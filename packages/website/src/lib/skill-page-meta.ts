@@ -43,7 +43,17 @@ const DEFAULT_SKILL_DESCRIPTION =
  */
 export function resolveSkillId(rawId: string | undefined): string | undefined {
   if (!rawId) return rawId
-  return decodeURIComponent(rawId)
+  try {
+    return decodeURIComponent(rawId)
+  } catch {
+    // Malformed percent-encoding (a lone '%', or an incomplete/invalid UTF-8
+    // sequence like '%E0%A4%A') throws URIError. Caught here rather than
+    // left to propagate into the page frontmatter, which would otherwise
+    // crash the SSR render for any crawler or link hitting a garbled URL.
+    // Falling back to the raw, still-encoded value lets skills-get 404
+    // naturally on it instead — an honest "not found" for a malformed ID.
+    return rawId
+  }
 }
 
 /**
@@ -61,6 +71,19 @@ export function resolveSkillId(rawId: string | undefined): string | undefined {
  */
 export function safeJsonLdScript(payload: unknown): string {
   return JSON.stringify(payload).replace(/</g, '\\u003c')
+}
+
+/**
+ * Whether the SSR skill-page response should be cached at the CDN edge.
+ * Only a genuinely successful metadata fetch (`skillMeta` populated) may be
+ * cached — a degraded response (network error, 5xx, or a rate limit on the
+ * shared anon-key bucket, see SMI-6190) must NOT be cached, or a purely
+ * transient failure gets baked into the CDN as the pre-SMI-6180 generic
+ * shell for the full cache lifetime, silently reintroducing the exact
+ * indexing problem this page fix exists to solve.
+ */
+export function shouldCacheSkillPage(skillMeta: SkillMeta | null): boolean {
+  return skillMeta !== null
 }
 
 /** Builds the server-side skills-get fetch URL from an already-decoded id. */

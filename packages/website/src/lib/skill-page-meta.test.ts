@@ -5,6 +5,7 @@ import {
   deriveSkillPageMeta,
   resolveSkillId,
   safeJsonLdScript,
+  shouldCacheSkillPage,
   type SkillMeta,
 } from './skill-page-meta'
 
@@ -32,6 +33,16 @@ describe('safeJsonLdScript', () => {
 describe('resolveSkillId', () => {
   it('returns undefined for an undefined id', () => {
     expect(resolveSkillId(undefined)).toBeUndefined()
+  })
+
+  it('falls back to the raw value for malformed percent-encoding instead of throwing', () => {
+    // SMI-6180 regression: decodeURIComponent throws URIError on a lone '%'
+    // or an incomplete/invalid UTF-8 escape — this must degrade gracefully,
+    // not crash the SSR render for a crawler hitting a garbled URL.
+    expect(() => resolveSkillId('bad%id')).not.toThrow()
+    expect(resolveSkillId('bad%id')).toBe('bad%id')
+    expect(() => resolveSkillId('%E0%A4%A')).not.toThrow()
+    expect(resolveSkillId('%E0%A4%A')).toBe('%E0%A4%A')
   })
 
   it('decodes a percent-encoded slash in an author/name id', () => {
@@ -131,5 +142,21 @@ describe('deriveSkillPageMeta', () => {
     expect(meta.title).toBe('Skill Details | Skillsmith')
     expect(meta.jsonLd).toBeNull()
     expect(meta.description).toContain('View skill details')
+  })
+})
+
+describe('shouldCacheSkillPage', () => {
+  it('caches a genuinely successful metadata fetch', () => {
+    const skill: SkillMeta = { id: 'smith-horn/example-skill', name: 'Example Skill' }
+    expect(shouldCacheSkillPage(skill)).toBe(true)
+  })
+
+  it('does not cache a degraded response (network error, 5xx, or rate limit — skillMeta null)', () => {
+    // SMI-6180 regression: caching this would bake a transient failure's
+    // generic-shell fallback into the CDN for the full cache lifetime,
+    // reintroducing the exact indexing problem this page fix exists to
+    // solve. See SMI-6190 for the underlying shared-rate-limit exposure
+    // this mitigates the practical impact of.
+    expect(shouldCacheSkillPage(null)).toBe(false)
   })
 })

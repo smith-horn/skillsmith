@@ -22,6 +22,7 @@ import {
   deriveSkillPageMeta,
   resolveSkillId,
   safeJsonLdScript,
+  shouldCacheSkillPage,
   type SkillMeta,
 } from '../../lib/skill-page-meta'
 
@@ -252,7 +253,7 @@ if (!isCategory && decodedId) {
     // itself a contributor to the "crawled, not indexed" bucket, since
     // Google had no way to distinguish a gone skill from a slow-loading one.
     Astro.response.status = 404
-  } else {
+  } else if (shouldCacheSkillPage(skillMeta)) {
     Astro.response.headers.set('Cache-Control', 's-maxage=300, stale-while-revalidate=60')
   }
 }
