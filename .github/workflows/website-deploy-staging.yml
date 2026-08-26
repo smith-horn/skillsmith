@@ -342,13 +342,16 @@ jobs:
       # Re-fire the repository_dispatch that smoke-prod.yml listens for. Once
       # native git integration is disconnected (Phase 2), Vercel stops emitting
       # the deploy webhook, so this CLI-deploy path must fire it itself.
-      # Must be a real PAT (GH_PAT) -- the default GITHUB_TOKEN will not
-      # re-trigger smoke-prod.yml (GitHub's workflow-recursion guard).
+      # Must be a real PAT (SKILLSMITH_SUPPORT_PAT) -- the default GITHUB_TOKEN
+      # will not re-trigger smoke-prod.yml (GitHub's workflow-recursion guard).
+      # SMI-6187: previously GH_PAT, replaced 2026-08-26 -- GH_PAT resolved
+      # empty in this job's context (confirmed under normal, non-outage
+      # platform conditions), root cause never isolated before rotation.
       - name: Re-fire post-deploy smoke dispatch
         id: smoke_dispatch
         continue-on-error: true
         env:
-          GH_TOKEN: ${{ secrets.GH_PAT }}
+          GH_TOKEN: ${{ secrets.SKILLSMITH_SUPPORT_PAT }}
         run: |
           gh api repos/${{ github.repository }}/dispatches \
             -f event_type=vercel-prod-deployed \
@@ -360,7 +363,7 @@ jobs:
       - name: Warn if smoke dispatch failed
         if: steps.smoke_dispatch.outcome == 'failure'
         run: |
-          echo "::warning::Failed to re-fire vercel-prod-deployed dispatch; smoke-prod.yml did not auto-run. Check the GH_PAT secret, then trigger smoke-prod.yml manually."
+          echo "::warning::Failed to re-fire vercel-prod-deployed dispatch; smoke-prod.yml did not auto-run. Check the SKILLSMITH_SUPPORT_PAT secret, then trigger smoke-prod.yml manually."
 
       - name: Generate deployment summary
         run: |
