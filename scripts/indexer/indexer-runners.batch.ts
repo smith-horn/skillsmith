@@ -117,7 +117,7 @@ async function upsertChunkWithRetry(
   const payload = chunk.map((a) => a.skillData)
   const { data, error } = await supabase
     .from('skills')
-    .upsert(payload, { onConflict: 'repo_url', ignoreDuplicates: false })
+    .upsert(payload, { onConflict: 'repo_url_canonical', ignoreDuplicates: false })
     .select('repo_url')
 
   if (error) {

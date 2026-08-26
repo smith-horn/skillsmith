@@ -165,4 +165,25 @@ describe('flushUpsertAccumulator — statement-timeout chunk retry (SMI-5968)', 
       expect(Number(end) - Number(start)).toBe(1)
     }
   })
+
+  it('SMI-5898 Wave 2 Step 6: upserts against onConflict repo_url_canonical, not repo_url', async () => {
+    const upsertOptions: Array<Record<string, unknown> | undefined> = []
+    const fakeSupabase = {
+      from: () => ({
+        upsert: (payload: Record<string, unknown>[], options?: Record<string, unknown>) => ({
+          select: () => {
+            upsertOptions.push(options)
+            return Promise.resolve({ data: [{ repo_url: payload[0].repo_url }], error: null })
+          },
+        }),
+        insert: () => Promise.resolve({ data: null, error: null }),
+      }),
+    } as unknown as SupabaseClient
+
+    const accumulator = [makeAccumulatorItem(1)]
+    await flushUpsertAccumulator(fakeSupabase, accumulator, new Set(), 1)
+
+    expect(upsertOptions).toHaveLength(1)
+    expect(upsertOptions[0]).toMatchObject({ onConflict: 'repo_url_canonical' })
+  })
 })

@@ -2,11 +2,19 @@
  * Per-skill GitHub tree-URL builder (Node port)
  * @module scripts/indexer/skill-url
  *
- * SMI-5286 Wave 1a (C-1): the load-bearing dedup fix. `skills.repo_url` is the
- * ONLY unique constraint (migration 001:26) and the upsert `onConflict` target
- * (`indexer-runners.batch.ts:153`). The community discovery emitters historically
- * persisted the BARE repo-root `html_url` for every skill, so N SKILL.md files in
- * one repo collided on `repo_url` → last-writer-wins → a single row.
+ * SMI-5286 Wave 1a (C-1): the load-bearing dedup fix. `skills.repo_url` was
+ * the unique constraint and upsert `onConflict` target at the time this was
+ * written; SMI-5898 Wave 2 added `repo_url_canonical` (a case-insensitive,
+ * trigger-maintained derivative — `20260819000000_smi5898_repo_url_canonical.sql`)
+ * as a second, now-primary unique constraint, and both `indexer-runners.batch.ts`
+ * files (Node + Deno) upsert against it instead. `repo_url` itself is still
+ * the source column this helper builds and is still unique (case-sensitive),
+ * so the distinct-per-skill-URL reasoning below is unaffected — only the
+ * upsert's conflict-inference target changed.
+ *
+ * The community discovery emitters historically persisted the BARE
+ * repo-root `html_url` for every skill, so N SKILL.md files in one repo
+ * collided on `repo_url` → last-writer-wins → a single row.
  *
  * This helper constructs a DISTINCT per-skill URL of the shape
  *   `${repoHtmlUrl}/tree/${defaultBranch}/${skillPath}`
