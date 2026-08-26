@@ -245,7 +245,7 @@ describe('runMergeShards — row-outcome coherence (hard fail)', () => {
     )
   })
 
-  it('throws when a verdict-delta outcome is missing its prePortQuarantine/postPortQuarantine fields', async () => {
+  it('throws (via field-presence, which runs first) when a verdict-delta outcome is missing its prePortQuarantine/postPortQuarantine fields', async () => {
     const dir = scratch()
     const fixture = buildThreeShardFixture()
     const tampered = {
@@ -261,8 +261,60 @@ describe('runMergeShards — row-outcome coherence (hard fail)', () => {
     const args = mergeArgs([path0, path1, path2], join(dir, 'merged.json'))
 
     await expect(runMergeShards(db, args)).rejects.toThrow(
-      /row-c2-1.*outcome=newly_quarantined but prePortQuarantine\/postPortQuarantine is missing/s
+      /row-c2-1.*outcome=newly_quarantined is a scored outcome, but has neither field/s
     )
+  })
+
+  it("throws (round-2 confirmation review finding) when a row mislabeled unfetchable still carries a real newly_quarantined row's quarantine fields", async () => {
+    const dir = scratch()
+    const fixture = buildThreeShardFixture()
+    // The exact round-2 attack: a genuinely newly_quarantined row (pre=false,
+    // post=true) relabeled `unfetchable` — the round-1 coherence check alone
+    // would skip this entirely (unfetchable isn't in VERDICT_DELTA_OUTCOMES),
+    // and it would also skip G-5's checkDeltaBound and G-1's review set.
+    const tampered = fixtureRow('row-c2-1', 'C2', {
+      outcome: 'unfetchable',
+      prePortQuarantine: false,
+      postPortQuarantine: true,
+    })
+
+    const path0 = writeShardReport(
+      dir,
+      0,
+      [tampered.reportRow, fixture.shardRows[0][1]],
+      fixture.totals
+    )
+    const path1 = writeShardReport(dir, 1, fixture.shardRows[1], fixture.totals)
+    const path2 = writeShardReport(dir, 2, fixture.shardRows[2], fixture.totals)
+    const db = makeMergeShardsDb(fixture.population)
+    const args = mergeArgs([path0, path1, path2], join(dir, 'merged.json'))
+
+    await expect(runMergeShards(db, args)).rejects.toThrow(
+      /row-c2-1.*outcome=unfetchable is NOT a scored outcome, but carries/s
+    )
+  })
+
+  it('does NOT flag a genuine unfetchable/unevaluable/content_drifted row with no quarantine fields at all', async () => {
+    const dir = scratch()
+    const fixture = buildThreeShardFixture()
+    const genuine = {
+      ...fixtureRow('row-c2-1', 'C2', { outcome: 'unfetchable' }).reportRow,
+    }
+    // Matches the real simulator's own shape for these three outcomes
+    // (processRow's early-return sites never attach these fields at all).
+    delete genuine['prePortQuarantine']
+    delete genuine['postPortQuarantine']
+    delete genuine['prePortRiskScore']
+    delete genuine['postPortRiskScore']
+
+    const path0 = writeShardReport(dir, 0, [genuine, fixture.shardRows[0][1]], fixture.totals)
+    const path1 = writeShardReport(dir, 1, fixture.shardRows[1], fixture.totals)
+    const path2 = writeShardReport(dir, 2, fixture.shardRows[2], fixture.totals)
+    const db = makeMergeShardsDb(fixture.population)
+    const args = mergeArgs([path0, path1, path2], join(dir, 'merged.json'))
+
+    const report = await runMergeShards(db, args)
+    expect(report.rows.find((r) => r.id === 'row-c2-1')?.outcome).toBe('unfetchable')
   })
 
   it('does NOT flag bundle_absent rows, whose outcome is deliberately overridden past what the quarantine booleans would classify to', async () => {

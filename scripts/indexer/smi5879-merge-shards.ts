@@ -64,7 +64,10 @@ import {
   recomputeCounts,
   type ShardReportInput,
 } from './smi5879-merge-shards.merge-rules.ts'
-import { assertRowOutcomeCoherence } from './smi5879-merge-shards.outcome-coherence.ts'
+import {
+  assertRowOutcomeCoherence,
+  assertRowOutcomeFieldPresence,
+} from './smi5879-merge-shards.outcome-coherence.ts'
 import {
   assertCoverageTotalsMatchPopulation,
   assertMergedRowsMatchPopulation,
@@ -197,6 +200,13 @@ export async function runMergeShards(
   // that disagrees with its own prePortQuarantine/postPortQuarantine fields
   // — neither check above would catch that. Cheap, purely local, so it runs
   // before the DB round trip alongside the other structural checks.
+  // Round-2 confirmation review found a gap in the round-1 fix: it only
+  // covered verdict-delta outcomes, so a real newly_quarantined row
+  // mislabeled unfetchable/unevaluable/content_drifted (while still
+  // carrying quarantine fields) skipped it entirely. Field-presence runs
+  // FIRST — it's the check that actually closes that gap; coherence then
+  // only needs to worry about the four outcomes it's scoped to.
+  assertRowOutcomeFieldPresence(mergedRows)
   assertRowOutcomeCoherence(mergedRows)
 
   const { population, summary } = await loadVerifiedPopulation(db, args.runId)

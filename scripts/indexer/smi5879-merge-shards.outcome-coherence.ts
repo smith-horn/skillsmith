@@ -10,7 +10,7 @@
  *
  * WHY THIS CHECK EXISTS
  * ----------------------
- * Wave 2 adversarial review finding: none of `.merge-rules.ts`'s checks —
+ * Wave 2 adversarial review, round 1: none of `.merge-rules.ts`'s checks —
  * id disjointness, population set-equality, per-cohort/author/name
  * agreement — verify that a row's `outcome` LABEL is actually consistent
  * with its own `prePortQuarantine`/`postPortQuarantine` fields. A row with
@@ -22,9 +22,31 @@
  * omit or include the wrong rows, while every coverage/count number this
  * tool checks still balances perfectly, because `counts` is recomputed
  * from the SAME (already-wrong) `outcome` field the label itself carries.
+ *
+ * Round 2 (confirmation round on round 1's fix) found a gap IN that fix: it
+ * only checked the four verdict-delta outcomes, so a genuinely
+ * `newly_quarantined` row mislabeled `unfetchable` (or `unevaluable`/
+ * `content_drifted`) while STILL carrying `prePortQuarantine=false,
+ * postPortQuarantine=true` would skip this check entirely (those three
+ * outcomes are not in `VERDICT_DELTA_OUTCOMES`) AND skip G-5's
+ * `checkDeltaBound` (which only looks at `SCORED_OUTCOMES`) AND be excluded
+ * from G-1's review set — with coverage/counts still balancing, because
+ * `unfetchable`/`unevaluable`/`content_drifted` are non-blocking, "we
+ * couldn't fully evaluate this row" buckets, not verdicts. Confirmed against
+ * `processRow` (`smi5879-simulate-full.helpers.ts`): every one of that
+ * function's `unfetchable`/`unevaluable`/`content_drifted` return sites
+ * constructs its result as `{ ...base, outcome: '...', reason: '...' }` —
+ * NONE of them ever attach `prePortQuarantine`/`postPortQuarantine` (or the
+ * risk-score fields) at all. Only `SCORED_OUTCOMES`
+ * (`smi5879-gate-check.helpers.ts` — `bundle_absent` plus the four
+ * verdict-delta outcomes) legitimately carry those fields. `assertRowOutcomeFieldPresence`
+ * below closes this: a row outside `SCORED_OUTCOMES` carrying quarantine
+ * fields at all is now itself a hard-fail, which catches the round-2 attack
+ * regardless of which non-scored outcome the mislabeling used.
  */
 
 import type { SimRowOutcome, SimRowResult } from './smi5879-simulate-full.types.ts'
+import { SCORED_OUTCOMES } from './smi5879-gate-check.helpers.ts'
 import { MAX_IDS_IN_ERROR } from './smi5879-merge-shards.merge-rules.ts'
 
 /**
@@ -49,7 +71,11 @@ const VERDICT_DELTA_OUTCOMES: readonly SimRowOutcome[] = [
  * own function cannot detect a fault IN that function) — and reimplementing
  * avoids pulling `smi5879-simulate-full.helpers.ts`'s network/fetch/
  * rate-limit dependency graph into a tool that must stay a pure local
- * aggregation step.
+ * aggregation step. `SCORED_OUTCOMES` below is imported, not reimplemented,
+ * for the opposite reason: it is not producer arithmetic to be independently
+ * re-derived, it is the closed classification G-5's own `checkDeltaBound`
+ * already depends on — reusing it means this check and G-5 can never drift
+ * apart on which outcomes are "scored."
  */
 function expectedVerdictDeltaOutcome(
   prePortQuarantine: boolean,
@@ -59,6 +85,45 @@ function expectedVerdictDeltaOutcome(
   if (prePortQuarantine && !postPortQuarantine) return 'newly_cleared'
   if (!prePortQuarantine && !postPortQuarantine) return 'unchanged_clean'
   return 'unchanged_quarantined'
+}
+
+/**
+ * Round-2 fix: assert `prePortQuarantine`/`postPortQuarantine` are present
+ * if and only if `outcome` is in `SCORED_OUTCOMES`. Closes the class of
+ * attack independent of which non-scored outcome is used — a row cannot
+ * carry quarantine fields while claiming to be `unfetchable`/`unevaluable`/
+ * `content_drifted` (fields present where the real producer never puts
+ * them), and cannot omit them while claiming a scored outcome (already
+ * covered for the verdict-delta subset by {@link assertRowOutcomeCoherence}
+ * below, extended here to `bundle_absent` too).
+ */
+export function assertRowOutcomeFieldPresence(rows: readonly SimRowResult[]): void {
+  const violations: string[] = []
+  for (const row of rows) {
+    const isScored = (SCORED_OUTCOMES as readonly SimRowOutcome[]).includes(row.outcome)
+    const hasFields = row.prePortQuarantine !== undefined || row.postPortQuarantine !== undefined
+    if (isScored && !hasFields) {
+      violations.push(
+        `${row.id} (outcome=${row.outcome} is a scored outcome, but has neither field)`
+      )
+    } else if (!isScored && hasFields) {
+      violations.push(
+        `${row.id} (outcome=${row.outcome} is NOT a scored outcome, but carries ` +
+          `prePortQuarantine=${row.prePortQuarantine}/postPortQuarantine=${row.postPortQuarantine} — ` +
+          'the real simulator never attaches these fields to this outcome)'
+      )
+    }
+  }
+  if (violations.length > 0) {
+    throw new Error(
+      `SMI-6015: ${violations.length} row(s) have quarantine-field presence inconsistent with their ` +
+        `outcome: ${violations.slice(0, MAX_IDS_IN_ERROR).join('; ')}` +
+        `${violations.length > MAX_IDS_IN_ERROR ? ', ...' : ''}. A row outside SCORED_OUTCOMES that ` +
+        'still carries these fields could otherwise masquerade as a non-blocking, non-reviewed ' +
+        "outcome while smuggling a real quarantine verdict's fields past G-1's review set and G-5's " +
+        'delta-bound check. Refusing to merge.'
+    )
+  }
 }
 
 /**
