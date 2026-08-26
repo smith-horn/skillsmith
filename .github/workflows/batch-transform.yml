@@ -7,7 +7,7 @@
 # Required secrets:
 #   - SUPABASE_URL
 #   - SUPABASE_SERVICE_ROLE_KEY
-#   - GH_PAT (GitHub Personal Access Token for 5,000 req/hr rate limit)
+#   - SKILLSMITH_SUPPORT_PAT (GitHub Personal Access Token for 5,000 req/hr rate limit; SMI-6187, was GH_PAT)
 
 name: Batch Skill Transformation
 
@@ -58,7 +58,7 @@ jobs:
         env:
           SUPABASE_URL: ${{ secrets.SUPABASE_URL }}
           SUPABASE_SERVICE_ROLE_KEY: ${{ secrets.SUPABASE_SERVICE_ROLE_KEY }}
-          GITHUB_TOKEN: ${{ secrets.GH_PAT }} # 5,000 req/hr vs 60 req/hr anonymous
+          GITHUB_TOKEN: ${{ secrets.SKILLSMITH_SUPPORT_PAT }} # 5,000 req/hr vs 60 req/hr anonymous
         run: |
           ARGS="--verbose"
 
