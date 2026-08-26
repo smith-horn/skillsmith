@@ -79,6 +79,27 @@
       "checks": ["check_sync_stripe_email_requires_jwt"]
     },
     {
+      "id": "edge-fn-audit-notify",
+      "owner": "edge-functions",
+      "trigger_globs": ["supabase/functions/audit-notify/**"],
+      "script": "scripts/smoke-prod/website.sh",
+      "checks": ["check_audit_notify_requires_jwt"]
+    },
+    {
+      "id": "edge-fn-audit-unsubscribe",
+      "owner": "edge-functions",
+      "trigger_globs": ["supabase/functions/audit-unsubscribe/**"],
+      "script": "scripts/smoke-prod/website.sh",
+      "checks": ["check_audit_unsubscribe_invalid_token_rejected"]
+    },
+    {
+      "id": "edge-fn-telemetry-consent",
+      "owner": "edge-functions",
+      "trigger_globs": ["supabase/functions/telemetry-consent/**"],
+      "script": "scripts/smoke-prod/website.sh",
+      "checks": ["check_telemetry_consent_edge_fn"]
+    },
+    {
       "id": "cli-published",
       "owner": "cli",
       "trigger_globs": ["packages/cli/**"],

@@ -1044,3 +1044,97 @@ except Exception:
   report_pass "website-status-page" "check_status_rss_feed_well_formed" "$url" "$ms"
   return 0
 }
+
+# ---- check_audit_notify_requires_jwt -----------------------------------
+# SMI-6177/SMI-5541. audit-notify is gateway-verified (real users hit it via
+# the CLI's `sklx audit security --email` / MCP auto-notify path). POST with
+# no Authorization header must be rejected by the gateway with 401, mirroring
+# check_sync_stripe_email_requires_jwt. Non-401 means JWT verification
+# regressed on a surface that sends real audit-report emails.
+check_audit_notify_requires_jwt() {
+  _require_supabase_url || { report_fail "edge-fn-audit-notify" "check_audit_notify_requires_jwt" "" "SUPABASE_URL" "unset"; return 1; }
+  local url="${SMOKE_SUPABASE_URL}/functions/v1/audit-notify"
+  local t0 t1 ms status
+  t0=$(now_ms)
+  status=$(with_retry http_status POST "$url" -H 'content-type: application/json' -d '{}')
+  t1=$(now_ms)
+  ms=$((t1 - t0))
+  if [ "$status" = "401" ]; then
+    report_pass "edge-fn-audit-notify" "check_audit_notify_requires_jwt" "$url" "$ms"
+    return 0
+  fi
+  report_fail "edge-fn-audit-notify" "check_audit_notify_requires_jwt" "$url" "401" "$status" "$ms"
+  return 1
+}
+
+# ---- check_audit_unsubscribe_invalid_token_rejected --------------------
+# SMI-6177. audit-unsubscribe is intentionally anonymous (verify_jwt=false)
+# — it's the one-click unsubscribe link embedded in audit-notify's digest
+# emails. GET with a bogus u/s query pair must return the deterministic
+# 400 "Invalid link" response; never send a real token here, this must stay
+# non-mutating (no preference update, no audit_logs write).
+check_audit_unsubscribe_invalid_token_rejected() {
+  _require_supabase_url || { report_fail "edge-fn-audit-unsubscribe" "check_audit_unsubscribe_invalid_token_rejected" "" "SUPABASE_URL" "unset"; return 1; }
+  local url="${SMOKE_SUPABASE_URL}/functions/v1/audit-unsubscribe?u=smoke-nonexistent&s=invalid"
+  local t0 t1 ms resp status body
+  t0=$(now_ms)
+  resp=$(with_retry http_body GET "$url") || true
+  t1=$(now_ms)
+  ms=$((t1 - t0))
+  status=$(printf '%s' "$resp" | head -n1)
+  body=$(printf '%s' "$resp" | tail -n +2)
+
+  if [ "$status" != "400" ]; then
+    report_fail "edge-fn-audit-unsubscribe" "check_audit_unsubscribe_invalid_token_rejected" "$url" "400" "$status" "$ms"
+    return 1
+  fi
+  if ! assert_contains "$body" 'Invalid link' "audit-unsubscribe-invalid-link"; then
+    report_fail "edge-fn-audit-unsubscribe" "check_audit_unsubscribe_invalid_token_rejected" "$url" "'Invalid link' in body" "missing" "$ms"
+    return 1
+  fi
+  report_pass "edge-fn-audit-unsubscribe" "check_audit_unsubscribe_invalid_token_rejected" "$url" "$ms"
+  return 0
+}
+
+# ---- check_telemetry_consent_edge_fn ------------------------------------
+# SMI-6177. Mirrors check_license_status_edge_fn (the function's own header
+# comment cites license-status as its precedent): POST a well-formed
+# installId (64-char sha256 hex) with no credentials, expect the
+# deterministic no-userId branch {"data":{"enabled":false,"consentRequired":
+# false}}. Caveat (plan-reviewed): this endpoint calls its own rate limiter
+# before returning, so a busy window can legitimately return 429 instead of
+# 200 — that's accepted as a non-failing outcome here rather than hard-failed,
+# since 429 still proves the function is deployed and routing correctly.
+check_telemetry_consent_edge_fn() {
+  _require_supabase_url || {
+    report_fail "edge-fn-telemetry-consent" "check_telemetry_consent_edge_fn" "" "SUPABASE_URL" "unset"
+    return 1
+  }
+  local url="${SMOKE_SUPABASE_URL}/functions/v1/telemetry-consent"
+  local install_id="000000000000000000000000000000000000000000000000000000000000000a"
+  local t0 t1 ms resp status body
+  t0=$(now_ms)
+  resp=$(with_retry http_body POST "$url" \
+    -H 'content-type: application/json' \
+    -d "{\"installId\":\"${install_id}\"}") || true
+  t1=$(now_ms)
+  ms=$((t1 - t0))
+  status=$(printf '%s' "$resp" | head -n1)
+  body=$(printf '%s' "$resp" | tail -n +2)
+
+  if [ "$status" = "429" ]; then
+    report_pass "edge-fn-telemetry-consent" "check_telemetry_consent_edge_fn" "$url" "$ms"
+    return 0
+  fi
+  if [ "$status" != "200" ]; then
+    report_fail "edge-fn-telemetry-consent" "check_telemetry_consent_edge_fn" "$url" "200|429" "$status" "$ms"
+    return 1
+  fi
+  if ! assert_contains "$body" '"enabled":false' "telemetry-consent-json" ||
+     ! assert_contains "$body" '"consentRequired":false' "telemetry-consent-json"; then
+    report_fail "edge-fn-telemetry-consent" "check_telemetry_consent_edge_fn" "$url" '{"enabled":false,"consentRequired":false} in JSON' "missing" "$ms"
+    return 1
+  fi
+  report_pass "edge-fn-telemetry-consent" "check_telemetry_consent_edge_fn" "$url" "$ms"
+  return 0
+}
