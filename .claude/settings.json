@@ -74,7 +74,12 @@
       "mcp__ruflo__claims_accept-handoff",
       "mcp__ruflo__hooks_post-task",
       "mcp__ruflo__hooks_model-outcome",
-      "mcp__ruflo__hooks_model-route"
+      "mcp__ruflo__hooks_model-route",
+      "Read(//Users/williamsmith/Documents/GitHub/Smith-Horn/skillsmith/.env)",
+      "Read(//Users/williamsmith/Documents/GitHub/Smith-Horn/skillsmith/.worktrees/**/.env)",
+      "Bash(cat .env)",
+      "Bash(cat .env:*)",
+      "Bash(echo $.env:*)"
     ]
   },
   "hooks": {

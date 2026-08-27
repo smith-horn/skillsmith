@@ -1,7 +1,7 @@
 {
   "name": "skillsmith",
   "version": "0.1.2",
-  "description": "Publish versioned agent skills to a team-scoped registry, catch drift across installs, and deprecate what's gone stale.",
+  "description": "A registry for sharing, scanning, and tracking agent skills across teams.",
   "private": true,
   "type": "module",
   "workspaces": [

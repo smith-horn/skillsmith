@@ -11,6 +11,14 @@ All notable changes to `@skillsmith/mcp-server` are documented here.
   reflects which service is actually wired in. The SSO stub's connection-test action also
   returned a fabricated real-looking success — it now carries `simulated: true` and says so
   explicitly (SMI-6184).
+- **Docs**: site-wide positioning reframe (SMI-6194) — every tool description's branding clause
+  ("Skillsmith is the canonical lifecycle manager for agent skills...") replaced with a plain
+  descriptive sentence ("...a registry for sharing, scanning, and tracking agent skills...")
+  across all 7 tool description files plus the bundled `SKILL.md` frontmatter, to avoid
+  degrading LLM tool-routing with marketing copy. Same swap applied to the README's framing
+  sentence, `server.json`'s registry-listing description (kept under its 100-char limit), and
+  the `package.json` keywords array (`"lifecycle"` removed, `"shared-skills"`/`"governance"`
+  added). Wording-only, no behavior change.
 
 ## v0.7.11
 

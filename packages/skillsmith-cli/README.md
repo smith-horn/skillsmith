@@ -4,7 +4,7 @@
 
 **Important:** The bare `skillsmith` package on npm is **not** this project. Use `@skillsmith/cli` or this wrapper (`skillsmith-cli`).
 
-Part of Skillsmith: a lifecycle layer for agent skills across teams.
+Part of Skillsmith: a registry for sharing, scanning, and tracking agent skills across teams.
 
 ## Install
 

@@ -119,9 +119,9 @@ export const pricingTiers: PricingTier[] = [
     name: 'Team',
     monthlyPrice: 25,
     period: '/user/month',
-    // Lifecycle framing (messaging reframe — LOCKED copy, byte-identical per
-    // docs/internal/implementation/messaging-lifecycle-reframe.md): publish, version, deprecate
-    description: 'The lifecycle layer for teams — publish, version, and deprecate together.',
+    // Messaging reframe, SMI-6194 (supersedes the prior lifecycle framing) — see
+    // docs/internal/implementation/messaging-multiplayer-reframe.md
+    description: 'Shared skills, safe for your team.',
     apiCalls: 10000,
     apiCallsFormatted: '10,000 API calls/month',
     features: [
@@ -142,9 +142,9 @@ export const pricingTiers: PricingTier[] = [
     name: 'Enterprise',
     monthlyPrice: 55,
     period: '/user/month',
-    // Lifecycle framing (messaging reframe, replaces SMI-4839 SDK positioning)
-    description:
-      'The lifecycle layer at org scale — publish, version, and deprecate, with audit logging, compliance reporting, and dedicated support.',
+    // Messaging reframe, SMI-6194 (supersedes the prior lifecycle framing, which itself
+    // replaced SMI-4839's SDK positioning)
+    description: 'Shared skills, safe at org scale.',
     apiCalls: 'unlimited',
     apiCallsFormatted: 'Unlimited API calls',
     features: [

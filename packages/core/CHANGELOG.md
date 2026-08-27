@@ -4,6 +4,10 @@ All notable changes to `@skillsmith/core` are documented here.
 
 ## [Unreleased]
 
+- **Docs**: README's framing sentence updated from the "lifecycle layer" tagline to a plain
+  descriptive sentence ("a registry for sharing, scanning, and tracking agent skills across
+  teams") as part of the site-wide positioning reframe. Wording-only. (SMI-6194)
+
 ## v0.12.0
 
 - **Feature**: new `resolveSessionTier` client (`sync/license-status-client.ts`, SMI-6098) —

@@ -4,7 +4,7 @@
 
 MCP (Model Context Protocol) server for agent skill publishing, installation, and lifecycle management.
 
-Part of Skillsmith: a lifecycle layer for agent skills across teams.
+Part of Skillsmith: a registry for sharing, scanning, and tracking agent skills across teams.
 
 ## What's New in v0.7.11
 
