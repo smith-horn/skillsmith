@@ -272,6 +272,7 @@ node packages/cli/dist/index.js install community/jest-helper
 - [**Security Guide**](https://skillsmith.app/docs/security) - Understanding skill trust, safety, and protections
 - [5-Minute Setup](https://skillsmith.app/docs/quickstart) - Quick start guide
 - [Configuration Guide](https://skillsmith.app/docs/getting-started) - Complete setup and usage
+- [Status](https://www.skillsmith.app/status) - Live status and uptime history for Skillsmith's core services
 
 ### Internal
 
