@@ -252,7 +252,7 @@ try {
 console.log(`\n${BOLD}3. File Length (max ${FILE_LENGTH_MAX_LINES} lines)${RESET}`)
 try {
   const sourceFiles = TYPE_SAFETY_AND_LENGTH_ROOTS.flatMap((root) =>
-    getFilesRecursive(root, ['.ts', '.tsx'])
+    getFilesRecursive(root, ['.ts', '.tsx', '.astro'])
   ).filter((f) => !isExemptFromLengthCheck(f))
 
   const longFiles = []
