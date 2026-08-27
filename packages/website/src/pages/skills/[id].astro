@@ -18,6 +18,7 @@ import { TRUST_TIER_PILL_CLASSES, DEFAULT_TRUST_TIER } from '../../constants/tru
 // SMI-6180: server-side skill metadata fetch for individual skill pages (see below).
 import { getSupabaseConfig } from '../../lib/supabase-config'
 import {
+  buildCategorySkillsUrl,
   buildSkillGetUrl,
   deriveSkillPageMeta,
   resolveSkillId,
@@ -136,11 +137,24 @@ let categoryFetchFailed = false
 
 if (isCategory && categoryMeta) {
   try {
-    const apiUrl = `https://api.skillsmith.app/v1/skills?category=${encodeURIComponent(categoryMeta.slug)}&limit=12&sort=score`
-    const res = await fetch(apiUrl, { cache: 'default' })
+    // SMI-6195: buildCategorySkillsUrl() below documents why the URL shape
+    // matters. The anon key is required too: unauthenticated, this would fall
+    // through to the trial-limiter's 10-requests-TOTAL-ever cap (already
+    // exhausted in prod) instead of the anon-key community tier's own bucket.
+    const { apiBaseUrl, anonKey } = getSupabaseConfig()
+    const apiUrl = buildCategorySkillsUrl(apiBaseUrl, categoryMeta.slug)
+    const res = await fetch(apiUrl, {
+      cache: 'default',
+      headers: { Authorization: `Bearer ${anonKey}` },
+    })
     if (res.ok) {
-      const data = (await res.json()) as { skills?: SkillItem[] }
-      categorySkills = data.skills ?? []
+      // SMI-6195: skills-search's real response shape is `{ data: [...] }`
+      // (confirmed against supabase/functions/skills-search/index.ts's own
+      // jsonResponse() call), not `{ skills: [...] }` — the old field name
+      // here never matched a live response, so categorySkills was always []
+      // even on a request that had otherwise succeeded.
+      const data = (await res.json()) as { data?: SkillItem[] }
+      categorySkills = data.data ?? []
     } else {
       categoryFetchFailed = true
     }

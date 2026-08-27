@@ -91,6 +91,21 @@ export function buildSkillGetUrl(apiBaseUrl: string, decodedId: string): string 
   return `${apiBaseUrl}/functions/v1/skills-get/${encodeURIComponent(decodedId)}`
 }
 
+/**
+ * Builds the server-side category-page live-skills fetch URL.
+ *
+ * SMI-6195: extracted after the inline version silently 404'd in production
+ * for its entire lifetime — it called `${apiBaseUrl}/v1/skills?category=...`,
+ * a path api.skillsmith.app's Vercel rewrite never routes (confirmed live);
+ * the correct function is `skills-search`, reached only via the
+ * `/functions/v1/` prefix, matching `buildSkillGetUrl` above. Extracted and
+ * unit-tested specifically so this exact regression — a URL string that
+ * silently stops routing — has a test that would have caught it.
+ */
+export function buildCategorySkillsUrl(apiBaseUrl: string, categorySlug: string): string {
+  return `${apiBaseUrl}/functions/v1/skills-search?category=${encodeURIComponent(categorySlug)}&limit=12&sort=score`
+}
+
 /** Builds the canonical skills page URL from an already-decoded id. */
 export function buildSkillCanonicalUrl(decodedId: string | undefined): string {
   return `https://www.skillsmith.app/skills/${encodeURIComponent(decodedId ?? '')}`
