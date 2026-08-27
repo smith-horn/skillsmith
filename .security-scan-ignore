@@ -20,3 +20,12 @@ docs/site/**
 # Local vector index (gitignored; metadata.json contains indexed doc text
 # that discusses secret patterns — not actual secrets)
 .ruvector/**
+
+# .env is unconditionally gitignored (.gitignore:65) — nothing in it can ever
+# reach a commit through normal git operations, so this scan provides zero
+# protection against secret leakage here. Scanning it anyway guarantees any
+# real credential configured for local dev gets grep-matched and echoed to
+# stdout on every single push (pre-push-check.sh:332) — a live secret-to-log
+# exposure vector with no compensating benefit. Excluded 2026-08-26 after a
+# real PAT was printed to a terminal transcript this way; see SMI-6219.
+.env
