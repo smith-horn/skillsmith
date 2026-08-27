@@ -6,16 +6,14 @@
  * Invoked from `.github/workflows/indexer.yml` as:
  *   npx tsx scripts/indexer/run.ts
  *
- * Reads env vars (see `parse-env.ts`), acquires the advisory lock,
- * dispatches to discovery or maintenance, writes a single audit_logs row
- * with rate-limit telemetry, releases the lock.
+ * Reads env vars (see `parse-env.ts`), acquires the advisory lock, dispatches to
+ * discovery or maintenance, writes a single audit_logs row with rate-limit telemetry, releases the lock.
  *
  * Hard rules carried forward from retro 2026-05-10:
- *  - Every GitHub fetch wrapped in `withRateLimitTracking` (verified by grep
- *    against `scripts/indexer/_shared/rate-limit.ts:withRateLimitTracking`).
+ *  - Every GitHub fetch wrapped in `withRateLimitTracking` (verified by grep against `scripts/indexer/_shared/rate-limit.ts:withRateLimitTracking`).
  *  - Phase 1 concurrency comes from `parseEnv().concurrency` (default 2;
- *    `CONCURRENCY_KILL_SWITCH=1` forces 1). Repo-var
- *    `INDEXER_CONCURRENCY_KILL_SWITCH` feeds the workflow's env block.
+ *    `CONCURRENCY_KILL_SWITCH=1` forces 1). Repo-var `INDEXER_CONCURRENCY_KILL_SWITCH`
+ *    feeds the workflow's env block.
  *  - `request_id` terminology everywhere except the literal RPC parameter
  *    name `run_id` for `try_indexer_lock(run_id text)`.
  *  - Error-before-data ordering on every Supabase RPC result.
@@ -73,6 +71,9 @@ interface RunSummary {
     core_remaining_min: number
     search_remaining_min: number
     code_search_remaining_min: number
+    core_observed: boolean
+    search_observed: boolean
+    code_search_observed: boolean // SMI-6073/SMI-6220: see rate-limit.ts
     secondary_rate_limit_hits: number
     retry_after_max_seconds: number
     concurrency: number

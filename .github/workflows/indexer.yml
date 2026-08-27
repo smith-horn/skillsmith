@@ -563,6 +563,223 @@ jobs:
             } >> "$GITHUB_STEP_SUMMARY"
           fi
 
+      - name: Evaluate Result Thresholds
+        # SMI-6220: output-based threshold alerting for the "success but
+        # degraded" class of failure -- SMI-6209 saw 3 consecutive discovery
+        # runs conclude `success` with an exhausted rate-limit bucket and
+        # paged nobody, because `Send Alert on Failure` below only runs on
+        # a failed conclusion and is structurally unreachable from a
+        # successful-but-degraded run.
+        # Full design: docs/internal/implementation/smi-6220-indexer-alert-threshold-sparc.md
+        if: success()
+        env:
+          RESPONSE: ${{ steps.indexer.outputs.response }}
+          RUN_TYPE: ${{ steps.config.outputs.run_type }}
+          DISCOVERY_PHASE: ${{ steps.config.outputs.discovery_phase }}
+          RUN_ID: ${{ github.run_id }}
+          RUN_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
+          SUPABASE_URL: ${{ env.SELECTED_SUPABASE_URL }}
+          SUPABASE_SERVICE_ROLE_KEY: ${{ env.SELECTED_SUPABASE_SERVICE_ROLE_KEY }}
+          SHADOW: ${{ vars.SKILLSMITH_INDEXER_DEGRADED_ALERT_SHADOW }}
+          DISABLE: ${{ vars.SKILLSMITH_INDEXER_DEGRADED_ALERT_DISABLE }}
+          MAX_FAILED_RATIO: ${{ vars.INDEXER_MAX_FAILED_RATIO }}
+          MIN_COHORT: ${{ vars.INDEXER_MIN_COHORT }}
+          MAX_SECONDARY_HITS: ${{ vars.INDEXER_MAX_SECONDARY_HITS }}
+        run: |
+          # jq must never be allowed to kill this step under the runner's
+          # default `bash -e {0}` (SMI-6220 SPARC §2.4 -- the exact hazard
+          # class documented at indexer-watch.yml:92-96). Every command
+          # substitution below carries a `|| VAR=` fail-open guard so a
+          # parse failure degrades to the skip branch instead of aborting
+          # the step (which would itself skip the alert, or worse, fall
+          # through to `Send Alert on Failure` with HTTP-failure framing).
+
+          write_summary() {
+            # Single place every verdict line goes: stdout (job log) and the
+            # step summary (operator-visible without opening logs).
+            echo "$1"
+            {
+              echo ""
+              echo "### Threshold Evaluation"
+              echo ""
+              echo "$1"
+            } >> "$GITHUB_STEP_SUMMARY"
+          }
+
+          # ── Threshold overrides: fall back to the default on a non-numeric
+          # value (mirrors scan-coverage-monitor's envFloat/envInt,
+          # supabase/functions/scan-coverage-monitor/index.ts:123-135). bash
+          # has no native float arithmetic -- ratio comparisons below go
+          # through `jq -n --argjson`.
+          env_float() {
+            if [ -n "$1" ] && printf '%s' "$1" | grep -Eq '^[0-9]+(\.[0-9]+)?$'; then
+              printf '%s' "$1"
+            else
+              printf '%s' "$2"
+            fi
+          }
+          env_int() {
+            if [ -n "$1" ] && printf '%s' "$1" | grep -Eq '^[0-9]+$'; then
+              printf '%s' "$1"
+            else
+              printf '%s' "$2"
+            fi
+          }
+
+          MAX_FAILED_RATIO=$(env_float "$MAX_FAILED_RATIO" "0.25") || MAX_FAILED_RATIO="0.25"
+          MIN_COHORT=$(env_int "$MIN_COHORT" "20") || MIN_COHORT="20"
+          MAX_SECONDARY_HITS=$(env_int "$MAX_SECONDARY_HITS" "5") || MAX_SECONDARY_HITS="5"
+
+          # ── Guard 0: evaluability. Fail-safe, never fail-loud. ──────────
+          # Covers the lock-skip shape (`{"event":"lock_held_by_other_run",...}`,
+          # run.ts:322-327 -- no `.meta` at all) AND unparseable JSON in one
+          # branch: both produce META_PRESENT != "true".
+          META_PRESENT=$(printf '%s' "$RESPONSE" | jq -r 'type=="object" and has("meta")') || META_PRESENT=""
+          if [ "$META_PRESENT" != "true" ]; then
+            write_summary "Threshold evaluation: SKIPPED (no .meta -- early exit / lock skip / unparseable)"
+            exit 0
+          fi
+
+          # ── Guard 1: dry run indexes nothing by design ───────────────────
+          DRY=$(printf '%s' "$RESPONSE" | jq -r '.data.dry_run // .data.dryRun // false') || DRY=""
+          if [ "$DRY" = "true" ]; then
+            write_summary "Threshold evaluation: SKIPPED (dry run)"
+            exit 0
+          fi
+
+          FOUND=$(printf '%s' "$RESPONSE" | jq -r '.data.found // 0') || FOUND="0"
+          INDEXED=$(printf '%s' "$RESPONSE" | jq -r '.data.indexed // 0') || INDEXED="0"
+          FAILED=$(printf '%s' "$RESPONSE" | jq -r '.data.failed // 0') || FAILED="0"
+          RRL=$(printf '%s' "$RESPONSE" | jq -r '.meta.rate_limit_remaining_min // 0') || RRL="0"
+          SEC=$(printf '%s' "$RESPONSE" | jq -r '.meta.secondary_rate_limit_hits // 0') || SEC="0"
+
+          CORE_OBSERVED=$(printf '%s' "$RESPONSE" | jq -r '.meta.core_observed // false') || CORE_OBSERVED="false"
+          CORE_REMAINING=$(printf '%s' "$RESPONSE" | jq -r '.meta.core_remaining_min // 0') || CORE_REMAINING="0"
+          SEARCH_OBSERVED=$(printf '%s' "$RESPONSE" | jq -r '.meta.search_observed // false') || SEARCH_OBSERVED="false"
+          SEARCH_REMAINING=$(printf '%s' "$RESPONSE" | jq -r '.meta.search_remaining_min // 0') || SEARCH_REMAINING="0"
+          CODE_SEARCH_OBSERVED=$(printf '%s' "$RESPONSE" | jq -r '.meta.code_search_observed // false') || CODE_SEARCH_OBSERVED="false"
+          CODE_SEARCH_REMAINING=$(printf '%s' "$RESPONSE" | jq -r '.meta.code_search_remaining_min // 0') || CODE_SEARCH_REMAINING="0"
+
+          REASONS=()
+
+          # ── Arm A (PRIMARY): rate-limit exhaustion. FAILED-independent. ──
+          # Per-bucket, not the global min: rate-limit.ts:269-272 -- the
+          # global value conflates core/search/code_search and cannot tell
+          # you WHICH bucket ran dry. Each bucket is only trusted when its
+          # own SMI-6073 observed-flag is true.
+          if [ "$CORE_OBSERVED" = "true" ] && [ "$CORE_REMAINING" = "0" ]; then
+            REASONS+=("GitHub 'core' rate-limit bucket exhausted (remaining=0, observed this run)")
+          fi
+          if [ "$SEARCH_OBSERVED" = "true" ] && [ "$SEARCH_REMAINING" = "0" ]; then
+            REASONS+=("GitHub 'search' rate-limit bucket exhausted (remaining=0, observed this run)")
+          fi
+          if [ "$CODE_SEARCH_OBSERVED" = "true" ] && [ "$CODE_SEARCH_REMAINING" = "0" ]; then
+            REASONS+=("GitHub 'code_search' rate-limit bucket exhausted (remaining=0, observed this run)")
+          fi
+
+          # ── Arm B (SECONDARY): failure ratio, discovery-only + cohort-guarded
+          # FOUND is the attempted cohort -- NOT found+indexed (INDEXED is a
+          # subset of FOUND; summing would double-count and dilute the
+          # ratio). maintenance/dequarantine/purge report under their own
+          # data.<branch> sub-objects (above) and legitimately have found=0;
+          # not evaluated here.
+          RATIO="0"
+          if [ "$RUN_TYPE" = "discovery" ] && [ "$FOUND" -ge "$MIN_COHORT" ]; then
+            RATIO=$(jq -n --argjson f "$FAILED" --argjson t "$FOUND" '$f/$t') || RATIO="0"
+            RATIO_BREACH=$(jq -n --argjson r "$RATIO" --argjson m "$MAX_FAILED_RATIO" '$r > $m') || RATIO_BREACH="false"
+            if [ "$RATIO_BREACH" = "true" ]; then
+              REASONS+=("failure ratio $RATIO > $MAX_FAILED_RATIO ($FAILED/$FOUND)")
+            fi
+            # else: cohort too small -- a 4/4 run is not evidence. Silent, by design.
+          fi
+
+          # ── Arm C: secondary rate-limit pressure (403/429 storm) ─────────
+          # Zero marginal cost -- SEC is already extracted above.
+          if [ "$SEC" -ge "$MAX_SECONDARY_HITS" ]; then
+            REASONS+=("$SEC secondary rate-limit (403/429) responses")
+          fi
+
+          # ── Arm D: recheck fetch-error-rate (throttling), recheck-only ───
+          # found/failed are ALWAYS 0 for recheck (recheckAuditZeroFills()) --
+          # Arm B's cohort guard therefore never admits a recheck run. This
+          # arm is recheck's real coverage. Reuses recheck's OWN
+          # classification condition verbatim (recheck.ts:430-431:
+          # errors > 0 || throttled) rather than a second
+          # independently-tunable threshold, so this arm can never drift
+          # from what recheck itself already calls 'partial'.
+          RC_ERRORS="0"
+          RC_ERROR_RATE="0"
+          if [ "$RUN_TYPE" = "recheck" ]; then
+            RC_ERRORS=$(printf '%s' "$RESPONSE" | jq -r '.data.recheck.errors // 0') || RC_ERRORS="0"
+            RC_ERROR_RATE=$(printf '%s' "$RESPONSE" | jq -r '.data.recheck.fetch_error_rate // 0') || RC_ERROR_RATE="0"
+            RC_RATE_BREACH=$(jq -n --argjson r "$RC_ERROR_RATE" '$r > 0.1') || RC_RATE_BREACH="false"
+            if [ "$RC_ERRORS" -gt "0" ] || [ "$RC_RATE_BREACH" = "true" ]; then
+              REASONS+=("recheck prevention outage: $RC_ERRORS errors, fetch_error_rate=$RC_ERROR_RATE (recheck.ts:430-438)")
+            fi
+          fi
+
+          # ── Verdict ───────────────────────────────────────────────────
+          if [ "${#REASONS[@]}" -eq 0 ]; then
+            write_summary "Threshold evaluation: OK"
+            exit 0
+          fi
+
+          REASON_TEXT=$(printf '%s; ' "${REASONS[@]}") || REASON_TEXT=""
+          REASON_TEXT="${REASON_TEXT%; }"
+          REASON_LINES=$(printf -- '- %s\n' "${REASONS[@]}") || REASON_LINES=""
+
+          MESSAGE=$(printf 'Skill Indexer run degraded (run_type=%s, phase=%s).\n\nReasons:\n%s\nObserved:\n- found=%s indexed=%s failed=%s\n- rate_limit_remaining_min=%s (global, informational only)\n- core: remaining=%s observed=%s\n- search: remaining=%s observed=%s\n- code_search: remaining=%s observed=%s\n- secondary_rate_limit_hits=%s\n- recheck: errors=%s fetch_error_rate=%s\n\nThresholds in force: MAX_FAILED_RATIO=%s MIN_COHORT=%s MAX_SECONDARY_HITS=%s\n\nRunbook: docs/internal/process/guards-and-opt-outs.md (SKILLSMITH_INDEXER_DEGRADED_ALERT_SHADOW / _DISABLE); CLAUDE.md Troubleshooting -> "indexer_degraded alert fired".\nRun: %s\n' \
+            "$RUN_TYPE" "${DISCOVERY_PHASE:-<none>}" "$REASON_LINES" \
+            "$FOUND" "$INDEXED" "$FAILED" \
+            "$RRL" \
+            "$CORE_REMAINING" "$CORE_OBSERVED" \
+            "$SEARCH_REMAINING" "$SEARCH_OBSERVED" \
+            "$CODE_SEARCH_REMAINING" "$CODE_SEARCH_OBSERVED" \
+            "$SEC" \
+            "$RC_ERRORS" "$RC_ERROR_RATE" \
+            "$MAX_FAILED_RATIO" "$MIN_COHORT" "$MAX_SECONDARY_HITS" \
+            "$RUN_URL") || MESSAGE="Skill Indexer run degraded (run_type=$RUN_TYPE): $REASON_TEXT"
+
+          # ── maybe_alert(): the ONLY curl path to alert-notify in this step
+          # (scan-coverage-monitor:177-196's fireAlert() single-gate
+          # principle) -- checks DISABLE, then SHADOW, then posts.
+          maybe_alert() {
+            if [ "$DISABLE" = "1" ]; then
+              write_summary "Threshold evaluation: SUPPRESSED (disabled): $REASON_TEXT"
+              return 0
+            fi
+            if [ "$SHADOW" != "0" ]; then
+              write_summary "Threshold evaluation: WOULD-ALERT (shadow): $REASON_TEXT"
+              return 0
+            fi
+
+            BODY=$(jq -n \
+              --arg msg "$MESSAGE" \
+              --arg rid "$RUN_ID" \
+              --arg url "$RUN_URL" \
+              '{type:"indexer_degraded", message:$msg, workflow:"Skill Indexer", runId:$rid, runUrl:$url}') || BODY=""
+
+            # SMI-5974 no-silent-delivery-failure pattern, verbatim shape:
+            # HTTP defaults to "000", overwritten only on a completed curl call.
+            HTTP="000"
+            if RESPONSE_CODE=$(curl -s -o /dev/null -w '%{http_code}' -X POST \
+              -H "Authorization: Bearer $SUPABASE_SERVICE_ROLE_KEY" \
+              -H "Content-Type: application/json" \
+              -d "$BODY" \
+              "$SUPABASE_URL/functions/v1/alert-notify"); then
+              HTTP="$RESPONSE_CODE"
+            fi
+
+            write_summary "Threshold evaluation: DEGRADED: $REASON_TEXT (alert-notify HTTP $HTTP)"
+
+            if [ "$HTTP" != "200" ]; then
+              echo "::error::alert-notify returned $HTTP -- email was NOT sent."
+              exit 1
+            fi
+          }
+
+          maybe_alert
+
       - name: Report Failure
         if: failure()
         env:
