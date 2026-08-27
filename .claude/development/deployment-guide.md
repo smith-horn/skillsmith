@@ -425,7 +425,7 @@ Authoritative table (extracted from CLAUDE.md per SMI-4828; the inline CLAUDE.md
 | Status Page Daily Rollup (SMI-5752) | Daily 00:15 UTC | Supabase pg_cron (`compute_status_daily_rollups()`) |
 | Status Page Checks Purge (SMI-5752) | Daily 00:20 UTC | Supabase pg_cron (`purge_status_checks()`) — drops `status_checks` rows older than 100 days |
 | Release Cadence Heartbeat (SMI-6052) | Daily 12:50 UTC | Supabase pg_cron (`invoke_release_cadence_heartbeat_monitor()`) → `release-cadence-heartbeat-monitor` — checks GitHub Actions run history for the most recent qualifying successful `release-cadence.yml` run, alerts via `alert-notify` when none in the last 8 days; deliberately outside GitHub Actions' own scheduler |
-| `prod-deploy-cancel-monitor` (SMI-6208) | Every 30 min (`*/30 * * * *`) | GitHub Actions (`prod-deploy-cancel-monitor.yml`) — detects a cancelled `Deploy to Production` job in `website-deploy-staging.yml` (approval-gate or mid-deploy cancellation, upstream-verified) and files a deduped GitHub Issue; shadow-default until the Open Question 2 soak criterion is met |
+| `prod-deploy-cancel-monitor` (SMI-6208) | Every 30 min (`*/30 * * * *`) | GitHub Actions (`prod-deploy-cancel-monitor.yml`) — detects a cancelled `Approve Production Deploy` job in `website-deploy-staging.yml` (the job that actually sits `waiting` for required-reviewer approval, under the two-job `approve-gate` + `deploy-production` split confirmed necessary by a live test on 2026-08-27; approval-gate or mid-deploy cancellation, upstream-verified) and files a deduped GitHub Issue; shadow-default until the Open Question 2 soak criterion is met |
 
 ### Alert Notifications
 

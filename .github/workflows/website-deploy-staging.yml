@@ -273,32 +273,55 @@ jobs:
           echo "::warning::Found ${{ steps.parse.outputs.external-errors }} broken external links (non-blocking)"
 
   # Production deployment with approval gate
+  #
+  # SMI-6208: split into approve-gate + deploy-production on 2026-08-27,
+  # after a LIVE TEST DISPROVED the original single-job hypothesis. That
+  # design gave deploy-production its own isolated, ref-keyed concurrency
+  # group with cancel-in-progress: false, on the (documented,
+  # flagged-as-unverified) theory that this would protect a job sitting
+  # `waiting` for required-reviewer approval. The live test: a first run's
+  # deploy-production sat `waiting` for 27 minutes, then was cancelled the
+  # INSTANT a second workflow_dispatch run started -- even inside its own
+  # isolated group. GitHub apparently treats a `waiting`-for-approval job as
+  # supersedable the same way it treats a `pending` one, regardless of
+  # cancel-in-progress. See the RCA's "fallback design" / "Concrete sketch"
+  # in docs/internal/implementation/website-deploy-approval-cancel-fix.md
+  # for the full writeup.
+  #
+  # The fix: approve-gate holds ONLY the human-approval environment, keyed
+  # by RUN ID (website-production-approve-<run_id>) -- run-ID-keyed groups
+  # never contend with each other, so any number of approval requests can
+  # sit `waiting` simultaneously without one superseding another.
+  # deploy-production (below) does the actual deploy work and keeps the
+  # ORIGINAL ref-keyed group (website-production-deploy-<ref>,
+  # cancel-in-progress: false), so concurrent deploy EXECUTIONS still stay
+  # mutually exclusive -- the staleness guard is what actually prevents a
+  # stale approved run from shipping, not the concurrency group alone.
+  approve-gate:
+    name: Approve Production Deploy
+    runs-on: ubuntu-latest
+    timeout-minutes: 1440
+    needs: [deploy-staging, lighthouse, link-check]
+    if: ${{ needs.lighthouse.result == 'success' && needs.link-check.result == 'success' }}
+    environment:
+      name: production
+      url: https://www.skillsmith.app
+    concurrency:
+      group: website-production-approve-${{ github.run_id }}
+      cancel-in-progress: false
+
+    steps:
+      - name: Approval granted
+        run: echo "Approved for commit ${{ github.sha }}"
+
   deploy-production:
     name: Deploy to Production
     runs-on: ubuntu-latest
     timeout-minutes: 15
-    needs: [deploy-staging, lighthouse, link-check]
-    if: ${{ needs.lighthouse.result == 'success' && needs.link-check.result == 'success' }}
-    # SMI-6208: deliberately its OWN concurrency group, isolated from
-    # website-staging-*, so a staging deploy for a different PR can never
-    # touch this job's queue. cancel-in-progress: false is intended to mean
-    # a job already `waiting` for required-reviewer approval, or actively
-    # deploying, is never auto-cancelled by a newer push -- BUT this has
-    # NOT been proven against GitHub's actual behavior for the `waiting`
-    # state specifically (GitHub's docs only define pending/running, not
-    # waiting-for-environment-approval -- see plan RCA). This MUST be
-    # verified live (plan Testing §3, a hard merge gate) before trusting
-    # this design; if the test disproves it, split this job into a
-    # run-ID-keyed `approve-gate` job plus a ref-keyed `deploy-production`
-    # job instead (see plan RCA "fallback design" -- a bare run-ID-keyed
-    # swap on this single job is NOT safe, it drops mutual exclusion
-    # between concurrent deploy executions).
+    needs: approve-gate
     concurrency:
       group: website-production-deploy-${{ github.ref }}
       cancel-in-progress: false
-    environment:
-      name: production
-      url: https://www.skillsmith.app
 
     outputs:
       deployment-url: ${{ steps.deploy.outputs.deployment-url }}
