@@ -32,7 +32,7 @@ git config core.hooksPath .husky/_
 npm run prepare
 ```
 
-`onnxruntime-node` (embeddings) and `hnswlib-node` (vector index) are not in the host repair scope — they only run inside Docker. The entrypoint rebuild loop covers all four native modules (better-sqlite3, onnxruntime-node, esbuild, hnswlib-node) per the SMI-4672 C1 fix.
+`onnxruntime-node` (embeddings) and `hnswlib-node` (vector index) previously had no host repair scope in `scripts/repair-host-native-deps.sh` — despite the claim once made here, both modules DO run on host whenever an MCP server is launched via a host-executing launcher script (`scripts/mcp-skillsmith-launcher.sh`, SMI-5049), since `@skillsmith/core`'s embeddings module pulls both in on that same host path. See CLAUDE.md's Troubleshooting table (`skillsmith` MCP CONNECTION_CLOSED row) for the host-side symptom and interim manual fix, and the [SMI-6221](https://linear.app/smith-horn-group/issue/SMI-6221/host-native-module-repair-and-mcp-preflight-have-zero-coverage-for) tracking issue for closing this repair-script gap durably. The entrypoint rebuild loop still covers all four native modules (better-sqlite3, onnxruntime-node, esbuild, hnswlib-node) per the SMI-4672 C1 fix for the CONTAINER side, which was never the affected surface.
 
 ## Worktree First Start
 
