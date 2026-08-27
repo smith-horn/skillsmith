@@ -260,6 +260,25 @@ export async function resolveOne(
           attempts: totalRequests,
         }
       }
+      // 451 ("Unavailable For Legal Reasons") is GitHub's own status for a
+      // repo blocked by a DMCA/legal takedown -- a permanent state, not a
+      // transient one. Retrying never resolves it (confirmed live, SMI-6015
+      // Wave 3 rehearsal, 2026-08-27: dzcmemory-web/bazi-ziwei-skill returned
+      // 451 across both its attempts and again on a fresh census run,
+      // repeatedly refusing I-6's seal check). Classified as `not-found`
+      // (same terminal bucket as 404) rather than falling into the generic
+      // "unclassified status" catch-all below, which defaults to `transient`
+      // and would keep this repo permanently `unevaluable` -- exactly the
+      // outcome G-2's coverage gate zero-tolerates.
+      if (response.status === 451) {
+        return {
+          repo,
+          resolution: 'not-found',
+          defaultBranch: null,
+          httpStatus: 451,
+          attempts: totalRequests,
+        }
+      }
       if (response.status === 403 || response.status === 429) {
         await waitOutRateLimit(response)
         continue

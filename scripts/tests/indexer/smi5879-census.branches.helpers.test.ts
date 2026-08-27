@@ -93,6 +93,15 @@ describe('resolveOne', () => {
     expect(fetchMock).toHaveBeenCalledTimes(1)
   })
 
+  it('SMI-6015 Wave 3: 451 (legal takedown) is classified not-found, not the generic transient catch-all', async () => {
+    const fetchMock = queueFetch([new Response('', { status: 451 })])
+    const outcome = await resolveOne(REPO, async () => ({}), newRateLimitTelemetry(), fastBucket())
+    expect(outcome.resolution).toBe('not-found')
+    expect(outcome.defaultBranch).toBeNull()
+    expect(outcome.httpStatus).toBe(451)
+    expect(fetchMock).toHaveBeenCalledTimes(1)
+  })
+
   it('200 with no default_branch is transient, never fabricated as resolved', async () => {
     queueFetch([new Response(JSON.stringify({}), { status: 200 })])
     const outcome = await resolveOne(REPO, async () => ({}), newRateLimitTelemetry(), fastBucket())
