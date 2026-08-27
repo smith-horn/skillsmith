@@ -332,7 +332,7 @@ export const OVERALL_BANNER: Record<ComponentStatus, OverallBannerConfig> = {
   },
   unknown: {
     headline: 'Status unavailable',
-    sub: "We couldn't load live status data. This page will keep retrying.",
+    sub: "We couldn't load live status data. If this doesn't update, see the live feed at /status.rss.xml.",
     dot: 'bg-gray-500',
     text: 'text-gray-400',
   },
