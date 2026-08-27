@@ -6,6 +6,8 @@ interface ImportMetaEnv {
   readonly PUBLIC_SITE_URL: string
   readonly PUBLIC_SUPABASE_URL: string
   readonly PUBLIC_SUPABASE_ANON_KEY: string
+  /** SMI-6190: server-only — dedicated API key for SSR skill/category-page fetches. */
+  readonly SKILLSMITH_WEBSITE_SSR_API_KEY: string
 }
 
 interface ImportMeta {

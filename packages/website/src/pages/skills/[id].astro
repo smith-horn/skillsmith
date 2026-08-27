@@ -17,6 +17,11 @@ import BaseLayout from '../../layouts/BaseLayout.astro'
 import { TRUST_TIER_PILL_CLASSES, DEFAULT_TRUST_TIER } from '../../constants/trust-tier-badges'
 // SMI-6180: server-side skill metadata fetch for individual skill pages (see below).
 import { getSupabaseConfig } from '../../lib/supabase-config'
+// SMI-6190: dedicated internal API key for both SSR fetches below — the shared
+// anon key gets rate-limited from ordinary anonymous traffic on the same
+// per-endpoint bucket, silently degrading these pages back to their
+// pre-SMI-6180/pre-SMI-6195 generic fallbacks under crawl load.
+import { getWebsiteSsrApiKey } from '../../lib/supabase-config.server'
 import {
   buildCategorySkillsUrl,
   buildSkillGetUrl,
@@ -138,14 +143,13 @@ let categoryFetchFailed = false
 if (isCategory && categoryMeta) {
   try {
     // SMI-6195: buildCategorySkillsUrl() below documents why the URL shape
-    // matters. The anon key is required too: unauthenticated, this would fall
-    // through to the trial-limiter's 10-requests-TOTAL-ever cap (already
-    // exhausted in prod) instead of the anon-key community tier's own bucket.
-    const { apiBaseUrl, anonKey } = getSupabaseConfig()
+    // matters. SMI-6190: authenticated with the dedicated SSR key rather than
+    // the shared anon key -- same rationale as the skill-detail fetch below.
+    const { apiBaseUrl } = getSupabaseConfig()
     const apiUrl = buildCategorySkillsUrl(apiBaseUrl, categoryMeta.slug)
     const res = await fetch(apiUrl, {
       cache: 'default',
-      headers: { Authorization: `Bearer ${anonKey}` },
+      headers: { Authorization: `Bearer ${getWebsiteSsrApiKey()}` },
     })
     if (res.ok) {
       // SMI-6195: skills-search's real response shape is `{ data: [...] }`
@@ -244,9 +248,9 @@ const decodedId = resolveSkillId(id)
 
 if (!isCategory && decodedId) {
   try {
-    const { apiBaseUrl, anonKey } = getSupabaseConfig()
+    const { apiBaseUrl } = getSupabaseConfig()
     const res = await fetch(buildSkillGetUrl(apiBaseUrl, decodedId), {
-      headers: { Authorization: `Bearer ${anonKey}` },
+      headers: { Authorization: `Bearer ${getWebsiteSsrApiKey()}` },
     })
     if (res.status === 404) {
       skillNotFound = true
