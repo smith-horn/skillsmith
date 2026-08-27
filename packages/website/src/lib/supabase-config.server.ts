@@ -39,7 +39,29 @@ import { getSupabaseConfig } from './supabase-config'
  * exists, then silently and correctly switches over once it's provisioned —
  * no redeploy needed, no window where behavior is worse than before this
  * feature shipped.
+ *
+ * Reads `process.env`, NOT `import.meta.env` — this is deliberate, not a
+ * style choice. `SKILLSMITH_WEBSITE_SSR_API_KEY` is a deployment-platform
+ * secret this repo's build pipeline never sees at build time (the website
+ * builds in GitHub Actions via `vercel pull` + `vercel build --prebuilt`,
+ * disconnected from Vercel's own build infra), and `import.meta.env.X` is
+ * statically resolved by Vite at build time for every property access, not
+ * just `PUBLIC_`-prefixed ones — confirmed empirically: building this exact
+ * function with `import.meta.env.SKILLSMITH_WEBSITE_SSR_API_KEY` compiled
+ * down to `return getSupabaseConfig().anonKey` with the left branch of the
+ * `||` dead-code-eliminated entirely, even when the correct value was
+ * present in the `vercel pull`-downloaded `.env.production.local` file used
+ * for the build. This reproduced the exact silent-fallback-only production
+ * bug the first hotfix pass didn't catch: the anon-key fallback WAS working
+ * (correctly, by design), but the dedicated-key code path was structurally
+ * unreachable regardless of whether the real secret was ever provisioned.
+ * `process.env.X` is a genuine JS runtime property access — not subject to
+ * Vite's `import.meta.env` static-replacement machinery — so it correctly
+ * reads the actual value Vercel injects into the running serverless
+ * function's environment at request time. Confirmed via the same build
+ * reproduction: switching to `process.env.X` preserved a live runtime
+ * lookup in the compiled output instead of a build-time-frozen constant.
  */
 export function getWebsiteSsrApiKey(): string {
-  return import.meta.env.SKILLSMITH_WEBSITE_SSR_API_KEY || getSupabaseConfig().anonKey
+  return process.env.SKILLSMITH_WEBSITE_SSR_API_KEY || getSupabaseConfig().anonKey
 }
