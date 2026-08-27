@@ -6,12 +6,29 @@ interface ImportMetaEnv {
   readonly PUBLIC_SITE_URL: string
   readonly PUBLIC_SUPABASE_URL: string
   readonly PUBLIC_SUPABASE_ANON_KEY: string
-  /** SMI-6190: server-only — dedicated API key for SSR skill/category-page fetches. */
-  readonly SKILLSMITH_WEBSITE_SSR_API_KEY: string
 }
 
 interface ImportMeta {
   readonly env: ImportMetaEnv
+}
+
+declare global {
+  namespace NodeJS {
+    interface ProcessEnv {
+      /**
+       * SMI-6190: server-only — dedicated API key for SSR skill/category-page
+       * fetches. Deliberately typed on `process.env`, NOT `ImportMetaEnv` —
+       * this var is a deployment-platform secret not known at build time, and
+       * must be read via `process.env` (a genuine runtime lookup), never
+       * `import.meta.env` (statically resolved by Vite at build time for
+       * every property access, which silently dead-code-eliminates a var
+       * that isn't resolvable when the build runs — confirmed empirically,
+       * see `supabase-config.server.ts`). Reintroducing an `import.meta.env`
+       * read for this specific var would silently break auth again.
+       */
+      SKILLSMITH_WEBSITE_SSR_API_KEY?: string
+    }
+  }
 }
 
 /**
