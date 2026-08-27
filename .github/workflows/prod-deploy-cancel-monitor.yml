@@ -1,0 +1,43 @@
+# SMI-6208. Detects the exact incident class this issue was filed for: a
+# `Deploy to Production` job (website-deploy-staging.yml, environment:
+# production, required-reviewer gated) that gets cancelled while `waiting`
+# for approval or actively mid-deploy. The concurrency-scoping fix in
+# website-deploy-staging.yml (job-level `website-production-deploy` group,
+# cancel-in-progress: false) is the actual root-cause fix; this monitor is
+# defense-in-depth for any OTHER path that could still cancel that job (a
+# future workflow edit reintroducing the hazard, a manual API-level
+# cancellation, etc.) so a silent production regression is never again
+# caught only because someone happened to check the live site.
+#
+# Does NOT depend on docker-build (pure gh CLI, no npm/node job at all) so
+# the SMI-4647 `# audit:carveout-pure-js` marker does not apply -- that
+# marker only gates jobs declaring `needs: docker-build`.
+name: Production Deploy Cancellation Monitor
+
+on:
+  schedule:
+    - cron: '*/30 * * * *'
+  workflow_dispatch: {}
+
+permissions:
+  actions: read
+  issues: write
+  contents: read
+
+concurrency:
+  group: prod-deploy-cancel-monitor
+  cancel-in-progress: false
+
+jobs:
+  monitor:
+    name: Check for cancelled production deploy approvals
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    env:
+      GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+      SKILLSMITH_PROD_DEPLOY_CANCEL_MONITOR_SHADOW: ${{ vars.SKILLSMITH_PROD_DEPLOY_CANCEL_MONITOR_SHADOW || '1' }}
+      SKILLSMITH_PROD_DEPLOY_CANCEL_MONITOR_DISABLE: ${{ vars.SKILLSMITH_PROD_DEPLOY_CANCEL_MONITOR_DISABLE || '' }}
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - name: Run monitor
+        run: ./scripts/prod-deploy-cancel-monitor.sh

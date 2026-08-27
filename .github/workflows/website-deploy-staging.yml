@@ -12,9 +12,13 @@ on:
         default: '3'
         type: string
 
-concurrency:
-  group: website-staging-${{ github.ref }}
-  cancel-in-progress: true
+# SMI-6208: deliberately NO workflow-level `concurrency:` block here. Every
+# job below declares its own concurrency explicitly instead, because
+# job-level vs. workflow-level concurrency combination semantics are not
+# documented by GitHub (see docs/internal/implementation/
+# website-deploy-approval-cancel-fix.md RCA) -- re-adding a workflow-level
+# block "for convenience" could silently interact with the per-job ones in
+# an unverified way and reintroduce the SMI-6208 incident. Don't.
 
 env:
   NODE_VERSION: '22'
@@ -30,6 +34,9 @@ jobs:
     name: Deploy to Staging
     runs-on: ubuntu-latest
     timeout-minutes: 15
+    concurrency:
+      group: website-staging-deploy-${{ github.ref }}
+      cancel-in-progress: true
     # CI validation happens via branch protection before code reaches main.
     # wait-for-ci job removed: the Build check is a late-stage rollup (~15min
     # into CI) that never registered in time for polling — 29/29 failures.
@@ -124,6 +131,9 @@ jobs:
     timeout-minutes: 10
     needs: deploy-staging
     if: ${{ needs.deploy-staging.result == 'success' }}
+    concurrency:
+      group: website-staging-lighthouse-${{ github.ref }}
+      cancel-in-progress: true
 
     steps:
       - name: Validate bypass secret
@@ -169,6 +179,9 @@ jobs:
     timeout-minutes: 10
     needs: deploy-staging
     if: ${{ needs.deploy-staging.result == 'success' }}
+    concurrency:
+      group: website-staging-linkcheck-${{ github.ref }}
+      cancel-in-progress: true
 
     steps:
       - name: Validate bypass secret
@@ -266,6 +279,23 @@ jobs:
     timeout-minutes: 15
     needs: [deploy-staging, lighthouse, link-check]
     if: ${{ needs.lighthouse.result == 'success' && needs.link-check.result == 'success' }}
+    # SMI-6208: deliberately its OWN concurrency group, isolated from
+    # website-staging-*, so a staging deploy for a different PR can never
+    # touch this job's queue. cancel-in-progress: false is intended to mean
+    # a job already `waiting` for required-reviewer approval, or actively
+    # deploying, is never auto-cancelled by a newer push -- BUT this has
+    # NOT been proven against GitHub's actual behavior for the `waiting`
+    # state specifically (GitHub's docs only define pending/running, not
+    # waiting-for-environment-approval -- see plan RCA). This MUST be
+    # verified live (plan Testing §3, a hard merge gate) before trusting
+    # this design; if the test disproves it, split this job into a
+    # run-ID-keyed `approve-gate` job plus a ref-keyed `deploy-production`
+    # job instead (see plan RCA "fallback design" -- a bare run-ID-keyed
+    # swap on this single job is NOT safe, it drops mutual exclusion
+    # between concurrent deploy executions).
+    concurrency:
+      group: website-production-deploy-${{ github.ref }}
+      cancel-in-progress: false
     environment:
       name: production
       url: https://www.skillsmith.app
@@ -276,6 +306,60 @@ jobs:
     steps:
       - name: Checkout
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+
+      # SMI-6208: if a reviewer approves this run's commit after a NEWER
+      # website-affecting commit has already re-triggered this workflow
+      # (this run had been sitting in the approval backlog behind a
+      # still-earlier one, or the approver simply didn't notice), fail fast
+      # instead of silently shipping stale content. The job-level
+      # concurrency group above means the newer run's own deploy-production
+      # job is already queued behind this one -- failing here releases the
+      # slot so it can reach its own (correct) approval prompt immediately.
+      #
+      # Deliberately compares against the newest VIABLE RUN of this
+      # workflow, not the raw tip of main: this workflow only triggers on
+      # packages/website/** pushes, and most main commits never touch that
+      # path -- comparing against main's tip would false-fail on any
+      # unrelated commit landing during the approval wait (see plan RCA /
+      # round-2 confirmation review; the incident this fix protects
+      # against had exactly that shape).
+      #
+      # "Viable" excludes runs that concluded failure/cancelled (round-3
+      # confirmation review): a newer run merely EXISTING isn't enough --
+      # if that newer run later fails its own lighthouse/link-check gates,
+      # it will never reach its own approval, and this job would have
+      # already killed itself deferring to a run that never ships anything.
+      # That's the exact staleness this fix exists to prevent, reintroduced
+      # by the fix itself. Selection uses `max_by(.id)` (run IDs are
+      # monotonically increasing), not array order/index -- GitHub does not
+      # document the list-runs API's sort order, and getting that wrong
+      # would fail CLOSED (every approved deploy, not just stale ones).
+      #
+      # Scoped to `push`-triggered runs only: a manual workflow_dispatch
+      # run against an older ref/tag is an intentional action (e.g. a
+      # rollback) and must never be blocked by this guard.
+      #
+      # Fails OPEN if the GitHub API call itself errors/rate-limits --
+      # a transient API hiccup must never become a new way to block a
+      # legitimate deploy.
+      - name: Guard - verify no newer viable run of this workflow exists
+        if: github.event_name == 'push'
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          set +e
+          LATEST_GOOD_RUN_ID="$(gh api "repos/${{ github.repository }}/actions/workflows/website-deploy-staging.yml/runs?branch=main&event=push&per_page=10" --jq '[.workflow_runs[] | select(.conclusion != "failure" and .conclusion != "cancelled")] | max_by(.id) | .id' 2>/dev/null)"
+          API_STATUS=$?
+          set -e
+          if [ "$API_STATUS" -ne 0 ] || [ -z "$LATEST_GOOD_RUN_ID" ] || [ "$LATEST_GOOD_RUN_ID" = "null" ]; then
+            echo "::warning::Could not verify latest viable workflow run (GitHub API error) -- proceeding without the staleness check."
+            exit 0
+          fi
+          if [ "${{ github.run_id }}" -lt "$LATEST_GOOD_RUN_ID" ]; then
+            echo "::error::A newer, still-viable push-triggered run of this workflow already exists for main (run $LATEST_GOOD_RUN_ID) -- a newer website-affecting commit merged since this deployment was approved, and that run hasn't itself failed/been cancelled. This job is stopping itself now; nothing further is needed from you. The newer run will reach its own approval prompt as soon as this job's slot releases (momentarily) -- approve that one instead. NOTE: only the person who approved THIS run sees this failure notification; the person who merged the newer commit is not notified by this job."
+            exit 1
+          fi
+          echo "OK: this is still the latest viable push-triggered run of this workflow for main (run ${{ github.run_id }})."
 
       - name: Setup Node.js
         uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v6
