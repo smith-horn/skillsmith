@@ -13,6 +13,7 @@
  * with a concrete assertion that neither the env var name nor the `sk_live_`
  * key shape ever reaches the client-shipped bundle.
  */
+import { getSupabaseConfig } from './supabase-config'
 
 /**
  * Returns the dedicated internal API key used to authenticate the website's
@@ -21,11 +22,24 @@
  * anon key, which shares a single per-endpoint rate bucket with every other
  * anonymous caller (see SMI-6190 for the full investigation).
  *
- * Returns `''` when the secret is unset (local dev, or before the real key
- * is provisioned) rather than throwing — callers degrade gracefully to the
- * existing trial-limiter fallback path exactly like any other failed/absent
- * auth, rather than crashing the SSR render.
+ * Falls back to the anon key when the dedicated secret is unset (local dev,
+ * or the window between this code deploying and the real credential being
+ * provisioned) rather than an empty string. This matters: an empty bearer
+ * token doesn't match the anon key's exact-string check
+ * (`isSupabaseAnonKey()`, `api-key-auth.ts`), so it would fall all the way
+ * through `runAuthMiddleware()` to the unauthenticated trial limiter — a
+ * 10-requests-TOTAL-EVER cap, confirmed already exhausted in prod, which is
+ * far stricter than the anon-key bucket this credential replaces. Live
+ * verification during rollout caught this: post-merge, every SSR render
+ * sitewide was silently spending down Vercel's own egress-IP trial budget
+ * toward zero, which would have made every skill/category page's degraded
+ * state permanent (no time-window reset) instead of the pre-existing
+ * partial-degrade-under-anon-bucket-pressure behavior. Falling back to the
+ * anon key preserves the exact pre-SMI-6190 behavior until the dedicated key
+ * exists, then silently and correctly switches over once it's provisioned —
+ * no redeploy needed, no window where behavior is worse than before this
+ * feature shipped.
  */
 export function getWebsiteSsrApiKey(): string {
-  return import.meta.env.SKILLSMITH_WEBSITE_SSR_API_KEY || ''
+  return import.meta.env.SKILLSMITH_WEBSITE_SSR_API_KEY || getSupabaseConfig().anonKey
 }
