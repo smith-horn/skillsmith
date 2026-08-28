@@ -59,7 +59,7 @@ npm update -g @skillsmith/cli
 npm install -g @skillsmith/cli@latest
 
 # Using npx always gets the latest
-npx @skillsmith/cli@latest sync
+npx @skillsmith/cli@latest --version
 ```
 
 ## Command Alias
@@ -432,11 +432,14 @@ skillsmith import --topic claude-skill --max 500
 
 ### sync
 
-Synchronize your local skill database with the live Skillsmith registry.
+Synchronize your local skill database with the live Skillsmith registry (Team+ tier). The registry holds hundreds of thousands of skills, so `sync` shows a live record count and asks for confirmation before downloading — pass `-y`/`--yes` to skip the prompt for scripted or automated use (e.g. running the CLI on a Team's own cloud instance to maintain a shared local mirror).
 
 ```bash
 # Sync skills from registry (differential - only changes)
 skillsmith sync
+
+# Skip the confirmation prompt (automation)
+skillsmith sync --yes
 
 # Force full sync (ignore last sync time)
 skillsmith sync --force
@@ -448,6 +451,7 @@ skillsmith sync --dry-run
 **Options:**
 - `-f, --force` - Force full sync, ignore last sync timestamp
 - `--dry-run` - Preview changes without writing to database
+- `-y, --yes` - Skip the confirmation prompt (for automation; also implied by `--json`)
 - `-d, --db <path>` - Database path
 - `--json` - Output results as JSON
 
@@ -489,7 +493,7 @@ Configure automatic sync settings.
 # Show current configuration
 skillsmith sync config --show
 
-# Enable automatic background sync
+# Enable automatic background sync (Team+ tier)
 skillsmith sync config --enable
 
 # Disable automatic sync
@@ -840,6 +844,8 @@ skillsmith search --interactive
 ```
 
 ### Keep Skills Up-to-Date
+
+`sync` and background auto-sync require Team+ tier — see [sync](#sync) above.
 
 ```bash
 # Sync with the live registry

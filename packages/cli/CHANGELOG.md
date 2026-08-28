@@ -4,6 +4,21 @@ All notable changes to `@skillsmith/cli` are documented here.
 
 ## [Unreleased]
 
+- **Breaking**: `sync` (and `sync config --enable`) now require Team+ tier — Community and
+  Individual tiers can no longer bulk-download the skill registry. The registry has grown far
+  larger than this feature was designed for (hundreds of thousands of records, still growing),
+  with no size warning or cost boundary until now. Enforced both client-side (fast, friendly
+  failure) and server-side (a new `registry-sync` Edge Function, so a direct API call or an
+  older CLI can't bypass the gate). Before syncing, the CLI now shows a live record count
+  fetched from the registry and asks for confirmation — pass `-y`/`--yes` to skip the prompt for
+  scripted/automated use (`--json` implies `--yes`). No deprecation window; see ADR-136 for the
+  full rationale (SMI-6236). Adversarial security review before merge found and fixed a real
+  regression in the client-side gate: it originally resolved tier from `SKILLSMITH_LICENSE_KEY`
+  only, which a user authenticated via the documented `skillsmith login` flow never has set —
+  such a user would have been incorrectly blocked as "community" even on a real Team plan. The
+  gate now resolves tier from whichever credential the sync request actually authenticates
+  with, deferring to the server's own response when it can't be resolved offline
+
 ## v0.8.8
 
 - **Fix**: logout/whoami now detect JWT device-code sessions (#2578)
