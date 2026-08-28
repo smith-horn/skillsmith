@@ -28,6 +28,7 @@ ANONYMOUS_FUNCTIONS=(
   "contact-submit"
   "stats"
   "skills-search"
+  "registry-sync"
   "skills-get"
   "skills-recommend"
   "stripe-webhook"

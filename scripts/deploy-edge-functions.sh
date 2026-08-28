@@ -101,6 +101,7 @@ NO_VERIFY_JWT_FUNCTIONS=(
   private-registry-get
   quota-monitor
   regenerate-license
+  registry-sync
   release-cadence-heartbeat-monitor
   scan-coverage-monitor
   skills-get
