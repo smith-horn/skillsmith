@@ -175,66 +175,59 @@ export class SyncEngine {
         message: lastSyncAt ? `Fetching changes since ${lastSyncAt}` : 'Fetching all skills...',
       })
 
-      // Fetch all skills from API with pagination
+      // Fetch all skills from the registry-sync endpoint (Team/Enterprise
+      // bulk enumeration, SMI-6197) with pagination. This replaces the old
+      // mechanism that abused the public search endpoint with 8 hardcoded
+      // broad queries deduplicated by skill id — registry-sync is a plain
+      // id-ordered scan of the whole table, so every row is visited exactly
+      // once by construction and no cross-page dedup bookkeeping is needed.
+      //
+      // `since` is applied server-side: omitted entirely on a forced sync,
+      // otherwise set to `lastSyncAt` when one exists. The client-side
+      // `updated_at > lastSyncAt` filter below is left in place as a
+      // harmless defense-in-depth double-check against server-pre-filtered
+      // data (it should now typically be a no-op).
       let offset = 0
       let hasMore = true
       const allSkills: ApiSearchResult[] = []
+      const since = force ? undefined : (lastSyncAt ?? undefined)
 
-      // API requires min 2 char query - use multiple broad queries to cover more skills
-      // These common terms appear in most skill names/descriptions
-      const searchQueries = ['git', 'code', 'dev', 'test', 'npm', 'api', 'cli', 'doc']
-      const seenIds = new Set<string>()
+      while (hasMore) {
+        // SMI-5649: stop paginating once aborted.
+        if (signal?.aborted) {
+          hasMore = false
+          break
+        }
+        try {
+          const response = await this.apiClient.syncRegistry({
+            limit: pageSize,
+            offset,
+            since,
+          })
 
-      for (const searchQuery of searchQueries) {
-        // SMI-5649: stop fetching new query batches once aborted.
-        if (signal?.aborted) break
-        offset = 0
-        hasMore = true
+          const skills = response.data
+          allSkills.push(...skills)
 
-        while (hasMore) {
-          // SMI-5649: stop paginating the current query once aborted.
-          if (signal?.aborted) {
+          onProgress?.({
+            phase: 'fetching',
+            current: allSkills.length,
+            total: 0, // Unknown total — registry-sync doesn't return a grand count
+            skillsProcessed: 0,
+            skillsChanged: 0,
+            message: `Fetched ${allSkills.length} skills...`,
+          })
+
+          // Check if there are more results
+          hasMore = skills.length === pageSize
+          offset += pageSize
+        } catch (error) {
+          const message = error instanceof Error ? error.message : String(error)
+          errors.push(`Fetch error at offset ${offset}: ${message}`)
+          // Continue with what we have if we got some results
+          if (allSkills.length > 0) {
             hasMore = false
-            break
-          }
-          try {
-            const response = await this.apiClient.search({
-              query: searchQuery,
-              limit: pageSize,
-              offset,
-            })
-
-            const skills = response.data
-
-            // Deduplicate skills across queries
-            for (const skill of skills) {
-              if (!seenIds.has(skill.id)) {
-                seenIds.add(skill.id)
-                allSkills.push(skill)
-              }
-            }
-
-            onProgress?.({
-              phase: 'fetching',
-              current: allSkills.length,
-              total: 0, // Unknown total
-              skillsProcessed: 0,
-              skillsChanged: 0,
-              message: `Fetched ${allSkills.length} skills...`,
-            })
-
-            // Check if there are more results
-            hasMore = skills.length === pageSize
-            offset += pageSize
-          } catch (error) {
-            const message = error instanceof Error ? error.message : String(error)
-            errors.push(`Fetch error at offset ${offset}: ${message}`)
-            // Continue with what we have if we got some results
-            if (allSkills.length > 0) {
-              hasMore = false
-            } else {
-              throw error
-            }
+          } else {
+            throw error
           }
         }
       }

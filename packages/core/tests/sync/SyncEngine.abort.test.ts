@@ -109,7 +109,10 @@ describe('SyncEngine - abort signal (SMI-5649)', () => {
   })
 
   it('stops fetching new pages once aborted mid-fetch', async () => {
-    const skills = Array.from({ length: 150 }, (_, i) => createMockSkill(`test/skill-${i}`))
+    // 250 skills at pageSize 100 spans 3 pages (100 + 100 + 50) unaborted —
+    // enough headroom to abort mid-scan and still prove the loop stopped
+    // short of the fixture's own natural page count.
+    const skills = Array.from({ length: 250 }, (_, i) => createMockSkill(`test/skill-${i}`))
     const apiClient = createMockApiClient({ skills })
     const engine = new SyncEngine(
       apiClient,
@@ -120,24 +123,27 @@ describe('SyncEngine - abort signal (SMI-5649)', () => {
     )
 
     const controller = new AbortController()
-    let searchCallCount = 0
-    const searchMock = apiClient.search as ReturnType<typeof vi.fn>
-    const originalImpl = searchMock.getMockImplementation() as (
-      opts: Parameters<SkillsmithApiClient['search']>[0]
-    ) => ReturnType<SkillsmithApiClient['search']>
-    searchMock.mockImplementation((opts: Parameters<SkillsmithApiClient['search']>[0]) => {
-      searchCallCount++
-      if (searchCallCount === 3) {
-        controller.abort()
+    let fetchCallCount = 0
+    const syncRegistryMock = apiClient.syncRegistry as ReturnType<typeof vi.fn>
+    const originalImpl = syncRegistryMock.getMockImplementation() as (
+      opts: Parameters<SkillsmithApiClient['syncRegistry']>[0]
+    ) => ReturnType<SkillsmithApiClient['syncRegistry']>
+    syncRegistryMock.mockImplementation(
+      (opts: Parameters<SkillsmithApiClient['syncRegistry']>[0]) => {
+        fetchCallCount++
+        if (fetchCallCount === 2) {
+          controller.abort()
+        }
+        return originalImpl(opts)
       }
-      return originalImpl(opts)
-    })
+    )
 
     await engine.sync({ signal: controller.signal, pageSize: 100 })
 
-    // Unaborted, this fixture makes 16 search calls (8 queries x 2 pages
-    // each — see the pagination test in SyncEngine.test.ts). Aborting on
-    // the 3rd call must stop the loop well short of that.
-    expect(searchCallCount).toBeLessThan(16)
+    // Unaborted, this fixture would make 3 syncRegistry calls (a single
+    // id-ordered scan: 100 + 100 + 50 across 3 pages — see the pagination
+    // test in SyncEngine.test.ts). Aborting on the 2nd call must stop the
+    // loop before a 3rd page is ever fetched.
+    expect(fetchCallCount).toBe(2)
   })
 })
