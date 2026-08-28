@@ -6,6 +6,9 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/), and this
 
 ## [Unreleased]
 
+## v0.7.8
+
+- **Cadence**: Mechanical cadence alignment (no changes since v0.7.7).
 - **Docs**: README's framing sentence updated from the "lifecycle layer" tagline to a plain
   descriptive sentence ("a registry for sharing, scanning, and tracking agent skills across
   teams") as part of the site-wide positioning reframe. Wording-only. (SMI-6194)

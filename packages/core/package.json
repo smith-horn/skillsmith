@@ -1,6 +1,6 @@
 {
   "name": "@skillsmith/core",
-  "version": "0.12.0",
+  "version": "0.12.1",
   "description": "A registry for sharing, scanning, and tracking agent skills across teams.",
   "type": "module",
   "main": "./dist/src/index.js",

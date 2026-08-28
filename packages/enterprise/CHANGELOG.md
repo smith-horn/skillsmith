@@ -4,6 +4,9 @@ All notable changes to `@smith-horn/enterprise` are documented here.
 
 ## [Unreleased]
 
+## v0.3.8
+
+- **Cadence**: Mechanical cadence alignment (no changes since v0.3.7).
 - **Docs**: README's framing sentence updated from "Enterprise features for Skillsmith, a
   lifecycle layer for agent skills across teams" to "...a registry for sharing, scanning, and
   tracking agent skills across teams" as part of the site-wide positioning reframe.
