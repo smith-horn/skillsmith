@@ -22,6 +22,8 @@ export {
   type ApiSearchResult,
   type RecommendationRequest,
   type TelemetryEvent,
+  type RegistrySyncOptions,
+  type PlatformStats,
 } from './client.js'
 
 // SMI-5905 Wave 4: private-registry content fetch — the CLI's only transport

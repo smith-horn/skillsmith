@@ -141,3 +141,232 @@ describe('SMI-5929: ApiClient.search() compatibility param forwarding', () => {
     expect(capturedUrl).toContain(encodeURIComponent('cursor,claude-code'))
   })
 })
+
+/** Build a minimal valid registry-sync response matching SearchResponseSchema. */
+function makeRegistrySyncResponse(items: unknown[] = []): Response {
+  return new Response(
+    JSON.stringify({
+      data: items,
+      meta: { limit: 100, offset: 0, since: null },
+    }),
+    { status: 200, headers: { 'Content-Type': 'application/json' } }
+  )
+}
+
+/** Build a minimal valid stats response matching StatsResponseSchema. */
+function makeStatsResponse(overrides: Record<string, unknown> = {}): Response {
+  return new Response(
+    JSON.stringify({
+      data: {
+        skillCount: 42,
+        githubTotal: 100,
+        lastUpdated: '2026-08-26T00:00:00.000Z',
+        ...overrides,
+      },
+    }),
+    { status: 200, headers: { 'Content-Type': 'application/json' } }
+  )
+}
+
+function makeErrorResponse(body: unknown, status: number): Response {
+  return new Response(JSON.stringify(body), {
+    status,
+    headers: { 'Content-Type': 'application/json' },
+  })
+}
+
+describe('ApiClient.syncRegistry() URL parameter forwarding', () => {
+  let fetchMock: ReturnType<typeof vi.fn>
+  let capturedUrl: string
+
+  beforeEach(() => {
+    capturedUrl = ''
+    fetchMock = vi.fn((url: string) => {
+      capturedUrl = url
+      return Promise.resolve(makeRegistrySyncResponse())
+    })
+    globalThis.fetch = fetchMock as unknown as typeof globalThis.fetch
+    ;(global as unknown as { fetch: typeof globalThis.fetch }).fetch =
+      fetchMock as unknown as typeof globalThis.fetch
+  })
+
+  afterEach(() => {
+    globalThis.fetch = ORIGINAL_FETCH
+    ;(global as unknown as { fetch: typeof globalThis.fetch }).fetch = ORIGINAL_FETCH
+    vi.clearAllMocks()
+  })
+
+  it('calls the /registry-sync endpoint', async () => {
+    const client = new SkillsmithApiClient({ offlineMode: false })
+    await client.syncRegistry()
+    expect(capturedUrl).toContain('/registry-sync?')
+  })
+
+  it('omits limit, offset, and since when no options are passed', async () => {
+    const client = new SkillsmithApiClient({ offlineMode: false })
+    await client.syncRegistry()
+    expect(capturedUrl).not.toContain('limit=')
+    expect(capturedUrl).not.toContain('offset=')
+    expect(capturedUrl).not.toContain('since=')
+  })
+
+  it('sends limit when provided', async () => {
+    const client = new SkillsmithApiClient({ offlineMode: false })
+    await client.syncRegistry({ limit: 50 })
+    expect(capturedUrl).toContain('limit=50')
+  })
+
+  it('sends offset when provided', async () => {
+    const client = new SkillsmithApiClient({ offlineMode: false })
+    await client.syncRegistry({ offset: 200 })
+    expect(capturedUrl).toContain('offset=200')
+  })
+
+  it('sends since when provided', async () => {
+    const client = new SkillsmithApiClient({ offlineMode: false })
+    await client.syncRegistry({ since: '2026-08-01T00:00:00.000Z' })
+    expect(capturedUrl).toContain(`since=${encodeURIComponent('2026-08-01T00:00:00.000Z')}`)
+  })
+
+  it('sends all three params together', async () => {
+    const client = new SkillsmithApiClient({ offlineMode: false })
+    await client.syncRegistry({ limit: 25, offset: 75, since: '2026-08-01T00:00:00.000Z' })
+    expect(capturedUrl).toContain('limit=25')
+    expect(capturedUrl).toContain('offset=75')
+    expect(capturedUrl).toContain(`since=${encodeURIComponent('2026-08-01T00:00:00.000Z')}`)
+  })
+})
+
+describe('ApiClient.syncRegistry() response handling', () => {
+  let fetchMock: ReturnType<typeof vi.fn>
+
+  beforeEach(() => {
+    fetchMock = vi.fn()
+    globalThis.fetch = fetchMock as unknown as typeof globalThis.fetch
+    ;(global as unknown as { fetch: typeof globalThis.fetch }).fetch =
+      fetchMock as unknown as typeof globalThis.fetch
+  })
+
+  afterEach(() => {
+    globalThis.fetch = ORIGINAL_FETCH
+    ;(global as unknown as { fetch: typeof globalThis.fetch }).fetch = ORIGINAL_FETCH
+    vi.clearAllMocks()
+  })
+
+  it('parses a successful response including registry-sync-only fields', async () => {
+    const row = {
+      id: 'skill-1',
+      name: 'commit',
+      description: 'A commit skill',
+      author: 'anthropic',
+      repo_url: 'https://github.com/anthropic/commit',
+      quality_score: 90,
+      trust_tier: 'verified',
+      tags: ['git'],
+      quarantined: false,
+      created_at: '2026-01-01T00:00:00.000Z',
+      updated_at: '2026-01-02T00:00:00.000Z',
+    }
+    fetchMock.mockImplementation(() => Promise.resolve(makeRegistrySyncResponse([row])))
+
+    const client = new SkillsmithApiClient({ offlineMode: false, cache: false })
+    const result = await client.syncRegistry({ limit: 10 })
+
+    expect(result.data).toHaveLength(1)
+    expect(result.data[0]).toMatchObject({
+      id: 'skill-1',
+      name: 'commit',
+      quarantined: false,
+      created_at: '2026-01-01T00:00:00.000Z',
+      updated_at: '2026-01-02T00:00:00.000Z',
+    })
+  })
+
+  it('surfaces a 403 tier_not_entitled error as a non-retryable ApiClientError', async () => {
+    fetchMock.mockImplementation(() =>
+      Promise.resolve(
+        makeErrorResponse(
+          {
+            error: 'Registry sync requires a Team or Enterprise subscription',
+            details: { code: 'tier_not_entitled', currentTier: 'community' },
+          },
+          403
+        )
+      )
+    )
+
+    const client = new SkillsmithApiClient({ offlineMode: false, cache: false, maxRetries: 1 })
+    let caught: unknown
+    try {
+      await client.syncRegistry()
+    } catch (err) {
+      caught = err
+    }
+
+    expect(caught).toBeInstanceOf(Error)
+    expect((caught as Error).message).toContain(
+      'Registry sync requires a Team or Enterprise subscription'
+    )
+    // Non-retryable 4xx — exactly one fetch call.
+    expect(fetchMock).toHaveBeenCalledTimes(1)
+  })
+})
+
+describe('ApiClient.getStats()', () => {
+  let fetchMock: ReturnType<typeof vi.fn>
+  let capturedUrl: string
+
+  beforeEach(() => {
+    capturedUrl = ''
+    fetchMock = vi.fn((url: string) => {
+      capturedUrl = url
+      return Promise.resolve(makeStatsResponse())
+    })
+    globalThis.fetch = fetchMock as unknown as typeof globalThis.fetch
+    ;(global as unknown as { fetch: typeof globalThis.fetch }).fetch =
+      fetchMock as unknown as typeof globalThis.fetch
+  })
+
+  afterEach(() => {
+    globalThis.fetch = ORIGINAL_FETCH
+    ;(global as unknown as { fetch: typeof globalThis.fetch }).fetch = ORIGINAL_FETCH
+    vi.clearAllMocks()
+  })
+
+  it('calls the /stats endpoint with no query params', async () => {
+    const client = new SkillsmithApiClient({ offlineMode: false })
+    await client.getStats()
+    expect(capturedUrl).toContain('/stats')
+    expect(capturedUrl).not.toContain('detailed')
+  })
+
+  it('parses a successful response', async () => {
+    const client = new SkillsmithApiClient({ offlineMode: false, cache: false })
+    const result = await client.getStats()
+    expect(result.data).toEqual({
+      skillCount: 42,
+      githubTotal: 100,
+      lastUpdated: '2026-08-26T00:00:00.000Z',
+    })
+  })
+
+  it('surfaces a 500 server error as an ApiClientError', async () => {
+    fetchMock.mockImplementation(() =>
+      Promise.resolve(makeErrorResponse({ error: 'Failed to retrieve stats' }, 500))
+    )
+
+    const client = new SkillsmithApiClient({ offlineMode: false, cache: false, maxRetries: 0 })
+    let caught: unknown
+    try {
+      await client.getStats()
+    } catch (err) {
+      caught = err
+    }
+
+    // 5xx responses are retryable, so request() reports the generic
+    // "Server error: <status>" message rather than the body's `error` field
+    // (which is only surfaced for non-retryable 4xx — see the 403 test above).
+    expect(caught).toBeInstanceOf(Error)
+    expect((caught as Error).message).toContain('Server error: 500')
+  })
+})

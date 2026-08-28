@@ -119,6 +119,8 @@ export type {
   ApiSearchResult,
   RecommendationRequest,
   TelemetryEvent,
+  RegistrySyncOptions,
+  PlatformStats,
   CacheConfig,
   CacheStats as ApiCacheStats,
   // OpenAPI-aligned types

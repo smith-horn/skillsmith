@@ -165,6 +165,21 @@ export const SearchResponseSchema = createApiResponseSchema(z.array(ApiSearchRes
  */
 export const SingleSkillResponseSchema = createApiResponseSchema(ApiSearchResultSchema)
 
+/**
+ * Schema for the `GET /stats` basic (non-detailed) response body.
+ * Field names match supabase/functions/stats/index.ts's `cachedStats` shape.
+ */
+export const PlatformStatsSchema = z.object({
+  skillCount: z.number(),
+  githubTotal: z.number(),
+  lastUpdated: z.string(),
+})
+
+/**
+ * Stats response schema (`{ data: PlatformStats, meta?: ... }`)
+ */
+export const StatsResponseSchema = createApiResponseSchema(PlatformStatsSchema)
+
 // ============================================================================
 // Type Inference
 // ============================================================================
@@ -188,3 +203,13 @@ export type ValidatedSingleSkillResponse = z.infer<typeof SingleSkillResponseSch
  * Inferred type from TelemetryResponseSchema
  */
 export type ValidatedTelemetryResponse = z.infer<typeof TelemetryResponseSchema>
+
+/**
+ * Inferred type from PlatformStatsSchema
+ */
+export type ValidatedPlatformStats = z.infer<typeof PlatformStatsSchema>
+
+/**
+ * Inferred type from StatsResponseSchema
+ */
+export type ValidatedStatsResponse = z.infer<typeof StatsResponseSchema>
