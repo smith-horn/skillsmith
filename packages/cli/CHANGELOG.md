@@ -4,6 +4,11 @@ All notable changes to `@skillsmith/cli` are documented here.
 
 ## [Unreleased]
 
+- **Fix**: `skillsmith logout` and `skillsmith whoami` now detect a JWT device-code session
+  (`skillsmith login`'s default flow, SMI-4402) — previously they only checked the legacy
+  API-key store, so `login` would report "Already authenticated" while `logout` immediately
+  after reported "Not authenticated. Nothing to log out.", a stuck loop with no way to
+  actually end the session. `logout` now clears both credential stores on confirm. (SMI-6235)
 - **Docs**: README's framing sentence updated from the "lifecycle layer" tagline to a plain
   descriptive sentence ("a registry for sharing, scanning, and tracking agent skills across
   teams") as part of the site-wide positioning reframe. Wording-only. (SMI-6194)

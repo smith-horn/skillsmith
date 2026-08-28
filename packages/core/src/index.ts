@@ -292,6 +292,7 @@ export {
 export {
   storeCredentials,
   loadCredentials,
+  clearCredentials,
   refreshAccessToken,
   type TokenCredentials,
 } from './config/token-credentials.js'
