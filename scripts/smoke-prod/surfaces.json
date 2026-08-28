@@ -321,6 +321,13 @@
       "checks": ["check_private_registry_get_requires_jwt"]
     },
     {
+      "id": "edge-fn-registry-sync",
+      "owner": "edge-functions",
+      "trigger_globs": ["supabase/functions/registry-sync/**"],
+      "script": "scripts/smoke-prod/registry-health.sh",
+      "checks": ["check_registry_sync_requires_team_tier"]
+    },
+    {
       "id": "anon-key-budget",
       "owner": "always-on-canary",
       "trigger_globs": [],

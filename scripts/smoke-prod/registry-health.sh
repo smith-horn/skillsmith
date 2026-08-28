@@ -228,3 +228,75 @@ check_private_registry_get_requires_jwt() {
   report_pass "edge-fn-private-registry-get" "check_private_registry_get_requires_jwt" "$url" "$ms"
   return 0
 }
+
+# ---------------------------------------------------------------------------
+# SMI-6236 — registry-sync tier-gate canary.
+# ---------------------------------------------------------------------------
+
+_require_registry_sync_creds() {
+  if [ -z "${SUPABASE_URL:-}" ]; then
+    smoke_warn "SUPABASE_URL not set — failing registry-sync tier-gate check"
+    return 1
+  fi
+  if [ -z "${SUPABASE_ANON_KEY:-}" ]; then
+    smoke_warn "SUPABASE_ANON_KEY not set — failing registry-sync tier-gate check"
+    return 1
+  fi
+  return 0
+}
+
+# check_registry_sync_requires_team_tier
+# registry-sync is `--no-verify-jwt` (self-managed auth, same as
+# skills-search) so the gateway performs no check at all -- an unauthenticated
+# GET would reach runAuthMiddleware() and, absent any credential, fall
+# through to the shared trial limiter, which is noisy/flaky under repeated
+# GitHub-runner traffic and proves nothing about the tier gate itself. Auth
+# with the anon key instead: `authenticateRequest()` resolves that to
+# `authMethod: 'anon_key'`/`tier: 'community'` (api-key-auth.ts), which is
+# `authenticated === true` but not team/enterprise -- so it deterministically
+# exercises the allow-list tier gate itself (index.ts's `isEntitled` check,
+# SMI-6236 F-3/F-4) rather than an upstream rate/trial gate. Same idiom
+# `_check_tier1_skill` above already uses to dodge the per-IP trial limiter.
+# Expect exactly 403 with `details.code === 'tier_not_entitled'` -- SMI-6236
+# F-5 explicitly strips the caller's own tier from this response, so we don't
+# assert on that field.
+check_registry_sync_requires_team_tier() {
+  _require_registry_sync_creds || {
+    report_fail "edge-fn-registry-sync" "check_registry_sync_requires_team_tier" "" "SUPABASE_URL+SUPABASE_ANON_KEY" "unset"
+    return 1
+  }
+  local url="${SUPABASE_URL}/functions/v1/registry-sync"
+  local t0 t1 ms resp status body code
+  t0=$(now_ms)
+  resp=$(with_retry http_body GET "$url" \
+    -H "apikey: ${SUPABASE_ANON_KEY}" \
+    -H "Authorization: Bearer ${SUPABASE_ANON_KEY}" \
+    -H "Accept: application/json") || true
+  t1=$(now_ms)
+  ms=$((t1 - t0))
+
+  status=$(printf '%s' "$resp" | head -n1)
+  body=$(printf '%s' "$resp" | tail -n +2)
+
+  if [ "$status" != "403" ]; then
+    report_fail "edge-fn-registry-sync" "check_registry_sync_requires_team_tier" "$url" "403" "$status" "$ms"
+    return 1
+  fi
+
+  if command -v python3 >/dev/null 2>&1; then
+    code=$(printf '%s' "$body" | python3 -c "import sys,json; d=json.load(sys.stdin).get('details') or {}; print(d.get('code',''))" 2>/dev/null || echo "")
+  else
+    code=""
+    if printf '%s' "$body" | grep -q '"code"[[:space:]]*:[[:space:]]*"tier_not_entitled"'; then
+      code="tier_not_entitled"
+    fi
+  fi
+
+  if [ "$code" != "tier_not_entitled" ]; then
+    report_fail "edge-fn-registry-sync" "check_registry_sync_requires_team_tier" "$url" "403 + details.code=tier_not_entitled" "403 (code=${code:-missing})" "$ms"
+    return 1
+  fi
+
+  report_pass "edge-fn-registry-sync" "check_registry_sync_requires_team_tier" "$url" "$ms"
+  return 0
+}
