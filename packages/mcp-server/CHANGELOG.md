@@ -4,6 +4,16 @@ All notable changes to `@skillsmith/mcp-server` are documented here.
 
 ## [Unreleased]
 
+- **Fix**: `skill_inventory_audit` never scanned Claude Code plugin-installed skills
+  (`~/.claude/plugins/cache/**`, gated on `enabledPlugins`) or a project's own
+  project-relative `.claude/skills/` mount-point — two real blind spots that let a
+  collision between a vendor plugin's skill and a project's own skill go undetected on
+  both sides. Adds Source 5 (plugin scan) and Source 6 (project scan) to the scanner,
+  tagging entries with a new `origin: 'native-client' | 'plugin' | 'project'` field
+  rather than widening the closed `ClientId` union. Both new sources guard against
+  path-traversal and symlink-escape reading outside their intended root
+  (SMI-6228/SMI-6240).
+
 ## v0.7.12
 
 - **Feature**: live RBAC service, grant-write RPCs, permission-gated website UI (SMI-6203) (#2586)
