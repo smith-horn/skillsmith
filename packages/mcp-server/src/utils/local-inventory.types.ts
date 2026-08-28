@@ -47,9 +47,37 @@ export interface InventoryEntry {
    * have no equivalent directory for other clients today. Optional: not
    * every `InventoryEntry` literal in this codebase sets it (e.g.
    * `install-preflight.ts`'s synthesized install-candidate entry), so this
-   * is a strictly additive field.
+   * is a strictly additive field. Always `undefined` for `origin: 'plugin'`
+   * entries — see `pluginId` below for how those are identified instead.
    */
   client?: ClientId
+  /**
+   * Where this entry was scanned from (SMI-6228). `'native-client'` covers
+   * every Source 1-4 entry (a supported client's native skills directory,
+   * plus Claude Code's own commands/agents/CLAUDE.md rules) — the same
+   * population `client` already tags. `'plugin'` covers Source 5: a Claude
+   * Code plugin-installed skill discovered under
+   * `~/.claude/plugins/cache/<marketplace>/<plugin>/<version>/skills/**`.
+   * Deliberately a SEPARATE field from `client` rather than widening
+   * `ClientId` to include a plugin variant — `ClientId` is a closed union
+   * consumed by real install-target resolution (`CLIENT_NATIVE_PATHS`,
+   * `install_skill --client`, and other exhaustive switches across
+   * `@skillsmith/core/install`), and a plugin is not an install target in
+   * that sense. Optional for backward compatibility with pre-SMI-6228
+   * `InventoryEntry` literals that don't set it (treat absence as
+   * equivalent to `'native-client'` for Source 1-4 provenance).
+   */
+  origin?: 'native-client' | 'plugin'
+  /**
+   * Set only when `origin === 'plugin'`: the enabling plugin's id in
+   * `<plugin>@<marketplace>` shape, exactly as it appears as a key in
+   * `~/.claude/settings.json`'s `enabledPlugins` map (e.g.
+   * `"supabase@supabase-agent-skills"`). Lets the audit report and
+   * collision detector attribute a plugin-sourced entry back to the plugin
+   * that installed it, since `client` is left `undefined` for these
+   * entries.
+   */
+  pluginId?: string
   meta?: {
     /** From `~/.skillsmith/manifest.json` if registered; else undefined. */
     author?: string

@@ -21,6 +21,7 @@ import {
   WARNING_CODES,
   capTriggerSurface,
   hashClaudeMdLine,
+  readEnabledPluginIds,
   splitDescriptionToPhrases,
   MAX_TRIGGER_PHRASES_PER_SKILL,
 } from '../../src/utils/local-inventory.helpers.js'
@@ -295,6 +296,183 @@ describe('scanLocalInventory', () => {
     expect(warnings).toHaveLength(1)
     expect(warnings[0]?.code).toBe(WARNING_CODES.TRIGGER_SURFACE_TRUNCATED)
     expect(warnings[0]?.context?.dropped_count).toBe(5)
+  })
+
+  it('SMI-6228: tags every Source 1-4 entry with origin "native-client"', async () => {
+    writeFile(
+      path.join(TEST_HOME, '.claude', 'skills', 'docker', 'SKILL.md'),
+      `---\nname: docker\n---\nbody\n`
+    )
+    writeFile(path.join(TEST_HOME, '.claude', 'commands', 'ship.md'), `Ship code.\n`)
+    writeFile(
+      path.join(TEST_HOME, '.claude', 'agents', 'reviewer.md'),
+      `---\nname: reviewer\ndescription: Reviews PRs\n---\nbody\n`
+    )
+    writeFile(
+      path.join(TEST_HOME, '.claude', 'CLAUDE.md'),
+      `## Trigger phrases\n\n- deploy to staging\n`
+    )
+    const result = await scanLocalInventory({ homeDir: TEST_HOME })
+    expect(result.entries.length).toBeGreaterThan(0)
+    expect(result.entries.every((e) => e.origin === 'native-client')).toBe(true)
+  })
+})
+
+describe('scanLocalInventory — Source 5 plugin scan (SMI-6228)', () => {
+  function writeSettings(content: unknown): void {
+    writeFile(path.join(TEST_HOME, '.claude', 'settings.json'), JSON.stringify(content))
+  }
+
+  function writePluginSkill(
+    marketplace: string,
+    plugin: string,
+    version: string,
+    skillName: string,
+    frontmatter: string
+  ): void {
+    writeFile(
+      path.join(
+        TEST_HOME,
+        '.claude',
+        'plugins',
+        'cache',
+        marketplace,
+        plugin,
+        version,
+        'skills',
+        skillName,
+        'SKILL.md'
+      ),
+      frontmatter
+    )
+  }
+
+  it('surfaces a skill from an enabled plugin (enabledPlugins[id] === true), tagged origin "plugin"', async () => {
+    writeSettings({ enabledPlugins: { 'foo@bar': true } })
+    writePluginSkill(
+      'bar',
+      'foo',
+      'abc123',
+      'shared-name',
+      `---\nname: shared-name\ndescription: Plugin skill\n---\nbody\n`
+    )
+    const result = await scanLocalInventory({ homeDir: TEST_HOME })
+    const pluginSkill = result.entries.find(
+      (e) => e.kind === 'skill' && e.identifier === 'shared-name' && e.origin === 'plugin'
+    )
+    expect(pluginSkill).toBeDefined()
+    expect(pluginSkill?.pluginId).toBe('foo@bar')
+    expect(pluginSkill?.client).toBeUndefined()
+    expect(pluginSkill?.meta?.description).toBe('Plugin skill')
+  })
+
+  it('a project skill and an enabled-plugin skill sharing an identifier both appear as distinct entries (real collision, SMI-6228)', async () => {
+    writeFile(
+      path.join(TEST_HOME, '.claude', 'skills', 'shared-name', 'SKILL.md'),
+      `---\nname: shared-name\n---\nbody\n`
+    )
+    writeSettings({ enabledPlugins: { 'foo@bar': true } })
+    writePluginSkill('bar', 'foo', 'abc123', 'shared-name', `---\nname: shared-name\n---\nbody\n`)
+
+    const result = await scanLocalInventory({ homeDir: TEST_HOME })
+    const matches = result.entries.filter(
+      (e) => e.kind === 'skill' && e.identifier === 'shared-name'
+    )
+    expect(matches).toHaveLength(2)
+    expect(matches.some((e) => e.origin === 'native-client' && e.client === 'claude-code')).toBe(
+      true
+    )
+    expect(matches.some((e) => e.origin === 'plugin' && e.pluginId === 'foo@bar')).toBe(true)
+  })
+
+  it('does NOT surface a skill from a disabled plugin (enabledPlugins[id] === false) — critical negative case', async () => {
+    writeSettings({ enabledPlugins: { 'foo@bar': false } })
+    writePluginSkill('bar', 'foo', 'abc123', 'shared-name', `---\nname: shared-name\n---\nbody\n`)
+
+    const result = await scanLocalInventory({ homeDir: TEST_HOME })
+    expect(result.entries.some((e) => e.origin === 'plugin')).toBe(false)
+    expect(result.entries.some((e) => e.identifier === 'shared-name')).toBe(false)
+  })
+
+  it('does NOT surface a skill from a plugin with a non-boolean enabledPlugins value', async () => {
+    writeSettings({ enabledPlugins: { 'foo@bar': 'true' } })
+    writePluginSkill('bar', 'foo', 'abc123', 'shared-name', `---\nname: shared-name\n---\nbody\n`)
+
+    const result = await scanLocalInventory({ homeDir: TEST_HOME })
+    expect(result.entries.some((e) => e.origin === 'plugin')).toBe(false)
+  })
+
+  it('degrades gracefully with no settings.json at all (no plugin entries, no warning)', async () => {
+    const result = await scanLocalInventory({ homeDir: TEST_HOME })
+    expect(result.entries.some((e) => e.origin === 'plugin')).toBe(false)
+    expect(result.warnings.some((w) => w.code === WARNING_CODES.PLUGIN_SCAN_SKIPPED)).toBe(false)
+  })
+
+  it('degrades gracefully when settings.json exists but has no enabledPlugins key', async () => {
+    writeSettings({ model: 'sonnet' })
+    const result = await scanLocalInventory({ homeDir: TEST_HOME })
+    expect(result.entries.some((e) => e.origin === 'plugin')).toBe(false)
+    expect(result.warnings.some((w) => w.code === WARNING_CODES.PLUGIN_SCAN_SKIPPED)).toBe(false)
+  })
+
+  it('degrades gracefully with a warning when an enabled plugin has no cache directory', async () => {
+    writeSettings({ enabledPlugins: { 'ghost@nowhere': true } })
+    const result = await scanLocalInventory({ homeDir: TEST_HOME })
+    expect(result.entries.some((e) => e.origin === 'plugin')).toBe(false)
+    expect(result.warnings.some((w) => w.code === WARNING_CODES.PLUGIN_SCAN_SKIPPED)).toBe(true)
+  })
+
+  it('degrades gracefully with a warning when a plugin cache dir has zero version directories', async () => {
+    writeSettings({ enabledPlugins: { 'foo@bar': true } })
+    fs.mkdirSync(path.join(TEST_HOME, '.claude', 'plugins', 'cache', 'bar', 'foo'), {
+      recursive: true,
+    })
+    const result = await scanLocalInventory({ homeDir: TEST_HOME })
+    expect(result.entries.some((e) => e.origin === 'plugin')).toBe(false)
+    expect(result.warnings.some((w) => w.code === WARNING_CODES.PLUGIN_SCAN_SKIPPED)).toBe(true)
+  })
+
+  it('degrades gracefully with a warning when a plugin cache dir has multiple version directories', async () => {
+    writeSettings({ enabledPlugins: { 'foo@bar': true } })
+    writePluginSkill('bar', 'foo', 'v1', 'a', `---\nname: a\n---\nbody\n`)
+    writePluginSkill('bar', 'foo', 'v2', 'b', `---\nname: b\n---\nbody\n`)
+    const result = await scanLocalInventory({ homeDir: TEST_HOME })
+    expect(result.entries.some((e) => e.origin === 'plugin')).toBe(false)
+    expect(result.warnings.some((w) => w.code === WARNING_CODES.PLUGIN_SCAN_SKIPPED)).toBe(true)
+  })
+
+  it('degrades gracefully with a warning on malformed settings.json JSON', async () => {
+    writeFile(path.join(TEST_HOME, '.claude', 'settings.json'), '{not valid json')
+    const result = await scanLocalInventory({ homeDir: TEST_HOME })
+    expect(result.entries.some((e) => e.origin === 'plugin')).toBe(false)
+    expect(result.warnings.some((w) => w.code === WARNING_CODES.PARSE_FAILED)).toBe(true)
+  })
+})
+
+describe('readEnabledPluginIds', () => {
+  it('returns only ids whose value is exactly boolean true', () => {
+    const warnings: ScanWarning[] = []
+    const settingsPath = path.join(TEST_HOME, '.claude', 'settings.json')
+    writeFile(
+      settingsPath,
+      JSON.stringify({
+        enabledPlugins: {
+          'a@market': true,
+          'b@market': false,
+          'c@market': 'true',
+        },
+      })
+    )
+    expect(readEnabledPluginIds(settingsPath, warnings)).toEqual(['a@market'])
+    expect(warnings).toEqual([])
+  })
+
+  it('returns [] when settings.json is missing', () => {
+    const warnings: ScanWarning[] = []
+    expect(
+      readEnabledPluginIds(path.join(TEST_HOME, '.claude', 'settings.json'), warnings)
+    ).toEqual([])
+    expect(warnings).toEqual([])
   })
 })
 

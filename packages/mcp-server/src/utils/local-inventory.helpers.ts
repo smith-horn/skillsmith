@@ -27,6 +27,12 @@ export const WARNING_CODES = {
   REGEX_EXTRACTION_SKIPPED: 'namespace.inventory.regex_extraction_skipped',
   UNMANAGED_SKILL_BOOTSTRAPPED: 'namespace.inventory.unmanaged_skill_bootstrapped',
   PARSE_FAILED: 'namespace.inventory.parse_failed',
+  /** SMI-6228 Source 5 (plugin-skill scan): an enabled plugin id could not be
+   * resolved to a scannable `skills/` directory — malformed
+   * `<plugin>@<marketplace>` shape, missing cache directory, or the cache
+   * directory doesn't have exactly one version subdirectory. Always
+   * fail-soft: the plugin is skipped, not thrown. */
+  PLUGIN_SCAN_SKIPPED: 'namespace.inventory.plugin_scan_skipped',
 } as const
 
 /** Maximum trigger phrases retained per entry — matches `OverlapDetector.MAX_TRIGGER_PHRASES_PER_SKILL`. */
@@ -233,8 +239,55 @@ function makeClaudeMdEntry(
     // CLAUDE.md rules are Claude Code-only (SMI-6077) — no other supported
     // client reads this file today.
     client: CANONICAL_CLIENT,
+    // Source 4 — a native-client entry, not a plugin-scan one (SMI-6228).
+    origin: 'native-client',
     meta: { description: phrase },
   }
+}
+
+/**
+ * Parse `~/.claude/settings.json`'s `enabledPlugins` map and return the ids
+ * (`<plugin>@<marketplace>` shape) whose value is exactly `true` (SMI-6228
+ * Source 5). Anything else — `false`, missing, a non-boolean value, a
+ * missing `enabledPlugins` key, a missing/unreadable/malformed
+ * settings.json — yields `[]` (fail-soft; a malformed-JSON file
+ * additionally raises a `PARSE_FAILED` warning since that indicates a
+ * corrupt file, not a normal absent state).
+ *
+ * The exact-`true` check is load-bearing, not incidental: a disabled plugin
+ * (`false`) must NOT surface its skills as inventory entries, or a stale
+ * collision against a since-disabled plugin would resurface as a false
+ * positive.
+ */
+export function readEnabledPluginIds(settingsPath: string, warnings: ScanWarning[]): string[] {
+  if (!fs.existsSync(settingsPath)) return []
+
+  let raw: string
+  try {
+    raw = fs.readFileSync(settingsPath, 'utf-8')
+  } catch {
+    return []
+  }
+
+  let parsed: unknown
+  try {
+    parsed = JSON.parse(raw)
+  } catch {
+    warnings.push({
+      code: WARNING_CODES.PARSE_FAILED,
+      message: `${settingsPath} is not valid JSON; plugin-skill scan skipped`,
+      context: { path: settingsPath },
+    })
+    return []
+  }
+
+  if (!parsed || typeof parsed !== 'object') return []
+  const enabledPlugins = (parsed as Record<string, unknown>)['enabledPlugins']
+  if (!enabledPlugins || typeof enabledPlugins !== 'object') return []
+
+  return Object.entries(enabledPlugins as Record<string, unknown>)
+    .filter(([, value]) => value === true)
+    .map(([id]) => id)
 }
 
 /**
