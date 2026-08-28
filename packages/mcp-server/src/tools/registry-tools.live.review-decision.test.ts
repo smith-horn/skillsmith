@@ -92,9 +92,20 @@ describe('review_private_registry_submission RPC errors — verbatim passthrough
       action: 'approve' as const,
       error: {
         code: '42501',
+        // SMI-6202 widened the RPC's own RAISE text from "only a team admin or owner may
+        // review ..." to also name an explicit registry:approve grant as a path to review —
+        // verbatim from migrations/20260827000001_rbac_seam_widening.sql:165-169 (`%`
+        // substituted for `p_team_id`). This file proves verbatim passthrough, not fidelity to
+        // the RPC's real text (see this file's own header), so any distinctive fixture text
+        // exercises the same code path either way — updated here purely so a reader searching
+        // for the real message string finds a match, not a stale pre-SMI-6202 paraphrase.
         message:
-          'Only team admins can review private-registry submissions. This team has no other ' +
-          'admin/owner besides the submitter — promote a second admin/owner to unblock review.',
+          'only a team admin or owner, or a holder of an explicit registry:approve grant, may ' +
+          'review ' +
+          'private-registry submissions for team team-alpha. If this team has exactly one ' +
+          'admin and that admin is also the submitter, nothing can be approved until a second ' +
+          'admin or owner exists -- promote one in team_members (self-approval is refused, see ' +
+          'below).',
       },
     },
     {

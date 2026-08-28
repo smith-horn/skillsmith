@@ -31,6 +31,12 @@
  *   4. the audit row for these operations names the **user** who authorized them, not the license
  *      key that did not (cross-provider review finding #3);
  *   5. a failed readability probe surfaces as a real error, never as "not found" (finding #4).
+ *
+ * @see registry-tools.live.review-rbac-widening.test.ts — SMI-6202's `review()`-side counterpart
+ *   to this file (has_team_permission()/team_permission_grants widening of
+ *   `review_private_registry_submission`'s admin check). Split into its own file rather than
+ *   appended here, to stay under the 500-line audit:standards budget (this file's own
+ *   deprecate/undeprecate/publish coverage was already close to it).
  */
 
 import { describe, it, expect, beforeEach, vi } from 'vitest'
