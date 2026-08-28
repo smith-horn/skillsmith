@@ -13,6 +13,10 @@ All notable changes to `@skillsmith/mcp-server` are documented here.
   rather than widening the closed `ClientId` union. Both new sources guard against
   path-traversal and symlink-escape reading outside their intended root
   (SMI-6228/SMI-6240).
+- **Docs**: `readEnabledPluginIds` in `local-inventory.helpers.ts` now cross-references its build-free
+  `.mjs` twin (`scripts/lib/mcp-command-guard.plugin-scan.mjs`) and the parity test enforcing
+  agreement between them, per ADR-136's requirement that cross-runtime duplication of
+  security-relevant logic name the divergence risk explicitly (SMI-6229).
 
 ## v0.7.12
 
