@@ -5,6 +5,7 @@ import { homedir } from 'os'
 import { join } from 'path'
 import { existsSync, readFileSync, writeFileSync, chmodSync } from 'fs'
 import { ensureConfigDir } from './index.js'
+import { acquireConfigLock, atomicWriteFile } from './config-atomic-write.js'
 import { PRODUCTION_ANON_KEY } from '../api/utils.js'
 
 const CONFIG_DIR = '.skillsmith'
@@ -138,6 +139,12 @@ export async function loadCredentials(): Promise<TokenCredentials | null> {
  * path since the two credential schemes live in different fields/keyring
  * accounts (SMI-4402 v2 schema vs. the pre-existing apiKey flow).
  *
+ * The config-file read-modify-write is guarded by the same cross-process
+ * lock + atomic rename `saveConfig()` uses (config-atomic-write.ts,
+ * SMI-5531) — a bare readConfigFile()/writeFileSync() here could lose a
+ * concurrent writer's update between the read and the write (PR review
+ * finding, SMI-6235).
+ *
  * @returns Result indicating which storage locations were cleared and any errors
  */
 export async function clearCredentials(): Promise<{
@@ -161,12 +168,19 @@ export async function clearCredentials(): Promise<{
   }
 
   // Always clear from config file — never leave stale JWT fields behind
-  const existing = readConfigFile()
-  delete existing.accessToken
-  delete existing.refreshToken
-  delete existing.expiresAt
-  delete existing.version
-  writeConfigFile(existing)
+  const configPath = getConfigPath()
+  ensureConfigDir()
+  const release = acquireConfigLock(configPath)
+  try {
+    const existing = readConfigFile()
+    delete existing.accessToken
+    delete existing.refreshToken
+    delete existing.expiresAt
+    delete existing.version
+    atomicWriteFile(configPath, JSON.stringify(existing, null, 2), 0o600)
+  } finally {
+    release()
+  }
   sources.push('config file')
 
   if (keyringError) {

@@ -103,25 +103,6 @@ describe('createLogoutCommand', () => {
       expect(mockClearApiKey).not.toHaveBeenCalled()
       expect(mockClearCredentials).not.toHaveBeenCalled()
     })
-
-    it('exits 0 when an expired JWT session is the only credential present', async () => {
-      mockGetAuthStatus.mockResolvedValue({
-        authenticated: false,
-        keyPrefix: null,
-        source: 'none',
-      })
-      mockLoadCredentials.mockResolvedValue({
-        accessToken: 'expired-token',
-        refreshToken: 'refresh',
-        expiresAt: Date.now() - 1000,
-        version: 2,
-      })
-
-      await expect(runCommand()).rejects.toThrow('process.exit(0)')
-
-      const output = consoleLogSpy.mock.calls.flat().join('\n')
-      expect(output).toContain('Not authenticated')
-    })
   })
 
   describe('JWT-only session (SMI-4402 regression — the reported login/logout mismatch)', () => {
@@ -140,6 +121,29 @@ describe('createLogoutCommand', () => {
         version: 2,
       })
       mockConfirm.mockResolvedValue(true)
+    })
+
+    // PR review finding (SMI-6235): logout must be able to clear a JWT
+    // session even when its access token has expired — an expired access
+    // token with a live refresh token is still a session to end, not
+    // "nothing to log out of". Distinct from the "not authenticated guard"
+    // describe above, which covers loadCredentials() returning null entirely.
+    it('proceeds to log out when the stored JWT session has an expired access token', async () => {
+      mockLoadCredentials.mockResolvedValue({
+        accessToken: 'expired-token',
+        refreshToken: 'refresh',
+        expiresAt: Date.now() - 1000,
+        version: 2,
+      })
+      mockClearApiKey.mockResolvedValue({ success: true, source: 'config file' })
+      mockClearCredentials.mockResolvedValue({ success: true, source: 'keyring and config file' })
+
+      await expect(runCommand()).rejects.toThrow('process.exit(0)')
+
+      const output = consoleLogSpy.mock.calls.flat().join('\n')
+      expect(output).not.toContain('Not authenticated')
+      expect(output).toContain('Logged out')
+      expect(mockClearCredentials).toHaveBeenCalledOnce()
     })
 
     it('does not print "Not authenticated" and proceeds to log out', async () => {
@@ -214,6 +218,21 @@ describe('createLogoutCommand', () => {
       const output = consoleLogSpy.mock.calls.flat().join('\n')
       expect(output).toContain('Logged out')
       expect(output).toContain('config file')
+    })
+
+    // PR review finding (SMI-6235): each result's `source` is itself a
+    // composite string ("keyring and config file"), so deduping the two
+    // composite strings whole (instead of their individual parts) produced
+    // "keyring and config file and config file" whenever they overlapped.
+    it('does not repeat an overlapping source location across both results', async () => {
+      mockClearApiKey.mockResolvedValue({ success: true, source: 'keyring and config file' })
+      mockClearCredentials.mockResolvedValue({ success: true, source: 'config file' })
+
+      await expect(runCommand()).rejects.toThrow('process.exit(0)')
+
+      const output = consoleLogSpy.mock.calls.flat().join('\n')
+      expect(output).not.toContain('config file and config file')
+      expect(output).toContain('keyring and config file')
     })
   })
 

@@ -24,11 +24,24 @@ const SOURCE_LABELS: Record<string, string> = {
 
 // SMI-5040: extracted from inline .action() closure for withTelemetry wrap.
 async function whoamiActionImpl(): Promise<void> {
+  // loadCredentials() returning non-null already means a resolvable refresh
+  // token is on file — don't additionally gate on access-token freshness
+  // (Date.now() < expiresAt): an expired access token with a live refresh
+  // token is a session resolveFreshAccessToken() refreshes transparently on
+  // next use, so reporting it as "not authenticated" here would be wrong
+  // (PR review finding, SMI-6235 — same root issue as logout.ts's gate).
   const jwtSession = await loadCredentials()
-  if (jwtSession && Date.now() < jwtSession.expiresAt) {
+  if (jwtSession) {
     console.log(chalk.bold('Skillsmith CLI'))
     console.log(chalk.dim('  Session: ') + chalk.cyan('device-code login'))
-    console.log(chalk.dim('  Expires: ') + new Date(jwtSession.expiresAt).toLocaleString())
+    const expired = Date.now() >= jwtSession.expiresAt
+    const expiresLabel = new Date(jwtSession.expiresAt).toLocaleString()
+    console.log(
+      chalk.dim('  Access token: ') +
+        (expired
+          ? chalk.yellow(`expired ${expiresLabel} (refreshes automatically on next use)`)
+          : chalk.green(`valid until ${expiresLabel}`))
+    )
     process.exit(0)
   }
 

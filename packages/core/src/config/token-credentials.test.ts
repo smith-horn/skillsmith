@@ -25,6 +25,17 @@ vi.mock('os', () => ({ homedir: vi.fn(() => '/mock-home') }))
 
 vi.mock('./index.js', () => ({ ensureConfigDir: vi.fn() }))
 
+// clearCredentials() guards its config-file write with the shared
+// cross-process lock + atomic rename (SMI-5531) — mock both so tests never
+// touch the real filesystem via node:fs (a bare `vi.mock('fs', ...)` above
+// does not intercept 'node:fs' imports, which config-atomic-write.ts uses).
+// eslint-disable-next-line @typescript-eslint/no-explicit-any
+const configAtomicWrite: any = {
+  acquireConfigLock: vi.fn(() => vi.fn()),
+  atomicWriteFile: vi.fn(),
+}
+vi.mock('./config-atomic-write.js', () => configAtomicWrite)
+
 vi.mock('../api/utils.js', () => ({
   PRODUCTION_ANON_KEY: 'test-anon-key',
 }))
@@ -148,8 +159,12 @@ describe('token-credentials', () => {
     expect(result.source).toContain('keyring')
     expect(result.source).toContain('config file')
     expect(keytarDefault.deletePassword).toHaveBeenCalledWith('skillsmith-cli', 'refresh-token')
+    expect(configAtomicWrite.acquireConfigLock).toHaveBeenCalledOnce()
+    // The lock's release function must be called exactly once (finally block).
+    const releaseFn = configAtomicWrite.acquireConfigLock.mock.results[0].value as () => void
+    expect(releaseFn).toHaveBeenCalledOnce()
 
-    const writeCall = vi.mocked(writeFileSync).mock.calls[0]
+    const writeCall = configAtomicWrite.atomicWriteFile.mock.calls[0]
     const written = JSON.parse(writeCall[1] as string) as Record<string, unknown>
     expect(written.accessToken).toBeUndefined()
     expect(written.refreshToken).toBeUndefined()
@@ -170,7 +185,7 @@ describe('token-credentials', () => {
     expect(result.success).toBe(false)
     expect(result.error).toBe('keyring locked')
     // Config file is still cleared even when the keyring delete fails.
-    expect(writeFileSync).toHaveBeenCalled()
+    expect(configAtomicWrite.atomicWriteFile).toHaveBeenCalled()
   })
 
   it('TC-8: clearCredentials preserves apiKey and other unrelated fields', async () => {
@@ -189,7 +204,7 @@ describe('token-credentials', () => {
     const { clearCredentials } = await import('./token-credentials.js')
     await clearCredentials()
 
-    const writeCall = vi.mocked(writeFileSync).mock.calls[0]
+    const writeCall = configAtomicWrite.atomicWriteFile.mock.calls[0]
     const written = JSON.parse(writeCall[1] as string) as Record<string, unknown>
     expect(written.apiKey).toBe('sk_live_legacy')
     expect(written.someOtherField).toBe('keep-me')

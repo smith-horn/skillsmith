@@ -115,7 +115,12 @@ describe('createWhoamiCommand', () => {
       expect(output).toContain('device-code login')
     })
 
-    it('falls through to the legacy API-key check when the JWT session is expired', async () => {
+    // PR review finding (SMI-6235): an expired access token with a live
+    // refresh token on file is still shown as a device-code session — it is
+    // a session resolveFreshAccessToken() refreshes transparently on next
+    // use, not one to report as absent. Distinct from the "no JWT session at
+    // all" case (loadCredentials() null), which does fall through below.
+    it('still shows device-code session when the access token has expired but a refresh token is on file', async () => {
       mockGetAuthStatus.mockResolvedValue({
         authenticated: true,
         keyPrefix: 'sk_live_xxxx',
@@ -127,6 +132,22 @@ describe('createWhoamiCommand', () => {
         expiresAt: Date.now() - 1000,
         version: 2,
       })
+
+      await expect(runCommand()).rejects.toThrow('process.exit(0)')
+
+      const output = consoleLogSpy.mock.calls.flat().join('\n')
+      expect(output).toContain('device-code login')
+      expect(output).toContain('expired')
+      expect(output).not.toContain('sk_live_xxxx...')
+    })
+
+    it('falls through to the legacy API-key check when there is no JWT session at all', async () => {
+      mockGetAuthStatus.mockResolvedValue({
+        authenticated: true,
+        keyPrefix: 'sk_live_xxxx',
+        source: 'config',
+      })
+      mockLoadCredentials.mockResolvedValue(null)
 
       await expect(runCommand()).rejects.toThrow('process.exit(0)')
 
