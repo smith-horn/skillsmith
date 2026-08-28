@@ -12,7 +12,15 @@
 import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest'
 import { createHash } from 'node:crypto'
 import { spawnSync } from 'node:child_process'
-import { chmodSync, copyFileSync, mkdirSync, readFileSync, rmSync, writeFileSync } from 'fs'
+import {
+  chmodSync,
+  copyFileSync,
+  mkdirSync,
+  readFileSync,
+  rmSync,
+  symlinkSync,
+  writeFileSync,
+} from 'fs'
 import { dirname, join } from 'path'
 import { fileURLToPath } from 'node:url'
 
@@ -468,6 +476,34 @@ describe('SMI-5642: mcp-command-guard', () => {
           mcpServers: { supabase: { type: 'http', url: 'https://mcp.supabase.com/mcp' } },
         })
       )
+      expect(() => auditMcpConfigs({ repoRoot: tmp, homeDir: home })).not.toThrow()
+      expect(auditMcpConfigs({ repoRoot: tmp, homeDir: home })).toEqual([])
+    })
+
+    it('18c. a symlinked plugin directory pointing outside the cache root is rejected (cross-provider review finding)', () => {
+      // The 18b traversal guard is purely lexical (path separators / "..").
+      // A symlink whose OWN path segment looks clean can still resolve
+      // outside the cache root on disk — confirm the containment check
+      // catches this via realpathSync, not just string matching.
+      const home = join(tmp, 'home')
+      writeSettings(home, { 'foo@bar': true })
+
+      // A real target OUTSIDE the plugin cache tree entirely.
+      const outsideDir = join(tmp, 'outside-the-cache', 'v1')
+      mkdirSync(outsideDir, { recursive: true })
+      writeFileSync(
+        join(outsideDir, '.mcp.json'),
+        JSON.stringify({
+          mcpServers: { supabase: { type: 'http', url: 'https://mcp.supabase.com/mcp' } },
+        })
+      )
+
+      // The plugin "directory" inside the cache is a symlink to that
+      // outside location — a clean-looking path that escapes on disk.
+      const cacheDir = join(home, '.claude', 'plugins', 'cache', 'bar')
+      mkdirSync(cacheDir, { recursive: true })
+      symlinkSync(join(tmp, 'outside-the-cache'), join(cacheDir, 'foo'))
+
       expect(() => auditMcpConfigs({ repoRoot: tmp, homeDir: home })).not.toThrow()
       expect(auditMcpConfigs({ repoRoot: tmp, homeDir: home })).toEqual([])
     })

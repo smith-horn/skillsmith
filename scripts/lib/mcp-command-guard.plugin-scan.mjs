@@ -33,8 +33,8 @@
  * @see docs/internal/implementation/mcp-guard-plugin-config-scan.md
  * @see docs/internal/adr/136-cross-runtime-duplication-of-security-logic.md
  */
-import { existsSync, readFileSync, readdirSync } from 'node:fs'
-import { join, resolve, sep as pathSep } from 'node:path'
+import { existsSync, readFileSync, readdirSync, realpathSync } from 'node:fs'
+import { join, sep as pathSep } from 'node:path'
 
 function isPlainObject(value) {
   return typeof value === 'object' && value !== null && !Array.isArray(value)
@@ -176,10 +176,31 @@ function isSafePathComponent(component) {
   )
 }
 
-/** True when `candidate`, once resolved, is `root` or nested under it. */
+/**
+ * True when `candidate`, once resolved to its REAL (symlink-followed) path,
+ * is `root` or nested under it.
+ *
+ * Cross-provider review finding (GPT-5.6-Sol, Medium): the first version of
+ * this check used lexical `path.resolve()`, which normalizes `..`/`.`
+ * segments but does NOT follow symlinks — so a symlinked cache subdirectory
+ * pointing outside the tree (e.g. `cache/marketplace/plugin -> /etc`) would
+ * pass the string-prefix check even though `readdirSync`/`readFileSync`
+ * would then genuinely follow it outside the cache root. `realpathSync`
+ * resolves symlinks; comparing REAL paths closes that gap. A path that
+ * doesn't exist yet (a normal case — an enabled plugin whose cache
+ * directory was never populated) makes `realpathSync` throw, which this
+ * function treats as "not safely within root" (fails closed, same
+ * `null`-and-skip outcome the caller already had for a missing directory).
+ */
 function isWithinRoot(root, candidate) {
-  const resolvedRoot = resolve(root)
-  const resolvedCandidate = resolve(candidate)
+  let resolvedRoot
+  let resolvedCandidate
+  try {
+    resolvedRoot = realpathSync(root)
+    resolvedCandidate = realpathSync(candidate)
+  } catch {
+    return false
+  }
   return resolvedCandidate === resolvedRoot || resolvedCandidate.startsWith(resolvedRoot + pathSep)
 }
 
