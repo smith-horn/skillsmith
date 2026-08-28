@@ -4,8 +4,9 @@
  *
  * SMI-1168: User registration and login
  * SMI-1715: GitHub OAuth authentication
+ * SMI-6204: Enterprise SSO sign-in (domain-based signInWithSSO)
  *
- * Handles email/password login and GitHub OAuth with Supabase Auth.
+ * Handles email/password login, GitHub OAuth, and SSO with Supabase Auth.
  * Redirects to account dashboard on success.
  */
 
@@ -150,7 +151,46 @@ const redirectTo =
 
         <div class="social-login">
           <LoginButton variant="primary" size="md" redirectTo={redirectTo} />
+
+          <button type="button" id="sso-toggle-btn" class="btn btn-secondary btn-full">
+            Sign in with SSO
+          </button>
         </div>
+
+        <form id="sso-form" class="auth-form sso-form" style="display: none;">
+          <div class="form-group">
+            <label for="sso-domain">Work email or company domain</label>
+            <input
+              type="text"
+              id="sso-domain"
+              name="sso-domain"
+              placeholder="you@company.com or company.com"
+              autocomplete="email"
+              required
+            />
+          </div>
+
+          <div id="sso-error-message" class="error-message" style="display: none;"></div>
+
+          <button type="submit" class="btn btn-primary btn-full" id="sso-submit-btn">
+            <span class="btn-text">Continue with SSO</span>
+            <span class="btn-loading" style="display: none;">
+              <svg class="spinner" viewBox="0 0 24 24">
+                <circle
+                  cx="12"
+                  cy="12"
+                  r="10"
+                  stroke="currentColor"
+                  stroke-width="4"
+                  fill="none"
+                  opacity="0.25"></circle>
+                <path d="M12 2a10 10 0 0 1 10 10" stroke="currentColor" stroke-width="4" fill="none"
+                ></path>
+              </svg>
+              Redirecting...
+            </span>
+          </button>
+        </form>
 
         <div class="auth-alternate">
           <p>Don't have an account? <a href="/signup">Sign up</a></p>
@@ -434,8 +474,24 @@ const redirectTo =
     transform: none;
   }
 
+  .btn-secondary {
+    background: transparent;
+    color: #fafafa;
+    border: 1px solid #2a2a2f;
+  }
+
+  .btn-secondary:hover {
+    border-color: #e07a5f;
+    background: rgba(224, 122, 95, 0.1);
+  }
+
   .btn-full {
     width: 100%;
+  }
+
+  /* SSO form (SMI-6204) — hidden until the toggle button reveals it */
+  .sso-form {
+    margin-top: 0.75rem;
   }
 
   /* Loading Spinner */
@@ -548,12 +604,18 @@ const redirectTo =
 
 <script>
   import { createClient } from '@supabase/supabase-js'
+  import { withAuthTimeout } from '../lib/auth-timeout'
 
   // Initialize Supabase client
   // Read config injected by SSR script in head
   const config = window.__SUPABASE_CONFIG__ || { url: '', anonKey: '' }
   const supabaseUrl = config.url
   const supabaseAnonKey = config.anonKey
+
+  // SMI-6204: bound the signInWithSSO call the same way SMI-5055 bounds
+  // getSession() in UserMenu.astro, so a degraded/unreachable GoTrue can't
+  // leave the SSO button stuck in its loading state forever.
+  const SSO_TIMEOUT_MS = 8000
 
   document.addEventListener('astro:page-load', () => {
     const form = document.getElementById('login-form') as HTMLFormElement
@@ -644,6 +706,114 @@ const redirectTo =
         btnText.style.display = 'inline'
         btnLoading.style.display = 'none'
         submitBtn.disabled = false
+      }
+    })
+
+    // SMI-6204: SSO sign-in (domain-based signInWithSSO)
+    const ssoToggleBtn = document.getElementById('sso-toggle-btn') as HTMLButtonElement | null
+    const ssoForm = document.getElementById('sso-form') as HTMLFormElement | null
+    const ssoDomainInput = document.getElementById('sso-domain') as HTMLInputElement | null
+    const ssoErrorMessage = document.getElementById('sso-error-message') as HTMLDivElement | null
+    const ssoSubmitBtn = document.getElementById('sso-submit-btn') as HTMLButtonElement | null
+
+    ssoToggleBtn?.addEventListener('click', () => {
+      if (!ssoForm) return
+      const isHidden = ssoForm.style.display === 'none'
+      ssoForm.style.display = isHidden ? 'flex' : 'none'
+      ssoForm.style.flexDirection = 'column'
+      ssoForm.style.gap = '1.25rem'
+      ssoToggleBtn.textContent = isHidden ? 'Use email and password instead' : 'Sign in with SSO'
+      if (isHidden) {
+        if (ssoErrorMessage) ssoErrorMessage.style.display = 'none'
+        ssoDomainInput?.focus()
+      }
+    })
+
+    ssoForm?.addEventListener('submit', async (e) => {
+      e.preventDefault()
+      if (!ssoErrorMessage || !ssoDomainInput || !ssoSubmitBtn) return
+
+      ssoErrorMessage.style.display = 'none'
+
+      // Accept either a bare domain or a full email address and extract the domain.
+      const raw = ssoDomainInput.value.trim().toLowerCase()
+      const domain = raw.includes('@') ? raw.split('@')[1] : raw
+
+      if (!domain) {
+        ssoErrorMessage.textContent = 'Enter your work email or company domain.'
+        ssoErrorMessage.style.display = 'block'
+        return
+      }
+
+      const btnText = ssoSubmitBtn.querySelector('.btn-text') as HTMLSpanElement | null
+      const btnLoading = ssoSubmitBtn.querySelector('.btn-loading') as HTMLSpanElement | null
+      if (btnText) btnText.style.display = 'none'
+      if (btnLoading) btnLoading.style.display = 'inline-flex'
+      ssoSubmitBtn.disabled = true
+
+      try {
+        if (!supabaseUrl || !supabaseAnonKey) {
+          throw new Error('Authentication service not configured')
+        }
+
+        const supabase = createClient(supabaseUrl, supabaseAnonKey)
+
+        // H7: prefer `next=` (new canonical), fall back to legacy `redirect=`.
+        const params = new URLSearchParams(window.location.search)
+        const postLoginRedirect = params.get('next') ?? params.get('redirect') ?? '/account'
+
+        const { data, error } = await withAuthTimeout(
+          supabase.auth.signInWithSSO({
+            domain,
+            options: {
+              redirectTo: `${window.location.origin}/auth/callback?redirect=${encodeURIComponent(postLoginRedirect)}`,
+              // Drive the redirect ourselves below rather than relying on the SDK's
+              // own auto-redirect, mirroring LoginButton.astro's signInWithOAuth call.
+              skipBrowserRedirect: true,
+            },
+          }),
+          SSO_TIMEOUT_MS,
+          'SSO sign-in did not respond in time. Please try again.'
+        )
+
+        if (error) {
+          // GoTrue returns two distinct 404s for signInWithSSO({ domain }) — surface
+          // them as two different messages, since a disabled provider (someone
+          // configured SSO but a reverification lapsed) is actionable-different from
+          // a domain that was never configured for SSO at all.
+          if (error.code === 'sso_provider_disabled') {
+            ssoErrorMessage.textContent =
+              'SSO is currently disabled for your organization. Contact your team admin to have it re-enabled.'
+          } else if (error.code === 'sso_provider_not_found') {
+            ssoErrorMessage.textContent = `No SSO provider is set up for ${domain}. You may not have SSO configured for your team — sign in with your email and password above instead.`
+          } else {
+            ssoErrorMessage.textContent = error.message
+          }
+          ssoErrorMessage.style.display = 'block'
+          return
+        }
+
+        if (data?.url) {
+          // GA4: Track SSO sign-in initiation (mirrors the email-login event above)
+          if (typeof window.gtag === 'function') {
+            window.gtag('event', 'login', { method: 'sso' })
+          }
+          window.location.href = data.url
+          return
+        }
+
+        throw new Error('No SSO redirect URL returned')
+      } catch (err) {
+        console.error('SSO login error:', err)
+        ssoErrorMessage.textContent =
+          err instanceof Error ? err.message : 'An error occurred. Please try again.'
+        ssoErrorMessage.style.display = 'block'
+      } finally {
+        const btnTextEl = ssoSubmitBtn.querySelector('.btn-text') as HTMLSpanElement | null
+        const btnLoadingEl = ssoSubmitBtn.querySelector('.btn-loading') as HTMLSpanElement | null
+        if (btnTextEl) btnTextEl.style.display = 'inline'
+        if (btnLoadingEl) btnLoadingEl.style.display = 'none'
+        ssoSubmitBtn.disabled = false
       }
     })
   })

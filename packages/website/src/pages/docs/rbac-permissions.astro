@@ -1,0 +1,198 @@
+---
+import DocsLayout from '../../layouts/DocsLayout.astro';
+
+const techArticleSchema = {
+  '@context': 'https://schema.org',
+  '@type': 'TechArticle',
+  headline: 'Roles, Permissions & SSO',
+  description:
+    'How Enterprise team roles and permissions work in Skillsmith, and how to set up single sign-on (SSO/SAML) for your team.',
+  url: 'https://www.skillsmith.app/docs/rbac-permissions',
+  author: {
+    '@id': 'https://www.skillsmith.app/#organization',
+  },
+  publisher: {
+    '@type': 'Organization',
+    '@id': 'https://www.skillsmith.app/#organization',
+    name: 'Skillsmith',
+    url: 'https://www.skillsmith.app',
+  },
+  about: {
+    '@type': 'SoftwareApplication',
+    name: 'Skillsmith',
+    applicationCategory: 'DeveloperApplication',
+  },
+};
+---
+
+<DocsLayout title="Roles, Permissions & SSO" description="How Enterprise team roles and permissions work in Skillsmith, and how to set up single sign-on (SSO/SAML) for your team">
+  <!-- JSON-LD TechArticle Schema -->
+  <script is:inline type="application/ld+json" slot="head" set:html={JSON.stringify(techArticleSchema)} />
+
+  <h1>Roles, Permissions &amp; SSO</h1>
+
+  <p class="lead">
+    Enterprise teams get three fixed roles and a small set of specific permissions you can grant
+    or deny on top of them — deliberately, instead of a large matrix of role names to memorize.
+    This page explains how that model works and how to connect your identity provider so your
+    team can sign in with SSO.
+  </p>
+
+  <h2>Three Roles, Not a Role Catalog</h2>
+
+  <p>
+    Every team member has exactly one of three roles: <strong>Owner</strong>,
+    <strong>Admin</strong>, or <strong>Member</strong>. That's the whole list — Skillsmith doesn't
+    let you invent custom role names, because a small, fixed set of roles is easier for your team
+    to reason about and easier for you to audit later. Each team has exactly one Owner, who can't
+    be removed or locked out (someone always has to be able to fix a misconfiguration), and any
+    number of Admins and Members.
+  </p>
+
+  <table>
+    <thead>
+      <tr>
+        <th>Role</th>
+        <th>What it means</th>
+      </tr>
+    </thead>
+    <tbody>
+      <tr>
+        <td><strong>Owner</strong></td>
+        <td>Full control of the team, including billing. Exactly one per team, always.</td>
+      </tr>
+      <tr>
+        <td><strong>Admin</strong></td>
+        <td>
+          Manages team membership and, by default, can approve or deprecate private-registry
+          skills.
+        </td>
+      </tr>
+      <tr>
+        <td><strong>Member</strong></td>
+        <td>
+          Everyday team access — install and use shared skills, view the private registry — without
+          admin-level actions.
+        </td>
+      </tr>
+    </tbody>
+  </table>
+
+  <h2>Permissions: Widen or Narrow a Role Without a New Role Name</h2>
+
+  <p>
+    On top of the three roles, an Admin can grant or deny four specific permissions to individual
+    team members. This is what lets you express something like "a reviewer who isn't a full
+    Admin" or "a read-only teammate" without Skillsmith having to add role names like
+    <em>ReadOnly</em> or <em>Manager</em> to the product. A broader role already includes
+    everything a narrower one can do — Admin already covers everything Member can — so you reach
+    those in-between shapes by taking a Member and adjusting exactly the permission that matters,
+    not by picking a different role:
+  </p>
+
+  <ul>
+    <li>
+      Want a trusted Member who can approve registry submissions without making them a full
+      Admin? Grant that one Member <code>registry:approve</code>.
+    </li>
+    <li>
+      Want a teammate who can only browse and install, never publish or approve anything? Leave
+      them as a Member and don't grant anything further — that's the read-only shape by default.
+    </li>
+  </ul>
+
+  <table>
+    <thead>
+      <tr>
+        <th>Permission</th>
+        <th>What it lets you do</th>
+        <th>Default</th>
+      </tr>
+    </thead>
+    <tbody>
+      <tr>
+        <td><code>registry:approve</code></td>
+        <td>Approve a pending private-registry skill submission</td>
+        <td>Owner, Admin</td>
+      </tr>
+      <tr>
+        <td><code>registry:deprecate</code></td>
+        <td>Mark an approved private-registry skill version deprecated</td>
+        <td>Owner, Admin</td>
+      </tr>
+      <tr>
+        <td><code>team:manage_rbac</code></td>
+        <td>Grant or deny these permissions to other team members</td>
+        <td>Owner</td>
+      </tr>
+      <tr>
+        <td><code>team:manage_sso</code></td>
+        <td>Configure SSO/SAML for the team (see below)</td>
+        <td>Owner</td>
+      </tr>
+    </tbody>
+  </table>
+
+  <p>
+    Two rules keep this predictable. First, an explicit <strong>deny always wins over an
+    allow</strong> — if an Admin is denied <code>registry:approve</code> for some reason, that
+    denial holds even though Admins get it by default. Second, <strong>the Owner role can never be
+    narrowed</strong> — you can't accidentally (or deliberately) strip the Owner's own access,
+    which is what guarantees a team can never lock itself out entirely.
+  </p>
+
+  <p>
+    Roles and permission grants are configured through the Skillsmith MCP tools in your AI coding
+    assistant, or the CLI — ask your assistant to show your team's current roles, or to grant or
+    revoke one of the four permissions above for a teammate, and it resolves to the underlying
+    RBAC management tools. See <a href="/docs/mcp-server">MCP Server</a> for how tools are wired
+    up, or <a href="/docs/cli">CLI Reference</a> for the equivalent commands.
+  </p>
+
+  <h2>Setting Up SSO</h2>
+
+  <p>
+    SSO lets your team sign in with your company's own identity provider (Okta, Azure AD, Google
+    Workspace, or any SAML/OIDC IdP) instead of a Skillsmith password. It's self-service on
+    Enterprise — an Owner or Admin with <code>team:manage_sso</code> sets it up directly, no
+    onboarding engagement required. Setup has four steps:
+  </p>
+
+  <ol>
+    <li>
+      <strong>Claim your domain.</strong> Tell Skillsmith which email domain your team signs in
+      with (for example, <code>yourcompany.com</code>).
+    </li>
+    <li>
+      <strong>Verify it with a DNS record.</strong> Skillsmith gives you a TXT record to add to
+      your domain's DNS. Once it's added, verification confirms you actually control the domain —
+      this is what stops anyone else from claiming a domain they don't own. Verification is
+      re-checked periodically to make sure the record hasn't been removed.
+    </li>
+    <li>
+      <strong>Register your identity provider.</strong> Provide your IdP's SAML metadata (or the
+      equivalent OIDC details) so Skillsmith knows how to redirect your team's sign-ins to it.
+    </li>
+    <li>
+      <strong>Sign in.</strong> Team members go to
+      <a href="/login">www.skillsmith.app/login</a>, choose <strong>Sign in with SSO</strong>, and
+      enter their work email or domain. Skillsmith looks up your team's identity provider by
+      domain and redirects them there to authenticate.
+    </li>
+  </ol>
+
+  <p>
+    If SSO isn't set up for your domain yet, the sign-in page will say so and offer email/password
+    sign-in as a fallback. If SSO was set up but is temporarily unavailable (for example, the
+    domain verification lapsed), the sign-in page tells you that too, and points you to your
+    team's admin rather than leaving you guessing.
+  </p>
+
+  <h2>Related Documentation</h2>
+
+  <ul>
+    <li><a href="/docs/private-registry">Private Registry</a> - where <code>registry:approve</code> and <code>registry:deprecate</code> apply</li>
+    <li><a href="/docs/governance">Governance, End to End</a> - the audit trail every role and permission change writes to</li>
+    <li><a href="/docs/mcp-server">MCP Server</a> - how the RBAC and SSO management tools are wired up</li>
+  </ul>
+</DocsLayout>

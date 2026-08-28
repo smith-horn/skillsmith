@@ -107,6 +107,7 @@ NO_VERIFY_JWT_FUNCTIONS=(
   skills-outreach-preferences
   skills-recommend
   skills-search
+  sso-domain-reverify
   stats
   status-check
   status-public
@@ -135,6 +136,7 @@ VERIFY_JWT_FUNCTIONS=(
   sync-oauth-email
   sync-stripe-email
   team-invite-send
+  team-sso-manage
   update-seat-count
   webhook-dlq
 )

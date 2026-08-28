@@ -134,3 +134,20 @@ packages/website/src/pages/invite/[token].astro
 # Smoke verification requires a real OAuth email-change event which the
 # harness cannot synthesize. Gateway-verified (no --no-verify-jwt).
 supabase/functions/sync-oauth-email/**
+
+# SMI-6204: team-sso-manage is user-facing (backs configure_sso's
+# set/get/test/remove/claim_domain/verify_domain actions) but, like
+# team-invite-send above, requires a real authenticated session holding the
+# team:manage_sso permission plus a real GoTrue SAML provider round-trip --
+# the current smoke harness cannot synthesize either without registering a
+# real SSO provider against prod. Smoke verification is manual on first
+# deploy; after that lands, move this into surfaces.json with a check that
+# exercises the not-signed-in 401 path and the gateway-verified 403 path.
+supabase/functions/team-sso-manage/**
+
+# SMI-6204: sso-domain-reverify is cron-only (invoked daily by pg_cron via
+# public.invoke_sso_domain_reverify(), no user-facing HTTP surface).
+# Verified via audit_logs (sso:domain_reverify_failed events) and the
+# team_sso_domains.consecutive_failures/last_verify_error columns, not HTTP
+# smoke -- same pattern as status-check above.
+supabase/functions/sso-domain-reverify/**

@@ -4,6 +4,17 @@ All notable changes to `@skillsmith/mcp-server` are documented here.
 
 ## [Unreleased]
 
+- **Feature**: `configure_sso` is now backed by a real Supabase-backed SSO service
+  (`sso-tools.live.ts`), calling the new `team-sso-manage` gateway-verified edge function instead
+  of the in-memory stub. `set`/`get`/`test`/`remove` configure and query a real GoTrue SAML
+  provider registration; `set`/`remove` are gated on the `team:manage_sso` permission (owner-only
+  by default, per SMI-6242) resolved as the caller. `configure_sso` gains two new actions,
+  `claim_domain`/`verify_domain`, for proving control of a domain via DNS TXT record before it can
+  be attached to an SSO configuration — a domain must be verified before `set` will register a
+  provider against it. `test` is now a real round-trip to GoTrue rather than a simulated response;
+  the existing `simulated?: boolean` field stays in the type and is simply absent on the live path.
+  A daily `sso-domain-reverify` job re-checks each claimed domain's DNS record and disables the
+  live IdP registration after repeated verification failures (SMI-6204).
 - **Feature**: `rbac_manage`/`rbac_assign_role`/`rbac_create_policy` are now backed by a real
   Supabase RBACService (`rbac-tools.live.ts`) instead of the in-memory stub, on the caller's own
   signed-in JWT — never the shared team license key or service-role. `list_roles`/`get_role` now

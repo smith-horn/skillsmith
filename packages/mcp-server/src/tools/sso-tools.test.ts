@@ -258,4 +258,63 @@ describe('sso-tools', () => {
       expect(result.test?.simulated).toBe(true)
     })
   })
+
+  // ==========================================================================
+  // SMI-6204 (Wave 3): claim_domain / verify_domain, stub mode
+  // ==========================================================================
+
+  describe('configure_sso action "claim_domain"', () => {
+    it('should fail without a domain', async () => {
+      const result = await executeConfigureSso(
+        { action: 'claim_domain', protocol: 'saml' },
+        mockContext
+      )
+      expect(result.success).toBe(false)
+      expect(result.error).toContain('domain is required')
+    })
+
+    it('should issue a simulated DNS TXT verification token', async () => {
+      const result = await executeConfigureSso(
+        { action: 'claim_domain', domain: 'example.com', protocol: 'saml' },
+        mockContext
+      )
+      expect(result.success).toBe(true)
+      expect(result.dataSource).toBe('stub')
+      expect(result.domainClaim).toBeDefined()
+      expect(result.domainClaim!.domain).toBe('example.com')
+      expect(result.domainClaim!.recordName).toBe('_skillsmith-verify.example.com')
+      expect(result.domainClaim!.recordType).toBe('TXT')
+      expect(result.domainClaim!.recordValue).toBeTruthy()
+      expect(result.domainClaim!.simulated).toBe(true)
+      expect(result.message).toContain('DNS TXT record')
+      expect(result.message).toContain('_skillsmith-verify.example.com')
+      expect(result.message).toMatch(/stub data/i)
+    })
+  })
+
+  describe('configure_sso action "verify_domain"', () => {
+    it('should fail without a domain', async () => {
+      const result = await executeConfigureSso(
+        { action: 'verify_domain', protocol: 'saml' },
+        mockContext
+      )
+      expect(result.success).toBe(false)
+      expect(result.error).toContain('domain is required')
+    })
+
+    it('should always simulate a successful verification', async () => {
+      const result = await executeConfigureSso(
+        { action: 'verify_domain', domain: 'example.com', protocol: 'saml' },
+        mockContext
+      )
+      expect(result.success).toBe(true)
+      expect(result.dataSource).toBe('stub')
+      expect(result.domainVerification).toBeDefined()
+      expect(result.domainVerification!.domain).toBe('example.com')
+      expect(result.domainVerification!.verified).toBe(true)
+      expect(result.domainVerification!.simulated).toBe(true)
+      expect(result.message).toContain('is verified')
+      expect(result.message).toMatch(/stub/i)
+    })
+  })
 })
