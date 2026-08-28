@@ -419,11 +419,16 @@ describe('data/skills-security-allowlist.json (ship-it sanity)', () => {
   // (jailbreak, data_exfiltration findingTypes) since both bare-keyword
   // patterns trip on the same description line — same self-describing-
   // security-tool FP class as RENJI04/prompt-injection-auditor.
+  // SMI-6237 (2026-08-27): binnukarunakar/icm-shipwright added — workspace-
+  // safety tool whose repo description says 'secret/PII guardrails'; same
+  // description-advertises-a-security-feature FP class as skill-protocol-rs
+  // and qpay-skills. Closes GH #2059 (7 straight Weekly Security Scan
+  // failures on this exact skill/finding since 2026-07-26).
   it('is parseable and every entry expires 90 days after review', () => {
     const filePath = path.resolve(__dirname, '../../../../data/skills-security-allowlist.json')
     const raw = JSON.parse(fs.readFileSync(filePath, 'utf-8'))
     const parsed = parseAllowlistFile(raw)
-    expect(parsed.allowlist.length).toBe(11)
+    expect(parsed.allowlist.length).toBe(12)
     const ids = parsed.allowlist.map((e) => e.skillId).sort()
     expect(ids).toEqual(
       [
@@ -431,6 +436,7 @@ describe('data/skills-security-allowlist.json (ship-it sanity)', () => {
         'github/RENJI04/prompt-injection-auditor',
         'github/RobinGase/skill-protocol-rs',
         'github/StrategicPromptArchitect-AI/MalPromptSentinel-CC-Skill',
+        'github/binnukarunakar/icm-shipwright',
         'github/dokind/qpay-skills',
         'github/fitz2882/narthex',
         'github/fitz2882/narthex',

@@ -101,6 +101,15 @@
       "reviewedBy": "ryansmith108",
       "reviewedAt": "2026-08-13",
       "expiresAt": "2026-11-11"
+    },
+    {
+      "skillId": "github/binnukarunakar/icm-shipwright",
+      "findingType": "sensitive_path",
+      "messagePattern": "secrets?",
+      "reason": "Workspace-safety tool ('Make AI-agent workspaces safe to run and ship... with secret/PII guardrails and a 17-check lint'). Fetched all 33 files in the repo tree and found zero literal 'secret(s)/' matches in any file content — the only hit anywhere is the repo's own GitHub description phrase 'secret/PII guardrails', which the bare-keyword sensitive_path regex matches case-insensitively. Same false-positive class as github/RobinGase/skill-protocol-rs and github/dokind/qpay-skills (description advertises a security/credential-handling feature). Triaged 2026-08-27 under SMI-6237 — closes GH #2059 (7 consecutive Weekly Security Scan failures since 2026-07-26, all the same skill/finding).",
+      "reviewedBy": "ryansmith108",
+      "reviewedAt": "2026-08-27",
+      "expiresAt": "2026-11-25"
     }
   ]
 }
