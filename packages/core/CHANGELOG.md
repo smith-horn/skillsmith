@@ -4,6 +4,10 @@ All notable changes to `@skillsmith/core` are documented here.
 
 ## [Unreleased]
 
+- **Fix**: new `clearCredentials()` export (`config/token-credentials.ts`) clears a stored
+  JWT device-code session (access/refresh token, expiry) from both the config file and the
+  OS keyring `refresh-token` entry — previously there was no way to end a JWT session at all;
+  `clearApiKey()` only ever touched the separate legacy `apiKey` field. (SMI-6235)
 - **Docs**: README's framing sentence updated from the "lifecycle layer" tagline to a plain
   descriptive sentence ("a registry for sharing, scanning, and tracking agent skills across
   teams") as part of the site-wide positioning reframe. Wording-only. (SMI-6194)
