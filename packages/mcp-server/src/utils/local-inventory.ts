@@ -184,7 +184,25 @@ export async function scanLocalInventory(
   // full rationale.
   if (opts.projectDir) {
     const projectSkillsDir = path.join(opts.projectDir, '.claude', 'skills')
-    entries.push(...scanProjectSkills(projectSkillsDir, manifest, warnings))
+    // GPT-5.6-Sol review finding (commit 4a883c9aa): a symlinked `.claude`
+    // or `skills` segment could resolve outside `projectDir` even though
+    // the lexical join above looks safe — same class of gap the Source 5
+    // plugin scan already guards against with `isWithinRoot`. Only check
+    // when the directory exists: `scanSkillsDirEntries` itself degrades
+    // silently (no warning) for a missing directory, and `isWithinRoot`'s
+    // `realpathSync` would otherwise throw on a nonexistent path and turn
+    // that silent case into a spurious skip-warning.
+    if (fs.existsSync(projectSkillsDir)) {
+      if (isWithinRoot(opts.projectDir, projectSkillsDir)) {
+        entries.push(...scanProjectSkills(projectSkillsDir, manifest, warnings))
+      } else {
+        warnings.push({
+          code: WARNING_CODES.PROJECT_SKILLS_SCAN_SKIPPED,
+          message: `${projectSkillsDir} resolves outside the project directory (symlink escape); skipping`,
+          context: { path: projectSkillsDir },
+        })
+      }
+    }
   }
 
   // Stable ordering for downstream consumers.

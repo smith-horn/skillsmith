@@ -33,6 +33,9 @@ export const WARNING_CODES = {
    * directory doesn't have exactly one version subdirectory. Always
    * fail-soft: the plugin is skipped, not thrown. */
   PLUGIN_SCAN_SKIPPED: 'namespace.inventory.plugin_scan_skipped',
+  /** SMI-6240 Source 6: `<projectDir>/.claude/skills` resolved (post-symlink)
+   * outside `projectDir` — same `isWithinRoot` guard as Source 5. */
+  PROJECT_SKILLS_SCAN_SKIPPED: 'namespace.inventory.project_skills_scan_skipped',
 } as const
 
 /** Maximum trigger phrases retained per entry — matches `OverlapDetector.MAX_TRIGGER_PHRASES_PER_SKILL`. */
@@ -290,11 +293,7 @@ export function readEnabledPluginIds(settingsPath: string, warnings: ScanWarning
     .map(([id]) => id)
 }
 
-/**
- * Resolve `~/.skillsmith/manifest.json` and return the parsed object, or
- * `null` if absent / unreadable. Scanner uses this to populate
- * `entry.meta.author` for installed skills.
- */
+/** Resolve `~/.skillsmith/manifest.json`, or `null` if absent/unreadable. */
 export function loadManifest(manifestPath: string): Record<string, unknown> | null {
   try {
     if (!fs.existsSync(manifestPath)) return null

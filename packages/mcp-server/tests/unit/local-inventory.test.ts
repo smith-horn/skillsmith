@@ -554,6 +554,28 @@ describe('scanLocalInventory — Source 6 project skills (SMI-6240)', () => {
     const result = await scanLocalInventory({ homeDir: TEST_HOME, projectDir: TEST_PROJECT_DIR })
     expect(result.entries.some((e) => e.origin === 'project')).toBe(false)
   })
+
+  it('a symlinked .claude/skills pointing outside projectDir is rejected, not followed (GPT-5.6-Sol review finding, commit 4a883c9aa)', async () => {
+    // Mirrors the Source 5 plugin symlink-escape test above: the lexical
+    // `path.join(projectDir, '.claude', 'skills')` looks safe even when
+    // `.claude` (or `skills`) is a symlink that resolves outside
+    // projectDir on disk.
+    const outsideDir = path.join(TEST_HOME, 'outside-the-project', 'skills', 'evil')
+    fs.mkdirSync(outsideDir, { recursive: true })
+    fs.writeFileSync(path.join(outsideDir, 'SKILL.md'), `---\nname: evil\n---\nbody\n`)
+
+    fs.symlinkSync(
+      path.join(TEST_HOME, 'outside-the-project'),
+      path.join(TEST_PROJECT_DIR, '.claude')
+    )
+
+    const result = await scanLocalInventory({ homeDir: TEST_HOME, projectDir: TEST_PROJECT_DIR })
+    expect(result.entries.some((e) => e.origin === 'project')).toBe(false)
+    expect(result.entries.some((e) => e.identifier === 'evil')).toBe(false)
+    expect(result.warnings.some((w) => w.code === WARNING_CODES.PROJECT_SKILLS_SCAN_SKIPPED)).toBe(
+      true
+    )
+  })
 })
 
 describe('readEnabledPluginIds', () => {
