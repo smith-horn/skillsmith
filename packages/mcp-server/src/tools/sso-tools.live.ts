@@ -318,7 +318,11 @@ function mapSettingsToConfig(body: GetSsoConfigResponse): SSOConfig | null {
     idpMetadataUrl: '',
     configuredAt: body.settings.updated_at,
     status: body.settings.status,
-    domains: body.domains.map((d) => d.domain),
+    // 2026-08-28 adversarial review, L-5: only report VERIFIED domains as configured for SSO —
+    // an unverified claim row is not yet meaningfully "configured," and reporting it as such
+    // would tell a caller SSO auto-discovery works for a domain that GoTrue was never actually
+    // told about (`set` only ever registers verified domains — see actions.config.ts).
+    domains: body.domains.filter((d) => d.verified_at !== null).map((d) => d.domain),
   }
 }
 

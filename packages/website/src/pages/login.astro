@@ -787,7 +787,13 @@ const redirectTo =
           } else if (error.code === 'sso_provider_not_found') {
             ssoErrorMessage.textContent = `No SSO provider is set up for ${domain}. You may not have SSO configured for your team — sign in with your email and password above instead.`
           } else {
-            ssoErrorMessage.textContent = error.message
+            // SMI-6204 (2026-08-28 adversarial review, M-6): never surface GoTrue's raw error
+            // text verbatim in the DOM — matches every other file in this wave's convention (this
+            // was `.textContent`, not `.innerHTML`, so not XSS, but still inconsistent). Log the
+            // raw detail for debugging and show a fixed, authored fallback instead.
+            console.error('SSO sign-in error (unrecognized code):', error.code, error.message)
+            ssoErrorMessage.textContent =
+              'Something went wrong signing in with SSO. Please try again or use your password.'
           }
           ssoErrorMessage.style.display = 'block'
           return

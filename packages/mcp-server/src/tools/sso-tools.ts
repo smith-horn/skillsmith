@@ -24,7 +24,7 @@ import { dataSourceFor } from './stub-data-source.js'
 import { isSupabaseConfigured } from '../supabase-client.js'
 import { createLiveSSOService, SsoDomainNotVerifiedError } from './sso-tools.live.js'
 import type { SsoDomainNotVerifiedDetails } from './sso-tools.live.js'
-import { toPermissionDeniedError } from './team-permission-error.js'
+import { toPermissionDeniedError, permissionErrorText } from './team-permission-error.js'
 import type { PermissionDeniedError } from './team-permission-error.js'
 import { createStubSSOService } from './sso-tools.stub.js'
 import type {
@@ -210,6 +210,12 @@ export interface SsoSettingsResult {
   dataSource: 'stub' | 'live'
   config?: SSOConfig
   message: string
+  /**
+   * A structured permission refusal (same shape RBAC/configure_sso render — `team-permission-
+   * error.ts`), populated when `svc.get()` throws (SMI-6204 2026-08-28 adversarial review, M-2).
+   * Mirrors `ConfigureSsoResult.error`.
+   */
+  error?: string | PermissionDeniedError
 }
 
 /**
@@ -367,25 +373,39 @@ async function executeSsoSettingsImpl(
   // SMI-6203 (P-5 audit): see executeConfigureSsoImpl above.
   const svc = service
   const dataSource: 'stub' | 'live' = dataSourceFor(svc)
-  const config = await svc.get(input.includeMetadata ?? false)
-  if (!config) {
+  // M-2 (SMI-6204 2026-08-28 adversarial review): `svc.get()` can throw
+  // TeamPermissionDeniedError/SsoAuthError/SsoServiceUnavailableError on the live path -- unlike
+  // executeConfigureSsoImpl, this had no try/catch at all, so a permission denial threw instead
+  // of returning the same structured refusal shape configure_sso already renders.
+  try {
+    const config = await svc.get(input.includeMetadata ?? false)
+    if (!config) {
+      return {
+        configured: false,
+        dataSource,
+        message:
+          'No SSO configuration found.\n' +
+          'Use configure_sso with action "set" to configure SSO for your organization.',
+      }
+    }
+    return {
+      configured: true,
+      dataSource,
+      config,
+      message:
+        `SSO is configured (${config.protocol.toUpperCase()}).\n` +
+        `IdP Entity ID: ${config.idpEntityId}\n` +
+        `Status: ${config.status}\n` +
+        `Configured at: ${config.configuredAt}`,
+    }
+  } catch (err) {
+    const { error } = toSsoToolError(err)
     return {
       configured: false,
       dataSource,
-      message:
-        'No SSO configuration found.\n' +
-        'Use configure_sso with action "set" to configure SSO for your organization.',
+      message: permissionErrorText(error) || 'Could not load SSO settings.',
+      error,
     }
-  }
-  return {
-    configured: true,
-    dataSource,
-    config,
-    message:
-      `SSO is configured (${config.protocol.toUpperCase()}).\n` +
-      `IdP Entity ID: ${config.idpEntityId}\n` +
-      `Status: ${config.status}\n` +
-      `Configured at: ${config.configuredAt}`,
   }
 }
 

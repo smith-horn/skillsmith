@@ -376,6 +376,58 @@ describe('createLiveSSOService — team-sso-manage fetch() mapping', () => {
     expect(result.config?.configuredAt).toBe('2026-08-28T00:00:00Z')
   })
 
+  it('sso_settings: an unverified domain claim is NOT reported as a configured domain (L-5)', async () => {
+    fetchMock.mockResolvedValue(
+      jsonResponse(
+        {
+          settings: {
+            supabase_provider_id: 'p1',
+            reverify_days: 7,
+            role_mapping: {},
+            status: 'active',
+            configured_by: '11111111-2222-3333-4444-555555555555',
+            created_at: '2026-08-27T00:00:00Z',
+            updated_at: '2026-08-28T00:00:00Z',
+          },
+          domains: [
+            { domain: 'verified.example.com', verified_at: '2026-08-28T00:00:00Z' },
+            { domain: 'still-claiming.example.com', verified_at: null },
+          ],
+        },
+        200
+      )
+    )
+    const result = await executeSsoSettings({ includeMetadata: false }, mockContext)
+    expect(result.config?.domains).toEqual(['verified.example.com'])
+    expect(result.config?.domains).not.toContain('still-claiming.example.com')
+  })
+
+  it('sso_settings: a 403 from get() surfaces as a structured refusal, not a thrown exception (M-2)', async () => {
+    // SMI-6204 (2026-08-28 adversarial review, M-2): executeSsoSettingsImpl previously had no
+    // try/catch at all, unlike executeConfigureSsoImpl -- a TeamPermissionDeniedError thrown by
+    // svc.get() (a live-path 403) would propagate out of the tool call entirely instead of
+    // rendering the same structured refusal shape configure_sso already does. This must resolve
+    // (not reject) with `configured: false` and a structured `error`.
+    fetchMock.mockResolvedValue(
+      jsonResponse(
+        {
+          error: 'forbidden',
+          permission: 'team:manage_sso',
+          message: 'You don\'t have the "team:manage_sso" permission for this team.',
+        },
+        403
+      )
+    )
+    // If this rejected instead of resolving, `await` would propagate that rejection straight to
+    // the test and fail it -- the assertion itself is proof this resolves rather than throws.
+    const result = await executeSsoSettings({ includeMetadata: false }, mockContext)
+    expect(result.configured).toBe(false)
+    expect(result.dataSource).toBe('live')
+    expect(isPermissionDeniedError(result.error)).toBe(true)
+    expect(permissionErrorText(result.error)).toContain('team:manage_sso')
+    expect(result.message).toContain('team:manage_sso')
+  })
+
   it('claim_domain: maps a live response into domainClaim with no simulated flag', async () => {
     // Real handleClaimDomain response shape (actions.domain.ts): txtRecordName/txtRecordValue,
     // no recordType field at all (it is always 'TXT' — the edge function never sends it back).

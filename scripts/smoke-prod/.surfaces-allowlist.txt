@@ -145,9 +145,14 @@ supabase/functions/sync-oauth-email/**
 # exercises the not-signed-in 401 path and the gateway-verified 403 path.
 supabase/functions/team-sso-manage/**
 
-# SMI-6204: sso-domain-reverify is cron-only (invoked daily by pg_cron via
-# public.invoke_sso_domain_reverify(), no user-facing HTTP surface).
-# Verified via audit_logs (sso:domain_reverify_failed events) and the
-# team_sso_domains.consecutive_failures/last_verify_error columns, not HTTP
-# smoke -- same pattern as status-check above.
+# SMI-6204: sso-domain-reverify is intended-cron-only (invoked daily by
+# pg_cron via public.invoke_sso_domain_reverify()) -- but, unlike status-check
+# below, it DOES have an internet-reachable HTTP surface (verify_jwt = false
+# functions are reachable by anyone; the handler itself gates on
+# isServiceRoleCallerBySecretCompare, added 2026-08-28 after an adversarial
+# review found the endpoint had no auth check at all). Not added to
+# surfaces.json because a real smoke check would need the real service-role
+# key, which the smoke harness does not hold. Verified via audit_logs
+# (sso:domain_reverify_failed events) and the
+# team_sso_domains.consecutive_failures/last_verify_error columns instead.
 supabase/functions/sso-domain-reverify/**

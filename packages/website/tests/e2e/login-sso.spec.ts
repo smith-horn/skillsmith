@@ -112,6 +112,29 @@ test.describe('Login — Sign in with SSO (SMI-6204)', () => {
     await expect(errorMessage).toContainText('Contact your team admin')
   })
 
+  test('an unrecognized SSO error code shows a fixed authored fallback, never GoTrue raw text (M-6)', async ({
+    page,
+  }) => {
+    // SMI-6204 (2026-08-28 adversarial review, M-6): the page's `else` branch previously set
+    // `ssoErrorMessage.textContent = error.message` verbatim for any error code it didn't
+    // explicitly recognize -- not XSS (`.textContent`, not `.innerHTML`), but inconsistent with
+    // every other file in this wave's "never surface raw upstream text" convention. Use an
+    // unrecognized `error_code` here (not `sso_provider_not_found`/`sso_provider_disabled`) and
+    // an obviously-raw, internal-sounding `msg` that must NEVER reach the visible DOM.
+    const rawUpstreamText = 'internal_gotrue_diagnostic_code_7734: saml assertion parse failure'
+    await mockSignInWithSSOError(page, 'some_unrecognized_error_code', rawUpstreamText)
+    await page.goto('/login')
+
+    await page.locator('#sso-toggle-btn').click()
+    await page.locator('#sso-domain').fill('acme.example')
+    await page.locator('#sso-submit-btn').click()
+
+    const errorMessage = page.locator('#sso-error-message')
+    await expect(errorMessage).toBeVisible()
+    await expect(errorMessage).toContainText('Something went wrong signing in with SSO')
+    await expect(errorMessage).not.toContainText(rawUpstreamText)
+  })
+
   test('a full email address is accepted and only the domain is sent', async ({ page }) => {
     let capturedBody: { domain?: string } | null = null
     await page.route(`${SUPABASE_HOST}/**`, async (route: Route) => {
