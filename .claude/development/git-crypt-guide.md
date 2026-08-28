@@ -206,6 +206,8 @@ The script handles:
 
 **Running commands in the worktree's container (SMI-5559)**: after `docker compose --profile dev up -d`, use `./scripts/worktree-docker.sh exec -- <cmd>` rather than a hardcoded `docker exec skillsmith-dev-1 <cmd>` — the latter is main's container name and silently "succeeds" from any worktree even when this worktree's own container never started. `worktree-docker.sh exec` resolves the container from cwd and errors loudly if it isn't running.
 
+**Run `create-worktree.sh` from the MAIN checkout only, never from inside another worktree (SMI-6203 retro, 2026-08-28).** The script's Step 4d `node_modules` symlink (and the `.env` symlink in Step 3b) are computed relative to whatever directory the script resolves as "repository root" — inside a worktree, that resolves to the WORKTREE itself, not the main checkout. The new worktree silently ends up with `.env` symlinked to the calling worktree's own `.env` (not main's) and `node_modules` missing entirely (the relative-path computation fails and the step is skipped with only a warning, easy to miss in a long creation log). If you're already inside a worktree and need a new one, `cd` to the main checkout first — the git worktree machinery itself works fine from anywhere, only this script's own path resolution assumes it.
+
 ### `.mcp.json` skip-worktree (SMI-4973)
 
 When `create-worktree.sh` finishes, the worktree's `.mcp.json` is
