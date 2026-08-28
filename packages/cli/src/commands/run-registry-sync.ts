@@ -3,10 +3,10 @@
  * @see SMI-4917
  *
  * Extracted from `sync.ts`'s `runSync` so the registry-sync mechanics (JWT load,
- * API client, repositories, `SyncEngine`) can be reused by:
- *   - the `sync` command (`sync.ts`),
- *   - the post-login auto-sync (`login.ts`),
- *   - the empty-DB auto-sync on `search` (`search.helpers.ts`).
+ * API client, repositories, `SyncEngine`) can be reused by the `sync` command.
+ * The post-login auto-sync (`login.ts`) and the empty-DB auto-sync on `search`
+ * (`search.helpers.ts`) call sites were removed under SMI-5427 — `sync.action.ts`
+ * (via `sync.ts`) is now this helper's only caller.
  *
  * This helper does NOT open or close the database and does NOT call
  * `process.exit` — the caller owns the database lifecycle and process control.
@@ -22,7 +22,25 @@ import {
   type DatabaseType,
   type SyncProgress,
   type SyncResult,
+  type SkillsmithApiClient,
 } from '@skillsmith/core'
+
+/**
+ * Resolve the API client used for registry sync, with the same
+ * credential-resolution path `runRegistrySync()` uses: an auto-loaded stored
+ * JWT (SMI-4474) when available, falling back to the client's own anonymous
+ * mode otherwise.
+ *
+ * Exported so callers that need the same authenticated client outside of a
+ * full sync run (e.g. `sync.action.ts`'s pre-sync record-count fetch) reuse
+ * this exact resolution instead of duplicating it.
+ */
+export async function getSyncApiClient(): Promise<SkillsmithApiClient> {
+  // SMI-4474: auto-load JWT from ~/.skillsmith/config.json so logged-in users
+  // count toward their quota instead of going anonymous.
+  const jwtToken = await loadStoredAccessToken()
+  return createApiClient(jwtToken ? { jwtToken } : {})
+}
 
 /**
  * Run a registry sync against an already-open, schema-initialized database.
@@ -48,10 +66,7 @@ export async function runRegistrySync(
   const syncHistoryRepo = new SyncHistoryRepository(db)
   const skillVersionRepo = new SkillVersionRepository(db)
 
-  // SMI-4474: auto-load JWT from ~/.skillsmith/config.json so logged-in users
-  // count toward their quota instead of going anonymous.
-  const jwtToken = await loadStoredAccessToken()
-  const apiClient = createApiClient(jwtToken ? { jwtToken } : {})
+  const apiClient = await getSyncApiClient()
 
   const syncEngine = new SyncEngine(
     apiClient,

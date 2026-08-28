@@ -2,9 +2,16 @@
  * SMI-5127: Sync command action implementations + telemetry wrappers.
  *
  * Sibling-split from sync.ts following the <command>.action.ts convention
- * established by SMI-5040. The four impl functions are extracted here and
- * wrapped with withTelemetry so the CLI_DISPATCHER_MAP coverage test can
- * assert 100% telemetry coverage without importing the full commander tree.
+ * established by SMI-5040, wrapped with withTelemetry so the
+ * CLI_DISPATCHER_MAP coverage test can assert 100% telemetry coverage
+ * without importing the full commander tree.
+ *
+ * Holds `syncAction` (the main sync — Team-tier gated, SMI-registry-sync-
+ * tier-gate) and `syncConfigAction` (partially gated: `--enable` requires
+ * Team tier, `--disable`/`--show`/`--frequency` do not). The read-only,
+ * ungated `status`/`history` subcommands were split out to the
+ * `sync.status-history.action.ts` sibling once this file grew past the
+ * 500-line CI standard with the tier gate + confirmation prompt added.
  *
  * Opts-adaptation choice: each *ActionImpl accepts the same typed options
  * struct that the sync.ts factory closures were building — the factory
@@ -14,33 +21,44 @@
  * commander imports.
  */
 
+import { confirm } from '@inquirer/prompts'
 import chalk from 'chalk'
 import ora from 'ora'
-import Table from 'cli-table3'
-import {
-  SyncConfigRepository,
-  SyncHistoryRepository,
-  type SyncProgress,
-  type SyncFrequency,
-} from '@skillsmith/core'
+import { SyncConfigRepository, type SyncProgress, type SyncFrequency } from '@skillsmith/core'
 import { getCliLogger } from '../cli-logger.js'
 import { withTelemetry } from '@skillsmith/core/telemetry'
 import { openCliDatabase } from '../utils/open-database.js'
-import { runRegistrySync } from './run-registry-sync.js'
+import { runRegistrySync, getSyncApiClient } from './run-registry-sync.js'
+import { requireTier } from '../utils/require-tier.js'
 import { sanitizeError } from '../utils/sanitize.js'
-import { formatDuration, formatDate, formatTimeUntil } from '../utils/formatters.js'
+import { formatDuration, formatDate } from '../utils/formatters.js'
 
 const logger = getCliLogger()
-import {
-  scanLocalSkillsForWarnings,
-  formatAdapterWarnings,
-  isAuthFailure,
-  formatAuthGuidance,
-} from './sync.helpers.js'
+import { isAuthFailure, formatAuthGuidance } from './sync.helpers.js'
 
 // ---------------------------------------------------------------------------
 // Impl functions
 // ---------------------------------------------------------------------------
+
+/**
+ * Fetch an approximate registry record count for the pre-sync confirmation
+ * prompt. Reuses `getSyncApiClient()` — the same credential-resolution path
+ * `runRegistrySync()` itself uses — so the count reflects the same auth
+ * context the sync will actually run under.
+ *
+ * Returns `null` on any failure (network error, auth error, etc.): the count
+ * is informational only and must never block the sync from proceeding just
+ * because the count fetch itself failed.
+ */
+async function fetchApproximateRecordCount(): Promise<number | null> {
+  try {
+    const apiClient = await getSyncApiClient()
+    const { data } = await apiClient.getStats()
+    return data.skillCount
+  } catch {
+    return null
+  }
+}
 
 /**
  * Run sync operation
@@ -49,17 +67,44 @@ async function syncActionImpl(options: {
   dbPath: string
   force: boolean
   dryRun: boolean
+  yes: boolean
   json: boolean
 }): Promise<void> {
   const spinner = ora()
 
   try {
+    // SMI-registry-sync-tier-gate: registry sync is a Team-tier feature —
+    // gate before any database/network work. Throws a friendly upgrade
+    // message on insufficient tier; the outer catch below handles it the
+    // same as any other sync failure.
+    await requireTier('team')
+
     spinner.start('Opening database...')
     // SMI-4917: openCliDatabase opens a connected, schema-initialized DB —
     // fresh installs would otherwise hit "no such table: skills".
     const db = await openCliDatabase(options.dbPath)
 
     try {
+      // SMI-registry-sync-tier-gate: confirm before pulling the full
+      // registry, unless the caller opted out (--yes) or is consuming
+      // machine-readable output (--json implies --yes — an interactive
+      // prompt mid-stream would corrupt a --json consumer's stdout).
+      if (!options.yes && !options.json) {
+        spinner.stop()
+        const count = await fetchApproximateRecordCount()
+        const message =
+          count !== null
+            ? `This will download approximately ${count.toLocaleString()} skill records. Continue?`
+            : 'This will download the full skill registry. Continue?'
+        const proceed = await confirm({ message, default: false })
+
+        if (!proceed) {
+          console.log(chalk.dim('Sync cancelled.'))
+          return
+        }
+        spinner.start()
+      }
+
       spinner.text = options.force ? 'Starting full sync...' : 'Starting differential sync...'
 
       const result = await runRegistrySync(db, {
@@ -153,196 +198,6 @@ async function syncActionImpl(options: {
 }
 
 /**
- * Show sync status
- *
- * SMI-5894 (Wave 1 Step 4): `client` (optional) scopes the local-skills
- * adapter-warnings scan to a specific agent's directory, resolved by
- * `scanLocalSkillsForWarnings()` the same way install/list/remove/update
- * resolve their target directory (explicit --client, else
- * SKILLSMITH_CLIENT, else the canonical client).
- */
-async function syncStatusActionImpl(options: {
-  dbPath: string
-  json: boolean
-  client?: string | undefined
-}): Promise<void> {
-  try {
-    const db = await openCliDatabase(options.dbPath)
-
-    try {
-      const syncConfigRepo = new SyncConfigRepository(db)
-      const syncHistoryRepo = new SyncHistoryRepository(db)
-
-      const config = syncConfigRepo.getConfig()
-      const lastRun = syncHistoryRepo.getLastSuccessful()
-      const isRunning = syncHistoryRepo.isRunning()
-      const isDue = syncConfigRepo.isSyncDue()
-      const stats = syncHistoryRepo.getStats()
-
-      if (options.json) {
-        console.log(
-          JSON.stringify(
-            {
-              config,
-              lastRun,
-              isRunning,
-              isDue,
-              stats,
-            },
-            null,
-            2
-          )
-        )
-        return
-      }
-
-      console.log(chalk.bold.blue('\n=== Sync Status ===\n'))
-
-      // Configuration
-      console.log(chalk.bold('Configuration:'))
-      console.log(
-        `  Auto-sync:  ${config.enabled ? chalk.green('Enabled') : chalk.red('Disabled')}`
-      )
-      console.log(`  Frequency:  ${chalk.cyan(config.frequency)}`)
-      console.log()
-
-      // Current state
-      console.log(chalk.bold('Current State:'))
-      console.log(`  Last sync:  ${formatDate(config.lastSyncAt)}`)
-      console.log(`  Next sync:  ${formatDate(config.nextSyncAt)}`)
-      console.log(`  Time until: ${formatTimeUntil(config.nextSyncAt)}`)
-      console.log(
-        `  Status:     ${isRunning ? chalk.yellow('Running') : isDue ? chalk.green('Due') : chalk.dim('Waiting')}`
-      )
-      console.log()
-
-      // Last run details
-      if (lastRun) {
-        console.log(chalk.bold('Last Successful Run:'))
-        console.log(`  Started:    ${formatDate(lastRun.startedAt)}`)
-        console.log(
-          `  Duration:   ${lastRun.durationMs ? formatDuration(lastRun.durationMs) : 'N/A'}`
-        )
-        console.log(`  Added:      ${lastRun.skillsAdded}`)
-        console.log(`  Updated:    ${lastRun.skillsUpdated}`)
-        console.log(`  Unchanged:  ${lastRun.skillsUnchanged}`)
-        console.log()
-      }
-
-      // Error info
-      if (config.lastSyncError) {
-        console.log(chalk.bold.red('Last Error:'))
-        console.log(`  ${config.lastSyncError}`)
-        console.log()
-      }
-
-      // Statistics
-      console.log(chalk.bold('Statistics:'))
-      console.log(`  Total runs:     ${stats.totalRuns}`)
-      console.log(`  Successful:     ${stats.successfulRuns}`)
-      console.log(`  Failed:         ${stats.failedRuns}`)
-      console.log(
-        `  Avg duration:   ${stats.averageDurationMs ? formatDuration(stats.averageDurationMs) : 'N/A'}`
-      )
-
-      // Local-skills adapter warnings (SMI-4287, GitHub #600).
-      // Surface symlink-escape / permission / loop errors so the user can
-      // act on them (e.g. `chmod +r`, remove rogue symlink).
-      const adapterWarnings = await scanLocalSkillsForWarnings(options.client)
-      if (adapterWarnings.length > 0) {
-        console.log()
-        console.log(chalk.bold.yellow('Local skill warnings:'))
-        for (const line of formatAdapterWarnings(adapterWarnings)) {
-          logger.error(line)
-        }
-      }
-    } finally {
-      db.close()
-    }
-  } catch (error) {
-    logger.error(`${chalk.red('Error:')} ${sanitizeError(error)}`)
-    process.exit(1)
-  }
-}
-
-/**
- * Show sync history
- */
-async function syncHistoryActionImpl(options: {
-  dbPath: string
-  limit: number
-  json: boolean
-}): Promise<void> {
-  try {
-    const db = await openCliDatabase(options.dbPath)
-
-    try {
-      const syncHistoryRepo = new SyncHistoryRepository(db)
-      const history = syncHistoryRepo.getHistory(options.limit)
-
-      if (options.json) {
-        console.log(JSON.stringify(history, null, 2))
-        return
-      }
-
-      if (history.length === 0) {
-        console.log(chalk.dim('\nNo sync history found. Run `skillsmith sync` to start syncing.\n'))
-        return
-      }
-
-      console.log(chalk.bold.blue('\n=== Sync History ===\n'))
-
-      const table = new Table({
-        head: [
-          chalk.bold('Date'),
-          chalk.bold('Status'),
-          chalk.bold('Added'),
-          chalk.bold('Updated'),
-          chalk.bold('Duration'),
-        ],
-        colWidths: [22, 12, 10, 10, 12],
-      })
-
-      for (const entry of history) {
-        const statusColor =
-          entry.status === 'success'
-            ? chalk.green
-            : entry.status === 'failed'
-              ? chalk.red
-              : entry.status === 'partial'
-                ? chalk.yellow
-                : chalk.blue
-
-        table.push([
-          new Date(entry.startedAt).toLocaleString(),
-          statusColor(entry.status),
-          String(entry.skillsAdded),
-          String(entry.skillsUpdated),
-          entry.durationMs ? formatDuration(entry.durationMs) : '-',
-        ])
-      }
-
-      console.log(table.toString())
-
-      if (history.some((e) => e.errorMessage)) {
-        console.log()
-        console.log(chalk.bold.red('Errors:'))
-        for (const entry of history.filter((e) => e.errorMessage)) {
-          console.log(
-            `  ${chalk.dim(new Date(entry.startedAt).toLocaleDateString())}: ${entry.errorMessage}`
-          )
-        }
-      }
-    } finally {
-      db.close()
-    }
-  } catch (error) {
-    logger.error(`${chalk.red('Error:')} ${sanitizeError(error)}`)
-    process.exit(1)
-  }
-}
-
-/**
  * Configure sync settings
  */
 async function syncConfigActionImpl(options: {
@@ -384,6 +239,12 @@ async function syncConfigActionImpl(options: {
 
       // Apply changes
       if (options.enable) {
+        // SMI-registry-sync-tier-gate: a below-tier user shouldn't be able to
+        // enable a background-sync feature that will only ever fail — the
+        // sync itself is gated to Team tier above. --disable/--show/--frequency
+        // are deliberately NOT gated: a user must always be able to see or
+        // turn off a setting regardless of tier.
+        await requireTier('team')
         syncConfigRepo.enable()
         console.log(chalk.green('✓ Auto-sync enabled'))
       }
@@ -430,18 +291,6 @@ async function syncConfigActionImpl(options: {
 export const syncAction = withTelemetry(syncActionImpl, {
   source: 'cli',
   extractSkillId: () => 'sync',
-  extractFramework: () => 'cli',
-})
-
-export const syncStatusAction = withTelemetry(syncStatusActionImpl, {
-  source: 'cli',
-  extractSkillId: () => 'sync status',
-  extractFramework: () => 'cli',
-})
-
-export const syncHistoryAction = withTelemetry(syncHistoryActionImpl, {
-  source: 'cli',
-  extractSkillId: () => 'sync history',
   extractFramework: () => 'cli',
 })
 
