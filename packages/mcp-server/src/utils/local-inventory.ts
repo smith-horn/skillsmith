@@ -28,13 +28,17 @@ import type { InventoryEntry, ScanResult, ScanWarning } from './local-inventory.
 import {
   WARNING_CODES,
   capTriggerSurface,
+  coerceDescription,
   extractClaudeMdTriggers,
   firstNonEmptyLine,
+  isSafePathComponent,
+  isWithinRoot,
   loadManifest,
-  lookupAuthor,
   readBody,
+  readEnabledPluginIds,
   readFrontmatter,
   readMtime,
+  scanSkillsDirEntries,
   splitDescriptionToPhrases,
 } from './local-inventory.helpers.js'
 
@@ -79,7 +83,12 @@ function resolveClientSkillsDir(client: ClientId, homeDir: string): string {
 export interface ScanLocalInventoryOptions {
   /** Defaults to `os.homedir()`. */
   homeDir?: string
-  /** Optional project CLAUDE.md to scan in addition to the user one. */
+  /**
+   * Optional project directory. When set, also scans `<projectDir>/CLAUDE.md`
+   * (Source 4, in addition to the user one) and `<projectDir>/.claude/skills/`
+   * (Source 6, SMI-6240 — this project's own skills, invisible to every
+   * other source, which are all user-level).
+   */
   projectDir?: string
   /** Override path to `~/.skillsmith/manifest.json`. */
   manifestPath?: string
@@ -157,6 +166,45 @@ export async function scanLocalInventory(
     }
   }
 
+  // Source 5 (SMI-6228): Claude Code plugin-installed skills under
+  // ~/.claude/plugins/cache/<marketplace>/<plugin>/<version>/skills/**,
+  // gated on `enabledPlugins["<plugin>@<marketplace>"] === true` in
+  // ~/.claude/settings.json. Additive to Sources 1-4 — plugin-installed
+  // skills were invisible to this scanner before this source existed
+  // (discovered via a vendor Supabase plugin colliding with this project's
+  // own `supabase` skill — see Source 6 below for the other half of that
+  // scenario this source alone did not close).
+  entries.push(...scanPluginInventory(claudeDir, manifest, warnings))
+
+  // Source 6 (SMI-6240): this project's own `.claude/skills/` mount-point
+  // (the private `skillsmith-strategy` submodule). Source 1 is USER-level
+  // only (~/.claude/skills), so a project-relative skill was invisible to
+  // this scanner even after Source 5 existed — the actual other half of
+  // the Source 5 collision scenario above. See `scanProjectSkills` for the
+  // full rationale.
+  if (opts.projectDir) {
+    const projectSkillsDir = path.join(opts.projectDir, '.claude', 'skills')
+    // GPT-5.6-Sol review finding (commit 4a883c9aa): a symlinked `.claude`
+    // or `skills` segment could resolve outside `projectDir` even though
+    // the lexical join above looks safe — same class of gap the Source 5
+    // plugin scan already guards against with `isWithinRoot`. Only check
+    // when the directory exists: `scanSkillsDirEntries` itself degrades
+    // silently (no warning) for a missing directory, and `isWithinRoot`'s
+    // `realpathSync` would otherwise throw on a nonexistent path and turn
+    // that silent case into a spurious skip-warning.
+    if (fs.existsSync(projectSkillsDir)) {
+      if (isWithinRoot(opts.projectDir, projectSkillsDir)) {
+        entries.push(...scanProjectSkills(projectSkillsDir, manifest, warnings))
+      } else {
+        warnings.push({
+          code: WARNING_CODES.PROJECT_SKILLS_SCAN_SKIPPED,
+          message: `${projectSkillsDir} resolves outside the project directory (symlink escape); skipping`,
+          context: { path: projectSkillsDir },
+        })
+      }
+    }
+  }
+
   // Stable ordering for downstream consumers.
   entries.sort((a, b) => {
     if (a.kind !== b.kind) return a.kind.localeCompare(b.kind)
@@ -174,6 +222,11 @@ export async function scanLocalInventory(
  * `~/.cursor/skills/*`) for SKILL.md frontmatter. Returns one entry per
  * directory; entries without SKILL.md are still recorded (with
  * directory-name fallback) so the collision detector still sees them.
+ *
+ * Thin wrapper over {@link scanSkillsDirEntries} that tags the result as
+ * Source 1 (`origin: 'native-client'`, `client` set). See
+ * {@link scanPluginSkills} for the Source 5 (plugin-scan) counterpart, which
+ * shares this same directory-walking logic but tags differently.
  */
 function scanSkills(
   skillsDir: string,
@@ -181,62 +234,161 @@ function scanSkills(
   warnings: ScanWarning[],
   client: ClientId
 ): InventoryEntry[] {
-  if (!fs.existsSync(skillsDir)) return []
+  return scanSkillsDirEntries(skillsDir, manifest, warnings).map((entry) => ({
+    ...entry,
+    client,
+    origin: 'native-client',
+  }))
+}
 
+/**
+ * Scan a plugin's `skills/` directory (SMI-6228 Source 5) — the pinned
+ * cache copy at
+ * `~/.claude/plugins/cache/<marketplace>/<plugin>/<version>/skills/**`, NOT
+ * the marketplace git clone. Same directory shape as a client's native
+ * skills directory (one `SKILL.md` per subdirectory), so this reuses
+ * {@link scanSkillsDirEntries} and only differs in how the result is
+ * tagged: `origin: 'plugin'` + `pluginId`, with `client` left `undefined`
+ * (a plugin is not a `ClientId` install target — see the doc comment on
+ * `InventoryEntry.origin`).
+ */
+function scanPluginSkills(
+  skillsDir: string,
+  manifest: Record<string, unknown> | null,
+  warnings: ScanWarning[],
+  pluginId: string
+): InventoryEntry[] {
+  return scanSkillsDirEntries(skillsDir, manifest, warnings).map((entry) => ({
+    ...entry,
+    origin: 'plugin',
+    pluginId,
+  }))
+}
+
+/**
+ * Source 6 (SMI-6240): this project's own `.claude/skills/` mount-point —
+ * the private `skillsmith-strategy` submodule (see CLAUDE.md's Skill
+ * Location Policy). Source 1 only scans USER-level client directories
+ * (`~/.claude/skills`, etc.); a project-relative skill was invisible to
+ * this scanner even after Source 5 (plugin scan) existed. This is the
+ * actual missing half of the scenario that motivated Source 5 in the first
+ * place — a vendor plugin skill colliding with THIS project's own skill
+ * (e.g. its `supabase` skill) was undetectable on either side until now.
+ * `client: CANONICAL_CLIENT` because no other supported client reads this
+ * project-relative convention today (same rationale as Sources 2-4).
+ */
+function scanProjectSkills(
+  skillsDir: string,
+  manifest: Record<string, unknown> | null,
+  warnings: ScanWarning[]
+): InventoryEntry[] {
+  return scanSkillsDirEntries(skillsDir, manifest, warnings).map((entry) => ({
+    ...entry,
+    client: CANONICAL_CLIENT,
+    origin: 'project',
+  }))
+}
+
+/**
+ * Source 5 (SMI-6228): Claude Code plugin-installed skills.
+ *
+ * For every plugin enabled in `~/.claude/settings.json` (per
+ * {@link readEnabledPluginIds}), resolve its skills from the PINNED CACHE
+ * copy — `~/.claude/plugins/cache/<marketplace>/<plugin>/<version>/skills/**`
+ * — never the marketplace git clone. The `<version>` segment is an opaque,
+ * arbitrary hash assigned by Claude Code's plugin manager; it is discovered
+ * by listing `<marketplace>/<plugin>/`, never hardcoded. Exactly one version
+ * directory is the expected steady state — zero (plugin id references a
+ * cache dir that was never populated or was since removed) or multiple
+ * (an in-progress or interrupted plugin update) both fail soft with a
+ * `PLUGIN_SCAN_SKIPPED` warning rather than guessing which version is live.
+ *
+ * Path-traversal/symlink guards (`isSafePathComponent`/`isWithinRoot`,
+ * GPT-5.6-Sol review finding) live in `local-inventory.helpers.ts`.
+ */
+function scanPluginInventory(
+  claudeDir: string,
+  manifest: Record<string, unknown> | null,
+  warnings: ScanWarning[]
+): InventoryEntry[] {
+  const settingsPath = path.join(claudeDir, 'settings.json')
+  const enabledPluginIds = readEnabledPluginIds(settingsPath, warnings)
+  if (enabledPluginIds.length === 0) return []
+
+  const pluginsCacheDir = path.join(claudeDir, 'plugins', 'cache')
   const out: InventoryEntry[] = []
-  let dirEntries: fs.Dirent[]
-  try {
-    dirEntries = fs.readdirSync(skillsDir, { withFileTypes: true })
-  } catch {
-    return []
-  }
 
-  for (const dirent of dirEntries) {
-    if (!dirent.isDirectory() || dirent.name.startsWith('.')) continue
-    const skillDir = path.join(skillsDir, dirent.name)
-    const skillMd = path.join(skillDir, 'SKILL.md')
-
-    let identifier = dirent.name
-    let description: string | undefined
-    let mtime: number | undefined
-
-    if (fs.existsSync(skillMd)) {
-      const fm = readFrontmatter(skillMd)
-      const fmName = typeof fm.name === 'string' ? fm.name : undefined
-      if (fmName && fmName.trim()) identifier = fmName.trim()
-      const fmDesc = coerceDescription(fm.description)
-      if (fmDesc) description = fmDesc
-      mtime = readMtime(skillMd)
-    } else {
-      // Skill directory without SKILL.md is unusual; record a soft warning
-      // so the audit report can flag it but do not block the scan.
+  for (const pluginId of enabledPluginIds) {
+    const sep = pluginId.indexOf('@')
+    if (sep <= 0 || sep === pluginId.length - 1) {
       warnings.push({
-        code: WARNING_CODES.PARSE_FAILED,
-        message: `skill directory ${skillDir} has no SKILL.md; using directory name as identifier`,
-        context: { path: skillDir },
+        code: WARNING_CODES.PLUGIN_SCAN_SKIPPED,
+        message: `enabledPlugins id "${pluginId}" is not in "<plugin>@<marketplace>" shape; skipping`,
+        context: { plugin_id: pluginId },
       })
+      continue
+    }
+    const pluginName = pluginId.slice(0, sep)
+    const marketplace = pluginId.slice(sep + 1)
+    // Cross-provider review finding (GPT-5.6-Sol, Medium): pluginName/
+    // marketplace were previously joined into a path with no check against
+    // separators or ".." segments, and the resolved path was never
+    // confirmed to stay under pluginsCacheDir.
+    if (!isSafePathComponent(pluginName) || !isSafePathComponent(marketplace)) {
+      warnings.push({
+        code: WARNING_CODES.PLUGIN_SCAN_SKIPPED,
+        message: `enabledPlugins id "${pluginId}" has an unsafe path component; skipping`,
+        context: { plugin_id: pluginId },
+      })
+      continue
+    }
+    const pluginDir = path.join(pluginsCacheDir, marketplace, pluginName)
+    if (!isWithinRoot(pluginsCacheDir, pluginDir)) {
+      warnings.push({
+        code: WARNING_CODES.PLUGIN_SCAN_SKIPPED,
+        message: `enabledPlugins id "${pluginId}" resolves outside the plugin cache root; skipping`,
+        context: { plugin_id: pluginId, path: pluginDir },
+      })
+      continue
     }
 
-    const phrases = capTriggerSurface(
-      identifier,
-      [identifier, ...splitDescriptionToPhrases(description)],
-      warnings
-    )
-    const author = lookupAuthor(manifest, identifier)
+    let versionDirs: fs.Dirent[]
+    try {
+      versionDirs = fs
+        .readdirSync(pluginDir, { withFileTypes: true })
+        .filter((d) => d.isDirectory())
+    } catch {
+      warnings.push({
+        code: WARNING_CODES.PLUGIN_SCAN_SKIPPED,
+        message: `enabled plugin "${pluginId}" has no cache directory at ${pluginDir}; skipping`,
+        context: { plugin_id: pluginId, path: pluginDir },
+      })
+      continue
+    }
 
-    out.push({
-      kind: 'skill',
-      source_path: skillMd,
-      identifier,
-      triggerSurface: phrases,
-      mtime,
-      client,
-      meta: {
-        description,
-        author: author.author,
-        tags: author.tags,
-      },
-    })
+    if (versionDirs.length !== 1) {
+      warnings.push({
+        code: WARNING_CODES.PLUGIN_SCAN_SKIPPED,
+        message: `enabled plugin "${pluginId}" has ${versionDirs.length} version directories under ${pluginDir} (expected exactly 1); skipping`,
+        context: {
+          plugin_id: pluginId,
+          path: pluginDir,
+          version_dir_count: versionDirs.length,
+        },
+      })
+      continue
+    }
+
+    const skillsDir = path.join(pluginDir, versionDirs[0]!.name, 'skills')
+    if (!isWithinRoot(pluginsCacheDir, skillsDir)) {
+      warnings.push({
+        code: WARNING_CODES.PLUGIN_SCAN_SKIPPED,
+        message: `enabled plugin "${pluginId}"'s skills directory resolves outside the plugin cache root; skipping`,
+        context: { plugin_id: pluginId, path: skillsDir },
+      })
+      continue
+    }
+    out.push(...scanPluginSkills(skillsDir, manifest, warnings, pluginId))
   }
 
   return out
@@ -306,27 +458,12 @@ function scanMdDir(
       triggerSurface: phrases,
       mtime: readMtime(filePath),
       client: CANONICAL_CLIENT,
+      // Source 2/3 — native-client entries, not plugin-scan ones (SMI-6228).
+      origin: 'native-client',
       meta: {
         description: triggerLine || undefined,
       },
     })
   }
   return out
-}
-
-/**
- * `parseYamlFrontmatter` returns `string | string[] | undefined` for
- * description (depending on block-scalar syntax). Normalize to a single
- * string for downstream consumers.
- */
-function coerceDescription(value: unknown): string | undefined {
-  if (typeof value === 'string') return value.trim() || undefined
-  if (Array.isArray(value)) {
-    const joined = value
-      .map((v) => (typeof v === 'string' ? v.trim() : ''))
-      .filter((v) => v.length > 0)
-      .join(' ')
-    return joined.length > 0 ? joined : undefined
-  }
-  return undefined
 }

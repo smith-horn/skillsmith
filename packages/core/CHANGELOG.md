@@ -4,6 +4,9 @@ All notable changes to `@skillsmith/core` are documented here.
 
 ## [Unreleased]
 
+## v0.12.1
+
+- **Fix**: logout/whoami now detect JWT device-code sessions (#2578)
 - **Fix**: new `clearCredentials()` export (`config/token-credentials.ts`) clears a stored
   JWT device-code session (access/refresh token, expiry) from both the config file and the
   OS keyring `refresh-token` entry — previously there was no way to end a JWT session at all;
