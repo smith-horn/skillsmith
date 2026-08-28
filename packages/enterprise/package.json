@@ -46,7 +46,7 @@
     "@opentelemetry/instrumentation-aws-sdk": "0.76.0",
     "@skillsmith/core": "^0.12.1",
     "jose": "^6.2.2",
-    "stripe": "20.3.0",
+    "stripe": "22.5.0",
     "zod": "4.2.1"
   },
   "devDependencies": {

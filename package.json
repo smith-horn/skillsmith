@@ -97,7 +97,7 @@
     "posthog-node": "5.47.3",
     "prettier": "3.8.3",
     "ruflo": "3.5.42",
-    "stripe": "20.2.0",
+    "stripe": "22.5.0",
     "supabase": "2.111.0",
     "tsx": "4.21.0",
     "turbo": "2.9.14",
