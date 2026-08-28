@@ -489,6 +489,73 @@ describe('scanLocalInventory — Source 5 plugin scan (SMI-6228)', () => {
   })
 })
 
+describe('scanLocalInventory — Source 6 project skills (SMI-6240)', () => {
+  let TEST_PROJECT_DIR: string
+
+  beforeEach(() => {
+    TEST_PROJECT_DIR = fs.mkdtempSync(path.join(os.tmpdir(), 'skillsmith-project-'))
+  })
+
+  afterEach(() => {
+    if (TEST_PROJECT_DIR && fs.existsSync(TEST_PROJECT_DIR)) {
+      fs.rmSync(TEST_PROJECT_DIR, { recursive: true, force: true })
+    }
+  })
+
+  function writeProjectSkill(name: string, frontmatter: string): void {
+    writeFile(path.join(TEST_PROJECT_DIR, '.claude', 'skills', name, 'SKILL.md'), frontmatter)
+  }
+
+  it('surfaces a skill from the project-relative .claude/skills/, tagged origin "project"', async () => {
+    writeProjectSkill('supabase', `---\nname: supabase\ndescription: Project skill\n---\nbody\n`)
+    const result = await scanLocalInventory({ homeDir: TEST_HOME, projectDir: TEST_PROJECT_DIR })
+    const entry = result.entries.find((e) => e.kind === 'skill' && e.identifier === 'supabase')
+    expect(entry).toBeDefined()
+    expect(entry?.origin).toBe('project')
+    expect(entry?.client).toBe('claude-code')
+    expect(entry?.pluginId).toBeUndefined()
+  })
+
+  it('a real collision: the same identifier from an enabled plugin and this project surfaces as two distinct entries (SMI-6240 — the scenario Source 5 alone did not close)', async () => {
+    writeProjectSkill('supabase', `---\nname: supabase\n---\nbody\n`)
+    writeFile(
+      path.join(TEST_HOME, '.claude', 'settings.json'),
+      JSON.stringify({ enabledPlugins: { 'foo@bar': true } })
+    )
+    writeFile(
+      path.join(
+        TEST_HOME,
+        '.claude',
+        'plugins',
+        'cache',
+        'bar',
+        'foo',
+        'v1',
+        'skills',
+        'supabase',
+        'SKILL.md'
+      ),
+      `---\nname: supabase\n---\nbody\n`
+    )
+    const result = await scanLocalInventory({ homeDir: TEST_HOME, projectDir: TEST_PROJECT_DIR })
+    const matches = result.entries.filter((e) => e.kind === 'skill' && e.identifier === 'supabase')
+    expect(matches).toHaveLength(2)
+    expect(matches.some((e) => e.origin === 'project')).toBe(true)
+    expect(matches.some((e) => e.origin === 'plugin' && e.pluginId === 'foo@bar')).toBe(true)
+  })
+
+  it('does NOT surface project skills when projectDir is not passed (existing callers unaffected)', async () => {
+    writeProjectSkill('supabase', `---\nname: supabase\n---\nbody\n`)
+    const result = await scanLocalInventory({ homeDir: TEST_HOME })
+    expect(result.entries.some((e) => e.origin === 'project')).toBe(false)
+  })
+
+  it('degrades gracefully when the project has no .claude/skills/ at all (e.g. the strategy submodule uninitialized)', async () => {
+    const result = await scanLocalInventory({ homeDir: TEST_HOME, projectDir: TEST_PROJECT_DIR })
+    expect(result.entries.some((e) => e.origin === 'project')).toBe(false)
+  })
+})
+
 describe('readEnabledPluginIds', () => {
   it('returns only ids whose value is exactly boolean true', () => {
     const warnings: ScanWarning[] = []

@@ -2,9 +2,9 @@
  * @fileoverview Helpers for the local-inventory scanner (SMI-4587 Wave 1 Step 2).
  * @module @skillsmith/mcp-server/utils/local-inventory.helpers
  *
- * Pure functions extracted to keep `local-inventory.ts` thin. CLAUDE.md
- * regex extraction lives here so the regex behavior can be tested in
- * isolation. Frontmatter helpers wrap the existing `parseYamlFrontmatter`.
+ * Pure functions extracted to keep `local-inventory.ts` thin — CLAUDE.md
+ * regex extraction (testable in isolation) and the shared skill-directory
+ * scan walk both live here.
  */
 
 import * as crypto from 'node:crypto'
@@ -386,16 +386,12 @@ export function isSafePathComponent(component: string): boolean {
 
 /**
  * True when `candidate`, once resolved to its REAL (symlink-followed) path,
- * is `root` or nested under it (cross-provider review finding, GPT-5.6-Sol,
- * applied here after it was first found and fixed in the plugin scanner's
- * `.mjs` mirror, `scripts/lib/mcp-command-guard.plugin-scan.mjs`). Lexical
- * `path.join`/`path.resolve` normalizes `..`/`.` but does not follow
- * symlinks, so a symlinked plugin-cache subdirectory pointing outside the
- * tree would pass a purely-lexical check even though `readdirSync` would
- * then genuinely follow it outside. A path that doesn't exist yet (a
- * normal case) makes `realpathSync` throw, treated here as "not safely
- * within root" — same fail-soft skip the caller already has for a missing
- * directory.
+ * is `root` or nested under it. Lexical `path.resolve` doesn't follow
+ * symlinks, so a symlinked cache subdirectory could escape a purely-lexical
+ * check even though `readdirSync`/`readFileSync` would then genuinely
+ * follow it outside (GPT-5.6-Sol review finding). A nonexistent path makes
+ * `realpathSync` throw — treated as "not within root" (fail-soft, same as
+ * the caller's existing missing-directory skip).
  */
 export function isWithinRoot(root: string, candidate: string): boolean {
   let resolvedRoot: string
@@ -407,4 +403,94 @@ export function isWithinRoot(root: string, candidate: string): boolean {
     return false
   }
   return resolvedCandidate === resolvedRoot || resolvedCandidate.startsWith(resolvedRoot + path.sep)
+}
+
+/**
+ * `parseYamlFrontmatter` returns `string | string[] | undefined` for
+ * description (depending on block-scalar syntax). Normalize to a single
+ * string for downstream consumers.
+ */
+export function coerceDescription(value: unknown): string | undefined {
+  if (typeof value === 'string') return value.trim() || undefined
+  if (Array.isArray(value)) {
+    const joined = value
+      .map((v) => (typeof v === 'string' ? v.trim() : ''))
+      .filter((v) => v.length > 0)
+      .join(' ')
+    return joined.length > 0 ? joined : undefined
+  }
+  return undefined
+}
+
+/**
+ * Core directory walk shared by every "one SKILL.md per subdirectory" scan
+ * source (`local-inventory.ts`'s Source 1/5/6 wrappers): one entry per
+ * subdirectory, from `SKILL.md` frontmatter when present, else the
+ * directory name (with a soft warning). Returns entries with
+ * `client`/`origin`/`pluginId` unset — callers tag their own. Moved here
+ * from `local-inventory.ts` to keep that file under the 500-line cap.
+ */
+export function scanSkillsDirEntries(
+  skillsDir: string,
+  manifest: Record<string, unknown> | null,
+  warnings: ScanWarning[]
+): InventoryEntry[] {
+  if (!fs.existsSync(skillsDir)) return []
+
+  const out: InventoryEntry[] = []
+  let dirEntries: fs.Dirent[]
+  try {
+    dirEntries = fs.readdirSync(skillsDir, { withFileTypes: true })
+  } catch {
+    return []
+  }
+
+  for (const dirent of dirEntries) {
+    if (!dirent.isDirectory() || dirent.name.startsWith('.')) continue
+    const skillDir = path.join(skillsDir, dirent.name)
+    const skillMd = path.join(skillDir, 'SKILL.md')
+
+    let identifier = dirent.name
+    let description: string | undefined
+    let mtime: number | undefined
+
+    if (fs.existsSync(skillMd)) {
+      const fm = readFrontmatter(skillMd)
+      const fmName = typeof fm.name === 'string' ? fm.name : undefined
+      if (fmName && fmName.trim()) identifier = fmName.trim()
+      const fmDesc = coerceDescription(fm.description)
+      if (fmDesc) description = fmDesc
+      mtime = readMtime(skillMd)
+    } else {
+      // Skill directory without SKILL.md is unusual; record a soft warning
+      // so the audit report can flag it but do not block the scan.
+      warnings.push({
+        code: WARNING_CODES.PARSE_FAILED,
+        message: `skill directory ${skillDir} has no SKILL.md; using directory name as identifier`,
+        context: { path: skillDir },
+      })
+    }
+
+    const phrases = capTriggerSurface(
+      identifier,
+      [identifier, ...splitDescriptionToPhrases(description)],
+      warnings
+    )
+    const author = lookupAuthor(manifest, identifier)
+
+    out.push({
+      kind: 'skill',
+      source_path: skillMd,
+      identifier,
+      triggerSurface: phrases,
+      mtime,
+      meta: {
+        description,
+        author: author.author,
+        tags: author.tags,
+      },
+    })
+  }
+
+  return out
 }

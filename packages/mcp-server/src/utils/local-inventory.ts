@@ -28,16 +28,17 @@ import type { InventoryEntry, ScanResult, ScanWarning } from './local-inventory.
 import {
   WARNING_CODES,
   capTriggerSurface,
+  coerceDescription,
   extractClaudeMdTriggers,
   firstNonEmptyLine,
   isSafePathComponent,
   isWithinRoot,
   loadManifest,
-  lookupAuthor,
   readBody,
   readEnabledPluginIds,
   readFrontmatter,
   readMtime,
+  scanSkillsDirEntries,
   splitDescriptionToPhrases,
 } from './local-inventory.helpers.js'
 
@@ -82,7 +83,12 @@ function resolveClientSkillsDir(client: ClientId, homeDir: string): string {
 export interface ScanLocalInventoryOptions {
   /** Defaults to `os.homedir()`. */
   homeDir?: string
-  /** Optional project CLAUDE.md to scan in addition to the user one. */
+  /**
+   * Optional project directory. When set, also scans `<projectDir>/CLAUDE.md`
+   * (Source 4, in addition to the user one) and `<projectDir>/.claude/skills/`
+   * (Source 6, SMI-6240 — this project's own skills, invisible to every
+   * other source, which are all user-level).
+   */
   projectDir?: string
   /** Override path to `~/.skillsmith/manifest.json`. */
   manifestPath?: string
@@ -163,11 +169,23 @@ export async function scanLocalInventory(
   // Source 5 (SMI-6228): Claude Code plugin-installed skills under
   // ~/.claude/plugins/cache/<marketplace>/<plugin>/<version>/skills/**,
   // gated on `enabledPlugins["<plugin>@<marketplace>"] === true` in
-  // ~/.claude/settings.json. Additive to Sources 1-4 — a real collision
-  // between a project skill and a vendor plugin skill was invisible to this
-  // scanner before this source existed (discovered via a vendor Supabase
-  // plugin colliding with this project's own `supabase` skill).
+  // ~/.claude/settings.json. Additive to Sources 1-4 — plugin-installed
+  // skills were invisible to this scanner before this source existed
+  // (discovered via a vendor Supabase plugin colliding with this project's
+  // own `supabase` skill — see Source 6 below for the other half of that
+  // scenario this source alone did not close).
   entries.push(...scanPluginInventory(claudeDir, manifest, warnings))
+
+  // Source 6 (SMI-6240): this project's own `.claude/skills/` mount-point
+  // (the private `skillsmith-strategy` submodule). Source 1 is USER-level
+  // only (~/.claude/skills), so a project-relative skill was invisible to
+  // this scanner even after Source 5 existed — the actual other half of
+  // the Source 5 collision scenario above. See `scanProjectSkills` for the
+  // full rationale.
+  if (opts.projectDir) {
+    const projectSkillsDir = path.join(opts.projectDir, '.claude', 'skills')
+    entries.push(...scanProjectSkills(projectSkillsDir, manifest, warnings))
+  }
 
   // Stable ordering for downstream consumers.
   entries.sort((a, b) => {
@@ -230,76 +248,27 @@ function scanPluginSkills(
 }
 
 /**
- * Core directory walk shared by {@link scanSkills} (Source 1) and
- * {@link scanPluginSkills} (Source 5): one entry per subdirectory of
- * `skillsDir`, sourced from that subdirectory's `SKILL.md` frontmatter when
- * present, falling back to the directory name (with a soft warning) when
- * absent. Returns entries with `client`/`origin`/`pluginId` unset —
- * callers apply their own tagging.
+ * Source 6 (SMI-6240): this project's own `.claude/skills/` mount-point —
+ * the private `skillsmith-strategy` submodule (see CLAUDE.md's Skill
+ * Location Policy). Source 1 only scans USER-level client directories
+ * (`~/.claude/skills`, etc.); a project-relative skill was invisible to
+ * this scanner even after Source 5 (plugin scan) existed. This is the
+ * actual missing half of the scenario that motivated Source 5 in the first
+ * place — a vendor plugin skill colliding with THIS project's own skill
+ * (e.g. its `supabase` skill) was undetectable on either side until now.
+ * `client: CANONICAL_CLIENT` because no other supported client reads this
+ * project-relative convention today (same rationale as Sources 2-4).
  */
-function scanSkillsDirEntries(
+function scanProjectSkills(
   skillsDir: string,
   manifest: Record<string, unknown> | null,
   warnings: ScanWarning[]
 ): InventoryEntry[] {
-  if (!fs.existsSync(skillsDir)) return []
-
-  const out: InventoryEntry[] = []
-  let dirEntries: fs.Dirent[]
-  try {
-    dirEntries = fs.readdirSync(skillsDir, { withFileTypes: true })
-  } catch {
-    return []
-  }
-
-  for (const dirent of dirEntries) {
-    if (!dirent.isDirectory() || dirent.name.startsWith('.')) continue
-    const skillDir = path.join(skillsDir, dirent.name)
-    const skillMd = path.join(skillDir, 'SKILL.md')
-
-    let identifier = dirent.name
-    let description: string | undefined
-    let mtime: number | undefined
-
-    if (fs.existsSync(skillMd)) {
-      const fm = readFrontmatter(skillMd)
-      const fmName = typeof fm.name === 'string' ? fm.name : undefined
-      if (fmName && fmName.trim()) identifier = fmName.trim()
-      const fmDesc = coerceDescription(fm.description)
-      if (fmDesc) description = fmDesc
-      mtime = readMtime(skillMd)
-    } else {
-      // Skill directory without SKILL.md is unusual; record a soft warning
-      // so the audit report can flag it but do not block the scan.
-      warnings.push({
-        code: WARNING_CODES.PARSE_FAILED,
-        message: `skill directory ${skillDir} has no SKILL.md; using directory name as identifier`,
-        context: { path: skillDir },
-      })
-    }
-
-    const phrases = capTriggerSurface(
-      identifier,
-      [identifier, ...splitDescriptionToPhrases(description)],
-      warnings
-    )
-    const author = lookupAuthor(manifest, identifier)
-
-    out.push({
-      kind: 'skill',
-      source_path: skillMd,
-      identifier,
-      triggerSurface: phrases,
-      mtime,
-      meta: {
-        description,
-        author: author.author,
-        tags: author.tags,
-      },
-    })
-  }
-
-  return out
+  return scanSkillsDirEntries(skillsDir, manifest, warnings).map((entry) => ({
+    ...entry,
+    client: CANONICAL_CLIENT,
+    origin: 'project',
+  }))
 }
 
 /**
@@ -479,21 +448,4 @@ function scanMdDir(
     })
   }
   return out
-}
-
-/**
- * `parseYamlFrontmatter` returns `string | string[] | undefined` for
- * description (depending on block-scalar syntax). Normalize to a single
- * string for downstream consumers.
- */
-function coerceDescription(value: unknown): string | undefined {
-  if (typeof value === 'string') return value.trim() || undefined
-  if (Array.isArray(value)) {
-    const joined = value
-      .map((v) => (typeof v === 'string' ? v.trim() : ''))
-      .filter((v) => v.length > 0)
-      .join(' ')
-    return joined.length > 0 ? joined : undefined
-  }
-  return undefined
 }

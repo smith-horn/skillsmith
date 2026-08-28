@@ -52,22 +52,30 @@ export interface InventoryEntry {
    */
   client?: ClientId
   /**
-   * Where this entry was scanned from (SMI-6228). `'native-client'` covers
-   * every Source 1-4 entry (a supported client's native skills directory,
-   * plus Claude Code's own commands/agents/CLAUDE.md rules) — the same
-   * population `client` already tags. `'plugin'` covers Source 5: a Claude
-   * Code plugin-installed skill discovered under
+   * Where this entry was scanned from (SMI-6228, SMI-6240). `'native-client'`
+   * covers every Source 1-4 entry (a supported client's USER-level native
+   * skills directory, plus Claude Code's own commands/agents/CLAUDE.md
+   * rules) — the same population `client` already tags. `'plugin'` covers
+   * Source 5: a Claude Code plugin-installed skill discovered under
    * `~/.claude/plugins/cache/<marketplace>/<plugin>/<version>/skills/**`.
-   * Deliberately a SEPARATE field from `client` rather than widening
-   * `ClientId` to include a plugin variant — `ClientId` is a closed union
-   * consumed by real install-target resolution (`CLIENT_NATIVE_PATHS`,
-   * `install_skill --client`, and other exhaustive switches across
-   * `@skillsmith/core/install`), and a plugin is not an install target in
-   * that sense. Optional for backward compatibility with pre-SMI-6228
-   * `InventoryEntry` literals that don't set it (treat absence as
-   * equivalent to `'native-client'` for Source 1-4 provenance).
+   * `'project'` covers Source 6: a skill in THIS project's own
+   * `<projectDir>/.claude/skills/` (the private `skillsmith-strategy`
+   * submodule) — distinct from `'native-client'` because that source is
+   * always user-level, never project-relative; a project skill was
+   * invisible to every source before SMI-6240 (discovered: the vendor
+   * plugin collision Source 5 was built to catch had this project's own
+   * `supabase` skill as its OTHER side, and that side stayed invisible
+   * even after Source 5 shipped). Deliberately a SEPARATE field from
+   * `client` rather than widening `ClientId` to include a plugin/project
+   * variant — `ClientId` is a closed union consumed by real install-target
+   * resolution (`CLIENT_NATIVE_PATHS`, `install_skill --client`, and other
+   * exhaustive switches across `@skillsmith/core/install`), and neither a
+   * plugin nor a project mount-point is an install target in that sense.
+   * Optional for backward compatibility with pre-SMI-6228 `InventoryEntry`
+   * literals that don't set it (treat absence as equivalent to
+   * `'native-client'` for Source 1-4 provenance).
    */
-  origin?: 'native-client' | 'plugin'
+  origin?: 'native-client' | 'plugin' | 'project'
   /**
    * Set only when `origin === 'plugin'`: the enabling plugin's id in
    * `<plugin>@<marketplace>` shape, exactly as it appears as a key in
