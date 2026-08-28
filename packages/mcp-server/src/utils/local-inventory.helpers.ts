@@ -261,6 +261,19 @@ function makeClaudeMdEntry(
  * (`false`) must NOT surface its skills as inventory entries, or a stale
  * collision against a since-disabled plugin would resurface as a false
  * positive.
+ *
+ * SECURITY-RELEVANT DUPLICATION (ADR-136): this function is the TS
+ * reference implementation for a native `.mjs` reimplementation at
+ * `scripts/lib/mcp-command-guard.plugin-scan.mjs` (SMI-6229) — not a shared
+ * import, because that file runs on a `SessionStart` hook path where this
+ * package's `dist/` may not exist. The `.mjs` twin decides which
+ * plugin-registered MCP servers `scripts/lib/mcp-command-guard.mjs`'s
+ * `findHostedScopeViolations` check evaluates for a hosted server that
+ * exposes write-capable database tools (`execute_sql`, `apply_migration`).
+ * A silent divergence between the two implementations is a security gap,
+ * not a cosmetic inconsistency: it would mean that guard scans a different
+ * plugin set than this scanner does. Enforced by
+ * `packages/mcp-server/tests/unit/plugin-scan-parity.test.ts`.
  */
 export function readEnabledPluginIds(settingsPath: string, warnings: ScanWarning[]): string[] {
   if (!fs.existsSync(settingsPath)) return []

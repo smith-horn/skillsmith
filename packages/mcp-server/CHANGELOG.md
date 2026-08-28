@@ -36,6 +36,10 @@ All notable changes to `@skillsmith/mcp-server` are documented here.
   rather than widening the closed `ClientId` union. Both new sources guard against
   path-traversal and symlink-escape reading outside their intended root
   (SMI-6228/SMI-6240).
+- **Docs**: `readEnabledPluginIds` in `local-inventory.helpers.ts` now cross-references its build-free
+  `.mjs` twin (`scripts/lib/mcp-command-guard.plugin-scan.mjs`) and the parity test enforcing
+  agreement between them, per ADR-136's requirement that cross-runtime duplication of
+  security-relevant logic name the divergence risk explicitly (SMI-6229).
 - **Fix**: `rbac_manage`/`rbac_assign_role`/`rbac_create_policy`, `configure_sso`/`sso_settings`,
   `webhook_configure`/`api_key_manage`, and `compliance_report` reported `dataSource: 'live'`
   whenever Supabase env vars were configured, even when the underlying service was still the
