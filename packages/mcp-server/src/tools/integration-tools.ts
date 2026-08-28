@@ -216,16 +216,15 @@ export interface ApiKeyManageResult {
 // Handlers
 // ============================================================================
 
-/** Resolve the current data source from the service actually wired in (SMI-6184) */
-function getDataSource(): 'stub' | 'live' {
-  return dataSourceFor(service)
-}
-
 async function executeWebhookConfigureImpl(
   input: WebhookConfigureInput,
   _context: ToolContext
 ): Promise<WebhookConfigureResult> {
-  const dataSource = getDataSource()
+  // SMI-6203 (P-5 audit): capture the module-level singleton once, so a setIntegrationService()
+  // call landing between this read and any of the .method() calls below cannot produce a result
+  // labelled with one service's dataSource and populated by another's.
+  const svc = service
+  const dataSource = dataSourceFor(svc)
 
   switch (input.action) {
     case 'create': {
@@ -233,7 +232,7 @@ async function executeWebhookConfigureImpl(
         return { success: false, dataSource, error: 'url is required for action "create".' }
       if (!input.events?.length)
         return { success: false, dataSource, error: 'events is required for action "create".' }
-      const wh = await service.createWebhook(input.url, input.events, input.description)
+      const wh = await svc.createWebhook(input.url, input.events, input.description)
       return {
         success: true,
         dataSource,
@@ -252,7 +251,7 @@ async function executeWebhookConfigureImpl(
       }
     }
     case 'list': {
-      const webhooks = await service.listWebhooks()
+      const webhooks = await svc.listWebhooks()
       return {
         success: true,
         dataSource,
@@ -267,7 +266,7 @@ async function executeWebhookConfigureImpl(
     case 'get': {
       if (!input.webhookId)
         return { success: false, dataSource, error: 'webhookId is required for action "get".' }
-      const wh = await service.getWebhook(input.webhookId)
+      const wh = await svc.getWebhook(input.webhookId)
       if (!wh)
         return { success: false, dataSource, error: `Webhook "${input.webhookId}" not found.` }
       return { success: true, dataSource, webhook: wh }
@@ -275,7 +274,7 @@ async function executeWebhookConfigureImpl(
     case 'delete': {
       if (!input.webhookId)
         return { success: false, dataSource, error: 'webhookId is required for action "delete".' }
-      const deleted = await service.deleteWebhook(input.webhookId)
+      const deleted = await svc.deleteWebhook(input.webhookId)
       if (!deleted)
         return { success: false, dataSource, error: `Webhook "${input.webhookId}" not found.` }
       return { success: true, dataSource, message: `Webhook "${input.webhookId}" deleted.` }
@@ -283,7 +282,7 @@ async function executeWebhookConfigureImpl(
     case 'test': {
       if (!input.webhookId)
         return { success: false, dataSource, error: 'webhookId is required for action "test".' }
-      const result = await service.testWebhook(input.webhookId)
+      const result = await svc.testWebhook(input.webhookId)
       return { success: result.success, dataSource, test: result, message: result.message }
     }
     case 'rotate_secret': {
@@ -294,7 +293,7 @@ async function executeWebhookConfigureImpl(
           error: 'webhookId is required for action "rotate_secret".',
         }
       try {
-        const rotated = await service.rotateSecret(input.webhookId)
+        const rotated = await svc.rotateSecret(input.webhookId)
         return {
           success: true,
           dataSource,
@@ -320,13 +319,15 @@ async function executeApiKeyManageImpl(
   input: ApiKeyManageInput,
   _context: ToolContext
 ): Promise<ApiKeyManageResult> {
-  const dataSource = getDataSource()
+  // SMI-6203 (P-5 audit): see executeWebhookConfigureImpl above.
+  const svc = service
+  const dataSource = dataSourceFor(svc)
 
   switch (input.action) {
     case 'create': {
       if (!input.name)
         return { success: false, dataSource, error: 'name is required for action "create".' }
-      const key = await service.createApiKey(input.name, input.permissions, input.expiresIn)
+      const key = await svc.createApiKey(input.name, input.permissions, input.expiresIn)
       return {
         success: true,
         dataSource,
@@ -343,7 +344,7 @@ async function executeApiKeyManageImpl(
       }
     }
     case 'list': {
-      const keys = await service.listApiKeys()
+      const keys = await svc.listApiKeys()
       return {
         success: true,
         dataSource,
@@ -360,14 +361,14 @@ async function executeApiKeyManageImpl(
     case 'get': {
       if (!input.keyId)
         return { success: false, dataSource, error: 'keyId is required for action "get".' }
-      const key = await service.getApiKey(input.keyId)
+      const key = await svc.getApiKey(input.keyId)
       if (!key) return { success: false, dataSource, error: `API key "${input.keyId}" not found.` }
       return { success: true, dataSource, key }
     }
     case 'revoke': {
       if (!input.keyId)
         return { success: false, dataSource, error: 'keyId is required for action "revoke".' }
-      const revoked = await service.revokeApiKey(input.keyId)
+      const revoked = await svc.revokeApiKey(input.keyId)
       if (!revoked)
         return {
           success: false,

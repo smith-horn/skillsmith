@@ -25,7 +25,12 @@
  */
 
 import { test, expect } from '@playwright/test'
-import { buildSessionToken, injectSupabaseStub, mockSupabase } from './complete-profile.helpers'
+import {
+  buildSessionToken,
+  injectSupabaseStub,
+  mockSupabase,
+  SUPABASE_HOST,
+} from './complete-profile.helpers'
 import { assertNoHandlerAccumulation, refireAstroPageLoad } from './astro-helpers'
 
 const TEAM_ID = 'team-e2e-registry-1'
@@ -41,11 +46,62 @@ const PENDING_ROW = {
   approval_mode: 'review',
 }
 
+const APPROVED_ROW = {
+  skill_id: 'ryan-smith/approved-skill',
+  version: '1.0.0',
+  description: 'An already-approved skill.',
+  deprecated: false,
+  published_by: 'user-owner',
+  published_at: '2026-08-10T00:00:00Z',
+}
+
+/**
+ * registry.astro (SMI-6203) resolves toggle-deprecated/review permission via
+ * two independent `has_team_permission(p_team_id, p_permission)` RPC calls
+ * (registry:deprecate / registry:approve) rather than a single role check.
+ * mockSupabase()'s rpcResponses map keys by function name only — it cannot
+ * distinguish the two calls by their `p_permission` param — so this registers
+ * a dedicated route that inspects the POST body to answer each call per
+ * permission. Registered AFTER mockSupabase() (and thus takes priority per
+ * Playwright's most-recently-registered-wins rule, per mockSupabase's own
+ * SMI-6134 comment) so it overrides mockSupabase's generic 404-for-unmocked-
+ * rpc fallback for this one function name.
+ */
+async function mockHasTeamPermission(
+  page: import('@playwright/test').Page,
+  permissions: Partial<Record<'registry:deprecate' | 'registry:approve', boolean>>
+): Promise<void> {
+  await page.route(`${SUPABASE_HOST}/rest/v1/rpc/has_team_permission`, async (route) => {
+    const body = route.request().postDataJSON() as { p_permission?: string } | null
+    const permission = body?.p_permission ?? ''
+    const allowed = Boolean(
+      permissions[permission as 'registry:deprecate' | 'registry:approve'] ?? false
+    )
+    await route.fulfill({
+      status: 200,
+      contentType: 'application/json',
+      body: JSON.stringify(allowed),
+    })
+  })
+}
+
 async function mockRegistryPage(
   page: import('@playwright/test').Page,
-  opts: { role: 'admin' | 'member' }
+  opts: {
+    role: 'admin' | 'member'
+    /**
+     * Explicit per-permission overrides — models a team_permission_grants row
+     * that diverges from the role-implied default (a grant for a member, or a
+     * deny for an admin). Any permission not named here defaults to the
+     * role-implied value (admin/owner -> true, member -> false), matching the
+     * real default_role_permission matrix for these two permissions.
+     */
+    permissions?: Partial<Record<'registry:deprecate' | 'registry:approve', boolean>>
+    approvedRows?: unknown[]
+  }
 ): Promise<void> {
   await injectSupabaseStub(page, { session: buildSessionToken({ provider: 'email' }) })
+  const defaultAllowed = opts.role === 'admin'
   await mockSupabase(page, {
     rpcResponses: {
       check_team_tier_access: { ok: true, team_id: TEAM_ID, tier: 'enterprise' },
@@ -57,13 +113,16 @@ async function mockRegistryPage(
       review_private_registry_submission: [{ ...PENDING_ROW, approval_status: 'approved' }],
     },
     restResponses: {
-      // .single() (registry.astro's own role check, and loadRegistryDashboardData's namespace
-      // lookup) expects PostgREST's unwrapped-object response shape, not an array — mockSupabase
-      // returns restResponses[table] verbatim, so these two must be bare objects.
-      team_members: { role: opts.role },
+      // .single() (loadRegistryDashboardData's namespace lookup) expects PostgREST's
+      // unwrapped-object response shape, not an array — mockSupabase returns
+      // restResponses[table] verbatim, so this must be a bare object.
       teams: { skill_namespace: 'ryan-smith' },
-      private_registry_skills: [],
+      private_registry_skills: opts.approvedRows ?? [],
     },
+  })
+  await mockHasTeamPermission(page, {
+    'registry:deprecate': opts.permissions?.['registry:deprecate'] ?? defaultAllowed,
+    'registry:approve': opts.permissions?.['registry:approve'] ?? defaultAllowed,
   })
   await page.goto('/account/team/registry')
   await expect(page.locator('#content')).toBeVisible()
@@ -93,8 +152,8 @@ test.describe('private registry dashboard — Approve button (SMI-6121 dogfood f
     await mockRegistryPage(page, { role: 'admin' })
 
     // Deliberately NOT assertNoHandlerAccumulation's plain refire loop: this page's listener
-    // attachment sits deep behind several `await`s (checkTeamAccess, auth.getSession, the
-    // team_members query, loadRegistry) inside its astro:page-load handler. A bare
+    // attachment sits deep behind several `await`s (checkTeamAccess, auth.getSession, the two
+    // has_team_permission RPC calls, loadRegistry) inside its astro:page-load handler. A bare
     // `document.dispatchEvent(new Event('astro:page-load'))` returns before any of that async
     // work runs, so firing 3 refires back-to-back with no wait between them just overlaps their
     // early awaits rather than letting each one actually reach the listener-attach line — the
@@ -105,8 +164,8 @@ test.describe('private registry dashboard — Approve button (SMI-6121 dogfood f
     // its own `createClient()` against the SAME localStorage session key, and supabase-js's own
     // GoTrueClient logs "Multiple GoTrueClient instances detected... may produce undefined
     // behavior when used concurrently" — confirmed live (2026-08-22) to make most, but not
-    // reliably all, of the accumulated listeners' OWN `canManage` closure resolve to `false`
-    // instead of throwing, so with the bug present the click is processed multiple times (each
+    // reliably all, of the accumulated listeners' OWN `canDeprecate`/`canApprove` closure resolve
+    // to `false` instead of throwing, so with the bug present the click is processed multiple times (each
     // logging its own `[registry] click ignored: ...` warning) while `rpcHits` can still land on
     // a small number by coincidence. Counting every listener invocation (successful RPC calls
     // PLUS ignored-click console warnings) is what actually proves how many listeners fired.
@@ -156,6 +215,59 @@ test.describe('private registry dashboard — Approve button (SMI-6121 dogfood f
     // checks, so drive it via the DOM directly — the click handler's own `button.disabled`
     // check (registry.astro) is the actual thing under test here.
     await approveButton.evaluate((el: HTMLButtonElement) => el.click())
+    await refireAstroPageLoad(page)
+    expect(rpcHits).toBe(0)
+  })
+
+  // SMI-6203: registry.astro now resolves toggle-deprecated/review permission per-action
+  // (registry:deprecate / registry:approve) via has_team_permission() instead of one blanket
+  // role === 'admin' || role === 'owner' check. These two tests are the plan's explicit "smoke
+  // rows for a granted member and a denied admin" — proving the gate now tracks the resolved
+  // permission grant, not just role.
+  test('a member with an explicit registry:approve grant sees enabled Approve/Reject buttons despite role=member', async ({
+    page,
+  }) => {
+    await mockRegistryPage(page, {
+      role: 'member',
+      permissions: { 'registry:approve': true },
+    })
+
+    const approveButton = page.locator('button[data-decision="approved"]').first()
+    const rejectButton = page.locator('button[data-decision="rejected"]').first()
+    await expect(approveButton).toBeVisible()
+    await expect(approveButton).toBeEnabled()
+    await expect(rejectButton).toBeEnabled()
+
+    await assertNoHandlerAccumulation(
+      page,
+      'button[data-decision="approved"]',
+      /\/rest\/v1\/rpc\/review_private_registry_submission/,
+      { clicks: 1, refires: 0 }
+    )
+  })
+
+  test('an admin with an explicit registry:deprecate deny grant sees a disabled Deprecate button despite role=admin', async ({
+    page,
+  }) => {
+    await mockRegistryPage(page, {
+      role: 'admin',
+      permissions: { 'registry:deprecate': false },
+      approvedRows: [APPROVED_ROW],
+    })
+
+    const deprecateButton = page.locator('button[data-action="toggle-deprecated"]').first()
+    await expect(deprecateButton).toBeVisible()
+    await expect(deprecateButton).toBeDisabled()
+
+    let rpcHits = 0
+    await page.route(/\/rest\/v1\/private_registry_skills/, async (route) => {
+      rpcHits += 1
+      await route.fulfill({ status: 200, contentType: 'application/json', body: '[]' })
+    })
+    // Disabled buttons don't receive real click events from Playwright's actionability
+    // checks, so drive it via the DOM directly — the click handler's own `button.disabled`
+    // check (registry.astro) is the actual thing under test here.
+    await deprecateButton.evaluate((el: HTMLButtonElement) => el.click())
     await refireAstroPageLoad(page)
     expect(rpcHits).toBe(0)
   })
