@@ -4,6 +4,10 @@ All notable changes to `@skillsmith/mcp-server` are documented here.
 
 ## [Unreleased]
 
+## v0.7.12
+
+- **Feature**: live RBAC service, grant-write RPCs, permission-gated website UI (SMI-6203) (#2586)
+- **Feature**: add team_permission_grants RBAC schema + widen approval-gate RLS seam (SMI-6202) (#2577)
 - **Feature**: `rbac_manage`/`rbac_assign_role`/`rbac_create_policy` are now backed by a real
   Supabase RBACService (`rbac-tools.live.ts`) instead of the in-memory stub, on the caller's own
   signed-in JWT — never the shared team license key or service-role. `list_roles`/`get_role` now

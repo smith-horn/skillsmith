@@ -4,6 +4,9 @@ All notable changes to `@skillsmith/cli` are documented here.
 
 ## [Unreleased]
 
+## v0.8.8
+
+- **Fix**: logout/whoami now detect JWT device-code sessions (#2578)
 - **Fix**: `skillsmith logout` and `skillsmith whoami` now detect a JWT device-code session
   (`skillsmith login`'s default flow, SMI-4402) — previously they only checked the legacy
   API-key store, so `login` would report "Already authenticated" while `logout` immediately

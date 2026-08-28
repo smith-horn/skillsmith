@@ -2,7 +2,7 @@
   "name": "skillsmith-vscode",
   "displayName": "Skillsmith",
   "description": "A registry for sharing, scanning, and tracking agent skills across teams.",
-  "version": "0.7.7",
+  "version": "0.7.8",
   "publisher": "skillsmith",
   "engines": {
     "vscode": "^1.110.0"
