@@ -56,6 +56,7 @@ AUTHENTICATED_FUNCTIONS=(
   "auth-device-approve"
   "auth-device-preview"
   "team-invite-send"
+  "team-sso-manage"
   "sync-oauth-email"
   "sync-stripe-email"
   "inventory-upload"
@@ -87,6 +88,7 @@ SERVICE_ROLE_FUNCTIONS=(
   "status-public"
   "scan-coverage-monitor"
   "release-cadence-heartbeat-monitor"
+  "sso-domain-reverify"
 )
 
 echo ""

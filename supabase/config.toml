@@ -508,6 +508,14 @@ verify_jwt = false
 [functions.status-check]
 verify_jwt = false
 
+# sso-domain-reverify: pg_cron-invoked, service-role internal (SMI-6204,
+# SMI-6200 Wave 3 Step 1b — Postgres cannot resolve DNS itself, so the daily
+# domain-reverify sweep invokes this function to do the actual
+# `_skillsmith-verify.<domain>` TXT lookup). Deploy WITH --no-verify-jwt;
+# mirrors scan-coverage-monitor / status-check.
+[functions.sso-domain-reverify]
+verify_jwt = false
+
 # status-public: public, anonymous read-only status-page endpoint (SMI-5754,
 # public status page Wave 4). Uses createSupabaseAdminClient() (service-role)
 # for every query because v_status_current and status_daily_rollups have NO
@@ -525,6 +533,15 @@ verify_jwt = false
 # fires. Mirrors auth-device-approve / auth-device-preview pattern. Deploy
 # WITHOUT --no-verify-jwt.
 [functions.team-invite-send]
+verify_jwt = true
+
+# SMI-6204: team-sso-manage — gateway-verified user-action endpoint that
+# configures/tests/removes a team's SAML SSO provider over GoTrue's Auth
+# Admin SSO API and manages domain-ownership verification. Resolves the
+# caller's team + team:manage_sso permission via has_team_permission() as
+# the authenticated user before any service-role/GoTrue call. Deploy
+# WITHOUT --no-verify-jwt.
+[functions.team-sso-manage]
 verify_jwt = true
 
 # SMI-4852: indexer-dispatch — service-role-only shim that triggers the GHA

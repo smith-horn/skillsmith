@@ -559,6 +559,10 @@ const NO_VERIFY_JWT_FUNCTIONS = [
   // liveness backstop for release-cadence.yml, service-role internal.
   // Mirrors scan-coverage-monitor / webhook-heartbeat-monitor.
   'release-cadence-heartbeat-monitor',
+  // SMI-6204: sso-domain-reverify — pg_cron-invoked daily SSO domain-claim
+  // DNS TXT reverify sweep, service-role internal (Postgres/pg_cron cannot
+  // resolve DNS itself). Mirrors scan-coverage-monitor / status-check.
+  'sso-domain-reverify',
 ]
 
 const CONFIG_TOML_PATH = 'supabase/config.toml'
