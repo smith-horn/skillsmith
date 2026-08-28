@@ -112,4 +112,22 @@ describe('readEnabledPluginIds parity (TS vs .mjs mirror, SMI-6229 / ADR-136)', 
     const p = writeSettings('{not valid json')
     expectParity(p)
   })
+
+  it('cross-provider review finding: array-shaped enabledPlugins returns [] on both sides, not ["0"]', () => {
+    // Before the fix: TS's `typeof enabledPlugins !== 'object'` check let an
+    // array through (typeof [] === 'object' in JS), so
+    // Object.entries([true]) produced ["0"] on the TS side while the .mjs
+    // side's isPlainObject correctly excluded arrays and returned []. That
+    // divergence is exactly what this parity test exists to catch, and its
+    // prior scenario table never exercised an array-shaped enabledPlugins.
+    const p = writeSettings(JSON.stringify({ enabledPlugins: [true, true] }))
+    expectParity(p)
+    const warnings: ScanWarning[] = []
+    expect(readEnabledPluginIdsTs(p, warnings)).toEqual([])
+  })
+
+  it('array-shaped settings.json (top-level) returns [] on both sides', () => {
+    const p = writeSettings(JSON.stringify([{ enabledPlugins: { 'a@market': true } }]))
+    expectParity(p)
+  })
 })

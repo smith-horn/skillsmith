@@ -138,7 +138,15 @@ export function findHostedScopeViolations(mcpServers, sourceLabel) {
       continue // unparseable URL — fail soft, silent
     }
 
-    const rule = HOSTED_SCOPE_RULES[url.hostname]
+    // Cross-provider review finding (GPT-5.6-Sol, Medium): `URL.hostname`
+    // already lowercases and strips the port, but preserves a DNS
+    // root-notation trailing dot (`mcp.supabase.com.` resolves identically
+    // to `mcp.supabase.com`). Without stripping it, that trivially-valid
+    // variant would miss the HOSTED_SCOPE_RULES lookup entirely and bypass
+    // this check completely, silently — confirmed live:
+    // `new URL('https://mcp.supabase.com./mcp').hostname === 'mcp.supabase.com.'`.
+    const hostname = url.hostname.replace(/\.$/, '')
+    const rule = HOSTED_SCOPE_RULES[hostname]
     if (!rule) continue
 
     // getAll, not get: a repeated `?features=` param must not be half-read.
@@ -168,9 +176,9 @@ export function findHostedScopeViolations(mcpServers, sourceLabel) {
       // write-capable tool groups.
       message:
         groups.size === 0
-          ? `is a hosted ${url.hostname} MCP server with no "${rule.param}" scoping — ${rule.why}.`
-          : `is a hosted ${url.hostname} MCP server scoped to "${[...groups].sort().join(',')}", which exceeds the docs-only scope this repo requires — the "${[...rule.allowed].join(',')}" scope is the only one this repo permits; the additional scope(s) here enable write-capable tool groups.`,
-      remediation: `Set the URL to https://${url.hostname}/mcp?${rule.param}=docs, or disable the plugin/server that registers it. Write access to a Supabase project must go through this repo's pooler scripts and the supabase-migration-reviewer gate, not an MCP tool.`,
+          ? `is a hosted ${hostname} MCP server with no "${rule.param}" scoping — ${rule.why}.`
+          : `is a hosted ${hostname} MCP server scoped to "${[...groups].sort().join(',')}", which exceeds the docs-only scope this repo requires — the "${[...rule.allowed].join(',')}" scope is the only one this repo permits; the additional scope(s) here enable write-capable tool groups.`,
+      remediation: `Set the URL to https://${hostname}/mcp?${rule.param}=docs, or disable the plugin/server that registers it. Write access to a Supabase project must go through this repo's pooler scripts and the supabase-migration-reviewer gate, not an MCP tool.`,
     })
   }
   return findings

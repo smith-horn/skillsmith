@@ -251,6 +251,21 @@ describe('SMI-5642: mcp-command-guard', () => {
       expect(findings).toEqual([])
     })
 
+    it('10b. a trailing-dot DNS root-notation hostname does NOT bypass the rule (cross-provider review finding)', () => {
+      // https://mcp.supabase.com./mcp resolves identically to the non-dot
+      // form in DNS. URL.hostname preserves the trailing dot, so the rule
+      // lookup must normalize it away or this variant silently bypasses
+      // the check entirely (confirmed live before the fix: the lookup
+      // missed and the loop `continue`d without evaluating the URL).
+      const findings = findHostedScopeViolations(
+        { supabase: { type: 'http', url: 'https://mcp.supabase.com./mcp' } },
+        '.mcp.json'
+      )
+      expect(findings).toHaveLength(1)
+      expect(findings[0]?.message).toContain('mcp.supabase.com')
+      expect(findings[0]?.message).not.toContain('mcp.supabase.com.')
+    })
+
     it('10a. documented edge case: a truthy non-string url plus a bare command is skipped by BOTH checks (plan-review Low #11)', () => {
       const entry = { weird: { command: 'bad-bin', url: 12345 } }
       // findBareCommandServers treats a truthy `url` (regardless of type) as
@@ -426,6 +441,33 @@ describe('SMI-5642: mcp-command-guard', () => {
     it('18. malformed plugin id shapes are skipped, does not throw', () => {
       const home = join(tmp, 'home')
       writeSettings(home, { noatsign: true, '@bar': true, 'foo@': true })
+      expect(() => auditMcpConfigs({ repoRoot: tmp, homeDir: home })).not.toThrow()
+      expect(auditMcpConfigs({ repoRoot: tmp, homeDir: home })).toEqual([])
+    })
+
+    it('18b. path-traversal-shaped plugin ids are rejected, never escape the cache root (cross-provider review finding)', () => {
+      // A plugin id is an unvalidated enabledPlugins KEY, not something
+      // Claude Code's own plugin manager guarantees is traversal-free from
+      // this guard's perspective. Confirm "../outside@../.." (and simpler
+      // single-".." variants) never resolve outside
+      // <home>/.claude/plugins/cache, even when a real .mcp.json with an
+      // unscoped server sits at the traversal target.
+      const home = join(tmp, 'home')
+      writeSettings(home, {
+        '../outside@../..': true,
+        '..@bar': true,
+        'foo@..': true,
+      })
+      // A real target the traversal would reach if unguarded: one level
+      // above the cache root.
+      const escapeTarget = join(home, '.claude', 'plugins', 'outside', 'v1', '.mcp.json')
+      mkdirSync(join(home, '.claude', 'plugins', 'outside', 'v1'), { recursive: true })
+      writeFileSync(
+        escapeTarget,
+        JSON.stringify({
+          mcpServers: { supabase: { type: 'http', url: 'https://mcp.supabase.com/mcp' } },
+        })
+      )
       expect(() => auditMcpConfigs({ repoRoot: tmp, homeDir: home })).not.toThrow()
       expect(auditMcpConfigs({ repoRoot: tmp, homeDir: home })).toEqual([])
     })

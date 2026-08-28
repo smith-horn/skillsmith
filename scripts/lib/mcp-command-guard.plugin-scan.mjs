@@ -34,7 +34,7 @@
  * @see docs/internal/adr/136-cross-runtime-duplication-of-security-logic.md
  */
 import { existsSync, readFileSync, readdirSync } from 'node:fs'
-import { join } from 'node:path'
+import { join, resolve, sep as pathSep } from 'node:path'
 
 function isPlainObject(value) {
   return typeof value === 'object' && value !== null && !Array.isArray(value)
@@ -119,6 +119,18 @@ export function readEnabledPluginIds(settingsPath) {
  * fail-soft table): an un-debounced stderr line on every session start
  * through an update window would be noise, and the guard runs on every
  * startup so the blindness window closes on its own.
+ *
+ * Cross-provider review finding (GPT-5.6-Sol, Medium): `pluginName` and
+ * `marketplace` come straight from an `enabledPlugins` KEY in
+ * `~/.claude/settings.json` — not validated by anything upstream of this
+ * function. Without a check here, an id like `"../outside@../.."` would
+ * resolve `pluginDir` well outside `~/.claude/plugins/cache`, and a
+ * symlinked path component could do the same even with clean-looking
+ * segments. Reject any component containing a path separator or a `..`
+ * segment, then confirm the fully-resolved path still lives under the
+ * cache root before ever calling `readdirSync`/`readFileSync` on it — this
+ * guard's job is to read plugin-registered MCP configs, not to become a
+ * path into arbitrary files on disk.
  */
 export function resolvePluginMcpConfigPath(claudeDir, pluginId) {
   const sep = pluginId.indexOf('@')
@@ -126,7 +138,11 @@ export function resolvePluginMcpConfigPath(claudeDir, pluginId) {
 
   const pluginName = pluginId.slice(0, sep)
   const marketplace = pluginId.slice(sep + 1)
-  const pluginDir = join(claudeDir, 'plugins', 'cache', marketplace, pluginName)
+  if (!isSafePathComponent(pluginName) || !isSafePathComponent(marketplace)) return null
+
+  const cacheRoot = join(claudeDir, 'plugins', 'cache')
+  const pluginDir = join(cacheRoot, marketplace, pluginName)
+  if (!isWithinRoot(cacheRoot, pluginDir)) return null
 
   let versionDirs
   try {
@@ -136,10 +152,35 @@ export function resolvePluginMcpConfigPath(claudeDir, pluginId) {
   }
   if (versionDirs.length !== 1) return null
 
+  const versionDirName = versionDirs[0].name
+  if (!isSafePathComponent(versionDirName)) return null
+
+  const configPath = join(pluginDir, versionDirName, '.mcp.json')
+  if (!isWithinRoot(cacheRoot, configPath)) return null
+
   // Verified live (docs/internal/implementation/mcp-guard-plugin-config-scan.md
   // "Surface Grounding"): the plugin's .mcp.json sits at the version-dir
   // ROOT, NOT under skills/.
-  return join(pluginDir, versionDirs[0].name, '.mcp.json')
+  return configPath
+}
+
+/** Rejects path separators, `.`/`..` segments, and empty strings. */
+function isSafePathComponent(component) {
+  return (
+    typeof component === 'string' &&
+    component.length > 0 &&
+    component !== '.' &&
+    component !== '..' &&
+    !component.includes('/') &&
+    !component.includes('\\')
+  )
+}
+
+/** True when `candidate`, once resolved, is `root` or nested under it. */
+function isWithinRoot(root, candidate) {
+  const resolvedRoot = resolve(root)
+  const resolvedCandidate = resolve(candidate)
+  return resolvedCandidate === resolvedRoot || resolvedCandidate.startsWith(resolvedRoot + pathSep)
 }
 
 /**

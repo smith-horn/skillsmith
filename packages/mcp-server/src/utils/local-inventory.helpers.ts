@@ -297,9 +297,16 @@ export function readEnabledPluginIds(settingsPath: string, warnings: ScanWarning
     return []
   }
 
-  if (!parsed || typeof parsed !== 'object') return []
+  // Cross-provider review finding (GPT-5.6-Sol, SMI-6229, Medium): `typeof`
+  // treats an array as `'object'` too, so `{"enabledPlugins":[true]}` used
+  // to pass this check and fall into `Object.entries([true])` — returning
+  // `["0"]` here while the `.mjs` twin's `isPlainObject` (which explicitly
+  // excludes arrays) correctly returned `[]` for the same input. Excluding
+  // arrays on both sides restores the parity guarantee this pair depends on.
+  if (!parsed || typeof parsed !== 'object' || Array.isArray(parsed)) return []
   const enabledPlugins = (parsed as Record<string, unknown>)['enabledPlugins']
-  if (!enabledPlugins || typeof enabledPlugins !== 'object') return []
+  if (!enabledPlugins || typeof enabledPlugins !== 'object' || Array.isArray(enabledPlugins))
+    return []
 
   return Object.entries(enabledPlugins as Record<string, unknown>)
     .filter(([, value]) => value === true)
