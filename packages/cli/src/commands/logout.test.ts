@@ -2,7 +2,9 @@
  * SMI-2715: Logout Command Tests
  *
  * Tests for `skillsmith logout` — not-authenticated guard, confirmation prompt,
- * successful logout, and partial failure (keyring error) handling.
+ * successful logout, partial failure (keyring error) handling, and JWT
+ * device-code session detection/clearing (SMI-4402 — the bug where `login`
+ * saw a live JWT session but `logout` only checked the legacy API key).
  */
 
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest'
@@ -14,6 +16,8 @@ import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest'
 vi.mock('@skillsmith/core', () => ({
   getAuthStatus: vi.fn(),
   clearApiKey: vi.fn(),
+  loadCredentials: vi.fn(),
+  clearCredentials: vi.fn(),
 }))
 
 vi.mock('@inquirer/prompts', () => ({
@@ -25,11 +29,13 @@ vi.mock('@inquirer/prompts', () => ({
 // ---------------------------------------------------------------------------
 
 import { createLogoutCommand } from './logout.js'
-import { getAuthStatus, clearApiKey } from '@skillsmith/core'
+import { getAuthStatus, clearApiKey, loadCredentials, clearCredentials } from '@skillsmith/core'
 import { confirm } from '@inquirer/prompts'
 
 const mockGetAuthStatus = vi.mocked(getAuthStatus)
 const mockClearApiKey = vi.mocked(clearApiKey)
+const mockLoadCredentials = vi.mocked(loadCredentials)
+const mockClearCredentials = vi.mocked(clearCredentials)
 const mockConfirm = vi.mocked(confirm)
 
 // ---------------------------------------------------------------------------
@@ -59,6 +65,11 @@ describe('createLogoutCommand', () => {
       .mockImplementation((code?: string | number | null | undefined) => {
         throw new Error(`process.exit(${code ?? 0})`)
       })
+
+    // Default: no JWT session, and both clear calls succeed. Individual
+    // tests override these to exercise the JWT-only / partial-failure paths.
+    mockLoadCredentials.mockResolvedValue(null)
+    mockClearCredentials.mockResolvedValue({ success: true, source: 'config file' })
   })
 
   afterEach(() => {
@@ -77,18 +88,79 @@ describe('createLogoutCommand', () => {
   })
 
   describe('not authenticated guard', () => {
-    it('exits 0 when not authenticated', async () => {
+    it('exits 0 when not authenticated (no API key, no JWT session)', async () => {
       mockGetAuthStatus.mockResolvedValue({
         authenticated: false,
         keyPrefix: null,
         source: 'none',
       })
+      mockLoadCredentials.mockResolvedValue(null)
 
       await expect(runCommand()).rejects.toThrow('process.exit(0)')
 
       const output = consoleLogSpy.mock.calls.flat().join('\n')
       expect(output).toContain('Not authenticated')
       expect(mockClearApiKey).not.toHaveBeenCalled()
+      expect(mockClearCredentials).not.toHaveBeenCalled()
+    })
+
+    it('exits 0 when an expired JWT session is the only credential present', async () => {
+      mockGetAuthStatus.mockResolvedValue({
+        authenticated: false,
+        keyPrefix: null,
+        source: 'none',
+      })
+      mockLoadCredentials.mockResolvedValue({
+        accessToken: 'expired-token',
+        refreshToken: 'refresh',
+        expiresAt: Date.now() - 1000,
+        version: 2,
+      })
+
+      await expect(runCommand()).rejects.toThrow('process.exit(0)')
+
+      const output = consoleLogSpy.mock.calls.flat().join('\n')
+      expect(output).toContain('Not authenticated')
+    })
+  })
+
+  describe('JWT-only session (SMI-4402 regression — the reported login/logout mismatch)', () => {
+    beforeEach(() => {
+      // Exactly the state a device-code login leaves behind: no legacy API
+      // key, but a live, unexpired JWT session.
+      mockGetAuthStatus.mockResolvedValue({
+        authenticated: false,
+        keyPrefix: null,
+        source: 'none',
+      })
+      mockLoadCredentials.mockResolvedValue({
+        accessToken: 'live-access-token',
+        refreshToken: 'live-refresh-token',
+        expiresAt: Date.now() + 60 * 60 * 1000,
+        version: 2,
+      })
+      mockConfirm.mockResolvedValue(true)
+    })
+
+    it('does not print "Not authenticated" and proceeds to log out', async () => {
+      mockClearApiKey.mockResolvedValue({ success: true, source: 'config file' })
+      mockClearCredentials.mockResolvedValue({ success: true, source: 'keyring and config file' })
+
+      await expect(runCommand()).rejects.toThrow('process.exit(0)')
+
+      const output = consoleLogSpy.mock.calls.flat().join('\n')
+      expect(output).not.toContain('Not authenticated')
+      expect(output).toContain('Logged out')
+    })
+
+    it('clears both the legacy API key store and the JWT session store', async () => {
+      mockClearApiKey.mockResolvedValue({ success: true, source: 'config file' })
+      mockClearCredentials.mockResolvedValue({ success: true, source: 'keyring and config file' })
+
+      await expect(runCommand()).rejects.toThrow('process.exit(0)')
+
+      expect(mockClearApiKey).toHaveBeenCalledOnce()
+      expect(mockClearCredentials).toHaveBeenCalledOnce()
     })
   })
 
@@ -107,6 +179,7 @@ describe('createLogoutCommand', () => {
       await expect(runCommand()).rejects.toThrow('process.exit(0)')
 
       expect(mockClearApiKey).not.toHaveBeenCalled()
+      expect(mockClearCredentials).not.toHaveBeenCalled()
       const output = consoleLogSpy.mock.calls.flat().join('\n')
       expect(output).toContain('Cancelled')
     })
@@ -118,6 +191,7 @@ describe('createLogoutCommand', () => {
       await expect(runCommand()).rejects.toThrow('process.exit(0)')
 
       expect(mockClearApiKey).toHaveBeenCalledOnce()
+      expect(mockClearCredentials).toHaveBeenCalledOnce()
     })
   })
 
@@ -131,8 +205,9 @@ describe('createLogoutCommand', () => {
       mockConfirm.mockResolvedValue(true)
     })
 
-    it('prints success message with source', async () => {
+    it('prints success message with combined sources', async () => {
       mockClearApiKey.mockResolvedValue({ success: true, source: 'config file' })
+      mockClearCredentials.mockResolvedValue({ success: true, source: 'config file' })
 
       await expect(runCommand()).rejects.toThrow('process.exit(0)')
 
@@ -158,12 +233,32 @@ describe('createLogoutCommand', () => {
         source: 'config file',
         error: 'access denied',
       })
+      mockClearCredentials.mockResolvedValue({ success: true, source: 'config file' })
 
       await expect(runCommand()).rejects.toThrow('process.exit(0)')
 
       const output = consoleLogSpy.mock.calls.flat().join('\n')
       expect(output).toContain('access denied')
       expect(output).toContain('OS keyring')
+    })
+
+    it('warns about both keyring errors when both clears partially fail', async () => {
+      mockClearApiKey.mockResolvedValue({
+        success: false,
+        source: 'config file',
+        error: 'api key keyring error',
+      })
+      mockClearCredentials.mockResolvedValue({
+        success: false,
+        source: 'config file',
+        error: 'refresh token keyring error',
+      })
+
+      await expect(runCommand()).rejects.toThrow('process.exit(0)')
+
+      const output = consoleLogSpy.mock.calls.flat().join('\n')
+      expect(output).toContain('api key keyring error')
+      expect(output).toContain('refresh token keyring error')
     })
   })
 })

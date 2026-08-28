@@ -5,6 +5,9 @@
  * TC-3: loadCredentials → returns TokenCredentials with keyring token
  * TC-4: refreshAccessToken → exchanges refresh token, returns new creds
  * TC-5: refreshAccessToken → returns null on non-2xx response
+ * TC-6: clearCredentials → deletes keyring entry + strips config fields
+ * TC-7: clearCredentials → reports partial failure on keyring error
+ * TC-8: clearCredentials → preserves apiKey and other unrelated fields
  */
 
 import { describe, it, expect, vi, beforeEach } from 'vitest'
@@ -30,6 +33,7 @@ vi.mock('../api/utils.js', () => ({
 const keytarDefault: any = {
   setPassword: vi.fn(),
   getPassword: vi.fn(),
+  deletePassword: vi.fn(),
 }
 vi.mock('@isaacs/keytar', () => ({ default: keytarDefault }))
 
@@ -44,6 +48,7 @@ describe('token-credentials', () => {
     vi.mocked(readFileSync).mockReturnValue('{}')
     keytarDefault.setPassword.mockResolvedValue(undefined)
     keytarDefault.getPassword.mockResolvedValue(null)
+    keytarDefault.deletePassword.mockResolvedValue(true)
   })
 
   it('TC-1: storeCredentials writes version:2 schema to config file', async () => {
@@ -123,5 +128,70 @@ describe('token-credentials', () => {
     const { refreshAccessToken } = await import('./token-credentials.js')
     const result = await refreshAccessToken('expired_rt')
     expect(result).toBeNull()
+  })
+
+  it('TC-6: clearCredentials deletes keyring entry and strips config fields', async () => {
+    vi.mocked(existsSync).mockReturnValue(true)
+    vi.mocked(readFileSync).mockReturnValue(
+      JSON.stringify({
+        accessToken: 'at_stored',
+        refreshToken: 'rt_stored',
+        expiresAt: 9999999999000,
+        version: 2,
+      })
+    )
+
+    const { clearCredentials } = await import('./token-credentials.js')
+    const result = await clearCredentials()
+
+    expect(result.success).toBe(true)
+    expect(result.source).toContain('keyring')
+    expect(result.source).toContain('config file')
+    expect(keytarDefault.deletePassword).toHaveBeenCalledWith('skillsmith-cli', 'refresh-token')
+
+    const writeCall = vi.mocked(writeFileSync).mock.calls[0]
+    const written = JSON.parse(writeCall[1] as string) as Record<string, unknown>
+    expect(written.accessToken).toBeUndefined()
+    expect(written.refreshToken).toBeUndefined()
+    expect(written.expiresAt).toBeUndefined()
+    expect(written.version).toBeUndefined()
+  })
+
+  it('TC-7: clearCredentials reports partial failure on keyring error', async () => {
+    vi.mocked(existsSync).mockReturnValue(true)
+    vi.mocked(readFileSync).mockReturnValue(
+      JSON.stringify({ accessToken: 'at_stored', expiresAt: 9999999999000, version: 2 })
+    )
+    keytarDefault.deletePassword.mockRejectedValue(new Error('keyring locked'))
+
+    const { clearCredentials } = await import('./token-credentials.js')
+    const result = await clearCredentials()
+
+    expect(result.success).toBe(false)
+    expect(result.error).toBe('keyring locked')
+    // Config file is still cleared even when the keyring delete fails.
+    expect(writeFileSync).toHaveBeenCalled()
+  })
+
+  it('TC-8: clearCredentials preserves apiKey and other unrelated fields', async () => {
+    vi.mocked(existsSync).mockReturnValue(true)
+    vi.mocked(readFileSync).mockReturnValue(
+      JSON.stringify({
+        apiKey: 'sk_live_legacy',
+        accessToken: 'at_stored',
+        refreshToken: 'rt_stored',
+        expiresAt: 9999999999000,
+        version: 2,
+        someOtherField: 'keep-me',
+      })
+    )
+
+    const { clearCredentials } = await import('./token-credentials.js')
+    await clearCredentials()
+
+    const writeCall = vi.mocked(writeFileSync).mock.calls[0]
+    const written = JSON.parse(writeCall[1] as string) as Record<string, unknown>
+    expect(written.apiKey).toBe('sk_live_legacy')
+    expect(written.someOtherField).toBe('keep-me')
   })
 })

@@ -3,13 +3,15 @@
  *
  * SMI-2715: CLI Login Device Flow
  *
- * Displays the masked API key and the storage source so users can
- * understand where their credentials are being read from.
+ * Displays the masked API key (or JWT session expiry) and the storage
+ * source so users can understand where their credentials are being read
+ * from. Checks a JWT device-code session (SMI-4402) via loadCredentials()
+ * first — getAuthStatus() alone only sees the legacy API key.
  */
 
 import { Command } from 'commander'
 import chalk from 'chalk'
-import { getAuthStatus } from '@skillsmith/core'
+import { getAuthStatus, loadCredentials } from '@skillsmith/core'
 import { withTelemetry } from '@skillsmith/core/telemetry'
 
 /** Human-readable labels for each credential source */
@@ -22,6 +24,14 @@ const SOURCE_LABELS: Record<string, string> = {
 
 // SMI-5040: extracted from inline .action() closure for withTelemetry wrap.
 async function whoamiActionImpl(): Promise<void> {
+  const jwtSession = await loadCredentials()
+  if (jwtSession && Date.now() < jwtSession.expiresAt) {
+    console.log(chalk.bold('Skillsmith CLI'))
+    console.log(chalk.dim('  Session: ') + chalk.cyan('device-code login'))
+    console.log(chalk.dim('  Expires: ') + new Date(jwtSession.expiresAt).toLocaleString())
+    process.exit(0)
+  }
+
   const status = await getAuthStatus()
 
   if (!status.authenticated || !status.keyPrefix) {

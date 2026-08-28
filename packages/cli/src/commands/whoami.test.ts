@@ -2,7 +2,9 @@
  * SMI-2715: Whoami Command Tests
  *
  * Tests for `skillsmith whoami` — unauthenticated state, each source label,
- * and masked key display.
+ * masked key display, and JWT device-code session detection (SMI-4402 — the
+ * bug where `whoami`/`logout` only checked the legacy API key and missed a
+ * live JWT session that `login` itself could see).
  */
 
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest'
@@ -13,6 +15,7 @@ import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest'
 
 vi.mock('@skillsmith/core', () => ({
   getAuthStatus: vi.fn(),
+  loadCredentials: vi.fn(),
 }))
 
 // ---------------------------------------------------------------------------
@@ -20,9 +23,10 @@ vi.mock('@skillsmith/core', () => ({
 // ---------------------------------------------------------------------------
 
 import { createWhoamiCommand } from './whoami.js'
-import { getAuthStatus } from '@skillsmith/core'
+import { getAuthStatus, loadCredentials } from '@skillsmith/core'
 
 const mockGetAuthStatus = vi.mocked(getAuthStatus)
+const mockLoadCredentials = vi.mocked(loadCredentials)
 
 // ---------------------------------------------------------------------------
 // Helpers
@@ -51,6 +55,10 @@ describe('createWhoamiCommand', () => {
       .mockImplementation((code?: string | number | null | undefined) => {
         throw new Error(`process.exit(${code ?? 0})`)
       })
+
+    // Default: no JWT session, so existing legacy-API-key tests exercise the
+    // getAuthStatus() path unchanged. JWT-specific tests override this.
+    mockLoadCredentials.mockResolvedValue(null)
   })
 
   afterEach(() => {
@@ -81,6 +89,50 @@ describe('createWhoamiCommand', () => {
       const output = consoleLogSpy.mock.calls.flat().join('\n')
       expect(output).toContain('Not authenticated')
       expect(output).toContain('skillsmith login')
+    })
+  })
+
+  describe('JWT session state (SMI-4402 regression)', () => {
+    it('shows device-code session when a live JWT exists, even with no API key configured', async () => {
+      // Exactly the state a device-code login leaves behind: getAuthStatus()
+      // (legacy API key only) sees nothing, but a live JWT session exists.
+      mockGetAuthStatus.mockResolvedValue({
+        authenticated: false,
+        keyPrefix: null,
+        source: 'none',
+      })
+      mockLoadCredentials.mockResolvedValue({
+        accessToken: 'live-access-token',
+        refreshToken: 'live-refresh-token',
+        expiresAt: Date.now() + 60 * 60 * 1000,
+        version: 2,
+      })
+
+      await expect(runCommand()).rejects.toThrow('process.exit(0)')
+
+      const output = consoleLogSpy.mock.calls.flat().join('\n')
+      expect(output).not.toContain('Not authenticated')
+      expect(output).toContain('device-code login')
+    })
+
+    it('falls through to the legacy API-key check when the JWT session is expired', async () => {
+      mockGetAuthStatus.mockResolvedValue({
+        authenticated: true,
+        keyPrefix: 'sk_live_xxxx',
+        source: 'config',
+      })
+      mockLoadCredentials.mockResolvedValue({
+        accessToken: 'expired-token',
+        refreshToken: 'refresh',
+        expiresAt: Date.now() - 1000,
+        version: 2,
+      })
+
+      await expect(runCommand()).rejects.toThrow('process.exit(0)')
+
+      const output = consoleLogSpy.mock.calls.flat().join('\n')
+      expect(output).not.toContain('device-code login')
+      expect(output).toContain('sk_live_xxxx...')
     })
   })
 

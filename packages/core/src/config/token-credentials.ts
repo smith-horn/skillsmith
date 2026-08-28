@@ -61,17 +61,17 @@ function writeConfigFile(data: StoredConfig): void {
   }
 }
 
-async function getKeytar(): Promise<{
+interface KeytarLike {
   setPassword(s: string, a: string, p: string): Promise<void>
   getPassword(s: string, a: string): Promise<string | null>
-} | null> {
+  deletePassword(s: string, a: string): Promise<boolean>
+}
+
+async function getKeytar(): Promise<KeytarLike | null> {
   try {
     // @ts-expect-error — optional dep, no type declarations in core
     const mod = (await import('@isaacs/keytar')) as { default?: unknown }
-    return (mod.default ?? mod) as {
-      setPassword(s: string, a: string, p: string): Promise<void>
-      getPassword(s: string, a: string): Promise<string | null>
-    }
+    return (mod.default ?? mod) as KeytarLike
   } catch {
     return null
   }
@@ -128,6 +128,58 @@ export async function loadCredentials(): Promise<TokenCredentials | null> {
     expiresAt: config.expiresAt as number,
     apiKey: config.apiKey,
     version: 2,
+  }
+}
+
+/**
+ * Clear the stored JWT session (access token, refresh token, expiry) from
+ * all storage locations. Mirrors clearApiKey() in config/index.ts, which
+ * only handles the legacy apiKey field — a JWT session needs its own clear
+ * path since the two credential schemes live in different fields/keyring
+ * accounts (SMI-4402 v2 schema vs. the pre-existing apiKey flow).
+ *
+ * @returns Result indicating which storage locations were cleared and any errors
+ */
+export async function clearCredentials(): Promise<{
+  success: boolean
+  source: string
+  error?: string
+}> {
+  const sources: string[] = []
+  let keyringError: string | undefined
+
+  const keytar = await getKeytar()
+  if (keytar) {
+    try {
+      const deleted = await keytar.deletePassword(KEYTAR_SERVICE, KEYTAR_ACCOUNT_REFRESH)
+      if (deleted) {
+        sources.push('keyring')
+      }
+    } catch (err) {
+      keyringError = err instanceof Error ? err.message : String(err)
+    }
+  }
+
+  // Always clear from config file — never leave stale JWT fields behind
+  const existing = readConfigFile()
+  delete existing.accessToken
+  delete existing.refreshToken
+  delete existing.expiresAt
+  delete existing.version
+  writeConfigFile(existing)
+  sources.push('config file')
+
+  if (keyringError) {
+    return {
+      success: false,
+      source: sources.join(' and '),
+      error: keyringError,
+    }
+  }
+
+  return {
+    success: true,
+    source: sources.join(' and '),
   }
 }
 
