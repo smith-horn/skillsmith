@@ -3,8 +3,9 @@
  * @module @skillsmith/mcp-server/tools/registry-tools.live
  * @see SMI-5816: Private skill registry — real implementation
  * @see ADR-129: Postgres-native (JSONB) storage, real team-auth (migration 071)
- * @see ADR-116: MCP service-role client + explicit tenant filter — SUPERSEDED for this file's
- *   team-scoped reads by SMI-6109 (see the addendum in docs/internal/adr/116-*.md). Still current
+ * @see ADR-116: MCP service-role client + explicit tenant filter — NARROWED for this file's
+ *   team-scoped reads by SMI-6109 (see the "Addendum: SMI-6109" section in
+ *   docs/internal/adr/116-mcp-server-service-role-for-team-scoped-tools.md). Still current
  *   for `team-workspace.live.ts`, deliberately not touched by that change.
  *
  * Backs `private_registry_publish` / `private_registry_manage` with the real

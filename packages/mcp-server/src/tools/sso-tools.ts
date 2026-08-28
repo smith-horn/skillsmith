@@ -227,14 +227,18 @@ async function executeConfigureSsoImpl(
   input: ConfigureSsoInput,
   _context: ToolContext
 ): Promise<ConfigureSsoResult> {
-  const dataSource: 'stub' | 'live' = dataSourceFor(service)
+  // SMI-6203 (P-5 audit): capture the module-level singleton once, so a setSSOConfigService()
+  // call landing between this read and any of the .method() calls below cannot produce a result
+  // labelled with one service's dataSource and populated by another's.
+  const svc = service
+  const dataSource: 'stub' | 'live' = dataSourceFor(svc)
 
   switch (input.action) {
     case 'set': {
       if (!input.idpMetadataUrl) {
         return { success: false, dataSource, error: 'idpMetadataUrl is required for action "set".' }
       }
-      const config = await service.set({
+      const config = await svc.set({
         idpMetadataUrl: input.idpMetadataUrl,
         idpEntityId: input.idpEntityId,
         protocol: input.protocol ?? 'saml',
@@ -251,7 +255,7 @@ async function executeConfigureSsoImpl(
     }
 
     case 'test': {
-      const result = await service.test()
+      const result = await svc.test()
       return {
         success: result.success,
         dataSource,
@@ -261,7 +265,7 @@ async function executeConfigureSsoImpl(
     }
 
     case 'remove': {
-      const removed = await service.remove()
+      const removed = await svc.remove()
       if (!removed) {
         return { success: false, dataSource, error: 'No SSO configuration to remove.' }
       }
@@ -277,8 +281,10 @@ async function executeSsoSettingsImpl(
   input: SsoSettingsInput,
   _context: ToolContext
 ): Promise<SsoSettingsResult> {
-  const dataSource: 'stub' | 'live' = dataSourceFor(service)
-  const config = await service.get(input.includeMetadata ?? false)
+  // SMI-6203 (P-5 audit): see executeConfigureSsoImpl above.
+  const svc = service
+  const dataSource: 'stub' | 'live' = dataSourceFor(svc)
+  const config = await svc.get(input.includeMetadata ?? false)
   if (!config) {
     return {
       configured: false,

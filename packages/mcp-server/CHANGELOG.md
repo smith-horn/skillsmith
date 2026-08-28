@@ -4,6 +4,15 @@ All notable changes to `@skillsmith/mcp-server` are documented here.
 
 ## [Unreleased]
 
+- **Feature**: `rbac_manage`/`rbac_assign_role`/`rbac_create_policy` are now backed by a real
+  Supabase RBACService (`rbac-tools.live.ts`) instead of the in-memory stub, on the caller's own
+  signed-in JWT — never the shared team license key or service-role. `list_roles`/`get_role` now
+  return the real two-role (`admin`/`member`) / four-permission model with per-team `allow`/`deny`
+  overrides, replacing the old arbitrary custom-role shape that never matched the database.
+  `rbac_assign_role` takes `memberId` (the team-membership row id) instead of `userId`/`roleId`.
+  Every write is gated on the `team:manage_rbac` permission, resolved server-side — a denial
+  returns a structured `{ code: 'permission_denied', permission, message }` object instead of a
+  raw error string, so the CLI and website can render the reason without parsing prose (SMI-6203).
 - **Fix**: `rbac_manage`/`rbac_assign_role`/`rbac_create_policy`, `configure_sso`/`sso_settings`,
   `webhook_configure`/`api_key_manage`, and `compliance_report` reported `dataSource: 'live'`
   whenever Supabase env vars were configured, even when the underlying service was still the

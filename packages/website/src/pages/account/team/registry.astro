@@ -587,18 +587,34 @@ const supabaseConfig = getSupabaseConfig()
     }
 
     try {
-      const { data: myMembership, error: membershipError } = await supabase
-        .from('team_members')
-        .select('role')
-        .eq('team_id', teamId)
-        .eq('user_id', session.user.id)
-        .limit(1)
-        .single()
+      // SMI-6203: toggle-deprecated and review are gated by two DIFFERENT
+      // permissions (registry:deprecate / registry:approve), not one blanket
+      // admin/owner check — resolve each independently via the caller-scoped
+      // has_team_permission() scalar RPC (no gate of its own; answers "does
+      // the caller, in their own role, have this permission for this team",
+      // using the caller's own auth.uid(), and never returns NULL — fails
+      // closed to FALSE). This is deliberately NOT
+      // get_effective_team_permissions(), which RAISEs permission_denied for
+      // a caller who lacks team:manage_rbac.
+      const [
+        { data: canDeprecateData, error: canDeprecateError },
+        { data: canApproveData, error: canApproveError },
+      ] = await Promise.all([
+        supabase.rpc('has_team_permission', {
+          p_team_id: teamId,
+          p_permission: 'registry:deprecate',
+        }),
+        supabase.rpc('has_team_permission', {
+          p_team_id: teamId,
+          p_permission: 'registry:approve',
+        }),
+      ])
 
-      if (membershipError) throw new Error(membershipError.message)
+      if (canDeprecateError) throw new Error(canDeprecateError.message)
+      if (canApproveError) throw new Error(canApproveError.message)
 
-      const role = String(myMembership?.role ?? '').toLowerCase()
-      const canManage = role === 'admin' || role === 'owner'
+      const canDeprecate = Boolean(canDeprecateData)
+      const canApprove = Boolean(canApproveData)
 
       async function loadRegistry() {
         // Read-path split (SMI-6087): approved via RLS-scoped select,
@@ -614,12 +630,12 @@ const supabaseConfig = getSupabaseConfig()
           ? `${registryData.namespace}/`
           : 'Not configured'
 
-        renderSkills(registryData.approved, canManage)
-        renderPending(registryData.pending, canManage)
+        renderSkills(registryData.approved, canDeprecate)
+        renderPending(registryData.pending, canApprove)
         renderRejected(registryData.rejected)
       }
 
-      function renderSkills(rows: PrivateRegistryDashboardRow[], userCanManage: boolean) {
+      function renderSkills(rows: PrivateRegistryDashboardRow[], userCanDeprecate: boolean) {
         const groups = groupRegistryVersions(rows)
         const list = document.getElementById('skills-list')!
         const empty = document.getElementById('skills-empty')!
@@ -644,9 +660,9 @@ const supabaseConfig = getSupabaseConfig()
                     const badge = badgeForRegistryVersion('approved', Boolean(version.deprecated))
                     const description = version.description || 'No description provided.'
                     const actionLabel = version.deprecated ? 'Undeprecate' : 'Deprecate'
-                    const title = userCanManage
+                    const title = userCanDeprecate
                       ? `${actionLabel} ${version.skill_id} ${version.version}`
-                      : 'Only team admins and owners can change deprecation state.'
+                      : "You do not have permission to change this skill's deprecation state."
                     return `<div class="version-row">
                       <div class="version-details">
                         <div class="version-heading">
@@ -668,7 +684,7 @@ const supabaseConfig = getSupabaseConfig()
                         data-version="${escapeHtml(version.version)}"
                         data-deprecated="${String(Boolean(version.deprecated))}"
                         title="${escapeHtml(title)}"
-                        ${userCanManage ? '' : 'disabled'}
+                        ${userCanDeprecate ? '' : 'disabled'}
                       >
                         ${actionLabel}
                       </button>
@@ -681,7 +697,7 @@ const supabaseConfig = getSupabaseConfig()
           .join('')
       }
 
-      function renderPending(rows: PrivateRegistryDashboardRow[], userCanManage: boolean) {
+      function renderPending(rows: PrivateRegistryDashboardRow[], userCanApprove: boolean) {
         const list = document.getElementById('pending-list')!
         const empty = document.getElementById('pending-empty')!
         const count = document.getElementById('pending-count')!
@@ -698,7 +714,7 @@ const supabaseConfig = getSupabaseConfig()
         empty.style.display = 'none'
         list.innerHTML = rows
           .map((row) => {
-            const title = userCanManage ? '' : 'Only team admins and owners can review submissions.'
+            const title = userCanApprove ? '' : 'You do not have permission to review submissions.'
             return `<article class="submission-card">
               <div class="submission-header">
                 <h3 class="submission-name">${escapeHtml(row.skill_id)}</h3>
@@ -722,7 +738,7 @@ const supabaseConfig = getSupabaseConfig()
                   data-skill-id="${escapeHtml(row.skill_id)}"
                   data-version="${escapeHtml(row.version)}"
                   title="${escapeHtml(title)}"
-                  ${userCanManage ? '' : 'disabled'}
+                  ${userCanApprove ? '' : 'disabled'}
                 >
                   Approve
                 </button>
@@ -734,7 +750,7 @@ const supabaseConfig = getSupabaseConfig()
                   data-skill-id="${escapeHtml(row.skill_id)}"
                   data-version="${escapeHtml(row.version)}"
                   title="${escapeHtml(title)}"
-                  ${userCanManage ? '' : 'disabled'}
+                  ${userCanApprove ? '' : 'disabled'}
                 >
                   Reject
                 </button>
@@ -790,9 +806,9 @@ const supabaseConfig = getSupabaseConfig()
       // and back)
       // attaches a NEW click listener to the same #content element every time, on top of any
       // still-live listener from the previous visit — each with its own now-stale `teamId`/
-      // `canManage`/`supabase` closure. Guarding on a marker on #content itself (not a module-level
-      // flag) means the listener is attached exactly once per DOM node, regardless of how many
-      // times this callback re-runs for the same node.
+      // `canDeprecate`/`canApprove`/`supabase` closure. Guarding on a marker on #content itself
+      // (not a module-level flag) means the listener is attached exactly once per DOM node,
+      // regardless of how many times this callback re-runs for the same node.
       const contentEl = document.getElementById('content')!
       if (contentEl.dataset.reviewListenerAttached !== 'true') {
         contentEl.dataset.reviewListenerAttached = 'true'
@@ -801,14 +817,22 @@ const supabaseConfig = getSupabaseConfig()
             'button[data-action]'
           )
           if (!button) return
-          if (button.disabled || !canManage) {
+
+          const action = button.dataset.action
+          // toggle-deprecated and review are gated by two DIFFERENT permissions
+          // (registry:deprecate / registry:approve respectively) — branch on the
+          // button's own action rather than checking one blanket flag, matching
+          // the per-action `canDeprecate`/`canApprove` resolution above.
+          const hasPermissionForAction =
+            action === 'toggle-deprecated' ? canDeprecate : action === 'review' ? canApprove : false
+
+          if (button.disabled || !hasPermissionForAction) {
             console.warn(
               '[registry] click ignored: button disabled or caller lacks manage permission'
             )
             return
           }
 
-          const action = button.dataset.action
           const skillId = button.dataset.skillId
           const version = button.dataset.version
 

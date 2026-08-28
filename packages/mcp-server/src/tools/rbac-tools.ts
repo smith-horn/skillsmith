@@ -1,236 +1,235 @@
 /**
- * @fileoverview Enterprise RBAC MCP tools for role management
+ * @fileoverview Enterprise RBAC MCP tools — fixed roles, four permissions, per-team overrides
  * @module @skillsmith/mcp-server/tools/rbac-tools
- * @see SMI-3901: RBAC MCP Tools
+ * @see SMI-3901: RBAC MCP Tools (the original shape)
+ * @see SMI-6202 Wave 1: `team_permission_grants` + the five resolver functions
+ * @see SMI-6203 Wave 2: the live service and these rewritten schemas
  *
- * RBAC enforcement is at the Supabase API layer (server-side), NOT local MCP.
- * These MCP tools are a management interface only — they configure roles,
- * assignments, and policies that the server enforces.
+ * RBAC enforcement is in the database, not here. `has_team_permission()` composes owner-exemption,
+ * per-team `allow`/`deny` grants and the built-in default matrix, and every function these tools
+ * call re-checks it server-side. This layer is a management interface: it resolves the team, hands
+ * the caller's own JWT to the right function, and renders the result.
  *
- * Default role hierarchy: admin > manager > member > viewer.
+ * TWO GATES, TWO QUESTIONS. The Enterprise tier gate (`toolFeatureMapping.ts`, unchanged) answers
+ * "is this customer entitled to RBAC?". The `team:manage_rbac` permission answers "is this
+ * particular person allowed to use it?". Neither replaces the other, and no new feature flag is
+ * added for the second — issued Enterprise licenses carry a frozen `features` array, so a new flag
+ * would deny every already-issued license (D-11 precedent).
  *
  * Tier gate: Enterprise (rbac feature flag).
  */
 
-import { z } from 'zod'
 import type { ToolContext } from '../context.js'
 import { withTelemetry } from '@skillsmith/core/telemetry'
 import { dataSourceFor } from './stub-data-source.js'
+import { isSupabaseConfigured } from '../supabase-client.js'
+import { readLicenseKey, resolveLicenseTeamId } from './team-resolver.js'
+import { toPermissionDeniedError } from './team-permission-error.js'
+import { createLiveRBACService } from './rbac-tools.live.js'
+import { PERMISSION_LIST } from './rbac-tools.schemas.js'
 import type {
+  RbacAssignRoleInput,
+  RbacCreatePolicyInput,
+  RbacManageInput,
+} from './rbac-tools.schemas.js'
+import type {
+  GrantableRole,
   RBACService,
-  RbacManageResult,
   RbacAssignRoleResult,
   RbacCreatePolicyResult,
+  RbacManageResult,
+  RbacToolError,
+  TeamPermission,
 } from './rbac-tools.types.js'
-import { createStubRBACService } from './rbac-tools.types.js'
+import { GRANTABLE_ROLES, MANAGE_RBAC_PERMISSION, TEAM_PERMISSIONS } from './rbac-tools.types.js'
+import { createStubRBACService, STUB_TEAM_ID } from './rbac-tools.stub.js'
 
 // Re-export types and stub factory for external consumers
 export type {
-  RBACRole,
-  RBACAssignment,
-  RBACPolicy,
+  EffectivePermission,
+  GrantableRole,
+  PermissionEffect,
+  PermissionSource,
   RBACService,
-  RbacManageResult,
   RbacAssignRoleResult,
   RbacCreatePolicyResult,
+  RbacManageResult,
+  RbacToolError,
+  RolePermissionsView,
+  TeamMemberAssignment,
+  TeamMemberRole,
+  TeamPermission,
 } from './rbac-tools.types.js'
-export { createStubRBACService } from './rbac-tools.types.js'
+export { DEFAULT_ROLE_PERMISSIONS } from './rbac-tools.types.js'
+export { createStubRBACService } from './rbac-tools.stub.js'
 
-// ============================================================================
-// Input schemas
-// ============================================================================
+// Both the Zod runtime-validation schemas and the MCP tool-registration schemas live in
+// rbac-tools.schemas.ts (this file's own 500-line audit:standards budget — the same split
+// registry-tools.schemas.ts made) and are re-exported here so every existing import site
+// (index.ts, tool-dispatch.ts, every test file) reaches them through this module unchanged.
+export {
+  rbacManageInputSchema,
+  rbacAssignRoleInputSchema,
+  rbacCreatePolicyInputSchema,
+  rbacManageToolSchema,
+  rbacAssignRoleToolSchema,
+  rbacCreatePolicyToolSchema,
+  type RbacManageInput,
+  type RbacAssignRoleInput,
+  type RbacCreatePolicyInput,
+} from './rbac-tools.schemas.js'
 
-export const rbacManageInputSchema = z.object({
-  action: z.enum(['create_role', 'list_roles', 'delete_role', 'get_role']),
-  name: z.string().min(1).max(64).optional().describe('Role name (required for create_role)'),
-  roleId: z.string().optional().describe('Role identifier (required for get_role/delete_role)'),
-  permissions: z
-    .array(z.string())
-    .optional()
-    .describe('Permission strings (optional for create_role)'),
-  description: z.string().max(256).optional().describe('Role description'),
-})
-
-export type RbacManageInput = z.infer<typeof rbacManageInputSchema>
-
-export const rbacAssignRoleInputSchema = z.object({
-  action: z.enum(['assign', 'revoke', 'list_assignments']),
-  userId: z.string().optional().describe('User identifier (required for assign/revoke)'),
-  roleId: z.string().optional().describe('Role identifier (required for assign/revoke)'),
-})
-
-export type RbacAssignRoleInput = z.infer<typeof rbacAssignRoleInputSchema>
-
-export const rbacCreatePolicyInputSchema = z.object({
-  action: z.enum(['create', 'list', 'delete', 'get']),
-  name: z.string().min(1).max(128).optional().describe('Policy name (required for create)'),
-  policyId: z.string().optional().describe('Policy identifier (required for get/delete)'),
-  effect: z.enum(['allow', 'deny']).optional().describe('Policy effect (required for create)'),
-  resources: z.array(z.string()).optional().describe('Resource patterns (required for create)'),
-  actions: z.array(z.string()).optional().describe('Action patterns (required for create)'),
-})
-
-export type RbacCreatePolicyInput = z.infer<typeof rbacCreatePolicyInputSchema>
-
-// ============================================================================
-// Tool schemas for MCP registration
-// ============================================================================
-
-export const rbacManageToolSchema = {
-  name: 'rbac_manage' as const,
-  description:
-    'Manage RBAC roles: create_role, list_roles, get_role, delete_role. ' +
-    'Default hierarchy: admin > manager > member > viewer. ' +
-    'Requires Enterprise tier (rbac feature).',
-  inputSchema: {
-    type: 'object' as const,
-    properties: {
-      action: {
-        type: 'string',
-        enum: ['create_role', 'list_roles', 'delete_role', 'get_role'],
-        description: 'RBAC role operation',
-      },
-      name: { type: 'string', description: 'Role name (required for create_role)' },
-      roleId: {
-        type: 'string',
-        description: 'Role ID (required for get_role/delete_role)',
-      },
-      permissions: {
-        type: 'array',
-        items: { type: 'string' },
-        description: 'Permission strings (optional for create_role)',
-      },
-      description: { type: 'string', description: 'Role description' },
-    },
-    required: ['action'],
-  },
-}
-
-export const rbacAssignRoleToolSchema = {
-  name: 'rbac_assign_role' as const,
-  description:
-    'Assign or revoke roles for users, or list current assignments. ' +
-    'Requires Enterprise tier (rbac feature).',
-  inputSchema: {
-    type: 'object' as const,
-    properties: {
-      action: {
-        type: 'string',
-        enum: ['assign', 'revoke', 'list_assignments'],
-        description: 'Assignment operation',
-      },
-      userId: { type: 'string', description: 'User ID (required for assign/revoke)' },
-      roleId: { type: 'string', description: 'Role ID (required for assign/revoke)' },
-    },
-    required: ['action'],
-  },
-}
-
-export const rbacCreatePolicyToolSchema = {
-  name: 'rbac_create_policy' as const,
-  description:
-    'Create, list, get, or delete RBAC policies that define access rules. ' +
-    'Requires Enterprise tier (rbac feature).',
-  inputSchema: {
-    type: 'object' as const,
-    properties: {
-      action: {
-        type: 'string',
-        enum: ['create', 'list', 'delete', 'get'],
-        description: 'Policy operation',
-      },
-      name: { type: 'string', description: 'Policy name (required for create)' },
-      policyId: { type: 'string', description: 'Policy ID (required for get/delete)' },
-      effect: {
-        type: 'string',
-        enum: ['allow', 'deny'],
-        description: 'Policy effect (required for create)',
-      },
-      resources: {
-        type: 'array',
-        items: { type: 'string' },
-        description: 'Resource patterns (required for create)',
-      },
-      actions: {
-        type: 'array',
-        items: { type: 'string' },
-        description: 'Action patterns (required for create)',
-      },
-    },
-    required: ['action'],
-  },
-}
-
-// Module-level singleton
-let service: RBACService = createStubRBACService()
+// Module-level singleton. Picks the live Supabase-backed service when SUPABASE_URL +
+// SUPABASE_ANON_KEY are configured; otherwise the in-memory stub (local dev / tests) —
+// same pattern as registry-tools.ts:196-198.
+let service: RBACService = isSupabaseConfigured()
+  ? createLiveRBACService()
+  : createStubRBACService()
 
 /** Replace the RBAC service implementation (for testing or production swap) */
 export function setRBACService(svc: RBACService): void {
   service = svc
 }
 
+/** The service instance currently wired in. */
+export function getRBACService(): RBACService {
+  return service
+}
+
 // ============================================================================
 // Handlers
 // ============================================================================
+
+/**
+ * Resolve the team from the team credential (license key, or API key — SMI-6080), exactly as
+ * `registry-tools.ts` does, including the static stub id when Supabase is unconfigured.
+ *
+ * Team resolution ONLY. Which team is never the same question as which person: every RBAC
+ * operation additionally needs `skillsmith login` (see `rbac-tools.live.auth.ts`).
+ */
+async function resolveTeamId(): Promise<string> {
+  if (!isSupabaseConfigured()) return STUB_TEAM_ID
+  const licenseKey = readLicenseKey()
+  if (!licenseKey) {
+    throw new Error(
+      'SKILLSMITH_LICENSE_KEY or SKILLSMITH_API_KEY is required for RBAC operations. Set one in ' +
+        'your MCP server config — shell exports do not reach MCP subprocesses. Managing roles and ' +
+        'permissions additionally requires `skillsmith login`.'
+    )
+  }
+  const teamId = await resolveLicenseTeamId(licenseKey)
+  if (!teamId) {
+    throw new Error(
+      'Unable to resolve team from the configured key. Ensure SKILLSMITH_LICENSE_KEY or ' +
+        'SKILLSMITH_API_KEY is active and attached to an Enterprise-tier subscription.'
+    )
+  }
+  return teamId
+}
+
+/** Map a thrown service error to the tool's `error` field: structured refusal, or plain text. */
+function toToolError(err: unknown, requiredPermission: TeamPermission): RbacToolError {
+  const denied = toPermissionDeniedError(err, requiredPermission)
+  if (denied) return denied
+  return err instanceof Error ? err.message : 'Unexpected RBAC error.'
+}
+
+const effectRow = (p: {
+  role: string
+  permission: string
+  effect: string
+  source: string
+}): string => `| ${p.role} | ${p.permission} | ${p.effect} | ${p.source} |`
+
+const PERMISSION_TABLE_HEAD =
+  '| Role | Permission | Effect | Source |\n|------|------------|--------|--------|'
+
+/** Expand `resources x actions` into `resource:action` strings, preserving input order. */
+function expandPermissions(resources: string[], actions: string[]): string[] {
+  return resources.flatMap((resource) => actions.map((action) => `${resource}:${action}`))
+}
 
 async function executeRbacManageImpl(
   input: RbacManageInput,
   _context: ToolContext
 ): Promise<RbacManageResult> {
-  const dataSource: 'stub' | 'live' = dataSourceFor(service)
+  // One read of the module-level singleton, so provenance and data can never come from two
+  // different instances if `setRBACService()` lands between them (Wave 2 Step 2).
+  const svc = service
+  const dataSource: 'stub' | 'live' = dataSourceFor(svc)
 
-  switch (input.action) {
-    case 'create_role': {
-      if (!input.name)
-        return { success: false, dataSource, error: 'name is required for action "create_role".' }
-      const role = await service.createRole(input.name, input.permissions, input.description)
-      return {
-        success: true,
-        dataSource,
-        role,
-        message:
-          `## Role Created\n\n` +
-          `- **Name:** ${role.name}\n` +
-          `- **ID:** ${role.id}\n` +
-          `- **Permissions:** ${role.permissions.length ? role.permissions.join(', ') : 'none'}\n` +
-          (role.description ? `- **Description:** ${role.description}\n` : ''),
-      }
-    }
-    case 'list_roles': {
-      const roles = await service.listRoles()
-      const lines = roles.map(
-        (r) => `| ${r.name} | ${r.id} | ${r.hierarchy} | ${r.permissions.join(', ')} |`
-      )
-      return {
-        success: true,
-        dataSource,
-        roles,
-        message:
-          `## RBAC Roles (${roles.length})\n\n` +
-          `| Name | ID | Hierarchy | Permissions |\n` +
-          `|------|-----|-----------|-------------|\n` +
-          lines.join('\n'),
-      }
-    }
-    case 'get_role': {
-      if (!input.roleId)
-        return { success: false, dataSource, error: 'roleId is required for action "get_role".' }
-      const role = await service.getRole(input.roleId)
-      if (!role) return { success: false, dataSource, error: `Role "${input.roleId}" not found.` }
-      return { success: true, dataSource, role }
-    }
-    case 'delete_role': {
-      if (!input.roleId)
-        return { success: false, dataSource, error: 'roleId is required for action "delete_role".' }
-      const deleted = await service.deleteRole(input.roleId)
-      if (!deleted)
+  let teamId: string
+  try {
+    teamId = await resolveTeamId()
+  } catch (err) {
+    return { success: false, dataSource, error: toToolError(err, MANAGE_RBAC_PERMISSION) }
+  }
+
+  try {
+    switch (input.action) {
+      case 'list_roles': {
+        const permissions = await svc.listPermissions(teamId)
+        const roles = GRANTABLE_ROLES.map((role) => ({
+          role,
+          permissions: permissions.filter((p) => p.role === role),
+        }))
         return {
-          success: false,
+          success: true,
           dataSource,
-          error: `Role "${input.roleId}" not found or is a built-in role.`,
+          roles,
+          permissions,
+          message:
+            `## Team Roles (${roles.length} configurable + owner)\n\n` +
+            'Owners always hold every permission and are never narrowable.\n\n' +
+            `${PERMISSION_TABLE_HEAD}\n${permissions.map(effectRow).join('\n')}`,
         }
-      return { success: true, dataSource, message: `Role "${input.roleId}" deleted.` }
+      }
+      case 'get_role': {
+        if (!input.role)
+          return { success: false, dataSource, error: 'role is required for action "get_role".' }
+        const permissions = (await svc.listPermissions(teamId)).filter((p) => p.role === input.role)
+        return {
+          success: true,
+          dataSource,
+          role: { role: input.role, permissions },
+          message:
+            `## Role: ${input.role}\n\n` +
+            `${PERMISSION_TABLE_HEAD}\n${permissions.map(effectRow).join('\n')}`,
+        }
+      }
+      case 'set_role_permission': {
+        if (!input.role || !input.permission || !input.effect)
+          return {
+            success: false,
+            dataSource,
+            error: 'role, permission and effect are required for action "set_role_permission".',
+          }
+        await svc.setRolePermission(teamId, input.role, input.permission, input.effect)
+        return {
+          success: true,
+          dataSource,
+          message: `Set **${input.effect}** on \`${input.permission}\` for role \`${input.role}\`.`,
+        }
+      }
+      case 'reset_role_permission': {
+        if (!input.role || !input.permission)
+          return {
+            success: false,
+            dataSource,
+            error: 'role and permission are required for action "reset_role_permission".',
+          }
+        const cleared = await svc.resetRolePermission(teamId, input.role, input.permission)
+        return {
+          success: true,
+          dataSource,
+          message: cleared
+            ? `Cleared the override on \`${input.permission}\` for role \`${input.role}\` — it now follows the built-in default.`
+            : `No override was set on \`${input.permission}\` for role \`${input.role}\` — already at the built-in default.`,
+        }
+      }
     }
+  } catch (err) {
+    return { success: false, dataSource, error: toToolError(err, MANAGE_RBAC_PERMISSION) }
   }
 }
 
@@ -238,61 +237,80 @@ async function executeRbacAssignRoleImpl(
   input: RbacAssignRoleInput,
   _context: ToolContext
 ): Promise<RbacAssignRoleResult> {
-  const dataSource: 'stub' | 'live' = dataSourceFor(service)
+  const svc = service
+  const dataSource: 'stub' | 'live' = dataSourceFor(svc)
 
-  switch (input.action) {
-    case 'assign': {
-      if (!input.userId || !input.roleId)
+  let teamId: string
+  try {
+    teamId = await resolveTeamId()
+  } catch (err) {
+    return { success: false, dataSource, error: toToolError(err, MANAGE_RBAC_PERMISSION) }
+  }
+
+  try {
+    switch (input.action) {
+      case 'assign': {
+        if (!input.memberId || !input.role)
+          return {
+            success: false,
+            dataSource,
+            error: 'memberId and role are required for action "assign".',
+          }
+        await svc.setMemberRole(input.memberId, input.role)
         return {
-          success: false,
+          success: true,
           dataSource,
-          error: 'userId and roleId are required for action "assign".',
+          message: `Member \`${input.memberId}\` is now \`${input.role}\`.`,
         }
-      const assignment = await service.assignRole(input.userId, input.roleId)
-      return {
-        success: true,
-        dataSource,
-        assignment,
-        message:
-          `## Role Assigned\n\n` +
-          `- **User:** ${assignment.userId}\n` +
-          `- **Role:** ${assignment.roleName} (${assignment.roleId})\n` +
-          `- **Assigned by:** ${assignment.assignedBy}`,
+      }
+      case 'revoke': {
+        if (!input.memberId || !input.role)
+          return {
+            success: false,
+            dataSource,
+            error: 'memberId and role are required for action "revoke".',
+          }
+        // Roles are exclusive, not additive: "revoke" means "drop back to the baseline role".
+        // Revoking `member` would mean removing them from the team, which is a different
+        // operation (`remove_team_member`) with its own gates — say so instead of silently
+        // doing nothing.
+        if (input.role === 'member')
+          return {
+            success: false,
+            dataSource,
+            error:
+              'Only "admin" can be revoked — that demotes the member to "member". Removing ' +
+              'someone from the team entirely is a separate operation (team member removal).',
+          }
+        await svc.setMemberRole(input.memberId, 'member')
+        return {
+          success: true,
+          dataSource,
+          message: `Revoked \`admin\` from member \`${input.memberId}\` — they are now \`member\`.`,
+        }
+      }
+      case 'list_assignments': {
+        const assignments = await svc.listMembers(teamId)
+        return {
+          success: true,
+          dataSource,
+          assignments,
+          message:
+            `## Team Members (${assignments.length})\n\n` +
+            (assignments.length === 0
+              ? 'No members found.'
+              : '| Member ID | Role | Name | Email |\n|-----------|------|------|-------|\n' +
+                assignments
+                  .map(
+                    (a) =>
+                      `| ${a.memberId} | ${a.role} | ${a.fullName ?? '—'} | ${a.email ?? '—'} |`
+                  )
+                  .join('\n')),
+        }
       }
     }
-    case 'revoke': {
-      if (!input.userId || !input.roleId)
-        return {
-          success: false,
-          dataSource,
-          error: 'userId and roleId are required for action "revoke".',
-        }
-      const revoked = await service.revokeRole(input.userId, input.roleId)
-      if (!revoked)
-        return {
-          success: false,
-          dataSource,
-          error: `No assignment found for user "${input.userId}" with role "${input.roleId}".`,
-        }
-      return {
-        success: true,
-        dataSource,
-        message: `Role "${input.roleId}" revoked from user "${input.userId}".`,
-      }
-    }
-    case 'list_assignments': {
-      const assignments = await service.listAssignments()
-      return {
-        success: true,
-        dataSource,
-        assignments,
-        message:
-          `## Role Assignments (${assignments.length})\n\n` +
-          (assignments.length === 0
-            ? 'No role assignments found.'
-            : assignments.map((a) => `- ${a.userId}: ${a.roleName} (${a.roleId})`).join('\n')),
-      }
-    }
+  } catch (err) {
+    return { success: false, dataSource, error: toToolError(err, MANAGE_RBAC_PERMISSION) }
   }
 }
 
@@ -300,68 +318,92 @@ async function executeRbacCreatePolicyImpl(
   input: RbacCreatePolicyInput,
   _context: ToolContext
 ): Promise<RbacCreatePolicyResult> {
-  const dataSource: 'stub' | 'live' = dataSourceFor(service)
+  const svc = service
+  const dataSource: 'stub' | 'live' = dataSourceFor(svc)
 
-  switch (input.action) {
-    case 'create': {
-      if (!input.name)
-        return { success: false, dataSource, error: 'name is required for action "create".' }
-      if (!input.effect)
-        return { success: false, dataSource, error: 'effect is required for action "create".' }
-      if (!input.resources?.length)
-        return { success: false, dataSource, error: 'resources is required for action "create".' }
-      if (!input.actions?.length)
-        return { success: false, dataSource, error: 'actions is required for action "create".' }
-      const policy = await service.createPolicy(
-        input.name,
-        input.effect,
-        input.resources,
-        input.actions
-      )
+  let teamId: string
+  try {
+    teamId = await resolveTeamId()
+  } catch (err) {
+    return { success: false, dataSource, error: toToolError(err, MANAGE_RBAC_PERMISSION) }
+  }
+
+  try {
+    if (input.action === 'list') {
+      const grants = (await svc.listPermissions(teamId)).filter((p) => p.source === 'grant')
       return {
         success: true,
         dataSource,
-        policy,
+        grants,
         message:
-          `## Policy Created\n\n` +
-          `- **Name:** ${policy.name}\n` +
-          `- **ID:** ${policy.id}\n` +
-          `- **Effect:** ${policy.effect}\n` +
-          `- **Resources:** ${policy.resources.join(', ')}\n` +
-          `- **Actions:** ${policy.actions.join(', ')}`,
+          `## Permission Overrides (${grants.length})\n\n` +
+          (grants.length === 0
+            ? 'No overrides set — every role follows the built-in defaults.'
+            : `${PERMISSION_TABLE_HEAD}\n${grants.map(effectRow).join('\n')}`),
       }
     }
-    case 'list': {
-      const policies = await service.listPolicies()
+
+    if (!input.role)
+      return { success: false, dataSource, error: `role is required for action "${input.action}".` }
+    if (!input.resources?.length || !input.actions?.length)
+      return {
+        success: false,
+        dataSource,
+        error: `resources and actions are required for action "${input.action}".`,
+      }
+    if (input.action === 'create' && !input.effect)
+      return { success: false, dataSource, error: 'effect is required for action "create".' }
+
+    const expanded = expandPermissions(input.resources, input.actions)
+    // Refuse the whole batch by name before writing any of it: the CHECK constraint would
+    // otherwise surface as a raw 23514 after a partial apply.
+    const unsupported = expanded.filter((p) => !(TEAM_PERMISSIONS as readonly string[]).includes(p))
+    if (unsupported.length > 0)
+      return {
+        success: false,
+        dataSource,
+        error:
+          `Not a configurable permission: ${unsupported.join(', ')}. ` +
+          `Valid resource:action expansions are ${PERMISSION_LIST}. Nothing was written.`,
+      }
+
+    const permissions = expanded as TeamPermission[]
+    const role: GrantableRole = input.role
+
+    if (input.action === 'create') {
+      const effect = input.effect ?? 'deny'
+      for (const permission of permissions) {
+        await svc.setRolePermission(teamId, role, permission, effect)
+      }
       return {
         success: true,
         dataSource,
-        policies,
+        grants: permissions.map((permission) => ({
+          role,
+          permission,
+          effect,
+          source: 'grant' as const,
+        })),
         message:
-          `## RBAC Policies (${policies.length})\n\n` +
-          (policies.length === 0
-            ? 'No policies defined.'
-            : policies
-                .map((p) => `- **${p.name}** (${p.id}): ${p.effect} ${p.resources.join(', ')}`)
-                .join('\n')),
+          `## Policy Applied${input.name ? `: ${input.name}` : ''}\n\n` +
+          `- **Role:** ${role}\n- **Effect:** ${effect}\n` +
+          `- **Permissions:** ${permissions.join(', ')}`,
       }
     }
-    case 'get': {
-      if (!input.policyId)
-        return { success: false, dataSource, error: 'policyId is required for action "get".' }
-      const policy = await service.getPolicy(input.policyId)
-      if (!policy)
-        return { success: false, dataSource, error: `Policy "${input.policyId}" not found.` }
-      return { success: true, dataSource, policy }
+
+    let cleared = 0
+    for (const permission of permissions) {
+      if (await svc.resetRolePermission(teamId, role, permission)) cleared += 1
     }
-    case 'delete': {
-      if (!input.policyId)
-        return { success: false, dataSource, error: 'policyId is required for action "delete".' }
-      const deleted = await service.deletePolicy(input.policyId)
-      if (!deleted)
-        return { success: false, dataSource, error: `Policy "${input.policyId}" not found.` }
-      return { success: true, dataSource, message: `Policy "${input.policyId}" deleted.` }
+    return {
+      success: true,
+      dataSource,
+      message:
+        `Cleared ${cleared} of ${permissions.length} override(s) for role \`${role}\` ` +
+        `(${permissions.join(', ')}). Any not listed here had no override set.`,
     }
+  } catch (err) {
+    return { success: false, dataSource, error: toToolError(err, MANAGE_RBAC_PERMISSION) }
   }
 }
 

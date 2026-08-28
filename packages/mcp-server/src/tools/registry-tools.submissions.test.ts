@@ -125,7 +125,13 @@ describe('private_registry_manage submissions/approve/reject — stub state mach
       mockContext
     )
     expect(result.success).toBe(false)
-    expect(result.error).toMatch(/not an admin/i)
+    // Matches `registry-tools.review-parity.test.ts`'s canonical `notAdmin` pattern. The old
+    // `/not an admin/i` paraphrase silently stopped matching when SMI-6202's seam-widening
+    // reworded this refusal (`registry-tools.stub.ts`) to also name the `registry:approve` grant
+    // — the parity file's own M-4 note records the same trap, but this sibling assertion was
+    // never updated with it.
+    expect(result.error).toMatch(/review private-registry submissions/i)
+    expect(result.error).toMatch(/registry:approve/)
   })
 
   it('blocks re-review of an already-decided submission (D-5 step 5 / D-8 terminal state)', async () => {
