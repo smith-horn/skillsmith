@@ -216,6 +216,14 @@ describe('SMI-5974: indexer-watch.yml (the new alert-gap watcher)', () => {
     const step = extractStep(watcher, 'Classify and alert')
     expect(step.runScript).toMatch(/type:"indexer_cancelled"/)
   })
+
+  it('SMI-6223: does not send the dead kind field to alert-notify — AlertRequest never declared it, $KIND stays only in the message string', () => {
+    const step = extractStep(watcher, 'Classify and alert')
+    expect(step.runScript).not.toMatch(/--arg kind/)
+    expect(step.runScript).not.toMatch(/kind:\$kind/)
+    // $KIND still does useful work embedded in the human-readable message.
+    expect(step.runScript).toMatch(/\(kind: \$KIND\)/)
+  })
 })
 
 describe('SMI-5974: indexer.yml (Send Alert on Failure alert-delivery-failure fix)', () => {

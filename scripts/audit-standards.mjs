@@ -567,6 +567,10 @@ const NO_VERIFY_JWT_FUNCTIONS = [
   // DNS TXT reverify sweep, service-role internal (Postgres/pg_cron cannot
   // resolve DNS itself). Mirrors scan-coverage-monitor / status-check.
   'sso-domain-reverify',
+  // SMI-6209: indexer-lock-starvation-monitor — pg_cron-invoked Arm A/B
+  // lock-starvation detection for the skill indexer, service-role internal.
+  // Mirrors scan-coverage-monitor / webhook-heartbeat-monitor.
+  'indexer-lock-starvation-monitor',
 ]
 
 const CONFIG_TOML_PATH = 'supabase/config.toml'

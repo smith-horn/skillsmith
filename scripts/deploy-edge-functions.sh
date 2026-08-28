@@ -96,6 +96,7 @@ NO_VERIFY_JWT_FUNCTIONS=(
   events
   generate-license
   health
+  indexer-lock-starvation-monitor
   license-status
   list-invoices
   private-registry-get
