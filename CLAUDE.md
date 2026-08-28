@@ -287,7 +287,7 @@ claude plugin disable supabase@supabase-agent-skills
 
 The generic `supabase` plugin is disabled (not uninstalled — `claude plugin enable supabase@supabase-agent-skills` reverts it) because it collides by skill name with this repo's own `supabase` skill and advises against `SECURITY DEFINER`, which conflicts with this schema's deliberate use of `SECURITY DEFINER` helpers to fix RLS recursion (SMI-4306). `postgres-best-practices` has no such conflicts and registers the same bundled MCP server, so nothing is lost by disabling the other one.
 
-Confirm whether SMI-4590's Team/Enterprise tier-gating for the session-start namespace audit covers this configuration automatically; until confirmed, invoke `skill_inventory_audit` manually to check for this class of collision.
+SMI-4590's Team/Enterprise tier-gating for the session-start namespace audit covers this automatically (confirmed via code read, SMI-6228: `session-start-audit-helper.ts` calls `runInventoryAudit()`, which calls `scanLocalInventory()` then `detectCollisions()`; the collision detector matches purely on `identifier` and never branches on `client`/`origin`, so a plugin-vs-project collision surfaces through the existing tier-gated audit with no extra wiring). No manual invocation needed on Team/Enterprise; on Community/Individual, invoke `skill_inventory_audit` directly to check for this class of collision.
 
 ---
 

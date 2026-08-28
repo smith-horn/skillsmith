@@ -366,3 +366,45 @@ export function readMtime(filePath: string): number | undefined {
 export function joinPath(dir: string, filename: string): string {
   return path.join(dir, filename)
 }
+
+/**
+ * Rejects path separators, `.`/`..` segments, and empty strings — an
+ * `enabledPlugins` id component is an unvalidated settings-file KEY, not
+ * something guaranteed traversal-free upstream of the plugin scanner
+ * (SMI-6228 Source 5, cross-provider review finding GPT-5.6-Sol). Moved
+ * here from `local-inventory.ts` to keep that file under the 500-line cap.
+ */
+export function isSafePathComponent(component: string): boolean {
+  return (
+    component.length > 0 &&
+    component !== '.' &&
+    component !== '..' &&
+    !component.includes('/') &&
+    !component.includes('\\')
+  )
+}
+
+/**
+ * True when `candidate`, once resolved to its REAL (symlink-followed) path,
+ * is `root` or nested under it (cross-provider review finding, GPT-5.6-Sol,
+ * applied here after it was first found and fixed in the plugin scanner's
+ * `.mjs` mirror, `scripts/lib/mcp-command-guard.plugin-scan.mjs`). Lexical
+ * `path.join`/`path.resolve` normalizes `..`/`.` but does not follow
+ * symlinks, so a symlinked plugin-cache subdirectory pointing outside the
+ * tree would pass a purely-lexical check even though `readdirSync` would
+ * then genuinely follow it outside. A path that doesn't exist yet (a
+ * normal case) makes `realpathSync` throw, treated here as "not safely
+ * within root" — same fail-soft skip the caller already has for a missing
+ * directory.
+ */
+export function isWithinRoot(root: string, candidate: string): boolean {
+  let resolvedRoot: string
+  let resolvedCandidate: string
+  try {
+    resolvedRoot = fs.realpathSync(root)
+    resolvedCandidate = fs.realpathSync(candidate)
+  } catch {
+    return false
+  }
+  return resolvedCandidate === resolvedRoot || resolvedCandidate.startsWith(resolvedRoot + path.sep)
+}

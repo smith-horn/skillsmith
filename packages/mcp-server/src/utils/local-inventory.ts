@@ -30,6 +30,8 @@ import {
   capTriggerSurface,
   extractClaudeMdTriggers,
   firstNonEmptyLine,
+  isSafePathComponent,
+  isWithinRoot,
   loadManifest,
   lookupAuthor,
   readBody,
@@ -313,6 +315,9 @@ function scanSkillsDirEntries(
  * cache dir that was never populated or was since removed) or multiple
  * (an in-progress or interrupted plugin update) both fail soft with a
  * `PLUGIN_SCAN_SKIPPED` warning rather than guessing which version is live.
+ *
+ * Path-traversal/symlink guards (`isSafePathComponent`/`isWithinRoot`,
+ * GPT-5.6-Sol review finding) live in `local-inventory.helpers.ts`.
  */
 function scanPluginInventory(
   claudeDir: string,
@@ -338,7 +343,27 @@ function scanPluginInventory(
     }
     const pluginName = pluginId.slice(0, sep)
     const marketplace = pluginId.slice(sep + 1)
+    // Cross-provider review finding (GPT-5.6-Sol, Medium): pluginName/
+    // marketplace were previously joined into a path with no check against
+    // separators or ".." segments, and the resolved path was never
+    // confirmed to stay under pluginsCacheDir.
+    if (!isSafePathComponent(pluginName) || !isSafePathComponent(marketplace)) {
+      warnings.push({
+        code: WARNING_CODES.PLUGIN_SCAN_SKIPPED,
+        message: `enabledPlugins id "${pluginId}" has an unsafe path component; skipping`,
+        context: { plugin_id: pluginId },
+      })
+      continue
+    }
     const pluginDir = path.join(pluginsCacheDir, marketplace, pluginName)
+    if (!isWithinRoot(pluginsCacheDir, pluginDir)) {
+      warnings.push({
+        code: WARNING_CODES.PLUGIN_SCAN_SKIPPED,
+        message: `enabledPlugins id "${pluginId}" resolves outside the plugin cache root; skipping`,
+        context: { plugin_id: pluginId, path: pluginDir },
+      })
+      continue
+    }
 
     let versionDirs: fs.Dirent[]
     try {
@@ -368,6 +393,14 @@ function scanPluginInventory(
     }
 
     const skillsDir = path.join(pluginDir, versionDirs[0]!.name, 'skills')
+    if (!isWithinRoot(pluginsCacheDir, skillsDir)) {
+      warnings.push({
+        code: WARNING_CODES.PLUGIN_SCAN_SKIPPED,
+        message: `enabled plugin "${pluginId}"'s skills directory resolves outside the plugin cache root; skipping`,
+        context: { plugin_id: pluginId, path: skillsDir },
+      })
+      continue
+    }
     out.push(...scanPluginSkills(skillsDir, manifest, warnings, pluginId))
   }
 

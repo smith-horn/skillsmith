@@ -447,6 +447,46 @@ describe('scanLocalInventory — Source 5 plugin scan (SMI-6228)', () => {
     expect(result.entries.some((e) => e.origin === 'plugin')).toBe(false)
     expect(result.warnings.some((w) => w.code === WARNING_CODES.PARSE_FAILED)).toBe(true)
   })
+
+  it('path-traversal-shaped plugin ids are rejected, never escape the cache root (cross-provider review finding, PR #2581)', async () => {
+    // A plugin id is an unvalidated enabledPlugins KEY. Confirm
+    // "../outside@../.." (and simpler single-".." variants) never resolve
+    // outside <home>/.claude/plugins/cache, even when a real SKILL.md sits
+    // at the traversal target.
+    writeSettings({
+      enabledPlugins: {
+        '../outside@../..': true,
+        '..@bar': true,
+        'foo@..': true,
+      },
+    })
+    writeFile(
+      path.join(TEST_HOME, '.claude', 'plugins', 'outside', 'v1', 'skills', 'evil', 'SKILL.md'),
+      `---\nname: evil\n---\nbody\n`
+    )
+    const result = await scanLocalInventory({ homeDir: TEST_HOME })
+    expect(result.entries.some((e) => e.origin === 'plugin')).toBe(false)
+    expect(result.entries.some((e) => e.identifier === 'evil')).toBe(false)
+  })
+
+  it('a symlinked plugin directory pointing outside the cache root is rejected (cross-provider review finding, PR #2581)', async () => {
+    // The traversal guard above is purely lexical (path separators / "..").
+    // A symlink whose own path segment looks clean can still resolve
+    // outside the cache root on disk.
+    writeSettings({ enabledPlugins: { 'foo@bar': true } })
+
+    const outsideDir = path.join(TEST_HOME, 'outside-the-cache', 'v1', 'skills', 'evil')
+    fs.mkdirSync(outsideDir, { recursive: true })
+    fs.writeFileSync(path.join(outsideDir, 'SKILL.md'), `---\nname: evil\n---\nbody\n`)
+
+    const cacheDir = path.join(TEST_HOME, '.claude', 'plugins', 'cache', 'bar')
+    fs.mkdirSync(cacheDir, { recursive: true })
+    fs.symlinkSync(path.join(TEST_HOME, 'outside-the-cache'), path.join(cacheDir, 'foo'))
+
+    const result = await scanLocalInventory({ homeDir: TEST_HOME })
+    expect(result.entries.some((e) => e.origin === 'plugin')).toBe(false)
+    expect(result.entries.some((e) => e.identifier === 'evil')).toBe(false)
+  })
 })
 
 describe('readEnabledPluginIds', () => {
