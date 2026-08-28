@@ -91,6 +91,7 @@ describe('sso-tools', () => {
         action: 'set',
         idpMetadataUrl: 'https://idp.example.com/metadata',
         protocol: 'saml',
+        domain: 'example.com',
       }
       const result = await executeConfigureSso(input, mockContext)
       expect(result.success).toBe(true)
@@ -107,6 +108,7 @@ describe('sso-tools', () => {
         idpMetadataUrl: 'https://idp.example.com/metadata',
         idpEntityId: 'https://custom-entity.example.com',
         protocol: 'saml',
+        domain: 'example.com',
       }
       const result = await executeConfigureSso(input, mockContext)
       expect(result.success).toBe(true)
@@ -127,6 +129,7 @@ describe('sso-tools', () => {
           action: 'set',
           idpMetadataUrl: 'https://idp.example.com/metadata',
           protocol: 'saml',
+          domain: 'example.com',
         },
         mockContext
       )
@@ -152,6 +155,7 @@ describe('sso-tools', () => {
           action: 'set',
           idpMetadataUrl: 'https://idp.example.com/metadata',
           protocol: 'saml',
+          domain: 'example.com',
         },
         mockContext
       )
@@ -188,6 +192,7 @@ describe('sso-tools', () => {
           action: 'set',
           idpMetadataUrl: 'https://idp.example.com/metadata',
           protocol: 'saml',
+          domain: 'example.com',
         },
         mockContext
       )
@@ -205,6 +210,7 @@ describe('sso-tools', () => {
           action: 'set',
           idpMetadataUrl: 'https://idp.example.com/metadata',
           protocol: 'oidc',
+          domain: 'example.com',
         },
         mockContext
       )
@@ -228,7 +234,12 @@ describe('sso-tools', () => {
       process.env.SUPABASE_ANON_KEY = 'anon-key'
       try {
         const configureResult = await executeConfigureSso(
-          { action: 'set', idpMetadataUrl: 'https://idp.example.com/metadata', protocol: 'saml' },
+          {
+            action: 'set',
+            idpMetadataUrl: 'https://idp.example.com/metadata',
+            protocol: 'saml',
+            domain: 'example.com',
+          },
           mockContext
         )
         const settingsResult = await executeSsoSettings({ includeMetadata: false }, mockContext)
@@ -244,7 +255,12 @@ describe('sso-tools', () => {
 
     it('marks a successful test-connection result as simulated', async () => {
       await executeConfigureSso(
-        { action: 'set', idpMetadataUrl: 'https://idp.example.com/metadata', protocol: 'saml' },
+        {
+          action: 'set',
+          idpMetadataUrl: 'https://idp.example.com/metadata',
+          protocol: 'saml',
+          domain: 'example.com',
+        },
         mockContext
       )
       const result = await executeConfigureSso({ action: 'test', protocol: 'saml' }, mockContext)

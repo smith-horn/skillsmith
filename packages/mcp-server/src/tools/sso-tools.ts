@@ -65,7 +65,8 @@ export const configureSsoInputSchema = z.object({
     .string()
     .optional()
     .describe(
-      'Domain to claim or verify for SSO auto-discovery (required for claim_domain/verify_domain)'
+      'Domain to claim, verify, or register for SSO auto-discovery ' +
+        '(required for set/claim_domain/verify_domain)'
     ),
   // SMI-6204 Wave 3 corrected plan: `expire_stale_sso_members()` is a Wave 4 deliverable, so
   // "expire" is not offered here — only "convert_to_manual" exists this wave. Optional because
@@ -124,7 +125,8 @@ export const configureSsoToolSchema = {
       },
       domain: {
         type: 'string',
-        description: 'Domain to claim or verify (required for claim_domain/verify_domain)',
+        description:
+          'Domain to claim, verify, or register (required for set/claim_domain/verify_domain)',
       },
       memberDisposition: {
         type: 'string',
@@ -253,10 +255,24 @@ async function executeConfigureSsoImpl(
             error: 'idpMetadataUrl is required for action "set".',
           }
         }
+        // SMI-6204 (corrected 2026-08-28): a provider can only be registered against a domain
+        // that has already been claimed and DNS-verified — see claim_domain/verify_domain above.
+        // This check was previously missing entirely, so `set` had no way to tell the live
+        // service which domain it was registering, and could never succeed end-to-end.
+        if (!input.domain) {
+          return {
+            success: false,
+            dataSource,
+            error:
+              'domain is required for action "set" — claim and verify a domain first ' +
+              '(configure_sso action "claim_domain", then "verify_domain").',
+          }
+        }
         const config = await svc.set({
           idpMetadataUrl: input.idpMetadataUrl,
           idpEntityId: input.idpEntityId,
           protocol: input.protocol ?? 'saml',
+          domain: input.domain,
         })
         return {
           success: true,

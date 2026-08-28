@@ -29,6 +29,7 @@ export function createStubSSOService(): SSOConfigService {
         idpEntityId: entityId,
         configuredAt: new Date().toISOString(),
         status: 'active',
+        domains: [config.domain],
       }
       return currentConfig
     },

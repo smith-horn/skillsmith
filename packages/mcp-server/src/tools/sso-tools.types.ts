@@ -51,10 +51,21 @@ export interface SsoDomainVerification {
 }
 
 export interface SSOConfigService {
+  /**
+   * `domain` (added SMI-6204, corrected 2026-08-28): the live path's `team-sso-manage` `set`
+   * action refuses without a domain that already has a `team_sso_domains` row with
+   * `verified_at IS NOT NULL` — a provider can only ever be registered against an
+   * already-proven domain. This was originally missing from this signature entirely (the domain
+   * claim/verify flow was added to the tool schema and the edge function without ever threading
+   * it through `set()`'s own input), which meant `set` could never succeed end-to-end. Required,
+   * not optional, on both paths — the stub also uses it, so the two paths' `set()` input can't
+   * silently drift again.
+   */
   set(config: {
     idpMetadataUrl: string
     idpEntityId?: string
     protocol: 'saml' | 'oidc'
+    domain: string
   }): Promise<SSOConfig>
   test(): Promise<{ success: boolean; latencyMs: number; message: string; simulated?: boolean }>
   /**

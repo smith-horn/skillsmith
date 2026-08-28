@@ -61,21 +61,32 @@ describe('createLiveSSOService — team-sso-manage fetch() mapping', () => {
   })
 
   it('POSTs to team-sso-manage with the Authorization/apikey headers and the action in the body', async () => {
+    // Real handleSet response shape (actions.config.ts): the provider is nested under `.provider`,
+    // not the bare provider object — see sso-tools.live.ts's SetSsoProviderResponse.
     fetchMock.mockResolvedValue(
       jsonResponse(
         {
-          id: 'p1',
-          disabled: false,
-          saml: { entity_id: 'https://idp.example.com/entity' },
-          domains: [{ domain: 'example.com' }],
-          created_at: '2026-08-28T00:00:00Z',
+          ok: true,
+          status: 'active',
+          provider: {
+            id: 'p1',
+            disabled: false,
+            saml: { entity_id: 'https://idp.example.com/entity' },
+            domains: [{ domain: 'example.com' }],
+            created_at: '2026-08-28T00:00:00Z',
+          },
         },
         200
       )
     )
 
     const result = await executeConfigureSso(
-      { action: 'set', idpMetadataUrl: 'https://idp.example.com/metadata', protocol: 'saml' },
+      {
+        action: 'set',
+        idpMetadataUrl: 'https://idp.example.com/metadata',
+        protocol: 'saml',
+        domain: 'example.com',
+      },
       mockContext
     )
 
@@ -90,6 +101,7 @@ describe('createLiveSSOService — team-sso-manage fetch() mapping', () => {
     expect(JSON.parse(String(init?.body))).toMatchObject({
       action: 'set',
       metadataUrl: 'https://idp.example.com/metadata',
+      domain: 'example.com',
     })
   })
 
@@ -97,21 +109,30 @@ describe('createLiveSSOService — team-sso-manage fetch() mapping', () => {
     fetchMock.mockResolvedValue(
       jsonResponse(
         {
-          id: 'p1',
-          disabled: false,
-          saml: {
-            entity_id: 'https://idp.example.com/entity',
-            metadata_url: 'https://idp.example.com/metadata',
+          ok: true,
+          status: 'active',
+          provider: {
+            id: 'p1',
+            disabled: false,
+            saml: {
+              entity_id: 'https://idp.example.com/entity',
+              metadata_url: 'https://idp.example.com/metadata',
+            },
+            domains: [{ domain: 'example.com' }, { domain: 'corp.example.com' }],
+            created_at: '2026-08-28T00:00:00Z',
           },
-          domains: [{ domain: 'example.com' }, { domain: 'corp.example.com' }],
-          created_at: '2026-08-28T00:00:00Z',
         },
         200
       )
     )
 
     const result = await executeConfigureSso(
-      { action: 'set', idpMetadataUrl: 'https://idp.example.com/metadata', protocol: 'saml' },
+      {
+        action: 'set',
+        idpMetadataUrl: 'https://idp.example.com/metadata',
+        protocol: 'saml',
+        domain: 'example.com',
+      },
       mockContext
     )
 
@@ -128,11 +149,26 @@ describe('createLiveSSOService — team-sso-manage fetch() mapping', () => {
 
   it('refuses "set" with protocol oidc locally, without calling fetch', async () => {
     const result = await executeConfigureSso(
-      { action: 'set', idpMetadataUrl: 'https://idp.example.com/metadata', protocol: 'oidc' },
+      {
+        action: 'set',
+        idpMetadataUrl: 'https://idp.example.com/metadata',
+        protocol: 'oidc',
+        domain: 'example.com',
+      },
       mockContext
     )
     expect(result.success).toBe(false)
     expect(result.error).toContain('SAML-only')
+    expect(fetchMock).not.toHaveBeenCalled()
+  })
+
+  it('refuses "set" locally without a domain, without calling fetch', async () => {
+    const result = await executeConfigureSso(
+      { action: 'set', idpMetadataUrl: 'https://idp.example.com/metadata', protocol: 'saml' },
+      mockContext
+    )
+    expect(result.success).toBe(false)
+    expect(result.error).toContain('domain is required')
     expect(fetchMock).not.toHaveBeenCalled()
   })
 
@@ -169,7 +205,12 @@ describe('createLiveSSOService — team-sso-manage fetch() mapping', () => {
       )
     )
     const result = await executeConfigureSso(
-      { action: 'set', idpMetadataUrl: 'https://idp.example.com/metadata', protocol: 'saml' },
+      {
+        action: 'set',
+        idpMetadataUrl: 'https://idp.example.com/metadata',
+        protocol: 'saml',
+        domain: 'example.com',
+      },
       mockContext
     )
     expect(result.success).toBe(false)
@@ -192,7 +233,12 @@ describe('createLiveSSOService — team-sso-manage fetch() mapping', () => {
       )
     )
     const result = await executeConfigureSso(
-      { action: 'set', idpMetadataUrl: 'https://idp.example.com/metadata', protocol: 'saml' },
+      {
+        action: 'set',
+        idpMetadataUrl: 'https://idp.example.com/metadata',
+        protocol: 'saml',
+        domain: 'example.com',
+      },
       mockContext
     )
     expect(result.success).toBe(false)
@@ -295,23 +341,52 @@ describe('createLiveSSOService — team-sso-manage fetch() mapping', () => {
     expect(result.error).toContain('getaddrinfo ENOTFOUND')
   })
 
-  it('sso_settings: a 404 "get" response means not configured, not an error', async () => {
-    fetchMock.mockResolvedValue(jsonResponse({}, 404))
+  it('sso_settings: a null settings row means not configured, not an error', async () => {
+    // Real handleGet response shape (actions.config.ts): always 200, never a raw 404 — "not
+    // configured" is conveyed by `settings: null`, not by the HTTP status.
+    fetchMock.mockResolvedValue(jsonResponse({ settings: null, domains: [] }, 200))
     const result = await executeSsoSettings({ includeMetadata: false }, mockContext)
     expect(result.configured).toBe(false)
     expect(result.dataSource).toBe('live')
     expect(result.message).toContain('No SSO configuration found')
   })
 
-  it('claim_domain: maps a live response into domainClaim with no simulated flag', async () => {
+  it('sso_settings: a populated settings row maps to a configured SSOConfig', async () => {
     fetchMock.mockResolvedValue(
       jsonResponse(
         {
+          settings: {
+            supabase_provider_id: 'p1',
+            reverify_days: 7,
+            role_mapping: {},
+            status: 'active',
+            configured_by: '11111111-2222-3333-4444-555555555555',
+            created_at: '2026-08-27T00:00:00Z',
+            updated_at: '2026-08-28T00:00:00Z',
+          },
+          domains: [{ domain: 'example.com', verified_at: '2026-08-28T00:00:00Z' }],
+        },
+        200
+      )
+    )
+    const result = await executeSsoSettings({ includeMetadata: false }, mockContext)
+    expect(result.configured).toBe(true)
+    expect(result.config?.status).toBe('active')
+    expect(result.config?.domains).toEqual(['example.com'])
+    expect(result.config?.configuredAt).toBe('2026-08-28T00:00:00Z')
+  })
+
+  it('claim_domain: maps a live response into domainClaim with no simulated flag', async () => {
+    // Real handleClaimDomain response shape (actions.domain.ts): txtRecordName/txtRecordValue,
+    // no recordType field at all (it is always 'TXT' — the edge function never sends it back).
+    fetchMock.mockResolvedValue(
+      jsonResponse(
+        {
+          ok: true,
           domain: 'example.com',
           verificationToken: 'tok_live_abc',
-          recordName: '_skillsmith-verify.example.com',
-          recordType: 'TXT',
-          recordValue: 'tok_live_abc',
+          txtRecordName: '_skillsmith-verify.example.com',
+          txtRecordValue: 'tok_live_abc',
         },
         200
       )
@@ -322,17 +397,63 @@ describe('createLiveSSOService — team-sso-manage fetch() mapping', () => {
     )
     expect(result.success).toBe(true)
     expect(result.domainClaim?.simulated).toBeUndefined()
+    expect(result.domainClaim?.recordName).toBe('_skillsmith-verify.example.com')
+    expect(result.domainClaim?.recordType).toBe('TXT')
     expect(result.domainClaim?.recordValue).toBe('tok_live_abc')
   })
 
-  it('verify_domain: an unverified result renders the retry message, not success', async () => {
-    fetchMock.mockResolvedValue(jsonResponse({ domain: 'example.com', verified: false }, 200))
+  it('verify_domain: a successful verification reports verified: true with no simulated flag', async () => {
+    // Real handleVerifyDomain response shape (actions.domain.ts): {ok, domain, verifiedAt} — there
+    // is no `verified` boolean on the wire at all; a 200 response IS the success case (failure is
+    // a distinct 409, exercised in the next test).
+    fetchMock.mockResolvedValue(
+      jsonResponse({ ok: true, domain: 'example.com', verifiedAt: '2026-08-28T00:00:00Z' }, 200)
+    )
+    const result = await executeConfigureSso(
+      { action: 'verify_domain', domain: 'example.com', protocol: 'saml' },
+      mockContext
+    )
+    expect(result.success).toBe(true)
+    expect(result.domainVerification?.verified).toBe(true)
+    expect(result.domainVerification?.verifiedAt).toBe('2026-08-28T00:00:00Z')
+    expect(result.domainVerification?.simulated).toBeUndefined()
+    expect(result.message).toContain('is verified')
+  })
+
+  it('verify_domain: a DNS mismatch/not-found result (409) renders the retry message, not success', async () => {
+    fetchMock.mockResolvedValue(
+      jsonResponse(
+        {
+          error: 'domain_verification_failed',
+          message:
+            'No TXT record found at "_skillsmith-verify.example.com". Publish it and try again.',
+        },
+        409
+      )
+    )
     const result = await executeConfigureSso(
       { action: 'verify_domain', domain: 'example.com', protocol: 'saml' },
       mockContext
     )
     expect(result.success).toBe(false)
-    expect(result.domainVerification?.verified).toBe(false)
-    expect(result.message).toContain('could not be verified yet')
+    expect(result.error).toContain('No TXT record found')
+  })
+
+  it('verify_domain: domain_not_claimed (404) is a plain string, not a fake outage', async () => {
+    fetchMock.mockResolvedValue(
+      jsonResponse(
+        {
+          error: 'domain_not_claimed',
+          message: 'No pending claim for "example.com" — call claim_domain first.',
+        },
+        404
+      )
+    )
+    const result = await executeConfigureSso(
+      { action: 'verify_domain', domain: 'example.com', protocol: 'saml' },
+      mockContext
+    )
+    expect(result.success).toBe(false)
+    expect(result.error).toContain('call claim_domain first')
   })
 })

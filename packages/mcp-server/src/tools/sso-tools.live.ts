@@ -48,83 +48,31 @@ import type {
   SsoDomainClaim,
   SsoDomainVerification,
 } from './sso-tools.types.js'
+import {
+  SsoAuthError,
+  SsoValidationError,
+  SsoDomainNotVerifiedError,
+  SsoDomainClaimedByAnotherTeamError,
+  SsoDomainVerificationFailedError,
+  SsoDomainNotClaimedError,
+  SsoExpireUnavailableError,
+  SsoServiceUnavailableError,
+} from './sso-tools.live.errors.js'
 
-// ============================================================================
-// Typed errors — one per mapped status/error code (task D5), plus a catch-all
-// ============================================================================
-
-/** HTTP 401 — no session, or the stored session has expired/been revoked. */
-export class SsoAuthError extends Error {
-  constructor(message = 'Not authenticated. Run `skillsmith login` and try again.') {
-    super(message)
-    this.name = 'SsoAuthError'
-  }
-}
-
-/** HTTP 400 `invalid_role_mapping` (or any other authored 400 refusal). */
-export class SsoValidationError extends Error {
-  constructor(message: string) {
-    super(message)
-    this.name = 'SsoValidationError'
-  }
-}
-
-/** The DNS TXT record the caller must publish, carried by {@link SsoDomainNotVerifiedError}. */
-export interface SsoDomainNotVerifiedDetails {
-  domain: string
-  recordName: string
-  recordType: string
-  recordValue: string
-}
-
-/**
- * HTTP 409 `domain_not_verified` — `set` was attempted (or the reverify sweep tripped) before the
- * domain's ownership was proven. Carries the exact TXT record so the MCP tool response can render
- * it, per the Wave 3 plan's `set` refusal requirement ("refuses with an actionable message naming
- * the exact TXT record").
- */
-export class SsoDomainNotVerifiedError extends Error {
-  readonly details: SsoDomainNotVerifiedDetails
-  constructor(details: SsoDomainNotVerifiedDetails, message: string) {
-    super(message)
-    this.name = 'SsoDomainNotVerifiedError'
-    this.details = details
-  }
-}
-
-/** HTTP 409 `domain_verified_by_another_team` — the partial-unique-index loser (Wave 3 Step 1). */
-export class SsoDomainClaimedByAnotherTeamError extends Error {
-  constructor(message: string) {
-    super(message)
-    this.name = 'SsoDomainClaimedByAnotherTeamError'
-  }
-}
-
-/** HTTP 501 `sso_expire_unavailable` — `expire_stale_sso_members()` is a Wave 4 deliverable. */
-export class SsoExpireUnavailableError extends Error {
-  constructor(message: string) {
-    super(message)
-    this.name = 'SsoExpireUnavailableError'
-  }
-}
-
-/**
- * Catch-all for 500/502/503 and network-level transport failures. `status === 0` marks the
- * transport-failure case (no HTTP response was ever received) — its `detail`, when present,
- * originates locally (Node's `fetch()` error message), never from GoTrue or the edge function, so
- * including it does not violate the "never leak raw GoTrue text" rule the status-code branches
- * enforce.
- */
-export class SsoServiceUnavailableError extends Error {
-  constructor(status: number, detail?: string) {
-    super(
-      status === 0
-        ? `SSO service request failed${detail ? `: ${detail}` : ''}.`
-        : `SSO service unavailable (HTTP ${status}). Try again shortly.`
-    )
-    this.name = 'SsoServiceUnavailableError'
-  }
-}
+// Re-exported so existing callers (sso-tools.ts, tests) can keep importing every error class from
+// this file's own module path — the split is an internal file-length fix (SMI-6204, 2026-08-28),
+// not a public API change.
+export {
+  SsoAuthError,
+  SsoValidationError,
+  SsoDomainNotVerifiedError,
+  SsoDomainClaimedByAnotherTeamError,
+  SsoDomainVerificationFailedError,
+  SsoDomainNotClaimedError,
+  SsoExpireUnavailableError,
+  SsoServiceUnavailableError,
+} from './sso-tools.live.errors.js'
+export type { SsoDomainNotVerifiedDetails } from './sso-tools.live.errors.js'
 
 // ============================================================================
 // fetch() plumbing
@@ -214,8 +162,20 @@ async function throwMappedError(res: Response): Promise<never> {
           body.message ?? 'This domain is already verified by another team.'
         )
       }
+      if (body?.error === 'domain_verification_failed') {
+        throw new SsoDomainVerificationFailedError(
+          body.message ?? 'The domain could not be verified. Confirm the TXT record and try again.'
+        )
+      }
       // An unrecognized 409 shape is a transport-layer surprise, not a domain refusal we know how
       // to render — fail the same way an outage would rather than fabricate a domain error.
+      throw new SsoServiceUnavailableError(res.status)
+    case 404:
+      if (body?.error === 'domain_not_claimed') {
+        throw new SsoDomainNotClaimedError(
+          body.message ?? 'No pending claim for this domain — call claim_domain first.'
+        )
+      }
       throw new SsoServiceUnavailableError(res.status)
     case 501:
       throw new SsoExpireUnavailableError(
@@ -308,6 +268,60 @@ function mapProviderToConfig(row: GoTrueSamlProviderResponse): SSOConfig {
   }
 }
 
+/**
+ * `set`'s real response, verified against `team-sso-manage`'s `actions.config.ts:handleSet`
+ * (corrected 2026-08-28 — the field originally guessed here was the bare provider object; the
+ * real response wraps it under `.provider`).
+ */
+interface SetSsoProviderResponse {
+  ok: true
+  provider: GoTrueSamlProviderResponse
+  status: 'active'
+}
+
+/**
+ * `get`'s real response — a `team_sso_settings` DB row (or `null`) plus its `team_sso_domains`
+ * rows, NOT a GoTrue provider shape (corrected 2026-08-28 — `get` is deliberately DB-only, no
+ * GoTrue round-trip, so `mapProviderToConfig` never applies here; see `handleGet`'s own header
+ * comment in `actions.config.ts`). Verified against `team-sso-manage`'s `actions.config.ts:handleGet`.
+ */
+interface GetSsoConfigResponse {
+  settings: {
+    supabase_provider_id: string | null
+    reverify_days: number
+    role_mapping: unknown
+    status: 'inactive' | 'active'
+    configured_by: string | null
+    created_at: string
+    updated_at: string
+  } | null
+  domains: Array<{
+    domain: string
+    verified_at: string | null
+    last_verified_at: string | null
+    consecutive_failures: number
+  }>
+}
+
+/**
+ * Maps `get`'s DB-row response into the flat `SSOConfig` shape. Unlike `mapProviderToConfig`,
+ * this has no GoTrue data to draw on at all (`get` never calls GoTrue) — `idpEntityId`/
+ * `idpMetadataUrl` are therefore genuinely unavailable here and fall back to `''`, same honest
+ * gap already documented on `mapProviderToConfig` for the `metadata_xml`-only case. A caller that
+ * needs the real IdP entity/metadata details should use `test`, which does round-trip GoTrue.
+ */
+function mapSettingsToConfig(body: GetSsoConfigResponse): SSOConfig | null {
+  if (!body.settings) return null
+  return {
+    protocol: 'saml',
+    idpEntityId: '',
+    idpMetadataUrl: '',
+    configuredAt: body.settings.updated_at,
+    status: body.settings.status,
+    domains: body.domains.map((d) => d.domain),
+  }
+}
+
 // ============================================================================
 // Service factory
 // ============================================================================
@@ -333,12 +347,17 @@ export function createLiveSSOService(): SSOConfigService {
         )
       }
       const binding = await getSsoManageUserClient('configure SSO')
-      const body = await callSsoManage<GoTrueSamlProviderResponse>(binding, {
+      // `domain` is required by `handleSet` — it refuses (409 domain_not_verified) without an
+      // already-claimed-and-verified `team_sso_domains` row for it. `entityId` is sent but
+      // unused server-side (GoTrue derives entity_id from the metadata content itself); kept for
+      // forward compatibility rather than removed.
+      const body = await callSsoManage<SetSsoProviderResponse>(binding, {
         action: 'set',
         metadataUrl: config.idpMetadataUrl,
         entityId: config.idpEntityId,
+        domain: config.domain,
       })
-      return mapProviderToConfig(body)
+      return mapProviderToConfig(body.provider)
     },
 
     async test() {
@@ -372,21 +391,63 @@ export function createLiveSSOService(): SSOConfigService {
 
     async get(includeMetadata): Promise<SSOConfig | null> {
       const binding = await getSsoReadUserClient('view SSO settings')
+      // `includeMetadata` is accepted but currently has no effect on the live path — `get` never
+      // returns the full IdP metadata regardless (it's DB-only, no GoTrue round-trip; see
+      // mapSettingsToConfig's comment). Kept in the request for forward compatibility.
       const res = await fetchSsoManage(binding, { action: 'get', includeMetadata })
+      // `handleGet` always returns 200 (a null `settings` field means "not configured", not a
+      // 404) — this branch is unreachable today but kept as a defensive fallback.
       if (res.status === 404) return null
       if (!res.ok) await throwMappedError(res)
-      const body = await readJson<GoTrueSamlProviderResponse | null>(res)
-      return body ? mapProviderToConfig(body) : null
+      const body = await readJson<GetSsoConfigResponse>(res)
+      if (body === null) {
+        throw new SsoServiceUnavailableError(res.status, 'response body was empty or unreadable')
+      }
+      return mapSettingsToConfig(body)
     },
 
     async claimDomain(domain): Promise<SsoDomainClaim> {
       const binding = await getSsoManageUserClient('claim a domain for SSO')
-      return callSsoManage<SsoDomainClaim>(binding, { action: 'claim_domain', domain })
+      // Field names corrected 2026-08-28 against `handleClaimDomain`'s real response
+      // (`actions.domain.ts`): `txtRecordName`/`txtRecordValue`, not `recordName`/`recordValue`,
+      // and no `recordType` field at all (it is always 'TXT' — the edge function never bothers
+      // sending it back). A blind `callSsoManage<SsoDomainClaim>` cast here previously left
+      // `recordName`/`recordType`/`recordValue` all `undefined`, breaking the message this tool
+      // builds from them.
+      const body = await callSsoManage<{
+        ok: true
+        domain: string
+        verificationToken: string
+        txtRecordName: string
+        txtRecordValue: string
+      }>(binding, { action: 'claim_domain', domain })
+      return {
+        domain: body.domain,
+        verificationToken: body.verificationToken,
+        recordName: body.txtRecordName,
+        recordType: 'TXT',
+        recordValue: body.txtRecordValue,
+      }
     },
 
     async verifyDomain(domain): Promise<SsoDomainVerification> {
       const binding = await getSsoManageUserClient('verify a domain for SSO')
-      return callSsoManage<SsoDomainVerification>(binding, { action: 'verify_domain', domain })
+      // Field names corrected 2026-08-28 against `handleVerifyDomain`'s real response
+      // (`actions.domain.ts`): there is no `verified` boolean at all — a 200 response IS the
+      // success case (failure is a 409, already thrown by `callSsoManage` before this line is
+      // reached), so `verified: true` is a fact about having reached this line, not a field read
+      // from the body. A blind `callSsoManage<SsoDomainVerification>` cast previously left
+      // `verified` `undefined` (falsy) on every genuinely successful verification, reporting
+      // success as if it had failed.
+      const body = await callSsoManage<{ ok: true; domain: string; verifiedAt: string }>(binding, {
+        action: 'verify_domain',
+        domain,
+      })
+      return {
+        domain: body.domain,
+        verified: true,
+        verifiedAt: body.verifiedAt,
+      }
     },
   }
 }
