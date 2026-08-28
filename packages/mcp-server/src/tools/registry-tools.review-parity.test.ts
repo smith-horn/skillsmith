@@ -61,9 +61,10 @@ const REVIEW_CONTENT = {
 
 const PARITY_PATTERNS = {
   // Matches both the stub's "Only team admins can review private-registry submissions." and the
-  // migration's real "only a team admin or owner may review private-registry submissions for
-  // team %." — neither of the OLD paraphrased patterns (`not an admin`, `admins can`) matched the
-  // real migration text (M-4).
+  // migration's real "only a team admin or owner, or a holder of an explicit registry:approve
+  // grant, may review private-registry submissions for team %." (widened by SMI-6202's RBAC seam-widening
+  // migration) — neither of the OLD paraphrased patterns (`not an admin`, `admins can`) matched
+  // the real migration text (M-4).
   notAdmin: /review private-registry submissions/i,
   selfApproval: /own submission/i,
   // Matches both the stub's "already been approved" and the migration's real "already % -- an
@@ -109,13 +110,17 @@ describe('stub/live review-gate error parity (SMI-5949 Wave 2 Step 5, M7)', () =
     const { client } = createFakeClient(
       liveRpcError({
         code: '42501',
-        // Verbatim from migrations/20260809000000_private_registry_approval_gate.sql:539-543
-        // (the concatenated PL/pgSQL string literal, `%` substituted for `p_team_id`).
+        // Verbatim from migrations/20260827000001_rbac_seam_widening.sql:165-169 (the
+        // concatenated PL/pgSQL string literal, `%` substituted for `p_team_id`) — SMI-6202
+        // widened this from the OLD "only a team admin or owner may review ..." text to also
+        // cover an explicit registry:approve grant.
         message:
-          'only a team admin or owner may review private-registry submissions for team ' +
-          'team-parity. If this team has exactly one admin and that admin is also the ' +
-          'submitter, nothing can be approved until a second admin or owner exists -- promote ' +
-          'one in team_members (self-approval is refused, see below).',
+          'only a team admin or owner, or a holder of an explicit registry:approve grant, may ' +
+          'review ' +
+          'private-registry submissions for team team-parity. If this team has exactly one ' +
+          'admin and that admin is also the submitter, nothing can be approved until a second ' +
+          'admin or owner exists -- promote one in team_members (self-approval is refused, see ' +
+          'below).',
       })
     )
     await mockBothClients(client)
