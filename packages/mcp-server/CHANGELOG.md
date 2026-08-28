@@ -27,6 +27,15 @@ All notable changes to `@skillsmith/mcp-server` are documented here.
   Every write is gated on the `team:manage_rbac` permission, resolved server-side — a denial
   returns a structured `{ code: 'permission_denied', permission, message }` object instead of a
   raw error string, so the CLI and website can render the reason without parsing prose (SMI-6203).
+- **Fix**: `skill_inventory_audit` never scanned Claude Code plugin-installed skills
+  (`~/.claude/plugins/cache/**`, gated on `enabledPlugins`) or a project's own
+  project-relative `.claude/skills/` mount-point — two real blind spots that let a
+  collision between a vendor plugin's skill and a project's own skill go undetected on
+  both sides. Adds Source 5 (plugin scan) and Source 6 (project scan) to the scanner,
+  tagging entries with a new `origin: 'native-client' | 'plugin' | 'project'` field
+  rather than widening the closed `ClientId` union. Both new sources guard against
+  path-traversal and symlink-escape reading outside their intended root
+  (SMI-6228/SMI-6240).
 - **Fix**: `rbac_manage`/`rbac_assign_role`/`rbac_create_policy`, `configure_sso`/`sso_settings`,
   `webhook_configure`/`api_key_manage`, and `compliance_report` reported `dataSource: 'live'`
   whenever Supabase env vars were configured, even when the underlying service was still the
