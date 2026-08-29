@@ -10,6 +10,8 @@ import {
   type ApiClientConfig,
   type RecommendationRequest,
   type TelemetryEvent,
+  type RegistrySyncOptions,
+  type PlatformStats,
 } from './client.types.js'
 
 export {
@@ -20,10 +22,12 @@ export {
   type ApiClientConfig,
   type RecommendationRequest,
   type TelemetryEvent,
+  type RegistrySyncOptions,
+  type PlatformStats,
 } from './client.types.js'
 
 // Import from extracted modules
-import { SearchResponseSchema, SingleSkillResponseSchema } from './schemas.js'
+import { SearchResponseSchema, SingleSkillResponseSchema, StatsResponseSchema } from './schemas.js'
 import {
   calculateBackoff,
   buildRequestHeaders,
@@ -36,7 +40,8 @@ import { buildClientEventBatcher } from './client.events.js'
 import { ApiCache } from './cache.js'
 import { buildResponseCache, withResponseCache, type CallCacheOptions } from './client.cache.js'
 import { tryRefreshToken } from './client.token-refresh.js'
-import { deriveSecuritySummaryFromApiSkill } from './security-summary.js'
+import { buildRegistrySyncEndpoint } from './client.registry-sync.js'
+import { toSkillImpl } from './client.toSkill.js'
 
 export type { CallCacheOptions } from './client.cache.js'
 
@@ -49,6 +54,7 @@ export {
   SingleSkillResponseSchema,
   TelemetryResponseSchema,
   TrustTierSchema,
+  StatsResponseSchema,
 } from './schemas.js'
 
 // ============================================================================
@@ -409,6 +415,28 @@ export class SkillsmithApiClient {
     )
   }
 
+  // Bulk registry enumeration for Team/Enterprise sync clients (backs a later
+  // SyncEngine rewire). Reuses SearchResponseSchema — see
+  // client.registry-sync.ts for the endpoint-builder + reuse-vs-new-schema
+  // rationale. No response caching (unlike search()/getSkill()): the edge
+  // function sets `Cache-Control: no-store` since this is per-caller/
+  // per-tier data paged via `since`/`offset` for incremental sync.
+  async syncRegistry(options: RegistrySyncOptions = {}): Promise<ApiResponse<ApiSearchResult[]>> {
+    return this.request<ApiSearchResult[]>(
+      buildRegistrySyncEndpoint(options),
+      {},
+      SearchResponseSchema
+    )
+  }
+
+  // Public platform stats (basic, non-detailed `GET /stats`). No auth
+  // required — request()'s existing anon/apiKey/jwt header logic already
+  // attaches the anon-key Authorization header for unauthenticated callers,
+  // so no special-casing is needed here (same as every other GET method).
+  async getStats(): Promise<ApiResponse<PlatformStats>> {
+    return this.request<PlatformStats>('/stats', {}, StatsResponseSchema)
+  }
+
   // SMI-4119: enqueues to in-memory batcher; returns { ok: true } synchronously
   async recordEvent(event: TelemetryEvent): Promise<{ ok: boolean }> {
     if (this.offlineMode) return { ok: true }
@@ -449,37 +477,10 @@ export class SkillsmithApiClient {
     return checkApiHealth(this.baseUrl, this.anonKey, this.offlineMode)
   }
 
-  // SMI-1577: optional field defaults. SMI-825: security scan fields default to not-scanned.
+  // SMI-1577/SMI-825/SMI-5897 (C-15): see client.toSkill.ts for the mapping
+  // + security-derivation rationale (extracted to keep this file <500 lines).
   static toSkill(result: ApiSearchResult): Skill {
-    // Sentinel value for missing timestamps - clearly indicates unknown date
-    const UNKNOWN_DATE = '1970-01-01T00:00:00.000Z'
-    // SMI-5897 (C-15): derive real security-status fields via the shared
-    // helper instead of hardcoding "not scanned" for every API-sourced
-    // skill — this is what made CLI `info`/`search` show "Not scanned" for
-    // skills MCP correctly reported as passed (both now derive from the
-    // same underlying last_scanned_at/quarantined/security_score fields).
-    // `security` is `undefined` when the skill has never been scanned;
-    // the flat Skill shape signals that the same way MCP's nested
-    // SecuritySummary does — securityPassed: null, securityScannedAt: null.
-    const security = deriveSecuritySummaryFromApiSkill(result)
-    return {
-      id: result.id,
-      name: result.name,
-      description: result.description,
-      author: result.author,
-      repoUrl: result.repo_url ?? null,
-      qualityScore: result.quality_score,
-      trustTier: result.trust_tier,
-      tags: result.tags || [],
-      installable: result.installable ?? false,
-      // SMI-825: Security scan fields
-      riskScore: security?.riskScore ?? null,
-      securityFindingsCount: security?.findingsCount ?? 0,
-      securityScannedAt: security?.scannedAt ?? null,
-      securityPassed: security?.passed ?? null,
-      createdAt: result.created_at ?? UNKNOWN_DATE,
-      updatedAt: result.updated_at ?? UNKNOWN_DATE,
-    }
+    return toSkillImpl(result)
   }
 }
 

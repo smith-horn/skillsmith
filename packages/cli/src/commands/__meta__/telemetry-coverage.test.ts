@@ -36,7 +36,11 @@ const CLI_DISPATCHER_MAP: Record<string, string[]> = {
   whoami: ['whoamiAction'],
   'install-skill': ['setupAction'],
   // SMI-5127: sibling-split pilot — action impls live in *.action.ts files
-  'sync.action': ['syncAction', 'syncStatusAction', 'syncHistoryAction', 'syncConfigAction'],
+  // SMI-registry-sync-tier-gate: syncStatusAction/syncHistoryAction split
+  // further into sync.status-history.action.ts once sync.action.ts grew
+  // past the 500-line CI standard with the tier gate + confirmation prompt.
+  'sync.action': ['syncAction', 'syncConfigAction'],
+  'sync.status-history.action': ['syncStatusAction', 'syncHistoryAction'],
   'search.action': ['searchAction'],
   // SMI-5128 batch A
   logout: ['logoutAction'],

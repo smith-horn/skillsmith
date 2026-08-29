@@ -51,6 +51,41 @@ export function formatAuthGuidance(): string[] {
 }
 
 /**
+ * SMI-6236 F-2: `requireSyncTier()`'s client-side pre-check cannot always
+ * resolve tier offline (e.g. `SKILLSMITH_API_KEY` set, no stored JWT session
+ * to live-check) — in that case it lets the request through and relies on
+ * `registry-sync`'s own 403 `tier_not_entitled` as the authoritative answer.
+ * This detects that server-side rejection the same way `isAuthFailure()`
+ * detects a 401, so the CLI can replace the raw `SyncResult.errors` string
+ * with the same friendly upgrade message `requireSyncTier()` would have
+ * thrown had it been able to check offline.
+ *
+ * @param result - The `SyncResult` returned by the sync engine.
+ * @returns `true` when the sync failed solely because the caller's tier
+ *   isn't Team/Enterprise.
+ */
+export function isTierRejection(result: SyncResult): boolean {
+  if (result.success || result.totalProcessed > 0) {
+    return false
+  }
+  return result.errors.some((error) => /team or enterprise subscription/i.test(error))
+}
+
+/**
+ * SMI-6236 F-2: actionable guidance shown when `sync` fails because the
+ * caller's tier isn't Team/Enterprise. Mirrors `formatAuthGuidance()`'s
+ * shape so both credential-related failures read consistently.
+ *
+ * @returns Lines to print to stderr, in order.
+ */
+export function formatTierUpgradeGuidance(): string[] {
+  return [
+    chalk.yellow('Sync requires a Team or Enterprise subscription.'),
+    chalk.dim('Upgrade at: ') + chalk.cyan('https://skillsmith.app/upgrade?tier=team'),
+  ]
+}
+
+/**
  * Scan the resolved client's skills directory for non-fatal adapter warnings.
  *
  * Pulls `SourceSearchResult.warnings[]` from a fresh LocalFilesystemAdapter

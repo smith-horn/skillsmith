@@ -241,6 +241,7 @@ npx supabase functions deploy early-access-signup --no-verify-jwt
 npx supabase functions deploy contact-submit --no-verify-jwt
 npx supabase functions deploy stats --no-verify-jwt
 npx supabase functions deploy skills-search --no-verify-jwt
+npx supabase functions deploy registry-sync --no-verify-jwt
 npx supabase functions deploy skills-get --no-verify-jwt
 npx supabase functions deploy skills-recommend --no-verify-jwt
 npx supabase functions deploy stripe-webhook --no-verify-jwt

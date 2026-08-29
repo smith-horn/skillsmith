@@ -99,6 +99,30 @@ export interface RecommendationRequest {
 }
 
 /**
+ * Options for `GET /registry-sync` — Team/Enterprise-tier-gated bulk
+ * enumeration of the skill registry (see supabase/functions/registry-sync).
+ * All fields optional; omitted fields fall back to the edge function's own
+ * defaults (limit 100, offset 0, no `since` filter).
+ */
+export interface RegistrySyncOptions {
+  limit?: number
+  offset?: number
+  /** ISO-8601 timestamp; only rows with `updated_at > since` are returned. */
+  since?: string
+}
+
+/**
+ * Platform statistics from `GET /stats` (basic, non-detailed response —
+ * see supabase/functions/stats). The `detailed=true` diagnostic dashboard
+ * shape is not modeled here; this client only calls the basic endpoint.
+ */
+export interface PlatformStats {
+  skillCount: number
+  githubTotal: number
+  lastUpdated: string
+}
+
+/**
  * Telemetry event
  */
 export interface TelemetryEvent {

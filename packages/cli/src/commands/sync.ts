@@ -8,17 +8,22 @@
  *   skillsmith sync              # Run sync (differential)
  *   skillsmith sync --force      # Run full sync
  *   skillsmith sync --dry-run    # Preview what would sync
+ *   skillsmith sync --yes        # Skip the confirmation prompt (automation)
  *   skillsmith sync status       # Show sync status
  *   skillsmith sync history      # Show sync history
  *   skillsmith sync config       # Configure auto-sync
  *
- * SMI-5127: Action implementations moved to sync.action.ts.
- * This file retains only the commander factory functions.
+ * SMI-5127: Action implementations moved to sync.action.ts (syncAction,
+ * syncConfigAction) and sync.status-history.action.ts (syncStatusAction,
+ * syncHistoryAction — split out once sync.action.ts grew past the 500-line
+ * CI standard, SMI-registry-sync-tier-gate). This file retains only the
+ * commander factory functions.
  */
 
 import { Command } from 'commander'
 import { DEFAULT_DB_PATH } from '../config.js'
-import { syncAction, syncStatusAction, syncHistoryAction, syncConfigAction } from './sync.action.js'
+import { syncAction, syncConfigAction } from './sync.action.js'
+import { syncStatusAction, syncHistoryAction } from './sync.status-history.action.js'
 import { VALID_CLIENT_HINT } from './install.js'
 
 /**
@@ -96,12 +101,14 @@ export function createSyncCommand(): Command {
     .option('-d, --db <path>', 'Database file path', DEFAULT_DB_PATH)
     .option('-f, --force', 'Force full sync (ignore last sync time)')
     .option('--dry-run', 'Show what would be synced without making changes')
+    .option('-y, --yes', 'Skip the confirmation prompt (for automation)')
     .option('--json', 'Output results as JSON')
     .action(async (opts: Record<string, string | boolean | undefined>) => {
       await syncAction({
         dbPath: opts['db'] as string,
         force: (opts['force'] as boolean) ?? false,
         dryRun: (opts['dry-run'] as boolean) ?? false,
+        yes: (opts['yes'] as boolean) ?? false,
         json: (opts['json'] as boolean) ?? false,
       })
     })

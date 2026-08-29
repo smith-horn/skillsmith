@@ -14,6 +14,9 @@ import type { SkillVersionRepository } from '../../src/repositories/SkillVersion
 import type { DatabaseType } from '../../src/db/schema.js'
 import type { SkillsmithApiClient, ApiSearchResult } from '../../src/api/client.js'
 
+/** Shape of the args `SyncEngine` passes to `apiClient.syncRegistry()`. */
+type SyncRegistryCallArgs = { limit?: number; offset?: number; since?: string }
+
 /**
  * Create a mock SkillVersionRepository for testing.
  * All methods return resolved promises so SyncEngine can call recordVersion
@@ -54,35 +57,45 @@ export function createMockSkill(
 }
 
 /**
- * Create a mock API client with customizable behavior
+ * Create a mock API client with customizable behavior.
+ *
+ * SyncEngine fetches via `syncRegistry()` (the Team/Enterprise bulk
+ * registry-enumeration endpoint, SMI-6197) rather than the old 8-broad-query
+ * abuse of `search()` — this mock paginates the same `skills` fixture array
+ * against `syncRegistry`'s `{ limit, offset, since }` signature. It does NOT
+ * filter by `since` itself (SyncEngine's own client-side
+ * `updated_at > lastSyncAt` filter is what's under test in the differential
+ * sync tests below) — `since` forwarding is asserted separately via the mock's
+ * call arguments.
  */
 export function createMockApiClient(
   config: {
     offline?: boolean
     healthStatus?: 'healthy' | 'degraded' | 'unhealthy'
     skills?: ApiSearchResult[]
-    throwOnSearch?: Error
+    throwOnFetch?: Error
   } = {}
 ): SkillsmithApiClient {
-  const { offline = false, healthStatus = 'healthy', skills = [], throwOnSearch } = config
+  const { offline = false, healthStatus = 'healthy', skills = [], throwOnFetch } = config
 
-  const searchMock = vi.fn().mockImplementation(async ({ limit = 100, offset = 0 }) => {
-    if (throwOnSearch) {
-      throw throwOnSearch
-    }
-    const pageSkills = skills.slice(offset, offset + limit)
-    return {
-      data: pageSkills,
-      total: skills.length,
-      limit,
-      offset,
-    }
-  })
+  const syncRegistryMock = vi
+    .fn()
+    .mockImplementation(async ({ limit = 100, offset = 0, since }: SyncRegistryCallArgs = {}) => {
+      if (throwOnFetch) {
+        throw throwOnFetch
+      }
+      const pageSkills = skills.slice(offset, offset + limit)
+      return {
+        data: pageSkills,
+        meta: { limit, offset, since: since ?? null },
+      }
+    })
 
   return {
     isOffline: vi.fn().mockReturnValue(offline),
     checkHealth: vi.fn().mockResolvedValue({ status: healthStatus }),
-    search: searchMock,
+    search: vi.fn(),
+    syncRegistry: syncRegistryMock,
     getSkill: vi.fn(),
     getHealthStatus: vi.fn(),
   } as unknown as SkillsmithApiClient
@@ -370,10 +383,65 @@ describe('SyncEngine', () => {
       expect(result.success).toBe(true)
       expect(result.skillsAdded).toBe(150)
       expect(result.totalProcessed).toBe(150)
-      // SyncEngine uses 8 different search queries to cover more skills
-      // Each query paginates through results: 8 queries × 2 pages (100 + 50) = 16 calls
-      // Skills are deduplicated across queries
-      expect(apiClient.search as ReturnType<typeof vi.fn>).toHaveBeenCalledTimes(16)
+      // SyncEngine now scans registry-sync's single id-ordered enumeration:
+      // 2 pages (100 + 50) instead of the old 8-query × 2-page = 16 calls.
+      expect(apiClient.syncRegistry as ReturnType<typeof vi.fn>).toHaveBeenCalledTimes(2)
+    })
+  })
+
+  describe('sync - since forwarding', () => {
+    it('omits `since` when force=true, even with a lastSyncAt on record', async () => {
+      const lastSyncAt = new Date(Date.now() - 60 * 60 * 1000).toISOString()
+      syncConfigRepo.setLastSync(lastSyncAt, 0)
+
+      const apiClient = createMockApiClient({ skills: [createMockSkill('test/skill-1')] })
+      const engine = new SyncEngine(
+        apiClient,
+        skillRepo,
+        syncConfigRepo,
+        syncHistoryRepo,
+        createMockSkillVersionRepo()
+      )
+
+      await engine.sync({ force: true })
+
+      const syncRegistryMock = apiClient.syncRegistry as ReturnType<typeof vi.fn>
+      expect(syncRegistryMock).toHaveBeenCalledWith(expect.objectContaining({ since: undefined }))
+    })
+
+    it('forwards lastSyncAt as `since` on a non-forced sync', async () => {
+      const lastSyncAt = new Date(Date.now() - 60 * 60 * 1000).toISOString()
+      syncConfigRepo.setLastSync(lastSyncAt, 0)
+
+      const apiClient = createMockApiClient({ skills: [createMockSkill('test/skill-1')] })
+      const engine = new SyncEngine(
+        apiClient,
+        skillRepo,
+        syncConfigRepo,
+        syncHistoryRepo,
+        createMockSkillVersionRepo()
+      )
+
+      await engine.sync()
+
+      const syncRegistryMock = apiClient.syncRegistry as ReturnType<typeof vi.fn>
+      expect(syncRegistryMock).toHaveBeenCalledWith(expect.objectContaining({ since: lastSyncAt }))
+    })
+
+    it('omits `since` on a non-forced sync with no lastSyncAt on record', async () => {
+      const apiClient = createMockApiClient({ skills: [createMockSkill('test/skill-1')] })
+      const engine = new SyncEngine(
+        apiClient,
+        skillRepo,
+        syncConfigRepo,
+        syncHistoryRepo,
+        createMockSkillVersionRepo()
+      )
+
+      await engine.sync()
+
+      const syncRegistryMock = apiClient.syncRegistry as ReturnType<typeof vi.fn>
+      expect(syncRegistryMock).toHaveBeenCalledWith(expect.objectContaining({ since: undefined }))
     })
   })
 })

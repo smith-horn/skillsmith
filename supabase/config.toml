@@ -592,6 +592,14 @@ verify_jwt = false
 [functions.private-registry-get]
 verify_jwt = false
 
+# registry-sync: Team/Enterprise-only bulk registry enumeration backing the CLI
+# `sync` command. Self-managed auth via the shared runAuthMiddleware — same
+# gateway-bypass pattern as skills-search — with an in-handler tier gate
+# (community/individual/anonymous rejected with 403) as the real access
+# control. Deploy WITH --no-verify-jwt.
+[functions.registry-sync]
+verify_jwt = false
+
 # [edge_runtime.secrets]
 # secret_key = "env(SECRET_VALUE)"
 

@@ -59,7 +59,7 @@ describe('SyncEngine - history tracking + getStatus', () => {
 
     it('should record sync history on failure', async () => {
       const apiClient = createMockApiClient({
-        throwOnSearch: new Error('Network failure'),
+        throwOnFetch: new Error('Network failure'),
       })
       const engine = new SyncEngine(
         apiClient,

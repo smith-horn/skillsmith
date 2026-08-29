@@ -530,6 +530,10 @@ const NO_VERIFY_JWT_FUNCTIONS = [
   // 0), then re-reads the row under that same token so RLS scopes it. Same
   // in-handler-auth shape as admin-grant-subscription / admin-incident-manage.
   'private-registry-get',
+  // registry-sync: self-managed in-handler auth via runAuthMiddleware, same
+  // as skills-search — the gateway performs no JWT check; the in-handler
+  // Team/Enterprise tier gate is the real access control.
+  'registry-sync',
   // Service-role batch-send functions (SMI-4400)
   // Deployed with --no-verify-jwt because service-role callers present the
   // service-role key in the Authorization header; gateway JWT check would

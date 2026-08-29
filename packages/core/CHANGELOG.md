@@ -4,6 +4,15 @@ All notable changes to `@skillsmith/core` are documented here.
 
 ## [Unreleased]
 
+- **Breaking**: `SyncEngine` now fetches via a new `registry-sync` Edge Function instead of
+  abusing the public `skills-search` endpoint with 8 hardcoded broad queries — this transport
+  is Team+ tier only server-side (see `@skillsmith/cli`'s changelog and ADR-136), so `SyncEngine.
+  sync()` will fail for a Community/Individual-tier API client. Also fixes a real completeness
+  gap in the old mechanism: any skill whose name/tags never matched one of the 8 hardcoded terms
+  was silently never synced. `since` is now forwarded server-side for differential syncs instead
+  of filtering client-side after downloading the entire registry. New `SkillsmithApiClient`
+  methods `syncRegistry()`/`getStats()` back this change (SMI-6236)
+
 ## v0.12.1
 
 - **Fix**: logout/whoami now detect JWT device-code sessions (#2578)

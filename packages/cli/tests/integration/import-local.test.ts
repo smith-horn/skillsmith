@@ -107,10 +107,12 @@ describe('skillsmith import-local — round-trip', () => {
       const local = localSkills[0]!
 
       // Build a SyncEngine that returns a colliding registry skill.
+      // SyncEngine fetches via `syncRegistry()`, not `search()` (SMI-6197).
       const apiClient = {
         isOffline: vi.fn().mockReturnValue(false),
         checkHealth: vi.fn().mockResolvedValue({ status: 'healthy' }),
-        search: vi.fn().mockResolvedValue({
+        search: vi.fn(),
+        syncRegistry: vi.fn().mockResolvedValue({
           data: [
             {
               id: local.id,
@@ -127,7 +129,7 @@ describe('skillsmith import-local — round-trip', () => {
               updated_at: new Date(Date.now() + 60_000).toISOString(),
             },
           ],
-          total: 1,
+          meta: { limit: 100, offset: 0 },
         }),
         getSkill: vi.fn(),
         getHealthStatus: vi.fn(),

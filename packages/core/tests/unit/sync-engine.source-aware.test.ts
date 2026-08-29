@@ -46,16 +46,16 @@ function createApiSkill(id: string, updatedAt: string): ApiSearchResult {
 }
 
 function createMockApiClient(skills: ApiSearchResult[]): SkillsmithApiClient {
-  const search = vi.fn().mockImplementation(async ({ limit = 100, offset = 0 }) => ({
+  // SyncEngine fetches via `syncRegistry()`, not `search()` (SMI-6197).
+  const syncRegistry = vi.fn().mockImplementation(async ({ limit = 100, offset = 0 }) => ({
     data: skills.slice(offset, offset + limit),
-    total: skills.length,
-    limit,
-    offset,
+    meta: { limit, offset },
   }))
   return {
     isOffline: vi.fn().mockReturnValue(false),
     checkHealth: vi.fn().mockResolvedValue({ status: 'healthy' }),
-    search,
+    search: vi.fn(),
+    syncRegistry,
     getSkill: vi.fn(),
     getHealthStatus: vi.fn(),
   } as unknown as SkillsmithApiClient
