@@ -67,7 +67,7 @@ The CLI is the terminal door, for anyone scripting or working by hand. The MCP s
 If you're the one signing off on this for your team, here's the short version of what to confirm before you call setup done:
 
 - **Tier.** A workspace itself, with membership, is Team-tier and above. Role-based permissions, private publish, and the audit log are Enterprise-tier specifically, not included at Team. A Community or Individual account can search and install, but doesn't get a workspace to manage at all.
-- **Who owns admin.** Someone on your team needs a role with `team:manage_rbac` before anyone else's permissions can be set up at all. Decide who that is before day one, not during it.
+- **Who owns admin.** Whoever's account created the workspace is its owner, and an owner already has every permission, automatically, no setup required. If you want a second person handling day-to-day approvals without owner access to everything, the owner grants them `team:manage_rbac` explicitly. Decide who the owner is before day one, since that role can't be handed off through the permission system itself.
 - **What a security reviewer will ask for.** The audit log (every approve, deprecate, and role change, timestamped) and the trust-tier legend on anything pulled from the public registry. Both exist today and neither needs to be built.
 - **What "done" looks like.** One admin logged in, a handful of teammates invited and given roles, one internally-written skill published and approved into the private registry, and everyone's laptop reporting into the same dashboard. That's a team fully set up, not a pilot.
 
