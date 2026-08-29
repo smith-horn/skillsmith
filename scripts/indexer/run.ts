@@ -355,7 +355,7 @@ async function main(): Promise<void> {
       status: 'skipped_lock' as const,
       discovery_phase: env.DISCOVERY_PHASE ?? null,
     }
-    await writeIndexerAuditLog(supabase, 'partial', {
+    await writeIndexerAuditLog(supabase, 'success', {
       requestId,
       topics: [],
       runType: env.RUN_TYPE,

@@ -502,6 +502,12 @@ verify_jwt = false
 [functions.release-cadence-heartbeat-monitor]
 verify_jwt = false
 
+# indexer-lock-starvation-monitor: pg_cron-invoked, service-role internal
+# (SMI-6209 — Arm A/B lock-starvation detection for the skill indexer).
+# Deploy WITH --no-verify-jwt; mirrors scan-coverage-monitor / webhook-heartbeat-monitor.
+[functions.indexer-lock-starvation-monitor]
+verify_jwt = false
+
 # status-check: pg_cron-invoked, service-role internal (SMI-5752, public
 # status page Wave 2). Deploy WITH --no-verify-jwt; mirrors
 # webhook-heartbeat-monitor / quota-monitor.

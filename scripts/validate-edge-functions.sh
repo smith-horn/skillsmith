@@ -90,6 +90,7 @@ SERVICE_ROLE_FUNCTIONS=(
   "scan-coverage-monitor"
   "release-cadence-heartbeat-monitor"
   "sso-domain-reverify"
+  "indexer-lock-starvation-monitor"
 )
 
 echo ""

@@ -124,8 +124,8 @@ jobs:
 
           BODY=$(jq -n \
             --arg msg "Skill Indexer run $RUN_ID ended in 'cancelled' after ${ELAPSED_MIN}m (kind: $KIND). Re-dispatch manually if this was a scheduled run and the next scheduled slot is more than a few hours away." \
-            --arg rid "$RUN_ID" --arg url "$RUN_URL" --arg kind "$KIND" \
-            '{type:"indexer_cancelled", message:$msg, workflow:"Skill Indexer", runId:$rid, runUrl:$url, kind:$kind}')
+            --arg rid "$RUN_ID" --arg url "$RUN_URL" \
+            '{type:"indexer_cancelled", message:$msg, workflow:"Skill Indexer", runId:$rid, runUrl:$url}')
 
           # ── No silent alert failures (SMI-5964 pattern) ──
           # HTTP defaults to "000" and is only overwritten on a completed
