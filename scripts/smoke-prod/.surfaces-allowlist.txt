@@ -145,6 +145,17 @@ supabase/functions/sync-oauth-email/**
 # exercises the not-signed-in 401 path and the gateway-verified 403 path.
 supabase/functions/team-sso-manage/**
 
+# SMI-6205: sso-link-notify is user-facing (it fires the post-link security
+# notification from /account/link-sso) but, like team-invite-send and
+# team-sso-manage above, its only non-trivial path requires a real
+# authenticated SSO session AND a real sso_account_links row whose linked_at
+# is already set -- i.e. an executed identity link, which the harness cannot
+# synthesize without persisting a link against prod. Every reachable
+# unauthenticated path is a flat refusal. Smoke verification is manual on
+# first deploy; after that lands, move this into surfaces.json with a check
+# that exercises the not-signed-in 401 path.
+supabase/functions/sso-link-notify/**
+
 # SMI-6204: sso-domain-reverify is intended-cron-only (invoked daily by
 # pg_cron via public.invoke_sso_domain_reverify()) -- but, unlike status-check
 # below, it DOES have an internet-reachable HTTP surface (verify_jwt = false

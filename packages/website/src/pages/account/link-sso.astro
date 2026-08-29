@@ -1,0 +1,1026 @@
+---
+/**
+ * Link SSO Account Page
+ *
+ * SMI-6200 Wave 4 Step 3 — the consented identity-link UI.
+ *
+ * A user who signs in for the first time via SSO and whose email matches an
+ * existing ("legacy") Skillsmith account lands here (redirected from
+ * `auth-callback-handler.ts`, which owns detecting the candidate link) to
+ * explicitly confirm merging the two identities' entitlements. This page
+ * NEVER auto-links — the RPC only fires on an explicit click of the Confirm
+ * button below.
+ *
+ * v1 scope, stated in the UI copy itself (per the plan, don't imply
+ * otherwise): team membership / role / license-key access MOVES to the SSO
+ * identity; installed-skill inventory and device history do NOT move in
+ * this step — full inventory migration is tracked separately.
+ *
+ * Two entry paths render on this one route, one per identity, distinguished
+ * by whether the URL carries a `legacy_user_id` query param:
+ *
+ * 1. WITH `?legacy_user_id=...` — the SSO identity, redirected here by
+ *    `auth-callback-handler.ts` after `record_sso_login()` returned a
+ *    `link_candidate`. The primary confirm view: shows both identities, what
+ *    moves and what doesn't, and a real <button> that calls
+ *    `link_sso_account`. On success it also fires the post-link notification
+ *    to the legacy identity's verified email (What Changes §4: "A
+ *    notification email fires on link regardless"). Everything it displays is
+ *    re-resolved from `get_own_sso_link_candidate()` — a read-only RPC keyed
+ *    on the caller's own session — never from the URL, and never from the
+ *    side-effecting `record_sso_login()` this view used to call for it
+ *    (SMI-6205 confirmation round N-3/N-4). When there is no live candidate
+ *    (declined, expired, completed, or not this caller's), the same path
+ *    renders the RESTORE card instead, which is how a "Not now" is undone —
+ *    dismissal used to be one-way, so the control could not honestly be
+ *    labelled "Not now" (confirmation round N-2).
+ * 2. WITHOUT it — the LEGACY identity, signed in normally, discovering the
+ *    pending request through `get_pending_sso_link_requests()` and consenting
+ *    to it with `record_sso_link_consent()`. This is the dual-consent
+ *    precondition's second half, and What Changes §4 offers exactly two
+ *    channels for it: an out-of-band emailed token, OR "the user must
+ *    re-authenticate as the legacy identity". The RE-AUTHENTICATION channel
+ *    is what shipped — `record_sso_link_consent()` is keyed SOLELY on
+ *    `auth.uid() = legacy_user_id` and performs no token-hash verification
+ *    (the `consent_token_hash` column exists but is deliberately unused,
+ *    reserved for a future flow per the migration's own comments). This page
+ *    therefore builds against the caller's ordinary authenticated session and
+ *    implements no token issuance or redemption: doing so would contradict
+ *    the deployed function's actual access control and ship dead code.
+ *
+ * Accessibility (verbatim from the plan, non-negotiable — this is a
+ * security-sensitive, semi-irreversible confirmation flow). BOTH confirm
+ * paths above meet it, not just the SSO one:
+ *  - Confirm is a real <button>, never a clickable <div>.
+ *  - Focus moves to the relevant heading on page load (tabindex="-1" +
+ *    .focus(), matching check-email.astro / return-to-cli.astro's
+ *    established pattern) so a screen-reader user hears the consequence
+ *    before the control.
+ *  - The "what moves / what doesn't" copy is associated with the confirm
+ *    button via aria-describedby, not just visual adjacency.
+ *  - A role="alert" region announces success/failure after submission.
+ */
+
+export const prerender = false
+
+import { ClientRouter } from 'astro:transitions'
+import AccountSidebar from '../../components/AccountSidebar.astro'
+import AccountMobileNav from '../../components/AccountMobileNav.astro'
+import Nav from '../../components/Nav.astro'
+import Footer from '../../components/Footer.astro'
+import { getSupabaseConfig } from '../../lib/supabase-config'
+
+const supabaseConfig = getSupabaseConfig()
+---
+
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <meta name="robots" content="noindex, nofollow" />
+    <link rel="icon" type="image/svg+xml" href="/logo-icon.svg" />
+
+    <meta name="description" content="Link your SSO identity to your existing Skillsmith account" />
+    <title>Link Your Account | Skillsmith</title>
+    <link rel="preconnect" href="https://api.fontshare.com" crossorigin />
+    <link
+      href="https://api.fontshare.com/v2/css?f[]=satoshi@300,400,500,700,900&display=swap"
+      rel="stylesheet"
+    />
+    <script is:inline define:vars={{ supabaseConfig }}>
+      window.__SUPABASE_CONFIG__ = supabaseConfig
+    </script>
+    <ClientRouter />
+  </head>
+  <body>
+    <Nav activePath="/account" />
+
+    <div class="account-shell">
+      <AccountSidebar currentPath={Astro.url.pathname} />
+
+      <main class="link-sso-container" data-account-page="/account/link-sso">
+        <AccountMobileNav currentPath={Astro.url.pathname} />
+
+        <!-- Loading state -->
+        <div id="loading-state" class="loading-state">
+          <div class="spinner-container">
+            <svg class="spinner" viewBox="0 0 24 24" aria-hidden="true">
+              <circle
+                cx="12"
+                cy="12"
+                r="10"
+                stroke="currentColor"
+                stroke-width="4"
+                fill="none"
+                opacity="0.25"></circle>
+              <path d="M12 2a10 10 0 0 1 10 10" stroke="currentColor" stroke-width="4" fill="none"
+              ></path>
+            </svg>
+          </div>
+          <p>Loading...</p>
+        </div>
+
+        <!-- Config / unexpected error state -->
+        <div id="error-state" class="error-state" style="display: none;">
+          <div class="error-content">
+            <h2>Something went wrong</h2>
+            <p id="error-message">Please try again.</p>
+            <button type="button" data-action="reload" class="btn btn-secondary">Try Again</button>
+          </div>
+        </div>
+
+        <!-- No pending link found -->
+        <div id="no-link-state" class="state-card" style="display: none;">
+          <h1 id="no-link-heading" tabindex="-1" class="state-heading">No pending account link</h1>
+          <p>
+            We don&rsquo;t have a pending SSO account link for you to confirm right now. A request
+            expires 7 days after it&rsquo;s created, so if you were expecting one, ask whoever
+            started it to sign in through your team&rsquo;s SSO again &mdash; or contact your team
+            admin.
+          </p>
+          <a href="/account" class="btn btn-secondary">Back to your account</a>
+        </div>
+
+        <!--
+          SSO identity: there is no LIVE offer for this session. Two ways in, one
+          card, because the server refuses to tell them apart and the client must
+          not invent the distinction:
+            a) they just pressed "Not now" and were sent back here with
+               `dismissed=1` (set only after the dismissal RPC actually
+               succeeded), so the undo sits where the action just happened; or
+            b) they came back to the link later and nothing is pending — declined,
+               expired, or already completed.
+          `undismiss_sso_link_candidate()` is the authority on whether there is
+          anything to restore, and its refusal is deliberately undifferentiated
+          (a client that could tell "you dismissed this" from "no such request"
+          would be the account-existence oracle every RPC in this flow refuses to
+          be), so the copy stays equally undifferentiated and the button simply
+          asks. Rendered ONLY on the SSO-identity path: the RPC is keyed on
+          sso_user_id = auth.uid() and needs a legacy_user_id to name the offer,
+          and the legacy identity has neither. SMI-6205 confirmation round N-2.
+        -->
+        <div id="restore-state" class="state-card" style="display: none;">
+          <h1 id="restore-heading" tabindex="-1" class="state-heading">No pending account link</h1>
+          <p id="restore-intro"></p>
+          <div class="link-actions">
+            <button type="button" id="restore-link-btn" class="btn btn-primary">
+              Restore that request
+            </button>
+            <a href="/account" class="btn btn-ghost">Back to your account</a>
+          </div>
+          <div
+            id="restore-result"
+            role="alert"
+            aria-live="assertive"
+            aria-atomic="true"
+            class="link-result"
+          >
+          </div>
+        </div>
+
+        <!-- Legacy identity: a pending request exists and needs this account's consent -->
+        <div id="consent-request-state" class="state-card state-card-wide" style="display: none;">
+          <h1 id="consent-request-heading" tabindex="-1" class="state-heading">
+            Confirm this account link
+          </h1>
+          <p>
+            Someone signing in through <strong id="consent-team-name">an organization</strong
+            >&rsquo;s single sign-on says they&rsquo;re you, and has asked to link that identity to
+            this Skillsmith account. Nothing happens unless you confirm &mdash; but confirming
+            can&rsquo;t be taken back from this page, so read the list below first.
+          </p>
+
+          <div id="consent-request-consequences" class="consequences-box">
+            <h2 class="consequences-heading">What happens if you confirm</h2>
+            <ul>
+              <li>
+                <strong>Moves to the SSO identity:</strong> your team membership, role, and license/API-key
+                access. The license keys on this account are revoked.
+              </li>
+              <li>
+                <strong>Does not move:</strong> your installed-skill inventory and device history stay
+                on this account.
+              </li>
+              <li>
+                Confirming does not complete the link on its own &mdash; the SSO identity finishes
+                it from their side, and you&rsquo;ll get an email when it does.
+              </li>
+              <li>
+                <strong>Confirming can&rsquo;t be undone from here.</strong> There&rsquo;s no self-service
+                way to withdraw a confirmation or unlink afterwards &mdash; if you change your mind, email
+                support@smithhorn.ca within 7 days of the link completing and we&rsquo;ll reverse it by
+                hand.
+              </li>
+            </ul>
+          </div>
+
+          <div id="consent-request-deadline" class="consent-note">
+            <p>
+              If you weren&rsquo;t expecting this, don&rsquo;t confirm &mdash; contact
+              support@smithhorn.ca instead.
+            </p>
+          </div>
+
+          <div class="link-actions">
+            <button
+              type="button"
+              id="confirm-consent-btn"
+              class="btn btn-primary"
+              aria-describedby="consent-request-consequences consent-request-deadline"
+            >
+              Yes, this is me &mdash; confirm
+            </button>
+            <a href="/account" class="btn btn-ghost">Not now</a>
+          </div>
+
+          <div
+            id="consent-result"
+            role="alert"
+            aria-live="assertive"
+            aria-atomic="true"
+            class="link-result"
+          >
+          </div>
+        </div>
+
+        <!-- Legacy identity: consent already recorded, waiting on the SSO identity -->
+        <div id="consent-state" class="state-card" style="display: none;">
+          <h1 id="consent-heading" tabindex="-1" class="state-heading">
+            You&rsquo;ve confirmed this link
+          </h1>
+          <p>
+            Thanks &mdash; we&rsquo;ve recorded your confirmation. The person signing in through
+            single sign-on finishes the link from their side; we&rsquo;ll email you when it
+            completes.
+          </p>
+          <a href="/account" class="btn btn-secondary">Back to your account</a>
+        </div>
+
+        <!-- Primary confirm view (SSO identity, authenticated) -->
+        <div id="link-content" style="display: none;">
+          <h1 id="link-sso-heading" tabindex="-1" class="page-heading">Link your account</h1>
+          <p class="link-intro">
+            We found an existing Skillsmith account that matches your email. Review what happens
+            below, then confirm if this is you.
+          </p>
+
+          <section class="identity-compare" aria-label="Accounts being linked">
+            <div class="identity-card">
+              <h2>Signing in via SSO</h2>
+              <p id="sso-identity-email" class="identity-email">&ndash;</p>
+            </div>
+            <div class="identity-arrow" aria-hidden="true">&harr;</div>
+            <div class="identity-card">
+              <h2>Existing Skillsmith account</h2>
+              <p id="legacy-identity-email" class="identity-email">&ndash;</p>
+            </div>
+          </section>
+
+          <div id="link-sso-consequences" class="consequences-box">
+            <h2 class="consequences-heading">What happens when you link</h2>
+            <ul>
+              <li>
+                <strong>Moves to this SSO identity:</strong> your team membership, role, and license/API-key
+                access.
+              </li>
+              <li>
+                <strong>Does not move:</strong> your installed-skill inventory and device history stay
+                on your existing account &mdash; you&rsquo;ll need to re-push them under this identity.
+                Full inventory migration isn&rsquo;t part of this step.
+              </li>
+              <li>A notification email is sent to the existing account when the link completes.</li>
+              <li>
+                <strong>This can&rsquo;t be undone from here.</strong> There&rsquo;s no self-service unlink
+                &mdash; if it turns out to be a mistake, email support@smithhorn.ca within 7 days and
+                we&rsquo;ll reverse it by hand.
+              </li>
+            </ul>
+          </div>
+
+          <div id="link-sso-consent-note" class="consent-note">
+            <p>
+              Before this link can complete, whoever owns
+              <strong id="legacy-identity-email-inline">the existing account</strong>
+              must also confirm, signed in as that account. Ask them to sign in to Skillsmith and open
+              this page &mdash; the request will be waiting for them. Once they&rsquo;ve confirmed, press
+              Confirm below.
+            </p>
+          </div>
+
+          <div class="link-actions">
+            <button
+              type="button"
+              id="confirm-link-btn"
+              class="btn btn-primary"
+              aria-describedby="link-sso-consequences link-sso-consent-note"
+            >
+              Confirm and link account
+            </button>
+            <!--
+              A real <button>, not an <a href="/account">: it records the dismissal via
+              dismiss_sso_link_candidate() before navigating. Without that the candidate
+              stayed live and record_sso_login() re-armed its 7-day window on every
+              subsequent login, so this redirect came back forever (SMI-6205 review H3).
+              Only the SSO-identity view gets this control -- the legacy identity's "Not
+              now" below stays a plain link, because dismissal is keyed on
+              sso_user_id = auth.uid() and that view is not the SSO identity. The legacy
+              identity also has no forced redirect to escape: it navigated here itself.
+              On success it now lands on the restore card above rather than /account, so
+              the decline is reversible at the moment the user is certain to see the offer
+              (SMI-6205 confirmation round N-2).
+            -->
+            <button type="button" id="dismiss-link-btn" class="btn btn-ghost">Not now</button>
+          </div>
+
+          <div
+            id="link-sso-result"
+            role="alert"
+            aria-live="assertive"
+            aria-atomic="true"
+            class="link-result"
+          >
+          </div>
+        </div>
+      </main>
+    </div>
+
+    <Footer compact />
+  </body>
+</html>
+
+<style>
+  *,
+  *::before,
+  *::after {
+    box-sizing: border-box;
+  }
+
+  body {
+    font-family:
+      'Satoshi',
+      -apple-system,
+      BlinkMacSystemFont,
+      'Segoe UI',
+      Roboto,
+      sans-serif;
+    line-height: 1.6;
+    color: #fafafa;
+    background: #0d0d0f;
+    min-height: 100vh;
+  }
+
+  .link-sso-container {
+    flex: 1;
+    max-width: 720px;
+    margin: 0 auto;
+    padding: 2rem 1.5rem 4rem;
+    width: 100%;
+  }
+
+  .page-heading,
+  .state-heading {
+    font-size: 1.75rem;
+    font-weight: 700;
+    margin: 0 0 0.75rem;
+    line-height: 1.25;
+  }
+
+  .page-heading:focus-visible,
+  .state-heading:focus-visible {
+    outline: 2px solid #e07a5f;
+    outline-offset: 4px;
+    border-radius: 0.25rem;
+  }
+
+  .link-intro {
+    color: #d4d4d8;
+    margin: 0 0 1.75rem;
+  }
+
+  .state-card {
+    background: #121214;
+    border: 1px solid #2a2a2f;
+    border-radius: 0.75rem;
+    padding: 2rem;
+    max-width: 480px;
+  }
+
+  /* The consent-request card carries the same consequences list the SSO-side
+     confirm view does, so it needs the wider measure that view already uses. */
+  .state-card-wide {
+    max-width: 100%;
+  }
+
+  .state-card p {
+    color: #d4d4d8;
+    margin: 0 0 1.25rem;
+    line-height: 1.6;
+  }
+
+  /* Loading state */
+  .loading-state {
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    justify-content: center;
+    padding: 4rem 2rem;
+    color: #9ca3af;
+  }
+
+  .spinner-container {
+    margin-bottom: 1rem;
+  }
+
+  .spinner {
+    width: 2.5rem;
+    height: 2.5rem;
+    color: #e07a5f;
+    animation: spin 1s linear infinite;
+  }
+
+  @keyframes spin {
+    from {
+      transform: rotate(0deg);
+    }
+    to {
+      transform: rotate(360deg);
+    }
+  }
+
+  .error-state {
+    text-align: center;
+    padding: 3rem 1rem;
+  }
+
+  .error-content {
+    max-width: 400px;
+    margin: 0 auto;
+  }
+
+  .error-state h2 {
+    font-size: 1.25rem;
+    font-weight: 600;
+    margin-bottom: 0.5rem;
+  }
+
+  .error-state p {
+    color: #9ca3af;
+    margin-bottom: 1.5rem;
+  }
+
+  /* Identity comparison */
+  .identity-compare {
+    display: flex;
+    align-items: stretch;
+    gap: 1rem;
+    margin-bottom: 1.75rem;
+  }
+
+  .identity-card {
+    flex: 1;
+    background: #121214;
+    border: 1px solid #2a2a2f;
+    border-radius: 0.75rem;
+    padding: 1.25rem;
+    min-width: 0;
+  }
+
+  .identity-card h2 {
+    font-size: 0.75rem;
+    font-weight: 600;
+    text-transform: uppercase;
+    letter-spacing: 0.05em;
+    color: #9ca3af;
+    margin: 0 0 0.5rem;
+  }
+
+  .identity-email {
+    font-size: 0.9375rem;
+    font-weight: 500;
+    color: #fafafa;
+    word-break: break-all;
+    margin: 0;
+  }
+
+  .identity-arrow {
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    color: #6b7280;
+    font-size: 1.25rem;
+    flex-shrink: 0;
+  }
+
+  /* Consequences */
+  .consequences-box {
+    background: #121214;
+    border: 1px solid #2a2a2f;
+    border-radius: 0.75rem;
+    padding: 1.25rem 1.5rem;
+    margin-bottom: 1.25rem;
+  }
+
+  .consequences-heading {
+    font-size: 1rem;
+    font-weight: 600;
+    margin: 0 0 0.75rem;
+  }
+
+  .consequences-box ul {
+    margin: 0;
+    padding-left: 1.25rem;
+    color: #d4d4d8;
+    line-height: 1.65;
+    font-size: 0.9375rem;
+  }
+
+  .consequences-box li {
+    margin-bottom: 0.5rem;
+  }
+
+  .consequences-box li:last-child {
+    margin-bottom: 0;
+  }
+
+  .consent-note {
+    background: rgba(224, 122, 95, 0.08);
+    border: 1px solid rgba(224, 122, 95, 0.25);
+    border-radius: 0.5rem;
+    padding: 0.875rem 1.125rem;
+    margin-bottom: 1.75rem;
+  }
+
+  .consent-note p {
+    margin: 0;
+    font-size: 0.875rem;
+    color: #e2c4b8;
+    line-height: 1.6;
+  }
+
+  /* Actions */
+  .link-actions {
+    display: flex;
+    align-items: center;
+    gap: 0.75rem;
+    margin-bottom: 1.25rem;
+    flex-wrap: wrap;
+  }
+
+  .btn {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    padding: 0.75rem 1.5rem;
+    font-size: 0.9375rem;
+    font-weight: 600;
+    font-family: inherit;
+    text-decoration: none;
+    border-radius: 0.5rem;
+    transition: all 0.2s;
+    cursor: pointer;
+    border: 1px solid transparent;
+  }
+
+  .btn:disabled {
+    opacity: 0.7;
+    cursor: not-allowed;
+  }
+
+  .btn-primary {
+    background: linear-gradient(135deg, #e07a5f 0%, #d4694e 100%);
+    color: white;
+  }
+
+  .btn-primary:hover:not(:disabled) {
+    transform: translateY(-1px);
+    box-shadow: 0 4px 12px rgba(224, 122, 95, 0.4);
+  }
+
+  .btn-secondary {
+    background: transparent;
+    color: #fafafa;
+    border-color: #2a2a2f;
+  }
+
+  .btn-secondary:hover {
+    border-color: #e07a5f;
+    color: #e07a5f;
+  }
+
+  .btn-ghost {
+    background: transparent;
+    color: #9ca3af;
+    border-color: transparent;
+  }
+
+  .btn-ghost:hover {
+    color: #fafafa;
+  }
+
+  /* Result region (role="alert") */
+  .link-result {
+    font-size: 0.9375rem;
+    line-height: 1.6;
+    border-radius: 0.5rem;
+  }
+
+  .link-result:empty {
+    display: none;
+  }
+
+  .link-result-error {
+    padding: 0.875rem 1.125rem;
+    background: rgba(239, 68, 68, 0.08);
+    border: 1px solid rgba(239, 68, 68, 0.3);
+    color: #fca5a5;
+  }
+
+  .link-result-success {
+    padding: 0.875rem 1.125rem;
+    background: rgba(34, 197, 94, 0.08);
+    border: 1px solid rgba(34, 197, 94, 0.3);
+    color: #86efac;
+  }
+
+  @media (max-width: 640px) {
+    .identity-compare {
+      flex-direction: column;
+    }
+
+    .identity-arrow {
+      transform: rotate(90deg);
+      padding: 0.25rem 0;
+    }
+  }
+</style>
+
+<script>
+  import { getSupabaseClient } from '../../lib/supabase-client'
+  import {
+    dismissSsoLinkCandidate,
+    fetchOwnSsoLinkCandidate,
+    fetchPendingSsoLinkRequest,
+    formatConsentDeadline,
+    mapLinkErrorToCopy,
+    notifySsoLinkComplete,
+    recordSsoLinkConsent,
+    undismissSsoLinkCandidate,
+  } from '../../lib/sso-link-consent'
+
+  function focusHeading(el: HTMLElement | null): void {
+    if (!el) return
+    try {
+      el.focus({ preventScroll: true })
+    } catch {
+      /* non-critical */
+    }
+  }
+
+  document.addEventListener('astro:page-load', async () => {
+    // Only run on this page — astro:page-load listeners persist on `document`
+    // across ClientRouter navigations and would re-fire here otherwise (SMI-4896/5158).
+    if (
+      window.location.pathname !== '/account/link-sso' &&
+      window.location.pathname !== '/account/link-sso/'
+    )
+      return
+
+    document.querySelectorAll<HTMLButtonElement>('[data-action="reload"]').forEach((btn) => {
+      btn.addEventListener('click', () => window.location.reload())
+    })
+
+    const loadingState = document.getElementById('loading-state') as HTMLDivElement | null
+    const errorState = document.getElementById('error-state') as HTMLDivElement | null
+    const errorMessage = document.getElementById('error-message') as HTMLParagraphElement | null
+    const noLinkState = document.getElementById('no-link-state') as HTMLDivElement | null
+    const noLinkHeading = document.getElementById('no-link-heading') as HTMLElement | null
+    const restoreState = document.getElementById('restore-state') as HTMLDivElement | null
+    const restoreHeading = document.getElementById('restore-heading') as HTMLElement | null
+    const restoreIntro = document.getElementById('restore-intro') as HTMLParagraphElement | null
+    const restoreBtn = document.getElementById('restore-link-btn') as HTMLButtonElement | null
+    const restoreResult = document.getElementById('restore-result') as HTMLDivElement | null
+    const consentRequestState = document.getElementById(
+      'consent-request-state'
+    ) as HTMLDivElement | null
+    const consentRequestHeading = document.getElementById(
+      'consent-request-heading'
+    ) as HTMLElement | null
+    const consentTeamName = document.getElementById('consent-team-name') as HTMLElement | null
+    const consentDeadline = document.getElementById(
+      'consent-request-deadline'
+    ) as HTMLDivElement | null
+    const confirmConsentBtn = document.getElementById(
+      'confirm-consent-btn'
+    ) as HTMLButtonElement | null
+    const consentResult = document.getElementById('consent-result') as HTMLDivElement | null
+    const consentState = document.getElementById('consent-state') as HTMLDivElement | null
+    const consentHeading = document.getElementById('consent-heading') as HTMLElement | null
+    const linkContent = document.getElementById('link-content') as HTMLDivElement | null
+    const linkHeading = document.getElementById('link-sso-heading') as HTMLElement | null
+    const ssoIdentityEmail = document.getElementById('sso-identity-email') as HTMLElement | null
+    const legacyIdentityEmail = document.getElementById(
+      'legacy-identity-email'
+    ) as HTMLElement | null
+    const legacyIdentityEmailInline = document.getElementById(
+      'legacy-identity-email-inline'
+    ) as HTMLElement | null
+    const confirmBtn = document.getElementById('confirm-link-btn') as HTMLButtonElement | null
+    const dismissBtn = document.getElementById('dismiss-link-btn') as HTMLButtonElement | null
+    const resultRegion = document.getElementById('link-sso-result') as HTMLDivElement | null
+
+    if (
+      !loadingState ||
+      !errorState ||
+      !errorMessage ||
+      !noLinkState ||
+      !noLinkHeading ||
+      !restoreState ||
+      !restoreHeading ||
+      !restoreIntro ||
+      !restoreBtn ||
+      !restoreResult ||
+      !consentRequestState ||
+      !consentRequestHeading ||
+      !consentTeamName ||
+      !consentDeadline ||
+      !confirmConsentBtn ||
+      !consentResult ||
+      !consentState ||
+      !consentHeading ||
+      !linkContent ||
+      !linkHeading ||
+      !ssoIdentityEmail ||
+      !legacyIdentityEmail ||
+      !legacyIdentityEmailInline ||
+      !confirmBtn ||
+      !dismissBtn ||
+      !resultRegion
+    ) {
+      return
+    }
+
+    type StateName =
+      | 'loading'
+      | 'error'
+      | 'no-link'
+      | 'restore'
+      | 'consent-request'
+      | 'consent'
+      | 'content'
+
+    function showState(state: StateName) {
+      loadingState!.style.display = 'none'
+      errorState!.style.display = 'none'
+      noLinkState!.style.display = 'none'
+      restoreState!.style.display = 'none'
+      consentRequestState!.style.display = 'none'
+      consentState!.style.display = 'none'
+      linkContent!.style.display = 'none'
+
+      if (state === 'loading') loadingState!.style.display = 'flex'
+      if (state === 'error') errorState!.style.display = 'block'
+      if (state === 'no-link') noLinkState!.style.display = 'block'
+      if (state === 'restore') restoreState!.style.display = 'block'
+      if (state === 'consent-request') consentRequestState!.style.display = 'block'
+      if (state === 'consent') consentState!.style.display = 'block'
+      if (state === 'content') linkContent!.style.display = 'block'
+    }
+
+    const supabase = getSupabaseClient()
+    if (!supabase) {
+      errorMessage.textContent = 'Configuration error. Please try again later.'
+      showState('error')
+      return
+    }
+
+    const {
+      data: { session },
+    } = await supabase.auth.getSession()
+
+    if (!session) {
+      const next = encodeURIComponent(
+        '/account/link-sso' + window.location.search + window.location.hash
+      )
+      window.location.href = `/login?next=${next}`
+      return
+    }
+
+    const params = new URLSearchParams(window.location.search)
+    // Used ONLY to decide which of the two views to render (see below). It is never
+    // displayed and never passed to link_sso_account() -- the candidate that IS acted on
+    // comes back from the server (SMI-6205 review M9).
+    const legacyUserIdParam = params.get('legacy_user_id')
+
+    // ────────────────────────────────────────────────────────────────────
+    // Path 2 — the LEGACY identity, with no candidate params in the URL.
+    // Its only way to LEARN a request exists is get_pending_sso_link_requests()
+    // (20260828000004): sso_account_links holds no client grant at all, and
+    // record_sso_link_consent() needs the sso_user_id this read supplies.
+    // ────────────────────────────────────────────────────────────────────
+    if (!legacyUserIdParam) {
+      const lookup = await fetchPendingSsoLinkRequest(supabase)
+
+      if (lookup.status === 'error') {
+        errorMessage.textContent = lookup.message
+        showState('error')
+        return
+      }
+      if (lookup.status === 'none') {
+        showState('no-link')
+        focusHeading(noLinkHeading)
+        return
+      }
+      if (lookup.status === 'consented') {
+        showState('consent')
+        focusHeading(consentHeading)
+        return
+      }
+
+      const request = lookup.request
+      consentTeamName.textContent = request.team_name ?? 'an organization'
+      const deadline = formatConsentDeadline(request.consent_expires_at)
+      if (deadline) {
+        const deadlineNote = document.createElement('p')
+        deadlineNote.textContent = `This request expires on ${deadline}.`
+        consentDeadline.prepend(deadlineNote)
+      }
+
+      showState('consent-request')
+      focusHeading(consentRequestHeading)
+
+      confirmConsentBtn.addEventListener('click', async () => {
+        consentResult.textContent = ''
+        consentResult.className = 'link-result'
+        confirmConsentBtn.disabled = true
+        confirmConsentBtn.setAttribute('aria-busy', 'true')
+        const originalConsentLabel = confirmConsentBtn.textContent
+        confirmConsentBtn.textContent = 'Confirming...'
+
+        const outcome = await recordSsoLinkConsent(supabase, request.sso_user_id)
+
+        if (!outcome.ok) {
+          consentResult.textContent = outcome.message
+          consentResult.classList.add('link-result-error')
+          confirmConsentBtn.disabled = false
+          confirmConsentBtn.removeAttribute('aria-busy')
+          confirmConsentBtn.textContent = originalConsentLabel
+          return
+        }
+
+        confirmConsentBtn.removeAttribute('aria-busy')
+        confirmConsentBtn.textContent = 'Confirmed'
+        showState('consent')
+        focusHeading(consentHeading)
+      })
+      return
+    }
+
+    // ────────────────────────────────────────────────────────────────────
+    // Path 1 — the SSO identity, arriving from the auth callback.
+    //
+    // The URL only tells us WHICH view to render. Everything the page then
+    // shows or acts on is re-resolved from the server against this caller's own
+    // session (SMI-6205 review M9): rendering `?legacy_email=` directly let a
+    // crafted link name one account in the consent copy while
+    // link_sso_account() acted on the id in `?legacy_user_id=`, which is an
+    // informed-consent screen that can be made to lie.
+    // ────────────────────────────────────────────────────────────────────
+    // "Not now" sends the user back here with `dismissed=1`, and only after the
+    // dismissal RPC actually succeeded. The flag deliberately SHORT-CIRCUITS the
+    // candidate read: H3 requires that "Not now" leave the confirm screen
+    // whether or not anything landed, and re-reading here could drop the user
+    // straight back onto it. It is not trusted for anything either — the
+    // Restore button below calls undismiss_sso_link_candidate(), which is keyed
+    // on sso_user_id = auth.uid() and refuses anything that is not genuinely
+    // this caller's own dismissed candidate (SMI-6205 confirmation round N-2).
+    const justDismissed = params.get('dismissed') === '1'
+    const candidate = justDismissed ? null : await fetchOwnSsoLinkCandidate(supabase)
+
+    if (!candidate) {
+      // No live candidate for this session: declined, expired, already
+      // completed, or the id in the URL is not ours. They all land on the same
+      // state on purpose — telling the caller which would confirm whether a link
+      // exists between two specific accounts, the disclosure every RPC in this
+      // flow refuses to make. The copy varies only in whether we are speaking
+      // to someone who just pressed "Not now", which we know from our own
+      // navigation rather than from the server.
+      restoreHeading.textContent = justDismissed ? 'We won’t ask again' : 'No pending account link'
+      restoreIntro.textContent = justDismissed
+        ? 'You chose “Not now”, so we’ve stopped asking. Nothing was linked and your existing account is untouched. Changed your mind? You can restore the request below.'
+        : 'There’s no account link waiting for you right now. If you chose “Not now” on one earlier and changed your mind, you can restore it below — as long as it hasn’t already been completed.'
+
+      showState('restore')
+      focusHeading(restoreHeading)
+
+      restoreBtn.addEventListener('click', async () => {
+        restoreResult.textContent = ''
+        restoreResult.className = 'link-result'
+        restoreBtn.disabled = true
+        restoreBtn.setAttribute('aria-busy', 'true')
+        const originalRestoreLabel = restoreBtn.textContent
+        restoreBtn.textContent = 'Restoring...'
+
+        const outcome = await undismissSsoLinkCandidate(supabase, legacyUserIdParam)
+
+        if (!outcome.ok) {
+          restoreResult.textContent = outcome.message
+          restoreResult.classList.add('link-result-error')
+          restoreBtn.disabled = false
+          restoreBtn.removeAttribute('aria-busy')
+          restoreBtn.textContent = originalRestoreLabel
+          return
+        }
+
+        // Reload WITHOUT `dismissed=1` so the page re-reads the now-live
+        // candidate and renders the ordinary confirm view. A reload rather than
+        // an in-place re-render because the confirm view's own listeners are
+        // wired once, on load, against a candidate that did not exist a moment
+        // ago.
+        window.location.href = `/account/link-sso?legacy_user_id=${encodeURIComponent(
+          legacyUserIdParam
+        )}`
+      })
+      return
+    }
+
+    const legacyUserId = candidate.legacy_user_id
+    const legacyEmail = candidate.legacy_email
+
+    ssoIdentityEmail.textContent = session.user.email ?? 'Unknown'
+    legacyIdentityEmail.textContent = legacyEmail ?? 'Unknown'
+    legacyIdentityEmailInline.textContent = legacyEmail ?? 'the existing account'
+
+    showState('content')
+    focusHeading(linkHeading)
+
+    dismissBtn.addEventListener('click', async () => {
+      dismissBtn.disabled = true
+      dismissBtn.setAttribute('aria-busy', 'true')
+      // Deliberately awaited but never allowed to block: a failed dismissal is
+      // logged inside the helper and must not trap the user on this page.
+      const dismissed = await dismissSsoLinkCandidate(supabase, legacyUserId)
+      // On success, land back on this route with `dismissed=1`, which renders
+      // the restore card WITHOUT re-reading the candidate — so "Not now" still
+      // always leaves the confirm screen, and the undo is offered at the one
+      // moment the user is certain to see it (confirmation round N-2: dismissal
+      // was previously one-way, and nothing in the schema re-arms a dismissed
+      // row, so "Not now" meant "never"). On FAILURE we fall through to
+      // /account exactly as before: escaping the page matters more than
+      // offering an undo for a dismissal that did not land, and telling the
+      // user we "won't ask again" when we will would be a lie.
+      window.location.href = dismissed
+        ? `/account/link-sso?legacy_user_id=${encodeURIComponent(legacyUserId)}&dismissed=1`
+        : '/account'
+    })
+
+    confirmBtn.addEventListener('click', async () => {
+      resultRegion.textContent = ''
+      resultRegion.className = 'link-result'
+      confirmBtn.disabled = true
+      confirmBtn.setAttribute('aria-busy', 'true')
+      const originalLabel = confirmBtn.textContent
+      confirmBtn.textContent = 'Linking...'
+
+      function resetButton() {
+        confirmBtn!.disabled = false
+        confirmBtn!.removeAttribute('aria-busy')
+        confirmBtn!.textContent = originalLabel
+      }
+
+      try {
+        const { error } = await supabase.rpc('link_sso_account', {
+          p_legacy_user_id: legacyUserId,
+        })
+
+        if (error) {
+          resultRegion.textContent = mapLinkErrorToCopy(error.message)
+          resultRegion.classList.add('link-result-error')
+          resetButton()
+          return
+        }
+
+        // What Changes SS4: "A notification email fires on link regardless."
+        // Deliberately AWAITED but never allowed to fail the flow — the link
+        // already committed in Postgres above, so a failed notice must never
+        // read to the user as a failed link. notifySsoLinkComplete() swallows
+        // its own errors and resolves to a boolean.
+        await notifySsoLinkComplete(supabase, legacyUserId)
+
+        resultRegion.textContent = 'Your account is linked. Redirecting to your account...'
+        resultRegion.classList.add('link-result-success')
+        confirmBtn.removeAttribute('aria-busy')
+        confirmBtn.textContent = 'Linked'
+        setTimeout(() => {
+          window.location.href = '/account'
+        }, 1500)
+      } catch (err) {
+        console.error('link_sso_account RPC failed:', err)
+        resultRegion.textContent =
+          'Something went wrong linking your account. Please try again or contact support@smithhorn.ca.'
+        resultRegion.classList.add('link-result-error')
+        resetButton()
+      }
+    })
+  })
+</script>

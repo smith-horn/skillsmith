@@ -135,6 +135,7 @@ VERIFY_JWT_FUNCTIONS=(
   purge-inventory
   skills-outreach
   skills-refresh-metadata
+  sso-link-notify
   sync-oauth-email
   sync-stripe-email
   team-invite-send

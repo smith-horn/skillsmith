@@ -275,6 +275,13 @@ const supabaseConfig = getSupabaseConfig()
     color: #f59e0b;
   }
 
+  /* SMI-6205: provisioned_via / sso_verified_at columns, same tokens as .member-joined. */
+  .member-provisioned,
+  .member-sso-verified {
+    color: #9ca3af;
+    font-size: 0.8125rem;
+  }
+
   .empty-state {
     text-align: center;
     padding: 1.5rem;

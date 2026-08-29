@@ -22,10 +22,11 @@ tags = ["uuid", "linear"]
 # Only flag if it looks like it's being used as a project ID in code
 keywords = ["project", "projectId", "PROJECT"]
 [[rules.allowlists]]
-description = "SMI-5575: synthetic smoke-test fixture UUIDs in migration DO $$ blocks (e.g. 5575aaaa-0000-0000-0000-000000000001) are not Linear project IDs. They only trip this rule when the same migration file also mentions 'this Supabase project' in prose (an unrelated use of the word). Established fixture convention predates this PR (see 20260524000002_team_member_tier_sync.sql's 5188aaaa-... constants) — the pattern is deliberately non-random (repeated hex nibble + trailing zeros) to signal 'this is a synthetic test id' to a human reader. SMI-5863 widened the trailing suffix from [0-9]{2} to [0-9a-f]{2}: sibling migrations already use hex suffixes for role-tagged fixture ids (e.g. 20260726000000's ...0000000000d1 device id, ...0000000000ff owner id) — those never tripped this rule only because their files happen not to mention 'project' anywhere, not because the id shape itself was ever allowlisted; SMI-5863's own file incidentally contains 'PROJECTION' (unrelated) and its ...0000000000d1 device-id fixture is the first case where a hex-suffixed id and the keyword gate actually coincide."
+description = "SMI-5575: synthetic smoke-test fixture UUIDs in migration DO $$ blocks (e.g. 5575aaaa-0000-0000-0000-000000000001) are not Linear project IDs. They only trip this rule when the same migration file also mentions 'this Supabase project' in prose (an unrelated use of the word). Established fixture convention predates this PR (see 20260524000002_team_member_tier_sync.sql's 5188aaaa-... constants) — the pattern is deliberately non-random (repeated hex nibble + trailing zeros) to signal 'this is a synthetic test id' to a human reader. SMI-5863 widened the trailing suffix from [0-9]{2} to [0-9a-f]{2}: sibling migrations already use hex suffixes for role-tagged fixture ids (e.g. 20260726000000's ...0000000000d1 device id, ...0000000000ff owner id) — those never tripped this rule only because their files happen not to mention 'project' anywhere, not because the id shape itself was ever allowlisted; SMI-5863's own file incidentally contains 'PROJECTION' (unrelated) and its ...0000000000d1 device-id fixture is the first case where a hex-suffixed id and the keyword gate actually coincide. SMI-6205's Wave 4 migrations (20260828000003/20260828000004) use a variant shape — an 8-digit SMI-derived prefix (62050000/62060000) directly, rather than a 4-digit-plus-repeated-nibble prefix, with either an all-zero or an 'aaaa'/'bbbb'/'cccc'/'dddd' second group (e.g. 62050000-0000-0000-0000-00000000000b, 62050000-bbbb-0000-0000-000000000001) — same non-random synthetic-id philosophy, generalized to also match an 8-digit numeric prefix."
 regexTarget = "match"
 regexes = [
   '''["\']?[0-9]{4}(aaaa|bbbb|cccc|dddd)-0000-0000-0000-0000000000[0-9a-f]{2}["\']?''',
+  '''["\']?[0-9]{8}-(0000|aaaa|bbbb|cccc|dddd)-0000-0000-0000000000[0-9a-f]{2}["\']?''',
 ]
 
 [[rules]]
@@ -159,6 +160,14 @@ regexes = [
   # broad keyword-gated regex behaves differently across the two scan modes.
   '''deriveSecuritySummaryFro''',
   '''skillDependencyRepositor''',
+
+  # False positive (SMI-6205): `smi6205-legacy-key` is a synthetic
+  # license_keys.id smoke-test fixture in
+  # 20260828000003_sso_member_lifecycle.sql (w11f), not a real API key — it
+  # trips the default generic-api-key rule purely on nearby SQL keywords like
+  # `license_keys`/`key`/`revoked_by`, the same "broad regex + coincidental
+  # keyword" class as the entries above.
+  '''smi6205-legacy-key''',
 
 ]
 

@@ -350,6 +350,11 @@ const redirectTo =
         showError,
         finishCallback,
         navigate: navigateTo,
+        // SMI-6205 Wave 4 Step 3: the SSO link-candidate redirect's own
+        // re-offer guard reads these, same DOM-free contract routePostAuth
+        // already uses below.
+        documentReferrer: typeof document !== 'undefined' ? document.referrer : '',
+        windowOrigin: window.location.origin,
       })
     } catch (error) {
       console.error('Auth callback error:', error)

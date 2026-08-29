@@ -14,43 +14,32 @@
  *   SMI-4401 — profile-completion gate (routePostAuth)
  *   SMI-5059 — popup mode dispatch
  *   SMI-5075 — this extraction
+ *   SMI-6205 — SSO callback routing (record_sso_login, SMI-6200 Wave 4 Step 2)
+ *   SMI-6205 — link-candidate routing to /account/link-sso (Wave 4 Step 3)
+ *   SMI-6205 — split into .types.ts + .sso.ts when Step 3 pushed this file
+ *              past the 500-line gate; this module keeps the generic
+ *              dispatcher + profile-completion gate and re-exports the rest.
  */
 
 import type { SupabaseClient } from '@supabase/supabase-js'
+import type {
+  CallbackParams,
+  DispatchCallbacks,
+  ProfileGateCallbacks,
+} from './auth-callback-handler.types'
+import { handleSsoCallback, isSsoProvisionedSession } from './auth-callback-handler.sso'
 
-export interface CallbackParams {
-  accessToken: string | null
-  refreshToken: string | null
-  type: string | null
-  errorCode: string | null
-  errorDescription: string | null
-  /** Full URL for PKCE exchange. */
-  url: string
-  /** Hash fragment (with leading `#` if present) for recovery redirect. */
-  hash: string
-}
-
-/** Callbacks the dispatcher uses to talk back to the DOM-bound .astro scope. */
-export interface DispatchCallbacks {
-  showError(message?: string): void
-  /** Runs fetchOrgs + popup-postMessage/close OR routePostAuth. Inlined in .astro. */
-  finishCallback(): Promise<void>
-  /** Navigation hook (defaults to window.location.href assignment in .astro). */
-  navigate(url: string): void
-}
-
-/** Callbacks the profile-completion gate uses. */
-export interface ProfileGateCallbacks {
-  showSuccess(): void
-  showError(message?: string): void
-  navigate(url: string): void
-  /** Already-validated next-redirect target (from validateNextParam at SSR time). */
-  authRedirectTo: string
-  /** document.referrer at call time. Passed in so this module is DOM-free. */
-  documentReferrer: string
-  /** window.location.origin at call time. */
-  windowOrigin: string
-}
+// Re-exported so every existing importer (auth/callback.astro, the test
+// suite) keeps a single entry point after the SMI-6205 file-length split.
+export type {
+  CallbackParams,
+  DispatchCallbacks,
+  ProfileGateCallbacks,
+  RecordSsoLoginResult,
+  SsoLinkCandidate,
+  SsoLoginRefusalReason,
+} from './auth-callback-handler.types'
+export { LINK_SSO_PATH, handleSsoCallback, ssoLinkRedirectUrl } from './auth-callback-handler.sso'
 
 /** Parse Supabase hash params + URL into a normalized CallbackParams. */
 export function parseCallbackParams(hash: string, url: string): CallbackParams {
@@ -153,6 +142,17 @@ export async function handleAlreadyLoggedInOrPkce(
  * Top-level dispatcher. Branches on the hash params and delegates to the right
  * handler. Mirrors the original astro:page-load if/else-if chain 1:1 so behavior
  * is preserved exactly.
+ *
+ * SMI-6205: every existing sub-handler's single success exit is
+ * `cbs.finishCallback()`. Rather than thread SSO detection through each
+ * handler individually, `finishCallback` is wrapped once here: whichever path
+ * establishes the session (hash-token OAuth, PKCE exchange, or the
+ * already-logged-in fast path), the wrapped callback re-checks the resulting
+ * session and — only for an SSO-provisioned one — routes through
+ * `handleSsoCallback` (which calls `record_sso_login()`) instead of the
+ * normal finish path. `handleSsoCallback` is handed the ORIGINAL (unwrapped)
+ * `cbs`, so its own 'ok' branch calling `cbs.finishCallback()` runs the real
+ * finish path exactly once, not this wrapper again.
  */
 export async function dispatchAuthCallback(
   supabase: SupabaseClient,
@@ -163,8 +163,23 @@ export async function dispatchAuthCallback(
     cbs.showError(params.errorDescription || 'Authentication failed')
     return
   }
+
+  const ssoAwareCbs: DispatchCallbacks = {
+    ...cbs,
+    finishCallback: async () => {
+      const {
+        data: { session },
+      } = await supabase.auth.getSession()
+      if (isSsoProvisionedSession(session)) {
+        await handleSsoCallback(supabase, cbs)
+        return
+      }
+      await cbs.finishCallback()
+    },
+  }
+
   if (params.type === 'signup' || params.type === 'email') {
-    await handleEmailVerification(supabase, params, cbs)
+    await handleEmailVerification(supabase, params, ssoAwareCbs)
     return
   }
   if (params.type === 'recovery') {
@@ -172,10 +187,10 @@ export async function dispatchAuthCallback(
     return
   }
   if (params.accessToken) {
-    await handleGenericOAuth(supabase, params, cbs)
+    await handleGenericOAuth(supabase, params, ssoAwareCbs)
     return
   }
-  await handleAlreadyLoggedInOrPkce(supabase, params, cbs)
+  await handleAlreadyLoggedInOrPkce(supabase, params, ssoAwareCbs)
 }
 
 /**

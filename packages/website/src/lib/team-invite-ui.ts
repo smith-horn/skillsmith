@@ -36,6 +36,24 @@ export interface TeamMemberRow {
   email: string | null
   /** SMI-5589. `null` resolves to `identity_unlinked` (warn) in the compliance check. */
   github_username: string | null
+  /**
+   * SMI-6205 (Wave 4). How this row was provisioned. `NOT NULL DEFAULT
+   * 'manual'` at the `team_members` table level with a CHECK-enforced enum
+   * (`20260827000000_team_permission_grants.sql:828-829`), so this is a
+   * closed union like `role` above, not a nullable string. `'sso'`-
+   * provisioned rows are the ones an IdP group-claim change can promote,
+   * demote, or expire; `'invite'`/`'billing'`-provisioned rows keep the
+   * role their team admin gave them even if the member also authenticates
+   * via SSO.
+   */
+  provisioned_via: 'invite' | 'billing' | 'sso' | 'manual'
+  /**
+   * SMI-6205 (Wave 4). When the identity provider itself last actually
+   * authenticated this user — stamped from the JWT's own `amr` timestamp
+   * (`record_sso_login()`), not wall-clock time at RPC-call time. `null`
+   * for a member who has never signed in via SSO.
+   */
+  sso_verified_at: string | null
 }
 
 /**
@@ -257,6 +275,42 @@ function canEditGithubUsername(viewer: Viewer, row: TeamMemberRow): boolean {
 }
 
 /**
+ * SMI-6205 (Wave 4, adversarial review L12). `provisioned_via` and
+ * `sso_verified_at` are ADMIN visibility, per the plan's own scoping — they say
+ * how a colleague was provisioned and when their IdP last authenticated them,
+ * which is roster-audit information for whoever manages the team, not something
+ * every member needs about every other member.
+ *
+ * Gated on the same owner/admin test `canRemove`/`canEditGithubUsername`
+ * already use, deliberately rather than on a `team:manage_rbac` lookup: this is
+ * a per-row RENDER decision in a hot loop with a Viewer object already in hand,
+ * and every other admin-only control on this page draws the line in exactly
+ * this place. The RPC still returns both columns to every member — this is
+ * presentation scoping, not an access-control boundary, and it is labelled as
+ * such so nobody mistakes it for one. Restricting the DATA belongs in
+ * `list_team_members_with_profile()` and would be its own migration.
+ */
+export function canSeeProvisioning(viewer: Viewer): boolean {
+  return viewer.role === 'owner' || viewer.role === 'admin'
+}
+
+/**
+ * SMI-6205 (Wave 4). Human-readable label for `TeamMemberRow.provisioned_via`.
+ */
+function formatProvisionedVia(value: TeamMemberRow['provisioned_via']): string {
+  switch (value) {
+    case 'sso':
+      return 'SSO'
+    case 'invite':
+      return 'Invite'
+    case 'billing':
+      return 'Billing'
+    default:
+      return 'Manual'
+  }
+}
+
+/**
  * Render one `.member-card` row. Used by `refreshMembersList` and by the
  * initial page-load render in `members.astro` (which imports this directly
  * to avoid duplicating markup).
@@ -272,6 +326,16 @@ export function renderMemberRow(row: TeamMemberRow, viewer: Viewer): string {
     : '—'
   const roleLower = String(row.role).toLowerCase()
   const roleLabel = roleLower.charAt(0).toUpperCase() + roleLower.slice(1)
+  const provisionedLabel = formatProvisionedVia(row.provisioned_via)
+  // SMI-6205 (Wave 4): after the redesign, sso_verified_at is stamped from
+  // the IdP's own `amr` authentication timestamp (record_sso_login()), not
+  // wall-clock time — a stronger claim than "last recorded a login," so the
+  // tooltip says so for an admin auditing SSO membership. Shown with full
+  // date+time precision (matching the pending-invite absolute-expiry
+  // pattern above) since freshness-window auditing needs more than a
+  // month/year granularity.
+  const ssoVerified = row.sso_verified_at ? new Date(row.sso_verified_at).toLocaleString() : null
+  const showProvisioning = canSeeProvisioning(viewer)
   const githubUsernameBtn = canEditGithubUsername(viewer, row)
     ? `<button class="btn btn-secondary"
               type="button"
@@ -308,6 +372,16 @@ export function renderMemberRow(row: TeamMemberRow, viewer: Viewer): string {
       <span class="member-github ${row.github_username ? '' : 'member-github--unlinked'}">
         ${row.github_username ? `GitHub: @${escapeHtml(row.github_username)}` : 'GitHub: not linked'}
       </span>
+      ${
+        showProvisioning
+          ? `<span class="member-provisioned">Via ${escapeHtml(provisionedLabel)}</span>`
+          : ''
+      }
+      ${
+        showProvisioning && ssoVerified
+          ? `<span class="member-sso-verified" title="Stamped from the identity provider's own authentication event, not from last activity in this app.">SSO verified ${escapeHtml(ssoVerified)}</span>`
+          : ''
+      }
     </div>
     ${actions}
   </div>`

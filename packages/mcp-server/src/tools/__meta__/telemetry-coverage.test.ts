@@ -41,6 +41,9 @@ import { isTelemetered } from '@skillsmith/core/telemetry'
  * Files NOT in this map are skipped even if they live under tools/:
  *   *.types.ts, *.helpers.ts, *.test.ts, *.dep.test.ts — infrastructure only.
  *   *.stub.ts, *.service.ts, *.tool.ts, *.live.ts — helpers/services, not dispatchers.
+ *   *.action.ts (SMI-5127, e.g. rbac-tools.action.ts / sso-tools.action.ts) — holds the
+ *     withTelemetry-wrapped exports, but the sibling *.ts thin file re-exports them, so the
+ *     dispatcher entry below stays keyed to the thin file, not the .action.ts file.
  *   merge.ts, LocalSkillSearch.ts, team-resolver.ts — pure utilities.
  *   index.ts — barrel re-export, no dispatch logic.
  *   namespace-audit/ directory — telemetry helper, not a dispatcher.
