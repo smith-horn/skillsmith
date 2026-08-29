@@ -43,7 +43,7 @@ vi.mock('./team-resolver.js', () => ({
 }))
 
 import { getSupabaseUserClient } from '../supabase-client.js'
-import { executeRbacManage, setRBACService } from './rbac-tools.js'
+import { executeRbacAssignRole, executeRbacManage, setRBACService } from './rbac-tools.js'
 import { createLiveRBACService } from './rbac-tools.live.js'
 import { isPermissionDeniedError, permissionErrorText } from './team-permission-error.js'
 
@@ -148,6 +148,31 @@ describe('createLiveRBACService — refusal mapping', () => {
     )
     expect(calls.map((c) => c.fn)).toEqual(['reset_team_role_permission'])
     expect(result.success).toBe(false)
+    expect(isPermissionDeniedError(result.error)).toBe(true)
+    expect(permissionErrorText(result.error)).toBe(message)
+  })
+
+  // SMI-6267 UAT finding F4: the it.each block above pins 3 of the 6 PASSTHROUGH_REFUSALS
+  // strings (both meta-permission owner-only refusals, plus the no-self-widening refusal), all
+  // raised by set_team_role_permission/reset_team_role_permission and reached via
+  // executeRbacManage. The remaining 3 are set_team_member_role()'s owner-protection refusals,
+  // reached only via executeRbacAssignRole's assign/revoke actions — untested through this live
+  // array-matching path until now (the SQL-side harness's T7 block already pins all 6 from the
+  // database side; this closes the matching gap in the TypeScript-side suite that actually runs
+  // in CI).
+  it.each([
+    "cannot change the team owner's role",
+    "forbidden: only the team owner can change an admin's role",
+    'forbidden: only owners and admins can promote a member to admin',
+  ])('renders the authored set_team_member_role refusal verbatim: %s', async (message) => {
+    respondWith({ data: null, error: { code: '42501', message } })
+    const result = await executeRbacAssignRole(
+      { action: 'assign', memberId: 'member-1', role: 'admin' },
+      mockContext
+    )
+    expect(calls.map((c) => c.fn)).toEqual(['set_team_member_role'])
+    expect(result.success).toBe(false)
+    // Structured — a live refusal must be indistinguishable from the stub's.
     expect(isPermissionDeniedError(result.error)).toBe(true)
     expect(permissionErrorText(result.error)).toBe(message)
   })

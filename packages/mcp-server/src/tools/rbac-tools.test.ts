@@ -21,6 +21,7 @@ import {
   DEFAULT_ROLE_PERMISSIONS,
 } from './rbac-tools.js'
 import { MANAGE_RBAC_PERMISSION } from './rbac-tools.types.js'
+import type { RBACService } from './rbac-tools.types.js'
 import { STUB_TEAM_ID, type StubRBACService } from './rbac-tools.stub.js'
 import { isPermissionDeniedError, permissionErrorText } from './team-permission-error.js'
 
@@ -686,6 +687,82 @@ describe('rbac-tools', () => {
 
       const list = await executeRbacCreatePolicy({ action: 'list' }, mockContext)
       expect(list.grants).toHaveLength(0)
+    })
+
+    // SMI-6267 UAT finding F3: each expanded permission in a create/delete batch is a SEPARATE
+    // RPC call with no shared transaction — a mid-batch failure must report exactly which
+    // permissions succeeded and which failed, not a bare success:false.
+    it('create reports partial results (F3) when a mid-batch permission write fails', async () => {
+      const calls: string[] = []
+      const failingAfterFirst: RBACService = {
+        listPermissions: async () => [],
+        setRolePermission: async (_teamId, _role, permission) => {
+          calls.push(permission)
+          if (permission === 'registry:deprecate') {
+            throw new Error('simulated RPC failure')
+          }
+        },
+        resetRolePermission: async () => false,
+        listMembers: async () => [],
+        setMemberRole: async () => {},
+      }
+      setRBACService(failingAfterFirst)
+
+      const result = await executeRbacCreatePolicy(
+        {
+          action: 'create',
+          role: 'member',
+          effect: 'deny',
+          resources: ['registry'],
+          actions: ['approve', 'deprecate'],
+        },
+        mockContext
+      )
+
+      expect(result.success).toBe(false)
+      expect(calls).toEqual(['registry:approve', 'registry:deprecate'])
+      expect(result.grants).toBeUndefined()
+      expect(result.partialResults).toEqual([
+        { permission: 'registry:approve', succeeded: true },
+        { permission: 'registry:deprecate', succeeded: false, error: 'simulated RPC failure' },
+      ])
+      expect(result.error).toBeTruthy()
+      expect(result.message).toContain('registry:approve')
+      expect(result.message).toContain('registry:deprecate')
+    })
+
+    it('delete reports partial results (F3) when a mid-batch reset fails', async () => {
+      const failingAfterFirst: RBACService = {
+        listPermissions: async () => [],
+        setRolePermission: async () => {},
+        resetRolePermission: async (_teamId, _role, permission) => {
+          if (permission === 'registry:deprecate') {
+            throw new Error('simulated reset failure')
+          }
+          return true
+        },
+        listMembers: async () => [],
+        setMemberRole: async () => {},
+      }
+      setRBACService(failingAfterFirst)
+
+      const result = await executeRbacCreatePolicy(
+        {
+          action: 'delete',
+          role: 'member',
+          resources: ['registry'],
+          actions: ['approve', 'deprecate'],
+        },
+        mockContext
+      )
+
+      expect(result.success).toBe(false)
+      expect(result.partialResults).toEqual([
+        { permission: 'registry:approve', succeeded: true },
+        { permission: 'registry:deprecate', succeeded: false, error: 'simulated reset failure' },
+      ])
+      expect(result.error).toBeTruthy()
+      expect(result.message).toContain('Cleared 1')
     })
   })
 

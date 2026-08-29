@@ -251,11 +251,37 @@ export interface RbacAssignRoleResult {
   error?: RbacToolError
 }
 
+/**
+ * One permission's outcome within a `create`/`delete` batch write.
+ *
+ * SMI-6267 UAT finding F3: `rbac_create_policy`'s `create`/`delete` actions expand
+ * `resources x actions` into N independent `setRolePermission`/`resetRolePermission` RPC calls —
+ * each a SEPARATE PostgREST request, so they cannot share one Postgres transaction from this layer
+ * without a new batched RPC (a larger schema change, out of scope for this fix). A mid-batch
+ * failure therefore leaves whichever earlier permissions already succeeded in place. Rather than
+ * pretend that can't happen, `RbacCreatePolicyResult.partialResults` names exactly which
+ * permissions succeeded and which failed (and why) whenever a batch is interrupted, so a caller
+ * can retry only the failed subset or reset the succeeded subset to return to a clean state —
+ * instead of a bare `success: false` with no detail on what state the batch was actually left in.
+ */
+export interface RbacCreatePolicyPermissionOutcome {
+  permission: TeamPermission
+  succeeded: boolean
+  /** Present only when `succeeded` is `false`. */
+  error?: string
+}
+
 export interface RbacCreatePolicyResult {
   success: boolean
   dataSource: 'stub' | 'live'
-  /** The grant rows a `create`/`delete` expansion wrote or cleared. */
+  /** The grant rows a `create`/`delete` expansion wrote or cleared. Only set when every permission in the batch succeeded. */
   grants?: EffectivePermission[]
+  /**
+   * Per-permission outcome for a `create`/`delete` batch, populated ONLY when the batch was
+   * interrupted by a mid-batch failure (`success: false`) — see {@link RbacCreatePolicyPermissionOutcome}.
+   * Absent on a fully-successful write (use `grants` there) and on single-permission/list calls.
+   */
+  partialResults?: RbacCreatePolicyPermissionOutcome[]
   message?: string
   error?: RbacToolError
 }
