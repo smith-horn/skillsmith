@@ -36,6 +36,7 @@ import type {
   GrantableRole,
   RBACService,
   RbacAssignRoleResult,
+  RbacCreatePolicyPermissionOutcome,
   RbacCreatePolicyResult,
   RbacManageResult,
   RbacToolError,
@@ -52,6 +53,7 @@ export type {
   PermissionSource,
   RBACService,
   RbacAssignRoleResult,
+  RbacCreatePolicyPermissionOutcome,
   RbacCreatePolicyResult,
   RbacManageResult,
   RbacToolError,
@@ -372,8 +374,43 @@ async function executeRbacCreatePolicyImpl(
 
     if (input.action === 'create') {
       const effect = input.effect ?? 'deny'
+      // SMI-6267 UAT finding F3: each expanded permission is a SEPARATE RPC call — there is no
+      // shared transaction across them (see RbacCreatePolicyPermissionOutcome's doc comment for
+      // why). Catch per-iteration so a mid-batch failure reports exactly which permissions were
+      // already written, rather than losing that information to the outer catch below.
+      const outcomes: RbacCreatePolicyPermissionOutcome[] = []
+      let firstError: unknown
       for (const permission of permissions) {
-        await svc.setRolePermission(teamId, role, permission, effect)
+        try {
+          await svc.setRolePermission(teamId, role, permission, effect)
+          outcomes.push({ permission, succeeded: true })
+        } catch (err) {
+          firstError ??= err
+          outcomes.push({
+            permission,
+            succeeded: false,
+            error: err instanceof Error ? err.message : String(err),
+          })
+        }
+      }
+      const failed = outcomes.filter((o) => !o.succeeded)
+      if (failed.length > 0) {
+        const succeeded = outcomes.filter((o) => o.succeeded)
+        return {
+          success: false,
+          dataSource,
+          partialResults: outcomes,
+          error: toToolError(firstError, MANAGE_RBAC_PERMISSION),
+          message:
+            `## Policy Write Failed Partway Through${input.name ? `: ${input.name}` : ''}\n\n` +
+            `- **Role:** ${role}\n- **Effect:** ${effect}\n` +
+            `- **Succeeded (${succeeded.length}/${outcomes.length}), already in effect:** ` +
+            `${succeeded.map((o) => o.permission).join(', ') || 'none'}\n` +
+            `- **Failed (${failed.length}/${outcomes.length}):** ` +
+            `${failed.map((o) => o.permission).join(', ')}\n\n` +
+            'Retry with only the failed permissions listed above to finish the batch, or reset ' +
+            'the succeeded ones to return to a clean state.',
+        }
       }
       return {
         success: true,
@@ -391,9 +428,41 @@ async function executeRbacCreatePolicyImpl(
       }
     }
 
+    // action === 'delete': same per-iteration reporting as 'create' above, for the same reason —
+    // resetRolePermission is likewise one independent RPC call per permission.
+    const resetOutcomes: RbacCreatePolicyPermissionOutcome[] = []
+    let firstResetError: unknown
     let cleared = 0
     for (const permission of permissions) {
-      if (await svc.resetRolePermission(teamId, role, permission)) cleared += 1
+      try {
+        if (await svc.resetRolePermission(teamId, role, permission)) cleared += 1
+        resetOutcomes.push({ permission, succeeded: true })
+      } catch (err) {
+        firstResetError ??= err
+        resetOutcomes.push({
+          permission,
+          succeeded: false,
+          error: err instanceof Error ? err.message : String(err),
+        })
+      }
+    }
+    const resetFailed = resetOutcomes.filter((o) => !o.succeeded)
+    if (resetFailed.length > 0) {
+      const resetSucceeded = resetOutcomes.filter((o) => o.succeeded)
+      return {
+        success: false,
+        dataSource,
+        partialResults: resetOutcomes,
+        error: toToolError(firstResetError, MANAGE_RBAC_PERMISSION),
+        message:
+          `Cleared ${cleared} of ${resetSucceeded.length} attempted override(s) for role ` +
+          `\`${role}\` before a failure.\n\n` +
+          `- **Succeeded (${resetSucceeded.length}/${resetOutcomes.length}):** ` +
+          `${resetSucceeded.map((o) => o.permission).join(', ') || 'none'}\n` +
+          `- **Failed (${resetFailed.length}/${resetOutcomes.length}):** ` +
+          `${resetFailed.map((o) => o.permission).join(', ')}\n\n` +
+          'Retry with only the failed permissions listed above to finish clearing the batch.',
+      }
     }
     return {
       success: true,
