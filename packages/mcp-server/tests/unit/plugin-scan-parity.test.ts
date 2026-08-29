@@ -8,13 +8,13 @@
  * name, SMI-6229) agree on which plugin ids are enabled, for every
  * `~/.claude/settings.json` shape in the scenario table below.
  *
- * SECURITY-RELEVANT (ADR-136): this is not a cosmetic parity check. A
+ * SECURITY-RELEVANT (ADR-137): this is not a cosmetic parity check. A
  * divergence here would mean `scripts/lib/mcp-command-guard.mjs`'s
  * hosted-scope check scans a different plugin set than
  * `skill_inventory_audit` does — the guard could go blind to a hosted MCP
  * server exposing write-capable database tools (`execute_sql`,
  * `apply_migration`) while the audit tool still sees it, or vice versa.
- * This test is the enforcement mechanism ADR-136 requires for that class of
+ * This test is the enforcement mechanism ADR-137 requires for that class of
  * duplication, not an optional nicety.
  *
  * Placement (deliberate, not `scripts/tests/`): `local-inventory.helpers.ts`
@@ -38,7 +38,7 @@ import { readEnabledPluginIds as readEnabledPluginIdsTs } from '../../src/utils/
 import type { ScanWarning } from '../../src/utils/local-inventory.types.js'
 // The plain-Node mirror this test enforces parity against — SMI-6229. The
 // relative path outside the package boundary is deliberate: this is the
-// runtime-mirror-parity precedent ADR-136 formalizes, same shape as
+// runtime-mirror-parity precedent ADR-137 formalizes, same shape as
 // scripts/tests/project-dir-parity.test.ts's cross-directory import.
 import { readEnabledPluginIds as readEnabledPluginIdsMjs } from '../../../../scripts/lib/mcp-command-guard.plugin-scan.mjs'
 
@@ -68,7 +68,7 @@ function expectParity(settingsPath: string): void {
   expect(mjsResult).toEqual(tsResult)
 }
 
-describe('readEnabledPluginIds parity (TS vs .mjs mirror, SMI-6229 / ADR-136)', () => {
+describe('readEnabledPluginIds parity (TS vs .mjs mirror, SMI-6229 / ADR-137)', () => {
   it('all-true enabledPlugins', () => {
     const p = writeSettings(
       JSON.stringify({ enabledPlugins: { 'a@market': true, 'b@market': true } })

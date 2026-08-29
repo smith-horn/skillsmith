@@ -22,7 +22,7 @@
  * (./mcp-command-guard.plugin-scan.mjs) — the only place a plugin-registered
  * hosted server like `mcp.supabase.com` actually appears on disk.
  *
- * SECURITY-RELEVANT DUPLICATION (ADR-136): the plugin-discovery logic in
+ * SECURITY-RELEVANT DUPLICATION (ADR-137): the plugin-discovery logic in
  * ./mcp-command-guard.plugin-scan.mjs (`readEnabledPluginIds`) is a native
  * `.mjs` reimplementation of
  * packages/mcp-server/src/utils/local-inventory.helpers.ts's function of the

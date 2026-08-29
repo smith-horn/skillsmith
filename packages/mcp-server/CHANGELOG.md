@@ -15,19 +15,6 @@ All notable changes to `@skillsmith/mcp-server` are documented here.
   the existing `simulated?: boolean` field stays in the type and is simply absent on the live path.
   A daily `sso-domain-reverify` job re-checks each claimed domain's DNS record and disables the
   live IdP registration after repeated verification failures (SMI-6204).
-- **Fix**: `skill_inventory_audit` never scanned Claude Code plugin-installed skills
-  (`~/.claude/plugins/cache/**`, gated on `enabledPlugins`) or a project's own
-  project-relative `.claude/skills/` mount-point — two real blind spots that let a
-  collision between a vendor plugin's skill and a project's own skill go undetected on
-  both sides. Adds Source 5 (plugin scan) and Source 6 (project scan) to the scanner,
-  tagging entries with a new `origin: 'native-client' | 'plugin' | 'project'` field
-  rather than widening the closed `ClientId` union. Both new sources guard against
-  path-traversal and symlink-escape reading outside their intended root
-  (SMI-6228/SMI-6240).
-- **Docs**: `readEnabledPluginIds` in `local-inventory.helpers.ts` now cross-references its build-free
-  `.mjs` twin (`scripts/lib/mcp-command-guard.plugin-scan.mjs`) and the parity test enforcing
-  agreement between them, per ADR-136's requirement that cross-runtime duplication of
-  security-relevant logic name the divergence risk explicitly (SMI-6229).
 
 ## v0.7.12
 
@@ -53,7 +40,7 @@ All notable changes to `@skillsmith/mcp-server` are documented here.
   (SMI-6228/SMI-6240).
 - **Docs**: `readEnabledPluginIds` in `local-inventory.helpers.ts` now cross-references its build-free
   `.mjs` twin (`scripts/lib/mcp-command-guard.plugin-scan.mjs`) and the parity test enforcing
-  agreement between them, per ADR-136's requirement that cross-runtime duplication of
+  agreement between them, per ADR-137's requirement that cross-runtime duplication of
   security-relevant logic name the divergence risk explicitly (SMI-6229).
 - **Fix**: `rbac_manage`/`rbac_assign_role`/`rbac_create_policy`, `configure_sso`/`sso_settings`,
   `webhook_configure`/`api_key_manage`, and `compliance_report` reported `dataSource: 'live'`
