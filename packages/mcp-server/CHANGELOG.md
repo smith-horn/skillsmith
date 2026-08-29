@@ -4,6 +4,10 @@ All notable changes to `@skillsmith/mcp-server` are documented here.
 
 ## [Unreleased]
 
+- **Fix**: `rbac_create_policy`'s `create`/`delete` actions now report per-permission
+  success/failure (`partialResults`) instead of a bare `success:false` when a multi-permission
+  batch write partially fails — a caller can now tell exactly which permissions in the batch
+  actually landed. Found and fixed during SMI-6267's synthetic RBAC UAT testing.
 - **Refactor**: split the path-traversal/symlink-escape guards (`joinPath`, `isSafePathComponent`,
   `isWithinRoot`) out of `local-inventory.helpers.ts` into a new sibling file,
   `local-inventory.path-safety.helpers.ts`, to bring the original file back under the 500-line CI
