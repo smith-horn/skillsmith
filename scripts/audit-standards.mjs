@@ -45,6 +45,7 @@ import {
   parseGitCryptEncryptedFiles,
   classifyGitCryptScanResult,
 } from './audit-standards-helpers.mjs'
+import { getFilesRecursive } from './audit-file-walker-helpers.mjs'
 import { isGitCryptEncrypted } from './ci/check-supply-chain-pins.mjs'
 import { VERCEL_JSON_SHARED_FIELDS, validateVercelJsonSync } from './audit-vercel-sync-helpers.mjs'
 import { findRealpathAsymmetry } from './audit-realpath-asymmetry-helpers.mjs'
@@ -104,6 +105,11 @@ const CHECK_REGISTRY = new Map([
       return checkRetroFrontmatter({ paths, mode })
     },
   ],
+  // SMI-6192: registered so scripts/tests/audit-standards-vercel-output-skip.test.ts
+  // can exercise Check 41's REAL production code (including its try/catch) as a
+  // narrow `--only realpath-asymmetry` subprocess, without running the full
+  // ~70-check audit against a synthetic fixture directory.
+  ['realpath-asymmetry', async () => runRealpathAsymmetryCheck()],
 ])
 
 const cliArgs = parseArgs({
@@ -153,24 +159,10 @@ function fail(msg, fix) {
   failed++
 }
 
-function getFilesRecursive(dir, extensions) {
-  const files = []
-  if (!existsSync(dir)) return files
-
-  const items = readdirSync(dir)
-  for (const item of items) {
-    const fullPath = join(dir, item)
-    if (item === 'node_modules' || item === 'dist' || item === '.git') continue
-
-    const stat = statSync(fullPath)
-    if (stat.isDirectory()) {
-      files.push(...getFilesRecursive(fullPath, extensions))
-    } else if (extensions.some((ext) => item.endsWith(ext))) {
-      files.push(fullPath)
-    }
-  }
-  return files
-}
+// SMI-6192: getFilesRecursive is now imported from ./audit-file-walker-helpers.mjs
+// (see import block above) — it was previously defined inline here and
+// unexported, which forced a would-be test to reimplement it rather than
+// exercise the real production code.
 
 console.log(`\n${BOLD}📋 Skillsmith Standards Audit${RESET}\n`)
 console.log('━'.repeat(50) + '\n')
@@ -2940,29 +2932,42 @@ console.log(`\n${BOLD}40. Fixture Git Env Sanitisation (SMI-4693)${RESET}`)
 // silently fails on macOS (`/var/folders` ↔ `/private/var/folders`) but
 // passes on Linux. Heuristic regex-based detector; suppression via
 // `// audit-allow:realpath-asymmetry — <reason>` comment.
-console.log(`\n${BOLD}41. Realpath-Asymmetry Path Comparison (SMI-4758)${RESET}`)
-{
-  const sourceFiles = getFilesRecursive('packages', ['.ts', '.tsx', '.mts', '.cts']).filter(
-    (f) =>
-      !f.includes('/node_modules/') &&
-      !f.includes('/dist/') &&
-      !f.endsWith('.test.ts') &&
-      !f.endsWith('.test.tsx') &&
-      !f.endsWith('.spec.ts') &&
-      !f.endsWith('.spec.tsx') &&
-      !f.endsWith('.d.ts')
-  )
-  const allViolations = []
-  for (const file of sourceFiles) {
-    const content = readFileSync(file, 'utf8')
-    const { violations } = findRealpathAsymmetry(content, file)
-    for (const v of violations) {
-      allViolations.push({ file, ...v })
+//
+// SMI-6192: factored into a standalone function (previously inline top-level
+// code) and try/catch-wrapped, matching Checks 2/3/4 above — this was
+// previously the only unguarded getFilesRecursive('packages', ...) caller
+// among the source-scanning checks, so a filesystem error (e.g. the live
+// ENOENT observed when a file disappears between getFilesRecursive's own
+// readdirSync listing it and a subsequent statSync call — see the plan doc's
+// Root Cause section) crashed the entire `npm run audit:standards` process
+// instead of degrading to a fail() line. The standalone-function shape also
+// lets it be registered in CHECK_REGISTRY above as a narrow `--only
+// realpath-asymmetry` entry point for testing the real production code.
+function runRealpathAsymmetryCheck() {
+  console.log(`\n${BOLD}41. Realpath-Asymmetry Path Comparison (SMI-4758)${RESET}`)
+  try {
+    const sourceFiles = getFilesRecursive('packages', ['.ts', '.tsx', '.mts', '.cts']).filter(
+      (f) =>
+        !f.includes('/node_modules/') &&
+        !f.includes('/dist/') &&
+        !f.endsWith('.test.ts') &&
+        !f.endsWith('.test.tsx') &&
+        !f.endsWith('.spec.ts') &&
+        !f.endsWith('.spec.tsx') &&
+        !f.endsWith('.d.ts')
+    )
+    const allViolations = []
+    for (const file of sourceFiles) {
+      const content = readFileSync(file, 'utf8')
+      const { violations } = findRealpathAsymmetry(content, file)
+      for (const v of violations) {
+        allViolations.push({ file, ...v })
+      }
     }
-  }
-  if (allViolations.length === 0) {
-    pass(`No realpath-asymmetry path comparisons found (${sourceFiles.length} files scanned)`)
-  } else {
+    if (allViolations.length === 0) {
+      pass(`No realpath-asymmetry path comparisons found (${sourceFiles.length} files scanned)`)
+      return true
+    }
     const formatted = allViolations
       .map(
         (v) =>
@@ -2973,8 +2978,13 @@ console.log(`\n${BOLD}41. Realpath-Asymmetry Path Comparison (SMI-4758)${RESET}`
       `${allViolations.length} realpath-asymmetry comparison(s) detected:\n${formatted}`,
       'Realpath both sides — `const Yreal = await fs.realpath(Y).catch(() => Y); X.startsWith(Yreal + sep)` — OR add `// audit-allow:realpath-asymmetry — <reason>` on the line above to suppress.'
     )
+    return false
+  } catch (e) {
+    fail(`Error checking realpath-asymmetry: ${e.message}`)
+    return false
   }
 }
+runRealpathAsymmetryCheck()
 
 // 42. SMI-4758: GitHub Actions `uses:` SHA-pin invariant. Repo convention is
 // `<owner>/<repo>(/<path>)?@<40-hex-sha> # <human-tag>`. Floating tag refs

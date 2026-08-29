@@ -70,6 +70,10 @@ services:
       - skillsmith-cli-node-modules:/app/packages/skillsmith-cli/node_modules
       - vscode-extension-node-modules:/app/packages/vscode-extension/node_modules
       - website-node-modules:/app/packages/website/node_modules
+      # SMI-6192: route the @astrojs/vercel adapter's git-ignored build
+      # output through a named volume instead of the .:/app bind mount --
+      # see docs/internal/implementation/smi-6192-website-vercel-output-eacces.md
+      - website-vercel-output:/app/packages/website/.vercel
       # SMI-4677: bind host Claude Code memory dir read-only for the
       # doc-retrieval-mcp memory-topic-files adapter. Source path uses
       # ${HOME} (resolved host-side at compose-parse time) +
@@ -131,6 +135,8 @@ services:
       - skillsmith-cli-node-modules:/app/packages/skillsmith-cli/node_modules
       - vscode-extension-node-modules:/app/packages/vscode-extension/node_modules
       - website-node-modules:/app/packages/website/node_modules
+      # SMI-6192: see the `dev` service's volumes block above for rationale.
+      - website-vercel-output:/app/packages/website/.vercel
     environment:
       - NODE_ENV=test
     entrypoint: ['/app/docker-entrypoint.sh']
@@ -179,5 +185,12 @@ volumes:
     labels:
       app.skillsmith.owned: 'true'
   website-node-modules:
+    labels:
+      app.skillsmith.owned: 'true'
+  # SMI-6192: named volume for packages/website/.vercel (the @astrojs/vercel
+  # adapter's git-ignored build output) -- see docs/internal/implementation/
+  # smi-6192-website-vercel-output-eacces.md. No explicit `driver:` key,
+  # matching every other base-file named volume above (implicit `local`).
+  website-vercel-output:
     labels:
       app.skillsmith.owned: 'true'
