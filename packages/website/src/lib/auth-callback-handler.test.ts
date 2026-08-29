@@ -464,8 +464,8 @@ describe('handleSsoCallback — link-candidate routing (Wave 4 Step 3)', () => {
     const sb = makeSupabase({ rpcData: { status: 'ok', link_candidate: candidate } })
     const cbs: MockCallbacks = {
       ...makeCallbacks(),
-      documentReferrer: 'https://skillsmith.app/account/link-sso',
-      windowOrigin: 'https://skillsmith.app',
+      documentReferrer: 'https://www.skillsmith.app/account/link-sso',
+      windowOrigin: 'https://www.skillsmith.app',
     }
     await handleSsoCallback(sb.client, cbs)
     expect(cbs.navigateUrls).toEqual([])
@@ -476,8 +476,8 @@ describe('handleSsoCallback — link-candidate routing (Wave 4 Step 3)', () => {
     const sb = makeSupabase({ rpcData: { status: 'ok', link_candidate: candidate } })
     const cbs: MockCallbacks = {
       ...makeCallbacks(),
-      documentReferrer: 'https://skillsmith.app/account/link-sso/',
-      windowOrigin: 'https://skillsmith.app',
+      documentReferrer: 'https://www.skillsmith.app/account/link-sso/',
+      windowOrigin: 'https://www.skillsmith.app',
     }
     await handleSsoCallback(sb.client, cbs)
     expect(cbs.finishCalls).toBe(1)
@@ -488,7 +488,7 @@ describe('handleSsoCallback — link-candidate routing (Wave 4 Step 3)', () => {
     const cbs: MockCallbacks = {
       ...makeCallbacks(),
       documentReferrer: 'https://idp.example.com/account/link-sso',
-      windowOrigin: 'https://skillsmith.app',
+      windowOrigin: 'https://www.skillsmith.app',
     }
     await handleSsoCallback(sb.client, cbs)
     expect(cbs.navigateUrls).toHaveLength(1)
@@ -496,12 +496,12 @@ describe('handleSsoCallback — link-candidate routing (Wave 4 Step 3)', () => {
   })
 
   it('an unrelated or unparseable referrer leaves the offer intact', async () => {
-    for (const referrer of ['https://skillsmith.app/complete-profile', 'not a url', '']) {
+    for (const referrer of ['https://www.skillsmith.app/complete-profile', 'not a url', '']) {
       const sb = makeSupabase({ rpcData: { status: 'ok', link_candidate: candidate } })
       const cbs: MockCallbacks = {
         ...makeCallbacks(),
         documentReferrer: referrer,
-        windowOrigin: 'https://skillsmith.app',
+        windowOrigin: 'https://www.skillsmith.app',
       }
       await handleSsoCallback(sb.client, cbs)
       expect(cbs.navigateUrls).toHaveLength(1)

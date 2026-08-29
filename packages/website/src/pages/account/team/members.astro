@@ -275,14 +275,8 @@ const supabaseConfig = getSupabaseConfig()
     color: #f59e0b;
   }
 
-  /* SMI-6205 (Wave 4): provisioned_via / sso_verified_at roster columns.
-   * Same tokens as .member-joined / .member-github — no new visual
-   * pattern for this page. */
-  .member-provisioned {
-    color: #9ca3af;
-    font-size: 0.8125rem;
-  }
-
+  /* SMI-6205: provisioned_via / sso_verified_at columns, same tokens as .member-joined. */
+  .member-provisioned,
   .member-sso-verified {
     color: #9ca3af;
     font-size: 0.8125rem;
