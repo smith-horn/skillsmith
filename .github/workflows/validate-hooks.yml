@@ -42,6 +42,7 @@ on:
       - 'scripts/tests/enumerate-compose-mounts.test.sh'
       - 'scripts/tests/enumerate-compose-mounts-smi5650.test.sh'
       - 'scripts/tests/enumerate-compose-mounts-smi5784.test.sh'
+      - 'scripts/tests/website-vercel-output-volume.test.sh'
       - 'scripts/tests/repair-worktree-container-symlinks.test.sh'
       - 'scripts/tests/worktree-port-collision.test.sh'
       - 'scripts/tests/worktree-dev-port.test.sh'
@@ -101,6 +102,7 @@ jobs:
             scripts/tests/enumerate-compose-mounts.test.sh \
             scripts/tests/enumerate-compose-mounts-smi5650.test.sh \
             scripts/tests/enumerate-compose-mounts-smi5784.test.sh \
+            scripts/tests/website-vercel-output-volume.test.sh \
             scripts/tests/repair-worktree-container-symlinks.test.sh \
             scripts/tests/worktree-port-collision.test.sh \
             scripts/tests/worktree-dev-port.test.sh \
@@ -139,6 +141,7 @@ jobs:
           bash -n scripts/tests/enumerate-compose-mounts.test.sh
           bash -n scripts/tests/enumerate-compose-mounts-smi5650.test.sh
           bash -n scripts/tests/enumerate-compose-mounts-smi5784.test.sh
+          bash -n scripts/tests/website-vercel-output-volume.test.sh
           bash -n scripts/tests/repair-worktree-container-symlinks.test.sh
           bash -n scripts/tests/worktree-port-collision.test.sh
           bash -n scripts/tests/worktree-dev-port.test.sh
@@ -174,6 +177,7 @@ jobs:
           bash scripts/tests/enumerate-compose-mounts.test.sh
           bash scripts/tests/enumerate-compose-mounts-smi5650.test.sh
           bash scripts/tests/enumerate-compose-mounts-smi5784.test.sh
+          bash scripts/tests/website-vercel-output-volume.test.sh
           bash scripts/tests/repair-worktree-container-symlinks.test.sh
           bash scripts/tests/worktree-port-collision.test.sh
           bash scripts/tests/worktree-dev-port.test.sh
