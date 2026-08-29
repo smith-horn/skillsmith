@@ -275,9 +275,10 @@ describe('setTeamMemberGithubUsername', () => {
 // list_team_members_with_profile row-shape contract (SMI-4294 follow-up)
 //
 // The PL/pgSQL RPC returns flat TABLE columns (member_id, user_id, role,
-// joined_at, invited_at, full_name, email). The website code consumes the
-// RPC directly via `supabase.rpc(...)` and does NOT translate snake_case →
-// camelCase, so the row shape must match what PostgREST emits.
+// joined_at, invited_at, full_name, email, github_username, provisioned_via,
+// sso_verified_at). The website code consumes the RPC directly via
+// `supabase.rpc(...)` and does NOT translate snake_case → camelCase, so the
+// row shape must match what PostgREST emits.
 //
 // This is a regression guard: if the migration is ever rewritten to nest
 // the profile (e.g. as a jsonb column) the renderer in team-invite-ui.ts
@@ -296,6 +297,8 @@ describe('list_team_members_with_profile row-shape contract', () => {
         full_name: 'Ada Lovelace',
         email: 'ada@example.com',
         github_username: 'ada-lovelace',
+        provisioned_via: 'manual',
+        sso_verified_at: null,
       },
       {
         member_id: 'tm_2',
@@ -306,6 +309,8 @@ describe('list_team_members_with_profile row-shape contract', () => {
         full_name: 'Tony Lee',
         email: 'tony.lee@example.com',
         github_username: null,
+        provisioned_via: 'sso',
+        sso_verified_at: '2026-05-10T00:05:00Z',
       },
     ]
     const supabase = mockSupabase({
@@ -339,5 +344,14 @@ describe('list_team_members_with_profile row-shape contract', () => {
     // pinned here so a future rewrite that drops/renests it fails loud, same
     // as the Bug-2 regression above.
     expect(rows[1]?.github_username).toBeNull()
+    // SMI-6205 (Wave 4): provisioned_via/sso_verified_at are the two columns
+    // this wave's list_team_members_with_profile DROP + CREATE adds — pinned
+    // separately for the same reason as github_username's SMI-5589 pin
+    // above, covering both the always-populated enum (provisioned_via) and
+    // the nullable freshness timestamp (sso_verified_at).
+    expect(rows[0]?.provisioned_via).toBe('manual')
+    expect(rows[0]?.sso_verified_at).toBeNull()
+    expect(rows[1]?.provisioned_via).toBe('sso')
+    expect(rows[1]?.sso_verified_at).toBe('2026-05-10T00:05:00Z')
   })
 })

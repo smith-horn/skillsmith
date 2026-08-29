@@ -4,10 +4,14 @@ import {
   dispatchAuthCallback,
   fetchAndStoreGitHubOrgs,
   handleEmailVerification,
+  handleSsoCallback,
   parseCallbackParams,
   routePostAuth,
+  ssoLinkRedirectUrl,
+  LINK_SSO_PATH,
   type DispatchCallbacks,
   type ProfileGateCallbacks,
+  type SsoLoginRefusalReason,
 } from './auth-callback-handler'
 
 interface MockCallbacks extends DispatchCallbacks {
@@ -38,8 +42,10 @@ interface MockSupabase {
   setSessionResult: { error: { message: string } | null }
   exchangeCodeResult: { error: { message: string } | null }
   getSessionResult: { data: { session: unknown } }
+  rpcResult: { data: unknown; error: { message: string } | null }
   setSessionCalls: number
   exchangeCodeCalls: number
+  rpcCalls: number
   client: SupabaseClient
 }
 
@@ -48,6 +54,9 @@ function makeSupabase(opts?: {
   exchangeCodeError?: string
   exchangeCodeThrows?: boolean
   session?: unknown
+  rpcData?: unknown
+  rpcError?: string
+  rpcThrows?: boolean
 }): MockSupabase {
   const mock: MockSupabase = {
     setSessionResult: { error: opts?.setSessionError ? { message: opts.setSessionError } : null },
@@ -55,8 +64,13 @@ function makeSupabase(opts?: {
       error: opts?.exchangeCodeError ? { message: opts.exchangeCodeError } : null,
     },
     getSessionResult: { data: { session: opts?.session ?? null } },
+    rpcResult: {
+      data: opts?.rpcData ?? null,
+      error: opts?.rpcError ? { message: opts.rpcError } : null,
+    },
     setSessionCalls: 0,
     exchangeCodeCalls: 0,
+    rpcCalls: 0,
     client: {} as SupabaseClient,
   }
   mock.client = {
@@ -72,6 +86,11 @@ function makeSupabase(opts?: {
       }),
       getSession: vi.fn(async () => mock.getSessionResult),
     },
+    rpc: vi.fn(async () => {
+      mock.rpcCalls += 1
+      if (opts?.rpcThrows) throw new Error('rpc-throw')
+      return mock.rpcResult
+    }),
   } as unknown as SupabaseClient
   return mock
 }
@@ -210,6 +229,297 @@ describe('dispatchAuthCallback', () => {
     expect(cbs.errorMessages).toEqual([
       'Invalid or expired verification link. Please request a new one.',
     ])
+  })
+
+  // SMI-6205: SSO routing. An SSO/SAML callback lands via the same
+  // no-hash-tokens PKCE/already-logged-in path as email/OAuth PKCE — the
+  // session's own app_metadata.provider is what actually distinguishes it.
+  it('SSO-provisioned session (already-logged-in fast path) routes through record_sso_login, not finishCallback', async () => {
+    const sb = makeSupabase({
+      session: { user: { id: 'u1', app_metadata: { provider: 'sso:abc-123' } } },
+      rpcData: { status: 'ok' },
+    })
+    const cbs = makeCallbacks()
+    await dispatchAuthCallback(sb.client, parseCallbackParams('', 'https://x/cb'), cbs)
+    expect(sb.rpcCalls).toBe(1)
+    expect(sb.exchangeCodeCalls).toBe(0)
+    // record_sso_login's 'ok' status reuses the real finishCallback exactly once.
+    expect(cbs.finishCalls).toBe(1)
+    expect(cbs.errorMessages).toEqual([])
+  })
+
+  it('SSO-provisioned session on the generic-OAuth hash-token path also routes through record_sso_login', async () => {
+    const sb = makeSupabase({
+      session: { user: { id: 'u1', app_metadata: { provider: 'sso:abc-123' } } },
+      rpcData: { status: 'unmapped', team_id: 't1' },
+    })
+    const cbs = makeCallbacks()
+    await dispatchAuthCallback(
+      sb.client,
+      parseCallbackParams('#access_token=at&refresh_token=rt', 'https://x/cb'),
+      cbs
+    )
+    expect(sb.setSessionCalls).toBe(1)
+    expect(sb.rpcCalls).toBe(1)
+    expect(cbs.finishCalls).toBe(0)
+    expect(cbs.errorMessages).toHaveLength(1)
+  })
+
+  it('a non-SSO session never calls record_sso_login', async () => {
+    const sb = makeSupabase({
+      session: { user: { id: 'u1', app_metadata: { provider: 'github' } } },
+    })
+    const cbs = makeCallbacks()
+    await dispatchAuthCallback(sb.client, parseCallbackParams('', 'https://x/cb'), cbs)
+    expect(sb.rpcCalls).toBe(0)
+    expect(cbs.finishCalls).toBe(1)
+  })
+
+  it('a session with no app_metadata.provider at all never calls record_sso_login', async () => {
+    const sb = makeSupabase({ session: { user: { id: 'u1' } } })
+    const cbs = makeCallbacks()
+    await dispatchAuthCallback(sb.client, parseCallbackParams('', 'https://x/cb'), cbs)
+    expect(sb.rpcCalls).toBe(0)
+    expect(cbs.finishCalls).toBe(1)
+  })
+})
+
+describe('handleSsoCallback', () => {
+  it("status 'ok' reuses the normal post-auth success path (finishCallback), not a reinvented one", async () => {
+    const sb = makeSupabase({ rpcData: { status: 'ok' } })
+    const cbs = makeCallbacks()
+    await handleSsoCallback(sb.client, cbs)
+    expect(sb.rpcCalls).toBe(1)
+    expect(cbs.finishCalls).toBe(1)
+    expect(cbs.errorMessages).toEqual([])
+  })
+
+  it("status 'unmapped' shows the plan's exact group-not-recognized copy", async () => {
+    const sb = makeSupabase({ rpcData: { status: 'unmapped', team_id: 't1' } })
+    const cbs = makeCallbacks()
+    await handleSsoCallback(sb.client, cbs)
+    expect(cbs.finishCalls).toBe(0)
+    expect(cbs.errorMessages).toEqual([
+      "Your identity provider didn't send a group this team recognizes — contact your team admin.",
+    ])
+  })
+
+  const REFUSAL_CASES: Array<[SsoLoginRefusalReason, RegExp]> = [
+    ['not_an_sso_session', /SSO session/i],
+    ['provider_not_registered', /isn't registered with this team/i],
+    ['sso_inactive', /turned off for your team/i],
+    ['domain_not_verified', /domain hasn't been verified/i],
+    ['no_authentication_timestamp', /could not confirm when/i],
+    ['seat_limit_reached', /used all its seats — ask your team owner to add more/],
+  ]
+
+  it.each(REFUSAL_CASES)(
+    'status refused with reason %s shows reason-specific copy',
+    async (reason, matcher) => {
+      const sb = makeSupabase({ rpcData: { status: 'refused', reason } })
+      const cbs = makeCallbacks()
+      await handleSsoCallback(sb.client, cbs)
+      expect(cbs.finishCalls).toBe(0)
+      expect(cbs.errorMessages).toHaveLength(1)
+      expect(cbs.errorMessages[0]).toMatch(matcher)
+    }
+  )
+
+  it("seat_limit_reached gets the plan's exact specified copy verbatim (the one refusal a team admin can fix)", async () => {
+    const sb = makeSupabase({ rpcData: { status: 'refused', reason: 'seat_limit_reached' } })
+    const cbs = makeCallbacks()
+    await handleSsoCallback(sb.client, cbs)
+    expect(cbs.errorMessages).toEqual([
+      'Your team has used all its seats — ask your team owner to add more.',
+    ])
+  })
+
+  it('an unrecognized refusal reason still shows a generic, non-crashing message', async () => {
+    const sb = makeSupabase({ rpcData: { status: 'refused', reason: 'some_future_reason' } })
+    const cbs = makeCallbacks()
+    await expect(handleSsoCallback(sb.client, cbs)).resolves.toBeUndefined()
+    expect(cbs.errorMessages).toHaveLength(1)
+  })
+
+  it('RPC error response is handled gracefully, not thrown', async () => {
+    const sb = makeSupabase({ rpcError: 'network down' })
+    const cbs = makeCallbacks()
+    await expect(handleSsoCallback(sb.client, cbs)).resolves.toBeUndefined()
+    expect(cbs.errorMessages).toEqual(['We could not complete your SSO sign-in. Please try again.'])
+    expect(cbs.finishCalls).toBe(0)
+  })
+
+  it('RPC throw (e.g. network failure) is caught, not an uncaught exception', async () => {
+    const sb = makeSupabase({ rpcThrows: true })
+    const cbs = makeCallbacks()
+    await expect(handleSsoCallback(sb.client, cbs)).resolves.toBeUndefined()
+    expect(cbs.errorMessages).toEqual(['We could not complete your SSO sign-in. Please try again.'])
+  })
+
+  it('an unexpected response shape (e.g. no status field) is handled gracefully', async () => {
+    const sb = makeSupabase({ rpcData: { unexpected: true } })
+    const cbs = makeCallbacks()
+    await expect(handleSsoCallback(sb.client, cbs)).resolves.toBeUndefined()
+    expect(cbs.errorMessages).toHaveLength(1)
+    expect(cbs.finishCalls).toBe(0)
+  })
+
+  it('an RPC that never resolves times out gracefully via withAuthTimeout, not a hang', async () => {
+    vi.useFakeTimers()
+    try {
+      const client = {
+        rpc: vi.fn(
+          () =>
+            new Promise(() => {
+              /* never resolves — simulates an unreachable RPC */
+            })
+        ),
+      } as unknown as SupabaseClient
+      const cbs = makeCallbacks()
+      const pending = handleSsoCallback(client, cbs)
+      await vi.advanceTimersByTimeAsync(8000)
+      await pending
+      expect(cbs.errorMessages).toEqual(['SSO sign-in did not complete in time. Please try again.'])
+      expect(cbs.finishCalls).toBe(0)
+    } finally {
+      vi.useRealTimers()
+    }
+  })
+})
+
+describe('ssoLinkRedirectUrl', () => {
+  it('builds the /account/link-sso target from a candidate', () => {
+    expect(ssoLinkRedirectUrl({ legacy_user_id: 'u1', legacy_email: 'a@b.example' })).toBe(
+      `${LINK_SSO_PATH}?legacy_user_id=u1`
+    )
+  })
+
+  it('URL-encodes the id — an IdP-asserted value may contain & or /', () => {
+    const url = ssoLinkRedirectUrl({ legacy_user_id: 'u/1&x' })
+    expect(url).not.toMatch(/legacy_user_id=u\/1&x/)
+    // The `&` must be encoded, so the query has no separator at all.
+    expect((url ?? '').split('&')).toHaveLength(1)
+    const parsed = new URLSearchParams((url ?? '').split('?')[1])
+    expect(parsed.get('legacy_user_id')).toBe('u/1&x')
+  })
+
+  it('NEVER carries legacy_email — the page resolves it server-side (SMI-6205 M9)', () => {
+    // Displaying an unauthenticated URL parameter as the counterparty on a
+    // consent screen let a crafted link name one account in the copy while
+    // link_sso_account() acted on the id beside it. The address is now
+    // re-resolved from get_own_sso_link_candidate() against the caller's own
+    // session (confirmation round N-3/N-4 moved that read off the
+    // side-effecting record_sso_login()), so carrying it here would be dead
+    // weight that invites the bug back.
+    for (const candidate of [
+      { legacy_user_id: 'u1', legacy_email: 'a@b.example' },
+      { legacy_user_id: 'u1', legacy_email: null },
+      { legacy_user_id: 'u1' },
+    ]) {
+      expect(ssoLinkRedirectUrl(candidate)).toBe(`${LINK_SSO_PATH}?legacy_user_id=u1`)
+      expect(ssoLinkRedirectUrl(candidate)).not.toContain('legacy_email')
+    }
+  })
+
+  it('returns null for a null/blank/malformed candidate rather than a blank-id redirect', () => {
+    expect(ssoLinkRedirectUrl(null)).toBeNull()
+    expect(ssoLinkRedirectUrl(undefined)).toBeNull()
+    expect(ssoLinkRedirectUrl({ legacy_user_id: '   ' })).toBeNull()
+    expect(ssoLinkRedirectUrl({} as never)).toBeNull()
+  })
+})
+
+describe('handleSsoCallback — link-candidate routing (Wave 4 Step 3)', () => {
+  const candidate = { legacy_user_id: 'legacy_1', legacy_email: 'ada@legacy.example' }
+
+  it("routes 'ok' + a candidate to /account/link-sso INSTEAD of the profile-completion gate", async () => {
+    const sb = makeSupabase({ rpcData: { status: 'ok', link_candidate: candidate } })
+    const cbs = makeCallbacks()
+    await handleSsoCallback(sb.client, cbs)
+    expect(cbs.navigateUrls).toEqual(['/account/link-sso?legacy_user_id=legacy_1'])
+    // finishCallback is what runs routePostAuth (the profile gate). A
+    // JIT-provisioned SSO user always has profile_completed_at NULL, so
+    // running it first would make this redirect unreachable.
+    expect(cbs.finishCalls).toBe(0)
+    expect(cbs.errorMessages).toEqual([])
+  })
+
+  it("'ok' with link_candidate null takes the normal finish path", async () => {
+    const sb = makeSupabase({ rpcData: { status: 'ok', link_candidate: null } })
+    const cbs = makeCallbacks()
+    await handleSsoCallback(sb.client, cbs)
+    expect(cbs.navigateUrls).toEqual([])
+    expect(cbs.finishCalls).toBe(1)
+  })
+
+  it("'ok' with a malformed candidate falls through to finish, never a blank-id redirect", async () => {
+    const sb = makeSupabase({ rpcData: { status: 'ok', link_candidate: { legacy_user_id: '' } } })
+    const cbs = makeCallbacks()
+    await handleSsoCallback(sb.client, cbs)
+    expect(cbs.navigateUrls).toEqual([])
+    expect(cbs.finishCalls).toBe(1)
+  })
+
+  it('does not re-offer the link when the browser just came FROM /account/link-sso', async () => {
+    const sb = makeSupabase({ rpcData: { status: 'ok', link_candidate: candidate } })
+    const cbs: MockCallbacks = {
+      ...makeCallbacks(),
+      documentReferrer: 'https://skillsmith.app/account/link-sso',
+      windowOrigin: 'https://skillsmith.app',
+    }
+    await handleSsoCallback(sb.client, cbs)
+    expect(cbs.navigateUrls).toEqual([])
+    expect(cbs.finishCalls).toBe(1)
+  })
+
+  it('the trailing-slash form of the referrer also suppresses the re-offer', async () => {
+    const sb = makeSupabase({ rpcData: { status: 'ok', link_candidate: candidate } })
+    const cbs: MockCallbacks = {
+      ...makeCallbacks(),
+      documentReferrer: 'https://skillsmith.app/account/link-sso/',
+      windowOrigin: 'https://skillsmith.app',
+    }
+    await handleSsoCallback(sb.client, cbs)
+    expect(cbs.finishCalls).toBe(1)
+  })
+
+  it('a CROSS-ORIGIN referrer with the same pathname does NOT suppress a real offer', async () => {
+    const sb = makeSupabase({ rpcData: { status: 'ok', link_candidate: candidate } })
+    const cbs: MockCallbacks = {
+      ...makeCallbacks(),
+      documentReferrer: 'https://idp.example.com/account/link-sso',
+      windowOrigin: 'https://skillsmith.app',
+    }
+    await handleSsoCallback(sb.client, cbs)
+    expect(cbs.navigateUrls).toHaveLength(1)
+    expect(cbs.finishCalls).toBe(0)
+  })
+
+  it('an unrelated or unparseable referrer leaves the offer intact', async () => {
+    for (const referrer of ['https://skillsmith.app/complete-profile', 'not a url', '']) {
+      const sb = makeSupabase({ rpcData: { status: 'ok', link_candidate: candidate } })
+      const cbs: MockCallbacks = {
+        ...makeCallbacks(),
+        documentReferrer: referrer,
+        windowOrigin: 'https://skillsmith.app',
+      }
+      await handleSsoCallback(sb.client, cbs)
+      expect(cbs.navigateUrls).toHaveLength(1)
+      expect(cbs.finishCalls).toBe(0)
+    }
+  })
+
+  it('a candidate on a refused/unmapped status is never acted on', async () => {
+    for (const rpcData of [
+      { status: 'unmapped', link_candidate: candidate },
+      { status: 'refused', reason: 'seat_limit_reached', link_candidate: candidate },
+    ]) {
+      const sb = makeSupabase({ rpcData })
+      const cbs = makeCallbacks()
+      await handleSsoCallback(sb.client, cbs)
+      expect(cbs.navigateUrls).toEqual([])
+      expect(cbs.errorMessages).toHaveLength(1)
+    }
   })
 })
 

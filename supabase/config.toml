@@ -550,6 +550,16 @@ verify_jwt = true
 [functions.team-sso-manage]
 verify_jwt = true
 
+# SMI-6205: sso-link-notify — gateway-verified user-action endpoint that sends
+# the post-link security notification to the LEGACY identity's own verified
+# email (What Changes §4: "a notification email fires on link regardless").
+# Authorization is an sso_account_links row for the CALLER's own sso_user_id
+# with linked_at already set, so it can only ever notify about a link the
+# caller actually executed; the recipient address is resolved server-side and
+# never taken from the request. Deploy WITHOUT --no-verify-jwt.
+[functions.sso-link-notify]
+verify_jwt = true
+
 # SMI-4852: indexer-dispatch — service-role-only shim that triggers the GHA
 # `indexer.yml` workflow via repository_dispatch. JWT verification ON (the
 # function explicit-checks the bearer is the service-role key); do NOT add

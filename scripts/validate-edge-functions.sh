@@ -58,6 +58,7 @@ AUTHENTICATED_FUNCTIONS=(
   "auth-device-preview"
   "team-invite-send"
   "team-sso-manage"
+  "sso-link-notify"
   "sync-oauth-email"
   "sync-stripe-email"
   "inventory-upload"

@@ -5,7 +5,16 @@
  * @see SMI-6204 (Wave 3 of SMI-6200): live `set`/`test`/`remove`/`claim_domain`/`verify_domain`
  *      over the `team-sso-manage` edge function (`sso-tools.live.ts`); `sso_settings` reads over
  *      the same function. Live/stub selection mirrors `rbac-tools.ts`'s
- *      `isSupabaseConfigured()` switch below.
+ *      `isSupabaseConfigured()` switch (now in `rbac-tools.action.ts`) below.
+ * @see SMI-5127 / SMI-6200 Wave 4 Step 0: the action-handler implementations, the
+ *      `withTelemetry`-wrapped exports, the service singleton, and the `ConfigureSsoResult`/
+ *      `SsoSettingsResult` result shapes moved to the sibling `sso-tools.action.ts` (same
+ *      500-line audit:standards budget split `rbac-tools.ts` got in the same pass — done
+ *      mechanically ahead of Wave 4's own new SSO surface landing in this file) —
+ *      re-exported below so every existing import site (index.ts, tool-dispatch.ts,
+ *      sso-tools.test.ts, sso-tools.live.test.ts) reaches them unchanged. This file now
+ *      holds only the MCP tool registration / Zod input schemas / JSON tool schemas and
+ *      the public re-export surface.
  *
  * Actual SAML/OIDC auth flows are deferred to a Supabase edge function since local MCP servers
  * have no HTTP callback endpoint — this file (plus `sso-tools.live.ts`) is a management interface
@@ -18,21 +27,6 @@
  */
 
 import { z } from 'zod'
-import type { ToolContext } from '../context.js'
-import { withTelemetry } from '@skillsmith/core/telemetry'
-import { dataSourceFor } from './stub-data-source.js'
-import { isSupabaseConfigured } from '../supabase-client.js'
-import { createLiveSSOService, SsoDomainNotVerifiedError } from './sso-tools.live.js'
-import type { SsoDomainNotVerifiedDetails } from './sso-tools.live.js'
-import { toPermissionDeniedError, permissionErrorText } from './team-permission-error.js'
-import type { PermissionDeniedError } from './team-permission-error.js'
-import { createStubSSOService } from './sso-tools.stub.js'
-import type {
-  SSOConfig,
-  SSOConfigService,
-  SsoDomainClaim,
-  SsoDomainVerification,
-} from './sso-tools.types.js'
 
 // Re-export types and stub factory for external consumers — same shape as rbac-tools.ts's own
 // re-export block (rbac-tools.types.ts / rbac-tools.stub.ts).
@@ -163,260 +157,15 @@ export const ssoSettingsToolSchema = {
 // this file's own 500-line audit:standards budget, the same split rbac-tools.ts made into
 // rbac-tools.types.ts / rbac-tools.stub.ts.
 
-// Module-level singleton. Picks the live team-sso-manage-backed service when SUPABASE_URL +
-// SUPABASE_ANON_KEY are configured; otherwise the in-memory stub (local dev / tests) — same
-// pattern as rbac-tools.ts:85-87.
-let service: SSOConfigService = isSupabaseConfigured()
-  ? createLiveSSOService()
-  : createStubSSOService()
-
-/** Replace the SSO config service implementation (for testing or production swap) */
-export function setSSOConfigService(svc: SSOConfigService): void {
-  service = svc
-}
-
-/** Get the current SSO config service instance */
-export function getSSOConfigService(): SSOConfigService {
-  return service
-}
-
-// ============================================================================
-// Handlers
-// ============================================================================
-
-export interface ConfigureSsoResult {
-  success: boolean
-  dataSource: 'stub' | 'live'
-  config?: SSOConfig
-  test?: { success: boolean; latencyMs: number; message: string; simulated?: boolean }
-  domainClaim?: SsoDomainClaim
-  domainVerification?: SsoDomainVerification
-  /**
-   * Populated only when a `set` was refused because the domain is not yet verified — carries the
-   * exact TXT record so the caller can act on it without re-parsing `error`. See
-   * `sso-tools.live.ts`'s `SsoDomainNotVerifiedError`.
-   */
-  domainNotVerified?: SsoDomainNotVerifiedDetails
-  message?: string
-  /**
-   * A structured permission refusal (same shape RBAC renders — `team-permission-error.ts`), or a
-   * plain validation/transport string. Both render via `permissionErrorText()`.
-   */
-  error?: string | PermissionDeniedError
-}
-
-export interface SsoSettingsResult {
-  configured: boolean
-  dataSource: 'stub' | 'live'
-  config?: SSOConfig
-  message: string
-  /**
-   * A structured permission refusal (same shape RBAC/configure_sso render — `team-permission-
-   * error.ts`), populated when `svc.get()` throws (SMI-6204 2026-08-28 adversarial review, M-2).
-   * Mirrors `ConfigureSsoResult.error`.
-   */
-  error?: string | PermissionDeniedError
-}
-
-/**
- * Map a thrown service error to the tool's `error` (+ optional structured detail) fields.
- *
- * Mirrors `rbac-tools.ts`'s `toToolError()`: a `TeamPermissionDeniedError` (thrown by the live
- * path on a `team-sso-manage` 403 — `sso-tools.live.ts`) becomes the structured refusal shape;
- * an `SsoDomainNotVerifiedError` (409) carries its TXT-record details through as
- * `domainNotVerified`; anything else renders as a plain string.
- */
-function toSsoToolError(err: unknown): {
-  error: string | PermissionDeniedError
-  domainNotVerified?: SsoDomainNotVerifiedDetails
-} {
-  const denied = toPermissionDeniedError(err, 'team:manage_sso')
-  if (denied) return { error: denied }
-  if (err instanceof SsoDomainNotVerifiedError) {
-    return { error: err.message, domainNotVerified: err.details }
-  }
-  return { error: err instanceof Error ? err.message : 'Unexpected SSO error.' }
-}
-
-/**
- * Execute a configure_sso operation.
- */
-async function executeConfigureSsoImpl(
-  input: ConfigureSsoInput,
-  _context: ToolContext
-): Promise<ConfigureSsoResult> {
-  // SMI-6203 (P-5 audit): capture the module-level singleton once, so a setSSOConfigService()
-  // call landing between this read and any of the .method() calls below cannot produce a result
-  // labelled with one service's dataSource and populated by another's.
-  const svc = service
-  const dataSource: 'stub' | 'live' = dataSourceFor(svc)
-
-  try {
-    switch (input.action) {
-      case 'set': {
-        if (!input.idpMetadataUrl) {
-          return {
-            success: false,
-            dataSource,
-            error: 'idpMetadataUrl is required for action "set".',
-          }
-        }
-        // SMI-6204 (corrected 2026-08-28): a provider can only be registered against a domain
-        // that has already been claimed and DNS-verified — see claim_domain/verify_domain above.
-        // This check was previously missing entirely, so `set` had no way to tell the live
-        // service which domain it was registering, and could never succeed end-to-end.
-        if (!input.domain) {
-          return {
-            success: false,
-            dataSource,
-            error:
-              'domain is required for action "set" — claim and verify a domain first ' +
-              '(configure_sso action "claim_domain", then "verify_domain").',
-          }
-        }
-        const config = await svc.set({
-          idpMetadataUrl: input.idpMetadataUrl,
-          idpEntityId: input.idpEntityId,
-          protocol: input.protocol ?? 'saml',
-          domain: input.domain,
-        })
-        return {
-          success: true,
-          dataSource,
-          config,
-          message:
-            `SSO configured with ${config.protocol.toUpperCase()} protocol.\n` +
-            `IdP Entity ID: ${config.idpEntityId}\n` +
-            `Status: ${config.status}`,
-        }
-      }
-
-      case 'test': {
-        const result = await svc.test()
-        return {
-          success: result.success,
-          dataSource,
-          test: result,
-          message: result.message,
-        }
-      }
-
-      case 'remove': {
-        // SMI-6204 Wave 3: "convert_to_manual" is the only supported disposition this wave, so
-        // omitting it is not ambiguous — default to the one legal value rather than forcing every
-        // caller to spell out a choice that isn't actually a choice yet.
-        const memberDisposition = input.memberDisposition ?? 'convert_to_manual'
-        const removed = await svc.remove(memberDisposition)
-        if (!removed) {
-          return { success: false, dataSource, error: 'No SSO configuration to remove.' }
-        }
-        return { success: true, dataSource, message: 'SSO configuration removed.' }
-      }
-
-      case 'claim_domain': {
-        if (!input.domain) {
-          return {
-            success: false,
-            dataSource,
-            error: 'domain is required for action "claim_domain".',
-          }
-        }
-        const claim = await svc.claimDomain(input.domain)
-        return {
-          success: true,
-          dataSource,
-          domainClaim: claim,
-          message:
-            `To verify ownership of \`${claim.domain}\`, publish this DNS TXT record:\n\n` +
-            `- **Name:** \`${claim.recordName}\`\n- **Type:** \`${claim.recordType}\`\n` +
-            `- **Value:** \`${claim.recordValue}\`\n\n` +
-            'Once it has propagated, run configure_sso with action "verify_domain".' +
-            (claim.simulated
-              ? '\n\n_This is stub data — no real DNS record is required to proceed._'
-              : ''),
-        }
-      }
-
-      case 'verify_domain': {
-        if (!input.domain) {
-          return {
-            success: false,
-            dataSource,
-            error: 'domain is required for action "verify_domain".',
-          }
-        }
-        const verification = await svc.verifyDomain(input.domain)
-        return {
-          success: verification.verified,
-          dataSource,
-          domainVerification: verification,
-          message: verification.verified
-            ? `Domain \`${verification.domain}\` is verified.` +
-              (verification.simulated ? ' (stub — no real DNS lookup was performed)' : '')
-            : `Domain \`${verification.domain}\` could not be verified yet. Confirm the TXT ` +
-              'record has propagated and try again.',
-        }
-      }
-    }
-  } catch (err) {
-    return { success: false, dataSource, ...toSsoToolError(err) }
-  }
-}
-
-/**
- * Execute an sso_settings query.
- */
-async function executeSsoSettingsImpl(
-  input: SsoSettingsInput,
-  _context: ToolContext
-): Promise<SsoSettingsResult> {
-  // SMI-6203 (P-5 audit): see executeConfigureSsoImpl above.
-  const svc = service
-  const dataSource: 'stub' | 'live' = dataSourceFor(svc)
-  // M-2 (SMI-6204 2026-08-28 adversarial review): `svc.get()` can throw
-  // TeamPermissionDeniedError/SsoAuthError/SsoServiceUnavailableError on the live path -- unlike
-  // executeConfigureSsoImpl, this had no try/catch at all, so a permission denial threw instead
-  // of returning the same structured refusal shape configure_sso already renders.
-  try {
-    const config = await svc.get(input.includeMetadata ?? false)
-    if (!config) {
-      return {
-        configured: false,
-        dataSource,
-        message:
-          'No SSO configuration found.\n' +
-          'Use configure_sso with action "set" to configure SSO for your organization.',
-      }
-    }
-    return {
-      configured: true,
-      dataSource,
-      config,
-      message:
-        `SSO is configured (${config.protocol.toUpperCase()}).\n` +
-        `IdP Entity ID: ${config.idpEntityId}\n` +
-        `Status: ${config.status}\n` +
-        `Configured at: ${config.configuredAt}`,
-    }
-  } catch (err) {
-    const { error } = toSsoToolError(err)
-    return {
-      configured: false,
-      dataSource,
-      message: permissionErrorText(error) || 'Could not load SSO settings.',
-      error,
-    }
-  }
-}
-
-// SMI-5017 W2.S2: wrap at export boundary
-export const executeConfigureSso = withTelemetry(executeConfigureSsoImpl, {
-  source: 'mcp-tool',
-  extractSkillId: () => 'configure_sso',
-  extractFramework: () => 'unknown',
-})
-export const executeSsoSettings = withTelemetry(executeSsoSettingsImpl, {
-  source: 'mcp-tool',
-  extractSkillId: () => 'sso_settings',
-  extractFramework: () => 'unknown',
-})
+// SMI-5127 / SMI-6200 Wave 4 Step 0: action-handler implementations, the withTelemetry-wrapped
+// dispatcher exports, the service singleton (setSSOConfigService/getSSOConfigService), and the
+// ConfigureSsoResult/SsoSettingsResult result shapes now live in sso-tools.action.ts —
+// re-exported here unchanged. See that file's header for the split rationale; see
+// sso-tools.action.ts's own JSDoc for setSSOConfigService/getSSOConfigService/each handler/type.
+export type { ConfigureSsoResult, SsoSettingsResult } from './sso-tools.action.js'
+export {
+  setSSOConfigService,
+  getSSOConfigService,
+  executeConfigureSso,
+  executeSsoSettings,
+} from './sso-tools.action.js'
