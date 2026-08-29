@@ -4,6 +4,11 @@ All notable changes to `@skillsmith/mcp-server` are documented here.
 
 ## [Unreleased]
 
+- **Refactor**: split the path-traversal/symlink-escape guards (`joinPath`, `isSafePathComponent`,
+  `isWithinRoot`) out of `local-inventory.helpers.ts` into a new sibling file,
+  `local-inventory.path-safety.helpers.ts`, to bring the original file back under the 500-line CI
+  cap (it had drifted to 516 lines). Re-exported from the original module so the one consumer
+  (`local-inventory.ts`) needs no changes. No behavior change (SMI-6229 follow-up).
 - **Feature**: `configure_sso` is now backed by a real Supabase-backed SSO service
   (`sso-tools.live.ts`), calling the new `team-sso-manage` gateway-verified edge function instead
   of the in-memory stub. `set`/`get`/`test`/`remove` configure and query a real GoTrue SAML
