@@ -67,7 +67,7 @@ export type SsoLoginRefusalReason =
  * `record_sso_login()`'s `link_candidate` field: `{legacy_user_id, legacy_email}`
  * when an un-linked, un-expired `sso_account_links` candidate row exists for
  * this session's identity, otherwise `null`
- * (`20260828000003_sso_member_lifecycle.sql`, `record_sso_login()` step 7).
+ * (`20260829230000_sso_member_lifecycle.sql`, `record_sso_login()` step 7).
  */
 export interface SsoLinkCandidate {
   legacy_user_id: string

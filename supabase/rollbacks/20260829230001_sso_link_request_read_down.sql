@@ -1,4 +1,4 @@
--- Rollback for 20260828000004_sso_link_request_read.sql
+-- Rollback for 20260829230001_sso_link_request_read.sql
 -- SMI-6205 (Wave 4 of SMI-6200)
 --
 -- Drops the two sso_account_links readers this migration created:
@@ -30,7 +30,7 @@
 --    'sso:link_consented' / 'sso:account_linked' audit_logs rows all survive untouched.
 --
 -- 3. THE TABLE GRANT IS NOT WIDENED AS COMPENSATION. sso_account_links deliberately holds
---    no client grant (20260828000003 Section 1) because it carries a consent token hash and
+--    no client grant (20260829230000 Section 1) because it carries a consent token hash and
 --    RLS is row-level, not column-level. If either read path is needed again, restore the
 --    function -- do not add a SELECT policy to the table.
 
@@ -43,7 +43,7 @@ DROP FUNCTION IF EXISTS get_pending_sso_link_requests();
 DROP FUNCTION IF EXISTS get_own_sso_link_candidate();
 
 -- schema_version back to 107. Matches the sibling rollback's own final step
--- (20260828000003_sso_member_lifecycle_down.sql:386); `AND TRUE` per this wave's
+-- (20260829230000_sso_member_lifecycle_down.sql:386); `AND TRUE` per this wave's
 -- pg_safeupdate convention.
 DELETE FROM schema_version WHERE version = 108 AND TRUE;
 

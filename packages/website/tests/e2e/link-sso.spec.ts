@@ -297,7 +297,7 @@ test.describe('Account — Link SSO account (SMI-6200 Wave 4)', () => {
     page,
   }) => {
     // Verbatim RAISE EXCEPTION text from link_sso_account()
-    // (supabase/migrations/20260828000003_sso_member_lifecycle.sql) — deliberately says
+    // (supabase/migrations/20260829230000_sso_member_lifecycle.sql) — deliberately says
     // "owns a team", not "owner", which an earlier substring-match draft of the page's
     // error mapper (written before this migration landed) would have missed.
     await mockSupabase(page, {
@@ -696,7 +696,7 @@ test.describe('Account — Link SSO consent (legacy identity, SMI-6200 Wave 4)',
 
   test('a consent refusal shows factual copy and re-enables the button', async ({ page }) => {
     // Verbatim RAISE EXCEPTION text from record_sso_link_consent()
-    // (supabase/migrations/20260828000003_sso_member_lifecycle.sql).
+    // (supabase/migrations/20260829230000_sso_member_lifecycle.sql).
     await mockSupabase(page, {
       pendingRows: [PENDING_ROW],
       consentError: 'forbidden: no pending link request for this account, or it has expired',

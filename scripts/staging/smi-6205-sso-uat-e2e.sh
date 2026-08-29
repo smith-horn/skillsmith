@@ -4,7 +4,7 @@
 # reversal pair, and the two read RPCs), exercised against REAL staging
 # (ovhcifugwqnzoebwfuku) through a REAL Mock SAML login -- real GoTrue-issued JWTs, real
 # PostgREST calls with `Authorization: Bearer <token>`, never a simulated
-# `request.jwt.claims` the way 20260828000003/4's own smoke blocks do.
+# `request.jwt.claims` the way 20260829230000/4's own smoke blocks do.
 #
 # Modeled on the sibling scripts/staging/smi-6267-rbac-uat-e2e.{sh,sql} harness (SMI-6267),
 # but this feature is RPC/API-driven rather than pure-SQL, so this is bash+curl+jq
@@ -394,7 +394,7 @@ echo "      family (T3-T7) -- including the newest dismiss/undismiss/N-7 code (T
 echo "      fully exercised end-to-end through real sessions and real PostgREST calls,"
 echo "      since none of those depend on role mapping succeeding."
 echo "[RECOMMENDATION] Not worth pursuing before ship: the role-mapping matrix itself is"
-echo "      already covered by 20260828000003.sql's own SQL smoke block (Section 11), and"
+echo "      already covered by 20260829230000.sql's own SQL smoke block (Section 11), and"
 echo "      standing up a fuller IdP (a real Okta dev org, or a self-hosted Jackson/BoxyHQ"
 echo "      instance with custom attribute mapping) is real infrastructure work for a gap"
 echo "      that is provably fail-closed today. Revisit only if a customer support ticket"

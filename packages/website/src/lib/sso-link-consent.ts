@@ -18,7 +18,7 @@
  *      → the `sso-link-notify` edge function (here)
  *
  * Both reads exist because `sso_account_links` deliberately holds NO client
- * grant (20260828000003 Section 1): without a dedicated reader the legacy
+ * grant (20260829230000 Section 1): without a dedicated reader the legacy
  * identity could never learn a request exists — and `record_sso_link_consent()`
  * takes the SSO user id as an argument it would have no channel to obtain —
  * while the SSO identity's own read had to come from somewhere that is not the
@@ -27,7 +27,7 @@
 
 import type { SupabaseClient } from '@supabase/supabase-js'
 
-/** One row of `get_pending_sso_link_requests()` (20260828000004). */
+/** One row of `get_pending_sso_link_requests()` (20260829230001). */
 export interface PendingSsoLinkRequest {
   sso_user_id: string
   team_id: string
@@ -84,7 +84,7 @@ export async function fetchPendingSsoLinkRequest(
 }
 
 /**
- * One row of `get_own_sso_link_candidate()` (20260828000004) — the SSO
+ * One row of `get_own_sso_link_candidate()` (20260829230001) — the SSO
  * identity's own view of its pending link candidate. Both fields are resolved
  * SERVER-side from the caller's own signed session, never from a URL parameter.
  */
@@ -232,7 +232,7 @@ export async function undismissSsoLinkCandidate(
  * Classify `record_sso_link_consent()`'s RAISE EXCEPTION text into user-facing
  * copy, matching the substring-match convention `team-invitations.ts`'s
  * `mapRpcErrorToCopy()` established. Matched against the migration's ACTUAL
- * exception strings (`20260828000003_sso_member_lifecycle.sql`,
+ * exception strings (`20260829230000_sso_member_lifecycle.sql`,
  * `record_sso_link_consent()`), which collapse "no candidate", "already
  * linked" and "expired" into ONE deliberately-undifferentiated message so a
  * signed-in caller cannot probe for candidates — so the copy here must stay

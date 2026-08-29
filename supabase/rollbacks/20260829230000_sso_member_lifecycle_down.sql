@@ -1,4 +1,4 @@
--- Rollback for 20260828000003_sso_member_lifecycle.sql
+-- Rollback for 20260829230000_sso_member_lifecycle.sql
 -- SMI-6205 (Wave 4 of SMI-6200)
 --
 -- Unschedules the daily SSO expiry sweep, drops the twelve functions, the
@@ -67,10 +67,10 @@
 --    same data-loss class as WARNING 4 and has the same mitigation: export
 --    sso_account_links before running this.
 --
--- 8. 20260828000004 MUST BE ROLLED BACK FIRST. Its own pre-flight refuses to apply
+-- 8. 20260829230001 MUST BE ROLLED BACK FIRST. Its own pre-flight refuses to apply
 --    without record_sso_link_consent() and undismiss_sso_link_candidate(), and its
 --    two readers select from sso_account_links, which section 3 below drops. Run
---    supabase/rollbacks/20260828000004_sso_link_request_read_down.sql before this
+--    supabase/rollbacks/20260829230001_sso_link_request_read_down.sql before this
 --    file, exactly as the forward migrations apply 3-before-4.
 
 BEGIN;

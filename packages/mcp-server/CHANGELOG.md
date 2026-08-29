@@ -4,6 +4,17 @@ All notable changes to `@skillsmith/mcp-server` are documented here.
 
 ## [Unreleased]
 
+- **Feature**: SMI-6205 Wave 4 SSO member lifecycle — JIT team provisioning on login,
+  seat-limit enforcement, and license-key binding/expiry tied to SSO login freshness, plus
+  dual-consent identity linking between a JIT-provisioned SSO account and a pre-existing
+  account sharing the same verified email (with a self-service decline/reversal path). No new
+  MCP tool surface — this is the underlying `record_sso_login`/`link_sso_account` SQL and
+  website flow, not a change to `configure_sso`'s own tool schema.
+- **Refactor**: split `rbac-tools.ts`/`sso-tools.ts` into thin re-export modules plus new
+  `rbac-tools.action.ts`/`sso-tools.action.ts` siblings holding the action-handler
+  implementations, `withTelemetry`-wrapped exports, and each service singleton (SMI-5127
+  convention, same split `local-inventory.helpers.ts` got below). Every existing import site
+  (`index.ts`, `tool-dispatch.ts`, all `*.test.ts` files) reaches the same exports unchanged.
 - **Fix**: `rbac_create_policy`'s `create`/`delete` actions now report per-permission
   success/failure (`partialResults`) instead of a bare `success:false` when a multi-permission
   batch write partially fails — a caller can now tell exactly which permissions in the batch
