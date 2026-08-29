@@ -1,6 +1,6 @@
 ---
 title: "How a Team Actually Runs on Skillsmith"
-description: "Six diagrams walking through what a team is actually signing up for: how a login turns into credentials, how a workspace and its members work, how skills get reviewed into the registry, how a laptop stays in sync, and how the CLI, MCP server, and VS Code extension all touch the same backend."
+description: "Six diagrams show what a team is actually signing up for: how a login turns into credentials, how a workspace and its members work, how skills get reviewed into the registry, how a laptop stays in sync, and how the CLI, MCP server, and VS Code extension all touch the same backend."
 author: "Skillsmith Team"
 date: 2026-08-28
 updated: 2026-08-28
@@ -10,7 +10,7 @@ draft: false
 ogImage: "https://res.cloudinary.com/diqcbcmaq/image/upload/f_auto,q_auto,w_1200,h_630,c_fill/blog/team-setup-architecture/01-overview"
 ---
 
-A security reviewer opens a ticket: "Approve Skillsmith for the platform team." Six tabs later, they still can't answer the one question that actually matters: what happens, mechanically, between someone typing a login command and a skill landing on ten laptops. This post is that answer, six pictures at a time, built from the system as it runs today, not as it's planned to run someday.
+You just signed your team up for Skillsmith. Here's exactly what happens next, one picture at a time, showing the system as it actually runs today, not as it's planned to run someday.
 
 ![A four-stage diagram of the Skillsmith team setup journey: auth bootstrap, then workspace/membership/RBAC, then registry supply and review, then local index and inventory sync, with the CLI, MCP server, and VS Code extension shown underneath as three interfaces connecting into the whole system.](https://res.cloudinary.com/diqcbcmaq/image/upload/f_auto,q_auto,w_1200/blog/team-setup-architecture/01-overview)
 
@@ -22,7 +22,7 @@ Once your team is on a paid tier, an admin gets a license key. That's the only t
 
 ![A four-step device-code login flow: running skillsmith login in a terminal, receiving a short device code, approving it in a browser, and credentials landing in a local config file.](https://res.cloudinary.com/diqcbcmaq/image/upload/f_auto,q_auto,w_1200/blog/team-setup-architecture/02-auth-bootstrap)
 
-Run `skillsmith login` and the CLI doesn't ask for a password. It shows you a short code, the same idea as the code a smart TV shows you when you sign into a streaming app: you type that code into a browser tab on a device you already trust, approve it there, and the terminal picks up a real access token a few seconds later. Nothing sensitive ever gets typed into the terminal itself. The token lands in `~/.skillsmith/config.json`, and from that point on, the CLI reads it automatically every time.
+Run `skillsmith login` and the CLI (short for command line interface, the tool you just typed that command into) doesn't ask for a password. It shows you a short code, the same idea as the code a smart TV shows you when you sign into a streaming app: you type that code into a browser tab on a device you already trust, approve it there, and the terminal picks up a real access token a few seconds later. Nothing sensitive ever gets typed into the terminal itself. The token lands in `~/.skillsmith/config.json`, and from that point on, the CLI reads it automatically every time.
 
 ## The room everyone shares
 
@@ -60,7 +60,7 @@ However someone on your team reaches Skillsmith, whether that's a terminal windo
 
 ![Three client interfaces, the CLI, the MCP server, and the VS Code extension, each shown with its own arrow pointing down into one shared backend box labeled edge functions and RPCs.](https://res.cloudinary.com/diqcbcmaq/image/upload/f_auto,q_auto,w_1200/blog/team-setup-architecture/06-three-interfaces)
 
-The CLI is the terminal door, for anyone scripting or working by hand. The MCP server is the door Claude Code and other agent tools walk through, so an agent can search for and install a skill mid-conversation without a human retyping the command. The VS Code extension is the same capability again, this time inside the editor someone's already staring at all day. All three hit the identical backend, the same edge functions and the same database calls. Nothing about permissions, trust tiers, or workspace membership changes depending on which door someone used to walk in.
+The CLI is the terminal door, for anyone scripting or working by hand. The MCP server (MCP stands for Model Context Protocol, a standard way for an AI tool to call another program) is the door Claude Code and other agent tools walk through, so an agent can search for and install a skill mid-conversation without a human retyping the command. The VS Code extension (VS Code is Microsoft's popular code editor) is the same capability again, this time inside the editor someone's already staring at all day. All three hit the identical backend: the same edge functions, and the same RPCs (RPC stands for remote procedure call, a direct function call to the server instead of a full web request). Nothing about permissions, trust tiers, or workspace membership changes depending on which door someone used to walk in.
 
 ## What to actually check before you say yes
 
