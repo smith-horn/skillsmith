@@ -10,7 +10,7 @@
  * place a plugin-registered hosted server like `mcp.supabase.com` actually
  * appears on disk (SMI-6229 Context).
  *
- * SECURITY-RELEVANT DUPLICATION (ADR-136): `readEnabledPluginIds` below is a
+ * SECURITY-RELEVANT DUPLICATION (ADR-137): `readEnabledPluginIds` below is a
  * native `.mjs` reimplementation of
  * packages/mcp-server/src/utils/local-inventory.helpers.ts's function of the
  * same name (SMI-6228 Wave 1) — not a shared import, because this file runs
