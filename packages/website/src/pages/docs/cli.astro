@@ -538,6 +538,16 @@ skillsmith validate ~/.claude/skills/jest-helper`}</code></pre>
     </tbody>
   </table>
 
+  <div class="callout">
+    <p class="callout-heading">SSO-provisioned accounts</p>
+    <p>
+      <code>skillsmith login</code> (the device-code flow) isn't supported for accounts
+      provisioned via your organization's SSO/SAML provider. Generate a personal API key at
+      <a href="/account/cli-token/">/account/cli-token/</a> instead, then set
+      <code>SKILLSMITH_API_KEY</code> as shown above.
+    </p>
+  </div>
+
   <h2>Lifecycle Tutorials</h2>
 
   <p>
