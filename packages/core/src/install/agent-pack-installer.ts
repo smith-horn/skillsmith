@@ -41,6 +41,7 @@ import { join } from 'node:path'
 import { AGENT_PACK_SKILL_NAME, generateAgentPack } from '../services/agent-pack/index.js'
 import { AGENT_TOOL_PROFILE_NAMES } from '../services/agent-tool-profile.js'
 import { CLIENT_NATIVE_PATHS } from './paths.js'
+import { resolveScopedSkillsDir } from './workspace-scope.js'
 import { relocateUnderHome } from './agent-home-relocate.js'
 import { writeOwnedArtifactFile } from './agent-pack-installer.fs-helpers.js'
 import {
@@ -286,6 +287,31 @@ export function installAgentPack(opts: AgentInstallOptions = {}): AgentInstallRe
   // its own (Codex's OWN report row covers its config/hook/shim surface).
   if (skillArtifact) {
     writeSkillPackFor(CLIENT_NATIVE_PATHS.agents, skillArtifact.content, ctx, 'agents')
+  }
+
+  // ADR-139 (SMI-6274 Wave 4, point 5's Wave 5 bootstrap requirement):
+  // `--scope workspace` is the ONLY path that may create AntiGravity's
+  // `.agents/skills` workspace directory — bare `agent install` never
+  // touches it, matching every other harness's detection-only default.
+  // This is deliberately NOT the full AntiGravity harness (MCP config,
+  // hooks, shim) — that is Wave 5's (SMI-6275) own scope; this wave only
+  // guarantees the plumbing (the resolver call + create-permission) Wave 5
+  // needs is reachable, per the ADR's explicit statement that Wave 4 must
+  // not have to build Wave 5's own harness logic.
+  if (opts.scope === 'workspace' && skillArtifact) {
+    const scopeTarget = resolveScopedSkillsDir({
+      client: 'antigravity',
+      cwd: opts.cwd ?? process.cwd(),
+      explicitScope: 'workspace',
+    })
+    const antigravityReport = newReport('antigravity')
+    antigravityReport.detected = true
+    writeSkillPackFor(scopeTarget.dir, skillArtifact.content, ctx, 'antigravity')
+    antigravityReport.skillPackWritten = true
+    if (scopeTarget.created) {
+      antigravityReport.notes.push(`Created workspace skills directory: ${scopeTarget.dir}`)
+    }
+    reports.push(antigravityReport)
   }
 
   saveAgentManifest({

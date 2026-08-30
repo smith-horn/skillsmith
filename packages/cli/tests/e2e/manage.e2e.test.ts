@@ -58,6 +58,18 @@ async function runCommand(args: string[], timeoutMs = 30000): Promise<CommandRes
     let stderr = ''
 
     const proc = spawn('node', [CLI_PATH, ...args], {
+      // ADR-139 (SMI-6274 Wave 4): resolveScopedSkillsDir()'s auto-detect
+      // walks ancestors from the spawned process's cwd looking for an
+      // existing workspace marker before falling back to global scope. An
+      // unset cwd inherits this test RUNNER's own cwd (the real repo root
+      // in CI, which has a real .git and can pick up a workspace marker
+      // left by a sibling e2e test file), silently redirecting these
+      // commands away from TEST_SKILLS_DIR (HOME-anchored, below) even
+      // though no --scope flag was ever passed. Pinning cwd to TEST_DIR (no
+      // .git, no marker) matches author.e2e.test.ts's existing pattern and
+      // keeps auto-detect resolving to global every time, as these tests
+      // (which never opt into workspace scope) expect.
+      cwd: TEST_DIR,
       env: {
         ...process.env,
         NODE_ENV: 'test',

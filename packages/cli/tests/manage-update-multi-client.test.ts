@@ -76,6 +76,16 @@ beforeEach(async () => {
   // (same technique as install-multi-client.test.ts / manage-multi-client.test.ts).
   vi.resetModules()
 
+  // ADR-139 (SMI-6274 Wave 4): see the identical (fuller) comment in
+  // manage-multi-client.test.ts — without this, install/update auto-detect
+  // this test PROCESS's real cwd (the skillsmith repo checkout, which
+  // genuinely has .claude/skills on disk) as an existing workspace marker
+  // and silently resolve to workspace scope instead of the intended
+  // isolated global $HOME. A distinct non-existent subdirectory (not
+  // homeDir itself) avoids collapsing the 'local' and 'claude-code' global
+  // scan targets onto the same directory, since $HOME === homeDir here too.
+  vi.spyOn(process, 'cwd').mockReturnValue(path.join(homeDir, 'no-such-workspace'))
+
   vi.spyOn(console, 'log').mockImplementation(() => {})
 })
 
@@ -146,13 +156,13 @@ describe('SMI-5895 Wave 2: getSkillDiff manifest resolution — same skill name,
 
     const claudeDiff = await getSkillDiff('test-repo', dbPath, 'claude-code')
     expect(typeof claudeDiff).toBe('object')
-    if (typeof claudeDiff === 'object') {
+    if (typeof claudeDiff === 'object' && !('adoptionError' in claudeDiff)) {
       expect(claudeDiff.skillId).toBe('https://github.com/owner-a/test-repo')
     }
 
     const cursorDiff = await getSkillDiff('test-repo', dbPath, 'cursor')
     expect(typeof cursorDiff).toBe('object')
-    if (typeof cursorDiff === 'object') {
+    if (typeof cursorDiff === 'object' && !('adoptionError' in cursorDiff)) {
       expect(cursorDiff.skillId).toBe('https://github.com/owner-b/test-repo')
     }
   })

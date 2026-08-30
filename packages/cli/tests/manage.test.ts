@@ -39,6 +39,28 @@ const mocks = vi.hoisted(() => ({
   initializeSchema: vi.fn(),
 }))
 
+// ADR-139 (SMI-6274 Wave 4) / pre-push repro fix: getLocalSkillsDir() now
+// calls findWorkspaceRoot() to walk UP from cwd for a workspace marker/
+// `.git` boundary. When vitest runs from the repo root (`/app`) that walk
+// finds a marker at `/app` on its first step, coincidentally matching this
+// file's own relative-display expectation — but the real pre-push hook (and
+// CI) runs `cd packages/cli && vitest run`, a SUBDIRECTORY, where the SUT
+// walks up further and resolves a DIFFERENT root, breaking the SMI-6060
+// footer test's `local: ./.claude/skills` assertion (confirmed live).
+// Returning null here preserves the pre-ADR-139 raw-cwd-joined fallback
+// (matches inventory-action-status.test.ts's identical, already-working fix
+// for the same sibling gap) — getLocalSkillsDirDisplay() derives its
+// relative path from the SAME real process.cwd() on both sides of its own
+// `relative()` call, so this stays `./.claude/skills` regardless of which
+// directory vitest was actually invoked from.
+vi.mock('@skillsmith/core/install', async (importOriginal) => {
+  const actual = await importOriginal<typeof import('@skillsmith/core/install')>()
+  return {
+    ...actual,
+    findWorkspaceRoot: vi.fn(() => null),
+  }
+})
+
 // Mock core - use class implementations to avoid vitest warning
 vi.mock('@skillsmith/core', () => ({
   createDatabase: vi.fn(() => ({
@@ -314,6 +336,8 @@ describe('SMI-745: Skill Management Commands', () => {
           installDate: '2026-01-01',
           hasUpdates: false,
           installedVia: 'claude-code',
+          scope: 'global',
+          untracked: false,
         },
       ])
 

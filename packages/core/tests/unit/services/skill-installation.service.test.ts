@@ -422,7 +422,7 @@ describe('SMI-3483: SkillInstallationService', () => {
       expect(result.message).toContain('not installed')
     })
 
-    it('should detect orphan skill on disk without manifest', async () => {
+    it('ADR-139 (SMI-6274 Wave 4): adopts and removes an orphan skill on disk without a manifest entry — force is no longer required', async () => {
       // Create skill directory without manifest
       const orphanDir = path.join(skillsDir, 'orphan-skill')
       await fs.mkdir(orphanDir, { recursive: true })
@@ -430,15 +430,19 @@ describe('SMI-3483: SkillInstallationService', () => {
 
       const service = createService(db)
 
-      // Without force, should warn
+      // Previously this required force=true just to remove an untracked
+      // skill; ADR-139 point 1 replaces that with adoption — a manifest
+      // entry is reconstructed from disk state, then removal proceeds
+      // normally, WITHOUT force.
       const result = await service.uninstall('orphan-skill')
-      expect(result.success).toBe(false)
-      expect(result.message).toContain('not in manifest')
+      expect(result.success).toBe(true)
+      expect(result.warning).toContain('adopted')
 
-      // With force, should remove
-      const forceResult = await service.uninstall('orphan-skill', { force: true })
-      expect(forceResult.success).toBe(true)
-      expect(forceResult.warning).toContain('not in the manifest')
+      const stillOnDisk = await fs.access(orphanDir).then(
+        () => true,
+        () => false
+      )
+      expect(stillOnDisk).toBe(false)
     })
   })
 

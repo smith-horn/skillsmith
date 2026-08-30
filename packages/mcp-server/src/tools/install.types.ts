@@ -235,6 +235,30 @@ export const installInputSchema = z.object({
         "calling editor/agent's real project, so the install fails closed with a clear error " +
         'if omitted rather than silently writing to the wrong directory.'
     ),
+  /**
+   * ADR-139 (SMI-6274 Wave 4) / GPT-5.6-Sol PR review: explicit install
+   * scope, mirroring the CLI's `--scope` flag (rank 1 of ADR-139 point 2's
+   * precedence chain). This MCP server is long-running (see `cwd` above) —
+   * `SKILLSMITH_SCOPE` (rank 2, read automatically by `resolveScopedSkillsDir`
+   * when this is omitted) applies uniformly to EVERY tool call for the
+   * server's entire process lifetime, so it cannot express "install THIS
+   * skill workspace-scoped, THAT one globally" within one long-lived MCP
+   * session the way a per-invocation CLI env var naturally can. A structured
+   * per-call parameter closes that gap and gives MCP callers the same
+   * per-call precision as the CLI flag, while `SKILLSMITH_SCOPE` remains a
+   * valid fallback for MCP client configs that can only set env vars at
+   * server-launch time.
+   */
+  scope: z
+    .enum(['global', 'workspace'])
+    .optional()
+    .describe(
+      'Install scope (ADR-139): "workspace" resolves against the nearest ancestor workspace ' +
+        "marker or .git root (walked from `cwd` above when provided, else this server's own " +
+        "process.cwd()), creating the client's workspace skills directory if none exists yet; " +
+        'defaults to SKILLSMITH_SCOPE env, then the per-client ~/.skillsmith/config.json ' +
+        'default, then auto-detecting an EXISTING workspace directory, then global.'
+    ),
 })
 
 export type InstallInput = z.infer<typeof installInputSchema>

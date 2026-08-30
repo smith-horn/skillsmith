@@ -37,6 +37,23 @@ export interface AgentInstallOptions {
   homeDir?: string
   /** Overwrite a foreign (non-Skillsmith) MCP/hook config entry instead of refusing. Default false. */
   force?: boolean
+  /**
+   * ADR-139 (SMI-6274 Wave 4, point 5's Wave 5 bootstrap requirement):
+   * `'workspace'` bootstraps AntiGravity as a target by resolving (and, if
+   * necessary, CREATING) its workspace-scoped `.agents/skills` directory
+   * via `resolveScopedSkillsDir()`, then writing the skill pack there —
+   * this is the ONLY path that may create `.agents/` (bare `agent install`
+   * with no `scope` never touches AntiGravity at all, matching every other
+   * harness's detection-only default). Omitted/`'global'` preserves
+   * today's exact behavior.
+   */
+  scope?: 'global' | 'workspace'
+  /**
+   * Test seam for the workspace-scope resolution above — defaults to
+   * `process.cwd()`. Mirrors `homeDir`'s existing test-injection role for
+   * the rest of this installer.
+   */
+  cwd?: string
 }
 
 export interface AgentInstallResult {

@@ -83,6 +83,7 @@ export interface SkillsmithConfig {
      */
     lastDigestHash?: string
   }
+  defaultScope?: Record<string, 'global' | 'workspace'> // ADR-139: per-client install-scope default
 }
 
 /** Default config directory name */

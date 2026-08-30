@@ -7,7 +7,6 @@
  * file to meet the 500-line standard.
  */
 
-import * as fs from 'fs/promises'
 import { existsSync, readFileSync } from 'fs'
 import * as path from 'path'
 import { createHash } from 'crypto'
@@ -23,16 +22,9 @@ import type { Database } from '../db/database-interface.js'
 import { computeQualityScore } from '../scoring/quality-score.js'
 import type { RiskScoreHistoryRepository } from '../repositories/RiskScoreHistoryRepository.js'
 import type { ScanReport } from '../security/index.js'
-import type {
-  DepIntelResult,
-  OptimizationInfo,
-  ProgressCallback,
-  UninstallResult,
-} from './skill-installation.types.js'
+import type { DepIntelResult, OptimizationInfo } from './skill-installation.types.js'
 
-import { checkForModifications } from './skill-installation.io.js'
 export { fetchFromGitHub } from './skill-installation.io.js'
-import type { ManifestManager } from './skill-manifest.js'
 import { CANONICAL_CLIENT, CLIENT_DISPLAY_LABELS, type ClientId } from '../install/paths.js'
 
 /** Result of applying optimization to a skill's content. */
@@ -211,131 +203,10 @@ export function manifestKeyFor(name: string, client: ClientId): string {
   return client === CANONICAL_CLIENT ? name : `${name}::${client}`
 }
 
-/** Perform skill uninstall with manifest awareness and orphan fallback. */
-export async function performUninstall(params: {
-  skillName: string
-  force: boolean
-  skillsDir: string
-  manifest: ManifestManager
-  skillDependencyRepo: SkillDependencyRepository
-  onProgress: ProgressCallback
-  /** SMI-5894 Wave 1 Step 3: defaults to the canonical client for callers
-   *  that don't yet resolve a client (preserves pre-existing behavior). */
-  client?: ClientId
-}): Promise<UninstallResult> {
-  const {
-    skillName,
-    force,
-    skillsDir,
-    manifest,
-    skillDependencyRepo,
-    onProgress,
-    client = CANONICAL_CLIENT,
-  } = params
-  const manifestKey = manifestKeyFor(skillName, client)
-
-  try {
-    onProgress('manifest', 'Loading manifest')
-    const manifestData = await manifest.load()
-    const skillEntry = manifestData.installedSkills[manifestKey]
-
-    if (!skillEntry) {
-      const potentialPath = path.join(skillsDir, skillName)
-      try {
-        await fs.access(potentialPath)
-        if (!force) {
-          return {
-            success: false,
-            skillName,
-            message:
-              'Skill "' +
-              skillName +
-              '" not in manifest but exists on disk. Use force=true to remove.',
-            warning: 'This skill was not installed via Skillsmith.',
-          }
-        }
-        onProgress('remove', 'Removing orphan skill from disk')
-        await fs.rm(potentialPath, { recursive: true, force: true })
-        return {
-          success: true,
-          skillName,
-          message: 'Skill "' + skillName + '" removed from disk (was not in manifest).',
-          removedPath: potentialPath,
-          warning:
-            'Skill was not in the manifest. Use "skillsmith install" to register skills properly.',
-        }
-      } catch {
-        return { success: false, skillName, message: 'Skill "' + skillName + '" is not installed.' }
-      }
-    }
-
-    const installPath = skillEntry.installPath
-
-    if (!force) {
-      onProgress('check', 'Checking for modifications')
-      const modified = await checkForModifications(installPath, skillEntry.installedAt)
-      if (modified) {
-        return {
-          success: false,
-          skillName,
-          message:
-            'Skill "' +
-            skillName +
-            '" has been modified since installation. Use force=true to remove anyway.',
-          warning: 'Local modifications will be lost if you force uninstall.',
-        }
-      }
-    }
-
-    onProgress('remove', 'Removing skill directory')
-    try {
-      await fs.rm(installPath, { recursive: true, force: true })
-    } catch (error) {
-      if ((error as NodeJS.ErrnoException).code !== 'ENOENT') throw error
-    }
-
-    try {
-      skillDependencyRepo.clearAll(skillEntry.id)
-    } catch {
-      // Table may not exist pre-migration
-    }
-
-    onProgress('manifest', 'Updating manifest')
-    // SMI-6007: route the final mutation through updateSafely() (lock +
-    // fresh re-read + save) instead of saving the `manifestData` snapshot
-    // loaded above. That snapshot can be stale by the time we get here —
-    // filesystem cleanup and the dependency-repo clear happened in between —
-    // so saving it directly could clobber an *unrelated* manifest entry
-    // written by a concurrent install/uninstall in that window. This closes
-    // that lost-update hazard for entries other than this one.
-    //
-    // Scope: this does NOT make the full uninstall sequence (lookup ->
-    // filesystem cleanup -> manifest mutation) atomic. A concurrent
-    // operation racing on the SAME key (e.g. a reinstall of this exact
-    // skill while its uninstall is mid-flight) can still leave disk and
-    // manifest inconsistent — only the unrelated-entry data loss is fixed
-    // here, not full transactional safety across the whole method.
-    await manifest.updateSafely((current) => {
-      const next: typeof current = { ...current, installedSkills: { ...current.installedSkills } }
-      delete next.installedSkills[manifestKey]
-      return next
-    })
-
-    onProgress('done', 'Uninstall complete')
-    return {
-      success: true,
-      skillName,
-      message: 'Skill "' + skillName + '" has been uninstalled successfully.',
-      removedPath: installPath,
-    }
-  } catch (error) {
-    return {
-      success: false,
-      skillName,
-      message: error instanceof Error ? error.message : 'Unknown error during uninstall',
-    }
-  }
-}
+// ADR-139 (SMI-6274 Wave 4): `performUninstall` (manifest-aware removal +
+// untracked-skill adoption) now lives in `skill-installation.uninstall.ts`
+// — split out to stay under the 500-line standard.
+export { performUninstall } from './skill-installation.uninstall.js'
 
 /**
  * Apply skill optimization via TransformationService.

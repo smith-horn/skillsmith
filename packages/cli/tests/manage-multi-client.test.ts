@@ -67,6 +67,26 @@ beforeEach(async () => {
   // (same technique as install-multi-client.test.ts).
   vi.resetModules()
 
+  // ADR-139 (SMI-6274 Wave 4): install/remove/update now auto-detect an
+  // EXISTING workspace marker above cwd (rank 4 of resolveSkillScope's
+  // precedence). Left unmocked, cwd is this test PROCESS's real cwd — the
+  // skillsmith repo checkout itself, which genuinely has `.claude/skills`
+  // on disk (its own strategy-submodule mount-point) — so these tests
+  // would silently resolve to WORKSPACE scope against the real repo
+  // instead of the intended isolated global $HOME.
+  //
+  // Deliberately NOT mocked to homeDir itself: getLocalSkillsDir()'s
+  // fallback (no workspace root found) joins cwd with '.claude/skills',
+  // which would then be BYTE-IDENTICAL to CLIENT_NATIVE_PATHS['claude-code']
+  // (join(homedir(), '.claude', 'skills')) since $HOME === homeDir too —
+  // collapsing the 'local' and 'claude-code' global scan targets onto the
+  // same real directory, a test artifact that never happens in real usage
+  // (cwd is a project directory, never literally $HOME). A distinct
+  // non-existent subdirectory keeps both the ancestor walk's termination
+  // (still reaches $HOME with nothing found in between) AND the two scan
+  // targets' independence.
+  vi.spyOn(process, 'cwd').mockReturnValue(path.join(homeDir, 'no-such-workspace'))
+
   // Quiet the install/remove commands' own console.log output — none of
   // these tests assert on stdout, only on filesystem/manifest state.
   vi.spyOn(console, 'log').mockImplementation(() => {})

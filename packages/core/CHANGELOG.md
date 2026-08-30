@@ -4,6 +4,30 @@ All notable changes to `@skillsmith/core` are documented here.
 
 ## [Unreleased]
 
+- **Feature**: ADR-139 global-vs-workspace install scope resolution (`@skillsmith/core/install`,
+  SMI-6274 Wave 4). New `resolveSkillScope()`/`resolveScopedSkillsDir()` resolve whether an
+  install/list/update/remove targets a client's global directory (`CLIENT_NATIVE_PATHS`) or a
+  workspace-local one (`<workspace-root>/<client's CLIENT_WORKSPACE_SEGMENTS>`, a new sibling
+  table to `CLIENT_NATIVE_PATHS`), by a five-rank precedence: explicit scope > `SKILLSMITH_SCOPE`
+  env var > per-client `~/.skillsmith/config.json` default (new `defaultScope` field) >
+  auto-detection of an EXISTING workspace marker > global. The workspace-root boundary is
+  marker-first, then nearest-ancestor `.git` (file OR directory, so worktrees and submodules
+  each resolve to their own root) via a new `findWorkspaceRoot()` — deliberately not a reuse of
+  `findMainRepoRoot()` (`doc-retrieval-mcp`), whose opposite `.git`-must-be-a-directory predicate
+  exists for a different purpose. Workspace-scoped installs record in a workspace-local
+  `<root>/.skillsmith/manifest.json`, leaving the global manifest and `manifestKeyFor()`
+  completely untouched. `installAgentPack({ scope: 'workspace' })` can now bootstrap AntiGravity
+  as a target in a fresh repo by creating `.agents/skills` — the only path permitted to create a
+  workspace directory implicitly. `performUninstall()` now adopts an untracked skill (present on
+  disk, no manifest entry) by reconstructing a manifest entry from disk state instead of requiring
+  `force=true`. `ManifestManager` gained a public `path` getter. `buildAdoptedManifestEntry()` —
+  the reconstruction builder `performUninstall()` uses — is now exported at the package root
+  (`@skillsmith/core`) alongside `manifestKeyFor`/`hashContent` so `@skillsmith/cli`'s `update`
+  path reuses the identical adoption logic instead of a second, driftable copy (PR review
+  follow-up: `update` previously never adopted an untracked skill at all, only `remove` did, and
+  could dead-end at `'unresolvable'` with zero side effects even when a skill's source genuinely
+  couldn't be recovered).
+
 - **Fix**: `agent install` no longer writes a broken Cursor MCP registration. Two independent
   bugs, both from before Cursor's MCP snippet was fixed in SMI-5893: the installer still wrote
   the `npx`-form command that reliably fails inside Cursor's bundled Node, without the

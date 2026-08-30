@@ -112,6 +112,21 @@ const mocks = vi.hoisted(() => ({
       recoveredSource: null,
     })
   ),
+  // ADR-139 (SMI-6274 Wave 4): getSkillDiff()'s adoption path for an
+  // untracked skill (no manifest entry) — see the identical mocks in
+  // manage.update.source-recovery.test.ts.
+  manifestUpdateSafelyFn: vi.fn(async () => undefined),
+  buildAdoptedEntryFn: vi.fn(
+    async (name: string, installPath: string): Promise<Record<string, unknown>> => ({
+      id: name,
+      name,
+      version: 'unknown',
+      source: 'unknown',
+      installPath,
+      installedAt: '2026-01-01T00:00:00.000Z',
+      lastUpdated: '2026-01-01T00:00:00.000Z',
+    })
+  ),
 }))
 
 // Mock core - use class implementations to avoid vitest warning
@@ -169,6 +184,68 @@ vi.mock('@skillsmith/core', () => ({
   isGitHubUrl: vi.fn(() => false),
   createApiClient: vi.fn(() => mocks.apiClient),
   loadStoredAccessToken: vi.fn(async () => null),
+  // ADR-139 (SMI-6274 Wave 4): getSkillDiff()'s adoption path for an
+  // untracked skill (manifest entry genuinely missing).
+  ManifestManager: vi.fn().mockImplementation(function (manifestPath: string) {
+    return { path: manifestPath, updateSafely: mocks.manifestUpdateSafelyFn }
+  }),
+  buildAdoptedManifestEntry: (name: string, installPath: string) =>
+    mocks.buildAdoptedEntryFn(name, installPath),
+  // GPT-5.6-Sol PR review round 4: the race-safe adoption-write wrapper
+  // moved to @skillsmith/core (adoptUntrackedSkillEntry, alongside
+  // buildAdoptedManifestEntry) so performUninstall() and getSkillDiff()
+  // share ONE implementation instead of two drifting copies. Mocked here
+  // with equivalent logic, driven by the SAME buildAdoptedManifestEntry/
+  // ManifestManager mocks above, so every existing assertion on
+  // buildAdoptedEntryFn's call args, manifestUpdateSafelyFn's captured
+  // callback, and adoptionError content keeps exercising the same shape.
+  adoptUntrackedSkillEntry: async (
+    skillName: string,
+    skillDirName: string,
+    installPath: string,
+    manifestKey: string,
+    manifest: {
+      path: string
+      updateSafely: (
+        fn: (current: { installedSkills: Record<string, unknown> }) => {
+          installedSkills: Record<string, unknown>
+        }
+      ) => Promise<void>
+    }
+  ): Promise<{ entry: Record<string, unknown>; adopted: boolean } | { adoptionError: string }> => {
+    const adoptedEntry = await mocks.buildAdoptedEntryFn(skillDirName, installPath)
+    let resolvedEntry: Record<string, unknown> = adoptedEntry
+    let adopted = true
+    try {
+      await manifest.updateSafely((current) => {
+        const existing = current.installedSkills?.[manifestKey]
+        if (existing) {
+          resolvedEntry = existing as Record<string, unknown>
+          adopted = false
+          return current
+        }
+        resolvedEntry = adoptedEntry
+        adopted = true
+        return {
+          ...current,
+          installedSkills: { ...current.installedSkills, [manifestKey]: adoptedEntry },
+        }
+      })
+    } catch (adoptError) {
+      return {
+        adoptionError:
+          'Failed to adopt untracked skill "' +
+          skillName +
+          '" at ' +
+          installPath +
+          ' into manifest ' +
+          manifest.path +
+          ': ' +
+          (adoptError instanceof Error ? adoptError.message : String(adoptError)),
+      }
+    }
+    return { entry: resolvedEntry, adopted }
+  },
 }))
 
 describe('SMI-5593: skillsmith update — real update path', () => {
@@ -200,6 +277,18 @@ describe('SMI-5593: skillsmith update — real update path', () => {
       registryId: null,
       recoveredSource: null,
     })
+    // ADR-139 (SMI-6274 Wave 4): adoption defaults — succeed, and
+    // reconstruct an 'unknown'-version/source entry, matching production.
+    mocks.manifestUpdateSafelyFn.mockResolvedValue(undefined)
+    mocks.buildAdoptedEntryFn.mockImplementation(async (name: string, installPath: string) => ({
+      id: name,
+      name,
+      version: 'unknown',
+      source: 'unknown',
+      installPath,
+      installedAt: '2026-01-01T00:00:00.000Z',
+      lastUpdated: '2026-01-01T00:00:00.000Z',
+    }))
 
     // SMI-6103: default empty manifest — the two author-mismatch regression
     // tests fall through to this path and expect no manifest entry either.
@@ -276,7 +365,7 @@ describe('SMI-5593: skillsmith update — real update path', () => {
 
       expect(result).not.toBe('not-installed')
       expect(result).not.toBe('unresolvable')
-      if (typeof result === 'object') {
+      if (typeof result === 'object' && !('adoptionError' in result)) {
         expect(result.skillId).toBe('wrsmith108/astro')
         expect(result.changes.some((c) => c.includes('1.0.0 -> 2.0.0'))).toBe(true)
       }
@@ -288,8 +377,11 @@ describe('SMI-5593: skillsmith update — real update path', () => {
     // personal, unclaimed skills ("commit", "Linear") were silently
     // overwritten with unrelated same-named registry skills. With no
     // manifest entry and no SourceRecoveryService match configured in this
-    // test, the safe outcome is "unresolvable", never a confident diff
-    // against the wrong author's row.
+    // test, the safe outcome is a non-confident diff against the wrong
+    // author's row — and, per ADR-139 (SMI-6274 Wave 4), the untracked skill
+    // is now ADOPTED along the way, so the outcome is 'adopted-unresolvable'
+    // rather than the plain 'unresolvable' this returned before adoption
+    // existed.
     it('does NOT trust a bare-name cache match when the installed skill has no claimed author', async () => {
       await mockInstalledSkill('commit', { version: '1.0.0' }) // no author claimed
       mockCache([
@@ -305,7 +397,7 @@ describe('SMI-5593: skillsmith update — real update path', () => {
       const { getSkillDiff } = await import('../src/commands/manage.js')
       const result = await getSkillDiff('commit', '/fake/db.sqlite')
 
-      expect(result).toBe('unresolvable')
+      expect(result).toBe('adopted-unresolvable')
     })
 
     it('does NOT trust a bare-name cache match when the installed skill claims a DIFFERENT author', async () => {
@@ -323,8 +415,12 @@ describe('SMI-5593: skillsmith update — real update path', () => {
       const { getSkillDiff } = await import('../src/commands/manage.js')
       const result = await getSkillDiff('linear', '/fake/db.sqlite')
 
-      expect(result).toBe('unresolvable')
+      expect(result).toBe('adopted-unresolvable')
     })
+
+    // GPT-5.6-Sol PR review finding (ADR-139 follow-up, adoption-guessed-id
+    // guard): moved to manage.update.adoption.test.ts (this file grew past
+    // the 500-line standard) — see that file's identically-named test.
 
     // SMI-6103 (PR #2465 review finding): the cache scan must check every
     // same-name row for a matching author, not just the first one found —
@@ -354,7 +450,7 @@ describe('SMI-5593: skillsmith update — real update path', () => {
 
       expect(result).not.toBe('not-installed')
       expect(result).not.toBe('unresolvable')
-      if (typeof result === 'object') {
+      if (typeof result === 'object' && !('adoptionError' in result)) {
         expect(result.skillId).toBe('wrsmith108/astro')
         expect(result.changes.some((c) => c.includes('1.0.0 -> 2.0.0'))).toBe(true)
       }

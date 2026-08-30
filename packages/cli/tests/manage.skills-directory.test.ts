@@ -18,6 +18,30 @@ vi.mock('fs/promises', () => ({
   stat: vi.fn(),
 }))
 
+// ADR-139 (SMI-6274 Wave 4) / pre-push repro fix: getLocalSkillsDir() now
+// calls findWorkspaceRoot() to walk UP from cwd looking for a workspace
+// marker/`.git` boundary, instead of a bare join(process.cwd(), ...). When
+// vitest runs from the monorepo root (`/app`), that walk and this test's own
+// naive `join(process.cwd(), ...)` expectation happen to coincide (both are
+// `/app`) — but the real pre-push hook (and CI) runs `cd packages/cli &&
+// vitest run`, where cwd is a SUBDIRECTORY of the repo root; the SUT then
+// correctly walks up to the real repo-root `.claude/skills`, while the
+// test's expectation stayed pinned to `packages/cli/.claude/skills`,
+// producing a real (confirmed live) failure that only reproduces under the
+// real invocation directory. Fixed the same way `search.test.ts` mocks this
+// subpath: findWorkspaceRoot always resolves to a FIXED, deterministic
+// marker root, independent of the real process.cwd() at test-run time —
+// LOCAL_SKILLS_DIR below is derived from that SAME fixed root, not from
+// `process.cwd()`, so the test passes identically from either invocation
+// directory.
+vi.mock('@skillsmith/core/install', async (importOriginal) => {
+  const actual = await importOriginal<typeof import('@skillsmith/core/install')>()
+  return {
+    ...actual,
+    findWorkspaceRoot: vi.fn(() => ({ root: '/fixture-workspace-root', via: 'marker' as const })),
+  }
+})
+
 // Mock core - use class implementations to avoid vitest warning
 vi.mock('@skillsmith/core', () => ({
   createDatabase: vi.fn(() => ({ close: vi.fn() })),
@@ -40,11 +64,26 @@ vi.mock('@skillsmith/core', () => ({
       inferTrustTier: vi.fn(() => 'unknown'),
     }
   }),
+  // ADR-139 (SMI-6274 Wave 4): getSkillsFromDirectory() now loads the
+  // relevant manifest (via ManifestManager) to stamp `untracked` on each
+  // discovered skill, and keys the lookup via manifestKeyFor() — both must
+  // be present on this mock or the real (unmocked) undefined bindings throw.
+  // An always-empty manifest is sufficient here: these tests assert on
+  // discovery/precedence, not on `untracked`.
+  ManifestManager: vi.fn().mockImplementation(function () {
+    return { load: vi.fn(async () => ({ version: '1.0.0', installedSkills: {} })) }
+  }),
+  manifestKeyFor: vi.fn((name: string, client: string) =>
+    client === 'claude-code' ? name : `${name}::${client}`
+  ),
 }))
 
 describe('SMI-1630: Search both global and local skill directories', () => {
   const GLOBAL_SKILLS_DIR = join(homedir(), '.claude', 'skills')
-  const LOCAL_SKILLS_DIR = join(process.cwd(), '.claude', 'skills')
+  // Must match the fixed marker root the findWorkspaceRoot mock above
+  // resolves to — NOT process.cwd(), which is the exact fragility this fix
+  // closes (see the mock's comment above).
+  const LOCAL_SKILLS_DIR = join('/fixture-workspace-root', '.claude', 'skills')
 
   const mockSkillMd = (name: string, version: string) => `---
 name: ${name}
@@ -194,15 +233,18 @@ A test skill.
     const { getInstalledSkills } = await import('../src/commands/manage.js')
     const skills = await getInstalledSkills()
 
-    // Should only have one skill (deduplicated)
-    expect(skills).toHaveLength(1)
+    // ADR-139 (SMI-6274 Wave 4): dedup now keys on the full (scope, client,
+    // name) triple, not name alone — a skill independently installed at
+    // BOTH global and workspace scope is genuinely distinct disk state and
+    // both rows now survive (previously the workspace/local copy silently
+    // won and the global copy was dropped entirely).
+    const sharedSkills = skills.filter((s) => s.name === 'shared-skill')
+    expect(sharedSkills).toHaveLength(2)
 
-    // The local skill should take precedence (verified by path)
-    const sharedSkill = skills.find((s) => s.name === 'shared-skill')
-    expect(sharedSkill).toBeDefined()
-    // Key assertion: local path takes precedence over global
-    expect(sharedSkill?.path).toContain(LOCAL_SKILLS_DIR)
-    expect(sharedSkill?.path).not.toContain(GLOBAL_SKILLS_DIR)
+    const localSkill = sharedSkills.find((s) => s.scope === 'workspace')
+    const globalSkill = sharedSkills.find((s) => s.scope === 'global')
+    expect(localSkill?.path).toContain(LOCAL_SKILLS_DIR)
+    expect(globalSkill?.path).toContain(GLOBAL_SKILLS_DIR)
   })
 
   it('should handle missing local skills directory gracefully', async () => {

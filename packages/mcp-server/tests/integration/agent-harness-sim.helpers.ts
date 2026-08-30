@@ -103,6 +103,18 @@ export function createIsolatedHome(prefix: string): { homeDir: string; cleanup: 
  * this is the consent-off/no-network-telemetry default every real install
  * starts from, and it is what lets the consent-gating assertions run fully
  * offline (see the file header of `agent-harness-sim.test.ts`).
+ *
+ * `SKILLSMITH_SKIP_SKILL_INSTALL` only silences the BUNDLED first-run
+ * install; the separate Tier-1 REGISTRY auto-install/self-heal path
+ * (`onboarding/tier1-self-heal.ts`, installing real `getsentry/*` skills) has
+ * its own kill switch, `SKILLSMITH_TIER1_AUTOINSTALL_DISABLE`, which this
+ * previously omitted — harmless while `getInstallPath()` was purely
+ * `homedir()`-based (so it landed inside this isolated `homeDir`), but ADR-139
+ * moved the resolver to `resolveScopedSkillsDir()`, whose auto-detect walks
+ * ancestors from the spawned process's `cwd` (unset here, so it inherited the
+ * real repo root) before falling back to global — reliably installing real
+ * `getsentry/skill-writer`/`getsentry/commit` skills into this worktree's own
+ * tracked `.claude/skills` submodule on every run. Both switches are now set.
  */
 export function baseSpawnEnv(homeDir: string): Record<string, string> {
   return {
@@ -111,6 +123,7 @@ export function baseSpawnEnv(homeDir: string): Record<string, string> {
     SKILLSMITH_DB_PATH: ':memory:',
     SKILLSMITH_AUTO_UPDATE_CHECK: 'false',
     SKILLSMITH_SKIP_SKILL_INSTALL: '1',
+    SKILLSMITH_TIER1_AUTOINSTALL_DISABLE: '1',
     SKILLSMITH_TOOL_PROFILE: 'agent',
   }
 }
@@ -266,6 +279,14 @@ export async function connectHarness(
     command: 'node',
     args: [DIST_ENTRY],
     env,
+    // Defense in depth alongside the env-based kill switches in
+    // baseSpawnEnv(): an unset `cwd` inherits the spawning vitest worker's
+    // real repo-root cwd, which is exactly the ancestor-walk starting point
+    // ADR-139's resolveScopedSkillsDir() auto-detect uses. `env.HOME` is
+    // always this test's isolated homeDir (no `.git`, so ancestor-walk
+    // correctly falls through to global scope) — pin `cwd` to match so any
+    // future cwd-based resolution added to the server also stays contained.
+    cwd: env['HOME'],
     stderr: 'pipe',
   })
 

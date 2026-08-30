@@ -13,6 +13,23 @@ All notable changes to `@skillsmith/cli` are documented here.
   failure here does not block the command (this is a display command, not a gate) — it shows a
   "could not verify" message instead of ever displaying a fabricated tier, since a single-shot
   CLI invocation has no cached last-known tier to fall back to (SMI-6266 Wave 2, SMI-6272)
+- **Feature**: `install`/`update`/`remove` gain a new `--scope <global|workspace>` flag
+  (ADR-139, SMI-6274 Wave 4) — `workspace` resolves against the nearest ancestor workspace
+  marker or `.git` root instead of the client's home-anchored global directory, creating the
+  workspace skills directory if none exists yet (the only path allowed to create one implicitly).
+  Precedence: `--scope` > `SKILLSMITH_SCOPE` env var > per-client `~/.skillsmith/config.json`
+  default > auto-detecting an EXISTING workspace directory > global (unchanged default — no
+  existing install moves, nothing changes for anyone who doesn't opt in). `remove`/`update` now
+  resolve against the exact `(scope, client, name)` triple rather than "whichever scope happened
+  to match by name." `list` now scans every client's workspace directory (not just Claude Code's
+  repo-local one) alongside every global directory, labels each row's scope, and marks a skill
+  present on disk with no manifest entry `[untracked]` instead of silently omitting it —
+  `remove`/`update` now adopt such a skill (reconstructing a manifest entry from disk) instead of
+  requiring `--force`. `agent install --scope workspace` can bootstrap AntiGravity as a target in
+  a fresh repo by creating `.agents/skills`. `getLocalSkillsDir()` is now a deprecated thin
+  wrapper delegating to the new resolver (also fixing a real bug: it previously never walked up
+  from `cwd`, so `list` run from a repo subdirectory silently missed the repo-root
+  `.claude/skills`)
 
 - **Fix**: `skillsmith diagnose` now checks whether your Cursor MCP registration (both the
   global `~/.cursor/mcp.json` and any project-scoped copy) is on the current, working config

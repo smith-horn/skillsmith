@@ -4,6 +4,25 @@ All notable changes to `@skillsmith/mcp-server` are documented here.
 
 ## [Unreleased]
 
+- **Feature**: `install_skill`/`uninstall_skill` gain `scope`/`client`/`cwd` input parameters
+  (ADR-139, SMI-6274 Wave 4) — `install_skill` previously called `getInstallPath()` directly,
+  the old global-only resolution, so the MCP server could never reach a workspace-scoped
+  install regardless of `SKILLSMITH_SCOPE`, contradicting the ADR's stated requirement that
+  the MCP server reach the identical scope resolution the CLI already has. Both tools now
+  route through `resolveScopedSkillsDir()`, with the same 5-rank precedence the CLI's
+  `--scope` flag uses; `SKILLSMITH_SCOPE` remains available for callers that can only set
+  process env, but a per-call `scope` parameter is also exposed since this is a long-running
+  server process where one env var can't express "this install workspace-scoped, that one
+  global" within a single session. `uninstall_skill` additionally gained `client` (it could
+  previously only ever target the canonical client's global directory). The MCP-only conflict
+  pre-flight check (`conflictAction`'s entire effect — `SkillInstallationService.install()`
+  itself never reads that option) now reads the scope-resolved manifest (`loadManifest()`
+  gained an optional `manifestPath` argument) instead of always the global one, so it works
+  correctly for both scopes rather than being gated to global only. `uninstall_skill`'s
+  `--also-link` fan-out cleanup (`removeLinks()`) is now gated to `client === CANONICAL_CLIENT`,
+  matching the CLI's own `remove` command guard — that mechanism has no scope or per-destination
+  client awareness, so calling it unconditionally could delete an unrelated canonical install's
+  fan-out links whenever a non-canonical-client copy of the same-named skill is uninstalled.
 - **Feature**: SMI-6205 Wave 4 SSO member lifecycle — JIT team provisioning on login,
   seat-limit enforcement, and license-key binding/expiry tied to SSO login freshness, plus
   dual-consent identity linking between a JIT-provisioned SSO account and a pre-existing

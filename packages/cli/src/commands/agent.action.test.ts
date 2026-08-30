@@ -18,10 +18,19 @@ vi.mock('@skillsmith/core/telemetry', () => ({
   ) => fn,
 }))
 
-vi.mock('@skillsmith/core/install', () => ({
-  installAgentPack: vi.fn(),
-  uninstallAgentPack: vi.fn(),
-}))
+vi.mock('@skillsmith/core/install', async (importOriginal) => {
+  // ADR-139 (SMI-6274 Wave 4): runInstall() now calls the real
+  // parseInstallScope() to validate --scope before calling
+  // installAgentPack() — pulled in via importOriginal rather than
+  // hand-mocked, since it's a pure validation function with no side
+  // effects (avoids this mock drifting from the real implementation).
+  const actual = await importOriginal<typeof import('@skillsmith/core/install')>()
+  return {
+    ...actual,
+    installAgentPack: vi.fn(),
+    uninstallAgentPack: vi.fn(),
+  }
+})
 
 import { installAgentPack, uninstallAgentPack } from '@skillsmith/core/install'
 import {

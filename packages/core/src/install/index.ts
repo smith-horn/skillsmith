@@ -82,3 +82,24 @@ export {
   isAllowedManifestEntryPath,
   isAllowedManifestBackupPath,
 } from './agent-manifest-path-guard.js'
+
+// ADR-139 (SMI-6274 Wave 4): global-vs-workspace install scope resolution.
+export {
+  CLIENT_WORKSPACE_SEGMENTS,
+  InvalidScopeValueError,
+  UnsatisfiableWorkspaceScopeError,
+  findWorkspaceRoot,
+  getDefaultScopeForClient,
+  parseInstallScope,
+  resolveScopedSkillsDir,
+  resolveSkillScope,
+  resolveWorkspaceManifestPath,
+} from './workspace-scope.js'
+export type {
+  FindWorkspaceRootOptions,
+  InstallScope,
+  ResolveScopeParams,
+  ResolvedSkillScope,
+  ScopedInstallTarget,
+  WorkspaceRootResult,
+} from './workspace-scope.js'

@@ -14,7 +14,7 @@
 
 import chalk from 'chalk'
 
-import { installAgentPack, uninstallAgentPack } from '@skillsmith/core/install'
+import { installAgentPack, parseInstallScope, uninstallAgentPack } from '@skillsmith/core/install'
 import type { MergeStatus } from '@skillsmith/core/install'
 import { getCliLogger } from '../cli-logger.js'
 import { withTelemetry } from '@skillsmith/core/telemetry'
@@ -28,6 +28,14 @@ const logger = getCliLogger()
 
 export interface AgentInstallCliOptions {
   force?: boolean
+  /**
+   * ADR-139 (SMI-6274 Wave 4): `'workspace'` bootstraps AntiGravity as a
+   * target by creating (if needed) its workspace-scoped `.agents/skills`
+   * directory — the only thing allowed to create it (point 5's Wave 5
+   * bootstrap requirement). Omitted/`'global'` preserves today's behavior
+   * exactly (AntiGravity untouched by `agent install`).
+   */
+  scope?: 'global' | 'workspace'
 }
 
 function mergeStatusColor(status: MergeStatus): (text: string) => string {
@@ -43,7 +51,14 @@ function mergeStatusColor(status: MergeStatus): (text: string) => string {
  * @see SMI-5456
  */
 export async function runInstall(opts: AgentInstallCliOptions = {}): Promise<void> {
-  const result = installAgentPack({ force: opts.force ?? false })
+  // Commander passes an unvalidated raw string — parseInstallScope() throws
+  // InvalidScopeValueError for anything other than global/workspace/empty,
+  // caught by this function's caller (agentInstallActionImpl).
+  const scope = parseInstallScope(opts.scope)
+  const result = installAgentPack({
+    force: opts.force ?? false,
+    ...(scope !== undefined && { scope }),
+  })
 
   console.log(chalk.bold('Skillsmith Agent — install report'))
   console.log()

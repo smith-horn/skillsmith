@@ -9,302 +9,30 @@
 import { confirm } from '@inquirer/prompts'
 import chalk from 'chalk'
 import ora from 'ora'
-import { readFile } from 'fs/promises'
-import { basename, join } from 'path'
 import {
   SkillRepository,
   SkillDependencyRepository,
   SkillInstallationService,
-  SkillParser,
-  SourceRecoveryService,
-  hashContent,
-  manifestKeyFor,
-  type DatabaseType,
-  type RecoveryConfidence,
-  type Skill,
-  type SkillRecoveryResult,
 } from '@skillsmith/core'
 import { openCliDatabase } from '../utils/open-database.js'
 import { DEFAULT_MANIFEST_PATH } from '../config.js'
 import { sanitizeError } from '../utils/sanitize.js'
-import { loadManifest } from '../utils/manifest.js'
-import { getInstalledSkillsForClient, type InstalledSkill } from '../utils/skills-directory.js'
-import {
-  buildFindCandidatesByName,
-  buildFindRegistryIdByRepoUrl,
-} from '../utils/source-recovery-deps.js'
+import { getInstalledSkillsForClient } from '../utils/skills-directory.js'
 import { createApiBackedRegistryLookup } from './install.js'
-import { CANONICAL_CLIENT, getInstallPath, type ClientId } from '@skillsmith/core/install'
+import { installedViaFor, getSkillDiff } from './manage.update.helpers.js'
+import {
+  CANONICAL_CLIENT,
+  getInstallPath,
+  type ClientId,
+  type ScopedInstallTarget,
+} from '@skillsmith/core/install'
 
-/**
- * Extended Skill type with optional version field.
- * Used for type-safe version comparisons in getSkillDiff.
- */
-interface SkillWithVersion extends Skill {
-  version?: string
-}
-
-/**
- * SMI-5895 (Wave 2 Step 1): confidence tiers that {@link recoverConfidentSourceId}
- * auto-applies without asking the user to confirm — matches the same
- * "exact/high/user-specified auto-backfill, medium/low review-only" floor
- * `backfillManifest`'s own default `minConfidence: 'high'` already encodes
- * (`provenance/backfill.ts`, `commands/audit-sources.ts --min-confidence`
- * default). A medium/low match is a *speculative* name lookup — silently
- * trusting it here could overwrite a local skill with the wrong upstream
- * version, so `update` fails safely instead (plan-review correction).
- */
-const AUTO_APPLY_RECOVERY_CONFIDENCES = new Set<RecoveryConfidence>([
-  'exact',
-  'high',
-  'user-specified',
-])
-
-/**
- * SMI-5895 (Wave 2 Step 1): fall back to `SourceRecoveryService` (SMI-5407,
- * already exposed via `sklx audit sources` / `skill_recover_source`) ONLY
- * when the manifest has no entry for this skill at all. Gated on confidence
- * — see {@link AUTO_APPLY_RECOVERY_CONFIDENCES}. Returns null (never
- * throws) when recovery is unavailable, unresolved/ambiguous, or below the
- * auto-apply confidence floor; the caller directs the user to
- * `sklx audit sources` for manual review in that case.
- */
-async function recoverConfidentSourceId(
-  skillName: string,
-  installed: InstalledSkill,
-  db: DatabaseType
-): Promise<string | null> {
-  let skillMd: string | null
-  try {
-    skillMd = await readFile(join(installed.path, 'SKILL.md'), 'utf-8')
-  } catch {
-    skillMd = null
-  }
-  const service = new SourceRecoveryService({
-    hashContent,
-    findCandidatesByName: buildFindCandidatesByName(db),
-    findRegistryIdByRepoUrl: buildFindRegistryIdByRepoUrl(db),
-  })
-  let result: SkillRecoveryResult
-  try {
-    result = await service.recoverOne(installed.path, skillName, skillMd)
-  } catch {
-    // The injected deps hit the local `skills` cache directly, so a missing/
-    // corrupt table throws rather than returning zero candidates. Recovery is
-    // a best-effort fallback — degrade to "unresolvable" (whose message points
-    // at `sklx audit sources`) instead of failing the whole update command.
-    return null
-  }
-  if (result.status !== 'recovered' || !AUTO_APPLY_RECOVERY_CONFIDENCES.has(result.confidence)) {
-    return null
-  }
-  // SMI-5895 review (D-1): prefer the skill-specific recoveredSource.url over
-  // registryId. registryId comes from findRegistryIdByRepoUrl's `repo_url`-only
-  // lookup (source-recovery-deps.ts), which has no per-skill disambiguation --
-  // a multi-skill plugin/monorepo shares one repo_url across every skill in it,
-  // so it can resolve to a DIFFERENT skill's registry row than the one being
-  // recovered. recoveredSource is always populated alongside registryId for
-  // both auto-apply-eligible tiers (SourceRecoveryService.recoverOne's
-  // git-remote/plugin-json branches), so this never loses real recovery
-  // coverage -- registryId only remains as a defensive fallback for a future
-  // confidence tier that might populate one without the other.
-  return result.recoveredSource?.url ?? result.registryId ?? null
-}
-
-/**
- * SMI-6103: the installed skill's own claimed author, read directly from its
- * SKILL.md front-matter (never null-defaulted to a directory/display name —
- * an unclaimed "Local" skill, the website's own term, genuinely has none).
- * Returns null on any read/parse failure or an absent `author` field.
- */
-async function readClaimedAuthor(installedPath: string): Promise<string | null> {
-  try {
-    const skillMd = await readFile(join(installedPath, 'SKILL.md'), 'utf-8')
-    const parsed = new SkillParser().parse(skillMd)
-    const author = (parsed as unknown as Record<string, unknown> | undefined)?.['author']
-    return typeof author === 'string' && author.trim().length > 0 ? author.trim() : null
-  } catch {
-    return null
-  }
-}
-
-/** Resolved diff/update target for a single installed skill. */
-interface SkillDiff {
-  /** Full `author/name` registry ID to pass to SkillInstallationService.install(). */
-  skillId: string
-  oldVersion: string | null
-  newVersion: string | null
-  changes: string[]
-}
-
-/**
- * Get skill diff for an installed skill, checking the local registry cache
- * first and falling back to the remote registry when the cache doesn't have
- * it (SMI-5427: the local SQLite cache is commonly empty in the
- * remote-default world — the local-only lookup this replaced would report
- * "not found in registry" for most real installs).
- *
- * Returns `'not-installed'` when the skill isn't installed at all, or
- * `'unresolvable'` when it's installed but no registry ID can be resolved
- * for it — from the local cache, the manifest, or (below) a confident
- * SourceRecoveryService recovery.
- *
- * SMI-5894 (Wave 1 Steps 2/3): `client` scopes the "is this installed"
- * lookup to the resolved client's own directory (plus repo-local skills)
- * via `getInstalledSkillsForClient`, instead of `getInstalledSkills()`'s
- * global cross-client dedup. Without this, a skill installed under two
- * clients with the same name would always resolve to whichever client wins
- * that dedup's precedence (Claude Code), not necessarily the client the
- * caller asked `update --client <id>` to target.
- *
- * SMI-5895 (Wave 2 Step 1): when the local cache doesn't have the skill,
- * this now consults `~/.skillsmith/manifest.json` — which
- * `SkillInstallationService.install()` already writes a correct `id`/
- * `source` into on every successful install (skill-installation.service.ts)
- * — keyed by `manifestKeyFor(<install dir basename>, client)` so a
- * same-named skill installed independently under two clients resolves to
- * the entry that actually matches the client being asked about, not
- * whichever one was written last (see the key-derivation note at the lookup
- * site). Only when the manifest entry is genuinely missing does this
- * fall back to a confidence-gated `SourceRecoveryService` recovery (see
- * {@link recoverConfidentSourceId}) — replacing the previous
- * `resolveInstalledSkillId()` dead code, which read a `SKILL.md`
- * front-matter `id` field `SkillParser` never actually populates.
- */
-async function getSkillDiff(
-  skillName: string,
-  dbPath: string,
-  client: ClientId = CANONICAL_CLIENT
-): Promise<SkillDiff | 'not-installed' | 'unresolvable'> {
-  const installed = (await getInstalledSkillsForClient(client, dbPath)).find(
-    (s) => s.name.toLowerCase() === skillName.toLowerCase()
-  )
-  if (!installed) {
-    return 'not-installed'
-  }
-
-  const db = await openCliDatabase(dbPath)
-  const skillRepo = new SkillRepository(db)
-
-  try {
-    // Find skill in the local registry cache by name (case-insensitive search).
-    // SMI-6103: a bare-name match here is only trustworthy when the installed
-    // skill's OWN front-matter claims the same author as the matched cache
-    // row — otherwise this silently resolves to an unrelated same-named
-    // skill from a different author (confirmed data loss: two personal,
-    // unclaimed skills were overwritten with unrelated registry content this
-    // way). A skill with no claimed author at all ("Local", the website's
-    // own term for this) must fall through to the confidence-gated
-    // manifest/recovery path below rather than be trusted here. Matching
-    // must scan every same-name row for one whose author agrees — not just
-    // the first same-name row found — otherwise an unrelated author's row
-    // that happens to sort first in the cache would make a legitimate
-    // same-name, correct-author update wrongly unresolvable (plan-review
-    // correction, GPT-5.6-Sol PR review on #2465).
-    const allSkills = skillRepo.findAll(1000, 0)
-    const claimedAuthor = await readClaimedAuthor(installed.path)
-    const nameMatches = allSkills.items.filter(
-      (s: Skill) => s.name.toLowerCase() === skillName.toLowerCase()
-    )
-    const skill = claimedAuthor
-      ? nameMatches.find(
-          (s: Skill) => s.author && s.author.toLowerCase() === claimedAuthor.toLowerCase()
-        )
-      : undefined
-
-    if (skill) {
-      const changes: string[] = []
-      const skillWithVersion = skill as SkillWithVersion
-
-      if (installed.version !== skillWithVersion.version) {
-        changes.push(
-          `Version: ${installed.version || 'N/A'} -> ${skillWithVersion.version || 'N/A'}`
-        )
-      }
-
-      if (installed.trustTier !== skill.trustTier) {
-        changes.push(`Trust Tier: ${installed.trustTier || 'unknown'} -> ${skill.trustTier}`)
-      }
-
-      return {
-        skillId: skill.id,
-        oldVersion: installed.version,
-        newVersion: skillWithVersion.version || null,
-        changes,
-      }
-    }
-    // No bare-name cache row whose author agrees with the installed skill's
-    // own claim (or no claim at all) — do not trust any bare-name match.
-    // Fall through to the manifest / confidence-gated recovery path.
-
-    // Not in the local cache — consult the manifest first (SMI-5895 Wave 2
-    // Step 1: the manifest entry install() already wrote is the source of
-    // truth this was previously never reading), keyed by (name, client) per
-    // Wave 1 Step 3 so a same-named skill installed under two clients
-    // resolves the entry that matches THIS client, not name alone.
-    //
-    // The key is derived from the install DIRECTORY basename, not from
-    // `skillName` (the caller-supplied argument) or `installed.name` (which
-    // `getSkillsFromDirectory` takes from SKILL.md front-matter, falling
-    // back to the directory name). `install()` builds both `installPath =
-    // join(skillsDir, skillName)` and `manifestKeyFor(skillName, client)`
-    // from the same string, so the basename is the only value guaranteed to
-    // reproduce the key it wrote — the argument is matched case-insensitively
-    // ("update Astro" resolves the `astro` install) and front-matter `name`
-    // can differ from the directory outright, so keying off either silently
-    // misses the entry and falls through to source recovery.
-    const manifest = await loadManifest()
-    const manifestEntry =
-      manifest.installedSkills?.[manifestKeyFor(basename(installed.path), client)]
-    const manifestId =
-      manifestEntry && typeof manifestEntry.id === 'string' && manifestEntry.id.trim().length > 0
-        ? manifestEntry.id
-        : null
-
-    // Genuinely missing from the manifest — fall back to a confidence-gated
-    // SourceRecoveryService recovery (SMI-5407). Never silently trust a
-    // medium/low-confidence speculative match here.
-    const resolvedId = manifestId ?? (await recoverConfidentSourceId(skillName, installed, db))
-    if (!resolvedId) {
-      return 'unresolvable'
-    }
-
-    // A raw GitHub URL (a direct-URL install's manifest `id`, or a
-    // git-remote/plugin-json SourceRecoveryService recovery) isn't a
-    // registry ID — skip the registry API confirmation below and let the
-    // force-install fetch it directly, same as a direct-URL `install` does.
-    if (resolvedId.startsWith('https://github.com/')) {
-      return {
-        skillId: resolvedId,
-        oldVersion: installed.version,
-        newVersion: null,
-        changes: [
-          `Source resolved to ${resolvedId} — no cached version to diff; will fetch and overwrite with the latest content.`,
-        ],
-      }
-    }
-
-    const registryLookup = await createApiBackedRegistryLookup(skillRepo, db)
-    const remote = await registryLookup.lookup(resolvedId)
-    if (!remote) {
-      return 'unresolvable'
-    }
-
-    // The registry API doesn't expose a comparable version string, so we
-    // can't render a version diff here — confirm the source and let the
-    // force-install fetch + overwrite with the latest content.
-    return {
-      skillId: resolvedId,
-      oldVersion: installed.version,
-      newVersion: null,
-      changes: [
-        `Registry source confirmed at ${remote.repoUrl} — no cached version to diff; will fetch and overwrite with the latest content.`,
-      ],
-    }
-  } finally {
-    db.close()
-  }
-}
+// `SkillDiff` and `getSkillDiff` moved to manage.update.helpers.ts (SMI-6274
+// Wave 4, file-length gate) — `getSkillDiff` imported above for local use
+// (updateSkill calls it directly) and re-exported at the bottom of this file
+// alongside updateSkill/updateSkills so manage.action.ts's existing
+// `from './manage.update.js'` import path is unaffected.
+export type { SkillDiff } from './manage.update.helpers.js'
 
 /**
  * Update a single skill. With `dryRun`, shows the same diff preview without
@@ -314,18 +42,26 @@ async function getSkillDiff(
  * update — resolved by the caller (explicit `--client`, else
  * `SKILLSMITH_CLIENT`, else canonical). Replaces the previously frozen
  * `DEFAULT_SKILLS_DIR` (always Claude Code) with a per-invocation
- * resolution via `getInstallPath(client)`.
+ * resolution.
+ *
+ * ADR-139 (SMI-6274 Wave 4): `scopeTarget` (when passed) resolves the exact
+ * `(scope, client)` write target — `skillsDir`/`manifestPath` come from it
+ * rather than always `getInstallPath(client)`/the global manifest, so an
+ * `update --scope workspace` overwrites the workspace copy, never the
+ * global one. Optional (defaulting to the canonical global resolution) so
+ * this stays callable from tests/callers that predate ADR-139.
  */
 async function updateSkill(
   skillName: string,
   dbPath: string,
   dryRun = false,
-  client: ClientId = CANONICAL_CLIENT
+  client: ClientId = CANONICAL_CLIENT,
+  scopeTarget?: ScopedInstallTarget
 ): Promise<boolean> {
   const spinner = ora(`Checking updates for ${skillName}...`).start()
 
   try {
-    const diff = await getSkillDiff(skillName, dbPath, client)
+    const diff = await getSkillDiff(skillName, dbPath, client, scopeTarget)
 
     if (diff === 'not-installed') {
       spinner.fail(
@@ -338,6 +74,25 @@ async function updateSkill(
       spinner.fail(
         `"${skillName}" has no recorded registry source — run "sklx audit sources" to recover it, or "skillsmith install <author>/${skillName} --force" with the full ID`
       )
+      return false
+    }
+
+    if (diff === 'adopted-unresolvable') {
+      // ADR-139 (SMI-6274 Wave 4): this skill WAS untracked (no manifest
+      // entry) and has now been adopted — a manifest entry exists with
+      // version/source recorded as "unknown" — but no registry source could
+      // be determined for it either. The command "says so" explicitly per
+      // ADR-139 point 1, distinct from the generic 'unresolvable' message.
+      spinner.fail(
+        `"${skillName}" was untracked and has been adopted (version/source recorded as "unknown"), ` +
+          `but no registry source could be determined — run "sklx audit sources" to recover it, ` +
+          `or "skillsmith install <author>/${skillName} --force" to set the real source`
+      )
+      return false
+    }
+
+    if ('adoptionError' in diff) {
+      spinner.fail(diff.adoptionError)
       return false
     }
 
@@ -381,8 +136,8 @@ async function updateSkill(
         db,
         skillRepo,
         skillDependencyRepo,
-        skillsDir: getInstallPath(client),
-        manifestPath: DEFAULT_MANIFEST_PATH,
+        skillsDir: scopeTarget?.dir ?? getInstallPath(client),
+        manifestPath: scopeTarget?.manifestPath ?? DEFAULT_MANIFEST_PATH,
         registryLookup,
         client,
         // SMI-5982 PR-review follow-up: explicit now that
@@ -422,15 +177,29 @@ async function updateSkill(
  *
  * SMI-5894 (Wave 1 Steps 2/3): `client` scopes both the `--all` skill-name
  * enumeration and each per-skill update to the resolved client.
+ *
+ * ADR-139 (SMI-6274 Wave 4): `scopeTarget` (when passed) additionally
+ * narrows the `--all` enumeration to skills actually installed at THIS
+ * exact `(scope, client)` pair — without it, `update --all --scope
+ * workspace` would enumerate every one of `client`'s installs (global AND
+ * workspace) and then try to write every one of them to the workspace
+ * directory.
  */
 async function updateSkills(
   names: string[] | undefined,
   dbPath: string,
   dryRun: boolean,
-  client: ClientId = CANONICAL_CLIENT
+  client: ClientId = CANONICAL_CLIENT,
+  scopeTarget?: ScopedInstallTarget
 ): Promise<void> {
+  const wantedVia = installedViaFor(client)
   const targetNames =
-    names ?? (await getInstalledSkillsForClient(client, dbPath)).map((s) => s.name)
+    names ??
+    (await getInstalledSkillsForClient(client, dbPath))
+      .filter(
+        (s) => !scopeTarget || (s.installedVia === wantedVia && s.scope === scopeTarget.scope)
+      )
+      .map((s) => s.name)
 
   if (targetNames.length === 0) {
     console.log(chalk.yellow('No skills installed'))
@@ -443,7 +212,7 @@ async function updateSkills(
   let failed = 0
 
   for (const name of targetNames) {
-    const success = await updateSkill(name, dbPath, dryRun, client)
+    const success = await updateSkill(name, dbPath, dryRun, client, scopeTarget)
     if (success) {
       updated++
     } else {
