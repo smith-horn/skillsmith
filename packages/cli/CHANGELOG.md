@@ -28,6 +28,12 @@ All notable changes to `@skillsmith/cli` are documented here.
   fails closed on a network/timeout error rather than silently passing or downgrading a real
   paying customer
 
+- **Fix**: `skillsmith login` (device-code flow) now refuses cleanly for SSO-provisioned users
+  instead of silently logging into the wrong account. Prints the server's refusal message and
+  points to the personal-API-key alternative (`/account/cli-token/` + `SKILLSMITH_API_KEY`).
+  Server-supplied error text is sanitized (control characters, bidi-override characters) before
+  being written to the terminal. Part of SMI-6206.
+
 - **Breaking**: `sync` (and `sync config --enable`) now require Team+ tier — Community and
   Individual tiers can no longer bulk-download the skill registry. The registry has grown far
   larger than this feature was designed for (hundreds of thousands of records, still growing),
