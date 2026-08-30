@@ -111,12 +111,25 @@ export function computeRemainingElapsedMs(params: {
 
 /**
  * SMI-6246/ADR-140: bounded retry loop for a lock-skipped acquisition attempt.
- * Guarantees a final attempt at (never after) the deadline — the invariant's
- * proof requires this; a loop that merely stops whenever its last sleep
- * happens to land is not covered by it. Never applied to backfill's own
- * acquisition (see {@link isBackfillAcquisition}) — those dispatches are
- * already GHA-serialized against each other via the `skill-indexer-backfill`
+ * Guarantees a final attempt at the deadline boundary — the invariant's proof
+ * requires this; a loop that merely stops whenever its last sleep happens to
+ * land is not covered by it. Never applied to backfill's own acquisition
+ * (see {@link isBackfillAcquisition}) — those dispatches are already
+ * GHA-serialized against each other via the `skill-indexer-backfill`
  * concurrency group.
+ *
+ * pr-reviewer round-3 finding: a real `setTimeout` can wake LATE (ordinary
+ * event-loop scheduling slack under load) but never early, so `sleep()`
+ * below can resolve after `deadline` has already passed, meaning the loop's
+ * next iteration technically *starts* its final attempt slightly after the
+ * boundary rather than exactly at it. A literal zero-drift "never starts
+ * after the deadline" is not a guarantee any real, single-threaded
+ * event-loop timer can make — what this function actually guarantees is
+ * that once that attempt starts, it is capped to an effectively-zero
+ * timeout (see `cappedAttemptTimeoutMs` below), so it can never itself
+ * extend the overshoot by a meaningful amount. That residual scheduling
+ * slack is milliseconds at most, dwarfed by ADR-140's multi-minute margins
+ * (`R`/`H_worst`/`G`), and does not threaten the timing invariant.
  */
 export async function retryAcquireLock(
   supabase: SupabaseClient,

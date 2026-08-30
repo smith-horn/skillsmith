@@ -290,6 +290,38 @@ describe('SMI-6246/ADR-140: retryAcquireLock', () => {
       expect(rpc).toHaveBeenCalledTimes(1) // never got to a second attempt
     })
   })
+
+  // pr-reviewer round-3 finding: a real setTimeout can wake LATE (ordinary
+  // event-loop scheduling slack) but never early, so the sleep between
+  // attempts can resolve after `deadline` has already passed -- meaning the
+  // loop's next attempt technically *starts* slightly after the boundary,
+  // not exactly at it. This uses the injectable sleep/now hooks (not fake
+  // timers) to simulate that overshoot directly and prove the actual
+  // guarantee: once that late-starting attempt begins, it is capped to an
+  // effectively-zero timeout rather than the full attemptTimeoutMs, so it
+  // can never itself compound the overshoot into something meaningful.
+  it('a late-firing sleep that lands past the deadline still resolves promptly, never blocking on the full attemptTimeoutMs', async () => {
+    const rpc = vi.fn().mockImplementation(() => new Promise(() => {})) // stalls forever
+    let elapsed = 0
+    const now = () => elapsed
+    const sleep = vi.fn().mockImplementation(async (ms: number) => {
+      // A real setTimeout only ever wakes AT OR AFTER its requested delay --
+      // simulate ordinary event-loop scheduling slack by overshooting past
+      // what was requested, landing after the deadline before the next
+      // attempt even starts.
+      elapsed += ms + 25
+    })
+    const result = await retryAcquireLock({ rpc } as never, 'run-1', {
+      windowMs: 50,
+      pollMs: 50,
+      attemptTimeoutMs: 10_000,
+      sleep,
+      now,
+    })
+    // The loop must still return promptly rather than waiting out the full
+    // (uncapped) attemptTimeoutMs on the deadline-overshooting attempt.
+    expect(result).toEqual({ acquired: false, error: null })
+  })
 })
 
 describe('SMI-6246: isBackfillAcquisition', () => {
