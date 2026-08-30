@@ -128,6 +128,23 @@ export function displayLicenseStatus(status: LicenseStatus): void {
 /**
  * Display the full CLI header with version and license info
  *
+ * SMI-6271 (Wave 1 of SMI-6266) decision: this stays on the offline-only
+ * `getLicenseStatus()` path — it is deliberately NOT migrated to the new
+ * `resolveEffectiveTier()` live resolver (`../utils/require-tier.js`), unlike
+ * `audit advisories`/`diff`/`pin`/`audit collisions`/`config get|set
+ * audit_mode`. This banner runs via a `preAction` hook on essentially every
+ * interactive TTY command invocation (see `packages/cli/src/index.ts`), not
+ * once per gated command — migrating it would add a live network round trip
+ * (up to `resolveEffectiveTier()`'s 5s timeout) to every single CLI
+ * invocation just to render a decorative, non-gating tier badge. It is
+ * best-effort display only (SMI-5427: `console.error`, never blocks a
+ * command), so an API-key/session-only user seeing a stale "Community" badge
+ * here is a known, accepted limitation of this wave — `skillsmith whoami`
+ * (Wave 2 of SMI-6266) is the intended live-tier display surface; any
+ * command that actually GATES on tier already gets the live resolution via
+ * `requireTier()`/`resolveEffectiveTier()` regardless of what this banner
+ * shows.
+ *
  * @param version - CLI version string
  */
 export async function displayStartupHeader(version: string): Promise<void> {
