@@ -131,12 +131,16 @@ check_anon_budget_counter_increments() {
   # _anon_budget_layer2_shadow/_anon_budget_layer2_enforce's own
   # _anon_budget_search_request call sites below): check_anon_usage
   # increments non-idempotently on every call this makes, and this check's
-  # own assertion is an EXACT used2 == used1+1 delta -- a
-  # phantom retry (whether from a genuinely ambiguous "000" status or from
-  # with_retry's substring match false-firing on a "000" appearing anywhere
-  # in the response BODY, e.g. a `.000Z` millisecond-precision timestamp in
-  # a real skill row) would silently add an extra real increment neither
-  # side of the delta accounts for.
+  # own assertion is an EXACT used2 == used1+1 delta -- a phantom retry on a
+  # genuinely ambiguous "000" status would silently add an extra real
+  # increment neither side of the delta accounts for. (SMI-6284 fixed
+  # with_retry's OTHER hazard here -- it used to also false-fire on a "000"
+  # substring appearing anywhere in the response BODY, e.g. a `.000Z`
+  # millisecond-precision timestamp in a real skill row, since it matched
+  # the whole captured output rather than just the status line; it now
+  # matches only the status token, so that half of this risk no longer
+  # applies. The exact-delta assertion still can't tolerate ANY retry,
+  # legitimate or not, so this call site stays without with_retry.)
   t0=$(now_ms)
   resp1=$(_anon_budget_search_request "$anon") || true
   status1=$(printf '%s' "$resp1" | sed -n '1p')
@@ -330,9 +334,13 @@ _anon_budget_layer2_shadow_assert() {
   # Deliberately NOT with_retry -- same reasoning as
   # check_anon_budget_counter_increments: check_anon_usage increments
   # non-idempotently on every call, and this branch asserts an EXACT seeded
-  # target, so a phantom with_retry-triggered second call (ambiguous "000"
-  # status, or a "000" substring anywhere in the real skills-search response
-  # body) would silently push `used` one past ANON_BUDGET_SHADOW_TARGET_USED.
+  # target, so a phantom with_retry-triggered second call on a genuinely
+  # ambiguous "000" status would silently push `used` one past
+  # ANON_BUDGET_SHADOW_TARGET_USED. (SMI-6284 fixed with_retry's separate
+  # body-substring false-fire hazard -- see
+  # check_anon_budget_counter_increments's comment above for detail -- but
+  # this exact-delta assertion still can't tolerate ANY retry, so this call
+  # site stays without with_retry regardless.)
   local anon_resp status used
   anon_resp=$(_anon_budget_search_request "$SMOKE_ANON_KEY_VALUE") || true
   ms=$(( $(now_ms) - t0 ))
