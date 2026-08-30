@@ -60,7 +60,7 @@ import {
   existsSync,
   chmodSync,
 } from 'node:fs'
-import { join, resolve } from 'node:path'
+import { basename, join, resolve } from 'node:path'
 import { dirname } from 'node:path'
 import { fileURLToPath } from 'node:url'
 
@@ -179,7 +179,10 @@ describe('check-dist-fresh.sh (SMI-5548)', () => {
 
   afterEach(() => {
     if (fixture && existsSync(fixture.root)) {
-      rmSync(fixture.root, { recursive: true, force: true })
+      // SMI-6285: retried — a git grandchild process can still be writing
+      // under `.git` when this runs, producing a confirmed one-off ENOTEMPTY
+      // (not a regression). Widened from a bare rmSync to 5x200ms retry.
+      rmSync(fixture.root, { recursive: true, force: true, maxRetries: 5, retryDelay: 200 })
     }
     fixture = null
   })
@@ -278,7 +281,8 @@ describe('check-dist-fresh.sh (SMI-5548)', () => {
   it('D-6 FRESH CLONE: no dist/ directories anywhere exits 0 (nothing built yet)', () => {
     const { root, distDir } = fixture!
 
-    rmSync(distDir, { recursive: true, force: true })
+    // SMI-6285: same ENOTEMPTY exposure as the afterEach teardown — retried.
+    rmSync(distDir, { recursive: true, force: true, maxRetries: 3, retryDelay: 100 })
 
     const check = runScript(root)
     expect(check.status).toBe(0)
@@ -340,8 +344,17 @@ describe('check-dist-fresh.sh (SMI-5548)', () => {
     // the script's own design — worktrees never have their own dist/), so
     // the worktree's checkout doesn't need one; the script always resolves
     // DIST_ROOT back to `root` regardless of which of the two `cwd:` is used.
-    const worktreeDir = join(root, '..', 'dist-freshness-test-wt')
-    execFileSync('git', ['-C', root, 'worktree', 'add', worktreeDir, '-b', 'wt-branch'], { env })
+    //
+    // SMI-6285: both the worktree directory name and its branch name are
+    // randomized off `fixture.root`'s own basename (already unique per test
+    // run via makeFixtureTempDir's mkdtempSync). The prior fixed
+    // `dist-freshness-test-wt` / `wt-branch` pair resolved OUTSIDE
+    // fixture.root, under the OS temp dir — a path shared MACHINE-WIDE, so
+    // concurrent test runs on the same machine could collide on it.
+    const suffix = basename(root)
+    const worktreeDir = join(root, '..', `dist-freshness-test-wt-${suffix}`)
+    const branchName = `wt-branch-${suffix}`
+    execFileSync('git', ['-C', root, 'worktree', 'add', worktreeDir, '-b', branchName], { env })
 
     try {
       const checkFromWorktree = runScript(worktreeDir)
@@ -357,9 +370,21 @@ describe('check-dist-fresh.sh (SMI-5548)', () => {
       expect(checkFromRoot.status).toBe(1)
       expect(checkFromRoot.output).toMatch(/✗ Stale Build Output/)
     } finally {
-      execFileSync('git', ['-C', root, 'worktree', 'remove', '--force', worktreeDir], {
-        env,
-      })
+      // SMI-6285: `git worktree remove` failing must not mask the real test
+      // failure above, so it's isolated in its own try/catch. It's also not
+      // sufficient on its own — a git worktree can leave the directory in a
+      // state `git worktree remove` doesn't always fully clean — so the
+      // rmSync fallback below runs UNCONDITIONALLY, regardless of whether
+      // the git command succeeded.
+      try {
+        execFileSync('git', ['-C', root, 'worktree', 'remove', '--force', worktreeDir], {
+          env,
+        })
+      } catch {
+        // Swallowed deliberately: cleanup best-effort only, never let a
+        // teardown failure here shadow a real assertion failure above.
+      }
+      rmSync(worktreeDir, { recursive: true, force: true, maxRetries: 3, retryDelay: 100 })
     }
   })
 })
