@@ -18,8 +18,13 @@
  * Typed error codes (printed to stderr; exit 1):
  *   audit.mode.invalid_value     — value not in {preventative,power_user,governance,off}
  *   audit.mode.tier_ineligible   — tier cannot select the requested mode
+ *   audit.mode.tier_unavailable  — SMI-6271: the live tier check (license key >
+ *                                  API key > device session > community) could
+ *                                  not complete (network/transient failure);
+ *                                  fail-closed rather than trust a stale/wrong
+ *                                  tier for either `get` or `set`
  *
- * No file write occurs on either error path. Other keys are rejected with a
+ * No file write occurs on any error path. Other keys are rejected with a
  * generic "unsupported key" message — the surface intentionally locks down
  * to v1 deliverables; v2 extends with additional keys.
  */
@@ -40,7 +45,7 @@ import { tierAllowsAuditMode } from '@skillsmith/core/audit'
 import { sanitizeError } from '../utils/sanitize.js'
 
 const logger = getCliLogger()
-import { getLicenseStatus } from '../utils/license.js'
+import { resolveEffectiveTier } from '../utils/require-tier.js'
 
 // ---------------------------------------------------------------------------
 // Constants
@@ -153,8 +158,20 @@ async function runConfigGet(key: string): Promise<void> {
 
   if (key === 'audit_mode') {
     const file = readConfigFile()
-    const status = await getLicenseStatus()
-    const tier = status.tier ?? 'community'
+    // SMI-6271: live credential-aware resolution (license key > API key >
+    // device session > community) — an API-key/session Team+ user previously
+    // always got the community default here. Fail-closed on a transient
+    // live-check failure: `config get` has no subsequent server-side gate,
+    // so a network blip must not silently report a wrong tier default.
+    const effectiveTier = await resolveEffectiveTier()
+    if (effectiveTier.transient) {
+      throw new ConfigError(
+        'audit.mode.tier_unavailable',
+        'Could not verify your subscription tier — the live tier check failed ' +
+          '(network error or a transient server issue). Please try again in a moment.'
+      )
+    }
+    const tier = effectiveTier.status.tier ?? 'community'
     const fileValue = isAuditMode(file.audit_mode) ? file.audit_mode : null
     const resolved = resolveAuditMode({ tier, override: fileValue })
 
@@ -187,8 +204,19 @@ async function runConfigSet(key: string, value: string): Promise<void> {
       )
     }
 
-    const status = await getLicenseStatus()
-    const tier = status.tier ?? 'community'
+    // SMI-6271: live credential-aware resolution — see runConfigGet's
+    // comment above. This is a genuine write-gate (below-tier values are
+    // rejected), so fail-closed here is load-bearing, not just cosmetic: a
+    // transient failure must never silently let a below-tier write through.
+    const effectiveTier = await resolveEffectiveTier()
+    if (effectiveTier.transient) {
+      throw new ConfigError(
+        'audit.mode.tier_unavailable',
+        'Could not verify your subscription tier — the live tier check failed ' +
+          '(network error or a transient server issue). Please try again in a moment.'
+      )
+    }
+    const tier = effectiveTier.status.tier ?? 'community'
 
     if (!tierAllowsAuditMode(tier, value)) {
       throw new ConfigError(
