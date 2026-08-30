@@ -113,7 +113,9 @@ const rawCode = Astro.url.searchParams.get('user_code')?.trim().toUpperCase() ??
       </p>
     </div>
 
-    <!-- State: denied -->
+    <!-- State: denied (SMI-6206: also reused for sso_unsupported — denied-desc's text
+         is overridden inline via setDeniedMessage() rather than a 6th state, since
+         there's no separate page to redirect to like profile_incomplete has) -->
     <div
       id="state-denied"
       class="device-card"
@@ -123,7 +125,7 @@ const rawCode = Astro.url.searchParams.get('user_code')?.trim().toUpperCase() ??
     >
       <div class="status-icon status-error" aria-hidden="true">✗</div>
       <h1 class="device-heading">Request denied.</h1>
-      <p class="device-sub">
+      <p class="device-sub" id="denied-desc">
         If you didn't try to sign in, someone else attempted it — your account is safe.
       </p>
     </div>
@@ -194,6 +196,19 @@ const rawCode = Astro.url.searchParams.get('user_code')?.trim().toUpperCase() ??
     show(`state-${s}`)
   }
 
+  const DEFAULT_DENIED_MESSAGE =
+    "If you didn't try to sign in, someone else attempted it — your account is safe."
+
+  // SMI-6206: overrides state-denied's copy for the sso_unsupported refusal (no
+  // separate page to redirect to, unlike profile_incomplete). Resets to the default
+  // "someone else attempted it" copy for every other denial path so a stale
+  // SSO-specific message never lingers across a later, unrelated denial in the same
+  // page session.
+  function setDeniedMessage(message: string | undefined) {
+    const el = document.getElementById('denied-desc')
+    if (el) el.textContent = message ?? DEFAULT_DENIED_MESSAGE
+  }
+
   function formatCode(raw: string): string {
     const clean = raw.replace(/[^A-Z0-9]/g, '').slice(0, 8)
     return clean.length > 4 ? `${clean.slice(0, 4)}-${clean.slice(4)}` : clean
@@ -206,7 +221,9 @@ const rawCode = Astro.url.searchParams.get('user_code')?.trim().toUpperCase() ??
     return data.session?.access_token ?? null
   }
 
-  async function callApprove(userCode: string): Promise<{ ok: boolean; errorCode?: string }> {
+  async function callApprove(
+    userCode: string
+  ): Promise<{ ok: boolean; errorCode?: string; message?: string }> {
     const token = await getAccessToken()
     if (!token) {
       // Not authenticated — redirect to login preserving this page as next
@@ -226,9 +243,11 @@ const rawCode = Astro.url.searchParams.get('user_code')?.trim().toUpperCase() ??
     if (res.ok) return { ok: true }
 
     let errCode = 'unknown'
+    let message: string | undefined
     try {
       const body = (await res.json()) as Record<string, unknown>
       errCode = (body['error'] as string) ?? errCode
+      if (typeof body['message'] === 'string') message = body['message']
     } catch {
       /* json parse failure */
     }
@@ -236,6 +255,15 @@ const rawCode = Astro.url.searchParams.get('user_code')?.trim().toUpperCase() ??
     if (res.status === 403 && errCode === 'profile_incomplete') {
       window.location.href = `${COMPLETE_PROFILE_URL}?next=${encodeURIComponent(window.location.pathname + window.location.search)}`
       return { ok: false }
+    }
+
+    // SMI-6206: unlike profile_incomplete above, there's no separate page to
+    // redirect an SSO-provisioned user to — render the server's message inline on
+    // this page's existing denied state instead. Conditional spread (not
+    // `message` directly) because tsconfig's exactOptionalPropertyTypes forbids
+    // assigning `string | undefined` to an optional `message?: string`.
+    if (res.status === 403 && errCode === 'sso_unsupported') {
+      return { ok: false, errorCode: errCode, ...(message !== undefined ? { message } : {}) }
     }
 
     return { ok: false, errorCode: errCode }
@@ -361,7 +389,11 @@ const rawCode = Astro.url.searchParams.get('user_code')?.trim().toUpperCase() ??
             denyBtn && (denyBtn.disabled = false)
             if (errCode === 'expired_token' || errCode === 'authorization_expired') {
               setState('expired')
+            } else if (errCode === 'sso_unsupported') {
+              setDeniedMessage(result.message)
+              setState('denied')
             } else {
+              setDeniedMessage(undefined)
               setState('denied')
             }
             return
@@ -371,11 +403,13 @@ const rawCode = Astro.url.searchParams.get('user_code')?.trim().toUpperCase() ??
           approveBtn.setAttribute('aria-busy', 'false')
           approveBtn.disabled = false
           denyBtn && (denyBtn.disabled = false)
+          setDeniedMessage(undefined)
           setState('denied')
         }
       })
 
       denyBtn?.addEventListener('click', () => {
+        setDeniedMessage(undefined)
         setState('denied')
       })
     }

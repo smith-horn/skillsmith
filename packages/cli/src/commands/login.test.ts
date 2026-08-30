@@ -14,6 +14,8 @@
 // LC-13: device-code network error during polling exits 5
 // LC-14: legacy key menu — choice 'd' runs device flow
 // LC-15: SMI-4454 — device-code flow sends client_meta with CLI identity
+// LC-16: SMI-6206 — sso_unsupported refusal exits 3 and prints the server's message
+// LC-17: SMI-6206 — sso_unsupported message with control characters is sanitized before printing
 
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest'
 
@@ -258,6 +260,85 @@ describe('createLoginCommand', () => {
       await vi.runAllTimersAsync()
       await expect(run).rejects.toThrow('process.exit(0)')
       expect(tokenCallCount).toBe(2)
+    })
+
+    it('LC-16: sso_unsupported refusal exits 3 and prints the server message', async () => {
+      const REFUSAL_MESSAGE =
+        "This account signs in via your organization's SSO provider, which doesn't " +
+        'support CLI device login. Generate a personal API key instead at ' +
+        'https://skillsmith.app/account/cli-token/, then set SKILLSMITH_API_KEY.'
+      global.fetch = vi.fn().mockImplementation((url: string) => {
+        if ((url as string).includes('auth-device-code')) {
+          return Promise.resolve({
+            ok: true,
+            json: () =>
+              Promise.resolve({
+                device_code: 'dc_sso',
+                user_code: 'BCDFGHJK',
+                verification_uri: 'https://skillsmith.app/device',
+                expires_in: 900,
+                interval: 5,
+              }),
+          })
+        }
+        return Promise.resolve({
+          ok: false,
+          status: 403,
+          json: () => Promise.resolve({ error: 'sso_unsupported', message: REFUSAL_MESSAGE }),
+        })
+      }) as typeof fetch
+
+      const run = runCommand()
+      run.catch(() => {})
+      await vi.runAllTimersAsync()
+      await expect(run).rejects.toThrow('process.exit(3)')
+      expect(consoleErrorSpy.mock.calls.flat().join('\n')).toContain(REFUSAL_MESSAGE)
+    })
+
+    it('LC-17 (SMI-6206): sso_unsupported message with control characters is sanitized before printing', async () => {
+      // Adversarial review finding: the server's message is untrusted content
+      // written directly to the TTY. A compromised/misconfigured server response
+      // could otherwise inject cursor-movement/screen-clear escapes or other
+      // control bytes. This asserts they're stripped before the CLI ever prints
+      // the message — not just that a clean message passes through unchanged
+      // (that's LC-16).
+      const HOSTILE_MESSAGE =
+        '\x1b[2J\x1b[H' + // clear screen, cursor home
+        'Fake prompt: ' +
+        '\x07' + // bell
+        'enter your password:\r' // carriage return (line-overwrite)
+      global.fetch = vi.fn().mockImplementation((url: string) => {
+        if ((url as string).includes('auth-device-code')) {
+          return Promise.resolve({
+            ok: true,
+            json: () =>
+              Promise.resolve({
+                device_code: 'dc_sso_hostile',
+                user_code: 'BCDFGHJK',
+                verification_uri: 'https://skillsmith.app/device',
+                expires_in: 900,
+                interval: 5,
+              }),
+          })
+        }
+        return Promise.resolve({
+          ok: false,
+          status: 403,
+          json: () => Promise.resolve({ error: 'sso_unsupported', message: HOSTILE_MESSAGE }),
+        })
+      }) as typeof fetch
+
+      const run = runCommand()
+      run.catch(() => {})
+      await vi.runAllTimersAsync()
+      await expect(run).rejects.toThrow('process.exit(3)')
+      const printed = consoleErrorSpy.mock.calls.flat().join('\n')
+      expect(printed).toContain('Fake prompt: enter your password:')
+      // Every control char EXCEPT \n (0x0A) — the CLI's own leading blank line
+      // before the message is legitimate and untouched by sanitizeServerMessage;
+      // this is checking the untrusted message content only got through clean.
+      // eslint-disable-next-line no-control-regex -- asserting control chars are ABSENT
+      expect(/[\x00-\x09\x0b-\x1f\x7f]/.test(printed)).toBe(false)
     })
 
     it('LC-13: network error during token polling exits 5', async () => {

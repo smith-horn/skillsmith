@@ -26,6 +26,43 @@ const DEVICE_CODE_TIMEOUT_MS = 15 * 60 * 1000
 const POLL_MS = 5_000
 const SLOW_DOWN_MS = 10_000
 
+// SMI-6206: defensive fallback only — the server always sends a `message` field
+// alongside `sso_unsupported`. Not the verbatim refusal copy itself (that lives
+// server-side, single-sourced in supabase/functions/_shared/constants.ts).
+const SSO_UNSUPPORTED_FALLBACK_MESSAGE =
+  "This account signs in via your organization's SSO provider, which doesn't support " +
+  'CLI device login. Generate a personal API key instead at ' +
+  'https://skillsmith.app/account/cli-token/, then set SKILLSMITH_API_KEY.'
+
+/**
+ * SMI-6206 (adversarial review finding): the server's sso_unsupported `message`
+ * field is untrusted content written directly to the TTY (`logger.error` below).
+ * Strips every C0 control character and DEL (0x00-0x1F, 0x7F) — not just ANSI SGR
+ * color codes (`@skillsmith/core`'s `stripAnsi` only strips `\x1b[...m`, not
+ * cursor-movement/screen-clear escapes or other control bytes like `\r`/`\x07`) —
+ * so a compromised or misconfigured server response can't manipulate the
+ * terminal (cursor repositioning, screen clearing, a spoofed prompt overwriting
+ * this line). Applied at construction, not just at the print site, so the
+ * PollResult.message field is guaranteed clean for any future consumer.
+ *
+ * Also strips C1 controls (0x80-0x9F, including the 8-bit CSI 0x9B — an
+ * alternate encoding of the same cursor-manipulation risk C0's ESC[ covers) and
+ * Unicode bidi-override characters (adversarial review round 2, X-b: the message
+ * tells the user to visit a URL — a Trojan-Source-class bidi override could
+ * visually reorder it without changing the underlying bytes).
+ */
+// Bidi-override code points spelled as \u escapes, never as literal characters
+// in source — embedding the actual invisible/reordering glyphs here would be
+// exactly the kind of hard-to-review, easy-to-tamper-with-invisibly content this
+// sanitizer exists to strip.
+const CONTROL_CHARS_PATTERN =
+  // eslint-disable-next-line no-control-regex -- intentional security sanitization
+  new RegExp('[\\x00-\\x1f\\x7f-\\x9f\\u200e\\u200f\\u202a-\\u202e\\u2066-\\u2069]', 'g')
+
+function sanitizeServerMessage(message: string): string {
+  return message.replace(CONTROL_CHARS_PATTERN, '')
+}
+
 // Per plan spec §Wave 3 CLI matrix (C6)
 const EXIT = { success: 0, generic: 1, cancelled: 2, authError: 3, timeout: 4, network: 5 } as const
 
@@ -40,6 +77,10 @@ interface DeviceCodeBody {
 type PollResult =
   | { ok: true; creds: Omit<TokenCredentials, 'version'> }
   | { ok: false; status: 'pending' | 'slow_down' | 'expired' | 'declined' }
+  // SMI-6206: a real gap, not just a display nuance — the server's sso_unsupported
+  // refusal carries a rich `message` field that none of the other typed statuses
+  // do, so runDeviceCodeFlow can print it directly instead of a generic error.
+  | { ok: false; status: 'sso_unsupported'; message: string }
 
 function termCols(): number {
   return Math.max(40, (process.stdout.columns ?? 80) - 4)
@@ -127,6 +168,18 @@ async function pollDeviceToken(deviceCode: string): Promise<PollResult> {
     const err = (body['error'] as string) ?? ''
     if (err === 'expired_token') return { ok: false, status: 'expired' }
     if (err === 'authorization_declined') return { ok: false, status: 'declined' }
+    // SMI-6206: SSO-provisioned caller — carries a rich `message` field none of the
+    // other typed statuses do, so it's printed verbatim rather than mapped to a
+    // generic error (see the PollResult type's own comment).
+    if (err === 'sso_unsupported') {
+      return {
+        ok: false,
+        status: 'sso_unsupported',
+        message: sanitizeServerMessage(
+          (body['message'] as string) ?? SSO_UNSUPPORTED_FALLBACK_MESSAGE
+        ),
+      }
+    }
     throw new Error(`auth-device-token error: ${err || res.status}`)
   }
 
@@ -136,6 +189,15 @@ async function pollDeviceToken(deviceCode: string): Promise<PollResult> {
     if (errVal === 'slow_down') return { ok: false, status: 'slow_down' }
     if (errVal === 'expired_token') return { ok: false, status: 'expired' }
     if (errVal === 'authorization_declined') return { ok: false, status: 'declined' }
+    if (errVal === 'sso_unsupported') {
+      return {
+        ok: false,
+        status: 'sso_unsupported',
+        message: sanitizeServerMessage(
+          (body['message'] as string) ?? SSO_UNSUPPORTED_FALLBACK_MESSAGE
+        ),
+      }
+    }
     throw new Error(`auth-device-token error: ${errVal}`)
   }
 
@@ -228,6 +290,13 @@ async function runDeviceCodeFlow(noBrowser: boolean): Promise<void> {
       if (result.status === 'expired') {
         logger.error(chalk.red('\nCode expired. Run `skillsmith login` again.'))
         process.exit(EXIT.timeout)
+      }
+      if (result.status === 'sso_unsupported') {
+        // SMI-6206: print the server's verbatim refusal message directly instead
+        // of a generic "denied" — this is the real gap the PollResult extension
+        // exists to close (see its own comment).
+        logger.error(chalk.red(`\n${result.message}`))
+        process.exit(EXIT.authError)
       }
       // declined
       logger.error(
