@@ -31,9 +31,19 @@
  * `--dry-run` here means "validate arguments and DB/GitHub connectivity only —
  * create, claim, populate NOTHING." `--apply` performs the real lifecycle above.
  *
+ * `--resume` (SMI-5879 checkpoint/resume follow-up, added after this tool died
+ * 3x in 24h in production to a host container bounce silently killing its
+ * `docker exec -d` background process): re-attaches to the SAME still-`open`
+ * generation instead of creating a new one, via the EXISTING `smi5879_claim_run`
+ * takeover CAS — no new SQL, no new migration. Requires `--apply`. Full design
+ * rationale, identity-check contract, and why an `abandoned` generation is
+ * deliberately NOT resumable: `smi5879-census.resume.ts`'s module header.
+ *
  * Usage:
  *   varlock run -- npx tsx scripts/indexer/smi5879-census.ts \
  *     --purpose=rehearsal --ruleset-epoch=2026-07-29T23:41:09Z [--apply] [--report-path=<path>]
+ *   varlock run -- npx tsx scripts/indexer/smi5879-census.ts \
+ *     --purpose=decision --ruleset-epoch=2026-07-29T23:41:09Z --apply --resume
  */
 
 import { hostname } from 'node:os'
@@ -54,6 +64,9 @@ import {
   queryBranchResolutionCounts,
 } from './smi5879-census.branches.ts'
 import { runInvariantChecks, checkI6BranchResolutionQuality } from './smi5879-census.invariants.ts'
+import { isPopulated, obtainClaimedRun } from './smi5879-census.resume.ts'
+import { populate, seal } from './smi5879-census.lifecycle.ts'
+import { startCensusHeartbeat } from './smi5879-census.heartbeat.ts'
 import { buildGitHubHeaders } from './_shared/github-auth.ts'
 import { newRateLimitTelemetry } from './_shared/rate-limit.ts'
 import type {
@@ -64,7 +77,6 @@ import type {
 } from './smi5879-census.types.ts'
 
 const VALID_PURPOSES: readonly Smi5879Purpose[] = ['rehearsal', 'decision', 'window']
-const HEARTBEAT_INTERVAL_MS = 60_000
 const RULESET_EPOCH_PROVENANCE =
   '`last_scanned_at` freshness is a date-based proxy for ruleset version (no ' +
   '`scanner_ruleset_version` column exists on `skills` — migration 039 adds only ' +
@@ -77,6 +89,8 @@ export interface CliArgs {
   rulesetEpoch: string
   apply: boolean
   reportPath: string
+  /** SMI-5879 checkpoint/resume follow-up — see this file's header for the full contract. */
+  resume: boolean
 }
 
 /** Parse and validate CLI args. Throws with a clear, actionable message on any problem. */
@@ -100,9 +114,16 @@ export function parseArgs(argv: string[]): CliArgs {
     )
   }
   const apply = argv.includes('--apply')
+  const resume = argv.includes('--resume')
+  if (resume && !apply) {
+    throw new Error(
+      'SMI-5879: --resume requires --apply — a dry-run resume does nothing useful and is refused ' +
+        'here rather than silently behaving like a plain --dry-run. Pass --apply --resume together.'
+    )
+  }
   const reportPath = find('report-path') ?? `smi5879-census-report-${Date.now()}.json`
 
-  return { purpose: purpose as Smi5879Purpose, rulesetEpoch, apply, reportPath }
+  return { purpose: purpose as Smi5879Purpose, rulesetEpoch, apply, reportPath, resume }
 }
 
 /** `host:pid:git-head`, for `smi5879_run.runner_holder` (design doc 8.3.5.2.5). */
@@ -114,129 +135,6 @@ function buildHolder(): string {
     // Not fatal — the holder string is for operator legibility only.
   }
   return `${hostname()}:${process.pid}:${head}`
-}
-
-/** Build a fresh `run_id` — legible (`purpose` + timestamp) plus a random suffix for uniqueness. */
-function buildRunId(purpose: Smi5879Purpose): string {
-  return `smi5879-${purpose}-${new Date().toISOString().replace(/[:.]/g, '-')}-${randomUUID().slice(0, 8)}`
-}
-
-/** Handle returned by {@link startCensusHeartbeat}. */
-export interface CensusHeartbeat {
-  /** Stop the timer and suppress any in-flight tick's fatal-abort/error logging. */
-  stop(): void
-}
-
-/**
- * Start the claim's independent heartbeat (design doc 8.3.5.2.5): calls
- * `heartbeat(runId, token)` on a fixed interval. A `null` return means the
- * claim was stolen or the run was abandoned — design doc 8.3.5.2.5 states
- * this is "fatal and immediate: the runner stops fetching, stops writing
- * checkpoints... and exits non-zero. It must not attempt to re-claim" — so
- * `onFatal` fires and the timer stops itself; the caller must not re-claim.
- *
- * SMI-5879 retro finding (sibling-implementation audit, 2026-08-08): this
- * runner previously called `smi5879_heartbeat` on a bare `setInterval` and
- * only ever caught a THROWN error — it never read the call's own return
- * value, so a stolen claim (which `smi5879_heartbeat` signals by returning
- * SQL NULL, not by throwing — see
- * `smi5879-census.claim-gc.test.ts`'s "heartbeat returns NULL for a
- * stolen/mismatched token" case, which asserts the DB function's half of
- * this contract) went completely undetected: this tool would keep
- * populating/resolving branches/sealing under a claim it no longer actually
- * held. Extracted as its own exported, unit-testable function — mirroring
- * `lock-heartbeat.ts`'s `startLockHeartbeat` (SMI-5311), which exists for
- * the identical "auto-execing main() on import" testability reason — so the
- * fatal-abort path can be exercised with a fake `heartbeat` function and
- * fake timers instead of a live Postgres claim-theft race. A thrown/rejected
- * `heartbeat` call is left non-fatal (log + retry next tick): unlike item
- * 3's multi-day unattended `smi5879-simulate-full.ts` run, this tool's
- * lifecycle is short and typically operator-observed directly.
- */
-export function startCensusHeartbeat(
-  heartbeat: (runId: string, token: string) => Promise<string | null>,
-  runId: string,
-  token: string,
-  intervalMs: number = HEARTBEAT_INTERVAL_MS,
-  onFatal: (message: string) => void = (message) => {
-    console.error(`[smi5879-census] FATAL: ${message} Exiting without re-claiming.`)
-    process.exit(1)
-  }
-): CensusHeartbeat {
-  let stopped = false
-  const timer = setInterval(() => {
-    if (stopped) return
-    void heartbeat(runId, token)
-      .then((result) => {
-        // A late callback after stop() must not fire — the run is done.
-        if (stopped) return
-        if (result === null) {
-          stopped = true
-          clearInterval(timer)
-          onFatal(
-            `heartbeat lost for run_id=${runId} — claim was stolen or the run was abandoned ` +
-              '(design doc 8.3.5.2.5).'
-          )
-        }
-      })
-      .catch((err) => {
-        if (!stopped) {
-          console.error(`[smi5879-census] heartbeat failed: ${(err as Error).message}`)
-        }
-      })
-  }, intervalMs)
-  // Don't keep the event loop alive on the heartbeat alone (in-flight I/O still
-  // pins it). Node's setInterval handle has unref; guard for non-Node timers.
-  timer.unref?.()
-  return {
-    stop() {
-      stopped = true
-      clearInterval(timer)
-    },
-  }
-}
-
-/** Population load — design doc 8.3.5.2.3's exact SQL shape, one `REPEATABLE READ` transaction. */
-async function populate(conn: PgConnParams, runId: string): Promise<void> {
-  await runPsql(
-    conn,
-    `BEGIN ISOLATION LEVEL REPEATABLE READ;
-     SELECT run_id FROM smi5879_run WHERE run_id = :'run_id' AND status = 'open' FOR UPDATE;
-     INSERT INTO smi5879_snapshot_pre (
-       run_id, id, security_score, quarantined, quarantine_reason,
-       last_scanned_at, indexed_at, last_seen_at, content_hash,
-       updated_at, row_xmin, repo_url, skill_path, author, name, security_findings,
-       snapshot_taken_at
-     )
-     SELECT
-       :'run_id', s.id, s.security_score, s.quarantined, s.quarantine_reason,
-       s.last_scanned_at, s.indexed_at, s.last_seen_at, s.content_hash,
-       s.updated_at, s.xmin::text, s.repo_url, s.skill_path, s.author, s.name,
-       s.security_findings, now()
-     FROM skills s;
-     COMMIT;`,
-    { run_id: runId }
-  )
-}
-
-/** Seal — design doc 8.3.5.2.4's exact SQL shape: count + digest + status flip in one transaction. */
-async function seal(conn: PgConnParams, runId: string): Promise<void> {
-  await runPsql(
-    conn,
-    `BEGIN;
-     SELECT run_id FROM smi5879_run WHERE run_id = :'run_id' AND status = 'open' FOR UPDATE;
-     UPDATE smi5879_run r
-        SET status             = 'sealed',
-            snapshot_sealed_at = now(),
-            row_count          = c.n,
-            population_digest  = smi5879_population_digest(:'run_id'),
-            branch_digest      = smi5879_branch_digest(:'run_id')
-       FROM (SELECT count(*) AS n FROM smi5879_snapshot_pre WHERE run_id = :'run_id') c
-      WHERE r.run_id = :'run_id'
-        AND r.status = 'open';
-     COMMIT;`,
-    { run_id: runId }
-  )
 }
 
 async function readCohortCounts(conn: PgConnParams, runId: string): Promise<CohortCounts> {
@@ -283,26 +181,13 @@ async function readRunSummary(
  * decides the process exit code.
  */
 export async function runCensus(conn: PgConnParams, args: CliArgs): Promise<Smi5879CensusReport> {
-  const runId = buildRunId(args.purpose)
   const token = randomUUID()
   const holder = buildHolder()
 
-  await runPsql(
-    conn,
-    `INSERT INTO smi5879_run (run_id, purpose, ruleset_epoch) VALUES (:'run_id', :'purpose', :'ruleset_epoch');`,
-    { run_id: runId, purpose: args.purpose, ruleset_epoch: args.rulesetEpoch }
-  )
-
-  const claimed = await queryRows(
-    conn,
-    `SELECT run_id, runner_token FROM smi5879_claim_run(:'run_id', :'token', :'holder');`,
-    { run_id: runId, token, holder }
-  )
-  if (claimed.length === 0) {
-    throw new Error(
-      `SMI-5879: claim of freshly-created generation ${runId} was refused — unexpected.`
-    )
-  }
+  // SMI-5879 checkpoint/resume follow-up: obtains + claims either a fresh
+  // run_id (default) or the existing open one (--resume) — see
+  // smi5879-census.resume.ts for the full identity-check/claim contract.
+  const runId = await obtainClaimedRun(conn, args, token, holder)
 
   const heartbeat = startCensusHeartbeat(
     (rid, tok) =>
@@ -316,7 +201,26 @@ export async function runCensus(conn: PgConnParams, args: CliArgs): Promise<Smi5
 
   let branchSummary: BranchResolutionSummary | null = null
   try {
-    await populate(conn, runId)
+    // SMI-5879 checkpoint/resume follow-up: population is all-or-nothing
+    // (isPopulated's doc comment) — skip re-running it rather than hitting a
+    // duplicate-key error on every row's (run_id, id) PK.
+    if (await isPopulated(conn, runId)) {
+      // SMI-5879 checkpoint/resume round-2 review finding: log the row count,
+      // not just "already loaded" — makes a suspiciously-small (e.g.
+      // hand-inserted) population visibly distinguishable from a genuine
+      // multi-hundred-thousand-row prior load in the operator's terminal.
+      const existingCount = await queryScalar(
+        conn,
+        `SELECT count(*) FROM smi5879_snapshot_pre WHERE run_id = :'run_id'`,
+        { run_id: runId }
+      )
+      console.log(
+        `[smi5879-census] run_id=${runId} population already loaded (${existingCount} rows) — ` +
+          'skipping population load (resume).'
+      )
+    } else {
+      await populate(conn, runId, token)
+    }
 
     const isFetchingGeneration = args.purpose !== 'window'
     if (isFetchingGeneration) {
@@ -326,21 +230,32 @@ export async function runCensus(conn: PgConnParams, args: CliArgs): Promise<Smi5
       // and only re-mints near expiry, so this costs ~nil when still fresh.
       const getHeaders = () => buildGitHubHeaders('skillsmith-smi5879-census/1.0')
       const telemetry = newRateLimitTelemetry()
-      branchSummary = await resolveDefaultBranches(conn, runId, getHeaders, telemetry)
+      // SMI-5879 checkpoint/resume follow-up: safe to call even when a prior
+      // (crashed) invocation already wrote SOME smi5879_repo_branch rows —
+      // distinctRepos() (smi5879-census.branches.ts) excludes anything
+      // already recorded, so this only resolves the unresolved remainder (a
+      // no-op exclusion on a fresh run, whose branch table starts empty).
+      branchSummary = await resolveDefaultBranches(conn, runId, token, getHeaders, telemetry)
 
       // Item 6: bounded re-resolution sweep over any still-transient rows,
       // BEFORE seal (the guard permits UPDATE while status='open'). Reduces
       // how often the I-6 gate immediately below actually fires.
-      const sweep = await sweepTransientRepos(conn, runId, getHeaders, telemetry)
-      if (sweep) {
-        const dbCounts = await queryBranchResolutionCounts(conn, runId)
-        branchSummary = {
-          ...branchSummary,
-          resolved: dbCounts.resolved,
-          not_found: dbCounts.not_found,
-          transient: dbCounts.transient,
-          reresolution_sweep: sweep,
-        }
+      const sweep = await sweepTransientRepos(conn, runId, token, getHeaders, telemetry)
+      // SMI-5879 checkpoint/resume follow-up: ALWAYS re-derive the final
+      // counts (incl. distinct_repos) from smi5879_repo_branch directly —
+      // previously only done inside `if (sweep)`, and distinct_repos was
+      // never overwritten, trusting resolveDefaultBranches's own in-process
+      // repos.length from the START of its call, which undercounts under
+      // resume (only the remainder THIS invocation processed). A report-
+      // accuracy fix that applies unconditionally, not just under resume.
+      const dbCounts = await queryBranchResolutionCounts(conn, runId)
+      branchSummary = {
+        ...branchSummary,
+        distinct_repos: dbCounts.resolved + dbCounts.not_found + dbCounts.transient,
+        resolved: dbCounts.resolved,
+        not_found: dbCounts.not_found,
+        transient: dbCounts.transient,
+        reresolution_sweep: sweep,
       }
 
       // SMI-6015 (GPT-5.6-Sol review, 2026-08-14): I-6 MUST gate seal(), not
@@ -358,7 +273,13 @@ export async function runCensus(conn: PgConnParams, args: CliArgs): Promise<Smi5
       }
     }
 
-    await seal(conn, runId)
+    // SMI-5879 checkpoint/resume, cross-model review finding (High + Medium):
+    // seal() is now token-fenced and self-verifying — see its own doc
+    // comment. It throws directly on a fenced-out/already-sealed-elsewhere
+    // seal, replacing the round-2 fix's separate assertGenerationSealed()
+    // (a later status READ that could not distinguish "I sealed it" from
+    // "I merely observed someone else's seal").
+    await seal(conn, runId, token)
   } finally {
     heartbeat.stop()
     await runPsql(conn, `SELECT smi5879_release_run(:'run_id', :'token');`, {
@@ -379,6 +300,7 @@ export async function runCensus(conn: PgConnParams, args: CliArgs): Promise<Smi5
     purpose: args.purpose,
     ruleset_epoch: args.rulesetEpoch,
     status: runSummary.status as Smi5879CensusReport['status'],
+    resumed: args.resume,
     row_count: runSummary.rowCount,
     population_digest: runSummary.populationDigest,
     branch_digest: runSummary.branchDigest,
@@ -395,7 +317,7 @@ export async function runCensus(conn: PgConnParams, args: CliArgs): Promise<Smi5
 function printSummary(report: Smi5879CensusReport): void {
   const failedInvariants = report.invariants.filter((i) => !i.passed)
   console.log(
-    `\n── Census Summary (${report.run_id}) ──\n` +
+    `\n── Census Summary (${report.run_id}${report.resumed ? ', resumed' : ''}) ──\n` +
       `  purpose:            ${report.purpose}\n` +
       `  ruleset_epoch:       ${report.ruleset_epoch}\n` +
       `  status:              ${report.status}\n` +

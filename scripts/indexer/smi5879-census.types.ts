@@ -42,6 +42,14 @@ export interface Smi5879CensusReport {
   /** ISO 8601, UTC. Pinned literal — never `now() - interval`, per 8.3.1.3. */
   ruleset_epoch: string
   status: Smi5879RunStatus
+  /**
+   * True when this invocation re-attached to an existing `open` generation
+   * via `--resume` (checkpoint/resume, SMI-5879 follow-up) rather than
+   * creating a fresh one. Pure audit-trail transparency — does not affect
+   * gating; a resumed generation's digests/invariants are checked exactly
+   * the same way as a fresh one's.
+   */
+  resumed: boolean
   row_count: number
   population_digest: string | null
   branch_digest: string | null

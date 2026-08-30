@@ -64,7 +64,29 @@ import type {
 
 export { BranchResolutionAuthError, BranchResolutionCircuitBreakerError }
 
-/** Query the just-loaded population's distinct repo_urls and derive `(owner, repo)` pairs. */
+/**
+ * Query the just-loaded population's distinct repo_urls, derive `(owner, repo)`
+ * pairs, and exclude any pair that already has a `smi5879_repo_branch` row for
+ * this `run_id` (SMI-5879 checkpoint/resume follow-up).
+ *
+ * The exclusion is what makes {@link resolveDefaultBranches} safe to call
+ * twice for the SAME generation — on a fresh run `smi5879_repo_branch` has
+ * zero rows for a brand-new `run_id`, so the exclusion is a no-op; on a
+ * resumed run (a prior invocation died mid-pass after writing SOME batches)
+ * it naturally yields exactly the still-unresolved remainder, so the main
+ * pass's plain `INSERT` (`buildBatchInsertSql`) never re-attempts a repo it
+ * already has a row for and never hits a duplicate-key error on `(run_id,
+ * owner, repo)`. A row is excluded regardless of its `resolution` value
+ * (including `'transient'`) — a transient repo already has a row, so
+ * re-attempting it here would still violate the PK; its re-attempt is
+ * {@link sweepTransientRepos}'s job (an `UPDATE`, not an `INSERT`), which
+ * queries `smi5879_repo_branch` directly and is unaffected by this function.
+ *
+ * Both queries are read-only and rely on the SAME single-active-claim-holder
+ * convention every other write path in this module already assumes (no lock
+ * taken here) — see this module's own header for the pre-existing trust
+ * model this does not change.
+ */
 export async function distinctRepos(
   conn: PgConnParams,
   runId: string
@@ -77,6 +99,13 @@ export async function distinctRepos(
   const seen = new Map<string, DistinctRepo>()
   let unparseableCount = 0
   for (const [rawUrl] of rows) {
+    // SMI-5879 coordinator review (2026-08-30): under noUncheckedIndexedAccess,
+    // destructuring a row of unknown static length types `rawUrl` as
+    // `string | undefined`, even though this query always selects exactly one
+    // column. Guard rather than assert, matching this module's existing
+    // defensive style — an actually-missing first column is treated the same
+    // as any other skip-worthy row, not a crash.
+    if (rawUrl === undefined) continue
     const url = nullable(rawUrl)
     if (url === null) continue
     const parsed = parseSkillMdUrl(url, null)
@@ -86,6 +115,30 @@ export async function distinctRepos(
     }
     seen.set(`${parsed.owner}/${parsed.repo}`, { owner: parsed.owner, repo: parsed.repo })
   }
+
+  const alreadyResolved = await queryRows(
+    conn,
+    `SELECT owner, repo FROM smi5879_repo_branch WHERE run_id = :'run_id'`,
+    { run_id: runId }
+  )
+  for (const [owner, repo] of alreadyResolved) {
+    // owner/repo are NOT NULL columns (this exclusion IS the entire "safe to
+    // call resolveDefaultBranches twice" mechanism, SMI-5879 round-2 review
+    // finding) — a missing cell here means queryRows's own field-count
+    // parsing itself is broken, not a data condition. Fail loudly rather
+    // than silently no-op `seen.delete("undefined/undefined")`, which would
+    // leave an already-resolved repo un-excluded and only surface later as a
+    // confusing duplicate-key abort at the end of an expensive pass. Mirrors
+    // queryTransientRepos's identical guard in smi5879-census.branches.helpers.ts.
+    if (owner === undefined || repo === undefined) {
+      throw new Error(
+        `SMI-6015/SMI-5879: malformed smi5879_repo_branch row for run_id=${runId} — expected ` +
+          `(owner, repo), got ${JSON.stringify([owner, repo])}`
+      )
+    }
+    seen.delete(`${owner}/${repo}`)
+  }
+
   return { repos: [...seen.values()], unparseableCount }
 }
 
@@ -110,15 +163,20 @@ export async function distinctRepos(
  * `startCensusHeartbeat`'s own doc comment establishes for a lost claim:
  * "exits non-zero... must not attempt to re-claim."
  *
- * Idempotent per repo is NOT guaranteed across re-invocation within the same
- * generation — the table's PK is `(run_id, owner, repo)`, so calling this
- * twice for the same generation will fail on the second repo's duplicate-key
- * INSERT. Callers run this exactly once per generation, immediately after
- * the population load.
+ * SMI-5879 checkpoint/resume follow-up: this IS now safe to call more than
+ * once for the same generation — {@link distinctRepos} excludes any repo
+ * that already has a `smi5879_repo_branch` row, so a resumed invocation's
+ * main-pass `INSERT` (`buildBatchInsertSql`) never re-attempts an
+ * already-recorded `(run_id, owner, repo)` and never hits its PK's
+ * duplicate-key error. The normal call shape is still exactly once per
+ * generation, immediately after the population load — a resume just means a
+ * SECOND process happens to make that same call against a `run_id` a PRIOR
+ * process already made partial progress on.
  */
 export async function resolveDefaultBranches(
   conn: PgConnParams,
   runId: string,
+  token: string,
   getHeaders: () => Promise<Record<string, string>>,
   telemetry: RateLimitTelemetry
 ): Promise<BranchResolutionSummary> {
@@ -128,11 +186,43 @@ export async function resolveDefaultBranches(
   const pendingFlushes: Promise<void>[] = []
   const counts = emptyResolutionCounts()
 
+  // SMI-5879 cross-model review round-4 finding (Medium): a rejected
+  // `writeOutcomesBatch` promise here was previously left UNHANDLED —
+  // `pendingFlushes.push(writeOutcomesBatch(...))` with no `.catch()`,
+  // called from inside a SYNCHRONOUS `onOutcome` callback the pool has no
+  // visibility into. `runCancellablePool` only aborts on a THROWN
+  // `processItem`/a `PoolAbortSignal` return from `onOutcome` — a rejected
+  // entry in `pendingFlushes` was invisible to it and sat unhandled until
+  // `Promise.all(pendingFlushes)` below, reached only after the ENTIRE pool
+  // finishes (hours, at this pass's conservative rate). Verified live: an
+  // unhandled rejection there kills the process via Node's default
+  // `--unhandled-rejections=throw` before `runCensus()`'s `finally` can run
+  // `heartbeat.stop()`/`smi5879_release_run()` — a claim-loss abort would
+  // then leave `runner_token` held for the full 30-minute takeover window
+  // instead of releasing immediately, directly regressing `--resume`'s own
+  // recovery time. Captured here and surfaced through `onOutcome`'s
+  // PoolAbortSignal return on the VERY NEXT completion, so the pool stops
+  // cooperatively through its own (already-reviewed) abort machinery.
+  //
+  // Named `writeError`, not `fencedOutError` (round-5 confirmation review,
+  // Low): this `.catch()` captures WHATEVER `writeOutcomesBatch` rejects
+  // with — a `ClaimFencedWriteError` on a lost claim, but ALSO a genuine
+  // `PsqlExitError` from an unrelated SQL failure after its own retries are
+  // exhausted. Either way this pass must stop, so the STOP behavior below
+  // is correct regardless of cause — but the variable name (and the
+  // `if (writeError) throw writeError` priority over `abortedBy` below)
+  // must not itself assert a specific cause the value can't guarantee.
+  let writeError: Error | undefined
+
   const flush = (): void => {
     if (buffer.length === 0) return
     const toWrite = buffer
     buffer = []
-    pendingFlushes.push(writeOutcomesBatch(conn, runId, toWrite))
+    pendingFlushes.push(
+      writeOutcomesBatch(conn, runId, token, toWrite).catch((err) => {
+        writeError = err as Error
+      })
+    )
   }
 
   const { abortedBy } = await runResolutionPool(
@@ -147,6 +237,7 @@ export async function resolveDefaultBranches(
       if (completedCount % PROGRESS_LOG_INTERVAL === 0) {
         logResolutionProgress(runId, completedCount, repos.length, counts, telemetry)
       }
+      if (writeError) return { reason: writeError }
       return checkCircuitBreaker(completedCount, counts.transient)
     }
   )
@@ -161,6 +252,20 @@ export async function resolveDefaultBranches(
     telemetry
   )
 
+  // The FINAL flush() above (the sub-WRITE_BATCH_SIZE remainder) runs AFTER
+  // the pool has already returned, so a rejection on THAT specific flush was
+  // never visible to any onOutcome tick — check it explicitly rather than
+  // let it disappear as a captured-but-unthrown value.
+  //
+  // SMI-5879 cross-model review round-5 finding (Low): `writeError` is
+  // checked FIRST, ahead of `abortedBy` — if the circuit breaker trips or a
+  // 401 lands in the exact same window a flush is separately rejected, the
+  // operator needs "your claim was stolen" (the more actionable, instance-
+  // specific diagnosis), not "52% transient"/"credential failure" (a
+  // diagnosis about the PASS, not this run's claim). Both orderings fail
+  // safe either way (a re-run is refused by the claim CAS regardless), this
+  // is purely about which message the operator sees first.
+  if (writeError) throw writeError
   if (abortedBy) throw abortedBy
 
   return {
@@ -217,6 +322,7 @@ async function queryTransientRepos(conn: PgConnParams, runId: string): Promise<D
 export async function sweepTransientRepos(
   conn: PgConnParams,
   runId: string,
+  token: string,
   getHeaders: () => Promise<Record<string, string>>,
   telemetry: RateLimitTelemetry
 ): Promise<ReresolutionSweepSummary | null> {
@@ -257,7 +363,7 @@ export async function sweepTransientRepos(
     )
 
     for (let i = 0; i < outcomes.length; i += WRITE_BATCH_SIZE) {
-      await updateOutcomesBatch(conn, runId, outcomes.slice(i, i + WRITE_BATCH_SIZE))
+      await updateOutcomesBatch(conn, runId, token, outcomes.slice(i, i + WRITE_BATCH_SIZE))
     }
 
     // A fatal auth error aborts the whole census the same way a mid-main-pass

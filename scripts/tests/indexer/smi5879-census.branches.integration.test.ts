@@ -95,6 +95,7 @@ describe.skipIf(prePushNoLiveTestPg)(
         rulesetEpoch: '2026-01-01T00:00:00Z',
         apply: true,
         reportPath: 'unused-happy.json',
+        resume: false,
       })
 
       expect(report.status).toBe('sealed')
@@ -117,6 +118,7 @@ describe.skipIf(prePushNoLiveTestPg)(
           rulesetEpoch: '2026-01-01T00:00:00Z',
           apply: true,
           reportPath: 'unused-401.json',
+          resume: false,
         })
       ).rejects.toThrow(/401/)
 
@@ -147,6 +149,7 @@ describe.skipIf(prePushNoLiveTestPg)(
         rulesetEpoch: '2026-01-01T00:00:00Z',
         apply: true,
         reportPath: 'unused-sweep.json',
+        resume: false,
       })
 
       expect(report.status).toBe('sealed')
