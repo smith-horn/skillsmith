@@ -15,16 +15,22 @@
  *   - A path already missing on disk (user deleted it manually) is a no-op,
  *     not an error.
  *
- * SECURITY (governance follow-up, 2026-07-01): before touching the
+ * SECURITY (governance follow-up, 2026-07-01; symlink check added SMI-6275
+ * Wave 5 per a GPT-5.6-Sol pr-reviewer finding): before touching the
  * filesystem, every entry's `path` is checked against
  * {@link isAllowedManifestEntryPath} (must structurally match one of the
- * installer's known per-harness target locations) and, when `backupPath` is
- * set, {@link isAllowedManifestBackupPath} (must resolve under this run's
- * manifest backups directory). The manifest is an ordinary user-writable
- * JSON file, not a signed record — a corrupted or tampered manifest must
- * never become an arbitrary-file-delete/overwrite primitive. An entry
- * failing either check is skipped entirely (added to `result.rejected`,
- * counted toward neither `removed` nor `restored`) rather than acted on.
+ * installer's known per-harness target locations), that it is not itself a
+ * SYMLINK (`lstatSync(...).isSymbolicLink()` — a matching suffix proves the
+ * path LOOKS right, not that the node there is the plain file the installer
+ * actually wrote; a symlink at that path would make the restore branch's
+ * `writeFileSync` follow it and overwrite the link's target instead), and,
+ * when `backupPath` is set, {@link isAllowedManifestBackupPath} (must
+ * resolve under this run's manifest backups directory). The manifest is an
+ * ordinary user-writable JSON file, not a signed record — a corrupted or
+ * tampered manifest must never become an arbitrary-file-delete/overwrite
+ * primitive. An entry failing any check is skipped entirely (added to
+ * `result.rejected`, counted toward neither `removed` nor `restored`)
+ * rather than acted on.
  *
  * After removing all installer-created files, now-empty directories we
  * likely created (the parents of removed paths) are cleaned up bottom-up —
@@ -40,7 +46,7 @@
  */
 
 import { dirname } from 'node:path'
-import { existsSync, readFileSync, rmdirSync, unlinkSync, writeFileSync } from 'node:fs'
+import { existsSync, lstatSync, readFileSync, rmdirSync, unlinkSync, writeFileSync } from 'node:fs'
 
 import { loadAgentManifest, saveAgentManifest } from './agent-manifest.js'
 import {
@@ -72,6 +78,25 @@ export function uninstallAgentPack(_opts: AgentUninstallOptions = {}): AgentUnin
     }
     if (!existsSync(entry.path)) {
       alreadyGone.push(entry.path)
+      continue
+    }
+    // GPT-5.6-Sol pr-reviewer finding (SMI-6275 Wave 5): passing
+    // isAllowedManifestEntryPath's structural suffix check proves entry.path
+    // LOOKS like one of the installer's known targets — it does not prove
+    // the filesystem node there is the plain file/directory this installer
+    // actually wrote. If it's a SYMLINK (e.g. planted by unrelated content
+    // already present at that path before Skillsmith ever ran — a real risk
+    // for the workspace-relative allowlist added this wave, since a
+    // workspace root is far more likely to contain untrusted pre-existing
+    // content than $HOME), the writeFileSync restore branch below follows
+    // it and overwrites the LINK TARGET, not the manifest-declared path —
+    // defeating the entire suffix allowlist and turning a tampered manifest
+    // into a write-anywhere-the-symlink-points primitive, the exact
+    // "arbitrary-file-overwrite" this guard's own module header says must
+    // never be possible. A legitimate installer-written artifact is never a
+    // symlink, so reject unconditionally rather than resolve-and-compare.
+    if (lstatSync(entry.path).isSymbolicLink()) {
+      rejected.push(entry.path)
       continue
     }
     touchedDirs.add(dirname(entry.path))

@@ -49,7 +49,7 @@ import { join } from 'node:path'
 import { AGENT_PACK_SKILL_NAME, generateAgentPack } from '../services/agent-pack/index.js'
 import { AGENT_TOOL_PROFILE_NAMES } from '../services/agent-tool-profile.js'
 import { CLIENT_NATIVE_PATHS } from './paths.js'
-import { resolveScopedSkillsDir } from './workspace-scope.js'
+import { UnsatisfiableWorkspaceScopeError, resolveScopedSkillsDir } from './workspace-scope.js'
 import { relocateUnderHome } from './agent-home-relocate.js'
 import { writeOwnedArtifactFile } from './agent-pack-installer.fs-helpers.js'
 import {
@@ -324,28 +324,50 @@ export function installAgentPack(opts: AgentInstallOptions = {}): AgentInstallRe
   // match whatever 'not detected' reporting shape other undetected harnesses
   // already use").
   if (skillArtifact) {
-    const scopeTarget = resolveScopedSkillsDir({
-      client: 'antigravity',
-      cwd: opts.cwd ?? process.cwd(),
-      explicitScope: opts.scope === 'workspace' ? 'workspace' : undefined,
-      envScope: '',
-      configDefaultScope: null,
-    })
     const antigravityReport = newReport('antigravity')
-    // `scopeTarget.workspaceRoot` is only ever set when `scope === 'workspace'`
-    // (`ResolvedSkillScope`'s own contract) — narrowing through a single local
-    // avoids re-deriving that condition twice across the branches below.
-    const workspaceRoot = scopeTarget.scope === 'workspace' ? scopeTarget.workspaceRoot : undefined
+    // GPT-5.6-Sol pr-reviewer finding (SMI-6275 Wave 5): resolveScopedSkillsDir()
+    // THROWS UnsatisfiableWorkspaceScopeError when `--scope workspace` was
+    // requested but can't be satisfied (no .agents/ marker and no ancestor
+    // .git). Left uncaught, that throw propagates out of installAgentPack()
+    // ENTIRELY — skipping saveAgentManifest() below, which is the ONLY place
+    // every other harness's already-written entries (lines 228-299 above)
+    // get persisted. The result: real files on disk for claude-code/cursor/
+    // etc, with zero manifest record of them — permanently unreachable by
+    // `agent uninstall`, and silently dropped by a subsequent re-install's
+    // carryForwardPriorBackups(). This is expected, narrow failure (a scope
+    // request AntiGravity specifically can't satisfy), not a programming
+    // bug, so it degrades to a normal not-detected report row instead of
+    // aborting the run; any OTHER error still propagates unchanged.
+    let workspaceRoot: string | undefined
+    let scopeTarget: ReturnType<typeof resolveScopedSkillsDir> | undefined
+    try {
+      scopeTarget = resolveScopedSkillsDir({
+        client: 'antigravity',
+        cwd: opts.cwd ?? process.cwd(),
+        explicitScope: opts.scope === 'workspace' ? 'workspace' : undefined,
+        envScope: '',
+        configDefaultScope: null,
+      })
+      // `scopeTarget.workspaceRoot` is only ever set when `scope === 'workspace'`
+      // (`ResolvedSkillScope`'s own contract) — narrowing through a single
+      // local avoids re-deriving that condition twice across the branches below.
+      workspaceRoot = scopeTarget.scope === 'workspace' ? scopeTarget.workspaceRoot : undefined
+    } catch (err) {
+      if (!(err instanceof UnsatisfiableWorkspaceScopeError)) throw err
+      antigravityReport.notes.push(
+        `AntiGravity workspace scope could not be resolved: ${err.message}`
+      )
+    }
     antigravityReport.detected = Boolean(workspaceRoot)
 
-    if (workspaceRoot) {
+    if (workspaceRoot && scopeTarget) {
       writeSkillPackFor(scopeTarget.dir, skillArtifact.content, ctx, 'antigravity')
       antigravityReport.skillPackWritten = true
       if (scopeTarget.created) {
         antigravityReport.notes.push(`Created workspace skills directory: ${scopeTarget.dir}`)
       }
       installAntigravityMcpConfig(workspaceRoot, ctx, antigravityReport)
-    } else {
+    } else if (antigravityReport.notes.length === 0) {
       antigravityReport.notes.push(
         'No .agents/ workspace directory found at or above the current directory, and ' +
           '--scope workspace was not passed — AntiGravity was not configured. Run ' +

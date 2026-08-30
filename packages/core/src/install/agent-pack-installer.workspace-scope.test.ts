@@ -27,7 +27,10 @@ import { join } from 'node:path'
 import { afterEach, beforeEach, describe, expect, it } from 'vitest'
 
 import { installAgentPack } from './agent-pack-installer.js'
+import { uninstallAgentPack } from './agent-pack-uninstaller.js'
 import { AGENT_INSTALL_DIR_ENV_VAR } from './agent-manifest.js'
+import { CLIENT_NATIVE_PATHS } from './paths.js'
+import { relocateUnderHome } from './agent-home-relocate.js'
 
 let homeDir: string
 let workspaceDir: string
@@ -114,6 +117,52 @@ describe('installAgentPack --scope workspace (ADR-139 point 5, required test 15)
     const antigravityReport = result.harnessReports.find((r) => r.harness === 'antigravity')
     expect(antigravityReport?.skillPackWritten).toBe(true)
     expect(antigravityReport?.notes.some((n) => n.includes('Created workspace'))).toBe(false)
+  })
+
+  // GPT-5.6-Sol pr-reviewer finding (SMI-6275 Wave 5): resolveScopedSkillsDir()
+  // throws UnsatisfiableWorkspaceScopeError when `--scope workspace` can't be
+  // satisfied (no .agents/ marker AND no ancestor .git). Before the fix, that
+  // throw propagated out of installAgentPack() entirely, skipping
+  // saveAgentManifest() and losing every OTHER harness's already-written
+  // entries — real files on disk with no manifest record, unreachable by
+  // `agent uninstall`.
+  it('`--scope workspace` outside any workspace (no .agents/, no ancestor .git) does not throw, reports antigravity as not detected with the resolver error, and still persists every other harness to the manifest', () => {
+    const bareDir = mkdtempSync(join(tmpdir(), 'skillsmith-agent-install-bare-'))
+    try {
+      let result: ReturnType<typeof installAgentPack> | undefined
+      expect(() => {
+        result = installAgentPack({ homeDir, cwd: bareDir, scope: 'workspace' })
+      }).not.toThrow()
+
+      const antigravityReport = result?.harnessReports.find((r) => r.harness === 'antigravity')
+      expect(antigravityReport?.detected).toBe(false)
+      expect(antigravityReport?.skillPackWritten).toBe(false)
+      expect(
+        antigravityReport?.notes.some((n) => n.includes('workspace scope could not be resolved'))
+      ).toBe(true)
+
+      // Proof the manifest actually recorded every other harness's writes
+      // (not just that the files exist on disk, which would be true even
+      // with the bug — the bug was the MANIFEST being skipped): a real
+      // installer-written file from a harness untouched by this failure
+      // must still exist...
+      const claudeSkillPath = join(
+        relocateUnderHome(CLIENT_NATIVE_PATHS['claude-code'], homeDir),
+        'skillsmith-agent',
+        'SKILL.md'
+      )
+      expect(existsSync(claudeSkillPath)).toBe(true)
+
+      // ...and uninstallAgentPack (which replays ONLY the manifest, never
+      // re-deriving "what the generator would currently produce") must be
+      // able to find and remove it — impossible unless saveAgentManifest()
+      // was actually reached despite the AntiGravity resolver's throw.
+      const uninstallResult = uninstallAgentPack()
+      expect(uninstallResult.removed).toContain(claudeSkillPath)
+      expect(existsSync(claudeSkillPath)).toBe(false)
+    } finally {
+      rmSync(bareDir, { recursive: true, force: true })
+    }
   })
 
   it('every other harness report is unaffected by --scope workspace', () => {
