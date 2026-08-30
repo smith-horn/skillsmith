@@ -211,12 +211,18 @@ export { performUninstall } from './skill-installation.uninstall.js'
 /**
  * Apply skill optimization via TransformationService.
  * Returns original content if transformation fails or produces no changes.
+ *
+ * @param client - SMI-6276: target client for the generated companion-agent
+ *   frontmatter shape (default: canonical / `claude-code`, preserving prior
+ *   behavior for every existing caller). See
+ *   `SubagentGenerator.client-profiles.ts`.
  */
 export async function applyOptimization(
   db: Database,
   skillId: string,
   skillName: string,
-  skillMdContent: string
+  skillMdContent: string,
+  client: ClientId = CANONICAL_CLIENT
 ): Promise<OptimizationResult> {
   try {
     const transformService = new TransformationService(db, {
@@ -233,7 +239,8 @@ export async function applyOptimization(
       skillId,
       extractedName,
       extractedDesc,
-      skillMdContent
+      skillMdContent,
+      client
     )
 
     if (transformResult.transformed) {

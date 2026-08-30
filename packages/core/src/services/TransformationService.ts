@@ -25,96 +25,19 @@ import {
   parallelizeTaskCalls,
   type DecompositionResult,
 } from './SkillDecomposer.js'
-import {
-  generateSubagent,
-  type SubagentGenerationResult,
-  type SubagentDefinition,
-} from './SubagentGenerator.js'
+import { generateSubagent, type SubagentGenerationResult } from './SubagentGenerator.js'
+import { CANONICAL_CLIENT, type ClientId } from '../install/paths.js'
+import type {
+  CachedTransformation,
+  TransformationResult,
+  TransformationServiceOptions,
+} from './TransformationService.types.js'
 
-/**
- * Full transformation result for a skill
- */
-export interface TransformationResult {
-  /** Whether transformation was applied */
-  transformed: boolean
-
-  /** The optimized main SKILL.md content */
-  mainSkillContent: string
-
-  /** Sub-skills (if decomposed) */
-  subSkills: Array<{
-    filename: string
-    content: string
-  }>
-
-  /** Companion subagent (if generated) */
-  subagent?: SubagentDefinition
-
-  /** CLAUDE.md integration snippet */
-  claudeMdSnippet?: string
-
-  /** Transformation statistics */
-  stats: TransformationStats
-
-  /** Analysis that informed the transformation */
-  analysis: SkillAnalysis
-
-  /** Attribution footer added to content */
-  attribution: string
-}
-
-/**
- * Statistics about the transformation
- */
-export interface TransformationStats {
-  /** Original content line count */
-  originalLines: number
-
-  /** Optimized main skill line count */
-  optimizedLines: number
-
-  /** Number of sub-skills extracted */
-  subSkillCount: number
-
-  /** Whether Task() calls were parallelized */
-  tasksParallelized: boolean
-
-  /** Whether subagent was generated */
-  subagentGenerated: boolean
-
-  /** Estimated token reduction percentage */
-  tokenReductionPercent: number
-
-  /** Transformation duration in ms */
-  transformDurationMs: number
-}
-
-/**
- * Cached transformation entry
- */
-interface CachedTransformation {
-  result: TransformationResult
-  skillHash: string
-  cachedAt: string
-  version: string
-}
-
-/**
- * Configuration for TransformationService
- */
-export interface TransformationServiceOptions {
-  /** Cache TTL in seconds (default: 3600 = 1 hour) */
-  cacheTtl?: number
-
-  /** Enable caching (default: true) */
-  enableCache?: boolean
-
-  /** Force re-transformation even if cached (default: false) */
-  forceTransform?: boolean
-
-  /** Transformation version for cache invalidation */
-  version?: string
-}
+export type {
+  TransformationResult,
+  TransformationStats,
+  TransformationServiceOptions,
+} from './TransformationService.types.js'
 
 const DEFAULT_OPTIONS: Required<TransformationServiceOptions> = {
   cacheTtl: 3600, // 1 hour
@@ -161,13 +84,18 @@ export class TransformationService {
    * @param skillName - Human-readable skill name
    * @param description - Skill description
    * @param content - The full SKILL.md content
+   * @param client - SMI-6276: target client for the generated companion-agent
+   *   frontmatter shape (default: canonical / `claude-code`, preserving prior
+   *   behavior for every existing caller). See
+   *   `SubagentGenerator.client-profiles.ts`.
    * @returns Transformation result
    */
   async transform(
     skillId: string,
     skillName: string,
     description: string,
-    content: string
+    content: string,
+    client: ClientId = CANONICAL_CLIENT
   ): Promise<TransformationResult> {
     const startTime = Date.now()
 
@@ -216,7 +144,7 @@ export class TransformationService {
     const decomposition = decomposeSkill(transformedContent, analysis)
 
     // 3. Generate subagent if beneficial
-    const subagentResult = generateSubagent(skillName, description, content, analysis)
+    const subagentResult = generateSubagent(skillName, description, content, analysis, client)
 
     // Build result
     const result = this.buildResult(
@@ -244,12 +172,15 @@ export class TransformationService {
    * @param skillName - Human-readable skill name
    * @param description - Skill description
    * @param content - The full SKILL.md content
+   * @param client - SMI-6276: target client for the generated companion-agent
+   *   frontmatter shape (default: canonical / `claude-code`).
    * @returns Transformation result
    */
   transformWithoutCache(
     skillName: string,
     description: string,
-    content: string
+    content: string,
+    client: ClientId = CANONICAL_CLIENT
   ): TransformationResult {
     const startTime = Date.now()
 
@@ -282,7 +213,7 @@ export class TransformationService {
     const decomposition = decomposeSkill(transformedContent, analysis)
 
     // 3. Generate subagent if beneficial
-    const subagentResult = generateSubagent(skillName, description, content, analysis)
+    const subagentResult = generateSubagent(skillName, description, content, analysis, client)
 
     return this.buildResult(decomposition, subagentResult, analysis, tasksParallelized, startTime)
   }
@@ -477,15 +408,18 @@ export class TransformationService {
  * @param skillName - Human-readable skill name
  * @param description - Skill description
  * @param content - The full SKILL.md content
+ * @param client - SMI-6276: target client for the generated companion-agent
+ *   frontmatter shape (default: canonical / `claude-code`).
  * @returns Transformation result
  */
 export function transformSkill(
   skillName: string,
   description: string,
-  content: string
+  content: string,
+  client: ClientId = CANONICAL_CLIENT
 ): TransformationResult {
   const service = new TransformationService()
-  return service.transformWithoutCache(skillName, description, content)
+  return service.transformWithoutCache(skillName, description, content, client)
 }
 
 export default TransformationService

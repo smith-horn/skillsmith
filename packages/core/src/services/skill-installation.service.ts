@@ -302,7 +302,7 @@ export class SkillInstallationService {
             claudeMdSnippet: undefined as string | undefined,
             optimizationInfo: { optimized: false as const },
           }
-        : await applyOptimization(this.db, skillId, skillName, skillMdContent)
+        : await applyOptimization(this.db, skillId, skillName, skillMdContent, this.client)
 
       const { finalSkillContent, subSkillFiles, subagentContent, optimizationInfo } = optimizeResult
       const contentHash = hashContent(finalSkillContent)

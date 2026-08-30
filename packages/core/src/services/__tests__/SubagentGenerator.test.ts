@@ -215,5 +215,149 @@ Write output files.
 
       expect(result.subagent?.tools).toContain('Read')
     })
+
+    it('threads the client parameter through to a client-specific frontmatter shape', () => {
+      const content = `# Skill\n\nRun bash commands. Search for patterns using grep.`
+      const result = generateMinimalSubagent('client-skill', 'Client skill', content, 'antigravity')
+
+      expect(result.generated).toBe(true)
+      expect(result.subagent?.content).not.toMatch(/^tools: /m)
+      expect(result.subagent?.content).not.toMatch(/^model: (haiku|sonnet|opus)$/m)
+    })
+  })
+
+  describe('per-client generation profiles (SMI-6276)', () => {
+    // Mirrors the existing heavy-tool-usage fixture above so `suggestsSubagent`
+    // reliably trips — plus lines that hit Read/Bash/Grep detection so the
+    // AntiGravity mapped-array assertions below have something to map.
+    const heavyToolContent = `---
+name: multi-client-skill
+description: Exercises heavy tool usage across bash, grep, and file reads
+---
+
+# Multi Client Skill
+
+This skill runs many commands:
+- npm install
+- git status
+- docker build
+- npx something
+- yarn add
+- pnpm install
+
+Use bash to execute commands.
+Terminal operations are common.
+Read files to examine content before changes.
+Search for patterns using grep.
+`
+    const description = 'Exercises heavy tool usage across bash, grep, and file reads'
+    const analysis = analyzeSkill(heavyToolContent)
+
+    it('generates distinct frontmatter for Claude Code, Cursor, AntiGravity, and an omit-fallback client in the same run', () => {
+      const claudeResult = generateSubagent(
+        'multi-client-skill',
+        description,
+        heavyToolContent,
+        analysis,
+        'claude-code'
+      )
+      const cursorResult = generateSubagent(
+        'multi-client-skill',
+        description,
+        heavyToolContent,
+        analysis,
+        'cursor'
+      )
+      const antigravityResult = generateSubagent(
+        'multi-client-skill',
+        description,
+        heavyToolContent,
+        analysis,
+        'antigravity'
+      )
+      const copilotResult = generateSubagent(
+        'multi-client-skill',
+        description,
+        heavyToolContent,
+        analysis,
+        'copilot'
+      )
+
+      expect(claudeResult.generated).toBe(true)
+      expect(cursorResult.generated).toBe(true)
+      expect(antigravityResult.generated).toBe(true)
+      expect(copilotResult.generated).toBe(true)
+
+      const claudeContent = claudeResult.subagent!.content
+      const cursorContent = cursorResult.subagent!.content
+      const antigravityContent = antigravityResult.subagent!.content
+      const copilotContent = copilotResult.subagent!.content
+
+      // Claude Code: Claude-native comma-list tools + a Claude model enum value.
+      expect(claudeContent).toMatch(/^tools: .*Read/m)
+      expect(claudeContent).toMatch(/^model: (haiku|sonnet|opus)$/m)
+
+      // Cursor deliberately mirrors Claude Code — COMPANION_AGENT_TARGETS.cursor
+      // resolves to the SAME `.claude/agents/` file, which Cursor reads as a
+      // documented compatibility surface (see client-profiles.ts header) — so
+      // identical output here is the intended, evidence-backed behavior, not
+      // an accidental fallback to a shared default.
+      expect(cursorContent).toEqual(claudeContent)
+
+      // AntiGravity: genuinely different shape — proves this isn't just
+      // Cursor's case reused everywhere. No Claude-shaped scalar `tools:`
+      // line, no Claude model enum value, and its OWN mapped vocabulary
+      // rendered as a real YAML array (not a comma-joined string).
+      expect(antigravityContent).not.toMatch(/^tools: /m)
+      expect(antigravityContent).not.toContain('Read,')
+      expect(antigravityContent).not.toMatch(/^model: (haiku|sonnet|opus)$/m)
+      expect(antigravityContent).toMatch(/^tools:$/m)
+      expect(antigravityContent).toContain('  - run_command')
+      expect(antigravityContent).toContain('  - grep_search')
+      expect(antigravityContent).toContain('  - view_file')
+      // Step 2 is a separate, independent question (not this wave's scope) —
+      // regression-pin that this wave's fix does not touch it either way.
+      expect(antigravityContent).not.toMatch(/^subagent:/m)
+
+      // Copilot: the unverified-vocabulary fallback path — omits both fields
+      // entirely rather than guessing a partial/wrong mapping.
+      expect(copilotContent).not.toMatch(/^tools:/m)
+      expect(copilotContent).not.toMatch(/^model:/m)
+
+      // Every client still gets the universal minimum (name + description).
+      for (const content of [claudeContent, cursorContent, antigravityContent, copilotContent]) {
+        expect(content).toMatch(/^name: multi-client-skill-specialist$/m)
+        expect(content).toMatch(/^description: /m)
+      }
+    })
+
+    it('emits an AntiGravity tools array using only confirmed identifiers, not Claude names', () => {
+      const result = generateSubagent(
+        'multi-client-skill',
+        description,
+        heavyToolContent,
+        analysis,
+        'antigravity'
+      )
+
+      const content = result.subagent!.content
+      // Never leak Skillsmith's internal Claude-style names into the value.
+      expect(content).not.toMatch(/- (Read|Write|Edit|Bash|Grep|Glob|WebFetch|WebSearch)$/m)
+    })
+
+    it('gives OpenCode a mode: subagent line but no tools/model fields', () => {
+      const result = generateSubagent(
+        'multi-client-skill',
+        description,
+        heavyToolContent,
+        analysis,
+        'opencode'
+      )
+
+      const content = result.subagent!.content
+      expect(content).toMatch(/^mode: subagent$/m)
+      expect(content).not.toMatch(/^tools:/m)
+      expect(content).not.toMatch(/^model:/m)
+    })
   })
 })

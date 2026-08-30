@@ -63,6 +63,15 @@ export {
   type ClaudeModel,
 } from '../services/SubagentGenerator.js'
 
+// SMI-6276 (Wave 6 Step 1): per-client companion-subagent generation profile.
+export {
+  getSubagentGenerationProfile,
+  SUBAGENT_CLIENT_PROFILES,
+  type SubagentGenerationProfile,
+  type SubagentToolsPolicy,
+  type SubagentModelPolicy,
+} from '../services/SubagentGenerator.client-profiles.js'
+
 // SMI-5456 Wave 1 Step 4: multi-target portable agent-pack generator.
 export {
   generateAgentPack,
