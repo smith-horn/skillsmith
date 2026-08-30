@@ -16,20 +16,25 @@
  *     not an error.
  *
  * SECURITY (governance follow-up, 2026-07-01; symlink check added SMI-6275
- * Wave 5 per a GPT-5.6-Sol pr-reviewer finding): before touching the
- * filesystem, every entry's `path` is checked against
- * {@link isAllowedManifestEntryPath} (must structurally match one of the
- * installer's known per-harness target locations), that it is not itself a
- * SYMLINK (`lstatSync(...).isSymbolicLink()` — a matching suffix proves the
- * path LOOKS right, not that the node there is the plain file the installer
- * actually wrote; a symlink at that path would make the restore branch's
- * `writeFileSync` follow it and overwrite the link's target instead), and,
- * when `backupPath` is set, {@link isAllowedManifestBackupPath} (must
- * resolve under this run's manifest backups directory). The manifest is an
- * ordinary user-writable JSON file, not a signed record — a corrupted or
- * tampered manifest must never become an arbitrary-file-delete/overwrite
- * primitive. An entry failing any check is skipped entirely (added to
- * `result.rejected`, counted toward neither `removed` nor `restored`)
+ * Wave 5 per two rounds of GPT-5.6-Sol pr-reviewer findings — round 1 caught
+ * a symlinked LEAF, round 2 caught round 1's own fix still missing a
+ * symlinked ANCESTOR directory): before touching the filesystem, every
+ * entry's `path` is checked against {@link isAllowedManifestEntryPath} (must
+ * structurally match one of the installer's known per-harness target
+ * locations), that `realpathSync()`'s fully-resolved form of the path
+ * (dereferencing EVERY symlink in the chain, leaf and ancestors alike)
+ * equals its own plain `path.resolve()` (a matching suffix proves the path
+ * LOOKS right, not that every component of the actual filesystem node
+ * reached by that path is a plain, non-symlinked directory/file the
+ * installer actually wrote — a link anywhere in the chain would make the
+ * restore branch's `writeFileSync` follow it and overwrite whatever is at
+ * the far end instead), and, when `backupPath` is set,
+ * {@link isAllowedManifestBackupPath} (must resolve under this run's
+ * manifest backups directory). The manifest is an ordinary user-writable
+ * JSON file, not a signed record — a corrupted or tampered manifest must
+ * never become an arbitrary-file-delete/overwrite primitive. An entry
+ * failing any check is skipped entirely (added to `result.rejected`,
+ * counted toward neither `removed` nor `restored`)
  * rather than acted on.
  *
  * After removing all installer-created files, now-empty directories we
@@ -45,8 +50,15 @@
  * @module @skillsmith/core/install/agent-pack-uninstaller
  */
 
-import { dirname } from 'node:path'
-import { existsSync, lstatSync, readFileSync, rmdirSync, unlinkSync, writeFileSync } from 'node:fs'
+import { dirname, resolve } from 'node:path'
+import {
+  existsSync,
+  readFileSync,
+  realpathSync,
+  rmdirSync,
+  unlinkSync,
+  writeFileSync,
+} from 'node:fs'
 
 import { loadAgentManifest, saveAgentManifest } from './agent-manifest.js'
 import {
@@ -80,22 +92,37 @@ export function uninstallAgentPack(_opts: AgentUninstallOptions = {}): AgentUnin
       alreadyGone.push(entry.path)
       continue
     }
-    // GPT-5.6-Sol pr-reviewer finding (SMI-6275 Wave 5): passing
+    // GPT-5.6-Sol pr-reviewer finding (SMI-6275 Wave 5), round 2: passing
     // isAllowedManifestEntryPath's structural suffix check proves entry.path
     // LOOKS like one of the installer's known targets — it does not prove
     // the filesystem node there is the plain file/directory this installer
-    // actually wrote. If it's a SYMLINK (e.g. planted by unrelated content
-    // already present at that path before Skillsmith ever ran — a real risk
-    // for the workspace-relative allowlist added this wave, since a
-    // workspace root is far more likely to contain untrusted pre-existing
-    // content than $HOME), the writeFileSync restore branch below follows
-    // it and overwrites the LINK TARGET, not the manifest-declared path —
-    // defeating the entire suffix allowlist and turning a tampered manifest
-    // into a write-anywhere-the-symlink-points primitive, the exact
-    // "arbitrary-file-overwrite" this guard's own module header says must
-    // never be possible. A legitimate installer-written artifact is never a
-    // symlink, so reject unconditionally rather than resolve-and-compare.
-    if (lstatSync(entry.path).isSymbolicLink()) {
+    // actually wrote. Round 1 of this fix only lstat'd the LEAF (entry.path
+    // itself) for isSymbolicLink() — round 2's confirmation pass correctly
+    // flagged that as incomplete: lstat does not dereference PARENT path
+    // components, so a symlinked ancestor directory (e.g. `.agents` itself
+    // being a symlink — a real risk for the workspace-relative allowlist
+    // added this wave, since a workspace root is far more likely to contain
+    // untrusted pre-existing content than $HOME) would still let the leaf
+    // check pass while writeFileSync's restore branch below resolves
+    // through that ancestor link and overwrites content OUTSIDE the
+    // manifest-declared path entirely. realpathSync() resolves EVERY
+    // symlink in the full chain (leaf and every ancestor); comparing its
+    // result against the plain, non-dereferencing path.resolve() of the
+    // same input catches a link anywhere in that chain in one check — this
+    // supersedes (not supplements) the leaf-only lstatSync check.
+    const resolvedPath = resolve(entry.path)
+    let realEntryPath: string
+    try {
+      realEntryPath = realpathSync(resolvedPath)
+    } catch {
+      // existsSync() above passed, but the path vanished (or a component
+      // became unreadable) before realpathSync ran — a race, not proof of
+      // safety. Reject rather than fall through to alreadyGone, which
+      // would silently skip cleanup of what could be a real artifact.
+      rejected.push(entry.path)
+      continue
+    }
+    if (realEntryPath !== resolvedPath) {
       rejected.push(entry.path)
       continue
     }

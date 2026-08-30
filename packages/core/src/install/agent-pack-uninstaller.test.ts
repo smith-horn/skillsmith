@@ -169,6 +169,55 @@ describe('uninstallAgentPack — exact reversal', () => {
     expect(result.removed).not.toContain(settingsPath)
   })
 
+  // GPT-5.6-Sol pr-reviewer round-2 confirmation finding: round 1's fix only
+  // lstat'd the LEAF path for isSymbolicLink() — a symlinked ANCESTOR
+  // directory still slipped through, since lstat doesn't dereference parent
+  // components. The realpathSync()-based fix must catch this too.
+  it('refuses to restore into (or delete) a manifest entry whose path is reached through a symlinked ANCESTOR directory', () => {
+    // A real, non-symlinked ".claude" directory holding the victim...
+    const realClaudeDir = join(homeDir, 'real-claude-target')
+    mkdirSync(realClaudeDir, { recursive: true })
+    const victimPath = join(realClaudeDir, 'settings.json')
+    writeFileSync(victimPath, 'victim original content')
+
+    // ...and a manifest entry whose path is reached via a SYMLINKED
+    // ".claude" directory (the parent, not the leaf) pointing at it — the
+    // leaf component itself ("settings.json") is not a symlink at all.
+    const claudeSymlinkPath = join(homeDir, '.claude')
+    symlinkSync(realClaudeDir, claudeSymlinkPath)
+    const entryPath = join(claudeSymlinkPath, 'settings.json')
+
+    const manifestPath = getAgentManifestPath()
+    writeFileSync(
+      manifestPath,
+      JSON.stringify(
+        {
+          schemaVersion: 1,
+          installedAt: new Date().toISOString(),
+          packSchemaVersion: 1,
+          entries: [
+            {
+              path: entryPath,
+              kind: 'mcp-config',
+              harness: 'claude-code',
+              backupPath: null,
+              executable: false,
+            },
+          ],
+        },
+        null,
+        2
+      )
+    )
+
+    const result = uninstallAgentPack()
+
+    // The victim file must be untouched.
+    expect(readFileSync(victimPath, 'utf-8')).toBe('victim original content')
+    expect(result.rejected).toContain(entryPath)
+    expect(result.removed).not.toContain(entryPath)
+  })
+
   it('refuses to restore from a backupPath outside the manifest backups directory', () => {
     mkdirSync(join(homeDir, '.claude'), { recursive: true })
     const settingsPath = join(homeDir, '.claude', 'settings.json')
