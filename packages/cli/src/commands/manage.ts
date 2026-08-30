@@ -48,8 +48,8 @@ export function createListCommand(): Command {
 const SCOPE_HINT =
   'target scope (ADR-139): "workspace" resolves against the nearest ancestor ' +
   'workspace marker or .git root; defaults to SKILLSMITH_SCOPE env, then the ' +
-  'per-client ~/.skillsmith/config.json default, then auto-detecting an ' +
-  'EXISTING workspace directory, then global'
+  'per-client config default, then auto-detecting an EXISTING workspace ' +
+  'directory, then global'
 
 /**
  * Create update command
