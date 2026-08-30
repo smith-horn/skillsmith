@@ -81,19 +81,38 @@ export type EffectiveTierSource = 'license-key' | 'api-key' | 'session' | 'none'
  * fail-closed caller (e.g. `requireTier()`) must refuse to trust `status` and
  * report a "could not verify" error rather than silently pass or silently
  * downgrade a real paying customer.
+ *
+ * `rateLimit` (SMI-6266 Wave 2, `skillsmith whoami`): the caller's per-minute
+ * API rate-limit ceiling, straight from the live `/license-status` response
+ * (`SessionTierResult.rateLimit` / the API-key path's identical `data.rateLimit`
+ * field — see `RATE_LIMITS_BY_TIER` in `supabase/functions/_shared/license.ts`,
+ * the single source of truth both auth paths already read from). It is a
+ * static function of tier, not a live usage counter — distinct from the
+ * monthly-quota/usage data Step 0 of the Wave 2 plan deliberately left out
+ * (that would require extending the edge function's response contract; this
+ * does not, since the field is already present on the wire and was
+ * previously just discarded here). Only ever set for the two LIVE paths
+ * (`api-key`, `session`) — the offline license-key path and the no-credential
+ * community default have no live rate-limit figure to report, so this stays
+ * `undefined` for those.
  */
 export interface EffectiveTierResult {
   status: LicenseStatus
   source: EffectiveTierSource
   transient: boolean
+  rateLimit?: number
 }
 
 function communityStatus(): LicenseStatus {
   return { valid: true, tier: 'community', features: TIER_FEATURES.community }
 }
 
-function definitiveResult(source: EffectiveTierSource, status: LicenseStatus): EffectiveTierResult {
-  return { status, source, transient: false }
+function definitiveResult(
+  source: EffectiveTierSource,
+  status: LicenseStatus,
+  rateLimit?: number
+): EffectiveTierResult {
+  return { status, source, transient: false, ...(rateLimit !== undefined && { rateLimit }) }
 }
 
 function transientResult(source: EffectiveTierSource): EffectiveTierResult {
@@ -119,6 +138,7 @@ interface LicenseStatusResponse {
   data?: {
     authenticated?: boolean
     tier?: string
+    rateLimit?: number
   }
 }
 
@@ -162,7 +182,11 @@ async function resolveViaApiKey(apiKey: string): Promise<EffectiveTierResult> {
     // DEFINITIVE: authenticated with a recognized tier.
     if (response.ok && data?.authenticated === true && data.tier && KNOWN_TIERS.has(data.tier)) {
       const tier = data.tier as LicenseTier
-      return definitiveResult('api-key', { valid: true, tier, features: TIER_FEATURES[tier] })
+      return definitiveResult(
+        'api-key',
+        { valid: true, tier, features: TIER_FEATURES[tier] },
+        data.rateLimit
+      )
     }
 
     // DEFINITIVE: bad/expired/revoked/missing key — stable "not authenticated".
@@ -199,7 +223,11 @@ async function resolveViaSession(): Promise<EffectiveTierResult> {
     // verified user who genuinely has no paid entitlement (community).
     if (result.authenticated && result.tier && KNOWN_TIERS.has(result.tier)) {
       const tier = result.tier as LicenseTier
-      return definitiveResult('session', { valid: true, tier, features: TIER_FEATURES[tier] })
+      return definitiveResult(
+        'session',
+        { valid: true, tier, features: TIER_FEATURES[tier] },
+        result.rateLimit
+      )
     }
 
     // DEFINITIVE: the server verified the JWT and found no session — a

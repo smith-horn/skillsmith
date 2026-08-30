@@ -178,6 +178,25 @@ describe('resolveEffectiveTier / requireTier (SMI-6271)', () => {
       await expect(requireTier('team')).resolves.toBeUndefined()
     })
 
+    // SMI-6266 Wave 2 (`skillsmith whoami`): rateLimit is plumbed through
+    // from the live response (previously discarded) so whoami has something
+    // to display beyond the bare tier badge — see require-tier.ts's
+    // EffectiveTierResult doc comment for why this isn't an edge-function
+    // contract change (the field was already on the wire).
+    it('plumbs rateLimit through from a live api-key response that includes it', async () => {
+      global.fetch = vi
+        .fn()
+        .mockResolvedValue(
+          new Response(
+            JSON.stringify({ data: { authenticated: true, tier: 'enterprise', rateLimit: 600 } }),
+            { status: 200 }
+          )
+        )
+
+      const result = await resolveEffectiveTier()
+      expect(result.rateLimit).toBe(600)
+    })
+
     it('an unauthenticated (bad/revoked) key resolves definitively to community', async () => {
       // mockImplementation (not mockResolvedValue) so each of the two calls
       // below gets its own Response instance — a Response body can only be
@@ -244,6 +263,10 @@ describe('resolveEffectiveTier / requireTier (SMI-6271)', () => {
         source: 'session',
         transient: false,
         status: { valid: true, tier: 'team', features: TIER_FEATURES.team },
+        // SMI-6266 Wave 2: rateLimit is plumbed through from
+        // resolveSessionTier()'s SessionTierResult (previously discarded) —
+        // matches the `rateLimit: 100` in this describe block's own mock.
+        rateLimit: 100,
       })
     })
 
