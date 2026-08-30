@@ -4,6 +4,12 @@ All notable changes to `@skillsmith/cli` are documented here.
 
 ## [Unreleased]
 
+- **Fix**: `skillsmith diagnose` now checks whether your Cursor MCP registration (both the
+  global `~/.cursor/mcp.json` and any project-scoped copy) is on the current, working config
+  shape and tells you how to fix it if not — previously nothing detected this at all once the
+  MCP server failed to even start, since the CLI's own update-nudge only fires from inside a
+  running MCP process (GH#2368, SMI-6279)
+
 - **Fix**: `audit advisories`, `diff`, `pin`, `config get/set audit_mode`, and `audit-collisions`
   now correctly recognize a personal `SKILLSMITH_API_KEY` or a logged-in `skillsmith login`
   session — previously they only ever checked `SKILLSMITH_LICENSE_KEY` (an offline license key

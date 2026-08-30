@@ -16,9 +16,42 @@
  */
 
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
-import { existsSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs'
+import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
+
+// SMI-6279 Wave 9: the "global" Cursor MCP config check reads
+// AGENT_MCP_TARGETS.cursor.path, which `@skillsmith/core/install` bakes in
+// at MODULE LOAD time from the REAL os.homedir() (agent-harness-targets.ts —
+// mocking `homedir()` after the fact wouldn't help, it's an already-computed
+// constant). Mock the target path itself, pointed at a real temp dir. Uses
+// `require()` (not this file's own top-level `node:fs`/`node:os`/`node:path`
+// imports) inside `vi.hoisted` — Vitest's hoist transform moves `vi.hoisted`/
+// `vi.mock` calls ABOVE the transformed import bindings too, so referencing
+// them here throws `Cannot access '...' before initialization`; `require()`
+// sidesteps that entirely (same pattern already used elsewhere in this repo,
+// e.g. packages/doc-retrieval-mcp/src/retrieval-log/writer.test.ts). Never
+// touches the real `~/.cursor/mcp.json`.
+const { globalCursorMcpPath } = vi.hoisted(() => {
+  // eslint-disable-next-line @typescript-eslint/no-require-imports -- vi.hoisted runs before this file's own transformed ESM import bindings are initialized (see comment above); require() is the only way to reach node:fs/os/path from inside it.
+  const fs = require('node:fs') as typeof import('node:fs')
+  // eslint-disable-next-line @typescript-eslint/no-require-imports
+  const os = require('node:os') as typeof import('node:os')
+  // eslint-disable-next-line @typescript-eslint/no-require-imports
+  const path = require('node:path') as typeof import('node:path')
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'skillsmith-diagnose-global-cursor-'))
+  return { globalCursorMcpPath: path.join(dir, 'mcp.json') }
+})
+vi.mock('@skillsmith/core/install', async (importOriginal) => {
+  const actual = await importOriginal<typeof import('@skillsmith/core/install')>()
+  return {
+    ...actual,
+    AGENT_MCP_TARGETS: {
+      ...actual.AGENT_MCP_TARGETS,
+      cursor: { ...actual.AGENT_MCP_TARGETS.cursor, path: globalCursorMcpPath },
+    },
+  }
+})
 
 import { createDiagnoseCommand, runDiagnose } from './diagnose.js'
 
@@ -82,8 +115,40 @@ afterEach(() => {
 
   rmSync(tempLogDir, { recursive: true, force: true })
   rmSync(tempCwd, { recursive: true, force: true })
+  // SMI-6279 Wave 9: reset the mocked "global" Cursor MCP path between
+  // tests — the temp dir itself is shared for the whole file (created once
+  // via vi.hoisted), only the file inside it is per-test state.
+  rmSync(globalCursorMcpPath, { force: true })
   vi.restoreAllMocks()
 })
+
+const STALE_NPX_ENTRY = {
+  mcpServers: {
+    skillsmith: {
+      command: 'npx',
+      args: ['-y', '@skillsmith/mcp-server'],
+      env: { SKILLSMITH_TOOL_PROFILE: 'agent' },
+    },
+  },
+}
+
+const FRESH_BINARY_ENTRY = {
+  mcpServers: {
+    '@skillsmith/mcp-server': {
+      command: '/usr/local/bin/skillsmith-mcp',
+      env: { SKILLSMITH_TOOL_PROFILE: 'agent', SKILLSMITH_CLIENT: 'cursor' },
+    },
+  },
+}
+
+function writeProjectCursorMcpJson(content: unknown): void {
+  mkdirSync(join(tempCwd, '.cursor'), { recursive: true })
+  writeFileSync(join(tempCwd, '.cursor', 'mcp.json'), JSON.stringify(content, null, 2))
+}
+
+function writeGlobalCursorMcpJson(content: unknown): void {
+  writeFileSync(globalCursorMcpPath, JSON.stringify(content, null, 2))
+}
 
 describe('skillsmith diagnose', () => {
   it('prints a graceful "no logs found" message with zero log files, without crashing', async () => {
@@ -203,5 +268,74 @@ describe('skillsmith diagnose', () => {
     const optionNames = cmd.options.map((o) => o.long)
     expect(optionNames).toContain('--limit')
     expect(optionNames).toContain('--bundle')
+  })
+})
+
+// SMI-6279 Wave 9: GH#2368 V3's actual broken config was project-scoped —
+// nothing before this checked that location at all. Covers both required
+// cases (stale npx-form flagged, fresh binary-path form passes) plus
+// independence between the global and project-scoped locations.
+describe('skillsmith diagnose — Cursor MCP registration check', () => {
+  it('flags a stale project-scoped .cursor/mcp.json with the old npx form', async () => {
+    writeProjectCursorMcpJson(STALE_NPX_ENTRY)
+
+    const lines = captureConsole()
+    await runDiagnose({})
+    const output = lines.join('\n')
+
+    expect(output).toContain('Cursor MCP registration')
+    const projectPath = join(tempCwd, '.cursor', 'mcp.json')
+    expect(output).toContain(projectPath)
+    expect(output).toContain('STALE')
+    expect(output).toContain("npx' command form")
+    expect(output).toContain('missing SKILLSMITH_CLIENT=cursor')
+    expect(output).toContain('skillsmith agent install')
+  })
+
+  it('passes a fresh binary-path .cursor/mcp.json', async () => {
+    writeProjectCursorMcpJson(FRESH_BINARY_ENTRY)
+
+    const lines = captureConsole()
+    await runDiagnose({})
+    const output = lines.join('\n')
+
+    const projectPath = join(tempCwd, '.cursor', 'mcp.json')
+    const projectLine = output.split('\n').find((line) => line.includes(projectPath))
+    expect(projectLine).toBeDefined()
+    expect(projectLine).toContain('OK')
+    expect(projectLine).not.toContain('STALE')
+  })
+
+  it('checks the global and project-scoped locations independently', async () => {
+    writeGlobalCursorMcpJson(STALE_NPX_ENTRY)
+    writeProjectCursorMcpJson(FRESH_BINARY_ENTRY)
+
+    const lines = captureConsole()
+    await runDiagnose({})
+    const output = lines.join('\n')
+    const outputLines = output.split('\n')
+
+    const globalLine = outputLines.find((line) => line.includes(globalCursorMcpPath))
+    const projectPath = join(tempCwd, '.cursor', 'mcp.json')
+    const projectLine = outputLines.find((line) => line.includes(projectPath))
+
+    expect(globalLine).toBeDefined()
+    expect(projectLine).toBeDefined()
+    // Different files, different verdicts — proves each location is
+    // evaluated on its own content, not short-circuited by the other.
+    expect(globalLine).toContain('STALE')
+    expect(projectLine).toContain('OK')
+    expect(projectLine).not.toContain('STALE')
+  })
+
+  it('reports "(not found)" for a location with no mcp.json at all', async () => {
+    // Neither global nor project-scoped file written this test.
+    const lines = captureConsole()
+    await runDiagnose({})
+    const output = lines.join('\n')
+
+    expect(output).toContain(`${globalCursorMcpPath}: (not found)`)
+    const projectPath = join(tempCwd, '.cursor', 'mcp.json')
+    expect(output).toContain(`${projectPath}: (not found)`)
   })
 })

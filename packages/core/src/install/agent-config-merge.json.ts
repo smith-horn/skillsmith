@@ -72,18 +72,27 @@ function writeBackup(sourcePath: string, backupDir: string): string {
 }
 
 /**
- * Merge a `skillsmith` MCP server entry into a JSON config file at
+ * Merge a Skillsmith MCP server entry into a JSON config file at
  * `opts.path`, under `opts.keyPath` (e.g. `['mcpServers']`).
  *
  * Never performs a whole-file write of unrelated keys — the file is parsed,
- * exactly one nested key (`skillsmith`) is set at `[...keyPath, 'skillsmith']`,
- * and the WHOLE document (all other keys untouched) is re-serialized. A
- * missing file is treated as `{}` (created fresh).
+ * exactly one nested key (`opts.entryKey`, defaulting to `'skillsmith'` —
+ * see `MergeOptions.entryKey`) is set at `[...keyPath, entryKey]`, and the
+ * WHOLE document (all other keys untouched) is re-serialized. A missing
+ * file is treated as `{}` (created fresh).
  */
 export function mergeJsonMcpEntry(
   opts: MergeOptions & { keyPath: readonly string[] }
 ): MergeResult {
-  const { path, keyPath, entryValue, backupDir, force = false, alreadyBackedUpPaths } = opts
+  const {
+    path,
+    keyPath,
+    entryValue,
+    backupDir,
+    force = false,
+    alreadyBackedUpPaths,
+    entryKey = 'skillsmith',
+  } = opts
 
   let doc: Record<string, unknown> = {}
   let existed = false
@@ -109,7 +118,7 @@ export function mergeJsonMcpEntry(
   const container = getAtPath(doc, keyPath)
   const existingEntry =
     container && typeof container === 'object' && !Array.isArray(container)
-      ? (container as Record<string, unknown>).skillsmith
+      ? (container as Record<string, unknown>)[entryKey]
       : undefined
 
   if (existingEntry !== undefined) {
@@ -132,14 +141,14 @@ export function mergeJsonMcpEntry(
     const backupPath =
       existed && shouldBackup(path, alreadyBackedUpPaths) ? writeBackup(path, backupDir) : null
     markBackedUp(path, alreadyBackedUpPaths)
-    setAtPath(doc, keyPath, { ...(container as Record<string, unknown>), skillsmith: entryValue })
+    setAtPath(doc, keyPath, { ...(container as Record<string, unknown>), [entryKey]: entryValue })
     mkdirSync(dirname(path), { recursive: true, mode: 0o700 })
     writeFileSync(path, JSON.stringify(doc, null, 2) + '\n', { mode: 0o600 })
     return { status: 'updated', path, backupPath }
   }
 
   // No existing entry — safe create. Still back up the FILE (not the
-  // skillsmith key, which didn't exist) so a foreign file with unrelated
+  // entryKey, which didn't exist) so a foreign file with unrelated
   // content the user cares about is always one restore away — unless an
   // earlier merge THIS RUN already captured the pre-install state.
   const backupPath =
@@ -149,7 +158,7 @@ export function mergeJsonMcpEntry(
     container && typeof container === 'object' && !Array.isArray(container)
       ? (container as Record<string, unknown>)
       : {}
-  setAtPath(doc, keyPath, { ...currentContainer, skillsmith: entryValue })
+  setAtPath(doc, keyPath, { ...currentContainer, [entryKey]: entryValue })
   mkdirSync(dirname(path), { recursive: true, mode: 0o700 })
   writeFileSync(path, JSON.stringify(doc, null, 2) + '\n', { mode: 0o600 })
   return { status: 'created', path, backupPath }

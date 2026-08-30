@@ -2,7 +2,13 @@
  * Version check utility for auto-update notifications
  * @see SMI-1952: Add auto-update check to MCP server startup
  */
+import { existsSync, readFileSync } from 'node:fs'
+
 import { resolveClientId } from '../install/paths.js'
+import {
+  CURSOR_MCP_ENTRY_KEY,
+  LEGACY_MCP_ENTRY_KEY,
+} from '../install/agent-pack-installer.entry.js'
 
 /**
  * Result of a version check against npm registry
@@ -115,8 +121,23 @@ export function formatUpdateNotification(result: VersionCheckResult, client?: st
     `Run \`${result.updateCommand}\` to use the new version.\n` +
     `Note: upgrading does not refresh onboarding artifacts already on disk —\n` +
     `run \`skillsmith setup --force${clientFlag}\` to refresh the bundled skill, and\n` +
-    `\`skillsmith agent install\` to refresh hooks/MCP registration.`
+    `\`${agentInstallRemediationCommand()}\` to refresh hooks/MCP registration.`
   )
+}
+
+/**
+ * Canonical "refresh hooks/MCP registration" remediation command — the
+ * single source of truth for this exact string, shared by
+ * {@link formatUpdateNotification} (version-bump-triggered, fires only
+ * inside a running MCP server — structurally unreachable when the server
+ * never spawns at all, e.g. GH#2368 V3's "zero MCP tools" report) and
+ * {@link checkCursorMcpArtifact} (on-disk-content-triggered, SMI-6279
+ * Wave 9 — reachable from `skillsmith diagnose` even when no server is
+ * running) so the two never drift into differently-worded instructions for
+ * the same underlying fix.
+ */
+export function agentInstallRemediationCommand(): string {
+  return 'skillsmith agent install'
 }
 
 /**
@@ -150,5 +171,108 @@ export function resolveUpdateNotificationClient(raw: string | undefined): string
     return resolveClientId(raw)
   } catch {
     return undefined
+  }
+}
+
+/**
+ * Result of inspecting one `.cursor/mcp.json` file for the GH#2368 V3
+ * staleness signature (SMI-6279 Wave 9).
+ */
+export interface CursorMcpArtifactCheck {
+  /** Absolute path checked. */
+  path: string
+  /** Whether the file exists on disk at all. */
+  exists: boolean
+  /**
+   * A Skillsmith MCP server entry was found under either the current key
+   * (`CURSOR_MCP_ENTRY_KEY`) or the pre-SMI-6279 legacy key
+   * (`LEGACY_MCP_ENTRY_KEY`) — see `agent-pack-installer.entry.ts`.
+   */
+  entryFound: boolean
+  /** The JSON key the entry was found under, when `entryFound` is true. */
+  entryKey?: string
+  /**
+   * True when the entry's `command` is the broken `npx` form
+   * (`buildAgentMcpEntryValue()`'s shape) — two independent live UAT passes
+   * proved this ENOENTs inside Cursor's bundled Node (GH#2368 C-01).
+   */
+  usesNpxForm: boolean
+  /** True when `env.SKILLSMITH_CLIENT === 'cursor'` is present on the entry. */
+  hasClientEnv: boolean
+  /**
+   * True when this artifact needs a `agent install` refresh — an entry was
+   * found and either `usesNpxForm` or NOT `hasClientEnv` (or both; the
+   * GH#2368 V3 repro found the real broken installer output had both
+   * problems at once). `false` when no entry was found at all — Cursor
+   * simply not being configured yet is not a staleness signal.
+   */
+  stale: boolean
+  /** Present only when `stale` is true — the exact remediation command. */
+  remediation?: string
+}
+
+function notFoundResult(path: string, exists: boolean): CursorMcpArtifactCheck {
+  return { path, exists, entryFound: false, usesNpxForm: false, hasClientEnv: false, stale: false }
+}
+
+/**
+ * Inspect one `.cursor/mcp.json` file (global `~/.cursor/mcp.json` or a
+ * project-scoped `<workspace>/.cursor/mcp.json` — the GH#2368 V3 tester's
+ * actual broken config was project-scoped, and nothing before this checked
+ * that location at all) for the exact staleness signature
+ * {@link agentInstallRemediationCommand} fixes: the `npx` command form, and/or
+ * a missing `SKILLSMITH_CLIENT` env var.
+ *
+ * Read-only, never throws — an unreadable or unparsable file is reported as
+ * "not found" (nothing we can confidently flag) rather than surfaced as an
+ * error; `skillsmith diagnose` is a best-effort diagnostic, not a validator.
+ */
+export function checkCursorMcpArtifact(path: string): CursorMcpArtifactCheck {
+  if (!existsSync(path)) return notFoundResult(path, false)
+
+  let doc: unknown
+  try {
+    doc = JSON.parse(readFileSync(path, 'utf-8'))
+  } catch {
+    return notFoundResult(path, true)
+  }
+  if (!doc || typeof doc !== 'object' || Array.isArray(doc)) return notFoundResult(path, true)
+
+  const servers = (doc as Record<string, unknown>).mcpServers
+  if (!servers || typeof servers !== 'object' || Array.isArray(servers)) {
+    return notFoundResult(path, true)
+  }
+  const serversObj = servers as Record<string, unknown>
+
+  const entryKey =
+    CURSOR_MCP_ENTRY_KEY in serversObj
+      ? CURSOR_MCP_ENTRY_KEY
+      : LEGACY_MCP_ENTRY_KEY in serversObj
+        ? LEGACY_MCP_ENTRY_KEY
+        : undefined
+  if (!entryKey) return notFoundResult(path, true)
+
+  const entry = serversObj[entryKey]
+  if (!entry || typeof entry !== 'object' || Array.isArray(entry)) return notFoundResult(path, true)
+  const entryObj = entry as Record<string, unknown>
+
+  const usesNpxForm = entryObj.command === 'npx'
+  const env = entryObj.env
+  const hasClientEnv =
+    !!env &&
+    typeof env === 'object' &&
+    !Array.isArray(env) &&
+    (env as Record<string, unknown>).SKILLSMITH_CLIENT === 'cursor'
+  const stale = usesNpxForm || !hasClientEnv
+
+  return {
+    path,
+    exists: true,
+    entryFound: true,
+    entryKey,
+    usesNpxForm,
+    hasClientEnv,
+    stale,
+    remediation: stale ? agentInstallRemediationCommand() : undefined,
   }
 }
