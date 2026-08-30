@@ -18,6 +18,30 @@ vi.mock('fs/promises', () => ({
   stat: vi.fn(),
 }))
 
+// ADR-139 (SMI-6274 Wave 4) / pre-push repro fix: getLocalSkillsDir() now
+// calls findWorkspaceRoot() to walk UP from cwd looking for a workspace
+// marker/`.git` boundary, instead of a bare join(process.cwd(), ...). When
+// vitest runs from the monorepo root (`/app`), that walk and this test's own
+// naive `join(process.cwd(), ...)` expectation happen to coincide (both are
+// `/app`) — but the real pre-push hook (and CI) runs `cd packages/cli &&
+// vitest run`, where cwd is a SUBDIRECTORY of the repo root; the SUT then
+// correctly walks up to the real repo-root `.claude/skills`, while the
+// test's expectation stayed pinned to `packages/cli/.claude/skills`,
+// producing a real (confirmed live) failure that only reproduces under the
+// real invocation directory. Fixed the same way `search.test.ts` mocks this
+// subpath: findWorkspaceRoot always resolves to a FIXED, deterministic
+// marker root, independent of the real process.cwd() at test-run time —
+// LOCAL_SKILLS_DIR below is derived from that SAME fixed root, not from
+// `process.cwd()`, so the test passes identically from either invocation
+// directory.
+vi.mock('@skillsmith/core/install', async (importOriginal) => {
+  const actual = await importOriginal<typeof import('@skillsmith/core/install')>()
+  return {
+    ...actual,
+    findWorkspaceRoot: vi.fn(() => ({ root: '/fixture-workspace-root', via: 'marker' as const })),
+  }
+})
+
 // Mock core - use class implementations to avoid vitest warning
 vi.mock('@skillsmith/core', () => ({
   createDatabase: vi.fn(() => ({ close: vi.fn() })),
@@ -56,7 +80,10 @@ vi.mock('@skillsmith/core', () => ({
 
 describe('SMI-1630: Search both global and local skill directories', () => {
   const GLOBAL_SKILLS_DIR = join(homedir(), '.claude', 'skills')
-  const LOCAL_SKILLS_DIR = join(process.cwd(), '.claude', 'skills')
+  // Must match the fixed marker root the findWorkspaceRoot mock above
+  // resolves to — NOT process.cwd(), which is the exact fragility this fix
+  // closes (see the mock's comment above).
+  const LOCAL_SKILLS_DIR = join('/fixture-workspace-root', '.claude', 'skills')
 
   const mockSkillMd = (name: string, version: string) => `---
 name: ${name}
