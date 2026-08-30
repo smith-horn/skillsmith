@@ -2,11 +2,21 @@
  * Production `Smi5879SimulateFullDbDeps` implementation for smi5879-simulate-full.ts.
  * @module scripts/indexer/smi5879-simulate-full.db
  *
- * Thin wrapper over item 1's `smi5879-census.pg.ts` psql helper (imported,
- * never modified — item 1 is merged and out of scope) plus the SQL functions
- * item 1's migration already ships (`smi5879_claim_run`, `smi5879_heartbeat`,
- * `smi5879_release_run`, `smi5879_population_digest`, `smi5879_branch_digest`).
- * No new SQL objects are created here.
+ * Thin wrapper over item 1's `smi5879-census.pg.ts` psql helper plus the SQL
+ * functions item 1's migration already ships (`smi5879_claim_run`,
+ * `smi5879_heartbeat`, `smi5879_release_run`, `smi5879_population_digest`,
+ * `smi5879_branch_digest`). No new SQL objects are created here.
+ *
+ * SMI-6294: `heartbeat()`/`heartbeatShard()` below opt into
+ * `{ timeoutMs: HEARTBEAT_QUERY_TIMEOUT_MS, treatAmbiguousLossAsRetryable:
+ * true }` — the identical hang-risk fix applied to `smi5879-census.ts`'s own
+ * heartbeat call site, since both share the exact same
+ * `smi5879_heartbeat`/`smi5879_heartbeat_shard` pattern via `queryScalar` and
+ * this is the tool that runs the real 3-shard production dispatch. A prior
+ * version of this header's "never modified — item 1 is merged and out of
+ * scope" line described item 3's OWN original wave scoping (never touch
+ * item 1's file), not a standing prohibition on `smi5879-census.pg.ts` ever
+ * being extended — this file now also imports the SMI-6294 timeout constant.
  */
 
 import {
@@ -16,6 +26,7 @@ import {
   runPsql,
   type PgConnParams,
 } from './smi5879-census.pg.ts'
+import { HEARTBEAT_QUERY_TIMEOUT_MS } from './smi5879-census.heartbeat.ts'
 import type {
   BranchMap,
   RepoBranchInfo,
@@ -71,10 +82,13 @@ export function createSmi5879SimulateFullDbDeps(conn: PgConnParams): Smi5879Simu
     async heartbeat(runId, token) {
       // queryScalar already resolves the SQL NULL sentinel to `null` — a bare
       // `SELECT smi5879_heartbeat(...)` returns exactly one scalar row.
-      return queryScalar(conn, `SELECT smi5879_heartbeat(:'run_id', :'token');`, {
-        run_id: runId,
-        token,
-      })
+      // SMI-6294: timeoutMs + treatAmbiguousLossAsRetryable — see module header.
+      return queryScalar(
+        conn,
+        `SELECT smi5879_heartbeat(:'run_id', :'token');`,
+        { run_id: runId, token },
+        { timeoutMs: HEARTBEAT_QUERY_TIMEOUT_MS, treatAmbiguousLossAsRetryable: true }
+      )
     },
 
     async releaseRun(runId, token) {
@@ -105,10 +119,12 @@ export function createSmi5879SimulateFullDbDeps(conn: PgConnParams): Smi5879Simu
     },
 
     async heartbeatShard(runId, shardIndex, token) {
+      // SMI-6294: timeoutMs + treatAmbiguousLossAsRetryable — see module header.
       return queryScalar(
         conn,
         `SELECT smi5879_heartbeat_shard(:'run_id', :'shard_index'::integer, :'token');`,
-        { run_id: runId, shard_index: String(shardIndex), token }
+        { run_id: runId, shard_index: String(shardIndex), token },
+        { timeoutMs: HEARTBEAT_QUERY_TIMEOUT_MS, treatAmbiguousLossAsRetryable: true }
       )
     },
 

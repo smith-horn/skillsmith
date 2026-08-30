@@ -179,6 +179,32 @@ export function isTransientConnectionError(stderr: string): boolean {
   return TRANSIENT_CONNECTION_ERROR_PATTERNS.some((pattern) => pattern.test(stderr))
 }
 
+/**
+ * SMI-6294: the SAME ambiguous post-execution category
+ * `TRANSIENT_CONNECTION_ERROR_PATTERNS`'s own doc comment deliberately
+ * excludes (the server may already have executed/committed before the
+ * client-side ack was lost) — matched here as a SEPARATE, opt-in classifier
+ * (see {@link SpawnPsqlOptions.treatAmbiguousLossAsRetryable}) safe only when
+ * the caller's SQL is idempotent, e.g. a heartbeat lease-extend `UPDATE`
+ * (`smi5879_heartbeat`/`smi5879_heartbeat_shard`). Anchored to psql's own
+ * `psql: error: ` prefix for the same misclassification-safety reason as
+ * `TRANSIENT_CONNECTION_ERROR_PATTERNS`.
+ */
+const AMBIGUOUS_CONNECTION_LOSS_PATTERNS: RegExp[] = [
+  /^psql: error: .*server closed the connection unexpectedly/im,
+  /^psql: error: .*terminating connection due to administrator command/im,
+  /^psql: error: .*timeout expired/im,
+]
+
+/**
+ * True when `stderr` looks like an ambiguous, post-execution connection loss
+ * (see {@link AMBIGUOUS_CONNECTION_LOSS_PATTERNS}'s doc comment). Callers
+ * must only treat this as retryable when their own SQL is idempotent.
+ */
+export function isAmbiguousConnectionLoss(stderr: string): boolean {
+  return AMBIGUOUS_CONNECTION_LOSS_PATTERNS.some((pattern) => pattern.test(stderr))
+}
+
 /** Bounded retry budget for a transient connection failure (initial attempt + this many retries). */
 export const TRANSIENT_RETRY_MAX_ATTEMPTS = 3
 /** Backoff between retry attempts (ms) — short, since this recovers from a blip, not a rate limit. */
@@ -243,12 +269,58 @@ export function isTransientSpawnErrorCode(code: string | undefined): boolean {
 }
 
 /**
+ * SMI-6294: thrown by {@link spawnPsqlOnce} when `options.timeoutMs` is set
+ * and the child neither exits nor errors within that window — a genuinely
+ * hung `psql` (e.g. a pooled connection whose client-side TCP socket is left
+ * half-open by a server-side disconnect). Mirrors {@link PsqlSpawnError}'s shape.
+ */
+class PsqlTimeoutError extends Error {
+  readonly timeoutMs: number
+  constructor(timeoutMs: number) {
+    super(`SMI-6294: psql timed out after ${timeoutMs}ms with no response`)
+    this.name = 'PsqlTimeoutError'
+    this.timeoutMs = timeoutMs
+  }
+}
+
+/**
+ * Per-call options for {@link spawnPsqlOnce}/{@link spawnPsql} and the public
+ * `runPsql`/`queryRows`/`queryScalar` wrappers. Every field defaults to
+ * today's existing (pre-SMI-6294) behavior — omitting `options`, as every
+ * call site predating this change does, is byte-identical to before.
+ */
+export interface SpawnPsqlOptions {
+  /** Kill the child and reject with {@link PsqlTimeoutError} if it hasn't settled within this many ms. Omit for no timeout (existing behavior). */
+  timeoutMs?: number
+  /**
+   * Widen retry classification to ALSO retry a {@link PsqlTimeoutError} and
+   * an ambiguous post-execution connection loss (see
+   * {@link isAmbiguousConnectionLoss}). ONLY safe when the underlying SQL is
+   * idempotent (e.g. a heartbeat lease-extend `UPDATE`) — a non-idempotent
+   * write could be silently replayed. Default false/unset preserves today's
+   * conservative behavior for every existing caller.
+   */
+  treatAmbiguousLossAsRetryable?: boolean
+}
+
+/**
  * Spawn `psql` against `conn`, feed `sql` via stdin, and resolve with
  * stdout/stderr. Rejects (with stderr — which carries any `RAISE EXCEPTION`
  * message the SQL triggered) on a non-zero exit. Credentials go via the child's
  * environment only, never argv, never logged.
+ *
+ * SMI-6294: when `options.timeoutMs` is set, a timer races the existing
+ * `child.on(...)` listeners — on fire, `SIGTERM` + reject with
+ * {@link PsqlTimeoutError}. Cleared in BOTH `close`/`error` handlers (a
+ * Promise settles once, so a same-tick race is harmless either way). No
+ * timer at all when `timeoutMs` is unset — zero behavior change otherwise.
  */
-function spawnPsqlOnce(conn: PgConnParams, extraArgs: string[], sql: string): Promise<PsqlOutcome> {
+function spawnPsqlOnce(
+  conn: PgConnParams,
+  extraArgs: string[],
+  sql: string,
+  options: SpawnPsqlOptions = {}
+): Promise<PsqlOutcome> {
   return new Promise((resolve, reject) => {
     const child = spawn(
       'psql',
@@ -268,12 +340,22 @@ function spawnPsqlOnce(conn: PgConnParams, extraArgs: string[], sql: string): Pr
     )
     let stdout = ''
     let stderr = ''
+    let timer: NodeJS.Timeout | undefined
+    if (options.timeoutMs !== undefined) {
+      const timeoutMs = options.timeoutMs
+      timer = setTimeout(() => {
+        child.kill('SIGTERM')
+        reject(new PsqlTimeoutError(timeoutMs))
+      }, timeoutMs)
+    }
     child.stdout.on('data', (d: Buffer) => (stdout += d.toString('utf8')))
     child.stderr.on('data', (d: Buffer) => (stderr += d.toString('utf8')))
-    child.on('error', (err: NodeJS.ErrnoException) =>
+    child.on('error', (err: NodeJS.ErrnoException) => {
+      clearTimeout(timer)
       reject(new PsqlSpawnError(`SMI-5879: failed to spawn psql: ${err.message}`, err.code))
-    )
+    })
     child.on('close', (code) => {
+      clearTimeout(timer)
       if (code !== 0) {
         reject(new PsqlExitError(code, stderr))
         return
@@ -294,30 +376,47 @@ function spawnPsqlOnce(conn: PgConnParams, extraArgs: string[], sql: string): Pr
  * other failure (a real SQL error, an ambiguous post-execution connection
  * loss, a permanent spawn failure like a missing binary) is NOT retried and
  * rejects on the first attempt, same as before this fix.
+ *
+ * SMI-6294: with `options.treatAmbiguousLossAsRetryable` true, this ALSO
+ * retries a {@link PsqlTimeoutError} and an ambiguous post-execution
+ * connection loss (see {@link isAmbiguousConnectionLoss}) — opt-in, safe
+ * only for idempotent SQL (see {@link SpawnPsqlOptions}). Every other caller
+ * gets exactly today's conservative classification.
  */
 async function spawnPsql(
   conn: PgConnParams,
   extraArgs: string[],
-  sql: string
+  sql: string,
+  options: SpawnPsqlOptions = {}
 ): Promise<PsqlOutcome> {
   let lastError: Error | undefined
   for (let attempt = 1; attempt <= TRANSIENT_RETRY_MAX_ATTEMPTS; attempt++) {
     try {
-      return await spawnPsqlOnce(conn, extraArgs, sql)
+      return await spawnPsqlOnce(conn, extraArgs, sql, options)
     } catch (err) {
       const error = err as Error
       const isTransient =
         error instanceof PsqlExitError
-          ? isTransientConnectionError(error.rawStderr)
+          ? isTransientConnectionError(error.rawStderr) ||
+            (options.treatAmbiguousLossAsRetryable === true &&
+              isAmbiguousConnectionLoss(error.rawStderr))
           : error instanceof PsqlSpawnError
             ? isTransientSpawnErrorCode(error.code)
-            : false
+            : error instanceof PsqlTimeoutError
+              ? options.treatAmbiguousLossAsRetryable === true
+              : false
       if (!isTransient || attempt === TRANSIENT_RETRY_MAX_ATTEMPTS) {
         throw error
       }
       lastError = error
+      const kind =
+        error instanceof PsqlSpawnError
+          ? 'spawn'
+          : error instanceof PsqlTimeoutError
+            ? 'timeout'
+            : 'connection'
       console.error(
-        `[smi5879-census.pg] transient ${error instanceof PsqlSpawnError ? 'spawn' : 'connection'} error ` +
+        `[smi5879-census.pg] transient ${kind} error ` +
           `(attempt ${attempt}/${TRANSIENT_RETRY_MAX_ATTEMPTS}), retrying: ${error.message}`
       )
       await delay(TRANSIENT_RETRY_BACKOFF_MS[attempt - 1] ?? TRANSIENT_RETRY_BACKOFF_MS.at(-1))
@@ -345,9 +444,10 @@ function varArgs(vars: Record<string, string>): string[] {
 export async function runPsql(
   conn: PgConnParams,
   sql: string,
-  vars: Record<string, string> = {}
+  vars: Record<string, string> = {},
+  options: SpawnPsqlOptions = {}
 ): Promise<PsqlOutcome> {
-  return spawnPsql(conn, varArgs(vars), sql)
+  return spawnPsql(conn, varArgs(vars), sql, options)
 }
 
 /**
@@ -360,12 +460,14 @@ export async function runPsql(
 export async function queryRows(
   conn: PgConnParams,
   sql: string,
-  vars: Record<string, string> = {}
+  vars: Record<string, string> = {},
+  options: SpawnPsqlOptions = {}
 ): Promise<string[][]> {
   const { stdout } = await spawnPsql(
     conn,
     ['-t', '-A', '-F', FIELD_SEP, '-P', `null=${SMI5879_NULL_MARKER}`, ...varArgs(vars)],
-    sql
+    sql,
+    options
   )
   return stdout
     .split('\n')
@@ -377,9 +479,10 @@ export async function queryRows(
 export async function queryScalar(
   conn: PgConnParams,
   sql: string,
-  vars: Record<string, string> = {}
+  vars: Record<string, string> = {},
+  options: SpawnPsqlOptions = {}
 ): Promise<string | null> {
-  const rows = await queryRows(conn, sql, vars)
+  const rows = await queryRows(conn, sql, vars, options)
   if (rows.length === 0 || rows[0].length === 0) return null
   return nullable(rows[0][0])
 }

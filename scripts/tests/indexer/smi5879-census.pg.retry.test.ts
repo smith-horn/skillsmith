@@ -44,19 +44,22 @@ const {
   queryRows,
   isTransientConnectionError,
   isTransientSpawnErrorCode,
+  isAmbiguousConnectionLoss,
   TRANSIENT_RETRY_MAX_ATTEMPTS,
 } = await import('../../indexer/smi5879-census.pg.ts')
 
-/** Minimal fake ChildProcess: EventEmitter + stdout/stderr/stdin the module actually uses. */
+/** Minimal fake ChildProcess: EventEmitter + stdout/stderr/stdin/kill the module actually uses. */
 function makeFakeChild() {
   const child = new EventEmitter() as EventEmitter & {
     stdout: EventEmitter
     stderr: EventEmitter
     stdin: { write: (s: string) => void; end: () => void }
+    kill: (signal?: string) => boolean
   }
   child.stdout = new EventEmitter()
   child.stderr = new EventEmitter()
   child.stdin = { write: vi.fn(), end: vi.fn() }
+  child.kill = vi.fn().mockReturnValue(true)
   return child
 }
 
@@ -84,6 +87,20 @@ function queueSpawnErrorOutcome(code: string, message = 'spawn psql ' + code): v
     })
     return child
   })
+}
+
+/**
+ * SMI-6294: queue one spawn() call that hangs FOREVER — a genuinely stuck
+ * `psql` whose stdin is fed (production code always writes/ends stdin) but
+ * which never emits `'close'` or `'error'` on its own. Only production
+ * code's own `options.timeoutMs` timer (calling `child.kill('SIGTERM')`) can
+ * ever resolve this. Returns the fake child so a test can assert whether/how
+ * `kill()` was called.
+ */
+function queueSpawnHangOutcome(): ReturnType<typeof makeFakeChild> {
+  const child = makeFakeChild()
+  spawnMock.mockImplementationOnce(() => child)
+  return child
 }
 
 const CONN = {
@@ -260,5 +277,118 @@ describe('SMI-6015: transient-connection retry (runPsql/queryRows)', () => {
     await vi.runAllTimersAsync()
     await assertion
     expect(spawnMock).toHaveBeenCalledTimes(1)
+  })
+})
+
+describe('SMI-6294: isAmbiguousConnectionLoss', () => {
+  it.each([
+    'psql: error: server closed the connection unexpectedly',
+    'psql: error: terminating connection due to administrator command',
+    'psql: error: timeout expired',
+  ])('classifies %s as an ambiguous post-execution connection loss', (message) => {
+    expect(isAmbiguousConnectionLoss(message)).toBe(true)
+  })
+
+  it('does NOT classify a real SQL error as an ambiguous connection loss', () => {
+    expect(
+      isAmbiguousConnectionLoss(
+        'ERROR:  duplicate key value violates unique constraint "smi5879_run_pkey"'
+      )
+    ).toBe(false)
+  })
+
+  it('does NOT misclassify a real SQL error whose message happens to contain "timeout expired" as incidental text', () => {
+    expect(
+      isAmbiguousConnectionLoss(
+        'ERROR:  invalid input syntax for type text: "timeout expired for lock acquisition"'
+      )
+    ).toBe(false)
+  })
+})
+
+describe('SMI-6294: spawnPsqlOnce timeout (options.timeoutMs)', () => {
+  it('with NO timeoutMs, a hung psql call never settles (contrast with the timeoutMs case below -- not a tautology: this proves the absence of a timer, not merely the presence of one)', async () => {
+    queueSpawnHangOutcome()
+
+    const promise = runPsql(CONN, 'SELECT 1;')
+    // A sentinel timer scheduled under the SAME fake-timer clock: if `promise`
+    // had any bound at all it would settle by 10 minutes and win the race.
+    const sentinel = new Promise<string>((resolve) => {
+      setTimeout(() => resolve('sentinel'), 10 * 60_000)
+    })
+    const racePromise = Promise.race([promise, sentinel])
+
+    await vi.advanceTimersByTimeAsync(10 * 60_000)
+    await expect(racePromise).resolves.toBe('sentinel')
+  })
+
+  it('with { timeoutMs: 5000 }, a hung psql call rejects with PsqlTimeoutError and kills the child with SIGTERM', async () => {
+    const child = queueSpawnHangOutcome()
+
+    const promise = runPsql(CONN, 'SELECT 1;', {}, { timeoutMs: 5000 })
+    const assertion = expect(promise).rejects.toThrow(
+      /SMI-6294: psql timed out after 5000ms with no response/
+    )
+    await vi.advanceTimersByTimeAsync(5000)
+    await assertion
+
+    expect(child.kill).toHaveBeenCalledWith('SIGTERM')
+    // treatAmbiguousLossAsRetryable is unset -- a PsqlTimeoutError is NOT
+    // retried by default, so exactly one spawn() call was made.
+    expect(spawnMock).toHaveBeenCalledTimes(1)
+  })
+
+  it('a timer that fires does not double-reject after the child ALSO closes on the same tick (clearTimeout hygiene)', async () => {
+    // Exercises the doc-commented "harmless either way" race: queue a normal
+    // successful close so if the timer's reject somehow fired AFTER close's
+    // resolve, the test would see an unhandled rejection / mismatched result.
+    queueSpawnOutcome(0, '', 'ok')
+
+    const promise = runPsql(CONN, 'SELECT 1;', {}, { timeoutMs: 5000 })
+    await vi.runAllTimersAsync()
+    await expect(promise).resolves.toEqual({ stdout: 'ok', stderr: '' })
+  })
+})
+
+describe('SMI-6294: treatAmbiguousLossAsRetryable opt-in', () => {
+  it('regression guard: WITHOUT treatAmbiguousLossAsRetryable, an ambiguous-loss stderr is still NOT retried (existing non-idempotent-write safety property)', async () => {
+    queueSpawnOutcome(2, 'psql: error: server closed the connection unexpectedly')
+
+    const promise = runPsql(CONN, "INSERT INTO smi5879_run (run_id) VALUES ('x');", {}, {})
+    const assertion = expect(promise).rejects.toThrow(/server closed the connection unexpectedly/)
+    await vi.runAllTimersAsync()
+    await assertion
+    expect(spawnMock).toHaveBeenCalledTimes(1)
+  })
+
+  it('WITH { treatAmbiguousLossAsRetryable: true }, the SAME ambiguous-loss stderr IS retried and can succeed within budget', async () => {
+    queueSpawnOutcome(2, 'psql: error: server closed the connection unexpectedly')
+    queueSpawnOutcome(0, '', '')
+
+    const promise = runPsql(
+      CONN,
+      `SELECT smi5879_heartbeat(:'run_id', :'token');`,
+      { run_id: 'run-1', token: 'tok-1' },
+      { treatAmbiguousLossAsRetryable: true }
+    )
+    await vi.runAllTimersAsync()
+    await expect(promise).resolves.toEqual({ stdout: '', stderr: '' })
+    expect(spawnMock).toHaveBeenCalledTimes(2)
+  })
+
+  it('WITH { treatAmbiguousLossAsRetryable: true }, a hung/timing-out call is retried as a PsqlTimeoutError and can succeed on a later attempt', async () => {
+    const hungChild = queueSpawnHangOutcome()
+    queueSpawnOutcome(0, '', '')
+
+    const promise = runPsql(
+      CONN,
+      `SELECT smi5879_heartbeat(:'run_id', :'token');`,
+      { run_id: 'run-1', token: 'tok-1' },
+      { timeoutMs: 2000, treatAmbiguousLossAsRetryable: true }
+    )
+    await vi.runAllTimersAsync()
+    await expect(promise).resolves.toEqual({ stdout: '', stderr: '' })
+    expect(hungChild.kill).toHaveBeenCalledWith('SIGTERM')
+    expect(spawnMock).toHaveBeenCalledTimes(2)
   })
 })

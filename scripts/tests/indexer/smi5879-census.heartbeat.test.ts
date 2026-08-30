@@ -30,7 +30,9 @@ import {
   startCensusHeartbeat,
   HEARTBEAT_INTERVAL_MS,
   HEARTBEAT_TAKEOVER_AFTER_MS,
+  HEARTBEAT_QUERY_TIMEOUT_MS,
 } from '../../indexer/smi5879-census.heartbeat.ts'
+import { TRANSIENT_RETRY_MAX_ATTEMPTS } from '../../indexer/smi5879-census.pg.ts'
 
 afterEach(() => {
   vi.useRealTimers()
@@ -316,5 +318,24 @@ describe("migration's documented ordering invariant (SMI-5879 cross-model review
     expect(HEARTBEAT_TAKEOVER_AFTER_MS).toBe(30 * 60_000)
     expect(GC_STALE_AFTER_MS).toBe(2 * 60 * 60_000)
     expect(GC_GRACE_PERIOD_MS).toBe(24 * 60 * 60_000)
+  })
+})
+
+describe('SMI-6294: HEARTBEAT_QUERY_TIMEOUT_MS ordering invariant', () => {
+  it("the retry wrapper's worst-case per-tick DB-call time stays well under HEARTBEAT_INTERVAL_MS", () => {
+    // Mirrors HEARTBEAT_QUERY_TIMEOUT_MS's own doc comment: at
+    // TRANSIENT_RETRY_MAX_ATTEMPTS (3) timeouts of HEARTBEAT_QUERY_TIMEOUT_MS
+    // (10s) each, the timeout-only worst case (30s) must land well before
+    // the next setInterval tick (HEARTBEAT_INTERVAL_MS, 60s) fires. This
+    // deliberately checks only the timeout portion, not
+    // smi5879-census.pg.ts's own (unexported, test-internal)
+    // TRANSIENT_RETRY_BACKOFF_MS between attempts — the margin asserted here
+    // (>=30s) is far larger than that fixed ~3s backoff total, so the full
+    // worst case (documented in HEARTBEAT_QUERY_TIMEOUT_MS's own comment as
+    // 33s) still fits comfortably without needing to widen this module's
+    // public surface just to re-assert a private constant here.
+    expect(HEARTBEAT_QUERY_TIMEOUT_MS * TRANSIENT_RETRY_MAX_ATTEMPTS).toBeLessThan(
+      HEARTBEAT_INTERVAL_MS
+    )
   })
 })
