@@ -1,6 +1,6 @@
 {
   "name": "@skillsmith/mcp-server",
-  "version": "0.7.12",
+  "version": "0.7.13",
   "mcpName": "io.github.smith-horn/skillsmith",
   "description": "A registry for sharing, scanning, and tracking agent skills across teams.",
   "type": "module",
@@ -36,7 +36,7 @@
   "dependencies": {
     "@cyclonedx/cyclonedx-library": "10.1.0",
     "@modelcontextprotocol/sdk": "^1.27.1",
-    "@skillsmith/core": "^0.12.1",
+    "@skillsmith/core": "^0.12.2",
     "@supabase/supabase-js": "2.112.2",
     "ajv-formats-draft2019": "1.6.1",
     "ulid": "3.0.1",

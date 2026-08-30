@@ -4,6 +4,12 @@ All notable changes to `@skillsmith/cli` are documented here.
 
 ## [Unreleased]
 
+## v0.8.9
+
+- **Feature**: SMI-6272 Wave 2 -- live effective-tier display in whoami (#2628)
+- **Fix**: SMI-6279 Wave 9 -- fix broken Cursor MCP install path + diagnose extension
+- **Feature**: SMI-6271 Wave 1 -- live credential-aware tier resolution
+- **Other**: Gate registry sync to Team/Enterprise tiers (#2584)
 - **Feature**: `skillsmith whoami` now shows your live effective license tier (and, when the
   live check returns one, your per-minute API rate limit) alongside the existing masked-key/
   session display, resolved via the same credential-aware `resolveEffectiveTier()` live check

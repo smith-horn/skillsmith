@@ -4,6 +4,10 @@ All notable changes to `@smith-horn/enterprise` are documented here.
 
 ## [Unreleased]
 
+## v0.3.9
+
+- **Cadence**: Mechanical cadence alignment (no changes since v0.3.8).
+
 ## v0.3.8
 
 - **Cadence**: Mechanical cadence alignment (no changes since v0.3.7).

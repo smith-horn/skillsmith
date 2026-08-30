@@ -4,6 +4,14 @@ All notable changes to `@skillsmith/mcp-server` are documented here.
 
 ## [Unreleased]
 
+## v0.7.13
+
+- **Fix**: SMI-6286/6287 Docker deps resilience + gitleaks path fix (#2624)
+- **Fix**: correct stale ADR-136 refs to ADR-137, dedupe CHANGELOG (#2601)
+- **Other**: Gate registry sync to Team/Enterprise tiers (#2584)
+- **Feature**: real SSO configuration — team-sso-manage + domain verification + reverify sweep (SMI-6204) (#2596)
+- **Feature**: MCP guard plugin-config scan + hosted-scope check (SMI-6229) (#2582)
+- **Fix**: scan Claude Code plugin-installed skills in skill_inventory_audit (SMI-6228) (#2581)
 - **Feature**: SMI-6205 Wave 4 SSO member lifecycle — JIT team provisioning on login,
   seat-limit enforcement, and license-key binding/expiry tied to SSO login freshness, plus
   dual-consent identity linking between a JIT-provisioned SSO account and a pre-existing

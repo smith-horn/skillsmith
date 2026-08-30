@@ -4,6 +4,10 @@ All notable changes to `@skillsmith/core` are documented here.
 
 ## [Unreleased]
 
+## v0.12.2
+
+- **Fix**: SMI-6279 Wave 9 -- fix broken Cursor MCP install path + diagnose extension
+- **Other**: Gate registry sync to Team/Enterprise tiers (#2584)
 - **Fix**: `agent install` no longer writes a broken Cursor MCP registration. Two independent
   bugs, both from before Cursor's MCP snippet was fixed in SMI-5893: the installer still wrote
   the `npx`-form command that reliably fails inside Cursor's bundled Node, without the
