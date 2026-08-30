@@ -326,7 +326,10 @@ export {
   checkForUpdates,
   formatUpdateNotification,
   resolveUpdateNotificationClient,
+  agentInstallRemediationCommand,
+  checkCursorMcpArtifact,
   type VersionCheckResult,
+  type CursorMcpArtifactCheck,
 } from './utils/version-check.js'
 
 // GitHub URL Parsing (SMI-2171)

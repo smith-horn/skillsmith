@@ -4,6 +4,30 @@ All notable changes to `@skillsmith/cli` are documented here.
 
 ## [Unreleased]
 
+- **Feature**: `skillsmith whoami` now shows your live effective license tier (and, when the
+  live check returns one, your per-minute API rate limit) alongside the existing masked-key/
+  session display, resolved via the same credential-aware `resolveEffectiveTier()` live check
+  `audit advisories`/`diff`/`pin`/`audit-collisions` already use (SMI-6271) — previously
+  `whoami` showed no tier information at all. Reuses the existing `formatTierBadge()` tier-badge
+  formatting rather than reimplementing it. Unlike those gating commands, a transient live-check
+  failure here does not block the command (this is a display command, not a gate) — it shows a
+  "could not verify" message instead of ever displaying a fabricated tier, since a single-shot
+  CLI invocation has no cached last-known tier to fall back to (SMI-6266 Wave 2, SMI-6272)
+
+- **Fix**: `skillsmith diagnose` now checks whether your Cursor MCP registration (both the
+  global `~/.cursor/mcp.json` and any project-scoped copy) is on the current, working config
+  shape and tells you how to fix it if not — previously nothing detected this at all once the
+  MCP server failed to even start, since the CLI's own update-nudge only fires from inside a
+  running MCP process (GH#2368, SMI-6279)
+
+- **Fix**: `audit advisories`, `diff`, `pin`, `config get/set audit_mode`, and `audit-collisions`
+  now correctly recognize a personal `SKILLSMITH_API_KEY` or a logged-in `skillsmith login`
+  session — previously they only ever checked `SKILLSMITH_LICENSE_KEY` (an offline license key
+  almost nobody uses), so an Enterprise customer using either of the two common auth methods was
+  always reported as Community tier (GH#2508, GH#2509, SMI-6271). Live tier verification now
+  fails closed on a network/timeout error rather than silently passing or downgrading a real
+  paying customer
+
 - **Breaking**: `sync` (and `sync config --enable`) now require Team+ tier — Community and
   Individual tiers can no longer bulk-download the skill registry. The registry has grown far
   larger than this feature was designed for (hundreds of thousands of records, still growing),

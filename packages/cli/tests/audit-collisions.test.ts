@@ -55,7 +55,7 @@ const mocks = vi.hoisted(() => ({
   readLedger: vi.fn(),
   writeLedger: vi.fn(),
   runInventoryAudit: vi.fn(),
-  getLicenseStatus: vi.fn(),
+  resolveEffectiveTier: vi.fn(),
 }))
 
 vi.mock('@inquirer/prompts', () => ({
@@ -71,8 +71,15 @@ vi.mock('@skillsmith/mcp-server/audit', () => ({
   NAMESPACE_OVERRIDES_CURRENT_VERSION: 1,
 }))
 
-vi.mock('../src/utils/license.js', () => ({
-  getLicenseStatus: () => mocks.getLicenseStatus(),
+// SMI-6271 (Wave 1 of SMI-6266): runAuditCollisions() now resolves tier via
+// the credential-aware resolveEffectiveTier() (require-tier.js), not the
+// offline-only getLicenseStatus() (license.js) this file previously mocked —
+// mocking the old target would silently stop controlling tier for these
+// tests (runAuditCollisions would fall through to a REAL, unmocked
+// resolveEffectiveTier() call, which is both untested-on-purpose here and
+// nondeterministic depending on this container's real ~/.skillsmith state).
+vi.mock('../src/utils/require-tier.js', () => ({
+  resolveEffectiveTier: () => mocks.resolveEffectiveTier(),
 }))
 
 import {
@@ -127,7 +134,11 @@ describe('SMI-4590 Wave 4 PR 5/6 — sklx audit collisions', () => {
     mocks.applyRename.mockResolvedValue({ success: true, summary: 'renamed' })
     mocks.readLedger.mockResolvedValue({ version: 1, overrides: [] })
     mocks.writeLedger.mockResolvedValue(undefined)
-    mocks.getLicenseStatus.mockResolvedValue({ tier: 'team' })
+    mocks.resolveEffectiveTier.mockResolvedValue({
+      status: { valid: true, tier: 'team', features: [] },
+      source: 'api-key',
+      transient: false,
+    })
     stdoutSpy = vi.spyOn(console, 'log').mockImplementation(() => {})
   })
 
@@ -446,6 +457,34 @@ describe('SMI-4590 Wave 4 PR 5/6 — sklx audit collisions', () => {
       // Parse and check shape.
       const parsed = JSON.parse(jsonOutput as string) as { auditId: string }
       expect(parsed.auditId).toBe(audit.auditId)
+
+      // SMI-6271: the live-resolved tier (from resolveEffectiveTier(), not
+      // just the offline default) is what's actually passed through.
+      expect(mocks.runInventoryAudit).toHaveBeenCalledWith(
+        expect.objectContaining({ tier: 'team' })
+      )
+    })
+
+    // SMI-6271: fail closed on a transient live-check failure — never
+    // silently falls back to a wrong/stale tier, never crashes uncaught.
+    it('fails closed on a transient live tier-check failure, never calling runInventoryAudit', async () => {
+      mocks.resolveEffectiveTier.mockResolvedValue({
+        status: { valid: true, tier: 'community', features: [] },
+        source: 'api-key',
+        transient: true,
+      })
+
+      await expect(
+        runAuditCollisions({
+          deep: false,
+          json: true,
+          applyAll: false,
+          reportOnly: false,
+          resetLedger: false,
+        })
+      ).rejects.toThrow(/Could not verify your subscription tier/)
+
+      expect(mocks.runInventoryAudit).not.toHaveBeenCalled()
     })
   })
 })

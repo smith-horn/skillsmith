@@ -4,6 +4,15 @@ All notable changes to `@skillsmith/core` are documented here.
 
 ## [Unreleased]
 
+- **Fix**: `agent install` no longer writes a broken Cursor MCP registration. Two independent
+  bugs, both from before Cursor's MCP snippet was fixed in SMI-5893: the installer still wrote
+  the `npx`-form command that reliably fails inside Cursor's bundled Node, without the
+  `SKILLSMITH_CLIENT` variable, so even the documented fix-it command (`agent install`) rewrote
+  the same broken config; and the installer's entry lived under a different JSON key than the
+  one users are told to paste from the website, so following both instructions left two
+  unreconciled server entries in the same file instead of one. Re-running `agent install` now
+  also cleans up a pre-fix install's stale entry (GH#2368, SMI-6279)
+
 - **Breaking**: `SyncEngine` now fetches via a new `registry-sync` Edge Function instead of
   abusing the public `skills-search` endpoint with 8 hardcoded broad queries — this transport
   is Team+ tier only server-side (see `@skillsmith/cli`'s changelog and ADR-136), so `SyncEngine.
