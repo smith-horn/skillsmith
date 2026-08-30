@@ -229,10 +229,13 @@ describe('SMI-5974: indexer-watch.yml (the new alert-gap watcher)', () => {
 describe('SMI-5974: indexer.yml (Send Alert on Failure alert-delivery-failure fix)', () => {
   const indexer = readFileSync(INDEXER_PATH, 'utf8')
 
-  it('no timeout-minutes was added to any step -- only the pre-existing job-level 30 remains', () => {
+  it('no timeout-minutes was added to any step -- only the pre-existing job-level value remains', () => {
+    // SMI-6246: bumped 30 -> 45 for headroom on the new cron-side bounded
+    // retry (ADR-140's timing invariant, R=22 min) — still a single job-level
+    // value, no per-step timeout was introduced.
     const matches = indexer.match(/timeout-minutes:/g) ?? []
     expect(matches).toHaveLength(1)
-    expect(indexer).toMatch(/timeout-minutes: 30/)
+    expect(indexer).toMatch(/timeout-minutes: 45/)
   })
 
   it('the two if: failure() conditions are unchanged', () => {

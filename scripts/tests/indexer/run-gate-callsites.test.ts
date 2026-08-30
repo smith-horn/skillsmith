@@ -58,8 +58,17 @@
  *     `smi5879-simulate-full.ts` and `smi5879-gate-check.ts` in the same
  *     T-3d/T-0 freeze-window pipeline those two already run inside — gating
  *     the merge step on the same freeze mechanism its neighbors on both
- *     sides are already exempted from would be exactly as circular. Pinned
- *     as its own explicit set (Shape 1's "exactly N" assertion below is
+ *     sides are already exempted from would be exactly as circular. SMI-6246's
+ *     `backfill-autochain-inputs.ts` is the same shape for a stronger reason
+ *     than any of the above: it makes no `skills` read OR write of any kind —
+ *     it only reads `audit_logs` (checkpoints and lock-skip rows) to recover
+ *     a completed/lock-skipped backfill dispatch's own campaign inputs, and
+ *     prints `GITHUB_OUTPUT` key=value pairs. It runs from a wholly separate
+ *     workflow (`indexer-backfill-autochain.yml`), on a `workflow_run`
+ *     trigger, with no relationship to the SMI-5879 change-window freeze this
+ *     census concerns itself with — gating it on `assertRunAllowed`/
+ *     `assertFreezeMarkerClear` would be a category error, not just circular.
+ *     Pinned as its own explicit set (Shape 1's "exactly N" assertion below is
  *     `PINNED_SHAPE1 ∪ PINNED_SHAPE4_UNGATED_GUARD`) rather than silently
  *     absorbed, so a FUTURE guard-shaped file that SHOULD be gated cannot
  *     hide behind this exclusion.
@@ -97,6 +106,7 @@ const PINNED_SHAPE4_UNGATED_GUARD = [
   'smi5879-gate-check.ts',
   'smi5879-corroboration-generate.ts',
   'smi5879-merge-shards.ts',
+  'backfill-autochain-inputs.ts',
 ].sort()
 
 const PINNED_SHEBANG_FILES = [
@@ -107,6 +117,7 @@ const PINNED_SHEBANG_FILES = [
   'repair-latched-name-rows.ts',
   'revalidate-stale-quarantines.ts',
   'run.ts',
+  'backfill-autochain-inputs.ts',
 ].sort()
 
 describe('Shape 1 — guarded direct-entry census', () => {
