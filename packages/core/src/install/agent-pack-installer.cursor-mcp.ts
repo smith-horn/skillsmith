@@ -108,6 +108,11 @@ export function installCursorMcpConfig(ctx: HarnessInstallCtx, report: HarnessIn
       `Removed stale legacy '${LEGACY_MCP_ENTRY_KEY}' MCP entry at ${path} — superseded by '${CURSOR_MCP_ENTRY_KEY}' (aligns with the website/CLI docs snippet key, SMI-6279 Wave 9).`
     )
   }
+  if (cleanup?.status === 'error') {
+    report.notes.push(
+      `Found a stale legacy '${LEGACY_MCP_ENTRY_KEY}' MCP entry at ${path} but could not remove it: ${cleanup.errorMessage}. The new '${CURSOR_MCP_ENTRY_KEY}' entry above was written successfully; the stale entry was left in place — remove it manually.`
+    )
+  }
 
   if (mergeSucceeded(result.status) || cleanup?.status === 'updated') {
     ctx.entries.push({
@@ -162,11 +167,17 @@ function looksLikeExactLegacyNpxEntry(value: unknown): boolean {
  * every other key in the file (including the entry this function's caller
  * just wrote under `CURSOR_MCP_ENTRY_KEY`) is preserved byte-for-byte.
  *
- * @returns `null` when there's nothing to clean up (file missing/unparsable,
+ * @returns `null` when there's genuinely nothing to clean up (file missing,
  *   no `mcpServers` object, no legacy key, or the legacy key isn't an EXACT
- *   match for our own legacy shape) — a genuine no-op, not surfaced as a
- *   report entry. A `MergeResult` with `status: 'updated'` when the legacy
- *   key was removed.
+ *   match for our own legacy shape) — a real no-op, not surfaced as a report
+ *   entry. A `MergeResult` with `status: 'updated'` when the legacy key was
+ *   removed, or `status: 'error'` when a match WAS found but reading,
+ *   backing up, or writing the file failed — this must reach the caller as
+ *   a reported failure, not collapse into the same `null` "nothing to do"
+ *   return as the routine no-match case (PR-07 finding, GPT-5.6-Sol /
+ *   SMI-6279): a swallowed write failure here would silently leave a
+ *   confirmed-stale, confirmed-broken legacy entry in place with no
+ *   indication anything went wrong.
  */
 function stripStaleLegacyMcpKey(
   path: string,
@@ -181,6 +192,9 @@ function stripStaleLegacyMcpKey(
     if (!parsed || typeof parsed !== 'object' || Array.isArray(parsed)) return null
     doc = parsed as Record<string, unknown>
   } catch {
+    // Unparsable/unreadable — not a match we can act on either way; the
+    // main merge above already succeeded reading+writing this same file
+    // moments earlier, so this is a genuine no-op, not a swallowed failure.
     return null
   }
 
@@ -195,9 +209,22 @@ function stripStaleLegacyMcpKey(
   // Foreign OR near-miss — never touch, even if named 'skillsmith'.
   if (!looksLikeExactLegacyNpxEntry(legacyEntry)) return null
 
-  delete containerObj[LEGACY_MCP_ENTRY_KEY]
-  const backupPath = shouldBackup(path, ctx.backedUpPaths) ? writeBackup(path, ctx.backupDir) : null
-  markBackedUp(path, ctx.backedUpPaths)
-  writeFileSync(path, JSON.stringify(doc, null, 2) + '\n', { mode: 0o600 })
-  return { status: 'updated', path, backupPath }
+  // Past this point we've confirmed a real match to delete — any failure
+  // from here on is a genuine error, not a no-op, and must be reported.
+  try {
+    delete containerObj[LEGACY_MCP_ENTRY_KEY]
+    const backupPath = shouldBackup(path, ctx.backedUpPaths)
+      ? writeBackup(path, ctx.backupDir)
+      : null
+    markBackedUp(path, ctx.backedUpPaths)
+    writeFileSync(path, JSON.stringify(doc, null, 2) + '\n', { mode: 0o600 })
+    return { status: 'updated', path, backupPath }
+  } catch (error) {
+    return {
+      status: 'error',
+      path,
+      backupPath: null,
+      errorMessage: error instanceof Error ? error.message : String(error),
+    }
+  }
 }

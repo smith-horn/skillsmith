@@ -31,6 +31,23 @@ vi.mock('node:child_process', async (importOriginal) => {
   return { ...actual, execFileSync: execFileSyncMock }
 })
 
+// Defaults to the real writeFileSync so every test in this file gets real
+// disk writes unmodified; only the one PR-07-regression test below swaps in
+// a conditional throw, keyed by path so it can't accidentally intercept the
+// unrelated skill-pack-file writes installAgentPack also performs in the
+// same run (confirmed necessary: a naive call-order-based override fired on
+// one of those instead, on the first pass at writing this test).
+const { writeFileSyncMock, realWriteFileSyncRef } = vi.hoisted(() => ({
+  writeFileSyncMock: vi.fn(),
+  realWriteFileSyncRef: { current: null as null | ((...args: unknown[]) => void) },
+}))
+vi.mock('node:fs', async (importOriginal) => {
+  const actual = await importOriginal<typeof import('node:fs')>()
+  realWriteFileSyncRef.current = actual.writeFileSync as unknown as (...args: unknown[]) => void
+  writeFileSyncMock.mockImplementation(actual.writeFileSync)
+  return { ...actual, writeFileSync: writeFileSyncMock }
+})
+
 import { installAgentPack } from './agent-pack-installer.js'
 import { AGENT_INSTALL_DIR_ENV_VAR } from './agent-manifest.js'
 
@@ -65,6 +82,9 @@ beforeEach(() => {
   prevInstallDirEnv = process.env[AGENT_INSTALL_DIR_ENV_VAR]
   process.env[AGENT_INSTALL_DIR_ENV_VAR] = manifestDir
   execFileSyncMock.mockReset()
+  // Reset to the real passthrough (see the vi.mock('node:fs', ...) setup
+  // above) in case a prior test overrode it to simulate a write failure.
+  writeFileSyncMock.mockClear()
 })
 
 afterEach(() => {
@@ -299,5 +319,56 @@ describe('installAgentPack — cursor mcp.json stale legacy-key cleanup (SMI-627
     expect(afterSecond).toBe(afterFirst)
     const report = second.harnessReports.find((r) => r.harness === 'cursor')
     expect(report?.mcpConfig?.status).toBe('unchanged')
+  })
+
+  it('reports a cleanup write failure via report.notes instead of swallowing it as "nothing to clean up" (PR-07 finding, GPT-5.6-Sol / SMI-6279)', () => {
+    execFileSyncMock.mockReturnValue(`${RESOLVED_BIN_PATH}\n`)
+    seedCursorPresent()
+    // Seed BOTH the already-correct new entry and the stale legacy entry, so
+    // the main merge sees 'unchanged' (no write attempted there) and only
+    // the cleanup step's own write is exercised below.
+    writeFileSync(
+      mcpJsonPath(homeDir),
+      JSON.stringify(
+        {
+          mcpServers: {
+            skillsmith: {
+              command: 'npx',
+              args: ['-y', '@skillsmith/mcp-server'],
+              env: { SKILLSMITH_TOOL_PROFILE: 'agent' },
+            },
+            '@skillsmith/mcp-server': {
+              command: RESOLVED_BIN_PATH,
+              env: { SKILLSMITH_TOOL_PROFILE: 'agent', SKILLSMITH_CLIENT: 'cursor' },
+            },
+          },
+        },
+        null,
+        2
+      )
+    )
+
+    // Target only the cleanup's write to THIS file — installAgentPack also
+    // writes several unrelated skill-pack files earlier in the same run, and
+    // must keep writing those for real.
+    const targetPath = mcpJsonPath(homeDir)
+    writeFileSyncMock.mockImplementation((...args: unknown[]) => {
+      if (args[0] === targetPath) {
+        throw new Error('EACCES: permission denied (simulated)')
+      }
+
+      return realWriteFileSyncRef.current!(...args)
+    })
+
+    const result = installAgentPack({ homeDir })
+
+    // The legacy key must still be on disk — the failed write must not have
+    // corrupted or partially applied the delete.
+    const doc = readCursorMcpJson(homeDir)
+    expect(doc.mcpServers.skillsmith).toBeDefined()
+
+    const report = result.harnessReports.find((r) => r.harness === 'cursor')
+    expect(report?.notes.some((n) => n.includes('could not remove it'))).toBe(true)
+    expect(report?.notes.some((n) => n.includes('EACCES'))).toBe(true)
   })
 })
