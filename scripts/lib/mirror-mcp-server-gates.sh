@@ -91,12 +91,22 @@ run_leak_audit() {
     # Flag names verified against the CI-pinned gitleaks v8.21.2 specifically
     # (`gitleaks detect --help`, both are top-level/global flags on that
     # version — not assumed from a newer/older gitleaks release).
+    #
+    # SMI-6287 pr-reviewer finding (GPT-5.6-Sol): gitleaks' JSON report
+    # includes the matched Secret string itself unless --redact is passed —
+    # dumping the raw report to CI logs on the abort path would leak the
+    # exact credential this gate exists to catch, in precisely the case
+    # where a real one is found. Extract only safe fields (RuleID, File,
+    # StartLine) via jq instead of printing the report verbatim.
     local report_path="$TMP_ROOT/gitleaks-report.json"
     if ! gitleaks detect --no-git --source "$TREE_DIR" --config "$REPO_ROOT/.gitleaks.toml" \
         --verbose --report-path "$report_path"; then
-      if [[ -s "$report_path" ]]; then
-        warn "gitleaks report (${report_path}):"
-        cat "$report_path" >&2
+      if [[ -s "$report_path" ]] && command -v jq >/dev/null 2>&1; then
+        warn "gitleaks findings (rule/file/line only — secret values redacted):"
+        jq -r '.[] | "  - rule=\(.RuleID) file=\(.File) line=\(.StartLine)"' "$report_path" >&2 \
+          || warn "  (could not parse report as JSON — see ${report_path} directly, off-CI)"
+      elif [[ -s "$report_path" ]]; then
+        warn "gitleaks wrote a report to ${report_path} (jq unavailable to redact it for CI logs — inspect off-CI, it may contain matched secret text)"
       fi
       err "gitleaks detected a potential secret in the candidate tree — aborting sync (see rule id/file/line above)"
     fi
