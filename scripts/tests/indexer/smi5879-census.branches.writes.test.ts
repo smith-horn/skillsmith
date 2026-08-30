@@ -54,8 +54,8 @@ describe('buildBatchInsertSql / buildBatchUpdateSql', () => {
   ]
 
   it('INSERT: embeds real JSON null for default_branch/http_status — no NULLIF sentinel hack', () => {
-    const { sql, vars } = buildBatchInsertSql('run-1', outcomes)
-    expect(vars).toEqual({ run_id: 'run-1' })
+    const { sql, vars } = buildBatchInsertSql('run-1', 'tok-1', outcomes)
+    expect(vars).toEqual({ run_id: 'run-1', token: 'tok-1' })
     expect(sql).toContain('INSERT INTO smi5879_repo_branch')
     expect(sql).not.toContain('NULLIF')
 
@@ -78,8 +78,8 @@ describe('buildBatchInsertSql / buildBatchUpdateSql', () => {
   })
 
   it('UPDATE: same JSON-null preservation, plus the additive `attempts = b.attempts + x.attempts` clause', () => {
-    const { sql, vars } = buildBatchUpdateSql('run-1', outcomes)
-    expect(vars).toEqual({ run_id: 'run-1' })
+    const { sql, vars } = buildBatchUpdateSql('run-1', 'tok-1', outcomes)
+    expect(vars).toEqual({ run_id: 'run-1', token: 'tok-1' })
     expect(sql).toContain('UPDATE smi5879_repo_branch')
     expect(sql).toContain('attempts       = b.attempts + x.attempts')
     expect(sql).toContain("WHERE b.run_id = :'run_id' AND b.owner = x.owner AND b.repo = x.repo")
@@ -99,13 +99,40 @@ describe('buildBatchInsertSql / buildBatchUpdateSql', () => {
         attempts: 1,
       },
     ]
-    const { sql } = buildBatchInsertSql('run-1', trickyOutcomes)
+    const { sql } = buildBatchInsertSql('run-1', 'tok-1', trickyOutcomes)
     const parsed = extractRecordsetJson(sql) as Array<Record<string, unknown>>
     expect(parsed[0]?.['default_branch']).toBe('contains-$smi5879b$-literally')
   })
 
   it('an empty outcomes array still builds valid (if pointless) SQL — callers skip the psql call entirely, not this builder', () => {
-    const { sql } = buildBatchInsertSql('run-1', [])
+    const { sql } = buildBatchInsertSql('run-1', 'tok-1', [])
     expect(extractRecordsetJson(sql)).toEqual([])
+  })
+
+  // SMI-5879 checkpoint/resume, cross-model review finding (High): every
+  // batch write must be fenced by the CURRENT claim token, evaluated
+  // atomically as part of the write statement (verified live against a real
+  // Postgres — see the checkpoint-resume integration test for the actual
+  // token-mismatch-rejects-the-write behavior this SQL shape produces).
+  describe('token fencing (SMI-5879 cross-model review, High)', () => {
+    it('INSERT: fences on run_id/status/token via a FOR-UPDATE-locked EXISTS, and returns owner/repo for row-count verification', () => {
+      const { sql, vars } = buildBatchInsertSql('run-1', 'tok-1', outcomes)
+      expect(vars).toEqual({ run_id: 'run-1', token: 'tok-1' })
+      expect(sql).toContain('WHERE EXISTS (')
+      expect(sql).toContain("r.run_id = :'run_id'")
+      expect(sql).toContain("r.status = 'open'")
+      expect(sql).toContain("r.runner_token = :'token'")
+      expect(sql).toContain('FOR UPDATE')
+      expect(sql).toContain('RETURNING owner, repo')
+    })
+
+    it('UPDATE: fences via AND EXISTS (same FOR-UPDATE-locked guard) alongside the existing run_id/owner/repo match, and returns owner/repo', () => {
+      const { sql, vars } = buildBatchUpdateSql('run-1', 'tok-1', outcomes)
+      expect(vars).toEqual({ run_id: 'run-1', token: 'tok-1' })
+      expect(sql).toContain('AND EXISTS (')
+      expect(sql).toContain("r.runner_token = :'token'")
+      expect(sql).toContain('FOR UPDATE')
+      expect(sql).toContain('RETURNING b.owner, b.repo')
+    })
   })
 })

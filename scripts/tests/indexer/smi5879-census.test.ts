@@ -443,9 +443,11 @@ describe.skipIf(prePushNoLiveTestPg)(
         rulesetEpoch: '2026-07-29T23:41:09Z',
         apply: true,
         reportPath: 'unused-in-test.json',
+        resume: false,
       })
 
       expect(report.status).toBe('sealed')
+      expect(report.resumed).toBe(false)
       expect(report.row_count).toBeGreaterThanOrEqual(3)
       expect(report.population_digest).toMatch(/^smi5879-v1:sha256:[0-9a-f]{64}$/)
       expect(report.branch_digest).toBe(
