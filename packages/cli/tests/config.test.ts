@@ -35,12 +35,20 @@ import * as fs from 'node:fs'
 import * as os from 'node:os'
 import { join } from 'node:path'
 
+// SMI-6271 (Wave 1 of SMI-6266): config.ts's tier revalidation now goes
+// through the credential-aware resolveEffectiveTier() (require-tier.js), not
+// the offline-only getLicenseStatus() (license.js) this file previously
+// mocked — mocking the old target would silently stop controlling the tier
+// these tests exercise (config.ts would fall through to a REAL, uncontrolled
+// resolveEffectiveTier() call, which resolves community with no credential
+// configured in this test env). Updated to keep this file's load-bearing
+// tier-revalidation security coverage (plan §810-813) meaningful.
 const mocks = vi.hoisted(() => ({
-  getLicenseStatus: vi.fn(),
+  resolveEffectiveTier: vi.fn(),
 }))
 
-vi.mock('../src/utils/license.js', () => ({
-  getLicenseStatus: () => mocks.getLicenseStatus(),
+vi.mock('../src/utils/require-tier.js', () => ({
+  resolveEffectiveTier: () => mocks.resolveEffectiveTier(),
 }))
 
 import { runConfigGet, runConfigSet, ConfigError, configPath } from '../src/commands/config.js'
@@ -72,7 +80,11 @@ afterEach(() => {
 })
 
 function setTier(tier: string): void {
-  mocks.getLicenseStatus.mockResolvedValue({ tier })
+  mocks.resolveEffectiveTier.mockResolvedValue({
+    status: { valid: true, tier, features: [] },
+    source: 'api-key',
+    transient: false,
+  })
 }
 
 function configFileExists(): boolean {
@@ -166,6 +178,27 @@ describe('SMI-4590 Wave 4 PR 5/6 — sklx config tier revalidation (plan §810-8
       expect(readConfigRaw()['audit_mode']).toBe('governance')
     })
   })
+
+  // SMI-6271: a transient live-tier-check failure must fail closed — never
+  // silently let a below-tier write through, and never write the config
+  // file on that path either (same "no file IO on rejection" invariant this
+  // describe block already enforces for every other rejection reason).
+  describe('transient live-check failure — fail closed, no write', () => {
+    it('audit.mode.tier_unavailable, NO write', async () => {
+      mocks.resolveEffectiveTier.mockResolvedValue({
+        status: { valid: true, tier: 'community', features: [] },
+        source: 'api-key',
+        transient: true,
+      })
+      try {
+        await runConfigSet('audit_mode', 'power_user')
+        expect.fail('Expected ConfigError')
+      } catch (error) {
+        expect((error as ConfigError).code).toBe('audit.mode.tier_unavailable')
+      }
+      expect(configFileExists()).toBe(false)
+    })
+  })
 })
 
 describe('SMI-4590 Wave 4 PR 5/6 — sklx config value validation', () => {
@@ -256,5 +289,22 @@ describe('SMI-4590 Wave 4 PR 5/6 — sklx config get audit_mode', () => {
     const after = readConfigRaw()
     expect(after['audit_mode']).toBe('power_user')
     expect(after['extra_key']).toBe('value')
+  })
+
+  // SMI-6271: `config get` has no subsequent server-side gate either — a
+  // transient live-tier-check failure must fail closed the same way `set`
+  // does, not silently report a wrong/stale tier default.
+  it('audit.mode.tier_unavailable on a transient live-check failure', async () => {
+    mocks.resolveEffectiveTier.mockResolvedValue({
+      status: { valid: true, tier: 'community', features: [] },
+      source: 'api-key',
+      transient: true,
+    })
+    try {
+      await runConfigGet('audit_mode')
+      expect.fail('Expected ConfigError')
+    } catch (error) {
+      expect((error as ConfigError).code).toBe('audit.mode.tier_unavailable')
+    }
   })
 })
