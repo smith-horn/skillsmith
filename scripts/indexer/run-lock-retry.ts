@@ -111,25 +111,27 @@ export function computeRemainingElapsedMs(params: {
 
 /**
  * SMI-6246/ADR-140: bounded retry loop for a lock-skipped acquisition attempt.
- * Guarantees a final attempt at the deadline boundary — the invariant's proof
- * requires this; a loop that merely stops whenever its last sleep happens to
- * land is not covered by it. Never applied to backfill's own acquisition
- * (see {@link isBackfillAcquisition}) — those dispatches are already
- * GHA-serialized against each other via the `skill-indexer-backfill`
+ * Guarantees the loop always makes one more attempt once it believes it has
+ * reached the deadline, rather than silently giving up on its last sleep —
+ * the invariant's proof requires this. Never applied to backfill's own
+ * acquisition (see {@link isBackfillAcquisition}) — those dispatches are
+ * already GHA-serialized against each other via the `skill-indexer-backfill`
  * concurrency group.
  *
- * pr-reviewer round-3 finding: a real `setTimeout` can wake LATE (ordinary
- * event-loop scheduling slack under load) but never early, so `sleep()`
- * below can resolve after `deadline` has already passed, meaning the loop's
- * next iteration technically *starts* its final attempt slightly after the
- * boundary rather than exactly at it. A literal zero-drift "never starts
- * after the deadline" is not a guarantee any real, single-threaded
- * event-loop timer can make — what this function actually guarantees is
- * that once that attempt starts, it is capped to an effectively-zero
- * timeout (see `cappedAttemptTimeoutMs` below), so it can never itself
- * extend the overshoot by a meaningful amount. That residual scheduling
- * slack is milliseconds at most, dwarfed by ADR-140's multi-minute margins
- * (`R`/`H_worst`/`G`), and does not threaten the timing invariant.
+ * pr-reviewer round-3/round-4 findings: this function does NOT (and cannot)
+ * guarantee that attempt starts at an exact wall-clock instant, or bound how
+ * late a `setTimeout`-based `sleep()` between attempts might fire — ordinary
+ * Node.js event-loop scheduling is best-effort: a timer can wake arbitrarily
+ * late under load (never early), with no fixed millisecond ceiling this
+ * function can promise. What it DOES guarantee, and what actually matters
+ * for ADR-140's invariant, is narrower and load-independent: whenever an
+ * attempt starts — on time, or after some amount of scheduling delay — its
+ * own timeout is capped to whatever time remains before `deadline`, clamped
+ * to a minimum of 0 (see `cappedAttemptTimeoutMs` below). A late-starting
+ * attempt therefore never itself adds a fresh `attemptTimeoutMs`-sized delay
+ * on top of however late the scheduler already made it; it resolves near-
+ * instantly instead. The invariant's `R`/`H_worst`/`G` margins only need to
+ * absorb ordinary Node.js scheduling jitter, not a second uncapped timeout.
  */
 export async function retryAcquireLock(
   supabase: SupabaseClient,
@@ -151,23 +153,25 @@ export async function retryAcquireLock(
 
   for (;;) {
     // pr-reviewer round-1 finding: bound each individual attempt so a single
-    // stalled RPC call cannot block this loop past its intended deadline —
-    // a timed-out attempt counts as a miss (retries), not a hard failure.
+    // stalled RPC call cannot itself hold the loop open indefinitely — a
+    // timed-out attempt counts as a miss (retries), not a hard failure.
     //
-    // pr-reviewer round-2 finding: that fix still let an attempt run for a
-    // full, fresh `attemptTimeoutMs` regardless of how little of the retry
-    // window was left, so a stalled attempt starting right at the deadline
-    // boundary could still finish up to `attemptTimeoutMs` past `deadline`
-    // — violating this function's own "never after the deadline" guarantee
-    // the timing invariant depends on. Capping THIS attempt's own timeout
-    // to whatever remains before the deadline (never negative — clamped at
-    // 0, so the deadline-boundary attempt itself still happens, just with
-    // an effectively-zero budget) closes that gap without giving up the
-    // guaranteed final attempt at the deadline the docstring above and the
-    // "always makes a final attempt at (not after) the deadline" test both
-    // require — a real, already-resolved RPC call still wins that race
-    // instantly regardless of the cap, since a settled microtask always
-    // runs before a timer callback, even a 0ms one.
+    // pr-reviewer round-2 finding: that fix still granted a full, fresh
+    // `attemptTimeoutMs` on every attempt regardless of how little of the
+    // retry window was left, so a stalled attempt could add up to a whole
+    // extra `attemptTimeoutMs` of delay on top of the intended budget.
+    //
+    // pr-reviewer round-4 finding: capping the attempt's timeout must not
+    // depend on the attempt starting exactly on time -- Node's event loop
+    // can delay `sleep()` between attempts by an unbounded amount (see the
+    // docstring above), so `deadline - now()` can already be negative by
+    // the time this line runs. `Math.max(0, ...)` handles that: a
+    // late-starting attempt still gets to run (this loop never silently
+    // drops the deadline-boundary attempt the invariant proof requires),
+    // just with an effectively-zero budget rather than a fresh full window.
+    // A real, already-resolved RPC call still wins that race instantly
+    // regardless of the cap, since a settled microtask always runs before a
+    // timer callback, even a 0ms one.
     const cappedAttemptTimeoutMs = Math.max(0, Math.min(attemptTimeoutMs, deadline - now()))
     const result = await raceWithTimeout(
       supabase.rpc('try_indexer_lock', { run_id: runId }),

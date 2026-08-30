@@ -205,7 +205,7 @@ describe('SMI-6246/ADR-140: retryAcquireLock', () => {
     expect(sleep).not.toHaveBeenCalled()
   })
 
-  it('always makes a final attempt at (not after) the deadline — the invariant proof requires this', async () => {
+  it('always makes a final attempt once it believes the deadline has been reached — the invariant proof requires this', async () => {
     // 3 misses spaced further apart than the window, forcing the "final
     // attempt at the boundary" branch (remaining <= 0 only checked AFTER an
     // attempt, so the deadline-boundary attempt itself still happens).
@@ -247,13 +247,12 @@ describe('SMI-6246/ADR-140: retryAcquireLock', () => {
   // pr-reviewer round-2 finding: round-1's raceWithTimeout fix bounded each
   // attempt by a fixed attemptTimeoutMs, but always granted a FULL fresh
   // attemptTimeoutMs regardless of how little of the retry window remained
-  // -- so a stalled attempt starting just before the deadline could still
-  // run up to attemptTimeoutMs PAST it, contradicting this function's own
-  // "never after the deadline" guarantee (the docstring above, and the
-  // preceding test). Capping each attempt to the remaining budget (checked
-  // BEFORE the attempt starts, not just before the sleep after it) closes
-  // that gap. This needs real fake timers, since raceWithTimeout's internal
-  // timeout always uses the real global setTimeout (it is not one of the
+  // -- so a stalled attempt could add a whole extra attemptTimeoutMs of
+  // delay on top of the intended budget. Capping each attempt to whatever
+  // remains before the deadline (checked immediately before the attempt
+  // starts, not only before the sleep after it) closes that gap. This
+  // needs real fake timers, since raceWithTimeout's internal timeout
+  // always uses the real global setTimeout (it is not one of the
   // injectable sleep/now hooks the rest of this describe block uses).
   describe('bounds a stalled attempt to the remaining deadline, not a fresh full attemptTimeoutMs', () => {
     beforeEach(() => {
