@@ -281,7 +281,15 @@ async function removeSkill(
       // removed (e.g. `remove foo --client cursor` nuking a canonical
       // `foo`'s `--also-link vscode` copy). Only the canonical removal path
       // legitimately owns those links.
-      if (client === CANONICAL_CLIENT) {
+      //
+      // ADR-139 (SMI-6274 Wave 4) / GPT-5.6-Sol PR review round 3: client
+      // identity alone is not sufficient once workspace scope is a real,
+      // independent install location -- `client === CANONICAL_CLIENT` alone
+      // still fires for a canonical client's WORKSPACE-scoped removal,
+      // deleting the unrelated GLOBAL canonical install's fan-out links even
+      // though only the workspace copy was meant to go. Fan-out is always
+      // global-canonical-to-global-client, so scope must also be checked.
+      if (client === CANONICAL_CLIENT && scopeTarget.scope === 'global') {
         try {
           const linkCount = await removeLinks(skillName)
           if (linkCount > 0) {

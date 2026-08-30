@@ -239,14 +239,14 @@ describe('ADR-139 (SMI-6274 Wave 4): uninstall_skill MCP tool workspace-scope wi
     // independent, same-named copy under a NON-CANONICAL client is
     // uninstalled (the CLI's own manage.action.ts comment's exact example:
     // `remove foo --client cursor` nuking a canonical foo's fan-out link).
-    // The guard is client-only, matching the CLI's own identical condition —
-    // confirmed the CLI's `removeSkill()` has this SAME shape (accepts a
-    // `scopeTarget` yet still only checks `client === CANONICAL_CLIENT`), so
-    // this test targets the scenario the guard actually protects: a
-    // DIFFERENT client, not merely a different scope of the canonical
-    // client (which neither this fix nor the CLI's own pre-existing guard
-    // claims to cover — matching, not exceeding, the CLI's behavior was the
-    // explicit instruction).
+    // The guard requires both client AND scope === 'global' (GPT-5.6-Sol PR
+    // review round 3 caught that a client-only guard, matching the CLI's own
+    // then-identical condition, still fires for a canonical client's
+    // WORKSPACE-scoped uninstall — see the sibling test below for that
+    // scenario, fixed on both the CLI and MCP sides). This test targets the
+    // DIFFERENT-client scenario specifically: a non-canonical client's
+    // independent install must never trigger fan-out cleanup at all,
+    // regardless of scope.
     vi.resetModules()
 
     const { ManifestManager } = await import('@skillsmith/core')
@@ -360,5 +360,132 @@ describe('ADR-139 (SMI-6274 Wave 4): uninstall_skill MCP tool workspace-scope wi
       links: Array<{ skillId: string }>
     }
     expect(linkManifest.links.some((l) => l.skillId === 'link-guard-skill')).toBe(true)
+  })
+
+  it("GPT-5.6-Sol PR review round 3: a canonical-client, WORKSPACE-scoped uninstall does NOT remove the unrelated GLOBAL canonical install's --also-link fan-out destinations", async () => {
+    // Same removeLinks(skillId) global-manifest/bare-name-only mechanism as
+    // the sibling test above, but the scenario round 3 caught: BOTH installs
+    // here are the canonical client (claude-code) — one global, one
+    // workspace-scoped, independent of each other. A client-only guard
+    // (matching the CLI's then-identical condition) would still fire for
+    // this workspace-scoped removal, deleting the GLOBAL canonical install's
+    // fan-out links even though only the workspace copy was being removed.
+    // Fixed by also requiring scope === 'global' on both the CLI
+    // (manage.action.ts) and MCP (this file) sides.
+    vi.resetModules()
+
+    const { ManifestManager } = await import('@skillsmith/core')
+    const { getLinkManifestPath, saveManifest: saveLinkManifest } =
+      await import('@skillsmith/core/install')
+
+    // Plant the GLOBAL canonical install this skill's fan-out link was
+    // recorded FROM.
+    const globalSkillDir = path.join(homeDir, '.claude', 'skills', 'scope-link-guard-skill')
+    await mkdir(globalSkillDir, { recursive: true })
+    await writeFile(
+      path.join(globalSkillDir, 'SKILL.md'),
+      `---\nname: scope-link-guard-skill\ndescription: test\n---\n${SKILL_MD_BODY}`,
+      'utf-8'
+    )
+    const globalManifestPath = path.join(homeDir, '.skillsmith', 'manifest.json')
+    await new ManifestManager(globalManifestPath).save({
+      version: '1.0.0',
+      installedSkills: {
+        'scope-link-guard-skill': {
+          id: 'owner/scope-link-guard-skill',
+          name: 'scope-link-guard-skill',
+          version: '1.0.0',
+          source: 'github:owner/scope-link-guard-skill',
+          installPath: globalSkillDir,
+          installedAt: new Date().toISOString(),
+          lastUpdated: new Date().toISOString(),
+        },
+      },
+    })
+
+    // Plant the global install's real --also-link fan-out destination, plus
+    // the link record removeLinks() reads.
+    const fanOutDestDir = path.join(
+      homeDir,
+      '.codeium',
+      'windsurf',
+      'skills',
+      'scope-link-guard-skill'
+    )
+    await mkdir(fanOutDestDir, { recursive: true })
+    await writeFile(
+      path.join(fanOutDestDir, 'SKILL.md'),
+      `---\nname: scope-link-guard-skill\ndescription: test\n---\n${SKILL_MD_BODY}`,
+      'utf-8'
+    )
+    await saveLinkManifest({
+      version: 1,
+      links: [
+        {
+          skillId: 'scope-link-guard-skill',
+          from: globalSkillDir,
+          to: fanOutDestDir,
+          kind: 'copy',
+          createdAt: new Date().toISOString(),
+        },
+      ],
+    })
+    const linkManifestPath = getLinkManifestPath()
+
+    // Plant an INDEPENDENT install of the SAME skill name under the SAME
+    // (canonical) client, at WORKSPACE scope — this is the one actually
+    // being uninstalled below.
+    const workspaceSkillDir = path.join(workspaceDir, '.claude', 'skills', 'scope-link-guard-skill')
+    await mkdir(workspaceSkillDir, { recursive: true })
+    await writeFile(
+      path.join(workspaceSkillDir, 'SKILL.md'),
+      `---\nname: scope-link-guard-skill\ndescription: test\n---\n${SKILL_MD_BODY}`,
+      'utf-8'
+    )
+    const workspaceManifestPath = path.join(workspaceDir, '.skillsmith', 'manifest.json')
+    await new ManifestManager(workspaceManifestPath).save({
+      version: '1.0.0',
+      installedSkills: {
+        'scope-link-guard-skill': {
+          id: 'owner/scope-link-guard-skill',
+          name: 'scope-link-guard-skill',
+          version: '1.0.0',
+          source: 'github:owner/scope-link-guard-skill',
+          installPath: workspaceSkillDir,
+          installedAt: new Date().toISOString(),
+          lastUpdated: new Date().toISOString(),
+        },
+      },
+    })
+
+    const { createToolContext } = await import('../../src/context.js')
+    const context = createToolContext({
+      dbPath: ':memory:',
+      apiClientConfig: { offlineMode: true },
+    })
+
+    const { uninstallSkill } = await import('../../src/tools/uninstall.js')
+    const result = await uninstallSkill(
+      {
+        skillName: 'scope-link-guard-skill',
+        force: true,
+        scope: 'workspace',
+        cwd: workspaceDir,
+      },
+      context
+    )
+
+    expect(result.success).toBe(true)
+    expect(await pathExists(workspaceSkillDir)).toBe(false)
+
+    // The global install and its fan-out destination/record are completely
+    // untouched — only the workspace copy was meant to go.
+    expect(await pathExists(globalSkillDir)).toBe(true)
+    expect(await pathExists(fanOutDestDir)).toBe(true)
+    const linkManifestRaw = await readFile(linkManifestPath, 'utf-8')
+    const linkManifest = JSON.parse(linkManifestRaw) as {
+      links: Array<{ skillId: string }>
+    }
+    expect(linkManifest.links.some((l) => l.skillId === 'scope-link-guard-skill')).toBe(true)
   })
 })

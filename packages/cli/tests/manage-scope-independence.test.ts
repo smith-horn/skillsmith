@@ -192,6 +192,38 @@ describe('ADR-139 (SMI-6274 Wave 4): remove/update independently target their ow
     ).toBeDefined()
   })
 
+  it("remove --scope workspace on a canonical-client install does not tear down the unrelated GLOBAL canonical install's fan-out link (GPT-5.6-Sol PR review round 3)", async () => {
+    // Same removeLinks(skillId) global-manifest/bare-name-only mechanism as
+    // manage-multi-client.test.ts's SMI-5894 fan-out guard test, but the
+    // scenario round 3 caught: BOTH installs here are the canonical client
+    // (claude-code) -- one global, one workspace-scoped, independent of each
+    // other. A client-only guard (the pre-round-3 shape) would still fire
+    // for this workspace-scoped removal, deleting the GLOBAL canonical
+    // install's fan-out link even though only the workspace copy was being
+    // removed. Fixed by also requiring scope === 'global' in
+    // manage.action.ts.
+    await installAtScope('global')
+    const { addLink } = await import('@skillsmith/core/install')
+    await addLink({ skillId: 'test-repo', fromClient: 'claude-code', toClient: 'windsurf' })
+    await installAtScope('workspace')
+
+    const windsurfPath = path.join(homeDir, '.codeium', 'windsurf', 'skills', 'test-repo')
+    const workspacePath = path.join(workspaceDir, '.claude', 'skills', 'test-repo')
+    await expect(access(windsurfPath)).resolves.toBeUndefined()
+    await expect(access(workspacePath)).resolves.toBeUndefined()
+
+    const { removeAction } = await import('../src/commands/manage.js')
+    const exitSpy = vi.spyOn(process, 'exit').mockImplementation(() => undefined as never)
+    await removeAction('test-repo', { force: true, db: dbPath, scope: 'workspace' })
+    exitSpy.mockRestore()
+
+    // The workspace copy is gone...
+    await expect(access(workspacePath)).rejects.toThrow()
+    // ...but the GLOBAL canonical install's fan-out link to Windsurf must
+    // survive -- it belongs to a completely different (global) install.
+    await expect(access(windsurfPath)).resolves.toBeUndefined()
+  })
+
   it('update --scope workspace force-reinstalls only the workspace copy, leaving the global manifest entry byte-identical', async () => {
     await installAtScope('global')
     await installAtScope('workspace')

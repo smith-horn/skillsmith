@@ -167,18 +167,18 @@ async function uninstallSkillImpl(
   // the CLI's parity behavior in `manage.action.ts` (`createRemoveCommand`'s
   // action impl).
   //
-  // ADR-139 (SMI-6274 Wave 4) / GPT-5.6-Sol PR review: fan-out links are
-  // always recorded FROM the canonical install — `removeLinks(skillId)`
-  // reads the GLOBAL `~/.skillsmith/links/manifest.json` and matches purely
-  // by bare skill name, with no scope or per-destination client scoping at
-  // all. Calling it unconditionally would delete a canonical install's
-  // unrelated `--also-link` fan-out destinations whenever a *non-canonical*
-  // client's (or workspace-scoped) independent install of the same-named
-  // skill is uninstalled here — identical guard to the CLI's, since this
-  // mechanism has no workspace-scope concept of its own (a fan-out is
-  // always global-canonical-to-global-client, so client identity is the
-  // only correctness-relevant dimension).
-  if (result.success && effectiveClient === CANONICAL_CLIENT) {
+  // ADR-139 (SMI-6274 Wave 4) / GPT-5.6-Sol PR review round 3: fan-out links
+  // are always recorded FROM the GLOBAL canonical install — `removeLinks
+  // (skillId)` reads the GLOBAL `~/.skillsmith/links/manifest.json` and
+  // matches purely by bare skill name, with no scope or per-destination
+  // client scoping at all. `effectiveClient === CANONICAL_CLIENT` alone is
+  // NOT sufficient: it still fires for a canonical client's WORKSPACE-scoped
+  // uninstall, which would delete the unrelated GLOBAL canonical install's
+  // `--also-link` fan-out destinations, even though only the workspace copy
+  // was meant to go. Requiring scope === 'global' too closes that — a
+  // fan-out is always global-canonical-to-global-client, so BOTH client
+  // identity AND scope are correctness-relevant here, not client alone.
+  if (result.success && effectiveClient === CANONICAL_CLIENT && scopeTarget.scope === 'global') {
     try {
       await removeLinks(input.skillName)
     } catch {
