@@ -51,7 +51,9 @@ const {
   ) => Finding[]
   findHostedScopeViolations: (
     mcpServers: Record<string, { url?: string; type?: string }> | undefined,
-    sourceLabel: string
+    sourceLabel: string,
+    disabledServerNames?: Set<string>,
+    pluginId?: string
   ) => Finding[]
   auditMcpConfigs: (opts: { repoRoot: string; homeDir?: string }) => Finding[]
   filterDebounced: (
@@ -173,10 +175,43 @@ describe('SMI-5642: mcp-command-guard', () => {
   })
 
   describe('findHostedScopeViolations', () => {
-    it('1. ?features=docs -> no finding (the real, correct current state)', () => {
+    it('1. ?features=docs -> now flags (SMI-6308: features= does not narrow the OAuth grant)', () => {
       const findings = findHostedScopeViolations(
         { supabase: { url: 'https://mcp.supabase.com/mcp?features=docs' } },
         'plugin:postgres-best-practices@supabase-agent-skills'
+      )
+      expect(findings).toHaveLength(1)
+      expect(findings[0]?.check).toBe('hosted-scope')
+      expect(findings[0]?.message).toContain('docs')
+      expect(findings[0]?.message).toContain('does not narrow')
+      expect(findings[0]?.remediation).toContain('disabledMcpServers')
+    })
+
+    it('1b. ?features=docs -> no finding when the plugin-sourced server is disabled via disabledMcpServers (SMI-6308)', () => {
+      const findings = findHostedScopeViolations(
+        { supabase: { url: 'https://mcp.supabase.com/mcp?features=docs' } },
+        'plugin:postgres-best-practices@supabase-agent-skills',
+        new Set(['plugin:postgres-best-practices:supabase']),
+        'postgres-best-practices@supabase-agent-skills'
+      )
+      expect(findings).toEqual([])
+    })
+
+    it('1c. ?features=docs -> still flags when disabledServerNames has only an unrelated entry (no false exemption)', () => {
+      const findings = findHostedScopeViolations(
+        { supabase: { url: 'https://mcp.supabase.com/mcp?features=docs' } },
+        'plugin:postgres-best-practices@supabase-agent-skills',
+        new Set(['plugin:other-plugin:other-server']),
+        'postgres-best-practices@supabase-agent-skills'
+      )
+      expect(findings).toHaveLength(1)
+    })
+
+    it('1d. a non-plugin-sourced entry is exempted by its bare server name, not a plugin-prefixed key', () => {
+      const findings = findHostedScopeViolations(
+        { supabase: { url: 'https://mcp.supabase.com/mcp?features=docs' } },
+        '.mcp.json',
+        new Set(['supabase'])
       )
       expect(findings).toEqual([])
     })
@@ -213,12 +248,15 @@ describe('SMI-5642: mcp-command-guard', () => {
       expect(findings).toHaveLength(1)
     })
 
-    it('5. ?features=DOCS -> no finding (case/whitespace normalization)', () => {
+    it('5. ?features=DOCS -> still flags after case/whitespace normalization (SMI-6308)', () => {
       const findings = findHostedScopeViolations(
         { supabase: { url: 'https://mcp.supabase.com/mcp?features= DOCS ' } },
         '.mcp.json'
       )
-      expect(findings).toEqual([])
+      expect(findings).toHaveLength(1)
+      // Normalization still happens (lowercased/trimmed in the message) even
+      // though it no longer affects the compliance outcome.
+      expect(findings[0]?.message).toContain('"docs"')
     })
 
     it('6. repeated ?features= param -> one finding (getAll vs get trap)', () => {
@@ -382,12 +420,33 @@ describe('SMI-5642: mcp-command-guard', () => {
       expect(findings[0]?.source).toBe('plugin:foo@bar')
     })
 
-    it('12. enabled plugin with ?features=docs -> nothing', () => {
+    it('12. enabled plugin with ?features=docs -> now flags (SMI-6308)', () => {
       const home = join(tmp, 'home')
       writeSettings(home, { 'foo@bar': true })
       writePluginConfig(home, 'bar', 'foo', 'v1', {
         supabase: { type: 'http', url: 'https://mcp.supabase.com/mcp?features=docs' },
       })
+      const findings = auditMcpConfigs({ repoRoot: tmp, homeDir: home })
+      expect(findings).toHaveLength(1)
+      expect(findings[0]?.source).toBe('plugin:foo@bar')
+    })
+
+    it('12b. enabled plugin with ?features=docs -> no finding once disabled via disabledMcpServers (SMI-6308)', () => {
+      const home = join(tmp, 'home')
+      writeSettings(home, { 'foo@bar': true })
+      writePluginConfig(home, 'bar', 'foo', 'v1', {
+        supabase: { type: 'http', url: 'https://mcp.supabase.com/mcp?features=docs' },
+      })
+      // Plugin-sourced entries record in disabledMcpServers under
+      // "plugin:<pluginName>:<serverName>" — confirmed live against this
+      // repo's own ~/.claude.json (SMI-6308) — NOT the "<pluginName>@<marketplace>"
+      // pluginId shape the plugin scan uses internally.
+      writeFileSync(
+        join(home, '.claude.json'),
+        JSON.stringify({
+          projects: { [tmp]: { disabledMcpServers: ['plugin:foo:supabase'] } },
+        })
+      )
       expect(auditMcpConfigs({ repoRoot: tmp, homeDir: home })).toEqual([])
     })
 
@@ -582,7 +641,7 @@ describe('SMI-5642: mcp-command-guard', () => {
       }
     })
 
-    it('23. two enabled plugins each registering a server named "supabase", one scoped and one not -> exactly one finding, correctly attributed', () => {
+    it('23. two enabled plugins each registering a server named "supabase" — the disabled one is exempt, the other still flags, correctly attributed (SMI-6308)', () => {
       const home = join(tmp, 'home')
       writeSettings(home, { 'foo@bar': true, 'baz@bar': true })
       writePluginConfig(home, 'bar', 'foo', 'v1', {
@@ -591,6 +650,14 @@ describe('SMI-5642: mcp-command-guard', () => {
       writePluginConfig(home, 'bar', 'baz', 'v1', {
         supabase: { type: 'http', url: 'https://mcp.supabase.com/mcp' },
       })
+      // Only "foo"'s supabase server is disabled — "baz"'s is not, so it
+      // must still flag even though both share the same server name.
+      writeFileSync(
+        join(home, '.claude.json'),
+        JSON.stringify({
+          projects: { [tmp]: { disabledMcpServers: ['plugin:foo:supabase'] } },
+        })
+      )
       const findings = auditMcpConfigs({ repoRoot: tmp, homeDir: home })
       expect(findings).toHaveLength(1)
       expect(findings[0]?.source).toBe('plugin:baz@bar')
@@ -610,6 +677,51 @@ describe('SMI-5642: mcp-command-guard', () => {
       expect(findings).toHaveLength(2)
       expect(findings.some((f) => f.source === 'plugin:foo@bar')).toBe(true)
       expect(findings.some((f) => f.source === '.mcp.json' && f.server === 'badRepo')).toBe(true)
+    })
+
+    it('24b. malformed ~/.claude.json does not suppress a plugin-sourced hosted-scope finding — the disabledMcpServers read fails soft to "nothing disabled" (SMI-6308)', () => {
+      const home = join(tmp, 'home')
+      mkdirSync(home, { recursive: true })
+      writeFileSync(join(home, '.claude.json'), '{not valid json')
+      writeSettings(home, { 'foo@bar': true })
+      writePluginConfig(home, 'bar', 'foo', 'v1', {
+        supabase: { type: 'http', url: 'https://mcp.supabase.com/mcp?features=docs' },
+      })
+      expect(() => auditMcpConfigs({ repoRoot: tmp, homeDir: home })).not.toThrow()
+      const findings = auditMcpConfigs({ repoRoot: tmp, homeDir: home })
+      expect(findings).toHaveLength(1)
+      expect(findings[0]?.source).toBe('plugin:foo@bar')
+    })
+
+    it('24c. a project entry with no disabledMcpServers key still flags normally (SMI-6308)', () => {
+      const home = join(tmp, 'home')
+      mkdirSync(home, { recursive: true })
+      writeFileSync(
+        join(home, '.claude.json'),
+        JSON.stringify({ projects: { [tmp]: { mcpServers: {} } } })
+      )
+      writeSettings(home, { 'foo@bar': true })
+      writePluginConfig(home, 'bar', 'foo', 'v1', {
+        supabase: { type: 'http', url: 'https://mcp.supabase.com/mcp?features=docs' },
+      })
+      const findings = auditMcpConfigs({ repoRoot: tmp, homeDir: home })
+      expect(findings).toHaveLength(1)
+      expect(findings[0]?.source).toBe('plugin:foo@bar')
+    })
+
+    it('24d. disabledMcpServers present but not an array fails soft (nothing exempted), does not throw', () => {
+      const home = join(tmp, 'home')
+      mkdirSync(home, { recursive: true })
+      writeFileSync(
+        join(home, '.claude.json'),
+        JSON.stringify({ projects: { [tmp]: { disabledMcpServers: 'supabase' } } })
+      )
+      writeSettings(home, { 'foo@bar': true })
+      writePluginConfig(home, 'bar', 'foo', 'v1', {
+        supabase: { type: 'http', url: 'https://mcp.supabase.com/mcp?features=docs' },
+      })
+      expect(() => auditMcpConfigs({ repoRoot: tmp, homeDir: home })).not.toThrow()
+      expect(auditMcpConfigs({ repoRoot: tmp, homeDir: home })).toHaveLength(1)
     })
 
     it('24a. SKILLSMITH_MCP_COMMAND_GUARD_DISABLE=1 suppresses all three sources and both check types', () => {
