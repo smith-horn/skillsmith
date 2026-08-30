@@ -21,11 +21,23 @@ import {
   type RegistrySkillInfo,
 } from '@skillsmith/core'
 import { withTelemetry } from '@skillsmith/core/telemetry'
-import { addLink, getInstallPath, resolveClientId } from '@skillsmith/core/install'
+import {
+  addLink,
+  parseInstallScope,
+  resolveClientId,
+  resolveScopedSkillsDir,
+  UnsatisfiableWorkspaceScopeError,
+  InvalidScopeValueError,
+} from '@skillsmith/core/install'
 import { resolveAuditMode, isAuditMode, type Tier } from '@skillsmith/core/config/audit-mode'
 import type { ToolContext } from '../context.js'
 import { getToolContext } from '../context.js'
-import { CLAUDE_SKILLS_DIR, installInputSchema, type InstallResult } from './install.types.js'
+import {
+  CLAUDE_SKILLS_DIR,
+  MANIFEST_PATH,
+  installInputSchema,
+  type InstallResult,
+} from './install.types.js'
 import { loadManifest, lookupSkillFromRegistry } from './install.helpers.js'
 import { FIELD_LIMITS } from './validate.types.js'
 
@@ -89,6 +101,26 @@ function buildInvalidSkillIdError(skillId: string, message: string): InstallResu
     skillId,
     installPath: '',
     error: `invalid_skill_id: ${message}`,
+  }
+}
+
+/**
+ * ADR-139 (SMI-6274 Wave 4) / GPT-5.6-Sol PR review: structured tool-error
+ * envelope for an unsatisfiable/invalid `scope` request — mirrors
+ * {@link buildValidationError}'s precedent (a structured `success: false`
+ * result, not an MCP protocol-level throw) so an unsatisfiable
+ * `scope: 'workspace'` request still surfaces as the "HARD ERROR naming the
+ * reason" ADR-139 point 2 requires, through the SAME structured channel
+ * every other pre-flight failure in this tool already uses, rather than an
+ * uncaught throw escaping into an MCP protocol-level error the caller can't
+ * distinguish from a transport failure.
+ */
+function buildScopeError(skillId: string, error: Error): InstallResult {
+  return {
+    success: false,
+    skillId,
+    installPath: '',
+    error: error.message,
   }
 }
 
@@ -173,7 +205,40 @@ async function installSkillImpl(input: unknown, _context?: ToolContext): Promise
   // colliding with a real canonical install of the same skill name and
   // invisible to `name::cursor`-scoped removal.
   const effectiveClient = resolveClientId(validInput.client)
-  const effectiveSkillsDir = getInstallPath(effectiveClient)
+
+  // ADR-139 (SMI-6274 Wave 4) / GPT-5.6-Sol PR review: resolve global-vs-
+  // workspace scope via the SAME shared core resolver the CLI's install/
+  // list/update/remove commands use — this was the actual finding: the MCP
+  // server previously called `getInstallPath(effectiveClient)` directly,
+  // the OLD global-only resolution, and could never reach workspace scope
+  // at all (the ADR's own stated MCP requirement, point 7). `cwd` (when the
+  // calling client passes it — see its own doc comment above) is used as
+  // the ancestor-walk starting point instead of this long-running server's
+  // own launch-time `process.cwd()`, exactly the same reason `cwd` exists
+  // for the companion-agent path. `explicitScope` (the new `scope` param,
+  // rank 1) and SKILLSMITH_SCOPE (rank 2, read automatically by
+  // resolveScopedSkillsDir when explicitScope is undefined) both apply. An
+  // unsatisfiable explicit `scope: 'workspace'` throws
+  // UnsatisfiableWorkspaceScopeError — caught below and surfaced as a
+  // structured hard error (ADR-139 point 2), never a silent downgrade.
+  let scopeTarget: ReturnType<typeof resolveScopedSkillsDir>
+  try {
+    scopeTarget = resolveScopedSkillsDir({
+      client: effectiveClient,
+      explicitScope: parseInstallScope(validInput.scope),
+      ...(validInput.cwd !== undefined && { cwd: validInput.cwd }),
+      globalManifestPath: MANIFEST_PATH,
+    })
+  } catch (scopeError) {
+    if (
+      scopeError instanceof UnsatisfiableWorkspaceScopeError ||
+      scopeError instanceof InvalidScopeValueError
+    ) {
+      return buildScopeError(validInput.skillId, scopeError)
+    }
+    throw scopeError
+  }
+  const effectiveSkillsDir = scopeTarget.dir
 
   // SMI-3483: Create core service instance with MCP context wiring
   // SMI-3873: aiDefenceFeedback omitted -- MCP server cannot call Ruflo tools.
@@ -185,6 +250,10 @@ async function installSkillImpl(input: unknown, _context?: ToolContext): Promise
     coInstallRecorder: context.coInstallRepository,
     sessionInstalledSkillIds: context.sessionInstalledSkillIds,
     skillsDir: effectiveSkillsDir,
+    // ADR-139: route the manifest write to the SAME manifest scopeTarget
+    // resolved — the workspace-local one when scope === 'workspace', else
+    // the global one (byte-identical to the previous default).
+    manifestPath: scopeTarget.manifestPath,
     client: effectiveClient,
     // SMI-5982 code-review fix #1: only Antigravity's directory-package mode
     // actually consumes this today (its `dir` is the only relative one) —
@@ -193,10 +262,25 @@ async function installSkillImpl(input: unknown, _context?: ToolContext): Promise
   })
 
   // SMI-1867: Pre-flight conflict check for reinstall with force
-  // This is MCP-specific (three-way merge UI, backup, storeOriginal)
+  // This is MCP-specific (three-way merge UI, backup, storeOriginal) —
+  // `SkillInstallationService.install()` itself never reads `conflictAction`
+  // at all (confirmed: it's declared on `InstallOptions` but nowhere
+  // consumed in `packages/core/src/services/*.ts`), so this pre-flight is
+  // its ENTIRE effect. An earlier version of this fix gated the whole block
+  // to `scopeTarget.scope === 'global'`, reasoning that consulting the
+  // GLOBAL manifest for a workspace-scoped reinstall would either miss
+  // (silently dropping `conflictAction`, e.g. a `cancel` request would be
+  // ignored and the install would proceed and overwrite anyway) or worse,
+  // false-positive against an unrelated same-named global entry — both real
+  // problems, but the fix is to read the RIGHT manifest, not to skip the
+  // check. `loadManifest()` (install.helpers.js) now takes the manifest path
+  // as an optional argument (default: global, unchanged for its other 3
+  // callers — outdated.ts, skill-updates.ts, updateManifestSafely) — passing
+  // `scopeTarget.manifestPath` here makes this pre-flight correct for BOTH
+  // scopes instead of gated to one.
   if (validInput.force && validInput.conflictAction) {
     try {
-      const manifest = await loadManifest()
+      const manifest = await loadManifest(scopeTarget.manifestPath)
       const skillName = extractSkillName(validInput.skillId)
 
       if (manifest.installedSkills[skillName]) {

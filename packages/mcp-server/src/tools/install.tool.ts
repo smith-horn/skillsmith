@@ -83,6 +83,17 @@ export const installTool = {
           "does not track the calling editor/agent's real project, so the install fails closed " +
           'with a clear error if omitted rather than silently writing to the wrong directory.',
       },
+      // ADR-139 (SMI-6274 Wave 4): mirrors the CLI's --scope flag.
+      scope: {
+        type: 'string',
+        enum: ['global', 'workspace'],
+        description:
+          'Install scope (ADR-139): "workspace" resolves against the nearest ancestor workspace ' +
+          "marker or .git root (walked from cwd when provided), creating the client's workspace " +
+          'skills directory if none exists yet; defaults to SKILLSMITH_SCOPE env, then the ' +
+          'per-client config default, then auto-detecting an EXISTING workspace directory, then ' +
+          'global.',
+      },
     },
     required: ['skillId'],
   },

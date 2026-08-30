@@ -5,6 +5,11 @@ Internal MCP server (SMI-4417) wrapping `@ruvector/core` for semantic doc retrie
 ## [Unreleased]
 
 ### Changed
+- SMI-6274 (ADR-139) — documentation-only: `findMainRepoRoot()`'s header comment now names
+  `@skillsmith/core`'s new `findWorkspaceRoot()`, which deliberately uses the opposite `.git`
+  predicate (path existence, not `isDirectory()`) for a different purpose (workspace-scoped
+  skill installs vs. this function's telemetry-attribution main-repo-root resolution). No
+  behavior change to this function.
 - SMI-5039 — wire the shared `probeEmbeddingCapability()` helper from
   `@skillsmith/core/embeddings/probe`. `server.ts` runs the probe eagerly
   before `server.connect(transport)` so the module-load cache is warm before

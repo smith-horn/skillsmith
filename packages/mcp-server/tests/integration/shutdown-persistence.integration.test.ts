@@ -53,6 +53,7 @@ vi.mock('@skillsmith/core/install', async (importActual) => {
     ...actual,
     resolveClientPath: vi.fn(),
     getInstallPath: vi.fn(),
+    resolveScopedSkillsDir: vi.fn(),
   }
 })
 
@@ -89,6 +90,7 @@ describe('SMI-5639: shutdown persistence — exact repro (integration, no subpro
   let coreFetchAndScanOptionalFiles: ReturnType<typeof vi.fn>
   let resolveClientPath: ReturnType<typeof vi.fn>
   let getInstallPath: ReturnType<typeof vi.fn>
+  let resolveScopedSkillsDir: ReturnType<typeof vi.fn>
 
   beforeAll(async () => {
     // Dynamic import after vi.mock() has been hoisted — mirrors
@@ -114,6 +116,9 @@ describe('SMI-5639: shutdown persistence — exact repro (integration, no subpro
       coreInstallModule.resolveClientPath as (...args: unknown[]) => unknown
     )
     getInstallPath = vi.mocked(coreInstallModule.getInstallPath as (...args: unknown[]) => unknown)
+    resolveScopedSkillsDir = vi.mocked(
+      coreInstallModule.resolveScopedSkillsDir as (...args: unknown[]) => unknown
+    )
   })
 
   beforeEach(async () => {
@@ -134,6 +139,17 @@ describe('SMI-5639: shutdown persistence — exact repro (integration, no subpro
     vi.clearAllMocks()
     resolveClientPath.mockReturnValue(fsContext.skillsDir)
     getInstallPath.mockReturnValue(fsContext.skillsDir)
+    // ADR-139 (SMI-6274 Wave 4): install.ts resolves its actual write target
+    // via this resolver now, not getInstallPath() directly — redirect it to
+    // the same per-test temp skillsDir/manifest so this real-write repro
+    // (the whole point of this test) stays isolated instead of falling
+    // through to a real ancestor-directory walk from the test runner's cwd.
+    resolveScopedSkillsDir.mockReturnValue({
+      scope: 'global',
+      dir: fsContext.skillsDir,
+      manifestPath: path.join(fsContext.manifestDir, 'manifest.json'),
+      created: false,
+    })
     coreFetchAndScanOptionalFiles.mockResolvedValue({
       configWarnings: [],
       failedScans: [],

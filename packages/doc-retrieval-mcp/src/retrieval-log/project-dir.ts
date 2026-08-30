@@ -75,6 +75,15 @@ function claudeProjectsRoot(): string {
  * the first such ancestor, or `null` before filesystem root. For a worktree
  * under `<repo>/.worktrees/<name>/`, this returns `<repo>` so all worktrees of
  * one project resolve to the same telemetry DB.
+ *
+ * ADR-139: `findWorkspaceRoot()` (`packages/core/src/install/workspace-scope.ts`)
+ * is a near-neighbour ancestor walk with the DELIBERATELY OPPOSITE `.git`
+ * predicate — it tests path EXISTENCE only, never `isDirectory()`, precisely
+ * so a worktree's own `.git` FILE still counts as a boundary (a worktree
+ * install must resolve to that worktree, not get redirected back to this
+ * function's "main repo" concept). The two walks are near-neighbours on
+ * purpose, not a drift accident — see `findWorkspaceRoot()`'s own header note
+ * pointing back here.
  */
 export function findMainRepoRoot(start: string): string | null {
   let current = resolve(start)

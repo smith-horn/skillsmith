@@ -47,12 +47,22 @@ vi.mock('@skillsmith/core/services/skill-installation-io', async (importActual) 
 // frozen at module load (`homedir()`), so a runtime HOME swap cannot redirect them —
 // mock the resolvers and point them at the per-test temp skillsDir in beforeEach.
 // `addLink` and the rest are preserved via importActual.
+//
+// ADR-139 (SMI-6274 Wave 4) / GPT-5.6-Sol PR review: install.ts no longer calls
+// `getInstallPath()` directly — it now resolves scope (global vs workspace) via
+// `resolveScopedSkillsDir()`, which reads `CLIENT_NATIVE_PATHS` directly for the
+// global branch, bypassing `getInstallPath()` entirely. Left unmocked, this
+// resolver would perform a REAL ancestor-directory walk from the test runner's
+// actual cwd — cwd-dependent test fragility, the same class a prior review round
+// on this same PR caught in a sibling CLI test file. Mocked deterministically to
+// redirect to the per-test temp skillsDir/manifest, set in beforeEach below.
 vi.mock('@skillsmith/core/install', async (importActual) => {
   const actual = await importActual<Record<string, unknown>>()
   return {
     ...actual,
     resolveClientPath: vi.fn(),
     getInstallPath: vi.fn(),
+    resolveScopedSkillsDir: vi.fn(),
   }
 })
 
@@ -332,6 +342,9 @@ describe('Install Skill Tool — Execution & Trust Tier', () => {
     let coreFetchAndScanOptionalFiles: ReturnType<typeof vi.fn>
     let resolveClientPath: ReturnType<typeof vi.fn>
     let getInstallPath: ReturnType<typeof vi.fn>
+    // ADR-139 (SMI-6274 Wave 4): the scope resolver install.ts now calls
+    // instead of getInstallPath() directly — see the vi.mock comment above.
+    let resolveScopedSkillsDir: ReturnType<typeof vi.fn>
 
     beforeAll(async () => {
       // Dynamic import after vi.mock() has been hoisted — module is already mocked
@@ -362,6 +375,9 @@ describe('Install Skill Tool — Execution & Trust Tier', () => {
       getInstallPath = vi.mocked(
         coreInstallModule.getInstallPath as (...args: unknown[]) => unknown
       )
+      resolveScopedSkillsDir = vi.mocked(
+        coreInstallModule.resolveScopedSkillsDir as (...args: unknown[]) => unknown
+      )
     })
 
     beforeEach(() => {
@@ -373,6 +389,19 @@ describe('Install Skill Tool — Execution & Trust Tier', () => {
       // SKILL.md fetch return explicitly.
       resolveClientPath.mockReturnValue(fsContext.skillsDir)
       getInstallPath.mockReturnValue(fsContext.skillsDir)
+      // ADR-139 (SMI-6274 Wave 4): install.ts resolves its actual write
+      // target via this resolver now, not getInstallPath() directly —
+      // redirect it to the SAME per-test temp skillsDir/manifest so this
+      // suite's real-write assertions (result.installPath.startsWith(...),
+      // fileExists(...)) still exercise the real install flow against an
+      // isolated temp directory, deterministically (global scope), instead
+      // of a real ancestor-directory walk from the test runner's cwd.
+      resolveScopedSkillsDir.mockReturnValue({
+        scope: 'global',
+        dir: fsContext.skillsDir,
+        manifestPath: path.join(fsContext.manifestDir, 'manifest.json'),
+        created: false,
+      })
       coreFetchAndScanOptionalFiles.mockResolvedValue({
         configWarnings: [],
         failedScans: [],

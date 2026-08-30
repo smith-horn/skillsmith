@@ -88,6 +88,30 @@ vi.mock('./install.namespace-gate.js', () => ({
   runNamespaceGate: mockRunNamespaceGate,
 }))
 
+// ADR-139 (SMI-6274 Wave 4) / GPT-5.6-Sol PR review: installSkillImpl now
+// resolves global-vs-workspace scope via resolveScopedSkillsDir() (real
+// filesystem ancestor walk when unmocked). Left unmocked, this test's
+// resolved scope would depend on whatever real `.claude/skills` marker or
+// `.git` boundary happens to exist above the test runner's actual
+// invocation cwd — the exact cwd-dependent fragility class a prior PR
+// review round on this same PR caught in a sibling CLI test file
+// (manage.skills-directory.test.ts / manage.test.ts). Every test in this
+// file assumes the pre-ADR-139 "always global" behavior (the conflict
+// pre-flight tests below specifically require scope === 'global' to run at
+// all — see install.ts's own gate), so this is mocked deterministically to
+// 'global' regardless of the real filesystem/invocation directory.
+const { mockResolveScopedSkillsDir } = vi.hoisted(() => ({
+  mockResolveScopedSkillsDir: vi.fn(),
+}))
+
+vi.mock('@skillsmith/core/install', async (importOriginal) => {
+  const actual = await importOriginal<Record<string, unknown>>()
+  return {
+    ...actual,
+    resolveScopedSkillsDir: mockResolveScopedSkillsDir,
+  }
+})
+
 import { installSkill, extractSkillName } from './install.js'
 import type { InstallResult } from './install.types.js'
 
@@ -105,6 +129,14 @@ describe('installSkill() Zod boundary guard (SMI-4288 / #599)', () => {
     mockLookupSkillFromRegistry.mockReset()
     mockCheckForConflicts.mockReset()
     mockRunNamespaceGate.mockReset()
+    mockResolveScopedSkillsDir.mockReset()
+    // ADR-139: deterministic global scope — see the mock's own comment above.
+    mockResolveScopedSkillsDir.mockReturnValue({
+      scope: 'global',
+      dir: '/mock/skills-dir',
+      manifestPath: '/mock/manifest.json',
+      created: false,
+    })
     mockInstall.mockResolvedValue(HAPPY_RESULT)
     // By default no conflict preflight interception.
     mockLoadManifest.mockResolvedValue({ version: '1', installedSkills: {} })
