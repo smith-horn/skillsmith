@@ -10,10 +10,18 @@
  *    the exact pattern that broke the `aqe` MCP server (ENOENT) after an
  *    nvm-managed Node global-bin install fell out of the active Node
  *    version.
- * 2. `findHostedScopeViolations` — warns when a hosted (`url`-based) MCP
- *    server is scoped wider than this repo permits (currently
- *    `mcp.supabase.com`'s `features` param — anything beyond `docs` exposes
- *    write-capable tool groups such as `execute_sql` / `apply_migration`).
+ * 2. `findHostedScopeViolations` — warns on any hosted (`url`-based) MCP
+ *    server matching a HOSTED_SCOPE_RULES host (currently `mcp.supabase.com`)
+ *    that is not disabled for this project. SMI-6308 CORRECTION: a
+ *    `features=docs` URL was previously treated as compliant on its own —
+ *    a live security investigation proved that's false: the `features=`
+ *    parameter never narrows the connector's actual OAuth grant, which is
+ *    always the full, organization-wide Management API regardless of that
+ *    parameter's value. The only state that removes the risk is having no
+ *    live connection at all, so this check now exempts an entry only when
+ *    its server name appears in this project's `disabledMcpServers` list
+ *    (`~/.claude.json`, set via Claude Code's own `/mcp` panel) — every
+ *    other matching hosted entry flags, regardless of `features=`.
  *
  * Scans three sources: this repo's `.mcp.json`; `~/.claude.json`'s
  * skillsmith-project-scoped `mcpServers` block (never that file's other,
@@ -38,6 +46,7 @@
  * @see docs/internal/implementation/fix-aqe-mcp-enoent.md
  * @see docs/internal/implementation/mcp-guard-plugin-config-scan.md
  * @see docs/internal/adr/136-cross-runtime-duplication-of-security-logic.md
+ * @see docs/internal/implementation/smi-6308-supabase-mcp-oauth-scope-guard.md
  */
 import { createHash } from 'node:crypto'
 import { existsSync, mkdirSync, readFileSync, renameSync, writeFileSync } from 'node:fs'
@@ -122,14 +131,56 @@ const HOSTED_SCOPE_RULES = {
  * boundary — findBareCommandServers owns anything without a string `url`),
  * and a hosted entry is never evaluated by findBareCommandServers.
  *
- * `read_only=true` is NOT accepted as satisfying this rule — it is a
- * mitigating parameter, not an equivalent one: it still admits the Database
- * tool group, and the requirement here is docs-only.
+ * SMI-6308 CORRECTION: a `features=docs` URL is NO LONGER treated as
+ * compliant on its own. A live security investigation
+ * (docs/internal/implementation/smi-6308-supabase-mcp-oauth-scope-guard.md)
+ * proved the `features=` URL parameter never narrows this connector's
+ * actual OAuth grant — `mcp.supabase.com`'s own
+ * `.well-known/oauth-protected-resource` metadata returns the SAME fixed,
+ * 13-scope, organization-wide Management-API scope set regardless of the
+ * query string, and Supabase has confirmed (supabase/mcp#239) that
+ * feature-based scope narrowing is unimplemented upstream. `features=` only
+ * filters which TOOLS the connector exposes post-authorization — it does
+ * nothing to the OAuth token itself, which can always reach the full
+ * Management API (including `secrets:read`, which can retrieve a project's
+ * durable `service_role` key). `read_only=true` is likewise NOT accepted as
+ * satisfying this rule, for the same underlying reason: it is a server-side
+ * tool-filtering parameter, not something that narrows the OAuth grant.
+ *
+ * The only state that actually removes this risk is having no live
+ * connection at all — checked FIRST, below, via `disabledServerNames`
+ * (a project's `disabledMcpServers` list in `~/.claude.json`, populated by
+ * Claude Code's own `/mcp` panel). Every other hosted entry matching
+ * HOSTED_SCOPE_RULES now flags, regardless of its `features=` value.
+ *
+ * @param disabledServerNames - Set of disabled-server identifiers for this
+ *   project (see readDisabledMcpServerNames). Defaults to an empty Set so
+ *   existing direct callers/tests that don't pass one behave exactly as
+ *   before (nothing is exempted).
+ * @param pluginId - present only when `mcpServers` came from a plugin's
+ *   pinned-cache config (the `<pluginName>@<marketplace>` shape
+ *   scanPluginMcpServers returns). Needed because a plugin-sourced server's
+ *   entry in `disabledMcpServers` is NOT keyed by that shape — it's keyed by
+ *   `plugin:<pluginName>:<serverName>` (confirmed live against this repo's
+ *   own `~/.claude.json`), so the lookup key differs by source.
  */
-export function findHostedScopeViolations(mcpServers, sourceLabel) {
+export function findHostedScopeViolations(
+  mcpServers,
+  sourceLabel,
+  disabledServerNames = new Set(),
+  pluginId
+) {
   const findings = []
   for (const [name, entry] of Object.entries(mcpServers || {})) {
     if (!entry || typeof entry.url !== 'string') continue // stdio entry — findBareCommandServers owns it
+
+    // SMI-6308: a server this project has disabled (Claude Code's own /mcp
+    // panel, persisted to ~/.claude.json's disabledMcpServers) has no live
+    // connection — Claude Code refuses to start it — so it carries no OAuth
+    // risk regardless of what scope its URL claims. Skip it entirely, before
+    // ever parsing the URL.
+    const disabledKey = pluginId ? `plugin:${pluginId.split('@')[0]}:${name}` : name
+    if (disabledServerNames.has(disabledKey)) continue
 
     let url
     try {
@@ -158,41 +209,87 @@ export function findHostedScopeViolations(mcpServers, sourceLabel) {
         .filter((g) => g.length > 0)
     )
 
-    const isSubsetOfAllowed = [...groups].every((g) => rule.allowed.has(g))
-    if (groups.size > 0 && isSubsetOfAllowed) continue
-
+    // SMI-6308: no "compliant scope" branch anymore — every entry that
+    // reaches this point (not disabled, hostname matches a rule) flags,
+    // whether unscoped or scoped to any value including "docs".
     findings.push({
       check: 'hosted-scope',
       source: sourceLabel,
       server: name,
       url: entry.url,
-      // Message-copy fix (plan-review Medium #8): the over-scoped branch
-      // does NOT reuse rule.why's omission-framed sentence — that sentence
-      // ("omitting `features` enables...") would be self-contradictory here,
-      // since the user demonstrably did supply `features`. The two branches
-      // read differently on purpose: the missing-scope branch explains what
-      // omission defaults to; the over-scope branch names the actual
-      // allowed set and states plainly that the extra scope(s) enable
-      // write-capable tool groups.
+      // Message-copy fix (plan-review Medium #8, still true post-SMI-6308):
+      // the scoped branch does NOT reuse rule.why's omission-framed
+      // sentence — that sentence ("omitting `features` enables...") would
+      // be self-contradictory here, since the user demonstrably did supply
+      // `features`. The two branches read differently on purpose.
       message:
         groups.size === 0
           ? `is a hosted ${hostname} MCP server with no "${rule.param}" scoping — ${rule.why}.`
-          : `is a hosted ${hostname} MCP server scoped to "${[...groups].sort().join(',')}", which exceeds the docs-only scope this repo requires — the "${[...rule.allowed].join(',')}" scope is the only one this repo permits; the additional scope(s) here enable write-capable tool groups.`,
-      remediation: `Set the URL to https://${hostname}/mcp?${rule.param}=docs, or disable the plugin/server that registers it. Write access to a Supabase project must go through this repo's pooler scripts and the supabase-migration-reviewer gate, not an MCP tool.`,
+          : `is a hosted ${hostname} MCP server scoped to "${[...groups].sort().join(',')}" — but the "${rule.param}" parameter does not narrow this connector's OAuth grant (${hostname}'s own OAuth metadata returns the same full, organization-wide Management-API scope set no matter what "${rule.param}" is set to), so even a "${[...rule.allowed].join(',')}"-only value still carries full read/write access to write-capable tool groups such as Database (execute_sql / apply_migration).`,
+      remediation: `The OAuth grant behind ${hostname} is broad (full Management API read/write, organization-wide, no project_ref scoping) no matter what "${rule.param}=" value the URL carries — Supabase has no supported way to narrow it via that parameter (see supabase/mcp#239 and ${hostname}'s own .well-known/oauth-protected-resource metadata). The only mitigation that actually removes this risk is disabling this connector entirely via Claude Code's /mcp panel, which adds it to this project's "disabledMcpServers" list in ~/.claude.json (SMI-6308) — once disabled it has no live connection and this check exempts it.`,
     })
   }
   return findings
 }
 
+/**
+ * Read this project's `disabledMcpServers` list from `~/.claude.json`
+ * (SMI-6308). A server Claude Code has disabled for this project has no
+ * live MCP connection — Claude Code itself refuses to start it — so it
+ * carries no OAuth risk no matter what scope its URL claims;
+ * findHostedScopeViolations uses this to skip such entries entirely rather
+ * than flag them.
+ *
+ * Fail-soft on every edge case, mirroring auditMcpConfigs' own
+ * ~/.claude.json handling immediately below it: a missing file, an
+ * unreadable file, malformed JSON, `projects` not being an object, no entry
+ * for this repoRoot, or a missing/non-array `disabledMcpServers` key all
+ * resolve to an empty Set — never a thrown error. Deliberately no
+ * `console.error` here even for a malformed `projects` shape: the
+ * ~/.claude.json (project scope) block in auditMcpConfigs already emits
+ * that warning once for the same root cause — a second warning here would
+ * be a duplicate, not new information. Also deliberately silent on a
+ * JSON.parse failure for the same reason as auditMcpConfigs' own parse
+ * catch blocks: this file is known to contain plaintext secrets adjacent to
+ * MCP server entries, and Node's SyntaxError messages embed a raw snippet
+ * of the offending source.
+ */
+function readDisabledMcpServerNames({ repoRoot, homeDir }) {
+  const claudeJsonPath = join(homeDir, '.claude.json')
+  if (!existsSync(claudeJsonPath)) return new Set()
+
+  try {
+    const parsed = JSON.parse(readFileSync(claudeJsonPath, 'utf-8'))
+    if (!parsed?.projects || typeof parsed.projects !== 'object') return new Set()
+    const disabled = parsed.projects[repoRoot]?.disabledMcpServers
+    if (!Array.isArray(disabled)) return new Set()
+    return new Set(disabled.filter((s) => typeof s === 'string'))
+  } catch {
+    return new Set()
+  }
+}
+
 export function auditMcpConfigs({ repoRoot, homeDir = homedir() }) {
   const findings = []
+
+  // SMI-6308: resolve this project's disabledMcpServers list up front — a
+  // server disabled via Claude Code's own /mcp panel has no live connection
+  // regardless of which of the three sources below registers it, so every
+  // findHostedScopeViolations call below needs this set before it evaluates
+  // any hosted-URL entry. Reads ~/.claude.json a second time (independent
+  // of the project-scope block below) — deliberately: it keeps this read
+  // and its fail-soft behavior self-contained and independently testable,
+  // and this is a small local file read on an advisory, non-hot-path guard.
+  const disabledServerNames = readDisabledMcpServerNames({ repoRoot, homeDir })
 
   const mcpJsonPath = join(repoRoot, '.mcp.json')
   if (existsSync(mcpJsonPath)) {
     try {
       const parsed = JSON.parse(readFileSync(mcpJsonPath, 'utf-8'))
       findings.push(...findBareCommandServers(parsed.mcpServers, '.mcp.json'))
-      findings.push(...findHostedScopeViolations(parsed.mcpServers, '.mcp.json'))
+      findings.push(
+        ...findHostedScopeViolations(parsed.mcpServers, '.mcp.json', disabledServerNames)
+      )
     } catch {
       /* malformed JSON — not this guard's job to report; fail soft */
     }
@@ -218,7 +315,13 @@ export function auditMcpConfigs({ repoRoot, homeDir = homedir() }) {
       }
       const projectServers = parsed?.projects?.[repoRoot]?.mcpServers
       findings.push(...findBareCommandServers(projectServers, '~/.claude.json (project scope)'))
-      findings.push(...findHostedScopeViolations(projectServers, '~/.claude.json (project scope)'))
+      findings.push(
+        ...findHostedScopeViolations(
+          projectServers,
+          '~/.claude.json (project scope)',
+          disabledServerNames
+        )
+      )
     } catch {
       /* malformed JSON or unreadable — fail soft, deliberately silent (see comment above) */
     }
@@ -233,7 +336,14 @@ export function auditMcpConfigs({ repoRoot, homeDir = homedir() }) {
   // is wrong for a vendor-owned config the user cannot edit.
   try {
     for (const { pluginId, mcpServers } of scanPluginMcpServers({ homeDir })) {
-      findings.push(...findHostedScopeViolations(mcpServers, `plugin:${pluginId}`))
+      findings.push(
+        ...findHostedScopeViolations(
+          mcpServers,
+          `plugin:${pluginId}`,
+          disabledServerNames,
+          pluginId
+        )
+      )
     }
   } catch {
     /* never let the new source suppress the two pre-existing ones */
