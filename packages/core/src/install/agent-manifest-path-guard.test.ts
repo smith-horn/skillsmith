@@ -3,7 +3,7 @@
  *               (SMI-5456 governance follow-up, code review 2026-07-01).
  * @module @skillsmith/core/install/agent-manifest-path-guard.test
  */
-import { homedir } from 'node:os'
+import { homedir, tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { describe, expect, it } from 'vitest'
 
@@ -57,6 +57,54 @@ describe('isAllowedManifestEntryPath', () => {
 
   it('rejects a bare directory that only partially matches (no filename)', () => {
     expect(isAllowedManifestEntryPath(join(homedir(), '.claude', 'skills'))).toBe(false)
+  })
+
+  // SMI-6275 Wave 5: AntiGravity's two artifacts are WORKSPACE-relative, not
+  // HOME-relative — a separate allowlist branch (module header addendum).
+  describe('AntiGravity workspace-relative artifacts (SMI-6275 Wave 5)', () => {
+    const workspaceRoot = join(tmpdir(), 'skillsmith-guard-test-workspace')
+
+    it('allows the workspace-scoped skill pack path under ANY workspace root', () => {
+      expect(
+        isAllowedManifestEntryPath(
+          join(workspaceRoot, '.agents', 'skills', 'skillsmith-agent', 'SKILL.md')
+        )
+      ).toBe(true)
+      // A DIFFERENT workspace root — the check is deliberately root-agnostic
+      // (any file literally named this way, per any workspace), not tied to
+      // one specific resolved root (module header explains why).
+      expect(
+        isAllowedManifestEntryPath(
+          join(tmpdir(), 'another-workspace', '.agents', 'skills', 'skillsmith-agent', 'SKILL.md')
+        )
+      ).toBe(true)
+    })
+
+    it('allows the workspace-scoped mcp_config.json path under any workspace root', () => {
+      expect(isAllowedManifestEntryPath(join(workspaceRoot, '.agents', 'mcp_config.json'))).toBe(
+        true
+      )
+    })
+
+    it('rejects a path that merely CONTAINS the mcp_config.json suffix as a substring, not a true path segment', () => {
+      expect(
+        isAllowedManifestEntryPath(join(workspaceRoot, 'evil.agents', 'mcp_config.json'))
+      ).toBe(false)
+      expect(
+        isAllowedManifestEntryPath(join(workspaceRoot, '.agents', 'evil-mcp_config.json'))
+      ).toBe(false)
+    })
+
+    it('rejects a hand-edited traversal string escaping the intended tail', () => {
+      expect(
+        isAllowedManifestEntryPath(`${workspaceRoot}/.agents/mcp_config.json/../../../etc/passwd`)
+      ).toBe(false)
+    })
+
+    it('still rejects an arbitrary sensitive path — the workspace-relative branch does not widen the home-relative rejections', () => {
+      expect(isAllowedManifestEntryPath('/etc/passwd')).toBe(false)
+      expect(isAllowedManifestEntryPath(join(homedir(), '.ssh', 'id_rsa'))).toBe(false)
+    })
   })
 })
 

@@ -24,6 +24,14 @@
  *   - The `skillsmith` MCP server registration (`SKILLSMITH_TOOL_PROFILE=agent`)
  *     for every detected MCP-capable harness (all 7), backup-first,
  *     idempotent, preserve-and-prompt on a foreign entry.
+ *   - AntiGravity (SMI-6275 Wave 5): a workspace-scoped 8th target, handled
+ *     OUTSIDE the 7-harness loop above — see the `antigravity` block near
+ *     the end of `installAgentPack`. Whenever its workspace scope resolves
+ *     (an existing `.agents/` marker auto-detects, or `--scope workspace`
+ *     creates one), writes the skill pack AND `.agents/mcp_config.json`
+ *     (`installAntigravityMcpConfig`, `agent-pack-installer.antigravity-mcp.ts`)
+ *     — MCP config only, no hooks/shim this wave (stated decision, see
+ *     `HOOK_HARNESSES`'s doc comment in `services/agent-pack/types.ts`).
  *
  * Every write funnels through `writeOwnedArtifactFile` (owned files) or the
  * `agent-config-merge.*` helpers (shared config files), both of which record
@@ -61,6 +69,7 @@ import {
 } from './agent-pack-installer.harness.js'
 import { installCursorHooks } from './agent-pack-installer.cursor-hooks.js'
 import { installCursorMcpConfig } from './agent-pack-installer.cursor-mcp.js'
+import { installAntigravityMcpConfig } from './agent-pack-installer.antigravity-mcp.js'
 import {
   HARNESS_SUPPORT_TIER,
   type AgentInstallOptions,
@@ -289,27 +298,59 @@ export function installAgentPack(opts: AgentInstallOptions = {}): AgentInstallRe
     writeSkillPackFor(CLIENT_NATIVE_PATHS.agents, skillArtifact.content, ctx, 'agents')
   }
 
-  // ADR-139 (SMI-6274 Wave 4, point 5's Wave 5 bootstrap requirement):
-  // `--scope workspace` is the ONLY path that may create AntiGravity's
-  // `.agents/skills` workspace directory — bare `agent install` never
-  // touches it, matching every other harness's detection-only default.
-  // This is deliberately NOT the full AntiGravity harness (MCP config,
-  // hooks, shim) — that is Wave 5's (SMI-6275) own scope; this wave only
-  // guarantees the plumbing (the resolver call + create-permission) Wave 5
-  // needs is reachable, per the ADR's explicit statement that Wave 4 must
-  // not have to build Wave 5's own harness logic.
-  if (opts.scope === 'workspace' && skillArtifact) {
+  // ADR-139 (SMI-6274 Wave 4, point 5's Wave 5 bootstrap requirement) +
+  // SMI-6275 Wave 5: AntiGravity is a valid `agent install` target whenever
+  // its WORKSPACE scope resolves — either because `--scope workspace` was
+  // passed explicitly (the only path allowed to CREATE `.agents/`, ADR-139
+  // point 5), or because an EXISTING `.agents/` marker auto-detects
+  // (ADR-139 point 2 rank 4 — a read-only check `resolveScopedSkillsDir`
+  // already performs on its own when `explicitScope` is omitted; this
+  // function never reimplements that detection). `envScope`/
+  // `configDefaultScope` are pinned to "no value" here rather than left to
+  // read the REAL `SKILLSMITH_SCOPE` env var / `~/.skillsmith/config.json`:
+  // `agent install`'s own CLI surface exposes only `--scope`, no separate
+  // env/config channel for THIS command, and leaving them unpinned would
+  // make a bare `agent install` run's AntiGravity detection depend on
+  // whatever unrelated scope state happens to exist on the invoking
+  // machine — the same test-isolation seam `ResolveScopeParams` documents
+  // its `configDefaultScope: null` value for.
+  //
+  // AntiGravity ALWAYS gets a report row now, whether or not its workspace
+  // scope resolves — matching every OTHER harness's reporting shape
+  // (`newReport()` + a `detected` badge in the CLI table, `agent.action.ts`).
+  // Wave 4 omitted the row entirely for the undetected case; Wave 5 corrects
+  // that for reporting consistency, per its own required test ("no `.agents/`
+  // directory and no `--scope workspace` → clear message, no silent no-op —
+  // match whatever 'not detected' reporting shape other undetected harnesses
+  // already use").
+  if (skillArtifact) {
     const scopeTarget = resolveScopedSkillsDir({
       client: 'antigravity',
       cwd: opts.cwd ?? process.cwd(),
-      explicitScope: 'workspace',
+      explicitScope: opts.scope === 'workspace' ? 'workspace' : undefined,
+      envScope: '',
+      configDefaultScope: null,
     })
     const antigravityReport = newReport('antigravity')
-    antigravityReport.detected = true
-    writeSkillPackFor(scopeTarget.dir, skillArtifact.content, ctx, 'antigravity')
-    antigravityReport.skillPackWritten = true
-    if (scopeTarget.created) {
-      antigravityReport.notes.push(`Created workspace skills directory: ${scopeTarget.dir}`)
+    // `scopeTarget.workspaceRoot` is only ever set when `scope === 'workspace'`
+    // (`ResolvedSkillScope`'s own contract) — narrowing through a single local
+    // avoids re-deriving that condition twice across the branches below.
+    const workspaceRoot = scopeTarget.scope === 'workspace' ? scopeTarget.workspaceRoot : undefined
+    antigravityReport.detected = Boolean(workspaceRoot)
+
+    if (workspaceRoot) {
+      writeSkillPackFor(scopeTarget.dir, skillArtifact.content, ctx, 'antigravity')
+      antigravityReport.skillPackWritten = true
+      if (scopeTarget.created) {
+        antigravityReport.notes.push(`Created workspace skills directory: ${scopeTarget.dir}`)
+      }
+      installAntigravityMcpConfig(workspaceRoot, ctx, antigravityReport)
+    } else {
+      antigravityReport.notes.push(
+        'No .agents/ workspace directory found at or above the current directory, and ' +
+          '--scope workspace was not passed — AntiGravity was not configured. Run ' +
+          '`agent install --scope workspace` from inside your repository to create it.'
+      )
     }
     reports.push(antigravityReport)
   }

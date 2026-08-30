@@ -37,6 +37,27 @@
  * with one of a dozen known per-harness relative locations" — a tampered
  * manifest can no longer name `/etc/passwd` or `~/.ssh/id_rsa`.
  *
+ * SMI-6275 Wave 5 addendum — a SECOND, WORKSPACE-relative allowlist. Every
+ * suffix above is relative to `os.homedir()`, which is correct for every
+ * OTHER installer target but not for AntiGravity's two workspace-scoped
+ * artifacts (the `.agents/skills/skillsmith-agent/SKILL.md` pack copy, ADR-139
+ * / SMI-6274 Wave 4, and `.agents/mcp_config.json`, this wave) — both are
+ * relative to a WORKSPACE root, which is any directory a user ran
+ * `agent install --scope workspace` from, not a statically enumerable set
+ * the way `CLIENT_NATIVE_PATHS` is. There is deliberately no attempt to
+ * validate "is this THE workspace root this manifest entry was actually
+ * written under" (that would require persisting and trusting the workspace
+ * root itself, which is exactly the kind of manifest-supplied data this
+ * guard exists to NOT trust) — instead the check narrows to the fixed
+ * RELATIVE suffix each artifact is known to end with, the same "shrink the
+ * blast radius to a known relative location" philosophy as the home-relative
+ * check above, applied to a workspace base instead of a home base. This
+ * still cannot match `/etc/passwd` or `~/.ssh/id_rsa`; it CAN match any file
+ * on disk literally named `.agents/mcp_config.json` (or the SKILL.md pack
+ * path) regardless of which workspace — a real but bounded reduction from
+ * "any file the process can write," consistent with this module's existing
+ * standard.
+ *
  * @module @skillsmith/core/install/agent-manifest-path-guard
  */
 
@@ -50,7 +71,9 @@ import {
   AGENT_SHIM_TARGETS,
 } from './agent-harness-targets.js'
 import { getAgentInstallBackupsDir } from './agent-manifest.js'
+import { ANTIGRAVITY_MCP_CONFIG_RELATIVE_SEGMENTS } from './agent-pack-installer.antigravity-mcp.js'
 import { CLIENT_NATIVE_PATHS } from './paths.js'
+import { CLIENT_WORKSPACE_SEGMENTS } from './workspace-scope.js'
 
 /** Relative-to-`os.homedir()` suffix for every path the installer can ever write. */
 function computeAllowedPathSuffixes(): ReadonlySet<string> {
@@ -93,15 +116,50 @@ function allowedPathSuffixes(): ReadonlySet<string> {
 }
 
 /**
+ * Relative-to-WORKSPACE-ROOT suffix for AntiGravity's two workspace-scoped
+ * artifacts (SMI-6275 Wave 5 addendum — see module header). Both segments
+ * are sourced from the same constants the writers themselves use
+ * (`CLIENT_WORKSPACE_SEGMENTS.antigravity`, `AGENT_PACK_SKILL_NAME`,
+ * `ANTIGRAVITY_MCP_CONFIG_RELATIVE_SEGMENTS`) rather than hand-duplicated
+ * literals, so this allowlist can never silently drift from what
+ * `installAgentPack` actually writes.
+ */
+function computeAllowedWorkspaceRelativeSuffixes(): ReadonlySet<string> {
+  const suffixes = new Set<string>()
+  const antigravitySkillsSegments = CLIENT_WORKSPACE_SEGMENTS.antigravity
+  if (antigravitySkillsSegments) {
+    suffixes.add(join(...antigravitySkillsSegments, AGENT_PACK_SKILL_NAME, 'SKILL.md'))
+  }
+  suffixes.add(join(...ANTIGRAVITY_MCP_CONFIG_RELATIVE_SEGMENTS))
+  return suffixes
+}
+
+let cachedWorkspaceRelativeSuffixes: ReadonlySet<string> | null = null
+
+function allowedWorkspaceRelativeSuffixes(): ReadonlySet<string> {
+  if (!cachedWorkspaceRelativeSuffixes) {
+    cachedWorkspaceRelativeSuffixes = computeAllowedWorkspaceRelativeSuffixes()
+  }
+  return cachedWorkspaceRelativeSuffixes
+}
+
+/**
  * True when `path` structurally matches one of the installer's known
- * relative target locations (see module header). Normalizes via
- * `path.resolve` first so a `..`-laden path can't dodge the suffix check by
- * embedding traversal segments before the matched tail.
+ * relative target locations (see module header) — either HOME-relative
+ * (every non-AntiGravity target, plus AntiGravity's own global skills dir
+ * entry in `CLIENT_NATIVE_PATHS`) or, per the SMI-6275 Wave 5 addendum,
+ * WORKSPACE-relative (AntiGravity's `.agents/`-scoped skill pack and MCP
+ * config). Normalizes via `path.resolve` first so a `..`-laden path can't
+ * dodge either suffix check by embedding traversal segments before the
+ * matched tail.
  */
 export function isAllowedManifestEntryPath(path: string): boolean {
   const normalized = resolve(path)
   for (const suffix of allowedPathSuffixes()) {
     if (normalized.endsWith(sep + suffix) || normalized === suffix) return true
+  }
+  for (const suffix of allowedWorkspaceRelativeSuffixes()) {
+    if (normalized.endsWith(sep + suffix)) return true
   }
   return false
 }

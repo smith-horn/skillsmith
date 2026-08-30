@@ -178,6 +178,48 @@ export function buildOpenCodeMcpEntryValue(): Record<string, unknown> {
   }
 }
 
+/**
+ * AntiGravity's own MCP server registration value (SMI-6275 Wave 5).
+ *
+ * Unlike Cursor, there is no verified evidence of an `npx`-inside-bundled-Node
+ * failure for AntiGravity (Wave 7 of the SMI-6266 plan makes the same call
+ * for the website/CLI docs snippet) — so this stays on the plain `npx` form,
+ * composed directly over {@link buildAgentMcpEntryValue} rather than
+ * reimplementing it. The one addition is `env.SKILLSMITH_CLIENT = 'antigravity'`,
+ * for the same reason Cursor's builder sets it (SMI-5894 Wave 1 Step 7):
+ * without it, an MCP server spawned from THIS entry would default to
+ * `~/.claude/skills` (`resolveClientPath()`'s fallback) instead of
+ * AntiGravity's own directories.
+ */
+export function buildAntigravityMcpEntryValue(): Record<string, unknown> {
+  const base = buildAgentMcpEntryValue()
+  return {
+    ...base,
+    env: {
+      ...(base.env as Record<string, unknown>),
+      SKILLSMITH_CLIENT: 'antigravity',
+    },
+  }
+}
+
+/**
+ * JSON key AntiGravity's `.agents/mcp_config.json` entry is installed under
+ * (SMI-6275 Wave 5) — deliberately the SAME value as {@link CURSOR_MCP_ENTRY_KEY},
+ * not the legacy `'skillsmith'` key every other non-Cursor harness's
+ * installer entry still uses. AntiGravity's OWN human-facing docs snippets
+ * (`packages/website/src/lib/mcp-client-snippets.ts`'s `STANDARD_JSON_BODY`
+ * and the CLI template's antigravity entry, both verified live 2026-08-30)
+ * already use the package-scoped key `@skillsmith/mcp-server` — aligning the
+ * installer's key here avoids the exact key-mismatch class of bug SMI-6279
+ * fixed for Cursor (a user who both pastes the docs snippet AND runs
+ * `agent install` ending up with two divergent, mutually-unrecognized
+ * entries). Unlike Cursor, AntiGravity has no PRE-EXISTING `agent install`
+ * writer to migrate away from — this is its first-ever implementation — so
+ * there is no legacy-keyed entry to clean up here (contrast
+ * `agent-pack-installer.cursor-mcp.ts`'s `stripStaleLegacyMcpKey`).
+ */
+export const ANTIGRAVITY_MCP_ENTRY_KEY = CURSOR_MCP_ENTRY_KEY
+
 /** Codex `[mcp_servers.skillsmith]` TOML block (text between our markers). */
 export function buildCodexMcpTomlBlock(): string {
   return [

@@ -57,8 +57,19 @@ export const AGENT_PACK_COMPATIBILITY: readonly string[] = [
   'windsurf',
 ]
 
-/** Harness identifiers the pack targets. */
-export type HarnessId = 'claude-code' | 'cursor' | 'codex' | 'copilot' | 'opencode'
+/**
+ * Harness identifiers the pack targets. `antigravity` added SMI-6275 Wave 5
+ * (closing the last unshipped ask of GH#2166): `agent install` can now
+ * target AntiGravity's WORKSPACE-scoped `.agents/mcp_config.json` (see
+ * `agent-pack-installer.antigravity-mcp.ts`) — the same recency precedent
+ * `cursor` set as this enum's most-recently-added member before it. Note
+ * AntiGravity does NOT get an entry in `AGENT_MCP_TARGETS`
+ * (`agent-harness-targets.ts`) the way every other `McpHarnessId` member
+ * does — its config path is workspace-anchored, not home-anchored, so it
+ * structurally doesn't fit that Record's shape; see `McpHarnessId`'s own
+ * doc comment.
+ */
+export type HarnessId = 'claude-code' | 'cursor' | 'codex' | 'copilot' | 'opencode' | 'antigravity'
 
 /**
  * Harnesses that get a generated SessionStart/SessionEnd hook (PRD §3.1,
@@ -66,6 +77,19 @@ export type HarnessId = 'claude-code' | 'cursor' | 'codex' | 'copilot' | 'openco
  * absent) and Windsurf has no hook system — both excluded. Copilot/OpenCode
  * hooks (preview / JS-plugin format) are out of Wave-1 hook scope by decision;
  * they still get shims.
+ *
+ * `antigravity` (SMI-6275 Wave 5) is deliberately excluded too — a stated
+ * decision, not an oversight: this wave's live web-search research (see
+ * `agent-pack-installer.antigravity-mcp.ts`'s header) turned up AntiGravity's
+ * documented MCP config format but no documented SessionStart/SessionEnd
+ * hook system equivalent to Claude Code/Cursor/Codex's — unlike those three,
+ * which each have a confirmed doc page. AntiGravity gets `.agents/mcp_config.json`
+ * registration ONLY this wave (support tier 3, matching Windsurf's MCP-only
+ * profile — see `HARNESS_SUPPORT_TIER` in `agent-pack-installer.types.ts`).
+ * It also gets no named-agent shim file (`AGENT_SHIM_TARGETS.antigravity` is
+ * `null` in `agent-harness-targets.ts`, for the same "no verified evidence
+ * yet" reason). Revisit both if/when AntiGravity ships a documented
+ * hook/shim equivalent.
  */
 export const HOOK_HARNESSES: readonly HarnessId[] = ['claude-code', 'cursor', 'codex']
 
