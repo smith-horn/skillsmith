@@ -338,15 +338,30 @@ describe('SMI-6294: spawnPsqlOnce timeout (options.timeoutMs)', () => {
     expect(spawnMock).toHaveBeenCalledTimes(1)
   })
 
-  it('a timer that fires does not double-reject after the child ALSO closes on the same tick (clearTimeout hygiene)', async () => {
-    // Exercises the doc-commented "harmless either way" race: queue a normal
-    // successful close so if the timer's reject somehow fired AFTER close's
-    // resolve, the test would see an unhandled rejection / mismatched result.
-    queueSpawnOutcome(0, '', 'ok')
+  it('clearTimeout hygiene: a successful close cancels the timer -- it never fires (and never kills the child) afterward', async () => {
+    // pr-reviewer cross-model gate finding (SMI-6294): the prior version of
+    // this test queued the successful `close` via `queueMicrotask`, which
+    // ALWAYS runs before any fake-timer-driven callback regardless of how far
+    // timers are advanced -- so it never actually raced the timer and would
+    // still have passed even if `clearTimeout(timer)` were missing entirely.
+    // The real proof is: after a normal success, advance fake time PAST
+    // `timeoutMs` and assert the timer never fires (`child.kill` never
+    // called) -- if `clearTimeout` were broken, this is exactly where a
+    // leaked timer would erroneously kill the (already-exited) child.
+    const child = makeFakeChild()
+    spawnMock.mockImplementationOnce(() => {
+      queueMicrotask(() => {
+        child.stdout.emit('data', Buffer.from('ok'))
+        child.emit('close', 0)
+      })
+      return child
+    })
 
     const promise = runPsql(CONN, 'SELECT 1;', {}, { timeoutMs: 5000 })
-    await vi.runAllTimersAsync()
     await expect(promise).resolves.toEqual({ stdout: 'ok', stderr: '' })
+
+    await vi.advanceTimersByTimeAsync(5000)
+    expect(child.kill).not.toHaveBeenCalled()
   })
 })
 

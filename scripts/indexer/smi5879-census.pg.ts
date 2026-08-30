@@ -273,8 +273,15 @@ export function isTransientSpawnErrorCode(code: string | undefined): boolean {
  * and the child neither exits nor errors within that window — a genuinely
  * hung `psql` (e.g. a pooled connection whose client-side TCP socket is left
  * half-open by a server-side disconnect). Mirrors {@link PsqlSpawnError}'s shape.
+ *
+ * Exported (pr-reviewer cross-model gate finding, SMI-6294): a caller whose
+ * retry budget is exhausted still receives this error type from
+ * `runPsql`/`queryRows`/`queryScalar` — without `export`, no external caller
+ * could ever `instanceof PsqlTimeoutError` to distinguish a timeout from any
+ * other failure, even though it's already documented as part of this
+ * module's public contract via `{@link PsqlTimeoutError}` cross-references.
  */
-class PsqlTimeoutError extends Error {
+export class PsqlTimeoutError extends Error {
   readonly timeoutMs: number
   constructor(timeoutMs: number) {
     super(`SMI-6294: psql timed out after ${timeoutMs}ms with no response`)
