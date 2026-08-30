@@ -8,6 +8,7 @@ import { describe, it, expect, vi } from 'vitest'
 import {
   resolveForProject,
   countConsecutiveSkipsForResumeFrom,
+  buildRetryCapOutcome,
 } from '../../indexer/backfill-autochain-inputs.ts'
 
 const dispatchInputs = {
@@ -281,5 +282,34 @@ describe('SMI-6246 change #4c: countConsecutiveSkipsForResumeFrom', () => {
     const supabase = makeAuditRowsMock([])
     const count = await countConsecutiveSkipsForResumeFrom(supabase as never, 'run-1')
     expect(count).toBe(0)
+  })
+})
+
+// pr-reviewer round-1 finding, verification-checklist gap closed: the plan
+// and runbook documented a 5-consecutive-skip retry cap as already shipped,
+// but nothing tested the exact threshold it trips at. buildRetryCapOutcome
+// is the pure decision extracted from main() specifically to make this
+// testable without mocking a Supabase client end-to-end.
+describe('SMI-6246 change #4c: buildRetryCapOutcome', () => {
+  it('does not trip below the cap', () => {
+    expect(buildRetryCapOutcome(4, 'run-1')).toBeNull()
+  })
+
+  it('trips at exactly the cap (5)', () => {
+    const outcome = buildRetryCapOutcome(5, 'run-1')
+    expect(outcome).toEqual({
+      skip: 'true',
+      retry_cap_exceeded: 'true',
+      skip_reason: expect.stringContaining('5 consecutive lock-skips against resume_from=run-1'),
+    })
+  })
+
+  it('still trips past the cap, not only exactly at it', () => {
+    expect(buildRetryCapOutcome(6, 'run-1')).not.toBeNull()
+  })
+
+  it('names the exact resume_from in the skip_reason so an operator can find the stuck campaign', () => {
+    const outcome = buildRetryCapOutcome(5, 'run-42')
+    expect(outcome?.skip_reason).toContain('resume_from=run-42')
   })
 })

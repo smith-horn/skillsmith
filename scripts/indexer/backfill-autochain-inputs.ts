@@ -186,6 +186,28 @@ export async function countConsecutiveSkipsForResumeFrom(
   return count
 }
 
+/**
+ * SMI-6246 change #4c: the retry-cap decision, pulled out as a pure function
+ * so the exact threshold (>= RETRY_CAP, not ==, so a count that somehow
+ * overshoots 5 still trips) is directly unit-testable without mocking a
+ * Supabase client — the same "export only pure helpers, never `main()`
+ * itself" pattern this file already uses for {@link resolveForProject} and
+ * {@link countConsecutiveSkipsForResumeFrom}.
+ */
+export function buildRetryCapOutcome(
+  consecutiveSkips: number,
+  resumeFrom: string
+): { skip: 'true'; retry_cap_exceeded: 'true'; skip_reason: string } | null {
+  if (consecutiveSkips < RETRY_CAP) {
+    return null
+  }
+  return {
+    skip: 'true',
+    retry_cap_exceeded: 'true',
+    skip_reason: `Retry cap reached: ${consecutiveSkips} consecutive lock-skips against resume_from=${resumeFrom}. Stopping auto-chain rather than retrying indefinitely -- the campaign is not lost, a human should confirm why the lock has stayed contended this long.`,
+  }
+}
+
 function emitOutputs(outputs: Record<string, string>): void {
   const outputFile = process.env.GITHUB_OUTPUT
   const lines = Object.entries(outputs)
@@ -258,12 +280,9 @@ async function main(): Promise<void> {
       resolvedClient,
       resolved.resumeFrom
     )
-    if (consecutiveSkips >= RETRY_CAP) {
-      emitOutputs({
-        skip: 'true',
-        retry_cap_exceeded: 'true',
-        skip_reason: `Retry cap reached: ${consecutiveSkips} consecutive lock-skips against resume_from=${resolved.resumeFrom}. Stopping auto-chain rather than retrying indefinitely -- the campaign is not lost, a human should confirm why the lock has stayed contended this long.`,
-      })
+    const capOutcome = buildRetryCapOutcome(consecutiveSkips, resolved.resumeFrom)
+    if (capOutcome) {
+      emitOutputs(capOutcome)
       return
     }
   }
