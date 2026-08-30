@@ -4,6 +4,16 @@ All notable changes to `@skillsmith/cli` are documented here.
 
 ## [Unreleased]
 
+- **Feature**: `skillsmith whoami` now shows your live effective license tier (and, when the
+  live check returns one, your per-minute API rate limit) alongside the existing masked-key/
+  session display, resolved via the same credential-aware `resolveEffectiveTier()` live check
+  `audit advisories`/`diff`/`pin`/`audit-collisions` already use (SMI-6271) — previously
+  `whoami` showed no tier information at all. Reuses the existing `formatTierBadge()` tier-badge
+  formatting rather than reimplementing it. Unlike those gating commands, a transient live-check
+  failure here does not block the command (this is a display command, not a gate) — it shows a
+  "could not verify" message instead of ever displaying a fabricated tier, since a single-shot
+  CLI invocation has no cached last-known tier to fall back to (SMI-6266 Wave 2, SMI-6272)
+
 - **Fix**: `skillsmith diagnose` now checks whether your Cursor MCP registration (both the
   global `~/.cursor/mcp.json` and any project-scoped copy) is on the current, working config
   shape and tells you how to fix it if not — previously nothing detected this at all once the
