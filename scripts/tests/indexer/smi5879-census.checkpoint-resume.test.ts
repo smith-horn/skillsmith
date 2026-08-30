@@ -56,7 +56,10 @@ import {
   updateOutcomesBatch,
   ClaimFencedWriteError,
 } from '../../indexer/smi5879-census.branches.writes.ts'
-import { describeResumeClaimRefusal } from '../../indexer/smi5879-census.resume.ts'
+import {
+  describeResumeClaimRefusal,
+  recordResumeNote,
+} from '../../indexer/smi5879-census.resume.ts'
 import {
   requireTestConn,
   resetSchema,
@@ -653,6 +656,60 @@ describe.skipIf(prePushNoLiveTestPg)(
       // actually hashes to — an undercounted seal computes BOTH from a stale
       // snapshot, so this is the same bug caught two independent ways.
       expect(populationDigest).toBe(currentDigest)
+    })
+  }
+)
+
+describe.skipIf(prePushNoLiveTestPg)(
+  'recordResumeNote() token fencing (SMI-5879 cross-model review round-6, Medium)',
+  () => {
+    it('succeeds with the CURRENT token, appends the note', async () => {
+      const runId = `t-resume-note-fence-ok-${randomUUID()}`
+      await createOpenRun(conn, runId, 'decision', '2026-01-01T00:00:00Z')
+      const token = randomUUID()
+      await runPsql(conn, `SELECT * FROM smi5879_claim_run(:'run_id', :'token', 'holder-a');`, {
+        run_id: runId,
+        token,
+      })
+      await expect(recordResumeNote(conn, runId, token, 'holder-a')).resolves.toBeUndefined()
+      const notes = await queryRows(
+        conn,
+        `SELECT notes FROM smi5879_run WHERE run_id = :'run_id'`,
+        {
+          run_id: runId,
+        }
+      )
+      expect(notes[0]?.[0]).toMatch(/resumed at .* by holder-a/)
+    })
+
+    it('throws on a STALE token — the round-6 finding this test exists to close — and appends NOTHING', async () => {
+      const runId = `t-resume-note-fence-stale-${randomUUID()}`
+      await createOpenRun(conn, runId, 'decision', '2026-01-01T00:00:00Z')
+      const staleToken = randomUUID()
+      await runPsql(conn, `SELECT * FROM smi5879_claim_run(:'run_id', :'token', 'holder-a');`, {
+        run_id: runId,
+        token: staleToken,
+      })
+      // Simulate a takeover in the exact window this finding describes: a
+      // second --resume claims with a NEW token before this process's own
+      // audit-note write runs.
+      await backdateHeartbeat(conn, runId, 61)
+      await runPsql(conn, `SELECT * FROM smi5879_claim_run(:'run_id', :'token', 'holder-b');`, {
+        run_id: runId,
+        token: randomUUID(),
+      })
+
+      await expect(recordResumeNote(conn, runId, staleToken, 'holder-a')).rejects.toThrow(
+        /resume audit-note update .* wrote 0 row\(s\), expected 1/
+      )
+      const notes = await queryRows(
+        conn,
+        `SELECT notes FROM smi5879_run WHERE run_id = :'run_id'`,
+        {
+          run_id: runId,
+        }
+      )
+      expect(notes[0]?.[0]).not.toMatch(/holder-a/)
     })
   }
 )

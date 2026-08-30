@@ -367,24 +367,65 @@ export async function obtainClaimedRun(
   }
 
   if (args.resume) {
-    // SMI-5879 checkpoint/resume round-2 review finding (Low): a resumed
-    // generation's smi5879_repo_branch rows can span two (potentially far
-    // apart) wall-clock windows — a repo renamed/deleted/re-defaulted in the
-    // gap is recorded at whichever instant its half was resolved. Per-row
-    // `resolved_at` already makes this forensically recoverable, but nothing
-    // previously recorded on the registry row itself that a resume even
-    // happened. `notes` (SECTION 1 of the migration) exists for exactly this
-    // and had no other writer — append rather than overwrite so a
-    // multiply-resumed generation keeps every resume's own record.
-    await runPsql(
-      conn,
-      `UPDATE smi5879_run
-          SET notes = COALESCE(notes || E'\n', '') || :'note'
-        WHERE run_id = :'run_id';`,
-      { run_id: runId, note: `resumed at ${new Date().toISOString()} by ${holder}` }
-    )
+    await recordResumeNote(conn, runId, token, holder)
   }
   return runId
+}
+
+/**
+ * Append a "resumed at ... by ..." audit note to the generation's `notes`
+ * column (SECTION 1 of the migration; had no other writer). Extracted as its
+ * own exported function — mirroring {@link assertGenerationSealed}'s own
+ * "testable in isolation" reasoning — so the fencing this function performs
+ * can be exercised the same deterministic way every other fenced write in
+ * this module family is tested: claim under token A, steal (update
+ * `runner_token` to B) via raw SQL, then call this with the now-stale A and
+ * assert it throws with zero rows affected, rather than needing a genuine
+ * concurrency race to prove the fence works.
+ *
+ * SMI-5879 checkpoint/resume round-2 review finding (Low): a resumed
+ * generation's `smi5879_repo_branch` rows can span two (potentially far
+ * apart) wall-clock windows — a repo renamed/deleted/re-defaulted in the gap
+ * is recorded at whichever instant its half was resolved. Per-row
+ * `resolved_at` already makes this forensically recoverable, but nothing
+ * previously recorded on the registry row itself that a resume even
+ * happened. Appends rather than overwrites so a multiply-resumed generation
+ * keeps every resume's own record.
+ *
+ * SMI-5879 checkpoint/resume round-6 (cross-model review, Medium): this
+ * write was the one mutating statement in this module that stayed UNFENCED
+ * after round 4's write-fencing pass — every other write this tool makes
+ * (population, branch outcomes, seal) requires the current `runner_token`;
+ * this one matched on `run_id` alone. A process whose claim is taken over by
+ * ANOTHER concurrent `--resume` in the brief window between this claim
+ * succeeding and this `UPDATE` running could still append a misleading
+ * "resumed by <stale holder>" note. `notes` is purely diagnostic (nothing
+ * downstream branches on it), so this cannot corrupt data — Medium, not High
+ * — but the audit trail itself is the thing this field exists to keep
+ * honest, so it gets the same fence and `RETURNING`-verified row count as
+ * every other write.
+ */
+export async function recordResumeNote(
+  conn: PgConnParams,
+  runId: string,
+  token: string,
+  holder: string
+): Promise<void> {
+  const noteRows = await queryRows(
+    conn,
+    `UPDATE smi5879_run
+        SET notes = COALESCE(notes || E'\n', '') || :'note'
+      WHERE run_id = :'run_id' AND status = 'open' AND runner_token = :'token'
+    RETURNING run_id;`,
+    { run_id: runId, token, note: `resumed at ${new Date().toISOString()} by ${holder}` }
+  )
+  if (noteRows.length !== 1) {
+    throw new Error(
+      `SMI-5879: resume audit-note update for ${runId} wrote ${noteRows.length} row(s), expected ` +
+        '1 — this claim was taken over by another process between claiming and this note being ' +
+        'written. This invocation no longer holds a live claim; stop immediately.'
+    )
+  }
 }
 
 /**
