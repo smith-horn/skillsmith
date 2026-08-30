@@ -290,24 +290,23 @@ describe('SMI-6246/ADR-140: retryAcquireLock', () => {
     })
   })
 
-  // pr-reviewer round-3 finding: a real setTimeout can wake LATE (ordinary
-  // event-loop scheduling slack) but never early, so the sleep between
-  // attempts can resolve after `deadline` has already passed -- meaning the
-  // loop's next attempt technically *starts* slightly after the boundary,
-  // not exactly at it. This uses the injectable sleep/now hooks (not fake
-  // timers) to simulate that overshoot directly and prove the actual
-  // guarantee: once that late-starting attempt begins, it is capped to an
-  // effectively-zero timeout rather than the full attemptTimeoutMs, so it
-  // can never itself compound the overshoot into something meaningful.
-  it('a late-firing sleep that lands past the deadline still resolves promptly, never blocking on the full attemptTimeoutMs', async () => {
+  // pr-reviewer round-3/round-5 findings: a real setTimeout's callback can
+  // run late (ordinary event-loop scheduling delay, no fixed ceiling) but
+  // never early, so `sleep()` between attempts can return after `deadline`
+  // has already passed -- meaning the loop's next attempt begins after a
+  // `now()` value already past the boundary. This uses the injectable
+  // sleep/now hooks (not fake timers, and not `vi.useFakeTimers()`'s own
+  // Date mocking) to simulate that directly, and checks only the VALUE
+  // computed for that attempt's timeout -- never how fast it executes.
+  it('when now() is already past the deadline, the next attempt is given a zero timeout rather than a fresh attemptTimeoutMs', async () => {
     const rpc = vi.fn().mockImplementation(() => new Promise(() => {})) // stalls forever
     let elapsed = 0
     const now = () => elapsed
     const sleep = vi.fn().mockImplementation(async (ms: number) => {
       // A real setTimeout only ever wakes AT OR AFTER its requested delay --
-      // simulate ordinary event-loop scheduling slack by overshooting past
-      // what was requested, landing after the deadline before the next
-      // attempt even starts.
+      // simulate ordinary event-loop scheduling delay by overshooting past
+      // what was requested, so `now()` is already past `deadline` before
+      // the next attempt's own timeout value is computed.
       elapsed += ms + 25
     })
     const result = await retryAcquireLock({ rpc } as never, 'run-1', {
@@ -317,8 +316,10 @@ describe('SMI-6246/ADR-140: retryAcquireLock', () => {
       sleep,
       now,
     })
-    // The loop must still return promptly rather than waiting out the full
-    // (uncapped) attemptTimeoutMs on the deadline-overshooting attempt.
+    // The function returns once the (zero-timeout) race settles -- this
+    // asserts the returned value, not an execution-speed claim; a
+    // regression to an uncapped attemptTimeoutMs would instead hit
+    // Vitest's own test timeout since the mocked rpc never resolves.
     expect(result).toEqual({ acquired: false, error: null })
   })
 })

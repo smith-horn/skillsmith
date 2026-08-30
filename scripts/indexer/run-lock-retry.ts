@@ -118,20 +118,21 @@ export function computeRemainingElapsedMs(params: {
  * already GHA-serialized against each other via the `skill-indexer-backfill`
  * concurrency group.
  *
- * pr-reviewer round-3/round-4 findings: this function does NOT (and cannot)
- * guarantee that attempt starts at an exact wall-clock instant, or bound how
- * late a `setTimeout`-based `sleep()` between attempts might fire — ordinary
- * Node.js event-loop scheduling is best-effort: a timer can wake arbitrarily
- * late under load (never early), with no fixed millisecond ceiling this
- * function can promise. What it DOES guarantee, and what actually matters
- * for ADR-140's invariant, is narrower and load-independent: whenever an
- * attempt starts — on time, or after some amount of scheduling delay — its
- * own timeout is capped to whatever time remains before `deadline`, clamped
- * to a minimum of 0 (see `cappedAttemptTimeoutMs` below). A late-starting
- * attempt therefore never itself adds a fresh `attemptTimeoutMs`-sized delay
- * on top of however late the scheduler already made it; it resolves near-
- * instantly instead. The invariant's `R`/`H_worst`/`G` margins only need to
- * absorb ordinary Node.js scheduling jitter, not a second uncapped timeout.
+ * pr-reviewer round-3/round-4/round-5 findings: this function makes no claim
+ * about wall-clock execution timing at all — not "near-instant," not "a few
+ * milliseconds," nothing. Node's event loop gives no fixed ceiling on how
+ * late any timer callback (including a `setTimeout(fn, 0)`) actually runs,
+ * so no comment here should describe how fast anything executes. What this
+ * function DOES guarantee, stated purely in terms of the VALUES it computes
+ * rather than how quickly the runtime acts on them: whenever an attempt
+ * starts — on time, or after however much scheduling delay `sleep()`
+ * happened to accumulate — the timeout value passed to `raceWithTimeout()`
+ * for that attempt (`cappedAttemptTimeoutMs` below) is bounded by whatever
+ * time remains before `deadline`, clamped to a minimum of 0. It is never
+ * reset to a fresh full `attemptTimeoutMs` just because the attempt started
+ * late. The invariant's `R`/`H_worst`/`G` margins are sized to absorb
+ * ordinary Node.js scheduling delay on `sleep()` itself; they do not depend
+ * on any particular execution speed for the zero-timeout race that follows.
  */
 export async function retryAcquireLock(
   supabase: SupabaseClient,
@@ -169,9 +170,11 @@ export async function retryAcquireLock(
     // late-starting attempt still gets to run (this loop never silently
     // drops the deadline-boundary attempt the invariant proof requires),
     // just with an effectively-zero budget rather than a fresh full window.
-    // A real, already-resolved RPC call still wins that race instantly
-    // regardless of the cap, since a settled microtask always runs before a
-    // timer callback, even a 0ms one.
+    // A real, already-resolved RPC call still wins that race ahead of the
+    // capped timer regardless of how small the cap is -- the JS spec
+    // guarantees a settled microtask is always processed before the next
+    // timer callback, including a 0ms one. This is an ordering guarantee,
+    // not a wall-clock speed claim.
     const cappedAttemptTimeoutMs = Math.max(0, Math.min(attemptTimeoutMs, deadline - now()))
     const result = await raceWithTimeout(
       supabase.rpc('try_indexer_lock', { run_id: runId }),
