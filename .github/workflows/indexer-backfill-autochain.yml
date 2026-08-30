@@ -125,10 +125,12 @@ jobs:
           SUPABASE_SERVICE_ROLE_KEY_PROD: ${{ secrets.SUPABASE_SERVICE_ROLE_KEY_PROD }}
           SUPABASE_URL_STAGING: ${{ secrets.SUPABASE_URL_STAGING }}
           SUPABASE_SERVICE_ROLE_KEY_STAGING: ${{ secrets.SUPABASE_SERVICE_ROLE_KEY_STAGING }}
-        run: npx tsx scripts/indexer/backfill-autochain-inputs.ts >> "$GITHUB_OUTPUT"
+        # Writes GITHUB_OUTPUT directly (scripts/indexer/backfill-autochain-inputs.ts's
+        # own emitOutputs()) -- GitHub Actions already sets that env var for every step.
+        run: npx tsx scripts/indexer/backfill-autochain-inputs.ts
 
       - name: Report skip reason
-        if: env.skip != 'true' && steps.recover.outputs.skip == 'true'
+        if: env.skip != 'true' && steps.recover.outputs.skip == 'true' && steps.recover.outputs.retry_cap_exceeded != 'true'
         run: |
           echo "Not re-dispatching: ${{ steps.recover.outputs.skip_reason }}"
           {
@@ -136,6 +138,43 @@ jobs:
             echo ""
             echo "${{ steps.recover.outputs.skip_reason }}"
           } >> "$GITHUB_STEP_SUMMARY"
+
+      - name: Alert on retry cap (SMI-6246 change #4c)
+        if: env.skip != 'true' && steps.recover.outputs.retry_cap_exceeded == 'true'
+        env:
+          SUPABASE_URL: ${{ secrets.SUPABASE_URL_PROD }}
+          SUPABASE_SERVICE_ROLE_KEY: ${{ secrets.SUPABASE_SERVICE_ROLE_KEY_PROD }}
+        run: |
+          # Mirrors indexer-backfill-watch.yml's own alert-notify call shape
+          # ({type, message, workflow, runId, runUrl}) rather than inventing a
+          # new alert path. The campaign is not lost -- this stops auto-chain
+          # from retrying indefinitely and hands off to a human.
+          BODY=$(jq -n \
+            --arg msg "${{ steps.recover.outputs.skip_reason }}" \
+            --arg rid "${{ github.event.workflow_run.id }}" \
+            --arg url "${{ github.event.workflow_run.html_url }}" \
+            '{type:"indexer_backfill_autochain_retry_cap", message:$msg, workflow:"Skill Indexer Backfill Autochain", runId:$rid, runUrl:$url}')
+
+          HTTP="000"
+          if RESPONSE_CODE=$(curl -s -o /dev/null -w '%{http_code}' -X POST \
+            -H "Authorization: Bearer $SUPABASE_SERVICE_ROLE_KEY" \
+            -H "Content-Type: application/json" -d "$BODY" \
+            "$SUPABASE_URL/functions/v1/alert-notify"); then
+            HTTP="$RESPONSE_CODE"
+          fi
+
+          {
+            echo "### Backfill auto-chain: retry cap reached, stopped"
+            echo ""
+            echo "${{ steps.recover.outputs.skip_reason }}"
+            echo ""
+            echo "alert-notify HTTP: $HTTP"
+          } >> "$GITHUB_STEP_SUMMARY"
+
+          if [ "$HTTP" != "200" ]; then
+            echo "::error::alert-notify returned $HTTP -- email was NOT sent."
+            exit 1
+          fi
 
       - name: Cooldown before reacquisition
         # SMI-6246/ADR-140: the deliberate G interval (2 min) the timing

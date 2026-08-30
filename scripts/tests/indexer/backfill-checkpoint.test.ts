@@ -10,13 +10,14 @@
  *  - Round-trip: write then read back preserves cursor (path, facet, last_page)
  */
 
-import { describe, it, expect, beforeEach, afterEach } from 'vitest'
+import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest'
 import type { SupabaseClient } from '@supabase/supabase-js'
 import {
   resolveTokenSource,
   writeCheckpoint,
   readLatestCheckpoint,
   BACKFILL_CHECKPOINT_EVENT_TYPE,
+  CHECKPOINT_WRITE_TIMEOUT_MS,
   type BackfillCheckpointPayload,
 } from '../../indexer/backfill-checkpoint.ts'
 
@@ -243,6 +244,46 @@ describe('writeCheckpoint', () => {
     const result = await writeCheckpoint(supabase, makePayload())
 
     expect(result).toBe(false)
+  })
+
+  // SMI-6246 (pr-reviewer round-1 finding): the plan's Change #1 required a
+  // real, enforced timeout on this call so it's a genuine contribution to
+  // H_worst (ADR-140), not an unstated assumption -- this was implemented
+  // but had no direct test coverage.
+  describe('SMI-6246: CHECKPOINT_WRITE_TIMEOUT_MS enforcement', () => {
+    beforeEach(() => {
+      vi.useFakeTimers()
+    })
+    afterEach(() => {
+      vi.useRealTimers()
+    })
+
+    it('returns false (fail-soft) rather than hanging when the insert never resolves', async () => {
+      const supabase = {
+        from: () => ({
+          // Never resolves -- simulates a stalled network call.
+          insert: () => new Promise(() => {}),
+        }),
+      } as unknown as SupabaseClient
+
+      const resultPromise = writeCheckpoint(supabase, makePayload())
+      await vi.advanceTimersByTimeAsync(CHECKPOINT_WRITE_TIMEOUT_MS)
+      const result = await resultPromise
+
+      expect(result).toBe(false)
+    })
+
+    it('resolves with the real result, not the timeout, when the insert completes first', async () => {
+      const captured: CapturedInsert[] = []
+      const supabase = makeInsertMock(captured)
+
+      const result = await writeCheckpoint(supabase, makePayload())
+      // Advancing past the timeout after resolution must not change the
+      // already-settled outcome, and must not throw from a leaked timer.
+      await vi.advanceTimersByTimeAsync(CHECKPOINT_WRITE_TIMEOUT_MS + 1000)
+
+      expect(result).toBe(true)
+    })
   })
 })
 

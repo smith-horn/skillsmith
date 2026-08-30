@@ -22,6 +22,37 @@ export const LOCK_RETRY_POLL_MS = 20 * 1000
  * plan's Change #1 arithmetic table.
  */
 export const LOCK_RELEASE_TIMEOUT_MS = 30_000
+/**
+ * SMI-6246 (pr-reviewer round-1 finding): each `try_indexer_lock` attempt
+ * inside the retry loop needs its own bounded timeout too — otherwise a
+ * single stalled RPC call can block the loop past its intended `R`-length
+ * window indefinitely, undermining the deterministic guarantee (ADR-140)
+ * the whole point of the retry loop is to provide. Comfortably shorter than
+ * `LOCK_RETRY_POLL_MS` so a timeout still leaves room for the loop's own
+ * sleep before the next attempt.
+ */
+export const LOCK_ACQUIRE_ATTEMPT_TIMEOUT_MS = 10_000
+
+/**
+ * Races `promise` against a timeout, clearing the timer in both outcomes
+ * (pr-reviewer round-1 finding: an uncleared `setTimeout` keeps the process
+ * alive for its remaining duration even after the real promise wins).
+ */
+async function raceWithTimeout<T>(
+  promise: PromiseLike<T>,
+  timeoutMs: number,
+  onTimeout: () => T
+): Promise<T> {
+  let timer: ReturnType<typeof setTimeout>
+  const timeout = new Promise<T>((resolve) => {
+    timer = setTimeout(() => resolve(onTimeout()), timeoutMs)
+  })
+  try {
+    return await Promise.race([promise, timeout])
+  } finally {
+    clearTimeout(timer!)
+  }
+}
 
 /**
  * SMI-6246: releases the lock with an explicit timeout, retrying once on a
@@ -37,13 +68,11 @@ export async function releaseLockWithTimeout(
 ): Promise<{ error: string | null }> {
   const attempt = async (): Promise<{ error: string | null }> => {
     try {
-      const releasePromise = supabase.rpc('release_indexer_lock', { run_id: runId })
-      const result = await Promise.race([
-        releasePromise,
-        new Promise<{ error: { message: string } }>((resolve) =>
-          setTimeout(() => resolve({ error: { message: 'lock release timed out' } }), timeoutMs)
-        ),
-      ])
+      const result = await raceWithTimeout(
+        supabase.rpc('release_indexer_lock', { run_id: runId }),
+        timeoutMs,
+        () => ({ error: { message: 'lock release timed out' } })
+      )
       return { error: result.error ? result.error.message : null }
     } catch (err) {
       return { error: err instanceof Error ? err.message : 'Unknown release error' }
@@ -95,18 +124,27 @@ export async function retryAcquireLock(
   opts: {
     windowMs?: number
     pollMs?: number
+    attemptTimeoutMs?: number
     sleep?: (ms: number) => Promise<void>
     now?: () => number
   } = {}
 ): Promise<{ acquired: boolean; error: string | null }> {
   const windowMs = opts.windowMs ?? LOCK_RETRY_WINDOW_MS
   const pollMs = opts.pollMs ?? LOCK_RETRY_POLL_MS
+  const attemptTimeoutMs = opts.attemptTimeoutMs ?? LOCK_ACQUIRE_ATTEMPT_TIMEOUT_MS
   const now = opts.now ?? Date.now
   const sleep = opts.sleep ?? ((ms: number) => new Promise((resolve) => setTimeout(resolve, ms)))
   const deadline = now() + windowMs
 
   for (;;) {
-    const result = await supabase.rpc('try_indexer_lock', { run_id: runId })
+    // pr-reviewer round-1 finding: bound each individual attempt so a single
+    // stalled RPC call cannot block this loop past its intended deadline —
+    // a timed-out attempt counts as a miss (retries), not a hard failure.
+    const result = await raceWithTimeout(
+      supabase.rpc('try_indexer_lock', { run_id: runId }),
+      attemptTimeoutMs,
+      () => ({ data: false, error: null }) as { data: boolean; error: { message: string } | null }
+    )
     if (result.error) {
       return { acquired: false, error: result.error.message }
     }

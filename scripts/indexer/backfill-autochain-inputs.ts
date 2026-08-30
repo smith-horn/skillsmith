@@ -30,12 +30,29 @@ import { createClient, type SupabaseClient } from '@supabase/supabase-js'
 import { appendFileSync } from 'node:fs'
 import { readLatestCheckpoint, type BackfillCheckpointPayload } from './backfill-checkpoint.ts'
 
+/**
+ * SMI-6246 change #4c: consecutive retries against the same resume_from
+ * before auto-chaining stops and alerts, rather than retrying indefinitely.
+ * ~5 * (H_worst + G) ≈ 100 minutes of legitimate retrying before escalating
+ * — an order of magnitude independent of SMI-6209's own Arm A threshold, not
+ * dependent on it.
+ */
+const RETRY_CAP = 5
+
 interface ResolvedDispatch {
   supabaseEnv: 'prod' | 'staging'
   resumeFrom: string
   dryRun: boolean
   dispatchInputs: NonNullable<BackfillCheckpointPayload['dispatch_inputs']>
   cursorDone: boolean
+  /**
+   * True when this resolution came from the failed attempt's own skip-branch
+   * audit row (no progress made), never true for a fresh checkpoint. The
+   * retry cap (change #4c) only applies here — a run that just made real
+   * progress resets the count implicitly, since its own checkpoint IS the
+   * new "last real progress" the count is measured from.
+   */
+  isRetry: boolean
 }
 
 /**
@@ -60,17 +77,25 @@ export async function resolveForProject(
       dryRun: checkpoint.dry_run,
       dispatchInputs: checkpoint.dispatch_inputs,
       cursorDone: checkpoint.cursor.facet === 'done',
+      isRetry: false,
     }
   }
 
   // No checkpoint of its own — query the skip-branch's audit row, keyed by
   // the new github_run_id field (request_id is a fresh UUID per invocation
   // and cannot be correlated to a GitHub Actions run id at all).
+  //
+  // pr-reviewer finding (round 1): github_run_id lives at metadata.meta.github_run_id,
+  // NOT metadata.github_run_id -- writeIndexerAuditLog (indexer-audit-log.ts) nests
+  // the whole skip-branch meta object under a `meta` key, matching the documented
+  // `metadata->'meta'->>'...'` convention (see indexer-audit-log.ts's own header
+  // comment). The original `metadata->>github_run_id` path here would never match
+  // any row, silently failing every fallback recovery.
   const { data, error } = await supabase
     .from('audit_logs')
     .select('metadata')
     .eq('event_type', 'indexer:run')
-    .eq('metadata->>github_run_id', completedRunId)
+    .eq('metadata->meta->>github_run_id', completedRunId)
     .order('created_at', { ascending: false })
     .limit(1)
     .maybeSingle()
@@ -114,7 +139,51 @@ export async function resolveForProject(
     dryRun: metadata?.dry_run ?? false,
     dispatchInputs,
     cursorDone,
+    isRetry: true,
   }
+}
+
+/**
+ * SMI-6246 change #4c: counts consecutive `skipped_lock` rows recorded
+ * against the same `resumed_from` value, most-recent first, stopping at the
+ * first row that is either a real (non-skip) success or resumes from a
+ * DIFFERENT value. Used to trip the retry cap before the lock-skip
+ * fallback loop (change #3) would otherwise retry indefinitely.
+ */
+export async function countConsecutiveSkipsForResumeFrom(
+  supabase: SupabaseClient,
+  resumeFrom: string,
+  limit = 50
+): Promise<number> {
+  const { data, error } = await supabase
+    .from('audit_logs')
+    .select('metadata')
+    .eq('event_type', 'indexer:run')
+    .order('created_at', { ascending: false })
+    .limit(limit)
+
+  if (error || !data) {
+    return 0 // fail open on a query error — never block a real dispatch on this alone
+  }
+
+  // Scheduled discovery/maintenance/recheck rows share this same table and
+  // interleave chronologically with backfill's own attempts — they must be
+  // ignored entirely when counting, not treated as breaking the streak.
+  // Only a backfill row (one that carries `resumed_from` at all) that is
+  // EITHER a different handoff OR genuine progress ends the count.
+  let count = 0
+  for (const row of data as Array<{ metadata: { meta?: Record<string, unknown> } | null }>) {
+    const meta = row.metadata?.meta
+    if (meta?.resumed_from === undefined) {
+      continue // not a backfill row at all (cron discovery/maintenance/recheck) — skip over it
+    }
+    if (meta.status === 'skipped_lock' && meta.resumed_from === resumeFrom) {
+      count += 1
+    } else {
+      break // a different handoff, or real progress on this one — streak ends
+    }
+  }
+  return count
 }
 
 function emitOutputs(outputs: Record<string, string>): void {
@@ -149,16 +218,20 @@ async function main(): Promise<void> {
   ]
 
   let resolved: ResolvedDispatch | null = null
+  let resolvedClient: SupabaseClient | null = null
   for (const project of projects) {
     if (!project.url || !project.key) continue
     const client = createClient(project.url, project.key, {
       auth: { autoRefreshToken: false, persistSession: false },
     })
     resolved = await resolveForProject(client, completedRunId, project.env)
-    if (resolved) break
+    if (resolved) {
+      resolvedClient = client
+      break
+    }
   }
 
-  if (!resolved) {
+  if (!resolved || !resolvedClient) {
     emitOutputs({
       skip: 'true',
       skip_reason:
@@ -173,6 +246,26 @@ async function main(): Promise<void> {
       skip_reason: 'The underlying campaign already reached cursor.facet === "done".',
     })
     return
+  }
+
+  // SMI-6246 change #4c: the retry cap only applies on the retry path (no
+  // progress this attempt) — a fresh checkpoint's own success is not itself
+  // a "consecutive skip" and never trips this. pr-reviewer round-1 finding:
+  // this was designed in the plan and documented in the runbook/CLAUDE.md as
+  // already shipped, but was never actually implemented — closing that gap.
+  if (resolved.isRetry) {
+    const consecutiveSkips = await countConsecutiveSkipsForResumeFrom(
+      resolvedClient,
+      resolved.resumeFrom
+    )
+    if (consecutiveSkips >= RETRY_CAP) {
+      emitOutputs({
+        skip: 'true',
+        retry_cap_exceeded: 'true',
+        skip_reason: `Retry cap reached: ${consecutiveSkips} consecutive lock-skips against resume_from=${resolved.resumeFrom}. Stopping auto-chain rather than retrying indefinitely -- the campaign is not lost, a human should confirm why the lock has stayed contended this long.`,
+      })
+      return
+    }
   }
 
   const d = resolved.dispatchInputs

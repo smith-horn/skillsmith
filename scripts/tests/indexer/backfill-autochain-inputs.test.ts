@@ -5,7 +5,10 @@
  * checkpoint or its own skip-branch audit row.
  */
 import { describe, it, expect, vi } from 'vitest'
-import { resolveForProject } from '../../indexer/backfill-autochain-inputs.ts'
+import {
+  resolveForProject,
+  countConsecutiveSkipsForResumeFrom,
+} from '../../indexer/backfill-autochain-inputs.ts'
 
 const dispatchInputs = {
   maxSkillsPerRepo: '50',
@@ -25,6 +28,12 @@ const dispatchInputs = {
  * resolve via `.maybeSingle()` — this mock discriminates by which
  * `event_type` was queried, since it's the only argument that tells the two
  * apart.
+ *
+ * SMI-6246 (pr-reviewer round-1 finding): the audit-row branch's data is
+ * gated behind the EXACT `metadata->meta->>github_run_id` column path — a
+ * regression back to the wrong `metadata->>github_run_id` path (queried in
+ * round 1's original, broken implementation) makes this mock return null
+ * instead of `auditRow`, failing any test that expects a real result.
  */
 function makeSupabase({
   checkpointRow,
@@ -33,14 +42,18 @@ function makeSupabase({
   checkpointRow?: { metadata: unknown } | null
   auditRow?: { metadata: unknown } | null
 }) {
-  return {
+  const eqCalls: Array<[string, string]> = []
+  const supabase = {
     from: vi.fn().mockImplementation((table: string) => {
       if (table !== 'audit_logs') throw new Error(`unexpected table: ${table}`)
       let eventType: string | undefined
+      let correctAuditPathQueried = false
       const builder = {
         select: vi.fn().mockReturnThis(),
         eq: vi.fn().mockImplementation((column: string, value: string) => {
+          eqCalls.push([column, value])
           if (column === 'event_type') eventType = value
+          if (column === 'metadata->meta->>github_run_id') correctAuditPathQueried = true
           return builder
         }),
         or: vi.fn().mockReturnThis(),
@@ -48,7 +61,12 @@ function makeSupabase({
         limit: vi.fn().mockReturnThis(),
         maybeSingle: vi.fn().mockImplementation(() =>
           Promise.resolve({
-            data: eventType === 'indexer:run' ? (auditRow ?? null) : (checkpointRow ?? null),
+            data:
+              eventType === 'indexer:run'
+                ? correctAuditPathQueried
+                  ? (auditRow ?? null)
+                  : null // wrong/missing column path never matches, regardless of fixture
+                : (checkpointRow ?? null),
             error: null,
           })
         ),
@@ -56,11 +74,12 @@ function makeSupabase({
       return builder
     }),
   }
+  return { supabase, eqCalls }
 }
 
 describe('SMI-6246: resolveForProject — exact-match checkpoint path', () => {
   it('resolves directly from the exact-run checkpoint when one exists', async () => {
-    const supabase = makeSupabase({
+    const { supabase } = makeSupabase({
       checkpointRow: {
         metadata: {
           run_id: 'run-42',
@@ -82,11 +101,12 @@ describe('SMI-6246: resolveForProject — exact-match checkpoint path', () => {
       dryRun: false,
       dispatchInputs,
       cursorDone: false,
+      isRetry: false,
     })
   })
 
   it('treats cursor.facet === "done" as campaign complete', async () => {
-    const supabase = makeSupabase({
+    const { supabase } = makeSupabase({
       checkpointRow: {
         metadata: {
           run_id: 'run-42',
@@ -103,10 +123,11 @@ describe('SMI-6246: resolveForProject — exact-match checkpoint path', () => {
     })
     const result = await resolveForProject(supabase as never, 'run-42', 'prod')
     expect(result?.cursorDone).toBe(true)
+    expect(result?.isRetry).toBe(false)
   })
 
   it('returns null (never defaults) when the exact-match checkpoint is missing dispatch_inputs', async () => {
-    const supabase = makeSupabase({
+    const { supabase } = makeSupabase({
       checkpointRow: {
         metadata: {
           run_id: 'run-42',
@@ -128,7 +149,7 @@ describe('SMI-6246: resolveForProject — exact-match checkpoint path', () => {
 
 describe("SMI-6246: resolveForProject — fallback to the failed attempt's own audit row (round-3 fix)", () => {
   it('retries the exact same handoff a specific resumed_from named, never a global "latest" lookup', async () => {
-    const supabase = makeSupabase({
+    const { supabase, eqCalls } = makeSupabase({
       checkpointRow: null,
       auditRow: {
         metadata: {
@@ -147,7 +168,11 @@ describe("SMI-6246: resolveForProject — fallback to the failed attempt's own a
       resumeFrom: 'run-98', // the SAME prior checkpoint, not "latest"
       dryRun: true, // recovered from this exact failed attempt's own metadata.dry_run
       dispatchInputs,
+      isRetry: true,
     })
+    // pr-reviewer round-1 finding, closed: the query must use the nested path.
+    expect(eqCalls).toContainEqual(['metadata->meta->>github_run_id', 'run-99'])
+    expect(eqCalls).not.toContainEqual(['metadata->>github_run_id', 'run-99'])
   })
 
   it("an unrelated older already-done campaign in the table does not affect a fresh campaign's first-attempt lock-skip", async () => {
@@ -155,7 +180,7 @@ describe("SMI-6246: resolveForProject — fallback to the failed attempt's own a
     // fallback must NOT go looking up "the latest checkpoint" (which could be
     // the unrelated older campaign); it has nothing to check cursorDone
     // against and should not claim the campaign is done.
-    const supabase = makeSupabase({
+    const { supabase } = makeSupabase({
       checkpointRow: null,
       auditRow: {
         metadata: {
@@ -172,10 +197,11 @@ describe("SMI-6246: resolveForProject — fallback to the failed attempt's own a
     const result = await resolveForProject(supabase as never, 'run-1', 'prod')
     expect(result?.cursorDone).toBe(false)
     expect(result?.resumeFrom).toBe('latest')
+    expect(result?.isRetry).toBe(true)
   })
 
   it('fails closed (returns null) when the audit row itself is missing dispatch_inputs', async () => {
-    const supabase = makeSupabase({
+    const { supabase } = makeSupabase({
       checkpointRow: null,
       auditRow: { metadata: { meta: { status: 'skipped_lock' } } },
     })
@@ -184,8 +210,76 @@ describe("SMI-6246: resolveForProject — fallback to the failed attempt's own a
   })
 
   it('fails closed (returns null) when neither a checkpoint nor an audit row exists for this run at all', async () => {
-    const supabase = makeSupabase({ checkpointRow: null, auditRow: null })
+    const { supabase } = makeSupabase({ checkpointRow: null, auditRow: null })
     const result = await resolveForProject(supabase as never, 'run-1', 'prod')
     expect(result).toBeNull()
+  })
+})
+
+describe('SMI-6246 change #4c: countConsecutiveSkipsForResumeFrom', () => {
+  function makeAuditRowsMock(rows: Array<{ metadata: unknown }>) {
+    return {
+      from: vi.fn().mockReturnValue({
+        select: vi.fn().mockReturnThis(),
+        eq: vi.fn().mockReturnThis(),
+        order: vi.fn().mockReturnThis(),
+        limit: vi.fn().mockResolvedValue({ data: rows, error: null }),
+      }),
+    }
+  }
+
+  it('counts consecutive skips against the same resume_from', async () => {
+    const supabase = makeAuditRowsMock([
+      { metadata: { meta: { status: 'skipped_lock', resumed_from: 'run-1' } } },
+      { metadata: { meta: { status: 'skipped_lock', resumed_from: 'run-1' } } },
+      { metadata: { meta: { status: 'skipped_lock', resumed_from: 'run-1' } } },
+    ])
+    const count = await countConsecutiveSkipsForResumeFrom(supabase as never, 'run-1')
+    expect(count).toBe(3)
+  })
+
+  it('stops counting at the first row for a DIFFERENT resume_from (a new campaign/chunk succeeded)', async () => {
+    const supabase = makeAuditRowsMock([
+      { metadata: { meta: { status: 'skipped_lock', resumed_from: 'run-2' } } },
+      { metadata: { meta: { status: 'skipped_lock', resumed_from: 'run-2' } } },
+      // Older rows reference a DIFFERENT (now-superseded) resume_from.
+      { metadata: { meta: { status: 'skipped_lock', resumed_from: 'run-1' } } },
+      { metadata: { meta: { status: 'skipped_lock', resumed_from: 'run-1' } } },
+    ])
+    const count = await countConsecutiveSkipsForResumeFrom(supabase as never, 'run-2')
+    expect(count).toBe(2)
+  })
+
+  it('ignores interleaved cron discovery/maintenance/recheck rows entirely (they carry no resumed_from)', async () => {
+    const supabase = makeAuditRowsMock([
+      { metadata: { meta: { status: 'skipped_lock', resumed_from: 'run-1' } } },
+      // A scheduled maintenance run's own row, unrelated to backfill — must
+      // not break the "consecutive" streak just because it's chronologically
+      // interleaved in the same audit_logs table.
+      { metadata: { meta: { status: 'success', run_type: 'maintenance' } } },
+      { metadata: { meta: { status: 'skipped_lock', resumed_from: 'run-1' } } },
+      { metadata: { meta: { status: 'skipped_lock', resumed_from: 'run-1' } } },
+    ])
+    const count = await countConsecutiveSkipsForResumeFrom(supabase as never, 'run-1')
+    expect(count).toBe(3)
+  })
+
+  it('returns 0 when the query errors (fails open — never blocks a real dispatch on this alone)', async () => {
+    const supabase = {
+      from: vi.fn().mockReturnValue({
+        select: vi.fn().mockReturnThis(),
+        eq: vi.fn().mockReturnThis(),
+        order: vi.fn().mockReturnThis(),
+        limit: vi.fn().mockResolvedValue({ data: null, error: { message: 'boom' } }),
+      }),
+    }
+    const count = await countConsecutiveSkipsForResumeFrom(supabase as never, 'run-1')
+    expect(count).toBe(0)
+  })
+
+  it('returns 0 when no rows exist at all', async () => {
+    const supabase = makeAuditRowsMock([])
+    const count = await countConsecutiveSkipsForResumeFrom(supabase as never, 'run-1')
+    expect(count).toBe(0)
   })
 })

@@ -323,15 +323,22 @@ export async function writeCheckpoint(
         dispatch_inputs: payload.dispatch_inputs,
       },
     })
-    const { error } = await Promise.race([
-      insertPromise,
-      new Promise<{ error: { message: string } }>((resolve) =>
-        setTimeout(
-          () => resolve({ error: { message: 'checkpoint write timed out' } }),
-          CHECKPOINT_WRITE_TIMEOUT_MS
-        )
-      ),
-    ])
+    // pr-reviewer round-1 finding: clear the timer on both outcomes -- an
+    // uncleared setTimeout keeps the process alive for its remaining
+    // duration even after the real insert wins the race.
+    let timer: ReturnType<typeof setTimeout>
+    const timeoutPromise = new Promise<{ error: { message: string } }>((resolve) => {
+      timer = setTimeout(
+        () => resolve({ error: { message: 'checkpoint write timed out' } }),
+        CHECKPOINT_WRITE_TIMEOUT_MS
+      )
+    })
+    let error: { message: string } | null
+    try {
+      ;({ error } = await Promise.race([insertPromise, timeoutPromise]))
+    } finally {
+      clearTimeout(timer!)
+    }
     if (error) {
       console.error(`[BackfillCheckpoint] write failed: ${error.message}`)
       return false
