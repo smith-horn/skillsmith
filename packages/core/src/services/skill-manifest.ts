@@ -21,6 +21,17 @@ export class ManifestManager {
   constructor(private readonly manifestPath: string) {}
 
   /**
+   * ADR-139 (SMI-6274 Wave 4): the manifest path this instance was
+   * constructed with — read-only accessor for callers that need to name it
+   * in a diagnostic message (e.g. `performUninstall`'s adoption-failure
+   * error, which must name the skill, the path, AND the manifest it tried
+   * to write, per ADR-139 point 1).
+   */
+  get path(): string {
+    return this.manifestPath
+  }
+
+  /**
    * SMI-6007: distinguishes "no manifest yet" (ENOENT — legitimate first-run
    * case, safe to synthesize an empty manifest) from "a manifest file exists
    * but couldn't be read/parsed" (corrupt JSON, permission error, I/O

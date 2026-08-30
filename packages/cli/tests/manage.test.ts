@@ -314,6 +314,8 @@ describe('SMI-745: Skill Management Commands', () => {
           installDate: '2026-01-01',
           hasUpdates: false,
           installedVia: 'claude-code',
+          scope: 'global',
+          untracked: false,
         },
       ])
 

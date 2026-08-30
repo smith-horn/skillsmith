@@ -233,3 +233,116 @@ describe('performUninstall manifest concurrency (SMI-6007)', () => {
     expect(finalManifest.installedSkills['concurrent-skill']).toBeDefined()
   })
 })
+
+describe('performUninstall adopts untracked skills (ADR-139 point 1, SMI-6274 Wave 4 — required test 17)', () => {
+  let tmpDir: string
+  let manifest: ManifestManager
+  let skillDependencyRepo: SkillDependencyRepository
+
+  beforeEach(() => {
+    tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), 'skillsmith-adopt-'))
+    manifest = new ManifestManager(path.join(tmpDir, 'manifest.json'))
+    skillDependencyRepo = { clearAll: () => {} } as unknown as SkillDependencyRepository
+  })
+
+  afterEach(() => {
+    fs.rmSync(tmpDir, { recursive: true, force: true })
+  })
+
+  it('adopts a skill on disk with no manifest entry and removes it WITHOUT requiring force', async () => {
+    const skillDir = path.join(tmpDir, 'untracked-skill')
+    fs.mkdirSync(skillDir, { recursive: true })
+    fs.writeFileSync(path.join(skillDir, 'SKILL.md'), '---\nname: untracked-skill\n---\n# hi\n')
+
+    // Manifest genuinely has no entry at all — the exact "untracked" state
+    // `list` would surface (a skill on disk, nothing tracking it).
+    await manifest.save({ version: '1.0.0', installedSkills: {} })
+
+    const result = await performUninstall({
+      skillName: 'untracked-skill',
+      force: false, // deliberately NOT forced — adoption must not require it
+      skillsDir: tmpDir,
+      manifest,
+      skillDependencyRepo,
+      onProgress: () => {},
+    })
+
+    expect(result.success).toBe(true)
+    expect(result.warning).toContain('adopted')
+    expect(fs.existsSync(skillDir)).toBe(false)
+  })
+
+  it('adoption reconstructs version/source as "unknown" rather than guessing', async () => {
+    // Verified via a spy manifest so the adopted entry can be inspected
+    // before removal deletes it again.
+    const skillDir = path.join(tmpDir, 'untracked-skill-fields')
+    fs.mkdirSync(skillDir, { recursive: true })
+    await manifest.save({ version: '1.0.0', installedSkills: {} })
+
+    let adoptedSnapshot: SkillManifestEntry | undefined
+    const spyManifest = {
+      path: manifest.path,
+      load: () => manifest.load(),
+      updateSafely: async (updateFn: Parameters<ManifestManager['updateSafely']>[0]) => {
+        await manifest.updateSafely((current) => {
+          const next = updateFn(current)
+          // performUninstall calls updateSafely TWICE: once to write the
+          // adopted entry, once more afterward to delete it post-removal.
+          // Only capture the write — the later deletion call's `next` has
+          // no entry for this key and must not clobber the snapshot.
+          const candidate = next.installedSkills['untracked-skill-fields']
+          if (candidate) adoptedSnapshot = candidate
+          return next
+        })
+      },
+    } as unknown as ManifestManager
+
+    await performUninstall({
+      skillName: 'untracked-skill-fields',
+      force: false,
+      skillsDir: tmpDir,
+      manifest: spyManifest,
+      skillDependencyRepo,
+      onProgress: () => {},
+    })
+
+    expect(adoptedSnapshot).toBeDefined()
+    expect(adoptedSnapshot?.version).toBe('unknown')
+    expect(adoptedSnapshot?.source).toBe('unknown')
+    expect(adoptedSnapshot?.installPath).toBe(skillDir)
+  })
+
+  it('only errors — naming the skill, path, and manifest — when adoption itself fails', async () => {
+    const skillDir = path.join(tmpDir, 'untracked-skill-fail')
+    fs.mkdirSync(skillDir, { recursive: true })
+
+    // A minimal manifest double whose load() succeeds (so performUninstall
+    // reaches the adoption step) but whose updateSafely() fails — isolates
+    // the adoption-write failure path without relying on filesystem
+    // permission tricks (unreliable when tests run as root in CI).
+    const brokenManifest = {
+      path: path.join(tmpDir, 'broken-manifest.json'),
+      load: async () => ({ version: '1.0.0', installedSkills: {} }),
+      updateSafely: async () => {
+        throw new Error('disk full (simulated)')
+      },
+    } as unknown as ManifestManager
+
+    const result = await performUninstall({
+      skillName: 'untracked-skill-fail',
+      force: false,
+      skillsDir: tmpDir,
+      manifest: brokenManifest,
+      skillDependencyRepo,
+      onProgress: () => {},
+    })
+
+    expect(result.success).toBe(false)
+    expect(result.message).toContain('untracked-skill-fail')
+    expect(result.message).toContain(skillDir)
+    expect(result.message).toContain('broken-manifest.json')
+    expect(result.message).toContain('disk full (simulated)')
+    // Adoption failed, so removal must never have proceeded.
+    expect(fs.existsSync(skillDir)).toBe(true)
+  })
+})

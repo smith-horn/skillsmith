@@ -26,9 +26,12 @@ import { DEFAULT_DB_PATH, DEFAULT_MANIFEST_PATH } from '../config.js'
 import {
   removeLinks,
   getInstallPath,
+  parseInstallScope,
   resolveClientId,
+  resolveScopedSkillsDir,
   CANONICAL_CLIENT,
   type ClientId,
+  type ScopedInstallTarget,
 } from '@skillsmith/core/install'
 import { getCliLogger } from '../cli-logger.js'
 import { sanitizeError } from '../utils/sanitize.js'
@@ -53,6 +56,38 @@ const logger = getCliLogger()
  */
 function resolveEffectiveClient(explicit: string | undefined): ClientId {
   return resolveClientId(explicit ?? process.env['SKILLSMITH_CLIENT'])
+}
+
+/**
+ * ADR-139 (SMI-6274 Wave 4): resolve the exact `(scope, client)` target for
+ * `remove`/`update` write operations — an explicit `--scope` flag routes
+ * through the shared core resolver's full precedence chain (env var,
+ * per-client config default, auto-detection, global). An unsatisfiable
+ * explicit `--scope workspace` throws `UnsatisfiableWorkspaceScopeError`,
+ * left to the caller's existing top-level catch (a hard error, never a
+ * silent downgrade — ADR-139 point 2).
+ */
+function resolveEffectiveScope(
+  client: ClientId,
+  scopeFlag: string | undefined
+): ScopedInstallTarget {
+  return resolveScopedSkillsDir({
+    client,
+    explicitScope: parseInstallScope(scopeFlag),
+    globalManifestPath: DEFAULT_MANIFEST_PATH,
+  })
+}
+
+/**
+ * ADR-139: the `installedVia` label an entry from `getInstalledSkillsForClient`
+ * carries for `client`'s OWN installs — `'local'` for the canonical client
+ * (matching the existing SMI-1630 convention), else `client` itself. Used to
+ * filter out an unrelated same-scope entry belonging to a DIFFERENT client
+ * (e.g. the always-present claude-code/'local' workspace scan) when
+ * resolving the exact `(scope, client, name)` triple a write must target.
+ */
+function installedViaFor(client: ClientId): ClientId | 'local' {
+  return client === CANONICAL_CLIENT ? 'local' : client
 }
 
 /**
@@ -86,6 +121,12 @@ const TRUST_TIER_COLORS: Record<TrustTier, (text: string) => string> = {
  * `./.claude/skills` — same displayed text (SMI-1630's repo-local
  * convention is unchanged and applies regardless of `--client`), just no
  * longer able to drift from `getLocalSkillsDir()`'s own path segments.
+ *
+ * ADR-139 (SMI-6274 Wave 4): adds a "Scope" column (global/workspace per
+ * row — the ADR's own mitigation for "two directories to check when
+ * debugging where a skill went") and marks an `untracked` entry (present on
+ * disk with no manifest record) with a visible `[untracked]` suffix rather
+ * than silently omitting it, per ADR-139 point 1's recovery requirement.
  */
 function displaySkillsTable(skills: InstalledSkill[], client: ClientId = CANONICAL_CLIENT): void {
   if (skills.length === 0) {
@@ -99,18 +140,23 @@ function displaySkillsTable(skills: InstalledSkill[], client: ClientId = CANONIC
       chalk.bold('Name'),
       chalk.bold('Version'),
       chalk.bold('Trust Tier'),
+      chalk.bold('Scope'),
       chalk.bold('Install Date'),
       chalk.bold('Updates'),
     ],
-    colWidths: [30, 15, 15, 15, 12],
+    colWidths: [30, 15, 15, 11, 15, 12],
   })
 
   for (const skill of skills) {
     const colorFn = TRUST_TIER_COLORS[skill.trustTier]
+    const name = skill.untracked
+      ? `${skill.name} ${chalk.yellow('[untracked]')}`
+      : colorFn(skill.name)
     table.push([
-      colorFn(skill.name),
+      name,
       skill.version || chalk.dim('N/A'),
       colorFn(skill.trustTier),
+      skill.scope,
       skill.installDate,
       skill.hasUpdates ? chalk.green('Available') : chalk.dim('Up to date'),
     ])
@@ -138,22 +184,39 @@ function displaySkillsTable(skills: InstalledSkill[], client: ClientId = CANONIC
  * was hardcoded to Claude Code's directory regardless — so a skill
  * installed ONLY under a non-canonical client would show correctly in the
  * confirm dialog, then fail ("not installed") when actually removed.
+ *
+ * ADR-139 (SMI-6274 Wave 4): `scopeTarget` narrows this further to the
+ * exact `(scope, client, name)` triple — both the pre-confirm lookup and
+ * the actual `SkillInstallationService` construction now target the same
+ * resolved scope's directory/manifest, never "whichever scope happened to
+ * match by name" (the SMI-5894 defect class, one axis over).
  */
 async function removeSkill(
   skillName: string,
   force: boolean,
   dbPath: string,
-  client: ClientId
+  client: ClientId,
+  scopeTarget: ScopedInstallTarget
 ): Promise<boolean> {
-  const skillsDir = getInstallPath(client)
+  const skillsDir = scopeTarget.dir
 
   // Show skill info and confirm before proceeding (unless --force)
   if (!force) {
     const installed = await getInstalledSkillsForClient(client)
-    const skill = installed.find((s) => s.name.toLowerCase() === skillName.toLowerCase())
+    const wantedVia = installedViaFor(client)
+    const skill = installed.find(
+      (s) =>
+        s.name.toLowerCase() === skillName.toLowerCase() &&
+        s.installedVia === wantedVia &&
+        s.scope === scopeTarget.scope
+    )
 
     if (!skill) {
-      console.log(chalk.red(`Skill "${skillName}" is not installed for client "${client}"`))
+      console.log(
+        chalk.red(
+          `Skill "${skillName}" is not installed for client "${client}" at ${scopeTarget.scope} scope`
+        )
+      )
       return false
     }
 
@@ -161,6 +224,13 @@ async function removeSkill(
     console.log(`  Name: ${skill.name}`)
     console.log(`  Version: ${skill.version || 'N/A'}`)
     console.log(`  Path: ${skill.path}`)
+    if (skill.untracked) {
+      console.log(
+        chalk.yellow(
+          `  Note: this install has no manifest entry (untracked) — it will be adopted before removal.`
+        )
+      )
+    }
     console.log()
 
     const proceed = await confirm({
@@ -189,7 +259,7 @@ async function removeSkill(
       skillRepo,
       skillDependencyRepo,
       skillsDir,
-      manifestPath: DEFAULT_MANIFEST_PATH,
+      manifestPath: scopeTarget.manifestPath,
       client,
       onProgress: (_stage: string, detail: string) => {
         spinner.text = detail
@@ -314,15 +384,16 @@ async function updateActionImpl(
 
   try {
     const client = resolveEffectiveClient(opts['client'] as string | undefined)
+    const scopeTarget = resolveEffectiveScope(client, opts['scope'] as string | undefined)
     if (updateAll) {
       if (skillNames.length > 0) {
         logger.error(chalk.red('Cannot combine --all with specific skill names.'))
         process.exit(1)
         return
       }
-      await updateSkills(undefined, dbPath, dryRun, client)
+      await updateSkills(undefined, dbPath, dryRun, client, scopeTarget)
     } else if (skillNames.length > 0) {
-      await updateSkills(skillNames, dbPath, dryRun, client)
+      await updateSkills(skillNames, dbPath, dryRun, client, scopeTarget)
     } else {
       console.log(
         chalk.yellow('Specify one or more skills to update, or pass --all for everything.')
@@ -357,7 +428,8 @@ async function removeActionImpl(
 
   try {
     const client = resolveEffectiveClient(opts['client'] as string | undefined)
-    const success = await removeSkill(skillName, force, dbPath, client)
+    const scopeTarget = resolveEffectiveScope(client, opts['scope'] as string | undefined)
+    const success = await removeSkill(skillName, force, dbPath, client, scopeTarget)
     process.exit(success ? 0 : 1)
   } catch (error) {
     logger.error(`${chalk.red('Error removing skill:')} ${sanitizeError(error)}`)

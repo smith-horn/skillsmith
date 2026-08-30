@@ -415,77 +415,8 @@ export { getRegisteredMcpServers } from '../services/skill-installation.helpers.
 // wholesale (as manage.update's suite does) cannot satisfy.
 export { hashContent, manifestKeyFor } from '../services/skill-installation.helpers.js'
 
-// ============================================================================
-// Billing (SMI-1062 to SMI-1070) — RELOCATED in SMI-5006 (core 0.7.0)
-// ============================================================================
-//
-// BREAKING: The billing module was moved to `@smith-horn/enterprise/billing`.
-// Both the root re-exports that previously lived here and the `./billing`
-// subpath shim were removed. Consumers must update imports:
-//
-//   - Before: import { StripeWebhookHandler } from '@skillsmith/core/billing'
-//   - After:  import { StripeWebhookHandler } from '@smith-horn/enterprise/billing'
-//
-// Stripe is no longer a runtime dependency of @skillsmith/core (removed in a
-// follow-up wave); applications wanting billing functionality must depend on
-// @smith-horn/enterprise directly. createLogger / Logger are exported from the
-// core barrel (see ../index.ts) to support enterprise's billing consumers.
-
-// ============================================================================
-// Skill Installation (SMI-3483: Wave 0)
-// ============================================================================
-
-export {
-  SkillInstallationService,
-  type SkillInstallationServiceParams,
-} from '../services/skill-installation.service.js'
-
-export { ManifestManager } from '../services/skill-manifest.js'
-
-export {
-  TRUST_TIER_SCANNER_OPTIONS as INSTALL_TRUST_TIER_SCANNER_OPTIONS,
-  type ProgressCallback,
-  type InstallOptions,
-  type InstallResult as CoreInstallResult,
-  type InstallErrorCode,
-  // SMI-5905 Wave 1: content-based install path (private registry).
-  type SkillContent,
-  type InstallFromContentOptions,
-  type UninstallOptions,
-  type UninstallResult as CoreUninstallResult,
-  type SkillManifest,
-  type SkillManifestEntry,
-  type RegistrySkillInfo,
-  type RegistryLookup,
-  type CoInstallRecorder,
-  type DepIntelResult,
-  type OptimizationInfo as CoreOptimizationInfo,
-  type ConflictAction as CoreConflictAction,
-  type AiDefenceFeedback,
-} from '../services/skill-installation.types.js'
-
-export {
-  recordAiDefenceFeedback,
-  collectTrendWarnings,
-} from '../services/skill-installation.feedback.js'
-
-// ============================================================================
-// Discovery-Tool Consistency (SMI-5896: Wave 3)
-// ============================================================================
-
-export {
-  resolveSkillApiFirst,
-  type ResolvedSkill,
-  type ResolveSkillOptions,
-} from '../services/skill-resolution.js'
-
-export {
-  buildEmptyStackGuidance,
-  getRecommendAutoDetectedFooterText,
-} from '../services/recommend-guard.js'
-
-// SMI-5986: shared context-word extraction (CLI `recommend --context` / MCP
-// `skill_recommend`'s `project_context`) so the two twins can't
-// independently drift on what counts as noise vs. a real short technical
-// term.
-export { extractContextWords } from '../services/context-words.js'
+// Install/adoption, discovery-tool-consistency, and the billing-relocation
+// notice all live in the sibling services.install.ts (SMI-6274 Wave 4,
+// file-length gate) — re-exported here so the root barrel's own public
+// surface is unchanged.
+export * from './services.install.js'

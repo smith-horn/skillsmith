@@ -43,6 +43,14 @@ export function createListCommand(): Command {
     .action(listAction)
 }
 
+// ADR-139 (SMI-6274 Wave 4): shared help text for the `--scope` flag on
+// `update`/`remove`, parallel to VALID_CLIENT_HINT above.
+const SCOPE_HINT =
+  'target scope (ADR-139): "workspace" resolves against the nearest ancestor ' +
+  'workspace marker or .git root; defaults to SKILLSMITH_SCOPE env, then the ' +
+  'per-client ~/.skillsmith/config.json default, then auto-detecting an ' +
+  'EXISTING workspace directory, then global'
+
 /**
  * Create update command
  *
@@ -61,6 +69,7 @@ export function createUpdateCommand(): Command {
       '--client <id>',
       `update the copy installed for a specific agent (defaults to SKILLSMITH_CLIENT env or claude-code; ${VALID_CLIENT_HINT})`
     )
+    .option('--scope <global|workspace>', SCOPE_HINT)
     .action(updateAction)
 }
 
@@ -79,5 +88,6 @@ export function createRemoveCommand(): Command {
       '--client <id>',
       `remove the copy installed for a specific agent (defaults to SKILLSMITH_CLIENT env or claude-code; ${VALID_CLIENT_HINT})`
     )
+    .option('--scope <global|workspace>', SCOPE_HINT)
     .action(removeAction)
 }

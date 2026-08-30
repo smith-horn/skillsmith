@@ -40,6 +40,18 @@ vi.mock('@skillsmith/core', () => ({
       inferTrustTier: vi.fn(() => 'unknown'),
     }
   }),
+  // ADR-139 (SMI-6274 Wave 4): getSkillsFromDirectory() now loads the
+  // relevant manifest (via ManifestManager) to stamp `untracked` on each
+  // discovered skill, and keys the lookup via manifestKeyFor() — both must
+  // be present on this mock or the real (unmocked) undefined bindings throw.
+  // An always-empty manifest is sufficient here: these tests assert on
+  // discovery/precedence, not on `untracked`.
+  ManifestManager: vi.fn().mockImplementation(function () {
+    return { load: vi.fn(async () => ({ version: '1.0.0', installedSkills: {} })) }
+  }),
+  manifestKeyFor: vi.fn((name: string, client: string) =>
+    client === 'claude-code' ? name : `${name}::${client}`
+  ),
 }))
 
 describe('SMI-1630: Search both global and local skill directories', () => {
@@ -194,15 +206,18 @@ A test skill.
     const { getInstalledSkills } = await import('../src/commands/manage.js')
     const skills = await getInstalledSkills()
 
-    // Should only have one skill (deduplicated)
-    expect(skills).toHaveLength(1)
+    // ADR-139 (SMI-6274 Wave 4): dedup now keys on the full (scope, client,
+    // name) triple, not name alone — a skill independently installed at
+    // BOTH global and workspace scope is genuinely distinct disk state and
+    // both rows now survive (previously the workspace/local copy silently
+    // won and the global copy was dropped entirely).
+    const sharedSkills = skills.filter((s) => s.name === 'shared-skill')
+    expect(sharedSkills).toHaveLength(2)
 
-    // The local skill should take precedence (verified by path)
-    const sharedSkill = skills.find((s) => s.name === 'shared-skill')
-    expect(sharedSkill).toBeDefined()
-    // Key assertion: local path takes precedence over global
-    expect(sharedSkill?.path).toContain(LOCAL_SKILLS_DIR)
-    expect(sharedSkill?.path).not.toContain(GLOBAL_SKILLS_DIR)
+    const localSkill = sharedSkills.find((s) => s.scope === 'workspace')
+    const globalSkill = sharedSkills.find((s) => s.scope === 'global')
+    expect(localSkill?.path).toContain(LOCAL_SKILLS_DIR)
+    expect(globalSkill?.path).toContain(GLOBAL_SKILLS_DIR)
   })
 
   it('should handle missing local skills directory gracefully', async () => {

@@ -23,6 +23,12 @@ vi.mock('@skillsmith/core', () => ({
 
 vi.mock('@skillsmith/core/install', () => ({
   enumerateHarnessPresence: vi.fn(() => []),
+  // ADR-139 (SMI-6274 Wave 4): getLocalSkillsDir() now calls
+  // findWorkspaceRoot() for its ancestor-search — returning null here
+  // (no workspace root found) preserves this test's expected raw
+  // cwd-joined fallback (./.claude/skills), matching its pre-ADR-139
+  // behavior.
+  findWorkspaceRoot: vi.fn(() => null),
 }))
 
 vi.mock('../src/utils/skills-directory.js', () => ({

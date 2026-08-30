@@ -38,6 +38,12 @@ export function createAgentCommand(): Command {
       'Overwrite a foreign pre-existing skillsmith MCP/hook config entry instead of leaving it untouched',
       false
     )
+    .option(
+      '--scope <global|workspace>',
+      'ADR-139: "workspace" bootstraps AntiGravity as a target by creating its ' +
+        'workspace-scoped .agents/skills directory if none exists yet; omitted leaves ' +
+        'AntiGravity untouched (detection-only, same as every other harness)'
+    )
     .action(agentInstallAction)
 
   agent

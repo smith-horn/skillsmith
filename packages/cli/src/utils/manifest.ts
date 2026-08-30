@@ -104,10 +104,19 @@ export const MANIFEST_PATH = join(SKILLSMITH_DIR, 'manifest.json')
 /**
  * Load the manifest from disk.
  * Returns an empty manifest if the file does not exist.
+ *
+ * @param manifestPath ADR-139 (SMI-6274 Wave 4): optional override, so a
+ *   scope-aware caller (`manage.update.ts`'s `getSkillDiff`) can read the
+ *   RESOLVED manifest (global or workspace-local) instead of always the
+ *   global `MANIFEST_PATH`. Defaults to `MANIFEST_PATH` so every existing
+ *   caller (`pin.ts`, `diff.ts`, `telemetry.action.ts`,
+ *   `audit-sources.action.ts`) keeps working unmodified — the same
+ *   backward-compatibility carve-out `manifestKeyFor()` established for the
+ *   canonical client (SMI-5894 precedent).
  */
-export async function loadManifest(): Promise<SkillManifest> {
+export async function loadManifest(manifestPath: string = MANIFEST_PATH): Promise<SkillManifest> {
   try {
-    const content = await readFile(MANIFEST_PATH, 'utf-8')
+    const content = await readFile(manifestPath, 'utf-8')
     return JSON.parse(content) as SkillManifest
   } catch {
     return { version: '1.0.0', installedSkills: {} }

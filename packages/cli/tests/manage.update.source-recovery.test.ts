@@ -2,22 +2,17 @@
  * SMI-5895 Wave 2 Step 1 — `getSkillDiff`'s manifest / SourceRecoveryService
  * fallback (when the skill isn't in the local registry cache).
  *
- * Split out of manage.update.test.ts (which mocks the local-cache-hit path;
- * this file is the "cache miss" half) to keep both files under the
- * 500-line pre-commit gate and to group by topic, matching Wave 1's own
- * split convention (manage-multi-client.test.ts).
- *
- * `manage.update.ts` previously fell back to `resolveInstalledSkillId()` —
- * a SKILL.md front-matter `id:` read that was always-null dead code, since
- * `SkillParser.toMetadata()` never emits a top-level `id` field. This file
- * proves the real replacement: (1) `~/.skillsmith/manifest.json`, which
- * `SkillInstallationService.install()` already writes an `id`/`source`
- * into on every successful install, is consulted first; (2) only when that
- * entry is genuinely missing does `SourceRecoveryService` (SMI-5407) run,
- * gated so a medium/low-confidence speculative match is never silently
- * trusted (plan-review correction — an update that blindly applied a
- * low-confidence name match could overwrite a local skill with the wrong
- * upstream version).
+ * Split out of manage.update.test.ts (the local-cache-hit path) to keep both
+ * under the 500-line pre-commit gate, grouped by topic (Wave 1's own
+ * manage-multi-client.test.ts split convention). `manage.update.ts`
+ * previously fell back to `resolveInstalledSkillId()` — an always-null dead
+ * SKILL.md front-matter read. This file proves the real replacement: (1)
+ * `~/.skillsmith/manifest.json` (which `install()` already writes `id`/
+ * `source` into) is consulted first; (2) only when genuinely missing does
+ * `SourceRecoveryService` (SMI-5407) run, gated so a medium/low-confidence
+ * speculative match is never silently trusted. The "adopted-unresolvable"
+ * (ADR-139, SMI-6274 Wave 4) recovery-fails/missing-manifest scenarios and
+ * the adoption-guessed-id guard live in manage.update.adoption.test.ts.
  */
 
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest'
@@ -96,6 +91,21 @@ const mocks = vi.hoisted(() => ({
       recoveredSource: null,
     })
   ),
+  // ADR-139 (SMI-6274 Wave 4): getSkillDiff()'s adoption path (untracked
+  // skill -> reconstructed manifest entry). Default succeeds; individual
+  // tests override to simulate an adoption WRITE failure.
+  manifestUpdateSafelyFn: vi.fn(async () => undefined),
+  buildAdoptedEntryFn: vi.fn(
+    async (name: string, installPath: string): Promise<Record<string, unknown>> => ({
+      id: name,
+      name,
+      version: 'unknown',
+      source: 'unknown',
+      installPath,
+      installedAt: '2026-01-01T00:00:00.000Z',
+      lastUpdated: '2026-01-01T00:00:00.000Z',
+    })
+  ),
 }))
 
 vi.mock('@skillsmith/core', () => ({
@@ -137,6 +147,68 @@ vi.mock('@skillsmith/core', () => ({
   // fully mocked and ignores its params) -- present only so the constructor
   // call site's destructuring/typing has something to reference.
   hashContent: vi.fn((content: string) => content),
+  // ADR-139 (SMI-6274 Wave 4): getSkillDiff()'s adoption path for an
+  // untracked skill (manifest entry genuinely missing).
+  ManifestManager: vi.fn().mockImplementation(function (manifestPath: string) {
+    return { path: manifestPath, updateSafely: mocks.manifestUpdateSafelyFn }
+  }),
+  buildAdoptedManifestEntry: (name: string, installPath: string) =>
+    mocks.buildAdoptedEntryFn(name, installPath),
+  // GPT-5.6-Sol PR review round 4: the race-safe adoption-write wrapper
+  // moved to @skillsmith/core (adoptUntrackedSkillEntry, alongside
+  // buildAdoptedManifestEntry) so performUninstall() and getSkillDiff()
+  // share ONE implementation instead of two drifting copies. Mocked here
+  // with equivalent logic, driven by the SAME buildAdoptedManifestEntry/
+  // ManifestManager mocks above, so every existing assertion on
+  // buildAdoptedEntryFn's call args, manifestUpdateSafelyFn's captured
+  // callback, and adoptionError content keeps exercising the same shape.
+  adoptUntrackedSkillEntry: async (
+    skillName: string,
+    skillDirName: string,
+    installPath: string,
+    manifestKey: string,
+    manifest: {
+      path: string
+      updateSafely: (
+        fn: (current: { installedSkills: Record<string, unknown> }) => {
+          installedSkills: Record<string, unknown>
+        }
+      ) => Promise<void>
+    }
+  ): Promise<{ entry: Record<string, unknown>; adopted: boolean } | { adoptionError: string }> => {
+    const adoptedEntry = await mocks.buildAdoptedEntryFn(skillDirName, installPath)
+    let resolvedEntry: Record<string, unknown> = adoptedEntry
+    let adopted = true
+    try {
+      await manifest.updateSafely((current) => {
+        const existing = current.installedSkills?.[manifestKey]
+        if (existing) {
+          resolvedEntry = existing as Record<string, unknown>
+          adopted = false
+          return current
+        }
+        resolvedEntry = adoptedEntry
+        adopted = true
+        return {
+          ...current,
+          installedSkills: { ...current.installedSkills, [manifestKey]: adoptedEntry },
+        }
+      })
+    } catch (adoptError) {
+      return {
+        adoptionError:
+          'Failed to adopt untracked skill "' +
+          skillName +
+          '" at ' +
+          installPath +
+          ' into manifest ' +
+          manifest.path +
+          ': ' +
+          (adoptError instanceof Error ? adoptError.message : String(adoptError)),
+      }
+    }
+    return { entry: resolvedEntry, adopted }
+  },
 }))
 
 describe('SMI-5895 Wave 2 Step 1: getSkillDiff — manifest / SourceRecoveryService fallback', () => {
@@ -162,6 +234,20 @@ describe('SMI-5895 Wave 2 Step 1: getSkillDiff — manifest / SourceRecoveryServ
       registryId: null,
       recoveredSource: null,
     })
+    // ADR-139 (SMI-6274 Wave 4): adoption defaults — succeed, and reconstruct
+    // an 'unknown'-version/source entry, matching production. Re-set every
+    // test (clearAllMocks() above clears call history, not implementation,
+    // but this matches the file's own established explicit-reset convention).
+    mocks.manifestUpdateSafelyFn.mockResolvedValue(undefined)
+    mocks.buildAdoptedEntryFn.mockImplementation(async (name: string, installPath: string) => ({
+      id: name,
+      name,
+      version: 'unknown',
+      source: 'unknown',
+      installPath,
+      installedAt: '2026-01-01T00:00:00.000Z',
+      lastUpdated: '2026-01-01T00:00:00.000Z',
+    }))
 
     const { loadManifest } = await import('../src/utils/manifest.js')
     vi.mocked(loadManifest).mockResolvedValue({ version: '1.0.0', installedSkills: {} })
@@ -171,13 +257,10 @@ describe('SMI-5895 Wave 2 Step 1: getSkillDiff — manifest / SourceRecoveryServ
     vi.restoreAllMocks()
   })
 
-  /**
-   * Mock a single installed skill directory (empty local registry cache by
-   * default). `frontmatterName` defaults to the directory name; pass it
-   * explicitly to reproduce the real-world case where SKILL.md's `name:`
-   * differs from the directory `install()` created (getSkillsFromDirectory
-   * prefers the front-matter name for `InstalledSkill.name`).
-   */
+  // Mock a single installed skill directory (empty local registry cache by
+  // default). `frontmatterName` defaults to the directory name; pass it
+  // explicitly for the real-world case where SKILL.md's `name:` differs
+  // from the install directory (getSkillsFromDirectory prefers front-matter).
   async function mockInstalledSkill(
     name: string,
     version = '1.0.0',
@@ -232,7 +315,7 @@ describe('SMI-5895 Wave 2 Step 1: getSkillDiff — manifest / SourceRecoveryServ
 
       expect(result).not.toBe('not-installed')
       expect(result).not.toBe('unresolvable')
-      if (typeof result === 'object') {
+      if (typeof result === 'object' && !('adoptionError' in result)) {
         expect(result.skillId).toBe('wrsmith108/astro')
       }
     })
@@ -246,7 +329,7 @@ describe('SMI-5895 Wave 2 Step 1: getSkillDiff — manifest / SourceRecoveryServ
 
       expect(result).not.toBe('not-installed')
       expect(result).not.toBe('unresolvable')
-      if (typeof result === 'object') {
+      if (typeof result === 'object' && !('adoptionError' in result)) {
         expect(result.skillId).toBe('https://github.com/someone/my-direct-skill')
       }
       // A raw-URL manifest id is not a registry id -- no API confirmation call.
@@ -264,7 +347,7 @@ describe('SMI-5895 Wave 2 Step 1: getSkillDiff — manifest / SourceRecoveryServ
       const result = await getSkillDiff('Astro', '/fake/db.sqlite')
 
       expect(result).not.toBe('unresolvable')
-      if (typeof result === 'object') {
+      if (typeof result === 'object' && !('adoptionError' in result)) {
         expect(result.skillId).toBe('https://github.com/someone/astro')
       }
       // Resolved from the manifest -- recovery must not have been consulted.
@@ -283,7 +366,7 @@ describe('SMI-5895 Wave 2 Step 1: getSkillDiff — manifest / SourceRecoveryServ
       const result = await getSkillDiff('Pitch Deck Builder', '/fake/db.sqlite')
 
       expect(result).not.toBe('unresolvable')
-      if (typeof result === 'object') {
+      if (typeof result === 'object' && !('adoptionError' in result)) {
         expect(result.skillId).toBe('https://github.com/someone/pitch')
       }
       expect(mocks.recoverOneFn).not.toHaveBeenCalled()
@@ -323,7 +406,7 @@ describe('SMI-5895 Wave 2 Step 1: getSkillDiff — manifest / SourceRecoveryServ
       const result = await getSkillDiff('test-repo', '/fake/db.sqlite', 'claude-code')
 
       expect(typeof result).toBe('object')
-      if (typeof result === 'object') {
+      if (typeof result === 'object' && !('adoptionError' in result)) {
         expect(result.skillId).toBe('https://github.com/owner-a/test-repo')
       }
     })
@@ -348,7 +431,7 @@ describe('SMI-5895 Wave 2 Step 1: getSkillDiff — manifest / SourceRecoveryServ
       const result = await getSkillDiff('git-tracked-skill', '/fake/db.sqlite')
 
       expect(result).not.toBe('unresolvable')
-      if (typeof result === 'object') {
+      if (typeof result === 'object' && !('adoptionError' in result)) {
         expect(result.skillId).toBe('https://github.com/someone/git-tracked-skill')
       }
     })
@@ -377,12 +460,12 @@ describe('SMI-5895 Wave 2 Step 1: getSkillDiff — manifest / SourceRecoveryServ
       const result = await getSkillDiff('plugin-tracked-skill', '/fake/db.sqlite')
 
       expect(result).not.toBe('unresolvable')
-      if (typeof result === 'object') {
+      if (typeof result === 'object' && !('adoptionError' in result)) {
         expect(result.skillId).toBe('https://github.com/someone/plugin-tracked-skill')
       }
     })
 
-    it('does NOT auto-apply a medium-confidence recovery (single registry-name match) — returns unresolvable', async () => {
+    it('does NOT auto-apply a medium-confidence recovery (single registry-name match) — adopts and returns adopted-unresolvable', async () => {
       await mockInstalledSkill('ambiguous-named-skill')
       mocks.recoverOneFn.mockResolvedValue({
         status: 'recovered',
@@ -398,10 +481,15 @@ describe('SMI-5895 Wave 2 Step 1: getSkillDiff — manifest / SourceRecoveryServ
       const { getSkillDiff } = await import('../src/commands/manage.js')
       const result = await getSkillDiff('ambiguous-named-skill', '/fake/db.sqlite')
 
-      expect(result).toBe('unresolvable')
+      // ADR-139 (SMI-6274 Wave 4): still not a confident match — a
+      // medium-confidence recovery is never auto-applied — but the skill
+      // IS now adopted (untracked -> a reconstructed manifest entry), so
+      // the outcome is the distinct 'adopted-unresolvable', not the plain
+      // 'unresolvable' this returned before adoption existed.
+      expect(result).toBe('adopted-unresolvable')
     })
 
-    it('does NOT auto-apply a low-confidence recovery — returns unresolvable', async () => {
+    it('does NOT auto-apply a low-confidence recovery — adopts and returns adopted-unresolvable', async () => {
       await mockInstalledSkill('hinted-skill')
       mocks.recoverOneFn.mockResolvedValue({
         status: 'recovered',
@@ -417,30 +505,7 @@ describe('SMI-5895 Wave 2 Step 1: getSkillDiff — manifest / SourceRecoveryServ
       const { getSkillDiff } = await import('../src/commands/manage.js')
       const result = await getSkillDiff('hinted-skill', '/fake/db.sqlite')
 
-      expect(result).toBe('unresolvable')
-    })
-
-    it('returns "unresolvable" (not a hard command failure) when recovery itself throws', async () => {
-      // The injected recovery deps query the local `skills` cache directly, so
-      // a missing/corrupt table throws rather than returning zero candidates.
-      await mockInstalledSkill('cache-broken-skill')
-      mocks.recoverOneFn.mockRejectedValue(new Error('SQLITE_ERROR: no such table: skills'))
-
-      const { getSkillDiff } = await import('../src/commands/manage.js')
-      const result = await getSkillDiff('cache-broken-skill', '/fake/db.sqlite')
-
-      expect(result).toBe('unresolvable')
-    })
-
-    it('returns "unresolvable" when the manifest is missing entirely and recovery finds nothing', async () => {
-      await mockInstalledSkill('mystery-skill')
-      // loadManifest default (beforeEach) is an empty manifest; recoverOneFn
-      // default (beforeEach) is 'unknown'/unresolved.
-
-      const { getSkillDiff } = await import('../src/commands/manage.js')
-      const result = await getSkillDiff('mystery-skill', '/fake/db.sqlite')
-
-      expect(result).toBe('unresolvable')
+      expect(result).toBe('adopted-unresolvable')
     })
 
     it("updateSkill's failure message for an unresolvable skill points to `sklx audit sources`", async () => {
@@ -461,6 +526,11 @@ describe('SMI-5895 Wave 2 Step 1: getSkillDiff — manifest / SourceRecoveryServ
         .mocked(spinnerInstance.fail)
         .mock.calls.map((c) => String(c[0]))
         .join('\n')
+      // ADR-139: the exact outcome is now 'adopted-unresolvable' (the skill
+      // WAS adopted), so the message names that explicitly, while still
+      // pointing to the same recovery commands the plain 'unresolvable'
+      // message does.
+      expect(failMessage).toContain('adopted')
       expect(failMessage).toContain('sklx audit sources')
     })
   })
