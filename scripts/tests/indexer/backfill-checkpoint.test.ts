@@ -278,6 +278,16 @@ describe('writeCheckpoint', () => {
       const supabase = makeInsertMock(captured)
 
       const result = await writeCheckpoint(supabase, makePayload())
+
+      // pr-reviewer round-2 finding: advancing past the timeout and only
+      // checking the already-settled `result` would still pass even if
+      // `clearTimeout(timer!)` were reverted -- a leaked timer's resolve()
+      // call on an already-settled Promise.race is a harmless no-op, so it
+      // can't be caught by re-checking `result` alone. Asserting the timer
+      // count is zero *before* advancing proves the timer was actually
+      // cleared, not just that its (still-pending) firing wouldn't matter.
+      expect(vi.getTimerCount()).toBe(0)
+
       // Advancing past the timeout after resolution must not change the
       // already-settled outcome, and must not throw from a leaked timer.
       await vi.advanceTimersByTimeAsync(CHECKPOINT_WRITE_TIMEOUT_MS + 1000)

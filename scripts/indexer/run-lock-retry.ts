@@ -140,9 +140,25 @@ export async function retryAcquireLock(
     // pr-reviewer round-1 finding: bound each individual attempt so a single
     // stalled RPC call cannot block this loop past its intended deadline —
     // a timed-out attempt counts as a miss (retries), not a hard failure.
+    //
+    // pr-reviewer round-2 finding: that fix still let an attempt run for a
+    // full, fresh `attemptTimeoutMs` regardless of how little of the retry
+    // window was left, so a stalled attempt starting right at the deadline
+    // boundary could still finish up to `attemptTimeoutMs` past `deadline`
+    // — violating this function's own "never after the deadline" guarantee
+    // the timing invariant depends on. Capping THIS attempt's own timeout
+    // to whatever remains before the deadline (never negative — clamped at
+    // 0, so the deadline-boundary attempt itself still happens, just with
+    // an effectively-zero budget) closes that gap without giving up the
+    // guaranteed final attempt at the deadline the docstring above and the
+    // "always makes a final attempt at (not after) the deadline" test both
+    // require — a real, already-resolved RPC call still wins that race
+    // instantly regardless of the cap, since a settled microtask always
+    // runs before a timer callback, even a 0ms one.
+    const cappedAttemptTimeoutMs = Math.max(0, Math.min(attemptTimeoutMs, deadline - now()))
     const result = await raceWithTimeout(
       supabase.rpc('try_indexer_lock', { run_id: runId }),
-      attemptTimeoutMs,
+      cappedAttemptTimeoutMs,
       () => ({ data: false, error: null }) as { data: boolean; error: { message: string } | null }
     )
     if (result.error) {

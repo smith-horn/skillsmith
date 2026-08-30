@@ -243,6 +243,53 @@ describe('SMI-6246/ADR-140: retryAcquireLock', () => {
     const result = await retryAcquireLock(supabase as never, 'run-1', { sleep, now })
     expect(result).toEqual({ acquired: false, error: null })
   })
+
+  // pr-reviewer round-2 finding: round-1's raceWithTimeout fix bounded each
+  // attempt by a fixed attemptTimeoutMs, but always granted a FULL fresh
+  // attemptTimeoutMs regardless of how little of the retry window remained
+  // -- so a stalled attempt starting just before the deadline could still
+  // run up to attemptTimeoutMs PAST it, contradicting this function's own
+  // "never after the deadline" guarantee (the docstring above, and the
+  // preceding test). Capping each attempt to the remaining budget (checked
+  // BEFORE the attempt starts, not just before the sleep after it) closes
+  // that gap. This needs real fake timers, since raceWithTimeout's internal
+  // timeout always uses the real global setTimeout (it is not one of the
+  // injectable sleep/now hooks the rest of this describe block uses).
+  describe('bounds a stalled attempt to the remaining deadline, not a fresh full attemptTimeoutMs', () => {
+    beforeEach(() => {
+      vi.useFakeTimers()
+    })
+    afterEach(() => {
+      vi.useRealTimers()
+    })
+
+    it('settles within the remaining window even when the RPC call never resolves', async () => {
+      const rpc = vi.fn().mockImplementation(() => new Promise(() => {})) // stalls forever
+      const supabase = { rpc }
+
+      let settled = false
+      const resultPromise = retryAcquireLock(supabase as never, 'run-1', {
+        windowMs: 50,
+        pollMs: 20,
+        attemptTimeoutMs: 10_000,
+        now: () => Date.now(),
+      }).then((r) => {
+        settled = true
+        return r
+      })
+
+      // Only the REMAINING window (50ms) should be needed to settle -- if
+      // the attempt still used the full 10s attemptTimeoutMs regardless of
+      // the deadline (the round-2 bug), the promise would still be pending
+      // after only 50ms and this assertion would fail.
+      await vi.advanceTimersByTimeAsync(50)
+      expect(settled).toBe(true)
+
+      const result = await resultPromise
+      expect(result).toEqual({ acquired: false, error: null })
+      expect(rpc).toHaveBeenCalledTimes(1) // never got to a second attempt
+    })
+  })
 })
 
 describe('SMI-6246: isBackfillAcquisition', () => {
