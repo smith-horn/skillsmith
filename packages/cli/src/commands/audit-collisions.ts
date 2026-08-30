@@ -53,7 +53,7 @@ import {
 } from '@skillsmith/mcp-server/audit'
 
 import { sanitizeError } from '../utils/sanitize.js'
-import { getLicenseStatus } from '../utils/license.js'
+import { resolveEffectiveTier } from '../utils/require-tier.js'
 
 // ---------------------------------------------------------------------------
 // Constants
@@ -307,12 +307,26 @@ async function runAuditCollisions(options: AuditCollisionsOptions): Promise<void
     return
   }
 
-  // Resolve tier from license status — the detector gates the semantic
-  // pass on `audit_mode`, which is tier-defaulted via runInventoryAudit's
-  // resolver. We pass the resolved tier through so a Team user gets
-  // `power_user` (semantic) by default.
-  const status = await getLicenseStatus()
-  const tier = status.tier ?? 'community'
+  // SMI-6271: resolve tier via the credential-aware live resolver (license
+  // key > API key > device session > community), not the offline-only
+  // SKILLSMITH_LICENSE_KEY-only path — an API-key/session Team+ user
+  // previously always got the community `basic` default here. The detector
+  // gates the semantic pass on `audit_mode`, which is tier-defaulted via
+  // runInventoryAudit's resolver. We pass the resolved tier through so a
+  // Team user gets `power_user` (semantic) by default.
+  //
+  // Fail-closed on a transient live-check failure: this command has no
+  // subsequent authoritative server-side gate for the same operation, so a
+  // network blip must not silently downgrade a paying customer's default
+  // mode nor silently proceed with a stale/wrong tier.
+  const resolved = await resolveEffectiveTier()
+  if (resolved.transient) {
+    throw new Error(
+      'Could not verify your subscription tier — the live tier check failed ' +
+        '(network error or a transient server issue). Please try again in a moment.'
+    )
+  }
+  const tier = resolved.status.tier ?? 'community'
 
   const audit = await runInventoryAudit({ deep: options.deep, tier })
 

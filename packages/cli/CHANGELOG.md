@@ -10,6 +10,14 @@ All notable changes to `@skillsmith/cli` are documented here.
   MCP server failed to even start, since the CLI's own update-nudge only fires from inside a
   running MCP process (GH#2368, SMI-6279)
 
+- **Fix**: `audit advisories`, `diff`, `pin`, `config get/set audit_mode`, and `audit-collisions`
+  now correctly recognize a personal `SKILLSMITH_API_KEY` or a logged-in `skillsmith login`
+  session — previously they only ever checked `SKILLSMITH_LICENSE_KEY` (an offline license key
+  almost nobody uses), so an Enterprise customer using either of the two common auth methods was
+  always reported as Community tier (GH#2508, GH#2509, SMI-6271). Live tier verification now
+  fails closed on a network/timeout error rather than silently passing or downgrading a real
+  paying customer
+
 - **Breaking**: `sync` (and `sync config --enable`) now require Team+ tier — Community and
   Individual tiers can no longer bulk-download the skill registry. The registry has grown far
   larger than this feature was designed for (hundreds of thousands of records, still growing),

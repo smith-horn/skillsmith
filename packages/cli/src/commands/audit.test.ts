@@ -5,7 +5,7 @@
  * Uses SKILLSMITH_SKIP_LICENSE_CHECK=true to bypass tier gate in tests.
  */
 
-import { describe, it, expect, beforeEach, afterEach } from 'vitest'
+import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest'
 import { AdvisoryRepository } from '@skillsmith/core'
 import { createTestDatabase, closeDatabase } from '@skillsmith/core/testkit'
 import type { Database as DatabaseType } from '@skillsmith/core'
@@ -117,11 +117,79 @@ describe('audit command — requireTier bypass', () => {
   it('throws when no license key and tier is required', async () => {
     delete process.env['SKILLSMITH_SKIP_LICENSE_CHECK']
     delete process.env['SKILLSMITH_LICENSE_KEY']
+    delete process.env['SKILLSMITH_API_KEY']
+
+    // SMI-6271: requireTier() now also checks for a stored `skillsmith
+    // login` device session (loadCredentials(), homedir-based) before
+    // falling back to community — sandbox HOME so this test's outcome
+    // never depends on whether this specific container happens to have a
+    // real session stored in ~/.skillsmith/config.json.
+    const { mkdtempSync, rmSync } = await import('node:fs')
+    const { tmpdir } = await import('node:os')
+    const { join } = await import('node:path')
+    const tmpHome = mkdtempSync(join(tmpdir(), 'sklx-audit-test-home-'))
+    const originalHome = process.env['HOME']
+    process.env['HOME'] = tmpHome
+
+    try {
+      const { requireTier } = await import('../utils/require-tier.js')
+
+      // With no license key, API key, or stored session, community tier —
+      // should reject the team requirement.
+      await expect(requireTier('team')).rejects.toThrow(/team tier/)
+    } finally {
+      if (originalHome !== undefined) {
+        process.env['HOME'] = originalHome
+      } else {
+        delete process.env['HOME']
+      }
+      rmSync(tmpHome, { recursive: true, force: true })
+    }
+  })
+})
+
+// ============================================================================
+// SMI-6271 (Wave 1 of SMI-6266): `audit advisories`' requireTier('team') now
+// live-resolves SKILLSMITH_API_KEY via /license-status instead of only ever
+// reporting community for it. Deliberately end-to-end (real requireTier(),
+// no @skillsmith/core module mock — just the env var + a fetch stub) so this
+// proves the FULL wiring through the actual command's tier gate, not just
+// the resolver in isolation (covered exhaustively by
+// packages/cli/src/utils/require-tier.test.ts).
+// ============================================================================
+
+describe('audit advisories — SMI-6271 live tier resolution via SKILLSMITH_API_KEY', () => {
+  const originalFetch = global.fetch
+
+  afterEach(() => {
+    delete process.env['SKILLSMITH_API_KEY']
+    delete process.env['SKILLSMITH_LICENSE_KEY']
+    delete process.env['SKILLSMITH_SKIP_LICENSE_CHECK']
+    global.fetch = originalFetch
+  })
+
+  it('resolves live Enterprise tier for a configured API key, no longer reporting community', async () => {
+    process.env['SKILLSMITH_API_KEY'] = 'sk_live_enterprise_test'
+    global.fetch = vi.fn().mockResolvedValue(
+      new Response(JSON.stringify({ data: { authenticated: true, tier: 'enterprise' } }), {
+        status: 200,
+      })
+    )
 
     const { requireTier } = await import('../utils/require-tier.js')
+    await expect(requireTier('team')).resolves.toBeUndefined()
+    expect(global.fetch).toHaveBeenCalledOnce()
+  })
 
-    // With no license key, community tier — should reject team requirement
-    // getLicenseStatus returns community tier when no key is present
+  it('still blocks a below-tier API key (live-resolved individual, gate requires team)', async () => {
+    process.env['SKILLSMITH_API_KEY'] = 'sk_live_individual_test'
+    global.fetch = vi.fn().mockResolvedValue(
+      new Response(JSON.stringify({ data: { authenticated: true, tier: 'individual' } }), {
+        status: 200,
+      })
+    )
+
+    const { requireTier } = await import('../utils/require-tier.js')
     await expect(requireTier('team')).rejects.toThrow(/team tier/)
   })
 })
