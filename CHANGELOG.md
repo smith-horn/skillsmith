@@ -98,8 +98,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   (304) response, already counted. Looking up a skill that doesn't exist now
   counts as one API call, consistent with how `skills-search` already counts
   a zero-result search. A request rejected before any lookup was attempted
-  (malformed request, 400) or one that failed on our side (a Skillsmith-side
-  database error, 500) still does not count.
+  (malformed request, 400) still does not count, and neither does one that
+  fails with a database error before your skill is located (a Skillsmith-side
+  error, 500) — though a rare server error after that point, while the
+  response is being built, still counts, the same as a successful lookup
+  would.
 - **Account navigation reorganized into Admin/Tools groups** (2026-08-23,
   SMI-6128): a second iteration on the account-area redesign shipped the day
   before (2026-08-22, below). The persistent account sidebar now leads with a

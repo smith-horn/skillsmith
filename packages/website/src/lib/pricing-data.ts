@@ -168,7 +168,7 @@ export const pricingFaqs: PricingFaq[] = [
   {
     question: 'What counts as an API call?',
     answer:
-      'Every authenticated request that reaches the API counts as one call — including a lookup that returns no match (404) and a cached-revalidation response (304). Requests rejected before any work (400) and requests that fail on our side (500) are not counted.',
+      "Every authenticated request that reaches the API counts as one call — including a lookup that returns no match (404) and a cached-revalidation response (304). A malformed request (400) doesn't count, and neither does a database error found before your skill is located (500) — though a rare server error after that point, while we're building the response, still counts.",
   },
   {
     question: 'Can I change plans at any time?',
