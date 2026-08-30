@@ -102,7 +102,10 @@ jobs:
   index:
     name: Index GitHub Skills
     runs-on: ubuntu-latest
-    timeout-minutes: 30
+    # SMI-6246: 30 -> 45. The lock-skip branch's cron-side bounded retry
+    # (ADR-140's timing invariant, R=22 min) needs headroom on top of real
+    # indexing work so a worst-case retry doesn't crowd out the run itself.
+    timeout-minutes: 45
     permissions: {}
     concurrency:
       group: skill-indexer
@@ -397,6 +400,10 @@ jobs:
           # so an unset repo variable must resolve to "sweep runs normally," not "brake engaged."
           # Registered in docs/internal/process/guards-and-opt-outs.md.
           STALE_QUARANTINE_DISABLE: ${{ vars.STALE_QUARANTINE_DISABLE || '' }}
+          # SMI-6246: disables only the cron-side bounded retry in the lock-skip
+          # branch (ADR-140's timing invariant); reverts to an instant
+          # single-attempt skip. Registered in docs/internal/process/guards-and-opt-outs.md.
+          INDEXER_LOCK_RETRY_DISABLE: ${{ vars.INDEXER_LOCK_RETRY_DISABLE || '' }}
           CONCURRENCY: ${{ github.event.inputs.concurrency || '2' }}
           # CONCURRENCY_KILL_SWITCH inherited from the job-level env (kill-switch sources).
           # SMI-5166 recheck vars - sourced from optional repo variables with safe defaults.

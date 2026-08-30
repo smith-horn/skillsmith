@@ -1,0 +1,181 @@
+# SMI-6246: Skill Indexer Backfill self-chaining re-dispatch.
+#
+# ROOT CAUSE THIS CLOSES: indexer-backfill.yml used to hold the singleton
+# indexer_lock for up to ~280 minutes per dispatch, with no periodic release —
+# starving every scheduled indexer.yml run that landed inside that window
+# (confirmed multi-day in the 2026-08-26 incident). scripts/indexer/run.ts now
+# shrinks that hold to BACKFILL_LOCK_YIELD_MINUTES (ADR-140's H_worst) via the
+# existing checkpoint-and-exit boundary SMI-5311 already proved safe. This
+# workflow exists so shrinking that hold doesn't turn "re-dispatch every
+# ~4h40m" into "re-dispatch every ~10-18 minutes" for a human operator.
+#
+# WHY A SEPARATE WORKFLOW FILE, NOT A JOB INSIDE indexer-backfill.yml: a
+# `workflow_run` trigger defined in the SAME file as the workflow it watches
+# also fires on completions of the runs THIS workflow itself dispatches —
+# contending for the very concurrency group it's meant to protect (round-2
+# plan-review finding). Nothing watches this file's own completions, so it
+# cannot self-trigger no matter how many times it fires.
+#
+# WHY THE CHECKPOINT-RECOVERY SCRIPT, NOT "resume_from=latest" ALONE: GitHub's
+# runs API does not reliably return a completed dispatch's own input values
+# after the fact (docs/internal/process/guards-and-opt-outs.md:42) — a naive
+# re-dispatch passing only resume_from would use every OTHER workflow_dispatch
+# input at its default, including dry_run (default 'true'), silently turning a
+# live campaign into a single dry run. scripts/indexer/run.ts now echoes every
+# campaign-defining input onto the checkpoint (on real progress) and onto the
+# skip-branch's own audit row (on a lost lock race) so this workflow can
+# recover a failed attempt's own recorded intent instead of guessing from a
+# globally-"latest" checkpoint — a round-3 plan-review finding: the first
+# fallback design ("read the latest checkpoint") could resolve an unrelated,
+# possibly already-done campaign's row.
+#
+# See docs/internal/implementation/indexer-backfill-lock-yield-plan.md and
+# docs/internal/adr/140-indexer-backfill-lock-yield-priority-invariant.md for
+# the full design and the two rounds of correctness fixes that shaped it.
+#
+# ADR-109: this is an infra workflow -- SPARC + plan-review gated (three
+# rounds) before implementation. See the plan doc above.
+# audit:carveout-pure-js -- pure-TS indexer path, no native modules (same as indexer-backfill.yml)
+
+name: Skill Indexer Backfill Autochain
+
+on:
+  workflow_run:
+    workflows: ['Skill Indexer Backfill'] # must match indexer-backfill.yml:45's `name:` exactly
+    types: [completed]
+    branches: [main]
+
+# Distinct from BOTH indexer-backfill.yml's `skill-indexer-backfill` group and
+# indexer.yml's `skill-indexer` group — this workflow's own execution must
+# never contend with the crawl dispatches it observes and creates.
+concurrency:
+  group: skill-indexer-backfill-autochain
+  cancel-in-progress: false
+
+jobs:
+  autochain:
+    name: Recover campaign state and re-dispatch
+    if: github.event.workflow_run.conclusion == 'success'
+    runs-on: ubuntu-latest
+    # Independent of the completed dispatch's own (up to 330-min) budget.
+    timeout-minutes: 10
+    permissions:
+      actions: write # the one gh workflow run call below needs this
+      contents: read
+
+    env:
+      NODE_VERSION: '22'
+      # SMI-6246 kill switch: falls back to manual-only re-dispatch. Each
+      # dispatch still self-limits via BACKFILL_LOCK_YIELD_MINUTES and
+      # releases, so disabling this alone does not reopen the starvation bug
+      # — it only removes automation. Registered in
+      # docs/internal/process/guards-and-opt-outs.md.
+      AUTOCHAIN_DISABLE: ${{ vars.BACKFILL_AUTOCHAIN_DISABLE || '' }}
+      # Same kill switch indexer-backfill.yml itself honors, checked again
+      # here so an operator engaging it mid-campaign also stops the chain.
+      BACKFILL_KILL_SWITCH: ${{ vars.BACKFILL_KILL_SWITCH || '' }}
+
+    steps:
+      - name: Kill-switch gate
+        run: |
+          if [ "$AUTOCHAIN_DISABLE" = "1" ] || [ "$BACKFILL_KILL_SWITCH" = "1" ]; then
+            echo "Auto-chain disabled (BACKFILL_AUTOCHAIN_DISABLE or BACKFILL_KILL_SWITCH engaged) — stopping without dispatching."
+            echo "skip=true" >> "$GITHUB_ENV"
+          fi
+
+      - name: No other backfill run queued or in-progress
+        if: env.skip != 'true'
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          # SMI-6246 round-3 fix: `--status=queued --status=in_progress` does
+          # NOT express an OR (the gh CLI's --status flag is scalar; repeating
+          # it keeps only the last value). This checks every non-completed run
+          # of the WATCHED workflow instead — correctly excludes this
+          # workflow's own execution, since it runs under a separate name.
+          NON_TERMINAL=$(gh run list --workflow="Skill Indexer Backfill" --limit 20 --json status \
+            --jq '[.[] | select(.status != "completed")] | length')
+          if [ "$NON_TERMINAL" != "0" ]; then
+            echo "Another backfill run is already queued/in-progress ($NON_TERMINAL) — skipping this cycle to avoid displacing it."
+            echo "skip=true" >> "$GITHUB_ENV"
+          fi
+
+      - name: Checkout
+        if: env.skip != 'true'
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          submodules: false
+
+      - name: Setup Node
+        if: env.skip != 'true'
+        uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v6
+        with:
+          node-version: ${{ env.NODE_VERSION }}
+
+      - name: Install dependencies
+        if: env.skip != 'true'
+        run: npm ci --omit=dev
+
+      - name: Recover campaign inputs
+        id: recover
+        if: env.skip != 'true'
+        env:
+          COMPLETED_RUN_ID: ${{ github.event.workflow_run.id }}
+          SUPABASE_URL_PROD: ${{ secrets.SUPABASE_URL_PROD }}
+          SUPABASE_SERVICE_ROLE_KEY_PROD: ${{ secrets.SUPABASE_SERVICE_ROLE_KEY_PROD }}
+          SUPABASE_URL_STAGING: ${{ secrets.SUPABASE_URL_STAGING }}
+          SUPABASE_SERVICE_ROLE_KEY_STAGING: ${{ secrets.SUPABASE_SERVICE_ROLE_KEY_STAGING }}
+        run: npx tsx scripts/indexer/backfill-autochain-inputs.ts >> "$GITHUB_OUTPUT"
+
+      - name: Report skip reason
+        if: env.skip != 'true' && steps.recover.outputs.skip == 'true'
+        run: |
+          echo "Not re-dispatching: ${{ steps.recover.outputs.skip_reason }}"
+          {
+            echo "### Backfill auto-chain: not re-dispatched"
+            echo ""
+            echo "${{ steps.recover.outputs.skip_reason }}"
+          } >> "$GITHUB_STEP_SUMMARY"
+
+      - name: Cooldown before reacquisition
+        # SMI-6246/ADR-140: the deliberate G interval (2 min) the timing
+        # invariant depends on — a real external gap with no shared process
+        # state, so waiting cron runs get a genuine window to acquire the lock.
+        if: env.skip != 'true' && steps.recover.outputs.skip != 'true'
+        run: sleep 120
+
+      - name: Re-check no other run queued or in-progress
+        id: recheck
+        if: env.skip != 'true' && steps.recover.outputs.skip != 'true'
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          # Narrows, does not eliminate, the residual TOCTOU race documented in
+          # the implementation plan's Change #4 — a manual dispatch racing into
+          # this single-digit-second window can still occasionally collide
+          # with GitHub's one-pending-slot concurrency semantics. This does
+          # NOT risk a concurrent-write hazard either way: cancel-in-progress:
+          # false plus the DB-level indexer_lock still guarantee no two crawls
+          # ever run simultaneously, regardless of which run wins the slot.
+          NON_TERMINAL=$(gh run list --workflow="Skill Indexer Backfill" --limit 20 --json status \
+            --jq '[.[] | select(.status != "completed")] | length')
+          echo "non_terminal=$NON_TERMINAL" >> "$GITHUB_OUTPUT"
+
+      - name: Dispatch next chunk
+        if: env.skip != 'true' && steps.recover.outputs.skip != 'true' && steps.recheck.outputs.non_terminal == '0'
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          gh workflow run indexer-backfill.yml \
+            -f resume_from="${{ steps.recover.outputs.resume_from }}" \
+            -f dry_run="${{ steps.recover.outputs.dry_run }}" \
+            -f max_skills_per_repo="${{ steps.recover.outputs.max_skills_per_repo }}" \
+            -f path_prefix="${{ steps.recover.outputs.path_prefix }}" \
+            -f max_ranges="${{ steps.recover.outputs.max_ranges }}" \
+            -f min_size_bytes="${{ steps.recover.outputs.min_size_bytes }}" \
+            -f max_skills_per_dispatch="${{ steps.recover.outputs.max_skills_per_dispatch }}" \
+            -f max_elapsed_minutes="${{ steps.recover.outputs.max_elapsed_minutes }}" \
+            -f accept_truncation="${{ steps.recover.outputs.accept_truncation }}" \
+            -f supabase_env="${{ steps.recover.outputs.supabase_env }}" \
+            -f token_source="${{ steps.recover.outputs.token_source }}"
+          echo "Re-dispatched indexer-backfill.yml, resume_from=${{ steps.recover.outputs.resume_from }}, supabase_env=${{ steps.recover.outputs.supabase_env }}"

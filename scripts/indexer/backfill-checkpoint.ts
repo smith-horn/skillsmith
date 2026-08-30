@@ -23,6 +23,9 @@
 
 import type { SupabaseClient } from '@supabase/supabase-js'
 import { type SizeFacet, buildSizeFacets, facetId, bisectFacet } from './code-search.facets.ts'
+// SMI-6246: campaign-defining inputs echoed onto the checkpoint so the
+// indexer-backfill-autochain.yml watcher can recover them without guessing.
+import type { BackfillDispatchInputs } from './backfill-dispatch-inputs.ts'
 
 /** `event_type` discriminator for backfill checkpoint rows in `audit_logs`. */
 export const BACKFILL_CHECKPOINT_EVENT_TYPE = 'indexer_backfill_checkpoint'
@@ -260,6 +263,16 @@ export interface BackfillCheckpointPayload {
    * `excludeDryRun: true`.
    */
   dry_run: boolean
+  /**
+   * SMI-6246: campaign-defining `workflow_dispatch` inputs echoed from the run
+   * that wrote this checkpoint. Lets `indexer-backfill-autochain.yml` replay
+   * the exact same campaign (including `dry_run` semantics carried alongside
+   * this field) instead of defaulting every input except `resume_from` on
+   * auto-chain, which would silently turn a live campaign into a dry run.
+   * Optional so pre-SMI-6246 checkpoint rows still deserialize; a watcher that
+   * finds one missing this field must fail closed, never default it.
+   */
+  dispatch_inputs?: BackfillDispatchInputs
 }
 
 /**
@@ -276,12 +289,24 @@ export interface BackfillCheckpointPayload {
  * @param payload - The checkpoint cursor + progress counters, including `dry_run`.
  * @returns true on a clean insert, false if the write was rejected/threw.
  */
+/**
+ * SMI-6246: the checkpoint-write RPC's contribution to `H_worst` (ADR-140's
+ * timing invariant) must be a real enforced bound, not an unstated assumption
+ * — see the SMI-6246 implementation plan's Change #1 arithmetic table.
+ */
+export const CHECKPOINT_WRITE_TIMEOUT_MS = 30_000
+
 export async function writeCheckpoint(
   supabase: SupabaseClient,
   payload: BackfillCheckpointPayload
 ): Promise<boolean> {
   try {
-    const { error } = await supabase.from('audit_logs').insert({
+    // SMI-6246: explicit timeout so this call's contribution to H_worst
+    // (ADR-140) is a real enforced bound, not an unstated assumption. A
+    // timeout still returns false (same as any other write failure) — the
+    // operator loop already tolerates a missed checkpoint by re-running the
+    // same facet idempotently.
+    const insertPromise = supabase.from('audit_logs').insert({
       event_type: BACKFILL_CHECKPOINT_EVENT_TYPE,
       actor: 'system',
       action: 'backfill_checkpoint',
@@ -295,8 +320,18 @@ export async function writeCheckpoint(
         truncated_repo_count: payload.truncated_repo_count,
         incomplete_results_ranges: payload.incomplete_results_ranges,
         dry_run: payload.dry_run,
+        dispatch_inputs: payload.dispatch_inputs,
       },
     })
+    const { error } = await Promise.race([
+      insertPromise,
+      new Promise<{ error: { message: string } }>((resolve) =>
+        setTimeout(
+          () => resolve({ error: { message: 'checkpoint write timed out' } }),
+          CHECKPOINT_WRITE_TIMEOUT_MS
+        )
+      ),
+    ])
     if (error) {
       console.error(`[BackfillCheckpoint] write failed: ${error.message}`)
       return false

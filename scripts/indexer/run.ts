@@ -48,9 +48,6 @@ import {
 } from './backfill-checkpoint.ts'
 // SMI-5286 1c: the facet-crawl plan handed to the orchestrator's Phase 3b.
 import type { BackfillFacetPlan } from './subdirectory-search.ts'
-// SMI-4870: lock-skip observability — write an audit row even when the lock is
-// already held so partial-cycle gaps are detectable in SQL.
-import { writeIndexerAuditLog } from './indexer-audit-log.ts'
 // SMI-5311: periodic holder-scoped lock refresh + abort-on-steal. Armed only on
 // the acquire path so a long backfill dispatch never lets its lock go stale.
 import { startLockHeartbeat } from './lock-heartbeat.ts'
@@ -60,6 +57,16 @@ import { runDequarantineBranch } from './run-dequarantine-branch.ts'
 // SMI-5357: purge run-type — CI-gated dead-quarantine purge. Same module
 // isolation rationale as dequarantine above.
 import { runPurgeBranch } from './run-purge-branch.ts'
+// SMI-6246: lock-hold budget accounting + the cron-side bounded retry/skip
+// handler (ADR-140's timing invariant). Sibling module for the same 500-line
+// gate reason as the two branches above.
+import {
+  computeRemainingElapsedMs,
+  handleLockSkip,
+  releaseLockWithTimeout,
+} from './run-lock-retry.ts'
+// SMI-6246: campaign-defining inputs echoed onto the backfill checkpoint.
+import { buildBackfillDispatchInputs } from './backfill-dispatch-inputs.ts'
 
 interface RunSummary {
   data: unknown
@@ -93,7 +100,12 @@ async function runDiscoveryBranch(
   telemetry: RateLimitTelemetry,
   // SMI-5311: aborts when the lock is stolen / repeatedly unrefreshable; the
   // orchestrator skips the Phase-4 upsert so a thief's run isn't double-written.
-  abortSignal: AbortSignal
+  abortSignal: AbortSignal,
+  // SMI-6246: when the lock was actually acquired (captured before the RPC
+  // call in main()), not when this branch starts — anchors the backfill
+  // elapsed budget so prefetch/setup time counts against it. Unused on the
+  // cron path (only backfillFacetPlan below reads it).
+  lockAcquireAttemptedAt: number
 ): Promise<{
   result: IndexerResult
   topics: string[]
@@ -186,9 +198,17 @@ async function runDiscoveryBranch(
       maxSkillsPerDispatch: env.BACKFILL_MAX_SKILLS_PER_DISPATCH,
       // SMI-5321: opt-in fetch for saturated unbisectable leaves (default false).
       acceptTruncation: env.BACKFILL_ACCEPT_TRUNCATION,
-      // SMI-5448: per-dispatch wall-clock budget (ms). 0 = disabled.
-      maxElapsedMs:
-        env.BACKFILL_MAX_ELAPSED_MINUTES > 0 ? env.BACKFILL_MAX_ELAPSED_MINUTES * 60_000 : 0,
+      // SMI-6246: remaining budget anchored at lock acquisition (not here),
+      // so prefetch/setup time and the try_indexer_lock RPC's own round-trip
+      // latency both count against BACKFILL_LOCK_YIELD_MINUTES — the ceiling
+      // that actually bounds continuous lock-hold. env.BACKFILL_MAX_ELAPSED_MINUTES
+      // can still shrink it further for a short test dispatch, but can no
+      // longer disable it (0/negative no longer means "unbounded").
+      maxElapsedMs: computeRemainingElapsedMs({
+        backfillMaxElapsedMinutes: env.BACKFILL_MAX_ELAPSED_MINUTES,
+        yieldCeilingMinutes: env.BACKFILL_LOCK_YIELD_MINUTES,
+        lockAcquireAttemptedAt,
+      }),
     }
   }
 
@@ -237,6 +257,9 @@ async function runDiscoveryBranch(
       truncated_repo_count: bc.truncated_repo_count,
       incomplete_results_ranges: bc.incomplete_results_ranges, // SMI-6073
       dry_run: env.DRY_RUN,
+      // SMI-6246: echoed so indexer-backfill-autochain.yml can replay this
+      // exact campaign on auto-chain instead of defaulting every input.
+      dispatch_inputs: buildBackfillDispatchInputs(env),
     })
     if (wrote) checkpointId = backfillRunId
     console.log(
@@ -306,6 +329,11 @@ async function main(): Promise<void> {
   // - lockResult.data=false -> benign skip, exit 0
   // Note: `run_id` is the literal RPC parameter name in try_indexer_lock(run_id text).
   // Everywhere else we use `request_id` terminology.
+  // SMI-6246: captured BEFORE the call, not after the response returns, so the
+  // RPC's own round-trip latency counts toward the backfill lock-hold budget
+  // (conservative over-counting, per round-2 review) rather than being silently
+  // excluded from the stated H_worst bound (ADR-140).
+  const lockAcquireAttemptedAt = Date.now()
   const lockResult = await supabase.rpc('try_indexer_lock', { run_id: requestId })
 
   if (lockResult.error) {
@@ -319,69 +347,14 @@ async function main(): Promise<void> {
     process.exit(1)
   }
 
+  // SMI-6246: every run type except backfill's own acquisition gets a bounded
+  // retry (ADR-140's timing invariant) before falling back to the existing
+  // skipped_lock audit path; handleLockSkip never returns when the lock could
+  // not be acquired (it calls process.exit itself), so reaching past this call
+  // means a retry succeeded and we fall through to the normal acquire path
+  // below unmodified.
   if (!lockResult.data) {
-    console.log(
-      JSON.stringify({
-        event: 'lock_held_by_other_run',
-        request_id: requestId,
-      })
-    )
-    // SMI-4870 issue #1: write a minimal audit_logs row so per-phase sub-slot
-    // skips are observable via SQL (GROUP BY discovery_phase, status).
-    // The meta shape mirrors the Phase 7 row written by writeDiscoveryAuditLog
-    // — only fields available without running any phase are populated.
-    // Assign to a typed intermediate so the extra `status` and `discovery_phase`
-    // keys survive the excess-property check (same pattern as writeDiscoveryAuditLog
-    // uses for its `auditMeta` local).
-    const skipMeta = {
-      request_id: requestId,
-      run_type: env.RUN_TYPE,
-      rate_limit_remaining_min: 0,
-      // SMI-4918: lock-skipped runs make no GitHub calls — zero every bucket.
-      core_remaining_min: 0,
-      search_remaining_min: 0,
-      code_search_remaining_min: 0,
-      secondary_rate_limit_hits: 0,
-      retry_after_max_seconds: 0,
-      concurrency: env.concurrency,
-      kill_switch_engaged: env.kill_switch_engaged,
-      topics: [],
-      cron_slot: env.CRON_SLOT,
-      rotation_source: 'fallback' as const,
-      tree_hash_cache_hits: 0,
-      tree_hash_cache_misses: 0,
-      // SMI-4870: observability keys — status marks the skip; discovery_phase
-      // identifies which per-phase sub-slot was blocked.
-      status: 'skipped_lock' as const,
-      discovery_phase: env.DISCOVERY_PHASE ?? null,
-    }
-    await writeIndexerAuditLog(supabase, 'success', {
-      requestId,
-      topics: [],
-      runType: env.RUN_TYPE,
-      dryRun: env.DRY_RUN,
-      found: 0,
-      indexed: 0,
-      updated: 0,
-      failed: 0,
-      stale: 0,
-      quality_gate_filtered: 0,
-      unchanged: 0,
-      quarantined: 0,
-      github_skill_count: 0,
-      code_search: undefined,
-      scoreDistribution: { highTrust: 0, community: 0, scores: [] },
-      categorizedCount: 0,
-      categoryAssignments: 0,
-      wildcard_expansion_count: 0,
-      cron_slot: env.CRON_SLOT,
-      rotation_source: 'fallback',
-      discovery_path_counts: {},
-      subdirectory_search: undefined,
-      high_trust_fallback_hits: 0,
-      meta: skipMeta,
-    })
-    process.exit(0)
+    await handleLockSkip(supabase, env, requestId)
   }
 
   let result: unknown = null
@@ -414,7 +387,13 @@ async function main(): Promise<void> {
       // `{ purge: PurgeCounts, dryRun }` for the Parse Results step.
       result = await runPurgeBranch(env, requestId)
     } else {
-      const discovery = await runDiscoveryBranch(env, requestId, telemetry, heartbeat.signal)
+      const discovery = await runDiscoveryBranch(
+        env,
+        requestId,
+        telemetry,
+        heartbeat.signal,
+        lockAcquireAttemptedAt
+      )
       result = discovery.result
       topics = discovery.topics
       rotationSource = discovery.rotationSource
@@ -425,12 +404,15 @@ async function main(): Promise<void> {
   } finally {
     // SMI-5311: stop the heartbeat first so no late refresh fires after release.
     heartbeat.stop()
-    const releaseResult = await supabase.rpc('release_indexer_lock', { run_id: requestId })
+    // SMI-6246: explicit timeout + one retry so this call's contribution to
+    // H_worst (ADR-140) is a real enforced bound; a still-failing release
+    // falls through to the existing 20-min stale-TTL crash-recovery path.
+    const releaseResult = await releaseLockWithTimeout(supabase, requestId)
     if (releaseResult.error) {
       console.error(
         JSON.stringify({
           event: 'lock_release_error',
-          error: releaseResult.error.message,
+          error: releaseResult.error,
           request_id: requestId,
         })
       )

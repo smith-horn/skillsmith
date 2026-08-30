@@ -23,6 +23,12 @@
  * supabase/functions/_shared/health-checks.readers.test.ts, alongside the
  * change #6 (indexer_lock_starvation_state.is_degraded wiring) regression
  * case — see that file's "SMI-6210" case.
+ *
+ * SMI-6246: the lock-skip branch moved out of run.ts's inline `main()` body
+ * into `scripts/indexer/run-lock-retry.ts`'s `handleLockSkip()`, to add the
+ * bounded cron-side retry (ADR-140) without pushing run.ts over the 500-line
+ * CI gate. This test now targets that file; a companion check confirms
+ * run.ts still calls the extracted function rather than reimplementing it.
  */
 import { describe, it, expect } from 'vitest'
 import { readFileSync } from 'node:fs'
@@ -32,21 +38,27 @@ import { fileURLToPath } from 'node:url'
 const __dirname = dirname(fileURLToPath(import.meta.url))
 const REPO_ROOT = resolve(__dirname, '..', '..', '..')
 const RUN_TS_PATH = resolve(REPO_ROOT, 'scripts', 'indexer', 'run.ts')
+const RUN_LOCK_RETRY_TS_PATH = resolve(REPO_ROOT, 'scripts', 'indexer', 'run-lock-retry.ts')
 
-describe("SMI-6210: run.ts's lock-skip branch writes result='success', not 'partial'", () => {
+describe("SMI-6210: run-lock-retry.ts's lock-skip handler writes result='success', not 'partial'", () => {
   const runTs = readFileSync(RUN_TS_PATH, 'utf8')
+  const retryTs = readFileSync(RUN_LOCK_RETRY_TS_PATH, 'utf8')
 
-  // Isolate the lock-skip branch: from the `if (!lockResult.data)` guard
-  // through its own `process.exit(0)`.
-  const branchStart = runTs.indexOf('if (!lockResult.data)')
-  const branchEnd = runTs.indexOf('process.exit(0)', branchStart)
+  it('run.ts delegates to handleLockSkip() rather than reimplementing the skip branch inline (SMI-6246)', () => {
+    expect(runTs).toMatch(/await handleLockSkip\(supabase,\s*env,\s*requestId\)/)
+  })
 
-  it('locates the lock-skip branch (sanity check — a miss here would silently no-op every assertion below)', () => {
+  // Isolate the lock-skip handler: from the `writeIndexerAuditLog` call
+  // (skipMeta is built above it) through its own `process.exit(0)`.
+  const branchStart = retryTs.indexOf('const skipMeta')
+  const branchEnd = retryTs.indexOf('process.exit(0)', branchStart)
+
+  it('locates the lock-skip handler (sanity check — a miss here would silently no-op every assertion below)', () => {
     expect(branchStart).toBeGreaterThan(-1)
     expect(branchEnd).toBeGreaterThan(branchStart)
   })
 
-  const branch = runTs.slice(branchStart, branchEnd === -1 ? runTs.length : branchEnd)
+  const branch = retryTs.slice(branchStart, branchEnd === -1 ? retryTs.length : branchEnd)
 
   it("calls writeIndexerAuditLog(supabase, 'success', ...) — the SMI-6210 fix — never 'partial'", () => {
     expect(branch).toMatch(/writeIndexerAuditLog\(supabase,\s*'success',/)
@@ -61,5 +73,12 @@ describe("SMI-6210: run.ts's lock-skip branch writes result='success', not 'part
     const resultArgMatch = branch.match(/writeIndexerAuditLog\(supabase,\s*'([a-z]+)',/)
     expect(resultArgMatch).not.toBeNull()
     expect(resultArgMatch?.[1]).toBe('success')
+  })
+
+  it('SMI-6246: extends the skip audit row with github_run_id/resumed_from/dispatch_inputs for backfill dispatches only', () => {
+    expect(branch).toMatch(/isBackfillAcquisition\(env\)/)
+    expect(branch).toMatch(/github_run_id:\s*process\.env\.GITHUB_RUN_ID/)
+    expect(branch).toMatch(/resumed_from:\s*process\.env\.RESUME_FROM/)
+    expect(branch).toMatch(/dispatch_inputs:\s*buildBackfillDispatchInputs\(env\)/)
   })
 })
