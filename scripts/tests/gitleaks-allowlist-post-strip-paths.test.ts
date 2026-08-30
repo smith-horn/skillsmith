@@ -111,9 +111,15 @@ function extractPathsRegexes(chunkSrc: string): string[] {
   return regexes
 }
 
-function isNotAGitRepositoryError(err: unknown): boolean {
+// SMI-6286/6287 pre-merge CI finding: root-level CI's own runner tripped a
+// SECOND git-plumbing-unavailable shape this function didn't originally
+// cover — "detected dubious ownership in repository at '/app'" (git's
+// safe.directory check, triggered by a UID mismatch between the checkout's
+// owner and the process running git; unrelated to this test's correctness,
+// same environment-limitation class as "not a git repository" below).
+function isGitPlumbingUnavailableError(err: unknown): boolean {
   const msg = err instanceof Error ? err.message : String(err)
-  return /not a git repository/i.test(msg)
+  return /not a git repository/i.test(msg) || /detected dubious ownership/i.test(msg)
 }
 
 /**
@@ -152,19 +158,31 @@ function listFilesRelativeTo(baseDir: string, walkDir: string): string[] {
  * Every git-tracked file under packages/mcp-server/ at HEAD, PRE-strip
  * (e.g. `packages/mcp-server/src/assets/typosquat-reference-snapshot.json`).
  *
- * Falls back to a filesystem walk (see listFilesRelativeTo) ONLY when git
- * itself reports "not a git repository" — the specific, diagnosed failure
- * mode of running this test inside a git WORKTREE's own dev container: a
- * worktree's `.git` is a pointer file naming an ABSOLUTE HOST path
- * (`<main-checkout>/.git/worktrees/<name>`) that is never bind-mounted into
- * that worktree's own container (only the worktree's working-tree directory
- * is) — confirmed live: even a bare `git status` fails identically inside
- * such a container. This is NOT a blanket "skip under Docker" — CI checks
- * out the repo directly (a self-contained .git, no worktree indirection)
- * and the main checkout's own long-lived container bind-mounts a
- * self-contained .git too, so both still exercise the real git-archive path
- * below; any OTHER git failure re-throws rather than silently masking a
- * genuine bug as an environment limitation.
+ * Falls back to a filesystem walk (see listFilesRelativeTo) ONLY on the two
+ * specific, diagnosed git-plumbing-unavailable failure modes this test has
+ * actually hit (see isGitPlumbingUnavailableError) — any OTHER git failure
+ * re-throws rather than silently masking a genuine bug as an environment
+ * limitation:
+ *
+ * 1. **"not a git repository"** — running this test inside a git
+ *    WORKTREE's own dev container: a worktree's `.git` is a pointer file
+ *    naming an ABSOLUTE HOST path (`<main-checkout>/.git/worktrees/<name>`)
+ *    that is never bind-mounted into that worktree's own container (only
+ *    the worktree's working-tree directory is) — confirmed live: even a
+ *    bare `git status` fails identically inside such a container.
+ * 2. **"detected dubious ownership"** — CI's own root-level `Test (root)`
+ *    job (not a worktree — a self-contained `.git` checkout), where git's
+ *    `safe.directory` ownership check trips on a UID mismatch between the
+ *    checkout's owner and the process running git. Confirmed live in CI
+ *    (PR #2624): this test was very likely the first in this suite to
+ *    invoke raw `git -C <path>` against `REPO_ROOT` inside that specific
+ *    job, exposing a pre-existing environment gap rather than introducing
+ *    one — no `git config --global --add safe.directory` step exists
+ *    anywhere in `.github/workflows/` today. Handled the same way as case
+ *    1 (graceful fallback in the test) rather than by adding that
+ *    workflow-level config, since `.github/workflows/**` is an ADR-109
+ *    infra-change trigger path requiring its own SPARC + plan-review cycle
+ *    — out of proportion for what a test-local fallback already covers.
  *
  * SMI-4693: passes `env: makeFixtureEnv()` even though this isn't a temp
  * fixture — it's a deliberate READ against the real live checkout at
@@ -186,7 +204,7 @@ function listPreStripFiles(): string[] {
     )
     return out.split('\n').filter((l) => l.length > 0)
   } catch (err) {
-    if (!isNotAGitRepositoryError(err)) throw err
+    if (!isGitPlumbingUnavailableError(err)) throw err
     return listFilesRelativeTo(REPO_ROOT, resolve(REPO_ROOT, MIRROR_SUBDIR))
   }
 }
@@ -224,7 +242,7 @@ function listPostStripFilesViaMirrorMechanism(): string[] {
       rmSync(tmpDir, { recursive: true, force: true })
     }
   } catch (err) {
-    if (!isNotAGitRepositoryError(err)) throw err
+    if (!isGitPlumbingUnavailableError(err)) throw err
     const mirrorRoot = resolve(REPO_ROOT, MIRROR_SUBDIR)
     return listFilesRelativeTo(mirrorRoot, mirrorRoot)
   }
