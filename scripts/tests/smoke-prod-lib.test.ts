@@ -30,12 +30,25 @@
  *     skipped when the budget was already blown, with the run still exiting
  *     0. Static regression guard: the inner break must stay conditioned on
  *     the surface's always_run flag.
+ *
+ * SMI-6284 with_retry MATCHES ONLY THE STATUS TOKEN, NOT THE BODY: the
+ *     retry predicate used to be `"$out" != *"000"*`, tested against the
+ *     ENTIRE captured output (status line + body) of http_body/http_status/
+ *     the *_probe helpers. A fuzzy_search_skills response containing a
+ *     similarity float like 0.30000001192092896 has "000" as a body
+ *     substring, so a healthy 200 response could still trip a bogus retry
+ *     — confirmed live against prod smoke-report logs from 2026-08-26/27
+ *     (every edge-fn-fuzzy-search check in those runs was preceded by a
+ *     "transient failure, retrying in 2s..." line despite a 200 status).
+ *     The fix matches only the first line (the status token http_body/
+ *     http_status/the probes all emit).
  */
 import { describe, it, expect } from 'vitest'
 import { execFileSync } from 'node:child_process'
-import { readFileSync } from 'node:fs'
-import { dirname, resolve } from 'node:path'
+import { readFileSync, writeFileSync, rmSync } from 'node:fs'
+import { dirname, resolve, join } from 'node:path'
 import { fileURLToPath } from 'node:url'
+import { tmpdir } from 'node:os'
 
 const __dirname = dirname(fileURLToPath(import.meta.url))
 const SMOKE_PROD_DIR = resolve(__dirname, '..', 'smoke-prod')
@@ -112,6 +125,83 @@ describe('smoke-prod/mcp-server.sh — no command-substitution around _smoke_mcp
       const nextLine = src.slice(idx + call.length, idx + call.length + 200)
       expect(nextLine).toMatch(/install="\$SMOKE_MCP_INSTALL_DIR"/)
     }
+  })
+})
+
+describe('smoke-prod/lib.sh — with_retry matches only the status token (SMI-6284)', () => {
+  // A fake "http_body"-shaped command: prints a 200 status line followed by
+  // a body containing "000" as a substring (mimicking a similarity float
+  // like 0.30000001192092896). Before the fix this retried; after, it must
+  // not.
+  it('does not retry a 200 response whose BODY happens to contain "000"', () => {
+    // 2>&1 on the with_retry call itself merges smoke_log's stderr output
+    // into the captured stdout, so a regression back to whole-body matching
+    // (which WOULD retry here) is actually visible to this assertion.
+    const script = `
+      set -euo pipefail
+      . "$LIB_SH"
+      fake_call() {
+        printf '200\\n{"similarity":0.30000001192092896}'
+      }
+      with_retry fake_call 2>&1
+    `
+    const out = execFileSync('bash', ['-c', script], {
+      encoding: 'utf-8',
+      env: { ...process.env, LIB_SH },
+    })
+    expect(out).toContain('200')
+    expect(out).not.toContain('retrying in 2s')
+  })
+
+  it('still retries once when the STATUS line itself is "000"', () => {
+    // with_retry's first attempt runs inside a `$(...)` command
+    // substitution (a subshell), so a plain shell-variable counter's
+    // increment wouldn't survive back to the second (direct, non-subshell)
+    // attempt -- use a counter FILE instead, which both invocations share.
+    const counterFile = join(tmpdir(), `smi-6284-with-retry-counter-${process.pid}`)
+    writeFileSync(counterFile, '0')
+    try {
+      const script = `
+        set -euo pipefail
+        . "$LIB_SH"
+        fake_call() {
+          attempt=$(($(cat "$COUNTER_FILE") + 1))
+          printf '%s' "$attempt" > "$COUNTER_FILE"
+          if [ "$attempt" -eq 1 ]; then
+            printf '000\\n'
+          else
+            printf '200\\nok'
+          fi
+        }
+        with_retry fake_call
+      `
+      const out = execFileSync('bash', ['-c', script], {
+        encoding: 'utf-8',
+        env: { ...process.env, LIB_SH, COUNTER_FILE: counterFile },
+      })
+      expect(out).toContain('200')
+      expect(out).toContain('ok')
+      expect(readFileSync(counterFile, 'utf-8')).toBe('2')
+    } finally {
+      rmSync(counterFile, { force: true })
+    }
+  })
+
+  it('does not match a body-only "000" substring inside a multi-line body', () => {
+    const script = `
+      set -euo pipefail
+      . "$LIB_SH"
+      fake_call() {
+        printf '200\\nline one\\nline with 000 embedded\\nline three'
+      }
+      with_retry fake_call 2>&1
+    `
+    const out = execFileSync('bash', ['-c', script], {
+      encoding: 'utf-8',
+      env: { ...process.env, LIB_SH },
+    })
+    expect(out).not.toContain('retrying in 2s')
+    expect(out).toContain('line with 000 embedded')
   })
 })
 
