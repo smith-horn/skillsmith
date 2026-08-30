@@ -59,6 +59,7 @@ import {
   type HarnessInstallCtx,
 } from './agent-pack-installer.harness.js'
 import { installCursorHooks } from './agent-pack-installer.cursor-hooks.js'
+import { installCursorMcpConfig } from './agent-pack-installer.cursor-mcp.js'
 import {
   HARNESS_SUPPORT_TIER,
   type AgentInstallOptions,
@@ -265,9 +266,15 @@ export function installAgentPack(opts: AgentInstallOptions = {}): AgentInstallRe
         )
         installCodexAgentsShim(shimByHarness.get('codex'), ctx, report)
       }
-      // `harnessIds` is exactly the 7-member McpHarnessId union (all harnesses
-      // considered here support MCP registration) — safe direct cast.
-      installMcpConfig(harness, ctx, report)
+      if (harness === 'cursor') {
+        // Cursor's MCP entry shape/key diverge from every other harness
+        // (SMI-6279 Wave 9) — see agent-pack-installer.cursor-mcp.ts.
+        installCursorMcpConfig(ctx, report)
+      } else {
+        // `harnessIds` is exactly the 7-member McpHarnessId union (all harnesses
+        // considered here support MCP registration) — safe direct cast.
+        installMcpConfig(harness, ctx, report)
+      }
     }
 
     reports.push(report)

@@ -3,10 +3,15 @@
  * @see SMI-1952: Add auto-update check to MCP server startup
  */
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest'
+import { existsSync, mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs'
+import { tmpdir } from 'node:os'
+import { join } from 'node:path'
 import {
   checkForUpdates,
   formatUpdateNotification,
   resolveUpdateNotificationClient,
+  agentInstallRemediationCommand,
+  checkCursorMcpArtifact,
   type VersionCheckResult,
 } from './version-check.js'
 
@@ -198,6 +203,155 @@ describe('version-check', () => {
     it('returns undefined (never throws) for an invalid client value', () => {
       expect(() => resolveUpdateNotificationClient('totally-bogus-client')).not.toThrow()
       expect(resolveUpdateNotificationClient('totally-bogus-client')).toBeUndefined()
+    })
+  })
+
+  describe('agentInstallRemediationCommand (SMI-6279 Wave 9)', () => {
+    it('returns the exact command formatUpdateNotification embeds', () => {
+      expect(agentInstallRemediationCommand()).toBe('skillsmith agent install')
+    })
+  })
+
+  describe('checkCursorMcpArtifact (SMI-6279 Wave 9)', () => {
+    let tempDir: string
+
+    beforeEach(() => {
+      tempDir = mkdtempSync(join(tmpdir(), 'skillsmith-cursor-mcp-check-'))
+    })
+
+    afterEach(() => {
+      rmSync(tempDir, { recursive: true, force: true })
+    })
+
+    function mcpJsonPath(): string {
+      return join(tempDir, 'mcp.json')
+    }
+
+    function write(content: unknown): void {
+      writeFileSync(mcpJsonPath(), JSON.stringify(content, null, 2))
+    }
+
+    it('reports not-stale, entry-not-found for a missing file', () => {
+      const result = checkCursorMcpArtifact(mcpJsonPath())
+      expect(result).toEqual({
+        path: mcpJsonPath(),
+        exists: false,
+        entryFound: false,
+        usesNpxForm: false,
+        hasClientEnv: false,
+        stale: false,
+      })
+    })
+
+    it('flags the broken npx form (missing SKILLSMITH_CLIENT) as stale with the shared remediation command', () => {
+      write({
+        mcpServers: {
+          skillsmith: {
+            command: 'npx',
+            args: ['-y', '@skillsmith/mcp-server'],
+            env: { SKILLSMITH_TOOL_PROFILE: 'agent' },
+          },
+        },
+      })
+
+      const result = checkCursorMcpArtifact(mcpJsonPath())
+
+      expect(result.exists).toBe(true)
+      expect(result.entryFound).toBe(true)
+      expect(result.entryKey).toBe('skillsmith')
+      expect(result.usesNpxForm).toBe(true)
+      expect(result.hasClientEnv).toBe(false)
+      expect(result.stale).toBe(true)
+      expect(result.remediation).toBe(agentInstallRemediationCommand())
+    })
+
+    it('passes a fresh resolved-binary-path entry under the @skillsmith/mcp-server key', () => {
+      write({
+        mcpServers: {
+          '@skillsmith/mcp-server': {
+            command: '/usr/local/bin/skillsmith-mcp',
+            env: { SKILLSMITH_TOOL_PROFILE: 'agent', SKILLSMITH_CLIENT: 'cursor' },
+          },
+        },
+      })
+
+      const result = checkCursorMcpArtifact(mcpJsonPath())
+
+      expect(result.exists).toBe(true)
+      expect(result.entryFound).toBe(true)
+      expect(result.entryKey).toBe('@skillsmith/mcp-server')
+      expect(result.usesNpxForm).toBe(false)
+      expect(result.hasClientEnv).toBe(true)
+      expect(result.stale).toBe(false)
+      expect(result.remediation).toBeUndefined()
+    })
+
+    it('flags an entry that has SKILLSMITH_CLIENT but is still on the npx form', () => {
+      write({
+        mcpServers: {
+          '@skillsmith/mcp-server': {
+            command: 'npx',
+            args: ['-y', '@skillsmith/mcp-server'],
+            env: { SKILLSMITH_CLIENT: 'cursor' },
+          },
+        },
+      })
+
+      const result = checkCursorMcpArtifact(mcpJsonPath())
+      expect(result.usesNpxForm).toBe(true)
+      expect(result.hasClientEnv).toBe(true)
+      expect(result.stale).toBe(true)
+    })
+
+    it('does not flag staleness when the file exists but has no Skillsmith entry at all', () => {
+      write({ mcpServers: { 'some-other-tool': { command: 'foo' } } })
+
+      const result = checkCursorMcpArtifact(mcpJsonPath())
+      expect(result.exists).toBe(true)
+      expect(result.entryFound).toBe(false)
+      expect(result.stale).toBe(false)
+    })
+
+    it('does not throw and reports not-found for an unparsable file', () => {
+      writeFileSync(mcpJsonPath(), '{not valid json')
+      expect(() => checkCursorMcpArtifact(mcpJsonPath())).not.toThrow()
+      const result = checkCursorMcpArtifact(mcpJsonPath())
+      expect(result.exists).toBe(true)
+      expect(result.entryFound).toBe(false)
+      expect(result.stale).toBe(false)
+    })
+
+    it('checks an arbitrary independent path — proving global vs project-scoped are evaluated separately', () => {
+      const otherDir = mkdtempSync(join(tmpdir(), 'skillsmith-cursor-mcp-check-other-'))
+      try {
+        mkdirSync(otherDir, { recursive: true })
+        const otherPath = join(otherDir, 'mcp.json')
+        writeFileSync(
+          otherPath,
+          JSON.stringify({
+            mcpServers: {
+              '@skillsmith/mcp-server': {
+                command: '/usr/local/bin/skillsmith-mcp',
+                env: { SKILLSMITH_TOOL_PROFILE: 'agent', SKILLSMITH_CLIENT: 'cursor' },
+              },
+            },
+          })
+        )
+        write({
+          mcpServers: {
+            skillsmith: { command: 'npx', args: ['-y', '@skillsmith/mcp-server'], env: {} },
+          },
+        })
+
+        const freshResult = checkCursorMcpArtifact(otherPath)
+        const staleResult = checkCursorMcpArtifact(mcpJsonPath())
+
+        expect(freshResult.stale).toBe(false)
+        expect(staleResult.stale).toBe(true)
+        expect(existsSync(otherPath)).toBe(true)
+      } finally {
+        rmSync(otherDir, { recursive: true, force: true })
+      }
     })
   })
 })

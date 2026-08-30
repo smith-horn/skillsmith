@@ -4,6 +4,12 @@ All notable changes to `@skillsmith/cli` are documented here.
 
 ## [Unreleased]
 
+- **Fix**: `skillsmith diagnose` now checks whether your Cursor MCP registration (both the
+  global `~/.cursor/mcp.json` and any project-scoped copy) is on the current, working config
+  shape and tells you how to fix it if not — previously nothing detected this at all once the
+  MCP server failed to even start, since the CLI's own update-nudge only fires from inside a
+  running MCP process (GH#2368, SMI-6279)
+
 - **Breaking**: `sync` (and `sync config --enable`) now require Team+ tier — Community and
   Individual tiers can no longer bulk-download the skill registry. The registry has grown far
   larger than this feature was designed for (hundreds of thousands of records, still growing),
