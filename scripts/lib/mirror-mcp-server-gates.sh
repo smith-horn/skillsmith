@@ -19,18 +19,30 @@ run_manual_secret_grep() {
   # positive far more often than the dedicated scanners; that's an accepted
   # tradeoff for a fallback, not the primary path (install gitleaks/trufflehog
   # to avoid it).
+  #
+  # SMI-6287: each branch used to route its `grep -rl` matches straight to
+  # /dev/null — a hit was reported ("found a ...-shaped string") with no way
+  # to tell WHICH file(s) tripped it, making this fallback branch just as
+  # undiagnosable as gitleaks' own bare "leaks found: 1" was before the
+  # --verbose/--report-path fix below. Print the matched filenames instead.
   local hit=false
+  local matches
 
-  if grep -rlE 'sk_live_[A-Za-z0-9]+' "$TREE_DIR" >/dev/null 2>&1; then
-    warn "Manual grep found an 'sk_live_'-shaped string in the candidate tree."
+  matches="$(grep -rlE 'sk_live_[A-Za-z0-9]+' "$TREE_DIR" 2>/dev/null || true)"
+  if [[ -n "$matches" ]]; then
+    warn "Manual grep found an 'sk_live_'-shaped string in the candidate tree:"$'\n'"$matches"
     hit=true
   fi
-  if grep -rlE '[a-z0-9]{20}\.supabase\.co' "$TREE_DIR" >/dev/null 2>&1; then
-    warn "Manual grep found a supabase.co project-ref-shaped string in the candidate tree."
+
+  matches="$(grep -rlE '[a-z0-9]{20}\.supabase\.co' "$TREE_DIR" 2>/dev/null || true)"
+  if [[ -n "$matches" ]]; then
+    warn "Manual grep found a supabase.co project-ref-shaped string in the candidate tree:"$'\n'"$matches"
     hit=true
   fi
-  if grep -rlE '[A-Za-z0-9._%+-]+@[A-Za-z0-9.-]+\.[A-Za-z]{2,}' "$TREE_DIR" >/dev/null 2>&1; then
-    warn "Manual grep found an email-address-shaped string in the candidate tree."
+
+  matches="$(grep -rlE '[A-Za-z0-9._%+-]+@[A-Za-z0-9.-]+\.[A-Za-z]{2,}' "$TREE_DIR" 2>/dev/null || true)"
+  if [[ -n "$matches" ]]; then
+    warn "Manual grep found an email-address-shaped string in the candidate tree:"$'\n'"$matches"
     hit=true
   fi
 
@@ -70,8 +82,34 @@ run_leak_audit() {
     # sync (verified: 25 hits with no --config, 0 with it, against a real
     # assembled tree — see SMI-5629 Opus review). Without this flag the gate
     # is not "aborts on a real leak", it's "aborts on every sync, forever".
-    gitleaks detect --no-git --source "$TREE_DIR" --config "$REPO_ROOT/.gitleaks.toml" \
-      || err "gitleaks detected a potential secret in the candidate tree — aborting sync"
+    #
+    # SMI-6287: --verbose + --report-path make this gate self-diagnosing — a
+    # bare failure used to print only "leaks found: N" with no rule id or
+    # file/line, which is exactly what let a post-strip path-drift false
+    # positive (the mirror's tar --strip-components=2 relocating
+    # typosquat-reference-snapshot.json) go undiagnosed sync after sync.
+    # Flag names verified against the CI-pinned gitleaks v8.21.2 specifically
+    # (`gitleaks detect --help`, both are top-level/global flags on that
+    # version — not assumed from a newer/older gitleaks release).
+    #
+    # SMI-6287 pr-reviewer finding (GPT-5.6-Sol): gitleaks' JSON report
+    # includes the matched Secret string itself unless --redact is passed —
+    # dumping the raw report to CI logs on the abort path would leak the
+    # exact credential this gate exists to catch, in precisely the case
+    # where a real one is found. Extract only safe fields (RuleID, File,
+    # StartLine) via jq instead of printing the report verbatim.
+    local report_path="$TMP_ROOT/gitleaks-report.json"
+    if ! gitleaks detect --no-git --source "$TREE_DIR" --config "$REPO_ROOT/.gitleaks.toml" \
+        --verbose --report-path "$report_path"; then
+      if [[ -s "$report_path" ]] && command -v jq >/dev/null 2>&1; then
+        warn "gitleaks findings (rule/file/line only — secret values redacted):"
+        jq -r '.[] | "  - rule=\(.RuleID) file=\(.File) line=\(.StartLine)"' "$report_path" >&2 \
+          || warn "  (could not parse report as JSON — see ${report_path} directly, off-CI)"
+      elif [[ -s "$report_path" ]]; then
+        warn "gitleaks wrote a report to ${report_path} (jq unavailable to redact it for CI logs — inspect off-CI, it may contain matched secret text)"
+      fi
+      err "gitleaks detected a potential secret in the candidate tree — aborting sync (see rule id/file/line above)"
+    fi
   elif command -v trufflehog >/dev/null 2>&1; then
     log "gitleaks not found — scanning with trufflehog..."
     # --fail is required: `trufflehog filesystem` exits 0 even when it finds
