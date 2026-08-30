@@ -34,6 +34,8 @@ import { basename, dirname, resolve } from 'node:path'
 import { Command } from 'commander'
 import chalk from 'chalk'
 import { withTelemetry } from '@skillsmith/core/telemetry'
+import { checkCursorMcpArtifact, type CursorMcpArtifactCheck } from '@skillsmith/core'
+import { AGENT_MCP_TARGETS } from '@skillsmith/core/install'
 import { getCliLogger } from '../cli-logger.js'
 import { sanitizeError } from '../utils/sanitize.js'
 import { VERSION } from '../version.js'
@@ -95,6 +97,42 @@ function printEnvSummary(summary: EnvSummary): void {
   console.log('')
 }
 
+/**
+ * Both locations Cursor reads MCP config from — global (`~/.cursor/mcp.json`)
+ * and project-scoped (`<cwd>/.cursor/mcp.json`). The GH#2368 V3 repro's
+ * actual broken config was project-scoped, and nothing before SMI-6279
+ * Wave 9 even looked there — checked independently, since a healthy global
+ * config says nothing about a stale project-scoped override shadowing it
+ * (Cursor merges both, project-scoped taking precedence).
+ */
+function cursorMcpArtifactPaths(): string[] {
+  return [AGENT_MCP_TARGETS.cursor.path, resolve(process.cwd(), '.cursor', 'mcp.json')]
+}
+
+function buildCursorMcpChecks(): CursorMcpArtifactCheck[] {
+  return cursorMcpArtifactPaths().map((path) => checkCursorMcpArtifact(path))
+}
+
+function formatCursorMcpCheckLine(check: CursorMcpArtifactCheck): string {
+  if (!check.exists) return `  ${check.path}: (not found)`
+  if (!check.entryFound) return `  ${check.path}: exists, no Skillsmith MCP entry`
+  if (!check.stale) return `  ${check.path}: OK`
+
+  const reasons: string[] = []
+  if (check.usesNpxForm) reasons.push("uses the broken 'npx' command form (GH#2368 C-01)")
+  if (!check.hasClientEnv) reasons.push('missing SKILLSMITH_CLIENT=cursor')
+  return `  ${check.path}: STALE — ${reasons.join('; ')}. Run \`${check.remediation}\` to fix.`
+}
+
+function printCursorMcpChecks(checks: CursorMcpArtifactCheck[]): void {
+  console.log(chalk.bold('Cursor MCP registration'))
+  for (const check of checks) {
+    const line = formatCursorMcpCheckLine(check)
+    console.log(check.stale ? chalk.yellow(line) : line)
+  }
+  console.log('')
+}
+
 function parseLimit(raw: string | undefined): number {
   const parsed = raw !== undefined ? Number.parseInt(raw, 10) : NaN
   return Number.isFinite(parsed) && parsed > 0 ? parsed : DEFAULT_LIMIT
@@ -148,6 +186,7 @@ export async function runDiagnose(options: DiagnoseCliOptions): Promise<void> {
     const logDir = resolveLogDir()
     const summary = buildEnvSummary(logDir)
     printEnvSummary(summary)
+    printCursorMcpChecks(buildCursorMcpChecks())
 
     const files = listLogFiles(logDir)
 

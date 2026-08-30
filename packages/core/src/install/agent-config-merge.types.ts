@@ -33,7 +33,7 @@ export interface MergeResult {
 
 export interface MergeOptions {
   path: string
-  /** The value to install under the `skillsmith` key. */
+  /** The value to install under `entryKey` (defaults to `'skillsmith'`). */
   entryValue: Record<string, unknown>
   /** Directory backups are written into. Caller ensures it exists. */
   backupDir: string
@@ -55,6 +55,16 @@ export interface MergeOptions {
    * backed up once per run, capturing genuine pre-install content.
    */
   alreadyBackedUpPaths?: Set<string>
+  /**
+   * JSON object key `entryValue` is installed under. Defaults to
+   * `'skillsmith'` — the key every `mergeJsonMcpEntry` caller except Cursor
+   * still uses (unchanged, out of scope for SMI-6279 Wave 9). Cursor passes
+   * `'@skillsmith/mcp-server'` instead, matching the key its own
+   * human-facing docs snippet uses — see `agent-pack-installer.entry.ts`'s
+   * `CURSOR_MCP_ENTRY_KEY` for the full rationale. Only meaningful for
+   * `mergeJsonMcpEntry` (the YAML/TOML-block merge helpers don't read it).
+   */
+  entryKey?: string
 }
 
 /**
