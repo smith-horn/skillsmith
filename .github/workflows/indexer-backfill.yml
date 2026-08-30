@@ -265,6 +265,15 @@ jobs:
           # turning a 330-min GHA-timeout rollback into forward progress. Default
           # 280 leaves a 50-min margin. 0 = disabled.
           BACKFILL_MAX_ELAPSED_MINUTES: ${{ github.event.inputs.max_elapsed_minutes || '280' }}
+          # SMI-6246: code-enforced ceiling on continuous indexer_lock hold per
+          # chunk (ADR-140's H_worst), independent of the input above -- 0 or a
+          # negative BACKFILL_MAX_ELAPSED_MINUTES can no longer mean "unbounded".
+          # Default (10 min, applied in code when this is unset) was chosen for
+          # the timing invariant's proof; only raise it after re-deriving R and
+          # indexer.yml's job timeout to match -- see ADR-140 and the SMI-6246
+          # implementation plan's Change #2 arithmetic table. Never settable
+          # above 45 (scripts/indexer/parse-env.ts's normalizeYieldMinutes).
+          BACKFILL_LOCK_YIELD_MINUTES: ${{ vars.BACKFILL_LOCK_YIELD_MINUTES || '' }}
           # SMI-5321: opt-in fetch-with-truncation floor for saturated unbisectable
           # leaves. Default false = current skip-only behavior.
           BACKFILL_ACCEPT_TRUNCATION: ${{ github.event.inputs.accept_truncation || 'false' }}

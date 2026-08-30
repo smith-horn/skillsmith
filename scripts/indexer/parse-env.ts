@@ -104,6 +104,14 @@ export interface IndexerEnv {
    * preserves the current skip-only behavior byte-for-byte.
    */
   BACKFILL_ACCEPT_TRUNCATION: boolean
+  /**
+   * SMI-6246: code-enforced ceiling on continuous `indexer_lock` hold per
+   * backfill chunk, independent of {@link BACKFILL_MAX_ELAPSED_MINUTES}'s own
+   * `0 = disabled` sentinel — see {@link normalizeYieldMinutes}. Always a
+   * finite value in `[1, 45]`; never lets the effective elapsed budget resolve
+   * to the "unbounded" sentinel that reopens the SMI-6246 starvation bug.
+   */
+  BACKFILL_LOCK_YIELD_MINUTES: number
 }
 
 function getRequired(name: string): string {
@@ -126,6 +134,17 @@ function getBool(name: string, defaultValue: boolean): boolean {
   const raw = process.env[name]
   if (raw == null || raw === '') return defaultValue
   return raw === '1' || raw === 'true' || raw === 'True' || raw === 'TRUE'
+}
+
+/**
+ * SMI-6246: NaN-safe normalization for `BACKFILL_LOCK_YIELD_MINUTES`. Deliberately
+ * NOT a `Math.min`/`Math.max` clamp — that propagates `NaN` silently (`Math.min(NaN, 45)
+ * === NaN`), which would fall through to the same "unbounded" sentinel this constant
+ * exists to close off. Any non-finite or out-of-range input falls back to the default
+ * instead of clamping toward a boundary.
+ */
+export function normalizeYieldMinutes(raw: number, defaultValue = 10): number {
+  return Number.isFinite(raw) && raw >= 1 && raw <= 45 ? raw : defaultValue
 }
 
 export function parseEnv(env: NodeJS.ProcessEnv = process.env): IndexerEnv {
@@ -263,6 +282,17 @@ export function parseEnv(env: NodeJS.ProcessEnv = process.env): IndexerEnv {
     // SMI-5321: opt-in fetch-with-truncation floor for saturated unbisectable
     // leaves. Default false — absent or anything other than "true" => false.
     const BACKFILL_ACCEPT_TRUNCATION = getBool('BACKFILL_ACCEPT_TRUNCATION', false)
+    // SMI-6246: code-enforced per-chunk lock-hold ceiling. Deliberately parsed
+    // with Number() + normalizeYieldMinutes rather than getInt() — getInt()
+    // THROWS on a non-finite value, but this constant must instead fall back
+    // to its default on any invalid input (NaN, Infinity, fractional, 0,
+    // negative, out-of-range), never throw and never propagate NaN.
+    const backfillLockYieldRaw = process.env.BACKFILL_LOCK_YIELD_MINUTES
+    const BACKFILL_LOCK_YIELD_MINUTES = normalizeYieldMinutes(
+      backfillLockYieldRaw == null || backfillLockYieldRaw === ''
+        ? 10
+        : Number(backfillLockYieldRaw)
+    )
 
     // Concurrency: kill-switch (env=1) forces 1, else CONCURRENCY env or D-3 default of 2.
     const kill_switch_engaged = getBool('CONCURRENCY_KILL_SWITCH', false)
@@ -296,6 +326,7 @@ export function parseEnv(env: NodeJS.ProcessEnv = process.env): IndexerEnv {
       BACKFILL_MAX_SKILLS_PER_DISPATCH,
       BACKFILL_MAX_ELAPSED_MINUTES,
       BACKFILL_ACCEPT_TRUNCATION,
+      BACKFILL_LOCK_YIELD_MINUTES,
     }
   } finally {
     process.env = prev
