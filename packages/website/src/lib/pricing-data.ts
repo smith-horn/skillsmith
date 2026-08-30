@@ -168,7 +168,7 @@ export const pricingFaqs: PricingFaq[] = [
   {
     question: 'What counts as an API call?',
     answer:
-      'Each skill search, recommendation request, or skill installation counts as one API call. Viewing cached results does not count against your quota.',
+      'Every authenticated request that reaches the API counts as one call — including a lookup that returns no match (404) and a cached-revalidation response (304). Requests rejected before any work (400) and requests that fail on our side (500) are not counted.',
   },
   {
     question: 'Can I change plans at any time?',

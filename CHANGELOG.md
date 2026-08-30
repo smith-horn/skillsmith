@@ -90,6 +90,16 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Changed
 
+- **Skill-lookup requests that return no match now count toward your API quota**
+  (2026-08-29, SMI-6283): the `skills-get` endpoint (used when you look up a
+  specific skill by `author/name` or ID) previously did not count a request
+  toward your monthly API-call quota when the lookup found no matching skill
+  (a 404 response) — every other outcome, including a cached-revalidation
+  (304) response, already counted. Looking up a skill that doesn't exist now
+  counts as one API call, consistent with how `skills-search` already counts
+  a zero-result search. A request rejected before any lookup was attempted
+  (malformed request, 400) or one that failed on our side (a Skillsmith-side
+  database error, 500) still does not count.
 - **Account navigation reorganized into Admin/Tools groups** (2026-08-23,
   SMI-6128): a second iteration on the account-area redesign shipped the day
   before (2026-08-22, below). The persistent account sidebar now leads with a
