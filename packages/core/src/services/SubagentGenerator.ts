@@ -67,10 +67,18 @@ function generateSubagentContent(
 
   const profile = getSubagentGenerationProfile(client)
 
+  // SMI-6276 pr-reviewer finding: `description` is free text sourced from
+  // the SKILL.md being transformed — an unquoted plain YAML scalar breaks
+  // if it contains `: ` (reinterpreted as a nested key) or ` #` (truncated
+  // as a comment). JSON.stringify() produces a valid YAML double-quoted
+  // scalar (YAML's double-quote escaping is a superset of JSON's), so this
+  // composes the full description+trigger text as a plain JS string FIRST,
+  // then quotes the whole thing once — not per-field — so the result is
+  // safe regardless of what the source content contains.
   const frontmatterLines = [
     '---',
     `name: ${name}`,
-    `description: ${description} Use when ${triggerString}.`,
+    `description: ${JSON.stringify(`${description} Use when ${triggerString}.`)}`,
   ]
   if (profile.includeSkillsField) {
     frontmatterLines.push(`skills: ${name.replace('-specialist', '')}`)

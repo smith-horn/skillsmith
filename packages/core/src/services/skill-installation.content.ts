@@ -337,8 +337,13 @@ export async function installFromContent(params: InstallFromContentParams): Prom
     }
 
     onProgress('optimize', 'Applying optimization')
+    // SMI-6276 pr-reviewer finding: `client` is already resolved above (used
+    // by manifestKeyFor/generateTips below) — passing it here is required,
+    // not optional, or this install path silently falls back to
+    // applyOptimization()'s claude-code default regardless of the real
+    // target client.
     const { finalSkillContent, subSkillFiles, subagentContent, optimizationInfo } =
-      await applyOptimization(db, skillId, skillName, skillMdContent)
+      await applyOptimization(db, skillId, skillName, skillMdContent, client)
 
     // Team-authored content wins any filename collision with a generated sub-skill.
     const teamAuthoredSubFiles = Object.entries(content)

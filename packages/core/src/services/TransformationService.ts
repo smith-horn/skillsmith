@@ -108,7 +108,7 @@ export class TransformationService {
 
     // Check cache first (unless force transform)
     if (!this.options.forceTransform && this.cache) {
-      const cached = this.getCachedTransformation(skillId, content)
+      const cached = this.getCachedTransformation(skillId, content, client)
       if (cached) {
         return cached
       }
@@ -121,7 +121,7 @@ export class TransformationService {
 
       // Cache the result
       if (this.cache) {
-        this.cacheTransformation(skillId, content, result)
+        this.cacheTransformation(skillId, content, result, client)
       }
 
       return result
@@ -157,7 +157,7 @@ export class TransformationService {
 
     // Cache the result
     if (this.cache) {
-      this.cacheTransformation(skillId, content, result)
+      this.cacheTransformation(skillId, content, result, client)
     }
 
     return result
@@ -231,11 +231,15 @@ export class TransformationService {
   /**
    * Get cached transformation if available and valid
    */
-  private getCachedTransformation(skillId: string, content: string): TransformationResult | null {
+  private getCachedTransformation(
+    skillId: string,
+    content: string,
+    client: ClientId
+  ): TransformationResult | null {
     if (!this.cache) return null
 
     try {
-      const cacheKey = this.buildCacheKey(skillId)
+      const cacheKey = this.buildCacheKey(skillId, client)
       const cached = this.cache.get<CachedTransformation>(cacheKey)
 
       if (!cached) return null
@@ -266,12 +270,13 @@ export class TransformationService {
   private cacheTransformation(
     skillId: string,
     content: string,
-    result: TransformationResult
+    result: TransformationResult,
+    client: ClientId
   ): void {
     if (!this.cache) return
 
     try {
-      const cacheKey = this.buildCacheKey(skillId)
+      const cacheKey = this.buildCacheKey(skillId, client)
       const contentHash = this.hashContent(content)
 
       const cacheEntry: CachedTransformation = {
@@ -289,10 +294,13 @@ export class TransformationService {
   }
 
   /**
-   * Build cache key for a skill
+   * Build cache key for a skill. Includes `client` (SMI-6276 pr-reviewer
+   * finding) -- without it, a cached transformation generated for one
+   * client's frontmatter shape gets silently served back for a different
+   * client, defeating the whole point of client-parameterized generation.
    */
-  private buildCacheKey(skillId: string): string {
-    return `${CACHE_KEY_PREFIX}${skillId}`
+  private buildCacheKey(skillId: string, client: ClientId): string {
+    return `${CACHE_KEY_PREFIX}${skillId}:${client}`
   }
 
   /**

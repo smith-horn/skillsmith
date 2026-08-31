@@ -5,6 +5,27 @@
 
 import { describe, it, expect } from 'vitest'
 import { TransformationService, transformSkill } from '../TransformationService.js'
+import { createTestDatabase } from '../../../tests/helpers/database.js'
+
+const HEAVY_TOOL_USAGE_CONTENT = `---
+name: tool-skill
+description: A skill with heavy tool usage
+---
+
+# Tool Skill
+
+This skill runs many commands:
+- npm install packages
+- git status and commit
+- docker build images
+- npx execute scripts
+- yarn add dependencies
+- pnpm install modules
+
+Use bash to execute commands.
+Terminal operations are common.
+Shell scripting is required.
+`
 
 describe('TransformationService', () => {
   describe('constructor', () => {
@@ -286,6 +307,55 @@ ${'Example\n'.repeat(500)}
       )
 
       expect(result.stats.tokenReductionPercent).toBeLessThanOrEqual(80)
+    })
+  })
+
+  // SMI-6276 pr-reviewer finding: buildCacheKey() didn't include `client`,
+  // so transform()'s cache lookup for the SAME skillId+content but a
+  // DIFFERENT client would silently return a previously-cached OTHER
+  // client's result — defeating client-parameterized generation entirely
+  // the moment caching is enabled.
+  describe('cache key includes client (SMI-6276)', () => {
+    it('does not serve a claude-code-cached transformation back for a different client', async () => {
+      const db = await createTestDatabase()
+      try {
+        const service = new TransformationService(db)
+
+        const claudeResult = await service.transform(
+          'shared-skill-id',
+          'tool-skill',
+          'A skill with heavy tool usage',
+          HEAVY_TOOL_USAGE_CONTENT,
+          'claude-code'
+        )
+        expect(claudeResult.subagent).toBeDefined()
+        expect(claudeResult.subagent?.content).toMatch(/^model: (haiku|sonnet|opus)$/m)
+
+        // SAME skillId + SAME content, DIFFERENT client — must not hit the
+        // claude-code entry just cached above.
+        const antigravityResult = await service.transform(
+          'shared-skill-id',
+          'tool-skill',
+          'A skill with heavy tool usage',
+          HEAVY_TOOL_USAGE_CONTENT,
+          'antigravity'
+        )
+        expect(antigravityResult.subagent).toBeDefined()
+        expect(antigravityResult.subagent?.content).not.toMatch(/^model: (haiku|sonnet|opus)$/m)
+
+        // And a SECOND claude-code call for the same input must still hit
+        // its own cache entry (proving this isn't just "caching broke").
+        const claudeResultAgain = await service.transform(
+          'shared-skill-id',
+          'tool-skill',
+          'A skill with heavy tool usage',
+          HEAVY_TOOL_USAGE_CONTENT,
+          'claude-code'
+        )
+        expect(claudeResultAgain.subagent?.content).toBe(claudeResult.subagent?.content)
+      } finally {
+        db.close()
+      }
     })
   })
 })
