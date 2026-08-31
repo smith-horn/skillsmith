@@ -17,3 +17,10 @@ scripts/lib/reserved-ranges.mjs        @wrsmith108
 scripts/check-publish-collision.mjs    @wrsmith108
 scripts/prepare-release.ts             @wrsmith108
 .github/workflows/publish.yml          @wrsmith108
+
+# Submodule pointer auto-repair (SMI-6260, ADR-143) — the only workflow file
+# that ever invokes SKILLSMITH_MAIN_PUSH_PAT, a write-scoped credential
+# capable of pushing to main. Branch protection on this repo has no
+# required_pull_request_reviews block at all, so this CODEOWNERS entry is
+# the only repo-level review control on this file, not belt-and-suspenders.
+.github/workflows/submodule-pointer-check.yml  @wrsmith108

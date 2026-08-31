@@ -1,0 +1,199 @@
+name: Submodule Pointer Ancestry Gate
+
+# SMI-6260 Wave 2. Closes the PR #2609 failure mode: a docs/internal (or
+# other .gitmodules mount) pointer bump that LOOKS like a clean forward
+# move (git diff/git status show a normal single-line SHA change) but is
+# actually a regression relative to the submodule's own upstream history,
+# or relative to what the target ref already registers. Full design:
+# docs/internal/implementation/smi-6260-docs-internal-pointer-regression-gate.md
+# ("Design decisions" section — binding, reviewed twice).
+#
+# Two jobs:
+#   pointer-check      (required PR-time gate) — always fires on every PR,
+#                       self-skips per R0/R9 when the diff doesn't touch a
+#                       mount. No `paths:` filter — see the plan's "Where the
+#                       check lives" design decision for why this is
+#                       deliberate (satisfies the SMI-3997/3999 required-
+#                       check pattern natively).
+#   pointer-autorepair  (post-merge TOCTOU closure) — fires on push to main
+#                       touching a mount; auto-repairs R3 (behind) when
+#                       SKILLSMITH_MAIN_PUSH_PAT is provisioned and not in
+#                       shadow mode, else alert-only; never auto-repairs
+#                       R1/R5/R6/R7/R8/R11 — opens a deduped GitHub issue.
+#
+# audit:carveout-pure-js — both jobs run pure git/bash directly on
+# ubuntu-latest, no Docker dev container: check-submodule-pointer.sh has
+# zero Node dependencies and no native modules, the same shape as
+# docs-folder-index.yml's existing host-runner job (SMI-4647 carveout).
+# Neither job declares `needs: docker-build`, so audit-standards.mjs Check
+# 38 (which only scans jobs with that dependency) does not — and, per the
+# plan, should not — reach this workflow. This is a deliberate design
+# choice, not an oversight.
+#
+# Plan: docs/internal/implementation/smi-6260-docs-internal-pointer-regression-gate.md
+# Parent: SMI-6260.
+
+on:
+  pull_request:
+    types: [opened, synchronize, reopened]
+  push:
+    branches: [main]
+    paths:
+      - 'docs/internal'
+      - '.claude/skills'
+      - '.claude/plans'
+      - '.claude/hive-mind'
+      - '.gitmodules'
+
+jobs:
+  pointer-check:
+    name: pointer-check
+    if: github.event_name == 'pull_request'
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    permissions:
+      contents: read
+    steps:
+      - name: Checkout PR head (full history, all branches)
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: ${{ github.event.pull_request.head.sha }}
+          fetch-depth: 0
+
+      - name: Fetch docs/internal submodule (best-effort)
+        # docs/internal is a private repo requiring STRATEGY_SUBMODULE_PAT.
+        # Mirrors docs-folder-index.yml:52-67's exact pattern: external-
+        # contributor (fork) PRs never receive repo secrets on the
+        # `pull_request` event, so STRATEGY_SUBMODULE_PAT is naturally empty
+        # there — pat_available=false below, which correctly routes those
+        # PRs to R8 ("external contributors cannot bump docs/internal") if
+        # they touch the mount, or R9 (skip) if they don't. Deliberately
+        # NOT pull_request_target (code-execution hazard for a job whose
+        # sibling job holds a write-scoped PAT) — R8's hard fail on fork
+        # PRs is the correct behavior, not a gap.
+        id: fetch
+        env:
+          STRATEGY_SUBMODULE_PAT: ${{ secrets.STRATEGY_SUBMODULE_PAT }}
+        run: |
+          set -uo pipefail
+          if [ -n "${STRATEGY_SUBMODULE_PAT:-}" ]; then
+            git config --global url."https://x-access-token:${STRATEGY_SUBMODULE_PAT}@github.com/".insteadOf "https://github.com/"
+            echo "pat_available=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "pat_available=false" >> "$GITHUB_OUTPUT"
+          fi
+          git submodule update --init docs/internal || \
+            echo "::warning::docs/internal submodule fetch failed; check-submodule-pointer.sh will FAIL (R8) if this PR touches docs/internal, or SKIP otherwise"
+
+      - name: Run ancestry check
+        id: check
+        run: |
+          set +e
+          ./scripts/ci/check-submodule-pointer.sh \
+            --mode=block \
+            --ref="${{ github.event.pull_request.head.sha }}" \
+            --target="origin/${{ github.event.pull_request.base.ref }}" \
+            --pat-available="${{ steps.fetch.outputs.pat_available }}" \
+            > /tmp/pointer-check-output.txt 2>&1
+          EXIT_CODE=$?
+          set -e
+          cat /tmp/pointer-check-output.txt
+
+          # Emit a GH Actions ::error:: annotation carrying the rule's
+          # remediation message verbatim, so it surfaces inline on the PR's
+          # Files/Checks view rather than only in a log a developer has to
+          # open (plan item 5's explicit requirement).
+          if [ "$EXIT_CODE" -ne 0 ]; then
+            while IFS= read -r line; do
+              case "$line" in
+                "FAIL ["*)
+                  echo "::error::${line}"
+                  ;;
+              esac
+            done < /tmp/pointer-check-output.txt
+          fi
+
+          exit "$EXIT_CODE"
+
+  pointer-autorepair:
+    name: pointer-autorepair
+    # Loop-prevention guard (plan-required): skip entirely when the
+    # triggering commit's own message carries the auto-repair marker, so
+    # this job never re-triggers itself on its own repair push. Kill
+    # switch: SKILLSMITH_SUBMODULE_POINTER_AUTOREPAIR_DISABLE=1.
+    if: >-
+      github.event_name == 'push' &&
+      !contains(github.event.head_commit.message, '[auto-repair SMI-6260]') &&
+      vars.SKILLSMITH_SUBMODULE_POINTER_AUTOREPAIR_DISABLE != '1'
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    concurrency:
+      group: submodule-pointer-repair-main
+      cancel-in-progress: false
+    permissions:
+      # NOT contents:write — the default GITHUB_TOKEN never performs the
+      # repair push (it can't push past a required status check at all,
+      # which is the whole reason SKILLSMITH_MAIN_PUSH_PAT exists). This
+      # token is only ever used for `gh issue` calls (issues:write) and the
+      # checkout step (contents:read). Declaring contents:write here would
+      # be an unused privilege grant on a job that already carries real
+      # write risk via the separate PAT (governance review finding).
+      contents: read
+      issues: write
+    env:
+      # Shadow mode suppresses ONLY the R3 auto-repair push — alerting
+      # (issue-opening) is never suppressed by shadow mode, per the plan's
+      # explicit shadow-mode-scope clarification. Default ON (shadow) —
+      # flip to '0' after the 7-day burn-in (exit criterion: zero
+      # false-positive hard-fails logged).
+      SKILLSMITH_SUBMODULE_POINTER_AUTOREPAIR_SHADOW: ${{ vars.SKILLSMITH_SUBMODULE_POINTER_AUTOREPAIR_SHADOW || '1' }}
+      GH_TOKEN: ${{ github.token }}
+    steps:
+      - name: Checkout main (full history, all branches)
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          fetch-depth: 0
+
+      - name: Resolve B_prev source
+        id: before
+        run: |
+          set -euo pipefail
+          RAW_BEFORE="${{ github.event.before }}"
+          if [ "$RAW_BEFORE" = "0000000000000000000000000000000000000000" ] || [ -z "$RAW_BEFORE" ]; then
+            echo "::warning::github.event.before is null (new-branch or force-push edge case, unusual for a push to main) — falling back to HEAD~1 for B_prev reconstruction"
+            echo "before_sha=$(git rev-parse HEAD~1)" >> "$GITHUB_OUTPUT"
+          else
+            echo "before_sha=$RAW_BEFORE" >> "$GITHUB_OUTPUT"
+          fi
+
+      - name: Fetch docs/internal submodule (best-effort)
+        # Unlike pointer-check (a required check with no other recourse), a
+        # fetch failure here just skips this run — matching
+        # docs-folder-index.yml's continue-on-error + warn precedent for the
+        # identical fetch operation. The next push-triggered run gets a
+        # fresh attempt.
+        id: fetch
+        continue-on-error: true
+        env:
+          STRATEGY_SUBMODULE_PAT: ${{ secrets.STRATEGY_SUBMODULE_PAT }}
+        run: |
+          set -euo pipefail
+          if [ -n "${STRATEGY_SUBMODULE_PAT:-}" ]; then
+            git config --global url."https://x-access-token:${STRATEGY_SUBMODULE_PAT}@github.com/".insteadOf "https://github.com/"
+          fi
+          git submodule update --init docs/internal
+
+      - name: Skip run — submodule fetch failed (R-FETCH)
+        if: steps.fetch.outcome == 'failure'
+        run: |
+          echo "::warning::docs/internal submodule fetch failed (R-FETCH) — skipping this pointer-autorepair run entirely; the next push-triggered run gets a fresh attempt."
+
+      - name: Evaluate and act
+        if: steps.fetch.outcome == 'success'
+        env:
+          GITHUB_SHA: ${{ github.sha }}
+          BEFORE_SHA: ${{ steps.before.outputs.before_sha }}
+          SHADOW: ${{ env.SKILLSMITH_SUBMODULE_POINTER_AUTOREPAIR_SHADOW }}
+          MAIN_PUSH_PAT: ${{ secrets.SKILLSMITH_MAIN_PUSH_PAT }}
+          GITHUB_REPOSITORY: ${{ github.repository }}
+        run: ./scripts/ci/submodule-pointer-autorepair.sh
