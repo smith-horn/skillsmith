@@ -17,6 +17,7 @@ import { SkillDependencyRepository } from '../../../src/repositories/SkillDepend
 import { createTestDatabase } from '../../helpers/database.js'
 import type { Database } from '../../../src/db/database-interface.js'
 import type { SkillContent } from '../../../src/services/skill-installation.types.js'
+import type { ClientId } from '../../../src/install/paths.js'
 
 const VALID_SKILL_MD = `---
 name: acme-tool
@@ -53,7 +54,7 @@ async function cleanupTmpDirs(): Promise<void> {
 
 function createService(
   db: Database,
-  client?: import('../../../src/install/paths.js').ClientId,
+  client?: ClientId,
   companionBaseDir?: string
 ): SkillInstallationService {
   const skillRepo = new SkillRepository(db)
