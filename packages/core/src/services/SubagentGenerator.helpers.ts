@@ -173,11 +173,34 @@ Task("${skillName}-specialist", "${exampleTask}", "${skillName}-specialist")
 export function extractTriggerPhrases(description: string, content: string): string[] {
   const phrases: string[] = []
 
-  // Common trigger phrase patterns
+  // Common trigger phrase patterns. CodeQL finding (SMI-6276, polynomial
+  // regex / ReDoS): the original patterns paired an optional word group
+  // (e.g. `(?:you\s+)?`) directly against a lazy wildcard capture
+  // (`(.+?)`) — since `.` also matches the letters/spaces the optional
+  // group matches, the engine has exponentially many ways to split
+  // ambiguous input (long runs of repeated words/spaces) between "the
+  // optional group matched" and "the wildcard consumed it instead".
+  // `textToSearch` includes up to 2000 chars of externally-authored
+  // SKILL.md content (a real untrusted-input path in a skill registry).
+  // Fix: bound each capture group to a small fixed max length instead of
+  // an unbounded lazy wildcard — extracted phrases are truncated to <=50
+  // chars a few lines below regardless, so this changes no real-world
+  // behavior, but caps worst-case backtracking work to a small constant
+  // instead of growing with input length.
+  const MAX_CANDIDATE_PHRASE_LENGTH = 60
   const patterns = [
-    /when\s+(?:you\s+)?(?:need\s+to\s+)?(.+?)(?:[.,]|$)/gi,
-    /use\s+(?:this\s+)?(?:when|for)\s+(.+?)(?:[.,]|$)/gi,
-    /(?:helps?\s+(?:you\s+)?(?:to\s+)?)?(.+?)(?:\s+tasks?|\s+operations?)/gi,
+    new RegExp(
+      `when\\s+(?:you\\s+)?(?:need\\s+to\\s+)?([^.,]{1,${MAX_CANDIDATE_PHRASE_LENGTH}})(?:[.,]|$)`,
+      'gi'
+    ),
+    new RegExp(
+      `use\\s+(?:this\\s+)?(?:when|for)\\s+([^.,]{1,${MAX_CANDIDATE_PHRASE_LENGTH}})(?:[.,]|$)`,
+      'gi'
+    ),
+    new RegExp(
+      `(?:helps?\\s+(?:you\\s+)?(?:to\\s+)?)?([^\\n]{1,${MAX_CANDIDATE_PHRASE_LENGTH}}?)(?:\\s+tasks?|\\s+operations?)`,
+      'gi'
+    ),
   ]
 
   const textToSearch = description + ' ' + content.slice(0, 2000) // Search first 2000 chars
