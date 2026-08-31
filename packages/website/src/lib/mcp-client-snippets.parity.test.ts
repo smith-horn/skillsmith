@@ -162,14 +162,17 @@ describe('MCP_CLIENT_SNIPPETS — parity with CLI CLIENT_SNIPPETS (SMI-5554)', (
           })
         } else {
           const mcpServers = parsed.mcpServers as Record<string, { env?: Record<string, string> }>
-          // SMI-5894 Wave 1 Step 7: cursor's body already carries
-          // SKILLSMITH_CLIENT before withApiKey() runs — the merged env
-          // block keeps that key alongside the injected API key, unlike
-          // every other JSON client whose env block starts empty.
+          // SMI-5894 Wave 1 Step 7 / SMI-6277 Wave 7: cursor's and
+          // antigravity's bodies already carry SKILLSMITH_CLIENT before
+          // withApiKey() runs — the merged env block keeps that key
+          // alongside the injected API key, unlike every other JSON client
+          // whose env block starts empty.
           const expectedEnv =
             snippet.id === 'cursor'
               ? { SKILLSMITH_CLIENT: 'cursor', SKILLSMITH_API_KEY: expectedValue }
-              : { SKILLSMITH_API_KEY: expectedValue }
+              : snippet.id === 'antigravity'
+                ? { SKILLSMITH_CLIENT: 'antigravity', SKILLSMITH_API_KEY: expectedValue }
+                : { SKILLSMITH_API_KEY: expectedValue }
           expect(mcpServers['@skillsmith/mcp-server'].env).toEqual(expectedEnv)
         }
       } else if (snippet.format === 'toml') {
@@ -191,6 +194,20 @@ describe('MCP_CLIENT_SNIPPETS — parity with CLI CLIENT_SNIPPETS (SMI-5554)', (
     }
     expect(parsed.mcpServers['@skillsmith/mcp-server'].env).toEqual({
       SKILLSMITH_CLIENT: 'cursor',
+    })
+  })
+
+  // SMI-6277 Wave 7: without SKILLSMITH_CLIENT, an AntiGravity user who
+  // copies the MCP snippet gets Claude Code's default install path
+  // (~/.claude/skills) instead of ~/.gemini/config/skills.
+  it('antigravity snippet includes SKILLSMITH_CLIENT="antigravity" even before an API key is added', () => {
+    const antigravity = MCP_CLIENT_SNIPPETS.find((s) => s.id === 'antigravity')
+    expect(antigravity).toBeDefined()
+    const parsed = JSON.parse(antigravity!.body) as {
+      mcpServers: Record<string, { env?: Record<string, string> }>
+    }
+    expect(parsed.mcpServers['@skillsmith/mcp-server'].env).toEqual({
+      SKILLSMITH_CLIENT: 'antigravity',
     })
   })
 })
