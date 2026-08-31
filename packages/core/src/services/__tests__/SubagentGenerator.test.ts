@@ -4,8 +4,16 @@
  */
 
 import { describe, it, expect } from 'vitest'
+import { parse as parseYaml } from 'yaml'
 import { generateSubagent, generateMinimalSubagent } from '../SubagentGenerator.js'
 import { analyzeSkill } from '../SkillAnalyzer.js'
+
+/** Extract just the frontmatter block (between the two `---` markers) as raw text. */
+function extractFrontmatter(content: string): string {
+  const match = content.match(/^---\n([\s\S]*?)\n---/)
+  if (!match) throw new Error('No frontmatter block found in generated content')
+  return match[1]
+}
 
 describe('SubagentGenerator', () => {
   describe('generateSubagent', () => {
@@ -358,6 +366,65 @@ Search for patterns using grep.
       expect(content).toMatch(/^mode: subagent$/m)
       expect(content).not.toMatch(/^tools:/m)
       expect(content).not.toMatch(/^model:/m)
+    })
+  })
+
+  // GPT-5.6-Sol round-2 pr-reviewer confirmation (SMI-6276): round 1's fix
+  // (JSON.stringify()-quoting the description) was CONFIRMED-FIXED, but the
+  // round-1 regression tests only asserted a description LINE existed, never
+  // actually exercised a hazardous `: ` or ` #` sequence. This closes that
+  // coverage gap by parsing the generated frontmatter with a real YAML
+  // parser, proving both that it's syntactically valid AND that the
+  // hazardous substrings survive intact rather than corrupting the block.
+  describe('YAML-safe description quoting (SMI-6276 round 2)', () => {
+    // Heavy tool-usage body (same pattern already proven above in this file)
+    // to reliably clear generateSubagent()'s own "worth generating" gate —
+    // the hazardous text under test lives only in the `description` argument
+    // passed to generateSubagent(), not the source SKILL.md's own frontmatter.
+    const heavyToolBody = `---
+name: hazard-skill
+description: A skill with heavy tool usage for YAML-hazard testing
+---
+
+# Hazard Skill
+
+- npm install
+- git status
+- docker build
+- npx something
+- yarn add
+- pnpm install
+
+Use bash to execute commands.
+Terminal operations are common.
+`
+
+    it('a description containing ": " does not get reinterpreted as a nested YAML key', () => {
+      const description = 'Handles config: values and other: colon-separated pairs'
+      const analysis = analyzeSkill(heavyToolBody)
+      const result = generateSubagent('colon-skill', description, heavyToolBody, analysis)
+
+      const frontmatter = extractFrontmatter(result.subagent!.content)
+      const parsed = parseYaml(frontmatter) as Record<string, unknown>
+      // The full description text must survive as ONE string value under the
+      // `description` key — not silently truncated, and not exploded into
+      // extra top-level keys by an unescaped `: `.
+      expect(typeof parsed.description).toBe('string')
+      expect(parsed.description as string).toContain(description)
+      expect(Object.keys(parsed)).not.toContain('values and other')
+    })
+
+    it('a description containing " #" does not get truncated as a YAML comment', () => {
+      const description = 'Fixes issue #123 and #456 before release'
+      const analysis = analyzeSkill(heavyToolBody)
+      const result = generateSubagent('hash-skill', description, heavyToolBody, analysis)
+
+      const frontmatter = extractFrontmatter(result.subagent!.content)
+      const parsed = parseYaml(frontmatter) as Record<string, unknown>
+      expect(typeof parsed.description).toBe('string')
+      // Everything after the first ` #` must still be present -- an
+      // unquoted scalar would have silently dropped "123 and #456...".
+      expect(parsed.description as string).toContain('#123 and #456 before release')
     })
   })
 })
