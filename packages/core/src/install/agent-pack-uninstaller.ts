@@ -15,16 +15,27 @@
  *   - A path already missing on disk (user deleted it manually) is a no-op,
  *     not an error.
  *
- * SECURITY (governance follow-up, 2026-07-01): before touching the
- * filesystem, every entry's `path` is checked against
- * {@link isAllowedManifestEntryPath} (must structurally match one of the
- * installer's known per-harness target locations) and, when `backupPath` is
- * set, {@link isAllowedManifestBackupPath} (must resolve under this run's
+ * SECURITY (governance follow-up, 2026-07-01; symlink check added SMI-6275
+ * Wave 5 per two rounds of GPT-5.6-Sol pr-reviewer findings — round 1 caught
+ * a symlinked LEAF, round 2 caught round 1's own fix still missing a
+ * symlinked ANCESTOR directory): before touching the filesystem, every
+ * entry's `path` is checked against {@link isAllowedManifestEntryPath} (must
+ * structurally match one of the installer's known per-harness target
+ * locations), that `realpathSync()`'s fully-resolved form of the path
+ * (dereferencing EVERY symlink in the chain, leaf and ancestors alike)
+ * equals its own plain `path.resolve()` (a matching suffix proves the path
+ * LOOKS right, not that every component of the actual filesystem node
+ * reached by that path is a plain, non-symlinked directory/file the
+ * installer actually wrote — a link anywhere in the chain would make the
+ * restore branch's `writeFileSync` follow it and overwrite whatever is at
+ * the far end instead), and, when `backupPath` is set,
+ * {@link isAllowedManifestBackupPath} (must resolve under this run's
  * manifest backups directory). The manifest is an ordinary user-writable
  * JSON file, not a signed record — a corrupted or tampered manifest must
  * never become an arbitrary-file-delete/overwrite primitive. An entry
- * failing either check is skipped entirely (added to `result.rejected`,
- * counted toward neither `removed` nor `restored`) rather than acted on.
+ * failing any check is skipped entirely (added to `result.rejected`,
+ * counted toward neither `removed` nor `restored`)
+ * rather than acted on.
  *
  * After removing all installer-created files, now-empty directories we
  * likely created (the parents of removed paths) are cleaned up bottom-up —
@@ -39,8 +50,15 @@
  * @module @skillsmith/core/install/agent-pack-uninstaller
  */
 
-import { dirname } from 'node:path'
-import { existsSync, readFileSync, rmdirSync, unlinkSync, writeFileSync } from 'node:fs'
+import { dirname, resolve } from 'node:path'
+import {
+  existsSync,
+  readFileSync,
+  realpathSync,
+  rmdirSync,
+  unlinkSync,
+  writeFileSync,
+} from 'node:fs'
 
 import { loadAgentManifest, saveAgentManifest } from './agent-manifest.js'
 import {
@@ -72,6 +90,44 @@ export function uninstallAgentPack(_opts: AgentUninstallOptions = {}): AgentUnin
     }
     if (!existsSync(entry.path)) {
       alreadyGone.push(entry.path)
+      continue
+    }
+    // GPT-5.6-Sol pr-reviewer finding (SMI-6275 Wave 5), round 2: passing
+    // isAllowedManifestEntryPath's structural suffix check proves entry.path
+    // LOOKS like one of the installer's known targets — it does not prove
+    // the filesystem node there is the plain file/directory this installer
+    // actually wrote. Round 1 of this fix only lstat'd the LEAF (entry.path
+    // itself) for isSymbolicLink() — round 2's confirmation pass correctly
+    // flagged that as incomplete: lstat does not dereference PARENT path
+    // components, so a symlinked ancestor directory (e.g. `.agents` itself
+    // being a symlink — a real risk for the workspace-relative allowlist
+    // added this wave, since a workspace root is far more likely to contain
+    // untrusted pre-existing content than $HOME) would still let the leaf
+    // check pass while writeFileSync's restore branch below resolves
+    // through that ancestor link and overwrites content OUTSIDE the
+    // manifest-declared path entirely. realpathSync() resolves EVERY
+    // symlink in the full chain (leaf and every ancestor); comparing its
+    // result against the plain, non-dereferencing path.resolve() of the
+    // same input catches a link anywhere in that chain in one check — this
+    // supersedes (not supplements) the leaf-only lstatSync check.
+    const resolvedPath = resolve(entry.path)
+    let realEntryPath: string
+    try {
+      realEntryPath = realpathSync(resolvedPath)
+    } catch {
+      // existsSync() above passed, but the path vanished (or a component
+      // became unreadable) before realpathSync ran — a race, not proof of
+      // safety. Reject rather than fall through to alreadyGone, which
+      // would silently skip cleanup of what could be a real artifact.
+      rejected.push(entry.path)
+      continue
+    }
+    // audit-allow:realpath-asymmetry — both sides derive from the SAME
+    // input (entry.path); the divergence itself is the detection signal
+    // (see the fuller comment above), not the SMI-4688/4692 bug this check
+    // targets (two independently-derived paths, only one realpath'd).
+    if (realEntryPath !== resolvedPath) {
+      rejected.push(entry.path)
       continue
     }
     touchedDirs.add(dirname(entry.path))

@@ -6,7 +6,15 @@
  *               the governance manifest-path-guard security tests.
  * @module @skillsmith/core/install/agent-pack-uninstaller.test
  */
-import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs'
+import {
+  existsSync,
+  mkdirSync,
+  mkdtempSync,
+  readFileSync,
+  rmSync,
+  symlinkSync,
+  writeFileSync,
+} from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { afterEach, beforeEach, describe, expect, it } from 'vitest'
@@ -116,6 +124,98 @@ describe('uninstallAgentPack — exact reversal', () => {
     // ...and is reported as rejected, not silently dropped or counted as removed.
     expect(result.rejected).toContain(sensitivePath)
     expect(result.removed).not.toContain(sensitivePath)
+  })
+
+  // GPT-5.6-Sol pr-reviewer finding (SMI-6275 Wave 5): isAllowedManifestEntryPath
+  // proves entry.path structurally LOOKS like a known installer target — it
+  // says nothing about whether the filesystem node there is the plain file
+  // the installer wrote, versus a symlink (e.g. content already present at
+  // that exact path before Skillsmith ever ran). Without a symlink check,
+  // the restore branch's `writeFileSync` follows the link and overwrites
+  // whatever it points at, even though `entry.path` and `entry.backupPath`
+  // both pass every existing validation.
+  it('refuses to restore into (or delete) a manifest entry whose path is a symlink, even with a legitimate backupPath', () => {
+    mkdirSync(join(homeDir, '.claude'), { recursive: true })
+    const settingsPath = join(homeDir, '.claude', 'settings.json')
+    writeFileSync(settingsPath, JSON.stringify({ someOtherKey: true }, null, 2))
+
+    installAgentPack({ homeDir })
+    const manifestPath = getAgentManifestPath()
+    const manifestAfterInstall = JSON.parse(readFileSync(manifestPath, 'utf-8')) as {
+      entries: Array<{ path: string; backupPath: string | null }>
+    }
+    const settingsEntry = manifestAfterInstall.entries.find((e) => e.path === settingsPath)
+    // A REAL, trusted backup from the real install run — proves the symlink
+    // check is what blocks this, not the pre-existing backupPath validation.
+    expect(settingsEntry?.backupPath).toBeTruthy()
+
+    // Replace the real settings.json with a symlink to an unrelated victim
+    // file OUTSIDE any installer target, simulating content that already
+    // occupied this exact allowed-suffix path before Skillsmith ran.
+    rmSync(settingsPath)
+    const victimPath = join(homeDir, 'victim.txt')
+    writeFileSync(victimPath, 'victim original content')
+    symlinkSync(victimPath, settingsPath)
+
+    const result = uninstallAgentPack()
+
+    // The victim file must be untouched — restore-from-backup must NOT
+    // follow the symlink and overwrite its target.
+    expect(readFileSync(victimPath, 'utf-8')).toBe('victim original content')
+    // The symlink itself is left alone too (rejected, not replaced/deleted).
+    expect(existsSync(settingsPath)).toBe(true)
+    expect(result.rejected).toContain(settingsPath)
+    expect(result.restored).not.toContain(settingsPath)
+    expect(result.removed).not.toContain(settingsPath)
+  })
+
+  // GPT-5.6-Sol pr-reviewer round-2 confirmation finding: round 1's fix only
+  // lstat'd the LEAF path for isSymbolicLink() — a symlinked ANCESTOR
+  // directory still slipped through, since lstat doesn't dereference parent
+  // components. The realpathSync()-based fix must catch this too.
+  it('refuses to restore into (or delete) a manifest entry whose path is reached through a symlinked ANCESTOR directory', () => {
+    // A real, non-symlinked ".claude" directory holding the victim...
+    const realClaudeDir = join(homeDir, 'real-claude-target')
+    mkdirSync(realClaudeDir, { recursive: true })
+    const victimPath = join(realClaudeDir, 'settings.json')
+    writeFileSync(victimPath, 'victim original content')
+
+    // ...and a manifest entry whose path is reached via a SYMLINKED
+    // ".claude" directory (the parent, not the leaf) pointing at it — the
+    // leaf component itself ("settings.json") is not a symlink at all.
+    const claudeSymlinkPath = join(homeDir, '.claude')
+    symlinkSync(realClaudeDir, claudeSymlinkPath)
+    const entryPath = join(claudeSymlinkPath, 'settings.json')
+
+    const manifestPath = getAgentManifestPath()
+    writeFileSync(
+      manifestPath,
+      JSON.stringify(
+        {
+          schemaVersion: 1,
+          installedAt: new Date().toISOString(),
+          packSchemaVersion: 1,
+          entries: [
+            {
+              path: entryPath,
+              kind: 'mcp-config',
+              harness: 'claude-code',
+              backupPath: null,
+              executable: false,
+            },
+          ],
+        },
+        null,
+        2
+      )
+    )
+
+    const result = uninstallAgentPack()
+
+    // The victim file must be untouched.
+    expect(readFileSync(victimPath, 'utf-8')).toBe('victim original content')
+    expect(result.rejected).toContain(entryPath)
+    expect(result.removed).not.toContain(entryPath)
   })
 
   it('refuses to restore from a backupPath outside the manifest backups directory', () => {

@@ -44,6 +44,17 @@
  *     `agent-pack-installer.entry.ts`). Agent markdown lives at
  *     `~/.config/opencode/agents/` — plural (opencode.ai/docs/agents/; the
  *     earlier singular `agent/` guess was wrong).
+ *   - antigravity (SMI-6275 Wave 5): HIGH — `.agents/mcp_config.json`,
+ *     standard `mcpServers` object shape, verified 2026-08-30 via live web
+ *     search against antigravity.google/docs/ide/mcp/ and
+ *     antigravity.google/docs/cli/mcp/ (both explicitly document the
+ *     workspace-local path and the shared global sibling
+ *     `~/.gemini/config/mcp_config.json`, corroborated by two independent
+ *     third-party sources — Google Cloud Community/Medium and a Composio
+ *     how-to). NOT listed in {@link AGENT_MCP_TARGETS} below, unlike every
+ *     other row in this list — see `McpHarnessId`'s own doc comment for why,
+ *     and `agent-pack-installer.antigravity-mcp.ts` for the dedicated
+ *     writer this wave adds instead.
  */
 
 import { homedir } from 'node:os'
@@ -51,8 +62,25 @@ import { join } from 'node:path'
 
 import type { HarnessId } from '../services/agent-pack/index.js'
 
-/** Harnesses that can receive an MCP server registration (all 7 targets). */
-export type McpHarnessId = HarnessId | 'windsurf' | 'hermes'
+/**
+ * Harnesses that can receive an MCP server registration via
+ * {@link AGENT_MCP_TARGETS}'s HOME-anchored `Record` shape (7 targets).
+ *
+ * `antigravity` is EXCLUDED here (SMI-6275 Wave 5) even though it is a
+ * {@link HarnessId} member — its `.agents/mcp_config.json` is
+ * WORKSPACE-anchored (relative to the workspace root Wave 4's
+ * `resolveScopedSkillsDir()` resolves), not home-anchored like every other
+ * `McpConfigTarget.path` in this file, so it structurally cannot be a value
+ * in a `Record<McpHarnessId, McpConfigTarget>` whose every consumer
+ * (`relocateUnderHome`, `agent-manifest-path-guard.ts`'s home-relative
+ * suffix computation) assumes a home-anchored path. This is the same
+ * structural reason Cursor got its own dedicated installer split
+ * (`agent-pack-installer.cursor-mcp.ts`, SMI-6279 Wave 9) rather than a
+ * generic-path `AGENT_MCP_TARGETS` entry — AntiGravity gets the same
+ * treatment: `agent-pack-installer.antigravity-mcp.ts` owns its path
+ * resolution + entry-value shape entirely outside this table.
+ */
+export type McpHarnessId = Exclude<HarnessId, 'antigravity'> | 'windsurf' | 'hermes'
 
 /** Config-file format the merge helper must speak for a given target. */
 export type ConfigFormat = 'json' | 'yaml' | 'toml-block'
@@ -172,6 +200,12 @@ export const AGENT_SHIM_TARGETS: Readonly<Record<HarnessId, ShimTarget | null>> 
   // ~/.codex/config.toml, not a standalone file — see AGENT_MCP_TARGETS.codex
   // and agent-config-merge.toml-block.ts. No separate ShimTarget.
   codex: null,
+  // SMI-6275 Wave 5 decision (stated, not an oversight): no named-agent shim
+  // for AntiGravity this wave — no verified evidence of a shim/companion-file
+  // convention distinct from `.agents/mcp_config.json` turned up during this
+  // wave's research. See HOOK_HARNESSES's doc comment (services/agent-pack/types.ts)
+  // for the parallel hooks decision.
+  antigravity: null,
 }
 
 /** Hook install targets — only harnesses with a real SessionStart hook (HOOK_HARNESSES). */

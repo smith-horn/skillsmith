@@ -18,6 +18,12 @@ export const HARNESS_SUPPORT_TIER: Readonly<Record<string, SupportTier>> = {
   opencode: 2,
   hermes: 2,
   windsurf: 3,
+  // SMI-6275 Wave 5: MCP config only (no shim, no hooks) — same reduced
+  // profile as windsurf, stated explicitly per the wave's own "support tier"
+  // decision requirement (see HOOK_HARNESSES's doc comment,
+  // services/agent-pack/types.ts, and AGENT_SHIM_TARGETS.antigravity,
+  // agent-harness-targets.ts).
+  antigravity: 3,
 }
 
 export interface HarnessInstallReport {
@@ -40,12 +46,22 @@ export interface AgentInstallOptions {
   /**
    * ADR-139 (SMI-6274 Wave 4, point 5's Wave 5 bootstrap requirement):
    * `'workspace'` bootstraps AntiGravity as a target by resolving (and, if
-   * necessary, CREATING) its workspace-scoped `.agents/skills` directory
-   * via `resolveScopedSkillsDir()`, then writing the skill pack there —
-   * this is the ONLY path that may create `.agents/` (bare `agent install`
-   * with no `scope` never touches AntiGravity at all, matching every other
-   * harness's detection-only default). Omitted/`'global'` preserves
-   * today's exact behavior.
+   * necessary, CREATING) its workspace-scoped `.agents/` directory via
+   * `resolveScopedSkillsDir()`, then writing the skill pack AND
+   * `.agents/mcp_config.json` there (SMI-6275 Wave 5 adds the latter) —
+   * this is the ONLY path that may CREATE `.agents/`.
+   *
+   * Omitted/`'global'` does NOT mean "AntiGravity untouched," despite the
+   * name — bare `agent install` still AUTO-DETECTS an already-EXISTING
+   * `.agents/` marker at or above `cwd` (ADR-139 point 2 rank 4, a
+   * read-only check that never creates anything) and, when found, installs
+   * the same skill pack + MCP config there. AntiGravity is only skipped
+   * entirely (reported `detected: false`, with a note — never a silent
+   * omission) when NO `.agents/` marker exists anywhere in the ancestry AND
+   * `scope` wasn't explicitly `'workspace'`. This auto-detect behavior is
+   * new in SMI-6275 Wave 5 — Wave 4 gated the skill-pack write on an
+   * explicit `'workspace'` value ONLY (see git history if comparing against
+   * that wave's own tests).
    */
   scope?: 'global' | 'workspace'
   /**

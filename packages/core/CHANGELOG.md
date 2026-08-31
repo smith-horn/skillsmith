@@ -4,6 +4,30 @@ All notable changes to `@skillsmith/core` are documented here.
 
 ## [Unreleased]
 
+- **Feature**: `sklx agent install` now supports AntiGravity as a harness (`@skillsmith/core/install`,
+  SMI-6275 Wave 5, closing the last unshipped ask of GH#2166). `HarnessId` gains `'antigravity'`,
+  but — unlike every other MCP-capable harness — it is deliberately excluded from `McpHarnessId`
+  and has no entry in `AGENT_MCP_TARGETS`: AntiGravity's MCP config is WORKSPACE-anchored
+  (`.agents/mcp_config.json`, verified live against antigravity.google/docs/ide/mcp/ and
+  antigravity.google/docs/cli/mcp/ — same standard `mcpServers`-keyed JSON shape as
+  claude-code/copilot/windsurf, registered under the package-scoped key `@skillsmith/mcp-server`
+  to match AntiGravity's own docs snippet, the same key-alignment fix SMI-6279 made for Cursor),
+  not home-anchored like the shared `Record`'s other entries. New
+  `agent-pack-installer.antigravity-mcp.ts` (mirroring the Cursor split) owns its path resolution
+  + entry-value shape entirely; only the entry-value builder is genuinely new code, reusing
+  `mergeJsonMcpEntry()` for the actual write. `installAgentPack` now resolves AntiGravity's scope
+  on every run (not just `--scope workspace`) — a bare `agent install` auto-detects an
+  already-existing `.agents/` marker (ADR-139 point 2 rank 4) and configures it, while
+  `--scope workspace` remains the only path that can CREATE one (ADR-139 point 5); AntiGravity now
+  always gets a report row (`detected: false` with an explanatory note when its workspace scope
+  doesn't resolve), matching every other harness's reporting shape instead of Wave 4's
+  row-omission. Support tier 3 (MCP config only) — no hooks (no documented AntiGravity hook
+  system found) and no named-agent shim this wave, both stated decisions. `agent-manifest-path-guard.ts`
+  gains a second, WORKSPACE-relative allowlist (alongside the existing home-relative one) so
+  `uninstallAgentPack` can actually remove AntiGravity's two workspace-scoped artifacts instead of
+  silently rejecting them as outside every known install target — closes a latent gap in Wave 4's
+  own skill-pack-only implementation, caught while extending the same guard for the MCP config file.
+
 - **Feature**: ADR-139 global-vs-workspace install scope resolution (`@skillsmith/core/install`,
   SMI-6274 Wave 4). New `resolveSkillScope()`/`resolveScopedSkillsDir()` resolve whether an
   install/list/update/remove targets a client's global directory (`CLIENT_NATIVE_PATHS`) or a
