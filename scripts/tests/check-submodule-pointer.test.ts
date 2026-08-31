@@ -210,6 +210,13 @@ describe('check-submodule-pointer.sh — R0-R11 + R-FETCH', () => {
     expect(r.status).toBe(0)
     expect(r.stdout).toContain('PASS-WARN (R4)')
     expect(r.stdout).toContain('live remote branch')
+    // SMI-6260 review fix: a pure R4 case (no independent B-axis R7 match)
+    // must emit exactly ONE result line for the mount -- R4's own verdict is
+    // "PASS + warning annotation", a single line, not that line followed by
+    // a second, redundant generic "PASS: ... OK relative to ..." line for
+    // the same mount. Confirmed live before the fix: both lines printed.
+    const resultLines = r.stdout.split('\n').filter((line) => line.includes('[docs/internal]'))
+    expect(resultLines).toHaveLength(1)
   })
 
   it('R5: S is a strict descendant of T but contained in no remote branch -> FAIL (orphaned)', () => {

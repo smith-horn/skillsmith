@@ -198,6 +198,23 @@ evaluate_layer2() {
 
     _CSP_FAIL_RULES=()
     _CSP_FAIL_MSGS=()
+    # SMI-6260 review fix: tracks whether the T-axis already emitted R4's own
+    # "PASS-WARN" verdict line, so the unconditional-PASS fallback below (for
+    # the no-FAIL-rules case) doesn't ALSO print a second, redundant generic
+    # "PASS: ... OK relative to ..." line for the same mount immediately
+    # after it. Confirmed live before this fix: a pure R4 case (S ahead of T
+    # on a live branch, no B-axis R7 match) printed BOTH lines back-to-back —
+    # every rule in the R0-R11 table is defined as exactly one verdict per
+    # mount (see this file's own "print_result — unified output line" and
+    # "Returns 0 (PASS/SKIP) or 1 (FAIL)" contract above), and R4's own
+    # verdict is "PASS + warning annotation", not "PASS + warning annotation,
+    # then also a second unrelated PASS". Must NOT just `return 0`
+    # immediately after printing R4's line — the combined-state (T<S<B) case
+    # requires the B-axis (R7) check below to still run and can still FAIL
+    # even though R4 passed on the T-axis alone (see check-submodule-pointer.test.ts's
+    # "combined state T < S < B" case) — this flag only suppresses the later
+    # redundant PASS print, it does not skip any evaluation.
+    _CSP_R4_WARNED=0
 
     # T-axis: S vs T (R2/R3/R4/R5/R6 — mutually exclusive with each other).
     if [ "$_CSP_S" = "$_CSP_T" ]; then
@@ -210,6 +227,7 @@ evaluate_layer2() {
     elif git -C "$_CSP_DIR" merge-base --is-ancestor "$_CSP_T" "$_CSP_S" 2>/dev/null; then
         if git -C "$_CSP_DIR" branch -r --contains "$_CSP_S" 2>/dev/null | grep -q .; then
             print_result "PASS-WARN (R4)" "$_CSP_MOUNT" "\`$_CSP_S\` is ahead of \`$_CSP_T\` and lives on a live remote branch (legitimate 'docs PR merged just after' case, SMI-5666)" "$_CSP_BLOCK"
+            _CSP_R4_WARNED=1
         else
             _CSP_FAIL_RULES+=("R5")
             _CSP_FAIL_MSGS+=("R5: orphaned tip: \`$_CSP_S\`'s branch was force-pushed or deleted after this pointer was set; re-bump to a commit on a live branch, or to \`$_CSP_T\`")
@@ -228,7 +246,9 @@ evaluate_layer2() {
     fi
 
     if [ "${#_CSP_FAIL_RULES[@]}" -eq 0 ]; then
-        print_result "PASS" "$_CSP_MOUNT" "\`$_CSP_S\` OK relative to \`$_CSP_T\`" "$_CSP_BLOCK"
+        if [ "$_CSP_R4_WARNED" -ne 1 ]; then
+            print_result "PASS" "$_CSP_MOUNT" "\`$_CSP_S\` OK relative to \`$_CSP_T\`" "$_CSP_BLOCK"
+        fi
         return 0
     fi
 
