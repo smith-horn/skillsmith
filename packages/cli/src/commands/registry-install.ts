@@ -42,11 +42,29 @@ export function createRegistryInstallCommand(): Command {
 
 /**
  * Build the `registry` command group.
+ *
+ * SMI-6278 (Wave 8): only `registry install` exists as a CLI subcommand today
+ * — publish/list are already-shipped, documented MCP-tool-only surfaces
+ * (`private_registry_publish` / `private_registry_manage`), not a gap. The
+ * trailing help text below surfaces that same stance (matching
+ * `packages/website/src/pages/docs/private-registry.astro`) so
+ * `registry --help` doesn't read as an accidental omission. No new CLI
+ * subcommands here — that's tracked separately as SMI-6290.
  */
 export function createRegistryCommand(): Command {
   return new Command('registry')
     .description("Commands for your team's private skill registry (Enterprise)")
     .addCommand(createRegistryInstallCommand())
+    .addHelpText(
+      'after',
+      `
+Note: Publishing and listing are MCP-only today — there's no CLI command for
+either yet, only for install. Use the private_registry_publish and
+private_registry_manage MCP tools instead.
+
+See https://skillsmith.app/docs/private-registry for details.
+`
+    )
 }
 
 export default createRegistryCommand
