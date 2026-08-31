@@ -94,12 +94,20 @@ _fuzzy_row_count() {
   printf '%s' "$out"
 }
 
-# _fuzzy_row_ids_unique BODY -- echoes "true" if every row's `id` in a fuzzy_search_skills JSON
-# array response is distinct (guards the SMI-6284 staged rewrite's stage-1/stage-2 dedup), "false"
-# if a duplicate exists, or "unknown" if BODY is not a JSON array.
+# _fuzzy_row_ids_unique BODY -- echoes "true" if BODY is a JSON array where every element is an
+# object with a non-null `id` and every `id` is distinct (guards the SMI-6284 staged rewrite's
+# stage-1/stage-2 dedup), "false" if a duplicate OR any malformed/null-id row exists (confirmation-
+# review finding: a single null/missing id used to pass silently, since it's trivially "unique"
+# against every real id -- now any malformed row fails outright), or "unknown" if BODY is not a
+# JSON array at all.
 _fuzzy_row_ids_unique() {
   local body="$1" out
-  out=$(printf '%s' "$body" | jq -r 'if type == "array" then (length == (map(.id) | unique | length) | tostring) else "unknown" end' 2>/dev/null)
+  out=$(printf '%s' "$body" | jq -r '
+    if type != "array" then "unknown"
+    elif (all(.[]; type == "object" and (.id != null)) | not) then "false"
+    else (length == (map(.id) | unique | length) | tostring)
+    end
+  ' 2>/dev/null)
   if [ -z "$out" ]; then
     out="unknown"
   fi

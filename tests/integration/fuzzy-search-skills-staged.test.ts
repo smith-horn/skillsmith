@@ -98,17 +98,28 @@ describe.skipIf(!LIVE_DB)('SMI-6284: fuzzy_search_skills staged rewrite', () => 
     }
   })
 
-  it('stage 1 alone fills the limit and stage 2 never runs (no description-only rows leak in)', async () => {
-    // 25 name-arm matches (over the limit of 20) + 5 description-only matches
-    // that would ONLY surface if stage 2 ran.
+  it('stage 1 alone fills the limit and stage 2 never runs (deterministic vs. the old global-ranking function)', async () => {
+    // 25 WEAK name-arm matches (a mutated prefix, verified live via
+    // `SELECT word_similarity('smi6284fzstg', 'smi6284fzst')` to score
+    // ~0.846 -- passes the 0.5 floor but is not a perfect match) + 1
+    // description-only row that scores a PERFECT 1.0. This makes the test
+    // genuinely discriminating (confirmation-review finding #3): under the
+    // OLD monolithic function (global top-N by GREATEST(name-sim,
+    // desc-sim)), the perfect-1.0 desc-only row would outrank every 0.846
+    // name row and appear in the top 20. Under the STAGED function, stage 1
+    // alone (25 rows >= limit 20) fills the limit and stage 2 never runs,
+    // so that row can never appear -- a real behavioral difference, not
+    // just "both happen to return 20 rows."
     const nameRows: ScratchRow[] = Array.from({ length: 25 }, (_, i) => ({
-      name: `${NAME_MARKER}-name-${i}`,
+      name: `smi6284fzst-name-${i}`, // weak match, ~0.846 -- see comment above
     }))
-    const descOnlyRows: ScratchRow[] = Array.from({ length: 5 }, (_, i) => ({
-      name: `unrelated-${i}`,
-      description: `contains ${NAME_MARKER} only in the description, not the name`,
-    }))
-    const descOnlyIds = new Set(await seed(descOnlyRows))
+    const perfectDescOnlyRow: ScratchRow[] = [
+      {
+        name: 'unrelated-perfect-desc',
+        description: `exact word match ${NAME_MARKER} embedded here`, // scores 1.0
+      },
+    ]
+    const perfectDescId = (await seed(perfectDescOnlyRow))[0]
     await seed(nameRows)
 
     const { data, error } = await adminClient.rpc('fuzzy_search_skills', {
@@ -119,26 +130,38 @@ describe.skipIf(!LIVE_DB)('SMI-6284: fuzzy_search_skills staged rewrite', () => 
 
     expect(error, `RPC failed: ${error?.message}`).toBeNull()
     expect(data).toHaveLength(20)
-    for (const row of data as Array<{ id: string }>) {
-      expect(
-        descOnlyIds.has(row.id),
-        'stage 2 must not run when stage 1 already fills the limit'
-      ).toBe(false)
-    }
+    const returnedIds = (data as Array<{ id: string }>).map((r) => r.id)
+    expect(
+      returnedIds,
+      'the perfect-scoring description-only row must not appear -- if it does, stage 2 ran when it should not have (or the old global-ranking behavior silently came back)'
+    ).not.toContain(perfectDescId)
   })
 
   it('stage 2 tops up when stage 1 under-fills, with no duplicate rows across stages', async () => {
-    // Only 3 name-arm matches (well under the limit) + 8 description-only
-    // matches -- stage 2 must run and contribute up to (limit - 3) rows.
-    const nameRows: ScratchRow[] = Array.from({ length: 3 }, (_, i) => ({
+    // 3 name-only matches + 2 OVERLAP matches (marker in BOTH name and
+    // description) + 8 description-only matches -- stage 2 must run
+    // (5 total name-arm matches < limit 20) and contribute up to
+    // (limit - 5) rows. Confirmation-review finding #2: the original
+    // version of this test had NO row matching both arms, so the SQL's
+    // `NOT (search_query <% s.name)` dedup guard could be silently
+    // deleted and this test would still pass. The 2 overlap rows close
+    // that gap -- they MUST appear in the response, and exactly once,
+    // which only holds if stage 2 correctly excludes rows stage 1 already
+    // returned.
+    const nameOnlyRows: ScratchRow[] = Array.from({ length: 3 }, (_, i) => ({
       name: `${DESC_MARKER}-name-${i}`,
+    }))
+    const overlapRows: ScratchRow[] = Array.from({ length: 2 }, (_, i) => ({
+      name: `${DESC_MARKER}-overlap-${i}`,
+      description: `also mentions ${DESC_MARKER} in the description`,
     }))
     const descOnlyRows: ScratchRow[] = Array.from({ length: 8 }, (_, i) => ({
       name: `unrelated-desc-${i}`,
       description: `mentions ${DESC_MARKER} in the body text only`,
     }))
-    const nameIds = new Set(await seed(nameRows))
-    const descIds = new Set(await seed(descOnlyRows))
+    const nameOnlyIds = new Set(await seed(nameOnlyRows))
+    const overlapIds = await seed(overlapRows)
+    const descOnlyIds = new Set(await seed(descOnlyRows))
 
     const { data, error } = await adminClient.rpc('fuzzy_search_skills', {
       search_query: DESC_MARKER,
@@ -148,13 +171,24 @@ describe.skipIf(!LIVE_DB)('SMI-6284: fuzzy_search_skills staged rewrite', () => 
 
     expect(error, `RPC failed: ${error?.message}`).toBeNull()
     const rows = data as Array<{ id: string }>
-    expect(rows.length).toBe(11) // all 3 name + all 8 desc-only (11 < 20, no cap binds)
+    // 3 name-only + 2 overlap (both returned once, by stage 1) + 8 desc-only
+    // (returned by stage 2, overlap rows excluded since stage 1 already has
+    // them) = 13 total, not 15 -- if this were 15, the dedup guard is broken
+    // and the overlap rows leaked into stage 2 as well.
+    expect(rows.length).toBe(13)
 
     const returnedIds = rows.map((r) => r.id)
-    expect(new Set(returnedIds).size).toBe(returnedIds.length) // no duplicates
+    expect(new Set(returnedIds).size).toBe(returnedIds.length) // no duplicates anywhere
 
-    for (const id of nameIds) expect(returnedIds).toContain(id)
-    for (const id of descIds) expect(returnedIds).toContain(id)
+    for (const id of nameOnlyIds) expect(returnedIds).toContain(id)
+    for (const id of overlapIds) {
+      const occurrences = returnedIds.filter((r) => r === id).length
+      expect(
+        occurrences,
+        `overlap row ${id} must appear exactly once, not ${occurrences} times`
+      ).toBe(1)
+    }
+    for (const id of descOnlyIds) expect(returnedIds).toContain(id)
   })
 
   it('excludes quarantined rows on both stage 1 and stage 2', async () => {
