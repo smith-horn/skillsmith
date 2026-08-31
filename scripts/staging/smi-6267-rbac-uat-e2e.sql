@@ -215,10 +215,22 @@ END $p0$;
 --   admin_a   team A admin        -- default admin; post-6242 holds NEITHER meta-permission
 --   admin2_a  team A second admin -- target for the admin-vs-admin gate
 --   member_a  team A member       -- default member; holds nothing
---   mgr_a     team A member       -- + an explicit team:manage_rbac ALLOW grant. This is
---                                    the "delegated RBAC manager": the single most
---                                    dangerous principal in the model, and the one the
---                                    set-then-reset bypass class is about.
+--   mgr_a     team A member       -- pre-SMI-6319 this was "+ an explicit team:manage_rbac
+--                                    ALLOW grant" -- "the delegated RBAC manager", the
+--                                    single most dangerous principal in the model, and the
+--                                    one the set-then-reset bypass class was about. SMI-6319
+--                                    makes that grant row unrepresentable (a table CHECK
+--                                    plus set_team_role_permission's gate 4b now refuse ANY
+--                                    row that gives team:manage_rbac/team:manage_sso an
+--                                    allow effect, to any role, even written by the owner)
+--                                    -- so mgr_a can no longer be constructed. Its fixture
+--                                    user/uuid is retained (T6.0/T7.0/T7.1 assert that the
+--                                    delegation attempt itself is now refused), but every
+--                                    T6/T7 case that used to run "as mgr_a" testing a gate
+--                                    downstream of the RPCs' shared gate 3 is now
+--                                    unreachable and marked SKIP with a pointer to the
+--                                    SMI-6319 assertion that supersedes it -- see T6's and
+--                                    T7's own block headers below.
 --   dual      team A + team B member -- cross-team isolation
 --   outsider  no team at all      -- existence-oracle probing
 --   owner_b   team B owner
@@ -690,16 +702,29 @@ END $t5$;
 -- ============================================================================
 -- T6. GRANT-WRITE RPC GATES + THE SET-THEN-RESET BYPASS CLASS.
 --
--- The high-value adversarial block. The principal of interest is `mgr_a`: role='member'
+-- Pre-SMI-6319, the high-value adversarial principal here was `mgr_a`: role='member'
 -- carrying an explicit team:manage_rbac ALLOW grant -- a first-class, insertable
--- configuration (it is a real cell in get_effective_team_permissions' own output). That
--- principal passes the RPCs' has_team_permission gate but is NOT owner and NOT admin, so
--- every "only owners and admins may widen" gate has to hold against them specifically.
+-- configuration (it was a real cell in get_effective_team_permissions' own output). That
+-- principal passed the RPCs' has_team_permission gate but was NOT owner and NOT admin, so
+-- every "only owners and admins may widen" gate had to hold against them specifically. The
+-- already-known finding was: set(deny) then reset() reaches the same widened state as one
+-- set(allow) call, which gate 5 blocks directly.
 --
--- The already-known finding was: set(deny) then reset() reaches the same widened state as
--- one set(allow) call, which gate 5 blocks directly. This block re-derives that sequence
--- from scratch AND probes its siblings -- reset-first, set-set-reset, no-op resets, both
--- meta-permissions, both directions of the role-change RPC.
+-- SMI-6319 UPDATE: mgr_a can no longer be constructed. set_team_role_permission's and
+-- set_team_member_role's shared gate 3 (has_team_permission(team, 'team:manage_rbac')) now
+-- admits ONLY the owner, because no grant row may ever give team:manage_rbac an allow
+-- effect to any role (T6.0 below asserts this directly). Every gate downstream of gate 3
+-- -- gates 4/4b/5 in both grant-write RPCs, and the admin-touch / self-promotion gates in
+-- set_team_member_role -- is therefore reachable only by a caller (the owner) who is
+-- always exempt from it. T6.0 replaces the old "owner delegates to member" setup with a
+-- positive SMI-6319 assertion; T6.1, T6.2, T6.13 are untouched (never depended on mgr_a);
+-- T6.8 is re-cast to run as the owner (the only remaining reachable caller for its still-
+-- meaningful assertion); T6.12 gains a new SMI-6319 sub-check (T6.12b) for team:manage_sso;
+-- a new T6.14 pins the raw-table CHECK constraint directly (independent of any RPC, in
+-- T6.13's own style) for both meta-permissions, with a deny-row negative control; and
+-- T6.3-T6.7 + T6.9-T6.11, whose whole premise was "a caller who passes gate 3 but is not
+-- the owner", are marked SKIP -- not deleted -- so the loss of that coverage stays visible
+-- in every run's output.
 -- ============================================================================
 DO $t6$
 DECLARE
@@ -708,27 +733,65 @@ DECLARE
   c_admin CONSTANT UUID := '62670000-0000-0000-0000-000000000002';
   c_mgr   CONSTANT UUID := '62670000-0000-0000-0000-000000000005';
   c_out   CONSTANT UUID := '62670000-0000-0000-0000-00000000000f';
-  v_state TEXT;
   v_ok    BOOLEAN;
-  v_mid   TEXT;
   v_eff   TEXT;
+  v_perm     TEXT;
   v_accepted BOOLEAN;
+  v_msg      TEXT;
+  v_sqlstate TEXT;
 BEGIN
   ------------------------------------------------------------------
-  -- Setup: owner delegates team:manage_rbac to the `member` role.
+  -- T6.0 (SMI-6319): the owner CANNOT delegate team:manage_rbac to the member role.
+  --
+  -- Pre-SMI-6319 this was this block's setup: it granted the delegation and everything
+  -- below ran "as mgr_a", the resulting principal. SMI-6319's gate 4b
+  -- (set_team_role_permission) plus the team_permission_grants_meta_permission_not_grantable
+  -- CHECK make that grant row unrepresentable -- no role may ever hold team:manage_rbac as
+  -- an ALLOW grant, not even when the caller is the team owner. mgr_a is therefore no
+  -- longer a constructible principal; this assertion is now the anchor for this whole
+  -- block. Flag-then-raise throughout (see T3.2's note): the FAIL is raised OUTSIDE the
+  -- BEGIN/EXCEPTION block that catches the expected refusal.
   ------------------------------------------------------------------
   DELETE FROM team_permission_grants WHERE team_id = c_team;
   PERFORM set_config('request.jwt.claims',
     json_build_object('sub', c_owner, 'role','authenticated')::text, true);
-  PERFORM set_team_role_permission(c_team, 'member', 'team:manage_rbac', 'allow');
 
-  SELECT effect INTO v_eff FROM team_permission_grants
-   WHERE team_id = c_team AND role='member' AND permission='team:manage_rbac';
-  IF v_eff IS DISTINCT FROM 'allow' THEN
-    RAISE EXCEPTION 'FAIL (T6.setup): the owner could not delegate team:manage_rbac (got %)',
-                    COALESCE(v_eff,'<none>');
+  v_accepted := FALSE;
+  v_msg      := NULL;
+  v_sqlstate := NULL;
+  BEGIN
+    PERFORM set_team_role_permission(c_team, 'member', 'team:manage_rbac', 'allow');
+    v_accepted := TRUE;
+  EXCEPTION WHEN OTHERS THEN
+    GET STACKED DIAGNOSTICS v_msg = MESSAGE_TEXT, v_sqlstate = RETURNED_SQLSTATE;
+  END;
+
+  IF v_accepted THEN
+    RAISE EXCEPTION 'FAIL (T6.0): the OWNER delegated team:manage_rbac to the member role -- '
+                    'SMI-6319 must refuse this unconditionally, for every caller including '
+                    'the owner.';
   END IF;
-  RAISE NOTICE 'PASS (T6.0): owner can delegate team:manage_rbac to the member role.';
+  IF v_sqlstate IS DISTINCT FROM '42501' THEN
+    RAISE EXCEPTION 'FAIL (T6.0): delegating team:manage_rbac raised % (%) instead of a typed '
+                    '42501 from gate 4b -- a raw 23514 here means the CHECK constraint fired '
+                    'but the function guard did not.', v_sqlstate, v_msg;
+  END IF;
+  IF v_msg IS DISTINCT FROM
+     'The "team:manage_rbac" permission is owner-only and cannot be granted to another role.'
+  THEN
+    RAISE EXCEPTION 'FAIL (T6.0): wrong refusal text -- got "%". team-permission-error.ts''s '
+                    'PASSTHROUGH_REFUSALS byte-matches this string; a reword here silently '
+                    'downgrades the customer-facing error.', v_msg;
+  END IF;
+
+  PERFORM 1 FROM team_permission_grants
+   WHERE team_id = c_team AND role = 'member' AND permission = 'team:manage_rbac';
+  IF FOUND THEN
+    RAISE EXCEPTION 'FAIL (T6.0): a team:manage_rbac grant row for role=member exists despite '
+                    'the refusal -- the write was not actually blocked.';
+  END IF;
+  RAISE NOTICE 'PASS (T6.0, SMI-6319): the owner cannot delegate team:manage_rbac to the '
+               'member role -- refused with the typed gate-4b 42501, no row created.';
 
   ------------------------------------------------------------------
   -- T6.1  A DEFAULT ADMIN (post-6242: no team:manage_rbac) is refused outright.
@@ -775,70 +838,46 @@ BEGIN
                '42501 (no existence oracle).';
 
   ------------------------------------------------------------------
-  -- Everything below runs as `mgr_a` -- the delegated RBAC manager.
+  -- T6.3-T6.7, T6.9-T6.11 (SMI-6319 SKIPs). Pre-SMI-6319 everything from here through
+  -- T6.11 ran "as mgr_a" -- a role='member' team member holding an explicit
+  -- team:manage_rbac ALLOW grant, which T6.0 above now proves is an unrepresentable
+  -- configuration. set_team_role_permission's and set_team_member_role's shared gate 3
+  -- (has_team_permission(team, 'team:manage_rbac')) now admits ONLY the owner, so every
+  -- gate downstream of it -- gates 4/4b/5 in both grant-write RPCs, and the admin-touch /
+  -- self-promotion gates in set_team_member_role -- is reachable only by a caller who is
+  -- always exempt from it. None of these can be re-expressed against a still-reachable
+  -- principal: the whole premise of each was "a caller who passes gate 3 but is NOT the
+  -- owner", which SMI-6319 makes impossible by construction. Marked SKIP rather than
+  -- deleted so this loss of coverage stays visible in every run's output, never silent.
+  -- (T6.8 and T6.12, further down, ARE still meaningful and are kept, re-cast to run as
+  -- the owner -- the only principal left who can call these RPCs at all.)
   ------------------------------------------------------------------
+  RAISE NOTICE 'SKIP (T6.3): direct-widening-refused-by-gate-5, tested as mgr_a (uuid %), is '
+               'unreachable post-SMI-6319 -- no non-owner can reach gate 5 any more. '
+               'Superseded by T6.0 (no non-owner can ever hold team:manage_rbac) and T6.1 '
+               '(a non-owner is refused at gate 3, before gate 5 is ever reached).', c_mgr;
+  RAISE NOTICE 'SKIP (T6.4): narrowing-is-permitted-for-a-real-manager, tested as mgr_a, is '
+               'unreachable -- there is no longer a non-owner principal that can call '
+               'set_team_role_permission at all. The owner''s own narrowing is proven by '
+               'T6.12.';
+  RAISE NOTICE 'SKIP (T6.5): the set(deny)->reset() bypass class (mgr_a widening in two '
+               'calls what gate 5 refuses in one) is unreachable -- the widened state it '
+               'targeted (a non-owner holding an allow) no longer exists by construction. '
+               'Superseded by T6.0.';
+  RAISE NOTICE 'SKIP (T6.6): the reset-first bypass variant is unreachable for the same '
+               'reason as T6.5 -- superseded by T6.0.';
+  RAISE NOTICE 'SKIP (T6.7): the set-set-reset bypass variant is unreachable for the same '
+               'reason as T6.5 -- superseded by T6.0.';
+
+  -- T6.8  THE LEGITIMATE RESET must still work: a member-role cell defaults to DENY, so
+  --       clearing it narrows-or-no-ops and must NOT be blocked by anything upstream of
+  --       gate 5. Pre-SMI-6319 this ran as mgr_a (the delegated manager, the intended
+  --       actor for this call in production); mgr_a can no longer be constructed (T6.0),
+  --       so this now runs as the owner -- the only principal left who can call
+  --       reset_team_role_permission at all (T6.1/T6.2). The assertion itself (narrowing a
+  --       member cell via reset is unblocked, and idempotent) is unchanged.
   PERFORM set_config('request.jwt.claims',
-    json_build_object('sub', c_mgr, 'role','authenticated')::text, true);
-
-  -- T6.3  Direct widening is refused (gate 5).
-  BEGIN
-    PERFORM set_team_role_permission(c_team,'admin','registry:approve','allow');
-    RAISE EXCEPTION 'FAIL (T6.3): a member-role caller wrote effect=allow.';
-  EXCEPTION WHEN insufficient_privilege THEN NULL;
-  END;
-  RAISE NOTICE 'PASS (T6.3): member-role caller cannot write effect=allow.';
-
-  -- T6.4  Narrowing IS permitted (they are a real RBAC manager, after all).
-  PERFORM set_team_role_permission(c_team,'admin','registry:approve','deny');
-  SELECT effect INTO v_eff FROM team_permission_grants
-   WHERE team_id=c_team AND role='admin' AND permission='registry:approve';
-  IF v_eff IS DISTINCT FROM 'deny' THEN
-    RAISE EXCEPTION 'FAIL (T6.4): the delegated manager could not write a deny (got %)',
-                    COALESCE(v_eff,'<none>');
-  END IF;
-  RAISE NOTICE 'PASS (T6.4): member-role caller may narrow (write deny).';
-
-  -- T6.5  *** THE BYPASS CLASS *** set(deny) -> reset() must NOT restore the allow default.
-  --       admin x registry:approve has a built-in default of ALLOW, so clearing the deny
-  --       row widens -- reaching exactly the state T6.3 just refused.
-  BEGIN
-    PERFORM reset_team_role_permission(c_team,'admin','registry:approve');
-    RAISE EXCEPTION 'FAIL (T6.5): SET-THEN-RESET BYPASS IS LIVE. A member-role caller wrote '
-                    'deny then cleared it, restoring the allow default -- the exact state '
-                    'gate 5 refuses in one call (T6.3). Two calls reach what one cannot.';
-  EXCEPTION WHEN insufficient_privilege THEN NULL;
-  END;
-  RAISE NOTICE 'PASS (T6.5): set(deny)->reset() bypass is closed.';
-
-  -- T6.6  RESET-FIRST variant: clearing a cell that has NO row, whose default is allow.
-  --       If the gate keyed on "a row exists" rather than "the result would be allow",
-  --       this would slip through as a harmless no-op.
-  DELETE FROM team_permission_grants
-   WHERE team_id=c_team AND role='admin' AND permission='registry:deprecate';
-  BEGIN
-    PERFORM reset_team_role_permission(c_team,'admin','registry:deprecate');
-    RAISE EXCEPTION 'FAIL (T6.6): a member-role caller cleared an allow-default cell that had '
-                    'no explicit row. The gate is keyed on row existence, not on whether the '
-                    'RESULT would be allow -- so the no-op path is unguarded.';
-  EXCEPTION WHEN insufficient_privilege THEN NULL;
-  END;
-  RAISE NOTICE 'PASS (T6.6): reset on a no-row allow-default cell is refused (gate keys on '
-               'the resulting effect, not on row existence).';
-
-  -- T6.7  SET-SET-RESET: repeat the write before clearing, in case the gate only inspects
-  --       the most recent transition rather than the cell's own default.
-  PERFORM set_team_role_permission(c_team,'admin','registry:deprecate','deny');
-  PERFORM set_team_role_permission(c_team,'admin','registry:deprecate','deny');
-  BEGIN
-    PERFORM reset_team_role_permission(c_team,'admin','registry:deprecate');
-    RAISE EXCEPTION 'FAIL (T6.7): set-set-reset reached the allow default.';
-  EXCEPTION WHEN insufficient_privilege THEN NULL;
-  END;
-  RAISE NOTICE 'PASS (T6.7): set-set-reset does not bypass the widening gate.';
-
-  -- T6.8  The LEGITIMATE reset must still work: a member-role cell defaults to DENY, so
-  --       clearing it narrows-or-no-ops and must NOT be blocked. A gate that refuses this
-  --       too would be over-broad and would break the delegated manager's actual job.
+    json_build_object('sub', c_owner, 'role','authenticated')::text, true);
   PERFORM set_team_role_permission(c_team,'member','registry:approve','deny');
   SELECT reset_team_role_permission(c_team,'member','registry:approve') INTO v_ok;
   IF v_ok IS NOT TRUE THEN
@@ -852,73 +891,83 @@ BEGIN
                     v_ok;
   END IF;
   RAISE NOTICE 'PASS (T6.8): clearing a deny-default cell is allowed, returns TRUE then FALSE '
-               '(idempotent, no spurious raise).';
+               '(idempotent, no spurious raise) -- as the owner, mgr_a no longer being '
+               'constructible post-SMI-6319.';
 
-  -- T6.9  BOTH meta-permissions are owner-only for BOTH verbs, for a non-owner.
-  --       team:manage_sso matters as much as team:manage_rbac: whoever controls the IdP
-  --       registration can authenticate AS the owner, reaching owner authority in two hops.
-  FOREACH v_state IN ARRAY ARRAY['team:manage_rbac','team:manage_sso'] LOOP
-    BEGIN
-      PERFORM set_team_role_permission(c_team,'admin',v_state,'allow');
-      RAISE EXCEPTION 'FAIL (T6.9): a non-owner GRANTED the meta-permission %.', v_state;
-    EXCEPTION WHEN insufficient_privilege THEN NULL;
-    END;
-    BEGIN
-      PERFORM set_team_role_permission(c_team,'admin',v_state,'deny');
-      RAISE EXCEPTION 'FAIL (T6.9): a non-owner DENIED the meta-permission % -- they can '
-                      'revoke a delegation only the owner should control.', v_state;
-    EXCEPTION WHEN insufficient_privilege THEN NULL;
-    END;
-    BEGIN
-      PERFORM reset_team_role_permission(c_team,'member',v_state);
-      RAISE EXCEPTION 'FAIL (T6.9): a non-owner CLEARED the meta-permission % -- a delegated '
-                      'manager could strip its own peers, or lock everyone out.', v_state;
-    EXCEPTION WHEN insufficient_privilege THEN NULL;
-    END;
-  END LOOP;
-  RAISE NOTICE 'PASS (T6.9): both meta-permissions are owner-only for set(allow), set(deny) '
-               'and reset.';
-
-  -- T6.10 SELF-ESCALATION via the role RPC: the delegated manager promotes itself to admin,
-  --       which would hand it registry:approve/deprecate that team:manage_rbac never granted.
-  SELECT id INTO v_mid FROM team_members WHERE team_id=c_team AND user_id=c_mgr;
-  BEGIN
-    PERFORM set_team_member_role(v_mid,'admin');
-    RAISE EXCEPTION 'FAIL (T6.10): SELF-ESCALATION -- a member-role caller holding only '
-                    'team:manage_rbac promoted ITSELF to admin, acquiring registry:approve '
-                    'and registry:deprecate.';
-  EXCEPTION WHEN insufficient_privilege THEN NULL;
-  END;
-  RAISE NOTICE 'PASS (T6.10): a delegated manager cannot self-promote to admin.';
-
-  -- T6.11 OUTRANKING: the delegated manager demotes a real admin.
-  SELECT id INTO v_mid FROM team_members WHERE team_id=c_team AND user_id=c_admin;
-  BEGIN
-    PERFORM set_team_member_role(v_mid,'member');
-    RAISE EXCEPTION 'FAIL (T6.11): a member-role caller demoted an ADMIN -- the delegated '
-                    'manager outranks every admin on the team.';
-  EXCEPTION WHEN insufficient_privilege THEN NULL;
-  END;
-  RAISE NOTICE 'PASS (T6.11): a delegated manager cannot demote an admin.';
+  RAISE NOTICE 'SKIP (T6.9): both-meta-permissions-owner-only-against-a-PRIVILEGED-non-owner '
+               '(mgr_a specifically, as a DEEPER check than T6.1''s plain no-authority '
+               'refusal) is unreachable -- there is no longer a privileged non-owner to '
+               'test against. Superseded by T6.0/T6.12b (no caller, owner included, can '
+               'ever hold an allow on either meta-permission via a grant row) and T6.1/T6.2 '
+               '(no non-owner can call the RPC at all without team:manage_rbac).';
+  RAISE NOTICE 'SKIP (T6.10): self-escalation via set_team_member_role, tested as mgr_a '
+               '(uuid %), is unreachable -- that RPC''s own gate 3 is the identical '
+               'has_team_permission(team,''team:manage_rbac'') check, so mgr_a cannot call '
+               'it either. Superseded by T6.0.', c_mgr;
+  RAISE NOTICE 'SKIP (T6.11): outranking-an-admin via set_team_member_role, tested as '
+               'mgr_a, is unreachable for the same reason as T6.10 -- superseded by T6.0.';
 
   ------------------------------------------------------------------
-  -- T6.12  Positive controls as the OWNER. Without these, every PASS above could be
+  -- T6.12  Positive controls as the OWNER. Without these, every refusal above could be
   --        explained by "the RPC refuses everything", which would be equally wrong.
+  --
+  --        SMI-6319 UPDATE: the owner CAN still widen an ordinary permission (unchanged),
+  --        and CAN still write/clear a meta-permission DENY row (deliberately still legal
+  --        -- see the migration's header, "deny can only narrow"). What the owner can NO
+  --        LONGER do is write a meta-permission ALLOW row to any role, including their own
+  --        admins -- that half of this control (T6.12b) now asserts a REFUSAL instead of a
+  --        success.
   ------------------------------------------------------------------
   PERFORM set_config('request.jwt.claims',
     json_build_object('sub', c_owner, 'role','authenticated')::text, true);
   PERFORM set_team_role_permission(c_team,'admin','registry:approve','allow');   -- widen
-  PERFORM set_team_role_permission(c_team,'admin','team:manage_sso','allow');    -- meta
   SELECT reset_team_role_permission(c_team,'admin','registry:approve') INTO v_ok;
   IF v_ok IS NOT TRUE THEN
     RAISE EXCEPTION 'FAIL (T6.12): the owner could not clear a grant it had just written.';
   END IF;
+
+  -- T6.12b (SMI-6319): the owner is refused for team:manage_sso ALLOW -- same gate 4b as
+  -- T6.0's team:manage_rbac assertion, different permission and different target role
+  -- (admin here, member there), covering the other (permission x role) corner this
+  -- migration touches.
+  v_accepted := FALSE;
+  v_msg      := NULL;
+  v_sqlstate := NULL;
+  BEGIN
+    PERFORM set_team_role_permission(c_team,'admin','team:manage_sso','allow');
+    v_accepted := TRUE;
+  EXCEPTION WHEN OTHERS THEN
+    GET STACKED DIAGNOSTICS v_msg = MESSAGE_TEXT, v_sqlstate = RETURNED_SQLSTATE;
+  END;
+  IF v_accepted THEN
+    RAISE EXCEPTION 'FAIL (T6.12b): the owner granted team:manage_sso allow to admin -- '
+                    'SMI-6319 must refuse this.';
+  END IF;
+  IF v_sqlstate IS DISTINCT FROM '42501' OR v_msg IS DISTINCT FROM
+     'The "team:manage_sso" permission is owner-only and cannot be granted to another role.'
+  THEN
+    RAISE EXCEPTION 'FAIL (T6.12b): expected the typed gate-4b 42501 for team:manage_sso, got '
+                    '% (%)', v_sqlstate, v_msg;
+  END IF;
+
+  -- ...but a meta DENY row is still legal, and still clearable -- the "selective, not
+  -- blanket" proof this control exists for, now made through the deny direction.
+  PERFORM set_team_role_permission(c_team,'admin','team:manage_sso','deny');
+  SELECT effect INTO v_eff FROM team_permission_grants
+   WHERE team_id=c_team AND role='admin' AND permission='team:manage_sso';
+  IF v_eff IS DISTINCT FROM 'deny' THEN
+    RAISE EXCEPTION 'FAIL (T6.12b): the owner could not write a team:manage_sso DENY row '
+                    '(got %) -- gate 4b must block allow only.', COALESCE(v_eff, '<none>');
+  END IF;
   SELECT reset_team_role_permission(c_team,'admin','team:manage_sso') INTO v_ok;
   IF v_ok IS NOT TRUE THEN
-    RAISE EXCEPTION 'FAIL (T6.12): the owner could not clear a meta-permission grant.';
+    RAISE EXCEPTION 'FAIL (T6.12b): the owner could not clear the team:manage_sso deny row.';
   END IF;
-  RAISE NOTICE 'PASS (T6.12): the owner CAN widen, set both meta-permissions, and clear '
-               'either -- the gates above are selective, not blanket refusals.';
+
+  RAISE NOTICE 'PASS (T6.12/T6.12b): the owner can widen an ordinary permission and clear '
+               'it; is refused (typed 42501, gate 4b) for team:manage_sso allow; and can '
+               'still write and clear a team:manage_sso DENY row -- the gates above are '
+               'selective, not blanket refusals.';
 
   -- T6.13 Typed input validation: an unenforced permission must raise a TYPED 22023, never
   --       leak the table''s raw 23514 CHECK violation to the caller.
@@ -952,6 +1001,51 @@ BEGIN
   RAISE NOTICE 'PASS (T6.13): unenforced permissions refused with a typed 22023 at the RPC '
                'and 23514 at the table.';
 
+  -- T6.14 (SMI-6319): raw-table defence-in-depth, in T6.13's own style. The
+  -- team_permission_grants_meta_permission_not_grantable CHECK refuses a direct INSERT of
+  -- either meta-permission's ALLOW row, completely independent of any RPC -- this is the
+  -- path team_permission_grants_service_all's WITH CHECK (true) would otherwise leave open
+  -- to any service_role writer (an edge function, an ops script). Proven for BOTH
+  -- meta-permissions. The negative control -- the SAME (team, role, permission) with
+  -- effect='deny' -- must SUCCEED, proving the constraint is selective (blocks only
+  -- meta+allow) rather than a blanket refusal on these two permissions.
+  FOREACH v_perm IN ARRAY ARRAY['team:manage_rbac','team:manage_sso'] LOOP
+    v_accepted := FALSE;
+    BEGIN
+      INSERT INTO team_permission_grants (team_id, role, permission, effect, created_by)
+      VALUES (c_team,'admin',v_perm,'allow',c_owner);
+      v_accepted := TRUE;
+    EXCEPTION WHEN check_violation THEN NULL;
+    END;
+    IF v_accepted THEN
+      RAISE EXCEPTION 'FAIL (T6.14): a direct table INSERT of % x admin x allow was accepted '
+                      '-- the CHECK constraint is missing or does not cover this pair, so '
+                      'every service_role write path is still open.', v_perm;
+    END IF;
+
+    -- Negative control: the identical row with effect=deny must succeed.
+    v_accepted := FALSE;
+    BEGIN
+      INSERT INTO team_permission_grants (team_id, role, permission, effect, created_by)
+      VALUES (c_team,'admin',v_perm,'deny',c_owner);
+      v_accepted := TRUE;
+    EXCEPTION WHEN OTHERS THEN
+      RAISE EXCEPTION 'FAIL (T6.14): a direct table INSERT of % x admin x deny was refused '
+                      '(% / %) -- the CHECK constraint is over-broad, blocking deny as well '
+                      'as allow.', v_perm, SQLSTATE, SQLERRM;
+    END;
+    IF NOT v_accepted THEN
+      RAISE EXCEPTION 'FAIL (T6.14): the % x admin x deny negative control did not report '
+                      'success.', v_perm;
+    END IF;
+    DELETE FROM team_permission_grants
+     WHERE team_id = c_team AND role = 'admin' AND permission = v_perm;
+  END LOOP;
+  RAISE NOTICE 'PASS (T6.14): the raw-table CHECK constraint refuses a direct meta-permission '
+               'allow INSERT (23514) for both team:manage_rbac and team:manage_sso, '
+               'independent of any RPC, and permits the identical deny row (selective, not '
+               'blanket).';
+
   DELETE FROM team_permission_grants WHERE team_id = c_team;
 END $t6$;
 
@@ -965,52 +1059,116 @@ END $t6$;
 -- either a raw Postgres string or a generic fallback instead of the authored copy.
 --
 -- This block pins the exact (sqlstate, message) pairs the TypeScript layer depends on.
+--
+-- SMI-6319 UPDATE: this block's own setup used to delegate team:manage_rbac to the member
+-- role (mirroring T6's setup) so the calls below could run "as mgr_a". That delegation is
+-- now itself refused -- T7.0 asserts it directly, pinning gate 4b's exact message for
+-- team:manage_rbac. T7.1 does the same for team:manage_sso (a different target role),
+-- replacing its pre-fix pin of the OLD gate 4 caller-check message, which -- like gate 5's
+-- self-widening message (T7.2) and set_team_member_role's admin-touch / self-promotion
+-- messages (T7.5/T7.6) -- can no longer be produced by any caller: all four of those gates
+-- sit downstream of has_team_permission(team,'team:manage_rbac'), which now admits ONLY
+-- the owner, who is unconditionally exempt from every one of them. T7.2/T7.5/T7.6 are
+-- marked SKIP with that reasoning; T7.3 (generic permission_denied) and T7.4 (owner-role-
+-- change refusal) are untouched -- neither ever depended on mgr_a.
 -- ============================================================================
 DO $t7$
 DECLARE
   c_team  CONSTANT TEXT := '_e2e_rbac_6267_team_a';
   c_owner CONSTANT UUID := '62670000-0000-0000-0000-000000000001';
   c_mgr   CONSTANT UUID := '62670000-0000-0000-0000-000000000005';
-  v_msg TEXT; v_state TEXT; v_n INT := 0;
+  v_msg TEXT; v_state TEXT; v_n INT := 0; v_accepted BOOLEAN;
 BEGIN
   DELETE FROM team_permission_grants WHERE team_id = c_team;
   PERFORM set_config('request.jwt.claims',
     json_build_object('sub', c_owner,'role','authenticated')::text, true);
-  PERFORM set_team_role_permission(c_team,'member','team:manage_rbac','allow');
 
-  PERFORM set_config('request.jwt.claims',
-    json_build_object('sub', c_mgr,'role','authenticated')::text, true);
+  -- (0) T7.0 (SMI-6319): the owner-only meta-permission refusal, team:manage_rbac side.
+  -- Pre-SMI-6319 this call SUCCEEDED -- it was this block's own setup, delegating
+  -- team:manage_rbac to the member role so the calls below could run "as mgr_a". SMI-6319
+  -- makes that delegation itself unrepresentable -- gate 4b now refuses it, for the OWNER,
+  -- unconditionally. This pins that refusal's exact (sqlstate, message) pair, matching
+  -- gate 4b's own comment in the migration ("byte-enumerated in team-permission-error.ts's
+  -- PASSTHROUGH_REFUSALS and in the stub's requireGrantWriteAuthority()").
+  v_accepted := FALSE;
+  BEGIN
+    PERFORM set_team_role_permission(c_team,'member','team:manage_rbac','allow');
+    v_accepted := TRUE;
+  EXCEPTION WHEN OTHERS THEN
+    GET STACKED DIAGNOSTICS v_msg = MESSAGE_TEXT, v_state = RETURNED_SQLSTATE;
+  END;
+  IF v_accepted THEN
+    RAISE EXCEPTION 'FAIL (T7.0): the owner delegated team:manage_rbac to the member role -- '
+                    'SMI-6319 must refuse this.';
+  END IF;
+  IF v_state <> '42501' THEN
+    RAISE EXCEPTION 'FAIL (T7.0): sqlstate % not 42501', v_state;
+  END IF;
+  IF v_msg <> 'The "team:manage_rbac" permission is owner-only and cannot be granted to another role.' THEN
+    RAISE EXCEPTION 'FAIL (T7.0): message drift. Got: %  -- PASSTHROUGH_REFUSALS in '
+                    'team-permission-error.ts byte-matches this string; a reword here '
+                    'silently downgrades the customer-facing error.', v_msg;
+  END IF;
+  v_n := v_n + 1;
 
-  -- (1) the owner-only meta-permission refusal
+  -- (1) T7.1 (SMI-6319, was the pre-fix gate-4 caller-check pin): the owner-only
+  -- meta-permission refusal, team:manage_sso side, to a DIFFERENT target role (admin) than
+  -- T7.0's (member) -- covering the other (permission x role) corner. Pre-SMI-6319 this
+  -- ran "as mgr_a" and pinned the OLD gate 4's caller-check message ("Only the team owner
+  -- can change who holds..."); that gate is now unreachable (only the owner ever passes
+  -- gate 3, and gate 4 only fires for a non-owner), so this now runs as the owner and pins
+  -- gate 4b's message instead.
+  v_accepted := FALSE;
   BEGIN
     PERFORM set_team_role_permission(c_team,'admin','team:manage_sso','allow');
+    v_accepted := TRUE;
   EXCEPTION WHEN OTHERS THEN
     GET STACKED DIAGNOSTICS v_msg = MESSAGE_TEXT, v_state = RETURNED_SQLSTATE;
-    IF v_state <> '42501' THEN
-      RAISE EXCEPTION 'FAIL (T7.1): sqlstate % not 42501', v_state;
-    END IF;
-    IF v_msg <> 'Only the team owner can change who holds the "team:manage_sso" permission.' THEN
-      RAISE EXCEPTION 'FAIL (T7.1): message drift. Got: %  -- PASSTHROUGH_REFUSALS in '
-                      'team-permission-error.ts byte-matches this string; a reword here '
-                      'silently downgrades the customer-facing error.', v_msg;
-    END IF;
-    v_n := v_n + 1;
   END;
+  IF v_accepted THEN
+    RAISE EXCEPTION 'FAIL (T7.1): the owner granted team:manage_sso allow to admin -- '
+                    'SMI-6319 must refuse this.';
+  END IF;
+  IF v_state <> '42501' THEN
+    RAISE EXCEPTION 'FAIL (T7.1): sqlstate % not 42501', v_state;
+  END IF;
+  IF v_msg <> 'The "team:manage_sso" permission is owner-only and cannot be granted to another role.' THEN
+    RAISE EXCEPTION 'FAIL (T7.1): message drift. Got: %  -- PASSTHROUGH_REFUSALS in '
+                    'team-permission-error.ts byte-matches this string; a reword here '
+                    'silently downgrades the customer-facing error.', v_msg;
+  END IF;
+  v_n := v_n + 1;
 
-  -- (2) the no-self-widening refusal
-  BEGIN
-    PERFORM set_team_role_permission(c_team,'admin','registry:approve','allow');
-  EXCEPTION WHEN OTHERS THEN
-    GET STACKED DIAGNOSTICS v_msg = MESSAGE_TEXT, v_state = RETURNED_SQLSTATE;
-    IF v_state <> '42501' THEN
-      RAISE EXCEPTION 'FAIL (T7.2): sqlstate % not 42501', v_state;
-    END IF;
-    IF v_msg <> 'Only owners and admins can widen a role''s permissions. You can review '
-                'permissions and remove grants, but not add an allow.' THEN
-      RAISE EXCEPTION 'FAIL (T7.2): message drift. Got: %', v_msg;
-    END IF;
-    v_n := v_n + 1;
-  END;
+  PERFORM 1 FROM team_permission_grants
+   WHERE team_id = c_team AND permission IN ('team:manage_rbac','team:manage_sso')
+     AND effect = 'allow';
+  IF FOUND THEN
+    RAISE EXCEPTION 'FAIL (T7.0/T7.1): a meta-permission allow grant row exists despite both '
+                    'refusals above -- the writes were not actually blocked.';
+  END IF;
+
+  -- (2) T7.2 SKIP (SMI-6319): the no-self-widening refusal (gate 5's message) was pinned
+  -- by calling as mgr_a, a role='member' caller who held team:manage_rbac and therefore
+  -- passed gate 3 but was not owner/admin, so gate 5 fired. mgr_a can no longer be
+  -- constructed (T6.0/T7.0), and gate 3 now admits ONLY the owner for
+  -- set_team_role_permission -- who is unconditionally exempt from gate 5 (it only fires
+  -- for v_caller_role NOT IN ('owner','admin')). Gate 5's refusal message can therefore no
+  -- longer be produced by ANY caller through a normal call: this is stated explicitly in
+  -- the migration's own header ("past gate 3, v_caller_role is now always 'owner' ...
+  -- [gates 4 and 5] are not dead code -- they are the layer that still holds if
+  -- default_role_permission() is ever changed again"). No replacement assertion -- there
+  -- is no live scenario left to assert against; gate 5 remains in the function purely as
+  -- defense-in-depth for a future regression this harness cannot provoke without directly
+  -- corrupting default_role_permission().
+  -- PRECISION, so nobody reads this SKIP as "gate 5 is dead code, delete it": gate 5 is
+  -- NULL-closed (`v_caller_role IS NULL OR NOT IN (''owner'',''admin'')`), and v_caller_role is
+  -- read in a SEPARATE statement from gate 3''s has_team_permission() call. An owner removed
+  -- from the team between those two READ COMMITTED snapshots still reads NULL and still trips
+  -- gate 5. That arm is live -- it is simply a race this harness cannot provoke on demand.
+  RAISE NOTICE 'SKIP (T7.2): the gate-5 self-widening refusal is not reachable BY THIS HARNESS '
+               'post-SMI-6319 -- no caller other than the owner can pass gate 3 any more, and '
+               'an owner does not trip gate 5 except in its NULL-closed concurrency arm. Gate 5 '
+               'is still live; see this block''s comment for the full reasoning.';
 
   -- (3) the generic denial -- must be EXACTLY `permission_denied`, which is the other
   --     half of toPermissionDeniedError()'s test.
@@ -1029,9 +1187,14 @@ BEGIN
   END;
 
   ------------------------------------------------------------------
-  -- The remaining THREE allowlist entries come from set_team_member_role(). All six
-  -- PASSTHROUGH_REFUSALS strings must be pinned, not just the grant-write pair: any one of
-  -- them drifting silently downgrades that refusal to the generic sentence.
+  -- The remaining THREE allowlist entries come from set_team_member_role(). Pre-SMI-6319
+  -- all three were pinned here; post-SMI-6319 only ONE (T7.4, the owner-role-change
+  -- refusal) is still reachable by any caller -- the other two (T7.5, T7.6) required a
+  -- privileged-but-non-owner caller that no longer exists, and are marked SKIP below with
+  -- the same reasoning as T7.2. All SIX PASSTHROUGH_REFUSALS strings still live in
+  -- team-permission-error.ts and must still be kept correct there (a future regression
+  -- that made one of T7.2/T7.5/T7.6's principals constructible again would need this
+  -- harness updated back to catch it), but only FOUR are exercisable by this harness today.
   ------------------------------------------------------------------
   -- (4) owner-role-change refusal, raised to the OWNER (who holds every permission, so the
   --     refusal cannot be attributed to a missing one).
@@ -1049,45 +1212,39 @@ BEGIN
     v_n := v_n + 1;
   END;
 
-  -- (5) only-the-owner-may-touch-an-admin refusal, raised to the delegated manager.
-  PERFORM set_config('request.jwt.claims',
-    json_build_object('sub', c_mgr,'role','authenticated')::text, true);
-  BEGIN
-    PERFORM set_team_member_role(
-      (SELECT id FROM team_members WHERE team_id=c_team
-        AND user_id='62670000-0000-0000-0000-000000000002'), 'member');
-  EXCEPTION WHEN OTHERS THEN
-    GET STACKED DIAGNOSTICS v_msg = MESSAGE_TEXT, v_state = RETURNED_SQLSTATE;
-    IF v_state <> '42501'
-       OR v_msg <> 'forbidden: only the team owner can change an admin''s role' THEN
-      RAISE EXCEPTION 'FAIL (T7.5): expected the owner-anchored admin-role refusal, got '
-                      '(%, "%")', v_state, v_msg;
-    END IF;
-    v_n := v_n + 1;
-  END;
+  -- (5) T7.5 SKIP (SMI-6319): "only the owner may touch an admin's role" was pinned by
+  -- calling set_team_member_role as mgr_a. That RPC shares the identical gate 3
+  -- (has_team_permission(team,'team:manage_rbac')) with set_team_role_permission, so
+  -- mgr_a can no longer call it either -- it would be refused at gate 3 with
+  -- 'permission_denied' before ever reaching the admin-touch gate this pin targets. Since
+  -- gate 3 now admits only the owner, and the owner is exempt from the admin-touch gate
+  -- (v_target_role='admin' AND v_caller_role IS DISTINCT FROM 'owner'), that gate's
+  -- message can no longer be produced by any caller through a normal call -- the same
+  -- structural argument as T7.2's gate 5. No replacement assertion: T7.4 already pins
+  -- set_team_member_role's OTHER PASSTHROUGH_REFUSALS entry that remains reachable (the
+  -- owner-role-change refusal), and T6.1/T6.2 already prove no non-owner can call either
+  -- grant-write RPC.
+  RAISE NOTICE 'SKIP (T7.5): the only-owner-may-touch-an-admin refusal is unreachable post-'
+               'SMI-6319 -- mgr_a (uuid %) can no longer call set_team_member_role at all '
+               '(same gate 3 as set_team_role_permission).', c_mgr;
 
-  -- (6) no-self-promotion refusal, same caller, promotion direction.
-  BEGIN
-    PERFORM set_team_member_role(
-      (SELECT id FROM team_members WHERE team_id=c_team
-        AND user_id='62670000-0000-0000-0000-000000000003'), 'admin');
-  EXCEPTION WHEN OTHERS THEN
-    GET STACKED DIAGNOSTICS v_msg = MESSAGE_TEXT, v_state = RETURNED_SQLSTATE;
-    IF v_state <> '42501'
-       OR v_msg <> 'forbidden: only owners and admins can promote a member to admin' THEN
-      RAISE EXCEPTION 'FAIL (T7.6): expected the promotion refusal, got (%, "%")',
-                      v_state, v_msg;
-    END IF;
-    v_n := v_n + 1;
-  END;
+  -- (6) T7.6 SKIP (SMI-6319): the no-self-promotion refusal, same caller (mgr_a) as T7.5,
+  -- unreachable for the identical reason -- mgr_a cannot call set_team_member_role at all
+  -- any more, so this promotion-direction gate is never reached either.
+  RAISE NOTICE 'SKIP (T7.6): the no-self-promotion refusal is unreachable post-SMI-6319 for '
+               'the same reason as T7.5 -- mgr_a cannot call set_team_member_role.';
 
-  IF v_n <> 6 THEN
-    RAISE EXCEPTION 'FAIL (T7): only % of 6 refusals were actually raised -- a call that '
-                    'should have failed SUCCEEDED.', v_n;
+  IF v_n <> 4 THEN
+    RAISE EXCEPTION 'FAIL (T7): only % of 4 refusals were actually raised -- a call that '
+                    'should have failed SUCCEEDED. (T7.2/T7.5/T7.6 are SMI-6319 SKIPs, not '
+                    'counted here -- see their own NOTICEs above.)', v_n;
   END IF;
   DELETE FROM team_permission_grants WHERE team_id = c_team;
-  RAISE NOTICE 'PASS (T7): all 6 PASSTHROUGH_REFUSALS strings + the generic permission_denied '
-               'sentence match the TypeScript allowlist byte-for-byte.';
+  RAISE NOTICE 'PASS (T7): all 4 still-reachable refusal pins -- the two SMI-6319 gate-4b '
+               'meta-permission messages (T7.0/T7.1), the generic permission_denied '
+               'sentence (T7.3), and the owner-role-change refusal (T7.4) -- match the '
+               'TypeScript allowlist byte-for-byte. T7.2/T7.5/T7.6 SKIPPED: SMI-6319 makes '
+               'those three refusal paths unreachable by any caller (see above).';
 END $t7$;
 
 -- ============================================================================

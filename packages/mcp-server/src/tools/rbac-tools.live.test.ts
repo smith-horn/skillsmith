@@ -4,6 +4,12 @@
  * @see SMI-6203 security round: `rpcError()` must carry the PostgREST SQLSTATE across, or the
  *   whole `PASSTHROUGH_REFUSALS` allowlist is unreachable in production AND a raw Postgres
  *   `42501` (which names internal schema objects) leaks verbatim to the customer.
+ * @see SMI-6319 (`supabase/migrations/20260901000000_rbac_meta_permission_not_grantable.sql`):
+ *   adds gate 4b's two new `PASSTHROUGH_REFUSALS` entries (neither meta-permission may ever be
+ *   GRANTED to a role, by any caller including the owner). This file mocks the RPC response
+ *   directly rather than exercising the stub's own gates, so no setup step here was broken by
+ *   SMI-6319 — the only change needed is completing the `it.each` allowlist-rendering check
+ *   below to cover the 2 new strings alongside the 6 it already pinned.
  *
  * Split into its own file rather than appended to `rbac-tools.test.ts` — that file is a
  * stub-mode suite and is already at its 500-line audit:standards budget. Mock style deliberately
@@ -115,9 +121,14 @@ describe('createLiveRBACService — refusal mapping', () => {
   it.each([
     'Only the team owner can change who holds the "team:manage_rbac" permission.',
     'Only the team owner can change who holds the "team:manage_sso" permission.',
+    // SMI-6319 gate 4b: neither meta-permission may ever be GRANTED to a role, by anyone
+    // including the owner — distinct from the two gate-4 refusals above, which are about who
+    // may write/clear an EXISTING grant row rather than whether the grant may exist at all.
+    'The "team:manage_rbac" permission is owner-only and cannot be granted to another role.',
+    'The "team:manage_sso" permission is owner-only and cannot be granted to another role.',
     "Only owners and admins can widen a role's permissions. You can review permissions and " +
       'remove grants, but not add an allow.',
-  ])('renders the authored gate-4/gate-5 refusal verbatim: %s', async (message) => {
+  ])('renders the authored gate-4/gate-4b/gate-5 refusal verbatim: %s', async (message) => {
     respondWith({ data: null, error: { code: '42501', message } })
     const result = await executeRbacManage(
       {
@@ -152,14 +163,15 @@ describe('createLiveRBACService — refusal mapping', () => {
     expect(permissionErrorText(result.error)).toBe(message)
   })
 
-  // SMI-6267 UAT finding F4: the it.each block above pins 3 of the 6 PASSTHROUGH_REFUSALS
-  // strings (both meta-permission owner-only refusals, plus the no-self-widening refusal), all
-  // raised by set_team_role_permission/reset_team_role_permission and reached via
+  // SMI-6267 UAT finding F4 (extended by SMI-6319): the it.each block above pins 5 of the 8
+  // PASSTHROUGH_REFUSALS strings (the two gate-4 meta-permission owner-only refusals, the two
+  // SMI-6319 gate-4b meta-permission non-grantable refusals, plus the no-self-widening
+  // refusal), all raised by set_team_role_permission/reset_team_role_permission and reached via
   // executeRbacManage. The remaining 3 are set_team_member_role()'s owner-protection refusals,
   // reached only via executeRbacAssignRole's assign/revoke actions — untested through this live
-  // array-matching path until now (the SQL-side harness's T7 block already pins all 6 from the
-  // database side; this closes the matching gap in the TypeScript-side suite that actually runs
-  // in CI).
+  // array-matching path until now (the SQL-side smoke blocks — 20260828000000's T7 plus
+  // 20260901000000's own gate-4b block — already pin all 8 from the database side; this closes
+  // the matching gap in the TypeScript-side suite that actually runs in CI).
   it.each([
     "cannot change the team owner's role",
     "forbidden: only the team owner can change an admin's role",

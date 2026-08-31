@@ -138,6 +138,19 @@ export function createStubRBACService(): StubRBACService {
    *  1. Only the OWNER may write or clear a grant for EITHER {@link META_PERMISSIONS} entry.
    *     (Adversarial-review fix: this originally covered `team:manage_rbac` only, leaving an
    *     elevated non-owner free to self-grant SSO control and reach owner authority in two hops.)
+   *  1b. SMI-6319: NEITHER {@link META_PERMISSIONS} entry may be GRANTED to a role at all — by
+   *     anyone, including the owner. Gate 1 above checks the CALLER and never the TARGET, so
+   *     before this fix an owner could hand `admin` or `member` the exact authority gate 1
+   *     exists to keep owner-anchored, reaching that end state one call earlier by a caller who
+   *     was permitted to make it (confirmed live in SMI-6312 UAT: owner grants `member`
+   *     `team:manage_rbac`, then `has_team_permission(team,'team:manage_rbac')` returns true for
+   *     that member). The owner loses nothing — the `actor.role === 'owner'` short-circuit in
+   *     `hasPermission` above already resolves both unconditionally. `deny` is deliberately NOT
+   *     blocked: it can only narrow, and both roles already default to deny per
+   *     {@link DEFAULT_ROLE_PERMISSIONS}. Ordered AFTER rule 1 so a non-owner's refusal text is
+   *     unchanged, and BEFORE rule 2 so an owner is told the real reason rather than rule 2's
+   *     unrelated self-widening copy — byte-identical ordering to the SQL's gates 4 / 4b / 5
+   *     (`20260901000000_rbac_meta_permission_not_grantable.sql`).
    *  2. Only an `owner`- or `admin`-role caller may create an `allow` STATE for `(role,
    *     permission)` — whether by writing `effect:'allow'` directly, or by CLEARING an explicit
    *     `deny` on a cell whose built-in default is `allow` (today: `admin` x `registry:approve` /
@@ -168,6 +181,16 @@ export function createStubRBACService(): StubRBACService {
       throw new TeamPermissionDeniedError(
         MANAGE_RBAC_PERMISSION,
         `Only the team owner can change who holds the "${permission}" permission.`
+      )
+    }
+    // Rule 1b (SMI-6319) — mirrors the SQL's gate 4b exactly, including its unconditional form:
+    // no `role !== 'owner'` predicate, because `owner` is not a member of `GrantableRole` at all
+    // (nor an accepted value for `team_permission_grants.role`), so such a predicate could only
+    // ever fail OPEN if that type were later widened.
+    if (META_PERMISSIONS.includes(permission) && effect === 'allow') {
+      throw new TeamPermissionDeniedError(
+        MANAGE_RBAC_PERMISSION,
+        `The "${permission}" permission is owner-only and cannot be granted to another role.`
       )
     }
     const wouldWiden =

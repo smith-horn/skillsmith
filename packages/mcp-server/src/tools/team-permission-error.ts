@@ -84,8 +84,19 @@ export function permissionDeniedMessage(permission: string): string {
  * below and can never carry caller-controlled text. Both are enumerated here rather than matched
  * by prefix, because a prefix match would be a passthrough in allowlist clothing.
  *
+ * SMI-6319 additions (`20260901000000_rbac_meta_permission_not_grantable.sql`, gate 4b): the
+ * refusal raised when a caller tries to GRANT either meta-permission to a role. Gate 4 (above)
+ * checks the CALLER and never the TARGET, so before SMI-6319 the owner could hand `admin` or
+ * `member` the very authority gate 4 exists to keep owner-anchored — confirmed live during
+ * SMI-6312 UAT. Gate 4b refuses that write for everyone, including the owner, who already holds
+ * both unconditionally via `has_team_permission()`'s owner short-circuit. Same `%`-substitution
+ * shape as gate 4's message, on the same gate-1-validated four-value allowlist, so it likewise
+ * has exactly the two possible outputs enumerated below and can never carry caller-controlled
+ * text. `deny` writes on a meta-permission are NOT refused (they can only narrow), so no third
+ * sentence exists.
+ *
  * Text is byte-identical to both the SQL's `RAISE EXCEPTION` message and the stub's
- * `requireGrantWriteAuthority()` (`rbac-tools.types.ts`), so live and stub render the same authored
+ * `requireGrantWriteAuthority()` (`rbac-tools.stub.ts`), so live and stub render the same authored
  * copy rather than the generic sentence. Matching is full-string and case-insensitive, and the
  * value RETURNED is this constant — never `err.message` — so even a match cannot echo remote text.
  */
@@ -95,6 +106,8 @@ const PASSTHROUGH_REFUSALS: readonly string[] = [
   'forbidden: only owners and admins can promote a member to admin',
   'Only the team owner can change who holds the "team:manage_rbac" permission.',
   'Only the team owner can change who holds the "team:manage_sso" permission.',
+  'The "team:manage_rbac" permission is owner-only and cannot be granted to another role.',
+  'The "team:manage_sso" permission is owner-only and cannot be granted to another role.',
   "Only owners and admins can widen a role's permissions. You can review permissions and " +
     'remove grants, but not add an allow.',
 ]
