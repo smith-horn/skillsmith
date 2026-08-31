@@ -241,21 +241,39 @@ if [ "$IS_WORKTREE" = "1" ] && command -v docker >/dev/null 2>&1 && [ "$DOCKER_A
         NEEDS_FALLBACK=1
         printf "${HOOK_DETECT_YELLOW}📂 SKILLSMITH_PRE_PUSH_HOST=1 — falling back to host execution${HOOK_DETECT_NC}\n"
     else
-        # SMI-4249-style docs-only classification (mirrored from
-        # scripts/pre-push-check.sh; duplication accepted per that file's
-        # own drift note — worst case is a false-positive hard-fail on an
-        # edge-case path, never a false-negative skip of the guard).
+        # SMI-6260: docs-only classification now sourced from the shared lib
+        # (scripts/lib/docs-only-patterns.sh) instead of this file's own
+        # inline duplicate regex, which had drifted from
+        # scripts/pre-push-check.sh's now-tightened version (missing the
+        # packages/**/*.md + **/tests/** + **/fixtures/** exclusions,
+        # SMI-4961 hazard). This file doesn't reliably self-locate its own
+        # path when sourced (BASH_SOURCE is bash-only and this file is also
+        # sourced under POSIX sh — see .husky/_/h's `sh -e` launcher — and
+        # callers use two different variable names for the path they
+        # resolved to THIS file: HOOK_DETECT_LIB or DETECT_LIB, per this
+        # file's own header comment's caller list) — so reuse whichever of
+        # those the caller already set to derive the sibling lib's path
+        # instead. Missing lib (or neither var set) fails safe: never
+        # docs-only, same as the pre-SMI-6260 "no changed files" default —
+        # worst case is a false-positive hard-fail on an edge-case path,
+        # never a false-negative skip of the guard.
         _HOOK_DOCS_ONLY=0
-        _HOOK_SAFE_REGEX='^(docs/|\.claude/development/|\.claude/templates/|\.github/(ISSUE_TEMPLATE/|CODEOWNERS|PULL_REQUEST_TEMPLATE\.md)|LICENSE$|.*\.md$|\.gitmodules$)'
+        _HOOK_DOP_BASE="${DETECT_LIB:-${HOOK_DETECT_LIB:-}}"
+        if [ -n "$_HOOK_DOP_BASE" ]; then
+            _HOOK_DOP_LIB="$(dirname "$_HOOK_DOP_BASE")/docs-only-patterns.sh"
+            if [ -r "$_HOOK_DOP_LIB" ]; then
+                # shellcheck source=./docs-only-patterns.sh
+                . "$_HOOK_DOP_LIB"
+            fi
+        fi
         if _HOOK_UPSTREAM=$(git rev-parse --abbrev-ref --symbolic-full-name '@{u}' 2>/dev/null); then
             _HOOK_CHANGED_FILES=$(git diff --name-only "$_HOOK_UPSTREAM..HEAD" 2>/dev/null || true)
         else
             git fetch origin main --quiet 2>/dev/null || true
             _HOOK_CHANGED_FILES=$(git diff --name-only origin/main..HEAD 2>/dev/null || true)
         fi
-        if [ -n "$_HOOK_CHANGED_FILES" ]; then
-            _HOOK_UNSAFE=$(printf '%s\n' "$_HOOK_CHANGED_FILES" | grep -vE "$_HOOK_SAFE_REGEX" || true)
-            if [ -z "$_HOOK_UNSAFE" ]; then
+        if command -v is_docs_only >/dev/null 2>&1; then
+            if printf '%s\n' "$_HOOK_CHANGED_FILES" | is_docs_only; then
                 _HOOK_DOCS_ONLY=1
             fi
         fi

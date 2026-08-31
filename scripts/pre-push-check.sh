@@ -87,21 +87,20 @@ echo ""
 # =============================================================================
 # SMI-4249: Detect docs-only / submodule-pointer pushes
 # Skip npm audit (CHECK 2) when no file in the push could introduce a
-# production dependency. CHECKS 1 (security tests) and 3 (hardcoded secrets)
-# remain unconditional.
+# production dependency. SMI-6260: CHECK 1 (security tests) is now also
+# skipped for a docs-only push (see below); CHECK 3 (hardcoded secrets)
+# remains unconditional.
 #
-# SAFE_REGEX matches files that cannot introduce production deps:
-#   - docs/**, **/*.md (including submodule pointer to docs/internal)
-#   - .claude/development/**, .claude/templates/**
-#   - LICENSE, .github/ISSUE_TEMPLATE/**, .github/CODEOWNERS, PR template
-#   - .gitmodules (submodule pointer bumps only)
-#
-# Drift note: CI mirrors similar logic in scripts/ci/classify-changes.ts.
-# Keeping in bash (no tsx dep). Worst case of drift is false-positive audit
-# run on a docs-only push (safe; never a false-negative skip).
+# SMI-6260: SAFE_REGEX + the classification function now live in
+# scripts/lib/docs-only-patterns.sh, shared with
+# scripts/lib/hook-docker-detect.sh and scripts/pre-push-coverage-check.sh —
+# see that file for the pattern definitions and drift note.
 # =============================================================================
-DOCS_ONLY=0
-SAFE_REGEX='^(docs/|\.claude/development/|\.claude/templates/|\.github/(ISSUE_TEMPLATE/|CODEOWNERS|PULL_REQUEST_TEMPLATE\.md)|LICENSE$|.*\.md$|\.gitmodules$)'
+DOCS_ONLY_LIB="$(dirname "$0")/lib/docs-only-patterns.sh"
+if [ -r "$DOCS_ONLY_LIB" ]; then
+  # shellcheck source=lib/docs-only-patterns.sh
+  . "$DOCS_ONLY_LIB"
+fi
 
 if UPSTREAM=$(git rev-parse --abbrev-ref --symbolic-full-name '@{u}' 2>/dev/null); then
   CHANGED_FILES=$(git diff --name-only "$UPSTREAM..HEAD" 2>/dev/null || true)
@@ -111,11 +110,13 @@ else
   CHANGED_FILES=$(git diff --name-only origin/main..HEAD 2>/dev/null || true)
 fi
 
-if [ -n "$CHANGED_FILES" ]; then
-  UNSAFE=$(printf '%s\n' "$CHANGED_FILES" | grep -vE "$SAFE_REGEX" || true)
-  if [ -z "$UNSAFE" ]; then
+DOCS_ONLY=0
+if command -v is_docs_only >/dev/null 2>&1; then
+  if printf '%s\n' "$CHANGED_FILES" | is_docs_only; then
     DOCS_ONLY=1
   fi
+else
+  echo -e "${YELLOW}⚠️  scripts/lib/docs-only-patterns.sh missing — treating push as full (non-docs-only)${NC}"
 fi
 
 # =============================================================================
@@ -127,28 +128,38 @@ fi
 # node_modules. Mirroring the SMI-4772 fix in pre-push-coverage-check.sh:
 # invoke vitest binary directly. In Docker, pin to /app/node_modules (always
 # absolute). On host, ./node_modules works (host resolves symlinks fine).
+#
+# SMI-6260: skipped entirely for a docs-only push — none of the docs-only
+# paths (per DOCS_ONLY above) are inputs to packages/core/tests/security/,
+# and full CI still runs the suite on the PR regardless, so this isn't the
+# last line of defense. Override with SKILLSMITH_PRE_PUSH_FORCE_FULL=1.
 # =============================================================================
 echo "📋 Running security test suite..."
 
-# Run tests once, capture both output and exit code
-if [ "$USE_DOCKER" = "1" ]; then
-  TEST_OUTPUT=$(docker exec -w "$CONTAINER_WD" "$DOCKER_CONTAINER" /app/node_modules/.bin/vitest run packages/core/tests/security/ 2>&1) || TEST_STATUS=$?
+if [ $DOCS_ONLY -eq 1 ] && [ "${SKILLSMITH_PRE_PUSH_FORCE_FULL:-0}" != "1" ]; then
+  echo -e "${BLUE}ℹ️  Skipping security test suite — docs-only push (override: SKILLSMITH_PRE_PUSH_FORCE_FULL=1)${NC}"
+  echo ""
 else
-  TEST_OUTPUT=$(run_cmd ./node_modules/.bin/vitest run packages/core/tests/security/ 2>&1) || TEST_STATUS=$?
-fi
-TEST_STATUS=${TEST_STATUS:-0}
+  # Run tests once, capture both output and exit code
+  if [ "$USE_DOCKER" = "1" ]; then
+    TEST_OUTPUT=$(docker exec -w "$CONTAINER_WD" "$DOCKER_CONTAINER" /app/node_modules/.bin/vitest run packages/core/tests/security/ 2>&1) || TEST_STATUS=$?
+  else
+    TEST_OUTPUT=$(run_cmd ./node_modules/.bin/vitest run packages/core/tests/security/ 2>&1) || TEST_STATUS=$?
+  fi
+  TEST_STATUS=${TEST_STATUS:-0}
 
-# Display relevant output (filter for test results)
-echo "$TEST_OUTPUT" | grep -E "(PASS|FAIL|✓|✗|Error|test)" || true
+  # Display relevant output (filter for test results)
+  echo "$TEST_OUTPUT" | grep -E "(PASS|FAIL|✓|✗|Error|test)" || true
 
-# Check status based on exit code (more reliable than parsing output)
-if [ $TEST_STATUS -ne 0 ]; then
-  echo -e "${RED}✗ Security tests failed${NC}"
-  CHECKS_FAILED=1
-else
-  echo -e "${GREEN}✓ Security tests passed${NC}"
+  # Check status based on exit code (more reliable than parsing output)
+  if [ $TEST_STATUS -ne 0 ]; then
+    echo -e "${RED}✗ Security tests failed${NC}"
+    CHECKS_FAILED=1
+  else
+    echo -e "${GREEN}✓ Security tests passed${NC}"
+  fi
+  echo ""
 fi
-echo ""
 
 # =============================================================================
 # CHECK 2: npm audit (Optimized - single run)
