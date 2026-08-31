@@ -83,7 +83,45 @@ run_suite() {
   ' _ "$1"
 }
 
+# =============================================================================
+# SMI-6260: docs-only classification — independent computation. This script
+# runs as a separate `bash` child process of .husky/pre-push's Phase 4
+# (invoked via `bash "$COVERAGE_SCRIPT"`, possibly wrapped in `timeout`), so
+# it cannot inherit DOCS_ONLY/CHANGED_FILES computed by Phase 2's
+# pre-push-check.sh — that's a SEPARATE child process too, and nothing it
+# computes is visible here. Each caller of the shared lib sources it and
+# computes its own answer, matching hook-docker-detect.sh's existing
+# duplication pattern. Skips the entire per-package + root coverage loop
+# below when docs-only; override with SKILLSMITH_PRE_PUSH_FORCE_FULL=1.
+# =============================================================================
+DOCS_ONLY_LIB="$(dirname "$0")/lib/docs-only-patterns.sh"
+if [ -r "$DOCS_ONLY_LIB" ]; then
+  # shellcheck source=lib/docs-only-patterns.sh
+  . "$DOCS_ONLY_LIB"
+fi
+
+if UPSTREAM=$(git rev-parse --abbrev-ref --symbolic-full-name '@{u}' 2>/dev/null); then
+  CHANGED_FILES=$(git diff --name-only "$UPSTREAM..HEAD" 2>/dev/null || true)
+else
+  git fetch origin main --quiet 2>/dev/null || true
+  CHANGED_FILES=$(git diff --name-only origin/main..HEAD 2>/dev/null || true)
+fi
+
+DOCS_ONLY=0
+if command -v is_docs_only >/dev/null 2>&1; then
+  if printf '%s\n' "$CHANGED_FILES" | is_docs_only; then
+    DOCS_ONLY=1
+  fi
+else
+  echo "⚠️  scripts/lib/docs-only-patterns.sh missing — treating push as full (non-docs-only)"
+fi
+
 echo "🔍 Running pre-push test check..."
+
+if [ "$DOCS_ONLY" = "1" ] && [ "${SKILLSMITH_PRE_PUSH_FORCE_FULL:-0}" != "1" ]; then
+  echo "ℹ️  Skipping per-package coverage — docs-only push (override: SKILLSMITH_PRE_PUSH_FORCE_FULL=1)"
+  exit 0
+fi
 
 # SMI-3502: Per-workspace tests (eliminates aggregate contention)
 FAILED_PACKAGES=""

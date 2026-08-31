@@ -135,6 +135,64 @@ if [ $SECURITY_STATUS -ne 0 ]; then
   exit 1
 fi
 
+# =============================================================================
+# SMI-6260 Wave 1: warn-only docs/internal (and other .gitmodules mount)
+# pointer-ancestry check, between Phase 2 and Phase 3. Advisory only — NEVER
+# blocks the push (the hard gate is Wave 2's CI job, not built yet).
+#
+# Cannot reuse DOCS_ONLY/CHANGED_FILES from Phase 2's pre-push-check.sh —
+# it just ran via `bash "$(dirname "$0")/../scripts/pre-push-check.sh"`
+# above, a CHILD PROCESS, so nothing it computed is visible back in this
+# shell. Independently recomputes the changed-file list here, matching
+# scripts/lib/hook-docker-detect.sh's own existing duplication pattern
+# (each caller sources the shared lib and computes its own answer).
+# =============================================================================
+GITMODULES_FILE="$(dirname "$0")/../.gitmodules"
+if [ -f "$GITMODULES_FILE" ]; then
+  if PP_SUB_UPSTREAM=$(git rev-parse --abbrev-ref --symbolic-full-name '@{u}' 2>/dev/null); then
+    PP_SUB_CHANGED=$(git diff --name-only "$PP_SUB_UPSTREAM..HEAD" 2>/dev/null || true)
+  else
+    git fetch origin main --quiet 2>/dev/null || true
+    PP_SUB_CHANGED=$(git diff --name-only origin/main..HEAD 2>/dev/null || true)
+  fi
+
+  # Generic over .gitmodules entries — exact-match discipline mirroring
+  # scripts/ci/classify-changes.ts's getSubmoduleMounts()/isSubmoduleMount()
+  # (never glob-match a mount path; it's data read from .gitmodules, not an
+  # authored pattern).
+  PP_SUB_MOUNTS=$(grep -E '^[[:space:]]*path[[:space:]]*=' "$GITMODULES_FILE" \
+    | sed -E 's/^[[:space:]]*path[[:space:]]*=[[:space:]]*//' \
+    | sed -E 's/^"(.*)"$/\1/')
+
+  PP_SUB_TOUCHED=0
+  if [ -n "$PP_SUB_CHANGED" ] && [ -n "$PP_SUB_MOUNTS" ]; then
+    while IFS= read -r pp_mount; do
+      [ -z "$pp_mount" ] && continue
+      if printf '%s\n' "$PP_SUB_CHANGED" | grep -qxF "$pp_mount"; then
+        PP_SUB_TOUCHED=1
+        break
+      fi
+    done <<PP_SUB_MOUNTS_EOF
+$PP_SUB_MOUNTS
+PP_SUB_MOUNTS_EOF
+  fi
+
+  if [ "$PP_SUB_TOUCHED" = "1" ]; then
+    echo "🔗 Checking submodule pointer ancestry (warn-only)..."
+    POINTER_CHECK_SCRIPT="$(dirname "$0")/../scripts/ci/check-submodule-pointer.sh"
+    if [ -r "$POINTER_CHECK_SCRIPT" ]; then
+      git fetch origin main --quiet 2>/dev/null || true
+      # check-submodule-pointer.sh itself gracefully SKIPs any mount whose
+      # local checkout isn't initialized (never requires a developer to
+      # have docs/internal checked out just to push), and --mode=warn
+      # always exits 0 regardless of what it finds — this call can never
+      # fail the push.
+      bash "$POINTER_CHECK_SCRIPT" --mode=warn --target=origin/main || true
+    fi
+    echo ""
+  fi
+fi
+
 # Phase 3: Format check (SMI-1835 follow-up; SMI-4681 host fallback)
 # Catches Prettier issues before they hit CI - shift left approach
 # SMI-4681: source shared detection so macOS+worktree falls back to host
