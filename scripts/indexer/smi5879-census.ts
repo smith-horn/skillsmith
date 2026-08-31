@@ -66,7 +66,7 @@ import {
 import { runInvariantChecks, checkI6BranchResolutionQuality } from './smi5879-census.invariants.ts'
 import { isPopulated, obtainClaimedRun } from './smi5879-census.resume.ts'
 import { populate, seal } from './smi5879-census.lifecycle.ts'
-import { startCensusHeartbeat } from './smi5879-census.heartbeat.ts'
+import { startCensusHeartbeat, HEARTBEAT_QUERY_TIMEOUT_MS } from './smi5879-census.heartbeat.ts'
 import { buildGitHubHeaders } from './_shared/github-auth.ts'
 import { newRateLimitTelemetry } from './_shared/rate-limit.ts'
 import type {
@@ -191,10 +191,12 @@ export async function runCensus(conn: PgConnParams, args: CliArgs): Promise<Smi5
 
   const heartbeat = startCensusHeartbeat(
     (rid, tok) =>
-      queryScalar(conn, `SELECT smi5879_heartbeat(:'run_id', :'token');`, {
-        run_id: rid,
-        token: tok,
-      }),
+      queryScalar(
+        conn,
+        `SELECT smi5879_heartbeat(:'run_id', :'token');`,
+        { run_id: rid, token: tok },
+        { timeoutMs: HEARTBEAT_QUERY_TIMEOUT_MS, treatAmbiguousLossAsRetryable: true }
+      ),
     runId,
     token
   )

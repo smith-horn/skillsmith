@@ -37,6 +37,30 @@ export const HEARTBEAT_INTERVAL_MS = 60_000
  */
 export const HEARTBEAT_TAKEOVER_AFTER_MS = 30 * 60_000
 
+/**
+ * SMI-6294: per-attempt timeout for the heartbeat's own DB call
+ * (`smi5879-census.pg.ts`'s `SpawnPsqlOptions.timeoutMs`), passed alongside
+ * `treatAmbiguousLossAsRetryable: true` since `smi5879_heartbeat`'s UPDATE is
+ * idempotent. Without a timeout, `spawnPsqlOnce`'s underlying `psql` child
+ * process has no bound at all — a pooled connection whose client-side TCP
+ * socket is left half-open by a server-side disconnect (no immediate error,
+ * no exit) hangs that call FOREVER, and because `setInterval` keeps firing
+ * every `HEARTBEAT_INTERVAL_MS` regardless of whether the previous tick ever
+ * settled, and the fatal-abort/staleness logic above only runs inside that
+ * promise's `.then()`/`.catch()`, a hung call is invisible: no success log,
+ * no failure log, no fatal abort, ever.
+ *
+ * 10s comfortably fits under `HEARTBEAT_INTERVAL_MS` (60s) even at the
+ * `spawnPsql` retry wrapper's full worst-case budget: with
+ * `treatAmbiguousLossAsRetryable` widening a `PsqlTimeoutError` into
+ * `TRANSIENT_RETRY_MAX_ATTEMPTS` (3) retries at `TRANSIENT_RETRY_BACKOFF_MS`
+ * ([1000, 2000]) between them, the worst case for one heartbeat tick's DB
+ * call is 10s + 1s + 10s + 2s + 10s = 33s — well under the 60s tick
+ * interval, so a hung/repeatedly-timing-out heartbeat always settles before
+ * `setInterval`'s next tick fires, instead of piling up silently forever.
+ */
+export const HEARTBEAT_QUERY_TIMEOUT_MS = 10_000
+
 /** Handle returned by {@link startCensusHeartbeat}. */
 export interface CensusHeartbeat {
   /** Stop the timer and suppress any in-flight tick's fatal-abort/error logging. */
