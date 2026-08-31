@@ -12,7 +12,7 @@
  * Consumed by:
  *   - packages/website/src/pages/docs/quickstart.astro (Step 2, Option C — uses `.body`)
  *   - packages/website/src/pages/docs/getting-started.astro (Option 3 — uses
- *     `withApiKey(snippet.body, snippet.format)`)
+ *     `withApiKey(snippet.body, snippet.format, snippet.id)`)
  *
  * Order matches SNIPPET_DISPLAY_ORDER in the CLI package's canonical file.
  *
@@ -52,10 +52,13 @@ export interface McpClientSnippet {
   openByDefault?: boolean
 }
 
-// The 5 "standard" JSON clients (claude-code, cursor, copilot, windsurf,
-// agents) share an identical body: they all key on the published package
-// name, not a client-specific name, so this is reused rather than
-// hand-duplicated 5 times (see Review Summary #2 in the SMI-5554 plan).
+// The 4 "standard" JSON clients (claude-code, copilot, windsurf, agents)
+// share an identical body: they all key on the published package name, not
+// a client-specific name, so this is reused rather than hand-duplicated 4
+// times (see Review Summary #2 in the SMI-5554 plan). Cursor and AntiGravity
+// each get their own dedicated body below (CURSOR_JSON_BODY /
+// ANTIGRAVITY_JSON_BODY) because they carry a client-specific
+// SKILLSMITH_CLIENT env var that the other 4 must NOT get.
 const STANDARD_JSON_BODY = `{
   "mcpServers": {
     "@skillsmith/mcp-server": {
@@ -65,8 +68,9 @@ const STANDARD_JSON_BODY = `{
   }
 }`
 
-// SMI-5894 Wave 1 Step 7: Cursor is the one "standard" JSON client that
-// does NOT reuse STANDARD_JSON_BODY — it needs SKILLSMITH_CLIENT in its own
+// SMI-5894 Wave 1 Step 7: Cursor is a "standard" JSON client that does
+// NOT reuse STANDARD_JSON_BODY (AntiGravity is the other one, below) — it
+// needs SKILLSMITH_CLIENT in its own
 // env block so installs route to ~/.cursor/skills instead of the default
 // ~/.claude/skills. withApiKeyJson() below special-cases this body (like
 // the OpenCode branch) to merge SKILLSMITH_API_KEY into the EXISTING env
@@ -85,6 +89,28 @@ const CURSOR_JSON_BODY = `{
       "command": "<paste output of: which skillsmith-mcp (macOS/Linux) or where skillsmith-mcp (Windows)>",
       "env": {
         "SKILLSMITH_CLIENT": "cursor"
+      }
+    }
+  }
+}`
+
+// SMI-6277 Wave 7: AntiGravity is a second "standard" JSON client that does
+// NOT reuse STANDARD_JSON_BODY — it needs SKILLSMITH_CLIENT in its own env
+// block so installs route to ~/.gemini/config/skills instead of the default
+// ~/.claude/skills (mirrors packages/cli/src/templates/mcp-server.template.snippets.ts's
+// antigravity entry; same fix Cursor got in SMI-5894 Wave 1 Step 7). Unlike
+// Cursor, AntiGravity keeps a plain `npx` command — it has no known
+// `npx`-resolution problem. withApiKeyJson() below special-cases this body
+// (like the Cursor branch) to merge SKILLSMITH_API_KEY into the EXISTING env
+// block rather than creating a new one via the generic STANDARD_ARGS_LINE
+// path, which assumes no env block is present yet.
+const ANTIGRAVITY_JSON_BODY = `{
+  "mcpServers": {
+    "@skillsmith/mcp-server": {
+      "command": "npx",
+      "args": ["-y", "@skillsmith/mcp-server"],
+      "env": {
+        "SKILLSMITH_CLIENT": "antigravity"
       }
     }
   }
@@ -149,7 +175,7 @@ args = ["-y", "@skillsmith/mcp-server"]`,
     label: 'OpenCode',
     configPath: '~/.config/opencode/opencode.json',
     format: 'json',
-    // OpenCode's entry schema differs from the other 5 JSON clients:
+    // OpenCode's entry schema differs from the other 6 JSON clients:
     // `command` is an array and the env-var field is named `environment`,
     // not `env` (verified opencode.ai/docs/mcp-servers/).
     body: `{
@@ -192,9 +218,9 @@ args = ["-y", "@skillsmith/mcp-server"]`,
     label: 'Google Antigravity',
     configPath: '~/.gemini/config/mcp_config.json',
     format: 'json',
-    body: STANDARD_JSON_BODY,
+    body: ANTIGRAVITY_JSON_BODY,
     notes:
-      'One config file is shared across the Antigravity CLI, IDE, and 2.0. A workspace-scoped alternative also exists at <code>.agents/mcp_config.json</code> (project root) if you prefer not to register the server globally.',
+      'One config file is shared across the Antigravity CLI, IDE, and 2.0. A workspace-scoped alternative also exists at <code>.agents/mcp_config.json</code> (project root) if you prefer not to register the server globally. <code>SKILLSMITH_CLIENT</code> routes installs to <code>~/.gemini/config/skills</code> instead of the default <code>~/.claude/skills</code>.',
   },
 ]
 
@@ -205,11 +231,14 @@ const OPENCODE_ENABLED_LINE = /(\n {6}"enabled": true)\n( {4}\}\n)/
 // "SKILLSMITH_CLIENT" line so SKILLSMITH_API_KEY is merged INTO that block
 // instead of STANDARD_ARGS_LINE trying (and failing) to insert a second one.
 const CURSOR_ENV_LINE = /(\n {8}"SKILLSMITH_CLIENT": "cursor")\n( {6}\}\n)/
+// SMI-6277 Wave 7: same reasoning as CURSOR_ENV_LINE above, for AntiGravity's
+// pre-existing SKILLSMITH_CLIENT env block.
+const ANTIGRAVITY_ENV_LINE = /(\n {8}"SKILLSMITH_CLIENT": "antigravity")\n( {6}\}\n)/
 
 function withApiKeyJson(body: string, id?: McpClientId): string {
   // OpenCode's shape is keyed differently (`mcp` + `environment`, not
   // `mcpServers` + `env`) — special-cased here rather than folded into the
-  // standard branch below, so the 5 standard JSON clients stay simple.
+  // standard branch below, so the 4 standard JSON clients stay simple.
   if (body.includes('"mcp": {')) {
     return body.replace(
       OPENCODE_ENABLED_LINE,
@@ -222,6 +251,14 @@ function withApiKeyJson(body: string, id?: McpClientId): string {
   if (id === 'cursor') {
     return body.replace(
       CURSOR_ENV_LINE,
+      '$1,\n        "SKILLSMITH_API_KEY": "sk_live_your_key_here"\n$2'
+    )
+  }
+  // AntiGravity already has an "env" block (SKILLSMITH_CLIENT) too — same
+  // merge-not-replace reasoning as the cursor branch above.
+  if (id === 'antigravity') {
+    return body.replace(
+      ANTIGRAVITY_ENV_LINE,
       '$1,\n        "SKILLSMITH_API_KEY": "sk_live_your_key_here"\n$2'
     )
   }
@@ -250,8 +287,11 @@ function withApiKeyYaml(body: string): string {
  * instead of hand-authoring a second template string per client. Used by
  * getting-started.astro; quickstart.astro renders `.body` as-is.
  *
- * `id` is optional but should be passed whenever available — it's only used
- * to special-case Windsurf's `${env:VAR}` interpolation example.
+ * `id` is optional but should be passed whenever available — it's needed by
+ * withApiKeyJson() to pick Cursor's and AntiGravity's regex-based env-merge
+ * branches (both bodies already carry a `SKILLSMITH_CLIENT` env block that
+ * must be merged into, not replaced), and is also used to special-case
+ * Windsurf's `${env:VAR}` interpolation example.
  */
 export function withApiKey(
   body: string,

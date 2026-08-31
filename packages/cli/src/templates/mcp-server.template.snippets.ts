@@ -232,6 +232,15 @@ SKILLSMITH_API_KEY = "sk_live_..."`,
   // by an independent third-party source): global config at
   // ~/.gemini/config/mcp_config.json, standard `mcpServers` object shape
   // (same command/args/env fields every non-Codex/non-OpenCode client uses).
+  //
+  // SMI-6277 Wave 7: SKILLSMITH_CLIENT tells the server to install to
+  // AntiGravity's own skills directory instead of the default
+  // ~/.claude/skills — without it, an AntiGravity user who copies this
+  // snippet verbatim silently gets Claude Code's install path (same fix
+  // Cursor got in SMI-5894 Wave 1 Step 7). `command`/`args` stay plain
+  // `npx` — unlike Cursor, AntiGravity has no known `npx`-resolution
+  // problem, so there is no reason to switch it to a resolved-path
+  // placeholder.
   antigravity: {
     label: 'Google Antigravity',
     configPath: '~/.gemini/config/mcp_config.json',
@@ -242,7 +251,8 @@ SKILLSMITH_API_KEY = "sk_live_..."`,
       "command": "npx",
       "args": ["-y", "{{name}}"],
       "env": {
-        "SKILLSMITH_API_KEY": "sk_live_..."
+        "SKILLSMITH_API_KEY": "sk_live_...",
+        "SKILLSMITH_CLIENT": "antigravity"
       }
     }
   }
