@@ -211,7 +211,8 @@
         "check_fuzzy_short_query_bounded",
         "check_fuzzy_recall_short_token",
         "check_recommend_fallback_2char",
-        "check_fuzzy_normal_query_no_regression"
+        "check_fuzzy_normal_query_no_regression",
+        "check_fuzzy_stage2_fallback_recall"
       ]
     },
     {

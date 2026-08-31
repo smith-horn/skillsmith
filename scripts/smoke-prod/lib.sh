@@ -79,12 +79,22 @@ http_body() {
 }
 
 # with_retry CMD [ARGS...]
-# Runs CMD; if the last line of stdout is "000" (connection failure) or the
-# command exits non-zero, retries once after 2s.
+# Runs CMD; if the FIRST LINE of stdout (the HTTP status token http_body
+# emits) is "000" (connection failure) or the command exits non-zero,
+# retries once after 2s.
+# SMI-6284: the predicate used to match "000" anywhere in the ENTIRE
+# captured output (status line + body) via `"$out" != *"000"*` -- a
+# similarity float like 0.30000001192092896 in a fuzzy_search_skills
+# response body contains "000" as a substring, so a perfectly healthy 200
+# response could still trip a bogus retry, inflating the caller's measured
+# wall-clock time by ~2s+ for no real transient failure. Matching only the
+# first line (the status token) restores the intended "connection failure"
+# semantics.
 with_retry() {
-  local out
+  local out first
   if out=$("$@" 2>&1); then
-    if [[ "$out" != *"000"* ]]; then
+    first=$(printf '%s' "$out" | head -n1)
+    if [[ "$first" != "000" ]]; then
       printf '%s' "$out"
       return 0
     fi
