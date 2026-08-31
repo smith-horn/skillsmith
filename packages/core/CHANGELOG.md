@@ -4,6 +4,22 @@ All notable changes to `@skillsmith/core` are documented here.
 
 ## [Unreleased]
 
+- **Feature**: companion subagent files (`generateSubagent`/`generateMinimalSubagent`,
+  `@skillsmith/core/services/SubagentGenerator`, SMI-6276 Wave 6 Step 1) now generate
+  client-specific frontmatter instead of Claude-shaped tool names/model tiers for every
+  client. New `SubagentGenerator.client-profiles.ts` defines an exhaustive per-client
+  generation profile (frontmatter fields, tool-vocabulary policy, model policy). AntiGravity
+  gets its own mapped tool vocabulary as a YAML array (its own docs warn an unmapped tool
+  name can hang the subagent process) and no Claude model field (a different vendor/model
+  family); Cursor mirrors Claude Code's shape exactly (documented compatibility surface);
+  Copilot/OpenCode/Windsurf/others omit `tools:`/`model:` per each client's own confirmed
+  reasoning. `TransformationService`'s cache key now includes the target client (a
+  same-skill-different-client request could otherwise be served a stale other-client's
+  cached result); `generateSubagentContent()`'s `description:` frontmatter field is now
+  JSON.stringify()-quoted as a valid YAML double-quoted scalar (previously broke on a
+  description containing `: ` or ` #`). `installFromContent()` now correctly forwards its
+  resolved client into `applyOptimization()` instead of silently defaulting to claude-code.
+
 - **Feature**: `sklx agent install` now supports AntiGravity as a harness (`@skillsmith/core/install`,
   SMI-6275 Wave 5, closing the last unshipped ask of GH#2166). `HarnessId` gains `'antigravity'`,
   but — unlike every other MCP-capable harness — it is deliberately excluded from `McpHarnessId`

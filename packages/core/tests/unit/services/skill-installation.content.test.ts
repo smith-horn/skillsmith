@@ -17,6 +17,7 @@ import { SkillDependencyRepository } from '../../../src/repositories/SkillDepend
 import { createTestDatabase } from '../../helpers/database.js'
 import type { Database } from '../../../src/db/database-interface.js'
 import type { SkillContent } from '../../../src/services/skill-installation.types.js'
+import type { ClientId } from '../../../src/install/paths.js'
 
 const VALID_SKILL_MD = `---
 name: acme-tool
@@ -51,7 +52,11 @@ async function cleanupTmpDirs(): Promise<void> {
   await fs.rm(tmpDir, { recursive: true, force: true }).catch(() => {})
 }
 
-function createService(db: Database): SkillInstallationService {
+function createService(
+  db: Database,
+  client?: ClientId,
+  companionBaseDir?: string
+): SkillInstallationService {
   const skillRepo = new SkillRepository(db)
   const skillDependencyRepo = new SkillDependencyRepository(db)
 
@@ -61,8 +66,27 @@ function createService(db: Database): SkillInstallationService {
     skillDependencyRepo,
     skillsDir,
     manifestPath,
+    ...(client !== undefined && { client }),
+    ...(companionBaseDir !== undefined && { companionBaseDir }),
   })
 }
+
+// SMI-6276 pr-reviewer finding: content substantial enough to trigger BOTH
+// quickTransformCheck (>=3 heavy-tool-pattern mentions) and
+// generateSubagent()'s own gate (lineCount >= 300) deterministically, so a
+// companion subagent is always generated regardless of analysis heuristics.
+const HEAVY_TOOL_USAGE_SKILL_MD = `---
+name: heavy-tool-skill
+description: A skill that runs npm, git, and docker commands extensively for testing client-aware subagent generation
+---
+
+# Heavy Tool Skill
+
+This skill runs \`npm install\`, \`git commit\`, and \`docker build\` as part of
+its normal operation, plus assorted Bash( invocations elsewhere in this file.
+
+${Array.from({ length: 300 }, (_, i) => `Padding line ${i} to exceed the subagent-generation line-count threshold.`).join('\n')}
+`
 
 describe('SMI-5905 Wave 1: installFromContent()', () => {
   let db: Database
@@ -345,5 +369,54 @@ describe('SMI-5905 Wave 1: installFromContent()', () => {
     expect(result.success).toBe(false)
     expect(result.errorCode).toBe('SCAN_REJECTED')
     await expect(fs.access(path.join(skillsDir, 'acme-tool'))).rejects.toThrow()
+  })
+
+  // SMI-6276 pr-reviewer finding (round 1): installFromContent() had `client`
+  // in scope (used elsewhere for the manifest key + tips) but never forwarded
+  // it into applyOptimization(), silently generating Claude-shaped subagent
+  // content regardless of the real target client. This proves the fix by
+  // installing the SAME heavy-tool-usage content under two different clients
+  // and asserting the written companion-subagent files actually differ in
+  // client-specific ways -- before the fix, both would be byte-identical
+  // (both Claude-shaped) despite requesting different clients.
+  it('threads the target client through to subagent generation — AntiGravity gets its own tool vocabulary, not Claude-shaped output', async () => {
+    const claudeService = createService(db, 'claude-code')
+    const claudeResult = await claudeService.installFromContent({
+      skillId: 'acme/heavy-tool-skill',
+      version: '1.0.0',
+      content: { 'SKILL.md': HEAVY_TOOL_USAGE_SKILL_MD },
+    })
+    expect(claudeResult.success).toBe(true)
+    expect(claudeResult.optimization?.subagentGenerated).toBe(true)
+    const claudeSubagentPath = claudeResult.optimization?.subagentPath
+    expect(claudeSubagentPath).toBeTruthy()
+    const claudeSubagentContent = await fs.readFile(claudeSubagentPath as string, 'utf-8')
+    // Claude-code gets the pre-existing Claude-shaped frontmatter.
+    expect(claudeSubagentContent).toMatch(/^model: (haiku|sonnet|opus)$/m)
+    expect(claudeSubagentContent).toMatch(/^tools: [A-Za-z]/m)
+
+    await cleanupTmpDirs()
+    await createTmpDirs()
+    db.close()
+    db = await createTestDatabase()
+
+    // AntiGravity's companion-agent path is workspace-relative (directory-
+    // package mode) and requires an explicit companionBaseDir — tmpDir
+    // stands in for "the calling client's real project" here.
+    const antigravityService = createService(db, 'antigravity', tmpDir)
+    const antigravityResult = await antigravityService.installFromContent({
+      skillId: 'acme/heavy-tool-skill',
+      version: '1.0.0',
+      content: { 'SKILL.md': HEAVY_TOOL_USAGE_SKILL_MD },
+    })
+    expect(antigravityResult.success).toBe(true)
+    expect(antigravityResult.optimization?.subagentGenerated).toBe(true)
+    const antigravitySubagentPath = antigravityResult.optimization?.subagentPath
+    expect(antigravitySubagentPath).toBeTruthy()
+    const antigravitySubagentContent = await fs.readFile(antigravitySubagentPath as string, 'utf-8')
+    // AntiGravity gets its own mapped tool vocabulary as a YAML array, and no
+    // Claude model field — the exact divergence this fix makes possible.
+    expect(antigravitySubagentContent).not.toMatch(/^model: (haiku|sonnet|opus)$/m)
+    expect(antigravitySubagentContent).not.toMatch(/^tools: [A-Za-z]/m)
   })
 })
