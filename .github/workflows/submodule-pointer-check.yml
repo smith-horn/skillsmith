@@ -131,7 +131,14 @@ jobs:
       group: submodule-pointer-repair-main
       cancel-in-progress: false
     permissions:
-      contents: write
+      # NOT contents:write — the default GITHUB_TOKEN never performs the
+      # repair push (it can't push past a required status check at all,
+      # which is the whole reason SKILLSMITH_MAIN_PUSH_PAT exists). This
+      # token is only ever used for `gh issue` calls (issues:write) and the
+      # checkout step (contents:read). Declaring contents:write here would
+      # be an unused privilege grant on a job that already carries real
+      # write risk via the separate PAT (governance review finding).
+      contents: read
       issues: write
     env:
       # Shadow mode suppresses ONLY the R3 auto-repair push — alerting

@@ -100,10 +100,19 @@ if [ "$RULE" = "R3" ]; then
     BRANCH="$(git config -f "$REPO_ROOT/.gitmodules" --get submodule."$MOUNT".branch 2>/dev/null || echo main)"
     T_SHA="$(git -C "$MOUNT_DIR" rev-parse "origin/$BRANCH")"
 
-    git -C "$MOUNT_DIR" checkout --detach --quiet "$T_SHA"
-    git -C "$REPO_ROOT" -c user.name="skillsmith-bot" -c user.email="bot@skillsmith.app" add "$MOUNT"
-    git -C "$REPO_ROOT" -c user.name="skillsmith-bot" -c user.email="bot@skillsmith.app" \
-        commit --quiet -m "chore(docs): fast-forward docs/internal pointer to ${T_SHA:0:7} [auto-repair SMI-6260]"
+    # No `set -e` in this script (the push result below needs explicit
+    # if/else branching), so this sequence must fail loudly and stop here
+    # rather than silently falling through to the push-or-shadow branch
+    # below with a HEAD that never actually advanced (governance review
+    # finding — a job with write access to main must never risk pushing a
+    # stale HEAD because an earlier step in the same run silently failed).
+    if ! git -C "$MOUNT_DIR" checkout --detach --quiet "$T_SHA" \
+        || ! git -C "$REPO_ROOT" -c user.name="skillsmith-bot" -c user.email="bot@skillsmith.app" add "$MOUNT" \
+        || ! git -C "$REPO_ROOT" -c user.name="skillsmith-bot" -c user.email="bot@skillsmith.app" \
+            commit --quiet -m "chore(docs): fast-forward docs/internal pointer to ${T_SHA:0:7} [auto-repair SMI-6260]"; then
+        echo "::error::[pointer-autorepair] failed to prepare the R3 repair commit (checkout/add/commit) — aborting without pushing or alerting on a stale HEAD; re-run the workflow"
+        exit 1
+    fi
 
     if [ "$SHADOW" = "1" ]; then
         echo "[pointer-autorepair] shadow mode — R3 detected, auto-repair PUSH suppressed, but still alerting (per plan's shadow-mode-scope clarification)."
