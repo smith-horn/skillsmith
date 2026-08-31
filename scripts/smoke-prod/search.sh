@@ -37,6 +37,21 @@
 #                                            needle ("docker"); no-regression guard. Pre-fix
 #                                            ~480ms was already acceptable; prod prototype measured
 #                                            182ms post-fix.
+#   check_fuzzy_stage2_fallback_recall     — SMI-6284: POST fuzzy_search_skills RPC with a genuine
+#                                            typo ("dokcer") that has zero name-arm matches, so the
+#                                            20260831120000 staged rewrite's stage 2 (description
+#                                            arm) actually executes -- none of the other checks in
+#                                            this file exercise stage 2 at all, since "ci"/"sql"/
+#                                            "docker" all fill the limit from the name arm alone.
+#                                            Asserts HTTP 200, >0 rows, no duplicate ids (stage-1/
+#                                            stage-2 dedup), and a 1000ms ceiling -- measured live
+#                                            101-113ms for "dokcer"; the plan doc's own adversarial
+#                                            testing found a rarer term ("kuberentes") reaching
+#                                            ~551-708ms, still under this ceiling but closer to it
+#                                            -- see docs/internal/implementation/
+#                                            smi-6284-fuzzy-search-scale-redesign.md for why that
+#                                            residual risk is monitored (Wave 2) rather than capped
+#                                            tighter here.
 #
 # fuzzy_search_skills EXECUTE is granted to anon (see
 # supabase/migrations/20260704184030_fuzzy_search_skills_shortquery_cost.sql), so checks (a)/(b)/(d)
@@ -75,6 +90,18 @@ _fuzzy_row_count() {
   out=$(printf '%s' "$body" | jq 'if type == "array" then length else -1 end' 2>/dev/null)
   if [ -z "$out" ]; then
     out="-1"
+  fi
+  printf '%s' "$out"
+}
+
+# _fuzzy_row_ids_unique BODY -- echoes "true" if every row's `id` in a fuzzy_search_skills JSON
+# array response is distinct (guards the SMI-6284 staged rewrite's stage-1/stage-2 dedup), "false"
+# if a duplicate exists, or "unknown" if BODY is not a JSON array.
+_fuzzy_row_ids_unique() {
+  local body="$1" out
+  out=$(printf '%s' "$body" | jq -r 'if type == "array" then (length == (map(.id) | unique | length) | tostring) else "unknown" end' 2>/dev/null)
+  if [ -z "$out" ]; then
+    out="unknown"
   fi
   printf '%s' "$out"
 }
@@ -295,5 +322,64 @@ check_fuzzy_normal_query_no_regression() {
   fi
 
   report_pass "edge-fn-fuzzy-search" "check_fuzzy_normal_query_no_regression" "$url" "$ms"
+  return 0
+}
+
+# ---- check_fuzzy_stage2_fallback_recall -------------------------------------
+# SMI-6284: "dokcer" has zero name-arm matches at threshold 0.5 (confirmed live during this
+# migration's adversarial testing), so this is the one check in this file that actually exercises
+# the staged rewrite's stage 2 (description arm). Ceiling 1000ms matches
+# check_fuzzy_short_query_bounded's; measured live 101-113ms for "dokcer" -- see the module header
+# comment for why a rarer term can run closer to (but still under) this ceiling.
+check_fuzzy_stage2_fallback_recall() {
+  _require_search_supabase_url || {
+    report_fail "edge-fn-fuzzy-search" "check_fuzzy_stage2_fallback_recall" "" "SUPABASE_URL" "unset"
+    return 1
+  }
+  local anon="${SUPABASE_ANON_KEY:-}"
+  if [ -z "$anon" ]; then
+    report_fail "edge-fn-fuzzy-search" "check_fuzzy_stage2_fallback_recall" "" "SUPABASE_ANON_KEY" "unset"
+    return 1
+  fi
+
+  local url="${SMOKE_SUPABASE_URL}/rest/v1/rpc/fuzzy_search_skills"
+  local payload='{"search_query":"dokcer","similarity_threshold":0.3,"limit_count":20}'
+  local ceiling_ms=1000
+  local t0 t1 ms resp status body rows unique
+
+  t0=$(now_ms)
+  resp=$(with_retry http_body POST "$url" \
+    -H "apikey: ${anon}" \
+    -H "Authorization: Bearer ${anon}" \
+    -H "Content-Type: application/json" \
+    -d "$payload") || true
+  t1=$(now_ms)
+  ms=$((t1 - t0))
+  status=$(printf '%s' "$resp" | head -n1)
+  body=$(printf '%s' "$resp" | tail -n +2)
+
+  if [ "$status" != "200" ]; then
+    report_fail "edge-fn-fuzzy-search" "check_fuzzy_stage2_fallback_recall" "$url" "200" "$status" "$ms"
+    return 1
+  fi
+
+  rows=$(_fuzzy_row_count "$body")
+  if [ "$rows" -le 0 ] 2>/dev/null; then
+    report_fail "edge-fn-fuzzy-search" "check_fuzzy_stage2_fallback_recall" "$url" "rows>0" "rows=${rows}" "$ms"
+    return 1
+  fi
+
+  unique=$(_fuzzy_row_ids_unique "$body")
+  if [ "$unique" != "true" ]; then
+    report_fail "edge-fn-fuzzy-search" "check_fuzzy_stage2_fallback_recall" "$url" "unique ids" "duplicates=${unique}" "$ms"
+    return 1
+  fi
+
+  if [ "$ms" -ge "$ceiling_ms" ]; then
+    report_fail "edge-fn-fuzzy-search" "check_fuzzy_stage2_fallback_recall" "$url" "<${ceiling_ms}ms" "${ms}ms" "$ms"
+    return 1
+  fi
+
+  report_pass "edge-fn-fuzzy-search" "check_fuzzy_stage2_fallback_recall" "$url" "$ms"
   return 0
 }
