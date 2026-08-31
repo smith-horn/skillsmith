@@ -122,6 +122,10 @@ export function uninstallAgentPack(_opts: AgentUninstallOptions = {}): AgentUnin
       rejected.push(entry.path)
       continue
     }
+    // audit-allow:realpath-asymmetry — both sides derive from the SAME
+    // input (entry.path); the divergence itself is the detection signal
+    // (see the fuller comment above), not the SMI-4688/4692 bug this check
+    // targets (two independently-derived paths, only one realpath'd).
     if (realEntryPath !== resolvedPath) {
       rejected.push(entry.path)
       continue
