@@ -10,6 +10,11 @@ All notable changes to `@skillsmith/cli` are documented here.
   testers had each independently read the silent absence of `registry publish`/`list` as an
   accidental gap; no new CLI subcommands (full CLI parity is tracked separately) (SMI-6266
   Wave 8, SMI-6278)
+- **Fix**: The MCP config snippet for Google Antigravity now sets `SKILLSMITH_CLIENT: "antigravity"`,
+  so copying it verbatim installs skills to AntiGravity's own directory instead of silently
+  falling back to Claude Code's default — the same fix Cursor got earlier. `command`/`args`
+  stay plain `npx` (AntiGravity has no known `npx`-resolution problem, unlike Cursor) (SMI-6266
+  Wave 7, SMI-6277)
 - **Feature**: `skillsmith whoami` now shows your live effective license tier (and, when the
   live check returns one, your per-minute API rate limit) alongside the existing masked-key/
   session display, resolved via the same credential-aware `resolveEffectiveTier()` live check
