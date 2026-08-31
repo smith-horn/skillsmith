@@ -4,6 +4,12 @@ All notable changes to `@skillsmith/cli` are documented here.
 
 ## [Unreleased]
 
+- **Fix**: `skillsmith registry --help` now states that publishing and listing are MCP-only
+  today (`private_registry_publish`/`private_registry_manage`), pointing at those tools and
+  the private-registry docs page — matching already-shipped website copy. Two external
+  testers had each independently read the silent absence of `registry publish`/`list` as an
+  accidental gap; no new CLI subcommands (full CLI parity is tracked separately) (SMI-6266
+  Wave 8, SMI-6278)
 - **Feature**: `skillsmith whoami` now shows your live effective license tier (and, when the
   live check returns one, your per-minute API rate limit) alongside the existing masked-key/
   session display, resolved via the same credential-aware `resolveEffectiveTier()` live check
