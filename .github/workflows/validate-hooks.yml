@@ -37,6 +37,8 @@ on:
       - 'scripts/tests/check-container-deps-fresh.test.sh'
       - 'scripts/tests/session-mcp-disconnect-guard.test.sh'
       - 'scripts/tests/create-worktree-hooks.test.sh'
+      - 'scripts/tests/worktree-hookspath.test.sh'
+      - 'scripts/lib/check-hooks-path.sh'
       - 'scripts/tests/session-start-audit.test.sh'
       - 'scripts/tests/reclaim-node-modules.test.sh'
       - 'scripts/tests/enumerate-compose-mounts.test.sh'
@@ -94,9 +96,11 @@ jobs:
             scripts/session-mcp-disconnect-guard.sh \
             scripts/lib/check-container-deps-fresh.sh \
             scripts/lib/check-container-deps-fresh-inner.sh \
+            scripts/lib/check-hooks-path.sh \
             scripts/tests/check-container-deps-fresh.test.sh \
             scripts/tests/session-mcp-disconnect-guard.test.sh \
             scripts/tests/create-worktree-hooks.test.sh \
+            scripts/tests/worktree-hookspath.test.sh \
             scripts/tests/session-start-audit.test.sh \
             scripts/tests/reclaim-node-modules.test.sh \
             scripts/tests/enumerate-compose-mounts.test.sh \
@@ -133,9 +137,11 @@ jobs:
           sh -n scripts/lib/hook-docker-detect.sh
           sh -n scripts/lib/check-container-deps-fresh.sh
           sh -n scripts/lib/check-container-deps-fresh-inner.sh
+          sh -n scripts/lib/check-hooks-path.sh
           bash -n scripts/tests/check-container-deps-fresh.test.sh
           bash -n scripts/tests/session-mcp-disconnect-guard.test.sh
           bash -n scripts/tests/create-worktree-hooks.test.sh
+          bash -n scripts/tests/worktree-hookspath.test.sh
           bash -n scripts/tests/session-start-audit.test.sh
           bash -n scripts/tests/reclaim-node-modules.test.sh
           bash -n scripts/tests/enumerate-compose-mounts.test.sh
@@ -172,6 +178,7 @@ jobs:
           bash scripts/tests/check-container-deps-fresh.test.sh
           bash scripts/tests/session-mcp-disconnect-guard.test.sh
           bash scripts/tests/create-worktree-hooks.test.sh
+          bash scripts/tests/worktree-hookspath.test.sh
           bash scripts/tests/session-start-audit.test.sh
           bash scripts/tests/reclaim-node-modules.test.sh
           bash scripts/tests/enumerate-compose-mounts.test.sh

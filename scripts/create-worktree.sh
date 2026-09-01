@@ -423,8 +423,11 @@ print_worktree_next_steps() {
         echo "  SKILLSMITH_WORKTREE_PREPUSH_HARDFAIL_DISABLE=1 git push   # always fall back this push"
     fi
     echo ""
-    echo "Pre-commit hooks: active (SMI-4377 + SMI-4381)"
+    echo "Pre-commit hooks: active (SMI-4377 + SMI-4381 + SMI-6334)"
     echo "  - Hook discovery: .husky/_/ is tracked in main repo (inherited via checkout)"
+    echo "  - Hook resolution: core.hooksPath is the relative literal '.husky/_' (SMI-6334),"
+    echo "    so every hook (and the scripts it references) now resolves into THIS worktree,"
+    echo "    not the main checkout — verify with: git config --get core.hooksPath"
     echo "  - Host tooling: node_modules symlinked to main repo (relative)"
     echo "  - Per-package: each packages/<pkg>/node_modules also symlinked"
     echo "  - Typecheck: runs in Docker on Linux; on macOS Docker Desktop falls back"
@@ -563,6 +566,16 @@ The worktree has been left intact. Fix with:
     fi
     link_worktree_package_node_modules "$worktree_path" "$REPO_ROOT"
     success "  per-package node_modules → $REPO_ROOT/packages/*/node_modules"
+
+    # Step 4e (SMI-6334): ensure core.hooksPath is the relative literal
+    # '.husky/_', not an absolute path into some other tree. Must run AFTER
+    # Step 4's checkout -- ensure_hooks_path_relative() refuses to write
+    # unless $worktree_path/.husky/_/h already exists on disk, and before
+    # checkout this worktree has no working-tree content at all yet. Like
+    # Step 3c's git-crypt filter registration, this key is repo-shared: one
+    # write here also fixes the main checkout and every other worktree.
+    info "Step 4e: Verifying core.hooksPath is relative (SMI-6334)..."
+    ensure_hooks_path_relative "$worktree_path"
 
     # Step 5: Generate Docker override file (if docker-compose.yml exists)
     if [[ -f "$worktree_path/docker-compose.yml" ]]; then

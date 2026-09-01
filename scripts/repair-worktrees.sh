@@ -152,6 +152,14 @@ assert_host_node_modules "$REPO_ROOT"
 info "Verifying git-crypt filter registration (SMI-5702)..."
 ensure_git_crypt_filter_registered "$REPO_ROOT"
 
+# SMI-6334: core.hooksPath is repo-shared state exactly like the git-crypt
+# filter registration above -- a single call here (against the main repo
+# root) retroactively repairs an already-drifted-to-absolute value for the
+# main checkout AND every worktree at once, not just whichever tree this
+# script happens to be iterating.
+info "Verifying core.hooksPath is relative (SMI-6334)..."
+ensure_hooks_path_relative "$REPO_ROOT"
+
 info "Repairing worktrees missing node_modules symlink (SMI-4377)..."
 repair_worktrees_node_modules "$REPO_ROOT"
 

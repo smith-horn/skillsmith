@@ -60,6 +60,7 @@ import {
   evaluateExportSurfaceShadowGate,
 } from './audit-export-surface-consumer-helpers.mjs'
 import { findGitCryptUnsetRemediations } from './audit-git-crypt-remediation-helpers.mjs'
+import { findMissingHuskyStubs } from './audit-husky-stub-coverage-helpers.mjs'
 import {
   findFloatingSupabaseCliInstalls,
   findUnpinnedBareNpxCliInPackageJson,
@@ -5628,6 +5629,39 @@ console.log(
   console.log(
     `Check 63: ${uncheckedTotal} default/namespace/dynamic-import unchecked import(s) across ${uncheckedFiles.size} file(s) not symbol-checked — see Known Limitations`
   )
+}
+
+// Check 64: `.husky/_/<hook>` stub-coverage guard (SMI-6334 Wave 2 Step 1)
+//
+// SMI-6334 makes `core.hooksPath` the relative literal '.husky/_', which
+// git resolves against the invoking working tree's toplevel. Husky's own
+// dispatcher (`.husky/_/h`) resolves the hook body to run from `$0` (i.e.
+// from `.husky/_/<hook>`) -- so any `.husky/<hook>` body with no matching,
+// non-trivial `.husky/_/<hook>` stub gets silently SKIPPED by git (a
+// missing hook file is not an error), not routed to some other tree. This
+// check is the mechanical backstop for the tree `npm run audit:standards`
+// happens to run against; it cannot centrally sweep every currently-active
+// worktree branch -- scripts/lib/check-hooks-path.sh (Check 64's per-
+// invoking-tree companion, invoked from .husky/pre-push) is what catches
+// this for whichever branch is actually being used, at push time.
+console.log(`\n${BOLD}Check 64: .husky/_/<hook> stub coverage (SMI-6334)${RESET}`)
+{
+  const huskyFindings = findMissingHuskyStubs('.husky')
+  if (huskyFindings.length === 0) {
+    pass('Check 64: every .husky/<hook> has a matching, non-trivial .husky/_/<hook> stub')
+  } else {
+    for (const f of huskyFindings) {
+      const detail =
+        f.reason === 'missing'
+          ? `.husky/_/${f.hook} is missing`
+          : `.husky/_/${f.hook} is only ${f.size} byte(s) — looks truncated/empty, not a real husky stub`
+      fail(
+        `Check 64: ${detail} — .husky/${f.hook} will silently NEVER run once core.hooksPath is '.husky/_' (SMI-6334)`,
+        `Re-add .husky/_/${f.hook} matching husky's own stub shape (` +
+          '`#!/usr/bin/env sh` then `. "$(dirname "$0")/h"`), and make sure it is committed and executable.'
+      )
+    }
+  }
 }
 
 // Summary

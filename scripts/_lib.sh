@@ -1024,6 +1024,83 @@ Install git-crypt (e.g. \`brew install git-crypt\` on macOS, \`apt-get install g
 }
 
 #######################################
+# SMI-6334: idempotent self-heal for core.hooksPath registration. See
+# docs/internal/implementation/smi-6334-worktree-hookspath-fix.md for the
+# full root-cause writeup -- summary: core.hooksPath is repo-SHARED state
+# (git-crypt's own extensions.worktreeConfig=true is set but unused -- `git
+# config` without `--worktree` always resolves to $GIT_COMMON_DIR/config,
+# shared by the main checkout and every worktree). An ABSOLUTE hooksPath
+# defeats every worktree's own tracked .husky/_/ dispatcher: husky's
+# dispatcher (.husky/_/h) resolves the hook body from `$0`, so an absolute
+# hooksPath means `$0` -- and therefore every hook body and every
+# `$(dirname "$0")/../` script reference inside it -- always resolves into
+# whichever tree the absolute path happens to point at, never the invoking
+# worktree.
+#
+# The fix is the single RELATIVE literal '.husky/_', which git resolves
+# against the toplevel of the INVOKING working tree -- this is husky's own
+# default (node_modules/husky/index.js:14 runs
+# `git config core.hooksPath '.husky/_'`, relative), not an invented
+# mechanism; the absolute value in a repo's config is local drift, not
+# husky's doing.
+#
+# Mirrors ensure_git_crypt_filter_registered()'s overall shape
+# (disable-var-first, idempotent no-op on the already-healthy state,
+# `git -C <ctx>` writes, loud log on repair) but is deliberately much
+# simpler: no read-back verification, no dedicated lock, no DISABLED-state
+# carve-out. There is no adjacent legitimate "deliberately wrong" state
+# analogous to git-crypt's mid-conflict-resolution disable -- any
+# core.hooksPath value other than the relative literal is unconditionally a
+# bug to repair here.
+#
+# Arguments:
+#   $1 - git_context_dir  Any directory git can resolve (main checkout root
+#        or any worktree path) -- like filter.git-crypt.*, `git -C <any-
+#        of-these>` all resolve to the same $GIT_COMMON_DIR/config file, so
+#        a single call from any one tree repairs every tree at once.
+#
+# Returns:
+#   0 - healthy (no-op when already canonical, healed, or disabled via
+#       SKILLSMITH_HOOKS_PATH_HEAL_DISABLE=1)
+#   1 - refused to write because $git_context_dir/.husky/_/h is absent --
+#       trading a wrong-tree hook for NO hook at all would be worse than the
+#       bug this function exists to fix, so it warns loudly instead of
+#       writing. Callers should treat a 1 as "left alone, investigate"
+#       (matching this codebase's other refuse-to-write guards), not as a
+#       hard failure that must abort the calling script.
+#######################################
+ensure_hooks_path_relative() {
+    local git_context_dir="$1"
+    local canonical=".husky/_"
+
+    if [[ "${SKILLSMITH_HOOKS_PATH_HEAL_DISABLE:-0}" == "1" ]]; then
+        info "  core.hooksPath self-heal disabled (SKILLSMITH_HOOKS_PATH_HEAL_DISABLE=1)"
+        return 0
+    fi
+
+    local current
+    current="$(git -C "$git_context_dir" config --get core.hooksPath 2>/dev/null || echo "")"
+
+    if [[ "$current" == "$canonical" ]]; then
+        return 0
+    fi
+
+    if [[ ! -f "$git_context_dir/.husky/_/h" ]]; then
+        warn "  core.hooksPath self-heal: $git_context_dir/.husky/_/h is missing -- refusing to set core.hooksPath=$canonical here (that would trade a wrong-tree hook for no hook at all). Verify .husky/_/ is checked out in this tree, then re-run."
+        return 1
+    fi
+
+    git -C "$git_context_dir" config core.hooksPath "$canonical"
+
+    if [[ -z "$current" ]]; then
+        success "  core.hooksPath set to relative '$canonical' (was unset, SMI-6334)"
+    else
+        success "  core.hooksPath repaired to relative '$canonical' (was '$current', SMI-6334)"
+    fi
+    return 0
+}
+
+#######################################
 # SMI-5702: find a real, on-disk file matching the first git-crypt-encrypted
 # glob prefix declared in <dir>/.gitattributes. De-duplicates the pattern
 # previously inlined at create-worktree.sh's check_git_crypt_unlocked
