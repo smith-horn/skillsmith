@@ -348,14 +348,21 @@ describe.skipIf(noLiveTestPg)('SMI-6345 — per-device lock protocol, two live s
   // ==========================================================================
   // C-5 — identity mutation under concurrency.
   //
-  // SCOPE NOTE. The plan's full C-5 ("one push introduces a duplicate canonical claim,
-  // another removes the other claimant") needs Wave 2's ingestion-resolution logic, which
-  // does not exist yet — nothing today writes canonical_skill_id. What Wave 1 ships is
-  // the property that resolution will REST on: a whole-device ambiguity snapshot computed
-  // under the protocol lock cannot be invalidated by a concurrent push. Both halves are
-  // asserted — with the lock, and (as the contrast that gives it meaning) without it.
+  // SCOPE NOTE (sharpened per SMI-6345 Wave 1 Codex adversarial review, finding 3). The
+  // plan's full C-5 ("one push introduces a duplicate canonical claim, another removes
+  // the other claimant") needs Wave 2's ingestion-resolution logic, which does not exist
+  // yet — nothing today computes an ambiguity snapshot or demotes a claimant; both tests
+  // below drive that entirely by hand (manual UPDATEs, a manually-held lock, manually
+  // inserted audit rows), never through application code, because no such code exists
+  // yet. These two tests do NOT prove Wave 2's ambiguity computation will be correct —
+  // they cannot, since it doesn't exist — and must not be read as C-5 coverage once
+  // Wave 2 ships; that wave needs its own tests exercising its real resolver. What these
+  // two DO prove, and all they claim to prove: the protocol LOCK itself guarantees a
+  // read taken under it cannot be invalidated by a concurrent push, which is the
+  // precondition Wave 2's real ambiguity computation will rely on. Read the two titles
+  // below as being about the lock, not about ambiguity resolution.
   // ==========================================================================
-  it('C-5: an ambiguity snapshot taken under the lock cannot go stale mid-decision', async () => {
+  it('C-5 precondition: a device-row read taken under the protocol lock cannot go stale mid-transaction', async () => {
     // Introduce the duplicate canonical claim Wave 2 will detect: two rows in one
     // (device, harness) both resolving to acme/beta from independent E1 evidence.
     await ctl.send(
@@ -427,7 +434,7 @@ describe.skipIf(noLiveTestPg)('SMI-6345 — per-device lock protocol, two live s
     ).toBe('2')
   }, 60_000)
 
-  it('C-5 contrast: the same snapshot DOES go stale for a writer that skips the lock', async () => {
+  it('C-5 precondition contrast: the same read DOES go stale for a writer that skips the lock', async () => {
     // The measurement that makes the previous test mean something. A non-compliant
     // writer — one that reads the device's rows without taking the protocol lock — has
     // its snapshot invalidated by a push that commits mid-decision, and would demote (or

@@ -38,6 +38,14 @@ SET LOCAL statement_timeout = '30s';
 
 DROP TABLE IF EXISTS device_skills_identity_audit;
 
+-- SMI-6345 Wave 1 Codex adversarial review, finding 1: the forward migration added a
+-- table-level CHECK spanning canonical_skill_id and identity_evidence. Drop it
+-- explicitly, by name, before dropping either column -- do not rely on DROP COLUMN's
+-- implicit constraint-drop behavior for a multi-column CHECK, which this rollback does
+-- not need to gamble on when the constraint has a name.
+ALTER TABLE device_skills
+  DROP CONSTRAINT IF EXISTS device_skills_canonical_id_evidence_tier_check;
+
 ALTER TABLE device_skills
   DROP COLUMN IF EXISTS evidence_protocol,
   DROP COLUMN IF EXISTS identity_resolved_at,
