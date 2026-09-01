@@ -9,8 +9,8 @@
  * same interleaving runs against the shipped `FOR UPDATE` lock and against a NO KEY
  * UPDATE lock side by side, so "the new lock is a genuine strengthening" stops being an
  * inference. A sequential simulation would prove none of it — to a lone session a locking
- * read and an unlocked read are indistinguishable, which is exactly why an unserialized
- * ownership read survived review in this function for two years.
+ * read and an unlocked read are indistinguishable, so a single-session test cannot
+ * distinguish a locked ownership read from the unlocked one this function shipped with.
  *
  * Harness, env vars, CI-coverage gap: ./inventory-device-lock.test-helpers.ts.
  *
