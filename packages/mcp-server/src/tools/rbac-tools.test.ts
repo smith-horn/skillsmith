@@ -5,6 +5,12 @@
  *      now cover — `RolePermissionsView` / `TeamMemberAssignment` / `RbacCreatePolicyResult.grants`,
  *      not the old `create_role`/`delete_role`/roleId/userId/policyId shapes.
  * @see SMI-6242: the corrected default matrix (`admin` denies `team:manage_rbac`/`team:manage_sso`)
+ * @see SMI-6319 (`supabase/migrations/20260901000000_rbac_meta_permission_not_grantable.sql`):
+ *      neither meta-permission may ever be GRANTED (`effect: 'allow'`) to a role by ANY caller,
+ *      including the owner (stub gate 1b, `rbac-tools.stub.ts`'s `requireGrantWriteAuthority`).
+ *      This makes every "owner elevates a non-owner with `team:manage_rbac`" setup step used by
+ *      the old gate 4/5 tests below unconstructible — those tests are rewritten in place to
+ *      assert the new refusal directly rather than deleted; see the comments at each site.
  */
 
 import { describe, it, expect, beforeEach } from 'vitest'
@@ -287,8 +293,14 @@ describe('rbac-tools', () => {
       expect(isPermissionDeniedError(result.error)).toBe(true)
     })
 
-    it('gate 4: once elevated, a non-owner admin still cannot rewrite team:manage_rbac itself', async () => {
-      // Owner elevates admin first (the real setRolePermission-succeeding-for-an-owner path).
+    // SMI-6319 (`20260901000000_rbac_meta_permission_not_grantable.sql`): this test used to prove
+    // that once the OWNER elevated a non-owner `admin` with an explicit `team:manage_rbac` grant,
+    // that elevated admin still could not rewrite `team:manage_rbac` itself (gate 1's non-owner
+    // branch). SMI-6319 removes the ability to construct that principal at all -- no grant row may
+    // ever set `team:manage_rbac` to `allow`, for ANY role, including by the owner -- so the
+    // elevation step itself now fails before the original assertion is ever reached. Rewritten to
+    // assert that unreachability directly, and that the refused write left no partial state.
+    it('SMI-6319: the owner cannot elevate `admin` with team:manage_rbac (was gate 4, now unreachable)', async () => {
       const elevate = await executeRbacManage(
         {
           action: 'set_role_permission',
@@ -298,50 +310,33 @@ describe('rbac-tools', () => {
         },
         mockContext
       )
-      expect(elevate.success).toBe(true)
-
-      stub.setActor({ userId: 'stub-admin', teamId: STUB_TEAM_ID, role: 'admin' })
-      const result = await executeRbacManage(
-        {
-          action: 'set_role_permission',
-          role: 'admin',
-          permission: 'team:manage_rbac',
-          effect: 'deny',
-        },
-        mockContext
-      )
-      expect(result.success).toBe(false)
-      expect(isPermissionDeniedError(result.error)).toBe(true)
-      expect(permissionErrorText(result.error)).toBe(
-        'Only the team owner can change who holds the "team:manage_rbac" permission.'
+      expect(elevate.success).toBe(false)
+      expect(isPermissionDeniedError(elevate.error)).toBe(true)
+      expect(permissionErrorText(elevate.error)).toBe(
+        'The "team:manage_rbac" permission is owner-only and cannot be granted to another role.'
       )
 
-      const resetResult = await executeRbacManage(
-        { action: 'reset_role_permission', role: 'admin', permission: 'team:manage_rbac' },
-        mockContext
-      )
-      expect(resetResult.success).toBe(false)
-      expect(isPermissionDeniedError(resetResult.error)).toBe(true)
+      const after = await executeRbacManage({ action: 'get_role', role: 'admin' }, mockContext)
+      expect(
+        after.role!.permissions.find((p) => p.permission === 'team:manage_rbac')
+      ).toMatchObject({ effect: 'deny', source: 'default' })
     })
 
-    it('gate 4 scope: an elevated admin CAN write registry:* grants (the gate is not over-broad)', async () => {
-      await executeRbacManage(
-        {
-          action: 'set_role_permission',
-          role: 'admin',
-          permission: 'team:manage_rbac',
-          effect: 'allow',
-        },
-        mockContext
-      )
-      stub.setActor({ userId: 'stub-admin', teamId: STUB_TEAM_ID, role: 'admin' })
-
+    // SMI-6319: this test used to prove that an admin the owner had elevated with
+    // `team:manage_rbac` could still freely write registry:* grants -- i.e. that gate 4's
+    // meta-only restriction was not over-broad. That elevation is now unreachable (see the test
+    // above), so a non-owner can no longer reach `set_role_permission` at all, for any
+    // permission (see the gate-3 test earlier in this block -- that is now the permanent state
+    // for every non-owner). Rewritten as the equivalent scope check for the NEW rule 1b: it
+    // fires only for the two META_PERMISSIONS, so an ordinary registry:* `allow` write -- the
+    // one write path a caller (now only ever the owner) can still make -- is untouched by it.
+    it('SMI-6319 scope: rule 1b only blocks the two meta-permissions -- registry:* allow writes are unaffected', async () => {
       const approve = await executeRbacManage(
         {
           action: 'set_role_permission',
           role: 'admin',
           permission: 'registry:approve',
-          effect: 'deny',
+          effect: 'allow',
         },
         mockContext
       )
@@ -350,9 +345,9 @@ describe('rbac-tools', () => {
       const deprecate = await executeRbacManage(
         {
           action: 'set_role_permission',
-          role: 'admin',
+          role: 'member',
           permission: 'registry:deprecate',
-          effect: 'deny',
+          effect: 'allow',
         },
         mockContext
       )
@@ -362,44 +357,38 @@ describe('rbac-tools', () => {
     // Adversarial-review fix (SMI-6203 security round): gate 4 originally covered
     // `team:manage_rbac` only, so an admin the owner elevated for registry work could grant
     // itself `team:manage_sso` — IdP registration + domain claims, i.e. the ability to
-    // authenticate as the owner. Both meta-permissions are now owner-only, on write AND reset.
-    it('gate 4 scope: an elevated admin CANNOT write or clear team:manage_sso', async () => {
-      await executeRbacManage(
+    // authenticate as the owner. Both meta-permissions became owner-only, on write AND reset.
+    //
+    // SMI-6319 update: this test used to prove that an elevated (non-owner) admin could not
+    // write or clear team:manage_sso. Elevation is now unreachable, so the scenario collapses
+    // one step earlier — rewritten to prove team:manage_sso gets the SAME rule-1b refusal as
+    // team:manage_rbac (the first test above), this time against the `member` role, completing
+    // the (role x meta-permission) coverage matrix across this describe block.
+    it('SMI-6319: the owner cannot elevate `member` with team:manage_sso either (was gate 4 scope, now unreachable)', async () => {
+      const elevate = await executeRbacManage(
         {
           action: 'set_role_permission',
-          role: 'admin',
-          permission: 'team:manage_rbac',
-          effect: 'allow',
-        },
-        mockContext
-      )
-      stub.setActor({ userId: 'stub-admin', teamId: STUB_TEAM_ID, role: 'admin' })
-
-      const sso = await executeRbacManage(
-        {
-          action: 'set_role_permission',
-          role: 'admin',
+          role: 'member',
           permission: 'team:manage_sso',
           effect: 'allow',
         },
         mockContext
       )
-      expect(sso.success).toBe(false)
-      expect(isPermissionDeniedError(sso.error)).toBe(true)
+      expect(elevate.success).toBe(false)
+      expect(isPermissionDeniedError(elevate.error)).toBe(true)
       // Names the permission actually attempted, not the one that gates the operation.
-      expect(permissionErrorText(sso.error)).toBe(
-        'Only the team owner can change who holds the "team:manage_sso" permission.'
+      expect(permissionErrorText(elevate.error)).toBe(
+        'The "team:manage_sso" permission is owner-only and cannot be granted to another role.'
       )
-
-      const reset = await executeRbacManage(
-        { action: 'reset_role_permission', role: 'admin', permission: 'team:manage_sso' },
-        mockContext
-      )
-      expect(reset.success).toBe(false)
-      expect(isPermissionDeniedError(reset.error)).toBe(true)
     })
 
-    it('gate 4 scope: the OWNER can still write and clear team:manage_sso', async () => {
+    // SMI-6319: this test used to prove the OWNER could still write and clear team:manage_sso —
+    // true before SMI-6319, but the WRITE half is now the exact case rule 1b exists to refuse
+    // (the owner is not exempt from rule 1b; only `hasPermission`'s unconditional owner
+    // short-circuit is, and the owner never loses that). Split in two: the write half below now
+    // asserts the refusal, and a second test confirms the owner can still write a DENY and clear
+    // the row — `deny` can only narrow, so rule 1b never applies to it.
+    it('gate 4 scope (SMI-6319): the OWNER cannot write an allow to team:manage_sso either', async () => {
       const grant = await executeRbacManage(
         {
           action: 'set_role_permission',
@@ -409,7 +398,25 @@ describe('rbac-tools', () => {
         },
         mockContext
       )
-      expect(grant.success).toBe(true)
+      expect(grant.success).toBe(false)
+      expect(isPermissionDeniedError(grant.error)).toBe(true)
+      expect(permissionErrorText(grant.error)).toBe(
+        'The "team:manage_sso" permission is owner-only and cannot be granted to another role.'
+      )
+    })
+
+    it('gate 4 scope: the OWNER can still write a deny and clear team:manage_sso', async () => {
+      const denied = await executeRbacManage(
+        {
+          action: 'set_role_permission',
+          role: 'admin',
+          permission: 'team:manage_sso',
+          effect: 'deny',
+        },
+        mockContext
+      )
+      expect(denied.success).toBe(true)
+      expect(denied.message).toContain('Set **deny**')
 
       const cleared = await executeRbacManage(
         { action: 'reset_role_permission', role: 'admin', permission: 'team:manage_sso' },
@@ -419,7 +426,13 @@ describe('rbac-tools', () => {
       expect(cleared.message).toContain('Cleared the override')
     })
 
-    it('gate 5: a granted member cannot self-widen via effect=allow, but can narrow via deny', async () => {
+    // SMI-6319: this test used to prove that a MEMBER the owner had elevated with
+    // `team:manage_rbac` could not self-widen its own registry:approve grant via a direct
+    // effect='allow' write (gate 5's no-self-widening rule), though it COULD narrow via deny.
+    // Elevation of `member` is now unreachable for the same reason as `admin` above — rewritten
+    // to assert that unreachability for the `member` role target, completing the last of the
+    // four (role x meta-permission) combinations this describe block now covers.
+    it('SMI-6319: the owner cannot elevate `member` with team:manage_rbac either (was gate 5, now unreachable)', async () => {
       const elevate = await executeRbacManage(
         {
           action: 'set_role_permission',
@@ -429,91 +442,29 @@ describe('rbac-tools', () => {
         },
         mockContext
       )
-      expect(elevate.success).toBe(true)
-
-      stub.setActor({ userId: 'stub-member', teamId: STUB_TEAM_ID, role: 'member' })
-
-      const widen = await executeRbacManage(
-        {
-          action: 'set_role_permission',
-          role: 'member',
-          permission: 'registry:approve',
-          effect: 'allow',
-        },
-        mockContext
+      expect(elevate.success).toBe(false)
+      expect(isPermissionDeniedError(elevate.error)).toBe(true)
+      expect(permissionErrorText(elevate.error)).toBe(
+        'The "team:manage_rbac" permission is owner-only and cannot be granted to another role.'
       )
-      expect(widen.success).toBe(false)
-      expect(isPermissionDeniedError(widen.error)).toBe(true)
-      expect(permissionErrorText(widen.error)).toContain('Only owners and admins can widen')
-
-      const narrow = await executeRbacManage(
-        {
-          action: 'set_role_permission',
-          role: 'member',
-          permission: 'registry:approve',
-          effect: 'deny',
-        },
-        mockContext
-      )
-      expect(narrow.success).toBe(true)
     })
 
-    it('gate 5 (confirmation-round fix): a granted member cannot self-widen via a two-call set-then-reset either', async () => {
-      // admin x registry:approve defaults to allow (SMI-6242), so clearing an owner-written
-      // deny on it restores that allow -- the same forbidden state a direct effect='allow'
-      // write is blocked from creating. Elevate c_member with team:manage_rbac, have the
-      // OWNER write the deny, then prove the granted member cannot clear it back.
-      const elevate = await executeRbacManage(
-        {
-          action: 'set_role_permission',
-          role: 'member',
-          permission: 'team:manage_rbac',
-          effect: 'allow',
-        },
+    // SMI-6319 (confirmation-round fix, was gate 5): this test used to prove a granted member
+    // could not bypass no-self-widening via set(deny)-then-reset on registry:approve (whose
+    // admin default is `allow`). That bypass shape needed a "granted member" principal SMI-6319
+    // makes unreachable (see the two tests above) — and it was specific to a permission whose
+    // DEFAULT is `allow`. For team:manage_rbac/team:manage_sso, DEFAULT_ROLE_PERMISSIONS is
+    // `deny` for every (role, permission) pair, so a reset can never restore a meta cell to
+    // `allow`, and rule 1b (which only inspects effect === 'allow') needs no separate reset-side
+    // twin. This proves that directly: the owner clearing a never-granted meta cell reports
+    // "nothing to clear", not a refusal.
+    it('SMI-6319: reset on a meta-permission needs no reset-side twin of rule 1b -- the default is always deny', async () => {
+      const result = await executeRbacManage(
+        { action: 'reset_role_permission', role: 'admin', permission: 'team:manage_rbac' },
         mockContext
       )
-      expect(elevate.success).toBe(true)
-
-      const denyAdminApprove = await executeRbacManage(
-        {
-          action: 'set_role_permission',
-          role: 'admin',
-          permission: 'registry:approve',
-          effect: 'deny',
-        },
-        mockContext
-      )
-      expect(denyAdminApprove.success).toBe(true)
-
-      stub.setActor({ userId: 'stub-member', teamId: STUB_TEAM_ID, role: 'member' })
-
-      const bypassAttempt = await executeRbacManage(
-        { action: 'reset_role_permission', role: 'admin', permission: 'registry:approve' },
-        mockContext
-      )
-      expect(bypassAttempt.success).toBe(false)
-      expect(isPermissionDeniedError(bypassAttempt.error)).toBe(true)
-      expect(permissionErrorText(bypassAttempt.error)).toContain('Only owners and admins can widen')
-
-      // The deny row must still be there -- the refused reset must not have partially applied.
-      // (The granted member still holds team:manage_rbac from the elevation above, so this
-      // read itself succeeds -- only the widening reset was refused.)
-      const stillDenied = await executeRbacManage(
-        { action: 'get_role', role: 'admin' },
-        mockContext
-      )
-      expect(stillDenied.success).toBe(true)
-      expect(
-        stillDenied.role!.permissions.find((p) => p.permission === 'registry:approve')
-      ).toMatchObject({ effect: 'deny', source: 'grant' })
-
-      // A narrowing reset (clearing a cell whose default is deny) is still fine for the same
-      // granted member -- confirms this fix only blocks the widening direction.
-      const narrowingReset = await executeRbacManage(
-        { action: 'reset_role_permission', role: 'member', permission: 'registry:approve' },
-        mockContext
-      )
-      expect(narrowingReset.success).toBe(true)
+      expect(result.success).toBe(true)
+      expect(result.message).toContain('already at the built-in default')
     })
   })
 

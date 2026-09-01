@@ -4,6 +4,11 @@ All notable changes to `@skillsmith/mcp-server` are documented here.
 
 ## [Unreleased]
 
+- **Fix**: `set_team_role_permission()` closed a delegation hole where a team owner could grant
+  `team:manage_rbac`/`team:manage_sso` to a non-owner role, reaching the exact escalated state
+  the owner-only gate existed to prevent (SMI-6319). Two new defense layers: a table CHECK
+  constraint and a typed function-level refusal, surfaced through `rbac_manage`'s error mapping
+  so a customer sees an authored refusal rather than a raw database error.
 - **Feature**: `install_skill`/`uninstall_skill` gain `scope`/`client`/`cwd` input parameters
   (ADR-139, SMI-6274 Wave 4) — `install_skill` previously called `getInstallPath()` directly,
   the old global-only resolution, so the MCP server could never reach a workspace-scoped
