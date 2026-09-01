@@ -1,0 +1,252 @@
+/**
+ * Tests for the SMI-6361 env-read-guard PreToolUse hook.
+ *
+ * Two things are covered, per the plan's Wave 1 Step 3
+ * (docs/internal/implementation/varlock-secret-exposure-defense-in-depth.md):
+ *
+ *   1. Registration regression pin — `.claude/settings.json` on disk must
+ *      still register this hook on the `Bash` `PreToolUse` matcher. This
+ *      is a REAL-FILE assertion, not a fixture copy, so a future PR that
+ *      quietly removes the registration fails this test.
+ *   2. Behavior — table-driven `decide()` cases covering the plan's
+ *      required minimum plus additional cases pulled from the guard's own
+ *      documented rules (safe-file allowlist, the output-free-grep
+ *      exception, the `varlock load --format` flag guard, the
+ *      `docker exec` / `varlock run` / `bash -c` wrapper-normalization
+ *      paths, and the hard-disable env var).
+ *
+ * No shadow mode exists for this guard (Owner Decision A — deny from day
+ * one), so unlike the sibling `linear-issue-creation-guard`, there is no
+ * `warn` action to test.
+ */
+import { readFileSync } from 'node:fs'
+import { fileURLToPath } from 'node:url'
+
+import { describe, expect, it } from 'vitest'
+
+import { decide } from '../env-read-guard.mjs'
+
+const SETTINGS_PATH = fileURLToPath(new URL('../../.claude/settings.json', import.meta.url))
+
+function bashCall(command: string) {
+  return { tool_name: 'Bash', tool_input: { command } }
+}
+
+describe('.claude/settings.json registration (regression pin)', () => {
+  it('registers env-read-guard.mjs on the Bash PreToolUse matcher', () => {
+    const settings = JSON.parse(readFileSync(SETTINGS_PATH, 'utf8'))
+    const preToolUse = settings.hooks?.PreToolUse
+    expect(Array.isArray(preToolUse)).toBe(true)
+
+    const bashMatchers = preToolUse.filter(
+      (entry: { matcher?: string }) => entry.matcher === 'Bash'
+    )
+    expect(bashMatchers.length).toBeGreaterThan(0)
+
+    const hasGuardHook = bashMatchers.some((entry: { hooks?: Array<{ command?: string }> }) =>
+      (entry.hooks ?? []).some(
+        (hook) => typeof hook.command === 'string' && hook.command.includes('env-read-guard')
+      )
+    )
+    expect(hasGuardHook).toBe(true)
+  })
+
+  it('no longer registers the dead Bash(echo $.env:*) deny entry', () => {
+    const settings = JSON.parse(readFileSync(SETTINGS_PATH, 'utf8'))
+    expect(settings.permissions?.deny ?? []).not.toContain('Bash(echo $.env:*)')
+  })
+})
+
+describe('decide() — required minimum cases (plan Wave 1 Step 3)', () => {
+  it('1. grep PAT .env -> deny (the incident shape)', () => {
+    const result = decide(bashCall('grep PAT .env'), {})
+    expect(result.action).toBe('deny')
+    expect(result.json?.hookSpecificOutput.permissionDecision).toBe('deny')
+    expect(result.json?.hookSpecificOutput.permissionDecisionReason).toEqual(expect.any(String))
+    expect(result.json?.hookSpecificOutput.permissionDecisionReason.length).toBeGreaterThan(0)
+  })
+
+  it('2. docker exec skillsmith-dev-1 cat /app/.env -> deny', () => {
+    const result = decide(bashCall('docker exec skillsmith-dev-1 cat /app/.env'), {})
+    expect(result.action).toBe('deny')
+    expect(result.json?.hookSpecificOutput.permissionDecision).toBe('deny')
+    expect(result.json?.hookSpecificOutput.permissionDecisionReason.length).toBeGreaterThan(0)
+  })
+
+  it('3. varlock load --format json -> deny (unmasked plaintext)', () => {
+    const result = decide(bashCall('varlock load --format json'), {})
+    expect(result.action).toBe('deny')
+    expect(result.json?.hookSpecificOutput.permissionDecision).toBe('deny')
+    expect(result.json?.hookSpecificOutput.permissionDecisionReason.length).toBeGreaterThan(0)
+  })
+
+  it("4. grep -qE '^LINEAR_API_KEY=' .env -> allow (output-free presence check)", () => {
+    const result = decide(bashCall("grep -qE '^LINEAR_API_KEY=' .env"), {})
+    expect(result.action).toBe('allow')
+  })
+
+  it('5. cat .env.schema -> allow (safe file)', () => {
+    const result = decide(bashCall('cat .env.schema'), {})
+    expect(result.action).toBe('allow')
+  })
+
+  it('6. cat .env.example -> allow (safe file)', () => {
+    const result = decide(bashCall('cat .env.example'), {})
+    expect(result.action).toBe('allow')
+  })
+
+  it('7. head -5 .worktrees/foo/.env -> deny (nested worktree path)', () => {
+    const result = decide(bashCall('head -5 .worktrees/foo/.env'), {})
+    expect(result.action).toBe('deny')
+    expect(result.json?.hookSpecificOutput.permissionDecision).toBe('deny')
+    expect(result.json?.hookSpecificOutput.permissionDecisionReason.length).toBeGreaterThan(0)
+  })
+
+  it('8. python3 -c "print(open(\'.env\').read())" -> deny (inline interpreter)', () => {
+    const result = decide(bashCall('python3 -c "print(open(\'.env\').read())"'), {})
+    expect(result.action).toBe('deny')
+    expect(result.json?.hookSpecificOutput.permissionDecision).toBe('deny')
+    expect(result.json?.hookSpecificOutput.permissionDecisionReason.length).toBeGreaterThan(0)
+  })
+})
+
+describe('decide() — additional cases from the guard’s own documented behavior', () => {
+  it('bare cat .env -> deny', () => {
+    const result = decide(bashCall('cat .env'), {})
+    expect(result.action).toBe('deny')
+  })
+
+  it('cat .env.registry -> deny (second secret-bearing file, root-cause finding 10)', () => {
+    const result = decide(bashCall('cat .env.registry'), {})
+    expect(result.action).toBe('deny')
+  })
+
+  it('cat .env.local -> deny (protected .env.<anything> except the two safe files)', () => {
+    const result = decide(bashCall('cat .env.local'), {})
+    expect(result.action).toBe('deny')
+  })
+
+  it('grep PAT .env with a count flag (-c) is treated as output, not the quiet exception -> deny', () => {
+    const result = decide(bashCall('grep -qc PAT .env'), {})
+    expect(result.action).toBe('deny')
+  })
+
+  it('grep -q PAT .env (quiet, no output flag) -> allow', () => {
+    const result = decide(bashCall('grep -q PAT .env'), {})
+    expect(result.action).toBe('allow')
+  })
+
+  it('grep -o PAT .env (quiet-less, output-producing) -> deny', () => {
+    const result = decide(bashCall('grep -o PAT .env'), {})
+    expect(result.action).toBe('deny')
+  })
+
+  it('[ -f .env ] presence/metadata check -> allow', () => {
+    const result = decide(bashCall('[ -f .env ]'), {})
+    expect(result.action).toBe('allow')
+  })
+
+  it('test -f .env presence/metadata check -> allow', () => {
+    const result = decide(bashCall('test -f .env'), {})
+    expect(result.action).toBe('allow')
+  })
+
+  it('wc -c .env metadata check -> allow', () => {
+    const result = decide(bashCall('wc -c .env'), {})
+    expect(result.action).toBe('allow')
+  })
+
+  it('varlock load (default pretty format, no --format flag) -> allow', () => {
+    const result = decide(bashCall('varlock load'), {})
+    expect(result.action).toBe('allow')
+  })
+
+  it('varlock load --format pretty -> allow (explicit default format)', () => {
+    const result = decide(bashCall('varlock load --format pretty'), {})
+    expect(result.action).toBe('allow')
+  })
+
+  it('varlock load --quiet -> allow (validation only)', () => {
+    const result = decide(bashCall('varlock load --quiet'), {})
+    expect(result.action).toBe('allow')
+  })
+
+  it('varlock load --format=json (equals-spelling) -> deny', () => {
+    const result = decide(bashCall('varlock load --format=json'), {})
+    expect(result.action).toBe('deny')
+  })
+
+  it('varlock load --format env -> deny', () => {
+    const result = decide(bashCall('varlock load --format env'), {})
+    expect(result.action).toBe('deny')
+  })
+
+  it('sudo cat .env -> deny (sudo wrapper stripped before matching)', () => {
+    const result = decide(bashCall('sudo cat .env'), {})
+    expect(result.action).toBe('deny')
+  })
+
+  it('bash -c "cat .env" -> deny (nested shell body is inspected)', () => {
+    const result = decide(bashCall('bash -c "cat .env"'), {})
+    expect(result.action).toBe('deny')
+  })
+
+  it('varlock run -- cat .env -> deny (varlock run wrapper stripped before matching)', () => {
+    const result = decide(bashCall('varlock run -- cat .env'), {})
+    expect(result.action).toBe('deny')
+  })
+
+  it('docker compose exec dev cat /app/.env -> deny (compose exec wrapper stripped)', () => {
+    const result = decide(bashCall('docker compose exec dev cat /app/.env'), {})
+    expect(result.action).toBe('deny')
+  })
+
+  it('cp .env /tmp/x (not a reader command) -> allow (named residual gap, not covered)', () => {
+    const result = decide(bashCall('cp .env /tmp/x'), {})
+    expect(result.action).toBe('allow')
+  })
+
+  it('cat some-other-file.txt -> allow (no protected file referenced)', () => {
+    const result = decide(bashCall('cat some-other-file.txt'), {})
+    expect(result.action).toBe('allow')
+  })
+})
+
+describe('decide() — SKILLSMITH_ENV_READ_GUARD_DISABLE hard-disable', () => {
+  it('a command that would normally deny is allowed when the disable var is set', () => {
+    const result = decide(bashCall('grep PAT .env'), { SKILLSMITH_ENV_READ_GUARD_DISABLE: '1' })
+    expect(result).toEqual({ action: 'allow', json: null, stderr: null })
+  })
+
+  it('a non-"1" value does not disable the guard (still denies)', () => {
+    const result = decide(bashCall('grep PAT .env'), { SKILLSMITH_ENV_READ_GUARD_DISABLE: 'true' })
+    expect(result.action).toBe('deny')
+  })
+})
+
+describe('decide() — malformed / non-Bash input fails open to allow', () => {
+  it('a non-Bash tool_name always allows, regardless of command content', () => {
+    const result = decide({ tool_name: 'Read', tool_input: { command: 'cat .env' } }, {})
+    expect(result).toEqual({ action: 'allow', json: null, stderr: null })
+  })
+
+  it('a null toolCall allows, does not throw', () => {
+    expect(() => decide(null, {})).not.toThrow()
+    expect(decide(null, {})).toEqual({ action: 'allow', json: null, stderr: null })
+  })
+
+  it('an undefined toolCall allows, does not throw', () => {
+    expect(() => decide(undefined, {})).not.toThrow()
+    expect(decide(undefined, {})).toEqual({ action: 'allow', json: null, stderr: null })
+  })
+
+  it('a Bash tool_call with a missing command allows', () => {
+    const result = decide({ tool_name: 'Bash', tool_input: {} }, {})
+    expect(result).toEqual({ action: 'allow', json: null, stderr: null })
+  })
+
+  it('a Bash tool_call with an empty/whitespace-only command allows', () => {
+    const result = decide(bashCall('   '), {})
+    expect(result).toEqual({ action: 'allow', json: null, stderr: null })
+  })
+})
