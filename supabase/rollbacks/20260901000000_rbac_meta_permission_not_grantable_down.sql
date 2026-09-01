@@ -158,6 +158,10 @@ REVOKE ALL ON FUNCTION set_team_role_permission(TEXT, TEXT, TEXT, TEXT) FROM PUB
 REVOKE EXECUTE ON FUNCTION set_team_role_permission(TEXT, TEXT, TEXT, TEXT) FROM anon, authenticated;
 GRANT EXECUTE ON FUNCTION set_team_role_permission(TEXT, TEXT, TEXT, TEXT) TO authenticated, service_role;
 
-DELETE FROM schema_version WHERE version = 111;
+-- Fixed (SMI-6319 governance retro, 2026-09-01, second-family pre-merge gate finding):
+-- the forward migration now stamps 112, not 111 (111 collided with SMI-6318's own
+-- stamp -- see that migration's SCHEMA VERSION section). Deleting 111 here would leave
+-- 112 behind on rollback and, worse, could delete SMI-6318's legitimate stamp instead.
+DELETE FROM schema_version WHERE version = 112;
 
 COMMIT;
