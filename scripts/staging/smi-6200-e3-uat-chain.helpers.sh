@@ -125,10 +125,22 @@ ensure_clean_email() {
     # left the OLD row in place every run, which is what C1.9's "expected exactly 1 row,
     # got 2" shadow-account check was actually catching -- a harness cleanup gap, not the
     # SMI-6206 regression the check's own comment guesses at. Clear device_codes first,
-    # then verify the actual DELETE status instead of swallowing it.
-    curl -s -o /dev/null -X DELETE "$STAGING_SUPABASE_URL/rest/v1/device_codes?user_id=eq.$uid" \
+    # then verify the actual DELETE status instead of swallowing it. (Second fix, same
+    # session: the device_codes DELETE itself still discarded body+status via `-o
+    # /dev/null` -- inconsistent with the fix this comment describes, flagged by NEEDLE's
+    # second-opinion review of the resulting UAT report. Now checked the same way.)
+    local dc_status
+    dc_status=$(curl -s -o "$WORKDIR/self_heal_device_codes_body.json" -w '%{http_code}' \
+      -X DELETE "$STAGING_SUPABASE_URL/rest/v1/device_codes?user_id=eq.$uid" \
       -H "apikey: $STAGING_SUPABASE_SERVICE_ROLE_KEY" \
-      -H "Authorization: Bearer $STAGING_SUPABASE_SERVICE_ROLE_KEY"
+      -H "Authorization: Bearer $STAGING_SUPABASE_SERVICE_ROLE_KEY")
+    case "$dc_status" in
+      2*) : ;;
+      *)
+        echo "REFUSING: self-heal device_codes cleanup for $email ($uid) failed (HTTP $dc_status): $(cat "$WORKDIR/self_heal_device_codes_body.json")" >&2
+        exit 1
+        ;;
+    esac
     local del_status
     del_status=$(curl -s -o "$WORKDIR/self_heal_delete_body.json" -w '%{http_code}' \
       -X DELETE "$STAGING_SUPABASE_URL/auth/v1/admin/users/$uid" \
