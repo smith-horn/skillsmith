@@ -157,8 +157,19 @@ ensure_git_crypt_filter_registered "$REPO_ROOT"
 # root) retroactively repairs an already-drifted-to-absolute value for the
 # main checkout AND every worktree at once, not just whichever tree this
 # script happens to be iterating.
+#
+# `|| true` is required under `set -e` (this script's own set -euo
+# pipefail, line 27): ensure_hooks_path_relative() legitimately `return 1`s
+# in its refuse-to-write case (target tree's .husky/_/h missing) -- a
+# non-fatal, already-logged WARN, not a reason to abort the rest of this
+# script's OTHER repair steps (node_modules symlinks, docker override
+# regen, the Docker-safety guard below). An unguarded call here would let
+# that one sub-repair's refusal kill every later step under set -e --
+# confirmed live via scripts/tests/repair-worktrees-docker-guard.test.ts's
+# synthetic fixtures (no .husky/_/h present), which stopped reaching the
+# Docker-active guard entirely before this fix.
 info "Verifying core.hooksPath is relative (SMI-6334)..."
-ensure_hooks_path_relative "$REPO_ROOT"
+ensure_hooks_path_relative "$REPO_ROOT" || true
 
 info "Repairing worktrees missing node_modules symlink (SMI-4377)..."
 repair_worktrees_node_modules "$REPO_ROOT"

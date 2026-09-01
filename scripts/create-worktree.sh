@@ -574,8 +574,14 @@ The worktree has been left intact. Fix with:
     # checkout this worktree has no working-tree content at all yet. Like
     # Step 3c's git-crypt filter registration, this key is repo-shared: one
     # write here also fixes the main checkout and every other worktree.
+    # `|| true`: this script also runs under `set -euo pipefail` (line 13).
+    # ensure_hooks_path_relative() legitimately `return 1`s in its
+    # refuse-to-write case, already logged as a WARN -- not a reason to
+    # abort worktree creation entirely (Docker override generation,
+    # node_modules backfill, etc. below still need to run). Same set -e
+    # hazard fixed at its repair-worktrees.sh call site.
     info "Step 4e: Verifying core.hooksPath is relative (SMI-6334)..."
-    ensure_hooks_path_relative "$worktree_path"
+    ensure_hooks_path_relative "$worktree_path" || true
 
     # Step 5: Generate Docker override file (if docker-compose.yml exists)
     if [[ -f "$worktree_path/docker-compose.yml" ]]; then
