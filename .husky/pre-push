@@ -117,6 +117,15 @@ if [ -r "$NATIVE_LIB" ]; then
   fi
 fi
 
+# hooksPath drift + per-tree stub-coverage guard (SMI-6334) — WARN only,
+# never blocks (core.hooksPath is repo-shared state; a false positive here
+# must never wedge every worktree's push at once). STDIN-SILENT
+# (</dev/null) / READ-ONLY, same contract as the guards above.
+HOOKS_PATH_LIB="$(dirname "$0")/../scripts/lib/check-hooks-path.sh"
+if [ -r "$HOOKS_PATH_LIB" ]; then
+  sh "$HOOKS_PATH_LIB" </dev/null || true
+fi
+
 # Phase 1: Check for uncommitted changes (SMI-1342)
 # This runs first to warn developers before they push
 bash "$(dirname "$0")/../scripts/pre-push-uncommitted-check.sh"

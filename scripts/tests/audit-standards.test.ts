@@ -19,10 +19,12 @@
  *   - audit-standards-apps-root.test.ts — SMI-5603 Check 2/Check 3 apps/
  *     root coverage (fixture-based, mirrors the non-exported walker/checks).
  */
-import { describe, expect, it } from 'vitest'
-import { readFileSync } from 'node:fs'
+import { afterEach, describe, expect, it } from 'vitest'
+import { existsSync, mkdirSync, readFileSync, rmSync, writeFileSync } from 'node:fs'
 import { dirname, join } from 'node:path'
 import { fileURLToPath } from 'node:url'
+
+import { makeFixtureTempDir } from './_lib/git-fixture-env.js'
 
 // Dynamic ESM import — exact convention from check-supply-chain-pins.test.ts
 const helpers = (await import('../audit-standards-helpers.mjs')) as {
@@ -35,6 +37,18 @@ const helpers = (await import('../audit-standards-helpers.mjs')) as {
 
 const { parseSemver, satisfies, extractCompletionIssues, hasCompletionSource, INFRA_PATTERNS } =
   helpers
+
+// SMI-6334 Wave 2 Step 1: Check 64's .husky/_/<hook> stub-coverage helper.
+// Separate companion file (not audit-standards-helpers.mjs above) — that
+// file's own header documents a "Zero dependencies. No I/O." contract, and
+// this helper does real filesystem I/O (readdirSync/statSync).
+const huskyStubHelpers = (await import('../audit-husky-stub-coverage-helpers.mjs')) as {
+  findMissingHuskyStubs: (
+    huskyDir: string
+  ) => Array<{ hook: string; reason: 'missing' | 'trivial'; size?: number }>
+  MIN_HUSKY_STUB_BYTES: number
+}
+const { findMissingHuskyStubs } = huskyStubHelpers
 
 const __dirname = dirname(fileURLToPath(import.meta.url))
 
@@ -412,3 +426,85 @@ describe('audit-standards Check 23: INFRA_PATTERNS + hasCompletionSource', () =>
 // (Check 29) and publish.yml gating helpers were split into
 // audit-standards-export-drift.test.ts and audit-standards-publish-gate.test.ts
 // respectively (SMI-5141) to keep this file under the 500-line CI gate.
+
+describe('audit-standards Check 64: .husky/_/<hook> stub coverage (SMI-6334)', () => {
+  let tmpRoot: string | null = null
+
+  afterEach(() => {
+    if (tmpRoot && existsSync(tmpRoot)) {
+      rmSync(tmpRoot, { recursive: true, force: true })
+    }
+    tmpRoot = null
+  })
+
+  function makeHuskyDir(): string {
+    tmpRoot = makeFixtureTempDir('husky-stub-coverage')
+    const huskyDir = join(tmpRoot, '.husky')
+    mkdirSync(join(huskyDir, '_'), { recursive: true })
+    return huskyDir
+  }
+
+  it('reports no findings when every hook has a non-trivial matching stub', () => {
+    const huskyDir = makeHuskyDir()
+    writeFileSync(join(huskyDir, 'pre-push'), 'echo real hook body\n')
+    writeFileSync(join(huskyDir, '_', 'pre-push'), '#!/usr/bin/env sh\n. "$(dirname "$0")/h"\n')
+
+    expect(findMissingHuskyStubs(huskyDir)).toEqual([])
+  })
+
+  it('flags a hook whose .husky/_/<hook> stub is entirely missing', () => {
+    const huskyDir = makeHuskyDir()
+    writeFileSync(join(huskyDir, 'pre-commit'), 'echo real hook body\n')
+    // No .husky/_/pre-commit written at all.
+
+    const findings = findMissingHuskyStubs(huskyDir)
+    expect(findings).toEqual([{ hook: 'pre-commit', reason: 'missing' }])
+  })
+
+  it('flags a hook whose .husky/_/<hook> stub exists but is truncated/empty', () => {
+    const huskyDir = makeHuskyDir()
+    writeFileSync(join(huskyDir, 'post-merge'), 'echo real hook body\n')
+    writeFileSync(join(huskyDir, '_', 'post-merge'), '') // 0 bytes — truncated/empty
+
+    const findings = findMissingHuskyStubs(huskyDir)
+    expect(findings).toEqual([{ hook: 'post-merge', reason: 'trivial', size: 0 }])
+  })
+
+  it('does not flag the "_" dispatch directory itself as a missing-stub hook', () => {
+    const huskyDir = makeHuskyDir()
+    writeFileSync(join(huskyDir, 'pre-rebase'), 'echo real hook body\n')
+    writeFileSync(join(huskyDir, '_', 'pre-rebase'), '#!/usr/bin/env sh\n. "$(dirname "$0")/h"\n')
+    // "_" is a directory (created by makeHuskyDir), not a hook file — must
+    // never appear as its own finding regardless of coverage elsewhere.
+
+    const findings = findMissingHuskyStubs(huskyDir)
+    expect(findings.some((f) => f.hook === '_')).toBe(false)
+  })
+
+  it('reports one finding per uncovered hook across multiple hooks', () => {
+    const huskyDir = makeHuskyDir()
+    writeFileSync(join(huskyDir, 'pre-push'), 'ok\n')
+    writeFileSync(join(huskyDir, '_', 'pre-push'), '#!/usr/bin/env sh\n. "$(dirname "$0")/h"\n')
+    writeFileSync(join(huskyDir, 'pre-commit'), 'ok\n') // missing stub
+    writeFileSync(join(huskyDir, 'post-checkout'), 'ok\n')
+    writeFileSync(join(huskyDir, '_', 'post-checkout'), '') // trivial stub
+
+    const findings = findMissingHuskyStubs(huskyDir)
+    const byHook = Object.fromEntries(findings.map((f) => [f.hook, f.reason]))
+    expect(byHook).toEqual({ 'pre-commit': 'missing', 'post-checkout': 'trivial' })
+  })
+
+  it('returns an empty array for a nonexistent .husky/ directory (nothing to check)', () => {
+    tmpRoot = makeFixtureTempDir('husky-stub-coverage')
+    expect(findMissingHuskyStubs(join(tmpRoot, 'no-such-dir', '.husky'))).toEqual([])
+  })
+
+  it('matches the shipped repo .husky/ tree with zero findings', () => {
+    // Executable twin of Check 64 itself, against THIS repo's real .husky/ —
+    // a green unit suite and a green `npm run audit:standards` run can never
+    // silently disagree, same precedent as Check 61's git-crypt-remediation
+    // twin test. __dirname is scripts/tests/ — repo root is two levels up.
+    const repoRoot = join(__dirname, '..', '..')
+    expect(findMissingHuskyStubs(join(repoRoot, '.husky'))).toEqual([])
+  })
+})
