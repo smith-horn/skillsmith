@@ -54,6 +54,7 @@ jobs:
           base: ${{ github.event.pull_request.base.ref || github.event.repository.default_branch }}
           filters: |
             docs:
+              - 'docs/internal'
               - 'docs/internal/**'
               - '.claude/development/**'
               - '.claude/templates/**'
