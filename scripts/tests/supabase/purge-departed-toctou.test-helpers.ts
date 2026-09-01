@@ -51,17 +51,24 @@
  * @module scripts/tests/supabase/purge-departed-toctou.test-helpers
  */
 
-import { spawn, type ChildProcessWithoutNullStreams } from 'node:child_process'
-import { readFileSync, readdirSync } from 'node:fs'
-import { join } from 'node:path'
+import {
+  PsqlSession,
+  extractFunction as extractFunctionShared,
+  extractLatestFunction as extractLatestFunctionShared,
+  type TestConn,
+} from './pg-session.ts'
 
-export interface TestConn {
-  host: string
-  port: string
-  user: string
-  password: string
-  database: string
-}
+// SMI-6345: PsqlSession / extractFunction / extractLatestFunction moved verbatim to
+// ./pg-session.ts so the SMI-6345 device-lock suite can use the identical harness
+// without importing this module (whose module-level skip warning is specific to
+// SMI-6321). Re-exported here so this suite's own imports are unchanged.
+export { PsqlSession, type TestConn }
+
+/** SMI-6321-labelled wrappers over the shared extractors (error text unchanged). */
+export const extractFunction = (migrationFile: string, functionName: string): string =>
+  extractFunctionShared(migrationFile, functionName, 'SMI-6321')
+export const extractLatestFunction = (functionName: string): string =>
+  extractLatestFunctionShared(functionName, 'SMI-6321')
 
 export function testConnFromEnv(env: NodeJS.ProcessEnv = process.env): TestConn | null {
   const host = env.SMI6321_TEST_PGHOST
@@ -94,172 +101,6 @@ export function requireTestConn(): TestConn {
     )
   }
   return conn
-}
-
-/**
- * A persistent `psql` process, so a transaction can be held OPEN across awaits while
- * another session runs against it. Per-call helpers that spawn a fresh psql (the
- * smi5879 harness's `runPsql`) cannot express that, and an interleaving is the entire
- * point here.
- *
- * The completion sentinel is `\echo`, a psql meta-command, NOT `SELECT '<mark>'`:
- * inside a transaction that a prior statement aborted, every subsequent SELECT fails
- * with 25P02 and the mark would never arrive, hanging the read. `\echo` prints
- * regardless of transaction state, so an errored statement still returns control —
- * which matters because several tests here deliberately provoke errors.
- */
-export class PsqlSession {
-  private readonly proc: ChildProcessWithoutNullStreams
-  private out = ''
-  private err = ''
-  private seq = 0
-  private exited = false
-
-  constructor(
-    conn: TestConn,
-    readonly name: string
-  ) {
-    this.proc = spawn(
-      'psql',
-      [
-        '-X',
-        '-q',
-        '-A',
-        '-t',
-        '-h',
-        conn.host,
-        '-p',
-        conn.port,
-        '-U',
-        conn.user,
-        '-d',
-        conn.database,
-      ],
-      { env: { ...process.env, PGPASSWORD: conn.password }, stdio: ['pipe', 'pipe', 'pipe'] }
-    )
-    this.proc.stdout.setEncoding('utf8')
-    this.proc.stderr.setEncoding('utf8')
-    this.proc.stdout.on('data', (d: string) => (this.out += d))
-    this.proc.stderr.on('data', (d: string) => (this.err += d))
-    this.proc.on('exit', () => (this.exited = true))
-  }
-
-  /**
-   * Run `sql` and resolve with `{ stdout, stderr }` once psql reports back.
-   * Rejects on timeout — a hang here means a lock wait that never resolved, which is
-   * itself a finding, so it must never be swallowed.
-   */
-  async send(sql: string, timeoutMs = 30_000): Promise<{ stdout: string; stderr: string }> {
-    if (this.exited) throw new Error(`[${this.name}] psql session already exited`)
-    const mark = `__SMI6321_MARK_${++this.seq}__`
-    this.out = ''
-    this.err = ''
-    this.proc.stdin.write(`${sql}\n\\echo ${mark}\n`)
-
-    const deadline = Date.now() + timeoutMs
-    for (;;) {
-      if (this.out.includes(mark) || this.err.includes(mark)) {
-        return {
-          stdout: this.out.replace(mark, '').trim(),
-          stderr: this.err.replace(mark, '').trim(),
-        }
-      }
-      if (this.exited) throw new Error(`[${this.name}] psql exited early: ${this.err}`)
-      if (Date.now() > deadline) {
-        throw new Error(
-          `[${this.name}] timed out after ${timeoutMs}ms running:\n${sql}\n` +
-            `stdout so far: ${this.out}\nstderr so far: ${this.err}`
-        )
-      }
-      await new Promise((r) => setTimeout(r, 20))
-    }
-  }
-
-  /** Fire `sql` WITHOUT awaiting it, so the caller can interleave another session. */
-  fire(sql: string, timeoutMs = 30_000): Promise<{ stdout: string; stderr: string }> {
-    return this.send(sql, timeoutMs)
-  }
-
-  async close(): Promise<void> {
-    if (this.exited) return
-    this.proc.stdin.end('\\q\n')
-    await new Promise((r) => setTimeout(r, 100))
-    if (!this.exited) this.proc.kill('SIGKILL')
-  }
-}
-
-/**
- * Pull one `CREATE OR REPLACE FUNCTION <name>(...) ... $tag$;` block verbatim out of a
- * migration file, so the suite executes the SHIPPED body rather than a copy that can
- * silently drift from it.
- *
- * NOTE: `supabase/migrations/` is git-crypt encrypted. In a normal unlocked checkout
- * these files are plaintext; in an environment where they are still ciphertext this
- * throws with a clear message rather than executing garbage — but that environment
- * also has no live Postgres configured, so the suite has already skipped.
- */
-export function extractFunction(migrationFile: string, functionName: string): string {
-  const path = join(process.cwd(), 'supabase/migrations', migrationFile)
-  return extractFunctionFromFile(path, functionName, migrationFile)
-}
-
-/**
- * Resolve the LATEST migration that defines `functionName` and extract it from there.
- *
- * Pinning a filename would make this suite test a body production no longer runs: a
- * future migration replacing the function would leave these tests happily exercising
- * the old, correct copy and passing, which is worse than no coverage. Migration names
- * are timestamp-prefixed and lexically sortable, so "last one that defines it" is the
- * deployed one.
- */
-export function extractLatestFunction(functionName: string): string {
-  const dir = join(process.cwd(), 'supabase/migrations')
-  const defining = readdirSync(dir)
-    .filter((f) => f.endsWith('.sql') && !f.endsWith('.disabled'))
-    .sort()
-    .filter((f) => {
-      const body = readFileSync(join(dir, f), 'utf8')
-      return !body.includes(' ') && body.includes(`CREATE OR REPLACE FUNCTION ${functionName}`)
-    })
-  const latest = defining.at(-1)
-  if (!latest) {
-    throw new Error(
-      `SMI-6321: no migration in supabase/migrations defines ${functionName}. If the repo is ` +
-        `git-crypt locked these files are ciphertext — unlock it (see CLAUDE.md § Git-Crypt).`
-    )
-  }
-  return extractFunctionFromFile(join(dir, latest), functionName, latest)
-}
-
-function extractFunctionFromFile(path: string, functionName: string, label: string): string {
-  const src = readFileSync(path, 'utf8')
-  const migrationFile = label
-  if (src.includes('\u0000')) {
-    throw new Error(
-      `SMI-6321: ${migrationFile} appears to be git-crypt ciphertext, not SQL. Unlock the ` +
-        `repo (see CLAUDE.md § Git-Crypt) before running this suite.`
-    )
-  }
-
-  const startRe = new RegExp(`CREATE OR REPLACE FUNCTION ${functionName}\\s*\\(`, 'g')
-  const start = startRe.exec(src)
-  if (!start) {
-    throw new Error(`SMI-6321: ${functionName} not found in ${migrationFile}`)
-  }
-  // The body delimiter is whatever dollar-quote tag opens after the AS keyword.
-  const afterAs = src.slice(start.index)
-  const tagMatch = /\bAS\s+(\$[A-Za-z0-9_]*\$)/.exec(afterAs)
-  if (!tagMatch) {
-    throw new Error(`SMI-6321: could not find the body delimiter for ${functionName}`)
-  }
-  const tag = tagMatch[1]
-  const bodyOpen = afterAs.indexOf(tag, tagMatch.index)
-  const bodyClose = afterAs.indexOf(tag, bodyOpen + tag.length)
-  if (bodyClose === -1) {
-    throw new Error(`SMI-6321: unterminated ${tag} body for ${functionName}`)
-  }
-  const end = afterAs.indexOf(';', bodyClose + tag.length)
-  return afterAs.slice(0, end + 1)
 }
 
 export const PURGE_MIGRATION = '20260901120000_purge_departed_inventory_toctou_lock.sql'
