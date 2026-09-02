@@ -264,6 +264,97 @@ describe('decide() — interpreter short-flag bypass regression (pre-merge revie
     const result = decide(bashCall('php -v'), {})
     expect(result.action).toBe('allow')
   })
+
+  // Discriminating regression for the per-interpreter design itself
+  // (adversarial confirmation-pass finding F5): the three "no false
+  // positive" tests above pass identically under a BROKEN pooled variant
+  // (one shared short-flag-char set for every interpreter) because none of
+  // them combine a coincidentally-shared flag letter with an actual `.env`
+  // reference. This one does — it denies under pooling (ruby's `-r` would
+  // wrongly gate a text scan) and allows under the correct per-interpreter
+  // design (ruby's own chars are `e` only, so `-r`'s argument is never
+  // scanned as inline script — matching real ruby semantics, where `-r`
+  // takes a library name to require, not code to run).
+  it('ruby -r "<text containing .env>" -> allow (proves per-interpreter chars, not a pooled set, are in effect)', () => {
+    const result = decide(bashCall(`ruby -r "readfile('.env')"`), {})
+    expect(result.action).toBe('allow')
+  })
+})
+
+describe('decide() — second-round adversarial confirmation findings (SMI-6361)', () => {
+  // A follow-up confirmation pass on the fix above found perl's -E and
+  // php's -B/-R/-E were the same class of gap node's -p was: a real
+  // inline-code short flag missing from INLINE_SCRIPT_SHORT_FLAG_CHARS.
+
+  it('perl -E "<code touching .env>" -> deny (perl -h: "-E ... like -e, but enables all optional features")', () => {
+    const result = decide(bashCall(`perl -E "open my $f,'<','.env'; print <$f>;"`), {})
+    expect(result.action).toBe('deny')
+  })
+
+  it('php -B "<code touching .env>" -> deny (process-begin hook, same hazard as -r)', () => {
+    const result = decide(bashCall(`php -B "readfile('.env');"`), {})
+    expect(result.action).toBe('deny')
+  })
+
+  it('php -R "<code touching .env>" -> deny (process-code hook, same hazard as -r)', () => {
+    const result = decide(bashCall(`php -R "readfile('.env');"`), {})
+    expect(result.action).toBe('deny')
+  })
+
+  it('php -E "<code touching .env>" -> deny (process-end hook, same hazard as -r)', () => {
+    const result = decide(bashCall(`php -E "readfile('.env');"`), {})
+    expect(result.action).toBe('deny')
+  })
+
+  it('php --run "<code touching .env>" -> deny (long-form alias of -r)', () => {
+    const result = decide(bashCall(`php --run "readfile('.env');"`), {})
+    expect(result.action).toBe('deny')
+  })
+
+  it('php -F .env -> allow (a real, different flag: -F names a per-line script FILE, not inline code)', () => {
+    const result = decide(bashCall('php -F script.php'), {})
+    expect(result.action).toBe('allow')
+  })
+
+  // Finding F6: awk/sed are on READER_COMMANDS (the guard's own declared
+  // surface) but their inline PROGRAM TEXT was never scanned before this
+  // fix — only their bare argv tokens were, so a protected-file reference
+  // embedded inside the script itself sailed through.
+
+  it('awk BEGIN-block reading .env -> deny (positional script text, no -f flag)', () => {
+    const result = decide(bashCall(`awk 'BEGIN{while((getline l < ".env")>0) print l}'`), {})
+    expect(result.action).toBe('deny')
+  })
+
+  it('awk -f script.awk file.txt -> allow (external script FILE, not inline text)', () => {
+    const result = decide(bashCall('awk -f script.awk file.txt'), {})
+    expect(result.action).toBe('allow')
+  })
+
+  it("sed 'r .env' -> deny (GNU sed's r command reads and prints an arbitrary file)", () => {
+    const result = decide(bashCall("sed 'r .env' input.txt"), {})
+    expect(result.action).toBe('deny')
+  })
+
+  it("sed -e 'r .env' -> deny (same hazard via the explicit -e flag)", () => {
+    const result = decide(bashCall("sed -e 'r .env' input.txt"), {})
+    expect(result.action).toBe('deny')
+  })
+
+  it('sed -f script.sed input.txt -> allow (external script FILE, not inline text)', () => {
+    const result = decide(bashCall('sed -f script.sed input.txt'), {})
+    expect(result.action).toBe('allow')
+  })
+
+  it("sed 's/foo/bar/' file.txt -> allow (ordinary substitution, no false positive)", () => {
+    const result = decide(bashCall("sed 's/foo/bar/' file.txt"), {})
+    expect(result.action).toBe('allow')
+  })
+
+  it("awk -F: '{print $1}' /etc/passwd -> allow (ordinary field-separator usage, no false positive)", () => {
+    const result = decide(bashCall("awk -F: '{print $1}' /etc/passwd"), {})
+    expect(result.action).toBe('allow')
+  })
 })
 
 describe('decide() — SKILLSMITH_ENV_READ_GUARD_DISABLE hard-disable', () => {

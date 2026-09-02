@@ -82,11 +82,25 @@ const READER_COMMANDS = new Set([
   '.',
 ])
 
-/** Interpreters whose inline script text must be scanned, not just argv. */
-const INLINE_INTERPRETERS = new Set(['python', 'python3', 'node', 'nodejs', 'perl', 'ruby', 'php'])
-
-/** Long flags that introduce inline script text on an interpreter. */
-const INLINE_SCRIPT_LONG_FLAGS = new Set(['--eval', '--print', '--execute', '--command'])
+/**
+ * Long flags that introduce inline script text on an interpreter. Checked
+ * against every interpreter uniformly (never per-interpreter) — unlike the
+ * short-flag map below, over-recognizing a long flag no interpreter
+ * actually has is safe (it just triggers one extra, harmless text scan).
+ * Includes php's four long-form process-hook aliases (--run/--process-begin/
+ * --process-code/--process-end), confirmed against php.net's CLI options
+ * page — SMI-6361 adversarial confirmation-pass finding F3.
+ */
+const INLINE_SCRIPT_LONG_FLAGS = new Set([
+  '--eval',
+  '--print',
+  '--execute',
+  '--command',
+  '--run',
+  '--process-begin',
+  '--process-code',
+  '--process-end',
+])
 
 /**
  * Short-flag characters that introduce inline script text, PER INTERPRETER —
@@ -102,16 +116,41 @@ const INLINE_SCRIPT_LONG_FLAGS = new Set(['--eval', '--print', '--execute', '--c
  * python/node/perl/ruby/php's short flags together would make `ruby -r`
  * false-positive as inline-script, or worse, tempt a future edit to drop a
  * real flag while "simplifying" a shared set.
+ *
+ * `perl: 'eE'` and `php: 'rBRE'` were added by a second-round adversarial
+ * confirmation pass on the fix above (same session, same SMI-6361): `perl
+ * -E` is documented as "like -e, but enables all optional features" (`perl
+ * -h`, confirmed live) — the exact -e-equivalent shape the first round
+ * fixed for node's -p, missed here on the first pass. `php`'s `-B`/`-R`/`-E`
+ * (process-begin/process-code/process-end hooks, confirmed against
+ * php.net's CLI options page) carry inline PHP code exactly like `-r`.
+ * `php: 'F'` is deliberately excluded — `-F` names an external FILE to run
+ * per input line, not inline text; that shape is already covered by the
+ * plain reader/argv-path rule, not this inline-script path.
+ *
+ * Interpreters here MUST stay in sync with `INLINE_INTERPRETERS` below — a
+ * name added to one without the other either skips inline-script scanning
+ * entirely (added here but not there) or silently no-ops via the `?? ''`
+ * fallback in `hasInlineScriptFlag` (added there but not here). Derived
+ * relationship, not independently maintained: see `INLINE_INTERPRETERS`.
  */
 const INLINE_SCRIPT_SHORT_FLAG_CHARS = {
   python: 'c',
   python3: 'c',
   node: 'ep',
   nodejs: 'ep',
-  perl: 'e',
+  perl: 'eE',
   ruby: 'e',
-  php: 'r',
+  php: 'rBRE',
 }
+
+/**
+ * Interpreters whose inline script text must be scanned, not just argv.
+ * Derived from INLINE_SCRIPT_SHORT_FLAG_CHARS's keys (not a separately
+ * maintained list) so the two structurally cannot drift apart — a gap an
+ * adversarial review flagged as a latent fail-open risk (SMI-6361).
+ */
+const INLINE_INTERPRETERS = new Set(Object.keys(INLINE_SCRIPT_SHORT_FLAG_CHARS))
 
 /**
  * Sanctioned exception: metadata-only / exit-code-only commands. These
@@ -533,6 +572,79 @@ function hasInlineScriptFlag(cmd, args) {
   return false
 }
 
+/**
+ * Commands whose FIRST positional (non-flag) argument is inline script
+ * text BY DEFAULT — unlike INLINE_INTERPRETERS, whose inline-code argument
+ * is always introduced by an explicit flag (-e/-c/-p/-r/...), awk puts
+ * script text in bare position: `awk '<program>' [file...]`. Unless a
+ * `-f <file>` flag names an external script file instead, in which case
+ * there is no inline text to scan. Found by a second-round adversarial
+ * confirmation pass (SMI-6361, finding F6): awk/gawk/mawk are already on
+ * READER_COMMANDS (the guard's own declared surface), but before this fix
+ * only their bare argv tokens were checked for a literal protected-file
+ * match — never their embedded program text — so
+ * `awk 'BEGIN{while((getline l < ".env")>0) print l}'` returned `allow`.
+ */
+const POSITIONAL_SCRIPT_COMMANDS = new Set(['awk', 'gawk', 'mawk'])
+
+/** sed flags that name an external script FILE — no inline text follows. */
+const SCRIPT_FILE_FLAGS = new Set(['-f', '--file'])
+
+/** sed flags whose following argument (or `=`-joined value) is script text. */
+const SED_SCRIPT_FLAGS = new Set(['-e', '--expression'])
+
+/**
+ * Same hazard as POSITIONAL_SCRIPT_COMMANDS above, but sed's script text
+ * can also arrive via an explicit `-e`/`--expression` flag rather than
+ * bare position — `sed 'r .env'` and `sed -e 'r .env'` are equivalent.
+ * `sed 'r .env' input.txt` (GNU sed's `r` command) reads and prints an
+ * arbitrary file's contents, so this is the exact same class of bypass as
+ * the awk case, reachable through a command already on READER_COMMANDS.
+ * @param {string[]} args
+ * @returns {string | null}
+ */
+function scanSedScriptText(args) {
+  let sawScriptFileFlag = false
+  let sawExplicitScriptFlag = false
+  for (let i = 0; i < args.length; i++) {
+    const a = args[i]
+    if (a === '--') break
+    if (SCRIPT_FILE_FLAGS.has(a) || a.startsWith('--file=')) {
+      sawScriptFileFlag = true
+      continue
+    }
+    if (SED_SCRIPT_FLAGS.has(a) || a.startsWith('--expression=')) {
+      sawExplicitScriptFlag = true
+      const text = a.includes('=') ? a.slice(a.indexOf('=') + 1) : args[i + 1]
+      const embedded = scanTextForProtected(text)
+      if (embedded) return embedded
+      continue
+    }
+  }
+  if (!sawScriptFileFlag && !sawExplicitScriptFlag) {
+    const firstNonFlag = args.find((a) => a !== '--' && !a.startsWith('-'))
+    if (firstNonFlag) return scanTextForProtected(firstNonFlag)
+  }
+  return null
+}
+
+/**
+ * @param {string} cmd
+ * @param {string[]} args
+ * @returns {string | null} the first protected-file reference found in
+ *   positional script text, or null.
+ */
+function scanPositionalScriptText(cmd, args) {
+  if (cmd === 'sed') return scanSedScriptText(args)
+  if (!POSITIONAL_SCRIPT_COMMANDS.has(cmd)) return null
+  const hasScriptFileFlag = args.some(
+    (a) => a === '-f' || a === '--file' || a.startsWith('--file=')
+  )
+  if (hasScriptFileFlag) return null
+  const firstNonFlag = args.find((a) => a !== '--' && !a.startsWith('-'))
+  return firstNonFlag ? scanTextForProtected(firstNonFlag) : null
+}
+
 /** `varlock load --format <value>` → value, or null when absent. */
 function extractFormatFlag(args) {
   for (let i = 0; i < args.length; i++) {
@@ -572,6 +684,9 @@ function checkArgv(argv) {
       return { kind: 'read', file: a }
     }
   }
+
+  const positionalEmbedded = scanPositionalScriptText(cmd, args)
+  if (positionalEmbedded) return { kind: 'read', file: positionalEmbedded }
 
   if (isInterpreter && hasInlineScriptFlag(cmd, args)) {
     for (const a of args) {
