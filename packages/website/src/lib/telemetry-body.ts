@@ -109,6 +109,25 @@ export interface TelemetryUpsertRow {
  * unlike `enabled`/`inventorySyncEnabled`/`auditEmailEnabled` there is no
  * "omitted field, keep existing" case to thread through: this function is
  * only ever reached via a real PUT.
+ *
+ * Known, accepted limitation (NEEDLE cross-provider confirmation round,
+ * finding 2): the COALESCE happens in application memory, not as a
+ * database-atomic operation -- this route's read-before-write + upsert are
+ * two round-trips, not one transaction. Two genuinely concurrent FIRST-ever
+ * saves for the same user (no existing row yet) could each read `existing
+ * = null`, each compute their own `now`, and the later upsert's timestamp
+ * wins. Not fixed here: doing so requires either a DB-level function/trigger
+ * or an `ON CONFLICT DO UPDATE SET consent_decided_at =
+ * COALESCE(user_telemetry_preferences.consent_decided_at, EXCLUDED.consent_decided_at)`
+ * merge expression, which PostgREST's `.upsert()` client call does not
+ * expose -- a real migration, not a route-level fix. Accepted because the
+ * only reachable trigger is two near-simultaneous submits of the SAME
+ * user's SAME explicit decision (a double-click or a client retry), so
+ * both candidate timestamps are within milliseconds of the same real
+ * consent event -- unlike the cross-session race this column exists to
+ * prevent (an established decision being silently re-stamped by an
+ * UNRELATED later save, which the COALESCE against a REAL existing row
+ * value already prevents regardless of this narrower race).
  */
 export function buildTelemetryUpsertRow(params: {
   userId: string

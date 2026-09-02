@@ -72,17 +72,46 @@ function readSdkVersion(): string | undefined {
 let cachedTelemetryIdentity: TelemetryIdentity | null = null
 let telemetryIdentityRefreshTimer: ReturnType<typeof setInterval> | undefined
 
-async function refreshTelemetryIdentity(currentApiKey: string | undefined): Promise<void> {
+/**
+ * SMI-6362 §1 confirmation-round fix (NEEDLE cross-provider review, finding
+ * 3): monotonic generation counter guarding `cachedTelemetryIdentity`
+ * writes. Three refresh triggers exist (install, `invalid_jwt`
+ * invalidation, the 5-minute timer) and can overlap — without this guard,
+ * an OLDER in-flight refresh (e.g. the timer) could resolve AFTER a NEWER
+ * one (e.g. an invalidation-triggered refresh) and clobber its result,
+ * silently reinstalling a token the server just rejected. Each refresh
+ * captures its own generation at start; a result is only applied if its
+ * generation is still the latest one issued.
+ */
+let telemetryIdentityGeneration = 0
+
+/** Test-only accessor for `cachedTelemetryIdentity`. Not exported from the package index. */
+export function _getCachedTelemetryIdentityForTests(): TelemetryIdentity | null {
+  return cachedTelemetryIdentity
+}
+
+/**
+ * Test-only export of the refresh function itself, so the generation-guard
+ * ordering (NEEDLE confirmation-round finding 3) is directly testable
+ * without going through `createToolContextAsync`'s install-time/timer/
+ * invalidation-handler plumbing, none of which is what's under test here.
+ * Not exported from the package index.
+ */
+export async function refreshTelemetryIdentity(currentApiKey: string | undefined): Promise<void> {
+  const generation = ++telemetryIdentityGeneration
+  let next: TelemetryIdentity | null
   try {
     const accessToken = await resolveFreshAccessToken()
-    cachedTelemetryIdentity = accessToken
-      ? { accessToken, apiKey: currentApiKey, sdkVersion: readSdkVersion() }
-      : null
+    next = accessToken ? { accessToken, apiKey: currentApiKey, sdkVersion: readSdkVersion() } : null
   } catch {
     // Best-effort: a failed refresh just means emitToolCallEvent keeps
     // skipping (skippedNoIdentity) until the next trigger succeeds.
-    cachedTelemetryIdentity = null
+    next = null
   }
+  // A newer refresh already started (and may have already applied its own
+  // result) while this one was in flight — this one is stale, discard it.
+  if (generation !== telemetryIdentityGeneration) return
+  cachedTelemetryIdentity = next
 }
 
 // Separate singleton for async context (prevents caching conflict with sync)
@@ -218,6 +247,16 @@ export async function createToolContextAsync(
   void refreshTelemetryIdentity(apiKey)
   setTelemetryIdentityProvider(() => cachedTelemetryIdentity)
   setTelemetryIdentityInvalidationHandler(() => {
+    // SMI-6362 §1 confirmation-round fix (NEEDLE cross-provider review,
+    // finding 3): clear the cache SYNCHRONOUSLY, before the refresh even
+    // starts. Without this, a tool_call emitted during the refresh window
+    // would keep resending the token the server just told us is invalid —
+    // wasted, guaranteed-rejected round-trips. Bumping the generation here
+    // too (refreshTelemetryIdentity bumps it again internally) fences off
+    // any already-in-flight refresh from a stale trigger (e.g. the timer)
+    // from re-applying its result after this invalidation.
+    telemetryIdentityGeneration++
+    cachedTelemetryIdentity = null
     void refreshTelemetryIdentity(apiKey)
   })
   if (telemetryIdentityRefreshTimer) clearInterval(telemetryIdentityRefreshTimer)

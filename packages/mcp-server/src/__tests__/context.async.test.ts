@@ -99,6 +99,11 @@ vi.mock('@skillsmith/core', async (importOriginal) => {
     BackgroundSyncService: MockBackgroundSyncService,
     getApiKey: vi.fn().mockReturnValue(undefined),
     validateDbPath: actual.validateDbPath,
+    // SMI-6362 §1: overridden (not `...actual`) so tests can control exactly
+    // when each refresh resolves — needed for the generation-guard
+    // regression test below. Defaults to a fast `null` resolution, matching
+    // the real function's behaviour in this credential-less test env.
+    resolveFreshAccessToken: vi.fn().mockResolvedValue(null),
   }
 })
 
@@ -110,6 +115,8 @@ import {
   createToolContextAsync,
   getToolContextAsync,
   resetAsyncToolContext,
+  refreshTelemetryIdentity,
+  _getCachedTelemetryIdentityForTests,
 } from '../context.async.js'
 
 describe('context.async', () => {
@@ -320,6 +327,57 @@ describe('context.async', () => {
       await resetAsyncToolContext()
 
       expect(shutdownPostHog).toHaveBeenCalled()
+    })
+  })
+
+  // ---------------------------------------------------------------------------
+  // SMI-6362 §1 confirmation round (NEEDLE finding 3): the telemetry identity
+  // cache's generation guard. Three refresh triggers exist and can overlap;
+  // without the guard, an OLDER in-flight refresh resolving AFTER a NEWER one
+  // would clobber the newer (valid) result with its own stale one.
+  // ---------------------------------------------------------------------------
+  describe('refreshTelemetryIdentity — generation guard', () => {
+    it('discards an older refresh that resolves AFTER a newer one, keeping the newer result', async () => {
+      const { resolveFreshAccessToken } = await import('@skillsmith/core')
+      const mockResolve = vi.mocked(resolveFreshAccessToken)
+
+      let resolveOlder!: (token: string | null) => void
+      let resolveNewer!: (token: string | null) => void
+      const olderPromise = new Promise<string | null>((resolve) => {
+        resolveOlder = resolve
+      })
+      const newerPromise = new Promise<string | null>((resolve) => {
+        resolveNewer = resolve
+      })
+      mockResolve.mockReturnValueOnce(olderPromise).mockReturnValueOnce(newerPromise)
+
+      // Start the OLDER refresh first (generation 1) — its resolveFreshAccessToken
+      // call is now in flight but not yet resolved.
+      const olderRefresh = refreshTelemetryIdentity('key-older')
+      // Start the NEWER refresh (generation 2) before the older one resolves.
+      const newerRefresh = refreshTelemetryIdentity('key-newer')
+
+      // Resolve the NEWER call's token FIRST, then the OLDER one — the
+      // reverse of call order, which is exactly the race this guard exists
+      // for (e.g. the older being the 5-minute timer, the newer being an
+      // invalidation-triggered refresh that legitimately needs to win).
+      resolveNewer('token-newer')
+      await newerRefresh
+      expect(_getCachedTelemetryIdentityForTests()?.accessToken).toBe('token-newer')
+
+      resolveOlder('token-older')
+      await olderRefresh
+      // The older refresh's result must NOT have overwritten the newer one.
+      expect(_getCachedTelemetryIdentityForTests()?.accessToken).toBe('token-newer')
+    })
+
+    it('a lone refresh still applies its result normally (guard does not block the common case)', async () => {
+      const { resolveFreshAccessToken } = await import('@skillsmith/core')
+      vi.mocked(resolveFreshAccessToken).mockResolvedValueOnce('token-solo')
+
+      await refreshTelemetryIdentity('key-solo')
+
+      expect(_getCachedTelemetryIdentityForTests()?.accessToken).toBe('token-solo')
     })
   })
 })

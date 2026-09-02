@@ -40,7 +40,10 @@ const state = vi.hoisted(() => ({
     data: { user: null as MockUser | null },
     error: null as { message: string } | null,
   },
-  selectResult: { data: null as Record<string, unknown> | null },
+  selectResult: {
+    data: null as Record<string, unknown> | null,
+    error: null as { message: string } | null,
+  },
   upsertResult: {
     data: null as Record<string, unknown> | null,
     error: null as { message: string } | null,
@@ -128,7 +131,18 @@ function setExistingRow(row: Record<string, unknown> | null): void {
             audit_email_enabled: false,
             ...row,
           },
+    error: null,
   }
+}
+
+/**
+ * SMI-6362 §1 confirmation round (NEEDLE finding 2): simulates the
+ * read-before-write SELECT failing (transient DB error). The route must
+ * fail closed (500) rather than silently treating `existing` as absent,
+ * which would risk re-stamping an already-decided consent_decided_at.
+ */
+function setExistingRowError(message: string): void {
+  state.selectResult = { data: null, error: { message } }
 }
 
 function setUpsertSuccess(row: Record<string, unknown>): void {
@@ -244,5 +258,26 @@ describe('PUT /api/account/telemetry — consent_decided_at stamp (SMI-6362 §3a
 
     expect(upsertCalls).toHaveLength(1)
     expect(upsertCalls[0].consent_decided_at).toEqual(expect.any(String))
+  })
+})
+
+describe('PUT /api/account/telemetry — read-before-write failure fails closed (SMI-6362 §1 confirmation round)', () => {
+  beforeEach(() => {
+    setUser('2026-01-01T00:00:00.000Z')
+    setUpsertSuccess({})
+  })
+
+  it('returns 500 when the read-before-write SELECT errors, instead of silently treating existing as absent', async () => {
+    setExistingRowError('connection reset')
+
+    const response = await callPut({ enabled: true })
+    const json = await response.json()
+
+    expect(response.status).toBe(500)
+    expect(json.error).toBe('fetch_failed')
+    // The upsert must never be reached — a re-stamped consent_decided_at
+    // (or any other field) must not be written from a guessed "no existing
+    // row" state.
+    expect(upsertCalls).toHaveLength(0)
   })
 })

@@ -174,7 +174,16 @@ export const PUT: APIRoute = async ({ request }) => {
   // toggling `enabled`) must never clobber a user's dedicated audit-email
   // consent (SMI-5540) — CAN-SPAM requires that consent stay independently
   // scoped, not inferred from or reset by other preference writes.
-  const { data: existing } = await client
+  // SMI-6362 §1 confirmation-round fix (NEEDLE cross-provider review,
+  // finding 2): the SELECT's `error` MUST be checked, not silently
+  // discarded. A transient read failure previously fell through to
+  // `existing = undefined`, which every downstream consumer of `existing`
+  // treats as "no row yet" -- for consent_decided_at specifically, that
+  // means a read failure could silently RE-STAMP an already-decided
+  // timestamp (violating first-decision-wins), not merely reset a
+  // preference default. Failing the request instead of guessing keeps a
+  // transient DB hiccup from corrupting the audit-relevant decision record.
+  const { data: existing, error: existingError } = await client
     .from('user_telemetry_preferences')
     .select(
       'anonymous_id, anonymous_id_created_at, inventory_sync_enabled, audit_email_enabled, consent_decided_at'
@@ -187,6 +196,8 @@ export const PUT: APIRoute = async ({ request }) => {
       audit_email_enabled: boolean
       consent_decided_at: string | null
     }>()
+
+  if (existingError) return jsonResponse({ error: 'fetch_failed' }, 500)
 
   const inventorySyncResult = parseInventorySyncEnabled(
     body.inventory_sync_enabled,
