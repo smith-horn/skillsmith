@@ -1,0 +1,257 @@
+{
+  "generated_at": "2026-09-02T03:26:03.339Z",
+  "mode": "package",
+  "workspaces": [
+    {
+      "workspace": "packages/vscode-extension",
+      "calibrated": false,
+      "scan_status": {
+        "comprehensive": "has_issues",
+        "production": "has_issues"
+      },
+      "candidates": [
+        {
+          "file": "packages/vscode-extension/src/mcp/index.ts",
+          "category": "files",
+          "name": null,
+          "line": null,
+          "col": null,
+          "reachability": "both"
+        },
+        {
+          "file": "packages/vscode-extension/src/sidebar/index.ts",
+          "category": "files",
+          "name": null,
+          "line": null,
+          "col": null,
+          "reachability": "both"
+        },
+        {
+          "file": "packages/vscode-extension/package.json",
+          "category": "devDependencies",
+          "name": "@types/mocha",
+          "line": 391,
+          "col": 6,
+          "reachability": "both"
+        },
+        {
+          "file": "packages/vscode-extension/package.json",
+          "category": "devDependencies",
+          "name": "@vscode/test-electron",
+          "line": 395,
+          "col": 6,
+          "reachability": "both"
+        },
+        {
+          "file": "packages/vscode-extension/package.json",
+          "category": "devDependencies",
+          "name": "@wdio/local-runner",
+          "line": 398,
+          "col": 6,
+          "reachability": "both"
+        },
+        {
+          "file": "packages/vscode-extension/package.json",
+          "category": "devDependencies",
+          "name": "@wdio/spec-reporter",
+          "line": 400,
+          "col": 6,
+          "reachability": "both"
+        },
+        {
+          "file": "packages/vscode-extension/package.json",
+          "category": "binaries",
+          "name": "vscode-test",
+          "line": null,
+          "col": null,
+          "reachability": "both"
+        },
+        {
+          "file": "packages/vscode-extension/tsconfig.e2e.json",
+          "category": "unlisted",
+          "name": "@wdio/globals",
+          "line": null,
+          "col": null,
+          "reachability": "both"
+        },
+        {
+          "file": "packages/vscode-extension/src/utils/createSkill.helpers.ts",
+          "category": "exports",
+          "name": "buildCliEnv",
+          "line": 46,
+          "col": 14,
+          "reachability": "both"
+        },
+        {
+          "file": "packages/vscode-extension/src/commands/compareCommand.ts",
+          "category": "exports",
+          "name": "runComparison",
+          "line": 161,
+          "col": 23,
+          "reachability": "both"
+        },
+        {
+          "file": "packages/vscode-extension/src/services/Telemetry.ts",
+          "category": "exports",
+          "name": "isTelemetryEnabled",
+          "line": 74,
+          "col": 17,
+          "reachability": "both"
+        },
+        {
+          "file": "packages/vscode-extension/src/services/SkillService.ts",
+          "category": "exports",
+          "name": "applyMockFilters",
+          "line": 184,
+          "col": 17,
+          "reachability": "both"
+        },
+        {
+          "file": "packages/vscode-extension/src/intellisense/index.ts",
+          "category": "exports",
+          "name": "DIAGNOSTIC_CODES",
+          "line": 7,
+          "col": 36,
+          "reachability": "both"
+        },
+        {
+          "file": "packages/vscode-extension/src/services/installUtils.ts",
+          "category": "exports",
+          "name": "generateSkillMd",
+          "line": 96,
+          "col": 17,
+          "reachability": "both"
+        },
+        {
+          "file": "packages/vscode-extension/src/views/skill-panel-html.ts",
+          "category": "exports",
+          "name": "getContentHtml",
+          "line": 17,
+          "col": 10,
+          "reachability": "both"
+        },
+        {
+          "file": "packages/vscode-extension/src/services/localSkillReader.ts",
+          "category": "exports",
+          "name": "resolveSkillsRoot",
+          "line": 49,
+          "col": 17,
+          "reachability": "both"
+        },
+        {
+          "file": "packages/vscode-extension/src/intellisense/SkillDiagnosticsProvider.ts",
+          "category": "exports",
+          "name": "DIAGNOSTIC_CODES",
+          "line": 37,
+          "col": 14,
+          "reachability": "both"
+        },
+        {
+          "file": "packages/vscode-extension/src/utils/skillNameValidation.ts",
+          "category": "exports",
+          "name": "VALID_SKILL_NAME_RE",
+          "line": 8,
+          "col": 14,
+          "reachability": "both"
+        },
+        {
+          "file": "packages/vscode-extension/src/views/SkillDetailPanel.ts",
+          "category": "types",
+          "name": "ScoreBreakdown",
+          "line": 31,
+          "col": 34,
+          "reachability": "both"
+        },
+        {
+          "file": "packages/vscode-extension/src/mcp/connectFailureUx.ts",
+          "category": "types",
+          "name": "ConfigWriter",
+          "line": 19,
+          "col": 18,
+          "reachability": "both"
+        },
+        {
+          "file": "packages/vscode-extension/src/sidebar/categories.ts",
+          "category": "types",
+          "name": "ApiCategory",
+          "line": 27,
+          "col": 13,
+          "reachability": "both"
+        },
+        {
+          "file": "packages/vscode-extension/src/mcp/types.ts",
+          "category": "types",
+          "name": "McpSearchFilters",
+          "line": 23,
+          "col": 18,
+          "reachability": "both"
+        },
+        {
+          "file": "packages/vscode-extension/src/mcp/types.ts",
+          "category": "types",
+          "name": "McpScoreBreakdown",
+          "line": 46,
+          "col": 18,
+          "reachability": "both"
+        },
+        {
+          "file": "packages/vscode-extension/src/mcp/types.ts",
+          "category": "types",
+          "name": "McpSecurityFinding",
+          "line": 97,
+          "col": 18,
+          "reachability": "both"
+        },
+        {
+          "file": "packages/vscode-extension/src/mcp/types.ts",
+          "category": "types",
+          "name": "McpSecurityReport",
+          "line": 106,
+          "col": 18,
+          "reachability": "both"
+        },
+        {
+          "file": "packages/vscode-extension/src/mcp/types.ts",
+          "category": "types",
+          "name": "McpRecommendation",
+          "line": 136,
+          "col": 18,
+          "reachability": "both"
+        },
+        {
+          "file": "packages/vscode-extension/src/mcp/types.ts",
+          "category": "types",
+          "name": "McpToolCall",
+          "line": 401,
+          "col": 18,
+          "reachability": "both"
+        },
+        {
+          "file": "packages/vscode-extension/src/mcp/types.ts",
+          "category": "types",
+          "name": "McpToolResultContent",
+          "line": 409,
+          "col": 18,
+          "reachability": "both"
+        },
+        {
+          "file": "packages/vscode-extension/src/mcp/types.ts",
+          "category": "types",
+          "name": "McpToolResult",
+          "line": 417,
+          "col": 18,
+          "reachability": "both"
+        },
+        {
+          "file": "packages/vscode-extension/src/sidebar/SkillTreeItem.ts",
+          "category": "types",
+          "name": "TrustTier",
+          "line": 19,
+          "col": 37,
+          "reachability": "both"
+        }
+      ],
+      "looks_bad_but_fine": []
+    }
+  ]
+}
