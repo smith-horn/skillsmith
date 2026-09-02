@@ -421,6 +421,49 @@ describe('decide() — third-round adversarial confirmation findings F-A/F-B/F-C
     const result = decide(bashCall("sed 's/foo/bar/' file.txt"), {})
     expect(result.action).toBe('allow')
   })
+})
+
+describe('decide() — fourth-round adversarial confirmation finding (SMI-6361)', () => {
+  // A fourth round found the third round's own uniform-scan rewrite
+  // regressed a case the arity-modeling code it replaced actually got
+  // right: `--` (end-of-options) does not precede junk for awk/sed, it
+  // precedes the SCRIPT ITSELF -- `awk -- 'BEGIN{...}'` puts the real
+  // program right after it. scanPositionalScriptText's loop inherited a
+  // `break` on `--` from the flag-scanning loops elsewhere in this file
+  // (correct there, since `--` means "stop, no more flags" for THEM), so
+  // it silently stopped scanning before ever reaching the script text --
+  // a real regression from the parent commit, which deliberately looked
+  // past `--` in both of the functions this one replaced.
+
+  it('awk -- \'BEGIN{...".env"...}\' -> deny (was a confirmed regression: -- broke the scan before it reached the script)', () => {
+    const result = decide(bashCall(`awk -- 'BEGIN{while((getline l < ".env")>0) print l}'`), {})
+    expect(result.action).toBe('deny')
+  })
+
+  it("sed -- 'r .env' file.txt -> deny (same regression, sed side)", () => {
+    const result = decide(bashCall("sed -- 'r .env' file.txt"), {})
+    expect(result.action).toBe('deny')
+  })
+
+  it("sed -n -- 'r .env' file.txt -> deny (-- combined with an unrelated boolean flag)", () => {
+    const result = decide(bashCall("sed -n -- 'r .env' file.txt"), {})
+    expect(result.action).toBe('deny')
+  })
+
+  it("sed -- -e 'r .env' file.txt -> deny (-- followed by a literal dash-prefixed script argument)", () => {
+    const result = decide(bashCall("sed -- -e 'r .env' file.txt"), {})
+    expect(result.action).toBe('deny')
+  })
+
+  it('docker exec skillsmith-dev-1 awk -- \'BEGIN{...".env"...}\' -> deny (the wrapper this guard exists for, combined with the -- regression)', () => {
+    const result = decide(
+      bashCall(
+        `docker exec skillsmith-dev-1 awk -- 'BEGIN{while((getline l < "/app/.env")>0) print l}'`
+      ),
+      {}
+    )
+    expect(result.action).toBe('deny')
+  })
 
   it("awk -F: '{print $1}' /etc/passwd -> allow (ordinary field-separator usage, no false positive)", () => {
     const result = decide(bashCall("awk -F: '{print $1}' /etc/passwd"), {})

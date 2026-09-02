@@ -620,8 +620,23 @@ const POSITIONAL_SCRIPT_COMMANDS = new Set(['awk', 'gawk', 'mawk', 'sed'])
  */
 function scanPositionalScriptText(cmd, args) {
   if (!POSITIONAL_SCRIPT_COMMANDS.has(cmd)) return null
+  // Deliberately no `if (a === '--') break` here, unlike the flag-scanning
+  // loops elsewhere in this file (isOutputFreeGrep, hasInlineScriptFlag).
+  // Those loops scan OPTIONS, where `--` correctly means "stop, everything
+  // after this is not a flag." Here we scan SCRIPT TEXT, where `--` means
+  // the opposite: "everything after this IS the script, even though it
+  // might start with a dash" -- `awk -- 'BEGIN{...}'` and
+  // `sed -- 'r .env' file` both put the real program immediately after
+  // `--`. A fourth adversarial round (SMI-6361) found this exact `break`
+  // was a regression this uniform-scan rewrite introduced: the two
+  // functions it replaced both deliberately looked PAST `--` (one via an
+  // explicit `a !== '--'` predicate, the other because its `find()` ran
+  // outside any loop with a `break` in it), so `awk -- '<code touching
+  // .env>'` denied on the parent commit and silently started allowing on
+  // this one -- a real secret-file read, not the redesign's accepted
+  // over-scanning tradeoff. `scanTextForProtected('--')` itself returns
+  // null harmlessly, so no special-casing is needed at all.
   for (const a of args) {
-    if (a === '--') break
     const embedded = scanTextForProtected(a)
     if (embedded) return embedded
   }
