@@ -1,0 +1,177 @@
+{
+  "generated_at": "2026-09-02T03:20:44.696Z",
+  "mode": "package",
+  "workspaces": [
+    {
+      "workspace": "packages/enterprise",
+      "calibrated": false,
+      "scan_status": {
+        "comprehensive": "has_issues",
+        "production": "has_issues"
+      },
+      "candidates": [
+        {
+          "file": "packages/enterprise/src/audit/formatters/index.ts",
+          "category": "files",
+          "name": null,
+          "line": null,
+          "col": null,
+          "reachability": "both"
+        },
+        {
+          "file": "packages/enterprise/src/audit/storage/index.ts",
+          "category": "files",
+          "name": null,
+          "line": null,
+          "col": null,
+          "reachability": "both"
+        },
+        {
+          "file": "packages/enterprise/package.json",
+          "category": "dependencies",
+          "name": "@opentelemetry/instrumentation-aws-sdk",
+          "line": 46,
+          "col": 6,
+          "reachability": "both"
+        },
+        {
+          "file": "packages/enterprise/package.json",
+          "category": "devDependencies",
+          "name": "@smithy/config-resolver",
+          "line": 54,
+          "col": 6,
+          "reachability": "both"
+        },
+        {
+          "file": "packages/enterprise/package.json",
+          "category": "devDependencies",
+          "name": "@smithy/core",
+          "line": 55,
+          "col": 6,
+          "reachability": "both"
+        },
+        {
+          "file": "packages/enterprise/package.json",
+          "category": "devDependencies",
+          "name": "@smithy/middleware-endpoint",
+          "line": 56,
+          "col": 6,
+          "reachability": "both"
+        },
+        {
+          "file": "packages/enterprise/package.json",
+          "category": "devDependencies",
+          "name": "@smithy/middleware-retry",
+          "line": 57,
+          "col": 6,
+          "reachability": "both"
+        },
+        {
+          "file": "packages/enterprise/package.json",
+          "category": "devDependencies",
+          "name": "@smithy/protocol-http",
+          "line": 58,
+          "col": 6,
+          "reachability": "both"
+        },
+        {
+          "file": "packages/enterprise/package.json",
+          "category": "devDependencies",
+          "name": "@smithy/smithy-client",
+          "line": 59,
+          "col": 6,
+          "reachability": "both"
+        },
+        {
+          "file": "packages/enterprise/package.json",
+          "category": "devDependencies",
+          "name": "@smithy/util-retry",
+          "line": 61,
+          "col": 6,
+          "reachability": "both"
+        },
+        {
+          "file": "packages/enterprise/src/audit/AuditEventTypes.ts",
+          "category": "exports",
+          "name": "SSOAuditEventSchema",
+          "line": 21,
+          "col": 3,
+          "reachability": "both"
+        },
+        {
+          "file": "packages/enterprise/src/audit/AuditEventTypes.ts",
+          "category": "exports",
+          "name": "RBACAuditEventSchema",
+          "line": 28,
+          "col": 3,
+          "reachability": "both"
+        },
+        {
+          "file": "packages/enterprise/src/audit/AuditEventTypes.ts",
+          "category": "exports",
+          "name": "LicenseAuditEventSchema",
+          "line": 34,
+          "col": 3,
+          "reachability": "both"
+        },
+        {
+          "file": "packages/enterprise/src/audit/AuditEventTypes.ts",
+          "category": "types",
+          "name": "SSOAuditEvent",
+          "line": 112,
+          "col": 13,
+          "reachability": "both"
+        },
+        {
+          "file": "packages/enterprise/src/license/GracefulDegradation.ts",
+          "category": "exports",
+          "name": "BASE_URL",
+          "line": 13,
+          "col": 3,
+          "reachability": "both"
+        },
+        {
+          "file": "packages/enterprise/src/audit/exporters/CloudWatchExporter.ts",
+          "category": "exports",
+          "name": "VALID_RETENTION_DAYS",
+          "line": 28,
+          "col": 3,
+          "reachability": "both"
+        },
+        {
+          "file": "packages/enterprise/src/audit/exporters/CloudWatchExporter.ts",
+          "category": "exports",
+          "name": "MAX_BATCH_SIZE",
+          "line": 29,
+          "col": 3,
+          "reachability": "both"
+        },
+        {
+          "file": "packages/enterprise/src/audit/exporters/CloudWatchExporter.ts",
+          "category": "exports",
+          "name": "MAX_BATCH_BYTES",
+          "line": 30,
+          "col": 3,
+          "reachability": "both"
+        },
+        {
+          "file": "packages/enterprise/src/audit/exporters/CloudWatchExporter.ts",
+          "category": "exports",
+          "name": "EVENT_OVERHEAD_BYTES",
+          "line": 31,
+          "col": 3,
+          "reachability": "both"
+        },
+        {
+          "file": "packages/enterprise/src/audit/scheduled-scan.lock.ts",
+          "category": "types",
+          "name": "LockCachedResult",
+          "line": 61,
+          "col": 18,
+          "reachability": "both"
+        }
+      ],
+      "looks_bad_but_fine": []
+    }
+  ]
+}
