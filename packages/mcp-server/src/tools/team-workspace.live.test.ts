@@ -158,6 +158,57 @@ describe('team-workspace live mode — membership-gated methods — SMI-6113/SMI
     expect(q!.filters.some((f) => f.column === 'team_id' && f.value === 'team-alpha')).toBe(true)
   })
 
+  it('getWorkspace returns the workspace for a plain member', async () => {
+    const { client } = createFakeClient({
+      singleResponders: [
+        () => ({
+          data: {
+            id: 'ws-1',
+            team_id: 'team-alpha',
+            name: 'WS',
+            description: null,
+            settings: null,
+            created_by: null,
+            created_at: '2026-09-02T00:00:00Z',
+            updated_at: '2026-09-02T00:00:00Z',
+          },
+          error: null,
+        }),
+      ],
+    })
+    await mockUserClient(client)
+
+    const result = await executeTeamWorkspace(
+      { action: 'get', workspaceId: '00000000-0000-0000-0000-000000000001' },
+      makeContext()
+    )
+
+    expect(result.success).toBe(true)
+    expect(result.workspace?.id).toBe('ws-1')
+  })
+
+  it('listWorkspaces surfaces a query failure as a clear thrown error', async () => {
+    const { client } = createFakeClient({
+      thenResponders: [() => ({ data: null, error: { message: 'connection reset' } })],
+    })
+    await mockUserClient(client)
+
+    const result = await executeTeamWorkspace({ action: 'list' }, makeContext())
+
+    expect(result.success).toBe(false)
+    expect(result.error).toMatch(/Failed to list workspaces: connection reset/)
+  })
+
+  it('surfaces a clear error when the license key does not resolve to a team', async () => {
+    const { resolveLicenseTeamId } = await import('./team-resolver.js')
+    vi.mocked(resolveLicenseTeamId).mockResolvedValueOnce(null)
+
+    const result = await executeTeamWorkspace({ action: 'list' }, makeContext())
+
+    expect(result.success).toBe(false)
+    expect(result.error).toMatch(/Unable to resolve team/)
+  })
+
   it('a member without a signed-in session gets a clear login-required error, not a raw failure', async () => {
     const { resolveUserAccessToken } = await import('./team-resolver.js')
     vi.mocked(resolveUserAccessToken).mockResolvedValueOnce(null)
@@ -241,6 +292,191 @@ describe('team-workspace live mode — membership-gated methods — SMI-6113/SMI
     // getWorkspaceSettings is reached indirectly via share_skill add's sharing-policy check above,
     // which already exercised fetchTeamScopedWorkspace on the member getter — no separate call needed.
   })
+
+  it('addSkill surfaces an insert failure as a clear thrown error', async () => {
+    const workspaceRow = {
+      id: 'ws-1',
+      team_id: 'team-alpha',
+      name: 'WS',
+      description: null,
+      settings: null,
+      created_by: null,
+      created_at: '2026-09-02T00:00:00Z',
+      updated_at: '2026-09-02T00:00:00Z',
+    }
+    const { client } = createFakeClient({
+      singleResponders: [
+        () => ({ data: workspaceRow, error: null }), // getWorkspaceSettings's probe
+        () => ({ data: workspaceRow, error: null }), // addSkill's assertWorkspaceInTeam probe
+        () => ({ data: null, error: { message: 'duplicate key value' } }), // insert fails
+      ],
+    })
+    await mockUserClient(client)
+
+    const result = await executeShareSkill(
+      {
+        action: 'add',
+        workspaceId: '00000000-0000-0000-0000-000000000001',
+        skillId: 'author/name',
+      },
+      makeContext()
+    )
+
+    expect(result.success).toBe(false)
+    expect(result.error).toMatch(/Failed to add skill: duplicate key value/)
+  })
+
+  it('removeSkill surfaces the delete-error path as a clear thrown error, not a fabricated false', async () => {
+    const workspaceRow = {
+      id: 'ws-1',
+      team_id: 'team-alpha',
+      name: 'WS',
+      description: null,
+      settings: null,
+      created_by: null,
+      created_at: '2026-09-02T00:00:00Z',
+      updated_at: '2026-09-02T00:00:00Z',
+    }
+    const { client } = createFakeClient({
+      singleResponders: [() => ({ data: workspaceRow, error: null })],
+      thenResponders: [() => ({ data: null, error: { message: 'connection reset' } })],
+    })
+    await mockUserClient(client)
+
+    const result = await executeShareSkill(
+      {
+        action: 'remove',
+        workspaceId: '00000000-0000-0000-0000-000000000001',
+        skillId: 'author/name',
+      },
+      makeContext()
+    )
+
+    expect(result.success).toBe(false)
+    expect(result.error).toMatch(/Failed to remove skill: connection reset/)
+  })
+
+  it('removeSkill throws (not a fabricated success/false) when the probe itself fails after a zero-row delete', async () => {
+    const workspaceRow = {
+      id: 'ws-1',
+      team_id: 'team-alpha',
+      name: 'WS',
+      description: null,
+      settings: null,
+      created_by: null,
+      created_at: '2026-09-02T00:00:00Z',
+      updated_at: '2026-09-02T00:00:00Z',
+    }
+    const { client } = createFakeClient({
+      singleResponders: [() => ({ data: workspaceRow, error: null })],
+      thenResponders: [
+        () => ({ data: [], error: null }), // delete: 0 rows, no error
+        () => ({ data: null, error: { message: 'token expired' } }), // probe fails too
+      ],
+    })
+    await mockUserClient(client)
+
+    const result = await executeShareSkill(
+      {
+        action: 'remove',
+        workspaceId: '00000000-0000-0000-0000-000000000001',
+        skillId: 'author/name',
+      },
+      makeContext()
+    )
+
+    expect(result.success).toBe(false)
+    expect(result.error).toMatch(/cannot tell whether it was already removed or you lost access/)
+  })
+
+  it('removeSkill throws a clear membership-lost error (not a fabricated success) when the probe finds the row after a zero-row delete', async () => {
+    const workspaceRow = {
+      id: 'ws-1',
+      team_id: 'team-alpha',
+      name: 'WS',
+      description: null,
+      settings: null,
+      created_by: null,
+      created_at: '2026-09-02T00:00:00Z',
+      updated_at: '2026-09-02T00:00:00Z',
+    }
+    const { client } = createFakeClient({
+      singleResponders: [() => ({ data: workspaceRow, error: null })],
+      thenResponders: [
+        () => ({ data: [], error: null }), // delete: 0 rows, no error
+        () => ({ data: [{ workspace_id: 'ws-1' }], error: null }), // probe: row IS there
+      ],
+    })
+    await mockUserClient(client)
+
+    const result = await executeShareSkill(
+      {
+        action: 'remove',
+        workspaceId: '00000000-0000-0000-0000-000000000001',
+        skillId: 'author/name',
+      },
+      makeContext()
+    )
+
+    expect(result.success).toBe(false)
+    expect(result.error).toMatch(/you may no longer be a member of this team/)
+  })
+
+  it('removeSkill reports "not found" when both the delete and the probe find no matching row', async () => {
+    const workspaceRow = {
+      id: 'ws-1',
+      team_id: 'team-alpha',
+      name: 'WS',
+      description: null,
+      settings: null,
+      created_by: null,
+      created_at: '2026-09-02T00:00:00Z',
+      updated_at: '2026-09-02T00:00:00Z',
+    }
+    const { client } = createFakeClient({
+      singleResponders: [() => ({ data: workspaceRow, error: null })],
+      thenResponders: [() => ({ data: [], error: null }), () => ({ data: [], error: null })],
+    })
+    await mockUserClient(client)
+
+    const result = await executeShareSkill(
+      {
+        action: 'remove',
+        workspaceId: '00000000-0000-0000-0000-000000000001',
+        skillId: 'author/name',
+      },
+      makeContext()
+    )
+
+    expect(result.success).toBe(false)
+    expect(result.error).toMatch(/not found in workspace/i)
+  })
+
+  it('listSkills surfaces a query failure as a clear thrown error', async () => {
+    const workspaceRow = {
+      id: 'ws-1',
+      team_id: 'team-alpha',
+      name: 'WS',
+      description: null,
+      settings: null,
+      created_by: null,
+      created_at: '2026-09-02T00:00:00Z',
+      updated_at: '2026-09-02T00:00:00Z',
+    }
+    const { client } = createFakeClient({
+      singleResponders: [() => ({ data: workspaceRow, error: null })],
+      thenResponders: [() => ({ data: null, error: { message: 'connection reset' } })],
+    })
+    await mockUserClient(client)
+
+    const result = await executeShareSkill(
+      { action: 'list', workspaceId: '00000000-0000-0000-0000-000000000001' },
+      makeContext()
+    )
+
+    expect(result.success).toBe(false)
+    expect(result.error).toMatch(/Failed to list skills: connection reset/)
+  })
 })
 
 // ============================================================================
@@ -298,6 +534,35 @@ describe('team-workspace live mode — workspace:manage-gated methods — SMI-61
     expect(result.error).not.toMatch(/row-level security policy/)
   })
 
+  it('createWorkspace recognizes an RLS denial by message text alone, when no error code is present', async () => {
+    const { client } = createFakeClient({
+      singleResponders: [
+        () => ({
+          data: null,
+          error: { message: 'new row violates row-level security policy for table "x"' },
+        }),
+      ],
+    })
+    await mockUserClient(client)
+
+    const result = await executeTeamWorkspace({ action: 'create', name: 'New WS' }, makeContext())
+
+    expect(result.success).toBe(false)
+    expect(result.error).toMatch(/workspace:manage/)
+  })
+
+  it('createWorkspace falls back to the generic error message for a non-RLS failure', async () => {
+    const { client } = createFakeClient({
+      singleResponders: [() => ({ data: null, error: null })],
+    })
+    await mockUserClient(client)
+
+    const result = await executeTeamWorkspace({ action: 'create', name: 'New WS' }, makeContext())
+
+    expect(result.success).toBe(false)
+    expect(result.error).toBe('Failed to create workspace: unknown error')
+  })
+
   it('deleteWorkspace succeeds when the delete affects a row (admin caller)', async () => {
     const { client } = createFakeClient({
       thenResponders: [() => ({ data: [{ id: 'ws-1' }], error: null })],
@@ -331,6 +596,39 @@ describe('team-workspace live mode — workspace:manage-gated methods — SMI-61
     expect(result.success).toBe(false)
     expect(result.error).toMatch(/workspace:manage/)
     expect(result.error).not.toMatch(/not found/i)
+  })
+
+  it('deleteWorkspace surfaces a direct delete-query failure as a clear thrown error', async () => {
+    const { client } = createFakeClient({
+      thenResponders: [() => ({ data: null, error: { message: 'connection reset' } })],
+    })
+    await mockUserClient(client)
+
+    const result = await executeTeamWorkspace(
+      { action: 'delete', workspaceId: '00000000-0000-0000-0000-000000000001' },
+      makeContext()
+    )
+
+    expect(result.success).toBe(false)
+    expect(result.error).toMatch(/Failed to delete workspace: connection reset/)
+  })
+
+  it('deleteWorkspace throws (not a fabricated success/false) when the probe itself fails after a zero-row delete', async () => {
+    const { client } = createFakeClient({
+      thenResponders: [
+        () => ({ data: [], error: null }), // delete: 0 rows, no error
+        () => ({ data: null, error: { message: 'token expired' } }), // probe fails too
+      ],
+    })
+    await mockUserClient(client)
+
+    const result = await executeTeamWorkspace(
+      { action: 'delete', workspaceId: '00000000-0000-0000-0000-000000000001' },
+      makeContext()
+    )
+
+    expect(result.success).toBe(false)
+    expect(result.error).toMatch(/cannot tell whether it is missing or you lack/)
   })
 
   it('deleteWorkspace reports "not found" (not a permission error) when the probe also finds nothing', async () => {
