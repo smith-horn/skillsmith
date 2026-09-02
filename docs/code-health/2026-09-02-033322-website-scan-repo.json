@@ -1,0 +1,633 @@
+{
+  "generated_at": "2026-09-02T03:33:22.638Z",
+  "mode": "package",
+  "workspaces": [
+    {
+      "workspace": "packages/website",
+      "calibrated": false,
+      "scan_status": {
+        "comprehensive": "has_issues",
+        "production": "has_issues"
+      },
+      "candidates": [
+        {
+          "file": "packages/website/src/components/index.ts",
+          "category": "files",
+          "name": null,
+          "line": null,
+          "col": null,
+          "reachability": "both"
+        },
+        {
+          "file": "packages/website/src/constants/index.ts",
+          "category": "files",
+          "name": null,
+          "line": null,
+          "col": null,
+          "reachability": "both"
+        },
+        {
+          "file": "packages/website/src/lib/api.ts",
+          "category": "files",
+          "name": null,
+          "line": null,
+          "col": null,
+          "reachability": "both"
+        },
+        {
+          "file": "packages/website/src/scripts/web-vitals.ts",
+          "category": "files",
+          "name": null,
+          "line": null,
+          "col": null,
+          "reachability": "both"
+        },
+        {
+          "file": "packages/website/src/components/auth/index.ts",
+          "category": "files",
+          "name": null,
+          "line": null,
+          "col": null,
+          "reachability": "both"
+        },
+        {
+          "file": "packages/website/package.json",
+          "category": "dependencies",
+          "name": "cookie",
+          "line": 30,
+          "col": 6,
+          "reachability": "both"
+        },
+        {
+          "file": "packages/website/package.json",
+          "category": "dependencies",
+          "name": "tailwindcss",
+          "line": 32,
+          "col": 6,
+          "reachability": "both"
+        },
+        {
+          "file": "packages/website/package.json",
+          "category": "devDependencies",
+          "name": "@tailwindcss/typography",
+          "line": 39,
+          "col": 6,
+          "reachability": "both"
+        },
+        {
+          "file": "packages/website/package.json",
+          "category": "devDependencies",
+          "name": "loupe",
+          "line": 46,
+          "col": 6,
+          "reachability": "both"
+        },
+        {
+          "file": "packages/website/package.json",
+          "category": "devDependencies",
+          "name": "picomatch",
+          "line": 47,
+          "col": 6,
+          "reachability": "both"
+        },
+        {
+          "file": "packages/website/package.json",
+          "category": "devDependencies",
+          "name": "prettier-plugin-astro",
+          "line": 49,
+          "col": 6,
+          "reachability": "both"
+        },
+        {
+          "file": "packages/website/package.json",
+          "category": "devDependencies",
+          "name": "strip-ansi",
+          "line": 50,
+          "col": 6,
+          "reachability": "both"
+        },
+        {
+          "file": "packages/website/package.json",
+          "category": "devDependencies",
+          "name": "strip-literal",
+          "line": 51,
+          "col": 6,
+          "reachability": "both"
+        },
+        {
+          "file": "packages/website/package.json",
+          "category": "devDependencies",
+          "name": "web-vitals",
+          "line": 55,
+          "col": 6,
+          "reachability": "both"
+        },
+        {
+          "file": "packages/website/src/constants/terminology.ts",
+          "category": "exports",
+          "name": "QUARANTINE_SEVERITY",
+          "line": 77,
+          "col": 14,
+          "reachability": "both"
+        },
+        {
+          "file": "packages/website/src/constants/terminology.ts",
+          "category": "exports",
+          "name": "SKILL_CATEGORIES",
+          "line": 121,
+          "col": 14,
+          "reachability": "both"
+        },
+        {
+          "file": "packages/website/src/constants/terminology.ts",
+          "category": "exports",
+          "name": "PRICING_TIERS",
+          "line": 144,
+          "col": 14,
+          "reachability": "both"
+        },
+        {
+          "file": "packages/website/src/constants/terminology.ts",
+          "category": "exports",
+          "name": "CONTACT_TOPICS",
+          "line": 187,
+          "col": 14,
+          "reachability": "both"
+        },
+        {
+          "file": "packages/website/src/constants/terminology.ts",
+          "category": "exports",
+          "name": "getTrustTierById",
+          "line": 202,
+          "col": 17,
+          "reachability": "both"
+        },
+        {
+          "file": "packages/website/src/constants/terminology.ts",
+          "category": "exports",
+          "name": "getQuarantineSeverityById",
+          "line": 209,
+          "col": 17,
+          "reachability": "both"
+        },
+        {
+          "file": "packages/website/src/constants/terminology.ts",
+          "category": "types",
+          "name": "QuarantineSeverityId",
+          "line": 115,
+          "col": 13,
+          "reachability": "both"
+        },
+        {
+          "file": "packages/website/src/constants/terminology.ts",
+          "category": "types",
+          "name": "CategoryId",
+          "line": 136,
+          "col": 13,
+          "reachability": "both"
+        },
+        {
+          "file": "packages/website/src/constants/terminology.ts",
+          "category": "types",
+          "name": "PricingTierId",
+          "line": 182,
+          "col": 13,
+          "reachability": "both"
+        },
+        {
+          "file": "packages/website/src/lib/auth-callback-handler.ts",
+          "category": "exports",
+          "name": "handleRecovery",
+          "line": 89,
+          "col": 17,
+          "reachability": "both"
+        },
+        {
+          "file": "packages/website/src/lib/auth-callback-handler.ts",
+          "category": "exports",
+          "name": "handleGenericOAuth",
+          "line": 94,
+          "col": 23,
+          "reachability": "both"
+        },
+        {
+          "file": "packages/website/src/lib/auth-callback-handler.ts",
+          "category": "exports",
+          "name": "handleAlreadyLoggedInOrPkce",
+          "line": 116,
+          "col": 23,
+          "reachability": "both"
+        },
+        {
+          "file": "packages/website/src/lib/auth-callback-handler.ts",
+          "category": "types",
+          "name": "RecordSsoLoginResult",
+          "line": 38,
+          "col": 3,
+          "reachability": "both"
+        },
+        {
+          "file": "packages/website/src/lib/auth-callback-handler.ts",
+          "category": "types",
+          "name": "SsoLinkCandidate",
+          "line": 39,
+          "col": 3,
+          "reachability": "both"
+        },
+        {
+          "file": "packages/website/src/lib/skills-page-render.ts",
+          "category": "exports",
+          "name": "BADGE_CONFIG",
+          "line": 32,
+          "col": 14,
+          "reachability": "both"
+        },
+        {
+          "file": "packages/website/src/lib/status-poller.ts",
+          "category": "exports",
+          "name": "isRovingNavKey",
+          "line": 20,
+          "col": 17,
+          "reachability": "both"
+        },
+        {
+          "file": "packages/website/src/lib/team-invite-ui.ts",
+          "category": "exports",
+          "name": "renderMemberRow",
+          "line": 318,
+          "col": 17,
+          "reachability": "both"
+        },
+        {
+          "file": "packages/website/src/lib/team-invite-ui.ts",
+          "category": "types",
+          "name": "TeamMemberRow",
+          "line": 29,
+          "col": 18,
+          "reachability": "both"
+        },
+        {
+          "file": "packages/website/src/middleware.utils.ts",
+          "category": "exports",
+          "name": "assignAbVariant",
+          "line": 165,
+          "col": 17,
+          "reachability": "both"
+        },
+        {
+          "file": "packages/website/src/lib/complete-profile-copy.ts",
+          "category": "exports",
+          "name": "humanizePath",
+          "line": 52,
+          "col": 17,
+          "reachability": "both"
+        },
+        {
+          "file": "packages/website/src/lib/pricing-data.ts",
+          "category": "exports",
+          "name": "ANNUAL_DISCOUNT_MONTHS",
+          "line": 32,
+          "col": 14,
+          "reachability": "both"
+        },
+        {
+          "file": "packages/website/src/lib/pricing-data.ts",
+          "category": "types",
+          "name": "PricingFeature",
+          "line": 15,
+          "col": 28,
+          "reachability": "both"
+        },
+        {
+          "file": "packages/website/src/lib/pricing.ts",
+          "category": "exports",
+          "name": "formatApiCalls",
+          "line": 21,
+          "col": 10,
+          "reachability": "both"
+        },
+        {
+          "file": "packages/website/src/lib/pricing.ts",
+          "category": "exports",
+          "name": "getTierById",
+          "line": 21,
+          "col": 26,
+          "reachability": "both"
+        },
+        {
+          "file": "packages/website/src/lib/pricing.ts",
+          "category": "exports",
+          "name": "formatPrice",
+          "line": 26,
+          "col": 17,
+          "reachability": "both"
+        },
+        {
+          "file": "packages/website/src/lib/status-client.ts",
+          "category": "exports",
+          "name": "STATUS_CACHE_KEY",
+          "line": 47,
+          "col": 3,
+          "reachability": "both"
+        },
+        {
+          "file": "packages/website/src/lib/status-client.ts",
+          "category": "exports",
+          "name": "STATUS_CACHE_TTL_MS",
+          "line": 48,
+          "col": 3,
+          "reachability": "both"
+        },
+        {
+          "file": "packages/website/src/lib/status-client.ts",
+          "category": "exports",
+          "name": "dedupeComponentsBySlug",
+          "line": 54,
+          "col": 3,
+          "reachability": "both"
+        },
+        {
+          "file": "packages/website/src/lib/status-client.ts",
+          "category": "exports",
+          "name": "buildAffectedComponentsText",
+          "line": 62,
+          "col": 3,
+          "reachability": "both"
+        },
+        {
+          "file": "packages/website/src/lib/status-client.ts",
+          "category": "exports",
+          "name": "computeRovingTabindexMove",
+          "line": 77,
+          "col": 3,
+          "reachability": "both"
+        },
+        {
+          "file": "packages/website/src/lib/status-client.ts",
+          "category": "exports",
+          "name": "INITIAL_POLL_OUTCOME_STATE",
+          "line": 79,
+          "col": 3,
+          "reachability": "both"
+        },
+        {
+          "file": "packages/website/src/lib/status-client.ts",
+          "category": "exports",
+          "name": "isRovingNavKey",
+          "line": 80,
+          "col": 3,
+          "reachability": "both"
+        },
+        {
+          "file": "packages/website/src/lib/status-client.ts",
+          "category": "exports",
+          "name": "nextPollOutcomeState",
+          "line": 81,
+          "col": 3,
+          "reachability": "both"
+        },
+        {
+          "file": "packages/website/src/lib/status-client.ts",
+          "category": "exports",
+          "name": "STALE_AFTER_CONSECUTIVE_FAILURES",
+          "line": 82,
+          "col": 3,
+          "reachability": "both"
+        },
+        {
+          "file": "packages/website/src/lib/status-client.ts",
+          "category": "types",
+          "name": "ComponentDedupeResult",
+          "line": 56,
+          "col": 8,
+          "reachability": "both"
+        },
+        {
+          "file": "packages/website/src/lib/status-client.ts",
+          "category": "types",
+          "name": "ReconcilePlan",
+          "line": 57,
+          "col": 8,
+          "reachability": "both"
+        },
+        {
+          "file": "packages/website/src/lib/status-client.ts",
+          "category": "types",
+          "name": "ComponentRowContent",
+          "line": 68,
+          "col": 8,
+          "reachability": "both"
+        },
+        {
+          "file": "packages/website/src/lib/status-client.ts",
+          "category": "types",
+          "name": "IncidentContent",
+          "line": 70,
+          "col": 8,
+          "reachability": "both"
+        },
+        {
+          "file": "packages/website/src/lib/status-client.ts",
+          "category": "types",
+          "name": "IncidentUpdateContent",
+          "line": 71,
+          "col": 8,
+          "reachability": "both"
+        },
+        {
+          "file": "packages/website/src/lib/status-client.ts",
+          "category": "types",
+          "name": "PollOutcomeState",
+          "line": 84,
+          "col": 8,
+          "reachability": "both"
+        },
+        {
+          "file": "packages/website/src/lib/status-client.ts",
+          "category": "types",
+          "name": "StatusPoller",
+          "line": 85,
+          "col": 8,
+          "reachability": "both"
+        },
+        {
+          "file": "packages/website/src/lib/status-client.ts",
+          "category": "types",
+          "name": "StatusPollerCallbacks",
+          "line": 86,
+          "col": 8,
+          "reachability": "both"
+        },
+        {
+          "file": "packages/website/src/lib/status-client.ts",
+          "category": "types",
+          "name": "StatusPollerOptions",
+          "line": 87,
+          "col": 8,
+          "reachability": "both"
+        },
+        {
+          "file": "packages/website/src/lib/account-profile-data.ts",
+          "category": "exports",
+          "name": "isEmail",
+          "line": 74,
+          "col": 17,
+          "reachability": "both"
+        },
+        {
+          "file": "packages/website/src/lib/account-nav.ts",
+          "category": "types",
+          "name": "AccountNavItem",
+          "line": 21,
+          "col": 18,
+          "reachability": "both"
+        },
+        {
+          "file": "packages/website/src/lib/oauth-popup.ts",
+          "category": "types",
+          "name": "OAuthPopupOutcome",
+          "line": 19,
+          "col": 13,
+          "reachability": "both"
+        },
+        {
+          "file": "packages/website/src/lib/private-registry-dashboard.ts",
+          "category": "types",
+          "name": "RegistryApprovalStatus",
+          "line": 17,
+          "col": 13,
+          "reachability": "both"
+        },
+        {
+          "file": "packages/website/src/lib/seat-update-error.ts",
+          "category": "types",
+          "name": "SeatUpdateErrorBody",
+          "line": 9,
+          "col": 18,
+          "reachability": "both"
+        },
+        {
+          "file": "packages/website/src/lib/skills-utils.ts",
+          "category": "types",
+          "name": "QualityTier",
+          "line": 3,
+          "col": 15,
+          "reachability": "both"
+        },
+        {
+          "file": "packages/website/src/lib/sso-link-consent.ts",
+          "category": "types",
+          "name": "PendingSsoLinkRequest",
+          "line": 31,
+          "col": 18,
+          "reachability": "both"
+        },
+        {
+          "file": "packages/website/src/lib/status-vocab.ts",
+          "category": "types",
+          "name": "IncidentUpdate",
+          "line": 50,
+          "col": 18,
+          "reachability": "both"
+        },
+        {
+          "file": "packages/website/src/lib/status-render.ts",
+          "category": "types",
+          "name": "IncidentUpdateContent",
+          "line": 224,
+          "col": 18,
+          "reachability": "both"
+        },
+        {
+          "file": "packages/website/src/types/index.ts",
+          "category": "types",
+          "name": "Skill",
+          "line": 41,
+          "col": 18,
+          "reachability": "both"
+        },
+        {
+          "file": "packages/website/src/types/index.ts",
+          "category": "types",
+          "name": "SkillCategory",
+          "line": 65,
+          "col": 13,
+          "reachability": "both"
+        },
+        {
+          "file": "packages/website/src/types/index.ts",
+          "category": "types",
+          "name": "SkillSearchParams",
+          "line": 79,
+          "col": 18,
+          "reachability": "both"
+        },
+        {
+          "file": "packages/website/src/types/index.ts",
+          "category": "types",
+          "name": "SkillSearchResult",
+          "line": 91,
+          "col": 18,
+          "reachability": "both"
+        },
+        {
+          "file": "packages/website/src/types/index.ts",
+          "category": "types",
+          "name": "NavItem",
+          "line": 100,
+          "col": 18,
+          "reachability": "both"
+        },
+        {
+          "file": "packages/website/src/types/index.ts",
+          "category": "types",
+          "name": "Feature",
+          "line": 110,
+          "col": 18,
+          "reachability": "both"
+        },
+        {
+          "file": "packages/website/src/types/index.ts",
+          "category": "types",
+          "name": "Testimonial",
+          "line": 119,
+          "col": 18,
+          "reachability": "both"
+        },
+        {
+          "file": "packages/website/src/types/index.ts",
+          "category": "types",
+          "name": "ApiResponse",
+          "line": 130,
+          "col": 18,
+          "reachability": "both"
+        },
+        {
+          "file": "packages/website/src/lib/account-summary-data.ts",
+          "category": "types",
+          "name": "SummaryProfile",
+          "line": 18,
+          "col": 18,
+          "reachability": "both"
+        },
+        {
+          "file": "packages/website/src/lib/account-summary-data.ts",
+          "category": "types",
+          "name": "SummaryQuota",
+          "line": 24,
+          "col": 18,
+          "reachability": "both"
+        },
+        {
+          "file": "packages/website/src/lib/account-overview-data.ts",
+          "category": "types",
+          "name": "TeamOverviewUsage",
+          "line": 21,
+          "col": 18,
+          "reachability": "both"
+        }
+      ],
+      "looks_bad_but_fine": []
+    }
+  ]
+}
