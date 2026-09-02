@@ -311,8 +311,14 @@ describe('decide() — second-round adversarial confirmation findings (SMI-6361)
     expect(result.action).toBe('deny')
   })
 
-  it('php -F .env -> allow (a real, different flag: -F names a per-line script FILE, not inline code)', () => {
-    const result = decide(bashCall('php -F script.php'), {})
+  // Discriminating (third-round finding F-D: the original version of this
+  // test used a plain filename with no .env reference at all, so it passed
+  // identically whether or not -F was correctly excluded from php's
+  // inline-code short-flag chars). This one denies if -F is ever
+  // (wrongly) added to those chars, and allows under the current, correct
+  // set — proving the exclusion is actually load-bearing, not just stated.
+  it('php -F "<text touching .env>" -> allow (-F names a per-line script FILE argument, not inline code — its value is a filename, never scanned as script text)', () => {
+    const result = decide(bashCall(`php -F "readfile('.env')"`), {})
     expect(result.action).toBe('allow')
   })
 
@@ -326,7 +332,7 @@ describe('decide() — second-round adversarial confirmation findings (SMI-6361)
     expect(result.action).toBe('deny')
   })
 
-  it('awk -f script.awk file.txt -> allow (external script FILE, not inline text)', () => {
+  it('awk -f script.awk file.txt -> allow (ordinary usage, no .env reference anywhere)', () => {
     const result = decide(bashCall('awk -f script.awk file.txt'), {})
     expect(result.action).toBe('allow')
   })
@@ -341,8 +347,73 @@ describe('decide() — second-round adversarial confirmation findings (SMI-6361)
     expect(result.action).toBe('deny')
   })
 
-  it('sed -f script.sed input.txt -> allow (external script FILE, not inline text)', () => {
+  it('sed -f script.sed input.txt -> allow (ordinary usage, no .env reference anywhere)', () => {
     const result = decide(bashCall('sed -f script.sed input.txt'), {})
+    expect(result.action).toBe('allow')
+  })
+})
+
+describe('decide() — third-round adversarial confirmation findings F-A/F-B/F-C (SMI-6361)', () => {
+  // A third round found the second round's own awk/sed fix (which tried
+  // to model each flag's arity — skip -f's value, treat -e's value as
+  // script, take the "first non-flag" as the positional default) missed
+  // any VALUE-TAKING flag written in separated form: the value token itself
+  // doesn't start with "-", so it was wrongly treated as "the script"
+  // while the REAL script (later in argv) was never examined. Also missed
+  // the attached short-option form entirely (`-e'r .env'` tokenizes as one
+  // string starting with "-", which the old code skipped outright). Fixed
+  // by scanning every argument uniformly instead of trying to identify
+  // which single one is "the script" (see scanPositionalScriptText's own
+  // header comment for the full rationale).
+
+  it('awk -v n=1 \'BEGIN{...".env"...}\' -> deny (F-A: a value-taking flag in separated form previously hid the real script)', () => {
+    const result = decide(bashCall(`awk -v n=1 'BEGIN{while((getline l < ".env")>0) print l}'`), {})
+    expect(result.action).toBe('deny')
+  })
+
+  it('awk -F , \'BEGIN{...".env"...}\' -> deny (same shape, a different separated value-taking flag)', () => {
+    const result = decide(bashCall(`awk -F , 'BEGIN{while((getline l < ".env")>0) print l}'`), {})
+    expect(result.action).toBe('deny')
+  })
+
+  it("sed -l 70 'r .env' file -> deny (F-A: GNU sed's --line-length value flag hid the real script)", () => {
+    const result = decide(bashCall("sed -l 70 'r .env' input.txt"), {})
+    expect(result.action).toBe('deny')
+  })
+
+  it("sed -e'r .env' input.txt -> deny (F-B: attached short-option form, one token starting with '-')", () => {
+    const result = decide(bashCall("sed -e'r .env' input.txt"), {})
+    expect(result.action).toBe('deny')
+  })
+
+  it("sed -n -e'r .env' input.txt -> deny (attached form combined with an unrelated boolean flag)", () => {
+    const result = decide(bashCall("sed -n -e'r .env' input.txt"), {})
+    expect(result.action).toBe('deny')
+  })
+
+  it("gawk --source='BEGIN{...\".env\"...}' -> deny (F-C: gawk's own inline-program long flag)", () => {
+    const result = decide(
+      bashCall(`gawk --source='BEGIN{while((getline l < ".env")>0) print l}'`),
+      {}
+    )
+    expect(result.action).toBe('deny')
+  })
+
+  it("sed -i '' 'r .env' input.txt -> deny (BSD in-place form; bonus fix from scanning uniformly)", () => {
+    const result = decide(bashCall("sed -i '' 'r .env' input.txt"), {})
+    expect(result.action).toBe('deny')
+  })
+
+  // Non-regression: the same flags in ordinary, .env-free usage must still
+  // allow — the fix scans more text, not more aggressively per match.
+
+  it("awk -v n=1 '{print $n}' data.txt -> allow (ordinary -v usage, no .env reference)", () => {
+    const result = decide(bashCall(`awk -v n=1 '{print $n}' data.txt`), {})
+    expect(result.action).toBe('allow')
+  })
+
+  it("sed -i '' 's/a/b/' file.txt -> allow (ordinary BSD in-place edit, no .env reference)", () => {
+    const result = decide(bashCall("sed -i '' 's/a/b/' file.txt"), {})
     expect(result.action).toBe('allow')
   })
 

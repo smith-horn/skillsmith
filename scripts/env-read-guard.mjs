@@ -585,64 +585,47 @@ function hasInlineScriptFlag(cmd, args) {
  * match — never their embedded program text — so
  * `awk 'BEGIN{while((getline l < ".env")>0) print l}'` returned `allow`.
  */
-const POSITIONAL_SCRIPT_COMMANDS = new Set(['awk', 'gawk', 'mawk'])
-
-/** sed flags that name an external script FILE — no inline text follows. */
-const SCRIPT_FILE_FLAGS = new Set(['-f', '--file'])
-
-/** sed flags whose following argument (or `=`-joined value) is script text. */
-const SED_SCRIPT_FLAGS = new Set(['-e', '--expression'])
+const POSITIONAL_SCRIPT_COMMANDS = new Set(['awk', 'gawk', 'mawk', 'sed'])
 
 /**
- * Same hazard as POSITIONAL_SCRIPT_COMMANDS above, but sed's script text
- * can also arrive via an explicit `-e`/`--expression` flag rather than
- * bare position — `sed 'r .env'` and `sed -e 'r .env'` are equivalent.
- * `sed 'r .env' input.txt` (GNU sed's `r` command) reads and prints an
- * arbitrary file's contents, so this is the exact same class of bypass as
- * the awk case, reachable through a command already on READER_COMMANDS.
- * @param {string[]} args
- * @returns {string | null}
- */
-function scanSedScriptText(args) {
-  let sawScriptFileFlag = false
-  let sawExplicitScriptFlag = false
-  for (let i = 0; i < args.length; i++) {
-    const a = args[i]
-    if (a === '--') break
-    if (SCRIPT_FILE_FLAGS.has(a) || a.startsWith('--file=')) {
-      sawScriptFileFlag = true
-      continue
-    }
-    if (SED_SCRIPT_FLAGS.has(a) || a.startsWith('--expression=')) {
-      sawExplicitScriptFlag = true
-      const text = a.includes('=') ? a.slice(a.indexOf('=') + 1) : args[i + 1]
-      const embedded = scanTextForProtected(text)
-      if (embedded) return embedded
-      continue
-    }
-  }
-  if (!sawScriptFileFlag && !sawExplicitScriptFlag) {
-    const firstNonFlag = args.find((a) => a !== '--' && !a.startsWith('-'))
-    if (firstNonFlag) return scanTextForProtected(firstNonFlag)
-  }
-  return null
-}
-
-/**
+ * awk/sed/gawk/mawk mix flags and inline SCRIPT TEXT unpredictably, across
+ * both separated (`-v n=1`) and attached (`-vn=1`, `-e'r .env'`) short-
+ * option forms, plus gawk's long forms (`--source=`, `--assign=`) and
+ * platform-specific arity quirks (GNU sed's `-i` takes an attached-only
+ * optional suffix; BSD/macOS sed's `-i` requires one, as a SEPARATE
+ * argument). A first attempt at this modeled each flag's arity explicitly
+ * (skip `-f`'s value, treat `-e`'s value as script text, etc.) and a
+ * follow-up adversarial review round found THREE live, reproduced bypasses
+ * against it in one pass — `awk -v n=1 'BEGIN{...".env"...}'`,
+ * `sed -l 70 'r .env' file`, and the attached form `sed -e'r .env' file`
+ * all returned `allow`, because the model didn't (and structurally could
+ * not, without also modeling every other value-taking flag) know those
+ * value tokens weren't the script (SMI-6361, third adversarial round).
+ *
+ * This scans EVERY argument uniformly instead of trying to identify which
+ * one is "the script" — closing all three at once and removing an entire
+ * class of arity-modeling bugs, at the cost of also scanning a flag's
+ * non-script value (a field separator, a `-v` assignment). That's the same
+ * over-inclusive-is-safe tradeoff already accepted for inline-interpreter
+ * script text (`node -e "console.log('.env')"` already denies on the
+ * mention alone, not just a real read) and for a bare `.env` grep pattern
+ * (`grep '.env' .gitignore` already denies via the plain reader-path
+ * check) — `scanTextForProtected`'s boundary-anchored regex only matches a
+ * genuine standalone `.env`-shaped substring, so this doesn't invent a new
+ * false-positive class, only extends an already-accepted one.
  * @param {string} cmd
  * @param {string[]} args
  * @returns {string | null} the first protected-file reference found in
- *   positional script text, or null.
+ *   positional/flag-attached script text, or null.
  */
 function scanPositionalScriptText(cmd, args) {
-  if (cmd === 'sed') return scanSedScriptText(args)
   if (!POSITIONAL_SCRIPT_COMMANDS.has(cmd)) return null
-  const hasScriptFileFlag = args.some(
-    (a) => a === '-f' || a === '--file' || a.startsWith('--file=')
-  )
-  if (hasScriptFileFlag) return null
-  const firstNonFlag = args.find((a) => a !== '--' && !a.startsWith('-'))
-  return firstNonFlag ? scanTextForProtected(firstNonFlag) : null
+  for (const a of args) {
+    if (a === '--') break
+    const embedded = scanTextForProtected(a)
+    if (embedded) return embedded
+  }
+  return null
 }
 
 /** `varlock load --format <value>` → value, or null when absent. */
