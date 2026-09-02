@@ -87,8 +87,12 @@ for parent_spec in "${PARENT_INDEXES[@]}"; do
   # processed before the loop silently exited).
   while IFS= read -r partition <&3; do
     [ -z "$partition" ] && continue
-    child_name="${partition}_${parent_name#idx_}"
-    child_name="${child_name:0:63}" # Postgres identifier length limit
+    child_name_full="${partition}_${parent_name#idx_}"
+    child_name="${child_name_full:0:63}" # Postgres identifier length limit
+    if [ "$child_name" != "$child_name_full" ]; then
+      echo "ERROR: child index name for $partition/$parent_name exceeds 63 bytes and would be silently truncated by Postgres (full: $child_name_full, truncated: $child_name). Refusing to proceed -- a truncated name risks colliding with another partition's truncated name. Shorten the partition or parent-index naming scheme instead of truncating blindly." >&2
+      exit 1
+    fi
 
     ALREADY_ATTACHED="$("$POOLER" -A -t -c "
       SELECT 1 FROM pg_index i
