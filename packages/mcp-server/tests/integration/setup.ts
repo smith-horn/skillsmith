@@ -79,7 +79,37 @@ export interface TestFilesystemContext {
   tempDir: string
   skillsDir: string
   manifestDir: string
+  /**
+   * SMI-6343 Wave 1: the isolated `manifest.json` path inside `manifestDir`.
+   * Pass THIS to anything that would otherwise default its manifest path to
+   * `os.homedir()` (SkillInstallationService, ManifestManager, the
+   * `resolveScopedSkillsDir` mock). `manifestDir` is kept for the existing
+   * callers that build the same path by hand; new tests should use
+   * `manifestPath` so the isolated path is the path of least resistance.
+   */
+  manifestPath: string
   cleanup: () => Promise<void>
+}
+
+/**
+ * SMI-6343 Wave 1: allocate an isolated manifest path for a test.
+ *
+ * The manifest-writing surfaces (`SkillInstallationService`, `installSkill`,
+ * `backfillManifest`, `new ManifestManager`) all fall back to
+ * `path.join(os.homedir(), '.skillsmith', 'manifest.json')` when no explicit
+ * path is supplied — which, on a host (non-Docker) vitest run, is the
+ * developer's real manifest. `vitest.setup.ts` sandboxes `$HOME` so that
+ * fallback is no longer destructive, and `ManifestManager` refuses real-home
+ * paths under `VITEST` — but a test should still name its own path rather than
+ * rely on either backstop.
+ *
+ * @param baseDir Directory to place `manifest.json` in. Defaults to a fresh
+ *   `os.tmpdir()` directory, created for the caller.
+ */
+export async function createIsolatedManifestPath(baseDir?: string): Promise<string> {
+  const dir = baseDir ?? (await fs.mkdtemp(path.join(os.tmpdir(), 'skillsmith-manifest-')))
+  await fs.mkdir(dir, { recursive: true })
+  return path.join(dir, 'manifest.json')
 }
 
 /**
@@ -100,6 +130,7 @@ export async function createTestFilesystem(): Promise<TestFilesystemContext> {
     tempDir,
     skillsDir,
     manifestDir,
+    manifestPath: await createIsolatedManifestPath(manifestDir),
     cleanup: async () => {
       try {
         await fs.rm(tempDir, { recursive: true, force: true })

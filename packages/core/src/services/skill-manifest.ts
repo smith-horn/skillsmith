@@ -5,6 +5,7 @@
  */
 
 import * as fs from 'fs/promises'
+import * as os from 'os'
 import * as path from 'path'
 import { randomUUID } from 'node:crypto'
 
@@ -12,6 +13,66 @@ import type { SkillManifest } from './skill-installation.types.js'
 
 const MANIFEST_LOCK_TIMEOUT_MS = 30000
 const MANIFEST_LOCK_RETRY_MS = 100
+
+/**
+ * SMI-6343 Wave 1 — runtime backstop for the test-fixture manifest leak.
+ *
+ * `vitest.setup.ts` redirects `$HOME`/`%USERPROFILE%` to a per-run temp
+ * directory so that homedir-derived manifest paths land in a sandbox. This
+ * guard is the defense-in-depth half: if a test ever resolves a manifest path
+ * under the developer's REAL home anyway — a hardcoded `/Users/<me>/...`, a
+ * captured-before-setup constant, a config that somehow skipped the preset —
+ * it fails loudly at the write boundary instead of silently corrupting
+ * `~/.skillsmith/manifest.json`.
+ *
+ * Ground truth for "the real home" is `SKILLSMITH_TEST_REAL_HOME`, captured by
+ * `vitest.setup.ts` BEFORE it installs the sandbox. `os.homedir()` is useless
+ * here (it returns the sandbox once the override is in place); `os.userInfo()`
+ * reads the password-file entry and ignores `$HOME`, so it is the fallback for
+ * the case where the env var is missing — which itself means the sandbox never
+ * ran, exactly when the guard matters most.
+ *
+ * Only active under `process.env.VITEST`. Production code paths are untouched.
+ */
+function realHomeUnderTest(): string | undefined {
+  const captured = process.env.SKILLSMITH_TEST_REAL_HOME
+  if (captured) return captured
+  try {
+    return os.userInfo().homedir
+  } catch {
+    // Some containers have no passwd entry for the effective uid. Without a
+    // ground truth there is nothing to compare against — degrade to no guard
+    // rather than throwing from a guard.
+    return undefined
+  }
+}
+
+function assertNotRealUserHome(manifestPath: string, operation: string): void {
+  if (!process.env.VITEST) return
+  const realHome = realHomeUnderTest()
+  if (!realHome) return
+
+  const resolvedHome = path.resolve(realHome)
+  const resolvedPath = path.resolve(manifestPath)
+  const isUnderRealHome =
+    resolvedPath === resolvedHome || resolvedPath.startsWith(resolvedHome + path.sep)
+  if (!isUnderRealHome) return
+
+  throw new Error(
+    'SMI-6343: refusing to ' +
+      operation +
+      ' a manifest inside the real user home during a test run.\n' +
+      '  Offending path: ' +
+      resolvedPath +
+      '\n  Real home:      ' +
+      resolvedHome +
+      '\n' +
+      'Tests must never touch ~/.skillsmith/manifest.json. Pass an explicit ' +
+      'manifestPath (e.g. from createIsolatedManifestPath() in ' +
+      'packages/mcp-server/tests/integration/setup.ts, or any os.tmpdir()-based ' +
+      'path) instead of letting it default to os.homedir().'
+  )
+}
 
 /**
  * Manages the skill manifest file (~/.skillsmith/manifest.json) with
@@ -76,6 +137,7 @@ export class ManifestManager {
    * `sqljsDriver.ts`'s `persist()`, SMI-5997) — the error is never swallowed.
    */
   async save(manifest: SkillManifest): Promise<void> {
+    assertNotRealUserHome(this.manifestPath, 'write')
     await fs.mkdir(path.dirname(this.manifestPath), { recursive: true })
     const tempPath = this.manifestPath + '.tmp.' + process.pid + '.' + randomUUID()
     try {
@@ -92,6 +154,10 @@ export class ManifestManager {
   }
 
   async acquireLock(): Promise<void> {
+    // Guarded here as well as in save(): updateSafely() acquires the lock
+    // BEFORE it loads, so without this the guard would fire only after a
+    // `manifest.json.lock` file had already been created in the real home.
+    assertNotRealUserHome(this.manifestPath, 'lock')
     const lockPath = this.manifestPath + '.lock'
     const startTime = Date.now()
 

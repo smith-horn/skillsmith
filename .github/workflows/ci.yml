@@ -1547,13 +1547,15 @@ jobs:
             skillsmith-ci:${{ github.sha }} \
             npm run test:integration -w packages/mcp-server
 
-      - name: Advisory note
+      - name: Result note
         if: always()
         run: |
           {
             echo "### Test (mcp-server integration)"
             echo ""
-            echo "Advisory check (SMI-5262) — promote to a required status check after 2 green runs. Result: \`${{ job.status }}\`."
+            echo "Required status check (added by SMI-5262, promoted out of advisory mode; listed in .github/branch-protection.json). Result: \`${{ job.status }}\`."
+            echo ""
+            echo "SMI-6343: this is the only job that runs packages/mcp-server/tests/integration/*.integration.test.ts, including the two files whose unmocked manifest path leaked fixture rows into a real user's ~/.skillsmith/manifest.json. It must stay required — a regression here has no other gate."
           } >> "$GITHUB_STEP_SUMMARY"
 
   # Security audit always runs regardless of change classification.

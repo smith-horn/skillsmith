@@ -13,6 +13,23 @@ import { sharedTestConfig } from '../../vitest.preset'
 // `node_modules/@skillsmith/core` → built dist, the same instance the service
 // loads, so subpath mocks intercept correctly. Mirrors the working unit
 // `vitest.config.ts`, which has no such alias.
+// SMI-6343 Wave 1 — THIS FILE IS THE REGRESSION SITE.
+//
+// `tests/integration/shutdown-persistence.integration.test.ts` and
+// `tests/integration/install.execution.integration.test.ts` are the two files
+// whose unmocked manifest path wrote fixture rows into a real user's
+// ~/.skillsmith/manifest.json. This config is the ONLY one that runs them
+// (the root config's `exclude` and packages/mcp-server/vitest.config.ts both
+// skip `*.integration.test.ts`), and `test-mcp-server-integration` is the only
+// CI job that loads it — so a HOME sandbox declared anywhere else does not
+// protect them.
+//
+// The `...sharedTestConfig` spread below is therefore load-bearing, not
+// cosmetic: it is what pulls in `setupFiles` (vitest.preset.ts) and with it
+// the $HOME sandbox. Do not replace the spread with hand-copied keys, and do
+// not add a local `setupFiles` key — a second declaration overrides the
+// inherited one rather than merging, which is precisely how this config ended
+// up with no sandbox at all.
 export default defineConfig({
   test: {
     ...sharedTestConfig,

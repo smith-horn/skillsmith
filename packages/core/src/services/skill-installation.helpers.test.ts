@@ -177,7 +177,10 @@ describe('performUninstall manifest concurrency (SMI-6007)', () => {
 
   beforeEach(() => {
     tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), 'skillsmith-uninstall-race-'))
-    manifest = new ManifestManager(path.join(tmpDir, 'manifest.json'))
+    // SMI-6343 Check 65: name the explicit manifest path rather than
+    // inlining it — this is a test-local tmpDir, never os.homedir().
+    const manifestPath = path.join(tmpDir, 'manifest.json')
+    manifest = new ManifestManager(manifestPath)
     // clearAll is best-effort (wrapped in try/catch by performUninstall) — a
     // minimal stub is sufficient for these manifest-concurrency tests.
     skillDependencyRepo = { clearAll: () => {} } as unknown as SkillDependencyRepository
@@ -241,7 +244,10 @@ describe('performUninstall adopts untracked skills (ADR-139 point 1, SMI-6274 Wa
 
   beforeEach(() => {
     tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), 'skillsmith-adopt-'))
-    manifest = new ManifestManager(path.join(tmpDir, 'manifest.json'))
+    // SMI-6343 Check 65: name the explicit manifest path rather than
+    // inlining it — this is a test-local tmpDir, never os.homedir().
+    const manifestPath = path.join(tmpDir, 'manifest.json')
+    manifest = new ManifestManager(manifestPath)
     skillDependencyRepo = { clearAll: () => {} } as unknown as SkillDependencyRepository
   })
 

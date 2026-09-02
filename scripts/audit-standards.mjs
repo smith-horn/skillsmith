@@ -62,6 +62,10 @@ import {
 import { findGitCryptUnsetRemediations } from './audit-git-crypt-remediation-helpers.mjs'
 import { findMissingHuskyStubs } from './audit-husky-stub-coverage-helpers.mjs'
 import {
+  listManifestHygieneTestFiles,
+  evaluateManifestHygiene,
+} from './audit-manifest-hygiene-helpers.mjs'
+import {
   findFloatingSupabaseCliInstalls,
   findUnpinnedBareNpxCliInPackageJson,
   findUnpinnedRufloMcpEntry,
@@ -5659,6 +5663,147 @@ console.log(`\n${BOLD}Check 64: .husky/_/<hook> stub coverage (SMI-6334)${RESET}
         `Check 64: ${detail} — .husky/${f.hook} will silently NEVER run once core.hooksPath is '.husky/_' (SMI-6334)`,
         `Re-add .husky/_/${f.hook} matching husky's own stub shape (` +
           '`#!/usr/bin/env sh` then `. "$(dirname "$0")/h"`), and make sure it is committed and executable.'
+      )
+    }
+  }
+}
+
+// Check 65: test-suite manifest hygiene (SMI-6343 Wave 1)
+//
+// SMI-6343 found `test-skill` and `shutdown-persistence-fixture` rows in a
+// REAL user's ~/.skillsmith/manifest.json. Root cause: two mcp-server
+// integration tests mocked their install-target paths but never their manifest
+// path, and `SkillInstallationService` defaults that path to
+// `path.join(os.homedir(), '.skillsmith', 'manifest.json')`. Inside Docker
+// that is /root (harmless); on a host vitest run — routine here via
+// SKILLSMITH_PRE_PUSH_HOST=1 — it is the developer's real manifest.
+//
+// Two runtime defenses shipped alongside this check (vitest.setup.ts's $HOME
+// sandbox, inherited by every config through vitest.preset.ts; and
+// ManifestManager's VITEST real-home guard). This is the static backstop: it
+// keeps a NEW test from reintroducing the pattern, which neither runtime
+// defense can express as a review-time signal.
+//
+// Day-one baseline was MEASURED, not estimated: 44 test files reference a
+// manifest-writing symbol; 27 already name their own path; 17 did not. All 17
+// were triaged — one (skill-installation.helpers.test.ts) got a real fix
+// (naming its explicit tmpDir path), and the other 16 are literal-match false
+// positives (fully-mocked services, comment-only mentions, string literals in
+// data maps, VS Code command ids) and carry an allowlist row each.
+console.log(`\n${BOLD}Check 65: test-suite manifest hygiene (SMI-6343)${RESET}`)
+{
+  // Keyed by FULL repo-relative path, never basename — same rule Check 62
+  // documents: a basename-only allowlist silently exempts any future file
+  // sharing one of these names in a different directory.
+  //
+  // Every entry below is a false positive of the literal-text match, not a
+  // deliberate exception to the rule. If an entry ever starts doing a real
+  // unmocked install, remove the row rather than widening the reason.
+  const MANIFEST_HYGIENE_ALLOWLIST_JUSTIFICATIONS = {
+    'packages/cli/src/commands/audit-sources.test.ts':
+      'backfillManifest is fully vi.mock()ed; the tests assert mock-call shape and never reach a real path',
+    'packages/cli/src/commands/registry-install.action.leak-and-errors.test.ts':
+      'SkillInstallationService is replaced by a vi.fn() mock implementation — no real installer is constructed',
+    'packages/cli/src/commands/registry-install.action.test.ts':
+      'SkillInstallationService is vi.mock()ed; the assertions are on constructor arguments, not on an install',
+    'packages/cli/tests/install-quarantine.test.ts':
+      'SkillInstallationService appears only in the file header comment; the test exercises createDbRegistryLookup against an in-memory DB',
+    'packages/cli/tests/manage.skills-directory.test.ts':
+      'SkillInstallationService is vi.mock()ed — the suite drives the CLI command surface, not the installer',
+    'packages/cli/tests/manage.test.ts':
+      'SkillInstallationService is vi.mock()ed; remove/uninstall delegation is asserted against the mock',
+    'packages/cli/tests/search.test.ts':
+      'SkillInstallationService is vi.mock()ed; only its companionBaseDir constructor argument is asserted',
+    'packages/cli/tests/unit/commands/install.test.ts':
+      'SkillInstallationService is vi.mock()ed; only its companionBaseDir constructor argument is asserted',
+    // packages/core/src/services/skill-installation.helpers.test.ts was in the
+    // measured day-one set and is deliberately ABSENT here: it got a real fix
+    // instead (it now assigns its explicit tmpDir path to a `manifestPath`
+    // const before constructing ManifestManager). If Check 65 ever flags it
+    // again, that is a genuine regression, not a missing allowlist row.
+    'packages/mcp-server/src/tools/__meta__/telemetry-coverage.test.ts':
+      "'installSkill' is a string literal inside a tool->handler coverage data map, not a call",
+    'packages/mcp-server/src/tools/skill-recover-source.test.ts':
+      'backfillManifest appears only in comments documenting that this read-only tool deliberately never calls it',
+    'packages/mcp-server/tests/onboarding/tier1-self-heal.test.ts':
+      "installSkill is fully vi.mock()ed via vi.mock('../../src/tools/install.js'); the self-heal helpers are what is under test",
+    'packages/mcp-server/tests/tools.test.ts':
+      "'installSkill' is only a describe() block label — the file never imports or calls it",
+    'packages/vscode-extension/src/__tests__/integration/smoke.int.test.ts':
+      "'skillsmith.installSkill' is a VS Code command id string in a command-registration assertion",
+    'packages/vscode-extension/src/__tests__/mcp/install_skill.test.ts':
+      "McpClient.installSkill is the extension's JSON-RPC wrapper tested against a stub transport — unrelated to core's installer",
+    'packages/vscode-extension/src/__tests__/tierDenied.test.ts':
+      "'skillsmith.installSkill' is a VS Code command id string passed to handleTierDenied",
+    'packages/vscode-extension/src/commands/__meta__/telemetry-coverage.test.ts':
+      "'skillsmith.installSkill' is a command-id key in a command->action coverage map",
+  }
+
+  const CHECK_65_SHADOW_END_DATE = '2026-09-15'
+  // [skip-manifest-hygiene-check] — a DEDICATED marker. Check 63's design note
+  // applies verbatim: conflating escape hatches lets a real bug hide behind an
+  // unrelated skip. Registered in docs/internal/process/guards-and-opt-outs.md.
+  const SKIP_MARKER = '[skip-manifest-hygiene-check]'
+  const PR_BODY = process.env.PR_BODY || ''
+
+  // evaluateExportSurfaceShadowGate is generic despite its name — it reasons
+  // only about (shadowEndDate, now, prBody, skipMarker) and has no
+  // export-surface specifics. Reused rather than duplicated.
+  const {
+    report: reportLevel,
+    shadowSuffix,
+    skipAcknowledged,
+  } = evaluateExportSurfaceShadowGate({
+    shadowEndDate: CHECK_65_SHADOW_END_DATE,
+    now: new Date(),
+    prBody: PR_BODY,
+    skipMarker: SKIP_MARKER,
+  })
+  const report = reportLevel === 'warn' ? warn : fail
+  if (skipAcknowledged) {
+    console.log(
+      `::notice::${SKIP_MARKER} opt-out found in PR body — Check 65 will report findings but not fail.`
+    )
+  }
+
+  const manifestHygieneFiles = listManifestHygieneTestFiles(process.cwd()).map((file) => ({
+    path: relative(process.cwd(), file),
+    content: readFileSync(file, 'utf8'),
+  }))
+  const {
+    findings: manifestHygieneFindings,
+    staleAllowlistEntries: staleManifestAllowlist,
+    matched: manifestWriterRefs,
+  } = evaluateManifestHygiene({
+    files: manifestHygieneFiles,
+    allowlist: Object.keys(MANIFEST_HYGIENE_ALLOWLIST_JUSTIFICATIONS),
+  })
+
+  if (manifestHygieneFindings.length === 0 && staleManifestAllowlist.length === 0) {
+    pass(
+      `Check 65: all ${manifestWriterRefs} test file(s) referencing a manifest writer either name ` +
+        'their own manifest path or carry a justified allowlist row'
+    )
+  } else {
+    for (const f of manifestHygieneFindings) {
+      report(
+        `Check 65: ${f} references a manifest-writing symbol (SkillInstallationService / installSkill / ` +
+          `backfillManifest / new ManifestManager) without an explicit manifest path${shadowSuffix}`,
+        'Pass an explicit manifestPath (createIsolatedManifestPath() or createTestFilesystem().manifestPath ' +
+          'from packages/mcp-server/tests/integration/setup.ts, or any os.tmpdir()-based path), or override ' +
+          '$HOME/%USERPROFILE% for the test. Without one, the writer falls back to ' +
+          "os.homedir()/.skillsmith/manifest.json — the developer's REAL manifest on a host vitest run " +
+          '(SMI-6343). If the reference is a false positive (mocked service, comment, string literal), add ' +
+          "the file's full repo-relative path to MANIFEST_HYGIENE_ALLOWLIST_JUSTIFICATIONS in " +
+          'scripts/audit-standards.mjs with a one-line reason.'
+      )
+    }
+    for (const stale of staleManifestAllowlist) {
+      report(
+        `Check 65: ${stale} is allowlisted in MANIFEST_HYGIENE_ALLOWLIST_JUSTIFICATIONS but no longer ` +
+          `matches (it now names a manifest path, no longer references a writer, or the file has moved)${shadowSuffix}`,
+        `Remove the stale entry for '${stale}' — an unnecessary allowlist grant is itself a finding ` +
+          '(Check 62 precedent), because a silently-stale row masks a real future regression at that path.'
       )
     }
   }

@@ -4,6 +4,19 @@ All notable changes to `@skillsmith/core` are documented here.
 
 ## [Unreleased]
 
+- **Fix**: `ManifestManager` (`@skillsmith/core/services/skill-manifest`) now refuses to lock
+  or write a manifest located inside the real user home while running under vitest
+  (SMI-6343 Wave 1). Two mcp-server integration tests mocked their install-target paths but
+  never their manifest path, and `SkillInstallationService` defaults that path to
+  `os.homedir()/.skillsmith/manifest.json` — so a host (non-Docker) test run wrote fixture
+  rows into a real user's manifest, one of them claiming an unrelated live registry skill id.
+  The primary fix is a per-run `$HOME` sandbox installed by `vitest.setup.ts` and inherited by
+  every vitest config through `vitest.preset.ts`; this guard is the defense-in-depth backstop
+  for a manifest path that reaches the real home anyway (a hardcoded path, or a constant
+  captured before setup ran). It is gated on `process.env.VITEST` and compares against the
+  pre-sandbox home captured in `SKILLSMITH_TEST_REAL_HOME`, falling back to `os.userInfo()`
+  (which ignores `$HOME`) when that is absent. No production code path is affected.
+
 - **Feature**: companion subagent files (`generateSubagent`/`generateMinimalSubagent`,
   `@skillsmith/core/services/SubagentGenerator`, SMI-6276 Wave 6 Step 1) now generate
   client-specific frontmatter instead of Claude-shaped tool names/model tiers for every

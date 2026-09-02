@@ -118,7 +118,18 @@ describe('SMI-898: Path Traversal Protection', () => {
       })
 
       it('should reject paths in home but outside allowed subdirs', () => {
-        const result = validateDbPath(resolve(homeDir, 'Documents/secret.db'))
+        // SMI-6343: `vitest.setup.ts` now sandboxes $HOME into `os.tmpdir()`,
+        // and `validateDbPath` deliberately allows the temp tree
+        // (`allowTempDir`, default true). A `homedir()`-derived path is
+        // therefore no longer a valid fixture for "inside home, outside the
+        // allowed subdirs" — it would be accepted by the temp carve-out, not
+        // by the rule under test. Pin the home root explicitly so this
+        // exercises the allowedDirs prefix match regardless of where $HOME
+        // happens to point. Production behaviour is unchanged.
+        const isolatedHome = '/nonexistent-home/testuser'
+        const result = validateDbPath(resolve(isolatedHome, 'Documents/secret.db'), {
+          allowedDirs: [resolve(isolatedHome, '.skillsmith'), resolve(isolatedHome, '.claude')],
+        })
         expect(result.valid).toBe(false)
         expect(result.error).toContain('outside allowed')
       })

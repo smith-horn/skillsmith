@@ -319,7 +319,11 @@ describe('Install Skill Tool — Execution & Trust Tier', () => {
    *  - SKILL.md fetch throws for registry-sourced skill → data quality error
    */
   describe('SMI-2722/2732: UUID install path', () => {
-    const TEST_UUID = 'a129e127-a82c-47e5-8bc5-09d7ba2e8734'
+    // SMI-6343: obviously-synthetic UUID — see the matching note in
+    // shutdown-persistence.integration.test.ts. This file wrote the OTHER
+    // leaked fixture row (`test-skill`) under the same real registry id
+    // (`addyosmani/performance`) into a real user's manifest.
+    const TEST_UUID = '00000000-6343-4000-8000-000000000002'
     const VALID_SKILL_MD = [
       '---',
       'name: test-skill',
