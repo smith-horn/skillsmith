@@ -226,8 +226,19 @@ function classifyPath(raw) {
   return classifyBasename(basenameOf(raw.replace(/^[<>]+/, '')))
 }
 
-/** Embedded reference inside script text, e.g. `open('.env')`. */
-const EMBEDDED_ENV_RE = /(?:^|[^A-Za-z0-9_.\-])(\.env(?:\.[A-Za-z0-9_-]+)*)/g
+/**
+ * Embedded reference inside script text, e.g. `open('.env')`. Anchored on
+ * BOTH sides (leading boundary via the first alternation, trailing via the
+ * negative lookahead) — a fifth adversarial confirmation round (SMI-6361)
+ * found the original leading-only anchor let `.envrc`/`.environment`/
+ * `.env-backup` false-positive as an embedded `.env` match (e.g.
+ * `awk '{print}' .envrc` denied), contradicting this file's own stated
+ * classification of `.envrc` as "not an env file at all" — `classifyPath`
+ * already got this right for whole-token matches; this regex now agrees.
+ * A false positive (over-blocking), not a bypass — same direction as
+ * every other tradeoff in this file, just closing an inconsistency.
+ */
+const EMBEDDED_ENV_RE = /(?:^|[^A-Za-z0-9_.\-])(\.env(?:\.[A-Za-z0-9_-]+)*)(?![A-Za-z0-9_-])/g
 
 /**
  * Scan free text (an inline interpreter's script) for a protected-file

@@ -469,6 +469,40 @@ describe('decide() — fourth-round adversarial confirmation finding (SMI-6361)'
     const result = decide(bashCall("awk -F: '{print $1}' /etc/passwd"), {})
     expect(result.action).toBe('allow')
   })
+
+  // A fifth confirmation round on the -- fix above surfaced a separate,
+  // pre-existing bug in the embedded-text scan itself: it was anchored on
+  // the leading side only, so `.envrc`/`.environment`/`.env-backup` (which
+  // this file's own docs already say are "not env files at all") could
+  // false-positive as an embedded `.env` reference. A false positive
+  // (over-blocking), not a bypass -- but it contradicted this file's own
+  // stated classification, so it's fixed alongside rather than left as a
+  // known inconsistency.
+
+  it("awk '{print}' .envrc -> allow (.envrc is not an env file, per this guard's own classifyBasename rule)", () => {
+    const result = decide(bashCall("awk '{print}' .envrc"), {})
+    expect(result.action).toBe('allow')
+  })
+
+  it('node -e "console.log(\'.envrc\')" -> allow (same boundary fix, inline-interpreter text-scan path)', () => {
+    const result = decide(bashCall(`node -e "console.log('.envrc')"`), {})
+    expect(result.action).toBe('allow')
+  })
+
+  it('node -e "console.log(\'.environment\')" -> allow (a different .env-prefixed non-env filename)', () => {
+    const result = decide(bashCall(`node -e "console.log('.environment')"`), {})
+    expect(result.action).toBe('allow')
+  })
+
+  it('node -e "console.log(\'.env-backup\')" -> allow (hyphen-suffixed, not dot-suffixed)', () => {
+    const result = decide(bashCall(`node -e "console.log('.env-backup')"`), {})
+    expect(result.action).toBe('allow')
+  })
+
+  it('node -e "console.log(\'.env.local\')" -> deny (still correctly protected: a real dot-suffixed variant)', () => {
+    const result = decide(bashCall(`node -e "console.log('.env.local')"`), {})
+    expect(result.action).toBe('deny')
+  })
 })
 
 describe('decide() — SKILLSMITH_ENV_READ_GUARD_DISABLE hard-disable', () => {
