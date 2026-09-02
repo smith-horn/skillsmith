@@ -1,5 +1,5 @@
 /**
- * Telemetry Consent Gate — SMI-5019 W2.S4
+ * Telemetry Consent Gate — SMI-5019 W2.S4, rewired by SMI-6362 §3/B-6
  *
  * For MCP-only clients (Cursor, Continue, Copilot users without a CLI install)
  * we cannot rely on a CLI first-run prompt or a VS Code toast. Per user
@@ -8,24 +8,25 @@
  *
  * This module supplies the MCP-side half of that flow:
  *
- *  1. On every tool call, resolve the calling anonymous_id's preference from
- *     `user_telemetry_preferences` (RLS-scoped via the same anon-key client
- *     used elsewhere in this package).
- *  2. If the row is missing, signal `consent_required:true` + the privacy URL
- *     in the response envelope so the client can prompt the user to open the
- *     dashboard.
- *  3. Cache the resolved state per process (Map keyed by anonymous_id) so
+ *  1. On every tool call, resolve the caller's preference by POSTing to the
+ *     already-deployed `telemetry-consent` edge function (SMI-6362 B-6 —
+ *     see the fetchConsentState doc-comment for why this replaced a direct
+ *     `user_telemetry_preferences` query keyed on an anonymous id).
+ *  2. If the row is missing (or the caller has never decided), signal
+ *     `consent_required:true` + the privacy URL in the response envelope so
+ *     the client can prompt the user to open the dashboard.
+ *  3. Cache the resolved state per process (Map keyed by the caller's id) so
  *     repeated calls within a session don't re-query, and so two parallel
- *     calls from the same unrecognized anonymous_id observe identical state.
- *  4. Suppress telemetry writes (consult `shouldEmitTelemetry`) for that
- *     anonymous_id until the preference resolves to `enabled:true`.
+ *     calls from the same id observe identical state.
+ *  4. Suppress telemetry writes (consult `shouldEmitTelemetry`) for that id
+ *     until the preference resolves to `enabled:true`.
  *
  * SMI-5016 (`packages/core/src/telemetry/wrap.ts`) and SMI-5017 (tool /
  * command dispatchers) are wave-sibling deliverables — this module
  * deliberately stays out of those files.
  */
 
-import { getSupabaseClient } from '../supabase-client.js'
+import { getApiBaseUrl, getApiKey, resolveFreshAccessToken } from '@skillsmith/core'
 
 /**
  * Canonical absolute URL of the consent dashboard. Must remain stable across
@@ -49,29 +50,15 @@ export interface ConsentState {
   privacyUrl: string
 }
 
-interface SupabaseLike {
-  from: (table: string) => {
-    select: (columns: string) => {
-      eq: (
-        col: string,
-        val: string
-      ) => {
-        maybeSingle: () => Promise<{
-          data: { enabled?: boolean | null } | null
-          error: unknown
-        }>
-      }
-    }
-  }
-}
-
 /**
- * Per-process cache keyed by anonymous_id. We deliberately use a single shared
- * Map so two parallel `withConsentGate` invocations for the same
- * anonymous_id observe identical state — the constraint flagged in the spec.
+ * Per-process cache keyed by the caller's id (post-D-7, this is
+ * `getOrCreateInstallId()`'s persisted value — see `context.async.ts`). We
+ * deliberately use a single shared Map so two parallel `withConsentGate`
+ * invocations for the same id observe identical state — the constraint
+ * flagged in the spec.
  *
  * Stored value is a Promise (not the resolved ConsentState) so concurrent
- * lookups share one in-flight Supabase query.
+ * lookups share one in-flight request.
  */
 const consentCache = new Map<string, Promise<ConsentState>>()
 
@@ -87,40 +74,105 @@ const DEFAULT_NO_ID: ConsentState = {
   privacyUrl: TELEMETRY_PRIVACY_URL,
 }
 
+const CONSENT_ENDPOINT = '/functions/v1/telemetry-consent'
+const CONSENT_REQUEST_TIMEOUT_MS = 2000
+
+interface TelemetryConsentResponse {
+  data?: { enabled?: unknown; consentRequired?: unknown }
+}
+
 /**
- * Look up the consent row for `anonymousId` and translate it into a
- * `ConsentState`. Falls back to "consent required" on any error so we never
- * silently emit telemetry from an unknown identity.
+ * Resolve the consent state for `installId` by POSTing to the already
+ * -deployed `telemetry-consent` edge function (SMI-6362 B-6/§3).
+ *
+ * This REPLACES a direct `user_telemetry_preferences` query keyed on an
+ * anonymous id — B-6 found that query structurally unmatchable: the MCP
+ * process supplied a fresh per-process `crypto.randomUUID()` while the
+ * website wrote a browser-minted `sa_<32hex>` id into that column, so the
+ * two id spaces could never collide and the gate was always closed for a
+ * real MCP client, regardless of the caller's actual consent. Re-keying
+ * consent resolution off the ACCOUNT (via a server-verified credential)
+ * rather than off any anonymous id retires that mismatch instead of trying
+ * to reconcile two id spaces that were never the same thing (D-7).
+ *
+ * Credential precedence is fixed, not opportunistic (round-2 required
+ * change #5): send the caller's JWT (`resolveFreshAccessToken()`) whenever
+ * one is available, and fall back to `X-API-Key` ONLY when none is. Never
+ * both, never key-preferred. A key-derived consent answer is somebody
+ * else's decision on a shared team credential — the same fact
+ * `team-resolver.ts` already documents. This is enforced independently and
+ * authoritatively server-side by `resolve_telemetry_identity` (D-2f) and by
+ * `telemetry-consent`'s own JWT-first resolution (§3b) — a client that got
+ * this precedence wrong would still write nothing attributable, but would
+ * show the user someone else's consent state, which is its own defect.
+ *
+ * Falls back to "consent required" on any transport/shape failure so this
+ * never silently emits telemetry the caller never actually consented to.
  */
-async function fetchConsentState(anonymousId: string): Promise<ConsentState> {
-  let client: SupabaseLike
+async function fetchConsentState(installId: string): Promise<ConsentState> {
+  let accessToken: string | null = null
   try {
-    client = (await getSupabaseClient()) as SupabaseLike
+    accessToken = await resolveFreshAccessToken()
   } catch {
-    // Supabase isn't configured in this environment (e.g. offline CLI run);
-    // safest interpretation is "no consent → no emit" but also "no need to
-    // prompt the user" because the network surface isn't reachable anyway.
-    return { ...DEFAULT_NO_ID }
+    accessToken = null
   }
 
-  try {
-    const { data, error } = await client
-      .from('user_telemetry_preferences')
-      .select('enabled')
-      .eq('anonymous_id', anonymousId)
-      .maybeSingle()
+  const headers: Record<string, string> = { 'content-type': 'application/json' }
+  if (accessToken) {
+    headers['Authorization'] = `Bearer ${accessToken}`
+  } else {
+    const apiKey = getApiKey()
+    if (apiKey) headers['X-API-Key'] = apiKey
+  }
+  // Neither credential present: the request still POSTs with no auth
+  // headers, matching the server's own `lane: 'anonymous'`-shaped
+  // resolution — it returns the unchanged DEFAULT_NO_ID shape for that
+  // case (SMI-6362 D-2a step 2), so no special-casing is needed here.
 
-    if (error || !data) {
+  const controller = new AbortController()
+  const timer = setTimeout(() => controller.abort(), CONSENT_REQUEST_TIMEOUT_MS)
+  try {
+    const res = await fetch(`${getApiBaseUrl()}${CONSENT_ENDPOINT}`, {
+      method: 'POST',
+      headers,
+      body: JSON.stringify({ installId }),
+      signal: controller.signal,
+    })
+    if (!res.ok) {
       return { ...DEFAULT_CONSENT_REQUIRED }
     }
-
+    const json = (await res.json()) as TelemetryConsentResponse
+    if (
+      !json?.data ||
+      typeof json.data.enabled !== 'boolean' ||
+      typeof json.data.consentRequired !== 'boolean'
+    ) {
+      return { ...DEFAULT_CONSENT_REQUIRED }
+    }
+    // The server's own "no identified caller" answer IS
+    // {enabled:false, consentRequired:false} — the DEFAULT_NO_ID shape —
+    // so passing its response straight through already covers that case
+    // without a separate branch here.
     return {
-      enabled: data.enabled === true,
-      consentRequired: false,
+      enabled: json.data.enabled,
+      consentRequired: json.data.consentRequired,
       privacyUrl: TELEMETRY_PRIVACY_URL,
     }
   } catch {
+    // Network/timeout/parse failure. Deliberately simplified from the
+    // pre-SMI-6362 design, which distinguished "Supabase client construction
+    // threw" (→ DEFAULT_NO_ID, no prompt) from "the query itself failed"
+    // (→ DEFAULT_CONSENT_REQUIRED). A single fetch call has no equivalent
+    // "not configured, no network surface at all" branch to distinguish —
+    // every failure here means a real attempt was made and did not
+    // complete, so it fails closed uniformly, consistent with D-1's server-
+    // side "fail-closed on consent-lookup error" philosophy applied
+    // client-side too. Cost: a genuinely offline user sees one extra
+    // consent_required flag they cannot act on until back online — harmless,
+    // since nothing is emitted either way while offline.
     return { ...DEFAULT_CONSENT_REQUIRED }
+  } finally {
+    clearTimeout(timer)
   }
 }
 

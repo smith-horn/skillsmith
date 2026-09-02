@@ -205,8 +205,21 @@ export {
 export { AuditLogger, MIN_RETENTION_DAYS, MAX_RETENTION_DAYS } from './security/AuditLogger.js'
 
 // Remote telemetry for install events (SMI-4182) + search events (SMI-5193)
-export { emitInstallEvent, emitSearchEvent } from './audit/remote-audit.js'
-export type { InstallEventPayload, SearchEventPayload } from './audit/remote-audit.js'
+export {
+  emitInstallEvent,
+  emitSearchEvent,
+  emitToolCallEvent,
+  setTelemetryIdentityProvider,
+  setTelemetryIdentityInvalidationHandler,
+  getTelemetryEmitStats,
+} from './audit/remote-audit.js'
+export type {
+  InstallEventPayload,
+  SearchEventPayload,
+  ToolCallEventPayload,
+  TelemetryIdentity,
+  TelemetryIdentityProvider,
+} from './audit/remote-audit.js'
 
 // Cross-ecosystem compatibility slug vocabulary (SMI-5178)
 export {
@@ -303,9 +316,13 @@ export {
 } from './api/client.token-refresh.js'
 
 // SMI-5391: Cross-harness inventory device identity + local consent/throttle gate
+// SMI-6362 (D-7): getOrCreateInstallId was added by SMI-5531 but never had a
+// public export or a caller -- wiring it into context.async.ts's distinctId
+// is exactly what it was built for.
 export {
   getDeviceId,
   getOrCreateDeviceId,
+  getOrCreateInstallId,
   setDeviceLabel,
   forgetDevice,
   isInventorySyncDisabledLocally,

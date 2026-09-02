@@ -1,5 +1,6 @@
 import { createHmac } from 'node:crypto'
 import { getApiKey } from '../config/index.js'
+import { getOrCreateInstallId } from '../config/device-identity.js'
 
 export interface InstallEventPayload {
   skillId: string
@@ -78,20 +79,30 @@ interface TelemetryEventBody {
  * Used by all `emit*Event` exports — never throws, swallows network/abort/
  * endpoint errors, and respects the 2s timeout. Telemetry failures must
  * never break the caller's flow.
+ *
+ * SMI-6362 (D-8): returns the raw `Response` (or `null` on a swallowed
+ * transport failure) so a caller that needs emission-durability
+ * classification — `emitToolCallEvent` below — can read it. The two
+ * pre-existing callers (`emitInstallEvent`, `emitSearchEvent`) ignore the
+ * return value, unchanged.
  */
-async function postTelemetryEvent(body: TelemetryEventBody): Promise<void> {
+async function postTelemetryEvent(
+  body: TelemetryEventBody,
+  opts?: { headers?: Record<string, string> }
+): Promise<Response | null> {
   const controller = new AbortController()
   const timer = setTimeout(() => controller.abort(), REQUEST_TIMEOUT_MS)
 
   try {
-    await fetch(`${getApiBase()}${EVENT_ENDPOINT}`, {
+    return await fetch(`${getApiBase()}${EVENT_ENDPOINT}`, {
       method: 'POST',
-      headers: { 'content-type': 'application/json' },
+      headers: { 'content-type': 'application/json', ...(opts?.headers ?? {}) },
       signal: controller.signal,
       body: JSON.stringify(body),
     })
   } catch {
     // Best-effort: swallow all errors (network, abort, endpoint down).
+    return null
   } finally {
     clearTimeout(timer)
   }
@@ -166,4 +177,185 @@ export function emitSearchEvent(payload: SearchEventPayload): void {
     anonymous_id: hashForActor(apiKey),
     metadata: payload as unknown as Record<string, unknown>,
   })
+}
+
+// ---------------------------------------------------------------------------
+// SMI-6362 §1: `tool_call` events (Lane B, JWT-authenticated MCP tool calls)
+// ---------------------------------------------------------------------------
+
+/**
+ * The synchronously-available, background-refreshed identity `wrap.ts`
+ * needs to attribute a `tool_call` event. Never resolved inline on the
+ * emit path — see `setTelemetryIdentityProvider`.
+ *
+ * `sdkVersion` is deliberately optional and resolved by the mcp-server
+ * caller (`context.async.ts`), not here: `@skillsmith/core` has no
+ * dependency on `@modelcontextprotocol/sdk` or any mcp-server package
+ * metadata, so this module must stay agnostic to how the caller derives it.
+ *
+ * `tier` is intentionally NOT part of this shape yet. Wave 3 (SMI-6362)
+ * ships without it: the only synchronous, already-cached tier resolver in
+ * the codebase (`createLicenseMiddleware`'s per-instance cache,
+ * `middleware/license.ts`) is constructed in `index.ts`'s `main()`, after
+ * `context.async.ts` (where this provider is installed) has already run —
+ * `context.async.ts` cannot reach it without a new cross-module wiring path,
+ * which is out of this wave's stated file footprint. Named limitation,
+ * tracked as a Wave 6 follow-up in the plan doc — not silently dropped.
+ */
+export interface TelemetryIdentity {
+  accessToken: string
+  apiKey?: string
+  sdkVersion?: string
+}
+
+export type TelemetryIdentityProvider = () => TelemetryIdentity | null
+
+let telemetryIdentityProvider: TelemetryIdentityProvider | null = null
+
+/**
+ * Install (or clear, with `null`) the module-level identity provider
+ * `emitToolCallEvent` reads synchronously on every call. The provider itself
+ * must never block — see the design note in the SMI-6362 plan §1
+ * ("Credential plumbing"): the cache is refreshed in the background by the
+ * caller (on install, on 401, and on a timer), never inline here.
+ */
+export function setTelemetryIdentityProvider(provider: TelemetryIdentityProvider | null): void {
+  telemetryIdentityProvider = provider
+}
+
+/**
+ * SMI-6362 §1: one of the three refresh triggers the plan names for the
+ * identity cache ("on install, on 401 from the events endpoint, and on a
+ * 5-minute timer"). This module cannot itself refresh anything — it has no
+ * knowledge of how the caller resolves a token — so it only signals
+ * "the cached token was rejected as invalid" via this optional callback,
+ * which `context.async.ts` registers alongside the provider. `classifyResponse`
+ * fires it on `reason === 'invalid_jwt'` and nowhere else (an `identity_required`
+ * or `consent_denied` rejection is not a stale-token problem and refreshing
+ * would not fix it).
+ */
+let telemetryIdentityInvalidationHandler: (() => void) | null = null
+
+export function setTelemetryIdentityInvalidationHandler(handler: (() => void) | null): void {
+  telemetryIdentityInvalidationHandler = handler
+}
+
+/** Payload `wrap.ts`'s second sink builds per MCP tool call. */
+export interface ToolCallEventPayload {
+  toolName: string
+  framework: string
+  durationMs: number
+  success: boolean
+  /** SMI-6362 §1: from the agent-marker file's own session id, when present. */
+  sessionId?: string
+  /**
+   * SMI-6362 §1: always `false` this wave. No MCP harness today distinguishes
+   * a subagent-issued tool call from a top-level one at the protocol level —
+   * the marker channel's `_meta`/file schema (SMI-5456) has no such field,
+   * and subagents share the SAME MCP server process as the top-level agent,
+   * so there is no process-level signal either. Sending a guessed value
+   * would be actively misleading in a paid analytics surface; `false` is the
+   * only honest default until a real signal exists. Named limitation,
+   * tracked as a Wave 6 follow-up in the plan doc (parallel to D-9).
+   */
+  isSubagent: boolean
+  errorName?: string
+  errorMessage?: string
+}
+
+interface TelemetryEmitStats {
+  accepted: number
+  rejected: number
+  failed: number
+  skippedNoIdentity: number
+}
+
+const emitStats: TelemetryEmitStats = { accepted: 0, rejected: 0, failed: 0, skippedNoIdentity: 0 }
+
+/** SMI-6362 (D-8): a snapshot of this process's `tool_call` emission outcomes. */
+export function getTelemetryEmitStats(): TelemetryEmitStats {
+  return { ...emitStats }
+}
+
+/** Reset for tests only. */
+export function resetTelemetryEmitStatsForTests(): void {
+  emitStats.accepted = 0
+  emitStats.rejected = 0
+  emitStats.failed = 0
+  emitStats.skippedNoIdentity = 0
+  loggedRejectReasons.clear()
+}
+
+// SMI-6362 (D-8): log a rejection reason once per reason per process, not
+// once per event — a sustained rejection (e.g. a stale token) must not spam
+// stderr on every single tool call.
+const loggedRejectReasons = new Set<string>()
+
+function classifyResponse(response: Response | null): void {
+  if (!response) {
+    emitStats.failed++
+    return
+  }
+  if (response.ok && response.headers.get('X-Skillsmith-Telemetry-Accepted') === '1') {
+    emitStats.accepted++
+    return
+  }
+  emitStats.rejected++
+  const reason = response.headers.get('X-Skillsmith-Telemetry-Reason') ?? 'unknown'
+  if (!loggedRejectReasons.has(reason)) {
+    loggedRejectReasons.add(reason)
+    console.debug(
+      `[skillsmith] tool_call telemetry rejected (reason=${reason}); further rejections with this reason are counted but not logged again this process`
+    )
+  }
+  // SMI-6362 §1: only a stale/invalid token is worth an out-of-band refresh —
+  // `identity_required` (no JWT sent at all), `consent_denied`/`consent_required`,
+  // `no_team`, etc. would not be fixed by re-resolving the same token.
+  if (reason === 'invalid_jwt') {
+    telemetryIdentityInvalidationHandler?.()
+  }
+}
+
+/**
+ * SMI-6362 §1: emit a `tool_call` event for an MCP tool invocation.
+ *
+ * Fire-and-forget (synchronous, returns `void`), mirroring `emitSearchEvent`.
+ * Reads the identity provider synchronously; if none is installed or it
+ * returns `null` (no cached credential yet), the event is skipped entirely
+ * — never sent unauthenticated, per the plan's "no fallback to an
+ * unauthenticated POST" rule (§1, "Credential plumbing").
+ */
+export function emitToolCallEvent(payload: ToolCallEventPayload): void {
+  if (isDisabled()) return
+
+  const identity = telemetryIdentityProvider?.()
+  if (!identity) {
+    emitStats.skippedNoIdentity++
+    return
+  }
+
+  const metadata: Record<string, unknown> = {
+    tool_name: payload.toolName,
+    source: 'mcp-tool',
+    framework: payload.framework,
+    duration_ms: payload.durationMs,
+    success: payload.success,
+    platform: process.platform,
+    is_subagent: payload.isSubagent,
+  }
+  if (payload.sessionId !== undefined) metadata.session_id = payload.sessionId
+  if (identity.sdkVersion !== undefined) metadata.sdk_version = identity.sdkVersion
+  if (!payload.success) {
+    if (payload.errorName !== undefined) metadata.error_name = payload.errorName
+    if (payload.errorMessage !== undefined) metadata.error_message = payload.errorMessage
+  }
+
+  void postTelemetryEvent(
+    {
+      event: 'tool_call',
+      anonymous_id: getOrCreateInstallId(),
+      metadata,
+    },
+    { headers: { Authorization: `Bearer ${identity.accessToken}` } }
+  ).then(classifyResponse)
 }

@@ -60,6 +60,14 @@ export interface ExistingTelemetryRow {
   anonymous_id_created_at: string | null
   inventory_sync_enabled: boolean
   audit_email_enabled: boolean
+  /**
+   * SMI-6362 §3a: the route's read-before-write select must also fetch this
+   * column so `buildTelemetryUpsertRow` can apply first-decision-wins
+   * semantics. `null`/`undefined` here means "never decided" (or "column
+   * unavailable to the caller" for an existing test/type that predates this
+   * field) — both are treated identically: stamp `now`.
+   */
+  consent_decided_at?: string | null
 }
 
 /** The row upserted into user_telemetry_preferences. */
@@ -71,6 +79,16 @@ export interface TelemetryUpsertRow {
   updated_at: string
   inventory_sync_enabled: boolean
   audit_email_enabled: boolean
+  /**
+   * SMI-6362 §3a (rev 4, round-3 item 2): stamped on EVERY explicit save,
+   * regardless of `enabled`'s value — an opt-out is a decision too, and
+   * only stamping on `enabled = true` would leave every dashboard opt-out
+   * permanently re-promptable, the same defect in the opposite direction.
+   * `resolve_telemetry_identity` (SMI-6362 migration) and this route are
+   * the only two places that read/write this column's meaning; keep them
+   * in sync if either changes.
+   */
+  consent_decided_at: string
 }
 
 /**
@@ -80,6 +98,17 @@ export interface TelemetryUpsertRow {
  * `inventorySyncEnabled`, and `auditEmailEnabled` (each already resolved via their
  * respective parse* helper) pass straight through. Pure, so the preserve/clobber
  * matrix is unit-testable.
+ *
+ * SMI-6362 §3a: `consent_decided_at` is set via COALESCE(existing, now)
+ * semantics — first decision wins, a later save never re-stamps. This is
+ * what "set exactly once per explicit save" in the column's comment was
+ * always supposed to mean; re-stamping would silently reset the
+ * audit-relevant timestamp of when consent was actually given. This route
+ * (`api/account/telemetry.ts`'s PUT handler) is the only writer of this
+ * column anywhere in `packages/` — every call here IS an explicit save, so
+ * unlike `enabled`/`inventorySyncEnabled`/`auditEmailEnabled` there is no
+ * "omitted field, keep existing" case to thread through: this function is
+ * only ever reached via a real PUT.
  */
 export function buildTelemetryUpsertRow(params: {
   userId: string
@@ -104,5 +133,6 @@ export function buildTelemetryUpsertRow(params: {
     updated_at: now,
     inventory_sync_enabled: inventorySyncEnabled,
     audit_email_enabled: auditEmailEnabled,
+    consent_decided_at: existing?.consent_decided_at ?? now,
   }
 }

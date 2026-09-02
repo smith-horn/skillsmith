@@ -31,6 +31,8 @@ interface TelemetryPreferenceRow {
   updated_at: string
   inventory_sync_enabled: boolean
   audit_email_enabled: boolean
+  /** SMI-6362 §3a: timestamp of the user's explicit consent decision. */
+  consent_decided_at: string | null
 }
 
 interface PutBody {
@@ -100,6 +102,7 @@ function defaultRow(userId: string): TelemetryPreferenceRow {
     updated_at: new Date(0).toISOString(),
     inventory_sync_enabled: false,
     audit_email_enabled: false,
+    consent_decided_at: null,
   }
 }
 
@@ -128,7 +131,7 @@ export const GET: APIRoute = async ({ request }) => {
   const { data, error } = await client
     .from('user_telemetry_preferences')
     .select(
-      'user_id, enabled, anonymous_id, anonymous_id_created_at, updated_at, inventory_sync_enabled, audit_email_enabled'
+      'user_id, enabled, anonymous_id, anonymous_id_created_at, updated_at, inventory_sync_enabled, audit_email_enabled, consent_decided_at'
     )
     .eq('user_id', userId)
     .maybeSingle<TelemetryPreferenceRow>()
@@ -173,13 +176,16 @@ export const PUT: APIRoute = async ({ request }) => {
   // scoped, not inferred from or reset by other preference writes.
   const { data: existing } = await client
     .from('user_telemetry_preferences')
-    .select('anonymous_id, anonymous_id_created_at, inventory_sync_enabled, audit_email_enabled')
+    .select(
+      'anonymous_id, anonymous_id_created_at, inventory_sync_enabled, audit_email_enabled, consent_decided_at'
+    )
     .eq('user_id', userId)
     .maybeSingle<{
       anonymous_id: string | null
       anonymous_id_created_at: string | null
       inventory_sync_enabled: boolean
       audit_email_enabled: boolean
+      consent_decided_at: string | null
     }>()
 
   const inventorySyncResult = parseInventorySyncEnabled(
@@ -225,7 +231,7 @@ export const PUT: APIRoute = async ({ request }) => {
     .from('user_telemetry_preferences')
     .upsert(upsertRow, { onConflict: 'user_id' })
     .select(
-      'user_id, enabled, anonymous_id, anonymous_id_created_at, updated_at, inventory_sync_enabled, audit_email_enabled'
+      'user_id, enabled, anonymous_id, anonymous_id_created_at, updated_at, inventory_sync_enabled, audit_email_enabled, consent_decided_at'
     )
     .single<TelemetryPreferenceRow>()
 

@@ -47,6 +47,11 @@ const state = vi.hoisted(() => ({
   },
 }))
 
+// SMI-6362 §3a: captures the exact row the route passes to .upsert(...) so
+// tests can assert on consent_decided_at without re-deriving it from the
+// mocked select/upsert echo fixtures.
+const upsertCalls: Array<Record<string, unknown>> = []
+
 vi.mock('@supabase/supabase-js', () => ({
   createClient: vi.fn(() => ({
     auth: {
@@ -58,11 +63,14 @@ vi.mock('@supabase/supabase-js', () => ({
           maybeSingle: vi.fn(async () => state.selectResult),
         })),
       })),
-      upsert: vi.fn((_row: unknown, _options: unknown) => ({
-        select: vi.fn((_columns: string) => ({
-          single: vi.fn(async () => state.upsertResult),
-        })),
-      })),
+      upsert: vi.fn((row: Record<string, unknown>, _options: unknown) => {
+        upsertCalls.push(row)
+        return {
+          select: vi.fn((_columns: string) => ({
+            single: vi.fn(async () => state.upsertResult),
+          })),
+        }
+      }),
     })),
   })),
 }))
@@ -83,6 +91,7 @@ beforeAll(async () => {
 
 afterEach(() => {
   vi.clearAllMocks()
+  upsertCalls.length = 0
 })
 
 function putRequest(body: Record<string, unknown>): Request {
@@ -190,5 +199,50 @@ describe('PUT /api/account/telemetry — audit-email verified-email guard (SMI-5
     expect(response.status).toBe(200)
     expect(json.error).toBeUndefined()
     expect(json.preference.audit_email_enabled).toBe(false)
+  })
+})
+
+describe('PUT /api/account/telemetry — consent_decided_at stamp (SMI-6362 §3a, rev 4 round-3 item 2)', () => {
+  beforeEach(() => {
+    setUser('2026-01-01T00:00:00.000Z')
+    setUpsertSuccess({})
+  })
+
+  it('stamps consent_decided_at on a first-time save (no existing row)', async () => {
+    setExistingRow(null)
+
+    await callPut({ enabled: true })
+
+    expect(upsertCalls).toHaveLength(1)
+    expect(upsertCalls[0].consent_decided_at).toEqual(expect.any(String))
+  })
+
+  it('preserves the ORIGINAL consent_decided_at on a second save — never re-stamps (first-decision-wins)', async () => {
+    const originalDecision = '2026-01-15T09:30:00.000Z'
+    setExistingRow({ consent_decided_at: originalDecision })
+
+    await callPut({ enabled: false })
+
+    expect(upsertCalls).toHaveLength(1)
+    expect(upsertCalls[0].consent_decided_at).toBe(originalDecision)
+  })
+
+  it('stamps consent_decided_at on an existing row that is enabled=true but was never decided — the exact production state this fix exists for', async () => {
+    setExistingRow({ enabled: true, consent_decided_at: null })
+
+    await callPut({ enabled: true })
+
+    expect(upsertCalls).toHaveLength(1)
+    expect(upsertCalls[0].consent_decided_at).toEqual(expect.any(String))
+    expect(upsertCalls[0].consent_decided_at).not.toBeNull()
+  })
+
+  it('stamps consent_decided_at on an explicit opt-out (enabled=false) exactly like an opt-in — a refusal is a decision too', async () => {
+    setExistingRow(null)
+
+    await callPut({ enabled: false })
+
+    expect(upsertCalls).toHaveLength(1)
+    expect(upsertCalls[0].consent_decided_at).toEqual(expect.any(String))
   })
 })

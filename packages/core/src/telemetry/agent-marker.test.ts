@@ -69,6 +69,8 @@ describe('readSessionMarker', () => {
       nudgeOrigin: false,
       triggerId: null,
       harness: 'claude-code',
+      // SMI-6362 §1: threaded from the marker file's own session_id.
+      sessionId: 'sess-1',
     })
   })
 
@@ -79,6 +81,7 @@ describe('readSessionMarker', () => {
       nudgeOrigin: true,
       triggerId: 'T1',
       harness: 'claude-code',
+      sessionId: 'sess-1',
     })
   })
 
@@ -213,6 +216,7 @@ describe('resolveAgentMarker', () => {
       nudgeOrigin: true,
       triggerId: 'FILE',
       harness: 'claude-code',
+      sessionId: 'sess-1',
     })
   })
 
@@ -223,12 +227,14 @@ describe('resolveAgentMarker', () => {
     )
     const resolved = resolveAgentMarker({ agent_session: false, trigger_id: 'META' }, { now: NOW })
     // agent_session + trigger_id come from _meta; nudge_origin + harness fall
-    // back to the file.
+    // back to the file. sessionId is file-channel only (no _meta equivalent
+    // exists), so it always comes from the file too.
     expect(resolved).toEqual({
       agentSession: false,
       nudgeOrigin: true,
       triggerId: 'META',
       harness: 'claude-code',
+      sessionId: 'sess-1',
     })
   })
 

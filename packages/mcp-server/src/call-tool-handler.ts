@@ -40,6 +40,7 @@ import {
   resolveAgentMarker,
   runWithMarkerContext,
   runWithEmissionGate,
+  runWithToolNameContext,
 } from '@skillsmith/core/telemetry'
 import type { LicenseMiddleware } from './middleware/license.js'
 import type { QuotaMiddleware } from './middleware/quota.js'
@@ -127,12 +128,18 @@ export async function handleCallToolRequest(
     const consent = await resolveConsent(toolContext.distinctId)
     const result = await runWithEmissionGate(consent.enabled, () =>
       runWithMarkerContext(resolveAgentMarker(requestMeta), () =>
-        dispatchToolCall(
-          name,
-          args as Record<string, unknown> | undefined,
-          toolContext,
-          licenseMiddleware,
-          quotaMiddleware
+        // SMI-6362 §1: `name` is the literal MCP tool name (e.g. 'search') —
+        // the one place it's known. Installed alongside the marker context so
+        // `withTelemetry`'s emit path (nested inside this continuation,
+        // including through `withLicenseAndQuota` middleware) can read it.
+        runWithToolNameContext(name, () =>
+          dispatchToolCall(
+            name,
+            args as Record<string, unknown> | undefined,
+            toolContext,
+            licenseMiddleware,
+            quotaMiddleware
+          )
         )
       )
     )

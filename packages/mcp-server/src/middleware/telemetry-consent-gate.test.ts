@@ -7,12 +7,14 @@
  * reference-identity contract `call-tool-handler.ts`'s `maybeAnnotate`
  * relies on).
  *
- * Mocking style matches `telemetry-consent.test.ts` /
- * `analytics.supabase.service.test.ts`: `vi.mock('../supabase-client.js')`
- * at module scope, `vi.mocked(getSupabaseClient)` driven per test.
- * `_resetConsentCacheForTests()` runs in `beforeEach`/`afterEach` so every
- * test starts with an empty process-level cache AND an empty `promptedIds`
- * set (SMI-5479 folded the latter into the same reset helper).
+ * SMI-6362 §3/B-6 rewired the real `fetchConsentState` from a direct
+ * Supabase query to a POST against the `telemetry-consent` edge function —
+ * mocking style now matches the sibling `telemetry-consent.test.ts`:
+ * `@skillsmith/core` mocked at module scope, global `fetch` stubbed per
+ * test. `_resetConsentCacheForTests()` runs in `beforeEach`/`afterEach` so
+ * every test starts with an empty process-level cache AND an empty
+ * `promptedIds` set (SMI-5479 folded the latter into the same reset
+ * helper).
  */
 
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest'
@@ -27,33 +29,28 @@ import {
 } from './telemetry-consent.js'
 
 // ============================================================================
-// Supabase module mock
+// @skillsmith/core + fetch mocks
 // ============================================================================
 
-vi.mock('../supabase-client.js', () => ({
-  getSupabaseClient: vi.fn(),
+const getApiBaseUrlMock = vi.fn(() => 'https://api.example.com')
+const getApiKeyMock = vi.fn((): string | undefined => undefined)
+const resolveFreshAccessTokenMock = vi.fn(async (): Promise<string | null> => null)
+
+vi.mock('@skillsmith/core', () => ({
+  getApiBaseUrl: () => getApiBaseUrlMock(),
+  getApiKey: () => getApiKeyMock(),
+  resolveFreshAccessToken: () => resolveFreshAccessTokenMock(),
 }))
 
-import { getSupabaseClient } from '../supabase-client.js'
-
-const mockGetClient = vi.mocked(getSupabaseClient)
-
-/**
- * Creates a mock Supabase client whose `.from().select().eq().maybeSingle()`
- * chain resolves with `resolvedValue`. Returns the `maybeSingle` spy so
- * callers can assert call counts.
- */
-function createQueryMock(resolvedValue: {
-  data: { enabled?: boolean | null } | null
-  error: unknown
-}) {
-  const maybeSingle = vi.fn().mockResolvedValue(resolvedValue)
-  const eq = vi.fn().mockReturnValue({ maybeSingle })
-  const select = vi.fn().mockReturnValue({ eq })
-  const from = vi.fn().mockReturnValue({ select })
-  const client = { from } as unknown as Awaited<ReturnType<typeof getSupabaseClient>>
-  return { client, from, select, eq, maybeSingle }
+function jsonResponse(body: unknown, ok = true, status = 200): Response {
+  return {
+    ok,
+    status,
+    json: async () => body,
+  } as Response
 }
+
+const fetchMock = vi.fn<typeof fetch>()
 
 /** Minimal MCP CallToolResult-shaped envelope. */
 function makeEnvelope(text: string): { content: { type: string; text: string }[] } {
@@ -63,10 +60,16 @@ function makeEnvelope(text: string): { content: { type: string; text: string }[]
 beforeEach(() => {
   _resetConsentCacheForTests()
   vi.clearAllMocks()
+  getApiBaseUrlMock.mockReturnValue('https://api.example.com')
+  getApiKeyMock.mockReturnValue(undefined)
+  resolveFreshAccessTokenMock.mockResolvedValue(null)
+  fetchMock.mockReset()
+  vi.stubGlobal('fetch', fetchMock)
 })
 
 afterEach(() => {
   _resetConsentCacheForTests()
+  vi.unstubAllGlobals()
 })
 
 // ============================================================================
@@ -85,23 +88,21 @@ describe('resolveConsent — eviction-on-rejection (SMI-5479)', () => {
     expect(rejectingFetcher).toHaveBeenCalledTimes(1)
 
     // Second call: had the rejected promise stayed cached, this would
-    // immediately reject again WITHOUT calling the fetcher a second time —
-    // eviction means it gets a fresh attempt.
-    const { client, maybeSingle } = createQueryMock({ data: { enabled: true }, error: null })
-    mockGetClient.mockResolvedValue(client)
+    // immediately reject again WITHOUT calling the real fetcher a second
+    // time — eviction means it gets a fresh attempt.
+    fetchMock.mockResolvedValue(jsonResponse({ data: { enabled: true, consentRequired: false } }))
 
     const state = await resolveConsent('user-evict')
     expect(state.enabled).toBe(true)
-    expect(maybeSingle).toHaveBeenCalledTimes(1)
+    expect(fetchMock).toHaveBeenCalledTimes(1)
   })
 
   it('does not evict OTHER cached ids when one id rejects', async () => {
-    const { client, maybeSingle } = createQueryMock({ data: { enabled: true }, error: null })
-    mockGetClient.mockResolvedValue(client)
+    fetchMock.mockResolvedValue(jsonResponse({ data: { enabled: true, consentRequired: false } }))
 
     // Populate a healthy cache entry for a different id first.
     await resolveConsent('user-evict-sibling')
-    expect(maybeSingle).toHaveBeenCalledTimes(1)
+    expect(fetchMock).toHaveBeenCalledTimes(1)
 
     const rejectingFetcher = vi.fn().mockRejectedValue(new Error('injected fetch failure'))
     await expect(resolveConsent('user-evict-target', rejectingFetcher)).rejects.toThrow()
@@ -109,41 +110,43 @@ describe('resolveConsent — eviction-on-rejection (SMI-5479)', () => {
     // The sibling's cache entry is untouched — a second resolve for it does
     // NOT re-query.
     await resolveConsent('user-evict-sibling')
-    expect(maybeSingle).toHaveBeenCalledTimes(1)
+    expect(fetchMock).toHaveBeenCalledTimes(1)
   })
 
-  it('pin: fetchConsentState (the real, unmocked fetcher) never rejects — even when getSupabaseClient throws AND when the query chain rejects mid-flight', async () => {
-    // Branch 1: getSupabaseClient itself throws synchronously-awaited.
-    mockGetClient.mockRejectedValueOnce(new Error('supabase client construction failed'))
-    await expect(resolveConsent('user-pin-client-throw')).resolves.toEqual({
-      enabled: false,
-      consentRequired: false,
-      privacyUrl: TELEMETRY_PRIVACY_URL,
-    })
-
-    // Branch 2: the query chain's terminal call rejects.
-    const maybeSingle = vi.fn().mockRejectedValue(new Error('network error mid-query'))
-    const eq = vi.fn().mockReturnValue({ maybeSingle })
-    const select = vi.fn().mockReturnValue({ eq })
-    const from = vi.fn().mockReturnValue({ select })
-    const client = { from } as unknown as Awaited<ReturnType<typeof getSupabaseClient>>
-    mockGetClient.mockResolvedValue(client)
-
-    await expect(resolveConsent('user-pin-query-throw')).resolves.toEqual({
+  it('pin: fetchConsentState (the real, unmocked fetcher) never rejects — even when fetch itself rejects, when the response is not ok, and when the response body is malformed', async () => {
+    // Branch 1: fetch itself rejects (network/timeout).
+    fetchMock.mockRejectedValueOnce(new Error('network error'))
+    await expect(resolveConsent('user-pin-network-throw')).resolves.toEqual({
       enabled: false,
       consentRequired: true,
       privacyUrl: TELEMETRY_PRIVACY_URL,
     })
 
-    // Branch 3: `.from()` itself throws synchronously (not a promise).
-    const throwingClient = {
-      from: () => {
-        throw new Error('synchronous client error')
-      },
-    } as unknown as Awaited<ReturnType<typeof getSupabaseClient>>
-    mockGetClient.mockResolvedValue(throwingClient)
+    // Branch 2: the response is not ok (e.g. the endpoint's own rate limit).
+    fetchMock.mockResolvedValueOnce(jsonResponse({ error: 'rate_limited' }, false, 429))
+    await expect(resolveConsent('user-pin-not-ok')).resolves.toEqual({
+      enabled: false,
+      consentRequired: true,
+      privacyUrl: TELEMETRY_PRIVACY_URL,
+    })
 
-    await expect(resolveConsent('user-pin-sync-throw')).resolves.toEqual({
+    // Branch 3: the response body is malformed (wrong-typed fields).
+    fetchMock.mockResolvedValueOnce(jsonResponse({ data: { enabled: 'yes' } }))
+    await expect(resolveConsent('user-pin-malformed')).resolves.toEqual({
+      enabled: false,
+      consentRequired: true,
+      privacyUrl: TELEMETRY_PRIVACY_URL,
+    })
+
+    // Branch 4: res.json() itself throws (e.g. truncated/non-JSON body).
+    fetchMock.mockResolvedValueOnce({
+      ok: true,
+      status: 200,
+      json: async () => {
+        throw new Error('unexpected end of JSON input')
+      },
+    } as unknown as Response)
+    await expect(resolveConsent('user-pin-json-throw')).resolves.toEqual({
       enabled: false,
       consentRequired: true,
       privacyUrl: TELEMETRY_PRIVACY_URL,

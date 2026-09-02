@@ -91,7 +91,7 @@ vi.mock('@skillsmith/core', async (importOriginal) => {
     SkillsmithApiClient: MockSkillsmithApiClient,
     initializePostHog: vi.fn(),
     shutdownPostHog: vi.fn().mockResolvedValue(undefined),
-    generateAnonymousId: vi.fn().mockReturnValue('anon-id-123'),
+    getOrCreateInstallId: vi.fn().mockReturnValue('install-id-abc123'),
     SyncConfigRepository: MockSyncConfigRepository,
     SyncHistoryRepository: MockSyncHistoryRepository,
     SyncEngine: MockSyncEngine,
@@ -181,6 +181,38 @@ describe('context.async', () => {
       expect(initializePostHog).toHaveBeenCalledWith(
         expect.objectContaining({ apiKey: 'phc_test-key' })
       )
+    })
+
+    it("SMI-6362 (D-7): distinctId is getOrCreateInstallId()'s persisted value, UNCONDITIONALLY — no telemetry/PostHog env vars set at all", async () => {
+      const { getOrCreateInstallId, initializePostHog } = await import('@skillsmith/core')
+      vi.mocked(getOrCreateInstallId).mockReturnValue('install-id-abc123')
+      // This file's convention (see openDatabaseAsync/createDatabaseAsync
+      // above) is an explicit mockClear() before an .not.toHaveBeenCalled()
+      // assertion, since mock call counts otherwise persist across tests in
+      // this file (no blanket vi.clearAllMocks() in beforeEach).
+      vi.mocked(initializePostHog).mockClear()
+
+      const ctx = await createToolContextAsync({ dbPath: ':memory:' })
+
+      // Unlike the legacy generateAnonymousId() path, distinctId no longer
+      // depends on SKILLSMITH_TELEMETRY_ENABLED or POSTHOG_API_KEY being set
+      // — that env gate is exactly what made the pre-SMI-6362 id inert for
+      // virtually every real MCP client (D-7).
+      expect(ctx.distinctId).toBe('install-id-abc123')
+      // The two concerns are orthogonal: PostHog itself stays un-initialized
+      // when its own env vars are absent.
+      expect(initializePostHog).not.toHaveBeenCalled()
+    })
+
+    it('SMI-6362 (D-7): distinctId is the SAME persisted value regardless of whether PostHog is also configured', async () => {
+      const { getOrCreateInstallId } = await import('@skillsmith/core')
+      vi.mocked(getOrCreateInstallId).mockReturnValue('install-id-abc123')
+      vi.stubEnv('SKILLSMITH_TELEMETRY_ENABLED', 'true')
+      vi.stubEnv('POSTHOG_API_KEY', 'phc_test-key')
+
+      const ctx = await createToolContextAsync({ dbPath: ':memory:' })
+
+      expect(ctx.distinctId).toBe('install-id-abc123')
     })
 
     it('does not create BackgroundSyncService when SKILLSMITH_BACKGROUND_SYNC is false', async () => {
@@ -274,6 +306,15 @@ describe('context.async', () => {
 
       vi.stubEnv('SKILLSMITH_TELEMETRY_ENABLED', 'true')
       vi.stubEnv('POSTHOG_API_KEY', 'phc_test-key')
+
+      await getToolContextAsync({ dbPath: ':memory:' })
+      await resetAsyncToolContext()
+
+      expect(shutdownPostHog).toHaveBeenCalled()
+    })
+
+    it('SMI-6362 (D-7): also calls shutdownPostHog with NO telemetry env vars set — distinctId is now unconditional, so this guard fires every time; shutdownPostHog itself is a safe no-op when PostHog was never initialized', async () => {
+      const { shutdownPostHog } = await import('@skillsmith/core')
 
       await getToolContextAsync({ dbPath: ':memory:' })
       await resetAsyncToolContext()
