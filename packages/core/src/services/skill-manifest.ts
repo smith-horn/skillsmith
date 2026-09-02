@@ -33,8 +33,19 @@ const MANIFEST_LOCK_RETRY_MS = 100
  * ran, exactly when the guard matters most.
  *
  * Only active under `process.env.VITEST`. Production code paths are untouched.
+ *
+ * Exported (adversarial-review finding, SMI-6343 follow-up) because
+ * `ManifestManager` is not the only homedir-defaulting manifest writer in the
+ * repo — `packages/mcp-server/src/tools/install.helpers.manifest.ts`,
+ * `packages/cli/src/utils/manifest.ts`, and
+ * `packages/core/src/install/fan-out.ts` each have their own raw-`fs`
+ * save/lock functions with the identical `os.homedir()`-derived path and no
+ * override parameter, so they need the same guard. Reusing this one function
+ * (rather than three independent copies) is the CLAUDE.md-documented
+ * duplicate-security-gate fix: one gate implementation is far harder to
+ * regress than four.
  */
-function realHomeUnderTest(): string | undefined {
+export function realHomeUnderTest(): string | undefined {
   const captured = process.env.SKILLSMITH_TEST_REAL_HOME
   if (captured) return captured
   try {
@@ -47,7 +58,7 @@ function realHomeUnderTest(): string | undefined {
   }
 }
 
-function assertNotRealUserHome(manifestPath: string, operation: string): void {
+export function assertNotRealUserHome(manifestPath: string, operation: string): void {
   if (!process.env.VITEST) return
   const realHome = realHomeUnderTest()
   if (!realHome) return
@@ -189,6 +200,14 @@ export class ManifestManager {
   }
 
   async releaseLock(): Promise<void> {
+    // Guarded (adversarial-review finding, SMI-6343 follow-up): a caller that
+    // invokes releaseLock() directly against a real-home-derived path (a
+    // cleanup helper, an afterEach) would otherwise delete a lock a live
+    // skillsmith process is holding on the real manifest, silently breaking
+    // that process's mutual exclusion. save()/acquireLock() reach this only
+    // through updateSafely()'s already-guarded acquireLock(), so this is
+    // belt-and-suspenders for a caller that skips that path.
+    assertNotRealUserHome(this.manifestPath, 'unlock')
     try {
       await fs.unlink(this.manifestPath + '.lock')
     } catch {

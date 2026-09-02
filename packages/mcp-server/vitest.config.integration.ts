@@ -17,12 +17,18 @@ import { sharedTestConfig } from '../../vitest.preset'
 //
 // `tests/integration/shutdown-persistence.integration.test.ts` and
 // `tests/integration/install.execution.integration.test.ts` are the two files
-// whose unmocked manifest path wrote fixture rows into a real user's
-// ~/.skillsmith/manifest.json. This config is the ONLY one that runs them
-// (the root config's `exclude` and packages/mcp-server/vitest.config.ts both
-// skip `*.integration.test.ts`), and `test-mcp-server-integration` is the only
-// CI job that loads it — so a HOME sandbox declared anywhere else does not
-// protect them.
+// whose unmocked manifest path historically wrote fixture rows into a real
+// user's ~/.skillsmith/manifest.json (before ADR-139/SMI-6274 Wave 4, #2634,
+// merged 2026-08-30, added the `manifestPath` override those tests now use —
+// two days before this fix, so those two specific files were already
+// isolated by the time this investigation started; see
+// `scripts/tests/audit-manifest-hygiene.test.ts`'s header for the full
+// timeline). This config is the ONLY one that runs them (the root config's
+// `exclude` and packages/mcp-server/vitest.config.ts both skip
+// `*.integration.test.ts`), and `test-mcp-server-integration` is the only CI
+// job that loads it — so a HOME sandbox declared anywhere else does not
+// protect them, and it remains the regression site for defense-in-depth
+// purposes even though the originally-named leak vector has since closed.
 //
 // The `...sharedTestConfig` spread below is therefore load-bearing, not
 // cosmetic: it is what pulls in `setupFiles` (vitest.preset.ts) and with it

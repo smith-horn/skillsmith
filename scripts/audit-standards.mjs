@@ -5702,6 +5702,19 @@ console.log(`\n${BOLD}Check 65: test-suite manifest hygiene (SMI-6343)${RESET}`)
   const MANIFEST_HYGIENE_ALLOWLIST_JUSTIFICATIONS = {
     'packages/cli/src/commands/audit-sources.test.ts':
       'backfillManifest is fully vi.mock()ed; the tests assert mock-call shape and never reach a real path',
+    // Adversarial-review follow-up (SMI-6343): the four rows below are newly
+    // matched because the writer-symbol list grew (updateManifestSafely,
+    // saveManifest, acquireManifestLock, updateManifestEntry) to cover the
+    // three sibling homedir-defaulting writers found alongside
+    // ManifestManager. All four are genuine false positives.
+    'packages/cli/src/commands/pin.test.ts':
+      "updateManifestEntry is replaced via vi.mock('../utils/manifest.js', () => ({ updateManifestEntry: mockUpdateManifestEntry, ... })) — no real manifest module is loaded",
+    'packages/cli/src/utils/manifest.test.ts':
+      "this IS manifest.ts's own test file — fs/promises is fully mocked (vi.mock with importOriginal, only mkdir/writeFile/rename/readFile/unlink overridden) so saveManifest()'s writes go to an in-memory memfs object, never real disk; a dedicated 'SMI-6343: real-home write guard' describe block additionally proves the new guard itself fires",
+    'packages/mcp-server/src/tools/install.helpers.manifest.test.ts':
+      "this IS install.helpers.manifest.ts's own test file, added by the same commit as the guard it tests — every case deliberately points SKILLSMITH_TEST_REAL_HOME at MANIFEST_PATH's current home so the guard throws BEFORE any real fs call; there is no code path in this file that reaches real fs I/O",
+    'packages/mcp-server/tests/unit/install-helpers.test.ts':
+      "vi.mock('fs/promises') (bare, no factory) auto-mocks every export as a stub — acquireManifestLock/saveManifest/updateManifestSafely never reach real fs regardless of what MANIFEST_PATH resolves to",
     'packages/cli/src/commands/registry-install.action.leak-and-errors.test.ts':
       'SkillInstallationService is replaced by a vi.fn() mock implementation — no real installer is constructed',
     'packages/cli/src/commands/registry-install.action.test.ts':

@@ -4,6 +4,11 @@ All notable changes to `@skillsmith/cli` are documented here.
 
 ## [Unreleased]
 
+- **Fix**: `utils/manifest.ts`'s `saveManifest()` — a homedir-derived manifest write with no
+  path-override parameter — now refuses to touch a manifest inside the real user home while
+  running under vitest, via `@skillsmith/core`'s newly-exported `assertNotRealUserHome()`
+  (SMI-6343 Wave 1 follow-up, adversarial review). Previously the test-run `$HOME` sandbox
+  was this write path's only protection.
 - **Fix**: `skillsmith registry --help` now states that publishing and listing are MCP-only
   today (`private_registry_publish`/`private_registry_manage`), pointing at those tools and
   the private-registry docs page — matching already-shipped website copy. Two external

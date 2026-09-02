@@ -4,6 +4,12 @@ All notable changes to `@skillsmith/mcp-server` are documented here.
 
 ## [Unreleased]
 
+- **Fix**: `install.helpers.manifest.ts`'s `saveManifest()`/`acquireManifestLock()` — a
+  second, complete manifest write stack parallel to `@skillsmith/core`'s `ManifestManager`,
+  homedir-derived with no path-override parameter — now refuse to touch a manifest inside the
+  real user home while running under vitest, via `@skillsmith/core`'s newly-exported
+  `assertNotRealUserHome()` (SMI-6343 Wave 1 follow-up, adversarial review). Previously the
+  test-run `$HOME` sandbox was this write path's only protection.
 - **Fix**: `set_team_role_permission()` closed a delegation hole where a team owner could grant
   `team:manage_rbac`/`team:manage_sso` to a non-owner role, reaching the exact escalated state
   the owner-only gate existed to prevent (SMI-6319). Two new defense layers: a table CHECK

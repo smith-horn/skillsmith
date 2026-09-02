@@ -20,6 +20,7 @@ import * as path from 'node:path'
 import * as fs from 'node:fs'
 import * as fsp from 'node:fs/promises'
 import { CLIENT_NATIVE_PATHS, CANONICAL_CLIENT, type ClientId } from './paths.js'
+import { assertNotRealUserHome } from '../services/skill-manifest.js'
 
 export type LinkKind = 'symlink' | 'copy'
 
@@ -71,6 +72,11 @@ export async function loadManifest(): Promise<LinkManifest> {
  */
 export async function saveManifest(manifest: LinkManifest): Promise<void> {
   const manifestPath = getLinkManifestPath()
+  // SMI-6343 follow-up (adversarial review): a fourth parallel manifest-write
+  // implementation (a different file, `links/manifest.json`, but the same
+  // homedir-derived-with-no-override shape). The $HOME sandbox
+  // (vitest.setup.ts) was this file's only defense until this guard.
+  assertNotRealUserHome(manifestPath, 'write')
   const dir = path.dirname(manifestPath)
   await fsp.mkdir(dir, { recursive: true })
   const tmp = `${manifestPath}.${process.pid}.tmp`

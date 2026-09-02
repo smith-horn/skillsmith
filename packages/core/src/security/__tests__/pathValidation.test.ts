@@ -134,6 +134,25 @@ describe('SMI-898: Path Traversal Protection', () => {
         expect(result.error).toContain('outside allowed')
       })
 
+      it('should reject paths in home but outside allowed subdirs — DEFAULT allowedDirs, sandbox carve-out disabled', () => {
+        // Adversarial-review follow-up (SMI-6343): the case above pins its own
+        // allowedDirs, so it no longer exercises DEFAULT_ALLOWED_DIRS (the
+        // production default, derived from the CURRENT os.homedir() — which
+        // under vitest.setup.ts's sandbox is a temp directory). This case
+        // restores that coverage by passing `allowTempDir: false`, which
+        // removes the confounding carve-out that made the original
+        // homedir()-derived fixture pass for the wrong reason, while still
+        // exercising the real, unmocked default allowlist against whatever
+        // home is currently in effect (sandboxed under vitest, real
+        // otherwise) — proving the actual production default rejects a path
+        // that's under home but outside `.skillsmith`/`.claude`.
+        const result = validateDbPath(resolve(homeDir, 'Documents/secret.db'), {
+          allowTempDir: false,
+        })
+        expect(result.valid).toBe(false)
+        expect(result.error).toContain('outside allowed')
+      })
+
       it('should reject Windows-style system paths when run on Windows or when backslashes are normalized', () => {
         // On Unix, Windows paths are treated as regular paths with backslash as separator
         // The path resolves relative to allowed dir, so test with explicit outside path

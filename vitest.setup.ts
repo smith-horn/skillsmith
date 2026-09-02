@@ -40,7 +40,23 @@ import { afterAll } from 'vitest'
 // through the environment rather than a module export because the consumer
 // lives in a different package that resolves through built `dist/`, so there
 // is no shared module instance to read a const from.
-const REAL_HOME_BEFORE_SANDBOX = homedir()
+//
+// Idempotency guard (adversarial-review finding, SMI-6343 follow-up):
+// under `vitest run --no-isolate`, Vitest reuses one worker process across
+// test files, so this setup file's top level runs once PER FILE in that same
+// process — and by the second file, `homedir()` no longer returns the real
+// home; it returns the FIRST file's sandbox (setup never restores `$HOME`,
+// only removes the temp dir in `afterAll`). A bare `homedir()` capture here
+// would overwrite `SKILLSMITH_TEST_REAL_HOME` with a since-deleted temp path
+// on every file after the first, silently disabling `assertNotRealUserHome()`
+// for the rest of the run (it would compare every real path against a
+// nonexistent directory and never match). Reusing an already-captured value
+// keeps the ground truth fixed to the actual real home for the whole worker
+// lifetime, however many files it processes. `isolate: true` is this repo's
+// default and no config overrides it, so this is currently latent — fixed
+// because it costs one line and the alternative is a guard that silently
+// stops working the moment someone reaches for `--no-isolate` as a speed-up.
+const REAL_HOME_BEFORE_SANDBOX = process.env.SKILLSMITH_TEST_REAL_HOME ?? homedir()
 process.env.SKILLSMITH_TEST_REAL_HOME = REAL_HOME_BEFORE_SANDBOX
 
 // One sandbox per setup execution (Vitest runs setup files once per test

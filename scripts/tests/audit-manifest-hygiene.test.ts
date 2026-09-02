@@ -1,10 +1,21 @@
 /**
  * Check 65 negative test (SMI-6343 Wave 1).
  *
- * The check exists because two mcp-server integration tests wrote fixture rows
- * into a REAL user's ~/.skillsmith/manifest.json: they mocked their install
- * paths but not their manifest path, and every manifest-writing symbol
- * defaults that path to `os.homedir()/.skillsmith/manifest.json`.
+ * The check exists because SMI-6343's investigation found fixture rows
+ * (`test-skill`, `shutdown-persistence-fixture`) in a REAL user's
+ * ~/.skillsmith/manifest.json, traced to two mcp-server integration tests
+ * whose manifest path — before ADR-139 (SMI-6274 Wave 4, #2634, merged
+ * 2026-08-30, two days before this fix) added the `manifestPath` override
+ * those tests now use — defaulted to `os.homedir()/.skillsmith/manifest.json`
+ * like every manifest-writing symbol. The rows are residual evidence of that
+ * historical leak; by the time this fix landed, #2634 had already isolated
+ * those two specific files as an unrelated side effect of its own workspace-
+ * scoping work. Check 65 exists as defense-in-depth for the wider,
+ * still-live class: four separate homedir-defaulting manifest writers exist
+ * across the repo (`ManifestManager`, and three siblings in mcp-server, cli,
+ * and fan-out.ts — an adversarial-review finding fixed in the same commit as
+ * this check), and nothing but the global $HOME test sandbox protected the
+ * three siblings until that fix.
  *
  * These assertions drive `evaluateManifestHygiene` with synthetic file
  * contents (no disk I/O), so they prove the three behaviours the plan asks
@@ -96,7 +107,6 @@ describe('SMI-6343 Check 65: manifest-hygiene detection', () => {
       ['bracket-notation HOME override', "process.env['HOME'] = tmpHome"],
       ['double-quoted bracket HOME override', 'process.env["HOME"] = tmpHome'],
       ['USERPROFILE override (Windows)', "process.env['USERPROFILE'] = tmpHome"],
-      ['SKILLSMITH_HOME override', 'process.env.SKILLSMITH_HOME = tmpHome'],
       ['vi.stubEnv', "vi.stubEnv('HOME', tmpHome)"],
       ['sanctioned helper', 'const p = await createIsolatedManifestPath()'],
     ]
@@ -109,6 +119,64 @@ describe('SMI-6343 Check 65: manifest-hygiene detection', () => {
         expect(result.findings).toEqual([])
       })
     }
+
+    // Adversarial-review follow-up (SMI-6343): SKILLSMITH_HOME is no longer
+    // accepted — no production writer reads it (grep-confirmed), so crediting
+    // it as isolation evidence was false. A file that sets only this env var
+    // is still exposed and must be flagged.
+    it('does NOT accept SKILLSMITH_HOME (no writer honors it)', () => {
+      const result = evaluate([
+        {
+          path: 'packages/core/tests/leaky.test.ts',
+          content: `${EXPOSED}\nprocess.env.SKILLSMITH_HOME = tmpHome\n`,
+        },
+      ])
+      expect(result.matched).toBe(1)
+      expect(result.findings).toEqual(['packages/core/tests/leaky.test.ts'])
+    })
+
+    // Adversarial-review follow-up (SMI-6343): a bare `manifestPath` token
+    // anywhere in the file — a comment, a TODO, an unrelated string — used to
+    // count as isolation evidence. It no longer does; the pattern now
+    // requires real-code context (assignment, property key, property access,
+    // or bare call argument).
+    it('does NOT accept a bare manifestPath token with no assignment/property context', () => {
+      const result = evaluate([
+        {
+          path: 'packages/core/tests/leaky.test.ts',
+          content: `${EXPOSED}\n// TODO: pass a manifestPath here\n`,
+        },
+      ])
+      expect(result.matched).toBe(1)
+      expect(result.findings).toEqual(['packages/core/tests/leaky.test.ts'])
+    })
+
+    // Regression pin for the first tightening's own bug: `.manifestPath`
+    // (property access) and a bare `manifestPath)` call-argument reference
+    // are both genuine explicit-path constructions and must be accepted —
+    // `new ManifestManager(target.manifestPath)` is exactly the shape
+    // packages/core/src/install/workspace-scope.test.ts uses.
+    it('accepts manifestPath as a property access (target.manifestPath)', () => {
+      const result = evaluate([
+        {
+          path: 'packages/core/tests/ok.test.ts',
+          content: `${EXPOSED}\nnew ManifestManager(target.manifestPath)\n`,
+        },
+      ])
+      expect(result.matched).toBe(1)
+      expect(result.findings).toEqual([])
+    })
+
+    it('accepts manifestPath as a bare call-argument identifier', () => {
+      const result = evaluate([
+        {
+          path: 'packages/core/tests/ok.test.ts',
+          content: `${EXPOSED}\nnew ManifestManager(manifestPath)\n`,
+        },
+      ])
+      expect(result.matched).toBe(1)
+      expect(result.findings).toEqual([])
+    })
   })
 
   describe('writer-symbol matching', () => {
@@ -118,6 +186,14 @@ describe('SMI-6343 Check 65: manifest-hygiene detection', () => {
         'await installSkill(input, ctx)',
         'await backfillManifest({ apply: true })',
         'const m = new ManifestManager(p)',
+        // Adversarial-review follow-up (SMI-6343): the three sibling
+        // homedir-defaulting writers found alongside ManifestManager.
+        'await updateManifestSafely((m) => m)',
+        'await saveManifest(manifest)',
+        'await acquireManifestLock()',
+        'await updateManifestEntry((m) => m)',
+        'await addLink({ skillId, fromClient, toClient })',
+        'await removeLinks(skillId)',
       ]) {
         expect(referencesManifestWriter(snippet), snippet).toBe(true)
       }

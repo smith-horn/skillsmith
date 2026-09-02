@@ -240,4 +240,30 @@ describe('ManifestManager concurrency hardening (SMI-6007)', () => {
       expect(files.some((f) => f.includes('.tmp.'))).toBe(false)
     })
   })
+
+  // SMI-6343 Wave 1 follow-up (adversarial review): releaseLock() was
+  // previously unguarded. save()/acquireLock() already refuse a real-home
+  // path (their own guard), so updateSafely() never reaches releaseLock()
+  // for a real-home path via that route — this exists for a caller that
+  // invokes releaseLock() directly (a cleanup helper, an afterEach) on a
+  // real-home-derived path, which would otherwise delete a lock a live
+  // skillsmith process is holding.
+  describe('releaseLock() real-home write guard', () => {
+    it('refuses to unlock when the manifest path resolves under the (simulated) real home', async () => {
+      const previous = process.env.SKILLSMITH_TEST_REAL_HOME
+      process.env.SKILLSMITH_TEST_REAL_HOME = tmpDir
+      try {
+        await expect(manager.releaseLock()).rejects.toThrow(/SMI-6343/)
+      } finally {
+        if (previous === undefined) delete process.env.SKILLSMITH_TEST_REAL_HOME
+        else process.env.SKILLSMITH_TEST_REAL_HOME = previous
+      }
+    })
+
+    it('still unlocks normally when the manifest path is NOT under the real home', async () => {
+      await manager.acquireLock()
+      await expect(manager.releaseLock()).resolves.toBeUndefined()
+      await expect(fs.access(manifestPath + '.lock')).rejects.toThrow()
+    })
+  })
 })

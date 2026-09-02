@@ -5,10 +5,13 @@
  * Why it lives here and not next to the other unit tests: the original fix
  * attempt put `setupFiles` only in the root `vitest.config.ts`, which does not
  * govern `packages/mcp-server/tests/integration/**`. That config is the ONLY
- * one that runs the two files whose unmocked manifest path wrote
- * `test-skill` / `shutdown-persistence-fixture` rows into a real user's
- * ~/.skillsmith/manifest.json, and it declared no `setupFiles` at all — so a
- * sandbox declared anywhere else would have left the actual leak site open.
+ * one that runs the two files that historically wrote `test-skill` /
+ * `shutdown-persistence-fixture` rows into a real user's
+ * ~/.skillsmith/manifest.json (see `packages/mcp-server/vitest.config.integration.ts`'s
+ * own header for the timeline — those two files were already isolated by an
+ * unrelated prior fix by the time this one landed), and it declared no
+ * `setupFiles` at all — so a sandbox declared anywhere else would leave this
+ * config's still-live defense-in-depth gap open.
  *
  * This file is therefore a config-topology regression test as much as a
  * behavioural one: if someone removes `...sharedTestConfig` from
@@ -96,7 +99,7 @@ describe('SMI-6343: $HOME sandbox is inherited by vitest.config.integration.ts',
     // SkillInstallationService's module-level DEFAULT_MANIFEST_PATH uses.
     const manifestPath = path.join(os.homedir(), '.skillsmith', 'manifest.json')
     const before = snapshot(realManifestPath)
-    const lockBefore = snapshot(realManifestLockPath)
+    const realLockExistedBefore = existsSync(realManifestLockPath)
 
     const manager = new ManifestManager(manifestPath)
     await manager.updateSafely((manifest) => ({
@@ -125,11 +128,26 @@ describe('SMI-6343: $HOME sandbox is inherited by vitest.config.integration.ts',
     expect(manifestPath).not.toBe(realManifestPath)
     expect(path.resolve(manifestPath).startsWith(path.resolve(realHome) + path.sep)).toBe(false)
 
-    // The real manifest is byte-for-byte where it was: not created, not
-    // modified, and no stray lockfile left behind next to it.
-    expect(snapshot(realManifestPath)).toEqual(before)
-    expect(snapshot(realManifestLockPath)).toEqual(lockBefore)
-    expect(existsSync(realManifestLockPath)).toBe(false)
+    // The real manifest was not touched BY THIS TEST (adversarial-review
+    // finding, SMI-6343 follow-up: a byte-for-byte `toEqual(before)` snapshot
+    // comparison, as this originally read, would false-fail if a legitimate
+    // concurrent skillsmith process wrote to the developer's real manifest
+    // WHILE this test ran on a host run — a real, if narrow-window, race that
+    // has nothing to do with the code under test). Instead: prove this test's
+    // own probe entry never landed in the real manifest, and that the real
+    // manifest's existence state is unchanged (this test neither created nor
+    // deleted it) — the specific claims this test can make without racing
+    // legitimate real-home activity.
+    const after = snapshot(realManifestPath)
+    expect(after.exists).toBe(before.exists)
+    if (after.exists) {
+      const realContent = JSON.parse(await fs.readFile(realManifestPath, 'utf-8'))
+      expect(realContent.installedSkills?.['smi-6343-sandbox-probe']).toBeUndefined()
+    }
+    // Same reasoning for the lock file: assert this test didn't change
+    // whether one exists, not that one can never exist (a live skillsmith
+    // process may legitimately hold one at the moment this test runs).
+    expect(existsSync(realManifestLockPath)).toBe(realLockExistedBefore)
   })
 
   // skipIf, not a silent pass: on a host run from a worktree the imported
@@ -161,6 +179,7 @@ describe('SMI-6343: $HOME sandbox is inherited by vitest.config.integration.ts',
       //
       // Redirecting the guard's ground truth to a throwaway directory keeps the
       // assertion identical and the blast radius zero.
+      const realLockExistedBefore = existsSync(realManifestLockPath)
       const fakeRealHome = await fs.mkdtemp(path.join(os.tmpdir(), 'smi6343-fake-real-home-'))
       const previousRealHome = process.env.SKILLSMITH_TEST_REAL_HOME
       process.env.SKILLSMITH_TEST_REAL_HOME = fakeRealHome
@@ -185,9 +204,12 @@ describe('SMI-6343: $HOME sandbox is inherited by vitest.config.integration.ts',
       }
 
       // The developer's actual manifest lock was never a target here — assert
-      // it anyway, since this is the file that would show a stray lock if the
-      // guard's path comparison ever regressed.
-      expect(existsSync(realManifestLockPath)).toBe(false)
+      // its existence state is unchanged (adversarial-review finding,
+      // SMI-6343 follow-up: hardcoding `false` would false-fail if a live
+      // skillsmith process legitimately holds that lock at the moment this
+      // test runs; this is the file that would show a NEW stray lock if the
+      // guard's path comparison ever regressed).
+      expect(existsSync(realManifestLockPath)).toBe(realLockExistedBefore)
     }
   )
 })

@@ -15,10 +15,13 @@ import { fileURLToPath } from 'node:url'
 // entry point: `packages/mcp-server/vitest.config.integration.ts` is the ONLY
 // config (and `test-mcp-server-integration` the only CI job) that runs the two
 // files whose leak caused SMI-6343 — and it declared no `setupFiles` at all.
-// Eight further configs (colocated, root-tests, vscode, core, cli, enterprise,
-// doc-retrieval-mcp, website) were likewise unguarded. Every one of them
-// spreads `sharedTestConfig`, so declaring it once here is the only placement
-// that actually closes the leak everywhere.
+// 12 further configs (adversarial-review-confirmed enumeration, SMI-6343
+// follow-up: unit, colocated, root-tests, vscode, core, cli, cli e2e,
+// enterprise, doc-retrieval-mcp, website, and two dedicated E2E configs) were
+// likewise unguarded — 13 configs in total including this one, not the 8
+// this comment originally under-counted. Every one of them spreads
+// `sharedTestConfig`, so declaring it once here is the only placement that
+// actually closes the leak everywhere.
 //
 // The path MUST be absolute. `setupFiles` resolves relative to each config's
 // own `root`, and the per-package configs have different roots — a relative

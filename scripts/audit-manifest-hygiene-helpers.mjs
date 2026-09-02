@@ -7,11 +7,15 @@
  *
  * What it detects: a test file that references a manifest-WRITING symbol
  * without naming its own manifest path. Those symbols all fall back to
- * `path.join(os.homedir(), '.skillsmith', 'manifest.json')` when no explicit
- * path is supplied, so on a host (non-Docker) vitest run they write into the
- * developer's real manifest — the exact leak SMI-6343 was filed for
- * (`test-skill` and `shutdown-persistence-fixture` rows found in a real user's
- * ~/.skillsmith/manifest.json).
+ * `path.join(os.homedir(), '.skillsmith', 'manifest.json')` (or the sibling
+ * `links/manifest.json` path in fan-out.ts) when no explicit path is
+ * supplied, so on a host (non-Docker) vitest run they write into the
+ * developer's real manifest — the class of leak SMI-6343 was filed for
+ * (`test-skill` and `shutdown-persistence-fixture` rows found in a real
+ * user's ~/.skillsmith/manifest.json; residual evidence of a leak that
+ * predates ADR-139/SMI-6274 Wave 4's unrelated `manifestPath` wiring for
+ * those two specific files, per `scripts/tests/audit-manifest-hygiene.test.ts`'s
+ * header for the full timeline).
  */
 
 import { existsSync, readdirSync } from 'node:fs'
@@ -22,23 +26,61 @@ import { join } from 'node:path'
  * `installSkill` and `backfillManifest` are matched as whole words;
  * `ManifestManager` only as a construction (`new ManifestManager`), since a
  * type-only import of the class is not a write.
+ *
+ * Adversarial-review follow-up (SMI-6343): `SkillInstallationService` /
+ * `ManifestManager` are NOT the only homedir-defaulting manifest writers.
+ * Three sibling implementations exist, each with the same shape (raw `fs`,
+ * `os.homedir()`-derived path, no override parameter) and none of them
+ * previously appeared in this list:
+ *   - `packages/mcp-server/src/tools/install.helpers.manifest.ts` —
+ *     `updateManifestSafely`, `saveManifest`, `acquireManifestLock`
+ *   - `packages/cli/src/utils/manifest.ts` — `saveManifest`,
+ *     `updateManifestEntry`
+ *   - `packages/core/src/install/fan-out.ts` — `saveManifest`, `addLink`,
+ *     `removeLinks` (the higher-level API a test actually calls; `addLink`/
+ *     `removeLinks` write through `saveManifest()` internally without the
+ *     literal string "saveManifest" necessarily appearing in the test file)
+ * All four are now runtime-guarded (`assertNotRealUserHome`, exported from
+ * `@skillsmith/core`), so this list is defense-in-depth on top of that fix,
+ * not the only thing standing between a new test and a repeat leak.
  */
 export const MANIFEST_WRITER_PATTERNS = [
   /\bSkillInstallationService\b/,
   /\binstallSkill\b/,
   /\bbackfillManifest\b/,
   /new\s+ManifestManager\b/,
+  /\bupdateManifestSafely\b/,
+  /\bsaveManifest\b/,
+  /\bacquireManifestLock\b/,
+  /\bupdateManifestEntry\b/,
+  /\baddLink\b/,
+  /\bremoveLinks\b/,
 ]
 
 /**
  * Evidence that the file names its own manifest location. Any one exempts.
  *
- * - `manifestPath` — an explicit path passed to the service/manager, or
- *   destructured from `createTestFilesystem()`'s context.
- * - a `$HOME`/`%USERPROFILE%`/`SKILLSMITH_HOME` override — both dot and
- *   bracket `process.env` notation, plus `vi.stubEnv`. Bracket notation is the
- *   dominant form in this repo (`process.env['HOME'] = homeDir`), so a
- *   dot-only pattern silently under-matches by four files.
+ * - `manifestPath` — an explicit path passed to the service/manager, in any
+ *   of its genuine real-code shapes: a property key or assignment target
+ *   (`manifestPath:` / `manifestPath =`), a property access
+ *   (`target.manifestPath`, `scopeTarget.manifestPath`), or a bare
+ *   identifier used as a call argument (`manifestPath)` / `manifestPath,`).
+ *   Adversarial-review follow-up (SMI-6343): the ORIGINAL pattern here was a
+ *   bare `\bmanifestPath\b` — a free-floating occurrence anywhere in the file
+ *   (a comment, a `// TODO: pass a manifestPath`, an unrelated string)
+ *   counted as proof of isolation, which is not evidence of anything. The
+ *   first tightening (requiring only a `:`/`=` suffix) went too far the other
+ *   way and stopped matching `new ManifestManager(target.manifestPath)` — a
+ *   genuine explicit-path construction via property access, caught live by
+ *   `packages/core/src/install/workspace-scope.test.ts` going newly (and
+ *   wrongly) exposed the moment the tightened pattern shipped. This version
+ *   covers all four real syntax shapes while still rejecting the comment
+ *   case (nothing in `// TODO: pass a manifestPath here` matches any of
+ *   them — "here" starts with neither punctuation nor `.`).
+ * - a `$HOME`/`%USERPROFILE%` override — both dot and bracket `process.env`
+ *   notation, plus `vi.stubEnv`. Bracket notation is the dominant form in
+ *   this repo (`process.env['HOME'] = homeDir`), so a dot-only pattern
+ *   silently under-matches by four files.
  * - `createIsolatedManifestPath` — the sanctioned helper
  *   (packages/mcp-server/tests/integration/setup.ts).
  *
@@ -46,11 +88,18 @@ export const MANIFEST_WRITER_PATTERNS = [
  * `manifestPath`, but a file that calls it and never wires that path into the
  * writer is still exposed — exempting on the call alone would grant the whole
  * integration suite a free pass.
+ *
+ * Deliberately REMOVED (adversarial-review follow-up, SMI-6343):
+ * `SKILLSMITH_HOME`. `grep -rn "SKILLSMITH_HOME" packages/*\/src
+ * packages/*\/tests scripts` returns exactly one hit — this file's own test —
+ * no production writer reads it, so crediting it as isolation evidence was
+ * false: a test setting it and nothing else is still fully exposed (and, as
+ * it happens, still protected only by the global $HOME sandbox, same as
+ * every other test).
  */
 export const MANIFEST_OVERRIDE_PATTERNS = [
-  /\bmanifestPath\b/,
+  /\bmanifestPath\s*(?:[:=]|[),.;])|\.manifestPath\b/,
   /process\.env\s*(?:\.\s*(?:HOME|USERPROFILE)\b|\[\s*['"`](?:HOME|USERPROFILE)['"`]\s*\])/,
-  /\bSKILLSMITH_HOME\b/,
   /stubEnv\(\s*['"`](?:HOME|USERPROFILE)['"`]/,
   /\bcreateIsolatedManifestPath\b/,
 ]

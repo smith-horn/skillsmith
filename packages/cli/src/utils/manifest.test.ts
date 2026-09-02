@@ -32,29 +32,41 @@ import { mkdir, writeFile, rename, unlink } from 'fs/promises'
 // Tests clear memfs keys in beforeEach/afterEach for isolation.
 const memfs: Record<string, string> = {}
 
-vi.mock('fs/promises', () => ({
-  mkdir: vi.fn(async () => undefined),
-  writeFile: vi.fn(async (path: string, content: string) => {
-    memfs[path] = content
-  }),
-  rename: vi.fn(async (src: string, dst: string) => {
-    const content = memfs[src]
-    if (content === undefined) throw new Error(`ENOENT: ${src}`)
-    memfs[dst] = content
-    delete memfs[src]
-  }),
-  readFile: vi.fn(async (path: string) => {
-    const content = memfs[path]
-    if (content === undefined) throw Object.assign(new Error(`ENOENT: ${path}`), { code: 'ENOENT' })
-    return content
-  }),
-  unlink: vi.fn(async (path: string) => {
-    if (memfs[path] === undefined) {
-      throw Object.assign(new Error(`ENOENT: ${path}`), { code: 'ENOENT' })
-    }
-    delete memfs[path]
-  }),
-}))
+// SMI-6343 follow-up: `manifest.ts` now imports `assertNotRealUserHome` from
+// `@skillsmith/core`, which transitively imports `constants` from
+// `fs/promises` (packages/core/src/utils/safe-fs.ts, module-level
+// `O_NOFOLLOW` lookup). A full-replacement mock factory must re-export it
+// (and anything else the real module has) via `importOriginal`, or that
+// transitive import throws "No constants export is defined" at collection
+// time — not just at the call sites this file actually exercises.
+vi.mock('fs/promises', async (importOriginal) => {
+  const actual = await importOriginal<typeof import('fs/promises')>()
+  return {
+    ...actual,
+    mkdir: vi.fn(async () => undefined),
+    writeFile: vi.fn(async (path: string, content: string) => {
+      memfs[path] = content
+    }),
+    rename: vi.fn(async (src: string, dst: string) => {
+      const content = memfs[src]
+      if (content === undefined) throw new Error(`ENOENT: ${src}`)
+      memfs[dst] = content
+      delete memfs[src]
+    }),
+    readFile: vi.fn(async (path: string) => {
+      const content = memfs[path]
+      if (content === undefined)
+        throw Object.assign(new Error(`ENOENT: ${path}`), { code: 'ENOENT' })
+      return content
+    }),
+    unlink: vi.fn(async (path: string) => {
+      if (memfs[path] === undefined) {
+        throw Object.assign(new Error(`ENOENT: ${path}`), { code: 'ENOENT' })
+      }
+      delete memfs[path]
+    }),
+  }
+})
 
 // Import AFTER mocks are registered
 import {
@@ -451,6 +463,36 @@ describe('telemetry block', () => {
 
       expect(memfs[MANIFEST_PATH]).toBeUndefined()
       expect(Object.keys(memfs).some((k) => k.includes('.tmp.'))).toBe(false)
+    })
+  })
+
+  // SMI-6343 Wave 1 follow-up (adversarial review): saveManifest() is
+  // homedir-derived with no manifestPath override parameter — the sandbox
+  // (vitest.setup.ts) was this write path's only protection until
+  // assertNotRealUserHome() was wired in. This proves the guard itself
+  // fires, not just that the sandbox exists — by pointing
+  // SKILLSMITH_TEST_REAL_HOME at whatever home MANIFEST_PATH is currently
+  // under (the sandbox, in this test run) so the guard treats it as "the
+  // real home" for this one assertion, same technique
+  // home-sandbox.integration.test.ts uses.
+  describe('SMI-6343: real-home write guard', () => {
+    it('refuses to write when MANIFEST_PATH resolves under the (simulated) real home', async () => {
+      const { MANIFEST_PATH, saveManifest } = await import('./manifest.js')
+      const path = await import('path')
+      // MANIFEST_PATH = join(homedir(), '.skillsmith', 'manifest.json')
+      const simulatedRealHome = path.dirname(path.dirname(MANIFEST_PATH))
+
+      const previous = process.env['SKILLSMITH_TEST_REAL_HOME']
+      process.env['SKILLSMITH_TEST_REAL_HOME'] = simulatedRealHome
+      try {
+        await expect(saveManifest(makeManifest({ enabled: false }))).rejects.toThrow(/SMI-6343/)
+      } finally {
+        if (previous === undefined) delete process.env['SKILLSMITH_TEST_REAL_HOME']
+        else process.env['SKILLSMITH_TEST_REAL_HOME'] = previous
+      }
+
+      // The guard fired before any fs call — nothing was written.
+      expect(writeFile).not.toHaveBeenCalled()
     })
   })
 })
