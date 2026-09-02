@@ -83,6 +83,15 @@ function isRlsDenied(error: { message?: string; code?: string } | null): boolean
   return (error.message ?? '').toLowerCase().includes('row-level security policy')
 }
 
+/** PostgREST's code for "no rows" (or >1 rows) via `.single()` — a real absence, not a query
+ *  failure. Matches registry-tools.live.ts's own `isNoRowsError` convention. Load-bearing for
+ *  fetchTeamScopedWorkspace() below: only a CONFIRMED no-rows result may collapse to `null` —
+ *  any other error must propagate, or a transient failure silently reads as "workspace has no
+ *  sharing policy" (adversarial-review finding, SMI-6113/SMI-6241 Wave 2 round 2). */
+function isNoRowsError(error: { message?: string; code?: string } | null): boolean {
+  return error?.code === 'PGRST116'
+}
+
 function mapWorkspace(row: WorkspaceRow): Workspace {
   return {
     id: row.id,
@@ -105,8 +114,13 @@ function mapSharedSkill(row: WorkspaceSkillRow): SharedSkill {
 
 /**
  * Fetch a workspace by (teamId, workspaceId) and verify tenant scope.
- * Returns null on miss or if the workspace belongs to a different team.
- * Shared helper so sibling methods don't depend on a correctly-bound `this`.
+ * Returns null on a CONFIRMED miss (including cross-team access, which the `team_id` filter turns
+ * into an ordinary no-rows result) — never on a query failure. `getWorkspaceSettings()` collapses
+ * this method's null into `{}` (no sharing policy), so a failure that were silently mapped to
+ * null here would fail the sharing-policy allow/deny gate OPEN on a transient error (adversarial-
+ * review finding, SMI-6113/SMI-6241 Wave 2 round 2) — the same "confirmed absence only" discipline
+ * registry-tools.live.ts's probe reads already use. Shared helper so sibling methods don't depend
+ * on a correctly-bound `this`.
  */
 async function fetchTeamScopedWorkspace(
   client: MinimalSupabaseClient,
@@ -119,7 +133,11 @@ async function fetchTeamScopedWorkspace(
     .eq('id', workspaceId)
     .eq('team_id', teamId)
     .single()
-  if (resp.error || !resp.data) return null
+  if (resp.error) {
+    if (isNoRowsError(resp.error)) return null
+    throw new Error(`Failed to look up workspace: ${resp.error.message ?? 'unknown error'}`)
+  }
+  if (!resp.data) return null
   return mapWorkspace(resp.data)
 }
 
@@ -172,9 +190,14 @@ export function createLiveService(): TeamWorkspaceService {
       if (resp.error || !resp.data) {
         if (isRlsDenied(resp.error)) {
           throw new Error(
-            'Only team admins can create a workspace — this action requires the ' +
-              '"workspace:manage" permission. Ask a team admin to create it, or have them ' +
-              'grant you workspace:manage.'
+            // Deliberately not "you are not an admin": an admin whose SSO session has gone
+            // stale also fails this check (has_team_permission()'s freshness gate), and telling
+            // them to ask an admin to grant workspace:manage would not fix it — round-2
+            // adversarial-review correction.
+            'Creating a workspace requires the "workspace:manage" permission — team admins ' +
+              'have it by default. If you are an admin and still see this, your SSO session ' +
+              'may need re-verification; otherwise ask a team admin to grant you ' +
+              'workspace:manage.'
           )
         }
         throw new Error(`Failed to create workspace: ${resp.error?.message ?? 'unknown error'}`)
@@ -214,6 +237,12 @@ export function createLiveService(): TeamWorkspaceService {
       // genuine miss. Probe with the SAME client via team_workspaces_member_read (any team member
       // can see the row) to disambiguate "no such workspace" from "you lack workspace:manage" —
       // mirrors registry-tools.live.ts's setDeprecated() probe pattern.
+      //
+      // Accepted TOCTOU (adversarial-review round 2): the DELETE and this probe are two separate
+      // statements, not one snapshot. If another caller deletes the SAME row between them, a
+      // permission-denied attempt reports "not found" instead of "workspace:manage required" —
+      // this is the safe direction (never fabricates success, never leaks existence to a
+      // non-member) and is accepted rather than closed with a single-statement RPC.
       const probe = await client
         .from<{ id: string }>('team_workspaces')
         .select('id')
@@ -228,9 +257,12 @@ export function createLiveService(): TeamWorkspaceService {
       }
       if (Array.isArray(probe.data) && probe.data.length > 0) {
         throw new Error(
-          'Only team admins can delete a workspace — this action requires the ' +
-            '"workspace:manage" permission. Ask a team admin to delete it, or have them grant ' +
-            'you workspace:manage.'
+          // Same wording rationale as createWorkspace()'s RLS-denial message: not "you are not
+          // an admin", since a stale-SSO admin fails this gate too and granting them
+          // workspace:manage would not help.
+          'Deleting a workspace requires the "workspace:manage" permission — team admins have ' +
+            'it by default. If you are an admin and still see this, your SSO session may need ' +
+            're-verification; otherwise ask a team admin to grant you workspace:manage.'
         )
       }
       return false

@@ -59,8 +59,15 @@ export interface WorkspaceUserClientBinding {
   actorUserId: string | null
   /**
    * Which getter produced this binding — `workspace_manage` for the `workspace:manage`-gated
-   * operations, `workspace_member` for the membership-gated ones. Kept on the binding so "no call
-   * site uses the wrong getter" is checkable from the return value, not only asserted in a test.
+   * operations, `workspace_member` for the membership-gated ones. Mirrors the `role`/`gate` field
+   * `registry-tools.live.auth.ts`/`rbac-tools.live.auth.ts` carry for their own audit trails.
+   *
+   * HONEST SCOPE (adversarial-review round 2 correction): `team-workspace.live.ts` has no
+   * `audit_logs` write path today, so nothing currently reads this field — it does NOT, by
+   * itself, catch a call site using the wrong getter (that would still compile and run; the
+   * field would just accurately describe whichever getter was actually called). It exists so a
+   * future audit trail for this module can attribute rows the same way the two sibling modules
+   * already do, without another interface change.
    */
   gate: 'workspace_manage' | 'workspace_member'
 }

@@ -187,6 +187,22 @@ describe('team-workspace live mode — membership-gated methods — SMI-6113/SMI
     expect(result.workspace?.id).toBe('ws-1')
   })
 
+  it('getWorkspace surfaces a genuine query failure as a clear thrown error, not a fabricated "not found"', async () => {
+    const { client } = createFakeClient({
+      singleResponders: [() => ({ data: null, error: { message: 'connection reset' } })],
+    })
+    await mockUserClient(client)
+
+    const result = await executeTeamWorkspace(
+      { action: 'get', workspaceId: '00000000-0000-0000-0000-000000000001' },
+      makeContext()
+    )
+
+    expect(result.success).toBe(false)
+    expect(result.error).toMatch(/Failed to look up workspace: connection reset/)
+    expect(result.error).not.toMatch(/not found/i)
+  })
+
   it('listWorkspaces surfaces a query failure as a clear thrown error', async () => {
     const { client } = createFakeClient({
       thenResponders: [() => ({ data: null, error: { message: 'connection reset' } })],
@@ -291,6 +307,29 @@ describe('team-workspace live mode — membership-gated methods — SMI-6113/SMI
 
     // getWorkspaceSettings is reached indirectly via share_skill add's sharing-policy check above,
     // which already exercised fetchTeamScopedWorkspace on the member getter — no separate call needed.
+  })
+
+  it('share_skill add fails CLOSED (not silently past the sharing policy) when the settings read itself fails', async () => {
+    // Round-2 adversarial-review regression test: fetchTeamScopedWorkspace() used to collapse
+    // EVERY error to null, so getWorkspaceSettings() would return `{}` (no sharing policy) on a
+    // transient query failure, letting share_skill add silently bypass a workspace's denyList.
+    // A non-PGRST116 error must now propagate as a thrown error instead.
+    const { client } = createFakeClient({
+      singleResponders: [() => ({ data: null, error: { message: 'connection reset' } })],
+    })
+    await mockUserClient(client)
+
+    const result = await executeShareSkill(
+      {
+        action: 'add',
+        workspaceId: '00000000-0000-0000-0000-000000000001',
+        skillId: 'author/name',
+      },
+      makeContext()
+    )
+
+    expect(result.success).toBe(false)
+    expect(result.error).toMatch(/Failed to look up workspace: connection reset/)
   })
 
   it('addSkill surfaces an insert failure as a clear thrown error', async () => {
@@ -673,7 +712,18 @@ describe('share_skill live mode — cross-team hardening — SMI-4312', () => {
    */
   function foreignWorkspaceFake() {
     return createFakeClient({
-      singleResponders: [() => ({ data: null, error: { message: 'No rows found' } })],
+      // Realistic shape: a team-scoped .single() against a cross-team id is PostgREST's genuine
+      // no-rows code (PGRST116), not an arbitrary message — fetchTeamScopedWorkspace() only
+      // collapses THIS code to null; any other error now throws (round-2 adversarial-review fix).
+      singleResponders: [
+        () => ({
+          data: null,
+          error: {
+            code: 'PGRST116',
+            message: 'JSON object requested, multiple (or no) rows returned',
+          },
+        }),
+      ],
       thenResponders: [() => ({ data: [], error: null })],
     })
   }
