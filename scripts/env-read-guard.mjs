@@ -89,6 +89,31 @@ const INLINE_INTERPRETERS = new Set(['python', 'python3', 'node', 'nodejs', 'per
 const INLINE_SCRIPT_LONG_FLAGS = new Set(['--eval', '--print', '--execute', '--command'])
 
 /**
+ * Short-flag characters that introduce inline script text, PER INTERPRETER —
+ * not a single shared set. A generic "-[ce]" regex misses real bypasses
+ * (`node -p '<code>'` prints an expression's value exactly like `-e`; `php
+ * -r '<code>'` runs code) because those interpreters' inline-code short
+ * flags don't happen to be the letters `c`/`e`. Getting this wrong is not a
+ * cosmetic gap here — `node -p "require('fs').readFileSync('.env','utf8')"`
+ * and `php -r "readfile('.env');"` both print the complete secret file and
+ * were confirmed to return `allow` before this fix (SMI-6361 pre-merge
+ * review). Deliberately per-interpreter rather than a single pooled set:
+ * ruby's `-r` means "require a library" (not inline code), so pooling
+ * python/node/perl/ruby/php's short flags together would make `ruby -r`
+ * false-positive as inline-script, or worse, tempt a future edit to drop a
+ * real flag while "simplifying" a shared set.
+ */
+const INLINE_SCRIPT_SHORT_FLAG_CHARS = {
+  python: 'c',
+  python3: 'c',
+  node: 'ep',
+  nodejs: 'ep',
+  perl: 'e',
+  ruby: 'e',
+  php: 'r',
+}
+
+/**
  * Sanctioned exception: metadata-only / exit-code-only commands. These
  * never emit file contents, which preserves the already-approved
  * `[ -f .env ] && grep -q "KEY" .env` idiom.
@@ -485,12 +510,25 @@ function isOutputFreeGrep(args) {
   return quiet && !output
 }
 
-/** True when an interpreter invocation carries inline script text. */
-function hasInlineScriptFlag(args) {
+/**
+ * True when an interpreter invocation carries inline script text. Short
+ * flags are checked per-interpreter (see INLINE_SCRIPT_SHORT_FLAG_CHARS);
+ * long flags (--eval/--print/--execute/--command) are checked against every
+ * interpreter uniformly — over-recognizing a long flag no interpreter
+ * actually has is safe (it just triggers an extra, harmless text scan),
+ * unlike under-recognizing a real short flag.
+ * @param {string} cmd
+ * @param {string[]} args
+ */
+function hasInlineScriptFlag(cmd, args) {
+  const shortChars = INLINE_SCRIPT_SHORT_FLAG_CHARS[cmd] ?? ''
   for (const a of args) {
     if (a === '--') break
     if (INLINE_SCRIPT_LONG_FLAGS.has(a.split('=')[0])) return true
-    if (/^-[A-Za-z]*[ce][A-Za-z]*$/.test(a)) return true
+    if (a.startsWith('--') || a === '-' || !a.startsWith('-')) continue
+    for (const ch of a.slice(1)) {
+      if (shortChars.includes(ch)) return true
+    }
   }
   return false
 }
@@ -535,7 +573,7 @@ function checkArgv(argv) {
     }
   }
 
-  if (isInterpreter && hasInlineScriptFlag(args)) {
+  if (isInterpreter && hasInlineScriptFlag(cmd, args)) {
     for (const a of args) {
       const embedded = scanTextForProtected(a)
       if (embedded) return { kind: 'read', file: embedded }

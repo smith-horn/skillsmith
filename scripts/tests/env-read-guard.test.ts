@@ -43,9 +43,18 @@ describe('.claude/settings.json registration (regression pin)', () => {
     )
     expect(bashMatchers.length).toBeGreaterThan(0)
 
-    const hasGuardHook = bashMatchers.some((entry: { hooks?: Array<{ command?: string }> }) =>
+    // Checks type + the exact invocation shape, not just a substring match
+    // on the command string — a pre-merge review flagged that a
+    // substring-only check would still pass if the hook were silently
+    // replaced with a non-functional command that merely retained the text
+    // "env-read-guard" somewhere (e.g. in a comment or an unrelated arg).
+    const hasGuardHook = bashMatchers.some((entry: { hooks?: Array<Record<string, unknown>> }) =>
       (entry.hooks ?? []).some(
-        (hook) => typeof hook.command === 'string' && hook.command.includes('env-read-guard')
+        (hook) =>
+          hook.type === 'command' &&
+          typeof hook.command === 'string' &&
+          hook.command.includes('node') &&
+          hook.command.includes('scripts/env-read-guard.mjs')
       )
     )
     expect(hasGuardHook).toBe(true)
@@ -208,6 +217,51 @@ describe('decide() — additional cases from the guard’s own documented behavi
 
   it('cat some-other-file.txt -> allow (no protected file referenced)', () => {
     const result = decide(bashCall('cat some-other-file.txt'), {})
+    expect(result.action).toBe('allow')
+  })
+})
+
+describe('decide() — interpreter short-flag bypass regression (pre-merge review finding)', () => {
+  // GPT-5.6-Sol's cross-model pre-merge review (SMI-6361) found that a
+  // generic "-[ce]" short-flag regex missed node's `-p` (print, same
+  // inline-code hazard as `-e`) — confirmed live: `node -p
+  // "require('fs').readFileSync('.env','utf8')"` returned allow before this
+  // fix. The same root cause (per-interpreter flags pooled into one
+  // generic check) was independently found to also miss php's `-r` (run
+  // code). Both are fixed via INLINE_SCRIPT_SHORT_FLAG_CHARS.
+
+  it('node -p "<code touching .env>" -> deny (was a confirmed bypass)', () => {
+    const result = decide(bashCall(`node -p "require('fs').readFileSync('.env','utf8')"`), {})
+    expect(result.action).toBe('deny')
+  })
+
+  it('node --print "<code touching .env>" -> deny (long-flag form, already covered)', () => {
+    const result = decide(bashCall(`node --print "require('fs').readFileSync('.env','utf8')"`), {})
+    expect(result.action).toBe('deny')
+  })
+
+  it('php -r "<code touching .env>" -> deny (was a confirmed bypass)', () => {
+    const result = decide(bashCall(`php -r "readfile('.env');"`), {})
+    expect(result.action).toBe('deny')
+  })
+
+  it('node -p "<code with no .env reference>" -> allow (no false positive)', () => {
+    const result = decide(bashCall('node -p "1+1"'), {})
+    expect(result.action).toBe('allow')
+  })
+
+  it('node -pe "<code with no .env reference>" -> allow (combined short flags, no false positive)', () => {
+    const result = decide(bashCall('node -pe "1+1"'), {})
+    expect(result.action).toBe('allow')
+  })
+
+  it('ruby -r json -e "puts 1" -> allow (ruby\'s -r means require-a-library, not run-code — must not be pooled with php\'s -r)', () => {
+    const result = decide(bashCall('ruby -r json -e "puts 1"'), {})
+    expect(result.action).toBe('allow')
+  })
+
+  it('php -v -> allow (a real php flag that happens to start with a different letter than -r)', () => {
+    const result = decide(bashCall('php -v'), {})
     expect(result.action).toBe('allow')
   })
 })
