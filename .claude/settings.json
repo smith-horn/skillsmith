@@ -78,8 +78,7 @@
       "Read(//Users/williamsmith/Documents/GitHub/Smith-Horn/skillsmith/.env)",
       "Read(//Users/williamsmith/Documents/GitHub/Smith-Horn/skillsmith/.worktrees/**/.env)",
       "Bash(cat .env)",
-      "Bash(cat .env:*)",
-      "Bash(echo $.env:*)"
+      "Bash(cat .env:*)"
     ]
   },
   "hooks": {
@@ -91,6 +90,11 @@
             "type": "command",
             "timeout": 5,
             "command": "CMD=$(cat | jq -r '.tool_input.command // empty' | head -c 4096 | tr '\\n' ' '); if [ -n \"$CMD\" ]; then \"$CLAUDE_PROJECT_DIR/scripts/claude-hooks-log-wrapper.sh\" pre-command \"$CMD\" -- --command \"$CMD\" --validate-safety true --prepare-resources true; fi"
+          },
+          {
+            "type": "command",
+            "timeout": 5,
+            "command": "node \"$CLAUDE_PROJECT_DIR/scripts/env-read-guard.mjs\""
           }
         ]
       },

@@ -46,6 +46,14 @@ This skill ensures all sensitive data is properly protected.
 echo $CLERK_SECRET_KEY
 cat .env | grep SECRET
 printenv | grep API
+grep SECRET .env
+head .env
+tail .env
+sed -n '1,5p' .env
+awk '{print}' .env
+strings .env
+python3 -c "print(open('.env').read())"
+docker exec <container> cat /app/.env   # a bind-mounted repo root reaches the identical file
 
 # ✅ DO THIS - validates without exposing
 varlock load --quiet && echo "✓ Secrets validated"
@@ -57,11 +65,18 @@ varlock load --quiet && echo "✓ Secrets validated"
 # ❌ NEVER DO THIS - exposes all secrets
 cat .env
 less .env
+head .env
+tail .env
+sed .env
+awk '{print}' .env
+grep <pattern> .env
+strings .env
 Read tool on .env file
+docker exec <container> cat .env    # or any wrapper around the commands above
 
 # ✅ DO THIS - read schema (safe) not values
 cat .env.schema
-varlock load  # Shows masked values
+varlock load   # default pretty format only — masked. NEVER --format json/json-full/json-full-compact/env (those print unmasked, raw values)
 ```
 
 ### Rule 3: Use Varlock for Validation
@@ -74,6 +89,8 @@ test -n "$API_KEY" && echo "Key: $API_KEY"
 varlock load
 # Output shows: API_KEY 🔐sensitive └ ▒▒▒▒▒
 ```
+
+> **Format matters.** Only `varlock load`'s **default pretty format** — the output shown above — redacts sensitive values. `varlock load --format json`, `--format json-full`, `--format json-full-compact`, and `--format env` all print **unmasked, raw values**. Never run `varlock load` with any of those four `--format` values, and never suggest them to a user as a "safe" way to inspect config.
 
 ### Rule 4: Never Include Secrets in Commands
 
@@ -174,14 +191,17 @@ STRIPE_PUBLISHABLE_KEY=
 ### Validating Environment
 
 ```bash
-# Check all variables (safe - masks sensitive values)
+# Check all variables (safe ONLY in the default pretty format - masks sensitive values)
 varlock load
 
 # Quiet mode (no output on success)
 varlock load --quiet
 
-# Check specific environment
+# Check specific environment (still default pretty format - masked)
 varlock load --env=production
+
+# ❌ NEVER add --format json / --format json-full / --format json-full-compact / --format env
+# to any of the commands above — all four print unmasked, raw values
 ```
 
 ### Running Commands with Secrets
@@ -212,7 +232,7 @@ grep "^[A-Z]" .env.schema
 ### Pattern 1: Validate Before Operations
 
 ```bash
-# Always validate environment first
+# Always validate environment first (quiet mode, default format)
 varlock load --quiet || {
   echo "❌ Environment validation failed"
   exit 1
@@ -228,7 +248,7 @@ npm run build
 # 1. Update secret in external source (1Password, AWS, etc.)
 # 2. Update .env file manually (don't use Claude for this)
 # 3. Validate new value works
-varlock load
+varlock load   # default pretty format — masked; never --format json/json-full/json-full-compact/env
 
 # 4. If using GitHub Secrets, sync (values not shown)
 ./scripts/update-github-secrets.sh
@@ -242,7 +262,7 @@ varlock load
   env:
     DATABASE_URL: ${{ secrets.DATABASE_URL }}
     API_KEY: ${{ secrets.API_KEY }}
-  run: varlock load --quiet
+  run: varlock load --quiet   # default format; never add --format json/json-full/json-full-compact/env
 ```
 
 ### Pattern 4: Docker Integration
@@ -263,9 +283,10 @@ CMD ["varlock", "run", "--", "npm", "start"]
 ### When User Asks to "Check if API key is set"
 
 ```bash
-# ✅ Safe approach
+# ✅ Safe approach (default pretty format only)
 varlock load 2>&1 | grep "API_KEY"
 # Shows: ✅ API_KEY 🔐sensitive └ ▒▒▒▒▒
+# Never combine with --format json/json-full/json-full-compact/env — those print unmasked values
 
 # ❌ Never do
 echo $API_KEY
@@ -274,7 +295,7 @@ echo $API_KEY
 ### When User Asks to "Debug authentication"
 
 ```bash
-# ✅ Safe approach - check presence and format
+# ✅ Safe approach - check presence and format (default pretty format only)
 varlock load  # Validates types and required fields
 
 # Check if key has correct prefix (without showing value)
@@ -291,7 +312,7 @@ Claude should respond:
 "I cannot directly modify secrets for security reasons. Please:
 1. Update the value in your .env file manually
 2. Or update in your secrets manager (1Password, AWS, etc.)
-3. Then run `varlock load` to validate
+3. Then run `varlock load` (default pretty format — masked; never `--format json`/`json-full`/`json-full-compact`/`env`) to validate
 
 I can help you update the .env.schema if you need to add new variables."
 ```
@@ -300,8 +321,8 @@ I can help you update the .env.schema if you need to add new variables."
 
 ```
 Claude should respond:
-"I won't read .env files directly as they contain secrets. Instead:
-- Run `varlock load` to see masked values
+"I won't read .env files directly as they contain secrets — not with cat, grep, head, tail, sed, awk, strings, an inline interpreter, or a docker exec wrapper around any of them. Instead:
+- Run `varlock load` (default pretty format only — masked; never `--format json`/`json-full`/`json-full-compact`/`env`, which print unmasked values) to see masked values
 - Run `cat .env.schema` to see the schema (safe)
 - I can help you modify .env.schema if needed"
 ```
@@ -354,8 +375,8 @@ export PATH="$HOME/.varlock/bin:$PATH"
 ### "Schema validation failed"
 
 ```bash
-# Check which variables are missing/invalid
-varlock load  # Shows detailed errors
+# Check which variables are missing/invalid (default pretty format — masked)
+varlock load   # Shows detailed errors; never --format json/json-full/json-full-compact/env, which print unmasked values
 
 # Common fixes:
 # - Add missing required variables to .env
@@ -368,7 +389,9 @@ varlock load  # Shows detailed errors
 ```bash
 # 1. Rotate the exposed secret immediately
 # 2. Check .env.schema has @sensitive annotation
-# 3. Ensure using varlock commands, not echo/cat
+# 3. Ensure using varlock commands in the default pretty format —
+#    not echo/cat/grep/head/tail/sed/awk/strings/an inline interpreter,
+#    a docker exec wrapper around any of them, or varlock load --format json/json-full/json-full-compact/env
 
 # Add missing sensitivity:
 # Before: API_KEY=
@@ -393,6 +416,8 @@ Add these to your package.json:
 }
 ```
 
+> `env:validate` and every other bare `varlock load` invocation above are safe **only** in the default pretty format shown here. Never change these scripts to add `--format json`, `--format json-full`, `--format json-full-compact`, or `--format env` — all four print unmasked, raw values.
+
 ---
 
 ## Security Checklist for New Projects
@@ -405,7 +430,8 @@ Add these to your package.json:
 - [ ] Commit `.env.schema` to version control
 - [ ] Add `npm run env:validate` to CI/CD
 - [ ] Document secret rotation procedure
-- [ ] Never use `cat .env` or `echo $SECRET` in Claude sessions
+- [ ] Never use `cat`, `grep`, `head`, `tail`, `sed`, `awk`, `strings`, an inline interpreter, or a `docker exec` wrapper to read `.env` directly, and never `echo $SECRET`, in Claude sessions
+- [ ] Never run `varlock load --format json` / `json-full` / `json-full-compact` / `env` — only the default pretty format is masked
 
 ---
 
@@ -413,21 +439,30 @@ Add these to your package.json:
 
 | Task | Safe Command |
 |------|-------------|
-| Validate all env vars | `varlock load` |
+| Validate all env vars | `varlock load` (default pretty format only) |
 | Quiet validation | `varlock load --quiet` |
 | Run with env | `varlock run -- <cmd>` |
 | View schema | `cat .env.schema` |
-| Check specific var | `varlock load \| grep VAR_NAME` |
+| Check specific var | `varlock load \| grep VAR_NAME` (default pretty format only) |
+
+> Never add `--format json`, `--format json-full`, `--format json-full-compact`, or `--format env` to any `varlock load` command above — those four print unmasked, raw values.
 
 | Never Do | Why |
 |----------|-----|
 | `cat .env` | Exposes all secrets |
+| `grep <pattern> .env` | Exposes all secrets |
+| `head .env` / `tail .env` | Exposes all secrets |
+| `sed` / `awk` on `.env` | Exposes all secrets |
+| `strings .env` | Exposes all secrets |
 | `echo $SECRET` | Exposes to Claude context |
 | `printenv \| grep` | Exposes matching secrets |
-| Read .env with tools | Secrets in Claude's context |
+| Inline interpreter reading `.env` (e.g. `python3 -c`) | Exposes all secrets |
+| `docker exec <container> cat /app/.env` (or any wrapper around a command above) | Same file via bind mount — exposes all secrets |
+| Read tool on .env | Secrets in Claude's context |
 | Hardcode in commands | In shell history |
+| `varlock load --format json` / `json-full` / `json-full-compact` / `env` | Prints **unmasked** raw values |
 
 ---
 
-*Last updated: December 22, 2025*
+*Last updated: September 1, 2026*
 *Secure-by-default environment management for Claude Code*
