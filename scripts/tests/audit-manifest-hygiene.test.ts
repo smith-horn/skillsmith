@@ -31,6 +31,8 @@ import {
   hasManifestPathOverride,
   referencesManifestWriter,
   listManifestHygieneTestFiles,
+  MANIFEST_WRITER_PATTERNS,
+  MANIFEST_WRITER_SYMBOLS,
 } from '../audit-manifest-hygiene-helpers.mjs'
 
 type HygieneResult = {
@@ -208,6 +210,27 @@ describe('SMI-6343 Check 65: manifest-hygiene detection', () => {
       // never wires that path into the writer is still exposed — exempting on
       // the call alone would grant the whole integration suite a free pass.
       expect(hasManifestPathOverride('const ctx = await createTestFilesystem()')).toBe(false)
+    })
+  })
+
+  describe('finding-message symbol labels stay in sync with the patterns', () => {
+    // pr-reviewer PR-12 (SMI-6343): the adversarial-review follow-up grew
+    // MANIFEST_WRITER_PATTERNS from 4 entries to 10 but left Check 65's
+    // finding message naming only the original 4 — so a test tripped by
+    // `saveManifest` was told to look for four symbols none of which appear in
+    // its file. The message now renders MANIFEST_WRITER_SYMBOLS; this asserts
+    // the two arrays cannot drift apart again.
+    const patterns = MANIFEST_WRITER_PATTERNS as RegExp[]
+    const symbols = MANIFEST_WRITER_SYMBOLS as string[]
+
+    it('has one label per pattern', () => {
+      expect(symbols).toHaveLength(patterns.length)
+    })
+
+    it('every label is matched by its own positionally-paired pattern', () => {
+      symbols.forEach((symbol, i) => {
+        expect(patterns[i].test(symbol), `${symbol} vs ${patterns[i]}`).toBe(true)
+      })
     })
   })
 

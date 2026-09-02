@@ -24,9 +24,13 @@ process.setMaxListeners(20)
 // place when module-level constants like `DEFAULT_MANIFEST_PATH` are computed.
 //
 // This file is loaded via `sharedTestConfig.setupFiles` (vitest.preset.ts) as
-// an ABSOLUTE path, so all 12 vitest configs inherit it — including
+// an ABSOLUTE path, so all 13 vitest configs inherit it — including
 // `packages/mcp-server/vitest.config.integration.ts`, which previously had no
-// `setupFiles` key at all.
+// `setupFiles` key at all. (13, not 12: verified with
+// `grep -rln sharedTestConfig --include='*.ts'` minus the non-config files that
+// only mention it in prose. The stale 12 here was the same undercount
+// vitest.preset.ts's own comment already corrected — pr-reviewer PR-12,
+// SMI-6343.)
 
 import { mkdtempSync, rmSync } from 'node:fs'
 import { homedir, tmpdir } from 'node:os'

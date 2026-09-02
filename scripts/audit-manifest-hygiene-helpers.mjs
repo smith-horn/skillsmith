@@ -58,6 +58,31 @@ export const MANIFEST_WRITER_PATTERNS = [
 ]
 
 /**
+ * Human-readable labels for `MANIFEST_WRITER_PATTERNS`, in the same order, used
+ * to build Check 65's finding message.
+ *
+ * Kept as a parallel array rather than inlined into the message string because
+ * the message ALREADY drifted once: the adversarial-review follow-up grew the
+ * pattern list from 4 entries to 10 and left the finding message naming only
+ * the original 4, so a test tripped by `saveManifest` would have been told to
+ * look for four symbols none of which appear in its file (pr-reviewer PR-12,
+ * SMI-6343). `audit-manifest-hygiene.test.ts` asserts the two arrays stay the
+ * same length, so the next person to add a pattern cannot repeat that drift.
+ */
+export const MANIFEST_WRITER_SYMBOLS = [
+  'SkillInstallationService',
+  'installSkill',
+  'backfillManifest',
+  'new ManifestManager',
+  'updateManifestSafely',
+  'saveManifest',
+  'acquireManifestLock',
+  'updateManifestEntry',
+  'addLink',
+  'removeLinks',
+]
+
+/**
  * Evidence that the file names its own manifest location. Any one exempts.
  *
  * - `manifestPath` — an explicit path passed to the service/manager, in any

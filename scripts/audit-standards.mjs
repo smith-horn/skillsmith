@@ -64,6 +64,7 @@ import { findMissingHuskyStubs } from './audit-husky-stub-coverage-helpers.mjs'
 import {
   listManifestHygieneTestFiles,
   evaluateManifestHygiene,
+  MANIFEST_WRITER_SYMBOLS,
 } from './audit-manifest-hygiene-helpers.mjs'
 import {
   findFloatingSupabaseCliInstalls,
@@ -5800,8 +5801,8 @@ console.log(`\n${BOLD}Check 65: test-suite manifest hygiene (SMI-6343)${RESET}`)
   } else {
     for (const f of manifestHygieneFindings) {
       report(
-        `Check 65: ${f} references a manifest-writing symbol (SkillInstallationService / installSkill / ` +
-          `backfillManifest / new ManifestManager) without an explicit manifest path${shadowSuffix}`,
+        `Check 65: ${f} references a manifest-writing symbol (` +
+          `${MANIFEST_WRITER_SYMBOLS.join(' / ')}) without an explicit manifest path${shadowSuffix}`,
         'Pass an explicit manifestPath (createIsolatedManifestPath() or createTestFilesystem().manifestPath ' +
           'from packages/mcp-server/tests/integration/setup.ts, or any os.tmpdir()-based path), or override ' +
           '$HOME/%USERPROFILE% for the test. Without one, the writer falls back to ' +
