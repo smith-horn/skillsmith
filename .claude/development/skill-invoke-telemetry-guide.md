@@ -96,12 +96,64 @@ const ALLOWED_EVENTS = new Set([
   'skill_invoke',
   'skill_context_load',
   'skill_invoke_unparsed',
+  'tool_call',
 ]);
 ```
 
 - `skill_invoke` — a skill was fully loaded and executed
 - `skill_context_load` — a `get_skill` MCP call retrieved skill context
 - `skill_invoke_unparsed` — invocation detected but could not be attributed (quarantine; used for coverage diagnostics)
+- `tool_call` — an MCP tool call made by a signed-in, consenting user (Team/Enterprise usage reporting)
+
+---
+
+## Tool call events (MCP attribution)
+
+The `tool_call` event type is distinct from `skill_invoke` and carries team-scoped attribution for Team/Enterprise usage dashboards.
+
+**Event type:** stored server-side as `event_type = 'telemetry:tool_call'`
+
+**Wire format:**
+```json
+{
+  "event": "tool_call",
+  "metadata": {
+    "tool_name": "search",
+    "duration_ms": 150,
+    "success": true
+  }
+}
+```
+
+**Authentication:** Requires `Authorization: Bearer <user JWT>` — no anonymous write path exists for this event type. An unauthenticated `tool_call` is rejected outright with HTTP 401.
+
+**Identity model:** Unlike `skill_invoke` which uses `anonymous_id`, `tool_call` requires a verified user JWT. The server derives team membership from the JWT and encodes it only as a per-team pseudonymous actor digest, never as the raw team ID or user email.
+
+**Consent requirement:** Same as `skill_invoke` — a user's telemetry preference must be enabled. Disabled consent → no event is written.
+
+**Note:** `metadata.tool_name` is used for tool-call events. The field `metadata.skill_name` is reserved exclusively for skill-invocation events and must not be reused for tool calls, as doing so would corrupt skill usage metrics.
+
+---
+
+## Two-lane identity model
+
+Skillsmith uses two independent attribution lanes:
+
+**Lane A — Anonymous (no JWT required)**
+- Applies to: Claude Code hook, CLI without login, any client not sending a user JWT
+- Identity: SHA-256 hash of a random UUID (rotates annually), stored in `~/.skillsmith/manifest.json`
+- Event types: `skill_invoke`, `skill_context_load`, `skill_invoke_unparsed`
+- Team scope: none (individual use only)
+- Dashboard visibility: not included in Team/Enterprise dashboards
+
+**Lane B — Attributable (JWT required)**
+- Applies to: Signed-in users on Team/Enterprise accounts who have consented to telemetry
+- Identity: non-reversible per-team pseudonym derived from verified user JWT
+- Event types: `tool_call` (new; MCP tool calls only)
+- Team scope: yes (team admins can see per-user usage within their team)
+- Dashboard visibility: counted in Team/Enterprise usage dashboards
+
+A user cannot simultaneously send both lanes for the same tool call — if a JWT is present, Lane B is used; otherwise Lane A is used.
 
 ---
 

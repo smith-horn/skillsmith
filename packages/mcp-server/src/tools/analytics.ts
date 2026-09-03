@@ -2,44 +2,43 @@
  * @fileoverview Analytics MCP tools — team and enterprise usage dashboards
  * @module @skillsmith/mcp-server/tools/analytics
  * @see SMI-3899: Team Usage Analytics MCP Tools (Wave 2b)
+ * @see SMI-6362 Wave 4: Wire Team/Enterprise analytics tools to cloud-aggregated MCP tool-call data
  *
  * Split-tier analytics:
  * - Team tier: team_analytics_dashboard, team_usage_report (usage_analytics flag)
  * - Enterprise tier: analytics_dashboard, usage_report (advanced_analytics flag)
  *
- * Uses real SQLite queries against audit_logs when db is available,
- * falls back to stub mock data when no database is present.
+ * Tier gating happens one layer above this file (MCP tool registration / license.gate.ts, not
+ * touched by this wave) — Community/Individual callers never reach the handlers below. A
+ * Team/Enterprise caller that does reach them resolves against cloud-aggregated `search_metrics`
+ * data via `SupabaseAnalyticsService` (analytics.supabase.service.ts), which requires both a
+ * `skillsmith login` session (who is calling) and an active Team/Enterprise license/API key (which
+ * team) — see analytics.actions.ts's `resolveCloudAnalytics()`. Neither a missing credential nor a
+ * cloud RPC failure falls through to local/stub data; both render an actionable error instead
+ * (SMI-6362 Wave 4 D-2c / AC-10) — there is no more silent "Uses real SQLite queries ... falls
+ * back to stub mock data" behavior for these four tools.
+ *
+ * SMI-5127 / SMI-6362 Wave 4: the four action-handler implementations, their withTelemetry-wrapped
+ * exports, and the cloud credential-resolution + rendering helpers live in the sibling
+ * analytics.actions.ts (500-line audit:standards budget split) — re-exported below unchanged. See
+ * that file's header for the full three-outcome resolution flow, and its
+ * `resolveCloudAnalytics()`/`CloudAnalyticsResolution` for the credential-resolution logic an
+ * adversarial review should scope to.
  */
 
 import { z } from 'zod'
-import type { ToolContext } from '../context.js'
-import { withTelemetry } from '@skillsmith/core/telemetry'
-import {
-  periodDays,
-  stubTeamAnalyticsDashboard,
-  stubTeamUsageReport,
-  stubAnalyticsDashboard,
-  stubUsageReport,
-} from './analytics.stub.js'
-import { createRealAnalyticsService, type AnalyticsService } from './analytics.service.js'
 
 // Re-export stub helpers for external consumers
 export { periodDays, generateDailyTrend } from './analytics.stub.js'
 
-/**
- * Resolve analytics service: real (SQLite-backed) when db is available,
- * otherwise null (handlers fall back to inline stub data).
- */
-function resolveAnalyticsService(context: ToolContext): AnalyticsService | null {
-  try {
-    if (context.db && context.db.open) {
-      return createRealAnalyticsService(context.db)
-    }
-  } catch {
-    // Fall through to stub
-  }
-  return null
-}
+// SMI-5127 / SMI-6362 Wave 4: action-handler implementations + withTelemetry-wrapped exports now
+// live in analytics.actions.ts — re-exported here unchanged.
+export {
+  executeTeamAnalyticsDashboard,
+  executeTeamUsageReport,
+  executeAnalyticsDashboard,
+  executeUsageReport,
+} from './analytics.actions.js'
 
 // ============================================================================
 // Shared types
@@ -132,7 +131,7 @@ export const teamUsageReportToolSchema = {
 export const analyticsDashboardToolSchema = {
   name: 'analytics_dashboard' as const,
   description:
-    'Enterprise analytics dashboard: recommendation accuracy, skill adoption curves, ' +
+    'Enterprise analytics dashboard: recommendation accuracy, skill usage trends, ' +
     'team-wide aggregation. Requires Enterprise tier (advanced_analytics feature).',
   inputSchema: {
     type: 'object' as const,
@@ -171,259 +170,3 @@ export const usageReportToolSchema = {
     },
   },
 }
-
-// ============================================================================
-// Handlers
-// ============================================================================
-
-/**
- * Team analytics dashboard handler.
- * Returns per-user tool usage, top tools, and daily trend as markdown.
- *
- * Uses real service when db is available, falls back to stub
- */
-async function executeTeamAnalyticsDashboardImpl(
-  input: TeamAnalyticsDashboardInput,
-  context: ToolContext
-): Promise<string> {
-  const days = periodDays(input.period)
-  const svc = resolveAnalyticsService(context)
-
-  if (svc) {
-    const data = svc.getDashboardData(days)
-    const total = data.totalToolCalls
-    const avgPerDay = days > 0 ? (total / days).toFixed(1) : '0.0'
-    const lines = [
-      `# Team Analytics Dashboard (${input.period})`,
-      '',
-      '## Summary',
-      `- **Period**: Last ${days} days`,
-      `- **Total tool calls**: ${total}`,
-      `- **Unique tools**: ${data.uniqueTools}`,
-      `- **Avg calls/day**: ${avgPerDay}`,
-      `- **Data source**: live`,
-      '',
-      '## Top Tools',
-      '| Tool | Calls | % of Total |',
-      '|------|-------|------------|',
-      ...data.topTools.map((t) => {
-        const pct = total > 0 ? Math.round((t.count / total) * 100) : 0
-        return `| ${t.tool} | ${t.count} | ${pct}% |`
-      }),
-      '',
-      '## Period Comparison',
-      `- **Current**: ${data.periodComparison.current}`,
-      `- **Previous**: ${data.periodComparison.previous}`,
-      `- **Change**: ${data.periodComparison.changePercent >= 0 ? '+' : ''}${data.periodComparison.changePercent}%`,
-      '',
-      '## Daily Trend (last 7 days)',
-      '| Date | Calls |',
-      '|------|-------|',
-      ...data.dailyTrend.slice(-7).map((d) => `| ${d.date} | ${d.count} |`),
-    ]
-    return lines.join('\n')
-  }
-
-  return stubTeamAnalyticsDashboard(input.period)
-}
-
-/**
- * Team usage report handler.
- * Returns weekly/monthly summary with period comparison as markdown.
- *
- * Uses real service when db is available, falls back to stub
- */
-async function executeTeamUsageReportImpl(
-  input: TeamUsageReportInput,
-  context: ToolContext
-): Promise<string> {
-  const days = periodDays(input.period)
-  const svc = resolveAnalyticsService(context)
-
-  if (svc) {
-    const data = svc.getUsageReport(days, input.format === 'detailed')
-    const { current, previous, changePercent } = data.periodComparison
-    const sign = changePercent >= 0 ? '+' : ''
-
-    const lines = [
-      `# Team Usage Report (${input.period})`,
-      '',
-      '## Period Summary',
-      `- **Current period**: ${current} total calls`,
-      `- **Previous period**: ${previous} total calls`,
-      `- **Change**: ${sign}${changePercent}%`,
-      `- **Unique tools**: ${data.uniqueTools}`,
-      `- **Data source**: live`,
-      '',
-      '## Top Tools',
-      '| Tool | Calls |',
-      '|------|-------|',
-      ...data.topTools.map((t) => `| ${t.tool} | ${t.count} |`),
-    ]
-
-    if (input.format === 'detailed' && data.byActor) {
-      lines.push(
-        '',
-        '## Detailed Breakdown by User',
-        '| User | Calls |',
-        '|------|-------|',
-        ...data.byActor.map((a) => `| ${a.actor} | ${a.count} |`)
-      )
-    }
-
-    return lines.join('\n')
-  }
-
-  return stubTeamUsageReport(input.period, input.format)
-}
-
-/**
- * Enterprise analytics dashboard handler.
- * Returns recommendation accuracy, adoption curves, and team aggregation as markdown.
- *
- * Uses real service when db is available, falls back to stub
- */
-async function executeAnalyticsDashboardImpl(
-  input: AnalyticsDashboardInput,
-  context: ToolContext
-): Promise<string> {
-  const days = periodDays(input.period)
-  const svc = resolveAnalyticsService(context)
-
-  if (svc) {
-    const data = svc.getDashboardData(days)
-    const total = data.totalToolCalls
-
-    const lines = [
-      `# Enterprise Analytics Dashboard (${input.period})`,
-      '',
-      '## Organization Summary',
-      `- **Period**: Last ${days} days`,
-      `- **Total tool calls**: ${total}`,
-      `- **Unique tools**: ${data.uniqueTools}`,
-      `- **Data source**: live`,
-      '',
-      '## Top Tools',
-      '| Tool | Calls | % of Total |',
-      '|------|-------|------------|',
-      ...data.topTools.map((t) => {
-        const pct = total > 0 ? Math.round((t.count / total) * 100) : 0
-        return `| ${t.tool} | ${t.count} | ${pct}% |`
-      }),
-      '',
-      '## Period Comparison',
-      `- **Current**: ${data.periodComparison.current}`,
-      `- **Previous**: ${data.periodComparison.previous}`,
-      `- **Change**: ${data.periodComparison.changePercent >= 0 ? '+' : ''}${data.periodComparison.changePercent}%`,
-      '',
-      '## Daily Trend (last 7 days)',
-      '| Date | Calls |',
-      '|------|-------|',
-      ...data.dailyTrend.slice(-7).map((d) => `| ${d.date} | ${d.count} |`),
-    ]
-
-    if (input.includeRecommendations) {
-      lines.push(
-        '',
-        '## Recommendation Accuracy',
-        '_Recommendation tracking requires server-side data. ' +
-          'Use audit_export for full recommendation metrics._'
-      )
-    }
-
-    return lines.join('\n')
-  }
-
-  return stubAnalyticsDashboard(input.period, input.includeRecommendations)
-}
-
-/**
- * Enterprise usage report handler.
- * Returns comprehensive report with all metrics as markdown (or CSV).
- *
- * Uses real service when db is available, falls back to stub
- */
-async function executeUsageReportImpl(
-  input: UsageReportInput,
-  context: ToolContext
-): Promise<string> {
-  const days = periodDays(input.period)
-  const svc = resolveAnalyticsService(context)
-
-  if (svc) {
-    const data = svc.getUsageReport(days, input.format === 'detailed')
-    const { current, previous, changePercent } = data.periodComparison
-    const sign = changePercent >= 0 ? '+' : ''
-
-    if (input.format === 'csv') {
-      const csvLines = [
-        'metric,current_period,previous_period,change_percent',
-        `total_calls,${current},${previous},${changePercent}`,
-        `unique_tools,${data.uniqueTools},,,`,
-      ]
-      for (const t of data.topTools) {
-        csvLines.push(`tool_${t.tool},${t.count},,,`)
-      }
-      return csvLines.join('\n')
-    }
-
-    const lines = [
-      `# Enterprise Usage Report (${input.period})`,
-      '',
-      '## Executive Summary',
-      `- **Period**: Last ${days} days`,
-      `- **Total tool calls**: ${current} (${sign}${changePercent}% vs previous)`,
-      `- **Unique tools**: ${data.uniqueTools}`,
-      `- **Data source**: live`,
-      '',
-      '## Top Tools',
-      '| Tool | Calls | % of Total |',
-      '|------|-------|------------|',
-      ...data.topTools.map((t) => {
-        const pct = current > 0 ? Math.round((t.count / current) * 100) : 0
-        return `| ${t.tool} | ${t.count} | ${pct}% |`
-      }),
-      '',
-      '## Daily Trend',
-      '| Date | Calls |',
-      '|------|-------|',
-      ...data.dailyTrend.slice(-7).map((d) => `| ${d.date} | ${d.count} |`),
-    ]
-
-    if (input.format === 'detailed' && data.byActor) {
-      lines.push(
-        '',
-        '## Per-User Breakdown',
-        '| User | Calls |',
-        '|------|-------|',
-        ...data.byActor.map((a) => `| ${a.actor} | ${a.count} |`)
-      )
-    }
-
-    return lines.join('\n')
-  }
-
-  return stubUsageReport(input.period, input.format)
-}
-
-// SMI-5017 W2.S2: wrap at export boundary
-export const executeTeamAnalyticsDashboard = withTelemetry(executeTeamAnalyticsDashboardImpl, {
-  source: 'mcp-tool',
-  extractSkillId: () => 'team_analytics_dashboard',
-  extractFramework: () => 'unknown',
-})
-export const executeTeamUsageReport = withTelemetry(executeTeamUsageReportImpl, {
-  source: 'mcp-tool',
-  extractSkillId: () => 'team_usage_report',
-  extractFramework: () => 'unknown',
-})
-export const executeAnalyticsDashboard = withTelemetry(executeAnalyticsDashboardImpl, {
-  source: 'mcp-tool',
-  extractSkillId: () => 'analytics_dashboard',
-  extractFramework: () => 'unknown',
-})
-export const executeUsageReport = withTelemetry(executeUsageReportImpl, {
-  source: 'mcp-tool',
-  extractSkillId: () => 'usage_report',
-  extractFramework: () => 'unknown',
-})

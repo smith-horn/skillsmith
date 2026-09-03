@@ -377,7 +377,12 @@ describe('emitToolCallEvent', () => {
       setTelemetryIdentityProvider(() => ({ accessToken: 'jwt-abc' }))
       emitToolCallEvent(basePayload)
       await flush()
-      expect(getTelemetryEmitStats()).toMatchObject({ accepted: 0, rejected: 1, failed: 0 })
+      expect(getTelemetryEmitStats()).toMatchObject({
+        accepted: 0,
+        rejected: 1,
+        failed: 0,
+        lastRejectionReason: 'consent_required',
+      })
     })
 
     it('classifies a swallowed fetch/network error as failed', async () => {
@@ -386,6 +391,35 @@ describe('emitToolCallEvent', () => {
       emitToolCallEvent(basePayload)
       await flush()
       expect(getTelemetryEmitStats()).toMatchObject({ accepted: 0, rejected: 0, failed: 1 })
+    })
+
+    it('updates lastRejectionReason to the most recent rejection only', async () => {
+      fetchSpy.mockResolvedValueOnce(
+        new Response(null, {
+          status: 200,
+          headers: {
+            'X-Skillsmith-Telemetry-Accepted': '0',
+            'X-Skillsmith-Telemetry-Reason': 'ambiguous_team',
+          },
+        })
+      )
+      setTelemetryIdentityProvider(() => ({ accessToken: 'jwt-abc' }))
+      emitToolCallEvent(basePayload)
+      await flush()
+      expect(getTelemetryEmitStats().lastRejectionReason).toBe('ambiguous_team')
+
+      fetchSpy.mockResolvedValueOnce(
+        new Response(null, {
+          status: 200,
+          headers: {
+            'X-Skillsmith-Telemetry-Accepted': '0',
+            'X-Skillsmith-Telemetry-Reason': 'consent_denied',
+          },
+        })
+      )
+      emitToolCallEvent(basePayload)
+      await flush()
+      expect(getTelemetryEmitStats().lastRejectionReason).toBe('consent_denied')
     })
 
     it('invokes the invalidation handler on an invalid_jwt rejection, and only that reason', async () => {

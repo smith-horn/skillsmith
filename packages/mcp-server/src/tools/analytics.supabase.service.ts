@@ -2,11 +2,15 @@
  * @fileoverview Supabase-backed analytics service — cloud read path for Team/Enterprise tiers
  * @module @skillsmith/mcp-server/tools/analytics.supabase.service
  * @see SMI-5015: W1.S3 — MCP read path for skill-invoke analytics RPCs
+ * @see SMI-6362 Wave 4 — D-2c (user-bound client, no SECURITY DEFINER bypass), D-2e (reporting
+ *   coverage / k-anonymity), D-9 (self-attestation disclosure)
  *
- * Three RPCs are called against the cloud `search_metrics` table:
- *  - analytics_skill_top     → topSkills panel
- *  - analytics_skill_stale   → staleSkills panel
- *  - analytics_skill_cooccurrence → co-occurrence panel
+ * Five RPCs are called against the cloud `search_metrics` table:
+ *  - analytics_skill_top              → topSkills panel
+ *  - analytics_skill_stale            → staleSkills panel
+ *  - analytics_skill_cooccurrence     → co-occurrence panel
+ *  - analytics_tool_usage             → AnalyticsData/UsageReportData (D-2c)
+ *  - analytics_team_reporting_coverage → TeamReportingCoverage (D-2e)
  *
  * Error handling: methods NEVER throw — errors are returned as a typed
  * error envelope `{ ok: false; error: string }` so callers can branch
@@ -14,9 +18,31 @@
  *
  * RPC params use PostgreSQL snake_case names (p_team_id, p_window_days,
  * p_threshold) matching the function signatures in the migration.
+ *
+ * Client (D-2c): every method below builds its client via `getSupabaseUserClient(accessToken)`,
+ * never the anon-key singleton. All five RPCs are `REVOKE ALL FROM PUBLIC, anon; GRANT EXECUTE TO
+ * authenticated` and require a real user's JWT — `p_team_id` is a filter, never an authorization
+ * check, so a caller-supplied team id alone must never be sufficient to read that team's data.
+ * This file deliberately does NOT special-case "no access token" — that's the caller's job (a
+ * different file, analytics.ts) to check before ever calling into this service.
  */
 
-import { getSupabaseClient } from '../supabase-client.js'
+import { getSupabaseUserClient } from '../supabase-client.js'
+import type { UsageReportData } from './analytics.service.js'
+import type {
+  RpcTopRow,
+  RpcStaleRow,
+  RpcCooccurrenceRow,
+  RpcToolUsageRow,
+  RpcReportingCoverageRow,
+} from './analytics.supabase.service.helpers.js'
+
+export {
+  COVERAGE_K,
+  buildCoverageNote,
+  nicknameFromActor,
+  actorDisplayLabel,
+} from './analytics.supabase.service.helpers.js'
 
 // ============================================================================
 // Panel response types (per M6 spec in skill-invoke-telemetry.md §4)
@@ -73,35 +99,32 @@ export interface CooccurrencePanel {
   rows: CooccurrenceRow[]
 }
 
+/**
+ * Mapped result of `analytics_team_reporting_coverage` (D-2e). Deliberately does NOT carry
+ * `suppression_reason` — that RPC column is diagnostic-only and must never reach a renderer, so it
+ * is dropped at the mapping boundary in {@link SupabaseAnalyticsService.getReportingCoverage}
+ * rather than merely being ignored by callers.
+ */
+export interface TeamReportingCoverage {
+  coverageLevel: 'full' | 'aggregate' | 'qualitative'
+  totalSeats: number | null
+  reportingSeats: number | null
+  nonReportingSeats: number | null
+  optedOutSeats: number | null
+  undecidedSeats: number | null
+  activeActorsInWindow: number | null
+  suppressed: boolean
+}
+
 // ============================================================================
 // Result envelope
 // ============================================================================
 
 export type ServiceResult<T> = { ok: true; data: T } | { ok: false; error: string }
 
-// ============================================================================
-// Supabase RPC row shapes (raw returns from @supabase/supabase-js)
-// ============================================================================
-
-interface RpcTopRow {
-  skill_name: string
-  invocation_count: bigint | number
-  distinct_developers: bigint | number
-  week_over_week_delta: string | number | null
-  framework_breakdown: Record<string, number> | null
-}
-
-interface RpcStaleRow {
-  skill_name: string
-  last_invoked: string | null
-  invocation_count: bigint | number
-}
-
-interface RpcCooccurrenceRow {
-  skill_a: string
-  skill_b: string
-  cooccurrence_count: bigint | number
-}
+// Raw Supabase RPC row shapes (RpcTopRow / RpcStaleRow / RpcCooccurrenceRow / RpcToolUsageRow /
+// RpcReportingCoverageRow) live in analytics.supabase.service.helpers.ts to stay under this
+// file's 500-line CI gate — imported as types above.
 
 // ============================================================================
 // Input option types
@@ -109,27 +132,48 @@ interface RpcCooccurrenceRow {
 
 export interface GetTopSkillsOpts {
   teamId: string
+  accessToken: string
   window: '7d' | '30d' | '90d'
   limit?: number
 }
 
 export interface GetStaleSkillsOpts {
   teamId: string
+  accessToken: string
   thresholdInvocations: number
   windowDays: number
 }
 
 export interface GetCooccurrenceOpts {
   teamId: string
+  accessToken: string
   windowDays: number
   minCount?: number
+}
+
+export interface GetToolUsageOpts {
+  teamId: string
+  accessToken: string
+  windowDays: number
+}
+
+export interface GetReportingCoverageOpts {
+  teamId: string
+  accessToken: string
 }
 
 // ============================================================================
 // Coverage note (shared across all callers of topSkills)
 // ============================================================================
 
-const COVERAGE_NOTE =
+/**
+ * Renamed from `COVERAGE_NOTE` (SMI-6362 Wave 4) — this is the ORIGINAL v1 skill-invoke coverage
+ * note, scoped to `getTopSkills()`'s `TopSkillsPanel.coverage_note` field only. Out of scope this
+ * wave; unchanged behavior, name only. The NEW tool-call coverage disclosure for the four
+ * Team/Enterprise analytics MCP tools is `buildCoverageNote()`, re-exported above from
+ * analytics.supabase.service.helpers.ts.
+ */
+const LEGACY_SKILL_COVERAGE_NOTE =
   'v1 captures Claude Code invocations + Skillsmith MCP tool calls. ' +
   'Context-injection skills (Cursor, Copilot, Codex) not yet captured.'
 
@@ -143,11 +187,48 @@ function toNumber(v: bigint | number): number {
   return typeof v === 'bigint' ? Number(v) : v
 }
 
+/**
+ * Defensive numeric coercion for RPC output (SMI-6362 Wave 4). PostgREST commonly serializes
+ * BIGINT as a JSON number when it fits in a safe integer, but treats every numeric RPC output
+ * defensively — a bigint or a numeric string both coerce cleanly.
+ */
+function toNum(v: unknown): number {
+  return typeof v === 'bigint' ? Number(v) : typeof v === 'string' ? Number(v) : (v as number)
+}
+
+// ============================================================================
+// Minimal RPC client shape (cast target for getSupabaseUserClient()'s `unknown` return)
+// ============================================================================
+
+type RpcClient = {
+  rpc(
+    fn: string,
+    params: Record<string, unknown>
+  ): Promise<{ data: unknown; error: { message: string } | null }>
+}
+
 // ============================================================================
 // Service class
 // ============================================================================
 
 export class SupabaseAnalyticsService {
+  /**
+   * Build a user-bound RPC client for `accessToken` (D-2c). Shared by every method below instead
+   * of each repeating its own try/catch — never falls back to the anon-key singleton, and never
+   * throws (a construction failure becomes a `{ ok: false }` envelope like every other error
+   * path).
+   */
+  private async client(
+    accessToken: string
+  ): Promise<{ ok: true; client: RpcClient } | { ok: false; error: string }> {
+    try {
+      const client = (await getSupabaseUserClient(accessToken)) as RpcClient
+      return { ok: true, client }
+    } catch (err) {
+      return { ok: false, error: err instanceof Error ? err.message : String(err) }
+    }
+  }
+
   /**
    * Top skills by invocation count for a team within a rolling window.
    * Calls `analytics_skill_top(p_team_id, p_window_days)`.
@@ -155,19 +236,9 @@ export class SupabaseAnalyticsService {
   async getTopSkills(opts: GetTopSkillsOpts): Promise<ServiceResult<TopSkillsPanel>> {
     const windowDays = WINDOW_DAYS[opts.window]
 
-    let client: Awaited<ReturnType<typeof getSupabaseClient>>
-    try {
-      client = await getSupabaseClient()
-    } catch (err) {
-      return { ok: false, error: err instanceof Error ? err.message : String(err) }
-    }
-
-    const supabase = client as {
-      rpc(
-        fn: string,
-        params: Record<string, unknown>
-      ): Promise<{ data: unknown; error: { message: string } | null }>
-    }
+    const bound = await this.client(opts.accessToken)
+    if (!bound.ok) return bound
+    const { client: supabase } = bound
 
     const { data, error } = await supabase.rpc('analytics_skill_top', {
       p_team_id: opts.teamId,
@@ -207,7 +278,7 @@ export class SupabaseAnalyticsService {
         window: opts.window,
         rows: limited,
         unattributed_count: unattributed,
-        coverage_note: COVERAGE_NOTE,
+        coverage_note: LEGACY_SKILL_COVERAGE_NOTE,
       },
     }
   }
@@ -217,19 +288,9 @@ export class SupabaseAnalyticsService {
    * Calls `analytics_skill_stale(p_team_id, p_window_days, p_threshold)`.
    */
   async getStaleSkills(opts: GetStaleSkillsOpts): Promise<ServiceResult<StaleSkillsPanel>> {
-    let client: Awaited<ReturnType<typeof getSupabaseClient>>
-    try {
-      client = await getSupabaseClient()
-    } catch (err) {
-      return { ok: false, error: err instanceof Error ? err.message : String(err) }
-    }
-
-    const supabase = client as {
-      rpc(
-        fn: string,
-        params: Record<string, unknown>
-      ): Promise<{ data: unknown; error: { message: string } | null }>
-    }
+    const bound = await this.client(opts.accessToken)
+    if (!bound.ok) return bound
+    const { client: supabase } = bound
 
     const { data, error } = await supabase.rpc('analytics_skill_stale', {
       p_team_id: opts.teamId,
@@ -273,19 +334,9 @@ export class SupabaseAnalyticsService {
    * Client-side `minCount` filter applied post-RPC (RPC has no threshold param).
    */
   async getCooccurrence(opts: GetCooccurrenceOpts): Promise<ServiceResult<CooccurrencePanel>> {
-    let client: Awaited<ReturnType<typeof getSupabaseClient>>
-    try {
-      client = await getSupabaseClient()
-    } catch (err) {
-      return { ok: false, error: err instanceof Error ? err.message : String(err) }
-    }
-
-    const supabase = client as {
-      rpc(
-        fn: string,
-        params: Record<string, unknown>
-      ): Promise<{ data: unknown; error: { message: string } | null }>
-    }
+    const bound = await this.client(opts.accessToken)
+    if (!bound.ok) return bound
+    const { client: supabase } = bound
 
     const { data, error } = await supabase.rpc('analytics_skill_cooccurrence', {
       p_team_id: opts.teamId,
@@ -313,6 +364,109 @@ export class SupabaseAnalyticsService {
         panel: 'cooccurrence',
         window_days: opts.windowDays,
         rows,
+      },
+    }
+  }
+
+  /**
+   * Team tool-call usage for a rolling window — the AnalyticsData/UsageReportData shape shared
+   * with the local SQLite-backed service (analytics.service.ts). Calls
+   * `analytics_tool_usage(p_team_id, p_window_days)`.
+   */
+  async getToolUsage(opts: GetToolUsageOpts): Promise<ServiceResult<UsageReportData>> {
+    const bound = await this.client(opts.accessToken)
+    if (!bound.ok) return bound
+    const { client: supabase } = bound
+
+    const { data, error } = await supabase.rpc('analytics_tool_usage', {
+      p_team_id: opts.teamId,
+      p_window_days: opts.windowDays,
+    })
+
+    if (error) {
+      return { ok: false, error: `analytics_tool_usage RPC failed: ${error.message}` }
+    }
+
+    const row = ((data ?? []) as RpcToolUsageRow[])[0]
+    if (!row) {
+      return {
+        ok: true,
+        data: {
+          totalToolCalls: 0,
+          uniqueTools: 0,
+          topTools: [],
+          dailyTrend: [],
+          periodComparison: { current: 0, previous: 0, changePercent: 0 },
+          byActor: [],
+        },
+      }
+    }
+
+    const current = toNum(row.total_calls)
+    const previous = toNum(row.previous_period_total)
+    const changePercent = previous > 0 ? Math.round(((current - previous) / previous) * 100) : 0
+
+    return {
+      ok: true,
+      data: {
+        totalToolCalls: current,
+        uniqueTools: toNum(row.unique_tools),
+        topTools: (row.top_tools ?? []).map((t) => ({ tool: t.tool, count: toNum(t.count) })),
+        dailyTrend: (row.daily_trend ?? []).map((t) => ({ date: t.date, count: toNum(t.count) })),
+        periodComparison: { current, previous, changePercent },
+        byActor: (row.by_actor ?? []).map((a) => ({ actor: a.actor, count: toNum(a.count) })),
+      },
+    }
+  }
+
+  /**
+   * Team reporting-coverage figure (D-2e) — how much of the team's usage data is actually
+   * captured, k-anonymized to avoid identifying individual opt-out/undecided seats. Calls
+   * `analytics_team_reporting_coverage(p_team_id)`.
+   *
+   * The RPC returns exactly one row for a team member, zero rows for a non-member (never an
+   * error) — a zero-row result is mapped here to `{ ok: false }` rather than a fabricated coverage
+   * level.
+   */
+  async getReportingCoverage(
+    opts: GetReportingCoverageOpts
+  ): Promise<ServiceResult<TeamReportingCoverage>> {
+    const bound = await this.client(opts.accessToken)
+    if (!bound.ok) return bound
+    const { client: supabase } = bound
+
+    const { data, error } = await supabase.rpc('analytics_team_reporting_coverage', {
+      p_team_id: opts.teamId,
+    })
+
+    if (error) {
+      return {
+        ok: false,
+        error: `analytics_team_reporting_coverage RPC failed: ${error.message}`,
+      }
+    }
+
+    const row = ((data ?? []) as RpcReportingCoverageRow[])[0]
+    if (!row) {
+      return {
+        ok: false,
+        error: 'Not a member of this team, or the team has no reporting data.',
+      }
+    }
+
+    // `row.suppression_reason` is deliberately never read here (D-2e) — it must never reach a
+    // renderer, so it is dropped at this exact boundary rather than merely unused downstream.
+    return {
+      ok: true,
+      data: {
+        coverageLevel: row.coverage_level,
+        totalSeats: row.total_seats,
+        reportingSeats: row.reporting_seats,
+        nonReportingSeats: row.non_reporting_seats,
+        optedOutSeats: row.opted_out_seats,
+        undecidedSeats: row.undecided_seats,
+        activeActorsInWindow: row.active_actors_in_window,
+        suppressed: row.suppressed,
       },
     }
   }

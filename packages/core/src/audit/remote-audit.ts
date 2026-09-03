@@ -268,9 +268,23 @@ interface TelemetryEmitStats {
   rejected: number
   failed: number
   skippedNoIdentity: number
+  /**
+   * SMI-6362 Wave 4 (D-8, completing what Wave 3 left unexported): the
+   * `X-Skillsmith-Telemetry-Reason` from the most recent rejection, so the
+   * read path (`analytics.ts` AC-10) can render an actionable line — e.g.
+   * `ambiguous_team` -> "set SKILLSMITH_LICENSE_KEY to choose which team" —
+   * instead of just a count. `null` until the first rejection this process.
+   */
+  lastRejectionReason: string | null
 }
 
-const emitStats: TelemetryEmitStats = { accepted: 0, rejected: 0, failed: 0, skippedNoIdentity: 0 }
+const emitStats: TelemetryEmitStats = {
+  accepted: 0,
+  rejected: 0,
+  failed: 0,
+  skippedNoIdentity: 0,
+  lastRejectionReason: null,
+}
 
 /** SMI-6362 (D-8): a snapshot of this process's `tool_call` emission outcomes. */
 export function getTelemetryEmitStats(): TelemetryEmitStats {
@@ -283,6 +297,7 @@ export function _resetTelemetryEmitStatsForTests(): void {
   emitStats.rejected = 0
   emitStats.failed = 0
   emitStats.skippedNoIdentity = 0
+  emitStats.lastRejectionReason = null
   loggedRejectReasons.clear()
 }
 
@@ -302,6 +317,7 @@ function classifyResponse(response: Response | null): void {
   }
   emitStats.rejected++
   const reason = response.headers.get('X-Skillsmith-Telemetry-Reason') ?? 'unknown'
+  emitStats.lastRejectionReason = reason
   if (!loggedRejectReasons.has(reason)) {
     loggedRejectReasons.add(reason)
     console.debug(

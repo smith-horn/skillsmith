@@ -7,11 +7,11 @@
 
 ## Summary
 
-Skill-invocation telemetry is **opt-in**. Nothing is sent until you explicitly enable it. The data collected is anonymous — there is no way for Skillsmith to link an event back to you as an individual. You can disable telemetry and rotate your anonymous ID at any time.
+Skill-invocation telemetry is **opt-in**. Nothing is sent until you explicitly enable it. For most users, the data collected is anonymous — there is no way for Skillsmith to link an event back to you as an individual. You can disable telemetry and rotate your anonymous ID at any time.
 
 - Opt-in required before any data is sent
-- No personal information is ever captured
-- Your anonymous ID rotates automatically every year
+- Personal data is only captured for signed-in users on Team/Enterprise plans who have consented
+- Your anonymous ID rotates automatically every year (anonymous lane only)
 - You can disable telemetry instantly with a single command or environment variable
 
 ---
@@ -47,16 +47,16 @@ Three event types are emitted:
 
 ## What is NEVER captured
 
-The following are explicitly excluded from all telemetry payloads and are never transmitted:
+The following are explicitly excluded from all telemetry payloads and are never transmitted (applies to both anonymous and signed-in lanes):
 
 - `tool_input.args` — the arguments you passed to a skill or tool call
 - Absolute paths — your local file system paths
 - File paths — any path to a file on your machine
-- User identity beyond the hashed `anonymous_id` — your name, email, IP address, or account details
+- User identity beyond the hashed `anonymous_id` or team pseudonym — your name, email, IP address, or account details
 - Environment variables — values from your shell environment
 - File contents — contents of any file on your machine
 
-These exclusions are enforced by an allowlist in the `events` edge function. Any field not in the allowlist above is stripped before the event is stored or forwarded to PostHog.
+These exclusions are enforced by an allowlist in the `events` edge function. Any field not in the allowlist above is stripped before the event is stored or forwarded to PostHog. For Team/Enterprise users, the team membership is derived server-side and encoded only as a non-reversible pseudonym, never as the raw team ID or name.
 
 ---
 
@@ -106,7 +106,7 @@ Add this to your shell profile (`~/.zshrc`, `~/.bashrc`) to make it permanent.
 
 ## Anonymous ID
 
-Your anonymous ID is a SHA-256 hash of a randomly generated UUID stored locally in `~/.skillsmith/config.json`. It is not linked to your name, email address, or Skillsmith account.
+Your anonymous ID is a SHA-256 hash of a randomly generated UUID stored locally in `~/.skillsmith/manifest.json`. It is not linked to your name, email address, or Skillsmith account.
 
 **Automatic rotation:** Your anonymous ID rotates automatically once per year. During the one-week overlap window, both the old and new IDs are accepted so no events are lost.
 
@@ -120,26 +120,46 @@ This generates a new random UUID immediately. Any historical events under the ol
 
 ---
 
+## Identifier types
+
+Skillsmith uses four distinct identifier mechanisms:
+
+1. **Anonymous ID** (`~/.skillsmith/manifest.json`) — a SHA-256 hash of a random UUID, rotates annually. Used by the anonymous-only telemetry lane (Claude Code hook, CLI without login).
+
+2. **Install ID** (`~/.skillsmith/config.json`) — a persistent, non-rotating ID used to correlate a device across sessions. Sent as the correlation field on MCP tool-call events, but it never determines team membership or consent — those are resolved server-side from your signed-in session, not from this ID.
+
+3. **In-memory session ID** — generated per CLI/hook invocation, used only within a single process. Deprecated for telemetry purposes.
+
+4. **Browser account ID** — stored server-side against your Skillsmith account on the website. Used only for Team/Enterprise dashboard access and team membership lookup.
+
+---
+
 ## What Skillsmith does with telemetry data
 
 Telemetry data is used to:
 
 - Rank skills by invocation frequency (not just install count)
 - Help team admins understand which skills their team uses most
-- Detect skills that are installed but never invoked (stale skill detection)
+- Detect skills with low usage (stale skill detection based on invocation count)
 - Improve Skillsmith's recommendation engine
 
 Telemetry data is **not** sold or shared with third parties outside of Skillsmith's infrastructure providers (Supabase, PostHog).
 
 ---
 
-## Team and Enterprise considerations
+## Team and Enterprise reporting
 
-**Team tier:** Admins can recommend that team members enable telemetry. Enabling remains optional for each individual.
+For users on a Team or Enterprise account who are signed in and have enabled skill-invocation telemetry, their MCP tool calls are attributed via a non-reversible, team-scoped pseudonym (not their name or email) and counted toward their team's usage dashboards.
 
-**Enterprise tier (v2):** Enterprise admins will be able to require telemetry for members of their organization. This capability requires a signed Data Processing Addendum. Enterprise required-mode is deferred to v2.
+**Coverage transparency:** Team admins can see a metric showing how many team members are actively reporting usage versus not reporting. This figure is deliberately suppressed (shown only as a general statement with no exact numbers) for small teams or small non-reporting groups to avoid identifying an individual by elimination.
 
-Enterprise data processing addendum: contact support@smithhorn.ca
+**Important disclosure:** Usage counts displayed in the analytics dashboards are self-reported by each client and are **not independently verified by Skillsmith**. These counts represent a usage-visibility view for the team, not an audit record, and must not be used as evidence for billing disputes, compliance verification, or any contractual or adversarial purpose.
+
+**Opting out:** A developer who has not consented to telemetry, or who is not signed in, contributes zero data to this reporting. Opting out means no usage row is created for that person — the data is not degraded or anonymized, it simply does not exist.
+
+**Team tier:** Admins can recommend that team members enable telemetry. Enabling remains optional for each individual — Team-tier reporting relies entirely on the voluntary opt-ins described above.
+
+**Enterprise tier (v2):** Enterprise admins will be able to require telemetry for members of their organization. This capability requires a signed Data Processing Addendum and is deferred to v2 — this release ships opt-in only, for every tier including Enterprise. Enterprise data processing addendum: contact support@smithhorn.ca
 
 ---
 
