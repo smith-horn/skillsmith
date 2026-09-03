@@ -4,6 +4,32 @@ All notable changes to `@skillsmith/core` are documented here.
 
 ## [Unreleased]
 
+- **Fix**: `ManifestManager` (`@skillsmith/core/services/skill-manifest`) now refuses to lock
+  or write a manifest located inside the real user home while running under vitest
+  (SMI-6343 Wave 1). This closes a class of leak evidenced by fixture rows found in a real
+  user's `~/.skillsmith/manifest.json`, one of them claiming an unrelated live registry skill
+  id — traced to two mcp-server integration tests whose manifest path defaulted to
+  `os.homedir()/.skillsmith/manifest.json` before ADR-139 (SMI-6274 Wave 4) gave them an
+  override two days before this fix. The primary fix is a per-run `$HOME` sandbox installed
+  by `vitest.setup.ts` and inherited by every vitest config through `vitest.preset.ts`; the
+  new `assertNotRealUserHome()` guard (now exported as `assertNotRealUserHome`) is the
+  defense-in-depth backstop for a manifest path that reaches the real home anyway. It is
+  gated on `process.env.VITEST` and compares against the pre-sandbox home captured in
+  `SKILLSMITH_TEST_REAL_HOME`, falling back to `os.userInfo()` (which ignores `$HOME`) when
+  that is absent. No production code path is affected.
+
+  Adversarial review found three sibling manifest-write implementations with the identical
+  homedir-derived, no-override-parameter shape, each now wired to the same guard:
+  `packages/mcp-server/src/tools/install.helpers.manifest.ts` (`saveManifest`,
+  `acquireManifestLock`), `packages/cli/src/utils/manifest.ts` (`saveManifest`), and
+  `packages/core/src/install/fan-out.ts` (`saveManifest`, writing
+  `~/.skillsmith/links/manifest.json`). Also fixed: a `vitest.setup.ts` idempotency gap under
+  `vitest run --no-isolate` (empirically demonstrated) that could silently disable the guard's
+  ground truth after the first test file in a reused worker; `scripts/audit-standards.mjs`
+  Check 65's `manifestPath` override-evidence pattern tightened from a bare word-boundary
+  match (which a stray comment could satisfy) to require assignment/property context; and its
+  `SKILLSMITH_HOME` override credit removed since no writer honors that variable.
+
 - **Feature**: companion subagent files (`generateSubagent`/`generateMinimalSubagent`,
   `@skillsmith/core/services/SubagentGenerator`, SMI-6276 Wave 6 Step 1) now generate
   client-specific frontmatter instead of Claude-shaped tool names/model tiers for every

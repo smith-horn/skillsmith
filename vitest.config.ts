@@ -31,7 +31,12 @@ const encryptedPathsExcluded = gitCryptLocked() ? ['supabase/functions/**'] : []
 export default defineConfig({
   test: {
     ...sharedTestConfig,
-    setupFiles: ['./vitest.setup.ts'],
+    // SMI-6343 Wave 1: `setupFiles` is deliberately NOT redeclared here. It
+    // now comes from `sharedTestConfig` (vitest.preset.ts) as an absolute
+    // path, so every config inherits the $HOME sandbox. A second declaration
+    // at this level would silently OVERRIDE the inherited value rather than
+    // merge with it, recreating the exact single-config blind spot SMI-6343
+    // was filed for.
     include: [
       'packages/*/src/**/*.test.ts',
       'packages/*/src/**/*.spec.ts',

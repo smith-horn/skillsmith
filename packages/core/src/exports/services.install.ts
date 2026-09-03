@@ -49,7 +49,7 @@ export {
   type SkillInstallationServiceParams,
 } from '../services/skill-installation.service.js'
 
-export { ManifestManager } from '../services/skill-manifest.js'
+export { ManifestManager, assertNotRealUserHome } from '../services/skill-manifest.js'
 
 export {
   TRUST_TIER_SCANNER_OPTIONS as INSTALL_TRUST_TIER_SCANNER_OPTIONS,

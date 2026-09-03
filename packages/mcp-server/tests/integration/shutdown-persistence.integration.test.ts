@@ -58,7 +58,14 @@ vi.mock('@skillsmith/core/install', async (importActual) => {
 })
 
 describe('SMI-5639: shutdown persistence — exact repro (integration, no subprocess)', () => {
-  const TEST_SKILL_ID = 'a129e127-a82c-47e5-8bc5-09d7ba2e8734'
+  // SMI-6343: obviously-synthetic UUID. The previous literal
+  // (`a129e127-…`) is a REAL registry skill id (`addyosmani/performance`,
+  // indexed 5 months before this test existed), so the fixture rows this test
+  // leaked into a real user's ~/.skillsmith/manifest.json claimed a live,
+  // unrelated registry identity. Any replacement must stay UUID-shaped —
+  // `parseSkillId()` (install.helpers.ts) routes 8-4-4-4-12 hex through the
+  // registry-lookup branch these tests mock.
+  const TEST_SKILL_ID = '00000000-6343-4000-8000-000000000001'
 
   // Genuine mcp__<server>__<tool> references, outside any fenced code block,
   // so McpReferenceExtractor treats them as high-confidence (matches the

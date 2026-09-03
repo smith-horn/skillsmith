@@ -25,6 +25,7 @@ import { createHash, randomUUID } from 'crypto'
 import { readFile, writeFile, mkdir, rename, unlink } from 'fs/promises'
 import { join, dirname } from 'path'
 import { homedir } from 'os'
+import { assertNotRealUserHome } from '@skillsmith/core'
 
 // ============================================================================
 // Types (mirrors install.types.ts from mcp-server — kept in sync manually)
@@ -136,6 +137,10 @@ export async function loadManifest(manifestPath: string = MANIFEST_PATH): Promis
  * error is never swallowed.
  */
 export async function saveManifest(manifest: SkillManifest): Promise<void> {
+  // SMI-6343 follow-up (adversarial review): a third parallel manifest-write
+  // implementation, homedir-derived with no override parameter — the $HOME
+  // sandbox (vitest.setup.ts) was this file's only defense until this guard.
+  assertNotRealUserHome(MANIFEST_PATH, 'write')
   await mkdir(dirname(MANIFEST_PATH), { recursive: true })
   const tmpPath = `${MANIFEST_PATH}.tmp.${process.pid}.${randomUUID()}`
   try {

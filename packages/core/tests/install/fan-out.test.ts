@@ -280,4 +280,33 @@ describe('install/fan-out', () => {
       await expect(stat(path.join(homeDir, '.claude', 'skills', 'multi'))).resolves.toBeDefined()
     })
   })
+
+  // SMI-6343 Wave 1 follow-up (adversarial review): saveManifest() here
+  // writes `~/.skillsmith/links/manifest.json` — homedir-derived with no
+  // path-override parameter, the same shape as the other three sibling
+  // manifest writers. This file's own per-test $HOME override (beforeEach
+  // above) already isolates every other test in this suite from the real
+  // home; this test instead proves the NEW assertNotRealUserHome() guard
+  // itself fires, by pointing SKILLSMITH_TEST_REAL_HOME at this test's own
+  // (already-isolated) homeDir, tricking the guard into treating it as "the
+  // real home" for one assertion.
+  describe('SMI-6343: real-home write guard', () => {
+    it('refuses to write when the link manifest resolves under the (simulated) real home', async () => {
+      const { saveManifest } = await loadModule()
+
+      const previous = process.env.SKILLSMITH_TEST_REAL_HOME
+      process.env.SKILLSMITH_TEST_REAL_HOME = homeDir
+      try {
+        await expect(saveManifest({ version: 1, links: [] })).rejects.toThrow(/SMI-6343/)
+      } finally {
+        if (previous === undefined) delete process.env.SKILLSMITH_TEST_REAL_HOME
+        else process.env.SKILLSMITH_TEST_REAL_HOME = previous
+      }
+
+      // The guard fired before any fs call — nothing was written.
+      await expect(
+        stat(path.join(homeDir, '.skillsmith', 'links', 'manifest.json'))
+      ).rejects.toThrow(/ENOENT/)
+    })
+  })
 })

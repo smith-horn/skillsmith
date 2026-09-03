@@ -23,23 +23,35 @@ import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest'
 
 const memfsAsync: Record<string, string> = {}
 
-vi.mock('fs/promises', () => ({
-  mkdir: vi.fn(async () => undefined),
-  writeFile: vi.fn(async (path: string, content: string) => {
-    memfsAsync[path] = content
-  }),
-  rename: vi.fn(async (src: string, dst: string) => {
-    const content = memfsAsync[src]
-    if (content === undefined) throw Object.assign(new Error(`ENOENT: ${src}`), { code: 'ENOENT' })
-    memfsAsync[dst] = content
-    delete memfsAsync[src]
-  }),
-  readFile: vi.fn(async (path: string) => {
-    const content = memfsAsync[path]
-    if (content === undefined) throw Object.assign(new Error(`ENOENT: ${path}`), { code: 'ENOENT' })
-    return content
-  }),
-}))
+// SMI-6343 follow-up: manifest.ts now imports assertNotRealUserHome from
+// @skillsmith/core, which transitively imports `constants` from fs/promises
+// (packages/core/src/utils/safe-fs.ts, module-level O_NOFOLLOW lookup). A
+// full-replacement mock factory must re-export it via importOriginal, or
+// that transitive import throws "No constants export is defined" at
+// collection time — not just at the call sites this file actually exercises.
+vi.mock('fs/promises', async (importOriginal) => {
+  const actual = await importOriginal<typeof import('fs/promises')>()
+  return {
+    ...actual,
+    mkdir: vi.fn(async () => undefined),
+    writeFile: vi.fn(async (path: string, content: string) => {
+      memfsAsync[path] = content
+    }),
+    rename: vi.fn(async (src: string, dst: string) => {
+      const content = memfsAsync[src]
+      if (content === undefined)
+        throw Object.assign(new Error(`ENOENT: ${src}`), { code: 'ENOENT' })
+      memfsAsync[dst] = content
+      delete memfsAsync[src]
+    }),
+    readFile: vi.fn(async (path: string) => {
+      const content = memfsAsync[path]
+      if (content === undefined)
+        throw Object.assign(new Error(`ENOENT: ${path}`), { code: 'ENOENT' })
+      return content
+    }),
+  }
+})
 
 // ---------------------------------------------------------------------------
 // node:fs mock (for telemetry.helpers.ts — settings.json operations)

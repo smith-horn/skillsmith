@@ -118,7 +118,37 @@ describe('SMI-898: Path Traversal Protection', () => {
       })
 
       it('should reject paths in home but outside allowed subdirs', () => {
-        const result = validateDbPath(resolve(homeDir, 'Documents/secret.db'))
+        // SMI-6343: `vitest.setup.ts` now sandboxes $HOME into `os.tmpdir()`,
+        // and `validateDbPath` deliberately allows the temp tree
+        // (`allowTempDir`, default true). A `homedir()`-derived path is
+        // therefore no longer a valid fixture for "inside home, outside the
+        // allowed subdirs" — it would be accepted by the temp carve-out, not
+        // by the rule under test. Pin the home root explicitly so this
+        // exercises the allowedDirs prefix match regardless of where $HOME
+        // happens to point. Production behaviour is unchanged.
+        const isolatedHome = '/nonexistent-home/testuser'
+        const result = validateDbPath(resolve(isolatedHome, 'Documents/secret.db'), {
+          allowedDirs: [resolve(isolatedHome, '.skillsmith'), resolve(isolatedHome, '.claude')],
+        })
+        expect(result.valid).toBe(false)
+        expect(result.error).toContain('outside allowed')
+      })
+
+      it('should reject paths in home but outside allowed subdirs — DEFAULT allowedDirs, sandbox carve-out disabled', () => {
+        // Adversarial-review follow-up (SMI-6343): the case above pins its own
+        // allowedDirs, so it no longer exercises DEFAULT_ALLOWED_DIRS (the
+        // production default, derived from the CURRENT os.homedir() — which
+        // under vitest.setup.ts's sandbox is a temp directory). This case
+        // restores that coverage by passing `allowTempDir: false`, which
+        // removes the confounding carve-out that made the original
+        // homedir()-derived fixture pass for the wrong reason, while still
+        // exercising the real, unmocked default allowlist against whatever
+        // home is currently in effect (sandboxed under vitest, real
+        // otherwise) — proving the actual production default rejects a path
+        // that's under home but outside `.skillsmith`/`.claude`.
+        const result = validateDbPath(resolve(homeDir, 'Documents/secret.db'), {
+          allowTempDir: false,
+        })
         expect(result.valid).toBe(false)
         expect(result.error).toContain('outside allowed')
       })

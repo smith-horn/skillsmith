@@ -9,6 +9,7 @@
 
 import * as fs from 'fs/promises'
 import * as path from 'path'
+import { assertNotRealUserHome } from '@skillsmith/core'
 import { MANIFEST_PATH, SKILLSMITH_DIR, type SkillManifest } from './install.types.js'
 
 // ============================================================================
@@ -27,6 +28,13 @@ const LOCK_RETRY_INTERVAL_MS = 100
  * SMI-1533: Prevents race conditions during concurrent installs
  */
 export async function acquireManifestLock(): Promise<void> {
+  // SMI-6343 follow-up (adversarial review): this is a second, complete
+  // manifest write stack parallel to `@skillsmith/core`'s `ManifestManager`
+  // — MANIFEST_PATH is homedir-derived (install.types.ts) with no override
+  // parameter, so nothing here could ever be redirected even by a test that
+  // wanted to. Only the $HOME sandbox (vitest.setup.ts) protected this path;
+  // this guard restores the second, independent layer the rest of Wave 1 has.
+  assertNotRealUserHome(MANIFEST_PATH, 'lock')
   const startTime = Date.now()
 
   // Ensure the skillsmith directory exists before attempting to create lock file
@@ -110,6 +118,7 @@ export async function loadManifest(manifestPath: string = MANIFEST_PATH): Promis
  * SMI-1533: Uses atomic write pattern with lock
  */
 export async function saveManifest(manifest: SkillManifest): Promise<void> {
+  assertNotRealUserHome(MANIFEST_PATH, 'write')
   await fs.mkdir(path.dirname(MANIFEST_PATH), { recursive: true })
   // Write to temp file first, then rename for atomic operation
   const tempPath = MANIFEST_PATH + '.tmp.' + process.pid
