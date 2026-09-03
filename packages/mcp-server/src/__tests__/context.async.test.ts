@@ -115,7 +115,7 @@ import {
   createToolContextAsync,
   getToolContextAsync,
   resetAsyncToolContext,
-  refreshTelemetryIdentity,
+  _refreshTelemetryIdentityForTests as refreshTelemetryIdentity,
   _getCachedTelemetryIdentityForTests,
 } from '../context.async.js'
 

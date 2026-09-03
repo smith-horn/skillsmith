@@ -6,7 +6,7 @@ import {
   setTelemetryIdentityProvider,
   setTelemetryIdentityInvalidationHandler,
   getTelemetryEmitStats,
-  resetTelemetryEmitStatsForTests,
+  _resetTelemetryEmitStatsForTests,
 } from './remote-audit.js'
 
 vi.mock('../config/device-identity.js', () => ({
@@ -228,7 +228,7 @@ describe('emitToolCallEvent', () => {
   afterEach(() => {
     setTelemetryIdentityProvider(null)
     setTelemetryIdentityInvalidationHandler(null)
-    resetTelemetryEmitStatsForTests()
+    _resetTelemetryEmitStatsForTests()
   })
 
   it('skips entirely (no fetch call) when no identity provider is installed', async () => {

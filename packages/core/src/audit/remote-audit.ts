@@ -278,7 +278,7 @@ export function getTelemetryEmitStats(): TelemetryEmitStats {
 }
 
 /** Reset for tests only. */
-export function resetTelemetryEmitStatsForTests(): void {
+export function _resetTelemetryEmitStatsForTests(): void {
   emitStats.accepted = 0
   emitStats.rejected = 0
   emitStats.failed = 0

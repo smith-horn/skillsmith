@@ -90,14 +90,7 @@ export function _getCachedTelemetryIdentityForTests(): TelemetryIdentity | null 
   return cachedTelemetryIdentity
 }
 
-/**
- * Test-only export of the refresh function itself, so the generation-guard
- * ordering (NEEDLE confirmation-round finding 3) is directly testable
- * without going through `createToolContextAsync`'s install-time/timer/
- * invalidation-handler plumbing, none of which is what's under test here.
- * Not exported from the package index.
- */
-export async function refreshTelemetryIdentity(currentApiKey: string | undefined): Promise<void> {
+async function refreshTelemetryIdentity(currentApiKey: string | undefined): Promise<void> {
   const generation = ++telemetryIdentityGeneration
   let next: TelemetryIdentity | null
   try {
@@ -113,6 +106,18 @@ export async function refreshTelemetryIdentity(currentApiKey: string | undefined
   if (generation !== telemetryIdentityGeneration) return
   cachedTelemetryIdentity = next
 }
+
+/**
+ * Test-only alias for `refreshTelemetryIdentity`, so the generation-guard
+ * ordering (NEEDLE confirmation-round finding 3) is directly testable
+ * without going through `createToolContextAsync`'s install-time/timer/
+ * invalidation-handler plumbing, none of which is what's under test there.
+ * The function itself stays unexported (it's real production logic, called
+ * internally); only this named alias is exported, matching this file's
+ * `_getCachedTelemetryIdentityForTests` convention. Not exported from the
+ * package index.
+ */
+export { refreshTelemetryIdentity as _refreshTelemetryIdentityForTests }
 
 // Separate singleton for async context (prevents caching conflict with sync)
 let asyncGlobalContext: ToolContext | null = null
