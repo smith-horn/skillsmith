@@ -10,6 +10,15 @@ All notable changes to `@skillsmith/mcp-server` are documented here.
   real user home while running under vitest, via `@skillsmith/core`'s newly-exported
   `assertNotRealUserHome()` (SMI-6343 Wave 1 follow-up, adversarial review). Previously the
   test-run `$HOME` sandbox was this write path's only protection.
+- **Breaking / Security fix**: `team_workspace`/`share_skill` no longer run on the Supabase
+  service-role client, which bypassed Row Level Security entirely and let any team member create
+  or delete a workspace — an action always intended to be admin-only (SMI-6113, live
+  privilege-escalation bug). All 8 methods now run on the caller's own signed-in-user JWT,
+  authorized via `workspace:manage` (create/delete) or plain team membership (the other 6
+  methods) — the two new RLS-backed permissions SMI-6241 also adds. **Every `team_workspace`/
+  `share_skill` call, including previously-unauthenticated reads, now requires `skillsmith login`
+  on the MCP host** — a hard prerequisite change for any existing Team-tier install that had only
+  `SUPABASE_SERVICE_ROLE_KEY` configured and no signed-in user.
 - **Fix**: the bundled `varlock` skill asset (`packages/mcp-server/src/assets/skills/varlock/SKILL.md`) — shipped to every customer who installs it via Skillsmith — carried stale security guidance dated December 22, 2025: a "never do this" list naming only `cat`, `echo $VAR`, `printenv | grep`, and `cat .env | grep SECRET`, plus unqualified `varlock load` recommendations blessed as safe. Corrected as a customer-visible correction to shipped security guidance: the never-do list now also names a direct `grep <pattern> .env`, `head`, `tail`, `sed`, `awk`, `strings`, inline interpreters (e.g. `python3 -c`), and a `docker exec` wrapper around any of the above (this repo's dev container bind-mounts the repo root at `/app`, so `docker exec <container> cat /app/.env` reaches the identical file); every `varlock load` recommendation in the file is now qualified — only the default pretty format redacts, while `--format json`, `--format json-full`, `--format json-full-compact`, and `--format env` all print unmasked, raw values (SMI-6361, varlock secret-exposure defense-in-depth Wave 1).
 - **Fix**: `set_team_role_permission()` closed a delegation hole where a team owner could grant
   `team:manage_rbac`/`team:manage_sso` to a non-owner role, reaching the exact escalated state

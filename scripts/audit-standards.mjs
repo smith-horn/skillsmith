@@ -5274,8 +5274,6 @@ console.log(`\n${BOLD}Check 62: MCP server service-role usage lockdown (SMI-6109
   // SUPABASE_SERVICE_ROLE_KEY, which neither pattern below actually matches, so it never needed
   // an entry; keeping it would itself have been a silent, unnecessary allowlist grant.
   const MCP_SERVICE_ROLE_ALLOWLIST_JUSTIFICATIONS = {
-    'packages/mcp-server/src/tools/team-workspace.live.ts':
-      'identical list/get-shaped pattern across 8 methods, writes included — needs its own design (SMI-6109 plan)',
     'packages/mcp-server/src/tools/registry-tools.live.audit.ts':
       'audit-log write path — a system-table insert, fail-soft, structurally different from a tenant-data read',
     // registry-tools.live.content.ts's entry was removed here (SMI-6111, 2026-08-24): its
@@ -5283,6 +5281,10 @@ console.log(`\n${BOLD}Check 62: MCP server service-role usage lockdown (SMI-6109
     // SECURITY DEFINER RPC via the member client — no getSupabaseAdminClient() call remains in
     // that file, so it needs no allowlist entry. If this Check ever fails on that file again,
     // treat it as a real regression, not a stale-allowlist gap.
+    //
+    // team-workspace.live.ts's entry was removed here (SMI-6113 + SMI-6241 Wave 2): every method
+    // now runs on the caller's own JWT via team-workspace.live.auth.ts's two named getters — no
+    // getSupabaseAdminClient() call remains in that file. See that module's header for why.
   }
   const MCP_SERVICE_ROLE_ALLOWLIST = new Set(Object.keys(MCP_SERVICE_ROLE_ALLOWLIST_JUSTIFICATIONS))
 
