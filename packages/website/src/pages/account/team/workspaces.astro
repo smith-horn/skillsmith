@@ -551,24 +551,28 @@ const supabaseConfig = getSupabaseConfig()
     }
 
     try {
-      // Gate already resolved the team_id; fetch the caller's role for the
-      // create-workspace control (admins/owners only per RLS).
+      // Gate already resolved the team_id; resolve the caller-scoped
+      // workspace:manage permission via has_team_permission() (SMI-6241
+      // Wave 3) for the create-workspace control, rather than reading a raw
+      // role literal — matches registry.astro's identical RPC shape.
       const teamId = gatedTeamId
-      const { data: myMembership } = await supabase
-        .from('team_members')
-        .select('role')
-        .eq('team_id', teamId)
-        .eq('user_id', session.user.id)
-        .limit(1)
-        .single()
-
-      const role = String(myMembership?.role ?? '').toLowerCase()
+      const { data: canManageWorkspacesData, error: canManageWorkspacesError } = await supabase.rpc(
+        'has_team_permission',
+        {
+          p_team_id: teamId,
+          p_permission: 'workspace:manage',
+        }
+      )
+      if (canManageWorkspacesError) throw new Error(canManageWorkspacesError.message)
+      const canManageWorkspaces = Boolean(canManageWorkspacesData)
 
       if (nav.isStale()) return
       await loadWorkspaces(teamId)
       if (nav.isStale()) return
 
-      // Wire create-workspace flow (admins/owners only per RLS)
+      // Wire create-workspace flow, gated on the workspace:manage permission
+      // (default-on for admins/owners, but overridable per-team via
+      // set_team_role_permission -- see has_team_permission() above)
       const createBtn = document.getElementById('create-workspace-btn') as HTMLButtonElement
       const modal = document.getElementById('create-modal') as HTMLDivElement
       const closeBtn = document.getElementById('close-modal') as HTMLButtonElement
@@ -578,9 +582,9 @@ const supabaseConfig = getSupabaseConfig()
       const descInput = document.getElementById('ws-description') as HTMLTextAreaElement
       const errInline = document.getElementById('create-error') as HTMLParagraphElement
 
-      if (role !== 'admin' && role !== 'owner') {
+      if (!canManageWorkspaces) {
         createBtn.disabled = true
-        createBtn.title = 'Only team admins and owners can create workspaces.'
+        createBtn.title = "You don't have permission to create workspaces for this team."
       }
 
       const openModal = () => {
