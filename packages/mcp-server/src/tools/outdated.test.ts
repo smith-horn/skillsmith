@@ -407,11 +407,19 @@ describe('executeOutdated', () => {
     }
     mockedLoadManifest.mockResolvedValue(noSourceManifest)
     mockedReadFile.mockResolvedValue('orphan-content')
+    // SMI-6343: give this skill a matching historical hash so it resolves
+    // to 'current' (not 'unknown') — isolates this test to the SMI-5407
+    // source-hint behavior it's actually about, independent of the new H1
+    // offline-diagnosis hint (also `hint`-carried) that would otherwise
+    // fire for any offline + no-history + unknown row regardless of
+    // whether a source is tracked.
+    await versionRepo.recordVersion('test/orphan-skill', sha256('orphan-content'), '1.0.0')
 
     const result = await executeOutdated({ include_deps: false }, makeContext(db))
 
     const skill = result.skills[0]
     expect(skill).toBeDefined()
+    expect(skill?.status).toBe('current')
     expect(typeof skill?.hint).toBe('string')
     expect(skill?.hint).toContain('audit sources')
     expect(skill?.hint).toContain('skill_recover_source')
@@ -434,11 +442,18 @@ describe('executeOutdated', () => {
     }
     mockedLoadManifest.mockResolvedValue(withSourceManifest)
     mockedReadFile.mockResolvedValue('tracked-content')
+    // SMI-6343: same reasoning as the sibling test above — a matching
+    // historical hash keeps this row 'current', so the new H1
+    // offline-diagnosis hint (which would otherwise fire for ANY offline +
+    // no-history + unknown row, tracked source or not) never enters the
+    // picture, and this test stays isolated to the SMI-5407 behavior.
+    await versionRepo.recordVersion('test/tracked-skill', sha256('tracked-content'), '1.0.0')
 
     const result = await executeOutdated({ include_deps: false }, makeContext(db))
 
     const skill = result.skills[0]
     expect(skill).toBeDefined()
+    expect(skill?.status).toBe('current')
     expect(skill?.hint).toBeUndefined()
   })
 
