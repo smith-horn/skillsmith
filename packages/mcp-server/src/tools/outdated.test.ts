@@ -668,8 +668,9 @@ describe('executeOutdated', () => {
       mockedReadFile.mockResolvedValue('latest-content')
       await versionRepo.recordVersion(skillId, sha256('latest-content'), '1.0.0')
       mockedLookupSkillFromRegistry.mockImplementationOnce(async (_id, _ctx, opts) => {
-        opts?.onQuotaExceeded?.()
-        opts?.onLiveLookupFailed?.(new Error('monthly_quota_exceeded'))
+        const quotaError = new Error('monthly_quota_exceeded')
+        opts?.onQuotaExceeded?.(quotaError)
+        opts?.onLiveLookupFailed?.(quotaError)
         return null
       })
 
