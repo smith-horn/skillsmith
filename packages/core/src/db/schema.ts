@@ -42,7 +42,9 @@ export type DatabaseType = Database
 // v14, v15: reserved (RBAC, integrations)
 // v16: SMI-4665 source column + extend trust_tier CHECK to allow 'local'
 // v17: SMI-4917 widen trust_tier CHECK to allow 'curated'
-export const SCHEMA_VERSION = 17
+// v18: SMI-6343 skill_versions.content_hash is now a real SKILL.md hash;
+//      purges incomparable proxy-hash rows
+export const SCHEMA_VERSION = 18
 
 /**
  * Initialize the database with the complete schema.

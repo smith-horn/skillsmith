@@ -29,6 +29,7 @@ import * as path from 'node:path'
 import { fileURLToPath } from 'node:url'
 import { createDatabaseSync } from '../../src/db/createDatabase.js'
 import { SCHEMA_SQL } from '../../src/db/schema-sql.js'
+import { MIGRATION_V5_SQL } from '../../src/db/migrations/v5-skill-versions.js'
 import { closeDatabase } from '../../src/db/schema.js'
 import { isBetterSqlite3Available } from '../../src/db/drivers/betterSqlite3Driver.js'
 
@@ -68,18 +69,27 @@ describe.skipIf(skipIfNoSqlite)('SMI-6003 runMigrations concurrent-migration rac
     mkdirSync(dir, { recursive: true })
     const dbPath = path.join(dir, 'race.db')
 
-    // Set up a "fresh" DB already stamped at v16 — only migration v17 (the
-    // last entry in MIGRATIONS) is pending, so BOTH children will race to
-    // apply and INSERT the exact same version row. This isolates the test
-    // to the check-then-act bug itself (one contested INSERT) rather than
-    // incidental concurrent DDL from re-running the full 17-migration chain
-    // (which would also happen to trip the same bug, just less
-    // deterministically — v17's own apply() short-circuits to a cheap SELECT
-    // probe on a fresh SCHEMA_SQL base, since the base schema already
-    // includes 'curated' in the trust_tier CHECK — see
+    // Set up a "fresh" DB already stamped at v16 — migrations v17 AND v18
+    // (SMI-6343 Wave 2, the last two entries in MIGRATIONS) are pending, so
+    // BOTH children will race to apply and INSERT the same version rows.
+    // This isolates the test to the check-then-act bug itself (contested
+    // INSERTs) rather than incidental concurrent DDL from re-running the
+    // full migration chain (which would also happen to trip the same bug,
+    // just less deterministically — v17's own apply() short-circuits to a
+    // cheap SELECT probe on a fresh SCHEMA_SQL base, since the base schema
+    // already includes 'curated' in the trust_tier CHECK — see
     // migrations/v17-curated-trust-tier.ts).
+    //
+    // v18's `DELETE FROM skill_versions` needs that table to exist, and
+    // SCHEMA_SQL (migration v1's own baseline) never included it — it's
+    // created by migration v5, which this setup deliberately skips (along
+    // with the rest of v2-v16) to keep the race window minimal. Explicitly
+    // replay v5's (idempotent, `CREATE TABLE IF NOT EXISTS`) SQL here so
+    // v18 has a real table to race against, without pulling in the full
+    // v2-v16 chain this test is designed to avoid.
     const setupDb = createDatabaseSync(dbPath)
     setupDb.exec(SCHEMA_SQL)
+    setupDb.exec(MIGRATION_V5_SQL)
     setupDb.prepare('INSERT INTO schema_version (version) VALUES (16)').run()
     closeDatabase(setupDb)
 

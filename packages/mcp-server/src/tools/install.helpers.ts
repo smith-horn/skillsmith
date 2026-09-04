@@ -5,7 +5,13 @@
 
 import type { ToolContext } from '../context.js'
 // SMI-2171: Import parseRepoUrl from @skillsmith/core for shared use
-import { parseRepoUrl, QuarantineRepository, type ParsedRepoUrl } from '@skillsmith/core'
+import {
+  parseRepoUrl,
+  QuarantineRepository,
+  SkillsmithError,
+  ErrorCodes,
+  type ParsedRepoUrl,
+} from '@skillsmith/core'
 import { CANONICAL_CLIENT, CLIENT_DISPLAY_LABELS, type ClientId } from '@skillsmith/core/install'
 import { validateTrustTier, type ParsedSkillId, type RegistrySkillInfo } from './install.types.js'
 
@@ -111,7 +117,43 @@ export function parseSkillId(input: string): ParsedSkillId {
  */
 export async function lookupSkillFromRegistry(
   skillId: string,
-  context: ToolContext
+  context: ToolContext,
+  options?: {
+    /**
+     * SMI-6343: invoked when the live call failed specifically because the
+     * caller's monthly API quota is exhausted (`ErrorCodes.NETWORK_QUOTA_
+     * EXCEEDED`, thrown by `SkillsmithApiClient`'s retry loop on a
+     * `monthly_quota_exceeded` 429 body) — lets a batch caller (e.g.
+     * `skill_outdated`'s live registry arm) stop issuing further live calls
+     * for the rest of its run instead of burning one failed call per
+     * remaining skill. The `error` argument is the caught `SkillsmithError`
+     * itself — its `.message` already carries the used/limit/tier and the
+     * formatted reset-time text (`client.ts`'s quota-error construction),
+     * so a caller building a user-facing diagnosis should read `.message`
+     * rather than re-deriving reset time from `.details.resetsAt`. Purely
+     * additive: this function's existing
+     * swallow-every-other-error-and-fall-back-to-local-DB behavior is
+     * unchanged, and every existing caller that doesn't pass `options` sees
+     * zero behavior change.
+     */
+    onQuotaExceeded?: (error: unknown) => void
+    /**
+     * SMI-6343 (pr-reviewer-gate fix): invoked for EVERY caught error
+     * (network error, DNS, timeout, quota exceeded — this fires in addition
+     * to, not instead of, `onQuotaExceeded` for the quota case), before
+     * falling through to the local-DB fallback. This function never
+     * rethrows — it always resolves, either to `null` or to a value from
+     * the local-DB fallback (which itself never carries a `contentHash`) —
+     * so a caller that needs to know "the live attempt failed" cannot infer
+     * that from a thrown exception; it never occurs. Without this signal,
+     * a caller like `skill_outdated`'s live registry arm has no way to
+     * distinguish "the registry genuinely has nothing new" from "the live
+     * call broke and we silently got local-DB data (or nothing) instead" —
+     * confirmed by a pr-reviewer-gate finding that the prior fix's `try/catch`
+     * around this function's call site was dead code for this exact reason.
+     */
+    onLiveLookupFailed?: (error: unknown) => void
+  }
 ): Promise<RegistrySkillInfo | null> {
   // Try API first (primary data source)
   if (!context.apiClient.isOffline()) {
@@ -131,7 +173,11 @@ export async function lookupSkillFromRegistry(
       }
       // API found skill but no repo_url - it's seed data
       return null
-    } catch {
+    } catch (error) {
+      if (error instanceof SkillsmithError && error.code === ErrorCodes.NETWORK_QUOTA_EXCEEDED) {
+        options?.onQuotaExceeded?.(error)
+      }
+      options?.onLiveLookupFailed?.(error)
       // API failed, fall through to local DB
     }
   }
