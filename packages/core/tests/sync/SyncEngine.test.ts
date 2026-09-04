@@ -444,4 +444,110 @@ describe('SyncEngine', () => {
       expect(syncRegistryMock).toHaveBeenCalledWith(expect.objectContaining({ since: undefined }))
     })
   })
+
+  // ===========================================================================
+  // SMI-6343 Wave 2: real content_hash recording (never a metadata proxy)
+  // ===========================================================================
+  describe('recordVersion — real content hash, never a metadata proxy', () => {
+    it('records the registry real content_hash on create, not a metadata proxy', async () => {
+      const skillVersionRepo = createMockSkillVersionRepo()
+      const skill: ApiSearchResult = {
+        ...createMockSkill('test/hash-on-create'),
+        content_hash: 'realsha256contenthash1',
+      }
+      const apiClient = createMockApiClient({ skills: [skill] })
+      const engine = new SyncEngine(
+        apiClient,
+        skillRepo,
+        syncConfigRepo,
+        syncHistoryRepo,
+        skillVersionRepo
+      )
+
+      const result = await engine.sync()
+
+      expect(result.success).toBe(true)
+      expect(skillVersionRepo.recordVersion).toHaveBeenCalledWith(
+        'test/hash-on-create',
+        'realsha256contenthash1'
+      )
+    })
+
+    it('records the registry real content_hash on update, not a metadata proxy', async () => {
+      skillRepo.create({
+        id: 'test/hash-on-update',
+        name: 'Old Name',
+        trustTier: 'community',
+        tags: ['old'],
+      })
+
+      const skillVersionRepo = createMockSkillVersionRepo()
+      const skill: ApiSearchResult = {
+        ...createMockSkill('test/hash-on-update', new Date(Date.now() + 1000).toISOString()),
+        content_hash: 'realsha256contenthash2',
+      }
+      const apiClient = createMockApiClient({ skills: [skill] })
+      const engine = new SyncEngine(
+        apiClient,
+        skillRepo,
+        syncConfigRepo,
+        syncHistoryRepo,
+        skillVersionRepo
+      )
+
+      const result = await engine.sync()
+
+      expect(result.success).toBe(true)
+      expect(result.skillsUpdated).toBe(1)
+      expect(skillVersionRepo.recordVersion).toHaveBeenCalledWith(
+        'test/hash-on-update',
+        'realsha256contenthash2'
+      )
+    })
+
+    it('skips recordVersion entirely when the registry provides no content_hash (create path)', async () => {
+      const skillVersionRepo = createMockSkillVersionRepo()
+      // createMockSkill() does not set content_hash.
+      const apiClient = createMockApiClient({ skills: [createMockSkill('test/no-hash-create')] })
+      const engine = new SyncEngine(
+        apiClient,
+        skillRepo,
+        syncConfigRepo,
+        syncHistoryRepo,
+        skillVersionRepo
+      )
+
+      const result = await engine.sync()
+
+      expect(result.success).toBe(true)
+      expect(result.skillsAdded).toBe(1)
+      expect(skillVersionRepo.recordVersion).not.toHaveBeenCalled()
+    })
+
+    it('skips recordVersion entirely when the registry provides no content_hash (update path)', async () => {
+      skillRepo.create({
+        id: 'test/no-hash-update',
+        name: 'Old Name',
+        trustTier: 'community',
+        tags: ['old'],
+      })
+
+      const skillVersionRepo = createMockSkillVersionRepo()
+      const skill = createMockSkill('test/no-hash-update', new Date(Date.now() + 1000).toISOString())
+      const apiClient = createMockApiClient({ skills: [skill] })
+      const engine = new SyncEngine(
+        apiClient,
+        skillRepo,
+        syncConfigRepo,
+        syncHistoryRepo,
+        skillVersionRepo
+      )
+
+      const result = await engine.sync()
+
+      expect(result.success).toBe(true)
+      expect(result.skillsUpdated).toBe(1)
+      expect(skillVersionRepo.recordVersion).not.toHaveBeenCalled()
+    })
+  })
 })

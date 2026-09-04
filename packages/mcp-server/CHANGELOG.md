@@ -4,6 +4,14 @@ All notable changes to `@skillsmith/mcp-server` are documented here.
 
 ## [Unreleased]
 
+- **Fix**: `skill_outdated` and `skill_updates` now compare real content hashes instead of a
+  structurally meaningless proxy comparison (SMI-6343 Wave 2). `skill_outdated` gains a live
+  registry lookup arm (via `lookupSkillFromRegistry()`) with full offline/network-error/
+  monthly-quota degradation handling — it never fails the call, degrading affected rows to
+  `unknown` instead — and fixes a `latest_hash` echo bug where an unchecked skill's hash
+  visually read as "in sync". `skill_updates` now compares the manifest's own recorded
+  installed hash (not `skill_versions`' oldest row, which was never actually tied to an
+  install event) against the current registry hash.
 - **Fix**: `install.helpers.manifest.ts`'s `saveManifest()`/`acquireManifestLock()` — a
   second, complete manifest write stack parallel to `@skillsmith/core`'s `ManifestManager`,
   homedir-derived with no path-override parameter — now refuse to touch a manifest inside the

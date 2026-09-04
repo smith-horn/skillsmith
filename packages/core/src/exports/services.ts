@@ -424,6 +424,16 @@ export { getRegisteredMcpServers } from '../services/skill-installation.helpers.
 // wholesale (as manage.update's suite does) cannot satisfy.
 export { hashContent, manifestKeyFor } from '../services/skill-installation.helpers.js'
 
+// SMI-6343 Wave 2: shared content-hash comparator — consumed by
+// skill_outdated, skill_updates, and the CLI's skills-directory.ts so the
+// three "is this skill outdated" readers can't drift apart on what
+// current/outdated/unknown means.
+export {
+  compareSkillContentHashes,
+  type ContentComparisonOutcome,
+  type ContentComparisonResult,
+} from '../services/skill-content-comparison.js'
+
 // Install/adoption, discovery-tool-consistency, and the billing-relocation
 // notice all live in the sibling services.install.ts (SMI-6274 Wave 4,
 // file-length gate) — re-exported here so the root barrel's own public

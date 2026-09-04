@@ -37,7 +37,9 @@ function emptyManifest(): SkillManifest {
   return { version: '1', installedSkills: {} }
 }
 
-function manifestWithSkills(entries: Array<{ key: string; id: string }>): SkillManifest {
+function manifestWithSkills(
+  entries: Array<{ key: string; id: string; contentHash?: string; originalContentHash?: string }>
+): SkillManifest {
   const installedSkills: SkillManifest['installedSkills'] = {}
   for (const e of entries) {
     installedSkills[e.key] = {
@@ -48,6 +50,10 @@ function manifestWithSkills(entries: Array<{ key: string; id: string }>): SkillM
       installPath: `/tmp/skills/${e.key}`,
       installedAt: '2026-01-01T00:00:00Z',
       lastUpdated: '2026-01-01T00:00:00Z',
+      ...(e.contentHash !== undefined ? { contentHash: e.contentHash } : {}),
+      ...(e.originalContentHash !== undefined
+        ? { originalContentHash: e.originalContentHash }
+        : {}),
     }
   }
   return { version: '1', installedSkills }
@@ -108,11 +114,16 @@ describe('executeSkillUpdates', () => {
   })
 
   it('bounds the default skillIds to the manifest, ignoring registry-wide skill_versions rows', async () => {
+    // SMI-6343 (C1): the manifest's recorded installed hash ('oldoldold1',
+    // what was actually installed) differs from the latest registry hash
+    // ('newnewnew2') -> update available. Version history itself no longer
+    // drives this — only the manifest-vs-latest-registry comparison does.
     mockedLoadManifest.mockResolvedValue(
-      manifestWithSkills([{ key: 'astro', id: 'community/astro' }])
+      manifestWithSkills([
+        { key: 'astro', id: 'community/astro', contentHash: 'oldoldold1' },
+      ])
     )
 
-    // Installed skill: two version records, hash changes -> update available.
     insertVersionAt(db, 'community/astro', 'oldoldold1', '1.0.0', 1000)
     insertVersionAt(db, 'community/astro', 'newnewnew2', '2.0.0', 2000)
 
@@ -129,18 +140,40 @@ describe('executeSkillUpdates', () => {
     expect(result.updatesAvailable).toBe(1)
   })
 
-  it('honors an explicit skillIds filter without consulting the manifest', async () => {
-    // Manifest is empty/irrelevant -- explicit skillIds is an override, same
-    // as before this fix.
-    mockedLoadManifest.mockResolvedValue(emptyManifest())
+  it('honors an explicit skillIds filter, still consulting the manifest for the real installed hash (SMI-6343 C1)', async () => {
+    // SMI-6343 (C1): the manifest is now always loaded — even for an
+    // explicit skillIds override — because it is the only source of the
+    // real recorded installed hash the comparison needs. This replaces the
+    // pre-fix design, where `skillIds` bypassed the manifest entirely and
+    // the comparison used skill_versions' (meaningless) oldest-vs-latest
+    // hashes instead.
+    mockedLoadManifest.mockResolvedValue(
+      manifestWithSkills([{ key: 'explicit', id: 'explicit/skill', contentHash: 'hashhash01' }])
+    )
 
     await versionRepo.recordVersion('explicit/skill', 'hashhash01', '1.0.0')
 
     const result = await executeSkillUpdates({ skillIds: ['explicit/skill'] }, makeContext(db))
 
+    expect(mockedLoadManifest).toHaveBeenCalled()
     expect(result.skills).toHaveLength(1)
     expect(result.skills[0].skillId).toBe('explicit/skill')
-    expect(mockedLoadManifest).not.toHaveBeenCalled()
+    expect(result.skills[0].updateAvailable).toBe(false)
+  })
+
+  it('reports updateAvailable: false for an explicit skillId the manifest has no entry for (unknown, not a false positive)', async () => {
+    mockedLoadManifest.mockResolvedValue(emptyManifest())
+
+    await versionRepo.recordVersion('unmanifested/skill', 'somehash01', '1.0.0')
+
+    const result = await executeSkillUpdates(
+      { skillIds: ['unmanifested/skill'] },
+      makeContext(db)
+    )
+
+    expect(result.skills).toHaveLength(1)
+    expect(result.skills[0].installedHash).toBe('--------')
+    expect(result.skills[0].updateAvailable).toBe(false)
   })
 
   it('de-duplicates a skill installed under two clients (SMI-5894 name::client keys) to one result', async () => {
@@ -188,15 +221,44 @@ describe('executeSkillUpdates', () => {
     expect(result.updatesAvailable).toBe(0)
   })
 
-  it('reports updateAvailable: false when the oldest and latest hash match', async () => {
+  it('reports updateAvailable: false when the manifest-recorded hash matches the latest registry hash', async () => {
     mockedLoadManifest.mockResolvedValue(
-      manifestWithSkills([{ key: 'stable', id: 'community/stable' }])
+      manifestWithSkills([{ key: 'stable', id: 'community/stable', contentHash: 'samehash01' }])
     )
     await versionRepo.recordVersion('community/stable', 'samehash01', '1.0.0')
 
     const result = await executeSkillUpdates({}, makeContext(db))
 
     expect(result.skills).toHaveLength(1)
+    expect(result.skills[0].updateAvailable).toBe(false)
+    expect(result.updatesAvailable).toBe(0)
+  })
+
+  // SMI-6343 (C1) regression guard: the migration purging skill_versions
+  // (v18) exists specifically to prevent a mixed old/new hash-space table
+  // from making `oldest !== latest` true for EVERY skill with pre-existing
+  // history. Prove the NEW comparison (manifest-vs-latest, not
+  // oldest-vs-latest) doesn't reintroduce that universal false positive by
+  // itself: a skill with several pre-existing (post-migration, real-hash)
+  // version rows whose manifest-recorded hash matches the current latest
+  // registry hash must report updateAvailable: false.
+  it('does not report updateAvailable purely because a skill has pre-existing version history (SMI-6343 universal-false-positive guard)', async () => {
+    mockedLoadManifest.mockResolvedValue(
+      manifestWithSkills([
+        { key: 'history-rich', id: 'community/history-rich', contentHash: 'currenthash1' },
+      ])
+    )
+
+    // Several real-hash version rows recorded over time, ending at the
+    // exact hash the manifest says is installed.
+    insertVersionAt(db, 'community/history-rich', 'ancienthash0', '1.0.0', 1000)
+    insertVersionAt(db, 'community/history-rich', 'olderhash01', '1.1.0', 2000)
+    insertVersionAt(db, 'community/history-rich', 'currenthash1', '1.2.0', 3000)
+
+    const result = await executeSkillUpdates({}, makeContext(db))
+
+    expect(result.skills).toHaveLength(1)
+    expect(result.skills[0].skillId).toBe('community/history-rich')
     expect(result.skills[0].updateAvailable).toBe(false)
     expect(result.updatesAvailable).toBe(0)
   })

@@ -27,6 +27,7 @@ import { MIGRATION_V12_SQL } from './migrations/v12-risk-score-history.js'
 import { MIGRATION_V13_SQL } from './migrations/v13-team-tables.js'
 import { applyMigrationV16 } from './migrations/v16-skill-source.js'
 import { applyMigrationV17 } from './migrations/v17-curated-trust-tier.js'
+import { MIGRATION_V18_SQL } from './migrations/v18-skill-versions-real-content-hash.js'
 import { SCHEMA_SQL, FTS5_MIGRATION_SQL } from './schema-sql.js'
 
 /**
@@ -122,6 +123,12 @@ export const MIGRATIONS: Migration[] = [
     version: 17,
     description: "SMI-4917: widen trust_tier CHECK to allow 'curated'",
     apply: applyMigrationV17,
+  },
+  {
+    version: 18,
+    description:
+      'SMI-6343: skill_versions.content_hash is now a real SKILL.md hash; purge incomparable proxy-hash rows',
+    sql: MIGRATION_V18_SQL,
   },
 ]
 

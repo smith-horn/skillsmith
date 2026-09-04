@@ -11,7 +11,10 @@ import {
   SkillParser,
   SkillVersionRepository,
   manifestKeyFor,
+  compareSkillContentHashes,
   type Database,
+  type SkillManifestEntry,
+  type SkillVersionRow,
   type TrustTier,
 } from '@skillsmith/core'
 import { openCliDatabase } from './open-database.js'
@@ -108,6 +111,32 @@ export interface InstalledSkill {
  * the full `Dirent` interface — those mocks never claim to be a symlink, so
  * treating a missing method as `false` preserves their existing behavior.
  */
+/**
+ * SMI-6343 (C2): compute whether a newer registry version exists for an
+ * installed skill, given (in order of preference) the manifest's recorded
+ * install/update-time content hash, else a freshly-computed on-disk SHA-256
+ * of the current SKILL.md content — compared against the most-recently
+ * synced registry content hash via the shared comparator so this can't
+ * silently drift from the other two SMI-6343 consumers (the mcp-server's
+ * skill_outdated / skill_updates tools).
+ *
+ * Exported for direct unit testing — this is the exact logic that fixes the
+ * pre-fix defect (comparing skill_versions' metadata-proxy hash against
+ * either a nonexistent `parsed.contentHash` field or a real on-disk hash,
+ * which meant it always fell into the "real hash vs. proxy hash" branch and
+ * could essentially never report `hasUpdates: true` correctly).
+ */
+export function computeHasUpdates(
+  manifestEntry: SkillManifestEntry | undefined,
+  content: string,
+  latestVersion: SkillVersionRow | null
+): boolean {
+  if (!latestVersion) return false
+  const manifestHash = manifestEntry?.contentHash ?? manifestEntry?.originalContentHash
+  const installedHash = manifestHash ?? createHash('sha256').update(content, 'utf8').digest('hex')
+  return compareSkillContentHashes(installedHash, latestVersion.content_hash).outcome === 'outdated'
+}
+
 async function resolvesToDirectory(
   entryPath: string,
   isDirectory: boolean,
@@ -157,13 +186,22 @@ export async function getSkillsFromDirectory(
   // rather than per-entry — a corrupt/unreadable manifest degrades to
   // "everything in this directory is untracked" rather than throwing
   // during what is otherwise a read-only `list` scan.
+  //
+  // SMI-6343 (C2): also keeps the full entries (not just their keys) around
+  // so `computeHasUpdates()` can read each entry's recorded
+  // contentHash/originalContentHash — the real installed hash, previously
+  // never actually reached (it was mistakenly read off the *parsed SKILL.md*
+  // object below, which has no such fields).
   let manifestKeys: Set<string> | null = null
+  let manifestEntries: Record<string, SkillManifestEntry> = {}
   if (manifestPath) {
     try {
       const manifest = await new ManifestManager(manifestPath).load()
-      manifestKeys = new Set(Object.keys(manifest.installedSkills ?? {}))
+      manifestEntries = manifest.installedSkills ?? {}
+      manifestKeys = new Set(Object.keys(manifestEntries))
     } catch {
       manifestKeys = new Set()
+      manifestEntries = {}
     }
   }
 
@@ -215,27 +253,19 @@ export async function getSkillsFromDirectory(
           const parser = new SkillParser()
           const parsed = parser.parse(content)
 
-          // Determine hasUpdates by comparing the current SKILL.md hash to the
-          // most-recently recorded hash in skill_versions for this skill id.
+          // SMI-6343 (C2): determine hasUpdates via the shared comparator,
+          // preferring the manifest's recorded installed hash over a fresh
+          // on-disk hash — see computeHasUpdates()'s doc comment for why the
+          // pre-fix version of this block never actually reached the
+          // manifest's stored hash.
           let hasUpdates = false
           if (versionRepo && parsed) {
             try {
               const parsedAny = parsed as unknown as Record<string, unknown>
               const skillId = (parsedAny['id'] as string | undefined) ?? entry.name
               const latestVersion = await versionRepo.getLatestVersion(skillId)
-              if (latestVersion) {
-                const currentHash = createHash('sha256').update(content, 'utf8').digest('hex')
-                const storedHash =
-                  (parsedAny['contentHash'] as string | undefined) ??
-                  (parsedAny['originalContentHash'] as string | undefined) ??
-                  ''
-                // hasUpdates = latest recorded hash differs from what we have locally
-                hasUpdates = storedHash !== '' && latestVersion.content_hash !== storedHash
-                // If we have no stored hash, compare against current content hash
-                if (!storedHash) {
-                  hasUpdates = latestVersion.content_hash !== currentHash
-                }
-              }
+              const manifestEntry = manifestEntries[manifestKeyFor(entry.name, effectiveClient)]
+              hasUpdates = computeHasUpdates(manifestEntry, content, latestVersion)
             } catch {
               // Version check failed — safe to ignore, fall back to false
               hasUpdates = false

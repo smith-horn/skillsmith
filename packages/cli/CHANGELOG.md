@@ -4,6 +4,13 @@ All notable changes to `@skillsmith/cli` are documented here.
 
 ## [Unreleased]
 
+- **Fix**: `skills-directory.ts`'s `hasUpdates` computation (read by `sklx list --outdated`)
+  previously read a nonexistent `contentHash`/`originalContentHash` field off the *parsed
+  SKILL.md* object instead of the manifest entry, so it always fell back to comparing a fresh
+  on-disk hash against `skill_versions`' pre-fix metadata-proxy hash and could not correctly
+  report `hasUpdates: true` (SMI-6343 Wave 2). Now reads the manifest's real recorded install
+  hash and compares it via the shared `compareSkillContentHashes()` comparator, matching the
+  MCP server's `skill_outdated`/`skill_updates` tools.
 - **Fix**: `utils/manifest.ts`'s `saveManifest()` — a homedir-derived manifest write with no
   path-override parameter — now refuses to touch a manifest inside the real user home while
   running under vitest, via `@skillsmith/core`'s newly-exported `assertNotRealUserHome()`

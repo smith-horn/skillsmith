@@ -6,24 +6,12 @@
  * on updated_at timestamps.
  */
 
-import { createHash } from 'crypto'
 import type { SkillsmithApiClient, ApiSearchResult } from '../api/client.js'
 import type { SkillRepository } from '../repositories/SkillRepository.js'
 import type { SyncConfigRepository } from '../repositories/SyncConfigRepository.js'
 import type { SyncHistoryRepository } from '../repositories/SyncHistoryRepository.js'
 import type { SkillVersionRepository } from '../repositories/SkillVersionRepository.js'
 import type { AdvisoryRepository } from '../repositories/AdvisoryRepository.js'
-
-/**
- * Hash a content string using SHA-256 and return the hex digest.
- *
- * NOTE: Duplicated from packages/mcp-server/src/tools/install.conflict-helpers.ts
- * to avoid a circular dependency (core → mcp-server). Implementation is identical.
- * If the hashing algorithm is ever changed it must be updated in both locations.
- */
-function hashContent(content: string): string {
-  return createHash('sha256').update(content, 'utf8').digest('hex')
-}
 
 /**
  * Sync options
@@ -429,14 +417,14 @@ export class SyncEngine {
           })
           updated++
 
-          // Record version hash after successful update
-          const contentProxy = JSON.stringify({
-            id: skill.id,
-            name: skill.name,
-            description: skill.description ?? null,
-            updated_at: skill.updated_at ?? null,
-          })
-          await this.skillVersionRepo.recordVersion(skill.id, hashContent(contentProxy))
+          // SMI-6343 Wave 2: record the registry's real SKILL.md content
+          // hash — never a metadata proxy. When the registry didn't supply
+          // one, skip recordVersion entirely rather than falling back to a
+          // proxy: a missing row is honestly "unknown" to every downstream
+          // comparator, while a proxy row is a lie that reads as a verdict.
+          if (skill.content_hash) {
+            await this.skillVersionRepo.recordVersion(skill.id, skill.content_hash)
+          }
         } else {
           unchanged++
         }
@@ -453,14 +441,11 @@ export class SyncEngine {
         })
         added++
 
-        // Record version hash after successful create
-        const contentProxy = JSON.stringify({
-          id: skill.id,
-          name: skill.name,
-          description: skill.description ?? null,
-          updated_at: skill.updated_at ?? null,
-        })
-        await this.skillVersionRepo.recordVersion(skill.id, hashContent(contentProxy))
+        // SMI-6343 Wave 2: same real-hash-or-skip rule as the update branch
+        // above.
+        if (skill.content_hash) {
+          await this.skillVersionRepo.recordVersion(skill.id, skill.content_hash)
+        }
       }
 
       onProgress?.(i + 1)

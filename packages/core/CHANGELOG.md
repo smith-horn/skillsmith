@@ -4,6 +4,15 @@ All notable changes to `@skillsmith/core` are documented here.
 
 ## [Unreleased]
 
+- **Fix**: `skill_versions.content_hash` (`SyncEngine.upsertSkills()`) now records the
+  registry's real SKILL.md content hash instead of a hash of a JSON metadata proxy
+  (`{id, name, description, updated_at}`) — the proxy meant every reader comparing against
+  this column (`skill_outdated`, `skill_updates`, the CLI's `skills-directory.ts`) was
+  structurally unable to detect a real content change (SMI-6343 Wave 2). New migration v18
+  purges pre-fix rows rather than leaving the two incompatible hash spaces mixed in the same
+  table, which would otherwise make every skill with prior history report a universal false
+  "update available". Adds a shared `compareSkillContentHashes()` comparator
+  (`@skillsmith/core`) so the three readers cannot drift apart on this comparison again.
 - **Fix**: `ManifestManager` (`@skillsmith/core/services/skill-manifest`) now refuses to lock
   or write a manifest located inside the real user home while running under vitest
   (SMI-6343 Wave 1). This closes a class of leak evidenced by fixture rows found in a real

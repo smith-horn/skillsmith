@@ -15,12 +15,12 @@
 import { z } from 'zod'
 import { promises as fs } from 'fs'
 import * as path from 'path'
-import { SkillVersionRepository } from '@skillsmith/core'
+import { SkillVersionRepository, compareSkillContentHashes } from '@skillsmith/core'
 import { withTelemetry } from '@skillsmith/core/telemetry'
 import type { SkillDependencyRow } from '@skillsmith/core'
 import type { ToolContext } from '../context.js'
 import { hashContent } from './install.conflict-helpers.js'
-import { loadManifest } from './install.helpers.js'
+import { loadManifest, lookupSkillFromRegistry } from './install.helpers.js'
 import { getManifestInstalledSkillIds } from './manifest-skill-ids.helpers.js'
 import type { SkillManifestEntry } from './install.types.js'
 
@@ -221,6 +221,17 @@ async function executeOutdatedImpl(
   let unknownCount = 0
   let missingDepsCount = 0
 
+  // SMI-6343 (H1): the live registry arm is skipped entirely, for every
+  // skill, when offline — never a per-skill error in that case. Monthly
+  // quota exhaustion is detected the first time it occurs (via
+  // lookupSkillFromRegistry's onQuotaExceeded callback) and likewise stops
+  // the live arm for every remaining skill in this run, so a quota-exhausted
+  // batch never burns one failed call per remaining skill. Per-minute
+  // rate-limit 429s are already handled by the API client's own
+  // retry/backoff and need no handling here.
+  const liveArmOffline = context.apiClient.isOffline()
+  let quotaExhausted = false
+
   for (const entry of entries) {
     // SMI-3177: Skip corrupt manifest entries with missing installPath
     if (!entry.installPath) {
@@ -242,37 +253,63 @@ async function executeOutdatedImpl(
     // Hash the currently installed SKILL.md
     const localHash = await readInstalledHash(entry.installPath)
 
-    // Get latest version from registry cache
+    // Historical arm: the most-recently-synced skill_versions row. Valid as
+    // an "ever matched" signal now that SyncEngine records a real SKILL.md
+    // hash instead of a metadata proxy (SMI-6343 Wave 2).
     const history = await versionRepo.getVersionHistory(entry.id, 1)
+    const historicalHash = history.length > 0 ? history[0].content_hash : null
+    const historicalSemver = history.length > 0 ? history[0].semver : null
+
+    // Live registry arm: only attempted when online, not yet quota-exhausted
+    // for this run, and there is a local hash worth comparing against (no
+    // point spending a call when the installed SKILL.md can't even be read).
+    let liveHash: string | null = null
+    if (!liveArmOffline && !quotaExhausted && localHash !== null) {
+      try {
+        const registryInfo = await lookupSkillFromRegistry(entry.id, context, {
+          onQuotaExceeded: () => {
+            quotaExhausted = true
+          },
+        })
+        liveHash = registryInfo?.contentHash ?? null
+      } catch {
+        // Per-skill network error / DNS / timeout — degrade this one skill
+        // to the historical arm; the batch continues. Matches
+        // skill-recover-source.ts's "429 -> []" per-item degradation
+        // contract.
+        liveHash = null
+      }
+    }
+
+    // Live arm wins when available; otherwise fall back to the historical
+    // arm. `null` (neither available) is what fixes the latest_hash echo
+    // bug below — an unchecked skill no longer echoes installed_hash.
+    const registryHash = liveHash ?? historicalHash
+    const comparison = compareSkillContentHashes(localHash, registryHash)
 
     let status: 'current' | 'outdated' | 'unknown'
-    let latestHash: string
-    let semver: string | null = null
-
-    if (history.length === 0 || localHash === null) {
-      status = 'unknown'
-      latestHash = localHash?.slice(0, 8) ?? '--------'
-      unknownCount++
+    if (comparison.outcome === 'current') {
+      status = 'current'
+      upToDateCount++
+    } else if (comparison.outcome === 'outdated') {
+      status = 'outdated'
+      outdatedCount++
     } else {
-      const latest = history[0]
-      semver = latest.semver
-      latestHash = latest.content_hash.slice(0, 8)
-
-      if (localHash === latest.content_hash) {
-        status = 'current'
-        upToDateCount++
-      } else {
-        status = 'outdated'
-        outdatedCount++
-      }
+      status = 'unknown'
+      unknownCount++
     }
 
     const skillInfo: OutdatedSkillInfo = {
       id: entry.id,
       installed_hash: localHash?.slice(0, 8) ?? '--------',
-      latest_hash: latestHash,
+      // SMI-6343: fixes the echo bug — previously this rendered
+      // installed_hash when there was no comparison data at all, which
+      // visually read as "in sync" for a row that was never actually
+      // checked. Now it only ever reflects a real (live or historical)
+      // registry hash, or the honest '--------' placeholder.
+      latest_hash: registryHash ? registryHash.slice(0, 8) : '--------',
       status,
-      semver,
+      semver: historicalSemver,
       // SMI-5407: surface a recovery hint when the manifest entry has no source.
       // The source is needed by skill_diff / View-Changes to fetch the latest
       // SKILL.md content. Recovering it requires `sklx audit sources`.

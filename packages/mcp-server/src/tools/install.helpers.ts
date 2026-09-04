@@ -5,7 +5,13 @@
 
 import type { ToolContext } from '../context.js'
 // SMI-2171: Import parseRepoUrl from @skillsmith/core for shared use
-import { parseRepoUrl, QuarantineRepository, type ParsedRepoUrl } from '@skillsmith/core'
+import {
+  parseRepoUrl,
+  QuarantineRepository,
+  SkillsmithError,
+  ErrorCodes,
+  type ParsedRepoUrl,
+} from '@skillsmith/core'
 import { CANONICAL_CLIENT, CLIENT_DISPLAY_LABELS, type ClientId } from '@skillsmith/core/install'
 import { validateTrustTier, type ParsedSkillId, type RegistrySkillInfo } from './install.types.js'
 
@@ -111,7 +117,22 @@ export function parseSkillId(input: string): ParsedSkillId {
  */
 export async function lookupSkillFromRegistry(
   skillId: string,
-  context: ToolContext
+  context: ToolContext,
+  options?: {
+    /**
+     * SMI-6343: invoked when the live call failed specifically because the
+     * caller's monthly API quota is exhausted (`ErrorCodes.NETWORK_QUOTA_
+     * EXCEEDED`, thrown by `SkillsmithApiClient`'s retry loop on a
+     * `monthly_quota_exceeded` 429 body) — lets a batch caller (e.g.
+     * `skill_outdated`'s live registry arm) stop issuing further live calls
+     * for the rest of its run instead of burning one failed call per
+     * remaining skill. Purely additive: this function's existing
+     * swallow-every-other-error-and-fall-back-to-local-DB behavior is
+     * unchanged, and every existing caller that doesn't pass `options` sees
+     * zero behavior change.
+     */
+    onQuotaExceeded?: () => void
+  }
 ): Promise<RegistrySkillInfo | null> {
   // Try API first (primary data source)
   if (!context.apiClient.isOffline()) {
@@ -131,7 +152,10 @@ export async function lookupSkillFromRegistry(
       }
       // API found skill but no repo_url - it's seed data
       return null
-    } catch {
+    } catch (error) {
+      if (error instanceof SkillsmithError && error.code === ErrorCodes.NETWORK_QUOTA_EXCEEDED) {
+        options?.onQuotaExceeded?.()
+      }
       // API failed, fall through to local DB
     }
   }

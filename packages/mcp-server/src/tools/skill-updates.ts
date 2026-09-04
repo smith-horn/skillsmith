@@ -2,10 +2,22 @@
  * @fileoverview skill_updates MCP tool — check for registry skill updates
  * @module @skillsmith/mcp-server/tools/skill-updates
  * @see SMI-skill-version-tracking Wave 1
+ * @see SMI-6343 Wave 2 — real content-hash comparison (C1)
  *
- * Compares the locally-recorded content hash of each installed skill
- * against the most-recent hash in the skill_versions table to determine
- * whether a newer version has been synced from the registry.
+ * Compares the manifest's recorded install/update-time content hash of each
+ * installed skill against the most-recent hash in the skill_versions table
+ * to determine whether a newer version has been synced from the registry.
+ *
+ * SMI-6343 (C1): previously compared `skill_versions`' OLDEST recorded row
+ * (documented as a stand-in for "what was installed") against its LATEST
+ * row — but `oldest` was never actually tied to a real install event, and
+ * (pre-fix) `skill_versions.content_hash` was a metadata-proxy hash, not a
+ * real SKILL.md hash, making the whole comparison structurally meaningless.
+ * Now compares the manifest's own recorded `contentHash`/`originalContentHash`
+ * (the real hash of what is actually installed) against the latest real
+ * registry hash, via the shared `compareSkillContentHashes()` comparator so
+ * this tool, `skill_outdated`, and the CLI's `skills-directory.ts` cannot
+ * drift apart on what "an update is available" means.
  *
  * Tier gate: Individual (version_tracking feature flag).
  * Community users see a graceful license error response, never a hard throw.
@@ -14,10 +26,11 @@
  */
 
 import { z } from 'zod'
-import { SkillVersionRepository } from '@skillsmith/core'
+import { SkillVersionRepository, compareSkillContentHashes } from '@skillsmith/core'
 import { withTelemetry } from '@skillsmith/core/telemetry'
 import { loadManifest } from './install.helpers.js'
 import { getManifestInstalledSkillIds } from './manifest-skill-ids.helpers.js'
+import type { SkillManifest } from './install.types.js'
 import type { ToolContext } from '../context.js'
 
 // ============================================================================
@@ -43,7 +56,14 @@ export type SkillUpdatesInput = z.infer<typeof skillUpdatesInputSchema>
 export interface SkillUpdateInfo {
   /** Registry skill identifier (e.g. "author/skill-name") */
   skillId: string
-  /** 8-char prefix of the oldest recorded hash in skill_versions (earliest registry sync) */
+  /**
+   * SMI-6343: 8-char prefix of the manifest's recorded install/update-time
+   * content hash (`contentHash` ?? `originalContentHash`) — the real
+   * recorded installed hash. Renders as the honest placeholder `'--------'`
+   * (never a stale `skill_versions` row) when the manifest has no entry for
+   * this skill id — `updateAvailable` is `false` for that row too, since an
+   * `unknown` comparator outcome never reports an update.
+   */
   installedHash: string
   /** 8-char prefix of the most-recent recorded hash (current registry state) */
   latestHash: string
@@ -98,13 +118,39 @@ export const skillUpdatesToolSchema = {
 // ============================================================================
 
 /**
+ * SMI-6343 (C1): build a map of registry skill id -> the manifest's
+ * recorded install/update-time content hash (`contentHash` when the skill
+ * has been updated since install, else `originalContentHash`) — the real
+ * hash of what is actually installed. A skill installed under two clients
+ * (SMI-5894) can produce two manifest entries sharing the same id; the
+ * first non-empty hash found wins, matching
+ * `getManifestInstalledSkillIds()`'s own dedup-by-id precedent.
+ */
+function buildManifestInstalledHashMap(manifest: SkillManifest): Map<string, string> {
+  const map = new Map<string, string>()
+  if (!manifest.installedSkills || typeof manifest.installedSkills !== 'object') {
+    return map
+  }
+  for (const entry of Object.values(manifest.installedSkills)) {
+    if (typeof entry.id !== 'string' || entry.id.trim().length === 0) continue
+    if (map.has(entry.id)) continue
+    const hash = entry.contentHash ?? entry.originalContentHash
+    if (typeof hash === 'string' && hash.trim().length > 0) {
+      map.set(entry.id, hash)
+    }
+  }
+  return map
+}
+
+/**
  * Execute the skill_updates tool.
  *
  * Resolves which skills to check either from `input.skillIds` or (SMI-5895
  * Wave 2 Step 2) the local manifest's installed-skill IDs — never an
- * unbounded registry-wide scan — then gets the latest version record for
- * each and compares it to the oldest recorded version (used as a proxy for
- * "what was installed").
+ * unbounded registry-wide scan. The manifest is always loaded (SMI-6343
+ * C1) so each skill's real recorded installed hash is available regardless
+ * of which path resolved its id; `skill_versions`' latest row still
+ * supplies the current registry hash and semver/age display fields.
  *
  * @param input   Validated tool input
  * @param context Tool context with database connection
@@ -115,6 +161,9 @@ async function executeSkillUpdatesImpl(
   context: ToolContext
 ): Promise<CheckUpdatesResponse> {
   const versionRepo = new SkillVersionRepository(context.db)
+
+  const manifest = await loadManifest()
+  const manifestInstalledHashes = buildManifestInstalledHashMap(manifest)
 
   // Determine which skill IDs to check.
   //
@@ -131,7 +180,6 @@ async function executeSkillUpdatesImpl(
   if (input.skillIds && input.skillIds.length > 0) {
     skillIds = input.skillIds
   } else {
-    const manifest = await loadManifest()
     skillIds = getManifestInstalledSkillIds(manifest)
   }
 
@@ -139,18 +187,22 @@ async function executeSkillUpdatesImpl(
   const skillInfos: SkillUpdateInfo[] = []
 
   for (const skillId of skillIds) {
-    // Get the full history to find both the oldest (installed proxy) and latest
-    const history = await versionRepo.getVersionHistory(skillId, 50)
+    // Latest registry-synced version (semver, age, and — when the manifest
+    // has no recorded installed hash — a display-only fallback).
+    const history = await versionRepo.getVersionHistory(skillId, 1)
 
     if (history.length === 0) {
       continue
     }
 
-    // Latest is history[0] (ordered DESC), oldest is history[history.length - 1]
     const latest = history[0]
-    const oldest = history[history.length - 1]
+    const manifestInstalledHash = manifestInstalledHashes.get(skillId)
 
-    const installedHash = oldest.content_hash.slice(0, 8)
+    // SMI-6343 (C1): compare the manifest's real recorded installed hash
+    // (not skill_versions' oldest row) against the current registry hash.
+    const comparison = compareSkillContentHashes(manifestInstalledHash, latest.content_hash)
+
+    const installedHash = manifestInstalledHash ? manifestInstalledHash.slice(0, 8) : '--------'
     const latestHash = latest.content_hash.slice(0, 8)
 
     const ageDays = Math.floor((now - latest.recorded_at) / 86400)
@@ -162,7 +214,11 @@ async function executeSkillUpdatesImpl(
       semver: latest.semver,
       ageDays,
       pinned: false, // Wave 2: pinning support
-      updateAvailable: oldest.content_hash !== latest.content_hash,
+      // SMI-6343: an 'unknown' comparator outcome (no manifest-recorded
+      // hash for this skill) reports no update — reporting may degrade,
+      // but this tool never claims an update is available when it can't
+      // actually verify one.
+      updateAvailable: comparison.outcome === 'outdated',
     })
   }
 
