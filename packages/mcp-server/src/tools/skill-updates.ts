@@ -26,7 +26,11 @@
  */
 
 import { z } from 'zod'
-import { SkillVersionRepository, compareSkillContentHashes, firstNonBlankHash } from '@skillsmith/core'
+import {
+  SkillVersionRepository,
+  compareSkillContentHashes,
+  firstNonBlankHash,
+} from '@skillsmith/core'
 import { withTelemetry } from '@skillsmith/core/telemetry'
 import { loadManifest } from './install.helpers.js'
 import { getManifestInstalledSkillIds } from './manifest-skill-ids.helpers.js'

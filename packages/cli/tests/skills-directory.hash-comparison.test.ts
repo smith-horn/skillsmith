@@ -55,7 +55,11 @@ describe('computeHasUpdates (SMI-6343 Wave 2, C2)', () => {
     const registryHash = sha256('registry-content')
     const entry = makeManifestEntry({ contentHash: registryHash })
     expect(
-      computeHasUpdates(entry, 'irrelevant on-disk content', makeVersionRow({ content_hash: registryHash }))
+      computeHasUpdates(
+        entry,
+        'irrelevant on-disk content',
+        makeVersionRow({ content_hash: registryHash })
+      )
     ).toBe(false)
   })
 
@@ -147,7 +151,11 @@ describe('computeHasUpdates (SMI-6343 Wave 2, C2)', () => {
     const entry = makeManifestEntry({ contentHash: '   ' })
     const onDiskContent = 'exact on-disk SKILL.md content'
     expect(
-      computeHasUpdates(entry, onDiskContent, makeVersionRow({ content_hash: sha256(onDiskContent) }))
+      computeHasUpdates(
+        entry,
+        onDiskContent,
+        makeVersionRow({ content_hash: sha256(onDiskContent) })
+      )
     ).toBe(false)
     expect(
       computeHasUpdates(
@@ -161,7 +169,11 @@ describe('computeHasUpdates (SMI-6343 Wave 2, C2)', () => {
   it('falls back to a fresh on-disk SHA-256 when there is no manifest entry at all (untracked skill)', () => {
     const onDiskContent = 'untracked skill content'
     expect(
-      computeHasUpdates(undefined, onDiskContent, makeVersionRow({ content_hash: sha256(onDiskContent) }))
+      computeHasUpdates(
+        undefined,
+        onDiskContent,
+        makeVersionRow({ content_hash: sha256(onDiskContent) })
+      )
     ).toBe(false)
     expect(
       computeHasUpdates(

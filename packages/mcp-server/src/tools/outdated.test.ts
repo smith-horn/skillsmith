@@ -585,7 +585,11 @@ describe('executeOutdated', () => {
       const skillId = 'community/flaky-with-history'
       mockedLoadManifest.mockResolvedValue(
         manifestWithSkills([
-          { id: skillId, name: 'flaky-with-history', installPath: '/tmp/skills/flaky-with-history' },
+          {
+            id: skillId,
+            name: 'flaky-with-history',
+            installPath: '/tmp/skills/flaky-with-history',
+          },
         ])
       )
       mockedReadFile.mockResolvedValue('latest-content')

@@ -62,9 +62,7 @@ export function normalizeHash(hash: string | null | undefined): string | null {
  * manifest's `contentHash`/`originalContentHash` (or an on-disk fallback)
  * should route through this instead of raw `??` chaining.
  */
-export function firstNonBlankHash(
-  ...candidates: Array<string | null | undefined>
-): string | null {
+export function firstNonBlankHash(...candidates: Array<string | null | undefined>): string | null {
   for (const candidate of candidates) {
     const normalized = normalizeHash(candidate)
     if (normalized !== null) return normalized

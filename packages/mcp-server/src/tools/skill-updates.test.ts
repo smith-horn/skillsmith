@@ -119,9 +119,7 @@ describe('executeSkillUpdates', () => {
     // ('newnewnew2') -> update available. Version history itself no longer
     // drives this — only the manifest-vs-latest-registry comparison does.
     mockedLoadManifest.mockResolvedValue(
-      manifestWithSkills([
-        { key: 'astro', id: 'community/astro', contentHash: 'oldoldold1' },
-      ])
+      manifestWithSkills([{ key: 'astro', id: 'community/astro', contentHash: 'oldoldold1' }])
     )
 
     insertVersionAt(db, 'community/astro', 'oldoldold1', '1.0.0', 1000)
@@ -186,10 +184,7 @@ describe('executeSkillUpdates', () => {
 
     await versionRepo.recordVersion('unmanifested/skill', 'somehash01', '1.0.0')
 
-    const result = await executeSkillUpdates(
-      { skillIds: ['unmanifested/skill'] },
-      makeContext(db)
-    )
+    const result = await executeSkillUpdates({ skillIds: ['unmanifested/skill'] }, makeContext(db))
 
     expect(result.skills).toHaveLength(1)
     expect(result.skills[0].installedHash).toBe('--------')

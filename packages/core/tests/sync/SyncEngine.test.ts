@@ -533,7 +533,10 @@ describe('SyncEngine', () => {
       })
 
       const skillVersionRepo = createMockSkillVersionRepo()
-      const skill = createMockSkill('test/no-hash-update', new Date(Date.now() + 1000).toISOString())
+      const skill = createMockSkill(
+        'test/no-hash-update',
+        new Date(Date.now() + 1000).toISOString()
+      )
       const apiClient = createMockApiClient({ skills: [skill] })
       const engine = new SyncEngine(
         apiClient,
