@@ -152,7 +152,18 @@ jobs:
     needs: [detect-changes]
     if: needs.detect-changes.outputs.code == 'true'
     runs-on: ubuntu-latest
-    timeout-minutes: 2
+    # SMI-6381: bumped from 2 -> 4. Not a blind bump -- measured baseline for
+    # the "Install minimatch" step below is ~55s cold-cache (see
+    # docs/internal/implementation/ci-classify-changes-timeout.md for the
+    # full root-cause writeup). That 55s baseline predates `cache: 'npm'`
+    # being added to this job (below); the cache-restore step itself adds
+    # negligible overhead -- quality-checks' own `cache: 'npm'` restore
+    # (bundled into its "Setup Node.js" step) measured ~1-2s on a hit in the
+    # same sample of runs. 4 minutes gives headroom for a genuinely degraded
+    # registry day (2x the measured cold-cache baseline) plus fixed
+    # checkout/setup-node/cache-restore overhead, while still hard-failing a
+    # step that is actually wedged rather than removing the guard.
+    timeout-minutes: 4
     outputs:
       tier: ${{ steps.classify.outputs.tier }}
       skip_docker: ${{ steps.classify.outputs.skip_docker }}
@@ -171,9 +182,39 @@ jobs:
         uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v6
         with:
           node-version: ${{ env.NODE_VERSION }}
+          cache: 'npm'
 
-      - name: Install dependencies
-        run: npm install minimatch
+      - name: Install minimatch (pinned, cached)
+        # SMI-6381: `minimatch@10.2.5` is already the pinned, resolvable
+        # version in package-lock.json (packages["node_modules/minimatch"]).
+        # This step only needs it importable for
+        # scripts/ci/classify-changes.ts's `import { minimatch } from
+        # 'minimatch'`. The previous unpinned `npm install minimatch` forced
+        # a live registry packument/dist-tag lookup ("what does `latest`
+        # currently resolve to?") on every run before it could even check
+        # the tarball cache -- THAT lookup is the actual root cause of the
+        # 2026-09 timeout incident (see the implementation plan's Root Cause
+        # Analysis), not just an absence of caching. Pinning to the exact
+        # locked version removes it entirely: combined with `cache: 'npm'`
+        # above, a warm cache resolves fully offline with no network call at
+        # all. --no-save avoids rewriting package.json/lock in this
+        # ephemeral checkout; --no-audit/--no-fund drop two more registry
+        # round trips npm makes by default that this job doesn't need;
+        # --prefer-offline is a defense-in-depth fallback for the rare case
+        # the cache is warm but the exact tarball still isn't present.
+        # Version-drift note: this pin WILL go stale whenever a future
+        # dependency bump changes what version package-lock.json's top-level
+        # `minimatch` entry resolves to -- reviewed and accepted as a
+        # deliberate trade-off. It's harmless when stale
+        # (scripts/ci/classify-changes.ts's usage, `minimatch(file, pattern,
+        # { dot: true })`, is a narrow, stable API surface across
+        # minimatch's 10.x line), it's a single visible line in this file,
+        # and it's trivially bumped whenever noticed -- not worth trading
+        # away the actual fix (removing the registry round trip) to avoid.
+        # See docs/internal/implementation/ci-classify-changes-timeout.md.
+        run: |
+          echo "::notice::Installing minimatch@10.2.5 (pinned) for scripts/ci/classify-changes.ts -- if this step is slow or times out, see SMI-6381 / docs/internal/implementation/ci-classify-changes-timeout.md"
+          npm install minimatch@10.2.5 --no-save --no-audit --no-fund --prefer-offline
 
       - name: Classify changes
         id: classify
