@@ -114,6 +114,7 @@ The `tool_call` event type is distinct from `skill_invoke` and carries team-scop
 **Event type:** stored server-side as `event_type = 'telemetry:tool_call'`
 
 **Wire format:**
+
 ```json
 {
   "event": "tool_call",
@@ -140,6 +141,7 @@ The `tool_call` event type is distinct from `skill_invoke` and carries team-scop
 Skillsmith uses two independent attribution lanes:
 
 **Lane A — Anonymous (no JWT required)**
+
 - Applies to: Claude Code hook, CLI without login, any client not sending a user JWT
 - Identity: SHA-256 hash of a random UUID (rotates annually), stored in `~/.skillsmith/manifest.json`
 - Event types: `skill_invoke`, `skill_context_load`, `skill_invoke_unparsed`
@@ -147,6 +149,7 @@ Skillsmith uses two independent attribution lanes:
 - Dashboard visibility: not included in Team/Enterprise dashboards
 
 **Lane B — Attributable (JWT required)**
+
 - Applies to: Signed-in users on Team/Enterprise accounts who have consented to telemetry
 - Identity: non-reversible per-team pseudonym derived from verified user JWT
 - Event types: `tool_call` (new; MCP tool calls only)
