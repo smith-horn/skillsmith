@@ -64,6 +64,14 @@ export interface TeamMemberRow {
 export interface Viewer {
   role: 'owner' | 'admin' | 'member'
   userId: string | null
+  /**
+   * SMI-6241 Wave 3. Resolved once per page load via the caller-scoped
+   * `has_team_permission(teamId, 'team:manage_members')` RPC — the real
+   * permission-system source of truth for the remove/edit gates below,
+   * rather than the `role` literal above (which stays on the interface for
+   * display purposes: role badges, the invite-role default, etc.).
+   */
+  canManageMembers: boolean
 }
 
 function escapeHtml(text: string): string {
@@ -255,7 +263,7 @@ export function wireInviteFlow(supabase: SupabaseClient, teamId: string): void {
 // ────────────────────────────────────────────────────────────────────────────
 
 function canRemove(viewer: Viewer, row: TeamMemberRow): boolean {
-  if (viewer.role !== 'owner' && viewer.role !== 'admin') return false
+  if (!viewer.canManageMembers) return false
   if (row.role === 'owner') return false
   if (viewer.userId !== null && row.user_id === viewer.userId) return false
   return true
@@ -269,7 +277,7 @@ function canRemove(viewer: Viewer, row: TeamMemberRow): boolean {
  * this issue — self-service editing is SMI-5590, not this RPC.
  */
 function canEditGithubUsername(viewer: Viewer, row: TeamMemberRow): boolean {
-  if (viewer.role !== 'owner' && viewer.role !== 'admin') return false
+  if (!viewer.canManageMembers) return false
   if (viewer.userId !== null && row.user_id === viewer.userId) return false
   return true
 }

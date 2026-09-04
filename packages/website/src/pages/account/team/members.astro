@@ -463,18 +463,31 @@ const supabaseConfig = getSupabaseConfig()
       const { data: userData } = await supabase.auth.getUser()
       const viewerUserId = userData?.user?.id ?? null
 
-      const { data: roleData, error: roleErr } = await supabase.rpc(
-        'list_team_members_with_profile',
-        { p_team_id: teamId }
-      )
+      // SMI-6241 Wave 3: resolve the caller-scoped team:manage_members
+      // permission ONCE per page load (not per member row — renderMemberRow
+      // calls canRemove/canEditGithubUsername once per row, so a per-row RPC
+      // would be an N+1) via has_team_permission(), run in parallel with the
+      // member-list RPC since neither depends on the other's result.
+      const [
+        { data: roleData, error: roleErr },
+        { data: canManageMembersData, error: canManageMembersError },
+      ] = await Promise.all([
+        supabase.rpc('list_team_members_with_profile', { p_team_id: teamId }),
+        supabase.rpc('has_team_permission', {
+          p_team_id: teamId,
+          p_permission: 'team:manage_members',
+        }),
+      ])
       if (roleErr) throw new Error(roleErr.message)
+      if (canManageMembersError) throw new Error(canManageMembersError.message)
       const rows = (roleData ?? []) as Array<{ user_id: string; role: string }>
       let viewerRole: 'owner' | 'admin' | 'member' = 'member'
       if (viewerUserId) {
         const match = rows.find((r) => r.user_id === viewerUserId)
         if (match?.role === 'owner' || match?.role === 'admin') viewerRole = match.role
       }
-      const viewer: Viewer = { role: viewerRole, userId: viewerUserId }
+      const canManageMembers = Boolean(canManageMembersData)
+      const viewer: Viewer = { role: viewerRole, userId: viewerUserId, canManageMembers }
 
       // Guard once before the first DOM-writing continuation: it covers
       // staleness accumulated across all three prior awaits (getUser, the
