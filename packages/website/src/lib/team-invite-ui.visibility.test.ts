@@ -30,20 +30,14 @@ describe('canSeeProvisioning (SMI-6205 L12)', () => {
     )
   })
 
-  it('draws the line in the same place as the other admin-only row controls', () => {
-    // canRemove/canEditGithubUsername both gate on `owner || admin`. If those
-    // ever move to a permission lookup, this must move with them rather than
-    // silently diverging. canSeeProvisioning itself stays role-literal by
-    // design (SMI-6241 Wave 3 does not touch it) — canManageMembers here just
-    // satisfies the Viewer type and mirrors what a real caller in that role
-    // would resolve from has_team_permission('team:manage_members').
-    for (const role of ['owner', 'admin', 'member'] as const) {
-      const viewerOnlyRoleMatters = canSeeProvisioning({
-        role,
-        userId: null,
-        canManageMembers: role !== 'member',
-      })
-      expect(viewerOnlyRoleMatters).toBe(role !== 'member')
-    }
+  it('follows role alone, independent of canManageMembers', () => {
+    // canRemove/canEditGithubUsername moved onto the real permission
+    // (canManageMembers) in SMI-6241 Wave 3. canSeeProvisioning deliberately
+    // did NOT move with them -- it stays role-literal, so the two can now
+    // diverge for the same viewer. Assert that divergence directly: an
+    // admin explicitly denied team:manage_members still sees provisioning
+    // data, and a member explicitly granted it still does not.
+    expect(canSeeProvisioning({ role: 'admin', userId: 'u1', canManageMembers: false })).toBe(true)
+    expect(canSeeProvisioning({ role: 'member', userId: 'u1', canManageMembers: true })).toBe(false)
   })
 })

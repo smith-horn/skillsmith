@@ -570,7 +570,9 @@ const supabaseConfig = getSupabaseConfig()
       await loadWorkspaces(teamId)
       if (nav.isStale()) return
 
-      // Wire create-workspace flow (admins/owners only per RLS)
+      // Wire create-workspace flow, gated on the workspace:manage permission
+      // (default-on for admins/owners, but overridable per-team via
+      // set_team_role_permission -- see has_team_permission() above)
       const createBtn = document.getElementById('create-workspace-btn') as HTMLButtonElement
       const modal = document.getElementById('create-modal') as HTMLDivElement
       const closeBtn = document.getElementById('close-modal') as HTMLButtonElement
@@ -582,7 +584,7 @@ const supabaseConfig = getSupabaseConfig()
 
       if (!canManageWorkspaces) {
         createBtn.disabled = true
-        createBtn.title = 'Only team admins and owners can create workspaces.'
+        createBtn.title = "You don't have permission to create workspaces for this team."
       }
 
       const openModal = () => {
