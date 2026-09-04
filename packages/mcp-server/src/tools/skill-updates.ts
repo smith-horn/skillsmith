@@ -26,7 +26,7 @@
  */
 
 import { z } from 'zod'
-import { SkillVersionRepository, compareSkillContentHashes } from '@skillsmith/core'
+import { SkillVersionRepository, compareSkillContentHashes, firstNonBlankHash } from '@skillsmith/core'
 import { withTelemetry } from '@skillsmith/core/telemetry'
 import { loadManifest } from './install.helpers.js'
 import { getManifestInstalledSkillIds } from './manifest-skill-ids.helpers.js'
@@ -118,25 +118,49 @@ export const skillUpdatesToolSchema = {
 // ============================================================================
 
 /**
- * SMI-6343 (C1): build a map of registry skill id -> the manifest's
- * recorded install/update-time content hash (`contentHash` when the skill
- * has been updated since install, else `originalContentHash`) — the real
- * hash of what is actually installed. A skill installed under two clients
- * (SMI-5894) can produce two manifest entries sharing the same id; the
- * first non-empty hash found wins, matching
- * `getManifestInstalledSkillIds()`'s own dedup-by-id precedent.
+ * SMI-6343 (C1, adversarial-review fix): build a map of registry skill id
+ * -> the manifest's recorded install/update-time content hash
+ * (`contentHash` when the skill has been updated since install, else
+ * `originalContentHash`) — the real hash of what is actually installed.
+ *
+ * A skill installed under two clients (SMI-5894) can produce two manifest
+ * entries sharing the same id, and those entries can legitimately carry
+ * DIFFERENT installed hashes — e.g. the Claude Code copy was updated and
+ * the Cursor copy wasn't. Picking "the first hash found" (the original
+ * implementation) makes the verdict depend on manifest iteration order,
+ * silently reporting "no update" for a genuinely-outdated client just
+ * because an up-to-date sibling entry happened to be read first. Per
+ * ADR-144 §3's fail-closed posture ("the system never converts uncertainty
+ * into a registry identity/verdict"), a genuine multi-client conflict
+ * resolves to no-hash-available (comparator reports `unknown`) rather than
+ * guessing which client's state to trust — this is a one-row-per-skill-id
+ * response shape, so there is nowhere honest to put two different verdicts
+ * for one row.
  */
 function buildManifestInstalledHashMap(manifest: SkillManifest): Map<string, string> {
-  const map = new Map<string, string>()
+  const hashesById = new Map<string, Set<string>>()
   if (!manifest.installedSkills || typeof manifest.installedSkills !== 'object') {
-    return map
+    return new Map()
   }
   for (const entry of Object.values(manifest.installedSkills)) {
     if (typeof entry.id !== 'string' || entry.id.trim().length === 0) continue
-    if (map.has(entry.id)) continue
-    const hash = entry.contentHash ?? entry.originalContentHash
-    if (typeof hash === 'string' && hash.trim().length > 0) {
-      map.set(entry.id, hash)
+    // firstNonBlankHash() already trims and rejects blank values, so a
+    // non-null result here is guaranteed non-blank.
+    const hash = firstNonBlankHash(entry.contentHash, entry.originalContentHash)
+    if (hash !== null) {
+      const set = hashesById.get(entry.id) ?? new Set<string>()
+      set.add(hash)
+      hashesById.set(entry.id, set)
+    }
+  }
+  const map = new Map<string, string>()
+  for (const [id, hashes] of hashesById) {
+    // Exactly one distinct hash across every client entry for this id ->
+    // unambiguous. Two or more -> conflicting client state; omit from the
+    // map entirely so the caller's `?? undefined` lookup falls through to
+    // the comparator's honest `unknown` outcome.
+    if (hashes.size === 1) {
+      map.set(id, [...hashes][0])
     }
   }
   return map

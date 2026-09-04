@@ -44,10 +44,32 @@ export interface ContentComparisonResult {
  * field, an absent DB row, an `undefined` API response field) is handled
  * uniformly regardless of how the caller spells "nothing here."
  */
-function normalizeHash(hash: string | null | undefined): string | null {
+export function normalizeHash(hash: string | null | undefined): string | null {
   if (typeof hash !== 'string') return null
   const trimmed = hash.trim()
   return trimmed.length > 0 ? trimmed : null
+}
+
+/**
+ * SMI-6343 (adversarial-review fix): return the first candidate that
+ * normalizes to a non-blank value, else `null`.
+ *
+ * Exists because a bare `a ?? b` precedence chain (the original shape at
+ * both call sites) only falls through on `null`/`undefined` — a blank
+ * string (`''`, whitespace-only) is neither, so `a ?? b` incorrectly
+ * "wins" with a value `normalizeHash()` would itself treat as absent,
+ * silently discarding a legitimate `b`. Every caller selecting between a
+ * manifest's `contentHash`/`originalContentHash` (or an on-disk fallback)
+ * should route through this instead of raw `??` chaining.
+ */
+export function firstNonBlankHash(
+  ...candidates: Array<string | null | undefined>
+): string | null {
+  for (const candidate of candidates) {
+    const normalized = normalizeHash(candidate)
+    if (normalized !== null) return normalized
+  }
+  return null
 }
 
 /**

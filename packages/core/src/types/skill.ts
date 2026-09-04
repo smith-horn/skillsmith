@@ -90,7 +90,15 @@ export interface Skill {
   createdAt: string
   updatedAt: string
   // SMI-skill-version-tracking Wave 1: version tracking fields
-  /** SHA-256 hex of the most recently recorded content proxy (optional, populated by SkillVersionRepository) */
+  /**
+   * SHA-256 hex of the most-recently-synced `skill_versions.content_hash`
+   * row for this skill — as of SMI-6343 Wave 2, a real hash of the
+   * registry's SKILL.md content at index time, never a metadata proxy (the
+   * original meaning this comment described). Currently declared but not
+   * populated anywhere in the codebase (no writer/reader references it) —
+   * a future consumer should source it via `SkillVersionRepository`, not
+   * assume it is already wired up.
+   */
   latestContentHash?: string
   /** Number of distinct content hashes recorded for this skill */
   versionCount?: number

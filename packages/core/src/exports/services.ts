@@ -430,6 +430,7 @@ export { hashContent, manifestKeyFor } from '../services/skill-installation.help
 // current/outdated/unknown means.
 export {
   compareSkillContentHashes,
+  firstNonBlankHash,
   type ContentComparisonOutcome,
   type ContentComparisonResult,
 } from '../services/skill-content-comparison.js'

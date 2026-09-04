@@ -12,6 +12,7 @@ import {
   SkillVersionRepository,
   manifestKeyFor,
   compareSkillContentHashes,
+  firstNonBlankHash,
   type Database,
   type SkillManifestEntry,
   type SkillVersionRow,
@@ -132,8 +133,13 @@ export function computeHasUpdates(
   latestVersion: SkillVersionRow | null
 ): boolean {
   if (!latestVersion) return false
-  const manifestHash = manifestEntry?.contentHash ?? manifestEntry?.originalContentHash
-  const installedHash = manifestHash ?? createHash('sha256').update(content, 'utf8').digest('hex')
+  // SMI-6343 (adversarial-review fix): firstNonBlankHash(), not a raw `??`
+  // chain — a blank-but-present contentHash/originalContentHash (`??` only
+  // falls through on null/undefined) must not block falling all the way
+  // through to a freshly-computed on-disk hash.
+  const installedHash =
+    firstNonBlankHash(manifestEntry?.contentHash, manifestEntry?.originalContentHash) ??
+    createHash('sha256').update(content, 'utf8').digest('hex')
   return compareSkillContentHashes(installedHash, latestVersion.content_hash).outcome === 'outdated'
 }
 

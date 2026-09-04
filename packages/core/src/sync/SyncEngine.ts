@@ -416,17 +416,28 @@ export class SyncEngine {
             tags: skill.tags,
           })
           updated++
-
-          // SMI-6343 Wave 2: record the registry's real SKILL.md content
-          // hash — never a metadata proxy. When the registry didn't supply
-          // one, skip recordVersion entirely rather than falling back to a
-          // proxy: a missing row is honestly "unknown" to every downstream
-          // comparator, while a proxy row is a lie that reads as a verdict.
-          if (skill.content_hash) {
-            await this.skillVersionRepo.recordVersion(skill.id, skill.content_hash)
-          }
         } else {
           unchanged++
+        }
+
+        // SMI-6343 Wave 2 (adversarial-review fix): record the registry's
+        // real SKILL.md content hash on EVERY sync pass for this skill,
+        // independent of whether its other metadata changed. Originally
+        // this only ran inside the `updated` branch above, which meant a
+        // skill whose `updated_at` doesn't change between syncs (the common
+        // steady-state case for most of the catalog most of the time) would
+        // never regain a skill_versions row after migration v18's purge —
+        // contradicting the migration's own "fully rebuilds on the next
+        // registry sync" rationale. recordVersion() is idempotent
+        // (INSERT OR IGNORE on skill_id+content_hash), so calling it here
+        // unconditionally for an unchanged skill is a no-op once the hash
+        // is already recorded, not a source of duplicate rows or wasted
+        // syncs. Skip entirely (never a proxy fallback) when the registry
+        // didn't supply a content_hash — a missing row is honestly
+        // "unknown" to every downstream comparator, while a proxy row is a
+        // lie that reads as a verdict.
+        if (skill.content_hash) {
+          await this.skillVersionRepo.recordVersion(skill.id, skill.content_hash)
         }
       } else {
         this.skillRepo.create({

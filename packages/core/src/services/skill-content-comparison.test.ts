@@ -4,7 +4,7 @@
  */
 
 import { describe, it, expect } from 'vitest'
-import { compareSkillContentHashes } from './skill-content-comparison.js'
+import { compareSkillContentHashes, firstNonBlankHash } from './skill-content-comparison.js'
 
 describe('compareSkillContentHashes', () => {
   it('returns current when both hashes match exactly', () => {
@@ -63,5 +63,37 @@ describe('compareSkillContentHashes', () => {
   it('trims surrounding whitespace before comparing', () => {
     const result = compareSkillContentHashes('  abc123  ', 'abc123')
     expect(result.outcome).toBe('current')
+  })
+})
+
+describe('firstNonBlankHash (adversarial-review addition, SMI-6343)', () => {
+  it('returns the first candidate when it is non-blank', () => {
+    expect(firstNonBlankHash('abc123', 'def456')).toBe('abc123')
+  })
+
+  it('falls through past null/undefined to the next candidate', () => {
+    expect(firstNonBlankHash(null, 'def456')).toBe('def456')
+    expect(firstNonBlankHash(undefined, 'def456')).toBe('def456')
+  })
+
+  it('falls through past a BLANK (whitespace-only) first candidate — the exact case a raw `??` chain gets wrong', () => {
+    // `'   ' ?? 'def456'` would incorrectly return '   ' (?? only falls
+    // through on null/undefined) — this is the whole reason this helper
+    // exists instead of a raw `??` chain at each call site.
+    expect(firstNonBlankHash('   ', 'def456')).toBe('def456')
+    expect(firstNonBlankHash('', 'def456')).toBe('def456')
+  })
+
+  it('trims a winning candidate', () => {
+    expect(firstNonBlankHash('  abc123  ')).toBe('abc123')
+  })
+
+  it('returns null when every candidate is blank/null/undefined', () => {
+    expect(firstNonBlankHash(null, undefined, '   ', '')).toBeNull()
+    expect(firstNonBlankHash()).toBeNull()
+  })
+
+  it('supports three or more candidates (on-disk-hash fallback chains)', () => {
+    expect(firstNonBlankHash('   ', undefined, 'on-disk-hash')).toBe('on-disk-hash')
   })
 })

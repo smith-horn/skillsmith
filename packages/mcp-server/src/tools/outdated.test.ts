@@ -575,6 +575,64 @@ describe('executeOutdated', () => {
       expect(result.skills.every((s) => s.status === 'unknown')).toBe(true)
     })
 
+    it('reports unknown on a per-skill network error even when stale historical data would say "current" (adversarial-review regression)', async () => {
+      // The bug this guards: a failed live-arm attempt fell back to
+      // historicalHash, producing a DEFINITIVE verdict from data that might
+      // no longer be true. This test plants a historical row that matches
+      // installed content — the exact shape that would incorrectly render
+      // as 'current' under the pre-fix fallback — so it fails loudly if the
+      // regression returns.
+      const skillId = 'community/flaky-with-history'
+      mockedLoadManifest.mockResolvedValue(
+        manifestWithSkills([
+          { id: skillId, name: 'flaky-with-history', installPath: '/tmp/skills/flaky-with-history' },
+        ])
+      )
+      mockedReadFile.mockResolvedValue('latest-content')
+      // Stale historical row that HAPPENS to match installed content.
+      await versionRepo.recordVersion(skillId, sha256('latest-content'), '1.0.0')
+      mockedLookupSkillFromRegistry.mockRejectedValueOnce(new Error('ETIMEDOUT'))
+
+      const result = await executeOutdated(
+        { include_deps: false },
+        makeContext(db, { online: true })
+      )
+
+      expect(mockedLookupSkillFromRegistry).toHaveBeenCalledTimes(1)
+      expect(result.skills[0].status).toBe('unknown')
+      expect(result.skills[0].latest_hash).toBe('--------')
+    })
+
+    it('reports unknown for the skill whose own call revealed quota exhaustion, even with matching stale history (adversarial-review regression)', async () => {
+      // lookupSkillFromRegistry swallows the quota error internally and
+      // returns a local-DB-shaped result (no throw) — the pre-fix code had
+      // no way to distinguish this from "no live data, consult history."
+      const skillId = 'community/quota-trigger-with-history'
+      mockedLoadManifest.mockResolvedValue(
+        manifestWithSkills([
+          {
+            id: skillId,
+            name: 'quota-trigger-with-history',
+            installPath: '/tmp/skills/quota-trigger-with-history',
+          },
+        ])
+      )
+      mockedReadFile.mockResolvedValue('latest-content')
+      await versionRepo.recordVersion(skillId, sha256('latest-content'), '1.0.0')
+      mockedLookupSkillFromRegistry.mockImplementationOnce(async (_id, _ctx, opts) => {
+        opts?.onQuotaExceeded?.()
+        return null
+      })
+
+      const result = await executeOutdated(
+        { include_deps: false },
+        makeContext(db, { online: true })
+      )
+
+      expect(result.skills[0].status).toBe('unknown')
+      expect(result.skills[0].latest_hash).toBe('--------')
+    })
+
     it('never fails the whole call when the live arm is unavailable for every skill', async () => {
       mockedLoadManifest.mockResolvedValue(
         manifestWithSkills([

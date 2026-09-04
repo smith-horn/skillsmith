@@ -161,6 +161,26 @@ describe('executeSkillUpdates', () => {
     expect(result.skills[0].updateAvailable).toBe(false)
   })
 
+  it('falls through a BLANK (whitespace-only) contentHash to originalContentHash (adversarial-review regression)', async () => {
+    mockedLoadManifest.mockResolvedValue(
+      manifestWithSkills([
+        {
+          key: 'blank-content-hash',
+          id: 'community/blank-content-hash',
+          contentHash: '   ',
+          originalContentHash: 'real-original-hash',
+        },
+      ])
+    )
+    await versionRepo.recordVersion('community/blank-content-hash', 'newer-registry-hash', '2.0.0')
+
+    const result = await executeSkillUpdates({}, makeContext(db))
+
+    expect(result.skills).toHaveLength(1)
+    expect(result.skills[0].installedHash).toBe('real-original-hash'.slice(0, 8))
+    expect(result.skills[0].updateAvailable).toBe(true)
+  })
+
   it('reports updateAvailable: false for an explicit skillId the manifest has no entry for (unknown, not a false positive)', async () => {
     mockedLoadManifest.mockResolvedValue(emptyManifest())
 
@@ -190,6 +210,44 @@ describe('executeSkillUpdates', () => {
 
     expect(result.skills).toHaveLength(1)
     expect(result.skills[0].skillId).toBe('community/astro')
+  })
+
+  it('reports unknown (not a guess) when two clients of the same skill carry conflicting installed hashes (adversarial-review regression)', async () => {
+    // The bug this guards: "first non-empty hash wins" made the verdict
+    // depend on manifest object-iteration order — one client's install is
+    // current, the other is genuinely outdated, and picking either
+    // silently misreports the other. Per ADR-144 §3, a real conflict must
+    // resolve to no-hash-available (comparator -> 'unknown'), never a
+    // guess.
+    mockedLoadManifest.mockResolvedValue(
+      manifestWithSkills([
+        { key: 'astro', id: 'community/astro', contentHash: 'client-a-hash' },
+        { key: 'astro::cursor', id: 'community/astro', contentHash: 'client-b-hash' },
+      ])
+    )
+    await versionRepo.recordVersion('community/astro', 'client-a-hash', '1.0.0')
+
+    const result = await executeSkillUpdates({}, makeContext(db))
+
+    expect(result.skills).toHaveLength(1)
+    expect(result.skills[0].updateAvailable).toBe(false)
+    expect(result.skills[0].installedHash).toBe('--------')
+  })
+
+  it('resolves normally when two clients of the same skill carry the SAME installed hash', async () => {
+    mockedLoadManifest.mockResolvedValue(
+      manifestWithSkills([
+        { key: 'astro', id: 'community/astro', contentHash: 'agreed-hash' },
+        { key: 'astro::cursor', id: 'community/astro', contentHash: 'agreed-hash' },
+      ])
+    )
+    await versionRepo.recordVersion('community/astro', 'newer-registry-hash', '2.0.0')
+
+    const result = await executeSkillUpdates({}, makeContext(db))
+
+    expect(result.skills).toHaveLength(1)
+    expect(result.skills[0].updateAvailable).toBe(true)
+    expect(result.skills[0].installedHash).toBe('agreed-hash'.slice(0, 8))
   })
 
   it('skips manifest entries with no id (corrupt row) without throwing', async () => {

@@ -118,6 +118,46 @@ describe('computeHasUpdates (SMI-6343 Wave 2, C2)', () => {
     ).toBe(true)
   })
 
+  it('falls through a BLANK (whitespace-only) contentHash to originalContentHash (adversarial-review regression)', () => {
+    // The bug this guards: a raw `entry.contentHash ?? entry.originalContentHash`
+    // chain only falls through on null/undefined — a blank-but-present
+    // contentHash would incorrectly "win" with a value the comparator
+    // itself treats as absent, discarding a legitimate originalContentHash.
+    const entry = makeManifestEntry({
+      contentHash: '   ',
+      originalContentHash: sha256('install-time-content'),
+    })
+    expect(
+      computeHasUpdates(
+        entry,
+        'irrelevant on-disk content',
+        makeVersionRow({ content_hash: sha256('install-time-content') })
+      )
+    ).toBe(false)
+    expect(
+      computeHasUpdates(
+        entry,
+        'irrelevant on-disk content',
+        makeVersionRow({ content_hash: sha256('different-registry-content') })
+      )
+    ).toBe(true)
+  })
+
+  it('falls through a BLANK contentHash all the way to a fresh on-disk hash when originalContentHash is also blank/absent', () => {
+    const entry = makeManifestEntry({ contentHash: '   ' })
+    const onDiskContent = 'exact on-disk SKILL.md content'
+    expect(
+      computeHasUpdates(entry, onDiskContent, makeVersionRow({ content_hash: sha256(onDiskContent) }))
+    ).toBe(false)
+    expect(
+      computeHasUpdates(
+        entry,
+        onDiskContent,
+        makeVersionRow({ content_hash: sha256('different-registry-content') })
+      )
+    ).toBe(true)
+  })
+
   it('falls back to a fresh on-disk SHA-256 when there is no manifest entry at all (untracked skill)', () => {
     const onDiskContent = 'untracked skill content'
     expect(

@@ -549,5 +549,87 @@ describe('SyncEngine', () => {
       expect(result.skillsUpdated).toBe(1)
       expect(skillVersionRepo.recordVersion).not.toHaveBeenCalled()
     })
+
+    it('records the registry content_hash for an UNCHANGED skill (adversarial-review regression)', async () => {
+      // The bug this guards: recordVersion() originally lived only inside
+      // the branch where existing.updatedAt !== skill.updated_at, so a
+      // skill whose metadata hasn't changed since last sync would never
+      // regain a skill_versions row after migration v18's purge —
+      // contradicting the migration's own "fully rebuilds on the next
+      // registry sync" claim for the common case where most of the catalog
+      // doesn't change every sync.
+      const timestamp = new Date().toISOString()
+      skillRepo.create({
+        id: 'test/unchanged-hash',
+        name: 'Skill test/unchanged-hash',
+        trustTier: 'community',
+        tags: ['test'],
+      })
+      db.prepare('UPDATE skills SET updated_at = ? WHERE id = ?').run(
+        timestamp,
+        'test/unchanged-hash'
+      )
+
+      const skillVersionRepo = createMockSkillVersionRepo()
+      const skill: ApiSearchResult = {
+        ...createMockSkill('test/unchanged-hash', timestamp),
+        content_hash: 'realsha256contenthash-unchanged',
+      }
+      const apiClient = createMockApiClient({ skills: [skill] })
+      const engine = new SyncEngine(
+        apiClient,
+        skillRepo,
+        syncConfigRepo,
+        syncHistoryRepo,
+        skillVersionRepo
+      )
+
+      const result = await engine.sync()
+
+      expect(result.success).toBe(true)
+      expect(result.skillsUnchanged).toBe(1)
+      expect(result.skillsUpdated).toBe(0)
+      expect(skillVersionRepo.recordVersion).toHaveBeenCalledWith(
+        'test/unchanged-hash',
+        'realsha256contenthash-unchanged'
+      )
+    })
+
+    it('does not record a version for a locally-imported skill even when unchanged', async () => {
+      // SMI-4665's local-import skip must still be honored — the fix above
+      // widens WHEN recordVersion runs, but must not reach past the
+      // pre-existing `existing.source === 'local'` early-continue.
+      const timestamp = new Date().toISOString()
+      skillRepo.create({
+        id: 'test/local-unchanged',
+        name: 'Local Skill',
+        trustTier: 'community',
+        tags: ['test'],
+        source: 'local',
+      })
+      db.prepare('UPDATE skills SET updated_at = ? WHERE id = ?').run(
+        timestamp,
+        'test/local-unchanged'
+      )
+
+      const skillVersionRepo = createMockSkillVersionRepo()
+      const skill: ApiSearchResult = {
+        ...createMockSkill('test/local-unchanged', timestamp),
+        content_hash: 'realsha256contenthash-local',
+      }
+      const apiClient = createMockApiClient({ skills: [skill] })
+      const engine = new SyncEngine(
+        apiClient,
+        skillRepo,
+        syncConfigRepo,
+        syncHistoryRepo,
+        skillVersionRepo
+      )
+
+      const result = await engine.sync()
+
+      expect(result.success).toBe(true)
+      expect(skillVersionRepo.recordVersion).not.toHaveBeenCalled()
+    })
   })
 })

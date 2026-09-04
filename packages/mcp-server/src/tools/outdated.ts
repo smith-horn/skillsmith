@@ -264,7 +264,18 @@ async function executeOutdatedImpl(
     // for this run, and there is a local hash worth comparing against (no
     // point spending a call when the installed SKILL.md can't even be read).
     let liveHash: string | null = null
+    // SMI-6343 (adversarial-review fix): true only when the live arm was
+    // actually attempted for THIS skill and came back empty-handed
+    // (network error, or this skill's own call is what revealed quota
+    // exhaustion) — distinct from "never attempted" (offline, already
+    // quota-exhausted from an earlier skill, or no local hash to check).
+    // H1's degradation table requires a failed attempt to degrade THIS
+    // skill to `unknown`, never to silently fall back to potentially-stale
+    // history — falling back to history is correct only when the live arm
+    // was skipped outright, not when it was tried and failed.
+    let liveArmFailed = false
     if (!liveArmOffline && !quotaExhausted && localHash !== null) {
+      const quotaExhaustedBefore = quotaExhausted
       try {
         const registryInfo = await lookupSkillFromRegistry(entry.id, context, {
           onQuotaExceeded: () => {
@@ -272,19 +283,35 @@ async function executeOutdatedImpl(
           },
         })
         liveHash = registryInfo?.contentHash ?? null
+        // lookupSkillFromRegistry swallows the quota error internally and
+        // falls through to a local-DB-shaped result (no live contentHash)
+        // rather than throwing — so a quota event revealed by THIS call
+        // must be detected via the before/after flag, not a catch block.
+        if (!quotaExhaustedBefore && quotaExhausted) {
+          liveArmFailed = true
+        }
       } catch {
         // Per-skill network error / DNS / timeout — degrade this one skill
-        // to the historical arm; the batch continues. Matches
+        // to unknown (not the historical arm); the batch continues. Matches
         // skill-recover-source.ts's "429 -> []" per-item degradation
         // contract.
         liveHash = null
+        liveArmFailed = true
       }
     }
 
-    // Live arm wins when available; otherwise fall back to the historical
-    // arm. `null` (neither available) is what fixes the latest_hash echo
-    // bug below — an unchecked skill no longer echoes installed_hash.
-    const registryHash = liveHash ?? historicalHash
+    // Live arm wins when it has data. When the live arm was never
+    // attempted (offline / already quota-exhausted / no local hash), fall
+    // back to the historical arm — a documented "skip entirely"
+    // degradation, not a failure, so stale-but-real history is a
+    // reasonable secondary signal. When the live arm WAS attempted for
+    // this skill but failed, historicalHash is deliberately NOT consulted
+    // (see liveArmFailed above), so this row honestly resolves to
+    // `unknown` via the comparator rather than a definitive verdict built
+    // on data that might no longer be true. `null` (neither available) is
+    // also what fixes the latest_hash echo bug below — an unchecked skill
+    // no longer echoes installed_hash.
+    const registryHash = liveArmFailed ? null : (liveHash ?? historicalHash)
     const comparison = compareSkillContentHashes(localHash, registryHash)
 
     let status: 'current' | 'outdated' | 'unknown'
