@@ -68,8 +68,14 @@ export interface OutdatedSkillInfo {
   /** Dependency satisfaction details (omitted when include_deps is false) */
   dependencies?: DependencyStatus
   /**
-   * SMI-5407: Present when manifest entry lacks a `source` URL. Directs the
-   * user to `sklx audit sources` / `skill_recover_source` to recover.
+   * SMI-5407: present when manifest entry lacks a `source` URL — directs
+   * the user to `sklx audit sources` / `skill_recover_source` to recover.
+   * SMI-6343 (H1): also present, taking precedence over the source-missing
+   * case, when `status === 'unknown'` because the live registry check was
+   * skipped (offline) or stopped (monthly quota exhausted, reset time
+   * included) — the plan's required "diagnosis naming" text for those two
+   * degradation states. A future wave may promote this into a fuller
+   * structured `diagnosis` field; `hint` is the interim carrier.
    */
   hint?: string
 }
@@ -231,6 +237,13 @@ async function executeOutdatedImpl(
   // retry/backoff and need no handling here.
   const liveArmOffline = context.apiClient.isOffline()
   let quotaExhausted = false
+  // SMI-6343 (H1, pr-reviewer-gate fix): captured once, from whichever call
+  // first revealed quota exhaustion — SkillsmithError's own `.message`
+  // already carries the used/limit/tier and formatted reset-time text
+  // (install.helpers.ts's onQuotaExceeded doc comment), so this is reused
+  // verbatim as the diagnosis for every later row that never even attempts
+  // the live arm because quotaExhausted is already true.
+  let quotaDiagnosis: string | undefined
 
   for (const entry of entries) {
     // SMI-3177: Skip corrupt manifest entries with missing installPath
@@ -264,37 +277,48 @@ async function executeOutdatedImpl(
     // for this run, and there is a local hash worth comparing against (no
     // point spending a call when the installed SKILL.md can't even be read).
     let liveHash: string | null = null
-    // SMI-6343 (adversarial-review fix): true only when the live arm was
-    // actually attempted for THIS skill and came back empty-handed
-    // (network error, or this skill's own call is what revealed quota
-    // exhaustion) — distinct from "never attempted" (offline, already
-    // quota-exhausted from an earlier skill, or no local hash to check).
-    // H1's degradation table requires a failed attempt to degrade THIS
-    // skill to `unknown`, never to silently fall back to potentially-stale
-    // history — falling back to history is correct only when the live arm
-    // was skipped outright, not when it was tried and failed.
+    // SMI-6343 (pr-reviewer-gate fix): true whenever the live arm was
+    // actually attempted for THIS skill and lookupSkillFromRegistry()
+    // reported a failure via onLiveLookupFailed — distinct from "never
+    // attempted" (offline, already quota-exhausted from an earlier skill,
+    // or no local hash to check). H1's degradation table requires a failed
+    // attempt to degrade THIS skill to `unknown`, never to silently fall
+    // back to potentially-stale history — falling back to history is
+    // correct only when the live arm was skipped outright, not when it was
+    // tried and failed.
+    //
+    // Driven by the onLiveLookupFailed callback, NOT a try/catch around
+    // this call: lookupSkillFromRegistry() never rethrows — every caught
+    // error inside it (network, DNS, timeout, quota) falls through to a
+    // local-DB fallback that itself never carries a contentHash, so a
+    // try/catch here observes nothing to catch. A pr-reviewer-gate finding
+    // caught this: the adversarial-review round's fix correctly handled
+    // the quota case (via the quotaExhausted flag) but left the generic
+    // network-error case silently falling back to historicalHash, exactly
+    // the bug this whole block exists to prevent.
     let liveArmFailed = false
     if (!liveArmOffline && !quotaExhausted && localHash !== null) {
-      const quotaExhaustedBefore = quotaExhausted
       try {
         const registryInfo = await lookupSkillFromRegistry(entry.id, context, {
-          onQuotaExceeded: () => {
+          onQuotaExceeded: (error) => {
             quotaExhausted = true
+            if (!quotaDiagnosis) {
+              quotaDiagnosis = error instanceof Error ? error.message : String(error)
+            }
+          },
+          onLiveLookupFailed: () => {
+            liveArmFailed = true
           },
         })
         liveHash = registryInfo?.contentHash ?? null
-        // lookupSkillFromRegistry swallows the quota error internally and
-        // falls through to a local-DB-shaped result (no live contentHash)
-        // rather than throwing — so a quota event revealed by THIS call
-        // must be detected via the before/after flag, not a catch block.
-        if (!quotaExhaustedBefore && quotaExhausted) {
-          liveArmFailed = true
-        }
       } catch {
-        // Per-skill network error / DNS / timeout — degrade this one skill
-        // to unknown (not the historical arm); the batch continues. Matches
-        // skill-recover-source.ts's "429 -> []" per-item degradation
-        // contract.
+        // Defense-in-depth only: lookupSkillFromRegistry() never rethrows
+        // in its current implementation (onLiveLookupFailed above is the
+        // real signal for every error it catches internally), but H1
+        // requires this tool to never fail the whole call for any reason —
+        // an unexpected throw here (a future change to the helper, a bad
+        // mock in a caller's test) must still degrade to unknown, not
+        // propagate.
         liveHash = null
         liveArmFailed = true
       }
@@ -326,6 +350,21 @@ async function executeOutdatedImpl(
       unknownCount++
     }
 
+    // SMI-6343 (H1): the plan's degradation contract requires a diagnosis
+    // naming the reason for an offline- or quota-caused `unknown` row.
+    // Gated on localHash !== null so a row that's unknown for an unrelated
+    // reason (SKILL.md unreadable) doesn't get a misleading offline/quota
+    // explanation — offline/quota only actually explain a row that would
+    // otherwise have attempted the live arm.
+    let degradationHint: string | undefined
+    if (status === 'unknown' && localHash !== null) {
+      if (liveArmOffline) {
+        degradationHint = `Registry offline — skipped live check for ${entry.id}; no prior sync history to compare against either.`
+      } else if (quotaExhausted && quotaDiagnosis) {
+        degradationHint = quotaDiagnosis
+      }
+    }
+
     const skillInfo: OutdatedSkillInfo = {
       id: entry.id,
       installed_hash: localHash?.slice(0, 8) ?? '--------',
@@ -339,12 +378,19 @@ async function executeOutdatedImpl(
       semver: historicalSemver,
       // SMI-5407: surface a recovery hint when the manifest entry has no source.
       // The source is needed by skill_diff / View-Changes to fetch the latest
-      // SKILL.md content. Recovering it requires `sklx audit sources`.
-      ...(typeof entry.source !== 'string' || entry.source.trim().length === 0
-        ? {
-            hint: `Source not tracked for ${entry.id}. Run \`sklx audit sources\` (or MCP skill_recover_source) to recover.`,
-          }
-        : {}),
+      // SKILL.md content. Recovering it requires `sklx audit sources`. The
+      // H1 degradation diagnosis (offline / quota) takes precedence when
+      // both would apply — it explains why THIS run's status couldn't be
+      // determined, which is the more actionable, run-specific fact; the
+      // missing-source condition is a standing one that will still be true
+      // next run regardless.
+      ...(degradationHint
+        ? { hint: degradationHint }
+        : typeof entry.source !== 'string' || entry.source.trim().length === 0
+          ? {
+              hint: `Source not tracked for ${entry.id}. Run \`sklx audit sources\` (or MCP skill_recover_source) to recover.`,
+            }
+          : {}),
     }
 
     // Dependency satisfaction

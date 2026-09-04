@@ -464,6 +464,22 @@ describe('executeOutdated', () => {
       expect(result.skills[0].status).toBe('current')
     })
 
+    it('names offline mode in the hint when offline AND no historical data resolves the row (H1 diagnosis)', async () => {
+      const skillId = 'community/offline-unknown'
+      mockedLoadManifest.mockResolvedValue(
+        manifestWithSkills([
+          { id: skillId, name: 'offline-unknown', installPath: '/tmp/skills/offline-unknown' },
+        ])
+      )
+      mockedReadFile.mockResolvedValue('latest-content')
+      // No recordVersion() call — no historical data either.
+
+      const result = await executeOutdated({ include_deps: false }, makeContext(db))
+
+      expect(result.skills[0].status).toBe('unknown')
+      expect(result.skills[0].hint).toMatch(/offline/i)
+    })
+
     it('compares against the live registry hash when online, taking precedence over stale history', async () => {
       const skillId = 'community/live-current'
       mockedLoadManifest.mockResolvedValue(
@@ -523,8 +539,16 @@ describe('executeOutdated', () => {
         ])
       )
       mockedReadFile.mockResolvedValue('latest-content')
+      // lookupSkillFromRegistry() never rethrows a network error — it
+      // catches it internally and signals via onLiveLookupFailed before
+      // falling through to its own local-DB fallback (which never carries
+      // a contentHash). A mockRejectedValueOnce here would simulate a
+      // shape production code never produces (pr-reviewer-gate finding).
       mockedLookupSkillFromRegistry
-        .mockRejectedValueOnce(new Error('ECONNRESET'))
+        .mockImplementationOnce(async (_id, _ctx, opts) => {
+          opts?.onLiveLookupFailed?.(new Error('ECONNRESET'))
+          return null
+        })
         .mockResolvedValueOnce({
           repoUrl: 'https://github.com/community/healthy',
           name: 'healthy',
@@ -556,10 +580,18 @@ describe('executeOutdated', () => {
       )
       mockedReadFile.mockResolvedValue('latest-content')
       // First call signals quota exhaustion (mirrors lookupSkillFromRegistry's
-      // real contract: it swallows the error internally and invokes
-      // onQuotaExceeded before falling back to a local-DB-shaped result).
+      // real contract: it swallows the error internally, invokes
+      // onQuotaExceeded AND onLiveLookupFailed unconditionally — every
+      // caught error fires the latter — before falling back to a
+      // local-DB-shaped result). The error object is the same
+      // SkillsmithError shape client.ts throws, whose .message already
+      // carries the used/limit/tier + formatted reset-time text.
+      const quotaError = new Error(
+        'Monthly quota reached (100/100 community tier).\nResets in 5 day(s) on Mon, 08 Sep 2026 00:00:00 UTC.\nUpgrade: https://skillsmith.app/pricing'
+      )
       mockedLookupSkillFromRegistry.mockImplementationOnce(async (_id, _ctx, opts) => {
-        opts?.onQuotaExceeded?.()
+        opts?.onQuotaExceeded?.(quotaError)
+        opts?.onLiveLookupFailed?.(quotaError)
         return null
       })
 
@@ -573,15 +605,21 @@ describe('executeOutdated', () => {
       expect(mockedLookupSkillFromRegistry).toHaveBeenCalledTimes(1)
       expect(result.skills).toHaveLength(3)
       expect(result.skills.every((s) => s.status === 'unknown')).toBe(true)
+      // SMI-6343 (H1): every row past the triggering one is unknown BECAUSE
+      // of quota exhaustion (not offline, not a read failure), so all three
+      // get the quota diagnosis — including the reset-time text carried in
+      // the captured error's own message.
+      expect(result.skills.every((s) => s.hint?.includes('Resets in 5 day(s)'))).toBe(true)
     })
 
-    it('reports unknown on a per-skill network error even when stale historical data would say "current" (adversarial-review regression)', async () => {
+    it('reports unknown on a per-skill network error even when stale historical data would say "current" (pr-reviewer-gate regression)', async () => {
       // The bug this guards: a failed live-arm attempt fell back to
       // historicalHash, producing a DEFINITIVE verdict from data that might
       // no longer be true. This test plants a historical row that matches
       // installed content — the exact shape that would incorrectly render
       // as 'current' under the pre-fix fallback — so it fails loudly if the
-      // regression returns.
+      // regression returns. Signals failure via onLiveLookupFailed, not a
+      // rejected promise — lookupSkillFromRegistry() never rethrows.
       const skillId = 'community/flaky-with-history'
       mockedLoadManifest.mockResolvedValue(
         manifestWithSkills([
@@ -595,7 +633,10 @@ describe('executeOutdated', () => {
       mockedReadFile.mockResolvedValue('latest-content')
       // Stale historical row that HAPPENS to match installed content.
       await versionRepo.recordVersion(skillId, sha256('latest-content'), '1.0.0')
-      mockedLookupSkillFromRegistry.mockRejectedValueOnce(new Error('ETIMEDOUT'))
+      mockedLookupSkillFromRegistry.mockImplementationOnce(async (_id, _ctx, opts) => {
+        opts?.onLiveLookupFailed?.(new Error('ETIMEDOUT'))
+        return null
+      })
 
       const result = await executeOutdated(
         { include_deps: false },
@@ -607,10 +648,13 @@ describe('executeOutdated', () => {
       expect(result.skills[0].latest_hash).toBe('--------')
     })
 
-    it('reports unknown for the skill whose own call revealed quota exhaustion, even with matching stale history (adversarial-review regression)', async () => {
+    it('reports unknown for the skill whose own call revealed quota exhaustion, even with matching stale history (pr-reviewer-gate regression)', async () => {
       // lookupSkillFromRegistry swallows the quota error internally and
       // returns a local-DB-shaped result (no throw) — the pre-fix code had
       // no way to distinguish this from "no live data, consult history."
+      // Fires both onQuotaExceeded and onLiveLookupFailed, matching the
+      // real function's catch block (every caught error, quota included,
+      // fires onLiveLookupFailed unconditionally).
       const skillId = 'community/quota-trigger-with-history'
       mockedLoadManifest.mockResolvedValue(
         manifestWithSkills([
@@ -625,6 +669,7 @@ describe('executeOutdated', () => {
       await versionRepo.recordVersion(skillId, sha256('latest-content'), '1.0.0')
       mockedLookupSkillFromRegistry.mockImplementationOnce(async (_id, _ctx, opts) => {
         opts?.onQuotaExceeded?.()
+        opts?.onLiveLookupFailed?.(new Error('monthly_quota_exceeded'))
         return null
       })
 
