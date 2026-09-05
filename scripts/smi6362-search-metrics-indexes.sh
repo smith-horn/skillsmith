@@ -1,13 +1,13 @@
 #!/usr/bin/env bash
 # SMI-6362 Wave 1: build the per-partition CONCURRENTLY children for the three
 # partitioned index shells created by
-# supabase/migrations/20260902000001_cloud_usage_analytics_indexes.sql.
+# supabase/migrations/20260905060001_cloud_usage_analytics_indexes.sql.
 #
 # Why this exists as a script and not more migration SQL: CREATE INDEX
 # CONCURRENTLY cannot run inside a transaction block, a PL/pgSQL function, or
 # a DO block, and the partition list is genuinely dynamic (enumerated from
 # pg_inherits, never hard-coded -- plan section 5 item 11 step b). See
-# 20260902000001's header comment for the full reasoning.
+# 20260905060001's header comment for the full reasoning.
 #
 # Usage (run the parent-shell migration FIRST, via `supabase db push`, so the
 # partitioned index rows already exist for this script to attach children to):
@@ -30,7 +30,7 @@ SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 POOLER="$SCRIPT_DIR/pooler-psql-session.sh"
 
 # The three parent partitioned indexes this script attaches children to, and
-# their exact index definitions (must match 20260902000001's shells verbatim
+# their exact index definitions (must match 20260905060001's shells verbatim
 # -- the per-partition CONCURRENTLY definition and the parent's definition
 # are compared, not just named, per plan step f).
 PARENT_INDEXES=(

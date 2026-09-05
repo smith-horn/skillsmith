@@ -161,7 +161,7 @@ export function actorDisplayLabel(actor: string): string {
 /**
  * k-anonymity floor (SMI-6362 Wave 4, D-2e). Mirrors the SQL migration's
  * `v_k CONSTANT INT := 5` inside analytics_team_reporting_coverage
- * (supabase/migrations/20260902000000_cloud_usage_analytics_wiring.sql). This constant does not
+ * (supabase/migrations/20260905060000_cloud_usage_analytics_wiring.sql). This constant does not
  * read the SQL value at runtime — it is a documented mirror of it. Raise both together if this
  * ever changes.
  */

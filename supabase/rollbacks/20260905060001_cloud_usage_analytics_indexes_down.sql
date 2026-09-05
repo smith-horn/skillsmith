@@ -1,4 +1,4 @@
--- Rollback for 20260902000001_cloud_usage_analytics_indexes.sql
+-- Rollback for 20260905060001_cloud_usage_analytics_indexes.sql
 -- SMI-6362 Wave 1
 --
 -- Drops the three partitioned indexes (parent shells) this migration added.

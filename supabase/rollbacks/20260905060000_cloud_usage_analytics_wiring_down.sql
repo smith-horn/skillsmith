@@ -1,4 +1,4 @@
--- Rollback for 20260902000000_cloud_usage_analytics_wiring.sql
+-- Rollback for 20260905060000_cloud_usage_analytics_wiring.sql
 -- SMI-6362 Wave 1
 --
 -- Restores the three analytics_skill_* RPCs to their pre-migration
