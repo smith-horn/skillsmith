@@ -128,6 +128,9 @@ export function createDbRegistryLookup(
         name: skill.name,
         trustTier: skill.trustTier,
         quarantined: quarantineRepo.isQuarantined(skill.id || skillId),
+        // SMI-6343 Wave 3: used by the shared identity-classification
+        // module's front-matter-contradiction signal.
+        author: skill.author ?? null,
       }
     },
   }
@@ -173,6 +176,9 @@ export async function createApiBackedRegistryLookup(
           name: r.name,
           trustTier: SkillsmithApiClient.toSkill(r).trustTier,
           quarantined: r.quarantined === true || r.installable === false,
+          // SMI-6343 Wave 3: used by the shared identity-classification
+          // module's front-matter-contradiction signal.
+          author: r.author ?? null,
         }
       } catch {
         return null

@@ -116,6 +116,19 @@ const mocks = vi.hoisted(() => ({
   // untracked skill (no manifest entry) — see the identical mocks in
   // manage.update.source-recovery.test.ts.
   manifestUpdateSafelyFn: vi.fn(async () => undefined),
+  // SMI-6343 (Wave 3): the pre-install contradiction gate's classification
+  // call — defaults to "safe to update" (matches the pre-Wave-3 assumption
+  // every existing test in this file made); overridden per-test to exercise
+  // the Skipped bucket / pre-install gate.
+  classifyDivergentEntryFn: vi.fn(
+    (
+      _params?: unknown
+    ): { state: string; signal: string | null; inconclusiveReason: string | null } => ({
+      state: 'outdated',
+      signal: null,
+      inconclusiveReason: null,
+    })
+  ),
   buildAdoptedEntryFn: vi.fn(
     async (name: string, installPath: string): Promise<Record<string, unknown>> => ({
       id: name,
@@ -171,6 +184,7 @@ vi.mock('@skillsmith/core', () => ({
   // fully mocked and ignores its params) -- present only so the constructor
   // call site's destructuring/typing has something to reference.
   hashContent: vi.fn((content: string) => content),
+  classifyDivergentEntry: (params: unknown) => mocks.classifyDivergentEntryFn(params),
   // Reached only via install.js's createApiBackedRegistryLookup(), which
   // updateSkill() now calls on every update — not the update path's main
   // logic, but must resolve without throwing.
@@ -276,6 +290,11 @@ describe('SMI-5593: skillsmith update — real update path', () => {
       confidence: 'unknown',
       registryId: null,
       recoveredSource: null,
+    })
+    mocks.classifyDivergentEntryFn.mockReturnValue({
+      state: 'outdated',
+      signal: null,
+      inconclusiveReason: null,
     })
     // ADR-139 (SMI-6274 Wave 4): adoption defaults — succeed, and
     // reconstruct an 'unknown'-version/source entry, matching production.
@@ -611,6 +630,37 @@ describe('SMI-5593: skillsmith update — real update path', () => {
 
       expect(success).toBe(false)
     })
+
+    // SMI-6343 (Wave 3, H5): the pre-install contradiction gate — refuses
+    // force-install(force: true) when the CURRENT entry's identity
+    // classification comes back unsafe, even though the user confirmed the
+    // prompt. SMI-6103's existing gate protects against CREATING a bad
+    // resolution; this protects against ACTING on one that's already there.
+    it('refuses to force-install when the pre-install classification finds an identity contradiction', async () => {
+      await mockInstalledSkill('astro', { version: '1.0.0', author: 'wrsmith108' })
+      mockCache([
+        {
+          id: 'wrsmith108/astro',
+          name: 'astro',
+          version: '2.0.0',
+          trustTier: 'community',
+          author: 'wrsmith108',
+        },
+      ])
+      mocks.classifyDivergentEntryFn.mockReturnValue({
+        state: 'identity-mismatch',
+        signal: 'owner-mismatch',
+        inconclusiveReason: null,
+      })
+      const { confirm } = await import('@inquirer/prompts')
+      vi.mocked(confirm).mockResolvedValue(true)
+
+      const { updateSkill } = await import('../src/commands/manage.js')
+      const success = await updateSkill('astro', '/fake/db.sqlite')
+
+      expect(success).toBe(false)
+      expect(mocks.installFn).not.toHaveBeenCalled()
+    })
   })
 
   describe('updateSkills (multi-skill / --all)', () => {
@@ -653,6 +703,40 @@ describe('SMI-5593: skillsmith update — real update path', () => {
       const { confirm } = await import('@inquirer/prompts')
       vi.mocked(confirm).mockResolvedValue(true)
     }
+
+    // SMI-6343 (Wave 3, H5): a local-drift/identity-mismatch row must land
+    // in the new Skipped bucket with a reason — never silently counted as
+    // Updated (the pre-Wave-3 bug: `updateSkill()` returning `true` for
+    // "already up to date" gave a skipped row no bucket of its own to land
+    // in without looking like a success).
+    it('excludes a local-drift/identity-mismatch skill from the update batch and reports it in the new Skipped count with a reason', async () => {
+      await mockTwoInstalledSkills()
+      // The adopted entry's `id` is the install-directory basename (this
+      // suite's `loadManifest` mock always returns an empty manifest, so
+      // both skills go through ADR-139 adoption) — differentiate on it.
+      mocks.classifyDivergentEntryFn.mockImplementation((params?: unknown) => {
+        const entryId = (params as { entry: { id: string } }).entry.id
+        return entryId === 'ci-doctor'
+          ? { state: 'local-drift', signal: null, inconclusiveReason: null }
+          : { state: 'outdated', signal: null, inconclusiveReason: null }
+      })
+
+      const { updateSkills } = await import('../src/commands/manage.js')
+      const logSpy = vi.spyOn(console, 'log').mockImplementation(() => {})
+
+      await updateSkills(['astro', 'ci-doctor'], '/fake/db.sqlite', false)
+
+      // Only astro (classified 'outdated') is actually force-installed.
+      expect(mocks.installFn).toHaveBeenCalledTimes(1)
+      expect(mocks.installFn).toHaveBeenCalledWith('wrsmith108/astro', { force: true })
+      const output = logSpy.mock.calls.map((c) => String(c[0])).join('\n')
+      expect(output).toContain('Updated: 1')
+      expect(output).toContain('Skipped: 1')
+      expect(output).not.toContain('Updated: 2')
+      expect(output).toMatch(/ci-doctor.*local edit/i)
+
+      logSpy.mockRestore()
+    })
 
     it('updates a specific set of named skills and reports a summary', async () => {
       await mockTwoInstalledSkills()

@@ -363,6 +363,16 @@ export interface SkillManifestEntry {
   pinnedVersion?: string
   /** SMI-skill-version-tracking Wave 1: How updates are handled (Wave 2: enforcement) */
   updatePolicy?: 'auto' | 'manual' | 'never'
+  /**
+   * SMI-5894 (Wave 1 Step 3): which client this installation targets.
+   * Absent on manifest entries written before multi-client re-keying —
+   * treat a missing value as the canonical client (`claude-code`), matching
+   * `manifestKeyFor()`'s own default. Mirrors the equivalent field on core's
+   * own `SkillManifestEntry` (`skill-installation.types.ts`) — this
+   * mcp-server-local copy predates that one and was never widened to match
+   * until SMI-6343 Wave 3 needed it for the path-unresolved identity signal.
+   */
+  client?: ClientId
 }
 
 export interface SkillManifest {
@@ -391,4 +401,10 @@ export interface RegistrySkillInfo {
   quarantined?: boolean
   /** SHA-256 hash of SKILL.md at index time for tamper detection */
   contentHash?: string
+  /**
+   * SMI-6343 Wave 3: the registry's recorded author for this skill id, used
+   * by the shared identity-classification module's front-matter-contradiction
+   * signal. `null`/absent when the registry has no author on record.
+   */
+  author?: string | null
 }

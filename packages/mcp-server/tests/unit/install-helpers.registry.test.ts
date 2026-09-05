@@ -42,6 +42,10 @@ describe('install.helpers (registry + fetch)', () => {
         name: 'test-skill',
         trustTier: 'community',
         quarantined: false,
+        // SMI-6343 (Wave 3): author now always populated (null when the
+        // API response carries none) for the shared identity-classification
+        // module's front-matter-contradiction signal.
+        author: null,
       })
       expect(mockContext.apiClient.getSkill).toHaveBeenCalledWith('test/skill')
     })
@@ -76,6 +80,7 @@ describe('install.helpers (registry + fetch)', () => {
         name: 'local-skill',
         trustTier: 'experimental',
         quarantined: false,
+        author: null,
       })
     })
 
@@ -110,6 +115,7 @@ describe('install.helpers (registry + fetch)', () => {
         name: 'fallback-skill',
         trustTier: 'community',
         quarantined: false,
+        author: null,
       })
     })
 

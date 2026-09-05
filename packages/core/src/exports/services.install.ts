@@ -79,6 +79,33 @@ export {
 } from '../services/skill-installation.feedback.js'
 
 // ============================================================================
+// Identity Classification (SMI-6343 Wave 3)
+// ============================================================================
+
+// Shared three-signal contradiction classification, consumed by BOTH
+// mcp-server (`outdated.identity.ts`) and cli (`manage.update.helpers.ts`)
+// so the two packages cannot drift into two independently-maintained
+// implementations of the same logic.
+export {
+  parseOwnerFromSource,
+  parseOwnerFromId,
+  detectOwnerMismatch,
+  detectPathUnresolved,
+  classifyManifestEntryIdentity,
+  hasRecordedLocalEdit,
+  classifyDivergentEntry,
+  classifyOutdatedState,
+  type IdentitySignal,
+  type IdentityInconclusiveReason,
+  type OutdatedClassificationState,
+  type IdentityRegistryRecord,
+  type RegistryLookupOutcome,
+  type ManifestEntryForIdentity,
+  type IdentityClassificationResult,
+  type DivergentEntryClassification,
+} from '../services/skill-identity-classification.js'
+
+// ============================================================================
 // Discovery-Tool Consistency (SMI-5896: Wave 3)
 // ============================================================================
 

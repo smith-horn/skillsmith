@@ -5,8 +5,10 @@
  */
 
 import { createHash } from 'crypto'
+import { basename, join } from 'path'
 import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest'
 import { SkillVersionRepository, SkillDependencyRepository } from '@skillsmith/core'
+import { getCanonicalInstallPath } from '@skillsmith/core/install'
 import { createTestDatabase, closeDatabase } from '@skillsmith/core/testkit'
 import { executeOutdated } from './outdated.js'
 import type { ToolContext } from '../context.js'
@@ -73,6 +75,15 @@ function emptyManifest(): SkillManifest {
   return { version: '1', installedSkills: {} }
 }
 
+/**
+ * SMI-6343 (Wave 3): every real installPath is rebased under the canonical
+ * native root — signal 3 (path-unresolved) treats a path OUTSIDE the
+ * claimed client's native root as a contradiction, and every pre-Wave-3
+ * test in this file uses fictional `/tmp/skills/<name>`-shaped paths that
+ * would otherwise misfire as `identity-mismatch`. The caller-supplied
+ * `installPath`'s basename is preserved (only the directory prefix
+ * changes) so every existing call site keeps compiling unmodified.
+ */
 function manifestWithSkills(
   skills: Array<{ id: string; name: string; installPath: string }>
 ): SkillManifest {
@@ -83,7 +94,7 @@ function manifestWithSkills(
       name: s.name,
       version: '1.0.0',
       source: 'registry',
-      installPath: s.installPath,
+      installPath: join(getCanonicalInstallPath(), basename(s.installPath)),
       installedAt: '2026-01-01T00:00:00Z',
       lastUpdated: '2026-01-01T00:00:00Z',
     }
@@ -147,7 +158,7 @@ describe('executeOutdated', () => {
     expect(result.summary.outdated).toBe(0)
   })
 
-  it('reports skill as outdated when hashes differ', async () => {
+  it('reports skill as unknown (not outdated) when a hash mismatch is found ONLY via stale offline history — SMI-6343 Wave 3: an "outdated" verdict now requires a fresh, successful identity check, which offline cannot provide', async () => {
     const skillId = 'community/outdated-skill'
     mockedLoadManifest.mockResolvedValue(
       manifestWithSkills([
@@ -158,18 +169,21 @@ describe('executeOutdated', () => {
     // Local content is old.
     mockedReadFile.mockResolvedValue('old-content')
 
-    // Registry has a different (real) hash.
+    // Registry has a different (real) hash — but only via stale historical
+    // data (offline, default `makeContext(db)`), so signal 2 can never be
+    // checked this run — H2 fail-closed: this must resolve to `unknown`,
+    // never a confidently-wrong `outdated`.
     await versionRepo.recordVersion(skillId, sha256('latest-content'), '2.0.0')
 
     const result = await executeOutdated({ include_deps: true }, makeContext(db))
 
     expect(result.skills).toHaveLength(1)
-    expect(result.skills[0].status).toBe('outdated')
+    expect(result.skills[0].status).toBe('unknown')
+    expect(result.skills[0].diagnosis.inconclusiveReason).toBe('offline')
+    expect(result.skills[0].diagnosis.safeToBulkUpdate).toBe(false)
     expect(result.skills[0].installed_hash).toBe(sha256('old-content').slice(0, 8))
-    expect(result.skills[0].latest_hash).toBe(sha256('latest-content').slice(0, 8))
-    expect(result.skills[0].semver).toBe('2.0.0')
-    expect(result.summary.outdated).toBe(1)
-    expect(result.summary.up_to_date).toBe(0)
+    expect(result.summary.unknown).toBe(1)
+    expect(result.summary.outdated).toBe(0)
   })
 
   it('reports unknown when no version history exists, and never echoes installed_hash as latest_hash', async () => {
@@ -710,6 +724,198 @@ describe('executeOutdated', () => {
       await expect(
         executeOutdated({ include_deps: false }, makeContext(db, { online: true }))
       ).resolves.toBeDefined()
+    })
+  })
+
+  // ===========================================================================
+  // SMI-6343 Wave 3: tamper-check classification (AC#3) — five state fixtures
+  // ===========================================================================
+
+  describe('tamper-check classification', () => {
+    it('classifies a genuine version bump as outdated (safe to bulk-update) when no signal fires', async () => {
+      const skillId = 'wrsmith108/astro'
+      mockedLoadManifest.mockResolvedValue(
+        manifestWithSkills([{ id: skillId, name: 'astro', installPath: '/tmp/skills/astro' }])
+      )
+      mockedReadFile.mockResolvedValue('old-content') // no frontmatter — signal 2 has nothing to contradict
+      mockedLookupSkillFromRegistry.mockResolvedValue({
+        repoUrl: 'https://github.com/wrsmith108/astro',
+        name: 'astro',
+        trustTier: 'community',
+        contentHash: sha256('new-content'),
+        author: 'wrsmith108',
+      })
+
+      const result = await executeOutdated(
+        { include_deps: false },
+        makeContext(db, { online: true })
+      )
+
+      expect(result.skills[0].status).toBe('outdated')
+      expect(result.skills[0].diagnosis.state).toBe('outdated')
+      expect(result.skills[0].diagnosis.signal).toBeNull()
+      expect(result.skills[0].diagnosis.safeToBulkUpdate).toBe(true)
+      expect(result.skills[0].diagnosis.remediation).toMatch(/skillsmith update/)
+      expect(result.summary.outdated).toBe(1)
+      expect(result.summary.local_drift).toBe(0)
+      expect(result.summary.identity_mismatch).toBe(0)
+    })
+
+    it('classifies a benign local edit as local-drift (excluded from bulk update) when no identity signal fires', async () => {
+      const skillId = 'wrsmith108/notes'
+      const manifest: SkillManifest = {
+        version: '1',
+        installedSkills: {
+          notes: {
+            id: skillId,
+            name: 'notes',
+            version: '1.0.0',
+            source: 'github:wrsmith108/notes',
+            installPath: join(getCanonicalInstallPath(), 'notes'),
+            installedAt: '2026-01-01T00:00:00Z',
+            lastUpdated: '2026-01-01T00:00:00Z',
+            // Recorded at install time — differs from the on-disk content
+            // mocked below, which is what makes this a local edit.
+            contentHash: sha256('originally-installed-content'),
+          },
+        },
+      }
+      mockedLoadManifest.mockResolvedValue(manifest)
+      mockedReadFile.mockResolvedValue('user-edited-content') // no frontmatter
+      mockedLookupSkillFromRegistry.mockResolvedValue({
+        repoUrl: 'https://github.com/wrsmith108/notes',
+        name: 'notes',
+        trustTier: 'community',
+        contentHash: sha256('registry-content'),
+        author: 'wrsmith108',
+      })
+
+      const result = await executeOutdated(
+        { include_deps: false },
+        makeContext(db, { online: true })
+      )
+
+      expect(result.skills[0].status).toBe('local-drift')
+      expect(result.skills[0].diagnosis.state).toBe('local-drift')
+      expect(result.skills[0].diagnosis.signal).toBeNull()
+      expect(result.skills[0].diagnosis.safeToBulkUpdate).toBe(false)
+      expect(result.skills[0].diagnosis.summary).toMatch(/local edit/i)
+      expect(result.summary.local_drift).toBe(1)
+      expect(result.summary.outdated).toBe(0)
+      expect(result.summary.identity_mismatch).toBe(0)
+    })
+
+    it('classifies an owner-mismatch entry as identity-mismatch (signal 1) — the real `linear` incident shape', async () => {
+      // source: "github:lobehub/lobehub" vs id: "wrsmith108/linear" — the
+      // exact real-world corruption this signal was built to catch.
+      const skillId = 'wrsmith108/linear'
+      const manifest: SkillManifest = {
+        version: '1',
+        installedSkills: {
+          linear: {
+            id: skillId,
+            name: 'linear',
+            version: '1.0.0',
+            source: 'github:lobehub/lobehub',
+            installPath: join(getCanonicalInstallPath(), 'linear'),
+            installedAt: '2026-01-01T00:00:00Z',
+            lastUpdated: '2026-01-01T00:00:00Z',
+          },
+        },
+      }
+      mockedLoadManifest.mockResolvedValue(manifest)
+      mockedReadFile.mockResolvedValue('linear-content')
+      // Offline — signal 1 is deterministic/offline, so this is exercised
+      // via the historical arm alone, with no live registry call at all.
+      await versionRepo.recordVersion(skillId, sha256('different-content'), '1.0.0')
+
+      const result = await executeOutdated({ include_deps: false }, makeContext(db))
+
+      expect(mockedLookupSkillFromRegistry).not.toHaveBeenCalled()
+      expect(result.skills[0].status).toBe('identity-mismatch')
+      expect(result.skills[0].diagnosis.state).toBe('identity-mismatch')
+      expect(result.skills[0].diagnosis.signal).toBe('owner-mismatch')
+      expect(result.skills[0].diagnosis.safeToBulkUpdate).toBe(false)
+      expect(result.skills[0].diagnosis.remediation).toMatch(/skill_recover_source/)
+      expect(result.summary.identity_mismatch).toBe(1)
+    })
+
+    it('classifies a front-matter contradiction as identity-mismatch (signal 2) despite id/source agreement — the real `commit` incident shape', async () => {
+      // Internally-consistent id/source (signal 1 passes clean) but the
+      // on-disk front-matter's claimed author contradicts the registry's
+      // record for this id — the harder case, since it requires content
+      // inspection rather than a simple id/source string comparison.
+      const skillId = 'acme/commit'
+      mockedLoadManifest.mockResolvedValue(
+        manifestWithSkills([{ id: skillId, name: 'commit', installPath: '/tmp/skills/commit' }])
+      )
+      const frontmatterContent = [
+        '---',
+        'name: commit',
+        'author: unrelated-author',
+        '---',
+        '# Commit skill',
+        'Sentry commit-message conventions.',
+      ].join('\n')
+      mockedReadFile.mockResolvedValue(frontmatterContent)
+      mockedLookupSkillFromRegistry.mockResolvedValue({
+        repoUrl: 'https://github.com/acme/commit',
+        name: 'commit',
+        trustTier: 'community',
+        contentHash: sha256('unrelated-registry-content'),
+        author: 'acme',
+      })
+
+      const result = await executeOutdated(
+        { include_deps: false },
+        makeContext(db, { online: true })
+      )
+
+      expect(result.skills[0].status).toBe('identity-mismatch')
+      expect(result.skills[0].diagnosis.signal).toBe('frontmatter-contradiction')
+      expect(result.skills[0].diagnosis.safeToBulkUpdate).toBe(false)
+      expect(result.summary.identity_mismatch).toBe(1)
+    })
+
+    it('H2 fail-closed: an inconclusive signal 2 (quota-exhausted mid-batch) classifies as unknown, never local-drift or outdated', async () => {
+      // Two skills: the first triggers quota exhaustion, so the SECOND
+      // skill's live arm is skipped entirely THIS run — signal 2 can never
+      // be checked for it. If the fail-open bug were reintroduced (treating
+      // "could not check" as "no contradiction"), this would silently
+      // resolve to `outdated` (no recorded contentHash -> no local-edit
+      // evidence either) instead of the required `unknown`.
+      mockedLoadManifest.mockResolvedValue(
+        manifestWithSkills([
+          { id: 'community/quota-trigger', name: 'quota-trigger', installPath: '/tmp/skills/a' },
+          { id: 'community/quota-victim', name: 'quota-victim', installPath: '/tmp/skills/b' },
+        ])
+      )
+      mockedReadFile.mockResolvedValue('mismatched-content')
+      // Stale history for the second skill so its comparison outcome is
+      // 'outdated' via the historical fallback, reaching classification.
+      await versionRepo.recordVersion(
+        'community/quota-victim',
+        sha256('stale-registry-content'),
+        '1.0.0'
+      )
+      const quotaError = new Error('Monthly quota reached (100/100 community tier).')
+      mockedLookupSkillFromRegistry.mockImplementationOnce(async (_id, _ctx, opts) => {
+        opts?.onQuotaExceeded?.(quotaError)
+        opts?.onLiveLookupFailed?.(quotaError)
+        return null
+      })
+
+      const result = await executeOutdated(
+        { include_deps: false },
+        makeContext(db, { online: true })
+      )
+
+      const victim = result.skills.find((s) => s.id === 'community/quota-victim')
+      expect(victim?.status).toBe('unknown')
+      expect(victim?.status).not.toBe('local-drift')
+      expect(victim?.status).not.toBe('outdated')
+      expect(victim?.diagnosis.inconclusiveReason).toBe('quota-exhausted')
+      expect(victim?.diagnosis.safeToBulkUpdate).toBe(false)
     })
   })
 })

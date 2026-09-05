@@ -4,18 +4,14 @@
  */
 
 import { readdir, readFile, realpath, stat } from 'fs/promises'
-import { createHash } from 'crypto'
 import { join } from 'path'
 import {
   ManifestManager,
   SkillParser,
   SkillVersionRepository,
   manifestKeyFor,
-  compareSkillContentHashes,
-  firstNonBlankHash,
   type Database,
   type SkillManifestEntry,
-  type SkillVersionRow,
   type TrustTier,
 } from '@skillsmith/core'
 import { openCliDatabase } from './open-database.js'
@@ -53,6 +49,14 @@ export {
   getInstalledSkillsPerHarness,
   type HarnessSkillEntry,
 } from './skills-directory.per-harness.js'
+
+// SMI-6343 (Wave 3): computeHasUpdates() extracted to skills-directory.hash-
+// comparison.ts to stay under the 500-line standard once the Wave 3
+// classification logic was added — re-exported here so existing call sites
+// (this file's own getSkillsFromDirectory() below, plus tests) keep
+// importing from this module unmodified (same convention as above).
+export { computeHasUpdates } from './skills-directory.hash-comparison.js'
+import { computeHasUpdates } from './skills-directory.hash-comparison.js'
 
 export interface InstalledSkill {
   name: string
@@ -112,37 +116,6 @@ export interface InstalledSkill {
  * the full `Dirent` interface — those mocks never claim to be a symlink, so
  * treating a missing method as `false` preserves their existing behavior.
  */
-/**
- * SMI-6343 (C2): compute whether a newer registry version exists for an
- * installed skill, given (in order of preference) the manifest's recorded
- * install/update-time content hash, else a freshly-computed on-disk SHA-256
- * of the current SKILL.md content — compared against the most-recently
- * synced registry content hash via the shared comparator so this can't
- * silently drift from the other two SMI-6343 consumers (the mcp-server's
- * skill_outdated / skill_updates tools).
- *
- * Exported for direct unit testing — this is the exact logic that fixes the
- * pre-fix defect (comparing skill_versions' metadata-proxy hash against
- * either a nonexistent `parsed.contentHash` field or a real on-disk hash,
- * which meant it always fell into the "real hash vs. proxy hash" branch and
- * could essentially never report `hasUpdates: true` correctly).
- */
-export function computeHasUpdates(
-  manifestEntry: SkillManifestEntry | undefined,
-  content: string,
-  latestVersion: SkillVersionRow | null
-): boolean {
-  if (!latestVersion) return false
-  // SMI-6343 (adversarial-review fix): firstNonBlankHash(), not a raw `??`
-  // chain — a blank-but-present contentHash/originalContentHash (`??` only
-  // falls through on null/undefined) must not block falling all the way
-  // through to a freshly-computed on-disk hash.
-  const installedHash =
-    firstNonBlankHash(manifestEntry?.contentHash, manifestEntry?.originalContentHash) ??
-    createHash('sha256').update(content, 'utf8').digest('hex')
-  return compareSkillContentHashes(installedHash, latestVersion.content_hash).outcome === 'outdated'
-}
-
 async function resolvesToDirectory(
   entryPath: string,
   isDirectory: boolean,
@@ -271,7 +244,7 @@ export async function getSkillsFromDirectory(
               const skillId = (parsedAny['id'] as string | undefined) ?? entry.name
               const latestVersion = await versionRepo.getLatestVersion(skillId)
               const manifestEntry = manifestEntries[manifestKeyFor(entry.name, effectiveClient)]
-              hasUpdates = computeHasUpdates(manifestEntry, content, latestVersion)
+              hasUpdates = computeHasUpdates(manifestEntry, content, latestVersion, skillsDir)
             } catch {
               // Version check failed — safe to ignore, fall back to false
               hasUpdates = false
