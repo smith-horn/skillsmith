@@ -4,6 +4,13 @@ All notable changes to `@smith-horn/enterprise` are documented here.
 
 ## [Unreleased]
 
+## v0.3.9
+
+- **Chore**: bump stripe from 20.2.0 to 22.6.1 (#2661)
+- **Chore**: bump @aws-sdk/client-cloudwatch-logs (#2406)
+- **Chore**: bump the smithy group across 1 directory with 8 updates (#2409)
+- **Chore**: bump the vitest group across 1 directory with 2 updates (#2660)
+
 ## v0.3.8
 
 - **Cadence**: Mechanical cadence alignment (no changes since v0.3.7).

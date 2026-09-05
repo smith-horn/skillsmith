@@ -6,13 +6,13 @@ Part of Skillsmith: a registry for sharing, scanning, and tracking agent skills 
 
 ## Contents
 
-- [What's New](#whats-new-in-v0121)
+- [What's New](#whats-new-in-v0122)
 - [Installation](#installation)
 - [Quick Start](#quick-start)
 - [Features](#features)
 - [Exports](#exports)
 
-## What's New in v0.12.1
+## What's New in v0.12.2
 
 - **New `resolveSessionTier` client** (`sync/license-status-client.ts`): authenticates a stored `skillsmith login` session against `/license-status` so the MCP server can resolve a real subscription tier without a separately-configured `SKILLSMITH_API_KEY`, instead of silently falling back to `community`.
 - **Scanner: bundled-file scan expanded to operational code** (Gap 8 of the ClawHavoc remediation): the indexer now reads `scripts/`, `src/`, and `bin/` alongside `SKILL.md`, closing a blind spot where a backdoor buried mid-function in working operational code was structurally invisible.

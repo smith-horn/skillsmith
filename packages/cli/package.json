@@ -1,6 +1,6 @@
 {
   "name": "@skillsmith/cli",
-  "version": "0.8.8",
+  "version": "0.8.9",
   "description": "A registry for sharing, scanning, and tracking agent skills across teams.",
   "type": "module",
   "bin": {
@@ -39,14 +39,14 @@
     "yaml": "2.8.3"
   },
   "devDependencies": {
-    "@skillsmith/core": "^0.12.1",
-    "@skillsmith/mcp-server": "^0.7.12",
+    "@skillsmith/core": "^0.12.2",
+    "@skillsmith/mcp-server": "^0.7.13",
     "@types/node": "^25.9.3",
     "esbuild": "0.28.1",
     "vitest": "4.1.11"
   },
   "peerDependencies": {
-    "@smith-horn/enterprise": "^0.3.8"
+    "@smith-horn/enterprise": "^0.3.9"
   },
   "peerDependenciesMeta": {
     "@smith-horn/enterprise": {
