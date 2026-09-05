@@ -115,6 +115,15 @@ describe('detectPathUnresolved (signal 3)', () => {
   it('does not fire when installPath equals the root itself', () => {
     expect(detectPathUnresolved(root, root)).toBe(false)
   })
+  it('does NOT fire for a contained child whose name merely starts with two dots (adversarial-review regression)', () => {
+    // path.relative('/root', '/root/..cache') === '..cache' — a literal,
+    // legitimate directory name, not a parent-directory escape. A bare
+    // `rel.startsWith('..')` check would misclassify this as outside.
+    expect(detectPathUnresolved(`${root}/..cache`, root)).toBe(false)
+  })
+  it('fires for an actual parent-directory escape one level up', () => {
+    expect(detectPathUnresolved('/home/user/.claude/other', root)).toBe(true)
+  })
 })
 
 describe('hasRecordedLocalEdit', () => {

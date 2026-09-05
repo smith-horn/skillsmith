@@ -27,7 +27,7 @@
  * exist" is already established by the time these signals run.
  */
 
-import { relative, isAbsolute } from 'node:path'
+import { relative, isAbsolute, sep } from 'node:path'
 import { SkillParser } from '../indexer/SkillParser.js'
 import { firstNonBlankHash } from './skill-content-comparison.js'
 import type { ContentComparisonOutcome } from './skill-content-comparison.js'
@@ -185,6 +185,25 @@ export function detectOwnerMismatch(
  * catches the exact shape of the SMI-6343 Wave 1 test-fixture leak (an
  * OS-temp-dir `installPath` written into the real manifest) via simple
  * string comparison, with no need to resolve symlinks.
+ *
+ * NOT a symlink-escape check (Wave 3 adversarial review, considered and
+ * scoped out): a real `installPath` inside `expectedRootDir` that is
+ * ITSELF a symlink pointing elsewhere is a local-filesystem-tampering
+ * threat distinct from this signal's actual purpose (catching a manifest
+ * entry whose *recorded* path doesn't match a legitimate install
+ * location — a software-bug/registry-tamper shape, not local attacker
+ * capability); an attacker with write access to plant such a symlink
+ * inside the client root already has equivalent-or-greater capability to
+ * edit SKILL.md content directly, making a `fs.realpath` upgrade here
+ * (which would also force this whole synchronous, filesystem-free module
+ * to become async) address a threat this signal was never meant to cover.
+ *
+ * The parent-segment check below (`rel === '..' || rel.startsWith('..' +
+ * sep)`) is deliberately NOT a bare `rel.startsWith('..')`: a literal
+ * directory name that happens to start with two dots (e.g. `..cache`) is a
+ * legitimate contained child — `path.relative('/r', '/r/..cache')` returns
+ * `'..cache'`, which a bare `startsWith('..')` would misclassify as an
+ * escape (Wave 3 adversarial review finding).
  */
 export function detectPathUnresolved(
   installPath: string | undefined | null,
@@ -193,7 +212,7 @@ export function detectPathUnresolved(
   if (!installPath) return true
   const rel = relative(expectedRootDir, installPath)
   if (rel === '') return false
-  return rel.startsWith('..') || isAbsolute(rel)
+  return rel === '..' || rel.startsWith('..' + sep) || isAbsolute(rel)
 }
 
 // ============================================================================
