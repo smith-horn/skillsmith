@@ -24,7 +24,7 @@
     "@astrojs/rss": "4.0.19",
     "@astrojs/sitemap": "3.7.4",
     "@astrojs/vercel": "11.0.9",
-    "@supabase/supabase-js": "2.112.2",
+    "@supabase/supabase-js": "2.114.0",
     "@tailwindcss/vite": "4.1.18",
     "astro": "7.2.10",
     "cookie": "2.0.1",
