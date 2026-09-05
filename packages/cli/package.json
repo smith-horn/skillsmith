@@ -43,7 +43,7 @@
     "@skillsmith/mcp-server": "^0.7.12",
     "@types/node": "^25.9.3",
     "esbuild": "0.28.1",
-    "vitest": "4.1.10"
+    "vitest": "4.1.11"
   },
   "peerDependencies": {
     "@smith-horn/enterprise": "^0.3.8"
