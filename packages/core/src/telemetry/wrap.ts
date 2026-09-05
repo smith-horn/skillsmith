@@ -17,6 +17,7 @@ import { trackSkillInvoke } from './posthog.js'
 import type { AgentMarker } from './agent-marker.js'
 import { getCorrelationId, runWithCorrelationId } from '../logging/context.js'
 import { redactSensitiveData } from '../logging/redact.js'
+import { emitToolCallEvent } from '../audit/remote-audit.js'
 
 // ---------------------------------------------------------------------------
 // Module-scoped registry (NOT exported — access only via isTelemetered)
@@ -129,6 +130,31 @@ const markerStorage = new AsyncLocalStorage<AgentMarker>()
  */
 export function runWithMarkerContext<T>(marker: AgentMarker, fn: () => Promise<T>): Promise<T> {
   return markerStorage.run(marker, fn)
+}
+
+// ---------------------------------------------------------------------------
+// Tool-name context (SMI-6362 §1)
+// ---------------------------------------------------------------------------
+//
+// `tool_name` (the literal MCP tool name, e.g. `'search'`) is known only at
+// the single MCP dispatch call site (`call-tool-handler.ts`'s
+// `request.params.name`) — none of the ~30 `withTelemetry(...)` call sites
+// across `packages/mcp-server/src/tools/*` know their own registered name,
+// and adding a new required `WithTelemetryOpts` field would mean touching
+// every one of them for a value the dispatcher already has for free. Same
+// ALS-context shape as `markerStorage` above, for the same reason: the
+// dispatcher installs it once per call, and every wrapped handler nested
+// inside that call's async continuation (including ones reached through
+// `withLicenseAndQuota` middleware) sees it without any per-call-site change.
+const toolNameStorage = new AsyncLocalStorage<string>()
+
+/**
+ * Run `fn` with `toolName` installed as the dispatch-level tool-name context
+ * for every `emitToolCallEvent` inside its async continuation. Mirrors
+ * `runWithMarkerContext` — concurrency-safe, no manual clearing.
+ */
+export function runWithToolNameContext<T>(toolName: string, fn: () => Promise<T>): Promise<T> {
+  return toolNameStorage.run(toolName, fn)
 }
 
 // ---------------------------------------------------------------------------
@@ -257,6 +283,23 @@ export function withTelemetry<TArgs extends readonly unknown[], TReturn>(
             // their own. Consent parity is automatic — these fields only ride an
             // event that the emission gate already permitted.
             const marker = markerStorage.getStore()
+            // SMI-6362 §1: computed once, shared by both sinks below — the
+            // second sink (emitToolCallEvent) needs the identical error
+            // fields trackSkillInvoke already derives, not a second
+            // independent computation that could drift from this one.
+            const resolvedFramework = marker?.harness ?? framework
+            const durationMs = Date.now() - start
+            const errorFields = success
+              ? {}
+              : {
+                  errorName:
+                    caughtError instanceof Error
+                      ? caughtError.constructor.name
+                      : typeof caughtError,
+                  errorMessage: truncateErrorMessage(
+                    redactSensitiveData(errorMessageOf(caughtError))
+                  ),
+                }
             trackSkillInvoke({
               skillId,
               source: opts.source,
@@ -268,8 +311,8 @@ export function withTelemetry<TArgs extends readonly unknown[], TReturn>(
               // per-request state, read here on every emit. CLI / VS Code
               // callers never install marker context, so `getStore()` is
               // undefined there and their real extractors keep winning.
-              framework: marker?.harness ?? framework,
-              durationMs: Date.now() - start,
+              framework: resolvedFramework,
+              durationMs,
               success,
               agentSession: marker?.agentSession ?? false,
               nudgeOrigin: marker?.nudgeOrigin ?? false,
@@ -282,18 +325,33 @@ export function withTelemetry<TArgs extends readonly unknown[], TReturn>(
               // SMI-5615: capture the previously-discarded error on failure only.
               // No stack traces leave the machine — class name + redacted,
               // truncated (<=256 char) message only.
-              ...(success
-                ? {}
-                : {
-                    errorName:
-                      caughtError instanceof Error
-                        ? caughtError.constructor.name
-                        : typeof caughtError,
-                    errorMessage: truncateErrorMessage(
-                      redactSensitiveData(errorMessageOf(caughtError))
-                    ),
-                  }),
+              ...errorFields,
             })
+
+            // SMI-6362 §1: second, independent sink — a `tool_call` row in
+            // `search_metrics`, distinct from the `skill_invoke` PostHog
+            // event above (D-3). Only for MCP tool calls (`tool_call` is
+            // Lane-B-only per D-2a/D-3; CLI/VS Code sources have no
+            // equivalent dispatch-level tool-name context installed). Same
+            // `gateOn` check as above by construction (both live inside this
+            // one `if (gateOn)` block) — the client-side half of D-1 is
+            // enforced at this single point.
+            if (opts.source === 'mcp-tool') {
+              const toolName = toolNameStorage.getStore()
+              if (toolName !== undefined) {
+                emitToolCallEvent({
+                  toolName,
+                  framework: resolvedFramework,
+                  durationMs,
+                  success,
+                  sessionId: marker?.sessionId,
+                  // SMI-6362 §1: named limitation — see the doc comment on
+                  // ToolCallEventPayload.isSubagent in remote-audit.ts.
+                  isSubagent: false,
+                  ...errorFields,
+                })
+              }
+            }
           }
         } catch {
           // Intentionally swallowed — telemetry must never break user code.

@@ -243,3 +243,100 @@ describe('buildTelemetryUpsertRow — preserve/clobber matrix (SMI-5394 governan
     expect(noId.anonymous_id_created_at).toBeNull()
   })
 })
+
+describe('buildTelemetryUpsertRow — consent_decided_at COALESCE/first-decision-wins (SMI-6362 §3a, rev 4 round-3 item 2)', () => {
+  const NOW = '2026-06-26T12:00:00.000Z'
+
+  it('stamps `now` for a first-time row (no existing row at all)', () => {
+    const row = buildTelemetryUpsertRow({
+      userId: 'u1',
+      enabled: true,
+      anonymousId: null,
+      inventorySyncEnabled: false,
+      auditEmailEnabled: false,
+      existing: null,
+      now: NOW,
+    })
+    expect(row.consent_decided_at).toBe(NOW)
+  })
+
+  it('stamps `now` when an existing row has consent_decided_at: null — the state every real dashboard opt-in was stuck in until this fix (rev 4, round-3 item 2)', () => {
+    const existing: ExistingTelemetryRow = {
+      anonymous_id: null,
+      anonymous_id_created_at: null,
+      inventory_sync_enabled: false,
+      audit_email_enabled: false,
+      consent_decided_at: null,
+    }
+    const row = buildTelemetryUpsertRow({
+      userId: 'u1',
+      enabled: true,
+      anonymousId: null,
+      inventorySyncEnabled: false,
+      auditEmailEnabled: false,
+      existing,
+      now: NOW,
+    })
+    expect(row.consent_decided_at).toBe(NOW)
+  })
+
+  it('first-decision-wins: a SECOND save preserves the ORIGINAL decision timestamp, never re-stamps to `now`', () => {
+    const originalDecision = '2026-01-15T09:30:00.000Z'
+    const existing: ExistingTelemetryRow = {
+      anonymous_id: null,
+      anonymous_id_created_at: null,
+      inventory_sync_enabled: false,
+      audit_email_enabled: false,
+      consent_decided_at: originalDecision,
+    }
+    // A later save toggling `enabled` (or any other field) must not move
+    // the decision timestamp -- re-stamping would silently reset the
+    // audit-relevant record of when consent was actually given.
+    const row = buildTelemetryUpsertRow({
+      userId: 'u1',
+      enabled: false,
+      anonymousId: null,
+      inventorySyncEnabled: true,
+      auditEmailEnabled: true,
+      existing,
+      now: NOW,
+    })
+    expect(row.consent_decided_at).toBe(originalDecision)
+    expect(row.consent_decided_at).not.toBe(NOW)
+  })
+
+  it('stamps `now` on an explicit OPT-OUT (enabled=false) exactly the same as an opt-in — a refusal is a decision too', () => {
+    const row = buildTelemetryUpsertRow({
+      userId: 'u1',
+      enabled: false,
+      anonymousId: null,
+      inventorySyncEnabled: false,
+      auditEmailEnabled: false,
+      existing: null,
+      now: NOW,
+    })
+    // Only stamping on enabled=true would leave every dashboard opt-out
+    // permanently re-promptable -- the same defect in the opposite direction.
+    expect(row.consent_decided_at).toBe(NOW)
+  })
+
+  it('an existing row missing consent_decided_at entirely (undefined, not null) is treated identically to null -- stamps `now`', () => {
+    const existing: ExistingTelemetryRow = {
+      anonymous_id: null,
+      anonymous_id_created_at: null,
+      inventory_sync_enabled: false,
+      audit_email_enabled: false,
+      // consent_decided_at omitted entirely
+    }
+    const row = buildTelemetryUpsertRow({
+      userId: 'u1',
+      enabled: true,
+      anonymousId: null,
+      inventorySyncEnabled: false,
+      auditEmailEnabled: false,
+      existing,
+      now: NOW,
+    })
+    expect(row.consent_decided_at).toBe(NOW)
+  })
+})

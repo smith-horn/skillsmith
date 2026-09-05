@@ -269,11 +269,20 @@ describe('marker channel precedence — unit-level fallback', () => {
     // 37def2f9) — the vocabulary-gated `harness` field threads from the
     // marker file into the resolved AgentMarker alongside the three
     // pre-existing fields.
+    // sessionId: 'unit-sess' likewise (SMI-6362 §1, 640a65777) — the marker
+    // file's `session_id` now threads through so a `tool_call` telemetry row
+    // can be grouped by harness session. File-channel only: `_meta` carries no
+    // `session_id`, so `resolveAgentMarker` always takes it from the file.
+    // This assertion is exhaustive (toEqual, not toMatchObject) on purpose —
+    // it is the guard that a newly-threaded marker field is a deliberate
+    // change and not an accidental leak into telemetry, so a new field must be
+    // added here consciously rather than passing silently.
     expect(marker).toEqual({
       agentSession: true,
       nudgeOrigin: true,
       triggerId: 'unit-trigger',
       harness: 'opencode',
+      sessionId: 'unit-sess',
     })
   })
 

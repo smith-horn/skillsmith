@@ -91,7 +91,7 @@ vi.mock('@skillsmith/core', async (importOriginal) => {
     SkillsmithApiClient: MockSkillsmithApiClient,
     initializePostHog: vi.fn(),
     shutdownPostHog: vi.fn().mockResolvedValue(undefined),
-    generateAnonymousId: vi.fn().mockReturnValue('anon-id-123'),
+    getOrCreateInstallId: vi.fn().mockReturnValue('install-id-abc123'),
     SyncConfigRepository: MockSyncConfigRepository,
     SyncHistoryRepository: MockSyncHistoryRepository,
     SyncEngine: MockSyncEngine,
@@ -99,6 +99,11 @@ vi.mock('@skillsmith/core', async (importOriginal) => {
     BackgroundSyncService: MockBackgroundSyncService,
     getApiKey: vi.fn().mockReturnValue(undefined),
     validateDbPath: actual.validateDbPath,
+    // SMI-6362 §1: overridden (not `...actual`) so tests can control exactly
+    // when each refresh resolves — needed for the generation-guard
+    // regression test below. Defaults to a fast `null` resolution, matching
+    // the real function's behaviour in this credential-less test env.
+    resolveFreshAccessToken: vi.fn().mockResolvedValue(null),
   }
 })
 
@@ -110,6 +115,8 @@ import {
   createToolContextAsync,
   getToolContextAsync,
   resetAsyncToolContext,
+  _refreshTelemetryIdentityForTests as refreshTelemetryIdentity,
+  _getCachedTelemetryIdentityForTests,
 } from '../context.async.js'
 
 describe('context.async', () => {
@@ -181,6 +188,38 @@ describe('context.async', () => {
       expect(initializePostHog).toHaveBeenCalledWith(
         expect.objectContaining({ apiKey: 'phc_test-key' })
       )
+    })
+
+    it("SMI-6362 (D-7): distinctId is getOrCreateInstallId()'s persisted value, UNCONDITIONALLY — no telemetry/PostHog env vars set at all", async () => {
+      const { getOrCreateInstallId, initializePostHog } = await import('@skillsmith/core')
+      vi.mocked(getOrCreateInstallId).mockReturnValue('install-id-abc123')
+      // This file's convention (see openDatabaseAsync/createDatabaseAsync
+      // above) is an explicit mockClear() before an .not.toHaveBeenCalled()
+      // assertion, since mock call counts otherwise persist across tests in
+      // this file (no blanket vi.clearAllMocks() in beforeEach).
+      vi.mocked(initializePostHog).mockClear()
+
+      const ctx = await createToolContextAsync({ dbPath: ':memory:' })
+
+      // Unlike the legacy generateAnonymousId() path, distinctId no longer
+      // depends on SKILLSMITH_TELEMETRY_ENABLED or POSTHOG_API_KEY being set
+      // — that env gate is exactly what made the pre-SMI-6362 id inert for
+      // virtually every real MCP client (D-7).
+      expect(ctx.distinctId).toBe('install-id-abc123')
+      // The two concerns are orthogonal: PostHog itself stays un-initialized
+      // when its own env vars are absent.
+      expect(initializePostHog).not.toHaveBeenCalled()
+    })
+
+    it('SMI-6362 (D-7): distinctId is the SAME persisted value regardless of whether PostHog is also configured', async () => {
+      const { getOrCreateInstallId } = await import('@skillsmith/core')
+      vi.mocked(getOrCreateInstallId).mockReturnValue('install-id-abc123')
+      vi.stubEnv('SKILLSMITH_TELEMETRY_ENABLED', 'true')
+      vi.stubEnv('POSTHOG_API_KEY', 'phc_test-key')
+
+      const ctx = await createToolContextAsync({ dbPath: ':memory:' })
+
+      expect(ctx.distinctId).toBe('install-id-abc123')
     })
 
     it('does not create BackgroundSyncService when SKILLSMITH_BACKGROUND_SYNC is false', async () => {
@@ -279,6 +318,66 @@ describe('context.async', () => {
       await resetAsyncToolContext()
 
       expect(shutdownPostHog).toHaveBeenCalled()
+    })
+
+    it('SMI-6362 (D-7): also calls shutdownPostHog with NO telemetry env vars set — distinctId is now unconditional, so this guard fires every time; shutdownPostHog itself is a safe no-op when PostHog was never initialized', async () => {
+      const { shutdownPostHog } = await import('@skillsmith/core')
+
+      await getToolContextAsync({ dbPath: ':memory:' })
+      await resetAsyncToolContext()
+
+      expect(shutdownPostHog).toHaveBeenCalled()
+    })
+  })
+
+  // ---------------------------------------------------------------------------
+  // SMI-6362 §1 confirmation round (NEEDLE finding 3): the telemetry identity
+  // cache's generation guard. Three refresh triggers exist and can overlap;
+  // without the guard, an OLDER in-flight refresh resolving AFTER a NEWER one
+  // would clobber the newer (valid) result with its own stale one.
+  // ---------------------------------------------------------------------------
+  describe('refreshTelemetryIdentity — generation guard', () => {
+    it('discards an older refresh that resolves AFTER a newer one, keeping the newer result', async () => {
+      const { resolveFreshAccessToken } = await import('@skillsmith/core')
+      const mockResolve = vi.mocked(resolveFreshAccessToken)
+
+      let resolveOlder!: (token: string | null) => void
+      let resolveNewer!: (token: string | null) => void
+      const olderPromise = new Promise<string | null>((resolve) => {
+        resolveOlder = resolve
+      })
+      const newerPromise = new Promise<string | null>((resolve) => {
+        resolveNewer = resolve
+      })
+      mockResolve.mockReturnValueOnce(olderPromise).mockReturnValueOnce(newerPromise)
+
+      // Start the OLDER refresh first (generation 1) — its resolveFreshAccessToken
+      // call is now in flight but not yet resolved.
+      const olderRefresh = refreshTelemetryIdentity('key-older')
+      // Start the NEWER refresh (generation 2) before the older one resolves.
+      const newerRefresh = refreshTelemetryIdentity('key-newer')
+
+      // Resolve the NEWER call's token FIRST, then the OLDER one — the
+      // reverse of call order, which is exactly the race this guard exists
+      // for (e.g. the older being the 5-minute timer, the newer being an
+      // invalidation-triggered refresh that legitimately needs to win).
+      resolveNewer('token-newer')
+      await newerRefresh
+      expect(_getCachedTelemetryIdentityForTests()?.accessToken).toBe('token-newer')
+
+      resolveOlder('token-older')
+      await olderRefresh
+      // The older refresh's result must NOT have overwritten the newer one.
+      expect(_getCachedTelemetryIdentityForTests()?.accessToken).toBe('token-newer')
+    })
+
+    it('a lone refresh still applies its result normally (guard does not block the common case)', async () => {
+      const { resolveFreshAccessToken } = await import('@skillsmith/core')
+      vi.mocked(resolveFreshAccessToken).mockResolvedValueOnce('token-solo')
+
+      await refreshTelemetryIdentity('key-solo')
+
+      expect(_getCachedTelemetryIdentityForTests()?.accessToken).toBe('token-solo')
     })
   })
 })

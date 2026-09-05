@@ -34,6 +34,16 @@
  * `createTestDatabase()`) and every network-capable tool here
  * (`search`/`get_skill`/`install_skill`) checks `apiClient.isOffline()`
  * before making a live call, so none of these tests touch the network.
+ *
+ * SMI-6362 §3/B-6 rewired the real `fetchConsentState` (inside
+ * `resolveConsent`, which `handleCallToolRequest` calls on every dispatch)
+ * from a direct `getSupabaseClient()` query to a POST against the
+ * `telemetry-consent` edge function. This file's consent-driving mock moved
+ * with it — global `fetch` is stubbed per test (mirrors the sibling
+ * `telemetry-consent-gate.test.ts`), not `getSupabaseClient` — see
+ * `mockConsentFetch` below. `getSupabaseClient` is still mocked (structural,
+ * unrelated to consent — see the comment on that `vi.mock` call) but no test
+ * here drives it anymore.
  */
 
 import { describe, it, expect, vi, beforeEach, afterEach, beforeAll, afterAll } from 'vitest'
@@ -49,14 +59,13 @@ import type { ToolContext } from './context.js'
 import type { LicenseMiddleware } from './middleware/license.js'
 import type { QuotaMiddleware } from './middleware/quota.js'
 
-// Mocking style matches telemetry-consent.test.ts / license.gate.test.ts's
-// T2 block: vi.mock the Supabase client module so `resolveConsent` (called
-// inside `handleCallToolRequest`) can be driven to a deterministic `enabled`
-// value per test. `importOriginal` + spread (rather than a bare `{
-// getSupabaseClient: vi.fn() }` factory) because `dispatchToolCall` pulls in
-// EVERY tool module — including ones this file never dispatches to, like
-// `team-workspace.ts` — and some of those import OTHER named exports off the
-// same module (e.g. `isSupabaseConfigured`) at their own top level.
+// `importOriginal` + spread (rather than a bare `{ getSupabaseClient: vi.fn() }`
+// factory) because `dispatchToolCall` pulls in EVERY tool module — including
+// ones this file never dispatches to, like `team-workspace.ts` — and some of
+// those import OTHER named exports off the same module (e.g.
+// `isSupabaseConfigured`) at their own top level. Structural only — no test
+// in this file drives `getSupabaseClient` (SMI-6362 §3/B-6 moved consent
+// resolution off it entirely; see `mockConsentFetch` below).
 vi.mock('./supabase-client.js', async (importOriginal) => {
   const actual = await importOriginal<typeof import('./supabase-client.js')>()
   return {
@@ -65,20 +74,25 @@ vi.mock('./supabase-client.js', async (importOriginal) => {
   }
 })
 
-import { getSupabaseClient } from './supabase-client.js'
+/**
+ * SMI-6362 §3/B-6: `resolveConsent` (called on every `handleCallToolRequest`
+ * dispatch) now POSTs to the `telemetry-consent` edge function instead of
+ * querying Supabase directly. Stubs global `fetch` so every consent
+ * resolution in this file returns a deterministic, decided state instead of
+ * making a real network call — mirrors `telemetry-consent-gate.test.ts`'s
+ * `jsonResponse` helper. `enabled` and `consentRequired` are independent on
+ * the wire, but every real state the server can produce has `consentRequired
+ * = !enabled` for a DECIDED row, and `{enabled:false, consentRequired:true}`
+ * for "never decided" — the two shapes this file's tests actually need.
+ */
+const fetchMock = vi.fn<typeof fetch>()
 
-const mockGetClient = vi.mocked(getSupabaseClient)
-
-/** Builds a mock Supabase client whose consent-row query resolves as given. */
-function createConsentQueryMock(resolvedValue: {
-  data: { enabled?: boolean | null } | null
-  error: unknown
-}): Awaited<ReturnType<typeof getSupabaseClient>> {
-  const maybeSingle = vi.fn().mockResolvedValue(resolvedValue)
-  const eq = vi.fn().mockReturnValue({ maybeSingle })
-  const select = vi.fn().mockReturnValue({ eq })
-  const from = vi.fn().mockReturnValue({ select })
-  return { from } as unknown as Awaited<ReturnType<typeof getSupabaseClient>>
+function mockConsentFetch(enabled: boolean, consentRequired: boolean): void {
+  fetchMock.mockResolvedValue({
+    ok: true,
+    status: 200,
+    json: async () => ({ data: { enabled, consentRequired } }),
+  } as Response)
 }
 
 const allowAllLicense: LicenseMiddleware = {
@@ -207,6 +221,8 @@ describe('handleCallToolRequest (SMI-5479 Step 3)', () => {
 
   beforeEach(() => {
     vi.clearAllMocks()
+    fetchMock.mockReset()
+    vi.stubGlobal('fetch', fetchMock)
     _resetConsentCacheForTests()
     _resetPendingWelcomeForTests()
     initializePostHog({ apiKey: 'phc_test_key_smi_5479_dispatch' })
@@ -220,6 +236,7 @@ describe('handleCallToolRequest (SMI-5479 Step 3)', () => {
 
   afterEach(async () => {
     await shutdownPostHog()
+    vi.unstubAllGlobals()
     _resetConsentCacheForTests()
     _resetPendingWelcomeForTests()
     if (previousInventoryDisable === undefined) {
@@ -238,9 +255,7 @@ describe('handleCallToolRequest (SMI-5479 Step 3)', () => {
   // ==========================================================================
   describe('T1 — dispatch-level emission gate on/off', () => {
     it('gate ON (consent enabled): exactly one emit with skillId=install_skill', async () => {
-      mockGetClient.mockResolvedValue(
-        createConsentQueryMock({ data: { enabled: true }, error: null })
-      )
+      mockConsentFetch(true, false)
       const captureSpy = vi.spyOn(getPostHog()!, 'capture').mockImplementation(() => undefined)
 
       await handleCallToolRequest(
@@ -259,9 +274,7 @@ describe('handleCallToolRequest (SMI-5479 Step 3)', () => {
     })
 
     it('gate OFF (consent disabled): zero emits', async () => {
-      mockGetClient.mockResolvedValue(
-        createConsentQueryMock({ data: { enabled: false }, error: null })
-      )
+      mockConsentFetch(false, false)
       const captureSpy = vi.spyOn(getPostHog()!, 'capture').mockImplementation(() => undefined)
 
       await handleCallToolRequest(
@@ -279,9 +292,7 @@ describe('handleCallToolRequest (SMI-5479 Step 3)', () => {
     })
 
     it('late-binding pin: a handler "registered" while toolContext is undefined still dispatches correctly once toolContext is assigned before the call (per-call deps, never captured at registration)', async () => {
-      mockGetClient.mockResolvedValue(
-        createConsentQueryMock({ data: { enabled: true }, error: null })
-      )
+      mockConsentFetch(true, false)
       const captureSpy = vi.spyOn(getPostHog()!, 'capture').mockImplementation(() => undefined)
 
       // Mirrors index.ts exactly: `toolContext` is a module-level `let`
@@ -327,9 +338,7 @@ describe('handleCallToolRequest (SMI-5479 Step 3)', () => {
     it.each(NEWLY_EMITTING_TOOLS)(
       '$name emits exactly once with skillId=$name under a permissive gate',
       async ({ name, args }) => {
-        mockGetClient.mockResolvedValue(
-          createConsentQueryMock({ data: { enabled: true }, error: null })
-        )
+        mockConsentFetch(true, false)
         const captureSpy = vi.spyOn(getPostHog()!, 'capture').mockImplementation(() => undefined)
 
         // The assertion is the EMIT, not handler success — any routed
@@ -359,7 +368,7 @@ describe('handleCallToolRequest (SMI-5479 Step 3)', () => {
   describe('once-per-process consent annotation', () => {
     it('first success call for a consent-required id is annotated; a second call for the SAME id is not', async () => {
       // No row => consentRequired: true (DEFAULT_CONSENT_REQUIRED).
-      mockGetClient.mockResolvedValue(createConsentQueryMock({ data: null, error: null }))
+      mockConsentFetch(false, true)
       const distinctId = 'user-annotate-once'
 
       const first = await handleCallToolRequest(makeRequest('search', { query: 'first' }), {
@@ -384,7 +393,7 @@ describe('handleCallToolRequest (SMI-5479 Step 3)', () => {
     })
 
     it('a DIFFERENT anonymousId is annotated again (per-id, not a global one-shot)', async () => {
-      mockGetClient.mockResolvedValue(createConsentQueryMock({ data: null, error: null }))
+      mockConsentFetch(false, true)
 
       // search.ts requires queries >= 3 chars (a shorter query throws
       // synchronously, producing an error envelope this test isn't after).
@@ -408,7 +417,7 @@ describe('handleCallToolRequest (SMI-5479 Step 3)', () => {
     })
 
     it('error envelopes are never annotated, even when consent is required', async () => {
-      mockGetClient.mockResolvedValue(createConsentQueryMock({ data: null, error: null }))
+      mockConsentFetch(false, true)
 
       const result = await handleCallToolRequest(
         makeRequest('smi5479-definitely-not-a-real-tool', {}),
@@ -426,7 +435,7 @@ describe('handleCallToolRequest (SMI-5479 Step 3)', () => {
     })
 
     it('inventory_push prose success body is never annotated (fail-open, no throw)', async () => {
-      mockGetClient.mockResolvedValue(createConsentQueryMock({ data: null, error: null }))
+      mockConsentFetch(false, true)
 
       const result = await handleCallToolRequest(makeRequest('inventory_push', {}), {
         toolContext: contextWithConsent('user-annotate-inventory'),

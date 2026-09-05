@@ -77,6 +77,7 @@ export {
   setEmissionGate,
   runWithEmissionGate,
   runWithMarkerContext,
+  runWithToolNameContext,
   type WithTelemetryOpts,
 } from './wrap.js'
 

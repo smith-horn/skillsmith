@@ -4,6 +4,18 @@ All notable changes to `@skillsmith/core` are documented here.
 
 ## [Unreleased]
 
+- **Added**: `emitToolCallEvent()` and a pluggable `TelemetryIdentityProvider` in
+  `audit/remote-audit.ts` — posts a `tool_call` telemetry event carrying the
+  server-verified `team_id`/actor identity (never a client-supplied credential,
+  per SMI-6362 D-2a/D-2b) to the `events` edge function, with
+  `getTelemetryEmitStats()`/`_resetTelemetryEmitStatsForTests()` for test
+  observability. `telemetry/wrap.ts` gained `runWithToolNameContext()` so the
+  tool name is available to the emitter without threading it through every
+  call site. `AgentMarker` (`telemetry/agent-marker.ts`) now carries an
+  optional `sessionId`, sourced from the marker file's `session_id` only (no
+  Tier-1 harness injects it via `_meta` yet), so a `tool_call` row can be
+  grouped by harness session (SMI-6362 §1). Wires Team/Enterprise usage
+  analytics to cloud-aggregated MCP tool-call data (SMI-6362 Wave 1).
 - **Added**: `skill-identity-classification.ts` — a shared tamper-check classification module
   consumed by both `@skillsmith/mcp-server` (`skill_outdated`) and `@skillsmith/cli`
   (`skillsmith update`), so the two packages cannot drift into two independently-maintained

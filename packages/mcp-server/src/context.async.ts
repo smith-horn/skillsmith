@@ -10,6 +10,7 @@
  */
 
 import { existsSync } from 'fs'
+import { createRequire } from 'node:module'
 import {
   createDatabaseAsync,
   openDatabaseAsync,
@@ -20,7 +21,7 @@ import {
   SkillsmithApiClient,
   initializePostHog,
   shutdownPostHog,
-  generateAnonymousId,
+  getOrCreateInstallId,
   SyncConfigRepository,
   SyncHistoryRepository,
   SyncEngine,
@@ -31,12 +32,92 @@ import {
   getApiKey,
   loadCredentials,
   tryRefreshToken,
+  resolveFreshAccessToken,
+  setTelemetryIdentityProvider,
+  setTelemetryIdentityInvalidationHandler,
   type SyncResult,
   type DatabaseType,
+  type TelemetryIdentity,
 } from '@skillsmith/core'
 import { LLMFailoverChain } from './llm/failover.js'
 import { getDefaultDbPath, ensureDbDirectory } from './context.helpers.js'
 import type { ToolContext, ToolContextOptions } from './context.types.js'
+
+// ESM-compatible require for reading this package's own package.json version
+// (SMI-6362 §1's `sdk_version` field) — mirrors index.startup-helpers.ts's
+// established pattern. Read once at module load, not per tool call: this
+// value cannot change within a running process.
+const require = createRequire(import.meta.url)
+let cachedSdkVersion: string | undefined
+function readSdkVersion(): string | undefined {
+  if (cachedSdkVersion !== undefined) return cachedSdkVersion
+  try {
+    const pkg = require('../package.json') as { version?: string }
+    cachedSdkVersion = pkg.version
+  } catch {
+    cachedSdkVersion = undefined
+  }
+  return cachedSdkVersion
+}
+
+/**
+ * SMI-6362 §1: the `telemetryIdentityProvider` module thunk the plan
+ * specifies — background-refreshed, never resolved inline on the emit path.
+ * Module-level (not per-context) because `setTelemetryIdentityProvider` in
+ * `@skillsmith/core` is itself a process-wide singleton; multiple
+ * `createToolContextAsync()` calls in one process (tests) each reinstall it,
+ * which is harmless — the last install wins, matching `initializePostHog`'s
+ * own already-established singleton behaviour in this same file.
+ */
+let cachedTelemetryIdentity: TelemetryIdentity | null = null
+let telemetryIdentityRefreshTimer: ReturnType<typeof setInterval> | undefined
+
+/**
+ * SMI-6362 §1 confirmation-round fix (NEEDLE cross-provider review, finding
+ * 3): monotonic generation counter guarding `cachedTelemetryIdentity`
+ * writes. Three refresh triggers exist (install, `invalid_jwt`
+ * invalidation, the 5-minute timer) and can overlap — without this guard,
+ * an OLDER in-flight refresh (e.g. the timer) could resolve AFTER a NEWER
+ * one (e.g. an invalidation-triggered refresh) and clobber its result,
+ * silently reinstalling a token the server just rejected. Each refresh
+ * captures its own generation at start; a result is only applied if its
+ * generation is still the latest one issued.
+ */
+let telemetryIdentityGeneration = 0
+
+/** Test-only accessor for `cachedTelemetryIdentity`. Not exported from the package index. */
+export function _getCachedTelemetryIdentityForTests(): TelemetryIdentity | null {
+  return cachedTelemetryIdentity
+}
+
+async function refreshTelemetryIdentity(currentApiKey: string | undefined): Promise<void> {
+  const generation = ++telemetryIdentityGeneration
+  let next: TelemetryIdentity | null
+  try {
+    const accessToken = await resolveFreshAccessToken()
+    next = accessToken ? { accessToken, apiKey: currentApiKey, sdkVersion: readSdkVersion() } : null
+  } catch {
+    // Best-effort: a failed refresh just means emitToolCallEvent keeps
+    // skipping (skippedNoIdentity) until the next trigger succeeds.
+    next = null
+  }
+  // A newer refresh already started (and may have already applied its own
+  // result) while this one was in flight — this one is stale, discard it.
+  if (generation !== telemetryIdentityGeneration) return
+  cachedTelemetryIdentity = next
+}
+
+/**
+ * Test-only alias for `refreshTelemetryIdentity`, so the generation-guard
+ * ordering (NEEDLE confirmation-round finding 3) is directly testable
+ * without going through `createToolContextAsync`'s install-time/timer/
+ * invalidation-handler plumbing, none of which is what's under test there.
+ * The function itself stays unexported (it's real production logic, called
+ * internally); only this named alias is exported, matching this file's
+ * `_getCachedTelemetryIdentityForTests` convention. Not exported from the
+ * package index.
+ */
+export { refreshTelemetryIdentity as _refreshTelemetryIdentityForTests }
 
 // Separate singleton for async context (prevents caching conflict with sync)
 let asyncGlobalContext: ToolContext | null = null
@@ -147,16 +228,59 @@ export async function createToolContextAsync(
     offlineMode: options.apiClientConfig?.offlineMode,
   })
 
-  // SMI-1184: Initialize PostHog telemetry (opt-in, privacy first)
-  let distinctId: string | undefined
+  // SMI-6362 (D-7): distinctId is now the PERSISTED, UNCONDITIONAL install id
+  // (SMI-5531's getOrCreateInstallId(), wired in here for the first time —
+  // it had zero call sites before this). The legacy behaviour generated a
+  // FRESH crypto.randomUUID() per process, and only when
+  // SKILLSMITH_TELEMETRY_ENABLED + POSTHOG_API_KEY were BOTH set — that env
+  // gate is exactly what made the identifier inert for virtually every real
+  // MCP client, and is why the consent-resolution rewrite (B-6,
+  // middleware/telemetry-consent.ts) could never have found a matching
+  // preference row even once the anon-key role/RLS issues were fixed
+  // separately. Do not re-couple this to the telemetry/PostHog gate below —
+  // consent resolution and the tool_call write path both need a stable id
+  // regardless of whether PostHog forwarding is configured.
+  const distinctId = getOrCreateInstallId()
 
+  // SMI-6362 §1: install the tool_call identity provider. Fire-and-forget —
+  // context creation must not block on a network round-trip (mirrors
+  // initializePostHog below never being awaited either); until the first
+  // refresh resolves, emitToolCallEvent sees `null` and skips
+  // (skippedNoIdentity), self-healing once this completes. Refreshed again
+  // on a 401 (`invalid_jwt`) via the invalidation handler, and on a 5-minute
+  // timer — the three triggers the plan names.
+  void refreshTelemetryIdentity(apiKey)
+  setTelemetryIdentityProvider(() => cachedTelemetryIdentity)
+  setTelemetryIdentityInvalidationHandler(() => {
+    // SMI-6362 §1 confirmation-round fix (NEEDLE cross-provider review,
+    // finding 3): clear the cache SYNCHRONOUSLY, before the refresh even
+    // starts. Without this, a tool_call emitted during the refresh window
+    // would keep resending the token the server just told us is invalid —
+    // wasted, guaranteed-rejected round-trips. Bumping the generation here
+    // too (refreshTelemetryIdentity bumps it again internally) fences off
+    // any already-in-flight refresh from a stale trigger (e.g. the timer)
+    // from re-applying its result after this invalidation.
+    telemetryIdentityGeneration++
+    cachedTelemetryIdentity = null
+    void refreshTelemetryIdentity(apiKey)
+  })
+  if (telemetryIdentityRefreshTimer) clearInterval(telemetryIdentityRefreshTimer)
+  telemetryIdentityRefreshTimer = setInterval(
+    () => void refreshTelemetryIdentity(apiKey),
+    5 * 60 * 1000
+  )
+  telemetryIdentityRefreshTimer.unref?.()
+
+  // SMI-1184: Initialize PostHog telemetry (opt-in, privacy first). This
+  // gate is now ORTHOGONAL to distinctId's value — it only controls whether
+  // the PostHog SDK itself gets initialized, not what id is used to resolve
+  // consent or attribute a tool_call event.
   const telemetryEnabled =
     process.env.SKILLSMITH_TELEMETRY_ENABLED === 'true' || options.telemetryConfig?.enabled === true
 
   const postHogApiKey = process.env.POSTHOG_API_KEY || options.telemetryConfig?.postHogApiKey
 
   if (telemetryEnabled && postHogApiKey) {
-    distinctId = generateAnonymousId()
     initializePostHog({
       apiKey: postHogApiKey,
       host: options.telemetryConfig?.postHogHost,
@@ -274,6 +398,20 @@ export async function getToolContextAsync(options?: ToolContextOptions): Promise
  * Reset the async global context (for testing)
  */
 export async function resetAsyncToolContext(): Promise<void> {
+  // SMI-6362 §1: always cleared, even if asyncGlobalContext is already null —
+  // refreshTelemetryIdentity/setInterval are installed unconditionally by
+  // createToolContextAsync regardless of whether a test later resets the
+  // context, so a stray interval must not survive a reset (test isolation:
+  // an un-cleared timer keeps calling resolveFreshAccessToken() against a
+  // torn-down test double in later, unrelated tests).
+  if (telemetryIdentityRefreshTimer) {
+    clearInterval(telemetryIdentityRefreshTimer)
+    telemetryIdentityRefreshTimer = undefined
+  }
+  setTelemetryIdentityProvider(null)
+  setTelemetryIdentityInvalidationHandler(null)
+  cachedTelemetryIdentity = null
+
   if (asyncGlobalContext) {
     // Inline close to avoid circular import with context.ts
     const context = asyncGlobalContext

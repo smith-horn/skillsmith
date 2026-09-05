@@ -267,8 +267,13 @@ describe('Recommend Tool - Online API Path (SMI-2755)', () => {
       meta: { total: 0 },
     })
 
-    // onlineContext has no distinctId (createTestContext doesn't set one)
-    await executeRecommend({ project_context: 'testing', limit: 5 }, onlineContext)
+    // SMI-6362 (D-7): distinctId is now the persisted, unconditional install
+    // id — createTestContext's real createToolContextAsync() always returns
+    // one, so it is no longer naturally absent. Explicitly override to
+    // undefined to still exercise the skip-when-absent defensive path (a
+    // ToolContext built outside context.async.ts can still omit it).
+    const contextWithoutId: ToolContext = { ...onlineContext, distinctId: undefined }
+    await executeRecommend({ project_context: 'testing', limit: 5 }, contextWithoutId)
 
     expect(trackEventSpy).not.toHaveBeenCalled()
   })

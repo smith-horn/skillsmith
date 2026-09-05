@@ -4,6 +4,17 @@ All notable changes to `@skillsmith/mcp-server` are documented here.
 
 ## [Unreleased]
 
+- **Added**: `team_analytics_dashboard`, `team_usage_report`, `analytics_dashboard`, and
+  `usage_report` now read from cloud-aggregated MCP tool-call data (`search_metrics`) instead of
+  the stub/local-only implementation (SMI-6362 Wave 1). `analytics.supabase.service.ts` gained
+  the Supabase-backed query paths, split out into `analytics.supabase.service.helpers.ts`; the
+  new `analytics.actions.ts` holds the `withTelemetry`-wrapped action handlers so `analytics.ts`
+  stays under the 500-line gate (see CLAUDE.md's CI Health Requirements). Bucket-aware
+  consent-coverage suppression (`k`-anonymity floor of 5, three levels —
+  `full`/`aggregate`/`qualitative`) protects any bucket without enough consenting members before
+  a result is returned. `middleware/telemetry-consent.ts` and `context.async.ts` gained the
+  server-verified team/user identity resolution this depends on (`resolve_telemetry_identity`,
+  never trusting a client-supplied `team_id`).
 - **Added**: `skill_outdated` now runs a three-signal tamper-check classification on every
   entry that differs from the registry, widening `status` from `current`/`outdated`/`unknown`
   to a five-state result: `local-drift` (a benign local edit, excluded from bulk update) and

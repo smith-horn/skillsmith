@@ -18,6 +18,7 @@ import {
   getToolContextAsync,
   resetAsyncToolContext,
 } from '../context.js'
+import { getPostHog } from '@skillsmith/core/telemetry'
 
 describe('Context Module', () => {
   // Store original values for env vars we modify
@@ -101,7 +102,12 @@ describe('Context Module', () => {
       it('should create context with default options', async () => {
         const context = await createToolContextAsync({ dbPath: ':memory:' })
 
-        expect(context.distinctId).toBeUndefined()
+        // SMI-6362 (D-7): distinctId is now the persisted, unconditional
+        // install id — always defined, regardless of telemetry/PostHog
+        // configuration. See the "telemetry configuration" describe block
+        // below for PostHog-specific (still-gated) assertions.
+        expect(context.distinctId).toBeDefined()
+        expect(typeof context.distinctId).toBe('string')
         // backgroundSync is created by default when sync config is enabled
         // This is the expected default behavior
         expect(context.llmFailover).toBeUndefined()
@@ -173,7 +179,11 @@ describe('Context Module', () => {
       it('should not enable telemetry by default', async () => {
         const context = await createToolContextAsync({ dbPath: ':memory:' })
 
-        expect(context.distinctId).toBeUndefined()
+        // SMI-6362 (D-7): distinctId is unconditional now — it no longer
+        // signals whether PostHog forwarding is configured. That gate is
+        // orthogonal and asserted directly via getPostHog().
+        expect(context.distinctId).toBeDefined()
+        expect(getPostHog()).toBeNull()
 
         await closeToolContext(context)
       })
@@ -210,7 +220,10 @@ describe('Context Module', () => {
 
         const context = await createToolContextAsync({ dbPath: ':memory:' })
 
-        expect(context.distinctId).toBeUndefined()
+        // SMI-6362 (D-7): distinctId is unconditional; PostHog forwarding
+        // still requires both the enabled flag AND an API key.
+        expect(context.distinctId).toBeDefined()
+        expect(getPostHog()).toBeNull()
 
         await closeToolContext(context)
       })

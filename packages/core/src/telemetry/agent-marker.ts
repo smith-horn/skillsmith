@@ -121,6 +121,14 @@ export interface AgentMarker {
    * channel supplied no value or an out-of-vocabulary one.
    */
   harness?: HarnessFramework
+  /**
+   * SMI-6362 §1: the harness's own session identifier (the marker file's
+   * `session_id`), threaded through so a `tool_call` telemetry row can be
+   * grouped by harness session. File-channel only — `_meta` carries no
+   * `session_id` today (no Tier-1 harness injects it, per this module's
+   * header doc), so this is always the marker FILE's value or `undefined`.
+   */
+  sessionId?: string
 }
 
 /**
@@ -221,6 +229,9 @@ function markerFromFile(file: AgentMarkerFile): AgentMarker {
     triggerId: typeof file.trigger_id === 'string' ? file.trigger_id : null,
     // Vocabulary-gated: junk from disk must not flow into telemetry.
     harness: validHarness(file.harness),
+    // SMI-6362 §1: session_id was already validated non-empty-string by
+    // readMarkerFile before this function is ever called on `file`.
+    sessionId: file.session_id,
   }
 }
 
@@ -303,5 +314,9 @@ export function resolveAgentMarker(meta: unknown, opts: { now?: number } = {}): 
     nudgeOrigin: fromMeta.nudgeOrigin ?? fromFile.nudgeOrigin,
     triggerId: fromMeta.triggerId !== undefined ? fromMeta.triggerId : fromFile.triggerId,
     harness: fromMeta.harness ?? fromFile.harness,
+    // SMI-6362 §1: file-channel only (see the AgentMarker.sessionId doc
+    // comment) — `extractMarkerMeta` never sets `sessionId`, so this is
+    // always `fromFile.sessionId`.
+    sessionId: fromFile.sessionId,
   }
 }
