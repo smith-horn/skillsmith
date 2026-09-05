@@ -118,8 +118,10 @@ describe('smoke-prod/mcp-server.sh — no command-substitution around _smoke_mcp
     const src = readFileSync(MCP_SERVER_SH, 'utf-8')
     const callSites =
       src.match(/_smoke_mcp_install_once\s+"[^"]+"\s+"[^"]+"\s*\|\|\s*return 1/g) ?? []
-    // Four checks share the helper (version + three audit-tool dispatch greps).
-    expect(callSites.length).toBe(4)
+    // Five checks share the helper (version + four audit-tool dispatch greps —
+    // SMI-6343 Wave 4 added apply_manifest_reconcile's own smoke check
+    // alongside the pre-existing three).
+    expect(callSites.length).toBe(5)
     for (const call of callSites) {
       const idx = src.indexOf(call)
       const nextLine = src.slice(idx + call.length, idx + call.length + 200)
