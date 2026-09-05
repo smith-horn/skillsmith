@@ -9,6 +9,19 @@ package-lock.json
 .astro/
 .understand-anything/
 
+# Local dev-tool caches and generated output — never present in a fresh CI
+# clone, so CI's own format:check never sees these; a long-lived local
+# checkout accumulates them and the whole-repo check chokes without this.
+.turbo/
+.vercel/
+packages/*/.vercel/
+.claude-flow/
+.agentic-qe/
+.swarm/
+.hive-mind/
+.ruvector/
+test-results/
+
 # Scripts with embedded GraphQL that Prettier cannot parse
 scripts/linear-api.mjs
 
