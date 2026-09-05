@@ -43,6 +43,10 @@ import {
   applyRecommendedEditToolSchema,
 } from './tools/apply-recommended-edit.js'
 import { undoApply, undoApplyToolSchema } from './tools/undo-apply.js'
+import {
+  applyManifestReconcile,
+  applyManifestReconcileToolSchema,
+} from './tools/apply-manifest-reconcile.js'
 import { APPLY_TEMPLATE_REGISTRY } from './audit/edit-applier.js'
 import { withLicenseAndQuota } from './middleware/license.js'
 import type { LicenseMiddleware } from './middleware/license.js'
@@ -76,6 +80,9 @@ function buildAuditToolNames(): string[] {
     // Always registered (like apply_namespace_rename) — not gated on any
     // registry, since undo has no per-template surface to gate.
     'undo_apply',
+    // SMI-6343 Wave 4: manifest identity repair. Always registered — no
+    // per-template gate applies to it.
+    'apply_manifest_reconcile',
   ]
   if (APPLY_TEMPLATE_REGISTRY.size > 0) {
     names.push('apply_recommended_edit')
@@ -122,6 +129,7 @@ export function newAuditToolDefinitions(): NewAuditToolDefinition[] {
     skillInventoryAuditToolSchema,
     applyNamespaceRenameToolSchema,
     undoApplyToolSchema,
+    applyManifestReconcileToolSchema,
   ]
   if (APPLY_TEMPLATE_REGISTRY.size > 0) {
     defs.push(applyRecommendedEditToolSchema)
@@ -189,6 +197,13 @@ export async function dispatchAuditTool(
 
     case 'undo_apply':
       return okBody(await undoApply(args))
+
+    case 'apply_manifest_reconcile':
+      // SMI-6343 Wave 4: unlike the other audit-family tools above, this
+      // one needs `toolContext` (relink's registry validation + verify's
+      // live registry comparison both call `lookupSkillFromRegistry`,
+      // which requires `context.apiClient`/`context.db`).
+      return okBody(await applyManifestReconcile(args, toolContext))
 
     case 'apply_recommended_edit':
       // Defense-in-depth: even if the parent dispatcher routes this name

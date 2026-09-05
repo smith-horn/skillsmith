@@ -67,6 +67,7 @@ When using the MCP server, these tools are available:
 | `apply_namespace_rename` (Team+) | auditId, collisionId, action (apply/custom/skip/revert), customName, confirmed | Apply a rename suggestion from an inventory audit |
 | `apply_recommended_edit` (Team+) | auditId, collisionId, confirmed | Apply a recommended prose edit from an inventory audit |
 | `undo_apply` (Team+) | count, suggestion_id | Session-scoped undo of the most recent apply_namespace_rename/apply_recommended_edit changeset(s) |
+| `apply_manifest_reconcile` | action (mark_local/relink/drop_entry/verify/revert), name, client, scope, cwd, id, source, reason, ledgerEntryId | Repair a corrupted or ambiguous ~/.skillsmith/manifest.json entry |
 | `team_workspace` (Team+) | action (create/list/get/delete), name, description, workspaceId | Manage team workspaces |
 | `share_skill` (Team+) | action (add/remove/list), workspaceId, skillId | Add, remove, or list skills in a team workspace |
 | `publish_private` (Team+) | skillId | Mark a skill private on this device, hiding it from your own search results |

@@ -64,6 +64,7 @@ const TEST_PROFILE: readonly string[] = [
   'apply_recommended_edit',
   'skill_audit',
   'undo_apply',
+  'apply_manifest_reconcile',
 ]
 
 function pack() {

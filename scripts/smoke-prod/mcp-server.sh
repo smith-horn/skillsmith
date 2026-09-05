@@ -156,6 +156,27 @@ check_apply_namespace_rename_tool_listed() {
   return 0
 }
 
+# SMI-6343 Wave 4 — verify `apply_manifest_reconcile` ships.
+check_apply_manifest_reconcile_tool_listed() {
+  local t0 t1 ms install dispatch
+  t0=$(now_ms)
+  _smoke_mcp_install_once "mcp-server-published" "check_apply_manifest_reconcile_tool_listed" || return 1
+  install="$SMOKE_MCP_INSTALL_DIR"
+  dispatch="$install/node_modules/${SMOKE_MCP_PKG}/dist/src/audit-tool-dispatch.js"
+  t1=$(now_ms)
+  ms=$((t1 - t0))
+  if [ ! -f "$dispatch" ]; then
+    report_fail "mcp-server-published" "check_apply_manifest_reconcile_tool_listed" "stat audit-tool-dispatch.js" "file present" "missing" "$ms"
+    return 1
+  fi
+  if ! grep -q "'apply_manifest_reconcile'" "$dispatch"; then
+    report_fail "mcp-server-published" "check_apply_manifest_reconcile_tool_listed" "grep apply_manifest_reconcile" "string present" "missing in dispatch" "$ms"
+    return 1
+  fi
+  report_pass "mcp-server-published" "check_apply_manifest_reconcile_tool_listed" "grep apply_manifest_reconcile" "$ms"
+  return 0
+}
+
 # SMI-4590 Wave 4 PR 5/6 — verify `apply_recommended_edit` is conditionally
 # registered. The dispatcher source MUST contain the conditional push
 # referencing APPLY_TEMPLATE_REGISTRY (the exact registration mechanism).

@@ -4,6 +4,15 @@ All notable changes to `@skillsmith/core` are documented here.
 
 ## [Unreleased]
 
+- **Added**: `SkillManifestEntry` (`services/skill-installation.types.ts`) gains two optional
+  fields per ADR-145 (manifest provenance as a second trust axis, orthogonal to `source`):
+  `provenance?: 'local' | 'registry'` (who asserts this entry's identity — absent means a legacy
+  entry with no assertion ever recorded, never defaulting to `'registry'`) and
+  `verifiedAt?: string` (ISO-8601 UTC timestamp of the last successful re-verification of the
+  entry's on-disk content hash against the registry's current content hash for the claimed `id`).
+  Written by `@skillsmith/mcp-server`'s new `apply_manifest_reconcile` tool (SMI-6343 Wave 4); read
+  by SMI-6345 Wave 2's E1 identity-evidence gate. `AGENT_TOOL_PROFILE_NAMES`
+  (`services/agent-tool-profile.ts`) gains `apply_manifest_reconcile` (17 entries).
 - **Added**: `emitToolCallEvent()` and a pluggable `TelemetryIdentityProvider` in
   `audit/remote-audit.ts` — posts a `tool_call` telemetry event carrying the
   server-verified `team_id`/actor identity (never a client-supplied credential,

@@ -25,9 +25,10 @@ Reference for Skillsmith MCP server tools, authentication, and CLI.
 | `skill_pack_audit` | Audit all skills in a directory (Individual+) |
 | `skill_audit` | Audit skill for security advisories (Team+) |
 | `skill_inventory_audit` | Audit every installed AI coding client's skill inventory for local namespace collisions; returns rename + edit suggestions (Team+) |
-| `apply_namespace_rename` | Apply a rename suggestion from a local namespace-collision audit (`apply` / `custom` / `skip`) (Team+) |
+| `apply_namespace_rename` | Apply a rename suggestion from a local namespace-collision audit (`apply` / `custom` / `skip` / `revert`) (Team+) |
 | `apply_recommended_edit` | Apply a recommended prose edit; gated on `APPLY_TEMPLATE_REGISTRY` (Team+) |
 | `undo_apply` | Session-scoped undo of the most recent apply_namespace_rename/apply_recommended_edit changeset(s) (Team+) |
+| `apply_manifest_reconcile` | Repair a corrupted or ambiguous `~/.skillsmith/manifest.json` entry — `mark_local` / `relink` / `drop_entry` / `verify` / `revert` (Community; SMI-6343 Wave 4) |
 | `team_workspace` | Manage team workspaces: create, list, get, delete (Team+) |
 | `share_skill` | Add, remove, or list skills in a team workspace (Team+) |
 | `publish_private` | Mark a skill private on this device, hidden from your own search results (Team+) |

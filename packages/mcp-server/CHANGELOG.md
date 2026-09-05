@@ -4,6 +4,25 @@ All notable changes to `@skillsmith/mcp-server` are documented here.
 
 ## [Unreleased]
 
+- **Added**: `apply_manifest_reconcile` — a new Community-tier MCP tool that repairs a corrupted or
+  ambiguous `~/.skillsmith/manifest.json` entry through a supported path instead of a hand-edit
+  (SMI-6343 Wave 4, ADR-144 §6 / ADR-145). Five actions: `mark_local` (clears registry tracking —
+  writes `source: 'unknown'` + `provenance: 'local'` atomically, per ADR-145 §2), `relink` (sets an
+  explicit, registry-validated `id`/`source` pair, never inferring an identity), `drop_entry`
+  (hard-removes an entry whose `installPath` no longer resolves), `verify` (re-checks one entry or,
+  by default, every entry against the registry's current content hash, writing `verifiedAt` only on
+  a match — the writer ADR-144 §6's blanket trust-downgrade needs to promote an entry back to E1
+  eligibility), and `revert` (a durable, cross-session undo of a prior reconcile action on ONE
+  entry, backed by a new `~/.skillsmith/manifest-reconcile-ledger.json` ledger and
+  `ManifestManager.updateSafely()`'s locked, single-key merge — survives an unrelated skill install
+  happening in between, unlike `undo_apply`, which was evaluated and rejected as the undo mechanism
+  here: session-scoped/in-process, a whole-file hash guard hostile to the manifest's seven
+  independent writers, and an unlocked restore path). The backup step uses `createProseBackup`
+  (single-file copy), never `createSkillBackup` (recursive directory copy that could otherwise leak
+  `~/.skillsmith/config.json`'s live API key into the backups tree if ever pointed at the wrong
+  path) — guarded by a `stat().isFile()` precondition before every backup. New
+  `packages/mcp-server/src/tools/apply-manifest-reconcile.ts` (+`.types.ts`, `.helpers.ts`,
+  `.actions.ts`, `.errors.ts`) and `manifest-reconcile-ledger.ts` (+`.types.ts`).
 - **Added**: `team_analytics_dashboard`, `team_usage_report`, `analytics_dashboard`, and
   `usage_report` now read from cloud-aggregated MCP tool-call data (`search_metrics`) instead of
   the stub/local-only implementation (SMI-6362 Wave 1). `analytics.supabase.service.ts` gained

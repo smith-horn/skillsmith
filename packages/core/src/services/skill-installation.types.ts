@@ -226,6 +226,33 @@ export interface SkillManifestEntry {
    * `manifestKeyFor()`'s own default.
    */
   client?: ClientId
+  /**
+   * ADR-145 §1: who asserts this entry's identity, independent of `source`.
+   * `'registry'` — Skillsmith itself resolved this identity and performed
+   * the install (an install record). `'local'` — the user has positively
+   * asserted this skill is their own / not registry-tracked; this is an
+   * assertion, not an absence of information. Absent = legacy entry, no
+   * assertion was ever recorded — NEVER defaults to `'registry'`. The only
+   * writer of `provenance: 'local'` is `apply_manifest_reconcile`'s
+   * `mark_local` action, which must clear `source` to `'unknown'` in the
+   * SAME locked update (ADR-145 §2 — the two fields are never written
+   * independently, since `'local'` + a registry-ref `source` is an illegal
+   * combination that fails closed on read).
+   */
+  provenance?: 'local' | 'registry'
+  /**
+   * ADR-145 §3 / ADR-144 §6: ISO-8601 UTC timestamp of the last successful
+   * re-verification of this entry's on-disk content hash against the
+   * registry's content hash for the claimed `id`. Absent = never
+   * re-verified. Written only by `apply_manifest_reconcile`'s `verify`
+   * action, only on a hash MATCH — a failed verification leaves this field
+   * untouched rather than clearing it (a stale verification is not the
+   * same claim as "never verified"). Gates exactly one transition: E1
+   * eligibility in SMI-6345 Wave 2's identity-evidence gate (the cross-ADR
+   * contract ADR-145 §4 documents). Not part of the `provenance`/`source`
+   * combination matrix — it is a freshness signal, not a trust axis.
+   */
+  verifiedAt?: string
 }
 
 /** Manifest tracking all installed skills */

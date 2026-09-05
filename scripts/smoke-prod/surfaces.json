@@ -115,7 +115,8 @@
         "check_mcp_server_version_exits_zero",
         "check_skill_inventory_audit_tool_listed",
         "check_apply_namespace_rename_tool_listed",
-        "check_apply_recommended_edit_conditional"
+        "check_apply_recommended_edit_conditional",
+        "check_apply_manifest_reconcile_tool_listed"
       ]
     },
     {
