@@ -1,5 +1,7 @@
 /**
- * @fileoverview Unit tests for computeHasUpdates() — SMI-6343 Wave 2 (C2)
+ * @fileoverview Unit tests for computeHasUpdates(,
+      '/tmp/skills'
+    ) — SMI-6343 Wave 2 (C2)
  *
  * Direct unit tests for the extracted pure comparison helper used by
  * `getSkillsFromDirectory()` (the function `sklx list --outdated` actually
@@ -48,7 +50,9 @@ function makeVersionRow(overrides: Partial<SkillVersionRow> = {}): SkillVersionR
 
 describe('computeHasUpdates (SMI-6343 Wave 2, C2)', () => {
   it('returns false when there is no latest registry version at all', () => {
-    expect(computeHasUpdates(makeManifestEntry(), 'on-disk content', null)).toBe(false)
+    expect(computeHasUpdates(makeManifestEntry(), 'on-disk content', null, '/tmp/skills')).toBe(
+      false
+    )
   })
 
   it('returns false when the manifest-recorded contentHash matches the latest registry hash', () => {
@@ -58,7 +62,8 @@ describe('computeHasUpdates (SMI-6343 Wave 2, C2)', () => {
       computeHasUpdates(
         entry,
         'irrelevant on-disk content',
-        makeVersionRow({ content_hash: registryHash })
+        makeVersionRow({ content_hash: registryHash }),
+        '/tmp/skills'
       )
     ).toBe(false)
   })
@@ -68,8 +73,13 @@ describe('computeHasUpdates (SMI-6343 Wave 2, C2)', () => {
     expect(
       computeHasUpdates(
         entry,
-        'irrelevant on-disk content',
-        makeVersionRow({ content_hash: sha256('newer-registry-content') })
+        // SMI-6343 (Wave 3): the on-disk content now also feeds the
+        // local-edit check, so it must actually match what contentHash was
+        // computed from (no local edit) for this to isolate the "genuinely
+        // outdated" case the test is about.
+        'installed-content',
+        makeVersionRow({ content_hash: sha256('newer-registry-content') }),
+        '/tmp/skills'
       )
     ).toBe(true)
   })
@@ -82,7 +92,8 @@ describe('computeHasUpdates (SMI-6343 Wave 2, C2)', () => {
       computeHasUpdates(
         entry,
         'irrelevant on-disk content',
-        makeVersionRow({ content_hash: sha256('install-time-content') })
+        makeVersionRow({ content_hash: sha256('install-time-content') }),
+        '/tmp/skills'
       )
     ).toBe(false)
   })
@@ -93,12 +104,15 @@ describe('computeHasUpdates (SMI-6343 Wave 2, C2)', () => {
       originalContentHash: sha256('stale-install-time-content'),
     })
     // Registry now matches the ORIGINAL install-time hash, not the latest
-    // update — proves contentHash (not originalContentHash) wins.
+    // update — proves contentHash (not originalContentHash) wins. On-disk
+    // content matches contentHash (no local edit), isolating this test to
+    // the preference behavior it's actually about.
     expect(
       computeHasUpdates(
         entry,
-        'irrelevant on-disk content',
-        makeVersionRow({ content_hash: sha256('stale-install-time-content') })
+        'latest-installed-content',
+        makeVersionRow({ content_hash: sha256('stale-install-time-content') }),
+        '/tmp/skills'
       )
     ).toBe(true)
   })
@@ -110,14 +124,16 @@ describe('computeHasUpdates (SMI-6343 Wave 2, C2)', () => {
       computeHasUpdates(
         entry,
         onDiskContent,
-        makeVersionRow({ content_hash: sha256(onDiskContent) })
+        makeVersionRow({ content_hash: sha256(onDiskContent) }),
+        '/tmp/skills'
       )
     ).toBe(false)
     expect(
       computeHasUpdates(
         entry,
         onDiskContent,
-        makeVersionRow({ content_hash: sha256('different-registry-content') })
+        makeVersionRow({ content_hash: sha256('different-registry-content') }),
+        '/tmp/skills'
       )
     ).toBe(true)
   })
@@ -135,14 +151,18 @@ describe('computeHasUpdates (SMI-6343 Wave 2, C2)', () => {
       computeHasUpdates(
         entry,
         'irrelevant on-disk content',
-        makeVersionRow({ content_hash: sha256('install-time-content') })
+        makeVersionRow({ content_hash: sha256('install-time-content') }),
+        '/tmp/skills'
       )
     ).toBe(false)
+    // On-disk content matches originalContentHash (no local edit), isolating
+    // this test to the blank-contentHash-fallthrough behavior it's about.
     expect(
       computeHasUpdates(
         entry,
-        'irrelevant on-disk content',
-        makeVersionRow({ content_hash: sha256('different-registry-content') })
+        'install-time-content',
+        makeVersionRow({ content_hash: sha256('different-registry-content') }),
+        '/tmp/skills'
       )
     ).toBe(true)
   })
@@ -154,14 +174,16 @@ describe('computeHasUpdates (SMI-6343 Wave 2, C2)', () => {
       computeHasUpdates(
         entry,
         onDiskContent,
-        makeVersionRow({ content_hash: sha256(onDiskContent) })
+        makeVersionRow({ content_hash: sha256(onDiskContent) }),
+        '/tmp/skills'
       )
     ).toBe(false)
     expect(
       computeHasUpdates(
         entry,
         onDiskContent,
-        makeVersionRow({ content_hash: sha256('different-registry-content') })
+        makeVersionRow({ content_hash: sha256('different-registry-content') }),
+        '/tmp/skills'
       )
     ).toBe(true)
   })
@@ -172,15 +194,67 @@ describe('computeHasUpdates (SMI-6343 Wave 2, C2)', () => {
       computeHasUpdates(
         undefined,
         onDiskContent,
-        makeVersionRow({ content_hash: sha256(onDiskContent) })
+        makeVersionRow({ content_hash: sha256(onDiskContent) }),
+        '/tmp/skills'
       )
     ).toBe(false)
     expect(
       computeHasUpdates(
         undefined,
         onDiskContent,
-        makeVersionRow({ content_hash: sha256('something-else') })
+        makeVersionRow({ content_hash: sha256('something-else') }),
+        '/tmp/skills'
       )
     ).toBe(true)
+  })
+
+  // ===========================================================================
+  // SMI-6343 Wave 3: `sklx list --outdated` must never surface a
+  // local-drift/identity-mismatch row as an ordinary "update available".
+  // ===========================================================================
+
+  it('never reports hasUpdates: true for an owner-mismatch entry (signal 1, deterministic)', () => {
+    // source: "github:lobehub/lobehub" vs id: "wrsmith108/linear" — the real
+    // `linear` incident shape.
+    const entry = makeManifestEntry({
+      id: 'wrsmith108/linear',
+      source: 'github:lobehub/lobehub',
+      contentHash: sha256('installed-content'),
+    })
+    expect(
+      computeHasUpdates(
+        entry,
+        'installed-content',
+        makeVersionRow({ content_hash: sha256('newer-registry-content') }),
+        '/tmp/skills'
+      )
+    ).toBe(false)
+  })
+
+  it('never reports hasUpdates: true for a path-unresolved entry (signal 3, deterministic)', () => {
+    const entry = makeManifestEntry({
+      installPath: '/var/folders/tmp/some-test-fixture-leak/linear',
+      contentHash: sha256('installed-content'),
+    })
+    expect(
+      computeHasUpdates(
+        entry,
+        'installed-content',
+        makeVersionRow({ content_hash: sha256('newer-registry-content') }),
+        '/tmp/skills' // expectedRootDir does NOT contain installPath above
+      )
+    ).toBe(false)
+  })
+
+  it('never reports hasUpdates: true for a local-drift entry (on-disk content diverges from the recorded hash, no identity signal)', () => {
+    const entry = makeManifestEntry({ contentHash: sha256('originally-installed-content') })
+    expect(
+      computeHasUpdates(
+        entry,
+        'user-edited-content', // differs from what contentHash was recorded against
+        makeVersionRow({ content_hash: sha256('registry-content') }),
+        '/tmp/skills'
+      )
+    ).toBe(false)
   })
 })

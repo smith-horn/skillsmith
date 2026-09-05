@@ -4,6 +4,18 @@ All notable changes to `@skillsmith/core` are documented here.
 
 ## [Unreleased]
 
+- **Added**: `skill-identity-classification.ts` — a shared tamper-check classification module
+  consumed by both `@skillsmith/mcp-server` (`skill_outdated`) and `@skillsmith/cli`
+  (`skillsmith update`), so the two packages cannot drift into two independently-maintained
+  implementations of the same logic (SMI-6343 Wave 3). Runs three contradiction signals
+  against a manifest entry already known to differ from the registry — owner-mismatch
+  (`id` vs `source`), path-unresolved (`installPath` outside the claimed client's root), and
+  front-matter-contradiction (on-disk `author`/`name` vs the registry's record, fail-closed
+  to `unknown` per ADR-144/145 when the registry lookup can't complete) — plus a fourth
+  local-edit check (`hasRecordedLocalEdit()`) that distinguishes a benign local edit
+  (`local-drift`) from a genuine version bump (`outdated`). Exports the full five-state
+  `OutdatedClassificationState` (`current`/`outdated`/`local-drift`/`identity-mismatch`/
+  `unknown`) from `@skillsmith/core`.
 - **Fix**: `skill_versions.content_hash` (`SyncEngine.upsertSkills()`) now records the
   registry's real SKILL.md content hash instead of a hash of a JSON metadata proxy
   (`{id, name, description, updated_at}`) — the proxy meant every reader comparing against

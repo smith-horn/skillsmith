@@ -4,6 +4,15 @@ All notable changes to `@skillsmith/mcp-server` are documented here.
 
 ## [Unreleased]
 
+- **Added**: `skill_outdated` now runs a three-signal tamper-check classification on every
+  entry that differs from the registry, widening `status` from `current`/`outdated`/`unknown`
+  to a five-state result: `local-drift` (a benign local edit, excluded from bulk update) and
+  `identity-mismatch` (the recorded id/source/content contradicts what's on disk — e.g. a
+  corrupted manifest entry pointing at an unrelated skill) alongside the existing three states
+  (SMI-6343 Wave 3). Adds a structured `diagnosis` field (`state`, `signal`,
+  `inconclusiveReason`, `summary`, `remediation`, `safeToBulkUpdate`) as the tool's full
+  user-facing surface — `skill_outdated` has no renderer anywhere in this repo, so this JSON
+  response IS the UX. `OutdatedSummary` gains `local_drift`/`identity_mismatch` counts.
 - **Fix**: `skill_outdated` and `skill_updates` now compare real content hashes instead of a
   structurally meaningless proxy comparison (SMI-6343 Wave 2). `skill_outdated` gains a live
   registry lookup arm (via `lookupSkillFromRegistry()`) with full offline/network-error/

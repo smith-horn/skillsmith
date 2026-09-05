@@ -19,6 +19,7 @@ import {
   type RecoveryConfidence,
   type Skill,
   type SkillRecoveryResult,
+  type SkillManifestEntry,
 } from '@skillsmith/core'
 import { getInstalledSkillsForClient, type InstalledSkill } from '../utils/skills-directory.js'
 import {
@@ -153,6 +154,25 @@ export interface SkillDiff {
   oldVersion: string | null
   newVersion: string | null
   changes: string[]
+  /**
+   * SMI-6343 (Wave 3, H5): the manifest entry CURRENTLY installed under this
+   * name/client — i.e. the one `install(force: true)` is about to overwrite.
+   * Always populated alongside a real `SkillDiff` (every return branch below
+   * has already resolved `manifestEntry` by this point, via either a direct
+   * lookup or ADR-139's untracked-skill adoption). Consumed by `updateSkill`'s
+   * pre-install contradiction gate (`manage.update.identity.ts`).
+   */
+  currentEntry: SkillManifestEntry
+  /**
+   * SMI-6343 (Wave 3, H5): registry author/name ALREADY obtained while
+   * resolving this diff — reused directly for the pre-install gate's signal
+   * 2 (front-matter contradiction) instead of firing a second lookup.
+   * `null` specifically means THIS resolution path never consulted the
+   * registry (the raw-URL branch, a legitimate, sanctioned code path — not
+   * a network failure): a direct-URL install has no registry-backed
+   * identity to check against in the first place.
+   */
+  resolvedRegistryRecord: { author: string | null; name: string | null } | null
 }
 
 /**
@@ -385,6 +405,8 @@ export async function getSkillDiff(
         oldVersion: installed.version,
         newVersion: skillWithVersion.version || null,
         changes,
+        currentEntry: manifestEntry,
+        resolvedRegistryRecord: { author: skill.author ?? null, name: skill.name ?? null },
       }
     }
     // No bare-name cache row whose author agrees with the installed skill's
@@ -412,6 +434,10 @@ export async function getSkillDiff(
         changes: [
           `Source resolved to ${resolvedId} — no cached version to diff; will fetch and overwrite with the latest content.`,
         ],
+        currentEntry: manifestEntry,
+        // A direct-URL install/update never consults the registry — see the
+        // field's own doc comment on `SkillDiff`.
+        resolvedRegistryRecord: null,
       }
     }
 
@@ -431,6 +457,8 @@ export async function getSkillDiff(
       changes: [
         `Registry source confirmed at ${remote.repoUrl} — no cached version to diff; will fetch and overwrite with the latest content.`,
       ],
+      currentEntry: manifestEntry,
+      resolvedRegistryRecord: { author: remote.author ?? null, name: remote.name ?? null },
     }
   } finally {
     db.close()

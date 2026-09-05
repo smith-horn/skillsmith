@@ -169,6 +169,9 @@ export async function lookupSkillFromRegistry(
           quarantined: response.data.quarantined === true,
           // SMI-3510: Content hash for tamper detection
           contentHash: response.data.content_hash ?? undefined,
+          // SMI-6343 Wave 3: used by the shared identity-classification
+          // module's front-matter-contradiction signal.
+          author: response.data.author ?? null,
         }
       }
       // API found skill but no repo_url - it's seed data
@@ -196,6 +199,9 @@ export async function lookupSkillFromRegistry(
       trustTier: validateTrustTier(dbSkill.trustTier),
       // SMI-2437: Pass through quarantine status from local DB
       quarantined: isQuarantined,
+      // SMI-6343 Wave 3: used by the shared identity-classification
+      // module's front-matter-contradiction signal.
+      author: dbSkill.author ?? null,
     }
   }
 

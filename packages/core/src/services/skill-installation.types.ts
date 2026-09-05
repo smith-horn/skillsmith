@@ -247,6 +247,12 @@ export interface RegistrySkillInfo {
   quarantined?: boolean
   /** SHA-256 hash of SKILL.md at index time for tamper detection */
   contentHash?: string
+  /**
+   * SMI-6343 Wave 3: the registry's recorded author for this skill id, used
+   * by the shared identity-classification module's front-matter-contradiction
+   * signal. `null`/absent when the registry has no author on record.
+   */
+  author?: string | null
 }
 
 /**

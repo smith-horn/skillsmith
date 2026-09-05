@@ -13,16 +13,21 @@
  */
 
 import { z } from 'zod'
-import { promises as fs } from 'fs'
-import * as path from 'path'
 import { SkillVersionRepository, compareSkillContentHashes } from '@skillsmith/core'
 import { withTelemetry } from '@skillsmith/core/telemetry'
-import type { SkillDependencyRow } from '@skillsmith/core'
+import type { IdentitySignal, IdentityInconclusiveReason } from '@skillsmith/core'
 import type { ToolContext } from '../context.js'
 import { hashContent } from './install.conflict-helpers.js'
 import { loadManifest, lookupSkillFromRegistry } from './install.helpers.js'
 import { getManifestInstalledSkillIds } from './manifest-skill-ids.helpers.js'
-import type { SkillManifestEntry } from './install.types.js'
+import type { SkillManifestEntry, RegistrySkillInfo } from './install.types.js'
+import { readInstalledContent, checkDependencies } from './outdated.helpers.js'
+import {
+  classifyOutdatedEntry,
+  buildRegistryLookupOutcome,
+  deriveUnknownReason,
+  buildOutdatedDiagnosis,
+} from './outdated.identity.js'
 
 // ============================================================================
 // Input / Output types
@@ -52,6 +57,33 @@ export interface DependencyStatus {
 }
 
 /**
+ * SMI-6343 (Wave 3, H6): structured, machine-readable companion to the
+ * free-text `hint`. `skill_outdated` has zero renderers anywhere in this
+ * repo (verified — see `outdated.identity.ts`'s doc comment), so this MCP
+ * JSON response is the tool's entire v1 user-facing surface; the field
+ * names and copy ARE the UX.
+ */
+export interface OutdatedDiagnosis {
+  state: 'current' | 'outdated' | 'local-drift' | 'identity-mismatch' | 'unknown'
+  /** Which contradiction signal fired. Null for non-identity-mismatch states. */
+  signal: 'owner-mismatch' | 'frontmatter-contradiction' | 'path-unresolved' | null
+  /** Why the state could not be determined. Null unless state is 'unknown'. */
+  inconclusiveReason:
+    | 'offline'
+    | 'quota-exhausted'
+    | 'network-error'
+    | 'no-registry-record'
+    | 'no-history'
+    | null
+  /** One sentence, addressed to the caller. */
+  summary: string
+  /** The exact next action, naming a real tool call. Null when none is needed. */
+  remediation: string | null
+  /** Whether a bulk/--all update may include this entry. */
+  safeToBulkUpdate: boolean
+}
+
+/**
  * Per-skill outdated information returned by the tool
  */
 export interface OutdatedSkillInfo {
@@ -61,21 +93,26 @@ export interface OutdatedSkillInfo {
   installed_hash: string
   /** 8-char prefix of the latest registry hash */
   latest_hash: string
-  /** Status of the skill: current, outdated, or unknown (no registry data) */
-  status: 'current' | 'outdated' | 'unknown'
+  /**
+   * SMI-6343 (Wave 3): widened from `current | outdated | unknown` to a
+   * five-state classification separating a genuine version bump
+   * (`outdated`, safe to bulk-update) from a benign local edit
+   * (`local-drift`) and a corrupted recorded identity (`identity-mismatch`)
+   * — see `diagnosis` for the structured explanation.
+   */
+  status: 'current' | 'outdated' | 'local-drift' | 'identity-mismatch' | 'unknown'
   /** Semver from the latest version record, if available */
   semver: string | null
   /** Dependency satisfaction details (omitted when include_deps is false) */
   dependencies?: DependencyStatus
+  /** SMI-6343 (Wave 3): structured classification, additive alongside `hint`. */
+  diagnosis: OutdatedDiagnosis
   /**
-   * SMI-5407: present when manifest entry lacks a `source` URL — directs
-   * the user to `sklx audit sources` / `skill_recover_source` to recover.
-   * SMI-6343 (H1): also present, taking precedence over the source-missing
-   * case, when `status === 'unknown'` because the live registry check was
-   * skipped (offline) or stopped (monthly quota exhausted, reset time
-   * included) — the plan's required "diagnosis naming" text for those two
-   * degradation states. A future wave may promote this into a fuller
-   * structured `diagnosis` field; `hint` is the interim carrier.
+   * SMI-5407: present when manifest entry lacks a `source` URL. SMI-6343
+   * (H1): also present, taking precedence, when `status === 'unknown'`
+   * because the live registry check was skipped (offline) or stopped
+   * (quota exhausted). `diagnosis` (above) is the spec'd structured carrier
+   * of this same information as of Wave 3; `hint` is unchanged, not removed.
    */
   hint?: string
 }
@@ -89,6 +126,10 @@ export interface OutdatedSummary {
   up_to_date: number
   unknown: number
   missing_deps: number
+  /** SMI-6343 (Wave 3): entries with a benign local edit, excluded from bulk update. */
+  local_drift: number
+  /** SMI-6343 (Wave 3): entries whose recorded identity contradicts what's on disk. */
+  identity_mismatch: number
 }
 
 /**
@@ -125,58 +166,6 @@ export const outdatedToolSchema = {
 }
 
 // ============================================================================
-// Helpers
-// ============================================================================
-
-/**
- * Read and hash the installed SKILL.md content.
- * Returns null if the file cannot be read.
- */
-async function readInstalledHash(installPath: string): Promise<string | null> {
-  const skillMdPath = path.join(installPath, 'SKILL.md')
-  try {
-    const content = await fs.readFile(skillMdPath, 'utf-8')
-    return hashContent(content)
-  } catch {
-    return null
-  }
-}
-
-/**
- * Check dependency satisfaction for a skill.
- * - skill_hard / skill_soft / skill_peer: satisfied if dep_target is in installedSkillIds
- * - mcp_server / model_minimum / other: marked satisfied (best-effort, can't verify)
- */
-function checkDependencies(
-  deps: SkillDependencyRow[],
-  installedSkillIds: Set<string>
-): DependencyStatus {
-  const satisfied: string[] = []
-  const missing: string[] = []
-
-  for (const dep of deps) {
-    const label = `${dep.dep_type}:${dep.dep_target}`
-
-    if (
-      dep.dep_type === 'skill_hard' ||
-      dep.dep_type === 'skill_soft' ||
-      dep.dep_type === 'skill_peer'
-    ) {
-      if (installedSkillIds.has(dep.dep_target)) {
-        satisfied.push(label)
-      } else {
-        missing.push(label)
-      }
-    } else {
-      // mcp_server, model_minimum, etc. — can't reliably verify, mark satisfied
-      satisfied.push(label)
-    }
-  }
-
-  return { total: deps.length, satisfied, missing }
-}
-
-// ============================================================================
 // Execution
 // ============================================================================
 
@@ -209,6 +198,8 @@ async function executeOutdatedImpl(
         up_to_date: 0,
         unknown: 0,
         missing_deps: 0,
+        local_drift: 0,
+        identity_mismatch: 0,
       },
     }
   }
@@ -226,6 +217,8 @@ async function executeOutdatedImpl(
   let upToDateCount = 0
   let unknownCount = 0
   let missingDepsCount = 0
+  let localDriftCount = 0
+  let identityMismatchCount = 0
 
   // SMI-6343 (H1): the live registry arm is skipped entirely, for every
   // skill, when offline — never a per-skill error in that case. Monthly
@@ -257,14 +250,20 @@ async function executeOutdatedImpl(
         latest_hash: '--------',
         status: 'unknown',
         semver: null,
+        diagnosis: buildOutdatedDiagnosis({
+          state: 'unknown',
+          signal: null,
+          inconclusiveReason: 'no-history',
+        }),
         ...(input.include_deps ? { dependencies: { total: 0, satisfied: [], missing: [] } } : {}),
       })
       unknownCount++
       continue
     }
 
-    // Hash the currently installed SKILL.md
-    const localHash = await readInstalledHash(entry.installPath)
+    // Read + hash the currently installed SKILL.md
+    const localContent = await readInstalledContent(entry.installPath)
+    const localHash = localContent !== null ? hashContent(localContent) : null
 
     // Historical arm: the most-recently-synced skill_versions row. Valid as
     // an "ever matched" signal now that SyncEngine records a real SKILL.md
@@ -297,9 +296,12 @@ async function executeOutdatedImpl(
     // network-error case silently falling back to historicalHash, exactly
     // the bug this whole block exists to prevent.
     let liveArmFailed = false
+    // SMI-6343 (Wave 3): hoisted so signal 2 can reuse this SAME lookup
+    // instead of firing a second registry call for the same skill.
+    let registryInfo: RegistrySkillInfo | null = null
     if (!liveArmOffline && !quotaExhausted && localHash !== null) {
       try {
-        const registryInfo = await lookupSkillFromRegistry(entry.id, context, {
+        registryInfo = await lookupSkillFromRegistry(entry.id, context, {
           onQuotaExceeded: (error) => {
             quotaExhausted = true
             if (!quotaDiagnosis) {
@@ -338,17 +340,72 @@ async function executeOutdatedImpl(
     const registryHash = liveArmFailed ? null : (liveHash ?? historicalHash)
     const comparison = compareSkillContentHashes(localHash, registryHash)
 
-    let status: 'current' | 'outdated' | 'unknown'
+    // SMI-6343 (Wave 3): mirrors the gate guarding the `try` block above —
+    // was the live arm actually attempted for THIS skill (vs. skipped for
+    // offline/quota/no-local-hash)? Feeds signal 2 below.
+    const liveArmAttempted = !liveArmOffline && !quotaExhausted && localHash !== null
+    const unknownReasonIfAny = deriveUnknownReason({
+      liveArmOffline,
+      quotaExhausted,
+      liveArmFailed,
+    })
+
+    let status: 'current' | 'outdated' | 'local-drift' | 'identity-mismatch' | 'unknown'
+    let identitySignal: IdentitySignal | null = null
+    let inconclusiveReason: IdentityInconclusiveReason | null = null
+
     if (comparison.outcome === 'current') {
       status = 'current'
-      upToDateCount++
-    } else if (comparison.outcome === 'outdated') {
-      status = 'outdated'
-      outdatedCount++
-    } else {
+    } else if (comparison.outcome === 'unknown') {
       status = 'unknown'
-      unknownCount++
+      inconclusiveReason = unknownReasonIfAny
+    } else {
+      // comparison.outcome === 'outdated' — run the three contradiction
+      // signals (SMI-6343 Wave 3, AC#3) before trusting this as a genuine,
+      // safe-to-bulk-update version bump.
+      const registryLookup = buildRegistryLookupOutcome({
+        liveArmAttempted,
+        liveArmOffline,
+        quotaExhausted,
+        liveArmFailed,
+        registryInfo,
+      })
+      const classification = classifyOutdatedEntry({
+        entry,
+        comparisonOutcome: comparison.outcome,
+        localHash,
+        localContent,
+        registryLookup,
+        unknownReason: unknownReasonIfAny,
+      })
+      status = classification.state
+      identitySignal = classification.signal
+      inconclusiveReason = classification.inconclusiveReason
     }
+
+    switch (status) {
+      case 'current':
+        upToDateCount++
+        break
+      case 'outdated':
+        outdatedCount++
+        break
+      case 'local-drift':
+        localDriftCount++
+        break
+      case 'identity-mismatch':
+        identityMismatchCount++
+        break
+      case 'unknown':
+        unknownCount++
+        break
+    }
+
+    const diagnosis = buildOutdatedDiagnosis({
+      state: status,
+      signal: identitySignal,
+      inconclusiveReason,
+    })
 
     // SMI-6343 (H1): the plan's degradation contract requires a diagnosis
     // naming the reason for an offline- or quota-caused `unknown` row.
@@ -376,6 +433,7 @@ async function executeOutdatedImpl(
       latest_hash: registryHash ? registryHash.slice(0, 8) : '--------',
       status,
       semver: historicalSemver,
+      diagnosis,
       // SMI-5407: surface a recovery hint when the manifest entry has no source.
       // The source is needed by skill_diff / View-Changes to fetch the latest
       // SKILL.md content. Recovering it requires `sklx audit sources`. The
@@ -418,6 +476,8 @@ async function executeOutdatedImpl(
       up_to_date: upToDateCount,
       unknown: unknownCount,
       missing_deps: missingDepsCount,
+      local_drift: localDriftCount,
+      identity_mismatch: identityMismatchCount,
     },
   }
 }

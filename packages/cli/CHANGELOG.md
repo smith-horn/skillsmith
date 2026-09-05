@@ -4,6 +4,14 @@ All notable changes to `@skillsmith/cli` are documented here.
 
 ## [Unreleased]
 
+- **Added**: `skillsmith update` now refuses to force-install over an already-corrupt manifest
+  entry — before overwriting the currently-installed skill, it runs the same shared tamper-
+  check classification `skill_outdated` uses and skips (rather than updates) any entry
+  classified `local-drift`, `identity-mismatch`, or `unknown`, naming the reason in a new
+  `Skipped` bucket in the update summary (SMI-6343 Wave 3). `sklx list --outdated` similarly
+  no longer reports `hasUpdates: true` for a `local-drift`/owner-mismatch/path-unresolved
+  entry — only the two signals that don't require a network call (this scan is offline by
+  design); a signal-2-only (front-matter) corruption still surfaces through `skill_outdated`.
 - **Fix**: `skills-directory.ts`'s `hasUpdates` computation (read by `sklx list --outdated`)
   previously read a nonexistent `contentHash`/`originalContentHash` field off the *parsed
   SKILL.md* object instead of the manifest entry, so it always fell back to comparing a fresh

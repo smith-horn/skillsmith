@@ -22,10 +22,15 @@
  * git tier's owner/skill-name, is what skill_outdated keys on.
  *
  * $HOME is set BEFORE the dynamic import of outdated.js (its install.helpers
- * module-level MANIFEST_PATH freezes at import).
+ * module-level MANIFEST_PATH freezes at import — and, as of SMI-6343 Wave 3,
+ * so does `@skillsmith/core/install`'s CLIENT_NATIVE_PATHS, which the new
+ * path-unresolved identity signal reads). `vi.resetModules()` runs between
+ * the env-var write and the dynamic import so both frozen constants are
+ * re-evaluated against the redirected $HOME (same technique as
+ * `manage-update-multi-client.test.ts` / `manage-multi-client.test.ts`).
  */
 
-import { describe, it, expect, beforeAll, afterAll } from 'vitest'
+import { describe, it, expect, beforeAll, afterAll, vi } from 'vitest'
 import * as fs from 'node:fs'
 import * as os from 'node:os'
 import * as path from 'node:path'
@@ -70,7 +75,8 @@ function makeContext(db: Database): ToolContext {
     // SMI-6343 Wave 2 added a required context.apiClient.isOffline() call in
     // outdated.ts's live registry arm. This test predates that arm and has no
     // live registry to mock, so `true` (offline) preserves its original
-    // behavior: only the historical/manifest resolution path is exercised.
+    // behavior: only the historical/manifest resolution path is exercised
+    // (SMI-6385 fixed this same gap independently on main; identical here).
     apiClient: { isOffline: () => true },
   } as unknown as ToolContext
 }
@@ -84,7 +90,14 @@ beforeAll(async () => {
   originalHome = process.env['HOME']
   tempHome = fs.mkdtempSync(path.join(os.tmpdir(), 'smi5407-out-home-'))
   process.env['HOME'] = tempHome
-  skillsRoot = fs.mkdtempSync(path.join(os.tmpdir(), 'smi5407-out-skills-'))
+  // SMI-6343 (Wave 3): nested under the redirected $HOME's canonical
+  // `.claude/skills` — matching what a REAL install's installPath looks
+  // like — rather than a sibling temp dir. Signal 3 (path-unresolved)
+  // treats an installPath outside the claimed client's native root as an
+  // identity contradiction; a sibling temp dir with no relation to $HOME
+  // would misfire that signal for every fixture entry here.
+  skillsRoot = path.join(tempHome, '.claude', 'skills')
+  fs.mkdirSync(skillsRoot, { recursive: true })
   writeSourceFixture(skillsRoot) // gives each entry a real SKILL.md to hash
 
   // Manifest mirrors exactly what the CLI backfill writes (see the write half).
@@ -124,6 +137,12 @@ beforeAll(async () => {
   const manifestPath = path.join(tempHome, '.skillsmith', 'manifest.json')
   fs.mkdirSync(path.dirname(manifestPath), { recursive: true })
   fs.writeFileSync(manifestPath, JSON.stringify(manifest, null, 2))
+  // SMI-6343 (Wave 3): forces a fresh evaluation of every module the dynamic
+  // import below transitively pulls in — including @skillsmith/core/install's
+  // CLIENT_NATIVE_PATHS — against the $HOME set above, rather than whatever
+  // value was frozen in when this file's static top-level imports first
+  // loaded @skillsmith/core.
+  vi.resetModules()
   ;({ executeOutdated } = (await import('../tools/outdated.js')) as unknown as {
     executeOutdated: OutdatedFn
   })
