@@ -161,6 +161,27 @@ describe('mark_local', () => {
     expect(result.success).toBe(false)
     expect(result.errorCode).toBe('manifest.reconcile.entry_not_found')
   })
+
+  it('refuses with key_shape_ambiguous for a CANONICAL-client request against a bare-key entry recorded under a different client (adversarial-review finding)', async () => {
+    // manifestKeyFor(name, 'claude-code') returns the bare name — the SAME
+    // bare key the SMI-6358/6359 bug can leave a NON-canonical entry sitting
+    // under. Without this guard, a default (canonical) mark_local/relink/
+    // drop_entry call would silently mutate this entry believing it was the
+    // caller's own claude-code row.
+    writeManifest({ commit: makeEntry({ client: 'cursor' }) })
+    const result = await reconcile({ action: 'mark_local', name: 'commit' }, makeContext())
+
+    expect(result.success).toBe(false)
+    expect(result.errorCode).toBe('manifest.reconcile.key_shape_ambiguous')
+    // Refused, not silently mutated.
+    expect(readManifest().installedSkills['commit']!.provenance).toBeUndefined()
+  })
+
+  it('does NOT refuse when the entry has no recorded client (legacy default, implicitly canonical)', async () => {
+    writeManifest({ commit: makeEntry() }) // no `client` field at all
+    const result = await reconcile({ action: 'mark_local', name: 'commit' }, makeContext())
+    expect(result.success).toBe(true)
+  })
 })
 
 // ============================================================================
@@ -248,9 +269,15 @@ describe('relink', () => {
 // ============================================================================
 
 describe('drop_entry', () => {
-  it('removes the entry and ledgers a null afterState', async () => {
+  it('removes an entry whose installPath no longer resolves, and ledgers a null afterState', async () => {
+    // Adversarial-review finding: drop_entry's own contract is "installPath
+    // no longer resolves" — this fixture's path must genuinely be gone,
+    // not the default plantSkill() fixture (which resolves).
     writeManifest({
-      'shutdown-persistence-fixture': makeEntry({ name: 'shutdown-persistence-fixture' }),
+      'shutdown-persistence-fixture': makeEntry({
+        name: 'shutdown-persistence-fixture',
+        installPath: path.join(os.tmpdir(), 'skillsmith-reconcile-does-not-exist'),
+      }),
     })
 
     const result = await reconcile(
@@ -260,6 +287,16 @@ describe('drop_entry', () => {
 
     expect(result.success).toBe(true)
     expect(readManifest().installedSkills['shutdown-persistence-fixture']).toBeUndefined()
+  })
+
+  it('refuses with drop_target_still_resolves when installPath still resolves to a real directory (adversarial-review finding)', async () => {
+    writeManifest({ commit: makeEntry() }) // makeEntry()'s default installPath is a REAL, resolving fixture dir
+    const result = await reconcile({ action: 'drop_entry', name: 'commit' }, makeContext())
+
+    expect(result.success).toBe(false)
+    expect(result.errorCode).toBe('manifest.reconcile.drop_target_still_resolves')
+    // Refused, not removed.
+    expect(readManifest().installedSkills['commit']).toBeDefined()
   })
 })
 
@@ -304,6 +341,44 @@ describe('verify', () => {
     expect(result.verifyResults?.[0]?.verified).toBe(false)
     expect(result.verifyResults?.[0]?.verifiedAt).toBeUndefined()
     expect(readManifest().installedSkills['mismatched']!.verifiedAt).toBeUndefined()
+  })
+
+  it('does NOT stamp verifiedAt when the entry was relinked to a DIFFERENT identity between the registry check and the lock (adversarial-review finding)', async () => {
+    // The registry comparison runs async, BEFORE the lock. If a concurrent
+    // writer relinks this same key to a different id/installPath in that
+    // window, the content that was actually hashed against the registry is
+    // no longer what the entry now claims to be — stamping verifiedAt onto
+    // the NEW identity would certify a pair that was never checked.
+    const content = `---\nname: racy\n---\nreal content`
+    const entry = makeEntry({ name: 'racy', installPath: plantSkill('racy', content) })
+    writeManifest({ racy: entry })
+
+    mockedLookup.mockImplementation(async () => {
+      // Simulate a concurrent writer relinking the SAME key mid-flight —
+      // by the time verify's own lock runs, the entry's id has changed.
+      const manifest = readManifest()
+      manifest.installedSkills['racy'] = {
+        ...manifest.installedSkills['racy']!,
+        id: 'someone/else',
+      }
+      fs.writeFileSync(MANIFEST_PATH, JSON.stringify(manifest, null, 2), 'utf-8')
+      return {
+        repoUrl: 'https://github.com/a/racy',
+        name: 'racy',
+        trustTier: 'verified',
+        contentHash: hashContent(content),
+      }
+    })
+
+    const result = await reconcile({ action: 'verify', name: 'racy' }, makeContext())
+
+    // The registry comparison itself still reports a match (it checked the
+    // snapshot it had), but the write must be skipped since that snapshot
+    // is no longer what's on disk.
+    expect(result.verifyResults?.[0]?.verified).toBe(true)
+    expect(readManifest().installedSkills['racy']!.verifiedAt).toBeUndefined()
+    // No ledger entry either — nothing was actually written.
+    expect(result.ledgerEntryId).toBeUndefined()
   })
 
   it('batches over every entry when name is omitted, writing only matched entries', async () => {
@@ -403,7 +478,11 @@ describe('revert', () => {
   })
 
   it('round-trips drop_entry (re-creates the removed entry)', async () => {
-    writeManifest({ commit: makeEntry() })
+    writeManifest({
+      commit: makeEntry({
+        installPath: path.join(os.tmpdir(), 'skillsmith-reconcile-does-not-exist-revert'),
+      }),
+    })
     const applied = await reconcile({ action: 'drop_entry', name: 'commit' }, makeContext())
     expect(readManifest().installedSkills['commit']).toBeUndefined()
 

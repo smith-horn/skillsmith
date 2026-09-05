@@ -105,7 +105,25 @@ export function resolveReconcileEntry(
 ): { key: string; entry: SkillManifestEntry } {
   const key = manifestKeyFor(name, client)
   const entry = manifest.installedSkills[key] as SkillManifestEntry | undefined
-  if (entry) return { key, entry }
+  if (entry) {
+    // Adversarial-review finding (Wave 4): for the CANONICAL client,
+    // `manifestKeyFor` returns the bare `name` itself — the same bare key
+    // the SMI-6358/6359 bug can leave a NON-canonical entry sitting under.
+    // Finding the entry at the resolved key is not proof it belongs to the
+    // requested `client`: if the entry itself carries a recorded `client`
+    // that disagrees, silently trusting it would let mark_local/relink/
+    // drop_entry mutate a DIFFERENT client's row than the caller intended.
+    // A missing `entry.client` is the documented legacy-entry default
+    // (implicitly canonical, per SMI-5894) and is NOT a conflict.
+    if (entry.client && entry.client !== client) {
+      throw new ReconcileGuardError('manifest.reconcile.key_shape_ambiguous', {
+        name,
+        manifestKey: key,
+        otherKey: key,
+      })
+    }
+    return { key, entry }
+  }
 
   // Not found under the resolved key. Before refusing entry_not_found,
   // check whether a bare-name key exists carrying a DIFFERENT client —
@@ -131,6 +149,39 @@ export function resolveReconcileEntry(
  */
 export function reconcileKeyForLedgerEntry(name: string, client: string): string {
   return manifestKeyFor(name, client as ClientId)
+}
+
+// ============================================================================
+// drop_entry — installPath-still-resolves guard (adversarial-review finding)
+// ============================================================================
+
+/**
+ * `drop_entry`'s own tool description and the plan's Actions table both
+ * describe it as removing an entry "whose installPath no longer resolves"
+ * — the implementation must actually enforce that, not just narrate it.
+ * Without this check, `drop_entry` would silently orphan a healthy,
+ * currently-installed skill's on-disk files by deleting only its manifest
+ * record. Refuses when `installPath` still resolves to an existing
+ * directory; any stat failure (ENOENT or otherwise) is treated as
+ * "no longer resolves" — exactly the case this action exists for.
+ */
+export async function assertDropTargetNoLongerResolves(
+  name: string,
+  entry: SkillManifestEntry
+): Promise<void> {
+  if (!entry.installPath) return
+  let stat: Stats
+  try {
+    stat = await fs.stat(entry.installPath)
+  } catch {
+    return
+  }
+  if (stat.isDirectory()) {
+    throw new ReconcileGuardError('manifest.reconcile.drop_target_still_resolves', {
+      name,
+      path: entry.installPath,
+    })
+  }
 }
 
 // ============================================================================

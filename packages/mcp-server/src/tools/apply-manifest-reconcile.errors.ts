@@ -66,6 +66,14 @@ export function describeReconcileError(
       )
     case 'manifest.reconcile.relink_incomplete':
       return `relink requires BOTH 'id' and 'source' — apply_manifest_reconcile never infers an identity implicitly (ADR-144 §3).`
+    case 'manifest.reconcile.drop_target_still_resolves':
+      return (
+        `Refusing to drop '${ctx.name ?? '<unknown>'}': its installPath` +
+        (ctx.path ? ` ('${ctx.path}')` : '') +
+        ` still resolves on disk. drop_entry is for entries whose install directory no longer ` +
+        `exists — if you intend to remove a still-installed skill's manifest record anyway, use ` +
+        `mark_local instead, or uninstall the skill first.`
+      )
     case 'manifest.reconcile.backup_target_not_a_file':
       return `Refusing to back up '${ctx.path ?? '<unknown>'}' — it is not a regular file (C8 guard rail; see createProseBackup's single-file contract).`
     case 'manifest.reconcile.backup_failed':

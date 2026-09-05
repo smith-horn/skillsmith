@@ -92,6 +92,7 @@ export interface McpApplyManifestReconcileResponse {
     | 'manifest.reconcile.key_shape_ambiguous'
     | 'manifest.reconcile.relink_unvalidated'
     | 'manifest.reconcile.relink_incomplete'
+    | 'manifest.reconcile.drop_target_still_resolves'
     | 'manifest.reconcile.backup_target_not_a_file'
     | 'manifest.reconcile.backup_failed'
     | 'manifest.reconcile.lock_timeout'

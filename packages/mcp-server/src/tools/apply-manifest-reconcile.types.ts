@@ -27,6 +27,7 @@ export type ManifestReconcileErrorCode =
   | 'manifest.reconcile.key_shape_ambiguous' // H9: bare-key vs manifestKeyFor collision
   | 'manifest.reconcile.relink_unvalidated' // relink id/source not confirmed against the registry
   | 'manifest.reconcile.relink_incomplete' // relink without BOTH id and source
+  | 'manifest.reconcile.drop_target_still_resolves' // adversarial-review finding: drop_entry's own contract requires installPath to no longer resolve
   | 'manifest.reconcile.backup_target_not_a_file' // C8 guard rail
   | 'manifest.reconcile.backup_failed'
   | 'manifest.reconcile.lock_timeout' // ManifestManager's 30s ceiling

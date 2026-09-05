@@ -25,36 +25,22 @@ import type { ManifestReconcileLedgerEntry } from './manifest-reconcile-ledger.t
 import type {
   ApplyManifestReconcileInput,
   ApplyManifestReconcileResponse,
-  ManifestReconcileVerifyResult,
 } from './apply-manifest-reconcile.types.js'
 import {
   ReconcileGuardError,
+  assertDropTargetNoLongerResolves,
   reconcileKeyForLedgerEntry,
   resolveReconcileEntry,
   takeManifestBackup,
   validateRelinkIdentity,
-  verifyEntryAgainstRegistry,
   type ReconcileScopeTarget,
 } from './apply-manifest-reconcile.helpers.js'
+import { withLockTimeoutMapping } from './apply-manifest-reconcile.lock-helpers.js'
 
-/** `ManifestManager.acquireLock()`'s 30s-timeout error has no typed shape — match its message. */
-function isLockTimeoutError(err: unknown): boolean {
-  return err instanceof Error && err.message.includes('Failed to acquire manifest lock')
-}
-
-async function withLockTimeoutMapping<T>(manifestPath: string, run: () => Promise<T>): Promise<T> {
-  try {
-    return await run()
-  } catch (err) {
-    if (err instanceof ReconcileGuardError) throw err
-    if (isLockTimeoutError(err)) {
-      throw new ReconcileGuardError('manifest.reconcile.lock_timeout', {
-        path: `${manifestPath}.lock`,
-      })
-    }
-    throw err
-  }
-}
+// `verify` lives in its own sibling file (500-line gate) — re-exported here
+// so existing `from './apply-manifest-reconcile.actions.js'` imports (the
+// dispatcher, tests) keep working unmodified.
+export { runVerify } from './apply-manifest-reconcile.verify.js'
 
 function requireName(input: ApplyManifestReconcileInput): string {
   if (!input.name || input.name.trim().length === 0) {
@@ -218,7 +204,14 @@ export async function runDropEntry(
 ): Promise<ApplyManifestReconcileResponse> {
   const name = requireName(input)
   const manager = new ManifestManager(scopeTarget.manifestPath)
-  resolveReconcileEntry(await manager.load(), name, scopeTarget.client)
+  const { entry: preCheckEntry } = resolveReconcileEntry(
+    await manager.load(),
+    name,
+    scopeTarget.client
+  )
+  // Adversarial-review finding: the tool's own contract for this action is
+  // "installPath no longer resolves" — enforce it, don't just narrate it.
+  await assertDropTargetNoLongerResolves(name, preCheckEntry)
   const backupPath = await takeManifestBackup(scopeTarget.manifestPath)
 
   let resolvedKey = ''
@@ -253,112 +246,6 @@ export async function runDropEntry(
     manifestKey: resolvedKey,
     ledgerEntryId: ledgerEntry.id,
     backupPath,
-  }
-}
-
-// ============================================================================
-// verify (C3)
-// ============================================================================
-
-export async function runVerify(
-  input: ApplyManifestReconcileInput,
-  scopeTarget: ReconcileScopeTarget,
-  context: ToolContext
-): Promise<ApplyManifestReconcileResponse> {
-  const manager = new ManifestManager(scopeTarget.manifestPath)
-  const manifest = await manager.load()
-
-  let targets: Array<{ key: string; entry: SkillManifestEntry }>
-  if (input.name) {
-    // Single-entry verify: total unavailability is a hard failure — the
-    // caller asked about ONE entry and there is nothing partial to report.
-    if (context.apiClient.isOffline()) {
-      throw new ReconcileGuardError('manifest.reconcile.verify_unavailable', {
-        name: input.name,
-        detail: 'registry is offline',
-      })
-    }
-    const { key, entry } = resolveReconcileEntry(manifest, input.name, scopeTarget.client)
-    targets = [{ key, entry }]
-  } else {
-    // Batch (C3: "Batch by default"). Never hard-fails on offline/quota —
-    // each entry degrades to an honest unverified result (H1 philosophy).
-    targets = Object.entries(manifest.installedSkills).map(([key, entry]) => ({
-      key,
-      entry: entry as SkillManifestEntry,
-    }))
-  }
-
-  let quotaExhausted = false
-  const results: ManifestReconcileVerifyResult[] = []
-  const writes: Array<{ key: string; verifiedAt: string }> = []
-
-  for (const { key, entry } of targets) {
-    const outcome = await verifyEntryAgainstRegistry(
-      entry,
-      context,
-      () => {
-        quotaExhausted = true
-      },
-      quotaExhausted
-    )
-    results.push({ name: entry.name ?? key, manifestKey: key, ...outcome })
-    if (outcome.verified && outcome.verifiedAt) {
-      writes.push({ key, verifiedAt: outcome.verifiedAt })
-    }
-  }
-
-  if (writes.length === 0) {
-    // C3: "Writes nothing on a mismatch" — no backup/ledger churn for a
-    // pass that changed nothing.
-    return { success: true, action: 'verify', verifyResults: results }
-  }
-
-  const backupPath = await takeManifestBackup(scopeTarget.manifestPath)
-  const ledgerEntries: ManifestReconcileLedgerEntry[] = []
-
-  await withLockTimeoutMapping(scopeTarget.manifestPath, () =>
-    manager.updateSafely((m: SkillManifest) => {
-      const updatedSkills = { ...m.installedSkills }
-      for (const { key, verifiedAt } of writes) {
-        const current = updatedSkills[key] as SkillManifestEntry | undefined
-        // Defense-in-depth: an entry that vanished between the async verify
-        // pass and this lock (dropped by a concurrent writer) is skipped —
-        // there is nothing left to stamp verifiedAt onto.
-        if (!current) continue
-        updatedSkills[key] = { ...current, verifiedAt }
-      }
-      return { ...m, installedSkills: updatedSkills }
-    })
-  )
-
-  // Ledger entries recorded AFTER the write (their before/after snapshots
-  // come from what we observed, which is accurate for the common case of
-  // no concurrent writer; skipped entries above simply get no ledger row).
-  for (const { key, verifiedAt } of writes) {
-    const entry = targets.find((t) => t.key === key)?.entry
-    if (!entry) continue
-    const ledgerEntry = await appendReconcileLedgerEntry({
-      manifestPath: scopeTarget.manifestPath,
-      manifestKey: key,
-      name: entry.name ?? key,
-      client: scopeTarget.client,
-      action: 'verify',
-      beforeState: entry as unknown as Record<string, unknown>,
-      afterState: { ...entry, verifiedAt } as unknown as Record<string, unknown>,
-      reason: input.reason ?? 'apply_manifest_reconcile: verify',
-    })
-    ledgerEntries.push(ledgerEntry)
-  }
-
-  return {
-    success: true,
-    action: 'verify',
-    verifyResults: results,
-    backupPath,
-    // Single-entry verify: surface the one ledger entry id directly for a
-    // later precise revert, mirroring the other single-write actions.
-    ledgerEntryId: input.name ? ledgerEntries[0]?.id : undefined,
   }
 }
 
