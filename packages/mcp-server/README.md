@@ -285,9 +285,10 @@ All tiers include:
 | `skill_pack_audit` | Audit all skills in a directory | Individual+ |
 | `skill_audit` | Check skills for security advisories | Team+ |
 | `skill_inventory_audit` | Audit every installed AI coding client's skill inventory for local namespace collisions; returns rename + edit suggestions | Team+ |
-| `apply_namespace_rename` | Apply a rename suggestion from an inventory audit (`apply`/`custom`/`skip`) | Team+ |
+| `apply_namespace_rename` | Apply a rename suggestion from an inventory audit (`apply`/`custom`/`skip`/`revert`) | Team+ |
 | `apply_recommended_edit` | Apply a recommended prose edit from an inventory audit (gated on APPLY_TEMPLATE_REGISTRY) | Team+ |
 | `undo_apply` | Session-scoped undo for the most recent apply_namespace_rename / apply_recommended_edit changeset(s), restored from the apply tool's own backup | Team+ |
+| `apply_manifest_reconcile` | Repair a corrupted or ambiguous manifest entry (`mark_local`/`relink`/`drop_entry`/`verify`/`revert`) — see `skill_outdated`'s `identity-mismatch`/`local-drift` diagnosis | Community |
 | `team_workspace` | Manage team workspaces (create, list, get, delete) | Team+ |
 | `share_skill` | Add, remove, or list skills in a team workspace | Team+ |
 | `publish_private` | Mark a skill as private to your team | Team+ |

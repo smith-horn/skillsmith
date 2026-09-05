@@ -86,9 +86,16 @@ export const JOBS: readonly JobDefinition[] = [
       '1. Run skill_outdated to list installed skills that are behind the registry. This is a free diagnosis; always show the whole list.',
       '2. For anything outdated, use skill_updates to see what a bump would bring and skill_diff to show what actually changed between the installed and latest versions, calling out breaking upstream changes explicitly.',
       '3. Use skill_pack_audit when the user wants the state of a whole bundle at once rather than skill by skill.',
-      '4. Group the findings: breaking changes first, then routine bumps. Propose the update plan; apply nothing until the user approves the specific set.',
+      "4. When skill_outdated reports 'local-drift' or 'identity-mismatch' instead of a plain version bump, do not update that entry. Its diagnosis names the next step: apply_manifest_reconcile with mark_local (stop tracking a local edit against the registry), relink (assert a corrected, registry-validated id/source), or drop_entry (remove a stale entry whose install path no longer resolves). Show the diagnosis before proposing a reconcile action.",
+      '5. Group the remaining findings: breaking changes first, then routine bumps. Propose the update plan; apply nothing until the user approves the specific set.',
     ].join('\n'),
-    tools: ['skill_outdated', 'skill_updates', 'skill_diff', 'skill_pack_audit'],
+    tools: [
+      'skill_outdated',
+      'skill_updates',
+      'skill_diff',
+      'skill_pack_audit',
+      'apply_manifest_reconcile',
+    ],
   },
   {
     id: 'audit-fix',
@@ -221,7 +228,7 @@ export const CLI_FALLBACK_COMMANDS: readonly string[] = [
 
 /** Closing note naming the MCP-only tools that have no CLI equivalent yet. */
 export const CLI_FALLBACK_NOTE =
-  'The CLI has no equivalent for skill_pack_audit, the apply_namespace_rename/apply_recommended_edit guided diff-and-approve flow, or undo_apply - those stay MCP-only until the server is back.'
+  'The CLI has no equivalent for skill_pack_audit, the apply_namespace_rename/apply_recommended_edit guided diff-and-approve flow, undo_apply, or apply_manifest_reconcile - those stay MCP-only until the server is back.'
 
 /** One-line SKILL.md frontmatter description (agentskills.io core field). */
 export const PACK_DESCRIPTION =

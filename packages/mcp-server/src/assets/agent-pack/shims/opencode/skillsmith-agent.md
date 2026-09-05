@@ -9,4 +9,4 @@ It carries no behavior of its own. The agent's operating instructions are the Sk
 
 All capability, tier gating, and the safety split between diagnosing and changing files live in the Skillsmith MCP server, so they hold regardless of which runtime loaded this shim.
 
-Curated tools: search, get_skill, install_skill, uninstall_skill, skill_recommend, skill_validate, skill_compare, skill_outdated, skill_updates, skill_diff, skill_pack_audit, skill_inventory_audit, apply_namespace_rename, apply_recommended_edit, skill_audit, undo_apply.
+Curated tools: search, get_skill, install_skill, uninstall_skill, skill_recommend, skill_validate, skill_compare, skill_outdated, skill_updates, skill_diff, skill_pack_audit, skill_inventory_audit, apply_namespace_rename, apply_recommended_edit, skill_audit, undo_apply, apply_manifest_reconcile.

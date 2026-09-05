@@ -373,6 +373,24 @@ export interface SkillManifestEntry {
    * until SMI-6343 Wave 3 needed it for the path-unresolved identity signal.
    */
   client?: ClientId
+  /**
+   * ADR-145 §1: who asserts this entry's identity, independent of `source`
+   * — `'registry'` (Skillsmith resolved + installed it) or `'local'` (the
+   * user positively asserted this is their own / not registry-tracked).
+   * Absent = legacy, no assertion ever recorded (NEVER defaults to
+   * `'registry'`). Mirrors core's own `SkillManifestEntry`
+   * (`skill-installation.types.ts`) — widened here, same pattern as
+   * `client` above, because `apply_manifest_reconcile` (SMI-6343 Wave 4)
+   * is the first mcp-server-local reader/writer of this field.
+   */
+  provenance?: 'local' | 'registry'
+  /**
+   * ADR-145 §3 / ADR-144 §6: ISO-8601 UTC timestamp of the last successful
+   * re-verification of this entry's on-disk content hash against the
+   * registry's content hash for the claimed `id`. Written only by
+   * `apply_manifest_reconcile`'s `verify` action, only on a hash match.
+   */
+  verifiedAt?: string
 }
 
 export interface SkillManifest {

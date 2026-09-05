@@ -1,7 +1,7 @@
 ---
 name: skillsmith-agent
 description: "Named entry point for the Skillsmith Agent: delegate keeping your agent skills current, auditing your inventory, and vetting skills before install. Operating instructions live in the Skillsmith Agent skill pack."
-tools: search, get_skill, install_skill, uninstall_skill, skill_recommend, skill_validate, skill_compare, skill_outdated, skill_updates, skill_diff, skill_pack_audit, skill_inventory_audit, apply_namespace_rename, apply_recommended_edit, skill_audit, undo_apply
+tools: search, get_skill, install_skill, uninstall_skill, skill_recommend, skill_validate, skill_compare, skill_outdated, skill_updates, skill_diff, skill_pack_audit, skill_inventory_audit, apply_namespace_rename, apply_recommended_edit, skill_audit, undo_apply, apply_manifest_reconcile
 ---
 
 This file is the Copilot named-agent shim for the Skillsmith Agent.

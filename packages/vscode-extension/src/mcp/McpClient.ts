@@ -20,6 +20,8 @@ import {
   type McpInventoryAuditResponse,
   type McpApplyNamespaceRenameResponse,
   type McpApplyRecommendedEditResponse,
+  type McpUndoApplyResponse,
+  type McpApplyManifestReconcileResponse,
   DEFAULT_MCP_CONFIG,
 } from './types.js'
 import type { JsonRpcRequest, JsonRpcResponse } from './jsonrpc.types.js'
@@ -411,12 +413,14 @@ export class McpClient {
    * UNGATED. Mutates `~/.claude/` (backup + revert ledger) only when
    * `confirmed: true`; else returns a non-mutating preview. The UI sends
    * `action: 'apply'` (`'custom'`/`'skip'` are reserved for SMI-5328).
+   * `'revert'` (SMI-5671) undoes a previously applied apply/custom rename
+   * for the same `auditId`/`collisionId` — durable and cross-session.
    * App-level failure arrives as `success: false` + `errorCode`, not a throw.
    */
   async applyNamespaceRename(args: {
     auditId: string
     collisionId: string
-    action: 'apply' | 'custom' | 'skip'
+    action: 'apply' | 'custom' | 'skip' | 'revert'
     customName?: string
     confirmed?: boolean
   }): Promise<McpApplyNamespaceRenameResponse> {
@@ -435,6 +439,36 @@ export class McpClient {
     confirmed?: boolean
   }): Promise<McpApplyRecommendedEditResponse> {
     return this.callTool<McpApplyRecommendedEditResponse>('apply_recommended_edit', args)
+  }
+
+  /**
+   * Undo the most recent apply_namespace_rename/apply_recommended_edit
+   * changeset(s) made in THIS server session (SMI-5456/SMI-5470).
+   * Session-scoped; `count`/`suggestion_id` are mutually exclusive.
+   */
+  async undoApply(
+    args: { count?: number; suggestion_id?: string } = {}
+  ): Promise<McpUndoApplyResponse> {
+    return this.callTool<McpUndoApplyResponse>('undo_apply', args)
+  }
+
+  /**
+   * Repair a corrupted/ambiguous `~/.skillsmith/manifest.json` entry
+   * (SMI-6343 Wave 4). Community tier, no confirm/preview gate. `name` is
+   * required except for a batch `verify` or a by-`ledgerEntryId` `revert`.
+   */
+  async applyManifestReconcile(args: {
+    action: 'mark_local' | 'relink' | 'drop_entry' | 'verify' | 'revert'
+    name?: string
+    client?: string
+    scope?: 'global' | 'workspace'
+    cwd?: string
+    id?: string
+    source?: string
+    reason?: string
+    ledgerEntryId?: string
+  }): Promise<McpApplyManifestReconcileResponse> {
+    return this.callTool<McpApplyManifestReconcileResponse>('apply_manifest_reconcile', args)
   }
 
   /**

@@ -98,6 +98,7 @@ When using Skillsmith MCP server:
 - `apply_namespace_rename` (Team+): Apply a rename suggestion from an inventory audit (apply/custom/skip)
 - `apply_recommended_edit` (Team+): Apply a recommended prose edit from an inventory audit
 - `undo_apply` (Team+): Session-scoped undo of the most recent apply_namespace_rename/apply_recommended_edit changeset(s)
+- `apply_manifest_reconcile`: Repair a corrupted or ambiguous manifest entry (mark_local/relink/drop_entry/verify/revert)
 - `team_workspace` (Team+): Manage team workspaces (create, list, get, delete)
 - `share_skill` (Team+): Add, remove, or list skills in a team workspace
 - `publish_private` (Team+): Mark a skill private on this device, hiding it from your own search results

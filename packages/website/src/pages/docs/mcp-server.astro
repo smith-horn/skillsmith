@@ -494,10 +494,11 @@ EOF`}</code></pre>
   <h2 id="namespace-collision-tools-team">Local Namespace-Collision Audit Tools</h2>
 
   <p>
-    These tools detect and resolve namespace collisions across your local skills, commands, agents, and CLAUDE.md files.
+    These tools detect and resolve namespace collisions across your local skills, commands, agents, and CLAUDE.md files, plus the durable undo mechanism and the separate manifest-identity-repair tool that round out the apply family.
     <code>skill_inventory_audit</code>, <code>apply_namespace_rename</code>, and
     <code>apply_recommended_edit</code> are all available on every tier today — Team/Enterprise
-    tier-gating for these tools is not yet enforced.
+    tier-gating for these tools is not yet enforced. <code>undo_apply</code> and
+    <code>apply_manifest_reconcile</code> are Community tier.
   </p>
 
   <h3>skill_inventory_audit</h3>
@@ -566,6 +567,56 @@ EOF`}</code></pre>
   <p><strong>Example prompts:</strong></p>
   <ul>
     <li>"Use Skillsmith to apply the suggested domain-qualifier edit to my skill description"</li>
+  </ul>
+
+  <h3>undo_apply</h3>
+
+  <p>Undo the most recent <code>apply_namespace_rename</code> / <code>apply_recommended_edit</code> changeset(s) made in the current MCP server session, restoring each file from the backup the apply tool wrote before it changed anything.</p>
+
+  <pre><code>{`// Tool: undo_apply
+// Parameters:
+{
+  "count": 1               // optional, defaults to 1 — undo the N most-recent changesets
+  // or: "suggestion_id": "rename-1"   // undo one specific changeset by id (mutually exclusive with count)
+}`}</code></pre>
+
+  <p>
+    Session-scoped: once the server process restarts, its undo history is gone. Refuses (rather than overwrites) when the file has changed since the apply, the backup is missing, or the restore target falls outside the confined skill roots — treat those as normal, expected outcomes.
+  </p>
+
+  <p><strong>Example prompts:</strong></p>
+  <ul>
+    <li>"Undo the last skill rename you applied"</li>
+  </ul>
+
+  <h3>apply_manifest_reconcile</h3>
+
+  <p>Repair a corrupted or ambiguous <code>~/.skillsmith/manifest.json</code> entry through a supported path — never a hand-edit. Use after <code>skill_outdated</code> reports <code>identity-mismatch</code> or <code>local-drift</code>, or after <code>skill_recover_source</code> found low or no confidence.</p>
+
+  <pre><code>{`// Tool: apply_manifest_reconcile
+// Parameters:
+{
+  "action": "mark_local",   // mark_local | relink | drop_entry | verify | revert
+  "name": "my-skill"        // required for mark_local/relink/drop_entry; optional for verify (batch) and revert
+  // relink also requires: "id": "author/name", "source": "github:author/name"
+  // revert accepts either "ledgerEntryId" (precise) or "name" (by most-recent, refuses if ambiguous)
+}`}</code></pre>
+
+  <p>
+    Five actions: <code>mark_local</code> stops tracking an entry against the registry
+    (<code>source: 'unknown'</code> + <code>provenance: 'local'</code>, written together); <code>relink</code>
+    asserts an explicit, registry-validated <code>id</code>/<code>source</code> pair — it never infers an
+    identity on its own; <code>drop_entry</code> hard-removes an entry whose install path no longer resolves;
+    <code>verify</code> re-checks on-disk content against the registry's current content hash for one entry or,
+    by default, every entry, writing <code>verifiedAt</code> only on a match; <code>revert</code> is a durable,
+    cross-session undo of a prior reconcile on a single entry — unlike <code>undo_apply</code>, it survives an
+    unrelated skill install happening in between and works across server restarts.
+  </p>
+
+  <p><strong>Example prompts:</strong></p>
+  <ul>
+    <li>"skill_outdated says the commit skill's identity doesn't match what's installed — mark it as my own local skill"</li>
+    <li>"Undo that last manifest reconcile"</li>
   </ul>
 
   <h2>Usage Examples</h2>

@@ -75,4 +75,11 @@ export const AGENT_TOOL_PROFILE_NAMES: readonly string[] = [
   'apply_recommended_edit',
   'skill_audit',
   'undo_apply',
+  // SMI-6343 Wave 4: manifest identity repair. Included because
+  // `skill_outdated` (already in this profile)'s `diagnosis.remediation`
+  // copy for `identity-mismatch`/`local-drift` names this tool by name as
+  // the next step — an agent following that documented workflow needs it
+  // in its curated profile, same as `apply_namespace_rename` sits alongside
+  // `skill_inventory_audit`.
+  'apply_manifest_reconcile',
 ]

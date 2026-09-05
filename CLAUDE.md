@@ -197,9 +197,10 @@ Vitest only runs tests matching these patterns. Tests elsewhere are **silently i
 | `skill_pack_audit` | Audit all skills in a directory (Individual+) |
 | `skill_audit` | Audit skill for security advisories (Team+) |
 | `skill_inventory_audit` | Audit every installed AI coding client's skill inventory (plus Claude Code's own commands/agents/CLAUDE.md rules) for local namespace collisions; returns rename + edit suggestions (SMI-4590; multi-client SMI-6077) |
-| `apply_namespace_rename` | Apply a rename suggestion from a local namespace-collision audit (`apply` / `custom` / `skip`) (SMI-4590) |
+| `apply_namespace_rename` | Apply a rename suggestion from a local namespace-collision audit (`apply` / `custom` / `skip` / `revert`) (SMI-4590; `revert` SMI-5671) |
 | `apply_recommended_edit` | Apply a recommended prose edit; gated on `APPLY_TEMPLATE_REGISTRY` (SMI-4590) |
 | `undo_apply` | Session-scoped undo of the most recent apply_namespace_rename/apply_recommended_edit changeset(s), restored from the apply tool's own backup (SMI-5456/SMI-5470) |
+| `apply_manifest_reconcile` | Repair a corrupted or ambiguous `~/.skillsmith/manifest.json` entry through a supported path — `mark_local` / `relink` / `drop_entry` / `verify` / `revert` (SMI-6343 Wave 4, ADR-144 §6 / ADR-145) |
 | `team_workspace` | Manage team workspaces: create, list, get, delete (Team+) |
 | `share_skill` | Add, remove, or list skills in a team workspace (Team+) |
 | `publish_private` | Mark a skill private on this device, hidden from your own search results (Team+) |

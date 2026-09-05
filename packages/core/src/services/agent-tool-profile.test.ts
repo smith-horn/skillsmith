@@ -12,8 +12,8 @@ import {
 } from './agent-tool-profile.js'
 
 describe('AGENT_TOOL_PROFILE_NAMES (core, QD-1 relocation)', () => {
-  it('has 16 entries', () => {
-    expect(AGENT_TOOL_PROFILE_NAMES).toHaveLength(16)
+  it('has 17 entries', () => {
+    expect(AGENT_TOOL_PROFILE_NAMES).toHaveLength(17)
   })
 
   it('contains undo_apply', () => {
