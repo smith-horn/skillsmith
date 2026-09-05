@@ -4,6 +4,11 @@ All notable changes to `@skillsmith/mcp-server` are documented here.
 
 ## [Unreleased]
 
+## v0.7.13
+
+- **Feature**: SMI-6343 Wave 4 -- apply_manifest_reconcile tool (#2715)
+- **Other**: SMI-6362: Wire Team/Enterprise analytics tools to cloud-aggregated MCP tool-call data (#2698)
+- **Feature**: SMI-6343 Wave 3 -- tamper-check classification (#2710)
 - **Added**: `apply_manifest_reconcile` — a new Community-tier MCP tool that repairs a corrupted or
   ambiguous `~/.skillsmith/manifest.json` entry through a supported path instead of a hand-edit
   (SMI-6343 Wave 4, ADR-144 §6 / ADR-145). Five actions: `mark_local` (clears registry tracking —

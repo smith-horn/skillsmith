@@ -4,6 +4,11 @@ All notable changes to `@skillsmith/core` are documented here.
 
 ## [Unreleased]
 
+## v0.12.2
+
+- **Feature**: SMI-6343 Wave 4 -- apply_manifest_reconcile tool (#2715)
+- **Other**: SMI-6362: Wire Team/Enterprise analytics tools to cloud-aggregated MCP tool-call data (#2698)
+- **Feature**: SMI-6343 Wave 3 -- tamper-check classification (#2710)
 - **Added**: `SkillManifestEntry` (`services/skill-installation.types.ts`) gains two optional
   fields per ADR-145 (manifest provenance as a second trust axis, orthogonal to `source`):
   `provenance?: 'local' | 'registry'` (who asserts this entry's identity — absent means a legacy

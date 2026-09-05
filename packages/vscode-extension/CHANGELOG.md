@@ -6,6 +6,8 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/), and this
 
 ## [Unreleased]
 
+## v0.7.9
+
 - **Added**: `McpClient` gains `applyManifestReconcile()` and a matching `McpApplyManifestReconcileResponse` type (new `mcp/types.apply.ts`), calling the new `apply_manifest_reconcile` MCP tool (SMI-6343 Wave 4). Also fixes two pre-existing drift bugs found while wiring this in: `applyNamespaceRename`'s `action` type was missing `'revert'` (shipped server-side in SMI-5671), and there was no `undoApply` method or `McpUndoApplyResponse` type at all for the existing `undo_apply` tool — both added alongside the new tool's own types.
 
 ## v0.7.8
