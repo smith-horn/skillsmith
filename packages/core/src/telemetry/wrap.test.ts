@@ -12,7 +12,7 @@
  */
 
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest'
-import { withTelemetry, isTelemetered, setEmissionGate } from './wrap.js'
+import { withTelemetry, isTelemetered, setEmissionGate, runWithToolNameContext } from './wrap.js'
 
 // ---------------------------------------------------------------------------
 // Mock trackSkillInvoke so tests run without a live PostHog instance
@@ -33,7 +33,24 @@ vi.mock('../logging/redact.js', () => ({
   redactSensitiveData: (s: string) => s,
 }))
 
+// SMI-6362 §1: `emitToolCallEvent` (the second sink) is deliberately NOT
+// mocked at the module level below — the AC-11 p99 gate at the bottom of this
+// file (§8) engages the REAL `remote-audit.js` so it proves the actual
+// wiring on the hot path, not a stand-in. Full functional coverage of the
+// second sink itself (gate-off/on, identity-null, transport-rejection
+// swallowing) lives in the sibling `wrap.tool-call-sink.test.ts`. Only
+// `getOrCreateInstallId` (real implementation reads/writes
+// `~/.skillsmith/config.json` under a file lock — unwanted disk I/O in a unit
+// test) is mocked, matching remote-audit.test.ts's own convention exactly.
+vi.mock('../config/device-identity.js', () => ({
+  getOrCreateInstallId: vi.fn(() => 'a'.repeat(64)),
+}))
+
 import { trackSkillInvoke } from './posthog.js'
+import {
+  setTelemetryIdentityProvider,
+  _resetTelemetryEmitStatsForTests,
+} from '../audit/remote-audit.js'
 const mockTrack = vi.mocked(trackSkillInvoke)
 
 beforeEach(() => {
@@ -252,6 +269,14 @@ describe('per-request framework', () => {
 // ---------------------------------------------------------------------------
 // 8. Overhead gate (Risk #7 — p99 < 1ms per wrapped call)
 // ---------------------------------------------------------------------------
+//
+// SMI-6362 §1's second sink (`emitToolCallEvent` — a `tool_call` event
+// dispatched to `search_metrics` alongside this sink's pre-existing
+// `trackSkillInvoke` PostHog event) has its own functional coverage in the
+// sibling `wrap.tool-call-sink.test.ts` (500-line file gate). The p99 gate
+// below is re-run with that second sink genuinely engaged (see the second
+// `it` block) to satisfy AC-11 — re-asserting the SAME latency thresholds,
+// not new ones, now that a second network-dispatching sink sits on this path.
 
 describe('overhead gate (risk #7)', () => {
   it('p99 per-call overhead is < 1ms over 10 000 iterations', async () => {
@@ -286,6 +311,78 @@ describe('overhead gate (risk #7)', () => {
     expect(mean).toBeLessThan(0.5)
 
     expect(mockTrack).toHaveBeenCalledTimes(ITERATIONS)
+  })
+
+  // SMI-6362 AC-11: the pre-existing gate above predates the second sink and
+  // never installs `runWithToolNameContext`, so `emitToolCallEvent` was never
+  // actually reached during that measurement — it would have passed trivially
+  // even if the second sink were arbitrarily slow. This case re-runs the same
+  // gate with the second sink genuinely engaged on every iteration (tool-name
+  // context + a valid identity provider installed, so `emitToolCallEvent`
+  // builds its metadata object and dispatches `fetch` each time) to prove the
+  // p99/mean thresholds still hold with BOTH sinks live, per the plan's "the
+  // p99 overhead gate ... still passes with the second sink installed."
+  it('p99 per-call overhead is < 1ms over 10 000 iterations with the second sink engaged', async () => {
+    // `X-Skillsmith-Telemetry-Accepted: '1'` matters here beyond realism: an
+    // unclassified-as-accepted response makes `classifyResponse` log a
+    // once-per-process console.debug line, which is noise this test doesn't
+    // need (and doesn't assert on `getTelemetryEmitStats()` — this gate is
+    // about latency, not durability classification; that's the sibling
+    // file's job).
+    const fetchSpy = vi
+      .fn()
+      .mockResolvedValue(
+        new Response(null, { status: 200, headers: { 'X-Skillsmith-Telemetry-Accepted': '1' } })
+      )
+    vi.stubGlobal('fetch', fetchSpy)
+    setTelemetryIdentityProvider(() => ({ accessToken: 'jwt-abc' }))
+
+    try {
+      const ITERATIONS = 10_000
+      const noopHandler = async (): Promise<number> => 42
+
+      const wrappedNoop = withTelemetry(noopHandler, {
+        source: 'mcp-tool',
+        extractSkillId: () => 'bench/skill',
+      })
+
+      const run = (): Promise<unknown> =>
+        runWithToolNameContext('bench-tool', () =>
+          (wrappedNoop as unknown as () => Promise<unknown>)()
+        )
+
+      // JIT warm-up — stabilise before measuring
+      for (let i = 0; i < 100; i++) {
+        await run()
+      }
+      mockTrack.mockReset()
+      fetchSpy.mockClear()
+
+      const elapsed: number[] = []
+      for (let i = 0; i < ITERATIONS; i++) {
+        const t0 = performance.now()
+        await run()
+        elapsed.push(performance.now() - t0)
+      }
+
+      elapsed.sort((a, b) => a - b)
+      const p99 = elapsed[Math.ceil(ITERATIONS * 0.99) - 1]
+      const mean = elapsed.reduce((s, v) => s + v, 0) / ITERATIONS
+
+      // AC-11: same thresholds as the single-sink gate above, now with the
+      // second sink genuinely on the hot path.
+      expect(p99).toBeLessThan(1)
+      expect(mean).toBeLessThan(0.5)
+
+      expect(mockTrack).toHaveBeenCalledTimes(ITERATIONS)
+      // Confirms the second sink really was reached on every iteration —
+      // otherwise this test would be exactly as trivial as the one above.
+      expect(fetchSpy).toHaveBeenCalledTimes(ITERATIONS)
+    } finally {
+      vi.unstubAllGlobals()
+      setTelemetryIdentityProvider(null)
+      _resetTelemetryEmitStatsForTests()
+    }
   })
 })
 
