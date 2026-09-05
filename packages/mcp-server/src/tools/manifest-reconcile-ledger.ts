@@ -188,8 +188,13 @@ export async function writeReconcileLedger(
   } catch (err) {
     try {
       await fs.rm(tmpPath, { force: true })
-    } catch {
-      // best-effort cleanup
+    } catch (cleanupErr) {
+      // Best-effort cleanup — logged (not silent) so a leaked .tmp file is
+      // diagnosable, matching this repo's convention of never swallowing a
+      // caught error without at least a warning (pr-reviewer-gate finding).
+      console.warn(
+        `[manifest-reconcile-ledger] failed to remove stale tmp file '${tmpPath}': ${(cleanupErr as Error).message}`
+      )
     }
     throw err
   }
