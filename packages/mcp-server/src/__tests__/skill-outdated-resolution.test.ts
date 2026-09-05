@@ -67,6 +67,11 @@ function makeContext(db: Database): ToolContext {
   return {
     db,
     skillDependencyRepository: new SkillDependencyRepository(db),
+    // SMI-6343 Wave 2 added a required context.apiClient.isOffline() call in
+    // outdated.ts's live registry arm. This test predates that arm and has no
+    // live registry to mock, so `true` (offline) preserves its original
+    // behavior: only the historical/manifest resolution path is exercised.
+    apiClient: { isOffline: () => true },
   } as unknown as ToolContext
 }
 
