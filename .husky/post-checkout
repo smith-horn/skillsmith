@@ -62,7 +62,30 @@ echo ""
 # deliberate single-session scope of post-merge (P-5: check mode stays read-
 # only; writes are in install/post-merge/post-checkout only, not pre-commit/
 # pre-push which may run on a shared worktree tree).
-if command -v docker > /dev/null 2>&1 && \
+# SMI-5628: linked-worktree detection (same idiom as .husky/post-merge's
+# SMI-5624 guard and scripts/lib/check-node-modules-fresh.sh). Hoisted here
+# rather than after the Docker block, since the host advisory below also
+# reads $_IS_LINKED_WT/$_MAIN_CHECKOUT.
+_gcd="$(git rev-parse --git-common-dir 2>/dev/null)"
+_gd="$(git rev-parse --git-dir 2>/dev/null)"
+_IS_LINKED_WT=0
+_MAIN_CHECKOUT=""
+if [ -n "$_gcd" ] && [ "$_gcd" != "$_gd" ]; then
+  _IS_LINKED_WT=1
+  _MAIN_CHECKOUT="$(cd "$_gcd/.." 2>/dev/null && pwd || echo '')"
+fi
+
+if [ "$_IS_LINKED_WT" = "1" ]; then
+  echo "${YELLOW}Skipping Docker npm install — this is a linked worktree.${NC}"
+  echo "  Installing here would target MAIN's container by mistake, and installing"
+  echo "  into this worktree's OWN container would fail (EROFS) — its node_modules"
+  echo "  mounts are read-only views of main's tree (SMI-5560/SMI-5626)."
+  if [ -n "$_MAIN_CHECKOUT" ]; then
+    echo "  Run instead: ( cd \"$_MAIN_CHECKOUT\" && docker exec -w /app $DOCKER_CONTAINER npm install )"
+  else
+    echo "  Run instead: docker exec -w /app $DOCKER_CONTAINER npm install"
+  fi
+elif command -v docker > /dev/null 2>&1 && \
    docker ps --format '{{.Names}}' 2>/dev/null | grep -q "^${DOCKER_CONTAINER}$"; then
   echo "${YELLOW}Installing updated dependencies in Docker...${NC}"
   if docker exec -w /app "$DOCKER_CONTAINER" npm install; then
@@ -84,8 +107,18 @@ echo ""
 # Always remind about the host tree; don't auto-run npm here because the hook
 # could fire in any interactive-rebase/worktree context where a silent install
 # would be surprising. The pre-commit/pre-push freshness guard is the backstop.
+# SMI-5628: worktree-aware — a worktree's node_modules is a symlink into main's
+# tree (SMI-4377/SMI-4381); running npm install in place would unlink it.
 echo "${YELLOW}Also run on the host to keep tooling + worktree symlinks in sync:${NC}"
-echo "  npm install"
+if [ "$_IS_LINKED_WT" = "1" ]; then
+  if [ -n "$_MAIN_CHECKOUT" ]; then
+    echo "  Run instead: ( cd \"$_MAIN_CHECKOUT\" && npm install )"
+  else
+    echo "  Run npm install in the main checkout instead."
+  fi
+else
+  echo "  npm install"
+fi
 echo ""
 
 exit 0
