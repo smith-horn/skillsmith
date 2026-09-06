@@ -93,7 +93,17 @@ jobs:
           # it keeps only the last value). This checks every non-completed run
           # of the WATCHED workflow instead — correctly excludes this
           # workflow's own execution, since it runs under a separate name.
-          NON_TERMINAL=$(gh run list --workflow="Skill Indexer Backfill" --limit 20 --json status \
+          #
+          # SMI-6404: --repo is mandatory here. This step deliberately runs
+          # BEFORE the Checkout step below (a cheap fail-fast check before
+          # paying for checkout + npm ci), so there is no local .git for `gh`
+          # to auto-detect the repo from -- confirmed live, every run since
+          # this file was created failed here with "failed to determine base
+          # repo: fatal: not a git repository". Same fix shape as the
+          # pre-existing SMI-5574 precedent in concurrency-audit-pr.yml /
+          # team-compliance-check-pr.yml. $GITHUB_REPOSITORY is a default
+          # Actions runtime env var -- no extra `env:` needed.
+          NON_TERMINAL=$(gh run list --repo "$GITHUB_REPOSITORY" --workflow="Skill Indexer Backfill" --limit 20 --json status \
             --jq '[.[] | select(.status != "completed")] | length')
           if [ "$NON_TERMINAL" != "0" ]; then
             echo "Another backfill run is already queued/in-progress ($NON_TERMINAL) — skipping this cycle to avoid displacing it."
@@ -196,7 +206,11 @@ jobs:
           # NOT risk a concurrent-write hazard either way: cancel-in-progress:
           # false plus the DB-level indexer_lock still guarantee no two crawls
           # ever run simultaneously, regardless of which run wins the slot.
-          NON_TERMINAL=$(gh run list --workflow="Skill Indexer Backfill" --limit 20 --json status \
+          #
+          # SMI-6404: --repo added for consistency with the earlier
+          # "No other backfill run" step and so this call no longer silently
+          # depends on Checkout having already run earlier in this job.
+          NON_TERMINAL=$(gh run list --repo "$GITHUB_REPOSITORY" --workflow="Skill Indexer Backfill" --limit 20 --json status \
             --jq '[.[] | select(.status != "completed")] | length')
           echo "non_terminal=$NON_TERMINAL" >> "$GITHUB_OUTPUT"
 
@@ -205,7 +219,12 @@ jobs:
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
-          gh workflow run indexer-backfill.yml \
+          # SMI-6404: --repo added for the same reason as the two `gh run
+          # list` calls above — this call already runs after Checkout today,
+          # but removing the step-order dependency here too means this file
+          # no longer has any gh invocation that could break simply because
+          # a future edit reorders its steps.
+          gh workflow run indexer-backfill.yml --repo "$GITHUB_REPOSITORY" \
             -f resume_from="${{ steps.recover.outputs.resume_from }}" \
             -f dry_run="${{ steps.recover.outputs.dry_run }}" \
             -f max_skills_per_repo="${{ steps.recover.outputs.max_skills_per_repo }}" \
