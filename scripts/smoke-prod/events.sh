@@ -12,8 +12,8 @@
 #                                         even on insert failure).
 #   check_events_skill_invoke_row_visible — Optional: verify the synthetic row
 #                                           is queryable via PostgREST REST API
-#                                           using SMOKE_SKILLS_* creds against
-#                                           the skills-smoke Supabase project.
+#                                           in prod using the service-role
+#                                           credential to bypass RLS.
 #                                           Skips gracefully when creds absent.
 #
 # Synthetic events are tagged source='smoke-prod' so production dashboards
@@ -33,6 +33,8 @@ SMOKE_LIB_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 # SUPABASE_URL must be supplied by the caller (env/secret). Fail loudly
 # if absent — same guard used in website.sh.
 SMOKE_SUPABASE_URL="${SUPABASE_URL:-}"
+# Normalized the same way anon-budget.sh normalizes it, for consistency.
+SMOKE_SERVICE_ROLE_KEY="${SUPABASE_SERVICE_ROLE_KEY:-}"
 
 _require_events_supabase_url() {
   if [ -z "$SMOKE_SUPABASE_URL" ]; then
@@ -100,32 +102,31 @@ check_events_skill_invoke_accepted() {
 }
 
 # Module-level cache of the run_id written by check_events_skill_invoke_accepted.
-# Reset each time that check runs.
+# Initialized once at source time; overwritten only on that check's own
+# success (a failed accepted-check leaves this empty, causing the
+# row-visibility check below to skip gracefully rather than run stale).
 _EVENTS_LAST_RUN_ID=""
 
 # ---- check_events_skill_invoke_row_visible --------------------------------
 # Optional: query search_metrics via PostgREST REST API to confirm the
-# synthetic row landed. Uses SMOKE_SKILLS_SUPABASE_URL / SMOKE_SKILLS_*
-# creds (the same staging account used by the usage-counter checks).
+# synthetic row landed in prod. Uses the service-role credential because the
+# row's random anonymous actor cannot be read through the authenticated-user
+# SELECT policy on search_metrics.
 #
 # Skips gracefully when creds are absent -- the accepted-body assertion in
 # check_events_skill_invoke_accepted is the load-bearing gate. This check
 # provides a deeper end-to-end read-path assertion as a belt-and-suspenders
-# layer when the skills smoke credentials are provisioned.
+# layer when the prod service-role credential is provisioned.
 #
 # Waits up to 10s (2 probe attempts with a 5s gap) for the row to be
 # visible (accounts for PostgREST plan-cache and pg connection pooling).
 check_events_skill_invoke_row_visible() {
-  if [ -z "${SMOKE_SKILLS_SUPABASE_URL:-}" ]; then
-    smoke_warn "SMOKE_SKILLS_SUPABASE_URL not set -- skipping row-visibility check"
+  if [ -z "$SMOKE_SUPABASE_URL" ]; then
+    smoke_warn "SUPABASE_URL not set -- skipping row-visibility check"
     return 0
   fi
-  if [ -z "${SMOKE_SKILLS_ANON_KEY:-}" ] && [ -z "${SMOKE_SKILLS_SUPABASE_ANON_KEY:-}" ]; then
-    smoke_warn "SMOKE_SKILLS_SUPABASE_ANON_KEY not set -- skipping row-visibility check"
-    return 0
-  fi
-  if [ -z "${SMOKE_SKILLS_EMAIL:-}" ] || [ -z "${SMOKE_SKILLS_PASSWORD:-}" ]; then
-    smoke_warn "SMOKE_SKILLS_EMAIL / SMOKE_SKILLS_PASSWORD not set -- skipping row-visibility check"
+  if [ -z "$SMOKE_SERVICE_ROLE_KEY" ]; then
+    smoke_warn "SUPABASE_SERVICE_ROLE_KEY not set -- skipping row-visibility check"
     return 0
   fi
   if [ -z "$_EVENTS_LAST_RUN_ID" ]; then
@@ -133,26 +134,9 @@ check_events_skill_invoke_row_visible() {
     return 0
   fi
 
-  local skills_url="${SMOKE_SKILLS_SUPABASE_URL}"
-  local skills_anon="${SMOKE_SKILLS_SUPABASE_ANON_KEY:-${SMOKE_SKILLS_ANON_KEY:-}}"
   local session_id="$_EVENTS_LAST_RUN_ID"
-
-  # Sign in to obtain a JWT for the RLS-gated search_metrics read.
-  local jwt
-  jwt=$(curl --silent --max-time "$SMOKE_HTTP_TIMEOUT" \
-    -X POST "${skills_url}/auth/v1/token?grant_type=password" \
-    -H "apikey: ${skills_anon}" \
-    -H "Content-Type: application/json" \
-    -d "{\"email\":\"${SMOKE_SKILLS_EMAIL}\",\"password\":\"${SMOKE_SKILLS_PASSWORD}\"}" 2>/dev/null \
-    | python3 -c "import sys,json; print(json.load(sys.stdin).get('access_token',''))" 2>/dev/null) || true
-
-  if [ -z "$jwt" ]; then
-    smoke_warn "row-visibility sign-in failed -- skipping"
-    return 0
-  fi
-
-  local rest_url="${skills_url}/rest/v1/search_metrics?select=session_id&metadata->>session_id=eq.${session_id}&limit=1"
-  local t0 t1 ms resp status body count
+  local rest_url="${SMOKE_SUPABASE_URL}/rest/v1/search_metrics?select=session_id&metadata->>session_id=eq.${session_id}&limit=1"
+  local t0 t1 ms resp count
 
   # Probe once immediately, then once after 5s if no row yet (10s total budget).
   local attempt=1
@@ -160,8 +144,8 @@ check_events_skill_invoke_row_visible() {
     t0=$(now_ms)
     resp=$(curl --silent --max-time "$SMOKE_HTTP_TIMEOUT" \
       -X GET "$rest_url" \
-      -H "apikey: ${skills_anon}" \
-      -H "Authorization: Bearer ${jwt}" \
+      -H "apikey: ${SMOKE_SERVICE_ROLE_KEY}" \
+      -H "Authorization: Bearer ${SMOKE_SERVICE_ROLE_KEY}" \
       -H "Accept: application/json" 2>/dev/null) || resp=""
     t1=$(now_ms)
     ms=$((t1 - t0))
