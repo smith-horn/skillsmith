@@ -393,7 +393,10 @@ export const CORROBORATION_COLLECTION: readonly CorroborationCollectionSpec[] = 
  *
  * Three entries do not exist yet on {@link PRE_PORT_BASELINE_SHA} — they are
  * ADDED by PR #2192 (`SecurityScanner.risk-score.ts`, and the edge twin's
- * `.evidence.ts` / `.chmod-compound.ts`). Listing them early is safe and
+ * `.evidence.ts` / `.compound.ts` — originally `.chmod-compound.ts` at
+ * authoring time, superseded by main's own directory-path-aware
+ * `.compound.ts` re-extraction during the SMI-6020 rebase; see that file's
+ * removal note above). Listing them early is safe and
  * correct: `git status --porcelain -- <path>` exits 0 with empty output for a
  * pathspec that matches nothing (verified 2026-08-12), so a not-yet-existing
  * entry is inert pre-merge and starts biting the instant the file lands.
@@ -426,6 +429,11 @@ export const ADDITIONAL_CLOSURE_WATCHED_SOURCE_PATHS = [
   // Edge bundle path — `scanSkillBundle` and its sibling enumeration/merge.
   'scripts/indexer/skill-processor.security.ts',
   'scripts/indexer/_shared/security-scanner-edge.evidence.ts',
-  'scripts/indexer/_shared/security-scanner-edge.chmod-compound.ts',
+  // Post-rebase fixup (SMI-6020): .chmod-compound.ts was PR #2192's own
+  // original owner-perm-chmod extraction; main independently re-extracted
+  // and FIXED the same detector (directory-path-aware correlation, SMI-6033
+  // Wave 3) as .compound.ts, which now wins as the single canonical export.
+  // .chmod-compound.ts (stale, basename-only correlation) is removed.
+  'scripts/indexer/_shared/security-scanner-edge.compound.ts',
   'scripts/indexer/_shared/rate-limit.ts',
 ] as const

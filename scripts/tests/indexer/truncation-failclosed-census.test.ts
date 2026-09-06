@@ -28,7 +28,13 @@ const REPO_ROOT = resolve(__dirname, '..', '..', '..')
 
 /** The pinned closed set (design §2.7 T2.27) — do not auto-discover. */
 const PINNED_FILES = [
-  'scripts/indexer/skill-processor.ts',
+  // SMI-6033 Wave 2 (Gap 8): repositoryToSkill (the actual call site) was
+  // extracted out of skill-processor.ts into this sibling to keep the parent
+  // under the 500-line gate; skill-processor.ts itself is now a pure
+  // re-export with no shouldQuarantine* call of its own. Pin the real call
+  // site instead. The Deno twin has not undergone this extraction, so it
+  // stays pinned directly.
+  'scripts/indexer/skill-processor.repository-mapping.ts',
   'supabase/functions/indexer/skill-processor.ts',
   'scripts/indexer/skill-processor.security.ts',
   'supabase/functions/indexer/skill-processor.security.ts',

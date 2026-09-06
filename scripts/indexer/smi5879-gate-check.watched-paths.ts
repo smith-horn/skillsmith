@@ -263,4 +263,13 @@ export const CLOSURE_WATCHED_SOURCE_PATHS = [
   'supabase/functions/_shared/security-scanner-edge.multiline.ts',
   'supabase/functions/_shared/security-scanner-edge.regex-utils.ts',
   'supabase/functions/_shared/constants.ts',
+  // SMI-6020 (file-length fixup, post-rebase): security-scanner-edge.ts's own
+  // quarantine-decision + summary helpers (quickSecurityCheck,
+  // shouldQuarantine(FailClosed), isScanTruncated, ROOT_SCAN_LABEL,
+  // summarizeFindings) were extracted to this new sibling to clear the
+  // 500-line gate the rebased multilineTruncated additions pushed it over.
+  // Re-exported from the already-watched security-scanner-edge.ts, so this
+  // is reachable the same way every other sibling extraction above is.
+  'scripts/indexer/_shared/security-scanner-edge.quarantine.ts',
+  'supabase/functions/_shared/security-scanner-edge.quarantine.ts',
 ] as const

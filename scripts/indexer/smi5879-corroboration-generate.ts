@@ -117,7 +117,7 @@ const GENERATOR_SCANNER_SOURCE_PATHS = [
   'scripts/indexer/_shared/security-scanner-edge.exec.ts',
   'scripts/indexer/_shared/security-scanner-edge.patterns.ts',
   'scripts/indexer/_shared/security-scanner-edge.evidence.ts',
-  'scripts/indexer/_shared/security-scanner-edge.chmod-compound.ts',
+  'scripts/indexer/_shared/security-scanner-edge.compound.ts',
   // Edge bundle path (needed for the 5 SB cases)
   'scripts/indexer/skill-processor.security.ts',
   'scripts/indexer/_shared/rate-limit.ts',
