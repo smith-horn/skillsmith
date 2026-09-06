@@ -39,7 +39,15 @@ echo "  ✓ ESLint passed"
 
 echo ""
 echo "[3/3] Running Prettier check..."
-npx prettier --check "**/*.{ts,tsx,js,jsx,json,md,yml,yaml}" --ignore-path .prettierignore
+# SMI-6388: must stay byte-identical to `npm run format:check` (CI + pre-push).
+# Do NOT pass --ignore-path here: it is an `array: true` option whose Prettier 3.x
+# default is [".gitignore", ".prettierignore"], so naming one file REPLACES the
+# whole default list and silently drops .gitignore — which then flags git-tracked
+# but gitignored files (e.g. packages/skillsmith-cli/bin.js, matched by
+# .gitignore's `packages/**/*.js`). Both ignore files are picked up automatically.
+# Do NOT substitute an extension glob either: "**/*.{ts,...}" omits .astro/.mjs/
+# .cjs/.mts/.cts/.css/.html, so it would pass locally on diffs CI then rejects.
+npx prettier --check .
 echo "  ✓ Prettier check passed"
 
 echo ""

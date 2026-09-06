@@ -22,7 +22,12 @@ packages/*/.vercel/
 .ruvector/
 test-results/
 
-# Scripts with embedded GraphQL that Prettier cannot parse
+# SMI-6388: Prettier parses this file fine — the original "cannot parse" claim was
+# wrong. The real reason to exclude it: Prettier's embedded-language formatter
+# rewrites the GraphQL inside the query template literals (verified — it collapses
+# `issueLabels(filter: ..., first: $first, after: $after)` onto one 106-char line,
+# past the printWidth 100 this repo sets, because embedded GraphQL is measured
+# separately). Keep the exclusion so the hand-wrapped queries stay readable.
 scripts/linear-api.mjs
 
 # Git-crypt encrypted directories - cannot be parsed when locked (CI, fresh clones)
