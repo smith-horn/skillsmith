@@ -4,6 +4,10 @@ All notable changes to `@skillsmith/cli` are documented here.
 
 ## [Unreleased]
 
+## v0.8.10
+
+- **Cadence**: Mechanical cadence alignment (no changes since v0.8.9).
+
 ## v0.8.9
 
 - **Feature**: SMI-6343 Wave 3 -- tamper-check classification (#2710)

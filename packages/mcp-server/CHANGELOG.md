@@ -4,6 +4,10 @@ All notable changes to `@skillsmith/mcp-server` are documented here.
 
 ## [Unreleased]
 
+## v0.7.14
+
+- **Cadence**: Mechanical cadence alignment (no changes since v0.7.13).
+
 ## v0.7.13
 
 - **Feature**: SMI-6343 Wave 4 -- apply_manifest_reconcile tool (#2715)

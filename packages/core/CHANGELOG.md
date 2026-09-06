@@ -4,6 +4,10 @@ All notable changes to `@skillsmith/core` are documented here.
 
 ## [Unreleased]
 
+## v0.12.3
+
+- **Cadence**: Mechanical cadence alignment (no changes since v0.12.2).
+
 ## v0.12.2
 
 - **Feature**: SMI-6343 Wave 4 -- apply_manifest_reconcile tool (#2715)
