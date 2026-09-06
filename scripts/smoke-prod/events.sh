@@ -135,7 +135,16 @@ check_events_skill_invoke_row_visible() {
   fi
 
   local session_id="$_EVENTS_LAST_RUN_ID"
-  local rest_url="${SMOKE_SUPABASE_URL}/rest/v1/search_metrics?select=session_id&metadata->>session_id=eq.${session_id}&limit=1"
+  # select=id, not session_id -- search_metrics has no top-level session_id
+  # column (it only lives inside metadata JSONB). Requesting a nonexistent
+  # column makes PostgREST return an error object instead of a row array,
+  # which the caller's isinstance(rows, list) check silently reads as
+  # count=0 -- this bug predates this fix (present in the original
+  # staging-pointed query too) and was never exposed until the query
+  # actually reached a real row for the first time. Confirmed live against
+  # prod: the identical query with select=session_id returns
+  # {"code":"42703",...}; select=id returns the row correctly.
+  local rest_url="${SMOKE_SUPABASE_URL}/rest/v1/search_metrics?select=id&metadata->>session_id=eq.${session_id}&limit=1"
   local t0 t1 ms resp count
 
   # Probe once immediately, then once after 5s if no row yet (10s total budget).
