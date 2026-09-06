@@ -240,7 +240,39 @@ describe("migration's documented ordering invariant (SMI-5879 cross-model review
     process.cwd(),
     'supabase/migrations/20260808000000_smi5879_snapshot_generations.sql'
   )
-  const migrationText = readFileSync(migrationPath, 'utf8')
+
+  // SMI-6402: `supabase/migrations/**` is git-crypt encrypted (`.gitattributes`), and
+  // `post-merge-verify.yml` intentionally has no unlock step (SMI-4221 — a workflow
+  // holding `issues: write` shouldn't also hold a decrypt key). On that locked checkout
+  // this file is ciphertext, so the regex extraction below can never find its patterns —
+  // that is expected, not a migration drift, and must not fail the run. Same 9-byte
+  // magic-header contract and `SKILLSMITH_GIT_CRYPT_EXPECTED_LOCKED` gate as
+  // `scripts/tests/private-registry-rls.test.ts` / `search-metrics-analytics-rls.helpers.ts`
+  // (each test that reads git-crypt content directly keeps its own copy of this check,
+  // scoped to the specific file(s) it reads, per those files' own doc comments). The
+  // unlocked PR-matrix CI remains the authoritative check for this invariant.
+  const GIT_CRYPT_MAGIC = Buffer.from([0x00, 0x47, 0x49, 0x54, 0x43, 0x52, 0x59, 0x50, 0x54]) // "\x00GITCRYPT"
+  const EXPECT_LOCKED_ENV_VAR = 'SKILLSMITH_GIT_CRYPT_EXPECTED_LOCKED'
+  const migrationBuf = readFileSync(migrationPath)
+  const migrationLocked = migrationBuf.subarray(0, GIT_CRYPT_MAGIC.length).equals(GIT_CRYPT_MAGIC)
+
+  it('locates the migration this invariant reads from', () => {
+    expect(migrationBuf.length).toBeGreaterThan(0)
+  })
+
+  if (migrationLocked) {
+    if (process.env[EXPECT_LOCKED_ENV_VAR] !== '1') {
+      throw new Error(
+        `${migrationPath} appears git-crypt-locked, but ${EXPECT_LOCKED_ENV_VAR} isn't set — ` +
+          'this checkout is not expected to be locked here. If this is post-merge-verify.yml, ' +
+          `set ${EXPECT_LOCKED_ENV_VAR}=1 on the job. Otherwise git-crypt likely failed to ` +
+          'unlock (SMI-5702/SMI-5861 filter fragility) — treat as a real failure, not a lock edge case.'
+      )
+    }
+    return // post-merge-verify.yml, by design (SMI-4221/SMI-5984)
+  }
+
+  const migrationText = migrationBuf.toString('utf8')
 
   /** Parses a Postgres interval literal of the exact shape this migration uses ('N hours' / 'N minutes') to milliseconds. */
   function intervalLiteralToMs(literal: string): number {
