@@ -9,6 +9,16 @@
  *   - Main-repo guard refuses to operate on the main repo
  *   - Project-name sanitization matches Docker Compose v2 rules
  *
+ * SMI-6401: `dev`/`test` are Compose-profile-gated, so `down`/`config`
+ * silently no-op without an explicit `--profile`. `cleanup_worktree_docker_resources()`
+ * now discovers the repo's declared profiles (`docker compose config --profiles`)
+ * and applies them to both the `down` call AND a `docker compose config --format
+ * json`-derived enumeration of every declared named volume (replacing a
+ * fallback that only ever guessed `_node_modules`). This inserts TWO new
+ * docker invocations ahead of the pre-existing `rmi`/`volume rm` calls in the
+ * scripted-exit-code tests below — see the per-test comments for the updated
+ * call-index accounting.
+ *
  * Tests use a fake `docker` shim on PATH that records invocations.
  * No real Docker daemon is needed; no git-crypt encryption is used.
  */
@@ -62,6 +72,39 @@ fi
 `
     : ''
 }exit 0
+`
+  const shimPath = join(binDir, 'docker')
+  writeFileSync(shimPath, shim)
+  chmodSync(shimPath, 0o755)
+}
+
+/**
+ * SMI-6401: docker shim variant that also fakes `compose config --profiles`
+ * and `compose ... config --format json` output, so the profile-discovery
+ * and Compose-config-derived volume-list logic in
+ * cleanup_worktree_docker_resources() can be exercised end-to-end without a
+ * real Docker daemon. Every other command (stop, down, rmi, volume rm, ...)
+ * always exits 0 -- this variant proves the derivation itself works; it is
+ * not used for the failure-interplay tests above (those use the plain
+ * `writeDockerShim` + exit-codes queue, where an empty discovery result is
+ * exactly what exercises the pre-fix-equivalent fallback path).
+ */
+function writeSmartDockerShim(binDir: string, logPath: string): void {
+  const shim = `#!/bin/sh
+echo "$@" >> "${logPath}"
+case "$*" in
+  *"config --profiles")
+    printf '%s\\n' dev test
+    exit 0
+    ;;
+  *"config --format json")
+    cat <<'JSON'
+{"volumes":{"node_modules":{},"website-vercel-output":{},"an-external-vol":{"external":true}}}
+JSON
+    exit 0
+    ;;
+esac
+exit 0
 `
   const shimPath = join(binDir, 'docker')
   writeFileSync(shimPath, shim)
@@ -156,11 +199,16 @@ describe('SMI-4653: remove-worktree.sh per-worktree Docker cleanup', () => {
     const result = runScriptWithDockerShim(`"${worktreeDir}" --force`, binDir, logPath, repoDir)
 
     expect(result.status).toBe(0)
-    // Path A: cleanup-side compose down has --volumes --rmi local AND no --profile filter
-    // (so dev/test services all tear down; orchestrator service removed, SMI-5719). The pre-existing stop_worktree_containers
-    // does emit `compose --profile dev down` separately — we assert on the exact cleanup string.
+    // Path A: with the plain (dumb, empty-output) shim, `compose config
+    // --profiles` (SMI-6401 discovery) returns nothing, so no --profile
+    // flags get appended -- the down call is byte-identical to the
+    // pre-SMI-6401 invocation. The pre-existing stop_worktree_containers
+    // does emit `compose --profile dev down` separately — we assert on the
+    // exact cleanup string.
     expect(result.dockerCalls).toContain('compose down --volumes --rmi local')
-    // Path B: fallback rmi + volume rm
+    // Path B: fallback rmi + volume rm (SMI-6401: `compose config --format
+    // json` also returns nothing from the dumb shim, so declared_volume_keys
+    // falls back to the single historical "node_modules" name).
     expect(result.dockerCalls).toContain('rmi wt-feature-dev')
     expect(result.dockerCalls).toContain('volume rm wt-feature_node_modules')
   })
@@ -198,15 +246,25 @@ describe('SMI-4653: remove-worktree.sh per-worktree Docker cleanup', () => {
     sh(`mkdir -p "${binDir}"`)
     const logPath = join(tempRoot, 'docker.log')
     const exitCodesPath = join(tempRoot, 'exit-codes')
-    // First docker call (stop_worktree_containers `compose --profile dev down`) → 0
-    // Second docker call (Path A `compose down --volumes --rmi local`) → 1 (fail)
-    // Subsequent calls → 0 (rmi, volume rm fall through)
-    writeFileSync(exitCodesPath, '0\n1\n0\n0\n')
+    // SMI-6401: 6 real calls now precede the network-ls/system-df/orphan-prune
+    // tail (profile discovery + config-json derivation inserted between the
+    // stop call and Path B, both `|| true`-tolerant no-ops with the dumb shim):
+    //   [0] stop_worktree_containers `compose --profile dev down`      → 0
+    //   [1] Path A profile discovery `compose config --profiles`       → 0
+    //   [2] Path A `compose down --volumes --rmi local`                → 1 (the simulated failure)
+    //   [3] Path B `compose config --format json` (volume derivation)  → 0
+    //   [4] Path B `rmi`                                               → 0
+    //   [5] Path B `volume rm`                                         → 0
+    writeFileSync(exitCodesPath, '0\n0\n1\n0\n0\n0\n')
     writeDockerShim(binDir, logPath, exitCodesPath)
 
     const result = runScriptWithDockerShim(`"${worktreeDir}" --force`, binDir, logPath, repoDir)
 
     expect(result.status).toBe(0)
+    // Pin exactly which call received the simulated failure, so a future
+    // insertion ahead of Path A's `down` can't silently mistarget it onto a
+    // `|| true`-tolerant discovery call instead (plan-review SMI-6401 finding).
+    expect(result.dockerCalls[2]).toBe('compose down --volumes --rmi local')
     expect(result.dockerCalls).toContain('rmi wt-fail-dev')
     expect(result.dockerCalls).toContain('volume rm wt-fail_node_modules')
   })
@@ -219,8 +277,9 @@ describe('SMI-4653: remove-worktree.sh per-worktree Docker cleanup', () => {
     sh(`mkdir -p "${binDir}"`)
     const logPath = join(tempRoot, 'docker.log')
     const exitCodesPath = join(tempRoot, 'exit-codes')
-    // 0 (stop), 0 (compose down), 1 (rmi fails), 0 (volume rm)
-    writeFileSync(exitCodesPath, '0\n0\n1\n0\n')
+    // SMI-6401: [0] stop=0, [1] profile discovery=0, [2] compose down=0,
+    // [3] config-json derivation=0, [4] rmi=1 (the simulated failure), [5] volume rm=0
+    writeFileSync(exitCodesPath, '0\n0\n0\n0\n1\n0\n')
     writeDockerShim(binDir, logPath, exitCodesPath)
 
     const result = runScriptWithDockerShim(`"${worktreeDir}" --force`, binDir, logPath, repoDir)
@@ -276,17 +335,84 @@ describe('SMI-4653: remove-worktree.sh per-worktree Docker cleanup', () => {
     sh(`mkdir -p "${binDir}"`)
     const logPath = join(tempRoot, 'docker.log')
     const exitCodesPath = join(tempRoot, 'exit-codes')
-    // Cleanup ops (compose stop, compose down, rmi, volume rm) → 1 (resources already gone).
-    // network ls (5th call, check_docker_networks) → 0 so the pipefail-protected pipeline
-    // doesn't blow up. The SMI-5145 `docker system df` (check_docker_reclaimable) is the 6th
-    // call and defaults to 0 (codes exhausted) — its bare invocation is `|| warn`-guarded so
-    // a non-zero would not abort regardless. Script should still succeed end-to-end.
-    writeFileSync(exitCodesPath, '1\n1\n1\n1\n0\n')
+    // SMI-6401: cleanup now spans 6 real calls (stop, profile discovery,
+    // compose down, config-json derivation, rmi, volume rm), all → 1
+    // (resources already gone / discovery unavailable -- every one of these
+    // is `|| true`-tolerant). network ls (7th call, check_docker_networks) →
+    // 0 so the pipefail-protected pipeline doesn't blow up. The SMI-5145
+    // `docker system df` (check_docker_reclaimable) and the SMI-5750
+    // orphan-prune's own docker calls all fall after the queue is exhausted
+    // and default to 0 — `docker system df`'s bare invocation is
+    // `|| warn`-guarded so a non-zero would not abort regardless. Script
+    // should still succeed end-to-end.
+    writeFileSync(exitCodesPath, '1\n1\n1\n1\n1\n1\n0\n')
     writeDockerShim(binDir, logPath, exitCodesPath)
 
     const result = runScriptWithDockerShim(`"${worktreeDir}" --force`, binDir, logPath, repoDir)
 
     expect(result.status).toBe(0)
+  })
+})
+
+describe('SMI-6401: profile-aware Path A + Compose-config-derived Path B volume list', () => {
+  it('discovers profiles, passes them to `down`, and removes every non-external declared volume', () => {
+    const tempRoot = makeTempDir('rmwt-6401-derive')
+    tempDirs.push(tempRoot)
+    const { repoDir, worktreeDir } = setupRepoWithWorktree(tempRoot, 'wt-derive')
+    const binDir = join(tempRoot, 'bin')
+    sh(`mkdir -p "${binDir}"`)
+    const logPath = join(tempRoot, 'docker.log')
+    writeSmartDockerShim(binDir, logPath)
+
+    const result = runScriptWithDockerShim(`"${worktreeDir}" --force`, binDir, logPath, repoDir)
+
+    expect(result.status).toBe(0)
+    // Path A: the discovered profiles ("dev", "test") are applied to `down`.
+    expect(result.dockerCalls).toContain(
+      'compose --profile dev --profile test down --volumes --rmi local'
+    )
+    // Path A also applies the same profiles to the `config --format json`
+    // derivation call.
+    expect(result.dockerCalls).toContain(
+      'compose --profile dev --profile test config --format json'
+    )
+    // Path B: BOTH non-external declared volumes are attempted, not just
+    // the single historical "node_modules" name.
+    expect(result.dockerCalls).toContain('volume rm wt-derive_node_modules')
+    expect(result.dockerCalls).toContain('volume rm wt-derive_website-vercel-output')
+    // The volume marked `external: true` in the canned config is never
+    // touched -- an externally-managed volume must not be deleted by this
+    // script.
+    expect(result.dockerCalls.some((c) => c.includes('an-external-vol'))).toBe(false)
+  })
+
+  it('does not crash when no docker-compose.override.yml exists (plan-review Critical regression check)', () => {
+    // SMI-6401 plan-review Critical finding: compose_profile_args/
+    // declared_volume_keys must be declared OUTSIDE the
+    // `if [[ -f docker-compose.override.yml ]]` block, or this exact
+    // no-override-file path (Path A skipped entirely) crashes with
+    // "unbound variable" under `set -euo pipefail` before `git worktree
+    // remove` ever runs. This worktree has no override file, so Path A
+    // never executes -- only the node_modules-only Path B fallback should
+    // run, and the script must still exit 0.
+    const tempRoot = makeTempDir('rmwt-6401-no-override')
+    tempDirs.push(tempRoot)
+    const { repoDir, worktreeDir } = setupRepoWithWorktree(tempRoot, 'wt-noover', false)
+    const binDir = join(tempRoot, 'bin')
+    sh(`mkdir -p "${binDir}"`)
+    const logPath = join(tempRoot, 'docker.log')
+    writeDockerShim(binDir, logPath)
+
+    const result = runScriptWithDockerShim(`"${worktreeDir}" --force`, binDir, logPath, repoDir)
+
+    expect(result.status).toBe(0)
+    // Path A's `compose down`/`config` calls never fire without an override
+    // file present.
+    expect(result.dockerCalls.some((c) => c.startsWith('compose down'))).toBe(false)
+    expect(result.dockerCalls.some((c) => c.startsWith('compose config'))).toBe(false)
+    // Path B still runs its single-name fallback.
+    expect(result.dockerCalls).toContain('rmi wt-noover-dev')
+    expect(result.dockerCalls).toContain('volume rm wt-noover_node_modules')
   })
 })
 
