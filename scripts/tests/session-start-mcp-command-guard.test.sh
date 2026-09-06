@@ -65,6 +65,10 @@ mk_test_repo() {
   cp "$HOOK" "$dir/scripts/session-start-mcp-command-guard.sh"
   chmod +x "$dir/scripts/session-start-mcp-command-guard.sh"
   cp "$REPO_ROOT/scripts/lib/mcp-command-guard.mjs" "$dir/scripts/lib/mcp-command-guard.mjs"
+  # SMI-6229 added a local import of ./mcp-command-guard.plugin-scan.mjs; the
+  # isolated throwaway repo needs that sibling too, or the hook process dies
+  # with ERR_MODULE_NOT_FOUND before it can emit anything to stderr/stdout.
+  cp "$REPO_ROOT/scripts/lib/mcp-command-guard.plugin-scan.mjs" "$dir/scripts/lib/mcp-command-guard.plugin-scan.mjs"
   echo "$dir"
 }
 
