@@ -153,6 +153,14 @@ describe('T-RLS-1..4 — search_metrics RLS + analytics RPC security declaration
 // ============================================================================
 
 describe('T-RLS-6 — cleanup_search_metrics() still hardens the partitions it creates', () => {
+  // SMI-6402: an unconditional `it()` must precede the lock-state `return` below — vitest
+  // fails an entirely empty `describe()` with "No test found in suite", which is exactly
+  // what this block did on post-merge-verify.yml's locked checkout before this fix (the
+  // describe-level guard alone, with no `it()` ahead of it, left zero registered on lock).
+  it('locates every migration this suite asserts against', () => {
+    expect(MIGRATIONS).toBeDefined()
+  })
+
   if (MIGRATIONS.locked) return
   const { partitionRls, wiring } = MIGRATIONS
 
@@ -180,6 +188,12 @@ describe('T-RLS-6 — cleanup_search_metrics() still hardens the partitions it c
 // ============================================================================
 
 describe('T-RLS-7 — the self-read branch is unchanged and documented-inert (D-2b consequence 1)', () => {
+  // SMI-6402: see T-RLS-6's comment above — an unconditional `it()` must precede the
+  // lock-state `return` or vitest fails the whole (then-empty) suite on a locked checkout.
+  it('locates every migration this suite asserts against', () => {
+    expect(MIGRATIONS).toBeDefined()
+  })
+
   if (MIGRATIONS.locked) return
   const { parentTable } = MIGRATIONS
 
@@ -225,6 +239,12 @@ describe('T-RLS-7 — the self-read branch is unchanged and documented-inert (D-
 // ============================================================================
 
 describe('T-GRANT-1 — the five analytics RPCs are authenticated-only', () => {
+  // SMI-6402: see T-RLS-6's comment above — an unconditional `it()` must precede the
+  // lock-state `return` or vitest fails the whole (then-empty) suite on a locked checkout.
+  it('locates every migration this suite asserts against', () => {
+    expect(MIGRATIONS).toBeDefined()
+  })
+
   if (MIGRATIONS.locked) return
   const { wiring } = MIGRATIONS
 
@@ -241,6 +261,12 @@ describe('T-GRANT-1 — the five analytics RPCs are authenticated-only', () => {
 })
 
 describe('T-GRANT-2 — resolve_telemetry_identity is UNREACHABLE from PostgREST', () => {
+  // SMI-6402: see T-RLS-6's comment above — an unconditional `it()` must precede the
+  // lock-state `return` or vitest fails the whole (then-empty) suite on a locked checkout.
+  it('locates every migration this suite asserts against', () => {
+    expect(MIGRATIONS).toBeDefined()
+  })
+
   if (MIGRATIONS.locked) return
   const { wiring } = MIGRATIONS
 
@@ -278,7 +304,21 @@ describe('T-PROV-1 static half — p_user_id provenance preconditions (D-2f rule
   const IDENTITY_MODULE = 'supabase/functions/_shared/telemetry-identity.ts'
   const ROW_BUILDER = 'supabase/functions/events/row-builder.ts'
 
+  // SMI-6402: both files above live under `supabase/functions/**`, which locks and
+  // unlocks together with `supabase/migrations/**` (same git-crypt key, same checkout) —
+  // `MIGRATIONS.locked` is therefore a valid proxy for whether these are readable too.
+  // This block originally read them unconditionally (the one gap among this file's
+  // describe blocks), so on post-merge-verify.yml's intentionally-locked checkout
+  // (SMI-4221/SMI-5984) both `it()`s below read ciphertext and failed on a false "not
+  // found" — not a real provenance regression. Gated per-`it()` (return early inside the
+  // body) rather than at the describe level: vitest fails an entirely empty `describe()`
+  // with "No test found in suite", so a describe-level-only `if (locked) return` with no
+  // unconditional `it()` ahead of it is unsafe (the exact bug T-RLS-6/7 and T-GRANT-1/2
+  // below had — fixed alongside this). The unlocked PR-matrix CI remains the authoritative
+  // check for this half.
+
   it('resolve_telemetry_identity has exactly ONE non-test RPC call site', () => {
+    if (MIGRATIONS.locked) return
     // DISCREPANCY WITH THE PLAN TEXT, resolved here rather than deferred. AC-6 writes this
     // rule as the literal shell command
     //   grep -rn "resolve_telemetry_identity" supabase/functions/ --include="*.ts" | grep -v _tests_
@@ -305,6 +345,7 @@ describe('T-PROV-1 static half — p_user_id provenance preconditions (D-2f rule
   })
 
   it("`user_id` is absent from sanitizeMetadata's allowlist (D-2f consequence 1)", () => {
+    if (MIGRATIONS.locked) return
     // Adding it — for any reason, including a plausible "let the client tell us who it is
     // for debugging" — converts D-2f rule 2 from structurally-true to merely-currently-true.
     const src = readFileSync(ROW_BUILDER, 'utf8')
