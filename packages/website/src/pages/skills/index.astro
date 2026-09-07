@@ -609,6 +609,16 @@ const breadcrumbSchema = {
         if (window._rateLimitInterval) {
           clearInterval(window._rateLimitInterval)
           delete window._rateLimitInterval
+          // SMI-6428 confirmation review (round 2, finding F-1): the countdown
+          // this cancels is the ONLY code path that ever re-enables this button
+          // (see the 429 branch below). Cancelling it without restoring the
+          // terminal state it would have reached strands the button reading
+          // "Retry in Ns" and disabled forever, on ANY later error state — not
+          // just another 429. Restore what the countdown's own zero-case sets.
+          if (retryButton) {
+            retryButton.textContent = 'Try Again'
+            retryButton.disabled = false
+          }
         }
 
         const query = searchInput.value.trim()

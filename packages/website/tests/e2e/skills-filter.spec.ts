@@ -76,6 +76,19 @@ test.describe('Skills Filter-Only Browsing (SMI-1658)', () => {
         /* localStorage unavailable — overlay suppression falls back to the race */
       }
     })
+    // SMI-6428 confirmation review (round 2, finding F-3): the readiness barrier
+    // below waits on loadFeaturedSkills()'s terminal write, and that function has
+    // no AbortController/timeout of its own -- it issues one real, unmocked
+    // fetch per featured-skills.json ID against prod skills-get. A slow or
+    // degraded prod response would stall this barrier for up to 30s on every
+    // test in this block, including the 2 that DO run in the required CI check
+    // -- for a reason unrelated to the code under test. Route it deterministically
+    // instead; loadFeaturedSkills() treats a non-ok response as a per-item null
+    // and only skips populating the grid if every item comes back that way
+    // (index.astro:954-963), so this doesn't need real skill data to resolve fast.
+    await page.route('**/skills-get/**', async (route) => {
+      await route.fulfill({ status: 200, contentType: 'application/json', body: '{"data":null}' })
+    })
     await page.goto(`${BASE_URL}/skills`)
     // Wait for the page to be fully loaded
     await expect(page.locator('#category-filter')).toBeVisible()
