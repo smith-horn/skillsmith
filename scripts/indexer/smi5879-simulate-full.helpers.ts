@@ -325,17 +325,16 @@ export async function processRow(
     }
   }
   if ('removed' in primaryOutcome) {
-    // JUDGMENT CALL (documented in the implementation report): a primary
-    // SKILL.md 404 has no dedicated bucket in the plan's closed vocabulary —
-    // `unfetchable` is reserved for structurally-undecidable ROW SHAPES
-    // determined without any network attempt; `bundle_absent` requires
-    // "primary OK". Routed to `unevaluable` (the conservative, G-2-blocking
-    // choice) because the post-port verdict is categorically unknowable with
-    // no primary content to score, matching unevaluable's own definition.
+    // SMI-6442: a confirmed 404 is terminal (never retried), so it must
+    // never be `unevaluable`. Not `unfetchable` either (no-network-attempt
+    // ROW SHAPE). Coverage-neutral, still G-1-exclude-required.
     return {
       ...base,
-      outcome: 'unevaluable',
-      reason: 'primary SKILL.md confirmed absent (404) since the generation was sealed',
+      outcome: 'primary_not_found',
+      reason:
+        'primary SKILL.md not found at this path/ref (404) — repo resolved fine, but this ' +
+        'specific file returned 404; not retried, since repeating an identical request will not ' +
+        'change the answer',
     }
   }
   const primaryContent = primaryOutcome.content

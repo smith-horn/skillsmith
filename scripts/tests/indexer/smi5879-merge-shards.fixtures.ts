@@ -107,12 +107,14 @@ export function coverageForShard(
     const cohortRows = reportRows.filter((r) => r['cohort'] === cohort)
     const unevaluable = cohortRows.filter((r) => r['outcome'] === 'unevaluable').length
     const unfetchable = cohortRows.filter((r) => r['outcome'] === 'unfetchable').length
+    const primaryNotFound = cohortRows.filter((r) => r['outcome'] === 'primary_not_found').length
     const total = totals[cohort]
     coverage[cohort] = makeCoverage({
       scanned: cohortRows.length,
       total,
       unevaluable,
       unfetchable,
+      primaryNotFound,
       status: cohortRows.length === total && unevaluable === 0 ? 'full' : 'partial',
     })
   }

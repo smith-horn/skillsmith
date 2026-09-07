@@ -221,8 +221,9 @@ export function computeR(rows: readonly SimRowResult[]): SimRowResult[] {
  * `bundle_absent` (lines ~399-407) and the final `classifyVerdictDelta`
  * branch (unchanged_clean/unchanged_quarantined/newly_quarantined/
  * newly_cleared, ~410-417) are the ONLY paths that populate the score
- * fields. `unevaluable`/`unfetchable`/`content_drifted` all return early
- * before scoring and never carry them.
+ * fields. `unevaluable`/`unfetchable`/`content_drifted`/`primary_not_found`
+ * (SMI-6442 — no primary content to score) all return early before scoring
+ * and never carry them.
  */
 export const SCORED_OUTCOMES: readonly SimRowOutcome[] = [
   'bundle_absent',

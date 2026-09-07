@@ -23,10 +23,13 @@ import { parseArgs, runMergeShards, writeMergedReport } from '../../indexer/smi5
 import {
   MERGE_RUN_ID,
   buildThreeShardFixture,
+  fixtureRow,
   makeMergeShardsDb,
   makeScratchDir,
   mergeArgs,
+  totalsFor,
   writeShardReport,
+  type FixtureRowPair,
 } from './smi5879-merge-shards.fixtures.ts'
 
 // ---------------------------------------------------------------------------
@@ -133,6 +136,7 @@ describe('runMergeShards — N=3 happy path', () => {
       total: 3,
       unevaluable: 0,
       unfetchable: 0,
+      primaryNotFound: 0,
     })
     expect(report.coverage.C3).toEqual({
       status: 'full',
@@ -140,6 +144,7 @@ describe('runMergeShards — N=3 happy path', () => {
       total: 3,
       unevaluable: 0,
       unfetchable: 0,
+      primaryNotFound: 0,
     })
     expect(report.coverage.C1).toEqual({
       status: 'full',
@@ -147,6 +152,7 @@ describe('runMergeShards — N=3 happy path', () => {
       total: 0,
       unevaluable: 0,
       unfetchable: 0,
+      primaryNotFound: 0,
     })
     expect(report.coverage.C4).toEqual({
       status: 'full',
@@ -154,6 +160,7 @@ describe('runMergeShards — N=3 happy path', () => {
       total: 0,
       unevaluable: 0,
       unfetchable: 0,
+      primaryNotFound: 0,
     })
 
     // counts: recomputed from the merged rows, sum(counts) === rows.length.
@@ -164,6 +171,49 @@ describe('runMergeShards — N=3 happy path', () => {
     // sweep: no shard hard-stopped, passes_run is the max across shards
     // (every shard defaults to `makeSimulatorReportJson`'s passes_run: 1).
     expect(report.sweep).toEqual({ passes_run: 1, hard_stopped: null })
+  })
+
+  it('SMI-6442: primaryNotFound sums correctly across shards and stays coverage-neutral', async () => {
+    const dir = scratch()
+    // primary_not_found is NOT a scored outcome (no primary content was ever
+    // fetched successfully) — the real simulator never attaches
+    // quarantine/risk-score fields to it, so build these rows by hand rather
+    // than via fixtureRow, which always attaches them.
+    const pnf1 = fixtureRow('row-pnf-1', 'C2')
+    const pnf2 = fixtureRow('row-pnf-2', 'C2')
+    const c2c = fixtureRow('row-pnf-3', 'C2')
+    const asPrimaryNotFound = (row: FixtureRowPair): FixtureRowPair => ({
+      population: row.population,
+      reportRow: {
+        id: row.reportRow['id'],
+        cohort: row.reportRow['cohort'],
+        author: row.reportRow['author'],
+        name: row.reportRow['name'],
+        outcome: 'primary_not_found',
+        reason: 'primary SKILL.md not found at this path/ref (404)',
+      },
+    })
+    const c2a = asPrimaryNotFound(pnf1)
+    const c2b = asPrimaryNotFound(pnf2)
+    const population = [c2a.population, c2b.population, c2c.population]
+    const totals = totalsFor(population)
+    // Split across two shards so the merge tool must SUM, not just pass through.
+    const path0 = writeShardReport(dir, 0, [c2a.reportRow], totals)
+    const path1 = writeShardReport(dir, 1, [c2b.reportRow, c2c.reportRow], totals)
+    const db = makeMergeShardsDb(population)
+    const args = mergeArgs([path0, path1], join(dir, 'merged.json'))
+
+    const report = await runMergeShards(db, args)
+
+    expect(report.coverage.C2).toEqual({
+      status: 'full',
+      scanned: 3,
+      total: 3,
+      unevaluable: 0,
+      unfetchable: 0,
+      primaryNotFound: 2,
+    })
+    expect(report.counts.primary_not_found).toBe(2)
   })
 })
 

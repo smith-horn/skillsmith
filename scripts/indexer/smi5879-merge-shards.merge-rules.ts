@@ -120,6 +120,7 @@ export function assertShardReportNumericSanity(input: ShardReportInput): void {
     assertNonNegativeInteger(c.scanned, `coverage.${cohort}.scanned`, input.path)
     assertNonNegativeInteger(c.unevaluable, `coverage.${cohort}.unevaluable`, input.path)
     assertNonNegativeInteger(c.unfetchable, `coverage.${cohort}.unfetchable`, input.path)
+    assertNonNegativeInteger(c.primaryNotFound, `coverage.${cohort}.primaryNotFound`, input.path)
   }
   for (const outcome of SIM_ROW_OUTCOMES) {
     assertNonNegativeInteger(input.report.counts[outcome], `counts.${outcome}`, input.path)
@@ -263,21 +264,24 @@ export function mergeCoverage(
     let scanned = 0
     let unevaluable = 0
     let unfetchable = 0
+    let primaryNotFound = 0
     for (const input of inputs) {
       const c = input.report.coverage[cohort]
       scanned += c.scanned
       unevaluable += c.unevaluable
       unfetchable += c.unfetchable
+      primaryNotFound += c.primaryNotFound
     }
 
     const cohortRows = mergedRows.filter((r) => r.cohort === cohort)
-    const summed = { scanned, unevaluable, unfetchable }
+    const summed = { scanned, unevaluable, unfetchable, primaryNotFound }
     const recomputed = {
       scanned: cohortRows.length,
       unevaluable: cohortRows.filter((r) => r.outcome === 'unevaluable').length,
       unfetchable: cohortRows.filter((r) => r.outcome === 'unfetchable').length,
+      primaryNotFound: cohortRows.filter((r) => r.outcome === 'primary_not_found').length,
     }
-    for (const key of ['scanned', 'unevaluable', 'unfetchable'] as const) {
+    for (const key of ['scanned', 'unevaluable', 'unfetchable', 'primaryNotFound'] as const) {
       if (summed[key] !== recomputed[key]) {
         throw new Error(
           `SMI-6015: summed coverage.${cohort}.${key}=${summed[key]} across the shard reports does ` +
@@ -294,17 +298,17 @@ export function mergeCoverage(
           `${total} — the shards collectively reported more rows than the cohort contains.`
       )
     }
-    if (unevaluable > scanned || unfetchable > scanned) {
+    if (unevaluable > scanned || unfetchable > scanned || primaryNotFound > scanned) {
       throw new Error(
         `SMI-6015: merged coverage.${cohort} subset count(s) exceed scanned=${scanned} ` +
-          `(unevaluable=${unevaluable}, unfetchable=${unfetchable}). Both are SUBSETS of scanned, ` +
-          'never addends to it.'
+          `(unevaluable=${unevaluable}, unfetchable=${unfetchable}, primaryNotFound=${primaryNotFound}). ` +
+          'All three are SUBSETS of scanned, never addends to it.'
       )
     }
 
     const status: CohortCoverage['status'] =
       scanned === total && unevaluable === 0 ? 'full' : 'partial'
-    coverage[cohort] = { status, scanned, total, unevaluable, unfetchable }
+    coverage[cohort] = { status, scanned, total, unevaluable, unfetchable, primaryNotFound }
   }
   return coverage
 }

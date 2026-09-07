@@ -125,15 +125,15 @@ describe('processRow — tier-2 outcome classification', () => {
     expect(result.reason).toMatch(/unparseable/)
   })
 
-  it('unevaluable: repo_url embeds a ref, census resolved the repo fine, but SKILL.md itself still 404s (file-level absence is NOT reclassified by this fix)', async () => {
+  it('primary_not_found: repo_url embeds a ref, census resolved the repo fine, but SKILL.md itself still 404s (a genuine live fetch, distinct from the embedded-ref repo-level bypass above — SMI-6442 routes this to primary_not_found, not unevaluable)', async () => {
     const row = makeRow()
     const branchMap: BranchMap = new Map([
       [`acme/${row.id}`, { resolution: 'resolved', default_branch: 'main' }],
     ])
     registerPrimary(row, [new Response('Not Found', { status: 404 })])
     const result = await processRow(row, branchMap, baseDeps(cleanScanner, cleanScanner))
-    expect(result.outcome).toBe('unevaluable')
-    expect(result.reason).toMatch(/confirmed absent/)
+    expect(result.outcome).toBe('primary_not_found')
+    expect(result.reason).toMatch(/not found/)
   })
 
   it('unchanged_clean: repo_url embeds a ref and census reports transient — transient does not block an embedded-ref row (it never needed default_branch)', async () => {
@@ -168,12 +168,12 @@ describe('processRow — tier-2 outcome classification', () => {
     expect(result.reason).toMatch(/primary fetch exhausted/)
   })
 
-  it('unevaluable: primary SKILL.md confirmed absent (404) since the snapshot (judgment call)', async () => {
+  it('primary_not_found: primary SKILL.md 404s (SMI-6442 — terminal, not retry-eligible)', async () => {
     const row = makeRow()
     registerPrimary(row, [new Response('Not Found', { status: 404 })])
     const result = await processRow(row, new Map(), baseDeps(cleanScanner, cleanScanner))
-    expect(result.outcome).toBe('unevaluable')
-    expect(result.reason).toMatch(/confirmed absent/)
+    expect(result.outcome).toBe('primary_not_found')
+    expect(result.reason).toMatch(/not found/)
   })
 
   it('unevaluable: a sibling exhausts retries', async () => {
@@ -367,6 +367,27 @@ describe('computeCoverage — unfetchable does NOT block full coverage, unevalua
     const coverage = computeCoverage({ C1: [], C2: rows, C3: [], C4: [] }, results)
     expect(coverage.C2.status).toBe('full')
     expect(coverage.C2.unfetchable).toBe(1)
+    expect(coverage.C2.unevaluable).toBe(0)
+  })
+
+  it('SMI-6442: a cohort where every row is primary_not_found or a resolved verdict reports full', () => {
+    const rows: [SimSnapshotRow, SimSnapshotRow] = [
+      makeRow({ cohort: 'C2' }),
+      makeRow({ cohort: 'C2' }),
+    ]
+    const results = new Map<string, SimRowResult>([
+      [
+        rows[0].id,
+        { id: rows[0].id, cohort: 'C2', author: null, name: null, outcome: 'primary_not_found' },
+      ],
+      [
+        rows[1].id,
+        { id: rows[1].id, cohort: 'C2', author: null, name: null, outcome: 'unchanged_clean' },
+      ],
+    ])
+    const coverage = computeCoverage({ C1: [], C2: rows, C3: [], C4: [] }, results)
+    expect(coverage.C2.status).toBe('full')
+    expect(coverage.C2.primaryNotFound).toBe(1)
     expect(coverage.C2.unevaluable).toBe(0)
   })
 
