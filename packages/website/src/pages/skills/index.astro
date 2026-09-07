@@ -834,6 +834,19 @@ const breadcrumbSchema = {
           errorMessage.textContent = isTimeout
             ? 'Request timed out. Please try again.'
             : (error as Error).message
+          // SMI-6428 confirmation review (round 3, finding 2): the 401 and 429
+          // branches above decorate this same #error-state region (heading text,
+          // icon visibility, retry-button visibility) and nothing ever reverted
+          // it — a generic error following either one rendered under a stale
+          // "You're on a roll!"/"Slow down a moment" heading, no icon, and (for
+          // 401) no retry button at all. Pre-existing on main, unrelated to the
+          // race fix, but this PR already owns this error-state machinery.
+          // Restore the static markup's defaults before painting a generic error.
+          const errorHeading = errorState.querySelector('h2')
+          const errorIcon = errorState.querySelector('svg')
+          if (errorHeading) errorHeading.textContent = 'Error loading skills'
+          if (errorIcon) errorIcon.classList.remove('hidden')
+          if (retryButton) retryButton.classList.remove('hidden')
           showState('error')
           resultsCount.textContent = 'Error'
         }

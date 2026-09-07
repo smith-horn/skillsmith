@@ -83,9 +83,12 @@ test.describe('Skills Filter-Only Browsing (SMI-1658)', () => {
     // degraded prod response would stall this barrier for up to 30s on every
     // test in this block, including the 2 that DO run in the required CI check
     // -- for a reason unrelated to the code under test. Route it deterministically
-    // instead; loadFeaturedSkills() treats a non-ok response as a per-item null
-    // and only skips populating the grid if every item comes back that way
-    // (index.astro:954-963), so this doesn't need real skill data to resolve fast.
+    // instead; loadFeaturedSkills() resolves each item as `body?.data ?? null`
+    // (index.astro:956) and only skips populating the grid if every item comes
+    // back null (index.astro:962-963) -- a 200 with `{"data":null}` per the mock
+    // below hits exactly that path, so this doesn't need real skill data to
+    // resolve fast (round-3 confirmation review, finding 1: an earlier version
+    // of this comment said "non-ok response", which is never actually reached).
     await page.route('**/skills-get/**', async (route) => {
       await route.fulfill({ status: 200, contentType: 'application/json', body: '{"data":null}' })
     })
@@ -622,5 +625,62 @@ test.describe('SMI-6428: results-region ownership race', () => {
     await expect(searchCard).toBeVisible({ timeout: 15000 })
     await expect(page.locator('#search-prompt-state')).toBeHidden()
     await expect(page.locator('#results-count')).not.toHaveText('Showing featured examples')
+  })
+
+  test('SMI-6428 confirmation review findings F-1 + 2: claiming ownership restores the retry button and clears stale error-state decoration', async ({
+    page,
+  }) => {
+    // Round 2 caught a regression the original generation-guard fix introduced
+    // (F-1): claiming ownership clears window._rateLimitInterval, but that
+    // countdown was the ONLY code path that ever re-enabled #retry-button --
+    // so a search superseding a live 429 countdown left the button stuck
+    // reading "Retry in Ns" / disabled under any later error state. Round 3
+    // caught an adjacent pre-existing bug in the same region (finding 2): the
+    // 401/429 branches decorate the error heading and icon with nothing ever
+    // reverting them, so a later generic error rendered under stale decoration.
+    // This test drives both in one sequence: a 429 (installs the countdown +
+    // "Slow down a moment" decoration), then a second search that resolves as
+    // a generic 500 -- the shape both fixes target.
+    await suppressSignedOutOverlay(page)
+    await routeFeatured(page, 0)
+
+    let searchCallCount = 0
+    await page.route('**/skills-search**', async (route) => {
+      searchCallCount += 1
+      if (searchCallCount === 1) {
+        await route.fulfill({
+          status: 429,
+          contentType: 'application/json',
+          headers: { 'Retry-After': '30' },
+          body: JSON.stringify({ details: { retry_after: 30 } }),
+        })
+        return
+      }
+      await route.fulfill({ status: 500, contentType: 'application/json', body: '{}' })
+    })
+
+    await page.goto(`${BASE_URL}/skills`)
+    await expect(page.locator('#category-filter')).toBeVisible()
+
+    // First search: category filter -> 429 -> countdown installed.
+    await page.locator('#category-filter').selectOption('development')
+    await expect(page.locator('#error-state')).toBeVisible()
+    await expect(page.locator('#error-state h2')).toHaveText('Slow down a moment')
+    await expect(page.locator('#error-state svg')).toBeHidden()
+    const retryButton = page.locator('#retry-button')
+    await expect(retryButton).toBeVisible()
+    await expect(retryButton).toHaveText('Retry in 30s')
+    await expect(retryButton).toBeDisabled()
+
+    // Second search, well before the 30s countdown could naturally reach zero:
+    // claims ownership (F-1: must restore the button), resolves as a generic
+    // 500 (finding 2: must reset the heading/icon this same claim didn't touch).
+    await page.locator('#trust-filter').selectOption('verified')
+    await expect(page.locator('#error-state')).toBeVisible()
+    await expect(page.locator('#error-state h2')).toHaveText('Error loading skills')
+    await expect(page.locator('#error-state svg')).toBeVisible()
+    await expect(retryButton).toBeVisible()
+    await expect(retryButton).toHaveText('Try Again')
+    await expect(retryButton).toBeEnabled()
   })
 })
