@@ -39,11 +39,12 @@ const MAX_LABEL_TOKENS = 2
  * those patterns is covered. `g` is required by matchAll, which clones the
  * regex, so there is no shared `lastIndex` state.
  *
- * DERIVATION NOTE (queen: please confirm) — the plan's item-3 block calls
- * CREDENTIAL_ASSIGN_SPAN / BARE_ASSIGNMENT_EOL but defines neither, and neither
- * exists in the repo. Round 8 showed the plan's single-whole-line-span shape is
- * unsound however those are spelled (see assignmentHasRealValue), so this
- * reconstruction segments the line by key instead of using one span regex.
+ * DERIVATION NOTE — the plan's item-3 block sketches CREDENTIAL_ASSIGN_SPAN /
+ * BARE_ASSIGNMENT_EOL, a single-whole-line-span shape. Round 8 confirmed
+ * (two adversarial review rounds, six hand-traced counter-examples) that
+ * shape leaks across assignments in THREE directions on a line carrying two
+ * keys — see assignmentHasRealValue below — so this reconstruction segments
+ * the line by key instead of using one span regex.
  */
 const ASSIGNMENT_HEAD = /(?:credentials|\bsecrets?|password)\s*[:=]\s*/gi
 
