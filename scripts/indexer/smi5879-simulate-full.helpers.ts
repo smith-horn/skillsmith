@@ -384,7 +384,15 @@ export async function processRow(
   const preVerdict = effectiveVerdict(prePortResult)
   const postVerdict = effectiveVerdict(postPortResult)
 
-  if (isBundleAbsent(postPortResult)) {
+  // SMI-6436: classify the delta FIRST — bundle_absent only replaces a
+  // non-change (unchanged_clean/unchanged_quarantined), never a real delta.
+  // The pre-fix order (isBundleAbsent before this) masked real flips.
+  const delta = classifyVerdictDelta(preVerdict.quarantine, postVerdict.quarantine)
+
+  if (
+    (delta === 'unchanged_clean' || delta === 'unchanged_quarantined') &&
+    isBundleAbsent(postPortResult)
+  ) {
     return {
       ...base,
       outcome: 'bundle_absent',
@@ -398,7 +406,7 @@ export async function processRow(
 
   return {
     ...base,
-    outcome: classifyVerdictDelta(preVerdict.quarantine, postVerdict.quarantine),
+    outcome: delta,
     prePortQuarantine: preVerdict.quarantine,
     postPortQuarantine: postVerdict.quarantine,
     prePortRiskScore: preVerdict.riskScore,
