@@ -496,8 +496,10 @@ test.describe('SMI-6428: results-region ownership race', () => {
           'skills_overlay_dismissed_until',
           new Date(Date.now() + 24 * 60 * 60 * 1000).toISOString()
         )
-      } catch {
-        /* localStorage unavailable -- overlay suppression falls back to the race */
+      } catch (e) {
+        // localStorage unavailable -- overlay suppression falls back to the race.
+        // NEEDLE/GPT-5.6-Sol pre-merge review (PR-07): log rather than swallow silently.
+        console.debug('[SMI-6428 test] overlay-suppression localStorage write failed:', e)
       }
     })
   }
