@@ -207,6 +207,43 @@ describe('processRow — tier-2 outcome classification', () => {
     expect(result.postPortQuarantine).toBe(false)
   })
 
+  it('SMI-6436: bundle_absent still fires for a non-change when both scans are quarantined (not just both clean)', async () => {
+    const row = makeRow()
+    registerPrimary(row, [contentsApiResponse('# SKILL')])
+    const scanner = makeBundleAbsentScanner(DIRTY_RISK)
+    const result = await processRow(row, new Map(), baseDeps(scanner, scanner))
+    expect(result.outcome).toBe('bundle_absent')
+    expect(result.prePortQuarantine).toBe(true)
+    expect(result.postPortQuarantine).toBe(true)
+  })
+
+  // SMI-6436 regression: empty sibling scope (bundle_absent-eligible) must
+  // NOT mask a real verdict delta. Prior to the fix, `isBundleAbsent` was
+  // checked before `classifyVerdictDelta`, so both of these rows would have
+  // been misclassified `bundle_absent` instead of their real delta.
+
+  it('SMI-6436: newly_quarantined even with empty sibling scope (bundle_absent must not mask a real delta)', async () => {
+    const row = makeRow()
+    registerPrimary(row, [contentsApiResponse('# SKILL')])
+    const postPort = makeBundleAbsentScanner(DIRTY_RISK)
+    const prePort = makeBundleAbsentScanner(CLEAN_RISK)
+    const result = await processRow(row, new Map(), baseDeps(postPort, prePort))
+    expect(result.outcome).toBe('newly_quarantined')
+    expect(result.prePortQuarantine).toBe(false)
+    expect(result.postPortQuarantine).toBe(true)
+  })
+
+  it('SMI-6436: newly_cleared even with empty sibling scope (bundle_absent must not mask a real delta)', async () => {
+    const row = makeRow()
+    registerPrimary(row, [contentsApiResponse('# SKILL')])
+    const postPort = makeBundleAbsentScanner(CLEAN_RISK)
+    const prePort = makeBundleAbsentScanner(DIRTY_RISK)
+    const result = await processRow(row, new Map(), baseDeps(postPort, prePort))
+    expect(result.outcome).toBe('newly_cleared')
+    expect(result.prePortQuarantine).toBe(true)
+    expect(result.postPortQuarantine).toBe(false)
+  })
+
   it('newly_quarantined: pre-port clean, post-port quarantined', async () => {
     const row = makeRow()
     registerPrimary(row, [contentsApiResponse('# SKILL')])

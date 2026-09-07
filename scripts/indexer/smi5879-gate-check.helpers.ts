@@ -218,9 +218,9 @@ export function computeR(rows: readonly SimRowResult[]): SimRowResult[] {
 /**
  * The five scoring outcomes that carry `prePortRiskScore`/`postPortRiskScore`
  * — verified against `smi5879-simulate-full.helpers.ts`'s `processRow`:
- * `bundle_absent` (lines ~316-326) and the final `classifyVerdictDelta`
+ * `bundle_absent` (lines ~399-407) and the final `classifyVerdictDelta`
  * branch (unchanged_clean/unchanged_quarantined/newly_quarantined/
- * newly_cleared, ~328-335) are the ONLY paths that populate the score
+ * newly_cleared, ~410-417) are the ONLY paths that populate the score
  * fields. `unevaluable`/`unfetchable`/`content_drifted` all return early
  * before scoring and never carry them.
  */
