@@ -341,4 +341,27 @@ describe('writeIndexerAuditLog — meta envelope persistence (SMI-4857)', () => 
     // it was the search bucket, not the core 5000/h budget.
     expect(meta.rate_limit_remaining_min).toBe(0)
   })
+
+  // T2.26 (SMI-6020, design §2.7 / §2.5 item 12)
+  it('surfaces the multiline_truncated counter under metadata.security', async () => {
+    const captured: CapturedInsert[] = []
+    const supabase = makeCapturingSupabase(captured)
+
+    await writeIndexerAuditLog(supabase, 'success', makeParams({ multiline_truncated: 7 }))
+
+    const metadata = captured[0].payload.metadata as Record<string, unknown>
+    const security = metadata.security as Record<string, unknown>
+    expect(security.multiline_truncated).toBe(7)
+  })
+
+  it('defaults multiline_truncated to 0 when the caller does not populate it', async () => {
+    const captured: CapturedInsert[] = []
+    const supabase = makeCapturingSupabase(captured)
+
+    await writeIndexerAuditLog(supabase, 'success', makeParams())
+
+    const metadata = captured[0].payload.metadata as Record<string, unknown>
+    const security = metadata.security as Record<string, unknown>
+    expect(security.multiline_truncated).toBe(0)
+  })
 })

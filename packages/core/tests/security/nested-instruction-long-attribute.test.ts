@@ -47,19 +47,29 @@ describe('SMI-5881 section 2 — adversarial throughput (many near-miss failed m
     const report = scanner.scan('adversarial-attribute-throughput', CORPUS)
     const elapsed = performance.now() - start
 
-    expect(elapsed).toBeLessThan(250)
+    // SMI-5879 (design §3.4): MAX_CONTENT_LENGTH_FOR_REGEX raised 10,000 ->
+    // 1,000,000, so SecurityScanner.scan() now genuinely scans this corpus's
+    // full 165,600 code units (previously truncated at 10,000 before ever
+    // reaching the regex — see the sibling test below, which independently
+    // confirmed the untruncated cost was always there, just hidden by the
+    // truncation layer this test used to hit). Budget raised from 250ms to
+    // 2000ms to match design §7.3's own established whole-scan-adversarial
+    // budget (this corpus is a proportionally consistent fraction of that
+    // budget's 1MB reference size) — not loosened arbitrarily; a genuine
+    // catastrophic-backtracking regression would still fail this comfortably
+    // (measured ~150ms in a well-provisioned local container, ~313ms on a
+    // shared CI runner — both linear-scaling, not exponential).
+    expect(elapsed).toBeLessThan(2000)
     expect(report).toBeDefined()
   })
 
-  it('the raw AD_NESTED_INSTRUCTION_BLOCK-equivalent pattern completes within budget on the UNTRUNCATED full corpus', () => {
-    // SecurityScanner.scan() truncates any single "line" (this corpus has no
-    // newlines, so it's one very long line/full-content blob) to 10,000 code
-    // units before regex matching (MAX_LINE_LENGTH_FOR_REGEX /
-    // MAX_CONTENT_LENGTH_FOR_REGEX) — so the test above alone doesn't fully
-    // exercise the corpus's true adversarial size (165,600 code units, ~16x
-    // the cap). This test runs the pattern directly against the FULL,
-    // UNTRUNCATED corpus to independently confirm no catastrophic
-    // backtracking regardless of the truncation layer.
+  it('the raw AD_NESTED_INSTRUCTION_BLOCK-equivalent pattern completes within budget on the full corpus', () => {
+    // SMI-5879: prior to design §3.4's cap raise, SecurityScanner.scan()
+    // truncated this corpus to 10,000 code units before regex matching, so
+    // the test above alone did not exercise its true adversarial size
+    // (165,600 code units, ~16x the old cap). This test runs the pattern
+    // directly against the full corpus, independent of SecurityScanner's own
+    // pipeline overhead, to isolate the regex's own cost.
     const pattern = /<instruction[^>]*>[\s\S]{0,500}?<\/instruction>/i
     expect(CORPUS.length).toBeGreaterThan(160_000)
 

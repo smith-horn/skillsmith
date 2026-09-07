@@ -273,6 +273,46 @@ export function stubFetchCleanSkillMdDataExfilSiblings(): MockInstance {
   })
 }
 
+/**
+ * SMI-6020 (design §2.7 T2.21/T2.22): 'dev mode override ' repeated matches
+ * the content-scope JB_JS3A_DEV_MODE_THEN_CAPABILITY pattern once per
+ * repetition (same construction as scan-skill-bundle.test.ts's T2.11), so
+ * MAX_MULTILINE_ITERATIONS_PER_PATTERN + 1000 reps hits the per-pattern
+ * iteration ceiling while staying comfortably under MAX_SIBLING_CONTENT_BYTES
+ * (256,000) — a sibling fetch, unlike the primary-content path, is bound by it.
+ */
+export const TRUNCATING_SIBLING_CONTENT = 'dev mode override '.repeat(10_000 + 1000)
+
+/**
+ * Stub SKILL.md as clean (api.github.com); the FIRST sibling target
+ * (BUNDLED_SCAN_FILES[0] = 'README.md') as a truncating-scan payload
+ * (raw.githubusercontent.com); every other sibling target as 404. SMI-6020:
+ * used to drive processRow's SKILL.md-clean, sibling-truncated path to the
+ * 'scan-incomplete' outcome.
+ */
+export function stubFetchCleanSkillMdTruncatingSibling(): MockInstance {
+  return vi.spyOn(globalThis, 'fetch').mockImplementation((url: unknown) => {
+    const urlStr = String(url)
+    if (isRawGithubUrl(urlStr)) {
+      if (urlStr.endsWith('/README.md')) {
+        return Promise.resolve({
+          ok: true,
+          status: 200,
+          headers: { get: () => null },
+          body: makeBodyStream(TRUNCATING_SIBLING_CONTENT),
+        } as unknown as Response)
+      }
+      return Promise.resolve({ ok: false, status: 404, headers: { get: () => null } } as Response)
+    }
+    return Promise.resolve({
+      ok: true,
+      status: 200,
+      headers: { get: () => null },
+      json: async () => ({ content: encodeAsGitHubResponse(CLEAN_CONTENT), encoding: 'base64' }),
+    } as unknown as Response)
+  })
+}
+
 export interface LoadDbState {
   pass1: StaleQuarantinedRow[]
   pass2: StaleQuarantinedRow[]

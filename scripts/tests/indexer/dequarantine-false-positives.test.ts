@@ -154,6 +154,23 @@ become root
     expect(scan.riskScore).toBeGreaterThanOrEqual(40)
     expect(isFalsePositive(scan)).toBe(false)
   })
+
+  // T2.23 (SMI-6020, design §2.7): the dequarantine-sweep clear predicate must
+  // fail closed on a truncated scan — this is the single most direct "clear an
+  // existing quarantine on an incomplete scan" violation in the tree.
+  it('is false for a truncated clean scan (SMI-6020)', () => {
+    expect(
+      isFalsePositive({
+        passed: true,
+        riskScore: 0,
+        findings: [],
+        contentHash: '0'.repeat(64),
+        scannedAt: '2026-08-11T00:00:00.000Z',
+        scanDurationMs: 0,
+        multilineTruncated: true,
+      })
+    ).toBe(false)
+  })
 })
 
 // ---------------------------------------------------------------------------

@@ -20,7 +20,10 @@
 import { describe, it, expect, vi, beforeEach, type MockInstance } from 'vitest'
 import { processRow } from '../../indexer/revalidate-stale-quarantines.ts'
 import type { StaleQuarantinedRow } from '../../indexer/revalidate-stale-quarantines.ts'
-import { generateContentHash } from '../../indexer/_shared/security-scanner-edge.ts'
+import {
+  generateContentHash,
+  MAX_MULTILINE_ITERATIONS_PER_PATTERN,
+} from '../../indexer/_shared/security-scanner-edge.ts'
 
 // SMI-5437 Wave 2: processRow now runs sibling re-scan on quarantined=true/undefined
 // rows with clean SKILL.md before clearing. Existing processRow tests (SMI-5165/5166)
@@ -325,6 +328,79 @@ describe('processRow — sibling-recovered (clear after sibling rescan)', () => 
     const hasQuarantinedEq = eqCalls.some(([col, val]) => col === 'quarantined' && val === true)
     expect(hasIdEq).toBe(true)
     expect(hasQuarantinedEq).toBe(true)
+  })
+})
+
+// ---------------------------------------------------------------------------
+// SMI-6020 (design §2.7 T2.15-T2.18): truncated-scan fail-closed write path
+// ---------------------------------------------------------------------------
+
+// Same construction as scan-skill-bundle.test.ts's T2.11: matches the
+// content-scope JB_JS3A_DEV_MODE_THEN_CAPABILITY pattern on a single line,
+// so the per-pattern iteration ceiling (not the score-neutral line cap) binds.
+const TRUNCATING_SKILL_MD = 'developer mode with no restrictions, '.repeat(
+  MAX_MULTILINE_ITERATIONS_PER_PATTERN + 500
+)
+
+describe('processRow — SMI-6020 truncated scan fail-closed', () => {
+  beforeEach(() => vi.restoreAllMocks())
+
+  it('T2.15: does not clear an existing quarantine — no update sets quarantined:false, sibling rescan never reached', async () => {
+    stubFetchOk(TRUNCATING_SKILL_MD)
+    const row = makeRow({ quarantine_reason: 'security scan previous finding' })
+    const db = makeDb({ updateError: null, updatedRows: [{ id: row.id }], insertError: null })
+    const result = await processRow(row, {}, true, db as never)
+
+    // 'kept-security' (not 'sibling-recovered'/'cleared') proves the early
+    // shouldQuarantineFailClosed branch returned before ever reaching the
+    // sibling-rescan code below it in processRow — that code path is what
+    // would produce a 'sibling-recovered'/'cleared' outcome instead.
+    expect(result.outcome).toBe('kept-security')
+    expect(db.update).toHaveBeenCalledOnce()
+    const updateArg = db.update.mock.calls[0][0]
+    expect(updateArg.quarantined).toBe(true)
+    // A clear write is the sibling-recovery shape; must never have happened.
+    expect(db.insert.mock.calls.every((c) => c[0].event_type !== 'quarantine:cleared')).toBe(true)
+  })
+
+  it('T2.16: does not lower security_score — the update payload omits security_score and security_findings', async () => {
+    stubFetchOk(TRUNCATING_SKILL_MD)
+    const row = makeRow({ quarantine_reason: 'security scan previous finding' })
+    const db = makeDb({ updateError: null, updatedRows: [{ id: row.id }], insertError: null })
+    await processRow(row, {}, true, db as never)
+
+    const updateArg = db.update.mock.calls[0][0]
+    expect(Object.prototype.hasOwnProperty.call(updateArg, 'security_score')).toBe(false)
+    expect(Object.prototype.hasOwnProperty.call(updateArg, 'security_findings')).toBe(false)
+  })
+
+  it('T2.17: records skip_reason on the audit row', async () => {
+    stubFetchOk(TRUNCATING_SKILL_MD)
+    const row = makeRow({ quarantine_reason: 'security scan previous finding' })
+    const db = makeDb({ updateError: null, updatedRows: [{ id: row.id }], insertError: null })
+    await processRow(row, {}, true, db as never)
+
+    expect(db.insert).toHaveBeenCalledOnce()
+    const insertArg = db.insert.mock.calls[0][0]
+    expect(insertArg.metadata.skip_reason).toBe('multiline-truncated')
+    // The reason string must still start with "Security scan" (ADR-112 Contract 4
+    // + the dequarantine-sweep `ilike 'security scan%'` cohort filter).
+    expect(insertArg.metadata.new_reason.toLowerCase().startsWith('security scan')).toBe(true)
+  })
+
+  it('T2.18: requarantines a truncated scan on a LIVE row (quarantined=false) instead of live-touching it', async () => {
+    stubFetchOk(TRUNCATING_SKILL_MD)
+    const row = makeRow({ quarantined: false, quarantine_reason: null })
+    const db = makeDb({ updateError: null, updatedRows: [{ id: row.id }], insertError: null })
+    const result = await processRow(row, {}, true, db as never)
+
+    expect(result.outcome).toBe('requarantined')
+    expect(db.update).toHaveBeenCalledOnce()
+    const updateArg = db.update.mock.calls[0][0]
+    expect(updateArg.quarantined).toBe(true)
+    // The live-touch branch's distinctive payload shape (last_seen_at, no
+    // quarantined key) must NOT have been taken.
+    expect(updateArg.last_seen_at).toBeUndefined()
   })
 })
 

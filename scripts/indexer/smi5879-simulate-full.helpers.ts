@@ -10,7 +10,7 @@
  * Design: docs/internal/implementation/smi-5879-edge-twin-parity-design.md §8.2.3
  */
 
-import { shouldQuarantine, generateContentHash } from './_shared/security-scanner-edge.ts'
+import { shouldQuarantineFailClosed, generateContentHash } from './_shared/security-scanner-edge.ts'
 import { parseSkillMdUrl, fetchSkillMd, type ParsedSkillUrl } from './_shared/skill-md-fetch.ts'
 import { fetchSiblingContent, type ScanSkillBundleResult } from './skill-processor.security.ts'
 import { runCancellablePool, type RateLimitTelemetry } from './_shared/rate-limit.ts'
@@ -183,9 +183,12 @@ export function makeCachingSiblingFetcher(
 
 /**
  * Canonical "effective verdict" derivation — matches skill-processor.ts's own
- * `mergedScan ? mergedScan.quarantine : securityScan ? shouldQuarantine(securityScan) : false`
- * (skill-processor.ts:398-402), so the simulator's comparison basis is
- * identical to what production actually decides on.
+ * `mergedScan ? mergedScan.quarantine : securityScan ? shouldQuarantineFailClosed(securityScan) : false`
+ * (skill-processor.ts:399-403), so the simulator's comparison basis is
+ * identical to what production actually decides on. SMI-6020 (design §2.5
+ * item 11): required, not cosmetic — the census/rollback protocol for PR
+ * #2192 depends on the simulator's verdict being structurally identical to
+ * production, which now includes the truncation fail-closed gate.
  */
 export function effectiveVerdict(result: ScanSkillBundleResult): {
   quarantine: boolean
@@ -198,7 +201,7 @@ export function effectiveVerdict(result: ScanSkillBundleResult): {
     }
   }
   return {
-    quarantine: shouldQuarantine(result.securityScan),
+    quarantine: shouldQuarantineFailClosed(result.securityScan),
     riskScore: result.securityScan.riskScore,
   }
 }

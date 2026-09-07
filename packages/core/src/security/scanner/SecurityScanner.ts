@@ -14,7 +14,7 @@ import {
 import { safeRegexTest, safeRegexCheck, MAX_CONTENT_LENGTH_FOR_REGEX } from './regex-utils.js'
 
 // Import helpers
-import type { LineContext } from './SecurityScanner.helpers.js'
+import type { LineContext, MultilineScanResult } from './SecurityScanner.helpers.js'
 import {
   analyzeMarkdownContext,
   isDocumentationContext,
@@ -84,6 +84,17 @@ export {
 export { scanSsrfPatterns }
 export { toMinimalRefs, toSARIF, toGitHubAnnotations, toSummary }
 
+/**
+ * SMI-5879 (design §5): quickCheck is a fast pre-filter, not the full scan —
+ * a bare mention-tier match (a documentation page discussing "jailbreak" or
+ * "DAN") should not by itself fail the quick path. Derived ONCE at module
+ * load, not hand-maintained, so it can never silently drift from
+ * JAILBREAK_PATTERNS' own evidence-tier classification.
+ */
+export const DIRECTIVE_JAILBREAK_PATTERNS: readonly RegExp[] = JAILBREAK_PATTERNS.filter(
+  (p) => classifyEvidence(p) !== 'mention'
+)
+
 export class SecurityScanner {
   private allowedDomains: Set<string>
   private blockedPatterns: RegExp[]
@@ -132,7 +143,7 @@ export class SecurityScanner {
     content: string,
     lineContexts: LineContext[] | undefined,
     maxMultilineLength: number
-  ): SecurityFinding[] {
+  ): MultilineScanResult {
     return scanPatternsWithMultilineSupport(
       content,
       {
@@ -211,7 +222,7 @@ export class SecurityScanner {
     content: string,
     lineContexts: LineContext[] | undefined,
     maxMultilineLength: number
-  ): SecurityFinding[] {
+  ): MultilineScanResult {
     return scanPatternsWithMultilineSupport(
       content,
       {
@@ -243,13 +254,26 @@ export class SecurityScanner {
    * text contains. This disables ONLY the encoded-payload detector on the
    * inner call, not the rest of the suite — a decoded `curl|bash` still
    * trips `code_execution`, decoded secrets still trip `sensitive_path`, etc.
+   *
+   * SMI-5879: `EncodedPayloadRescanner`'s contract is a bare
+   * `SecurityFinding[]` return (SecurityScanner.encoding.ts, out of scope for
+   * this change), so a recursive `runDetectors` call for decoded content has
+   * no return channel of its own to report multiline truncation.
+   * `truncationRef` is a shared mutable out-param instead: every call (outer
+   * and any recursive rescan) ORs its own jailbreak/AI-defence truncation
+   * into it, so truncation anywhere in the recursion is visible to the
+   * original (outermost) caller. Per `ScanReport.multilineTruncated`'s own
+   * doc: being truncated is only ever used to RAISE caution, never to lower
+   * it, so over-reporting here (e.g. attributing an inner rescan's
+   * truncation to the whole document) is safe by that same design.
    */
   private runDetectors(
     content: string,
     lineContexts: LineContext[],
     skipEncodedPayload: boolean,
     isHighTrustAuthor = false,
-    isMarkdown = true
+    isMarkdown = true,
+    truncationRef?: { truncated: boolean }
   ): SecurityFinding[] {
     const findings: SecurityFinding[] = []
     // SMI-5881: the multiline (full-content) regex pass has its OWN, much
@@ -263,7 +287,12 @@ export class SecurityScanner {
 
     findings.push(...this.scanUrls(content))
     findings.push(...scanSensitivePaths(content, lineContexts))
-    findings.push(...this.scanJailbreakPatterns(content, lineContexts, effectiveMultilineLimit))
+    const jailbreakResult: MultilineScanResult = this.scanJailbreakPatterns(
+      content,
+      lineContexts,
+      effectiveMultilineLimit
+    )
+    findings.push(...jailbreakResult.findings)
     findings.push(...this.scanSuspiciousPatterns(content, lineContexts))
     findings.push(...scanSocialEngineering(content, lineContexts))
     findings.push(...scanPromptLeaking(content, lineContexts))
@@ -301,9 +330,16 @@ export class SecurityScanner {
     // run before escalateCodeExecution below since a later dispatch wires
     // this finding type into that co-signal mechanism.
     findings.push(...scanDecoyMisdirection(content, lineContexts))
-    findings.push(
-      ...this.scanAIDefenceVulnerabilities(content, lineContexts, effectiveMultilineLimit)
+    const aiDefenceResult: MultilineScanResult = this.scanAIDefenceVulnerabilities(
+      content,
+      lineContexts,
+      effectiveMultilineLimit
     )
+    findings.push(...aiDefenceResult.findings)
+    if (truncationRef) {
+      truncationRef.truncated =
+        truncationRef.truncated || jailbreakResult.truncated || aiDefenceResult.truncated
+    }
     findings.push(...scanSsrfPatterns(content, lineContexts, effectiveMultilineLimit))
     findings.push(...scanPiiPatterns(content, lineContexts))
     findings.push(...scanCodeExecution(content, lineContexts))
@@ -339,7 +375,8 @@ export class SecurityScanner {
             analyzeMarkdownContext(decodedContent, isMarkdown),
             true,
             isHighTrustAuthor,
-            isMarkdown
+            isMarkdown,
+            truncationRef
           )
         )
       )
@@ -394,7 +431,17 @@ export class SecurityScanner {
       })
     }
 
-    findings.push(...this.runDetectors(content, lineContexts, false, isHighTrustAuthor, isMarkdown))
+    const truncationRef = { truncated: false }
+    findings.push(
+      ...this.runDetectors(
+        content,
+        lineContexts,
+        false,
+        isHighTrustAuthor,
+        isMarkdown,
+        truncationRef
+      )
+    )
 
     const endTime = performance.now()
     const { total: riskScore, breakdown: riskBreakdown } = calculateRiskScore(findings)
@@ -411,11 +458,17 @@ export class SecurityScanner {
       scanDurationMs: endTime - startTime,
       riskScore,
       riskBreakdown,
+      multilineTruncated: truncationRef.truncated,
     }
   }
 
+  /**
+   * SMI-5879 (design §5): tests only the directive-tier derived subset (a
+   * bare mention like "jailbreak" or "DAN" alone should not fail the quick
+   * path — see DIRECTIVE_JAILBREAK_PATTERNS above).
+   */
   quickCheck(content: string): boolean {
-    for (const pattern of JAILBREAK_PATTERNS) {
+    for (const pattern of DIRECTIVE_JAILBREAK_PATTERNS) {
       if (safeRegexCheck(pattern, content)) return false
     }
     return true

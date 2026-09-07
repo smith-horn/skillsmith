@@ -50,6 +50,12 @@ import {
 // SMI-6033 Wave 1: chmod+fetch compound signal, extracted to a sibling twin
 // (500-line limit); byte-identical body across both _shared twins (parity test).
 // SMI-6033 Wave 2: xattr Gatekeeper-bypass (Gap 5) lives in the same module.
+// SMI-6033 Wave 3 (post-rebase fixup, SMI-6020): this is now the SOLE
+// scanChmodFetchCompound export. PR #2192 had its own independent extraction
+// of the same detector (security-scanner-edge.chmod-compound.ts, SMI-5424
+// PR2/SMI-5879) that never picked up main's directory-path-aware correlation
+// fix; the two collided into a duplicate import during the rebase. The
+// chmod-compound.ts file is deleted — this Wave 3 version (with the fix) wins.
 import { scanChmodFetchCompound, scanGatekeeperBypass } from './security-scanner-edge.compound.ts'
 // SMI-6033 Wave 1: sensitive_path detector, ported from core's
 // SecurityScanner.scanners.ts (edge previously had no sensitive_path
@@ -64,6 +70,21 @@ import { scanEncodedPayload } from './security-scanner-edge.encoding.ts'
 // SMI-6033 Wave 4 (Gap 6): decoy/misdirection URL-target heuristic.
 import { scanDecoyMisdirection } from './security-scanner-edge.decoy.ts'
 
+// SMI-5879: evidence-tier classification + pattern scope + corroboration —
+// extracted to a sibling twin; byte-identical body across both _shared twins.
+import { escalateCorroboratedMentions } from './security-scanner-edge.evidence.ts'
+
+// SMI-5879: multiline-scan two-pass engine — extracted to a sibling twin
+// (500-line limit); byte-identical body across both _shared twins.
+import type { MultilineScanResult } from './security-scanner-edge.multiline.ts'
+import {
+  scanPatternsWithMultilineSupport,
+  MAX_MULTILINE_LINES_PER_PATTERN,
+  MAX_MULTILINE_ITERATIONS_PER_PATTERN,
+} from './security-scanner-edge.multiline.ts'
+
+import { safeRegexTest } from './security-scanner-edge.regex-utils.ts'
+
 // SMI-4960: re-export the context model + finding types so existing consumers
 // and the parity tests keep importing them from this module.
 export type {
@@ -72,6 +93,7 @@ export type {
   FindingConfidence,
   SecurityFinding,
   LineContext,
+  EvidenceType,
 } from './security-scanner-edge.context.ts'
 export {
   analyzeMarkdownContext,
@@ -79,15 +101,12 @@ export {
   isWithinInlineCode,
   isInsideCodeBlock,
 } from './security-scanner-edge.context.ts'
+export { MAX_CONTENT_SCAN_LENGTH } from './security-scanner-edge.regex-utils.ts'
+export { MAX_MULTILINE_LINES_PER_PATTERN, MAX_MULTILINE_ITERATIONS_PER_PATTERN }
 
 // ============================================================================
 // Constants + Result Type
 // ============================================================================
-
-/**
- * ReDoS protection: maximum line length for regex matching
- */
-const MAX_LINE_LENGTH = 10000
 
 /**
  * Risk score threshold for quarantine (skills >= this are flagged)
@@ -104,19 +123,19 @@ export interface EdgeScanResult {
   contentHash: string
   scannedAt: string
   scanDurationMs: number
+  /**
+   * SMI-5879 (design §3.3.6): true when the jailbreak or prompt_injection
+   * multiline pass hit its per-pattern iteration ceiling before exhausting
+   * matches on a pathological same-line-repetition input. NOT provably
+   * score-neutral — the write path must treat this scan as authoritative for
+   * RAISING a verdict only, never for lowering an existing quarantine.
+   */
+  multilineTruncated?: boolean
 }
 
 // ============================================================================
 // Helper Functions
 // ============================================================================
-
-/**
- * Safe regex test with length limit to prevent ReDoS
- */
-function safeRegexTest(pattern: RegExp, input: string): RegExpMatchArray | null {
-  const safeInput = input.length > MAX_LINE_LENGTH ? input.slice(0, MAX_LINE_LENGTH) : input
-  return safeInput.match(pattern)
-}
 
 /**
  * Generate SHA-256 hash of content for change detection
@@ -135,31 +154,21 @@ export async function generateContentHash(content: string): Promise<string> {
 
 /**
  * Scan content for jailbreak patterns
- * SMI-4960: documentation-context matches downgrade to low confidence.
+ *
+ * SMI-5879 (design §2/§3): now a two-pass evidence-tier scan (multiline
+ * 'content'/'both'-scope patterns against full content, 'line'/'both'-scope
+ * patterns per-line), replacing the flat first-match-per-line severity model.
  */
-function scanJailbreakPatterns(lines: string[], contexts: LineContext[]): SecurityFinding[] {
-  const findings: SecurityFinding[] = []
-
-  for (const [index, line] of lines.entries()) {
-    for (const pattern of JAILBREAK_PATTERNS) {
-      const match = safeRegexTest(pattern, line)
-      if (match) {
-        const { inDocContext, confidence } = classifyMatch(contexts[index], line, match.index ?? 0)
-        findings.push({
-          type: 'jailbreak',
-          severity: inDocContext ? 'high' : 'critical',
-          message: `Jailbreak pattern detected: "${match[0].slice(0, 50)}"`,
-          lineNumber: index + 1,
-          location: line.trim().slice(0, 100),
-          inDocumentationContext: inDocContext,
-          confidence,
-        })
-        break // One finding per line
-      }
-    }
-  }
-
-  return findings
+function scanJailbreakPatterns(
+  content: string,
+  lines: string[],
+  contexts: LineContext[]
+): MultilineScanResult {
+  return scanPatternsWithMultilineSupport(content, lines, contexts, {
+    type: 'jailbreak',
+    messagePrefix: 'Jailbreak pattern detected',
+    patterns: JAILBREAK_PATTERNS,
+  })
 }
 
 /**
@@ -251,31 +260,20 @@ function scanPrivilegeEscalation(lines: string[], contexts: LineContext[]): Secu
 
 /**
  * Scan content for prompt injection patterns
- * SMI-4960: documentation-context matches downgrade to low confidence.
+ *
+ * SMI-5879 (design §2/§3): now a two-pass evidence-tier scan, replacing the
+ * flat first-match-per-line severity model (see scanJailbreakPatterns above).
  */
-function scanPromptInjection(lines: string[], contexts: LineContext[]): SecurityFinding[] {
-  const findings: SecurityFinding[] = []
-
-  for (const [index, line] of lines.entries()) {
-    for (const pattern of PROMPT_INJECTION_PATTERNS) {
-      const match = safeRegexTest(pattern, line)
-      if (match) {
-        const { inDocContext, confidence } = classifyMatch(contexts[index], line, match.index ?? 0)
-        findings.push({
-          type: 'prompt_injection',
-          severity: inDocContext ? 'high' : 'critical',
-          message: `Prompt injection pattern: "${match[0].slice(0, 50)}"`,
-          lineNumber: index + 1,
-          location: line.trim().slice(0, 100),
-          inDocumentationContext: inDocContext,
-          confidence,
-        })
-        break
-      }
-    }
-  }
-
-  return findings
+function scanPromptInjection(
+  content: string,
+  lines: string[],
+  contexts: LineContext[]
+): MultilineScanResult {
+  return scanPatternsWithMultilineSupport(content, lines, contexts, {
+    type: 'prompt_injection',
+    messagePrefix: 'Prompt injection pattern',
+    patterns: PROMPT_INJECTION_PATTERNS,
+  })
 }
 
 // ============================================================================
@@ -297,17 +295,31 @@ function scanPromptInjection(lines: string[], contexts: LineContext[]): Security
  * text contains. This disables ONLY the encoded-payload detector on the
  * inner call, not the rest of the suite.
  */
+// SMI-5879: `EncodedPayloadRescanner`'s contract is a bare `SecurityFinding[]`
+// return (security-scanner-edge.encoding.ts, out of scope for this change), so
+// a recursive `runDetectors` call for decoded content has no return channel of
+// its own to report multiline truncation. `truncationRef` is a shared mutable
+// out-param instead: every call (outer and any recursive rescan) ORs its own
+// jailbreak/prompt-injection truncation into it, so truncation anywhere in the
+// recursion is visible to the original (outermost) caller. Per this module's
+// own `multilineTruncated` doc (EdgeScanResult above): being truncated is only
+// ever used to RAISE caution, never to lower it, so over-reporting here (e.g.
+// attributing an inner rescan's truncation to the whole document) is safe by
+// that same design.
 function runDetectors(
+  content: string,
   lines: string[],
   contexts: LineContext[],
   skipEncodedPayload: boolean,
   isHighTrustAuthor = false,
-  isMarkdown = true
+  isMarkdown = true,
+  truncationRef?: { truncated: boolean }
 ): SecurityFinding[] {
   const findings: SecurityFinding[] = []
 
   // Run all scanners
-  findings.push(...scanJailbreakPatterns(lines, contexts))
+  const jailbreakResult = scanJailbreakPatterns(content, lines, contexts)
+  findings.push(...jailbreakResult.findings)
   findings.push(...scanSuspiciousPatterns(lines, contexts))
   findings.push(...scanDataExfiltration(lines, contexts))
   findings.push(...scanPrivilegeEscalation(lines, contexts))
@@ -339,15 +351,25 @@ function runDetectors(
   // escalateCodeExecution below since a later dispatch wires this finding
   // type into that co-signal mechanism.
   findings.push(...scanDecoyMisdirection(lines, contexts))
-  findings.push(...scanPromptInjection(lines, contexts))
+  const promptInjectionResult = scanPromptInjection(content, lines, contexts)
+  findings.push(...promptInjectionResult.findings)
   // SMI-6033 Wave 1: sensitive_path (credential file/path/env-var references).
   findings.push(...scanSensitivePaths(lines, contexts))
+  if (truncationRef) {
+    truncationRef.truncated =
+      truncationRef.truncated || jailbreakResult.truncated || promptInjectionResult.truncated
+  }
   // SMI-5359 Wave 4.2c: remote-fetch-to-interpreter + Unicode-concealed directives.
   findings.push(...scanCodeExecution(lines, contexts))
   findings.push(...scanObfuscatedDirective(lines))
   // Promote code_execution to critical when it co-occurs with a non-doc
   // exfil/privilege/obfuscation signal (runs after every detector).
   escalateCodeExecution(findings)
+  // SMI-5879: lift a mention-tier jailbreak/prompt_injection finding when it
+  // co-occurs with a genuinely dangerous non-documentation signal. MUST run
+  // after escalateCodeExecution so a freshly-critical code_execution finding
+  // can itself serve as a corroborator.
+  escalateCorroboratedMentions(findings)
 
   // SMI-6033 Wave 2 (Gap 2): decode-and-recursively-rescan base64 payloads.
   // Appended AFTER escalateCodeExecution above, and the recursive rescan's
@@ -359,7 +381,15 @@ function runDetectors(
       ...scanEncodedPayload(lines, contexts, (decodedContent) => {
         const decodedLines = decodedContent.split('\n')
         const decodedContexts = analyzeMarkdownContext(decodedContent, isMarkdown)
-        return runDetectors(decodedLines, decodedContexts, true, isHighTrustAuthor, isMarkdown)
+        return runDetectors(
+          decodedContent,
+          decodedLines,
+          decodedContexts,
+          true,
+          isHighTrustAuthor,
+          isMarkdown,
+          truncationRef
+        )
       })
     )
   }
@@ -397,7 +427,16 @@ export async function scanSkillContent(
   // SMI-4960: compute markdown context once and thread it through all scanners.
   const contexts = analyzeMarkdownContext(content, isMarkdown)
 
-  const findings = runDetectors(lines, contexts, false, isHighTrustAuthor, isMarkdown)
+  const truncationRef = { truncated: false }
+  const findings = runDetectors(
+    content,
+    lines,
+    contexts,
+    false,
+    isHighTrustAuthor,
+    isMarkdown,
+    truncationRef
+  )
 
   // Calculate risk score
   const riskScore = calculateRiskScore(findings)
@@ -424,68 +463,19 @@ export async function scanSkillContent(
     contentHash,
     scannedAt: new Date().toISOString(),
     scanDurationMs: endTime - startTime,
+    multilineTruncated: truncationRef.truncated,
   }
 }
 
-/**
- * Quick check for critical patterns only (fast path)
- * Use this for quick rejection before full scan
- *
- * SMI-2391: Split content into lines before testing. Previously passed entire
- * content as a single string to safeRegexTest, which truncates at MAX_LINE_LENGTH
- * (10KB). Content after 10KB was never scanned, allowing jailbreak patterns
- * placed after that offset to bypass detection.
- *
- * @param content - Content to check
- * @returns true if content appears safe, false if critical pattern found
- */
-export function quickSecurityCheck(content: string): boolean {
-  const lines = content.split('\n')
-  for (const line of lines) {
-    for (const pattern of JAILBREAK_PATTERNS) {
-      if (safeRegexTest(pattern, line)) {
-        return false
-      }
-    }
-  }
-  return true
-}
-
-/**
- * Check if a skill should be quarantined based on scan result
- *
- * SMI-4960: quarantine is purely score-driven — riskScore >= QUARANTINE_THRESHOLD
- * (40). This is the single prod quarantine gate; it does not consult `passed`.
- */
-export function shouldQuarantine(scanResult: EdgeScanResult): boolean {
-  return scanResult.riskScore >= QUARANTINE_THRESHOLD
-}
-
-/**
- * SMI-2384: Create a concise human-readable summary of security findings.
- *
- * Groups findings by type and lists each with its line number (if available).
- * Output is capped at `maxFindings` entries to keep the summary brief.
- *
- * @param findings - Array of SecurityFinding objects from a scan
- * @param maxFindings - Maximum number of individual findings to list (default 5)
- * @returns A summary string, or empty string if there are no findings
- */
-export function summarizeFindings(findings: SecurityFinding[], maxFindings = 5): string {
-  if (findings.length === 0) {
-    return ''
-  }
-
-  const listed = findings.slice(0, maxFindings)
-  const parts = listed.map((f) => {
-    const location = f.lineNumber ? ` (line ${f.lineNumber})` : ''
-    return `${f.type}${location}`
-  })
-
-  let summary = `Patterns found: ${parts.join(', ')}`
-  if (findings.length > maxFindings) {
-    summary += `, and ${findings.length - maxFindings} more`
-  }
-
-  return summary
-}
+// SMI-6020: quarantine-decision + summary helpers extracted to a sibling
+// module to keep this file under the 500-line gate. Re-exported so the
+// public API is unchanged for every existing import site.
+export {
+  DIRECTIVE_JAILBREAK_PATTERNS,
+  quickSecurityCheck,
+  shouldQuarantine,
+  isScanTruncated,
+  shouldQuarantineFailClosed,
+  ROOT_SCAN_LABEL,
+  summarizeFindings,
+} from './security-scanner-edge.quarantine.ts'

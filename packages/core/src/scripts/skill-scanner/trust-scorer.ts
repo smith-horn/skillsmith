@@ -51,6 +51,13 @@ export function shouldQuarantine(
   config: TrustScorerConfig = DEFAULT_TRUST_CONFIG,
   allowlist?: AllowlistMatcher
 ): boolean {
+  // SMI-6020 (design §3.3.6/§2.8): a truncated scan is a known under-count. An
+  // allowlist must not be able to clear a scan-integrity hold, so this check
+  // precedes the allowlist filter entirely.
+  if (report.multilineTruncated === true) {
+    return true
+  }
+
   const effectiveFindings = allowlist
     ? report.findings.filter((f) => !allowlist.isAllowed(report.skillId, f))
     : report.findings
