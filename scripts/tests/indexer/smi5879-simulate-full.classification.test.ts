@@ -207,6 +207,16 @@ describe('processRow — tier-2 outcome classification', () => {
     expect(result.postPortQuarantine).toBe(false)
   })
 
+  it('SMI-6436: bundle_absent still fires for a non-change when both scans are quarantined (not just both clean)', async () => {
+    const row = makeRow()
+    registerPrimary(row, [contentsApiResponse('# SKILL')])
+    const scanner = makeBundleAbsentScanner(DIRTY_RISK)
+    const result = await processRow(row, new Map(), baseDeps(scanner, scanner))
+    expect(result.outcome).toBe('bundle_absent')
+    expect(result.prePortQuarantine).toBe(true)
+    expect(result.postPortQuarantine).toBe(true)
+  })
+
   // SMI-6436 regression: empty sibling scope (bundle_absent-eligible) must
   // NOT mask a real verdict delta. Prior to the fix, `isBundleAbsent` was
   // checked before `classifyVerdictDelta`, so both of these rows would have
