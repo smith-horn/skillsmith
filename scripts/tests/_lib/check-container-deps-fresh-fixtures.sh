@@ -45,6 +45,13 @@ REPO_ROOT=$(cd "$SCRIPT_DIR/.." && pwd)
 GUARD="$REPO_ROOT/scripts/lib/check-container-deps-fresh.sh"
 INNER="$REPO_ROOT/scripts/lib/check-container-deps-fresh-inner.sh"
 REAL_FRESH_CHECK="$REPO_ROOT/scripts/lib/check-node-modules-fresh.sh"
+# SMI-6437: the real, committed sibling script GUARD resolves at its own new
+# call sites. A dedicated scenario temporarily renames this exact file (via
+# absolute path, restored by an EXIT trap) to test the "probe script itself
+# is missing" branch — never referenced via a relative path anywhere that
+# scenario touches it, precisely to avoid a cwd-change silently breaking
+# the restore (confirmed painfully while writing that scenario).
+NATIVE_LIB="$REPO_ROOT/scripts/lib/check-native-modules.sh"
 
 if [ ! -x "$GUARD" ]; then
   echo "FAIL: $GUARD is not executable"
@@ -52,6 +59,10 @@ if [ ! -x "$GUARD" ]; then
 fi
 if [ ! -x "$INNER" ]; then
   echo "FAIL: $INNER is not executable"
+  exit 1
+fi
+if [ ! -x "$NATIVE_LIB" ]; then
+  echo "FAIL: $NATIVE_LIB is not executable"
   exit 1
 fi
 

@@ -163,6 +163,37 @@ assert_eq "S12: npm install failure still exits non-zero" "1" "$rc"
 assert_eq "S12: output additionally mentions native bindings ALSO broken" "yes" "$(grep -q "ALSO currently broken" "$GUARD_LAST_OUTPUT" && echo yes || echo no)"
 assert_eq "S12: output still names the restart remedy" "yes" "$(grep -q "docker compose --profile dev restart dev" "$GUARD_LAST_OUTPUT" && echo yes || echo no)"
 
+# =========================================================================
+# Scenario 13 (SMI-6437, pr-reviewer finding): self-heal succeeds, but the
+# native-probe script ITSELF is missing/unreadable — must be a hard failure
+# too, not a silent fail-open pass. Temporarily renames the REAL,
+# committed NATIVE_LIB via its absolute path (never a relative one — a
+# cwd change elsewhere in this scenario must never break the restore).
+# Deliberately does NOT use `trap ... EXIT` for the restore: this file
+# already has one EXIT trap (the fixtures file's TMP_ROOT cleanup, sourced
+# above) — a SECOND `trap ... EXIT` here would silently REPLACE it, and
+# `trap - EXIT` afterward clears the slot rather than restoring what was
+# there before, permanently losing that cleanup for the rest of the run.
+# The one command between the two `mv` calls (`run_guard`) is already
+# proven safe under this file's `set -euo pipefail` — its last action is
+# always a successful `echo $?`, exactly like every other scenario's
+# `rc=$(run_guard ...)` call above — so a plain sequential restore is
+# sufficient without needing trap-based protection.
+# =========================================================================
+MAIN13="$TMP_ROOT/main13"
+APP13="$TMP_ROOT/app13"
+setup_main_repo "$MAIN13"
+setup_fake_app_dir "$APP13" stale
+FAKE_APP_DIR="$APP13"
+FAKE_DOCKER_LOG=$(mktemp)
+: > "$NPM_CALL_LOG"
+mv "$NATIVE_LIB" "$NATIVE_LIB.s13-bak"
+rc=$(run_guard "$MAIN13")
+mv "$NATIVE_LIB.s13-bak" "$NATIVE_LIB"
+assert_eq "S13: self-heal succeeds but native-probe script is missing -> hard failure" "1" "$rc"
+assert_eq "S13: output names the missing-probe reason" "yes" "$(grep -q "could not be verified" "$GUARD_LAST_OUTPUT" && echo yes || echo no)"
+assert_eq "S13: real NATIVE_LIB restored" "yes" "$([ -x "$NATIVE_LIB" ] && echo yes || echo no)"
+
 echo ""
 echo "======================================"
 echo "Results: $pass passed, $fail failed"

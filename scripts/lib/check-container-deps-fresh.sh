@@ -170,7 +170,21 @@ if [ "$RC" -eq 0 ]; then
             # work — verify before letting the push proceed. Not silenced:
             # check-native-modules.sh prints its own actionable diagnostic
             # on failure, which is worth showing in full here.
-            if [ -r "$NATIVE_CHECK_LIB" ] && ! sh "$NATIVE_CHECK_LIB"; then
+            #
+            # Fail LOUD, not open, when the probe script itself is missing
+            # (pr-reviewer finding, SMI-6437): the whole point of this
+            # change is that a self-heal must not silently skip
+            # verification. A missing tracked sibling script is not a
+            # legitimate "nothing to verify" case — it means verification
+            # could not happen, which must block the push exactly like a
+            # failed probe would.
+            if [ ! -r "$NATIVE_CHECK_LIB" ]; then
+                printf '\n'
+                printf "${RED}  ✗ Self-heal reported success, but native-module health could not be verified (SMI-6437) — %s is missing or unreadable.${NC}\n" "$NATIVE_CHECK_LIB"
+                printf "${RED}    Refusing to let the push proceed against an unverified tree.${NC}\n"
+                printf '\n'
+                exit 1
+            elif ! sh "$NATIVE_CHECK_LIB"; then
                 printf '\n'
                 printf "${RED}  ✗ Self-heal reported success, but native module bindings are still broken (SMI-6437) — refusing to let the push proceed.${NC}\n"
                 printf '\n'
@@ -207,8 +221,16 @@ case "$RC" in
         # side effect, even though the FIX above targets the npm error, not
         # this. Silenced (>/dev/null 2>&1) and folded into one extra line —
         # the npm failure above is already the primary diagnostic; no need
-        # to print a second full banner for this additive check.
-        if [ -r "$NATIVE_CHECK_LIB" ] && ! sh "$NATIVE_CHECK_LIB" >/dev/null 2>&1; then
+        # to print a second full banner for this additive check. This
+        # branch already exits 1 regardless (npm failed), but still says so
+        # plainly when the probe itself is missing (pr-reviewer finding) —
+        # "could not check" is a different, worth-noting fact from "checked
+        # and it's fine", even though both currently share the same exit
+        # code here.
+        if [ ! -r "$NATIVE_CHECK_LIB" ]; then
+            printf '\n'
+            printf "${YELLOW}  Note: native-module health could not be checked (%s is missing or unreadable).${NC}\n" "$NATIVE_CHECK_LIB"
+        elif ! sh "$NATIVE_CHECK_LIB" >/dev/null 2>&1; then
             printf '\n'
             printf "${RED}  Native module bindings are ALSO currently broken as a result of this failed install.${NC}\n"
             printf "  ${YELLOW}Recover those FIRST:${NC} docker compose --profile dev restart dev\n"
