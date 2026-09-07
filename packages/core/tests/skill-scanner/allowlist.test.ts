@@ -424,11 +424,15 @@ describe('data/skills-security-allowlist.json (ship-it sanity)', () => {
   // description-advertises-a-security-feature FP class as skill-protocol-rs
   // and qpay-skills. Closes GH #2059 (7 straight Weekly Security Scan
   // failures on this exact skill/finding since 2026-07-26).
+  // SMI-6425 (2026-09-06): lucas-lima-s/claude-skill-repo-audit added —
+  // publish-readiness audit skill whose repo description says 'secret/PII
+  // scans'; same description-advertises-a-security-feature FP class as
+  // icm-shipwright. Closes GH #2616 + #2060.
   it('is parseable and every entry expires 90 days after review', () => {
     const filePath = path.resolve(__dirname, '../../../../data/skills-security-allowlist.json')
     const raw = JSON.parse(fs.readFileSync(filePath, 'utf-8'))
     const parsed = parseAllowlistFile(raw)
-    expect(parsed.allowlist.length).toBe(12)
+    expect(parsed.allowlist.length).toBe(13)
     const ids = parsed.allowlist.map((e) => e.skillId).sort()
     expect(ids).toEqual(
       [
@@ -442,6 +446,7 @@ describe('data/skills-security-allowlist.json (ship-it sanity)', () => {
         'github/fitz2882/narthex',
         'github/kcmadden/claude-code-1password-skill',
         'github/leksman/ai-security-guard',
+        'github/lucas-lima-s/claude-skill-repo-audit',
         'github/rhysha/claude-security-research-skill',
         'github/straygizmo/mdium',
       ].sort()
@@ -472,5 +477,37 @@ describe('data/skills-security-allowlist.json (ship-it sanity)', () => {
         `${entry.skillId}: expiresAt window too long (max 1 year); got ${gapDays}d`
       ).toBeLessThanOrEqual(ONE_YEAR_MS)
     }
+  })
+
+  // SMI-6425 regression boundary: the new lucas-lima-s/claude-skill-repo-audit
+  // entry's messagePattern is scoped to the path-form sensitive_path pattern's
+  // echoed source only. A future genuine leak matching the SIBLING
+  // assignment-form pattern (\bsecrets?\s*[:=]/i) for the same skill and
+  // finding type must still be quarantined, not silently swallowed by this
+  // entry. This proves the scoping is airtight against the real production
+  // allowlist, not just narrowly worded in the JSON reason field.
+  it('does not allowlist the sibling assignment-form sensitive_path pattern for the new entry', () => {
+    const filePath = path.resolve(__dirname, '../../../../data/skills-security-allowlist.json')
+    const raw = JSON.parse(fs.readFileSync(filePath, 'utf-8'))
+    const parsed = parseAllowlistFile(raw)
+    const matcher = buildMatcher(parsed.allowlist)
+    const skillId = 'github/lucas-lima-s/claude-skill-repo-audit'
+
+    // The path-form match this entry exists to suppress.
+    const pathFormFinding = finding({
+      type: 'sensitive_path',
+      severity: 'high',
+      message: 'Reference to potentially sensitive path: \\bsecrets?\\/[a-z0-9_.-]+',
+    })
+    expect(matcher.isAllowed(skillId, pathFormFinding)).toBe(true)
+
+    // A hypothetical future assignment-form leak for the SAME skill and
+    // finding type must still be caught.
+    const assignmentFormFinding = finding({
+      type: 'sensitive_path',
+      severity: 'high',
+      message: 'Reference to potentially sensitive path: \\bsecrets?\\s*[:=]',
+    })
+    expect(matcher.isAllowed(skillId, assignmentFormFinding)).toBe(false)
   })
 })
