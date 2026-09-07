@@ -58,7 +58,8 @@ const NULL_DEREF =
 // Sibling pages reachable via a real `<a>` in the account sidebar (SMI-5475
 // — replaced the Quick Links grid; SMI-6128 — reorganized into Account /
 // Admin / Tools / Preferences / Resources, absorbing every destination the
-// retired AccountHubNav tab row used to own), so ClientRouter (not a full
+// retired AccountHubNav tab row used to own; SMI-6424 — group order revised
+// to Tools / Preferences / Resources / Admin), so ClientRouter (not a full
 // reload) performs the transition that re-fires `astro:page-load` on the
 // previously-visited page's leaked listener. /account (Overview) is the
 // loop's anchor page — it is not its own sibling, so it is not listed here;
