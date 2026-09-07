@@ -109,13 +109,14 @@ If a SMOKE test cannot fire automatically post-deploy, name the human runner and
 
 ## Shared-State / Coordination Audit (P-5)
 
-_Required when the plan touches any of: browser/Node globals (window.\*, module singletons); event listeners on shared targets (`document`, `window`, broadcast channels, postMessage, signals); caches keyed by computed values (in-memory Map, Redis, KV, file-system caches); row-shape extensions (new column, new field on an interface with multiple persisters); new async producers feeding existing async consumers (or vice versa)._
+_Required when the plan touches any of: browser/Node globals (window.\*, module singletons); event listeners on shared targets (`document`, `window`, broadcast channels, postMessage, signals); caches keyed by computed values (in-memory Map, Redis, KV, file-system caches); row-shape extensions (new column, new field on an interface with multiple persisters); new async producers feeding existing async consumers (or vice versa); async chains whose completion callback writes shared UI/render state that a separately-triggered handler also writes (SMI-6428)._
 
 For each piece of shared mutable state introduced or extended:
 
 | State | Producers (file:line) | Consumers (file:line) | Coordination invariant | Test |
 |-------|------------------------|------------------------|------------------------|------|
 | Example: `window.__SUPABASE_CLIENT__` | `BaseLayout.astro:136` (eager init) + `supabase-client.ts:24` (lazy fallback) | `LoginButton.astro:247`, `callback.astro:*`, `device.astro:*` | Every consumer reads via `getSupabaseClient()`, not the raw global; lazy-init guarantees a client exists for the consumer's tick. | `LoginButton.test.ts` covers cold-load case |
+| Example: skills-page results region (`showState()` + `#results-count`) | `skills/index.astro:916` (init chain terminal write) + `:593`, `:636`, `:692`, `:778`, `:824` (searchSkills paths) | same functions; `skills-filter.spec.ts:24` `waitForResults` | Exactly one logical owner per page load: every `searchSkills()` entry advances `resultsGeneration`; any write after an `await` re-checks it; the init chain's featured write runs only when no query/filter intent is live. | `skills-filter.spec.ts` SMI-6428 describe (delayed-fetch stomp repro) |
 
 **Producers** are every write site, found via `grep -rn` against the codebase — not from memory. **Consumers** are every read site. The **coordination invariant** is one sentence stating the rule that must hold. The **test** is a specific case (file:test-name), not "tests pass".
 
@@ -136,7 +137,7 @@ If the audit surfaces a producer/consumer pair without an explicit invariant, **
 - [ ] Surface grounding (P-1, P-2): every cross-surface reference has a canonical source + verification command
 - [ ] PL/pgSQL name-collision audit (P-3) completed _if_ plan touches a `RETURNS TABLE` function
 - [ ] Smoke path (P-4) specified and run post-deploy (or `scripts/smoke-prod.sh` invoked once it exists)
-- [ ] Shared-state audit (P-5) completed _if_ plan touches browser/Node globals, event listeners on shared targets, computed-key caches, row-shape extensions, or new async producer/consumer pairs
+- [ ] Shared-state audit (P-5) completed _if_ plan touches browser/Node globals, event listeners on shared targets, computed-key caches, row-shape extensions, new async producer/consumer pairs, or async chains whose completion callback writes shared UI/render state that a separately-triggered handler also writes
 - [ ] If this plan includes a genuine architecture decision (not just an implementation detail), flag it and confirm whether it warrants its own `docs/internal/adr/` entry — `plan-review-skill`'s VP Engineering rubric checks for this (standing rule since 2026-08-24, see CLAUDE.md § Infrastructure Change Policy)
 - [ ] **If this change targets a non-Docker CI workflow** (e.g. `post-merge-verify.yml`,
       any workflow running on `ubuntu-latest` without the Docker dev container):
