@@ -1,0 +1,125 @@
+/**
+ * SMI-5207 (round 8): Edge MF-4 assignment-value gate
+ * @module scripts/indexer/_shared/security-scanner-edge.value-gate (Node port)
+ *
+ * The `sensitive_path` MF-4 gate: given a line that matched one of the three
+ * VALUE_GATED_ASSIGNMENT_PATTERNS, decide whether it assigns a REAL credential
+ * (→ HIGH) or only prose (→ MEDIUM). HIGH is the default; a downgrade requires
+ * positive prose evidence, and since HIGH is the pre-SMI-5207 unconditional
+ * behaviour that default can never regress detection.
+ *
+ * Split out of security-scanner-edge.paths.ts for the 500-line pre-commit
+ * gate once round 8's segmentation logic landed. Mirrors core's identical
+ * SecurityScanner.value-gate.ts split — cohesive unit, every symbol here
+ * serves the single question "is this assignment's value real?". Byte-
+ * identical body across both `_shared` twins (parity test enforces); only
+ * the @module header line above differs. Pure Deno/Web APIs, no Node deps.
+ */
+
+import { PLACEHOLDER_SECRET_RE } from './security-scanner-edge.paths.ts'
+import { PROSE_STOPWORDS } from './security-scanner-edge.prose-lexicon.ts'
+
+// ReDoS protection: maximum line length for regex matching (mirrors scanner).
+// Same cap as security-scanner-edge.paths.ts's own MAX_LINE_LENGTH — matchAll
+// has no safeRegex* wrapper equivalent, so the truncation is explicit here.
+const MAX_LINE_LENGTH = 10000
+
+/** A value that REFERENCES a secret rather than containing one. */
+const TEMPLATE_REFERENCE = /^\$|^\{\{|\$\{|^%[A-Za-z_]|^<%/
+
+/**
+ * Max token count for an all-lowercase span to read as a doc LABEL rather
+ * than a passphrase. 2 dictionary words carry ~26 bits (2 x ~12.9 diceware),
+ * below any credible credential strength; 3 words (~39 bits) is defensibly a
+ * real passphrase. This is the narrowest value that closes `credentials:
+ * rotation policy` (2 words) without also swallowing a genuine 3-word
+ * passphrase — verified at both 2 and 3 against the full fixture set; 2 wins
+ * because it errs toward RETAINING detection on the ambiguous 3-token case.
+ */
+const MAX_LABEL_TOKENS = 2
+
+/**
+ * The assignment KEY — the exact union of the three
+ * VALUE_GATED_ASSIGNMENT_PATTERNS it gates, `\b` included (only the secrets
+ * entry carries one), so every line reaching assignmentHasRealValue() through
+ * those patterns is covered. `g` is required by matchAll, which clones the
+ * regex, so there is no shared `lastIndex` state.
+ */
+const ASSIGNMENT_HEAD = /(?:credentials|\bsecrets?|password)\s*[:=]\s*/gi
+
+/**
+ * Positive prose evidence. Absence of evidence leaves the finding at HIGH.
+ * PROSE_STOPWORDS lives in security-scanner-edge.prose-lexicon.ts — English
+ * function words: a passphrase is nouns, an explanatory sentence is not.
+ */
+function isProseValue(span: string): boolean {
+  const v = span.replace(/^['"]|['"]$/g, '').trim()
+  if (v.length === 0) return true
+  if (TEMPLATE_REFERENCE.test(v)) return true // $VAR, ${{ secrets.X }}
+  if (PLACEHOLDER_SECRET_RE.test(v)) return true // <YOUR_PASSWORD>, changeme
+  if (/^(.)\1+$/.test(v)) return true // xxxxxxxx
+  const tokens = v.split(/\s+/)
+  if (tokens.some((t) => PROSE_STOPWORDS.has(t.toLowerCase().replace(/[^a-z']/g, '')))) return true // sentence
+  if (tokens.length > 12) return true // long sentence
+  if (
+    tokens.length > 1 &&
+    tokens.length <= MAX_LABEL_TOKENS &&
+    tokens.every((t) => /^[a-z]{1,19}$/.test(t))
+  )
+    return true // 2-word doc label
+  return false // DEFAULT: stays HIGH
+}
+
+/**
+ * MF-4 value classification, SEGMENTED PER ASSIGNMENT (SMI-5207 adversarial
+ * review, round 8). Each assignment key on the line owns exactly the text
+ * between its own `:`/`=` and the NEXT key (or EOL); the finding stays HIGH if
+ * ANY of those values is a real credential, and downgrades only when EVERY one
+ * of them positively reads as prose.
+ *
+ * The single-whole-line-span shape this replaced leaked across assignments in
+ * THREE directions on a line carrying two keys. All three are false-negative
+ * REGRESSIONS (unconditionally HIGH pre-SMI-5207) and none is residual R-3,
+ * which is a stopword inside the assignment's OWN value — here the prose
+ * bleeds in from a DIFFERENT assignment entirely:
+ *
+ *   1. LEFT — an unanchored span captures from the LEFTMOST key, not
+ *      necessarily the one that produced the finding (scanSensitivePaths emits
+ *      for the first entry matching in ARRAY order, and CREDENTIALS/SECRETS
+ *      precede PASSWORD). `password: this credentials: Tr0ub4dor&3` →
+ *      captured `this credentials: Tr0ub4dor&3` → leading `this` → MEDIUM.
+ *   2. RIGHT — a span running to EOL swallows the next assignment's prose:
+ *      `credentials: Tr0ub4dor&3 password: this` → trailing `this` → MEDIUM.
+ *   3. Anchoring at the finding's own match (the narrow fix) closes 1, not 2,
+ *      and opens a mirror of 1: only ONE finding is emitted per line (the
+ *      scanner loop `break`s), so on `password: Tr0ub4dor&3 credentials: this`
+ *      the emitted finding sits RIGHT of the real credential, which a
+ *      match-anchored scan never sees → MEDIUM.
+ *
+ * Segmenting closes all three. It is also the correct granularity: severity
+ * attaches to the LINE (the finding's `location` is the whole trimmed line), so
+ * a line holding any real credential is HIGH. Monotonicity holds — this returns
+ * true at least as often as the per-span reading, and true is the status quo.
+ */
+export function assignmentHasRealValue(lines: string[], index: number): boolean {
+  const line = lines[index].slice(0, MAX_LINE_LENGTH)
+  const heads = [...line.matchAll(ASSIGNMENT_HEAD)]
+  if (heads.length === 0) return false
+  let trailingKeyIsBare = false
+  for (let i = 0; i < heads.length; i++) {
+    const from = (heads[i].index ?? 0) + heads[i][0].length
+    const to = i + 1 < heads.length ? (heads[i + 1].index ?? line.length) : line.length
+    const value = line.slice(from, to)
+    if (value.trim().length === 0) {
+      // A key with nothing after it. Only the LAST one can take its value from
+      // the next line (YAML block form).
+      trailingKeyIsBare = i === heads.length - 1
+      continue
+    }
+    trailingKeyIsBare = false
+    if (!isProseValue(value)) return true
+  }
+  if (!trailingKeyIsBare) return false
+  const next: string | undefined = lines[index + 1]
+  return next !== undefined && !isProseValue(next.trim())
+}
