@@ -90,6 +90,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Changed
 
+- **Account navigation group order: Admin moved to the bottom** (2026-09-06,
+  SMI-6424): the account area's left navigation now lists Tools,
+  Preferences, and Resources first, with Admin (Overview, Summary,
+  Subscription, Billing History, Email Address) moved to the bottom. The
+  "Account" heading, every destination, its URL, and the team-plan lock
+  affordance are unchanged — only the order of the four groups moves, on
+  both the desktop sidebar and the narrow-viewport disclosure.
 - **Skill-lookup requests that return no match now count toward your API quota**
   (2026-08-29, SMI-6283): the `skills-get` endpoint (used when you look up a
   specific skill by `author/name` or ID) previously did not count a request

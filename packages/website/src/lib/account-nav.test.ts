@@ -1,6 +1,6 @@
 /**
  * Tests for the account navigation data contract + active-link logic
- * (SMI-5475, reorganized SMI-6128).
+ * (SMI-5475, reorganized SMI-6128, group order revised SMI-6424).
  *
  * This also absorbs the retired `account-hub-nav.ts`'s active-path and
  * exact-list coverage: no dedicated `account-hub-nav.test.ts` ever existed
@@ -25,18 +25,8 @@ describe('ACCOUNT_NAV_ROOT_LABEL', () => {
 })
 
 describe('ACCOUNT_NAV_GROUPS', () => {
-  it('matches the Admin/Tools/Preferences/Resources structure exactly', () => {
+  it('matches the Tools/Preferences/Resources/Admin structure exactly', () => {
     expect(ACCOUNT_NAV_GROUPS).toEqual([
-      {
-        heading: 'Admin',
-        items: [
-          { href: '/account', label: 'Overview', icon: 'home' },
-          { href: '/account/summary', label: 'Summary', icon: 'bar-chart-2' },
-          { href: '/account/subscription', label: 'Subscription', icon: 'repeat' },
-          { href: '/account/billing', label: 'Billing History', icon: 'credit-card' },
-          { href: '/account/profile', label: 'Email Address', icon: 'mail' },
-        ],
-      },
       {
         heading: 'Tools',
         items: [
@@ -82,12 +72,22 @@ describe('ACCOUNT_NAV_GROUPS', () => {
           { href: '/docs/api', label: 'API Docs', icon: 'code' },
         ],
       },
+      {
+        heading: 'Admin',
+        items: [
+          { href: '/account', label: 'Overview', icon: 'home' },
+          { href: '/account/summary', label: 'Summary', icon: 'bar-chart-2' },
+          { href: '/account/subscription', label: 'Subscription', icon: 'repeat' },
+          { href: '/account/billing', label: 'Billing History', icon: 'credit-card' },
+          { href: '/account/profile', label: 'Email Address', icon: 'mail' },
+        ],
+      },
     ])
   })
 
   it('has exactly the four group headings, in order, with no Billing or Team heading', () => {
     const headings = ACCOUNT_NAV_GROUPS.map((g) => g.heading)
-    expect(headings).toEqual(['Admin', 'Tools', 'Preferences', 'Resources'])
+    expect(headings).toEqual(['Tools', 'Preferences', 'Resources', 'Admin'])
     expect(headings).not.toContain('Billing')
     expect(headings).not.toContain('Team')
     expect(headings).not.toContain('Account')

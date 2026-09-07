@@ -1,6 +1,8 @@
 /**
  * Account-area navigation data + active-link logic (SMI-5475, reorganized
- * SMI-6128 per docs/internal/implementation/account-nav-admin-tools-reorg.md).
+ * SMI-6128 per docs/internal/implementation/account-nav-admin-tools-reorg.md;
+ * group order revised SMI-6424 per
+ * docs/internal/implementation/smi-6424-account-nav-admin-to-bottom.md).
  *
  * Pure module so `isActiveAccountNav` (and the rest of this contract) is
  * unit-testable outside Astro (same pattern as other extracted utils in
@@ -13,7 +15,7 @@
  * This module also absorbs the retired `account-hub-nav.ts`'s canonical
  * tab list and active-path matcher — the eight-destination hub tab row
  * (`AccountHubNav.astro`) is gone; every destination it used to own now
- * lives in the Admin/Tools groups below.
+ * lives in the Tools/Admin groups below.
  */
 
 import { normalizeAccountPath } from './account-page-path'
@@ -38,20 +40,10 @@ export interface AccountNavGroup {
   items: readonly AccountNavItem[]
 }
 
-/** Visible root heading above the Admin/Tools/Preferences/Resources groups. */
+/** Visible root heading above the Tools/Preferences/Resources/Admin groups. */
 export const ACCOUNT_NAV_ROOT_LABEL = 'Account'
 
 export const ACCOUNT_NAV_GROUPS: readonly AccountNavGroup[] = [
-  {
-    heading: 'Admin',
-    items: [
-      { href: '/account', label: 'Overview', icon: 'home' },
-      { href: '/account/summary', label: 'Summary', icon: 'bar-chart-2' },
-      { href: '/account/subscription', label: 'Subscription', icon: 'repeat' },
-      { href: '/account/billing', label: 'Billing History', icon: 'credit-card' },
-      { href: '/account/profile', label: 'Email Address', icon: 'mail' },
-    ],
-  },
   {
     heading: 'Tools',
     items: [
@@ -96,6 +88,16 @@ export const ACCOUNT_NAV_GROUPS: readonly AccountNavGroup[] = [
     items: [
       { href: '/docs/quickstart', label: 'Getting Started', icon: 'play-circle' },
       { href: '/docs/api', label: 'API Docs', icon: 'code' },
+    ],
+  },
+  {
+    heading: 'Admin',
+    items: [
+      { href: '/account', label: 'Overview', icon: 'home' },
+      { href: '/account/summary', label: 'Summary', icon: 'bar-chart-2' },
+      { href: '/account/subscription', label: 'Subscription', icon: 'repeat' },
+      { href: '/account/billing', label: 'Billing History', icon: 'credit-card' },
+      { href: '/account/profile', label: 'Email Address', icon: 'mail' },
     ],
   },
 ] as const

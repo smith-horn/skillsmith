@@ -8,8 +8,8 @@
  * were folded into the AccountHubNav tab row instead of the sidebar.
  *
  * SMI-6128 — AccountHubNav is retired. `account-nav.ts` now expresses one
- * root ("Account") with four groups (Admin, Tools, Preferences, Resources)
- * rendered by two components sharing the same data: `AccountSidebar.astro`
+ * root ("Account") with four groups (Tools, Preferences, Resources, Admin —
+ * order revised SMI-6424) rendered by two components sharing the same data: `AccountSidebar.astro`
  * (desktop, hidden at/below 1024px) and `AccountMobileNav.astro` (a native
  * `<details>` disclosure, hidden above 1024px). This spec asserts:
  *   - the exact grouped data (root/group/order/hrefs) renders on both,
@@ -57,7 +57,7 @@ const RESOURCES_ITEMS = [
   { href: '/docs/api', label: 'API Docs' },
 ]
 
-const ALL_ITEMS = [...ADMIN_ITEMS, ...TOOLS_ITEMS, ...PREFERENCES_ITEMS, ...RESOURCES_ITEMS]
+const ALL_ITEMS = [...TOOLS_ITEMS, ...PREFERENCES_ITEMS, ...RESOURCES_ITEMS, ...ADMIN_ITEMS]
 
 const TEAM_GATED_HREFS = [
   '/account/team/registry',
@@ -87,7 +87,7 @@ test.afterEach(() => {
   ).toEqual([])
 })
 
-test.describe('account navigation — Account/Admin/Tools/Preferences/Resources (SMI-6128)', () => {
+test.describe('account navigation — Account/Tools/Preferences/Resources/Admin (SMI-6128, SMI-6424)', () => {
   test.beforeEach(async ({ page }) => {
     await injectSupabaseStub(page, { session: buildSessionToken({ provider: 'email' }) })
     // Resolve the team gate as entitled: this describe block asserts pure
@@ -134,17 +134,17 @@ test.describe('account navigation — Account/Admin/Tools/Preferences/Resources 
     await expect(nav).toHaveAttribute('aria-labelledby', headingId as string)
   })
 
-  test('desktop sidebar renders exactly the Admin, Tools, Preferences, and Resources groups in order', async ({
+  test('desktop sidebar renders exactly the Tools, Preferences, Resources, and Admin groups in order', async ({
     page,
   }) => {
     await page.goto('/account')
 
     const headings = page.locator('.account-sidebar h3')
     await expect(headings).toHaveCount(4)
-    await expect(headings.nth(0)).toHaveText('Admin')
-    await expect(headings.nth(1)).toHaveText('Tools')
-    await expect(headings.nth(2)).toHaveText('Preferences')
-    await expect(headings.nth(3)).toHaveText('Resources')
+    await expect(headings.nth(0)).toHaveText('Tools')
+    await expect(headings.nth(1)).toHaveText('Preferences')
+    await expect(headings.nth(2)).toHaveText('Resources')
+    await expect(headings.nth(3)).toHaveText('Admin')
   })
 
   test('desktop sidebar renders every item, in order, with the exact href and label', async ({
@@ -165,10 +165,10 @@ test.describe('account navigation — Account/Admin/Tools/Preferences/Resources 
 
     const groupHeadings = page.locator('.account-mobile-nav h3')
     await expect(groupHeadings).toHaveCount(4)
-    await expect(groupHeadings.nth(0)).toHaveText('Admin')
-    await expect(groupHeadings.nth(1)).toHaveText('Tools')
-    await expect(groupHeadings.nth(2)).toHaveText('Preferences')
-    await expect(groupHeadings.nth(3)).toHaveText('Resources')
+    await expect(groupHeadings.nth(0)).toHaveText('Tools')
+    await expect(groupHeadings.nth(1)).toHaveText('Preferences')
+    await expect(groupHeadings.nth(2)).toHaveText('Resources')
+    await expect(groupHeadings.nth(3)).toHaveText('Admin')
 
     const links = page.locator('.account-mobile-nav a.account-mobile-nav-link')
     await expect(links).toHaveCount(ALL_ITEMS.length)
