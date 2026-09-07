@@ -29,6 +29,12 @@ async function waitForResults(page: Page): Promise<void> {
   await expect(page.locator('#empty-state')).toBeHidden()
   await expect(page.locator('#search-prompt-state')).toBeHidden()
 
+  // SMI-6428: assert the error state too. Without it, a 401/429/timeout from
+  // skills-search fails at the #results-grid line with a bare "expected visible,
+  // received hidden" — visually identical to the state-stomp failure this ticket
+  // fixed, which is exactly what made the CI trace ambiguous.
+  await expect(page.locator('#error-state')).toBeHidden()
+
   // Results grid should be visible with content
   await expect(page.locator('#results-grid')).toBeVisible()
 }
@@ -73,6 +79,16 @@ test.describe('Skills Filter-Only Browsing (SMI-1658)', () => {
     await page.goto(`${BASE_URL}/skills`)
     // Wait for the page to be fully loaded
     await expect(page.locator('#category-filter')).toBeVisible()
+    // SMI-6428 readiness barrier: #category-filter is static HTML, visible long
+    // before the astro:page-load handler binds its change listener (index.astro
+    // ~835) or the initAuth() -> loadFeaturedSkills() chain resolves. #results-count
+    // renders as "Loading skills..." (index.astro:274) and is only rewritten to
+    // "Showing featured examples" by that chain's terminal write (~917). Waiting
+    // for that exact string proves the handler ran to completion, so no interaction
+    // below can be stomped by it.
+    await expect(page.locator('#results-count')).toHaveText('Showing featured examples', {
+      timeout: 30000,
+    })
   })
 
   test.describe('Category Filter Without Search Query', () => {
@@ -406,5 +422,192 @@ test.describe('Skills Filter-Only Browsing (SMI-1658)', () => {
       // URL must contain the skill id segment -- confirms the stretched link fired.
       await expect(page).toHaveURL(/\/skills\//)
     })
+  })
+})
+
+/**
+ * SMI-6428: results-region ownership race.
+ *
+ * A SIBLING describe block, deliberately NOT nested inside the SMI-1658 block above:
+ * these scenarios must register their own page.route() handlers BEFORE page.goto(),
+ * and the parent's beforeEach already navigates. Inheriting it would make every
+ * route registration land after navigation, where it cannot affect requests already
+ * in flight.
+ *
+ * The bug: searchSkills() and the astro:page-load init chain
+ * (initAuth() -> loadFeaturedSkills() -> showState('search-prompt')) are two
+ * independent writers to one shared results region. Whichever resolved last won, so
+ * a filter touched shortly after page load could have its results silently replaced
+ * by the featured-examples view. The fix is a resultsGeneration ownership counter
+ * plus a terminal-write guard in the init chain.
+ */
+test.describe('SMI-6428: results-region ownership race', () => {
+  const SEARCH_FIXTURE_SKILL = {
+    id: 'smith-horn/smi-6428-race-fixture',
+    name: 'SMI-6428 Race Fixture Skill',
+    author: 'smith-horn',
+    description: 'Search-result fixture proving the results region survives the init chain.',
+    trust_tier: 'verified',
+    stars: 7,
+    categories: ['development'],
+    version: '1.0.0',
+    compatibility: ['claude-code'],
+    license: 'MIT',
+  }
+
+  const FEATURED_FIXTURE_SKILL = {
+    id: 'smith-horn/smi-6428-featured-fixture',
+    name: 'SMI-6428 Featured Fixture Skill',
+    author: 'smith-horn',
+    description: 'Featured-examples fixture -- must never replace an active search.',
+    trust_tier: 'verified',
+    stars: 3,
+    categories: ['development'],
+    version: '1.0.0',
+    compatibility: ['claude-code'],
+    license: 'MIT',
+  }
+
+  /**
+   * Same SMI-5504 overlay suppression the SMI-1658 beforeEach uses. Re-declared
+   * here rather than shared because this block intentionally does not inherit that
+   * beforeEach (see the block comment above).
+   */
+  async function suppressSignedOutOverlay(page: Page): Promise<void> {
+    await page.addInitScript(() => {
+      try {
+        window.localStorage.setItem(
+          'skills_overlay_dismissed_until',
+          new Date(Date.now() + 24 * 60 * 60 * 1000).toISOString()
+        )
+      } catch {
+        /* localStorage unavailable -- overlay suppression falls back to the race */
+      }
+    })
+  }
+
+  /** skills-search always answers immediately with one deterministic card. */
+  async function routeSearch(page: Page): Promise<void> {
+    await page.route('**/skills-search**', async (route) => {
+      await route.fulfill({
+        status: 200,
+        contentType: 'application/json',
+        body: JSON.stringify({ skills: [SEARCH_FIXTURE_SKILL] }),
+      })
+    })
+  }
+
+  /**
+   * skills-get backs loadFeaturedSkills(). `delayMs` holds the init chain open so
+   * its terminal write lands AFTER the search has already rendered -- the exact
+   * ordering that produced the red CI check.
+   */
+  async function routeFeatured(page: Page, delayMs: number): Promise<void> {
+    await page.route('**/skills-get/**', async (route) => {
+      if (delayMs > 0) {
+        await new Promise((resolve) => setTimeout(resolve, delayMs))
+      }
+      await route.fulfill({
+        status: 200,
+        contentType: 'application/json',
+        body: JSON.stringify({ data: FEATURED_FIXTURE_SKILL }),
+      })
+    })
+  }
+
+  test('SMI-6428 scenario 1: a slow featured-load must not stomp an active search', async ({
+    page,
+  }) => {
+    await suppressSignedOutOverlay(page)
+    // Registered BEFORE goto -- a route added after navigation starts does not
+    // apply to requests already in flight.
+    await routeFeatured(page, 1500)
+    await routeSearch(page)
+
+    await page.goto(`${BASE_URL}/skills`)
+
+    // Only proves the static HTML rendered -- NOT that the astro:page-load handler
+    // bound its listeners or that the init chain resolved. Interacting here is the
+    // post-bind race window this scenario targets.
+    await expect(page.locator('#category-filter')).toBeVisible()
+    await page.locator('#category-filter').selectOption('development')
+
+    const searchCard = page.locator('#results-grid').getByText(SEARCH_FIXTURE_SKILL.name)
+    await expect(searchCard).toBeVisible({ timeout: 15000 })
+    await expect(page.locator('#search-prompt-state')).toBeHidden()
+
+    // Past the 1500ms featured-load delay: the init chain's terminal write has now
+    // had its chance to fire. Before the fix it replaced the results with the
+    // featured state here; it must not any more.
+    await page.waitForTimeout(2000)
+    await expect(searchCard).toBeVisible()
+    await expect(page.locator('#search-prompt-state')).toBeHidden()
+    await expect(page.locator('#results-count')).not.toHaveText('Showing featured examples')
+  })
+
+  test('SMI-6428 scenario 2: a filter changed before listeners bind is not lost', async ({
+    page,
+  }) => {
+    await suppressSignedOutOverlay(page)
+
+    // Natural timing cannot reliably reach the pre-bind window, so make it
+    // deterministic: capture every astro:page-load listener registered on document
+    // WITHOUT invoking it, and expose a release hook the test fires on demand.
+    // All captured listeners are replayed in registration order (BaseLayout's
+    // ClientRouter and other components register on this event too), so releasing
+    // reproduces a normal page-load, just later than the interaction.
+    await page.addInitScript(() => {
+      const captured: Array<{ target: EventTarget; args: unknown[] }> = []
+      const realAdd = EventTarget.prototype.addEventListener
+      const invokeRealAdd = (target: EventTarget, args: unknown[]): void => {
+        Reflect.apply(realAdd, target, args)
+      }
+      const patched = function (this: EventTarget, type: string, ...rest: unknown[]): void {
+        if (type === 'astro:page-load' && (this as unknown) === document) {
+          captured.push({ target: this, args: [type, ...rest] })
+          return
+        }
+        invokeRealAdd(this, [type, ...rest])
+      }
+      EventTarget.prototype.addEventListener =
+        patched as typeof EventTarget.prototype.addEventListener
+
+      const release = (): void => {
+        EventTarget.prototype.addEventListener = realAdd
+        const evt = new Event('astro:page-load')
+        for (const entry of captured) {
+          invokeRealAdd(entry.target, entry.args)
+          const listener = entry.args[1] as EventListenerOrEventListenerObject | undefined
+          if (typeof listener === 'function') {
+            listener.call(entry.target, evt)
+          } else if (listener && typeof listener.handleEvent === 'function') {
+            listener.handleEvent(evt)
+          }
+        }
+        captured.length = 0
+      }
+      ;(window as unknown as { __releaseAstroPageLoad__?: () => void }).__releaseAstroPageLoad__ =
+        release
+    })
+
+    await routeFeatured(page, 0)
+    await routeSearch(page)
+
+    await page.goto(`${BASE_URL}/skills`)
+    await expect(page.locator('#category-filter')).toBeVisible()
+
+    // The handler has NOT run, so no change listener exists yet. This select is the
+    // user interaction the real listener would have caught -- before the fix it was
+    // dropped entirely and the init chain painted the featured state over it.
+    await page.locator('#category-filter').selectOption('development')
+
+    await page.evaluate(() => {
+      ;(window as unknown as { __releaseAstroPageLoad__?: () => void }).__releaseAstroPageLoad__?.()
+    })
+
+    const searchCard = page.locator('#results-grid').getByText(SEARCH_FIXTURE_SKILL.name)
+    await expect(searchCard).toBeVisible({ timeout: 15000 })
+    await expect(page.locator('#search-prompt-state')).toBeHidden()
+    await expect(page.locator('#results-count')).not.toHaveText('Showing featured examples')
   })
 })
