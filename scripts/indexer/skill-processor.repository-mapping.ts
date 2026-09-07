@@ -15,7 +15,10 @@
  * erased at compile time).
  */
 
-import { shouldQuarantineFailClosed, QUARANTINE_THRESHOLD } from './_shared/security-scanner-edge.ts'
+import {
+  shouldQuarantineFailClosed,
+  QUARANTINE_THRESHOLD,
+} from './_shared/security-scanner-edge.ts'
 import { deriveCompatibility } from './compatibility-map.ts'
 import type { HighTrustAuthor } from './high-trust-authors.ts'
 import type { GitHubRepository } from './topic-search.ts'
