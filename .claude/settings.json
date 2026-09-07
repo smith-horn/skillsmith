@@ -217,6 +217,15 @@
             "command": "$CLAUDE_PROJECT_DIR/scripts/session-start-mcp-command-guard.sh"
           }
         ]
+      },
+      {
+        "matcher": "compact|resume",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "$CLAUDE_PROJECT_DIR/scripts/session-start-priming.sh"
+          }
+        ]
       }
     ],
     "Stop": [

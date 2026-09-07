@@ -50,10 +50,13 @@ SOURCE=$(json_get source unknown)
 SESSION_ID=$(json_get session_id unknown)
 CWD=$(json_get cwd "")
 
-# Gate 1: source must be startup
-if [ "$SOURCE" != "startup" ]; then
-  emit_empty
-fi
+# Gate 1: source must be startup, compact, or resume (SMI-6423 — compact/resume
+# added so the priming banner survives mid-session context compaction and
+# --resume, not just a fresh `claude` invocation). Fail closed on anything else.
+case "$SOURCE" in
+  startup|compact|resume) ;;
+  *) emit_empty ;;
+esac
 
 # Gate 1b: cwd must be a git checkout
 if [ -z "$CWD" ] || [ ! -d "$CWD" ]; then
