@@ -449,7 +449,13 @@ const breadcrumbSchema = {
     // Use astro:page-load for View Transitions compatibility (fires on both initial load and client-side navigation).
     // Bundled ES module evaluates once, so this binds exactly one listener; the early-bail below
     // (search-input existence) is the state guard for the handler body across ClientRouter navigations.
-    // audit:concurrency-ok — single bind (module evals once) + early-bail state guard on the handler body
+    // SMI-6428: the bind is only half the concurrency story — the handler body's own
+    // terminal write (initAuth() -> loadFeaturedSkills() -> showState('search-prompt'))
+    // targets the same results region searchSkills() writes, and the two resolve in
+    // whatever order the network decides. The `resultsGeneration` ownership counter
+    // declared below is the guard for that second half.
+    // audit:concurrency-ok — single bind (module evals once) + early-bail state guard on the
+    // handler body + resultsGeneration ownership guard on the shared results region (SMI-6428)
     document.addEventListener('astro:page-load', () => {
       // Document-level listeners persist across ClientRouter navigations. When the user
       // navigates /skills → /skills/[id] (or any non-/skills page), this handler still
@@ -530,6 +536,18 @@ const breadcrumbSchema = {
       let allResults: WireSkill[] = []
       let debounceTimer: ReturnType<typeof setTimeout> | undefined
 
+      // SMI-6428: results-region ownership generation. Every user-initiated
+      // searchSkills() call claims the shared region (#results-grid /
+      // #loading-state / #empty-state / #error-state / #search-prompt-state
+      // visibility + #results-count text) by advancing this. Any write that
+      // follows an `await` must re-check it before touching that state.
+      // Same shape as createNavigationEpochGuard() (SMI-6112,
+      // src/lib/account-navigation-epoch.ts) but scoped to same-page-load
+      // ownership rather than navigation — that module's counter only advances
+      // on astro:before-swap/astro:page-load, so it would never fire for a
+      // filter change within one page load. See D-1 in the plan.
+      let resultsGeneration = 0
+
       // DOM Elements
       const searchInput = document.getElementById('search-input') as HTMLInputElement
       const categoryFilter = document.getElementById('category-filter') as HTMLSelectElement
@@ -580,6 +598,29 @@ const breadcrumbSchema = {
 
       // Search skills
       async function searchSkills() {
+        const gen = ++resultsGeneration
+        // Claiming ownership tears down anything a previous owner left running —
+        // otherwise a superseded search's rate-limit countdown keeps mutating a
+        // button the new search no longer controls (GPT-5.6-Sol plan-review
+        // finding #3). `delete` rather than `= undefined`: tsconfig.json sets
+        // exactOptionalPropertyTypes, under which assigning undefined to the
+        // optional `Window._rateLimitInterval` (env.d.ts:56) is a type error —
+        // this matches the existing teardown in the 429 branch below.
+        if (window._rateLimitInterval) {
+          clearInterval(window._rateLimitInterval)
+          delete window._rateLimitInterval
+          // SMI-6428 confirmation review (round 2, finding F-1): the countdown
+          // this cancels is the ONLY code path that ever re-enables this button
+          // (see the 429 branch below). Cancelling it without restoring the
+          // terminal state it would have reached strands the button reading
+          // "Retry in Ns" and disabled forever, on ANY later error state — not
+          // just another 429. Restore what the countdown's own zero-case sets.
+          if (retryButton) {
+            retryButton.textContent = 'Try Again'
+            retryButton.disabled = false
+          }
+        }
+
         const query = searchInput.value.trim()
         const category = categoryFilter.value
         const trustTier = trustFilter.value
@@ -621,6 +662,11 @@ const breadcrumbSchema = {
             },
           })
           clearTimeout(timeoutId)
+          // SMI-6428 guard 1/4. Placed AFTER clearTimeout so the abort timer is
+          // always torn down even for a superseded search, and BEFORE any state
+          // mutation — it covers the 401 branch's error-DOM writes, the 429
+          // branch's entry, and the quota-banner writes below.
+          if (gen !== resultsGeneration) return
 
           if (response.status === 401) {
             // Trial limit exceeded — show friendly CTA instead of generic error
@@ -641,6 +687,10 @@ const breadcrumbSchema = {
           // SMI-3589: Rate limit exceeded — show friendly countdown instead of generic error
           if (response.status === 429) {
             const retryData = await response.json().catch(() => ({}))
+            // SMI-6428 guard 2/4. A superseded 429 response must not install a
+            // live countdown interval or repaint the retry button — the new
+            // owner already cleared the previous interval when it claimed.
+            if (gen !== resultsGeneration) return
             // SMI-3664: Suppress global toast — this page handles 429 inline
             if (typeof window.hideRateLimitToast === 'function') {
               window.hideRateLimitToast()
@@ -725,6 +775,11 @@ const breadcrumbSchema = {
           }
 
           const data = await response.json()
+          // SMI-6428 guard 3/4 (success path). Placed before the `allResults`
+          // assignment so a superseded response never overwrites the current
+          // owner's result set, org-boost ordering, gtag event, sort, page
+          // reset, or rendered grid.
+          if (gen !== resultsGeneration) return
           allResults = (data.data || data.skills || data.results || []) as WireSkill[]
 
           // SMI-4401 Wave 2 A-M9-2: signal-boost — surface skills whose topics or author
@@ -770,11 +825,28 @@ const breadcrumbSchema = {
           renderResults()
         } catch (error) {
           clearTimeout(timeoutId)
+          // SMI-6428 guard 4/4. A superseded search's abort/network error must
+          // not paint the error state over the current owner's results. Again
+          // after clearTimeout so the timer is torn down unconditionally.
+          if (gen !== resultsGeneration) return
           console.error('Search error:', error)
           const isTimeout = (error as Error).name === 'AbortError'
           errorMessage.textContent = isTimeout
             ? 'Request timed out. Please try again.'
             : (error as Error).message
+          // SMI-6428 confirmation review (round 3, finding 2): the 401 and 429
+          // branches above decorate this same #error-state region (heading text,
+          // icon visibility, retry-button visibility) and nothing ever reverted
+          // it — a generic error following either one rendered under a stale
+          // "You're on a roll!"/"Slow down a moment" heading, no icon, and (for
+          // 401) no retry button at all. Pre-existing on main, unrelated to the
+          // race fix, but this PR already owns this error-state machinery.
+          // Restore the static markup's defaults before painting a generic error.
+          const errorHeading = errorState.querySelector('h2')
+          const errorIcon = errorState.querySelector('svg')
+          if (errorHeading) errorHeading.textContent = 'Error loading skills'
+          if (errorIcon) errorIcon.classList.remove('hidden')
+          if (retryButton) retryButton.classList.remove('hidden')
           showState('error')
           resultsCount.textContent = 'Error'
         }
@@ -911,8 +983,34 @@ const breadcrumbSchema = {
       }
 
       // SMI-2081 + SMI-4838: Initialize auth, load featured examples, then show featured state.
+      // SMI-6428: this chain's terminal write targets the SAME shared region
+      // searchSkills() owns, at a time neither side controls. Capture the
+      // ownership generation before the first await; at the end, re-read the
+      // live controls (they are the ground truth for user intent) and never
+      // overwrite an active search with the featured state.
+      const initGen = resultsGeneration
       initAuth().then(async () => {
         await loadFeaturedSkills()
+        const hasQuery = searchInput.value.trim().length >= MIN_QUERY_LENGTH
+        const hasFilter = Boolean(categoryFilter.value || trustFilter.value)
+        if (hasQuery || hasFilter) {
+          // The user expressed a search intent since page load. If the generation
+          // is unchanged, no searchSkills() call has actually STARTED for it yet.
+          // That covers two cases: (a) the change/input listeners hadn't attached
+          // when the control changed, so the intent was dropped entirely; (b) a
+          // debounced input search is still armed (debounceTimer pending, ~400ms
+          // out) but hasn't fired. Either way, clear any pending debounce and
+          // dispatch immediately — GPT-5.6-Sol plan-review flagged that leaving
+          // the timer armed here lets it fire a SECOND, redundant searchSkills()
+          // call ~400ms later; the resultsGeneration guards make that safe (not
+          // corrupting), but it's a wasted duplicate fetch worth eliminating
+          // outright rather than merely tolerating.
+          if (resultsGeneration === initGen) {
+            clearTimeout(debounceTimer)
+            void searchSkills()
+          }
+          return
+        }
         showState('search-prompt')
         resultsCount.textContent = 'Showing featured examples'
       })
