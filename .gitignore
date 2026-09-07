@@ -155,6 +155,13 @@ docs/site/
 .batch-transform-checkpoint.json
 .batch-transform-checkpoint.json.bak
 .hive-mind/
+
+# SMI-6015/SMI-5879: root-level working files for census/simulation dispatches
+# (smi5879-census.ts / smi5879-simulate-full.ts --checkpoint-path/--report-path
+# defaults). Never committed — deleted once the run reaches a terminal state.
+smi5879-simulate-checkpoint-*.json
+smi5879-simulate-report-*.json
+smi5879-census-checkpoint-*.json
 .vercel
 
 # DNS and Email Provider Exports
