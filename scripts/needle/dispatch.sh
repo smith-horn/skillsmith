@@ -30,6 +30,18 @@ source "$SCRIPT_DIR/lib.sh"
 
 DEFAULT_MODEL="gpt-5.6-sol"
 DEFAULT_TIMEOUT=3600
+# MIN_CODEX_VERSION (SMI-6445) — the oldest Codex CLI release that can serve
+# every model in NEEDLE_ALLOWED_MODELS today: 0.153.1 is the first version
+# with GPT-6-Astra API support (npm view @openai/codex time --json shows
+# 0.153.1 published 2026-09-03T21:02Z, the same day as GPT-6-Astra's
+# announcement; confirmed against the GitHub release notes for
+# rust-v0.153.1). A local CLI older than this accepts `--model gpt-6-astra`
+# syntactically, then fails with the same opaque 404 a genuinely dead model
+# produces (`gpt-5.5`'s exact failure mode, see lib.sh's allowlist comment) —
+# this check turns that into a clear, actionable, Skillsmith-authored error
+# instead. Bump this constant (with a comment explaining why) whenever a
+# newly-added model needs a newer floor than the current value.
+MIN_CODEX_VERSION="0.153.1"
 
 WORKSPACE=""
 TITLE=""
@@ -58,6 +70,10 @@ Arguments:
 Options:
   --model <model>       Codex model to dispatch to (default: $DEFAULT_MODEL).
                          Allowed: $NEEDLE_ALLOWED_MODELS
+                         A model newer than your local Codex CLI needs
+                         'codex update' first (see README's Setup step 6) —
+                         this script checks for that below and errors clearly
+                         if your CLI predates $MIN_CODEX_VERSION.
   --timeout <secs>      Dispatch timeout in seconds (default: $DEFAULT_TIMEOUT).
   --expect-write         Signal that this dispatch is expected to produce a
                          real workspace change (not a pure analysis/review
@@ -72,7 +88,7 @@ Options:
 
 Examples:
   $(basename "$0") --workspace .worktrees/smi-1234-thing --title "Draft README section" --body-file /tmp/prompt.txt
-  $(basename "$0") --workspace .worktrees/smi-1234-thing --title "second opinion on auth design" --body-file /tmp/prompt.txt --model gpt-5.5 --timeout 1800
+  $(basename "$0") --workspace .worktrees/smi-1234-thing --title "second opinion on auth design" --body-file /tmp/prompt.txt --model gpt-5.6-terra --timeout 1800
 
 dispatch.sh's terminal outcomes: 'success' is FINAL — consume the result,
 never re-dispatch, even when the results log also carries an incidental
@@ -137,6 +153,13 @@ check_binary needle
 check_binary bf
 check_binary codex
 check_binary jq
+
+# SMI-6445: MIN_CODEX_VERSION pre-flight check, extracted to
+# needle_check_codex_version() (lib.sh) to keep this file under the repo's
+# 500-line limit. Calls this script's own needle_error() on failure — see
+# lib.sh for the full rationale (a real set -euo pipefail fail-open bug
+# caught by this PR's own cross-model review, fixed and reproduced there).
+needle_check_codex_version "$MIN_CODEX_VERSION"
 
 # Resolve to an absolute, real path so the repo-root refusal check below
 # cannot be bypassed by a relative path or a symlink.
