@@ -27,6 +27,7 @@
  */
 
 import { getApiBaseUrl, getApiKey, resolveFreshAccessToken } from '@skillsmith/core'
+import { spliceStructured } from './structured-content.js'
 
 /**
  * Canonical absolute URL of the consent dashboard. Must remain stable across
@@ -287,7 +288,9 @@ export function annotateResponseWithConsent<T extends { content?: unknown }>(
 
   const nextContent = [...content]
   nextContent[0] = { ...first, text: JSON.stringify(annotated, null, 2) }
-  return { ...response, content: nextContent }
+  // SMI-6472: keep `structuredContent` in lock-step with the text block, or a
+  // structured-output client would never see the consent notice at all.
+  return { ...response, content: nextContent, ...spliceStructured(response, annotated) }
 }
 
 /**

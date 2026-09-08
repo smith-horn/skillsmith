@@ -3,7 +3,7 @@
  * @module @skillsmith/mcp-server/tools/validate.helpers
  */
 
-import { basename, dirname } from 'path'
+import { basename, dirname, resolve } from 'path'
 import { extractMcpReferences, getRegisteredMcpServers, validateSkillName } from '@skillsmith/core'
 import type { ValidationError } from './validate.types.js'
 import { FIELD_LIMITS, SSRF_PATTERNS, PATH_TRAVERSAL_PATTERNS } from './validate.types.js'
@@ -466,7 +466,19 @@ export function validateNameMatchesDirectory(
     return []
   }
 
-  const actualDirName = isDirectory ? basename(skillPath) : basename(dirname(skillPath))
+  // SMI-6472 (cross-model pre-merge review): resolve() BEFORE deriving the
+  // enclosing directory. Without it a relative input degrades to '.' —
+  // `basename(dirname('SKILL.md'))` and `basename('.')` both return '.',
+  // which can never equal a valid skill name, so a perfectly valid skill
+  // validated by a relative path (e.g. `skill_path: './SKILL.md'` from
+  // inside its own directory) was rejected outright. resolve() is
+  // deliberately lexical, not realpath: a symlinked skill directory is
+  // compared by the name the caller actually used, not by the link target,
+  // so validating through a symlink named after the skill still passes.
+  const absoluteSkillPath = resolve(skillPath)
+  const actualDirName = isDirectory
+    ? basename(absoluteSkillPath)
+    : basename(dirname(absoluteSkillPath))
 
   if (name !== actualDirName) {
     return [

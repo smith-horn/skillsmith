@@ -5,6 +5,7 @@
  * SMI-1719: Unit tests for extracted helper functions from Wave 3 refactor
  */
 
+import { basename } from 'path'
 import { describe, it, expect } from 'vitest'
 import {
   parseYamlFrontmatter,
@@ -594,6 +595,43 @@ tags:
       const errors = validateNameMatchesDirectory('my-skill', '/skills/my-skill/SKILL.md', false)
 
       expect(errors).toEqual([])
+    })
+
+    // SMI-6472 (cross-model pre-merge review): a relative path used to
+    // degrade to '.' via basename(dirname('SKILL.md')), which can never
+    // equal a valid skill name — so a perfectly valid skill validated from
+    // inside its own directory was rejected outright. These pin the
+    // resolve()-before-basename fix.
+    it('passes for a bare relative SKILL.md resolved from inside the skill directory', () => {
+      const cwd = process.cwd()
+      const errors = validateNameMatchesDirectory(basename(cwd), 'SKILL.md', false)
+
+      expect(errors).toEqual([])
+    })
+
+    it('passes for a ./-prefixed relative SKILL.md', () => {
+      const cwd = process.cwd()
+      const errors = validateNameMatchesDirectory(basename(cwd), './SKILL.md', false)
+
+      expect(errors).toEqual([])
+    })
+
+    it("passes for '.' as the skill directory (isDirectory=true)", () => {
+      const cwd = process.cwd()
+      const errors = validateNameMatchesDirectory(basename(cwd), '.', true)
+
+      expect(errors).toEqual([])
+    })
+
+    it('still errors on a genuine mismatch given a relative path', () => {
+      const errors = validateNameMatchesDirectory(
+        'definitely-not-the-cwd-name',
+        './SKILL.md',
+        false
+      )
+
+      expect(errors).toHaveLength(1)
+      expect(errors[0]).toMatchObject({ field: 'name', severity: 'error' })
     })
 
     it('errors when name mismatches the directory (isDirectory=true)', () => {
