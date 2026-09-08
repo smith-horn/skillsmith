@@ -7,9 +7,11 @@
 # needle-dispatch.bead-lifecycle.test.sh — split out to stay under this
 # repo's 500-line-per-file limit; both source the shared fixture setup in
 # scripts/tests/_lib/needle-dispatch-fixtures.sh. SMI-6445's model-allowlist
-# + MIN_CODEX_VERSION cases (15-17) are appended at the end of THIS file,
+# + MIN_CODEX_VERSION cases (15-19) are appended at the end of THIS file,
 # numbered to continue after the sibling file's case 14 rather than
-# colliding with it.
+# colliding with it. Cases 18-19 were added during that PR's own cross-model
+# pr-reviewer gate (GPT-5.6-Sol via NEEDLE), which caught a real
+# fail-open/set-euo-pipefail bug in cases 15-17's first draft.
 #
 # Usage: ./scripts/tests/needle-dispatch.test.sh
 
@@ -241,6 +243,69 @@ if [[ "$EXIT_CODE" -ne 1 ]] || ! grep -q "older than the minimum" /tmp/needle-di
     FAIL_COUNT=$((FAIL_COUNT + 1))
 else
     echo "PASS (case 17): a Codex CLI older than MIN_CODEX_VERSION is rejected with a clear pre-flight error"
+fi
+
+# Case 18 (cross-model pr-reviewer finding, GPT-5.6-Sol via NEEDLE): a
+# malformed/empty 'codex --version' output must NOT abort dispatch.sh
+# outright under set -euo pipefail. The pre-fix version of the
+# MIN_CODEX_VERSION extraction pipeline did exactly that (confirmed via a
+# direct standalone repro during review) despite its own comment claiming
+# "fails open" — this case is the regression guard for that fix.
+UNPARSEABLE_CODEX_BIN_DIR="$(mktemp -d)"
+cat > "$UNPARSEABLE_CODEX_BIN_DIR/codex" << 'UNPARSEABLE_FAKE_CODEX'
+#!/usr/bin/env bash
+case "${1:-}" in
+    --version) echo "codex-cli unknown"; exit 0 ;;
+    *) exit 0 ;;
+esac
+UNPARSEABLE_FAKE_CODEX
+chmod +x "$UNPARSEABLE_CODEX_BIN_DIR/codex"
+: > "$FAKE_OUTCOME_FILE"
+EXIT_CODE="$(FAKE_SCENARIO=clean FAKE_TOUCH_FILE=0 PATH="$UNPARSEABLE_CODEX_BIN_DIR:$TEST_PATH" "$DISPATCH" \
+    --workspace "$GIT_WORKTREE_DIR" \
+    --title "fixture case 18" \
+    --body-file "$BODY_FILE" \
+    --timeout 5 \
+    >/tmp/needle-dispatch-test-case18.out 2>&1; echo $?)"
+rm -rf "$UNPARSEABLE_CODEX_BIN_DIR"
+if [[ "$EXIT_CODE" -ne 0 ]] || ! grep -q "outcome=success" /tmp/needle-dispatch-test-case18.out; then
+    echo "FAIL (case 18): an unparseable 'codex --version' output should fail OPEN (dispatch still succeeds), got exit $EXIT_CODE" >&2
+    cat /tmp/needle-dispatch-test-case18.out >&2
+    FAIL_COUNT=$((FAIL_COUNT + 1))
+else
+    echo "PASS (case 18): an unparseable codex --version output fails open instead of aborting dispatch"
+fi
+
+# Case 19 (same review pass): a prerelease-suffixed version that is
+# numerically OLDER than MIN_CODEX_VERSION must still fail open (skip the
+# check) rather than being silently truncated to its numeric prefix and
+# compared as if it were a stable release — semver prerelease ordering
+# isn't implemented here, so this is a deliberate "can't verify" skip, not
+# a false pass on stale-but-real versions (case 17 already covers a real
+# stale STABLE version being correctly rejected).
+PRERELEASE_CODEX_BIN_DIR="$(mktemp -d)"
+cat > "$PRERELEASE_CODEX_BIN_DIR/codex" << 'PRERELEASE_FAKE_CODEX'
+#!/usr/bin/env bash
+case "${1:-}" in
+    --version) echo "codex-cli 0.100.0-alpha.1"; exit 0 ;;
+    *) exit 0 ;;
+esac
+PRERELEASE_FAKE_CODEX
+chmod +x "$PRERELEASE_CODEX_BIN_DIR/codex"
+: > "$FAKE_OUTCOME_FILE"
+EXIT_CODE="$(FAKE_SCENARIO=clean FAKE_TOUCH_FILE=0 PATH="$PRERELEASE_CODEX_BIN_DIR:$TEST_PATH" "$DISPATCH" \
+    --workspace "$GIT_WORKTREE_DIR" \
+    --title "fixture case 19" \
+    --body-file "$BODY_FILE" \
+    --timeout 5 \
+    >/tmp/needle-dispatch-test-case19.out 2>&1; echo $?)"
+rm -rf "$PRERELEASE_CODEX_BIN_DIR"
+if [[ "$EXIT_CODE" -ne 0 ]] || ! grep -q "outcome=success" /tmp/needle-dispatch-test-case19.out; then
+    echo "FAIL (case 19): a prerelease-suffixed version should fail open (skip the floor check) rather than block, got exit $EXIT_CODE" >&2
+    cat /tmp/needle-dispatch-test-case19.out >&2
+    FAIL_COUNT=$((FAIL_COUNT + 1))
+else
+    echo "PASS (case 19): a prerelease-suffixed codex version skips the floor check instead of being misparsed"
 fi
 
 # ---- Results-log isolation regression (Wave 3 Step 3) ----

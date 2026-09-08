@@ -154,31 +154,12 @@ check_binary bf
 check_binary codex
 check_binary jq
 
-# ---- SMI-6445: MIN_CODEX_VERSION pre-flight check. Confirmed live on
-# 2026-09-07 (macOS host, both BSD-derived and GNU sort report -V support
-# here): a Codex CLI older than MIN_CODEX_VERSION accepts a newer model name
-# syntactically, then fails with the exact same opaque 404 a genuinely dead
-# model produces (see lib.sh's NEEDLE_ALLOWED_MODELS comment) — this turns
-# that into a clear, actionable error before ever reaching Codex. Version
-# extraction and 'sort -V' failing open (never blocking a dispatch on a
-# parsing hiccup) mirrors this script's other pre-flight guards' philosophy
-# of failing loud on the specific thing they check, not on unrelated
-# surprises.
-CODEX_VERSION_RAW="$(codex --version 2>/dev/null || echo '')"
-CODEX_VERSION_NUM="$(echo "$CODEX_VERSION_RAW" | grep -oE '[0-9]+\.[0-9]+\.[0-9]+' | head -1)"
-if [[ -n "$CODEX_VERSION_NUM" ]]; then
-    OLDEST_OF_TWO="$(printf '%s\n%s\n' "$MIN_CODEX_VERSION" "$CODEX_VERSION_NUM" | sort -V | head -1)"
-    if [[ "$OLDEST_OF_TWO" != "$MIN_CODEX_VERSION" ]]; then
-        needle_error "Installed Codex CLI ($CODEX_VERSION_NUM) is older than the minimum this repo's model allowlist needs ($MIN_CODEX_VERSION) — see MIN_CODEX_VERSION's comment above for why.
-
-A stale Codex CLI accepts --model syntactically for any newly-added model, then fails with an opaque 404 ('does not exist or you do not have access to it') indistinguishable from a genuinely dead model. Fix: run 'codex update' (wraps 'npm install -g @openai/codex'), then re-run this dispatch. Before doing so, check scripts/needle/results/codex-*.log for any dispatch in flight from a concurrent session on this machine — 'codex update' is a global npm install, not scoped to this repo. See scripts/needle/README.md's Setup step 6."
-    fi
-fi
-# A CODEX_VERSION_NUM parse failure (empty string) deliberately does NOT
-# block dispatch — it degrades to "can't verify, proceed" rather than a hard
-# failure on a version-string format this check didn't anticipate; a real
-# incompatibility still surfaces as Codex's own 404 downstream, just without
-# this check's clearer message.
+# SMI-6445: MIN_CODEX_VERSION pre-flight check, extracted to
+# needle_check_codex_version() (lib.sh) to keep this file under the repo's
+# 500-line limit. Calls this script's own needle_error() on failure — see
+# lib.sh for the full rationale (a real set -euo pipefail fail-open bug
+# caught by this PR's own cross-model review, fixed and reproduced there).
+needle_check_codex_version "$MIN_CODEX_VERSION"
 
 # Resolve to an absolute, real path so the repo-root refusal check below
 # cannot be bypassed by a relative path or a symlink.

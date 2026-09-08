@@ -43,6 +43,71 @@ source "$NEEDLE_LIB_DIR/../agent-evals/lib.sh"
 # target. Do not reintroduce either without a documented reason.
 NEEDLE_ALLOWED_MODELS="gpt-5.6-sol gpt-6-astra gpt-5.6-terra gpt-5.6-luna gpt-5.4-mini"
 
+# needle_check_codex_version MIN_VERSION — pre-flight check (SMI-6445, moved
+# here from dispatch.sh to stay under the repo's 500-line-per-file limit).
+# Calls the CALLER's own needle_error() (dispatch.sh's) on failure — this
+# relies on bash resolving function calls at call-time, not definition-time,
+# so it's fine that needle_error isn't defined yet when THIS function is
+# defined, only that it's defined by the time dispatch.sh actually calls
+# needle_check_codex_version further down its own script.
+#
+# Confirmed live on 2026-09-07 (macOS host, both BSD-derived and GNU sort
+# report -V support here): a Codex CLI older than MIN_VERSION accepts a
+# newer model name syntactically, then fails with the exact same opaque 404
+# a genuinely dead model produces (see NEEDLE_ALLOWED_MODELS's comment
+# above) — this turns that into a clear, actionable error before ever
+# reaching Codex.
+#
+# SMI-6445 cross-model review (pr-reviewer gate, GPT-5.6-Sol via NEEDLE)
+# caught a real bug here, confirmed live via direct reproduction: under
+# dispatch.sh's own 'set -euo pipefail', 'VAR="$(cmd1 | cmd2)"' aborts the
+# ENTIRE SCRIPT the instant any stage of that pipeline exits non-zero
+# (pipefail propagates the rightmost non-zero exit through the pipeline;
+# set -e then kills the script on the assignment itself) — a bare
+# 'echo "" | grep -oE ... | head -1' reproduces this exactly ('grep' finds
+# nothing, exits 1; 'head' still exits 0 reading empty input; pipefail makes
+# the pipeline's status 1; the script dies with no needle_error message at
+# all). An earlier draft of this check claimed a parse failure "fails
+# open" — it did the opposite: a genuinely malformed or empty
+# 'codex --version' output would silently kill dispatch with exit 1 and
+# zero explanation. Both extraction pipelines below now end in '|| true'
+# (the same idiom dispatch.sh already uses for ANSWER_CHARS) so a parse
+# failure degrades to "can't verify, proceed" as originally intended,
+# rather than aborting. Removing either '|| true' reintroduces that bug.
+#
+# Also caught: a prerelease-suffixed version (e.g. '0.153.1-alpha.6') had
+# its suffix silently discarded by the digits-only regex, which would treat
+# it as equal to a stable '0.153.1' floor — semver prerelease ordering isn't
+# implemented here, so that's a real ordering risk, not just cosmetic. A
+# version string containing a hyphen is now treated as unparseable (fails
+# open, same as an empty string) rather than truncated and compared as if
+# it were the stable release.
+#
+# A parse failure (empty string, or a prerelease suffix cleared below)
+# deliberately does NOT block dispatch — it degrades to "can't verify,
+# proceed" rather than a hard failure on a version-string format this check
+# didn't anticipate; a real incompatibility still surfaces as Codex's own
+# 404 downstream, just without this check's clearer message.
+needle_check_codex_version() {
+  local min_version="$1" codex_version_raw codex_version_num oldest_of_two
+  codex_version_raw="$(codex --version 2>/dev/null || echo '')"
+  codex_version_num="$(echo "$codex_version_raw" | grep -oE '[0-9]+\.[0-9]+\.[0-9]+(-[A-Za-z0-9.]+)?' | head -1 || true)"
+  if [[ "$codex_version_num" == *-* ]]; then
+    # Prerelease/alpha build — can't reliably order against a stable floor
+    # with a plain numeric comparison; skip the check rather than risk a
+    # wrong verdict either way.
+    codex_version_num=""
+  fi
+  if [[ -n "$codex_version_num" ]]; then
+    oldest_of_two="$(printf '%s\n%s\n' "$min_version" "$codex_version_num" | sort -V | head -1 || true)"
+    if [[ -n "$oldest_of_two" ]] && [[ "$oldest_of_two" != "$min_version" ]]; then
+      needle_error "Installed Codex CLI ($codex_version_num) is older than the minimum this repo's model allowlist needs ($min_version) — see MIN_CODEX_VERSION's comment in dispatch.sh for why.
+
+A stale Codex CLI accepts --model syntactically for any newly-added model, then fails with an opaque 404 ('does not exist or you do not have access to it') indistinguishable from a genuinely dead model. Fix: run 'codex update' (wraps 'npm install -g @openai/codex'), then re-run this dispatch. Before doing so, check scripts/needle/results/codex-*.log for any dispatch in flight from a concurrent session on this machine — 'codex update' is a global npm install, not scoped to this repo. See scripts/needle/README.md's Setup step 6."
+    fi
+  fi
+}
+
 # needle_model_allowed MODEL — returns 0 if MODEL is in the allowlist above,
 # 1 otherwise.
 needle_model_allowed() {
