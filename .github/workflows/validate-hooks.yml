@@ -59,6 +59,10 @@ on:
       - 'scripts/claude-hooks-log-wrapper.sh'
       - 'scripts/tests/claude-hooks-xargs-regression.test.sh'
       - 'scripts/tests/claude-hooks-log-wrapper.test.sh'
+      - 'scripts/mcp-skillsmith-launcher.sh'
+      - 'scripts/mcp-doc-retrieval-launcher.sh'
+      - 'scripts/tests/mcp-skillsmith-launcher.test.ts'
+      - 'scripts/tests/mcp-doc-retrieval-launcher.test.ts'
       - '.github/workflows/validate-hooks.yml'
 
 permissions:
@@ -119,7 +123,9 @@ jobs:
             scripts/tests/session-start-mcp-command-guard.test.sh \
             scripts/claude-hooks-log-wrapper.sh \
             scripts/tests/claude-hooks-xargs-regression.test.sh \
-            scripts/tests/claude-hooks-log-wrapper.test.sh
+            scripts/tests/claude-hooks-log-wrapper.test.sh \
+            scripts/mcp-skillsmith-launcher.sh \
+            scripts/mcp-doc-retrieval-launcher.sh
 
       - name: Syntax check (bash -n)
         run: |
@@ -162,6 +168,8 @@ jobs:
           bash -n scripts/tests/session-start-mcp-command-guard.test.sh
           bash -n scripts/tests/claude-hooks-xargs-regression.test.sh
           bash -n scripts/tests/claude-hooks-log-wrapper.test.sh
+          bash -n scripts/mcp-skillsmith-launcher.sh
+          bash -n scripts/mcp-doc-retrieval-launcher.sh
           sh -n scripts/claude-hooks-log-wrapper.sh
           sh -n .husky/pre-commit
           sh -n .husky/pre-push

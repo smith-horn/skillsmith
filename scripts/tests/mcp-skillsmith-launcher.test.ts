@@ -176,6 +176,14 @@ describe('mcp-skillsmith-launcher.sh', () => {
     for (const s of stubs) rmSync(s, { recursive: true, force: true })
   })
 
+  // SMI-6454: REMEDIATION_INSTALL_BUILD's exact expected text -- `npm install`
+  // is host-side (no `docker exec` prefix), on its own line, followed by the
+  // container-side build (dist/ isn't volume-migrated, so that half stays
+  // correct as-is). Asserted line-anchored, not as a loose substring, per
+  // plan-review finding #3 (GPT-5.6-Sol, 2026-09-08).
+  const EXPECTED_INSTALL_BUILD_REMEDIATION =
+    '    npm install\n    docker compose --profile dev up -d\n    docker exec skillsmith-dev-1 npm run build'
+
   it('exits 1 with actionable stderr when node_modules is absent', () => {
     const root = makeRoot()
     roots.push(root)
@@ -183,7 +191,8 @@ describe('mcp-skillsmith-launcher.sh', () => {
     expect(res.status).toBe(1)
     expect(res.stderr).toContain('[skillsmith]')
     expect(res.stderr).toContain('node_modules missing')
-    expect(res.stderr).toContain('npm run build')
+    expect(res.stderr).toContain(EXPECTED_INSTALL_BUILD_REMEDIATION)
+    expect(res.stderr).not.toContain('docker exec skillsmith-dev-1 npm install')
   })
 
   it('exits 1 with actionable stderr when dist/ is absent', () => {
@@ -194,7 +203,8 @@ describe('mcp-skillsmith-launcher.sh', () => {
     expect(res.status).toBe(1)
     expect(res.stderr).toContain('[skillsmith]')
     expect(res.stderr).toContain('dist/ missing')
-    expect(res.stderr).toContain('docker compose --profile dev up -d')
+    expect(res.stderr).toContain(EXPECTED_INSTALL_BUILD_REMEDIATION)
+    expect(res.stderr).not.toContain('docker exec skillsmith-dev-1 npm install')
   })
 
   it('checks node_modules before dist/ (node_modules wins when both absent)', () => {
@@ -224,6 +234,12 @@ describe('mcp-skillsmith-launcher.sh', () => {
 
   // ---- SMI-5451: dependency-integrity probe ----
 
+  // SMI-6454: nested-corrupt's exact expected text -- both the `rm -rf` and
+  // the reinstall are host-side (packages/mcp-server/node_modules is a
+  // named volume too, same reasoning as the root case above).
+  const EXPECTED_NESTED_CORRUPT_REMEDIATION =
+    '    rm -rf packages/mcp-server/node_modules/ulid\n    npm install'
+
   it('exits 1 when a nested dep dir exists but is empty (the SMI-5451 incident)', () => {
     const root = makeRoot()
     roots.push(root)
@@ -236,7 +252,9 @@ describe('mcp-skillsmith-launcher.sh', () => {
     expect(res.stderr).toContain('[skillsmith]')
     expect(res.stderr).toContain('ulid')
     expect(res.stderr).toContain('packages/mcp-server/node_modules/')
-    expect(res.stderr).toContain('npm install')
+    // Exact host-side remediation lines (SMI-6454), not a loose substring.
+    expect(res.stderr).toContain(EXPECTED_NESTED_CORRUPT_REMEDIATION)
+    expect(res.stderr).not.toContain('docker exec skillsmith-dev-1 npm install')
     expect(res.stderr).toContain('(See CLAUDE.md')
   })
 
@@ -251,6 +269,10 @@ describe('mcp-skillsmith-launcher.sh', () => {
     const res = runLauncher(root)
     expect(res.status).toBe(1)
     expect(res.stderr).toContain('ulid dependency corrupt at packages/mcp-server/node_modules/ulid')
+    // The shadowing precedence still selects nested-corrupt (not some other
+    // state) after the SMI-6454 remediation-text fix -- same corrected text.
+    expect(res.stderr).toContain(EXPECTED_NESTED_CORRUPT_REMEDIATION)
+    expect(res.stderr).not.toContain('docker exec skillsmith-dev-1 npm install')
   })
 
   it('passes when the dep is present hoisted only', () => {
@@ -298,7 +320,10 @@ describe('mcp-skillsmith-launcher.sh', () => {
     const res = runLauncher(root)
     expect(res.status).toBe(1)
     expect(res.stderr).toContain('__smi-5570-fixture-absent-dep__ dependency missing')
-    expect(res.stderr).toContain('npm install')
+    // SMI-6454: bare host-side `npm install`, no `docker exec` prefix -- this
+    // state's remediation is a single line, unlike the multi-line blocks above.
+    expect(res.stderr).toContain('\n    npm install\n')
+    expect(res.stderr).not.toContain('docker exec skillsmith-dev-1 npm install')
   })
 
   it('fails open with a warning when the probe itself cannot run (M5)', () => {
@@ -337,7 +362,9 @@ describe('mcp-skillsmith-launcher.sh', () => {
     const res = runLauncher(root)
     expect(res.status).toBe(1)
     expect(res.stderr).toContain('@skillsmith/__smi-5570-fixture-pkg__')
-    expect(res.stderr).toContain('npm run build')
+    // SMI-6454: unbuilt-workspace also uses REMEDIATION_INSTALL_BUILD.
+    expect(res.stderr).toContain(EXPECTED_INSTALL_BUILD_REMEDIATION)
+    expect(res.stderr).not.toContain('docker exec skillsmith-dev-1 npm install')
     // Workspace symlinks point at real source — rm -rf must never be emitted.
     expect(res.stderr).not.toContain('rm -rf')
   })
