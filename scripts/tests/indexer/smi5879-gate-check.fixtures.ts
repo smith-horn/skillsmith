@@ -128,10 +128,19 @@ const ALL_OUTCOMES = [
   'bundle_absent',
   'unevaluable',
   'unfetchable',
+  'primary_not_found',
 ] as const
 
 export function makeCoverage(overrides: Record<string, unknown> = {}): Record<string, unknown> {
-  return { status: 'full', scanned: 0, total: 0, unevaluable: 0, unfetchable: 0, ...overrides }
+  return {
+    status: 'full',
+    scanned: 0,
+    total: 0,
+    unevaluable: 0,
+    unfetchable: 0,
+    primaryNotFound: 0,
+    ...overrides,
+  }
 }
 
 export function makeFullCoverageAllCohorts(): Record<string, unknown> {
@@ -178,11 +187,13 @@ function deriveCoverageFromRows(rows: readonly Record<string, unknown>[]): Recor
     const cohortRows = rows.filter((r) => r['cohort'] === cohort)
     const unevaluable = cohortRows.filter((r) => r['outcome'] === 'unevaluable').length
     const unfetchable = cohortRows.filter((r) => r['outcome'] === 'unfetchable').length
+    const primaryNotFound = cohortRows.filter((r) => r['outcome'] === 'primary_not_found').length
     coverage[cohort] = makeCoverage({
       scanned: cohortRows.length,
       total: cohortRows.length,
       unevaluable,
       unfetchable,
+      primaryNotFound,
     })
   }
   return coverage

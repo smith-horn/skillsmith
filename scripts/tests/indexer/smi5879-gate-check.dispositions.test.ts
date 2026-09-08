@@ -303,6 +303,23 @@ describe('smi5879-gate-check.ts — G-1 hand review', () => {
     expect(findGate(report.gates, 'G-1').reason).toMatch(/unfetchable row/)
   })
 
+  it('SMI-6442: is INCONCLUSIVE when a primary_not_found row has no recorded exclude', async () => {
+    const dir = makeScratchDir()
+    const rows = [makeSimRow({ id: 'r1', outcome: 'primary_not_found' })]
+    const dispositionsPath = writeFixtureFile(
+      dir,
+      'dispositions.json',
+      makeDispositionLedgerJson([])
+    )
+    const args = {
+      ...buildRequiredArgs(dir, { simulatorJson: makeSimulatorReportJson({ rows }) }),
+      dispositionsPath,
+    }
+    const report = await evaluateGateCheck({ db: makeFakeDb(), test: makeFakeTestDeps() }, args)
+    expect(findGate(report.gates, 'G-1').outcome).toBe('INCONCLUSIVE')
+    expect(findGate(report.gates, 'G-1').reason).toMatch(/primary_not_found row/)
+  })
+
   it('PASSes when every row in R and every unfetchable row has a recorded disposition', async () => {
     const dir = makeScratchDir()
     const rows = [

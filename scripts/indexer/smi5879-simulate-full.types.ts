@@ -37,6 +37,7 @@ export type SimRowOutcome =
   | 'bundle_absent'
   | 'unevaluable'
   | 'unfetchable'
+  | 'primary_not_found'
 
 /**
  * Single source of truth for the closed {@link SimRowOutcome} vocabulary at
@@ -57,6 +58,7 @@ export const EMPTY_OUTCOME_COUNTS: Record<SimRowOutcome, number> = {
   bundle_absent: 0,
   unevaluable: 0,
   unfetchable: 0,
+  primary_not_found: 0,
 }
 
 export const SIM_ROW_OUTCOMES: readonly SimRowOutcome[] = Object.keys(
@@ -113,6 +115,8 @@ export interface CohortCoverage {
   total: number
   unevaluable: number
   unfetchable: number
+  /** SMI-6442: confirmed file-level 404 on the primary SKILL.md — terminal, coverage-neutral. */
+  primaryNotFound: number
 }
 
 export type CoverageByCohort = Record<SimulatedCohort, CohortCoverage>

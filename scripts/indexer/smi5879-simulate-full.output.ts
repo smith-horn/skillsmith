@@ -28,7 +28,7 @@ export function printSummary(report: Smi5879SimulateFullReport): void {
       `  sweep:             ${report.sweep.passes_run} pass(es), hard_stopped=${report.sweep.hard_stopped ?? 'none'}\n` +
       ALL_SIMULATED_COHORTS.map(
         (c) =>
-          `  coverage.${c}:       ${report.coverage[c].status} (${report.coverage[c].scanned}/${report.coverage[c].total}, unevaluable=${report.coverage[c].unevaluable}, unfetchable=${report.coverage[c].unfetchable})`
+          `  coverage.${c}:       ${report.coverage[c].status} (${report.coverage[c].scanned}/${report.coverage[c].total}, unevaluable=${report.coverage[c].unevaluable}, unfetchable=${report.coverage[c].unfetchable}, primaryNotFound=${report.coverage[c].primaryNotFound})`
       ).join('\n') +
       `\n  counts: ${JSON.stringify(report.counts)}\n`
   )

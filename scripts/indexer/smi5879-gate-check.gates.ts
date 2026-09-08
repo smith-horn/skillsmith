@@ -79,7 +79,7 @@ export function evaluateG2(
       reason:
         'coverage is not full-and-zero-unevaluable for every cohort — ' +
         `partial: [${partial.join(', ') || 'none'}], unevaluable>0: [${unevaluableNonzero.join(', ') || 'none'}]. ` +
-        'unfetchable and bundle_absent rows do NOT block this gate.',
+        'unfetchable, primary_not_found, and bundle_absent rows do NOT block this gate.',
       detail: { partial, unevaluableNonzero },
     }
   }
@@ -302,6 +302,14 @@ export function evaluateG1(
     .filter((r) => ledger.validation.byId.get(r.id) !== 'exclude')
     .map((r) => r.id)
 
+  // SMI-6442: primary_not_found is terminal and coverage-neutral like
+  // unfetchable, and needs the identical exclusion requirement — without
+  // this, a confirmed-404 row would silently skip human review entirely.
+  const primaryNotFoundRows = simReport.rows.filter((r) => r.outcome === 'primary_not_found')
+  const missingPrimaryNotFoundExcludes = primaryNotFoundRows
+    .filter((r) => ledger.validation.byId.get(r.id) !== 'exclude')
+    .map((r) => r.id)
+
   const driftRequiringExclusion =
     mode === 'reconciliation'
       ? g2rDriftRows.filter((r) =>
@@ -315,6 +323,7 @@ export function evaluateG1(
   if (
     missingRDispositions.length > 0 ||
     missingUnfetchableExcludes.length > 0 ||
+    missingPrimaryNotFoundExcludes.length > 0 ||
     missingDriftExcludes.length > 0
   ) {
     const parts: string[] = []
@@ -330,6 +339,12 @@ export function evaluateG1(
           `${missingUnfetchableExcludes.slice(0, 10).join(', ')}${missingUnfetchableExcludes.length > 10 ? ', ...' : ''}`
       )
     }
+    if (missingPrimaryNotFoundExcludes.length > 0) {
+      parts.push(
+        `${missingPrimaryNotFoundExcludes.length} primary_not_found row(s) lack a recorded exclude: ` +
+          `${missingPrimaryNotFoundExcludes.slice(0, 10).join(', ')}${missingPrimaryNotFoundExcludes.length > 10 ? ', ...' : ''}`
+      )
+    }
     if (missingDriftExcludes.length > 0) {
       parts.push(
         `${missingDriftExcludes.length} G-2R drift row(s) (DR-1..DR-4) lack a recorded exclude: ` +
@@ -340,7 +355,12 @@ export function evaluateG1(
       id: 'G-1',
       outcome: 'INCONCLUSIVE',
       reason: parts.join('; '),
-      detail: { missingRDispositions, missingUnfetchableExcludes, missingDriftExcludes },
+      detail: {
+        missingRDispositions,
+        missingUnfetchableExcludes,
+        missingPrimaryNotFoundExcludes,
+        missingDriftExcludes,
+      },
     }
   }
 
@@ -348,7 +368,8 @@ export function evaluateG1(
     id: 'G-1',
     outcome: 'PASS',
     reason:
-      `every row in R (${R.length}), every unfetchable row (${unfetchableRows.length}), and every ` +
-      `G-2R drift row requiring exclusion (${driftRequiringExclusion.length}) has a recorded disposition`,
+      `every row in R (${R.length}), every unfetchable row (${unfetchableRows.length}), every ` +
+      `primary_not_found row (${primaryNotFoundRows.length}), and every G-2R drift row requiring ` +
+      `exclusion (${driftRequiringExclusion.length}) has a recorded disposition`,
   }
 }

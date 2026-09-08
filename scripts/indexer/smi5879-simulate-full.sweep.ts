@@ -53,16 +53,18 @@ export function computeCoverage(
     let scanned = 0
     let unevaluable = 0
     let unfetchable = 0
+    let primaryNotFound = 0
     for (const row of rows) {
       const result = results.get(row.id)
       if (!result) continue
       scanned++
       if (result.outcome === 'unevaluable') unevaluable++
       if (result.outcome === 'unfetchable') unfetchable++
+      if (result.outcome === 'primary_not_found') primaryNotFound++
     }
     const status: CohortCoverage['status'] =
       scanned === total && unevaluable === 0 ? 'full' : 'partial'
-    coverage[cohort] = { status, scanned, total, unevaluable, unfetchable }
+    coverage[cohort] = { status, scanned, total, unevaluable, unfetchable, primaryNotFound }
   }
   return coverage
 }
@@ -159,8 +161,9 @@ const defaultSleep = (ms: number): Promise<void> =>
 /**
  * Re-run ONLY the rows currently classified `unevaluable`, in repeated sweep
  * passes, until fixed point (`|R_k| = 0`) or a hard stop (plan §3b tier 3).
- * `unfetchable` rows are never included in `initialResidual` by the caller —
- * being terminal, they can never cause non-convergence.
+ * `unfetchable`/`primary_not_found` rows are never included in
+ * `initialResidual` by the caller — being terminal, they can never cause
+ * non-convergence.
  */
 export async function runTier3Sweep(
   initialResidual: SimRowResult[],

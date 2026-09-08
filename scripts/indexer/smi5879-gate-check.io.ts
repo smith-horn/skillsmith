@@ -167,6 +167,7 @@ const VALID_OUTCOMES: readonly SimRowOutcome[] = [
   'bundle_absent',
   'unevaluable',
   'unfetchable',
+  'primary_not_found',
 ]
 
 function validateCoverage(
@@ -178,13 +179,21 @@ function validateCoverage(
   const total = value['total']
   const unevaluable = value['unevaluable']
   const unfetchable = value['unfetchable']
+  // SMI-6442: primaryNotFound is additive to the report schema. A report
+  // from before this fix landed has no such field at all — treat a genuinely
+  // ABSENT field as 0 (backward compatible with every pre-existing report),
+  // but still reject a PRESENT, non-number value as malformed.
+  const primaryNotFoundRaw = value['primaryNotFound']
+  const primaryNotFound = primaryNotFoundRaw === undefined ? 0 : primaryNotFoundRaw
   if (status !== 'full' && status !== 'partial')
     return { ok: false, reason: 'status must be full|partial' }
   if (typeof scanned !== 'number') return { ok: false, reason: 'scanned must be a number' }
   if (typeof total !== 'number') return { ok: false, reason: 'total must be a number' }
   if (typeof unevaluable !== 'number') return { ok: false, reason: 'unevaluable must be a number' }
   if (typeof unfetchable !== 'number') return { ok: false, reason: 'unfetchable must be a number' }
-  return { ok: true, value: { status, scanned, total, unevaluable, unfetchable } }
+  if (typeof primaryNotFound !== 'number')
+    return { ok: false, reason: 'primaryNotFound must be a number when present' }
+  return { ok: true, value: { status, scanned, total, unevaluable, unfetchable, primaryNotFound } }
 }
 
 function validateRow(
@@ -302,6 +311,16 @@ function validateSimulatorReportConsistency(
         reason:
           `coverage.${cohort}.unfetchable=${cov.unfetchable} does not equal the number of ` +
           `unfetchable cohort=${cohort} rows in report.rows (${actualUnfetchable})`,
+      }
+    }
+    // SMI-6442: same cross-validation for the new terminal outcome.
+    const actualPrimaryNotFound = cohortRows.filter((r) => r.outcome === 'primary_not_found').length
+    if (cov.primaryNotFound !== actualPrimaryNotFound) {
+      return {
+        ok: false,
+        reason:
+          `coverage.${cohort}.primaryNotFound=${cov.primaryNotFound} does not equal the number of ` +
+          `primary_not_found cohort=${cohort} rows in report.rows (${actualPrimaryNotFound})`,
       }
     }
   }

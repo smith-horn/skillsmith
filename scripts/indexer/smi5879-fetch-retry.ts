@@ -101,11 +101,20 @@ export async function withFetchRetry(
 
   for (let i = 0; i <= maxRetries; i++) {
     let result: RetryableFetchResult
+    // SMI-6442: track whether THIS iteration threw a RateLimitError, and its
+    // server-reported retryAfterSeconds if it had a usable one — needed below
+    // both to fix an adjacent bug (captureStatus overwriting a fresh
+    // RateLimitError's own status with a stale value) and to honor
+    // Retry-After.
+    let threwRateLimitError = false
+    let rateLimitRetryAfterSeconds: number | null = null
     try {
       result = await attempt()
     } catch (err) {
       if (err instanceof RateLimitError) {
         lastStatus = err.status
+        threwRateLimitError = true
+        rateLimitRetryAfterSeconds = err.retryAfterSeconds > 0 ? err.retryAfterSeconds : null
         result = null
       } else {
         // Not a retryable-shaped error — a genuine bug in the caller, not a
@@ -117,12 +126,25 @@ export async function withFetchRetry(
 
     if (result !== null) return result // { content } or { removed: true } — immediate, never retried
 
-    const captured = options.captureStatus?.()
-    if (captured !== undefined) lastStatus = captured
+    // Only consult captureStatus for a plain-null (non-RateLimitError)
+    // attempt — otherwise a stale status from an EARLIER null-returning
+    // attempt could silently overwrite the status THIS iteration's
+    // RateLimitError already set on `lastStatus` above.
+    if (!threwRateLimitError) {
+      const captured = options.captureStatus?.()
+      if (captured !== undefined) lastStatus = captured
+    }
 
     if (i === maxRetries) break
 
-    const waitMs = fullJitterWaitMs(i, baseMs, maxMs)
+    // A server-provided Retry-After acts as a FLOOR over local jitter — never
+    // truncated by maxMs. An authoritative delay must be honored in full, not
+    // silently shortened; maxMs only bounds our own guessed backoff.
+    const jitterWaitMs = fullJitterWaitMs(i, baseMs, maxMs)
+    const waitMs =
+      rateLimitRetryAfterSeconds !== null
+        ? Math.max(jitterWaitMs, rateLimitRetryAfterSeconds * 1000)
+        : jitterWaitMs
     options.onRetry?.(i + 1, waitMs)
     await sleep(waitMs)
   }
