@@ -80,6 +80,22 @@ Architecture decision: [ADR-128](../../docs/internal/adr/128-harness-of-harnesse
    `needle`, `bf`, and the adapter all install fine but every dispatch fails
    for a reason none of the earlier steps explain.
 
+   **Keep this current, not just installed once (SMI-6445).**
+   `NEEDLE_ALLOWED_MODELS` (`scripts/needle/lib.sh`) can list a model your
+   *local* Codex CLI predates — the CLI will accept `--model <that-slug>`
+   syntactically, then fail with an opaque
+   `404 The model 'X' does not exist or you do not have access to it.`,
+   indistinguishable from a genuinely dead/removed model. Before dispatching
+   with a model you haven't used before, run `npm view @openai/codex
+   version` and compare against your own `codex --version`; if yours is
+   behind, run `codex update`. **Before running `codex update`**, check
+   `scripts/needle/results/codex-*.log` for any dispatch in flight from a
+   concurrent session on this machine — `codex update` is a global `npm
+   install -g`, not scoped to this repo or to your current dispatch.
+   `dispatch.sh` itself checks this before every dispatch (its
+   `MIN_CODEX_VERSION` pre-flight check) and will tell you clearly if your
+   CLI is too old — this note is what to do about it.
+
 ## Usage
 
 ```sh
@@ -401,3 +417,12 @@ their outcomes, are the concrete facts to bring to the harness team.
   that dispatch is starting cleanly (e.g. that the secret-scanner pre-check
   passes), that's fine to pipe through `head` — just re-run the real
   dispatch afterward rather than trusting that piped attempt's outcome.
+- **`codex exec` fails with `404 ... does not exist or you do not have
+  access to it` for a model that IS in `NEEDLE_ALLOWED_MODELS`.** (SMI-6445)
+  Your local Codex CLI predates that model's rollout — run `npm view
+  @openai/codex version` vs. `codex --version`, then `codex update` if
+  behind. See Setup step 6. `dispatch.sh` itself now checks this before
+  dispatching (its `MIN_CODEX_VERSION` pre-flight check) and prints the same
+  remediation; if you're seeing the raw Codex 404 instead of `dispatch.sh`'s
+  own clearer error, you likely bypassed `dispatch.sh` and called `codex
+  exec` directly.

@@ -14,11 +14,34 @@ NEEDLE_LIB_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 source "$NEEDLE_LIB_DIR/../agent-evals/lib.sh"
 
 # NEEDLE_ALLOWED_MODELS — the Codex models confirmed present in
-# ~/.codex/models_cache.json at diligence time (see this doc's § Surface
-# Grounding). An explicit allowlist, not passed through unchecked: {model}
-# flows into a shell-interpreted invoke_template (codex-adapter.yaml), so an
-# unvalidated value reaching it would be a command-injection surface.
-NEEDLE_ALLOWED_MODELS="gpt-5.6-sol gpt-5.5 gpt-5.6-luna gpt-5.6-terra"
+# ~/.codex/models_cache.json AND smoke-tested via a real `codex exec` call at
+# diligence time (SMI-6445, 2026-09-07 rotation — see
+# docs/internal/implementation/smi-6445-codex-model-rotation.md § Live
+# Validation Record). An explicit allowlist, not passed through unchecked:
+# {model} flows into a shell-interpreted invoke_template (codex-adapter.yaml),
+# so an unvalidated value reaching it would be a command-injection surface.
+#
+# `gpt-5.5` was removed in the 2026-09-07 rotation: it stayed listed in
+# OpenAI's own model catalog but returned a live 404 ("does not exist or you
+# do not have access to it") from every real dispatch — the exact silent
+# failure mode this allowlist exists to prevent from reaching an operator
+# unfiltered. Re-verify this list periodically against a fresh
+# `~/.codex/models_cache.json` + a real smoke test per model; a catalog
+# listing alone is not proof a model actually works (this is now the second
+# time a listed model went dead without OpenAI removing the catalog entry).
+#
+# `gpt-5.4-mini` is included as a cheap/fast burst tier for Codex-side work —
+# the catalog's lowest-priority, lowest-effort `visibility: list` model — a
+# genuine analogue to CLAUDE.md's Haiku row (mechanical/high-volume work),
+# not because a specific workload needs it yet.
+#
+# `gpt-reserve` and `codex-auto-review` are deliberately EXCLUDED despite
+# both passing their smoke test: both carry `visibility: hide` in OpenAI's
+# own catalog (not meant for direct/interactive selection), and
+# `codex-auto-review`'s name/lowest-priority value suggest it's purpose-built
+# for the `codex review` subcommand's internal use, not a general dispatch
+# target. Do not reintroduce either without a documented reason.
+NEEDLE_ALLOWED_MODELS="gpt-5.6-sol gpt-6-astra gpt-5.6-terra gpt-5.6-luna gpt-5.4-mini"
 
 # needle_model_allowed MODEL — returns 0 if MODEL is in the allowlist above,
 # 1 otherwise.

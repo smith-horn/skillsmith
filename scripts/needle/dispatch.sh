@@ -30,6 +30,18 @@ source "$SCRIPT_DIR/lib.sh"
 
 DEFAULT_MODEL="gpt-5.6-sol"
 DEFAULT_TIMEOUT=3600
+# MIN_CODEX_VERSION (SMI-6445) — the oldest Codex CLI release that can serve
+# every model in NEEDLE_ALLOWED_MODELS today: 0.153.1 is the first version
+# with GPT-6-Astra API support (npm view @openai/codex time --json shows
+# 0.153.1 published 2026-09-03T21:02Z, the same day as GPT-6-Astra's
+# announcement; confirmed against the GitHub release notes for
+# rust-v0.153.1). A local CLI older than this accepts `--model gpt-6-astra`
+# syntactically, then fails with the same opaque 404 a genuinely dead model
+# produces (`gpt-5.5`'s exact failure mode, see lib.sh's allowlist comment) —
+# this check turns that into a clear, actionable, Skillsmith-authored error
+# instead. Bump this constant (with a comment explaining why) whenever a
+# newly-added model needs a newer floor than the current value.
+MIN_CODEX_VERSION="0.153.1"
 
 WORKSPACE=""
 TITLE=""
@@ -58,6 +70,10 @@ Arguments:
 Options:
   --model <model>       Codex model to dispatch to (default: $DEFAULT_MODEL).
                          Allowed: $NEEDLE_ALLOWED_MODELS
+                         A model newer than your local Codex CLI needs
+                         'codex update' first (see README's Setup step 6) —
+                         this script checks for that below and errors clearly
+                         if your CLI predates $MIN_CODEX_VERSION.
   --timeout <secs>      Dispatch timeout in seconds (default: $DEFAULT_TIMEOUT).
   --expect-write         Signal that this dispatch is expected to produce a
                          real workspace change (not a pure analysis/review
@@ -72,7 +88,7 @@ Options:
 
 Examples:
   $(basename "$0") --workspace .worktrees/smi-1234-thing --title "Draft README section" --body-file /tmp/prompt.txt
-  $(basename "$0") --workspace .worktrees/smi-1234-thing --title "second opinion on auth design" --body-file /tmp/prompt.txt --model gpt-5.5 --timeout 1800
+  $(basename "$0") --workspace .worktrees/smi-1234-thing --title "second opinion on auth design" --body-file /tmp/prompt.txt --model gpt-5.6-terra --timeout 1800
 
 dispatch.sh's terminal outcomes: 'success' is FINAL — consume the result,
 never re-dispatch, even when the results log also carries an incidental
@@ -137,6 +153,32 @@ check_binary needle
 check_binary bf
 check_binary codex
 check_binary jq
+
+# ---- SMI-6445: MIN_CODEX_VERSION pre-flight check. Confirmed live on
+# 2026-09-07 (macOS host, both BSD-derived and GNU sort report -V support
+# here): a Codex CLI older than MIN_CODEX_VERSION accepts a newer model name
+# syntactically, then fails with the exact same opaque 404 a genuinely dead
+# model produces (see lib.sh's NEEDLE_ALLOWED_MODELS comment) — this turns
+# that into a clear, actionable error before ever reaching Codex. Version
+# extraction and 'sort -V' failing open (never blocking a dispatch on a
+# parsing hiccup) mirrors this script's other pre-flight guards' philosophy
+# of failing loud on the specific thing they check, not on unrelated
+# surprises.
+CODEX_VERSION_RAW="$(codex --version 2>/dev/null || echo '')"
+CODEX_VERSION_NUM="$(echo "$CODEX_VERSION_RAW" | grep -oE '[0-9]+\.[0-9]+\.[0-9]+' | head -1)"
+if [[ -n "$CODEX_VERSION_NUM" ]]; then
+    OLDEST_OF_TWO="$(printf '%s\n%s\n' "$MIN_CODEX_VERSION" "$CODEX_VERSION_NUM" | sort -V | head -1)"
+    if [[ "$OLDEST_OF_TWO" != "$MIN_CODEX_VERSION" ]]; then
+        needle_error "Installed Codex CLI ($CODEX_VERSION_NUM) is older than the minimum this repo's model allowlist needs ($MIN_CODEX_VERSION) — see MIN_CODEX_VERSION's comment above for why.
+
+A stale Codex CLI accepts --model syntactically for any newly-added model, then fails with an opaque 404 ('does not exist or you do not have access to it') indistinguishable from a genuinely dead model. Fix: run 'codex update' (wraps 'npm install -g @openai/codex'), then re-run this dispatch. Before doing so, check scripts/needle/results/codex-*.log for any dispatch in flight from a concurrent session on this machine — 'codex update' is a global npm install, not scoped to this repo. See scripts/needle/README.md's Setup step 6."
+    fi
+fi
+# A CODEX_VERSION_NUM parse failure (empty string) deliberately does NOT
+# block dispatch — it degrades to "can't verify, proceed" rather than a hard
+# failure on a version-string format this check didn't anticipate; a real
+# incompatibility still surfaces as Codex's own 404 downstream, just without
+# this check's clearer message.
 
 # Resolve to an absolute, real path so the repo-root refusal check below
 # cannot be bypassed by a relative path or a symlink.
