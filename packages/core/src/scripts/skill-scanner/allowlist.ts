@@ -12,6 +12,16 @@
  *   unbounded wildcards; runtime uses safeRegexTest with length cap.
  * - Fail-safe toward quarantine: malformed entries throw at load; unknown
  *   matchField rejects.
+ * - Governance review L-4 (SMI-5207): the default `matchField: 'message'` is no
+ *   longer 100% scanner-derived text. Since SMI-5207, `sensitive_path`
+ *   findings' `message` embeds up to 60 characters of the matched span from
+ *   the skill's OWN content (SecurityScanner.scanners.ts), so a skill that
+ *   already holds an allowlist entry could in principle craft matched text
+ *   widening that entry's reach across its own findings of the same type —
+ *   the per-skillId scope bounds this to no cross-skill bypass. New entries
+ *   for message-embedding finding types should scope `messagePattern` against
+ *   `pattern.source` (the fixed regex-source suffix every message carries),
+ *   not the quoted span, matching the existing entries' own convention.
  */
 
 import * as fs from 'fs'

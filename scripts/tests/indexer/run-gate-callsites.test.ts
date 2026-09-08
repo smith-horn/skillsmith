@@ -68,6 +68,20 @@
  *     trigger, with no relationship to the SMI-5879 change-window freeze this
  *     census concerns itself with — gating it on `assertRunAllowed`/
  *     `assertFreezeMarkerClear` would be a category error, not just circular.
+ *     SMI-5207's `smi5207-blast-radius-weekly.ts` and
+ *     `smi5207-blast-radius-transitions.ts` are the same shape for the same
+ *     reason as `smi5879-simulate-full.ts`/`smi5879-gate-check.ts` above:
+ *     both are pure READERS built to verify the SMI-5207 sensitive_path
+ *     severity-gating change's blast radius — `-weekly.ts` replays a skill
+ *     population through `scanSkill()`/`shouldQuarantine()` and diffs the
+ *     verdict against a `beforeQuarantined` ground-truth field (never writes
+ *     `skills.quarantined` itself), and `-transitions.ts` re-runs the real,
+ *     unmodified `escalateCodeExecution()` against a counterfactual findings
+ *     array purely to attribute a severity flip, writing only its own report
+ *     artifact. Neither is on any production write path, and neither has any
+ *     relationship to the SMI-5879 change-window freeze — gating them on
+ *     `assertRunAllowed`/`assertFreezeMarkerClear` would be the same category
+ *     error as `backfill-autochain-inputs.ts` above.
  *     Pinned as its own explicit set (Shape 1's "exactly N" assertion below is
  *     `PINNED_SHAPE1 ∪ PINNED_SHAPE4_UNGATED_GUARD`) rather than silently
  *     absorbed, so a FUTURE guard-shaped file that SHOULD be gated cannot
@@ -107,6 +121,8 @@ const PINNED_SHAPE4_UNGATED_GUARD = [
   'smi5879-corroboration-generate.ts',
   'smi5879-merge-shards.ts',
   'backfill-autochain-inputs.ts',
+  'smi5207-blast-radius-weekly.ts',
+  'smi5207-blast-radius-transitions.ts',
 ].sort()
 
 const PINNED_SHEBANG_FILES = [

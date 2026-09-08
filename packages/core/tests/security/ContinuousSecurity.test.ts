@@ -315,6 +315,13 @@ describe('ContinuousSecurity - SecurityScanner', () => {
     })
 
     describe('Credential Files', () => {
+      // SMI-5207 (MF-3): a bare credential-filename MENTION with no action verb
+      // or shell operator within +/-1 line now downgrades to MEDIUM rather than
+      // unconditional HIGH — none of these three fixtures carries an action verb
+      // ("root"/"file"/"backup" aren't in ACTION_VERBS) or a `|`/`>` operator, so
+      // all three are still detected (the finding itself is unchanged) but no
+      // longer quarantine on their own. Same MF-2 assertion shape as 'Environment
+      // Files' above, which hit this same severity-loosening one wave earlier.
       it.each(toTestCases(edgeCases.categories.pathEdgeCases.credentialFiles))(
         'should detect credentials reference: %s',
         (content) => {
@@ -322,12 +329,16 @@ describe('ContinuousSecurity - SecurityScanner', () => {
           const pathFindings = report.findings.filter((f) => f.type === 'sensitive_path')
 
           expect(pathFindings.length).toBeGreaterThan(0)
-          expect(report.passed).toBe(false)
+          expect(pathFindings.every((f) => f.severity === 'medium')).toBe(true)
+          expect(report.passed).toBe(true)
         }
       )
     })
 
     describe('Key Files', () => {
+      // SMI-5207 (MF-3): same action-context gate as Credential Files above —
+      // none of these four fixtures carries an action verb or shell operator, so
+      // each detected key-file mention now downgrades to MEDIUM instead of HIGH.
       it.each(toTestCases(edgeCases.categories.pathEdgeCases.keyFiles))(
         'should detect key file reference: %s',
         (content) => {
@@ -335,7 +346,8 @@ describe('ContinuousSecurity - SecurityScanner', () => {
           const pathFindings = report.findings.filter((f) => f.type === 'sensitive_path')
 
           expect(pathFindings.length).toBeGreaterThan(0)
-          expect(report.passed).toBe(false)
+          expect(pathFindings.every((f) => f.severity === 'medium')).toBe(true)
+          expect(report.passed).toBe(true)
         }
       )
     })

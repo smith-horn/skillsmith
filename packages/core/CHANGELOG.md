@@ -4,6 +4,7 @@ All notable changes to `@skillsmith/core` are documented here.
 
 ## [Unreleased]
 
+- **Fix**: `sensitive_path` scanner findings now require nearby action evidence (a verb, shell operator, or imperative framing) before scoring HIGH — a bare mention of a sensitive path in prose or a defensive/documentation context downgrades to MEDIUM instead of triggering the weekly security scan's allowlist-triage cycle (SMI-5207). Adds `SecurityScanner.action-context.ts` (the action-context gate) and `SecurityScanner.value-gate.ts`/`SecurityScanner.prose-lexicon.ts` (per-assignment-segmented value classification), with `patterns.sensitive-path.ts` split out of `patterns.ts` for the pattern family itself. `scanSensitivePaths()`'s severity-message construction now embeds up to 60 chars of the matched content — see `skill-scanner/allowlist.ts`'s updated design-invariant note if authoring a new allowlist entry against a `sensitive_path` message.
 - **Fix**: `multilineTruncated` (set when a scan hits its per-pattern iteration ceiling, so `riskScore` is a known under-count) was computed but never consumed at the quarantine decision — `trust-scorer.ts`'s `shouldQuarantine()` could clear or never apply a quarantine hold based on an incomplete scan. A truncated scan now forces `quarantine: true` before allowlist filtering runs, so an allowlist can no longer clear a scan-integrity hold (SMI-5879, SMI-6020)
 
 ## v0.12.2

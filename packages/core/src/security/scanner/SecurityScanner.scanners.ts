@@ -16,6 +16,8 @@ import {
   SENSITIVE_PATH_PATTERNS,
   ENV_PATH_PATTERN,
   VALUE_GATED_KEYWORD_PATTERNS,
+  PATH_FORM_PATTERNS,
+  VALUE_GATED_ASSIGNMENT_PATTERNS,
   SOCIAL_ENGINEERING_PATTERNS,
   PROMPT_LEAKING_PATTERNS,
   DATA_EXFILTRATION_PATTERNS,
@@ -34,6 +36,11 @@ import {
   shannonEntropy,
   scanPiiPatterns,
 } from './SecurityScanner.pii.js'
+// SMI-5207: the two sensitive_path severity gates, each split into its own
+// module for the 500-line gate. MF-3 answers "is this path being acted on?";
+// MF-4 answers "does this assignment carry a real credential?".
+import { hasPathActionContext } from './SecurityScanner.action-context.js'
+import { assignmentHasRealValue } from './SecurityScanner.value-gate.js'
 
 /**
  * SMI-5359 Wave 4 (MF-2): a `.env` reference is an active read/exfiltration only when
@@ -82,14 +89,24 @@ export function scanSensitivePaths(
       }
 
       // MF-2: lone `.env` → MEDIUM; `.env` + read/exfil verb or pipe/redirect → HIGH.
+      // MF-3 (SMI-5207): a path-form match → HIGH only with an action verb or shell
+      // operator within +/-1 line; a bare path MENTION is the common case, so evidence
+      // is required to escalate.
+      // MF-4 (SMI-5207): an assignment-form match → HIGH by DEFAULT (a `keyword: value`
+      // credential shape is rare in innocent prose), downgraded only on positive prose
+      // evidence about the assigned value.
       // Doc-context keeps the existing MEDIUM downgrade for every pattern.
       let severity: SecurityFinding['severity']
       if (inDocContext) {
-        severity = 'medium'
+        severity = 'medium' // unchanged
       } else if (pattern === ENV_PATH_PATTERN) {
-        severity = safeRegexCheck(ENV_EXFIL_CONTEXT, line) ? 'high' : 'medium'
+        severity = safeRegexCheck(ENV_EXFIL_CONTEXT, line) ? 'high' : 'medium' // MF-2, unchanged
+      } else if (PATH_FORM_PATTERNS.has(pattern)) {
+        severity = hasPathActionContext(lines, index) ? 'high' : 'medium' // MF-3
+      } else if (VALUE_GATED_ASSIGNMENT_PATTERNS.has(pattern)) {
+        severity = assignmentHasRealValue(lines, index) ? 'high' : 'medium' // MF-4
       } else {
-        severity = 'high'
+        severity = 'high' // MF-1 survivors and any future unclassified pattern — fail CLOSED
       }
       const confidence: FindingConfidence = inDocContext
         ? 'low'
@@ -100,7 +117,20 @@ export function scanSensitivePaths(
       findings.push({
         type: 'sensitive_path',
         severity,
-        message: `Reference to potentially sensitive path: ${pattern.source}`,
+        // SMI-5207: the matched TEXT is prepended additively — `pattern.source` is
+        // deliberately retained, not swapped out, because allowlist entries'
+        // `messagePattern` values match on that regex-source substring.
+        // Governance review L-5: `match?.[0] ?? ''` is kept (a plain `match[0]`
+        // fails `tsc` — TS cannot correlate the separate `safeRegexCheck`/
+        // `safeRegexTest` calls the way it narrows a local `if (match)` block, the
+        // pattern this file's OTHER scanners use). Behaviorally the `?? ''`
+        // fallback is unreachable: `safeRegexCheck` (.test()) already gated the
+        // loop above on this same pattern/line pair, and for a non-`g` pattern
+        // .test() and .match() can never disagree on the same input. If it ever
+        // WAS reached, it would silently diverge from the edge twins (which emit
+        // no finding at all rather than one with an empty quoted span) — a gap the
+        // twin-parity test can't catch, since it compares files, not behavior.
+        message: `Reference to potentially sensitive path: "${match?.[0]?.slice(0, 60) ?? ''}" (${pattern.source})`,
         location: line.trim().slice(0, 100),
         lineNumber: index + 1,
         inDocumentationContext: inDocContext,

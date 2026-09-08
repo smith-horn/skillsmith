@@ -57,68 +57,22 @@ export const TRANSIENT_TRANSFER_HOSTS = ['transfer.sh', 'file.io', 'tmpfiles.org
 // install shape (a bare shortened link stays at url:medium like any tier here).
 export const URL_SHORTENER_DOMAINS = ['bit.ly', 'tinyurl.com', 't.co', 'is.gd']
 
-// Sensitive file path patterns
-// SMI-4396 Wave 2: bare-keyword variants (credentials, secrets?, password) tightened
-// to require assignment/path/file-extension context. Without this tuning,
-// documentation keywords in SKILL.md frontmatter and prose (1Password integration
-// guides, security-research skill domain vocabulary) tripped HIGH severity.
-//
-// SMI-5359 Wave 4 — FP-narrowing for two over-firing entries (severity policy lives
-// in scanSensitivePaths so the array length / regression-guard baseline is unchanged):
-//   MF-1: bare /api[_-]?key/i & /auth[_-]?token/i fired HIGH on ANY substring —
-//     benign prose ("set your api_key in the dashboard"), `export API_KEY=$1`, and
-//     `apiKey: <YOUR_KEY>` placeholders. They are now VALUE-GATED: HIGH only when the
-//     line assigns a real (non-placeholder, sufficiently-entropic) secret. The
-//     value-BEARING leak is already caught at PII (PII_PATTERNS[0/2]); the
-//     credential-in-an-outbound-curl exfil is caught by DATA_EXFILTRATION_PATTERNS
-//     (the `$API_KEY`-in-a-fetched-URL pattern added below). See
-//     VALUE_GATED_KEYWORD_PATTERNS.
-//   MF-2: lone /\.env/i fired HIGH on every `.env` mention AND on the benign committed
-//     family (.envrc, .env.example/.sample/.template/.schema/.dist). ENV_PATH_PATTERN
-//     negative-lookaheads exclude that family; scanSensitivePaths downgrades a LONE
-//     `.env` to MEDIUM and keeps HIGH when it co-occurs with a read/exfil verb or
-//     shell pipe/redirect (`cat .env | curl ...`).
-
-// MF-2: `.env` as a real env-file reference. Excludes `.envrc` (direnv config) and the
-// committed placeholder family (.env.example/.sample/.template/.schema/.dist). The
-// `(?![A-Za-z])` guard also drops the `.environment`/`.envision` English-word FP while
-// still matching real variants like `.env`, `.env.local`, `.env.production`.
-export const ENV_PATH_PATTERN = /\.env(?![A-Za-z])(?!\.(?:example|sample|template|schema|dist))/i
-
-// MF-1: bare credential keywords — value-gated in scanSensitivePaths, never standalone HIGH.
-const API_KEY_KEYWORD = /api[_-]?key/i
-const AUTH_TOKEN_KEYWORD = /auth[_-]?token/i
-
-export const SENSITIVE_PATH_PATTERNS = [
+// SMI-5207: the whole `sensitive_path` family (ENV_PATH_PATTERN, the 15-entry
+// SENSITIVE_PATH_PATTERNS array and the three ReadonlySets that classify its
+// entries by severity gate) moved to patterns.sensitive-path.ts — this file
+// had only 18 lines of headroom under the 500-line pre-commit gate, and the
+// MF-3/MF-4 classification needed ~42. Re-exported here unchanged so every
+// existing import path (index.ts, SecurityScanner.scanners.ts,
+// scanner-regression-guard.test.ts) keeps working AND reference identity is
+// preserved — scanSensitivePaths classifies patterns by reference, so this
+// re-export is load-bearing exactly like the two below it; do not remove.
+export {
   ENV_PATH_PATTERN,
-  // Contextual credentials: filename or assignment, not bare prose
-  /credentials\.(?:json|ya?ml|env|toml|txt)/i,
-  /credentials\s*[:=]/i,
-  // Contextual secrets: assignment or path, not bare word
-  /\bsecrets?\s*[:=]/i,
-  /\bsecrets?\/[a-z0-9_.-]+/i,
-  /\.pem$/i,
-  /\.key$/i,
-  /\.crt$/i,
-  // Contextual password: assignment or URL (postgres://user:pass@host) only
-  /password\s*[:=]/i,
-  API_KEY_KEYWORD,
-  AUTH_TOKEN_KEYWORD,
-  /~\/\.ssh/i,
-  /~\/\.aws/i,
-  /~\/\.config/i,
-  // SMI-4396 Wave 2: explicit system-file paths. Added so that tightening
-  // bare /credentials/i and /password/i into assignment-context variants
-  // doesn't drop coverage of obvious sensitive references like /etc/passwd.
-  /\/etc\/(?:passwd|shadow|sudoers|hosts)\b/i,
-]
-
-// MF-1: the two bare-keyword patterns above emit HIGH only when accompanied by a real
-// assigned secret value; scanSensitivePaths suppresses an otherwise-bare match.
-export const VALUE_GATED_KEYWORD_PATTERNS: ReadonlySet<RegExp> = new Set([
-  API_KEY_KEYWORD,
-  AUTH_TOKEN_KEYWORD,
-])
+  SENSITIVE_PATH_PATTERNS,
+  VALUE_GATED_KEYWORD_PATTERNS,
+  PATH_FORM_PATTERNS,
+  VALUE_GATED_ASSIGNMENT_PATTERNS,
+} from './patterns.sensitive-path.js'
 
 // Jailbreak attempt patterns
 // SMI-5876 Wave 1: JAILBREAK_PATTERNS and AI_DEFENCE_PATTERNS (below) moved to
@@ -136,7 +90,9 @@ export { EVIDENCE_TYPE_BY_PATTERN } from './patterns.jailbreak.evidence.js'
 
 /**
  * SMI-5876 §0.1/§0.2: bump on ANY pattern-array or evidence-table change in
- * this module or patterns.jailbreak.ts. The security-audit baseline
+ * this module, patterns.jailbreak.ts, or patterns.sensitive-path.ts (SMI-5207
+ * moved the sensitive_path family there; the bump obligation moved with it).
+ * The security-audit baseline
  * (packages/mcp-server/src/audit/security-baseline.ts /
  * security-audit.ts) stamps every stored entry with the version that
  * produced it and treats a mismatch as "not comparable" — forcing a re-scan
@@ -192,11 +148,21 @@ export { EVIDENCE_TYPE_BY_PATTERN } from './patterns.jailbreak.evidence.js'
  * produced advisory-tier findings before. All three are the
  * previously-clean-content-now-fires scenario this gate exists for. Scope
  * note (unchanged from Wave 3): this forces re-evaluation of the local MCP
- * audit baseline only (patterns.ts:100-125,
+ * audit baseline only (this constant and its `comparable` consumer,
  * packages/mcp-server/src/audit/security-audit.ts:219-222); the edge indexer
  * never reads this constant, which is why it has no edge counterpart.
+ * (SMI-5207 replaced a `patterns.ts:100-125` line-range citation here — that
+ * range addressed the sensitive_path family, which moved to
+ * patterns.sensitive-path.ts, so the numbers no longer resolve.)
+ *
+ * Bumped to `2026-09-07.1`: SMI-5207 added the MF-3 (path-form
+ * action-context, negation-aware) and MF-4 (assignment-form value,
+ * default-HIGH-unless-prose) severity gates. Unlike every bump above, this
+ * one is *previously-flagged-content-now-clean* — without it, the
+ * `comparable` gate keeps reusing a stored `malicious` verdict produced by
+ * the pre-fix ruleset, and the fix never reaches an already-scanned skill.
  */
-export const SCANNER_RULESET_VERSION = '2026-08-15.1' as const
+export const SCANNER_RULESET_VERSION = '2026-09-07.1' as const
 
 // Suspicious patterns that might indicate malicious intent
 export const SUSPICIOUS_PATTERNS = [
