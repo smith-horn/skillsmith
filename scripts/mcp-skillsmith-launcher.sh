@@ -62,8 +62,14 @@ emit_error() {
   } >&2
 }
 
-REMEDIATION_INSTALL_BUILD="    docker compose --profile dev up -d
-    docker exec skillsmith-dev-1 npm install
+# SMI-6454: "npm install" runs on the HOST, not via `docker exec` -- root
+# node_modules is a Docker named volume (docker-compose.yml), a completely
+# separate filesystem from the host tree this host-run launcher (and its
+# dependency probe below) actually reads. `npm run build` stays container-side:
+# dist/ is NOT volume-migrated, so a container-side build's output lands on
+# the shared bind mount and is visible to the host unchanged.
+REMEDIATION_INSTALL_BUILD="    npm install
+    docker compose --profile dev up -d
     docker exec skillsmith-dev-1 npm run build"
 
 if [ ! -f "$NM_SENTINEL" ]; then
@@ -159,15 +165,18 @@ if [ "$probe_status" -eq 1 ] && printf '%s\n' "$probe_out" | grep -q '^FAIL '; t
         "$REMEDIATION_INSTALL_BUILD"
       ;;
     nested-corrupt)
+      # SMI-6454: packages/mcp-server/node_modules is ALSO a named volume
+      # (docker-compose.yml) -- both the rm -rf and the reinstall must be
+      # host-side, no container involved, or the fix never reaches the
+      # bytes this host-run launcher's probe actually reads.
       emit_error "$dep_name dependency corrupt at packages/mcp-server/node_modules/$dep_name" \
-"    docker compose --profile dev up -d
-    rm -rf packages/mcp-server/node_modules/$dep_name
-    docker exec skillsmith-dev-1 npm install"
+"    rm -rf packages/mcp-server/node_modules/$dep_name
+    npm install"
       ;;
     *)
+      # SMI-6454: same named-volume reasoning as nested-corrupt above.
       emit_error "$dep_name dependency missing" \
-"    docker compose --profile dev up -d
-    docker exec skillsmith-dev-1 npm install"
+"    npm install"
       ;;
   esac
   # Diagnostic: every failing dep, one line each (first drives the message).
