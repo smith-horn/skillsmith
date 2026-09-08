@@ -12,6 +12,14 @@ All notable changes to `@skillsmith/mcp-server` are documented here.
   is now a re-export). (2) Frontmatter `name` must match the skill's enclosing directory name, for
   both a direct skill-directory `skill_path` and a direct `.../my-skill/SKILL.md` file path. Both
   checks report as `field: 'name'`, `severity: 'error'`.
+- **Fixed**: SMI-6472 Wave 2 -- every MCP tool schema (all 43) now declares a top-level
+  `title` and an `annotations: { readOnlyHint, destructiveHint }` object per the MCP spec, and
+  `src/index.ts`'s `ListToolsRequestSchema` handler now reads and re-emits both fields onto the
+  wire response. Previously that handler mapped every tool to `{ name, description, inputSchema }`
+  only, so a field added to a tool's schema constant was silently invisible to MCP clients unless
+  the handler was also updated — a hazard covered going forward by a new wire-level integration
+  test (`tests/integration/tools-list-annotations.integration.test.ts`) that spawns the real built
+  server and asserts on the live `tools/list` response rather than the exported schema constants.
 
 ## v0.7.13
 

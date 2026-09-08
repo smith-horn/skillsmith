@@ -145,6 +145,8 @@ export const skillRescanToolSchema = {
     'Detects issues like SSRF instructions, prompt injection, data exfiltration, ' +
     'and other threats that may not have been caught when the skill was originally installed. ' +
     'Run without arguments to scan all installed skills, or specify a skill name to scan one.',
+  title: 'Rescan Installed Skills',
+  annotations: { readOnlyHint: false, destructiveHint: false },
   inputSchema: {
     type: 'object' as const,
     properties: {

@@ -28,6 +28,8 @@ export const indexLocalToolSchema = {
   name: 'index_local',
   description:
     'Index local skills from ~/.claude/skills/ directory. Returns count and details of indexed skills.',
+  title: 'Index Local Skills',
+  annotations: { readOnlyHint: true, destructiveHint: false },
   inputSchema: {
     type: 'object' as const,
     properties: {

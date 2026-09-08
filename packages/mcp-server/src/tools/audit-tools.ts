@@ -75,6 +75,8 @@ export const auditExportToolSchema = {
     'Export audit log events for a given time range. ' +
     'Requires Enterprise tier (audit_logging feature). ' +
     'Returns structured audit events in JSON format.',
+  title: 'Export Audit Logs',
+  annotations: { readOnlyHint: true, destructiveHint: false },
   inputSchema: {
     type: 'object' as const,
     properties: {
@@ -91,6 +93,8 @@ export const auditQueryToolSchema = {
   description:
     'Query audit logs with filters (actor, resource, event type, result, date range). ' +
     'Requires Enterprise tier (audit_logging feature).',
+  title: 'Query Audit Logs',
+  annotations: { readOnlyHint: true, destructiveHint: false },
   inputSchema: {
     type: 'object' as const,
     properties: {
@@ -115,6 +119,8 @@ export const siemExportToolSchema = {
     'Export audit events for SIEM ingestion (CloudWatch, Splunk, Datadog). ' +
     'Requires Enterprise tier (siem_export feature). ' +
     'SIEM destination is configured via environment variables, not tool arguments.',
+  title: 'Export SIEM Events',
+  annotations: { readOnlyHint: true, destructiveHint: false },
   inputSchema: {
     type: 'object' as const,
     properties: {

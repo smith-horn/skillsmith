@@ -9,7 +9,11 @@
 
 import { Server } from '@modelcontextprotocol/sdk/server/index.js'
 import { StdioServerTransport } from '@modelcontextprotocol/sdk/server/stdio.js'
-import { CallToolRequestSchema, ListToolsRequestSchema } from '@modelcontextprotocol/sdk/types.js'
+import {
+  CallToolRequestSchema,
+  ListToolsRequestSchema,
+  type ToolAnnotations,
+} from '@modelcontextprotocol/sdk/types.js'
 
 // SMI-2208: Use async context for WASM fallback support
 // SMI-5981: buildDbInitializedLogMessage prints the actually-resolved DB path.
@@ -203,14 +207,41 @@ const server = new Server(
   }
 )
 
+// SMI-6472 (MCP server spec alignment): `toolDefinitions` is a
+// heterogeneous array — every tool's schema constant carries its own inline
+// `as const` literal type, plus the two dispatcher-built interfaces spread
+// in from `audit-tool-dispatch.ts`/`provenance-tool-dispatch.ts` — so `tool`
+// inside the ListTools handler below is a wide union with no shared
+// `title`/`annotations` member yet (most schema constants don't declare
+// those two optional MCP-spec fields yet). This narrow structural view lets
+// the handler read them where present without a blanket `any` cast, and
+// without touching (or needing to touch) the many individual schema-constant
+// declaration sites. Extend with `outputSchema?: unknown` for Wave 3 — a
+// one-line addition alongside the allowlist below.
+type ToolMetaFields = {
+  title?: string
+  annotations?: ToolAnnotations
+}
+
 // Handle list tools request
 server.setRequestHandler(ListToolsRequestSchema, async () => {
   return {
-    tools: filterToolsForAgentProfile(toolDefinitions).map((tool) => ({
-      name: tool.name,
-      description: tool.description,
-      inputSchema: tool.inputSchema,
-    })),
+    tools: filterToolsForAgentProfile(toolDefinitions).map((tool) => {
+      // This `.map()` defines the ENTIRE wire-visible tool shape — a field
+      // added to a tool's schema constant (e.g. `title`/`annotations`) is
+      // otherwise invisible to MCP clients unless it is also read and
+      // re-emitted here. Each optional field is spread in only when actually
+      // present, so we never emit `title: undefined` / `annotations: undefined`
+      // on tools that don't define them.
+      const meta = tool as ToolMetaFields
+      return {
+        name: tool.name,
+        description: tool.description,
+        inputSchema: tool.inputSchema,
+        ...(meta.title !== undefined ? { title: meta.title } : {}),
+        ...(meta.annotations !== undefined ? { annotations: meta.annotations } : {}),
+      }
+    }),
   }
 })
 

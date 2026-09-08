@@ -63,6 +63,8 @@ export const applyRecommendedEditToolSchema = {
   name: 'apply_recommended_edit',
   description:
     '[Skillsmith — Maintain stage] Apply a recommended prose edit from a prior `skill_inventory_audit`. MUTATES `~/.claude` (rewrites a SKILL.md / CLAUDE.md snippet) — but ONLY when `confirmed: true`. Without `confirmed`, returns a non-mutating preview ({ preview: true, before, after, applied: false }). Gated on APPLY_TEMPLATE_REGISTRY: only registered when at least one apply-eligible template is enabled.',
+  title: 'Apply Recommended Edit',
+  annotations: { readOnlyHint: false, destructiveHint: true },
   inputSchema: {
     type: 'object' as const,
     properties: {

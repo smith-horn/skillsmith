@@ -66,6 +66,8 @@ export const webhookConfigureToolSchema = {
     'Configure webhooks for skill lifecycle events (skill.install, skill.publish, etc.). ' +
     'Webhooks are signed with HMAC-SHA256. ' +
     'Requires Enterprise tier (custom_integrations feature).',
+  title: 'Configure Webhook',
+  annotations: { readOnlyHint: false, destructiveHint: true },
   inputSchema: {
     type: 'object' as const,
     properties: {
@@ -95,6 +97,8 @@ export const apiKeyManageToolSchema = {
   description:
     'Manage API keys for programmatic access. Keys are shown once on creation. ' +
     'Stored as SHA-256 hashes. Requires Enterprise tier (custom_integrations feature).',
+  title: 'Manage API Keys',
+  annotations: { readOnlyHint: false, destructiveHint: true },
   inputSchema: {
     type: 'object' as const,
     properties: {

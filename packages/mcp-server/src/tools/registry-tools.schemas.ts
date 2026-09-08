@@ -116,6 +116,8 @@ export const privateRegistryPublishToolSchema = {
     "Skills are scoped to your team's registry namespace and published versions are immutable. " +
     'A published version is not installable by teammates until a team admin approves it — ' +
     'see private_registry_manage action "submissions" to check its status.',
+  title: 'Publish to Private Registry',
+  annotations: { readOnlyHint: false, destructiveHint: false },
   inputSchema: {
     type: 'object' as const,
     properties: {
@@ -149,6 +151,8 @@ export const privateRegistryManageToolSchema = {
     'namespace, submissions, approve, reject). Requires Enterprise tier (private_registry ' +
     'feature). Published versions require a team admin to approve them via "approve" before ' +
     'other members can install them (see "submissions" to check status).',
+  title: 'Manage Private Registry',
+  annotations: { readOnlyHint: false, destructiveHint: true },
   inputSchema: {
     type: 'object' as const,
     properties: {
