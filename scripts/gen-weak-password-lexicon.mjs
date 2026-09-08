@@ -1,12 +1,16 @@
 #!/usr/bin/env node
 // SMI-6441: generate the weak-password lexicon consumed by the
-// `sensitive_path` MF-4b veto (Wave 2 — not wired to any severity change
-// yet in this wave). Reads a vendored, SHA-256-pinned SecLists snapshot,
-// filters it to lowercase 3-19-char tokens, subtracts a hand-curated
-// documentation-vocabulary keeplist, and emits three
-// byte-identical-modulo-@module TypeScript modules: one for
-// @skillsmith/core, one for the Node indexer edge twin, one for the Deno
-// Supabase edge twin (git-crypt encrypted — unlock before writing).
+// `sensitive_path` MF-4b veto (Wave 2 — no severity change in this wave).
+// Reads a vendored, SHA-256-pinned SecLists snapshot, truncates it to its
+// first SOURCE_RANK_LIMIT (5000) rank-ordered lines (M-2a — see that
+// constant below and docs/internal/implementation/smi-6441-weak-password-
+// veto.md § item 3 "Sizing the corpus"; the untruncated 10k-line pipeline
+// yields 7,063 entries / 506 lines, failing both gates below), filters to
+// lowercase 3-19-char tokens, subtracts a hand-curated documentation-
+// vocabulary keeplist, and emits three byte-identical-modulo-@module
+// TypeScript modules: @skillsmith/core, the Node indexer edge twin, and
+// the Deno Supabase edge twin (git-crypt encrypted — unlock before
+// writing).
 //
 // Modeled on scripts/gen-docs-folder-index.mjs: --write/--check convention,
 // zero runtime dependencies, plain .mjs so audit-standards.mjs can call it
@@ -49,13 +53,17 @@ export const LEXICON_VERSION = '2026-09-08.1'
 export const SHAPE_RE = /^[a-z]{3,19}$/
 export const ENCODING_UNSAFE_RE = /[`\\$]/
 // [2000, 6000]: tightened from the pre-review [2000, 8000] (M-2) — see the
-// plan doc § item 3's "Gate interaction" note for the file-length-budget
-// arithmetic behind this exact upper bound. Do not raise it without a new
-// plan-review round.
+// plan doc's "Gate interaction" note. Do not raise without a plan review.
 export const MIN_ENTRIES = 2000
 export const MAX_ENTRIES = 6000
 export const MAX_EMITTED_LINES = 480
 export const WRAP_WIDTH = 120
+// M-2a: truncate the rank-ordered snapshot to its first N lines BEFORE any
+// filtering (`lines.slice(0, SOURCE_RANK_LIMIT)`, so N maps to `sed -n
+// '1,5000p'`). Measured: 4,079 entries / 317 total lines (plan doc's
+// "Sizing the corpus"). Raising this is a GATED change — re-run the sizing
+// table, the Wave 2 fixture matrix, and the Wave 2 Step 4 replay.
+export const SOURCE_RANK_LIMIT = 5000
 
 export const SOURCES_JSON_PATH = join(REPO_ROOT, 'data/wordlists/SOURCES.json')
 export const KEEPLIST_PATH = join(REPO_ROOT, 'data/wordlists/doc-vocab-keeplist.txt')
@@ -106,6 +114,18 @@ export function verifySourcesIntegrity(sourcesObj, readVendoredFile) {
       )
     }
   }
+}
+
+/**
+ * Truncate the raw vendored snapshot to its first `limit` lines (rank-order
+ * cut) — MUST run before any shape filtering (M-2a). The upstream file is
+ * frequency-rank-ordered, most common password first, so this keeps the
+ * most-common half and drops the least-common half; it is not an arbitrary
+ * sample. `lines.slice(0, limit)` so a reviewer can reproduce the cut by
+ * hand with `sed -n '1,Np'` on the vendored file.
+ */
+export function truncateToRankLimit(rawText, limit = SOURCE_RANK_LIMIT) {
+  return rawText.split('\n').slice(0, limit).join('\n')
 }
 
 /** Lowercase, `/^[a-z]{3,19}$/`-shaped, deduped tokens from a snapshot's raw text. */
@@ -221,10 +241,18 @@ export function wrapPayload(sortedEntries, width = WRAP_WIDTH) {
 
 /**
  * Run every gate and return the final sorted entry array. Throws (does not
- * silently degrade) on the first violated invariant.
+ * silently degrade) on the first violated invariant. `sourceRankLimit`
+ * defaults to the real SOURCE_RANK_LIMIT constant; tests pass a smaller
+ * value to exercise the truncation boundary against small fixtures.
  */
-export function computeLexicon({ snapshotText, keeplistText, proseLexiconText }) {
-  const shapeTokens = filterShapeTokens(snapshotText)
+export function computeLexicon({
+  snapshotText,
+  keeplistText,
+  proseLexiconText,
+  sourceRankLimit = SOURCE_RANK_LIMIT,
+}) {
+  const truncated = truncateToRankLimit(snapshotText, sourceRankLimit)
+  const shapeTokens = filterShapeTokens(truncated)
   const keeplist = parseKeeplist(keeplistText)
   const proseStopwords = parseProseStopwords(proseLexiconText)
   const afterKeeplist = subtractKeeplist(shapeTokens, keeplist)
@@ -300,6 +328,7 @@ export function renderModule({ moduleLine, source, version, payloadLines }) {
     `  license: ${JSON.stringify(source.license)},`,
     `  commit: ${JSON.stringify(source.commit)},`,
     `  sha256: ${JSON.stringify(source.sha256)},`,
+    `  sourceRankLimit: ${source.sourceRankLimit},`,
     `  entries: ${source.entries},`,
     '} as const',
     '',
@@ -373,6 +402,7 @@ export function generateAll(inputs) {
     license: inputs.sourceMeta.license,
     commit: inputs.sourceMeta.commit,
     sha256: inputs.sourceMeta.sha256,
+    sourceRankLimit: SOURCE_RANK_LIMIT,
     entries: entries.length,
   }
   const rendered = OUTPUTS.map((out) => {

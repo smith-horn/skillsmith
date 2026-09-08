@@ -17,6 +17,7 @@ import { describe, it, expect } from 'vitest'
 import {
   sha256Hex,
   verifySourcesIntegrity,
+  truncateToRankLimit,
   filterShapeTokens,
   parseKeeplist,
   parseProseStopwords,
@@ -29,9 +30,11 @@ import {
   renderModule,
   assertEmittedLineBudget,
   detectDrift,
+  generateAll,
   MIN_ENTRIES,
   MAX_ENTRIES,
   MAX_EMITTED_LINES,
+  SOURCE_RANK_LIMIT,
 } from '../gen-weak-password-lexicon.mjs'
 
 /** Minimal PROSE_STOPWORDS fixture matching the real file's anchor shape. */
@@ -174,6 +177,73 @@ describe('assertEntryCountInRange — M-2 [2000, 6000] bound', () => {
   })
 })
 
+describe('SOURCE_RANK_LIMIT (M-2a)', () => {
+  it('is 5000, per the plan doc\'s "Sizing the corpus" derivation', () => {
+    expect(SOURCE_RANK_LIMIT).toBe(5000)
+  })
+})
+
+describe('truncateToRankLimit — rank-order cut, must run before shape filtering (M-2a)', () => {
+  it('keeps exactly the first `limit` lines, in file order', () => {
+    const raw = ['a', 'b', 'c', 'd', 'e'].join('\n')
+    expect(truncateToRankLimit(raw, 3)).toBe('a\nb\nc')
+  })
+
+  it('is a no-op when limit exceeds the line count', () => {
+    const raw = ['a', 'b'].join('\n')
+    expect(truncateToRankLimit(raw, 100)).toBe('a\nb')
+  })
+
+  it('drops everything when limit is 0', () => {
+    expect(truncateToRankLimit('a\nb\nc', 0)).toBe('')
+  })
+})
+
+describe('computeLexicon — SOURCE_RANK_LIMIT truncation boundary, both directions (M-2a)', () => {
+  // Per the plan: "Testing only that the fixtures survive would pass even
+  // if truncation silently never ran, so the exclusion half is the
+  // load-bearing half." This test asserts BOTH a survivor at the boundary
+  // AND the immediately-next, correctly-excluded token — a regression that
+  // removes or raises the truncation step would turn the excluded token
+  // green and fail this test.
+  const proseLexicon = proseLexiconFixture(['the', 'a'])
+
+  it('keeps a token exactly at the limit and drops the very next rank', () => {
+    const limit = MIN_ENTRIES + 5
+    const filler = letterFillerTokens(limit - 1) // occupies ranks 1..limit-1
+    const raw = [...filler, 'survivor', 'excluded'].join('\n') // ranks limit, limit+1
+    const entries = computeLexicon({
+      snapshotText: raw,
+      keeplistText: '',
+      proseLexiconText: proseLexicon,
+      sourceRankLimit: limit,
+    })
+    expect(entries).toContain('survivor')
+    expect(entries).not.toContain('excluded')
+  })
+
+  it('a smaller sourceRankLimit excludes tokens the untruncated pipeline would have kept', () => {
+    const filler = letterFillerTokens(MIN_ENTRIES + 5)
+    const raw = [...filler, 'onlyuntrunc'].join('\n')
+    // Untruncated (limit covers the whole raw text): the extra token survives.
+    const untruncated = computeLexicon({
+      snapshotText: raw,
+      keeplistText: '',
+      proseLexiconText: proseLexicon,
+      sourceRankLimit: raw.split('\n').length,
+    })
+    expect(untruncated).toContain('onlyuntrunc')
+    // Truncated one rank short of the extra token: it must be excluded.
+    const truncated = computeLexicon({
+      snapshotText: raw,
+      keeplistText: '',
+      proseLexiconText: proseLexicon,
+      sourceRankLimit: MIN_ENTRIES + 5,
+    })
+    expect(truncated).not.toContain('onlyuntrunc')
+  })
+})
+
 describe('computeLexicon — end-to-end gate composition on synthetic fixtures', () => {
   const proseLexicon = proseLexiconFixture(['the', 'a', 'please', 'never'])
 
@@ -217,6 +287,48 @@ describe('computeLexicon — end-to-end gate composition on synthetic fixtures',
   })
 })
 
+describe('renderModule — records sourceRankLimit in WEAK_PASSWORD_LEXICON_SOURCE (M-2a)', () => {
+  it('emits the literal sourceRankLimit value passed in `source`', () => {
+    const source = {
+      upstream: 'https://example.test/repo',
+      path: 'fixture.txt',
+      license: 'MIT',
+      commit: 'a'.repeat(40),
+      sha256: 'b'.repeat(64),
+      sourceRankLimit: 5000,
+      entries: 2,
+    }
+    const text = renderModule({
+      moduleLine: '@module fixture',
+      source,
+      version: '2026-01-01.1',
+      payloadLines: ['horse monkey'],
+    })
+    expect(text).toMatch(/sourceRankLimit: 5000,/)
+  })
+
+  it('generateAll defaults to the real SOURCE_RANK_LIMIT constant when the caller omits it', () => {
+    const proseLexicon = proseLexiconFixture(['the', 'a'])
+    const filler = letterFillerTokens(MIN_ENTRIES + 10)
+    const inputs = {
+      snapshotText: filler.join('\n'),
+      keeplistText: '',
+      proseLexiconText: proseLexicon,
+      sourceMeta: {
+        upstream: 'https://example.test/repo',
+        path: 'fixture.txt',
+        license: 'MIT',
+        commit: 'a'.repeat(40),
+        sha256: 'b'.repeat(64),
+      },
+    }
+    const result = generateAll(inputs)
+    for (const r of result.rendered) {
+      expect(r.text).toMatch(new RegExp(`sourceRankLimit: ${SOURCE_RANK_LIMIT},`))
+    }
+  })
+})
+
 describe('renderModule + assertEmittedLineBudget — M-2 480-line gate', () => {
   const source = {
     upstream: 'https://example.test/repo',
@@ -224,6 +336,7 @@ describe('renderModule + assertEmittedLineBudget — M-2 480-line gate', () => {
     license: 'MIT',
     commit: 'a'.repeat(40),
     sha256: 'b'.repeat(64),
+    sourceRankLimit: 5000,
     entries: 3,
   }
 
@@ -259,6 +372,7 @@ describe('renderModule — three renders differ ONLY in the @module line', () =>
       license: 'MIT',
       commit: 'a'.repeat(40),
       sha256: 'b'.repeat(64),
+      sourceRankLimit: 5000,
       entries: 2,
     }
     const payloadLines = ['horse monkey']
@@ -305,6 +419,7 @@ describe('determinism — two consecutive generations produce byte-identical out
       license: 'MIT',
       commit: 'c',
       sha256: 's',
+      sourceRankLimit: 5000,
       entries: entriesA.length,
     }
     const payloadLines = wrapPayload(entriesA)

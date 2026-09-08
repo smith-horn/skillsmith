@@ -52,6 +52,11 @@ import {
   allowlistKeyFor,
 } from './audit-host-volume-fs-guard-helpers.mjs'
 import { isGitCryptEncrypted } from './ci/check-supply-chain-pins.mjs'
+import {
+  loadGeneratorInputs as loadWeakPasswordLexiconInputs,
+  generateAll as generateWeakPasswordLexicon,
+  detectDrift as detectWeakPasswordLexiconDrift,
+} from './gen-weak-password-lexicon.mjs'
 import { VERCEL_JSON_SHARED_FIELDS, validateVercelJsonSync } from './audit-vercel-sync-helpers.mjs'
 import { findRealpathAsymmetry } from './audit-realpath-asymmetry-helpers.mjs'
 import { findUnpinnedActionUses } from './audit-workflow-sha-pin-helpers.mjs'
@@ -5929,6 +5934,63 @@ console.log(
       }
     }
   }
+}
+
+// Check 67: weak-password lexicon freshness (SMI-6441 Wave 1, item 5, L3)
+//
+// Anti-hand-edit / anti-drift gate for the three generated
+// COMMON_WEAK_PASSWORDS modules. Calls the generator's own exported
+// functions in-process (no subprocess, no shell — safer than
+// execFileSync('node', [...]) and avoids parsing its stdout) and compares
+// the freshly-rendered text against what's on disk via detectDrift, same
+// as `npm run lexicon:weak-passwords:check` does at the CLI.
+//
+// L1 (Deno<->Node byte identity) and L2 (three-way literal payload
+// identity) both `it.skipIf(isGitCryptEncrypted(...))` on the Deno copy;
+// this check does the equivalent for its own Deno-edge comparison — core
+// and Node-edge are ALWAYS compared (never skipped), and the Deno-edge
+// copy is compared only when git-crypt is unlocked, with the partial
+// coverage stated explicitly in the pass message rather than silently
+// treated as a full pass (per the plan's L3 requirement).
+console.log(`\n${BOLD}Check 67: weak-password lexicon freshness (SMI-6441 L3)${RESET}`)
+try {
+  const weakPasswordInputs = loadWeakPasswordLexiconInputs()
+  const { rendered: weakPasswordRendered } = generateWeakPasswordLexicon(weakPasswordInputs)
+  const weakPasswordStatuses = detectWeakPasswordLexiconDrift(weakPasswordRendered)
+  const denoOutput = weakPasswordRendered.find((r) => r.label === 'deno-edge')
+  const denoLocked = denoOutput ? isGitCryptEncrypted(denoOutput.path) : false
+
+  const genuineFailures = weakPasswordStatuses.filter(
+    (s) => s.status !== 'fresh' && !(s.label === 'deno-edge' && denoLocked)
+  )
+
+  if (genuineFailures.length === 0) {
+    if (denoLocked) {
+      pass(
+        'Check 67: core + Node-edge weak-password lexicon copies are fresh; Deno-edge copy NOT ' +
+          'verified because git-crypt is locked — unlock and re-run before merging to confirm it too'
+      )
+    } else {
+      pass(
+        'Check 67: all 3 weak-password lexicon copies are fresh (see: npm run lexicon:weak-passwords:check)'
+      )
+    }
+  } else {
+    const detail = genuineFailures.map((s) => `${s.label} (${s.status})`).join(', ')
+    fail(
+      `Check 67: weak-password lexicon drift detected: ${detail}`,
+      'Run: npm run lexicon:weak-passwords, then commit the regenerated file(s). If this is the ' +
+        'Deno-edge copy and git-crypt is genuinely unlocked, also verify with ' +
+        '`git-crypt status supabase/functions/_shared/security-scanner-edge.weak-passwords.ts`.'
+    )
+  }
+} catch (err) {
+  fail(
+    `Check 67: weak-password lexicon generator failed: ${err.message}`,
+    'Investigate scripts/gen-weak-password-lexicon.mjs and its inputs under data/wordlists/ — a ' +
+      'thrown sanity-gate error here means the generator itself cannot currently produce a valid ' +
+      'lexicon, which is a harder failure than mere drift.'
+  )
 }
 
 // Summary

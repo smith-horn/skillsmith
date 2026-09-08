@@ -43,13 +43,28 @@ monitor control console dashboard gateway proxy endpoint
 test testing demo user users account name value data file files folder directory path
 private public shared internal external
 
-# PROSE_STOPWORDS disjointness-gate collisions (SMI-6441 generator run against
-# the pinned SecLists snapshot, commit c205c36a445bff37f8e58a9ec829105cd4975c58):
-# these are plain English function words already in PROSE_STOPWORDS
-# (packages/core/src/security/scanner/SecurityScanner.prose-lexicon.ts) that
-# also happen to appear in the top-10000 common-password list. Per the
-# generator's disjointness gate (a hard-fail invariant check, not a silent
-# subtraction — see this file's header and the plan's § item 2), a token
-# cannot simultaneously be prose evidence and credential evidence; the fixed
-# remediation is this keeplist addition, not editing PROSE_STOPWORDS.
+# PROSE_STOPWORDS disjointness-gate collisions (SMI-6441 generator run
+# against the FULL, UNTRUNCATED pinned SecLists snapshot, commit
+# c205c36a445bff37f8e58a9ec829105cd4975c58 — this run predated
+# SOURCE_RANK_LIMIT): these are plain English function words already in
+# PROSE_STOPWORDS (packages/core/src/security/scanner/SecurityScanner.prose-
+# lexicon.ts) that also happen to appear in the top-10000 common-password
+# list. Per the generator's disjointness gate (a hard-fail invariant check,
+# not a silent subtraction — see this file's header and the plan's § item
+# 2), a token cannot simultaneously be prose evidence and credential
+# evidence; the fixed remediation is this keeplist addition, not editing
+# PROSE_STOPWORDS.
+#
+# M-2a: six of the twelve tokens below — `here` (rank 5,374), `never`
+# (6,790), `there` (6,472), `their` (8,568), `these` (9,603), `this`
+# (9,887) — rank BEYOND SOURCE_RANK_LIMIT (5,000) and are therefore
+# UNREACHABLE at the current limit: they never survive the generator's
+# truncate-then-shape-filter pipeline, so they cannot currently collide.
+# THEY MUST NOT BE PRUNED AS "DEAD" ANYWAY. Subtracting an absent token is
+# a harmless no-op, but the disjointness gate is a hard fail — pruning
+# these now and later raising SOURCE_RANK_LIMIT would break the build with
+# a collision error whose cause (a keeplist edit made months earlier) is
+# far removed from its symptom. This keeplist is deliberately sized for
+# the WHOLE pinned snapshot, not for the current SOURCE_RANK_LIMIT slice of
+# it — see § item 3 "Sizing the corpus" in the plan doc.
 again down here never over please their there these this what will
