@@ -16,6 +16,7 @@ import { describe, it, expect } from 'vitest'
 // scripts/tests/gen-docs-folder-index.test.ts)
 import {
   sha256Hex,
+  singleQuoteJs,
   verifySourcesIntegrity,
   truncateToRankLimit,
   filterShapeTokens,
@@ -284,6 +285,50 @@ describe('computeLexicon — end-to-end gate composition on synthetic fixtures',
     expect(entries).toEqual([...entries].sort())
     expect(entries.length).toBeGreaterThanOrEqual(MIN_ENTRIES)
     expect(entries.length).toBeLessThanOrEqual(MAX_ENTRIES)
+  })
+})
+
+describe('singleQuoteJs', () => {
+  it('wraps a plain string in single quotes', () => {
+    expect(singleQuoteJs('https://example.test')).toBe("'https://example.test'")
+  })
+
+  it('escapes an embedded single quote and backslash', () => {
+    expect(singleQuoteJs("it's a \\test")).toBe("'it\\'s a \\\\test'")
+  })
+})
+
+describe('renderModule — emits ZERO double-quoted string literals (post-review fix)', () => {
+  // Regression guard for a real bug found post-review: renderModule used to
+  // build WEAK_PASSWORD_LEXICON_SOURCE's string fields and
+  // WEAK_PASSWORD_LEXICON_VERSION with JSON.stringify (always
+  // double-quotes). `.prettierignore` excludes `supabase/functions/`
+  // entirely (git-crypt ciphertext can't be parsed when locked), so the
+  // pre-commit `prettier --write` step that reformats packages/core and
+  // scripts/indexer to this repo's singleQuote:true config NEVER reaches
+  // the Deno-edge copy — it silently kept double quotes while the other
+  // two converged to single quotes, breaking L2's literal three-way
+  // payload-identity parity on the very first real commit. Asserting "no
+  // double quote anywhere in the output" (not just spot-checking the known
+  // fields) is deliberately broad: it also catches a FUTURE field added
+  // the same wrong way.
+  it('contains no `"` character anywhere in the rendered text', () => {
+    const source = {
+      upstream: 'https://example.test/repo',
+      path: 'fixture.txt',
+      license: 'MIT',
+      commit: 'a'.repeat(40),
+      sha256: 'b'.repeat(64),
+      sourceRankLimit: 5000,
+      entries: 3,
+    }
+    const text = renderModule({
+      moduleLine: '@module fixture',
+      source,
+      version: '2026-01-01.1',
+      payloadLines: ['horse monkey dragon'],
+    })
+    expect(text).not.toContain('"')
   })
 })
 

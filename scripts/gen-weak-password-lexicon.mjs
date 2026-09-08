@@ -97,6 +97,26 @@ export function sha256Hex(data) {
 }
 
 /**
+ * Render `str` as a single-quoted JS string literal, matching this repo's
+ * Prettier config (`.prettierrc`'s `singleQuote: true`) — used instead of
+ * `JSON.stringify` (which always double-quotes) so raw generator output is
+ * ALREADY a Prettier fixed point.
+ *
+ * Load-bearing: `.prettierignore` excludes `supabase/functions/` entirely
+ * (git-crypt ciphertext can't be parsed when locked), so the Deno-edge copy
+ * is NEVER reformatted by the pre-commit `prettier --write` step that the
+ * other two copies (`packages/core`, `scripts/indexer`) go through. Emitting
+ * `JSON.stringify`'s double quotes here would make the Deno copy silently
+ * diverge from the other two on every regeneration + normal commit — this
+ * is exactly what happened once already (SMI-6441 Wave 1 post-review fix)
+ * and is not a one-time bug to hand-patch, but a raw-output invariant this
+ * function exists to hold permanently.
+ */
+export function singleQuoteJs(str) {
+  return `'${str.replace(/\\/g, '\\\\').replace(/'/g, "\\'")}'`
+}
+
+/**
  * Verify every vendored file recorded in `sourcesObj.files` against its
  * recorded sha256, via the injected `readVendoredFile(name) -> Buffer`.
  * Hard-fails on the first mismatch — a tampered or partially-written
@@ -323,17 +343,17 @@ export function renderModule({ moduleLine, source, version, payloadLines }) {
     '',
     '/** Provenance of the vendored upstream snapshot this file was generated from. */',
     'export const WEAK_PASSWORD_LEXICON_SOURCE = {',
-    `  upstream: ${JSON.stringify(source.upstream)},`,
-    `  path: ${JSON.stringify(source.path)},`,
-    `  license: ${JSON.stringify(source.license)},`,
-    `  commit: ${JSON.stringify(source.commit)},`,
-    `  sha256: ${JSON.stringify(source.sha256)},`,
+    `  upstream: ${singleQuoteJs(source.upstream)},`,
+    `  path: ${singleQuoteJs(source.path)},`,
+    `  license: ${singleQuoteJs(source.license)},`,
+    `  commit: ${singleQuoteJs(source.commit)},`,
+    `  sha256: ${singleQuoteJs(source.sha256)},`,
     `  sourceRankLimit: ${source.sourceRankLimit},`,
     `  entries: ${source.entries},`,
     '} as const',
     '',
     '/** Bumped whenever the emitted entry set changes. Deterministic, no timestamp. */',
-    `export const WEAK_PASSWORD_LEXICON_VERSION = ${JSON.stringify(version)} as const`,
+    `export const WEAK_PASSWORD_LEXICON_VERSION = ${singleQuoteJs(version)} as const`,
     '',
     '/**',
     ' * Lowercase-alphabetic common-password tokens, 3-19 chars, sorted, with the',
