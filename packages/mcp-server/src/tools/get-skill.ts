@@ -71,6 +71,117 @@ export const getSkillToolSchema = {
     },
     required: ['id'],
   },
+  // SMI-6472 Wave 3: derived from `GetSkillResponse` (packages/core/src/types.ts)
+  // and the `Skill`/`ScoreBreakdown`/`SecuritySummary` types it embeds, plus
+  // `AlsoInstalledSkill` and `SkillDependencyRow` (packages/core/src/types/
+  // dependencies.ts) for the two optional array fields. Only fields
+  // non-optional on `GetSkillResponse`/`Skill` are `required` — every other
+  // field mirrors the interface's own optionality (e.g. `security` is
+  // undefined for a never-scanned skill, `content`/`also_installed`/
+  // `dependencies` are undefined when empty — see executeGetSkillImpl's two
+  // return statements in get-skill.ts). A not-found lookup throws
+  // (SkillsmithError SKILL_NOT_FOUND) rather than returning a differently
+  // shaped object, so it never needs to satisfy this schema — the MCP SDK
+  // only requires structuredContent on a non-error response.
+  outputSchema: {
+    type: 'object' as const,
+    properties: {
+      skill: {
+        type: 'object',
+        properties: {
+          id: { type: 'string' },
+          name: { type: 'string' },
+          description: { type: 'string' },
+          author: { type: 'string' },
+          repository: { type: 'string' },
+          installable: { type: 'boolean' },
+          version: { type: 'string' },
+          category: { type: 'string' },
+          trustTier: { type: 'string' },
+          score: { type: 'number' },
+          scoreBreakdown: {
+            type: 'object',
+            properties: {
+              quality: { type: 'number' },
+              popularity: { type: 'number' },
+              maintenance: { type: 'number' },
+              security: { type: 'number' },
+              documentation: { type: 'number' },
+            },
+          },
+          tags: { type: 'array', items: { type: 'string' } },
+          installCommand: { type: 'string' },
+          security: {
+            type: 'object',
+            properties: {
+              passed: { type: ['boolean', 'null'] },
+              riskScore: { type: ['number', 'null'] },
+              findingsCount: { type: 'number' },
+              scannedAt: { type: ['string', 'null'] },
+              scanCoverageIncomplete: { type: 'boolean' },
+              scanCoverageNote: { type: ['string', 'null'] },
+            },
+          },
+          createdAt: { type: 'string' },
+          updatedAt: { type: 'string' },
+          license: { type: ['string', 'null'] },
+        },
+        required: [
+          'id',
+          'name',
+          'description',
+          'author',
+          'category',
+          'trustTier',
+          'score',
+          'tags',
+          'createdAt',
+          'updatedAt',
+        ],
+      },
+      installCommand: { type: 'string' },
+      content: { type: 'string' },
+      timing: {
+        type: 'object',
+        properties: { totalMs: { type: 'number' } },
+        required: ['totalMs'],
+      },
+      also_installed: {
+        type: 'array',
+        items: {
+          type: 'object',
+          properties: {
+            skillId: { type: 'string' },
+            name: { type: 'string' },
+            description: { type: 'string' },
+            author: { type: 'string' },
+            installCount: { type: 'number' },
+          },
+          required: ['skillId', 'name', 'installCount'],
+        },
+      },
+      dependencies: {
+        type: 'array',
+        items: {
+          type: 'object',
+          properties: {
+            id: { type: 'number' },
+            skill_id: { type: 'string' },
+            dep_type: { type: 'string' },
+            dep_target: { type: 'string' },
+            dep_version: { type: ['string', 'null'] },
+            dep_source: { type: 'string' },
+            confidence: { type: ['number', 'null'] },
+            metadata: { type: ['string', 'null'] },
+            created_at: { type: 'string' },
+            updated_at: { type: 'string' },
+          },
+          required: ['skill_id', 'dep_type', 'dep_target', 'dep_version', 'dep_source'],
+        },
+      },
+    },
+    required: ['skill', 'installCommand', 'timing'],
+  },
 }
 
 /**

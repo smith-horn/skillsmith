@@ -216,11 +216,13 @@ const server = new Server(
 // those two optional MCP-spec fields yet). This narrow structural view lets
 // the handler read them where present without a blanket `any` cast, and
 // without touching (or needing to touch) the many individual schema-constant
-// declaration sites. Extend with `outputSchema?: unknown` for Wave 3 — a
-// one-line addition alongside the allowlist below.
+// declaration sites. SMI-6472 Wave 3: `outputSchema?: unknown` added the same
+// way — only `search`/`get_skill`/`skill_validate` declare it today, so most
+// tools' `meta.outputSchema` reads `undefined` and is correctly omitted below.
 type ToolMetaFields = {
   title?: string
   annotations?: ToolAnnotations
+  outputSchema?: unknown
 }
 
 // Handle list tools request
@@ -240,6 +242,7 @@ server.setRequestHandler(ListToolsRequestSchema, async () => {
         inputSchema: tool.inputSchema,
         ...(meta.title !== undefined ? { title: meta.title } : {}),
         ...(meta.annotations !== undefined ? { annotations: meta.annotations } : {}),
+        ...(meta.outputSchema !== undefined ? { outputSchema: meta.outputSchema } : {}),
       }
     }),
   }

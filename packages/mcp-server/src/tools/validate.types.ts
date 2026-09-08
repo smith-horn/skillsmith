@@ -75,6 +75,38 @@ export const validateToolSchema = {
     },
     required: ['skill_path'],
   },
+  // SMI-6472 Wave 3: derived from `ValidateResponse`/`ValidationError` above —
+  // executeValidateImpl (validate.ts) has exactly one `return` statement, so
+  // there is no differently-shaped success path to account for (a bad path/
+  // unreadable file throws SkillsmithError instead of returning). `metadata`
+  // is `Record<string, unknown> | null` (non-optional but nullable) so it's
+  // `required` here too, typed permissively since frontmatter fields vary.
+  outputSchema: {
+    type: 'object' as const,
+    properties: {
+      valid: { type: 'boolean' },
+      errors: {
+        type: 'array',
+        items: {
+          type: 'object',
+          properties: {
+            field: { type: 'string' },
+            message: { type: 'string' },
+            severity: { type: 'string', enum: ['error', 'warning'] },
+          },
+          required: ['field', 'message', 'severity'],
+        },
+      },
+      metadata: { type: ['object', 'null'] },
+      path: { type: 'string' },
+      timing: {
+        type: 'object',
+        properties: { totalMs: { type: 'number' } },
+        required: ['totalMs'],
+      },
+    },
+    required: ['valid', 'errors', 'metadata', 'path', 'timing'],
+  },
 }
 
 /**

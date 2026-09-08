@@ -99,4 +99,79 @@ export const searchToolSchema = {
     },
     required: [], // Query is optional if filters are provided
   },
+  // SMI-6472 Wave 3: derived from `SearchResponse` (packages/core/src/types.ts)
+  // and `SkillSearchResult`/`SearchFilters`/`SecuritySummary`/`CompatibilityFilter`
+  // in that same file — see executeSearch's return statements in search.ts for
+  // the two paths (API-first, local-fallback) that both build this exact shape.
+  // Only fields non-optional on `SearchResponse` are `required` here; every
+  // other field mirrors the interface's own optionality.
+  outputSchema: {
+    type: 'object' as const,
+    properties: {
+      results: {
+        type: 'array',
+        items: {
+          type: 'object',
+          properties: {
+            id: { type: 'string' },
+            name: { type: 'string' },
+            description: { type: 'string' },
+            author: { type: 'string' },
+            category: { type: 'string' },
+            trustTier: { type: 'string' },
+            score: { type: 'number' },
+            repository: { type: 'string' },
+            installable: { type: 'boolean' },
+            security: {
+              type: 'object',
+              properties: {
+                passed: { type: ['boolean', 'null'] },
+                riskScore: { type: ['number', 'null'] },
+                findingsCount: { type: 'number' },
+                scannedAt: { type: ['string', 'null'] },
+                scanCoverageIncomplete: { type: 'boolean' },
+                scanCoverageNote: { type: ['string', 'null'] },
+              },
+            },
+            source: { type: 'string', enum: ['local', 'registry'] },
+            installHint: { type: 'string' },
+            compatibility: { type: 'array', items: { type: 'string' } },
+            license: { type: ['string', 'null'] },
+          },
+          required: ['id', 'name', 'description', 'author', 'category', 'trustTier', 'score'],
+        },
+      },
+      total: { type: 'number' },
+      query: { type: 'string' },
+      filters: {
+        type: 'object',
+        properties: {
+          category: { type: 'string' },
+          trustTier: { type: 'string' },
+          minScore: { type: 'number' },
+          safeOnly: { type: 'boolean' },
+          maxRiskScore: { type: 'number' },
+          compatibleWith: {
+            type: 'object',
+            properties: {
+              ides: { type: 'array', items: { type: 'string' } },
+              llms: { type: 'array', items: { type: 'string' } },
+            },
+          },
+        },
+      },
+      compatibilityDeprioritized: { type: 'number' },
+      discoveryOnlyHidden: { type: 'number' },
+      suggestion: { type: 'string' },
+      timing: {
+        type: 'object',
+        properties: {
+          searchMs: { type: 'number' },
+          totalMs: { type: 'number' },
+        },
+        required: ['searchMs', 'totalMs'],
+      },
+    },
+    required: ['results', 'total', 'query', 'filters', 'timing'],
+  },
 }

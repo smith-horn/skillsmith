@@ -20,6 +20,16 @@ All notable changes to `@skillsmith/mcp-server` are documented here.
   the handler was also updated — a hazard covered going forward by a new wire-level integration
   test (`tests/integration/tools-list-annotations.integration.test.ts`) that spawns the real built
   server and asserts on the live `tools/list` response rather than the exported schema constants.
+- **Fixed**: SMI-6472 Wave 3 -- `search`, `get_skill`, and `skill_validate` now declare an MCP
+  `outputSchema` (derived from each tool's own response type) and return `structuredContent`
+  alongside the existing text block, per the MCP spec. `src/index.ts`'s `ListToolsRequestSchema`
+  handler now reads and re-emits `outputSchema` the same way as `title`/`annotations`, and the
+  shared `ok()` response wrapper (`middleware/license.gate.ts`) gained an opt-in second parameter
+  (`{ structuredContent: true }`) so the ~40 other tools that declare no `outputSchema` keep their
+  exact existing wire shape. Covered by a new wire-level integration test alongside
+  `tools-list-annotations.integration.test.ts` that spawns the real built server, calls each of the
+  three tools through a genuine SDK `Client`, and relies on the client's own automatic
+  `structuredContent`-vs-`outputSchema` validation as the conformance check.
 
 ## v0.7.13
 
