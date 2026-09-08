@@ -26,6 +26,7 @@ import {
   parseAllowlistFile,
 } from '../../src/scripts/skill-scanner/allowlist.js'
 import { shouldQuarantine } from '../../src/scripts/skill-scanner/trust-scorer.js'
+import { scanSensitivePaths } from '../../src/security/scanner/SecurityScanner.scanners.js'
 import type {
   AllowlistEntry,
   ScanReport,
@@ -535,21 +536,29 @@ describe('data/skills-security-allowlist.json (ship-it sanity)', () => {
     const matcher = buildMatcher(parsed.allowlist)
     const skillId = 'github/lucas-lima-s/claude-skill-repo-audit'
 
-    // The path-form match this entry exists to suppress.
-    const pathFormFinding = finding({
-      type: 'sensitive_path',
-      severity: 'high',
-      message: 'Reference to potentially sensitive path: \\bsecrets?\\/[a-z0-9_.-]+',
-    })
-    expect(matcher.isAllowed(skillId, pathFormFinding)).toBe(true)
+    // The path-form match this entry exists to suppress. Hand-written
+    // messages here would be exactly the anti-false-green-mock pattern the
+    // governance skill warns about (H-3): a message hardcoded to what the
+    // scanner used to emit stays green even if a later change alters the
+    // format, hiding a real re-quarantine. Derive it from the actual
+    // scanner instead — content adjacent to a real, currently-allowlisted
+    // secrets-path mention with no action evidence nearby.
+    const pathFormFinding = scanSensitivePaths(
+      'Publish-readiness gate: secret/PII scans, git-history identity leaks'
+    ).find((f) => f.type === 'sensitive_path')
+    expect(pathFormFinding, 'fixture no longer produces a sensitive_path finding').toBeDefined()
+    expect(matcher.isAllowed(skillId, pathFormFinding!)).toBe(true)
 
     // A hypothetical future assignment-form leak for the SAME skill and
-    // finding type must still be caught.
-    const assignmentFormFinding = finding({
-      type: 'sensitive_path',
-      severity: 'high',
-      message: 'Reference to potentially sensitive path: \\bsecrets?\\s*[:=]',
-    })
-    expect(matcher.isAllowed(skillId, assignmentFormFinding)).toBe(false)
+    // finding type must still be caught — also derived from the real
+    // scanner, a genuine `secrets: <value>` assignment.
+    const assignmentFormFinding = scanSensitivePaths('secrets: Tr0ub4dor&3').find(
+      (f) => f.type === 'sensitive_path'
+    )
+    expect(
+      assignmentFormFinding,
+      'fixture no longer produces a sensitive_path finding'
+    ).toBeDefined()
+    expect(matcher.isAllowed(skillId, assignmentFormFinding!)).toBe(false)
   })
 })

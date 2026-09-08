@@ -78,6 +78,20 @@ import {
   CODE_EXECUTION_PATTERNS,
 } from '../../src/security/scanner/index.js'
 import type { ScanReport } from '../../src/security/scanner/index.js'
+// SMI-5207 Wave 1 Step 3(e): PATH_FORM_PATTERNS / VALUE_GATED_ASSIGNMENT_PATTERNS
+// / ENV_PATH_PATTERN are not re-exported from scanner/index.ts (confirmed by
+// grep — only SENSITIVE_PATH_PATTERNS is), so the partition-totality guard
+// below imports them directly from patterns.ts, which re-exports the whole
+// sensitive_path family from patterns.sensitive-path.ts unchanged (reference
+// identity preserved — see that file's own header comment). VALUE_GATED_
+// KEYWORD_PATTERNS is imported alongside for the same reason, even though it
+// is also reachable via SecurityScanner.scanners.ts.
+import {
+  ENV_PATH_PATTERN,
+  PATH_FORM_PATTERNS,
+  VALUE_GATED_ASSIGNMENT_PATTERNS,
+  VALUE_GATED_KEYWORD_PATTERNS,
+} from '../../src/security/scanner/patterns.js'
 
 /**
  * Minimum pattern counts per category (April 2026 baseline).
@@ -496,6 +510,38 @@ describe('Scanner Regression Guard (SMI-3864)', () => {
 
       expect(verdict.verdict).toBe('benign')
       expect(verdict.riskDelta).toBeLessThanOrEqual(0)
+    })
+  })
+
+  // SMI-5207 Wave 1 Step 3(e): partition-totality guard for the severity-gate
+  // classification. Plan item 2: "1 (ENV) + 9 (PATH_FORM) + 3 (ASSIGNMENT) +
+  // 2 (VALUE_GATED_KEYWORD) = 15 — total and disjoint. A dedicated test...
+  // guards this durably: an unclassified future pattern falls through to the
+  // fail-closed `else` branch."
+  describe('SENSITIVE_PATH_PATTERNS severity-gate partition (SMI-5207)', () => {
+    it('every entry belongs to exactly one of {ENV, PATH_FORM, VALUE_GATED_ASSIGNMENT, VALUE_GATED_KEYWORD}', () => {
+      for (const pattern of SENSITIVE_PATH_PATTERNS) {
+        const classes = [
+          pattern === ENV_PATH_PATTERN,
+          PATH_FORM_PATTERNS.has(pattern),
+          VALUE_GATED_ASSIGNMENT_PATTERNS.has(pattern),
+          VALUE_GATED_KEYWORD_PATTERNS.has(pattern),
+        ].filter(Boolean)
+        expect(classes).toHaveLength(1)
+      }
+    })
+
+    it('the four classes total and partition SENSITIVE_PATH_PATTERNS exactly (1 + 9 + 3 + 2 = 15)', () => {
+      expect(PATH_FORM_PATTERNS.size).toBe(9)
+      expect(VALUE_GATED_ASSIGNMENT_PATTERNS.size).toBe(3)
+      expect(VALUE_GATED_KEYWORD_PATTERNS.size).toBe(2)
+      expect(SENSITIVE_PATH_PATTERNS).toContain(ENV_PATH_PATTERN)
+      expect(
+        1 +
+          PATH_FORM_PATTERNS.size +
+          VALUE_GATED_ASSIGNMENT_PATTERNS.size +
+          VALUE_GATED_KEYWORD_PATTERNS.size
+      ).toBe(SENSITIVE_PATH_PATTERNS.length)
     })
   })
 })

@@ -272,4 +272,39 @@ export const CLOSURE_WATCHED_SOURCE_PATHS = [
   // is reachable the same way every other sibling extraction above is.
   'scripts/indexer/_shared/security-scanner-edge.quarantine.ts',
   'supabase/functions/_shared/security-scanner-edge.quarantine.ts',
+  // SMI-5207: MF-3 (action-context gating) + MF-4 (assignment-value gating)
+  // added a new core sibling pair — SecurityScanner.prose-lexicon.ts
+  // (NEGATION_TOKENS/PROSE_STOPWORDS) and SecurityScanner.value-gate.ts (the
+  // round-8 per-assignment-segmented MF-4 classifier) — both imported by the
+  // already-watched SecurityScanner.scanners.ts, plus patterns.sensitive-
+  // path.ts (the sensitive_path pattern family + severity-gate classification
+  // sets, extracted out of the already-watched patterns.ts and re-exported
+  // from it). Same closure-completeness reasoning as every entry above;
+  // flagged as reachable-but-unwatched by assertion 5 (the real import-graph
+  // tracer) after this wave's changes landed.
+  'packages/core/src/security/scanner/SecurityScanner.prose-lexicon.ts',
+  'packages/core/src/security/scanner/SecurityScanner.value-gate.ts',
+  'packages/core/src/security/scanner/patterns.sensitive-path.ts',
+  // SMI-5207: the twin ports of the same two new siblings, imported by the
+  // already-watched security-scanner-edge.paths.ts on both twins — same
+  // closure-completeness reasoning, same symmetry as every other
+  // scripts/indexer/_shared + supabase/functions/_shared pair above (patterns
+  // .sensitive-path.ts has no edge-twin counterpart: both edge paths.ts twins
+  // already inline the equivalent pattern classification, unlike core, so
+  // there is nothing separate to watch there).
+  'scripts/indexer/_shared/security-scanner-edge.prose-lexicon.ts',
+  'scripts/indexer/_shared/security-scanner-edge.value-gate.ts',
+  'supabase/functions/_shared/security-scanner-edge.prose-lexicon.ts',
+  'supabase/functions/_shared/security-scanner-edge.value-gate.ts',
+  // SMI-5207 round 10: MF-3's action-context gate (two new disqualifiers —
+  // a determiner-forces-noun check and a detection-framing + relative-clause
+  // check) was extracted from the already-watched SecurityScanner.scanners.ts
+  // into its own sibling, SecurityScanner.action-context.ts, for the same
+  // 500-line pre-commit gate reason the prose-lexicon.ts/value-gate.ts split
+  // above happened — same closure-completeness reasoning, same symmetry:
+  // both edge twin ports below, imported by the already-watched
+  // security-scanner-edge.paths.ts on both twins.
+  'packages/core/src/security/scanner/SecurityScanner.action-context.ts',
+  'scripts/indexer/_shared/security-scanner-edge.action-context.ts',
+  'supabase/functions/_shared/security-scanner-edge.action-context.ts',
 ] as const

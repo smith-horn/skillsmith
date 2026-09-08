@@ -25,9 +25,19 @@
  *
  * Imports the unencrypted Node mirror so this suite runs in CI (the
  * supabase/functions twin is git-crypt-encrypted and excluded there).
+ *
+ * SMI-5207 (Wave 1 Step 2): also closes a parity gap flagged during design —
+ * `security-scanner-edge.paths.ts`'s own header comment has long claimed a
+ * twin byte-identity parity test exists ("Byte-identical body across both
+ * `_shared` twins (parity test enforces)"), but none did, unlike every
+ * sibling detector file (see security-scanner-edge.paste-host.test.ts). The
+ * describe block below follows that established template exactly.
  */
 
 import { describe, it, expect } from 'vitest'
+import { readFileSync } from 'node:fs'
+import { resolve, dirname } from 'node:path'
+import { fileURLToPath } from 'node:url'
 import {
   scanSkillContent,
   shouldQuarantine,
@@ -40,6 +50,79 @@ import {
 } from '../../indexer/_shared/security-scanner-edge.ts'
 import { classifyEvidence } from '../../indexer/_shared/security-scanner-edge.evidence.ts'
 import { JAILBREAK_PATTERNS } from '../../indexer/_shared/security-scanner-edge.patterns.ts'
+import { normalizeWs, isGitCryptEncrypted } from './parity-utils.ts'
+
+const __filename = fileURLToPath(import.meta.url)
+const __dirname = dirname(__filename)
+// scripts/tests/indexer/security-scanner-edge.test.ts -> repo root is 3 levels up.
+const REPO_ROOT = resolve(__dirname, '..', '..', '..')
+
+// SMI-5207: paths.ts plus its three line-budget-split siblings —
+// prose-lexicon.ts (original split, round 10 added NOUN_DETERMINERS/
+// DETECTION_FRAMING/RELATIVE_MARKERS), action-context.ts (round 10's MF-3
+// split, mirrors core's identical SecurityScanner.action-context.ts split),
+// and value-gate.ts (round 8's MF-4 segmentation split, mirrors core's
+// identical SecurityScanner.value-gate.ts split) — all need the same
+// byte-identity coverage. Data-driven, same TWINS-array convention as
+// security-scanner-edge.co-signal-escalation.test.ts.
+const PATHS_FAMILY_TWINS: ReadonlyArray<{
+  label: string
+  deno: string
+  node: string
+  denoModuleLine: string
+  nodeModuleLine: string
+}> = [
+  {
+    label: 'security-scanner-edge.paths.ts',
+    deno: resolve(REPO_ROOT, 'supabase/functions/_shared/security-scanner-edge.paths.ts'),
+    node: resolve(REPO_ROOT, 'scripts/indexer/_shared/security-scanner-edge.paths.ts'),
+    denoModuleLine: '@module _shared/security-scanner-edge.paths',
+    nodeModuleLine: '@module scripts/indexer/_shared/security-scanner-edge.paths (Node port)',
+  },
+  {
+    label: 'security-scanner-edge.prose-lexicon.ts',
+    deno: resolve(REPO_ROOT, 'supabase/functions/_shared/security-scanner-edge.prose-lexicon.ts'),
+    node: resolve(REPO_ROOT, 'scripts/indexer/_shared/security-scanner-edge.prose-lexicon.ts'),
+    denoModuleLine: '@module _shared/security-scanner-edge.prose-lexicon',
+    nodeModuleLine:
+      '@module scripts/indexer/_shared/security-scanner-edge.prose-lexicon (Node port)',
+  },
+  {
+    label: 'security-scanner-edge.action-context.ts',
+    deno: resolve(REPO_ROOT, 'supabase/functions/_shared/security-scanner-edge.action-context.ts'),
+    node: resolve(REPO_ROOT, 'scripts/indexer/_shared/security-scanner-edge.action-context.ts'),
+    denoModuleLine: '@module _shared/security-scanner-edge.action-context',
+    nodeModuleLine:
+      '@module scripts/indexer/_shared/security-scanner-edge.action-context (Node port)',
+  },
+  {
+    label: 'security-scanner-edge.value-gate.ts',
+    deno: resolve(REPO_ROOT, 'supabase/functions/_shared/security-scanner-edge.value-gate.ts'),
+    node: resolve(REPO_ROOT, 'scripts/indexer/_shared/security-scanner-edge.value-gate.ts'),
+    denoModuleLine: '@module _shared/security-scanner-edge.value-gate',
+    nodeModuleLine: '@module scripts/indexer/_shared/security-scanner-edge.value-gate (Node port)',
+  },
+]
+
+describe('Deno <-> Node twin byte-identity (SMI-5207)', () => {
+  for (const twin of PATHS_FAMILY_TWINS) {
+    const denoEncrypted = isGitCryptEncrypted(twin.deno)
+    it.skipIf(denoEncrypted)(
+      `${twin.label} twins are byte-identical modulo the @module header line`,
+      () => {
+        const node = normalizeWs(readFileSync(twin.node, 'utf-8'))
+        const deno = readFileSync(twin.deno, 'utf-8').replace(
+          twin.denoModuleLine,
+          twin.nodeModuleLine
+        )
+        expect(
+          node,
+          `${twin.label} drift between supabase/functions/_shared/ and scripts/indexer/_shared/ twins (beyond the permitted @module line)`
+        ).toBe(normalizeWs(deno))
+      }
+    )
+  }
+})
 
 // ============================================================================
 // Part A: False-positive fixtures — the verified 4 (must score < 40)
