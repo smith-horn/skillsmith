@@ -22,6 +22,29 @@
 
 import { describe, it, expect, vi, afterEach } from 'vitest'
 
+/**
+ * Pin process.argv so a regression is detected DETERMINISTICALLY, not by
+ * timing: if the module-load guard were removed, the unguarded `main()`
+ * would run parseArgs synchronously during the dynamic import (an async
+ * function body executes synchronously up to its first await), see
+ * `--help`, and call `process.exit(0)` — tripping the spy before the
+ * import even resolves. Without this pin, a broken build could scan the
+ * real `data/imported-skills.json` from the vitest cwd and complete
+ * WITHOUT ever calling process.exit, leaving the assertion green while
+ * the side effect silently ran (silence-as-success, governance SMI-6433
+ * check 2). argv[1] is also pinned to a path that matches neither
+ * module's own file URL, so the guard itself must evaluate false.
+ */
+async function importPinned<T>(importer: () => Promise<T>): Promise<T> {
+  const originalArgv = process.argv
+  process.argv = [process.argv[0] ?? 'node', '/nonexistent-test-entry.js', '--help']
+  try {
+    return await importer()
+  } finally {
+    process.argv = originalArgv
+  }
+}
+
 describe('SMI-6464: skill-scanner CLI import guard', () => {
   afterEach(() => {
     vi.restoreAllMocks()
@@ -32,12 +55,7 @@ describe('SMI-6464: skill-scanner CLI import guard', () => {
       throw new Error('process.exit should not be called on import')
     })
 
-    const mod = await import('../../src/scripts/skill-scanner/index.js')
-
-    // The old side effect was an async main() call — give it a moment to
-    // settle so a regression (unconditional invocation) would surface here
-    // rather than in an unrelated later test.
-    await new Promise((resolve) => setTimeout(resolve, 50))
+    const mod = await importPinned(() => import('../../src/scripts/skill-scanner/index.js'))
 
     expect(exitSpy).not.toHaveBeenCalled()
     expect(typeof mod.main).toBe('function')
@@ -50,9 +68,7 @@ describe('SMI-6464: skill-scanner CLI import guard', () => {
       throw new Error('process.exit should not be called on import')
     })
 
-    const mod = await import('../../src/scripts/scan-imported-skills.js')
-
-    await new Promise((resolve) => setTimeout(resolve, 50))
+    const mod = await importPinned(() => import('../../src/scripts/scan-imported-skills.js'))
 
     expect(exitSpy).not.toHaveBeenCalled()
     expect(typeof mod.main).toBe('function')
