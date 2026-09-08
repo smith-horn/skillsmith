@@ -21,7 +21,13 @@ import { describe, it, expect } from 'vitest'
 import { writeFileSync } from 'node:fs'
 import { join } from 'node:path'
 import { evaluateGateCheck } from '../../indexer/smi5879-gate-check.ts'
-import type { GateResult } from '../../indexer/smi5879-gate-check.types.ts'
+import { bindSimulatorReportToPopulation } from '../../indexer/smi5879-gate-check.binding.ts'
+import { evaluateG5 } from '../../indexer/smi5879-gate-check.gates.ts'
+import type {
+  GateResult,
+  Smi5879SimulateFullReport,
+} from '../../indexer/smi5879-gate-check.types.ts'
+import type { SimSnapshotRow } from '../../indexer/smi5879-simulate-full.types.ts'
 import {
   ALL_PASSING_INVARIANTS,
   DECISION_RUN_ID,
@@ -32,10 +38,12 @@ import {
   makeCensusReportJson,
   makeFakeDb,
   makeFakeTestDeps,
+  makeRunSummary,
   makeScratchDir,
   makeSimRow,
   makeSimulatorReportJson,
   makeWindowCensusReportJson,
+  populationFromSimRows,
 } from './smi5879-gate-check.fixtures.ts'
 
 function findGate(gates: readonly GateResult[], id: string): GateResult {
@@ -209,6 +217,173 @@ describe('smi5879-gate-check.ts — preconditions and artifact/generation bindin
     expect(report.artifact_binding_ok).toBe(false)
     expect(report.artifact_binding_reason).toMatch(/digest re-verification/)
   })
+
+  // -------------------------------------------------------------------------
+  // SMI-6444 (plan Item 2): the simulator REPORT is authenticated against the
+  // sealed population at gate-check time, not merely trusted because
+  // merge-shards once proved it in a separate, earlier invocation.
+  // -------------------------------------------------------------------------
+
+  it('SMI-6444: a report with a row DELETED relative to the sealed population is rejected at binding', async () => {
+    const dir = makeScratchDir()
+    const rows = [makeSimRow({ id: 'r1' }), makeSimRow({ id: 'r2' })]
+    const args = buildRequiredArgs(dir, { simulatorJson: makeSimulatorReportJson({ rows }) })
+    // The sealed population has a third row the report never mentions.
+    const population = [
+      ...populationFromSimRows(rows),
+      ...populationFromSimRows([makeSimRow({ id: 'r3' })]),
+    ]
+    const db = makeFakeDb({
+      async loadCohortRows() {
+        return population
+      },
+    })
+    const report = await evaluateGateCheck({ db, test: makeFakeTestDeps() }, args)
+    expect(report.artifact_binding_ok).toBe(false)
+    expect(report.artifact_binding_reason).toMatch(/reported by NO shard/)
+    expect(report.artifact_binding_reason).toMatch(/r3/)
+    expect(report.gates).toEqual([])
+    expect(report.overall).toBe('INCONCLUSIVE')
+  })
+
+  it('SMI-6444: a report with a row ADDED relative to the sealed population is rejected at binding', async () => {
+    const dir = makeScratchDir()
+    const rows = [makeSimRow({ id: 'r1' }), makeSimRow({ id: 'r2' })]
+    const args = buildRequiredArgs(dir, { simulatorJson: makeSimulatorReportJson({ rows }) })
+    const db = makeFakeDb({
+      async loadCohortRows() {
+        return populationFromSimRows([makeSimRow({ id: 'r1' })])
+      },
+    })
+    const report = await evaluateGateCheck({ db, test: makeFakeTestDeps() }, args)
+    expect(report.artifact_binding_ok).toBe(false)
+    expect(report.artifact_binding_reason).toMatch(/not present in the sealed population/)
+    expect(report.artifact_binding_reason).toMatch(/r2/)
+    expect(report.overall).toBe('INCONCLUSIVE')
+  })
+
+  it('SMI-6444: a report row SUBSTITUTED for a real one (counts unchanged) is rejected at binding', async () => {
+    const dir = makeScratchDir()
+    // The exact case row-count arithmetic can never catch: same cohort, same
+    // count, one id swapped for another.
+    const rows = [makeSimRow({ id: 'r1' }), makeSimRow({ id: 'impostor' })]
+    const args = buildRequiredArgs(dir, { simulatorJson: makeSimulatorReportJson({ rows }) })
+    const db = makeFakeDb({
+      async loadCohortRows() {
+        return populationFromSimRows([makeSimRow({ id: 'r1' }), makeSimRow({ id: 'r2' })])
+      },
+    })
+    const report = await evaluateGateCheck({ db, test: makeFakeTestDeps() }, args)
+    expect(report.artifact_binding_ok).toBe(false)
+    expect(report.artifact_binding_reason).toMatch(/impostor/)
+    expect(report.artifact_binding_reason).toMatch(/r2/)
+    expect(report.overall).toBe('INCONCLUSIVE')
+  })
+
+  it('SMI-6444: a row relabeled to a terminal outcome with its score fields left intact fails the reused coherence checks', async () => {
+    const dir = makeScratchDir()
+    // Structurally the relabeling tamper: `unfetchable` claimed, but the row
+    // still carries the score fields only a SCORED outcome ever has.
+    const rows = [
+      {
+        id: 'r1',
+        cohort: 'C2',
+        author: 'acme',
+        name: 'r1',
+        outcome: 'unfetchable',
+        prePortQuarantine: false,
+        postPortQuarantine: true,
+        prePortRiskScore: 1,
+        postPortRiskScore: 9,
+      },
+    ]
+    const args = buildRequiredArgs(dir, { simulatorJson: makeSimulatorReportJson({ rows }) })
+    const report = await evaluateGateCheck({ db: makeFakeDb(), test: makeFakeTestDeps() }, args)
+    expect(report.artifact_binding_ok).toBe(false)
+    expect(report.artifact_binding_reason).toMatch(/NOT a scored outcome/)
+    expect(report.artifact_binding_reason).toMatch(/r1/)
+    expect(report.gates).toEqual([])
+    expect(report.overall).toBe('INCONCLUSIVE')
+  })
+
+  it('SMI-6444: an EMPTY sealed population is refused — it would vacuously "match" any report', async () => {
+    const dir = makeScratchDir()
+    const args = buildRequiredArgs(dir, {
+      simulatorJson: makeSimulatorReportJson({ rows: [] }),
+    })
+    const db = makeFakeDb({
+      async loadCohortRows() {
+        return []
+      },
+    })
+    const report = await evaluateGateCheck({ db, test: makeFakeTestDeps() }, args)
+    expect(report.artifact_binding_ok).toBe(false)
+    expect(report.artifact_binding_reason).toMatch(/is empty \(zero C1-C4 rows\)/)
+    expect(report.overall).toBe('INCONCLUSIVE')
+  })
+
+  it('SMI-6444: the ordering guard is structural — an unbound or un-digest-verified generation refuses the check outright', async () => {
+    const simReport = makeSimulatorReportJson({
+      rows: [makeSimRow({ id: 'r1' })],
+    }) as unknown as Smi5879SimulateFullReport
+    let loadCalls = 0
+    const db = {
+      async loadCohortRows(): Promise<SimSnapshotRow[]> {
+        loadCalls++
+        return populationFromSimRows([makeSimRow({ id: 'r1' })])
+      },
+    }
+
+    const unbound = await bindSimulatorReportToPopulation(
+      db,
+      {
+        run_id: DECISION_RUN_ID,
+        expected_purpose: 'decision',
+        summary: null,
+        digest_verified: null,
+        bound: false,
+        reason: 'no smi5879_run row',
+      },
+      simReport
+    )
+    expect(unbound.bound).toBe(false)
+    expect(unbound.reason).toMatch(/generation binding is not verified/)
+
+    // `bound: true` but digests never verified must ALSO refuse — the guard is
+    // on `digest_verified === true`, not on `bound` alone.
+    const unverified = await bindSimulatorReportToPopulation(
+      db,
+      {
+        run_id: DECISION_RUN_ID,
+        expected_purpose: 'decision',
+        summary: makeRunSummary(),
+        digest_verified: null,
+        bound: true,
+        reason: 'digests never checked',
+      },
+      simReport
+    )
+    expect(unverified.bound).toBe(false)
+    expect(unverified.reason).toMatch(/digest_verified=null/)
+    // Neither refusal may reach the population at all.
+    expect(loadCalls).toBe(0)
+
+    // The same report/population pair DOES bind once the generation is verified.
+    const ok = await bindSimulatorReportToPopulation(
+      db,
+      {
+        run_id: DECISION_RUN_ID,
+        expected_purpose: 'decision',
+        summary: makeRunSummary(),
+        digest_verified: true,
+        bound: true,
+        reason: 'sealed and digests re-verify',
+      },
+      simReport
+    )
+    expect(ok.bound).toBe(true)
+    expect(loadCalls).toBe(1)
+  })
 })
 
 describe('smi5879-gate-check.ts — finding #2: window census report binding (reconciliation mode)', () => {
@@ -312,7 +487,12 @@ describe('smi5879-gate-check.ts — G-2 coverage', () => {
     expect(findGate(report.gates, 'G-2').outcome).toBe('PASS')
 
     // But unevaluable > 0 in ANY cohort DOES block, distinctly from the two
-    // above. 4 C1 rows recorded (matching `scanned: 4`), 1 unevaluable.
+    // above. 4 C1 rows recorded, 1 unevaluable — coverage is left to derive
+    // from `rows` (SMI-6444: an explicit `total` that exceeds the reported
+    // rows now describes a population the report doesn't cover, which
+    // `bindSimulatorReportToPopulation` rejects before any gate runs; the
+    // derived coverage still says status:'full' with unevaluable:1, which is
+    // exactly the condition this half of the test is about).
     const rows2 = [
       makeSimRow({ id: 's1', cohort: 'C1', outcome: 'unevaluable' }),
       makeSimRow({ id: 's2', cohort: 'C1', outcome: 'unchanged_clean' }),
@@ -320,15 +500,7 @@ describe('smi5879-gate-check.ts — G-2 coverage', () => {
       makeSimRow({ id: 's4', cohort: 'C1', outcome: 'unchanged_clean' }),
     ]
     const args2 = buildRequiredArgs(dir, {
-      simulatorJson: makeSimulatorReportJson({
-        rows: rows2,
-        coverage: {
-          C1: { status: 'partial', scanned: 4, total: 5, unevaluable: 1, unfetchable: 0 },
-          C2: { status: 'full', scanned: 0, total: 0, unevaluable: 0, unfetchable: 0 },
-          C3: { status: 'full', scanned: 0, total: 0, unevaluable: 0, unfetchable: 0 },
-          C4: { status: 'full', scanned: 0, total: 0, unevaluable: 0, unfetchable: 0 },
-        },
-      }),
+      simulatorJson: makeSimulatorReportJson({ rows: rows2 }),
     })
     const report2 = await evaluateGateCheck({ db: makeFakeDb(), test: makeFakeTestDeps() }, args2)
     expect(findGate(report2.gates, 'G-2').outcome).toBe('INCONCLUSIVE')
@@ -338,6 +510,10 @@ describe('smi5879-gate-check.ts — G-2 coverage', () => {
     const dir = makeScratchDir()
     const args = buildRequiredArgs(dir, {
       simulatorJson: makeSimulatorReportJson({
+        // SMI-6444: at least one row, so the sealed population this report is
+        // authenticated against isn't empty (an empty population is refused
+        // outright, before any gate runs).
+        rows: [makeSimRow({ id: 'r1' })],
         sweep: { passes_run: 8, hard_stopped: 'non_convergence' },
       }),
     })
@@ -431,15 +607,44 @@ describe('smi5879-gate-check.ts — G-5 structural closure + delta bound', () =>
     expect(findGate(report.gates, 'G-5').detail?.['violations']).toHaveLength(1)
   })
 
-  it('is INCONCLUSIVE when a scored-outcome row is missing its score fields (never silently skipped)', async () => {
+  it('a scored-outcome row missing its score fields is now rejected at binding, BEFORE G-5 (SMI-6444)', async () => {
     const dir = makeScratchDir()
     const rows = [
       { id: 'r1', cohort: 'C2', author: 'acme', name: 'r1', outcome: 'newly_quarantined' },
     ]
     const args = buildRequiredArgs(dir, { simulatorJson: makeSimulatorReportJson({ rows }) })
     const report = await evaluateGateCheck({ db: makeFakeDb(), test: makeFakeTestDeps() }, args)
-    expect(findGate(report.gates, 'G-5').outcome).toBe('INCONCLUSIVE')
-    expect(findGate(report.gates, 'G-5').detail?.['missingScoreIds']).toContain('r1')
+    // Before SMI-6444 this reached G-5 and surfaced as `missingScoreIds`.
+    // `bindSimulatorReportToPopulation` now runs the outcome-coherence
+    // asserts before any gate, so the same malformed row is caught strictly
+    // earlier and more loudly — no gate is evaluated at all.
+    expect(report.artifact_binding_ok).toBe(false)
+    expect(report.artifact_binding_reason).toMatch(/scored outcome/)
+    expect(report.artifact_binding_reason).toMatch(/r1/)
+    expect(report.gates).toEqual([])
+    expect(report.overall).toBe('INCONCLUSIVE')
+  })
+
+  it("G-5's own missing-score-field detection still holds (never silently skipped), evaluated directly", () => {
+    // Retained as direct `evaluateG5` coverage: the end-to-end path above can
+    // no longer reach G-5 with such a row, but G-5 must still refuse one if it
+    // ever sees it — that guarantee is independent of what binds first.
+    const simReport = makeSimulatorReportJson({
+      rows: [{ id: 'r1', cohort: 'C2', author: 'acme', name: 'r1', outcome: 'newly_quarantined' }],
+    }) as unknown as Smi5879SimulateFullReport
+    const g5 = evaluateG5(
+      false,
+      {
+        ran: true,
+        passed: true,
+        baseline_commit: SAMPLE_COMMIT,
+        unavailable_reason: null,
+        fixtureCorpusCorroborationVerified: true,
+      },
+      simReport
+    )
+    expect(g5.outcome).toBe('INCONCLUSIVE')
+    expect(g5.detail?.['missingScoreIds']).toContain('r1')
   })
 
   it("finding #3: is INCONCLUSIVE, not PASS, when fixture-corpus RiskScoreBreakdown corroboration evidence is unavailable — a real failure mode of the SMI-5879 Wave 1 producer, not production's permanent state", async () => {

@@ -259,12 +259,12 @@ export async function processRow(
       ...base,
       outcome: 'unfetchable',
       reason: `repo_url did not parse to a fetchable target (repo_url=${row.repo_url ?? '(null)'})`,
+      unfetchable_subtype: 'url_parse',
     }
   }
 
-  // SMI-6015 rehearsal finding (unevaluable-routing bug — SMI-6157): the
-  // census's branch-resolution
-  // table is consulted for EVERY row's repo, regardless of whether `repo_url`
+  // SMI-6015 rehearsal finding (unevaluable-routing bug — SMI-6157): the census's
+  // branch-resolution table is consulted for EVERY row's repo, regardless of whether `repo_url`
   // embeds its own ref (`/tree/<ref>/`) — a `not-found`/`unparseable`
   // resolution means the census already confirmed the REPO itself is gone or
   // its branch-resolution response was structurally unusable, a fact that has
@@ -278,7 +278,6 @@ export async function processRow(
   // rehearsal run measured 7,538 of 12,867 C4 primary-404 rows were exactly
   // this already-known-dead-repo case, wrongly blocking G-2 on a false
   // positive.
-  //
   // `transient` is deliberately NOT checked here (it still is, unchanged,
   // inside the `!parsed.ref` branch below): an embedded-ref row never needs
   // `default_branch` to be resolved at all — it already names its own ref —
@@ -296,6 +295,7 @@ export async function processRow(
       ...base,
       outcome: 'unfetchable',
       reason: `default_branch resolution=${info.resolution}`,
+      unfetchable_subtype: 'branch_resolution',
     }
   }
 

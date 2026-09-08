@@ -13,12 +13,50 @@ import { existsSync, readFileSync } from 'node:fs'
 import type {
   AttestationCheck,
   AttestationCheckStatus,
-  DispositionRecord,
-  DispositionVerdict,
-  Smi5879DispositionLedger,
   Smi5879FreezeAttestation,
+  Smi5879GateCheckDbDeps,
 } from './smi5879-gate-check.types.ts'
-import type { SimRowOutcome, SimRowResult } from './smi5879-simulate-full.types.ts'
+import type { SimRowOutcome, SimRowResult, SimSnapshotRow } from './smi5879-simulate-full.types.ts'
+
+/**
+ * SMI-6444: one `loadCohortRows` call per run_id per gate-check invocation.
+ * Both `bindSimulatorReportToPopulation` and G-1 need the identical sealed
+ * population, and it is a ~314K-row load in production. The de-duplication
+ * lives here rather than inside the binding function because that function
+ * deliberately takes a `Pick<..., 'loadCohortRows'>` and loads the population
+ * ITSELF — handing it a pre-loaded array instead would let a caller bypass
+ * the digest-verified-ordering guard that is its whole point.
+ */
+export function memoizeCohortRowLoad(
+  db: Pick<Smi5879GateCheckDbDeps, 'loadCohortRows'>
+): Pick<Smi5879GateCheckDbDeps, 'loadCohortRows'> {
+  const cache = new Map<string, Promise<SimSnapshotRow[]>>()
+  return {
+    loadCohortRows(runId) {
+      const cached = cache.get(runId)
+      if (cached !== undefined) return cached
+      const pending = db.loadCohortRows(runId)
+      cache.set(runId, pending)
+      return pending
+    },
+  }
+}
+
+/**
+ * SMI-6444 — disposition-ledger shape/consistency validation moved to a
+ * sibling file once the bulk-disposition batch/provenance/revocation fields
+ * pushed this logic past the file-length policy's 500-line cap on its own.
+ * Re-exported here so every existing import site (`smi5879-gate-check.ts`,
+ * `smi5879-gate-check.gates.ts`, `smi5879-gate-check.g2r.ts`, and their
+ * tests) is unaffected.
+ */
+export {
+  resolveLedger,
+  validateDispositionLedger,
+  validateDispositionLedgerShape,
+  type LedgerValidation,
+  type ResolvedLedger,
+} from './smi5879-gate-check.ledger-validation.ts'
 
 // ---------------------------------------------------------------------------
 // Generic JSON-file loading — "absence of evidence is INCONCLUSIVE"
@@ -101,104 +139,13 @@ export function checkArtifactRunIdMatch<T extends { run_id: string }>(
 }
 
 // ---------------------------------------------------------------------------
-// Disposition ledger (G-1) — validation
+// Shared shape-parsing helper — retained here for the freeze-attestation
+// validator below (the disposition-ledger validator that used to share this
+// copy now has its own, in smi5879-gate-check.field-parsers.ts).
 // ---------------------------------------------------------------------------
 
 function isPlainObject(value: unknown): value is Record<string, unknown> {
   return typeof value === 'object' && value !== null && !Array.isArray(value)
-}
-
-const VALID_VERDICTS: readonly DispositionVerdict[] = ['confirm', 'exclude']
-
-export function validateDispositionLedgerShape(
-  value: unknown
-): { ok: true; value: Smi5879DispositionLedger } | { ok: false; reason: string } {
-  if (!isPlainObject(value)) return { ok: false, reason: 'not a JSON object' }
-  const runId = value['run_id']
-  const entriesRaw = value['entries']
-  if (typeof runId !== 'string' || runId.length === 0) {
-    return { ok: false, reason: 'run_id must be a non-empty string' }
-  }
-  if (!Array.isArray(entriesRaw)) return { ok: false, reason: 'entries must be an array' }
-  const entries: DispositionRecord[] = []
-  for (const [i, raw] of entriesRaw.entries()) {
-    if (!isPlainObject(raw)) return { ok: false, reason: `entries[${i}] is not an object` }
-    const id = raw['id']
-    const verdict = raw['verdict']
-    if (typeof id !== 'string' || id.length === 0) {
-      return { ok: false, reason: `entries[${i}].id must be a non-empty string` }
-    }
-    if (typeof verdict !== 'string' || !VALID_VERDICTS.includes(verdict as DispositionVerdict)) {
-      return {
-        ok: false,
-        reason: `entries[${i}].verdict must be one of ${VALID_VERDICTS.join('|')}`,
-      }
-    }
-    const reason = raw['reason']
-    const recordedBy = raw['recorded_by']
-    const recordedAt = raw['recorded_at']
-    entries.push({
-      id,
-      verdict: verdict as DispositionVerdict,
-      ...(typeof reason === 'string' ? { reason } : {}),
-      ...(typeof recordedBy === 'string' ? { recorded_by: recordedBy } : {}),
-      ...(typeof recordedAt === 'string' ? { recorded_at: recordedAt } : {}),
-    })
-  }
-  return { ok: true, value: { run_id: runId, entries } }
-}
-
-export interface LedgerValidation {
-  valid: boolean
-  byId: Map<string, DispositionVerdict>
-  /** ids with two-or-more entries carrying DIFFERENT verdicts — never last-write-wins. */
-  conflictingIds: string[]
-}
-
-/**
- * Validate internal consistency of an already-shape-checked ledger. A
- * duplicate entry for the same id is fine IFF every entry for that id agrees
- * on the verdict; a genuine conflict (confirm AND exclude recorded for the
- * same id) makes the WHOLE ledger untrustworthy, never resolved by
- * last-write-wins (task spec, explicit).
- */
-export function validateDispositionLedger(ledger: Smi5879DispositionLedger): LedgerValidation {
-  const byId = new Map<string, DispositionVerdict>()
-  const conflicting = new Set<string>()
-  for (const entry of ledger.entries) {
-    const existing = byId.get(entry.id)
-    if (existing !== undefined && existing !== entry.verdict) {
-      conflicting.add(entry.id)
-      continue
-    }
-    byId.set(entry.id, entry.verdict)
-  }
-  return { valid: conflicting.size === 0, byId, conflictingIds: [...conflicting].sort() }
-}
-
-export interface ResolvedLedger {
-  validation: LedgerValidation
-  /** Non-null iff the ledger could not be loaded at all (missing/malformed) — distinct
-   *  from "loaded but incomplete", which each gate reports on its own terms. */
-  loadFailureReason: string | null
-}
-
-/**
- * Normalize a `loadJsonFile` result for the disposition ledger into a shape
- * both G-1 and G-2R can consume uniformly: a load failure (missing file,
- * unparseable JSON, failed shape validation) produces an EMPTY, vacuously
- * "valid" ledger plus a distinct `loadFailureReason` — callers check that
- * field FIRST, so "no ledger at all" is never silently indistinguishable
- * from "ledger loaded but every row happens to be undisposed."
- */
-export function resolveLedger(loadResult: LoadResult<Smi5879DispositionLedger>): ResolvedLedger {
-  if (loadResult.status === 'ok') {
-    return { validation: validateDispositionLedger(loadResult.value), loadFailureReason: null }
-  }
-  return {
-    validation: { valid: true, byId: new Map(), conflictingIds: [] },
-    loadFailureReason: loadResult.reason,
-  }
 }
 
 // ---------------------------------------------------------------------------

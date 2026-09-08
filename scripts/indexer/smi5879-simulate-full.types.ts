@@ -102,6 +102,18 @@ export interface SimRowResult {
   outcome: SimRowOutcome
   /** Populated whenever `outcome` isn't a plain verdict-delta bucket — names the exact cause. */
   reason?: string
+  /**
+   * SMI-6444: set only when `outcome === 'unfetchable'`, at both of
+   * `processRow`'s `unfetchable` return sites — distinguishes a pure local
+   * `parseSkillMdUrl` failure from a stored `smi5879_repo_branch`
+   * not-found/unparseable resolution. A typed field, not free-form `reason`
+   * text, so downstream tooling (the bulk disposition producer, gate-side
+   * re-derivation) never has to parse prose to recover it. See
+   * `smi5879-terminal-derivation.ts`'s `deriveUnfetchableSubtype`, which
+   * re-derives this independently from digest-verified data rather than
+   * trusting this field alone.
+   */
+  unfetchable_subtype?: 'url_parse' | 'branch_resolution'
   prePortQuarantine?: boolean
   postPortQuarantine?: boolean
   prePortRiskScore?: number

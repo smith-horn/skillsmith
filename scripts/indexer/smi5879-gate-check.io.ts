@@ -223,12 +223,23 @@ function validateRow(
     }
   }
   const reason = value['reason']
+  const unfetchableSubtype = value['unfetchable_subtype']
   const prePortQuarantine = value['prePortQuarantine']
   const postPortQuarantine = value['postPortQuarantine']
   const prePortRiskScore = value['prePortRiskScore']
   const postPortRiskScore = value['postPortRiskScore']
   if (reason !== undefined && typeof reason !== 'string') {
     return { ok: false, reason: `rows[${i}].reason must be a string when present` }
+  }
+  if (
+    unfetchableSubtype !== undefined &&
+    unfetchableSubtype !== 'url_parse' &&
+    unfetchableSubtype !== 'branch_resolution'
+  ) {
+    return {
+      ok: false,
+      reason: `rows[${i}].unfetchable_subtype must be "url_parse" or "branch_resolution" when present`,
+    }
   }
   if (prePortQuarantine !== undefined && typeof prePortQuarantine !== 'boolean') {
     return { ok: false, reason: `rows[${i}].prePortQuarantine must be a boolean when present` }
@@ -251,6 +262,9 @@ function validateRow(
       name,
       outcome: outcome as SimRowOutcome,
       ...(typeof reason === 'string' ? { reason } : {}),
+      ...(unfetchableSubtype === 'url_parse' || unfetchableSubtype === 'branch_resolution'
+        ? { unfetchable_subtype: unfetchableSubtype }
+        : {}),
       ...(typeof prePortQuarantine === 'boolean' ? { prePortQuarantine } : {}),
       ...(typeof postPortQuarantine === 'boolean' ? { postPortQuarantine } : {}),
       ...(typeof prePortRiskScore === 'number' ? { prePortRiskScore } : {}),

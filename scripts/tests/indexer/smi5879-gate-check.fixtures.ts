@@ -14,25 +14,39 @@
  * control flow that mocked dependencies exercise more precisely than a
  * live-DB harness would.
  *
- * Report/ledger/attestation fixtures below are built as PLAIN JSON-shaped
- * objects (not typed against the internal `Smi5879*` interfaces) and written
- * to real temp files via {@link writeFixtureFile} — this exercises the
- * ACTUAL file-loading + shape-validation path (`smi5879-gate-check.io.ts`
- * and `.helpers.ts`'s `loadJsonFile`), not just the in-memory evaluator
- * functions.
+ * Report fixtures below are built as PLAIN JSON-shaped objects (not typed
+ * against the internal `Smi5879*` interfaces) and written to real temp files
+ * via {@link writeFixtureFile} — this exercises the ACTUAL file-loading +
+ * shape-validation path (`smi5879-gate-check.io.ts` and `.helpers.ts`'s
+ * `loadJsonFile`), not just the in-memory evaluator functions.
+ *
+ * TWO SIBLING MODULES hold the fixtures that only some suites need, split out
+ * under SMI-6444 when this file crossed the 500-line policy cap. Import those
+ * helpers from the sibling DIRECTLY — they are deliberately not re-exported
+ * here, so the import graph stays one-way (siblings import from this module;
+ * this module imports nothing back):
+ *   - `smi5879-gate-check.fixtures.dispositions.ts` — the operator-authored
+ *     G-1 disposition ledger (entries, bulk entries, `DispositionBatch`
+ *     records) and the G-7/G-8 freeze attestation.
+ *   - `smi5879-gate-check.fixtures.g2r.ts` — drift rows and the
+ *     call-counting fake DB, used only by the G-2R suite.
  */
 
 import { mkdtempSync, realpathSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import type {
-  DriftRow,
   Smi5879GateCheckDbDeps,
   Smi5879GateCheckMode,
   Smi5879GateCheckTestDeps,
   Smi5879RunSummary,
   StructuralClosureResult,
 } from '../../indexer/smi5879-gate-check.types.ts'
+import type {
+  BranchMap,
+  SimSnapshotRow,
+  SimulatedCohort,
+} from '../../indexer/smi5879-simulate-full.types.ts'
 import type { CliArgs } from '../../indexer/smi5879-gate-check.ts'
 
 // ---------------------------------------------------------------------------
@@ -143,26 +157,51 @@ export function makeCoverage(overrides: Record<string, unknown> = {}): Record<st
   }
 }
 
-export function makeFullCoverageAllCohorts(): Record<string, unknown> {
-  return {
-    C1: makeCoverage(),
-    C2: makeCoverage(),
-    C3: makeCoverage(),
-    C4: makeCoverage(),
-  }
+/**
+ * The quarantine pair each SCORED outcome must carry to be internally
+ * coherent — `SCORED_OUTCOMES` exactly, keyed to what
+ * `expectedVerdictDeltaOutcome` derives from the pair
+ * (`smi5879-merge-shards.outcome-coherence.ts`).
+ *
+ * SMI-6444: {@link makeSimRow} used to hand every row the same
+ * `false/false/0/0` quartet regardless of outcome — rows the real simulator
+ * can NEVER emit (an `unfetchable` row carrying score fields; a
+ * `newly_quarantined` row whose own booleans say `unchanged_clean`). Harmless
+ * while the coherence asserts ran only inside `runMergeShards`; now that
+ * `bindSimulatorReportToPopulation` runs them gate-side (plan Item 2), such a
+ * row correctly fails to bind. Deriving from the outcome keeps every existing
+ * call site meaning what it always meant.
+ */
+const SCORED_OUTCOME_QUARANTINE: Record<string, { pre: boolean; post: boolean }> = {
+  newly_quarantined: { pre: false, post: true },
+  newly_cleared: { pre: true, post: false },
+  unchanged_clean: { pre: false, post: false },
+  unchanged_quarantined: { pre: true, post: true },
+  // bundle_absent is scored but must be a NON-change (SMI-6436).
+  bundle_absent: { pre: false, post: false },
 }
 
 export function makeSimRow(overrides: Record<string, unknown> = {}): Record<string, unknown> {
+  const outcome = (overrides['outcome'] as string | undefined) ?? 'unchanged_clean'
+  const quarantine = SCORED_OUTCOME_QUARANTINE[outcome]
   return {
     id: 'row-1',
     cohort: 'C2',
     author: 'acme',
     name: 'row-1',
-    outcome: 'unchanged_clean',
-    prePortQuarantine: false,
-    postPortQuarantine: false,
-    prePortRiskScore: 0,
-    postPortRiskScore: 0,
+    outcome,
+    // Non-scored outcomes (unevaluable/unfetchable/primary_not_found/
+    // content_drifted) carry NO score fields at all — the real simulator
+    // never attaches them, and a row that does fails
+    // `assertRowOutcomeFieldPresence`.
+    ...(quarantine !== undefined
+      ? {
+          prePortQuarantine: quarantine.pre,
+          postPortQuarantine: quarantine.post,
+          prePortRiskScore: 0,
+          postPortRiskScore: 0,
+        }
+      : {}),
     ...overrides,
   }
 }
@@ -232,39 +271,6 @@ export function makeSimulatorReportJson(
 }
 
 // ---------------------------------------------------------------------------
-// Disposition ledger / attestation fixtures
-// ---------------------------------------------------------------------------
-
-export function makeDispositionLedgerJson(
-  entries: Record<string, unknown>[] = [],
-  runId = DECISION_RUN_ID
-): Record<string, unknown> {
-  return { run_id: runId, entries }
-}
-
-export function makeAttestationChecks(
-  ids: readonly string[],
-  status = 'green'
-): Record<string, unknown>[] {
-  return ids.map((id) => ({ id, status }))
-}
-
-export function makeAttestationJson(
-  overrides: Record<string, unknown> = {}
-): Record<string, unknown> {
-  return {
-    run_id: DECISION_RUN_ID,
-    checks: [],
-    backfill_kill_switch_clean: true,
-    pr2192a_merged: true,
-    pr2192a_deploy_green: true,
-    pr2192a_merged_at: '2026-07-28T00:00:00.000000Z',
-    recorded_at: new Date().toISOString(),
-    ...overrides,
-  }
-}
-
-// ---------------------------------------------------------------------------
 // Fake DB / test deps
 // ---------------------------------------------------------------------------
 
@@ -297,6 +303,55 @@ export function makeWindowRunSummary(
   })
 }
 
+// ---------------------------------------------------------------------------
+// Sealed-population plumbing (SMI-6444)
+// ---------------------------------------------------------------------------
+
+/**
+ * The population {@link makeFakeDb}'s default `loadCohortRows` serves, set by
+ * {@link buildRequiredArgs} from the simulator report it just wrote.
+ *
+ * WHY A MODULE-SCOPED HOLDER, NOT A PARAMETER: since SMI-6444
+ * `evaluateGateCheck` refuses any report not EXACTLY set-equal to the sealed
+ * population, so the fake DB and the fixture report can no longer be built
+ * independently — yet they are constructed at different call sites, and
+ * `makeFakeDb()` is frequently evaluated BEFORE `buildRequiredArgs(...)` (it
+ * sits in the first argument of the same `evaluateGateCheck(...)` call). The
+ * default reader is therefore LAZY: it reads this holder when gate-check
+ * actually calls it, by which point `buildRequiredArgs` has always run.
+ * Vitest runs a file's tests sequentially (no `it.concurrent` in this suite),
+ * so exactly one fixture is in flight at a time. A test that needs the
+ * population to DIVERGE from the report passes an explicit `loadCohortRows`
+ * override to {@link makeFakeDb} instead.
+ */
+let currentFixturePopulation: SimSnapshotRow[] = []
+
+/**
+ * Derive the sealed-population rows implied by a set of report rows.
+ * `repo_url`/`skill_path` are null, so `deriveUnfetchableSubtype` resolves
+ * every row as `'url_parse'` — a bulk `unfetchable` batch over these rows
+ * re-derives cleanly by default. A test proving the NEGATIVE case supplies a
+ * row with a real GitHub `repo_url` and an empty branch map.
+ */
+export function populationFromSimRows(rows: readonly Record<string, unknown>[]): SimSnapshotRow[] {
+  return rows.map((row) => ({
+    id: String(row['id']),
+    cohort: row['cohort'] as SimulatedCohort,
+    repo_url: null,
+    skill_path: null,
+    author: (row['author'] as string | null | undefined) ?? null,
+    name: (row['name'] as string | null | undefined) ?? null,
+    content_hash: null,
+    snapshot_security_score: null,
+    snapshot_quarantined: null,
+  }))
+}
+
+/** Read the population {@link buildRequiredArgs} last installed. */
+export function getFixturePopulation(): SimSnapshotRow[] {
+  return currentFixturePopulation
+}
+
 export function makeFakeDb(
   overrides: Partial<Smi5879GateCheckDbDeps> = {}
 ): Smi5879GateCheckDbDeps {
@@ -316,6 +371,13 @@ export function makeFakeDb(
     },
     async enumerateDrift() {
       return []
+    },
+    // Lazy on purpose — see currentFixturePopulation's doc comment.
+    async loadCohortRows() {
+      return getFixturePopulation()
+    },
+    async loadBranchMap(): Promise<BranchMap> {
+      return new Map()
     },
     ...overrides,
   }
@@ -350,25 +412,6 @@ export function makeFakeTestDeps(
   }
 }
 
-export function makeDriftRow(overrides: Partial<DriftRow> = {}): DriftRow {
-  return {
-    id: 'row-1',
-    drift_class: 'DR-1-deleted-row',
-    decision_content_hash: 'hash-a',
-    window_content_hash: null,
-    decision_score: 3,
-    window_score: null,
-    decision_quarantined: false,
-    window_quarantined: null,
-    decision_cohort: 'E',
-    window_cohort: null,
-    repo_url: 'https://github.com/acme/row-1',
-    author: 'acme',
-    name: 'row-1',
-    ...overrides,
-  }
-}
-
 /**
  * Write the two REQUIRED artifacts (census + simulator report) to `dir` and
  * return a ready-to-use `CliArgs`. Optional inputs (dispositions,
@@ -389,10 +432,17 @@ export function buildRequiredArgs(
   const mode = opts.mode ?? 'decision'
   const decisionRunId = opts.decisionRunId ?? DECISION_RUN_ID
   const censusPath = writeFixtureFile(dir, 'census.json', opts.censusJson ?? makeCensusReportJson())
-  const simulatorPath = writeFixtureFile(
-    dir,
-    'simulator.json',
-    opts.simulatorJson ?? makeSimulatorReportJson()
+  // SMI-6444: the default report carries ONE row rather than none — a report
+  // with zero rows implies a zero-row sealed population, which
+  // `bindSimulatorReportToPopulation` refuses outright (an empty population
+  // vacuously "matches" anything). `makeSimulatorReportJson`'s own default
+  // stays `rows: []`, since merge-shards' fixtures always pass rows
+  // explicitly and depend on that default.
+  const simulatorJson =
+    opts.simulatorJson ?? makeSimulatorReportJson({ rows: [makeSimRow({ id: 'row-1' })] })
+  const simulatorPath = writeFixtureFile(dir, 'simulator.json', simulatorJson)
+  currentFixturePopulation = populationFromSimRows(
+    (simulatorJson['rows'] as Record<string, unknown>[] | undefined) ?? []
   )
   return {
     mode,
@@ -432,25 +482,4 @@ export function buildReconciliationArgs(
     windowRunId,
     windowCensusReportPath,
   }
-}
-
-/** A count-tracking wrapper — asserts phase short-circuiting by call counts. */
-export function makeCountingFakeDb(overrides: Partial<Smi5879GateCheckDbDeps> = {}): {
-  db: Smi5879GateCheckDbDeps
-  calls: { countFreezeLeak: number; enumerateDrift: number }
-} {
-  const calls = { countFreezeLeak: 0, enumerateDrift: 0 }
-  const base = makeFakeDb(overrides)
-  const db: Smi5879GateCheckDbDeps = {
-    ...base,
-    async countFreezeLeak(decisionRunId, windowRunId) {
-      calls.countFreezeLeak++
-      return base.countFreezeLeak(decisionRunId, windowRunId)
-    },
-    async enumerateDrift(decisionRunId, windowRunId) {
-      calls.enumerateDrift++
-      return base.enumerateDrift(decisionRunId, windowRunId)
-    },
-  }
-  return { db, calls }
 }
