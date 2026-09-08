@@ -23,6 +23,14 @@ import {
   RELATIVE_MARKERS,
 } from './security-scanner-edge.prose-lexicon.ts'
 
+// Governance review L-2: same cap as security-scanner-edge.paths.ts's and
+// security-scanner-edge.value-gate.ts's own MAX_LINE_LENGTH — without it, an
+// action verb past character 10,000 on a line could escalate a path the
+// pattern scan itself never saw past that point. Declared locally, matching
+// this edge codebase's existing per-file convention (see value-gate.ts's own
+// comment) rather than a shared import.
+const MAX_LINE_LENGTH = 10000
+
 /**
  * MF-3 (SMI-5207): action verbs for a path-form match, matched as whole
  * tokens (not substring) so negation lookaround works cleanly.
@@ -176,7 +184,8 @@ function inRelativeClause(norm: string[], i: number): boolean {
  * speculative POS heuristic — risks under-flagging on the surfaces that
  * cannot be allowlisted at all.
  */
-function hasActionEvidence(line: string): boolean {
+function hasActionEvidence(rawLine: string): boolean {
+  const line = rawLine.slice(0, MAX_LINE_LENGTH)
   if (SHELL_OPERATOR.test(line)) return true
   const words = line.split(/\s+/)
   const norm = words.map((w) => w.toLowerCase().replace(/[^a-z']/g, ''))

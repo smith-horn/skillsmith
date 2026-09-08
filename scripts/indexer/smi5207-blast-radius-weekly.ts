@@ -60,7 +60,8 @@
  * nothing newly quarantined); 1 on any violation — see printSummary().
  */
 
-import { writeFileSync } from 'node:fs'
+import { writeFileSync, mkdirSync } from 'node:fs'
+import { dirname } from 'node:path'
 // scanSkill is NOT re-exported from skill-scanner/index.ts's barrel (only
 // scanImportedSkills/DEFAULT_CONFIG/DEFAULT_CLI_OPTIONS are) — imported
 // directly from its source module instead.
@@ -81,7 +82,10 @@ import type {
   Smi5207WeeklyRow,
 } from './smi5207-blast-radius.types.js'
 
-const DEFAULT_REPORT_PATH = 'smi5207-blast-radius-weekly-report.json'
+// Governance review L-3: never the repo root (CLAUDE.md "Never save working
+// files, text/mds and tests to the root folder") — a scoped, gitignored
+// directory instead.
+const DEFAULT_REPORT_PATH = '.smi5207-reports/blast-radius-weekly-report.json'
 
 function classifyOutcome(before: boolean | null, after: boolean): Smi5207RowOutcome {
   if (before === null) return 'unknown_before'
@@ -195,6 +199,7 @@ async function main(): Promise<void> {
   }
 
   const reportPath = common.reportPath ?? DEFAULT_REPORT_PATH
+  mkdirSync(dirname(reportPath), { recursive: true })
   writeFileSync(reportPath, JSON.stringify(report, null, 2))
 
   printSummary(report)

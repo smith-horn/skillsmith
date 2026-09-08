@@ -18,6 +18,7 @@ import {
   DETECTION_FRAMING,
   RELATIVE_MARKERS,
 } from './SecurityScanner.prose-lexicon.js'
+import { MAX_LINE_LENGTH_FOR_REGEX } from './regex-utils.js'
 
 /**
  * MF-3 (SMI-5207): action verbs for a path-form match, matched as whole
@@ -171,7 +172,13 @@ function inRelativeClause(norm: string[], i: number): boolean {
  * heuristic — risks under-flagging on four surfaces that cannot be allowlisted
  * at all.
  */
-function hasActionEvidence(line: string): boolean {
+function hasActionEvidence(rawLine: string): boolean {
+  // Governance review L-2: cap at the same length the sibling value-gate
+  // applies (SecurityScanner.value-gate.ts) and the same cap safeRegexTest
+  // already applied to the match that got the caller here — without this,
+  // an action verb past character 10,000 on a line could escalate a path
+  // the pattern scan itself never saw past that point.
+  const line = rawLine.slice(0, MAX_LINE_LENGTH_FOR_REGEX)
   if (SHELL_OPERATOR.test(line)) return true
   const words = line.split(/\s+/)
   const norm = words.map((w) => w.toLowerCase().replace(/[^a-z']/g, ''))

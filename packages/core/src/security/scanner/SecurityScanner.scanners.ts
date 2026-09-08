@@ -120,6 +120,16 @@ export function scanSensitivePaths(
         // SMI-5207: the matched TEXT is prepended additively — `pattern.source` is
         // deliberately retained, not swapped out, because allowlist entries'
         // `messagePattern` values match on that regex-source substring.
+        // Governance review L-5: `match?.[0] ?? ''` is kept (a plain `match[0]`
+        // fails `tsc` — TS cannot correlate the separate `safeRegexCheck`/
+        // `safeRegexTest` calls the way it narrows a local `if (match)` block, the
+        // pattern this file's OTHER scanners use). Behaviorally the `?? ''`
+        // fallback is unreachable: `safeRegexCheck` (.test()) already gated the
+        // loop above on this same pattern/line pair, and for a non-`g` pattern
+        // .test() and .match() can never disagree on the same input. If it ever
+        // WAS reached, it would silently diverge from the edge twins (which emit
+        // no finding at all rather than one with an empty quoted span) — a gap the
+        // twin-parity test can't catch, since it compares files, not behavior.
         message: `Reference to potentially sensitive path: "${match?.[0]?.slice(0, 60) ?? ''}" (${pattern.source})`,
         location: line.trim().slice(0, 100),
         lineNumber: index + 1,
