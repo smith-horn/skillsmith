@@ -1,41 +1,40 @@
 /**
- * Tests for the skillsmith-doc-retrieval MCP launcher (SMI-5718).
+ * Tests for the skillsmith-doc-retrieval MCP launcher (SMI-5718, SMI-6453).
  *
- * Sibling to scripts/tests/mcp-skillsmith-launcher.test.ts (SMI-5451) — same
- * fixture-harness pattern, adapted for scripts/mcp-doc-retrieval-launcher.sh:
- *   - `packages/doc-retrieval-mcp` instead of `packages/mcp-server`
- *   - dist entry `dist/src/server.js` instead of `dist/src/index.js`
- *   - a NEW container-liveness check (Check 0) — doc-retrieval-mcp runs
- *     inside the container (native module better-sqlite3), so the final
- *     invocation is `docker exec`, not a direct host `exec node`. This
- *     means the launcher's dependency probe (real node, host-side) and its
- *     final invocation (docker) are stubbed separately: `node` runs for
- *     real so the probe actually executes; `docker` is stubbed to control
- *     container-liveness output and to capture the final exec invocation.
+ * The harness models the two filesystems the launcher intentionally sees:
+ *
+ * - The HOST tree is `makeRoot()`'s temporary repository. It contains the
+ *   copied launcher and represents the bind-mounted repository. Host-side
+ *   checks, including container liveness and Check 2's dist entry, see it.
+ * - The CONTAINER tree is a separate temporary directory representing /app
+ *   inside the running container. Its node_modules directories are independent
+ *   named-volume contents. Checks 1 and 3 must inspect this tree exclusively.
+ *
+ * The generated `docker` stub remaps container `/app` arguments, workdirs, and
+ * environment values to the CONTAINER tree. Unlike the old swallow-everything
+ * stub, it genuinely re-executes non-server `docker exec` commands with the
+ * test runner's real `sh` and `node`. Only the final server invocation is
+ * replaced by a marker touch.
  *
  * Environment note (mirrors the sibling suite's SMI-5570/SMI-5074 comment):
- * this worktree's dev container has a documented root-`node_modules`
- * resolution leak — `import.meta.resolve()` for a real hoisted dependency
- * succeeds from ANY cwd, including an isolated tmpdir fixture, because of a
- * Docker mount-destination quirk (see
- * docs/internal/implementation/smi-5570-5074-worktree-native-module-resolution-plan.md).
- * Verified directly against this container before writing these fixtures.
- * Tests that assert a dependency is MISSING/CORRUPT use fixture-only names
- * for exactly this reason. The launcher's new `zod-to-json-schema`
- * root-hoisted check is therefore only exercised on its PASS path here
- * (see the note on that test) — the same limitation the sibling suite
- * already accepts for its own generic "absent" case.
+ * this worktree's dev container has a documented root-node_modules resolution
+ * leak. `import.meta.resolve()` for a real hoisted dependency can succeed from
+ * an isolated temporary fixture because of a Docker mount-destination quirk
+ * (see docs/internal/implementation/
+ * smi-5570-5074-worktree-native-module-resolution-plan.md). Every negative
+ * dependency case therefore uses a clearly fixture-only package name so an
+ * unrelated real package cannot mask the intended failure.
  */
-import { describe, it, expect, beforeEach, afterEach } from 'vitest'
+import { afterEach, beforeEach, describe, expect, it } from 'vitest'
 import {
-  mkdtempSync,
-  mkdirSync,
-  rmSync,
-  readFileSync,
-  writeFileSync,
-  copyFileSync,
   chmodSync,
+  copyFileSync,
   existsSync,
+  mkdirSync,
+  mkdtempSync,
+  readFileSync,
+  rmSync,
+  writeFileSync,
 } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { dirname, join, resolve } from 'node:path'
@@ -51,32 +50,51 @@ interface RunResult {
   stderr: string
 }
 
-/**
- * Run the launcher copied into `root`, returning exit code + captured
- * output. `extraPath` (a stub-`docker` bin dir) is prepended to PATH when
- * given; the launcher's real dependency probe always uses the real `node`
- * on PATH (never stubbed — the probe must actually execute).
- */
 function runLauncher(root: string, extraPath?: string): RunResult {
   const launcher = join(root, 'scripts', 'mcp-doc-retrieval-launcher.sh')
   const env = { ...process.env }
+
   if (extraPath) {
     env.PATH = `${extraPath}:${env.PATH ?? ''}`
   }
-  const r = spawnSync('bash', [launcher], {
+
+  const result = spawnSync('bash', [launcher], {
     encoding: 'utf8',
     env,
     stdio: ['ignore', 'pipe', 'pipe'],
   })
-  return { status: r.status ?? 1, stdout: r.stdout ?? '', stderr: r.stderr ?? '' }
+
+  return {
+    status: result.status ?? 1,
+    stdout: result.stdout ?? '',
+    stderr: result.stderr ?? '',
+  }
 }
 
 function makeRoot(): string {
   const suffix = `${Date.now()}-${Math.random().toString(36).slice(2)}`
   const root = mkdtempSync(join(tmpdir(), `mcp-doc-retrieval-launcher-${suffix}-`))
+
   mkdirSync(join(root, 'scripts'), { recursive: true })
   copyFileSync(LAUNCHER_SRC, join(root, 'scripts', 'mcp-doc-retrieval-launcher.sh'))
   chmodSync(join(root, 'scripts', 'mcp-doc-retrieval-launcher.sh'), 0o755)
+
+  return root
+}
+
+/**
+ * Every container tree has the probe workdir. Without it, the docker stub's
+ * natural `cd` failure would turn an intended dependency assertion into a
+ * generic fail-open infrastructure warning.
+ */
+function makeContainerRoot(): string {
+  const suffix = `${Date.now()}-${Math.random().toString(36).slice(2)}`
+  const root = mkdtempSync(join(tmpdir(), `mcp-doc-retrieval-container-${suffix}-`))
+
+  mkdirSync(join(root, 'packages', 'doc-retrieval-mcp', 'dist', 'src'), {
+    recursive: true,
+  })
+
   return root
 }
 
@@ -96,7 +114,11 @@ function addDocRetrievalPackageJson(root: string, dependencies: Record<string, s
   mkdirSync(pkgDir, { recursive: true })
   writeFileSync(
     join(pkgDir, 'package.json'),
-    JSON.stringify({ name: '@skillsmith/doc-retrieval-mcp', version: '0.0.0', dependencies }),
+    JSON.stringify({
+      name: '@skillsmith/doc-retrieval-mcp',
+      version: '0.0.0',
+      dependencies,
+    }),
     'utf8'
   )
 }
@@ -117,22 +139,47 @@ function addHoistedDep(root: string, name: string): void {
 
 function addNestedDep(root: string, name: string, opts: { empty?: boolean } = {}): void {
   const dir = join(root, 'packages', 'doc-retrieval-mcp', 'node_modules', name)
+
   if (opts.empty) {
-    mkdirSync(dir, { recursive: true }) // the SMI-5452 state: dir exists, no contents
+    mkdirSync(dir, { recursive: true })
     return
   }
+
   writeMinimalPackage(dir, name)
 }
 
 /**
- * Create a temp bin dir with a `docker` stub:
- *  - `docker ps ...` prints a fake container ID if `running` is true,
- *    otherwise prints nothing (both exit 0 — matches real `docker ps -q`
- *    behavior, which never errors just because the filter matched zero rows)
- *  - `docker exec ...` logs its argv and touches a marker (final-invocation stand-in)
- *  - every invocation's argv is appended to invocations.log for assertions
+ * A healthy host now needs only the bind-mounted dist entry. Checks 1 and 3
+ * run inside the container and must not be encouraged to depend on host-side
+ * package or node_modules fixtures.
  */
-function makeDockerStub(opts: { running: boolean }): {
+function makeHealthyHost(): string {
+  const root = makeRoot()
+  addDist(root)
+  return root
+}
+
+/**
+ * A healthy container has the root sentinel, package metadata, a resolvable
+ * declared dependency, and zod-to-json-schema. The latter is checked
+ * explicitly by the launcher but is not declared by doc-retrieval-mcp.
+ */
+function makeHealthyContainer(): string {
+  const root = makeContainerRoot()
+  addNodeModules(root)
+  addDocRetrievalPackageJson(root, { '__smi-6453-fixture-healthy-dep__': '1.0.0' })
+  addHoistedDep(root, '__smi-6453-fixture-healthy-dep__')
+  addHoistedDep(root, 'zod-to-json-schema')
+  return root
+}
+
+interface DockerStubOptions {
+  running: boolean
+  containerRoot: string
+  execFailureStatus?: number
+}
+
+function makeDockerStub(opts: DockerStubOptions): {
   binDir: string
   execMarker: string
   invocationsLog: string
@@ -141,44 +188,131 @@ function makeDockerStub(opts: { running: boolean }): {
   const execMarker = join(binDir, 'exec-invoked')
   const invocationsLog = join(binDir, 'invocations.log')
   const stub = join(binDir, 'docker')
+  const failureStatus = opts.execFailureStatus ?? 0
+
   writeFileSync(
     stub,
     `#!/usr/bin/env bash
-echo "$*" >> "${invocationsLog}"
+
+{
+  printf '%s ' "$@"
+  printf '\\n'
+} | tr '\\n' ' ' >> "${invocationsLog}"
+printf '\\n' >> "${invocationsLog}"
+
 if [ "$1" = "ps" ]; then
   ${opts.running ? 'echo "fakecontainerid0123"' : ''}
   exit 0
 fi
+
 if [ "$1" = "exec" ]; then
-  touch "${execMarker}"
-  exit 0
+  shift
+  workdir=""
+  declare -a exec_env=()
+
+  while [ "$#" -gt 0 ] && [[ "$1" == -* ]]; do
+    case "$1" in
+      -i|-t|-d)
+        shift
+        ;;
+      -w|--workdir)
+        if [ "$#" -lt 2 ]; then
+          echo "docker stub: $1 requires a value" >&2
+          exit 125
+        fi
+        workdir="$2"
+        shift 2
+        ;;
+      -e|--env)
+        if [ "$#" -lt 2 ]; then
+          echo "docker stub: $1 requires a value" >&2
+          exit 125
+        fi
+        exec_env+=("$2")
+        shift 2
+        ;;
+      *)
+        echo "docker stub: unsupported docker exec option: $1" >&2
+        exit 125
+        ;;
+    esac
+  done
+
+  if [ "$#" -eq 0 ]; then
+    echo "docker stub: missing container name" >&2
+    exit 125
+  fi
+
+  shift
+
+  remap_app_path() {
+    case "$1" in
+      /app)
+        printf '%s\\n' "${opts.containerRoot}"
+        ;;
+      /app/*)
+        printf '%s/%s\\n' "${opts.containerRoot}" "\${1#/app/}"
+        ;;
+      *)
+        printf '%s\\n' "$1"
+        ;;
+    esac
+  }
+
+  if [ -n "$workdir" ]; then
+    workdir="$(remap_app_path "$workdir")"
+  fi
+
+  declare -a remapped_env=()
+  for assignment in "\${exec_env[@]}"; do
+    key="\${assignment%%=*}"
+    value="\${assignment#*=}"
+    remapped_env+=("$key=$(remap_app_path "$value")")
+  done
+
+  declare -a command_args=()
+  for argument in "$@"; do
+    command_args+=("$(remap_app_path "$argument")")
+  done
+
+  if [ "\${#command_args[@]}" -ge 2 ] &&
+     [ "\${command_args[0]}" = "node" ] &&
+     [[ "\${command_args[1]}" == */dist/src/server.js ]]; then
+    touch "${execMarker}"
+    exit 0
+  fi
+
+  if [ "${failureStatus}" -ne 0 ]; then
+    exit "${failureStatus}"
+  fi
+
+  if [ "\${#command_args[@]}" -eq 0 ]; then
+    echo "docker stub: missing exec command" >&2
+    exit 125
+  fi
+
+  if [ -n "$workdir" ]; then
+    cd "$workdir" || exit 127
+  fi
+
+  for assignment in "\${remapped_env[@]}"; do
+    export "$assignment"
+  done
+
+  exec "\${command_args[@]}"
 fi
+
 exit 1
 `,
     'utf8'
   )
+
   chmodSync(stub, 0o755)
   return { binDir, execMarker, invocationsLog }
 }
 
-/**
- * A fully healthy fixture: sentinel, dist, package.json + resolvable dep +
- * a resolvable root-hoisted `zod-to-json-schema` (the launcher's explicit
- * extra check — see DEP_PROBE_JS's standalone call — is not one of
- * doc-retrieval-mcp's own declared `dependencies`, so it is never covered
- * by `addDocRetrievalPackageJson`/`addHoistedDep` for an arbitrary dep name;
- * every "healthy" fixture must provision it explicitly or the probe
- * legitimately reports it FAIL missing, exactly as it should for a real
- * environment that doesn't have it hoisted).
- */
-function makeHealthyRoot(): string {
-  const root = makeRoot()
-  addNodeModules(root)
-  addDist(root)
-  addDocRetrievalPackageJson(root, { glob: '11.1.0' })
-  addHoistedDep(root, 'glob')
-  addHoistedDep(root, 'zod-to-json-schema')
-  return root
+function warningCount(stderr: string): number {
+  return stderr.match(/preflight warning/g)?.length ?? 0
 }
 
 describe('mcp-doc-retrieval-launcher.sh', () => {
@@ -191,195 +325,360 @@ describe('mcp-doc-retrieval-launcher.sh', () => {
   })
 
   afterEach(() => {
-    for (const r of roots) rmSync(r, { recursive: true, force: true })
-    for (const s of stubs) rmSync(s, { recursive: true, force: true })
+    for (const root of roots) {
+      rmSync(root, { recursive: true, force: true })
+    }
+    for (const stub of stubs) {
+      rmSync(stub, { recursive: true, force: true })
+    }
   })
 
   it('exits 1 with actionable stderr when the container is not running', () => {
-    const root = makeHealthyRoot()
-    roots.push(root)
-    const { binDir } = makeDockerStub({ running: false })
+    const host = makeHealthyHost()
+    const container = makeHealthyContainer()
+    roots.push(host, container)
+
+    const { binDir } = makeDockerStub({ running: false, containerRoot: container })
     stubs.push(binDir)
-    const res = runLauncher(root, binDir)
-    expect(res.status).toBe(1)
-    expect(res.stderr).toContain('[doc-retrieval]')
-    expect(res.stderr).toContain('container is not running')
-    expect(res.stderr).toContain('docker compose --profile dev up -d')
+
+    const result = runLauncher(host, binDir)
+
+    expect(result.status).toBe(1)
+    expect(result.stderr).toContain('[doc-retrieval]')
+    expect(result.stderr).toContain('container is not running')
+    expect(result.stderr).toContain('docker compose --profile dev up -d')
   })
 
-  it('checks container liveness before node_modules (container wins when both missing/absent)', () => {
-    const root = makeRoot() // no node_modules, no dist, no package.json
-    roots.push(root)
-    const { binDir } = makeDockerStub({ running: false })
+  it('checks container liveness before node_modules and dist', () => {
+    const host = makeRoot()
+    const container = makeContainerRoot()
+    roots.push(host, container)
+
+    const { binDir } = makeDockerStub({ running: false, containerRoot: container })
     stubs.push(binDir)
-    const res = runLauncher(root, binDir)
-    expect(res.status).toBe(1)
-    expect(res.stderr).toContain('container is not running')
-    expect(res.stderr).not.toContain('node_modules missing')
+
+    const result = runLauncher(host, binDir)
+
+    expect(result.status).toBe(1)
+    expect(result.stderr).toContain('container is not running')
+    expect(result.stderr).not.toContain('node_modules missing')
+    expect(result.stderr).not.toContain('dist/ missing')
   })
 
-  it('exits 1 with actionable stderr when node_modules is absent (container running)', () => {
-    const root = makeRoot()
-    roots.push(root)
-    const { binDir } = makeDockerStub({ running: true })
+  it('exits 1 when container node_modules is absent', () => {
+    const host = makeHealthyHost()
+    const container = makeContainerRoot()
+    roots.push(host, container)
+
+    const { binDir } = makeDockerStub({ running: true, containerRoot: container })
     stubs.push(binDir)
-    const res = runLauncher(root, binDir)
-    expect(res.status).toBe(1)
-    expect(res.stderr).toContain('[doc-retrieval]')
-    expect(res.stderr).toContain('node_modules missing')
-    expect(res.stderr).toContain('npm install')
+
+    const result = runLauncher(host, binDir)
+
+    expect(result.status).toBe(1)
+    expect(result.stderr).toContain('[doc-retrieval]')
+    expect(result.stderr).toContain('node_modules missing')
+    expect(result.stderr).toContain('npm install')
   })
 
-  it('exits 1 with actionable stderr when dist/ is absent (container running)', () => {
-    const root = makeRoot()
-    roots.push(root)
-    addNodeModules(root)
-    const { binDir } = makeDockerStub({ running: true })
-    stubs.push(binDir)
-    const res = runLauncher(root, binDir)
-    expect(res.status).toBe(1)
-    expect(res.stderr).toContain('[doc-retrieval]')
-    expect(res.stderr).toContain('dist/ missing')
-  })
+  it('reads Check 1 sentinel from the container when host node_modules is absent', () => {
+    const host = makeHealthyHost()
+    const container = makeHealthyContainer()
+    roots.push(host, container)
 
-  it('execs docker exec on the dist entry when everything is healthy', () => {
-    const root = makeHealthyRoot()
-    roots.push(root)
-    const { binDir, execMarker, invocationsLog } = makeDockerStub({ running: true })
+    const { binDir, execMarker } = makeDockerStub({
+      running: true,
+      containerRoot: container,
+    })
     stubs.push(binDir)
-    const res = runLauncher(root, binDir)
-    expect(res.status).toBe(0)
-    expect(res.stderr).not.toContain('cannot start')
+
+    const result = runLauncher(host, binDir)
+
+    expect(result.status).toBe(0)
+    expect(result.stderr).not.toContain('node_modules missing')
+    expect(existsSync(join(host, 'node_modules'))).toBe(false)
     expect(existsSync(execMarker)).toBe(true)
+  })
+
+  it('exits 1 with actionable stderr when host dist is absent', () => {
+    const host = makeRoot()
+    const container = makeHealthyContainer()
+    roots.push(host, container)
+
+    const { binDir } = makeDockerStub({ running: true, containerRoot: container })
+    stubs.push(binDir)
+
+    const result = runLauncher(host, binDir)
+
+    expect(result.status).toBe(1)
+    expect(result.stderr).toContain('[doc-retrieval]')
+    expect(result.stderr).toContain('dist/ missing')
+  })
+
+  it('uses the new container-side preflights and final server invocation when healthy', () => {
+    const host = makeHealthyHost()
+    const container = makeHealthyContainer()
+    roots.push(host, container)
+
+    const { binDir, execMarker, invocationsLog } = makeDockerStub({
+      running: true,
+      containerRoot: container,
+    })
+    stubs.push(binDir)
+
+    const result = runLauncher(host, binDir)
+
+    expect(result.status).toBe(0)
+    expect(result.stderr).not.toContain('cannot start')
+    expect(existsSync(execMarker)).toBe(true)
+
     const invocations = readFileSync(invocationsLog, 'utf8').trim().split('\n')
-    const finalInvocation = invocations[invocations.length - 1]
-    expect(finalInvocation).toContain('exec')
-    expect(finalInvocation).toContain('skillsmith-dev-1')
+
+    const sentinelInvocation = invocations.find((line) => line.includes('SMI6453_PRESENT'))
+    expect(sentinelInvocation).toBeDefined()
+    expect(sentinelInvocation).toContain('exec skillsmith-dev-1 sh -c')
+    expect(sentinelInvocation).toContain('SMI6453_PRESENT')
+    expect(sentinelInvocation).toContain('SMI6453_ABSENT')
+    expect(sentinelInvocation).toContain('/app/node_modules/.package-lock.json')
+
+    const probeInvocation = invocations.find((line) =>
+      line.includes('SKILLSMITH_LAUNCHER_REPO_ROOT=/app')
+    )
+    expect(probeInvocation).toBeDefined()
+    expect(probeInvocation).toContain('exec -w /app/packages/doc-retrieval-mcp/dist/src')
+    expect(probeInvocation).toContain('-e SKILLSMITH_LAUNCHER_REPO_ROOT=/app')
+    expect(probeInvocation).toContain('skillsmith-dev-1 node --input-type=module -e')
+    expect(probeInvocation).not.toContain('exec -i')
+
+    const finalInvocation = invocations.at(-1)
+    expect(finalInvocation).toContain('exec -i skillsmith-dev-1 node')
     expect(finalInvocation).toContain('/app/packages/doc-retrieval-mcp/dist/src/server.js')
-    // The new zod-to-json-schema root-hoisted check ran as part of this
-    // healthy pass (real `node` on PATH actually executed the probe,
-    // real zod-to-json-schema resolves in this dev container) without
-    // producing a false failure — see the module docblock for why a
-    // dedicated negative case for this specific hardcoded name is not
-    // fixture-isolable in this environment.
   })
 
-  // ---- dependency-integrity probe (SMI-5718, mirrors SMI-5451) ----
+  it('ignores host-only stale native-module corruption when container is healthy', () => {
+    const staleDep = '__smi-6453-stale-linux-x64-native__'
+    const host = makeHealthyHost()
+    const container = makeHealthyContainer()
+    roots.push(host, container)
 
-  it('exits 1 when a nested dep dir exists but is empty (the SMI-5452 incident state, e.g. zod)', () => {
-    const root = makeRoot()
-    roots.push(root)
-    addNodeModules(root)
-    addDist(root)
-    addDocRetrievalPackageJson(root, { zod: '3.25.76' })
-    addNestedDep(root, 'zod', { empty: true })
-    const { binDir } = makeDockerStub({ running: true })
+    // This recreates the 2026-09-07 failure shape exclusively on the host.
+    // The original host-side probe sees it; the corrected probe must not.
+    addNodeModules(host)
+    addDocRetrievalPackageJson(host, { [staleDep]: '1.0.0' })
+    addNestedDep(host, staleDep, { empty: true })
+    addHoistedDep(host, 'zod-to-json-schema')
+
+    const { binDir, execMarker } = makeDockerStub({
+      running: true,
+      containerRoot: container,
+    })
     stubs.push(binDir)
-    const res = runLauncher(root, binDir)
-    expect(res.status).toBe(1)
-    expect(res.stderr).toContain('[doc-retrieval]')
-    expect(res.stderr).toContain('zod')
-    expect(res.stderr).toContain('packages/doc-retrieval-mcp/node_modules/')
-    expect(res.stderr).toContain('npm install')
-    expect(res.stderr).toContain('(See CLAUDE.md')
+
+    const result = runLauncher(host, binDir)
+
+    expect(result.status).toBe(0)
+    expect(result.stderr).not.toContain('nested-corrupt')
+    expect(result.stderr).not.toContain(staleDep)
+    expect(existsSync(execMarker)).toBe(true)
   })
 
-  it('empty nested dir still fails when a healthy hoisted copy exists (shadowing precedence)', () => {
-    const root = makeRoot()
-    roots.push(root)
-    addNodeModules(root)
-    addDist(root)
-    addDocRetrievalPackageJson(root, { zod: '3.25.76' })
-    addHoistedDep(root, 'zod')
-    addNestedDep(root, 'zod', { empty: true })
-    const { binDir } = makeDockerStub({ running: true })
+  it('detects container-only nested corruption without host node_modules', () => {
+    const corruptDep = '__smi-6453-fixture-container-corrupt__'
+    const host = makeHealthyHost()
+    const container = makeContainerRoot()
+    roots.push(host, container)
+
+    addNodeModules(container)
+    addDocRetrievalPackageJson(container, { [corruptDep]: '1.0.0' })
+    addNestedDep(container, corruptDep, { empty: true })
+    addHoistedDep(container, 'zod-to-json-schema')
+
+    const { binDir } = makeDockerStub({ running: true, containerRoot: container })
     stubs.push(binDir)
-    const res = runLauncher(root, binDir)
-    expect(res.status).toBe(1)
-    expect(res.stderr).toContain(
-      'zod dependency corrupt at packages/doc-retrieval-mcp/node_modules/zod'
+
+    const result = runLauncher(host, binDir)
+
+    expect(result.status).toBe(1)
+    expect(existsSync(join(host, 'node_modules'))).toBe(false)
+    expect(result.stderr).toContain(
+      `${corruptDep} dependency corrupt at packages/doc-retrieval-mcp/node_modules/${corruptDep} (container-side, not host)`
+    )
+    expect(result.stderr).toContain(
+      `docker exec skillsmith-dev-1 rm -rf /app/packages/doc-retrieval-mcp/node_modules/${corruptDep}`
     )
   })
 
-  it('passes when the dep is present hoisted only', () => {
-    const root = makeRoot()
-    roots.push(root)
-    addNodeModules(root)
-    addDist(root)
-    addDocRetrievalPackageJson(root, { zod: '3.25.76' })
-    addHoistedDep(root, 'zod')
-    addHoistedDep(root, 'zod-to-json-schema') // see makeHealthyRoot's docblock
-    const { binDir, execMarker } = makeDockerStub({ running: true })
+  it('empty container nested dir fails despite a healthy container-hoisted copy', () => {
+    const corruptDep = '__smi-6453-fixture-shadowed-dep__'
+    const host = makeHealthyHost()
+    const container = makeContainerRoot()
+    roots.push(host, container)
+
+    addNodeModules(container)
+    addDocRetrievalPackageJson(container, { [corruptDep]: '1.0.0' })
+    addHoistedDep(container, corruptDep)
+    addNestedDep(container, corruptDep, { empty: true })
+    addHoistedDep(container, 'zod-to-json-schema')
+
+    const { binDir } = makeDockerStub({ running: true, containerRoot: container })
     stubs.push(binDir)
-    const res = runLauncher(root, binDir)
-    expect(res.status).toBe(0)
+
+    const result = runLauncher(host, binDir)
+
+    expect(result.status).toBe(1)
+    expect(result.stderr).toContain(
+      `${corruptDep} dependency corrupt at packages/doc-retrieval-mcp/node_modules/${corruptDep} (container-side, not host)`
+    )
+  })
+
+  it('passes when a declared container dependency is hoisted only', () => {
+    const dep = '__smi-6453-fixture-hoisted-dep__'
+    const host = makeHealthyHost()
+    const container = makeContainerRoot()
+    roots.push(host, container)
+
+    addNodeModules(container)
+    addDocRetrievalPackageJson(container, { [dep]: '1.0.0' })
+    addHoistedDep(container, dep)
+    addHoistedDep(container, 'zod-to-json-schema')
+
+    const { binDir, execMarker } = makeDockerStub({
+      running: true,
+      containerRoot: container,
+    })
+    stubs.push(binDir)
+
+    const result = runLauncher(host, binDir)
+
+    expect(result.status).toBe(0)
     expect(existsSync(execMarker)).toBe(true)
   })
 
-  it('passes when the dep is present nested with a real package.json', () => {
-    const root = makeRoot()
-    roots.push(root)
-    addNodeModules(root)
-    addDist(root)
-    addDocRetrievalPackageJson(root, { zod: '3.25.76' })
-    addNestedDep(root, 'zod')
-    addHoistedDep(root, 'zod-to-json-schema') // see makeHealthyRoot's docblock
-    const { binDir, execMarker } = makeDockerStub({ running: true })
+  it('passes when a declared container dependency is nested and valid', () => {
+    const dep = '__smi-6453-fixture-nested-dep__'
+    const host = makeHealthyHost()
+    const container = makeContainerRoot()
+    roots.push(host, container)
+
+    addNodeModules(container)
+    addDocRetrievalPackageJson(container, { [dep]: '1.0.0' })
+    addNestedDep(container, dep)
+    addHoistedDep(container, 'zod-to-json-schema')
+
+    const { binDir, execMarker } = makeDockerStub({
+      running: true,
+      containerRoot: container,
+    })
     stubs.push(binDir)
-    const res = runLauncher(root, binDir)
-    expect(res.status).toBe(0)
+
+    const result = runLauncher(host, binDir)
+
+    expect(result.status).toBe(0)
     expect(existsSync(execMarker)).toBe(true)
   })
 
-  it('exits 1 when a dep is absent everywhere', () => {
-    const root = makeRoot()
-    roots.push(root)
-    addNodeModules(root)
-    addDist(root)
-    // SMI-5570/SMI-5074 (see module docblock): use a fixture-only name so a
-    // leaked real hoisted dependency can't accidentally resolve and mask
-    // the failure this test asserts.
-    addDocRetrievalPackageJson(root, { '__smi-5718-fixture-absent-dep__': '1.0.0' })
-    const { binDir } = makeDockerStub({ running: true })
+  it('exits 1 when a container dependency is absent everywhere', () => {
+    const missingDep = '__smi-6453-fixture-absent-dep__'
+    const host = makeHealthyHost()
+    const container = makeContainerRoot()
+    roots.push(host, container)
+
+    addNodeModules(container)
+    addDocRetrievalPackageJson(container, { [missingDep]: '1.0.0' })
+    addHoistedDep(container, 'zod-to-json-schema')
+
+    const { binDir } = makeDockerStub({ running: true, containerRoot: container })
     stubs.push(binDir)
-    const res = runLauncher(root, binDir)
-    expect(res.status).toBe(1)
-    expect(res.stderr).toContain('__smi-5718-fixture-absent-dep__ dependency missing')
-    expect(res.stderr).toContain('npm install')
+
+    const result = runLauncher(host, binDir)
+
+    expect(result.status).toBe(1)
+    expect(result.stderr).toContain(`${missingDep} dependency missing`)
+    expect(result.stderr).toContain('npm install')
   })
 
-  it('fails open with a warning when the probe itself cannot run (probe-infra error)', () => {
-    const root = makeRoot()
-    roots.push(root)
-    addNodeModules(root)
-    addDist(root)
-    const pkgDir = join(root, 'packages', 'doc-retrieval-mcp')
+  it('fails open when the container-side probe package.json is invalid', () => {
+    const host = makeHealthyHost()
+    const container = makeContainerRoot()
+    roots.push(host, container)
+
+    addNodeModules(container)
+    const pkgDir = join(container, 'packages', 'doc-retrieval-mcp')
     mkdirSync(pkgDir, { recursive: true })
     writeFileSync(join(pkgDir, 'package.json'), '{ this is not JSON', 'utf8')
-    const { binDir, execMarker } = makeDockerStub({ running: true })
+
+    const { binDir, execMarker } = makeDockerStub({
+      running: true,
+      containerRoot: container,
+    })
     stubs.push(binDir)
-    const res = runLauncher(root, binDir)
-    expect(res.status).toBe(0)
-    expect(res.stderr).toContain('preflight warning')
-    expect(res.stderr).not.toContain('cannot start')
+
+    const result = runLauncher(host, binDir)
+
+    expect(result.status).toBe(0)
+    expect(result.stderr).toContain('preflight warning')
+    expect(result.stderr).not.toContain('cannot start')
     expect(existsSync(execMarker)).toBe(true)
   })
 
-  it('never suggests rm -rf for @skillsmith/* workspace deps', () => {
-    const root = makeRoot()
-    roots.push(root)
-    addNodeModules(root)
-    addDist(root)
-    // Fixture-only @skillsmith/* name — see SMI-5570/SMI-5074 note above;
-    // classification only branches on the "@skillsmith/" prefix, so a real
-    // package name risks the same leak-driven false pass.
-    addDocRetrievalPackageJson(root, { '@skillsmith/__smi-5718-fixture-pkg__': '^0.8.0' })
-    const { binDir } = makeDockerStub({ running: true })
+  it('never suggests rm -rf for unresolved @skillsmith/* workspace deps', () => {
+    const workspaceDep = '@skillsmith/__smi-6453-fixture-workspace__'
+    const host = makeHealthyHost()
+    const container = makeContainerRoot()
+    roots.push(host, container)
+
+    addNodeModules(container)
+    addDocRetrievalPackageJson(container, { [workspaceDep]: '^0.8.0' })
+    addHoistedDep(container, 'zod-to-json-schema')
+
+    const { binDir } = makeDockerStub({ running: true, containerRoot: container })
     stubs.push(binDir)
-    const res = runLauncher(root, binDir)
-    expect(res.status).toBe(1)
-    expect(res.stderr).toContain('@skillsmith/__smi-5718-fixture-pkg__')
-    expect(res.stderr).not.toContain('rm -rf')
-    expect(res.stderr).toContain('npm run build')
+
+    const result = runLauncher(host, binDir)
+
+    expect(result.status).toBe(1)
+    expect(result.stderr).toContain(workspaceDep)
+    expect(result.stderr).not.toContain('rm -rf')
+    expect(result.stderr).toContain('npm run build')
+  })
+
+  it('fails open twice when both preflight docker exec calls exit 127', () => {
+    const host = makeHealthyHost()
+    const container = makeHealthyContainer()
+    roots.push(host, container)
+
+    const { binDir, execMarker } = makeDockerStub({
+      running: true,
+      containerRoot: container,
+      execFailureStatus: 127,
+    })
+    stubs.push(binDir)
+
+    const result = runLauncher(host, binDir)
+
+    expect(result.status).toBe(0)
+    expect(warningCount(result.stderr)).toBe(2)
+    expect(result.stderr).not.toContain('cannot start')
+    expect(existsSync(execMarker)).toBe(true)
+  })
+
+  it('does not mistake docker exec status 1 for a genuinely absent sentinel', () => {
+    const host = makeHealthyHost()
+    const container = makeHealthyContainer()
+    roots.push(host, container)
+
+    const { binDir, execMarker } = makeDockerStub({
+      running: true,
+      containerRoot: container,
+      execFailureStatus: 1,
+    })
+    stubs.push(binDir)
+
+    const result = runLauncher(host, binDir)
+
+    expect(result.status).toBe(0)
+    expect(result.stderr).toContain('preflight warning')
+    expect(result.stderr).not.toContain('node_modules missing')
+    expect(existsSync(execMarker)).toBe(true)
   })
 })

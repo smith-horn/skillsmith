@@ -28,11 +28,14 @@
 #      transitive-dependency exposure" section).
 #
 # The dependency probe (check 3) runs in ESM context with cwd at the dist
-# entry dir, ON THE HOST — not via `docker exec` — because
-# docker-compose.yml's `.:/app` bind mount means the host filesystem view of
-# packages/doc-retrieval-mcp/node_modules is the same bytes the container
-# sees (SMI-5451's rationale, reused verbatim). Only the final server
-# invocation execs into the container.
+# entry dir, INSIDE THE CONTAINER via `docker exec` (SMI-6453). `/app/node_modules`
+# and every `/app/packages/*/node_modules` are NAMED VOLUMES (docker-compose.yml
+# SMI-5957 correction #5), which shadow the `.:/app` bind mount at exactly
+# those paths — the host directory and the container directory are
+# independent filesystems, so a host-side probe inspects bytes the server
+# never loads (false positives on host-only debris, false negatives on
+# container-only corruption). Only `dist/` is still plain bind-mounted (host
+# == container), which is why check 2 stays host-side.
 #
 # Probe failure semantics (mirrors SMI-5451 M5):
 #   - confirmed unresolvable dependency -> fail-closed (exit 1, per-state
@@ -45,16 +48,18 @@
 # Canonical path source: packages/doc-retrieval-mcp/package.json `main`/`bin`.
 # Container name source: docker-compose.yml `container_name`.
 #
-# References: SMI-5718, SMI-5451 (precedent), SMI-5452 (the trigger hazard).
+# References: SMI-5718, SMI-5451 (precedent), SMI-5452 (the trigger hazard),
+# SMI-6453 (container-side probe correction).
 
 set -euo pipefail
 
 REPO_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 PKG_DIR="$REPO_ROOT/packages/doc-retrieval-mcp"
 DIST_ENTRY="$PKG_DIR/dist/src/server.js"
-DIST_DIR="$PKG_DIR/dist/src"
-NM_SENTINEL="$REPO_ROOT/node_modules/.package-lock.json"
 CONTAINER_NAME="skillsmith-dev-1"
+CONTAINER_APP_ROOT="/app"                                   # docker-compose.yml:40 `.:/app`
+CONTAINER_DIST_DIR="$CONTAINER_APP_ROOT/packages/doc-retrieval-mcp/dist/src"
+CONTAINER_NM_SENTINEL="$CONTAINER_APP_ROOT/node_modules/.package-lock.json"
 
 # emit_error <state> <remediation-block>
 # Tag is [doc-retrieval] throughout (plan-review, VP Design) — distinct from
@@ -88,11 +93,36 @@ if [ -z "$(docker ps --filter "name=^/${CONTAINER_NAME}\$" --filter "status=runn
   exit 1
 fi
 
-if [ ! -f "$NM_SENTINEL" ]; then
+# Check 1: node_modules installed — CONTAINER-side (SMI-6453). /app/node_modules
+# is a named volume (docker-compose.yml:41); the host's node_modules/ is a
+# different filesystem from the one server.js loads. No -i (see check 3).
+#
+# Content-based, not exit-code-based (plan-review finding, GPT-5.6-Sol,
+# 2026-09-08): a bare `docker exec … test -f …`'s exit 1 is ambiguous — it is
+# also what `docker exec` itself returns on a daemon-level failure (confirmed
+# live: `docker exec __nonexistent__ test -f /x` -> exit 1 on this repo's
+# Docker CLI, not only 125-127). Check 3 avoids this by gating on the probe's
+# own FAIL-line stdout content, not exit code; Check 1 does the same: the
+# inner `sh -c` always exits 0 and always emits one of two unambiguous
+# tokens when docker exec itself succeeds, so branch on TEXT, never on
+# docker exec's raw exit status.
+set +e
+nm_out="$(docker exec "$CONTAINER_NAME" sh -c '[ -f "$1" ] && echo SMI6453_PRESENT || echo SMI6453_ABSENT' _ "$CONTAINER_NM_SENTINEL" 2>&1)"
+nm_status=$?
+set -e
+if [ "$nm_status" -eq 0 ] && [ "$nm_out" = "SMI6453_ABSENT" ]; then
   emit_error "node_modules missing" "$REMEDIATION_INSTALL_BUILD"
   exit 1
+elif [ "$nm_status" -ne 0 ] || [ "$nm_out" != "SMI6453_PRESENT" ]; then
+  # Fail-open: docker exec itself failed, or returned something other than
+  # our own two known tokens — never trust a bare exit code here.
+  echo "[doc-retrieval] preflight warning: could not inspect container node_modules (docker exec status $nm_status, output: $nm_out); continuing." >&2
 fi
 
+# Check 2: dist/ built — HOST-side, deliberately. packages/doc-retrieval-mcp/dist
+# is under the `.:/app` bind mount and no docker-compose.yml volume targets a
+# `dist` path, so host bytes == container bytes here. This check passing is
+# what guarantees $CONTAINER_DIST_DIR exists as check 3's probe cwd below.
 if [ ! -f "$DIST_ENTRY" ]; then
   emit_error "dist/ missing" "$REMEDIATION_INSTALL_BUILD"
   exit 1
@@ -176,7 +206,12 @@ process.exit(failed ? 1 : 0);
 '
 
 set +e
-probe_out="$(cd "$DIST_DIR" && SKILLSMITH_LAUNCHER_REPO_ROOT="$REPO_ROOT" node --input-type=module -e "$DEP_PROBE_JS" 2>&1)"
+# SMI-6453: run INSIDE the container. /app/node_modules and
+# /app/packages/*/node_modules are named volumes (docker-compose.yml:41,
+# :65-72), so the host's view of those paths is a different filesystem
+# from the one server.js resolves against. No -i: never attach the MCP
+# host's stdin to a preflight exec.
+probe_out="$(docker exec -w "$CONTAINER_DIST_DIR" -e "SKILLSMITH_LAUNCHER_REPO_ROOT=$CONTAINER_APP_ROOT" "$CONTAINER_NAME" node --input-type=module -e "$DEP_PROBE_JS" 2>&1)"
 probe_status=$?
 set -e
 
@@ -190,17 +225,20 @@ if [ "$probe_status" -eq 1 ] && printf '%s\n' "$probe_out" | grep -q '^FAIL '; t
         "$REMEDIATION_INSTALL_BUILD"
       ;;
     nested-corrupt)
-      emit_error "$dep_name dependency corrupt at packages/doc-retrieval-mcp/node_modules/$dep_name" \
+      # packages/doc-retrieval-mcp/node_modules is a NAMED VOLUME
+      # (docker-compose.yml:67, SMI-5957 correction #5): the host directory at
+      # that path is a different filesystem from the container's copy, so the
+      # rm -rf must run INSIDE the container, then npm install repopulates the
+      # volume (SMI-6453). A host-side rm -rf here was a confirmed no-op.
+      emit_error "$dep_name dependency corrupt at packages/doc-retrieval-mcp/node_modules/$dep_name (container-side, not host)" \
 "    docker compose --profile dev up -d
-    rm -rf packages/doc-retrieval-mcp/node_modules/$dep_name
+    docker exec $CONTAINER_NAME rm -rf $CONTAINER_APP_ROOT/packages/doc-retrieval-mcp/node_modules/$dep_name
     docker exec $CONTAINER_NAME npm install"
       ;;
     root-hoisted-corrupt)
-      # NOTE: unlike nested-corrupt (bind-mounted, host rm == container rm),
-      # root node_modules is a NAMED VOLUME (docker-compose.yml) — a host-side
-      # `rm -rf node_modules/$dep_name` would touch a different filesystem
-      # than the container's own copy, so it is deliberately omitted here.
-      # `npm install` inside the container repairs the volume directly.
+      # Root node_modules is likewise a NAMED VOLUME (docker-compose.yml:41);
+      # npm install inside the container repairs the volume directly. No rm -rf
+      # is needed for a root-hoisted package (npm reifies over it).
       emit_error "$dep_name dependency corrupt at root node_modules/$dep_name (container-side, not host)" \
 "    docker compose --profile dev up -d
     docker exec $CONTAINER_NAME npm install"
@@ -219,4 +257,4 @@ elif [ "$probe_status" -ne 0 ]; then
   echo "[doc-retrieval] preflight warning: dependency probe failed to run (status $probe_status); continuing. First output: $(printf '%s' "$probe_out" | head -1)" >&2
 fi
 
-exec docker exec -i "$CONTAINER_NAME" node /app/packages/doc-retrieval-mcp/dist/src/server.js "$@"
+exec docker exec -i "$CONTAINER_NAME" node "$CONTAINER_DIST_DIR/server.js" "$@"

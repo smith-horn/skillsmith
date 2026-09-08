@@ -146,8 +146,8 @@ export function jsonSchemaOf(schema: z.ZodType): Record<string, unknown> {
     throw new Error(
       '[doc-retrieval] jsonSchemaOf: schema not recognized as a zod v3/v4 object schema ' +
         '— possible zod version drift. Run:\n\n' +
-        '    rm -rf packages/doc-retrieval-mcp/node_modules/zod\n' +
         '    docker compose --profile dev up -d\n' +
+        '    docker exec skillsmith-dev-1 rm -rf /app/packages/doc-retrieval-mcp/node_modules/zod\n' +
         '    docker exec skillsmith-dev-1 npm install\n\n' +
         '(packages/doc-retrieval-mcp pins zod@3.25.76 — this fires when a hoisted ' +
         'different-major zod resolves instead. See CLAUDE.md > Troubleshooting.)'
@@ -165,8 +165,8 @@ export function jsonSchemaOf(schema: z.ZodType): Record<string, unknown> {
     throw new Error(
       '[doc-retrieval] jsonSchemaOf: failed to convert a recognized zod schema to ' +
         'JSON Schema. Run:\n\n' +
-        '    rm -rf packages/doc-retrieval-mcp/node_modules/zod\n' +
         '    docker compose --profile dev up -d\n' +
+        '    docker exec skillsmith-dev-1 rm -rf /app/packages/doc-retrieval-mcp/node_modules/zod\n' +
         '    docker exec skillsmith-dev-1 npm install\n\n' +
         '(possible zod version drift, or a zod-to-json-schema conversion bug — ' +
         `original error: ${err instanceof Error ? err.message : String(err)})`
