@@ -35,6 +35,8 @@ on:
       - 'scripts/lib/check-container-deps-fresh.sh'
       - 'scripts/lib/check-container-deps-fresh-inner.sh'
       - 'scripts/tests/check-container-deps-fresh.test.sh'
+      - 'scripts/tests/check-container-deps-fresh-lock.test.sh'
+      - 'scripts/tests/_lib/check-container-deps-fresh-fixtures.sh'
       - 'scripts/tests/session-mcp-disconnect-guard.test.sh'
       - 'scripts/tests/create-worktree-hooks.test.sh'
       - 'scripts/tests/worktree-hookspath.test.sh'
@@ -98,6 +100,8 @@ jobs:
             scripts/lib/check-container-deps-fresh-inner.sh \
             scripts/lib/check-hooks-path.sh \
             scripts/tests/check-container-deps-fresh.test.sh \
+            scripts/tests/check-container-deps-fresh-lock.test.sh \
+            scripts/tests/_lib/check-container-deps-fresh-fixtures.sh \
             scripts/tests/session-mcp-disconnect-guard.test.sh \
             scripts/tests/create-worktree-hooks.test.sh \
             scripts/tests/worktree-hookspath.test.sh \
@@ -139,6 +143,8 @@ jobs:
           sh -n scripts/lib/check-container-deps-fresh-inner.sh
           sh -n scripts/lib/check-hooks-path.sh
           bash -n scripts/tests/check-container-deps-fresh.test.sh
+          bash -n scripts/tests/check-container-deps-fresh-lock.test.sh
+          bash -n scripts/tests/_lib/check-container-deps-fresh-fixtures.sh
           bash -n scripts/tests/session-mcp-disconnect-guard.test.sh
           bash -n scripts/tests/create-worktree-hooks.test.sh
           bash -n scripts/tests/worktree-hookspath.test.sh
@@ -176,6 +182,7 @@ jobs:
       - name: Hooks unit tests
         run: |
           bash scripts/tests/check-container-deps-fresh.test.sh
+          bash scripts/tests/check-container-deps-fresh-lock.test.sh
           bash scripts/tests/session-mcp-disconnect-guard.test.sh
           bash scripts/tests/create-worktree-hooks.test.sh
           bash scripts/tests/worktree-hookspath.test.sh

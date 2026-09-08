@@ -63,6 +63,20 @@
 # forces the code path without a real container, mirroring
 # check-native-modules.sh's own SKILLSMITH_NATIVE_CHECK_TEST pattern.
 #
+# SMI-6437: a "successful" npm install (RC=0) can still leave a nested
+# native-module binding broken — confirmed incident, 2026-09-07:
+# better-sqlite3's packages/core copy failed with ERR_DLOPEN_FAILED
+# ("invalid ELF header") right after this self-heal reported success, and
+# sat undetected until an unrelated later push happened to reach
+# check-native-modules.sh (SMI-5513) further down .husky/pre-push. A failed
+# install (RC=4) can leave the same breakage behind too. Both outcome
+# branches below now invoke check-native-modules.sh's existing probe
+# directly — reusing it as-is rather than duplicating its logic — so a
+# broken binding surfaces on THIS push, not a later unrelated one.
+# check-native-modules.sh's own SKILLSMITH_SKIP_NATIVE_CHECK opt-out and
+# USE_DOCKER gating apply to these new call sites for free; see
+# docs/internal/implementation/smi-6437-container-self-heal-native-verify.md.
+#
 # POSIX sh — no `local`, no `[[ ]]`, no arrays.
 
 if [ "${SKILLSMITH_SKIP_CONTAINER_DEPS_FRESHNESS:-0}" = "1" ]; then
@@ -100,6 +114,11 @@ if [ ! -r "$DETECT_LIB" ]; then
 fi
 # shellcheck source=./hook-docker-detect.sh
 . "$DETECT_LIB"
+
+# SMI-6437: sibling path to the existing native-module probe (SMI-5513),
+# resolved the same way DETECT_LIB is above. Invoked directly (not sourced)
+# from both self-heal outcome branches below.
+NATIVE_CHECK_LIB="$(dirname "$0")/check-native-modules.sh"
 
 # Only meaningful for the main checkout's own container. Worktree containers
 # mount node_modules :ro (self-heal there would EROFS) and are already
@@ -147,6 +166,30 @@ if [ "$RC" -eq 0 ]; then
     case "$OUTPUT" in
         *SELF_HEAL_START*)
             printf "${GREEN}  ✓ Self-healed — %s's node_modules now matches package-lock.json${NC}\n" "$DOCKER_CONTAINER"
+            # SMI-6437: npm exiting 0 does not prove native bindings still
+            # work — verify before letting the push proceed. Not silenced:
+            # check-native-modules.sh prints its own actionable diagnostic
+            # on failure, which is worth showing in full here.
+            #
+            # Fail LOUD, not open, when the probe script itself is missing
+            # (pr-reviewer finding, SMI-6437): the whole point of this
+            # change is that a self-heal must not silently skip
+            # verification. A missing tracked sibling script is not a
+            # legitimate "nothing to verify" case — it means verification
+            # could not happen, which must block the push exactly like a
+            # failed probe would.
+            if [ ! -r "$NATIVE_CHECK_LIB" ]; then
+                printf '\n'
+                printf "${RED}  ✗ Self-heal reported success, but native-module health could not be verified (SMI-6437) — %s is missing or unreadable.${NC}\n" "$NATIVE_CHECK_LIB"
+                printf "${RED}    Refusing to let the push proceed against an unverified tree.${NC}\n"
+                printf '\n'
+                exit 1
+            elif ! sh "$NATIVE_CHECK_LIB"; then
+                printf '\n'
+                printf "${RED}  ✗ Self-heal reported success, but native module bindings are still broken (SMI-6437) — refusing to let the push proceed.${NC}\n"
+                printf '\n'
+                exit 1
+            fi
             ;;
     esac
     exit 0
@@ -174,6 +217,25 @@ case "$RC" in
         printf '\n'
         printf "  ${YELLOW}Fix — retry manually:${NC}\n"
         printf '    docker exec %s npm install\n' "$DOCKER_CONTAINER"
+        # SMI-6437: a failed install can leave native bindings broken as a
+        # side effect, even though the FIX above targets the npm error, not
+        # this. Silenced (>/dev/null 2>&1) and folded into one extra line —
+        # the npm failure above is already the primary diagnostic; no need
+        # to print a second full banner for this additive check. This
+        # branch already exits 1 regardless (npm failed), but still says so
+        # plainly when the probe itself is missing (pr-reviewer finding) —
+        # "could not check" is a different, worth-noting fact from "checked
+        # and it's fine", even though both currently share the same exit
+        # code here.
+        if [ ! -r "$NATIVE_CHECK_LIB" ]; then
+            printf '\n'
+            printf "${YELLOW}  Note: native-module health could not be checked (%s is missing or unreadable).${NC}\n" "$NATIVE_CHECK_LIB"
+        elif ! sh "$NATIVE_CHECK_LIB" >/dev/null 2>&1; then
+            printf '\n'
+            printf "${RED}  Native module bindings are ALSO currently broken as a result of this failed install.${NC}\n"
+            printf "  ${YELLOW}Recover those FIRST:${NC} docker compose --profile dev restart dev\n"
+            printf '  Then retry the npm install fix above.\n'
+        fi
         ;;
     *)
         # Any other code (docker itself failing, sh unable to start, an
