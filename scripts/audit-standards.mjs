@@ -39,6 +39,8 @@ import {
   findFunctionsWithoutSearchPath,
   auditSecdefAnonGrants,
   findServerJsonFieldLengthViolations,
+  findServerJsonMetaPlacementViolations,
+  MCP_REGISTRY_RESERVED_META_KEY,
   countUnreleasedEntries,
   findUnreleasedHeadingLines,
   isReleasePrepDiff,
@@ -2080,7 +2082,7 @@ console.log(`\n${BOLD}27. VS Code skillNameValidation Codegen Drift (SMI-4194)${
       pass('skillNameValidation.ts is in sync with CLI source')
     } catch (e) {
       fail(
-        'skillNameValidation.ts is out of sync with packages/cli/src/utils/skill-name.ts',
+        'skillNameValidation.ts is out of sync with packages/core/src/utils/skill-name.ts',
         'Run: node scripts/sync-skill-name-validation.mjs'
       )
     }
@@ -5932,6 +5934,41 @@ console.log(
           `Remove the stale entry — an unnecessary allowlist grant is itself a finding (Check 62/65 precedent).`
         )
       }
+// Check 67: MCP registry server.json `_meta` placement
+// The MCP Registry schema (https://static.modelcontextprotocol.io/schemas/
+// 2025-12-11/server.schema.json) only PRESERVES the reserved top-level
+// `_meta` key `io.modelcontextprotocol.registry/publisher-provided` (4KB
+// budget) on publish. Anything else under top-level `_meta` is silently
+// dropped — confirmed live: the registry's `versions/latest` for
+// `io.github.smith-horn/skillsmith` returned `_meta: {}` while
+// packages/mcp-server/server.json still had `io.skillsmith/categories` and
+// `io.skillsmith/keywords` sitting directly under top-level `_meta` instead
+// of nested under the reserved key. This check fails loudly if a custom
+// `_meta` key ever lands at the top level again.
+console.log(`\n${BOLD}Check 67: MCP registry server.json _meta placement${RESET}`)
+{
+  const SERVER_JSON_PATH = 'packages/mcp-server/server.json'
+  if (!existsSync(SERVER_JSON_PATH)) {
+    warn(`Check 67: ${SERVER_JSON_PATH} not found — skipping registry _meta placement check`)
+  } else {
+    try {
+      const serverJson = JSON.parse(readFileSync(SERVER_JSON_PATH, 'utf8'))
+      const violations = findServerJsonMetaPlacementViolations(serverJson)
+      if (violations.length === 0) {
+        pass(`${SERVER_JSON_PATH} _meta has no keys the MCP registry will silently drop`)
+      } else {
+        for (const v of violations) {
+          fail(
+            `Check 67: ${SERVER_JSON_PATH}: _meta key '${v.key}' is not nested under the reserved ` +
+              `'${MCP_REGISTRY_RESERVED_META_KEY}' key and will be silently dropped by the registry`,
+            `Move ${SERVER_JSON_PATH}'s _meta.${v.key.replace(/'/g, "\\'")} to be nested under ` +
+              `_meta['${MCP_REGISTRY_RESERVED_META_KEY}'] — see the registry schema at ` +
+              'https://static.modelcontextprotocol.io/schemas/2025-12-11/server.schema.json'
+          )
+        }
+      }
+    } catch (e) {
+      warn(`Check 67: could not parse ${SERVER_JSON_PATH}: ${e.message}`)
     }
   }
 }

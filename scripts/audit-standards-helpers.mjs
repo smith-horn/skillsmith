@@ -1905,6 +1905,50 @@ export function findServerJsonFieldLengthViolations(
   return violations
 }
 
+/**
+ * The one `_meta` key the MCP Registry schema preserves on publish
+ * (https://static.modelcontextprotocol.io/schemas/2025-12-11/server.schema.json,
+ * 4KB budget). Any other top-level `_meta` key is silently dropped — confirmed
+ * live: the registry's `versions/latest` for `io.github.smith-horn/skillsmith`
+ * returned `_meta: {}` while `packages/mcp-server/server.json` still had
+ * `io.skillsmith/categories` and `io.skillsmith/keywords` sitting directly
+ * under top-level `_meta` instead of nested under this reserved key. Exported
+ * so Check 66 (audit-standards.mjs) and its test fixtures share one source of
+ * truth instead of duplicating the literal string.
+ */
+export const MCP_REGISTRY_RESERVED_META_KEY = 'io.modelcontextprotocol.registry/publisher-provided'
+
+/**
+ * Validate a parsed server.json object's top-level `_meta` object against the
+ * MCP Registry's `_meta` preservation contract: only
+ * `MCP_REGISTRY_RESERVED_META_KEY` survives a registry publish. Any sibling
+ * key alongside (or instead of) it is silently dropped by the registry, which
+ * is exactly what happened to `io.skillsmith/categories` and
+ * `io.skillsmith/keywords` before this check existed.
+ *
+ * Absence of `_meta` entirely, or a `_meta` containing only the reserved key
+ * (or nothing at all), is not a violation — this is a placement gate, not a
+ * requirement that `_meta` exist or carry specific content.
+ *
+ * @param {object} serverJson  Parsed server.json content.
+ * @returns {{ key: string }[]}  One entry per top-level `_meta` key that will
+ *   be silently dropped by the registry.
+ */
+export function findServerJsonMetaPlacementViolations(serverJson) {
+  const violations = []
+  if (!serverJson || typeof serverJson !== 'object') return violations
+
+  const meta = serverJson._meta
+  if (!meta || typeof meta !== 'object' || Array.isArray(meta)) return violations
+
+  for (const key of Object.keys(meta)) {
+    if (key === MCP_REGISTRY_RESERVED_META_KEY) continue
+    violations.push({ key })
+  }
+
+  return violations
+}
+
 // -----------------------------------------------------------------------------
 // Check 54 helpers — SMI-5680: CHANGELOG entry gate.
 //

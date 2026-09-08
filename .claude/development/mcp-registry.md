@@ -53,6 +53,8 @@ Location: `packages/mcp-server/server.json`
 }
 ```
 
+**Custom `_meta` keys must nest under the reserved key**: the registry schema only PRESERVES the reserved top-level `_meta` key `io.modelcontextprotocol.registry/publisher-provided` (4KB budget) — any custom key (e.g. `io.skillsmith/categories`, `io.skillsmith/keywords`) placed directly under top-level `_meta` instead of nested inside that reserved key is silently dropped on publish (confirmed live via `versions/latest`, which returned `_meta: {}`). `npm run audit:standards` Check 66 enforces this — it fails if any top-level `_meta` key other than the reserved one is present.
+
 ### package.json
 
 The `mcpName` field in `packages/mcp-server/package.json` links the npm package to the registry entry:

@@ -352,6 +352,9 @@ export {
 // GitHub URL Parsing (SMI-2171)
 export { parseRepoUrl, isGitHubUrl, type ParsedRepoUrl } from './utils/github-url.js'
 
+// Shared skill name validation (relocated from @skillsmith/cli — canonical here now)
+export { VALID_SKILL_NAME_RE, validateSkillName } from './utils/skill-name.js'
+
 // SMI-2274: Safe filesystem operations
 export { safeWriteFile, SymlinkError, HardlinkError } from './utils/safe-fs.js'
 

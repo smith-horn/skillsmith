@@ -4,6 +4,15 @@ All notable changes to `@skillsmith/mcp-server` are documented here.
 
 ## [Unreleased]
 
+- **Fixed**: SMI-6472 -- `skill_validate` now enforces two additional Agent Skills
+  spec requirements that were previously silently accepted. (1) Frontmatter `name` must match
+  the canonical slug format (lowercase letters, digits, and hyphens, starting with a lowercase
+  letter) — reuses the same `validateSkillName` the CLI's `create`/`author init` commands already
+  enforce, relocated to `@skillsmith/core` as the canonical source (`packages/cli/src/utils/skill-name.ts`
+  is now a re-export). (2) Frontmatter `name` must match the skill's enclosing directory name, for
+  both a direct skill-directory `skill_path` and a direct `.../my-skill/SKILL.md` file path. Both
+  checks report as `field: 'name'`, `severity: 'error'`.
+
 ## v0.7.13
 
 - **Feature**: SMI-6343 Wave 4 -- apply_manifest_reconcile tool (#2715)
