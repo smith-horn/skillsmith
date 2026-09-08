@@ -30,6 +30,8 @@
     "lint:linear-issues": "node scripts/lint-linear-issues.mjs",
     "docs:folder-index": "node scripts/gen-docs-folder-index.mjs --write",
     "docs:folder-index:check": "node scripts/gen-docs-folder-index.mjs --check",
+    "lexicon:weak-passwords": "node scripts/gen-weak-password-lexicon.mjs --write",
+    "lexicon:weak-passwords:check": "node scripts/gen-weak-password-lexicon.mjs --check",
     "validate:skills": "node scripts/validate-local-skills.mjs",
     "validate:anon-functions": "npx tsx scripts/validate-anonymous-functions.ts",
     "ci:local": "npm run lint && npm run typecheck && npm run test:coverage",

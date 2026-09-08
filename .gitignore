@@ -114,6 +114,11 @@ docs/strategy/
 !/data/skills-security-allowlist.json
 # SMI-4408: indexer blocklist for non-skill repos (imported-skill ingest filter).
 !/data/indexer-blocklist.json
+# SMI-6441: vendored SecLists snapshot + hand-curated keeplist for the weak-
+# password lexicon generator (scripts/gen-weak-password-lexicon.mjs). The
+# directory itself must be un-ignored (not just its files) — see the SMI-4396
+# comment above on why gitignore can't negate a child of an excluded parent.
+!/data/wordlists/
 /output/
 test-results/
 playwright-report/
