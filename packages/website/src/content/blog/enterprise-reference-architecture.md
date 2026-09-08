@@ -3,7 +3,7 @@ title: "Skillsmith as an Enterprise Reference Architecture"
 description: "A blueprint for running Skillsmith on your own infrastructure — source-available under the Elastic License 2.0 — with Supabase (or an equivalent), edge functions, local SQLite, the MCP server, CLI, and VS Code extension, plus a private registry and an IAM/RBAC access model."
 author: "Skillsmith Team"
 date: 2026-05-15
-updated: 2026-05-15
+updated: 2026-09-08
 category: "Engineering"
 tags: ["architecture", "enterprise", "supabase", "rbac", "sso", "private-registry", "mcp", "reference-architecture", "elastic-license"]
 draft: false
@@ -17,10 +17,12 @@ for that — what the pieces are, how they fit, and what changes when Skillsmith
 runs on infrastructure you control.
 
 A note on honesty up front: **this is a target-state blueprint.** The discovery,
-indexing, and distribution layers ship today. The private registry has a real
-Supabase-backed live mode. IAM/RBAC and SSO are further behind: the MCP tool
-surface exists, but the backing service is stub-only today, with no live mode
-yet. Where that matters, the text says so.
+indexing, and distribution layers ship today. The private registry, IAM/RBAC,
+and SSO all route to a real, database-backed live service — active whenever
+Skillsmith runs against a configured Supabase project, which is the normal
+case for both the hosted product and a properly configured self-hosted
+deployment. Only when no database is configured at all does any of the three
+fall back to an in-memory stub. Where that matters, the text says so.
 
 ![Architecture diagram of Skillsmith showing three developer surfaces — CLI, MCP server, and VS Code extension — reading from a per-developer local SQLite database, which is synced from a hosted Supabase registry of Postgres tables and edge functions.](https://res.cloudinary.com/diqcbcmaq/image/upload/f_auto,q_auto,w_1200/blog/enterprise-reference-architecture/01-system-overview)
 
@@ -35,11 +37,12 @@ neither the software nor permission to self-host — both are already granted.
 
 What an Enterprise subscription buys is a **license key** and a **support
 commitment**. The license key — a signed JWT — unlocks the gated feature set:
-SSO/SAML, RBAC, audit logging, SIEM export, compliance reporting, the private
-registry, and advanced analytics. The support commitment is the enterprise SLA: a
-99.9% uptime target, dedicated support, custom integrations. Without the key, the
-core discovery, indexing, and installation tools still run for free; the gated
-features simply stay locked.
+SSO/SAML, RBAC, audit logging, SIEM export, the private registry, and advanced
+analytics. (Compliance reporting has since graduated to the Team tier and up —
+it no longer needs the Enterprise key.) The support commitment is the
+enterprise SLA: a 99.9% uptime target, dedicated support, custom integrations.
+Without the key, the core discovery, indexing, and installation tools still
+run for free; the gated features simply stay locked.
 
 The **API key is a separate credential** doing a different job: it authenticates
 calls to a registry — the public Skillsmith registry, or your own private
@@ -49,7 +52,7 @@ The one use that needs a *separate* commercial agreement — beyond any
 subscription — is offering Skillsmith to third parties as a hosted or managed
 service. That is the whole model.
 
-## Available today vs. designed
+## What's shipped
 
 | Component | Status |
 |-----------|--------|
@@ -57,8 +60,8 @@ service. That is the whole model.
 | Supabase data layer + edge functions | Shipped |
 | Per-developer local SQLite index | Shipped |
 | GitHub indexer + `skillsmith sync` | Shipped |
-| Private internal registry | Tooling shipped; backend matures with a configured database |
-| IAM/RBAC enforcement, SSO/SAML | Designed; MCP tool surface exists, backing service is stub-only |
+| Private internal registry | Shipped; live when a database is configured |
+| IAM/RBAC enforcement, SSO/SAML | Shipped; live when a database is configured |
 
 ## The entities that make up Skillsmith
 
@@ -66,21 +69,21 @@ Skillsmith is a small number of cooperating parts:
 
 - **`@skillsmith/core`** — the database layer, repositories, and domain services.
 - **`@skillsmith/mcp-server`** — the [Model Context Protocol](https://modelcontextprotocol.io)
-  surface Claude Code talks to, exposing two-dozen-plus tools (`search`,
-  `install_skill`, `recommend`, and the rest).
+  surface Claude Code talks to, exposing forty-plus tools (`search`,
+  `install_skill`, `skill_recommend`, and the rest).
 - **`@skillsmith/cli`** — the terminal interface.
 - **VS Code extension** — the same capabilities inside the editor.
 - **`@smith-horn/enterprise`** — SSO, RBAC, audit logging, and the private
   registry.
 - **Supabase** — a Postgres skill registry plus a set of edge functions
   (`skills-search`, `skills-get`, `skills-recommend`, the `indexer`, and roughly
-  thirty more).
+  fifty more).
 - **A local SQLite database** — one per developer, with an FTS5 full-text index
   for fast offline search.
 
-Every skill in the registry carries a **trust tier** — `verified`, `curated`,
-`community`, `experimental`, `unknown`, or `local` — which downstream policy can
-key off.
+Every skill in the registry carries a **trust tier** — `official`, `verified`,
+`curated`, `community`, `experimental`, `unknown`, `unverified`, or `local` —
+which downstream policy can key off.
 
 ## The same architecture on your infrastructure
 
@@ -104,10 +107,11 @@ data plane — and it is yours.
 Skills reach the registry from two kinds of source — external and internal — and
 three mechanisms move them:
 
-1. **The indexer** is a server-side edge function. On a schedule (four times a
-   day in our hosted deployment) it crawls **GitHub** via the Search and Code
-   Search APIs, under rate-limit budgets, and writes discovered skills into the
-   Supabase Postgres registry.
+1. **The indexer** is a server-side edge function. On a schedule — eleven runs
+   a day in our hosted deployment: one maintenance pass, one recheck pass, and
+   three discovery cycles split into three phase-slots each — it crawls
+   **GitHub** via the Search and Code Search APIs, under rate-limit budgets,
+   and writes discovered skills into the Supabase Postgres registry.
 2. **Internal authored skills** are your own organization's source. In most
    companies these start scattered — a `SKILL.md` on one developer's laptop, a
    prompt on a shared drive, a snippet in a private repo, none of it discoverable
@@ -142,13 +146,15 @@ and the model lets you treat them differently. Every action is written to an
 audit log, queryable and exportable to a SIEM.
 
 To be straight about maturity: the RBAC, SSO, and private-registry **tools**
-all exist and are wired into the MCP server, but they are not equally far
-along. The private registry has a real Supabase-backed live mode that
-activates when a database is configured, with a stub fallback when one is
-not. RBAC and SSO are stub-only right now — no live backing service exists
-yet, database or not. Treat this layer as the *designed* access-control model
-of the reference architecture — real for the registry, not yet for RBAC and
-SSO, and none of it something to put in front of an auditor as finished.
+all exist, are wired into the MCP server, and now share the same live/stub
+split. Each routes to a real, database-backed live service that activates
+when Supabase is configured — the normal case for the hosted product, and for
+any self-hosted deployment set up the same way — falling back to an
+in-memory stub only when no database is configured at all. Treat this layer
+as the real access-control model of the reference architecture, gated to the
+Enterprise tier: not a mock-up, though any deployment should still run it
+through your own security review before relying on it for a specific
+compliance regime.
 
 ## Why this matters for partners
 
@@ -159,7 +165,8 @@ SSO, and none of it something to put in front of an auditor as finished.
 - **A compliance story.** Trust tiers, RBAC, and an exportable audit log give a
   security team something concrete to evaluate.
 - **Gradual adoption.** Start with the hosted registry and the CLI; add a private
-  registry; add SSO and RBAC as that layer matures — without re-platforming.
+  registry; turn on SSO and RBAC when you're ready for them — without
+  re-platforming.
 
 If you are evaluating Skillsmith for an enterprise deployment, this is the shape
 of what you would be running. [Get in touch](/contact) and we can walk through it
