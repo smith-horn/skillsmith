@@ -62,6 +62,12 @@ services:
       # auto-populates from the image's build-time `npm ci` output on first
       # mount, exactly like the existing root node_modules volume already
       # does.
+      #
+      # SMI-6453: any HOST-side inspection or `rm -rf` of these paths reads/
+      # writes a different filesystem than the container -- this is exactly
+      # what silently broke scripts/mcp-doc-retrieval-launcher.sh's
+      # dependency probe. See that script's header comment before adding a
+      # new volume here or writing a preflight check against one.
       - cli-node-modules:/app/packages/cli/node_modules
       - core-node-modules:/app/packages/core/node_modules
       - doc-retrieval-mcp-node-modules:/app/packages/doc-retrieval-mcp/node_modules
