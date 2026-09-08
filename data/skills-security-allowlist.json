@@ -3,28 +3,10 @@
   "generatedAt": "2026-06-02T00:00:00.000Z",
   "allowlist": [
     {
-      "skillId": "github/kcmadden/claude-code-1password-skill",
-      "findingType": "sensitive_path",
-      "messagePattern": "password|credentials",
-      "reason": "1Password integration skill. The product literally contains the word 'password' and its SKILL.md is security guidance telling Claude Code NEVER to ask users to paste passwords/credentials in chat. Bare-keyword sensitive_path regex cannot distinguish 'documents handling of passwords' from 'hardcoded password'. Wave 2 tightens patterns to require assignment/path context. Renewed 2026-07-12 under SMI-5666 (repo re-verified unchanged via gh api) — expiring 2026-07-21 would have re-tripped the weekly gate.",
-      "reviewedBy": "ryansmith108",
-      "reviewedAt": "2026-07-12",
-      "expiresAt": "2026-10-10"
-    },
-    {
       "skillId": "github/StrategicPromptArchitect-AI/MalPromptSentinel-CC-Skill",
       "findingType": "privilege_escalation",
       "messagePattern": "escalation",
       "reason": "Prompt-injection scanner skill whose description enumerates adversarial techniques it detects ('role manipulation, privilege escalation, ...'). Bare /escalat(e|ion)/i pattern triggered CRITICAL on a defensive-security tool describing its own subject matter. Wave 2 replaces with contextual patterns (privilege_escalation, escalate to root, exploit-to-escalate). Renewed 2026-07-12 under SMI-5666 (repo re-verified unchanged via gh api) — expiring 2026-07-21 would have re-tripped the weekly gate.",
-      "reviewedBy": "ryansmith108",
-      "reviewedAt": "2026-07-12",
-      "expiresAt": "2026-10-10"
-    },
-    {
-      "skillId": "github/rhysha/claude-security-research-skill",
-      "findingType": "sensitive_path",
-      "messagePattern": "secrets?",
-      "reason": "Security-research skill. 'Secrets' is domain vocabulary (talks about finding/handling secrets as a research topic), not an instruction to access a sensitive path. Bare-keyword match. Wave 2 tightens sensitive_path patterns to require assignment/path/file-extension context. Renewed 2026-07-12 under SMI-5666 (repo re-verified unchanged via gh api) — expiring 2026-07-21 would have re-tripped the weekly gate.",
       "reviewedBy": "ryansmith108",
       "reviewedAt": "2026-07-12",
       "expiresAt": "2026-10-10"
@@ -101,24 +83,6 @@
       "reviewedBy": "ryansmith108",
       "reviewedAt": "2026-08-13",
       "expiresAt": "2026-11-11"
-    },
-    {
-      "skillId": "github/binnukarunakar/icm-shipwright",
-      "findingType": "sensitive_path",
-      "messagePattern": "secrets\\?\\\\\\/\\[a-z0-9",
-      "reason": "Workspace-safety tool ('Make AI-agent workspaces safe to run and ship... with secret/PII guardrails and a 17-check lint'). Fetched all 33 files in the repo tree and found zero literal 'secret(s)/' matches in any file content — the only hit anywhere is the repo's own GitHub description phrase 'secret/PII guardrails', which the bare-keyword sensitive_path regex matches case-insensitively. Same false-positive class as github/RobinGase/skill-protocol-rs and github/dokind/qpay-skills (description advertises a security/credential-handling feature). messagePattern is scoped to the path-form pattern's echoed source only (SENSITIVE_PATH_PATTERNS' \\bsecrets?\\/[a-z0-9_.-]+, not the sibling assignment-form \\bsecrets?\\s*[:=] — both feed sensitive_path, and a bare 'secrets?' pattern here would also suppress a real future assignment-form secret leak in this skill). Triaged 2026-08-27 under SMI-6237 — closes GH #2059 (7 consecutive Weekly Security Scan failures since 2026-07-26, all the same skill/finding).",
-      "reviewedBy": "ryansmith108",
-      "reviewedAt": "2026-08-27",
-      "expiresAt": "2026-11-25"
-    },
-    {
-      "skillId": "github/lucas-lima-s/claude-skill-repo-audit",
-      "findingType": "sensitive_path",
-      "messagePattern": "secrets\\?\\\\\\/\\[a-z0-9",
-      "reason": "Publish-readiness audit skill whose GitHub repo description reads 'Publish-readiness gate for any repository: secret/PII scans, git-history identity leaks...'. Fetched all 44 files in the repo tree and found zero literal 'secret(s)/' matches in any file content — the only hit anywhere is the repo's own GitHub description phrase 'secret/PII', which the bare-keyword sensitive_path regex matches case-insensitively (the [a-z0-9_.-]+ class swallows 'PII'). Same false-positive class as github/binnukarunakar/icm-shipwright (SMI-6237, 'secret/PII guardrails') and github/RobinGase/skill-protocol-rs. messagePattern is scoped to the path-form pattern's echoed source only (SENSITIVE_PATH_PATTERNS' \\bsecrets?\\/[a-z0-9_.-]+, not the sibling assignment-form \\bsecrets?\\s*[:=] — both feed sensitive_path, and a bare 'secrets?' pattern here would also suppress a real future assignment-form secret leak in this skill). Triaged 2026-09-06 under SMI-6425 — closes GH #2616 + #2060 (recurring Weekly Security Scan failures since 2026-07-26).",
-      "reviewedBy": "ryansmith108",
-      "reviewedAt": "2026-09-06",
-      "expiresAt": "2026-12-05"
     }
   ]
 }

@@ -26,7 +26,6 @@ import {
   parseAllowlistFile,
 } from '../../src/scripts/skill-scanner/allowlist.js'
 import { shouldQuarantine } from '../../src/scripts/skill-scanner/trust-scorer.js'
-import { scanSensitivePaths } from '../../src/security/scanner/SecurityScanner.scanners.js'
 import type {
   AllowlistEntry,
   ScanReport,
@@ -471,11 +470,23 @@ describe('data/skills-security-allowlist.json (ship-it sanity)', () => {
   // publish-readiness audit skill whose repo description says 'secret/PII
   // scans'; same description-advertises-a-security-feature FP class as
   // icm-shipwright. Closes GH #2616 + #2060.
+  // SMI-6466 (2026-09-08): 4 entries retired following SMI-5207's MF-3/MF-4
+  // sensitive_path action-context gating. A live post-merge targeted re-scan
+  // (real repo descriptions fetched via `gh api`, real scanner run against a
+  // hand-built imported-skills.json fixture, real edited allowlist file) confirmed
+  // all four now clear with zero HIGH/CRITICAL findings and isQuarantined=false:
+  // binnukarunakar/icm-shipwright and lucas-lima-s/claude-skill-repo-audit clear
+  // to MEDIUM via MF-3 exactly as the SMI-5207 plan predicted; kcmadden/
+  // claude-code-1password-skill and rhysha/claude-security-research-skill clear
+  // with ZERO sensitive_path findings at all (not the predicted MF-4 MEDIUM
+  // downgrade) — their current live GitHub descriptions no longer contain any
+  // text matching any of the 15 SENSITIVE_PATH_PATTERNS, so the MF-4 branch is
+  // never reached; the clear is content-driven, not gate-driven, for these two.
   it('is parseable and every entry expires 90 days after review', () => {
     const filePath = path.resolve(__dirname, '../../../../data/skills-security-allowlist.json')
     const raw = JSON.parse(fs.readFileSync(filePath, 'utf-8'))
     const parsed = parseAllowlistFile(raw)
-    expect(parsed.allowlist.length).toBe(13)
+    expect(parsed.allowlist.length).toBe(9)
     const ids = parsed.allowlist.map((e) => e.skillId).sort()
     expect(ids).toEqual(
       [
@@ -483,14 +494,10 @@ describe('data/skills-security-allowlist.json (ship-it sanity)', () => {
         'github/RENJI04/prompt-injection-auditor',
         'github/RobinGase/skill-protocol-rs',
         'github/StrategicPromptArchitect-AI/MalPromptSentinel-CC-Skill',
-        'github/binnukarunakar/icm-shipwright',
         'github/dokind/qpay-skills',
         'github/fitz2882/narthex',
         'github/fitz2882/narthex',
-        'github/kcmadden/claude-code-1password-skill',
         'github/leksman/ai-security-guard',
-        'github/lucas-lima-s/claude-skill-repo-audit',
-        'github/rhysha/claude-security-research-skill',
         'github/straygizmo/mdium',
       ].sort()
     )
@@ -522,43 +529,15 @@ describe('data/skills-security-allowlist.json (ship-it sanity)', () => {
     }
   })
 
-  // SMI-6425 regression boundary: the new lucas-lima-s/claude-skill-repo-audit
-  // entry's messagePattern is scoped to the path-form sensitive_path pattern's
-  // echoed source only. A future genuine leak matching the SIBLING
-  // assignment-form pattern (\bsecrets?\s*[:=]/i) for the same skill and
-  // finding type must still be quarantined, not silently swallowed by this
-  // entry. This proves the scoping is airtight against the real production
-  // allowlist, not just narrowly worded in the JSON reason field.
-  it('does not allowlist the sibling assignment-form sensitive_path pattern for the new entry', () => {
-    const filePath = path.resolve(__dirname, '../../../../data/skills-security-allowlist.json')
-    const raw = JSON.parse(fs.readFileSync(filePath, 'utf-8'))
-    const parsed = parseAllowlistFile(raw)
-    const matcher = buildMatcher(parsed.allowlist)
-    const skillId = 'github/lucas-lima-s/claude-skill-repo-audit'
-
-    // The path-form match this entry exists to suppress. Hand-written
-    // messages here would be exactly the anti-false-green-mock pattern the
-    // governance skill warns about (H-3): a message hardcoded to what the
-    // scanner used to emit stays green even if a later change alters the
-    // format, hiding a real re-quarantine. Derive it from the actual
-    // scanner instead — content adjacent to a real, currently-allowlisted
-    // secrets-path mention with no action evidence nearby.
-    const pathFormFinding = scanSensitivePaths(
-      'Publish-readiness gate: secret/PII scans, git-history identity leaks'
-    ).find((f) => f.type === 'sensitive_path')
-    expect(pathFormFinding, 'fixture no longer produces a sensitive_path finding').toBeDefined()
-    expect(matcher.isAllowed(skillId, pathFormFinding!)).toBe(true)
-
-    // A hypothetical future assignment-form leak for the SAME skill and
-    // finding type must still be caught — also derived from the real
-    // scanner, a genuine `secrets: <value>` assignment.
-    const assignmentFormFinding = scanSensitivePaths('secrets: Tr0ub4dor&3').find(
-      (f) => f.type === 'sensitive_path'
-    )
-    expect(
-      assignmentFormFinding,
-      'fixture no longer produces a sensitive_path finding'
-    ).toBeDefined()
-    expect(matcher.isAllowed(skillId, assignmentFormFinding!)).toBe(false)
-  })
+  // SMI-6425's regression-boundary test for the lucas-lima-s/
+  // claude-skill-repo-audit entry's messagePattern scoping lived here. That
+  // entry was retired under SMI-6466 (live post-merge re-scan confirmed the
+  // MF-3 gate clears it to MEDIUM without any allowlist entry at all), so the
+  // entry-specific scoping proof no longer has an entry to prove airtight
+  // scoping for — removed rather than left asserting against a skillId with
+  // zero matching allowlist rows. The underlying scanner behavior (path-form
+  // vs. assignment-form sensitive_path classification) stays covered by
+  // packages/core/tests/security/sensitive-path-fp.test.ts and
+  // sensitive-path-adversarial-review.test.ts, which test the scanner
+  // directly rather than through an allowlist entry.
 })
