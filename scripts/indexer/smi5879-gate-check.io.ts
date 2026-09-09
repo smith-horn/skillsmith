@@ -247,11 +247,29 @@ function validateRow(
   if (postPortQuarantine !== undefined && typeof postPortQuarantine !== 'boolean') {
     return { ok: false, reason: `rows[${i}].postPortQuarantine must be a boolean when present` }
   }
-  if (prePortRiskScore !== undefined && typeof prePortRiskScore !== 'number') {
-    return { ok: false, reason: `rows[${i}].prePortRiskScore must be a number when present` }
+  // SMI-6481 (governance review, 2026-09-09): `Number.isFinite`, not
+  // `typeof === 'number'`, matching the checkpoint-side twin
+  // (`smi5879-simulate-full.checkpoint-row-shape.ts`). An asymmetry between the
+  // two loaders is the defect class SMI-6481 exists to remove, and having just
+  // tightened the checkpoint side it would be perverse to leave this one the
+  // weaker of the pair.
+  //
+  // Honest scope: this is defence-in-depth against a FUTURE caller, not a live
+  // hole. `validateRow` is module-private and its only reachable path is
+  // `loadSimulatorReport` -> `loadJsonFile` -> `JSON.parse`, and standard JSON
+  // cannot express NaN or Infinity — so no input available today can actually
+  // reach the tightened branch. It matters if a non-JSON producer is ever
+  // added, because a NaN risk score would otherwise pass G-5 silently:
+  // `checkDeltaBound` (`smi5879-gate-check.helpers.ts`) tests `delta > MAX`,
+  // and every comparison against NaN is false, so such a row is never flagged.
+  if (prePortRiskScore !== undefined && !Number.isFinite(prePortRiskScore)) {
+    return { ok: false, reason: `rows[${i}].prePortRiskScore must be a finite number when present` }
   }
-  if (postPortRiskScore !== undefined && typeof postPortRiskScore !== 'number') {
-    return { ok: false, reason: `rows[${i}].postPortRiskScore must be a number when present` }
+  if (postPortRiskScore !== undefined && !Number.isFinite(postPortRiskScore)) {
+    return {
+      ok: false,
+      reason: `rows[${i}].postPortRiskScore must be a finite number when present`,
+    }
   }
   return {
     ok: true,

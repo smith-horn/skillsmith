@@ -113,7 +113,10 @@ describe('checkpoint I/O', () => {
       updated_at: new Date().toISOString(),
     }
     writeFileSync(path, JSON.stringify(raw))
-    expect(() => readCheckpoint(path)).toThrow(/outcome=totally_not_a_real_outcome/)
+    // SMI-6481: rejected values are now rendered via `describeValue`, which
+    // quotes strings so a string `"true"` is visibly distinct from a boolean
+    // `true` — the exact confusion the new type checks exist to catch.
+    expect(() => readCheckpoint(path)).toThrow(/outcome="totally_not_a_real_outcome"/)
   })
 
   it('readCheckpoint rejects a checkpoint missing required top-level fields', () => {
@@ -130,8 +133,15 @@ describe('checkpoint I/O', () => {
   // `bundle_absent` row carrying `null` (or two equal strings) in the
   // quarantine pair satisfies both the pair-presence check and
   // `expectedVerdictDeltaOutcome`, and a poisoned checkpoint loads clean.
-  // The gate-report loader (`validateRow`, `smi5879-gate-check.io.ts`)
-  // already did this; checkpoint load was the asymmetric hole.
+  // The gate-report loader (`validateRow`, `smi5879-gate-check.io.ts`) already
+  // did this for the BOOLEAN pair; checkpoint load was the asymmetric hole.
+  // (The risk-score pair was NOT already equivalent: `validateRow` used a bare
+  // `typeof === 'number'`, which accepts NaN/Infinity — SMI-6481 tightened it
+  // to `Number.isFinite` on that side too, so the two loaders now match.)
+  //
+  // Each pair is poisoned in BOTH directions below. Poisoning only the `pre*`
+  // member would let a mutation that drops the `post*` field from the checked
+  // list pass every test (governance review finding S1).
   // -------------------------------------------------------------------------
 
   function checkpointWithRowFields(extra: Record<string, unknown>): Record<string, unknown> {
@@ -162,38 +172,73 @@ describe('checkpoint I/O', () => {
     [
       'null quarantine pair (the truthiness-bypass shape)',
       { prePortQuarantine: null, postPortQuarantine: null },
-      /prePortQuarantine=null/,
+      /prePortQuarantine=null \(must be a boolean/,
     ],
     [
-      'string quarantine values',
-      { prePortQuarantine: 'true', postPortQuarantine: 'false' },
-      /prePortQuarantine=true \(must be a boolean/,
+      'a bad PRE quarantine value only',
+      { prePortQuarantine: 'true', postPortQuarantine: false },
+      /prePortQuarantine="true" \(must be a boolean/,
     ],
     [
-      'numeric quarantine values',
-      { prePortQuarantine: 1, postPortQuarantine: 0 },
-      /prePortQuarantine=1 \(must be a boolean/,
+      'a bad POST quarantine value only',
+      { prePortQuarantine: true, postPortQuarantine: 'false' },
+      /postPortQuarantine="false" \(must be a boolean/,
+    ],
+    [
+      'a numeric POST quarantine value only',
+      { prePortQuarantine: true, postPortQuarantine: 0 },
+      /postPortQuarantine=0 \(must be a boolean/,
+    ],
+    [
+      'a bad PRE risk score only',
+      { prePortRiskScore: 'forty', postPortRiskScore: 0 },
+      /prePortRiskScore="forty" \(must be a finite number/,
+    ],
+    [
+      'a bad POST risk score only',
+      { prePortRiskScore: 40, postPortRiskScore: null },
+      /postPortRiskScore=null \(must be a finite number/,
+    ],
+    [
+      'a NaN-shaped POST risk score (rejected by isFinite, accepted by a bare typeof)',
+      { prePortRiskScore: 40, postPortRiskScore: 'NaN' },
+      /postPortRiskScore="NaN" \(must be a finite number/,
+    ],
+    ['a non-string reason', { reason: 42 }, /reason=42 \(must be a string when present/],
+    [
+      'an unrecognised unfetchable_subtype',
+      { unfetchable_subtype: 'made_up' },
+      /unfetchable_subtype="made_up" \(must be one of/,
+    ],
+    [
+      'an object where a scalar belongs (rendered legibly, not as [object Object])',
+      { prePortQuarantine: { nested: true }, postPortQuarantine: false },
+      /prePortQuarantine=\{"nested":true\} \(must be a boolean/,
     ],
   ])('readCheckpoint rejects a row with %s', (_label, extra, pattern) => {
-    const path = join(dir, 'bad-quarantine.json')
+    const path = join(dir, 'bad-row-field.json')
     writeFileSync(path, JSON.stringify(checkpointWithRowFields(extra)))
     expect(() => readCheckpoint(path)).toThrow(pattern)
   })
 
-  it('readCheckpoint rejects a row whose risk scores are not finite numbers', () => {
-    const path = join(dir, 'bad-score.json')
-    writeFileSync(
-      path,
-      JSON.stringify(
-        checkpointWithRowFields({
-          prePortQuarantine: true,
-          postPortQuarantine: false,
-          prePortRiskScore: 'forty',
-          postPortRiskScore: null,
-        })
-      )
-    )
-    expect(() => readCheckpoint(path)).toThrow(/prePortRiskScore=forty \(must be a finite number/)
+  it('caps the enumerated field errors and reports the true total', () => {
+    const path = join(dir, 'many-bad-rows.json')
+    const base = checkpointWithRowFields({})
+    const rowResults: Record<string, unknown> = {}
+    for (let i = 0; i < 60; i++) {
+      rowResults[`row-${i}`] = {
+        id: `row-${i}`,
+        cohort: 'C2',
+        author: null,
+        name: null,
+        outcome: 'bundle_absent',
+        prePortQuarantine: 'nope',
+      }
+    }
+    writeFileSync(path, JSON.stringify({ ...base, row_results: rowResults }))
+    // 60 rows x 1 bad field each: total is reported, enumeration is truncated.
+    expect(() => readCheckpoint(path)).toThrow(/60 invalid\/missing field\(s\)/)
+    expect(() => readCheckpoint(path)).toThrow(/and 40 more/)
   })
 
   it('readCheckpoint still accepts a row whose scored fields are absent or correctly typed', () => {

@@ -15,7 +15,11 @@
  */
 
 import { existsSync, readFileSync, renameSync, writeFileSync } from 'node:fs'
-import { ALL_SIMULATED_COHORTS, isValidSimRowOutcome } from './smi5879-simulate-full.types.ts'
+import { ALL_SIMULATED_COHORTS } from './smi5879-simulate-full.types.ts'
+import {
+  isPlainObject,
+  validateCheckpointRowShape,
+} from './smi5879-simulate-full.checkpoint-row-shape.ts'
 import { shardOf } from './smi5879-simulate-full.shard.ts'
 import type {
   SimSnapshotRow,
@@ -82,9 +86,12 @@ const VALID_HARD_STOP_REASONS_FOR_SHAPE_CHECK: readonly SweepHardStopReason[] = 
   null,
 ]
 
-function isPlainObject(value: unknown): value is Record<string, unknown> {
-  return typeof value === 'object' && value !== null && !Array.isArray(value)
-}
+/**
+ * SMI-6481: cap on how many individual shape-validation failures a single
+ * refusal message enumerates. See the throw site for why this is not
+ * unbounded.
+ */
+const MAX_SHAPE_ERRORS_IN_MESSAGE = 20
 
 /**
  * Runtime shape validation for a checkpoint read off disk — a bare
@@ -175,50 +182,12 @@ function assertValidCheckpointShape(
   if (!isPlainObject(rowResults)) {
     errors.push('row_results')
   } else {
+    // SMI-6481: per-row field validation lives in
+    // `smi5879-simulate-full.checkpoint-row-shape.ts` — see that module's
+    // header for why type-checking (not just presence-checking) the scored
+    // fields is what makes the poisoned-checkpoint refusal actually closed.
     for (const [id, rawResult] of Object.entries(rowResults)) {
-      if (!isPlainObject(rawResult)) {
-        errors.push(`row_results.${id} (not an object)`)
-        continue
-      }
-      const resultId = rawResult['id']
-      const cohort = rawResult['cohort']
-      const outcome = rawResult['outcome']
-      if (typeof resultId !== 'string') errors.push(`row_results.${id}.id`)
-      if (
-        typeof cohort !== 'string' ||
-        !ALL_SIMULATED_COHORTS.includes(cohort as SimulatedCohort)
-      ) {
-        errors.push(`row_results.${id}.cohort=${String(cohort)}`)
-      }
-      if (!isValidSimRowOutcome(outcome)) {
-        errors.push(`row_results.${id}.outcome=${String(outcome)}`)
-      }
-      // SMI-6481 (GPT-5.6-Sol cross-model gate, 2026-09-09): TYPE-check the
-      // scored fields here — presence alone is fail-OPEN. The coherence
-      // guards (`smi5879-merge-shards.outcome-coherence.ts`) test presence
-      // with `!== undefined` then read the quarantine pair through
-      // truthiness, so a hand-edited `bundle_absent` row carrying
-      // `null`/`null` (or two equal strings) satisfies both the pair-presence
-      // check and `expectedVerdictDeltaOutcome` and loads clean — defeating
-      // the refusal that exists to reject tampered checkpoints. The
-      // gate-report loader already validates exactly this (`validateRow`,
-      // `smi5879-gate-check.io.ts`); checkpoint load was the asymmetric hole.
-      // `Number.isFinite`, not `typeof === 'number'`, so a NaN/Infinity from
-      // a non-`JSON.parse` writer can't pass either.
-      for (const field of ['prePortQuarantine', 'postPortQuarantine'] as const) {
-        const v = rawResult[field]
-        if (v !== undefined && typeof v !== 'boolean') {
-          errors.push(`row_results.${id}.${field}=${String(v)} (must be a boolean when present)`)
-        }
-      }
-      for (const field of ['prePortRiskScore', 'postPortRiskScore'] as const) {
-        const v = rawResult[field]
-        if (v !== undefined && !Number.isFinite(v)) {
-          errors.push(
-            `row_results.${id}.${field}=${String(v)} (must be a finite number when present)`
-          )
-        }
-      }
+      errors.push(...validateCheckpointRowShape(id, rawResult))
     }
   }
 
@@ -240,11 +209,21 @@ function assertValidCheckpointShape(
   }
 
   if (errors.length > 0) {
+    // SMI-6481 (governance review, 2026-09-09): cap the enumeration. Real
+    // populations run into the hundreds of thousands of rows and each bad row
+    // can now contribute up to 7 fragments, so an uncapped `join` on a wholly
+    // corrupt checkpoint produced a multi-tens-of-MB `Error.message`. Every
+    // sibling guard in this family already caps the same way
+    // (`assertCheckpointRowsBelongToGeneration`'s `slice(0, 5)`,
+    // `MAX_IDS_IN_ERROR`, `MAX_IDS_IN_CHECKPOINT_REMEDIATION`).
+    const shown = errors.slice(0, MAX_SHAPE_ERRORS_IN_MESSAGE)
+    const remainder = errors.length - shown.length
+    const suffix = remainder > 0 ? `, and ${remainder} more` : ''
     throw new Error(
-      `SMI-5879: checkpoint at ${path} failed shape validation — invalid/missing field(s): ` +
-        `${errors.join(', ')}. Refusing to trust a malformed checkpoint file — fix or remove it ` +
-        'before resuming (removing it is a COLD START, not a safe default: confirm no real ' +
-        'progress is being discarded first).'
+      `SMI-5879: checkpoint at ${path} failed shape validation — ${errors.length} ` +
+        `invalid/missing field(s): ${shown.join(', ')}${suffix}. Refusing to trust a malformed ` +
+        'checkpoint file — fix or remove it before resuming (removing it is a COLD START, not a ' +
+        'safe default: confirm no real progress is being discarded first).'
     )
   }
 }

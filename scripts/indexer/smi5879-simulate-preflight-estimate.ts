@@ -220,8 +220,21 @@ export async function runPreflightEstimate(
 
   const branchMap = await db.loadBranchMap(args.runId)
   const telemetry = newRateLimitTelemetry()
-  const headers = await buildGitHubHeaders('skillsmith-smi5879-preflight-estimate/1.0')
-  const scanDeps = { scanPostPort, scanPrePort, telemetry, headers }
+  // SMI-6481 (governance review, 2026-09-09): this MUST be `getHeaders` (a
+  // callback), not a `headers` object resolved once. `ProcessRowDeps`
+  // (`smi5879-simulate-full.helpers.ts`) switched to the callback form in
+  // SMI-6015 so a multi-day run re-mints the token instead of going stale
+  // past GitHub's 1h App-token expiry; `runMainPass`/`runSimulateFull` were
+  // updated then, this call site was missed. The result was not a stale-token
+  // bug but a hard `TypeError: getHeaders is not a function` on the FIRST row
+  // (`retryPrimaryFetch` calls `await getHeaders()`, and `withFetchRetry`
+  // rethrows non-`RateLimitError`), i.e. `runPreflightEstimate` could not
+  // complete a single row. Nothing caught it: `tsconfig.json` has
+  // `"files": []` and references only `packages/`, so `tsc --build` never
+  // sees `scripts/`, and `eslint.config.js`'s type-aware block is scoped to
+  // `packages/**` too. Mirrors `smi5879-simulate-full.ts`'s own wiring.
+  const getHeaders = () => buildGitHubHeaders('skillsmith-smi5879-preflight-estimate/1.0')
+  const scanDeps = { scanPostPort, scanPrePort, telemetry, getHeaders }
 
   const sample = seededSample(frame, args.sampleSize, args.seed)
   const results = []

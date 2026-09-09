@@ -1,0 +1,126 @@
+/**
+ * SMI-6481: direct unit coverage of
+ * `smi5879-simulate-full.checkpoint-row-shape.ts`.
+ *
+ * The `readCheckpoint`-driven tests in
+ * `smi5879-simulate-full.checkpoint.test.ts` exercise this module through JSON
+ * on disk, which is the real production path but cannot express `NaN` or
+ * `Infinity` — standard JSON has no literal for either. Those are exactly the
+ * values `Number.isFinite` exists to reject (a bare `typeof === 'number'`
+ * accepts both), so the finite check has no reachable JSON-level test. Calling
+ * the exported validator directly is the only way to cover that branch rather
+ * than assert it works by inspection.
+ *
+ * @module scripts/tests/indexer/smi5879-checkpoint-row-shape
+ */
+
+import { describe, it, expect } from 'vitest'
+import {
+  describeValue,
+  validateCheckpointRowShape,
+} from '../../indexer/smi5879-simulate-full.checkpoint-row-shape.ts'
+
+const validRow = {
+  id: 'row-1',
+  cohort: 'C2',
+  author: null,
+  name: null,
+  outcome: 'bundle_absent',
+}
+
+describe('validateCheckpointRowShape', () => {
+  it('accepts a minimal valid row and a fully-populated scored row', () => {
+    expect(validateCheckpointRowShape('row-1', validRow)).toEqual([])
+    expect(
+      validateCheckpointRowShape('row-1', {
+        ...validRow,
+        prePortQuarantine: true,
+        postPortQuarantine: true,
+        prePortRiskScore: 40,
+        postPortRiskScore: 41,
+        reason: 'every sibling target 404d',
+        unfetchable_subtype: 'url_parse',
+      })
+    ).toEqual([])
+  })
+
+  it('rejects a non-object row without inspecting further', () => {
+    expect(validateCheckpointRowShape('row-1', 'nope')).toEqual([
+      'row_results.row-1 (not an object)',
+    ])
+    expect(validateCheckpointRowShape('row-1', null)).toEqual(['row_results.row-1 (not an object)'])
+    expect(validateCheckpointRowShape('row-1', [])).toEqual(['row_results.row-1 (not an object)'])
+  })
+
+  // The whole reason this module exists: JSON cannot carry NaN/Infinity, so
+  // these branches are unreachable from `readCheckpoint` and would otherwise
+  // ship untested.
+  it.each([
+    ['NaN', Number.NaN],
+    ['Infinity', Number.POSITIVE_INFINITY],
+    ['-Infinity', Number.NEGATIVE_INFINITY],
+  ])('rejects a %s risk score that a bare typeof check would accept', (_label, value) => {
+    // Guard the premise: these ARE typeof 'number', so a `typeof` check passes.
+    expect(typeof value).toBe('number')
+
+    const preErrors = validateCheckpointRowShape('row-1', { ...validRow, prePortRiskScore: value })
+    expect(preErrors).toHaveLength(1)
+    expect(preErrors[0]).toMatch(/prePortRiskScore=.* \(must be a finite number/)
+
+    const postErrors = validateCheckpointRowShape('row-1', {
+      ...validRow,
+      postPortRiskScore: value,
+    })
+    expect(postErrors).toHaveLength(1)
+    expect(postErrors[0]).toMatch(/postPortRiskScore=.* \(must be a finite number/)
+  })
+
+  it('reports every violation on a row at once, not just the first', () => {
+    const errors = validateCheckpointRowShape('row-1', {
+      id: 42,
+      cohort: 'C9',
+      outcome: 'not_an_outcome',
+      prePortQuarantine: 'yes',
+      postPortQuarantine: 'no',
+      prePortRiskScore: 'forty',
+      postPortRiskScore: Number.NaN,
+      reason: 7,
+      unfetchable_subtype: 'invented',
+    })
+    // id, cohort, outcome, 2 booleans, 2 scores, reason, subtype = 9.
+    expect(errors).toHaveLength(9)
+  })
+
+  it('accepts absent optional fields (undefined is not a violation)', () => {
+    expect(
+      validateCheckpointRowShape('row-1', {
+        ...validRow,
+        prePortQuarantine: undefined,
+        prePortRiskScore: undefined,
+        reason: undefined,
+        unfetchable_subtype: undefined,
+      })
+    ).toEqual([])
+  })
+})
+
+describe('describeValue', () => {
+  it.each([
+    ['a string, quoted so it is distinct from a boolean', 'true', '"true"'],
+    ['null', null, 'null'],
+    ['a number', 40, '40'],
+    ['NaN as a readable token, not null', Number.NaN, 'NaN'],
+    ['Infinity as a readable token, not null', Number.POSITIVE_INFINITY, 'Infinity'],
+    ['an object, not [object Object]', { nested: true }, '{"nested":true}'],
+    ['an array, not the empty string', [1, 2], '[1,2]'],
+    ['a boolean', false, 'false'],
+  ])('renders %s', (_label, value, expected) => {
+    expect(describeValue(value)).toBe(expected)
+  })
+
+  it('falls back rather than throwing on a circular structure', () => {
+    const circular: Record<string, unknown> = {}
+    circular['self'] = circular
+    expect(() => describeValue(circular)).not.toThrow()
+  })
+})
