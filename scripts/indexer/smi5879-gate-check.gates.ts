@@ -10,6 +10,10 @@
 
 import { checkDeltaBound, computeR, type ResolvedLedger } from './smi5879-gate-check.helpers.ts'
 import {
+  makeAuthorizedDispositionLookup,
+  makeManualOnlyDispositionLookup,
+} from './smi5879-gate-check.gates.bulk-authorization.ts'
+import {
   DRIFT_CLASSES_REQUIRING_EXCLUSION,
   type DriftRow,
   type GateResult,
@@ -17,7 +21,7 @@ import {
   type Smi5879SimulateFullReport,
   type StructuralClosureResult,
 } from './smi5879-gate-check.types.ts'
-import type { SimulatedCohort } from './smi5879-simulate-full.types.ts'
+import type { BranchMap, SimSnapshotRow, SimulatedCohort } from './smi5879-simulate-full.types.ts'
 
 export { evaluateG7, evaluateG8 } from './smi5879-gate-check.gates.attestation.ts'
 
@@ -251,13 +255,26 @@ export function evaluateG5(
 // G-1 — hand review (evaluated LAST — depends on G-2 and G-2R)
 // ---------------------------------------------------------------------------
 
+/**
+ * SMI-6444: `population`/`branchMap` are the digest-verified sealed
+ * generation's own data — threaded in so a `method:'bulk'` ledger entry can
+ * be independently AUTHORIZED rather than trusted (plan Item 2). An entry
+ * that fails authorization is treated as if it did not exist, so it falls
+ * through this function's existing missing-disposition reporting unchanged;
+ * no new message shape is needed for a bad bulk claim. `population` must
+ * come from the same run `bindSimulatorReportToPopulation` already proved
+ * `simReport.rows` set-equal to — the outcome cross-check inside the lookup
+ * is only as trustworthy as that binding.
+ */
 export function evaluateG1(
   mode: Smi5879GateCheckMode,
   simReport: Smi5879SimulateFullReport,
   ledger: ResolvedLedger,
   g2Result: GateResult,
   g2rResult: GateResult,
-  g2rDriftRows: readonly DriftRow[]
+  g2rDriftRows: readonly DriftRow[],
+  population: readonly SimSnapshotRow[],
+  branchMap: BranchMap
 ): GateResult {
   if (ledger.loadFailureReason !== null) {
     return {
@@ -294,12 +311,22 @@ export function evaluateG1(
     }
   }
 
+  // SMI-6444: every disposition lookup below goes through this, never
+  // `byId` directly — an unauthorized bulk entry must read as "no
+  // disposition", not as whatever verdict the ledger file claims.
+  const dispositionOf = makeAuthorizedDispositionLookup(
+    ledger.validation,
+    simReport.rows,
+    population,
+    branchMap
+  )
+
   const R = computeR(simReport.rows)
-  const missingRDispositions = R.filter((r) => !ledger.validation.byId.has(r.id)).map((r) => r.id)
+  const missingRDispositions = R.filter((r) => dispositionOf(r.id) === undefined).map((r) => r.id)
 
   const unfetchableRows = simReport.rows.filter((r) => r.outcome === 'unfetchable')
   const missingUnfetchableExcludes = unfetchableRows
-    .filter((r) => ledger.validation.byId.get(r.id) !== 'exclude')
+    .filter((r) => dispositionOf(r.id) !== 'exclude')
     .map((r) => r.id)
 
   // SMI-6442: primary_not_found is terminal and coverage-neutral like
@@ -307,7 +334,7 @@ export function evaluateG1(
   // this, a confirmed-404 row would silently skip human review entirely.
   const primaryNotFoundRows = simReport.rows.filter((r) => r.outcome === 'primary_not_found')
   const missingPrimaryNotFoundExcludes = primaryNotFoundRows
-    .filter((r) => ledger.validation.byId.get(r.id) !== 'exclude')
+    .filter((r) => dispositionOf(r.id) !== 'exclude')
     .map((r) => r.id)
 
   const driftRequiringExclusion =
@@ -316,8 +343,14 @@ export function evaluateG1(
           (DRIFT_CLASSES_REQUIRING_EXCLUSION as readonly string[]).includes(r.drift_class)
         )
       : []
+  // Drift rows use the MANUAL-ONLY lookup, not `dispositionOf` — plan Item 0
+  // keeps DR-1..DR-4 on the manual path, and `drift_class` is independent of
+  // the report `outcome` the general lookup checks (an `unfetchable` row can
+  // also be a DR-1 row). Same lookup G-2R phase (iii) uses, so the two gates
+  // can never disagree about a drift row.
+  const driftDispositionOf = makeManualOnlyDispositionLookup(ledger.validation)
   const missingDriftExcludes = driftRequiringExclusion
-    .filter((r) => ledger.validation.byId.get(r.id) !== 'exclude')
+    .filter((r) => driftDispositionOf(r.id) !== 'exclude')
     .map((r) => r.id)
 
   if (
