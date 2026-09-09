@@ -40,10 +40,17 @@ describe('WEAK_PASSWORD_LEXICON_SOURCE provenance (Node-edge)', () => {
   })
 
   it('entries matches the emitted Set size, and is inside [2000, 6000] (M-2)', () => {
+    // SMI-6441 Wave 2, adversarial review round 2: 4,079 -> 4,012. The
+    // keeplist gained a software-engineering vocabulary section after two
+    // independent reviewers found ordinary documentation nouns (`security`,
+    // `command`, `cloud`, `scanner`, …) still in the lexicon, where they
+    // vetoed benign two-token labels to HIGH — which blocks an INSTALL, since
+    // that gate fails on hasHigh alone. Keep this literal in lock-step with
+    // the core mirror in packages/core/tests/security/weak-password-lexicon.test.ts.
     expect(COMMON_WEAK_PASSWORDS.size).toBe(WEAK_PASSWORD_LEXICON_SOURCE.entries)
     expect(COMMON_WEAK_PASSWORDS.size).toBeGreaterThanOrEqual(2000)
     expect(COMMON_WEAK_PASSWORDS.size).toBeLessThanOrEqual(6000)
-    expect(COMMON_WEAK_PASSWORDS.size).toBe(4079)
+    expect(COMMON_WEAK_PASSWORDS.size).toBe(4012)
   })
 })
 

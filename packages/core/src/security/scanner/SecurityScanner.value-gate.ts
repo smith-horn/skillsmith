@@ -99,6 +99,18 @@ function isProseValue(span: string, weakPasswordVeto: boolean): boolean {
    * ordinary documentation sentences to HIGH, reopening the FP class with 10
    * documented recurrences). Anyone closing R-3 later closes this bypass with
    * it; until then, do not describe this veto as unpoisonable.
+   *
+   * ONE THING THE R-3 IDENTIFICATION DOES NOT CARRY OVER (SMI-6441
+   * adversarial review round 2). Calling this bypass "exactly R-3" is true
+   * of the MECHANISM, but must not be read as inheriting SMI-5207's whole
+   * acceptance rationale. That plan accepted R-3 partly because its quoted
+   * form is independently covered by PII_PATTERNS. Measured, that backstop
+   * covers only the quoted form: a quoted stopword-prefixed value still
+   * fires a HIGH pii finding, while the UNQUOTED form fires nothing at any
+   * severity — and the unquoted form is the one an author would type. The
+   * mechanism is inherited; its REACHABILITY AS AN EVASION is not. Before
+   * this wave there was nothing to evade here, because a 2-token label was
+   * already MEDIUM. Treat it as an accepted residual with NO backstop.
    */
   if (
     tokens.length > 1 &&
@@ -141,6 +153,16 @@ function isProseValue(span: string, weakPasswordVeto: boolean): boolean {
  * attaches to the LINE (the finding's `location` is the whole trimmed line), so
  * a line holding any real credential is HIGH. Monotonicity holds — this returns
  * true at least as often as the per-span reading, and true is the status quo.
+ *
+ * SMI-6441 note: "true is the status quo" is still literally correct, but no
+ * longer conveys the blast radius of a single keeplist miss. Under the MF-4b
+ * veto ONE lexicon hit in ANY segment escalates the WHOLE line — so a line
+ * whose first segment is the acceptance criterion's own must-stay-MEDIUM case
+ * goes HIGH anyway if a later segment trips the veto. The next-line path does
+ * the same across a line boundary, letting an indented continuation drive the
+ * severity of an unindented key line. Both follow from the design and neither
+ * loses detection; recorded so a future reader sizes one missing keeplist
+ * entry correctly.
  */
 export function assignmentHasRealValue(
   lines: string[],

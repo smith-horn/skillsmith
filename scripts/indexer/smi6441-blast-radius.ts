@@ -244,7 +244,20 @@ function analyzeSkill(
       )
     }
     if (!beforeReal && afterReal) census.push(censusRowFor(skill, lines, f, idx))
-    return { ...f, severity: beforeReal ? 'high' : ('medium' as SecuritySeverity) }
+    // `confidence` must be re-derived, not inherited from the AFTER finding.
+    // SecurityScanner.scanners.ts:111-115 computes it FROM severity
+    // (inDocContext ? 'low' : severity === 'high' ? 'high' : 'medium'), and
+    // risk scoring consumes confidence — so spreading the post-change
+    // `confidence: 'high'` onto a counterfactual finding we just demoted to
+    // 'medium' inflates the BEFORE risk score. That can push a BEFORE total
+    // over the 40-point indexer threshold, making a skill look
+    // already-quarantined and hiding a real 4a transition. The doc-context
+    // arm ('low') is genuinely unreachable here — the early return above
+    // already excluded every doc-context finding, and the compiler narrows
+    // `inDocumentationContext` to `false | undefined` at this point, so
+    // writing that arm is a TS2367 error rather than defensive coding.
+    const beforeSeverity: SecuritySeverity = beforeReal ? 'high' : 'medium'
+    return { ...f, severity: beforeSeverity, confidence: beforeReal ? 'high' : 'medium' }
   })
 
   // Re-run the REAL escalation over the counterfactual array, as
