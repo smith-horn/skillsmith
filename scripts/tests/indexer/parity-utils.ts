@@ -187,6 +187,25 @@ export function extractScannerBody(filePath: string): string {
 }
 
 /**
+ * SMI-6441 Wave 1 (L2): extract everything from the literal `@generated`
+ * marker to EOF. Used for the weak-password lexicon's three-way (core +
+ * Node edge + Deno edge) LITERAL payload-identity check — a generated,
+ * import-free, logic-free module has no legitimate reason to differ across
+ * substrates beyond its `@module` line, which sits ABOVE this marker in
+ * each file's docblock (see scripts/gen-weak-password-lexicon.mjs's
+ * renderModule). This is a STRONGER guarantee than the whitespace-
+ * normalised parity extractScannerBody above governs for the hand-written
+ * twins: no normalization here — callers must compare with a literal
+ * `===`, not normalizeWs.
+ */
+export function extractGeneratedPayload(filePath: string): string {
+  const source = readFileSync(filePath, 'utf-8')
+  const markerIdx = source.indexOf('@generated')
+  if (markerIdx < 0) throw new Error(`'@generated' banner marker not found in ${filePath}`)
+  return source.slice(markerIdx)
+}
+
+/**
  * SMI-4852: Returns true when the file is git-crypt-encrypted (e.g.
  * post-merge-verify.yml runs without unlocking the key). The encrypted file
  * begins with the literal magic `\x00GITCRYPT\x00`. Callers `it.skipIf` on this
