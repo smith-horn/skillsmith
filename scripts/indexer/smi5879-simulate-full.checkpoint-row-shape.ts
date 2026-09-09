@@ -41,7 +41,8 @@ export function isPlainObject(value: unknown): value is Record<string, unknown> 
  * into the refusal message. Bounds the rendered VALUE only — the surrounding
  * fragment also embeds `row_results.${id}.${field}`, and a checkpoint key is
  * itself unbounded, so this is not a bound on total fragment length. The
- * message-count cap in `smi5879-simulate-full.checkpoint.ts` bounds the count
+ * message-count cap (`MAX_SHAPE_ERRORS_IN_MESSAGE`, in
+ * `smi5879-simulate-full.checkpoint-shape.ts`) bounds the count
  * axis. (Round-3 correction: the pre-fix `String(v)` was NOT implicitly bounded
  * either — only plain objects collapsed to `'[object Object]'`; a long string
  * or array rendered in full.)
@@ -79,11 +80,33 @@ export function describeValue(value: unknown): string {
  * a raw `String.prototype.slice` can cut a surrogate pair in half and emit a
  * lone surrogate into an operator-facing message (round-3 finding: a 200-emoji
  * value ended in a bare `\uD83D`).
+ *
+ * The `.slice()` before `Array.from` is load-bearing, not incidental (round-4
+ * finding): `Array.from` over the WHOLE string would allocate one array element
+ * per code point of a value that may itself be tens of megabytes — reintroducing
+ * an unbounded allocation into the exact error path the cap exists to bound,
+ * the same "blow-up relocated rather than removed" shape as the round-2 F4
+ * finding. A `2 * MAX` code-unit prefix always contains at least MAX code
+ * points (a code point is at most 2 code units), so the result is identical to
+ * slicing the full string, at O(MAX) instead of O(input).
  */
 function truncateRendered(rendered: string): string {
   if (rendered.length <= MAX_RENDERED_VALUE_CHARS) return rendered
-  const codePoints = Array.from(rendered)
-  if (codePoints.length <= MAX_RENDERED_VALUE_CHARS) return rendered
+  const prefix = rendered.slice(0, MAX_RENDERED_VALUE_CHARS * 2)
+  const codePoints = Array.from(prefix)
+  // Return unchanged ONLY when the prefix covered the entire string AND that
+  // whole string fits. The `prefix.length === rendered.length` half is
+  // defensive, not load-bearing for today's callers: testing
+  // `codePoints.length <= MAX` alone would misread a long ALL-surrogate-pair
+  // string (exactly MAX code points in a 2*MAX-unit prefix) as "fits" and
+  // return it whole — but `describeValue` can't produce one, because every
+  // JSON rendering starts with a BMP character (`"`, `{`, `[`) which pushes
+  // the prefix to MAX+1 code points. Verified, not assumed: mutating this
+  // condition to the naive form fails no test. Kept because the invariant
+  // should hold for any future caller handing this a raw string.
+  if (prefix.length === rendered.length && codePoints.length <= MAX_RENDERED_VALUE_CHARS) {
+    return rendered
+  }
   return `${codePoints.slice(0, MAX_RENDERED_VALUE_CHARS).join('')}…`
 }
 

@@ -1,8 +1,11 @@
 /**
- * Checkpoint I/O for smi5879-simulate-full.ts: on-disk read/write, shape
- * validation for a checkpoint read off disk, and the two identity guards
- * that refuse to resume a checkpoint that doesn't actually belong to this
- * invocation. Split out of smi5879-simulate-full.sweep.ts (CLAUDE.md's
+ * Checkpoint I/O for smi5879-simulate-full.ts: on-disk read/write plus the two
+ * identity guards that refuse to resume a checkpoint that doesn't actually
+ * belong to this invocation. Runtime SHAPE validation moved to
+ * `smi5879-simulate-full.checkpoint-shape.ts` (SMI-6481, same <500-line
+ * pressure); per-row field validation is a further split again, in
+ * `smi5879-simulate-full.checkpoint-row-shape.ts`. Split out of
+ * smi5879-simulate-full.sweep.ts (CLAUDE.md's
  * <500-line-per-file convention — SMI-6015 Wave 1's `cohorts` field pushed
  * the combined file over budget). Coverage aggregation and the tier-3 sweep
  * loop stay in `.sweep.ts`; `processRow`'s per-row logic stays in

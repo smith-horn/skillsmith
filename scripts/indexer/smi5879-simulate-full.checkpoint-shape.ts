@@ -1,8 +1,9 @@
 /**
  * SMI-6481: whole-checkpoint runtime shape validation, split out of
- * `smi5879-simulate-full.checkpoint.ts` — which had crept back to 499/500
- * lines (the blocking pre-commit gate) as the SMI-6481 guards and their
- * rationale comments landed. That file now owns checkpoint FILE I/O; this one
+ * `smi5879-simulate-full.checkpoint.ts` — which had crept to 495 lines
+ * against the 500-line blocking pre-commit gate as the SMI-6481 guards and
+ * their rationale comments landed, with the in-flight round-3 edits taking it
+ * to the limit. That file now owns checkpoint FILE I/O; this one
  * owns "is this parsed JSON actually a checkpoint". Per-ROW field validation
  * is a further split again, in
  * `smi5879-simulate-full.checkpoint-row-shape.ts`.
@@ -68,9 +69,11 @@ export function assertValidCheckpointShape(
   const errors: string[] = []
 
   // Bracket notation throughout this function is required, not stylistic —
-  // `value`/`rawResult`/`sweep` are `Record<string, unknown>` (from the
+  // `value` and `sweep` are `Record<string, unknown>` (from the
   // `isPlainObject` guard), which `noPropertyAccessFromIndexSignature`
-  // (tsconfig.base.json) refuses to let dot-notation read.
+  // (tsconfig.base.json) refuses to let dot-notation read. (Per-row values
+  // are no longer read here at all — they go straight to
+  // `validateCheckpointRowShape`.)
   const runId = value['run_id']
   const purpose = value['purpose']
   const baselineCommit = value['baseline_commit']
@@ -176,12 +179,15 @@ export function assertValidCheckpointShape(
   } else {
     for (const [id, rawResult] of Object.entries(rowResults)) {
       const rowErrors = validateCheckpointRowShape(id, rawResult)
-      for (let i = 0; i < rowErrors.length; i++) {
+      // `.entries()` rather than an index loop: gives both the index the
+      // suppressed-count math needs AND a properly-typed `err`, so no
+      // `as string` is needed to defeat `noUncheckedIndexedAccess`.
+      for (const [i, err] of rowErrors.entries()) {
         if (errors.length >= MAX_SHAPE_ERRORS_IN_MESSAGE) {
           suppressedCount += rowErrors.length - i
           break
         }
-        errors.push(rowErrors[i] as string)
+        errors.push(err)
       }
     }
   }
@@ -193,8 +199,7 @@ export function assertValidCheckpointShape(
     // (`assertCheckpointRowsBelongToGeneration`'s `slice(0, 5)`,
     // `MAX_IDS_IN_ERROR`, `MAX_IDS_IN_CHECKPOINT_REMEDIATION`).
     const total = errors.length + suppressedCount
-    const remainder = suppressedCount
-    const suffix = remainder > 0 ? `, and ${remainder} more` : ''
+    const suffix = suppressedCount > 0 ? `, and ${suppressedCount} more` : ''
     throw new Error(
       `SMI-5879: checkpoint at ${path} failed shape validation — ${total} ` +
         `invalid/missing field(s): ${errors.join(', ')}${suffix}. Refusing to trust a malformed ` +

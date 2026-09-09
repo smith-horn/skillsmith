@@ -156,6 +156,28 @@ describe('describeValue', () => {
       expect(rendered.endsWith('…')).toBe(true)
     })
 
+    // Covers the multi-byte truncation path. Note what it does NOT prove:
+    // `truncateRendered`'s `prefix.length === rendered.length` condition is
+    // defensive against a case `describeValue` cannot actually produce (every
+    // JSON rendering opens with a BMP character, so a 2*MAX-unit prefix never
+    // holds exactly MAX code points). Mutating that condition to the naive
+    // `codePoints.length <= MAX` fails no test — stated here so nobody reads
+    // this as a regression test for it.
+    it('truncates a long all-surrogate-pair value rather than returning it whole', () => {
+      const rendered = describeValue('😀'.repeat(5000))
+      expect(rendered.endsWith('…')).toBe(true)
+      expect(Array.from(rendered).length).toBeLessThanOrEqual(201)
+    })
+
+    it('leaves a multi-byte value alone when its CODE POINT count fits', () => {
+      // 150 emoji = 300 UTF-16 code units (over the cap) but only 150 code
+      // points (under it) — must not truncate. Guards the inverse mistake.
+      const value = '😀'.repeat(150)
+      const rendered = describeValue(value)
+      expect(rendered.endsWith('…')).toBe(false)
+      expect(rendered).toBe(JSON.stringify(value))
+    })
+
     it('does not throw on a null-prototype object, whose String() conversion throws', () => {
       // `String(Object.create(null))` raises "Cannot convert object to
       // primitive value" — the fallback must be total, since it runs inside
