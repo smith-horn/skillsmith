@@ -585,18 +585,46 @@ jobs:
         if: steps.publish-core-oidc.outcome == 'success'
         run: |
           VERSION=$(jq -r .version packages/core/package.json)
-          # Retry to absorb npm registry/CDN propagation lag right after publish —
-          # a single immediate `npm view` can false-negative on a real publish.
-          for attempt in 1 2 3 4 5; do
+          # SMI-6493: npm's publish-time malware scan makes a new version
+          # take "typically around five minutes" to become available, and npm
+          # tells automation to tolerate that delay. The old 5 x 6s = 30s budget
+          # red-failed two successful publishes (runs 33994465930, 34393376220).
+          # Budget: 30 x 10s ~= 300s, fixed interval. `npm view` sets preferOnline
+          # internally (npm/cli v11.9.0 lib/commands/view.js), so every attempt
+          # revalidates against the registry -- no cache flag is needed or useful.
+          VERIFY_MAX_ATTEMPTS=30
+          VERIFY_INTERVAL=10
+          for attempt in $(seq 1 "$VERIFY_MAX_ATTEMPTS"); do
             LIVE=$(npm view "@skillsmith/core@${VERSION}" version 2>/dev/null || echo '')
             if [ "$LIVE" = "$VERSION" ]; then
               echo "✓ @skillsmith/core@${VERSION} verified live on npm (attempt ${attempt})"
               exit 0
             fi
-            echo "… @skillsmith/core@${VERSION} not yet visible (attempt ${attempt}/5); waiting 6s"
-            sleep 6
+            echo "… @skillsmith/core@${VERSION} not yet visible (attempt ${attempt}/${VERIFY_MAX_ATTEMPTS}); waiting ${VERIFY_INTERVAL}s"
+            sleep "$VERIFY_INTERVAL"
           done
-          echo "::error::@skillsmith/core@${VERSION} is not live on npm after publish — failing the job."
+          # Final authoritative probe. The version can become visible during the
+          # last interval, so consume that probe instead of discarding it. Unlike
+          # the loop this keeps stderr, so a registry outage, DNS failure or auth
+          # error is distinguishable from ordinary propagation lag.
+          # stderr goes to its own file, never into $FINAL: merging it would let a
+          # single npm warning line on an otherwise-successful `npm view` break the
+          # equality test and red-fail a live package — the exact SMI-6493 symptom,
+          # 300s later. The loop above already discards stderr for the same reason.
+          # Deterministic runner-local path, not mktemp: a failing `mktemp` would
+          # exit the step under `bash -e` BEFORE the final probe runs, putting a new
+          # fallible operation inside the very rescue path that exists to stop
+          # last-interval false failures. Nothing below can abort the probe.
+          FINAL_ERR="${RUNNER_TEMP:-/tmp}/npm-view-core.err"
+          FINAL=$(npm view "@skillsmith/core@${VERSION}" version 2>"$FINAL_ERR") || true
+          if [ "$FINAL" = "$VERSION" ]; then
+            echo "✓ @skillsmith/core@${VERSION} verified live on npm (final probe)"
+            exit 0
+          fi
+          echo "Last npm view output for @skillsmith/core@${VERSION}:"
+          echo "$FINAL"
+          cat "$FINAL_ERR" 2>/dev/null || true 2>/dev/null || true 2>/dev/null || true
+          echo "::error::@skillsmith/core@${VERSION} is not live on npm after ${VERIFY_MAX_ATTEMPTS} attempts over $((VERIFY_MAX_ATTEMPTS * VERIFY_INTERVAL))s — failing the job."
           exit 1
 
   # SMI-1319: Use pre-publish-check outputs to skip already-published packages
@@ -722,18 +750,46 @@ jobs:
         if: steps.publish-mcp-server-oidc.outcome == 'success'
         run: |
           VERSION=$(jq -r .version packages/mcp-server/package.json)
-          # Retry to absorb npm registry/CDN propagation lag right after publish —
-          # a single immediate `npm view` can false-negative on a real publish.
-          for attempt in 1 2 3 4 5; do
+          # SMI-6493: npm's publish-time malware scan makes a new version
+          # take "typically around five minutes" to become available, and npm
+          # tells automation to tolerate that delay. The old 5 x 6s = 30s budget
+          # red-failed two successful publishes (runs 33994465930, 34393376220).
+          # Budget: 30 x 10s ~= 300s, fixed interval. `npm view` sets preferOnline
+          # internally (npm/cli v11.9.0 lib/commands/view.js), so every attempt
+          # revalidates against the registry -- no cache flag is needed or useful.
+          VERIFY_MAX_ATTEMPTS=30
+          VERIFY_INTERVAL=10
+          for attempt in $(seq 1 "$VERIFY_MAX_ATTEMPTS"); do
             LIVE=$(npm view "@skillsmith/mcp-server@${VERSION}" version 2>/dev/null || echo '')
             if [ "$LIVE" = "$VERSION" ]; then
               echo "✓ @skillsmith/mcp-server@${VERSION} verified live on npm (attempt ${attempt})"
               exit 0
             fi
-            echo "… @skillsmith/mcp-server@${VERSION} not yet visible (attempt ${attempt}/5); waiting 6s"
-            sleep 6
+            echo "… @skillsmith/mcp-server@${VERSION} not yet visible (attempt ${attempt}/${VERIFY_MAX_ATTEMPTS}); waiting ${VERIFY_INTERVAL}s"
+            sleep "$VERIFY_INTERVAL"
           done
-          echo "::error::@skillsmith/mcp-server@${VERSION} is not live on npm after publish — failing the job."
+          # Final authoritative probe. The version can become visible during the
+          # last interval, so consume that probe instead of discarding it. Unlike
+          # the loop this keeps stderr, so a registry outage, DNS failure or auth
+          # error is distinguishable from ordinary propagation lag.
+          # stderr goes to its own file, never into $FINAL: merging it would let a
+          # single npm warning line on an otherwise-successful `npm view` break the
+          # equality test and red-fail a live package — the exact SMI-6493 symptom,
+          # 300s later. The loop above already discards stderr for the same reason.
+          # Deterministic runner-local path, not mktemp: a failing `mktemp` would
+          # exit the step under `bash -e` BEFORE the final probe runs, putting a new
+          # fallible operation inside the very rescue path that exists to stop
+          # last-interval false failures. Nothing below can abort the probe.
+          FINAL_ERR="${RUNNER_TEMP:-/tmp}/npm-view-mcp-server.err"
+          FINAL=$(npm view "@skillsmith/mcp-server@${VERSION}" version 2>"$FINAL_ERR") || true
+          if [ "$FINAL" = "$VERSION" ]; then
+            echo "✓ @skillsmith/mcp-server@${VERSION} verified live on npm (final probe)"
+            exit 0
+          fi
+          echo "Last npm view output for @skillsmith/mcp-server@${VERSION}:"
+          echo "$FINAL"
+          cat "$FINAL_ERR"
+          echo "::error::@skillsmith/mcp-server@${VERSION} is not live on npm after ${VERIFY_MAX_ATTEMPTS} attempts over $((VERIFY_MAX_ATTEMPTS * VERIFY_INTERVAL))s — failing the job."
           exit 1
 
       # SMI-2158: Publish to MCP Registry after npm publish.
@@ -932,18 +988,46 @@ jobs:
         if: steps.publish-cli-oidc.outcome == 'success'
         run: |
           VERSION=$(jq -r .version packages/cli/package.json)
-          # Retry to absorb npm registry/CDN propagation lag right after publish —
-          # a single immediate `npm view` can false-negative on a real publish.
-          for attempt in 1 2 3 4 5; do
+          # SMI-6493: npm's publish-time malware scan makes a new version
+          # take "typically around five minutes" to become available, and npm
+          # tells automation to tolerate that delay. The old 5 x 6s = 30s budget
+          # red-failed two successful publishes (runs 33994465930, 34393376220).
+          # Budget: 30 x 10s ~= 300s, fixed interval. `npm view` sets preferOnline
+          # internally (npm/cli v11.9.0 lib/commands/view.js), so every attempt
+          # revalidates against the registry -- no cache flag is needed or useful.
+          VERIFY_MAX_ATTEMPTS=30
+          VERIFY_INTERVAL=10
+          for attempt in $(seq 1 "$VERIFY_MAX_ATTEMPTS"); do
             LIVE=$(npm view "@skillsmith/cli@${VERSION}" version 2>/dev/null || echo '')
             if [ "$LIVE" = "$VERSION" ]; then
               echo "✓ @skillsmith/cli@${VERSION} verified live on npm (attempt ${attempt})"
               exit 0
             fi
-            echo "… @skillsmith/cli@${VERSION} not yet visible (attempt ${attempt}/5); waiting 6s"
-            sleep 6
+            echo "… @skillsmith/cli@${VERSION} not yet visible (attempt ${attempt}/${VERIFY_MAX_ATTEMPTS}); waiting ${VERIFY_INTERVAL}s"
+            sleep "$VERIFY_INTERVAL"
           done
-          echo "::error::@skillsmith/cli@${VERSION} is not live on npm after publish — failing the job."
+          # Final authoritative probe. The version can become visible during the
+          # last interval, so consume that probe instead of discarding it. Unlike
+          # the loop this keeps stderr, so a registry outage, DNS failure or auth
+          # error is distinguishable from ordinary propagation lag.
+          # stderr goes to its own file, never into $FINAL: merging it would let a
+          # single npm warning line on an otherwise-successful `npm view` break the
+          # equality test and red-fail a live package — the exact SMI-6493 symptom,
+          # 300s later. The loop above already discards stderr for the same reason.
+          # Deterministic runner-local path, not mktemp: a failing `mktemp` would
+          # exit the step under `bash -e` BEFORE the final probe runs, putting a new
+          # fallible operation inside the very rescue path that exists to stop
+          # last-interval false failures. Nothing below can abort the probe.
+          FINAL_ERR="${RUNNER_TEMP:-/tmp}/npm-view-cli.err"
+          FINAL=$(npm view "@skillsmith/cli@${VERSION}" version 2>"$FINAL_ERR") || true
+          if [ "$FINAL" = "$VERSION" ]; then
+            echo "✓ @skillsmith/cli@${VERSION} verified live on npm (final probe)"
+            exit 0
+          fi
+          echo "Last npm view output for @skillsmith/cli@${VERSION}:"
+          echo "$FINAL"
+          cat "$FINAL_ERR"
+          echo "::error::@skillsmith/cli@${VERSION} is not live on npm after ${VERIFY_MAX_ATTEMPTS} attempts over $((VERIFY_MAX_ATTEMPTS * VERIFY_INTERVAL))s — failing the job."
           exit 1
 
   # SMI-5513: Standalone OIDC publish job for the UNSCOPED skillsmith-cli wrapper
@@ -1051,20 +1135,38 @@ jobs:
         if: steps.publish-skillsmith-cli-oidc.outcome == 'success'
         run: |
           VERSION=$(jq -r .version packages/skillsmith-cli/package.json)
-          # Retry to absorb npm registry/CDN propagation lag right after publish.
+          # SMI-6493: see the "Verify core on npm" step for the budget rationale.
+          # Kept ASCII-only and break-based to match the surrounding block; the
+          # npx smoke loop below is deliberately separate and stays non-fatal.
+          VERIFY_MAX_ATTEMPTS=30
+          VERIFY_INTERVAL=10
           LIVE=''
-          for attempt in 1 2 3 4 5; do
+          for attempt in $(seq 1 "$VERIFY_MAX_ATTEMPTS"); do
             LIVE=$(npm view "skillsmith-cli@${VERSION}" version 2>/dev/null || echo '')
             if [ "$LIVE" = "$VERSION" ]; then
               echo "OK skillsmith-cli@${VERSION} verified live on npm (attempt ${attempt})"
               break
             fi
-            echo "... skillsmith-cli@${VERSION} not yet visible (attempt ${attempt}/5); waiting 6s"
-            sleep 6
+            echo "... skillsmith-cli@${VERSION} not yet visible (attempt ${attempt}/${VERIFY_MAX_ATTEMPTS}); waiting ${VERIFY_INTERVAL}s"
+            sleep "$VERIFY_INTERVAL"
           done
           if [ "$LIVE" != "$VERSION" ]; then
-            echo "::error::skillsmith-cli@${VERSION} is not live on npm after publish - failing the job."
-            exit 1
+            # Final authoritative probe; keeps stderr so a real registry/auth
+            # failure is distinguishable from ordinary propagation lag.
+            # stderr to its own file, never into $FINAL - see the Verify core step.
+            # Deterministic runner-local path, not mktemp - see the Verify core step.
+            FINAL_ERR="${RUNNER_TEMP:-/tmp}/npm-view-skillsmith-cli.err"
+            FINAL=$(npm view "skillsmith-cli@${VERSION}" version 2>"$FINAL_ERR") || true
+            if [ "$FINAL" = "$VERSION" ]; then
+              echo "OK skillsmith-cli@${VERSION} verified live on npm (final probe)"
+              LIVE="$VERSION"
+            else
+              echo "Last npm view output for skillsmith-cli@${VERSION}:"
+              echo "$FINAL"
+              cat "$FINAL_ERR" 2>/dev/null || true
+              echo "::error::skillsmith-cli@${VERSION} is not live on npm after ${VERIFY_MAX_ATTEMPTS} attempts over $((VERIFY_MAX_ATTEMPTS * VERIFY_INTERVAL))s - failing the job."
+              exit 1
+            fi
           fi
           # Smoke the REAL install path, run from a fresh temp dir OUTSIDE the
           # monorepo: npx must resolve the PUBLISHED skillsmith-cli + its
@@ -1084,7 +1186,11 @@ jobs:
             echo "... npx smoke not ready (attempt ${attempt}/3); waiting 8s"
             sleep 8
           done
-          echo "::warning::npx skillsmith-cli@${VERSION} --version smoke did not pass (package is published + verified live on npm regardless; check bin delegation)."
+          # SMI-6493: if the verify loop above took the slow path (a high attempt
+          # number, or "final probe"), the tarball may simply not be on the CDN
+          # yet - installability lags packument visibility. Name that benign cause
+          # so a triager does not chase bin delegation for a slow-but-fine publish.
+          echo "::warning::npx skillsmith-cli@${VERSION} --version smoke did not pass (package is published + verified live on npm regardless). If the verify step above reported a high attempt number or a final-probe rescue, the likeliest cause is npm tarball propagation lag, not bin delegation - re-check with 'npx -y skillsmith-cli@${VERSION} --version' before investigating."
           cat /tmp/sk-smoke.out || true
           exit 0
 
