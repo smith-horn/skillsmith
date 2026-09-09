@@ -130,6 +130,14 @@ export const CLOSURE_WATCHED_SOURCE_PATHS = [
   'packages/core/src/security/scanner/SecurityScanner.formatters.ts', // imported by SecurityScanner.ts itself (toMinimalRefs et al.)
   'packages/core/src/security/scanner/confusables.ts', // confusable/homoglyph folding, imported by the already-watched SecurityScanner.exec.ts
   'scripts/indexer/_shared/github-auth.ts', // imported by the already-watched skill-processor.security.ts
+  // SMI-6441 Wave 2: the generated common-password lexicon became REACHABLE
+  // from the already-watched scanner graph only in this wave. Wave 1 emitted
+  // these modules but nothing imported them; Wave 2's MF-4b veto makes
+  // `*.value-gate.ts` import them, so they now decide scanner behaviour and a
+  // dirty copy changes what the corroboration tests evaluate. Found by
+  // RUNNING assertion 5, not hand-derived — same provenance as the four above.
+  'packages/core/src/security/scanner/SecurityScanner.weak-passwords.ts',
+  'scripts/indexer/_shared/security-scanner-edge.weak-passwords.ts',
   // The final four are a self-referential consequence of the edge
   // corroboration test importing `CLOSURE_WATCHED_SOURCE_PATHS` FROM this
   // very file (to check it is closed) — this file, and what it in turn

@@ -134,6 +134,10 @@ const PINNED_SHAPE4_UNGATED_GUARD = [
   'backfill-autochain-inputs.ts',
   'smi5207-blast-radius-weekly.ts',
   'smi5207-blast-radius-transitions.ts',
+  // SMI-6441 Wave 2: same shape and same reason as the two SMI-5207
+  // blast-radius scripts above — a guarded direct entry point that reads the
+  // population and reports, and never writes through an indexer writer.
+  'smi6441-blast-radius.ts',
   'smi5879-dispose-terminal.ts',
 ].sort()
 

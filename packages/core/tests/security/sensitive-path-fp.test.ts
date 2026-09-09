@@ -286,16 +286,35 @@ describe('SMI-5207 — sensitive_path action-context gating (MF-3/MF-4)', () => 
         ],
         ['two-word documentation-label case (MAX_LABEL_TOKENS=2)', 'credentials: rotation policy'],
         [
-          '2-word passphrase — accepted R-2 residual (~26 bits, below credible strength)',
-          'password: horse staple',
-        ],
-        [
-          'stopword-containing passphrase — accepted R-3 residual',
+          'stopword-containing passphrase — accepted R-3 residual (R-3 deliberately NOT closed by SMI-6441)',
           'password: the correct horse battery',
         ],
         [
           'corrected allowlist-entry-1 fixture — pins the round-2 regression fix',
           '…credentials: use 1Password CLI',
+        ],
+        // SMI-6441 Wave 2 (MF-4b weak-password veto) keeplist pins — all of
+        // these tokens are confirmed absent from the generated common-password
+        // lexicon (SecurityScanner.weak-passwords.ts), verified live before
+        // writing these fixtures.
+        ['SMI-6441 keeplist: highest-risk new FP shape', 'credentials: access token'],
+        ['SMI-6441 keeplist: adjacent to allowlist entry 1', 'credentials: password manager'],
+        ['SMI-6441 keeplist', 'secrets: key management'],
+        ['SMI-6441 keeplist', 'secrets: rotation schedule'],
+        ['SMI-6441 keeplist: pins "master", a top-1000 password', 'credentials: master key'],
+        [
+          'R-3 unchanged: sentence path proves the veto does not leak upward',
+          'password: never paste your password into chat',
+        ],
+        // R-2's remaining half. SUBSTITUTION: the plan doc's own Step 3(c)
+        // fixture ("velvet hammer") is wrong — both words ARE present in the
+        // generated lexicon (verified live), so it would wrongly fire HIGH
+        // under the veto. "lantern"/"trellis" are confirmed absent from both
+        // the lexicon and PROSE_STOPWORDS, so this clears for the intended
+        // (undecidable ordinary-word) reason, not via the stopword shortcut.
+        [
+          'R-2 remaining half — undecidable ordinary-word pair (see substitution note above)',
+          'password: lantern trellis',
         ],
         ['placeholder value', 'password: <YOUR_PASSWORD>'],
         ['template-reference value', 'secret: ${{ secrets.API_KEY }}'],
@@ -346,9 +365,34 @@ describe('SMI-5207 — sensitive_path action-context gating (MF-3/MF-4)', () => 
           'round-1 truncation regression pin (whole-span capture, not single-token)',
           'password: correct horse battery staple',
         ],
+        // SMI-6441 note on this SMI-5207 fixture: it still passes purely on
+        // token count (3 tokens, so the 2-token carve-out is never reached and
+        // the MF-4b veto is never consulted). But BOTH `velvet` and `hammer`
+        // ARE members of the generated common-password lexicon — so dropping
+        // `orbit92` would NOT produce a benign 2-token doc label, it would fire
+        // HIGH via the veto instead. Do not shorten this fixture to test the
+        // 2-token path; use the `lantern trellis` pair below, whose words are
+        // verified absent from the lexicon.
         [
           "3-token passphrase — the design's own MAX_LABEL_TOKENS=2 boundary (see comment above)",
           'password: velvet hammer orbit92',
+        ],
+        // SMI-6441 Wave 2 (MF-4b weak-password veto) — R-2 closed. Moved out
+        // of the must-clear table above, where this fixture used to be labelled
+        // "accepted R-2 residual"; leaving that label in place would make the
+        // suite lie about the design.
+        ['R-2 closed by SMI-6441 — "horse" is a known common password', 'password: horse staple'],
+        ['two common passwords, no ambiguity', 'password: monkey dragon'],
+        ['non-word common password — highest-precision sub-case', 'password: qwerty ninja'],
+        ['different assignment key, same shape', 'secrets: letmein sunshine'],
+        ['third assignment key', 'credentials: dragon shadow'],
+        [
+          'segmentation: one prose segment + one credential segment -> HIGH (round-8 invariant holds under the veto)',
+          'credentials: rotation policy password: horse staple',
+        ],
+        [
+          'R-2 remaining-half companion: 3 tokens -> carve-out never applies',
+          'password: lantern trellis orbit92',
         ],
         [
           'round-3 single-word weak-password fixture (undecidable per R-1 — errs HIGH)',
@@ -414,6 +458,14 @@ describe('SMI-5207 — sensitive_path action-context gating (MF-3/MF-4)', () => 
 
       it('YAML block form, real value on the next line', () => {
         const content = ['password:', '  Xk9mPz2QwLmRt'].join('\n')
+        const findings = sp(scanner.scan('t', content).findings)
+        expect(findings.some((f) => f.severity === 'high')).toBe(true)
+      })
+
+      // SMI-6441 Wave 2: the YAML next-line block form reaches the same
+      // weak-password veto rule as the inline form (value-gate.ts:131).
+      it('SMI-6441: YAML block form reaches the weak-password veto too', () => {
+        const content = ['password:', '  monkey dragon'].join('\n')
         const findings = sp(scanner.scan('t', content).findings)
         expect(findings.some((f) => f.severity === 'high')).toBe(true)
       })

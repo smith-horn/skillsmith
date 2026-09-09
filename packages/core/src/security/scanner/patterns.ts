@@ -161,8 +161,16 @@ export { EVIDENCE_TYPE_BY_PATTERN } from './patterns.jailbreak.evidence.js'
  * one is *previously-flagged-content-now-clean* — without it, the
  * `comparable` gate keeps reusing a stored `malicious` verdict produced by
  * the pre-fix ruleset, and the fix never reaches an already-scanned skill.
+ *
+ * Bumped to `2026-09-09.1`: SMI-6441 added the MF-4b common-password veto on
+ * the assignment-value 2-token documentation-label carve-out. Direction
+ * note — unlike SMI-5207's bump immediately above (previously-flagged-
+ * content-now-clean), this one is *previously-clean-now-flagged*: without
+ * it, the `comparable` gate keeps reusing a stored clean verdict produced by
+ * the pre-SMI-6441 ruleset and the tightening never reaches an
+ * already-scanned skill.
  */
-export const SCANNER_RULESET_VERSION = '2026-09-07.1' as const
+export const SCANNER_RULESET_VERSION = '2026-09-09.1' as const
 
 // Suspicious patterns that might indicate malicious intent
 export const SUSPICIOUS_PATTERNS = [

@@ -18,6 +18,7 @@
 
 import { PLACEHOLDER_SECRET_RE } from './security-scanner-edge.paths.ts'
 import { PROSE_STOPWORDS } from './security-scanner-edge.prose-lexicon.ts'
+import { COMMON_WEAK_PASSWORDS } from './security-scanner-edge.weak-passwords.ts'
 
 // ReDoS protection: maximum line length for regex matching (mirrors scanner).
 // Same cap as security-scanner-edge.paths.ts's own MAX_LINE_LENGTH — matchAll
@@ -52,7 +53,7 @@ const ASSIGNMENT_HEAD = /(?:credentials|\bsecrets?|password)\s*[:=]\s*/gi
  * PROSE_STOPWORDS lives in security-scanner-edge.prose-lexicon.ts — English
  * function words: a passphrase is nouns, an explanatory sentence is not.
  */
-function isProseValue(span: string): boolean {
+function isProseValue(span: string, weakPasswordVeto: boolean): boolean {
   const v = span.replace(/^['"]|['"]$/g, '').trim()
   if (v.length === 0) return true
   if (TEMPLATE_REFERENCE.test(v)) return true // $VAR, ${{ secrets.X }}
@@ -61,10 +62,48 @@ function isProseValue(span: string): boolean {
   const tokens = v.split(/\s+/)
   if (tokens.some((t) => PROSE_STOPWORDS.has(t.toLowerCase().replace(/[^a-z']/g, '')))) return true // sentence
   if (tokens.length > 12) return true // long sentence
+  /**
+   * SMI-6441 (MF-4b): a 2-token all-lowercase value normally reads as a
+   * documentation label ("rotation policy"). It does NOT when one of its tokens
+   * is a known common password ("horse staple", "monkey dragon") — that is a
+   * weak credential wearing a label's shape, SMI-5207's residual R-2.
+   *
+   * SCOPE, DELIBERATELY NARROW: this veto applies ONLY to the exactly-2-token
+   * all-lowercase carve-out below, never to the stopword ("sentence") rule
+   * above it. A top-10k common-password list is saturated with ordinary nouns
+   * (love, money, summer, hello, welcome, computer, football, sunshine) and a
+   * ten-word documentation sentence has a high chance of containing one, so
+   * extending the veto to sentences would reopen exactly the false-positive
+   * class SMI-5207 closed. R-3 (a passphrase containing a function word) is
+   * therefore NOT closed by this wave, by design.
+   *
+   * SAFETY INVARIANT — stated precisely, because the obvious stronger claim is
+   * FALSE. This veto only ever REMOVES a downgrade path; it never adds one. So
+   * for every input, post-6441 severity >= pre-6441 severity, and the set of
+   * inputs reading MEDIUM after this change is a strict SUBSET of the set that
+   * read MEDIUM before it. That is the whole safety argument, and it is enough:
+   * no input that was HIGH becomes MEDIUM, so no detection is lost.
+   *
+   * It is NOT true that "no added token can lower severity". The stopword check
+   * above runs BEFORE this label check and returns early, so:
+   *     password: monkey dragon     -> vetoed  -> HIGH
+   *     password: a monkey dragon   -> stopword -> MEDIUM
+   * A third token that is a PROSE_STOPWORD ('a', 'the', 'an', 'no', 'so',
+   * 'now', 'just', 'only', 'is', ...) short-circuits ahead of this line and
+   * downgrades. This stopword-prepend path is the KNOWN, ACCEPTED BYPASS of
+   * this veto. It is not a new hole opened by SMI-6441 — it is exactly
+   * SMI-5207's residual R-3 (a value containing an English function word
+   * degrades to MEDIUM), which this wave deliberately leaves open (see
+   * Rejected alternative 1: extending the veto to the stopword rule would flip
+   * ordinary documentation sentences to HIGH, reopening the FP class with 10
+   * documented recurrences). Anyone closing R-3 later closes this bypass with
+   * it; until then, do not describe this veto as unpoisonable.
+   */
   if (
     tokens.length > 1 &&
     tokens.length <= MAX_LABEL_TOKENS &&
-    tokens.every((t) => /^[a-z]{1,19}$/.test(t))
+    tokens.every((t) => /^[a-z]{1,19}$/.test(t)) &&
+    (!weakPasswordVeto || !tokens.some((t) => COMMON_WEAK_PASSWORDS.has(t)))
   )
     return true // 2-word doc label
   return false // DEFAULT: stays HIGH
@@ -101,7 +140,12 @@ function isProseValue(span: string): boolean {
  * a line holding any real credential is HIGH. Monotonicity holds — this returns
  * true at least as often as the per-span reading, and true is the status quo.
  */
-export function assignmentHasRealValue(lines: string[], index: number): boolean {
+export function assignmentHasRealValue(
+  lines: string[],
+  index: number,
+  options?: { readonly weakPasswordVeto?: boolean } // default true
+): boolean {
+  const weakPasswordVeto = options?.weakPasswordVeto !== false
   const line = lines[index].slice(0, MAX_LINE_LENGTH)
   const heads = [...line.matchAll(ASSIGNMENT_HEAD)]
   if (heads.length === 0) return false
@@ -117,9 +161,9 @@ export function assignmentHasRealValue(lines: string[], index: number): boolean 
       continue
     }
     trailingKeyIsBare = false
-    if (!isProseValue(value)) return true
+    if (!isProseValue(value, weakPasswordVeto)) return true
   }
   if (!trailingKeyIsBare) return false
   const next: string | undefined = lines[index + 1]
-  return next !== undefined && !isProseValue(next.trim())
+  return next !== undefined && !isProseValue(next.trim(), weakPasswordVeto)
 }
