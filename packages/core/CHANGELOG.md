@@ -4,6 +4,24 @@ All notable changes to `@skillsmith/core` are documented here.
 
 ## [Unreleased]
 
+- **Fix**: `sensitive_path` MF-4 no longer reads a two-word all-lowercase value as a harmless
+  documentation label when **every** one of its words is a known common password — `password: monkey
+  dragon` now scores HIGH, while `credentials: rotation policy` and ordinary documentation labels are
+  untouched. Closes SMI-5207's residual R-2 for the two-common-password case only; a value pairing
+  one common password with an ordinary word (`password: horse staple`) deliberately stays MEDIUM,
+  because it is not distinguishable from a documentation label at a false-positive rate this gate can
+  afford. This is the first `sensitive_path` change that can RAISE severity, so SMI-5207's
+  monotonic-non-increase safety argument no longer applies — see
+  [ADR-149](../../docs/internal/adr/149-generated-scanner-data-veto-severity-model.md) for the
+  severity-raising exception and its § *Revision, 2026-09-09* for why the predicate is `every` and
+  not `some` (55% of the emitted lexicon is ordinary English dictionary words, so a `some` predicate
+  reopens the documentation false-positive class unboundedly). `SCANNER_RULESET_VERSION` bumps to
+  `2026-09-09.1` — *previously-clean-now-flagged*, the opposite direction from SMI-5207's bump, so
+  without it an already-scanned skill keeps its stored clean verdict and never sees the tightened
+  rule. `assignmentHasRealValue()` gains an optional `{ weakPasswordVeto }` parameter (default on) —
+  a pure per-call parameter used only by the blast-radius verification harness, never module state
+  (SMI-6441 Wave 2)
+
 ## v0.12.3
 
 - **Add**: `SecurityScanner.weak-passwords.ts` — a generated, versioned list of common weak passwords (vendored from SecLists, hash-pinned, capped to the top 5,000 by frequency rank), built by the new `scripts/gen-weak-password-lexicon.mjs` generator and mirrored byte-identically into the Node and Deno/Supabase edge scanner twins. This wave ships the data pipeline only — no scanner behavior changes; the `sensitive_path` detection change that consumes this data is a separate, follow-on change (SMI-6441 Wave 1)
