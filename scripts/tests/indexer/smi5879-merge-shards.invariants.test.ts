@@ -20,6 +20,8 @@ import { describe, it, expect, beforeEach, afterEach } from 'vitest'
 import { rmSync } from 'node:fs'
 import { join } from 'node:path'
 import { runMergeShards } from '../../indexer/smi5879-merge-shards.ts'
+import { findIncoherentRowIds } from '../../indexer/smi5879-merge-shards.outcome-coherence.ts'
+import type { SimRowResult } from '../../indexer/smi5879-simulate-full.types.ts'
 import {
   buildThreeShardFixture,
   fixtureRow,
@@ -371,13 +373,16 @@ describe('runMergeShards — row-outcome coherence (hard fail)', () => {
     expect(report.rows.find((r) => r.id === 'row-c2-1')?.outcome).toBe('unfetchable')
   })
 
-  it('does NOT flag bundle_absent rows, whose outcome is deliberately overridden past what the quarantine booleans would classify to', async () => {
+  it('accepts a bundle_absent row whose quarantine booleans reflect a genuine non-change', async () => {
     const dir = scratch()
     const fixture = buildThreeShardFixture()
-    // bundle_absent with prePortQuarantine/postPortQuarantine that would
-    // classify to something else entirely (unchanged_clean) if this row's
-    // outcome were a verdict-delta bucket — must NOT be flagged, since
-    // bundle_absent is not in VERDICT_DELTA_OUTCOMES.
+    // Post-SMI-6436, `processRow` only ever emits `bundle_absent` when the
+    // verdict delta already resolved to a non-change — this false/false pair
+    // IS that non-change (unchanged_clean-shaped), so no coherence check
+    // should flag it. (`assertRowOutcomeCoherence` also wouldn't flag this
+    // row regardless, since `bundle_absent` is outside VERDICT_DELTA_OUTCOMES
+    // by design — {@link assertBundleAbsentCoherence} is the one that
+    // actually validates it.)
     const bundleAbsent = fixtureRow('row-c2-1', 'C2', {
       outcome: 'bundle_absent',
       prePortQuarantine: false,
@@ -397,5 +402,110 @@ describe('runMergeShards — row-outcome coherence (hard fail)', () => {
 
     const report = await runMergeShards(db, args)
     expect(report.rows.find((r) => r.id === 'row-c2-1')?.outcome).toBe('bundle_absent')
+  })
+
+  // ---------------------------------------------------------------------------
+  // SMI-6481: assertBundleAbsentCoherence's own throw path — a bundle_absent
+  // row whose quarantine booleans disagree (a real verdict change, not a
+  // non-change) must be refused, in EITHER direction.
+  // ---------------------------------------------------------------------------
+
+  it('throws when a bundle_absent row has prePortQuarantine=true/postPortQuarantine=false (a real newly_cleared delta)', async () => {
+    const dir = scratch()
+    const fixture = buildThreeShardFixture()
+    const tampered = fixtureRow('row-c2-1', 'C2', {
+      outcome: 'bundle_absent',
+      prePortQuarantine: true,
+      postPortQuarantine: false,
+    })
+
+    const path0 = writeShardReport(
+      dir,
+      0,
+      [tampered.reportRow, fixture.shardRows[0][1]],
+      fixture.totals
+    )
+    const path1 = writeShardReport(dir, 1, fixture.shardRows[1], fixture.totals)
+    const path2 = writeShardReport(dir, 2, fixture.shardRows[2], fixture.totals)
+    const db = makeMergeShardsDb(fixture.population)
+    const args = mergeArgs([path0, path1, path2], join(dir, 'merged.json'))
+
+    await expect(runMergeShards(db, args)).rejects.toThrow(
+      /row-c2-1.*outcome=bundle_absent, but prePortQuarantine=true\/postPortQuarantine=false is a real verdict change/s
+    )
+  })
+
+  it('throws when a bundle_absent row has prePortQuarantine=false/postPortQuarantine=true (a real newly_quarantined delta)', async () => {
+    const dir = scratch()
+    const fixture = buildThreeShardFixture()
+    const tampered = fixtureRow('row-c2-1', 'C2', {
+      outcome: 'bundle_absent',
+      prePortQuarantine: false,
+      postPortQuarantine: true,
+    })
+
+    const path0 = writeShardReport(
+      dir,
+      0,
+      [tampered.reportRow, fixture.shardRows[0][1]],
+      fixture.totals
+    )
+    const path1 = writeShardReport(dir, 1, fixture.shardRows[1], fixture.totals)
+    const path2 = writeShardReport(dir, 2, fixture.shardRows[2], fixture.totals)
+    const db = makeMergeShardsDb(fixture.population)
+    const args = mergeArgs([path0, path1, path2], join(dir, 'merged.json'))
+
+    await expect(runMergeShards(db, args)).rejects.toThrow(
+      /row-c2-1.*outcome=bundle_absent, but prePortQuarantine=false\/postPortQuarantine=true is a real verdict change/s
+    )
+  })
+})
+
+// ---------------------------------------------------------------------------
+// findIncoherentRowIds (SMI-6481) — direct unit coverage. Called outside
+// runMergeShards entirely (only smi5879-simulate-full.checkpoint-coherence.ts
+// uses it), so exercised directly here rather than routed through
+// runMergeShards. Every existing failure-path test above uses exactly ONE
+// bad row — this is the function's whole point (enumerating exactly the
+// offending SUBSET out of a larger population), so it needs its own test
+// with a genuinely mixed population.
+// ---------------------------------------------------------------------------
+
+describe('findIncoherentRowIds — mixed population', () => {
+  it('returns exactly the incoherent row ids (both bad quarantine-flip directions), never the coherent ones, out of a mixed population', () => {
+    const good1 = fixtureRow('good-1', 'C2') // default: unchanged_clean, false/false — coherent
+    const good2 = fixtureRow('good-2', 'C2', {
+      outcome: 'newly_quarantined',
+      prePortQuarantine: false,
+      postPortQuarantine: true,
+    })
+    // Both bad directions, same shape as the assertBundleAbsentCoherence
+    // throw-path tests above: a bundle_absent row whose own quarantine
+    // booleans show a real verdict change, in EITHER direction.
+    const bad1 = fixtureRow('bad-1', 'C2', {
+      outcome: 'bundle_absent',
+      prePortQuarantine: true,
+      postPortQuarantine: false,
+    })
+    const bad2 = fixtureRow('bad-2', 'C2', {
+      outcome: 'bundle_absent',
+      prePortQuarantine: false,
+      postPortQuarantine: true,
+    })
+    const rows = [
+      good1.reportRow,
+      bad1.reportRow,
+      good2.reportRow,
+      bad2.reportRow,
+    ] as unknown as SimRowResult[]
+
+    const found = findIncoherentRowIds(rows)
+
+    // Order-insensitive: findIncoherentRowIds's own doc comment makes no
+    // ordering guarantee (it iterates `rows` in order and pushes as it
+    // goes, so in practice this WOULD come back in input order, but the
+    // contract itself doesn't promise that).
+    expect(new Set(found)).toEqual(new Set(['bad-1', 'bad-2']))
+    expect(found).toHaveLength(2)
   })
 })

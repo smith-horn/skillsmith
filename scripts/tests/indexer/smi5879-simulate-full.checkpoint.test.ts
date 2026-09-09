@@ -113,13 +113,198 @@ describe('checkpoint I/O', () => {
       updated_at: new Date().toISOString(),
     }
     writeFileSync(path, JSON.stringify(raw))
-    expect(() => readCheckpoint(path)).toThrow(/outcome=totally_not_a_real_outcome/)
+    // SMI-6481: rejected values are now rendered via `describeValue`, which
+    // quotes strings so a string `"true"` is visibly distinct from a boolean
+    // `true` — the exact confusion the new type checks exist to catch.
+    expect(() => readCheckpoint(path)).toThrow(/outcome="totally_not_a_real_outcome"/)
   })
 
   it('readCheckpoint rejects a checkpoint missing required top-level fields', () => {
     const path = join(dir, 'missing-fields.json')
     writeFileSync(path, JSON.stringify({ run_id: 'run-1' }))
     expect(() => readCheckpoint(path)).toThrow(/failed shape validation/)
+  })
+
+  // -------------------------------------------------------------------------
+  // SMI-6481 (GPT-5.6-Sol cross-model pre-merge gate, 2026-09-09): the scored
+  // fields must be TYPE-validated at load, not just presence-checked
+  // downstream. The coherence guards test presence with `!== undefined` and
+  // then read the quarantine booleans through truthiness — so a hand-edited
+  // `bundle_absent` row carrying `null` (or two equal strings) in the
+  // quarantine pair satisfies both the pair-presence check and
+  // `expectedVerdictDeltaOutcome`, and a poisoned checkpoint loads clean.
+  // The gate-report loader (`validateRow`, `smi5879-gate-check.io.ts`) already
+  // did this for the BOOLEAN pair; checkpoint load was the asymmetric hole.
+  // (The risk-score pair was NOT already equivalent: `validateRow` used a bare
+  // `typeof === 'number'`, which accepts NaN/Infinity — SMI-6481 tightened it
+  // to `Number.isFinite` on that side too, so the two loaders now match.)
+  //
+  // Each pair is poisoned in BOTH directions below. Poisoning only the `pre*`
+  // member would let a mutation that drops the `post*` field from the checked
+  // list pass every test (governance review finding S1).
+  // -------------------------------------------------------------------------
+
+  function checkpointWithRowFields(extra: Record<string, unknown>): Record<string, unknown> {
+    return {
+      run_id: 'run-1',
+      purpose: 'decision',
+      baseline_commit: 'abc123',
+      token_source: 'pat',
+      cohorts: ['C1', 'C2', 'C3', 'C4'],
+      clean_shutdown: true,
+      row_results: {
+        'row-1': {
+          id: 'row-1',
+          cohort: 'C2',
+          author: null,
+          name: null,
+          outcome: 'bundle_absent',
+          ...extra,
+        },
+      },
+      sweep: { pass: 0, residual_history: [], non_decrease_streak: 0, hard_stopped: null },
+      started_at: new Date().toISOString(),
+      updated_at: new Date().toISOString(),
+    }
+  }
+
+  it.each([
+    [
+      'null quarantine pair (the truthiness-bypass shape)',
+      { prePortQuarantine: null, postPortQuarantine: null },
+      /prePortQuarantine=null \(must be a boolean/,
+    ],
+    [
+      'a bad PRE quarantine value only',
+      { prePortQuarantine: 'true', postPortQuarantine: false },
+      /prePortQuarantine="true" \(must be a boolean/,
+    ],
+    [
+      'a bad POST quarantine value only',
+      { prePortQuarantine: true, postPortQuarantine: 'false' },
+      /postPortQuarantine="false" \(must be a boolean/,
+    ],
+    [
+      'a numeric POST quarantine value only',
+      { prePortQuarantine: true, postPortQuarantine: 0 },
+      /postPortQuarantine=0 \(must be a boolean/,
+    ],
+    [
+      'a bad PRE risk score only',
+      { prePortRiskScore: 'forty', postPortRiskScore: 0 },
+      /prePortRiskScore="forty" \(must be a finite number/,
+    ],
+    [
+      'a bad POST risk score only',
+      { prePortRiskScore: 40, postPortRiskScore: null },
+      /postPortRiskScore=null \(must be a finite number/,
+    ],
+    [
+      'a NaN-shaped POST risk score (rejected by isFinite, accepted by a bare typeof)',
+      { prePortRiskScore: 40, postPortRiskScore: 'NaN' },
+      /postPortRiskScore="NaN" \(must be a finite number/,
+    ],
+    ['a non-string reason', { reason: 42 }, /reason=42 \(must be a string when present/],
+    [
+      'an unrecognised unfetchable_subtype',
+      { unfetchable_subtype: 'made_up' },
+      /unfetchable_subtype="made_up" \(must be one of/,
+    ],
+    [
+      'an object where a scalar belongs (rendered legibly, not as [object Object])',
+      { prePortQuarantine: { nested: true }, postPortQuarantine: false },
+      /prePortQuarantine=\{"nested":true\} \(must be a boolean/,
+    ],
+  ])('readCheckpoint rejects a row with %s', (_label, extra, pattern) => {
+    const path = join(dir, 'bad-row-field.json')
+    writeFileSync(path, JSON.stringify(checkpointWithRowFields(extra)))
+    expect(() => readCheckpoint(path)).toThrow(pattern)
+  })
+
+  it('caps the enumerated field errors and reports the true total', () => {
+    const path = join(dir, 'many-bad-rows.json')
+    const base = checkpointWithRowFields({})
+    const rowResults: Record<string, unknown> = {}
+    for (let i = 0; i < 60; i++) {
+      rowResults[`row-${i}`] = {
+        id: `row-${i}`,
+        cohort: 'C2',
+        author: null,
+        name: null,
+        outcome: 'bundle_absent',
+        prePortQuarantine: 'nope',
+      }
+    }
+    writeFileSync(path, JSON.stringify({ ...base, row_results: rowResults }))
+    // 60 rows x 1 bad field each: total is reported, enumeration is truncated.
+    expect(() => readCheckpoint(path)).toThrow(/60 invalid\/missing field\(s\)/)
+    expect(() => readCheckpoint(path)).toThrow(/and 40 more/)
+  })
+
+  // SMI-6481 (governance round 2, finding F5): pins the GUARANTEE that corrupt
+  // resume state is always reported, never buried under row noise.
+  //
+  // Exactly what this catches, established by mutation rather than asserted:
+  // it FAILS when the code reverts to the round-1 shape — truncation applied at
+  // `join` time over a fully-accumulated array, with `sweep` validated after the
+  // row loop — which is the real regression, and the state that silently hid
+  // sweep errors behind 20+ row errors.
+  //
+  // It does NOT fail when only the block order is swapped back. The F4
+  // accumulation cap makes the row loop self-limiting while the sweep block
+  // pushes unconditionally, so ordering alone is no longer load-bearing. Both
+  // protections are kept anyway: either one alone is sufficient, which is the
+  // point of having them.
+  it('always reports corrupt sweep state even when row errors exceed the cap', () => {
+    const path = join(dir, 'bad-sweep-and-rows.json')
+    const base = checkpointWithRowFields({})
+    const rowResults: Record<string, unknown> = {}
+    for (let i = 0; i < 60; i++) {
+      rowResults[`row-${i}`] = {
+        id: `row-${i}`,
+        cohort: 'C2',
+        author: null,
+        name: null,
+        outcome: 'bundle_absent',
+        prePortQuarantine: 'nope',
+      }
+    }
+    writeFileSync(
+      path,
+      JSON.stringify({
+        ...base,
+        row_results: rowResults,
+        sweep: {
+          pass: 'not-a-number',
+          residual_history: [],
+          non_decrease_streak: 0,
+          hard_stopped: null,
+        },
+      })
+    )
+    // The sweep failure must be named, not elided by the 60 row errors.
+    expect(() => readCheckpoint(path)).toThrow(/sweep\.pass/)
+    expect(() => readCheckpoint(path)).toThrow(/61 invalid\/missing field\(s\)/)
+  })
+
+  it('readCheckpoint still accepts a row whose scored fields are absent or correctly typed', () => {
+    const path = join(dir, 'good-scored.json')
+    writeFileSync(
+      path,
+      JSON.stringify(
+        checkpointWithRowFields({
+          prePortQuarantine: true,
+          postPortQuarantine: true,
+          prePortRiskScore: 40,
+          postPortRiskScore: 41,
+        })
+      )
+    )
+    expect(() => readCheckpoint(path)).not.toThrow()
+
+    const bare = join(dir, 'good-bare.json')
+    writeFileSync(bare, JSON.stringify(checkpointWithRowFields({})))
+    expect(() => readCheckpoint(bare)).not.toThrow()
   })
 
   // -------------------------------------------------------------------------

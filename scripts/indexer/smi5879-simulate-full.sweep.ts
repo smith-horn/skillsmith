@@ -15,6 +15,7 @@
  */
 
 import { runCancellablePool, type RateLimitTelemetry } from './_shared/rate-limit.ts'
+import { assertRowsInternallyCoherent } from './smi5879-merge-shards.outcome-coherence.ts'
 import { processRow, PROCESS_CONCURRENCY } from './smi5879-simulate-full.helpers.ts'
 import { writeCheckpoint } from './smi5879-simulate-full.checkpoint.ts'
 import { EMPTY_OUTCOME_COUNTS } from './smi5879-simulate-full.types.ts'
@@ -278,6 +279,13 @@ export async function runSweepPhase(
         },
         PROCESS_CONCURRENCY
       )
+      // SMI-6481: same coherence check as runMainPass
+      // (smi5879-simulate-full.mainpass.ts) — validate THIS pass's own
+      // outcomes BEFORE merging into `results` and durably checkpointing via
+      // `onPass`/the abort path below. The tier-3 sweep calls `processRow`
+      // independently of `runMainPass`, so it needs its own copy of the same
+      // guard, not a shared call site.
+      assertRowsInternallyCoherent(outcomes)
       const updated = new Map(outcomes.map((o) => [o.id, o]))
       for (const [id, result] of updated) results.set(id, result)
       if (abortedBy) {

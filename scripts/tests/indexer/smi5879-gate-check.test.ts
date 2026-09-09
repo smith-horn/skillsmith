@@ -625,6 +625,29 @@ describe('smi5879-gate-check.ts — G-5 structural closure + delta bound', () =>
     expect(report.overall).toBe('INCONCLUSIVE')
   })
 
+  it('SMI-6481: an incoherent bundle_absent row (quarantine booleans disagree) is rejected at binding, before any gate runs', async () => {
+    const dir = makeScratchDir()
+    const rows = [
+      makeSimRow({
+        id: 'r1',
+        outcome: 'bundle_absent',
+        prePortQuarantine: true,
+        postPortQuarantine: false,
+      }),
+    ]
+    const args = buildRequiredArgs(dir, { simulatorJson: makeSimulatorReportJson({ rows }) })
+    const report = await evaluateGateCheck({ db: makeFakeDb(), test: makeFakeTestDeps() }, args)
+    expect(report.artifact_binding_ok).toBe(false)
+    expect(report.artifact_binding_reason).toMatch(/bundle_absent/)
+    expect(report.artifact_binding_reason).toMatch(/r1/)
+    // Unique to assertBundleAbsentCoherence's own thrown message — proves
+    // THIS check (not assertRowOutcomeFieldPresence, whose message also
+    // mentions "bundle_absent" and could name "r1") is what caught it.
+    expect(report.artifact_binding_reason).toMatch(/is a real verdict change/)
+    expect(report.gates).toEqual([])
+    expect(report.overall).toBe('INCONCLUSIVE')
+  })
+
   it("G-5's own missing-score-field detection still holds (never silently skipped), evaluated directly", () => {
     // Retained as direct `evaluateG5` coverage: the end-to-end path above can
     // no longer reach G-5 with such a row, but G-5 must still refuse one if it

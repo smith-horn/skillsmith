@@ -42,8 +42,10 @@ export type SimRowOutcome =
 /**
  * Single source of truth for the closed {@link SimRowOutcome} vocabulary at
  * runtime — shared by `smi5879-simulate-full.sweep.ts`'s `summarizeCounts`
- * and `smi5879-simulate-full.checkpoint.ts`'s shape validator (SMI-5879
- * review finding 1), so the two can never drift apart. Lives here (not in
+ * and the checkpoint shape validator (SMI-5879 review finding 1; the
+ * validator now lives in `smi5879-simulate-full.checkpoint-row-shape.ts`,
+ * moved out of `.checkpoint.ts` by SMI-6481), so the two can never drift
+ * apart. Lives here (not in
  * either of those files) specifically to avoid a circular import between
  * them (SMI-6015 Wave 1: `.sweep.ts` needs `writeCheckpoint` from
  * `.checkpoint.ts`, so `.checkpoint.ts` cannot import anything back from
@@ -100,7 +102,19 @@ export interface SimRowResult {
   author: string | null
   name: string | null
   outcome: SimRowOutcome
-  /** Populated whenever `outcome` isn't a plain verdict-delta bucket — names the exact cause. */
+  /**
+   * Populated whenever `outcome` isn't a plain verdict-delta bucket — names
+   * the exact cause. SMI-6481: ALSO populated on a `newly_quarantined`/
+   * `newly_cleared` outcome in the one case where the bundle scope was ALSO
+   * confirmed empty (every sibling target 404'd) but the real delta took
+   * precedence over `bundle_absent` (SMI-6436) — recovers that otherwise-
+   * dropped diagnostic rather than discarding it silently. NEVER populated
+   * on `unchanged_clean`/`unchanged_quarantined`: `processRow` returns the
+   * `bundle_absent` outcome first whenever the delta is one of those two AND
+   * the bundle scope is empty, so a genuine `unchanged_clean`/
+   * `unchanged_quarantined` row reaching this field is never the
+   * bundle-scope-empty case — `reason` stays absent there.
+   */
   reason?: string
   /**
    * SMI-6444: set only when `outcome === 'unfetchable'`, at both of

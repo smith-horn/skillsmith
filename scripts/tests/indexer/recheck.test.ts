@@ -51,7 +51,27 @@ vi.mock('../../indexer/indexer-audit-log.ts', () => ({
   writeIndexerAuditLog: (...args: unknown[]) => writeIndexerAuditLog(...args),
 }))
 
-// buildGitHubHeaders has no required env; let it run real (returns base headers).
+// SMI-6481 (governance review, 2026-09-09): the previous comment here claimed
+// "buildGitHubHeaders has no required env; let it run real (returns base
+// headers)." That premise is false. `recheck.ts` calls it unmocked, and
+// `getInstallationToken` DOES require GITHUB_APP_ID /
+// GITHUB_APP_INSTALLATION_ID / GITHUB_APP_PRIVATE_KEY and POSTs to
+// api.github.com to mint a real token when they are present in the REAL
+// `process.env` — silent in CI (unset) but a live network call under
+// `varlock run -- npm test`, which CLAUDE.md documents as a normal invocation.
+// Contained here only incidentally, by these tests stubbing `globalThis.fetch`.
+// `stale-reconciliation-verify.test.ts` and `stale-reconciliation-boundary.test.ts`
+// already mocked it; this file AND `recheck.sibling-rescan.test.ts` (which also
+// calls `runRecheck`) did not — both are fixed in the same change.
+// Partial mock via `importOriginal` so the module's other exports
+// (e.g. `GitHubAuthError`) survive for anything importing them at load time.
+vi.mock('../../indexer/_shared/github-auth.ts', async (importOriginal) => {
+  const actual = await importOriginal<typeof import('../../indexer/_shared/github-auth.ts')>()
+  return {
+    ...actual,
+    buildGitHubHeaders: vi.fn(async () => ({})),
+  }
+})
 
 // ---------------------------------------------------------------------------
 // TASK 1.1 — loadRecheckCandidates two-pass priority (E2)

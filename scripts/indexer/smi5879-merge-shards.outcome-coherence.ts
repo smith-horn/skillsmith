@@ -172,7 +172,7 @@ export function assertRowOutcomeFieldPresence(rows: readonly SimRowResult[]): vo
         'still carries these fields could otherwise masquerade as a non-blocking, non-reviewed ' +
         "outcome while smuggling a real quarantine verdict's fields past G-1's review set and G-5's " +
         'delta-bound check; a row with only one field present is malformed regardless of outcome. ' +
-        'Refusing to merge.'
+        'Refusing to accept a report containing an internally-inconsistent row.'
     )
   }
 }
@@ -209,7 +209,7 @@ export function assertRowOutcomeCoherence(rows: readonly SimRowResult[]): void {
         `${mismatches.length > MAX_IDS_IN_ERROR ? ', ...' : ''}. G-1's review set and G-3's counts ` +
         'are derived directly from the outcome label — a row whose label disagrees with its own ' +
         'quarantine fields would corrupt both without any coverage/count arithmetic ever detecting it. ' +
-        'Refusing to merge a shard report containing an internally-inconsistent row.'
+        'Refusing to accept a report containing an internally-inconsistent row.'
     )
   }
 }
@@ -251,7 +251,49 @@ export function assertBundleAbsentCoherence(rows: readonly SimRowResult[]): void
         `${mismatches.length > MAX_IDS_IN_ERROR ? ', ...' : ''}. bundle_absent must only be used for a ` +
         'non-change (unchanged_clean/unchanged_quarantined) — a row like this would hide a real ' +
         "newly_quarantined/newly_cleared delta from G-1's review set and G-3's counts. Refusing to " +
-        'merge a shard report containing an internally-inconsistent row.'
+        'accept a report containing an internally-inconsistent row.'
     )
   }
+}
+
+/**
+ * Convenience composite of all three asserts above, in the required order
+ * (field-presence first — the other two assume presence already holds).
+ * `runMergeShards`/`bindSimulatorReportToPopulation` keep the three calls
+ * explicit (their own call-site comments explain why); SMI-6481's four new
+ * call sites (`smi5879-simulate-full.checkpoint-coherence.ts`/`.report.ts`/
+ * `.mainpass.ts`/`.sweep.ts`) want one terse call instead.
+ */
+export function assertRowsInternallyCoherent(rows: readonly SimRowResult[]): void {
+  assertRowOutcomeFieldPresence(rows)
+  assertRowOutcomeCoherence(rows)
+  assertBundleAbsentCoherence(rows)
+}
+
+/**
+ * SMI-6481: every row id that fails ANY of the three checks above — for a
+ * caller that needs to enumerate every offending row (e.g. so an operator
+ * can remove exactly those rows from a checkpoint's `row_results`), not just
+ * the first {@link MAX_IDS_IN_ERROR} named in a thrown message. Deliberately
+ * checks each row via the SAME three real functions above (one-row-at-a-time,
+ * catching each's throw) rather than re-deriving the "is this row bad"
+ * predicate independently — every one of these three checks is already
+ * per-row (no cross-row state), so this is exactly equivalent to the bulk
+ * check with zero risk of the two ever drifting apart. Only meant to be
+ * called in a failure path (after {@link assertRowsInternallyCoherent} has
+ * already thrown) — never on the hot path, so the extra per-row overhead is
+ * a non-issue.
+ */
+export function findIncoherentRowIds(rows: readonly SimRowResult[]): string[] {
+  const bad: string[] = []
+  for (const row of rows) {
+    try {
+      assertRowOutcomeFieldPresence([row])
+      assertRowOutcomeCoherence([row])
+      assertBundleAbsentCoherence([row])
+    } catch {
+      bad.push(row.id)
+    }
+  }
+  return bad
 }

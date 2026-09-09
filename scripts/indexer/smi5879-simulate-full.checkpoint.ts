@@ -1,8 +1,11 @@
 /**
- * Checkpoint I/O for smi5879-simulate-full.ts: on-disk read/write, shape
- * validation for a checkpoint read off disk, and the two identity guards
- * that refuse to resume a checkpoint that doesn't actually belong to this
- * invocation. Split out of smi5879-simulate-full.sweep.ts (CLAUDE.md's
+ * Checkpoint I/O for smi5879-simulate-full.ts: on-disk read/write plus the two
+ * identity guards that refuse to resume a checkpoint that doesn't actually
+ * belong to this invocation. Runtime SHAPE validation moved to
+ * `smi5879-simulate-full.checkpoint-shape.ts` (SMI-6481, same <500-line
+ * pressure); per-row field validation is a further split again, in
+ * `smi5879-simulate-full.checkpoint-row-shape.ts`. Split out of
+ * smi5879-simulate-full.sweep.ts (CLAUDE.md's
  * <500-line-per-file convention — SMI-6015 Wave 1's `cohorts` field pushed
  * the combined file over budget). Coverage aggregation and the tier-3 sweep
  * loop stay in `.sweep.ts`; `processRow`'s per-row logic stays in
@@ -15,13 +18,12 @@
  */
 
 import { existsSync, readFileSync, renameSync, writeFileSync } from 'node:fs'
-import { ALL_SIMULATED_COHORTS, isValidSimRowOutcome } from './smi5879-simulate-full.types.ts'
+import { assertValidCheckpointShape } from './smi5879-simulate-full.checkpoint-shape.ts'
 import { shardOf } from './smi5879-simulate-full.shard.ts'
 import type {
   SimSnapshotRow,
   SimulatedCohort,
   Smi5879SimulateCheckpoint,
-  SweepHardStopReason,
   TokenSource,
 } from './smi5879-simulate-full.types.ts'
 import type { Smi5879Purpose } from './smi5879-census.types.ts'
@@ -68,159 +70,6 @@ function parseShardIndexFromPath(path: string): number | null {
   const captured = match?.[1]
   if (captured === undefined) return null
   return Number(captured)
-}
-
-const VALID_PURPOSES_FOR_SHAPE_CHECK: readonly Smi5879Purpose[] = [
-  'rehearsal',
-  'decision',
-  'window',
-]
-const VALID_TOKEN_SOURCES_FOR_SHAPE_CHECK: readonly TokenSource[] = ['app', 'pat']
-const VALID_HARD_STOP_REASONS_FOR_SHAPE_CHECK: readonly SweepHardStopReason[] = [
-  'non_convergence',
-  'max_passes',
-  null,
-]
-
-function isPlainObject(value: unknown): value is Record<string, unknown> {
-  return typeof value === 'object' && value !== null && !Array.isArray(value)
-}
-
-/**
- * Runtime shape validation for a checkpoint read off disk — a bare
- * `JSON.parse(raw) as Smi5879SimulateCheckpoint` casts arbitrary JSON
- * straight to the type with zero verification, so a wrong
- * `--checkpoint-path` or a hand-edited file could silently carry an
- * unrecognised `outcome` value (or the wrong overall shape) straight into
- * `runSimulateFull` (SMI-5879 review finding 1). Throws — never returns a
- * best-effort partial object — because a checkpoint that fails shape
- * validation means real prior progress may exist in a form we can no
- * longer trust, which is categorically different from "no checkpoint yet"
- * (cold start) and must not be treated the same way.
- */
-function assertValidCheckpointShape(
-  value: unknown,
-  path: string
-): asserts value is Smi5879SimulateCheckpoint {
-  if (!isPlainObject(value)) {
-    throw new Error(`SMI-5879: checkpoint at ${path} is not a JSON object.`)
-  }
-  const errors: string[] = []
-
-  // Bracket notation throughout this function is required, not stylistic —
-  // `value`/`rawResult`/`sweep` are `Record<string, unknown>` (from the
-  // `isPlainObject` guard), which `noPropertyAccessFromIndexSignature`
-  // (tsconfig.base.json) refuses to let dot-notation read.
-  const runId = value['run_id']
-  const purpose = value['purpose']
-  const baselineCommit = value['baseline_commit']
-  const tokenSource = value['token_source']
-  const cohorts = value['cohorts']
-  const cleanShutdown = value['clean_shutdown']
-  const startedAt = value['started_at']
-  const updatedAt = value['updated_at']
-  const rowResults = value['row_results']
-  const sweepRaw = value['sweep']
-
-  if (typeof runId !== 'string' || runId.length === 0) errors.push('run_id')
-  if (
-    typeof purpose !== 'string' ||
-    !VALID_PURPOSES_FOR_SHAPE_CHECK.includes(purpose as Smi5879Purpose)
-  ) {
-    errors.push(`purpose=${String(purpose)}`)
-  }
-  if (typeof baselineCommit !== 'string' || baselineCommit.length === 0) {
-    errors.push('baseline_commit')
-  }
-  if (
-    typeof tokenSource !== 'string' ||
-    !VALID_TOKEN_SOURCES_FOR_SHAPE_CHECK.includes(tokenSource as TokenSource)
-  ) {
-    errors.push(`token_source=${String(tokenSource)}`)
-  }
-  // SMI-6015 Wave 1: `cohorts` must be a non-empty array of valid cohort
-  // values — always the explicit resolved scope, never omitted (see the
-  // field's own doc comment in smi5879-simulate-full.types.ts).
-  if (
-    !Array.isArray(cohorts) ||
-    cohorts.length === 0 ||
-    !cohorts.every((c) => ALL_SIMULATED_COHORTS.includes(c as SimulatedCohort))
-  ) {
-    errors.push(`cohorts=${JSON.stringify(cohorts)}`)
-  }
-  // SMI-6015 Wave 1: shard_index/shard_count are both-or-neither, and when
-  // present must be a valid (index, count) pair — same rigor as the CLI
-  // parser's own validation (smi5879-simulate-full.cli.ts), re-applied here
-  // because a hand-edited or stale checkpoint file bypasses the CLI parser
-  // entirely.
-  const shardIndex = value['shard_index']
-  const shardCount = value['shard_count']
-  if (shardIndex !== undefined || shardCount !== undefined) {
-    if (
-      typeof shardCount !== 'number' ||
-      !Number.isInteger(shardCount) ||
-      shardCount < 1 ||
-      typeof shardIndex !== 'number' ||
-      !Number.isInteger(shardIndex) ||
-      shardIndex < 0 ||
-      shardIndex >= shardCount
-    ) {
-      errors.push(`shard_index=${String(shardIndex)}/shard_count=${String(shardCount)}`)
-    }
-  }
-  if (typeof cleanShutdown !== 'boolean') errors.push('clean_shutdown')
-  if (typeof startedAt !== 'string') errors.push('started_at')
-  if (typeof updatedAt !== 'string') errors.push('updated_at')
-
-  if (!isPlainObject(rowResults)) {
-    errors.push('row_results')
-  } else {
-    for (const [id, rawResult] of Object.entries(rowResults)) {
-      if (!isPlainObject(rawResult)) {
-        errors.push(`row_results.${id} (not an object)`)
-        continue
-      }
-      const resultId = rawResult['id']
-      const cohort = rawResult['cohort']
-      const outcome = rawResult['outcome']
-      if (typeof resultId !== 'string') errors.push(`row_results.${id}.id`)
-      if (
-        typeof cohort !== 'string' ||
-        !ALL_SIMULATED_COHORTS.includes(cohort as SimulatedCohort)
-      ) {
-        errors.push(`row_results.${id}.cohort=${String(cohort)}`)
-      }
-      if (!isValidSimRowOutcome(outcome)) {
-        errors.push(`row_results.${id}.outcome=${String(outcome)}`)
-      }
-    }
-  }
-
-  if (!isPlainObject(sweepRaw)) {
-    errors.push('sweep')
-  } else {
-    const pass = sweepRaw['pass']
-    const residualHistory = sweepRaw['residual_history']
-    const nonDecreaseStreak = sweepRaw['non_decrease_streak']
-    const hardStopped = sweepRaw['hard_stopped']
-    if (typeof pass !== 'number') errors.push('sweep.pass')
-    if (!Array.isArray(residualHistory) || !residualHistory.every((n) => typeof n === 'number')) {
-      errors.push('sweep.residual_history')
-    }
-    if (typeof nonDecreaseStreak !== 'number') errors.push('sweep.non_decrease_streak')
-    if (!VALID_HARD_STOP_REASONS_FOR_SHAPE_CHECK.includes(hardStopped as SweepHardStopReason)) {
-      errors.push(`sweep.hard_stopped=${String(hardStopped)}`)
-    }
-  }
-
-  if (errors.length > 0) {
-    throw new Error(
-      `SMI-5879: checkpoint at ${path} failed shape validation — invalid/missing field(s): ` +
-        `${errors.join(', ')}. Refusing to trust a malformed checkpoint file — fix or remove it ` +
-        'before resuming (removing it is a COLD START, not a safe default: confirm no real ' +
-        'progress is being discarded first).'
-    )
-  }
 }
 
 export function readCheckpoint(path: string): Smi5879SimulateCheckpoint | null {
@@ -438,6 +287,9 @@ export function assertCheckpointRowsBelongToGeneration(
     )
   }
 }
+
+// assertCheckpointRowsAreCoherent lives in
+// smi5879-simulate-full.checkpoint-coherence.ts (500-line budget)
 
 /**
  * Atomic replace: write to a temp file in the SAME directory as `path`,

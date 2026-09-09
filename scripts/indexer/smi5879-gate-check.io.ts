@@ -247,11 +247,29 @@ function validateRow(
   if (postPortQuarantine !== undefined && typeof postPortQuarantine !== 'boolean') {
     return { ok: false, reason: `rows[${i}].postPortQuarantine must be a boolean when present` }
   }
-  if (prePortRiskScore !== undefined && typeof prePortRiskScore !== 'number') {
-    return { ok: false, reason: `rows[${i}].prePortRiskScore must be a number when present` }
+  // SMI-6481 (governance review, 2026-09-09): `Number.isFinite`, not
+  // `typeof === 'number'`, matching the checkpoint-side twin
+  // (`smi5879-simulate-full.checkpoint-row-shape.ts`). An asymmetry between the
+  // two loaders is the defect class SMI-6481 exists to remove, and having just
+  // tightened the checkpoint side it would be perverse to leave this one the
+  // weaker of the pair.
+  //
+  // Honest scope: this is defence-in-depth against a FUTURE caller, not a live
+  // hole. `validateRow` is module-private and its only reachable path is
+  // `loadSimulatorReport` -> `loadJsonFile` -> `JSON.parse`, and standard JSON
+  // cannot express NaN or Infinity — so no input available today can actually
+  // reach the tightened branch. It matters if a non-JSON producer is ever
+  // added, because a NaN risk score would otherwise pass G-5 silently:
+  // `checkDeltaBound` (`smi5879-gate-check.helpers.ts`) tests `delta > MAX`,
+  // and every comparison against NaN is false, so such a row is never flagged.
+  if (prePortRiskScore !== undefined && !Number.isFinite(prePortRiskScore)) {
+    return { ok: false, reason: `rows[${i}].prePortRiskScore must be a finite number when present` }
   }
-  if (postPortRiskScore !== undefined && typeof postPortRiskScore !== 'number') {
-    return { ok: false, reason: `rows[${i}].postPortRiskScore must be a number when present` }
+  if (postPortRiskScore !== undefined && !Number.isFinite(postPortRiskScore)) {
+    return {
+      ok: false,
+      reason: `rows[${i}].postPortRiskScore must be a finite number when present`,
+    }
   }
   return {
     ok: true,
@@ -267,8 +285,21 @@ function validateRow(
         : {}),
       ...(typeof prePortQuarantine === 'boolean' ? { prePortQuarantine } : {}),
       ...(typeof postPortQuarantine === 'boolean' ? { postPortQuarantine } : {}),
-      ...(typeof prePortRiskScore === 'number' ? { prePortRiskScore } : {}),
-      ...(typeof postPortRiskScore === 'number' ? { postPortRiskScore } : {}),
+      // SMI-6481: matches the `Number.isFinite` guard above, but keeps the
+      // `typeof` half — `Number.isFinite` is declared `(number: unknown) =>
+      // boolean`, NOT a type predicate, so it does not narrow. Using it alone
+      // here widened these to `unknown` and made the object un-assignable to
+      // `SimRowResult` (TS2322). That went unnoticed for one review round
+      // because `tsconfig.json` is `"files": []` + `packages/` references, so
+      // `npm run typecheck` never sees `scripts/` — the same blind spot as
+      // SMI-6486, hit while fixing SMI-6481. Verify changes here with
+      // `npx tsc --noEmit --strict ... <file>` directly, not `npm run typecheck`.
+      ...(typeof prePortRiskScore === 'number' && Number.isFinite(prePortRiskScore)
+        ? { prePortRiskScore }
+        : {}),
+      ...(typeof postPortRiskScore === 'number' && Number.isFinite(postPortRiskScore)
+        ? { postPortRiskScore }
+        : {}),
     },
   }
 }
@@ -409,7 +440,16 @@ export function loadSimulatorReport(
     if (!isPlainObject(countsRaw)) return { ok: false, reason: 'counts must be an object' }
     const counts: Partial<Record<SimRowOutcome, number>> = {}
     for (const outcome of VALID_OUTCOMES) {
-      const n = countsRaw[outcome]
+      const raw = countsRaw[outcome]
+      // SMI-6481: counts.primary_not_found is additive to the report schema
+      // (SMI-6442), same as coverage.<cohort>.primaryNotFound above — a
+      // report from before that fix has no such field at all. An ABSENT
+      // value means "zero pre-existing primary_not_found rows," never a
+      // malformed report; a PRESENT-but-non-number value is still rejected
+      // below, same as every other counts bucket. `validateCoverage`'s own
+      // shim (above) got this at the time; counts did not — this closes
+      // that asymmetry.
+      const n = outcome === 'primary_not_found' && raw === undefined ? 0 : raw
       if (typeof n !== 'number') return { ok: false, reason: `counts.${outcome} must be a number` }
       counts[outcome] = n
     }
