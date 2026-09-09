@@ -280,8 +280,8 @@ export function buildDeviceCardHtml(device: DeviceView): string {
  */
 export const SKILLS_PAGE_CSS = `
 /* Colors below reference the four --sk-* custom properties declared in
-   skills.astro's own static <style> block (SMI-6503). They are deliberately NOT
-   declared here: this stylesheet is injected behind a
+   src/styles/account-skills.css, which skills.astro imports (SMI-6503). They
+   are deliberately NOT declared here: this stylesheet is injected behind a
    document.querySelector('style[data-skills-page]') guard, so a stale copy left
    in the DOM by a pre-deploy ClientRouter navigation would make the guard return
    early and every var() below resolve to nothing. The static block always ships
