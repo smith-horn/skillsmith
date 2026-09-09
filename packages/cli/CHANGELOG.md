@@ -4,6 +4,8 @@ All notable changes to `@skillsmith/cli` are documented here.
 
 ## [Unreleased]
 
+- **Fixed**: SMI-6472 -- `src/utils/skill-name.ts`'s re-export of `VALID_SKILL_NAME_RE`/`validateSkillName` now imports from the narrow `@skillsmith/core/utils/skill-name` subpath instead of the `@skillsmith/core` package barrel. The barrel import transitively pulled in `skill-installation.io.ts` -> `safe-fs.ts`'s `fs/promises` needs (`open`/`lstat`/`constants`), breaking `tests/create.test.ts`'s narrow `fs/promises` mock (`mkdir`/`writeFile`/`stat` only) with `[vitest] No "constants" export is defined on the "fs/promises" mock`. No behavior change — only the import path.
+
 ## v0.8.9
 
 - **Feature**: SMI-6343 Wave 3 -- tamper-check classification (#2710)
