@@ -231,6 +231,10 @@ describe('processRow — tier-2 outcome classification', () => {
     expect(result.outcome).toBe('newly_quarantined')
     expect(result.prePortQuarantine).toBe(false)
     expect(result.postPortQuarantine).toBe(true)
+    // SMI-6481: the bundle-absence diagnostic must not be silently dropped
+    // just because a real delta won — it's recovered in `reason` instead.
+    expect(result.reason).toMatch(/bundle scope confirmed empty/)
+    expect(result.reason).toMatch(/verdict delta takes precedence/)
   })
 
   it('SMI-6436: newly_cleared even with empty sibling scope (bundle_absent must not mask a real delta)', async () => {
@@ -242,6 +246,21 @@ describe('processRow — tier-2 outcome classification', () => {
     expect(result.outcome).toBe('newly_cleared')
     expect(result.prePortQuarantine).toBe(true)
     expect(result.postPortQuarantine).toBe(false)
+    // SMI-6481: same recovered diagnostic on the opposite delta direction.
+    expect(result.reason).toMatch(/bundle scope confirmed empty/)
+    expect(result.reason).toMatch(/verdict delta takes precedence/)
+  })
+
+  it('SMI-6481: a genuine unchanged_clean/unchanged_quarantined delta (no bundle-absence in play) carries no reason', async () => {
+    const row = makeRow()
+    registerPrimary(row, [contentsApiResponse('# SKILL')])
+    // A verdict-delta scanner that does NOT touch siblings at all — the
+    // opposite of makeBundleAbsentScanner — so isBundleAbsent is false and
+    // the plain delta branch's `reason` stays entirely absent, exactly like
+    // before SMI-6481.
+    const result = await processRow(row, new Map(), baseDeps(cleanScanner, cleanScanner))
+    expect(result.outcome).toBe('unchanged_clean')
+    expect(result.reason).toBeUndefined()
   })
 
   it('newly_quarantined: pre-port clean, post-port quarantined', async () => {

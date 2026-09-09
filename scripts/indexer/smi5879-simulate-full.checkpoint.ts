@@ -439,6 +439,9 @@ export function assertCheckpointRowsBelongToGeneration(
   }
 }
 
+// assertCheckpointRowsAreCoherent lives in
+// smi5879-simulate-full.checkpoint-coherence.ts (500-line budget)
+
 /**
  * Atomic replace: write to a temp file in the SAME directory as `path`,
  * then `renameSync` over the real path. `renameSync` on the same

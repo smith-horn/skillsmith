@@ -409,7 +409,16 @@ export function loadSimulatorReport(
     if (!isPlainObject(countsRaw)) return { ok: false, reason: 'counts must be an object' }
     const counts: Partial<Record<SimRowOutcome, number>> = {}
     for (const outcome of VALID_OUTCOMES) {
-      const n = countsRaw[outcome]
+      const raw = countsRaw[outcome]
+      // SMI-6481: counts.primary_not_found is additive to the report schema
+      // (SMI-6442), same as coverage.<cohort>.primaryNotFound above — a
+      // report from before that fix has no such field at all. An ABSENT
+      // value means "zero pre-existing primary_not_found rows," never a
+      // malformed report; a PRESENT-but-non-number value is still rejected
+      // below, same as every other counts bucket. `validateCoverage`'s own
+      // shim (above) got this at the time; counts did not — this closes
+      // that asymmetry.
+      const n = outcome === 'primary_not_found' && raw === undefined ? 0 : raw
       if (typeof n !== 'number') return { ok: false, reason: `counts.${outcome} must be a number` }
       counts[outcome] = n
     }
