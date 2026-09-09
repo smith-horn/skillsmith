@@ -48,14 +48,19 @@ vi.mock('../../indexer/smi5879-simulate-full.helpers.ts', async (importOriginal)
   return { ...actual, processRow: processRowMock }
 })
 
-// `runPreflightEstimate` calls `buildGitHubHeaders` before it reaches the code
-// under test. Unmocked, that reaches `getInstallationToken()`, which POSTs to
-// api.github.com to mint a real App token whenever GITHUB_APP_ID /
-// GITHUB_APP_INSTALLATION_ID / GITHUB_APP_PRIVATE_KEY are present in the REAL
-// `process.env` — silent in CI (unset) but a live network call under
-// `varlock run -- npm test`, which CLAUDE.md documents as a normal invocation.
-// The `env` injected into `runPreflightEstimate` only reaches
-// `assertPatTokenSource`, so it does not protect this path.
+// Defence-in-depth only, and deliberately kept: as of the SMI-6481 `getHeaders`
+// fix, `buildGitHubHeaders` in `runPreflightEstimate` is reachable ONLY through
+// the lazy `getHeaders` closure, which the mocked `processRow` below never
+// calls — so nothing in THIS file currently reaches it. (Before that fix it was
+// eagerly awaited, and this mock was load-bearing here.) It stays because the
+// unmocked call reaches `getInstallationToken()`, which POSTs to api.github.com
+// to mint a real App token whenever GITHUB_APP_ID / GITHUB_APP_INSTALLATION_ID /
+// GITHUB_APP_PRIVATE_KEY are present in the REAL `process.env` — silent in CI
+// (unset) but a live network call under `varlock run -- npm test`. The `env`
+// injected into `runPreflightEstimate` only reaches `assertPatTokenSource`, so
+// it would not protect that path. It IS load-bearing in the sibling
+// `smi5879-preflight-wiring.test.ts`, where `processRow` is real.
+//
 // Partial mock via `importOriginal` — a full replacement would drop the
 // module's other exports (e.g. `GitHubAuthError`), which the helpers module
 // imports at load time.
@@ -374,15 +379,19 @@ describe('SMI-6481 guard call sites — preflight estimate', () => {
     const err = await runPreflightEstimate(db, unreachableScan, unreachableScan, args, env).catch(
       (e: unknown) => e
     )
-    expectBundleAbsentMaskingError(err, 'p-')
+    // The sample is fully deterministic (sampleSize 2 over a two-row frame),
+    // so the exact id is assertable — a `'p-'` prefix would pass on either row.
+    expectBundleAbsentMaskingError(err, 'p-1')
   })
 
-  // Control (governance finding S2). This also covers the SMI-6481 `getHeaders`
-  // wiring fix: before it, `runPreflightEstimate` threw
-  // `TypeError: getHeaders is not a function` on the first row in production —
-  // and the negative test above could not see that, because a throw was the
-  // expected outcome there. This test's success path is what proves the
-  // function can complete at all.
+  // Control (governance finding S2): proves the guard is a real conditional
+  // check and not an unconditional `throw` at that call site.
+  //
+  // It does NOT cover the SMI-6481 `getHeaders` wiring fix, despite running
+  // `runPreflightEstimate` end to end — `processRow` is mocked file-wide above,
+  // so `deps.getHeaders` is never invoked here. Reverting that fix leaves every
+  // test in this file green. `smi5879-preflight-wiring.test.ts` is the only
+  // test that catches it; do not delete that file as redundant with this one.
   it('produces an estimate when every row is coherent', async () => {
     processRowMock.mockImplementation(async (row: SimSnapshotRow) => ({
       ...incoherentResult(row.id),

@@ -88,8 +88,12 @@ const VALID_HARD_STOP_REASONS_FOR_SHAPE_CHECK: readonly SweepHardStopReason[] = 
 
 /**
  * SMI-6481: cap on how many individual shape-validation failures a single
- * refusal message enumerates. See the throw site for why this is not
- * unbounded.
+ * refusal enumerates — applied at ACCUMULATION time, not just at `join` time,
+ * so a wholly corrupt checkpoint cannot retain millions of strings on its way
+ * to a capped message. A single bad row can contribute up to 9 fragments (id,
+ * cohort, outcome, the two boolean fields, the two score fields, `reason`,
+ * `unfetchable_subtype`), so the unbounded form scaled at 9x the row count.
+ * The reported total stays exact; only the enumeration is capped.
  */
 const MAX_SHAPE_ERRORS_IN_MESSAGE = 20
 
@@ -179,18 +183,13 @@ function assertValidCheckpointShape(
   if (typeof startedAt !== 'string') errors.push('started_at')
   if (typeof updatedAt !== 'string') errors.push('updated_at')
 
-  if (!isPlainObject(rowResults)) {
-    errors.push('row_results')
-  } else {
-    // SMI-6481: per-row field validation lives in
-    // `smi5879-simulate-full.checkpoint-row-shape.ts` — see that module's
-    // header for why type-checking (not just presence-checking) the scored
-    // fields is what makes the poisoned-checkpoint refusal actually closed.
-    for (const [id, rawResult] of Object.entries(rowResults)) {
-      errors.push(...validateCheckpointRowShape(id, rawResult))
-    }
-  }
-
+  // SMI-6481 (F5): `sweep` is validated BEFORE `row_results` — corrupt resume
+  // state must never be the half elided from a truncated message. Scope, per
+  // mutation: defence-in-depth, not the active mechanism (F4's cap already
+  // makes the row loop self-limiting while this block pushes unconditionally,
+  // so swapping the two fails no test). Kept because reverting BOTH — cap at
+  // `join` over a full array, sweep last — does break it. See the regression
+  // test in `smi5879-simulate-full.checkpoint.test.ts`.
   if (!isPlainObject(sweepRaw)) {
     errors.push('sweep')
   } else {
@@ -208,20 +207,43 @@ function assertValidCheckpointShape(
     }
   }
 
+  // SMI-6481 (governance round 2, finding F4): count every row error but STOP
+  // RETAINING them past the message cap. Capping only at `join` time (the
+  // round-1 fix) still accumulated one string per bad field per bad row — at a
+  // real population (hundreds of thousands of rows, up to 9 fragments each)
+  // that is millions of retained strings: the same blow-up the cap was added to
+  // prevent, relocated from `Error.message` into the array.
+  //
+  // Per-row validation lives in `smi5879-simulate-full.checkpoint-row-shape.ts`
+  // — see that module's header for why type-checking (not just
+  // presence-checking) the scored fields is what closes the refusal.
+  let rowErrorCount = 0
+  if (!isPlainObject(rowResults)) {
+    errors.push('row_results')
+  } else {
+    for (const [id, rawResult] of Object.entries(rowResults)) {
+      const rowErrors = validateCheckpointRowShape(id, rawResult)
+      rowErrorCount += rowErrors.length
+      for (const err of rowErrors) {
+        if (errors.length >= MAX_SHAPE_ERRORS_IN_MESSAGE) break
+        errors.push(err)
+      }
+    }
+  }
+
   if (errors.length > 0) {
-    // SMI-6481 (governance review, 2026-09-09): cap the enumeration. Real
-    // populations run into the hundreds of thousands of rows and each bad row
-    // can now contribute up to 7 fragments, so an uncapped `join` on a wholly
-    // corrupt checkpoint produced a multi-tens-of-MB `Error.message`. Every
-    // sibling guard in this family already caps the same way
+    // The enumeration is capped; the reported TOTAL is not — an operator needs
+    // the true scale even when only the first `MAX_SHAPE_ERRORS_IN_MESSAGE` are
+    // named. Every sibling guard in this family caps the same way
     // (`assertCheckpointRowsBelongToGeneration`'s `slice(0, 5)`,
     // `MAX_IDS_IN_ERROR`, `MAX_IDS_IN_CHECKPOINT_REMEDIATION`).
-    const shown = errors.slice(0, MAX_SHAPE_ERRORS_IN_MESSAGE)
-    const remainder = errors.length - shown.length
+    const nonRowErrorCount = errors.filter((e) => !e.startsWith('row_results.')).length
+    const total = nonRowErrorCount + rowErrorCount
+    const remainder = total - errors.length
     const suffix = remainder > 0 ? `, and ${remainder} more` : ''
     throw new Error(
-      `SMI-5879: checkpoint at ${path} failed shape validation — ${errors.length} ` +
-        `invalid/missing field(s): ${shown.join(', ')}${suffix}. Refusing to trust a malformed ` +
+      `SMI-5879: checkpoint at ${path} failed shape validation — ${total} ` +
+        `invalid/missing field(s): ${errors.join(', ')}${suffix}. Refusing to trust a malformed ` +
         'checkpoint file — fix or remove it before resuming (removing it is a COLD START, not a ' +
         'safe default: confirm no real progress is being discarded first).'
     )

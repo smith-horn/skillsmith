@@ -25,6 +25,7 @@ import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest'
 import { runPreflightEstimate } from '../../indexer/smi5879-simulate-preflight-estimate.ts'
 import type {
   BranchMap,
+  ScanSkillBundleFn,
   SimSnapshotRow,
   Smi5879SimulateFullDbDeps,
 } from '../../indexer/smi5879-simulate-full.types.ts'
@@ -70,17 +71,27 @@ const db = {
 
 /**
  * Both scanners return a clean, unquarantined verdict — an `unchanged_clean`
- * row. Shaped for `effectiveVerdict`, which reads `mergedSecurityScan` when
- * present and otherwise falls back to `securityScan.riskScore`.
+ * row. Typed as the real `ScanSkillBundleFn` rather than cast through `as
+ * never`: `scripts/` is untypechecked, so a cast here would hide a shape
+ * mismatch exactly the way the B1 bug this file exists to catch was hidden.
+ * The full `ScanSkillBundleResult` shape means this genuinely drives
+ * `effectiveVerdict` (which prefers `mergedSecurityScan`, falling back to
+ * `securityScan.riskScore`) and `isBundleAbsent` (which reads `siblingScans`
+ * and `siblingFailures` — both empty here means a normal, present bundle).
  */
-const cleanScan = async () => ({
-  securityScan: { riskScore: 0, findings: [] },
-  mergedSecurityScan: { quarantine: false, riskScore: 0 },
-  // `isBundleAbsent` reads both of these; an empty-scans + all-removed-failures
-  // combination is what marks a bundle absent, so leave both empty for a
-  // normal, present bundle.
+const cleanScan: ScanSkillBundleFn = async () => ({
+  securityScan: {
+    passed: true,
+    riskScore: 0,
+    findings: [],
+    contentHash: 'test-content-hash',
+    scannedAt: new Date(0).toISOString(),
+    scanDurationMs: 0,
+  },
+  mergedSecurityScan: { quarantine: false, riskScore: 0, findings: [] },
   siblingScans: [],
   siblingFailures: [],
+  scanCoverage: { incomplete: false, note: null },
 })
 
 let fetchSpy: ReturnType<typeof vi.spyOn>
@@ -110,8 +121,8 @@ describe('SMI-6481 B1 — runPreflightEstimate real-dependency wiring', () => {
   it('completes every sampled row against the real processRow (regression: getHeaders wiring)', async () => {
     const report = await runPreflightEstimate(
       db,
-      cleanScan as never,
-      cleanScan as never,
+      cleanScan,
+      cleanScan,
       {
         runId: 'run-1',
         purpose: 'decision',
@@ -125,10 +136,12 @@ describe('SMI-6481 B1 — runPreflightEstimate real-dependency wiring', () => {
 
     expect(report.report_kind).toBe('preflight_estimate')
     expect(report.sample_size).toBe(2)
-    // The specific pre-fix failure was a TypeError on row 1, so the load-bearing
-    // assertion is simply that both rows produced an outcome at all.
-    const total = Object.values(report.counts).reduce((a, b) => a + b, 0)
-    expect(total).toBe(2)
+    // Pin the EXACT outcome, not a sum across all buckets: a bucket-sum of 2
+    // would still hold if both rows silently degraded to `unevaluable` or
+    // `primary_not_found` — e.g. if the hand-built Contents-API body below ever
+    // stopped satisfying `fetchSkillMd`. Both scanners return a clean verdict
+    // against a present bundle, so `unchanged_clean` is the only correct answer.
+    expect(report.counts.unchanged_clean).toBe(2)
     // And the real fetch path was genuinely exercised — not silently skipped.
     expect(fetchSpy).toHaveBeenCalled()
   })

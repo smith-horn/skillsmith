@@ -285,8 +285,13 @@ function validateRow(
         : {}),
       ...(typeof prePortQuarantine === 'boolean' ? { prePortQuarantine } : {}),
       ...(typeof postPortQuarantine === 'boolean' ? { postPortQuarantine } : {}),
-      ...(typeof prePortRiskScore === 'number' ? { prePortRiskScore } : {}),
-      ...(typeof postPortRiskScore === 'number' ? { postPortRiskScore } : {}),
+      // SMI-6481: `Number.isFinite`, matching the guard above. Functionally
+      // unreachable divergence (the guard already rejected any non-finite
+      // value), but two different predicates for the same field inside one
+      // function is the readability half of the very asymmetry this issue
+      // exists to remove.
+      ...(Number.isFinite(prePortRiskScore) ? { prePortRiskScore } : {}),
+      ...(Number.isFinite(postPortRiskScore) ? { postPortRiskScore } : {}),
     },
   }
 }

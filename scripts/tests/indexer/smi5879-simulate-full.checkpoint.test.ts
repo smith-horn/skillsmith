@@ -241,6 +241,52 @@ describe('checkpoint I/O', () => {
     expect(() => readCheckpoint(path)).toThrow(/and 40 more/)
   })
 
+  // SMI-6481 (governance round 2, finding F5): pins the GUARANTEE that corrupt
+  // resume state is always reported, never buried under row noise.
+  //
+  // Exactly what this catches, established by mutation rather than asserted:
+  // it FAILS when the code reverts to the round-1 shape — truncation applied at
+  // `join` time over a fully-accumulated array, with `sweep` validated after the
+  // row loop — which is the real regression, and the state that silently hid
+  // sweep errors behind 20+ row errors.
+  //
+  // It does NOT fail when only the block order is swapped back. The F4
+  // accumulation cap makes the row loop self-limiting while the sweep block
+  // pushes unconditionally, so ordering alone is no longer load-bearing. Both
+  // protections are kept anyway: either one alone is sufficient, which is the
+  // point of having them.
+  it('always reports corrupt sweep state even when row errors exceed the cap', () => {
+    const path = join(dir, 'bad-sweep-and-rows.json')
+    const base = checkpointWithRowFields({})
+    const rowResults: Record<string, unknown> = {}
+    for (let i = 0; i < 60; i++) {
+      rowResults[`row-${i}`] = {
+        id: `row-${i}`,
+        cohort: 'C2',
+        author: null,
+        name: null,
+        outcome: 'bundle_absent',
+        prePortQuarantine: 'nope',
+      }
+    }
+    writeFileSync(
+      path,
+      JSON.stringify({
+        ...base,
+        row_results: rowResults,
+        sweep: {
+          pass: 'not-a-number',
+          residual_history: [],
+          non_decrease_streak: 0,
+          hard_stopped: null,
+        },
+      })
+    )
+    // The sweep failure must be named, not elided by the 60 row errors.
+    expect(() => readCheckpoint(path)).toThrow(/sweep\.pass/)
+    expect(() => readCheckpoint(path)).toThrow(/61 invalid\/missing field\(s\)/)
+  })
+
   it('readCheckpoint still accepts a row whose scored fields are absent or correctly typed', () => {
     const path = join(dir, 'good-scored.json')
     writeFileSync(

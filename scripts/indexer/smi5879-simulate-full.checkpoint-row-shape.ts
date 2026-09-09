@@ -14,10 +14,16 @@
  * checkpoint refusal this issue added never fires. Type-checking at load is
  * what makes that refusal actually closed.
  *
- * The field set here is kept deliberately in lock-step with `validateRow`
- * (`smi5879-gate-check.io.ts`), the gate-report-side twin. An asymmetry
- * between the two is exactly the defect class SMI-6481 was filed for, so a
- * field added to one belongs in the other in the same change.
+ * The field set here is kept in lock-step with `validateRow`
+ * (`smi5879-gate-check.io.ts`), the gate-report-side twin, with ONE deliberate
+ * exception: `validateRow` also type-checks `author` and `name`, and this
+ * validator does not. That is not an oversight and not a gap — the checkpoint
+ * side covers both fields more strongly via
+ * `assertCheckpointRowsBelongToGeneration`, which cross-checks every row
+ * against the canonical sealed population rather than merely asserting the
+ * fields are strings. Every OTHER field belongs in both, and a field added to
+ * one belongs in the other in the same change: an asymmetry between the two is
+ * exactly the defect class SMI-6481 was filed for.
  *
  * @module scripts/indexer/smi5879-simulate-full.checkpoint-row-shape
  */
@@ -30,6 +36,17 @@ export function isPlainObject(value: unknown): value is Record<string, unknown> 
 }
 
 /**
+ * SMI-6481 (governance round 2, finding F6): per-fragment length cap. `String(v)`
+ * had an implicit bound (`'[object Object]'`, 15 chars); `JSON.stringify` has
+ * none, so one corrupt field holding a large nested value would serialize in
+ * full into the refusal message. The message-count cap in
+ * `smi5879-simulate-full.checkpoint.ts` bounds the *count* axis; this bounds
+ * the *size* axis of the same message. Same threat model — a hand-edited or
+ * corrupt checkpoint.
+ */
+const MAX_RENDERED_VALUE_CHARS = 200
+
+/**
  * Render a rejected value legibly in an error message. A bare `String(v)`
  * (the original) collapses `{}` to `[object Object]` and `[]` to the empty
  * string, which makes a corrupt-checkpoint report unreadable at exactly the
@@ -39,12 +56,34 @@ export function isPlainObject(value: unknown): value is Record<string, unknown> 
  */
 export function describeValue(value: unknown): string {
   if (typeof value === 'number' || typeof value === 'bigint') return String(value)
+  let rendered: string
   try {
-    return JSON.stringify(value) ?? String(value)
+    rendered = JSON.stringify(value) ?? safeToString(value)
   } catch {
-    // Circular structure, or a BigInt nested inside an object — either way a
-    // legible fallback beats throwing from inside the error-reporting path.
+    // Circular structure, or a BigInt nested inside an object.
+    rendered = safeToString(value)
+  }
+  return rendered.length > MAX_RENDERED_VALUE_CHARS
+    ? `${rendered.slice(0, MAX_RENDERED_VALUE_CHARS)}…`
+    : rendered
+}
+
+/**
+ * SMI-6481 (governance round 2, finding F7): `String(value)` is NOT total —
+ * it throws `TypeError: Cannot convert object to primitive value` for a
+ * null-prototype object, and propagates anything a custom
+ * `toString`/`Symbol.toPrimitive` throws. That would defeat the whole purpose
+ * of a fallback inside the error-reporting path. Unreachable from `JSON.parse`
+ * today (it produces neither null-prototype nor circular objects — a
+ * `"__proto__"` key is created as an own property, not a prototype swap), so
+ * this is the same defence-in-depth tier as the `Number.isFinite` tightening,
+ * held to that same standard.
+ */
+function safeToString(value: unknown): string {
+  try {
     return String(value)
+  } catch {
+    return '(unrenderable value)'
   }
 }
 
