@@ -1,6 +1,6 @@
 # Concurrency Patterns Reference
 
-Pattern-to-incident-to-canonical-fix index for the five `concurrency-auditor` patterns. Use this when:
+Pattern-to-incident-to-canonical-fix index for the six `concurrency-auditor` patterns. Use this when:
 
 - You see a `concurrency-audit-pr.yml` hit in CI and want to know "what does Pattern N really mean here?"
 - You're drafting a P-5 matrix and want a real prior PR to model your row on.
@@ -8,7 +8,7 @@ Pattern-to-incident-to-canonical-fix index for the five `concurrency-auditor` pa
 
 Each row links to the **real PR that fixed the motivating incident** — grep the diff, copy the shape, don't re-derive from memory.
 
-## The five patterns at a glance
+## The six patterns at a glance
 
 | # | Pattern | Real incident | Canonical fix PR |
 |---|---------|---------------|------------------|
@@ -16,7 +16,8 @@ Each row links to the **real PR that fixed the motivating incident** — grep th
 | 2 | `astro:page-load` bind accumulation | SMI-4896 (post-approve state rollback); SMI-4893 (LoginButton, open) | [#1109](https://github.com/smith-horn/skillsmith/pull/1109) (device); follow-up for SMI-4893 |
 | 3 | In-memory cache with computed key | SMI-4861 (tree-hash cache key-shape mismatch) | [#1089](https://github.com/smith-horn/skillsmith/pull/1089) |
 | 4 | New SQL column on multi-write table | SMI-4887 (skip-gate path missed) | [#1100](https://github.com/smith-horn/skillsmith/pull/1100) |
-| 5 | New async producer / consumer | _Advisory; no captured Skillsmith incident as of plan date._ Drop this row if no incident lands within 60 days (per `NEVER say "consider for future"` rule). | — |
+| 5 | New async producer / consumer | _Advisory; no captured Skillsmith incident. The 60-day drop deadline this row carried (2026-07-13) lapsed with none; SMI-6428 was evaluated and ruled out as one (SMI-6434 D-1). Drop-or-rescope is owned by SMI-6462._ | — |
+| 6 | Unguarded async-completion write to shared UI/render state | SMI-6428 (skills-page featured-state stomp turned a REQUIRED CI gate red on `main`) | [#2753](https://github.com/smith-horn/skillsmith/pull/2753) |
 
 The detector signatures, mitigation playbooks, and false-positive marker conventions live in `.claude/skills/concurrency-auditor/patterns/README.md`. This doc points at the _incidents and PRs_, not the rules.
 
@@ -113,9 +114,38 @@ For each hit, the plan documents either **cover** (this path writes the new colu
 
 The detector reports any `export async function` in a shared-surface module (`packages/core/src/services/`, `packages/website/src/lib/`, `packages/website/src/layouts/`) as informational-only. It never blocks. Shipping a stricter regex without a calibrating incident would flood reviewers with false positives.
 
-**SLA**: 60 days from 2026-05-14. If no incident lands by 2026-07-13, drop this pattern from the auditor and from this doc (per `NEVER say "consider for future"`). Tracking issue: SMI-pending-pattern-5-incident-or-drop (filed alongside this doc; the issue itself sets the calendar reminder).
+**SLA (lapsed)**: this doc originally committed to dropping the pattern if no incident landed by 2026-07-13. None did, and SMI-6428 — the one candidate since — was evaluated against the signature and ruled out (not exported, under `pages/`, two peer writers rather than a producer/consumer await contract; SMI-6434 D-1). Whether to drop or re-scope Pattern 5 is a separate decision tracked in SMI-6462; until it lands the detector stays advisory and this row stays.
 
 If you've got a real incident that fits the pattern shape — async helper exported from a shared module, awaited by some consumers and bypassed by others — file a Linear issue under the **Plan-to-Code Verification** project and link this doc. That's how the pattern graduates from advisory to blocking.
+
+## Pattern 6 — Unguarded async-completion write to shared UI/render state
+
+**Incident: SMI-6428 — skills-page featured-state stomp (2026-09-07)**
+
+`packages/website/src/pages/skills/index.astro` had two writers to one results region: `searchSkills()` (filter `change` / debounced `input`) and the `astro:page-load` init chain's `initAuth().then(async () => { await loadFeaturedSkills(); showState('search-prompt'); … })`. Neither checked whether the other had run since it started; the last network response won. A user touching a filter within ~1 s of load had their results replaced by the featured state, and `website-skills-e2e.yml` — a REQUIRED branch-protection context — was deterministically red on `main`. Governance's four P-5 checks at the time (window globals, bind idempotency, re-fire tests, singleton double-read) all passed: the bug is inside a single firing of a correctly-bound listener.
+
+**Canonical fix** ([#2753](https://github.com/smith-horn/skillsmith/pull/2753)): a page-local ownership generation.
+
+```ts
+let resultsGeneration = 0                      // page scope
+
+async function searchSkills() {
+  const gen = ++resultsGeneration              // claim before the first await
+  const response = await fetch(/* … */)
+  if (gen !== resultsGeneration) return        // re-check after EVERY await, before ANY write
+  showState('error')                           // …
+}
+
+const initGen = resultsGeneration              // capture before the chain's first await
+initAuth().then(async () => {
+  await loadFeaturedSkills()
+  if (resultsGeneration === initGen) { /* only then may this chain touch the region */ }
+})
+```
+
+Not `createNavigationEpochGuard()` — its counter only advances on navigation, so for a same-page-load race it yields a guard that can never fire while reading as protected (SMI-6428 D-1). Same shape, page-local counter.
+
+**Why it shipped**: origin PR #1051 (2026-05-09) predates P-5 by four days, and no later review described this shape until check 5 (SMI-6428). `scan-diff.sh` Pattern 6 (SMI-6434) is the machine half; it is advisory and lists guarded sites so the reviewer confirms the guard compares the right counter.
 
 ## Related
 

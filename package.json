@@ -131,20 +131,20 @@
         "postcss": "^8.5.23"
       }
     },
-    "sharp": "0.35.3",
-    "js-yaml": "^4.3.1",
+    "sharp": "0.35.4",
+    "js-yaml": "^4.3.2",
     "gray-matter": {
-      "js-yaml": "^3.15.1"
+      "js-yaml": "^3.15.2"
     },
     "@yarnpkg/parsers": {
-      "js-yaml": "^3.15.1"
+      "js-yaml": "^3.15.2"
     },
     "mocha": {
       "serialize-javascript": "^7.0.5"
     },
     "h3": "^1.15.9",
     "tmp": "^0.2.6",
-    "hono": "^4.12.31",
+    "hono": "^4.13.5",
     "@hono/node-server": "2.0.11",
     "protobufjs": "^7.6.5",
     "uuid": "^14.0.0",
@@ -156,7 +156,7 @@
     "web-vitals": "5.1.0",
     "@grpc/grpc-js": "^1.14.4",
     "ws": "^8.21.0",
-    "svgo": "^4.0.2",
+    "svgo": "^4.1.0",
     "brace-expansion": "^5.0.9",
     "body-parser": "^2.3.0",
     "@claude-flow/mcp": {
@@ -185,7 +185,7 @@
     },
     "@vercel/backends": {
       "srvx": "^0.11.13",
-      "js-yaml": "^3.15.0"
+      "js-yaml": "^3.15.2"
     },
     "@vercel/rust": {
       "smol-toml": "^1.6.1"

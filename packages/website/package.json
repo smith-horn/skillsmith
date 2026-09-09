@@ -28,7 +28,7 @@
     "@tailwindcss/vite": "4.1.18",
     "astro": "7.2.10",
     "cookie": "2.0.1",
-    "sharp": "0.35.3",
+    "sharp": "0.35.4",
     "tailwindcss": "4.3.3",
     "turndown": "7.2.4",
     "turndown-plugin-gfm": "1.0.2"

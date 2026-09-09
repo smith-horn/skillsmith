@@ -46,6 +46,11 @@ import {
   classifyGitCryptScanResult,
 } from './audit-standards-helpers.mjs'
 import { getFilesRecursive } from './audit-file-walker-helpers.mjs'
+import {
+  parseNamedVolumeRepoRelativePaths,
+  findHostSideNamedVolumeOps,
+  allowlistKeyFor,
+} from './audit-host-volume-fs-guard-helpers.mjs'
 import { isGitCryptEncrypted } from './ci/check-supply-chain-pins.mjs'
 import { VERCEL_JSON_SHARED_FIELDS, validateVercelJsonSync } from './audit-vercel-sync-helpers.mjs'
 import { findRealpathAsymmetry } from './audit-realpath-asymmetry-helpers.mjs'
@@ -5821,6 +5826,107 @@ console.log(`\n${BOLD}Check 65: test-suite manifest hygiene (SMI-6343)${RESET}`)
         `Remove the stale entry for '${stale}' — an unnecessary allowlist grant is itself a finding ` +
           '(Check 62 precedent), because a silently-stale row masks a real future regression at that path.'
       )
+    }
+  }
+}
+
+// Check 66: host-side fs ops against docker-compose.yml named-volume paths (SMI-6457)
+console.log(
+  `\n${BOLD}Check 66: host-side fs ops against docker-compose.yml named-volume paths (SMI-6457)${RESET}`
+)
+{
+  const CHECK_66_SHADOW_END_DATE = '2026-10-20'
+  const inShadow = new Date() < new Date(CHECK_66_SHADOW_END_DATE)
+  const report = inShadow ? warn : fail
+  const shadowSuffix = inShadow
+    ? ` [shadow mode through ${CHECK_66_SHADOW_END_DATE} — advisory only]`
+    : ''
+
+  // Heuristic candidate-generator, not a definitive classifier — a matched
+  // line means "a host-side fs op targets a docker-compose.yml named-volume
+  // path with no same-line docker exec wrap", NOT "this is a bug." Each row
+  // below is a confirmed-correct host-side check (its script's own server
+  // runs host-only, or the check never crosses a host/container boundary at
+  // all), triaged during Check 66's own Wave 2 calibration against `main`
+  // (SMI-6457) — never a bare "looked fine" grant.
+  const HOST_VOLUME_GUARD_ALLOWLIST_JUSTIFICATIONS = {
+    'scripts/mcp-skillsmith-launcher.sh:if [ ! -f "$NM_SENTINEL" ]; then':
+      "the skillsmith MCP server itself runs entirely on the HOST (no docker exec in this launcher's own invocation, SMI-6454) — a host-side check here is correct, not the SMI-6453 bug shape",
+    'scripts/mcp-skillsmith-launcher.sh:if (existsSync(join(pkgDir, "node_modules", name))) return "nested-corrupt";':
+      'same host-only launcher as above — the DEP_PROBE_JS dependency probe correctly runs host-side',
+    'scripts/mcp-skillsmith-launcher.sh:"    rm -rf packages/mcp-server/node_modules/$dep_name':
+      'inert remediation TEXT inside emit_error(), never executed by the script itself, AND correct even if it were (host-only launcher, SMI-6454 fix)',
+    'scripts/lib/check-node-modules-fresh.sh:if [ -f "$SENTINEL" ]; then':
+      'this IS the canonical HOST-tree freshness guard (SMI-5343/5344/6006) — checking host bytes is its entire documented purpose',
+    'scripts/lib/check-node-modules-fresh.sh:if [ ! -f "$SENTINEL" ]; then':
+      'same guard as above, the inverse branch',
+    'scripts/repair-host-native-deps.sh:rm -rf "$dest"':
+      'file header: "audit:host-npm-required ... by-design host-side native binding rebuild per SMI-4549; cannot run in Docker" — deliberately host-only',
+    'scripts/repair-host-native-deps.sh:warn "$pkg_name: refetched but bin/esbuild still fails the ELF check — manual recovery: rm -rf node_modules/@esbuild/$(basename "${linux_dir%/}") && npm pack $pkg_name@$version"':
+      'same host-only script as above — inert instructional text inside a warn() call',
+    'scripts/repair-host-native-deps.sh:if [[ -d "$ROOT_BSQLITE_DIR" ]]; then':
+      'same host-only script, SMI-4780 fallback probe',
+    'scripts/repair-host-native-deps.sh:rm -rf node_modules/better-sqlite3':
+      'same host-only script, root binding reset',
+  }
+
+  const composePath = 'docker-compose.yml'
+  if (!existsSync(composePath)) {
+    warn('Check 66: docker-compose.yml not found — skipping')
+  } else {
+    const namedVolumePaths = parseNamedVolumeRepoRelativePaths(readFileSync(composePath, 'utf8'))
+    // scripts/audit-standards.mjs itself is excluded: HOST_VOLUME_GUARD_ALLOWLIST_JUSTIFICATIONS
+    // necessarily embeds, as string literals, the exact flagged text of real
+    // findings from OTHER files (for documentation) — Check 66's own
+    // operator/target-resolution logic can't distinguish that from real
+    // executable code, so this file unavoidably self-matches its own
+    // allowlist strings. Confirmed during Check 66's Wave 2 calibration
+    // (SMI-6457) — the one otherwise-legitimate finding this file itself
+    // produced (an npm-overrides existsSync() check that is self-referential
+    // and never crosses a host/container boundary) was independently
+    // confirmed correct before this exclusion was added.
+    const scanFiles = getFilesRecursive('scripts', ['.sh', '.ts', '.mjs']).filter(
+      (f) => !f.includes('.test.') && f !== join('scripts', 'audit-standards.mjs')
+    )
+    const findings = findHostSideNamedVolumeOps(scanFiles, namedVolumePaths)
+
+    const seenAllowlistKeys = new Set()
+    const unallowlisted = []
+    for (const finding of findings) {
+      const key = allowlistKeyFor(finding)
+      if (key in HOST_VOLUME_GUARD_ALLOWLIST_JUSTIFICATIONS) {
+        seenAllowlistKeys.add(key)
+      } else {
+        unallowlisted.push(finding)
+      }
+    }
+    const staleAllowlistKeys = Object.keys(HOST_VOLUME_GUARD_ALLOWLIST_JUSTIFICATIONS).filter(
+      (k) => !seenAllowlistKeys.has(k)
+    )
+
+    if (unallowlisted.length === 0 && staleAllowlistKeys.length === 0) {
+      pass(
+        `Check 66: no unallowlisted host-side fs op(s) found against docker-compose.yml's ` +
+          `${namedVolumePaths.length} named-volume path(s) (${seenAllowlistKeys.size} confirmed-correct match(es) allowlisted)`
+      )
+    } else {
+      for (const f of unallowlisted) {
+        report(
+          `Check 66: ${f.file}:${f.line} — ${f.operation} targets '${f.matchedPath}' (a docker-compose.yml ` +
+            `named-volume path) with no same-line docker exec wrap${shadowSuffix}`,
+          `This is a CANDIDATE for the SMI-6453/SMI-6454 bug class, not a confirmed bug — verify whether the ` +
+            `containing script's own server/process runs host-side (host check is correct) or container-side ` +
+            `(host check is the bug). If confirmed correct, add '${allowlistKeyFor(f)}' to ` +
+            `HOST_VOLUME_GUARD_ALLOWLIST_JUSTIFICATIONS in scripts/audit-standards.mjs with a specific reason.`
+        )
+      }
+      for (const stale of staleAllowlistKeys) {
+        report(
+          `Check 66: '${stale}' is allowlisted in HOST_VOLUME_GUARD_ALLOWLIST_JUSTIFICATIONS but no longer ` +
+            `matches a current finding (the line changed or moved)${shadowSuffix}`,
+          `Remove the stale entry — an unnecessary allowlist grant is itself a finding (Check 62/65 precedent).`
+        )
+      }
     }
   }
 }
