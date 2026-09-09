@@ -5938,7 +5938,7 @@ console.log(
   }
 }
 
-// Check 67: MCP registry server.json `_meta` placement
+// Check 68: MCP registry server.json `_meta` placement
 // The MCP Registry schema (https://static.modelcontextprotocol.io/schemas/
 // 2025-12-11/server.schema.json) only PRESERVES the reserved top-level
 // `_meta` key `io.modelcontextprotocol.registry/publisher-provided` (4KB
@@ -5949,11 +5949,11 @@ console.log(
 // `io.skillsmith/keywords` sitting directly under top-level `_meta` instead
 // of nested under the reserved key. This check fails loudly if a custom
 // `_meta` key ever lands at the top level again.
-console.log(`\n${BOLD}Check 67: MCP registry server.json _meta placement${RESET}`)
+console.log(`\n${BOLD}Check 68: MCP registry server.json _meta placement${RESET}`)
 {
   const SERVER_JSON_PATH = 'packages/mcp-server/server.json'
   if (!existsSync(SERVER_JSON_PATH)) {
-    warn(`Check 67: ${SERVER_JSON_PATH} not found — skipping registry _meta placement check`)
+    warn(`Check 68: ${SERVER_JSON_PATH} not found — skipping registry _meta placement check`)
   } else {
     try {
       const serverJson = JSON.parse(readFileSync(SERVER_JSON_PATH, 'utf8'))
@@ -5963,7 +5963,7 @@ console.log(`\n${BOLD}Check 67: MCP registry server.json _meta placement${RESET}
       } else {
         for (const v of violations) {
           fail(
-            `Check 67: ${SERVER_JSON_PATH}: _meta key '${v.key}' is not nested under the reserved ` +
+            `Check 68: ${SERVER_JSON_PATH}: _meta key '${v.key}' is not nested under the reserved ` +
               `'${MCP_REGISTRY_RESERVED_META_KEY}' key and will be silently dropped by the registry`,
             `Move ${SERVER_JSON_PATH}'s _meta.${v.key.replace(/'/g, "\\'")} to be nested under ` +
               `_meta['${MCP_REGISTRY_RESERVED_META_KEY}'] — see the registry schema at ` +
@@ -5972,7 +5972,7 @@ console.log(`\n${BOLD}Check 67: MCP registry server.json _meta placement${RESET}
         }
       }
     } catch (e) {
-      warn(`Check 67: could not parse ${SERVER_JSON_PATH}: ${e.message}`)
+      warn(`Check 68: could not parse ${SERVER_JSON_PATH}: ${e.message}`)
     }
   }
 }

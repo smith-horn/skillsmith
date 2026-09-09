@@ -1913,7 +1913,7 @@ export function findServerJsonFieldLengthViolations(
  * returned `_meta: {}` while `packages/mcp-server/server.json` still had
  * `io.skillsmith/categories` and `io.skillsmith/keywords` sitting directly
  * under top-level `_meta` instead of nested under this reserved key. Exported
- * so Check 67 (audit-standards.mjs) and its test fixtures share one source of
+ * so Check 68 (audit-standards.mjs) and its test fixtures share one source of
  * truth instead of duplicating the literal string.
  */
 export const MCP_REGISTRY_RESERVED_META_KEY = 'io.modelcontextprotocol.registry/publisher-provided'

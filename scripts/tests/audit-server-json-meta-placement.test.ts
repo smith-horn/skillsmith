@@ -1,6 +1,6 @@
 /**
  * Tests for the MCP Registry server.json `_meta` placement validation helper
- * used by scripts/audit-standards.mjs Check 67.
+ * used by scripts/audit-standards.mjs Check 68.
  *
  * Background: the MCP Registry schema (https://static.modelcontextprotocol.io/
  * schemas/2025-12-11/server.schema.json) only PRESERVES the reserved
@@ -10,7 +10,7 @@
  * `io.github.smith-horn/skillsmith` returned `_meta: {}` while
  * packages/mcp-server/server.json still had `io.skillsmith/categories` and
  * `io.skillsmith/keywords` sitting directly under top-level `_meta` instead
- * of nested under the reserved key. Check 67 closes that gap by flagging any
+ * of nested under the reserved key. Check 68 closes that gap by flagging any
  * top-level `_meta` key that isn't the reserved key.
  */
 import { describe, expect, it } from 'vitest'
