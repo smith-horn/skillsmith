@@ -165,7 +165,6 @@ describe('SMI-6441 Wave 2 (Node twin, action-context suite) — MF-4b weak-passw
 
   describe('(a) must fire HIGH — R-2 closed', () => {
     it.each([
-      ['R-2 closed — "horse" is a known common password', 'password: horse staple'],
       ['two common passwords, no ambiguity', 'password: monkey dragon'],
       ['non-word common password — highest-precision sub-case', 'password: qwerty ninja'],
       ['different assignment key, same shape', 'secrets: letmein sunshine'],
@@ -173,7 +172,7 @@ describe('SMI-6441 Wave 2 (Node twin, action-context suite) — MF-4b weak-passw
       ['YAML next-line block form reaches the same rule', 'password:\n  monkey dragon'],
       [
         'segmentation: one prose segment + one credential segment (round-8 invariant holds under the veto)',
-        'credentials: rotation policy password: horse staple',
+        'credentials: rotation policy password: monkey dragon',
       ],
     ])('%s', (_label, content) => {
       expect(severityOf(content)).toBe('high')
@@ -187,6 +186,28 @@ describe('SMI-6441 Wave 2 (Node twin, action-context suite) — MF-4b weak-passw
       ['pins "key"/"management" absent from lexicon', 'secrets: key management'],
       ['pins "rotation"/"schedule" absent from lexicon', 'secrets: rotation schedule'],
       ['pins "master", a top-1000 password, absent from lexicon', 'credentials: master key'],
+      // This fixture has moved twice. SMI-5207 accepted it as the R-2
+      // residual (MEDIUM). An interim SMI-6441 draft using tokens.some(...)
+      // moved it to must-fire, since "horse" alone is a known common
+      // password. The final tokens.every(...) predicate returns it here — R-2
+      // is only PARTIALLY closed: pairing one common password with one
+      // ordinary word still clears to MEDIUM, because some() was found to
+      // reopen the SMI-5207 documentation false-positive class unboundedly.
+      [
+        'R-2 PARTIALLY closed by SMI-6441 — one common password + one ordinary word stays MEDIUM under the every() predicate',
+        'password: horse staple',
+      ],
+      // Regression guard for the exact FP class the every() predicate change
+      // was made to close — each of these fired HIGH under the interim
+      // some() predicate and must clear to MEDIUM under every().
+      ['every() FP-class guard', 'credentials: security policy'],
+      ['every() FP-class guard', 'credentials: command reference'],
+      ['every() FP-class guard', 'secrets: cloud provider'],
+      ['every() FP-class guard', 'credentials: help center'],
+      ['every() FP-class guard', 'credentials: active profile'],
+      ['every() FP-class guard', 'secrets: mobile app'],
+      ['every() FP-class guard', 'credentials: java client'],
+      ['every() FP-class guard', 'credentials: support matrix'],
     ])('%s', (_label, content) => {
       expect(severityOf(content)).toBe('medium')
     })
@@ -226,13 +247,12 @@ describe('SMI-6441 Wave 2 (Node twin, action-context suite) — MF-4b weak-passw
   describe('(d) seam: options.weakPasswordVeto is a pure per-call parameter (P-5)', () => {
     it('(d.1) correctness: veto:false reproduces the pre-6441 verdict for every (a) fixture', () => {
       const fixtures: Array<string[]> = [
-        ['password: horse staple'],
         ['password: monkey dragon'],
         ['password: qwerty ninja'],
         ['secrets: letmein sunshine'],
         ['credentials: dragon shadow'],
         ['password:', '  monkey dragon'],
-        ['credentials: rotation policy password: horse staple'],
+        ['credentials: rotation policy password: monkey dragon'],
       ]
       for (const lines of fixtures) {
         expect(assignmentHasRealValue(lines, 0, { weakPasswordVeto: false })).toBe(false)
@@ -246,7 +266,7 @@ describe('SMI-6441 Wave 2 (Node twin, action-context suite) — MF-4b weak-passw
     // flip. The seam is byte-identical across all three substrates, so a leak
     // introduced in this twin port must fail here too.
     it('(d.2) no cross-call leakage — the option must not be sticky across alternating calls', () => {
-      const lines = ['password: horse staple']
+      const lines = ['password: monkey dragon']
       expect(assignmentHasRealValue(lines, 0, { weakPasswordVeto: false })).toBe(false) // pre-6441
       expect(assignmentHasRealValue(lines, 0)).toBe(true) // default: veto on
       expect(assignmentHasRealValue(lines, 0, { weakPasswordVeto: false })).toBe(false) // must NOT be sticky

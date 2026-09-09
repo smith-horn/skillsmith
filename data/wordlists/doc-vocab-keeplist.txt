@@ -124,3 +124,19 @@ time today tool trigger unique vector video welcome window windows
 # scanner, guest account, standard user, session cookie, repo tree, data
 # models, star rating.
 cookie guest matrix models scanner standard star tree
+#
+# OPTION-B ADDENDUM (SMI-6441 Wave 2, after adversarial review round 3). The
+# veto predicate changed from `tokens.some(in lexicon)` to
+# `tokens.every(in lexicon)`, which closes the documentation false-positive
+# class STRUCTURALLY rather than by curation. That narrows this file's job:
+# it now only has to cover labels where BOTH words are common passwords, not
+# every label with one. Measured after the switch, 3 of ~50 realistic
+# two-word doc labels still had both tokens in the lexicon:
+#   help center | back office | free trial
+# One token from each pair is enough to break `every`, so only the clearest
+# documentation noun of each is subtracted here rather than both — under
+# `every` each entry costs strictly more detection than it did under `some`
+# (ANY keeplisted token in a pair now disables the veto, where previously
+# ALL of them had to be), so the bar for adding to this file is now HIGHER,
+# not lower. Do not bulk-add speculative vocabulary here.
+center office trial

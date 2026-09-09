@@ -302,6 +302,26 @@ describe('SMI-5207 — sensitive_path action-context gating (MF-3/MF-4)', () => 
         ['SMI-6441 keeplist', 'secrets: key management'],
         ['SMI-6441 keeplist', 'secrets: rotation schedule'],
         ['SMI-6441 keeplist: pins "master", a top-1000 password', 'credentials: master key'],
+        // SMI-6441 Wave 2: moved twice — SMI-5207's accepted R-2 residual,
+        // briefly must-fire under an interim tokens.some(...) predicate (since
+        // "horse" alone is a common password), back here under the final
+        // tokens.every(...) predicate. R-2 is only PARTIALLY closed: pairing
+        // one common password with one ordinary word still clears to MEDIUM,
+        // because some() reopened SMI-5207's documentation FP class below.
+        [
+          'R-2 PARTIALLY closed by SMI-6441 — one common password + one ordinary word stays MEDIUM under the every() predicate',
+          'password: horse staple',
+        ],
+        // Regression guard for the FP class every() was chosen to close —
+        // each fired HIGH under the interim some() predicate.
+        ['every() FP-class guard', 'credentials: security policy'],
+        ['every() FP-class guard', 'credentials: command reference'],
+        ['every() FP-class guard', 'secrets: cloud provider'],
+        ['every() FP-class guard', 'credentials: help center'],
+        ['every() FP-class guard', 'credentials: active profile'],
+        ['every() FP-class guard', 'secrets: mobile app'],
+        ['every() FP-class guard', 'credentials: java client'],
+        ['every() FP-class guard', 'credentials: support matrix'],
         [
           'R-3 unchanged: sentence path proves the veto does not leak upward',
           'password: never paste your password into chat',
@@ -377,18 +397,13 @@ describe('SMI-5207 — sensitive_path action-context gating (MF-3/MF-4)', () => 
           "3-token passphrase — the design's own MAX_LABEL_TOKENS=2 boundary (see comment above)",
           'password: velvet hammer orbit92',
         ],
-        // SMI-6441 Wave 2 (MF-4b weak-password veto) — R-2 closed. Moved out
-        // of the must-clear table above, where this fixture used to be labelled
-        // "accepted R-2 residual"; leaving that label in place would make the
-        // suite lie about the design.
-        ['R-2 closed by SMI-6441 — "horse" is a known common password', 'password: horse staple'],
         ['two common passwords, no ambiguity', 'password: monkey dragon'],
         ['non-word common password — highest-precision sub-case', 'password: qwerty ninja'],
         ['different assignment key, same shape', 'secrets: letmein sunshine'],
         ['third assignment key', 'credentials: dragon shadow'],
         [
           'segmentation: one prose segment + one credential segment -> HIGH (round-8 invariant holds under the veto)',
-          'credentials: rotation policy password: horse staple',
+          'credentials: rotation policy password: monkey dragon',
         ],
         [
           'R-2 remaining-half companion: 3 tokens -> carve-out never applies',

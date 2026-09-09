@@ -28,7 +28,9 @@ export const REPO_ROOT = join(__dirname, '..')
 // only signal that the emitted set moved — regenerating without bumping it
 // leaves a changed payload wearing an unchanged version, which is exactly the
 // silent drift the constant exists to make visible.
-export const LEXICON_VERSION = '2026-09-09.1'
+// 2026-09-09.1 -> 2026-09-09.2 (Option B): veto predicate changed from
+// some() to every(); keeplist gained center/office/trial. 4,012 -> 4,009.
+export const LEXICON_VERSION = '2026-09-09.2'
 
 export const SHAPE_RE = /^[a-z]{3,19}$/
 export const ENCODING_UNSAFE_RE = /[`\\$]/

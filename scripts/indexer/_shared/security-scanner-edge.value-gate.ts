@@ -64,9 +64,32 @@ function isProseValue(span: string, weakPasswordVeto: boolean): boolean {
   if (tokens.length > 12) return true // long sentence
   /**
    * SMI-6441 (MF-4b): a 2-token all-lowercase value normally reads as a
-   * documentation label ("rotation policy"). It does NOT when one of its tokens
-   * is a known common password ("horse staple", "monkey dragon") — that is a
-   * weak credential wearing a label's shape, SMI-5207's residual R-2.
+   * documentation label ("rotation policy"). It does NOT when EVERY one of its
+   * tokens is a known common password ("monkey dragon", "qwerty ninja") — that
+   * is a weak credential wearing a label's shape, SMI-5207's residual R-2.
+   *
+   * WHY `every` AND NOT `some` — the load-bearing choice, decided on measured
+   * evidence after three adversarial review rounds. A `some` predicate reopens
+   * the very false-positive class SMI-5207 closed, and does so unboundedly:
+   * 55% of the emitted lexicon (2,229 of 4,012 entries) are ordinary English
+   * dictionary words, so almost any two-word documentation label pairs a
+   * benign noun with a lexicon member. Three independent review passes each
+   * found more leaks (`security policy`, `command reference`, `cloud
+   * provider`, `active profile`, `help center`, `java client`, `mobile app`,
+   * …), and the keeplist that was supposed to prevent this is a hand-curated
+   * denylist-of-a-denylist against a 2,229-word residual — it does not
+   * converge. `every` closes the class STRUCTURALLY instead: a documentation
+   * label essentially never has BOTH of its words in a common-password list.
+   *
+   * WHAT THIS COSTS, STATED PLAINLY: R-2 is now closed only for the
+   * two-common-password case. A value pairing ONE common password with an
+   * ordinary word — the plan's original headline example — stays MEDIUM,
+   * because it is not distinguishable from a documentation label without a
+   * false-positive rate this gate cannot afford. The install gate fails on
+   * `hasHigh` alone with no allowlist anywhere in `skill-installation.*`, so
+   * an FP here blocks a legitimate install and costs a package publish to
+   * undo; a FN leaves a weak credential at MEDIUM, which is exactly where it
+   * sat before this wave. The asymmetry is what decides it.
    *
    * SCOPE, DELIBERATELY NARROW: this veto applies ONLY to the exactly-2-token
    * all-lowercase carve-out below, never to the stopword ("sentence") rule
@@ -115,7 +138,7 @@ function isProseValue(span: string, weakPasswordVeto: boolean): boolean {
     tokens.length > 1 &&
     tokens.length <= MAX_LABEL_TOKENS &&
     tokens.every((t) => /^[a-z]{1,19}$/.test(t)) &&
-    (!weakPasswordVeto || !tokens.some((t) => COMMON_WEAK_PASSWORDS.has(t)))
+    (!weakPasswordVeto || !tokens.every((t) => COMMON_WEAK_PASSWORDS.has(t)))
   )
     return true // 2-word doc label
   return false // DEFAULT: stays HIGH
