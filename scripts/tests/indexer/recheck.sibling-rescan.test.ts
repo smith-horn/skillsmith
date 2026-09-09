@@ -38,6 +38,23 @@ vi.mock('../../indexer/indexer-audit-log.ts', () => ({
   writeIndexerAuditLog: (...args: unknown[]) => writeIndexerAuditLog(...args),
 }))
 
+// SMI-6481 (governance review, 2026-09-09): this file calls `runRecheck`, and
+// `recheck.ts` calls `buildGitHubHeaders()` unconditionally. Unmocked, that
+// reaches `getInstallationToken()`, which POSTs to api.github.com to mint a
+// real App token whenever GITHUB_APP_ID / GITHUB_APP_INSTALLATION_ID /
+// GITHUB_APP_PRIVATE_KEY are present in the REAL `process.env` — silent in CI
+// (unset) but a live network call under `varlock run -- npm test`, contained
+// here only incidentally by this file's own `stubFetch*` helpers. Partial mock
+// via `importOriginal` so the module's other exports (e.g. `GitHubAuthError`)
+// survive for anything importing them at load time.
+vi.mock('../../indexer/_shared/github-auth.ts', async (importOriginal) => {
+  const actual = await importOriginal<typeof import('../../indexer/_shared/github-auth.ts')>()
+  return {
+    ...actual,
+    buildGitHubHeaders: vi.fn(async () => ({})),
+  }
+})
+
 // ---------------------------------------------------------------------------
 // SMI-6020 (design §2.7 T2.19-T2.20): runSiblingRescan truncation fail-closed
 // ---------------------------------------------------------------------------

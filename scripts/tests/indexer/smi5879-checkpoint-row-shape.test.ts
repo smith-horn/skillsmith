@@ -123,4 +123,47 @@ describe('describeValue', () => {
     circular['self'] = circular
     expect(() => describeValue(circular)).not.toThrow()
   })
+
+  // SMI-6481 (governance round 3, finding SF4): the truncation cap and the
+  // `safeToString` fallback shipped in round 2 with no coverage at all.
+  describe('length cap and total fallback', () => {
+    it('truncates an over-long rendered value and marks it elided', () => {
+      const rendered = describeValue('x'.repeat(5000))
+      expect(rendered.endsWith('…')).toBe(true)
+      // 200 code points + the ellipsis. Well under the raw 5002-char render.
+      expect(Array.from(rendered)).toHaveLength(201)
+    })
+
+    it('truncates a bigint too — the number short-circuit must not bypass the cap', () => {
+      // Round-3 finding: the original `typeof number|bigint` branch returned
+      // before truncation, and a bigint has no length bound (10n ** 300n is
+      // 301 chars).
+      const rendered = describeValue(10n ** 300n)
+      expect(Array.from(rendered)).toHaveLength(201)
+      expect(rendered.endsWith('…')).toBe(true)
+    })
+
+    it('leaves a short value untouched, with no ellipsis', () => {
+      expect(describeValue('short')).toBe('"short"')
+      expect(describeValue(42)).toBe('42')
+    })
+
+    it('never splits a surrogate pair when truncating', () => {
+      // A raw `String.prototype.slice` cuts mid-pair and emits a lone
+      // surrogate into an operator-facing message.
+      const rendered = describeValue('😀'.repeat(500))
+      expect(rendered).not.toMatch(/[\uD800-\uDBFF]$/)
+      expect(rendered.endsWith('…')).toBe(true)
+    })
+
+    it('does not throw on a null-prototype object, whose String() conversion throws', () => {
+      // `String(Object.create(null))` raises "Cannot convert object to
+      // primitive value" — the fallback must be total, since it runs inside
+      // the error-reporting path itself.
+      const nullProto = Object.create(null) as Record<string, unknown>
+      nullProto['self'] = nullProto // also circular, to force the catch branch
+      expect(() => describeValue(nullProto)).not.toThrow()
+      expect(describeValue(nullProto)).toBe('(unrenderable value)')
+    })
+  })
 })

@@ -74,7 +74,14 @@ const db = {
  * row. Typed as the real `ScanSkillBundleFn` rather than cast through `as
  * never`: `scripts/` is untypechecked, so a cast here would hide a shape
  * mismatch exactly the way the B1 bug this file exists to catch was hidden.
- * The full `ScanSkillBundleResult` shape means this genuinely drives
+ *
+ * The annotation only helps if the object ACTUALLY satisfies it — an
+ * unenforced annotation in an unchecked directory hides a mismatch just as
+ * well as a cast does. A first attempt at this omitted four required
+ * `MergedEdgeScanResult` fields and still "passed" `npm run typecheck`,
+ * because that command never sees `scripts/`. Verify with
+ * `npx tsc --noEmit --strict ... <file>` directly. Every required field of
+ * `ScanSkillBundleResult` is now present, so this genuinely drives
  * `effectiveVerdict` (which prefers `mergedSecurityScan`, falling back to
  * `securityScan.riskScore`) and `isBundleAbsent` (which reads `siblingScans`
  * and `siblingFailures` — both empty here means a normal, present bundle).
@@ -88,7 +95,15 @@ const cleanScan: ScanSkillBundleFn = async () => ({
     scannedAt: new Date(0).toISOString(),
     scanDurationMs: 0,
   },
-  mergedSecurityScan: { quarantine: false, riskScore: 0, findings: [] },
+  mergedSecurityScan: {
+    quarantine: false,
+    riskScore: 0,
+    findings: [],
+    siblingRejectable: false,
+    primarySiblingPath: null,
+    multilineTruncated: false,
+    truncatedScanPaths: [],
+  },
   siblingScans: [],
   siblingFailures: [],
   scanCoverage: { incomplete: false, note: null },

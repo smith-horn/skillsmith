@@ -285,13 +285,21 @@ function validateRow(
         : {}),
       ...(typeof prePortQuarantine === 'boolean' ? { prePortQuarantine } : {}),
       ...(typeof postPortQuarantine === 'boolean' ? { postPortQuarantine } : {}),
-      // SMI-6481: `Number.isFinite`, matching the guard above. Functionally
-      // unreachable divergence (the guard already rejected any non-finite
-      // value), but two different predicates for the same field inside one
-      // function is the readability half of the very asymmetry this issue
-      // exists to remove.
-      ...(Number.isFinite(prePortRiskScore) ? { prePortRiskScore } : {}),
-      ...(Number.isFinite(postPortRiskScore) ? { postPortRiskScore } : {}),
+      // SMI-6481: matches the `Number.isFinite` guard above, but keeps the
+      // `typeof` half — `Number.isFinite` is declared `(number: unknown) =>
+      // boolean`, NOT a type predicate, so it does not narrow. Using it alone
+      // here widened these to `unknown` and made the object un-assignable to
+      // `SimRowResult` (TS2322). That went unnoticed for one review round
+      // because `tsconfig.json` is `"files": []` + `packages/` references, so
+      // `npm run typecheck` never sees `scripts/` — the same blind spot as
+      // SMI-6486, hit while fixing SMI-6481. Verify changes here with
+      // `npx tsc --noEmit --strict ... <file>` directly, not `npm run typecheck`.
+      ...(typeof prePortRiskScore === 'number' && Number.isFinite(prePortRiskScore)
+        ? { prePortRiskScore }
+        : {}),
+      ...(typeof postPortRiskScore === 'number' && Number.isFinite(postPortRiskScore)
+        ? { postPortRiskScore }
+        : {}),
     },
   }
 }

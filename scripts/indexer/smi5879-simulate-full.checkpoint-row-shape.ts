@@ -36,13 +36,15 @@ export function isPlainObject(value: unknown): value is Record<string, unknown> 
 }
 
 /**
- * SMI-6481 (governance round 2, finding F6): per-fragment length cap. `String(v)`
- * had an implicit bound (`'[object Object]'`, 15 chars); `JSON.stringify` has
- * none, so one corrupt field holding a large nested value would serialize in
- * full into the refusal message. The message-count cap in
- * `smi5879-simulate-full.checkpoint.ts` bounds the *count* axis; this bounds
- * the *size* axis of the same message. Same threat model — a hand-edited or
- * corrupt checkpoint.
+ * SMI-6481 (F6): per-rendered-value length cap. `JSON.stringify` is unbounded,
+ * so one corrupt field holding a large nested value would serialize in full
+ * into the refusal message. Bounds the rendered VALUE only — the surrounding
+ * fragment also embeds `row_results.${id}.${field}`, and a checkpoint key is
+ * itself unbounded, so this is not a bound on total fragment length. The
+ * message-count cap in `smi5879-simulate-full.checkpoint.ts` bounds the count
+ * axis. (Round-3 correction: the pre-fix `String(v)` was NOT implicitly bounded
+ * either — only plain objects collapsed to `'[object Object]'`; a long string
+ * or array rendered in full.)
  */
 const MAX_RENDERED_VALUE_CHARS = 200
 
@@ -55,17 +57,34 @@ const MAX_RENDERED_VALUE_CHARS = 200
  * boolean `true` — the whole point of these checks.
  */
 export function describeValue(value: unknown): string {
-  if (typeof value === 'number' || typeof value === 'bigint') return String(value)
   let rendered: string
-  try {
-    rendered = JSON.stringify(value) ?? safeToString(value)
-  } catch {
-    // Circular structure, or a BigInt nested inside an object.
-    rendered = safeToString(value)
+  if (typeof value === 'number' || typeof value === 'bigint') {
+    // Bare, so NaN/Infinity read naturally. Still truncated below: a bigint
+    // has no length bound either (round-3 finding — `10n ** 300n` is 301
+    // chars, and the original short-circuit returned before the cap).
+    rendered = String(value)
+  } else {
+    try {
+      rendered = JSON.stringify(value) ?? safeToString(value)
+    } catch {
+      // Circular structure, or a BigInt nested inside an object.
+      rendered = safeToString(value)
+    }
   }
-  return rendered.length > MAX_RENDERED_VALUE_CHARS
-    ? `${rendered.slice(0, MAX_RENDERED_VALUE_CHARS)}…`
-    : rendered
+  return truncateRendered(rendered)
+}
+
+/**
+ * Single truncation exit point. Slices by CODE POINT, not UTF-16 code unit —
+ * a raw `String.prototype.slice` can cut a surrogate pair in half and emit a
+ * lone surrogate into an operator-facing message (round-3 finding: a 200-emoji
+ * value ended in a bare `\uD83D`).
+ */
+function truncateRendered(rendered: string): string {
+  if (rendered.length <= MAX_RENDERED_VALUE_CHARS) return rendered
+  const codePoints = Array.from(rendered)
+  if (codePoints.length <= MAX_RENDERED_VALUE_CHARS) return rendered
+  return `${codePoints.slice(0, MAX_RENDERED_VALUE_CHARS).join('')}…`
 }
 
 /**

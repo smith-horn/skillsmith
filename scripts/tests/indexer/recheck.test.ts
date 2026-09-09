@@ -60,9 +60,10 @@ vi.mock('../../indexer/indexer-audit-log.ts', () => ({
 // `process.env` — silent in CI (unset) but a live network call under
 // `varlock run -- npm test`, which CLAUDE.md documents as a normal invocation.
 // Contained here only incidentally, by these tests stubbing `globalThis.fetch`.
-// The sibling suites (`stale-reconciliation-verify.test.ts`,
-// `stale-reconciliation-boundary.test.ts`) already mock it; this file was the
-// outlier. Partial mock via `importOriginal` so the module's other exports
+// `stale-reconciliation-verify.test.ts` and `stale-reconciliation-boundary.test.ts`
+// already mocked it; this file AND `recheck.sibling-rescan.test.ts` (which also
+// calls `runRecheck`) did not — both are fixed in the same change.
+// Partial mock via `importOriginal` so the module's other exports
 // (e.g. `GitHubAuthError`) survive for anything importing them at load time.
 vi.mock('../../indexer/_shared/github-auth.ts', async (importOriginal) => {
   const actual = await importOriginal<typeof import('../../indexer/_shared/github-auth.ts')>()
