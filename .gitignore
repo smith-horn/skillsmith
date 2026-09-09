@@ -207,6 +207,9 @@ docs/articles/tmp/
 # transitions}.ts default their report output here instead of the repo root
 # (CLAUDE.md "Never save working files, text/mds and tests to the root folder").
 .smi5207-reports/
+# SMI-6441 Wave 2: scripts/indexer/smi6441-blast-radius.ts follows the same
+# convention for the same reason.
+.smi6441-reports/
 # A sibling SMI-5879 script default-writes to the root the same way; ignored
 # preventively rather than left to repeat the same class of stray file.
 smi5879-simulate-*.json

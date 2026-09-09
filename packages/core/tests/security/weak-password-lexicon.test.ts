@@ -41,14 +41,24 @@ describe('WEAK_PASSWORD_LEXICON_SOURCE provenance', () => {
   it('entries matches the emitted Set size, and is inside [2000, 6000] (M-2)', () => {
     // Bound must name the SAME two numbers as the generator's own gate
     // (scripts/gen-weak-password-lexicon.mjs MIN_ENTRIES/MAX_ENTRIES).
-    // Asserting the RANGE (not the literal 4,079) so a legitimate future
-    // keeplist addition doesn't fail this test — but 4,079 is the measured
+    // Asserting the RANGE (not the literal count) so a legitimate future
+    // keeplist addition doesn't fail this test — but the exact measured
     // value at SOURCE_RANK_LIMIT=5000 against the pinned snapshot + shipped
-    // keeplist, recorded here so an unexplained drift is visible in review.
+    // keeplist is recorded here so an unexplained drift is visible in review.
+    //
+    // SMI-6441 Wave 2: 4,079 -> 4,012 (review round 2) -> 4,009 (round 3).
+    // Round 2: two reviewers found the keeplist had no software-engineering
+    // vocabulary section, so ordinary documentation nouns were still in the
+    // lexicon and vetoed benign two-token labels to HIGH — which BLOCKS AN
+    // INSTALL, since that gate fails on hasHigh alone. Round 3 then showed
+    // curation does not converge (55% of entries are English dictionary
+    // words), so the VETO PREDICATE changed from some() to every() and the
+    // keeplist's remaining job narrowed to both-tokens pairs (center, office,
+    // trial). This literal moving is the intended, reviewed consequence.
     expect(COMMON_WEAK_PASSWORDS.size).toBe(WEAK_PASSWORD_LEXICON_SOURCE.entries)
     expect(COMMON_WEAK_PASSWORDS.size).toBeGreaterThanOrEqual(2000)
     expect(COMMON_WEAK_PASSWORDS.size).toBeLessThanOrEqual(6000)
-    expect(COMMON_WEAK_PASSWORDS.size).toBe(4079)
+    expect(COMMON_WEAK_PASSWORDS.size).toBe(4009)
   })
 })
 

@@ -40,10 +40,13 @@ describe('WEAK_PASSWORD_LEXICON_SOURCE provenance (Node-edge)', () => {
   })
 
   it('entries matches the emitted Set size, and is inside [2000, 6000] (M-2)', () => {
+    // SMI-6441 Wave 2: 4,079 -> 4,012 (review round 2) -> 4,009 (round 3,
+    // which also changed the veto predicate from some() to every()). Keep this
+    // literal in lock-step with the core mirror under packages/core/tests.
     expect(COMMON_WEAK_PASSWORDS.size).toBe(WEAK_PASSWORD_LEXICON_SOURCE.entries)
     expect(COMMON_WEAK_PASSWORDS.size).toBeGreaterThanOrEqual(2000)
     expect(COMMON_WEAK_PASSWORDS.size).toBeLessThanOrEqual(6000)
-    expect(COMMON_WEAK_PASSWORDS.size).toBe(4079)
+    expect(COMMON_WEAK_PASSWORDS.size).toBe(4009)
   })
 })
 

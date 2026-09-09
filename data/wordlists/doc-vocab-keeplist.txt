@@ -68,3 +68,75 @@ private public shared internal external
 # the WHOLE pinned snapshot, not for the current SOURCE_RANK_LIMIT slice of
 # it — see § item 3 "Sizing the corpus" in the plan doc.
 again down here never over please their there these this what will
+
+# ---------------------------------------------------------------------------
+# SOFTWARE-ENGINEERING / PRODUCT VOCABULARY (SMI-6441 Wave 2, adversarial
+# review round 2 — added post-implementation, BLOCKER-1 + SHOULD-FIX-2).
+#
+# WHY THIS SECTION EXISTS. The four sections above cover security, config/ops,
+# infrastructure and generic doc nouns. None covered the ordinary ENGINEERING
+# vocabulary that saturates a SKILL.md — which is the corpus this scanner
+# actually reads. Two independent adversarial reviewers (GPT-5.6-Sol via
+# NEEDLE, and an Opus round) converged on the same gap from different
+# starting points, and both landed on `security` specifically: the plan's own
+# § Context fact 3 enumerates twenty saturating documentation nouns and
+# requires that any severity-RAISING list subtract them explicitly. Nineteen
+# of the twenty were subtracted. `security` was not — in a skills registry
+# whose own corpus contains skills literally named `security-best-practices`.
+#
+# Each entry below was verified present in the emitted lexicon (i.e. a real
+# subtraction, not a no-op) and each was verified to produce a MEDIUM->HIGH
+# flip on a realistic two-token documentation label before being added, e.g.
+#   credentials: security policy   secrets: cloud provider
+#   credentials: command reference credentials: change history
+#   secrets: design system         credentials: contact support
+# Every one of those blocks an INSTALL, not merely a scan: the install gate
+# is severity-based (`SecurityScanner.ts:455` fails on hasHigh alone), so a
+# single HIGH sensitive_path finding rejects at a risk score of 1/100, and
+# there is no allowlist anywhere in the skill-installation.* family.
+#
+# THE DETECTION COST, STATED PLAINLY RATHER THAN BURIED. Some of these ARE
+# credible weak passwords. Ranks in the pinned snapshot: welcome #145,
+# driver #396, digital #508, member #559, action #625, tester #643,
+# security #691, windows #954. Adding them means a two-token value drawn
+# ENTIRELY from keeplisted words degrades to MEDIUM (`password: welcome
+# time` no longer fires). That cost is bounded and was accepted knowingly:
+# the veto is `tokens.some(...)`, so a pair with ANY non-keeplisted lexicon
+# member still fires; single-token values are untouched (R-1 keeps them
+# HIGH); and the failure directions are not symmetric — a false negative
+# here leaves a weak credential at MEDIUM, while a false positive blocks a
+# legitimate install with no data-side remedy short of a lexicon
+# regeneration, an @skillsmith/core publish, and a user upgrade.
+# ---------------------------------------------------------------------------
+action builder button cancel change check cloud command compute connect
+contact content delete design digital direct driver element engine engineer
+enterprise filter function global history library machine member memory
+method number quality random search secure security select shell site
+software space static strength support target team temp terminal tester
+time today tool trigger unique vector video welcome window windows
+#
+# Second pass, same review round: a systematic sweep of ~200 ordinary
+# software/doc nouns against the regenerated lexicon left exactly these
+# eight. They surfaced because the veto is `tokens.some(...)` — keeplisting
+# one half of a phrase is not protection, so `credentials: support matrix`
+# still fired on `matrix` after `support` was subtracted. Each pairs with an
+# already-keeplisted word in a realistic label: support matrix, content
+# scanner, guest account, standard user, session cookie, repo tree, data
+# models, star rating.
+cookie guest matrix models scanner standard star tree
+#
+# OPTION-B ADDENDUM (SMI-6441 Wave 2, after adversarial review round 3). The
+# veto predicate changed from `tokens.some(in lexicon)` to
+# `tokens.every(in lexicon)`, which closes the documentation false-positive
+# class STRUCTURALLY rather than by curation. That narrows this file's job:
+# it now only has to cover labels where BOTH words are common passwords, not
+# every label with one. Measured after the switch, 3 of ~50 realistic
+# two-word doc labels still had both tokens in the lexicon:
+#   help center | back office | free trial
+# One token from each pair is enough to break `every`, so only the clearest
+# documentation noun of each is subtracted here rather than both — under
+# `every` each entry costs strictly more detection than it did under `some`
+# (ANY keeplisted token in a pair now disables the veto, where previously
+# ALL of them had to be), so the bar for adding to this file is now HIGHER,
+# not lower. Do not bulk-add speculative vocabulary here.
+center office trial

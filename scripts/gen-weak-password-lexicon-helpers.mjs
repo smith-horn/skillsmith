@@ -18,7 +18,19 @@ export const REPO_ROOT = join(__dirname, '..')
 // Bumped BY HAND whenever the emitted entry set changes. Deliberately never
 // derived from the wall clock — a timestamp here would make --check and
 // byte-identity both break on every run regardless of content.
-export const LEXICON_VERSION = '2026-09-08.1'
+//
+// 2026-09-08.1 -> 2026-09-09.1 (SMI-6441 Wave 2, adversarial review round 2):
+// 4,079 -> 4,012 entries. The keeplist gained a software-engineering
+// vocabulary section after two independent reviewers found ordinary
+// documentation nouns (`security`, `command`, `cloud`, `scanner`, …) still in
+// the lexicon, where they vetoed benign two-token labels to HIGH and blocked
+// installs. NOTE FOR THE NEXT EDITOR: this bump is hand-maintained and is the
+// only signal that the emitted set moved — regenerating without bumping it
+// leaves a changed payload wearing an unchanged version, which is exactly the
+// silent drift the constant exists to make visible.
+// 2026-09-09.1 -> 2026-09-09.2 (Option B): veto predicate changed from
+// some() to every(); keeplist gained center/office/trial. 4,012 -> 4,009.
+export const LEXICON_VERSION = '2026-09-09.2'
 
 export const SHAPE_RE = /^[a-z]{3,19}$/
 export const ENCODING_UNSAFE_RE = /[`\\$]/

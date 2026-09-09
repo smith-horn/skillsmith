@@ -54,6 +54,9 @@
 
 import { describe, it, expect } from 'vitest'
 import { scanSkillContent, shouldQuarantine } from '../../indexer/_shared/security-scanner-edge.ts'
+import { scanSensitivePaths } from '../../indexer/_shared/security-scanner-edge.paths.ts'
+import { analyzeMarkdownContext } from '../../indexer/_shared/security-scanner-edge.context.ts'
+import { assignmentHasRealValue } from '../../indexer/_shared/security-scanner-edge.value-gate.ts'
 
 interface EdgeFinding {
   type: string
@@ -135,5 +138,147 @@ describe('core <-> edge (Node twin) behavioral parity — sensitive_path co-sign
     expect(r.riskScore, 'riskScore must land at exactly 13 (12.504 rounded)').toBe(13)
     expect(r.riskScore).toBeLessThan(40)
     expect(shouldQuarantine(r), 'must NOT quarantine').toBe(false)
+  })
+})
+
+/**
+ * SMI-6441 Wave 2 (Node twin) — the MF-4b weak-password veto. R-2 closed: the
+ * 2-token documentation-label carve-out no longer swallows a value where one
+ * token is a known common password
+ * (security-scanner-edge.weak-passwords.ts, a generated lexicon). Mirrors
+ * core's packages/core/tests/security/sensitive-path-adversarial-review.test.ts
+ * "SMI-6441 Wave 2" describe block byte-for-byte in fixture content, using
+ * this suite's own local severityOf() (built on this file's own imports of
+ * scanSensitivePaths/analyzeMarkdownContext, not by importing the sibling
+ * test file's helper) so the direct-scan-layer coverage exists in this file
+ * too, not just at the full-pipeline (scanSkillContent) layer above.
+ */
+describe('SMI-6441 Wave 2 (Node twin, action-context suite) — MF-4b weak-password veto', () => {
+  /** Highest sensitive_path severity on `content` ('none' when nothing fires). */
+  function severityOf(content: string): string {
+    const lines = content.split('\n')
+    const contexts = analyzeMarkdownContext(content)
+    const findings = scanSensitivePaths(lines, contexts).filter((f) => f.type === 'sensitive_path')
+    if (findings.length === 0) return 'none'
+    return findings.some((f) => f.severity === 'high') ? 'high' : findings[0].severity
+  }
+
+  describe('(a) must fire HIGH — R-2 closed', () => {
+    it.each([
+      ['two common passwords, no ambiguity', 'password: monkey dragon'],
+      ['non-word common password — highest-precision sub-case', 'password: qwerty ninja'],
+      ['different assignment key, same shape', 'secrets: letmein sunshine'],
+      ['third assignment key', 'credentials: dragon shadow'],
+      ['YAML next-line block form reaches the same rule', 'password:\n  monkey dragon'],
+      [
+        'segmentation: one prose segment + one credential segment (round-8 invariant holds under the veto)',
+        'credentials: rotation policy password: monkey dragon',
+      ],
+    ])('%s', (_label, content) => {
+      expect(severityOf(content)).toBe('high')
+    })
+  })
+
+  describe('(b) must NOT regress — MEDIUM keeplist (tokens confirmed absent from the lexicon)', () => {
+    it.each([
+      ['highest-risk new FP shape', 'credentials: access token'],
+      ["adjacent to allowlist entry 1's 1Password class", 'credentials: password manager'],
+      ['pins "key"/"management" absent from lexicon', 'secrets: key management'],
+      ['pins "rotation"/"schedule" absent from lexicon', 'secrets: rotation schedule'],
+      ['pins "master", a top-1000 password, absent from lexicon', 'credentials: master key'],
+      // This fixture has moved twice. SMI-5207 accepted it as the R-2
+      // residual (MEDIUM). An interim SMI-6441 draft using tokens.some(...)
+      // moved it to must-fire, since "horse" alone is a known common
+      // password. The final tokens.every(...) predicate returns it here — R-2
+      // is only PARTIALLY closed: pairing one common password with one
+      // ordinary word still clears to MEDIUM, because some() was found to
+      // reopen the SMI-5207 documentation false-positive class unboundedly.
+      [
+        'R-2 PARTIALLY closed by SMI-6441 — one common password + one ordinary word stays MEDIUM under the every() predicate',
+        'password: horse staple',
+      ],
+      // Regression guard for the exact FP class the every() predicate change
+      // was made to close — each of these fired HIGH under the interim
+      // some() predicate and must clear to MEDIUM under every().
+      ['every() FP-class guard', 'credentials: security policy'],
+      ['every() FP-class guard', 'credentials: command reference'],
+      ['every() FP-class guard', 'secrets: cloud provider'],
+      ['every() FP-class guard', 'credentials: help center'],
+      ['every() FP-class guard', 'credentials: active profile'],
+      ['every() FP-class guard', 'secrets: mobile app'],
+      ['every() FP-class guard', 'credentials: java client'],
+      ['every() FP-class guard', 'credentials: support matrix'],
+    ])('%s', (_label, content) => {
+      expect(severityOf(content)).toBe('medium')
+    })
+  })
+
+  describe('(c) residuals pinned so a future wave cannot silently change them', () => {
+    it('R-1 unchanged: single token stays HIGH', () => {
+      expect(severityOf('password: swordfish')).toBe('high')
+    })
+
+    it('R-1 unchanged: undecidable by construction', () => {
+      expect(severityOf('secret: cryptography')).toBe('high')
+    })
+
+    it('R-3 deliberately NOT closed — the veto does not extend to the stopword rule', () => {
+      expect(severityOf('password: the correct horse battery')).toBe('medium')
+    })
+
+    it('sentence path — proves the veto did not leak upward', () => {
+      expect(severityOf('password: never paste your password into chat')).toBe('medium')
+    })
+
+    // R-2's remaining half. SUBSTITUTION: the plan doc's own Step 3(c)
+    // literal ("velvet hammer") is wrong — both words ARE present in the
+    // generated lexicon (verified live), so it would wrongly fire HIGH under
+    // the veto. "lantern"/"trellis" are confirmed absent from both the
+    // lexicon and PROSE_STOPWORDS.
+    it('R-2 remaining half — two ordinary words, neither a common password (undecidable)', () => {
+      expect(severityOf('password: lantern trellis')).toBe('medium')
+    })
+
+    it('3 tokens -> carve-out never applies, unchanged by SMI-6441', () => {
+      expect(severityOf('password: lantern trellis orbit92')).toBe('high')
+    })
+  })
+
+  describe('(d) seam: options.weakPasswordVeto is a pure per-call parameter (P-5)', () => {
+    it('(d.1) correctness: veto:false reproduces the pre-6441 verdict for every (a) fixture', () => {
+      const fixtures: Array<string[]> = [
+        ['password: monkey dragon'],
+        ['password: qwerty ninja'],
+        ['secrets: letmein sunshine'],
+        ['credentials: dragon shadow'],
+        ['password:', '  monkey dragon'],
+        ['credentials: rotation policy password: monkey dragon'],
+      ]
+      for (const lines of fixtures) {
+        expect(assignmentHasRealValue(lines, 0, { weakPasswordVeto: false })).toBe(false)
+      }
+    })
+
+    // The P-5 audit claims options.weakPasswordVeto is a pure parameter and
+    // never module state, asserted in prose only. Alternates the option
+    // across calls on the SAME module instance — any module-level caching of
+    // the option (or a veto-conditioned derived value) makes one of these
+    // flip. The seam is byte-identical across all three substrates, so a leak
+    // introduced in this twin port must fail here too.
+    it('(d.2) no cross-call leakage — the option must not be sticky across alternating calls', () => {
+      const lines = ['password: monkey dragon']
+      expect(assignmentHasRealValue(lines, 0, { weakPasswordVeto: false })).toBe(false) // pre-6441
+      expect(assignmentHasRealValue(lines, 0)).toBe(true) // default: veto on
+      expect(assignmentHasRealValue(lines, 0, { weakPasswordVeto: false })).toBe(false) // must NOT be sticky
+      expect(assignmentHasRealValue(lines, 0, { weakPasswordVeto: true })).toBe(true)
+      expect(assignmentHasRealValue(lines, 0)).toBe(true)
+
+      const mediumLines = ['credentials: rotation policy']
+      expect(assignmentHasRealValue(mediumLines, 0, { weakPasswordVeto: false })).toBe(false)
+      expect(assignmentHasRealValue(mediumLines, 0)).toBe(false)
+      expect(assignmentHasRealValue(mediumLines, 0, { weakPasswordVeto: false })).toBe(false)
+      expect(assignmentHasRealValue(mediumLines, 0, { weakPasswordVeto: true })).toBe(false)
+      expect(assignmentHasRealValue(mediumLines, 0)).toBe(false)
+    })
   })
 })
