@@ -4,6 +4,9 @@ All notable changes to `@skillsmith/mcp-server` are documented here.
 
 ## [Unreleased]
 
+## v0.7.14
+
+- **Fix**: SMI-5207 -- sensitive_path action-context gating (Wave 1) (#2760)
 - **Fixed**: SMI-6472 -- `skill_validate` now enforces two additional Agent Skills
   spec requirements that were previously silently accepted. (1) Frontmatter `name` must match
   the canonical slug format (lowercase letters, digits, and hyphens, starting with a lowercase

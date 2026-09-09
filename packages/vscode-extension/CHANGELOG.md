@@ -6,6 +6,8 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/), and this
 
 ## [Unreleased]
 
+## v0.7.10
+
 - **Chore**: SMI-6472 -- `src/utils/skillNameValidation.ts`'s auto-generated header now tracks `packages/core/src/utils/skill-name.ts` as its source instead of `packages/cli/src/utils/skill-name.ts` (`scripts/sync-skill-name-validation.mjs` retargeted, not retired -- retiring it would give the extension a `@skillsmith/core` runtime dependency and trip ADR-113's explicit trip-wire). No functional change: `VALID_SKILL_NAME_RE`/`validateSkillName`'s exported content is byte-identical, only the source-of-truth comment changed.
 
 ## v0.7.9

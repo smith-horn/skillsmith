@@ -4,6 +4,10 @@ All notable changes to `@smith-horn/enterprise` are documented here.
 
 ## [Unreleased]
 
+## v0.3.10
+
+- **Cadence**: Mechanical cadence alignment (no changes since v0.3.9).
+
 ## v0.3.9
 
 - **Chore**: bump stripe from 20.2.0 to 22.6.1 (#2661)
