@@ -123,6 +123,100 @@ describe('checkpoint I/O', () => {
   })
 
   // -------------------------------------------------------------------------
+  // SMI-6481 (GPT-5.6-Sol cross-model pre-merge gate, 2026-09-09): the scored
+  // fields must be TYPE-validated at load, not just presence-checked
+  // downstream. The coherence guards test presence with `!== undefined` and
+  // then read the quarantine booleans through truthiness — so a hand-edited
+  // `bundle_absent` row carrying `null` (or two equal strings) in the
+  // quarantine pair satisfies both the pair-presence check and
+  // `expectedVerdictDeltaOutcome`, and a poisoned checkpoint loads clean.
+  // The gate-report loader (`validateRow`, `smi5879-gate-check.io.ts`)
+  // already did this; checkpoint load was the asymmetric hole.
+  // -------------------------------------------------------------------------
+
+  function checkpointWithRowFields(extra: Record<string, unknown>): Record<string, unknown> {
+    return {
+      run_id: 'run-1',
+      purpose: 'decision',
+      baseline_commit: 'abc123',
+      token_source: 'pat',
+      cohorts: ['C1', 'C2', 'C3', 'C4'],
+      clean_shutdown: true,
+      row_results: {
+        'row-1': {
+          id: 'row-1',
+          cohort: 'C2',
+          author: null,
+          name: null,
+          outcome: 'bundle_absent',
+          ...extra,
+        },
+      },
+      sweep: { pass: 0, residual_history: [], non_decrease_streak: 0, hard_stopped: null },
+      started_at: new Date().toISOString(),
+      updated_at: new Date().toISOString(),
+    }
+  }
+
+  it.each([
+    [
+      'null quarantine pair (the truthiness-bypass shape)',
+      { prePortQuarantine: null, postPortQuarantine: null },
+      /prePortQuarantine=null/,
+    ],
+    [
+      'string quarantine values',
+      { prePortQuarantine: 'true', postPortQuarantine: 'false' },
+      /prePortQuarantine=true \(must be a boolean/,
+    ],
+    [
+      'numeric quarantine values',
+      { prePortQuarantine: 1, postPortQuarantine: 0 },
+      /prePortQuarantine=1 \(must be a boolean/,
+    ],
+  ])('readCheckpoint rejects a row with %s', (_label, extra, pattern) => {
+    const path = join(dir, 'bad-quarantine.json')
+    writeFileSync(path, JSON.stringify(checkpointWithRowFields(extra)))
+    expect(() => readCheckpoint(path)).toThrow(pattern)
+  })
+
+  it('readCheckpoint rejects a row whose risk scores are not finite numbers', () => {
+    const path = join(dir, 'bad-score.json')
+    writeFileSync(
+      path,
+      JSON.stringify(
+        checkpointWithRowFields({
+          prePortQuarantine: true,
+          postPortQuarantine: false,
+          prePortRiskScore: 'forty',
+          postPortRiskScore: null,
+        })
+      )
+    )
+    expect(() => readCheckpoint(path)).toThrow(/prePortRiskScore=forty \(must be a finite number/)
+  })
+
+  it('readCheckpoint still accepts a row whose scored fields are absent or correctly typed', () => {
+    const path = join(dir, 'good-scored.json')
+    writeFileSync(
+      path,
+      JSON.stringify(
+        checkpointWithRowFields({
+          prePortQuarantine: true,
+          postPortQuarantine: true,
+          prePortRiskScore: 40,
+          postPortRiskScore: 41,
+        })
+      )
+    )
+    expect(() => readCheckpoint(path)).not.toThrow()
+
+    const bare = join(dir, 'good-bare.json')
+    writeFileSync(bare, JSON.stringify(checkpointWithRowFields({})))
+    expect(() => readCheckpoint(bare)).not.toThrow()
+  })
+
+  // -------------------------------------------------------------------------
   // SMI-6015 Wave 1: `cohorts` is a new required field — shape validation
   // must reject a missing/empty/invalid value, not silently accept it.
   // -------------------------------------------------------------------------

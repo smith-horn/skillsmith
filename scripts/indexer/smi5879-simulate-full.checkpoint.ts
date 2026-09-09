@@ -193,6 +193,32 @@ function assertValidCheckpointShape(
       if (!isValidSimRowOutcome(outcome)) {
         errors.push(`row_results.${id}.outcome=${String(outcome)}`)
       }
+      // SMI-6481 (GPT-5.6-Sol cross-model gate, 2026-09-09): TYPE-check the
+      // scored fields here — presence alone is fail-OPEN. The coherence
+      // guards (`smi5879-merge-shards.outcome-coherence.ts`) test presence
+      // with `!== undefined` then read the quarantine pair through
+      // truthiness, so a hand-edited `bundle_absent` row carrying
+      // `null`/`null` (or two equal strings) satisfies both the pair-presence
+      // check and `expectedVerdictDeltaOutcome` and loads clean — defeating
+      // the refusal that exists to reject tampered checkpoints. The
+      // gate-report loader already validates exactly this (`validateRow`,
+      // `smi5879-gate-check.io.ts`); checkpoint load was the asymmetric hole.
+      // `Number.isFinite`, not `typeof === 'number'`, so a NaN/Infinity from
+      // a non-`JSON.parse` writer can't pass either.
+      for (const field of ['prePortQuarantine', 'postPortQuarantine'] as const) {
+        const v = rawResult[field]
+        if (v !== undefined && typeof v !== 'boolean') {
+          errors.push(`row_results.${id}.${field}=${String(v)} (must be a boolean when present)`)
+        }
+      }
+      for (const field of ['prePortRiskScore', 'postPortRiskScore'] as const) {
+        const v = rawResult[field]
+        if (v !== undefined && !Number.isFinite(v)) {
+          errors.push(
+            `row_results.${id}.${field}=${String(v)} (must be a finite number when present)`
+          )
+        }
+      }
     }
   }
 
