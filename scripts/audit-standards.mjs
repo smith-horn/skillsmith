@@ -5952,25 +5952,21 @@ console.log(
 // copy is compared only when git-crypt is unlocked, with the partial
 // coverage stated explicitly in the pass message rather than silently
 // treated as a full pass (per the plan's L3 requirement).
-console.log(`\n${BOLD}Check 67: weak-password lexicon freshness (SMI-6441 L3)${RESET}`)
-try {
-  const weakPasswordInputs = loadWeakPasswordLexiconInputs()
-  const { rendered: weakPasswordRendered } = generateWeakPasswordLexicon(weakPasswordInputs)
-  const denoOutput = weakPasswordRendered.find((r) => r.label === 'deno-edge')
-  const denoLocked = denoOutput ? isGitCryptEncrypted(denoOutput.path) : false
-  // CodeQL (js/clear-text-logging) flags this block: its taint tracking is
-  // object-level, not field-sensitive, and `weakPasswordRendered` entries
-  // carry a `text` field holding the actual rendered lexicon payload (real
-  // wordlist content) alongside the harmless `label`/`status` metadata this
-  // check actually logs. A rename alone doesn't fix it — CodeQL just walks
-  // back to the next tainted-named variable in the chain. The real fix:
-  // drop `text` immediately, before any further processing, so nothing
-  // downstream is even structurally connected to the sensitive field.
-  const lexiconFreshnessStatuses = detectWeakPasswordLexiconDrift(weakPasswordRendered).map(
-    ({ label, status }) => ({ label, status })
-  )
-
-  const genuineFailures = lexiconFreshnessStatuses.filter(
+/**
+ * Report Check 67's verdict. Deliberately isolated in its own function so
+ * the ONLY things in scope are already-stripped `{label, status}` pairs and
+ * a boolean — never the full rendered-module objects (which carry the
+ * actual lexicon payload as a `text` field). CodeQL's js/clear-text-logging
+ * query flagged this block twice already despite the caller renaming its
+ * variable and stripping the sensitive field with `.map()` — its taint
+ * tracking appears to treat any log call reachable in the SAME function
+ * scope as a call site that touched a password-named value as suspect,
+ * regardless of the actual transformation in between. Full scope
+ * separation (this function receives no reference to, and cannot reach,
+ * the sensitive `text` field at all) is the structural fix.
+ */
+function reportWeakPasswordLexiconFreshness(statuses, denoLocked) {
+  const genuineFailures = statuses.filter(
     (s) => s.status !== 'fresh' && !(s.label === 'deno-edge' && denoLocked)
   )
 
@@ -5994,6 +5990,18 @@ try {
         '`git-crypt status supabase/functions/_shared/security-scanner-edge.weak-passwords.ts`.'
     )
   }
+}
+
+console.log(`\n${BOLD}Check 67: weak-password lexicon freshness (SMI-6441 L3)${RESET}`)
+try {
+  const weakPasswordInputs = loadWeakPasswordLexiconInputs()
+  const { rendered: weakPasswordRendered } = generateWeakPasswordLexicon(weakPasswordInputs)
+  const denoOutput = weakPasswordRendered.find((r) => r.label === 'deno-edge')
+  const denoLocked = denoOutput ? isGitCryptEncrypted(denoOutput.path) : false
+  const freshnessStatuses = detectWeakPasswordLexiconDrift(weakPasswordRendered).map(
+    ({ label, status }) => ({ label, status })
+  )
+  reportWeakPasswordLexiconFreshness(freshnessStatuses, denoLocked)
 } catch (err) {
   fail(
     `Check 67: weak-password lexicon generator failed: ${err.message}`,
