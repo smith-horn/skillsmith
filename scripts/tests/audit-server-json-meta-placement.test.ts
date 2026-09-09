@@ -20,9 +20,14 @@ const helpers = (await import('../audit-standards-helpers.mjs')) as {
   findServerJsonMetaPlacementViolations: (
     serverJson: Record<string, unknown> | null | undefined
   ) => Array<{ key: string }>
+  escapeMetaKeyForMessage: (key: string) => string
 }
 
-const { MCP_REGISTRY_RESERVED_META_KEY, findServerJsonMetaPlacementViolations } = helpers
+const {
+  MCP_REGISTRY_RESERVED_META_KEY,
+  findServerJsonMetaPlacementViolations,
+  escapeMetaKeyForMessage,
+} = helpers
 
 describe('findServerJsonMetaPlacementViolations', () => {
   it('(1) flags the pre-fix shape — custom keys at top level of _meta', () => {
@@ -101,5 +106,35 @@ describe('findServerJsonMetaPlacementViolations', () => {
     expect(MCP_REGISTRY_RESERVED_META_KEY).toBe(
       'io.modelcontextprotocol.registry/publisher-provided'
     )
+  })
+})
+
+describe('escapeMetaKeyForMessage', () => {
+  it('escapes a lone single quote', () => {
+    expect(escapeMetaKeyForMessage("io.skillsmith/it's-fine")).toBe("io.skillsmith/it\\'s-fine")
+  })
+
+  it('escapes a lone backslash', () => {
+    expect(escapeMetaKeyForMessage('io.skillsmith\\key')).toBe('io.skillsmith\\\\key')
+  })
+
+  it('escapes backslash-then-quote unambiguously (the CodeQL incomplete-sanitization finding, PR #2783)', () => {
+    // A quote-only escape would turn `\'` into `\\'` — indistinguishable from
+    // an escaped backslash followed by an UNescaped quote. Escaping the
+    // backslash first disambiguates: `\'` -> `\\` -> `\\'` -> (quote step)
+    // -> `\\\'`, which is an escaped backslash followed by an escaped quote.
+    const key = "foo\\'bar"
+    expect(escapeMetaKeyForMessage(key)).toBe("foo\\\\\\'bar")
+  })
+
+  it('leaves a key with no special characters unchanged', () => {
+    expect(escapeMetaKeyForMessage('io.skillsmith/categories')).toBe('io.skillsmith/categories')
+  })
+
+  it('round-trip: the escaped form, once un-escaped in the same order reversed, recovers the original', () => {
+    const original = "weird\\'key\\with\\backslashes'and'quotes"
+    const escaped = escapeMetaKeyForMessage(original)
+    const unescaped = escaped.replace(/\\'/g, "'").replace(/\\\\/g, '\\')
+    expect(unescaped).toBe(original)
   })
 })

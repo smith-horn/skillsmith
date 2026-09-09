@@ -40,6 +40,7 @@ import {
   auditSecdefAnonGrants,
   findServerJsonFieldLengthViolations,
   findServerJsonMetaPlacementViolations,
+  escapeMetaKeyForMessage,
   MCP_REGISTRY_RESERVED_META_KEY,
   countUnreleasedEntries,
   findUnreleasedHeadingLines,
@@ -5965,7 +5966,7 @@ console.log(`\n${BOLD}Check 68: MCP registry server.json _meta placement${RESET}
           fail(
             `Check 68: ${SERVER_JSON_PATH}: _meta key '${v.key}' is not nested under the reserved ` +
               `'${MCP_REGISTRY_RESERVED_META_KEY}' key and will be silently dropped by the registry`,
-            `Move ${SERVER_JSON_PATH}'s _meta.${v.key.replace(/'/g, "\\'")} to be nested under ` +
+            `Move ${SERVER_JSON_PATH}'s _meta.${escapeMetaKeyForMessage(v.key)} to be nested under ` +
               `_meta['${MCP_REGISTRY_RESERVED_META_KEY}'] — see the registry schema at ` +
               'https://static.modelcontextprotocol.io/schemas/2025-12-11/server.schema.json'
           )

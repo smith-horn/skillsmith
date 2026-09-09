@@ -1949,6 +1949,23 @@ export function findServerJsonMetaPlacementViolations(serverJson) {
   return violations
 }
 
+/**
+ * Escape a `_meta` key for interpolation into Check 68's single-quoted
+ * remediation message. Must escape backslashes BEFORE single quotes — doing
+ * quotes only (as an earlier version of this function did) is an incomplete
+ * escape: a key containing a literal backslash immediately before a quote
+ * produces output ambiguous with an escaped quote (CodeQL
+ * js/incomplete-sanitization, PR #2783 review). Same backslash-first
+ * ordering as this repo's SQLite LIKE-escaping convention.
+ *
+ * @param {string} key  Raw `_meta` key from server.json.
+ * @returns {string}  Key with `\` and `'` escaped, safe to interpolate into
+ *   a single-quoted diagnostic message.
+ */
+export function escapeMetaKeyForMessage(key) {
+  return key.replace(/\\/g, '\\\\').replace(/'/g, "\\'")
+}
+
 // -----------------------------------------------------------------------------
 // Check 54 helpers — SMI-5680: CHANGELOG entry gate.
 //
