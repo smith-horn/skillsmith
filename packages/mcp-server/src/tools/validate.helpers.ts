@@ -3,7 +3,8 @@
  * @module @skillsmith/mcp-server/tools/validate.helpers
  */
 
-import { extractMcpReferences, getRegisteredMcpServers } from '@skillsmith/core'
+import { basename, dirname, resolve } from 'path'
+import { extractMcpReferences, getRegisteredMcpServers, validateSkillName } from '@skillsmith/core'
 import type { ValidationError } from './validate.types.js'
 import { FIELD_LIMITS, SSRF_PATTERNS, PATH_TRAVERSAL_PATTERNS } from './validate.types.js'
 import { KNOWN_IDES, KNOWN_LLMS } from '../utils/validation.js'
@@ -155,6 +156,18 @@ export function validateMetadata(
       message: `Field "name" exceeds maximum length of ${FIELD_LIMITS.name} characters`,
       severity: 'error',
     })
+  } else {
+    // SMI-6472: Agent Skills spec name format (lowercase letters,
+    // digits, hyphens; must start with a lowercase letter). Call once and
+    // reuse the result to avoid re-running the regex.
+    const nameFormatResult = validateSkillName(metadata.name)
+    if (nameFormatResult !== true) {
+      errors.push({
+        field: 'name',
+        message: nameFormatResult,
+        severity: 'error',
+      })
+    }
   }
 
   // Description validation
@@ -426,4 +439,59 @@ export function validateDependencies(
   }
 
   return errors
+}
+
+/**
+ * SMI-6472: Validate that a skill's frontmatter `name` matches its
+ * enclosing directory, per the Agent Skills spec.
+ *
+ * `skillPath` is the tool's original `skill_path` input, not the resolved
+ * `SKILL.md` file path. In both accepted input shapes the enclosing
+ * directory IS the skill directory:
+ *   - `isDirectory === true`: `skillPath` already points at the skill
+ *     directory, so compare against `basename(skillPath)`.
+ *   - `isDirectory === false`: `skillPath` points directly at a
+ *     `.../my-skill/SKILL.md` file, so compare against
+ *     `basename(dirname(skillPath))`.
+ *
+ * Returns no errors when `name` is missing or not a string — validateMetadata
+ * already reports that case, and double-reporting would be noise.
+ */
+export function validateNameMatchesDirectory(
+  name: unknown,
+  skillPath: string,
+  isDirectory: boolean
+): ValidationError[] {
+  if (typeof name !== 'string') {
+    return []
+  }
+
+  // SMI-6472 (cross-model pre-merge review): resolve() BEFORE deriving the
+  // enclosing directory. Without it a relative input degrades to '.' —
+  // `basename(dirname('SKILL.md'))` and `basename('.')` both return '.',
+  // which can never equal a valid skill name, so a perfectly valid skill
+  // validated by a relative path (e.g. `skill_path: './SKILL.md'` from
+  // inside its own directory) was rejected outright. resolve() is
+  // deliberately lexical, not realpath: a symlinked skill directory is
+  // compared by the name the caller actually used, not by the link target,
+  // so validating through a symlink named after the skill still passes.
+  const absoluteSkillPath = resolve(skillPath)
+  const actualDirName = isDirectory
+    ? basename(absoluteSkillPath)
+    : basename(dirname(absoluteSkillPath))
+
+  if (name !== actualDirName) {
+    return [
+      {
+        field: 'name',
+        message:
+          `Frontmatter "name" ("${name}") does not match the skill's directory name ` +
+          `("${actualDirName}"). Per the Agent Skills spec, a skill's name must match ` +
+          'the name of its containing directory.',
+        severity: 'error',
+      },
+    ]
+  }
+
+  return []
 }

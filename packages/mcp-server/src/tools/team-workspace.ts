@@ -104,6 +104,8 @@ export interface ShareSkillResult {
 export const teamWorkspaceToolSchema = {
   name: 'team_workspace',
   description: 'Manage team workspaces (create, list, get, delete). Requires Team tier license.',
+  title: 'Manage Team Workspace',
+  annotations: { readOnlyHint: false, destructiveHint: true },
   inputSchema: {
     type: 'object' as const,
     properties: {
@@ -132,6 +134,8 @@ export const teamWorkspaceToolSchema = {
 export const shareSkillToolSchema = {
   name: 'share_skill',
   description: 'Add, remove, or list skills in a team workspace. Requires Team tier license.',
+  title: 'Share Skill with Team',
+  annotations: { readOnlyHint: false, destructiveHint: false },
   inputSchema: {
     type: 'object' as const,
     properties: {

@@ -91,6 +91,8 @@ export const compareToolSchema = {
   name: 'skill_compare',
   description:
     "[Skillsmith — Evaluate stage] Compare two Skillsmith-registry skills side-by-side. Use when the user wants to compare/contrast/decide-between two specific skills — e.g. 'compare getsentry/commit and microsoft/playwright-cli', 'which is better, X or Y', 'what's the difference between these two skills'. Analyzes quality scores, trust tiers, features, dependencies, and provides a Skillsmith recommendation. Skillsmith is a registry for sharing, scanning, and tracking agent skills across any MCP-capable runtime.",
+  title: 'Compare Skills',
+  annotations: { readOnlyHint: true, destructiveHint: false },
   inputSchema: {
     type: 'object' as const,
     properties: {

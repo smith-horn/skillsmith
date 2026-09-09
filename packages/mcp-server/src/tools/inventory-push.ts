@@ -40,6 +40,8 @@ export const inventoryPushToolSchema = {
   name: 'inventory_push',
   description:
     "[Skillsmith — Sync stage] Push this machine's installed-skill inventory to your Skillsmith account so it appears on the web dashboard. Read-only monitoring — no local skill files are modified. Requires `skillsmith login`; respects the local SKILLSMITH_INVENTORY_DISABLE flag and your account's server-side consent setting.",
+  title: 'Push Skill Inventory',
+  annotations: { readOnlyHint: false, destructiveHint: false },
   inputSchema: {
     type: 'object' as const,
     properties: {} as Record<string, never>,

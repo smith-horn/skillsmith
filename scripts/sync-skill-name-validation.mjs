@@ -1,9 +1,9 @@
 #!/usr/bin/env node
 /**
  * Regenerate packages/vscode-extension/src/utils/skillNameValidation.ts
- * from packages/cli/src/utils/skill-name.ts (SMI-4194).
+ * from packages/core/src/utils/skill-name.ts (SMI-4194).
  *
- * The VS Code extension cannot import @skillsmith/cli per ADR-113 (extension
+ * The VS Code extension cannot import @skillsmith/core per ADR-113 (extension
  * is self-contained, esbuild-bundled, no workspace deps). This codegen copies
  * the validator verbatim into the extension and lets audit:standards detect
  * drift if the source changes without regeneration.
@@ -18,14 +18,14 @@ import { fileURLToPath } from 'node:url'
 
 const here = dirname(fileURLToPath(import.meta.url))
 const repoRoot = resolve(here, '..')
-const SOURCE = resolve(repoRoot, 'packages/cli/src/utils/skill-name.ts')
+const SOURCE = resolve(repoRoot, 'packages/core/src/utils/skill-name.ts')
 const TARGET = resolve(repoRoot, 'packages/vscode-extension/src/utils/skillNameValidation.ts')
 
-const HEADER = `// AUTO-GENERATED from packages/cli/src/utils/skill-name.ts (SMI-4194).
+const HEADER = `// AUTO-GENERATED from packages/core/src/utils/skill-name.ts (SMI-4194).
 // DO NOT EDIT BY HAND. Regenerate with:
 //   node scripts/sync-skill-name-validation.mjs
-// audit:standards enforces drift between this copy and the CLI source.
-// The VS Code extension cannot import @skillsmith/cli per ADR-113; this
+// audit:standards enforces drift between this copy and the core source.
+// The VS Code extension cannot import @skillsmith/core per ADR-113; this
 // codegen preserves parity without creating a runtime dependency.
 `
 
@@ -36,8 +36,8 @@ function extract(source) {
   )
   if (!reMatch || !fnMatch) {
     throw new Error(
-      'Could not locate VALID_SKILL_NAME_RE or validateSkillName in CLI source. ' +
-        'If the CLI source was refactored, update this codegen script.'
+      'Could not locate VALID_SKILL_NAME_RE or validateSkillName in core source. ' +
+        'If the core source was refactored, update this codegen script.'
     )
   }
   return `${HEADER}\n${reMatch[0]}\n\n${fnMatch[0]}\n`
@@ -56,7 +56,7 @@ if (checkMode) {
     )
     process.exit(1)
   }
-  console.log(`✓ skillNameValidation.ts is in sync with CLI source.`)
+  console.log(`✓ skillNameValidation.ts is in sync with core source.`)
   process.exit(0)
 }
 

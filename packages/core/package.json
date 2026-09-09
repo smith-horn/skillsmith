@@ -16,6 +16,11 @@
       "import": "./dist/src/errors.js",
       "default": "./dist/src/errors.js"
     },
+    "./utils/skill-name": {
+      "types": "./dist/src/utils/skill-name.d.ts",
+      "import": "./dist/src/utils/skill-name.js",
+      "default": "./dist/src/utils/skill-name.js"
+    },
     "./embeddings": {
       "types": "./dist/src/embeddings/index.d.ts",
       "import": "./dist/src/embeddings/index.js",

@@ -15,6 +15,8 @@ export const searchToolSchema = {
   name: 'search',
   description:
     "[Skillsmith — Discover stage] Search the Skillsmith registry of agent skills (SKILL.md format) — curated, security-scanned, trust-scored skills indexed daily from GitHub. Skillsmith is a registry for sharing, scanning, and tracking agent skills across any MCP-capable runtime. Use this tool for ANY user request to find/search/discover/list skills — e.g. 'search for testing skills', 'find git workflow skills', 'show me devops skills with quality above 80'. Returns ranked installable skills with trust badges, NOT general programming guidance. Results are installable-only by default (pass installable_only:false to also include discovery-only entries that cannot be installed). Filters: query (required), category, trust_tier (verified/curated/community/experimental), min_score, max_risk, safe_only, installable_only, limit, compatibility (IDE/LLM). Matching is keyword-based, not semantic — use a short single-topic query; on empty results, check the response suggestion field for what to try next.",
+  title: 'Search Skills',
+  annotations: { readOnlyHint: true, destructiveHint: false },
   inputSchema: {
     type: 'object' as const,
     properties: {
@@ -96,5 +98,80 @@ export const searchToolSchema = {
       },
     },
     required: [], // Query is optional if filters are provided
+  },
+  // SMI-6472 Wave 3: derived from `SearchResponse` (packages/core/src/types.ts)
+  // and `SkillSearchResult`/`SearchFilters`/`SecuritySummary`/`CompatibilityFilter`
+  // in that same file — see executeSearch's return statements in search.ts for
+  // the two paths (API-first, local-fallback) that both build this exact shape.
+  // Only fields non-optional on `SearchResponse` are `required` here; every
+  // other field mirrors the interface's own optionality.
+  outputSchema: {
+    type: 'object' as const,
+    properties: {
+      results: {
+        type: 'array',
+        items: {
+          type: 'object',
+          properties: {
+            id: { type: 'string' },
+            name: { type: 'string' },
+            description: { type: 'string' },
+            author: { type: 'string' },
+            category: { type: 'string' },
+            trustTier: { type: 'string' },
+            score: { type: 'number' },
+            repository: { type: 'string' },
+            installable: { type: 'boolean' },
+            security: {
+              type: 'object',
+              properties: {
+                passed: { type: ['boolean', 'null'] },
+                riskScore: { type: ['number', 'null'] },
+                findingsCount: { type: 'number' },
+                scannedAt: { type: ['string', 'null'] },
+                scanCoverageIncomplete: { type: 'boolean' },
+                scanCoverageNote: { type: ['string', 'null'] },
+              },
+            },
+            source: { type: 'string', enum: ['local', 'registry'] },
+            installHint: { type: 'string' },
+            compatibility: { type: 'array', items: { type: 'string' } },
+            license: { type: ['string', 'null'] },
+          },
+          required: ['id', 'name', 'description', 'author', 'category', 'trustTier', 'score'],
+        },
+      },
+      total: { type: 'number' },
+      query: { type: 'string' },
+      filters: {
+        type: 'object',
+        properties: {
+          category: { type: 'string' },
+          trustTier: { type: 'string' },
+          minScore: { type: 'number' },
+          safeOnly: { type: 'boolean' },
+          maxRiskScore: { type: 'number' },
+          compatibleWith: {
+            type: 'object',
+            properties: {
+              ides: { type: 'array', items: { type: 'string' } },
+              llms: { type: 'array', items: { type: 'string' } },
+            },
+          },
+        },
+      },
+      compatibilityDeprioritized: { type: 'number' },
+      discoveryOnlyHidden: { type: 'number' },
+      suggestion: { type: 'string' },
+      timing: {
+        type: 'object',
+        properties: {
+          searchMs: { type: 'number' },
+          totalMs: { type: 'number' },
+        },
+        required: ['searchMs', 'totalMs'],
+      },
+    },
+    required: ['results', 'total', 'query', 'filters', 'timing'],
   },
 }

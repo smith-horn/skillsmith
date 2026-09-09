@@ -72,7 +72,12 @@ tags:
 
 This is a test skill.
 `
-      const filePath = join(testDir, 'SKILL.md')
+      // SMI-6472: frontmatter `name` must match the containing
+      // directory per the Agent Skills spec, so the file lives under a
+      // 'test-skill' subdirectory rather than directly in testDir.
+      const skillDir = join(testDir, 'test-skill')
+      await fs.mkdir(skillDir, { recursive: true })
+      const filePath = join(skillDir, 'SKILL.md')
       await fs.writeFile(filePath, skillContent)
 
       const result = await executeValidate({ skill_path: filePath })
@@ -93,12 +98,16 @@ description: Skill in directory
 version: 1.0.0
 ---
 `
-      await fs.writeFile(join(testDir, 'SKILL.md'), skillContent)
+      // SMI-6472: frontmatter `name` must match the containing
+      // directory, so use a 'dir-skill' subdirectory as skill_path.
+      const skillDir = join(testDir, 'dir-skill')
+      await fs.mkdir(skillDir, { recursive: true })
+      await fs.writeFile(join(skillDir, 'SKILL.md'), skillContent)
 
-      const result = await executeValidate({ skill_path: testDir })
+      const result = await executeValidate({ skill_path: skillDir })
 
       expect(result.valid).toBe(true)
-      expect(result.path).toBe(join(testDir, 'SKILL.md'))
+      expect(result.path).toBe(join(skillDir, 'SKILL.md'))
       expect(result.metadata?.name).toBe('dir-skill')
     })
 
@@ -125,7 +134,11 @@ name: no-description-skill
 version: 1.0.0
 ---
 `
-      const filePath = join(testDir, 'SKILL.md')
+      // SMI-6472: frontmatter `name` must match the containing
+      // directory per the Agent Skills spec.
+      const skillDir = join(testDir, 'no-description-skill')
+      await fs.mkdir(skillDir, { recursive: true })
+      const filePath = join(skillDir, 'SKILL.md')
       await fs.writeFile(filePath, skillContent)
 
       const result = await executeValidate({ skill_path: filePath, strict: false })
@@ -350,7 +363,11 @@ version: 1.0.0
 tags: [testing, formatting]
 ---
 `
-      const filePath = join(testDir, 'SKILL.md')
+      // SMI-6472: frontmatter `name` must match the containing
+      // directory per the Agent Skills spec.
+      const skillDir = join(testDir, 'format-test-skill')
+      await fs.mkdir(skillDir, { recursive: true })
+      const filePath = join(skillDir, 'SKILL.md')
       await fs.writeFile(filePath, skillContent)
 
       const result = await executeValidate({ skill_path: filePath })

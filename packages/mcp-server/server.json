@@ -10,8 +10,10 @@
   },
   "version": "0.7.13",
   "_meta": {
-    "io.skillsmith/categories": ["developer-tools", "ai-agents", "skill-management"],
-    "io.skillsmith/keywords": ["claude-code", "agent-skills", "autonomous-agents", "openclaw"]
+    "io.modelcontextprotocol.registry/publisher-provided": {
+      "io.skillsmith/categories": ["developer-tools", "ai-agents", "skill-management"],
+      "io.skillsmith/keywords": ["claude-code", "agent-skills", "autonomous-agents", "openclaw"]
+    }
   },
   "packages": [
     {

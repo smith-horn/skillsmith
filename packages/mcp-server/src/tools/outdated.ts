@@ -153,6 +153,8 @@ export const outdatedToolSchema = {
     'Check installed skills for available updates and dependency satisfaction status. ' +
     'Reads the local manifest, hashes each installed SKILL.md, and compares against the ' +
     'latest registry state. Community tier — no license required.',
+  title: 'Check Outdated Skills',
+  annotations: { readOnlyHint: true, destructiveHint: false },
   inputSchema: {
     type: 'object' as const,
     properties: {

@@ -88,6 +88,8 @@ export const skillAuditToolSchema = {
     'Requires Team tier or higher (skill_security_audit feature). ' +
     'The advisory system is in early access — the Skillsmith team publishes advisories ' +
     'as security issues are identified. Run `skillsmith sync` to fetch the latest advisories.',
+  title: 'Audit Skill Security Advisories',
+  annotations: { readOnlyHint: true, destructiveHint: false },
   inputSchema: {
     type: 'object' as const,
     properties: {

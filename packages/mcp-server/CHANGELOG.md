@@ -4,6 +4,33 @@ All notable changes to `@skillsmith/mcp-server` are documented here.
 
 ## [Unreleased]
 
+- **Fixed**: SMI-6472 -- `skill_validate` now enforces two additional Agent Skills
+  spec requirements that were previously silently accepted. (1) Frontmatter `name` must match
+  the canonical slug format (lowercase letters, digits, and hyphens, starting with a lowercase
+  letter) — reuses the same `validateSkillName` the CLI's `create`/`author init` commands already
+  enforce, relocated to `@skillsmith/core` as the canonical source (`packages/cli/src/utils/skill-name.ts`
+  is now a re-export). (2) Frontmatter `name` must match the skill's enclosing directory name, for
+  both a direct skill-directory `skill_path` and a direct `.../my-skill/SKILL.md` file path. Both
+  checks report as `field: 'name'`, `severity: 'error'`.
+- **Fixed**: SMI-6472 Wave 2 -- every MCP tool schema (all 43) now declares a top-level
+  `title` and an `annotations: { readOnlyHint, destructiveHint }` object per the MCP spec, and
+  `src/index.ts`'s `ListToolsRequestSchema` handler now reads and re-emits both fields onto the
+  wire response. Previously that handler mapped every tool to `{ name, description, inputSchema }`
+  only, so a field added to a tool's schema constant was silently invisible to MCP clients unless
+  the handler was also updated — a hazard covered going forward by a new wire-level integration
+  test (`tests/integration/tools-list-annotations.integration.test.ts`) that spawns the real built
+  server and asserts on the live `tools/list` response rather than the exported schema constants.
+- **Fixed**: SMI-6472 Wave 3 -- `search`, `get_skill`, and `skill_validate` now declare an MCP
+  `outputSchema` (derived from each tool's own response type) and return `structuredContent`
+  alongside the existing text block, per the MCP spec. `src/index.ts`'s `ListToolsRequestSchema`
+  handler now reads and re-emits `outputSchema` the same way as `title`/`annotations`, and the
+  shared `ok()` response wrapper (`middleware/license.gate.ts`) gained an opt-in second parameter
+  (`{ structuredContent: true }`) so the ~40 other tools that declare no `outputSchema` keep their
+  exact existing wire shape. Covered by a new wire-level integration test alongside
+  `tools-list-annotations.integration.test.ts` that spawns the real built server, calls each of the
+  three tools through a genuine SDK `Client`, and relies on the client's own automatic
+  `structuredContent`-vs-`outputSchema` validation as the conformance check.
+
 ## v0.7.13
 
 - **Feature**: SMI-6343 Wave 4 -- apply_manifest_reconcile tool (#2715)
