@@ -4,6 +4,8 @@ All notable changes to `@skillsmith/core` are documented here.
 
 ## [Unreleased]
 
+## v0.12.3
+
 - **Add**: `SecurityScanner.weak-passwords.ts` — a generated, versioned list of common weak passwords (vendored from SecLists, hash-pinned, capped to the top 5,000 by frequency rank), built by the new `scripts/gen-weak-password-lexicon.mjs` generator and mirrored byte-identically into the Node and Deno/Supabase edge scanner twins. This wave ships the data pipeline only — no scanner behavior changes; the `sensitive_path` detection change that consumes this data is a separate, follow-on change (SMI-6441 Wave 1)
 - **Added**: SMI-6472 -- new `./utils/skill-name` subpath export (`VALID_SKILL_NAME_RE`, `validateSkillName`), matching the existing narrow-subpath convention (`./services/skill-installation-io`, etc.) rather than requiring consumers to import the full package barrel for a small, dependency-free utility.
 - **Fix**: `scripts/skill-scanner/index.ts` no longer runs its CLI `main()` unconditionally at module-load time — the invocation is guarded by the standard `import.meta.url === \`file://${process.argv[1]}\`` check, so importing the barrel for its exports (types, categorizer, trust-scorer, file-scanner, logger, reporter, scanner) no longer hijacks `process.argv`, runs a scan, or exits the importing process. `main` is now exported, and the `scripts/scan-imported-skills.ts` backwards-compat shim (the `weekly-security-scan.yml` entry point) invokes it explicitly under its own identical guard — direct `npx tsx` execution of either file is unchanged (SMI-6464)
