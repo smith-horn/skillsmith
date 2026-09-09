@@ -169,6 +169,39 @@ export function deviceDisplayName(d: DeviceView): string {
 }
 
 /**
+ * Presentation labels for harness slugs on THIS page (SMI-6503).
+ *
+ * Deliberately page-local, NOT `CLIENT_DISPLAY_LABELS` from
+ * `@skillsmith/core/install`. That map feeds mid-sentence install guidance in
+ * four call sites across core, mcp-server and cli — e.g.
+ * `Start a new ${label} session…` in cli's install-skill.ts — so its
+ * `agents: 'your agent'` value is written for prose, not for a standalone
+ * heading. Importing it here would couple a UI heading to CLI copy and make
+ * either one unable to change without breaking the other.
+ *
+ * Unmapped slugs fall through to the raw value (still escaped at the call
+ * site), so a newly-supported client renders readably without a code change
+ * here.
+ */
+const HARNESS_HEADING_LABELS: Record<string, string> = {
+  agents: 'Shared (AGENTS.md)',
+  'claude-code': 'Claude Code',
+  cursor: 'Cursor',
+  copilot: 'GitHub Copilot',
+  windsurf: 'Windsurf',
+  opencode: 'OpenCode',
+  hermes: 'Hermes',
+  grok: 'Grok Build',
+  antigravity: 'Antigravity',
+}
+
+/** Human-readable heading for a harness slug; falls back to the raw slug. */
+export function harnessHeadingLabel(harness: string): string {
+  if (!harness) return 'Default harness'
+  return HARNESS_HEADING_LABELS[harness] ?? harness
+}
+
+/**
  * Builds a `<section>` HTML string for one device card, including all skill rows
  * grouped by harness. Output is safe for innerHTML assignment.
  */
@@ -197,9 +230,13 @@ export function buildDeviceCardHtml(device: DeviceView): string {
       if (group) group.push(sk)
       else byHarness.set(key, [sk])
     }
+    // One "Skills" section heading per device, above the per-harness subgroups
+    // (SMI-6503). Device name is <h3>, so the outline is h3 > h4 > h5 — emitting
+    // both levels as <h4> would make the section and its subgroups peers.
+    skillsHtml += `<h4 class="skills-section-heading">Skills</h4>`
     for (const [harness, skills] of byHarness) {
-      const hLabel = escapeHtml(harness || 'Default harness')
-      skillsHtml += `<h4 class="harness-heading">${hLabel}</h4>`
+      const hLabel = escapeHtml(harnessHeadingLabel(harness))
+      skillsHtml += `<h5 class="harness-heading">${hLabel}</h5>`
       skillsHtml += `<ul class="skill-list" aria-label="Skills for ${hLabel}">`
       for (const sk of skills) {
         const ver = sk.version ? escapeHtml(sk.version) : '—'
@@ -235,6 +272,57 @@ export function buildDeviceCardHtml(device: DeviceView): string {
 // ─── CSS injection for dynamically-built content ───────────────────────────────
 
 /**
+ * CSS for the dynamically-built device card elements.
+ *
+ * Exported as a plain string, not just injected, so the contrast and
+ * link-affordance rules it encodes can be asserted in a `node`-environment unit
+ * test without a DOM (SMI-6503).
+ */
+export const SKILLS_PAGE_CSS = `
+/* Colors below reference the four --sk-* custom properties declared in
+   skills.astro's own static <style> block (SMI-6503). They are deliberately NOT
+   declared here: this stylesheet is injected behind a
+   document.querySelector('style[data-skills-page]') guard, so a stale copy left
+   in the DOM by a pre-deploy ClientRouter navigation would make the guard return
+   early and every var() below resolve to nothing. The static block always ships
+   with the document. See the tier table in the SMI-6503 plan. */
+.device-card{background:#111114;border:1px solid #27272a;border-radius:12px;padding:1.5rem;margin-bottom:1.25rem}
+/* No opacity here: it composites the whole card as a group, dragging every
+   color down ~35% and pushing six text elements under WCAG AA (SMI-6503).
+   standards-astro.md:460 — "opacity compounds contrast". Staleness is signalled
+   by this border plus the amber "(stale)" marker instead. */
+.device-card--stale{border-color:#3f3f46;border-left:3px solid var(--sk-accent-stale)}
+.device-header{margin-bottom:1rem}
+.device-name-row{display:flex;align-items:baseline;gap:.75rem;flex-wrap:wrap;margin-bottom:.25rem}
+.device-name{font-size:1rem;font-weight:600;margin:0;color:var(--sk-text-primary)}
+.device-platform{font-size:.75rem;color:var(--sk-text-muted);font-family:'SF Mono','Fira Code',monospace}
+.device-freshness{font-size:.8125rem;color:var(--sk-text-muted);margin:0}
+.device-freshness--stale{color:var(--sk-accent-stale)}
+.stale-marker{font-style:italic;color:var(--sk-accent-stale)}
+.never-synced-msg{font-size:.875rem;color:var(--sk-text-muted);margin:0;font-style:italic}
+.skills-section-heading{font-size:.6875rem;font-weight:600;color:var(--sk-text-muted);text-transform:uppercase;letter-spacing:.06em;margin:1.25rem 0 .5rem}
+.device-card>.skills-section-heading:first-of-type{margin-top:0}
+/* Sentence case, not uppercase — these carry real product names now
+   ("Claude Code", not "CLAUDE CODE"). */
+.harness-heading{font-size:.75rem;font-weight:600;color:var(--sk-text-muted);letter-spacing:.01em;margin:.75rem 0 .375rem}
+.skill-list{list-style:none;margin:0 0 .5rem;padding:0;display:flex;flex-direction:column;gap:.375rem}
+.skill-item{display:flex;align-items:center;gap:.625rem;padding:.4rem .625rem;background:#18181b;border-radius:6px;flex-wrap:wrap}
+.skill-id{font-family:'SF Mono','Fira Code',monospace;font-size:.8125rem;font-weight:500;color:var(--sk-text-primary);flex:1;min-width:0;word-break:break-all}
+.skill-version{font-family:'SF Mono','Fira Code',monospace;font-size:.75rem;color:var(--sk-text-muted);white-space:nowrap}
+.skill-source{font-size:.75rem;color:var(--sk-text-muted);flex-basis:100%;margin-top:.25rem;word-break:break-all}
+.skill-source--unverified{font-style:italic}
+.skill-source-tag{font-size:.75rem;color:var(--sk-text-muted)}
+/* Underlined at rest, not only on hover — standards-astro.md:465 requires links
+   in text blocks to be distinguishable by more than color. */
+.skill-source-link{color:var(--sk-text-muted);text-decoration:underline}
+.skill-source-link:hover{color:var(--sk-text-secondary)}
+.skill-action{font-size:.75rem;color:var(--sk-text-secondary);flex-basis:100%;margin-top:.25rem;word-break:break-word}
+.skill-action code{font-family:'SF Mono','Fira Code',monospace;word-break:break-all}
+.device-batch-tip{font-size:.8125rem;color:var(--sk-text-secondary);margin:0 0 1rem;padding:.5rem .75rem;background:#18181b;border-radius:6px;word-break:break-word}
+.device-batch-tip code{font-family:'SF Mono','Fira Code',monospace;word-break:break-all}
+`
+
+/**
  * Injects the CSS required by dynamically-built device card elements into
  * `document.head`. Safe to call on every `astro:page-load` — idempotent.
  *
@@ -247,33 +335,6 @@ export function injectSkillsPageStyles(): void {
   if (document.querySelector('style[data-skills-page]')) return
   const style = document.createElement('style')
   style.dataset['skillsPage'] = '1'
-  style.textContent = `
-.device-card{background:#111114;border:1px solid #27272a;border-radius:12px;padding:1.5rem;margin-bottom:1.25rem}
-.device-card--stale{opacity:.72;border-color:#3f3f46}
-.device-header{margin-bottom:1rem}
-.device-name-row{display:flex;align-items:baseline;gap:.75rem;flex-wrap:wrap;margin-bottom:.25rem}
-.device-name{font-size:1rem;font-weight:600;margin:0;color:#fafafa}
-.device-platform{font-size:.75rem;color:#71717a;font-family:'SF Mono','Fira Code',monospace}
-.device-freshness{font-size:.8125rem;color:#71717a;margin:0}
-.device-freshness--stale{color:#a16207}
-.stale-marker{font-style:italic;color:#a16207}
-.never-synced-msg{font-size:.875rem;color:#52525b;margin:0;font-style:italic}
-.harness-heading{font-size:.6875rem;font-weight:600;color:#71717a;text-transform:uppercase;letter-spacing:.06em;margin:1rem 0 .5rem}
-.device-card>.harness-heading:first-of-type{margin-top:0}
-.skill-list{list-style:none;margin:0 0 .5rem;padding:0;display:flex;flex-direction:column;gap:.375rem}
-.skill-item{display:flex;align-items:center;gap:.625rem;padding:.4rem .625rem;background:#18181b;border-radius:6px;flex-wrap:wrap}
-.skill-id{font-family:'SF Mono','Fira Code',monospace;font-size:.8125rem;color:#d4d4d8;flex:1;min-width:0;word-break:break-all}
-.skill-version{font-family:'SF Mono','Fira Code',monospace;font-size:.75rem;color:#52525b;white-space:nowrap}
-.skill-source{font-size:.75rem;color:#71717a;flex-basis:100%;margin-top:.25rem;word-break:break-all}
-.skill-source--unverified{font-style:italic}
-.skill-source-tag{font-size:.6875rem;color:#52525b}
-.skill-source-link{color:#71717a;text-decoration:none}
-.skill-source-link:hover{color:#a1a1aa;text-decoration:underline}
-/* #a1a1aa (not .skill-source's #71717a, which is ~3.67:1 here — fails WCAG AA) computes to ~6.91:1 on the #18181b skill-item background */
-.skill-action{font-size:.75rem;color:#a1a1aa;flex-basis:100%;margin-top:.25rem;word-break:break-word}
-.skill-action code{font-family:'SF Mono','Fira Code',monospace;word-break:break-all}
-.device-batch-tip{font-size:.8125rem;color:#a1a1aa;margin:0 0 1rem;padding:.5rem .75rem;background:#18181b;border-radius:6px;word-break:break-word}
-.device-batch-tip code{font-family:'SF Mono','Fira Code',monospace;word-break:break-all}
-`
+  style.textContent = SKILLS_PAGE_CSS
   document.head.appendChild(style)
 }

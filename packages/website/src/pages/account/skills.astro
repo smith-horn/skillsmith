@@ -263,10 +263,33 @@ const supabaseConfig = getSupabaseConfig()
 </script>
 
 <style>
+  /*
+   * Text tiers for this page and for the card CSS that skills-page-render.ts
+   * injects at runtime (SMI-6503).
+   *
+   * Declared HERE, in the document's own static stylesheet, rather than in the
+   * injected sheet: injectSkillsPageStyles() is guarded by a
+   * document.querySelector('style[data-skills-page]') check, so a stale style
+   * element left in the DOM by a pre-deploy ClientRouter navigation makes it
+   * return early. Properties declared inside that element would then never
+   * land, and every var() reference would resolve to nothing.
+   *
+   * --sk-text-muted is #a1a1aa, the brand's "Text Secondary", not its
+   * "Text Muted" (#71717a). #71717a cannot reach 4.5:1 on these surfaces —
+   * brand_guidelines.md's claim that it passes at 4.6:1 is wrong, and
+   * standards-astro.md:455 already prescribes replacing it.
+   */
+  :root {
+    --sk-text-primary: #fafafa; /* 18.1:1 on the card — headings, device + skill names */
+    --sk-text-secondary: #d4d4d8; /* 11.9:1 on a skill row — update hints, batch tips */
+    --sk-text-muted: #a1a1aa; /* 6.9:1 on a skill row — platform, timestamps, URLs */
+    --sk-accent-stale: #f4a261; /* 9.1:1 on the card — brand Amber, stale marker + border */
+  }
+
   body {
     margin: 0;
-    background: #0a0a0c;
-    color: #fafafa;
+    background: #0d0d0f;
+    color: var(--sk-text-primary);
     font-family:
       'Satoshi',
       -apple-system,
@@ -288,7 +311,7 @@ const supabaseConfig = getSupabaseConfig()
     justify-content: center;
     min-height: 50vh;
     gap: 1rem;
-    color: #71717a;
+    color: var(--sk-text-muted);
   }
 
   .spinner {
@@ -317,22 +340,23 @@ const supabaseConfig = getSupabaseConfig()
   .devices-heading {
     font-size: 1rem;
     font-weight: 600;
-    color: #fafafa;
+    color: var(--sk-text-primary);
     margin: 0 0 1rem;
   }
 
   .back-link {
     display: inline-flex;
     align-items: center;
-    color: #71717a;
-    text-decoration: none;
+    color: var(--sk-text-muted);
+    /* Underlined at rest — standards-astro.md:465 (SMI-6503). */
+    text-decoration: underline;
     font-size: 0.875rem;
     margin-bottom: 1rem;
     transition: color 0.15s;
   }
 
   .back-link:hover {
-    color: #fafafa;
+    color: var(--sk-text-primary);
   }
 
   .page-header h1 {
@@ -343,7 +367,7 @@ const supabaseConfig = getSupabaseConfig()
   }
 
   .page-description {
-    color: #a1a1aa;
+    color: var(--sk-text-muted);
     margin: 0;
     font-size: 0.9375rem;
     line-height: 1.6;
@@ -370,11 +394,11 @@ const supabaseConfig = getSupabaseConfig()
     font-size: 1rem;
     font-weight: 600;
     margin: 0 0 0.75rem;
-    color: #fafafa;
+    color: var(--sk-text-primary);
   }
 
   .state-body {
-    color: #a1a1aa;
+    color: var(--sk-text-muted);
     font-size: 0.9375rem;
     line-height: 1.6;
     margin: 0;
@@ -382,7 +406,7 @@ const supabaseConfig = getSupabaseConfig()
 
   .inline-link {
     color: #a78bfa;
-    text-decoration: none;
+    text-decoration: underline;
   }
 
   .inline-link:hover {
@@ -424,7 +448,7 @@ const supabaseConfig = getSupabaseConfig()
     padding: 0.75rem 1rem;
     margin-bottom: 1.25rem;
     font-size: 0.875rem;
-    color: #a1a1aa;
+    color: var(--sk-text-muted);
   }
 
   .reload-row {
@@ -441,7 +465,7 @@ const supabaseConfig = getSupabaseConfig()
     flex: 1;
     min-width: 200px;
     font-size: 0.8125rem;
-    color: #71717a;
+    color: var(--sk-text-muted);
     margin: 0;
     line-height: 1.5;
     padding-top: 0.375rem;
@@ -470,7 +494,7 @@ const supabaseConfig = getSupabaseConfig()
 
   .btn-primary {
     background: #7c3aed;
-    color: #fafafa;
+    color: var(--sk-text-primary);
     border-color: #7c3aed;
   }
 
@@ -481,12 +505,12 @@ const supabaseConfig = getSupabaseConfig()
 
   .btn-secondary {
     background: #18181b;
-    color: #d4d4d8;
+    color: var(--sk-text-secondary);
     border-color: #3f3f46;
   }
 
   .btn-secondary:hover {
     background: #27272a;
-    color: #fafafa;
+    color: var(--sk-text-primary);
   }
 </style>
