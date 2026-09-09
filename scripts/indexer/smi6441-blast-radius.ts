@@ -51,6 +51,7 @@ import {
   type SecuritySeverity,
 } from '../../packages/core/src/security/scanner/index.js'
 import { VALUE_GATED_ASSIGNMENT_PATTERNS } from '../../packages/core/src/security/scanner/patterns.js'
+import type { VetoSegment, CensusRow, SkillRow } from './smi6441-blast-radius.types.ts'
 import { assignmentHasRealValue } from '../../packages/core/src/security/scanner/SecurityScanner.value-gate.js'
 import {
   COMMON_WEAK_PASSWORDS,
@@ -96,33 +97,6 @@ const HARNESS_LABEL_TOKEN = /^[a-z]{1,19}$/
 const HARNESS_MAX_LABEL_TOKENS = 2
 
 class HarnessAbort extends Error {}
-
-type VetoSegment = { value: string; src: 'same_line' | 'next_line'; hits: string[] }
-
-interface CensusRow {
-  skillId: string
-  lineNumber: number
-  sourceLine: string
-  valueSource: string
-  segmentValue: string
-  lexiconTokensHit: string[]
-  shapeVerdict: 'two_token_carveout' | 'unexplained_shape'
-}
-
-interface SkillRow {
-  skillId: string
-  mf4Evaluated: number
-  quarantinedBefore: boolean
-  quarantinedAfter: boolean
-  indexerRiskBefore: number
-  indexerRiskAfter: number
-  indexerQBefore: boolean
-  indexerQAfter: boolean
-  codeExecBefore: SecuritySeverity | null
-  codeExecAfter: SecuritySeverity | null
-  newBlockTiers: string[]
-  newRejectTiers: string[]
-}
 
 const MF4_PATTERNS = [...VALUE_GATED_ASSIGNMENT_PATTERNS]
 
