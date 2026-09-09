@@ -5934,6 +5934,10 @@ console.log(
           `Remove the stale entry — an unnecessary allowlist grant is itself a finding (Check 62/65 precedent).`
         )
       }
+    }
+  }
+}
+
 // Check 67: MCP registry server.json `_meta` placement
 // The MCP Registry schema (https://static.modelcontextprotocol.io/schemas/
 // 2025-12-11/server.schema.json) only PRESERVES the reserved top-level
