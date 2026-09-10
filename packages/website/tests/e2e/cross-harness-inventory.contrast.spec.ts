@@ -79,6 +79,10 @@ test.describe('Cross-Harness Skill Inventory — rendered contrast (staging)', (
   })
 
   test('stale device card meets WCAG AA on every rendered text node', async ({ page }) => {
+    // Matches the sibling specs: staging sign-in plus a client-side render does
+    // not fit the 30s default, and an assertion timeout equal to the test
+    // timeout is cut off before it can report which wait actually failed.
+    test.setTimeout(120_000)
     const cfg = getConfig()
     const deviceId = randomUUID()
     const label = `e2e-inv-${runId}-contrast`
@@ -118,20 +122,20 @@ test.describe('Cross-Harness Skill Inventory — rendered contrast (staging)', (
       // Every one of these is a positive signal. None of them is a sleep.
       const seededCard = page.locator('[data-testid="device-card"]').filter({ hasText: label })
       await expect(seededCard, 'seeded device-card should render').toBeVisible({
-        timeout: 30_000,
+        timeout: 15_000,
       })
       // The card ITSELF carries the class — a descendant locator would silently
       // match nothing and the assertion would never fire.
       await expect(
         seededCard,
         'seeded card should be classified stale — the bug only manifests when it is'
-      ).toHaveClass(/device-card--stale/, { timeout: 10_000 })
+      ).toHaveClass(/device-card--stale/, { timeout: 15_000 })
 
       for (const harness of harnesses) {
         await expect(
           seededCard.locator('.harness-heading', { hasText: harnessHeadingFor(harness) }),
           `harness group "${harness}" should have rendered before measuring`
-        ).toHaveCount(1, { timeout: 10_000 })
+        ).toHaveCount(1, { timeout: 15_000 })
       }
 
       // Fonts affect glyph rendering, not computed colour, but a pending web
