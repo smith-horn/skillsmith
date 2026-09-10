@@ -286,9 +286,20 @@ RUN npm run build || echo "Build completed with warnings"
 FROM deps AS dev
 
 # SMI-4782 — install psql so scripts/pooler-psql.sh works as documented.
-# Scoped to the dev stage only to keep prod/builder images lean.
+# SMI-6491 — install git-crypt so any in-container git command that touches an
+# encrypted path can run the configured clean/smudge filter. Without it,
+# `git status` fails on supabase/functions/_shared/*, which surfaced two ways:
+# gate-check's G-5 closure test reported `artifact binding: FAILED` (a tooling
+# condition wearing a data verdict's clothes), and Turborepo silently degraded
+# its dirty-hash cache-validity computation to a warning. The git-crypt KEY is
+# already present at runtime via the /app bind mount, and the filters are
+# already registered — only the executable was missing.
+# Both scoped to the dev stage. `builder` is a sibling from `deps` and `prod`
+# descends from `base` via `prod-deps`, so neither inherits these. Compose's
+# `test` service does, since it also builds the `dev` target.
 RUN apt-get update && apt-get install -y --no-install-recommends \
     postgresql-client \
+    git-crypt \
     && rm -rf /var/lib/apt/lists/* \
     && apt-get clean
 
