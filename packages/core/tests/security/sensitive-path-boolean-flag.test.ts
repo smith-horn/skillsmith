@@ -40,6 +40,11 @@ const CASES: Array<[string, boolean, string]> = [
   ['allow_credentials=TRUE', false, 'case-insensitive'],
   ['    allow_credentials=True;', false, 'semicolon terminator'],
   ['    allow_credentials=True]', false, 'bracket terminator'],
+  [
+    '    allow_credentials=True}',
+    false,
+    'brace terminator — every delimiter the class accepts is pinned',
+  ],
 
   // --- accepted residuals: part of the span would have to go unexamined ---
   [
@@ -73,7 +78,12 @@ const CASES: Array<[string, boolean, string]> = [
 
   // --- the SMI-6508 shape must keep flagging ---
   ['AWS_CREDENTIALS=hunter2', true, 'embedded key, real value — must stay HIGH (SMI-6508)'],
-  ['allow_credentials="true"', true, 'quoted boolean is a string value, not a flag'],
+  ['allow_credentials="true"', true, 'embedded key, QUOTED boolean — a string value, not a flag'],
+  [
+    'credentials: "true"',
+    true,
+    'bare key, quoted boolean — HIGH via two independent routes: the key is not embedded, and the quotes defeat the anchored match anyway',
+  ],
 
   // --- the accepted cost, pinned so it stays deliberate and visible ---
   ['DB_PASSWORD=true', false, 'ACCEPTED COST: embedded credential-ish key, boolean value'],
