@@ -6,7 +6,15 @@
  * VALUE_GATED_ASSIGNMENT_PATTERNS, decide whether it assigns a REAL credential
  * (→ HIGH) or only prose (→ MEDIUM). HIGH is the default; a downgrade requires
  * positive prose evidence, and since HIGH is the pre-SMI-5207 unconditional
- * behaviour that default can never regress detection.
+ * behaviour that default could not regress detection.
+ *
+ * SMI-6505 QUALIFIES THAT LAST CLAUSE — it is no longer unconditionally true of
+ * this module. It held while every rule here only recognized prose. The
+ * embedded-key boolean-flag rule below deliberately turns a previously-HIGH
+ * input MEDIUM (`allow_credentials=True`, a FastAPI CORS flag that was blocking
+ * installation of any skill documenting CORS setup). The MF-4b veto's own
+ * invariant is unaffected: that one is a claim about the `weakPasswordVeto`
+ * option, and it still holds — see its block below.
  *
  * Split out of security-scanner-edge.paths.ts for the 500-line pre-commit
  * gate once round 8's segmentation logic landed. Mirrors core's identical
@@ -47,6 +55,45 @@ const MAX_LABEL_TOKENS = 2
  * regex, so there is no shared `lastIndex` state.
  */
 const ASSIGNMENT_HEAD = /(?:credentials|\bsecrets?|password)\s*[:=]\s*/gi
+
+/**
+ * A whole-span boolean literal, plus trailing delimiters (SMI-6505).
+ *
+ * Anchored at BOTH ends, deliberately. DO NOT relax this. Two obvious
+ * relaxations were each implemented, measured, and rejected: the value span runs
+ * to the next assignment key or EOL, so whatever this regex accepts unexamined
+ * is exactly where a real credential can hide.
+ *
+ *   token-terminated — `^(?:true|false)\s*(?:[,;)\]}]|#|\/\/)`
+ *     would fix  a single-line multi-argument call
+ *     would open `<prefix>_credentials=true, Tr0ub4dor&3` -> MEDIUM
+ *
+ *   trailing-comment branch — `...[\s,;)\]}]*(?:(?:#|\/\/).*)?$`
+ *     would fix  `allow_credentials=True,  # allow cookies`
+ *     would open `<prefix>_credentials=true # Tr0ub4dor&3` -> MEDIUM
+ *
+ * Both bypass shapes are pinned as must-stay-HIGH tests. An embedded key is
+ * trivial to write, so either relaxation is a cheap deliberate bypass rather
+ * than an accidental edge case — which is why the two formatting variants they
+ * would have fixed are accepted residuals instead.
+ */
+const BOOLEAN_FLAG_VALUE = /^(?:true|false)[\s,;)\]}]*$/i
+
+/**
+ * Is the matched assignment keyword a SUFFIX of a longer identifier?
+ *
+ * The SMI-6505 discriminator. `allow_credentials=True` reaches this gate at all
+ * only because CREDENTIALS_ASSIGN_PATTERN carries no left boundary; the keyword
+ * being embedded is what marks it as an ordinary identifier rather than a
+ * credential key. Never true of the secrets entry, which has its own `\b`.
+ *
+ * Deliberately NOT fixed by adding `\b` to the pattern instead — that would also
+ * stop matching `AWS_CREDENTIALS=hunter2`, a real credential, trading this false
+ * positive for a false negative. See SMI-6508.
+ */
+function isEmbeddedKey(line: string, matchStart: number): boolean {
+  return matchStart > 0 && /[A-Za-z0-9_]/.test(line[matchStart - 1])
+}
 
 /**
  * Positive prose evidence. Absence of evidence leaves the finding at HIGH.
@@ -206,6 +253,11 @@ export function assignmentHasRealValue(
       continue
     }
     trailingKeyIsBare = false
+    // SMI-6505: an EMBEDDED key assigned a bare boolean is a configuration flag,
+    // not a credential. `continue` classifies the segment as prose without
+    // consulting isProseValue(), which sees only the value span and therefore
+    // could not tell this apart from a bare `credentials: True`.
+    if (isEmbeddedKey(line, heads[i].index ?? 0) && BOOLEAN_FLAG_VALUE.test(value.trim())) continue
     if (!isProseValue(value, weakPasswordVeto)) return true
   }
   if (!trailingKeyIsBare) return false
