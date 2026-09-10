@@ -169,8 +169,19 @@ export { EVIDENCE_TYPE_BY_PATTERN } from './patterns.jailbreak.evidence.js'
  * it, the `comparable` gate keeps reusing a stored clean verdict produced by
  * the pre-SMI-6441 ruleset and the tightening never reaches an
  * already-scanned skill.
+ *
+ * Bumped to `2026-09-10.1`: SMI-6505 added the embedded-key boolean-flag
+ * carve-out to the MF-4 assignment-value gate (`allow_credentials=True`, a
+ * FastAPI CORS flag, was scoring HIGH and blocking installation). Direction is
+ * *previously-flagged-content-now-clean*, the same as SMI-5207's bump two
+ * entries above and the opposite of SMI-6441's immediately above — so the bump
+ * is load-bearing for exactly the reason stated there: without it the
+ * `comparable` gate keeps reusing the stored pre-fix verdict, and an
+ * already-scanned skill stays blocked even though the rule no longer flags it.
+ * A severity-LOWERING change is the case where forgetting the bump is silent —
+ * nothing fails, the fix simply never arrives.
  */
-export const SCANNER_RULESET_VERSION = '2026-09-09.1' as const
+export const SCANNER_RULESET_VERSION = '2026-09-10.1' as const
 
 // Suspicious patterns that might indicate malicious intent
 export const SUSPICIOUS_PATTERNS = [

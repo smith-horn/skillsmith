@@ -4,6 +4,27 @@ All notable changes to `@skillsmith/core` are documented here.
 
 ## [Unreleased]
 
+- **Fix**: `sensitive_path` MF-4 no longer scores an **embedded** assignment key assigned a bare
+  boolean as a real credential. `allow_credentials=True` — the standard FastAPI/Starlette CORS
+  middleware flag — was scoring HIGH, which makes `SecurityScanner` compute `passed = false`, which
+  makes the install service reject the install. With no allowlist anywhere in the
+  `skill-installation.*` family, that made **any skill documenting FastAPI CORS setup uninstallable**
+  at a risk score of 1/100. The discriminator is the key, not the value: `credentials` matched inside
+  `allow_credentials` only because `CREDENTIALS_ASSIGN_PATTERN` carries no left boundary, so the fix
+  keys on the keyword being a *suffix of a longer identifier*. Bare `credentials:` / `secrets:` /
+  `password:` keys are untouched, and `AWS_CREDENTIALS=hunter2` still scores HIGH — deliberately
+  **not** fixed by adding `\b` to the pattern, which would have traded this false positive for that
+  false negative (tracked separately as SMI-6508, which documents the same missed-detection class
+  already live for `secrets`). `SCANNER_RULESET_VERSION` bumps to `2026-09-10.1` —
+  *previously-flagged-now-clean*, the same direction as SMI-5207's bump and the opposite of
+  SMI-6441's, and load-bearing for the same reason: without it the `comparable` gate keeps reusing
+  the stored pre-fix verdict and an already-scanned skill stays blocked. Two formatting variants are
+  accepted residuals and stay HIGH — a single-line multi-argument call, and a trailing inline comment
+  — because the relaxations that would fix them each leave part of the value span unexamined, which
+  measurably lets a real credential hide behind a boolean (both bypass shapes are pinned as
+  must-stay-HIGH tests). Adds a core↔edge behavioural parity test, which did not previously exist:
+  the existing twin guard only asserts the two `_shared` copies are byte-identical to each other, not
+  that they agree with `@skillsmith/core`.
 - **Fix**: `sensitive_path` MF-4 no longer reads a two-word all-lowercase value as a harmless
   documentation label when **every** one of its words is a known common password — `password: monkey
   dragon` now scores HIGH, while `credentials: rotation policy` and ordinary documentation labels are
