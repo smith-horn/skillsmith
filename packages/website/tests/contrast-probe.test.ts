@@ -159,8 +159,9 @@ describe('evaluateSamples — group opacity', () => {
   it('flags a pairing that passes undimmed and fails only once dimmed', () => {
     // The regression's exact shape: a colour comfortably above AA at full
     // opacity that drops below it once the card is composited at 72%. A probe
-    // that ignored group opacity — or blended onto the wrong backdrop — would
-    // report this as passing.
+    // that ignored group opacity would report this as passing. (It does not
+    // distinguish a wrong backdrop — this pairing fails on white too; the
+    // preceding fixture covers backdrop correctness via exact colours.)
     const chain = [
       { color: 'rgb(17, 17, 20)', opacity: 1 },
       { color: 'rgb(13, 13, 15)', opacity: 1 },
@@ -236,6 +237,51 @@ describe('evaluateSamples — group opacity', () => {
     })
     expect(r.failures).toHaveLength(1)
     expect(r.failures[0]!.ratio).toBeLessThan(4.5)
+  })
+
+  it('refuses nested opacity rather than silently mis-measuring it', () => {
+    // Two boundaries each composite through their own buffer. Collapsing them
+    // to one alpha is wrong whenever a background sits between them, and the
+    // error would be invisible in the reported ratio — so the probe throws.
+    expect(() =>
+      evaluateSamples({
+        raw: [
+          sample({
+            opacity: 0.36, // 0.72 * 0.5, the collapsed value
+            chain: [
+              { color: 'rgb(24, 24, 27)', opacity: 0.5 }, // inner group
+              { color: 'rgb(17, 17, 20)', opacity: 0.72 }, // outer group
+              { color: 'rgb(13, 13, 15)', opacity: 1 }, // body
+            ],
+          }),
+        ],
+        scannedTextNodes: 1,
+        deviceCards: 1,
+        staleCards: 1,
+        harnessHeadings: [],
+      })
+    ).toThrow(/2 nested opacity ancestors/)
+  })
+
+  it('still accepts a single opacity boundary', () => {
+    // The supported shape must keep working — a guard that rejects the valid
+    // case too would be worse than the bug it prevents.
+    const r = evaluateSamples({
+      raw: [
+        sample({
+          opacity: 0.72,
+          chain: [
+            { color: 'rgb(17, 17, 20)', opacity: 0.72 },
+            { color: 'rgb(13, 13, 15)', opacity: 1 },
+          ],
+        }),
+      ],
+      scannedTextNodes: 1,
+      deviceCards: 1,
+      staleCards: 1,
+      harnessHeadings: [],
+    })
+    expect(r.samples).toHaveLength(1)
   })
 
   it('names the cause when the page returned nothing usable', () => {

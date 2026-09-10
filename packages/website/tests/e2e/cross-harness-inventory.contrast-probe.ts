@@ -23,10 +23,17 @@
  * wrong in the other, and is exactly how the original bug stayed invisible:
  * every declared colour looked compliant.
  *
- * Assumption: all opacity sits at or above the element's parent, so a single
- * accumulated alpha describes the group. That holds for this page — the only
- * opacity was on `.device-card` — and a text node carrying its own opacity
- * would need the buffer split per boundary.
+ * SUPPORTED SHAPE: exactly ONE opacity-bearing ancestor. That is what this page
+ * has ever had (`.device-card`), and a single accumulated alpha describes it
+ * exactly.
+ *
+ * NOT supported: two or more nested opacity ancestors. Each creates its own
+ * offscreen composite, and multiplying the alphas to composite once is not
+ * equivalent when a background sits between the boundaries. Rather than
+ * silently reporting a wrong ratio, `evaluateSamples` detects that shape and
+ * throws — a probe that quietly mis-measures the exact case it guards is worse
+ * than one that refuses. Implementing boundary-by-boundary compositing is the
+ * fix if the page ever grows a second boundary.
  */
 
 /** sRGB colour with alpha, 0-255 channels. */
@@ -215,11 +222,24 @@ export function evaluateSamples(collected: RawCollect): ProbeResult {
     // that element is the stacking-context boundary, and everything outside it
     // is the real backdrop the group composites onto.
     let boundary = -1
+    let opacityLayers = 0
     for (let i = s.chain.length - 1; i >= 0; i--) {
       if (s.chain[i]!.opacity < 1) {
-        boundary = i
-        break
+        opacityLayers++
+        if (boundary === -1) boundary = i
       }
+    }
+    // Refuse rather than mis-measure. Nested boundaries each composite through
+    // their own buffer; collapsing them to one alpha is wrong whenever a
+    // background sits between them, and the error is invisible in the output.
+    if (opacityLayers > 1) {
+      throw new Error(
+        `[SMI-6503] contrast probe found ${opacityLayers} nested opacity ancestors on ` +
+          `"${s.selector}". Only one is supported: each boundary composites through its ` +
+          'own offscreen buffer, so a single accumulated alpha would report a ratio that ' +
+          'is not what renders. Implement boundary-by-boundary compositing before ' +
+          'measuring this page.'
+      )
     }
 
     // Backdrop: fold the layers OUTSIDE the group, honouring their own
