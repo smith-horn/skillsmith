@@ -1344,10 +1344,34 @@ try {
     pass('No double-encrypted files')
   }
 } catch {
-  warn(
-    'Skipped (git-crypt not installed) — Check 18 did not run',
-    'Install git-crypt on this runner to exercise this check'
-  )
+  // SMI-6491: "not installed" used to be the only way this could fail inside
+  // the dev container, so the catch-all message was accurate. It no longer is.
+  // The dev image now ships git-crypt, and the remaining in-container failure
+  // is a WORKTREE container, where /app/.git is a file naming a host path that
+  // does not exist inside the container — so no git command runs at all, and
+  // git-crypt exits 1 on `git rev-parse --show-cdup`. Reporting that as
+  // "git-crypt not installed" sends the reader off to install a binary they
+  // already have: the same shape of misleading diagnostic (a tooling condition
+  // wearing another condition's clothes) that SMI-6491 was filed to remove.
+  let gitCryptInstalled = false
+  try {
+    execSync('command -v git-crypt', { stdio: 'ignore' })
+    gitCryptInstalled = true
+  } catch {
+    gitCryptInstalled = false
+  }
+
+  if (gitCryptInstalled) {
+    warn(
+      'Skipped (git-crypt is installed, but `git-crypt status` failed) — Check 18 did not run',
+      'Most often a worktree container: /app/.git is a file naming a host path that does not exist inside it, so no git command can run. Run this check from the main checkout, or on the host.'
+    )
+  } else {
+    warn(
+      'Skipped (git-crypt not installed) — Check 18 did not run',
+      'Install git-crypt on this runner to exercise this check'
+    )
+  }
 }
 
 // 19. docs/ Directory Structure Guard (SMI-2607)

@@ -58,6 +58,21 @@ chmodSync(join(GIT_CRYPT_SHIM_DIR, 'git-crypt'), 0o755)
 const GIT_ENV = { ...makeFixtureEnv(), PATH: `${GIT_CRYPT_SHIM_DIR}:${process.env.PATH ?? ''}` }
 
 /**
+ * Every temp directory created during a test, removed in `afterEach`.
+ *
+ * Declared here rather than beside `afterEach` below because
+ * `mirrorWithoutGitCrypt` pushes to it. That function is only ever called
+ * from inside a test, so a later declaration would work — but only by
+ * accident; calling it at module scope would throw on the TDZ.
+ *
+ * `rmSync(..., { recursive: true })` unlinks symlinks rather than following
+ * them, so removing a mirror directory never touches the `/usr/bin` entries
+ * it points at. Verified empirically, not assumed — the failure mode if it
+ * were untrue is deleting system binaries.
+ */
+const tempDirs: string[] = []
+
+/**
  * PATH with NO git-crypt reachable at all — neither the shim above nor a real
  * install — while every OTHER executable stays exactly where it was. T9's
  * premise depends on both halves.
@@ -104,7 +119,6 @@ function pathWithoutAnyGitCrypt(): string {
     .join(':')
 }
 
-const tempDirs: string[] = []
 afterEach(() => {
   for (const d of tempDirs) {
     if (existsSync(d)) rmSync(d, { recursive: true, force: true })
