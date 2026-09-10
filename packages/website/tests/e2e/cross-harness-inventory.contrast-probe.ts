@@ -108,16 +108,20 @@ export interface ProbeResult {
 }
 
 /**
- * The browser-side scan, as a string for `page.evaluate`. Kept as a plain
- * function so the maths above can be unit-tested in Node; this is the DOM
- * traversal that cannot be.
+ * The browser-side scan, as a string for `page.evaluate`.
+ *
+ * Wrapped as a self-invoking expression, NOT a bare arrow function. Playwright
+ * evaluates a string argument as an EXPRESSION: `() => {...}` evaluates to the
+ * function object, which is not serialisable, so `page.evaluate` resolves
+ * undefined and the caller crashes on the first property read rather than
+ * anywhere near the actual mistake.
  *
  * Returns raw computed values only — every ratio is computed in Node by
  * `evaluateSamples` below, against the same functions the unit tests exercise.
  * Doing the arithmetic in the page would mean the tested implementation and the
  * running implementation were two different copies.
  */
-export const COLLECT_IN_PAGE = `() => {
+export const COLLECT_IN_PAGE = `(() => {
   function ancestorOpacity(el) {
     let o = 1, e = el
     while (e) { o *= parseFloat(getComputedStyle(e).opacity); e = e.parentElement }
@@ -164,7 +168,7 @@ export const COLLECT_IN_PAGE = `() => {
       h.textContent.trim()
     ),
   }
-}`
+})()`
 
 interface RawSample {
   selector: string
@@ -192,6 +196,20 @@ const CANVAS: Rgba = { r: 255, g: 255, b: 255, a: 1 }
  * with synthetic input of known ratio.
  */
 export function evaluateSamples(collected: RawCollect): ProbeResult {
+  // Name the failure rather than crashing on a property read. The realistic
+  // cause is page.evaluate resolving undefined because COLLECT_IN_PAGE stopped
+  // being a self-invoking expression — a mistake whose natural symptom is a
+  // TypeError pointing at this line instead of at the invocation.
+  if (!collected || !Array.isArray(collected.raw)) {
+    throw new Error(
+      '[SMI-6503] contrast probe collected nothing usable from the page. ' +
+        'Expected { raw: [...] }, got: ' +
+        JSON.stringify(collected) +
+        '. Check that COLLECT_IN_PAGE is a self-invoking expression — ' +
+        'page.evaluate treats a string as an expression, so a bare arrow ' +
+        'function evaluates to the function itself and serialises to undefined.'
+    )
+  }
   const samples: ProbeSample[] = collected.raw.map((s) => {
     // Fold the background chain WITHOUT opacity first: this is what the group
     // renders into its offscreen buffer.

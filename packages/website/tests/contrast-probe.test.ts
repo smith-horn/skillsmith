@@ -171,6 +171,14 @@ describe('evaluateSamples — group opacity', () => {
     expect(r.failures[0]!.ratio).toBeLessThan(4.5)
   })
 
+  it('names the cause when the page returned nothing usable', () => {
+    // The CI failure this guards against surfaced as an opaque
+    // "Cannot read properties of undefined (reading 'raw')" pointing at the
+    // fold, not at the page.evaluate call that actually went wrong.
+    expect(() => evaluateSamples(undefined as never)).toThrow(/collected nothing usable/)
+    expect(() => evaluateSamples({ notRaw: true } as never)).toThrow(/self-invoking expression/)
+  })
+
   it('reports worstRatio null and no failures when it measured nothing', () => {
     // The spec must treat this as a hard failure rather than a pass — an empty
     // scan produces an empty failures list, which is indistinguishable from
