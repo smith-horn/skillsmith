@@ -7,9 +7,20 @@
  * survive compilation. A frontmatter-imported stylesheet is unscoped, so they
  * unambiguously do. Same pattern as account-profile.css.
  *
- * Verified safe to globalise: none of the 21 selectors here collide with
- * Nav.astro, AccountSidebar.astro, AccountMobileNav.astro or Footer.astro,
- * the only components rendered into this document.
+ * Every rule is namespaced under .account-skills-page (set on <body>) rather
+ * than shipped as a bare global. An earlier revision of this file globalised
+ * 21 generic selectors after checking only the four components skills.astro
+ * imports directly -- which missed the transitive ones. Nav.astro renders
+ * auth/UserMenu.astro, which renders auth/LoginButton.astro, and that defines
+ * its own .spinner with no color of its own. Astro's scoping had kept the two
+ * apart; extraction removed that boundary, so this file's .spinner color
+ * leaked into the login spinner on this page.
+ *
+ * The namespace fixes that class of bug rather than that one instance: .card,
+ * .btn and .page-header are equally generic and would collide with any
+ * component added to this page later. :root and @keyframes stay global by
+ * necessity -- custom properties must resolve document-wide, and the --sk-
+ * prefix is unique.
  */
 /*
    * Text tiers for this page and for the card CSS that skills-page-render.ts
@@ -35,7 +46,7 @@
   --sk-accent-stale: #f4a261; /* 9.1:1 on the card — brand Amber, stale marker + border */
 }
 
-body {
+body.account-skills-page {
   margin: 0;
   background: #0d0d0f;
   color: var(--sk-text-primary);
@@ -47,13 +58,13 @@ body {
   min-height: 100vh;
 }
 
-.page-container {
+.account-skills-page .page-container {
   max-width: 720px;
   margin: 0 auto;
   padding: 2rem 1.5rem 4rem;
 }
 
-.state-block {
+.account-skills-page .state-block {
   display: flex;
   flex-direction: column;
   align-items: center;
@@ -63,7 +74,7 @@ body {
   color: var(--sk-text-muted);
 }
 
-.spinner {
+.account-skills-page .spinner {
   width: 40px;
   height: 40px;
   animation: spin 0.8s linear infinite;
@@ -76,24 +87,24 @@ body {
   }
 }
 
-.error-text {
+.account-skills-page .error-text {
   color: #ef4444;
   font-size: 0.875rem;
   margin: 0 0 1rem;
 }
 
-.page-header {
+.account-skills-page .page-header {
   margin-bottom: 2rem;
 }
 
-.devices-heading {
+.account-skills-page .devices-heading {
   font-size: 1rem;
   font-weight: 600;
   color: var(--sk-text-primary);
   margin: 0 0 1rem;
 }
 
-.back-link {
+.account-skills-page .back-link {
   display: inline-flex;
   align-items: center;
   color: var(--sk-text-muted);
@@ -104,25 +115,25 @@ body {
   transition: color 0.15s;
 }
 
-.back-link:hover {
+.account-skills-page .back-link:hover {
   color: var(--sk-text-primary);
 }
 
-.page-header h1 {
+.account-skills-page .page-header h1 {
   font-size: 1.875rem;
   font-weight: 700;
   margin: 0 0 0.5rem;
   line-height: 1.2;
 }
 
-.page-description {
+.account-skills-page .page-description {
   color: var(--sk-text-muted);
   margin: 0;
   font-size: 0.9375rem;
   line-height: 1.6;
 }
 
-.page-description code {
+.account-skills-page .page-description code {
   background: #18181b;
   border: 1px solid #27272a;
   border-radius: 4px;
@@ -131,7 +142,7 @@ body {
   color: #a78bfa;
 }
 
-.card {
+.account-skills-page .card {
   background: #111114;
   border: 1px solid #27272a;
   border-radius: 12px;
@@ -139,30 +150,30 @@ body {
   margin-bottom: 1.5rem;
 }
 
-.card h2 {
+.account-skills-page .card h2 {
   font-size: 1rem;
   font-weight: 600;
   margin: 0 0 0.75rem;
   color: var(--sk-text-primary);
 }
 
-.state-body {
+.account-skills-page .state-body {
   color: var(--sk-text-muted);
   font-size: 0.9375rem;
   line-height: 1.6;
   margin: 0;
 }
 
-.inline-link {
+.account-skills-page .inline-link {
   color: #a78bfa;
   text-decoration: underline;
 }
 
-.inline-link:hover {
+.account-skills-page .inline-link:hover {
   text-decoration: underline;
 }
 
-.command-block {
+.account-skills-page .command-block {
   display: flex;
   align-items: center;
   gap: 0.75rem;
@@ -174,7 +185,7 @@ body {
   flex-wrap: wrap;
 }
 
-.command-code {
+.account-skills-page .command-code {
   flex: 1;
   font-family: 'SF Mono', 'Fira Code', monospace;
   font-size: 0.9rem;
@@ -182,14 +193,14 @@ body {
   word-break: break-all;
 }
 
-.copy-status {
+.account-skills-page .copy-status {
   font-size: 0.8125rem;
   color: #10b981;
   margin: 0;
   min-height: 1.25rem;
 }
 
-.inline-hint {
+.account-skills-page .inline-hint {
   background: #18181b;
   border: 1px solid #27272a;
   border-left: 3px solid #7c3aed;
@@ -200,7 +211,7 @@ body {
   color: var(--sk-text-muted);
 }
 
-.reload-row {
+.account-skills-page .reload-row {
   display: flex;
   align-items: flex-start;
   gap: 1rem;
@@ -210,7 +221,7 @@ body {
   border-top: 1px solid #27272a;
 }
 
-.reload-description {
+.account-skills-page .reload-description {
   flex: 1;
   min-width: 200px;
   font-size: 0.8125rem;
@@ -220,7 +231,7 @@ body {
   padding-top: 0.375rem;
 }
 
-.btn {
+.account-skills-page .btn {
   display: inline-flex;
   align-items: center;
   justify-content: center;
@@ -236,29 +247,29 @@ body {
   white-space: nowrap;
 }
 
-.btn-sm {
+.account-skills-page .btn-sm {
   padding: 0.375rem 0.75rem;
   font-size: 0.8125rem;
 }
 
-.btn-primary {
+.account-skills-page .btn-primary {
   background: #7c3aed;
   color: var(--sk-text-primary);
   border-color: #7c3aed;
 }
 
-.btn-primary:hover {
+.account-skills-page .btn-primary:hover {
   background: #6d28d9;
   border-color: #6d28d9;
 }
 
-.btn-secondary {
+.account-skills-page .btn-secondary {
   background: #18181b;
   color: var(--sk-text-secondary);
   border-color: #3f3f46;
 }
 
-.btn-secondary:hover {
+.account-skills-page .btn-secondary:hover {
   background: #27272a;
   color: var(--sk-text-primary);
 }

@@ -180,10 +180,18 @@ export function deviceDisplayName(d: DeviceView): string {
  * either one unable to change without breaking the other.
  *
  * Unmapped slugs fall through to the raw value (still escaped at the call
- * site), so a newly-supported client renders readably without a code change
- * here.
+ * site), so a newly-supported client still renders rather than showing a blank
+ * heading. That fallback is a safety net, not the intended path -- a client
+ * Skillsmith actually supports should have a real label here, and the raw slug
+ * is a degraded rendering.
+ *
+ * Because the website bundle cannot import @skillsmith/core at runtime, keys
+ * cannot be checked against the ClientId union at compile time. The parity
+ * guard in skills-page-render.harness-parity.test.ts is that enforcement
+ * boundary instead -- the same pattern skill-card.parity.test.ts uses for
+ * COMPAT_LABELS. Add a client to core's ClientId and this map goes red.
  */
-const HARNESS_HEADING_LABELS: Record<string, string> = {
+export const HARNESS_HEADING_LABELS: Record<string, string> = {
   agents: 'Shared (AGENTS.md)',
   'claude-code': 'Claude Code',
   cursor: 'Cursor',
