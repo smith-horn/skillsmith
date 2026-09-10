@@ -210,30 +210,31 @@ docs/articles/tmp/
 # SMI-6441 Wave 2: scripts/indexer/smi6441-blast-radius.ts follows the same
 # convention for the same reason.
 .smi6441-reports/
-# A sibling SMI-5879 script default-writes to the root the same way; ignored
-# preventively rather than left to repeat the same class of stray file.
-# Widened from `smi5879-simulate-*` to `smi5879-*` after round-5 review of
-# PR #2789 found a 135MB `smi5879-resume-checkpoint.json` sitting untracked
-# and unmatched — the narrower pattern only covered the tool's default output
-# name, not the ones an operator supplies via --checkpoint-path.
-/smi5879-*.json*
-# SMI-6444 / SMI-6481 gate-check and acceptance evidence, same class: the
-# tools default-write these to the repo root, and they are campaign evidence
-# referenced from Linear rather than committed artifacts. Left untracked they
-# fail `format:check`, which scans the whole tree — that blocked a docs-only
-# push on 2026-09-09 for reasons unrelated to the change being pushed.
+# SMI-5879 / SMI-6444 / SMI-6481 census, simulation, gate-check and acceptance
+# evidence. These tools default-write to the repo root, and the files are
+# campaign evidence referenced from Linear rather than committed artifacts.
+# Left untracked they fail `format:check`, which scans the whole tree — that
+# blocked a docs-only push on 2026-09-09 for reasons unrelated to the change.
 #
-# All three patterns are root-anchored (`/`) deliberately: without the leading
-# slash git matches the basename at ANY depth, which would silently hide a
-# same-named fixture or committed evidence file under a subdirectory. The
-# smi5879 line above was unanchored and is corrected here for the same reason.
+# TWO patterns per prefix, not one wildcard. Each prefix needs the tool's own
+# output (`.json`) plus the operator's pre-rerun backup of it (`.json.bak…`,
+# e.g. `.json.bak-pre-smi6481` on a 169MB file that sat unmatched here).
 #
-# All three also end `.json*`, not `.json`: operators hand-copy these files to
-# `.json.bak-<reason>` before a destructive rerun, which a bare `.json` suffix
-# leaves unmatched. A 169MB `smi5879-simulate-checkpoint-decision-single
-# .json.bak-pre-smi6481` was sitting untracked and unmatched by the round-5
-# pattern for exactly that reason — the same stray-file class this block
-# already exists to prevent, one suffix removed. `.json` still anchors the
-# match, so an unrelated root-level `smi5879-*.ts` stays visible.
-/smi6444-*.json*
-/smi6481-*.json*
+# An earlier revision collapsed both into a single `.json*` and claimed
+# "`.json` still anchors the match". That was WRONG, and #2789's cross-family
+# pre-merge review caught it: `.json*` means "STARTS WITH `.json`", so it also
+# swallowed root-level `.jsonl`, `.json5`, `.jsonnet`, `.json.ts` and
+# `.json.example` — real formats someone could legitimately want to commit.
+# Silently hiding a source or data file is exactly the risk this block must
+# not create. Confirmed with `git check-ignore -v --no-index` in both
+# directions before and after.
+#
+# Every pattern is root-anchored (`/`) deliberately: without the leading slash
+# git matches the basename at ANY depth, which would hide a same-named fixture
+# or committed evidence file under a subdirectory.
+/smi5879-*.json
+/smi5879-*.json.bak*
+/smi6444-*.json
+/smi6444-*.json.bak*
+/smi6481-*.json
+/smi6481-*.json.bak*
