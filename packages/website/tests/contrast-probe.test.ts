@@ -452,7 +452,9 @@ interface FakeEl {
   style: Record<string, string>
 }
 
-function makeCollectorDom(opts: { elementOpacity?: number; cardOpacity?: number } = {}) {
+function makeCollectorDom(
+  opts: { elementOpacity?: number; cardOpacity?: number; cardBackground?: string } = {}
+) {
   const style = (over: Record<string, string> = {}): Record<string, string> => ({
     opacity: '1',
     backgroundColor: 'rgba(0, 0, 0, 0)',
@@ -477,7 +479,7 @@ function makeCollectorDom(opts: { elementOpacity?: number; cardOpacity?: number 
     childNodes: [],
     parentElement: body,
     style: style({
-      backgroundColor: 'rgb(17, 17, 20)',
+      backgroundColor: opts.cardBackground ?? 'rgb(17, 17, 20)',
       opacity: String(opts.cardOpacity ?? 1),
     }),
   }
@@ -514,7 +516,9 @@ function makeCollectorDom(opts: { elementOpacity?: number; cardOpacity?: number 
 
 type Collected = Parameters<typeof evaluateSamples>[0]
 
-function runCollector(opts: { elementOpacity?: number; cardOpacity?: number } = {}): Collected {
+function runCollector(
+  opts: { elementOpacity?: number; cardOpacity?: number; cardBackground?: string } = {}
+): Collected {
   const dom = makeCollectorDom(opts)
   // Executing the shipped string is the whole point: a copy would test the
   // copy. `COLLECT_IN_PAGE` is a self-invoking expression, so it is returned.
@@ -576,5 +580,92 @@ describe('COLLECT_IN_PAGE — the shipped collector, executed', () => {
     c.raw[0]!.chain[1]!.opacity = 0.8
     c.raw[0]!.opacity = 0.72 * 0.8
     expect(() => evaluateSamples(c)).toThrow(/nested opacity ancestors/)
+  })
+})
+
+describe('parseRgb — strict colour syntax', () => {
+  // Round-6 gate finding: the old parser pulled digit runs out of ANY string,
+  // so a modern colour space would have been reinterpreted as sRGB 0-255 and
+  // produced a plausible wrong ratio. These pin the refusal.
+  const MODERN = [
+    'oklch(0.7 0.1 250)',
+    'oklch(70% 0.1 250 / 0.5)',
+    'lab(54% 81 70)',
+    'lch(54% 107 41)',
+    'color(display-p3 1 0.5 0)',
+    'color(srgb 0.1 0.2 0.3)',
+    'hsl(210 40% 20%)',
+  ]
+  for (const c of MODERN) {
+    it(`refuses ${c} rather than reading its components as sRGB`, () => {
+      expect(() => parseRgb(c)).toThrow(/unparseable/)
+    })
+  }
+
+  const JUNK = ['transparent', 'red', '#111114', '', 'rgb(1, 2)', 'rgb(1, 2, 3, 4, 5)']
+  for (const c of JUNK) {
+    it(`refuses ${JSON.stringify(c)}`, () => {
+      expect(() => parseRgb(c)).toThrow(/unparseable/)
+    })
+  }
+
+  it('refuses a negative component instead of dropping the sign', () => {
+    // The old digit-run regex silently turned -20 into 20.
+    expect(() => parseRgb('rgb(17, 17, -20)')).toThrow(/outside \[0, 255\]/)
+  })
+
+  it('refuses an out-of-range component', () => {
+    expect(() => parseRgb('rgb(17, 17, 300)')).toThrow(/outside \[0, 255\]/)
+  })
+
+  it('refuses the CSS Color 4 "none" keyword rather than assuming zero', () => {
+    expect(() => parseRgb('rgb(17 17 none)')).toThrow(/not a number/)
+  })
+
+  it('reads the CSS Color 4 space-separated form', () => {
+    expect(parseRgb('rgb(17 17 20)')).toEqual({ r: 17, g: 17, b: 20, a: 1 })
+  })
+
+  it('reads slash alpha', () => {
+    expect(parseRgb('rgb(17 17 20 / 0.5)')).toEqual({ r: 17, g: 17, b: 20, a: 0.5 })
+  })
+
+  it('reads percentage components', () => {
+    expect(parseRgb('rgb(100%, 0%, 0%)')).toEqual({ r: 255, g: 0, b: 0, a: 1 })
+    expect(parseRgb('rgb(17 17 20 / 50%)')).toEqual({ r: 17, g: 17, b: 20, a: 0.5 })
+  })
+
+  it('still reads the legacy forms the page actually produces', () => {
+    expect(parseRgb('rgb(17, 17, 20)')).toEqual({ r: 17, g: 17, b: 20, a: 1 })
+    expect(parseRgb('rgba(0, 0, 0, 0)')).toEqual({ r: 0, g: 0, b: 0, a: 0 })
+  })
+})
+
+describe('evaluateSamples — sparse chain', () => {
+  it('reports a hole as a contract violation, not an incidental TypeError', () => {
+    // Round-6 gate finding: `forEach` skips holes, so a sparse chain used to
+    // reach the boundary loop and die on `undefined.opacity`.
+    const sparse: { color: string; opacity: number }[] = []
+    sparse[2] = { color: 'rgb(0, 0, 0)', opacity: 1 }
+    expect(() =>
+      evaluateSamples({
+        raw: [sample({ chain: sparse })],
+        scannedTextNodes: 1,
+        deviceCards: 1,
+        staleCards: 0,
+        harnessHeadings: [],
+      })
+    ).toThrow(/chain\[0\]\.opacity/)
+  })
+})
+
+describe('COLLECT_IN_PAGE — modern colour syntax end to end', () => {
+  it('refuses a modern colour space rather than mis-measuring it', () => {
+    // Round-6 gate finding: the fake DOM hard-coded rgb(), so it encoded the
+    // same assumption as the parser and could not have exposed this. Driving a
+    // modern colour through the real collector proves the pipeline refuses.
+    const c = runCollector({ cardBackground: 'oklch(0.21 0.006 285.9)' })
+    expect(c.raw[0]!.chain[0]!.color).toBe('oklch(0.21 0.006 285.9)')
+    expect(() => evaluateSamples(c)).toThrow(/unparseable colour/)
   })
 })

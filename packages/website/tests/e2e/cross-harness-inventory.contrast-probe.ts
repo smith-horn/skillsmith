@@ -62,15 +62,100 @@ export interface Rgba {
   a: number
 }
 
-/** Parse `rgb(r, g, b)` / `rgba(r, g, b, a)` as produced by getComputedStyle. */
+/**
+ * Parse a computed colour, strictly — legacy sRGB `rgb()` / `rgba()` only.
+ *
+ * Round-6 gate finding: the previous implementation pulled every digit run out
+ * of the string with `/[\d.]+/g` and took the first three as R, G and B. That
+ * accepts far more than it can actually interpret. `oklch(0.7 0.1 250)`,
+ * `lab(54% 81 70)` and `color(display-p3 1 0.5 0)` all yield three numbers, so
+ * they would have been read as sRGB 0-255 and produced a plausible, wrong
+ * contrast ratio rather than a refusal. The regex also dropped minus signs, so
+ * a negative component silently changed value.
+ *
+ * None of the site's stylesheets use a modern colour syntax today, so nothing
+ * currently hits that path — but Tailwind v4 emits `oklch()` by default, and a
+ * probe that quietly mis-measures the moment a stylesheet modernises is the
+ * exact failure this module exists to prevent. Refusing is the safe default:
+ * an unsupported colour space needs real conversion, not reinterpretation.
+ *
+ * Accepts both serialisations a browser may emit for sRGB: the legacy
+ * comma form (`rgb(17, 17, 20)`, `rgba(17, 17, 20, 0.5)`) and the CSS Color 4
+ * space-separated form (`rgb(17 17 20)`, `rgb(17 17 20 / 0.5)`), with
+ * percentages allowed on any component. Everything else throws.
+ */
 export function parseRgb(input: string): Rgba {
-  const m = input.match(/[\d.]+/g)
-  if (!m || m.length < 3) throw new Error(`[SMI-6503] unparseable colour: ${input}`)
+  const raw = typeof input === 'string' ? input.trim() : ''
+  const fn = /^rgba?\(([^()]*)\)$/i.exec(raw)
+  if (!fn) {
+    throw new Error(
+      `[SMI-6503] unparseable colour: ${JSON.stringify(input)}. Only legacy sRGB ` +
+        'rgb()/rgba() serialisation is supported. A modern colour space such as ' +
+        'oklch(), lab() or color() needs real conversion — reinterpreting its ' +
+        'components as sRGB would report a ratio that is not what renders.'
+    )
+  }
+
+  // CSS Color 4 puts alpha after a slash; the legacy form makes it a 4th value.
+  const slashParts = fn[1]!.split('/')
+  if (slashParts.length > 2) {
+    throw new Error(`[SMI-6503] unparseable colour: ${JSON.stringify(input)} (multiple "/").`)
+  }
+  const tokens = (t: string): string[] =>
+    t
+      .trim()
+      .split(/[\s,]+/)
+      .filter(Boolean)
+  const head = tokens(slashParts[0]!)
+  const tail = slashParts.length === 2 ? tokens(slashParts[1]!) : []
+
+  let channels: string[]
+  let alphaToken: string | undefined
+  if (slashParts.length === 2) {
+    if (tail.length !== 1) {
+      throw new Error(`[SMI-6503] unparseable colour: ${JSON.stringify(input)} (alpha after "/").`)
+    }
+    channels = head
+    alphaToken = tail[0]
+  } else if (head.length === 4) {
+    channels = head.slice(0, 3)
+    alphaToken = head[3]
+  } else {
+    channels = head
+  }
+  if (channels.length !== 3) {
+    throw new Error(
+      `[SMI-6503] unparseable colour: ${JSON.stringify(input)} — expected 3 colour ` +
+        `components, got ${channels.length}.`
+    )
+  }
+
+  /** One component, as a number in [0, max]. Rejects `none`, signs out of range, junk. */
+  const channel = (token: string, max: number, label: string): number => {
+    const pct = token.endsWith('%')
+    const body = pct ? token.slice(0, -1) : token
+    if (!/^[+-]?(?:\d+\.?\d*|\.\d+)$/.test(body)) {
+      throw new Error(
+        `[SMI-6503] unparseable colour: ${JSON.stringify(input)} — ${label} is ` +
+          `${JSON.stringify(token)}, not a number. The CSS Color 4 "none" keyword and ` +
+          'other non-numeric components are refused rather than assumed to be zero.'
+      )
+    }
+    const value = pct ? (Number(body) / 100) * max : Number(body)
+    if (!Number.isFinite(value) || value < 0 || value > max) {
+      throw new Error(
+        `[SMI-6503] unparseable colour: ${JSON.stringify(input)} — ${label} resolves to ` +
+          `${value}, outside [0, ${max}].`
+      )
+    }
+    return value
+  }
+
   return {
-    r: Number(m[0]),
-    g: Number(m[1]),
-    b: Number(m[2]),
-    a: m.length > 3 ? Number(m[3]) : 1,
+    r: channel(channels[0]!, 255, 'red'),
+    g: channel(channels[1]!, 255, 'green'),
+    b: channel(channels[2]!, 255, 'blue'),
+    a: alphaToken === undefined ? 1 : channel(alphaToken, 1, 'alpha'),
   }
 }
 
@@ -281,7 +366,12 @@ export function evaluateSamples(collected: RawCollect): ProbeResult {
           'Expected { color, opacity } layers from backgroundChain().'
       )
     }
-    s.chain.forEach((layer, i) => assertOpacity(layer?.opacity, `chain[${i}].opacity`, s.selector))
+    // Indexed, NOT forEach: forEach skips holes in a sparse array, so a sparse
+    // chain would slip past this contract and die later on an incidental
+    // `undefined.opacity` TypeError instead of the diagnostic below.
+    for (let i = 0; i < s.chain.length; i++) {
+      assertOpacity(s.chain[i]?.opacity, `chain[${i}].opacity`, s.selector)
+    }
 
     // `chain` is innermost-first. Find the OUTERMOST ancestor carrying opacity:
     // that element is the stacking-context boundary, and everything outside it
