@@ -45,6 +45,13 @@
  * shapes and throws — a probe that quietly mis-measures the exact case it guards is worse
  * than one that refuses. Implementing boundary-by-boundary compositing is the
  * fix if the page ever grows a second boundary.
+ *
+ * Both of those guards are written as `< 1`, which fails OPEN on a malformed
+ * value: `undefined < 1` and `NaN < 1` are both false. Since `COLLECT_IN_PAGE`
+ * is a string that TypeScript never checks against `RawSample`, a dropped or
+ * renamed field would disable the guards silently. So every opacity is
+ * contract-checked by `assertOpacity` before either guard runs — see the note
+ * on that function.
  */
 
 /** sRGB colour with alpha, 0-255 channels. */
@@ -217,6 +224,37 @@ const CANVAS: Rgba = { r: 255, g: 255, b: 255, a: 1 }
  * Fold a raw collection into ratios. Pure — this is what the unit tests drive
  * with synthetic input of known ratio.
  */
+/**
+ * Every opacity the evaluator reads must be a real number in [0, 1].
+ *
+ * This is a CONTRACT check against the collector, and it is load-bearing
+ * because `COLLECT_IN_PAGE` is a STRING evaluated in the page — TypeScript
+ * never type-checks it against `RawSample`, so a field it stops emitting is
+ * invisible until runtime. Both refusal guards below are written as `< 1`, and
+ * JavaScript makes `undefined < 1` and `NaN < 1` BOTH false: a missing or
+ * malformed opacity would sail past the guard that exists to catch it and the
+ * probe would report a plausible, wrong ratio. That is precisely the
+ * silent-mis-measurement failure this whole module exists to prevent, so the
+ * contract fails CLOSED rather than open.
+ *
+ * `typeof` is checked explicitly rather than relying on comparison, because
+ * numeric strings coerce: `"0.5" < 1` is true, and a string that reached here
+ * means the collector changed shape and should be fixed, not tolerated.
+ */
+function assertOpacity(value: unknown, label: string, selector: string): number {
+  if (typeof value !== 'number' || !Number.isFinite(value) || value < 0 || value > 1) {
+    throw new Error(
+      `[SMI-6503] contrast probe got ${label}=${JSON.stringify(value)} on "${selector}". ` +
+        'Expected a finite number in [0, 1]. COLLECT_IN_PAGE is evaluated as a string and ' +
+        'is not type-checked against RawSample, so a renamed or dropped field surfaces ' +
+        'only here. Refusing rather than measuring: the opacity guards below compare with ' +
+        '"< 1", and undefined < 1 and NaN < 1 are both false, so a malformed value would ' +
+        'silently disable them and the reported ratio would not be what renders.'
+    )
+  }
+  return value
+}
+
 export function evaluateSamples(collected: RawCollect): ProbeResult {
   // Name the failure rather than crashing on a property read. The realistic
   // cause is page.evaluate resolving undefined because COLLECT_IN_PAGE stopped
@@ -233,6 +271,18 @@ export function evaluateSamples(collected: RawCollect): ProbeResult {
     )
   }
   const samples: ProbeSample[] = collected.raw.map((s) => {
+    // Validate the collector contract BEFORE any loop or colour parsing, so a
+    // malformed sample can never reach a guard that would silently accept it.
+    assertOpacity(s.ownOpacity, 'ownOpacity', s.selector)
+    assertOpacity(s.opacity, 'opacity', s.selector)
+    if (!Array.isArray(s.chain)) {
+      throw new Error(
+        `[SMI-6503] contrast probe got a non-array background chain on "${s.selector}". ` +
+          'Expected { color, opacity } layers from backgroundChain().'
+      )
+    }
+    s.chain.forEach((layer, i) => assertOpacity(layer?.opacity, `chain[${i}].opacity`, s.selector))
+
     // `chain` is innermost-first. Find the OUTERMOST ancestor carrying opacity:
     // that element is the stacking-context boundary, and everything outside it
     // is the real backdrop the group composites onto.
