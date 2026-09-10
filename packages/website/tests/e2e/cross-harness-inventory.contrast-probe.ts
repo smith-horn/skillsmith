@@ -23,15 +23,26 @@
  * wrong in the other, and is exactly how the original bug stayed invisible:
  * every declared colour looked compliant.
  *
- * SUPPORTED SHAPE: exactly ONE opacity-bearing ancestor. That is what this page
- * has ever had (`.device-card`), and a single accumulated alpha describes it
- * exactly.
+ * SUPPORTED SHAPE: AT MOST ONE opacity-bearing ancestor, and no opacity on the
+ * sampled text element itself. Zero is fine and is the current state of the
+ * page; one ancestor is what it had before this fix (`.device-card`), and a
+ * single accumulated alpha describes that exactly.
  *
- * NOT supported: two or more nested opacity ancestors. Each creates its own
- * offscreen composite, and multiplying the alphas to composite once is not
- * equivalent when a background sits between the boundaries. Rather than
- * silently reporting a wrong ratio, `evaluateSamples` detects that shape and
- * throws — a probe that quietly mis-measures the exact case it guards is worse
+ * NOT supported: two or more nested opacity ancestors, OR opacity on the sampled
+ * element itself. Each creates its own offscreen composite, and multiplying the
+ * alphas to composite once is not equivalent when a background sits between the
+ * boundaries.
+ *
+ * The element's own opacity needs calling out separately because it is the
+ * subtler half: `ancestorOpacity()` walks from the element itself, so an
+ * element-level opacity lands in the accumulated alpha, while `chain` starts at
+ * the parent and never counts it. Counting only chain entries would let an
+ * element-plus-ancestor pair through the nesting guard as if it were a single
+ * boundary — the exact shape the guard exists to reject. So the collector
+ * reports the element's own opacity separately and it is checked on its own.
+ *
+ * Rather than silently reporting a wrong ratio, `evaluateSamples` detects both
+ * shapes and throws — a probe that quietly mis-measures the exact case it guards is worse
  * than one that refuses. Implementing boundary-by-boundary compositing is the
  * fix if the page ever grows a second boundary.
  */
@@ -163,6 +174,7 @@ export const COLLECT_IN_PAGE = `(() => {
       fontSizePx: parseFloat(cs.fontSize),
       fontWeight: parseInt(cs.fontWeight, 10) || 400,
       opacity: ancestorOpacity(el),
+      ownOpacity: parseFloat(cs.opacity),
       chain: backgroundChain(el.parentElement || document.body),
     })
   })
@@ -183,7 +195,10 @@ interface RawSample {
   color: string
   fontSizePx: number
   fontWeight: number
+  /** Accumulated opacity of the element AND all its ancestors. */
   opacity: number
+  /** The element's own opacity alone — not covered by `chain`. */
+  ownOpacity: number
   chain: { color: string; opacity: number }[]
 }
 
@@ -229,6 +244,19 @@ export function evaluateSamples(collected: RawCollect): ProbeResult {
         if (boundary === -1) boundary = i
       }
     }
+    // The element's own opacity is NOT in `chain` — see the module comment. It
+    // must be checked separately or an element-plus-ancestor pair slips through
+    // the nesting guard below counting as one boundary.
+    if (s.ownOpacity < 1) {
+      throw new Error(
+        `[SMI-6503] contrast probe found opacity ${s.ownOpacity} on the sampled element ` +
+          `"${s.selector}" itself. Only ancestor opacity is supported: the element's own ` +
+          'opacity opens a further compositing boundary that this model does not ' +
+          'represent, so the ratio would not be what renders. Implement ' +
+          'boundary-by-boundary compositing before measuring this page.'
+      )
+    }
+
     // Refuse rather than mis-measure. Nested boundaries each composite through
     // their own buffer; collapsing them to one alpha is wrong whenever a
     // background sits between them, and the error is invisible in the output.

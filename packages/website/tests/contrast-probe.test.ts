@@ -32,6 +32,7 @@ function sample(over: Partial<Record<string, unknown>> = {}) {
     fontSizePx: 13,
     fontWeight: 400,
     opacity: 1,
+    ownOpacity: 1,
     chain: [OPAQUE('rgb(0, 0, 0)')],
     ...over,
   } as never
@@ -237,6 +238,46 @@ describe('evaluateSamples — group opacity', () => {
     })
     expect(r.failures).toHaveLength(1)
     expect(r.failures[0]!.ratio).toBeLessThan(4.5)
+  })
+
+  it('refuses opacity on the sampled element itself', () => {
+    // The subtle half: ancestorOpacity() walks from the element, so element
+    // opacity lands in the accumulated alpha, while `chain` starts at the parent
+    // and never counts it. Checked on its own or it is invisible to the nesting
+    // guard below.
+    expect(() =>
+      evaluateSamples({
+        raw: [sample({ opacity: 0.5, ownOpacity: 0.5 })],
+        scannedTextNodes: 1,
+        deviceCards: 1,
+        staleCards: 0,
+        harnessHeadings: [],
+      })
+    ).toThrow(/on the sampled element/)
+  })
+
+  it('refuses element opacity combined with one ancestor opacity', () => {
+    // This is the pair that would otherwise slip through: chain carries ONE
+    // opacity entry, so the nesting guard sees a single supported boundary,
+    // while the accumulated alpha silently contains two.
+    expect(() =>
+      evaluateSamples({
+        raw: [
+          sample({
+            opacity: 0.36, // 0.72 ancestor * 0.5 element
+            ownOpacity: 0.5,
+            chain: [
+              { color: 'rgb(17, 17, 20)', opacity: 0.72 },
+              { color: 'rgb(13, 13, 15)', opacity: 1 },
+            ],
+          }),
+        ],
+        scannedTextNodes: 1,
+        deviceCards: 1,
+        staleCards: 1,
+        harnessHeadings: [],
+      })
+    ).toThrow(/on the sampled element/)
   })
 
   it('refuses nested opacity rather than silently mis-measuring it', () => {
