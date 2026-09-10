@@ -669,3 +669,35 @@ describe('COLLECT_IN_PAGE — modern colour syntax end to end', () => {
     expect(() => evaluateSamples(c)).toThrow(/unparseable colour/)
   })
 })
+
+describe('parseRgb — separator grammar', () => {
+  // Round-7 gate finding: the tokenizer split on /[\s,]+/, treating commas and
+  // whitespace as interchangeable. CSS does not allow mixing them, so these
+  // malformed strings were accepted and would have yielded a plausible ratio.
+  const MALFORMED = [
+    ['empty comma field', 'rgb(1,, 2, 3)'],
+    ['whitespace form with a 4th component', 'rgba(1 2 3 0.5)'],
+    ['comma form with a slash alpha', 'rgb(1, 2, 3 / 0.5)'],
+    ['slash alpha with a stray comma', 'rgb(1 2 3 / ,0.5)'],
+    ['mixed separators', 'rgb(1 2, 3)'],
+    ['trailing comma', 'rgb(1, 2, 3,)'],
+    ['too few comma fields', 'rgb(1, 2)'],
+    ['too many comma fields', 'rgb(1, 2, 3, 4, 5)'],
+    ['slash with no alpha', 'rgb(1 2 3 / )'],
+    ['two slashes', 'rgb(1 2 3 / 0.5 / 0.5)'],
+  ] as const
+
+  for (const [label, value] of MALFORMED) {
+    it(`refuses ${label}: ${value}`, () => {
+      expect(() => parseRgb(value)).toThrow(/unparseable colour/)
+    })
+  }
+
+  it('still accepts both well-formed grammars unchanged', () => {
+    expect(parseRgb('rgb(17, 17, 20)')).toEqual({ r: 17, g: 17, b: 20, a: 1 })
+    expect(parseRgb('rgba(34, 197, 94, 0.1)')).toEqual({ r: 34, g: 197, b: 94, a: 0.1 })
+    expect(parseRgb('rgb(17 17 20)')).toEqual({ r: 17, g: 17, b: 20, a: 1 })
+    expect(parseRgb('rgb(17 17 20 / 0.5)')).toEqual({ r: 17, g: 17, b: 20, a: 0.5 })
+    expect(parseRgb('rgb(100%, 0%, 0%)')).toEqual({ r: 255, g: 0, b: 0, a: 1 })
+  })
+})

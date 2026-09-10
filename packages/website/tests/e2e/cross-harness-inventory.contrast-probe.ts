@@ -96,38 +96,41 @@ export function parseRgb(input: string): Rgba {
     )
   }
 
-  // CSS Color 4 puts alpha after a slash; the legacy form makes it a 4th value.
-  const slashParts = fn[1]!.split('/')
-  if (slashParts.length > 2) {
-    throw new Error(`[SMI-6503] unparseable colour: ${JSON.stringify(input)} (multiple "/").`)
-  }
-  const tokens = (t: string): string[] =>
-    t
-      .trim()
-      .split(/[\s,]+/)
-      .filter(Boolean)
-  const head = tokens(slashParts[0]!)
-  const tail = slashParts.length === 2 ? tokens(slashParts[1]!) : []
+  // Pick the grammar from the separators actually present. CSS does not allow
+  // mixing comma and whitespace forms, so a tokenizer that treats them
+  // interchangeably accepts `rgb(1,, 2, 3)`, `rgba(1 2 3 0.5)` and
+  // `rgb(1, 2, 3 / 0.5)` — malformed input yielding a plausible ratio, which is
+  // the fail-open shape this module exists to reject (round-7 gate finding).
+  const body = fn[1]!
+  const bad = (why: string): Error =>
+    new Error(`[SMI-6503] unparseable colour: ${JSON.stringify(input)} — ${why}.`)
 
   let channels: string[]
   let alphaToken: string | undefined
-  if (slashParts.length === 2) {
-    if (tail.length !== 1) {
-      throw new Error(`[SMI-6503] unparseable colour: ${JSON.stringify(input)} (alpha after "/").`)
+  if (body.includes(',')) {
+    // Legacy: commas only, 3 or 4 non-empty single-token fields, no slash.
+    if (body.includes('/')) throw bad('mixes comma syntax with a "/" alpha')
+    const parts = body.split(',').map((p) => p.trim())
+    if (parts.length < 3 || parts.length > 4) {
+      throw bad(`expected 3 or 4 comma-separated fields, got ${parts.length}`)
     }
-    channels = head
-    alphaToken = tail[0]
-  } else if (head.length === 4) {
-    channels = head.slice(0, 3)
-    alphaToken = head[3]
+    if (parts.some((p) => p === '' || /\s/.test(p))) {
+      throw bad('has an empty or whitespace-split comma field')
+    }
+    channels = parts.slice(0, 3)
+    alphaToken = parts[3]
   } else {
+    // CSS Color 4: whitespace-separated, with an optional `/ alpha`.
+    const slash = body.split('/')
+    if (slash.length > 2) throw bad('has multiple "/" separators')
+    const head = slash[0]!.trim().split(/\s+/).filter(Boolean)
+    if (head.length !== 3) throw bad(`expected 3 colour components, got ${head.length}`)
     channels = head
-  }
-  if (channels.length !== 3) {
-    throw new Error(
-      `[SMI-6503] unparseable colour: ${JSON.stringify(input)} — expected 3 colour ` +
-        `components, got ${channels.length}.`
-    )
+    if (slash.length === 2) {
+      const tail = slash[1]!.trim().split(/\s+/).filter(Boolean)
+      if (tail.length !== 1) throw bad('needs exactly one alpha value after "/"')
+      alphaToken = tail[0]
+    }
   }
 
   /** One component, as a number in [0, max]. Rejects `none`, signs out of range, junk. */
