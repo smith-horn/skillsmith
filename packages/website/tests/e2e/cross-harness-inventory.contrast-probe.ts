@@ -211,21 +211,42 @@ export function evaluateSamples(collected: RawCollect): ProbeResult {
     )
   }
   const samples: ProbeSample[] = collected.raw.map((s) => {
-    // Fold the background chain WITHOUT opacity first: this is what the group
-    // renders into its offscreen buffer.
-    let bgRaw = CANVAS
+    // `chain` is innermost-first. Find the OUTERMOST ancestor carrying opacity:
+    // that element is the stacking-context boundary, and everything outside it
+    // is the real backdrop the group composites onto.
+    let boundary = -1
     for (let i = s.chain.length - 1; i >= 0; i--) {
+      if (s.chain[i]!.opacity < 1) {
+        boundary = i
+        break
+      }
+    }
+
+    // Backdrop: fold the layers OUTSIDE the group, honouring their own
+    // opacities. Assuming white here instead would lighten both colours and
+    // misreport the ratio — on this page the real backdrop is a near-black
+    // body, which is nothing like the canvas.
+    let backdrop = CANVAS
+    for (let i = s.chain.length - 1; i > boundary; i--) {
+      const layer = parseRgb(s.chain[i]!.color)
+      backdrop = composite({ ...layer, a: layer.a * s.chain[i]!.opacity }, backdrop)
+    }
+
+    // Inside the group, fold the remaining layers WITHOUT their opacities —
+    // this is what renders into the offscreen buffer — starting from the
+    // backdrop so a translucent inner background still resolves correctly.
+    let bgRaw = backdrop
+    for (let i = boundary; i >= 0; i--) {
       bgRaw = composite(parseRgb(s.chain[i]!.color), bgRaw)
     }
     const fgRaw = parseRgb(s.color)
 
-    // Then composite text and background through the SAME accumulated opacity,
-    // each onto the canvas behind the group — not the text onto the already
-    // composited background, which double-applies the blend and reports a
-    // foreground darker than what is on screen.
+    // Composite text and background through the SAME accumulated opacity onto
+    // that shared backdrop. Blending the text onto the already-blended
+    // background instead double-applies it.
     const op = s.opacity
-    const fg = composite({ ...fgRaw, a: fgRaw.a * op }, CANVAS)
-    const bg = composite({ ...bgRaw, a: op }, CANVAS)
+    const fg = composite({ ...fgRaw, a: fgRaw.a * op }, backdrop)
+    const bg = composite({ ...bgRaw, a: op }, backdrop)
     const ratio = contrastRatio(fg, bg)
     const threshold = aaThreshold(s.fontSizePx, s.fontWeight)
     return {

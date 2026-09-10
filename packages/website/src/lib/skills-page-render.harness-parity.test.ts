@@ -2,12 +2,20 @@
  * SMI-6503 parity guard: HARNESS_HEADING_LABELS must cover every ClientId that
  * core recognises.
  *
- * Source of truth: packages/core/src/install/paths.ts (the `ClientId` union).
- * The website client bundle CANNOT import @skillsmith/core at runtime, so the
- * key set is duplicated here and this test is the enforcement boundary.
+ * Source of truth: packages/core/src/install/paths.ts (`CLIENT_IDS`), imported
+ * DIRECTLY below.
  *
- * Pattern: follows skill-card.parity.test.ts (SMI-5178 / SMI-5366), which does
- * the same for COMPAT_LABELS against core's COMPATIBILITY_LABELS.
+ * The website client BUNDLE cannot import @skillsmith/core at runtime, which is
+ * why HARNESS_HEADING_LABELS is page-local. This test is not the bundle: it runs
+ * in Node under vitest, so it can reach core's source and compare against the
+ * real thing.
+ *
+ * That matters. An earlier revision transcribed the id list into a local
+ * constant, following skill-card.parity.test.ts's precedent — but a hardcoded
+ * copy in the same package only proves map-versus-copy agreement. Adding a
+ * client to core would change neither side and this test would stay green,
+ * which is the drift it exists to catch. The precedent has the same weakness;
+ * this does not follow it there.
  *
  * Note this guards KEYS ONLY, deliberately. The values are not shared with
  * core's CLIENT_DISPLAY_LABELS and must not be: that map feeds mid-sentence
@@ -16,27 +24,16 @@
  * string reads wrong, so this page carries its own wording. What the two maps
  * owe each other is coverage, not phrasing.
  *
- * When a client is added to core's ClientId union, add it to
- * HARNESS_HEADING_LABELS and to EXPECTED_CLIENT_IDS below in lockstep.
+ * Adding a client to core's CLIENT_IDS now turns this red on its own — no
+ * second list to remember to update.
  */
 
 import { describe, it, expect } from 'vitest'
 import { HARNESS_HEADING_LABELS, harnessHeadingLabel } from './skills-page-render'
+// Test-only source import. Node-side only — never reaches the client bundle.
+import { CLIENT_IDS } from '../../../core/src/install/paths'
 
-// Hardcoded canonical contract — transcribed from the ClientId union in
-// packages/core/src/install/paths.ts. Do NOT derive this from
-// HARNESS_HEADING_LABELS itself; that would make the test circular.
-const EXPECTED_CLIENT_IDS = [
-  'claude-code',
-  'cursor',
-  'copilot',
-  'windsurf',
-  'agents',
-  'opencode',
-  'hermes',
-  'grok',
-  'antigravity',
-] as const
+const EXPECTED_CLIENT_IDS = CLIENT_IDS
 
 describe('HARNESS_HEADING_LABELS — parity with core ClientId (SMI-6503)', () => {
   it('has a heading label for every client core recognises', () => {

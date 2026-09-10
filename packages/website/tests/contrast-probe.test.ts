@@ -125,6 +125,73 @@ describe('evaluateSamples — group opacity', () => {
     expect(r.worstRatio).toBeCloseTo(21, 5)
   })
 
+  it('blends onto the real backdrop outside the group, not a white canvas', () => {
+    // The page's true stack: near-black body behind a near-black card. Assuming
+    // a white canvas would lighten both colours and misreport the ratio.
+    const r = evaluateSamples({
+      raw: [
+        sample({
+          color: 'rgb(161, 161, 170)', // --sk-text-muted
+          // `opacity` is the element's ACCUMULATED ancestor opacity and must
+          // agree with the chain, which carries each layer's own — a fixture
+          // where they disagree describes a DOM that cannot exist.
+          opacity: 0.5,
+          chain: [
+            { color: 'rgb(17, 17, 20)', opacity: 0.5 }, // card, dimmed
+            { color: 'rgb(13, 13, 15)', opacity: 1 }, // body
+          ],
+        }),
+      ],
+      scannedTextNodes: 1,
+      deviceCards: 1,
+      staleCards: 1,
+      harnessHeadings: [],
+    })
+    const s = r.samples[0]!
+    // Per channel, blended at 50% onto the body rgb(13,13,15):
+    //   fg = (.5*161+.5*13, .5*161+.5*13, .5*170+.5*15) = (87, 87, 92.5 -> 93)
+    //   bg = (.5*17 +.5*13, .5*17 +.5*13, .5*20 +.5*15) = (15, 15, 17.5 -> 18)
+    // Against a white canvas both would be far lighter and the ratio wrong.
+    expect(s.fg).toBe('rgb(87, 87, 93)')
+    expect(s.bg).toBe('rgb(15, 15, 18)')
+  })
+
+  it('flags a pairing that passes undimmed and fails only once dimmed', () => {
+    // The regression's exact shape: a colour comfortably above AA at full
+    // opacity that drops below it once the card is composited at 72%. A probe
+    // that ignored group opacity — or blended onto the wrong backdrop — would
+    // report this as passing.
+    const chain = [
+      { color: 'rgb(17, 17, 20)', opacity: 1 },
+      { color: 'rgb(13, 13, 15)', opacity: 1 },
+    ]
+    const undimmed = evaluateSamples({
+      raw: [sample({ color: 'rgb(125, 125, 130)', chain })],
+      scannedTextNodes: 1,
+      deviceCards: 1,
+      staleCards: 0,
+      harnessHeadings: [],
+    })
+    expect(undimmed.failures, 'should pass at full opacity').toHaveLength(0)
+    expect(undimmed.samples[0]!.ratio).toBeGreaterThan(4.5)
+
+    const dimmed = evaluateSamples({
+      raw: [
+        sample({
+          color: 'rgb(125, 125, 130)',
+          opacity: 0.72,
+          chain: [{ ...chain[0]!, opacity: 0.72 }, chain[1]!],
+        }),
+      ],
+      scannedTextNodes: 1,
+      deviceCards: 1,
+      staleCards: 1,
+      harnessHeadings: [],
+    })
+    expect(dimmed.failures, 'the same pairing must fail once the card is dimmed').toHaveLength(1)
+    expect(dimmed.samples[0]!.ratio).toBeLessThan(4.5)
+  })
+
   it('composites BOTH foreground and background through ancestor opacity', () => {
     // White on black inside an ancestor at 50% opacity, over a white canvas.
     // The chain entry carries that ancestor's own opacity and `opacity` carries

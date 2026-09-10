@@ -18,9 +18,14 @@
  *
  * The namespace fixes that class of bug rather than that one instance: .card,
  * .btn and .page-header are equally generic and would collide with any
- * component added to this page later. :root and @keyframes stay global by
- * necessity -- custom properties must resolve document-wide, and the --sk-
- * prefix is unique.
+ * component added to this page later. :root stays global by necessity: custom
+ * properties must resolve document-wide, and the --sk- prefix is unique.
+ *
+ * @keyframes cannot be selector-namespaced, so the animation is renamed
+ * instead. auth/LoginButton.astro also defines `spin`; the two are currently
+ * equivalent so nothing was visibly wrong, but two components on one page
+ * sharing a global keyframe name is a collision waiting for one of them to
+ * change.
  */
 /*
    * Text tiers for this page and for the card CSS that skills-page-render.ts
@@ -77,11 +82,11 @@ body.account-skills-page {
 .account-skills-page .spinner {
   width: 40px;
   height: 40px;
-  animation: spin 0.8s linear infinite;
+  animation: account-skills-spin 0.8s linear infinite;
   color: #7c3aed;
 }
 
-@keyframes spin {
+@keyframes account-skills-spin {
   to {
     transform: rotate(360deg);
   }
