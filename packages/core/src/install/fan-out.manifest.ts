@@ -67,7 +67,9 @@ export async function readManifestFile(): Promise<ManifestRead> {
     return { state: 'unreadable', manifest: empty, reason: code ?? String(err) }
   }
   try {
-    const parsed = JSON.parse(raw) as { version?: unknown; links?: unknown } | null
+    // Round 11: a byte-order mark some editors add isn't corruption.
+    const text = raw.charCodeAt(0) === 0xfeff ? raw.slice(1) : raw
+    const parsed = JSON.parse(text) as { version?: unknown; links?: unknown } | null
     if (parsed?.version === MANIFEST_VERSION && Array.isArray(parsed.links)) {
       return { state: 'ok', manifest: parsed as LinkManifest }
     }

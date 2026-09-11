@@ -10,6 +10,7 @@ import {
   mkdir,
   readFile,
   readdir,
+  readlink,
   rename,
   rm,
   stat,
@@ -57,6 +58,24 @@ async function seedSkill(skillId: string, files: Record<string, string> = {}) {
     await writeFile(fp, content, 'utf-8')
   }
   return skillDir
+}
+
+/** Make every link-manifest lock attempt fail, as when that lock can't be taken. */
+function mockManifestLockFailure(): void {
+  vi.doMock('../../src/install/fan-out.overwrite.js', async () => {
+    const actual = await vi.importActual<typeof import('../../src/install/fan-out.overwrite.js')>(
+      '../../src/install/fan-out.overwrite.js'
+    )
+    return {
+      ...actual,
+      withFileLock: vi.fn(
+        async <T>(target: string, label: string, fn: () => Promise<T>): Promise<T> => {
+          if (label.includes('manifest')) throw new Error('manifest lock unavailable')
+          return actual.withFileLock(target, label, fn)
+        }
+      ),
+    }
+  })
 }
 
 describe('install/fan-out', () => {
@@ -955,8 +974,12 @@ describe('install/fan-out', () => {
       await mkdir(path.dirname(manifestPath), { recursive: true })
       await writeFile(manifestPath, corrupt, 'utf-8')
 
-      // Nothing to remove, so nothing is written.
-      expect(await removeLinks('other')).toEqual({ removed: 0, refused: [] })
+      // An uninstall writes nothing, and says it couldn't use the manifest.
+      expect(await removeLinks('other')).toEqual({
+        removed: 0,
+        refused: [],
+        warnings: [expect.stringContaining('could not be parsed')],
+      })
       expect(await readFile(manifestPath, 'utf-8')).toBe(corrupt)
 
       const result = await addLink({
@@ -1096,20 +1119,7 @@ describe('install/fan-out', () => {
     })
 
     it('takes a fresh copy back out when its record cannot be saved', async () => {
-      vi.doMock('../../src/install/fan-out.overwrite.js', async () => {
-        const actual = await vi.importActual<
-          typeof import('../../src/install/fan-out.overwrite.js')
-        >('../../src/install/fan-out.overwrite.js')
-        return {
-          ...actual,
-          withFileLock: vi.fn(
-            async <T>(target: string, label: string, fn: () => Promise<T>): Promise<T> => {
-              if (label.includes('manifest')) throw new Error('manifest lock unavailable')
-              return actual.withFileLock(target, label, fn)
-            }
-          ),
-        }
-      })
+      mockManifestLockFailure()
       try {
         vi.resetModules()
         const { addLink } = await import('../../src/install/fan-out.js')
@@ -1124,6 +1134,117 @@ describe('install/fan-out', () => {
         vi.doUnmock('../../src/install/fan-out.overwrite.js')
         vi.resetModules()
       }
+    })
+  })
+
+  // SMI-6529 review round 11: an uninstall drops every current record for a
+  // destination it removes, a refreshed symlink is put back when its record
+  // can't be saved, a byte-order mark isn't corruption, and an uninstall says
+  // when it couldn't use the manifest.
+  describe('SMI-6529 round 11: record integrity, second pass', () => {
+    it('an uninstall that runs after a force refresh leaves no record for the folder it removed', async () => {
+      const { addLink, removeLinks, listLinks } = await loadModule()
+      const { acquireOwnedLock } = await import('../../src/config/owned-lock.js')
+      await seedSkill('addrm')
+      const { record } = await addLink({
+        skillId: 'addrm',
+        fromClient: 'claude-code',
+        toClient: 'cursor',
+      })
+      // Hold the destination's lock so both calls queue on it: the refresh
+      // first, then the uninstall, which has already read the old record.
+      const release = acquireOwnedLock(
+        path.join(path.dirname(record.to), '.addrm.skillsmith-fanout')
+      )
+      let refresh: Promise<unknown> = Promise.resolve()
+      let removal: Promise<unknown> = Promise.resolve()
+      try {
+        refresh = addLink({
+          skillId: 'addrm',
+          fromClient: 'claude-code',
+          toClient: 'cursor',
+          force: true,
+        })
+        await new Promise((resolve) => setTimeout(resolve, 50))
+        removal = removeLinks('addrm')
+        await new Promise((resolve) => setTimeout(resolve, 100))
+      } finally {
+        release()
+      }
+      await refresh
+      await removal
+
+      expect(await listLinks('addrm')).toEqual([])
+      await expect(stat(record.to)).rejects.toThrow(/ENOENT/)
+    })
+
+    it('puts a refreshed symlink back when its record cannot be saved', async () => {
+      const { addLink } = await loadModule()
+      await seedSkill('linkundo')
+      const first = await addLink({
+        skillId: 'linkundo',
+        fromClient: 'claude-code',
+        toClient: 'windsurf',
+        preferSymlink: true,
+      })
+      expect(first.record.kind).toBe('symlink')
+      const target = await readlink(first.record.to)
+
+      mockManifestLockFailure()
+      try {
+        vi.resetModules()
+        const { addLink: failingAddLink } = await import('../../src/install/fan-out.js')
+        await expect(
+          failingAddLink({
+            skillId: 'linkundo',
+            fromClient: 'claude-code',
+            toClient: 'windsurf',
+            force: true,
+          })
+        ).rejects.toThrow(/manifest lock unavailable/)
+      } finally {
+        vi.doUnmock('../../src/install/fan-out.overwrite.js')
+        vi.resetModules()
+      }
+
+      expect((await lstat(first.record.to)).isSymbolicLink()).toBe(true)
+      expect(await readlink(first.record.to)).toBe(target)
+    })
+
+    it('reads a manifest that starts with a byte-order mark', async () => {
+      const { addLink, listLinks, getLinkManifestPath } = await loadModule()
+      await seedSkill('bomkeep')
+      await seedSkill('bomnew')
+      const { record } = await addLink({
+        skillId: 'bomkeep',
+        fromClient: 'claude-code',
+        toClient: 'cursor',
+      })
+      const manifestPath = getLinkManifestPath()
+      await writeFile(manifestPath, '\uFEFF' + (await readFile(manifestPath, 'utf-8')), 'utf-8')
+
+      expect((await listLinks()).map((l) => l.to)).toEqual([record.to])
+      const result = await addLink({
+        skillId: 'bomnew',
+        fromClient: 'claude-code',
+        toClient: 'cursor',
+      })
+      expect(result.warnings).toBeUndefined()
+      expect((await listLinks()).map((l) => l.skillId).sort()).toEqual(['bomkeep', 'bomnew'])
+    })
+
+    it('tells the user when an uninstall could not use the manifest', async () => {
+      const { removeLinks, getLinkManifestPath } = await loadModule()
+      const manifestPath = getLinkManifestPath()
+      const newer = '{"version":2,"links":[{"skillId":"future"}]}'
+      await mkdir(path.dirname(manifestPath), { recursive: true })
+      await writeFile(manifestPath, newer, 'utf-8')
+
+      const result = await removeLinks('future')
+
+      expect(result.removed).toBe(0)
+      expect(result.warnings).toEqual([expect.stringContaining('newer Skillsmith')])
+      expect(await readFile(manifestPath, 'utf-8')).toBe(newer)
     })
   })
 

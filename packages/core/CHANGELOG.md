@@ -23,7 +23,8 @@ All notable changes to `@skillsmith/core` are documented here.
   changed under its own lock (concurrent fan-outs of different skills lost records and could
   corrupt it), and a corrupt one is moved aside with a warning rather than replaced by an empty
   one that dropped every other skill's record; a manifest written by a newer version is left
-  untouched, and an uninstall racing a re-link no longer drops the new copy's record. The
+  untouched. An uninstall racing a re-link or a refresh leaves the records matching what is on
+  disk, and an uninstall that can't read the manifest says so. The
   per-target write queue now classifies and snapshots
   every write independently (not just the first for a given path), so two differently-cased files
   on a case-sensitive filesystem restore correctly, a short write is retried until complete or
