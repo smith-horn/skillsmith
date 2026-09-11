@@ -234,7 +234,7 @@ fi
 if [ "$IS_WORKTREE" = "1" ] && command -v docker >/dev/null 2>&1 && [ "$DOCKER_AVAILABLE" = "0" ] && [ -n "$CONTAINER_WD" ]; then
     if [ "${SKILLSMITH_PRE_PUSH_DOCKER:-0}" = "1" ]; then
         printf "${HOOK_DETECT_RED}❌ SKILLSMITH_PRE_PUSH_DOCKER=1 set, but this worktree's own container ('${DOCKER_CONTAINER}') is not running.${HOOK_DETECT_NC}\n" >&2
-        printf "${HOOK_DETECT_YELLOW}   Start it: cd ${_HOOK_WORKTREE_ROOT:-.} && docker compose --profile dev up -d${HOOK_DETECT_NC}\n" >&2
+        printf "${HOOK_DETECT_YELLOW}   Start it: ${_HOOK_WORKTREE_ROOT}/scripts/worktree-docker.sh start ${_HOOK_WORKTREE_ROOT}${HOOK_DETECT_NC}\n" >&2
         printf "${HOOK_DETECT_YELLOW}   Or unset the env var to fall back to host (will hit SMI-4767 leak).${HOOK_DETECT_NC}\n" >&2
         exit 1
     elif [ "${SKILLSMITH_PRE_PUSH_HOST:-0}" = "1" ]; then
@@ -292,7 +292,7 @@ if [ "$IS_WORKTREE" = "1" ] && command -v docker >/dev/null 2>&1 && [ "$DOCKER_A
             printf "${HOOK_DETECT_RED}❌ Container '${DOCKER_CONTAINER}' is not running for ${_HOOK_WORKTREE_ROOT:-this worktree} (resolved from worktree branch).${HOOK_DETECT_NC}\n" >&2
             printf "\n" >&2
             printf "${HOOK_DETECT_YELLOW}Start it first:${HOOK_DETECT_NC}\n" >&2
-            printf "${HOOK_DETECT_YELLOW}  cd ${_HOOK_WORKTREE_ROOT:-.} && docker compose --profile dev up -d${HOOK_DETECT_NC}\n" >&2
+            printf "${HOOK_DETECT_YELLOW}  ${_HOOK_WORKTREE_ROOT}/scripts/worktree-docker.sh start ${_HOOK_WORKTREE_ROOT}${HOOK_DETECT_NC}\n" >&2
             printf "\n" >&2
             printf "${HOOK_DETECT_YELLOW}Escape hatches:${HOOK_DETECT_NC}\n" >&2
             printf "${HOOK_DETECT_YELLOW}  SKILLSMITH_PRE_PUSH_HOST=1 git push       # fall back to host this once${HOOK_DETECT_NC}\n" >&2

@@ -125,7 +125,6 @@ export function createDatabaseSync(path: string = ':memory:', options?: Database
         '  - Node.js version mismatch\n' +
         '  - Missing native build tools\n\n' +
         'Solutions:\n' +
-        '  - Run in Docker: docker compose --profile dev up -d\n' +
         '  - Rebuild native module: npm rebuild better-sqlite3\n' +
         '  - Use createDatabaseAsync() for automatic WASM fallback'
     )
@@ -204,7 +203,6 @@ export async function createDatabaseAsync(
     '[Skillsmith] No SQLite driver available.\n\n' +
       'Neither better-sqlite3 (native) nor sql.js (WASM) could be loaded.\n\n' +
       'Solutions:\n' +
-      '  - Run in Docker: docker compose --profile dev up -d\n' +
       '  - Rebuild native module: npm rebuild better-sqlite3\n' +
       '  - Install sql.js: npm install sql.js'
   )
