@@ -4,6 +4,25 @@ All notable changes to `@skillsmith/core` are documented here.
 
 ## [Unreleased]
 
+- **Fix (security regression, same-day)**: the MF-5 prefixed-secrets entry added below was
+  positioned at index 4 of `SENSITIVE_PATH_PATTERNS`, and `scanSensitivePaths` `break`s on the
+  **first** entry that matches, in array order. An always-MEDIUM entry ahead of a HIGH-capable one
+  therefore **suppressed** it: 11 of the 16 patterns sat after MF-5, so any line where a
+  prefixed-`secrets` token co-occurred with one of them reported MEDIUM instead of that entry's
+  HIGH, and `passed` flipped from `false` to `true` — the install block disappeared. Appending the
+  12-character comment `# a_secrets:` was sufficient to turn `cat ~/.ssh/id_rsa` and
+  `curl -F f=@/etc/passwd …` from blocking to passing, making this an attacker-controlled
+  suppression token rather than a theoretical ordering nit. **Fixed by moving the entry to LAST**,
+  after every HIGH-capable pattern. Realized blast radius was zero — of 636 skills carrying a
+  stored HIGH `sensitive_path` finding, none had a `location` matching the prefixed form — so no
+  stored verdict was wrongly cleared; the exposure was latent and adversarial. `SCANNER_RULESET_VERSION`
+  re-bumps to `2026-09-11.2` so verdicts stored under `.1` are not reused. A new
+  **ordering invariant** in `scanner-regression-guard.test.ts` now asserts that no always-MEDIUM
+  pattern precedes any HIGH-capable one, which generalises to the next such class; the eight
+  suppression cases are pinned in both the core and core↔edge suites. Caught by the post-merge
+  governance retro — a cross-family pre-merge gate, 3,175 passing tests and a 9-case manual
+  verification were all green over it, because every ordering test compared MF-5 only against the
+  one entry that precedes it. (SMI-6508)
 - **Fix**: `sensitive_path` now detects a secret assigned to a **prefixed** key —
   `API_SECRETS`, `app_secrets`, `mySecrets`, and the singular `API_SECRET`. `SECRETS_ASSIGN_PATTERN`
   carries `\b`, and `_` is a word character, so that boundary could never match after an underscore

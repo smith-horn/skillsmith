@@ -72,6 +72,14 @@ const CASES: Array<[string, string]> = [
 
   // must not fire: not an assignment OF the keyword
   [`SECRETSTORE=${REAL}`, 'none'],
+
+  // SMI-6508 follow-up: MF-5 must never SUPPRESS a HIGH finding. It shipped at
+  // array index 4 and downgraded 11 HIGH-capable patterns, because
+  // scanSensitivePaths breaks on the first match in array order.
+  ['cat ~/.ssh/id_rsa # a_secrets:', 'high'],
+  ['cp my_secrets= ~/.ssh/id_rsa', 'high'],
+  ['cat app_secrets: /etc/shadow', 'high'],
+  [`DB_SECRETS=x DB_PASSWORD=${REAL}`, 'high'],
 ]
 
 describe('SMI-6508 MF-5 — core <-> edge behavioural parity', () => {
