@@ -57,7 +57,7 @@ export const TRANSIENT_TRANSFER_HOSTS = ['transfer.sh', 'file.io', 'tmpfiles.org
 // install shape (a bare shortened link stays at url:medium like any tier here).
 export const URL_SHORTENER_DOMAINS = ['bit.ly', 'tinyurl.com', 't.co', 'is.gd']
 
-// SMI-5207: the whole `sensitive_path` family (ENV_PATH_PATTERN, the 15-entry
+// SMI-5207: the whole `sensitive_path` family (ENV_PATH_PATTERN, the 16-entry
 // SENSITIVE_PATH_PATTERNS array and the three ReadonlySets that classify its
 // entries by severity gate) moved to patterns.sensitive-path.ts — this file
 // had only 18 lines of headroom under the 500-line pre-commit gate, and the

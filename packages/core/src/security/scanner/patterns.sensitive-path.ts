@@ -62,7 +62,7 @@ const AUTH_TOKEN_KEYWORD = /auth[_-]?token/i
 
 // SMI-5207: the 12 non-`.env` entries are hoisted from inline array literals to named
 // consts so scanSensitivePaths can classify each by severity gate BY REFERENCE. The
-// array's contents, order, and length (15) are unchanged — the regression-guard floor
+// array's order is unchanged; its length grew 15 → 16 with SMI-6508's MF-5 entry — the regression-guard floor
 // (scanner-regression-guard.test.ts) still holds.
 // Contextual credentials: filename or assignment, not bare prose
 const CREDENTIALS_FILE_PATTERN = /credentials\.(?:json|ya?ml|env|toml|txt)/i

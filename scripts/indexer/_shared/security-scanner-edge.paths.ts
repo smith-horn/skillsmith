@@ -11,7 +11,7 @@
  * test enforces); only the @module header line above differs. Pure Deno/Web
  * APIs, no Node deps.
  *
- * Preserves core's four false-positive gates exactly:
+ * Preserves core's five false-positive gates exactly (MF-5 added by SMI-6508):
  *   MF-1: a bare `api_key`/`auth_token` keyword mention is suppressed unless
  *     the line ASSIGNS a real (non-placeholder, sufficiently-entropic) value.
  *   MF-2: a lone `.env` mention stays MEDIUM; it only grades HIGH when it

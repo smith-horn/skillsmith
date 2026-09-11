@@ -14,11 +14,15 @@
  * lines "real value", newly blocking 132 skills, and ~46% of those 191 had
  * false-positive-looking shapes. So MF-5 ships the detection at MEDIUM.
  *
- * THE COMPLEMENTARITY IS LOAD-BEARING. The two patterns must never both fire on
- * one line: double-firing would emit two findings for one credential and make
- * the severity depend on array order. The bare pattern keeps `MY-SECRETS=` and
- * `my.secrets=` (both `-` and `.` are non-word characters its `\b` accepts);
- * the prefixed one takes exactly what the boundary excludes.
+ * THE COMPLEMENTARITY IS LOAD-BEARING, AND IT IS PER OCCURRENCE. No single
+ * keyword occurrence may be matched by both patterns — that would double-report
+ * one credential and make its severity depend on array order. A line carrying a
+ * bare assignment AND a prefixed one legitimately fires both, at different
+ * offsets, and correctly yields two findings; an earlier draft of this file
+ * asserted the stronger per-LINE form, which the cross-family pre-merge gate
+ * showed to be false. The bare pattern keeps `MY-SECRETS=` and `my.secrets=`
+ * (both `-` and `.` are non-word characters its `\b` accepts); the prefixed one
+ * takes exactly what the boundary excludes.
  */
 import { describe, it, expect, beforeEach } from 'vitest'
 import { SecurityScanner } from '../../src/security/index.js'
@@ -102,12 +106,54 @@ describe('SMI-6508: prefixed secrets assignment (MF-5)', () => {
       `  secrets: ${REAL}`,
     ]
 
-    it.each(ALL)('%s matches at most one of the two secrets-assignment patterns', (line) => {
-      const bare = [...VALUE_GATED_ASSIGNMENT_PATTERNS].filter(
-        (p) => p.source.includes('secrets') && p.test(line)
-      )
-      const prefixed = [...OBSERVE_ONLY_MEDIUM_PATTERNS].filter((p) => p.test(line))
-      expect(bare.length + prefixed.length).toBeLessThanOrEqual(1)
+    /**
+     * The invariant is per OCCURRENCE, not per line — corrected after the
+     * cross-family pre-merge gate showed the line-level form was false. A line
+     * carrying a bare assignment AND a prefixed one legitimately fires both
+     * patterns, at different offsets, and should produce two findings. What
+     * must never happen is one occurrence matching both, which would double-
+     * report a single credential and make its severity depend on array order.
+     */
+    const offsets = (p: RegExp, line: string): number[] =>
+      [...line.matchAll(new RegExp(p.source, 'gi'))].map((m) => m.index ?? -1)
+
+    const bareSecrets = (): RegExp =>
+      [...VALUE_GATED_ASSIGNMENT_PATTERNS].find((p) => p.source.includes('secrets'))!
+    const prefixedSecrets = (): RegExp => [...OBSERVE_ONLY_MEDIUM_PATTERNS][0]
+
+    it.each(ALL)('%s — no single occurrence is matched by both patterns', (line) => {
+      const bare = offsets(bareSecrets(), line)
+      const prefixed = offsets(prefixedSecrets(), line)
+      expect(bare.filter((i) => prefixed.includes(i))).toEqual([])
+    })
+
+    /**
+     * Both REGEXES match a mixed line, at different offsets. The SCANNER still
+     * emits one finding, because scanSensitivePaths `break`s on the first
+     * SENSITIVE_PATH_PATTERNS entry that matches, in array order — the bare
+     * entry precedes the prefixed one, so a line carrying a real bare
+     * assignment keeps its HIGH regardless of the order the two appear in the
+     * text. Measured, not assumed: the pre-merge gate predicted two findings
+     * here, and the `break` makes that wrong.
+     */
+    it.each([
+      [`secrets=${REAL} API_SECRETS=${REAL}`, 'bare first'],
+      [`API_SECRETS=${REAL} secrets=${REAL}`, 'prefixed first'],
+    ])('%s — both regexes match at different offsets (%s)', (line) => {
+      const bare = offsets(bareSecrets(), line)
+      const prefixed = offsets(prefixedSecrets(), line)
+      expect(bare.length).toBeGreaterThan(0)
+      expect(prefixed.length).toBeGreaterThan(0)
+      expect(bare.filter((i) => prefixed.includes(i))).toEqual([])
+    })
+
+    it.each([
+      [`secrets=${REAL} API_SECRETS=${REAL}`, 'bare first'],
+      [`API_SECRETS=${REAL} secrets=${REAL}`, 'prefixed first'],
+    ])('%s — scanner emits exactly one finding, HIGH (%s)', (line) => {
+      const findings = sensitivePathFindings(line)
+      expect(findings).toHaveLength(1)
+      expect(findings[0].severity).toBe('high')
     })
   })
 
