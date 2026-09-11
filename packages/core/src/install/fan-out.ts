@@ -195,8 +195,9 @@ export async function addLink(opts: AddLinkOptions): Promise<AddLinkResult> {
     let kind: LinkKind = 'copy'
     let fellBackToCopy = false
     // The new copy or symlink is written to a staging path and swapped into
-    // place; a failure here never touches the existing destination.
-    await replaceDestination(toDir, async (staged) => {
+    // place; a failure here never touches the existing destination. `placed`
+    // is what this call put in place, so an undo only removes that.
+    const placed = await replaceDestination(toDir, async (staged) => {
       if (preferSymlink) {
         // A relative symlink keeps the manifest entry portable across homedir
         // changes. It is computed for the FINAL location, not the staging path.
@@ -219,8 +220,6 @@ export async function addLink(opts: AddLinkOptions): Promise<AddLinkResult> {
       }
     })
 
-    // Round 14: what this call just put in place, so an undo only removes that.
-    const placed = await fsp.lstat(toDir).catch(() => null)
     const record: LinkRecord = {
       skillId,
       from: fromDir,

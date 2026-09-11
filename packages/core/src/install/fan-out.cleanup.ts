@@ -4,18 +4,19 @@
  * addLink's undo of a write whose record couldn't be saved. Split out of
  * fan-out.ts to stay under the 500-line gate.
  *
- * Round 14 (cross-model and Opus confirmation reviews): each checks, right
- * before removing, that the path still holds the entry it means to remove
- * (same device and inode). The destination lock keeps other Skillsmith calls
- * out, not other programs. The check and the removal are two syscalls apart;
- * that residual window is accepted, since Node has no descriptor-relative
- * recursive removal.
+ * Round 14 (cross-model and Opus confirmation reviews): each removes only the
+ * entry it means to remove (same device and inode). The destination lock
+ * keeps other Skillsmith calls out, not other programs. Round 15: the check
+ * runs after the entry is parked under a random name (`removeIfSame`), so a
+ * program that swaps the path after the check no longer has its entry
+ * deleted.
  *
  * @module @skillsmith/core/install/fan-out.cleanup
  */
 import type { Stats } from 'node:fs'
 import * as fsp from 'node:fs/promises'
 import { checkGitAtRoot, gitRefusal } from './fan-out.overwrite.js'
+import { removeIfSame, type EntryIdentity } from './remove-if-same.js'
 
 function errorText(err: unknown): string {
   return err instanceof Error ? err.message : String(err)
@@ -34,46 +35,27 @@ export type RecordedLinkRemoval = { removed: true } | { removed: false; reason: 
  * just unlinked; what they point at is untouched.
  *
  * Returns `{ removed: true }` on a removal, or when the path is already gone,
- * and `{ removed: false, reason }` on a refusal, so the caller keeps the
- * manifest entry and reports it.
+ * and `{ removed: false, reason }` on a refusal or a failure, so the caller
+ * keeps the manifest entry and reports it.
  */
 export async function removeRecordedLink(p: string): Promise<RecordedLinkRemoval> {
   let stat: Stats
   try {
     stat = await fsp.lstat(p)
-  } catch {
-    // Already gone — races with an external editor/uninstall are expected;
-    // treat as successfully removed (nothing left to report).
-    return { removed: true }
-  }
-  try {
-    if (!stat.isSymbolicLink() && !stat.isFile()) {
-      const refusal = gitRefusal(p, await checkGitAtRoot(p), 'delete')
-      if (refusal) return { removed: false, reason: refusal }
-    }
-    // Round 14: remove only the entry the first check saw.
-    let now: Stats
-    try {
-      now = await fsp.lstat(p)
-    } catch (err) {
-      if ((err as NodeJS.ErrnoException).code === 'ENOENT') return { removed: true }
-      throw err
-    }
-    if (now.dev !== stat.dev || now.ino !== stat.ino) {
-      return {
-        removed: false,
-        reason: `${p} was replaced by something else while it was being removed; left in place.`,
-      }
-    }
-    if (now.isSymbolicLink() || now.isFile()) await fsp.unlink(p)
-    else await fsp.rm(p, { recursive: true, force: true })
-    return { removed: true }
   } catch (err) {
-    // Uninstall should not fail because cleanup races with an external
-    // editor. Report it as a refusal rather than pretending success, so
-    // `removeLinks` keeps the manifest entry for a future retry.
-    return { removed: false, reason: `${p} could not be removed: ${errorText(err)}` }
+    // Already gone: races with an external editor or uninstall are expected,
+    // and there is nothing left to report. Round 15 (cross-model review): any
+    // other error means we can't tell what is there, so the record is kept.
+    if ((err as NodeJS.ErrnoException).code === 'ENOENT') return { removed: true }
+    return { removed: false, reason: `${p} could not be checked: ${errorText(err)}` }
   }
+  if (!stat.isSymbolicLink() && !stat.isFile()) {
+    const refusal = gitRefusal(p, await checkGitAtRoot(p), 'delete')
+    if (refusal) return { removed: false, reason: refusal }
+  }
+  // Remove only the entry checked above.
+  const removal = await removeIfSame(p, stat)
+  return removal.removed ? removal : { removed: false, reason: `${p} ${removal.reason}.` }
 }
 
 /**
@@ -84,45 +66,29 @@ export async function removeRecordedLink(p: string): Promise<RecordedLinkRemoval
  * describe: uninstall would miss it, and a force refresh would refuse it.
  *
  * The caller holds the destination's lock, so no other Skillsmith call has
- * touched it. Round 14: another program may have, so only the entry this call
- * placed (`placed`, same device and inode) is removed; anything else found
- * there is left, and the error says so.
+ * touched it. Another program may have, so only the entry this call placed is
+ * removed; anything else found there is left, and the error says so. Round
+ * 15: `placed` is the staged entry's identity, taken before it was swapped
+ * into place, so a swap after that moment can't pass as this call's write.
  */
 export async function undoUnrecordedWrite(
   toDir: string,
   cause: unknown,
   oldLinkTarget: string | undefined,
-  placed: Stats | null
+  placed: EntryIdentity
 ): Promise<void> {
-  const fail = (what: string, err?: unknown): Error =>
+  const fail = (what: string): Error =>
     new Error(
-      `addLink: ${errorText(cause)}; ${toDir} ${what}` +
-        (err === undefined ? '.' : ` (${errorText(err)}).`),
+      `addLink: ${errorText(cause)}; this call's unrecorded write could not be undone: ${what}.`,
       { cause }
     )
-  let current: Stats | null = null
-  try {
-    current = await fsp.lstat(toDir)
-  } catch (err) {
-    if ((err as NodeJS.ErrnoException).code !== 'ENOENT') {
-      throw fail('could not be checked, so this unrecorded write was left in place', err)
-    }
-  }
-  if (current !== null) {
-    if (placed === null || current.dev !== placed.dev || current.ino !== placed.ino) {
-      throw fail('was replaced by something else after this call wrote it, so it was left in place')
-    }
-    try {
-      await fsp.rm(toDir, { recursive: true, force: true })
-    } catch (err) {
-      throw fail('holds an unrecorded write that could not be undone', err)
-    }
-  }
+  const removal = await removeIfSame(toDir, placed)
+  if (!removal.removed) throw fail(`${toDir} ${removal.reason}`)
   if (oldLinkTarget !== undefined) {
     try {
       await fsp.symlink(oldLinkTarget, toDir, 'dir')
     } catch (err) {
-      throw fail('could not be put back as the symlink it was', err)
+      throw fail(`${toDir} could not be put back as the symlink it was (${errorText(err)})`)
     }
   }
 }

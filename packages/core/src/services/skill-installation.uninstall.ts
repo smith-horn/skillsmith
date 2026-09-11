@@ -10,8 +10,12 @@
  * is not part of `@skillsmith/core`'s public export surface.
  */
 
+import type { Stats } from 'fs'
 import * as fs from 'fs/promises'
 import * as path from 'path'
+
+import { checkGitAtRoot } from '../install/fan-out.overwrite.js'
+import { removeIfSame } from '../install/remove-if-same.js'
 
 import type { SkillDependencyRepository } from '../repositories/SkillDependencyRepository.js'
 import type { ProgressCallback, UninstallResult } from './skill-installation.types.js'
@@ -155,6 +159,59 @@ export async function adoptUntrackedSkillEntry(
   return { entry: resolvedEntry, adopted }
 }
 
+/**
+ * SMI-6529 round 15 (cross-model review, Critical): what uninstall found at
+ * `installPath` before removing it. A folder with `.git` at its root is a git
+ * working tree, which git owns (ADR-155), so it is refused with or without
+ * `force`: deleting it would take unpushed commits and uncommitted edits with
+ * it. A symlink or a file needs no such check, since removing it leaves what
+ * it points at alone. Returns the entry's identity (null when nothing is
+ * there), so the delete can confirm it is still the same entry.
+ */
+async function inspectForRemoval(
+  installPath: string
+): Promise<{ stat: Stats | null } | { refusal: string }> {
+  let stat: Stats
+  try {
+    stat = await fs.lstat(installPath)
+  } catch (error) {
+    const code = (error as NodeJS.ErrnoException).code
+    if (code === 'ENOENT') return { stat: null }
+    return {
+      refusal:
+        'Could not check ' +
+        installPath +
+        ' (' +
+        (code ?? String(error)) +
+        '); nothing was removed.',
+    }
+  }
+  if (!stat.isSymbolicLink() && !stat.isFile()) {
+    const git = await checkGitAtRoot(installPath)
+    if (git.kind === 'present') {
+      return {
+        refusal:
+          installPath +
+          ' is a git working tree (it has .git at its root), so Skillsmith will not delete it, ' +
+          'even with force. Check `git -C ' +
+          installPath +
+          ' status`, then remove the folder yourself.',
+      }
+    }
+    if (git.kind === 'unknown') {
+      return {
+        refusal:
+          'Could not check ' +
+          installPath +
+          ' for a .git directory (' +
+          git.reason +
+          '); nothing was removed.',
+      }
+    }
+  }
+  return { stat }
+}
+
 /** Perform skill uninstall with manifest awareness and orphan fallback. */
 export async function performUninstall(params: {
   skillName: string
@@ -191,6 +248,10 @@ export async function performUninstall(params: {
       } catch {
         return { success: false, skillName, message: 'Skill "' + skillName + '" is not installed.' }
       }
+      // SMI-6529 round 15: refuse a git working tree before adopting it, so a
+      // refusal writes nothing to the manifest.
+      const early = await inspectForRemoval(potentialPath)
+      if ('refusal' in early) return { success: false, skillName, message: early.refusal }
 
       // ADR-139 (SMI-6274 Wave 4): a skill present on disk with no manifest
       // entry is ADOPTED — reconciled by writing a manifest entry derived
@@ -225,6 +286,8 @@ export async function performUninstall(params: {
     }
 
     const installPath = skillEntry.installPath
+    const seen = await inspectForRemoval(installPath)
+    if ('refusal' in seen) return { success: false, skillName, message: seen.refusal }
 
     if (!force) {
       onProgress('check', 'Checking for modifications')
@@ -243,10 +306,25 @@ export async function performUninstall(params: {
     }
 
     onProgress('remove', 'Removing skill directory')
-    try {
-      await fs.rm(installPath, { recursive: true, force: true })
-    } catch (error) {
-      if ((error as NodeJS.ErrnoException).code !== 'ENOENT') throw error
+    // SMI-6529 round 15 (cross-model review, Critical): remove only the entry
+    // checked above. Anything another program put there since is left in
+    // place, and so is the manifest entry, so the user can retry.
+    if (seen.stat !== null) {
+      const removal = await removeIfSame(installPath, seen.stat)
+      if (!removal.removed) {
+        return {
+          success: false,
+          skillName,
+          message:
+            'Skill "' +
+            skillName +
+            '" was not removed: ' +
+            installPath +
+            ' ' +
+            removal.reason +
+            '.',
+        }
+      }
     }
 
     try {

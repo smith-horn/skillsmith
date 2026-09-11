@@ -1393,44 +1393,59 @@ describe('install/fan-out', () => {
       expect(refreshed.warnings?.[0]).toContain('a partial copy')
     })
 
-    it('names why a failed write left its staging folder in place', async () => {
-      const failing = { mode: '' as '' | 'rm' | 'lstat', lstatCalls: 0 }
+    it('names why a failed write left its staging folder in place, and leaves it there', async () => {
+      const failing = { mode: '' as '' | 'rename' | 'lstat' | 'rm' }
       vi.doMock('node:fs/promises', async () => {
         const actual = await vi.importActual<typeof import('node:fs/promises')>('node:fs/promises')
         const eacces = (p: PathLike): NodeJS.ErrnoException =>
           Object.assign(new Error(`EACCES: permission denied, '${String(p)}'`), { code: 'EACCES' })
         const isStagingFolder = (p: PathLike): boolean =>
           /\.skillsmith-staging-[A-Za-z0-9]{6}$/.test(String(p))
-        const rm = vi.fn(async (...args: Parameters<typeof actual.rm>) => {
-          if (failing.mode === 'rm' && isStagingFolder(args[0])) throw eacces(args[0])
-          return actual.rm(...args)
+        // Round 15: the delete checks and removes the folder under a parked name.
+        const isParkedStaging = (p: PathLike): boolean =>
+          /\.skillsmith-staging-[A-Za-z0-9]{6}\.skillsmith-removing-[0-9a-f]{12}$/.test(String(p))
+        const rename = vi.fn(async (from: PathLike, to: PathLike) => {
+          if (failing.mode === 'rename' && isStagingFolder(from)) throw eacces(from)
+          return actual.rename(from, to)
         })
         const lstat = vi.fn(async (...args: Parameters<typeof actual.lstat>) => {
-          // The first lstat of the staging folder records it; fail the check.
-          if (failing.mode === 'lstat' && isStagingFolder(args[0]) && ++failing.lstatCalls >= 2) {
-            throw eacces(args[0])
-          }
+          if (failing.mode === 'lstat' && isParkedStaging(args[0])) throw eacces(args[0])
           return actual.lstat(...args)
         })
-        return { ...actual, default: { ...actual, rm, lstat }, rm, lstat }
+        const rm = vi.fn(async (...args: Parameters<typeof actual.rm>) => {
+          if (failing.mode === 'rm' && isParkedStaging(args[0])) throw eacces(args[0])
+          return actual.rm(...args)
+        })
+        return { ...actual, default: { ...actual, rename, lstat, rm }, rename, lstat, rm }
       })
       try {
+        // Group 1 is the folder the message says was left; it must really be there.
         const cases = [
-          ['rm', /write failed; the staging folder .* could not be removed \(EACCES\)/],
-          ['lstat', /write failed; the staging folder .* could not be checked \(EACCES\)/],
+          [
+            'rename',
+            /write failed; the staging folder (\S+) could not be moved aside to be removed \(EACCES\), so it was left in place$/,
+          ],
+          [
+            'lstat',
+            /write failed; the staging folder (\S+) could not be checked \(EACCES\), so it was left in place$/,
+          ],
+          [
+            'rm',
+            /write failed; the staging folder \S+ could not be removed \(EACCES\); what is left of it is at (\S+)$/,
+          ],
         ] as const
         for (const [mode, expected] of cases) {
           failing.mode = mode
-          failing.lstatCalls = 0
           vi.resetModules()
           const { replaceDestination } = await import('../../src/install/fan-out.overwrite.js')
           const parent = path.join(homeDir, `named-${mode}`)
           await mkdir(parent, { recursive: true })
-          await expect(
-            replaceDestination(path.join(parent, 'dest'), async () => {
-              throw new Error('write failed')
-            })
-          ).rejects.toThrow(expected)
+          const err = await replaceDestination(path.join(parent, 'dest'), async () => {
+            throw new Error('write failed')
+          }).catch((e: unknown) => e)
+          const match = expected.exec(err instanceof Error ? err.message : String(err))
+          expect(match, `${mode}: ${String(err)}`).not.toBeNull()
+          expect((await lstat(match?.[1] ?? '')).isDirectory()).toBe(true)
         }
       } finally {
         failing.mode = ''
@@ -1453,14 +1468,13 @@ describe('install/fan-out', () => {
         const { addLink } = await import('../../src/install/fan-out.js')
         await expect(
           addLink({ skillId: 'undoswap', fromClient: 'claude-code', toClient: 'cursor' })
-        ).rejects.toThrow(/replaced by something else after this call wrote it/)
+        ).rejects.toThrow(/could not be undone: \S+undoswap was replaced by something else/)
         expect(await readFile(path.join(toDir, 'KEEP.md'), 'utf-8')).toBe('not ours')
       } finally {
         vi.doUnmock('../../src/install/fan-out.overwrite.js')
         vi.resetModules()
       }
     })
-
     it('an uninstall leaves a folder that replaced the copy after its .git check', async () => {
       const { addLink } = await loadModule()
       await seedSkill('rmswap')
@@ -1498,6 +1512,107 @@ describe('install/fan-out', () => {
         vi.doUnmock('node:fs/promises')
         vi.resetModules()
       }
+    })
+  })
+
+  // SMI-6529 round 15 (Opus round 14 and cross-model round 3 confirmations).
+  describe('SMI-6529 round 15: identity taken before the swap, and cleanup that can fail', () => {
+    it('an undo never deletes a folder swapped in just after the new copy landed', async () => {
+      await seedSkill('gapswap')
+      const toDir = path.join(homeDir, '.cursor', 'skills', 'gapswap')
+      vi.doMock('node:fs/promises', async () => {
+        const actual = await vi.importActual<typeof import('node:fs/promises')>('node:fs/promises')
+        let swapped = false
+        const rmdir = vi.fn(async (...args: Parameters<typeof actual.rmdir>) => {
+          // The staging folder's rmdir, right after the swap: another program
+          // moves the new copy aside and puts its own folder there. The
+          // identity used to be recorded after this moment.
+          if (!swapped && /\.gapswap\.skillsmith-staging-[A-Za-z0-9]{6}$/.test(String(args[0]))) {
+            swapped = true
+            await actual.rename(toDir, `${toDir}-moved`)
+            await actual.mkdir(toDir)
+            await actual.writeFile(path.join(toDir, 'KEEP.md'), 'not ours', 'utf-8')
+          }
+          return actual.rmdir(...args)
+        })
+        return { ...actual, default: { ...actual, rmdir }, rmdir }
+      })
+      mockManifestLockFailure()
+      try {
+        vi.resetModules()
+        const { addLink } = await import('../../src/install/fan-out.js')
+        await expect(
+          addLink({ skillId: 'gapswap', fromClient: 'claude-code', toClient: 'cursor' })
+        ).rejects.toThrow(/could not be undone: \S+gapswap was replaced by something else/)
+        expect(await readFile(path.join(toDir, 'KEEP.md'), 'utf-8')).toBe('not ours')
+      } finally {
+        vi.doUnmock('node:fs/promises')
+        vi.doUnmock('../../src/install/fan-out.overwrite.js')
+        vi.resetModules()
+      }
+    })
+
+    it('an uninstall keeps the record of a copy it could not check', async () => {
+      const { addLink } = await loadModule()
+      await seedSkill('rmcheck')
+      const { record } = await addLink({
+        skillId: 'rmcheck',
+        fromClient: 'claude-code',
+        toClient: 'cursor',
+      })
+      vi.doMock('node:fs/promises', async () => {
+        const actual = await vi.importActual<typeof import('node:fs/promises')>('node:fs/promises')
+        const lstat = vi.fn(async (...args: Parameters<typeof actual.lstat>) => {
+          if (String(args[0]) === record.to) {
+            throw Object.assign(new Error(`EACCES: permission denied, lstat '${record.to}'`), {
+              code: 'EACCES',
+            })
+          }
+          return actual.lstat(...args)
+        })
+        return { ...actual, default: { ...actual, lstat }, lstat }
+      })
+      try {
+        vi.resetModules()
+        const { removeLinks, listLinks } = await import('../../src/install/fan-out.js')
+        const result = await removeLinks('rmcheck')
+        expect(result.removed).toBe(0)
+        expect(result.refused).toEqual([
+          { to: record.to, reason: expect.stringContaining('could not be checked') },
+        ])
+        expect(await listLinks('rmcheck')).toHaveLength(1)
+        expect((await lstat(record.to)).isDirectory()).toBe(true)
+      } finally {
+        vi.doUnmock('node:fs/promises')
+        vi.resetModules()
+      }
+    })
+
+    it('reports what a failed removal left under a parked name, and only for this skill', async () => {
+      const { addLink } = await loadModule()
+      await seedSkill('parkleft')
+      const { record } = await addLink({
+        skillId: 'parkleft',
+        fromClient: 'claude-code',
+        toClient: 'cursor',
+      })
+      const parent = path.dirname(record.to)
+      const parked = path.join(parent, '.parkleft.skillsmith-removing-0123456789ab')
+      await mkdir(parked)
+      await writeFile(path.join(parked, 'part.md'), 'partial', 'utf-8')
+      // A sibling skill's parked name is not this skill's leftover.
+      await mkdir(path.join(parent, '.parkleft.x.skillsmith-removing-0123456789ab'))
+
+      const refreshed = await addLink({
+        skillId: 'parkleft',
+        fromClient: 'claude-code',
+        toClient: 'cursor',
+        force: true,
+      })
+
+      expect(refreshed.warnings).toEqual([expect.stringContaining(parked)])
+      expect(refreshed.warnings?.[0]).toContain('an interrupted removal')
+      expect(await readFile(path.join(parked, 'part.md'), 'utf-8')).toBe('partial')
     })
   })
 

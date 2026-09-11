@@ -25,6 +25,7 @@
 import * as fs from 'fs/promises'
 import { constants } from 'fs'
 import { O_NOFOLLOW, writeFullBuffer } from '../utils/safe-fs.js'
+import { removeIfSame, type EntryIdentity } from '../install/remove-if-same.js'
 
 /** A pre-write copy of a regular file (path, bytes and mode), used to restore it on rollback. */
 export interface FileSnapshot {
@@ -200,11 +201,7 @@ export async function restoreSnapshots(snapshots: FileSnapshot[]): Promise<strin
   return failures
 }
 
-/** A created entry's identity, to tell it apart from anything later put at the same path. */
-export interface EntryIdentity {
-  dev: number
-  ino: number
-}
+export type { EntryIdentity }
 
 /**
  * Run one rollback cleanup step. An error whose code is in `ignore` means
@@ -231,31 +228,29 @@ export async function cleanupStep(
 /**
  * Recursively remove a directory this install created, but only while it is
  * still that directory (same device and inode). If something else now sits
- * at the path, it is left alone and recorded as a failure (round 13). The
- * check and the removal are not atomic; this narrows the window from the
- * whole install to two syscalls.
+ * at the path, it is left alone and recorded as a failure (round 13). Round
+ * 15: the entry is checked after it is parked under a random name
+ * (`removeIfSame`), so nothing can be swapped in between the check and the
+ * delete.
  */
 export async function removeCreatedDirectory(
   dir: string,
   identity: EntryIdentity | undefined,
   failures: string[]
 ): Promise<void> {
-  let current
-  try {
-    current = await fs.lstat(dir)
-  } catch (err) {
-    if ((err as NodeJS.ErrnoException).code === 'ENOENT') return
-    failures.push(`${dir} (${(err as NodeJS.ErrnoException).code ?? String(err)})`)
-    return
-  }
-  if (
-    identity === undefined ||
-    !current.isDirectory() ||
-    current.dev !== identity.dev ||
-    current.ino !== identity.ino
-  ) {
+  if (identity === undefined) {
+    // The install never recorded what it created, so nothing shows that
+    // what is at the path now is ours.
+    try {
+      await fs.lstat(dir)
+    } catch (err) {
+      if ((err as NodeJS.ErrnoException).code === 'ENOENT') return
+      failures.push(`${dir} (${(err as NodeJS.ErrnoException).code ?? String(err)})`)
+      return
+    }
     failures.push(`${dir} (replaced by something else after the install created it; left in place)`)
     return
   }
-  await cleanupStep(dir, () => fs.rm(dir, { recursive: true, force: true }), [], failures)
+  const removal = await removeIfSame(dir, identity)
+  if (!removal.removed) failures.push(`${dir} (${removal.reason})`)
 }

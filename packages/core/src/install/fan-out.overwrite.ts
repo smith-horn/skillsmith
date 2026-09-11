@@ -30,7 +30,11 @@
  *    is deleted only while it is still the folder we made (same device and
  *    inode). Round 14: a crashed write's staging folder is never deleted
  *    (neither its name nor its contents proves who owns it), only reported,
- *    and a folder left in place is named with the reason.
+ *    and a folder left in place is named with the reason. Round 15: each
+ *    delete parks the folder under a random name and checks it there
+ *    (`removeIfSame`), closing the gap between the check and the delete,
+ *    and `replaceDestination` returns the new entry's identity, taken before
+ *    it became visible at the destination.
  *  - Round 8: a lock released mid-attempt was reported as corrupt, so
  *    contending callers failed at once; waiting on an orphaned reclaim lock
  *    still blocked the event loop; a reinstall after an uninstall restored a
@@ -45,6 +49,7 @@ import type { Stats } from 'node:fs'
 import { setTimeout as delay } from 'node:timers/promises'
 import { acquireOwnedLock, StuckLockError, type StuckLockReason } from '../config/owned-lock.js'
 import type { LinkManifest } from './fan-out.manifest.js'
+import { PARK_TAG, removeIfSame } from './remove-if-same.js'
 
 const BACKUP_TAG = '.skillsmith-backup-'
 const STAGING_TAG = '.skillsmith-staging-'
@@ -79,12 +84,23 @@ function siblingPattern(dest: string, tag: string): RegExp {
   return new RegExp('^' + escapeRegExp(siblingPrefix(dest, tag)) + '[A-Za-z0-9]{6}$')
 }
 
-function errorMessage(err: unknown): string {
-  return err instanceof Error ? err.message : String(err)
+/**
+ * Names `removeIfSame` parks `dest`, or one of its backup or staging folders,
+ * under while removing it (`.<name>.skillsmith-removing-<12 hex>`). Exact, so
+ * a sibling skill's names (`foo.bar` for `foo`) never match.
+ */
+function parkedPatterns(dest: string): RegExp[] {
+  const park = escapeRegExp(PARK_TAG) + '[0-9a-f]{12}$'
+  return [
+    new RegExp('^' + escapeRegExp('.' + path.basename(dest)) + park),
+    ...[BACKUP_TAG, STAGING_TAG].map(
+      (tag) => new RegExp('^\\.' + escapeRegExp(siblingPrefix(dest, tag)) + '[A-Za-z0-9]{6}' + park)
+    ),
+  ]
 }
 
-function errorCode(err: unknown): string {
-  return (err as NodeJS.ErrnoException).code ?? errorMessage(err)
+function errorMessage(err: unknown): string {
+  return err instanceof Error ? err.message : String(err)
 }
 
 async function lstatOrNull(p: string): Promise<Stats | null> {
@@ -311,7 +327,8 @@ export async function recoverDestination(dest: string, manifest: LinkManifest): 
  * (`.Foo.` for `foo`) belongs to this destination too, so it is reported;
  * it is never removed or restored, since on a case-sensitive volume the
  * same name belongs to a different destination. Round 14: a staging folder
- * left by a crashed write is reported the same way. Call under the lock.
+ * left by a crashed write is reported the same way. Round 15: so is what a
+ * crashed or failed removal left under a parked name. Call under the lock.
  */
 export async function listLeftoverBackups(dest: string): Promise<string[]> {
   const parent = path.dirname(dest)
@@ -323,11 +340,12 @@ export async function listLeftoverBackups(dest: string): Promise<string[]> {
   }
   const exact = siblingPattern(dest, BACKUP_TAG)
   const staging = siblingPattern(dest, STAGING_TAG)
+  const parked = parkedPatterns(dest)
   const anyCase = new RegExp(exact.source, 'i')
   const leftovers: string[] = []
   for (const name of entries) {
     const folder = path.join(parent, name)
-    if (exact.test(name) || staging.test(name)) {
+    if (exact.test(name) || staging.test(name) || parked.some((p) => p.test(name))) {
       if (!(await removeIfEmpty(folder))) leftovers.push(folder)
     } else if (anyCase.test(name) && (await isCaseVariantOf(folder, dest))) {
       leftovers.push(folder)
@@ -353,9 +371,16 @@ async function isCaseVariantOf(folder: string, dest: string): Promise<boolean> {
   return contents.length > 0
 }
 
-/** User-facing warning for a leftover backup or staging folder. */
+/** User-facing warning for a leftover backup, staging folder or parked entry. */
 export function leftoverBackupWarning(folder: string): string {
-  const what = path.basename(folder).includes(STAGING_TAG) ? 'a partial copy' : 'an earlier copy'
+  const name = path.basename(folder)
+  if (name.includes(PARK_TAG)) {
+    return (
+      `an interrupted removal left part of what it was removing at the hidden path ${folder}; ` +
+      `check it, then delete it yourself if you don't need it.`
+    )
+  }
+  const what = name.includes(STAGING_TAG) ? 'a partial copy' : 'an earlier copy'
   return (
     `an interrupted refresh left ${what} in the hidden folder ${folder}; ` +
     `check it, then delete it yourself if you don't need it.`
@@ -366,63 +391,40 @@ export function leftoverBackupWarning(folder: string): string {
  * Replace (or create) `dest` with what `write` produces. The caller must hold
  * `withDestinationLock(dest)` and have checked `assertOverwritable`. `write`
  * receives a staging path; if it throws, the destination is never touched.
+ *
+ * Returns the identity of the entry now at `dest`. Round 15 (Opus): it is
+ * taken from the staged entry before the swap, since a rename keeps device
+ * and inode. Taken after the swap, it could record a folder another program
+ * had put there in between, and an undo would then delete that folder.
  */
 export async function replaceDestination(
   dest: string,
   write: (stagedPath: string) => Promise<void>
-): Promise<void> {
+): Promise<Stats> {
   const parent = path.dirname(dest)
   const stagingFolder = await fsp.mkdtemp(path.join(parent, siblingPrefix(dest, STAGING_TAG)))
   const made = await fsp.lstat(stagingFolder)
   const staged = path.join(stagingFolder, 'content')
+  let placed: Stats
   try {
     await write(staged)
+    placed = await fsp.lstat(staged)
     await swapIntoPlace(dest, staged)
   } catch (err) {
     // A partial copy made from the source skill: remove it, but only while
     // the folder is still the one we made (round 13), and say why when that
     // didn't happen (round 14).
-    const removal = await removeOwnFolder(stagingFolder, made)
+    const removal = await removeIfSame(stagingFolder, made)
     if (removal.removed) throw err
-    throw new Error(
-      `${errorMessage(err)}; the staging folder ${stagingFolder} ${removal.reason} and was ` +
-        `left in place`,
-      { cause: err }
-    )
+    throw new Error(`${errorMessage(err)}; the staging folder ${stagingFolder} ${removal.reason}`, {
+      cause: err,
+    })
   }
   // Empty after a successful swap, so a non-recursive rmdir can't delete
   // anything else. If it fails, the folder stays, and listLeftoverBackups,
   // which the caller runs next, reports it.
   await fsp.rmdir(stagingFolder).catch(() => {})
-}
-
-/** Whether removeOwnFolder removed the folder, and if not, why. */
-type FolderRemoval = { removed: true } | { removed: false; reason: string }
-
-/**
- * Recursively remove a folder this call made, but only while it is still
- * that folder (same device and inode). Round 13 (cross-model review): the
- * destination lock keeps other Skillsmith calls out, not other programs.
- * Round 14: a folder that can't be checked, isn't ours any more, or can't be
- * removed is reported with its reason, never counted as removed.
- */
-async function removeOwnFolder(folder: string, made: Stats): Promise<FolderRemoval> {
-  let current: Stats | null
-  try {
-    current = await lstatOrNull(folder)
-  } catch (err) {
-    return { removed: false, reason: `could not be checked (${errorCode(err)})` }
-  }
-  if (current === null) return { removed: true }
-  if (!current.isDirectory() || current.dev !== made.dev || current.ino !== made.ino) {
-    return { removed: false, reason: 'was replaced by something else' }
-  }
-  try {
-    await fsp.rm(folder, { recursive: true, force: true })
-    return { removed: true }
-  } catch (err) {
-    return { removed: false, reason: `could not be removed (${errorCode(err)})` }
-  }
+  return placed
 }
 
 async function swapIntoPlace(dest: string, staged: string): Promise<void> {
@@ -473,6 +475,6 @@ async function swapIntoPlace(dest: string, staged: string): Promise<void> {
     originalNow.dev === existing.dev &&
     originalNow.ino === existing.ino
   ) {
-    await removeOwnFolder(backupFolder, backupMade)
+    await removeIfSame(backupFolder, backupMade)
   }
 }
