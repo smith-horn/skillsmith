@@ -190,8 +190,20 @@ if [ -n "$SHADOW_LABEL" ]; then
 fi
 printf '\n'
 printf "  ${YELLOW}How to fix${NC} — refresh the installed deps to match package-lock.json:\n"
-printf '    docker exec skillsmith-dev-1 npm install   # container tree (Docker build/typecheck)\n'
-printf '\n'
+# Only the MAIN checkout has a container with its own writable dependency
+# tree. A worktree container reads the host tree read-only, so an install
+# inside it cannot help and is actively dangerous (SMI-6378: npm reify races
+# the read-only bind and can break the container's view of /app/node_modules).
+# Printing the main container's command to a worktree user is also the SMI-5559
+# trap -- it silently "succeeds" against a different checkout's container.
+if [ -z "$_MAIN_CHECKOUT" ]; then
+    printf '    docker exec skillsmith-dev-1 npm install   # container tree (Docker build/typecheck)\n'
+    printf '\n'
+else
+    printf '    (you are in a worktree: its container reads the host tree read-only,\n'
+    printf '     so there is no separate container install to run -- fix the host tree below)\n'
+    printf '\n'
+fi
 printf '  Host tree: a bare npm install will not clear this guard. This repo sets\n'
 printf '  ignore-scripts=true in .npmrc, so npm install also skips the postinstall\n'
 printf '  step that writes the sentinel this guard reads. Run the script that writes\n'

@@ -53,6 +53,22 @@ const DEP_FIELDS = ['dependencies', 'devDependencies', 'peerDependencies', 'opti
 const PLACEHOLDER = '<internal>'
 
 /**
+ * True only for a plain semver range -- the shape a release-cadence version
+ * bump actually produces. Deliberately conservative: every protocol form
+ * (`github:`, `file:`, `workspace:`, `npm:`, `git+ssh://`, a bare URL) carries
+ * a `:` or `/` and is rejected, so it keeps its literal value and still moves
+ * the hash. A tag like `latest` carries no digit and is likewise rejected.
+ *
+ * Rejecting wrongly costs a false "real drift" label, which is safe.
+ * Accepting wrongly hides a genuine dependency change, which is not.
+ */
+function isPlainVersionRange(value) {
+  return (
+    typeof value === 'string' && !value.includes(':') && !value.includes('/') && /\d/.test(value)
+  )
+}
+
+/**
  * True if `key` (a package-lock.json `packages` map key, e.g.
  * "packages/core") is matched by workspace glob `glob` (e.g. "packages/*").
  * Only single-level trailing-"*" globs are supported — this repo's
@@ -125,7 +141,18 @@ export function computeShadowHash(lockfileText, packageJsonText) {
       const deps = entry[field]
       if (!deps || typeof deps !== 'object') continue
       for (const depName of Object.keys(deps)) {
-        if (internalNames.has(depName)) {
+        // Neutralize ONLY release-version movement on an internal edge. An
+        // earlier draft replaced every value attached to an internal package
+        // name, which made `"^0.12.2"` and `"github:someone/fork#main"`
+        // normalize identically -- a real dependency redirection would have
+        // been labelled cosmetic, and once Wave 2 promotes this hash to the
+        // pass/fail decision that becomes a stale-dependency bypass. Found by
+        // the cross-family pre-merge gate (ADR-128).
+        //
+        // Fails toward VISIBLE drift, never toward "cosmetic": anything this
+        // predicate does not recognize as a plain version range keeps its
+        // literal value and therefore still moves the hash.
+        if (internalNames.has(depName) && isPlainVersionRange(deps[depName])) {
           deps[depName] = PLACEHOLDER
         }
       }
