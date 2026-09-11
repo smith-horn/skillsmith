@@ -69,6 +69,19 @@ const CREDENTIALS_FILE_PATTERN = /credentials\.(?:json|ya?ml|env|toml|txt)/i
 const CREDENTIALS_ASSIGN_PATTERN = /credentials\s*[:=]/i
 // Contextual secrets: assignment or path, not bare word
 const SECRETS_ASSIGN_PATTERN = /\bsecrets?\s*[:=]/i
+/**
+ * SMI-6508 (MF-5): the PREFIXED assignment form — `API_SECRETS=`, `app_secrets:`,
+ * `mySecrets=`, and the singular `API_SECRET=`. Exactly complementary to
+ * SECRETS_ASSIGN_PATTERN above: that one carries `\b`, and `_` is a word
+ * character, so it cannot match after an underscore or a camelCase hump. The
+ * lookbehind here matches precisely the cases its boundary excludes, so the two
+ * never both fire on one match. `MY-SECRETS=` and `my.secrets=` stay with the
+ * bare pattern, since `-` and `.` are non-word characters its `\b` already
+ * accepts.
+ *
+ * MEDIUM by classification, NOT value-gated — see OBSERVE_ONLY_MEDIUM_PATTERNS.
+ */
+const SECRETS_PREFIXED_ASSIGN_PATTERN = /(?<=[A-Za-z0-9_])secrets?\s*[:=]/i
 const SECRETS_PATH_PATTERN = /\bsecrets?\/[a-z0-9_.-]+/i
 const PEM_PATTERN = /\.pem$/i
 const KEY_FILE_PATTERN = /\.key$/i
@@ -88,6 +101,7 @@ export const SENSITIVE_PATH_PATTERNS = [
   CREDENTIALS_FILE_PATTERN,
   CREDENTIALS_ASSIGN_PATTERN,
   SECRETS_ASSIGN_PATTERN,
+  SECRETS_PREFIXED_ASSIGN_PATTERN,
   SECRETS_PATH_PATTERN,
   PEM_PATTERN,
   KEY_FILE_PATTERN,
@@ -133,12 +147,43 @@ export const PATH_FORM_PATTERNS: ReadonlySet<RegExp> = new Set([
  * the assigned value. See scanSensitivePaths' assignmentHasRealValue().
  *
  * Partition check (guarded by a dedicated test): 1 (ENV) + 9 (PATH_FORM) +
- * 3 (ASSIGNMENT) + 2 (VALUE_GATED_KEYWORD) = 15, total and disjoint. An
- * unclassified future pattern falls through to scanSensitivePaths' fail-CLOSED
- * `else` branch and stays HIGH.
+ * 3 (ASSIGNMENT) + 2 (VALUE_GATED_KEYWORD) + 1 (OBSERVE_ONLY_MEDIUM) = 16,
+ * total and disjoint. An unclassified future pattern falls through to
+ * scanSensitivePaths' fail-CLOSED `else` branch and stays HIGH.
  */
 export const VALUE_GATED_ASSIGNMENT_PATTERNS: ReadonlySet<RegExp> = new Set([
   CREDENTIALS_ASSIGN_PATTERN,
   SECRETS_ASSIGN_PATTERN,
   PASSWORD_ASSIGN_PATTERN,
+])
+
+/**
+ * SMI-6508 (MF-5): always MEDIUM, never value-gated and never escalated.
+ *
+ * WHY A NEW CLASS RATHER THAN THE MF-4 SET. Adding the prefixed form to
+ * VALUE_GATED_ASSIGNMENT_PATTERNS would make it HIGH-by-default, which blocks
+ * installation — there is no allowlist in that path and undoing it costs a
+ * package publish. Measured against 66,495 real skill contents in prod: the
+ * prefixed form newly matches 259 skills / 418 lines, of which the MF-4 value
+ * gate would call 191 "real value" → HIGH, newly blocking 132 skills (0.20% of
+ * the corpus, ~975 extrapolated to the full population). Shape analysis put
+ * roughly 46% of those 191 in false-positive-looking shapes — multi-word prose,
+ * lowercase identifiers, paths — and left 104 genuinely ambiguous.
+ *
+ * So the detection ships at MEDIUM: the finding becomes visible without costing
+ * a single install, and the accumulated real-world findings become the evidence
+ * for whether HIGH is justified later. Promoting it is a one-line move into the
+ * MF-4 set once that evidence exists.
+ *
+ * DELIBERATE ASYMMETRY. `DB_PASSWORD=` and `AWS_CREDENTIALS=` already reach
+ * HIGH today, because CREDENTIALS_ASSIGN_PATTERN and PASSWORD_ASSIGN_PATTERN
+ * carry no `\b` and so have always matched their prefixed forms. Those are
+ * grandfathered, not endorsed: their prefixed-form FP rate has never been
+ * measured. This entry is MEDIUM because we measured it and the others are not
+ * because we have not — that asymmetry reflects the evidence, and levelling it
+ * in either direction without measuring first would be the wrong fix. See
+ * SMI-6508.
+ */
+export const OBSERVE_ONLY_MEDIUM_PATTERNS: ReadonlySet<RegExp> = new Set([
+  SECRETS_PREFIXED_ASSIGN_PATTERN,
 ])
