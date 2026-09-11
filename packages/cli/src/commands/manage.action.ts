@@ -406,9 +406,12 @@ async function updateActionImpl(
       console.log(
         chalk.yellow('Specify one or more skills to update, or pass --all for everything.')
       )
+      // SMI-6530 containment: lead with a dry-run review of everything; a bulk,
+      // non-dry-run `update --all` can overwrite local edits until the update
+      // eligibility gate (SMI-6532) ships.
+      console.log(chalk.dim('  skillsmith update --all --dry-run   # review every update first'))
       console.log(chalk.dim('  skillsmith update <skill>'))
       console.log(chalk.dim('  skillsmith update <skill1> <skill2> ...'))
-      console.log(chalk.dim('  skillsmith update --all'))
       console.log(chalk.dim('  skillsmith update <skill> --dry-run'))
       process.exit(1)
     }
