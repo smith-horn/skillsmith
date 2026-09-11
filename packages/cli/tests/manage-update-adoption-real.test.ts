@@ -37,7 +37,7 @@
  *      candidate AND a concurrent real manifest write are present, the
  *      trustworthy manifest entry wins — not the unrelated cache-matched id.
  */
-import { mkdir, mkdtemp, readFile, rm, writeFile } from 'node:fs/promises'
+import { mkdir, mkdtemp, readdir, readFile, rm, writeFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import * as path from 'node:path'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
@@ -162,6 +162,55 @@ describe('ADR-139 (SMI-6274 Wave 4): getSkillDiff adoption — real manifest per
     expect(result).toBe('skipped-local')
     // No manifest was ever written — a dry run must have zero side effects.
     await expect(readFile(manifestPath, 'utf-8')).rejects.toThrow()
+  })
+
+  it('SMI-6529 Wave A0: a dry run leaves an existing manifest and the skills directory byte-identical', async () => {
+    const skillsDir = path.join(homeDir, '.claude', 'skills')
+    const trackedDir = path.join(skillsDir, 'tracked-skill')
+    const untrackedDir = path.join(skillsDir, 'dry-run-untracked-skill')
+    for (const [dir, name] of [
+      [trackedDir, 'tracked-skill'],
+      [untrackedDir, 'dry-run-untracked-skill'],
+    ] as const) {
+      await mkdir(dir, { recursive: true })
+      await writeFile(
+        path.join(dir, 'SKILL.md'),
+        `---\nname: ${name}\ndescription: test\n---\n${SKILL_MD_BODY}`,
+        'utf-8'
+      )
+    }
+    const manifestPath = path.join(homeDir, '.skillsmith', 'manifest.json')
+    const { ManifestManager } = await import('@skillsmith/core')
+    await new ManifestManager(manifestPath).updateSafely((current) => ({
+      ...current,
+      installedSkills: {
+        ...current.installedSkills,
+        'tracked-skill': {
+          id: 'https://github.com/someauthor/tracked-skill',
+          name: 'tracked-skill',
+          version: '1.0.0',
+          source: 'github:someauthor/tracked-skill',
+          installPath: trackedDir,
+          installedAt: new Date().toISOString(),
+          lastUpdated: new Date().toISOString(),
+        },
+      },
+    }))
+    const manifestBefore = await readFile(manifestPath)
+    const listingBefore = await readdir(skillsDir)
+
+    const { getSkillDiff } = await import('../src/commands/manage.js')
+    const result = await getSkillDiff(
+      'dry-run-untracked-skill',
+      dbPath,
+      'claude-code',
+      undefined,
+      true // dryRun
+    )
+
+    expect(result).toBe('skipped-local')
+    expect((await readFile(manifestPath)).equals(manifestBefore)).toBe(true)
+    expect(await readdir(skillsDir)).toEqual(listingBefore)
   })
 
   it('ADR-139 finding 2 (race safety): a concurrent writer that tracks the skill under lock wins over the guessed adoption entry', async () => {

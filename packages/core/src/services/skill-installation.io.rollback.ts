@@ -26,6 +26,7 @@ import * as fs from 'fs/promises'
 import { constants } from 'fs'
 import { O_NOFOLLOW, writeFullBuffer } from '../utils/safe-fs.js'
 
+/** A pre-write copy of a regular file (path, bytes and mode), used to restore it on rollback. */
 export interface FileSnapshot {
   path: string
   content: Buffer
@@ -67,6 +68,7 @@ export class InstallRestoreError extends Error {
   }
 }
 
+/** What {@link classifyPreWrite} found at a write target before any write. */
 export type PreWriteClassification =
   | { kind: 'absent' }
   | { kind: 'regular'; snapshot: FileSnapshot }

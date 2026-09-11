@@ -45,6 +45,7 @@ import type { Stats } from 'fs'
 import * as path from 'path'
 import type { InstallErrorCode, SkillManifestEntry } from './skill-installation.types.js'
 
+/** The refusal codes {@link checkInstallTarget} can return. */
 export type InstallTargetFailureCode = Extract<
   InstallErrorCode,
   | 'INSTALL_TARGET_MISMATCH'
@@ -54,6 +55,7 @@ export type InstallTargetFailureCode = Extract<
   | 'ALREADY_INSTALLED'
 >
 
+/** Input to {@link checkInstallTarget}: the write target, its skills root, and the manifest entry at its key. */
 export interface CheckInstallTargetParams {
   installPath: string
   skillsDir: string
@@ -64,6 +66,7 @@ export interface CheckInstallTargetParams {
   expectedInstallPath?: string
 }
 
+/** Whether the write may proceed; `preExisted` says whether the target directory was already there. */
 export type CheckInstallTargetResult =
   | { ok: true; preExisted: boolean }
   | { ok: false; code: InstallTargetFailureCode; error: string; tips?: string[] }
@@ -222,6 +225,12 @@ async function pathStillExists(p: string): Promise<boolean> {
   }
 }
 
+/**
+ * The pre-write gate: decide, without changing anything, whether an install
+ * or update may write into `installPath`. The rules (pre) and (a)–(f) in the
+ * module comment are checked in order, and the first to fail wins. Callers
+ * run it before any content fetch or disk write.
+ */
 export async function checkInstallTarget(
   params: CheckInstallTargetParams
 ): Promise<CheckInstallTargetResult> {

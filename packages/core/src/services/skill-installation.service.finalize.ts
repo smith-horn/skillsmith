@@ -29,6 +29,7 @@ import { extractDepIntel, persistDependencies, generateTips } from './skill-inst
 import { checkDepsAgainstQuarantine } from './skill-installation.validate.js'
 import { recordAiDefenceFeedback, collectTrendWarnings } from './skill-installation.feedback.js'
 
+/** Everything {@link finalizeSuccessfulInstall} needs from the service and the install in progress. */
 export interface FinalizeInstallParams {
   manifest: ManifestManager
   coInstallRecorder: CoInstallRecorder | undefined

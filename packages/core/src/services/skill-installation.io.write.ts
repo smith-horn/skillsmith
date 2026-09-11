@@ -27,6 +27,7 @@ import {
 } from './skill-installation.io.rollback.js'
 import { mkdirNoFollow } from './skill-installation.io.dirs.js'
 
+/** What {@link writeInstallFiles} wrote, plus a `rollback` that undoes it. */
 export interface WriteInstallResult {
   writtenFiles: string[]
   subagentPath?: string
@@ -53,6 +54,12 @@ export interface WriteInstallResult {
   rollback: (causeError: unknown) => Promise<void>
 }
 
+/**
+ * Write a skill's files into `installPath`, snapshotting every file it will
+ * overwrite first. On failure it restores those files and removes only what
+ * it created; a directory that existed before the call is never removed.
+ * Callers run `checkInstallTarget` first.
+ */
 export async function writeInstallFiles(
   installPath: string,
   skillsDir: string,
