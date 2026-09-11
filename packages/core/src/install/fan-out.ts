@@ -11,16 +11,14 @@
  *
  * Every fan-out is recorded in `~/.skillsmith/links/manifest.json` so
  * `removeLinks(skillId)` can tear down both copies and symlinks atomically
- * during uninstall.
+ * during uninstall. The manifest itself lives in fan-out.manifest.ts.
  *
  * @module @skillsmith/core/install/fan-out
  */
-import { homedir } from 'node:os'
 import * as path from 'node:path'
 import * as fs from 'node:fs'
 import * as fsp from 'node:fs/promises'
 import { CLIENT_NATIVE_PATHS, CANONICAL_CLIENT, type ClientId } from './paths.js'
-import { assertNotRealUserHome } from '../services/skill-manifest.js'
 import {
   assertOverwritable,
   checkGitAtRoot,
@@ -30,134 +28,20 @@ import {
   recoverDestination,
   replaceDestination,
   withDestinationLock,
-  withFileLock,
 } from './fan-out.overwrite.js'
+import {
+  getLinkManifestPath,
+  loadManifest,
+  readManifestFile,
+  unreadableManifestError,
+  updateManifest,
+  type LinkKind,
+  type LinkManifest,
+  type LinkRecord,
+} from './fan-out.manifest.js'
 
-export type LinkKind = 'symlink' | 'copy'
-
-export interface LinkRecord {
-  skillId: string
-  from: string
-  to: string
-  kind: LinkKind
-  createdAt: string
-}
-
-export interface LinkManifest {
-  version: 1
-  links: LinkRecord[]
-}
-
-const MANIFEST_VERSION = 1 as const
-
-/**
- * Resolve the manifest file path. Sits under `~/.skillsmith/` so it shares
- * the existing allow-list entry for that directory (DEFAULT_ALLOWED_DIRS in
- * `pathValidation.ts`).
- */
-export function getLinkManifestPath(): string {
-  return path.join(homedir(), '.skillsmith', 'links', 'manifest.json')
-}
-
-interface ManifestRead {
-  state: 'ok' | 'missing' | 'corrupt' | 'unreadable'
-  manifest: LinkManifest
-  reason?: string
-}
-
-async function readManifestFile(): Promise<ManifestRead> {
-  const empty: LinkManifest = { version: MANIFEST_VERSION, links: [] }
-  let raw: string
-  try {
-    raw = await fsp.readFile(getLinkManifestPath(), 'utf-8')
-  } catch (err) {
-    const code = (err as NodeJS.ErrnoException).code
-    if (code === 'ENOENT') return { state: 'missing', manifest: empty }
-    return { state: 'unreadable', manifest: empty, reason: code ?? String(err) }
-  }
-  try {
-    const parsed = JSON.parse(raw) as LinkManifest
-    if (parsed?.version === MANIFEST_VERSION && Array.isArray(parsed.links)) {
-      return { state: 'ok', manifest: parsed }
-    }
-  } catch {
-    // Not JSON: reported as corrupt below.
-  }
-  return { state: 'corrupt', manifest: empty }
-}
-
-/** Error for a manifest that exists but can't be read; nothing is written over it. */
-function unreadableManifestError(reason: string | undefined): Error {
-  return new Error(
-    `could not read the fan-out link manifest at ${getLinkManifestPath()} (${reason}); ` +
-      `refusing to overwrite it.`
-  )
-}
-
-/**
- * Load the manifest for reading. Returns an empty manifest if the file is
- * missing, unreadable or corrupt — fan-out is best-effort, never crash on
- * cold start. Changes go through {@link updateManifest}, which never
- * overwrites a file it couldn't read.
- */
-export async function loadManifest(): Promise<LinkManifest> {
-  return (await readManifestFile()).manifest
-}
-
-/**
- * Apply `change` to the manifest and save it, under the manifest's own lock.
- * Returns a warning for the user, if any.
- *
- * SMI-6529 round 9: destination locks only serialize calls for one
- * destination, so fan-outs of different skills loaded, changed and saved the
- * manifest at the same time, through one shared temp file; twelve concurrent
- * fan-outs kept one record, and could leave the file corrupt. No destination
- * lock is ever requested while this lock is held, so the two can't deadlock.
- *
- * A corrupt file used to be replaced with an empty manifest, dropping every
- * other skill's record. It is now moved aside, with a warning; a file that
- * can't be read at all is left alone and the call fails.
- */
-async function updateManifest(
-  change: (manifest: LinkManifest) => void
-): Promise<string | undefined> {
-  const manifestPath = getLinkManifestPath()
-  assertNotRealUserHome(manifestPath, 'write')
-  await fsp.mkdir(path.dirname(manifestPath), { recursive: true })
-  return withFileLock(manifestPath, 'fan-out link manifest lock', async () => {
-    const read = await readManifestFile()
-    if (read.state === 'unreadable') throw unreadableManifestError(read.reason)
-    let warning: string | undefined
-    if (read.state === 'corrupt') {
-      const aside = `${manifestPath}.corrupt-${Date.now()}`
-      await fsp.rename(manifestPath, aside)
-      warning =
-        `the fan-out link manifest at ${manifestPath} could not be parsed; it was moved to ` +
-        `${aside} and a new one started. Copies recorded only in the old file are no longer tracked.`
-    }
-    change(read.manifest)
-    await saveManifest(read.manifest)
-    return warning
-  })
-}
-
-/**
- * Persist the manifest atomically (write-temp + rename) so a crash mid-write
- * never leaves the file in a partial state.
- */
-export async function saveManifest(manifest: LinkManifest): Promise<void> {
-  const manifestPath = getLinkManifestPath()
-  // SMI-6343 follow-up (adversarial review): a fourth parallel manifest-write
-  // implementation (a different file, `links/manifest.json`, but the same
-  // homedir-derived-with-no-override shape). The $HOME sandbox
-  // (vitest.setup.ts) was this file's only defense until this guard.
-  assertNotRealUserHome(manifestPath, 'write')
-  const dir = path.dirname(manifestPath)
-  await fsp.mkdir(dir, { recursive: true })
-  const tmp = `${manifestPath}.${process.pid}.tmp`
-  await fsp.writeFile(tmp, JSON.stringify(manifest, null, 2), 'utf-8')
-  await fsp.rename(tmp, manifestPath)
-}
+export { getLinkManifestPath, loadManifest, saveManifest } from './fan-out.manifest.js'
+export type { LinkKind, LinkManifest, LinkRecord } from './fan-out.manifest.js'
 
 export interface AddLinkOptions {
   /** Skill identifier (e.g. `author/name`). Used as the directory name on disk. */
@@ -185,6 +69,10 @@ export interface AddLinkResult {
    * Omitted when none.
    */
   warnings?: string[]
+}
+
+function errorText(err: unknown): string {
+  return err instanceof Error ? err.message : String(err)
 }
 
 /**
@@ -289,10 +177,25 @@ async function removeRecordedLink(
     // an external editor that already moved the file. Report it as a
     // (different) refusal rather than silently pretending success, so
     // `removeLinks` still keeps the manifest entry for a future retry.
-    return {
-      removed: false,
-      reason: `${p} could not be removed: ${err instanceof Error ? err.message : String(err)}`,
-    }
+    return { removed: false, reason: `${p} could not be removed: ${errorText(err)}` }
+  }
+}
+
+/**
+ * SMI-6529 round 10: take back out a destination this call created when its
+ * record couldn't be saved. Left in place, it would be a copy nothing tracks:
+ * uninstall would never remove it, and a force refresh would refuse it. The
+ * caller holds the destination's lock, so no one else has touched it.
+ */
+async function discardUnrecordedCopy(toDir: string, cause: unknown): Promise<void> {
+  try {
+    await fsp.rm(toDir, { recursive: true, force: true })
+  } catch (rmErr) {
+    throw new Error(
+      `addLink: ${errorText(cause)}; the new, unrecorded copy at ${toDir} could not be ` +
+        `removed either (${errorText(rmErr)}).`,
+      { cause }
+    )
   }
 }
 
@@ -348,6 +251,14 @@ export async function addLink(opts: AddLinkOptions): Promise<AddLinkResult> {
           `addLink: ${toDir} already exists. Pass force: true (CLI: --force) to overwrite.`
         )
       }
+      // Round 10: say why there's no record, rather than "not recorded".
+      if (read.state === 'corrupt' && !existing.isSymbolicLink()) {
+        throw new Error(
+          `addLink: ${toDir} already exists, and the fan-out link manifest at ` +
+            `${getLinkManifestPath()} could not be parsed, so nothing shows Skillsmith made ` +
+            `this copy. Fix or move the manifest, or remove ${toDir} yourself, then retry.`
+        )
+      }
       await assertOverwritable(toDir, existing, manifest)
     }
 
@@ -388,10 +299,16 @@ export async function addLink(opts: AddLinkOptions): Promise<AddLinkResult> {
     // SMI-6529 N7: a force-overwrite of an already-recorded destination
     // replaces its manifest entry rather than appending a second one.
     const resolvedToDir = path.resolve(toDir)
-    const manifestWarning = await updateManifest((current) => {
-      current.links = current.links.filter((l) => path.resolve(l.to) !== resolvedToDir)
-      current.links.push(record)
-    })
+    let manifestWarning: string | undefined
+    try {
+      manifestWarning = await updateManifest((current) => {
+        current.links = current.links.filter((l) => path.resolve(l.to) !== resolvedToDir)
+        current.links.push(record)
+      })
+    } catch (err) {
+      if (!existing) await discardUnrecordedCopy(toDir, err)
+      throw err
+    }
     const warnings = [
       ...(manifestWarning ? [manifestWarning] : []),
       ...(await listLeftoverBackups(toDir)).map(leftoverBackupWarning),
@@ -419,6 +336,11 @@ export interface RemoveLinksResult {
   warnings?: string[]
 }
 
+/** Whether two records are the same fan-out, not just the same path. */
+function isSameRecord(a: LinkRecord, b: LinkRecord): boolean {
+  return a.skillId === b.skillId && a.to === b.to && a.createdAt === b.createdAt
+}
+
 /**
  * Remove every fan-out link recorded for `skillId`. Safe to call when no
  * manifest exists (returns `{ removed: 0, refused: [] }`).
@@ -443,23 +365,29 @@ export async function removeLinks(skillId: string): Promise<RemoveLinksResult> {
   const warnings: string[] = []
   const removedTargets = new Set<string>()
   for (const link of matching) {
-    // SMI-6529 round 6: same per-destination lock as addLink.
-    const { outcome, leftovers } = await withDestinationLock(link.to, async () => ({
-      outcome: await removeRecordedLink(link.to),
-      leftovers: await listLeftoverBackups(link.to),
-    }))
-    if (outcome.removed) {
+    // SMI-6529 round 6: same per-destination lock as addLink. Round 10: the
+    // record is dropped while that lock is still held, and only the record
+    // read above (same path and creation time). Filtering by path after the
+    // loop also dropped a record a concurrent addLink had just saved for a
+    // new copy at a path already done, leaving that copy untracked.
+    const step = await withDestinationLock(link.to, async () => {
+      const outcome = await removeRecordedLink(link.to)
+      const manifestWarning = outcome.removed
+        ? await updateManifest((current) => {
+            current.links = current.links.filter((l) => !isSameRecord(l, link))
+          })
+        : undefined
+      return { outcome, manifestWarning, leftovers: await listLeftoverBackups(link.to) }
+    })
+    if (step.manifestWarning) warnings.push(step.manifestWarning)
+    if (step.outcome.removed) {
       removedTargets.add(link.to)
     } else {
-      refused.push({ to: link.to, reason: outcome.reason })
+      refused.push({ to: link.to, reason: step.outcome.reason })
     }
-    warnings.push(...leftovers.map(leftoverBackupWarning))
+    warnings.push(...step.leftovers.map(leftoverBackupWarning))
   }
 
-  const manifestWarning = await updateManifest((current) => {
-    current.links = current.links.filter((l) => l.skillId !== skillId || !removedTargets.has(l.to))
-  })
-  if (manifestWarning) warnings.unshift(manifestWarning)
   return warnings.length > 0
     ? { removed: removedTargets.size, refused, warnings }
     : { removed: removedTargets.size, refused }

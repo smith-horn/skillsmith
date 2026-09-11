@@ -1015,6 +1015,118 @@ describe('install/fan-out', () => {
     })
   })
 
+  // SMI-6529 review round 10: an uninstall never drops a concurrent re-link's
+  // record, a newer manifest version is never moved aside, a corrupt manifest
+  // is named in a force-refresh refusal, and a fresh copy whose record can't
+  // be saved is taken back out.
+  describe('SMI-6529 round 10: record integrity under races and bad manifests', () => {
+    it('an uninstall never drops the record of a copy a concurrent re-link just made', async () => {
+      const { addLink, removeLinks, listLinks } = await loadModule()
+      const { acquireOwnedLock } = await import('../../src/config/owned-lock.js')
+      await seedSkill('rmadd')
+      const cursor = await addLink({
+        skillId: 'rmadd',
+        fromClient: 'claude-code',
+        toClient: 'cursor',
+      })
+      const windsurf = await addLink({
+        skillId: 'rmadd',
+        fromClient: 'claude-code',
+        toClient: 'windsurf',
+      })
+      // Hold windsurf's destination lock so the uninstall pauses after cursor.
+      const releaseWindsurf = acquireOwnedLock(
+        path.join(path.dirname(windsurf.record.to), '.rmadd.skillsmith-fanout')
+      )
+      let removal: Promise<unknown> = Promise.resolve()
+      try {
+        removal = removeLinks('rmadd')
+        for (let i = 0; i < 150; i++) {
+          const present = await stat(cursor.record.to).then(
+            () => true,
+            () => false
+          )
+          if (!present) break
+          await new Promise((resolve) => setTimeout(resolve, 20))
+        }
+        await expect(stat(cursor.record.to)).rejects.toThrow(/ENOENT/)
+        // A re-link of the same skill to cursor lands mid-uninstall.
+        await addLink({ skillId: 'rmadd', fromClient: 'claude-code', toClient: 'cursor' })
+      } finally {
+        releaseWindsurf()
+      }
+      await removal
+
+      expect((await listLinks('rmadd')).map((l) => l.to)).toEqual([cursor.record.to])
+      await expect(stat(cursor.record.to)).resolves.toBeDefined()
+    })
+
+    it('refuses to overwrite a manifest written by a newer version', async () => {
+      const { addLink, getLinkManifestPath } = await loadModule()
+      await seedSkill('newer')
+      const manifestPath = getLinkManifestPath()
+      const newer = '{"version":2,"links":[{"skillId":"future"}]}'
+      await mkdir(path.dirname(manifestPath), { recursive: true })
+      await writeFile(manifestPath, newer, 'utf-8')
+
+      await expect(
+        addLink({ skillId: 'newer', fromClient: 'claude-code', toClient: 'cursor' })
+      ).rejects.toThrow(/newer Skillsmith/)
+      expect(await readFile(manifestPath, 'utf-8')).toBe(newer)
+      const aside = (await readdir(path.dirname(manifestPath))).filter((n) =>
+        n.includes('.corrupt-')
+      )
+      expect(aside).toEqual([])
+    })
+
+    it('names the corrupt manifest when refusing a force refresh over an existing copy', async () => {
+      const { addLink, getLinkManifestPath } = await loadModule()
+      await seedSkill('corruptforce')
+      await addLink({ skillId: 'corruptforce', fromClient: 'claude-code', toClient: 'cursor' })
+      await writeFile(getLinkManifestPath(), 'not json', 'utf-8')
+
+      await expect(
+        addLink({
+          skillId: 'corruptforce',
+          fromClient: 'claude-code',
+          toClient: 'cursor',
+          force: true,
+        })
+      ).rejects.toThrow(/could not be parsed/)
+    })
+
+    it('takes a fresh copy back out when its record cannot be saved', async () => {
+      vi.doMock('../../src/install/fan-out.overwrite.js', async () => {
+        const actual = await vi.importActual<
+          typeof import('../../src/install/fan-out.overwrite.js')
+        >('../../src/install/fan-out.overwrite.js')
+        return {
+          ...actual,
+          withFileLock: vi.fn(
+            async <T>(target: string, label: string, fn: () => Promise<T>): Promise<T> => {
+              if (label.includes('manifest')) throw new Error('manifest lock unavailable')
+              return actual.withFileLock(target, label, fn)
+            }
+          ),
+        }
+      })
+      try {
+        vi.resetModules()
+        const { addLink } = await import('../../src/install/fan-out.js')
+        await seedSkill('norecord')
+        await expect(
+          addLink({ skillId: 'norecord', fromClient: 'claude-code', toClient: 'cursor' })
+        ).rejects.toThrow(/manifest lock unavailable/)
+        await expect(stat(path.join(homeDir, '.cursor', 'skills', 'norecord'))).rejects.toThrow(
+          /ENOENT/
+        )
+      } finally {
+        vi.doUnmock('../../src/install/fan-out.overwrite.js')
+        vi.resetModules()
+      }
+    })
+  })
+
   // SMI-6529 N7 (round 4): `--force --also-link` must be able to refresh a
   // COPY Skillsmith itself recorded (the default fan-out kind) — round-2's
   // H3 fix incorrectly refused this too, treating every non-symlink `toDir`

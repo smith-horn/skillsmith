@@ -38,7 +38,7 @@ import * as fsp from 'node:fs/promises'
 import type { Stats } from 'node:fs'
 import { setTimeout as delay } from 'node:timers/promises'
 import { acquireOwnedLock, StuckLockError, type StuckLockReason } from '../config/owned-lock.js'
-import type { LinkManifest } from './fan-out.js'
+import type { LinkManifest } from './fan-out.manifest.js'
 
 const BACKUP_TAG = '.skillsmith-backup-'
 const STAGING_TAG = '.skillsmith-staging-'

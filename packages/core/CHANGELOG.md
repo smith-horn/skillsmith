@@ -22,7 +22,9 @@ All notable changes to `@skillsmith/core` are documented here.
   a warning, and is never restored over a skill uninstalled since. The fan-out link manifest is
   changed under its own lock (concurrent fan-outs of different skills lost records and could
   corrupt it), and a corrupt one is moved aside with a warning rather than replaced by an empty
-  one that dropped every other skill's record. The per-target write queue now classifies and snapshots
+  one that dropped every other skill's record; a manifest written by a newer version is left
+  untouched, and an uninstall racing a re-link no longer drops the new copy's record. The
+  per-target write queue now classifies and snapshots
   every write independently (not just the first for a given path), so two differently-cased files
   on a case-sensitive filesystem restore correctly, a short write is retried until complete or
   reported as a restore failure, and a 0-byte file orphaned by a failed create is still cleaned up.
