@@ -51,6 +51,16 @@ export {
 
 export { ManifestManager, assertNotRealUserHome } from '../services/skill-manifest.js'
 
+// SMI-6529 L20 (round 2): exported so mcp-server's `install.ts` conflict
+// pre-flight can run the SAME pre-write target guard `install()` itself runs
+// internally, BEFORE any backup/GC side effect — see that call site's own
+// comment for why running it first matters.
+export {
+  checkInstallTarget,
+  type CheckInstallTargetParams,
+  type CheckInstallTargetResult,
+} from '../services/skill-installation.target-guard.js'
+
 export {
   TRUST_TIER_SCANNER_OPTIONS as INSTALL_TRUST_TIER_SCANNER_OPTIONS,
   type ProgressCallback,

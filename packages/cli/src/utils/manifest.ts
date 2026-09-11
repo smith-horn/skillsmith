@@ -26,6 +26,7 @@ import { readFile, writeFile, mkdir, rename, unlink } from 'fs/promises'
 import { join, dirname } from 'path'
 import { homedir } from 'os'
 import { assertNotRealUserHome } from '@skillsmith/core'
+import type { ClientId } from '@skillsmith/core/install'
 
 // ============================================================================
 // Types (mirrors install.types.ts from mcp-server — kept in sync manually)
@@ -44,6 +45,17 @@ export interface SkillManifestEntry {
   /** Wave 2: pinned content hash (8-char truncation of full SHA-256) */
   pinnedVersion?: string
   updatePolicy?: 'auto' | 'manual' | 'never'
+  /** SMI-5894: which client this installation targets. See core's `SkillManifestEntry`. */
+  client?: ClientId
+  /**
+   * ADR-145 §1 (SMI-6529 sync): who asserts this entry's identity —
+   * `'local'` is a positive user assertion ("this is my own skill, not
+   * registry-tracked") that `getSkillDiff` must never chase a source for.
+   * See core's `SkillManifestEntry` for the full doc comment.
+   */
+  provenance?: 'local' | 'registry'
+  /** ADR-145 §3 / ADR-144 §6: last successful re-verification timestamp. See core's `SkillManifestEntry`. */
+  verifiedAt?: string
 }
 
 export interface SkillManifest {

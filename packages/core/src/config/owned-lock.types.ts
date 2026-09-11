@@ -92,6 +92,15 @@ export interface AcquireOwnedLockOptions {
   /** Delay before the first reclaim probe (ms). Production callers should omit this; test-only override. */
   reclaimProbeAfterMs?: number
   /**
+   * Max wait for the reclaim lock (ms). Defaults to `RECLAIM_LOCK_TIMEOUT_MS`.
+   * That wait is a synchronous sleep, so an async caller that does its own
+   * polling passes 0: a held or orphaned reclaim lock then fails the attempt
+   * at once (`reclaim_unavailable`) instead of blocking the event loop. A
+   * shorter wait only makes an attempt give up sooner; it never weakens the
+   * lock (SMI-6529 round 8).
+   */
+  reclaimLockTimeoutMs?: number
+  /**
    * @internal Test seam (owned-lock-reclaim-race.test.ts §8b). Fires AFTER
    * the pre-filter has validated a dead claim and BEFORE any reclaim-lock
    * acquisition or removal is attempted. Never set in production code.

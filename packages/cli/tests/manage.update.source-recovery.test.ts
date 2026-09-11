@@ -298,6 +298,37 @@ describe('SMI-5895 Wave 2 Step 1: getSkillDiff — manifest / SourceRecoveryServ
   }
 
   describe('manifest resolution (cache miss)', () => {
+    // SMI-6529 Wave A0: `provenance: 'local'` is a distinct trigger from
+    // `source: 'unknown'` — this entry has a completely NORMAL, resolvable
+    // source/id (unlike every adoption-driven test elsewhere in this file),
+    // proving `provenance`, not `source`, is what drives the skip here.
+    it('skips a provenance:"local" entry and never calls SourceRecoveryService, even with a fully-resolvable source', async () => {
+      await mockInstalledSkill('my-own-skill')
+      const { loadManifest } = await import('../src/utils/manifest.js')
+      vi.mocked(loadManifest).mockResolvedValue({
+        version: '1.0.0',
+        installedSkills: {
+          'my-own-skill': {
+            id: 'someauthor/my-own-skill',
+            name: 'my-own-skill',
+            version: '1.0.0',
+            source: 'github:someauthor/my-own-skill',
+            installPath: join(SKILLS_DIR, 'my-own-skill'),
+            installedAt: '2026-01-01T00:00:00Z',
+            lastUpdated: '2026-01-01T00:00:00Z',
+            provenance: 'local',
+          },
+        },
+      })
+
+      const { getSkillDiff } = await import('../src/commands/manage.js')
+      const result = await getSkillDiff('my-own-skill', '/fake/db.sqlite')
+
+      expect(result).toBe('skipped-local')
+      expect(mocks.recoverOneFn).not.toHaveBeenCalled()
+      expect(mocks.apiClient.getSkill).not.toHaveBeenCalled()
+    })
+
     it('resolves via the manifest and confirms a registry-shaped id against the remote registry', async () => {
       await mockInstalledSkill('astro')
       await setManifestEntry('astro', 'wrsmith108/astro')
@@ -412,8 +443,17 @@ describe('SMI-5895 Wave 2 Step 1: getSkillDiff — manifest / SourceRecoveryServ
     })
   })
 
-  describe('SourceRecoveryService fallback (manifest entry genuinely missing)', () => {
-    it('auto-applies an exact-confidence recovery (git-remote)', async () => {
+  // SMI-6529 Wave A0: `getSkillDiff` now short-circuits an untracked
+  // (manifest entry genuinely missing) skill to 'skipped-local' BEFORE it
+  // ever adopts-and-then-chases a source — the exact "SourceRecoveryService
+  // fallback" this describe block used to exercise is now unreachable for
+  // a freshly-adopted row, since adoption always writes `source: 'unknown'`
+  // and that is exactly what the new early check intercepts. `recoverOneFn`
+  // must never be called for any of these — that's the actual fix for the
+  // data-loss bug (a same-name/same-author match, however confident, is no
+  // longer trusted for a directory Skillsmith never tracked).
+  describe('SourceRecoveryService fallback (manifest entry genuinely missing) — SMI-6529: now short-circuits to skipped-local', () => {
+    it('does NOT auto-apply an exact-confidence recovery (git-remote) — never even calls recoverOne', async () => {
       await mockInstalledSkill('git-tracked-skill')
       // loadManifest default (beforeEach) returns an empty manifest.
       mocks.recoverOneFn.mockResolvedValue({
@@ -430,20 +470,11 @@ describe('SMI-5895 Wave 2 Step 1: getSkillDiff — manifest / SourceRecoveryServ
       const { getSkillDiff } = await import('../src/commands/manage.js')
       const result = await getSkillDiff('git-tracked-skill', '/fake/db.sqlite')
 
-      expect(result).not.toBe('unresolvable')
-      if (typeof result === 'object' && !('adoptionError' in result)) {
-        expect(result.skillId).toBe('https://github.com/someone/git-tracked-skill')
-      }
+      expect(result).toBe('skipped-local')
+      expect(mocks.recoverOneFn).not.toHaveBeenCalled()
     })
 
-    it('auto-applies a high-confidence recovery (plugin manifest) and prefers the skill-specific raw URL over the enriched registryId', async () => {
-      // SMI-5895 review (D-1): registryId comes from a repo_url-only lookup
-      // with no per-skill disambiguation -- a multi-skill plugin/monorepo
-      // shares one repo_url across every skill in it, so it can resolve to a
-      // DIFFERENT skill's registry row than the one actually being
-      // recovered. recoveredSource.url is always populated alongside
-      // registryId for this confidence tier and is skill-specific, so it
-      // must be preferred.
+    it('does NOT auto-apply a high-confidence recovery (plugin manifest) — never even calls recoverOne', async () => {
       await mockInstalledSkill('plugin-tracked-skill')
       mocks.recoverOneFn.mockResolvedValue({
         status: 'recovered',
@@ -459,13 +490,11 @@ describe('SMI-5895 Wave 2 Step 1: getSkillDiff — manifest / SourceRecoveryServ
       const { getSkillDiff } = await import('../src/commands/manage.js')
       const result = await getSkillDiff('plugin-tracked-skill', '/fake/db.sqlite')
 
-      expect(result).not.toBe('unresolvable')
-      if (typeof result === 'object' && !('adoptionError' in result)) {
-        expect(result.skillId).toBe('https://github.com/someone/plugin-tracked-skill')
-      }
+      expect(result).toBe('skipped-local')
+      expect(mocks.recoverOneFn).not.toHaveBeenCalled()
     })
 
-    it('does NOT auto-apply a medium-confidence recovery (single registry-name match) — adopts and returns adopted-unresolvable', async () => {
+    it('does NOT auto-apply a medium-confidence recovery (single registry-name match) — adopts and returns skipped-local', async () => {
       await mockInstalledSkill('ambiguous-named-skill')
       mocks.recoverOneFn.mockResolvedValue({
         status: 'recovered',
@@ -481,15 +510,15 @@ describe('SMI-5895 Wave 2 Step 1: getSkillDiff — manifest / SourceRecoveryServ
       const { getSkillDiff } = await import('../src/commands/manage.js')
       const result = await getSkillDiff('ambiguous-named-skill', '/fake/db.sqlite')
 
-      // ADR-139 (SMI-6274 Wave 4): still not a confident match — a
-      // medium-confidence recovery is never auto-applied — but the skill
-      // IS now adopted (untracked -> a reconstructed manifest entry), so
-      // the outcome is the distinct 'adopted-unresolvable', not the plain
-      // 'unresolvable' this returned before adoption existed.
-      expect(result).toBe('adopted-unresolvable')
+      // SMI-6529: the skill IS adopted (untracked -> a reconstructed
+      // manifest entry, source: 'unknown') but that adoption now short-
+      // circuits straight to 'skipped-local' — recovery is never consulted,
+      // confident or not.
+      expect(result).toBe('skipped-local')
+      expect(mocks.recoverOneFn).not.toHaveBeenCalled()
     })
 
-    it('does NOT auto-apply a low-confidence recovery — adopts and returns adopted-unresolvable', async () => {
+    it('does NOT auto-apply a low-confidence recovery — adopts and returns skipped-local', async () => {
       await mockInstalledSkill('hinted-skill')
       mocks.recoverOneFn.mockResolvedValue({
         status: 'recovered',
@@ -505,10 +534,11 @@ describe('SMI-5895 Wave 2 Step 1: getSkillDiff — manifest / SourceRecoveryServ
       const { getSkillDiff } = await import('../src/commands/manage.js')
       const result = await getSkillDiff('hinted-skill', '/fake/db.sqlite')
 
-      expect(result).toBe('adopted-unresolvable')
+      expect(result).toBe('skipped-local')
+      expect(mocks.recoverOneFn).not.toHaveBeenCalled()
     })
 
-    it("updateSkill's failure message for an unresolvable skill points to `sklx audit sources`", async () => {
+    it("updateSkill's failure message for an untracked skill points to `sklx audit sources` and renders it as a skip", async () => {
       await mockInstalledSkill('mystery-skill')
 
       const oraModule = await import('ora')
@@ -526,12 +556,13 @@ describe('SMI-5895 Wave 2 Step 1: getSkillDiff — manifest / SourceRecoveryServ
         .mocked(spinnerInstance.fail)
         .mock.calls.map((c) => String(c[0]))
         .join('\n')
-      // ADR-139: the exact outcome is now 'adopted-unresolvable' (the skill
-      // WAS adopted), so the message names that explicitly, while still
-      // pointing to the same recovery commands the plain 'unresolvable'
-      // message does.
-      expect(failMessage).toContain('adopted')
+      // SMI-6529: the outcome is now 'skipped-local' (a SKIP, not a
+      // failure) — the message says so and still points at the same
+      // recovery commands.
+      expect(failMessage).toContain('skipped')
+      expect(failMessage).toContain('marked local / not tracked by Skillsmith')
       expect(failMessage).toContain('sklx audit sources')
+      expect(mocks.recoverOneFn).not.toHaveBeenCalled()
     })
   })
 

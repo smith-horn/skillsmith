@@ -4,6 +4,30 @@ All notable changes to `@skillsmith/core` are documented here.
 
 ## [Unreleased]
 
+- **Fix (data loss)**: install and update no longer destroy a skill directory that already
+  existed. A failed write restores every overwritten file to its original bytes and removes only
+  files and directories the install created; a directory that existed is never deleted (it was
+  removed recursively, `.git` included). A new pre-write check, `checkInstallTarget`, refuses to
+  write into a git working tree (or a directory inside one, symlinks resolved), a directory
+  Skillsmith didn't install (no matching manifest entry, or a row marked local or adopted), and a
+  target that differs from the directory `update` compared (`expectedInstallPath`); `force` does
+  not override these. A restore that itself fails now raises `InstallRestoreError` naming the
+  unrestored files instead of a generic internal error. Private-registry content keys can no
+  longer create a `.git` path, and `--also-link --force` replaces a symlink or a fan-out copy
+  Skillsmith itself recorded (the new copy is written to a hidden staging folder and swapped into
+  place under a per-destination lock, so a failed or concurrent refresh never loses the existing
+  copy) but still refuses a real directory Skillsmith never created, or a recorded copy that has
+  since grown a `.git` directory; uninstall's own cleanup applies the same `.git` refusal to a
+  recorded copy instead of deleting it. A copy an interrupted refresh left behind is reported as
+  a warning, and is never restored over a skill uninstalled since. The fan-out link manifest is
+  changed under its own lock (concurrent fan-outs of different skills lost records and could
+  corrupt it), and a corrupt one is moved aside with a warning rather than replaced by an empty
+  one that dropped every other skill's record. The per-target write queue now classifies and snapshots
+  every write independently (not just the first for a given path), so two differently-cased files
+  on a case-sensitive filesystem restore correctly, a short write is retried until complete or
+  reported as a restore failure, and a 0-byte file orphaned by a failed create is still cleaned up.
+  Backfill never modifies a `provenance: 'local'` row (SMI-6529, ADR-155).
+
 - **Fix**: `sensitive_path` MF-4 no longer scores an **embedded** assignment key assigned a bare
   boolean as a real credential. `allow_credentials=True` — the standard FastAPI/Starlette CORS
   middleware flag — was scoring HIGH, which makes `SecurityScanner` compute `passed = false`, which

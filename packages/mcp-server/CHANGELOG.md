@@ -4,6 +4,18 @@ All notable changes to `@skillsmith/mcp-server` are documented here.
 
 ## [Unreleased]
 
+- **Fix (data loss)**: `install_skill` checks the target directory before its conflict backup, so a
+  git working tree or a directory Skillsmith didn't install is refused without being backed up and
+  overwritten; that check now runs against the *right* client's skills directory and manifest key
+  (not always the default client's), and refuses cleanly if the resolved target somehow isn't
+  inside the skills directory at all. A failed check due to a permission error is reported
+  accurately (it names the real error) instead of falsely claiming a git repository was found.
+  `--also-link --force` and uninstall's own link cleanup now surface a fan-out refusal (e.g. a
+  recorded copy that grew a `.git` directory) in the tool result, not only stderr. Tier-1 self-heal
+  treats such user-owned directories as present instead of retrying them every day, but only when
+  the directory genuinely exists on disk — a phantom manifest row with nothing on disk is still
+  retried (SMI-6529).
+
 ## v0.7.14
 
 - **Fix**: SMI-5207 -- sensitive_path action-context gating (Wave 1) (#2760)

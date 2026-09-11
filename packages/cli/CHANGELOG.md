@@ -4,6 +4,13 @@ All notable changes to `@skillsmith/cli` are documented here.
 
 ## [Unreleased]
 
+- **Fix (data loss)**: `skillsmith update` writes only into the directory it compared and refuses
+  otherwise, so a skill can no longer be written into a differently named directory. Skills marked
+  local, and skills Skillsmith didn't install, are skipped before any source recovery or registry
+  lookup instead of being resolved and overwritten. `--dry-run` no longer writes the manifest. The
+  "no recorded registry source" hint no longer suggests `install --force` and names the skill by
+  its directory (SMI-6529).
+
 ## v0.8.10
 
 - **Fixed**: SMI-6472 -- `src/utils/skill-name.ts`'s re-export of `VALID_SKILL_NAME_RE`/`validateSkillName` now imports from the narrow `@skillsmith/core/utils/skill-name` subpath instead of the `@skillsmith/core` package barrel. The barrel import transitively pulled in `skill-installation.io.ts` -> `safe-fs.ts`'s `fs/promises` needs (`open`/`lstat`/`constants`), breaking `tests/create.test.ts`'s narrow `fs/promises` mock (`mkdir`/`writeFile`/`stat` only) with `[vitest] No "constants" export is defined on the "fs/promises" mock`. No behavior change — only the import path.

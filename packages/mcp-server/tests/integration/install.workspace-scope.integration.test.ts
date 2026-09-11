@@ -45,14 +45,24 @@ vi.mock('@skillsmith/core/services/skill-installation-io', async (importActual) 
 // `community`-tier `preventative` mode, blocks on ANY detected collision.
 // Mocked to a deterministic `proceed` outcome, matching install.test.ts's
 // identical isolation of this same concern.
-vi.mock('../../src/tools/install.namespace-gate.js', () => ({
-  runNamespaceGate: vi.fn(async (input: { candidate: { identifier: string } }) => ({
-    decision: 'proceed' as const,
-    candidate: input.candidate,
-    preflight: { warnings: [], pendingCollision: null, auditId: 'test-audit-id' },
-    resultPatch: { installComplete: true },
-  })),
-}))
+// SMI-6529 N5 (round 4): `buildPreflightCandidate`/`resolveCallerTier`/
+// `readAuditModeOverride`/`extractSkillName` moved into this module (to
+// keep install.ts under the 500-line gate) — `install.ts` now imports ALL
+// of them from here, so this mock must pass those four through via
+// `importActual` (pure, deterministic, no side effects) and only override
+// `runNamespaceGate` itself.
+vi.mock('../../src/tools/install.namespace-gate.js', async (importActual) => {
+  const actual = await importActual<typeof import('../../src/tools/install.namespace-gate.js')>()
+  return {
+    ...actual,
+    runNamespaceGate: vi.fn(async (input: { candidate: { identifier: string } }) => ({
+      decision: 'proceed' as const,
+      candidate: input.candidate,
+      preflight: { warnings: [], pendingCollision: null, auditId: 'test-audit-id' },
+      resultPatch: { installComplete: true },
+    })),
+  }
+})
 
 const ORIGINAL_HOME = process.env['HOME']
 const ORIGINAL_USERPROFILE = process.env['USERPROFILE']
@@ -327,5 +337,85 @@ describe('ADR-139 (SMI-6274 Wave 4): install_skill MCP tool workspace-scope wiri
     // on disk is byte-identical to what it was before this call.
     const contentAfter = await readFile(path.join(skillDir, 'SKILL.md'), 'utf-8')
     expect(contentAfter).toBe(LOCALLY_MODIFIED_CONTENT)
+  })
+
+  it('SMI-6529: --also-link fan-out surfaces a leftover interrupted-refresh backup warning in tips', async () => {
+    // extractSkillName('https://github.com/owner/workspace-scope-test-skill')
+    // takes the last '/'-segment -- the same literal name every other test
+    // in this file uses for the GLOBAL install directory.
+    const canonicalSkillDir = path.join(homeDir, '.claude', 'skills', 'workspace-scope-test-skill')
+    const cursorDestDir = path.join(homeDir, '.cursor', 'skills', 'workspace-scope-test-skill')
+
+    // Pre-seed the --also-link fan-out destination as an existing,
+    // manifest-recorded copy so `force: true` is allowed to overwrite it
+    // (assertOverwritable in fan-out.overwrite.ts) -- and so
+    // recoverDestination() does NOT restore the leftover backup seeded
+    // below (it only restores a backup when the destination is MISSING).
+    await mkdir(cursorDestDir, { recursive: true })
+    await writeFile(path.join(cursorDestDir, 'SKILL.md'), '# stale cursor copy\n', 'utf-8')
+
+    const { saveManifest } = await import('@skillsmith/core/install')
+    await saveManifest({
+      version: 1,
+      links: [
+        {
+          skillId: 'workspace-scope-test-skill',
+          from: canonicalSkillDir,
+          to: cursorDestDir,
+          kind: 'copy',
+          createdAt: new Date().toISOString(),
+        },
+      ],
+    })
+
+    // A hidden backup folder left behind by an earlier interrupted refresh,
+    // sitting next to the fan-out destination.
+    const backupDir = path.join(
+      homeDir,
+      '.cursor',
+      'skills',
+      '.workspace-scope-test-skill.skillsmith-backup-AbC123'
+    )
+    await mkdir(path.join(backupDir, 'original'), { recursive: true })
+    await writeFile(path.join(backupDir, 'original', 'SKILL.md'), '# orphaned\n', 'utf-8')
+
+    const { createToolContext } = await import('../../src/context.js')
+    const context = createToolContext({
+      dbPath: ':memory:',
+      apiClientConfig: { offlineMode: true },
+    })
+
+    const { installSkill } = await import('../../src/tools/install.js')
+    const result = await installSkill(
+      {
+        skillId: 'https://github.com/owner/workspace-scope-test-skill',
+        confirmed: true,
+        skipOptimize: true,
+        // No explicit `scope` -- `workspaceDir` has only a bare `.git`
+        // marker, which the "bare install ... resolves to global" test
+        // above already proves is not enough to auto-detect workspace
+        // scope, so this lands the PRIMARY install at global, matching
+        // `canonicalSkillDir` above.
+        cwd: workspaceDir,
+        alsoLink: ['cursor'],
+        force: true,
+      },
+      context
+    )
+
+    expect(result.success).toBe(true)
+    expect(result.installPath).toBe(canonicalSkillDir)
+
+    const tipsText = (result.tips ?? []).join('\n')
+    expect(tipsText).toContain('alsoLink to cursor')
+    expect(tipsText).toContain('an interrupted refresh')
+
+    // The cursor destination now holds the fresh fan-out copy, not the
+    // stale pre-seeded content...
+    const cursorSkillMd = await readFile(path.join(cursorDestDir, 'SKILL.md'), 'utf-8')
+    expect(cursorSkillMd).not.toBe('# stale cursor copy\n')
+
+    // ...but the orphaned backup folder is left alone, only ever reported.
+    expect(await pathExists(path.join(backupDir, 'original', 'SKILL.md'))).toBe(true)
   })
 })
