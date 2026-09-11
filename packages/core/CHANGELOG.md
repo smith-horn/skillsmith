@@ -4,6 +4,32 @@ All notable changes to `@skillsmith/core` are documented here.
 
 ## [Unreleased]
 
+- **Fix**: `sensitive_path` now detects a secret assigned to a **prefixed** key —
+  `API_SECRETS`, `app_secrets`, `mySecrets`, and the singular `API_SECRET`. `SECRETS_ASSIGN_PATTERN`
+  carries `\b`, and `_` is a word character, so that boundary could never match after an underscore
+  or a camelCase hump; SCREAMING_SNAKE and snake_case are the dominant conventions for
+  secret-bearing environment variables, so this missed the most likely real shape. The sibling
+  `credentials` and `password` patterns carry no boundary and were never affected. Fixed by a
+  **complementary** pattern matching exactly what the boundary excludes, rather than by removing it
+  — the two never match the same occurrence, and `MY-SECRETS=` / `my.secrets=` stay with the bare
+  pattern since `-` and `.` are non-word characters its `\b` already accepts.
+- **Added**: a fifth `sensitive_path` severity class, **MF-5 (`OBSERVE_ONLY_MEDIUM_PATTERNS`)** —
+  always MEDIUM, never value-gated and never escalated. The prefixed form is classified here rather
+  than into MF-4 because MF-4 is HIGH by default, and a HIGH `sensitive_path` makes
+  `SecurityScanner` compute `passed = false`, which blocks installation with no allowlist in that
+  path. Measured against 66,495 real skill bodies in production: routing the prefixed form through
+  MF-4 would newly block 132 skills (0.20% of that corpus, ~975 extrapolated to the full registry),
+  and shape analysis put roughly 46% of those in false-positive-looking shapes. Shipping at MEDIUM
+  makes the detection visible at zero install cost and turns the open question into one the
+  accumulated findings can answer; promoting it later is a one-line move into the MF-4 set. The
+  severity-gate partition grows 4 classes → 5 and 15 patterns → 16, both guarded by the existing
+  regression test's totality check. **Deliberate asymmetry**: prefixed `password` / `credentials`
+  keys still reach HIGH, grandfathered rather than endorsed — their prefixed-form false-positive
+  rate has never been measured, and levelling in either direction without measuring would be the
+  wrong fix. `SCANNER_RULESET_VERSION` bumps to `2026-09-11.1` — *previously-clean-now-fires*, the
+  opposite direction from SMI-6505's bump and load-bearing for the same reason: without it the
+  `comparable` gate reuses the stored verdict and the new finding never reaches an already-scanned
+  skill. (SMI-6508)
 - **Fix**: `createDatabaseSync`/`createDatabaseAsync`'s native-module error messages no longer
   recommend `docker compose --profile dev up -d`. `@skillsmith/core` ships under Elastic License
   2.0 to external npm consumers (`@skillsmith/cli`, both MCP servers) who have no worktree tooling
