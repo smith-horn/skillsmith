@@ -182,7 +182,7 @@ export { EVIDENCE_TYPE_BY_PATTERN } from './patterns.jailbreak.evidence.js'
  * A severity-LOWERING change is the case where forgetting the bump is silent —
  * nothing fails, the fix simply never arrives.
  */
-export const SCANNER_RULESET_VERSION = '2026-09-11.1' as const
+export const SCANNER_RULESET_VERSION = '2026-09-11.2' as const
 
 // Suspicious patterns that might indicate malicious intent
 export const SUSPICIOUS_PATTERNS = [
