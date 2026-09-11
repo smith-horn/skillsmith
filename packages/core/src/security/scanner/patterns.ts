@@ -57,7 +57,7 @@ export const TRANSIENT_TRANSFER_HOSTS = ['transfer.sh', 'file.io', 'tmpfiles.org
 // install shape (a bare shortened link stays at url:medium like any tier here).
 export const URL_SHORTENER_DOMAINS = ['bit.ly', 'tinyurl.com', 't.co', 'is.gd']
 
-// SMI-5207: the whole `sensitive_path` family (ENV_PATH_PATTERN, the 15-entry
+// SMI-5207: the whole `sensitive_path` family (ENV_PATH_PATTERN, the 16-entry
 // SENSITIVE_PATH_PATTERNS array and the three ReadonlySets that classify its
 // entries by severity gate) moved to patterns.sensitive-path.ts — this file
 // had only 18 lines of headroom under the 500-line pre-commit gate, and the
@@ -72,6 +72,7 @@ export {
   VALUE_GATED_KEYWORD_PATTERNS,
   PATH_FORM_PATTERNS,
   VALUE_GATED_ASSIGNMENT_PATTERNS,
+  OBSERVE_ONLY_MEDIUM_PATTERNS,
 } from './patterns.sensitive-path.js'
 
 // Jailbreak attempt patterns
@@ -181,7 +182,7 @@ export { EVIDENCE_TYPE_BY_PATTERN } from './patterns.jailbreak.evidence.js'
  * A severity-LOWERING change is the case where forgetting the bump is silent —
  * nothing fails, the fix simply never arrives.
  */
-export const SCANNER_RULESET_VERSION = '2026-09-10.1' as const
+export const SCANNER_RULESET_VERSION = '2026-09-11.2' as const
 
 // Suspicious patterns that might indicate malicious intent
 export const SUSPICIOUS_PATTERNS = [
