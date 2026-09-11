@@ -1431,7 +1431,7 @@ describe('install/fan-out', () => {
           ],
           [
             'rm',
-            /write failed; the staging folder \S+ could not be removed \(EACCES\); what is left of it is at (\S+)$/,
+            /write failed; the staging folder (\S+) could not be removed \(EACCES\), so what is left of it stayed in place$/,
           ],
         ] as const
         for (const [mode, expected] of cases) {
@@ -1613,6 +1613,52 @@ describe('install/fan-out', () => {
       expect(refreshed.warnings).toEqual([expect.stringContaining(parked)])
       expect(refreshed.warnings?.[0]).toContain('an interrupted removal')
       expect(await readFile(path.join(parked, 'part.md'), 'utf-8')).toBe('partial')
+    })
+
+    // Round 16 (cross-model review): the reason a superseded copy was kept
+    // used to be dropped, leaving a later sweep to call it "an earlier copy".
+    it('says why the copy a refresh replaced was kept', async () => {
+      const { addLink: setupAddLink } = await loadModule()
+      await seedSkill('keptbackup')
+      const { record } = await setupAddLink({
+        skillId: 'keptbackup',
+        fromClient: 'claude-code',
+        toClient: 'cursor',
+      })
+      vi.doMock('node:fs/promises', async () => {
+        const actual = await vi.importActual<typeof import('node:fs/promises')>('node:fs/promises')
+        const rm = vi.fn(async (...args: Parameters<typeof actual.rm>) => {
+          const parkedBackup =
+            /\.skillsmith-backup-[A-Za-z0-9]{6}\.skillsmith-removing-[0-9a-f]{12}$/
+          if (parkedBackup.test(String(args[0]))) {
+            throw Object.assign(new Error(`EACCES: permission denied, rm '${String(args[0])}'`), {
+              code: 'EACCES',
+            })
+          }
+          return actual.rm(...args)
+        })
+        return { ...actual, default: { ...actual, rm }, rm }
+      })
+      try {
+        vi.resetModules()
+        const { addLink } = await import('../../src/install/fan-out.js')
+        const refreshed = await addLink({
+          skillId: 'keptbackup',
+          fromClient: 'claude-code',
+          toClient: 'cursor',
+          force: true,
+        })
+        expect(refreshed.warnings).toEqual(
+          expect.arrayContaining([
+            expect.stringContaining('the copy this refresh replaced was kept'),
+          ])
+        )
+        expect(refreshed.warnings?.join(' ')).toContain('EACCES')
+        expect(await readFile(path.join(record.to, 'SKILL.md'), 'utf-8')).toBe('# test\n')
+      } finally {
+        vi.doUnmock('node:fs/promises')
+        vi.resetModules()
+      }
     })
   })
 

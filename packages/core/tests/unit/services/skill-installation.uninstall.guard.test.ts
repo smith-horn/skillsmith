@@ -17,9 +17,21 @@ import type { Database } from '../../../src/db/database-interface.js'
 // One-shot: the next rename of this exact path first has another program move
 // the folder aside and put its own folder there.
 const swapBeforeRename = vi.hoisted(() => ({ path: null as string | null }))
+// One-shot: while this path is being parked, another install claims the same
+// manifest key by rewriting that record's installPath.
+const claimOnRename = vi.hoisted(() => ({
+  path: null as string | null,
+  manifestPath: null as string | null,
+  key: null as string | null,
+  newInstallPath: null as string | null,
+}))
+// Every rename onto this path fails, so the manifest write fails after the
+// skill folder is already gone.
+const failRenameTo = vi.hoisted(() => ({ path: null as string | null }))
 
-vi.mock('node:fs/promises', async (importOriginal) => {
-  const actual = await importOriginal<typeof import('node:fs/promises')>()
+// `removeIfSame` imports `node:fs/promises`; `ManifestManager` imports
+// `fs/promises`. Both get the same hooks.
+const makeFsMock = vi.hoisted(() => (actual: typeof import('node:fs/promises')) => {
   const rename = async (from: string, to: string): Promise<void> => {
     if (String(from) === swapBeforeRename.path) {
       swapBeforeRename.path = null
@@ -27,10 +39,33 @@ vi.mock('node:fs/promises', async (importOriginal) => {
       await actual.mkdir(from)
       await actual.writeFile(`${String(from)}/KEEP.md`, 'not ours', 'utf-8')
     }
+    if (String(from) === claimOnRename.path && claimOnRename.manifestPath !== null) {
+      const manifestFile = claimOnRename.manifestPath
+      const key = claimOnRename.key ?? ''
+      const claimed = claimOnRename.newInstallPath ?? ''
+      claimOnRename.path = null
+      const raw = JSON.parse(await actual.readFile(manifestFile, 'utf-8')) as {
+        installedSkills: Record<string, { installPath: string }>
+      }
+      if (raw.installedSkills[key]) raw.installedSkills[key].installPath = claimed
+      await actual.writeFile(manifestFile, JSON.stringify(raw, null, 2))
+    }
+    if (String(to) === failRenameTo.path) {
+      throw Object.assign(new Error(`EACCES: permission denied, rename '${String(to)}'`), {
+        code: 'EACCES',
+      })
+    }
     return actual.rename(from, to)
   }
   return { ...actual, default: { ...actual, rename }, rename }
 })
+
+vi.mock('node:fs/promises', async (importOriginal) =>
+  makeFsMock(await importOriginal<typeof import('node:fs/promises')>())
+)
+vi.mock('fs/promises', async (importOriginal) =>
+  makeFsMock(await importOriginal<typeof import('node:fs/promises')>())
+)
 
 let tmpDir: string
 let skillsDir: string
@@ -90,6 +125,9 @@ beforeEach(async () => {
 
 afterEach(async () => {
   swapBeforeRename.path = null
+  claimOnRename.path = null
+  claimOnRename.manifestPath = null
+  failRenameTo.path = null
   db.close()
   await fs.rm(tmpDir, { recursive: true, force: true })
 })
@@ -132,6 +170,60 @@ describe('uninstall never deletes a git working tree (SMI-6529 round 15)', () =>
     expect(result.success).toBe(true)
     await expect(fs.lstat(link)).rejects.toMatchObject({ code: 'ENOENT' })
     expect(await fs.readFile(path.join(clone, 'SKILL.md'), 'utf-8')).toBe('# Local work\n')
+  })
+})
+
+describe('uninstall keeps the manifest honest (SMI-6529 round 16)', () => {
+  it('reports what an earlier removal left parked next to the skill', async () => {
+    const installPath = path.join(skillsDir, 'leftover-skill')
+    await fs.mkdir(installPath)
+    await fs.writeFile(path.join(installPath, 'SKILL.md'), '# Installed\n')
+    const parked = path.join(skillsDir, '.leftover-skill.skillsmith-removing-0123456789ab')
+    await fs.mkdir(parked)
+    await fs.writeFile(path.join(parked, 'part.md'), 'partial')
+    await track('leftover-skill', installPath)
+
+    const result = await createService().uninstall('leftover-skill', { force: true })
+
+    expect(result.success).toBe(true)
+    expect(result.warning).toContain(parked)
+    expect(result.warning).toContain('an interrupted removal')
+    expect(await fs.readFile(path.join(parked, 'part.md'), 'utf-8')).toBe('partial')
+  })
+
+  it('leaves the record alone when another install claimed the name meanwhile', async () => {
+    const installPath = path.join(skillsDir, 'claimed-skill')
+    await fs.mkdir(installPath)
+    await fs.writeFile(path.join(installPath, 'SKILL.md'), '# Installed\n')
+    await track('claimed-skill', installPath)
+    const claimedPath = path.join(tmpDir, 'elsewhere', 'claimed-skill')
+    claimOnRename.path = installPath
+    claimOnRename.manifestPath = manifestPath
+    claimOnRename.key = 'claimed-skill'
+    claimOnRename.newInstallPath = claimedPath
+
+    const result = await createService().uninstall('claimed-skill', { force: true })
+
+    expect(result.success).toBe(true)
+    expect(result.warning).toContain('Another install claimed this name')
+    expect(await manifestEntry('claimed-skill')).toMatchObject({ installPath: claimedPath })
+  })
+
+  it('says what to do when the folder is gone but its record could not be updated', async () => {
+    const installPath = path.join(skillsDir, 'stuck-skill')
+    await fs.mkdir(installPath)
+    await fs.writeFile(path.join(installPath, 'SKILL.md'), '# Installed\n')
+    await track('stuck-skill', installPath)
+    failRenameTo.path = manifestPath
+
+    const result = await createService().uninstall('stuck-skill', { force: true })
+
+    expect(result.success).toBe(false)
+    expect(result.message).toContain('could not be updated')
+    expect(result.message).toContain(manifestPath)
+    expect(result.message).toContain('Run the same remove again')
+    await expect(fs.lstat(installPath)).rejects.toMatchObject({ code: 'ENOENT' })
+    expect(await manifestEntry('stuck-skill')).toBeDefined()
   })
 })
 

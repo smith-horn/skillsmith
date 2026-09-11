@@ -48,6 +48,69 @@ function parkedName(target: string): string {
   return path.join(path.dirname(target), name)
 }
 
+/** Matches exactly the names {@link removeIfSame} parks `target` under. */
+export function parkedPattern(target: string): RegExp {
+  const escaped = ('.' + path.basename(target) + PARK_TAG).replace(/[.*+?^${}()|[\]\\]/g, '\\$&')
+  return new RegExp('^' + escaped + '[0-9a-f]{12}$')
+}
+
+/**
+ * Entries a crashed or failed removal left parked next to `target`, so a
+ * caller can report them. Round 16 (both reviewers): away from a fan-out
+ * destination nothing swept these, so a failed removal's leftover was named
+ * once, in one error, and never again.
+ */
+export async function listParkedLeftovers(target: string): Promise<string[]> {
+  const pattern = parkedPattern(target)
+  let entries: string[]
+  try {
+    entries = await fsp.readdir(path.dirname(target))
+  } catch {
+    return []
+  }
+  return entries
+    .filter((name) => pattern.test(name))
+    .map((name) => path.join(path.dirname(target), name))
+}
+
+/** User-facing warning for what {@link listParkedLeftovers} found. */
+export function parkedLeftoverWarning(parked: string): string {
+  return (
+    `an interrupted removal left part of what it was removing at the hidden path ${parked}; ` +
+    `check it, then delete it yourself if you don't need it.`
+  )
+}
+
+/**
+ * Put a parked entry back where it came from, but only while nothing is at
+ * that path. Round 16 (both reviewers): `rename` REPLACES the destination —
+ * measured on macOS and Linux, a parked directory replaces an empty
+ * directory, and a parked file or symlink replaces a file or symlink (other
+ * combinations the kernel refuses). So an unguarded put-back could destroy
+ * what another program created while the entry was parked. Something at the
+ * path now owns it: the entry stays parked, and the caller says where it is.
+ *
+ * The check and the rename are still two syscalls; what that window can now
+ * cost is one entry created inside it, rather than the recursive delete this
+ * primitive exists to prevent.
+ */
+async function putBack(parked: string, target: string): Promise<{ why: string } | null> {
+  try {
+    await fsp.lstat(target)
+    return { why: `something else is at ${target} now` }
+  } catch (err) {
+    if ((err as NodeJS.ErrnoException).code !== 'ENOENT') {
+      return { why: `${target} could not be checked (${errorCode(err)})` }
+    }
+  }
+  try {
+    await fsp.rename(parked, target)
+    return null
+  } catch (err) {
+    return { why: `the move back failed (${errorCode(err)})` }
+  }
+}
+
 /**
  * Remove `target` (a folder recursively, anything else with `unlink`) only if
  * it is still the entry `expected` describes. An entry that is already gone
@@ -79,24 +142,31 @@ export async function removeIfSame(
       now === undefined
         ? `could not be checked (${errorCode(checkError)})`
         : 'was replaced by something else'
-    try {
-      await fsp.rename(parked, target)
-    } catch (err) {
-      return {
-        removed: false,
-        reason: `${what}; that entry is now at ${parked} and could not be put back (${errorCode(err)})`,
-      }
+    // What was parked is not ours, so it goes back where it was.
+    const stranded = await putBack(parked, target)
+    return {
+      removed: false,
+      reason:
+        stranded === null
+          ? `${what}, so it was left in place`
+          : `${what}; that entry is now at ${parked} (${stranded.why})`,
     }
-    return { removed: false, reason: `${what}, so it was left in place` }
   }
   try {
     if (now.isDirectory()) await fsp.rm(parked, { recursive: true, force: true })
     else await fsp.unlink(parked)
     return { removed: true }
   } catch (err) {
+    // Put back whatever is left, so the caller's record still describes where
+    // it is and a retry finds it there (round 16, cross-model review).
+    const stranded = await putBack(parked, target)
+    const why = `could not be removed (${errorCode(err)})`
     return {
       removed: false,
-      reason: `could not be removed (${errorCode(err)}); what is left of it is at ${parked}`,
+      reason:
+        stranded === null
+          ? `${why}, so what is left of it stayed in place`
+          : `${why}; what is left of it is at ${parked} (${stranded.why})`,
     }
   }
 }

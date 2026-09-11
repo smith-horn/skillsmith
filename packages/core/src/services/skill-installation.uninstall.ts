@@ -15,7 +15,11 @@ import * as fs from 'fs/promises'
 import * as path from 'path'
 
 import { checkGitAtRoot } from '../install/fan-out.overwrite.js'
-import { removeIfSame } from '../install/remove-if-same.js'
+import {
+  listParkedLeftovers,
+  parkedLeftoverWarning,
+  removeIfSame,
+} from '../install/remove-if-same.js'
 
 import type { SkillDependencyRepository } from '../repositories/SkillDependencyRepository.js'
 import type { ProgressCallback, UninstallResult } from './skill-installation.types.js'
@@ -348,22 +352,69 @@ export async function performUninstall(params: {
     // skill while its uninstall is mid-flight) can still leave disk and
     // manifest inconsistent — only the unrelated-entry data loss is fixed
     // here, not full transactional safety across the whole method.
-    await manifest.updateSafely((current) => {
-      const next: typeof current = { ...current, installedSkills: { ...current.installedSkills } }
-      delete next.installedSkills[manifestKey]
-      return next
-    })
+    //
+    // Round 16 (cross-model review): the record is dropped only while it still
+    // describes the skill just removed. A concurrent install of the same name
+    // rewrites this key, and an unconditional delete would lose that install's
+    // record. And a manifest write that fails after the folder is gone is
+    // reported for what it is, rather than surfacing as a bare lock error.
+    let claimedByAnotherInstall = false
+    try {
+      await manifest.updateSafely((current) => {
+        const entry = current.installedSkills[manifestKey]
+        const describesWhatWasRemoved =
+          entry === undefined ||
+          (entry.installPath === undefined
+            ? entry.id === skillEntry.id
+            : path.resolve(entry.installPath) === path.resolve(installPath))
+        if (!describesWhatWasRemoved) {
+          claimedByAnotherInstall = true
+          return current
+        }
+        const next: typeof current = { ...current, installedSkills: { ...current.installedSkills } }
+        delete next.installedSkills[manifestKey]
+        return next
+      })
+    } catch (error) {
+      return {
+        success: false,
+        skillName,
+        removedPath: installPath,
+        message:
+          'Skill "' +
+          skillName +
+          '" was removed from ' +
+          installPath +
+          ', but its record in ' +
+          manifest.path +
+          ' could not be updated (' +
+          (error instanceof Error ? error.message : String(error)) +
+          '). Run the same remove again to clear the record.',
+      }
+    }
 
     onProgress('done', 'Uninstall complete')
+    // Round 16 (both reviewers): away from a fan-out destination nothing swept
+    // what a failed removal parked, so it was named once and never again.
+    const warnings = [
+      ...(adopted
+        ? [
+            'This skill had no manifest entry (untracked) — it was adopted from disk state before removal.',
+          ]
+        : []),
+      ...(claimedByAnotherInstall
+        ? [
+            'Another install claimed this name while this one was being removed, so that record was left alone.',
+          ]
+        : []),
+      ...(await listParkedLeftovers(installPath)).map(parkedLeftoverWarning),
+    ]
     return {
       success: true,
       skillName,
       message: 'Skill "' + skillName + '" has been uninstalled successfully.',
       removedPath: installPath,
-      ...(adopted && {
-        warning:
-          'This skill had no manifest entry (untracked) — it was adopted from disk state before removal.',
-      }),
+      ...(warnings.length > 0 && { warning: warnings.join(' ') }),
     }
   } catch (error) {
     return {

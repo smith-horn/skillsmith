@@ -131,9 +131,10 @@ describe('removeIfSame (SMI-6529 round 15)', () => {
     expect(await readdir(root)).toEqual(['skill'])
   })
 
-  it('reports a delete that fails, and names where what is left of it is', async () => {
+  it('puts back what is left when the delete fails and the path is free', async () => {
     const target = path.join(root, 'skill')
     await mkdir(target)
+    await writeFile(path.join(target, 'SKILL.md'), 'ours', 'utf-8')
     mockFs(
       'rm',
       () =>
@@ -143,13 +144,72 @@ describe('removeIfSame (SMI-6529 round 15)', () => {
     )
     const { removeIfSame } = await load()
 
+    // Round 16: what is left goes back where it was, so the caller's record
+    // still describes it and a retry finds it there.
+    expect(await removeIfSame(target, await lstat(target))).toEqual({
+      removed: false,
+      reason: 'could not be removed (EACCES), so what is left of it stayed in place',
+    })
+    expect(await readdir(root)).toEqual(['skill'])
+    expect(await readFile(path.join(target, 'SKILL.md'), 'utf-8')).toBe('ours')
+  })
+
+  // Round 16 (both reviewers): `rename` REPLACES what is at the destination —
+  // a directory replaces an empty directory, a file replaces a file or a
+  // symlink — so the put-back must never run onto an occupied path.
+  it('leaves what it removed parked rather than replacing a folder that took the path', async () => {
+    const target = path.join(root, 'skill')
+    await mkdir(target)
+    await writeFile(path.join(target, 'SKILL.md'), 'ours', 'utf-8')
+    mockFs(
+      'rm',
+      (actual) =>
+        (async (p: PathLike) => {
+          // Another program takes the path, with an empty directory: exactly
+          // what an unguarded put-back would replace.
+          await actual.mkdir(target)
+          throw eacces(p)
+        }) as RealFs['rm']
+    )
+    const { removeIfSame } = await load()
+
     const result = await removeIfSame(target, await lstat(target))
     expect(result.removed).toBe(false)
     const reason = result.removed ? '' : result.reason
     expect(reason).toMatch(/^could not be removed \(EACCES\); what is left of it is at /)
-    const parked = reason.slice(reason.indexOf(' is at ') + ' is at '.length)
-    expect(parked).toMatch(PARKED)
-    expect((await lstat(parked)).isDirectory()).toBe(true)
+    expect(reason).toContain(`something else is at ${target} now`)
+    // Their directory is untouched, and ours is still parked beside it.
+    expect(await readdir(target)).toEqual([])
+    const parked = (await readdir(root)).find((n) => PARKED.test(n))
+    expect(parked).toBeDefined()
+    expect(await readFile(path.join(root, parked ?? '', 'SKILL.md'), 'utf-8')).toBe('ours')
+  })
+
+  it('leaves a parked file rather than replacing a file that took the path', async () => {
+    const target = path.join(root, 'note.md')
+    await writeFile(target, 'ours', 'utf-8')
+    const seen = await lstat(target)
+    mockFs(
+      'lstat',
+      (actual) =>
+        (async (...args: Parameters<RealFs['lstat']>) => {
+          if (PARKED.test(String(args[0]))) {
+            // The check fails, and another program writes its own file there.
+            await actual.writeFile(target, 'theirs', 'utf-8')
+            throw eacces(args[0])
+          }
+          return actual.lstat(...args)
+        }) as RealFs['lstat']
+    )
+    const { removeIfSame } = await load()
+
+    const result = await removeIfSame(target, seen)
+    expect(result.removed).toBe(false)
+    expect(result.removed ? '' : result.reason).toContain('could not be checked (EACCES)')
+    expect(await readFile(target, 'utf-8')).toBe('theirs')
+    const parked = (await readdir(root)).find((n) => PARKED.test(n))
+    expect(parked).toBeDefined()
+    expect(await readFile(path.join(root, parked ?? ''), 'utf-8')).toBe('ours')
   })
 
   it('leaves an entry it cannot move aside where it is', async () => {

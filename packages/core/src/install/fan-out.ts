@@ -197,7 +197,7 @@ export async function addLink(opts: AddLinkOptions): Promise<AddLinkResult> {
     // The new copy or symlink is written to a staging path and swapped into
     // place; a failure here never touches the existing destination. `placed`
     // is what this call put in place, so an undo only removes that.
-    const placed = await replaceDestination(toDir, async (staged) => {
+    const { placed, warnings: swapWarnings } = await replaceDestination(toDir, async (staged) => {
       if (preferSymlink) {
         // A relative symlink keeps the manifest entry portable across homedir
         // changes. It is computed for the FINAL location, not the staging path.
@@ -244,6 +244,7 @@ export async function addLink(opts: AddLinkOptions): Promise<AddLinkResult> {
     }
     const warnings = [
       ...(manifestWarning ? [manifestWarning] : []),
+      ...swapWarnings,
       ...(await listLeftoverBackups(toDir)).map(leftoverBackupWarning),
     ]
     return warnings.length > 0 ? { record, fellBackToCopy, warnings } : { record, fellBackToCopy }

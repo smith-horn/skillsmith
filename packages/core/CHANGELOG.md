@@ -33,11 +33,17 @@ All notable changes to `@skillsmith/core` are documented here.
   reported rather than silently ignored. A crashed refresh's staging folder is reported, never
   deleted, and an uninstall re-checks a fan-out copy just before removing it. Each of these
   deletes now moves the entry to a hidden name and checks it there before removing it, so a
-  folder another program swaps in at that moment is put back rather than deleted. Uninstall
-  refuses a skill folder that is a git working tree (`.git` at its root), even with force and
-  before adopting an untracked one; it removes only the folder it checked, and keeps the manifest
-  entry when it removes nothing. Backfill never modifies a `provenance: 'local'` row (SMI-6529,
-  ADR-155).
+  folder another program swaps in at that moment is put back rather than deleted — and put back
+  only while nothing else has taken the path, since a rename replaces an empty directory, a file
+  or a symlink. What a failed removal leaves behind is reported by the next uninstall of that
+  skill, as well as next to a fan-out destination, and a refresh now says why it kept the copy it
+  replaced. Uninstall refuses a skill folder that is a git working tree (`.git` at its root), even
+  with force and before adopting an untracked one; it removes only the folder it checked, and
+  keeps the manifest entry when it removes nothing. It also drops a skill's record only while that
+  record still describes what was removed, so an install that claims the same name meanwhile keeps
+  its own record, and a manifest write that fails after the folder is gone now says so, and what
+  to do about it, instead of surfacing as a bare lock error. Backfill never modifies a
+  `provenance: 'local'` row (SMI-6529, ADR-155).
 
 - **Fix**: `sensitive_path` now detects a secret assigned to a **prefixed** key —
   `API_SECRETS`, `app_secrets`, `mySecrets`, and the singular `API_SECRET`. `SECRETS_ASSIGN_PATTERN`
