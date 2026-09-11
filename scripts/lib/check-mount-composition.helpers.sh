@@ -162,8 +162,19 @@ mc_resolve_container_path() {
 # ---------------------------------------------------------------------------
 # A1 -- expected inventory, parsed from the COMPOSE FILE, never from mounts.
 #
-# Emits TAB-separated: <source>\t<destination>\t<options>\t<kind>
-#   kind = short | tmpfs
+# Emits TAB-separated: <source>\t<destination>\t<kind>\t<options>
+#   kind = short | tmpfs | PARSE_ERROR
+#
+# FIELD ORDER IS LOAD-BEARING: <options> is last because it is the only field
+# that can be EMPTY, and TAB is an IFS *whitespace* character. `IFS=$'\t' read
+# -r a b c d` therefore collapses a run of tabs, so an empty field in the
+# MIDDLE silently shifts every later field one position left, while an empty
+# field at the END is simply assigned "". Measured:
+#   printf 'a\tb\t\td\n' | IFS=$'\t' read -r f1 f2 f3 f4  ->  f3=d, f4=''
+# An earlier revision emitted <options> third; every entry without options
+# therefore delivered kind="short" into the caller's `opts` variable and left
+# `kind` empty. It was harmless only by luck (`case ",short," in *,ro,*` does
+# not match), and it broke the moment `kind` was actually consumed.
 #
 # Scoped to ONE service. This is load-bearing: a generated worktree override
 # declares the identical ~163-entry volume list TWICE (services.dev and
@@ -191,7 +202,7 @@ mc_parse_compose_volumes() {
         }
         function flush_tmpfs() {
             if (in_tmpfs && tmpfs_target != "") {
-                printf "tmpfs\t%s\t\ttmpfs\n", tmpfs_target
+                printf "tmpfs\t%s\ttmpfs\t\n", tmpfs_target
             }
             in_tmpfs = 0; tmpfs_target = ""
         }
@@ -246,7 +257,7 @@ mc_parse_compose_volumes() {
             if (item ~ /^type:/) {
                 # Long-form, non-tmpfs. Not emitted by the generator today; if
                 # one ever appears it must be visible, not quietly dropped.
-                printf "?\t?\t%s\tPARSE_ERROR\n", item
+                printf "?\t?\tPARSE_ERROR\t%s\n", item
                 next
             }
             gsub(/^["'"'"']|["'"'"']$/, "", item)
@@ -268,11 +279,11 @@ mc_parse_compose_volumes() {
                 }
             }
             p = match_last_colon(rest2)
-            if (p <= 0) { printf "?\t?\t%s\tPARSE_ERROR\n", item; next }
+            if (p <= 0) { printf "?\t?\tPARSE_ERROR\t%s\n", item; next }
             src = substr(rest2, 1, p - 1)
             dst = substr(rest2, p + 1)
-            if (src == "" || dst !~ /^\//) { printf "?\t?\t%s\tPARSE_ERROR\n", item; next }
-            printf "%s\t%s\t%s\tshort\n", src, dst, opts
+            if (src == "" || dst !~ /^\//) { printf "?\t?\tPARSE_ERROR\t%s\n", item; next }
+            printf "%s\t%s\tshort\t%s\n", src, dst, opts
             next
         }
         # Long-form item opener written as "- type: tmpfs" already handled;

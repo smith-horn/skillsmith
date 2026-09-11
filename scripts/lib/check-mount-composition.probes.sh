@@ -14,7 +14,9 @@
 # resolved path can succeed while the path real consumers use fails.
 #
 # shellcheck shell=bash
-# shellcheck disable=SC2154  # fail/okline/note + MC_* come from the caller
+# shellcheck disable=SC2154  # fail/okline/notevaluated/skipline/note + MC_*
+#                            # come from the caller, which defines them before
+#                            # sourcing this file.
 
 mc_probe_tag() { printf '.mc-probe.%s.%s' "$$" "${RANDOM:-0}"; }
 
@@ -31,6 +33,7 @@ mc_probe_tag() { printf '.mc-probe.%s.%s' "$$" "${RANDOM:-0}"; }
 # ---------------------------------------------------------------------------
 mc_probe_abi() {
     local tmp="$1" scanned=0 bad=0 skipped=0 machine
+    local targets=0 ver_compared=0 ver_stale=0 ver_noref=0
     # A single binary can sit under more than one declared destination (on the
     # main checkout /app and /app/node_modules both cover the root tree), which
     # would otherwise report the same fault once per covering declaration.
@@ -43,11 +46,14 @@ mc_probe_abi() {
         x86_64 | amd64) machine="x86-64" ;;
     esac
 
-    while IFS=$'\t' read -r res dst src _opts; do
-        # Named-volume destinations are the seeded native targets. A bind
-        # source contains a "/"; a volume name does not.
-        case "$src" in */*) continue ;; esac
+    while IFS=$'\t' read -r res dst src kind opts; do
+        # Named-volume destinations are the seeded native targets. Classified
+        # through the shared helper rather than a local `*/*` test, which
+        # misread docker-compose.yml:40's `- .:/app` -- a relative-path bind
+        # with no "/" in it -- as a volume named ".".
+        case "$(mc_declared_backing "$src" "$kind")" in volume:*) ;; *) continue ;; esac
         [ -d "$dst" ] || continue
+        targets=$((targets + 1))
 
         # DO NOT skip unmounted destinations. That was a real defect in an
         # earlier revision of this probe and it skipped the PRIMARY signature:
@@ -63,13 +69,50 @@ mc_probe_abi() {
         local mounted=0
         grep -qxF "$res" "$tmp/actual.set" && mounted=1
 
-        local found=0 nodefile abi arch own ver cause
+        local found=0 nodefile abi arch own ver cause seedref seedver
         if [ "$mounted" = 1 ]; then
             cause="destination IS mounted, so the SEEDED VOLUME CONTENT itself is wrong (not a fall-through)"
         else
             cause="destination is NOT mounted -- READ-ONLY-PARENT FALL-THROUGH: the host's macOS binary is being served at a Linux path (SMI-6516 signature)"
         fi
         ver="$(mc_package_version "$dst")"
+
+        # A4 -- STALE SEED. Reading a version and only interpolating it into a
+        # failure message asserts nothing: a stale-but-ABI-correct copy passed
+        # every other check in this probe. The expected value IS knowable --
+        # the image carries the seed this volume was populated from, at
+        # /opt/native-seed/... (mc_seed_reference documents the three layouts
+        # and the Dockerfile lines they come from).
+        #
+        # This is a reachable state, not a theoretical one: BOTH boot-time
+        # seeders gate on presence, never on version
+        # (docker-entrypoint.sh:96-99, docker-entrypoint-native-per-package.sh:
+        # 79-82 both decide `already_seeded` from `[ -f "$target/package.json"
+        # ]`), so a volume that already holds any copy is never re-seeded and a
+        # dependency bump leaves the old version in place indefinitely.
+        #
+        # Only compared when the destination IS mounted -- on an unmounted one
+        # we would be reading the read-only parent's version and reporting a
+        # consequence of the detachment A2/A4 already name. Only compared when
+        # BOTH versions are known; a destination with no seed reference (main's
+        # per-package volumes, the @-scope seeds that carry no top-level
+        # package.json, an image predating the seed) is counted, not asserted.
+        if [ "$mounted" = 1 ]; then
+            seedref="$(mc_seed_reference "$dst" "${MC_SCOPE:-/app}")"
+            seedver="unknown"
+            [ -n "$seedref" ] && seedver="$(mc_package_version "$seedref")"
+            if [ "$ver" = "unknown" ] || [ "$seedver" = "unknown" ]; then
+                ver_noref=$((ver_noref + 1))
+            elif [ "$ver" != "$seedver" ]; then
+                ver_compared=$((ver_compared + 1))
+                ver_stale=$((ver_stale + 1))
+                bad=$((bad + 1))
+                fail A4 "STALE SEED at $dst: volume=$src holds version $ver but the image seed $seedref is $seedver -- the boot seeder only re-seeds an EMPTY target, so this copy will never update on its own. Remedy: remove the named volume and recreate the container."
+            else
+                ver_compared=$((ver_compared + 1))
+            fi
+        fi
+
         while IFS= read -r nodefile; do
             [ -n "$nodefile" ] || continue
             found=1
@@ -110,6 +153,24 @@ mc_probe_abi() {
             #
             # What a shared object actually needs is READABILITY. The exec bit
             # is asserted only for real executables under a bin/ directory.
+            #
+            # UID/GID: CAPTURED, DELIBERATELY NOT ASSERTED. A second measurement
+            # 2026-09-11 settles this half of A8, across three live containers
+            # and every mount kind:
+            #   healthy worktree, seeded named volume, ELF  -> uid:gid 0:0 mode 755
+            #   degraded worktree, fall-through Mach-O      -> uid:gid 0:0 mode 755
+            #   degraded main,     fall-through Mach-O      -> uid:gid 0:0 mode 755
+            #   virtiofs :ro host-bind parent               -> uid:gid 0:0 mode 755
+            # Docker Desktop's file-sharing layer presents every host file as
+            # the container's own uid, so ownership is IDENTICAL in the healthy
+            # state and in both broken states. It has zero discriminating power
+            # for this fault, while a fixed expected uid:gid WOULD false-
+            # positive wherever the mapping differs -- a Linux daemon binding
+            # host files (which carry the host user's real uid), userns-remap,
+            # or a non-root container user. Asserting it would add no detection
+            # and one new false-positive surface. The plan's A8 row is being
+            # corrected to match this measurement rather than the code being
+            # bent to match the row.
             case "$own" in
                 missing | unreadable)
                     bad=$((bad + 1))
@@ -139,8 +200,19 @@ mc_probe_abi() {
     # ALWAYS report the denominator, pass or fail. A findings-only summary makes
     # a scope-blind run ("scanned 0 files, no findings") read identically to a
     # real clean one -- the same invisible-success shape this checker exists to
-    # eliminate.
-    okline A4 "asserted on $scanned native binary/binaries for $machine across declared native targets (mounted AND unmounted); $bad failed; $skipped skipped as foreign-platform payloads"
+    # eliminate. And per ADR-151, a denominator of ZERO is not a pass at all:
+    # reporting `ok ... asserted on 0 binaries` is the vacuous form of exactly
+    # the claim this probe exists to make.
+    if [ "$scanned" -eq 0 ]; then
+        notevaluated A4 "asserted on 0 native binaries across $targets declared native target(s) for $machine ($skipped skipped as foreign-platform payloads) -- the ABI assertion examined nothing"
+    else
+        okline A4 "asserted on $scanned native binary/binaries for $machine across $targets declared native target(s) (mounted AND unmounted); $bad failed; $skipped skipped as foreign-platform payloads"
+    fi
+    if [ "$ver_compared" -eq 0 ]; then
+        notevaluated A4 "seeded-version comparison ran on 0 target(s) ($ver_noref had no resolvable image seed reference) -- a stale-but-ABI-correct copy could not have been seen"
+    else
+        okline A4 "seeded version compared against the image seed for $ver_compared mounted target(s); $ver_stale stale; $ver_noref had no seed reference"
+    fi
 }
 
 # ---------------------------------------------------------------------------
@@ -156,7 +228,7 @@ mc_probe_abi() {
 mc_probe_writability() {
     local tmp="$1" probed=0 bad=0 tag
     tag="$(mc_probe_tag)"
-    while IFS=$'\t' read -r _res dst _src opts; do
+    while IFS=$'\t' read -r _res dst _src _kind opts; do
         case ",$opts," in *,ro,*) continue ;; esac
         case "$dst" in */node_modules/*) ;; *) continue ;; esac
         probed=$((probed + 1))
@@ -172,7 +244,11 @@ mc_probe_writability() {
             fail A5 "NOT WRITABLE through the traversal path: $dst/ (EROFS or permission) -- this is SMI-6520's symptom"
         fi
     done <"$tmp/expected.uniq.tsv"
-    okline A5 "probed $probed declared writable overlay(s) through their traversal path; $bad not writable"
+    if [ "$probed" -eq 0 ]; then
+        notevaluated A5 "0 declared writable node_modules overlay(s) were probed -- the traversal-path writability assertion examined nothing (ADR-151)"
+    else
+        okline A5 "probed $probed declared writable overlay(s) through their traversal path; $bad not writable"
+    fi
 }
 
 # ---------------------------------------------------------------------------
@@ -187,7 +263,7 @@ mc_probe_writability() {
 mc_probe_ro_parent_write() {
     local tmp="$1" probed=0 bad=0 tag
     tag="$(mc_probe_tag).d"
-    while IFS=$'\t' read -r _res dst _src opts; do
+    while IFS=$'\t' read -r _res dst _src _kind opts; do
         case ",$opts," in *,ro,*) ;; *) continue ;; esac
         [ -d "$dst" ] || continue
         probed=$((probed + 1))
@@ -197,7 +273,11 @@ mc_probe_ro_parent_write() {
             fail A6 "declared :ro parent ACCEPTED A WRITE: $dst -- a write here can reach the main checkout's real dependency tree (SMI-5560)"
         fi
     done <"$tmp/expected.uniq.tsv"
-    okline A6 "write-probed $probed declared :ro parent(s); $bad wrongly accepted a write"
+    if [ "$probed" -eq 0 ]; then
+        notevaluated A6 "0 declared :ro parent(s) were write-probed -- the direct read-only test examined nothing (ADR-151)"
+    else
+        okline A6 "write-probed $probed declared :ro parent(s); $bad wrongly accepted a write"
+    fi
 }
 
 # ---------------------------------------------------------------------------
@@ -224,7 +304,7 @@ mc_probe_undeclared_caches() {
     local tmp="$1" reported=0 scanned=0 parents=0 parent child base ign
     ign=" ${MC_A7_IGNORE:-$MC_A7_IGNORE_DEFAULT} "
     cut -f2 "$tmp/expected.uniq.tsv" | sort -u >"$tmp/declared.paths"
-    while IFS=$'\t' read -r _res dst _src opts; do
+    while IFS=$'\t' read -r _res dst _src _kind opts; do
         case ",$opts," in *,ro,*) ;; *) continue ;; esac
         case "$dst" in */node_modules) ;; *) continue ;; esac
         parent="$dst"
@@ -242,7 +322,11 @@ mc_probe_undeclared_caches() {
             fi
         done
     done <"$tmp/expected.uniq.tsv"
-    okline A7 "scanned $scanned dot-directory/ies under $parents declared read-only parent(s); $reported undeclared"
+    if [ "$parents" -eq 0 ]; then
+        notevaluated A7 "0 declared :ro node_modules parent(s) existed to scan -- the undeclared-cache-directory assertion examined nothing (ADR-151)"
+    else
+        okline A7 "scanned $scanned dot-directory/ies under $parents declared read-only parent(s); $reported undeclared"
+    fi
 }
 
 # ---------------------------------------------------------------------------
@@ -265,6 +349,9 @@ mc_run_live_probes() {
         mc_probe_writability "$tmp"
         mc_probe_ro_parent_write "$tmp"
     else
-        okline A5 "write probes skipped (--live-write not set); A5/A6-write NOT evaluated"
+        # A stated operator choice, not an empty denominator: reported through
+        # the SKIP channel so it never reads as `ok`, but not blocking under
+        # --strict the way a zero denominator is.
+        skipline A5 "--live-write not set: the A5 traversal-writability and A6 read-only-parent write probes did not run"
     fi
 }
