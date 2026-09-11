@@ -91,6 +91,7 @@ import {
   PATH_FORM_PATTERNS,
   VALUE_GATED_ASSIGNMENT_PATTERNS,
   VALUE_GATED_KEYWORD_PATTERNS,
+  OBSERVE_ONLY_MEDIUM_PATTERNS,
 } from '../../src/security/scanner/patterns.js'
 
 /**
@@ -99,7 +100,7 @@ import {
  * removing patterns requires updating this file with justification.
  */
 const BASELINE_PATTERN_COUNTS = {
-  SENSITIVE_PATH_PATTERNS: 15, // SMI-4396 Wave 2: 12 → 15 (bare-keyword tightened + /etc/passwd explicit); SMI-5359 Wave 4 narrowed .env/api_key/auth_token in place (count unchanged)
+  SENSITIVE_PATH_PATTERNS: 16, // SMI-6508: 15 → 16 (+SECRETS_PREFIXED_ASSIGN, MF-5 observe-only MEDIUM). SMI-4396 Wave 2: 12 → 15 (bare-keyword tightened + /etc/passwd explicit); SMI-5359 Wave 4 narrowed .env/api_key/auth_token in place (count unchanged)
   JAILBREAK_PATTERNS: 23, // SMI-5876: 15 → 18 (+J-N1/J-N2/J-N3); 18 → 23 (design-pass follow-up: +J-S1/J-S2/J-S3a/J-S3b/J-S4 state_assertion + obedience-compulsion patterns, closing a 12-fixture recall gap; 4 existing bare-vocabulary entries reclassified `mention`-tier in place, not removed)
   SUSPICIOUS_PATTERNS: 11,
   SOCIAL_ENGINEERING_PATTERNS: 12,
@@ -519,28 +520,60 @@ describe('Scanner Regression Guard (SMI-3864)', () => {
   // guards this durably: an unclassified future pattern falls through to the
   // fail-closed `else` branch."
   describe('SENSITIVE_PATH_PATTERNS severity-gate partition (SMI-5207)', () => {
-    it('every entry belongs to exactly one of {ENV, PATH_FORM, VALUE_GATED_ASSIGNMENT, VALUE_GATED_KEYWORD}', () => {
+    it('every entry belongs to exactly one of {ENV, PATH_FORM, VALUE_GATED_ASSIGNMENT, VALUE_GATED_KEYWORD, OBSERVE_ONLY_MEDIUM}', () => {
       for (const pattern of SENSITIVE_PATH_PATTERNS) {
         const classes = [
           pattern === ENV_PATH_PATTERN,
           PATH_FORM_PATTERNS.has(pattern),
           VALUE_GATED_ASSIGNMENT_PATTERNS.has(pattern),
           VALUE_GATED_KEYWORD_PATTERNS.has(pattern),
+          OBSERVE_ONLY_MEDIUM_PATTERNS.has(pattern),
         ].filter(Boolean)
         expect(classes).toHaveLength(1)
       }
     })
 
-    it('the four classes total and partition SENSITIVE_PATH_PATTERNS exactly (1 + 9 + 3 + 2 = 15)', () => {
+    /**
+     * SMI-6508 follow-up — ARRAY ORDER IS A SECURITY PROPERTY, not style.
+     *
+     * scanSensitivePaths `break`s on the FIRST SENSITIVE_PATH_PATTERNS entry
+     * that matches a line. An always-MEDIUM entry placed ahead of a HIGH-capable
+     * one therefore SUPPRESSES it: the MEDIUM wins the race, the HIGH never
+     * fires, and `passed` flips from false to true — the install block vanishes.
+     *
+     * MF-5 shipped at index 4, ahead of 11 HIGH-capable entries, and that was a
+     * live scanner-evasion primitive. Appending the 12-character comment
+     * `# a_secrets:` to a line was enough to turn `cat ~/.ssh/id_rsa` and
+     * `curl -F f=@/etc/passwd …` from blocking to passing. A cross-family gate,
+     * 3175 passing tests and a 9-case manual check were all green over it,
+     * because every ordering test compared MF-5 only against the ONE entry that
+     * precedes it. This guard compares against ALL of them, so the next
+     * always-MEDIUM class cannot repeat it.
+     */
+    it('no always-MEDIUM pattern precedes any HIGH-capable pattern (ordering is load-bearing)', () => {
+      const firstMediumOnly = SENSITIVE_PATH_PATTERNS.findIndex((p) =>
+        OBSERVE_ONLY_MEDIUM_PATTERNS.has(p)
+      )
+      if (firstMediumOnly === -1) return // no always-MEDIUM entries yet
+      const highCapableAfter = SENSITIVE_PATH_PATTERNS.slice(firstMediumOnly + 1).filter(
+        (p) => !OBSERVE_ONLY_MEDIUM_PATTERNS.has(p)
+      )
+      expect(highCapableAfter).toEqual([])
+    })
+
+    // SMI-6508 added the fifth class (MF-5, OBSERVE_ONLY_MEDIUM): 1 + 9 + 3 + 2 + 1 = 16.
+    it('the five classes total and partition SENSITIVE_PATH_PATTERNS exactly (1 + 9 + 3 + 2 + 1 = 16)', () => {
       expect(PATH_FORM_PATTERNS.size).toBe(9)
       expect(VALUE_GATED_ASSIGNMENT_PATTERNS.size).toBe(3)
       expect(VALUE_GATED_KEYWORD_PATTERNS.size).toBe(2)
+      expect(OBSERVE_ONLY_MEDIUM_PATTERNS.size).toBe(1)
       expect(SENSITIVE_PATH_PATTERNS).toContain(ENV_PATH_PATTERN)
       expect(
         1 +
           PATH_FORM_PATTERNS.size +
           VALUE_GATED_ASSIGNMENT_PATTERNS.size +
-          VALUE_GATED_KEYWORD_PATTERNS.size
+          VALUE_GATED_KEYWORD_PATTERNS.size +
+          OBSERVE_ONLY_MEDIUM_PATTERNS.size
       ).toBe(SENSITIVE_PATH_PATTERNS.length)
     })
   })
