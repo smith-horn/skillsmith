@@ -4,6 +4,13 @@ All notable changes to `@skillsmith/core` are documented here.
 
 ## [Unreleased]
 
+- **Fix**: `createDatabaseSync`/`createDatabaseAsync`'s native-module error messages no longer
+  recommend `docker compose --profile dev up -d`. `@skillsmith/core` ships under Elastic License
+  2.0 to external npm consumers (`@skillsmith/cli`, both MCP servers) who have no worktree tooling
+  and no `skillsmith-dev-1` container, so the Docker line was actively misleading for most of its
+  readers. The two remaining solutions (`npm rebuild better-sqlite3`, and `createDatabaseAsync()`'s
+  automatic WASM fallback) are correct in any environment. (SMI-6507)
+
 - **Changed**: the agent pack's CLI fallback commands (`CLI_FALLBACK_COMMANDS` in
   `services/agent-pack/prompt-source.ts`) now lead with `skillsmith update --all --dry-run` and
   then per-skill updates, instead of recommending `skillsmith update --all` directly. Containment

@@ -1,21 +1,29 @@
 /**
  * SMI-6496 Fix 2: Tests for scripts/lib/normalize-lockfile-for-freshness.mjs.
  *
- * Uses REAL lockfile pairs pulled from this repo's own git history (via
- * `git show <rev>:<path>`) for the two cases that must prove the algorithm
- * against genuine historical diffs, not only synthetic fixtures — resolving
- * the plan review's A2 concern that a synthetic-only suite would be weaker
- * than the defect it exists to catch. Synthetic fixtures cover the two cases
- * a real commit is unlikely to isolate cleanly (an internal-dependency-edge
- * add/remove in isolation, and a combined workspace-bump + real change in
- * one diff).
+ * Cases 1-2 use COMMITTED FIXTURE FILES (scripts/tests/fixtures/
+ * normalize-lockfile-for-freshness/) — trimmed slices of this repo's own
+ * package-lock.json at three real commits, extracted once on the host and
+ * checked in with provenance comments — rather than reading live git
+ * history via `git show`. That is a deliberate correction, not a style
+ * choice: a `git show`-based version of this test passed standalone on the
+ * host but failed under pre-push, which runs tests inside the worktree
+ * container. `git worktree add` always writes an ABSOLUTE gitdir path, and
+ * that host path does not exist inside any worktree container — so
+ * `git -C /app show <rev>:<path>` fails with "fatal: not a git repository"
+ * unconditionally in-container, regardless of which rev or path is asked
+ * for. Fixture files make this test's environment-sensitivity zero: same
+ * content, same result, on the host and in the container. See the fixture
+ * directory's own README.md for the full mechanism and regeneration
+ * instructions. Synthetic fixtures (cases 3-4 below) already worked this
+ * way; this makes cases 1-2 match.
  *
  * Cases:
- *   1. Real pair 0d4f294bc vs its parent (workspace-version-only,
+ *   1. Fixture pair for 0d4f294bc vs its parent (workspace-version-only,
  *      release-cadence bump) -> shadow hash EQUAL.
- *   2. Real pairs 08d8cacb0 (chalk bump) and c51db0a83 (stripe bump), each
- *      vs its own parent (genuine node_modules/* changes) -> shadow hash
- *      DIFFERS.
+ *   2. Fixture pairs for 08d8cacb0 (chalk bump) and c51db0a83 (stripe bump),
+ *      each vs its own parent (genuine external-dependency changes, zero
+ *      workspace-self version movement) -> shadow hash DIFFERS.
  *   3. Synthetic: add/remove an internal dependency edge, all other
  *      versions unchanged -> shadow hash DIFFERS (proves step 3 of the
  *      algorithm neutralizes only the VALUE of an existing edge, never the
@@ -28,72 +36,62 @@
  *      contract on failure.
  */
 import { describe, it, expect } from 'vitest'
-import { execFileSync, spawnSync } from 'node:child_process'
-import { writeFileSync, mkdtempSync, rmSync } from 'node:fs'
+import { spawnSync } from 'node:child_process'
+import { writeFileSync, mkdtempSync, rmSync, readFileSync } from 'node:fs'
 import { join, dirname, resolve } from 'node:path'
 import { tmpdir } from 'node:os'
 import { fileURLToPath } from 'node:url'
 
 import { computeShadowHash } from '../lib/normalize-lockfile-for-freshness.mjs'
-import { makeFixtureEnv } from './_lib/git-fixture-env.js'
 
 const __dirname = dirname(fileURLToPath(import.meta.url))
-const REPO_ROOT = resolve(__dirname, '..', '..')
 const CLI_SCRIPT = resolve(__dirname, '..', 'lib', 'normalize-lockfile-for-freshness.mjs')
+const FIXTURE_DIR = resolve(__dirname, 'fixtures', 'normalize-lockfile-for-freshness')
 
-// package-lock.json is ~1.3MB — the default execFileSync maxBuffer (1MB)
-// truncates it (ENOBUFS), so every git-show read below sets a generous cap.
-const MAX_BUFFER = 1024 * 1024 * 50
+const SHARED_PACKAGE_JSON = readFileSync(join(FIXTURE_DIR, 'package.json'), 'utf8')
 
-// SMI-4693: this reads THIS REPO's own real history (not a throwaway
-// fixture repo), but the audit-standards Audit-39 check still requires the
-// sanitized env on any `git` spawn in scripts/tests/** — a bare
-// `git show <rev>:<path>` is a read-only lookup, but GIT_DISCOVERY_VARS
-// inherited from the vitest worker could still redirect it away from
-// REPO_ROOT in principle, so sanitize regardless of read-only intent.
-function showAtRev(rev: string, path: string): string {
-  return execFileSync('git', ['-C', REPO_ROOT, 'show', `${rev}:${path}`], {
-    encoding: 'utf8',
-    maxBuffer: MAX_BUFFER,
-    env: makeFixtureEnv(),
-  })
+function readFixtureLock(name: string): string {
+  return readFileSync(join(FIXTURE_DIR, `${name}.package-lock.json`), 'utf8')
 }
 
-// ── Case 1-2: real git-history pairs ────────────────────────────────────────
+// ── Case 1-2: real-commit fixture pairs (committed, not live git history) ──
 
-describe('normalize-lockfile-for-freshness.mjs — real git-history pairs (SMI-6496 Fix 2)', () => {
+describe('normalize-lockfile-for-freshness.mjs — real-commit fixture pairs (SMI-6496 Fix 2)', () => {
   it('Case 1: 0d4f294bc (release-cadence bump, workspace-version-only) vs parent -> shadow hash EQUAL', () => {
-    const childLock = showAtRev('0d4f294bc', 'package-lock.json')
-    const childPkg = showAtRev('0d4f294bc', 'package.json')
-    const parentLock = showAtRev('0d4f294bc^', 'package-lock.json')
-    const parentPkg = showAtRev('0d4f294bc^', 'package.json')
-
-    const childHash = computeShadowHash(childLock, childPkg)
-    const parentHash = computeShadowHash(parentLock, parentPkg)
+    const childHash = computeShadowHash(
+      readFixtureLock('case1-release-bump.child'),
+      SHARED_PACKAGE_JSON
+    )
+    const parentHash = computeShadowHash(
+      readFixtureLock('case1-release-bump.parent'),
+      SHARED_PACKAGE_JSON
+    )
 
     expect(childHash).toBe(parentHash)
   })
 
   it('Case 2a: 08d8cacb0 (chore(deps): bump chalk 5.6.2 -> 6.0.0) vs parent -> shadow hash DIFFERS', () => {
-    const childLock = showAtRev('08d8cacb0', 'package-lock.json')
-    const childPkg = showAtRev('08d8cacb0', 'package.json')
-    const parentLock = showAtRev('08d8cacb0^', 'package-lock.json')
-    const parentPkg = showAtRev('08d8cacb0^', 'package.json')
-
-    const childHash = computeShadowHash(childLock, childPkg)
-    const parentHash = computeShadowHash(parentLock, parentPkg)
+    const childHash = computeShadowHash(
+      readFixtureLock('case2a-chalk-bump.child'),
+      SHARED_PACKAGE_JSON
+    )
+    const parentHash = computeShadowHash(
+      readFixtureLock('case2a-chalk-bump.parent'),
+      SHARED_PACKAGE_JSON
+    )
 
     expect(childHash).not.toBe(parentHash)
   })
 
   it('Case 2b: c51db0a83 (chore(deps): bump stripe 20.2.0 -> 22.6.1) vs parent -> shadow hash DIFFERS', () => {
-    const childLock = showAtRev('c51db0a83', 'package-lock.json')
-    const childPkg = showAtRev('c51db0a83', 'package.json')
-    const parentLock = showAtRev('c51db0a83^', 'package-lock.json')
-    const parentPkg = showAtRev('c51db0a83^', 'package.json')
-
-    const childHash = computeShadowHash(childLock, childPkg)
-    const parentHash = computeShadowHash(parentLock, parentPkg)
+    const childHash = computeShadowHash(
+      readFixtureLock('case2b-stripe-bump.child'),
+      SHARED_PACKAGE_JSON
+    )
+    const parentHash = computeShadowHash(
+      readFixtureLock('case2b-stripe-bump.parent'),
+      SHARED_PACKAGE_JSON
+    )
 
     expect(childHash).not.toBe(parentHash)
   })
