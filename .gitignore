@@ -220,6 +220,16 @@ docs/articles/tmp/
 # output (`.json`) plus the operator's pre-rerun backup of it (`.json.bak…`,
 # e.g. `.json.bak-pre-smi6481` on a 169MB file that sat unmatched here).
 #
+# Scope limit, deliberate: ONLY the `.bak` backup convention is covered. A
+# backup saved under any other suffix — `.json.gz`, `.json.old`, `.json.copy`
+# — stays VISIBLE, where the old `.json*` had swallowed it. That narrowing is
+# intended, not an oversight: #2795's cross-family pre-merge review raised the
+# compressed case, and a grep for gzip/zlib/zstd/zip/archiver across the three
+# tools found no compression path in any of them, so re-widening for a shape
+# nothing produces would repeat exactly the guess this block was rewritten to
+# undo. If a tool ever starts compressing, add that explicit suffix per prefix
+# — never restore `.json*`.
+#
 # An earlier revision collapsed both into a single `.json*` and claimed
 # "`.json` still anchors the match". That was WRONG, and #2789's cross-family
 # pre-merge review caught it: `.json*` means "STARTS WITH `.json`", so it also
