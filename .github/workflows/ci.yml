@@ -172,6 +172,15 @@ jobs:
       affected_packages: ${{ steps.affected.outputs.affected_packages || '[]' }}
       affected_dirs: ${{ steps.affected.outputs.affected_dirs || '[]' }}
       affected_count: ${{ steps.affected.outputs.affected_count || '0' }}
+      # SMI-6488: sentinel proving the affected_* outputs above actually
+      # landed -- 'computed' (detect-affected.ts ran and wrote its
+      # outputs), 'gated' (tier isn't code/deps, S1, legitimate and green),
+      # or the 'ABSENT' fallback (S3/S4 -- detect-affected.ts ran but
+      # failed to write, or crashed before writing). See the
+      # "Verify affected-detection sentinel" step below, which hard-fails
+      # this required job on ABSENT.
+      affected_status: ${{ steps.affected.outputs.affected_status || steps.affected_gated.outputs.affected_status || 'ABSENT' }}
+      affected_reason: ${{ steps.affected.outputs.affected_reason || steps.affected_gated.outputs.affected_reason || '' }}
     steps:
       - name: Checkout
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
@@ -232,8 +241,66 @@ jobs:
             CHANGED_FILES=$(git diff --name-only HEAD~1)
           fi
 
-          # Detect affected packages (outputs written to GITHUB_OUTPUT by script)
-          echo "$CHANGED_FILES" | npx tsx scripts/ci/detect-affected.ts > /dev/null
+          # Detect affected packages (outputs, incl. the SMI-6488
+          # affected_status=computed sentinel, written to GITHUB_OUTPUT by
+          # the script). SMI-6488: stdout is deliberately left
+          # un-redirected (was `> /dev/null`) -- it is the only log record
+          # of the computed affected_dirs array, and discarding it
+          # protected no exit code: the script's own exit status already
+          # propagates through this pipeline regardless of the redirect.
+          echo "$CHANGED_FILES" | npx tsx scripts/ci/detect-affected.ts
+
+      # SMI-6488: companion to the step above with the exact inverse `if:`
+      # (De Morgan's law over the same two tier checks). Emits a distinct
+      # affected_status so a docs/config-tier PR (S1, legitimately gated --
+      # this step's condition is false) is distinguishable from a
+      # code/deps-tier PR where detect-affected.ts ran but failed to write
+      # its outputs (S3/S4). Without this, both cases leave
+      # steps.affected.outputs.affected_status empty and are
+      # indistinguishable.
+      # This condition POSITIVELY ENUMERATES the legitimately-gated tiers. It
+      # is deliberately NOT the inverse of the detector's condition above.
+      # classify-changes.ts emits tier=code|deps|config|docs, but an inverse
+      # predicate (tier != 'code' && tier != 'deps') is also satisfied by an
+      # EMPTY tier -- which is exactly the failure this whole guard exists to
+      # catch, one level up: if classify-changes.ts ever exits 0 without
+      # writing tier, an inverse predicate would emit 'gated', the sentinel
+      # check below would pass, and affected_dirs would still default to []
+      # with every per-package check skipping green. Found by the
+      # cross-family pre-merge gate (ADR-128) on the PR that added this step.
+      # Adding a tier here without adding it to the detector's condition
+      # re-opens that hole; keep the two lists exhaustive between them.
+      - name: Detect affected packages (gated)
+        id: affected_gated
+        if: steps.classify.outputs.tier == 'config' || steps.classify.outputs.tier == 'docs'
+        run: |
+          echo "affected_status=gated" >> $GITHUB_OUTPUT
+          echo "affected_reason=tier '${{ steps.classify.outputs.tier }}' is not code/deps" >> $GITHUB_OUTPUT
+
+      # SMI-6488: hard-fails the required "Classify Changes" job when
+      # neither step above wrote affected_status. That condition means
+      # exactly "the affected_status || 'ABSENT' fallback in this job's
+      # outputs fired" -- i.e. detect-affected.ts ran (tier was code/deps)
+      # but exited without writing GITHUB_OUTPUT (S3, now also caught by
+      # the script's own exit code) or crashed before writing (S4, already
+      # red on its own). Lives here, in the producer's own job, rather than
+      # a downstream job: every downstream consumer of affected_dirs
+      # (e.g. `test-mcp-server-integration`) is itself gated on
+      # affected_dirs/affected_count being non-empty, so checking there
+      # would make the guard blind to the exact failure it exists to catch
+      # -- it would simply skip-as-success alongside the rest of that job.
+      - name: Verify affected-detection sentinel
+        if: always()
+        env:
+          AFFECTED_STATUS: ${{ steps.affected.outputs.affected_status }}
+          GATED_STATUS: ${{ steps.affected_gated.outputs.affected_status }}
+        run: |
+          STATUS="${AFFECTED_STATUS:-${GATED_STATUS:-ABSENT}}"
+          if [ "$STATUS" = "ABSENT" ]; then
+            echo "::error::detect-affected.ts did not report affected_status (ABSENT). This means the affected_dirs || '[]' fallback is masking a failure to write GITHUB_OUTPUT -- the per-package test matrix and other affected_dirs-gated required checks would silently skip. See docs/internal/implementation/smi-6488-verification-scope-reporting.md."
+            exit 1
+          fi
+          echo "affected-detection sentinel OK: $STATUS"
 
   # SMI-4924: PR Validation (Node) — bundles verify-implementation (SMI-3541/3546,
   # required check since 2026-04-05) and doc-drift (SMI-3882). The job-level if is
@@ -1510,7 +1577,13 @@ jobs:
   # in NO CI job — `packages/mcp-server/vitest.config.ts` excludes tests/integration).
   # Clones `Test (root colocated)`'s tier gate, plus an affected_dirs guard mirroring
   # the `Test (mcp-server)` matrix so it runs ONLY when mcp-server is affected.
-  # ADVISORY until promoted to a required status check after 2 green runs (SMI-5262).
+  # REQUIRED status check (promoted per SMI-5262 after its 2-green-run bar; confirmed
+  # live via `gh api repos/smith-horn/skillsmith/branches/main/protection` during
+  # SMI-6488, 2026-09-11 -- "Test (mcp-server integration)" is in
+  # required_status_checks.checks). This comment previously said ADVISORY, which was
+  # stale: an affected_dirs-gated required job skips-as-success on a PR that doesn't
+  # touch mcp-server, which is exactly the failure shape SMI-6488 is about -- do not
+  # let this comment drift out of sync with branch protection again.
   test-mcp-server-integration:
     name: Test (mcp-server integration)
     runs-on: ubuntu-latest

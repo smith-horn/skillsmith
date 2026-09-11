@@ -4,6 +4,60 @@ All notable changes to `@skillsmith/core` are documented here.
 
 ## [Unreleased]
 
+- **Docs**: recorded the two missing `SCANNER_RULESET_VERSION` history entries for
+  `2026-09-11.1` and `2026-09-11.2`. Both bumps shipped correctly — the `comparable` gate does
+  re-scan — but the constant had moved twice past the end of its own documented history, so the
+  *direction* and the consequence-if-omitted were unrecorded for both. `.1` is
+  previously-clean-now-flagged (MF-5 delivers new detection). `.2` is the same direction for a
+  sharper reason: it invalidates verdicts `.1` computed wrongly under the array-position
+  suppression, so omitting it would have left the evasion alive in stored data even after the code
+  fix. Raised by another session (SMI-6554) after a downstream stale-dist failure. (SMI-6508)
+- **Fix (security regression, same-day)**: the MF-5 prefixed-secrets entry added below was
+  positioned at index 4 of `SENSITIVE_PATH_PATTERNS`, and `scanSensitivePaths` `break`s on the
+  **first** entry that matches, in array order. An always-MEDIUM entry ahead of a HIGH-capable one
+  therefore **suppressed** it: 11 of the 16 patterns sat after MF-5, so any line where a
+  prefixed-`secrets` token co-occurred with one of them reported MEDIUM instead of that entry's
+  HIGH, and `passed` flipped from `false` to `true` — the install block disappeared. Appending the
+  12-character comment `# a_secrets:` was sufficient to turn `cat ~/.ssh/id_rsa` and
+  `curl -F f=@/etc/passwd …` from blocking to passing, making this an attacker-controlled
+  suppression token rather than a theoretical ordering nit. **Fixed by moving the entry to LAST**,
+  after every HIGH-capable pattern. Realized blast radius was zero — of 636 skills carrying a
+  stored HIGH `sensitive_path` finding, none had a `location` matching the prefixed form — so no
+  stored verdict was wrongly cleared; the exposure was latent and adversarial. `SCANNER_RULESET_VERSION`
+  re-bumps to `2026-09-11.2` so verdicts stored under `.1` are not reused. A new
+  **ordering invariant** in `scanner-regression-guard.test.ts` now asserts that no always-MEDIUM
+  pattern precedes any HIGH-capable one, which generalises to the next such class; the eight
+  suppression cases are pinned in both the core and core↔edge suites. Caught by the post-merge
+  governance retro — a cross-family pre-merge gate, 3,175 passing tests and a 9-case manual
+  verification were all green over it, because every ordering test compared MF-5 only against the
+  one entry that precedes it. (SMI-6508)
+- **Fix**: `sensitive_path` now detects a secret assigned to a **prefixed** key —
+  `API_SECRETS`, `app_secrets`, `mySecrets`, and the singular `API_SECRET`. `SECRETS_ASSIGN_PATTERN`
+  carries `\b`, and `_` is a word character, so that boundary could never match after an underscore
+  or a camelCase hump; SCREAMING_SNAKE and snake_case are the dominant conventions for
+  secret-bearing environment variables, so this missed the most likely real shape. The sibling
+  `credentials` and `password` patterns carry no boundary and were never affected. Fixed by a
+  **complementary** pattern matching exactly what the boundary excludes, rather than by removing it
+  — the two never match the same occurrence, and `MY-SECRETS=` / `my.secrets=` stay with the bare
+  pattern since `-` and `.` are non-word characters its `\b` already accepts.
+- **Added**: a fifth `sensitive_path` severity class, **MF-5 (`OBSERVE_ONLY_MEDIUM_PATTERNS`)** —
+  always MEDIUM, never value-gated and never escalated. The prefixed form is classified here rather
+  than into MF-4 because MF-4 is HIGH by default, and a HIGH `sensitive_path` makes
+  `SecurityScanner` compute `passed = false`, which blocks installation with no allowlist in that
+  path. Measured against 66,495 real skill bodies in production: routing the prefixed form through
+  MF-4 would newly block 132 skills (0.20% of that corpus, ~975 extrapolated to the full registry),
+  and shape analysis put roughly 46% of those in false-positive-looking shapes. Shipping at MEDIUM
+  makes the detection visible at zero install cost and turns the open question into one the
+  accumulated findings can answer; promoting it later is a one-line move into the MF-4 set. The
+  severity-gate partition grows 4 classes → 5 and 15 patterns → 16, both guarded by the existing
+  regression test's totality check. **Deliberate asymmetry**: prefixed `password` / `credentials`
+  keys still reach HIGH, grandfathered rather than endorsed — their prefixed-form false-positive
+  rate has never been measured, and levelling in either direction without measuring would be the
+  wrong fix. `SCANNER_RULESET_VERSION` bumps to `2026-09-11.1` — *previously-clean-now-fires*, the
+  opposite direction from SMI-6505's bump and load-bearing for the same reason: without it the
+  `comparable` gate reuses the stored verdict and the new finding never reaches an already-scanned
+  skill. (SMI-6508)
+
 - **Changed**: the agent pack's CLI fallback commands (`CLI_FALLBACK_COMMANDS` in
   `services/agent-pack/prompt-source.ts`) now lead with `skillsmith update --all --dry-run` and
   then per-skill updates, instead of recommending `skillsmith update --all` directly. Containment
