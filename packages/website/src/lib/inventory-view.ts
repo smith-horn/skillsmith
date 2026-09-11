@@ -122,8 +122,11 @@ export const STALE_AFTER_HOURS = 24
 
 /**
  * Human-readable label, one-line tooltip, and suggested next action for each
- * {@link SkillState}. The `.astro` component maps each state to an
- * icon/shape; this module owns only the text.
+ * {@link SkillState}. `BADGE_CONFIG` in `skills-page-render.ts` maps each state
+ * to its visual treatment — an icon path plus foreground, background and border
+ * colours; this module owns only the text. That split is deliberate — see the
+ * note on `BADGE_CONFIG` for why the visuals are inline CSS colour literals
+ * rather than a component (SMI-6504).
  *
  * `suggestedAction` may contain inline-code spans delimited by backtick
  * pairs (`` ` ``...`` ` ``), which the renderer converts to `<code>` tags.
