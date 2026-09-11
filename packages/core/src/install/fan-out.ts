@@ -350,13 +350,34 @@ export interface RemoveLinksResult {
   warnings?: string[]
 }
 
-/** Warning for an uninstall that couldn't use the manifest (round 11). */
-function unusableManifestWarning(read: ManifestRead, skillId: string): string {
+/**
+ * Warning for an uninstall that couldn't use the manifest (rounds 11–12). By
+ * then the canonical skill is gone, so a second uninstall stops at "not
+ * installed" and never gets here: any fan-out copy left is the user's to
+ * remove. List the ones on disk so they know where to look.
+ */
+async function unusableManifestWarning(read: ManifestRead, skillId: string): Promise<string> {
   const why =
     read.state === 'corrupt' ? 'could not be parsed' : `could not be read (${read.reason})`
+  const canonical = path.resolve(CLIENT_NATIVE_PATHS[CANONICAL_CLIENT])
+  const candidates: string[] = []
+  for (const root of new Set(Object.values(CLIENT_NATIVE_PATHS))) {
+    if (path.resolve(root) === canonical) continue
+    const dir = path.join(root, skillId)
+    const present = await fsp.lstat(dir).then(
+      () => true,
+      () => false
+    )
+    if (present) candidates.push(dir)
+  }
+  const next =
+    candidates.length > 0
+      ? ` These may be fan-out copies Skillsmith made; check each one and delete it yourself ` +
+        `if you don't need it: ${candidates.join(', ')}.`
+      : ` No other client's skills folder has a ${skillId} folder, so there is nothing to clean up.`
   return (
     `the fan-out link manifest at ${getLinkManifestPath()} ${why}, so no fan-out copies of ` +
-    `${skillId} were checked or removed.`
+    `${skillId} were checked or removed.${next}`
   )
 }
 
@@ -381,7 +402,7 @@ export async function removeLinks(skillId: string): Promise<RemoveLinksResult> {
   // said nothing and left every fan-out copy behind. Say so instead, and
   // leave the file alone.
   if (read.state === 'unreadable' || read.state === 'corrupt') {
-    return { removed: 0, refused: [], warnings: [unusableManifestWarning(read, skillId)] }
+    return { removed: 0, refused: [], warnings: [await unusableManifestWarning(read, skillId)] }
   }
   const matching = read.manifest.links.filter((l) => l.skillId === skillId)
   if (matching.length === 0) return { removed: 0, refused: [] }

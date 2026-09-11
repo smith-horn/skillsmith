@@ -1233,17 +1233,30 @@ describe('install/fan-out', () => {
       expect((await listLinks()).map((l) => l.skillId).sort()).toEqual(['bomkeep', 'bomnew'])
     })
 
-    it('tells the user when an uninstall could not use the manifest', async () => {
+    it('tells the user when an uninstall could not use the manifest, and where copies remain', async () => {
       const { removeLinks, getLinkManifestPath } = await loadModule()
       const manifestPath = getLinkManifestPath()
       const newer = '{"version":2,"links":[{"skillId":"future"}]}'
       await mkdir(path.dirname(manifestPath), { recursive: true })
       await writeFile(manifestPath, newer, 'utf-8')
 
-      const result = await removeLinks('future')
+      // No other client has a folder for it: nothing to clean up.
+      const none = await removeLinks('future')
+      expect(none.removed).toBe(0)
+      expect(none.warnings).toEqual([expect.stringContaining('newer Skillsmith')])
+      expect(none.warnings?.[0]).toContain('nothing to clean up')
 
-      expect(result.removed).toBe(0)
-      expect(result.warnings).toEqual([expect.stringContaining('newer Skillsmith')])
+      // A leftover folder in another client's skills folder is named, with
+      // what to do; the canonical folder is never listed.
+      const leftover = path.join(homeDir, '.cursor', 'skills', 'future')
+      const canonical = path.join(homeDir, '.claude', 'skills', 'future')
+      await mkdir(leftover, { recursive: true })
+      await mkdir(canonical, { recursive: true })
+      const some = await removeLinks('future')
+      expect(some.warnings?.[0]).toContain(leftover)
+      expect(some.warnings?.[0]).toContain('delete it yourself')
+      expect(some.warnings?.[0]).not.toContain(canonical)
+      await expect(stat(leftover)).resolves.toBeDefined()
       expect(await readFile(manifestPath, 'utf-8')).toBe(newer)
     })
   })
