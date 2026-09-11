@@ -18,8 +18,21 @@ import { escapeHtml } from './skills-utils'
 
 export { escapeHtml }
 
-// ─── Badge config (mirrors InventoryStateBadge.astro) ─────────────────────────
+// ─── Badge config ─────────────────────────────────────────────────────────────
 // Distinct icon shape + WCAG-AA color pair per state — not color alone (WCAG 1.4.1).
+//
+// Inline-style hex rather than an Astro component, deliberately. Device cards are
+// built as HTML strings and assigned via `innerHTML` (see `skills.astro`), so
+// there is no server render pass an Astro component could hook into. A component
+// form, `InventoryStateBadge.astro`, existed until SMI-6504 and was unreachable
+// for exactly that reason: it duplicated every entry below and could have drifted
+// from the live path without anyone noticing. Do NOT re-extract one unless the
+// card rendering stops using `innerHTML` first — that is the larger change this
+// config is downstream of, not a cleanup.
+//
+// Labels, descriptions and suggested actions live separately in `SKILL_STATE_META`
+// (`inventory-view.ts`). That split is intentional — text there, visuals here —
+// and is not the duplication SMI-6504 removed.
 
 interface BadgeEntry {
   bg: string
