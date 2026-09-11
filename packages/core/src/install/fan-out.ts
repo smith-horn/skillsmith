@@ -21,8 +21,6 @@ import * as fsp from 'node:fs/promises'
 import { CLIENT_NATIVE_PATHS, CANONICAL_CLIENT, type ClientId } from './paths.js'
 import {
   assertOverwritable,
-  checkGitAtRoot,
-  gitRefusal,
   leftoverBackupWarning,
   listLeftoverBackups,
   recoverDestination,
@@ -40,6 +38,7 @@ import {
   type LinkRecord,
   type ManifestRead,
 } from './fan-out.manifest.js'
+import { removeRecordedLink, undoUnrecordedWrite } from './fan-out.cleanup.js'
 
 export { getLinkManifestPath, loadManifest, saveManifest } from './fan-out.manifest.js'
 export type { LinkKind, LinkManifest, LinkRecord } from './fan-out.manifest.js'
@@ -70,10 +69,6 @@ export interface AddLinkResult {
    * Omitted when none.
    */
   warnings?: string[]
-}
-
-function errorText(err: unknown): string {
-  return err instanceof Error ? err.message : String(err)
 }
 
 /**
@@ -128,83 +123,6 @@ async function pathExists(p: string): Promise<boolean> {
     return true
   } catch {
     return false
-  }
-}
-
-/**
- * SMI-6529 H3 (round 2) / N6 (round 4): recursive teardown for
- * `removeLinks()`'s legitimate uninstall cleanup of a copy-mode fan-out (or
- * symlink) THIS module created and recorded in the link manifest.
- *
- * N6: a recorded COPY can drift into a real git working tree after
- * Skillsmith created it (the user `git init`/`git clone`s into that exact
- * path later) — round 2's fix already stopped `addLink --force` from
- * clobbering that, but `removeLinks` (the UNINSTALL path) still happily
- * recursively deleted it on the strength of a stale manifest record alone.
- * Refuse — report and leave it in place — when a non-symlink recorded copy
- * contains `.git` at its root. Symlinks are always still just unlinked
- * (disposable regardless of what they point at; the pointed-to content is
- * untouched either way).
- *
- * Returns `{ removed: true }` on an actual removal (or a harmless "already
- * gone" ENOENT), `{ removed: false, reason }` on the N6 refusal so the
- * caller (`removeLinks`) can keep the manifest entry and report it instead
- * of silently discarding both the entry and the content.
- */
-async function removeRecordedLink(
-  p: string
-): Promise<{ removed: true } | { removed: false; reason: string }> {
-  let stat
-  try {
-    stat = await fsp.lstat(p)
-  } catch {
-    // Already gone — races with an external editor/uninstall are expected;
-    // treat as successfully removed (nothing left to report).
-    return { removed: true }
-  }
-  try {
-    if (stat.isSymbolicLink() || stat.isFile()) {
-      await fsp.unlink(p)
-      return { removed: true }
-    }
-    const refusal = gitRefusal(p, await checkGitAtRoot(p), 'delete')
-    if (refusal) {
-      return { removed: false, reason: refusal }
-    }
-    await fsp.rm(p, { recursive: true, force: true })
-    return { removed: true }
-  } catch (err) {
-    // Best-effort — uninstall should not fail because cleanup races with
-    // an external editor that already moved the file. Report it as a
-    // (different) refusal rather than silently pretending success, so
-    // `removeLinks` still keeps the manifest entry for a future retry.
-    return { removed: false, reason: `${p} could not be removed: ${errorText(err)}` }
-  }
-}
-
-/**
- * SMI-6529 rounds 10–11: undo this call's write when its record couldn't be
- * saved. A fresh destination is removed. A refreshed symlink is put back,
- * since its existing record still describes it (it was replaced with no
- * backup). Left as is, either would be a destination the manifest doesn't
- * describe: uninstall would miss it, and a force refresh would refuse it.
- * The caller holds the destination's lock, so no other Skillsmith call has
- * touched it.
- */
-async function undoUnrecordedWrite(
-  toDir: string,
-  cause: unknown,
-  oldLinkTarget: string | undefined
-): Promise<void> {
-  try {
-    await fsp.rm(toDir, { recursive: true, force: true })
-    if (oldLinkTarget !== undefined) await fsp.symlink(oldLinkTarget, toDir, 'dir')
-  } catch (undoErr) {
-    throw new Error(
-      `addLink: ${errorText(cause)}; the new, unrecorded write at ${toDir} could not be ` +
-        `undone either (${errorText(undoErr)}).`,
-      { cause }
-    )
   }
 }
 
@@ -301,6 +219,8 @@ export async function addLink(opts: AddLinkOptions): Promise<AddLinkResult> {
       }
     })
 
+    // Round 14: what this call just put in place, so an undo only removes that.
+    const placed = await fsp.lstat(toDir).catch(() => null)
     const record: LinkRecord = {
       skillId,
       from: fromDir,
@@ -319,7 +239,7 @@ export async function addLink(opts: AddLinkOptions): Promise<AddLinkResult> {
       })
     } catch (err) {
       if (!existing || oldLinkTarget !== undefined) {
-        await undoUnrecordedWrite(toDir, err, oldLinkTarget)
+        await undoUnrecordedWrite(toDir, err, oldLinkTarget, placed)
       }
       throw err
     }

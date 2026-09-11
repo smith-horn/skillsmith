@@ -30,7 +30,8 @@ All notable changes to `@skillsmith/core` are documented here.
   retried until complete or reported as a restore failure, and a 0-byte file orphaned by a failed
   create is still cleaned up. Rollback and fan-out cleanup never recursively delete a folder that
   something else put at its path after Skillsmith created it, and a cleanup step that fails is
-  reported rather than silently ignored.
+  reported rather than silently ignored. A crashed refresh's staging folder is reported, never
+  deleted, and an uninstall re-checks a fan-out copy just before removing it.
   Backfill never modifies a `provenance: 'local'` row (SMI-6529, ADR-155).
 
 - **Fix**: `sensitive_path` now detects a secret assigned to a **prefixed** key —

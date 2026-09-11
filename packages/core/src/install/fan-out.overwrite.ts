@@ -28,7 +28,9 @@
  *  - Round 13 (cross-model review): the destination lock keeps other
  *    Skillsmith calls out, not other programs. So a staging or backup folder
  *    is deleted only while it is still the folder we made (same device and
- *    inode), and a stale staging folder only if it holds nothing but ours.
+ *    inode). Round 14: a crashed write's staging folder is never deleted
+ *    (neither its name nor its contents proves who owns it), only reported,
+ *    and a folder left in place is named with the reason.
  *  - Round 8: a lock released mid-attempt was reported as corrupt, so
  *    contending callers failed at once; waiting on an orphaned reclaim lock
  *    still blocked the event loop; a reinstall after an uninstall restored a
@@ -79,6 +81,10 @@ function siblingPattern(dest: string, tag: string): RegExp {
 
 function errorMessage(err: unknown): string {
   return err instanceof Error ? err.message : String(err)
+}
+
+function errorCode(err: unknown): string {
+  return (err as NodeJS.ErrnoException).code ?? errorMessage(err)
 }
 
 async function lstatOrNull(p: string): Promise<Stats | null> {
@@ -257,8 +263,6 @@ async function removeIfEmpty(folder: string): Promise<boolean> {
 
 /**
  * Housekeeping under the destination lock, before any write:
- *  - remove staging folders left by a crashed write (they only ever hold a
- *    partial copy generated from the source skill);
  *  - remove an empty backup folder (a crash before anything was moved in);
  *  - restore a backup stranded by a crash between the rename-aside and the
  *    swap: the destination is missing, this is the only backup whose
@@ -268,8 +272,10 @@ async function removeIfEmpty(folder: string): Promise<boolean> {
  *    bring back a stale, untracked copy. With two or more, nothing says which
  *    is newest (a name can sort anywhere), so none is restored (round 9).
  *
- * Any other backup is left in place for `listLeftoverBackups` to report.
- * Returns the backup folders restored from.
+ * Any other backup is left in place for `listLeftoverBackups` to report, and
+ * so is a staging folder left by a crashed write: round 14 (cross-model
+ * review) stopped deleting those here, since neither a folder's name nor its
+ * contents proves who owns it now. Returns the backup folders restored from.
  */
 export async function recoverDestination(dest: string, manifest: LinkManifest): Promise<string[]> {
   const parent = path.dirname(dest)
@@ -279,21 +285,10 @@ export async function recoverDestination(dest: string, manifest: LinkManifest): 
   } catch {
     return []
   }
-  const staging = siblingPattern(dest, STAGING_TAG)
   const backup = siblingPattern(dest, BACKUP_TAG)
   const candidates: string[] = []
   for (const name of entries) {
     const folder = path.join(parent, name)
-    if (staging.test(name)) {
-      // A crashed write's staging folder only ever holds `content`, a
-      // partial copy of the source skill. Anything else in it isn't ours,
-      // so the folder stays (round 13).
-      const inside = await fsp.readdir(folder).catch(() => null)
-      if (inside !== null && inside.every((entry) => entry === 'content')) {
-        await fsp.rm(folder, { recursive: true, force: true }).catch(() => {})
-      }
-      continue
-    }
     if (!backup.test(name)) continue
     if (await removeIfEmpty(folder)) continue
     const originalStat = await lstatOrNull(path.join(folder, 'original')).catch(() => null)
@@ -315,7 +310,8 @@ export async function recoverDestination(dest: string, manifest: LinkManifest): 
  * that ignores case, a backup made under another spelling of the name
  * (`.Foo.` for `foo`) belongs to this destination too, so it is reported;
  * it is never removed or restored, since on a case-sensitive volume the
- * same name belongs to a different destination. Call under the lock.
+ * same name belongs to a different destination. Round 14: a staging folder
+ * left by a crashed write is reported the same way. Call under the lock.
  */
 export async function listLeftoverBackups(dest: string): Promise<string[]> {
   const parent = path.dirname(dest)
@@ -326,11 +322,12 @@ export async function listLeftoverBackups(dest: string): Promise<string[]> {
     return []
   }
   const exact = siblingPattern(dest, BACKUP_TAG)
+  const staging = siblingPattern(dest, STAGING_TAG)
   const anyCase = new RegExp(exact.source, 'i')
   const leftovers: string[] = []
   for (const name of entries) {
     const folder = path.join(parent, name)
-    if (exact.test(name)) {
+    if (exact.test(name) || staging.test(name)) {
       if (!(await removeIfEmpty(folder))) leftovers.push(folder)
     } else if (anyCase.test(name) && (await isCaseVariantOf(folder, dest))) {
       leftovers.push(folder)
@@ -356,10 +353,11 @@ async function isCaseVariantOf(folder: string, dest: string): Promise<boolean> {
   return contents.length > 0
 }
 
-/** User-facing warning for a leftover backup folder. */
+/** User-facing warning for a leftover backup or staging folder. */
 export function leftoverBackupWarning(folder: string): string {
+  const what = path.basename(folder).includes(STAGING_TAG) ? 'a partial copy' : 'an earlier copy'
   return (
-    `an interrupted refresh left an earlier copy in the hidden folder ${folder}; ` +
+    `an interrupted refresh left ${what} in the hidden folder ${folder}; ` +
     `check it, then delete it yourself if you don't need it.`
   )
 }
@@ -382,37 +380,49 @@ export async function replaceDestination(
     await swapIntoPlace(dest, staged)
   } catch (err) {
     // A partial copy made from the source skill: remove it, but only while
-    // the folder is still the one we made (round 13).
-    if (await removeOwnFolder(stagingFolder, made)) throw err
+    // the folder is still the one we made (round 13), and say why when that
+    // didn't happen (round 14).
+    const removal = await removeOwnFolder(stagingFolder, made)
+    if (removal.removed) throw err
     throw new Error(
-      `${errorMessage(err)}; the staging folder ${stagingFolder} was replaced by something ` +
-        `else and was left in place`,
+      `${errorMessage(err)}; the staging folder ${stagingFolder} ${removal.reason} and was ` +
+        `left in place`,
       { cause: err }
     )
   }
   // Empty after a successful swap, so a non-recursive rmdir can't delete
-  // anything else; if it isn't empty, it isn't ours to remove.
+  // anything else. If it fails, the folder stays, and listLeftoverBackups,
+  // which the caller runs next, reports it.
   await fsp.rmdir(stagingFolder).catch(() => {})
 }
 
+/** Whether removeOwnFolder removed the folder, and if not, why. */
+type FolderRemoval = { removed: true } | { removed: false; reason: string }
+
 /**
  * Recursively remove a folder this call made, but only while it is still
- * that folder (same device and inode). Returns false, leaving it, when
- * something else now sits at the path, or it can't be checked. Round 13
- * (cross-model review): the destination lock keeps other Skillsmith calls
- * out, not other programs.
+ * that folder (same device and inode). Round 13 (cross-model review): the
+ * destination lock keeps other Skillsmith calls out, not other programs.
+ * Round 14: a folder that can't be checked, isn't ours any more, or can't be
+ * removed is reported with its reason, never counted as removed.
  */
-async function removeOwnFolder(folder: string, made: Stats): Promise<boolean> {
+async function removeOwnFolder(folder: string, made: Stats): Promise<FolderRemoval> {
   let current: Stats | null
   try {
     current = await lstatOrNull(folder)
-  } catch {
-    return false
+  } catch (err) {
+    return { removed: false, reason: `could not be checked (${errorCode(err)})` }
   }
-  if (current === null) return true
-  if (!current.isDirectory() || current.dev !== made.dev || current.ino !== made.ino) return false
-  await fsp.rm(folder, { recursive: true, force: true }).catch(() => {})
-  return true
+  if (current === null) return { removed: true }
+  if (!current.isDirectory() || current.dev !== made.dev || current.ino !== made.ino) {
+    return { removed: false, reason: 'was replaced by something else' }
+  }
+  try {
+    await fsp.rm(folder, { recursive: true, force: true })
+    return { removed: true }
+  } catch (err) {
+    return { removed: false, reason: `could not be removed (${errorCode(err)})` }
+  }
 }
 
 async function swapIntoPlace(dest: string, staged: string): Promise<void> {
@@ -454,7 +464,9 @@ async function swapIntoPlace(dest: string, staged: string): Promise<void> {
   }
   // The swap succeeded, so the superseded copy is no longer needed. Drop it
   // only while the backup folder and the copy in it are still what we put
-  // there (round 13); otherwise it stays, and listLeftoverBackups reports it.
+  // there (round 13). A folder left for any reason (not ours, or the removal
+  // failed) stays, and listLeftoverBackups, which the caller runs next,
+  // reports it.
   const originalNow = await lstatOrNull(original).catch(() => null)
   if (
     originalNow !== null &&
