@@ -3,20 +3,31 @@
  * flags a tracked file containing an absolute `--separate-git-dir`
  * invocation (`--separate-git-dir=/...` or `--separate-git-dir /...`).
  * See docs/internal/implementation/smi-6515-absolute-gitdir-detector.md.
+ *
+ * The helper enumerates `git ls-files`, not a filesystem walk (fixed
+ * post-review: the prior filesystem-walk implementation reported its
+ * denominator as "tracked file(s) scanned" while never actually consulting
+ * git, so the count included gitignored/untracked files and was off by
+ * 1000+ against the real tracked count). Every fixture here is therefore a
+ * real (if minimal) git repo, not a bare temp directory -- `git ls-files`
+ * has nothing to enumerate otherwise.
  */
-import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs'
-import { tmpdir } from 'node:os'
+import { execFileSync } from 'node:child_process'
+import { mkdirSync, rmSync, writeFileSync } from 'node:fs'
 import { dirname, join } from 'node:path'
 import { fileURLToPath } from 'node:url'
 import { afterEach, describe, expect, it } from 'vitest'
 // @ts-expect-error - .mjs helper has no typings
 import { findAbsoluteSeparateGitDirWriters } from '../audit-gitdir-writer-helpers.mjs'
+// SMI-4693: every fixture `git` spawn below must route through
+// makeFixtureEnv/makeFixtureTempDir -- see scripts/tests/_lib/git-fixture-env.ts.
+import { makeFixtureEnv, makeFixtureTempDir } from './_lib/git-fixture-env.js'
 
 const __dirname = dirname(fileURLToPath(import.meta.url))
 const REPO_ROOT = join(__dirname, '..', '..')
 
-// A full recursive repo-root walk + readFileSync of every non-excluded
-// file legitimately exceeds the 15s vitest.preset.ts default under normal
+// A full `git ls-files` enumeration + readFileSync of every tracked file
+// legitimately exceeds the 15s vitest.preset.ts default under normal
 // multi-worktree-container contention (this repo's default dev workflow,
 // CLAUDE.md's Default Execution Model) -- 60s matches the same convention
 // git-crypt-remediation-strings.test.ts uses for the same reason.
@@ -25,14 +36,22 @@ const REPO_WALK_TIMEOUT_MS = 60_000
 describe('findAbsoluteSeparateGitDirWriters (fixture cases)', () => {
   const roots: string[] = []
 
+  // Builds a real, minimal git repo and STAGES every given file (`git add`,
+  // no commit needed -- `git ls-files` reads the index) so the helper's
+  // `git ls-files` call has a real tracked set to enumerate.
   function makeFixtureRepo(files: Record<string, string>): string {
-    const root = mkdtempSync(join(tmpdir(), 'smi6515-gitdir-'))
+    const root = makeFixtureTempDir('smi6515-gitdir')
     roots.push(root)
+    const env = makeFixtureEnv()
+    execFileSync('git', ['init', '--quiet'], { cwd: root, env })
+    execFileSync('git', ['config', 'user.email', 'fixture@example.invalid'], { cwd: root, env })
+    execFileSync('git', ['config', 'user.name', 'Fixture'], { cwd: root, env })
     for (const [relPath, content] of Object.entries(files)) {
       const full = join(root, relPath)
       mkdirSync(dirname(full), { recursive: true })
       writeFileSync(full, content, 'utf8')
     }
+    execFileSync('git', ['add', '-A'], { cwd: root, env })
     return root
   }
 
@@ -113,6 +132,32 @@ describe('findAbsoluteSeparateGitDirWriters (fixture cases)', () => {
     const { filesChecked, findings } = findAbsoluteSeparateGitDirWriters(root)
     expect(findings).toEqual([])
     expect(filesChecked).toBe(3)
+  })
+
+  // Regression case for the finding that motivated the git-ls-files
+  // rewrite: an untracked file present on disk must NOT move the
+  // "tracked file(s) scanned" denominator, since it was never tracked.
+  it('does not count an untracked file toward the denominator', () => {
+    const root = makeFixtureRepo({
+      'tracked.md': 'nothing interesting here\n',
+    })
+    // Written AFTER makeFixtureRepo's `git add -A`, so deliberately never
+    // staged/tracked -- the exact shape of "an untracked local note".
+    writeFileSync(join(root, 'untracked-note.md'), 'a local scratch note\n', 'utf8')
+    const { filesChecked, findings } = findAbsoluteSeparateGitDirWriters(root)
+    expect(findings).toEqual([])
+    expect(filesChecked).toBe(1)
+  })
+
+  // The prior filesystem-walk implementation degraded silently: no git,
+  // no problem, it just walked disk under a "tracked" label that was no
+  // longer true. The fix must fail loudly instead of relabeling a
+  // different measurement as "tracked".
+  it('throws rather than silently falling back to a filesystem walk when the target is not a git repo', () => {
+    const root = makeFixtureTempDir('smi6515-nogit')
+    roots.push(root)
+    writeFileSync(join(root, 'some-doc.md'), 'nothing interesting here\n', 'utf8')
+    expect(() => findAbsoluteSeparateGitDirWriters(root)).toThrow(/ls-files.*failed/i)
   })
 })
 

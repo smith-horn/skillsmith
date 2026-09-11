@@ -33,18 +33,9 @@
  * remediation-string ban with a narrow, reasoned allow-list).
  */
 
-import { readFileSync, readdirSync, statSync } from 'fs'
-import { join, relative } from 'path'
-
-const EXCLUDED_DIR_NAMES = new Set([
-  '.git',
-  'node_modules',
-  'dist',
-  '.worktrees',
-  '.git-crypt',
-  '.beads',
-  '.ruvector',
-])
+import { execFileSync } from 'node:child_process'
+import { readFileSync } from 'fs'
+import { join } from 'path'
 
 // Files that legitimately contain the literal banned substring. Every
 // entry needs its own reason here -- an unexplained allow-list entry is
@@ -92,57 +83,90 @@ function isDocsExemptPath(relPath) {
 
 const ABSOLUTE_SEPARATE_GIT_DIR_RE = /--separate-git-dir[= ]\//
 
-function walk(dir, out) {
-  let entries
+/**
+ * Enumerate `git ls-files --recurse-submodules` output for `repoRoot` --
+ * the actual tracked-file set, not a filesystem walk. A prior version of
+ * this check walked the filesystem with `readdirSync` and reported the
+ * resulting count under a "tracked file(s) scanned" label; that label was
+ * false (it scans whatever happens to be on disk, gitignored or not, up
+ * to 1000+ files off from the real tracked count) and its value is not
+ * stable -- an untracked local scratch file changes it. `git ls-files` is
+ * the actual tracked set, so the label is now true as written.
+ *
+ * `--recurse-submodules` (rather than plain `git ls-files`) matters here
+ * specifically: this repo's `docs/internal` is a submodule containing the
+ * `implementation/`, `retros/`, `code_review/`, and `pr-reviews/`
+ * subdirectories `isDocsExemptPath` below exempts by design -- without
+ * `--recurse-submodules`, `git ls-files` reports `docs/internal` as one
+ * opaque gitlink entry and never lists anything inside it, silently
+ * un-scanning that entire allow-listed surface rather than correctly
+ * exempting it. Confirmed safe for an uninitialized/missing submodule too
+ * (the external-contributor case, gate #3 SMI-4829): `--recurse-submodules`
+ * degrades to the same gitlink-only listing plain `ls-files` would give,
+ * exit 0, no error -- verified by direct reproduction (init a repo with a
+ * submodule, then `git submodule deinit` it and remove its directory
+ * entirely; `git ls-files --recurse-submodules` still lists the gitlink
+ * path and exits 0 in both states).
+ *
+ * Deliberately does NOT fall back to a filesystem walk if `git` is
+ * unavailable or fails (detached gitdir, corrupt index, git binary
+ * missing, `repoRoot` not a git working tree, etc.) -- a silent fallback
+ * would reproduce exactly the bug this function exists to fix: a count
+ * that no longer matches what the label claims. Callers that need this
+ * check to degrade instead of hard-fail must catch and handle that
+ * explicitly at the call site; this function will not quietly relabel a
+ * different measurement as "tracked".
+ *
+ * @param {string} repoRoot
+ * @returns {string[]} tracked file paths, relative to `repoRoot`, forward-slash separated
+ */
+function listTrackedFiles(repoRoot) {
+  let out
   try {
-    entries = readdirSync(dir)
-  } catch {
-    return
+    out = execFileSync('git', ['-C', repoRoot, 'ls-files', '-z', '--recurse-submodules'], {
+      encoding: 'utf8',
+      maxBuffer: 256 * 1024 * 1024,
+    })
+  } catch (err) {
+    throw new Error(
+      `findAbsoluteSeparateGitDirWriters: \`git -C ${repoRoot} ls-files\` failed (${err.message}). ` +
+        'This check reports its denominator as "tracked file(s) scanned" and will not silently ' +
+        'substitute an untracked filesystem walk under that label -- fix git availability/repo ' +
+        `state for ${repoRoot} (is it a real git working tree?) rather than suppressing this error.`
+    )
   }
-  for (const entry of entries) {
-    if (EXCLUDED_DIR_NAMES.has(entry)) continue
-    const full = join(dir, entry)
-    let st
-    try {
-      st = statSync(full)
-    } catch {
-      continue
-    }
-    if (st.isDirectory()) {
-      walk(full, out)
-    } else if (st.isFile()) {
-      out.push(full)
-    }
-  }
+  return out.split('\0').filter((p) => p.length > 0)
 }
 
 /**
- * Walk `repoRoot` and report every {file, line, text} occurrence of an
- * absolute `--separate-git-dir` invocation (`--separate-git-dir=/...` or
- * `--separate-git-dir /...`), excluding the paths documented in this
- * file's header, alongside the denominator: how many files were actually
- * read and tested against the pattern. A verification that can pass
- * vacuously has to report what it examined, not just its verdict.
+ * Enumerate `repoRoot`'s git-tracked files and report every
+ * {file, line, text} occurrence of an absolute `--separate-git-dir`
+ * invocation (`--separate-git-dir=/...` or `--separate-git-dir /...`),
+ * excluding the paths documented in this file's header, alongside the
+ * denominator: how many tracked files were actually read and tested
+ * against the pattern. A verification that can pass vacuously has to
+ * report what it examined, not just its verdict -- and what it examined
+ * has to be what it claims to have examined.
  *
  * @param {string} repoRoot
  * @returns {{filesChecked: number, findings: Array<{file: string, line: number, text: string}>}}
  */
 export function findAbsoluteSeparateGitDirWriters(repoRoot) {
-  const files = []
-  walk(repoRoot, files)
+  const trackedPaths = listTrackedFiles(repoRoot)
 
   let filesChecked = 0
   const findings = []
-  for (const full of files) {
-    const relPath = relative(repoRoot, full).split('\\').join('/')
+  for (const relPath of trackedPaths) {
     if (SELF_EXEMPT_FILES.has(relPath)) continue
     if (isDocsExemptPath(relPath)) continue
 
     let content
     try {
-      content = readFileSync(full, 'utf8')
+      content = readFileSync(join(repoRoot, relPath), 'utf8')
     } catch {
-      continue // binary/unreadable -- can't contain a matching text line
+      // Binary/unreadable, or a submodule gitlink entry (a directory on
+      // disk, not a file) -- can't contain a matching text line.
+      continue
     }
     filesChecked++
     if (!ABSOLUTE_SEPARATE_GIT_DIR_RE.test(content)) continue

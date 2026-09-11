@@ -523,11 +523,19 @@ printf 'gitdir: ../../../../.git/worktrees/<worktree-name>/modules/docs/internal
   > docs/internal/.git.tmp.$$
 mv -f docs/internal/.git.tmp.$$ docs/internal/.git
 
-# Verify: both of these must succeed with no error -- on the host, and via
-# `docker exec <container> git -C docs/internal rev-parse --git-dir`.
+# Verify on the HOST only -- both of these must succeed with no error.
 cat docs/internal/.git
 git -C docs/internal rev-parse --git-dir
 ```
+
+**Verify on the host only -- there is no in-container form of this check for a worktree (confirmed live, not assumed).** A prior version of this recipe additionally told the reader to verify with `docker exec <container> git -C docs/internal rev-parse --git-dir`. That command cannot succeed, in any worktree's container, no matter how the gitfile is written: the relative `gitdir:` line resolves against the directory containing it, and that resolution genuinely differs by four real path segments between host and container --
+
+```
+host:      <repo>/.worktrees/<w>/docs/internal  + ../../../../  -> <repo>/.git/worktrees/<w>/modules/docs/internal   (real dir, OK)
+container: /app/docs/internal                   + ../../../../  -> /.git/worktrees/<w>/modules/docs/internal        (root fs, MISSING)
+```
+
+because the container bind-mounts only the worktree subtree at `/app` (the `.worktrees/<w>` path segments this relative form counts through don't exist inside it), so the same `../../../../` walks past `/` instead of past the worktree's siblings. This is the same class of breakage the "Worktree Docker bind-mounts (SMI-4689)" section above already documents generically (`git` at `/app` in a worktree container, `fatal: not a git repository`), tracked further as SMI-6549 for this specific recipe. No relative path depth fixes it: the main checkout's real `.git/worktrees/<w>/modules/docs/internal` object store is never mounted into a worktree's own container at all, under the current bind-mount architecture, so no in-container recipe exists to give -- not a different one, none. Verify this recipe on the host, where `git push` and `git submodule` operations already originate anyway (per that same SMI-4689 section's own guidance).
 
 **For the main checkout, not a worktree**: use `--separate-git-dir=/path/to/skillsmith/.git/modules/docs/internal` (no `.git/worktrees/<worktree-name>/` indirection), and rewrite the gitfile to `gitdir: ../../.git/modules/docs/internal` instead of the four-level worktree form above.
 

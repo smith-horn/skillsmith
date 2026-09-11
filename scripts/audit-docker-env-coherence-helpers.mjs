@@ -17,26 +17,90 @@
  *
  * Ships HARD (fail), not shadow/warn -- unlike most of this repo's
  * shadow-gated checks, this one compares two static files with no
- * live-environment dependency and no plausible false-positive surface.
- * There is no legitimate reason for these two files to ever disagree.
+ * live-environment dependency.
+ *
+ * A prior version of this file's extraction claimed "no plausible
+ * false-positive surface" here. That claim was disproved twice over by a
+ * cross-family pre-merge review (SMI-6518 finding): the regexes searched
+ * the WHOLE compose file and took the first match with no anchoring to
+ * the `dev` service (so a second service declaring the same vars, listed
+ * earlier in the file, would be validated instead of `dev` -- real drift
+ * in `dev` passes silently), matched commented-out lines (a stale decoy
+ * above the live line wins), and required single quotes for `cpus` but no
+ * quotes for `mem_limit` (valid YAML that quotes one and not the other
+ * fails a legitimate formatting change). Fixed: extraction is now scoped
+ * to the `dev` service's own line block (`extractServiceBlock`), comments
+ * are stripped from that block before matching, and both keys accept an
+ * optional matching quote (single, double, or none) via a backreference.
  */
 
-const COMPOSE_CPUS_RE = /cpus:\s*'\$\{SKILLSMITH_DOCKER_CPUS:-([^}]+)\}'/
-const COMPOSE_MEM_RE = /mem_limit:\s*\$\{SKILLSMITH_DOCKER_MEM:-([^}]+)\}/
+const COMPOSE_CPUS_RE = /cpus:\s*(['"]?)\$\{SKILLSMITH_DOCKER_CPUS:-([^}'"]+)\}\1/
+const COMPOSE_MEM_RE = /mem_limit:\s*(['"]?)\$\{SKILLSMITH_DOCKER_MEM:-([^}'"]+)\}\1/
+
+/**
+ * Extract a named top-level service's own line block from docker-compose
+ * YAML content -- e.g. `dev`'s own `cpus:`/`mem_limit:`/etc lines, not the
+ * whole file. Comment-only lines are dropped from the returned block, so a
+ * commented-out decoy line can never satisfy a caller's regex. Deliberately
+ * an indentation-based scanner, not a full YAML parser: docker-compose.yml
+ * is a small, hand-authored file this repo controls, and "child lines are
+ * indented deeper than their key, until a sibling key at the same-or-less
+ * indentation ends the block" is enough to anchor correctly without adding
+ * a YAML dependency for one check.
+ *
+ * @param {string} composeContent
+ * @param {string} serviceName
+ * @returns {string|null} the service's own lines (comments stripped, joined with '\n'), or null if the service key isn't found
+ */
+function extractServiceBlock(composeContent, serviceName) {
+  const lines = composeContent.split('\n')
+  const serviceLineRe = new RegExp(`^(\\s+)${serviceName}:\\s*$`)
+
+  let blockIndent = -1
+  let startIndex = -1
+  for (let i = 0; i < lines.length; i++) {
+    const line = lines[i]
+    if (line.trim().startsWith('#')) continue // a commented-out `dev:` never opens a block
+    const m = line.match(serviceLineRe)
+    if (m) {
+      blockIndent = m[1].length
+      startIndex = i + 1
+      break
+    }
+  }
+  if (startIndex === -1) return null
+
+  const blockLines = []
+  for (let i = startIndex; i < lines.length; i++) {
+    const line = lines[i]
+    if (line.trim() === '') continue // blank lines don't end the block
+    const indent = line.length - line.trimStart().length
+    if (indent <= blockIndent) break // sibling key/service -- block is over
+    if (line.trim().startsWith('#')) continue // drop comment-only lines
+    blockLines.push(line)
+  }
+  return blockLines.join('\n')
+}
 
 /**
  * Extract the `${VAR:-default}` values docker-compose.yml's `dev` service
- * declares for SKILLSMITH_DOCKER_CPUS / SKILLSMITH_DOCKER_MEM.
+ * declares for SKILLSMITH_DOCKER_CPUS / SKILLSMITH_DOCKER_MEM, anchored to
+ * the `dev` service's own block (never a different service, never a
+ * comment).
  *
  * @param {string} composeContent
  * @returns {{cpus: string|null, mem: string|null}}
  */
 export function extractComposeDockerDefaults(composeContent) {
-  const cpusMatch = composeContent.match(COMPOSE_CPUS_RE)
-  const memMatch = composeContent.match(COMPOSE_MEM_RE)
+  const devBlock = extractServiceBlock(composeContent, 'dev')
+  if (devBlock === null) {
+    return { cpus: null, mem: null }
+  }
+  const cpusMatch = devBlock.match(COMPOSE_CPUS_RE)
+  const memMatch = devBlock.match(COMPOSE_MEM_RE)
   return {
-    cpus: cpusMatch ? cpusMatch[1] : null,
-    mem: memMatch ? memMatch[1] : null,
+    cpus: cpusMatch ? cpusMatch[2] : null,
+    mem: memMatch ? memMatch[2] : null,
   }
 }
 
