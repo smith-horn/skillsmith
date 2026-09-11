@@ -36,11 +36,11 @@ export function siblingPattern(dest: string, tag: string): RegExp {
 
 /**
  * Names `removeIfSame` parks `dest`, or one of its backup or staging folders,
- * under while removing it (`.<name>.skillsmith-removing-<12 hex>`). Exact, so
+ * under while removing it (`.<name>.skillsmith-removing-<32 hex>`). Exact, so
  * a sibling skill's names (`foo.bar` for `foo`) never match.
  */
 function parkedPatterns(dest: string): RegExp[] {
-  const park = escapeRegExp(PARK_TAG) + '[0-9a-f]{12}$'
+  const park = escapeRegExp(PARK_TAG) + '[0-9a-f]{32}$'
   return [
     parkedPattern(dest),
     ...[BACKUP_TAG, STAGING_TAG].map(
@@ -176,9 +176,11 @@ async function isCaseVariantOf(folder: string, dest: string): Promise<boolean> {
 export function leftoverBackupWarning(folder: string): string {
   const name = path.basename(folder)
   if (name.includes(PARK_TAG)) {
+    // Round 18: who owns a parked entry is not known — see parkedLeftoverWarning.
     return (
-      `an interrupted removal left part of what it was removing at the hidden path ${folder}; ` +
-      `check it, then delete it yourself if you don't need it.`
+      `an interrupted removal moved something aside to the hidden path ${folder} and did not ` +
+      `finish. It may be part of this skill's copy, or something another program put there. ` +
+      `Check it, then restore or delete it yourself.`
     )
   }
   const what = name.includes(STAGING_TAG) ? 'a partial copy' : 'an earlier copy'

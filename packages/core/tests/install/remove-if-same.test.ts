@@ -22,7 +22,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 
 type RealFs = typeof import('node:fs/promises')
 
-const PARKED = /\.skillsmith-removing-[0-9a-f]{12}$/
+const PARKED = /\.skillsmith-removing-[0-9a-f]{32}$/
 
 let root: string
 

@@ -40,10 +40,14 @@ All notable changes to `@skillsmith/core` are documented here.
   skill, as well as next to a fan-out destination, and a refresh now says why it kept the copy it
   replaced. Uninstall refuses a skill folder that is a git working tree (`.git` at its root), even
   with force and before adopting an untracked one; it removes only the folder it checked, and
-  keeps the manifest entry when it removes nothing. It also drops a skill's record only while that
-  record still describes what was removed, so an install that claims the same name meanwhile keeps
-  its own record, and a manifest write that fails after the folder is gone now says so, and what
-  to do about it, instead of surfacing as a bare lock error. Backfill never modifies a
+  keeps the manifest entry when it removes nothing. It also drops a skill's record only while every
+  field of that record still matches the one it removed, so an install claiming the same name
+  meanwhile keeps its own record — at the same path, or written in the same millisecond. A manifest
+  write that fails after the folder is gone now says so, and what to do about it, instead of
+  surfacing as a bare lock error, and a progress listener that throws can no longer stop an
+  uninstall from reporting what it removed and what it left behind. A warning about something left
+  behind no longer claims Skillsmith owns it: in a race it can be an entry another program put at
+  that path. Backfill never modifies a
   `provenance: 'local'` row (SMI-6529, ADR-155).
 
 - **Fix**: `sensitive_path` now detects a secret assigned to a **prefixed** key —

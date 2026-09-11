@@ -10,10 +10,12 @@
  * rename in the same folder, and checked under that name. Only then is it
  * removed. To have its entry deleted, a program would have to guess the name.
  *
- * A crash, or a failed removal, can leave an entry under that parked name.
- * Every skill enumerator skips dot-prefixed names, so it is never mistaken
- * for a skill, and fan-out's `listLeftoverBackups` reports one next to a
- * fan-out destination.
+ * A crash, or a failed removal, can leave an entry under that parked name —
+ * and in a race it may be an entry another program put at the path, not ours,
+ * so the warnings say so. Every skill enumerator skips dot-prefixed names, so
+ * a parked entry is never mistaken for a skill; uninstall reports what is
+ * parked next to a skill, and fan-out's `listLeftoverBackups` reports one next
+ * to a fan-out destination.
  *
  * @module @skillsmith/core/install/remove-if-same
  */
@@ -22,7 +24,7 @@ import type { Stats } from 'node:fs'
 import * as fsp from 'node:fs/promises'
 import * as path from 'node:path'
 
-/** Tag in a parked entry's name: `.<name>.skillsmith-removing-<12 hex>`. */
+/** Tag in a parked entry's name: `.<name>.skillsmith-removing-<32 hex>`. */
 export const PARK_TAG = '.skillsmith-removing-'
 
 /** An entry's device and inode, to tell it apart from anything later put at its path. */
@@ -42,16 +44,22 @@ function errorCode(err: unknown): string {
   return code ?? (err instanceof Error ? err.message : String(err))
 }
 
-/** A random hidden sibling name to park `target` under. */
+/**
+ * A random hidden sibling name to park `target` under. 128 random bits, so
+ * the rename that parks an entry cannot realistically land on a name
+ * something else already holds — that rename replaces its destination, and it
+ * is the one step here that runs before any check (round 18, cross-model
+ * review).
+ */
 function parkedName(target: string): string {
-  const name = '.' + path.basename(target) + PARK_TAG + randomBytes(6).toString('hex')
+  const name = '.' + path.basename(target) + PARK_TAG + randomBytes(16).toString('hex')
   return path.join(path.dirname(target), name)
 }
 
 /** Matches exactly the names {@link removeIfSame} parks `target` under. */
 export function parkedPattern(target: string): RegExp {
   const escaped = ('.' + path.basename(target) + PARK_TAG).replace(/[.*+?^${}()|[\]\\]/g, '\\$&')
-  return new RegExp('^' + escaped + '[0-9a-f]{12}$')
+  return new RegExp('^' + escaped + '[0-9a-f]{32}$')
 }
 
 /**
@@ -73,11 +81,17 @@ export async function listParkedLeftovers(target: string): Promise<string[]> {
     .map((name) => path.join(path.dirname(target), name))
 }
 
-/** User-facing warning for what {@link listParkedLeftovers} found. */
+/**
+ * User-facing warning for what {@link listParkedLeftovers} found. Round 18
+ * (cross-model review): who owns a parked entry is not known. It is whatever
+ * was at the path when a removal moved it aside, which in a race can belong
+ * to another program, so the wording says that instead of calling it ours.
+ */
 export function parkedLeftoverWarning(parked: string): string {
   return (
-    `an interrupted removal left part of what it was removing at the hidden path ${parked}; ` +
-    `check it, then delete it yourself if you don't need it.`
+    `an interrupted removal moved something aside to the hidden path ${parked} and did not ` +
+    `finish. It may be part of the skill being removed, or something another program put ` +
+    `there. Check it, then restore or delete it yourself.`
   )
 }
 

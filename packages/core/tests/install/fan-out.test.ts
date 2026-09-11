@@ -1403,7 +1403,7 @@ describe('install/fan-out', () => {
           /\.skillsmith-staging-[A-Za-z0-9]{6}$/.test(String(p))
         // Round 15: the delete checks and removes the folder under a parked name.
         const isParkedStaging = (p: PathLike): boolean =>
-          /\.skillsmith-staging-[A-Za-z0-9]{6}\.skillsmith-removing-[0-9a-f]{12}$/.test(String(p))
+          /\.skillsmith-staging-[A-Za-z0-9]{6}\.skillsmith-removing-[0-9a-f]{32}$/.test(String(p))
         const rename = vi.fn(async (from: PathLike, to: PathLike) => {
           if (failing.mode === 'rename' && isStagingFolder(from)) throw eacces(from)
           return actual.rename(from, to)
@@ -1597,11 +1597,16 @@ describe('install/fan-out', () => {
         toClient: 'cursor',
       })
       const parent = path.dirname(record.to)
-      const parked = path.join(parent, '.parkleft.skillsmith-removing-0123456789ab')
+      const parked = path.join(
+        parent,
+        '.parkleft.skillsmith-removing-0123456789abcdef0123456789abcdef'
+      )
       await mkdir(parked)
       await writeFile(path.join(parked, 'part.md'), 'partial', 'utf-8')
       // A sibling skill's parked name is not this skill's leftover.
-      await mkdir(path.join(parent, '.parkleft.x.skillsmith-removing-0123456789ab'))
+      await mkdir(
+        path.join(parent, '.parkleft.x.skillsmith-removing-0123456789abcdef0123456789abcdef')
+      )
 
       const refreshed = await addLink({
         skillId: 'parkleft',
@@ -1612,6 +1617,7 @@ describe('install/fan-out', () => {
 
       expect(refreshed.warnings).toEqual([expect.stringContaining(parked)])
       expect(refreshed.warnings?.[0]).toContain('an interrupted removal')
+      expect(refreshed.warnings?.[0]).toContain('restore or delete it yourself')
       expect(await readFile(path.join(parked, 'part.md'), 'utf-8')).toBe('partial')
     })
 
@@ -1629,7 +1635,7 @@ describe('install/fan-out', () => {
         const actual = await vi.importActual<typeof import('node:fs/promises')>('node:fs/promises')
         const rm = vi.fn(async (...args: Parameters<typeof actual.rm>) => {
           const parkedBackup =
-            /\.skillsmith-backup-[A-Za-z0-9]{6}\.skillsmith-removing-[0-9a-f]{12}$/
+            /\.skillsmith-backup-[A-Za-z0-9]{6}\.skillsmith-removing-[0-9a-f]{32}$/
           if (parkedBackup.test(String(args[0]))) {
             throw Object.assign(new Error(`EACCES: permission denied, rm '${String(args[0])}'`), {
               code: 'EACCES',

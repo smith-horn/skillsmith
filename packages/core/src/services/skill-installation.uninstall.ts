@@ -217,6 +217,38 @@ async function inspectForRemoval(
 }
 
 /**
+ * Report progress without letting a caller's listener change the outcome.
+ * Round 18 (cross-model review): a listener that threw after the folder was
+ * already removed reached the generic catch, which reported neither what had
+ * been removed nor what was left parked.
+ */
+function notify(onProgress: ProgressCallback, ...args: Parameters<ProgressCallback>): void {
+  try {
+    onProgress(...args)
+  } catch {
+    // A progress listener must never break an uninstall.
+  }
+}
+
+/**
+ * Whether `entry` is still, field for field, the record this uninstall
+ * loaded. Round 18 (cross-model review): timestamps alone are not a unique
+ * generation token — two installs can share a millisecond, an older writer
+ * can omit them, and a copied record keeps them — so every field has to
+ * match. An install that claims the same name writes its own values, so any
+ * difference means a different generation. A durable generation id belongs
+ * with A1's manifest work (SMI-6531).
+ */
+function sameRecord(entry: SkillManifestEntry, loaded: SkillManifestEntry): boolean {
+  const keys = new Set([...Object.keys(entry), ...Object.keys(loaded)])
+  for (const key of keys) {
+    const k = key as keyof SkillManifestEntry
+    if (entry[k] !== loaded[k]) return false
+  }
+  return true
+}
+
+/**
  * Warnings naming anything an earlier removal left parked next to
  * `installPath`. Round 17 (cross-model review): every exit after the removal
  * reports these, not only the successful one.
@@ -249,7 +281,7 @@ export async function performUninstall(params: {
   const manifestKey = manifestKeyFor(skillName, client)
 
   try {
-    onProgress('manifest', 'Loading manifest')
+    notify(onProgress, 'manifest', 'Loading manifest')
     const manifestData = await manifest.load()
     let skillEntry = manifestData.installedSkills[manifestKey]
     let adopted = false
@@ -280,7 +312,7 @@ export async function performUninstall(params: {
       // real `install()` landing in that window could be silently
       // clobbered. `adopted` now reflects whether OUR guess actually won
       // (false when a concurrent writer's real entry was found instead).
-      onProgress('adopt', 'Adopting untracked skill (no manifest entry found)')
+      notify(onProgress, 'adopt', 'Adopting untracked skill (no manifest entry found)')
       const adoptResult = await adoptUntrackedSkillEntry(
         skillName,
         skillName,
@@ -303,7 +335,7 @@ export async function performUninstall(params: {
     if ('refusal' in seen) return { success: false, skillName, message: seen.refusal }
 
     if (!force) {
-      onProgress('check', 'Checking for modifications')
+      notify(onProgress, 'check', 'Checking for modifications')
       const modified = await checkForModifications(installPath, skillEntry.installedAt)
       if (modified) {
         return {
@@ -318,7 +350,7 @@ export async function performUninstall(params: {
       }
     }
 
-    onProgress('remove', 'Removing skill directory')
+    notify(onProgress, 'remove', 'Removing skill directory')
     // SMI-6529 round 15 (cross-model review, Critical): remove only the entry
     // checked above. Anything another program put there since is left in
     // place, and so is the manifest entry, so the user can retry.
@@ -348,7 +380,7 @@ export async function performUninstall(params: {
       // Table may not exist pre-migration
     }
 
-    onProgress('manifest', 'Updating manifest')
+    notify(onProgress, 'manifest', 'Updating manifest')
     // SMI-6007: route the final mutation through updateSafely() (lock +
     // fresh re-read + save) instead of saving the `manifestData` snapshot
     // loaded above. That snapshot can be stale by the time we get here —
@@ -377,12 +409,8 @@ export async function performUninstall(params: {
         // path, so the path alone does not identify the generation just
         // removed — and comparing paths alone also keeps a stale record
         // forever whenever the spelling differs (a case-insensitive volume, a
-        // symlinked parent). The install timestamps do identify it.
-        const describesWhatWasRemoved =
-          entry === undefined ||
-          (entry.id === skillEntry.id &&
-            entry.installedAt === skillEntry.installedAt &&
-            entry.lastUpdated === skillEntry.lastUpdated)
+        // symlinked parent). Round 18: the whole record identifies it.
+        const describesWhatWasRemoved = entry === undefined || sameRecord(entry, skillEntry)
         if (!describesWhatWasRemoved) {
           claimedByAnotherInstall = true
           return current
@@ -412,7 +440,7 @@ export async function performUninstall(params: {
       }
     }
 
-    onProgress('done', 'Uninstall complete')
+    notify(onProgress, 'done', 'Uninstall complete')
     // Round 16 (both reviewers): away from a fan-out destination nothing swept
     // what a failed removal parked, so it was named once and never again.
     const warnings = [

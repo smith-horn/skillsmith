@@ -25,6 +25,7 @@ const claimOnRename = vi.hoisted(() => ({
   key: null as string | null,
   newInstallPath: null as string | null,
   reinstalledAt: null as string | null,
+  newVersion: null as string | null,
 }))
 // Every rename onto this path fails, so the manifest write fails after the
 // skill folder is already gone.
@@ -45,18 +46,22 @@ const makeFsMock = vi.hoisted(() => (actual: typeof import('node:fs/promises')) 
       const key = claimOnRename.key ?? ''
       const claimed = claimOnRename.newInstallPath ?? ''
       claimOnRename.path = null
-      const reinstalledAt = claimOnRename.reinstalledAt ?? new Date().toISOString()
+      const reinstalledAt = claimOnRename.reinstalledAt
+      const newVersion = claimOnRename.newVersion
       const raw = JSON.parse(await actual.readFile(manifestFile, 'utf-8')) as {
         installedSkills: Record<
           string,
-          { installPath: string; installedAt: string; lastUpdated: string }
+          { installPath: string; installedAt?: string; lastUpdated?: string; version?: string }
         >
       }
       const entry = raw.installedSkills[key]
       if (entry) {
-        entry.installPath = claimed
-        entry.installedAt = reinstalledAt
-        entry.lastUpdated = reinstalledAt
+        if (claimed !== '') entry.installPath = claimed
+        if (reinstalledAt !== null) {
+          entry.installedAt = reinstalledAt
+          entry.lastUpdated = reinstalledAt
+        }
+        if (newVersion !== null) entry.version = newVersion
       }
       await actual.writeFile(manifestFile, JSON.stringify(raw, null, 2))
     }
@@ -82,13 +87,16 @@ let skillsDir: string
 let manifestPath: string
 let db: Database
 
-function createService(): SkillInstallationService {
+function createService(
+  onProgress?: (stage: string, detail: string) => void
+): SkillInstallationService {
   return new SkillInstallationService({
     db,
     skillRepo: new SkillRepository(db),
     skillDependencyRepo: new SkillDependencyRepository(db),
     skillsDir,
     manifestPath,
+    ...(onProgress !== undefined && { onProgress }),
   })
 }
 
@@ -107,6 +115,23 @@ async function track(name: string, installPath: string): Promise<void> {
         installPath,
         installedAt: later,
         lastUpdated: later,
+      },
+    },
+  }
+  await fs.writeFile(manifestPath, JSON.stringify(manifest, null, 2))
+}
+
+/** Record `name` with no install timestamps, as an older writer did. */
+async function trackLegacy(name: string, installPath: string): Promise<void> {
+  const manifest = {
+    version: '1.0.0',
+    installedSkills: {
+      [name]: {
+        id: `author/${name}`,
+        name,
+        version: '1.0.0',
+        source: `github:author/${name}`,
+        installPath,
       },
     },
   }
@@ -138,6 +163,8 @@ afterEach(async () => {
   claimOnRename.path = null
   claimOnRename.manifestPath = null
   claimOnRename.reinstalledAt = null
+  claimOnRename.newVersion = null
+  claimOnRename.newInstallPath = null
   failRenameTo.path = null
   db.close()
   await fs.rm(tmpDir, { recursive: true, force: true })
@@ -189,7 +216,10 @@ describe('uninstall keeps the manifest honest (SMI-6529 round 16)', () => {
     const installPath = path.join(skillsDir, 'leftover-skill')
     await fs.mkdir(installPath)
     await fs.writeFile(path.join(installPath, 'SKILL.md'), '# Installed\n')
-    const parked = path.join(skillsDir, '.leftover-skill.skillsmith-removing-0123456789ab')
+    const parked = path.join(
+      skillsDir,
+      '.leftover-skill.skillsmith-removing-0123456789abcdef0123456789abcdef'
+    )
     await fs.mkdir(parked)
     await fs.writeFile(path.join(parked, 'part.md'), 'partial')
     await track('leftover-skill', installPath)
@@ -199,6 +229,8 @@ describe('uninstall keeps the manifest honest (SMI-6529 round 16)', () => {
     expect(result.success).toBe(true)
     expect(result.warning).toContain(parked)
     expect(result.warning).toContain('an interrupted removal')
+    // Round 18: the wording does not claim the parked entry is ours.
+    expect(result.warning).toContain('restore or delete it yourself')
     expect(await fs.readFile(path.join(parked, 'part.md'), 'utf-8')).toBe('partial')
   })
 
@@ -230,7 +262,10 @@ describe('uninstall keeps the manifest honest (SMI-6529 round 16)', () => {
     const installPath = path.join(skillsDir, 'stuck-parked')
     await fs.mkdir(installPath)
     await fs.writeFile(path.join(installPath, 'SKILL.md'), '# Installed\n')
-    const parked = path.join(skillsDir, '.stuck-parked.skillsmith-removing-0123456789ab')
+    const parked = path.join(
+      skillsDir,
+      '.stuck-parked.skillsmith-removing-0123456789abcdef0123456789abcdef'
+    )
     await fs.mkdir(parked)
     await fs.writeFile(path.join(parked, 'part.md'), 'partial')
     await track('stuck-parked', installPath)
@@ -257,6 +292,65 @@ describe('uninstall keeps the manifest honest (SMI-6529 round 16)', () => {
     expect(result.message).toContain('run the same remove again once that file is writable')
     await expect(fs.lstat(installPath)).rejects.toMatchObject({ code: 'ENOENT' })
     expect(await manifestEntry('stuck-skill')).toBeDefined()
+  })
+
+  // Round 18 (cross-model review): timestamps are not a unique generation
+  // token — two installs can share a millisecond, and an older writer omits
+  // them — so the whole record is compared.
+  it('leaves the record alone when a reinstall shares both timestamps', async () => {
+    const installPath = path.join(skillsDir, 'collide-skill')
+    await fs.mkdir(installPath)
+    await fs.writeFile(path.join(installPath, 'SKILL.md'), '# Installed\n')
+    await track('collide-skill', installPath)
+    claimOnRename.path = installPath
+    claimOnRename.manifestPath = manifestPath
+    claimOnRename.key = 'collide-skill'
+    claimOnRename.newVersion = '9.9.9'
+
+    const result = await createService().uninstall('collide-skill', { force: true })
+
+    expect(result.success).toBe(true)
+    expect(result.warning).toContain('Another install claimed this name')
+    expect(await manifestEntry('collide-skill')).toMatchObject({ version: '9.9.9' })
+  })
+
+  it('leaves the record alone when a record with no timestamps is replaced', async () => {
+    const installPath = path.join(skillsDir, 'legacy-skill')
+    await fs.mkdir(installPath)
+    await fs.writeFile(path.join(installPath, 'SKILL.md'), '# Installed\n')
+    await trackLegacy('legacy-skill', installPath)
+    const claimedPath = path.join(tmpDir, 'elsewhere', 'legacy-skill')
+    claimOnRename.path = installPath
+    claimOnRename.manifestPath = manifestPath
+    claimOnRename.key = 'legacy-skill'
+    claimOnRename.newInstallPath = claimedPath
+
+    const result = await createService().uninstall('legacy-skill', { force: true })
+
+    expect(result.success).toBe(true)
+    expect(result.warning).toContain('Another install claimed this name')
+    expect(await manifestEntry('legacy-skill')).toMatchObject({ installPath: claimedPath })
+  })
+
+  it('still reports what is parked when a progress listener throws', async () => {
+    const installPath = path.join(skillsDir, 'noisy-skill')
+    await fs.mkdir(installPath)
+    await fs.writeFile(path.join(installPath, 'SKILL.md'), '# Installed\n')
+    const parked = path.join(
+      skillsDir,
+      '.noisy-skill.skillsmith-removing-0123456789abcdef0123456789abcdef'
+    )
+    await fs.mkdir(parked)
+    await fs.writeFile(path.join(parked, 'part.md'), 'partial')
+    await track('noisy-skill', installPath)
+
+    const result = await createService(() => {
+      throw new Error('listener exploded')
+    }).uninstall('noisy-skill', { force: true })
+
+    expect(result.success).toBe(true)
+    expect(result.warning).toContain(parked)
+    await expect(fs.lstat(installPath)).rejects.toMatchObject({ code: 'ENOENT' })
   })
 })
 
