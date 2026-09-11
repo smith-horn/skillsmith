@@ -11,7 +11,7 @@
  * test enforces); only the @module header line above differs. Pure Deno/Web
  * APIs, no Node deps.
  *
- * Preserves core's four false-positive gates exactly:
+ * Preserves core's five false-positive gates exactly (MF-5 added by SMI-6508):
  *   MF-1: a bare `api_key`/`auth_token` keyword mention is suppressed unless
  *     the line ASSIGNS a real (non-placeholder, sufficiently-entropic) value.
  *   MF-2: a lone `.env` mention stays MEDIUM; it only grades HIGH when it
@@ -80,6 +80,13 @@ const AUTH_TOKEN_KEYWORD = /auth[_-]?token/i
 const CREDENTIALS_FILE_PATTERN = /credentials\.(?:json|ya?ml|env|toml|txt)/i
 const CREDENTIALS_ASSIGN_PATTERN = /credentials\s*[:=]/i
 const SECRETS_ASSIGN_PATTERN = /\bsecrets?\s*[:=]/i
+// SMI-6508 (MF-5): the PREFIXED form (`API_SECRETS=`, `app_secrets:`,
+// `mySecrets=`, singular `API_SECRET=`). Exactly complementary to the pattern
+// above — `_` is a word character, so that one's `\b` cannot match after an
+// underscore or camelCase hump, and this lookbehind matches only those cases.
+// The two never both fire. MEDIUM by classification; see
+// OBSERVE_ONLY_MEDIUM_PATTERNS.
+const SECRETS_PREFIXED_ASSIGN_PATTERN = /(?<=[A-Za-z0-9_])secrets?\s*[:=]/i
 const SECRETS_PATH_PATTERN = /\bsecrets?\/[a-z0-9_.-]+/i
 const PEM_PATTERN = /\.pem$/i
 const KEY_FILE_PATTERN = /\.key$/i
@@ -95,6 +102,7 @@ export const SENSITIVE_PATH_PATTERNS: RegExp[] = [
   CREDENTIALS_FILE_PATTERN,
   CREDENTIALS_ASSIGN_PATTERN,
   SECRETS_ASSIGN_PATTERN,
+  SECRETS_PREFIXED_ASSIGN_PATTERN,
   SECRETS_PATH_PATTERN,
   PEM_PATTERN,
   KEY_FILE_PATTERN,
@@ -140,14 +148,33 @@ export const PATH_FORM_PATTERNS: ReadonlySet<RegExp> = new Set([
  * the assigned value. See assignmentHasRealValue() below.
  *
  * Partition check: 1 (ENV) + 9 (PATH_FORM) + 3 (ASSIGNMENT) + 2
- * (VALUE_GATED_KEYWORD) = 15, total and disjoint. An unclassified future
- * pattern falls through to scanSensitivePaths' fail-CLOSED `else` branch and
- * stays HIGH.
+ * (VALUE_GATED_KEYWORD) + 1 (OBSERVE_ONLY_MEDIUM) = 16, total and disjoint. An
+ * unclassified future pattern falls through to scanSensitivePaths' fail-CLOSED
+ * `else` branch and stays HIGH.
  */
 export const VALUE_GATED_ASSIGNMENT_PATTERNS: ReadonlySet<RegExp> = new Set([
   CREDENTIALS_ASSIGN_PATTERN,
   SECRETS_ASSIGN_PATTERN,
   PASSWORD_ASSIGN_PATTERN,
+])
+
+/**
+ * SMI-6508 (MF-5): always MEDIUM, never value-gated and never escalated.
+ *
+ * Routing the prefixed form through MF-4 would make it HIGH-by-default, which
+ * blocks installation with no allowlist in that path. Measured against 66,495
+ * real skill contents: MF-4 would call 191 of 418 newly-reached lines "real
+ * value", newly blocking 132 skills — and shape analysis put ~46% of those in
+ * false-positive-looking shapes. Shipping at MEDIUM makes the detection visible
+ * at zero install cost and turns the open question into one real findings can
+ * answer. Promotion is a one-line move into the MF-4 set once they do.
+ *
+ * `DB_PASSWORD=` / `AWS_CREDENTIALS=` already reach HIGH because their patterns
+ * never carried a `\b`. That is grandfathered, not endorsed — their prefixed-form
+ * FP rate is unmeasured. The asymmetry reflects the evidence. See SMI-6508.
+ */
+export const OBSERVE_ONLY_MEDIUM_PATTERNS: ReadonlySet<RegExp> = new Set([
+  SECRETS_PREFIXED_ASSIGN_PATTERN,
 ])
 
 // MF-2: a `.env` reference is an active read/exfiltration only when it co-occurs with a
@@ -283,6 +310,11 @@ export function scanSensitivePaths(lines: string[], contexts: LineContext[]): Se
         severity = hasPathActionContext(lines, index) ? 'high' : 'medium'
       } else if (VALUE_GATED_ASSIGNMENT_PATTERNS.has(pattern)) {
         severity = assignmentHasRealValue(lines, index) ? 'high' : 'medium'
+      } else if (OBSERVE_ONLY_MEDIUM_PATTERNS.has(pattern)) {
+        // MF-5 (SMI-6508): always MEDIUM. Detection without an install block,
+        // pending real-world evidence on the FP rate. Deliberately NOT routed
+        // through assignmentHasRealValue.
+        severity = 'medium'
       } else {
         severity = 'high' // MF-1 survivors and any future unclassified pattern — fail CLOSED
       }
