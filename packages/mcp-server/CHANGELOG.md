@@ -8,6 +8,9 @@ All notable changes to `@skillsmith/mcp-server` are documented here.
   directories that are git clones and can write into the wrong directory (SMI-6528). On those
   versions, preview with `--dry-run` and update skills one at a time; the install-layer fix is
   tracked in SMI-6529.
+- **Fix**: copyright headers in the three quota middleware source files now read
+  `2025-2026 Smith Horn Group Ltd`; they previously gave 2024 as the start year. Comment-only,
+  no behavior change. (SMI-6552)
 
 ## v0.7.14
 
