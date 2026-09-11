@@ -732,7 +732,7 @@ describe('executeOutdated', () => {
   // ===========================================================================
 
   describe('tamper-check classification', () => {
-    it('classifies a genuine version bump as outdated (safe to bulk-update) when no signal fires', async () => {
+    it('classifies a genuine version bump as outdated (SMI-6530: excluded from bulk update) when no signal fires', async () => {
       const skillId = 'wrsmith108/astro'
       mockedLoadManifest.mockResolvedValue(
         manifestWithSkills([{ id: skillId, name: 'astro', installPath: '/tmp/skills/astro' }])
@@ -754,8 +754,10 @@ describe('executeOutdated', () => {
       expect(result.skills[0].status).toBe('outdated')
       expect(result.skills[0].diagnosis.state).toBe('outdated')
       expect(result.skills[0].diagnosis.signal).toBeNull()
-      expect(result.skills[0].diagnosis.safeToBulkUpdate).toBe(true)
-      expect(result.skills[0].diagnosis.remediation).toMatch(/skillsmith update/)
+      // SMI-6530 containment: bulk update is unsafe until the update
+      // eligibility gate (SMI-6532) ships.
+      expect(result.skills[0].diagnosis.safeToBulkUpdate).toBe(false)
+      expect(result.skills[0].diagnosis.remediation).toMatch(/skillsmith update <name> --dry-run/)
       expect(result.summary.outdated).toBe(1)
       expect(result.summary.local_drift).toBe(0)
       expect(result.summary.identity_mismatch).toBe(0)

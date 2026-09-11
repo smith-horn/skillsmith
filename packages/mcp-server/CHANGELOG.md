@@ -16,6 +16,11 @@ All notable changes to `@skillsmith/mcp-server` are documented here.
   the directory genuinely exists on disk — a phantom manifest row with nothing on disk is still
   retried (SMI-6529).
 
+- **Security**: `skillsmith update --all` in CLI 0.8.8-0.8.10 can overwrite local edits in skill
+  directories that are git clones and can write into the wrong directory (SMI-6528). On those
+  versions, preview with `--dry-run` and update skills one at a time. This release includes the
+  install-layer fix (SMI-6529).
+
 ## v0.7.14
 
 - **Fix**: SMI-5207 -- sensitive_path action-context gating (Wave 1) (#2760)

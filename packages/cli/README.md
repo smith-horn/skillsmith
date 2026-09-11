@@ -142,8 +142,8 @@ names, or `--all` — bare `skillsmith update` with none of those prints usage
 guidance instead of updating anything.
 
 ```bash
-# Update all skills
-skillsmith update --all
+# Preview what --all would change before applying it
+skillsmith update --all --dry-run
 
 # Update one skill
 skillsmith update skill-name
@@ -833,8 +833,8 @@ npm run dev
 ### Manage Skills
 
 ```bash
-# Update all installed skills
-skillsmith update --all
+# Preview updates to all installed skills, then update one at a time
+skillsmith update --all --dry-run
 
 # Remove a skill
 skillsmith remove community/old-skill

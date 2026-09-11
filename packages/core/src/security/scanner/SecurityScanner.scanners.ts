@@ -18,6 +18,7 @@ import {
   VALUE_GATED_KEYWORD_PATTERNS,
   PATH_FORM_PATTERNS,
   VALUE_GATED_ASSIGNMENT_PATTERNS,
+  OBSERVE_ONLY_MEDIUM_PATTERNS,
   SOCIAL_ENGINEERING_PATTERNS,
   PROMPT_LEAKING_PATTERNS,
   DATA_EXFILTRATION_PATTERNS,
@@ -105,6 +106,12 @@ export function scanSensitivePaths(
         severity = hasPathActionContext(lines, index) ? 'high' : 'medium' // MF-3
       } else if (VALUE_GATED_ASSIGNMENT_PATTERNS.has(pattern)) {
         severity = assignmentHasRealValue(lines, index) ? 'high' : 'medium' // MF-4
+      } else if (OBSERVE_ONLY_MEDIUM_PATTERNS.has(pattern)) {
+        // MF-5 (SMI-6508): always MEDIUM. Detection without an install block,
+        // pending real-world evidence on the FP rate. Deliberately NOT routed
+        // through assignmentHasRealValue — the measured HIGH rate for this
+        // shape was 191/418 lines, ~46% of which looked like false positives.
+        severity = 'medium'
       } else {
         severity = 'high' // MF-1 survivors and any future unclassified pattern — fail CLOSED
       }

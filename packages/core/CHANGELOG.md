@@ -24,12 +24,45 @@ All notable changes to `@skillsmith/core` are documented here.
   corrupt it), and a corrupt one is moved aside with a warning rather than replaced by an empty
   one that dropped every other skill's record; a manifest written by a newer version is left
   untouched. An uninstall racing a re-link or a refresh leaves the records matching what is on
-  disk, and an uninstall that can't read the manifest says so. The
-  per-target write queue now classifies and snapshots
-  every write independently (not just the first for a given path), so two differently-cased files
-  on a case-sensitive filesystem restore correctly, a short write is retried until complete or
-  reported as a restore failure, and a 0-byte file orphaned by a failed create is still cleaned up.
+  disk, and an uninstall that can't read the manifest says so. The per-target write queue now
+  classifies and snapshots every write independently (not just the first for a given path), so two
+  differently-cased files on a case-sensitive filesystem restore correctly, a short write is
+  retried until complete or reported as a restore failure, and a 0-byte file orphaned by a failed
+  create is still cleaned up.
   Backfill never modifies a `provenance: 'local'` row (SMI-6529, ADR-155).
+
+- **Fix**: `sensitive_path` now detects a secret assigned to a **prefixed** key —
+  `API_SECRETS`, `app_secrets`, `mySecrets`, and the singular `API_SECRET`. `SECRETS_ASSIGN_PATTERN`
+  carries `\b`, and `_` is a word character, so that boundary could never match after an underscore
+  or a camelCase hump; SCREAMING_SNAKE and snake_case are the dominant conventions for
+  secret-bearing environment variables, so this missed the most likely real shape. The sibling
+  `credentials` and `password` patterns carry no boundary and were never affected. Fixed by a
+  **complementary** pattern matching exactly what the boundary excludes, rather than by removing it
+  — the two never match the same occurrence, and `MY-SECRETS=` / `my.secrets=` stay with the bare
+  pattern since `-` and `.` are non-word characters its `\b` already accepts.
+- **Added**: a fifth `sensitive_path` severity class, **MF-5 (`OBSERVE_ONLY_MEDIUM_PATTERNS`)** —
+  always MEDIUM, never value-gated and never escalated. The prefixed form is classified here rather
+  than into MF-4 because MF-4 is HIGH by default, and a HIGH `sensitive_path` makes
+  `SecurityScanner` compute `passed = false`, which blocks installation with no allowlist in that
+  path. Measured against 66,495 real skill bodies in production: routing the prefixed form through
+  MF-4 would newly block 132 skills (0.20% of that corpus, ~975 extrapolated to the full registry),
+  and shape analysis put roughly 46% of those in false-positive-looking shapes. Shipping at MEDIUM
+  makes the detection visible at zero install cost and turns the open question into one the
+  accumulated findings can answer; promoting it later is a one-line move into the MF-4 set. The
+  severity-gate partition grows 4 classes → 5 and 15 patterns → 16, both guarded by the existing
+  regression test's totality check. **Deliberate asymmetry**: prefixed `password` / `credentials`
+  keys still reach HIGH, grandfathered rather than endorsed — their prefixed-form false-positive
+  rate has never been measured, and levelling in either direction without measuring would be the
+  wrong fix. `SCANNER_RULESET_VERSION` bumps to `2026-09-11.1` — *previously-clean-now-fires*, the
+  opposite direction from SMI-6505's bump and load-bearing for the same reason: without it the
+  `comparable` gate reuses the stored verdict and the new finding never reaches an already-scanned
+  skill. (SMI-6508)
+
+- **Changed**: the agent pack's CLI fallback commands (`CLI_FALLBACK_COMMANDS` in
+  `services/agent-pack/prompt-source.ts`) now lead with `skillsmith update --all --dry-run` and
+  then per-skill updates, instead of recommending `skillsmith update --all` directly. Containment
+  for SMI-6528: `update --all` in CLI 0.8.8-0.8.10 can overwrite local edits in skill directories
+  that are git clones and can write into the wrong directory (SMI-6530).
 
 - **Fix**: `sensitive_path` MF-4 no longer scores an **embedded** assignment key assigned a bare
   boolean as a real credential. `allow_credentials=True` — the standard FastAPI/Starlette CORS

@@ -59,7 +59,8 @@ skillsmith install community/jest-helper
 skillsmith validate ./my-skill
 
 # Maintain
-skillsmith update --all
+skillsmith update --all --dry-run
+skillsmith update <skill>
 skillsmith audit collisions
 
 # Retire
@@ -77,7 +78,7 @@ Some lifecycle operations live in the CLI and have no MCP equivalent (yet). When
 |---|---|
 | Pin a skill to a version | `skillsmith pin <skill> <version>` |
 | Unpin a skill | `skillsmith unpin <skill>` |
-| Update all installed skills | `skillsmith update --all` |
+| Preview updates to all installed skills | `skillsmith update --all --dry-run` |
 | Audit advisories (Team+) | `skillsmith audit advisories` |
 | Audit collisions | `skillsmith audit collisions` |
 | Configure audit mode | `skillsmith config set audit_mode <preventative\|power_user\|governance\|off>` |
@@ -174,8 +175,9 @@ The companion **skill-builder** skill guides you through frontmatter, progressiv
 
 ```
 "Ask Skillsmith for updates to my installed skills"
-# Then run in terminal:
-skillsmith update --all
+# Then run in terminal — preview first, then update skills one at a time:
+skillsmith update --all --dry-run
+skillsmith update <skill>
 ```
 
 ### Audit before sharing your skill folder

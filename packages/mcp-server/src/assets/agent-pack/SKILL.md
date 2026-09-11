@@ -123,8 +123,9 @@ If the MCP server is unavailable, use the CLI directly for the same jobs above. 
 
 ```bash
 # Keep skills current
-skillsmith diff <skill>       # what changed since your installed version
-skillsmith update <skill>     # or: skillsmith update --all
+skillsmith diff <skill>             # what changed since your installed version
+skillsmith update --all --dry-run   # review updates first
+skillsmith update <skill>           # then update one skill at a time
 
 # Audit and clean up inventory
 skillsmith audit collisions

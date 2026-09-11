@@ -91,6 +91,7 @@ import {
   PATH_FORM_PATTERNS,
   VALUE_GATED_ASSIGNMENT_PATTERNS,
   VALUE_GATED_KEYWORD_PATTERNS,
+  OBSERVE_ONLY_MEDIUM_PATTERNS,
 } from '../../src/security/scanner/patterns.js'
 
 /**
@@ -99,7 +100,7 @@ import {
  * removing patterns requires updating this file with justification.
  */
 const BASELINE_PATTERN_COUNTS = {
-  SENSITIVE_PATH_PATTERNS: 15, // SMI-4396 Wave 2: 12 → 15 (bare-keyword tightened + /etc/passwd explicit); SMI-5359 Wave 4 narrowed .env/api_key/auth_token in place (count unchanged)
+  SENSITIVE_PATH_PATTERNS: 16, // SMI-6508: 15 → 16 (+SECRETS_PREFIXED_ASSIGN, MF-5 observe-only MEDIUM). SMI-4396 Wave 2: 12 → 15 (bare-keyword tightened + /etc/passwd explicit); SMI-5359 Wave 4 narrowed .env/api_key/auth_token in place (count unchanged)
   JAILBREAK_PATTERNS: 23, // SMI-5876: 15 → 18 (+J-N1/J-N2/J-N3); 18 → 23 (design-pass follow-up: +J-S1/J-S2/J-S3a/J-S3b/J-S4 state_assertion + obedience-compulsion patterns, closing a 12-fixture recall gap; 4 existing bare-vocabulary entries reclassified `mention`-tier in place, not removed)
   SUSPICIOUS_PATTERNS: 11,
   SOCIAL_ENGINEERING_PATTERNS: 12,
@@ -519,28 +520,32 @@ describe('Scanner Regression Guard (SMI-3864)', () => {
   // guards this durably: an unclassified future pattern falls through to the
   // fail-closed `else` branch."
   describe('SENSITIVE_PATH_PATTERNS severity-gate partition (SMI-5207)', () => {
-    it('every entry belongs to exactly one of {ENV, PATH_FORM, VALUE_GATED_ASSIGNMENT, VALUE_GATED_KEYWORD}', () => {
+    it('every entry belongs to exactly one of {ENV, PATH_FORM, VALUE_GATED_ASSIGNMENT, VALUE_GATED_KEYWORD, OBSERVE_ONLY_MEDIUM}', () => {
       for (const pattern of SENSITIVE_PATH_PATTERNS) {
         const classes = [
           pattern === ENV_PATH_PATTERN,
           PATH_FORM_PATTERNS.has(pattern),
           VALUE_GATED_ASSIGNMENT_PATTERNS.has(pattern),
           VALUE_GATED_KEYWORD_PATTERNS.has(pattern),
+          OBSERVE_ONLY_MEDIUM_PATTERNS.has(pattern),
         ].filter(Boolean)
         expect(classes).toHaveLength(1)
       }
     })
 
-    it('the four classes total and partition SENSITIVE_PATH_PATTERNS exactly (1 + 9 + 3 + 2 = 15)', () => {
+    // SMI-6508 added the fifth class (MF-5, OBSERVE_ONLY_MEDIUM): 1 + 9 + 3 + 2 + 1 = 16.
+    it('the five classes total and partition SENSITIVE_PATH_PATTERNS exactly (1 + 9 + 3 + 2 + 1 = 16)', () => {
       expect(PATH_FORM_PATTERNS.size).toBe(9)
       expect(VALUE_GATED_ASSIGNMENT_PATTERNS.size).toBe(3)
       expect(VALUE_GATED_KEYWORD_PATTERNS.size).toBe(2)
+      expect(OBSERVE_ONLY_MEDIUM_PATTERNS.size).toBe(1)
       expect(SENSITIVE_PATH_PATTERNS).toContain(ENV_PATH_PATTERN)
       expect(
         1 +
           PATH_FORM_PATTERNS.size +
           VALUE_GATED_ASSIGNMENT_PATTERNS.size +
-          VALUE_GATED_KEYWORD_PATTERNS.size
+          VALUE_GATED_KEYWORD_PATTERNS.size +
+          OBSERVE_ONLY_MEDIUM_PATTERNS.size
       ).toBe(SENSITIVE_PATH_PATTERNS.length)
     })
   })
