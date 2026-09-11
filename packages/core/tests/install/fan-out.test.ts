@@ -1427,11 +1427,11 @@ describe('install/fan-out', () => {
           ],
           [
             'lstat',
-            /write failed; the staging folder (\S+) could not be checked \(EACCES\), so it was left in place$/,
+            /write failed; the staging folder \S+ could not be checked \(EACCES\) and is now at (\S+)$/,
           ],
           [
             'rm',
-            /write failed; the staging folder (\S+) could not be removed \(EACCES\), so what is left of it stayed in place$/,
+            /write failed; the staging folder \S+ could not be removed \(EACCES\); what is left of it is at (\S+)$/,
           ],
         ] as const
         for (const [mode, expected] of cases) {

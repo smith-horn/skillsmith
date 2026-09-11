@@ -216,6 +216,15 @@ async function inspectForRemoval(
   return { stat }
 }
 
+/**
+ * Warnings naming anything an earlier removal left parked next to
+ * `installPath`. Round 17 (cross-model review): every exit after the removal
+ * reports these, not only the successful one.
+ */
+async function parkedWarnings(installPath: string): Promise<string[]> {
+  return (await listParkedLeftovers(installPath)).map(parkedLeftoverWarning)
+}
+
 /** Perform skill uninstall with manifest awareness and orphan fallback. */
 export async function performUninstall(params: {
   skillName: string
@@ -316,6 +325,7 @@ export async function performUninstall(params: {
     if (seen.stat !== null) {
       const removal = await removeIfSame(installPath, seen.stat)
       if (!removal.removed) {
+        const parked = await parkedWarnings(installPath)
         return {
           success: false,
           skillName,
@@ -327,6 +337,7 @@ export async function performUninstall(params: {
             ' ' +
             removal.reason +
             '.',
+          ...(parked.length > 0 && { warning: parked.join(' ') }),
         }
       }
     }
@@ -362,11 +373,16 @@ export async function performUninstall(params: {
     try {
       await manifest.updateSafely((current) => {
         const entry = current.installedSkills[manifestKey]
+        // Round 17 (cross-model review): a reinstall can land at the SAME
+        // path, so the path alone does not identify the generation just
+        // removed — and comparing paths alone also keeps a stale record
+        // forever whenever the spelling differs (a case-insensitive volume, a
+        // symlinked parent). The install timestamps do identify it.
         const describesWhatWasRemoved =
           entry === undefined ||
-          (entry.installPath === undefined
-            ? entry.id === skillEntry.id
-            : path.resolve(entry.installPath) === path.resolve(installPath))
+          (entry.id === skillEntry.id &&
+            entry.installedAt === skillEntry.installedAt &&
+            entry.lastUpdated === skillEntry.lastUpdated)
         if (!describesWhatWasRemoved) {
           claimedByAnotherInstall = true
           return current
@@ -376,6 +392,7 @@ export async function performUninstall(params: {
         return next
       })
     } catch (error) {
+      const parked = await parkedWarnings(installPath)
       return {
         success: false,
         skillName,
@@ -389,7 +406,9 @@ export async function performUninstall(params: {
           manifest.path +
           ' could not be updated (' +
           (error instanceof Error ? error.message : String(error)) +
-          '). Run the same remove again to clear the record.',
+          '). Its folder is already gone; run the same remove again once that file is writable, ' +
+          'which acts on whatever that record names at the time.',
+        ...(parked.length > 0 && { warning: parked.join(' ') }),
       }
     }
 
@@ -407,7 +426,7 @@ export async function performUninstall(params: {
             'Another install claimed this name while this one was being removed, so that record was left alone.',
           ]
         : []),
-      ...(await listParkedLeftovers(installPath)).map(parkedLeftoverWarning),
+      ...(await parkedWarnings(installPath)),
     ]
     return {
       success: true,

@@ -82,44 +82,38 @@ export function parkedLeftoverWarning(parked: string): string {
 }
 
 /**
- * Put a parked entry back where it came from, but only while nothing is at
- * that path. Round 16 (both reviewers): `rename` REPLACES the destination —
- * measured on macOS and Linux, a parked directory replaces an empty
- * directory, and a parked file or symlink replaces a file or symlink (other
- * combinations the kernel refuses). So an unguarded put-back could destroy
- * what another program created while the entry was parked. Something at the
- * path now owns it: the entry stays parked, and the caller says where it is.
- *
- * The check and the rename are still two syscalls; what that window can now
- * cost is one entry created inside it, rather than the recursive delete this
- * primitive exists to prevent.
- */
-async function putBack(parked: string, target: string): Promise<{ why: string } | null> {
-  try {
-    await fsp.lstat(target)
-    return { why: `something else is at ${target} now` }
-  } catch (err) {
-    if ((err as NodeJS.ErrnoException).code !== 'ENOENT') {
-      return { why: `${target} could not be checked (${errorCode(err)})` }
-    }
-  }
-  try {
-    await fsp.rename(parked, target)
-    return null
-  } catch (err) {
-    return { why: `the move back failed (${errorCode(err)})` }
-  }
-}
-
-/**
  * Remove `target` (a folder recursively, anything else with `unlink`) only if
  * it is still the entry `expected` describes. An entry that is already gone
- * counts as removed. Anything else found there is put back and left in place.
+ * counts as removed. Anything else is left alone, and whatever this call
+ * moved aside is reported with its exact path.
+ *
+ * Round 17 (cross-model review): nothing is ever renamed back. `rename`
+ * replaces what is at the destination — measured on macOS and Linux, a
+ * directory replaces an empty directory and a file or symlink replaces a file
+ * or symlink — so putting an entry back could destroy something created at
+ * that path in the meantime, and a check first only narrows that window
+ * rather than closing it. The two failure modes are not equal: a put-back can
+ * destroy an entry, while leaving one parked merely moves it, recoverably,
+ * and says where it went. The identity is also checked once BEFORE the entry
+ * is parked, so the ordinary mismatch moves nothing at all.
  */
 export async function removeIfSame(
   target: string,
   expected: EntryIdentity
 ): Promise<CheckedRemoval> {
+  let before: Stats
+  try {
+    before = await fsp.lstat(target)
+  } catch (err) {
+    if ((err as NodeJS.ErrnoException).code === 'ENOENT') return { removed: true }
+    return {
+      removed: false,
+      reason: `could not be checked (${errorCode(err)}), so it was left in place`,
+    }
+  }
+  if (before.dev !== expected.dev || before.ino !== expected.ino) {
+    return { removed: false, reason: 'was replaced by something else, so it was left in place' }
+  }
   const parked = parkedName(target)
   try {
     await fsp.rename(target, parked)
@@ -137,19 +131,19 @@ export async function removeIfSame(
   } catch (err) {
     checkError = err
   }
-  if (now === undefined || now.dev !== expected.dev || now.ino !== expected.ino) {
-    const what =
-      now === undefined
-        ? `could not be checked (${errorCode(checkError)})`
-        : 'was replaced by something else'
-    // What was parked is not ours, so it goes back where it was.
-    const stranded = await putBack(parked, target)
+  if (now === undefined) {
     return {
       removed: false,
-      reason:
-        stranded === null
-          ? `${what}, so it was left in place`
-          : `${what}; that entry is now at ${parked} (${stranded.why})`,
+      reason: `could not be checked (${errorCode(checkError)}) and is now at ${parked}`,
+    }
+  }
+  if (now.dev !== expected.dev || now.ino !== expected.ino) {
+    // Something took the path between the check above and this rename, so what
+    // is parked belongs to whoever put it there. It is never renamed back over
+    // what is at the path now; its exact location is reported instead.
+    return {
+      removed: false,
+      reason: `was replaced by something else, and that entry is now at ${parked}`,
     }
   }
   try {
@@ -157,16 +151,9 @@ export async function removeIfSame(
     else await fsp.unlink(parked)
     return { removed: true }
   } catch (err) {
-    // Put back whatever is left, so the caller's record still describes where
-    // it is and a retry finds it there (round 16, cross-model review).
-    const stranded = await putBack(parked, target)
-    const why = `could not be removed (${errorCode(err)})`
     return {
       removed: false,
-      reason:
-        stranded === null
-          ? `${why}, so what is left of it stayed in place`
-          : `${why}; what is left of it is at ${parked} (${stranded.why})`,
+      reason: `could not be removed (${errorCode(err)}); what is left of it is at ${parked}`,
     }
   }
 }

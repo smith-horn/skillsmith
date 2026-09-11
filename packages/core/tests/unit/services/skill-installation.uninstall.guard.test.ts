@@ -24,6 +24,7 @@ const claimOnRename = vi.hoisted(() => ({
   manifestPath: null as string | null,
   key: null as string | null,
   newInstallPath: null as string | null,
+  reinstalledAt: null as string | null,
 }))
 // Every rename onto this path fails, so the manifest write fails after the
 // skill folder is already gone.
@@ -44,10 +45,19 @@ const makeFsMock = vi.hoisted(() => (actual: typeof import('node:fs/promises')) 
       const key = claimOnRename.key ?? ''
       const claimed = claimOnRename.newInstallPath ?? ''
       claimOnRename.path = null
+      const reinstalledAt = claimOnRename.reinstalledAt ?? new Date().toISOString()
       const raw = JSON.parse(await actual.readFile(manifestFile, 'utf-8')) as {
-        installedSkills: Record<string, { installPath: string }>
+        installedSkills: Record<
+          string,
+          { installPath: string; installedAt: string; lastUpdated: string }
+        >
       }
-      if (raw.installedSkills[key]) raw.installedSkills[key].installPath = claimed
+      const entry = raw.installedSkills[key]
+      if (entry) {
+        entry.installPath = claimed
+        entry.installedAt = reinstalledAt
+        entry.lastUpdated = reinstalledAt
+      }
       await actual.writeFile(manifestFile, JSON.stringify(raw, null, 2))
     }
     if (String(to) === failRenameTo.path) {
@@ -127,6 +137,7 @@ afterEach(async () => {
   swapBeforeRename.path = null
   claimOnRename.path = null
   claimOnRename.manifestPath = null
+  claimOnRename.reinstalledAt = null
   failRenameTo.path = null
   db.close()
   await fs.rm(tmpDir, { recursive: true, force: true })
@@ -191,22 +202,44 @@ describe('uninstall keeps the manifest honest (SMI-6529 round 16)', () => {
     expect(await fs.readFile(path.join(parked, 'part.md'), 'utf-8')).toBe('partial')
   })
 
-  it('leaves the record alone when another install claimed the name meanwhile', async () => {
+  // Round 17 (cross-model review): the reinstall lands at the SAME path, so
+  // comparing paths alone would read it as the record just removed and delete
+  // the new install's record.
+  it('leaves the record alone when the same name is reinstalled at the same path', async () => {
     const installPath = path.join(skillsDir, 'claimed-skill')
     await fs.mkdir(installPath)
     await fs.writeFile(path.join(installPath, 'SKILL.md'), '# Installed\n')
     await track('claimed-skill', installPath)
-    const claimedPath = path.join(tmpDir, 'elsewhere', 'claimed-skill')
     claimOnRename.path = installPath
     claimOnRename.manifestPath = manifestPath
     claimOnRename.key = 'claimed-skill'
-    claimOnRename.newInstallPath = claimedPath
+    claimOnRename.newInstallPath = installPath
+    claimOnRename.reinstalledAt = '2030-01-01T00:00:00.000Z'
 
     const result = await createService().uninstall('claimed-skill', { force: true })
 
     expect(result.success).toBe(true)
     expect(result.warning).toContain('Another install claimed this name')
-    expect(await manifestEntry('claimed-skill')).toMatchObject({ installPath: claimedPath })
+    expect(await manifestEntry('claimed-skill')).toMatchObject({
+      installPath,
+      installedAt: '2030-01-01T00:00:00.000Z',
+    })
+  })
+
+  it('names what is parked even when the record could not be updated', async () => {
+    const installPath = path.join(skillsDir, 'stuck-parked')
+    await fs.mkdir(installPath)
+    await fs.writeFile(path.join(installPath, 'SKILL.md'), '# Installed\n')
+    const parked = path.join(skillsDir, '.stuck-parked.skillsmith-removing-0123456789ab')
+    await fs.mkdir(parked)
+    await fs.writeFile(path.join(parked, 'part.md'), 'partial')
+    await track('stuck-parked', installPath)
+    failRenameTo.path = manifestPath
+
+    const result = await createService().uninstall('stuck-parked', { force: true })
+
+    expect(result.success).toBe(false)
+    expect(result.warning).toContain(parked)
   })
 
   it('says what to do when the folder is gone but its record could not be updated', async () => {
@@ -221,7 +254,7 @@ describe('uninstall keeps the manifest honest (SMI-6529 round 16)', () => {
     expect(result.success).toBe(false)
     expect(result.message).toContain('could not be updated')
     expect(result.message).toContain(manifestPath)
-    expect(result.message).toContain('Run the same remove again')
+    expect(result.message).toContain('run the same remove again once that file is writable')
     await expect(fs.lstat(installPath)).rejects.toMatchObject({ code: 'ENOENT' })
     expect(await manifestEntry('stuck-skill')).toBeDefined()
   })
@@ -238,8 +271,24 @@ describe('uninstall removes only the folder it checked (SMI-6529 round 15)', () 
     const result = await createService().uninstall('swapped-skill', { force: true })
 
     expect(result.success).toBe(false)
-    expect(result.message).toMatch(/was not removed: .* was replaced by something else/)
-    expect(await fs.readFile(path.join(installPath, 'KEEP.md'), 'utf-8')).toBe('not ours')
+    expect(result.message).toMatch(
+      /was not removed: .* was replaced by something else, and that entry is now at /
+    )
+    // Round 17 (cross-model review): their folder is never renamed back over
+    // whatever is at the path now. It is moved aside, and the exact path is
+    // reported, so nothing of theirs is destroyed.
+    const parkedName = (await fs.readdir(skillsDir)).find((n) =>
+      n.startsWith('.swapped-skill.skillsmith-removing-')
+    )
+    expect(parkedName).toBeDefined()
+    expect(await fs.readFile(path.join(skillsDir, parkedName ?? '', 'KEEP.md'), 'utf-8')).toBe(
+      'not ours'
+    )
+    expect(result.warning).toContain(parkedName ?? 'no parked entry')
+    // Our own copy is where their swap moved it, untouched.
+    expect(await fs.readFile(path.join(`${installPath}-moved`, 'SKILL.md'), 'utf-8')).toBe(
+      '# Installed\n'
+    )
     expect(await manifestEntry('swapped-skill')).toBeDefined()
   })
 })

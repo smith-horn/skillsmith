@@ -93,7 +93,9 @@ describe('removeIfSame (SMI-6529 round 15)', () => {
     expect(await removeIfSame(target, seen)).toEqual({ removed: true })
   })
 
-  it('puts back a folder another program swapped in before the call', async () => {
+  // Round 17: the identity is checked before the entry is parked, so an
+  // ordinary mismatch moves nothing at all.
+  it('refuses without moving anything when the entry was already replaced', async () => {
     const { removeIfSame } = await load()
     const target = path.join(root, 'skill')
     await mkdir(target)
@@ -108,6 +110,7 @@ describe('removeIfSame (SMI-6529 round 15)', () => {
     })
     expect(await readFile(path.join(target, 'KEEP.md'), 'utf-8')).toBe('not ours')
     expect((await readdir(root)).sort()).toEqual(['skill', 'skill-moved'])
+    expect((await readdir(root)).some((n) => PARKED.test(n))).toBe(false)
   })
 
   it('never deletes a folder another program puts at the path while the delete runs', async () => {
@@ -131,7 +134,7 @@ describe('removeIfSame (SMI-6529 round 15)', () => {
     expect(await readdir(root)).toEqual(['skill'])
   })
 
-  it('puts back what is left when the delete fails and the path is free', async () => {
+  it('leaves what is left parked when the delete fails, and names where', async () => {
     const target = path.join(root, 'skill')
     await mkdir(target)
     await writeFile(path.join(target, 'SKILL.md'), 'ours', 'utf-8')
@@ -144,19 +147,21 @@ describe('removeIfSame (SMI-6529 round 15)', () => {
     )
     const { removeIfSame } = await load()
 
-    // Round 16: what is left goes back where it was, so the caller's record
-    // still describes it and a retry finds it there.
-    expect(await removeIfSame(target, await lstat(target))).toEqual({
-      removed: false,
-      reason: 'could not be removed (EACCES), so what is left of it stayed in place',
-    })
-    expect(await readdir(root)).toEqual(['skill'])
-    expect(await readFile(path.join(target, 'SKILL.md'), 'utf-8')).toBe('ours')
+    // Round 17: nothing is renamed back, so the caller is told exactly where
+    // what is left ended up. The next uninstall of this skill reports it too.
+    const result = await removeIfSame(target, await lstat(target))
+    expect(result.removed).toBe(false)
+    const reason = result.removed ? '' : result.reason
+    expect(reason).toMatch(/^could not be removed \(EACCES\); what is left of it is at /)
+    const parked = reason.slice(reason.lastIndexOf(' ') + 1)
+    expect(path.basename(parked)).toMatch(PARKED)
+    expect(await readFile(path.join(parked, 'SKILL.md'), 'utf-8')).toBe('ours')
+    await expect(lstat(target)).rejects.toMatchObject({ code: 'ENOENT' })
   })
 
-  // Round 16 (both reviewers): `rename` REPLACES what is at the destination —
-  // a directory replaces an empty directory, a file replaces a file or a
-  // symlink — so the put-back must never run onto an occupied path.
+  // Round 16 (both reviewers), round 17 (cross-model): `rename` REPLACES what
+  // is at the destination — a directory replaces an empty directory, a file
+  // replaces a file or a symlink — so nothing is ever renamed back.
   it('leaves what it removed parked rather than replacing a folder that took the path', async () => {
     const target = path.join(root, 'skill')
     await mkdir(target)
@@ -177,7 +182,6 @@ describe('removeIfSame (SMI-6529 round 15)', () => {
     expect(result.removed).toBe(false)
     const reason = result.removed ? '' : result.reason
     expect(reason).toMatch(/^could not be removed \(EACCES\); what is left of it is at /)
-    expect(reason).toContain(`something else is at ${target} now`)
     // Their directory is untouched, and ours is still parked beside it.
     expect(await readdir(target)).toEqual([])
     const parked = (await readdir(root)).find((n) => PARKED.test(n))
@@ -205,7 +209,9 @@ describe('removeIfSame (SMI-6529 round 15)', () => {
 
     const result = await removeIfSame(target, seen)
     expect(result.removed).toBe(false)
-    expect(result.removed ? '' : result.reason).toContain('could not be checked (EACCES)')
+    expect(result.removed ? '' : result.reason).toMatch(
+      /^could not be checked \(EACCES\) and is now at /
+    )
     expect(await readFile(target, 'utf-8')).toBe('theirs')
     const parked = (await readdir(root)).find((n) => PARKED.test(n))
     expect(parked).toBeDefined()
@@ -232,7 +238,7 @@ describe('removeIfSame (SMI-6529 round 15)', () => {
     expect((await lstat(target)).isDirectory()).toBe(true)
   })
 
-  it('puts back an entry it cannot check', async () => {
+  it('leaves an entry it cannot check parked, and says where', async () => {
     const target = path.join(root, 'skill')
     await mkdir(target)
     const seen = await lstat(target)
@@ -246,10 +252,13 @@ describe('removeIfSame (SMI-6529 round 15)', () => {
     )
     const { removeIfSame } = await load()
 
-    expect(await removeIfSame(target, seen)).toEqual({
-      removed: false,
-      reason: 'could not be checked (EACCES), so it was left in place',
-    })
-    expect(await readdir(root)).toEqual(['skill'])
+    const result = await removeIfSame(target, seen)
+    expect(result.removed).toBe(false)
+    expect(result.removed ? '' : result.reason).toMatch(
+      /^could not be checked \(EACCES\) and is now at /
+    )
+    const left = await readdir(root)
+    expect(left).toHaveLength(1)
+    expect(left[0]).toMatch(PARKED)
   })
 })
