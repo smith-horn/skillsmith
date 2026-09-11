@@ -530,7 +530,7 @@ git -C docs/internal rev-parse --git-dir
 
 **Verify on the host only -- there is no in-container form of this check for a worktree (confirmed live, not assumed).** A prior version of this recipe additionally told the reader to verify with `docker exec <container> git -C docs/internal rev-parse --git-dir`. That command cannot succeed, in any worktree's container, no matter how the gitfile is written: the relative `gitdir:` line resolves against the directory containing it, and that resolution genuinely differs by four real path segments between host and container --
 
-```
+```text
 host:      <repo>/.worktrees/<w>/docs/internal  + ../../../../  -> <repo>/.git/worktrees/<w>/modules/docs/internal   (real dir, OK)
 container: /app/docs/internal                   + ../../../../  -> /.git/worktrees/<w>/modules/docs/internal        (root fs, MISSING)
 ```
