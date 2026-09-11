@@ -51,20 +51,47 @@ export interface FileSnapshot {
 export class InstallRestoreError extends Error {
   /** The paths that could not be restored (same list as `restoreSnapshots()`'s return). */
   public readonly restoreFailures: string[]
+  /**
+   * SMI-6529 round 13: paths this install created but could not remove, each
+   * with its reason (a permission error, or a folder replaced by something
+   * else since the install created it). These used to be swallowed.
+   */
+  public readonly cleanupFailures: string[]
 
-  constructor(innerMessage: string, restoreFailures: string[], options?: { cause?: unknown }) {
+  constructor(
+    innerMessage: string,
+    restoreFailures: string[],
+    options?: { cause?: unknown },
+    cleanupFailures: string[] = []
+  ) {
+    const parts: string[] = []
+    if (restoreFailures.length > 0) {
+      parts.push(
+        'could not restore ' +
+          restoreFailures.length +
+          ' pre-existing file(s) to their original content: ' +
+          restoreFailures.join(', ')
+      )
+    }
+    if (cleanupFailures.length > 0) {
+      parts.push(
+        'could not remove ' +
+          cleanupFailures.length +
+          ' path(s) it created: ' +
+          cleanupFailures.join(', ')
+      )
+    }
     super(
       'Install failed (' +
         innerMessage +
-        ') AND could not restore ' +
-        restoreFailures.length +
-        ' pre-existing file(s) to their original content: ' +
-        restoreFailures.join(', ') +
+        ') AND ' +
+        parts.join(' AND ') +
         '. Recover these manually before retrying.',
       options
     )
     this.name = 'InstallRestoreError'
     this.restoreFailures = restoreFailures
+    this.cleanupFailures = cleanupFailures
   }
 }
 
@@ -171,4 +198,64 @@ export async function restoreSnapshots(snapshots: FileSnapshot[]): Promise<strin
     }
   }
   return failures
+}
+
+/** A created entry's identity, to tell it apart from anything later put at the same path. */
+export interface EntryIdentity {
+  dev: number
+  ino: number
+}
+
+/**
+ * Run one rollback cleanup step. An error whose code is in `ignore` means
+ * nothing of ours was left to remove; any other is recorded in `failures`
+ * (path and reason) for the caller to report. SMI-6529 round 13
+ * (cross-model review): these were all swallowed, so a failed install could
+ * leave files behind without saying so.
+ */
+export async function cleanupStep(
+  target: string,
+  step: () => Promise<void>,
+  ignore: readonly string[],
+  failures: string[]
+): Promise<void> {
+  try {
+    await step()
+  } catch (err) {
+    const code = (err as NodeJS.ErrnoException).code
+    if (code !== undefined && ignore.includes(code)) return
+    failures.push(`${target} (${code ?? (err instanceof Error ? err.message : String(err))})`)
+  }
+}
+
+/**
+ * Recursively remove a directory this install created, but only while it is
+ * still that directory (same device and inode). If something else now sits
+ * at the path, it is left alone and recorded as a failure (round 13). The
+ * check and the removal are not atomic; this narrows the window from the
+ * whole install to two syscalls.
+ */
+export async function removeCreatedDirectory(
+  dir: string,
+  identity: EntryIdentity | undefined,
+  failures: string[]
+): Promise<void> {
+  let current
+  try {
+    current = await fs.lstat(dir)
+  } catch (err) {
+    if ((err as NodeJS.ErrnoException).code === 'ENOENT') return
+    failures.push(`${dir} (${(err as NodeJS.ErrnoException).code ?? String(err)})`)
+    return
+  }
+  if (
+    identity === undefined ||
+    !current.isDirectory() ||
+    current.dev !== identity.dev ||
+    current.ino !== identity.ino
+  ) {
+    failures.push(`${dir} (replaced by something else after the install created it; left in place)`)
+    return
+  }
+  await cleanupStep(dir, () => fs.rm(dir, { recursive: true, force: true }), [], failures)
 }

@@ -25,6 +25,10 @@
  *    symlink to /etc included), that an EACCES on the `.git` check was
  *    reported as "contains a .git directory", and that the name prefix could
  *    match a sibling skill's folders.
+ *  - Round 13 (cross-model review): the destination lock keeps other
+ *    Skillsmith calls out, not other programs. So a staging or backup folder
+ *    is deleted only while it is still the folder we made (same device and
+ *    inode), and a stale staging folder only if it holds nothing but ours.
  *  - Round 8: a lock released mid-attempt was reported as corrupt, so
  *    contending callers failed at once; waiting on an orphaned reclaim lock
  *    still blocked the event loop; a reinstall after an uninstall restored a
@@ -281,7 +285,13 @@ export async function recoverDestination(dest: string, manifest: LinkManifest): 
   for (const name of entries) {
     const folder = path.join(parent, name)
     if (staging.test(name)) {
-      await fsp.rm(folder, { recursive: true, force: true }).catch(() => {})
+      // A crashed write's staging folder only ever holds `content`, a
+      // partial copy of the source skill. Anything else in it isn't ours,
+      // so the folder stays (round 13).
+      const inside = await fsp.readdir(folder).catch(() => null)
+      if (inside !== null && inside.every((entry) => entry === 'content')) {
+        await fsp.rm(folder, { recursive: true, force: true }).catch(() => {})
+      }
       continue
     }
     if (!backup.test(name)) continue
@@ -365,14 +375,44 @@ export async function replaceDestination(
 ): Promise<void> {
   const parent = path.dirname(dest)
   const stagingFolder = await fsp.mkdtemp(path.join(parent, siblingPrefix(dest, STAGING_TAG)))
+  const made = await fsp.lstat(stagingFolder)
   const staged = path.join(stagingFolder, 'content')
   try {
     await write(staged)
     await swapIntoPlace(dest, staged)
-  } finally {
-    // Our own folder: empty after a successful swap, a partial copy otherwise.
-    await fsp.rm(stagingFolder, { recursive: true, force: true }).catch(() => {})
+  } catch (err) {
+    // A partial copy made from the source skill: remove it, but only while
+    // the folder is still the one we made (round 13).
+    if (await removeOwnFolder(stagingFolder, made)) throw err
+    throw new Error(
+      `${errorMessage(err)}; the staging folder ${stagingFolder} was replaced by something ` +
+        `else and was left in place`,
+      { cause: err }
+    )
   }
+  // Empty after a successful swap, so a non-recursive rmdir can't delete
+  // anything else; if it isn't empty, it isn't ours to remove.
+  await fsp.rmdir(stagingFolder).catch(() => {})
+}
+
+/**
+ * Recursively remove a folder this call made, but only while it is still
+ * that folder (same device and inode). Returns false, leaving it, when
+ * something else now sits at the path, or it can't be checked. Round 13
+ * (cross-model review): the destination lock keeps other Skillsmith calls
+ * out, not other programs.
+ */
+async function removeOwnFolder(folder: string, made: Stats): Promise<boolean> {
+  let current: Stats | null
+  try {
+    current = await lstatOrNull(folder)
+  } catch {
+    return false
+  }
+  if (current === null) return true
+  if (!current.isDirectory() || current.dev !== made.dev || current.ino !== made.ino) return false
+  await fsp.rm(folder, { recursive: true, force: true }).catch(() => {})
+  return true
 }
 
 async function swapIntoPlace(dest: string, staged: string): Promise<void> {
@@ -389,6 +429,7 @@ async function swapIntoPlace(dest: string, staged: string): Promise<void> {
   const backupFolder = await fsp.mkdtemp(
     path.join(path.dirname(dest), siblingPrefix(dest, BACKUP_TAG))
   )
+  const backupMade = await fsp.lstat(backupFolder)
   const original = path.join(backupFolder, 'original')
   try {
     await fsp.rename(dest, original)
@@ -411,6 +452,15 @@ async function swapIntoPlace(dest: string, staged: string): Promise<void> {
     await fsp.rmdir(backupFolder).catch(() => {})
     throw err
   }
-  // The swap succeeded: the superseded copy is no longer needed.
-  await fsp.rm(backupFolder, { recursive: true, force: true }).catch(() => {})
+  // The swap succeeded, so the superseded copy is no longer needed. Drop it
+  // only while the backup folder and the copy in it are still what we put
+  // there (round 13); otherwise it stays, and listLeftoverBackups reports it.
+  const originalNow = await lstatOrNull(original).catch(() => null)
+  if (
+    originalNow !== null &&
+    originalNow.dev === existing.dev &&
+    originalNow.ino === existing.ino
+  ) {
+    await removeOwnFolder(backupFolder, backupMade)
+  }
 }

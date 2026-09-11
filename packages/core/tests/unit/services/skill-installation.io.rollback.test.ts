@@ -58,6 +58,17 @@ const mkdirRaceTarget = vi.hoisted(() => ({ path: null as string | null, armed: 
 // "another process" renames its own file over it and the write throws. The
 // rollback must leave that other process's file alone.
 const replaceAfterCreateTarget = vi.hoisted(() => ({ path: null as string | null }))
+// SMI-6529 round 13 (cross-model review): one-shot — the NEXT safeCreateFile
+// for this path first has "another process" move the fresh install directory
+// away and put its own directory there, then the write throws. Rollback must
+// leave that directory alone.
+const swapInstallDirTarget = vi.hoisted(() => ({
+  path: null as string | null,
+  installPath: null as string | null,
+}))
+// SMI-6529 round 13: one-shot — the NEXT fs.unlink of this path fails with
+// EACCES, so rollback can't remove a file it created.
+const unlinkFailTarget = vi.hoisted(() => ({ path: null as string | null }))
 
 vi.mock('fs/promises', async (importOriginal) => {
   const actual = await importOriginal<typeof import('fs/promises')>()
@@ -84,6 +95,17 @@ vi.mock('fs/promises', async (importOriginal) => {
       }
       return actual.mkdir(p, opts)
     },
+    unlink: async (p: Parameters<typeof actual.unlink>[0]): ReturnType<typeof actual.unlink> => {
+      if (p === unlinkFailTarget.path) {
+        unlinkFailTarget.path = null
+        const err = new Error(
+          `EACCES: permission denied, unlink '${String(p)}'`
+        ) as NodeJS.ErrnoException
+        err.code = 'EACCES'
+        throw err
+      }
+      return actual.unlink(p)
+    },
   }
 })
 
@@ -97,6 +119,16 @@ vi.mock('../../../src/utils/safe-fs.js', async (importOriginal) => {
       options?: Parameters<typeof actual.safeCreateFile>[2],
       onCreated?: (identity?: { dev: number; ino: number }) => void
     ): Promise<void> => {
+      if (filePath === swapInstallDirTarget.path && swapInstallDirTarget.installPath) {
+        const installPath = swapInstallDirTarget.installPath
+        swapInstallDirTarget.path = null
+        swapInstallDirTarget.installPath = null
+        const real = await vi.importActual<typeof import('fs/promises')>('fs/promises')
+        await real.rename(installPath, `${installPath}.moved`)
+        await real.mkdir(installPath)
+        await real.writeFile(`${installPath}/KEEP.md`, 'not the install')
+        throw new Error('Simulated failure after another process replaced the install directory')
+      }
       if (filePath === replaceAfterCreateTarget.path) {
         replaceAfterCreateTarget.path = null
         const real = await vi.importActual<typeof import('fs/promises')>('fs/promises')
@@ -1070,6 +1102,75 @@ describe('writeInstallFiles rollback-on-failure (SMI-6529)', () => {
       const stat = await fs.lstat(installPath)
       expect(stat.isDirectory()).toBe(true)
     } finally {
+      await fs.rm(root, { recursive: true, force: true }).catch(() => {})
+    }
+  })
+})
+
+// SMI-6529 round 13 (cross-model review): rollback's recursive delete of a
+// fresh install directory checks it is still the directory the install
+// created, and a cleanup step that fails is reported, not swallowed.
+describe('writeInstallFiles rollback cleanup is identity-checked and reported (SMI-6529 round 13)', () => {
+  it('never removes a directory that replaced the fresh install directory before rollback', async () => {
+    const root = await fs.mkdtemp(path.join(os.tmpdir(), 'wif-rollback-swapdir-'))
+    try {
+      const skillsDir = path.join(root, 'skills')
+      await fs.mkdir(skillsDir, { recursive: true })
+      const installPath = path.join(skillsDir, 'fresh-skill')
+      swapInstallDirTarget.path = path.join(installPath, 'SKILL.md')
+      swapInstallDirTarget.installPath = installPath
+
+      const err = await writeInstallFiles(
+        installPath,
+        skillsDir,
+        'fresh-skill',
+        '# new content',
+        [],
+        undefined
+      ).catch((e: unknown) => e)
+
+      expect(err).toBeInstanceOf(InstallRestoreError)
+      expect((err as InstallRestoreError).cleanupFailures).toEqual([
+        expect.stringContaining('replaced by something else'),
+      ])
+      expect(await fs.readFile(path.join(installPath, 'KEEP.md'), 'utf8')).toBe('not the install')
+    } finally {
+      swapInstallDirTarget.path = null
+      swapInstallDirTarget.installPath = null
+      await fs.rm(root, { recursive: true, force: true }).catch(() => {})
+    }
+  })
+
+  it('reports a file it created but could not remove, instead of swallowing the error', async () => {
+    const root = await fs.mkdtemp(path.join(os.tmpdir(), 'wif-rollback-unlinkfail-'))
+    try {
+      const skillsDir = path.join(root, 'skills')
+      const installPath = path.join(skillsDir, 'my-skill')
+      await fs.mkdir(installPath, { recursive: true })
+      await fs.writeFile(path.join(installPath, 'notes.txt'), 'user notes')
+      // SKILL.md is absent, so the install creates it fresh; the symlinked
+      // examples.md then makes the install fail and roll back.
+      const skillMdPath = path.join(installPath, 'SKILL.md')
+      await fs.symlink('/nonexistent-target', path.join(installPath, 'examples.md'))
+      unlinkFailTarget.path = skillMdPath
+
+      const err = await writeInstallFiles(
+        installPath,
+        skillsDir,
+        'my-skill',
+        '# new content',
+        [{ filename: 'examples.md', content: 'x' }],
+        undefined
+      ).catch((e: unknown) => e)
+
+      expect(err).toBeInstanceOf(InstallRestoreError)
+      const cleanup = (err as InstallRestoreError).cleanupFailures
+      expect(cleanup).toEqual([expect.stringContaining(skillMdPath)])
+      expect(cleanup[0]).toContain('EACCES')
+      expect((err as Error).message).toMatch(/could not remove 1 path\(s\) it created/)
+      expect(await fs.readFile(path.join(installPath, 'notes.txt'), 'utf8')).toBe('user notes')
+    } finally {
+      unlinkFailTarget.path = null
       await fs.rm(root, { recursive: true, force: true }).catch(() => {})
     }
   })

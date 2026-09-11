@@ -18,6 +18,7 @@ import {
   symlink,
   writeFile,
 } from 'node:fs/promises'
+import type { PathLike } from 'node:fs'
 import { hostname, tmpdir } from 'node:os'
 import * as path from 'node:path'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
@@ -1258,6 +1259,93 @@ describe('install/fan-out', () => {
       expect(some.warnings?.[0]).not.toContain(canonical)
       await expect(stat(leftover)).resolves.toBeDefined()
       expect(await readFile(manifestPath, 'utf-8')).toBe(newer)
+    })
+  })
+
+  // SMI-6529 round 13 (cross-model review): the destination lock keeps other
+  // Skillsmith calls out, not other programs, so a staging or backup folder is
+  // only deleted while it is still the folder we made.
+  describe('SMI-6529 round 13: cleanup never deletes a folder something else put in place', () => {
+    it('keeps a folder that replaced the staging folder before a failed write is cleaned up', async () => {
+      const { replaceDestination } = await import('../../src/install/fan-out.overwrite.js')
+      const parent = path.join(homeDir, 'swap-staging')
+      await mkdir(parent, { recursive: true })
+      let stagingFolder = ''
+
+      await expect(
+        replaceDestination(path.join(parent, 'dest'), async (staged) => {
+          stagingFolder = path.dirname(staged)
+          await mkdir(staged)
+          await writeFile(path.join(staged, 'partial.md'), 'partial', 'utf-8')
+          // Another program swaps its own folder in at the staging path.
+          await rename(stagingFolder, `${stagingFolder}-moved`)
+          await mkdir(stagingFolder)
+          await writeFile(path.join(stagingFolder, 'KEEP.md'), 'not ours', 'utf-8')
+          throw new Error('write failed')
+        })
+      ).rejects.toThrow(/write failed.*replaced by something else/)
+      expect(await readFile(path.join(stagingFolder, 'KEEP.md'), 'utf-8')).toBe('not ours')
+    })
+
+    it('keeps a folder that replaced the backup folder, and reports it', async () => {
+      const { addLink: setupAddLink } = await loadModule()
+      await seedSkill('swapbk')
+      const { record } = await setupAddLink({
+        skillId: 'swapbk',
+        fromClient: 'claude-code',
+        toClient: 'cursor',
+      })
+      const parent = path.dirname(record.to)
+      let swappedIn = ''
+      vi.doMock('node:fs/promises', async () => {
+        const actual = await vi.importActual<typeof import('node:fs/promises')>('node:fs/promises')
+        const rename = async (from: PathLike, to: PathLike): Promise<void> => {
+          await actual.rename(from, to)
+          // Right after the new copy lands, another program swaps its own
+          // folder in at the backup path.
+          if (String(to) === record.to && String(from).endsWith(`${path.sep}content`)) {
+            const name = (await actual.readdir(parent)).find((n) =>
+              n.startsWith('.swapbk.skillsmith-backup-')
+            )
+            if (name !== undefined) {
+              swappedIn = path.join(parent, name)
+              await actual.rename(swappedIn, `${swappedIn}-moved`)
+              await actual.mkdir(swappedIn)
+              await actual.writeFile(path.join(swappedIn, 'KEEP.md'), 'not ours', 'utf-8')
+            }
+          }
+        }
+        return { ...actual, default: { ...actual, rename }, rename }
+      })
+      try {
+        vi.resetModules()
+        const { addLink } = await import('../../src/install/fan-out.js')
+        const refreshed = await addLink({
+          skillId: 'swapbk',
+          fromClient: 'claude-code',
+          toClient: 'cursor',
+          force: true,
+        })
+        expect(swappedIn).not.toBe('')
+        expect(await readFile(path.join(swappedIn, 'KEEP.md'), 'utf-8')).toBe('not ours')
+        expect(refreshed.warnings).toEqual([expect.stringContaining(swappedIn)])
+      } finally {
+        vi.doUnmock('node:fs/promises')
+        vi.resetModules()
+      }
+    })
+
+    it('keeps a stale staging folder that holds something other than a partial copy', async () => {
+      const { addLink } = await loadModule()
+      await seedSkill('foreignstage')
+      const parent = path.join(homeDir, '.cursor', 'skills')
+      const foreign = path.join(parent, '.foreignstage.skillsmith-staging-abc123')
+      await mkdir(foreign, { recursive: true })
+      await writeFile(path.join(foreign, 'KEEP.md'), 'not a partial copy', 'utf-8')
+
+      await addLink({ skillId: 'foreignstage', fromClient: 'claude-code', toClient: 'cursor' })
+
+      expect(await readFile(path.join(foreign, 'KEEP.md'), 'utf-8')).toBe('not a partial copy')
     })
   })
 

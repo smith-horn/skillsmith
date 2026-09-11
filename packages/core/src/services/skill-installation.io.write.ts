@@ -21,10 +21,16 @@ import {
 } from '../install/paths.js'
 import {
   classifyPreWrite,
+  cleanupStep,
+  removeCreatedDirectory,
   restoreSnapshots,
   InstallRestoreError,
+  type EntryIdentity,
   type FileSnapshot,
 } from './skill-installation.io.rollback.js'
+
+/** Errors a non-recursive rmdir in rollback can ignore: already gone, or holding content this call didn't create. */
+const DIR_GONE_OR_NOT_OURS = ['ENOENT', 'ENOTEMPTY', 'EEXIST'] as const
 import { mkdirNoFollow } from './skill-installation.io.dirs.js'
 
 /** What {@link writeInstallFiles} wrote, plus a `rollback` that undoes it. */
@@ -127,6 +133,8 @@ export async function writeInstallFiles(
   // can never force-delete an out-of-bounds path (e.g. a symlink-escape the realpath
   // check rejects after mkdir).
   let pathValidated = false
+  // Round 13: the identity of the directory this call created, if it did.
+  let installDirIdentity: EntryIdentity | undefined
   // SMI-6529: determine BEFORE any mutation whether installPath already existed — a
   // rollback must NEVER remove a directory that existed before this call started
   // (the data-loss bug: a real user's git-cloned skill directory, `.git` included, got
@@ -231,8 +239,14 @@ export async function writeInstallFiles(
    * a write failure, AND is exposed as `rollback()` on the returned result
    * for a caller whose LATER step (after a successful write) fails.
    */
-  async function performRollback(): Promise<string[]> {
+  async function performRollback(): Promise<{
+    restoreFailures: string[]
+    cleanupFailures: string[]
+  }> {
     const restoreFailures = await restoreSnapshots(overwritten)
+    // Round 13 (cross-model review): every cleanup failure is collected and
+    // reported through InstallRestoreError instead of swallowed.
+    const cleanupFailures: string[] = []
     for (const entry of createdFresh) {
       if (entry.identity) {
         // R5: skip a path that no longer names the file this call created.
@@ -243,20 +257,20 @@ export async function writeInstallFiles(
           continue // already gone
         }
       }
-      await fs.unlink(entry.path).catch(() => {})
+      await cleanupStep(entry.path, () => fs.unlink(entry.path), ['ENOENT'], cleanupFailures)
     }
     // F4 (review round 1): remove nested sub-skill directories THIS call created
     // fresh (e.g. "scripts/") — files must be gone first (done above), and a
     // non-recursive rmdir requires children removed before parents, hence the
     // deepest-first ordering (sorted by path-separator count, not string length —
-    // a short deep path must still sort before a long shallow one). Always a safe
-    // no-op: ENOENT (already removed by a sibling's identical cleanup) or
-    // non-empty (unexpected surviving content) are both swallowed.
+    // a short deep path must still sort before a long shallow one). ENOENT
+    // (already removed by a sibling's identical cleanup) and non-empty
+    // (content this call didn't create) mean nothing of ours is left.
     const deepestFirst = [...freshDirs].sort(
       (a, b) => b.split(path.sep).length - a.split(path.sep).length
     )
     for (const dir of deepestFirst) {
-      await fs.rmdir(dir).catch(() => {})
+      await cleanupStep(dir, () => fs.rmdir(dir), DIR_GONE_OR_NOT_OURS, cleanupFailures)
     }
     // SMI-5982 (Wave 6) / SMI-6529 L15: 'directory-package' mode (Antigravity)
     // creates a skill-named subdirectory OUTSIDE installPath
@@ -271,7 +285,8 @@ export async function writeInstallFiles(
       !agentDirPreExisted &&
       getCompanionAgentTarget(client).fileMode === 'directory-package'
     ) {
-      await fs.rmdir(path.dirname(subagentPath)).catch(() => {})
+      const agentDir = path.dirname(subagentPath)
+      await cleanupStep(agentDir, () => fs.rmdir(agentDir), DIR_GONE_OR_NOT_OURS, cleanupFailures)
     }
     // SMI-6529: NEVER remove installPath once it is known to have preExisted — the
     // caller (or a prior install) owned that directory before this call started.
@@ -280,24 +295,32 @@ export async function writeInstallFiles(
     // mid-batch Promise.all write can't survive. If mkdir or the realpath escape
     // guard threw, installPath was never validated; fall back to a non-recursive
     // rmdir, a safe no-op on a non-empty or out-of-bounds directory (NEVER a
-    // recursive force-delete of an unvalidated path).
+    // recursive force-delete of an unvalidated path). Round 13: and the
+    // recursive delete runs only while installPath is still the directory
+    // this call created; anything put there since is left and reported.
     if (!preExisted) {
       if (pathValidated) {
-        await fs.rm(installPath, { recursive: true, force: true }).catch(() => {})
+        await removeCreatedDirectory(installPath, installDirIdentity, cleanupFailures)
       } else {
-        await fs.rmdir(installPath).catch(() => {})
+        await cleanupStep(
+          installPath,
+          () => fs.rmdir(installPath),
+          DIR_GONE_OR_NOT_OURS,
+          cleanupFailures
+        )
       }
     }
-    return restoreFailures
+    return { restoreFailures, cleanupFailures }
   }
 
   const rollback = async (causeError: unknown): Promise<void> => {
-    const restoreFailures = await performRollback()
-    if (restoreFailures.length > 0) {
+    const { restoreFailures, cleanupFailures } = await performRollback()
+    if (restoreFailures.length > 0 || cleanupFailures.length > 0) {
       throw new InstallRestoreError(
         causeError instanceof Error ? causeError.message : String(causeError),
         restoreFailures,
-        { cause: causeError }
+        { cause: causeError },
+        cleanupFailures
       )
     }
   }
@@ -317,6 +340,10 @@ export async function writeInstallFiles(
       await fs.mkdir(path.dirname(installPath), { recursive: true })
       try {
         await fs.mkdir(installPath)
+        // Round 13: remember which directory this call created, so rollback
+        // never recursively deletes something put at this path since.
+        const created = await fs.lstat(installPath)
+        installDirIdentity = { dev: created.dev, ino: created.ino }
       } catch (mkdirErr) {
         if ((mkdirErr as NodeJS.ErrnoException).code === 'EEXIST') {
           // SMI-6529 N8 (round 4): the directory that "appeared" belongs to
@@ -435,12 +462,13 @@ export async function writeInstallFiles(
     // installPath, under the client's companion-agent dir — see
     // resolveCompanionAgentPath()/COMPANION_AGENT_TARGETS, install/paths.ts — but is
     // tracked via the same overwritten/createdFresh split as everything else).
-    const restoreFailures = await performRollback()
-    if (restoreFailures.length > 0) {
+    const { restoreFailures, cleanupFailures } = await performRollback()
+    if (restoreFailures.length > 0 || cleanupFailures.length > 0) {
       throw new InstallRestoreError(
         writeError instanceof Error ? writeError.message : String(writeError),
         restoreFailures,
-        { cause: writeError }
+        { cause: writeError },
+        cleanupFailures
       )
     }
     throw writeError

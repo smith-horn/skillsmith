@@ -28,7 +28,9 @@ All notable changes to `@skillsmith/core` are documented here.
   classifies and snapshots every write independently (not just the first for a given path), so two
   differently-cased files on a case-sensitive filesystem restore correctly, a short write is
   retried until complete or reported as a restore failure, and a 0-byte file orphaned by a failed
-  create is still cleaned up.
+  create is still cleaned up. Rollback and fan-out cleanup never recursively delete a folder that
+  something else put at its path after Skillsmith created it, and a cleanup step that fails is
+  reported rather than silently ignored.
   Backfill never modifies a `provenance: 'local'` row (SMI-6529, ADR-155).
 
 - **Fix**: `sensitive_path` now detects a secret assigned to a **prefixed** key —
