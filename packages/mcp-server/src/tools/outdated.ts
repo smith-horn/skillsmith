@@ -96,9 +96,11 @@ export interface OutdatedSkillInfo {
   /**
    * SMI-6343 (Wave 3): widened from `current | outdated | unknown` to a
    * five-state classification separating a genuine version bump
-   * (`outdated`, safe to bulk-update) from a benign local edit
-   * (`local-drift`) and a corrupted recorded identity (`identity-mismatch`)
-   * — see `diagnosis` for the structured explanation.
+   * (`outdated`) from a benign local edit (`local-drift`) and a corrupted
+   * recorded identity (`identity-mismatch`) — see `diagnosis` for the
+   * structured explanation. SMI-6530 containment: `outdated` is no longer
+   * marked safe to bulk-update (see `diagnosis.safeToBulkUpdate`) until the
+   * update eligibility gate (SMI-6532) ships.
    */
   status: 'current' | 'outdated' | 'local-drift' | 'identity-mismatch' | 'unknown'
   /** Semver from the latest version record, if available */

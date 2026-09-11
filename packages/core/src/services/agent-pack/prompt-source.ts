@@ -212,8 +212,9 @@ export const CLI_FALLBACK_PARAGRAPHS: readonly string[] = [
 /** Command lines for the CLI Fallback fenced code block, one per line. */
 export const CLI_FALLBACK_COMMANDS: readonly string[] = [
   '# Keep skills current',
-  'skillsmith diff <skill>       # what changed since your installed version',
-  'skillsmith update <skill>     # or: skillsmith update --all',
+  'skillsmith diff <skill>             # what changed since your installed version',
+  'skillsmith update --all --dry-run   # review updates first',
+  'skillsmith update <skill>           # then update one skill at a time',
   '',
   '# Audit and clean up inventory',
   'skillsmith audit collisions',

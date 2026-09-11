@@ -57,7 +57,7 @@ describe('SKILL_STATE_META — suggestedAction (SMI-5595)', () => {
   it('suggestedAction copy matches the exact reviewed spec strings', () => {
     expect(SKILL_STATE_META.current.suggestedAction).toBe('No action needed.')
     expect(SKILL_STATE_META.drifted.suggestedAction).toBe(
-      'Run `skillsmith update <skill>` on that machine.'
+      'Preview it first: run `skillsmith update <skill> --dry-run` on that machine.'
     )
     expect(SKILL_STATE_META.missing.suggestedAction).toBe(
       'Confirm the skill is still installed, then re-run `skillsmith inventory push` from that machine — or reinstall it if it was removed intentionally.'
@@ -80,7 +80,9 @@ describe('SKILL_STATE_META — suggestedAction (SMI-5595)', () => {
   })
 
   it('drifted and pinned suggestedAction contain the <skill> placeholder inside a backtick span', () => {
-    expect(SKILL_STATE_META.drifted.suggestedAction).toContain('`skillsmith update <skill>`')
+    expect(SKILL_STATE_META.drifted.suggestedAction).toContain(
+      '`skillsmith update <skill> --dry-run`'
+    )
     expect(SKILL_STATE_META.pinned.suggestedAction).toContain('`skillsmith unpin <skill>`')
   })
 

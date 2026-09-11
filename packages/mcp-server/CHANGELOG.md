@@ -4,6 +4,10 @@ All notable changes to `@skillsmith/mcp-server` are documented here.
 
 ## [Unreleased]
 
+- **Security**: Until the update-safety fix ships, preview `skillsmith update` with `--dry-run`;
+  `update --all` in 0.8.8-0.8.10 can overwrite local edits in skill directories that are git
+  clones and can write into the wrong directory (SMI-6528).
+
 ## v0.7.14
 
 - **Fix**: SMI-5207 -- sensitive_path action-context gating (Wave 1) (#2760)

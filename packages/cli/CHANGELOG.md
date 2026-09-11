@@ -4,6 +4,10 @@ All notable changes to `@skillsmith/cli` are documented here.
 
 ## [Unreleased]
 
+- **Security**: Until the update-safety fix ships, preview `skillsmith update` with `--dry-run`;
+  `update --all` in 0.8.8-0.8.10 can overwrite local edits in skill directories that are git
+  clones and can write into the wrong directory (SMI-6528).
+
 ## v0.8.10
 
 - **Fixed**: SMI-6472 -- `src/utils/skill-name.ts`'s re-export of `VALID_SKILL_NAME_RE`/`validateSkillName` now imports from the narrow `@skillsmith/core/utils/skill-name` subpath instead of the `@skillsmith/core` package barrel. The barrel import transitively pulled in `skill-installation.io.ts` -> `safe-fs.ts`'s `fs/promises` needs (`open`/`lstat`/`constants`), breaking `tests/create.test.ts`'s narrow `fs/promises` mock (`mkdir`/`writeFile`/`stat` only) with `[vitest] No "constants" export is defined on the "fs/promises" mock`. No behavior change — only the import path.
