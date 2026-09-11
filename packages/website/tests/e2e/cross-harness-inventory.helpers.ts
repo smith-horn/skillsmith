@@ -23,6 +23,9 @@
  *   - cleanupDevice(deviceId): delete user_devices row (FK CASCADE clears device_skills)
  *   - readUserConsent(userId): service-role read of user_telemetry_preferences
  *     .inventory_sync_enabled → boolean (H7)
+ *   - seedStaleDevice({userId, deviceId, label, platform, hoursStale}): backdated
+ *     user_devices INSERT so get_user_inventory() classifies the device `stale`
+ *     (SMI-6503 contrast regression — the bug only manifests on a stale card)
  */
 
 import { createClient, type SupabaseClient } from '@supabase/supabase-js'
@@ -311,4 +314,48 @@ export async function readUserConsent(userId: string): Promise<boolean> {
   if (error) throw new Error(`[SMI-5395] readUserConsent: ${error.message}`)
   if (!data) return false
   return (data as { inventory_sync_enabled: boolean }).inventory_sync_enabled === true
+}
+
+// ─── Stale-device seeding (service-role, SMI-6503 contrast regression) ───────
+
+/**
+ * Insert a `user_devices` row whose `last_seen_at` is far enough in the past
+ * that `get_user_inventory()` classifies it `stale` (the RPC's `p_stale_after`
+ * defaults to 24h — see STALE_AFTER_HOURS in inventory-view.ts).
+ *
+ * Exists because the contrast regression this guards only appears on a STALE
+ * card. `.device-card--stale` used to carry `opacity: .72`, which composites
+ * the whole subtree and cost every colour on the card about a third of its
+ * contrast — enough to push six of eight text elements under WCAG AA while
+ * every declared value still looked compliant in the stylesheet. A fresh
+ * device cannot reproduce it, so a test that seeds only fresh devices would
+ * pass against the bug it exists to catch.
+ *
+ * `uploadInventory()` cannot be used for this: it goes through the
+ * inventory-upload edge function, which stamps `last_seen_at` to NOW(). Only a
+ * service-role write can backdate it.
+ *
+ * Teardown is the existing `cleanupDevice(deviceId)` — the FK ON DELETE CASCADE
+ * clears the seeded `device_skills` rows with it.
+ */
+export async function seedStaleDevice(opts: {
+  userId: string
+  deviceId: string
+  label: string
+  platform: string
+  hoursStale: number
+}): Promise<void> {
+  const lastSeen = new Date(Date.now() - opts.hoursStale * 3600_000).toISOString()
+  const { error } = await withTimeout(
+    admin().from('user_devices').insert({
+      device_id: opts.deviceId,
+      user_id: opts.userId,
+      label: opts.label,
+      platform: opts.platform,
+      last_seen_at: lastSeen,
+    }),
+    STAGING_CALL_TIMEOUT_MS,
+    'seedStaleDevice'
+  )
+  if (error) throw new Error(`[SMI-6503] seedStaleDevice: ${error.message}`)
 }
