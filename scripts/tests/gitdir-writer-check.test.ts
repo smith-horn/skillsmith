@@ -161,14 +161,48 @@ describe('findAbsoluteSeparateGitDirWriters (fixture cases)', () => {
   })
 })
 
-describe('SMI-6515 Wave 2: live repo has zero absolute --separate-git-dir writers', () => {
+// Whether `git ls-files` can run against this checkout AT ALL. It cannot
+// inside a worktree's own container: `git worktree add` writes an absolute
+// gitdir into the worktree's `.git`, pointing into the main checkout, and
+// that host path does not exist in the container (SMI-6549). Pre-push runs
+// exactly there, so this is not a hypothetical.
+//
+// The helper THROWING in that situation is correct and deliberate -- it
+// refuses to relabel a filesystem walk as "tracked". So the environment
+// check belongs here in the test, not as a softening of the helper.
+function gitLsFilesWorksHere(): { ok: boolean; reason: string } {
+  try {
+    execFileSync('git', ['-C', REPO_ROOT, 'ls-files', '-z', '--recurse-submodules'], {
+      encoding: 'utf8',
+      maxBuffer: 64 * 1024 * 1024,
+      ...makeFixtureEnv(),
+    })
+    return { ok: true, reason: '' }
+  } catch (err) {
+    return { ok: false, reason: err instanceof Error ? err.message.split('\n')[0] : String(err) }
+  }
+}
+
+const GIT_LS_FILES = gitLsFilesWorksHere()
+
+describe(`SMI-6515 Wave 2: live repo scan (git ls-files usable here: ${GIT_LS_FILES.ok})`, () => {
   it(
     'finds zero occurrences repo-wide outside the allow-listed recipe and historical plan docs, having actually scanned files',
-    () => {
+    (ctx) => {
+      // A skip must announce what it skipped and why -- a silent skip here
+      // would report green while asserting nothing about the live repo,
+      // which is the exact class ADR-151 exists for.
+      if (!GIT_LS_FILES.ok) {
+        ctx.skip(
+          `git ls-files cannot run against ${REPO_ROOT} in this environment, so the live-repo scan cannot be performed. ` +
+            `This is expected inside a worktree container (SMI-6549) and the host run does cover it. Reason: ${GIT_LS_FILES.reason}`
+        )
+        return
+      }
       const { filesChecked, findings } = findAbsoluteSeparateGitDirWriters(REPO_ROOT)
       expect(findings).toEqual([])
       // Anti-vacuous check: a PASS with a zero denominator would mean the
-      // walk silently examined nothing, which is not a real PASS.
+      // scan silently examined nothing, which is not a real PASS.
       expect(filesChecked).toBeGreaterThan(100)
     },
     REPO_WALK_TIMEOUT_MS
