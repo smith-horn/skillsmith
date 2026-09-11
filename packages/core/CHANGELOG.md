@@ -4,6 +4,14 @@ All notable changes to `@skillsmith/core` are documented here.
 
 ## [Unreleased]
 
+- **Docs**: recorded the two missing `SCANNER_RULESET_VERSION` history entries for
+  `2026-09-11.1` and `2026-09-11.2`. Both bumps shipped correctly — the `comparable` gate does
+  re-scan — but the constant had moved twice past the end of its own documented history, so the
+  *direction* and the consequence-if-omitted were unrecorded for both. `.1` is
+  previously-clean-now-flagged (MF-5 delivers new detection). `.2` is the same direction for a
+  sharper reason: it invalidates verdicts `.1` computed wrongly under the array-position
+  suppression, so omitting it would have left the evasion alive in stored data even after the code
+  fix. Raised by another session (SMI-6554) after a downstream stale-dist failure. (SMI-6508)
 - **Fix (security regression, same-day)**: the MF-5 prefixed-secrets entry added below was
   positioned at index 4 of `SENSITIVE_PATH_PATTERNS`, and `scanSensitivePaths` `break`s on the
   **first** entry that matches, in array order. An always-MEDIUM entry ahead of a HIGH-capable one
