@@ -4,6 +4,12 @@ All notable changes to `@skillsmith/core` are documented here.
 
 ## [Unreleased]
 
+- **Changed**: the agent pack's CLI fallback commands (`CLI_FALLBACK_COMMANDS` in
+  `services/agent-pack/prompt-source.ts`) now lead with `skillsmith update --all --dry-run` and
+  then per-skill updates, instead of recommending `skillsmith update --all` directly. Containment
+  for SMI-6528: `update --all` in CLI 0.8.8-0.8.10 can overwrite local edits in skill directories
+  that are git clones and can write into the wrong directory (SMI-6530).
+
 - **Fix**: `sensitive_path` MF-4 no longer scores an **embedded** assignment key assigned a bare
   boolean as a real credential. `allow_credentials=True` — the standard FastAPI/Starlette CORS
   middleware flag — was scoring HIGH, which makes `SecurityScanner` compute `passed = false`, which
