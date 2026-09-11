@@ -21,9 +21,12 @@ export { escapeHtml }
 // ─── Badge config ─────────────────────────────────────────────────────────────
 // Distinct icon shape + WCAG-AA color pair per state — not color alone (WCAG 1.4.1).
 //
-// Inline-style hex rather than an Astro component, deliberately. Device cards are
-// built as HTML strings and assigned via `innerHTML` (see `skills.astro`), so
-// there is no server render pass an Astro component could hook into. A component
+// Each entry is an icon path plus three colour literals: a hex foreground and
+// two rgba() values for background and border.
+//
+// Inline rather than an Astro component, deliberately. Device cards are built as
+// HTML strings and assigned via `innerHTML` (see `skills.astro`), so there is no
+// server render pass an Astro component could hook into. A component
 // form, `InventoryStateBadge.astro`, existed until SMI-6504 and was unreachable
 // for exactly that reason: it duplicated every entry below and could have drifted
 // from the live path without anyone noticing. Do NOT re-extract one unless the
