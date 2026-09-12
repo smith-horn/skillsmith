@@ -104,6 +104,14 @@ jobs:
         # downgrading to an existence-only check.
         env:
           SKILLSMITH_GIT_CRYPT_EXPECTED_LOCKED: '1'
+          # SMI-6564: this lane has no unlock step by design, so every Deno twin is
+          # encrypted here and each it.skipIf(...) parity assertion already skips (15
+          # test files skip in this lane). The guard this silences REPORTS that absence
+          # rather than providing coverage — see SMI-5879 design §6.4.
+          # Registered use: "CI lanes that never receive the git-crypt key."
+          # If this workflow is EVER given the key, REMOVE this line — the tripwire
+          # would then be silenced in a lane where it is load-bearing.
+          SKILLSMITH_PARITY_ALLOW_ENCRYPTED_DENO: '1'
         run: npx vitest run --config vitest.config.root-tests.ts
 
       - name: File or update auto-issue on failure
