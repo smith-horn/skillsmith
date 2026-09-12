@@ -1758,9 +1758,10 @@ describe('install/fan-out', () => {
       }
     })
 
-    // Round 24 (cross-model review): the cleanup after a failed publish must
-    // remove only the claim this call made — not an empty directory another
-    // program substituted for it — and must never remove one holding content.
+    // Round 24, kept and strengthened in round 25: a directory another program
+    // substituted for this call's claim survives a failed publication. Round 24
+    // achieved that with an identity check; round 25 removes nothing at all, and
+    // this test holds either way — it fails the moment a cleanup is reintroduced.
     it('leaves an empty directory another program substituted for its claim', async () => {
       await seedSkill('claimswap')
       const toDir = path.join(homeDir, '.cursor', 'skills', 'claimswap')
@@ -1772,10 +1773,10 @@ describe('install/fan-out', () => {
           if (!swapped && String(to) === toDir && String(from).endsWith(`${path.sep}content`)) {
             swapped = true
             // Their own empty directory replaces the claim, and the publish
-            // then fails: the cleanup must not treat theirs as ours. Theirs is
-            // made elsewhere and renamed in, because a directory created at the
-            // path the claim just freed can reuse the claim's own inode number
-            // (round 15) — which would let this test pass without the fix.
+            // then fails: theirs must survive. It is made elsewhere and renamed
+            // in, because a directory created at the path the claim just freed
+            // can reuse the claim's own inode number (round 15), which would
+            // have let this test pass against round 24's identity check.
             theirs.claimIno = Number((await actual.lstat(toDir)).ino)
             const theirDir = path.join(homeDir, 'their-claimswap')
             await actual.mkdir(theirDir)
@@ -1825,6 +1826,151 @@ describe('install/fan-out', () => {
         // "Could not look" is not "nothing is there".
         expect(scan.folders).toEqual([])
         expect(scan.unreadable).toContain('could not be listed (EACCES)')
+      } finally {
+        vi.doUnmock('node:fs/promises')
+        vi.resetModules()
+      }
+    })
+
+    // Round 25 (cross-model review): round 24's identity check cannot hold —
+    // `mkdir` and the `lstat` that records the identity are two syscalls, so
+    // what it records may already be another program's directory, and the
+    // check and the `rmdir` are two more. The claim is left and named instead.
+    it('leaves the empty directory it claimed when publication fails, and names it', async () => {
+      await seedSkill('claimkeep')
+      const toDir = path.join(homeDir, '.cursor', 'skills', 'claimkeep')
+      vi.doMock('node:fs/promises', async () => {
+        const actual = await vi.importActual<typeof import('node:fs/promises')>('node:fs/promises')
+        let failed = false
+        const rename = vi.fn(async (from: PathLike, to: PathLike) => {
+          if (!failed && String(to) === toDir && String(from).endsWith(`${path.sep}content`)) {
+            failed = true
+            throw Object.assign(new Error('EIO: simulated publish failure'), { code: 'EIO' })
+          }
+          return actual.rename(from, to)
+        })
+        return { ...actual, default: { ...actual, rename }, rename }
+      })
+      try {
+        vi.resetModules()
+        const { addLink } = await import('../../src/install/fan-out.js')
+
+        const err = await addLink({
+          skillId: 'claimkeep',
+          fromClient: 'claude-code',
+          toClient: 'cursor',
+        }).catch((e: unknown) => e)
+
+        expect((err as Error).message).toMatch(/EIO/)
+        expect((err as Error).message).toContain(toDir)
+        expect((err as Error).message).toMatch(/left in place/)
+        // Still there: nothing removes what it cannot identify.
+        expect((await lstat(toDir)).isDirectory()).toBe(true)
+      } finally {
+        vi.doUnmock('node:fs/promises')
+        vi.resetModules()
+      }
+    })
+
+    it('surfaces an unreadable scan through addLink, not only through the scan itself', async () => {
+      await seedSkill('scanwarn')
+      const parent = path.join(homeDir, '.cursor', 'skills')
+      await mkdir(parent, { recursive: true })
+      vi.doMock('node:fs/promises', async () => {
+        const actual = await vi.importActual<typeof import('node:fs/promises')>('node:fs/promises')
+        const readdir = vi.fn(async (...args: Parameters<typeof actual.readdir>) => {
+          if (String(args[0]) === parent) {
+            throw Object.assign(new Error(`EACCES: permission denied, scandir '${parent}'`), {
+              code: 'EACCES',
+            })
+          }
+          return actual.readdir(...args)
+        })
+        return { ...actual, default: { ...actual, readdir }, readdir }
+      })
+      try {
+        vi.resetModules()
+        const { addLink } = await import('../../src/install/fan-out.js')
+
+        const result = await addLink({
+          skillId: 'scanwarn',
+          fromClient: 'claude-code',
+          toClient: 'cursor',
+        })
+
+        // Round 25: a direct call to the scan proves nothing about whether its
+        // caller passes the message on. Both scans run here, so both report.
+        const unreadable = (result.warnings ?? []).filter((w) => w.includes('could not be listed'))
+        expect(unreadable).toHaveLength(2)
+        expect(unreadable.join('\n')).toContain('(EACCES)')
+      } finally {
+        vi.doUnmock('node:fs/promises')
+        vi.resetModules()
+      }
+    })
+
+    it('reports a leftover backup it could not inspect, instead of passing over it', async () => {
+      await seedSkill('inspectfail')
+      const parent = path.join(homeDir, '.cursor', 'skills')
+      const backup = path.join(parent, '.inspectfail.skillsmith-backup-abc123')
+      const probed = path.join(backup, 'original')
+      await mkdir(probed, { recursive: true })
+      await writeFile(path.join(probed, 'SKILL.md'), '# older copy\n', 'utf-8')
+      vi.doMock('node:fs/promises', async () => {
+        const actual = await vi.importActual<typeof import('node:fs/promises')>('node:fs/promises')
+        const lstat = vi.fn(async (p: PathLike, ...rest: unknown[]) => {
+          if (String(p) === probed) {
+            throw Object.assign(new Error(`EACCES: permission denied, lstat '${probed}'`), {
+              code: 'EACCES',
+            })
+          }
+          return actual.lstat(p, ...(rest as []))
+        })
+        return { ...actual, default: { ...actual, lstat }, lstat }
+      })
+      try {
+        vi.resetModules()
+        const { addLink } = await import('../../src/install/fan-out.js')
+
+        const result = await addLink({
+          skillId: 'inspectfail',
+          fromClient: 'claude-code',
+          toClient: 'cursor',
+        })
+
+        // "Could not inspect" is not "not a candidate".
+        expect((result.warnings ?? []).join('\n')).toMatch(/could not be inspected \(EACCES\)/)
+      } finally {
+        vi.doUnmock('node:fs/promises')
+        vi.resetModules()
+      }
+    })
+
+    it('reports a case-variant backup it could not inspect', async () => {
+      const parent = path.join(homeDir, 'cv-unreadable')
+      const variant = path.join(parent, '.CVX.skillsmith-backup-AbC123')
+      await mkdir(variant, { recursive: true })
+      vi.doMock('node:fs/promises', async () => {
+        const actual = await vi.importActual<typeof import('node:fs/promises')>('node:fs/promises')
+        const lstat = vi.fn(async (p: PathLike, ...rest: unknown[]) => {
+          if (String(p) === variant) {
+            throw Object.assign(new Error(`EACCES: permission denied, lstat '${variant}'`), {
+              code: 'EACCES',
+            })
+          }
+          return actual.lstat(p, ...(rest as []))
+        })
+        return { ...actual, default: { ...actual, lstat }, lstat }
+      })
+      try {
+        vi.resetModules()
+        const { listLeftoverBackups } = await import('../../src/install/fan-out.overwrite.js')
+
+        const scan = await listLeftoverBackups(path.join(parent, 'cvx'))
+
+        // Round 25: this answered "not a variant" and reported nothing at all.
+        expect(scan.folders).toEqual([])
+        expect(scan.unreadable).toContain('could not be inspected (EACCES)')
       } finally {
         vi.doUnmock('node:fs/promises')
         vi.resetModules()

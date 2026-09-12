@@ -250,12 +250,22 @@ export async function writeInstallFiles(
     for (const entry of createdFresh) {
       if (entry.identity) {
         // R5: skip a path that no longer names the file this call created.
+        let current
         try {
-          const current = await fs.lstat(entry.path)
-          if (current.dev !== entry.identity.dev || current.ino !== entry.identity.ino) continue
-        } catch {
-          continue // already gone
+          current = await fs.lstat(entry.path)
+        } catch (err) {
+          // Round 25 (cross-model review): only absence means "already gone".
+          // Any other failure means this call could not tell what is at the
+          // path, so it is reported rather than counted as a clean rollback.
+          const code = (err as NodeJS.ErrnoException).code
+          if (code !== 'ENOENT') {
+            cleanupFailures.push(
+              `${entry.path} (${code ?? (err instanceof Error ? err.message : String(err))})`
+            )
+          }
+          continue
         }
+        if (current.dev !== entry.identity.dev || current.ino !== entry.identity.ino) continue
       }
       await cleanupStep(entry.path, () => fs.unlink(entry.path), ['ENOENT'], cleanupFailures)
     }

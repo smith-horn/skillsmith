@@ -53,7 +53,7 @@ async function swapIn(real: RealFs, target: string): Promise<void> {
 }
 
 /** Mock one `node:fs/promises` function for the module loaded next. */
-function mockFs<K extends 'rename' | 'lstat' | 'rm' | 'unlink'>(
+function mockFs<K extends 'rename' | 'lstat' | 'rm' | 'unlink' | 'readdir'>(
   name: K,
   make: (actual: RealFs) => RealFs[K]
 ): void {
@@ -338,6 +338,27 @@ describe('removeIfSame (SMI-6529 round 15)', () => {
     })
     expect(await readFile(target, 'utf-8')).toBe('ours')
     expect(await readdir(root)).toEqual(['note.md'])
+  })
+
+  // Round 25 (cross-model review): an empty list said "nothing is parked" when
+  // the truth was "this folder could not be listed".
+  it('says when it could not look for parked leftovers', async () => {
+    const target = path.join(root, 'skill')
+    await mkdir(target)
+    mockFs(
+      'readdir',
+      (actual) =>
+        (async (...args: Parameters<RealFs['readdir']>) => {
+          if (String(args[0]) === root) throw eacces(args[0])
+          return actual.readdir(...args)
+        }) as RealFs['readdir']
+    )
+    const { listParkedLeftovers } = await load()
+
+    const scan = await listParkedLeftovers(target)
+
+    expect(scan.parked).toEqual([])
+    expect(scan.unreadable).toContain('could not be listed (EACCES)')
   })
 
   it('leaves an entry it cannot check parked, and says where', async () => {

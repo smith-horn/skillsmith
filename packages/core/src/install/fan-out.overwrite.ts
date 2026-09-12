@@ -89,7 +89,7 @@ function errorMessage(err: unknown): string {
 }
 
 function errorCode(err: unknown): string {
-  return (err as NodeJS.ErrnoException).code ?? errorMessage(err)
+  return (err as NodeJS.ErrnoException)?.code ?? errorMessage(err)
 }
 
 // Same-process callers for one destination queue here, so only one of them
@@ -350,21 +350,26 @@ async function publish(staged: string, dest: string, staging: Stats): Promise<St
   // half-copied skill visible at the destination, which staging exists to
   // prevent (round 6).
   await fsp.mkdir(dest)
-  const claim = await fsp.lstat(dest)
   try {
     await fsp.rename(staged, dest)
   } catch (err) {
-    // Round 24 (cross-model review): remove only the claim this call made, and
-    // only while it is still empty. The identity check stops the cleanup
-    // removing an empty directory another program substituted for the claim;
-    // `rmdir` refuses a directory that holds anything, so content another
-    // program wrote INTO the claim is never deleted either. A recursive
-    // identity-checked delete would satisfy the first and break the second.
-    const now = await lstatOrNull(dest)
-    if (now !== null && now.dev === claim.dev && now.ino === claim.ino) {
-      await fsp.rmdir(dest).catch(() => {})
-    }
-    throw err
+    // Round 25 (cross-model review): the empty directory this call claimed is
+    // left in place and reported, never removed. Round 24 removed it after an
+    // identity check, and that check cannot hold: `mkdir` and the `lstat` that
+    // takes the identity are two syscalls, so what it records may already be
+    // another program's directory; the check and the `rmdir` are two more, so a
+    // substitution between them can reuse the freed inode and match. Node
+    // exposes no pathname operation that verifies identity and removes in one
+    // step, so the only choices are to remove something we cannot prove is
+    // ours, or to leave it and say so. This module's rule decides it: delete
+    // only what you can identify. The cost is an empty directory at the
+    // destination, which the next install refuses and explains.
+    throw new Error(
+      `${errorMessage(err)}; the empty directory this call claimed at ${dest} was left in ` +
+        `place, since nothing can prove it is still the one this call made. Remove it ` +
+        `yourself if you do not want it.`,
+      { cause: err }
+    )
   }
   return staging
 }

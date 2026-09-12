@@ -5,21 +5,17 @@
  *
  * Split out of `skill-installation.helpers.ts` to stay under the 500-line
  * standard once ADR-139's adoption logic was added — mirrors the existing
- * `skill-installation.io.ts` sibling-split convention. `performUninstall`
+ * `skill-installation.io.ts` sibling-split convention. Round 25 split its own
+ * helpers out again, into `skill-installation.uninstall.helpers.ts`, for the
+ * same reason. `performUninstall`
  * has exactly one internal consumer (`skill-installation.service.ts`) and
  * is not part of `@skillsmith/core`'s public export surface.
  */
 
-import type { Stats } from 'fs'
 import * as fs from 'fs/promises'
 import * as path from 'path'
 
-import { checkGitAtRoot } from '../install/fan-out.overwrite.js'
-import {
-  listParkedLeftovers,
-  parkedLeftoverWarning,
-  removeIfSame,
-} from '../install/remove-if-same.js'
+import { removeIfSame } from '../install/remove-if-same.js'
 
 import type { SkillDependencyRepository } from '../repositories/SkillDependencyRepository.js'
 import type { ProgressCallback, UninstallResult } from './skill-installation.types.js'
@@ -28,6 +24,12 @@ import { hashContent, manifestKeyFor } from './skill-installation.helpers.js'
 import type { ManifestManager } from './skill-manifest.js'
 import { CANONICAL_CLIENT, type ClientId } from '../install/paths.js'
 import type { SkillManifestEntry } from './skill-installation.types.js'
+import {
+  inspectForRemoval,
+  notify,
+  parkedWarnings,
+  sameRecord,
+} from './skill-installation.uninstall.helpers.js'
 
 /**
  * ADR-139 (SMI-6274 Wave 4): build a manifest entry for a skill found on
@@ -163,114 +165,6 @@ export async function adoptUntrackedSkillEntry(
   return { entry: resolvedEntry, adopted }
 }
 
-/**
- * SMI-6529 round 15 (cross-model review, Critical): what uninstall found at
- * `installPath` before removing it. A folder with `.git` at its root is a git
- * working tree, which git owns (ADR-155), so it is refused with or without
- * `force`: deleting it would take unpushed commits and uncommitted edits with
- * it. A symlink or a file needs no such check, since removing it leaves what
- * it points at alone. Returns the entry's identity (null when nothing is
- * there), so the delete can confirm it is still the same entry.
- */
-async function inspectForRemoval(
-  installPath: string
-): Promise<{ stat: Stats | null } | { refusal: string }> {
-  let stat: Stats
-  try {
-    stat = await fs.lstat(installPath)
-  } catch (error) {
-    const code = (error as NodeJS.ErrnoException).code
-    if (code === 'ENOENT') return { stat: null }
-    return {
-      refusal:
-        'Could not check ' +
-        installPath +
-        ' (' +
-        (code ?? String(error)) +
-        '); nothing was removed.',
-    }
-  }
-  if (!stat.isSymbolicLink() && !stat.isFile()) {
-    const git = await checkGitAtRoot(installPath)
-    if (git.kind === 'present') {
-      return {
-        refusal:
-          installPath +
-          ' is a git working tree (it has .git at its root), so Skillsmith will not delete it, ' +
-          'even with force. Check `git -C ' +
-          installPath +
-          ' status`, then remove the folder yourself.',
-      }
-    }
-    if (git.kind === 'unknown') {
-      return {
-        refusal:
-          'Could not check ' +
-          installPath +
-          ' for a .git directory (' +
-          git.reason +
-          '); nothing was removed.',
-      }
-    }
-  }
-  return { stat }
-}
-
-/**
- * Report progress without letting a caller's listener change the outcome.
- * Round 18 (cross-model review): a listener that threw after the folder was
- * already removed reached the generic catch, which reported neither what had
- * been removed nor what was left parked.
- */
-function notify(onProgress: ProgressCallback, ...args: Parameters<ProgressCallback>): void {
-  try {
-    onProgress(...args)
-  } catch {
-    // A progress listener must never break an uninstall.
-  }
-}
-
-/**
- * Whether `entry` is still, field for field, the record this uninstall
- * loaded. Round 18 (cross-model review): timestamps alone are not a unique
- * generation token — two installs can share a millisecond, an older writer
- * can omit them, and a copied record keeps them — so every field has to
- * match. An install that claims the same name writes its own values, so any
- * difference means a different generation. A durable generation id belongs
- * with A1's manifest work (SMI-6531).
- */
-function sameRecord(entry: SkillManifestEntry, loaded: SkillManifestEntry): boolean {
-  return stableJson(entry) === stableJson(loaded)
-}
-
-/**
- * JSON with every object's keys in a fixed order, so two records compare by
- * value. Round 19 (Opus): comparing field by field with `!==` was correct only
- * while every field is a string — one array or object field, written by a
- * newer version or another tool, would never compare equal, and the record
- * would be kept forever with a warning that says an install claimed the name.
- */
-function stableJson(value: unknown): string {
-  return JSON.stringify(value, (_key, nested: unknown) =>
-    nested !== null && typeof nested === 'object' && !Array.isArray(nested)
-      ? Object.fromEntries(
-          Object.entries(nested as Record<string, unknown>).sort(([a], [b]) =>
-            a < b ? -1 : a > b ? 1 : 0
-          )
-        )
-      : nested
-  )
-}
-
-/**
- * Warnings naming anything an earlier removal left parked next to
- * `installPath`. Round 17 (cross-model review): every exit after the removal
- * reports these, not only the successful one.
- */
-async function parkedWarnings(installPath: string): Promise<string[]> {
-  return (await listParkedLeftovers(installPath)).map(parkedLeftoverWarning)
-}
-
 /** Perform skill uninstall with manifest awareness and orphan fallback. */
 export async function performUninstall(params: {
   skillName: string
@@ -304,7 +198,20 @@ export async function performUninstall(params: {
       const potentialPath = path.join(skillsDir, skillName)
       try {
         await fs.access(potentialPath)
-      } catch {
+      } catch (err) {
+        // Round 25 (cross-model review): only absence means "not installed".
+        // EACCES or EIO means we could not tell, and saying "not installed"
+        // sends the user away from a skill that is still on disk.
+        const code = (err as NodeJS.ErrnoException).code
+        if (code !== undefined && code !== 'ENOENT') {
+          return {
+            success: false,
+            skillName,
+            message:
+              `Could not tell whether "${skillName}" is installed: ${potentialPath} could not be ` +
+              `checked (${code}). Nothing was removed.`,
+          }
+        }
         return { success: false, skillName, message: 'Skill "' + skillName + '" is not installed.' }
       }
       // SMI-6529 round 15: refuse a git working tree before adopting it, so a

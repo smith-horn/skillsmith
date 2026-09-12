@@ -69,6 +69,19 @@ const swapInstallDirTarget = vi.hoisted(() => ({
 // SMI-6529 round 13: one-shot — the NEXT fs.unlink of this path fails with
 // EACCES, so rollback can't remove a file it created.
 const unlinkFailTarget = vi.hoisted(() => ({ path: null as string | null }))
+// SMI-6529 round 25 (cross-model review): one-shot — the NEXT fs.lstat of this
+// path fails with EACCES, so rollback cannot tell whether the file it created
+// is still the one at that path. It is armed by `armLstatFailOnWrite` rather
+// than set directly, because `safeCreateFile` lstats a path before creating it
+// and would otherwise consume the one-shot during the write, long before the
+// rollback this exists to test.
+const lstatFailTarget = vi.hoisted(() => ({ path: null as string | null }))
+// Arms `lstatFailTarget` when `trigger`'s write begins — the write that then
+// fails for real, so the only lstat left to fire on is rollback's own.
+const armLstatFailOnWrite = vi.hoisted(() => ({
+  trigger: null as string | null,
+  target: null as string | null,
+}))
 
 vi.mock('fs/promises', async (importOriginal) => {
   const actual = await importOriginal<typeof import('fs/promises')>()
@@ -105,6 +118,17 @@ vi.mock('fs/promises', async (importOriginal) => {
         throw err
       }
       return actual.unlink(p)
+    },
+    lstat: async (p: Parameters<typeof actual.lstat>[0]) => {
+      if (p === lstatFailTarget.path) {
+        lstatFailTarget.path = null
+        const err = new Error(
+          `EACCES: permission denied, lstat '${String(p)}'`
+        ) as NodeJS.ErrnoException
+        err.code = 'EACCES'
+        throw err
+      }
+      return actual.lstat(p)
     },
   }
 })
@@ -165,6 +189,10 @@ vi.mock('../../../src/utils/safe-fs.js', async (importOriginal) => {
       content: string | Buffer,
       options?: Parameters<typeof actual.safeWriteFile>[2]
     ): Promise<void> => {
+      if (filePath === armLstatFailOnWrite.trigger) {
+        armLstatFailOnWrite.trigger = null
+        lstatFailTarget.path = armLstatFailOnWrite.target
+      }
       if (filePath === truncateThenThrowTarget.path) {
         // Simulate safeWriteFile's own O_TRUNC truncating the file to empty,
         // then the write itself failing (e.g. ENOSPC/EIO) before any new
@@ -1171,6 +1199,46 @@ describe('writeInstallFiles rollback cleanup is identity-checked and reported (S
       expect(await fs.readFile(path.join(installPath, 'notes.txt'), 'utf8')).toBe('user notes')
     } finally {
       unlinkFailTarget.path = null
+      await fs.rm(root, { recursive: true, force: true }).catch(() => {})
+    }
+  })
+
+  // SMI-6529 round 25 (cross-model review): the identity check skipped a path
+  // on ANY lstat failure, treating "I could not tell what is here" as "it is
+  // already gone" — so a rollback that left a file behind reported success.
+  it('reports a file it created but could not identify, instead of counting it cleaned up', async () => {
+    const root = await fs.mkdtemp(path.join(os.tmpdir(), 'wif-rollback-lstatfail-'))
+    try {
+      const skillsDir = path.join(root, 'skills')
+      const installPath = path.join(skillsDir, 'my-skill')
+      await fs.mkdir(installPath, { recursive: true })
+      await fs.writeFile(path.join(installPath, 'notes.txt'), 'user notes')
+      const skillMdPath = path.join(installPath, 'SKILL.md')
+      const examplesPath = path.join(installPath, 'examples.md')
+      await fs.symlink('/nonexistent-target', examplesPath)
+      // SKILL.md is created fresh first; examples.md then fails for real, and
+      // arms the lstat failure so it lands on rollback's identity check.
+      armLstatFailOnWrite.trigger = examplesPath
+      armLstatFailOnWrite.target = skillMdPath
+
+      const err = await writeInstallFiles(
+        installPath,
+        skillsDir,
+        'my-skill',
+        '# new content',
+        [{ filename: 'examples.md', content: 'x' }],
+        undefined
+      ).catch((e: unknown) => e)
+
+      expect(err).toBeInstanceOf(InstallRestoreError)
+      const cleanup = (err as InstallRestoreError).cleanupFailures
+      expect(cleanup).toEqual([expect.stringContaining(skillMdPath)])
+      expect(cleanup[0]).toContain('EACCES')
+      expect(await fs.readFile(path.join(installPath, 'notes.txt'), 'utf8')).toBe('user notes')
+    } finally {
+      lstatFailTarget.path = null
+      armLstatFailOnWrite.trigger = null
+      armLstatFailOnWrite.target = null
       await fs.rm(root, { recursive: true, force: true }).catch(() => {})
     }
   })

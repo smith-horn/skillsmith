@@ -31,8 +31,22 @@ export interface LeftoverScan {
 }
 
 function errorCode(err: unknown): string {
-  const code = (err as NodeJS.ErrnoException).code
+  const code = (err as NodeJS.ErrnoException)?.code
   return code ?? (err instanceof Error ? err.message : String(err))
+}
+
+/**
+ * One message for entries a scan could not inspect. Round 25 (cross-model
+ * review): the parent listing succeeding does not mean every entry under it
+ * could be read, and an entry that could not be read is not an entry that
+ * isn't there.
+ */
+function unreadableNote(items: string[], dest: string): string | undefined {
+  if (items.length === 0) return undefined
+  return (
+    `${items.join('; ')}, so anything an interrupted refresh or removal left beside ${dest} ` +
+    `may not be fully reported.`
+  )
 }
 
 export const BACKUP_TAG = '.skillsmith-backup-'
@@ -130,24 +144,37 @@ export async function recoverDestination(
   }
   const backup = siblingPattern(dest, BACKUP_TAG)
   const candidates: string[] = []
+  const unreadable: string[] = []
   for (const name of entries) {
     const folder = path.join(parent, name)
     if (!backup.test(name)) continue
     if (await removeIfEmpty(folder)) continue
-    const originalStat = await lstatOrNull(path.join(folder, 'original')).catch(() => null)
+    let originalStat: Stats | null
+    try {
+      originalStat = await lstatOrNull(path.join(folder, 'original'))
+    } catch (err) {
+      // Round 25 (cross-model review): this swallowed the failure and treated
+      // the folder as "not a candidate", so a backup that could not be read
+      // was silently skipped instead of reported.
+      unreadable.push(`${folder} could not be inspected (${errorCode(err)})`)
+      continue
+    }
     if (originalStat?.isDirectory()) candidates.push(folder)
   }
+  const note = unreadableNote(unreadable, dest)
   const folder = candidates.length === 1 ? candidates[0] : undefined
-  if (folder === undefined || !isRecordedCopy(dest, manifest)) return { restored: [] }
+  if (folder === undefined || !isRecordedCopy(dest, manifest)) {
+    return { restored: [], unreadable: note }
+  }
   // Round 19 (Opus): this check sits immediately before the rename below,
   // which is as narrow as Node allows — there is no atomic no-clobber rename
   // for a directory — so an entry created inside that window would be
   // replaced (measured: an empty directory). Not restoring at all would lose
   // the crash recovery this exists for, so the window is accepted and stated.
-  if ((await lstatOrNull(dest)) !== null) return { restored: [] }
+  if ((await lstatOrNull(dest)) !== null) return { restored: [], unreadable: note }
   await fsp.rename(path.join(folder, 'original'), dest)
   await fsp.rmdir(folder).catch(() => {})
-  return { restored: [folder] }
+  return { restored: [folder], unreadable: note }
 }
 
 /**
@@ -180,15 +207,18 @@ export async function listLeftoverBackups(dest: string): Promise<LeftoverScan> {
   const parked = parkedPatterns(dest)
   const anyCase = new RegExp(exact.source, 'i')
   const leftovers: string[] = []
+  const unreadable: string[] = []
   for (const name of entries) {
     const folder = path.join(parent, name)
     if (exact.test(name) || staging.test(name) || parked.some((p) => p.test(name))) {
       if (!(await removeIfEmpty(folder))) leftovers.push(folder)
-    } else if (anyCase.test(name) && (await isCaseVariantOf(folder, dest))) {
-      leftovers.push(folder)
+    } else if (anyCase.test(name)) {
+      const variant = await isCaseVariantOf(folder, dest)
+      if ('unreadable' in variant) unreadable.push(variant.unreadable)
+      else if (variant.variant) leftovers.push(folder)
     }
   }
-  return { folders: leftovers }
+  return { folders: leftovers, unreadable: unreadableNote(unreadable, dest) }
 }
 
 /**
@@ -196,16 +226,30 @@ export async function listLeftoverBackups(dest: string): Promise<LeftoverScan> {
  * volume, the same entry as the name spelled for `dest`, and holds content.
  * On a case-sensitive volume that name doesn't exist, or is a different entry.
  */
-async function isCaseVariantOf(folder: string, dest: string): Promise<boolean> {
+async function isCaseVariantOf(
+  folder: string,
+  dest: string
+): Promise<{ variant: boolean } | { unreadable: string }> {
   const suffix = path.basename(folder).slice(-6)
   const ownName = path.join(path.dirname(dest), siblingPrefix(dest, BACKUP_TAG) + suffix)
-  const [a, b] = await Promise.all([
-    lstatOrNull(folder).catch(() => null),
-    lstatOrNull(ownName).catch(() => null),
-  ])
-  if (a === null || b === null || a.dev !== b.dev || a.ino !== b.ino) return false
-  const contents = await fsp.readdir(folder).catch(() => [])
-  return contents.length > 0
+  // Round 25 (cross-model review): both of these swallowed a failed inspection
+  // and answered "not a variant", and the read below answered "empty", so a
+  // folder that could not be read was reported as nothing at all.
+  let a: Stats | null
+  let b: Stats | null
+  try {
+    ;[a, b] = await Promise.all([lstatOrNull(folder), lstatOrNull(ownName)])
+  } catch (err) {
+    return { unreadable: `${folder} could not be inspected (${errorCode(err)})` }
+  }
+  if (a === null || b === null || a.dev !== b.dev || a.ino !== b.ino) return { variant: false }
+  let contents: string[]
+  try {
+    contents = await fsp.readdir(folder)
+  } catch (err) {
+    return { unreadable: `${folder} could not be listed (${errorCode(err)})` }
+  }
+  return { variant: contents.length > 0 }
 }
 
 /** User-facing warning for a leftover backup, staging folder or parked entry. */

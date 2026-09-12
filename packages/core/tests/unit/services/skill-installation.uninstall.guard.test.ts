@@ -30,6 +30,12 @@ const claimOnRename = vi.hoisted(() => ({
 // Every rename onto this path fails, so the manifest write fails after the
 // skill folder is already gone.
 const failRenameTo = vi.hoisted(() => ({ path: null as string | null }))
+// Round 25: `access` of this exact path fails with EACCES, so the existence
+// check cannot tell whether the skill is on disk.
+const accessFailFor = vi.hoisted(() => ({ path: null as string | null }))
+// Round 25: `readdir` of this exact folder fails, so the parked-leftover scan
+// cannot look.
+const readdirFailFor = vi.hoisted(() => ({ path: null as string | null }))
 
 // `removeIfSame` imports `node:fs/promises`; `ManifestManager` imports
 // `fs/promises`. Both get the same hooks.
@@ -72,7 +78,29 @@ const makeFsMock = vi.hoisted(() => (actual: typeof import('node:fs/promises')) 
     }
     return actual.rename(from, to)
   }
-  return { ...actual, default: { ...actual, rename }, rename }
+  const access = async (p: string, mode?: number): Promise<void> => {
+    if (String(p) === accessFailFor.path) {
+      throw Object.assign(new Error(`EACCES: permission denied, access '${String(p)}'`), {
+        code: 'EACCES',
+      })
+    }
+    return actual.access(p, mode)
+  }
+  const readdir = (async (...args: Parameters<typeof actual.readdir>) => {
+    if (String(args[0]) === readdirFailFor.path) {
+      throw Object.assign(new Error(`EACCES: permission denied, scandir '${String(args[0])}'`), {
+        code: 'EACCES',
+      })
+    }
+    return actual.readdir(...args)
+  }) as typeof actual.readdir
+  return {
+    ...actual,
+    default: { ...actual, rename, access, readdir },
+    rename,
+    access,
+    readdir,
+  }
 })
 
 vi.mock('node:fs/promises', async (importOriginal) =>
@@ -187,6 +215,8 @@ afterEach(async () => {
   claimOnRename.newVersion = null
   claimOnRename.newInstallPath = null
   failRenameTo.path = null
+  accessFailFor.path = null
+  readdirFailFor.path = null
   db.close()
   await fs.rm(tmpDir, { recursive: true, force: true })
 })
@@ -229,6 +259,38 @@ describe('uninstall never deletes a git working tree (SMI-6529 round 15)', () =>
     expect(result.success).toBe(true)
     await expect(fs.lstat(link)).rejects.toMatchObject({ code: 'ENOENT' })
     expect(await fs.readFile(path.join(clone, 'SKILL.md'), 'utf-8')).toBe('# Local work\n')
+  })
+})
+
+// SMI-6529 round 25 (cross-model review): a check that could not run is not a
+// check that found nothing. Both of these used to be silent.
+describe('uninstall says when it could not tell (SMI-6529 round 25)', () => {
+  it('does not say "not installed" when the check itself failed', async () => {
+    const installPath = path.join(skillsDir, 'unreadable-skill')
+    await fs.mkdir(installPath)
+    await fs.writeFile(path.join(installPath, 'SKILL.md'), '# Installed\n')
+    accessFailFor.path = installPath
+
+    const result = await createService().uninstall('unreadable-skill')
+
+    expect(result.success).toBe(false)
+    expect(result.message).toContain('Could not tell whether')
+    expect(result.message).toContain('EACCES')
+    // The skill is still there: the user is not sent away from it.
+    expect(await fs.readFile(path.join(installPath, 'SKILL.md'), 'utf-8')).toBe('# Installed\n')
+  })
+
+  it('says when it could not look for parked leftovers', async () => {
+    const installPath = path.join(skillsDir, 'parkscan-skill')
+    await fs.mkdir(installPath)
+    await fs.writeFile(path.join(installPath, 'SKILL.md'), '# Installed\n')
+    await track('parkscan-skill', installPath)
+    readdirFailFor.path = skillsDir
+
+    const result = await createService().uninstall('parkscan-skill', { force: true })
+
+    expect(result.success).toBe(true)
+    expect(result.warning).toContain('could not be listed (EACCES)')
   })
 })
 

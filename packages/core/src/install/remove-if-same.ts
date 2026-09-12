@@ -40,8 +40,16 @@ export interface EntryIdentity {
 export type CheckedRemoval = { removed: true } | { removed: false; reason: string }
 
 function errorCode(err: unknown): string {
-  const code = (err as NodeJS.ErrnoException).code
+  const code = (err as NodeJS.ErrnoException)?.code
   return code ?? (err instanceof Error ? err.message : String(err))
+}
+
+/** What a parked-leftover scan found, and whether it could look at all. */
+export interface ParkedScan {
+  /** Entries a crashed or failed removal left parked beside the target. */
+  parked: string[]
+  /** Set when the folder holding them could not be listed. */
+  unreadable?: string
 }
 
 /**
@@ -68,17 +76,26 @@ export function parkedPattern(target: string): RegExp {
  * destination nothing swept these, so a failed removal's leftover was named
  * once, in one error, and never again.
  */
-export async function listParkedLeftovers(target: string): Promise<string[]> {
+export async function listParkedLeftovers(target: string): Promise<ParkedScan> {
   const pattern = parkedPattern(target)
+  const parent = path.dirname(target)
   let entries: string[]
   try {
-    entries = await fsp.readdir(path.dirname(target))
-  } catch {
-    return []
+    entries = await fsp.readdir(parent)
+  } catch (err) {
+    // Round 25 (cross-model review): an empty list here said "nothing is
+    // parked" when the truth was "this folder could not be listed", hiding
+    // the very thing this scan exists to surface.
+    return {
+      parked: [],
+      unreadable:
+        `${parent} could not be listed (${errorCode(err)}), so anything an interrupted removal ` +
+        `left parked beside ${target} is not reported here.`,
+    }
   }
-  return entries
-    .filter((name) => pattern.test(name))
-    .map((name) => path.join(path.dirname(target), name))
+  return {
+    parked: entries.filter((name) => pattern.test(name)).map((name) => path.join(parent, name)),
+  }
 }
 
 /**
