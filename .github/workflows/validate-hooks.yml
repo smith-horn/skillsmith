@@ -53,6 +53,8 @@ on:
       - 'scripts/lib/check-mount-composition.probes.sh'
       - 'scripts/lib/check-mount-composition.identity.sh'
       - 'scripts/tests/check-mount-composition.test.sh'
+      - 'scripts/verify-worktree-symlinks.sh'
+      - 'scripts/tests/verify-worktree-symlinks-dangling.test.sh'
       - 'scripts/tests/worktree-port-collision.test.sh'
       - 'scripts/tests/worktree-dev-port.test.sh'
       - 'scripts/tests/regen-worktree-overrides.test.sh'
@@ -126,6 +128,8 @@ jobs:
             scripts/lib/check-mount-composition.probes.sh \
             scripts/lib/check-mount-composition.identity.sh \
             scripts/tests/check-mount-composition.test.sh \
+            scripts/verify-worktree-symlinks.sh \
+            scripts/tests/verify-worktree-symlinks-dangling.test.sh \
             scripts/tests/worktree-port-collision.test.sh \
             scripts/tests/worktree-dev-port.test.sh \
             scripts/tests/regen-worktree-overrides.test.sh \
@@ -176,6 +180,8 @@ jobs:
           bash -n scripts/lib/check-mount-composition.probes.sh
           bash -n scripts/lib/check-mount-composition.identity.sh
           bash -n scripts/tests/check-mount-composition.test.sh
+          bash -n scripts/verify-worktree-symlinks.sh
+          bash -n scripts/tests/verify-worktree-symlinks-dangling.test.sh
           bash -n scripts/tests/worktree-port-collision.test.sh
           bash -n scripts/tests/worktree-dev-port.test.sh
           bash -n scripts/tests/regen-worktree-overrides.test.sh
@@ -217,6 +223,7 @@ jobs:
           bash scripts/tests/website-vercel-output-volume.test.sh
           bash scripts/tests/repair-worktree-container-symlinks.test.sh
           bash scripts/tests/check-mount-composition.test.sh
+          bash scripts/tests/verify-worktree-symlinks-dangling.test.sh
           bash scripts/tests/worktree-port-collision.test.sh
           bash scripts/tests/worktree-dev-port.test.sh
           bash scripts/tests/regen-worktree-overrides.test.sh
