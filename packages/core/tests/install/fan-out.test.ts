@@ -1699,22 +1699,19 @@ describe('install/fan-out', () => {
       }
     })
 
-    it('installs over an empty destination a crashed claim left behind', async () => {
+    // Round 22 (cross-model review): an empty directory the user made looks
+    // exactly like one a crashed claim left, so Skillsmith refuses instead of
+    // removing it, and says what it probably is.
+    it('refuses an empty destination rather than removing what it cannot identify', async () => {
       const { addLink } = await loadModule()
       await seedSkill('emptyclaim')
       const toDir = path.join(homeDir, '.cursor', 'skills', 'emptyclaim')
-      // What a crash between the claim and the swap leaves: an empty directory
-      // that used to block every later addLink for this skill.
       await mkdir(toDir, { recursive: true })
 
-      const { record } = await addLink({
-        skillId: 'emptyclaim',
-        fromClient: 'claude-code',
-        toClient: 'cursor',
-      })
-
-      expect(record.to).toBe(toDir)
-      expect(await readFile(path.join(toDir, 'SKILL.md'), 'utf-8')).toBe('# test\n')
+      await expect(
+        addLink({ skillId: 'emptyclaim', fromClient: 'claude-code', toClient: 'cursor' })
+      ).rejects.toThrow(/already exists.*interrupted install may have left it/s)
+      expect((await lstat(toDir)).isDirectory()).toBe(true)
     })
 
     it('refuses to move aside a copy that was replaced before the refresh got to it', async () => {

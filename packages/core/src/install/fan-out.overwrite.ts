@@ -319,6 +319,17 @@ async function publish(staged: string, dest: string, staging: Stats): Promise<St
     const linked = await fsp.readlink(dest).catch(() => null)
     return linked === target ? now : null
   }
+  // Round 22 (cross-model review; accepted residual, user decision
+  // 2026-09-12, tracked as SMI-6559): the claim and the rename below are two
+  // syscalls, and that CANNOT be made atomic here — Node exposes no
+  // no-replace rename (Linux's renameat2(RENAME_NOREPLACE) and macOS's
+  // renamex_np have no binding in node:fs). What the remaining window
+  // requires is narrow: another program must remove THIS call's own empty
+  // claim and put its own entry at the path in between. Five adversarial
+  // interleavings across macOS and Linux lost no data. The alternative —
+  // filling the claimed directory in place — removes the window but makes a
+  // half-copied skill visible at the destination, which staging exists to
+  // prevent (round 6).
   await fsp.mkdir(dest)
   try {
     await fsp.rename(staged, dest)
@@ -357,6 +368,10 @@ async function swapIntoPlace(
   // Round 20 (cross-model review): move aside only the entry that was checked.
   // A rename moves whatever is at the path, so without this an entry another
   // program had just put there would be carried into this call's backup folder.
+  // The same accepted residual as the claim above (SMI-6559): this check and
+  // the rename that follows are two syscalls. If another program replaces the
+  // destination in between, its entry is moved into this call's backup folder
+  // rather than deleted, and `listLeftoverBackups` reports it.
   const stillThere = await lstatOrNull(dest).catch(() => null)
   if (stillThere === null || stillThere.dev !== existing.dev || stillThere.ino !== existing.ino) {
     await fsp.rmdir(backupFolder).catch(() => {})

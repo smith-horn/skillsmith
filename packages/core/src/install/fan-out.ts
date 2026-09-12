@@ -175,7 +175,9 @@ export async function addLink(opts: AddLinkOptions): Promise<AddLinkResult> {
     if (existing) {
       if (!force) {
         throw new Error(
-          `addLink: ${toDir} already exists. Pass force: true (CLI: --force) to overwrite.`
+          `addLink: ${toDir} already exists. Pass force: true (CLI: --force) to overwrite. ` +
+            `If it is an empty directory, an interrupted install may have left it; Skillsmith ` +
+            `does not remove it for you, since an empty directory you made looks the same.`
         )
       }
       // Round 10: say why there's no record, rather than "not recorded".
