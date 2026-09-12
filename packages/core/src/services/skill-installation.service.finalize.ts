@@ -29,6 +29,13 @@ import { extractDepIntel, persistDependencies, generateTips } from './skill-inst
 import { checkDepsAgainstQuarantine } from './skill-installation.validate.js'
 import { recordAiDefenceFeedback, collectTrendWarnings } from './skill-installation.feedback.js'
 
+function errorText(err: unknown): string {
+  return (
+    (err as NodeJS.ErrnoException | null)?.code ??
+    (err instanceof Error ? err.message : String(err))
+  )
+}
+
 /** Everything {@link finalizeSuccessfulInstall} needs from the service and the install in progress. */
 export interface FinalizeInstallParams {
   manifest: ManifestManager
@@ -128,20 +135,32 @@ export async function finalizeSuccessfulInstall(
   // so an unrelated co-install-recording hiccup was rolling back files and a
   // manifest entry that were both already correct. Co-install session
   // tracking has no bearing on whether the install itself succeeded.
+  // Round 28 (pre-merge gate, PR-07): still best-effort — the install itself
+  // succeeded and must not be undone — but no longer silent. A swallowed
+  // failure here left the operator with no sign that session bookkeeping is
+  // incomplete, which is the same "could not tell" class this wave removed
+  // everywhere else.
+  const bookkeepingProblems: string[] = []
   if (coInstallRecorder) {
     try {
       coInstallRecorder.recordSessionCoInstalls([...sessionInstalledSkillIds, skillId])
       sessionInstalledSkillIds.push(skillId)
-    } catch {
-      /* best-effort */
+    } catch (err) {
+      bookkeepingProblems.push(
+        `co-install session tracking was not recorded for ${skillId} (${errorText(err)}). The ` +
+          `install itself succeeded.`
+      )
     }
   }
   // Persist dependency intelligence (best-effort)
   const depIntel = extractDepIntel(skillMdContent)
   try {
     persistDependencies(skillDependencyRepo, skillId, skillMdContent, depIntel.dep_declared)
-  } catch {
-    /* best-effort */
+  } catch (err) {
+    bookkeepingProblems.push(
+      `dependency intelligence was not persisted for ${skillId} (${errorText(err)}). The install ` +
+        `itself succeeded.`
+    )
   }
   let quarantinedDeps: string[] | undefined // SMI-3871
   if (quarantineLookup) {
@@ -151,8 +170,13 @@ export async function finalizeSuccessfulInstall(
         quarantinedDeps = dqResult.quarantinedDeps
         depIntel.dep_warnings.push(...dqResult.warnings)
       }
-    } catch {
-      /* best-effort */
+    } catch (err) {
+      // This one matters most of the three: a failed check is not a clean
+      // check, and silence here reads as "no quarantined dependencies".
+      bookkeepingProblems.push(
+        `dependencies could not be checked against the quarantine list (${errorText(err)}), so ` +
+          `this install is not evidence that none are quarantined.`
+      )
     }
   }
   const trendWarnings = securityReport
@@ -173,6 +197,7 @@ export async function finalizeSuccessfulInstall(
   const tips = generateTips(skillName, optimizationInfo, client, skillsDir)
   tips.unshift(...trendWarnings)
   tips.push(...configWarnings)
+  tips.push(...bookkeepingProblems)
   if (skipScanRequested) {
     tips.unshift('Security scan was skipped. This skill was not scanned for malicious content.')
   }

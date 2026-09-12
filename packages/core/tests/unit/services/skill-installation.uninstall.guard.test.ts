@@ -269,6 +269,29 @@ describe('uninstall never deletes a git working tree (SMI-6529 round 15)', () =>
   })
 })
 
+// SMI-6529 round 28 (pre-merge gate, PR-07): a progress listener that throws
+// must not change the uninstall's outcome — that part was deliberate — but it
+// must not vanish either.
+describe('uninstall reports a progress listener that threw (SMI-6529 round 28)', () => {
+  it('finishes the uninstall and says the listener threw', async () => {
+    const installPath = path.join(skillsDir, 'listener-skill')
+    await fs.mkdir(installPath)
+    await fs.writeFile(path.join(installPath, 'SKILL.md'), '# Installed\n')
+    await track('listener-skill', installPath)
+
+    const result = await createService(() => {
+      throw new Error('listener blew up')
+    }).uninstall('listener-skill', { force: true })
+
+    // The outcome is unchanged: the skill really is gone.
+    expect(result.success).toBe(true)
+    await expect(fs.lstat(installPath)).rejects.toMatchObject({ code: 'ENOENT' })
+    // And the failure is not silent.
+    expect(result.warning).toContain('progress listener threw')
+    expect(result.warning).toContain('listener blew up')
+  })
+})
+
 // SMI-6529 round 25 (cross-model review): a check that could not run is not a
 // check that found nothing. Both of these used to be silent.
 describe('uninstall says when it could not tell (SMI-6529 round 25)', () => {

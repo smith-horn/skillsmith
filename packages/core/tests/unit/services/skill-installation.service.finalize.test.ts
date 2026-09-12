@@ -59,6 +59,36 @@ function buildParams(overrides: Partial<FinalizeInstallParams> = {}): FinalizeIn
 }
 
 describe('finalizeSuccessfulInstall (SMI-6529 N4)', () => {
+  // SMI-6529 round 28 (pre-merge gate, PR-07): these three catches stayed
+  // best-effort — the install succeeded and must not be undone — but they were
+  // SILENT, so an operator had no sign that bookkeeping was incomplete. They
+  // now ride the result's own tips channel.
+  it('reports best-effort bookkeeping it could not complete, instead of swallowing it', async () => {
+    const throwingRecorder: CoInstallRecorder = {
+      recordSessionCoInstalls: vi.fn(() => {
+        throw new Error('simulated SQLite busy/lock error')
+      }),
+    }
+    const params = buildParams({
+      coInstallRecorder: throwingRecorder,
+      // The lookup is only consulted for servers the content actually
+      // references, so the fixture has to name one (mcp__<server>__<tool>).
+      skillMdContent: '# my-skill\n\nUse mcp__linear__save_issue to file it.\n',
+      quarantineLookup: () => {
+        throw new Error('quarantine store unavailable')
+      },
+    })
+
+    const result = await finalizeSuccessfulInstall(params)
+
+    // Still a successful install: the fix makes it audible, not fatal.
+    expect(result.success).toBe(true)
+    const tips = (result.tips ?? []).join('\n')
+    expect(tips).toContain('co-install session tracking was not recorded')
+    // The one that matters most: a failed quarantine check is not a clean one.
+    expect(tips).toContain('could not be checked against the quarantine list')
+  })
+
   it('N4: a throwing coInstallRecorder does NOT fail the install — manifest write already committed', async () => {
     const throwingRecorder: CoInstallRecorder = {
       recordSessionCoInstalls: vi.fn(() => {

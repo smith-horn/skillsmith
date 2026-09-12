@@ -76,12 +76,28 @@ export async function inspectForRemoval(
  * Round 18 (cross-model review): a listener that threw after the folder was
  * already removed reached the generic catch, which reported neither what had
  * been removed nor what was left parked.
+ *
+ * Round 28 (pre-merge gate, PR-07): the failure is still swallowed as far as
+ * the uninstall's outcome goes — that part was deliberate and stays — but it
+ * is no longer swallowed as far as the USER goes. It is pushed onto
+ * `problems`, which the caller surfaces alongside its other warnings. An empty
+ * catch here was the same "could not tell" silence this wave removed
+ * everywhere else, in the one place that reports to the user for a living.
  */
-export function notify(onProgress: ProgressCallback, ...args: Parameters<ProgressCallback>): void {
+export function notify(
+  onProgress: ProgressCallback,
+  problems: string[],
+  ...args: Parameters<ProgressCallback>
+): void {
   try {
     onProgress(...args)
-  } catch {
-    // A progress listener must never break an uninstall.
+  } catch (err) {
+    const stage = String(args[0] ?? 'unknown')
+    problems.push(
+      `the progress listener threw while reporting the "${stage}" step ` +
+        `(${err instanceof Error ? err.message : String(err)}); the uninstall itself was not ` +
+        `affected.`
+    )
   }
 }
 

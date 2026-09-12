@@ -188,8 +188,13 @@ export async function performUninstall(params: {
   } = params
   const manifestKey = manifestKeyFor(skillName, client)
 
+  // Round 28 (pre-merge gate, PR-07): a progress listener that throws must not
+  // change the outcome, but it must not vanish either. Every notify below
+  // records into this one array, and every exit that reports warnings carries
+  // it.
+  const listenerProblems: string[] = []
   try {
-    notify(onProgress, 'manifest', 'Loading manifest')
+    notify(onProgress, listenerProblems, 'manifest', 'Loading manifest')
     const manifestData = await manifest.load()
     let skillEntry = manifestData.installedSkills[manifestKey]
     let adopted = false
@@ -238,7 +243,12 @@ export async function performUninstall(params: {
       // real `install()` landing in that window could be silently
       // clobbered. `adopted` now reflects whether OUR guess actually won
       // (false when a concurrent writer's real entry was found instead).
-      notify(onProgress, 'adopt', 'Adopting untracked skill (no manifest entry found)')
+      notify(
+        onProgress,
+        listenerProblems,
+        'adopt',
+        'Adopting untracked skill (no manifest entry found)'
+      )
       const adoptResult = await adoptUntrackedSkillEntry(
         skillName,
         skillName,
@@ -261,7 +271,7 @@ export async function performUninstall(params: {
     if ('refusal' in seen) return { success: false, skillName, message: seen.refusal }
 
     if (!force) {
-      notify(onProgress, 'check', 'Checking for modifications')
+      notify(onProgress, listenerProblems, 'check', 'Checking for modifications')
       const modified = await checkForModifications(installPath, skillEntry.installedAt)
       if (modified) {
         return {
@@ -271,19 +281,21 @@ export async function performUninstall(params: {
             'Skill "' +
             skillName +
             '" has been modified since installation. Use force=true to remove anyway.',
-          warning: 'Local modifications will be lost if you force uninstall.',
+          warning: ['Local modifications will be lost if you force uninstall.', ...listenerProblems]
+            .join(' ')
+            .trim(),
         }
       }
     }
 
-    notify(onProgress, 'remove', 'Removing skill directory')
+    notify(onProgress, listenerProblems, 'remove', 'Removing skill directory')
     // SMI-6529 round 15 (cross-model review, Critical): remove only the entry
     // checked above. Anything another program put there since is left in
     // place, and so is the manifest entry, so the user can retry.
     if (seen.stat !== null) {
       const removal = await removeIfSame(installPath, seen.stat)
       if (!removal.removed) {
-        const parked = await parkedWarnings(installPath)
+        const parked = [...(await parkedWarnings(installPath)), ...listenerProblems]
         return {
           success: false,
           skillName,
@@ -306,7 +318,7 @@ export async function performUninstall(params: {
       // Table may not exist pre-migration
     }
 
-    notify(onProgress, 'manifest', 'Updating manifest')
+    notify(onProgress, listenerProblems, 'manifest', 'Updating manifest')
     // SMI-6007: route the final mutation through updateSafely() (lock +
     // fresh re-read + save) instead of saving the `manifestData` snapshot
     // loaded above. That snapshot can be stale by the time we get here —
@@ -346,7 +358,7 @@ export async function performUninstall(params: {
         return next
       })
     } catch (error) {
-      const parked = await parkedWarnings(installPath)
+      const parked = [...(await parkedWarnings(installPath)), ...listenerProblems]
       return {
         success: false,
         skillName,
@@ -366,7 +378,7 @@ export async function performUninstall(params: {
       }
     }
 
-    notify(onProgress, 'done', 'Uninstall complete')
+    notify(onProgress, listenerProblems, 'done', 'Uninstall complete')
     // Round 16 (both reviewers): away from a fan-out destination nothing swept
     // what a failed removal parked, so it was named once and never again.
     const warnings = [
@@ -381,6 +393,7 @@ export async function performUninstall(params: {
           ]
         : []),
       ...(await parkedWarnings(installPath)),
+      ...listenerProblems,
     ]
     return {
       success: true,
