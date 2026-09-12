@@ -73,6 +73,8 @@ import {
   evaluateExportSurfaceShadowGate,
 } from './audit-export-surface-consumer-helpers.mjs'
 import { findGitCryptUnsetRemediations } from './audit-git-crypt-remediation-helpers.mjs'
+import { findAbsoluteSeparateGitDirWriters } from './audit-gitdir-writer-helpers.mjs'
+import { checkDockerEnvDefaultCoherence } from './audit-docker-env-coherence-helpers.mjs'
 import { findMissingHuskyStubs } from './audit-husky-stub-coverage-helpers.mjs'
 import {
   listManifestHygieneTestFiles,
@@ -5892,6 +5894,8 @@ console.log(
       'this IS the canonical HOST-tree freshness guard (SMI-5343/5344/6006) — checking host bytes is its entire documented purpose',
     'scripts/lib/check-node-modules-fresh.sh:if [ ! -f "$SENTINEL" ]; then':
       'same guard as above, the inverse branch',
+    'scripts/lib/check-node-modules-fresh.sh:if [ -f "$SENTINEL_SHADOW" ]; then':
+      'SMI-6496 Fix 2 shadow-hash sentinel — same canonical HOST-tree freshness guard as the raw sentinel rows above, checking a second host-side file for the same documented purpose',
     'scripts/repair-host-native-deps.sh:rm -rf "$dest"':
       'file header: "audit:host-npm-required ... by-design host-side native binding rebuild per SMI-4549; cannot run in Docker" — deliberately host-only',
     'scripts/repair-host-native-deps.sh:warn "$pkg_name: refetched but bin/esbuild still fails the ELF check — manual recovery: rm -rf node_modules/@esbuild/$(basename "${linux_dir%/}") && npm pack $pkg_name@$version"':
@@ -6075,6 +6079,108 @@ try {
       'thrown sanity-gate error here means the generator itself cannot currently produce a valid ' +
       'lexicon, which is a harder failure than mere drift.'
   )
+}
+
+// Check 69: absolute `--separate-git-dir` writer ban (SMI-6515 Wave 2)
+//
+// A submodule gitfile (`.git`) whose `gitdir:` line is an absolute host
+// path resolves fine on the host that wrote it, but breaks every git
+// command run inside skillsmith-dev-1 or any worktree container -- the
+// repo is bind-mounted at /app there, so the host path never exists.
+// docs/internal/implementation/smi-6515-absolute-gitdir-detector.md
+// confirms two writers of this exact bad form: git's own
+// `git submodule--helper clone` internals (unfixable from this repo --
+// it is git's own code, reached whenever `git submodule update --init`
+// is interrupted between its clone and finalize steps) and this repo's
+// own documented recipe (.claude/development/git-crypt-guide.md, SMI-6015
+// stall-recovery section, corrected in this same PR). This check closes
+// the second writer -- the one this repo's own tracked files can
+// regress -- but it cannot observe or prevent the git-internal one.
+//
+// Ships at FAIL, per the plan's original Wave 2 Step 2 spec. This scans
+// TRACKED files for a writer pattern, a fully CI-enforceable invariant
+// with no plausible false-positive surface once allow-listed paths are
+// excluded (see the helper's own header for why each allow-list entry is
+// there). This is a DIFFERENT question from Wave 0's cache-error-direction
+// measurement (conservative MISS, never a false HIT), which governs the
+// severity of a future detector for the untracked, machine-local GITDIR
+// ARTIFACT (Wave 3, out of scope here) -- that detector legitimately warns;
+// this check does not, matching the fail()-from-day-one precedent set by
+// Check 61 (also a tracked-file remediation-string ban).
+//
+// scripts/tests/gitdir-writer-check.test.ts is the executable twin of
+// this check -- same helper, same invariant.
+console.log(`\n${BOLD}Check 69: absolute --separate-git-dir writer ban (SMI-6515)${RESET}`)
+{
+  const { filesChecked, findings: gitdirWriterFindings } = findAbsoluteSeparateGitDirWriters('.')
+  if (gitdirWriterFindings.length === 0) {
+    pass(
+      `Check 69: no absolute \`--separate-git-dir\` invocation found (${filesChecked} tracked file(s) scanned outside the allow-listed recipe)`
+    )
+  } else {
+    // WARN, not fail. The cross-family pre-merge gate (ADR-128) established
+    // that this detector cannot justify blocking in its current form, in both
+    // directions at once:
+    //
+    //   MISSES real writers -- the pattern requires a literal `/` right after
+    //   `=` or one space, so every quoted form (`--separate-git-dir="$HOME/x"`,
+    //   `--separate-git-dir='/abs'`), a line continuation before the value, and
+    //   any variable indirection all pass straight through.
+    //
+    //   BLOCKS harmless prose -- documentation that merely quotes the bad
+    //   invocation to warn against it trips the same pattern.
+    //
+    // A gate that blocks documentation while missing the invocations it bans
+    // is worse than one that reports. Promoting this to fail() requires
+    // quote-aware and continuation-aware parsing that can also tell an
+    // executable line from prose; until that exists, the signal is worth
+    // keeping and the block is not.
+    for (const f of gitdirWriterFindings) {
+      warn(
+        `Check 69: ${f.file}:${f.line} — absolute \`--separate-git-dir\` found among ${filesChecked} scanned file(s): ${f.text}`,
+        "Use a mandatory rewrite-to-relative step immediately after the clone (temp file + rename), and verify with `git -C <path> rev-parse --git-dir` ON THE HOST (in-container git does not work in a worktree, SMI-6549). See .claude/development/git-crypt-guide.md's SMI-6015 stall-recovery section for the corrected pattern."
+      )
+    }
+  }
+}
+
+// Check 70: SKILLSMITH_DOCKER default coherence (SMI-6518)
+//
+// docker-compose.yml's `dev` service reads SKILLSMITH_DOCKER_CPUS /
+// SKILLSMITH_DOCKER_MEM via `${VAR:-default}` shorthand (SMI-6064).
+// .env.schema separately documents what those defaults are, in prose.
+// Nothing checked that the two agree -- confirmed during SMI-6518,
+// `grep -n "SKILLSMITH_DOCKER\|mem_limit" scripts/audit-standards.mjs`
+// returned zero hits before this check existed.
+//
+// Ships HARD (fail), not shadow/warn: this compares two static files
+// with no live-environment dependency and no plausible false-positive
+// surface. There is no legitimate reason for these two files to ever
+// disagree.
+//
+// scripts/tests/audit-docker-env-coherence.test.ts is the executable
+// twin of this check -- same helper, same invariant.
+console.log(`\n${BOLD}Check 70: SKILLSMITH_DOCKER default coherence (SMI-6518)${RESET}`)
+{
+  const composeContent = readFileSync('docker-compose.yml', 'utf8')
+  const envSchemaContent = readFileSync('.env.schema', 'utf8')
+  const dockerCoherence = checkDockerEnvDefaultCoherence(composeContent, envSchemaContent)
+
+  if (dockerCoherence.problems.length > 0) {
+    fail(
+      `Check 70: ${dockerCoherence.problems.join('; ')}`,
+      'Both files must declare a parseable default -- see docker-compose.yml\'s dev service (`cpus:`/`mem_limit:`) and .env.schema\'s SKILLSMITH_DOCKER_CPUS/SKILLSMITH_DOCKER_MEM entries ("Default N" prose).'
+    )
+  } else if (dockerCoherence.mismatches.length > 0) {
+    fail(
+      `Check 70: docker-compose.yml and .env.schema disagree on SKILLSMITH_DOCKER default(s) — ${dockerCoherence.mismatches.join('; ')}`,
+      'Update whichever file is stale so both defaults match exactly.'
+    )
+  } else {
+    pass(
+      `Check 70: docker-compose.yml and .env.schema agree on SKILLSMITH_DOCKER_CPUS (${dockerCoherence.compose.cpus}) and SKILLSMITH_DOCKER_MEM (${dockerCoherence.compose.mem}) defaults`
+    )
+  }
 }
 
 // Summary

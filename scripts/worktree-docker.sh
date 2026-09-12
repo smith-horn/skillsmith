@@ -362,10 +362,21 @@ Usage: $(basename "$0") exec [worktree-path] -- <cmd...>"
     resolved_from=$(printf '%s' "$name_and_source" | cut -d' ' -f2-)
 
     if ! docker ps --filter "name=^${container_name}\$" --format '{{.Names}}' | grep -qx "$container_name"; then
+        # SMI-6507: the main checkout starts with a bare `docker compose`;
+        # a worktree must start via this script's own `start` subcommand
+        # instead (bare `docker compose --profile dev up -d` in a worktree
+        # publishes an extra host port and collides with the main
+        # checkout's container; see CLAUDE.md's Docker-First section).
+        local start_cmd
+        if is_main_checkout "$worktree_path"; then
+            start_cmd="cd $worktree_path && docker compose --profile dev up -d"
+        else
+            start_cmd="$worktree_path/scripts/worktree-docker.sh start $worktree_path"
+        fi
         error "Container '$container_name' is not running for $worktree_path (resolved from $resolved_from).
 
 Start it first:
-  cd $worktree_path && docker compose --profile dev up -d"
+  $start_cmd"
     fi
 
     success "Running in: $container_name"
