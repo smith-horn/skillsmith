@@ -1656,6 +1656,67 @@ describe('install/fan-out', () => {
       }
     })
 
+    // Round 21 (Opus): `symlink` creates a new entry, so the identity has to be
+    // read back — and something can replace the path in that instant. Reporting
+    // that identity would let the undo delete another program's entry.
+    it('never deletes what replaced a symlink it had just published', async () => {
+      await seedSkill('symundo')
+      const toDir = path.join(homeDir, '.cursor', 'skills', 'symundo')
+      vi.doMock('node:fs/promises', async () => {
+        const actual = await vi.importActual<typeof import('node:fs/promises')>('node:fs/promises')
+        let swapped = false
+        const symlink = vi.fn(
+          async (target: PathLike, p: PathLike, type?: Parameters<typeof actual.symlink>[2]) => {
+            const made = await actual.symlink(target, p, type)
+            if (!swapped && String(p) === toDir) {
+              swapped = true
+              await actual.unlink(toDir)
+              await actual.mkdir(toDir)
+              await actual.writeFile(path.join(toDir, 'KEEP.md'), 'not ours', 'utf-8')
+            }
+            return made
+          }
+        )
+        return { ...actual, default: { ...actual, symlink }, symlink }
+      })
+      mockManifestLockFailure()
+      try {
+        vi.resetModules()
+        const { addLink } = await import('../../src/install/fan-out.js')
+        await expect(
+          addLink({
+            skillId: 'symundo',
+            fromClient: 'claude-code',
+            toClient: 'cursor',
+            preferSymlink: true,
+          })
+        ).rejects.toThrow(/could not identify/)
+        expect(await readFile(path.join(toDir, 'KEEP.md'), 'utf-8')).toBe('not ours')
+      } finally {
+        vi.doUnmock('node:fs/promises')
+        vi.doUnmock('../../src/install/fan-out.overwrite.js')
+        vi.resetModules()
+      }
+    })
+
+    it('installs over an empty destination a crashed claim left behind', async () => {
+      const { addLink } = await loadModule()
+      await seedSkill('emptyclaim')
+      const toDir = path.join(homeDir, '.cursor', 'skills', 'emptyclaim')
+      // What a crash between the claim and the swap leaves: an empty directory
+      // that used to block every later addLink for this skill.
+      await mkdir(toDir, { recursive: true })
+
+      const { record } = await addLink({
+        skillId: 'emptyclaim',
+        fromClient: 'claude-code',
+        toClient: 'cursor',
+      })
+
+      expect(record.to).toBe(toDir)
+      expect(await readFile(path.join(toDir, 'SKILL.md'), 'utf-8')).toBe('# test\n')
+    })
+
     it('refuses to move aside a copy that was replaced before the refresh got to it', async () => {
       const { addLink: setupAddLink } = await loadModule()
       await seedSkill('moveaside')

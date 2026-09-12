@@ -75,13 +75,21 @@ export async function undoUnrecordedWrite(
   toDir: string,
   cause: unknown,
   oldLinkTarget: string | undefined,
-  placed: EntryIdentity
+  placed: EntryIdentity | null
 ): Promise<void> {
   const fail = (what: string): Error =>
     new Error(
       `addLink: ${errorText(cause)}; this call's unrecorded write could not be undone: ${what}.`,
       { cause }
     )
+  if (placed === null) {
+    // Round 21 (Opus): the write could not be identified — something replaced
+    // it while it was being created — so nothing here is safe to remove.
+    throw fail(
+      `${toDir} holds a write this call could not identify, since something replaced it while ` +
+        `it was being created, so nothing was removed`
+    )
+  }
   const removal = await removeIfSame(toDir, placed)
   if (!removal.removed) throw fail(`${toDir} ${removal.reason}`)
   if (oldLinkTarget !== undefined) {

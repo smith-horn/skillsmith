@@ -239,8 +239,13 @@ export async function assertOverwritable(
 
 /** What {@link replaceDestination} put in place, and what it could not clean up. */
 export interface PlacedDestination {
-  /** Identity of the entry now at `dest`, taken before the swap. */
-  placed: Stats
+  /**
+   * Identity of the entry now at `dest`, or null when this call cannot be
+   * sure what it placed — round 21 (Opus): a published symlink that something
+   * replaced between creating it and reading it back. A null identity means an
+   * undo reports the write instead of deleting anything.
+   */
+  placed: Stats | null
   /** Warnings for the caller to surface, e.g. a superseded copy left behind. */
   warnings: string[]
 }
@@ -263,7 +268,7 @@ export async function replaceDestination(
   const stagingFolder = await fsp.mkdtemp(path.join(parent, siblingPrefix(dest, STAGING_TAG)))
   const made = await fsp.lstat(stagingFolder)
   const staged = path.join(stagingFolder, 'content')
-  let placed: Stats
+  let placed: Stats | null
   let warnings: string[]
   try {
     await write(staged)
@@ -298,11 +303,21 @@ export async function replaceDestination(
  * Returns the identity of what is now at `dest`: a rename keeps the staged
  * directory's, while a published symlink is a new entry.
  */
-async function publish(staged: string, dest: string, staging: Stats): Promise<Stats> {
+async function publish(staged: string, dest: string, staging: Stats): Promise<Stats | null> {
   if (staging.isSymbolicLink()) {
-    await fsp.symlink(await fsp.readlink(staged), dest)
+    const target = await fsp.readlink(staged)
+    await fsp.symlink(target, dest)
     await fsp.unlink(staged).catch(() => {})
-    return await fsp.lstat(dest)
+    // Round 21 (Opus): `symlink` creates a NEW entry, so unlike the rename
+    // below there is no pre-image to report. Read it back and accept it only
+    // while it is still the link just written — anything else means another
+    // program replaced it in that window, and reporting that identity would
+    // let an undo delete their entry. Fail closed: no identity. (`link` is not
+    // an option: on Linux it links the symlink, on macOS it follows it.)
+    const now = await lstatOrNull(dest)
+    if (now === null || !now.isSymbolicLink()) return null
+    const linked = await fsp.readlink(dest).catch(() => null)
+    return linked === target ? now : null
   }
   await fsp.mkdir(dest)
   try {
@@ -320,7 +335,7 @@ async function swapIntoPlace(
   dest: string,
   staged: string,
   staging: Stats
-): Promise<{ placed: Stats; warnings: string[] }> {
+): Promise<{ placed: Stats | null; warnings: string[] }> {
   const existing = await lstatOrNull(dest)
   if (existing === null) {
     return { placed: await publish(staged, dest, staging), warnings: [] }
@@ -356,7 +371,7 @@ async function swapIntoPlace(
     await fsp.rmdir(backupFolder).catch(() => {})
     throw err
   }
-  let placed: Stats
+  let placed: Stats | null
   try {
     placed = await publish(staged, dest, staging)
   } catch (err) {

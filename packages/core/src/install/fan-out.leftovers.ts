@@ -95,6 +95,12 @@ async function removeIfEmpty(folder: string): Promise<boolean> {
  * contents proves who owns it now. Returns the backup folders restored from.
  */
 export async function recoverDestination(dest: string, manifest: LinkManifest): Promise<string[]> {
+  // Round 21 (Opus): a crash between the claim `mkdir` and the swap leaves an
+  // empty destination, which then blocks every later addLink for that skill —
+  // without force it says "already exists", with force "not a fan-out
+  // destination Skillsmith recorded". `rmdir` cannot destroy content, so
+  // removing an empty directory here is safe, and it unblocks the retry.
+  await removeIfEmpty(dest)
   const parent = path.dirname(dest)
   let entries: string[]
   try {

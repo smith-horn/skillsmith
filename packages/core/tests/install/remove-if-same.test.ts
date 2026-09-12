@@ -316,6 +316,30 @@ describe('removeIfSame (SMI-6529 round 15)', () => {
     expect((await readdir(root)).some((n) => PARKED.test(n))).toBe(false)
   })
 
+  // Round 21 (Opus): the pre-check already established this is our regular
+  // file, so it goes back even when the parked entry cannot be checked.
+  it('puts a file back when the parked entry cannot be checked', async () => {
+    const target = path.join(root, 'note.md')
+    await writeFile(target, 'ours', 'utf-8')
+    const seen = await lstat(target)
+    mockFs(
+      'lstat',
+      (actual) =>
+        (async (...args: Parameters<RealFs['lstat']>) => {
+          if (PARKED.test(String(args[0]))) throw eacces(args[0])
+          return actual.lstat(...args)
+        }) as RealFs['lstat']
+    )
+    const { removeIfSame } = await load()
+
+    expect(await removeIfSame(target, seen)).toEqual({
+      removed: false,
+      reason: 'could not be checked (EACCES), so it was left in place',
+    })
+    expect(await readFile(target, 'utf-8')).toBe('ours')
+    expect(await readdir(root)).toEqual(['note.md'])
+  })
+
   it('leaves an entry it cannot check parked, and says where', async () => {
     const target = path.join(root, 'skill')
     await mkdir(target)

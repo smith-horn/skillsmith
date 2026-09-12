@@ -146,10 +146,21 @@ export async function removeIfSame(
     checkError = err
   }
   if (now === undefined) {
-    return {
-      removed: false,
-      reason: `could not be checked (${errorCode(checkError)}) and is now at ${parked}`,
+    // Round 21 (Opus): the pre-check above already established this is a
+    // regular file with the expected identity, so it can go back atomically
+    // even though the parked entry itself could not be checked.
+    const why = `could not be checked (${errorCode(checkError)})`
+    const back = await linkFileBack(parked, target, before)
+    if (back !== 'not-restored') {
+      return {
+        removed: false,
+        reason:
+          back === 'restored'
+            ? `${why}, so it was left in place`
+            : `${why}, so it was left in place; a link to it also remains at ${parked}`,
+      }
     }
+    return { removed: false, reason: `${why} and is now at ${parked}` }
   }
   if (now.dev !== expected.dev || now.ino !== expected.ino) {
     // Something took the path between the check above and this rename, so what
