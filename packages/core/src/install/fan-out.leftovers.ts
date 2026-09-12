@@ -188,9 +188,14 @@ export function leftoverBackupWarning(folder: string): string {
       `Check it, then restore or delete it yourself.`
     )
   }
-  const what = name.includes(STAGING_TAG) ? 'a partial copy' : 'an earlier copy'
+  // Round 23 (Opus): this used to call the contents "an earlier copy" of the
+  // skill. That is an ownership claim it cannot make — the move-aside window
+  // can displace another program's entry into this folder — and it is the same
+  // claim the parked wording above dropped.
+  const what = name.includes(STAGING_TAG) ? 'a partial copy' : 'a copy'
   return (
-    `an interrupted refresh left ${what} in the hidden folder ${folder}; ` +
-    `check it, then delete it yourself if you don't need it.`
+    `an interrupted refresh left ${what} in the hidden folder ${folder}. It is either what this ` +
+    `skill replaced, or something another program put at the path while the refresh was moving ` +
+    `the old copy aside. Check it, then restore or delete it yourself.`
   )
 }

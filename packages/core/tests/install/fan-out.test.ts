@@ -1699,6 +1699,91 @@ describe('install/fan-out', () => {
       }
     })
 
+    // Round 23 (Opus): the ADR now rests on the claim that this rename can only
+    // ever replace an EMPTY directory, so both refusals are pinned here.
+    it('refuses to publish when something is written into its claim', async () => {
+      await seedSkill('claimfill')
+      const toDir = path.join(homeDir, '.cursor', 'skills', 'claimfill')
+      vi.doMock('node:fs/promises', async () => {
+        const actual = await vi.importActual<typeof import('node:fs/promises')>('node:fs/promises')
+        let filled = false
+        const rename = vi.fn(async (from: PathLike, to: PathLike) => {
+          if (!filled && String(to) === toDir && String(from).endsWith(`${path.sep}content`)) {
+            filled = true
+            await actual.writeFile(path.join(toDir, 'THEIRS.md'), 'not ours', 'utf-8')
+          }
+          return actual.rename(from, to)
+        })
+        return { ...actual, default: { ...actual, rename }, rename }
+      })
+      try {
+        vi.resetModules()
+        const { addLink } = await import('../../src/install/fan-out.js')
+        await expect(
+          addLink({ skillId: 'claimfill', fromClient: 'claude-code', toClient: 'cursor' })
+        ).rejects.toThrow(/ENOTEMPTY/)
+        expect(await readFile(path.join(toDir, 'THEIRS.md'), 'utf-8')).toBe('not ours')
+      } finally {
+        vi.doUnmock('node:fs/promises')
+        vi.resetModules()
+      }
+    })
+
+    it('refuses to publish when a file takes the place of its claim', async () => {
+      await seedSkill('claimfile')
+      const toDir = path.join(homeDir, '.cursor', 'skills', 'claimfile')
+      vi.doMock('node:fs/promises', async () => {
+        const actual = await vi.importActual<typeof import('node:fs/promises')>('node:fs/promises')
+        let swapped = false
+        const rename = vi.fn(async (from: PathLike, to: PathLike) => {
+          if (!swapped && String(to) === toDir && String(from).endsWith(`${path.sep}content`)) {
+            swapped = true
+            await actual.rmdir(toDir)
+            await actual.writeFile(toDir, 'not ours', 'utf-8')
+          }
+          return actual.rename(from, to)
+        })
+        return { ...actual, default: { ...actual, rename }, rename }
+      })
+      try {
+        vi.resetModules()
+        const { addLink } = await import('../../src/install/fan-out.js')
+        await expect(
+          addLink({ skillId: 'claimfile', fromClient: 'claude-code', toClient: 'cursor' })
+        ).rejects.toThrow(/ENOTDIR/)
+        expect(await readFile(toDir, 'utf-8')).toBe('not ours')
+      } finally {
+        vi.doUnmock('node:fs/promises')
+        vi.resetModules()
+      }
+    })
+
+    it('explains an empty destination on the force path too', async () => {
+      const { addLink } = await loadModule()
+      await seedSkill('forceempty')
+      const toDir = path.join(homeDir, '.cursor', 'skills', 'forceempty')
+      await mkdir(toDir, { recursive: true })
+
+      await expect(
+        addLink({
+          skillId: 'forceempty',
+          fromClient: 'claude-code',
+          toClient: 'cursor',
+          force: true,
+        })
+      ).rejects.toThrow(/not a fan-out destination Skillsmith recorded[\s\S]*empty directory/)
+      expect((await lstat(toDir)).isDirectory()).toBe(true)
+    })
+
+    it('does not call a leftover backup this skill own copy', async () => {
+      const { leftoverBackupWarning } = await import('../../src/install/fan-out.leftovers.js')
+
+      const text = leftoverBackupWarning('/x/.foo.skillsmith-backup-abc123')
+
+      expect(text).toContain('either what this skill replaced, or something another program put')
+      expect(text).not.toContain('an earlier copy')
+    })
+
     // Round 22 (cross-model review): an empty directory the user made looks
     // exactly like one a crashed claim left, so Skillsmith refuses instead of
     // removing it, and says what it probably is.

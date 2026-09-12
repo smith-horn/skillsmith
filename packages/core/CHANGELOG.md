@@ -19,7 +19,7 @@ All notable changes to `@skillsmith/core` are documented here.
   copy; the new copy is published by claiming its name with a primitive that refuses to replace —
   `mkdir` for a directory, `symlink` for a link — and the copy it replaces is moved aside only
   while it is still the one that was checked; a published link is recorded only while it is still
-  the link this call wrote) but still refuses a real directory Skillsmith never created, or a recorded copy that has
+  the link this call wrote; an empty destination is refused with an explanation of what it probably is, on the plain and the `--force` path alike, and a hidden folder an interrupted refresh left behind is described without claiming Skillsmith owns it) but still refuses a real directory Skillsmith never created, or a recorded copy that has
   since grown a `.git` directory; uninstall's own cleanup applies the same `.git` refusal to a
   recorded copy instead of deleting it. A copy an interrupted refresh left behind is reported as
   a warning, and is never restored over a skill uninstalled since. The fan-out link manifest is

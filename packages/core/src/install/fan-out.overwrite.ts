@@ -228,9 +228,18 @@ export async function assertOverwritable(
 ): Promise<void> {
   if (existing.isSymbolicLink()) return
   if (!isRecordedCopy(dest, manifest)) {
+    // Round 23 (Opus): the non-force refusal sends the user here, so this one
+    // explains the same state — an empty directory is most likely a claim an
+    // interrupted install left, and Skillsmith will not remove it for them.
+    const empty =
+      existing.isDirectory() && (await fsp.readdir(dest).catch(() => ['?'])).length === 0
     throw new Error(
       `addLink: ${dest} already exists and is not a fan-out destination Skillsmith recorded ` +
-        `(no matching entry in the link manifest); remove it yourself, then retry with force.`
+        `(no matching entry in the link manifest); remove it yourself, then retry with force.` +
+        (empty
+          ? ` It is an empty directory: an interrupted install may have left it, and Skillsmith ` +
+            `does not remove it for you, since an empty directory you made looks the same.`
+          : '')
     )
   }
   const refusal = gitRefusal(dest, await checkGitAtRoot(dest), 'overwrite')
@@ -325,8 +334,11 @@ async function publish(staged: string, dest: string, staging: Stats): Promise<St
   // no-replace rename (Linux's renameat2(RENAME_NOREPLACE) and macOS's
   // renamex_np have no binding in node:fs). What the remaining window
   // requires is narrow: another program must remove THIS call's own empty
-  // claim and put its own entry at the path in between. Five adversarial
-  // interleavings across macOS and Linux lost no data. The alternative —
+  // claim and put its own entry at the path in between — and even then the
+  // rename can only ever replace an EMPTY directory, because POSIX `rename`
+  // refuses a non-empty directory (ENOTEMPTY) and a non-directory (ENOTDIR).
+  // Measured across six interleavings on macOS and Linux, three of which
+  // removed the claim first: nothing holding content was ever replaced. The alternative —
   // filling the claimed directory in place — removes the window but makes a
   // half-copied skill visible at the destination, which staging exists to
   // prevent (round 6).
