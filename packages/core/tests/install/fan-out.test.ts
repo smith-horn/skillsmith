@@ -351,7 +351,7 @@ describe('install/fan-out', () => {
       })
 
       // Reverse: claude-code → agents — detectCycle() must fire BEFORE any
-      // overwrite is even considered (it runs ahead of the pathExists/force
+      // overwrite is even considered (it runs ahead of the inspectPath/force
       // check in addLink()), so this never needs to touch agents' own
       // pre-existing `cycle` directory either.
       await expect(
