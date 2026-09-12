@@ -495,9 +495,11 @@ git -C /path/to/skillsmith/docs/internal log --oneline -1
 
 ### `git submodule update --init docs/internal` stalls indefinitely in a fresh worktree (SMI-6015 session, 2026-08-13)
 
-A brand-new worktree's `docs/internal` clone over HTTPS can stall for 20+ minutes with near-zero CPU (`ps -o etime,time` shows large elapsed time, near-zero accumulated CPU — genuinely blocked on network I/O, not just slow). Killing and retrying reproduces the same stall; running multiple retries without killing the prior attempt's orphaned `git index-pack`/`git-remote-https` processes makes it worse, since they all compete for the same connection. This is independent of repo size — `docs/internal`'s object store is only ~80MB.
+A brand-new worktree's `docs/internal` clone over HTTPS can stall for 20+ minutes with near-zero CPU (`ps -o etime,time` shows large elapsed time, near-zero accumulated CPU: genuinely blocked on network I/O, not just slow). Killing and retrying reproduces the same stall. Running multiple retries without killing the prior attempt's orphaned `git index-pack`/`git-remote-https` processes makes it worse, since they all compete for the same connection. This is independent of repo size: `docs/internal`'s object store is only ~80MB.
 
-**Fix**: skip the network clone entirely. The main checkout already has a complete local copy of `docs/internal`'s object database at `.git/modules/docs/internal` — clone from that via `file://` instead, then re-point the remote at the real GitHub URL:
+**Fix**: skip the network clone entirely. The main checkout already has a complete local copy of `docs/internal`'s object database at `.git/modules/docs/internal`. Clone from that via `file://` instead, then re-point the remote at the real GitHub URL.
+
+**Mandatory final step, do not skip (SMI-6515)**: `git clone --separate-git-dir=<path>` always writes an absolute `gitdir:` line into the resulting `.git` file, even when the `--separate-git-dir` argument itself is given as a relative path (confirmed by direct reproduction, not assumed). An absolute gitdir resolves fine on the host that wrote it, but breaks every git command run inside `skillsmith-dev-1` or any worktree container, because the repo is bind-mounted at `/app` there and the host path never exists at that location. Turborepo only warns and continues when this happens (`WARNING failed to get git status for dirty hash`), so the breakage is easy to miss for days. See `docs/internal/implementation/smi-6515-absolute-gitdir-detector.md`. The recipe below ends with a step that rewrites the gitfile to the relative form. Run it every time.
 
 ```bash
 # From the new worktree's root, after killing any stalled clone processes
@@ -513,9 +515,35 @@ git clone --no-checkout \
 cd docs/internal
 git remote set-url origin https://github.com/smith-horn/skillsmith-docs.git
 git reset --hard HEAD   # --no-checkout leaves the working tree empty; this populates it
+cd ..
+
+# MANDATORY: rewrite the gitfile to the relative form, atomically (temp
+# file + rename, so a concurrent reader never sees a truncated file).
+printf 'gitdir: ../../../../.git/worktrees/<worktree-name>/modules/docs/internal\n' \
+  > docs/internal/.git.tmp.$$
+mv -f docs/internal/.git.tmp.$$ docs/internal/.git
+
+# Verify on the HOST only -- both of these must succeed with no error.
+cat docs/internal/.git
+git -C docs/internal rev-parse --git-dir
 ```
 
-This is instant (local filesystem copy, no network) and produces a submodule checkout indistinguishable from what `git submodule update --init` would have made — `git submodule status` recognizes it normally afterward. The main checkout's `main` branch must already be fetched-current for this to hand the worktree a fully up-to-date object store.
+**Verify on the host only -- there is no in-container form of this check for a worktree (confirmed live, not assumed).** A prior version of this recipe additionally told the reader to verify with `docker exec <container> git -C docs/internal rev-parse --git-dir`. That command cannot succeed, in any worktree's container, no matter how the gitfile is written: the relative `gitdir:` line resolves against the directory containing it, and that resolution genuinely differs by four real path segments between host and container --
+
+```text
+host:      <repo>/.worktrees/<w>/docs/internal  + ../../../../  -> <repo>/.git/worktrees/<w>/modules/docs/internal   (real dir, OK)
+container: /app/docs/internal                   + ../../../../  -> /.git/worktrees/<w>/modules/docs/internal        (root fs, MISSING)
+```
+
+because the container bind-mounts only the worktree subtree at `/app` (the `.worktrees/<w>` path segments this relative form counts through don't exist inside it), so the same `../../../../` walks past `/` instead of past the worktree's siblings. This is the same class of breakage the "Worktree Docker bind-mounts (SMI-4689)" section above already documents generically (`git` at `/app` in a worktree container, `fatal: not a git repository`), tracked further as SMI-6549 for this specific recipe. No relative path depth fixes it: the main checkout's real `.git/worktrees/<w>/modules/docs/internal` object store is never mounted into a worktree's own container at all, under the current bind-mount architecture, so no in-container recipe exists to give -- not a different one, none. Verify this recipe on the host, where `git push` and `git submodule` operations already originate anyway (per that same SMI-4689 section's own guidance).
+
+**For the main checkout, not a worktree**: use `--separate-git-dir=/path/to/skillsmith/.git/modules/docs/internal` (no `.git/worktrees/<worktree-name>/` indirection), and rewrite the gitfile to `gitdir: ../../.git/modules/docs/internal` instead of the four-level worktree form above.
+
+**Correction (SMI-6515)**: an earlier version of this section claimed the result was indistinguishable from what `git submodule update --init` would have made. That claim was false, and it is why this defect went unnoticed for six days. `git submodule status` recognizes the result normally either way, which is exactly why the difference stayed hidden. The one command that does distinguish them is `cat docs/internal/.git`: an absolute `gitdir:` line before the mandatory rewrite step above, a relative one after it. Always run that `cat`, not just `git submodule status`, before trusting the result.
+
+**This defect is not unique to this recipe (SMI-6515).** `git submodule update --init`, the command this whole section exists to route around when it stalls, goes through git's own internal `git submodule--helper clone`. That helper clones with an absolute `--separate-git-dir` first and only rewrites it to relative in a separate finalize step afterward. Any invocation killed or interrupted between those two steps leaves the same broken absolute gitdir behind, not because of this recipe, but because of git's own implementation. Killing a stalled `git submodule update --init` (as this section's opening paragraph instructs) can trigger exactly this. If you killed a stalled `git submodule update --init` instead of following the manual recipe above, run `cat docs/internal/.git` afterward before assuming the result is clean.
+
+The main checkout's `main` branch must already be fetched-current for this to hand the worktree a fully up-to-date object store.
 
 ## Host Native Bindings & SessionStart Instrumentation (SMI-4549)
 
