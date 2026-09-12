@@ -6155,11 +6155,37 @@ console.log(`\n${BOLD}Check 69: absolute --separate-git-dir writer ban (SMI-6515
 // twin of this check -- same helper, same invariant.
 console.log(`\n${BOLD}Check 70: SKILLSMITH_DOCKER default coherence (SMI-6518)${RESET}`)
 {
-  const composeContent = readFileSync('docker-compose.yml', 'utf8')
-  const envSchemaContent = readFileSync('.env.schema', 'utf8')
-  const dockerCoherence = checkDockerEnvDefaultCoherence(composeContent, envSchemaContent)
+  // SMI-6575, found by the post-merge governance retro on #2804 -- the same PR
+  // that shipped the Check 69 crash. These two reads were unguarded, and Check
+  // 70 is the LAST check, with the Summary block immediately below: an ENOENT
+  // here destroys the summary and the exit verdict exactly as Check 69's throw
+  // did. SMI-6192 already hit this class once in this file (an unhandled ENOENT
+  // inside getFilesRecursive), so it is a demonstrated failure mode, not a
+  // hypothetical one.
+  //
+  // Scoped deliberately to the two reads #2804 introduced. 58 of this file's 99
+  // readFileSync calls are similarly unguarded -- a pre-existing repo-wide
+  // pattern, filed separately rather than refactored here.
+  let dockerCoherence
+  try {
+    const composeContent = readFileSync('docker-compose.yml', 'utf8')
+    const envSchemaContent = readFileSync('.env.schema', 'utf8')
+    dockerCoherence = checkDockerEnvDefaultCoherence(composeContent, envSchemaContent)
+  } catch (err) {
+    const reason = err instanceof Error ? err.message : String(err)
+    const reportUnread = process.env.CI ? fail : warn
+    reportUnread(
+      `Check 70: NOT EVALUATED — could not read docker-compose.yml and/or .env.schema, so nothing was compared: ${reason}`,
+      process.env.CI
+        ? 'A CI runner checks out the full tree, so this is a real breakage. Confirm the checkout step ran and that audit:standards is invoked from the repository root.'
+        : 'Both paths are resolved relative to the current working directory — run `npm run audit:standards` from the repository root.'
+    )
+    dockerCoherence = null
+  }
 
-  if (dockerCoherence.problems.length > 0) {
+  if (dockerCoherence === null) {
+    // Already reported as NOT EVALUATED above. Never falls through to pass().
+  } else if (dockerCoherence.problems.length > 0) {
     fail(
       `Check 70: ${dockerCoherence.problems.join('; ')}`,
       'Both files must declare a parseable default -- see docker-compose.yml\'s dev service (`cpus:`/`mem_limit:`) and .env.schema\'s SKILLSMITH_DOCKER_CPUS/SKILLSMITH_DOCKER_MEM entries ("Default N" prose).'
