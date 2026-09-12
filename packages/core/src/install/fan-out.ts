@@ -117,12 +117,23 @@ async function copyDirectoryRecursive(src: string, dest: string): Promise<void> 
   }
 }
 
-async function pathExists(p: string): Promise<boolean> {
+/** Whether a path is there, absent, or could not be checked at all. */
+type Presence = { kind: 'present' } | { kind: 'absent' } | { kind: 'unknown'; reason: string }
+
+/**
+ * Round 27 (cross-model review): this returned a plain boolean, so a
+ * permission or I/O failure was reported to the user as "does not exist" —
+ * sending them to reinstall a skill that is sitting right where they left it.
+ * Only absence is absence.
+ */
+async function inspectPath(p: string): Promise<Presence> {
   try {
     await fsp.access(p, fs.constants.F_OK)
-    return true
-  } catch {
-    return false
+    return { kind: 'present' }
+  } catch (err) {
+    const code = (err as NodeJS.ErrnoException | null)?.code
+    if (code === 'ENOENT' || code === 'ENOTDIR') return { kind: 'absent' }
+    return { kind: 'unknown', reason: code ?? (err instanceof Error ? err.message : String(err)) }
   }
 }
 
@@ -146,9 +157,16 @@ export async function addLink(opts: AddLinkOptions): Promise<AddLinkResult> {
   const fromDir = path.join(CLIENT_NATIVE_PATHS[fromClient], skillId)
   const toDir = path.join(CLIENT_NATIVE_PATHS[toClient], skillId)
 
-  if (!(await pathExists(fromDir))) {
+  const source = await inspectPath(fromDir)
+  if (source.kind === 'absent') {
     throw new Error(
       `addLink: source skill '${skillId}' does not exist at ${fromDir} — install for ${fromClient} first`
+    )
+  }
+  if (source.kind === 'unknown') {
+    throw new Error(
+      `addLink: the source skill at ${fromDir} could not be checked (${source.reason}), so ` +
+        `nothing was changed.`
     )
   }
 
@@ -286,20 +304,37 @@ async function unusableManifestWarning(read: ManifestRead, skillId: string): Pro
     read.state === 'corrupt' ? 'could not be parsed' : `could not be read (${read.reason})`
   const canonical = path.resolve(CLIENT_NATIVE_PATHS[CANONICAL_CLIENT])
   const candidates: string[] = []
+  const unreadable: string[] = []
   for (const root of new Set(Object.values(CLIENT_NATIVE_PATHS))) {
     if (path.resolve(root) === canonical) continue
     const dir = path.join(root, skillId)
-    const present = await fsp.lstat(dir).then(
-      () => true,
-      () => false
-    )
-    if (present) candidates.push(dir)
+    try {
+      await fsp.lstat(dir)
+      candidates.push(dir)
+    } catch (err) {
+      // Round 27 (cross-model review): a folder that could not be inspected is
+      // not a folder that isn't there, and this message went on to promise
+      // there was "nothing to clean up".
+      const code = (err as NodeJS.ErrnoException | null)?.code
+      if (code !== 'ENOENT' && code !== 'ENOTDIR') {
+        unreadable.push(`${dir} (${code ?? (err instanceof Error ? err.message : String(err))})`)
+      }
+    }
   }
-  const next =
+  const found =
     candidates.length > 0
       ? ` These may be fan-out copies Skillsmith made; check each one and delete it yourself ` +
         `if you don't need it: ${candidates.join(', ')}.`
-      : ` No other client's skills folder has a ${skillId} folder, so there is nothing to clean up.`
+      : ''
+  const couldNotCheck =
+    unreadable.length > 0
+      ? ` These could not be checked, so anything under them is not reported here: ` +
+        `${unreadable.join(', ')}.`
+      : ''
+  const next =
+    found === '' && couldNotCheck === ''
+      ? ` No other client's skills folder has a ${skillId} folder, so there is nothing to clean up.`
+      : `${found}${couldNotCheck}`
   return (
     `the fan-out link manifest at ${getLinkManifestPath()} ${why}, so no fan-out copies of ` +
     `${skillId} were checked or removed.${next}`

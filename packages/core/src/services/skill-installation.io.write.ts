@@ -435,10 +435,19 @@ export async function writeInstallFiles(
       subagentPath = resolveCompanionAgentPath(skillName, client, companionBaseDir)
       const agentsDir = path.dirname(subagentPath)
       if (getCompanionAgentTarget(client).fileMode === 'directory-package') {
-        agentDirPreExisted = await fs.lstat(agentsDir).then(
-          () => true,
-          () => false
-        )
+        // Round 27 (cross-model review): only absence means "this call created
+        // it". Any other lstat failure used to record `false`, and rollback
+        // rmdirs this directory precisely when that is false — so one
+        // unreadable moment could cost the user a directory that was already
+        // there. Fail closed instead: nothing has been written yet, so
+        // throwing here leaves nothing behind.
+        try {
+          await fs.lstat(agentsDir)
+          agentDirPreExisted = true
+        } catch (err) {
+          if ((err as NodeJS.ErrnoException | null)?.code !== 'ENOENT') throw err
+          agentDirPreExisted = false
+        }
       }
       await fs.mkdir(agentsDir, { recursive: true })
       // SMI-6529 M10: a FRESH install must never silently overwrite an

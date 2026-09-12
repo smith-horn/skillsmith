@@ -1249,6 +1249,41 @@ describe('install/fan-out', () => {
       expect((await listLinks()).map((l) => l.skillId).sort()).toEqual(['bomkeep', 'bomnew'])
     })
 
+    it('says which client folders it could not check, instead of "nothing to clean up"', async () => {
+      const manifestPath = (await loadModule()).getLinkManifestPath()
+      await mkdir(path.dirname(manifestPath), { recursive: true })
+      await writeFile(manifestPath, '{"version":2,"links":[{"skillId":"future"}]}', 'utf-8')
+      const cursorDir = path.join(homeDir, '.cursor', 'skills', 'unreadableclient')
+      vi.doMock('node:fs/promises', async () => {
+        const actual = await vi.importActual<typeof import('node:fs/promises')>('node:fs/promises')
+        const lstat = vi.fn(async (p: PathLike, ...rest: unknown[]) => {
+          if (String(p) === cursorDir) {
+            throw Object.assign(new Error(`EACCES: permission denied, lstat '${cursorDir}'`), {
+              code: 'EACCES',
+            })
+          }
+          return actual.lstat(p, ...(rest as []))
+        })
+        return { ...actual, default: { ...actual, lstat }, lstat }
+      })
+      try {
+        vi.resetModules()
+        const { removeLinks } = await import('../../src/install/fan-out.js')
+
+        const result = await removeLinks('unreadableclient')
+
+        // Round 27: a folder that could not be inspected was counted as absent,
+        // and the warning then promised there was nothing to clean up.
+        const warning = (result.warnings ?? []).join('\n')
+        expect(warning).toContain('could not be checked')
+        expect(warning).toContain(cursorDir)
+        expect(warning).not.toContain('nothing to clean up')
+      } finally {
+        vi.doUnmock('node:fs/promises')
+        vi.resetModules()
+      }
+    })
+
     it('tells the user when an uninstall could not use the manifest, and where copies remain', async () => {
       const { removeLinks, getLinkManifestPath } = await loadModule()
       const manifestPath = getLinkManifestPath()
@@ -1940,6 +1975,82 @@ describe('install/fan-out', () => {
 
         // "Could not inspect" is not "not a candidate".
         expect((result.warnings ?? []).join('\n')).toMatch(/could not be inspected \(EACCES\)/)
+      } finally {
+        vi.doUnmock('node:fs/promises')
+        vi.resetModules()
+      }
+    })
+
+    it('says the source could not be checked, not that it is missing', async () => {
+      await seedSkill('srcunreadable')
+      const fromDir = path.join(homeDir, '.claude', 'skills', 'srcunreadable')
+      vi.doMock('node:fs/promises', async () => {
+        const actual = await vi.importActual<typeof import('node:fs/promises')>('node:fs/promises')
+        const access = vi.fn(async (p: PathLike, mode?: number) => {
+          if (String(p) === fromDir) {
+            throw Object.assign(new Error(`EACCES: permission denied, access '${fromDir}'`), {
+              code: 'EACCES',
+            })
+          }
+          return actual.access(p, mode)
+        })
+        return { ...actual, default: { ...actual, access }, access }
+      })
+      try {
+        vi.resetModules()
+        const { addLink } = await import('../../src/install/fan-out.js')
+
+        // Round 27: this said the skill "does not exist", sending the user to
+        // reinstall something that is sitting right there.
+        await expect(
+          addLink({ skillId: 'srcunreadable', fromClient: 'claude-code', toClient: 'cursor' })
+        ).rejects.toThrow(/could not be checked \(EACCES\)/)
+      } finally {
+        vi.doUnmock('node:fs/promises')
+        vi.resetModules()
+      }
+    })
+
+    it('says the destination could not be checked, not that it was replaced', async () => {
+      const { addLink } = await loadModule()
+      await seedSkill('destunreadable')
+      await addLink({ skillId: 'destunreadable', fromClient: 'claude-code', toClient: 'cursor' })
+      const toDir = path.join(homeDir, '.cursor', 'skills', 'destunreadable')
+      vi.doMock('node:fs/promises', async () => {
+        const actual = await vi.importActual<typeof import('node:fs/promises')>('node:fs/promises')
+        // Arm only once the backup folder exists, so the failing lstat is the
+        // pre-move check and not addLink's own earlier existence check.
+        const armed = { on: false }
+        const mkdtemp = vi.fn(async (prefix: PathLike) => {
+          const made = await actual.mkdtemp(prefix as string)
+          if (String(prefix).includes('skillsmith-backup-')) armed.on = true
+          return made
+        })
+        const lstat = vi.fn(async (p: PathLike, ...rest: unknown[]) => {
+          if (armed.on && String(p) === toDir) {
+            armed.on = false
+            throw Object.assign(new Error(`EACCES: permission denied, lstat '${toDir}'`), {
+              code: 'EACCES',
+            })
+          }
+          return actual.lstat(p, ...(rest as []))
+        })
+        return { ...actual, default: { ...actual, lstat, mkdtemp }, lstat, mkdtemp }
+      })
+      try {
+        vi.resetModules()
+        const { addLink: addLinkMocked } = await import('../../src/install/fan-out.js')
+
+        await expect(
+          addLinkMocked({
+            skillId: 'destunreadable',
+            fromClient: 'claude-code',
+            toClient: 'cursor',
+            force: true,
+          })
+        ).rejects.toThrow(/could not be checked \(EACCES\)/)
+        // The copy is untouched: the refusal still fails closed.
+        expect((await lstat(toDir)).isDirectory()).toBe(true)
       } finally {
         vi.doUnmock('node:fs/promises')
         vi.resetModules()

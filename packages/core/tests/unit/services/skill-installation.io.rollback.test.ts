@@ -69,6 +69,10 @@ const swapInstallDirTarget = vi.hoisted(() => ({
 // SMI-6529 round 13: one-shot — the NEXT fs.unlink of this path fails with
 // EACCES, so rollback can't remove a file it created.
 const unlinkFailTarget = vi.hoisted(() => ({ path: null as string | null }))
+// SMI-6529 round 27: one-shot — the NEXT fs.lstat of this path fails with
+// EACCES. Used for the companion-agent directory check, which recorded ANY
+// failure as "this call created it" and so licensed rollback to rmdir it.
+const lstatFailForDir = vi.hoisted(() => ({ path: null as string | null }))
 // SMI-6529 round 25 (cross-model review): one-shot — the NEXT fs.lstat of this
 // path fails with EACCES, so rollback cannot tell whether the file it created
 // is still the one at that path. It is armed by `armLstatFailOnWrite` rather
@@ -120,6 +124,14 @@ vi.mock('fs/promises', async (importOriginal) => {
       return actual.unlink(p)
     },
     lstat: async (p: Parameters<typeof actual.lstat>[0]) => {
+      if (p === lstatFailForDir.path) {
+        lstatFailForDir.path = null
+        const err = new Error(
+          `EACCES: permission denied, lstat '${String(p)}'`
+        ) as NodeJS.ErrnoException
+        err.code = 'EACCES'
+        throw err
+      }
       if (p === lstatFailTarget.path) {
         lstatFailTarget.path = null
         const err = new Error(
@@ -230,6 +242,7 @@ vi.mock('../../../src/utils/safe-fs.js', async (importOriginal) => {
 })
 
 import { writeInstallFiles } from '../../../src/services/skill-installation.io.js'
+import { resolveCompanionAgentPath } from '../../../src/install/paths.js'
 import { InstallRestoreError } from '../../../src/services/skill-installation.io.rollback.js'
 
 describe('writeInstallFiles rollback-on-failure (SMI-6529)', () => {
@@ -1199,6 +1212,49 @@ describe('writeInstallFiles rollback cleanup is identity-checked and reported (S
       expect(await fs.readFile(path.join(installPath, 'notes.txt'), 'utf8')).toBe('user notes')
     } finally {
       unlinkFailTarget.path = null
+      await fs.rm(root, { recursive: true, force: true }).catch(() => {})
+    }
+  })
+
+  // SMI-6529 round 27 (cross-model review): the companion-agent directory check
+  // recorded ANY lstat failure as "did not pre-exist", and rollback rmdirs that
+  // directory precisely when that is false — so one unreadable moment could
+  // cost the user a directory that was already there.
+  it('keeps a companion agent directory it could not check', async () => {
+    const root = await fs.mkdtemp(path.join(os.tmpdir(), 'wif-agentdir-'))
+    try {
+      const skillsDir = path.join(root, 'skills')
+      const installPath = path.join(skillsDir, 'my-skill')
+      await fs.mkdir(installPath, { recursive: true })
+      const companionBaseDir = path.join(root, 'base')
+      const subagentPath = resolveCompanionAgentPath('my-skill', 'antigravity', companionBaseDir)
+      const agentsDir = path.dirname(subagentPath)
+      // The user's directory, already there and empty.
+      await fs.mkdir(agentsDir, { recursive: true })
+
+      // Its check fails, and the companion write then fails for real, so a
+      // rollback runs while the directory's provenance is in doubt.
+      lstatFailForDir.path = agentsDir
+      createFailAfterOpenTarget.path = subagentPath
+
+      await expect(
+        writeInstallFiles(
+          installPath,
+          skillsDir,
+          'my-skill',
+          '# new content',
+          [],
+          '# companion agent',
+          'antigravity',
+          companionBaseDir
+        )
+      ).rejects.toThrow()
+
+      // Still there: a directory this call cannot prove it created is never removed.
+      expect((await fs.lstat(agentsDir)).isDirectory()).toBe(true)
+    } finally {
+      lstatFailForDir.path = null
+      createFailAfterOpenTarget.path = null
       await fs.rm(root, { recursive: true, force: true }).catch(() => {})
     }
   })
