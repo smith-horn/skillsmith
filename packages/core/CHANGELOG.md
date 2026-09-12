@@ -4,6 +4,14 @@ All notable changes to `@skillsmith/core` are documented here.
 
 ## [Unreleased]
 
+## v0.12.4
+
+- **Fix**: SMI-6507 + SMI-6496 -- remediation strings that actually work (#2803)
+- **Fix**: SMI-6508 -- move MF-5 last; it was suppressing HIGH findings (#2808)
+- **Fix**: SMI-6508 — detect prefixed secrets assignments at MEDIUM (MF-5) (#2806)
+- **Fix**: SMI-6530 -- stop recommending bulk `skillsmith update` until the safety gate ships (#2801)
+- **Fix**: SMI-6505 -- stop scoring an embedded key assigned a boolean as a credential (#2793)
+- **Feature**: SMI-6441 -- MF-4b common-password veto (Wave 2) (#2786)
 - **Docs**: recorded the two missing `SCANNER_RULESET_VERSION` history entries for
   `2026-09-11.1` and `2026-09-11.2`. Both bumps shipped correctly — the `comparable` gate does
   re-scan — but the constant had moved twice past the end of its own documented history, so the

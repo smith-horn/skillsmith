@@ -4,6 +4,9 @@ All notable changes to `@skillsmith/cli` are documented here.
 
 ## [Unreleased]
 
+## v0.8.11
+
+- **Fix**: SMI-6530 -- stop recommending bulk `skillsmith update` until the safety gate ships (#2801)
 - **Security**: `skillsmith update --all` in CLI 0.8.8-0.8.10 can overwrite local edits in skill
   directories that are git clones and can write into the wrong directory (SMI-6528). On those
   versions, preview with `--dry-run` and update skills one at a time; the install-layer fix is
