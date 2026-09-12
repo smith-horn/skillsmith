@@ -201,15 +201,20 @@ export async function performUninstall(params: {
       } catch (err) {
         // Round 25 (cross-model review): only absence means "not installed".
         // EACCES or EIO means we could not tell, and saying "not installed"
-        // sends the user away from a skill that is still on disk.
-        const code = (err as NodeJS.ErrnoException).code
-        if (code !== undefined && code !== 'ENOENT') {
+        // sends the user away from a skill that is still on disk. Round 26
+        // (cross-model review): an error carrying no `code` at all is also
+        // "could not tell", and the previous guard let it fall through to "not
+        // installed" — the same false absence, one step further out. Only
+        // ENOENT is absence now, and the thrown value is read null-safely.
+        const code = (err as NodeJS.ErrnoException | null)?.code
+        if (code !== 'ENOENT') {
+          const detail = code ?? (err instanceof Error ? err.message : String(err))
           return {
             success: false,
             skillName,
             message:
               `Could not tell whether "${skillName}" is installed: ${potentialPath} could not be ` +
-              `checked (${code}). Nothing was removed.`,
+              `checked (${detail}). Nothing was removed.`,
           }
         }
         return { success: false, skillName, message: 'Skill "' + skillName + '" is not installed.' }

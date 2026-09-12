@@ -30,9 +30,14 @@ const claimOnRename = vi.hoisted(() => ({
 // Every rename onto this path fails, so the manifest write fails after the
 // skill folder is already gone.
 const failRenameTo = vi.hoisted(() => ({ path: null as string | null }))
-// Round 25: `access` of this exact path fails with EACCES, so the existence
-// check cannot tell whether the skill is on disk.
-const accessFailFor = vi.hoisted(() => ({ path: null as string | null }))
+// Round 25: `access` of this exact path fails, so the existence check cannot
+// tell whether the skill is on disk. Round 26: `throws` chooses WHAT it fails
+// with — the default is a coded EACCES, and a test can supply an error with no
+// `code`, or a value that is not an Error at all.
+const accessFailFor = vi.hoisted(() => ({
+  path: null as string | null,
+  throws: null as { value: unknown } | null,
+}))
 // Round 25: `readdir` of this exact folder fails, so the parked-leftover scan
 // cannot look.
 const readdirFailFor = vi.hoisted(() => ({ path: null as string | null }))
@@ -80,6 +85,7 @@ const makeFsMock = vi.hoisted(() => (actual: typeof import('node:fs/promises')) 
   }
   const access = async (p: string, mode?: number): Promise<void> => {
     if (String(p) === accessFailFor.path) {
+      if (accessFailFor.throws !== null) throw accessFailFor.throws.value
       throw Object.assign(new Error(`EACCES: permission denied, access '${String(p)}'`), {
         code: 'EACCES',
       })
@@ -216,6 +222,7 @@ afterEach(async () => {
   claimOnRename.newInstallPath = null
   failRenameTo.path = null
   accessFailFor.path = null
+  accessFailFor.throws = null
   readdirFailFor.path = null
   db.close()
   await fs.rm(tmpDir, { recursive: true, force: true })
@@ -277,6 +284,38 @@ describe('uninstall says when it could not tell (SMI-6529 round 25)', () => {
     expect(result.message).toContain('Could not tell whether')
     expect(result.message).toContain('EACCES')
     // The skill is still there: the user is not sent away from it.
+    expect(await fs.readFile(path.join(installPath, 'SKILL.md'), 'utf-8')).toBe('# Installed\n')
+  })
+
+  // Round 26 (cross-model review): the round-25 guard read
+  // `code !== undefined && code !== 'ENOENT'`, so an error carrying no code at
+  // all fell through to "not installed" — the same false absence it fixed.
+  it('does not say "not installed" when the check failed with no error code', async () => {
+    const installPath = path.join(skillsDir, 'uncoded-skill')
+    await fs.mkdir(installPath)
+    await fs.writeFile(path.join(installPath, 'SKILL.md'), '# Installed\n')
+    accessFailFor.path = installPath
+    accessFailFor.throws = { value: new Error('filesystem went away') }
+
+    const result = await createService().uninstall('uncoded-skill')
+
+    expect(result.success).toBe(false)
+    expect(result.message).toContain('Could not tell whether')
+    expect(result.message).toContain('filesystem went away')
+    expect(await fs.readFile(path.join(installPath, 'SKILL.md'), 'utf-8')).toBe('# Installed\n')
+  })
+
+  it('survives a thrown value that is not an Error at all', async () => {
+    const installPath = path.join(skillsDir, 'nonerror-skill')
+    await fs.mkdir(installPath)
+    await fs.writeFile(path.join(installPath, 'SKILL.md'), '# Installed\n')
+    accessFailFor.path = installPath
+    accessFailFor.throws = { value: null }
+
+    const result = await createService().uninstall('nonerror-skill')
+
+    expect(result.success).toBe(false)
+    expect(result.message).toContain('Could not tell whether')
     expect(await fs.readFile(path.join(installPath, 'SKILL.md'), 'utf-8')).toBe('# Installed\n')
   })
 
