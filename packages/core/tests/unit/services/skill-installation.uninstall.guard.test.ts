@@ -138,6 +138,27 @@ async function trackLegacy(name: string, installPath: string): Promise<void> {
   await fs.writeFile(manifestPath, JSON.stringify(manifest, null, 2))
 }
 
+/** Record `name` with an extra field of the given value, as another tool might. */
+async function trackWithExtra(name: string, installPath: string, extra: unknown): Promise<void> {
+  const later = new Date(Date.now() + 60_000).toISOString()
+  const manifest = {
+    version: '1.0.0',
+    installedSkills: {
+      [name]: {
+        id: `author/${name}`,
+        name,
+        version: '1.0.0',
+        source: `github:author/${name}`,
+        installPath,
+        installedAt: later,
+        lastUpdated: later,
+        tags: extra,
+      },
+    },
+  }
+  await fs.writeFile(manifestPath, JSON.stringify(manifest, null, 2))
+}
+
 async function manifestEntry(name: string): Promise<unknown> {
   const raw = await fs.readFile(manifestPath, 'utf-8').catch(() => null)
   if (raw === null) return undefined
@@ -330,6 +351,22 @@ describe('uninstall keeps the manifest honest (SMI-6529 round 16)', () => {
     expect(result.success).toBe(true)
     expect(result.warning).toContain('Another install claimed this name')
     expect(await manifestEntry('legacy-skill')).toMatchObject({ installPath: claimedPath })
+  })
+
+  // Round 19 (Opus): comparing field by field with `!==` was correct only
+  // while every field is a string. One array field, and the record would be
+  // kept forever with a warning saying an install claimed the name.
+  it('drops a record that carries a non-string field', async () => {
+    const installPath = path.join(skillsDir, 'tagged-skill')
+    await fs.mkdir(installPath)
+    await fs.writeFile(path.join(installPath, 'SKILL.md'), '# Installed\n')
+    await trackWithExtra('tagged-skill', installPath, ['one', 'two'])
+
+    const result = await createService().uninstall('tagged-skill', { force: true })
+
+    expect(result.success).toBe(true)
+    expect(result.warning ?? '').not.toContain('Another install claimed this name')
+    expect(await manifestEntry('tagged-skill')).toBeUndefined()
   })
 
   it('still reports what is parked when a progress listener throws', async () => {

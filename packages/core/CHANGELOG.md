@@ -36,9 +36,11 @@ All notable changes to `@skillsmith/core` are documented here.
   removing it, so a folder another program swaps in at that moment is never the one deleted.
   Nothing is ever renamed back over whatever has taken a path — a rename replaces an empty
   directory, a file or a symlink — so anything a call moved aside is reported with its exact path
-  instead. What a failed removal leaves behind is reported by the next uninstall of that
-  skill, as well as next to a fan-out destination, and a refresh now says why it kept the copy it
-  replaced. Uninstall refuses a skill folder that is a git working tree (`.git` at its root), even
+  instead. A regular file is the one exception: it goes back atomically, since `link`
+  fails rather than replacing. What a failed removal leaves behind is reported by the next
+  uninstall of that skill, as well as next to a fan-out destination, and a refresh now says why it
+  kept the copy it replaced, removes only the symlink it checked when replacing one, and puts a
+  copy back only while that path is still free. Uninstall refuses a skill folder that is a git working tree (`.git` at its root), even
   with force and before adopting an untracked one; it removes only the folder it checked, and
   keeps the manifest entry when it removes nothing. It also drops a skill's record only while every
   field of that record still matches the one it removed, so an install claiming the same name

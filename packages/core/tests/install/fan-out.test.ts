@@ -1623,6 +1623,101 @@ describe('install/fan-out', () => {
 
     // Round 16 (cross-model review): the reason a superseded copy was kept
     // used to be dropped, leaving a later sweep to call it "an earlier copy".
+    // Round 19 (Opus): the symlink branch used to `unlink` the destination two
+    // syscalls after the check that said "symlink".
+    it('refuses when a file takes the path of the symlink it was replacing', async () => {
+      const { addLink: setupAddLink } = await loadModule()
+      await seedSkill('symswap')
+      const { record } = await setupAddLink({
+        skillId: 'symswap',
+        fromClient: 'claude-code',
+        toClient: 'cursor',
+        preferSymlink: true,
+      })
+      vi.doMock('node:fs/promises', async () => {
+        const actual = await vi.importActual<typeof import('node:fs/promises')>('node:fs/promises')
+        let swapped = false
+        const rename = vi.fn(async (from: PathLike, to: PathLike) => {
+          if (!swapped && String(from) === record.to) {
+            swapped = true
+            // Written elsewhere and renamed in, so it is a distinct inode.
+            const theirs = `${record.to}.theirs`
+            await actual.writeFile(theirs, 'not ours', 'utf-8')
+            await actual.rename(theirs, record.to)
+          }
+          return actual.rename(from, to)
+        })
+        return { ...actual, default: { ...actual, rename }, rename }
+      })
+      try {
+        vi.resetModules()
+        const { addLink } = await import('../../src/install/fan-out.js')
+        await expect(
+          addLink({
+            skillId: 'symswap',
+            fromClient: 'claude-code',
+            toClient: 'cursor',
+            preferSymlink: true,
+            force: true,
+          })
+        ).rejects.toThrow(/was replaced by something else/)
+        expect(await readFile(record.to, 'utf-8')).toBe('not ours')
+      } finally {
+        vi.doUnmock('node:fs/promises')
+        vi.resetModules()
+      }
+    })
+
+    it('leaves the copy it replaced in its backup folder when something takes the path', async () => {
+      const { addLink: setupAddLink } = await loadModule()
+      await seedSkill('restoreswap')
+      const { record } = await setupAddLink({
+        skillId: 'restoreswap',
+        fromClient: 'claude-code',
+        toClient: 'cursor',
+      })
+      vi.doMock('node:fs/promises', async () => {
+        const actual = await vi.importActual<typeof import('node:fs/promises')>('node:fs/promises')
+        const rename = vi.fn(async (from: PathLike, to: PathLike) => {
+          // The swap of the new copy into place fails, and another program
+          // takes the path in that moment.
+          if (String(to) === record.to && String(from).endsWith(`${path.sep}content`)) {
+            await actual.mkdir(record.to)
+            await actual.writeFile(path.join(record.to, 'KEEP.md'), 'not ours', 'utf-8')
+            throw Object.assign(new Error('EIO: swap failed'), { code: 'EIO' })
+          }
+          return actual.rename(from, to)
+        })
+        return { ...actual, default: { ...actual, rename }, rename }
+      })
+      try {
+        vi.resetModules()
+        const { addLink } = await import('../../src/install/fan-out.js')
+        await expect(
+          addLink({
+            skillId: 'restoreswap',
+            fromClient: 'claude-code',
+            toClient: 'cursor',
+            force: true,
+          })
+        ).rejects.toThrow(/something else is at .* now, so the original was left at /)
+        expect(await readFile(path.join(record.to, 'KEEP.md'), 'utf-8')).toBe('not ours')
+        const backup = (await readdir(path.dirname(record.to))).find((n) =>
+          n.startsWith('.restoreswap.skillsmith-backup-')
+        )
+        expect(backup).toBeDefined()
+        expect(
+          await readFile(
+            path.join(path.dirname(record.to), backup ?? '', 'original', 'SKILL.md'),
+            'utf-8'
+          )
+        ).toBe('# test\n')
+      } finally {
+        vi.doUnmock('node:fs/promises')
+        vi.resetModules()
+      }
+    })
+
     it('says why the copy a refresh replaced was kept', async () => {
       const { addLink: setupAddLink } = await loadModule()
       await seedSkill('keptbackup')

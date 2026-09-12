@@ -53,7 +53,7 @@ async function swapIn(real: RealFs, target: string): Promise<void> {
 }
 
 /** Mock one `node:fs/promises` function for the module loaded next. */
-function mockFs<K extends 'rename' | 'lstat' | 'rm'>(
+function mockFs<K extends 'rename' | 'lstat' | 'rm' | 'unlink'>(
   name: K,
   make: (actual: RealFs) => RealFs[K]
 ): void {
@@ -236,6 +236,57 @@ describe('removeIfSame (SMI-6529 round 15)', () => {
       reason: 'could not be moved aside to be removed (EACCES), so it was left in place',
     })
     expect((await lstat(target)).isDirectory()).toBe(true)
+  })
+
+  // Round 19 (Opus): a regular file can go back atomically — `link` fails
+  // with EEXIST instead of replacing — so files are put back while
+  // directories and symlinks stay parked.
+  it('puts a parked file back when the path is free', async () => {
+    const target = path.join(root, 'note.md')
+    await writeFile(target, 'ours', 'utf-8')
+    mockFs(
+      'unlink',
+      () =>
+        (async (p: PathLike) => {
+          throw eacces(p)
+        }) as RealFs['unlink']
+    )
+    const { removeIfSame } = await load()
+
+    expect(await removeIfSame(target, await lstat(target))).toEqual({
+      removed: false,
+      reason: 'could not be removed (EACCES), so it was left in place',
+    })
+    expect(await readFile(target, 'utf-8')).toBe('ours')
+  })
+
+  it('puts a file another program left at the path back, rather than parking it', async () => {
+    const target = path.join(root, 'note.md')
+    await writeFile(target, 'ours', 'utf-8')
+    const seen = await lstat(target)
+    mockFs(
+      'rename',
+      (actual) =>
+        (async (from: PathLike, to: PathLike) => {
+          if (String(from) === target) {
+            // Between the check and the park, another program replaces it.
+            // Written elsewhere and renamed in, so it is a distinct inode: a
+            // freed one can be reused straight away.
+            const theirs = `${target}.theirs`
+            await actual.writeFile(theirs, 'theirs', 'utf-8')
+            await actual.rename(theirs, target)
+          }
+          return actual.rename(from, to)
+        }) as RealFs['rename']
+    )
+    const { removeIfSame } = await load()
+
+    expect(await removeIfSame(target, seen)).toEqual({
+      removed: false,
+      reason: 'was replaced by something else, so it was left in place',
+    })
+    expect(await readFile(target, 'utf-8')).toBe('theirs')
+    expect((await readdir(root)).some((n) => PARKED.test(n))).toBe(false)
   })
 
   it('leaves an entry it cannot check parked, and says where', async () => {

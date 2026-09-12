@@ -153,8 +153,12 @@ export async function removeIfSame(
   }
   if (now.dev !== expected.dev || now.ino !== expected.ino) {
     // Something took the path between the check above and this rename, so what
-    // is parked belongs to whoever put it there. It is never renamed back over
-    // what is at the path now; its exact location is reported instead.
+    // is parked belongs to whoever put it there. A regular file goes back
+    // atomically; anything else is never renamed back over what is at the path
+    // now, so it stays parked and its exact location is reported.
+    if (await linkFileBack(parked, target, now)) {
+      return { removed: false, reason: 'was replaced by something else, so it was left in place' }
+    }
     return {
       removed: false,
       reason: `was replaced by something else, and that entry is now at ${parked}`,
@@ -165,9 +169,34 @@ export async function removeIfSame(
     else await fsp.unlink(parked)
     return { removed: true }
   } catch (err) {
-    return {
-      removed: false,
-      reason: `could not be removed (${errorCode(err)}); what is left of it is at ${parked}`,
+    const why = `could not be removed (${errorCode(err)})`
+    if (await linkFileBack(parked, target, now)) {
+      return { removed: false, reason: `${why}, so it was left in place` }
     }
+    return { removed: false, reason: `${why}; what is left of it is at ${parked}` }
   }
+}
+
+/**
+ * Put a parked regular file back where it came from, atomically. Round 19
+ * (Opus): `link` fails with EEXIST rather than replacing, so unlike `rename`
+ * it cannot destroy whatever took the path — which is why files can go back
+ * while directories and symlinks stay parked. (Whether `link` follows a
+ * symlink differs across platforms, so symlinks are not attempted.) Returns
+ * whether the entry is back at `target`.
+ */
+async function linkFileBack(parked: string, target: string, entry: Stats): Promise<boolean> {
+  if (!entry.isFile()) return false
+  try {
+    await fsp.link(parked, target)
+  } catch {
+    return false
+  }
+  try {
+    await fsp.unlink(parked)
+  } catch {
+    // It is back at its path. A link left under the parked name is reported
+    // like any other leftover.
+  }
+  return true
 }

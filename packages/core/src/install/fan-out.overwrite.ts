@@ -294,7 +294,11 @@ async function swapIntoPlace(dest: string, staged: string): Promise<string[]> {
     return []
   }
   if (existing.isSymbolicLink()) {
-    await fsp.unlink(dest)
+    // Round 19 (Opus): this `unlink` used to run two syscalls after the
+    // `lstat` that said "symlink", so a file another program put at the path
+    // in between was deleted. `removeIfSame` removes only the entry checked.
+    const removal = await removeIfSame(dest, existing)
+    if (!removal.removed) throw new Error(`addLink: ${dest} ${removal.reason}.`)
     await fsp.rename(staged, dest)
     return []
   }
@@ -312,6 +316,23 @@ async function swapIntoPlace(dest: string, staged: string): Promise<string[]> {
   try {
     await fsp.rename(staged, dest)
   } catch (err) {
+    // Round 19 (Opus): put the original back only while the path is still
+    // free — a rename would otherwise replace whatever took it, and the
+    // original is safe where it is, in a backup folder listLeftoverBackups
+    // reports. A path that can't be checked counts as taken.
+    let free: boolean
+    try {
+      free = (await lstatOrNull(dest)) === null
+    } catch {
+      free = false
+    }
+    if (!free) {
+      throw new Error(
+        `addLink: ${errorMessage(err)}; something else is at ${dest} now, so the original was ` +
+          `left at ${original}`,
+        { cause: err }
+      )
+    }
     try {
       await fsp.rename(original, dest)
     } catch (restoreErr) {

@@ -113,6 +113,11 @@ export async function recoverDestination(dest: string, manifest: LinkManifest): 
   }
   const folder = candidates.length === 1 ? candidates[0] : undefined
   if (folder === undefined || !isRecordedCopy(dest, manifest)) return []
+  // Round 19 (Opus): this check sits immediately before the rename below,
+  // which is as narrow as Node allows — there is no atomic no-clobber rename
+  // for a directory — so an entry created inside that window would be
+  // replaced (measured: an empty directory). Not restoring at all would lose
+  // the crash recovery this exists for, so the window is accepted and stated.
   if ((await lstatOrNull(dest)) !== null) return []
   await fsp.rename(path.join(folder, 'original'), dest)
   await fsp.rmdir(folder).catch(() => {})

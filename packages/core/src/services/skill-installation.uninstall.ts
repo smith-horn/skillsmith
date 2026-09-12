@@ -240,12 +240,26 @@ function notify(onProgress: ProgressCallback, ...args: Parameters<ProgressCallba
  * with A1's manifest work (SMI-6531).
  */
 function sameRecord(entry: SkillManifestEntry, loaded: SkillManifestEntry): boolean {
-  const keys = new Set([...Object.keys(entry), ...Object.keys(loaded)])
-  for (const key of keys) {
-    const k = key as keyof SkillManifestEntry
-    if (entry[k] !== loaded[k]) return false
-  }
-  return true
+  return stableJson(entry) === stableJson(loaded)
+}
+
+/**
+ * JSON with every object's keys in a fixed order, so two records compare by
+ * value. Round 19 (Opus): comparing field by field with `!==` was correct only
+ * while every field is a string — one array or object field, written by a
+ * newer version or another tool, would never compare equal, and the record
+ * would be kept forever with a warning that says an install claimed the name.
+ */
+function stableJson(value: unknown): string {
+  return JSON.stringify(value, (_key, nested: unknown) =>
+    nested !== null && typeof nested === 'object' && !Array.isArray(nested)
+      ? Object.fromEntries(
+          Object.entries(nested as Record<string, unknown>).sort(([a], [b]) =>
+            a < b ? -1 : a > b ? 1 : 0
+          )
+        )
+      : nested
+  )
 }
 
 /**
