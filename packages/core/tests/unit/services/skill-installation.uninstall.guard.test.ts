@@ -273,6 +273,19 @@ describe('uninstall never deletes a git working tree (SMI-6529 round 15)', () =>
 // must not change the uninstall's outcome — that part was deliberate — but it
 // must not vanish either.
 describe('uninstall reports a progress listener that threw (SMI-6529 round 28)', () => {
+  // Round 29 (gate confirmation): the success path was covered; the exits that
+  // carry no warning of their own were not, and those are exactly where a
+  // listener failure used to disappear.
+  it('still says the listener threw when the uninstall exits early', async () => {
+    const result = await createService(() => {
+      throw new Error('listener blew up')
+    }).uninstall('never-installed-skill')
+
+    expect(result.success).toBe(false)
+    expect(result.message).toContain('is not installed')
+    expect(result.warning).toContain('progress listener threw')
+  })
+
   it('finishes the uninstall and says the listener threw', async () => {
     const installPath = path.join(skillsDir, 'listener-skill')
     await fs.mkdir(installPath)

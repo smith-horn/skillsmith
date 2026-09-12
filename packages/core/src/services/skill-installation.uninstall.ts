@@ -193,6 +193,13 @@ export async function performUninstall(params: {
   // records into this one array, and every exit that reports warnings carries
   // it.
   const listenerProblems: string[] = []
+  // Round 29 (pre-merge gate, confirmation pass): `notify` fires before every
+  // exit below, so EVERY exit has to carry what the listener did — not just
+  // the ones that already had a warning to give. The previous round covered
+  // the reporting exits only, which left a listener failure vanishing on the
+  // refusal, not-installed, adoption-failure and outer-error paths.
+  const listenerWarning = (): { warning?: string } =>
+    listenerProblems.length > 0 ? { warning: listenerProblems.join(' ') } : {}
   try {
     notify(onProgress, listenerProblems, 'manifest', 'Loading manifest')
     const manifestData = await manifest.load()
@@ -220,14 +227,22 @@ export async function performUninstall(params: {
             message:
               `Could not tell whether "${skillName}" is installed: ${potentialPath} could not be ` +
               `checked (${detail}). Nothing was removed.`,
+            ...listenerWarning(),
           }
         }
-        return { success: false, skillName, message: 'Skill "' + skillName + '" is not installed.' }
+        return {
+          success: false,
+          skillName,
+          message: 'Skill "' + skillName + '" is not installed.',
+          ...listenerWarning(),
+        }
       }
       // SMI-6529 round 15: refuse a git working tree before adopting it, so a
       // refusal writes nothing to the manifest.
       const early = await inspectForRemoval(potentialPath)
-      if ('refusal' in early) return { success: false, skillName, message: early.refusal }
+      if ('refusal' in early) {
+        return { success: false, skillName, message: early.refusal, ...listenerWarning() }
+      }
 
       // ADR-139 (SMI-6274 Wave 4): a skill present on disk with no manifest
       // entry is ADOPTED — reconciled by writing a manifest entry derived
@@ -260,7 +275,12 @@ export async function performUninstall(params: {
         // Only if adoption itself fails does the command error — naming the
         // skill, the path, and the manifest it tried to write (ADR-139
         // point 1's stated failure contract).
-        return { success: false, skillName, message: adoptResult.adoptionError }
+        return {
+          success: false,
+          skillName,
+          message: adoptResult.adoptionError,
+          ...listenerWarning(),
+        }
       }
       skillEntry = adoptResult.entry
       adopted = adoptResult.adopted
@@ -268,7 +288,9 @@ export async function performUninstall(params: {
 
     const installPath = skillEntry.installPath
     const seen = await inspectForRemoval(installPath)
-    if ('refusal' in seen) return { success: false, skillName, message: seen.refusal }
+    if ('refusal' in seen) {
+      return { success: false, skillName, message: seen.refusal, ...listenerWarning() }
+    }
 
     if (!force) {
       notify(onProgress, listenerProblems, 'check', 'Checking for modifications')
@@ -407,6 +429,7 @@ export async function performUninstall(params: {
       success: false,
       skillName,
       message: error instanceof Error ? error.message : 'Unknown error during uninstall',
+      ...listenerWarning(),
     }
   }
 }

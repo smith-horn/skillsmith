@@ -89,6 +89,28 @@ describe('finalizeSuccessfulInstall (SMI-6529 N4)', () => {
     expect(tips).toContain('could not be checked against the quarantine list')
   })
 
+  // Round 29 (gate confirmation): the previous test covered two of the three
+  // best-effort catches. Dependency persistence had none, so reverting that
+  // catch alone would not have failed anything.
+  it('reports dependency intelligence it could not persist', async () => {
+    const throwingRepo = {
+      setDependencies: vi.fn(() => {
+        throw new Error('dependency table is locked')
+      }),
+    } as unknown as SkillDependencyRepository
+    const params = buildParams({
+      skillDependencyRepo: throwingRepo,
+      // persistDependencies returns early when nothing merges, so the content
+      // has to reference a server for the repo to be touched at all.
+      skillMdContent: '# my-skill\n\nUse mcp__linear__save_issue to file it.\n',
+    })
+
+    const result = await finalizeSuccessfulInstall(params)
+
+    expect(result.success).toBe(true)
+    expect((result.tips ?? []).join('\n')).toContain('dependency intelligence was not persisted')
+  })
+
   it('N4: a throwing coInstallRecorder does NOT fail the install — manifest write already committed', async () => {
     const throwingRecorder: CoInstallRecorder = {
       recordSessionCoInstalls: vi.fn(() => {
