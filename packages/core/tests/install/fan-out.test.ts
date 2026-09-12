@@ -1623,6 +1623,124 @@ describe('install/fan-out', () => {
 
     // Round 16 (cross-model review): the reason a superseded copy was kept
     // used to be dropped, leaving a later sweep to call it "an earlier copy".
+    // Round 20 (cross-model review): publishing used a plain rename, which
+    // replaces its destination, so an entry another program created after the
+    // destination was checked could be destroyed. A directory is published by
+    // claiming the name with `mkdir`, a symlink by `symlink` — both refuse.
+    it('refuses to publish a copy over something that took the path', async () => {
+      await seedSkill('claimrace')
+      const toDir = path.join(homeDir, '.cursor', 'skills', 'claimrace')
+      vi.doMock('node:fs/promises', async () => {
+        const actual = await vi.importActual<typeof import('node:fs/promises')>('node:fs/promises')
+        let taken = false
+        const mkdir = vi.fn(async (p: PathLike, opts?: Parameters<typeof actual.mkdir>[1]) => {
+          if (!taken && String(p) === toDir) {
+            taken = true
+            await actual.mkdir(toDir, { recursive: true })
+            await actual.writeFile(path.join(toDir, 'KEEP.md'), 'not ours', 'utf-8')
+          }
+          return actual.mkdir(p, opts)
+        })
+        return { ...actual, default: { ...actual, mkdir }, mkdir }
+      })
+      try {
+        vi.resetModules()
+        const { addLink } = await import('../../src/install/fan-out.js')
+        await expect(
+          addLink({ skillId: 'claimrace', fromClient: 'claude-code', toClient: 'cursor' })
+        ).rejects.toThrow(/EEXIST/)
+        expect(await readFile(path.join(toDir, 'KEEP.md'), 'utf-8')).toBe('not ours')
+      } finally {
+        vi.doUnmock('node:fs/promises')
+        vi.resetModules()
+      }
+    })
+
+    it('refuses to move aside a copy that was replaced before the refresh got to it', async () => {
+      const { addLink: setupAddLink } = await loadModule()
+      await seedSkill('moveaside')
+      const { record } = await setupAddLink({
+        skillId: 'moveaside',
+        fromClient: 'claude-code',
+        toClient: 'cursor',
+      })
+      vi.doMock('node:fs/promises', async () => {
+        const actual = await vi.importActual<typeof import('node:fs/promises')>('node:fs/promises')
+        let swapped = false
+        const mkdtemp = vi.fn(
+          async (prefix: string, opts?: Parameters<typeof actual.mkdtemp>[1]) => {
+            const made = await actual.mkdtemp(prefix, opts)
+            // The backup folder exists; another program replaces the copy
+            // before this refresh can move it aside.
+            if (!swapped && String(prefix).includes('.moveaside.skillsmith-backup-')) {
+              swapped = true
+              await actual.rename(record.to, `${record.to}-moved`)
+              await actual.mkdir(record.to)
+              await actual.writeFile(path.join(record.to, 'KEEP.md'), 'not ours', 'utf-8')
+            }
+            return made
+          }
+        )
+        return { ...actual, default: { ...actual, mkdtemp }, mkdtemp }
+      })
+      try {
+        vi.resetModules()
+        const { addLink } = await import('../../src/install/fan-out.js')
+        await expect(
+          addLink({
+            skillId: 'moveaside',
+            fromClient: 'claude-code',
+            toClient: 'cursor',
+            force: true,
+          })
+        ).rejects.toThrow(/was replaced by something else before this refresh could move it aside/)
+        // Their folder is untouched, and ours is where their swap put it.
+        expect(await readFile(path.join(record.to, 'KEEP.md'), 'utf-8')).toBe('not ours')
+        expect(await readFile(path.join(`${record.to}-moved`, 'SKILL.md'), 'utf-8')).toBe(
+          '# test\n'
+        )
+      } finally {
+        vi.doUnmock('node:fs/promises')
+        vi.resetModules()
+      }
+    })
+
+    it('refuses to publish a symlink over a file that took the path', async () => {
+      await seedSkill('symclaim')
+      const toDir = path.join(homeDir, '.cursor', 'skills', 'symclaim')
+      vi.doMock('node:fs/promises', async () => {
+        const actual = await vi.importActual<typeof import('node:fs/promises')>('node:fs/promises')
+        let taken = false
+        const symlink = vi.fn(
+          async (target: PathLike, p: PathLike, type?: Parameters<typeof actual.symlink>[2]) => {
+            if (!taken && String(p) === toDir) {
+              taken = true
+              await actual.mkdir(path.dirname(toDir), { recursive: true })
+              await actual.writeFile(toDir, 'not ours', 'utf-8')
+            }
+            return actual.symlink(target, p, type)
+          }
+        )
+        return { ...actual, default: { ...actual, symlink }, symlink }
+      })
+      try {
+        vi.resetModules()
+        const { addLink } = await import('../../src/install/fan-out.js')
+        await expect(
+          addLink({
+            skillId: 'symclaim',
+            fromClient: 'claude-code',
+            toClient: 'cursor',
+            preferSymlink: true,
+          })
+        ).rejects.toThrow(/EEXIST/)
+        expect(await readFile(toDir, 'utf-8')).toBe('not ours')
+      } finally {
+        vi.doUnmock('node:fs/promises')
+        vi.resetModules()
+      }
+    })
+
     // Round 19 (Opus): the symlink branch used to `unlink` the destination two
     // syscalls after the check that said "symlink".
     it('refuses when a file takes the path of the symlink it was replacing', async () => {
@@ -1679,14 +1797,14 @@ describe('install/fan-out', () => {
       vi.doMock('node:fs/promises', async () => {
         const actual = await vi.importActual<typeof import('node:fs/promises')>('node:fs/promises')
         const rename = vi.fn(async (from: PathLike, to: PathLike) => {
-          // The swap of the new copy into place fails, and another program
-          // takes the path in that moment.
-          if (String(to) === record.to && String(from).endsWith(`${path.sep}content`)) {
+          const moved = await actual.rename(from, to)
+          // The copy being replaced has just been moved aside; another program
+          // takes the path before the new one can be published.
+          if (String(from) === record.to && String(to).endsWith(`${path.sep}original`)) {
             await actual.mkdir(record.to)
             await actual.writeFile(path.join(record.to, 'KEEP.md'), 'not ours', 'utf-8')
-            throw Object.assign(new Error('EIO: swap failed'), { code: 'EIO' })
           }
-          return actual.rename(from, to)
+          return moved
         })
         return { ...actual, default: { ...actual, rename }, rename }
       })

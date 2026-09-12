@@ -267,8 +267,8 @@ export async function replaceDestination(
   let warnings: string[]
   try {
     await write(staged)
-    placed = await fsp.lstat(staged)
-    warnings = await swapIntoPlace(dest, staged)
+    const staging = await fsp.lstat(staged)
+    ;({ placed, warnings } = await swapIntoPlace(dest, staged, staging))
   } catch (err) {
     // A partial copy made from the source skill: remove it, but only while
     // the folder is still the one we made (round 13), and say why when that
@@ -286,35 +286,79 @@ export async function replaceDestination(
   return { placed, warnings }
 }
 
-/** Swaps `staged` into `dest`, returning warnings about what it could not clean up. */
-async function swapIntoPlace(dest: string, staged: string): Promise<string[]> {
+/**
+ * Put `staged` at `dest` without ever replacing something else. Round 20
+ * (cross-model review): `rename` replaces its destination, so publishing with
+ * it could destroy an entry another program created after the destination was
+ * checked. Both primitives here refuse instead — `symlink` and `mkdir` fail
+ * with EEXIST. A directory is published by claiming the name with `mkdir` and
+ * then renaming the staged copy over that empty directory, so the only thing
+ * the rename can replace is what this call itself just created.
+ *
+ * Returns the identity of what is now at `dest`: a rename keeps the staged
+ * directory's, while a published symlink is a new entry.
+ */
+async function publish(staged: string, dest: string, staging: Stats): Promise<Stats> {
+  if (staging.isSymbolicLink()) {
+    await fsp.symlink(await fsp.readlink(staged), dest)
+    await fsp.unlink(staged).catch(() => {})
+    return await fsp.lstat(dest)
+  }
+  await fsp.mkdir(dest)
+  try {
+    await fsp.rename(staged, dest)
+  } catch (err) {
+    // Only this call's own empty claim is removed.
+    await fsp.rmdir(dest).catch(() => {})
+    throw err
+  }
+  return staging
+}
+
+/** Swaps `staged` into `dest`, returning what it placed and what it could not clean up. */
+async function swapIntoPlace(
+  dest: string,
+  staged: string,
+  staging: Stats
+): Promise<{ placed: Stats; warnings: string[] }> {
   const existing = await lstatOrNull(dest)
   if (existing === null) {
-    await fsp.rename(staged, dest)
-    return []
+    return { placed: await publish(staged, dest, staging), warnings: [] }
   }
   if (existing.isSymbolicLink()) {
-    // Round 19 (Opus): this `unlink` used to run two syscalls after the
-    // `lstat` that said "symlink", so a file another program put at the path
-    // in between was deleted. `removeIfSame` removes only the entry checked.
+    // Round 19 (Opus): this used to `unlink` the destination two syscalls
+    // after the `lstat` that said "symlink", so a file another program put at
+    // the path in between was deleted. `removeIfSame` removes only the entry
+    // it checked.
     const removal = await removeIfSame(dest, existing)
     if (!removal.removed) throw new Error(`addLink: ${dest} ${removal.reason}.`)
-    await fsp.rename(staged, dest)
-    return []
+    return { placed: await publish(staged, dest, staging), warnings: [] }
   }
   const backupFolder = await fsp.mkdtemp(
     path.join(path.dirname(dest), siblingPrefix(dest, BACKUP_TAG))
   )
   const backupMade = await fsp.lstat(backupFolder)
   const original = path.join(backupFolder, 'original')
+  // Round 20 (cross-model review): move aside only the entry that was checked.
+  // A rename moves whatever is at the path, so without this an entry another
+  // program had just put there would be carried into this call's backup folder.
+  const stillThere = await lstatOrNull(dest).catch(() => null)
+  if (stillThere === null || stillThere.dev !== existing.dev || stillThere.ino !== existing.ino) {
+    await fsp.rmdir(backupFolder).catch(() => {})
+    throw new Error(
+      `addLink: ${dest} was replaced by something else before this refresh could move it ` +
+        `aside; nothing was changed.`
+    )
+  }
   try {
     await fsp.rename(dest, original)
   } catch (err) {
     await fsp.rmdir(backupFolder).catch(() => {})
     throw err
   }
+  let placed: Stats
   try {
-    await fsp.rename(staged, dest)
+    placed = await publish(staged, dest, staging)
   } catch (err) {
     // Round 19 (Opus): put the original back only while the path is still
     // free — a rename would otherwise replace whatever took it, and the
@@ -357,11 +401,14 @@ async function swapIntoPlace(dest: string, staged: string): Promise<string[]> {
   try {
     originalNow = await lstatOrNull(original)
   } catch (err) {
-    return [
-      `the copy this refresh replaced could not be checked (${errorCode(err)}), so ` +
-        `${backupFolder} was left in place; check it, then delete it yourself if you don't ` +
-        `need it.`,
-    ]
+    return {
+      placed,
+      warnings: [
+        `the copy this refresh replaced could not be checked (${errorCode(err)}), so ` +
+          `${backupFolder} was left in place; check it, then delete it yourself if you don't ` +
+          `need it.`,
+      ],
+    }
   }
   if (
     originalNow === null ||
@@ -369,10 +416,13 @@ async function swapIntoPlace(dest: string, staged: string): Promise<string[]> {
     originalNow.ino !== existing.ino
   ) {
     // Not what we put there. listLeftoverBackups reports it.
-    return []
+    return { placed, warnings: [] }
   }
   const removal = await removeIfSame(backupFolder, backupMade)
-  return removal.removed
-    ? []
-    : [`the copy this refresh replaced was kept: ${backupFolder} ${removal.reason}.`]
+  return {
+    placed,
+    warnings: removal.removed
+      ? []
+      : [`the copy this refresh replaced was kept: ${backupFolder} ${removal.reason}.`],
+  }
 }

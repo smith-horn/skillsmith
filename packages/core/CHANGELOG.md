@@ -16,7 +16,9 @@ All notable changes to `@skillsmith/core` are documented here.
   longer create a `.git` path, and `--also-link --force` replaces a symlink or a fan-out copy
   Skillsmith itself recorded (the new copy is written to a hidden staging folder and swapped into
   place under a per-destination lock, so a failed or concurrent refresh never loses the existing
-  copy) but still refuses a real directory Skillsmith never created, or a recorded copy that has
+  copy; the new copy is published by claiming its name with a primitive that refuses to replace —
+  `mkdir` for a directory, `symlink` for a link — and the copy it replaces is moved aside only
+  while it is still the one that was checked) but still refuses a real directory Skillsmith never created, or a recorded copy that has
   since grown a `.git` directory; uninstall's own cleanup applies the same `.git` refusal to a
   recorded copy instead of deleting it. A copy an interrupted refresh left behind is reported as
   a warning, and is never restored over a skill uninstalled since. The fan-out link manifest is

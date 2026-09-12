@@ -253,11 +253,38 @@ describe('removeIfSame (SMI-6529 round 15)', () => {
     )
     const { removeIfSame } = await load()
 
+    // Every unlink fails here, so the link under the parked name cannot be
+    // cleaned up either — and the reason says so (round 20, cross-model review).
+    const result = await removeIfSame(target, await lstat(target))
+    expect(result.removed).toBe(false)
+    expect(result.removed ? '' : result.reason).toMatch(
+      /^could not be removed \(EACCES\), so it was left in place; a link to it also remains at /
+    )
+    expect(await readFile(target, 'utf-8')).toBe('ours')
+  })
+
+  it('cleans up the parked link when it puts a file back', async () => {
+    const target = path.join(root, 'note.md')
+    await writeFile(target, 'ours', 'utf-8')
+    mockFs('unlink', (actual) => {
+      let first = true
+      return (async (p: PathLike) => {
+        // The delete fails; the cleanup of the parked link succeeds.
+        if (first) {
+          first = false
+          throw eacces(p)
+        }
+        return actual.unlink(p)
+      }) as RealFs['unlink']
+    })
+    const { removeIfSame } = await load()
+
     expect(await removeIfSame(target, await lstat(target))).toEqual({
       removed: false,
       reason: 'could not be removed (EACCES), so it was left in place',
     })
     expect(await readFile(target, 'utf-8')).toBe('ours')
+    expect(await readdir(root)).toEqual(['note.md'])
   })
 
   it('puts a file another program left at the path back, rather than parking it', async () => {
