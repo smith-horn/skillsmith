@@ -181,8 +181,34 @@ export { EVIDENCE_TYPE_BY_PATTERN } from './patterns.jailbreak.evidence.js'
  * already-scanned skill stays blocked even though the rule no longer flags it.
  * A severity-LOWERING change is the case where forgetting the bump is silent —
  * nothing fails, the fix simply never arrives.
+ *
+ * Bumped to `2026-09-11.1`: SMI-6508 added MF-5, a fifth severity class
+ * (`OBSERVE_ONLY_MEDIUM_PATTERNS`, always MEDIUM) carrying the prefixed
+ * `secrets` assignment form — `API_SECRETS=`, `app_secrets=`, `mySecrets=` and
+ * the singular `API_SECRET=`, none of which the boundary-carrying
+ * SECRETS_ASSIGN_PATTERN could ever match. Direction is
+ * *previously-clean-content-now-flagged*, the same as SMI-6441's and the
+ * opposite of SMI-6505's immediately above: content that produced no
+ * `sensitive_path` finding can now produce a MEDIUM one purely because new
+ * detection exists, not because the content changed. Without the bump the
+ * `comparable` gate reuses the stored pre-MF-5 verdict and an already-scanned
+ * skill never receives the new finding at all.
+ *
+ * Bumped to `2026-09-11.2`: SMI-6508 follow-up — MF-5's entry was moved to the
+ * END of SENSITIVE_PATH_PATTERNS. It had shipped at index 4, and
+ * scanSensitivePaths `break`s on the FIRST matching entry in array order, so an
+ * always-MEDIUM entry ahead of 11 HIGH-capable ones SUPPRESSED them: `passed`
+ * flipped false→true and the install block vanished (appending `# a_secrets:`
+ * to a line was sufficient). Direction is *previously-clean-content-now-flagged*
+ * again, but for a sharper reason than the entry above — this bump does not
+ * merely deliver new detection, it INVALIDATES verdicts that `.1` computed
+ * wrongly. A skill scanned under `2026-09-11.1` may carry a stored `passed:
+ * true` that the suppression produced; without this bump the `comparable` gate
+ * would keep serving it, so the evasion would survive in stored data even
+ * though the code no longer permits it. Forgetting the bump here leaves a
+ * security hole open, not just a fix undelivered.
  */
-export const SCANNER_RULESET_VERSION = '2026-09-11.1' as const
+export const SCANNER_RULESET_VERSION = '2026-09-11.2' as const
 
 // Suspicious patterns that might indicate malicious intent
 export const SUSPICIOUS_PATTERNS = [

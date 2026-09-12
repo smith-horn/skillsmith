@@ -37,6 +37,8 @@ import { homedir, tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { afterAll } from 'vitest'
 
+import { resolveRealHome } from './scripts/tests/_lib/resolve-real-home.js'
+
 // Ground truth for the runtime guard in
 // `packages/core/src/services/skill-manifest.ts`. Captured BEFORE $HOME is
 // rewritten — once the sandbox is installed, `os.homedir()` returns the
@@ -60,7 +62,11 @@ import { afterAll } from 'vitest'
 // default and no config overrides it, so this is currently latent — fixed
 // because it costs one line and the alternative is a guard that silently
 // stops working the moment someone reaches for `--no-isolate` as a speed-up.
-const REAL_HOME_BEFORE_SANDBOX = process.env.SKILLSMITH_TEST_REAL_HOME ?? homedir()
+// SMI-6514 finding 2: `??` alone only catches `undefined`, not a defined-but-
+// empty (or whitespace-only) env var, which would otherwise be captured
+// verbatim and propagated to every downstream reader of this env var for the
+// rest of the run. See resolve-real-home.ts for the concrete consequence.
+const REAL_HOME_BEFORE_SANDBOX = resolveRealHome(process.env.SKILLSMITH_TEST_REAL_HOME, homedir)
 process.env.SKILLSMITH_TEST_REAL_HOME = REAL_HOME_BEFORE_SANDBOX
 
 // One sandbox per setup execution (Vitest runs setup files once per test

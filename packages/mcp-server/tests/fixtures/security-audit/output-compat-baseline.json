@@ -31,13 +31,13 @@
   },
   "candidates": [
     {
-      "key": "3e5dc05165d7037998d7f28a916cd51d72e4d94bc596477de35dea85b42ad8ad",
-      "acceptKey": "3e5dc05165d7037998d7f28a916cd51d72e4d94bc596477de35dea85b42ad8ad",
+      "key": "88abaaa7b045a44cd1dcd20b66dac1819bc45649a1baf8387cc8705869359e7b",
+      "acceptKey": "88abaaa7b045a44cd1dcd20b66dac1819bc45649a1baf8387cc8705869359e7b",
       "sourcePath": "/skills/jailbreak-checklist/SKILL.md",
       "identifier": "jailbreak-checklist",
       "contentDigest": "1c2a50029a9b0cbbd8910e94dd7fe624851171a8dcb6e4f937f8242c2d855ded",
       "findingFingerprint": "e88edf38adbff96a12d8f7edbce4ce9a0d394413081ae39685838050b67dc42d",
-      "rulesetVersion": "2026-09-11.1",
+      "rulesetVersion": "2026-09-11.2",
       "finding": {
         "type": "jailbreak",
         "severity": "medium",
@@ -57,39 +57,13 @@
       ]
     },
     {
-      "key": "9b25799249fb747b4ff846fa1c5c40ea7e35b812eaf7a137edb79df97e51fcab",
-      "acceptKey": "9b25799249fb747b4ff846fa1c5c40ea7e35b812eaf7a137edb79df97e51fcab",
-      "sourcePath": "/skills/jailbreak-checklist/SKILL.md",
-      "identifier": "jailbreak-checklist",
-      "contentDigest": "1c2a50029a9b0cbbd8910e94dd7fe624851171a8dcb6e4f937f8242c2d855ded",
-      "findingFingerprint": "524ee7779065e767dc81756b9f620e7e5c0ca99c7da7fa674941abad0dbd89dd",
-      "rulesetVersion": "2026-09-11.1",
-      "finding": {
-        "type": "jailbreak",
-        "severity": "critical",
-        "message": "fabricated instruction override",
-        "location": "SKILL.md",
-        "lineNumber": 12,
-        "inDocumentationContext": false
-      },
-      "skillPassed": false,
-      "acceptedAt": null,
-      "duplicateCount": 1,
-      "affectedSkills": [
-        {
-          "sourcePath": "/skills/jailbreak-checklist/SKILL.md",
-          "identifier": "jailbreak-checklist"
-        }
-      ]
-    },
-    {
-      "key": "f87acda26e518aef6b92449c221fed5d1a59e2328c06b3519d1314295ae24817",
-      "acceptKey": "f87acda26e518aef6b92449c221fed5d1a59e2328c06b3519d1314295ae24817",
+      "key": "a9bdae3d8227d35b4b657d3f13db75eefa851766c1598026493baf86cdba9c4e",
+      "acceptKey": "a9bdae3d8227d35b4b657d3f13db75eefa851766c1598026493baf86cdba9c4e",
       "sourcePath": "/commands/some-command.md",
       "identifier": "some-command",
       "contentDigest": "c66306af18349092309de76d385bc21fb8901407fb7ebb5a5242bb467ee39b6c",
       "findingFingerprint": "97ab68d5426964d8c3071475e6377dc70b4ac2a2327bfb1264bbe68aa79f2e1b",
-      "rulesetVersion": "2026-09-11.1",
+      "rulesetVersion": "2026-09-11.2",
       "finding": {
         "type": "suspicious_pattern",
         "severity": "low",
@@ -105,6 +79,32 @@
         {
           "sourcePath": "/commands/some-command.md",
           "identifier": "some-command"
+        }
+      ]
+    },
+    {
+      "key": "de05b62b17f4ccf3a7f082273d85cf77b9f8089f5acb07f0145a7414813bb52b",
+      "acceptKey": "de05b62b17f4ccf3a7f082273d85cf77b9f8089f5acb07f0145a7414813bb52b",
+      "sourcePath": "/skills/jailbreak-checklist/SKILL.md",
+      "identifier": "jailbreak-checklist",
+      "contentDigest": "1c2a50029a9b0cbbd8910e94dd7fe624851171a8dcb6e4f937f8242c2d855ded",
+      "findingFingerprint": "524ee7779065e767dc81756b9f620e7e5c0ca99c7da7fa674941abad0dbd89dd",
+      "rulesetVersion": "2026-09-11.2",
+      "finding": {
+        "type": "jailbreak",
+        "severity": "critical",
+        "message": "fabricated instruction override",
+        "location": "SKILL.md",
+        "lineNumber": 12,
+        "inDocumentationContext": false
+      },
+      "skillPassed": false,
+      "acceptedAt": null,
+      "duplicateCount": 1,
+      "affectedSkills": [
+        {
+          "sourcePath": "/skills/jailbreak-checklist/SKILL.md",
+          "identifier": "jailbreak-checklist"
         }
       ]
     }

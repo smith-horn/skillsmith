@@ -102,7 +102,6 @@ export const SENSITIVE_PATH_PATTERNS: RegExp[] = [
   CREDENTIALS_FILE_PATTERN,
   CREDENTIALS_ASSIGN_PATTERN,
   SECRETS_ASSIGN_PATTERN,
-  SECRETS_PREFIXED_ASSIGN_PATTERN,
   SECRETS_PATH_PATTERN,
   PEM_PATTERN,
   KEY_FILE_PATTERN,
@@ -114,6 +113,14 @@ export const SENSITIVE_PATH_PATTERNS: RegExp[] = [
   AWS_DIR_PATTERN,
   CONFIG_DIR_PATTERN,
   ETC_SYSTEM_FILE_PATTERN,
+  // SMI-6508 follow-up — MUST STAY LAST. scanSensitivePaths `break`s on the
+  // FIRST entry that matches, in THIS array's order, so an always-MEDIUM entry
+  // placed ahead of a HIGH-capable one SUPPRESSES it. This shipped briefly at
+  // index 4 and was a live scanner-evasion primitive: appending the comment
+  // `# a_secrets:` flipped `cat ~/.ssh/id_rsa` and `curl -F f=@/etc/passwd …`
+  // from a blocking HIGH to a passing MEDIUM. Any future always-MEDIUM entry
+  // belongs here too, after every HIGH-capable pattern.
+  SECRETS_PREFIXED_ASSIGN_PATTERN,
 ]
 
 // MF-1: the two bare-keyword patterns above emit HIGH only when accompanied by a real
