@@ -5894,6 +5894,8 @@ console.log(
       'this IS the canonical HOST-tree freshness guard (SMI-5343/5344/6006) — checking host bytes is its entire documented purpose',
     'scripts/lib/check-node-modules-fresh.sh:if [ ! -f "$SENTINEL" ]; then':
       'same guard as above, the inverse branch',
+    'scripts/lib/check-node-modules-fresh.sh:if [ -f "$SENTINEL_SHADOW" ]; then':
+      'SMI-6496 Fix 2 shadow-hash sentinel — same canonical HOST-tree freshness guard as the raw sentinel rows above, checking a second host-side file for the same documented purpose',
     'scripts/repair-host-native-deps.sh:rm -rf "$dest"':
       'file header: "audit:host-npm-required ... by-design host-side native binding rebuild per SMI-4549; cannot run in Docker" — deliberately host-only',
     'scripts/repair-host-native-deps.sh:warn "$pkg_name: refetched but bin/esbuild still fails the ELF check — manual recovery: rm -rf node_modules/@esbuild/$(basename "${linux_dir%/}") && npm pack $pkg_name@$version"':
