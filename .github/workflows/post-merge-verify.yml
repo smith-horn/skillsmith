@@ -105,9 +105,9 @@ jobs:
         env:
           SKILLSMITH_GIT_CRYPT_EXPECTED_LOCKED: '1'
           # SMI-6564: this lane has no unlock step by design, so every Deno twin is
-          # encrypted here and each it.skipIf(...) parity assertion already skips (15
-          # test files skip in this lane). The guard this silences REPORTS that absence
-          # rather than providing coverage — see SMI-5879 design §6.4.
+          # encrypted here and each it.skipIf(...) parity assertion already skips.
+          # The guard this silences REPORTS that absence rather than providing
+          # coverage — see SMI-5879 design §6.4, and SMI-6564 for the measurement.
           # Registered use: "CI lanes that never receive the git-crypt key."
           # If this workflow is EVER given the key, REMOVE this line — the tripwire
           # would then be silenced in a lane where it is load-bearing.
