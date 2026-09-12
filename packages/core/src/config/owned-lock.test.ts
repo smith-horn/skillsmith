@@ -10,12 +10,24 @@
  */
 
 import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest'
-import { existsSync, mkdirSync, readFileSync, readdirSync, rmSync, writeFileSync } from 'node:fs'
+import {
+  chmodSync,
+  existsSync,
+  linkSync,
+  mkdirSync,
+  readFileSync,
+  readdirSync,
+  rmSync,
+  symlinkSync,
+  writeFileSync,
+} from 'node:fs'
+import { spawnSync } from 'node:child_process'
 import { hostname } from 'node:os'
 import * as path from 'node:path'
 import * as os from 'node:os'
 
-import { acquireOwnedLock, StuckLockError } from './owned-lock.js'
+import { acquireOwnedLock, RECLAIM_LOCK_TIMEOUT_MS, StuckLockError } from './owned-lock.js'
+import { acquireOwnedLockCore, toTimingMs } from './owned-lock.acquire.js'
 import { createLockExclusive } from './owned-lock.claim.js'
 import { mintDeadPid } from '../../tests/helpers/deterministic-dead-pid.js'
 
@@ -439,4 +451,144 @@ describe('orphaned reclaim lock (residual R1, §8c)', () => {
     expect(existsSync(reclaimPath)).toBe(false)
     release()
   })
+})
+
+// ---------------------------------------------------------------------------
+// SMI-6529 round 8 — non-waiting callers (`timeoutMs: 0`), as fan-out's
+// destination lock uses the primitive: each attempt is one try, and the
+// caller awaits between attempts itself.
+// ---------------------------------------------------------------------------
+
+describe('non-waiting callers (SMI-6529 round 8)', () => {
+  it('1. a lock released between our failed create and the claim read is reported as held, not unparseable', () => {
+    seed(v1(process.pid)) // a live holder
+    // The holder releases in the window after our link fails with EEXIST.
+    const releaseOnEexist = (existing: string, newPath: string): void => {
+      try {
+        linkSync(existing, newPath)
+      } catch (err) {
+        if ((err as NodeJS.ErrnoException).code === 'EEXIST') rmSync(newPath, { force: true })
+        throw err
+      }
+    }
+
+    let caught: StuckLockError | undefined
+    try {
+      acquireOwnedLockCore(target, {
+        timeoutMs: 0,
+        reclaimProbeAfterMs: 0,
+        linkSyncOverride: releaseOnEexist,
+      })
+    } catch (err) {
+      caught = err as StuckLockError
+    }
+
+    // 'held' is retried by the caller; 'unreclaimable_unparseable' was
+    // fatal, and its message told the user to delete a live lock.
+    expect(caught).toBeInstanceOf(StuckLockError)
+    expect(caught?.reason).toBe('held')
+  })
+
+  it('2. reclaimLockTimeoutMs: 0 gives up on an orphaned reclaim lock at once instead of sleeping', () => {
+    seed(v1(mintDeadPid()), lockPath)
+    seed(v1(process.pid), reclaimPath) // orphan stand-in
+
+    const started = Date.now()
+    let caught: StuckLockError | undefined
+    try {
+      acquireOwnedLock(target, { timeoutMs: 0, reclaimProbeAfterMs: 0, reclaimLockTimeoutMs: 0 })
+    } catch (err) {
+      caught = err as StuckLockError
+    }
+    expect(caught?.reason).toBe('reclaim_unavailable')
+    expect(Date.now() - started).toBeLessThan(RECLAIM_LOCK_TIMEOUT_MS / 2)
+
+    // Control: the default waits the full reclaim timeout in a synchronous sleep.
+    const controlStarted = Date.now()
+    expect(() => acquireOwnedLock(target, { timeoutMs: 0, reclaimProbeAfterMs: 0 })).toThrow(
+      StuckLockError
+    )
+    expect(Date.now() - controlStarted).toBeGreaterThanOrEqual(RECLAIM_LOCK_TIMEOUT_MS)
+  })
+})
+
+// ---------------------------------------------------------------------------
+// SMI-6529 round 9 — a lock that can never be released fails fast, a live
+// holder is named even with auto-reclaim off, and bad timing options can't
+// hang the synchronous wait.
+// ---------------------------------------------------------------------------
+
+describe('unreleasable locks and timing options (SMI-6529 round 9)', () => {
+  function attempt(): StuckLockError | undefined {
+    try {
+      acquireOwnedLock(target, { timeoutMs: 0, reclaimProbeAfterMs: 0 })
+    } catch (err) {
+      return err as StuckLockError
+    }
+    return undefined
+  }
+
+  it('1. a dangling symlink at the lock path is unparseable, not a released lock', () => {
+    symlinkSync(path.join(dir, 'nowhere'), lockPath)
+    expect(attempt()?.reason).toBe('unreclaimable_unparseable')
+  })
+
+  // root can read a mode-000 file, so the case only exists for other users.
+  it.skipIf(process.getuid?.() === 0)(
+    '2. a lock we may not read is unparseable, not a released lock',
+    () => {
+      seed(v1(process.pid))
+      chmodSync(lockPath, 0o000)
+      expect(attempt()?.reason).toBe('unreclaimable_unparseable')
+    }
+  )
+
+  it('3. with auto-reclaim off, a live holder is still reported as held, by pid', () => {
+    seed(v1(process.pid))
+    process.env['SKILLSMITH_LOCK_NO_AUTO_RECLAIM'] = '1'
+    let caught: StuckLockError | undefined
+    try {
+      caught = attempt()
+    } finally {
+      delete process.env['SKILLSMITH_LOCK_NO_AUTO_RECLAIM']
+    }
+    expect(caught?.reason).toBe('held')
+    expect(caught?.message).toContain(`pid ${process.pid}`)
+  })
+
+  it('4. timing options fall back to the default unless finite and non-negative', () => {
+    const cases: Array<[number | undefined, number]> = [
+      [undefined, 7],
+      [Number.NaN, 7],
+      [Number.POSITIVE_INFINITY, 7],
+      [Number.NEGATIVE_INFINITY, 7],
+      [-1, 7],
+      [0, 0],
+      [0.5, 0.5],
+      [250, 250],
+    ]
+    for (const [input, expected] of cases) {
+      expect(toTimingMs(input, 7), String(input)).toBe(expected)
+    }
+  })
+
+  it('5. reclaimLockTimeoutMs: NaN no longer hangs the synchronous wait', () => {
+    seed(v1(mintDeadPid()), lockPath)
+    seed(v1(process.pid), reclaimPath) // orphan stand-in
+    // Run in a child: a regression is an endless synchronous loop, which
+    // would hang this test process instead of failing it.
+    const moduleUrl = new URL('./owned-lock.ts', import.meta.url).href
+    const script =
+      `const { acquireOwnedLock } = await import(${JSON.stringify(moduleUrl)});` +
+      `try { acquireOwnedLock(${JSON.stringify(target)}, ` +
+      `{ timeoutMs: 0, reclaimProbeAfterMs: 0, reclaimLockTimeoutMs: NaN }); ` +
+      `console.log('acquired') } catch (err) { console.log(err.reason) }`
+    const child = spawnSync(
+      process.execPath,
+      ['--import', 'tsx', '--input-type=module', '-e', script],
+      { encoding: 'utf-8', timeout: 15_000 }
+    )
+    expect(child.signal, child.stderr).toBeNull()
+    expect(child.stdout.trim()).toBe('reclaim_unavailable')
+  }, 20_000)
 })
