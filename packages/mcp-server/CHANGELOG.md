@@ -4,10 +4,22 @@ All notable changes to `@skillsmith/mcp-server` are documented here.
 
 ## [Unreleased]
 
+- **Fix (data loss)**: `install_skill` checks the target directory before its conflict backup, so a
+  git working tree or a directory Skillsmith didn't install is refused without being backed up and
+  overwritten; that check now runs against the *right* client's skills directory and manifest key
+  (not always the default client's), and refuses cleanly if the resolved target somehow isn't
+  inside the skills directory at all. A failed check due to a permission error is reported
+  accurately (it names the real error) instead of falsely claiming a git repository was found.
+  `--also-link --force` and uninstall's own link cleanup now surface a fan-out refusal (e.g. a
+  recorded copy that grew a `.git` directory) in the tool result, not only stderr. Tier-1 self-heal
+  treats such user-owned directories as present instead of retrying them every day, but only when
+  the directory genuinely exists on disk — a phantom manifest row with nothing on disk is still
+  retried (SMI-6529).
+
 - **Security**: `skillsmith update --all` in CLI 0.8.8-0.8.10 can overwrite local edits in skill
   directories that are git clones and can write into the wrong directory (SMI-6528). On those
-  versions, preview with `--dry-run` and update skills one at a time; the install-layer fix is
-  tracked in SMI-6529.
+  versions, preview with `--dry-run` and update skills one at a time. This release includes the
+  install-layer fix (SMI-6529).
 - **Fix**: copyright headers in the three quota middleware source files now read
   `2025-2026 Smith Horn Group Ltd`; they previously gave 2024 as the start year. Comment-only,
   no behavior change. (SMI-6552)

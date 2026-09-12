@@ -122,14 +122,39 @@ function isThrottled(lastAttempt: string | undefined, now: number): boolean {
   return now - last < RETRY_THROTTLE_MS
 }
 
-/** True when an install outcome should count as "installed" for state purposes. */
+/**
+ * True when an install outcome should count as "installed" for state
+ * purposes — i.e. no 24h re-nag retry is needed for this skill.
+ *
+ * SMI-6529 L11 (round 2): a Tier-1 skill whose target directory is
+ * `INSTALL_TARGET_UNTRACKED` (an untracked pre-existing directory — most
+ * plausibly the user's own local copy of the same skill) or
+ * `INSTALL_TARGET_GIT_WORKTREE` (a git clone at that path) is, from this
+ * self-heal loop's perspective, ALREADY PRESENT — retrying it every 24h
+ * forever would never succeed (the guard refuses on every subsequent
+ * attempt too, for the same reason) and would just repeat the same
+ * refusal indefinitely. Both codes mean "something is already there,"
+ * distinct from a genuine, possibly-transient failure (network, scan
+ * rejection, etc.) that DOES deserve a retry.
+ */
 function countsAsInstalled(result: InstallResult): boolean {
   if (result.success) return true
   // The mcp-server `InstallResult` type erases `errorCode` (the core service
   // sets it at runtime); read it defensively. A skill already present on disk
   // is "installed" for our purposes — don't churn it on the 24h retry.
   const errorCode = (result as { errorCode?: string }).errorCode
-  return errorCode === 'ALREADY_INSTALLED'
+  if (errorCode === 'ALREADY_INSTALLED') return true
+  if (errorCode === 'INSTALL_TARGET_UNTRACKED' || errorCode === 'INSTALL_TARGET_GIT_WORKTREE') {
+    // SMI-6529 N10 (round 4): these two codes can ALSO fire with NOTHING on
+    // disk at all — e.g. an invalid/relative manifest `installPath` row
+    // (L17), or a `provenance:'local'` entry whose recorded directory is
+    // already gone (M8). Trusting them unconditionally as "installed" would
+    // count a phantom, non-existent install as done FOREVER — no 24h retry
+    // would ever fire to actually install the skill. Only trust them when
+    // the target directory genuinely exists.
+    return result.installPath !== '' && existsSync(result.installPath)
+  }
+  return false
 }
 
 /**

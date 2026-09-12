@@ -259,16 +259,22 @@ describe('ADR-139 (SMI-6274 Wave 4): getSkillDiff untracked-skill adoption + ado
     mocks.parseFn.mockReturnValue({ name, version })
   }
 
-  it('returns "adopted-unresolvable" (not a hard command failure) when recovery itself throws — required test 17 (update adoption)', async () => {
-    // The injected recovery deps query the local `skills` cache directly, so
-    // a missing/corrupt table throws rather than returning zero candidates.
+  it('returns "skipped-local" (not a hard command failure) and never even calls recovery — required test 17 (update adoption)', async () => {
+    // SMI-6529 Wave A0: adoption always writes source: 'unknown', which now
+    // short-circuits to 'skipped-local' BEFORE source recovery ever runs —
+    // so a broken recovery backend (this test's original premise) can no
+    // longer even matter for a freshly-adopted row. The injected recovery
+    // deps still query the local `skills` cache directly on a real call, so
+    // a missing/corrupt table would throw rather than returning zero
+    // candidates — but that call is now never reached.
     await mockInstalledSkill('cache-broken-skill')
     mocks.recoverOneFn.mockRejectedValue(new Error('SQLITE_ERROR: no such table: skills'))
 
     const { getSkillDiff } = await import('../src/commands/manage.js')
     const result = await getSkillDiff('cache-broken-skill', '/fake/db.sqlite')
 
-    expect(result).toBe('adopted-unresolvable')
+    expect(result).toBe('skipped-local')
+    expect(mocks.recoverOneFn).not.toHaveBeenCalled()
     // ADR-139 point 1: adoption must actually WRITE a reconstructed
     // manifest entry (via buildAdoptedManifestEntry + ManifestManager),
     // not just change getSkillDiff's return value — this is the concrete
@@ -280,7 +286,7 @@ describe('ADR-139 (SMI-6274 Wave 4): getSkillDiff untracked-skill adoption + ado
     expect(mocks.manifestUpdateSafelyFn).toHaveBeenCalledTimes(1)
   })
 
-  it('returns "adopted-unresolvable" when the manifest is missing entirely and recovery finds nothing, and writes the adopted entry — required test 17 (update adoption)', async () => {
+  it('returns "skipped-local" when the manifest is missing entirely, adopts, and never calls recovery — required test 17 (update adoption)', async () => {
     await mockInstalledSkill('mystery-skill')
     // loadManifest default (beforeEach) is an empty manifest; recoverOneFn
     // default (beforeEach) is 'unknown'/unresolved.
@@ -288,7 +294,8 @@ describe('ADR-139 (SMI-6274 Wave 4): getSkillDiff untracked-skill adoption + ado
     const { getSkillDiff } = await import('../src/commands/manage.js')
     const result = await getSkillDiff('mystery-skill', '/fake/db.sqlite')
 
-    expect(result).toBe('adopted-unresolvable')
+    expect(result).toBe('skipped-local')
+    expect(mocks.recoverOneFn).not.toHaveBeenCalled()
     expect(mocks.buildAdoptedEntryFn).toHaveBeenCalledWith(
       'mystery-skill',
       join(SKILLS_DIR, 'mystery-skill')
@@ -358,13 +365,13 @@ describe('ADR-139 (SMI-6274 Wave 4): getSkillDiff untracked-skill adoption + ado
     const { getSkillDiff } = await import('../src/commands/manage.js')
     const result = await getSkillDiff('guessed-id-skill', '/fake/db.sqlite')
 
-    // Must NOT resolve to the guessed id — falls through to source recovery
-    // (which also finds nothing here), landing on 'adopted-unresolvable'
-    // rather than a confident (and wrong) diff.
-    expect(result).toBe('adopted-unresolvable')
-    if (typeof result === 'object' && !('adoptionError' in result)) {
-      expect(result.skillId).not.toBe('some-author/some-other-skill')
-    }
+    // SMI-6529: must NOT resolve to the guessed id — this entry's
+    // `source: 'unknown'` now short-circuits straight to 'skipped-local'
+    // BEFORE the cache-match/recovery machinery this test's original guard
+    // exercised ever runs, which is an even stronger guarantee than falling
+    // through to an unresolved recovery.
+    expect(result).toBe('skipped-local')
+    expect(mocks.recoverOneFn).not.toHaveBeenCalled()
     // Since a real (already-tracked) manifest entry existed, adoption must
     // NOT run again — no fresh write.
     expect(mocks.manifestUpdateSafelyFn).not.toHaveBeenCalled()

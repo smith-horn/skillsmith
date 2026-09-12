@@ -5,32 +5,22 @@
  * `manage.update.ts` past it.
  */
 
-import { readFile } from 'fs/promises'
-import { basename, join } from 'path'
+import { basename } from 'path'
 import {
-  SkillParser,
   SkillRepository,
-  SourceRecoveryService,
   ManifestManager,
   adoptUntrackedSkillEntry,
-  hashContent,
   manifestKeyFor,
-  type DatabaseType,
-  type RecoveryConfidence,
   type Skill,
-  type SkillRecoveryResult,
   type SkillManifestEntry,
 } from '@skillsmith/core'
 import { getInstalledSkillsForClient, type InstalledSkill } from '../utils/skills-directory.js'
-import {
-  buildFindCandidatesByName,
-  buildFindRegistryIdByRepoUrl,
-} from '../utils/source-recovery-deps.js'
 import { openCliDatabase } from '../utils/open-database.js'
 import { DEFAULT_MANIFEST_PATH } from '../config.js'
 import { loadManifest } from '../utils/manifest.js'
 import { createApiBackedRegistryLookup } from './install.js'
 import { CANONICAL_CLIENT, type ClientId, type ScopedInstallTarget } from '@skillsmith/core/install'
+import { recoverConfidentSourceId, readClaimedAuthor } from './manage.update.recovery.js'
 
 /**
  * ADR-139 (SMI-6274 Wave 4): the `installedVia` label an entry from
@@ -51,90 +41,6 @@ export function installedViaFor(client: ClientId): ClientId | 'local' {
  */
 export interface SkillWithVersion extends Skill {
   version?: string
-}
-
-/**
- * SMI-5895 (Wave 2 Step 1): confidence tiers that {@link recoverConfidentSourceId}
- * auto-applies without asking the user to confirm — matches the same
- * "exact/high/user-specified auto-backfill, medium/low review-only" floor
- * `backfillManifest`'s own default `minConfidence: 'high'` already encodes
- * (`provenance/backfill.ts`, `commands/audit-sources.ts --min-confidence`
- * default). A medium/low match is a *speculative* name lookup — silently
- * trusting it here could overwrite a local skill with the wrong upstream
- * version, so `update` fails safely instead (plan-review correction).
- */
-export const AUTO_APPLY_RECOVERY_CONFIDENCES = new Set<RecoveryConfidence>([
-  'exact',
-  'high',
-  'user-specified',
-])
-
-/**
- * SMI-5895 (Wave 2 Step 1): fall back to `SourceRecoveryService` (SMI-5407,
- * already exposed via `sklx audit sources` / `skill_recover_source`) ONLY
- * when the manifest has no entry for this skill at all. Gated on confidence
- * — see {@link AUTO_APPLY_RECOVERY_CONFIDENCES}. Returns null (never
- * throws) when recovery is unavailable, unresolved/ambiguous, or below the
- * auto-apply confidence floor; the caller directs the user to
- * `sklx audit sources` for manual review in that case.
- */
-export async function recoverConfidentSourceId(
-  skillName: string,
-  installed: InstalledSkill,
-  db: DatabaseType
-): Promise<string | null> {
-  let skillMd: string | null
-  try {
-    skillMd = await readFile(join(installed.path, 'SKILL.md'), 'utf-8')
-  } catch {
-    skillMd = null
-  }
-  const service = new SourceRecoveryService({
-    hashContent,
-    findCandidatesByName: buildFindCandidatesByName(db),
-    findRegistryIdByRepoUrl: buildFindRegistryIdByRepoUrl(db),
-  })
-  let result: SkillRecoveryResult
-  try {
-    result = await service.recoverOne(installed.path, skillName, skillMd)
-  } catch {
-    // The injected deps hit the local `skills` cache directly, so a missing/
-    // corrupt table throws rather than returning zero candidates. Recovery is
-    // a best-effort fallback — degrade to "unresolvable" (whose message points
-    // at `sklx audit sources`) instead of failing the whole update command.
-    return null
-  }
-  if (result.status !== 'recovered' || !AUTO_APPLY_RECOVERY_CONFIDENCES.has(result.confidence)) {
-    return null
-  }
-  // SMI-5895 review (D-1): prefer the skill-specific recoveredSource.url over
-  // registryId. registryId comes from findRegistryIdByRepoUrl's `repo_url`-only
-  // lookup (source-recovery-deps.ts), which has no per-skill disambiguation --
-  // a multi-skill plugin/monorepo shares one repo_url across every skill in it,
-  // so it can resolve to a DIFFERENT skill's registry row than the one being
-  // recovered. recoveredSource is always populated alongside registryId for
-  // both auto-apply-eligible tiers (SourceRecoveryService.recoverOne's
-  // git-remote/plugin-json branches), so this never loses real recovery
-  // coverage -- registryId only remains as a defensive fallback for a future
-  // confidence tier that might populate one without the other.
-  return result.recoveredSource?.url ?? result.registryId ?? null
-}
-
-/**
- * SMI-6103: the installed skill's own claimed author, read directly from its
- * SKILL.md front-matter (never null-defaulted to a directory/display name —
- * an unclaimed "Local" skill, the website's own term, genuinely has none).
- * Returns null on any read/parse failure or an absent `author` field.
- */
-export async function readClaimedAuthor(installedPath: string): Promise<string | null> {
-  try {
-    const skillMd = await readFile(join(installedPath, 'SKILL.md'), 'utf-8')
-    const parsed = new SkillParser().parse(skillMd)
-    const author = (parsed as unknown as Record<string, unknown> | undefined)?.['author']
-    return typeof author === 'string' && author.trim().length > 0 ? author.trim() : null
-  } catch {
-    return null
-  }
 }
 
 // ADR-139 (SMI-6274 Wave 4) adoption note: the race-safe untracked-skill
@@ -173,6 +79,20 @@ export interface SkillDiff {
    * identity to check against in the first place.
    */
   resolvedRegistryRecord: { author: string | null; name: string | null } | null
+  /**
+   * SMI-6529 M6: the exact on-disk directory `getSkillDiff` actually
+   * compared against — `getInstalledSkillsForClient(client, dbPath)`'s
+   * matched entry's `.path`, NOT `currentEntry.installPath` (the manifest's
+   * OWN recorded path, which can legitimately differ — e.g. a repo-local
+   * skill resolved outside the client's normal install dir, or a manifest
+   * entry that's stale relative to what's actually on disk today).
+   * `updateSkill()` passes THIS, not `currentEntry.installPath`, as
+   * `expectedInstallPath` — `install()`'s target guard must refuse to write
+   * anywhere other than the directory this diff was actually computed
+   * against, and the manifest's own recorded path is not guaranteed to be
+   * that directory.
+   */
+  installedPath: string
 }
 
 /**
@@ -225,14 +145,17 @@ export interface SkillDiff {
  * lived only inside the manifest-fallback branch, AFTER the cache-match
  * check had already returned — so an untracked skill whose front-matter
  * author happened to match a cache row of the same name silently skipped
- * adoption entirely (GPT-5.6-Sol PR review round 2 finding). Returns
- * `'adopted-unresolvable'` (distinct from plain `'unresolvable'`) when the
- * entry — freshly adopted here, or already `source: 'unknown'` from an
- * earlier adoption — still has no resolvable registry id, so the caller can
- * say so explicitly (ADR-139: "the entry records it as unknown and the
- * command says so"). Returns `{ adoptionError }` only if the adoption WRITE
- * itself fails (naming the skill, path, and manifest — the same failure
- * contract `performUninstall()` uses).
+ * adoption entirely (GPT-5.6-Sol PR review round 2 finding). SMI-6529 Wave A0
+ * / L18 (round 2): a freshly-adopted entry always carries `source: 'unknown'`,
+ * and the `provenance === 'local' || source === 'unknown'` check further down
+ * this function now short-circuits ANY such entry straight to
+ * `'skipped-local'` before source resolution ever runs — so the entry this
+ * paragraph used to describe as reaching a distinct `'adopted-unresolvable'`
+ * outcome can no longer get there at all; that string outcome was removed as
+ * dead code (see the L18 comment at its former return site). Returns
+ * `{ adoptionError }` only if the adoption WRITE itself fails (naming the
+ * skill, path, and manifest — the same failure contract
+ * `performUninstall()` uses).
  *
  * GPT-5.6-Sol PR review finding (adoption-guessed-id guard): an adopted
  * entry's `id` is a GUESS (`= skillName`, since the real registry id can't
@@ -261,14 +184,34 @@ export interface SkillDiff {
  * Split out of manage.update.ts into this file (SMI-6274 Wave 4, file-length
  * gate) — re-exported from manage.update.ts so manage.action.ts's existing
  * import path is unaffected.
+ *
+ * SMI-6529 Wave A0: `dryRun` (default false) suppresses the untracked-skill
+ * adoption WRITE below — a dry run must never touch the manifest. Since a
+ * freshly-adopted entry always carries `source: 'unknown'`, and (see below)
+ * ANY `source: 'unknown'`/`provenance: 'local'` entry now short-circuits to
+ * `'skipped-local'` before any resolution runs, a dry run on an untracked
+ * skill can skip straight to that same outcome without writing anything.
  */
 export async function getSkillDiff(
   skillName: string,
   dbPath: string,
   client: ClientId = CANONICAL_CLIENT,
-  scopeTarget?: ScopedInstallTarget
+  scopeTarget?: ScopedInstallTarget,
+  dryRun = false,
+  /**
+   * SMI-6529 L19: optional out-param the caller can pass to receive the
+   * resolved `installed` record this function ALREADY looked up via
+   * `getInstalledSkillsForClient()` — for EVERY outcome, including the bare
+   * string ones (`'skipped-local'`/`'unresolvable'`) that carry no
+   * `SkillDiff` object of their own. Lets a caller building a
+   * user-facing display label for one of those outcomes (`updateSkillWithOutcome`'s
+   * label resolution) reuse this lookup instead of re-scanning the same
+   * client's installed-skills directory a second time per skipped skill.
+   * Never changes `getSkillDiff`'s own return type/contract — purely additive.
+   */
+  outInstalled?: { current?: InstalledSkill }
 ): Promise<
-  SkillDiff | 'not-installed' | 'unresolvable' | 'adopted-unresolvable' | { adoptionError: string }
+  SkillDiff | 'not-installed' | 'unresolvable' | 'skipped-local' | { adoptionError: string }
 > {
   const wantedVia = installedViaFor(client)
   const installed = (await getInstalledSkillsForClient(client, dbPath)).find(
@@ -279,6 +222,7 @@ export async function getSkillDiff(
   if (!installed) {
     return 'not-installed'
   }
+  if (outInstalled) outInstalled.current = installed
 
   const db = await openCliDatabase(dbPath)
   const skillRepo = new SkillRepository(db)
@@ -309,6 +253,13 @@ export async function getSkillDiff(
     let manifestEntry = manifest.installedSkills?.[manifestKey]
 
     if (!manifestEntry) {
+      // SMI-6529 Wave A0: a dry run must never write the manifest. A freshly
+      // adopted entry always carries `source: 'unknown'`, which the check
+      // just below this block always redirects to 'skipped-local' anyway —
+      // so skip the adoption WRITE entirely and go straight to that outcome.
+      if (dryRun) {
+        return 'skipped-local'
+      }
       // manifestPathForAdoption mirrors updateSkill()'s own scopeTarget-first
       // resolution so the write lands in the SAME manifest the read above
       // just consulted.
@@ -327,6 +278,20 @@ export async function getSkillDiff(
         return adoptResult
       }
       manifestEntry = adoptResult.entry
+    }
+
+    // SMI-6529 Wave A0: a `provenance: 'local'` row is a positive user
+    // assertion ("this is my own skill, not registry-tracked"), and
+    // `source: 'unknown'` is what BOTH that assertion AND a just-adopted
+    // untracked row carry — for either, `update` must never chase a source:
+    // no bare-name cache match, no SourceRecoveryService recovery, no
+    // registry lookup. This is the actual fix for the reported data-loss
+    // bug (a git-cloned or otherwise untracked skill directory silently
+    // resolved via a same-name/same-author cache match and got
+    // force-overwritten from an unrelated registry skill). Placed BEFORE
+    // every resolution path below, including the bare-name cache-match scan.
+    if (manifestEntry.provenance === 'local' || manifestEntry.source === 'unknown') {
+      return 'skipped-local'
     }
 
     // GPT-5.6-Sol PR review finding: `source !== 'unknown'` guards against
@@ -407,6 +372,7 @@ export async function getSkillDiff(
         changes,
         currentEntry: manifestEntry,
         resolvedRegistryRecord: { author: skill.author ?? null, name: skill.name ?? null },
+        installedPath: installed.path,
       }
     }
     // No bare-name cache row whose author agrees with the installed skill's
@@ -419,7 +385,12 @@ export async function getSkillDiff(
     // medium/low-confidence speculative match here.
     const resolvedId = manifestId ?? (await recoverConfidentSourceId(skillName, installed, db))
     if (!resolvedId) {
-      return manifestEntry.source === 'unknown' ? 'adopted-unresolvable' : 'unresolvable'
+      // SMI-6529 L18: `manifestEntry.source === 'unknown'` can no longer be
+      // true here — the early `provenance === 'local' || source === 'unknown'`
+      // short-circuit above (redirecting straight to 'skipped-local') already
+      // returned before this point whenever that would have held, making the
+      // former `'adopted-unresolvable'` branch this ternary fed dead code.
+      return 'unresolvable'
     }
 
     // A raw GitHub URL (a direct-URL install's manifest `id`, or a
@@ -438,6 +409,7 @@ export async function getSkillDiff(
         // A direct-URL install/update never consults the registry — see the
         // field's own doc comment on `SkillDiff`.
         resolvedRegistryRecord: null,
+        installedPath: installed.path,
       }
     }
 
@@ -459,6 +431,7 @@ export async function getSkillDiff(
       ],
       currentEntry: manifestEntry,
       resolvedRegistryRecord: { author: remote.author ?? null, name: remote.name ?? null },
+      installedPath: installed.path,
     }
   } finally {
     db.close()

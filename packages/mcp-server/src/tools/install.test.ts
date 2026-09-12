@@ -84,9 +84,19 @@ const { mockRunNamespaceGate } = vi.hoisted(() => ({
   mockRunNamespaceGate: vi.fn(),
 }))
 
-vi.mock('./install.namespace-gate.js', () => ({
-  runNamespaceGate: mockRunNamespaceGate,
-}))
+// SMI-6529 N5 (round 4): `buildPreflightCandidate`/`resolveCallerTier`/
+// `readAuditModeOverride`/`extractSkillName` moved into this module (to
+// keep install.ts under the 500-line gate) — install.ts now imports ALL of
+// them from here, so this mock must pass those four through via
+// `importActual` (pure, deterministic, no side effects) and only override
+// `runNamespaceGate` itself.
+vi.mock('./install.namespace-gate.js', async (importActual) => {
+  const actual = await importActual<typeof import('./install.namespace-gate.js')>()
+  return {
+    ...actual,
+    runNamespaceGate: mockRunNamespaceGate,
+  }
+})
 
 // ADR-139 (SMI-6274 Wave 4) / GPT-5.6-Sol PR review: installSkillImpl now
 // resolves global-vs-workspace scope via resolveScopedSkillsDir() (real
@@ -325,9 +335,15 @@ describe('installSkill() Zod boundary guard (SMI-4288 / #599)', () => {
       })
 
       expect(result).toEqual(HAPPY_RESULT)
+      // SMI-6529 N5 (round 4): the pre-flight now computes `installPath`
+      // the SAME way core's install() does — `path.join(effectiveSkillsDir,
+      // skillName)` — never the manifest entry's own recorded
+      // `installPath` (here `/x`), which can legitimately differ (a
+      // different scope/client's directory entirely). `/mock/skills-dir` is
+      // this test file's mocked `effectiveSkillsDir`.
       expect(mockCheckForConflicts).toHaveBeenCalledWith(
         'bare-name',
-        '/x',
+        '/mock/skills-dir/bare-name',
         expect.objectContaining({ installedSkills: expect.any(Object) }),
         'overwrite',
         'bare-name'
