@@ -7,6 +7,7 @@
  */
 
 import { confirm } from '@inquirer/prompts'
+import { basename } from 'path'
 import chalk from 'chalk'
 import ora from 'ora'
 import {
@@ -17,7 +18,7 @@ import {
 import { openCliDatabase } from '../utils/open-database.js'
 import { DEFAULT_MANIFEST_PATH } from '../config.js'
 import { sanitizeError } from '../utils/sanitize.js'
-import { getInstalledSkillsForClient } from '../utils/skills-directory.js'
+import { getInstalledSkillsForClient, type InstalledSkill } from '../utils/skills-directory.js'
 import { createApiBackedRegistryLookup } from './install.js'
 import { installedViaFor, getSkillDiff } from './manage.update.helpers.js'
 import {
@@ -55,6 +56,33 @@ export interface UpdateSkillResult {
 }
 
 /**
+ * SMI-6529 F7: format a user-facing label for a skill that `getSkillDiff`
+ * could NOT produce a full `SkillDiff` for (its `'not-installed'` /
+ * `'unresolvable'` / `'skipped-local'` string outcomes carry no
+ * `currentEntry` to read a directory/display name from). Named by the
+ * install DIRECTORY's basename — the value every write path actually keys
+ * on — with the front-matter display name in parentheses only when it
+ * differs, so a case-mismatched or renamed skill is still unambiguous.
+ * Falls back to the caller's raw argument if no `installed` record is given
+ * (mirrors `getSkillDiff`'s own `getInstalledSkillsForClient` lookup, whose
+ * result the caller now reuses directly — see SMI-6529 L19 below — so the
+ * two never disagree about which directory matched).
+ *
+ * SMI-6529 L19 (round 2): this used to itself call
+ * `getInstalledSkillsForClient()` a SECOND time per skipped skill — a full
+ * re-scan of the exact same client's installed-skills directory
+ * `getSkillDiff()` had ALREADY scanned moments earlier to produce the
+ * outcome this label is being built for. It's now a pure formatter over an
+ * `InstalledSkill` the caller already has in hand (via `getSkillDiff`'s
+ * `outInstalled` out-param), doing zero I/O of its own.
+ */
+function formatDisplayLabel(skillName: string, installed: InstalledSkill | undefined): string {
+  if (!installed) return `"${skillName}"`
+  const dirName = basename(installed.path)
+  return dirName === installed.name ? `"${dirName}"` : `"${dirName}" (${installed.name})`
+}
+
+/**
  * Update a single skill. With `dryRun`, shows the same diff preview without
  * prompting or installing.
  *
@@ -86,7 +114,11 @@ async function updateSkillWithOutcome(
   const spinner = ora(`Checking updates for ${skillName}...`).start()
 
   try {
-    const diff = await getSkillDiff(skillName, dbPath, client, scopeTarget)
+    // SMI-6529 L19: reused by `formatDisplayLabel` below instead of a second
+    // `getInstalledSkillsForClient()` scan per skipped skill — see
+    // `getSkillDiff`'s own `outInstalled` doc comment.
+    const installedInfo: { current?: InstalledSkill } = {}
+    const diff = await getSkillDiff(skillName, dbPath, client, scopeTarget, dryRun, installedInfo)
 
     if (diff === 'not-installed') {
       spinner.fail(
@@ -95,25 +127,32 @@ async function updateSkillWithOutcome(
       return { outcome: 'not-installed' }
     }
 
-    if (diff === 'unresolvable') {
-      spinner.fail(
-        `"${skillName}" has no recorded registry source — run "sklx audit sources" to recover it, or "skillsmith install <author>/${skillName} --force" with the full ID`
-      )
-      return { outcome: 'failed', reason: 'unresolvable' }
+    if (diff === 'skipped-local') {
+      // SMI-6529 Wave A0: a `provenance: 'local'` row, or a not-yet-tracked
+      // (adopted this call) row — either way, Skillsmith will not guess a
+      // source for it. This is a SKIP, not a failure: reuses the existing
+      // Skipped bucket updateSkills() already renders for the SMI-6343
+      // safety check, rather than counting toward Failed.
+      //
+      // F7 (review round 1): never suggest `skillsmith install ... --force`
+      // here — F5 now refuses that exact command for an adopted/local
+      // directory, so it was actively wrong advice (and was never valid with
+      // a bare display name in the first place, not a real `<author>/<name>`
+      // skillId). `sklx audit sources` is the only safe next step.
+      const label = formatDisplayLabel(skillName, installedInfo.current)
+      const reason = 'marked local / not tracked by Skillsmith'
+      spinner.fail(`${label} skipped: ${reason} — run "sklx audit sources" (dry run — read-only).`)
+      return { outcome: 'skipped', reason }
     }
 
-    if (diff === 'adopted-unresolvable') {
-      // ADR-139 (SMI-6274 Wave 4): this skill WAS untracked (no manifest
-      // entry) and has now been adopted — a manifest entry exists with
-      // version/source recorded as "unknown" — but no registry source could
-      // be determined for it either. The command "says so" explicitly per
-      // ADR-139 point 1, distinct from the generic 'unresolvable' message.
+    if (diff === 'unresolvable') {
+      // F7: same fix as 'skipped-local' above — never suggest a force-install
+      // with a bare display name.
+      const label = formatDisplayLabel(skillName, installedInfo.current)
       spinner.fail(
-        `"${skillName}" was untracked and has been adopted (version/source recorded as "unknown"), ` +
-          `but no registry source could be determined — run "sklx audit sources" to recover it, ` +
-          `or "skillsmith install <author>/${skillName} --force" to set the real source`
+        `${label} has no recorded registry source — run "sklx audit sources" (dry run — read-only) to recover it.`
       )
-      return { outcome: 'failed', reason: 'adopted-unresolvable' }
+      return { outcome: 'failed', reason: 'unresolvable' }
     }
 
     if ('adoptionError' in diff) {
@@ -195,7 +234,24 @@ async function updateSkillWithOutcome(
         },
       })
 
-      const result = await service.install(diff.skillId, { force: true })
+      // SMI-6529 Wave A0: name the exact directory this diff compared against —
+      // install() refuses to write anywhere else, even under force=true. This
+      // is what actually stops the "repo name != install directory name"
+      // data-loss class (a registry/raw-URL resolution landing in a NEW,
+      // wrongly-named directory instead of overwriting the one being updated).
+      //
+      // SMI-6529 M6 (round 2): `diff.installedPath` — the directory
+      // `getSkillDiff` actually found and diffed against on disk — not
+      // `diff.currentEntry.installPath` (the manifest's OWN recorded path).
+      // These can legitimately diverge (e.g. a repo-local skill resolved
+      // outside the client's normal global install dir while its manifest
+      // entry was written under a different scope's path); using the
+      // manifest's value here would let this guard compare against a
+      // directory that was never the one actually diffed.
+      const result = await service.install(diff.skillId, {
+        force: true,
+        expectedInstallPath: diff.installedPath,
+      })
 
       if (result.success) {
         updateSpinner.succeed(`Updated ${skillName}`)

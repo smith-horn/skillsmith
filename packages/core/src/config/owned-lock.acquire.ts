@@ -31,6 +31,7 @@ import {
 import {
   LOCK_ACQUIRE_TIMEOUT_MS,
   LOCK_RETRY_DELAY_MS,
+  RECLAIM_LOCK_TIMEOUT_MS,
   RECLAIM_PROBE_AFTER_MS,
   RECLAIM_PROBE_INTERVAL_MS,
 } from './owned-lock.types.js'
@@ -118,12 +119,23 @@ export interface AcquireOwnedLockCoreOptions {
   timeoutMs?: number
   label?: string
   reclaimProbeAfterMs?: number
+  reclaimLockTimeoutMs?: number
   onReclaimBoundary?: () => void
   onReclaimOutcome?: (outcome: ReclaimOutcome) => void
   /** @internal NEGATIVE CONTROL ONLY (owned-lock-reclaim-race.test.ts §8b). Removes the authoritative re-read that makes this mechanism sound -- reintroduces the round-3 lock-theft race on purpose. Never set outside that spec, and never reachable via the public acquireOwnedLock(). */
   unsafeSkipReclaimRevalidation?: boolean
   /** @internal test seam (owned-lock.test.ts item 14). Never reachable via the public acquireOwnedLock(). */
   linkSyncOverride?: (existingPath: string, newPath: string) => void
+}
+
+/**
+ * A timing option as a finite, non-negative number of milliseconds. Anything
+ * else (NaN, Infinity, a negative number) falls back to `fallback`: a NaN
+ * deadline never passes, so it hung the synchronous wait loop forever
+ * (SMI-6529 round 9).
+ */
+export function toTimingMs(value: number | undefined, fallback: number): number {
+  return typeof value === 'number' && Number.isFinite(value) && value >= 0 ? value : fallback
 }
 
 /**
@@ -140,10 +152,11 @@ export function acquireOwnedLockCore(
   const reclaimPath = `${lockPath}.reclaim`
   const token = randomHex(8)
   const label = opts.label ?? 'lock'
-  const timeoutMs = opts.timeoutMs ?? LOCK_ACQUIRE_TIMEOUT_MS
+  const timeoutMs = toTimingMs(opts.timeoutMs, LOCK_ACQUIRE_TIMEOUT_MS)
+  const reclaimLockTimeoutMs = toTimingMs(opts.reclaimLockTimeoutMs, RECLAIM_LOCK_TIMEOUT_MS)
   const started = Date.now()
   const deadline = started + timeoutMs
-  let nextProbeAt = started + (opts.reclaimProbeAfterMs ?? RECLAIM_PROBE_AFTER_MS)
+  let nextProbeAt = started + toTimingMs(opts.reclaimProbeAfterMs, RECLAIM_PROBE_AFTER_MS)
   let lastRefusal: RefusalCategory | ReclaimOutcome = 'held' // safe default: EEXIST already implies SOMETHING is there
   let lastObservedClaim: Claim = { kind: 'absent' }
 
@@ -164,6 +177,7 @@ export function acquireOwnedLockCore(
         const outcome: ReclaimOutcome = tryReclaimUnderLock(lockPath, reclaimPath, {
           unsafeSkipRevalidation: opts.unsafeSkipReclaimRevalidation,
           linkSyncOverride: opts.linkSyncOverride,
+          reclaimLockTimeoutMs,
         })
         opts.onReclaimOutcome?.(outcome)
         if (outcome === 'reclaimed' || outcome === 'gone') {
@@ -172,7 +186,11 @@ export function acquireOwnedLockCore(
         }
         lastRefusal = outcome // 'not-stale' | 'unavailable'
       } else {
-        lastRefusal = classifyRefusal(claim)
+        // SMI-6529 round 8: a claim that vanished between our EEXIST and this
+        // read was released by a live holder. That is contention, not a
+        // corrupt lock; calling it 'unparseable' made a non-waiting caller
+        // give up and advise `rm` on a lock another process may just have taken.
+        lastRefusal = claim.kind === 'absent' ? 'held' : classifyRefusal(claim)
       }
       nextProbeAt = Date.now() + RECLAIM_PROBE_INTERVAL_MS
     }

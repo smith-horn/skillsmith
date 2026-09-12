@@ -17,6 +17,8 @@
 import {
   SkillInstallationService,
   emitInstallEvent,
+  checkInstallTarget,
+  manifestKeyFor,
   type RegistryLookup,
   type RegistrySkillInfo,
 } from '@skillsmith/core'
@@ -29,25 +31,31 @@ import {
   UnsatisfiableWorkspaceScopeError,
   InvalidScopeValueError,
 } from '@skillsmith/core/install'
-import { resolveAuditMode, isAuditMode, type Tier } from '@skillsmith/core/config/audit-mode'
+import { resolveAuditMode } from '@skillsmith/core/config/audit-mode'
 import type { ToolContext } from '../context.js'
 import { getToolContext } from '../context.js'
-import {
-  CLAUDE_SKILLS_DIR,
-  MANIFEST_PATH,
-  installInputSchema,
-  type InstallResult,
-} from './install.types.js'
+import { MANIFEST_PATH, installInputSchema, type InstallResult } from './install.types.js'
 import { loadManifest, lookupSkillFromRegistry } from './install.helpers.js'
-import { FIELD_LIMITS } from './validate.types.js'
 
 // SMI-1867: Conflict resolution logic (extracted per governance review)
 import { checkForConflicts } from './install.conflict.js'
 
 // SMI-4588 Wave 2 PR #3: namespace pre-flight + ledger replay + mode gate.
-import { runNamespaceGate } from './install.namespace-gate.js'
+// SMI-6529 round 4: buildPreflightCandidate/resolveCallerTier/
+// readAuditModeOverride/extractSkillName moved here too (pure move) to stay
+// under the 500-line CI gate — extractSkillName re-exported below so its
+// external import path (used directly by SMI-4737's tests) is unaffected.
+import {
+  runNamespaceGate,
+  buildPreflightCandidate,
+  resolveCallerTier,
+  readAuditModeOverride,
+  extractSkillName,
+} from './install.namespace-gate.js'
 import type { CandidateSkill } from '../audit/install-preflight.js'
 import * as path from 'path'
+
+export { extractSkillName } from './install.namespace-gate.js'
 
 // SMI-2741: MCP tool definition extracted to companion file
 export { installTool } from './install.tool.js'
@@ -282,9 +290,52 @@ async function installSkillImpl(input: unknown, _context?: ToolContext): Promise
     try {
       const manifest = await loadManifest(scopeTarget.manifestPath)
       const skillName = extractSkillName(validInput.skillId)
+      // SMI-6529 N5 (round 4): look up the SAME manifest key
+      // `service.install()` itself will read/write (`manifestKeyFor(name,
+      // client)`) — a bare-name lookup silently misses every non-canonical
+      // client's entry (their key is always `name::client`), which used to
+      // skip this WHOLE pre-flight block for them regardless of what's
+      // actually on disk.
+      const manifestKey = manifestKeyFor(skillName, effectiveClient)
+      const existingEntry = manifest.installedSkills[manifestKey]
 
-      if (manifest.installedSkills[skillName]) {
-        const installPath = manifest.installedSkills[skillName].installPath
+      if (existingEntry) {
+        // SMI-6529 N5 (round 4): compute installPath the SAME way core's
+        // install() does — `path.join(effectiveSkillsDir, skillName)` — NOT
+        // the manifest's own recorded `installPath`. Those can legitimately
+        // differ (the manifest entry can be scoped to a different
+        // scope/client's directory entirely); passing the WRONG installPath
+        // into `checkInstallTarget` together with THIS client's
+        // `effectiveSkillsDir` broke its rule (d) ancestor walk — installPath
+        // was never actually inside skillsDir, so the walk never met it and
+        // silently climbed toward the filesystem root (probe-preflight.mjs).
+        const installPath = path.join(effectiveSkillsDir, skillName)
+
+        // SMI-6529 L20 (round 2): run the SAME pre-write target guard
+        // `service.install()` runs internally, BEFORE this MCP-only
+        // conflict pre-flight's backup + GC side effects
+        // (`createSkillBackup`/`cleanupOldBackups`, inside `checkForConflicts`
+        // below). A refusal here (an untracked directory, a git working
+        // tree, etc.) must short-circuit BEFORE a backup file gets written
+        // and old backups get swept for an install that was going to be
+        // refused anyway — not discovered only after those side effects
+        // already ran, inside `service.install()`'s own later call to this
+        // same guard.
+        const targetCheck = await checkInstallTarget({
+          installPath,
+          skillsDir: effectiveSkillsDir,
+          manifestEntry: existingEntry,
+          force: validInput.force,
+        })
+        if (!targetCheck.ok) {
+          return {
+            success: false,
+            skillId: validInput.skillId,
+            installPath,
+            error: targetCheck.error,
+            ...(targetCheck.tips !== undefined && { tips: targetCheck.tips }),
+          }
+        }
 
         const conflictCheck = await checkForConflicts(
           skillName,
@@ -329,28 +380,44 @@ async function installSkillImpl(input: unknown, _context?: ToolContext): Promise
   // SMI-4578: fan-out to additional clients after primary install. Failures
   // are logged but do NOT mark the overall install as failed — canonical
   // install at `client` is already complete.
+  //
+  // SMI-6529 N7 (round 4): a failure here used to ONLY go to stderr — a
+  // caller reading the returned InstallResult had no way to know a
+  // requested `alsoLink` target was silently refused (e.g. the fan-out
+  // destination is a real, un-recorded directory). Collected into `tips` (a
+  // plain string[] already on InstallResult) below, alongside the stderr
+  // log which stays for `docker logs`/local debugging.
+  const alsoLinkFailures: string[] = []
   if (result.success && validInput.alsoLink.length > 0) {
     const fromClient = validInput.client ?? 'claude-code'
     const skillName = extractSkillName(validInput.skillId)
     for (const target of validInput.alsoLink) {
       if (target === fromClient) continue
       try {
-        await addLink({
+        const linked = await addLink({
           skillId: skillName,
           fromClient,
           toClient: target,
           preferSymlink: validInput.symlink,
           force: validInput.force,
         })
+        // SMI-6529 round 7: hidden backups from an interrupted refresh.
+        for (const warning of linked.warnings ?? []) {
+          alsoLinkFailures.push(`alsoLink to ${target}: ${warning}`)
+        }
       } catch (linkErr) {
+        const message = linkErr instanceof Error ? linkErr.message : String(linkErr)
         // Best-effort fan-out — log but don't fail the install
-        console.error(
-          `[install] alsoLink to ${target} failed:`,
-          linkErr instanceof Error ? linkErr.message : String(linkErr)
-        )
+        console.error(`[install] alsoLink to ${target} failed:`, message)
+        alsoLinkFailures.push(`alsoLink to ${target} failed: ${message}`)
       }
     }
   }
+
+  const resultWithTips: InstallResult =
+    alsoLinkFailures.length > 0
+      ? { ...result, tips: [...(result.tips ?? []), ...alsoLinkFailures] }
+      : result
 
   // SMI-4588 Wave 2 PR #3: surface non-blocking namespace warnings (and
   // installComplete=true marker) on `power_user` / `governance` paths.
@@ -358,88 +425,13 @@ async function installSkillImpl(input: unknown, _context?: ToolContext): Promise
   // to the blocking-mode early return above.
   if (gate.resultPatch.warnings && gate.resultPatch.warnings.length > 0) {
     return {
-      ...result,
+      ...resultWithTips,
       installComplete: gate.resultPatch.installComplete,
       warnings: gate.resultPatch.warnings,
     }
   }
 
-  return result
-}
-
-/**
- * Build the `CandidateSkill` shape consumed by `runNamespaceGate`. The
- * pre-flight runs before any disk write, so the path is projected.
- *
- * `extractSkillName` mirrors the manifest-key derivation used elsewhere in
- * this file; the `skillId` is propagated when the input is a registry id
- * (`<author>/<name>`) so ledger lookups key on the canonical form.
- */
-function buildPreflightCandidate(skillId: string): CandidateSkill {
-  const skillName = extractSkillName(skillId)
-  const isRegistryId = skillId.includes('/') && !skillId.startsWith('https://')
-  const author = isRegistryId ? skillId.split('/')[0] : null
-  return {
-    identifier: skillName,
-    projectedSourcePath: path.join(CLAUDE_SKILLS_DIR, skillName),
-    skillId: isRegistryId ? skillId : null,
-    author,
-  }
-}
-
-/**
- * Resolve the caller's subscription tier for the audit-mode resolver.
- * Reads `SKILLSMITH_TIER` env var; falls through to `'community'` (the
- * resolver's fail-safe default) when unset or invalid. The MCP subprocess
- * has no JWT context, so env var is the only signal available without
- * cross-cutting changes (Wave 4 will revisit if richer tier resolution
- * becomes load-bearing).
- */
-function resolveCallerTier(): Tier {
-  const raw = process.env['SKILLSMITH_TIER']
-  if (raw === 'community' || raw === 'individual' || raw === 'team' || raw === 'enterprise') {
-    return raw
-  }
-  return 'community'
-}
-
-/**
- * Read the optional `SKILLSMITH_AUDIT_MODE` override. Invalid values fall
- * through to `null` so the resolver applies the tier default.
- */
-function readAuditModeOverride() {
-  const raw = process.env['SKILLSMITH_AUDIT_MODE']
-  return isAuditMode(raw) ? raw : null
-}
-
-/**
- * Best-effort skill name extraction for conflict pre-check.
- * Does not need to be perfect -- just needs to match manifest keys.
- *
- * SMI-4737: throws when the extracted segment exceeds `FIELD_LIMITS.token`
- * (128 chars). Adversarial `skillId` inputs that survive the Zod 512-char
- * boundary but produce an over-cap segment are rejected at the derivation
- * site so they cannot reach `sanitizeSegment`'s defensive 256-char floor
- * (SMI-4733). Caller sites must wrap in try/catch and surface a structured
- * tool-error envelope; the throw must not escape the MCP handler.
- *
- * Exported for direct unit testing (SMI-4737 tests).
- */
-export function extractSkillName(skillId: string): string {
-  let name: string
-  if (skillId.includes('/')) {
-    const parts = skillId.split('/')
-    name = parts[parts.length - 1]
-  } else {
-    name = skillId
-  }
-  if (name.length > FIELD_LIMITS.token) {
-    throw new Error(
-      `Extracted skill name exceeds ${FIELD_LIMITS.token} chars (got ${name.length}). ` +
-        `skillId: ${skillId.slice(0, 64)}${skillId.length > 64 ? '...' : ''}`
-    )
-  }
-  return name
+  return resultWithTips
 }
 
 // SMI-5017 W2.S2: wrap at export boundary

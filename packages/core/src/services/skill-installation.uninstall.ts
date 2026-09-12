@@ -5,13 +5,17 @@
  *
  * Split out of `skill-installation.helpers.ts` to stay under the 500-line
  * standard once ADR-139's adoption logic was added — mirrors the existing
- * `skill-installation.io.ts` sibling-split convention. `performUninstall`
+ * `skill-installation.io.ts` sibling-split convention. Round 25 split its own
+ * helpers out again, into `skill-installation.uninstall.helpers.ts`, for the
+ * same reason. `performUninstall`
  * has exactly one internal consumer (`skill-installation.service.ts`) and
  * is not part of `@skillsmith/core`'s public export surface.
  */
 
 import * as fs from 'fs/promises'
 import * as path from 'path'
+
+import { removeIfSame } from '../install/remove-if-same.js'
 
 import type { SkillDependencyRepository } from '../repositories/SkillDependencyRepository.js'
 import type { ProgressCallback, UninstallResult } from './skill-installation.types.js'
@@ -20,6 +24,12 @@ import { hashContent, manifestKeyFor } from './skill-installation.helpers.js'
 import type { ManifestManager } from './skill-manifest.js'
 import { CANONICAL_CLIENT, type ClientId } from '../install/paths.js'
 import type { SkillManifestEntry } from './skill-installation.types.js'
+import {
+  inspectForRemoval,
+  notify,
+  parkedWarnings,
+  sameRecord,
+} from './skill-installation.uninstall.helpers.js'
 
 /**
  * ADR-139 (SMI-6274 Wave 4): build a manifest entry for a skill found on
@@ -178,8 +188,20 @@ export async function performUninstall(params: {
   } = params
   const manifestKey = manifestKeyFor(skillName, client)
 
+  // Round 28 (pre-merge gate, PR-07): a progress listener that throws must not
+  // change the outcome, but it must not vanish either. Every notify below
+  // records into this one array, and every exit that reports warnings carries
+  // it.
+  const listenerProblems: string[] = []
+  // Round 29 (pre-merge gate, confirmation pass): `notify` fires before every
+  // exit below, so EVERY exit has to carry what the listener did — not just
+  // the ones that already had a warning to give. The previous round covered
+  // the reporting exits only, which left a listener failure vanishing on the
+  // refusal, not-installed, adoption-failure and outer-error paths.
+  const listenerWarning = (): { warning?: string } =>
+    listenerProblems.length > 0 ? { warning: listenerProblems.join(' ') } : {}
   try {
-    onProgress('manifest', 'Loading manifest')
+    notify(onProgress, listenerProblems, 'manifest', 'Loading manifest')
     const manifestData = await manifest.load()
     let skillEntry = manifestData.installedSkills[manifestKey]
     let adopted = false
@@ -188,8 +210,38 @@ export async function performUninstall(params: {
       const potentialPath = path.join(skillsDir, skillName)
       try {
         await fs.access(potentialPath)
-      } catch {
-        return { success: false, skillName, message: 'Skill "' + skillName + '" is not installed.' }
+      } catch (err) {
+        // Round 25 (cross-model review): only absence means "not installed".
+        // EACCES or EIO means we could not tell, and saying "not installed"
+        // sends the user away from a skill that is still on disk. Round 26
+        // (cross-model review): an error carrying no `code` at all is also
+        // "could not tell", and the previous guard let it fall through to "not
+        // installed" — the same false absence, one step further out. Only
+        // ENOENT is absence now, and the thrown value is read null-safely.
+        const code = (err as NodeJS.ErrnoException | null)?.code
+        if (code !== 'ENOENT') {
+          const detail = code ?? (err instanceof Error ? err.message : String(err))
+          return {
+            success: false,
+            skillName,
+            message:
+              `Could not tell whether "${skillName}" is installed: ${potentialPath} could not be ` +
+              `checked (${detail}). Nothing was removed.`,
+            ...listenerWarning(),
+          }
+        }
+        return {
+          success: false,
+          skillName,
+          message: 'Skill "' + skillName + '" is not installed.',
+          ...listenerWarning(),
+        }
+      }
+      // SMI-6529 round 15: refuse a git working tree before adopting it, so a
+      // refusal writes nothing to the manifest.
+      const early = await inspectForRemoval(potentialPath)
+      if ('refusal' in early) {
+        return { success: false, skillName, message: early.refusal, ...listenerWarning() }
       }
 
       // ADR-139 (SMI-6274 Wave 4): a skill present on disk with no manifest
@@ -206,7 +258,12 @@ export async function performUninstall(params: {
       // real `install()` landing in that window could be silently
       // clobbered. `adopted` now reflects whether OUR guess actually won
       // (false when a concurrent writer's real entry was found instead).
-      onProgress('adopt', 'Adopting untracked skill (no manifest entry found)')
+      notify(
+        onProgress,
+        listenerProblems,
+        'adopt',
+        'Adopting untracked skill (no manifest entry found)'
+      )
       const adoptResult = await adoptUntrackedSkillEntry(
         skillName,
         skillName,
@@ -218,16 +275,25 @@ export async function performUninstall(params: {
         // Only if adoption itself fails does the command error — naming the
         // skill, the path, and the manifest it tried to write (ADR-139
         // point 1's stated failure contract).
-        return { success: false, skillName, message: adoptResult.adoptionError }
+        return {
+          success: false,
+          skillName,
+          message: adoptResult.adoptionError,
+          ...listenerWarning(),
+        }
       }
       skillEntry = adoptResult.entry
       adopted = adoptResult.adopted
     }
 
     const installPath = skillEntry.installPath
+    const seen = await inspectForRemoval(installPath)
+    if ('refusal' in seen) {
+      return { success: false, skillName, message: seen.refusal, ...listenerWarning() }
+    }
 
     if (!force) {
-      onProgress('check', 'Checking for modifications')
+      notify(onProgress, listenerProblems, 'check', 'Checking for modifications')
       const modified = await checkForModifications(installPath, skillEntry.installedAt)
       if (modified) {
         return {
@@ -237,16 +303,35 @@ export async function performUninstall(params: {
             'Skill "' +
             skillName +
             '" has been modified since installation. Use force=true to remove anyway.',
-          warning: 'Local modifications will be lost if you force uninstall.',
+          warning: ['Local modifications will be lost if you force uninstall.', ...listenerProblems]
+            .join(' ')
+            .trim(),
         }
       }
     }
 
-    onProgress('remove', 'Removing skill directory')
-    try {
-      await fs.rm(installPath, { recursive: true, force: true })
-    } catch (error) {
-      if ((error as NodeJS.ErrnoException).code !== 'ENOENT') throw error
+    notify(onProgress, listenerProblems, 'remove', 'Removing skill directory')
+    // SMI-6529 round 15 (cross-model review, Critical): remove only the entry
+    // checked above. Anything another program put there since is left in
+    // place, and so is the manifest entry, so the user can retry.
+    if (seen.stat !== null) {
+      const removal = await removeIfSame(installPath, seen.stat)
+      if (!removal.removed) {
+        const parked = [...(await parkedWarnings(installPath)), ...listenerProblems]
+        return {
+          success: false,
+          skillName,
+          message:
+            'Skill "' +
+            skillName +
+            '" was not removed: ' +
+            installPath +
+            ' ' +
+            removal.reason +
+            '.',
+          ...(parked.length > 0 && { warning: parked.join(' ') }),
+        }
+      }
     }
 
     try {
@@ -255,7 +340,7 @@ export async function performUninstall(params: {
       // Table may not exist pre-migration
     }
 
-    onProgress('manifest', 'Updating manifest')
+    notify(onProgress, listenerProblems, 'manifest', 'Updating manifest')
     // SMI-6007: route the final mutation through updateSafely() (lock +
     // fresh re-read + save) instead of saving the `manifestData` snapshot
     // loaded above. That snapshot can be stale by the time we get here —
@@ -270,28 +355,81 @@ export async function performUninstall(params: {
     // skill while its uninstall is mid-flight) can still leave disk and
     // manifest inconsistent — only the unrelated-entry data loss is fixed
     // here, not full transactional safety across the whole method.
-    await manifest.updateSafely((current) => {
-      const next: typeof current = { ...current, installedSkills: { ...current.installedSkills } }
-      delete next.installedSkills[manifestKey]
-      return next
-    })
+    //
+    // Round 16 (cross-model review): the record is dropped only while it still
+    // describes the skill just removed. A concurrent install of the same name
+    // rewrites this key, and an unconditional delete would lose that install's
+    // record. And a manifest write that fails after the folder is gone is
+    // reported for what it is, rather than surfacing as a bare lock error.
+    let claimedByAnotherInstall = false
+    try {
+      await manifest.updateSafely((current) => {
+        const entry = current.installedSkills[manifestKey]
+        // Round 17 (cross-model review): a reinstall can land at the SAME
+        // path, so the path alone does not identify the generation just
+        // removed — and comparing paths alone also keeps a stale record
+        // forever whenever the spelling differs (a case-insensitive volume, a
+        // symlinked parent). Round 18: the whole record identifies it.
+        const describesWhatWasRemoved = entry === undefined || sameRecord(entry, skillEntry)
+        if (!describesWhatWasRemoved) {
+          claimedByAnotherInstall = true
+          return current
+        }
+        const next: typeof current = { ...current, installedSkills: { ...current.installedSkills } }
+        delete next.installedSkills[manifestKey]
+        return next
+      })
+    } catch (error) {
+      const parked = [...(await parkedWarnings(installPath)), ...listenerProblems]
+      return {
+        success: false,
+        skillName,
+        removedPath: installPath,
+        message:
+          'Skill "' +
+          skillName +
+          '" was removed from ' +
+          installPath +
+          ', but its record in ' +
+          manifest.path +
+          ' could not be updated (' +
+          (error instanceof Error ? error.message : String(error)) +
+          '). Its folder is already gone; run the same remove again once that file is writable, ' +
+          'which acts on whatever that record names at the time.',
+        ...(parked.length > 0 && { warning: parked.join(' ') }),
+      }
+    }
 
-    onProgress('done', 'Uninstall complete')
+    notify(onProgress, listenerProblems, 'done', 'Uninstall complete')
+    // Round 16 (both reviewers): away from a fan-out destination nothing swept
+    // what a failed removal parked, so it was named once and never again.
+    const warnings = [
+      ...(adopted
+        ? [
+            'This skill had no manifest entry (untracked) — it was adopted from disk state before removal.',
+          ]
+        : []),
+      ...(claimedByAnotherInstall
+        ? [
+            'Another install claimed this name while this one was being removed, so that record was left alone.',
+          ]
+        : []),
+      ...(await parkedWarnings(installPath)),
+      ...listenerProblems,
+    ]
     return {
       success: true,
       skillName,
       message: 'Skill "' + skillName + '" has been uninstalled successfully.',
       removedPath: installPath,
-      ...(adopted && {
-        warning:
-          'This skill had no manifest entry (untracked) — it was adopted from disk state before removal.',
-      }),
+      ...(warnings.length > 0 && { warning: warnings.join(' ') }),
     }
   } catch (error) {
     return {
       success: false,
       skillName,
       message: error instanceof Error ? error.message : 'Unknown error during uninstall',
+      ...listenerWarning(),
     }
   }
 }

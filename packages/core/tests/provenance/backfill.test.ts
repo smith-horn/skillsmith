@@ -278,6 +278,53 @@ describe('backfillManifest', () => {
     expect(entry.version).toBe('2.5.0')
   })
 
+  // SMI-6529 Wave A0: a `provenance: 'local'` row is a positive user
+  // assertion ("this is my own skill, not registry-tracked") that must never
+  // be backfilled — even when its source/id fields are otherwise "unhealthy"
+  // (the exact shape that would normally qualify for the fill-missing-fields
+  // path below), unlike the plain-unhealthy case this differs from ONLY by
+  // `provenance`. Asserted field-by-field (not via a byte-identical file
+  // comparison) because `ManifestManager.save()` always rewrites the whole
+  // file with its own pretty-printed formatting whenever ANY entry in the
+  // batch qualifies for planning, regardless of whether this specific
+  // entry's fields end up unchanged — see the "never clobbers" test above
+  // for the same field-level assertion style.
+  it('SMI-6529: never backfills a provenance:"local" row, even though its source is empty (would otherwise qualify)', async () => {
+    const dir = mkSkillDir('local-skill')
+    const existing: SkillManifest = {
+      version: '1.0.0',
+      installedSkills: {
+        'local-skill': {
+          id: 'keep-id',
+          name: 'local-skill',
+          version: '3.0.0',
+          source: '', // "unhealthy" by field-completeness alone
+          installPath: dir,
+          installedAt: '2021-02-02T00:00:00.000Z',
+          lastUpdated: '2021-02-02T00:00:00.000Z',
+          provenance: 'local',
+        },
+      },
+    }
+    fs.mkdirSync(path.dirname(manifestPath), { recursive: true })
+    fs.writeFileSync(manifestPath, JSON.stringify(existing))
+
+    const outcome = await backfillManifest(report(gitResult(dir, 'local-skill')), {
+      manifestPath,
+      apply: true,
+      now: NOW,
+    })
+
+    expect(outcome.written).toEqual([])
+    expect(outcome.skipped).toContain('local-skill')
+
+    const entry = loadManifest().installedSkills['local-skill'] as SkillManifestEntry
+    expect(entry.source).toBe('') // NOT filled in, unlike the plain-unhealthy test below
+    expect(entry.id).toBe('keep-id')
+    expect(entry.version).toBe('3.0.0')
+    expect(entry.provenance).toBe('local')
+  })
+
   it('fills a missing source onto an unhealthy existing entry without clobbering other fields', async () => {
     const dir = mkSkillDir('partial')
     const existing: SkillManifest = {

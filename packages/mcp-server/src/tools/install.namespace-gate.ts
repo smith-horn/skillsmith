@@ -26,6 +26,7 @@
  *     it into the `pendingCollision` envelope without re-deriving.
  */
 
+import * as path from 'path'
 import {
   runInstallPreflight,
   type CandidateSkill,
@@ -35,10 +36,92 @@ import { newAuditId } from '../audit/audit-history.js'
 import { readLedger } from '../audit/namespace-overrides.js'
 import { applyLedgerReplay } from './install.ledger-replay.js'
 import { scanLocalInventory } from '../utils/local-inventory.js'
-import type { AuditMode, Tier } from '@skillsmith/core/config/audit-mode'
+import { isAuditMode, type AuditMode, type Tier } from '@skillsmith/core/config/audit-mode'
 import type { InventoryEntry } from '../audit/collision-detector.types.js'
 
-import type { InstallResult } from './install.types.js'
+import { CLAUDE_SKILLS_DIR, type InstallResult } from './install.types.js'
+import { FIELD_LIMITS } from './validate.types.js'
+
+/**
+ * SMI-6529 round 4: moved from install.ts to keep it under the 500-line CI
+ * gate (pure move, no behavior change) — also breaks what would otherwise be
+ * a circular import (install.ts already imports `runNamespaceGate` FROM this
+ * file). `install.ts` re-exports this so its own external import path
+ * (`from '../../src/tools/install.js'`, used directly by SMI-4737's tests)
+ * is unaffected.
+ *
+ * Best-effort skill name extraction for conflict pre-check. Does not need to
+ * be perfect — just needs to match manifest keys.
+ *
+ * SMI-4737: throws when the extracted segment exceeds `FIELD_LIMITS.token`
+ * (128 chars). Adversarial `skillId` inputs that survive the Zod 512-char
+ * boundary but produce an over-cap segment are rejected at the derivation
+ * site so they cannot reach `sanitizeSegment`'s defensive 256-char floor
+ * (SMI-4733). Caller sites must wrap in try/catch and surface a structured
+ * tool-error envelope; the throw must not escape the MCP handler.
+ */
+export function extractSkillName(skillId: string): string {
+  let name: string
+  if (skillId.includes('/')) {
+    const parts = skillId.split('/')
+    name = parts[parts.length - 1]
+  } else {
+    name = skillId
+  }
+  if (name.length > FIELD_LIMITS.token) {
+    throw new Error(
+      `Extracted skill name exceeds ${FIELD_LIMITS.token} chars (got ${name.length}). ` +
+        `skillId: ${skillId.slice(0, 64)}${skillId.length > 64 ? '...' : ''}`
+    )
+  }
+  return name
+}
+
+/**
+ * Build the `CandidateSkill` shape consumed by `runNamespaceGate`. The
+ * pre-flight runs before any disk write, so the path is projected.
+ *
+ * `extractSkillName` mirrors the manifest-key derivation used elsewhere in
+ * install.ts; the `skillId` is propagated when the input is a registry id
+ * (`<author>/<name>`) so ledger lookups key on the canonical form.
+ */
+export function buildPreflightCandidate(skillId: string): CandidateSkill {
+  const skillName = extractSkillName(skillId)
+  const isRegistryId = skillId.includes('/') && !skillId.startsWith('https://')
+  const author = isRegistryId ? skillId.split('/')[0] : null
+  return {
+    identifier: skillName,
+    projectedSourcePath: path.join(CLAUDE_SKILLS_DIR, skillName),
+    skillId: isRegistryId ? skillId : null,
+    author,
+  }
+}
+
+/**
+ * SMI-6529 round 4: moved from install.ts (pure move). Resolve the caller's
+ * subscription tier for the audit-mode resolver. Reads `SKILLSMITH_TIER` env
+ * var; falls through to `'community'` (the resolver's fail-safe default)
+ * when unset or invalid. The MCP subprocess has no JWT context, so env var
+ * is the only signal available without cross-cutting changes (Wave 4 will
+ * revisit if richer tier resolution becomes load-bearing).
+ */
+export function resolveCallerTier(): Tier {
+  const raw = process.env['SKILLSMITH_TIER']
+  if (raw === 'community' || raw === 'individual' || raw === 'team' || raw === 'enterprise') {
+    return raw
+  }
+  return 'community'
+}
+
+/**
+ * SMI-6529 round 4: moved from install.ts (pure move). Read the optional
+ * `SKILLSMITH_AUDIT_MODE` override. Invalid values fall through to `null` so
+ * the resolver applies the tier default.
+ */
+export function readAuditModeOverride() {
+  const raw = process.env['SKILLSMITH_AUDIT_MODE']
+  return isAuditMode(raw) ? raw : null
+}
 
 export interface NamespaceGateInput {
   /** Synthesized candidate for the skill being installed. */

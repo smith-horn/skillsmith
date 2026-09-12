@@ -21,13 +21,10 @@ import {
   type AiDefenceFeedback,
 } from './skill-installation.types.js'
 import { installFromContent } from './skill-installation.content.js'
-import { recordAiDefenceFeedback, collectTrendWarnings } from './skill-installation.feedback.js'
+import { recordAiDefenceFeedback } from './skill-installation.feedback.js'
 import { ManifestManager } from './skill-manifest.js'
 import {
   hashContent,
-  generateTips,
-  extractDepIntel,
-  persistDependencies,
   applyOptimization,
   performUninstall,
   sanitizeInstallError,
@@ -37,7 +34,6 @@ import { CANONICAL_CLIENT, type ClientId } from '../install/paths.js'
 import {
   parseSkillIdInternal,
   validateSkillMd,
-  checkDepsAgainstQuarantine,
   resolveRegistryInstall,
 } from './skill-installation.validate.js'
 import {
@@ -46,6 +42,8 @@ import {
   fetchAndScanOptionalFiles,
 } from './skill-installation.io.js'
 import { buildInstallFailure, buildConfirmationRequired } from './skill-installation.errors.js'
+import { checkInstallTarget } from './skill-installation.target-guard.js'
+import { finalizeSuccessfulInstall } from './skill-installation.service.finalize.js'
 const DEFAULT_SKILLS_DIR = path.join(os.homedir(), '.claude', 'skills')
 const DEFAULT_MANIFEST_PATH = path.join(os.homedir(), '.skillsmith', 'manifest.json')
 export interface SkillInstallationServiceParams {
@@ -150,12 +148,25 @@ export class SkillInstallationService {
       this.onProgress('manifest', 'Checking manifest')
       const manifest = await this.manifest.load()
       const manifestKey = manifestKeyFor(skillName, this.client)
-      if (manifest.installedSkills[manifestKey] && !options.force) {
-        return buildInstallFailure('ALREADY_INSTALLED', {
+      // SMI-6529 Wave A0: pre-write install-target safety guard — refuses an
+      // untracked pre-existing directory, a git working tree, or (when `update`
+      // sets `expectedInstallPath`) a write anywhere other than the directory it
+      // diffed against. Runs BEFORE any content fetch or disk write. Replaces
+      // the bare manifest-membership ALREADY_INSTALLED check this used to be.
+      const targetCheck = await checkInstallTarget({
+        installPath,
+        skillsDir: this.skillsDir,
+        manifestEntry: manifest.installedSkills[manifestKey],
+        force: options.force ?? false,
+        expectedInstallPath: options.expectedInstallPath,
+      })
+      if (!targetCheck.ok) {
+        return buildInstallFailure(targetCheck.code, {
           skillId,
           installPath,
           trustTier,
-          error: 'Skill "' + skillName + '" is already installed. Use force=true to reinstall.',
+          error: targetCheck.error,
+          ...(targetCheck.tips !== undefined && { tips: targetCheck.tips }),
         })
       }
       this.onProgress('fetch', 'Fetching SKILL.md from GitHub')
@@ -372,91 +383,57 @@ export class SkillInstallationService {
       if (writeResult.subagentPath) {
         optimizationInfo.subagentPath = writeResult.subagentPath
       }
-      // Update manifest
-      this.onProgress('manifest', 'Updating manifest')
-      await this.manifest.updateSafely((currentManifest) => ({
-        ...currentManifest,
-        installedSkills: {
-          ...currentManifest.installedSkills,
-          [manifestKey]: {
-            id: skillId,
-            name: skillName,
-            version: '1.0.0',
-            source: 'github:' + owner + '/' + repo,
-            installPath,
-            installedAt: new Date().toISOString(),
-            lastUpdated: new Date().toISOString(),
-            originalContentHash: contentHash, // hash of optimized content (post-applyOptimization)
-            client: this.client,
-          },
-        },
-      }))
-      if (this.coInstallRecorder) {
-        this.coInstallRecorder.recordSessionCoInstalls([...this.sessionInstalledSkillIds, skillId])
-        this.sessionInstalledSkillIds.push(skillId)
+      // SMI-6529 M10: a companion agent file was left untouched because this
+      // was a fresh install and something already occupied the target path.
+      const extraTips: string[] = []
+      if (writeResult.companionSkipped) {
+        extraTips.push(
+          'A companion agent file already existed at the target location and was not overwritten (fresh install). Remove it manually if you want Skillsmith to regenerate it.'
+        )
       }
-      // Persist dependency intelligence (best-effort)
-      const depIntel = extractDepIntel(skillMdContent)
+      // SMI-6529 (Wave A0): everything after a successful write — manifest
+      // update, best-effort dependency/quarantine/trend/AI-defence bookkeeping,
+      // and the final result — moved to a sibling module (pure move, no
+      // behavior change) to keep this file under the 500-line CI gate once
+      // the target guard above was added.
       try {
-        persistDependencies(
-          this.skillDependencyRepo,
+        return await finalizeSuccessfulInstall({
+          manifest: this.manifest,
+          coInstallRecorder: this.coInstallRecorder,
+          sessionInstalledSkillIds: this.sessionInstalledSkillIds,
+          skillDependencyRepo: this.skillDependencyRepo,
+          quarantineLookup: this.quarantineLookup,
+          riskHistoryRepo: this.riskHistoryRepo,
+          aiDefenceFeedback: this.aiDefenceFeedback,
+          onProgress: this.onProgress,
+          client: this.client,
+          skillsDir: this.skillsDir,
           skillId,
+          owner,
+          repo,
+          skillName,
+          installPath,
+          manifestKey,
+          contentHash,
           skillMdContent,
-          depIntel.dep_declared
-        )
-      } catch {
-        /* best-effort */
-      }
-      let quarantinedDeps: string[] | undefined // SMI-3871
-      if (this.quarantineLookup) {
-        try {
-          const dqResult = checkDepsAgainstQuarantine(depIntel, this.quarantineLookup)
-          if (dqResult.quarantinedDeps.length > 0) {
-            quarantinedDeps = dqResult.quarantinedDeps
-            depIntel.dep_warnings.push(...dqResult.warnings)
-          }
-        } catch {
-          /* best-effort */
-        }
-      }
-      const trendWarnings = securityReport
-        ? collectTrendWarnings({
-            historyRepo: this.riskHistoryRepo,
-            skillId,
-            scanReport: securityReport,
-            contentHash,
-          })
-        : []
-      recordAiDefenceFeedback({
-        feedback: this.aiDefenceFeedback,
-        skillMdContent,
-        scanReport: securityReport,
-        blocked: false,
-      })
-      this.onProgress('done', 'Installation complete')
-      const tips = generateTips(skillName, optimizationInfo, this.client, this.skillsDir)
-      tips.unshift(...trendWarnings)
-      tips.push(...optionalFiles.configWarnings)
-      if (options.skipScan) {
-        tips.unshift('Security scan was skipped. This skill was not scanned for malicious content.')
-      }
-      if (contentHashMismatch) {
-        tips.unshift(
-          "Content has changed since Skillsmith last indexed this skill. This may mean the author updated it, or the content was modified. Review recent changes at the skill's repository before using."
-        )
-      }
-
-      return {
-        success: true,
-        skillId,
-        installPath,
-        securityReport,
-        trustTier,
-        optimization: optimizationInfo,
-        depIntel,
-        contentHashMismatch,
-        quarantinedDeps,
-        tips,
+          optimizationInfo,
+          securityReport,
+          configWarnings: optionalFiles.configWarnings,
+          skipScanRequested: options.skipScan,
+          contentHashMismatch,
+          trustTier,
+          extraTips,
+        })
+      } catch (finalizeError) {
+        // SMI-6529 M7: the write itself already succeeded — a failure HERE
+        // (the manifest update, the only step in finalizeSuccessfulInstall
+        // that can actually throw) must undo it via the SAME rollback logic
+        // writeInstallFiles runs on its own internal failure, or the skill
+        // is left on disk with no manifest entry at all. `rollback()` throws
+        // an InstallRestoreError instead if the restore itself also fails,
+        // which supersedes `finalizeError` below.
+        await writeResult.rollback(finalizeError)
+        throw finalizeError
       }
     } catch (error) {
       return buildInstallFailure('UNKNOWN', {

@@ -54,15 +54,28 @@ afterAll(async () => {
 })
 
 /**
- * Fresh skillsDir/installPath per test so parallel `it.each` iterations
- * (all sharing TEST_HOME) never collide with each other.
+ * Fresh skillsDir/installPath/skillName per test so parallel `it.each`
+ * iterations (all sharing TEST_HOME) never collide with each other.
+ *
+ * SMI-6529 M10 (round 2): `skillName` is now derived from `label` (unique
+ * per call site) rather than a shared `'my-skill'` literal. Several "flat"
+ * -mode clients (claude-code, cursor, windsurf, agents, hermes, grok) share
+ * the exact same physical companion-agent directory + filename pattern by
+ * design (COMPANION_AGENT_TARGETS' own doc comment: "no independent
+ * evidence" for most of them) — with a shared skillName, one test's write
+ * would leave behind a companion file that a LATER, logically-unrelated
+ * test (a different client, or the same client re-run) would see as an
+ * already-occupied target and, per M10, refuse to silently overwrite. A
+ * unique skillName per test keeps every test's companion-agent target
+ * genuinely isolated, matching how `skillsDir` is already isolated.
  */
 async function freshInstallPath(
   label: string
-): Promise<{ skillsDir: string; installPath: string }> {
+): Promise<{ skillsDir: string; installPath: string; skillName: string }> {
   const skillsDir = path.join(TEST_HOME, 'src', label, 'skills')
   await fs.mkdir(skillsDir, { recursive: true })
-  return { skillsDir, installPath: path.join(skillsDir, 'my-skill') }
+  const skillName = 'skill-' + label.replace(/[^a-z0-9-]/gi, '-')
+  return { skillsDir, installPath: path.join(skillsDir, skillName), skillName }
 }
 
 describe('writeInstallFiles companion-subagent path per client (SMI-5980 regression)', () => {
@@ -78,15 +91,15 @@ describe('writeInstallFiles companion-subagent path per client (SMI-5980 regress
   it.each<ClientId>(CLIENT_IDS.filter((id) => id !== 'antigravity'))(
     'writes the companion subagent for client=%s at exactly COMPANION_AGENT_TARGETS[client]',
     async (client) => {
-      const { skillsDir, installPath } = await freshInstallPath(client)
+      const { skillsDir, installPath, skillName } = await freshInstallPath(client)
 
       const result = await writeInstallFiles(
         installPath,
         skillsDir,
-        'my-skill',
+        skillName,
         '# hello',
         [],
-        '---\nname: my-skill-specialist\n---\nbody',
+        `---\nname: ${skillName}-specialist\n---\nbody`,
         client
       )
 
@@ -95,22 +108,22 @@ describe('writeInstallFiles companion-subagent path per client (SMI-5980 regress
       const target = COMPANION_AGENT_TARGETS[client]
       const expectedPath = path.join(
         target.dir,
-        target.filenamePattern.replace('{name}', 'my-skill')
+        target.filenamePattern.replace('{name}', skillName)
       )
       expect(result.subagentPath).toBe(expectedPath)
       expect(await fs.readFile(expectedPath, 'utf8')).toBe(
-        '---\nname: my-skill-specialist\n---\nbody'
+        `---\nname: ${skillName}-specialist\n---\nbody`
       )
     }
   )
 
   it('defaults to the canonical (claude-code) target when client is omitted (regression: unchanged)', async () => {
-    const { skillsDir, installPath } = await freshInstallPath('default-client')
+    const { skillsDir, installPath, skillName } = await freshInstallPath('default-client')
 
     const result = await writeInstallFiles(
       installPath,
       skillsDir,
-      'my-skill',
+      skillName,
       '# hello',
       [],
       'subagent body'
@@ -119,7 +132,7 @@ describe('writeInstallFiles companion-subagent path per client (SMI-5980 regress
 
     const expectedPath = path.join(
       COMPANION_AGENT_TARGETS['claude-code'].dir,
-      'my-skill-specialist.md'
+      `${skillName}-specialist.md`
     )
     expect(result.subagentPath).toBe(expectedPath)
     expect(await fs.readFile(expectedPath, 'utf8')).toBe('subagent body')
@@ -132,7 +145,7 @@ describe('writeInstallFiles companion-subagent path per client (SMI-5980 regress
     const claudeResult = await writeInstallFiles(
       claudeCode.installPath,
       claudeCode.skillsDir,
-      'my-skill',
+      claudeCode.skillName,
       '# hello',
       [],
       'body',
@@ -141,7 +154,7 @@ describe('writeInstallFiles companion-subagent path per client (SMI-5980 regress
     const cursorResult = await writeInstallFiles(
       cursor.installPath,
       cursor.skillsDir,
-      'my-skill',
+      cursor.skillName,
       '# hello',
       [],
       'body',
@@ -160,7 +173,7 @@ describe('writeInstallFiles companion-subagent path per client (SMI-5980 regress
     const copilotResult = await writeInstallFiles(
       copilot.installPath,
       copilot.skillsDir,
-      'my-skill',
+      copilot.skillName,
       '# hello',
       [],
       'body',
@@ -169,7 +182,7 @@ describe('writeInstallFiles companion-subagent path per client (SMI-5980 regress
     const opencodeResult = await writeInstallFiles(
       opencode.installPath,
       opencode.skillsDir,
-      'my-skill',
+      opencode.skillName,
       '# hello',
       [],
       'body',
@@ -352,7 +365,15 @@ describe('writeInstallFiles companion-subagent path for antigravity (directory-p
     // reclaims disk space (an EMPTY orphaned directory can only arise from a
     // transient I/O failure between mkdir and the write, not reproducible
     // deterministically without mocking fs internals).
+    //
+    // SMI-6529 N11 (round 4): a symlinked companion path is now correctly
+    // SKIPPED on a FRESH install (`companionSkipped`, no SymlinkError) — so
+    // this test forces `preExisted = true` (a reinstall) instead, the one
+    // case N11 leaves unchanged: a forced reinstall still overwrites the
+    // companion path unconditionally, so the symlink refusal below is still
+    // reachable exactly as this test always intended.
     const { skillsDir, installPath } = await freshInstallPath('antigravity-symlink')
+    await fs.mkdir(installPath, { recursive: true }) // preExisted = true
 
     const agentSkillDir = path.join(projectDir, '.agents', 'agents', 'my-skill')
     await fs.mkdir(agentSkillDir, { recursive: true })

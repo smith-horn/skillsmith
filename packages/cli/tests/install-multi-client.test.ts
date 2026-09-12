@@ -191,27 +191,38 @@ describe('install --client / --also-link', () => {
       expect(after).toBe('# DIFFERENT\n')
     })
 
-    it('overwrites when force=true', async () => {
+    // SMI-6529 H3 (round 2): `force` no longer recursively deletes a
+    // pre-existing REAL directory at the fan-out destination — only a
+    // symlink Skillsmith itself created is safe to clear. A real directory
+    // (even one with no special content, as here) is refused with a clear
+    // error naming the path, and its content is left completely untouched.
+    it('refuses to force-overwrite a pre-existing REAL directory — never recursively deletes it', async () => {
       await seedSkill('clash')
       const destDir = path.join(homeDir, '.cursor', 'skills', 'clash')
       await mkdir(destDir, { recursive: true })
       await writeFile(path.join(destDir, 'SKILL.md'), '# OLD\n', 'utf-8')
 
       const { addLink } = await import('@skillsmith/core/install')
-      await addLink({
-        skillId: 'clash',
-        fromClient: 'claude-code',
-        toClient: 'cursor',
-        force: true,
-      })
+      await expect(
+        addLink({
+          skillId: 'clash',
+          fromClient: 'claude-code',
+          toClient: 'cursor',
+          force: true,
+        })
+      ).rejects.toThrow(/not a fan-out destination Skillsmith recorded/)
       const after = await readFile(path.join(destDir, 'SKILL.md'), 'utf-8')
-      expect(after).toContain('# test') // matches seedSkill default body
+      expect(after).toBe('# OLD\n')
     })
   })
 
   describe('cycle detection', () => {
     it('refuses A→B when an existing B→A entry would form a cycle', async () => {
-      await seedSkill('cycle')
+      // SMI-6529 H3 (round 2): seed ONLY the agents-side source, not the
+      // canonical claude-code location — the forward hop below no longer
+      // needs `force` to overwrite anything (claude-code's own `cycle`
+      // doesn't exist yet), and `detectCycle()` fires before the reverse
+      // hop ever considers overwriting agents' own pre-existing directory.
       const agentsDir = path.join(homeDir, '.agents', 'skills', 'cycle')
       await mkdir(agentsDir, { recursive: true })
       await writeFile(path.join(agentsDir, 'SKILL.md'), '# cycle\n', 'utf-8')
@@ -250,7 +261,7 @@ describe('install --client / --also-link', () => {
       })
 
       const removed = await removeLinks('teardown')
-      expect(removed).toBe(2)
+      expect(removed).toEqual({ removed: 2, refused: [] })
       expect(await listLinks('teardown')).toEqual([])
 
       // Both destinations gone
@@ -265,10 +276,10 @@ describe('install --client / --also-link', () => {
       await expect(stat(path.join(homeDir, '.claude', 'skills', 'teardown'))).resolves.toBeDefined()
     })
 
-    it('removeLinks returns 0 when no manifest exists', async () => {
+    it('removeLinks reports nothing removed when no manifest exists', async () => {
       const { removeLinks } = await import('@skillsmith/core/install')
       const removed = await removeLinks('nothing-installed')
-      expect(removed).toBe(0)
+      expect(removed).toEqual({ removed: 0, refused: [] })
     })
   })
 
@@ -310,6 +321,112 @@ describe('install --client / --also-link', () => {
       await expect(stat(path.join(homeDir, '.agents', 'skills', 'getsentry'))).rejects.toThrow(
         /ENOENT/
       )
+    })
+  })
+
+  describe('interrupted-refresh leftover backup warning (SMI-6529)', () => {
+    beforeEach(() => {
+      alsoLinkMocks.installFn.mockReset()
+    })
+
+    it('prints the fan-out leftover-backup warning in human output but omits it from --json stdout', async () => {
+      const installPath = await seedSkill('leftover', '# leftover skill\n')
+      alsoLinkMocks.installFn.mockResolvedValue({
+        success: true,
+        skillId: 'author/leftover',
+        installPath,
+        trustTier: 'verified',
+      })
+
+      const { saveManifest } = await import('@skillsmith/core/install')
+      const destDir = path.join(homeDir, '.cursor', 'skills', 'leftover')
+      await mkdir(destDir, { recursive: true })
+      await writeFile(path.join(destDir, 'SKILL.md'), '# stale copy\n', 'utf-8')
+
+      // Recorded as a fan-out copy already so a --force overwrite is
+      // allowed (assertOverwritable in fan-out.overwrite.ts).
+      await saveManifest({
+        version: 1,
+        links: [
+          {
+            skillId: 'leftover',
+            from: path.join(homeDir, '.claude', 'skills', 'leftover'),
+            to: destDir,
+            kind: 'copy',
+            createdAt: new Date().toISOString(),
+          },
+        ],
+      })
+
+      // A hidden backup folder left behind by an earlier interrupted
+      // refresh, sitting next to the fan-out destination. recoverDestination
+      // only restores such a folder when the destination is MISSING, so
+      // seeding it while destDir already exists (above) keeps it in place
+      // as a superseded copy for listLeftoverBackups() to report.
+      const backupDir = path.join(
+        homeDir,
+        '.cursor',
+        'skills',
+        '.leftover.skillsmith-backup-AbC123'
+      )
+      await mkdir(path.join(backupDir, 'original'), { recursive: true })
+      await writeFile(path.join(backupDir, 'original', 'SKILL.md'), '# orphaned\n', 'utf-8')
+
+      const originalConsoleWarn = console.warn
+      const originalConsoleLog = console.log
+      const mockConsoleWarn = vi.fn()
+      const mockConsoleLog = vi.fn()
+      console.warn = mockConsoleWarn
+      console.log = mockConsoleLog
+
+      try {
+        const { createInstallCommand } = await import('../src/commands/install.js')
+
+        // Human-mode run: the warning must reach console output.
+        const cmdHuman = createInstallCommand()
+        await cmdHuman.parseAsync([
+          'node',
+          'test',
+          'author/leftover',
+          '--client',
+          'claude-code',
+          '--also-link',
+          'cursor',
+          '--force',
+        ])
+
+        const humanWarnText = mockConsoleWarn.mock.calls.map((args) => String(args[0])).join('\n')
+        expect(humanWarnText).toContain('an interrupted refresh')
+
+        // JSON-mode run: the same leftover backup is still sitting there
+        // (neither recoverDestination nor the swap ever deletes it), but the
+        // CLI must not print the warning anywhere in --json mode.
+        mockConsoleWarn.mockClear()
+        mockConsoleLog.mockClear()
+        const cmdJson = createInstallCommand()
+        await cmdJson.parseAsync([
+          'node',
+          'test',
+          'author/leftover',
+          '--client',
+          'claude-code',
+          '--also-link',
+          'cursor',
+          '--force',
+          '--json',
+        ])
+
+        expect(mockConsoleWarn).not.toHaveBeenCalled()
+        const jsonStdout = mockConsoleLog.mock.calls.map((args) => String(args[0])).join('\n')
+        expect(jsonStdout).not.toContain('an interrupted refresh')
+      } finally {
+        console.warn = originalConsoleWarn
+        console.log = originalConsoleLog
+      }
+
+      // The leftover backup itself is left alone -- only ever reported,
+      // never deleted by addLink's own swap logic.
+      await expect(stat(path.join(backupDir, 'original', 'SKILL.md'))).resolves.toBeDefined()
     })
   })
 })

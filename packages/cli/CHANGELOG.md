@@ -4,10 +4,17 @@ All notable changes to `@skillsmith/cli` are documented here.
 
 ## [Unreleased]
 
+- **Fix (data loss)**: `skillsmith update` writes only into the directory it compared and refuses
+  otherwise, so a skill can no longer be written into a differently named directory. Skills marked
+  local, and skills Skillsmith didn't install, are skipped before any source recovery or registry
+  lookup instead of being resolved and overwritten. `--dry-run` no longer writes the manifest. The
+  "no recorded registry source" hint no longer suggests `install --force` and names the skill by
+  its directory (SMI-6529).
+
 - **Security**: `skillsmith update --all` in CLI 0.8.8-0.8.10 can overwrite local edits in skill
   directories that are git clones and can write into the wrong directory (SMI-6528). On those
-  versions, preview with `--dry-run` and update skills one at a time; the install-layer fix is
-  tracked in SMI-6529.
+  versions, preview with `--dry-run` and update skills one at a time. This release includes the
+  install-layer fix (SMI-6529).
 
 ## v0.8.10
 

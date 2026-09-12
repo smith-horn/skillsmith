@@ -291,9 +291,18 @@ async function removeSkill(
       // global-canonical-to-global-client, so scope must also be checked.
       if (client === CANONICAL_CLIENT && scopeTarget.scope === 'global') {
         try {
-          const linkCount = await removeLinks(skillName)
+          // SMI-6529 N6 (round 4): `removeLinks` now reports destinations it
+          // refused to remove (e.g. a recorded fan-out copy that has since
+          // become a real `.git` working tree) instead of silently
+          // discarding both the manifest entry and the content — surface
+          // each refusal so the user knows a fan-out destination was left
+          // behind and why.
+          const { removed: linkCount, refused, warnings } = await removeLinks(skillName)
           if (linkCount > 0) {
             spinner.text = `Removed ${linkCount} cross-client link${linkCount > 1 ? 's' : ''}`
+          }
+          for (const text of [...refused.map((r) => r.reason), ...(warnings ?? [])]) {
+            console.log(chalk.yellow(`  Warning: ${text}`))
           }
         } catch (linkErr) {
           console.log(
