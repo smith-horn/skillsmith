@@ -164,7 +164,7 @@ export async function addLink(opts: AddLinkOptions): Promise<AddLinkResult> {
     const read = await readManifestFile()
     if (read.state === 'unreadable') throw unreadableManifestError(read.reason)
     const manifest = read.manifest
-    await recoverDestination(toDir, manifest)
+    const recovery = await recoverDestination(toDir, manifest)
 
     let existing: fs.Stats | null = null
     try {
@@ -244,10 +244,13 @@ export async function addLink(opts: AddLinkOptions): Promise<AddLinkResult> {
       }
       throw err
     }
+    const leftovers = await listLeftoverBackups(toDir)
     const warnings = [
       ...(manifestWarning ? [manifestWarning] : []),
       ...swapWarnings,
-      ...(await listLeftoverBackups(toDir)).map(leftoverBackupWarning),
+      ...(recovery.unreadable ? [recovery.unreadable] : []),
+      ...(leftovers.unreadable ? [leftovers.unreadable] : []),
+      ...leftovers.folders.map(leftoverBackupWarning),
     ]
     return warnings.length > 0 ? { record, fellBackToCopy, warnings } : { record, fellBackToCopy }
   })
@@ -359,7 +362,8 @@ export async function removeLinks(skillId: string): Promise<RemoveLinksResult> {
     } else {
       refused.push({ to: link.to, reason: step.outcome.reason })
     }
-    warnings.push(...step.leftovers.map(leftoverBackupWarning))
+    if (step.leftovers.unreadable) warnings.push(step.leftovers.unreadable)
+    warnings.push(...step.leftovers.folders.map(leftoverBackupWarning))
   }
 
   return warnings.length > 0

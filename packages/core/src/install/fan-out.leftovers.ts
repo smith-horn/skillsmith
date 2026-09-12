@@ -17,6 +17,24 @@ import type { Stats } from 'node:fs'
 import type { LinkManifest } from './fan-out.manifest.js'
 import { PARK_TAG, parkedPattern } from './remove-if-same.js'
 
+/** What a leftover scan found, and whether it could look at all. */
+export interface LeftoverScan {
+  /** Hidden folders beside the destination that an interrupted operation left. */
+  folders: string[]
+  /**
+   * Set when the parent folder could not be listed. Round 24 (cross-model
+   * review): returning an empty list then reports "could not look" as "nothing
+   * is there", and the accepted residual's promise is that a displaced entry
+   * gets reported.
+   */
+  unreadable?: string
+}
+
+function errorCode(err: unknown): string {
+  const code = (err as NodeJS.ErrnoException).code
+  return code ?? (err instanceof Error ? err.message : String(err))
+}
+
 export const BACKUP_TAG = '.skillsmith-backup-'
 export const STAGING_TAG = '.skillsmith-staging-'
 
@@ -94,13 +112,21 @@ async function removeIfEmpty(folder: string): Promise<boolean> {
  * review) stopped deleting those here, since neither a folder's name nor its
  * contents proves who owns it now. Returns the backup folders restored from.
  */
-export async function recoverDestination(dest: string, manifest: LinkManifest): Promise<string[]> {
+export async function recoverDestination(
+  dest: string,
+  manifest: LinkManifest
+): Promise<{ restored: string[]; unreadable?: string }> {
   const parent = path.dirname(dest)
   let entries: string[]
   try {
     entries = await fsp.readdir(parent)
-  } catch {
-    return []
+  } catch (err) {
+    return {
+      restored: [],
+      unreadable:
+        `${parent} could not be listed (${errorCode(err)}), so anything an interrupted refresh ` +
+        `left beside ${dest} was neither recovered nor reported.`,
+    }
   }
   const backup = siblingPattern(dest, BACKUP_TAG)
   const candidates: string[] = []
@@ -112,16 +138,16 @@ export async function recoverDestination(dest: string, manifest: LinkManifest): 
     if (originalStat?.isDirectory()) candidates.push(folder)
   }
   const folder = candidates.length === 1 ? candidates[0] : undefined
-  if (folder === undefined || !isRecordedCopy(dest, manifest)) return []
+  if (folder === undefined || !isRecordedCopy(dest, manifest)) return { restored: [] }
   // Round 19 (Opus): this check sits immediately before the rename below,
   // which is as narrow as Node allows — there is no atomic no-clobber rename
   // for a directory — so an entry created inside that window would be
   // replaced (measured: an empty directory). Not restoring at all would lose
   // the crash recovery this exists for, so the window is accepted and stated.
-  if ((await lstatOrNull(dest)) !== null) return []
+  if ((await lstatOrNull(dest)) !== null) return { restored: [] }
   await fsp.rename(path.join(folder, 'original'), dest)
   await fsp.rmdir(folder).catch(() => {})
-  return [folder]
+  return { restored: [folder] }
 }
 
 /**
@@ -136,13 +162,18 @@ export async function recoverDestination(dest: string, manifest: LinkManifest): 
  * left by a crashed write is reported the same way. Round 15: so is what a
  * crashed or failed removal left under a parked name. Call under the lock.
  */
-export async function listLeftoverBackups(dest: string): Promise<string[]> {
+export async function listLeftoverBackups(dest: string): Promise<LeftoverScan> {
   const parent = path.dirname(dest)
   let entries: string[]
   try {
     entries = await fsp.readdir(parent)
-  } catch {
-    return []
+  } catch (err) {
+    return {
+      folders: [],
+      unreadable:
+        `${parent} could not be listed (${errorCode(err)}), so anything an interrupted refresh ` +
+        `or removal left beside ${dest} is not reported here.`,
+    }
   }
   const exact = siblingPattern(dest, BACKUP_TAG)
   const staging = siblingPattern(dest, STAGING_TAG)
@@ -157,7 +188,7 @@ export async function listLeftoverBackups(dest: string): Promise<string[]> {
       leftovers.push(folder)
     }
   }
-  return leftovers
+  return { folders: leftovers }
 }
 
 /**

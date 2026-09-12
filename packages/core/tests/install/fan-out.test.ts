@@ -1048,7 +1048,7 @@ describe('install/fan-out', () => {
 
       const leftovers = await listLeftoverBackups(path.join(parent, 'cv'))
 
-      expect(leftovers).toEqual(ignoresCase ? [variant] : [])
+      expect(leftovers.folders).toEqual(ignoresCase ? [variant] : [])
       await expect(stat(variant)).resolves.toBeDefined()
       await expect(stat(emptyVariant)).resolves.toBeDefined()
     })
@@ -1752,6 +1752,79 @@ describe('install/fan-out', () => {
           addLink({ skillId: 'claimfile', fromClient: 'claude-code', toClient: 'cursor' })
         ).rejects.toThrow(/ENOTDIR/)
         expect(await readFile(toDir, 'utf-8')).toBe('not ours')
+      } finally {
+        vi.doUnmock('node:fs/promises')
+        vi.resetModules()
+      }
+    })
+
+    // Round 24 (cross-model review): the cleanup after a failed publish must
+    // remove only the claim this call made — not an empty directory another
+    // program substituted for it — and must never remove one holding content.
+    it('leaves an empty directory another program substituted for its claim', async () => {
+      await seedSkill('claimswap')
+      const toDir = path.join(homeDir, '.cursor', 'skills', 'claimswap')
+      const theirs = { ino: 0, claimIno: 0 }
+      vi.doMock('node:fs/promises', async () => {
+        const actual = await vi.importActual<typeof import('node:fs/promises')>('node:fs/promises')
+        let swapped = false
+        const rename = vi.fn(async (from: PathLike, to: PathLike) => {
+          if (!swapped && String(to) === toDir && String(from).endsWith(`${path.sep}content`)) {
+            swapped = true
+            // Their own empty directory replaces the claim, and the publish
+            // then fails: the cleanup must not treat theirs as ours. Theirs is
+            // made elsewhere and renamed in, because a directory created at the
+            // path the claim just freed can reuse the claim's own inode number
+            // (round 15) — which would let this test pass without the fix.
+            theirs.claimIno = Number((await actual.lstat(toDir)).ino)
+            const theirDir = path.join(homeDir, 'their-claimswap')
+            await actual.mkdir(theirDir)
+            theirs.ino = Number((await actual.lstat(theirDir)).ino)
+            await actual.rename(theirDir, toDir)
+            throw Object.assign(new Error('EIO: simulated publish failure'), { code: 'EIO' })
+          }
+          return actual.rename(from, to)
+        })
+        return { ...actual, default: { ...actual, rename }, rename }
+      })
+      try {
+        vi.resetModules()
+        const { addLink } = await import('../../src/install/fan-out.js')
+        await expect(
+          addLink({ skillId: 'claimswap', fromClient: 'claude-code', toClient: 'cursor' })
+        ).rejects.toThrow(/EIO/)
+        expect(theirs.ino).not.toBe(theirs.claimIno)
+        expect(Number((await lstat(toDir)).ino)).toBe(theirs.ino)
+      } finally {
+        vi.doUnmock('node:fs/promises')
+        vi.resetModules()
+      }
+    })
+
+    it('says when it could not look for leftovers', async () => {
+      const parent = path.join(homeDir, 'unreadable-parent')
+      await mkdir(parent, { recursive: true })
+      vi.doMock('node:fs/promises', async () => {
+        const actual = await vi.importActual<typeof import('node:fs/promises')>('node:fs/promises')
+        const readdir = vi.fn(async (...args: Parameters<typeof actual.readdir>) => {
+          if (String(args[0]) === parent) {
+            throw Object.assign(new Error(`EACCES: permission denied, scandir '${parent}'`), {
+              code: 'EACCES',
+            })
+          }
+          return actual.readdir(...args)
+        })
+        return { ...actual, default: { ...actual, readdir }, readdir }
+      })
+      try {
+        vi.resetModules()
+        const { listLeftoverBackups } = await import('../../src/install/fan-out.overwrite.js')
+
+        const scan = await listLeftoverBackups(path.join(parent, 'somewhere'))
+
+        // "Could not look" is not "nothing is there".
+        expect(scan.folders).toEqual([])
+        expect(scan.unreadable).toContain('could not be listed (EACCES)')
       } finally {
         vi.doUnmock('node:fs/promises')
         vi.resetModules()

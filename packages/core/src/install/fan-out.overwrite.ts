@@ -301,13 +301,20 @@ export async function replaceDestination(
 }
 
 /**
- * Put `staged` at `dest` without ever replacing something else. Round 20
- * (cross-model review): `rename` replaces its destination, so publishing with
- * it could destroy an entry another program created after the destination was
- * checked. Both primitives here refuse instead — `symlink` and `mkdir` fail
- * with EEXIST. A directory is published by claiming the name with `mkdir` and
- * then renaming the staged copy over that empty directory, so the only thing
- * the rename can replace is what this call itself just created.
+ * Put `staged` at `dest` without replacing anything that holds content. Round
+ * 20 (cross-model review): `rename` replaces its destination, so publishing
+ * with it could destroy an entry another program created after the destination
+ * was checked. A directory is published by claiming the name with `mkdir`,
+ * which fails with EEXIST rather than replacing, and then renaming the staged
+ * copy over that empty claim; a symlink is published with `symlink()`, which
+ * refuses an occupied path the same way.
+ *
+ * Round 24: the bound this holds, and the one it does not. The rename can
+ * still replace an EMPTY directory, if another program removes this call's own
+ * claim and substitutes one inside the two-syscall window — the accepted
+ * residual described below (SMI-6559). It can never replace anything holding
+ * content: POSIX `rename` refuses a non-empty directory (ENOTEMPTY) and a
+ * non-directory (ENOTDIR).
  *
  * Returns the identity of what is now at `dest`: a rename keeps the staged
  * directory's, while a published symlink is a new entry.
@@ -343,11 +350,20 @@ async function publish(staged: string, dest: string, staging: Stats): Promise<St
   // half-copied skill visible at the destination, which staging exists to
   // prevent (round 6).
   await fsp.mkdir(dest)
+  const claim = await fsp.lstat(dest)
   try {
     await fsp.rename(staged, dest)
   } catch (err) {
-    // Only this call's own empty claim is removed.
-    await fsp.rmdir(dest).catch(() => {})
+    // Round 24 (cross-model review): remove only the claim this call made, and
+    // only while it is still empty. The identity check stops the cleanup
+    // removing an empty directory another program substituted for the claim;
+    // `rmdir` refuses a directory that holds anything, so content another
+    // program wrote INTO the claim is never deleted either. A recursive
+    // identity-checked delete would satisfy the first and break the second.
+    const now = await lstatOrNull(dest)
+    if (now !== null && now.dev === claim.dev && now.ino === claim.ino) {
+      await fsp.rmdir(dest).catch(() => {})
+    }
     throw err
   }
   return staging
