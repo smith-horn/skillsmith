@@ -61,6 +61,31 @@ CONTAINER_APP_ROOT="/app"                                   # docker-compose.yml
 CONTAINER_DIST_DIR="$CONTAINER_APP_ROOT/packages/doc-retrieval-mcp/dist/src"
 CONTAINER_NM_SENTINEL="$CONTAINER_APP_ROOT/node_modules/.package-lock.json"
 
+# SMI-6507/SMI-6496 plan §4: this launcher always targets the shared
+# "skillsmith-dev-1" container (the doc-retrieval corpus is main-repo-shared
+# by design — never patched per-worktree, confirmed correct in every
+# branch). But when THIS COPY of the script lives inside a worktree checkout
+# (its own .mcp.json invokes the worktree's own tracked copy), REPO_ROOT
+# above resolves to the WORKTREE root, not main's — so a reader sitting in
+# that worktree who copy-pastes a bare `docker compose --profile dev up -d`
+# risks the exact SMI-4298 port collision, even though the fix has nothing
+# to do with their worktree. Resolve the actual MAIN checkout path the same
+# way scripts/lib/check-node-modules-fresh.sh already does (git-common-dir
+# vs git-dir), anchored via `git -C "$REPO_ROOT"` rather than ambient cwd
+# since this launcher's invoking cwd is controlled by the MCP host, not a
+# human shell. Fail-soft: falls back to REPO_ROOT itself (today's behavior)
+# if git is unavailable or the checkout is unreadable.
+MAIN_CHECKOUT="$REPO_ROOT"
+_gcd="$(git -C "$REPO_ROOT" rev-parse --git-common-dir 2>/dev/null || echo '')"
+if [ -n "$_gcd" ]; then
+  case "$_gcd" in
+    /*) _abs_gcd="$_gcd" ;;
+    *) _abs_gcd="$REPO_ROOT/$_gcd" ;;
+  esac
+  _resolved_main="$(cd "$_abs_gcd/.." 2>/dev/null && pwd || echo '')"
+  [ -n "$_resolved_main" ] && MAIN_CHECKOUT="$_resolved_main"
+fi
+
 # emit_error <state> <remediation-block>
 # Tag is [doc-retrieval] throughout (plan-review, VP Design) — distinct from
 # mcp-skillsmith-launcher.sh's [skillsmith] tag, and matching the
@@ -71,7 +96,7 @@ emit_error() {
   local remediation="$2"
   {
     echo "[doc-retrieval] MCP server cannot start: $state."
-    echo "[doc-retrieval] Run these commands in the repo root, then reconnect via /mcp:"
+    echo "[doc-retrieval] Run these commands, then reconnect via /mcp:"
     echo ""
     echo "$remediation"
     echo ""
@@ -79,9 +104,9 @@ emit_error() {
   } >&2
 }
 
-REMEDIATION_START_CONTAINER="    docker compose --profile dev up -d"
+REMEDIATION_START_CONTAINER="    ( cd \"$MAIN_CHECKOUT\" && docker compose --profile dev up -d )"
 
-REMEDIATION_INSTALL_BUILD="    docker compose --profile dev up -d
+REMEDIATION_INSTALL_BUILD="    ( cd \"$MAIN_CHECKOUT\" && docker compose --profile dev up -d )
     docker exec $CONTAINER_NAME npm install
     docker exec $CONTAINER_NAME npm run build"
 
@@ -231,7 +256,7 @@ if [ "$probe_status" -eq 1 ] && printf '%s\n' "$probe_out" | grep -q '^FAIL '; t
       # rm -rf must run INSIDE the container, then npm install repopulates the
       # volume (SMI-6453). A host-side rm -rf here was a confirmed no-op.
       emit_error "$dep_name dependency corrupt at packages/doc-retrieval-mcp/node_modules/$dep_name (container-side, not host)" \
-"    docker compose --profile dev up -d
+"    ( cd \"$MAIN_CHECKOUT\" && docker compose --profile dev up -d )
     docker exec $CONTAINER_NAME rm -rf $CONTAINER_APP_ROOT/packages/doc-retrieval-mcp/node_modules/$dep_name
     docker exec $CONTAINER_NAME npm install"
       ;;
@@ -240,12 +265,12 @@ if [ "$probe_status" -eq 1 ] && printf '%s\n' "$probe_out" | grep -q '^FAIL '; t
       # npm install inside the container repairs the volume directly. No rm -rf
       # is needed for a root-hoisted package (npm reifies over it).
       emit_error "$dep_name dependency corrupt at root node_modules/$dep_name (container-side, not host)" \
-"    docker compose --profile dev up -d
+"    ( cd \"$MAIN_CHECKOUT\" && docker compose --profile dev up -d )
     docker exec $CONTAINER_NAME npm install"
       ;;
     *)
       emit_error "$dep_name dependency missing" \
-"    docker compose --profile dev up -d
+"    ( cd \"$MAIN_CHECKOUT\" && docker compose --profile dev up -d )
     docker exec $CONTAINER_NAME npm install"
       ;;
   esac

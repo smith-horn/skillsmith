@@ -35,6 +35,12 @@
 # POSIX sh — no `local`, no `[[ ]]`, no arrays.
 
 SENTINEL_NAME=".skillsmith-deps-hash"
+# SMI-6496 Fix 2 (Wave 1, shadow-only): a second sentinel, alongside the raw
+# one, storing a normalized "shadow hash" that neutralizes workspace-self
+# version bumps. Written whenever the raw sentinel is (see --write-sentinel
+# below); used only to LABEL a drift already decided by the raw hash — see
+# the "shadow-hash diagnostic label" block near the bottom of this file.
+SENTINEL_SHADOW_NAME=".skillsmith-deps-hash-shadow"
 
 # --- repo-root resolution (robust from main repo OR a worktree) -------------
 # package-lock.json is hashed against the CURRENT working tree (the worktree's
@@ -49,6 +55,9 @@ fi
 
 LOCKFILE="$REPO_ROOT/package-lock.json"
 SENTINEL="$REPO_ROOT/node_modules/$SENTINEL_NAME"
+SENTINEL_SHADOW="$REPO_ROOT/node_modules/$SENTINEL_SHADOW_NAME"
+NORMALIZE_SCRIPT="$REPO_ROOT/scripts/lib/normalize-lockfile-for-freshness.mjs"
+PACKAGE_JSON="$REPO_ROOT/package.json"
 
 # sha256 helper — prefer sha256sum (Linux/Docker), fall back to shasum -a 256
 # (macOS host). Prints the bare hash (hex), nothing else.
@@ -62,6 +71,17 @@ _lockfile_sha256() {
     fi
 }
 
+# Shadow-hash helper (SMI-6496 Fix 2). Fail-soft (M4 in the plan): any
+# problem here prints nothing and the caller must treat that as "shadow hash
+# unavailable" — fall back to no label, never to "treat as fresh".
+_shadow_hash() {
+    [ "${SKILLSMITH_DEPS_FRESHNESS_SHADOW_HASH_DISABLE:-0}" = "1" ] && { printf ''; return; }
+    command -v node >/dev/null 2>&1 || { printf ''; return; }
+    [ -r "$NORMALIZE_SCRIPT" ] || { printf ''; return; }
+    [ -r "$PACKAGE_JSON" ] || { printf ''; return; }
+    node "$NORMALIZE_SCRIPT" "$LOCKFILE" "$PACKAGE_JSON" 2>/dev/null
+}
+
 # --- mode: --write-sentinel (install time only) -----------------------------
 if [ "${1:-}" = "--write-sentinel" ]; then
     # Fail-soft: a missing lockfile / node_modules during a fragile install
@@ -70,6 +90,18 @@ if [ "${1:-}" = "--write-sentinel" ]; then
     [ -d "$REPO_ROOT/node_modules" ] || exit 0
     NEW_HASH="$(_lockfile_sha256)"
     [ -n "$NEW_HASH" ] || exit 0
+
+    # SMI-6496 Fix 2 (Wave 1, shadow-only): compute and store the shadow hash
+    # unconditionally, independent of the idempotent raw-sentinel skip below
+    # — an install right after this feature ships must not wait for the next
+    # real lockfile change before a shadow sentinel exists. Best-effort: a
+    # failure here (see _shadow_hash's fail-soft contract) never blocks or
+    # fails the raw sentinel write that follows.
+    NEW_SHADOW="$(_shadow_hash)"
+    if [ -n "$NEW_SHADOW" ]; then
+        printf '%s\n' "$NEW_SHADOW" > "$SENTINEL_SHADOW" 2>/dev/null || true
+    fi
+
     # Idempotent: skip the write when unchanged (avoids needless mtime churn
     # that a parallel session's freshness check might observe).
     if [ -f "$SENTINEL" ]; then
@@ -94,12 +126,30 @@ CUR_HASH="$(_lockfile_sha256)"
 [ -n "$CUR_HASH" ] || exit 0
 
 DRIFT_REASON=""
+SHADOW_LABEL=""
 if [ ! -f "$SENTINEL" ]; then
-    DRIFT_REASON="dependencies not installed — run npm install"
+    DRIFT_REASON="dependencies not installed"
 else
     SENTINEL_HASH="$(cat "$SENTINEL" 2>/dev/null || echo '')"
     if [ "$SENTINEL_HASH" != "$CUR_HASH" ]; then
         DRIFT_REASON="node_modules is stale vs package-lock.json"
+        # SMI-6496 Fix 2 (Wave 1, shadow-only, OUTPUT-ONLY): this only picks
+        # which diagnostic label to print alongside the drift decision
+        # already made above — it never changes that decision. Both a
+        # stored shadow sentinel and a freshly-computed current shadow hash
+        # are required to compare; anything missing leaves SHADOW_LABEL
+        # empty (fail-soft — no label, never a wrong one).
+        if [ -f "$SENTINEL_SHADOW" ]; then
+            SENTINEL_SHADOW_HASH="$(cat "$SENTINEL_SHADOW" 2>/dev/null || echo '')"
+            CUR_SHADOW_HASH="$(_shadow_hash)"
+            if [ -n "$SENTINEL_SHADOW_HASH" ] && [ -n "$CUR_SHADOW_HASH" ]; then
+                if [ "$SENTINEL_SHADOW_HASH" = "$CUR_SHADOW_HASH" ]; then
+                    SHADOW_LABEL="Cosmetic-only drift detected — package-lock.json changed but only in workspace-self version fields (release-cadence bump). npm install is likely NOT required for this. Still blocking pending SMI-6496 Wave 2 (shadow soak in progress, see guards-and-opt-outs.md)."
+                else
+                    SHADOW_LABEL="Real dependency change detected (not workspace-version-only) — npm install required."
+                fi
+            fi
+        fi
     fi
 fi
 
@@ -135,13 +185,33 @@ printf '\n'
 printf '  Your installed node_modules no longer matches package-lock.json.\n'
 printf '  This is an environment issue, not a problem with your changes.\n'
 printf '  (%s)\n' "$DRIFT_REASON"
+if [ -n "$SHADOW_LABEL" ]; then
+    printf '  %s\n' "$SHADOW_LABEL"
+fi
 printf '\n'
 printf "  ${YELLOW}How to fix${NC} — refresh the installed deps to match package-lock.json:\n"
-printf '    docker exec skillsmith-dev-1 npm install   # container tree (Docker build/typecheck)\n'
-if [ -n "$_MAIN_CHECKOUT" ]; then
-    printf '    ( cd "%s" \\\n        && npm install )   # host tree — MAIN checkout (you are in a worktree)\n' "$_MAIN_CHECKOUT"
+# Only the MAIN checkout has a container with its own writable dependency
+# tree. A worktree container reads the host tree read-only, so an install
+# inside it cannot help and is actively dangerous (SMI-6378: npm reify races
+# the read-only bind and can break the container's view of /app/node_modules).
+# Printing the main container's command to a worktree user is also the SMI-5559
+# trap -- it silently "succeeds" against a different checkout's container.
+if [ -z "$_MAIN_CHECKOUT" ]; then
+    printf '    docker exec skillsmith-dev-1 npm install   # container tree (Docker build/typecheck)\n'
+    printf '\n'
 else
-    printf '    npm install                                # host tree (git hooks, host vscode tests)\n'
+    printf '    (you are in a worktree: its container reads the host tree read-only,\n'
+    printf '     so there is no separate container install to run -- fix the host tree below)\n'
+    printf '\n'
+fi
+printf '  Host tree: a bare npm install will not clear this guard. This repo sets\n'
+printf '  ignore-scripts=true in .npmrc, so npm install also skips the postinstall\n'
+printf '  step that writes the sentinel this guard reads. Run the script that writes\n'
+printf '  the sentinel directly instead:\n'
+if [ -n "$_MAIN_CHECKOUT" ]; then
+    printf '    ( cd "%s" \\\n        && ./scripts/regen-lockfile.sh )   # host tree, from the MAIN checkout\n' "$_MAIN_CHECKOUT"
+else
+    printf '    ./scripts/regen-lockfile.sh                 # host tree\n'
 fi
 printf '\n'
 printf '  Stale-detection false positive? Re-run with:\n'

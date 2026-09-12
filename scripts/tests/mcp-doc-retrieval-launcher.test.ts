@@ -41,6 +41,8 @@ import { dirname, join, resolve } from 'node:path'
 import { fileURLToPath } from 'node:url'
 import { spawnSync } from 'node:child_process'
 
+import { makeFixtureEnv, makeFixtureTempDir } from './_lib/git-fixture-env.js'
+
 const __dirname = dirname(fileURLToPath(import.meta.url))
 const LAUNCHER_SRC = resolve(__dirname, '..', 'mcp-doc-retrieval-launcher.sh')
 
@@ -347,6 +349,65 @@ describe('mcp-doc-retrieval-launcher.sh', () => {
     expect(result.stderr).toContain('[doc-retrieval]')
     expect(result.stderr).toContain('container is not running')
     expect(result.stderr).toContain('docker compose --profile dev up -d')
+    // SMI-6507/SMI-6496 plan §4: `host` here is a plain tmpdir, not a git
+    // checkout, so MAIN_CHECKOUT falls back to REPO_ROOT itself (fail-soft) —
+    // the printed command must still be explicitly `cd`-qualified, never a
+    // bare `docker compose ...` with no directory context at all.
+    expect(result.stderr).toContain(`cd "${host}"`)
+    // The old ambiguous "in the repo root" framing must be gone — a worktree
+    // is also, in git's own terms, "a repo root" (the exact ambiguity this
+    // fix exists to remove).
+    expect(result.stderr).not.toContain('in the repo root')
+  })
+
+  it('main-checkout qualifier resolves to the actual main checkout, not the worktree, when run from a linked worktree', () => {
+    // Real git-worktree fixture (not `makeRoot()`'s bare tmpdir) — the one
+    // scenario this fix targets: a human sitting in a WORKTREE terminal
+    // reads a remediation command that must `cd` into MAIN, never their own
+    // worktree, or they risk the exact SMI-4298 port collision.
+    // Realpath-canonical (makeFixtureTempDir, not plain mkdtempSync(tmpdir()))
+    // is load-bearing here, not cosmetic: this test compares `mainRepo` as a
+    // JS string against a path the LAUNCHER SCRIPT resolves itself via
+    // `cd ... && pwd`, which canonicalizes macOS's /var -> /private/var
+    // symlink. A non-canonical `mainRepo` would make that string comparison
+    // fail even though the launcher resolved the right directory.
+    const mainRepo = makeFixtureTempDir('mcp-doc-retrieval-main')
+    const worktree = makeFixtureTempDir('mcp-doc-retrieval-wt')
+    rmSync(worktree, { recursive: true, force: true }) // git worktree add must create this path itself
+
+    const runGit = (args: string[], cwd: string) => {
+      const res = spawnSync('git', args, { cwd, encoding: 'utf8', env: makeFixtureEnv() })
+      if (res.status !== 0) {
+        throw new Error(`git ${args.join(' ')} failed: ${res.stderr}`)
+      }
+    }
+
+    mkdirSync(join(mainRepo, 'scripts'), { recursive: true })
+    copyFileSync(LAUNCHER_SRC, join(mainRepo, 'scripts', 'mcp-doc-retrieval-launcher.sh'))
+    chmodSync(join(mainRepo, 'scripts', 'mcp-doc-retrieval-launcher.sh'), 0o755)
+    addDist(mainRepo)
+
+    runGit(['-c', 'init.defaultBranch=main', 'init', '--quiet', '.'], mainRepo)
+    runGit(['config', 'user.email', 'test@test.com'], mainRepo)
+    runGit(['config', 'user.name', 'test'], mainRepo)
+    runGit(['add', '-A'], mainRepo)
+    runGit(['commit', '--quiet', '-m', 'init'], mainRepo)
+    runGit(['worktree', 'add', '--quiet', '-b', 'feature', worktree], mainRepo)
+
+    roots.push(mainRepo, worktree)
+
+    const container = makeHealthyContainer()
+    roots.push(container)
+    const { binDir } = makeDockerStub({ running: false, containerRoot: container })
+    stubs.push(binDir)
+
+    const result = runLauncher(worktree, binDir)
+
+    expect(result.status).toBe(1)
+    expect(result.stderr).toContain(`cd "${mainRepo}"`)
+    expect(result.stderr).not.toContain(`cd "${worktree}"`)
+
+    runGit(['worktree', 'remove', '--force', worktree], mainRepo)
   })
 
   it('checks container liveness before node_modules and dist', () => {
