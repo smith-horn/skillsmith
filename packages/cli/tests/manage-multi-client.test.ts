@@ -20,7 +20,7 @@
  * through the CLI's own install/remove/update actions, not just that a
  * mock was called with the right arguments.
  */
-import { mkdtemp, rm, readFile, access } from 'node:fs/promises'
+import { mkdtemp, rm, readFile, access, mkdir, writeFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import * as path from 'node:path'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
@@ -277,5 +277,47 @@ describe('SMI-5894 Wave 1: same-name skill installed under two clients', () => {
 
     const claudeDiff = await getSkillDiff('test-skill', dbPath, 'claude-code')
     expect(claudeDiff).toBe('not-installed')
+  })
+
+  it('remove --client claude-code (default) surfaces a leftover interrupted-refresh backup warning from a fan-out destination (SMI-6529)', async () => {
+    await installForClient('claude-code')
+
+    const { addLink } = await import('@skillsmith/core/install')
+    await addLink({ skillId: 'test-repo', fromClient: 'claude-code', toClient: 'windsurf' })
+
+    const windsurfDir = path.join(homeDir, '.codeium', 'windsurf', 'skills', 'test-repo')
+    await expect(access(windsurfDir)).resolves.toBeUndefined()
+
+    // A hidden backup folder left behind by an earlier interrupted refresh,
+    // sitting next to the fan-out destination -- removeLinks (N6, round 4)
+    // reports this via listLeftoverBackups() without ever touching it.
+    const backupDir = path.join(
+      homeDir,
+      '.codeium',
+      'windsurf',
+      'skills',
+      '.test-repo.skillsmith-backup-AbC123'
+    )
+    await mkdir(path.join(backupDir, 'original'), { recursive: true })
+    await writeFile(path.join(backupDir, 'original', 'SKILL.md'), '# orphaned\n', 'utf-8')
+
+    const { removeAction } = await import('../src/commands/manage.js')
+    const exitSpy = vi.spyOn(process, 'exit').mockImplementation(() => undefined as never)
+    // Default client (claude-code) + global scope is required for the
+    // fan-out cleanup branch in manage.action.ts to run at all.
+    await removeAction('test-repo', { force: true, db: dbPath })
+    exitSpy.mockRestore()
+
+    // The fan-out destination itself is torn down...
+    await expect(access(windsurfDir)).rejects.toThrow()
+
+    const printed = vi
+      .mocked(console.log)
+      .mock.calls.map((args) => String(args[0]))
+      .join('\n')
+    expect(printed).toContain('an interrupted refresh')
+
+    // ...but the orphaned backup itself is left alone, only ever reported.
+    await expect(access(path.join(backupDir, 'original', 'SKILL.md'))).resolves.toBeUndefined()
   })
 }, 60_000)

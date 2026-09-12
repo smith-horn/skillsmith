@@ -69,9 +69,16 @@ function nonEmpty(value: string | undefined): value is string {
   return typeof value === 'string' && value.trim().length > 0
 }
 
-/** A manifest entry is "healthy" once it carries both a non-empty source and id. */
+/**
+ * A manifest entry is "healthy" once it carries both a non-empty source and
+ * id — OR (SMI-6529) once it carries `provenance: 'local'`, a positive user
+ * assertion ("this is my own skill, not registry-tracked") that must never
+ * be backfilled regardless of how complete its source/id fields are. Routing
+ * it through the same "healthy" gate means the caller's existing
+ * clobber-protection branch skips it, so it never reaches `mergeEntry()`.
+ */
 function isHealthy(entry: SkillManifestEntry): boolean {
-  return nonEmpty(entry.source) && nonEmpty(entry.id)
+  return entry.provenance === 'local' || (nonEmpty(entry.source) && nonEmpty(entry.id))
 }
 
 /**
@@ -172,6 +179,11 @@ async function planResult(
 
 /** Fill missing fields from `planned` onto an unhealthy `existing` entry. */
 function mergeEntry(existing: SkillManifestEntry, planned: SkillManifestEntry): SkillManifestEntry {
+  // SMI-6529: defense-in-depth — isHealthy() already routes a
+  // provenance:'local' row to the caller's skip branch before this is ever
+  // reached, but never silently fill/override a local row's fields even if
+  // that gate is somehow bypassed in the future.
+  if (existing.provenance === 'local') return existing
   return {
     ...existing,
     id: nonEmpty(existing.id) ? existing.id : planned.id,

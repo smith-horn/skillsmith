@@ -230,7 +230,15 @@ export function displayResult(result: CoreInstallResult, quiet: boolean): void {
       if (result.optimization.subSkills && result.optimization.subSkills.length > 0) {
         console.log(chalk.dim(`  Sub-skills: ${result.optimization.subSkills.join(', ')}`))
       }
-      if (result.optimization.subagentGenerated) {
+      // SMI-6529 N11 (round 4): `subagentGenerated` is set as soon as content
+      // was GENERATED (applyOptimization, before any disk write is even
+      // attempted) — it stays true even when the actual write was skipped
+      // (M10's companionSkipped: a pre-existing file/symlink already
+      // occupied the target on a fresh install). Gate the message on
+      // `subagentPath` too — writeInstallFiles only sets it when the file
+      // was ACTUALLY written — so this line never claims success for a
+      // write that didn't happen.
+      if (result.optimization.subagentGenerated && result.optimization.subagentPath) {
         console.log(chalk.dim(`  Companion subagent generated`))
       }
     }
@@ -435,6 +443,9 @@ async function installActionImpl(
             if (!quiet && !jsonOutput) {
               const note = linked.fellBackToCopy ? ' (fell back to copy)' : ''
               console.log(chalk.dim(`  Linked into ${target} as ${linked.record.kind}${note}`))
+            }
+            if (!jsonOutput) {
+              for (const w of linked.warnings ?? []) logger.warn(chalk.yellow(`  Warning: ${w}`))
             }
           } catch (linkErr) {
             if (!jsonOutput) {

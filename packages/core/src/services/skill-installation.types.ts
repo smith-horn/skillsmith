@@ -75,6 +75,18 @@ export interface InstallOptions {
   conflictAction?: ConflictAction
   /** SMI-3863: User has confirmed they want to install despite security warnings */
   confirmed?: boolean
+  /**
+   * SMI-6529 Wave A0: set by `update` to the exact directory it diffed
+   * against (the manifest entry's `installPath`) — `install()` refuses to
+   * write anywhere else, even with `force: true`. Closes the "repo name !=
+   * install directory name" data-loss class (e.g. a registry lookup or a
+   * raw-URL `repo` resolving to a DIFFERENT on-disk name than the directory
+   * `update` actually compared), where a force-reinstall silently wrote a
+   * second, wrongly-named directory instead of overwriting the one the user
+   * meant to update. Omitted by a plain `install()` call, which has no
+   * "directory it compared against" to enforce.
+   */
+  expectedInstallPath?: string
 }
 
 /** Dependency intelligence result from an install */
@@ -125,6 +137,11 @@ export type InstallErrorCode =
   | 'SCAN_REJECTED' // Security scan returned non-passing report
   | 'CONFIRMATION_REQUIRED' // Experimental/unknown registry skill needs confirmed=true
   | 'INVALID_CONTENT' // SMI-5905: installFromContent() content shape/path-safety rejected
+  // SMI-6529 Wave A0: pre-write install-target safety guard (checkInstallTarget).
+  | 'INSTALL_TARGET_MISMATCH' // update() would write outside the directory it diffed against
+  | 'INSTALL_TARGET_NOT_DIRECTORY' // A non-directory (and not a valid symlink-to-dir) occupies the target
+  | 'INSTALL_TARGET_GIT_WORKTREE' // Target is (or lives inside) a git working tree — filesystem-only check
+  | 'INSTALL_TARGET_UNTRACKED' // An existing directory isn't tracked by Skillsmith's manifest at this path
   | 'UNKNOWN' // Unhandled exception caught by outer try/catch
 
 /** Result of an install operation */

@@ -124,6 +124,7 @@ export function acquireOwnedLock(target: string, opts: AcquireOwnedLockOptions =
     timeoutMs: opts.timeoutMs,
     label: opts.label,
     reclaimProbeAfterMs: opts.reclaimProbeAfterMs,
+    reclaimLockTimeoutMs: opts.reclaimLockTimeoutMs,
     onReclaimBoundary: opts.onReclaimBoundary,
     onReclaimOutcome: opts.onReclaimOutcome,
     unsafeSkipReclaimRevalidation: undefined,

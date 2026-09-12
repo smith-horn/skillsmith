@@ -69,6 +69,7 @@ import {
 import { validateSkillMd } from './skill-installation.validate.js'
 import { buildInstallFailure } from './skill-installation.errors.js'
 import { writeInstallFiles } from './skill-installation.io.js'
+import { checkInstallTarget } from './skill-installation.target-guard.js'
 import {
   applyOptimization,
   generateTips,
@@ -98,9 +99,17 @@ function unsafeContentKeyReason(key: string): string | null {
   // ("\\\\server\\share") forms regardless of the host platform; POSIX-style
   // absolute paths are covered by path.posix.isAbsolute().
   if (path.posix.isAbsolute(key) || path.win32.isAbsolute(key)) return 'is an absolute path'
-  const segments = key.split('/')
+  // SMI-6529 M9: split on BOTH separators (the backslash check above already
+  // rejects any key containing one, but this stays separator-agnostic rather
+  // than relying on that ordering) and drop empty ("a//b.md") and "."
+  // segments BEFORE inspecting them. The previous version only checked
+  // `segments[0]`, missing a ".git" segment at any OTHER position
+  // ("sub/.git/config") and missing it entirely behind a leading "."
+  // segment ("./.git/config"). Matching case-insensitively closes the
+  // "./.Git/HEAD" / ".GIT/config" class a case-sensitive `===` check missed.
+  const segments = key.split(/[/\\]/).filter((seg) => seg !== '' && seg !== '.')
   if (segments.some((seg) => seg === '..')) return 'contains a ".." path segment'
-  if (segments[0] === '.git') return 'targets the .git directory'
+  if (segments.some((seg) => seg.toLowerCase() === '.git')) return 'targets the .git directory'
   return null
 }
 
@@ -113,8 +122,13 @@ function unsafeContentKeyReason(key: string): string | null {
  *   - any key that, after `path.resolve()` against `installPath`, resolves
  *     outside `installPath` (a lexical backstop behind the checks above,
  *     matching `writeInstallFiles()`'s own lexical escape check);
- *   - two keys that `path.normalize()` to the same on-disk path (a
- *     collision — e.g. "SKILL.md" and "./SKILL.md").
+ *   - two keys that `path.normalize()` to the same on-disk path CASE
+ *     -INSENSITIVELY (SMI-6529 M4/M9) — a collision on any filesystem, but
+ *     specifically catches a case-insensitive alias (e.g. "SKILL.md" and
+ *     "skill.md" — literally the same inode on default APFS) that a
+ *     case-sensitive string comparison would miss, in addition to the
+ *     exact-string collision it already caught (e.g. "SKILL.md" and
+ *     "./SKILL.md").
  */
 export function validateContentKeys(
   content: Record<string, string>,
@@ -137,17 +151,22 @@ export function validateContentKeys(
       }
     }
 
+    // SMI-6529 M4/M9: lowercase the normalized path before comparing so a
+    // case-insensitive-filesystem alias ("SKILL.md" vs "skill.md") is caught
+    // alongside an exact-string duplicate ("SKILL.md" vs "./SKILL.md") —
+    // one check, not two.
     const normalized = path.normalize(key)
-    const priorKey = seenByNormalizedPath.get(normalized)
+    const normalizedKey = normalized.toLowerCase()
+    const priorKey = seenByNormalizedPath.get(normalizedKey)
     if (priorKey !== undefined) {
       return {
         valid: false,
         error:
-          `Rejected content keys "${priorKey}" and "${key}": both normalize to the ` +
-          'same on-disk path.',
+          `Rejected content keys "${priorKey}" and "${key}": both resolve to the ` +
+          'same on-disk path (case-insensitively).',
       }
     }
-    seenByNormalizedPath.set(normalized, key)
+    seenByNormalizedPath.set(normalizedKey, key)
   }
 
   return { valid: true }
@@ -305,12 +324,23 @@ export async function installFromContent(params: InstallFromContentParams): Prom
     onProgress('manifest', 'Checking manifest')
     const manifestData = await manifest.load()
     const manifestKey = manifestKeyFor(skillName, client)
-    if (manifestData.installedSkills[manifestKey] && !force) {
-      return buildInstallFailure('ALREADY_INSTALLED', {
+    // SMI-6529 Wave A0: same pre-write install-target safety guard install()
+    // runs — refuses an untracked pre-existing directory or a git working
+    // tree even under force=true. Replaces the bare manifest-membership
+    // ALREADY_INSTALLED check this used to be.
+    const targetCheck = await checkInstallTarget({
+      installPath,
+      skillsDir,
+      manifestEntry: manifestData.installedSkills[manifestKey],
+      force,
+    })
+    if (!targetCheck.ok) {
+      return buildInstallFailure(targetCheck.code, {
         skillId,
         installPath,
         trustTier,
-        error: 'Skill "' + skillName + '" is already installed. Use force=true to reinstall.',
+        error: targetCheck.error,
+        ...(targetCheck.tips !== undefined && { tips: targetCheck.tips }),
       })
     }
 
@@ -369,27 +399,45 @@ export async function installFromContent(params: InstallFromContentParams): Prom
     }
 
     onProgress('manifest', 'Updating manifest')
-    await manifest.updateSafely((currentManifest) => ({
-      ...currentManifest,
-      installedSkills: {
-        ...currentManifest.installedSkills,
-        [manifestKey]: {
-          id: skillId,
-          name: skillName,
-          version,
-          // SMI-5905: provenance for content-sourced installs (never a github: URL).
-          source: 'private-registry:' + skillId,
-          installPath,
-          installedAt: new Date().toISOString(),
-          lastUpdated: new Date().toISOString(),
-          originalContentHash: hashContent(finalSkillContent),
-          client,
+    try {
+      await manifest.updateSafely((currentManifest) => ({
+        ...currentManifest,
+        installedSkills: {
+          ...currentManifest.installedSkills,
+          [manifestKey]: {
+            id: skillId,
+            name: skillName,
+            version,
+            // SMI-5905: provenance for content-sourced installs (never a github: URL).
+            source: 'private-registry:' + skillId,
+            installPath,
+            installedAt: new Date().toISOString(),
+            lastUpdated: new Date().toISOString(),
+            originalContentHash: hashContent(finalSkillContent),
+            client,
+          },
         },
-      },
-    }))
+      }))
+    } catch (manifestError) {
+      // SMI-6529 M7: the write itself already succeeded — a manifest-update
+      // failure here must undo it via the same rollback logic
+      // writeInstallFiles runs on its own internal failure, or the skill is
+      // left on disk with no manifest entry at all. `rollback()` throws an
+      // InstallRestoreError instead if the restore itself also fails, which
+      // supersedes `manifestError` below.
+      await writeResult.rollback(manifestError)
+      throw manifestError
+    }
 
     onProgress('done', 'Installation complete')
     const tips = generateTips(skillName, optimizationInfo, client, skillsDir)
+    // SMI-6529 M10: a companion agent file was left untouched because this
+    // was a fresh install and something already occupied the target path.
+    if (writeResult.companionSkipped) {
+      tips.push(
+        'A companion agent file already existed at the target location and was not overwritten (fresh install). Remove it manually if you want Skillsmith to regenerate it.'
+      )
+    }
 
     return {
       success: true,

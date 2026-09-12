@@ -180,7 +180,19 @@ async function uninstallSkillImpl(
   // identity AND scope are correctness-relevant here, not client alone.
   if (result.success && effectiveClient === CANONICAL_CLIENT && scopeTarget.scope === 'global') {
     try {
-      await removeLinks(input.skillName)
+      // SMI-6529 N6 (round 4): `removeLinks` now reports destinations it
+      // refused to remove (e.g. a recorded fan-out copy that has since
+      // become a real `.git` working tree) instead of silently discarding
+      // both the manifest entry and the content. Surface the refusal in
+      // the tool result's `warning` field, not only stderr — matching N7's
+      // "MCP must surface fan-out refusals in the tool result" requirement
+      // for the sibling `install_skill` refusal path.
+      const { refused, warnings } = await removeLinks(input.skillName)
+      const notes = [...refused.map((r) => r.reason), ...(warnings ?? [])]
+      if (notes.length > 0) {
+        const refusalText = notes.join('; ')
+        result.warning = result.warning ? `${result.warning}; ${refusalText}` : refusalText
+      }
     } catch {
       // Manifest read/write failure should never fail the uninstall.
     }

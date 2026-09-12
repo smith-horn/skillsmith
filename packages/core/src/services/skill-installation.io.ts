@@ -6,15 +6,8 @@
 
 import * as fs from 'fs/promises'
 import * as path from 'path'
-import { safeWriteFile } from '../utils/safe-fs.js'
 import { SecurityScanner } from '../security/index.js'
 import type { ScannerOptions, ScanReport } from '../security/index.js'
-import {
-  CANONICAL_CLIENT,
-  getCompanionAgentTarget,
-  resolveCompanionAgentPath,
-  type ClientId,
-} from '../install/paths.js'
 import { validateOptionalConfig } from './skill-installation.validate.js'
 import {
   BUNDLED_SCAN_FILES,
@@ -22,6 +15,13 @@ import {
   extractPackageJsonLifecycleScripts,
   isRejectableScan,
 } from './skill-installation.policy.js'
+
+// SMI-6529 Wave A0 round 2: writeInstallFiles() + WriteInstallResult moved to
+// a sibling module (pure move, no behavior change to it) to keep this file
+// under the 500-line CI gate once the M4/M7/M10/L14/L15 fixes landed —
+// re-exported here so every existing `from './skill-installation.io.js'`
+// import site is unaffected.
+export { writeInstallFiles, type WriteInstallResult } from './skill-installation.io.write.js'
 
 export function assertNotEncrypted(content: string, filePath: string): void {
   if (content.startsWith('\x00GITCRYPT')) {
@@ -114,197 +114,6 @@ export async function checkForModifications(
   } catch {
     return false
   }
-}
-
-export interface WriteInstallResult {
-  writtenFiles: string[]
-  subagentPath?: string
-}
-
-/**
- * Ensure `dirPath` exists as a real directory, never following (or silently accepting) an
- * existing symlink there.
- *
- * Sol final-code-review finding #2 (confirmed): `safeWriteFile()` only `lstat`s the FINAL
- * path component before writing — a symlinked INTERMEDIATE directory (e.g. `<installPath>/
- * scripts` already existing as a symlink from a prior force-reinstall or a planted attack)
- * is never checked, so a nested sub-skill filename like `"scripts/run.sh"` could write
- * through it to an arbitrary target outside `installPath`. `fs.mkdir(dir, {recursive:true})`
- * alone does not close this either — it silently no-ops on an existing path whether or not
- * that path is a symlink.
- */
-async function ensureDirNoFollow(dirPath: string): Promise<void> {
-  const check = async (): Promise<'ok' | 'missing'> => {
-    let stats
-    try {
-      stats = await fs.lstat(dirPath)
-    } catch (err) {
-      if ((err as NodeJS.ErrnoException).code === 'ENOENT') return 'missing'
-      throw err
-    }
-    if (stats.isSymbolicLink()) {
-      throw new Error('Refusing to write through existing symlink: ' + dirPath)
-    }
-    if (!stats.isDirectory()) {
-      throw new Error('Expected a directory, found a file: ' + dirPath)
-    }
-    return 'ok'
-  }
-
-  if ((await check()) === 'ok') return
-
-  try {
-    await fs.mkdir(dirPath)
-  } catch (err) {
-    // EEXIST here is a benign race between our own concurrent sub-skill writes under the
-    // same new subdirectory (writeInstallFiles writes them in parallel) — re-check below
-    // rather than trust that; it ALSO re-confirms nothing hostile won the race.
-    if ((err as NodeJS.ErrnoException).code !== 'EEXIST') throw err
-  }
-
-  // Re-check post-create: closes both the benign concurrent-mkdir race above and the TOCTOU
-  // window between the first check and this mkdir.
-  if ((await check()) !== 'ok') {
-    throw new Error('Failed to create directory: ' + dirPath)
-  }
-}
-
-/**
- * Create every path segment of `dir` (relative to `baseDir`) via `ensureDirNoFollow()`,
- * so no intermediate segment can be a pre-existing symlink. `dir` must already be lexically
- * inside `baseDir` — callers are expected to have proven that (as `writeInstallFiles()`'s
- * `installPath` already is, via its own lexical + realpath checks) before calling this.
- */
-async function mkdirNoFollow(baseDir: string, dir: string): Promise<void> {
-  const relative = path.relative(baseDir, dir)
-  if (relative === '' || relative.startsWith('..')) return
-  const segments = relative.split(path.sep)
-  let current = baseDir
-  for (const segment of segments) {
-    current = path.join(current, segment)
-    await ensureDirNoFollow(current)
-  }
-}
-
-export async function writeInstallFiles(
-  installPath: string,
-  skillsDir: string,
-  skillName: string,
-  finalSkillContent: string,
-  subSkillFiles: Array<{ filename: string; content: string }>,
-  subagentContent: string | undefined,
-  /**
-   * SMI-5980 (Wave 3): the client this companion subagent (if any) is
-   * generated for — resolves its output path via
-   * `resolveCompanionAgentPath()` (install/paths.ts) instead of a hardcoded
-   * `~/.claude/agents/` literal. Optional, defaulting to `CANONICAL_CLIENT`
-   * (`claude-code`) so pre-existing callers/tests that never pass it keep
-   * today's exact behavior unchanged.
-   */
-  client: ClientId = CANONICAL_CLIENT,
-  /**
-   * SMI-5982 code-review fix #1: explicit base dir for resolving a RELATIVE
-   * `COMPANION_AGENT_TARGETS[client].dir` (Antigravity only — every other
-   * client's `dir` is absolute already). Threaded through to
-   * `resolveCompanionAgentPath()`'s own `baseDir` param as-is (no
-   * `?? process.cwd()` fallback here) — `resolveCompanionAgentPath()` itself
-   * now requires an explicit `baseDir` for every `directory-package`-mode
-   * client (PR-review follow-up), so whether an omitted `companionBaseDir`
-   * is acceptable is that function's call to make, not this one's.
-   */
-  companionBaseDir?: string
-): Promise<WriteInstallResult> {
-  const writtenFiles: string[] = []
-  let subagentPath: string | undefined
-  // SMI-5359 (retro): lexically reject an escaping installPath BEFORE any filesystem
-  // mutation. path.resolve normalizes `..`, so an unsanitized skillName like '..'
-  // (e.g. path.basename('foo/..')) or a compromised registry skillName cannot drive
-  // installPath outside skillsDir and reach the rollback below. Thrown here, nothing
-  // has been created, so no cleanup is needed.
-  const resolvedInstall = path.resolve(installPath)
-  const resolvedSkillsDir = path.resolve(skillsDir)
-  if (
-    resolvedInstall !== resolvedSkillsDir &&
-    !resolvedInstall.startsWith(resolvedSkillsDir + path.sep)
-  ) {
-    throw new Error('Install path escapes skills directory (lexical): ' + installPath)
-  }
-  // Only set true once installPath is PROVEN inside skillsDir (both the lexical check
-  // above and the realpath check below). The recursive rollback rm keys off this so it
-  // can never force-delete an out-of-bounds path (e.g. a symlink-escape the realpath
-  // check rejects after mkdir).
-  let pathValidated = false
-  try {
-    await fs.mkdir(installPath, { recursive: true })
-    // SMI-4692: realpath both sides — macOS /var/folders symlinks to /private/var/folders.
-    const realInstallPath = await fs.realpath(installPath)
-    const expectedPrefix = await fs.realpath(skillsDir).catch(() => path.resolve(skillsDir))
-    if (
-      !realInstallPath.startsWith(expectedPrefix + path.sep) &&
-      realInstallPath !== expectedPrefix
-    ) {
-      throw new Error('Install path escapes skills directory (realpath): ' + installPath)
-    }
-    pathValidated = true
-
-    const mainSkillPath = path.join(installPath, 'SKILL.md')
-    await safeWriteFile(mainSkillPath, finalSkillContent)
-    writtenFiles.push(mainSkillPath)
-    // Write sub-skills in parallel. Sol final-code-review findings #2/#4: a nested filename
-    // (e.g. "scripts/run.sh", used by private-registry content installs) needs its parent
-    // directory created symlink-safely first — writeInstallFiles previously neither created it
-    // (ENOENT on any clean install with a nested file) nor checked it for a pre-existing symlink.
-    if (subSkillFiles.length > 0) {
-      await Promise.all(
-        subSkillFiles.map(async (subSkill) => {
-          const subPath = path.join(installPath, subSkill.filename)
-          const subDir = path.dirname(subPath)
-          if (subDir !== installPath) {
-            await mkdirNoFollow(installPath, subDir)
-          }
-          await safeWriteFile(subPath, subSkill.content)
-          writtenFiles.push(subPath)
-        })
-      )
-    }
-    // Write companion subagent if generated
-    if (subagentContent) {
-      subagentPath = resolveCompanionAgentPath(skillName, client, companionBaseDir)
-      const agentsDir = path.dirname(subagentPath)
-      await fs.mkdir(agentsDir, { recursive: true })
-      await safeWriteFile(subagentPath, subagentContent)
-      writtenFiles.push(subagentPath)
-    }
-  } catch (writeError) {
-    // Rollback on failure. Unlink tracked files first (subagentPath lives OUTSIDE
-    // installPath, under the client's companion-agent dir — see
-    // resolveCompanionAgentPath()/COMPANION_AGENT_TARGETS, install/paths.ts).
-    for (const filePath of writtenFiles) {
-      await fs.unlink(filePath).catch(() => {})
-    }
-    // SMI-5982 (Wave 6): 'directory-package' mode (Antigravity) creates a
-    // skill-named subdirectory OUTSIDE installPath (<agentsDir>/<skillName>/
-    // agent.md) that 'flat' mode never needed — every other client's agents
-    // dir is a shared, pre-existing directory, never created per-skill. A
-    // failed install must not leave that now-empty per-skill directory
-    // orphaned. rmdir is non-recursive: a safe no-op if the directory is
-    // missing (never created) or non-empty (unexpected content survives).
-    if (subagentPath && getCompanionAgentTarget(client).fileMode === 'directory-package') {
-      await fs.rmdir(path.dirname(subagentPath)).catch(() => {})
-    }
-    // Only recursively remove installPath once it has been PROVEN inside skillsDir
-    // (pathValidated) — so an untracked orphan from a mid-batch Promise.all write can't
-    // survive. If mkdir or the realpath escape guard threw, installPath was never
-    // validated; fall back to a non-recursive rmdir, a safe no-op on a non-empty or
-    // out-of-bounds directory (NEVER a recursive force-delete of an unvalidated path).
-    if (pathValidated) {
-      await fs.rm(installPath, { recursive: true, force: true }).catch(() => {})
-    } else {
-      await fs.rmdir(installPath).catch(() => {})
-    }
-    throw writeError
-  }
-  return { writtenFiles, subagentPath }
 }
 
 export interface OptionalInstallFilesResult {

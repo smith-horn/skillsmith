@@ -12,6 +12,57 @@ All notable changes to `@skillsmith/core` are documented here.
 - **Fix**: SMI-6530 -- stop recommending bulk `skillsmith update` until the safety gate ships (#2801)
 - **Fix**: SMI-6505 -- stop scoring an embedded key assigned a boolean as a credential (#2793)
 - **Feature**: SMI-6441 -- MF-4b common-password veto (Wave 2) (#2786)
+- **Fix (data loss)**: install and update no longer destroy a skill directory that already
+  existed. A failed write restores every overwritten file to its original bytes and removes only
+  files and directories the install created; a directory that existed is never deleted (it was
+  removed recursively, `.git` included). A new pre-write check, `checkInstallTarget`, refuses to
+  write into a git working tree (or a directory inside one, symlinks resolved), a directory
+  Skillsmith didn't install (no matching manifest entry, or a row marked local or adopted), and a
+  target that differs from the directory `update` compared (`expectedInstallPath`); `force` does
+  not override these. A restore that itself fails now raises `InstallRestoreError` naming the
+  unrestored files instead of a generic internal error. Private-registry content keys can no
+  longer create a `.git` path, and `--also-link --force` replaces a symlink or a fan-out copy
+  Skillsmith itself recorded (the new copy is written to a hidden staging folder and swapped into
+  place under a per-destination lock, so a failed or concurrent refresh never loses the existing
+  copy; the new copy is published by claiming its name with a primitive that refuses to replace —
+  `mkdir` for a directory, `symlink` for a link — and the copy it replaces is moved aside only
+  while it is still the one that was checked; a published link is recorded only while it is still
+  the link this call wrote; an empty destination is refused with an explanation of what it probably is, on the plain and the `--force` path alike, and a hidden folder an interrupted refresh left behind is described without claiming Skillsmith owns it) but still refuses a real directory Skillsmith never created, or a recorded copy that has
+  since grown a `.git` directory; uninstall's own cleanup applies the same `.git` refusal to a
+  recorded copy instead of deleting it. A copy an interrupted refresh left behind is reported as
+  a warning, and is never restored over a skill uninstalled since. The fan-out link manifest is
+  changed under its own lock (concurrent fan-outs of different skills lost records and could
+  corrupt it), and a corrupt one is moved aside with a warning rather than replaced by an empty
+  one that dropped every other skill's record; a manifest written by a newer version is left
+  untouched. An uninstall racing a re-link or a refresh leaves the records matching what is on
+  disk, and an uninstall that can't read the manifest says so. The per-target write queue now
+  classifies and snapshots every write independently (not just the first for a given path), so two
+  differently-cased files on a case-sensitive filesystem restore correctly, a short write is
+  retried until complete or reported as a restore failure, and a 0-byte file orphaned by a failed
+  create is still cleaned up. Rollback and fan-out cleanup never recursively delete a folder that
+  something else put at its path after Skillsmith created it, and a cleanup step that fails is
+  reported rather than silently ignored. A crashed refresh's staging folder is reported, never
+  deleted, and an uninstall re-checks a fan-out copy just before removing it. Each of these
+  deletes now checks the entry, moves it to a hidden name and checks it again there before
+  removing it, so a folder another program swaps in at that moment is never the one deleted.
+  Nothing is ever renamed back over whatever has taken a path — a rename replaces an empty
+  directory, a file or a symlink — so anything a call moved aside is reported with its exact path
+  instead. A regular file is the one exception: it goes back atomically, since `link`
+  fails rather than replacing. What a failed removal leaves behind is reported by the next
+  uninstall of that skill, as well as next to a fan-out destination, and a refresh now says why it
+  kept the copy it replaced, removes only the symlink it checked when replacing one, and puts a
+  copy back only while that path is still free. Uninstall refuses a skill folder that is a git working tree (`.git` at its root), even
+  with force and before adopting an untracked one; it removes only the folder it checked, and
+  keeps the manifest entry when it removes nothing. It also drops a skill's record only while every
+  field of that record still matches the one it removed, so an install claiming the same name
+  meanwhile keeps its own record — at the same path, or written in the same millisecond. A manifest
+  write that fails after the folder is gone now says so, and what to do about it, instead of
+  surfacing as a bare lock error, and a progress listener that throws can no longer stop an
+  uninstall from reporting what it removed and what it left behind. A warning about something left
+  behind no longer claims Skillsmith owns it: in a race it can be an entry another program put at
+  that path. Backfill never modifies a
+  `provenance: 'local'` row (SMI-6529, ADR-155).
+
 - **Docs**: recorded the two missing `SCANNER_RULESET_VERSION` history entries for
   `2026-09-11.1` and `2026-09-11.2`. Both bumps shipped correctly — the `comparable` gate does
   re-scan — but the constant had moved twice past the end of its own documented history, so the
