@@ -606,9 +606,15 @@ jobs:
             echo "… @skillsmith/core@${VERSION} not yet visible (attempt ${attempt}/${VERIFY_MAX_ATTEMPTS}); waiting ${VERIFY_INTERVAL}s"
             sleep "$VERIFY_INTERVAL"
           done
-          # Four flags pin `npm view`'s behaviour against environment config that
-          # would otherwise red-fail a live package — the SMI-6493 symptom by
-          # another route. All four are reachable via NPM_CONFIG_* env vars:
+          # Four flags pin THIS `npm view` PROBE's own registry lookup against
+          # environment config that would otherwise false-negative a live package
+          # (see the flag-by-flag rationale below). This does NOT guarantee which
+          # registry `npm publish` actually used above: npm resolves a scoped
+          # `@skillsmith:registry` override (package-level or npm-config-level)
+          # BEFORE the global --registry/registry setting is ever consulted, and
+          # the `npm publish` commands above carry no --registry flag at all.
+          # Asserting the actual effective registry pre-publish is SMI-6511's
+          # scope, not this probe's.
           #   --no-json               JSON output prints "1.2.3" WITH quotes, so the
           #                           exact-equality test never matches.
           #   --offline=false         `offline` selects only-if-cached; on a cold
@@ -785,9 +791,15 @@ jobs:
             echo "… @skillsmith/mcp-server@${VERSION} not yet visible (attempt ${attempt}/${VERIFY_MAX_ATTEMPTS}); waiting ${VERIFY_INTERVAL}s"
             sleep "$VERIFY_INTERVAL"
           done
-          # Four flags pin `npm view`'s behaviour against environment config that
-          # would otherwise red-fail a live package — the SMI-6493 symptom by
-          # another route. All four are reachable via NPM_CONFIG_* env vars:
+          # Four flags pin THIS `npm view` PROBE's own registry lookup against
+          # environment config that would otherwise false-negative a live package
+          # (see the flag-by-flag rationale below). This does NOT guarantee which
+          # registry `npm publish` actually used above: npm resolves a scoped
+          # `@skillsmith:registry` override (package-level or npm-config-level)
+          # BEFORE the global --registry/registry setting is ever consulted, and
+          # the `npm publish` commands above carry no --registry flag at all.
+          # Asserting the actual effective registry pre-publish is SMI-6511's
+          # scope, not this probe's.
           #   --no-json               JSON output prints "1.2.3" WITH quotes, so the
           #                           exact-equality test never matches.
           #   --offline=false         `offline` selects only-if-cached; on a cold
@@ -1037,9 +1049,15 @@ jobs:
             echo "… @skillsmith/cli@${VERSION} not yet visible (attempt ${attempt}/${VERIFY_MAX_ATTEMPTS}); waiting ${VERIFY_INTERVAL}s"
             sleep "$VERIFY_INTERVAL"
           done
-          # Four flags pin `npm view`'s behaviour against environment config that
-          # would otherwise red-fail a live package — the SMI-6493 symptom by
-          # another route. All four are reachable via NPM_CONFIG_* env vars:
+          # Four flags pin THIS `npm view` PROBE's own registry lookup against
+          # environment config that would otherwise false-negative a live package
+          # (see the flag-by-flag rationale below). This does NOT guarantee which
+          # registry `npm publish` actually used above: npm resolves a scoped
+          # `@skillsmith:registry` override (package-level or npm-config-level)
+          # BEFORE the global --registry/registry setting is ever consulted, and
+          # the `npm publish` commands above carry no --registry flag at all.
+          # Asserting the actual effective registry pre-publish is SMI-6511's
+          # scope, not this probe's.
           #   --no-json               JSON output prints "1.2.3" WITH quotes, so the
           #                           exact-equality test never matches.
           #   --offline=false         `offline` selects only-if-cached; on a cold
@@ -1217,14 +1235,20 @@ jobs:
           # loudly for a fix-forward rather than red-failing an irreversible
           # success.
           # audit:verify-block-smoke-tail
-          SMOKE_DIR="$(mktemp -d)"
+          if ! SMOKE_DIR="$(mktemp -d)"; then
+            echo "::warning::mktemp -d failed while preparing the skillsmith-cli smoke sandbox (disk full, an invalid/unwritable explicitly-set TMPDIR, or permissions) - skipping the bin-delegation smoke check. Non-fatal: the publish is already verified live on npm above."
+            exit 0
+          fi
           for attempt in 1 2 3; do
             if (cd "$SMOKE_DIR" && npx -y "skillsmith-cli@${VERSION}" --version) >/tmp/sk-smoke.out 2>&1; then
               echo "OK npx skillsmith-cli@${VERSION} --version -> $(tail -1 /tmp/sk-smoke.out)"
               exit 0
             fi
             echo "... npx smoke not ready (attempt ${attempt}/3); waiting 8s"
-            sleep 8
+            sleep 8 || {
+              echo "::warning::sleep failed during the npx smoke retry loop - skipping remaining attempts. Non-fatal: the publish is already verified live on npm above."
+              exit 0
+            }
           done
           # SMI-6493: if the verify loop above took the slow path (a high attempt
           # number, or "final probe"), the tarball may simply not be on the CDN

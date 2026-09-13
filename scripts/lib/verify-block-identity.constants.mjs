@@ -189,18 +189,26 @@ export const R3_REPLACEMENT = [
  * change to it was intended. A legitimate tail edit bumps this constant in the same
  * PR, adding a bump-log line below.
  *
- * This is CHANGE ACKNOWLEDGEMENT, not semantic proof of non-fatality. The tail's
- * `SMOKE_DIR="$(mktemp -d)"` and `sleep 8` are unguarded, and GitHub Actions runs
- * `run:` steps under `bash -e` (this workflow declares no `shell:` and no
- * `defaults:`, so errexit is on while pipefail and nounset are not) — a failing
- * `mktemp` therefore still kills the step. The textual guard alongside this digest
- * claims only "no registry probe, no explicit `exit 1`". Making non-fatality a real
- * invariant would need either a behavioural test executing the tail with failing
- * stubs for every fallible external command, or a `publish.yml` change wrapping the
- * smoke operation in an explicit guard; SMI-6513 deliberately does neither and
- * names the cost instead.
+ * This is CHANGE ACKNOWLEDGEMENT, not semantic proof of non-fatality — this digest
+ * only detects that the tail's bytes moved, never whether the new bytes are correct.
+ * As of SMI-6512 (folding in SMI-6583), the tail's two previously-unguarded fallible
+ * commands, `SMOKE_DIR="$(mktemp -d)"` and `sleep 8`, are both guarded (`if ! ...;
+ * then ... exit 0; fi` / `... || { ... exit 0; }`) so a failure of either routes
+ * through the tail's own `::warning::` + `exit 0` path instead of errexit aborting
+ * the step (GitHub Actions runs `run:` steps under `bash -e` here — this workflow
+ * declares no `shell:`/`defaults:` override, so errexit is on while pipefail and
+ * nounset are not). The semantic proof that the guards actually work under real
+ * `bash -e` semantics lives in `scripts/tests/publish-smoke-tail-guards.test.ts`,
+ * which extracts and executes this exact tail with stubbed failures — not in this
+ * digest, which would accept any edit once re-pinned. SMI-6513 originally shipped
+ * with both commands unguarded and named that gap explicitly; do not let a future
+ * edit reintroduce an unguarded fallible command in this tail without a matching
+ * guard and test case, since nothing here would catch it.
  *
  * Bump log:
  *   SMI-6513, 2026-09-12 — initial pin.
+ *   SMI-6512, 2026-09-13 — guarded `mktemp -d` and `sleep 8` (SMI-6583 folded in) so
+ *     both failures route through the tail's existing `::warning::` + `exit 0` path
+ *     instead of red-failing an already-verified publish via errexit.
  */
-export const PINNED_TAIL_DIGEST = '333b16ccc3a6558a1bd58386b8c0ed24b1ac88f6ecbd455d21ed34c6594566b5'
+export const PINNED_TAIL_DIGEST = '30267586b6d3aebcd765e29c50128ff07e3a6034413121451f0578d9fbac68fc'
