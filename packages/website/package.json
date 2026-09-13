@@ -34,7 +34,7 @@
     "turndown-plugin-gfm": "1.0.2"
   },
   "devDependencies": {
-    "@axe-core/playwright": "4.11.1",
+    "@axe-core/playwright": "4.13.0",
     "@playwright/test": "1.62.1",
     "@tailwindcss/typography": "0.5.19",
     "@types/node": "^25.9.3",
