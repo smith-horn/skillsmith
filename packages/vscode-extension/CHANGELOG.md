@@ -6,6 +6,10 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/), and this
 
 ## [Unreleased]
 
+## v0.7.12
+
+- **Cadence**: Mechanical cadence alignment (no changes since v0.7.11).
+
 ## v0.7.11
 
 - **Chore**: SMI-6552 -- correct Smith Horn copyright start year to 2025 (#2810)
