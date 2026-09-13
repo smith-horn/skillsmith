@@ -29,6 +29,7 @@
 import * as path from 'path'
 import {
   runInstallPreflight,
+  describeThrown,
   type CandidateSkill,
   type RunInstallPreflightResult,
 } from '../audit/install-preflight.js'
@@ -154,6 +155,20 @@ export interface NamespaceGateOutcome {
    * path has a single shape to splat.
    */
   resultPatch: Pick<InstallResult, 'installComplete' | 'pendingCollision' | 'warnings'>
+  /**
+   * SMI-6588: non-fatal problems this gate hit, for the caller to surface
+   * through `tips`. Empty means the gate ran; a non-empty entry means it
+   * did NOT run and says which step failed.
+   *
+   * This is deliberately NOT folded into `resultPatch.warnings`: that field
+   * is `NamespaceWarning[]` (a structured collision record), and a gate that
+   * never ran has no collision to report — it has a reason. Conflating the
+   * two is what made "found nothing" and "never looked" identical here.
+   *
+   * Non-optional on purpose. An optional field that is sometimes `undefined`
+   * reintroduces the exact ambiguity this issue exists to remove.
+   */
+  problems: string[]
 }
 
 /**
@@ -175,10 +190,9 @@ export async function runNamespaceGate(input: NamespaceGateInput): Promise<Names
   } catch (err) {
     // Edit 6: typed version_unsupported (or any other ledger error)
     // surfaces here. Pre-flight is non-blocking; degrade.
-    console.warn(
-      `[install.namespace-gate] ledger read failed (${(err as Error).message}); skipping pre-flight`
-    )
-    return degradedProceed(candidate)
+    const cause = describeThrown(err)
+    console.warn(`[install.namespace-gate] ledger read failed (${cause}); skipping pre-flight`)
+    return degradedProceed(candidate, 'the rename ledger could not be read', cause)
   }
 
   // Step 2 — scan local inventory + run pre-flight. The scanner runs
@@ -188,10 +202,11 @@ export async function runNamespaceGate(input: NamespaceGateInput): Promise<Names
     const scan = await scanLocalInventory()
     existingInventory = scan.entries
   } catch (err) {
+    const cause = describeThrown(err)
     console.warn(
-      `[install.namespace-gate] scanLocalInventory failed (${(err as Error).message}); skipping pre-flight`
+      `[install.namespace-gate] scanLocalInventory failed (${cause}); skipping pre-flight`
     )
-    return degradedProceed(candidate)
+    return degradedProceed(candidate, 'the local skill inventory could not be scanned', cause)
   }
 
   let preflight: RunInstallPreflightResult
@@ -206,11 +221,20 @@ export async function runNamespaceGate(input: NamespaceGateInput): Promise<Names
     // `runInstallPreflight` itself already catches detector throws and
     // degrades, but a defensive outer catch keeps the install hot path
     // bulletproof against any future regression.
+    const cause = describeThrown(err)
     console.warn(
-      `[install.namespace-gate] runInstallPreflight threw (${(err as Error).message}); proceeding non-blocking`
+      `[install.namespace-gate] runInstallPreflight threw (${cause}); proceeding non-blocking`
     )
-    return degradedProceed(candidate)
+    return degradedProceed(candidate, 'the collision detector threw', cause)
   }
+
+  // SMI-6588 cross-model review: the outer catch above is a backstop that in
+  // practice cannot fire for a detector failure — `runInstallPreflight` has
+  // its own catch and degrades first, returning a shape identical to a clean
+  // run. The real detector-failure report therefore comes from `problem`, not
+  // from this file's catch. Keeping both is deliberate: the catch still
+  // covers anything that throws outside `runInstallPreflight`'s own try.
+  const preflightProblems = preflight.problem === null ? [] : [preflight.problem]
 
   // Step 3 — mode gate.
   const hasCollision = preflight.pendingCollision !== null
@@ -225,6 +249,7 @@ export async function runNamespaceGate(input: NamespaceGateInput): Promise<Names
         pendingCollision: preflight.pendingCollision ?? undefined,
         warnings: preflight.warnings.length > 0 ? preflight.warnings : undefined,
       },
+      problems: preflightProblems,
     }
   }
 
@@ -237,18 +262,46 @@ export async function runNamespaceGate(input: NamespaceGateInput): Promise<Names
       installComplete: true,
       warnings: preflight.warnings.length > 0 ? preflight.warnings : undefined,
     },
+    problems: preflightProblems,
   }
 }
 
 /**
+ * SMI-6588 cross-model review: the gate runs early in `installSkillImpl`, but
+ * its problems were merged only at the final return. Every exit between the
+ * two dropped them — a scope error, a target-guard refusal, or a conflict
+ * early return would report its own failure while silently discarding the
+ * fact that the namespace pre-flight never ran.
+ *
+ * Lives here rather than in `install.ts` because that file sits at the
+ * 500-line CI gate.
+ */
+export function attachGateProblems<T extends { tips?: string[] }>(
+  result: T,
+  problems: string[]
+): T {
+  if (problems.length === 0) return result
+  return { ...result, tips: [...(result.tips ?? []), ...problems] }
+}
+
+/**
  * Degraded-proceed shape used when ledger read, inventory scan, or
- * pre-flight throws. Caller continues the install with no warnings.
+ * pre-flight throws.
+ *
+ * SMI-6588: degrading to `proceed` is correct — the namespace pre-flight is
+ * advisory and must never block an install on its own failure. Reporting
+ * NOTHING was not. `step` names which part failed and `cause` why, so the
+ * caller can tell "no collision was found" from "nothing ever looked."
  *
  * `auditId` is allocated via `newAuditId()` even on the degraded path so
  * the `AuditId` brand invariant holds for any defensive consumer that
  * reads `preflight.auditId` without checking `decision` first.
  */
-function degradedProceed(candidate: CandidateSkill): NamespaceGateOutcome {
+function degradedProceed(
+  candidate: CandidateSkill,
+  step: string,
+  cause: string
+): NamespaceGateOutcome {
   return {
     decision: 'proceed',
     candidate,
@@ -256,9 +309,17 @@ function degradedProceed(candidate: CandidateSkill): NamespaceGateOutcome {
       warnings: [],
       pendingCollision: null,
       auditId: newAuditId(),
+      // The pre-flight never ran at all on this path, so this synthetic
+      // result must say so rather than mimic a clean one.
+      problem: `${step}: ${cause}`,
     },
     resultPatch: {
       installComplete: true,
     },
+    problems: [
+      `the namespace pre-flight did not run (${step} failed: ${cause}); the install ` +
+        `proceeded, but this skill was NOT checked for a name collision with your ` +
+        `already-installed skills.`,
+    ],
   }
 }
