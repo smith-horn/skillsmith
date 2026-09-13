@@ -44,10 +44,44 @@
 set -u
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+# SMI-6598: this `source` and the `sanitize_git_env` call below are BOTH
+# checked, because neither is fatal on its own. This script sets `set -u`, not
+# `set -e`, so a failed source does not halt it and a call to the resulting
+# undefined function is only "command not found" — also non-fatal. Measured
+# with the file removed and GIT_DIR poisoned to the submodule's own gitdir:
+#
+#   line 48: .../git-env-sanitize.sh: No such file or directory
+#   line 59: sanitize_git_env: command not found
+#   check-submodule-pointer.sh: no .gitmodules found — nothing to check.
+#   exit=0
+#
+# REPO_ROOT below is resolved by a bare `git rev-parse --show-toplevel` with no
+# -C and no wrapper (deliberately — outer calls are meant to inherit a
+# LEGITIMATE worktree GIT_DIR). Unsanitized, a poisoned one redirects REPO_ROOT
+# to the submodule, where .gitmodules does not exist, and the guard reports a
+# silent clean pass. That is worse than the SMI-6569 bug it replaced, which was
+# at least loud. Fail closed instead.
 # shellcheck source=git-env-sanitize.sh
-source "$SCRIPT_DIR/git-env-sanitize.sh"
+source "$SCRIPT_DIR/git-env-sanitize.sh" || {
+    echo "check-submodule-pointer.sh: cannot source git-env-sanitize.sh — refusing to evaluate with an unverified git environment" >&2
+    exit 2
+}
+# A bare `||` does not catch a PARTIALLY sourced file (a syntax error midway
+# leaves the function undefined but the source status zero), so verify the
+# contract directly rather than trusting that it was established.
+if ! declare -F sanitize_git_env >/dev/null 2>&1; then
+    echo "check-submodule-pointer.sh: git-env-sanitize.sh sourced but sanitize_git_env is undefined — refusing to evaluate with an unverified git environment" >&2
+    exit 2
+fi
 # shellcheck source=check-submodule-pointer.helpers.sh
-source "$SCRIPT_DIR/check-submodule-pointer.helpers.sh"
+source "$SCRIPT_DIR/check-submodule-pointer.helpers.sh" || {
+    echo "check-submodule-pointer.sh: cannot source check-submodule-pointer.helpers.sh — the rule engine is missing" >&2
+    exit 2
+}
+if ! declare -F evaluate_mount >/dev/null 2>&1; then
+    echo "check-submodule-pointer.sh: helpers sourced but evaluate_mount is undefined — the rule engine is incomplete" >&2
+    exit 2
+fi
 
 # SMI-6569: clear the inherited git environment BEFORE resolving the repo root
 # below. Every git call in this script and its helpers — outer-repo calls

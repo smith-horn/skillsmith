@@ -47,11 +47,21 @@
 #       from "no existing issue" (previously folded together by
 #       `|| echo ""`) — a `gh` outage no longer silently disables dedup and
 #       proceeds as though nothing were already reported.
-#   (e) A `check-submodule-pointer.sh` exit code of 2 (a BROKEN INVOCATION —
-#       unknown argument, an unresolvable --ref/--target/--before; see that
-#       script's own :69-71, :76, :94-101) is now distinguished from exit 1
-#       (a normal FAIL/R-FETCH content verdict) and fails loudly instead of
-#       being folded into "nothing actionable, exit 0".
+#   (e) A `check-submodule-pointer.sh` exit code of 2 (a BROKEN INVOCATION) is
+#       now distinguished from exit 1 (a normal FAIL/R-FETCH content verdict)
+#       and fails loudly instead of being folded into "nothing actionable,
+#       exit 0". That script exits 2 from four conditions: an unknown
+#       argument, a `--mode` that is neither block nor warn, a `--ref` that
+#       does not resolve to a commit, and a diff-base (`--before`/`--target`)
+#       that does not resolve to a commit.
+#
+#       Those four are named by CONDITION rather than by line number on
+#       purpose (SMI-6598). An earlier version of this comment cited
+#       ":69-71, :76, :94-101", and the very PR that wrote it then added an
+#       11-line block to the top of that file and shifted every one of them —
+#       so the citation was stale before it was ever read, and pointed at
+#       variable initialisations and an exit-0 block. A condition survives a
+#       refactor; a line number does not.
 #
 # Testability: the body that was previously top-level imperative code (the
 # GITHUB_SHA/BEFORE_SHA requireds, the check-submodule-pointer.sh subprocess
@@ -95,8 +105,20 @@ MOUNT_DIR="$REPO_ROOT/$MOUNT"
 # a hook on a push from a linked worktree), but this script is the one that can
 # push to main, so it gets the same treatment rather than an argument about why
 # it does not need it.
+# SMI-6598: both the source and the function's existence are checked. This
+# script sets `set -uo pipefail`, not `set -e`, so neither a failed source nor
+# a call to the resulting undefined function halts it — the guard would run on
+# with an unsanitized environment and no indication. This script can push to
+# main, so it fails closed. See check-submodule-pointer.sh's fuller note.
 # shellcheck source=git-env-sanitize.sh
-source "$(dirname "${BASH_SOURCE[0]}")/git-env-sanitize.sh"
+source "$(dirname "${BASH_SOURCE[0]}")/git-env-sanitize.sh" || {
+    echo "::error::[pointer-autorepair] cannot source git-env-sanitize.sh — refusing to run with an unverified git environment"
+    exit 2
+}
+if ! declare -F sanitize_git_env >/dev/null 2>&1; then
+    echo "::error::[pointer-autorepair] git-env-sanitize.sh sourced but sanitize_git_env is undefined — refusing to run with an unverified git environment"
+    exit 2
+fi
 sanitize_git_env
 
 # git_mount <git-args...> — run git against the SUBMODULE working directory.

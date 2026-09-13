@@ -54,9 +54,9 @@
 # Measured that clearing them would in fact have been safe — `git config
 # --global` writes to $HOME/.gitconfig even when XDG_CONFIG_HOME is set, and
 # the rewrite stays visible with it unset — so this is a scoping choice, not a
-# workaround. `GIT_CONFIG_COUNT` / `GIT_CONFIG_KEY_*` / `GIT_CONFIG_VALUE_*`
-# / `GIT_CONFIG_PARAMETERS` can inject arbitrary config including remote URLs
-# and are a separate, unaddressed surface — tracked rather than guessed at.
+# workaround. The `GIT_CONFIG_COUNT` / `GIT_CONFIG_PARAMETERS` family IS
+# handled — see the config-injection block in the list below; an earlier
+# version of this comment dismissed it as out of scope and was wrong.
 
 SKILLSMITH_GIT_VERDICT_VARS=(
     # --- repo discovery (mirrors GIT_DISCOVERY_VARS) ---
@@ -73,6 +73,27 @@ SKILLSMITH_GIT_VERDICT_VARS=(
     # --- ancestry rewriting (this file's own additions) ---
     GIT_SHALLOW_FILE
     GIT_GRAFT_FILE
+    # --- config injection (SMI-6598) ---
+    # An earlier version of this file listed these two in a comment as "a
+    # separate, unaddressed surface — tracked rather than guessed at". That
+    # understated them. Accidental inheritance is the SAME class as the
+    # GIT_DIR-from-a-linked-worktree trigger this file exists for: any
+    # ordinary `git -c key=val <cmd>` that fires a hook exports the parameter
+    # into that hook's environment, with no attacker involved. Measured:
+    #
+    #   $ git -c some.key=someval commit -qam second
+    #     PROBE GIT_CONFIG_PARAMETERS=['some.key'='someval']
+    #
+    # And the indexed form injects config that reads back live — including
+    # `url.<other>.insteadOf`, which redirects a fetch EVEN WHEN
+    # remote.origin.url is set normally, as every initialized submodule's is.
+    # That manipulates T, the value R2-R6 are decided on.
+    #
+    # GIT_CONFIG_COUNT alone neutralizes the indexed form; the KEY_N/VALUE_N
+    # pairs are inert without it, so they do not need enumerating (measured).
+    # GIT_CONFIG_PARAMETERS is gated independently and needs its own entry.
+    GIT_CONFIG_COUNT
+    GIT_CONFIG_PARAMETERS
 )
 
 # sanitize_git_env — clear the whole set for the remainder of this process.
