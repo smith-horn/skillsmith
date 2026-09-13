@@ -357,28 +357,19 @@ async function installSkillImpl(input: unknown, _context?: ToolContext): Promise
         }
       }
     } catch (err) {
-      // SMI-6585: this catch predates the guard it now encloses. Wave A0
-      // moved `checkInstallTarget` inside it, which turned a fail-closed
-      // guard into a fail-open one for anything that throws in this block.
-      //
-      // The install's OUTCOME is deliberately unchanged: `service.install()`
-      // runs the same target guard unconditionally before any fetch or disk
-      // write (`skill-installation.service.ts`, and `.content.ts` for the
-      // content path), so a refusal still happens there. Swallowing the
-      // outcome is correct; swallowing the FACT is not.
-      //
-      // What is no longer silent is that the pre-flight did not complete. It
-      // rides `tips`, the same surface the fan-out failures use, so a caller
-      // can tell "pre-flight passed" from "pre-flight could not be evaluated".
-      //
-      // SMI-6585 cross-model review: describing the caught value must not
-      // itself throw. A rejection can carry ANY value — `Object.create(null)`
-      // has no `toString`, and a hostile or exotic object can throw from one —
-      // which would turn "the install's outcome is unchanged" into an escaped
-      // exception from the very handler written to prevent that.
+      // SMI-6585: this catch predates the guard it encloses — Wave A0 moved
+      // `checkInstallTarget` inside it, turning a fail-closed guard fail-open.
+      // The install's OUTCOME is deliberately unchanged (`service.install()`
+      // runs the same target guard unconditionally before any fetch or write),
+      // so swallowing the outcome is correct; swallowing the FACT is not. The
+      // failure now rides `tips`, letting a caller tell "pre-flight passed"
+      // from "pre-flight could not be evaluated".
+      // SMI-6588 confirmation round: a Symbol `message` skipped the bound below
+      // and threw at interpolation. Third of three instances — see describeCause.
       let cause: string
       try {
-        cause = err instanceof Error ? err.message : String(err)
+        const raw: unknown = err instanceof Error ? err.message : err
+        cause = typeof raw === 'string' ? raw : String(raw)
       } catch {
         cause = 'the thrown value could not be described'
       }
