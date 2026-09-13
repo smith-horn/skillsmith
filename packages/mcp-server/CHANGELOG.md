@@ -4,6 +4,13 @@ All notable changes to `@skillsmith/mcp-server` are documented here.
 
 ## [Unreleased]
 
+## v0.7.15
+
+- **Fix**: SMI-6508 -- move MF-5 last; it was suppressing HIGH findings (#2808)
+- **Fix**: SMI-6508 — detect prefixed secrets assignments at MEDIUM (MF-5) (#2806)
+- **Fix**: SMI-6530 -- stop recommending bulk `skillsmith update` until the safety gate ships (#2801)
+- **Fix**: SMI-6505 -- stop scoring an embedded key assigned a boolean as a credential (#2793)
+- **Feature**: SMI-6441 -- MF-4b common-password veto (Wave 2) (#2786)
 - **Fix (data loss)**: `install_skill` checks the target directory before its conflict backup, so a
   git working tree or a directory Skillsmith didn't install is refused without being backed up and
   overwritten; that check now runs against the *right* client's skills directory and manifest key
