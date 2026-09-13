@@ -4,6 +4,9 @@ All notable changes to `@smith-horn/enterprise` are documented here.
 
 ## [Unreleased]
 
+## v0.3.11
+
+- **Chore**: SMI-6552 -- correct Smith Horn copyright start year to 2025 (#2810)
 - **Fix**: copyright notices now read `2025-2026 Smith Horn Group Ltd`. `LICENSE.md` previously
   omitted the 2025 start year, and seven source-file headers plus one test-file header gave 2024
   as the start year. Notice and comment text only, no behavior change. (SMI-6552)

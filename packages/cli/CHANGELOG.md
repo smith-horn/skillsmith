@@ -4,6 +4,9 @@ All notable changes to `@skillsmith/cli` are documented here.
 
 ## [Unreleased]
 
+## v0.8.11
+
+- **Fix**: SMI-6530 -- stop recommending bulk `skillsmith update` until the safety gate ships (#2801)
 - **Fix (data loss)**: `skillsmith update` writes only into the directory it compared and refuses
   otherwise, so a skill can no longer be written into a differently named directory. Skills marked
   local, and skills Skillsmith didn't install, are skipped before any source recovery or registry

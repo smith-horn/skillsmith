@@ -4,6 +4,14 @@ All notable changes to `@skillsmith/core` are documented here.
 
 ## [Unreleased]
 
+## v0.12.4
+
+- **Fix**: SMI-6507 + SMI-6496 -- remediation strings that actually work (#2803)
+- **Fix**: SMI-6508 -- move MF-5 last; it was suppressing HIGH findings (#2808)
+- **Fix**: SMI-6508 — detect prefixed secrets assignments at MEDIUM (MF-5) (#2806)
+- **Fix**: SMI-6530 -- stop recommending bulk `skillsmith update` until the safety gate ships (#2801)
+- **Fix**: SMI-6505 -- stop scoring an embedded key assigned a boolean as a credential (#2793)
+- **Feature**: SMI-6441 -- MF-4b common-password veto (Wave 2) (#2786)
 - **Fix (data loss)**: install and update no longer destroy a skill directory that already
   existed. A failed write restores every overwritten file to its original bytes and removes only
   files and directories the install created; a directory that existed is never deleted (it was
