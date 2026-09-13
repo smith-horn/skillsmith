@@ -44,8 +44,19 @@
 set -u
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+# shellcheck source=git-env-sanitize.sh
+source "$SCRIPT_DIR/git-env-sanitize.sh"
 # shellcheck source=check-submodule-pointer.helpers.sh
 source "$SCRIPT_DIR/check-submodule-pointer.helpers.sh"
+
+# SMI-6569: clear the inherited git environment BEFORE resolving the repo root
+# below. Every git call in this script and its helpers — outer-repo calls
+# included — depends on this. See git-env-sanitize.sh for the executed
+# counterexamples; the short version is that an inherited GIT_DIR pointed at a
+# different valid repository makes the outer `ls-tree` return empty with exit
+# 0, which evaluate_mount reads as "no gitlink entry, nothing to check" and
+# reports as a PASS.
+sanitize_git_env
 
 # v1 blocking allowlist (plan's "Scope boundary" design decision). The three
 # skillsmith-strategy mounts (.claude/skills, .claude/plans,
