@@ -73,8 +73,11 @@ import {
   evaluateExportSurfaceShadowGate,
 } from './audit-export-surface-consumer-helpers.mjs'
 import { findGitCryptUnsetRemediations } from './audit-git-crypt-remediation-helpers.mjs'
-import { findAbsoluteSeparateGitDirWriters } from './audit-gitdir-writer-helpers.mjs'
-import { checkDockerEnvDefaultCoherence } from './audit-docker-env-coherence-helpers.mjs'
+import {
+  evaluateAbsoluteSeparateGitDirWriters,
+  gitDirWriterReportLines,
+} from './audit-gitdir-writer-helpers.mjs'
+import { dockerEnvCoherenceReportLines } from './audit-docker-env-coherence-helpers.mjs'
 import { findMissingHuskyStubs } from './audit-husky-stub-coverage-helpers.mjs'
 import {
   listManifestHygieneTestFiles,
@@ -6112,35 +6115,25 @@ try {
 // this check -- same helper, same invariant.
 console.log(`\n${BOLD}Check 69: absolute --separate-git-dir writer ban (SMI-6515)${RESET}`)
 {
-  const { filesChecked, findings: gitdirWriterFindings } = findAbsoluteSeparateGitDirWriters('.')
-  if (gitdirWriterFindings.length === 0) {
-    pass(
-      `Check 69: no absolute \`--separate-git-dir\` invocation found (${filesChecked} tracked file(s) scanned outside the allow-listed recipe)`
-    )
-  } else {
-    // WARN, not fail. The cross-family pre-merge gate (ADR-128) established
-    // that this detector cannot justify blocking in its current form, in both
-    // directions at once:
-    //
-    //   MISSES real writers -- the pattern requires a literal `/` right after
-    //   `=` or one space, so every quoted form (`--separate-git-dir="$HOME/x"`,
-    //   `--separate-git-dir='/abs'`), a line continuation before the value, and
-    //   any variable indirection all pass straight through.
-    //
-    //   BLOCKS harmless prose -- documentation that merely quotes the bad
-    //   invocation to warn against it trips the same pattern.
-    //
-    // A gate that blocks documentation while missing the invocations it bans
-    // is worse than one that reports. Promoting this to fail() requires
-    // quote-aware and continuation-aware parsing that can also tell an
-    // executable line from prose; until that exists, the signal is worth
-    // keeping and the block is not.
-    for (const f of gitdirWriterFindings) {
-      warn(
-        `Check 69: ${f.file}:${f.line} — absolute \`--separate-git-dir\` found among ${filesChecked} scanned file(s): ${f.text}`,
-        "Use a mandatory rewrite-to-relative step immediately after the clone (temp file + rename), and verify with `git -C <path> rev-parse --git-dir` ON THE HOST (in-container git does not work in a worktree, SMI-6549). See .claude/development/git-crypt-guide.md's SMI-6015 stall-recovery section for the corrected pattern."
-      )
-    }
+  // SMI-6575: the helper throws when `git ls-files` fails, by design -- see its
+  // header. Before this catch existed, that throw killed the entire audit in
+  // every worktree dev container: Check 70, the summary block and the exit
+  // verdict, all lost. Measured 2026-09-12 -- worktree container exit 1 with 84
+  // pass-marks and no summary, versus host exit 0 with 89 passed / 7 warnings /
+  // 0 failed. NOT EVALUATED is a third outcome, never a silent pass.
+  //
+  // The branching that turns a verdict into report lines lives in the helper
+  // module, not here, so every outcome -- including the findings loop -- is
+  // directly testable. The first draft of this fix kept that branching inline
+  // and left the findings loop referencing two out-of-scope names, a
+  // ReferenceError reachable only when a finding exists. `.mjs` is outside both
+  // typecheck and eslint here, so nothing mechanical could see it. What remains
+  // below is a flat dispatch with no branch-local bindings to get wrong.
+  const reporters = { pass, warn, fail }
+  for (const line of gitDirWriterReportLines(
+    evaluateAbsoluteSeparateGitDirWriters('.', { isCI: Boolean(process.env.CI) })
+  )) {
+    reporters[line.severity](line.message, line.fix)
   }
 }
 
@@ -6162,24 +6155,25 @@ console.log(`\n${BOLD}Check 69: absolute --separate-git-dir writer ban (SMI-6515
 // twin of this check -- same helper, same invariant.
 console.log(`\n${BOLD}Check 70: SKILLSMITH_DOCKER default coherence (SMI-6518)${RESET}`)
 {
-  const composeContent = readFileSync('docker-compose.yml', 'utf8')
-  const envSchemaContent = readFileSync('.env.schema', 'utf8')
-  const dockerCoherence = checkDockerEnvDefaultCoherence(composeContent, envSchemaContent)
-
-  if (dockerCoherence.problems.length > 0) {
-    fail(
-      `Check 70: ${dockerCoherence.problems.join('; ')}`,
-      'Both files must declare a parseable default -- see docker-compose.yml\'s dev service (`cpus:`/`mem_limit:`) and .env.schema\'s SKILLSMITH_DOCKER_CPUS/SKILLSMITH_DOCKER_MEM entries ("Default N" prose).'
-    )
-  } else if (dockerCoherence.mismatches.length > 0) {
-    fail(
-      `Check 70: docker-compose.yml and .env.schema disagree on SKILLSMITH_DOCKER default(s) — ${dockerCoherence.mismatches.join('; ')}`,
-      'Update whichever file is stale so both defaults match exactly.'
-    )
-  } else {
-    pass(
-      `Check 70: docker-compose.yml and .env.schema agree on SKILLSMITH_DOCKER_CPUS (${dockerCoherence.compose.cpus}) and SKILLSMITH_DOCKER_MEM (${dockerCoherence.compose.mem}) defaults`
-    )
+  // SMI-6575: Check 70's two reads were unguarded, and Check 70 is the LAST
+  // check with the Summary block immediately below -- an ENOENT here destroyed
+  // the summary and the exit verdict exactly as Check 69's throw did. Measured
+  // by moving .env.schema aside: exit 1, no summary block at all.
+  //
+  // The branching lives in the helper module, not here, so every outcome --
+  // including the unread path -- is directly testable. A first version wrapped
+  // the reads inline; the cross-family pre-merge gate BLOCKED it for leaving
+  // the new failure path untested, which was the same defect that had blocked
+  // the Check 69 fix a round earlier. `.mjs` is outside both typecheck and
+  // eslint here, so nothing mechanical guards an inline branch.
+  //
+  // Scoped deliberately to the two reads #2804 introduced. 54 of this file's 97
+  // readFileSync CALL sites are similarly unguarded (a proximity heuristic, not
+  // exact) -- a pre-existing repo-wide pattern, filed as SMI-6584 rather than
+  // refactored here.
+  const reporters = { pass, warn, fail }
+  for (const line of dockerEnvCoherenceReportLines({ isCI: Boolean(process.env.CI) })) {
+    reporters[line.severity](line.message, line.fix)
   }
 }
 
