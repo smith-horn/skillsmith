@@ -29,6 +29,7 @@
 import * as path from 'path'
 import {
   runInstallPreflight,
+  describeThrown,
   type CandidateSkill,
   type RunInstallPreflightResult,
 } from '../audit/install-preflight.js'
@@ -189,7 +190,7 @@ export async function runNamespaceGate(input: NamespaceGateInput): Promise<Names
   } catch (err) {
     // Edit 6: typed version_unsupported (or any other ledger error)
     // surfaces here. Pre-flight is non-blocking; degrade.
-    const cause = describeCause(err)
+    const cause = describeThrown(err)
     console.warn(`[install.namespace-gate] ledger read failed (${cause}); skipping pre-flight`)
     return degradedProceed(candidate, 'the rename ledger could not be read', cause)
   }
@@ -201,7 +202,7 @@ export async function runNamespaceGate(input: NamespaceGateInput): Promise<Names
     const scan = await scanLocalInventory()
     existingInventory = scan.entries
   } catch (err) {
-    const cause = describeCause(err)
+    const cause = describeThrown(err)
     console.warn(
       `[install.namespace-gate] scanLocalInventory failed (${cause}); skipping pre-flight`
     )
@@ -220,7 +221,7 @@ export async function runNamespaceGate(input: NamespaceGateInput): Promise<Names
     // `runInstallPreflight` itself already catches detector throws and
     // degrades, but a defensive outer catch keeps the install hot path
     // bulletproof against any future regression.
-    const cause = describeCause(err)
+    const cause = describeThrown(err)
     console.warn(
       `[install.namespace-gate] runInstallPreflight threw (${cause}); proceeding non-blocking`
     )
@@ -263,33 +264,6 @@ export async function runNamespaceGate(input: NamespaceGateInput): Promise<Names
     },
     problems: preflightProblems,
   }
-}
-
-/**
- * SMI-6588: describing a caught value must not itself throw. A rejection can
- * carry ANY value — `Object.create(null)` has no `toString`, and a hostile or
- * exotic object can throw from one — which would turn a degrade that is
- * supposed to keep the install running into an escaped exception. Same
- * reasoning, and same bound, as `install.ts`'s own catch (SMI-6585).
- */
-function describeCause(err: unknown): string {
-  let cause: string
-  try {
-    // SMI-6588 cross-model review: `Error.message` is typed `string`, but a
-    // runtime value need not honour that — `Object.defineProperty(err,
-    // 'message', { value: Symbol(...) })` produces an Error whose message is
-    // a Symbol. The previous form returned it unchanged (`cause.length` is
-    // `undefined`, so the bound check below was skipped), and the caller's
-    // template literal then threw `TypeError: Cannot convert a Symbol value
-    // to a string` — turning a deliberately non-blocking degrade into an
-    // escaped exception. Verified against a 6-case table: this is the only
-    // input of the six where the call site threw.
-    const raw: unknown = err instanceof Error ? err.message : err
-    cause = typeof raw === 'string' ? raw : String(raw)
-  } catch {
-    cause = 'the thrown value could not be described'
-  }
-  return cause.length > 300 ? cause.slice(0, 300) + '…' : cause
 }
 
 /**

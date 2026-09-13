@@ -53,7 +53,7 @@ import {
   readAuditModeOverride,
   extractSkillName,
 } from './install.namespace-gate.js'
-import type { CandidateSkill } from '../audit/install-preflight.js'
+import { describeThrown, type CandidateSkill } from '../audit/install-preflight.js'
 import * as path from 'path'
 
 export { extractSkillName } from './install.namespace-gate.js'
@@ -179,10 +179,10 @@ async function installSkillImpl(input: unknown, _context?: ToolContext): Promise
   try {
     candidate = buildPreflightCandidate(validInput.skillId)
   } catch (err) {
-    return buildInvalidSkillIdError(
-      validInput.skillId,
-      err instanceof Error ? err.message : String(err)
-    )
+    // SMI-6588 round 3: `extractSkillName` only ever throws an ordinary Error,
+    // so this site was already safe — routed through the shared helper anyway
+    // so no coercion in this file can drift from the others again.
+    return buildInvalidSkillIdError(validInput.skillId, describeThrown(err))
   }
   const tier = resolveCallerTier()
   const auditMode = resolveAuditMode({
@@ -364,18 +364,11 @@ async function installSkillImpl(input: unknown, _context?: ToolContext): Promise
       // so swallowing the outcome is correct; swallowing the FACT is not. The
       // failure now rides `tips`, letting a caller tell "pre-flight passed"
       // from "pre-flight could not be evaluated".
-      // SMI-6588 confirmation round: a Symbol `message` skipped the bound below
-      // and threw at interpolation. Third of three instances — see describeCause.
-      let cause: string
-      try {
-        const raw: unknown = err instanceof Error ? err.message : err
-        cause = typeof raw === 'string' ? raw : String(raw)
-      } catch {
-        cause = 'the thrown value could not be described'
-      }
-      // Bound it: this string is returned to the caller, and an unbounded
-      // message from an arbitrary throw site is not something to pass through.
-      if (cause.length > 300) cause = cause.slice(0, 300) + '…'
+      // SMI-6588: the one shared implementation, which also bounds the string
+      // (an unbounded message from an arbitrary throw site is not something to
+      // pass back to a caller). See describeThrown's own comment for why this
+      // is shared rather than written out here again.
+      const cause = describeThrown(err)
 
       // SMI-6585 cross-model review: "was not applied" claimed more than the
       // code can know. `checkForConflicts` can throw AFTER writing a backup,
@@ -441,7 +434,11 @@ async function installSkillImpl(input: unknown, _context?: ToolContext): Promise
           alsoLinkFailures.push(`alsoLink to ${target}: ${warning}`)
         }
       } catch (linkErr) {
-        const message = linkErr instanceof Error ? linkErr.message : String(linkErr)
+        // SMI-6588 round 3: the fourth copy of this coercion, and the only one
+        // with no inner try/catch — a hostile value made `String()` itself
+        // throw, escaping AFTER the primary install had already succeeded and
+        // replacing a success with an exception.
+        const message = describeThrown(linkErr)
         // Best-effort fan-out — log but don't fail the install
         console.error(`[install] alsoLink to ${target} failed:`, message)
         alsoLinkFailures.push(`alsoLink to ${target} failed: ${message}`)

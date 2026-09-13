@@ -305,14 +305,19 @@ function excludeSelfReinstall(
  * `auditId`) — the install MUST proceed when the detector breaks (Edit 2).
  */
 /**
- * SMI-6588 cross-model review: describing a caught value must not itself
- * throw. `Error.message` is typed `string`, but a runtime value need not
- * honour that — an Error whose `message` is a Symbol makes a template
- * literal throw `TypeError: Cannot convert a Symbol value to a string`,
- * turning a deliberately non-blocking degrade into an escaped exception.
- * `String()` is safe on a Symbol; implicit interpolation is not.
+ * The single implementation for describing a caught value. Shared by
+ * `install.namespace-gate.ts` and `install.ts` — do not hand-write another copy.
+ *
+ * `Error.message` is typed `string` but a runtime value need not honour it: an
+ * Error whose `message` is a Symbol makes a template literal throw
+ * `TypeError: Cannot convert a Symbol value to a string`, turning a
+ * non-blocking degrade into an escaped exception. `String()` is safe on a
+ * Symbol; implicit interpolation is not.
+ *
+ * Shared precisely because it was not — four hand-written copies existed, and
+ * SMI-6588's review rounds 1-3 each found another one still unfixed.
  */
-function describeThrown(err: unknown): string {
+export function describeThrown(err: unknown): string {
   let cause: string
   try {
     const raw: unknown = err instanceof Error ? err.message : err
