@@ -47,6 +47,7 @@ import { checkForConflicts } from './install.conflict.js'
 // external import path (used directly by SMI-4737's tests) is unaffected.
 import {
   runNamespaceGate,
+  attachGateProblems,
   buildPreflightCandidate,
   resolveCallerTier,
   readAuditModeOverride,
@@ -242,7 +243,7 @@ async function installSkillImpl(input: unknown, _context?: ToolContext): Promise
       scopeError instanceof UnsatisfiableWorkspaceScopeError ||
       scopeError instanceof InvalidScopeValueError
     ) {
-      return buildScopeError(validInput.skillId, scopeError)
+      return attachGateProblems(buildScopeError(validInput.skillId, scopeError), gate.problems)
     }
     throw scopeError
   }
@@ -331,13 +332,16 @@ async function installSkillImpl(input: unknown, _context?: ToolContext): Promise
           force: validInput.force,
         })
         if (!targetCheck.ok) {
-          return {
-            success: false,
-            skillId: validInput.skillId,
-            installPath,
-            error: targetCheck.error,
-            ...(targetCheck.tips !== undefined && { tips: targetCheck.tips }),
-          }
+          return attachGateProblems(
+            {
+              success: false,
+              skillId: validInput.skillId,
+              installPath,
+              error: targetCheck.error,
+              ...(targetCheck.tips !== undefined && { tips: targetCheck.tips }),
+            },
+            gate.problems
+          )
         }
 
         const conflictCheck = await checkForConflicts(
@@ -349,7 +353,7 @@ async function installSkillImpl(input: unknown, _context?: ToolContext): Promise
         )
 
         if (!conflictCheck.shouldProceed) {
-          return conflictCheck.earlyReturn!
+          return attachGateProblems(conflictCheck.earlyReturn!, gate.problems)
         }
       }
     } catch (err) {
@@ -454,14 +458,10 @@ async function installSkillImpl(input: unknown, _context?: ToolContext): Promise
     }
   }
 
-  // SMI-6529 round 7 / SMI-6585: every non-fatal problem this function knows
-  // about rides one surface. A fan-out refusal and a pre-flight that could
-  // not be evaluated are both things the caller needs to see without either
-  // of them changing the install's success.
-  //
-  // SMI-6588: `gate.problems` joins them — the namespace gate degrades to
-  // `proceed` on its own failure (correct; it is advisory), but used to do so
-  // silently. Empty whenever the gate actually ran.
+  // SMI-6529 round 7 / SMI-6585 / SMI-6588: every non-fatal problem this
+  // function knows about rides one surface — a fan-out refusal, a conflict
+  // pre-flight that could not be evaluated, and a namespace pre-flight that
+  // never ran. None of them changes whether the install itself succeeded.
   const nonFatalProblems = [...preflightProblems, ...gate.problems, ...alsoLinkFailures]
   const resultWithTips: InstallResult =
     nonFatalProblems.length > 0

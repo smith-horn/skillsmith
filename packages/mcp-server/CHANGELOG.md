@@ -8,9 +8,12 @@ All notable changes to `@skillsmith/mcp-server` are documented here.
   a name collision with your already-installed skills — could not run. It degrades to
   letting the install proceed, which is correct for an advisory check, but it used to
   do so reporting nothing at all, so "no collision found" and "nothing ever looked"
-  were the same result. Three paths could reach it: the rename ledger failing to read,
-  the local inventory failing to scan, and the collision detector throwing. Each now
-  names itself in `tips`, on the same surface the conflict pre-flight uses (SMI-6588).
+  were the same result. Each failure now names itself in `tips`, on the same surface
+  the conflict pre-flight uses: the rename ledger failing to read, the local inventory
+  failing to scan, and — the one that matters most — the collision detector itself
+  throwing. That last case degrades inside `runInstallPreflight`, which returned a
+  result byte-identical to a clean run; reporting it required a change there, not only
+  at the gate above it (SMI-6588).
 
 - **Fix**: `install_skill` now reports it when its pre-flight safety check could not
   run, instead of continuing silently. The pre-flight sat inside a bare `catch {}`

@@ -45,7 +45,7 @@ vi.mock('../../src/tools/install.namespace-gate.js', async (importActual) => {
     runNamespaceGate: vi.fn(async (input: { candidate: { identifier: string } }) => ({
       decision: 'proceed' as const,
       candidate: input.candidate,
-      preflight: { warnings: [], pendingCollision: null, auditId: 'test-audit-id' },
+      preflight: { warnings: [], pendingCollision: null, auditId: 'test-audit-id', problem: null },
       resultPatch: { installComplete: true },
       // SMI-6588: `problems` is non-optional on NamespaceGateOutcome and
       // `install.ts` spreads it. Omitting it here spreads `undefined` and

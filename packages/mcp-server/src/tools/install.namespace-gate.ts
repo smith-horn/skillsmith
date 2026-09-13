@@ -227,6 +227,14 @@ export async function runNamespaceGate(input: NamespaceGateInput): Promise<Names
     return degradedProceed(candidate, 'the collision detector threw', cause)
   }
 
+  // SMI-6588 cross-model review: the outer catch above is a backstop that in
+  // practice cannot fire for a detector failure — `runInstallPreflight` has
+  // its own catch and degrades first, returning a shape identical to a clean
+  // run. The real detector-failure report therefore comes from `problem`, not
+  // from this file's catch. Keeping both is deliberate: the catch still
+  // covers anything that throws outside `runInstallPreflight`'s own try.
+  const preflightProblems = preflight.problem === null ? [] : [preflight.problem]
+
   // Step 3 — mode gate.
   const hasCollision = preflight.pendingCollision !== null
 
@@ -240,7 +248,7 @@ export async function runNamespaceGate(input: NamespaceGateInput): Promise<Names
         pendingCollision: preflight.pendingCollision ?? undefined,
         warnings: preflight.warnings.length > 0 ? preflight.warnings : undefined,
       },
-      problems: [],
+      problems: preflightProblems,
     }
   }
 
@@ -253,7 +261,7 @@ export async function runNamespaceGate(input: NamespaceGateInput): Promise<Names
       installComplete: true,
       warnings: preflight.warnings.length > 0 ? preflight.warnings : undefined,
     },
-    problems: [],
+    problems: preflightProblems,
   }
 }
 
@@ -267,11 +275,39 @@ export async function runNamespaceGate(input: NamespaceGateInput): Promise<Names
 function describeCause(err: unknown): string {
   let cause: string
   try {
-    cause = err instanceof Error ? err.message : String(err)
+    // SMI-6588 cross-model review: `Error.message` is typed `string`, but a
+    // runtime value need not honour that — `Object.defineProperty(err,
+    // 'message', { value: Symbol(...) })` produces an Error whose message is
+    // a Symbol. The previous form returned it unchanged (`cause.length` is
+    // `undefined`, so the bound check below was skipped), and the caller's
+    // template literal then threw `TypeError: Cannot convert a Symbol value
+    // to a string` — turning a deliberately non-blocking degrade into an
+    // escaped exception. Verified against a 6-case table: this is the only
+    // input of the six where the call site threw.
+    const raw: unknown = err instanceof Error ? err.message : err
+    cause = typeof raw === 'string' ? raw : String(raw)
   } catch {
     cause = 'the thrown value could not be described'
   }
   return cause.length > 300 ? cause.slice(0, 300) + '…' : cause
+}
+
+/**
+ * SMI-6588 cross-model review: the gate runs early in `installSkillImpl`, but
+ * its problems were merged only at the final return. Every exit between the
+ * two dropped them — a scope error, a target-guard refusal, or a conflict
+ * early return would report its own failure while silently discarding the
+ * fact that the namespace pre-flight never ran.
+ *
+ * Lives here rather than in `install.ts` because that file sits at the
+ * 500-line CI gate.
+ */
+export function attachGateProblems<T extends { tips?: string[] }>(
+  result: T,
+  problems: string[]
+): T {
+  if (problems.length === 0) return result
+  return { ...result, tips: [...(result.tips ?? []), ...problems] }
 }
 
 /**
@@ -299,6 +335,9 @@ function degradedProceed(
       warnings: [],
       pendingCollision: null,
       auditId: newAuditId(),
+      // The pre-flight never ran at all on this path, so this synthetic
+      // result must say so rather than mimic a clean one.
+      problem: `${step}: ${cause}`,
     },
     resultPatch: {
       installComplete: true,

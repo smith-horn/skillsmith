@@ -183,7 +183,7 @@ describe('installSkill() Zod boundary guard (SMI-4288 / #599)', () => {
     mockRunNamespaceGate.mockResolvedValue({
       decision: 'proceed',
       candidate: { identifier: 'test', projectedSourcePath: '/tmp/test' },
-      preflight: { warnings: [], pendingCollision: null, auditId: 'mock-audit-id' },
+      preflight: { warnings: [], pendingCollision: null, auditId: 'mock-audit-id', problem: null },
       resultPatch: { installComplete: true },
       problems: [],
     })
@@ -466,7 +466,12 @@ describe('installSkill() Zod boundary guard (SMI-4288 / #599)', () => {
       mockRunNamespaceGate.mockResolvedValue({
         decision: 'proceed',
         candidate: { identifier: 'test', projectedSourcePath: '/tmp/test' },
-        preflight: { warnings: [], pendingCollision: null, auditId: 'mock-audit-id' },
+        preflight: {
+          warnings: [],
+          pendingCollision: null,
+          auditId: 'mock-audit-id',
+          problem: null,
+        },
         resultPatch: { installComplete: true },
         problems: [
           'the namespace pre-flight did not run (the rename ledger could not be read: ' +
