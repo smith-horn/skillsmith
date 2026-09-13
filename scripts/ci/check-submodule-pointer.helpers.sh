@@ -75,6 +75,53 @@ repo_slug() {
     printf '%s:%s' "$_CSP_SLUG" "$_CSP_BRANCH"
 }
 
+# git_sub <submodule-dir> <git-args...> — run git against a SUBMODULE working
+# directory, immune to an inherited GIT_DIR (SMI-6569).
+#
+# `git -C <dir>` does NOT override GIT_DIR: -C changes the working directory,
+# but an ABSOLUTE GIT_DIR still wins over repo discovery, so the command runs
+# against the OUTER repo while appearing to target the submodule. Git exports
+# an absolute GIT_DIR into hooks on a push FROM A LINKED WORKTREE — this
+# repo's default workspace — so `.husky/pre-push`'s invocation hit this on
+# every run. Measured on git 2.50.0 against docs/internal:
+#
+#   GIT_DIR unset             -> git -C docs/internal cat-file -e <sha>^{commit} -> exit 0
+#   GIT_DIR=<absolute>        -> same command                                    -> exit 128
+#   GIT_DIR=".git" (RELATIVE) -> same command                                    -> exit 0
+#
+# A relative GIT_DIR re-resolves against -C's new cwd and is harmless; only an
+# absolute one redirects. End-to-end on one identical tree, the symptom was a
+# fabricated R1 ("was never pushed") for a commit that is pushed and reachable,
+# which ALSO suppressed the true verdict (R3) because R1 is a Layer-1
+# precondition that short-circuits Layer 2 entirely.
+#
+# Every git call in this file that targets the submodule must go through this
+# wrapper, not just the R1 existence check: under a contaminated GIT_DIR the
+# fetch, the origin/<branch> rev-parse, and every merge-base/rev-list/branch
+# comparison were all reading the OUTER repo too. R1 simply failed first and
+# masked the rest.
+#
+# Calls targeting the OUTER repo (`git -C "$_CSP_ROOT" ls-tree`, and
+# check-submodule-pointer.sh's own rev-parse/diff) deliberately do NOT use
+# this wrapper: they want the outer repo, and an inherited worktree GIT_DIR
+# already names it. Verified — `rev-parse --show-toplevel` and `ls-tree HEAD`
+# return identical results with and without GIT_DIR set.
+#
+# WHICH vars are cleared, and why, lives in ONE place: git-env-sanitize.sh.
+# This wrapper delegates there rather than carrying its own copy of the list —
+# an earlier version kept a second inline copy in submodule-pointer-autorepair.sh
+# synchronised only by a comment, which is drift waiting to happen.
+#
+# Note that the entry point (check-submodule-pointer.sh) already calls
+# sanitize_git_env() for the whole process, so in the normal path this wrapper
+# is defence in depth rather than the active fix. It still matters: a test that
+# sources this file directly does not go through that entry point.
+git_sub() {
+    _CSP_GIT_SUB_DIR="$1"
+    shift
+    git_sanitized -C "$_CSP_GIT_SUB_DIR" "$@"
+}
+
 # print_result — unified output line. severity: PASS|PASS-WARN|SKIP|FAIL.
 # is_blocking (0/1) downgrades a FAIL's displayed severity to WARN (mount
 # not in BLOCKING_MOUNTS) without changing the caller's exit-code decision,
@@ -125,11 +172,15 @@ evaluate_mount() {
     # Not-initialized check: test for a LITERAL .git entry directly under the
     # mount directory (file or dir — a submodule's own .git is a file
     # pointing at ../../.git/modules/<path> since git 1.7.8+). Deliberately
-    # NOT `git -C "$_CSP_DIR" rev-parse --git-dir`: for an uninitialized
+    # NOT `git_sub "$_CSP_DIR" rev-parse --git-dir`: for an uninitialized
     # mount (an empty directory with no .git of its own), git's repo
     # discovery walks UP the directory tree and silently finds the PARENT
     # repo's own .git instead of failing — that would make this check
     # always report "initialized" even when the submodule plainly isn't.
+    # SMI-6569 makes this MORE true, not less: git_sub exists precisely to
+    # strip the env hints that would otherwise short-circuit discovery, so it
+    # guarantees the upward walk this check must avoid. A plain filesystem
+    # test is the right tool here and no wrapper changes that.
     _CSP_DIR="$_CSP_ROOT/$_CSP_MOUNT"
     if [ ! -e "$_CSP_DIR/.git" ]; then
         print_result "SKIP" "$_CSP_MOUNT" "local submodule checkout not initialized — cannot verify ancestry locally (CI initializes this before running; a developer pushing without the submodule checked out is never blocked)" "$_CSP_BLOCK"
@@ -144,7 +195,7 @@ evaluate_mount() {
     _CSP_FETCH_OK=0
     _CSP_I=0
     while [ "$_CSP_I" -lt "$_CSP_ATTEMPTS" ]; do
-        if git -C "$_CSP_DIR" fetch origin --prune --quiet 2>/dev/null; then
+        if git_sub "$_CSP_DIR" fetch origin --prune --quiet 2>/dev/null; then
             _CSP_FETCH_OK=1
             break
         fi
@@ -156,14 +207,14 @@ evaluate_mount() {
         return 1
     fi
 
-    _CSP_T="$(git -C "$_CSP_DIR" rev-parse -q --verify "refs/remotes/origin/$_CSP_BRANCH" 2>/dev/null)"
+    _CSP_T="$(git_sub "$_CSP_DIR" rev-parse -q --verify "refs/remotes/origin/$_CSP_BRANCH" 2>/dev/null)"
     if [ -z "$_CSP_T" ]; then
         print_result "FAIL" "$_CSP_MOUNT" "R-FETCH: infra: fetch failed, not a content problem — re-run the check" "$_CSP_BLOCK"
         return 1
     fi
 
     # --- Layer 1 preconditions: R1 (S exists), R10/R11 (B) ---
-    if ! git -C "$_CSP_DIR" cat-file -e "${_CSP_S}^{commit}" 2>/dev/null; then
+    if ! git_sub "$_CSP_DIR" cat-file -e "${_CSP_S}^{commit}" 2>/dev/null; then
         print_result "FAIL" "$_CSP_MOUNT" "R1: \`$_CSP_S\` was never pushed, or its branch was deleted; push a valid commit at that SHA (or a valid replacement) and re-bump" "$_CSP_BLOCK"
         return 1
     fi
@@ -172,7 +223,7 @@ evaluate_mount() {
     _CSP_B_RESOLVABLE=0
     if [ -n "$_CSP_B" ]; then
         _CSP_B_AVAILABLE=1
-        if git -C "$_CSP_DIR" cat-file -e "${_CSP_B}^{commit}" 2>/dev/null; then
+        if git_sub "$_CSP_DIR" cat-file -e "${_CSP_B}^{commit}" 2>/dev/null; then
             _CSP_B_RESOLVABLE=1
         fi
     fi
@@ -219,13 +270,13 @@ evaluate_layer2() {
     # T-axis: S vs T (R2/R3/R4/R5/R6 — mutually exclusive with each other).
     if [ "$_CSP_S" = "$_CSP_T" ]; then
         : # R2 PASS
-    elif git -C "$_CSP_DIR" merge-base --is-ancestor "$_CSP_S" "$_CSP_T" 2>/dev/null; then
-        _CSP_BEHIND="$(git -C "$_CSP_DIR" rev-list --count "${_CSP_S}..${_CSP_T}" 2>/dev/null || echo '?')"
+    elif git_sub "$_CSP_DIR" merge-base --is-ancestor "$_CSP_S" "$_CSP_T" 2>/dev/null; then
+        _CSP_BEHIND="$(git_sub "$_CSP_DIR" rev-list --count "${_CSP_S}..${_CSP_T}" 2>/dev/null || echo '?')"
         _CSP_SLUG="$(repo_slug "$_CSP_ROOT/.gitmodules" "$_CSP_MOUNT")"
         _CSP_FAIL_RULES+=("R3")
         _CSP_FAIL_MSGS+=("R3: stale: behind \`$_CSP_SLUG\` by $_CSP_BEHIND commits; re-bump with \`scripts/bump-docs-pointer.sh\`")
-    elif git -C "$_CSP_DIR" merge-base --is-ancestor "$_CSP_T" "$_CSP_S" 2>/dev/null; then
-        if git -C "$_CSP_DIR" branch -r --contains "$_CSP_S" 2>/dev/null | grep -q .; then
+    elif git_sub "$_CSP_DIR" merge-base --is-ancestor "$_CSP_T" "$_CSP_S" 2>/dev/null; then
+        if git_sub "$_CSP_DIR" branch -r --contains "$_CSP_S" 2>/dev/null | grep -q .; then
             print_result "PASS-WARN (R4)" "$_CSP_MOUNT" "\`$_CSP_S\` is ahead of \`$_CSP_T\` and lives on a live remote branch (legitimate 'docs PR merged just after' case, SMI-5666)" "$_CSP_BLOCK"
             _CSP_R4_WARNED=1
         else
@@ -240,7 +291,7 @@ evaluate_layer2() {
     # B-axis: S vs B (R7) — only when B is available (R10: absent => skip
     # this axis, not the whole mount; T-axis above still stands).
     if [ "$_CSP_B_AVAILABLE" -eq 1 ] && [ "$_CSP_S" != "$_CSP_B" ] \
-        && git -C "$_CSP_DIR" merge-base --is-ancestor "$_CSP_S" "$_CSP_B" 2>/dev/null; then
+        && git_sub "$_CSP_DIR" merge-base --is-ancestor "$_CSP_S" "$_CSP_B" 2>/dev/null; then
         _CSP_FAIL_RULES+=("R7")
         _CSP_FAIL_MSGS+=("R7: backward regression: this pointer already registers \`$_CSP_B\` on \`$_CSP_REF\`, which is ahead of the proposed \`$_CSP_S\`; re-bump to \`$_CSP_B\` or a descendant of it, never to an ancestor")
     fi
