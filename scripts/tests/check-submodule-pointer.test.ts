@@ -21,7 +21,7 @@
 
 import { describe, it, expect, afterEach } from 'vitest'
 import { execFileSync, spawnSync } from 'node:child_process'
-import { mkdirSync, writeFileSync, rmSync } from 'node:fs'
+import { mkdirSync, writeFileSync, rmSync, copyFileSync } from 'node:fs'
 import { join, resolve, dirname } from 'node:path'
 import { fileURLToPath } from 'node:url'
 import { makeFixtureEnv, makeFixtureTempDir } from './_lib/git-fixture-env.js'
@@ -707,5 +707,112 @@ describe('check-submodule-pointer.sh — evaluation order, gating, and mode sema
     expect(r.status).toBe(1)
     expect(r.stdout).toContain('R3:')
     expect(r.stdout).toContain('stale')
+  })
+})
+
+// ---------------------------------------------------------------------------
+// SMI-6598 — dependency integrity of the shared sanitizer
+// ---------------------------------------------------------------------------
+
+describe('check-submodule-pointer.sh — sanitizer dependency integrity (SMI-6598)', () => {
+  /**
+   * Copy the entry point and rule engine into a scratch dir, optionally
+   * writing a `git-env-sanitize.sh` alongside them. Omitting it, or writing a
+   * broken one, is what these tests exercise: the script resolves its sources
+   * relative to its own location, so a copy without the dependency reproduces
+   * a missing/corrupt deploy exactly.
+   */
+  function stageScripts(sanitizeContent: string | null): string {
+    const dir = makeFixtureTempDir('spa-dep-')
+    createdRoots.push(dir)
+    for (const f of ['check-submodule-pointer.sh', 'check-submodule-pointer.helpers.sh']) {
+      copyFileSync(join(REPO_ROOT, 'scripts', 'ci', f), join(dir, f))
+    }
+    if (sanitizeContent !== null) {
+      writeFileSync(join(dir, 'git-env-sanitize.sh'), sanitizeContent)
+    }
+    return dir
+  }
+
+  function runStaged(dir: string, cwd: string, env: NodeJS.ProcessEnv = {}): RunResult {
+    const result = spawnSync(
+      'bash',
+      [
+        join(dir, 'check-submodule-pointer.sh'),
+        '--mode=block',
+        '--ref=HEAD',
+        '--target=origin/main',
+      ],
+      { cwd, encoding: 'utf8', env: { ...makeFixtureEnv(), ...env } }
+    )
+    return { status: result.status ?? -1, stdout: result.stdout ?? '', stderr: result.stderr ?? '' }
+  }
+
+  it('a MISSING git-env-sanitize.sh fails closed instead of reporting a clean pass', () => {
+    // Neither entry point uses `set -e` (this one sets `set -u` only), so a
+    // failed `source` does not halt the script and the subsequent call to the
+    // undefined `sanitize_git_env` is only "command not found" — also
+    // non-fatal. Before the fix, with GIT_DIR poisoned, REPO_ROOT resolved to
+    // the submodule (the bare `git rev-parse --show-toplevel` has no -C by
+    // design), .gitmodules was not found there, and the guard printed
+    // "nothing to check" and exited 0. A silent clean pass — worse than the
+    // SMI-6569 bug it replaced, which was at least loud.
+    const f = track(buildFixture())
+    const dir = stageScripts(null)
+    const r = runStaged(dir, f.parentDir, { GIT_DIR: join(f.mountDir, '.git') })
+
+    expect(r.status).toBe(2)
+    expect(r.stderr).toContain('cannot source git-env-sanitize.sh')
+    expect(r.stdout).not.toContain('nothing to check')
+  })
+
+  it('a SYNTACTICALLY BROKEN git-env-sanitize.sh fails closed', () => {
+    // Honest note: this case passes WITH OR WITHOUT the guard, because bash
+    // aborts a non-interactive shell on a syntax error while parsing a sourced
+    // file, and that abort happens to exit 2. Confirmed by reverting the guard
+    // and watching this test still pass, unlike its two siblings.
+    //
+    // Kept because it pins behaviour that is currently incidental: if a future
+    // bash, or a wrapper, stopped aborting here, this would start failing and
+    // point at a real hole. It documents a load-bearing accident rather than
+    // demonstrating the guard. The `declare -F` test below is the one that
+    // actually exercises the guard — valid bash, zero status, no function.
+    const f = track(buildFixture())
+    const dir = stageScripts('this is not valid bash (((\n')
+    const r = runStaged(dir, f.parentDir)
+
+    expect(r.status).toBe(2)
+    expect(r.stdout).not.toContain('nothing to check')
+  })
+
+  it('a sanitize_git_env that sources cleanly but defines nothing fails closed', () => {
+    // The exact partial-contract case: valid bash, zero exit status, no
+    // function. `||` alone passes this through.
+    const f = track(buildFixture())
+    const dir = stageScripts('# valid bash, defines nothing\ntrue\n')
+    const r = runStaged(dir, f.parentDir)
+
+    expect(r.status).toBe(2)
+    expect(r.stderr).toContain('sanitize_git_env is undefined')
+    expect(r.stdout).not.toContain('nothing to check')
+  })
+
+  it('the real dependency present still evaluates normally', () => {
+    // Guards against the fix over-firing — the three cases above must not be
+    // achievable by simply making the script refuse to run.
+    const f = track(buildFixture())
+    const c1 = commitGitlink(f.parentDir, f.base, 'base bump (target)')
+    commitGitlink(f.parentDir, f.T, 'S = T')
+    const real = join(REPO_ROOT, 'scripts', 'ci', 'git-env-sanitize.sh')
+    const dir = stageScripts(null)
+    copyFileSync(real, join(dir, 'git-env-sanitize.sh'))
+
+    const result = spawnSync(
+      'bash',
+      [join(dir, 'check-submodule-pointer.sh'), '--mode=block', '--ref=HEAD', `--target=${c1}`],
+      { cwd: f.parentDir, encoding: 'utf8', env: makeFixtureEnv() }
+    )
+    expect(result.status).toBe(0)
+    expect(result.stdout).toContain('PASS [docs/internal]')
   })
 })
