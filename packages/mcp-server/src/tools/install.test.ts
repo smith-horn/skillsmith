@@ -153,9 +153,15 @@ describe('installSkill() Zod boundary guard (SMI-4288 / #599)', () => {
     // It MUST carry a default — a bare `vi.fn()` returns `undefined`, and the
     // caller's `if (!targetCheck.ok)` would then throw into the very catch
     // these tests exercise, quietly adding a tip to every other test in the
-    // file. `{ ok: true }` is what the real guard returns for these fixtures.
+    // file.
+    //
+    // SMI-6588: `preExisted` is part of the contract's ok-branch
+    // (`{ ok: true; preExisted: boolean }`). `install.ts` does not read it
+    // today, which is exactly why omitting it was safe AND wrong: the suite
+    // would stay green on the day someone does, handing them `undefined`.
+    // A mock must not be a looser shape than the thing it stands in for.
     mockCheckInstallTarget.mockReset()
-    mockCheckInstallTarget.mockResolvedValue({ ok: true })
+    mockCheckInstallTarget.mockResolvedValue({ ok: true, preExisted: false })
     // ADR-139: deterministic global scope — see the mock's own comment above.
     mockResolveScopedSkillsDir.mockReturnValue({
       scope: 'global',
@@ -170,11 +176,16 @@ describe('installSkill() Zod boundary guard (SMI-4288 / #599)', () => {
     // SMI-4588 Wave 2 PR #3: default the namespace gate to `proceed` with
     // no warnings/pending so the Zod boundary tests remain focused on
     // validation behavior. Tests that need the blocking path can override.
+    // SMI-6588: `problems: []` is the "the gate ran and had nothing to say"
+    // shape. It is non-optional on the real type for the same reason it is
+    // spelled out here — an absent field would be indistinguishable from a
+    // gate that never ran.
     mockRunNamespaceGate.mockResolvedValue({
       decision: 'proceed',
       candidate: { identifier: 'test', projectedSourcePath: '/tmp/test' },
       preflight: { warnings: [], pendingCollision: null, auditId: 'mock-audit-id' },
       resultPatch: { installComplete: true },
+      problems: [],
     })
   })
 
@@ -445,6 +456,42 @@ describe('installSkill() Zod boundary guard (SMI-4288 / #599)', () => {
       // The install still completed rather than the handler throwing.
       expect(mockInstall).toHaveBeenCalledTimes(1)
       expect(result.tips?.join(' ') ?? '').toContain('could not be described')
+    })
+
+    // SMI-6588: the namespace gate degrades to `proceed` when it cannot run.
+    // These two cases are the point of the change — they must NOT produce the
+    // same result. The negative case is as load-bearing as the positive one:
+    // without it, a regression that tipped on every install would pass.
+    it('reports it when the namespace pre-flight degraded instead of running', async () => {
+      mockRunNamespaceGate.mockResolvedValue({
+        decision: 'proceed',
+        candidate: { identifier: 'test', projectedSourcePath: '/tmp/test' },
+        preflight: { warnings: [], pendingCollision: null, auditId: 'mock-audit-id' },
+        resultPatch: { installComplete: true },
+        problems: [
+          'the namespace pre-flight did not run (the rename ledger could not be read: ' +
+            'EACCES: permission denied); the install proceeded, but this skill was NOT ' +
+            'checked for a name collision with your already-installed skills.',
+        ],
+      })
+
+      const result = await installSkill({ skillId: 'owner/repo/test-skill' })
+
+      // The install still succeeds — the gate is advisory and must never
+      // block on its own failure.
+      expect(result.success).toBe(true)
+      expect(mockInstall).toHaveBeenCalledTimes(1)
+      const reported = result.tips?.join(' ') ?? ''
+      expect(reported).toContain('namespace pre-flight did not run')
+      expect(reported).toContain('EACCES: permission denied')
+    })
+
+    it('adds no tip when the namespace pre-flight ran and found no collision', async () => {
+      // The beforeEach default is a clean `problems: []` gate.
+      const result = await installSkill({ skillId: 'owner/repo/test-skill' })
+
+      expect(result.success).toBe(true)
+      expect(result.tips?.join(' ') ?? '').not.toContain('namespace pre-flight')
     })
 
     it('resolves bare skillId (no slash) via extractSkillName', async () => {

@@ -47,6 +47,11 @@ vi.mock('../../src/tools/install.namespace-gate.js', async (importActual) => {
       candidate: input.candidate,
       preflight: { warnings: [], pendingCollision: null, auditId: 'test-audit-id' },
       resultPatch: { installComplete: true },
+      // SMI-6588: `problems` is non-optional on NamespaceGateOutcome and
+      // `install.ts` spreads it. Omitting it here spreads `undefined` and
+      // throws — and TypeScript cannot catch that through an untyped mock
+      // factory, which is precisely why the field is not optional.
+      problems: [],
     })),
   }
 })

@@ -4,6 +4,14 @@ All notable changes to `@skillsmith/mcp-server` are documented here.
 
 ## [Unreleased]
 
+- **Fix**: `install_skill` now reports it when the namespace pre-flight — the check for
+  a name collision with your already-installed skills — could not run. It degrades to
+  letting the install proceed, which is correct for an advisory check, but it used to
+  do so reporting nothing at all, so "no collision found" and "nothing ever looked"
+  were the same result. Three paths could reach it: the rename ledger failing to read,
+  the local inventory failing to scan, and the collision detector throwing. Each now
+  names itself in `tips`, on the same surface the conflict pre-flight uses (SMI-6588).
+
 - **Fix**: `install_skill` now reports it when its pre-flight safety check could not
   run, instead of continuing silently. The pre-flight sat inside a bare `catch {}`
   that predates it; SMI-6529 Wave A0 moved the `checkInstallTarget` guard inside that
@@ -14,8 +22,8 @@ All notable changes to `@skillsmith/mcp-server` are documented here.
   guard unconditionally before any download or disk write, so an unsafe target was
   always refused. What was missing was the report, not the protection. The install's
   outcome is deliberately unchanged; what is no longer invisible is that the
-  pre-flight did not complete — which also means its conflict backup was skipped and
-  a requested `conflictAction` may not have been fully applied. That now rides
+  pre-flight did not complete — which means a requested `conflictAction` may not have
+  been fully applied, and its conflict backup may not have been written. That now rides
   `tips`, the same surface fan-out refusals already use, and names the underlying
   error so a caller can tell "pre-flight passed" from "pre-flight could not be
   evaluated" (SMI-6585).

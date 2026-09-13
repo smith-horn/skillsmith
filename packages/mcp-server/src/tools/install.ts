@@ -458,7 +458,11 @@ async function installSkillImpl(input: unknown, _context?: ToolContext): Promise
   // about rides one surface. A fan-out refusal and a pre-flight that could
   // not be evaluated are both things the caller needs to see without either
   // of them changing the install's success.
-  const nonFatalProblems = [...preflightProblems, ...alsoLinkFailures]
+  //
+  // SMI-6588: `gate.problems` joins them — the namespace gate degrades to
+  // `proceed` on its own failure (correct; it is advisory), but used to do so
+  // silently. Empty whenever the gate actually ran.
+  const nonFatalProblems = [...preflightProblems, ...gate.problems, ...alsoLinkFailures]
   const resultWithTips: InstallResult =
     nonFatalProblems.length > 0
       ? { ...result, tips: [...(result.tips ?? []), ...nonFatalProblems] }
