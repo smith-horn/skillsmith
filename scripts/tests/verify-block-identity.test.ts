@@ -209,7 +209,9 @@ describe('tail-marker ordering invariant', () => {
     const { head, tail } = result as { head: string; tail: string }
 
     const firstTailLine = tail.split('\n').find((l) => l.trim().length > 0)
-    expect(firstTailLine?.trim()).toBe('SMOKE_DIR="$(mktemp -d)"')
+    // SMI-6512 guarded the bare assignment (`if ! SMOKE_DIR=... ; then`), so the
+    // first substantive tail line is the guard's `if`, not the bare assignment.
+    expect(firstTailLine?.trim()).toBe('if ! SMOKE_DIR="$(mktemp -d)"; then')
     expect(head).not.toContain('SMOKE_DIR')
     // The head keeps the registry verification, including its explicit failure path.
     expect(head).toContain('npm view')
