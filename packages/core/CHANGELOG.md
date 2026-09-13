@@ -4,6 +4,10 @@ All notable changes to `@skillsmith/core` are documented here.
 
 ## [Unreleased]
 
+## v0.12.5
+
+- **Cadence**: Mechanical cadence alignment (no changes since v0.12.4).
+
 ## v0.12.4
 
 - **Fix**: SMI-6507 + SMI-6496 -- remediation strings that actually work (#2803)

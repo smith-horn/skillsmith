@@ -4,6 +4,9 @@ All notable changes to `@skillsmith/mcp-server` are documented here.
 
 ## [Unreleased]
 
+## v0.7.16
+
+- **Fix**: SMI-6585 -- the install pre-flight reports its failure instead of swallowing it (#2821)
 - **Fix**: `install_skill` now reports it when its pre-flight safety check could not
   run, instead of continuing silently. The pre-flight sat inside a bare `catch {}`
   that predates it; SMI-6529 Wave A0 moved the `checkInstallTarget` guard inside that

@@ -4,6 +4,10 @@ All notable changes to `@skillsmith/cli` are documented here.
 
 ## [Unreleased]
 
+## v0.8.12
+
+- **Cadence**: Mechanical cadence alignment (no changes since v0.8.11).
+
 ## v0.8.11
 
 - **Fix**: SMI-6530 -- stop recommending bulk `skillsmith update` until the safety gate ships (#2801)
