@@ -144,13 +144,65 @@ export function normalize(run, pkg, manifestPath) {
   const afterManifest = countedReplace(decommented, manifestPath, MANIFEST_SENTINEL)
   const afterPkg = countedReplace(afterManifest.text, pkg, PKG_SENTINEL)
 
+  // SMI-6513 cross-family review (GPT-5.6-Sol, PR 2825). Trimming below is
+  // deliberate and stays -- leading indentation and blank lines are inert in
+  // shell, and tolerating cosmetic reformatting between blocks is a reviewed
+  // decision (positive cases P-2 and P-3). But that tolerance is only sound
+  // while the stripped whitespace really is inert, and there are two shapes
+  // where it is not. Both are rejected here rather than normalized away.
+  //
+  // (a) A line ending in a backslash followed by whitespace. Measured under
+  //     the workflow's real `bash -e` semantics:
+  //
+  //       printf "<%s>" foo \<newline>bar   -> <foo> <bar>, exit 0
+  //       printf "<%s>" foo \ <newline>bar  -> <foo> < >, `bar: command not
+  //                                             found`, exit 127
+  //
+  //     The two differ only in one trailing space, and `.trim()` erases that
+  //     difference -- so a verify block broken at runtime would have compared
+  //     byte-identical to a working one. That is precisely the class of defect
+  //     this checker exists to catch, so it must never be silently absorbed.
+  //
+  // (b) A heredoc opener. Inside a heredoc, indentation and blank lines are
+  //     payload, not formatting, so trimming would corrupt the comparison.
+  //     `<<-` strips leading TABS only, never spaces, so even that form is not
+  //     safe to trim.
+  //
+  // Neither shape exists in the workflow today (measured: zero occurrences of
+  // each across the whole file), so this guard costs nothing now. It exists so
+  // that whoever introduces one gets a failure naming the reason instead of a
+  // check that quietly stops detecting drift.
+  const unsafeBackslash = []
+  const unsafeHeredoc = []
+  for (const [i, line] of afterPkg.text.split('\n').entries()) {
+    if (/\\[ \t]+$/.test(line)) unsafeBackslash.push(`${i + 1}: ${JSON.stringify(line)}`)
+    if (/<<-?\s*['\"]?\w/.test(line)) unsafeHeredoc.push(`${i + 1}: ${JSON.stringify(line.trim())}`)
+  }
+  const unsafe = unsafeBackslash.length
+    ? {
+        kind: 'a line ends in a backslash followed by whitespace, which does NOT continue the line',
+        samples: unsafeBackslash.slice(0, 3).join('; '),
+      }
+    : unsafeHeredoc.length
+      ? {
+          kind: 'a heredoc is present, whose payload indentation and blank lines are significant',
+          samples: unsafeHeredoc.slice(0, 3).join('; '),
+        }
+      : null
+
   const text = afterPkg.text
     .split('\n')
     .map((line) => line.trim())
     .filter((line) => line.length > 0)
     .join('\n')
 
-  return { text, sentinelCollision, manifestCount: afterManifest.count, pkgCount: afterPkg.count }
+  return {
+    text,
+    sentinelCollision,
+    unsafe,
+    manifestCount: afterManifest.count,
+    pkgCount: afterPkg.count,
+  }
 }
 
 /**
@@ -341,6 +393,11 @@ export function analyzeVerifyBlocks(yamlText) {
     }
 
     const normalized = normalize(headSource, entry.pkg, entry.manifestPath)
+    if (normalized.unsafe) {
+      const msg = MSG.unsafeWhitespace(normalized.unsafe.kind, normalized.unsafe.samples)
+      add('VB-UNSAFE-WHITESPACE', entry.jobId, entry.stepName, msg)
+      continue
+    }
     if (normalized.sentinelCollision) {
       const msg = MSG.sentinelCollision(PKG_SENTINEL, MANIFEST_SENTINEL)
       add('VB-SENTINEL-COLLISION', entry.jobId, entry.stepName, msg)
@@ -452,6 +509,11 @@ export function analyzeVerifyBlocks(yamlText) {
   // mentioning `npm view` does not fire it.
   if (reshaped) {
     const tailNorm = normalize(reshaped.tailSource, reshaped.entry.pkg, reshaped.entry.manifestPath)
+    if (tailNorm.unsafe) {
+      const msg = MSG.unsafeWhitespace(tailNorm.unsafe.kind, tailNorm.unsafe.samples)
+      add('VB-UNSAFE-WHITESPACE', reshaped.entry.jobId, reshaped.entry.stepName, msg)
+      return finish()
+    }
     const probes = []
     if (tailNorm.text.includes('npm view')) probes.push('`npm view`')
     if (tailNorm.text.includes('exit 1')) probes.push('a literal `exit 1`')

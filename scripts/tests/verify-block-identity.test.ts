@@ -390,6 +390,38 @@ describe('negative cases: tail region', () => {
     expect(codesOf(analyzeVerifyBlocks(mutated))).toContain('VB-TAIL-CONTAINS-PROBE')
   })
 
+  // N-21/N-22/N-23: SMI-6513 cross-family review (GPT-5.6-Sol, PR 2825).
+  // `normalize()` trims leading indentation and drops blank lines, which is a
+  // reviewed decision (see P-2/P-3) and correct while the stripped whitespace
+  // is inert in shell. These cases pin the two shapes where it is NOT inert,
+  // and which are therefore rejected rather than normalized away.
+  it('N-21: a line ending in backslash + whitespace is rejected, not trimmed', () => {
+    const mutated = mutateStepBody(REAL_YAML, CORE.job, CORE.step, (b) =>
+      b.replace('VERIFY_MAX_ATTEMPTS=30', 'VERIFY_MAX_ATTEMPTS=30 \\ ')
+    )
+    expect(codesOf(analyzeVerifyBlocks(mutated))).toContain('VB-UNSAFE-WHITESPACE')
+  })
+
+  it('N-22: backslash + whitespace would otherwise be INVISIBLE to the digest', () => {
+    // The reason N-21 must exist. Under `bash -e` these two bodies behave
+    // differently -- `foo \` continues the line, `foo \ ` escapes a space and
+    // ends the command, so the next line runs as its own command (measured:
+    // exit 0 vs exit 127). `.trim()` erases that difference, so without the
+    // guard a runtime-broken block would hash identically to a working one.
+    const good = normalize('a b \\\nc\n', 'p', 'm')
+    const bad = normalize('a b \\ \nc\n', 'p', 'm')
+    expect(good.text).toBe(bad.text) // the masking is real...
+    expect(good.unsafe).toBeNull() // ...which is exactly why the guard,
+    expect(bad.unsafe).not.toBeNull() // not the digest, has to catch it
+  })
+
+  it('N-23: a heredoc is rejected, since its payload whitespace is significant', () => {
+    const mutated = mutateStepBody(REAL_YAML, CORE.job, CORE.step, (b) =>
+      b.replace('VERIFY_MAX_ATTEMPTS=30', 'cat <<EOF\npayload\nEOF\nVERIFY_MAX_ATTEMPTS=30')
+    )
+    expect(codesOf(analyzeVerifyBlocks(mutated))).toContain('VB-UNSAFE-WHITESPACE')
+  })
+
   it('N-19: the tail gains an explicit exit 1', () => {
     const mutated = mutateStepBody(REAL_YAML, WRAPPER.job, WRAPPER.step, (b) =>
       b.replace('SMOKE_DIR="$(mktemp -d)"', 'SMOKE_DIR="$(mktemp -d)" || exit 1')

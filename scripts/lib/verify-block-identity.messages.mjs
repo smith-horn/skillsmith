@@ -40,6 +40,14 @@ export const MSG = {
     `"${actualJob}". Moving a verify step between jobs changes its predicates, dependencies, ` +
     'permissions and publish association while changing no digest at all.',
 
+  unsafeWhitespace: (kind, samples) =>
+    `normalization cannot safely handle this body: ${kind}. ` +
+    `Offending line(s): ${samples}. ` +
+    'Leading indentation and blank lines are stripped before comparison because they are ' +
+    'inert in shell -- but they are NOT inert here, so stripping them could make a block ' +
+    'that is broken at runtime compare equal to one that works. Fix the line rather than ' +
+    'relaxing this guard.',
+
   sentinelCollision: (pkgSentinel, manifestSentinel) =>
     `body already contains the literal ${pkgSentinel} or ${manifestSentinel}, which would ` +
     'defeat the substitution. Rename the offending token.',
