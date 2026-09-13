@@ -47,12 +47,13 @@ import { checkForConflicts } from './install.conflict.js'
 // external import path (used directly by SMI-4737's tests) is unaffected.
 import {
   runNamespaceGate,
+  attachGateProblems,
   buildPreflightCandidate,
   resolveCallerTier,
   readAuditModeOverride,
   extractSkillName,
 } from './install.namespace-gate.js'
-import type { CandidateSkill } from '../audit/install-preflight.js'
+import { describeThrown, type CandidateSkill } from '../audit/install-preflight.js'
 import * as path from 'path'
 
 export { extractSkillName } from './install.namespace-gate.js'
@@ -178,10 +179,10 @@ async function installSkillImpl(input: unknown, _context?: ToolContext): Promise
   try {
     candidate = buildPreflightCandidate(validInput.skillId)
   } catch (err) {
-    return buildInvalidSkillIdError(
-      validInput.skillId,
-      err instanceof Error ? err.message : String(err)
-    )
+    // SMI-6588 round 3: `extractSkillName` only ever throws an ordinary Error,
+    // so this site was already safe — routed through the shared helper anyway
+    // so no coercion in this file can drift from the others again.
+    return buildInvalidSkillIdError(validInput.skillId, describeThrown(err))
   }
   const tier = resolveCallerTier()
   const auditMode = resolveAuditMode({
@@ -242,7 +243,7 @@ async function installSkillImpl(input: unknown, _context?: ToolContext): Promise
       scopeError instanceof UnsatisfiableWorkspaceScopeError ||
       scopeError instanceof InvalidScopeValueError
     ) {
-      return buildScopeError(validInput.skillId, scopeError)
+      return attachGateProblems(buildScopeError(validInput.skillId, scopeError), gate.problems)
     }
     throw scopeError
   }
@@ -331,13 +332,16 @@ async function installSkillImpl(input: unknown, _context?: ToolContext): Promise
           force: validInput.force,
         })
         if (!targetCheck.ok) {
-          return {
-            success: false,
-            skillId: validInput.skillId,
-            installPath,
-            error: targetCheck.error,
-            ...(targetCheck.tips !== undefined && { tips: targetCheck.tips }),
-          }
+          return attachGateProblems(
+            {
+              success: false,
+              skillId: validInput.skillId,
+              installPath,
+              error: targetCheck.error,
+              ...(targetCheck.tips !== undefined && { tips: targetCheck.tips }),
+            },
+            gate.problems
+          )
         }
 
         const conflictCheck = await checkForConflicts(
@@ -349,38 +353,22 @@ async function installSkillImpl(input: unknown, _context?: ToolContext): Promise
         )
 
         if (!conflictCheck.shouldProceed) {
-          return conflictCheck.earlyReturn!
+          return attachGateProblems(conflictCheck.earlyReturn!, gate.problems)
         }
       }
     } catch (err) {
-      // SMI-6585: this catch predates the guard it now encloses. Wave A0
-      // moved `checkInstallTarget` inside it, which turned a fail-closed
-      // guard into a fail-open one for anything that throws in this block.
-      //
-      // The install's OUTCOME is deliberately unchanged: `service.install()`
-      // runs the same target guard unconditionally before any fetch or disk
-      // write (`skill-installation.service.ts`, and `.content.ts` for the
-      // content path), so a refusal still happens there. Swallowing the
-      // outcome is correct; swallowing the FACT is not.
-      //
-      // What is no longer silent is that the pre-flight did not complete. It
-      // rides `tips`, the same surface the fan-out failures use, so a caller
-      // can tell "pre-flight passed" from "pre-flight could not be evaluated".
-      //
-      // SMI-6585 cross-model review: describing the caught value must not
-      // itself throw. A rejection can carry ANY value — `Object.create(null)`
-      // has no `toString`, and a hostile or exotic object can throw from one —
-      // which would turn "the install's outcome is unchanged" into an escaped
-      // exception from the very handler written to prevent that.
-      let cause: string
-      try {
-        cause = err instanceof Error ? err.message : String(err)
-      } catch {
-        cause = 'the thrown value could not be described'
-      }
-      // Bound it: this string is returned to the caller, and an unbounded
-      // message from an arbitrary throw site is not something to pass through.
-      if (cause.length > 300) cause = cause.slice(0, 300) + '…'
+      // SMI-6585: this catch predates the guard it encloses — Wave A0 moved
+      // `checkInstallTarget` inside it, turning a fail-closed guard fail-open.
+      // The install's OUTCOME is deliberately unchanged (`service.install()`
+      // runs the same target guard unconditionally before any fetch or write),
+      // so swallowing the outcome is correct; swallowing the FACT is not. The
+      // failure now rides `tips`, letting a caller tell "pre-flight passed"
+      // from "pre-flight could not be evaluated".
+      // SMI-6588: the one shared implementation, which also bounds the string
+      // (an unbounded message from an arbitrary throw site is not something to
+      // pass back to a caller). See describeThrown's own comment for why this
+      // is shared rather than written out here again.
+      const cause = describeThrown(err)
 
       // SMI-6585 cross-model review: "was not applied" claimed more than the
       // code can know. `checkForConflicts` can throw AFTER writing a backup,
@@ -446,7 +434,11 @@ async function installSkillImpl(input: unknown, _context?: ToolContext): Promise
           alsoLinkFailures.push(`alsoLink to ${target}: ${warning}`)
         }
       } catch (linkErr) {
-        const message = linkErr instanceof Error ? linkErr.message : String(linkErr)
+        // SMI-6588 round 3: the fourth copy of this coercion, and the only one
+        // with no inner try/catch — a hostile value made `String()` itself
+        // throw, escaping AFTER the primary install had already succeeded and
+        // replacing a success with an exception.
+        const message = describeThrown(linkErr)
         // Best-effort fan-out — log but don't fail the install
         console.error(`[install] alsoLink to ${target} failed:`, message)
         alsoLinkFailures.push(`alsoLink to ${target} failed: ${message}`)
@@ -454,11 +446,11 @@ async function installSkillImpl(input: unknown, _context?: ToolContext): Promise
     }
   }
 
-  // SMI-6529 round 7 / SMI-6585: every non-fatal problem this function knows
-  // about rides one surface. A fan-out refusal and a pre-flight that could
-  // not be evaluated are both things the caller needs to see without either
-  // of them changing the install's success.
-  const nonFatalProblems = [...preflightProblems, ...alsoLinkFailures]
+  // SMI-6529 round 7 / SMI-6585 / SMI-6588: every non-fatal problem this
+  // function knows about rides one surface — a fan-out refusal, a conflict
+  // pre-flight that could not be evaluated, and a namespace pre-flight that
+  // never ran. None of them changes whether the install itself succeeded.
+  const nonFatalProblems = [...preflightProblems, ...gate.problems, ...alsoLinkFailures]
   const resultWithTips: InstallResult =
     nonFatalProblems.length > 0
       ? { ...result, tips: [...(result.tips ?? []), ...nonFatalProblems] }
