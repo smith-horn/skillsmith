@@ -122,11 +122,20 @@ interface RunResult {
   stderr: string
 }
 
-function runScript(parentDir: string, args: string[]): RunResult {
+/**
+ * `envOverrides` exists for the SMI-6569 case, which must inject an absolute
+ * GIT_DIR — the one thing `makeFixtureEnv()` deliberately does not set,
+ * because every other test needs a clean environment.
+ */
+function runScript(
+  parentDir: string,
+  args: string[],
+  envOverrides: NodeJS.ProcessEnv = {}
+): RunResult {
   const result = spawnSync('bash', [SCRIPT, ...args], {
     cwd: parentDir,
     encoding: 'utf8',
-    env: makeFixtureEnv(),
+    env: { ...makeFixtureEnv(), ...envOverrides },
   })
   return { status: result.status ?? -1, stdout: result.stdout ?? '', stderr: result.stderr ?? '' }
 }
@@ -195,6 +204,57 @@ describe('check-submodule-pointer.sh — R0-R11 + R-FETCH', () => {
     expect(r.stdout).toContain('R3:')
     expect(r.stdout).toContain('stale')
     expect(r.stdout).toContain('by 1 commits')
+  })
+
+  it('SMI-6569: an absolute inherited GIT_DIR does not fabricate R1 or suppress the true verdict', () => {
+    // `git -C <dir>` does NOT override an absolute GIT_DIR — -C changes the
+    // cwd, but GIT_DIR still wins over repo discovery, so every submodule-
+    // directed call in the helpers ran against the OUTER repo instead. Git
+    // exports an absolute GIT_DIR into hooks on a push FROM A LINKED
+    // WORKTREE, which is this repo's default workspace, so `.husky/pre-push`
+    // hit this on every run.
+    //
+    // The damage was in two directions at once: R1 ("was never pushed") is
+    // FABRICATED for a commit that is pushed and reachable, AND because R1 is
+    // a Layer-1 precondition it short-circuits Layer 2, SUPPRESSING the real
+    // verdict. This fixture is the R3 case above, so the true answer is known
+    // and the suppression is observable rather than merely asserted-absent.
+    //
+    // A relative GIT_DIR (".git") re-resolves against -C's cwd and is
+    // harmless; only an absolute one redirects. Hence the absolute path here.
+    const f = track(buildFixture())
+    const c1 = commitGitlink(f.parentDir, f.base, 'base bump (target)')
+    commitGitlink(f.parentDir, f.T, 'S = T (stale once remote advances)')
+    commitFile(f.seedDir, 'f2.txt', 'advance\n', 'remote advances past T')
+    git(f.seedDir, 'push', '-q', 'origin', f.branch)
+
+    const args = ['--mode=block', '--ref=HEAD', `--target=${c1}`]
+    const clean = runScript(f.parentDir, args)
+    const contaminated = runScript(f.parentDir, args, {
+      GIT_DIR: join(f.parentDir, '.git'),
+    })
+
+    // The real verdict survives contamination.
+    expect(contaminated.stdout).toContain('R3:')
+    expect(contaminated.stdout).toContain('stale')
+
+    // Neither contamination symptom is produced. Which one appears without
+    // the fix depends on whether the OUTER repo has an `origin` remote:
+    //   - production (outer repo HAS origin): the misdirected fetch succeeds
+    //     against the wrong repo, so the failure surfaces later as a
+    //     fabricated R1 — the reported SMI-6569 symptom.
+    //   - this fixture (parent has NO origin): the misdirected fetch itself
+    //     fails, so it surfaces earlier as R-FETCH.
+    // Both are the same defect. Asserting only R1 here would make this test
+    // pass against the bug in the fixture, which is why the invariant below
+    // is the load-bearing assertion rather than either symptom name.
+    expect(contaminated.stdout).not.toContain('R1:')
+    expect(contaminated.stdout).not.toContain('R-FETCH:')
+
+    // The invariant, and the strongest form of it: GIT_DIR must not change
+    // the verdict at all, exit status included.
+    expect(contaminated.status).toBe(clean.status)
+    expect(contaminated.stdout).toBe(clean.stdout)
   })
 
   it('R4: S is a strict descendant of T and lives on a live remote branch -> PASS + warning', () => {

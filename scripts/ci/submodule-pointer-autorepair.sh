@@ -217,7 +217,14 @@ main() {
     if [ "$RULE" = "R3" ]; then
         # The only auto-repairable case: fast-forward the gitlink to T.
         BRANCH="$(git config -f "$REPO_ROOT/.gitmodules" --get submodule."$MOUNT".branch 2>/dev/null || echo main)"
-        T_SHA="$(git -C "$MOUNT_DIR" rev-parse "origin/$BRANCH")"
+        # `env -u GIT_DIR -u GIT_WORK_TREE` for the same reason as
+        # check-submodule-pointer.helpers.sh's git_sub (SMI-6569): `git -C`
+        # does NOT override an absolute inherited GIT_DIR, so without this the
+        # call silently reads the OUTER repo. Not currently defective here —
+        # this script runs from a GitHub Actions step, which exports no
+        # GIT_DIR, unlike a hook on a push from a linked worktree — but the
+        # pattern is identical and hardening it costs nothing.
+        T_SHA="$(env -u GIT_DIR -u GIT_WORK_TREE git -C "$MOUNT_DIR" rev-parse "origin/$BRANCH")"
 
         # No `set -e` in this script (the push result below needs explicit
         # if/else branching), so this sequence must fail loudly and stop here
@@ -225,7 +232,7 @@ main() {
         # below with a HEAD that never actually advanced (governance review
         # finding — a job with write access to main must never risk pushing a
         # stale HEAD because an earlier step in the same run silently failed).
-        if ! git -C "$MOUNT_DIR" checkout --detach --quiet "$T_SHA" \
+        if ! env -u GIT_DIR -u GIT_WORK_TREE git -C "$MOUNT_DIR" checkout --detach --quiet "$T_SHA" \
             || ! git -C "$REPO_ROOT" -c user.name="skillsmith-bot" -c user.email="bot@skillsmith.app" add "$MOUNT" \
             || ! git -C "$REPO_ROOT" -c user.name="skillsmith-bot" -c user.email="bot@skillsmith.app" \
                 commit --quiet -m "chore(docs): fast-forward docs/internal pointer to ${T_SHA:0:7} [auto-repair SMI-6260]"; then
