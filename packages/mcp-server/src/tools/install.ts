@@ -286,6 +286,9 @@ async function installSkillImpl(input: unknown, _context?: ToolContext): Promise
   // callers — outdated.ts, skill-updates.ts, updateManifestSafely) — passing
   // `scopeTarget.manifestPath` here makes this pre-flight correct for BOTH
   // scopes instead of gated to one.
+  // SMI-6585: collected here rather than swallowed, and surfaced via `tips`
+  // below alongside the fan-out failures.
+  const preflightProblems: string[] = []
   if (validInput.force && validInput.conflictAction) {
     try {
       const manifest = await loadManifest(scopeTarget.manifestPath)
@@ -349,8 +352,29 @@ async function installSkillImpl(input: unknown, _context?: ToolContext): Promise
           return conflictCheck.earlyReturn!
         }
       }
-    } catch {
-      // Conflict check failed; proceed with normal install
+    } catch (err) {
+      // SMI-6585: this catch predates the guard it now encloses. Wave A0
+      // moved `checkInstallTarget` inside it, which turned a fail-closed
+      // guard into a fail-open one for anything that throws in this block.
+      //
+      // The install's OUTCOME is deliberately unchanged: `service.install()`
+      // runs the same target guard unconditionally before any fetch or disk
+      // write (`skill-installation.service.ts`, and `.content.ts` for the
+      // content path), so a refusal still happens there. Swallowing the
+      // outcome is correct; swallowing the FACT is not.
+      //
+      // What is no longer silent is that the pre-flight did not run — which
+      // means its two side effects did not happen either: the conflict
+      // backup/GC was skipped, and any requested `conflictAction` was never
+      // applied. It rides `tips`, the same surface the fan-out failures use,
+      // so a caller can tell "pre-flight passed" from "pre-flight could not
+      // be evaluated".
+      preflightProblems.push(
+        `the install pre-flight (conflict check and target guard) could not be evaluated ` +
+          `(${err instanceof Error ? err.message : String(err)}); the install proceeded and its ` +
+          `target was still checked by the installer's own guard, but any requested ` +
+          `conflictAction was not applied.`
+      )
     }
   }
 
@@ -414,9 +438,14 @@ async function installSkillImpl(input: unknown, _context?: ToolContext): Promise
     }
   }
 
+  // SMI-6529 round 7 / SMI-6585: every non-fatal problem this function knows
+  // about rides one surface. A fan-out refusal and a pre-flight that could
+  // not be evaluated are both things the caller needs to see without either
+  // of them changing the install's success.
+  const nonFatalProblems = [...preflightProblems, ...alsoLinkFailures]
   const resultWithTips: InstallResult =
-    alsoLinkFailures.length > 0
-      ? { ...result, tips: [...(result.tips ?? []), ...alsoLinkFailures] }
+    nonFatalProblems.length > 0
+      ? { ...result, tips: [...(result.tips ?? []), ...nonFatalProblems] }
       : result
 
   // SMI-4588 Wave 2 PR #3: surface non-blocking namespace warnings (and

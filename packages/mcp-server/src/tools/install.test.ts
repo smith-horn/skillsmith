@@ -298,8 +298,16 @@ describe('installSkill() Zod boundary guard (SMI-4288 / #599)', () => {
       expect(mockInstall).not.toHaveBeenCalled()
     })
 
-    it('falls through to core install when manifest lookup throws', async () => {
-      // Conflict preflight swallows errors and continues with normal install.
+    it('falls through to core install when manifest lookup throws, and reports that it did', async () => {
+      // SMI-6585: a throw in the pre-flight no longer changes the OUTCOME —
+      // the install still proceeds, and core's own target guard still runs
+      // unconditionally before any write — but it is no longer invisible.
+      //
+      // This assertion deliberately checks the reported problem rather than
+      // a bare call count. A count cannot distinguish "the pre-flight never
+      // ran" from "it threw and was swallowed"; both read as zero. That
+      // ambiguity is what made the original defect survive 13 cross-model
+      // review rounds.
       mockLoadManifest.mockRejectedValueOnce(new Error('manifest missing'))
 
       const result = await installSkill({
@@ -308,8 +316,35 @@ describe('installSkill() Zod boundary guard (SMI-4288 / #599)', () => {
         conflictAction: 'overwrite',
       })
 
-      expect(result).toEqual(HAPPY_RESULT)
+      expect(result.success).toBe(HAPPY_RESULT.success)
       expect(mockInstall).toHaveBeenCalledTimes(1)
+      expect(result.tips).toEqual(
+        expect.arrayContaining([expect.stringContaining('could not be evaluated')])
+      )
+      expect(result.tips?.join(' ')).toContain('manifest missing')
+    })
+
+    it('reports the underlying cause and the unapplied conflictAction, not a generic string', async () => {
+      // SMI-6585: the two things a caller loses when the pre-flight throws
+      // are (1) the conflict backup/GC side effects and (2) their requested
+      // conflictAction. A report that says only "something failed" is worth
+      // little more than the silence it replaced, so both the real errno and
+      // the unapplied action must survive into the message.
+      mockLoadManifest.mockRejectedValueOnce(new Error('EACCES: permission denied'))
+
+      const result = await installSkill({
+        skillId: 'owner/repo/test-skill',
+        force: true,
+        conflictAction: 'cancel',
+      })
+
+      // The install proceeded: core's guard, not this pre-flight, is what
+      // refuses an unsafe target.
+      expect(mockInstall).toHaveBeenCalledTimes(1)
+
+      const reported = result.tips?.join(' ') ?? ''
+      expect(reported).toContain('EACCES: permission denied')
+      expect(reported).toContain('conflictAction was not applied')
     })
 
     it('resolves bare skillId (no slash) via extractSkillName', async () => {
