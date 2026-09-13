@@ -6172,10 +6172,10 @@ console.log(`\n${BOLD}Check 70: SKILLSMITH_DOCKER default coherence (SMI-6518)${
   // the Check 69 fix a round earlier. `.mjs` is outside both typecheck and
   // eslint here, so nothing mechanical guards an inline branch.
   //
-  // Scoped deliberately to the two reads #2804 introduced. 54 of this file's 97
-  // readFileSync CALL sites are similarly unguarded (a proximity heuristic, not
-  // exact) -- a pre-existing repo-wide pattern, filed as SMI-6584 rather than
-  // refactored here.
+  // Scoped deliberately to the two reads #2804 introduced. Most of this file's
+  // readFileSync call sites are similarly unguarded -- a pre-existing repo-wide
+  // pattern, filed as SMI-6584 (which holds the counts and the method that
+  // produced them) rather than refactored here.
   const reporters = { pass, warn, fail }
   for (const line of dockerEnvCoherenceReportLines({ isCI: Boolean(process.env.CI) })) {
     reporters[line.severity](line.message, line.fix)
