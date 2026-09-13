@@ -172,10 +172,35 @@ The adapter's sandbox (`-s read-only`) blocks Codex from *writing* to the
 target workspace, but not from *reading* it — a read-only sandbox can still
 `cat` a secret-bearing file, and that content can end up in
 `.beads/traces/<bead-id>/{trace.jsonl,stdout.txt}` or in NEEDLE's own
-telemetry log with no redaction step. **Do not dispatch into a workspace
-that contains live secrets** (`.env`, unencrypted credentials, etc.) — this
-is the same class of exposure CLAUDE.md's Varlock section already guards
-against for terminal output and logs, just via a new surface.
+telemetry log with no redaction step. This is the same class of exposure
+CLAUDE.md's Varlock section already guards against for terminal output and
+logs, just via a new surface.
+
+**The rule, revised 2026-09-13.** This section previously read "do not
+dispatch into a workspace that contains live secrets (`.env`, ...)". Every
+worktree now carries a varlock-managed `.env` by design — without it, e2e
+tests cannot run in a worktree's Docker container — so that rule had become
+unsatisfiable: read literally it forbids every dispatch, forever, which is
+not a security posture but an outage. The rule now is:
+
+- **A varlock-managed `.env` in a worktree does not by itself bar a
+  dispatch.** It is expected infrastructure, not an anomaly.
+- **The prompt must not ask Codex to read, summarize, or reason about
+  environment or credential files**, and must not send it looking through
+  config for an answer. Keep dispatches scoped to source, tests and docs.
+- **Treat `.beads/traces/<bead-id>/` as secret-bearing** for any dispatch
+  into a workspace holding real credentials. Do not paste trace content
+  into an issue, a PR, or a commit message without reading it first.
+- **Unencrypted credentials that are NOT varlock-managed** — a stray key
+  file, a dumped token, a downloaded service-account JSON — still bar a
+  dispatch. Remove them from the workspace first.
+
+None of this is enforced in code: `dispatch.sh` has no workspace-secret
+check, and its secret scanner covers only the `--title`/`--body-file`
+prompt text, never the workspace. The one observed mitigation — Codex
+finding a dummy `.env`, declining to read it, and citing the agent pack's
+Varlock skill (recorded below) — is defence in depth that depends on the
+model following guidance, and is not a substitute for any bullet above.
 
 Verified during implementation with a real dispatch into a workspace
 containing a dummy `.env`: Codex found the file, then explicitly declined to
