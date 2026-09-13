@@ -115,10 +115,17 @@ source "$(dirname "${BASH_SOURCE[0]}")/git-env-sanitize.sh" || {
     echo "::error::[pointer-autorepair] cannot source git-env-sanitize.sh — refusing to run with an unverified git environment"
     exit 2
 }
-if ! declare -F sanitize_git_env >/dev/null 2>&1; then
-    echo "::error::[pointer-autorepair] git-env-sanitize.sh sourced but sanitize_git_env is undefined — refusing to run with an unverified git environment"
+if ! declare -F assert_git_env_sanitize_contract >/dev/null 2>&1; then
+    echo "::error::[pointer-autorepair] git-env-sanitize.sh sourced but its contract helper is undefined — refusing to run with an unverified git environment"
     exit 2
 fi
+# Version AND postcondition, not a bare existence check — see
+# check-submodule-pointer.sh's note. This script can push to main, so a stale
+# sanitizer here is the worst place in the guard to accept one.
+_SPA_CONTRACT_ERR="$(assert_git_env_sanitize_contract 4)" || {
+    echo "::error::[pointer-autorepair] git environment sanitizer failed its contract — ${_SPA_CONTRACT_ERR}; refusing to run"
+    exit 2
+}
 sanitize_git_env
 
 # git_mount <git-args...> — run git against the SUBMODULE working directory.

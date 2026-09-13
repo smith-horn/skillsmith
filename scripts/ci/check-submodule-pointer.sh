@@ -69,10 +69,19 @@ source "$SCRIPT_DIR/git-env-sanitize.sh" || {
 # A bare `||` does not catch a PARTIALLY sourced file (a syntax error midway
 # leaves the function undefined but the source status zero), so verify the
 # contract directly rather than trusting that it was established.
-if ! declare -F sanitize_git_env >/dev/null 2>&1; then
-    echo "check-submodule-pointer.sh: git-env-sanitize.sh sourced but sanitize_git_env is undefined — refusing to evaluate with an unverified git environment" >&2
+if ! declare -F assert_git_env_sanitize_contract >/dev/null 2>&1; then
+    echo "check-submodule-pointer.sh: git-env-sanitize.sh sourced but its contract helper is undefined — refusing to evaluate with an unverified git environment" >&2
     exit 2
 fi
+# Existence is not the contract. `declare -F sanitize_git_env` passes for a
+# STALE copy of that file whose variable list predates what this script needs —
+# demonstrated: a stub defining only `unset GIT_DIR` satisfied the existence
+# check while GIT_CONFIG_COUNT stayed live. Require the version AND verify the
+# function actually clears everything its own list claims.
+_CSP_CONTRACT_ERR="$(assert_git_env_sanitize_contract 4)" || {
+    echo "check-submodule-pointer.sh: git environment sanitizer failed its contract — ${_CSP_CONTRACT_ERR}; refusing to evaluate" >&2
+    exit 2
+}
 # shellcheck source=check-submodule-pointer.helpers.sh
 source "$SCRIPT_DIR/check-submodule-pointer.helpers.sh" || {
     echo "check-submodule-pointer.sh: cannot source check-submodule-pointer.helpers.sh — the rule engine is missing" >&2

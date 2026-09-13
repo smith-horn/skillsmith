@@ -42,21 +42,45 @@
 #
 # The first ten entries mirror GIT_DISCOVERY_VARS in
 # scripts/tests/_lib/git-fixture-env.ts (SMI-4693, audited 2026-05-03), which
-# is the test-fixture side of the same threat model. Keep them in sync. The
-# last two are additions this file needs and that list does not have, because
-# a fixture builds its own repos from scratch and never evaluates inherited
-# ancestry.
+# is the test-fixture side of the same threat model. Keep them in sync. Every
+# entry AFTER the discovery block is an addition this file needs and that list
+# does not have, because a fixture builds its own repos from scratch and never
+# evaluates inherited ancestry or inherited config routing.
+#
+# (An earlier version of this sentence said "the last two are additions" and
+# went stale the first time the list grew — the third stale-comment defect in
+# this one file. Describing the category rather than counting survives a
+# change; a count does not.)
 #
 # Two entries of that list are deliberately NOT mirrored: GIT_CONFIG and
-# XDG_CONFIG_HOME. Those route config resolution rather than repo state, and
-# this guard runs a real authenticated `git fetch` whose credentials come from
-# the url.<base>.insteadOf rewrite CI installs with `git config --global`.
-# Measured that clearing them would in fact have been safe — `git config
-# --global` writes to $HOME/.gitconfig even when XDG_CONFIG_HOME is set, and
-# the rewrite stays visible with it unset — so this is a scoping choice, not a
-# workaround. The `GIT_CONFIG_COUNT` / `GIT_CONFIG_PARAMETERS` family IS
-# handled — see the config-injection block in the list below; an earlier
-# version of this comment dismissed it as out of scope and was wrong.
+# XDG_CONFIG_HOME. `GIT_CONFIG` affects `git config` itself rather than the
+# fetch/ancestry commands this guard runs. `XDG_CONFIG_HOME` participates in
+# NORMAL global-config resolution, which is where CI's authenticated
+# url.<base>.insteadOf rewrite lives — clearing it was measured safe (`git
+# config --global` writes to $HOME/.gitconfig even when it is set, and the
+# rewrite stays visible with it unset), so this is a scoping choice rather
+# than a dependency.
+#
+# GIT_CONFIG_GLOBAL / GIT_CONFIG_SYSTEM / GIT_CONFIG_NOSYSTEM are a KNOWN,
+# MEASURED, DELIBERATELY DEFERRED gap — SMI-6600, not an oversight. They
+# replace the normal config sources outright, so any of them can introduce or
+# hide a `url.*.insteadOf` and redirect the fetch that produces T:
+#
+#   $ git config --get-all 'url.https://evil.example/.insteadOf'   -> (empty)
+#   $ GIT_CONFIG_GLOBAL=<file with that rule> git config --get-all -> https://github.com/
+#
+# They are not cleared here because doing so breaks the shared test harness.
+# scripts/tests/_lib/git-fixture-env.ts uses GIT_CONFIG_GLOBAL=/dev/null as its
+# ONLY global-config isolation and deliberately leaves HOME alone (SMI-4699,
+# stated in its own comments). Unsetting it mid-script punches through that —
+# measured, the scripts under test went from seeing no global config to seeing
+# the developer's real ~/.gitconfig. Closing this properly means changing that
+# helper, which is audit-enforced (Audit-39, SMI-4693) and has a byte-identical
+# mirror; that is SMI-6600's scope, not this file's.
+#
+# Unlike GIT_CONFIG_PARAMETERS below, nothing in ordinary git usage SETS these
+# — it takes a deliberate act — which is why they are the deferrable half and
+# GIT_CONFIG_PARAMETERS was not.
 
 SKILLSMITH_GIT_VERDICT_VARS=(
     # --- repo discovery (mirrors GIT_DISCOVERY_VARS) ---
@@ -73,6 +97,22 @@ SKILLSMITH_GIT_VERDICT_VARS=(
     # --- ancestry rewriting (this file's own additions) ---
     GIT_SHALLOW_FILE
     GIT_GRAFT_FILE
+    # --- object-graph replacement (SMI-6598 round 2) ---
+    # Replacement refs rewrite commit parentage, so they change exactly what
+    # merge-base and rev-list report — the R3-R7 decision inputs. Measured on a
+    # 4-commit chain, replacing the tip with a parentless rewrite:
+    #
+    #   baseline                              is-ancestor c1 c4 -> 0, count 3
+    #   with a replacement ref                is-ancestor c1 c4 -> 1, count 1
+    #   + GIT_NO_REPLACE_OBJECTS=1            is-ancestor c1 c4 -> 0  (bypassed)
+    #   + GIT_REPLACE_REF_BASE=refs/nowhere   is-ancestor c1 c4 -> 0  (hidden)
+    #
+    # Both directions are a verdict change: setting them suppresses a
+    # replacement a repo legitimately has, and leaving them unset lets an
+    # inherited one apply. Same class as GIT_SHALLOW_FILE and GIT_GRAFT_FILE
+    # above, which this file already covers — these were simply missed.
+    GIT_REPLACE_REF_BASE
+    GIT_NO_REPLACE_OBJECTS
     # --- config injection (SMI-6598) ---
     # An earlier version of this file listed these two in a comment as "a
     # separate, unaddressed surface — tracked rather than guessed at". That
@@ -95,6 +135,58 @@ SKILLSMITH_GIT_VERDICT_VARS=(
     GIT_CONFIG_COUNT
     GIT_CONFIG_PARAMETERS
 )
+
+# Contract version. Bump this whenever SKILLSMITH_GIT_VERDICT_VARS GAINS an
+# entry, and raise the minimum each entry point requires to match.
+#
+# This exists because `declare -F sanitize_git_env` proves the function is
+# DEFINED, not that it covers what the caller needs. A mixed or partial
+# deployment — an older copy of this file next to newer entry points — defines
+# the function with a shorter list and sails through an existence check.
+# Demonstrated: a stub defining only `unset GIT_DIR` satisfied `declare -F`
+# while GIT_CONFIG_COUNT stayed live through "sanitization".
+#
+# A postcondition check alone does not fix that either, because it would probe
+# the function against THIS file's own list — and a stale file's list is
+# exactly what is wrong with it. So entry points check both: the version (does
+# this file claim to cover what I need) and the postcondition (does the
+# function actually do what this file claims).
+#
+#   1 — initial: discovery vars
+#   2 — + GIT_SHALLOW_FILE, GIT_GRAFT_FILE
+#   3 — + GIT_CONFIG_COUNT, GIT_CONFIG_PARAMETERS
+#   4 — + GIT_REPLACE_REF_BASE, GIT_NO_REPLACE_OBJECTS
+SKILLSMITH_GIT_SANITIZE_CONTRACT=4
+
+# assert_git_env_sanitize_contract <minimum-version> — verify this file both
+# CLAIMS and DELIVERS what the caller requires. Returns non-zero with a reason
+# on stdout; the caller decides how loudly to fail.
+assert_git_env_sanitize_contract() {
+    _SGE_WANT="$1"
+    if [ "${SKILLSMITH_GIT_SANITIZE_CONTRACT:-0}" -lt "$_SGE_WANT" ]; then
+        echo "git-env-sanitize.sh declares contract v${SKILLSMITH_GIT_SANITIZE_CONTRACT:-0}, caller requires v${_SGE_WANT} — stale or mixed deployment"
+        return 1
+    fi
+    # Postcondition: set a sentinel for every variable the list claims, run the
+    # function in a subshell, and report any that survived. Catches a
+    # current-version file whose function is broken rather than merely old.
+    _SGE_SURVIVORS="$(
+        for _SGE_V in "${SKILLSMITH_GIT_VERDICT_VARS[@]}"; do
+            export "${_SGE_V}=skillsmith-sanitize-probe"
+        done
+        sanitize_git_env
+        for _SGE_V in "${SKILLSMITH_GIT_VERDICT_VARS[@]}"; do
+            if [ -n "$(eval "printf '%s' \"\${${_SGE_V}+set}\"")" ]; then
+                printf '%s ' "$_SGE_V"
+            fi
+        done
+    )"
+    if [ -n "$_SGE_SURVIVORS" ]; then
+        echo "sanitize_git_env left these set: ${_SGE_SURVIVORS}"
+        return 1
+    fi
+    return 0
+}
 
 # sanitize_git_env — clear the whole set for the remainder of this process.
 #
