@@ -34,6 +34,8 @@
  * optional matching quote (single, double, or none) via a backreference.
  */
 
+import { readFileSync } from 'node:fs'
+
 const COMPOSE_CPUS_RE = /cpus:\s*(['"]?)\$\{SKILLSMITH_DOCKER_CPUS:-([^}'"]+)\}\1/
 const COMPOSE_MEM_RE = /mem_limit:\s*(['"]?)\$\{SKILLSMITH_DOCKER_MEM:-([^}'"]+)\}\1/
 
@@ -208,4 +210,95 @@ export function checkDockerEnvDefaultCoherence(composeContent, envSchemaContent)
     mismatches,
     ok: problems.length === 0 && mismatches.length === 0,
   }
+}
+
+const DOCKER_ENV_FIX_CI =
+  'A CI runner checks out the full tree, so this is a real breakage. Confirm the checkout ' +
+  'step ran and that audit:standards is invoked from the repository root.'
+
+const DOCKER_ENV_FIX_LOCAL =
+  'Both paths are resolved relative to the current working directory — run ' +
+  '`npm run audit:standards` from the repository root.'
+
+/**
+ * Read both inputs and evaluate them, returning a verdict instead of throwing
+ * (SMI-6575, round 2).
+ *
+ * Check 70's call site previously read `docker-compose.yml` and `.env.schema`
+ * with bare `readFileSync` calls. Check 70 is the LAST check and the Summary
+ * block sits immediately below it, so an ENOENT there destroyed the summary and
+ * the exit verdict exactly as Check 69's throw did -- measured by moving
+ * `.env.schema` aside: exit 1, no summary block at all.
+ *
+ * The first fix for that wrapped the reads inline in audit-standards.mjs, which
+ * a cross-family pre-merge gate correctly BLOCKED: it left the new failure path
+ * with no automated coverage, which is the same defect that had blocked the
+ * Check 69 fix one round earlier. `.mjs` is outside both typecheck and eslint
+ * here, so nothing mechanical guards an inline branch. Extracting the read plus
+ * the branching makes every outcome directly testable and leaves the audit
+ * script a flat dispatch.
+ *
+ * `readFile` is injected so a test can drive the failure path without touching
+ * the real filesystem.
+ *
+ * @param {{isCI?: boolean, readFile?: (path: string) => string}} [options]
+ * @returns {Array<{severity: 'pass' | 'warn' | 'fail', message: string, fix?: string}>}
+ */
+export function dockerEnvCoherenceReportLines(options = {}) {
+  const readFile = options.readFile ?? ((p) => readFileSync(p, 'utf8'))
+
+  let coherence
+  try {
+    coherence = checkDockerEnvDefaultCoherence(
+      readFile('docker-compose.yml'),
+      readFile('.env.schema')
+    )
+  } catch (err) {
+    const reason = err instanceof Error ? err.message : String(err)
+    // NOT EVALUATED is a third outcome, never a pass -- a check that self-skips
+    // to pass is the SMI-6118 / SMI-6332 failure mode elsewhere in this audit.
+    return [
+      {
+        severity: options.isCI ? 'fail' : 'warn',
+        message:
+          'Check 70: NOT EVALUATED — could not read docker-compose.yml and/or ' +
+          `.env.schema, so nothing was compared: ${reason}`,
+        fix: options.isCI ? DOCKER_ENV_FIX_CI : DOCKER_ENV_FIX_LOCAL,
+      },
+    ]
+  }
+
+  if (coherence.problems.length > 0) {
+    return [
+      {
+        severity: 'fail',
+        message: `Check 70: ${coherence.problems.join('; ')}`,
+        fix:
+          "Both files must declare a parseable default -- see docker-compose.yml's dev service " +
+          "(`cpus:`/`mem_limit:`) and .env.schema's SKILLSMITH_DOCKER_CPUS/SKILLSMITH_DOCKER_MEM " +
+          'entries ("Default N" prose).',
+      },
+    ]
+  }
+
+  if (coherence.mismatches.length > 0) {
+    return [
+      {
+        severity: 'fail',
+        message:
+          'Check 70: docker-compose.yml and .env.schema disagree on SKILLSMITH_DOCKER ' +
+          `default(s) — ${coherence.mismatches.join('; ')}`,
+        fix: 'Update whichever file is stale so both defaults match exactly.',
+      },
+    ]
+  }
+
+  return [
+    {
+      severity: 'pass',
+      message:
+        'Check 70: docker-compose.yml and .env.schema agree on SKILLSMITH_DOCKER_CPUS ' +
+        `(${coherence.compose.cpus}) and SKILLSMITH_DOCKER_MEM (${coherence.compose.mem}) defaults`,
+    },
+  ]
 }
