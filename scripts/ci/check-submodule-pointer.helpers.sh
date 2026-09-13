@@ -107,44 +107,19 @@ repo_slug() {
 # already names it. Verified — `rev-parse --show-toplevel` and `ls-tree HEAD`
 # return identical results with and without GIT_DIR set.
 #
-# WHICH vars are unset, and why it is not just GIT_DIR. An earlier version of
-# this wrapper unset only GIT_DIR and GIT_WORK_TREE and claimed that "removes
-# the remaining way a caller's environment could redirect these reads". That
-# claim was false, and measurement is what caught it — governance review found
-# it, and it reproduced here against docs/internal:
+# WHICH vars are cleared, and why, lives in ONE place: git-env-sanitize.sh.
+# This wrapper delegates there rather than carrying its own copy of the list —
+# an earlier version kept a second inline copy in submodule-pointer-autorepair.sh
+# synchronised only by a comment, which is drift waiting to happen.
 #
-#   GIT_COMMON_DIR=<outer .git>          + env -u GIT_DIR -u GIT_WORK_TREE -> exit 128
-#   GIT_OBJECT_DIRECTORY=<outer objects> + env -u GIT_DIR -u GIT_WORK_TREE -> exit 128
-#
-# Both redirect straight through a GIT_DIR-only unset, producing the same
-# failure class as the original bug. The other six discovery vars
-# (GIT_INDEX_FILE, GIT_ALTERNATE_OBJECT_DIRECTORIES, GIT_NAMESPACE,
-# GIT_PREFIX, GIT_CEILING_DIRECTORIES, GIT_DISCOVERY_ACROSS_FILESYSTEM)
-# measured harmless for these call shapes, and git exports none of the eight
-# into hooks natively — so this is hardening against a class, not a live
-# trigger. It is unset anyway because enumerating "which ones happen to matter
-# for today's exact commands" is the brittle version of this fix.
-#
-# The list mirrors GIT_DISCOVERY_VARS in scripts/tests/_lib/git-fixture-env.ts
-# (SMI-4693, audited 2026-05-03), which is this repo's single source of truth
-# for the discovery-redirect threat model. Keep them in sync.
-#
-# DELIBERATE DIVERGENCE from that list: its last two entries, GIT_CONFIG and
-# XDG_CONFIG_HOME, are NOT unset here. Those route config resolution, not repo
-# discovery, and this wrapper runs a real authenticated `git fetch` whose
-# credentials come from the `url.<base>.insteadOf` rewrite that CI installs
-# with `git config --global`. Narrowing to the discovery class keeps the fix
-# scoped to the defect. (Measured that it would in fact have been safe either
-# way: `git config --global` writes to $HOME/.gitconfig even when
-# XDG_CONFIG_HOME is set, and the rewrite is still visible with
-# XDG_CONFIG_HOME unset — so this is a scoping choice, not a workaround.)
+# Note that the entry point (check-submodule-pointer.sh) already calls
+# sanitize_git_env() for the whole process, so in the normal path this wrapper
+# is defence in depth rather than the active fix. It still matters: a test that
+# sources this file directly does not go through that entry point.
 git_sub() {
     _CSP_GIT_SUB_DIR="$1"
     shift
-    env -u GIT_DIR -u GIT_WORK_TREE -u GIT_INDEX_FILE -u GIT_OBJECT_DIRECTORY \
-        -u GIT_ALTERNATE_OBJECT_DIRECTORIES -u GIT_COMMON_DIR -u GIT_NAMESPACE \
-        -u GIT_PREFIX -u GIT_CEILING_DIRECTORIES -u GIT_DISCOVERY_ACROSS_FILESYSTEM \
-        git -C "$_CSP_GIT_SUB_DIR" "$@"
+    git_sanitized -C "$_CSP_GIT_SUB_DIR" "$@"
 }
 
 # print_result — unified output line. severity: PASS|PASS-WARN|SKIP|FAIL.

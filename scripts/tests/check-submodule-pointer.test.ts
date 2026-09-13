@@ -225,7 +225,7 @@ describe('check-submodule-pointer.sh — R0-R11 + R-FETCH', () => {
     const f = track(buildFixture())
     const c1 = commitGitlink(f.parentDir, f.base, 'base bump (target)')
     commitGitlink(f.parentDir, f.T, 'S = T (stale once remote advances)')
-    commitFile(f.seedDir, 'f2.txt', 'advance\n', 'remote advances past T')
+    const advanced = commitFile(f.seedDir, 'f2.txt', 'advance\n', 'remote advances past T')
     git(f.seedDir, 'push', '-q', 'origin', f.branch)
 
     const args = ['--mode=block', '--ref=HEAD', `--target=${c1}`]
@@ -239,13 +239,73 @@ describe('check-submodule-pointer.sh — R0-R11 + R-FETCH', () => {
     // hooks, so they are a hardened class rather than a live trigger; the
     // first version of this fix unset only GIT_DIR and claimed to have closed
     // the class, which was false.
-    for (const varName of ['GIT_DIR', 'GIT_COMMON_DIR', 'GIT_OBJECT_DIRECTORY']) {
-      const value =
-        varName === 'GIT_OBJECT_DIRECTORY'
-          ? join(f.parentDir, '.git', 'objects')
-          : join(f.parentDir, '.git')
-      const contaminated = runScript(f.parentDir, args, { [varName]: value })
-      assertVerdictUnchanged(varName, clean, contaminated)
+    // Real ancestry-rewriting payloads. The boundary must be the ADVANCED
+    // commit (the new upstream tip), not `T`: shallow and graft files cut a
+    // commit's PARENTS, so detaching `T` leaves `T -> advanced` intact and
+    // changes nothing. Cutting `advanced`'s parents is what makes `T`
+    // unreachable from the tip, flipping `merge-base --is-ancestor` and the
+    // `rev-list --count` that R3's "behind by N" is built from.
+    //
+    // An earlier version of this test pointed both at /dev/null, which flips
+    // `rev-parse --is-shallow-repository` to true but lists no boundary and
+    // truncates nothing — it passed against the bug. Caught by removing the
+    // two vars from the sanitizer and watching the test still pass.
+    const shallowFile = join(f.root, 'poison-shallow')
+    writeFileSync(shallowFile, `${advanced}\n`)
+    const graftFile = join(f.root, 'poison-graft')
+    writeFileSync(graftFile, `${advanced}\n`)
+
+    const poisons: { name: string; value: string; why: string }[] = [
+      {
+        name: 'GIT_DIR',
+        value: join(f.parentDir, '.git'),
+        why: 'the var git actually exports into hooks; the reported bug',
+      },
+      {
+        name: 'GIT_COMMON_DIR',
+        value: join(f.parentDir, '.git'),
+        why: 'redirects identically and survives a GIT_DIR-only unset (measured exit 128)',
+      },
+      {
+        name: 'GIT_OBJECT_DIRECTORY',
+        value: join(f.parentDir, '.git', 'objects'),
+        why: 'same — survives a GIT_DIR-only unset',
+      },
+      {
+        // The counterexample that broke the "outer-repo calls are safe because
+        // an inherited worktree GIT_DIR already names the outer repo" claim.
+        // Pointing GIT_DIR at a DIFFERENT valid repository made the outer
+        // `ls-tree HEAD -- docs/internal` return EMPTY with exit 0, which
+        // evaluate_mount reads as "no gitlink entry … nothing to check" and
+        // reports as PASS — a wrong answer delivered as a pass.
+        name: 'GIT_DIR',
+        value: join(f.mountDir, '.git'),
+        why: 'points at the SUBMODULE repo, poisoning the OUTER calls too',
+      },
+      {
+        // Not a discovery variable at all — it rewrites ancestry. The file
+        // must name a REAL boundary commit to bite: an empty or /dev/null
+        // shallow file flips `rev-parse --is-shallow-repository` to true but
+        // truncates nothing, so a test using it would pass against the bug.
+        // With `T` listed as a boundary, T loses its parents, so
+        // `merge-base --is-ancestor <base> <T>` flips 0 -> 1 and
+        // `rev-list --count` drops — which is exactly what R3-R7 decide on.
+        name: 'GIT_SHALLOW_FILE',
+        value: shallowFile,
+        why: 'rewrites ancestry rather than redirecting discovery',
+      },
+      {
+        // Same class: a graft line naming a commit with no parents detaches
+        // it from its history.
+        name: 'GIT_GRAFT_FILE',
+        value: graftFile,
+        why: 'rewrites parentage, same class as GIT_SHALLOW_FILE',
+      },
+    ]
+
+    for (const p of poisons) {
+      const contaminated = runScript(f.parentDir, args, { [p.name]: p.value })
+      assertVerdictUnchanged(`${p.name} (${p.why})`, clean, contaminated)
     }
   })
 

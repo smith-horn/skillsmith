@@ -84,25 +84,26 @@ REPO_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
 MOUNT="docs/internal"
 MOUNT_DIR="$REPO_ROOT/$MOUNT"
 
-# git_mount <git-args...> — run git against the SUBMODULE working directory,
-# immune to an inherited git-discovery environment (SMI-6569). Same contract
-# and same var list as check-submodule-pointer.helpers.sh's git_sub(); this
-# script does not source that file, so the wrapper is duplicated rather than
-# shared. Keep the two lists in sync, and in sync with GIT_DISCOVERY_VARS in
-# scripts/tests/_lib/git-fixture-env.ts (SMI-4693), which is the source of
-# truth for the threat model.
+# SMI-6569: clear the inherited git environment for this whole process. This
+# script's own git calls include `add`, `commit` and `push` against the OUTER
+# repo — the highest-consequence calls in the guard — and an earlier fix
+# wrapped only the submodule-directed ones. See git-env-sanitize.sh for the
+# executed counterexample showing an outer call returning a wrong answer with
+# exit 0 under a poisoned GIT_DIR.
 #
-# `git -C <dir>` does NOT override an absolute inherited GIT_DIR, and measured,
-# GIT_COMMON_DIR and GIT_OBJECT_DIRECTORY redirect even when GIT_DIR is unset.
-# Not currently defective here — this script runs from a GitHub Actions step,
-# which exports none of these — unlike a hook on a push from a linked worktree.
-# It is hardened anyway because the call shape is identical to the one that
-# WAS defective, and a reader should not have to work out which copy is safe.
+# Not a live trigger here (a GitHub Actions step exports none of these, unlike
+# a hook on a push from a linked worktree), but this script is the one that can
+# push to main, so it gets the same treatment rather than an argument about why
+# it does not need it.
+# shellcheck source=git-env-sanitize.sh
+source "$(dirname "${BASH_SOURCE[0]}")/git-env-sanitize.sh"
+sanitize_git_env
+
+# git_mount <git-args...> — run git against the SUBMODULE working directory.
+# Delegates the variable list to git-env-sanitize.sh; see git_sub() in
+# check-submodule-pointer.helpers.sh for the sibling wrapper.
 git_mount() {
-    env -u GIT_DIR -u GIT_WORK_TREE -u GIT_INDEX_FILE -u GIT_OBJECT_DIRECTORY \
-        -u GIT_ALTERNATE_OBJECT_DIRECTORIES -u GIT_COMMON_DIR -u GIT_NAMESPACE \
-        -u GIT_PREFIX -u GIT_CEILING_DIRECTORIES -u GIT_DISCOVERY_ACROSS_FILESYSTEM \
-        git -C "$MOUNT_DIR" "$@"
+    git_sanitized -C "$MOUNT_DIR" "$@"
 }
 
 # ---------------------------------------------------------------------------
@@ -123,22 +124,44 @@ git_mount() {
 open_or_skip_issue() {
     _SPA_REMEDIATION="$1"
 
-    # SMI-6580(d): distinguish "the dedupe query itself failed" from "no
-    # existing issue" — the original `|| echo ""` folded both into an empty
-    # string, so a `gh` outage silently disabled dedup and proceeded as if
-    # nothing were open. `gh issue list`'s own exit status is now captured
-    # explicitly instead of being discarded.
+    # SMI-6580(F-4): a machine-readable dedupe key, embedded in the body and
+    # searched for verbatim. The previous key was the prose `commit <sha>`,
+    # which matches ANY issue whose body happens to mention that commit —
+    # combined with `--state all`, an old closed incident write-up discussing
+    # the same SHA would suppress a real pointer alert and return success.
+    # This marker cannot appear by accident, and the query below is also
+    # constrained by label.
+    _SPA_DEDUPE_KEY="pointer-autorepair-key:${MOUNT}:${GITHUB_SHA}"
+
+    # Label creation comes FIRST, before the dedupe query, because that query
+    # is label-constrained (below) and `gh issue list --label` against a label
+    # that does not exist is not a state this function should have to reason
+    # about. It is also the SMI-6580 root cause, so it belongs ahead of every
+    # other gh call rather than immediately before the create.
     #
-    # stderr goes to a FILE, never `2>&1` into the captured value. `gh` writes
-    # advisory notices to stderr on otherwise-successful calls (new-release
-    # nags, auth/deprecation warnings), and merging those into the capture
-    # makes a non-empty `_SPA_EXISTING` on a run where NO issue exists — which
-    # this function would then read as "already reported" and skip alerting.
-    # That is the SMI-6580 silent-miss reintroduced by its own fix; measured
-    # with a faked `gh` that prints a release notice on a successful list.
-    _SPA_ERR_FILE="$(mktemp)"
+    # SMI-6580(F-5): `|| true` on its own would make a failed label write
+    # indistinguishable from success. Tolerate failure only when the label
+    # demonstrably already exists; otherwise say so, because the next call is
+    # the one SMI-6580 was about.
+    _SPA_ERR_FILE="$(mktemp)" || {
+        echo "::error::[pointer-autorepair] mktemp failed — cannot capture gh diagnostics, refusing to run the alert path blind"
+        return 1
+    }
+    if ! gh label create submodule-pointer-regression --color b60205 \
+        --description "docs/internal pointer regression pointer-autorepair could not safely auto-repair (SMI-6260/SMI-6580)" \
+        >/dev/null 2>"$_SPA_ERR_FILE"; then
+        if gh label list --repo "$GITHUB_REPOSITORY" \
+            --search submodule-pointer-regression --json name \
+            -q '.[].name' 2>/dev/null | grep -qx submodule-pointer-regression; then
+            : # already exists — the expected steady state, nothing to report
+        else
+            echo "::warning::[pointer-autorepair] could not create label 'submodule-pointer-regression' and could not confirm it exists: $(cat "$_SPA_ERR_FILE"). The issue create below will fail if the label is genuinely missing, and that failure is now fatal."
+        fi
+    fi
+
     if ! _SPA_EXISTING="$(gh issue list --repo "$GITHUB_REPOSITORY" \
-        --search "\"commit ${GITHUB_SHA}\" in:body" --state all \
+        --label submodule-pointer-regression \
+        --search "\"${_SPA_DEDUPE_KEY}\" in:body" --state all \
         --json number -q '.[0].number' 2>"$_SPA_ERR_FILE")"; then
         echo "::error::[pointer-autorepair] dedupe query failed (gh issue list) — cannot safely determine whether ${RULE} on ${GITHUB_SHA} was already reported, refusing to proceed as though it wasn't: $(cat "$_SPA_ERR_FILE")"
         rm -f "$_SPA_ERR_FILE"
@@ -150,22 +173,16 @@ open_or_skip_issue() {
         return 0
     fi
 
-    # SMI-6580(a): the label must exist before `gh issue create --label`
-    # references it, or the create silently fails with "not found" — the
-    # exact SMI-6580 root cause (see this file's header note). Idempotent
-    # and safe to call on every run; matches the established shape in
-    # scripts/prod-deploy-cancel-monitor.sh:178 and
-    # scripts/status-external-probe.sh:148. This label is also pre-
-    # registered in scripts/setup-github-labels.sh so a fresh repo doesn't
-    # depend on this call-site create running first.
-    gh label create submodule-pointer-regression --color b60205 --force >/dev/null 2>&1 || true
-
     # shellcheck disable=SC2016  # single-quoted ON PURPOSE: the backticked
     # `pointer-autorepair`/`main`/etc. spans are literal Markdown, not shell
     # command substitution — the %s placeholders are printf format specs,
     # substituted via printf's own args below, never shell-expanded.
-    _SPA_BODY="$(printf '%s\n\nDetected by `pointer-autorepair` (SMI-6260) on push to `main`, commit %s.\n\n**Remediation**: %s\n\n_Auto-generated by `.github/workflows/submodule-pointer-check.yml` (SMI-6260)._' \
-        "$FAIL_LINE" "$GITHUB_SHA" "$_SPA_REMEDIATION")"
+    #
+    # The trailing HTML comment carries the dedupe key. It is invisible in
+    # rendered Markdown and is what the query above matches on, so dedupe no
+    # longer depends on prose that an unrelated issue could reproduce.
+    _SPA_BODY="$(printf '%s\n\nDetected by `pointer-autorepair` (SMI-6260) on push to `main`, commit %s.\n\n**Remediation**: %s\n\n_Auto-generated by `.github/workflows/submodule-pointer-check.yml` (SMI-6260)._\n\n<!-- %s -->' \
+        "$FAIL_LINE" "$GITHUB_SHA" "$_SPA_REMEDIATION" "$_SPA_DEDUPE_KEY")"
 
     # SMI-6580(b): capture stderr and surface the actual cause instead of
     # discarding it into a generic `::warning::` that always returned 0.
@@ -173,7 +190,10 @@ open_or_skip_issue() {
     # issue's URL, which is echoed below — the pre-SMI-6580 code let `gh`
     # print that URL straight to the job log, and losing it would make a
     # successful alert harder to find than a failed one.
-    _SPA_ERR_FILE="$(mktemp)"
+    _SPA_ERR_FILE="$(mktemp)" || {
+        echo "::error::[pointer-autorepair] mktemp failed — cannot capture gh's diagnostics for the issue create, refusing to attempt the alert blind"
+        return 1
+    }
     if ! _SPA_URL="$(gh issue create --repo "$GITHUB_REPOSITORY" \
         --label submodule-pointer-regression \
         --title "docs/internal pointer regression on main (${RULE}) — commit ${GITHUB_SHA:0:7}" \
@@ -195,7 +215,15 @@ open_or_skip_issue() {
 # path), 1 for anything that means an alert or repair did NOT actually
 # happen when it should have (SMI-6580 fix).
 main() {
-    OUTPUT_FILE="$(mktemp)"
+    # SMI-6580(F-5): mktemp's own failure was unchecked, and the file was never
+    # removed. An unchecked mktemp means `>"$OUTPUT_FILE"` writes to the empty
+    # string and the evaluator's output is lost, which this function would then
+    # scan for a FAIL line and find none.
+    OUTPUT_FILE="$(mktemp)" || {
+        echo "::error::[pointer-autorepair] mktemp failed — cannot capture the evaluator's output, refusing to run blind"
+        return 1
+    }
+    trap 'rm -f "$OUTPUT_FILE"' RETURN
 
     : "${GITHUB_SHA:?GITHUB_SHA required}"
     : "${BEFORE_SHA:?BEFORE_SHA required}"
@@ -216,19 +244,37 @@ main() {
         return 0
     fi
 
-    FAIL_LINE="$(grep -E "^FAIL \[${MOUNT}\]: " "$OUTPUT_FILE" | head -1 || true)"
-    if [ -z "$FAIL_LINE" ]; then
-        # SMI-6580(e): exit 2 from check-submodule-pointer.sh means a BROKEN
-        # INVOCATION (unknown argument, or --ref/--target/--before failing
-        # to resolve to a commit — see its own :69-71, :76, :94-101), not a
-        # normal "nothing matched" verdict. Only exit 1 with no FAIL line is
-        # the legitimate R-FETCH-already-handled-elsewhere case; exit 2 must
-        # fail loudly instead of being silently treated as "nothing to do".
-        if [ "$EXIT_CODE" -eq 2 ]; then
-            echo "::error::[pointer-autorepair] check-submodule-pointer.sh exited 2 (broken invocation, not a content verdict) — see its output above; this is a bug in how this script invoked it, not a docs/internal regression"
+    # SMI-6580(e): capture grep's OWN status instead of ending the pipeline
+    # with `| head -1 || true`, which masked both producer and consumer
+    # failure. grep exits 1 for "no match" (expected and benign) and >1 for a
+    # real error — an unreadable output file, a bad pattern. Those are not the
+    # same event and must not both read as "no FAIL line".
+    FAIL_LINE=""
+    if GREP_OUT="$(grep -E "^FAIL \[${MOUNT}\]: " "$OUTPUT_FILE")"; then
+        FAIL_LINE="$(printf '%s\n' "$GREP_OUT" | head -1)"
+    else
+        GREP_STATUS=$?
+        if [ "$GREP_STATUS" -gt 1 ]; then
+            echo "::error::[pointer-autorepair] could not scan the evaluator's output for a ${MOUNT} FAIL line (grep exited ${GREP_STATUS}, not 0-match-found or 1-no-match) — the verdict is unknown, refusing to report success"
             return 1
         fi
-        echo "[pointer-autorepair] non-zero exit but no blocking-mount FAIL line found for $MOUNT — nothing actionable (likely R-FETCH, already handled by the caller's own fetch-outcome gate)."
+    fi
+
+    if [ -z "$FAIL_LINE" ]; then
+        # ALLOWLIST, not a denylist. An earlier version special-cased exit 2
+        # and let every other non-zero status fall through to "nothing
+        # actionable, return 0" — so 126 (not executable), 127 (interpreter
+        # missing), a signal death, or any future status meant this job
+        # reported success on a run that never produced a verdict.
+        #
+        # Only exit 1 is a content verdict. Exit 2 is a broken invocation
+        # (unknown argument, or --ref/--target/--before not resolving — see
+        # check-submodule-pointer.sh's own argument parsing and ref checks).
+        if [ "$EXIT_CODE" -ne 1 ]; then
+            echo "::error::[pointer-autorepair] check-submodule-pointer.sh exited ${EXIT_CODE} with no ${MOUNT} FAIL line. Only exit 1 is a content verdict; 2 means this script invoked it wrongly, and anything else means it crashed, was signalled, or could not run at all. See its output above. Not treating this as 'nothing to do'."
+            return 1
+        fi
+        echo "[pointer-autorepair] exit 1 with no blocking-mount FAIL line for $MOUNT — nothing actionable (an R-FETCH or a non-blocking-mount warning, already handled by the caller's own fetch-outcome gate)."
         return 0
     fi
 

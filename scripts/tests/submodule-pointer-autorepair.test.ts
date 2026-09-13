@@ -219,10 +219,13 @@ describe('submodule-pointer-autorepair.sh — open_or_skip_issue (SMI-6580)', ()
     expect(r.stdout).toContain(distinctiveCause)
     expect(r.stdout).toContain('dedupe query failed')
 
-    // The real proof that it didn't "silently proceed": neither the label
-    // nor the issue was ever created after the dedupe query blew up.
+    // The real proof that it didn't "silently proceed": no issue was created
+    // after the dedupe query blew up. `label create` legitimately ran first —
+    // it is deliberately ordered ahead of the dedupe query, because that query
+    // is label-constrained and must not be the thing that discovers the label
+    // is missing.
     const calls = readLog(logFile)
-    expect(calls).not.toContain('label create')
+    expect(calls).toEqual(['label create', 'issue list'])
     expect(calls).not.toContain('issue create')
   })
 
@@ -277,8 +280,10 @@ describe('submodule-pointer-autorepair.sh — open_or_skip_issue (SMI-6580)', ()
 
     expect(r.status).toBe(0)
     expect(r.stdout).toContain('already reported as issue #4242')
+    // Stops at the dedupe hit — no duplicate issue. `label create` ran first
+    // by design (see the dedupe-failure test above for why).
     const calls = readLog(logFile)
-    expect(calls).not.toContain('label create')
+    expect(calls).toEqual(['label create', 'issue list'])
     expect(calls).not.toContain('issue create')
   })
 })
@@ -357,7 +362,7 @@ describe('submodule-pointer-autorepair.sh — exit-code-2-vs-1 distinction (SMI-
     expect(r.status).toBe(1)
     expect(r.stdout).toContain('::error::')
     expect(r.stdout).toContain('exited 2')
-    expect(r.stdout).toContain('broken invocation')
+    expect(r.stdout).toContain('invoked it wrongly')
     // Confirms this is NOT the pre-existing "nothing actionable" exit-0 path.
     expect(r.stdout).not.toContain('nothing actionable')
     expect(r.stdout).not.toContain('matched rule:')
@@ -419,7 +424,10 @@ describe('submodule-pointer-autorepair.sh — exit-code-2-vs-1 distinction (SMI-
     expect(r.stdout).toContain('matched rule: R1')
     expect(r.stdout).not.toContain('exited 2')
 
+    // Label first, THEN the label-constrained dedupe query, THEN the create.
+    // This exact ordering is the SMI-6580 fix: the label must exist before
+    // either of the two calls that reference it.
     const calls = readLog(logFile)
-    expect(calls).toEqual(['issue list', 'label create', 'issue create'])
+    expect(calls).toEqual(['label create', 'issue list', 'issue create'])
   })
 })
