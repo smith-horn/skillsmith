@@ -180,3 +180,132 @@ export function findAbsoluteSeparateGitDirWriters(repoRoot) {
   }
   return { filesChecked, findings }
 }
+
+/**
+ * The sanctioned call-site catch that `listTrackedFiles`' own header requires
+ * (SMI-6575). `findAbsoluteSeparateGitDirWriters` throws rather than relabel an
+ * untracked filesystem walk as "tracked" -- correct, and unchanged. What was
+ * missing was any caller honouring the instruction to catch: Check 69's call
+ * site in audit-standards.mjs did not, so inside a worktree dev container the
+ * unhandled throw killed the whole audit. There `/app/.git` is a FILE naming a
+ * HOST path under the main checkout's `.git/worktrees/<name>`, which is not
+ * mounted, so `git ls-files` exits 128 (SMI-6524 is the umbrella root cause).
+ * CI never saw it: `quality-checks` runs on the host runner under the SMI-4647
+ * pure-JS carve-out, where git resolves normally.
+ *
+ * Returns a verdict instead of throwing. The unevaluated verdict is explicitly
+ * NOT a pass -- a check that self-skips to pass is the SMI-6118 / SMI-6332
+ * failure mode elsewhere in this same audit, and it is worse than a crash
+ * because it is invisible. Callers must render it as its own third outcome.
+ *
+ * Severity splits on CI because the two environments mean different things: a
+ * CI runner always has a working git, so an unevaluated Check 69 there is a
+ * real breakage that must block. Locally it is the expected, understood state
+ * of every worktree container, so it warns.
+ *
+ * @param {string} repoRoot
+ * @param {{isCI?: boolean}} [options]
+ * @returns {{status: 'evaluated', filesChecked: number, findings: Array<{file: string, line: number, text: string}>}
+ *          |{status: 'not_evaluated', reason: string, severity: 'fail' | 'warn'}}
+ */
+export function evaluateAbsoluteSeparateGitDirWriters(repoRoot, options = {}) {
+  try {
+    const { filesChecked, findings } = findAbsoluteSeparateGitDirWriters(repoRoot)
+    return { status: 'evaluated', filesChecked, findings }
+  } catch (err) {
+    return {
+      status: 'not_evaluated',
+      reason: err instanceof Error ? err.message : String(err),
+      severity: options.isCI ? 'fail' : 'warn',
+    }
+  }
+}
+
+const GITDIR_WRITER_FIX_CI =
+  'A CI runner always has a working git, so this is a real breakage, not the known ' +
+  'worktree-container state. Check that the checkout step ran and that the working tree ' +
+  'is a real git repository.'
+
+const GITDIR_WRITER_FIX_LOCAL =
+  'Expected inside a worktree dev container, where /app/.git names an unmounted host path ' +
+  '(SMI-6524). Run `npm run audit:standards` on the HOST, or in the main checkout ' +
+  'container, to evaluate Check 69.'
+
+const GITDIR_WRITER_FIX_FINDING =
+  'Use a mandatory rewrite-to-relative step immediately after the clone (temp file + ' +
+  'rename), and verify with `git -C <path> rev-parse --git-dir` ON THE HOST (in-container ' +
+  "git does not work in a worktree, SMI-6549). See .claude/development/git-crypt-guide.md's " +
+  'SMI-6015 stall-recovery section for the corrected pattern.'
+
+/**
+ * Turn a verdict into the exact lines Check 69 should report (SMI-6575).
+ *
+ * This lives here, not inline in audit-standards.mjs, for one reason found the
+ * hard way: the first draft of the SMI-6575 fix put this branching in the audit
+ * script, scoped a destructure inside one branch, and left the findings loop
+ * referencing two out-of-scope names. That ReferenceError was reachable only
+ * when a finding exists -- a state this repo never produces -- so no test, no
+ * typecheck (`.mjs` is excluded) and no lint run (`.mjs` is eslint-ignored)
+ * could see it. A cross-family pre-merge gate caught it as an untested branch.
+ *
+ * Moving the branching into an exported pure function makes every outcome,
+ * including the findings loop, directly testable, and leaves the audit script
+ * with a flat dispatch that has no branch-local bindings to get wrong.
+ *
+ * `severity` is the name of the audit's own reporter to call: `pass`, `warn`
+ * or `fail`. There is deliberately no 'skip' -- an unevaluated check reports as
+ * warn or fail, never as a pass.
+ *
+ * @param {ReturnType<typeof evaluateAbsoluteSeparateGitDirWriters>} verdict
+ * @returns {Array<{severity: 'pass' | 'warn' | 'fail', message: string, fix?: string}>}
+ */
+export function gitDirWriterReportLines(verdict) {
+  if (verdict.status === 'not_evaluated') {
+    return [
+      {
+        severity: verdict.severity,
+        message:
+          'Check 69: NOT EVALUATED — could not enumerate tracked files, so nothing was ' +
+          `scanned: ${verdict.reason}`,
+        fix: verdict.severity === 'fail' ? GITDIR_WRITER_FIX_CI : GITDIR_WRITER_FIX_LOCAL,
+      },
+    ]
+  }
+
+  const { filesChecked, findings } = verdict
+
+  if (findings.length === 0) {
+    return [
+      {
+        severity: 'pass',
+        message:
+          'Check 69: no absolute `--separate-git-dir` invocation found ' +
+          `(${filesChecked} tracked file(s) scanned outside the allow-listed recipe)`,
+      },
+    ]
+  }
+
+  // WARN, not fail. The cross-family pre-merge gate (ADR-128) established that
+  // this detector cannot justify blocking in its current form, in both
+  // directions at once:
+  //
+  //   MISSES real writers -- the pattern requires a literal `/` right after `=`
+  //   or one space, so every quoted form (`--separate-git-dir="$HOME/x"`,
+  //   `--separate-git-dir='/abs'`), a line continuation before the value, and
+  //   any variable indirection all pass straight through.
+  //
+  //   BLOCKS harmless prose -- documentation that merely quotes the bad
+  //   invocation to warn against it trips the same pattern.
+  //
+  // A gate that blocks documentation while missing the invocations it bans is
+  // worse than one that reports. Promoting this to fail() requires quote-aware
+  // and continuation-aware parsing that can also tell an executable line from
+  // prose; until that exists, the signal is worth keeping and the block is not.
+  return findings.map((f) => ({
+    severity: 'warn',
+    message:
+      `Check 69: ${f.file}:${f.line} — absolute \`--separate-git-dir\` found among ` +
+      `${filesChecked} scanned file(s): ${f.text}`,
+    fix: GITDIR_WRITER_FIX_FINDING,
+  }))
+}
