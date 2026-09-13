@@ -11,6 +11,7 @@ import { describe, expect, it } from 'vitest'
 // @ts-expect-error - .mjs helper has no typings
 import {
   checkDockerEnvDefaultCoherence,
+  dockerEnvCoherenceReportLines,
   extractComposeDockerDefaults,
   extractEnvSchemaDefault,
 } from '../audit-docker-env-coherence-helpers.mjs'
@@ -228,5 +229,90 @@ describe('SMI-6518: the real docker-compose.yml and .env.schema in this repo agr
     expect(result.problems).toEqual([])
     expect(result.mismatches).toEqual([])
     expect(result.ok).toBe(true)
+  })
+})
+
+// SMI-6575 round 2. The cross-family pre-merge gate (ADR-128) BLOCKED the first
+// Check 70 fix for exactly this gap: the guard was written inline in
+// audit-standards.mjs with no automated coverage, so removing the try/catch --
+// or letting the catch path fall through -- would leave every test passing
+// while a missing .env.schema again destroyed the audit's summary and exit
+// verdict. That is the same defect that had blocked the Check 69 fix a round
+// earlier, repeated in the sibling check.
+//
+// The branching now lives in dockerEnvCoherenceReportLines() with an injectable
+// reader, so the failure path is reachable from a test without touching the
+// real filesystem.
+describe('dockerEnvCoherenceReportLines (SMI-6575 round 2: Check 70 read guard)', () => {
+  const THROWS = () => {
+    throw new Error("ENOENT: no such file or directory, open '.env.schema'")
+  }
+
+  it('returns a verdict instead of throwing when an input cannot be read', () => {
+    expect(() => dockerEnvCoherenceReportLines({ readFile: THROWS })).not.toThrow()
+    const lines = dockerEnvCoherenceReportLines({ readFile: THROWS })
+    expect(lines).toHaveLength(1)
+    expect(lines[0].message).toContain('NOT EVALUATED')
+    expect(lines[0].message).toContain('ENOENT')
+  })
+
+  it('never reports an unread check as a pass, and says nothing was compared', () => {
+    for (const isCI of [true, false]) {
+      const [line] = dockerEnvCoherenceReportLines({ readFile: THROWS, isCI })
+      expect(line.severity).not.toBe('pass')
+      expect(line.message).toContain('nothing was compared')
+    }
+  })
+
+  it('fails under CI and warns otherwise, with different remediation', () => {
+    const [ci] = dockerEnvCoherenceReportLines({ readFile: THROWS, isCI: true })
+    const [local] = dockerEnvCoherenceReportLines({ readFile: THROWS, isCI: false })
+    expect(ci.severity).toBe('fail')
+    expect(local.severity).toBe('warn')
+    expect(ci.fix).not.toBe(local.fix)
+    expect(local.fix).toContain('repository root')
+  })
+
+  it('passes a coherent pair through as exactly one pass line naming both values', () => {
+    const lines = dockerEnvCoherenceReportLines({
+      readFile: (p: string) => (p === 'docker-compose.yml' ? MATCHING_COMPOSE : MATCHING_SCHEMA),
+    })
+    expect(lines).toHaveLength(1)
+    expect(lines[0].severity).toBe('pass')
+    expect(lines[0].message).toContain('4')
+    expect(lines[0].message).toContain('6g')
+  })
+
+  it('surfaces a genuine mismatch as a fail, not as an unread verdict', () => {
+    const lines = dockerEnvCoherenceReportLines({
+      readFile: (p: string) =>
+        p === 'docker-compose.yml' ? MATCHING_COMPOSE : MISMATCHED_CPUS_SCHEMA,
+    })
+    expect(lines[0].severity).toBe('fail')
+    expect(lines[0].message).not.toContain('NOT EVALUATED')
+  })
+
+  it('emits a severity the audit actually has a reporter for, on every branch', () => {
+    // audit-standards.mjs dispatches via `reporters[line.severity]`; an unknown
+    // severity would be a TypeError in the branch that produced it.
+    const cases = [
+      { readFile: THROWS },
+      { readFile: THROWS, isCI: true },
+      {
+        readFile: (p: string) => (p === 'docker-compose.yml' ? MATCHING_COMPOSE : MATCHING_SCHEMA),
+      },
+      {
+        readFile: (p: string) =>
+          p === 'docker-compose.yml' ? MATCHING_COMPOSE : MISMATCHED_CPUS_SCHEMA,
+      },
+    ]
+    for (const c of cases) {
+      const lines = dockerEnvCoherenceReportLines(c)
+      expect(lines.length).toBeGreaterThan(0)
+      for (const l of lines) {
+        expect(['pass', 'warn', 'fail']).toContain(l.severity)
+        expect(typeof l.message).toBe('string')
+      }
+    }
   })
 })
