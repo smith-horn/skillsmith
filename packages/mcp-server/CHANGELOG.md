@@ -4,6 +4,28 @@ All notable changes to `@skillsmith/mcp-server` are documented here.
 
 ## [Unreleased]
 
+- **Fix**: `install_skill` now reports it when its pre-flight safety check could not
+  run, instead of continuing silently. The pre-flight sat inside a bare `catch {}`
+  that predates it; SMI-6529 Wave A0 moved the `checkInstallTarget` guard inside that
+  catch, which made a fail-closed guard fail open for anything that threw there — a
+  manifest load, the target guard itself, or the conflict check.
+
+  **No skill folder was ever at risk from this.** The installer runs the same target
+  guard unconditionally before any download or disk write, so an unsafe target was
+  always refused. What was missing was the report, not the protection. The install's
+  outcome is deliberately unchanged; what is no longer invisible is that the
+  pre-flight did not complete — which also means its conflict backup was skipped and
+  a requested `conflictAction` may not have been fully applied. That now rides
+  `tips`, the same surface fan-out refusals already use, and names the underlying
+  error so a caller can tell "pre-flight passed" from "pre-flight could not be
+  evaluated" (SMI-6585).
+
+- **Fix**: namespace-gate warnings no longer replace the installer's own warnings in
+  the tool result; both sets are merged. Pre-existing since SMI-4588 and harmless
+  while only one producer ever returned warnings — the same shape as the catch
+  above, where a line's meaning inverts the day something else starts returning
+  data (SMI-6585, cross-model review).
+
 ## v0.7.15
 
 - **Fix**: SMI-6508 -- move MF-5 last; it was suppressing HIGH findings (#2808)
