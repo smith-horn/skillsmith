@@ -363,17 +363,33 @@ async function installSkillImpl(input: unknown, _context?: ToolContext): Promise
       // content path), so a refusal still happens there. Swallowing the
       // outcome is correct; swallowing the FACT is not.
       //
-      // What is no longer silent is that the pre-flight did not run — which
-      // means its two side effects did not happen either: the conflict
-      // backup/GC was skipped, and any requested `conflictAction` was never
-      // applied. It rides `tips`, the same surface the fan-out failures use,
-      // so a caller can tell "pre-flight passed" from "pre-flight could not
-      // be evaluated".
+      // What is no longer silent is that the pre-flight did not complete. It
+      // rides `tips`, the same surface the fan-out failures use, so a caller
+      // can tell "pre-flight passed" from "pre-flight could not be evaluated".
+      //
+      // SMI-6585 cross-model review: describing the caught value must not
+      // itself throw. A rejection can carry ANY value — `Object.create(null)`
+      // has no `toString`, and a hostile or exotic object can throw from one —
+      // which would turn "the install's outcome is unchanged" into an escaped
+      // exception from the very handler written to prevent that.
+      let cause: string
+      try {
+        cause = err instanceof Error ? err.message : String(err)
+      } catch {
+        cause = 'the thrown value could not be described'
+      }
+      // Bound it: this string is returned to the caller, and an unbounded
+      // message from an arbitrary throw site is not something to pass through.
+      if (cause.length > 300) cause = cause.slice(0, 300) + '…'
+
+      // SMI-6585 cross-model review: "was not applied" claimed more than the
+      // code can know. `checkForConflicts` can throw AFTER writing a backup,
+      // so the action may have been partially applied. Say what is true.
       preflightProblems.push(
         `the install pre-flight (conflict check and target guard) could not be evaluated ` +
-          `(${err instanceof Error ? err.message : String(err)}); the install proceeded and its ` +
-          `target was still checked by the installer's own guard, but any requested ` +
-          `conflictAction was not applied.`
+          `(${cause}); the install proceeded and its target was still checked by the ` +
+          `installer's own guard, but any requested conflictAction may not have been fully ` +
+          `applied.`
       )
     }
   }
@@ -452,11 +468,17 @@ async function installSkillImpl(input: unknown, _context?: ToolContext): Promise
   // installComplete=true marker) on `power_user` / `governance` paths.
   // `pendingCollision` is intentionally not merged here — it is exclusive
   // to the blocking-mode early return above.
+  //
+  // SMI-6585 cross-model review: this used to REPLACE the installer's own
+  // warnings with the gate's. That is the same shape as the catch this change
+  // fixes — a line whose meaning inverts the day a producer elsewhere starts
+  // returning data it previously never did. Merge instead, as the `tips` code
+  // above does, so neither source can silently erase the other.
   if (gate.resultPatch.warnings && gate.resultPatch.warnings.length > 0) {
     return {
       ...resultWithTips,
       installComplete: gate.resultPatch.installComplete,
-      warnings: gate.resultPatch.warnings,
+      warnings: [...(resultWithTips.warnings ?? []), ...gate.resultPatch.warnings],
     }
   }
 
