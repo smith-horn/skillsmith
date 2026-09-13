@@ -1216,6 +1216,7 @@ jobs:
           # cannot be un-published, so this bonus bin-delegation check warns
           # loudly for a fix-forward rather than red-failing an irreversible
           # success.
+          # audit:verify-block-smoke-tail
           SMOKE_DIR="$(mktemp -d)"
           for attempt in 1 2 3; do
             if (cd "$SMOKE_DIR" && npx -y "skillsmith-cli@${VERSION}" --version) >/tmp/sk-smoke.out 2>&1; then
