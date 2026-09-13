@@ -108,6 +108,21 @@ export interface RunInstallPreflightResult {
    * install caller does not re-derive it for telemetry / ledger linkage.
    */
   auditId: AuditId
+  /**
+   * SMI-6588 cross-model review: `null` when the pre-flight actually ran —
+   * and ONLY then. A non-null string means it did not, and says why.
+   *
+   * Before this field, the catch below returned the same
+   * `warnings: [], pendingCollision: null` shape as a clean zero-flag run,
+   * so a caller could not tell "the detector found no collision" from "the
+   * detector threw." SMI-6588's first attempt added reporting one layer up
+   * in `runNamespaceGate` and missed this entirely: that outer catch cannot
+   * fire, because this one already degrades first.
+   *
+   * Required, not optional — every return site must answer it, which is how
+   * a future third return cannot quietly reintroduce the ambiguity.
+   */
+  problem: string | null
 }
 
 /**
@@ -289,6 +304,30 @@ function excludeSelfReinstall(
  * degraded shape (`warnings: []`, `pendingCollision: null`, fresh
  * `auditId`) — the install MUST proceed when the detector breaks (Edit 2).
  */
+/**
+ * The single implementation for describing a caught value. Shared by
+ * `install.namespace-gate.ts` and `install.ts` — do not hand-write another copy.
+ *
+ * `Error.message` is typed `string` but a runtime value need not honour it: an
+ * Error whose `message` is a Symbol makes a template literal throw
+ * `TypeError: Cannot convert a Symbol value to a string`, turning a
+ * non-blocking degrade into an escaped exception. `String()` is safe on a
+ * Symbol; implicit interpolation is not.
+ *
+ * Shared precisely because it was not — four hand-written copies existed, and
+ * SMI-6588's review rounds 1-3 each found another one still unfixed.
+ */
+export function describeThrown(err: unknown): string {
+  let cause: string
+  try {
+    const raw: unknown = err instanceof Error ? err.message : err
+    cause = typeof raw === 'string' ? raw : String(raw)
+  } catch {
+    cause = 'the thrown value could not be described'
+  }
+  return cause.length > 300 ? cause.slice(0, 300) + '…' : cause
+}
+
 export async function runInstallPreflight(
   input: RunInstallPreflightInput
 ): Promise<RunInstallPreflightResult> {
@@ -317,10 +356,17 @@ export async function runInstallPreflight(
     // The catch covers `excludeSelfReinstall` (rejects non-iterable
     // inputs), `synthesizeCandidateEntry`, the spread, AND
     // `detectCollisions`. Any pre-flight failure → install proceeds.
-    console.warn(
-      `[install-preflight] detector failed (${(err as Error).message}); degrading to non-blocking pass`
-    )
-    return { warnings: [], pendingCollision: null, auditId }
+    const cause = describeThrown(err)
+    console.warn(`[install-preflight] detector failed (${cause}); degrading to non-blocking pass`)
+    return {
+      warnings: [],
+      pendingCollision: null,
+      auditId,
+      // SMI-6588: the install still proceeds — that part was always right.
+      // What was missing is that this result is now distinguishable from a
+      // clean run instead of being byte-identical to one.
+      problem: `the namespace collision detector failed (${cause}); this skill was NOT checked for a name collision with your already-installed skills`,
+    }
   }
 
   // Filter to flags involving the candidate. Pre-existing collisions are
@@ -339,7 +385,7 @@ export async function runInstallPreflight(
     // agent's later inspection by auditId still resolves; absence of an
     // audit file would be ambiguous.
     await tryWriteAuditHistory(result)
-    return { warnings: [], pendingCollision: null, auditId }
+    return { warnings: [], pendingCollision: null, auditId, problem: null }
   }
 
   // SMI-4589 Wave 3: run the edit-suggester over the audit result (which
@@ -402,7 +448,7 @@ export async function runInstallPreflight(
 
   await tryWriteAuditHistory(result)
 
-  return { warnings, pendingCollision, auditId }
+  return { warnings, pendingCollision, auditId, problem: null }
 }
 
 function buildWarningMessage(
@@ -426,8 +472,9 @@ async function collectRecommendedEdits(
     const recommendedEdits = await runEditSuggester(result)
     return new Map(recommendedEdits.map((e) => [e.collisionId as string, e]))
   } catch (err) {
+    // SMI-6588 round 4: a Symbol message made this literal throw, escaping.
     console.warn(
-      `[install-preflight] edit-suggester failed (${(err as Error).message}); proceeding without prose edits`
+      `[install-preflight] edit-suggester failed (${describeThrown(err)}); proceeding without prose edits`
     )
     return new Map()
   }
@@ -442,8 +489,10 @@ async function tryWriteAuditHistory(result: InventoryAuditResult): Promise<void>
   try {
     await writeAuditHistory(result)
   } catch (err) {
+    // SMI-6588 round 4: throwing here escaped while handling a rejection; on a
+    // preventative collision that permitted an install that should be blocked.
     console.warn(
-      `[install-preflight] writeAuditHistory failed (${(err as Error).message}); auditId will be unrecoverable but install proceeds`
+      `[install-preflight] writeAuditHistory failed (${describeThrown(err)}); auditId will be unrecoverable but install proceeds`
     )
   }
 }
