@@ -84,6 +84,27 @@ REPO_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
 MOUNT="docs/internal"
 MOUNT_DIR="$REPO_ROOT/$MOUNT"
 
+# git_mount <git-args...> — run git against the SUBMODULE working directory,
+# immune to an inherited git-discovery environment (SMI-6569). Same contract
+# and same var list as check-submodule-pointer.helpers.sh's git_sub(); this
+# script does not source that file, so the wrapper is duplicated rather than
+# shared. Keep the two lists in sync, and in sync with GIT_DISCOVERY_VARS in
+# scripts/tests/_lib/git-fixture-env.ts (SMI-4693), which is the source of
+# truth for the threat model.
+#
+# `git -C <dir>` does NOT override an absolute inherited GIT_DIR, and measured,
+# GIT_COMMON_DIR and GIT_OBJECT_DIRECTORY redirect even when GIT_DIR is unset.
+# Not currently defective here — this script runs from a GitHub Actions step,
+# which exports none of these — unlike a hook on a push from a linked worktree.
+# It is hardened anyway because the call shape is identical to the one that
+# WAS defective, and a reader should not have to work out which copy is safe.
+git_mount() {
+    env -u GIT_DIR -u GIT_WORK_TREE -u GIT_INDEX_FILE -u GIT_OBJECT_DIRECTORY \
+        -u GIT_ALTERNATE_OBJECT_DIRECTORIES -u GIT_COMMON_DIR -u GIT_NAMESPACE \
+        -u GIT_PREFIX -u GIT_CEILING_DIRECTORIES -u GIT_DISCOVERY_ACROSS_FILESYSTEM \
+        git -C "$MOUNT_DIR" "$@"
+}
+
 # ---------------------------------------------------------------------------
 # Deduped GitHub issue helper — dedupe key is the exact commit SHA this run
 # is reacting to (a fresh regression on a later push always gets its own
@@ -217,14 +238,7 @@ main() {
     if [ "$RULE" = "R3" ]; then
         # The only auto-repairable case: fast-forward the gitlink to T.
         BRANCH="$(git config -f "$REPO_ROOT/.gitmodules" --get submodule."$MOUNT".branch 2>/dev/null || echo main)"
-        # `env -u GIT_DIR -u GIT_WORK_TREE` for the same reason as
-        # check-submodule-pointer.helpers.sh's git_sub (SMI-6569): `git -C`
-        # does NOT override an absolute inherited GIT_DIR, so without this the
-        # call silently reads the OUTER repo. Not currently defective here —
-        # this script runs from a GitHub Actions step, which exports no
-        # GIT_DIR, unlike a hook on a push from a linked worktree — but the
-        # pattern is identical and hardening it costs nothing.
-        T_SHA="$(env -u GIT_DIR -u GIT_WORK_TREE git -C "$MOUNT_DIR" rev-parse "origin/$BRANCH")"
+        T_SHA="$(git_mount rev-parse "origin/$BRANCH")"
 
         # No `set -e` in this script (the push result below needs explicit
         # if/else branching), so this sequence must fail loudly and stop here
@@ -232,7 +246,7 @@ main() {
         # below with a HEAD that never actually advanced (governance review
         # finding — a job with write access to main must never risk pushing a
         # stale HEAD because an earlier step in the same run silently failed).
-        if ! env -u GIT_DIR -u GIT_WORK_TREE git -C "$MOUNT_DIR" checkout --detach --quiet "$T_SHA" \
+        if ! git_mount checkout --detach --quiet "$T_SHA" \
             || ! git -C "$REPO_ROOT" -c user.name="skillsmith-bot" -c user.email="bot@skillsmith.app" add "$MOUNT" \
             || ! git -C "$REPO_ROOT" -c user.name="skillsmith-bot" -c user.email="bot@skillsmith.app" \
                 commit --quiet -m "chore(docs): fast-forward docs/internal pointer to ${T_SHA:0:7} [auto-repair SMI-6260]"; then

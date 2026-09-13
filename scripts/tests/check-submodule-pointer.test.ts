@@ -230,13 +230,39 @@ describe('check-submodule-pointer.sh — R0-R11 + R-FETCH', () => {
 
     const args = ['--mode=block', '--ref=HEAD', `--target=${c1}`]
     const clean = runScript(f.parentDir, args)
-    const contaminated = runScript(f.parentDir, args, {
-      GIT_DIR: join(f.parentDir, '.git'),
-    })
 
+    // GIT_DIR is the var git actually exports into hooks and the one that
+    // caused the reported bug. GIT_COMMON_DIR and GIT_OBJECT_DIRECTORY are
+    // included because they redirect identically and survive a GIT_DIR-only
+    // unset — measured, each producing exit 128 on the same `cat-file -e`
+    // call under `env -u GIT_DIR -u GIT_WORK_TREE`. Git exports neither into
+    // hooks, so they are a hardened class rather than a live trigger; the
+    // first version of this fix unset only GIT_DIR and claimed to have closed
+    // the class, which was false.
+    for (const varName of ['GIT_DIR', 'GIT_COMMON_DIR', 'GIT_OBJECT_DIRECTORY']) {
+      const value =
+        varName === 'GIT_OBJECT_DIRECTORY'
+          ? join(f.parentDir, '.git', 'objects')
+          : join(f.parentDir, '.git')
+      const contaminated = runScript(f.parentDir, args, { [varName]: value })
+      assertVerdictUnchanged(varName, clean, contaminated)
+    }
+  })
+
+  /**
+   * The SMI-6569 invariant: a git-discovery environment variable must not
+   * change this check's verdict. Asserted as full stdout + exit-status
+   * equality rather than by symptom name — see the caller for why naming a
+   * symptom would let the test pass against the bug in this fixture.
+   */
+  function assertVerdictUnchanged(
+    varName: string,
+    clean: RunResult,
+    contaminated: RunResult
+  ): void {
     // The real verdict survives contamination.
-    expect(contaminated.stdout).toContain('R3:')
-    expect(contaminated.stdout).toContain('stale')
+    expect(contaminated.stdout, `${varName}: true verdict lost`).toContain('R3:')
+    expect(contaminated.stdout, `${varName}: true verdict lost`).toContain('stale')
 
     // Neither contamination symptom is produced. Which one appears without
     // the fix depends on whether the OUTER repo has an `origin` remote:
@@ -248,14 +274,14 @@ describe('check-submodule-pointer.sh — R0-R11 + R-FETCH', () => {
     // Both are the same defect. Asserting only R1 here would make this test
     // pass against the bug in the fixture, which is why the invariant below
     // is the load-bearing assertion rather than either symptom name.
-    expect(contaminated.stdout).not.toContain('R1:')
-    expect(contaminated.stdout).not.toContain('R-FETCH:')
+    expect(contaminated.stdout, `${varName}: fabricated R1`).not.toContain('R1:')
+    expect(contaminated.stdout, `${varName}: fabricated R-FETCH`).not.toContain('R-FETCH:')
 
-    // The invariant, and the strongest form of it: GIT_DIR must not change
-    // the verdict at all, exit status included.
-    expect(contaminated.status).toBe(clean.status)
-    expect(contaminated.stdout).toBe(clean.stdout)
-  })
+    // The invariant, and the strongest form of it: the variable must not
+    // change the verdict at all, exit status included.
+    expect(contaminated.status, `${varName}: exit status changed`).toBe(clean.status)
+    expect(contaminated.stdout, `${varName}: stdout changed`).toBe(clean.stdout)
+  }
 
   it('R4: S is a strict descendant of T and lives on a live remote branch -> PASS + warning', () => {
     const f = track(buildFixture())
