@@ -286,6 +286,9 @@ async function installSkillImpl(input: unknown, _context?: ToolContext): Promise
   // callers — outdated.ts, skill-updates.ts, updateManifestSafely) — passing
   // `scopeTarget.manifestPath` here makes this pre-flight correct for BOTH
   // scopes instead of gated to one.
+  // SMI-6585: collected here rather than swallowed, and surfaced via `tips`
+  // below alongside the fan-out failures.
+  const preflightProblems: string[] = []
   if (validInput.force && validInput.conflictAction) {
     try {
       const manifest = await loadManifest(scopeTarget.manifestPath)
@@ -349,8 +352,45 @@ async function installSkillImpl(input: unknown, _context?: ToolContext): Promise
           return conflictCheck.earlyReturn!
         }
       }
-    } catch {
-      // Conflict check failed; proceed with normal install
+    } catch (err) {
+      // SMI-6585: this catch predates the guard it now encloses. Wave A0
+      // moved `checkInstallTarget` inside it, which turned a fail-closed
+      // guard into a fail-open one for anything that throws in this block.
+      //
+      // The install's OUTCOME is deliberately unchanged: `service.install()`
+      // runs the same target guard unconditionally before any fetch or disk
+      // write (`skill-installation.service.ts`, and `.content.ts` for the
+      // content path), so a refusal still happens there. Swallowing the
+      // outcome is correct; swallowing the FACT is not.
+      //
+      // What is no longer silent is that the pre-flight did not complete. It
+      // rides `tips`, the same surface the fan-out failures use, so a caller
+      // can tell "pre-flight passed" from "pre-flight could not be evaluated".
+      //
+      // SMI-6585 cross-model review: describing the caught value must not
+      // itself throw. A rejection can carry ANY value — `Object.create(null)`
+      // has no `toString`, and a hostile or exotic object can throw from one —
+      // which would turn "the install's outcome is unchanged" into an escaped
+      // exception from the very handler written to prevent that.
+      let cause: string
+      try {
+        cause = err instanceof Error ? err.message : String(err)
+      } catch {
+        cause = 'the thrown value could not be described'
+      }
+      // Bound it: this string is returned to the caller, and an unbounded
+      // message from an arbitrary throw site is not something to pass through.
+      if (cause.length > 300) cause = cause.slice(0, 300) + '…'
+
+      // SMI-6585 cross-model review: "was not applied" claimed more than the
+      // code can know. `checkForConflicts` can throw AFTER writing a backup,
+      // so the action may have been partially applied. Say what is true.
+      preflightProblems.push(
+        `the install pre-flight (conflict check and target guard) could not be evaluated ` +
+          `(${cause}); the install proceeded and its target was still checked by the ` +
+          `installer's own guard, but any requested conflictAction may not have been fully ` +
+          `applied.`
+      )
     }
   }
 
@@ -414,20 +454,31 @@ async function installSkillImpl(input: unknown, _context?: ToolContext): Promise
     }
   }
 
+  // SMI-6529 round 7 / SMI-6585: every non-fatal problem this function knows
+  // about rides one surface. A fan-out refusal and a pre-flight that could
+  // not be evaluated are both things the caller needs to see without either
+  // of them changing the install's success.
+  const nonFatalProblems = [...preflightProblems, ...alsoLinkFailures]
   const resultWithTips: InstallResult =
-    alsoLinkFailures.length > 0
-      ? { ...result, tips: [...(result.tips ?? []), ...alsoLinkFailures] }
+    nonFatalProblems.length > 0
+      ? { ...result, tips: [...(result.tips ?? []), ...nonFatalProblems] }
       : result
 
   // SMI-4588 Wave 2 PR #3: surface non-blocking namespace warnings (and
   // installComplete=true marker) on `power_user` / `governance` paths.
   // `pendingCollision` is intentionally not merged here — it is exclusive
   // to the blocking-mode early return above.
+  //
+  // SMI-6585 cross-model review: this used to REPLACE the installer's own
+  // warnings with the gate's. That is the same shape as the catch this change
+  // fixes — a line whose meaning inverts the day a producer elsewhere starts
+  // returning data it previously never did. Merge instead, as the `tips` code
+  // above does, so neither source can silently erase the other.
   if (gate.resultPatch.warnings && gate.resultPatch.warnings.length > 0) {
     return {
       ...resultWithTips,
       installComplete: gate.resultPatch.installComplete,
-      warnings: gate.resultPatch.warnings,
+      warnings: [...(resultWithTips.warnings ?? []), ...gate.resultPatch.warnings],
     }
   }
 
