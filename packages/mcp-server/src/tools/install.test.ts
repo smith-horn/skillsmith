@@ -20,9 +20,17 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 // Zod gate + delegation. `vi.hoisted` is required because `vi.mock` is
 // hoisted above regular `const` declarations and would otherwise reference
 // the stubs before they are initialised.
-const { mockInstall, mockEmitInstallEvent } = vi.hoisted(() => ({
+// SMI-6585 cross-model review: `checkInstallTarget` was reached through the
+// `...actual` passthrough, so no test could make the TARGET GUARD itself
+// throw — only the manifest load. That left three of the pre-flight's four
+// throw sources uncovered, and a regression that reported manifest failures
+// while silently losing guard failures would have passed. It is stubbed here,
+// defaulting to the same `{ ok: true }` the real guard returns for these
+// fixtures, so existing tests are unaffected and the throw path is reachable.
+const { mockInstall, mockEmitInstallEvent, mockCheckInstallTarget } = vi.hoisted(() => ({
   mockInstall: vi.fn(),
   mockEmitInstallEvent: vi.fn(),
+  mockCheckInstallTarget: vi.fn(),
 }))
 
 vi.mock('@skillsmith/core', async (importActual) => {
@@ -34,6 +42,7 @@ vi.mock('@skillsmith/core', async (importActual) => {
     ...actual,
     SkillInstallationService: MockSkillInstallationService,
     emitInstallEvent: mockEmitInstallEvent,
+    checkInstallTarget: mockCheckInstallTarget,
   }
 })
 
@@ -140,6 +149,13 @@ describe('installSkill() Zod boundary guard (SMI-4288 / #599)', () => {
     mockCheckForConflicts.mockReset()
     mockRunNamespaceGate.mockReset()
     mockResolveScopedSkillsDir.mockReset()
+    // SMI-6585: the target guard is stubbed so its throw path is reachable.
+    // It MUST carry a default — a bare `vi.fn()` returns `undefined`, and the
+    // caller's `if (!targetCheck.ok)` would then throw into the very catch
+    // these tests exercise, quietly adding a tip to every other test in the
+    // file. `{ ok: true }` is what the real guard returns for these fixtures.
+    mockCheckInstallTarget.mockReset()
+    mockCheckInstallTarget.mockResolvedValue({ ok: true })
     // ADR-139: deterministic global scope — see the mock's own comment above.
     mockResolveScopedSkillsDir.mockReturnValue({
       scope: 'global',
@@ -298,8 +314,16 @@ describe('installSkill() Zod boundary guard (SMI-4288 / #599)', () => {
       expect(mockInstall).not.toHaveBeenCalled()
     })
 
-    it('falls through to core install when manifest lookup throws', async () => {
-      // Conflict preflight swallows errors and continues with normal install.
+    it('falls through to core install when manifest lookup throws, and reports that it did', async () => {
+      // SMI-6585: a throw in the pre-flight no longer changes the OUTCOME —
+      // the install still proceeds, and core's own target guard still runs
+      // unconditionally before any write — but it is no longer invisible.
+      //
+      // This assertion deliberately checks the reported problem rather than
+      // a bare call count. A count cannot distinguish "the pre-flight never
+      // ran" from "it threw and was swallowed"; both read as zero. That
+      // ambiguity is what made the original defect survive 13 cross-model
+      // review rounds.
       mockLoadManifest.mockRejectedValueOnce(new Error('manifest missing'))
 
       const result = await installSkill({
@@ -308,8 +332,119 @@ describe('installSkill() Zod boundary guard (SMI-4288 / #599)', () => {
         conflictAction: 'overwrite',
       })
 
-      expect(result).toEqual(HAPPY_RESULT)
+      expect(result.success).toBe(HAPPY_RESULT.success)
       expect(mockInstall).toHaveBeenCalledTimes(1)
+      expect(result.tips).toEqual(
+        expect.arrayContaining([expect.stringContaining('could not be evaluated')])
+      )
+      expect(result.tips?.join(' ')).toContain('manifest missing')
+    })
+
+    it('reports the underlying cause and the unapplied conflictAction, not a generic string', async () => {
+      // SMI-6585: the two things a caller loses when the pre-flight throws
+      // are (1) the conflict backup/GC side effects and (2) their requested
+      // conflictAction. A report that says only "something failed" is worth
+      // little more than the silence it replaced, so both the real errno and
+      // the unapplied action must survive into the message.
+      mockLoadManifest.mockRejectedValueOnce(new Error('EACCES: permission denied'))
+
+      const result = await installSkill({
+        skillId: 'owner/repo/test-skill',
+        force: true,
+        conflictAction: 'cancel',
+      })
+
+      // The install proceeded: core's guard, not this pre-flight, is what
+      // refuses an unsafe target.
+      expect(mockInstall).toHaveBeenCalledTimes(1)
+
+      const reported = result.tips?.join(' ') ?? ''
+      expect(reported).toContain('EACCES: permission denied')
+      // Deliberately "may not have been fully applied": `checkForConflicts`
+      // can throw AFTER writing a backup, so claiming it was not applied at
+      // all would assert more than this code can know (cross-model review).
+      expect(reported).toContain('may not have been fully applied')
+    })
+
+    // SMI-6585 cross-model review: the try block has four throw sources and
+    // the tests above only exercise the manifest load. A regression that kept
+    // reporting manifest failures while silently losing a TARGET GUARD or
+    // CONFLICT CHECK failure would have passed. Each source gets its own case.
+    it('reports a failure thrown by the target guard itself', async () => {
+      mockLoadManifest.mockResolvedValueOnce({
+        version: '1',
+        installedSkills: {
+          'test-skill': {
+            id: 'owner/repo/test-skill',
+            name: 'test-skill',
+            version: '1.0.0',
+            source: 'registry',
+            installPath: '/existing/path',
+            installedAt: '2026-01-01T00:00:00Z',
+            lastUpdated: '2026-01-01T00:00:00Z',
+          },
+        },
+      })
+      mockCheckInstallTarget.mockRejectedValueOnce(new Error('EACCES: lstat failed'))
+
+      const result = await installSkill({
+        skillId: 'owner/repo/test-skill',
+        force: true,
+        conflictAction: 'overwrite',
+      })
+
+      expect(mockInstall).toHaveBeenCalledTimes(1)
+      expect(result.tips?.join(' ') ?? '').toContain('EACCES: lstat failed')
+    })
+
+    it('reports a failure thrown by the conflict check', async () => {
+      mockLoadManifest.mockResolvedValueOnce({
+        version: '1',
+        installedSkills: {
+          'test-skill': {
+            id: 'owner/repo/test-skill',
+            name: 'test-skill',
+            version: '1.0.0',
+            source: 'registry',
+            installPath: '/existing/path',
+            installedAt: '2026-01-01T00:00:00Z',
+            lastUpdated: '2026-01-01T00:00:00Z',
+          },
+        },
+      })
+      mockCheckForConflicts.mockRejectedValueOnce(new Error('backup store unreadable'))
+
+      const result = await installSkill({
+        skillId: 'owner/repo/test-skill',
+        force: true,
+        conflictAction: 'overwrite',
+      })
+
+      expect(mockInstall).toHaveBeenCalledTimes(1)
+      expect(result.tips?.join(' ') ?? '').toContain('backup store unreadable')
+    })
+
+    it('survives a thrown value whose string conversion itself throws', async () => {
+      // SMI-6585 cross-model review: a rejection can carry ANY value. An
+      // object with a throwing `toString` would make the reporting code throw
+      // from inside the handler written to keep the install's outcome
+      // unchanged — converting a swallowed failure into an escaped exception.
+      const hostile = {
+        toString() {
+          throw new Error('nice try')
+        },
+      }
+      mockLoadManifest.mockRejectedValueOnce(hostile)
+
+      const result = await installSkill({
+        skillId: 'owner/repo/test-skill',
+        force: true,
+        conflictAction: 'overwrite',
+      })
+
+      // The install still completed rather than the handler throwing.
+      expect(mockInstall).toHaveBeenCalledTimes(1)
+      expect(result.tips?.join(' ') ?? '').toContain('could not be described')
     })
 
     it('resolves bare skillId (no slash) via extractSkillName', async () => {
