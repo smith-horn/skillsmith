@@ -4,6 +4,10 @@ All notable changes to `@smith-horn/enterprise` are documented here.
 
 ## [Unreleased]
 
+## v0.3.12
+
+- **Cadence**: Mechanical cadence alignment (no changes since v0.3.11).
+
 ## v0.3.11
 
 - **Chore**: SMI-6552 -- correct Smith Horn copyright start year to 2025 (#2810)

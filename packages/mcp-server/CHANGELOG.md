@@ -4,6 +4,9 @@ All notable changes to `@skillsmith/mcp-server` are documented here.
 
 ## [Unreleased]
 
+## v0.7.16
+
+- **Fix**: SMI-6585 -- the install pre-flight reports its failure instead of swallowing it (#2821)
 - **Fix**: `install_skill` now reports it when the namespace pre-flight — the check for
   a name collision with your already-installed skills — could not run. It degrades to
   letting the install proceed, which is correct for an advisory check, but it used to
@@ -14,7 +17,6 @@ All notable changes to `@skillsmith/mcp-server` are documented here.
   throwing. That last case degrades inside `runInstallPreflight`, which returned a
   result byte-identical to a clean run; reporting it required a change there, not only
   at the gate above it (SMI-6588).
-
 - **Fix**: `install_skill` now reports it when its pre-flight safety check could not
   run, instead of continuing silently. The pre-flight sat inside a bare `catch {}`
   that predates it; SMI-6529 Wave A0 moved the `checkInstallTarget` guard inside that
