@@ -472,8 +472,9 @@ async function collectRecommendedEdits(
     const recommendedEdits = await runEditSuggester(result)
     return new Map(recommendedEdits.map((e) => [e.collisionId as string, e]))
   } catch (err) {
+    // SMI-6588 round 4: a Symbol message made this literal throw, escaping.
     console.warn(
-      `[install-preflight] edit-suggester failed (${(err as Error).message}); proceeding without prose edits`
+      `[install-preflight] edit-suggester failed (${describeThrown(err)}); proceeding without prose edits`
     )
     return new Map()
   }
@@ -488,8 +489,10 @@ async function tryWriteAuditHistory(result: InventoryAuditResult): Promise<void>
   try {
     await writeAuditHistory(result)
   } catch (err) {
+    // SMI-6588 round 4: throwing here escaped while handling a rejection; on a
+    // preventative collision that permitted an install that should be blocked.
     console.warn(
-      `[install-preflight] writeAuditHistory failed (${(err as Error).message}); auditId will be unrecoverable but install proceeds`
+      `[install-preflight] writeAuditHistory failed (${describeThrown(err)}); auditId will be unrecoverable but install proceeds`
     )
   }
 }
