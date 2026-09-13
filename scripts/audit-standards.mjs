@@ -75,6 +75,11 @@ import {
 import { findGitCryptUnsetRemediations } from './audit-git-crypt-remediation-helpers.mjs'
 import { findAbsoluteSeparateGitDirWriters } from './audit-gitdir-writer-helpers.mjs'
 import { checkDockerEnvDefaultCoherence } from './audit-docker-env-coherence-helpers.mjs'
+import {
+  analyzeVerifyBlocks,
+  notEvaluated as notEvaluatedVerifyBlocks,
+  reportLines as verifyBlockReportLines,
+} from './lib/verify-block-identity.mjs'
 import { findMissingHuskyStubs } from './audit-husky-stub-coverage-helpers.mjs'
 import {
   listManifestHygieneTestFiles,
@@ -6179,6 +6184,65 @@ console.log(`\n${BOLD}Check 70: SKILLSMITH_DOCKER default coherence (SMI-6518)${
   } else {
     pass(
       `Check 70: docker-compose.yml and .env.schema agree on SKILLSMITH_DOCKER_CPUS (${dockerCoherence.compose.cpus}) and SKILLSMITH_DOCKER_MEM (${dockerCoherence.compose.mem}) defaults`
+    )
+  }
+}
+
+// Check 71: publish.yml verify-block byte identity (SMI-6513)
+//
+// .github/workflows/publish.yml carries four `Verify … on npm` blocks, one per
+// published package -- the same shell program modulo which package name and
+// manifest path it targets. Nothing else enforces that they stay the same
+// program: shellcheck passes on each block independently, and divergence
+// between two independently-valid shell blocks is not a lint category.
+// SMI-6493 shipped exactly that kind of divergence through a fully green
+// suite because coverage only ever exercised block 1.
+// scripts/lib/verify-block-identity.mjs is the pure analysis module (YAML
+// text in, a structured three-way verdict out); this call site is its only
+// caller in this audit.
+//
+// The verdict is THREE-WAY -- 'passed' / 'failed' / 'not_evaluated' -- and
+// `ok` is false for the latter two alike, so a read/parse failure can never
+// read as a clean pass. A bare `readFileSync` + `analyzeVerifyBlocks` call
+// here would throw on a missing/unreadable publish.yml and, per the Check 69
+// / Check 70 SMI-6575 precedent, an uncaught throw at any check in this file
+// kills every check after it plus the Summary block and the exit verdict --
+// so the read+analyze call is wrapped and a thrown error is converted into
+// `notEvaluated()` instead of propagating. `reportLines()` always renders the
+// compared/expected fraction in its headline, so a partial comparison (e.g.
+// the tail marker gone, dropping coverage to 3/4) can never look identical to
+// a full 4/4 pass.
+//
+// scripts/tests/verify-block-identity.test.ts is the executable twin of this
+// check -- same module, same invariant.
+console.log(`\n${BOLD}Check 71: publish.yml verify-block byte identity (SMI-6513)${RESET}`)
+{
+  const PUBLISH_YML_PATH = '.github/workflows/publish.yml'
+  let verifyBlockResult
+  try {
+    verifyBlockResult = analyzeVerifyBlocks(readFileSync(PUBLISH_YML_PATH, 'utf8'))
+  } catch (err) {
+    verifyBlockResult = notEvaluatedVerifyBlocks(`${err.code ?? 'read error'}: ${PUBLISH_YML_PATH}`)
+  }
+
+  const { ok, lines } = verifyBlockReportLines(verifyBlockResult)
+  const [headline, ...detailLines] = lines
+  const message = detailLines.length > 0 ? `${headline}\n${detailLines.join('\n')}` : headline
+
+  if (ok) {
+    pass(message)
+  } else if (verifyBlockResult.status === 'not_evaluated') {
+    fail(
+      message,
+      `Confirm ${PUBLISH_YML_PATH} exists and is readable from the repository root, then ` +
+        're-run -- a check that could not run is not the same as one that ran and found nothing.'
+    )
+  } else {
+    fail(
+      message,
+      `Reconcile the named block(s) above so all four \`Verify … on npm\` blocks in ` +
+        `${PUBLISH_YML_PATH} are the same program again -- see scripts/lib/verify-block-identity.mjs ` +
+        'for the exact invariant each VB-* finding code enforces.'
     )
   }
 }
