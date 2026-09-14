@@ -57,7 +57,7 @@
  * therefore never transfers a byte of content, and a not-found never reads one.
  */
 
-import { recordRegistryAudit } from './registry-tools.live.audit.js'
+import { recordRegistryAudit, type RegistryReadAuditEvent } from './registry-tools.live.audit.js'
 import {
   REGISTRY_METADATA_COLUMNS,
   REGISTRY_TABLE,
@@ -115,9 +115,7 @@ export interface GetSkillContentParams {
 }
 
 /** Shared audit fields for every outcome of one `getContent()` call. */
-function auditBase(
-  params: GetSkillContentParams
-): Parameters<typeof recordRegistryAudit>[0] & { result: 'error' } {
+function auditBase(params: GetSkillContentParams): RegistryReadAuditEvent & { result: 'error' } {
   return {
     operation: OPERATION,
     teamId: params.teamId,

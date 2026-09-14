@@ -25,8 +25,9 @@
  * routing it through the manage-gated getter would tell a plain member "you need team:manage_rbac"
  * for an operation that never required it.
  *
- * NO CLIENT-SIDE AUDIT WRITE. Unlike `registry-tools.live.ts` (which calls `recordRegistryAudit()`
- * at this layer because the underlying tables/RPCs it wraps do not audit themselves), every RPC this
+ * NO CLIENT-SIDE AUDIT WRITE. Same rule `registry-tools.live.ts` follows for committed mutations
+ * since SMI-6114 (its table now audits itself via the `trg_prs_audit` trigger; only reads and
+ * uncommitted attempts still go through `recordRegistryAudit()`). Every RPC this
  * file calls — `set_team_role_permission`, `reset_team_role_permission` (both added in this same
  * Wave, `20260828000000_rbac_grant_writes.sql`), and `set_team_member_role` (Wave 1) — already writes
  * its own `audit_logs` row inside the SAME transaction as the write, non-fatally on audit failure.

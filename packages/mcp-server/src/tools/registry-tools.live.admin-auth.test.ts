@@ -87,7 +87,7 @@ interface Recorded {
 function createRecorder(
   respond: (record: Recorded) => {
     data: unknown[] | null
-    error: { message?: string } | null
+    error: { code?: string; message?: string } | null
   } = () => ({
     data: [{ id: 'row-1' }],
     error: null,
@@ -308,18 +308,27 @@ describe('SMI-5822 — deprecate/undeprecate require a user credential, not the 
   // real `auth.uid()`. Recording `license_key:<fingerprint>` as the actor named a credential with
   // no say in the decision. The key fingerprint stays in metadata (still useful for correlation);
   // the ACTOR is the user.
+  //
+  // SMI-6114: a SUCCESSFUL deprecate/publish no longer writes a client-side row at all (the
+  // trg_prs_audit trigger records the committed change — registry-tools.live.server-audit.test.ts
+  // pins that). Attribution is therefore asserted on the rows this client still writes: attempts
+  // that did not commit.
   // ==========================================================================
-  it('attributes an admin-authorized deprecate to the JWT user, not to the license key', async () => {
-    const user = createRecorder()
+  it('attributes a denied deprecate to the JWT user, not to the license key', async () => {
+    const user = createRecorder((record) =>
+      record.op === 'update' ? { data: [], error: null } : { data: [{ id: 'row-1' }], error: null }
+    )
     const admin = createRecorder()
     await setClients(user.client, admin.client)
 
-    await createLiveRegistryService().deprecate(TEAM, SKILL)
+    await expect(createLiveRegistryService().deprecate(TEAM, SKILL)).rejects.toThrow(
+      /only team admins/i
+    )
 
     const audit = admin.calls.find((c) => c.table === 'audit_logs' && c.op === 'insert')
     expect(audit).toBeDefined()
     expect(audit!.payload?.event_type).toBe('private_registry:deprecate')
-    expect(audit!.payload?.result).toBe('success')
+    expect(audit!.payload?.result).toBe('denied')
     expect(audit!.payload?.actor).toBe(`user:${FAKE_USER_ID}`)
     // The license key did not authorize this, so it must not appear as the actor.
     expect(String(audit!.payload?.actor)).not.toContain('license_key')
@@ -337,13 +346,16 @@ describe('SMI-5822 — deprecate/undeprecate require a user credential, not the 
     const { resolveUserAccessToken } = await import('./team-resolver.js')
     vi.mocked(resolveUserAccessToken).mockResolvedValue('not-a-jwt')
 
-    const user = createRecorder()
+    // Not-found path (update and probe both match nothing): one of the rows this client still
+    // writes after SMI-6114.
+    const user = createRecorder(() => ({ data: [], error: null }))
     const admin = createRecorder()
     await setClients(user.client, admin.client)
 
-    await createLiveRegistryService().deprecate(TEAM, SKILL)
+    await expect(createLiveRegistryService().deprecate(TEAM, SKILL)).resolves.toBe(false)
 
     const audit = admin.calls.find((c) => c.table === 'audit_logs' && c.op === 'insert')
+    expect(audit!.payload?.result).toBe('not_found')
     // Unknown, never backfilled with the license key that did not authorize it.
     expect(audit!.payload?.actor).toBe('user_jwt:unknown')
     expect((audit!.payload?.metadata as Record<string, unknown>).actor_user_id).toBeNull()
@@ -354,14 +366,21 @@ describe('SMI-5822 — deprecate/undeprecate require a user credential, not the 
   // deprecate/undeprecate. Renamed and rewritten from the pre-D-7 "publish really is
   // key-authorized" test, which is now factually wrong: a shared license key can never
   // authorize a publish, because it cannot name the submitter D-6's self-approval check needs.
-  it('attributes an authorized publish to the JWT user, not to the license key — SMI-5949 D-7', async () => {
-    const user = createRecorder()
+  it('attributes a failed publish to the JWT user, not to the license key — SMI-5949 D-7', async () => {
+    // SMI-6114: a successful publish is audited by trg_prs_audit, so attribution is asserted on
+    // the client-side row that remains — an insert the database refused (here, an immutable
+    // version).
+    const user = createRecorder((record) =>
+      record.op === 'insert'
+        ? { data: null, error: { code: '23505', message: 'duplicate key value' } }
+        : { data: [{ id: 'row-1' }], error: null }
+    )
     const admin = createRecorder()
     await setClients(user.client, admin.client)
 
-    await createLiveRegistryService().publish(TEAM, SKILL, '1.0.0', {
-      'SKILL.md': '# a skill',
-    })
+    await expect(
+      createLiveRegistryService().publish(TEAM, SKILL, '1.0.0', { 'SKILL.md': '# a skill' })
+    ).rejects.toThrow(/immutable/i)
 
     // The insert itself must land on the user client — never the service-role admin client,
     // which is exactly the SMI-5822-shaped escalation this credential move exists to avoid.
@@ -376,7 +395,8 @@ describe('SMI-5822 — deprecate/undeprecate require a user credential, not the 
     const audit = admin.calls.find((c) => c.table === 'audit_logs' && c.op === 'insert')
     expect(audit).toBeDefined()
     expect(audit!.payload?.event_type).toBe('private_registry:publish')
-    expect(audit!.payload?.result).toBe('success')
+    expect(audit!.payload?.result).toBe('error')
+    expect((audit!.payload?.metadata as Record<string, unknown>).detail).toBe('version_immutable')
     expect(audit!.payload?.actor).toBe(`user:${FAKE_USER_ID}`)
     // The license key did not authorize this, so it must not appear as the actor.
     expect(String(audit!.payload?.actor)).not.toContain('license_key')
