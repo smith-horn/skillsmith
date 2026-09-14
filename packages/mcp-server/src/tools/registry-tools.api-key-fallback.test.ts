@@ -146,4 +146,103 @@ describe('private-registry team resolution — SKILLSMITH_API_KEY fallback (SMI-
     expect(result.error).toContain('Unable to resolve team')
     expect(result.error).toContain('SKILLSMITH_API_KEY')
   })
+
+  // ============================================================================
+  // SMI-6622 round 6 PR-07 finding 4: end-to-end through the actual MCP tool handlers —
+  // registry-tools.ts's publish/manage catch blocks (lines ~253-258, ~341-347) forward
+  // resolveRegistryTeamId()'s thrown `.message` directly into the result. A team-resolution
+  // failure with credential-shaped text anywhere upstream (an RPC error, a thrown exception, or
+  // getSupabaseClient() itself failing) must never let that text reach either tool's result.
+  // ============================================================================
+
+  describe('team-resolution failures never leak secrets into either tool result (round 6 PR-07)', () => {
+    const jwt = 'eyJhbGciOiJIUzI1NiJ9.eyJzdWIiOiJ4In0.sig'
+    const apiKey = 'sk_live_abcdefghijklmnopqrstuvwx'
+    const licenseKey = 'sk_test_fake_license'
+
+    it('rpc_error: an RPC error.message containing secrets reaches neither the manage nor the publish result', async () => {
+      process.env.SKILLSMITH_API_KEY = 'sk_live_x'
+      rpcMock.mockResolvedValue({
+        data: null,
+        error: {
+          message: `permission denied for token ${jwt} key ${apiKey} license ${licenseKey}`,
+        },
+      })
+
+      const manageResult = await executePrivateRegistryManage({ action: 'list' }, makeContext())
+      expect(manageResult.success).toBe(false)
+      expect(manageResult.error).not.toContain(jwt)
+      expect(manageResult.error).not.toContain(apiKey)
+      expect(manageResult.error).not.toContain(licenseKey)
+
+      const publishResult = await executePrivateRegistryPublish(
+        {
+          skillId: 'myteam/my-skill',
+          version: '1.0.0',
+          content: { 'SKILL.md': '# My Skill\n\nDoes a useful thing.' },
+        },
+        makeContext()
+      )
+      expect(publishResult.success).toBe(false)
+      expect(publishResult.error).not.toContain(jwt)
+      expect(publishResult.error).not.toContain(apiKey)
+      expect(publishResult.error).not.toContain(licenseKey)
+    })
+
+    it('transport_error: a thrown RPC-call exception containing secrets reaches neither the manage nor the publish result', async () => {
+      process.env.SKILLSMITH_API_KEY = 'sk_live_x'
+      rpcMock.mockRejectedValue(
+        new Error(`upstream failure: token ${jwt} key ${apiKey} license ${licenseKey}`)
+      )
+
+      const manageResult = await executePrivateRegistryManage({ action: 'list' }, makeContext())
+      expect(manageResult.success).toBe(false)
+      expect(manageResult.error).not.toContain(jwt)
+      expect(manageResult.error).not.toContain(apiKey)
+      expect(manageResult.error).not.toContain(licenseKey)
+
+      const publishResult = await executePrivateRegistryPublish(
+        {
+          skillId: 'myteam/my-skill',
+          version: '1.0.0',
+          content: { 'SKILL.md': '# My Skill\n\nDoes a useful thing.' },
+        },
+        makeContext()
+      )
+      expect(publishResult.success).toBe(false)
+      expect(publishResult.error).not.toContain(jwt)
+      expect(publishResult.error).not.toContain(apiKey)
+      expect(publishResult.error).not.toContain(licenseKey)
+    })
+
+    it('client_unavailable: getSupabaseClient() throwing with secrets in its message reaches neither the manage nor the publish result', async () => {
+      process.env.SKILLSMITH_API_KEY = 'sk_live_x'
+      const { getSupabaseClient } = await import('../supabase-client.js')
+      vi.mocked(getSupabaseClient).mockRejectedValue(
+        new Error(`client init failed: token ${jwt} key ${apiKey} license ${licenseKey}`)
+      )
+
+      const manageResult = await executePrivateRegistryManage({ action: 'list' }, makeContext())
+      expect(manageResult.success).toBe(false)
+      expect(manageResult.error).not.toContain(jwt)
+      expect(manageResult.error).not.toContain(apiKey)
+      expect(manageResult.error).not.toContain(licenseKey)
+
+      const publishResult = await executePrivateRegistryPublish(
+        {
+          skillId: 'myteam/my-skill',
+          version: '1.0.0',
+          content: { 'SKILL.md': '# My Skill\n\nDoes a useful thing.' },
+        },
+        makeContext()
+      )
+      expect(publishResult.success).toBe(false)
+      expect(publishResult.error).not.toContain(jwt)
+      expect(publishResult.error).not.toContain(apiKey)
+      expect(publishResult.error).not.toContain(licenseKey)
+
+      vi.mocked(getSupabaseClient).mockReset()
+      vi.mocked(getSupabaseClient).mockImplementation(async () => ({ rpc: rpcMock }))
+    })
+  })
 })

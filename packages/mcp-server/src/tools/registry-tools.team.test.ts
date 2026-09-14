@@ -165,19 +165,120 @@ describe('resolveRegistryTeamId — credential resolution (SMI-6622)', () => {
   })
 
   // Test item 6: RPC/network error → a typed error, never a stub fallback.
-  it('throws a typed RegistryTeamResolutionError on an RPC-level failure', async () => {
+  it('throws a typed RegistryTeamResolutionError (reason: rpc_error) on an RPC-level failure', async () => {
     process.env.SKILLSMITH_API_KEY = 'sk_live_x'
     rpcMock.mockResolvedValue({ data: null, error: { message: 'permission denied' } })
 
     await expect(resolveRegistryTeamId()).rejects.toBeInstanceOf(RegistryTeamResolutionError)
+    try {
+      await resolveRegistryTeamId()
+      expect.unreachable()
+    } catch (err) {
+      expect(err).toBeInstanceOf(RegistryTeamResolutionError)
+      expect((err as InstanceType<typeof RegistryTeamResolutionError>).reason).toBe('rpc_error')
+    }
   })
 
-  it('throws a typed RegistryTeamResolutionError on a network/transport failure', async () => {
+  it('throws a typed RegistryTeamResolutionError (reason: client_unavailable) when getSupabaseClient() itself throws', async () => {
     process.env.SKILLSMITH_API_KEY = 'sk_live_x'
     const { getSupabaseClient } = await import('../supabase-client.js')
     vi.mocked(getSupabaseClient).mockRejectedValueOnce(new Error('fetch failed'))
 
-    await expect(resolveRegistryTeamId()).rejects.toBeInstanceOf(RegistryTeamResolutionError)
+    try {
+      await resolveRegistryTeamId()
+      expect.unreachable()
+    } catch (err) {
+      expect(err).toBeInstanceOf(RegistryTeamResolutionError)
+      expect((err as InstanceType<typeof RegistryTeamResolutionError>).reason).toBe(
+        'client_unavailable'
+      )
+    }
+  })
+
+  // SMI-6622 round 6 PR-07: distinct from the getSupabaseClient() throw above — the client is
+  // constructed fine, but the RPC CALL ITSELF throws (a genuine network/transport exception),
+  // which the round-5 code conflated with client construction in one try block.
+  it('throws a typed RegistryTeamResolutionError (reason: transport_error) when the RPC call itself throws', async () => {
+    process.env.SKILLSMITH_API_KEY = 'sk_live_x'
+    rpcMock.mockRejectedValueOnce(new Error('fetch failed'))
+
+    try {
+      await resolveRegistryTeamId()
+      expect.unreachable()
+    } catch (err) {
+      expect(err).toBeInstanceOf(RegistryTeamResolutionError)
+      expect((err as InstanceType<typeof RegistryTeamResolutionError>).reason).toBe(
+        'transport_error'
+      )
+    }
+  })
+
+  // ============================================================================
+  // SMI-6622 round 6 PR-07 finding 4: upstream text (an RPC error.message, a thrown exception's
+  // message, or getSupabaseClient() failing) must never reach a thrown message — only the
+  // authored credential-source label. Each below embeds credential-shaped secrets in the upstream
+  // text and asserts none of them survive into the thrown Error's own `.message`.
+  // ============================================================================
+
+  describe('never forwards upstream text into a thrown message (round 6 PR-07)', () => {
+    const jwt = 'eyJhbGciOiJIUzI1NiJ9.eyJzdWIiOiJ4In0.sig'
+    const apiKey = 'sk_live_abcdefghijklmnopqrstuvwx'
+    const licenseKey = 'sk_test_fake_license'
+
+    it('rpc_error: an RPC error.message containing secrets never reaches the thrown message', async () => {
+      process.env.SKILLSMITH_API_KEY = 'sk_live_x'
+      rpcMock.mockResolvedValue({
+        data: null,
+        error: {
+          message: `permission denied for token ${jwt} key ${apiKey} license ${licenseKey}`,
+        },
+      })
+
+      try {
+        await resolveRegistryTeamId()
+        expect.unreachable()
+      } catch (err) {
+        const message = (err as Error).message
+        expect(message).not.toContain(jwt)
+        expect(message).not.toContain(apiKey)
+        expect(message).not.toContain(licenseKey)
+      }
+    })
+
+    it('transport_error: a thrown exception message containing secrets never reaches the thrown message', async () => {
+      process.env.SKILLSMITH_API_KEY = 'sk_live_x'
+      rpcMock.mockRejectedValueOnce(
+        new Error(`upstream failure: token ${jwt} key ${apiKey} license ${licenseKey}`)
+      )
+
+      try {
+        await resolveRegistryTeamId()
+        expect.unreachable()
+      } catch (err) {
+        const message = (err as Error).message
+        expect(message).not.toContain(jwt)
+        expect(message).not.toContain(apiKey)
+        expect(message).not.toContain(licenseKey)
+      }
+    })
+
+    it('client_unavailable: a getSupabaseClient() exception message containing secrets never reaches the thrown message', async () => {
+      process.env.SKILLSMITH_API_KEY = 'sk_live_x'
+      const { getSupabaseClient } = await import('../supabase-client.js')
+      vi.mocked(getSupabaseClient).mockRejectedValueOnce(
+        new Error(`client init failed: token ${jwt} key ${apiKey} license ${licenseKey}`)
+      )
+
+      try {
+        await resolveRegistryTeamId()
+        expect.unreachable()
+      } catch (err) {
+        const message = (err as Error).message
+        expect(message).not.toContain(jwt)
+        expect(message).not.toContain(apiKey)
+        expect(message).not.toContain(licenseKey)
+      }
+    })
   })
 })
 

@@ -29,8 +29,20 @@
  * failure mode throws, distinguishably:
  *   - no credential anywhere (env or config.json) → a plain, actionable `Error`
  *   - the RPC call itself fails (network/transport, or a non-null `error` in its response) →
- *     {@link RegistryTeamResolutionError}
+ *     {@link RegistryTeamResolutionError}, one of three {@link RegistryTeamResolutionReason}s
  *   - the RPC succeeds but resolves to no team (unknown/malformed/revoked key) → a plain `Error`
+ *
+ * **Guarantee, and its exact scope** (SMI-6622 round 6 PR-07): every `Error` thrown by
+ * {@link resolveRegistryTeamId} has an AUTHORED `message` — a fixed string naming only the
+ * credential source label (one of three closed-enum values, never upstream text). A
+ * `getSupabaseClient()`/`rpc()` exception or a `rpcResult.error` object is attached ONLY as
+ * `cause`, never read into a message and never logged. This covers only what THIS module throws;
+ * `registry-tools.membership-check.ts` carries the equivalent guarantee for the membership probe
+ * (see that file's own header), and any OTHER registry call site not touched by this PR may still
+ * forward upstream text — tracked in SMI-6649. `readRegistryCredential()`/`resolveCredentialWithSource()`
+ * below were checked and confirmed to never throw at all (`readLicenseKey()` is pure `process.env`
+ * string logic; `getApiKey()`'s own `loadConfig()` swallows every read/parse error internally and
+ * returns `{}`), so neither needed a fix.
  *
  * Team-vs-membership mismatch (a license key that resolves to team A, while the signed-in user —
  * `skillsmith login` — is actually a member of team B or no team at all) is NOT this module's
@@ -55,16 +67,27 @@ interface MinimalSupabaseClient {
   rpc<T = unknown>(fn: string, params?: Record<string, unknown>): Promise<SupabaseRpcResult<T>>
 }
 
+/** Which stage of team resolution failed — a closed enum, never free text. */
+export type RegistryTeamResolutionReason = 'client_unavailable' | 'transport_error' | 'rpc_error'
+
 /**
- * Thrown when `resolve_team_from_license` could not be reached at all — a network/transport
- * failure, or a non-null `error` in the RPC response. Distinct from the plain `Error` thrown when
- * the RPC succeeds but resolves to no team, so a caller (or a test) can tell "we asked and the key
- * is wrong/unknown" apart from "we could not even ask."
+ * Thrown when `resolve_team_from_license` could not be reached at all — a Supabase client
+ * construction failure, a network/transport exception, or a non-null `error` in the RPC response.
+ * Distinct from the plain `Error` thrown when the RPC succeeds but resolves to no team, so a
+ * caller (or a test) can tell "we asked and the key is wrong/unknown" apart from "we could not
+ * even ask." `reason` lets a caller branch without parsing `message` text; `message` is always
+ * authored (see this file's header) and the upstream error, if any, is attached only as `cause`.
  */
 export class RegistryTeamResolutionError extends Error {
-  constructor(message: string, options?: { cause?: unknown }) {
+  readonly reason: RegistryTeamResolutionReason
+  constructor(
+    reason: RegistryTeamResolutionReason,
+    message: string,
+    options?: { cause?: unknown }
+  ) {
     super(message, options)
     this.name = 'RegistryTeamResolutionError'
+    this.reason = reason
   }
 }
 
@@ -150,24 +173,36 @@ export async function resolveRegistryTeamId(): Promise<RegistryTeamResolution> {
   const { key, source } = credential
   const sourceLabel = describeCredentialSource(source)
 
+  let client: MinimalSupabaseClient
+  try {
+    client = (await getSupabaseClient()) as MinimalSupabaseClient
+  } catch (err) {
+    throw new RegistryTeamResolutionError(
+      'client_unavailable',
+      `Could not create a Supabase client to resolve your team from the credential in ` +
+        `${sourceLabel}. Try again, and contact support if this persists.`,
+      { cause: err }
+    )
+  }
+
   let rpcResult: SupabaseRpcResult<string>
   try {
-    const client = (await getSupabaseClient()) as MinimalSupabaseClient
     rpcResult = await client.rpc<string>('resolve_team_from_license', { p_license_key: key })
   } catch (err) {
     throw new RegistryTeamResolutionError(
-      `Failed to resolve your team from the credential in ${sourceLabel}: ${
-        err instanceof Error ? err.message : 'unknown error'
-      }`,
+      'transport_error',
+      `A network error interrupted resolving your team from the credential in ${sourceLabel}. ` +
+        'Try again, and contact support if this persists.',
       { cause: err }
     )
   }
 
   if (rpcResult.error) {
     throw new RegistryTeamResolutionError(
-      `Failed to resolve your team from the credential in ${sourceLabel}: ${
-        rpcResult.error.message ?? 'unknown error'
-      }`
+      'rpc_error',
+      `The team-resolution request for the credential in ${sourceLabel} failed. ` +
+        'Try again, and contact support if this persists.',
+      { cause: rpcResult.error }
     )
   }
 
