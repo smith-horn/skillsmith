@@ -24,7 +24,7 @@
 
 MAIN="${1:?usage: print-deps-refresh-advice.sh <main-checkout-path>}"
 
-printf '  0. Confirm the main container'\''s own mounts (root + every packages/*/node_modules, round-2b):\n'
+printf '  0. Confirm the main container'\''s own mounts (root + every packages/*/node_modules):\n'
 printf '       docker exec -w /app skillsmith-dev-1 sh scripts/lib/node-modules-mount-gate.sh\n'
 printf '     If that fails, recreate it first (this restarts both MCP servers\n'
 printf '     for every session), then re-check:\n'

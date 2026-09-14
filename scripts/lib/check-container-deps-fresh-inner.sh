@@ -96,43 +96,22 @@ release() {
     fi
 }
 
-# SMI-6516/6520/6614 (ADR-158, change 5): mount check before any self-heal
-# install. Delegates to the shared scripts/lib/node-modules-mount-gate.sh
-# (round-2b) rather than checking `/app/node_modules` alone — that was the
-# ONLY mount checked through round 2, but skillsmith-dev-1 declares nine
-# node_modules volumes (root + one per packages/*), and SMI-6516 detached
-# nine of ten individually; a root-only check misses "root attached, one
-# workspace detached" exactly the way SMI-6516 happened. The shared helper
-# normalizes every outcome to 0 (every path mounted with a volume-shaped
-# root) / 32 (>=1 detached, or mounted but not volume-shaped, or ambiguous
-# — stderr names each) / 127 (/proc/self/mountinfo unreadable) — see that
-# file's own header for the full contract, its "no fourth error bucket"
-# note, and the residual it states plainly (this checks a mount's SHAPE,
-# not Docker/Podman identity, which is unreachable from inside the
-# container).
+# SMI-6614 (ADR-158): mount check before any self-heal install, via the
+# shared scripts/lib/node-modules-mount-gate.sh — checks every declared
+# node_modules path (root + one per packages/*), not just root, since
+# SMI-6516 detached nine of ten individually and a root-only check misses
+# "root attached, one workspace detached." The helper normalizes every
+# outcome to 0 (every path mounted with a volume-shaped root) / 32 (>=1
+# detached, mounted but not volume-shaped, or ambiguous — stderr names
+# each) / 127 (mountinfo unreadable) — see that file's own header for the
+# full contract and the residual it states plainly. Full history and
+# code-review trail: docs/internal/implementation/smi-6614-6606-lockfile-drift-classifier.md.
 #
-# round-3: the helper no longer uses `mountpoint` at all — it parses
-# /proc/self/mountinfo directly. `mountpoint -q` follows symlinks and
-# returns 0 for ANY mount at the resolved path, so a worktree container
-# whose /app/node_modules is a SYMLINK to a real mount elsewhere (measured:
-# post-merge-lockfile-drift-classifier-dev-1's mounts sit at /node_modules,
-# not /app/node_modules) was reported as mounted when it genuinely wasn't —
-# a false negative for exactly the class of bug this check exists to catch.
-#
-# No env-var test seam (round 2 review, Finding A): an earlier version
-# honoured a SKILLSMITH_MOUNTPOINT_TEST=1 master switch plus a
-# SKILLSMITH_MOUNTPOINT_TEST_RC override, forwarded in by
-# check-container-deps-fresh.sh's own `docker exec -e ...`. Review found
-# that forwarding path itself was the vulnerability: a stray host
-# environment carrying both variables (e.g. left over from manual testing)
-# reached this process unconditionally and bypassed the real check, however
-# tightly the override was gated once it arrived. check-container-deps-fresh.sh
-# now forwards nothing mount-related at all, so this function always runs the
-# real command — there is no branch left to bypass. Tests exercise this by
-# pointing the helper's NODE_MODULES_MOUNT_GATE_MOUNTINFO seam at a fixture
-# mountinfo file (round-3 — the `mountpoint` PATH-shim this file's own
-# comment used to describe is gone; nothing left to shim) — this runs the
-# exact production code path instead of a parallel test-only branch.
+# check-container-deps-fresh.sh's own `docker exec -e ...` forwards nothing
+# mount-related, so this function always runs the real helper — there is no
+# test-only branch to accidentally exercise instead. Tests point the
+# helper's own SKILLSMITH_MOUNT_GATE_MOUNTINFO_TEST seam at a fixture
+# mountinfo file, running the exact production code path.
 _check_mountpoint() {
     sh scripts/lib/node-modules-mount-gate.sh
 }

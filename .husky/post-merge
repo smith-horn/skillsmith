@@ -104,13 +104,12 @@ if git diff --name-only ORIG_HEAD HEAD | grep -q '^package-lock\.json$'; then
   # --- Host retrieval auto-heal (SMI-5426) -----------------------------------
   # Out-of-band: kick a detached, guarded auto-heal of the host better-sqlite3
   # binding so long-dead retrieval telemetry self-revives (SMI-4549/SMI-5419).
-  # SMI-6614 change 4: kicked ONLY on fresh/cosmetic — retrieval-autoheal.sh
-  # runs repair-host-native-deps.sh against the HOST tree
-  # (retrieval-autoheal.sh:309-323), and its own lock does not exclude a
-  # human install (retrieval-autoheal.sh:311-316), so kicking it on real/
-  # unknown would race the refresh advised above. regen-lockfile.sh re-kicks
-  # the auto-heal once that refresh completes (change 5c). --print-banner is
-  # read-only and always runs, regardless of verdict.
+  # SMI-6614: kicked ONLY on fresh/cosmetic — retrieval-autoheal.sh's own
+  # repair step runs repair-host-native-deps.sh against the HOST tree, and
+  # its own lock does not exclude a concurrent human-run install, so
+  # kicking it on real/unknown would race the refresh advised above.
+  # regen-lockfile.sh re-kicks the auto-heal once that refresh completes.
+  # --print-banner is read-only and always runs, regardless of verdict.
   if command -v node > /dev/null 2>&1 && [ -f scripts/retrieval-autoheal.sh ]; then
     bash scripts/retrieval-autoheal.sh --print-banner 2>/dev/null || true
     case "$VERDICT" in

@@ -574,7 +574,7 @@ The worktree has been left intact. Fix with:
     # checkout this worktree has no working-tree content at all yet. Like
     # Step 3c's git-crypt filter registration, this key is repo-shared: one
     # write here also fixes the main checkout and every other worktree.
-    # `|| true`: this script also runs under `set -euo pipefail` (line 13).
+    # `|| true`: this script also runs under its own top-of-file `set -euo pipefail`.
     # ensure_hooks_path_relative() legitimately `return 1`s in its
     # refuse-to-write case, already logged as a WARN -- not a reason to
     # abort worktree creation entirely (Docker override generation,

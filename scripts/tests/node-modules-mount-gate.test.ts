@@ -11,7 +11,7 @@
  * including a writable host bind — see the helper's own header for the
  * measured worktree-container false negative that motivated this). It now
  * parses /proc/self/mountinfo directly. This file drives the real POSIX-sh
- * script via spawnSync, pointing its NODE_MODULES_MOUNT_GATE_MOUNTINFO test
+ * script via spawnSync, pointing its SKILLSMITH_MOUNT_GATE_MOUNTINFO_TEST test
  * seam at a small fixture mountinfo file per test (mirrors
  * regen-lockfile.test.ts's identical round-3 migration) rather than
  * PATH-shimming `mountpoint` — that shim is dead code against the rewritten
@@ -123,8 +123,8 @@ function runGate(
     timeout: 10_000,
     env: {
       PATH: '/usr/bin:/bin',
-      APP_ROOT: appRoot,
-      NODE_MODULES_MOUNT_GATE_MOUNTINFO: mountinfoPath,
+      SKILLSMITH_MOUNT_GATE_APP_ROOT_TEST: appRoot,
+      SKILLSMITH_MOUNT_GATE_MOUNTINFO_TEST: mountinfoPath,
     },
   })
   return { status: r.status ?? 1, stdout: r.stdout ?? '', stderr: r.stderr ?? '' }

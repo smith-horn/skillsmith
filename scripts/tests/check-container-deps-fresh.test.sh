@@ -250,11 +250,9 @@ assert_eq "S16: fresh tree + detached mount -> exit 0 (no block)" "0" "$rc"
 assert_eq "S16: npm install NOT called" "0" "$(npm_call_count)"
 
 # =========================================================================
-# Scenario 17 (round-3): stale tree + mountinfo genuinely UNREADABLE (points
-# NODE_MODULES_MOUNT_GATE_MOUNTINFO — via FAKE_MOUNTINFO_OVERRIDE — at a
-# path that was never written, rather than the old "mountpoint binary
-# absent from PATH" mechanism, which is obsolete now that the helper never
-# calls `mountpoint` at all) -> outer exits 1 with the "cannot verify"
+# Scenario 17: stale tree + mountinfo genuinely UNREADABLE (points
+# SKILLSMITH_MOUNT_GATE_MOUNTINFO_TEST — via FAKE_MOUNTINFO_OVERRIDE — at a
+# path that was never written) -> outer exits 1 with the "cannot verify"
 # message, no install.
 # =========================================================================
 MAIN17="$TMP_ROOT/main17"

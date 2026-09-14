@@ -33,7 +33,7 @@ source "$SCRIPT_DIR/lib/running-script-pids.sh"
 # `worktree` entry of `git worktree list --porcelain` is always the main tree.
 # Use sed (full line after the prefix), NOT `awk '{print $2}'` — awk would
 # truncate a path containing a space, diverging from the TS full-path slice and
-# silently breaking the heal + banner on such a path (round-2 retro Low-1).
+# silently breaking the heal + banner on such a path.
 MAIN_REPO="$(git -C "$SCRIPT_DIR" worktree list --porcelain 2>/dev/null | sed -n 's/^worktree //p' | head -1)"
 if [ -z "${MAIN_REPO:-}" ]; then
   MAIN_REPO="$(git -C "$SCRIPT_DIR" rev-parse --show-toplevel 2>/dev/null || echo "")"
@@ -109,15 +109,13 @@ probe_binding() {
 # above (regen-lockfile.sh's own `npm install`/`npm rebuild` calls run INSIDE
 # the container via `docker exec`, invisible to a host-side pgrep).
 #
-# round-2 code-review (Finding B): "cannot tell whether a foreign install is
-# running" is not a green light to proceed — it is the SAME race this
-# detector exists to prevent, just undetectable instead of detected. Both
-# missing-tool paths (running_script_pids itself failing — e.g. `ps`
-# unavailable — and pgrep being absent for the npm-pattern check below) now
-# make this function return "yes, treat as running" (defer) rather than "no,
-# proceed", logging exactly which tool is missing each time. There is no
-# proceed-anyway path left; the caller no longer needs its own warn-and-go
-# fallback.
+# "Cannot tell whether a foreign install is running" is not a green light
+# to proceed — it is the SAME race this detector exists to prevent, just
+# undetectable instead of detected. Both missing-tool paths
+# (running_script_pids itself failing — e.g. `ps` unavailable — and pgrep
+# being absent for the npm-pattern check below) make this function return
+# "yes, treat as running" (defer) rather than "no, proceed", logging
+# exactly which tool is missing each time.
 HAVE_PGREP=0
 command -v pgrep >/dev/null 2>&1 && HAVE_PGREP=1
 foreign_install_running() {
@@ -238,9 +236,8 @@ acquire_lock() {
 
 # --- ANSI strip — portable across BSD (macOS) + GNU sed --------------------
 # The GNU hex-escape form for ESC is a no-op on BSD/macOS sed (it matches the
-# literal characters, not the control byte), so the prior strip silently did
-# nothing on the host target (round-2 retro Low-2). A bash $'\033' yields a real
-# ESC byte that BOTH seds match.
+# literal characters, not the control byte), silently stripping nothing on
+# the host target. A bash $'\033' yields a real ESC byte that BOTH seds match.
 strip_ansi() { sed $'s/\033\\[[0-9;]*m//g'; }
 
 # --- Reason extraction from repair output (strip ANSI; prefer the Error: line)-
@@ -302,9 +299,9 @@ if probe_binding; then
   exit 0
 fi
 
-# 5. Concurrent-install detector (pre-lock). foreign_install_running() owns the
-#    whole decision (incl. the FORCE_INSTALL test seam) AND the missing-tool
-#    fail-closed defer (round-2 Finding B) — it already logs when it defers
+# 5. Concurrent-install detector (pre-lock). foreign_install_running() owns
+#    the whole decision (incl. the FORCE_INSTALL test seam) AND the
+#    missing-tool fail-closed defer — it already logs when it defers
 #    because a detection tool is unavailable, so there is nothing left for
 #    this call site to warn about separately.
 if foreign_install_running; then

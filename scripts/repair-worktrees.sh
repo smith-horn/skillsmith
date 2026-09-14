@@ -66,7 +66,7 @@ EOF
     esac
 done
 
-# round-4 (finding 3): classifies container $1 by its Compose
+# Classifies container $1 by its Compose
 # `com.docker.compose.project.working_dir` label against $REPO_ROOT — a
 # `docker ps` match can be the MAIN checkout's container, a WORKTREE's own
 # container, or (rare) something whose label can't be read at all. Each
@@ -161,7 +161,7 @@ check_docker_safety_for_rebuild() {
     # today's macOS reality (a wedged daemon would have hung the script
     # anyway since the guard never executed) but at least lets the guard
     # fire when Docker is responsive. Pattern mirrors
-    # scripts/session-start-priming.sh:143-156, with the addition of
+    # scripts/session-start-priming.sh's own capability probe, with the addition of
     # validating `gtimeout` (priming-script only validates `timeout`) so a
     # broken Homebrew coreutils install can't trip the same trap. Extracted
     # into run_with_timeout so create-worktree.sh's Step 8 readiness probe
@@ -183,12 +183,11 @@ check_docker_safety_for_rebuild() {
         return 0
     fi
 
-    # round-4 (finding 3): classify EACH matched container individually and
-    # build one advice block with exactly one `docker exec`/`docker compose`
-    # line per container — never a single command interpolating several
-    # names at once (the original bug this round fixes: `$match` can be
-    # multiple lines, and a naive `docker exec … $match …` would splice all
-    # of them into one argv).
+    # Classify EACH matched container individually and build one advice
+    # block with exactly one `docker exec`/`docker compose` line per
+    # container — never a single command interpolating several names at
+    # once: `$match` can be multiple lines, and a naive `docker exec …
+    # $match …` would splice all of them into one argv.
     local advice="" name classification
     while IFS= read -r name; do
         [ -n "$name" ] || continue
@@ -248,8 +247,8 @@ ensure_git_crypt_filter_registered "$REPO_ROOT"
 # main checkout AND every worktree at once, not just whichever tree this
 # script happens to be iterating.
 #
-# `|| true` is required under `set -e` (this script's own set -euo
-# pipefail, line 27): ensure_hooks_path_relative() legitimately `return 1`s
+# `|| true` is required under `set -e` (this script's own top-of-file
+# `set -euo pipefail`): ensure_hooks_path_relative() legitimately `return 1`s
 # in its refuse-to-write case (target tree's .husky/_/h missing) -- a
 # non-fatal, already-logged WARN, not a reason to abort the rest of this
 # script's OTHER repair steps (node_modules symlinks, docker override

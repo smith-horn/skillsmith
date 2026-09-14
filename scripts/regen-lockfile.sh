@@ -105,24 +105,19 @@ verify_container_native() {
     "require('@skillsmith/core').createDatabaseSync(':memory:').close()" >/dev/null 2>&1
 }
 
-# SMI-6614 (ADR-158, change 5b/R3-1; widened round-2b; round-4 rename):
-# reports a failed docker-exec-wrapped npm mutation and exits. Distinguishes
-# a mount-gate refusal (exit 97 AND a literal `MOUNT_GATE <rc>` line on the
-# captured stderr — BOTH required, since `npm rebuild`'s own lifecycle
-# scripts can independently exit 97) from an ordinary npm failure. The gate
-# itself is now scripts/lib/node-modules-mount-gate.sh (checks root + every
-# packages/*/node_modules, not just root; round-3: parses
-# /proc/self/mountinfo directly rather than shelling out to `mountpoint`,
-# which follows symlinks and can't tell a real mount from anything else
-# mounted wherever a symlink resolves to; round-4: resolves the currently
-# visible mount at a path by topology, not file order, and can no longer
-# claim to PROVE a mount is Docker/Podman-managed from inside the container
-# — it checks the mount's root SHAPE, hence "volume-shaped" below, not
-# "named volume") — its own "MOUNT_DETACHED <path>" / "MOUNT_NOT_VOLUME
-# <path> root=... fstype=..." / "MOUNT_AMBIGUOUS <path>" lines flow
-# straight through into $err_text (the sh -c payload below never redirects
-# the gate's stderr away), so rc=32 names the actual affected path(s)
-# instead of assuming /app/node_modules specifically.
+# SMI-6614 (ADR-158): reports a failed docker-exec-wrapped npm mutation and
+# exits. Distinguishes a mount-gate refusal (exit 97 AND a literal
+# `MOUNT_GATE <rc>` line on the captured stderr — BOTH required, since `npm
+# rebuild`'s own lifecycle scripts can independently exit 97) from an
+# ordinary npm failure. The gate is scripts/lib/node-modules-mount-gate.sh
+# (checks root + every packages/*/node_modules); its own "MOUNT_DETACHED
+# <path>" / "MOUNT_NOT_VOLUME <path> root=... fstype=..." / "MOUNT_AMBIGUOUS
+# <path>" lines flow straight through into $err_text (the sh -c payload
+# below never redirects the gate's stderr away), so rc=32 names the actual
+# affected path(s) instead of assuming /app/node_modules specifically. The
+# helper checks a mount's root SHAPE, not Docker/Podman identity (which is
+# unreachable from inside the container) — hence "volume-shaped" below, not
+# "named volume".
 report_docker_npm_failure() {
   local label="$1" rc="$2" err_text="$3" mount_rc affected_paths
   if [ "$rc" -eq 97 ] && printf '%s\n' "$err_text" | grep -q '^MOUNT_GATE '; then
@@ -147,14 +142,14 @@ Recreate: docker compose --profile dev up -d --force-recreate dev (from the main
   error "$label failed inside $CONTAINER (see output above, exit $rc)."
 }
 
-# SMI-6614 (ADR-158, change 5c/1): refuses to start a full sync while a host
-# native repair (retrieval-autoheal.sh or repair-host-native-deps.sh) is
-# already running — both mutate the same host tree this script is about to
-# mutate. round-2 code-review (Finding B): "cannot tell whether a repair is
-# running" is not a green light — it is the SAME hazard this check exists to
-# prevent, just undetectable instead of detected. `ps`/`pgrep` unavailable
-# now REFUSES (fail-closed), naming whichever tool running_script_pids
-# reported missing, rather than proceeding with only a warning.
+# SMI-6614 (ADR-158): refuses to start a full sync while a host native
+# repair (retrieval-autoheal.sh or repair-host-native-deps.sh) is already
+# running — both mutate the same host tree this script is about to mutate.
+# "Cannot tell whether a repair is running" fails closed rather than
+# proceeding with only a warning: it is the SAME hazard this check exists
+# to prevent, just undetectable instead of detected. `ps`/`pgrep`
+# unavailable REFUSES, naming whichever tool running_script_pids reported
+# missing.
 refuse_if_native_repair_running() {
   local pids detect_stderr_file detect_err
   detect_stderr_file="$(mktemp)"

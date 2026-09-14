@@ -120,10 +120,10 @@ fi
 # from both self-heal outcome branches below.
 NATIVE_CHECK_LIB="$(dirname "$0")/check-native-modules.sh"
 
-# SMI-6614 (ADR-158, code-review finding 3): the shared refresh advice —
-# resolved the same way. This script only ever runs on the main checkout
-# (IS_WORKTREE=0 is enforced below), so the main-checkout path is simply the
-# current repo root.
+# SMI-6614 (ADR-158): the shared refresh advice, resolved the same way.
+# This script only ever runs on the main checkout (IS_WORKTREE=0 is
+# enforced below), so the main-checkout path is simply the current repo
+# root.
 ADVICE_LIB="$(dirname "$0")/print-deps-refresh-advice.sh"
 _print_container_deps_advice() {
     _advice_main="$(git rev-parse --show-toplevel 2>/dev/null || pwd)"
@@ -161,27 +161,17 @@ case "$LOCK_SLEEP_SECS" in
     ''|*[!0-9]*) LOCK_SLEEP_SECS=2 ;;
 esac
 
-# SMI-6614 (ADR-158, code-review round 2, Finding A): this script forwards
-# NO mount-check test-seam variable into the container, ever, regardless of
-# what this (host) process's own environment happens to contain. Round 1
-# gated SKILLSMITH_MOUNTPOINT_TEST_RC's forwarding behind a
-# SKILLSMITH_MOUNTPOINT_TEST=1 master switch read from this process's own
-# env — but that switch itself was still forwarded unconditionally, so a
-# stray host shell that happened to have BOTH SKILLSMITH_MOUNTPOINT_TEST=1
-# and SKILLSMITH_MOUNTPOINT_TEST_RC=0 set (e.g. left over from earlier manual
-# testing) still reached the container and bypassed the real mount-identity
-# check. There is no way to gate a forwarded override safely when the host
-# environment invoking THIS script cannot itself be trusted — so the fix is
-# to never forward anything test-seam-shaped here at all.
-# check-container-deps-fresh-inner.sh's own mount check
-# (_check_mountpoint()) has no env-var seam any more either — it always runs
-# the real scripts/lib/node-modules-mount-gate.sh helper, which (round-3)
-# parses /proc/self/mountinfo directly rather than shelling out to
-# `mountpoint` (which follows symlinks and can't tell a real mount from
-# anything else mounted at wherever a symlink resolves to — see that
-# helper's own header). Tests exercise that real code path by pointing the
-# helper's own NODE_MODULES_MOUNT_GATE_MOUNTINFO seam at a fixture
-# mountinfo file, never by forwarding a variable through this script — see
+# SMI-6614 (ADR-158): this script forwards NO mount-check test-seam
+# variable into the container, ever, regardless of what this (host)
+# process's own environment happens to contain — a forwarded override
+# cannot be gated safely when the host environment invoking this script is
+# itself untrusted (e.g. a stray leftover test variable from manual
+# testing). check-container-deps-fresh-inner.sh's own mount check
+# (_check_mountpoint()) has no env-var seam either — it always runs the
+# real scripts/lib/node-modules-mount-gate.sh helper. Tests exercise that
+# real code path by pointing the helper's own
+# SKILLSMITH_MOUNT_GATE_MOUNTINFO_TEST seam at a fixture mountinfo file,
+# never by forwarding a variable through this script — see
 # scripts/tests/_lib/check-container-deps-fresh-fixtures.sh.
 
 # The actual lock + self-heal logic lives in check-container-deps-fresh-inner.sh
@@ -252,9 +242,9 @@ case "$RC" in
         printf '\n'
         printf '  %s\n' "$OUTPUT"
         printf '\n'
-        # SMI-6614 (ADR-158, code-review finding 3): never advertise a bare
-        # `docker exec … npm install` retry — point at the same mount-gated,
-        # scripted refresh path every other remedy in this file uses.
+        # SMI-6614 (ADR-158): never advertise a bare `docker exec … npm
+        # install` retry — point at the same mount-gated, scripted refresh
+        # path every other remedy in this file uses.
         printf "  ${YELLOW}Fix — refresh via the scripted, mount-gated path:${NC}\n"
         _print_container_deps_advice
         # SMI-6437: a failed install can leave native bindings broken as a
@@ -278,23 +268,22 @@ case "$RC" in
         fi
         ;;
     5)
-        # SMI-6516/6520/6614 (ADR-158, change 5; widened round-2b; round-4
-        # rename): the shared scripts/lib/node-modules-mount-gate.sh ran
-        # (after the freshness check failed) and found at least one of
-        # skillsmith-dev-1's NINE declared node_modules paths (root, or a
-        # packages/*/node_modules) is NOT currently mounted with a
-        # volume-shaped root — installing here would write into that
-        # path's HOST tree instead (the exact hazard this plan exists to
-        # stop; SMI-6516 detached nine of ten individually, so a root-only
-        # check would have missed most of that incident). Distinguishes
-        # MOUNT_CHECK_UNAVAILABLE (127, /proc/self/mountinfo is unreadable
+        # SMI-6516/6520/6614 (ADR-158): the shared
+        # scripts/lib/node-modules-mount-gate.sh ran (after the freshness
+        # check failed) and found at least one of skillsmith-dev-1's
+        # declared node_modules paths (root, or a packages/*/node_modules)
+        # is NOT currently mounted with a volume-shaped root — installing
+        # here would write into that path's HOST tree instead (SMI-6516
+        # detached nine of ten declared mounts individually, so a
+        # root-only check would have missed most of that incident).
+        # Distinguishes MOUNT_CHECK_UNAVAILABLE (127, mountinfo unreadable
         # inside the container) from everything else (32 — MOUNT_DETACHED,
-        # MOUNT_NOT_VOLUME, or round-4's MOUNT_AMBIGUOUS) — all fail closed
-        # and install nothing. round-4: the helper cannot prove a mount is
-        # a genuine Docker/Podman-managed volume from inside the container
-        # (that metadata isn't reachable there) — it checks the mount's
-        # ROOT SHAPE (`.../volumes/<name>/_data`), so the message below
-        # says "volume-shaped root", not "named volume".
+        # MOUNT_NOT_VOLUME, or MOUNT_AMBIGUOUS) — all fail closed and
+        # install nothing. The helper cannot prove a mount is a genuine
+        # Docker/Podman-managed volume from inside the container (that
+        # metadata isn't reachable there); it checks the mount's ROOT
+        # SHAPE (`.../volumes/<name>/_data`), hence "volume-shaped root"
+        # below, not "named volume".
         case "$OUTPUT" in
             *MOUNT_CHECK_UNAVAILABLE*)
                 printf "${RED}  ✗ Cannot verify %s's node_modules mounts${NC}\n" "$DOCKER_CONTAINER"

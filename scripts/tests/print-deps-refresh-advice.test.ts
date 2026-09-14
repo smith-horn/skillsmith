@@ -67,8 +67,8 @@ describe('scripts/lib/print-deps-refresh-advice.sh', () => {
     expect(r.stdout).toContain('cd "/my/main/checkout" && ./scripts/repair-worktrees.sh')
   })
 
-  // round-2b: step 0's mount check widened to every node_modules named
-  // volume (root + packages/*), via the shared helper, not a root-only
+  // Step 0's mount check covers every node_modules path (root +
+  // packages/*), via the shared helper, not a root-only
   // `mountpoint -q /app/node_modules` one-liner.
   it('step 0 uses the shared node-modules-mount-gate.sh helper, not a root-only mountpoint check', () => {
     const r = run(['/tmp/fake-main'])

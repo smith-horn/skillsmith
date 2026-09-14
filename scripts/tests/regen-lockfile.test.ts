@@ -116,8 +116,8 @@ function setupRepo(tempRoot: string): {
   const binDir = join(tempRoot, 'bin')
   const dockerLog = join(tempRoot, 'docker.log')
   const npmLog = join(tempRoot, 'npm.log')
-  // round-3: runScript()'s env below points NODE_MODULES_MOUNT_GATE_MOUNTINFO
-  // at join(dirname(cwd), 'mountinfo') — cwd is always repoDir for every test
+  // runScript()'s env below points SKILLSMITH_MOUNT_GATE_MOUNTINFO_TEST at
+  // join(dirname(cwd), 'mountinfo') — cwd is always repoDir for every test
   // that reaches the mount gate, so this resolves to the same path.
   const mountinfoPath = join(tempRoot, 'mountinfo')
 
@@ -133,10 +133,10 @@ function setupRepo(tempRoot: string): {
   chmodSync(join(scriptsDir, 'regen-lockfile.sh'), 0o755)
   copyFileSync(SOURCE_LIB_SH, join(scriptsDir, '_lib.sh'))
   copyFileSync(SOURCE_RUNNING_SCRIPT_PIDS_SH, join(scriptsLibDir, 'running-script-pids.sh'))
-  // round-2b: regen-lockfile.sh's in-container gate now delegates to the
-  // shared node-modules-mount-gate.sh helper (relative path, resolved
-  // against the fake docker exec's cwd == repoDir via APP_ROOT=repoDir in
-  // runScript()'s env below) instead of calling `mountpoint` directly.
+  // regen-lockfile.sh's in-container gate delegates to the shared
+  // node-modules-mount-gate.sh helper (relative path, resolved against the
+  // fake docker exec's cwd == repoDir via
+  // SKILLSMITH_MOUNT_GATE_APP_ROOT_TEST=repoDir in runScript()'s env below).
   copyFileSync(SOURCE_NODE_MODULES_MOUNT_GATE_SH, join(scriptsLibDir, 'node-modules-mount-gate.sh'))
   chmodSync(join(scriptsLibDir, 'node-modules-mount-gate.sh'), 0o755)
   // The helper's root check needs a real directory to stat before it will
@@ -222,16 +222,16 @@ exit ${rc}
 }
 
 /**
- * round-3: node-modules-mount-gate.sh no longer shells out to `mountpoint`
- * at all — it parses /proc/self/mountinfo directly (mountpoint follows
- * symlinks and can't tell a real mount from anything else
- * mounted wherever a symlink resolves to; see that file's own header). The
- * `mountpoint` PATH-shims this file used to write are dead code now — the
- * helper never calls that binary, so shimming it would silently test
- * nothing (the exact SMI-6598 trap: a test that used to exercise a real
- * code path, still green, but for the wrong reason). Every mount-state test
- * below instead writes a fixture mountinfo file and points the helper's own
- * NODE_MODULES_MOUNT_GATE_MOUNTINFO seam at it.
+ * node-modules-mount-gate.sh parses /proc/self/mountinfo directly rather
+ * than shelling out to `mountpoint` (which follows symlinks and can't tell
+ * a real mount from anything else mounted wherever a symlink resolves to;
+ * see that file's own header). A PATH-shimmed `mountpoint` binary would be
+ * dead code against it — the helper never calls that binary, so shimming
+ * it would silently test nothing (the SMI-6598 trap: a test that exercises
+ * a real code path can go stale and pass for the wrong reason once the
+ * underlying mechanism changes). Every mount-state test below instead
+ * writes a fixture mountinfo file and points the helper's own
+ * SKILLSMITH_MOUNT_GATE_MOUNTINFO_TEST seam at it.
  */
 
 /** One mountinfo line for `mountPoint` as a genuine Docker/Podman named-
@@ -367,27 +367,26 @@ function runScript(
   const r = spawnSync('bash', [scriptPath, ...args], {
     encoding: 'utf8',
     timeout: 30_000,
-    // APP_ROOT: round-2b's node-modules-mount-gate.sh test seam — points
-    // the helper's root/packages/* checks at this fixture repo (standing in
-    // for the container's /app) instead of its own default. Inherited by
-    // the fake docker exec subprocess and everything IT spawns (normal
-    // subprocess env inheritance), never forwarded via any real `docker
-    // exec -e` in production code (SMI-6614 round-2 Finding A).
+    // SKILLSMITH_MOUNT_GATE_APP_ROOT_TEST: node-modules-mount-gate.sh's own
+    // test seam — points the helper's root/packages/* checks at this
+    // fixture repo (standing in for the container's /app) instead of its
+    // own default. Inherited by the fake docker exec subprocess and
+    // everything IT spawns (normal subprocess env inheritance), never
+    // forwarded via any real `docker exec -e` in production code (SMI-6614).
     //
-    // NODE_MODULES_MOUNT_GATE_MOUNTINFO (round-3): same test-seam status as
-    // APP_ROOT above — points the helper's mountinfo parsing at this
-    // fixture repo's own mountinfo file (setupRepo()'s mountinfoPath,
-    // always tempRoot/mountinfo — cwd here is always repoDir, i.e.
-    // tempRoot/repo, so dirname(cwd) resolves back to tempRoot) instead of
-    // the real /proc/self/mountinfo.
+    // SKILLSMITH_MOUNT_GATE_MOUNTINFO_TEST: same test-seam status — points
+    // the helper's mountinfo parsing at this fixture repo's own mountinfo
+    // file (setupRepo()'s mountinfoPath, always tempRoot/mountinfo — cwd
+    // here is always repoDir, i.e. tempRoot/repo, so dirname(cwd) resolves
+    // back to tempRoot) instead of the real /proc/self/mountinfo.
     //
     // extraPathDirs defaults to the real system dirs (needed for git/sed/
     // mktemp/etc).
     env: {
       ...GIT_ENV,
       PATH: [binDir, ...extraPathDirs].join(':'),
-      APP_ROOT: cwd,
-      NODE_MODULES_MOUNT_GATE_MOUNTINFO: join(dirname(cwd), 'mountinfo'),
+      SKILLSMITH_MOUNT_GATE_APP_ROOT_TEST: cwd,
+      SKILLSMITH_MOUNT_GATE_MOUNTINFO_TEST: join(dirname(cwd), 'mountinfo'),
     },
     cwd,
   })
@@ -537,11 +536,9 @@ describe('regen-lockfile.sh worktree routing (SMI-5724)', () => {
     const { repoDir, binDir, dockerLog, npmLog, mountinfoPath } = setupRepo(tempRoot)
     writeExecutingDockerShim(binDir, dockerLog, 'skillsmith-dev-1')
     writeNpmShim(binDir, npmLog)
-    // round-3: 127 means /proc/self/mountinfo (or its
-    // NODE_MODULES_MOUNT_GATE_MOUNTINFO override) cannot be READ — simulate
-    // by removing setupRepo()'s own default fixture file entirely, rather
-    // than the old "mountpoint binary genuinely absent from PATH" mechanism
-    // (obsolete: the helper no longer calls `mountpoint` at all).
+    // 127 means /proc/self/mountinfo (or its
+    // SKILLSMITH_MOUNT_GATE_MOUNTINFO_TEST override) cannot be READ —
+    // simulate by removing setupRepo()'s own default fixture file entirely.
     rmSync(mountinfoPath, { force: true })
 
     const result = runScript(repoDir, [], binDir)
