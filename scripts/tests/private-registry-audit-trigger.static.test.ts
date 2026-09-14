@@ -28,6 +28,9 @@ const helpers = (await import('../audit-standards-helpers.mjs')) as {
 
 const MIGRATIONS_DIR = 'supabase/migrations'
 const MIGRATION_FILE = '20260913000000_private_registry_audit_trigger.sql'
+// Not git-crypt-scoped (only supabase/functions/ and supabase/migrations/ are), so this is always
+// plaintext and needs no GIT_CRYPT_MAGIC handling of its own.
+const ROLLBACK_FILE = 'supabase/rollbacks/20260913000000_private_registry_audit_trigger_down.sql'
 const GIT_CRYPT_MAGIC = Buffer.from([0x00, 0x47, 0x49, 0x54, 0x43, 0x52, 0x59, 0x50, 0x54])
 const EXPECT_LOCKED_ENV_VAR = 'SKILLSMITH_GIT_CRYPT_EXPECTED_LOCKED'
 
@@ -180,5 +183,23 @@ describe.skipIf(locked)('20260913000000_private_registry_audit_trigger.sql (SMI-
       (col) => !new RegExp(`NEW\\.${col} IS DISTINCT FROM OLD\\.${col}\\b`).test(body)
     )
     expect(uncovered).toEqual([])
+  })
+
+  // SMI-6114: pin the schema_version registration (migration insert, rollback delete) so a later
+  // edit can't silently drop either half.
+  it('registers schema_version 116 exactly once, idempotently, before the transaction COMMIT', () => {
+    const inserts = code.match(
+      /INSERT INTO schema_version \(version\) VALUES \(116\) ON CONFLICT DO NOTHING;/g
+    )
+    // Denominator first: a pattern that matched nothing would make the ordering check below vacuous.
+    expect(inserts).toHaveLength(1)
+    const commits = code.match(/\bCOMMIT;/g)
+    expect(commits).toHaveLength(1)
+    expect(code.indexOf(inserts![0])).toBeLessThan(code.indexOf(commits![0]))
+  })
+
+  it('the standalone rollback file deletes schema_version 116 as a real (uncommented) statement', () => {
+    const rollbackCode = stripLineComments(readFileSync(ROLLBACK_FILE, 'utf8'))
+    expect(rollbackCode.match(/DELETE FROM schema_version WHERE version = 116;/g)).toHaveLength(1)
   })
 })
