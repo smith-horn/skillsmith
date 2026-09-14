@@ -63,17 +63,21 @@ chmod +x "$STUBDIR/sleep"
 cat > "$STUBDIR/npm" <<'NPM_STUB'
 #!/usr/bin/env bash
 echo x >> "$NPM_STUB_COUNTER"
-# Record the COMPLETE argument vector, one invocation per line, with every
-# argument wrapped in | delimiters. Reading only the package spec would let any
-# probe flag be deleted with every case still green -- the gap the retired
-# VB-R3-FRAGMENT-LOST guard covered. Recording "$*" instead is NOT enough: it
-# collapses argument boundaries, so a substring test then accepts
-# `--offline=false-bogus` or `prefix--no-json` as if the real flag were present.
-# The delimiters make the assertion an exact-token test.
+# Record the COMPLETE argument vector STRUCTURALLY: a header carrying the
+# authoritative argument count, then one argument per line. Two weaker encodings
+# were tried and both were forgeable:
+#   "$*"                  collapses boundaries, so a substring test accepts
+#                         `--offline=false-bogus` or `prefix--no-json`.
+#   |a|b|c| delimiters    an argument may itself contain `|`, so ONE argument
+#                         spelled `--offline=false|--no-json|` satisfies two
+#                         separate flag assertions at once.
+# One argument per line with an exact whole-line match (grep -Fx) cannot be
+# forged by an argument's CONTENT, and $# comes from the shell rather than from
+# the recorded text, so an embedded newline inflates the line total instead of
+# hiding inside it.
 if [ -n "${NPM_STUB_ARGV:-}" ]; then
-  _argv_line='|'
-  for _a in "$@"; do _argv_line="${_argv_line}${_a}|"; done
-  printf '%s\n' "$_argv_line" >> "$NPM_STUB_ARGV"
+  printf -- '--INVOCATION-- %s\n' "$#" >> "$NPM_STUB_ARGV"
+  for _a in "$@"; do printf '%s\n' "$_a" >> "$NPM_STUB_ARGV"; done
 fi
 CALLNUM=$(wc -l < "$NPM_STUB_COUNTER" | tr -d ' ')
 MODE=$(cat "$NPM_STUB_MODE")
@@ -250,19 +254,28 @@ PATH="$STUBDIR:$PATH" NPM_STUB_COUNTER="$flagdir/calls" NPM_STUB_MODE="$flagdir/
   NPM_STUB_ARGV="$flagdir/argv" \
   bash "$HELPER" mypkg 1.2.3 > "$flagdir/stdout" 2> "$flagdir/stderr"
 set -e
-flag_calls=$(wc -l < "$flagdir/argv" | tr -d ' ')
 flag_ok=1
-# 31 = 30 in-loop probes + 1 final probe. If this drifts, the case below is
-# silently checking fewer invocations than it claims to.
+# 31 = 30 in-loop probes + 1 final probe. If this drifts, everything below is
+# checking fewer invocations than it claims to.
+flag_calls=$(grep -c '^--INVOCATION-- ' "$flagdir/argv" || true)
 [ "$flag_calls" = "31" ] || flag_ok=0
-# Exact-token match: "|--no-json|" cannot be satisfied by "--no-json=maybe" or
-# by a longer argument that merely contains the flag as a substring.
+# Every invocation must report the SAME argument count, and the file must hold
+# exactly that many lines. This is what makes an argument containing a newline
+# fail closed rather than smuggle in a forged flag line.
+argcs=$(grep '^--INVOCATION-- ' "$flagdir/argv" | awk '{print $2}' | sort -u | wc -l | tr -d ' ')
+argc=$(grep -m1 '^--INVOCATION-- ' "$flagdir/argv" | awk '{print $2}')
+total=$(wc -l < "$flagdir/argv" | tr -d ' ')
+expected_total=$(( flag_calls + flag_calls * argc ))
+[ "$argcs" = "1" ] || { flag_ok=0; echo "  invocations disagree on argument count ($argcs distinct values)"; }
+[ "$total" = "$expected_total" ] || { flag_ok=0; echo "  argv line total $total, expected $expected_total (embedded newline?)"; }
+# Exact WHOLE-LINE match. Unlike a substring or a delimiter scheme, this cannot
+# be satisfied by an argument that merely contains the flag.
 for f in $REQUIRED_FLAGS; do
-  missing=$(grep -cvF -- "|$f|" "$flagdir/argv" || true)
-  [ "$missing" = "0" ] || { flag_ok=0; echo "  missing exact argument '$f' on $missing/$flag_calls invocation(s)"; }
+  n=$(grep -Fxc -- "$f" "$flagdir/argv" || true)
+  [ "$n" = "$flag_calls" ] || { flag_ok=0; echo "  exact argument '$f' on $n/$flag_calls invocation(s)"; }
 done
 if [ "$flag_ok" = "1" ]; then
-  echo "PASS registry_flags_pinned_on_every_probe ($flag_calls/31 invocations, 4/4 flags)"
+  echo "PASS registry_flags_pinned_on_every_probe ($flag_calls/31 invocations, ${argc} args each, 4/4 flags exact)"
 else
   echo "FAIL registry_flags_pinned_on_every_probe: calls=$flag_calls(want 31)"
   fail=1
