@@ -363,13 +363,20 @@ describe('the re-anchor (SMI-6497 Edit A)', () => {
     // path it skips, the verify step skips with it, and a skipped step does not
     // fail the job -- leaving the smoke to run against a publish that never
     // happened. The two conditions must stay identical.
+    // Pin the REQUIRED PREDICATE itself, not merely that the two agree. Asserting
+    // equality alone is satisfied by mutating BOTH conditions to the same wrong
+    // expression -- e.g. `github.event_name == 'release'` -- which would permit
+    // the smoke to run after a skipped publish while the test stayed green.
+    const REQUIRED_GATE = "steps.publish-skillsmith-cli-oidc.outcome == 'success'"
     expect(smoke.if, 'the smoke step must carry an explicit `if:`').toBeTruthy()
-    expect(smoke.if).toBe(verify.if)
+    expect(smoke.if).toBe(REQUIRED_GATE)
+    expect(verify.if).toBe(REQUIRED_GATE)
 
     // And it must contain NO status-check function, because that is precisely
     // what keeps GitHub's default success() applied -- which is what preserves
-    // FT-2: a verify step that fails must stop the smoke.
-    expect(smoke.if).not.toMatch(/\b(success|failure|cancelled|always)\s*\(/)
+    // FT-2: a verify step that fails must stop the smoke. Case-insensitive:
+    // GitHub's expression functions are, so `Success()` would otherwise evade it.
+    expect(smoke.if).not.toMatch(/\b(success|failure|cancelled|always)\s*\(/i)
   })
 
   it('resolves the tail by (jobId, stepName), not by any marker', () => {

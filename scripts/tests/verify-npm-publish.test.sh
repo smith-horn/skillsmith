@@ -63,11 +63,18 @@ chmod +x "$STUBDIR/sleep"
 cat > "$STUBDIR/npm" <<'NPM_STUB'
 #!/usr/bin/env bash
 echo x >> "$NPM_STUB_COUNTER"
-# Record the COMPLETE argument vector, one invocation per line. Reading only
-# the package spec would let any probe flag be deleted from the helper with
-# every case still green -- which is exactly the gap the retired
-# VB-R3-FRAGMENT-LOST guard used to cover.
-[ -n "${NPM_STUB_ARGV:-}" ] && printf '%s\n' "$*" >> "$NPM_STUB_ARGV"
+# Record the COMPLETE argument vector, one invocation per line, with every
+# argument wrapped in | delimiters. Reading only the package spec would let any
+# probe flag be deleted with every case still green -- the gap the retired
+# VB-R3-FRAGMENT-LOST guard covered. Recording "$*" instead is NOT enough: it
+# collapses argument boundaries, so a substring test then accepts
+# `--offline=false-bogus` or `prefix--no-json` as if the real flag were present.
+# The delimiters make the assertion an exact-token test.
+if [ -n "${NPM_STUB_ARGV:-}" ]; then
+  _argv_line='|'
+  for _a in "$@"; do _argv_line="${_argv_line}${_a}|"; done
+  printf '%s\n' "$_argv_line" >> "$NPM_STUB_ARGV"
+fi
 CALLNUM=$(wc -l < "$NPM_STUB_COUNTER" | tr -d ' ')
 MODE=$(cat "$NPM_STUB_MODE")
 # args: view "<pkg>@<version>" version --no-json ... -- extract the
@@ -248,9 +255,11 @@ flag_ok=1
 # 31 = 30 in-loop probes + 1 final probe. If this drifts, the case below is
 # silently checking fewer invocations than it claims to.
 [ "$flag_calls" = "31" ] || flag_ok=0
+# Exact-token match: "|--no-json|" cannot be satisfied by "--no-json=maybe" or
+# by a longer argument that merely contains the flag as a substring.
 for f in $REQUIRED_FLAGS; do
-  missing=$(grep -cvF -- "$f" "$flagdir/argv" || true)
-  [ "$missing" = "0" ] || { flag_ok=0; echo "  missing '$f' on $missing/$flag_calls invocation(s)"; }
+  missing=$(grep -cvF -- "|$f|" "$flagdir/argv" || true)
+  [ "$missing" = "0" ] || { flag_ok=0; echo "  missing exact argument '$f' on $missing/$flag_calls invocation(s)"; }
 done
 if [ "$flag_ok" = "1" ]; then
   echo "PASS registry_flags_pinned_on_every_probe ($flag_calls/31 invocations, 4/4 flags)"
