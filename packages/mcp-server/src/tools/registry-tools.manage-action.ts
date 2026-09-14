@@ -23,7 +23,7 @@ import type { ToolContext } from '../context.js'
 import type { PrivateRegistryManageResult, PrivateRegistryService } from './registry-tools.js'
 import type { PrivateRegistryManageInput } from './registry-tools.schemas.js'
 import type { RegistryCredentialSource } from './registry-tools.team.js'
-import { confirmedNonMemberMessage } from './registry-tools.membership-check.js'
+import { membershipOverrideError } from './registry-tools.membership-check.js'
 import { executeRegistryInstall } from './registry-tools.install-action.js'
 import {
   executeRegistrySubmissions,
@@ -52,13 +52,15 @@ export async function executePrivateRegistryManageAction(params: {
     switch (input.action) {
       case 'list': {
         const skills = await service.list(teamId, input.version, input.includeDeprecated)
-        // SMI-6622 round 2 finding 3: an empty live list also means "not a member" (RLS hides
-        // every row identically either way) — only overridden when membership is positively
-        // ruled out; see registry-tools.membership-check.ts's own header for the fail-closed
-        // contract.
+        // SMI-6622 round 2 finding 3 / round 4 PR-07: an empty live list also means "not a
+        // member" (RLS hides every row identically either way) — overridden when membership is
+        // positively ruled out OR when the probe itself could not run (a network outage or
+        // expired JWT must never look identical to a genuinely empty registry — see
+        // registry-tools.membership-check.ts's own header for the round-4 fix). Only a confirmed
+        // MEMBER leaves this empty-list result standing.
         if (dataSource === 'live' && skills.length === 0) {
-          const nonMember = await confirmedNonMemberMessage(teamId, credentialSource)
-          if (nonMember) return { success: false, dataSource, error: nonMember }
+          const override = await membershipOverrideError(teamId, credentialSource)
+          if (override) return { success: false, dataSource, error: override }
         }
         return {
           success: true,
@@ -170,11 +172,13 @@ export async function executePrivateRegistryManageAction(params: {
           // getNamespace() never throws, so "not logged in" and "genuinely unconfigured" both
           // collapse to this one message (unlike list/get's actionable login error) — hinting at
           // login here is a partial fix for that UX gap (SMI-6109 cross-provider review).
-          // SMI-6622 round 2 finding 3: a THIRD collapsed case — confirmed non-membership — gets
-          // its own, more specific message when we can positively rule the other two out.
+          // SMI-6622 round 2 finding 3 / round 4 PR-07: confirmed non-membership AND a failed
+          // membership probe (network outage, expired JWT, any other transport/query error) each
+          // get their own, more specific message — a failed probe must never fall through to the
+          // generic "unable to resolve" text below as if nothing had gone wrong differently.
           if (dataSource === 'live') {
-            const nonMember = await confirmedNonMemberMessage(teamId, credentialSource)
-            if (nonMember) return { success: false, dataSource, error: nonMember }
+            const override = await membershipOverrideError(teamId, credentialSource)
+            if (override) return { success: false, dataSource, error: override }
           }
           return {
             success: false,

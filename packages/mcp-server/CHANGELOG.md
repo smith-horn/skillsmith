@@ -4,6 +4,19 @@ All notable changes to `@skillsmith/mcp-server` are documented here.
 
 ## [Unreleased]
 
+- **Fix**: SMI-6622 -- `private_registry_publish` and `private_registry_manage` now reach
+  the real private registry with no Supabase environment variables. Before, a server
+  without `SUPABASE_URL` and `SUPABASE_ANON_KEY` quietly used an in-memory test registry:
+  publishes reported success and saved nothing (#2845).
+- **Fix**: SMI-6622 -- registry team lookup also reads the API key `skillsmith login` saves
+  in `~/.skillsmith/config.json`, not only `SKILLSMITH_LICENSE_KEY`/`SKILLSMITH_API_KEY`
+  (#2845).
+- **Fix**: SMI-6622 -- an empty `list` or unresolved `namespace` no longer looks like an
+  empty registry when the problem is membership. If your account isn't on the resolved
+  team, `list`, `namespace` and `publish` say so and name the credential that resolved it.
+  If the membership check itself fails (signed out, network or auth error), `list` and
+  `namespace` return that error instead of an empty success (#2845).
+
 ## v0.7.16
 
 - **Fix**: SMI-6585 -- the install pre-flight reports its failure instead of swallowing it (#2821)
