@@ -26,8 +26,13 @@ varlock load   # validates schema; the new var is non-sensitive
 # 2. Bring up the container (will now bind ~/.claude/projects/<encoded>/memory
 #    into /skillsmith-memory:ro).
 docker compose --profile dev up -d
-docker exec skillsmith-dev-1 npm install
-docker exec skillsmith-dev-1 npm run build -w packages/doc-retrieval-mcp
+# Mount-gated (SMI-6516/6520/6614, ADR-158; round-2b widened this to every
+# node_modules path, not just root): exit non-zero with no npm/build
+# output means at least one is not currently mounted with a volume-shaped
+# root — recreate first
+# (docker compose --profile dev up -d --force-recreate dev), then retry,
+# rather than assuming the install itself failed.
+docker exec -w /app skillsmith-dev-1 sh -c 'sh scripts/lib/node-modules-mount-gate.sh && npm install && npm run build -w packages/doc-retrieval-mcp'
 
 # 3. Verify the bind worked.
 docker exec skillsmith-dev-1 printenv SKILLSMITH_MEMORY_DIR_OVERRIDE   # → /skillsmith-memory

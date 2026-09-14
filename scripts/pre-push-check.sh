@@ -194,7 +194,17 @@ else
       echo "$AUDIT_OUTPUT"
       echo -e "${RED}✗ High-severity vulnerabilities detected${NC}"
       if [ $USE_DOCKER -eq 1 ]; then
-        echo -e "${YELLOW}Run 'docker exec $DOCKER_CONTAINER npm audit fix' to resolve issues${NC}"
+        if [ "${IS_WORKTREE:-0}" = "1" ]; then
+          # SMI-6614 (ADR-158) / SMI-6378: a worktree container's node_modules
+          # is bind-mounted read-only from the host — npm audit fix here is
+          # not merely ineffective, it has been confirmed to actively corrupt
+          # the container's view of /app/node_modules (SMI-6378). Fix on the
+          # HOST, in the main checkout, which then propagates to this worktree.
+          echo -e "${YELLOW}Run 'npm audit fix' on the HOST in the main checkout (never inside this worktree's container — SMI-6378) to resolve issues${NC}"
+        else
+          echo -e "${YELLOW}Run 'docker exec -w /app $DOCKER_CONTAINER sh -c \"sh scripts/lib/node-modules-mount-gate.sh && npm audit fix\"' to resolve issues${NC}"
+          echo -e "${YELLOW}(exit non-zero with no npm output means at least one node_modules mount is detached or not a volume, SMI-6516/SMI-6520 — recreate first: docker compose --profile dev up -d --force-recreate dev)${NC}"
+        fi
       else
         echo -e "${YELLOW}Run 'npm audit fix' to resolve issues${NC}"
       fi

@@ -34,8 +34,8 @@
 #
 # SMI-6614 (ADR-158, change 5b): this is the advised refresh command for a
 # real lockfile-drift verdict. Every container node_modules mutation
-# (`npm install`, `npm rebuild`) is mount-gated: the mountpoint check and the
-# mutation run in ONE `docker exec … sh -c` process, so a container recreated
+# (`npm install`, `npm rebuild`) is mount-gated: the mount-identity check and
+# the mutation run in ONE `docker exec … sh -c` process, so a container recreated
 # between them can't redirect the mutation onto a freshly-detached mount
 # (R2-1). The gate is identified by BOTH exit 97 AND a literal
 # `MOUNT_GATE <rc>` line on the captured stderr (R3-1) — `npm rebuild`'s own
@@ -105,21 +105,38 @@ verify_container_native() {
     "require('@skillsmith/core').createDatabaseSync(':memory:').close()" >/dev/null 2>&1
 }
 
-# SMI-6614 (ADR-158, change 5b/R3-1): reports a failed docker-exec-wrapped
-# npm mutation and exits. Distinguishes a mount-gate refusal (exit 97 AND a
-# literal `MOUNT_GATE <rc>` line on the captured stderr — BOTH required,
-# since `npm rebuild`'s own lifecycle scripts can independently exit 97) from
-# an ordinary npm failure.
+# SMI-6614 (ADR-158, change 5b/R3-1; widened round-2b; round-4 rename):
+# reports a failed docker-exec-wrapped npm mutation and exits. Distinguishes
+# a mount-gate refusal (exit 97 AND a literal `MOUNT_GATE <rc>` line on the
+# captured stderr — BOTH required, since `npm rebuild`'s own lifecycle
+# scripts can independently exit 97) from an ordinary npm failure. The gate
+# itself is now scripts/lib/node-modules-mount-gate.sh (checks root + every
+# packages/*/node_modules, not just root; round-3: parses
+# /proc/self/mountinfo directly rather than shelling out to `mountpoint`,
+# which follows symlinks and can't tell a real mount from anything else
+# mounted wherever a symlink resolves to; round-4: resolves the currently
+# visible mount at a path by topology, not file order, and can no longer
+# claim to PROVE a mount is Docker/Podman-managed from inside the container
+# — it checks the mount's root SHAPE, hence "volume-shaped" below, not
+# "named volume") — its own "MOUNT_DETACHED <path>" / "MOUNT_NOT_VOLUME
+# <path> root=... fstype=..." / "MOUNT_AMBIGUOUS <path>" lines flow
+# straight through into $err_text (the sh -c payload below never redirects
+# the gate's stderr away), so rc=32 names the actual affected path(s)
+# instead of assuming /app/node_modules specifically.
 report_docker_npm_failure() {
-  local label="$1" rc="$2" err_text="$3" mount_rc
+  local label="$1" rc="$2" err_text="$3" mount_rc affected_paths
   if [ "$rc" -eq 97 ] && printf '%s\n' "$err_text" | grep -q '^MOUNT_GATE '; then
     mount_rc="$(printf '%s\n' "$err_text" | sed -n 's/^MOUNT_GATE //p' | head -1)"
     case "$mount_rc" in
       32)
-        error "$CONTAINER's /app/node_modules is not a mountpoint (detached, SMI-6516) — refusing to run $label, which would write into the HOST tree instead. Recreate: docker compose --profile dev up -d --force-recreate dev (from the main checkout), verify with 'docker exec $CONTAINER mountpoint -q /app/node_modules', then retry."
+        affected_paths="$(printf '%s\n' "$err_text" | grep -E '^(MOUNT_DETACHED|MOUNT_NOT_VOLUME|MOUNT_AMBIGUOUS) ' | sed -E 's/^(MOUNT_DETACHED|MOUNT_NOT_VOLUME|MOUNT_AMBIGUOUS) /    - /')"
+        error "$CONTAINER has a node_modules mount problem (SMI-6516) — refusing to run $label, which would write into the HOST tree instead.
+Affected path(s):
+${affected_paths:-    (path unavailable — see raw output below)}
+Recreate: docker compose --profile dev up -d --force-recreate dev (from the main checkout), verify with 'docker exec -w /app $CONTAINER sh scripts/lib/node-modules-mount-gate.sh && echo OK', then retry."
         ;;
       127)
-        error "Cannot verify $CONTAINER's node_modules mount ('mountpoint' unavailable inside the container) — refusing to run $label blind."
+        error "Cannot verify $CONTAINER's node_modules mounts (cannot read /proc/self/mountinfo inside the container) — refusing to run $label blind."
         ;;
       *)
         error "Mount check for $CONTAINER's node_modules failed unexpectedly (exit $mount_rc) — refusing to run $label."
@@ -133,13 +150,20 @@ report_docker_npm_failure() {
 # SMI-6614 (ADR-158, change 5c/1): refuses to start a full sync while a host
 # native repair (retrieval-autoheal.sh or repair-host-native-deps.sh) is
 # already running — both mutate the same host tree this script is about to
-# mutate. pgrep unavailable -> proceed with a warning (today's behavior).
+# mutate. round-2 code-review (Finding B): "cannot tell whether a repair is
+# running" is not a green light — it is the SAME hazard this check exists to
+# prevent, just undetectable instead of detected. `ps`/`pgrep` unavailable
+# now REFUSES (fail-closed), naming whichever tool running_script_pids
+# reported missing, rather than proceeding with only a warning.
 refuse_if_native_repair_running() {
-  local pids
-  if ! pids="$(running_script_pids retrieval-autoheal.sh repair-host-native-deps.sh)"; then
-    warn "pgrep unavailable — cannot check for a running host native repair; proceeding."
-    return 0
+  local pids detect_stderr_file detect_err
+  detect_stderr_file="$(mktemp)"
+  if ! pids="$(running_script_pids retrieval-autoheal.sh repair-host-native-deps.sh 2>"$detect_stderr_file")"; then
+    detect_err="$(cat "$detect_stderr_file" 2>/dev/null || true)"
+    rm -f "$detect_stderr_file"
+    error "Cannot verify no host native repair is currently running (${detect_err:-process-detection tool unavailable}) — refusing to start a full sync blind. Install the missing tool and retry."
   fi
+  rm -f "$detect_stderr_file"
   if [ -n "$pids" ]; then
     error "A host native repair is already running (retrieval-autoheal.sh or repair-host-native-deps.sh, pid(s): $(printf '%s' "$pids" | tr '\n' ' ')) — retry when it finishes."
   fi
@@ -218,7 +242,7 @@ info "Regenerating lockfile + syncing container node_modules… (container: skil
 # a container recreate to redirect the install onto a freshly-detached
 # mount.
 INSTALL_ERR_FILE="$(mktemp)"
-if docker exec "$CONTAINER" sh -c 'mountpoint -q /app/node_modules; rc=$?; [ "$rc" -eq 0 ] || { echo "MOUNT_GATE $rc" >&2; exit 97; }; exec npm install' 2>"$INSTALL_ERR_FILE"; then
+if docker exec -w /app "$CONTAINER" sh -c 'sh scripts/lib/node-modules-mount-gate.sh; rc=$?; [ "$rc" -eq 0 ] || { echo "MOUNT_GATE $rc" >&2; exit 97; }; exec npm install' 2>"$INSTALL_ERR_FILE"; then
   rm -f "$INSTALL_ERR_FILE"
 else
   INSTALL_RC=$?
@@ -230,7 +254,7 @@ fi
 info "Rebuilding native modules with build scripts (the anti-wipe step)…"
 REBUILD_ERR_FILE="$(mktemp)"
 # shellcheck disable=SC2086
-if docker exec "$CONTAINER" sh -c 'mountpoint -q /app/node_modules; rc=$?; [ "$rc" -eq 0 ] || { echo "MOUNT_GATE $rc" >&2; exit 97; }; exec npm rebuild "$@"' _ $NATIVE_MODULES --ignore-scripts=false 2>"$REBUILD_ERR_FILE"; then
+if docker exec -w /app "$CONTAINER" sh -c 'sh scripts/lib/node-modules-mount-gate.sh; rc=$?; [ "$rc" -eq 0 ] || { echo "MOUNT_GATE $rc" >&2; exit 97; }; exec npm rebuild "$@"' _ $NATIVE_MODULES --ignore-scripts=false 2>"$REBUILD_ERR_FILE"; then
   rm -f "$REBUILD_ERR_FILE"
 else
   REBUILD_RC=$?

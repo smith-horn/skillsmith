@@ -114,9 +114,11 @@ emit_error() {
 
 REMEDIATION_START_CONTAINER="    ( cd \"$MAIN_CHECKOUT\" && docker compose --profile dev up -d )"
 
+# SMI-6614 (ADR-158, round-2 Finding C): mount-gated (SMI-6516/SMI-6520) — a
+# bare install/build would silently write into the HOST tree if detached.
 REMEDIATION_INSTALL_BUILD="    ( cd \"$MAIN_CHECKOUT\" && docker compose --profile dev up -d )
-    docker exec $CONTAINER_NAME npm install
-    docker exec $CONTAINER_NAME npm run build"
+    docker exec -w /app $CONTAINER_NAME sh -c 'sh scripts/lib/node-modules-mount-gate.sh && npm install && npm run build'
+    # exit non-zero, no npm/build output => a node_modules mount is detached or not a volume — recreate (--force-recreate dev), retry"
 
 # Check 0: container liveness. doc-retrieval-mcp's actual server process
 # runs inside the container (native module better-sqlite3), so every
@@ -461,12 +463,13 @@ if [ "$probe_status" -eq 1 ] && printf '%s\n' "$probe_out" | grep -q '^FAIL '; t
         # NOT to be a Tier-B path. Fail safe: never print an rm -rf.
         emit_error "$dep_name dependency corrupt at packages/doc-retrieval-mcp/node_modules/$dep_name (container-side, not host); the Tier-B mount-source list was unavailable, so automatic removal is not suggested" \
 "    ( cd \"$MAIN_CHECKOUT\" && docker compose --profile dev up -d )
-    docker exec $CONTAINER_NAME npm install"
+    docker exec -w /app $CONTAINER_NAME sh -c 'sh scripts/lib/node-modules-mount-gate.sh && npm install'
+    # exit non-zero, no npm output => a node_modules mount is detached or not a volume — recreate (--force-recreate dev), retry"
       else
         emit_error "$dep_name dependency corrupt at packages/doc-retrieval-mcp/node_modules/$dep_name (container-side, not host)" \
 "    ( cd \"$MAIN_CHECKOUT\" && docker compose --profile dev up -d )
-    docker exec $CONTAINER_NAME rm -rf $CONTAINER_APP_ROOT/packages/doc-retrieval-mcp/node_modules/$dep_name
-    docker exec $CONTAINER_NAME npm install"
+    docker exec -w /app $CONTAINER_NAME sh -c 'sh scripts/lib/node-modules-mount-gate.sh && rm -rf $CONTAINER_APP_ROOT/packages/doc-retrieval-mcp/node_modules/$dep_name && npm install'
+    # exit non-zero, no output => a node_modules mount is detached or not a volume — recreate (--force-recreate dev), retry"
       fi
       ;;
     root-hoisted-corrupt)
@@ -475,12 +478,14 @@ if [ "$probe_status" -eq 1 ] && printf '%s\n' "$probe_out" | grep -q '^FAIL '; t
       # is needed for a root-hoisted package (npm reifies over it).
       emit_error "$dep_name dependency corrupt at root node_modules/$dep_name (container-side, not host)" \
 "    ( cd \"$MAIN_CHECKOUT\" && docker compose --profile dev up -d )
-    docker exec $CONTAINER_NAME npm install"
+    docker exec -w /app $CONTAINER_NAME sh -c 'sh scripts/lib/node-modules-mount-gate.sh && npm install'
+    # exit non-zero, no npm output => a node_modules mount is detached or not a volume — recreate (--force-recreate dev), retry"
       ;;
     *)
       emit_error "$dep_name dependency missing" \
 "    ( cd \"$MAIN_CHECKOUT\" && docker compose --profile dev up -d )
-    docker exec $CONTAINER_NAME npm install"
+    docker exec -w /app $CONTAINER_NAME sh -c 'sh scripts/lib/node-modules-mount-gate.sh && npm install'
+    # exit non-zero, no npm output => a node_modules mount is detached or not a volume — recreate (--force-recreate dev), retry"
       ;;
   esac
   # Diagnostic: every failing dep, one line each (first drives the message).

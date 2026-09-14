@@ -161,21 +161,28 @@ case "$LOCK_SLEEP_SECS" in
     ''|*[!0-9]*) LOCK_SLEEP_SECS=2 ;;
 esac
 
-# SMI-6614 (ADR-158, code-review finding 2): the mount-check test seam is
-# gated behind a master switch honoured on BOTH sides. Only forward a
-# non-default SKILLSMITH_MOUNTPOINT_TEST_RC into the container when THIS
-# (host) process's own SKILLSMITH_MOUNTPOINT_TEST=1 is set — a stray
-# SKILLSMITH_MOUNTPOINT_TEST_RC in the host environment with the switch
-# unset must never reach the container at all. The inner script ALSO
-# re-checks the switch in its own (container) environment before honouring
-# the override (see check-container-deps-fresh-inner.sh's _check_mountpoint),
-# so even if both vars were somehow forwarded unconditionally, an accidental
-# SKILLSMITH_MOUNTPOINT_TEST_RC alone still could not bypass the real check.
-_MOUNTPOINT_TEST_MODE="${SKILLSMITH_MOUNTPOINT_TEST:-0}"
-_MOUNTPOINT_TEST_RC_FORWARD=""
-if [ "$_MOUNTPOINT_TEST_MODE" = "1" ]; then
-    _MOUNTPOINT_TEST_RC_FORWARD="${SKILLSMITH_MOUNTPOINT_TEST_RC:-}"
-fi
+# SMI-6614 (ADR-158, code-review round 2, Finding A): this script forwards
+# NO mount-check test-seam variable into the container, ever, regardless of
+# what this (host) process's own environment happens to contain. Round 1
+# gated SKILLSMITH_MOUNTPOINT_TEST_RC's forwarding behind a
+# SKILLSMITH_MOUNTPOINT_TEST=1 master switch read from this process's own
+# env — but that switch itself was still forwarded unconditionally, so a
+# stray host shell that happened to have BOTH SKILLSMITH_MOUNTPOINT_TEST=1
+# and SKILLSMITH_MOUNTPOINT_TEST_RC=0 set (e.g. left over from earlier manual
+# testing) still reached the container and bypassed the real mount-identity
+# check. There is no way to gate a forwarded override safely when the host
+# environment invoking THIS script cannot itself be trusted — so the fix is
+# to never forward anything test-seam-shaped here at all.
+# check-container-deps-fresh-inner.sh's own mount check
+# (_check_mountpoint()) has no env-var seam any more either — it always runs
+# the real scripts/lib/node-modules-mount-gate.sh helper, which (round-3)
+# parses /proc/self/mountinfo directly rather than shelling out to
+# `mountpoint` (which follows symlinks and can't tell a real mount from
+# anything else mounted at wherever a symlink resolves to — see that
+# helper's own header). Tests exercise that real code path by pointing the
+# helper's own NODE_MODULES_MOUNT_GATE_MOUNTINFO seam at a fixture
+# mountinfo file, never by forwarding a variable through this script — see
+# scripts/tests/_lib/check-container-deps-fresh-fixtures.sh.
 
 # The actual lock + self-heal logic lives in check-container-deps-fresh-inner.sh
 # (bind-mounted into the container the same way check-node-modules-fresh.sh
@@ -183,7 +190,7 @@ fi
 # there's no shell-quoting hazard and the inner script's functions can be
 # unit-tested by sourcing it directly (see its own test seam). It still runs
 # as ONE continuous docker-exec process — see that file's header for why.
-OUTPUT="$(docker exec -w /app -e SKILLSMITH_LOCK_MAX_TRIES="$LOCK_MAX_TRIES" -e SKILLSMITH_LOCK_SLEEP_SECS="$LOCK_SLEEP_SECS" -e SKILLSMITH_MOUNTPOINT_TEST="$_MOUNTPOINT_TEST_MODE" -e SKILLSMITH_MOUNTPOINT_TEST_RC="$_MOUNTPOINT_TEST_RC_FORWARD" "$DOCKER_CONTAINER" sh scripts/lib/check-container-deps-fresh-inner.sh 2>&1)"
+OUTPUT="$(docker exec -w /app -e SKILLSMITH_LOCK_MAX_TRIES="$LOCK_MAX_TRIES" -e SKILLSMITH_LOCK_SLEEP_SECS="$LOCK_SLEEP_SECS" "$DOCKER_CONTAINER" sh scripts/lib/check-container-deps-fresh-inner.sh 2>&1)"
 RC=$?
 
 case "$OUTPUT" in
@@ -271,35 +278,46 @@ case "$RC" in
         fi
         ;;
     5)
-        # SMI-6516/6520/6614 (ADR-158, change 5): the mount-identity check
-        # ran (after the freshness check failed) and found /app/node_modules
-        # is NOT a bind mount of its own named volume — installing here would
-        # write into the HOST tree instead (the exact hazard this plan
-        # exists to stop). Distinguishes MOUNT_DETACHED (32, the mount is
-        # genuinely detached) from MOUNT_CHECK_UNAVAILABLE (127, `mountpoint`
-        # itself is missing inside the container) — both fail closed and
-        # install nothing.
+        # SMI-6516/6520/6614 (ADR-158, change 5; widened round-2b; round-4
+        # rename): the shared scripts/lib/node-modules-mount-gate.sh ran
+        # (after the freshness check failed) and found at least one of
+        # skillsmith-dev-1's NINE declared node_modules paths (root, or a
+        # packages/*/node_modules) is NOT currently mounted with a
+        # volume-shaped root — installing here would write into that
+        # path's HOST tree instead (the exact hazard this plan exists to
+        # stop; SMI-6516 detached nine of ten individually, so a root-only
+        # check would have missed most of that incident). Distinguishes
+        # MOUNT_CHECK_UNAVAILABLE (127, /proc/self/mountinfo is unreadable
+        # inside the container) from everything else (32 — MOUNT_DETACHED,
+        # MOUNT_NOT_VOLUME, or round-4's MOUNT_AMBIGUOUS) — all fail closed
+        # and install nothing. round-4: the helper cannot prove a mount is
+        # a genuine Docker/Podman-managed volume from inside the container
+        # (that metadata isn't reachable there) — it checks the mount's
+        # ROOT SHAPE (`.../volumes/<name>/_data`), so the message below
+        # says "volume-shaped root", not "named volume".
         case "$OUTPUT" in
             *MOUNT_CHECK_UNAVAILABLE*)
-                printf "${RED}  ✗ Cannot verify %s's node_modules mount${NC}\n" "$DOCKER_CONTAINER"
+                printf "${RED}  ✗ Cannot verify %s's node_modules mounts${NC}\n" "$DOCKER_CONTAINER"
                 printf "${RED}━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━${NC}\n"
                 printf '\n'
-                printf "  The 'mountpoint' command is unavailable inside %s — refusing to\n" "$DOCKER_CONTAINER"
+                printf "  Cannot read /proc/self/mountinfo inside %s — refusing to\n" "$DOCKER_CONTAINER"
                 printf '  self-heal blind rather than risk writing into the wrong tree.\n'
                 ;;
             *)
-                printf "${RED}  ✗ %s's /app/node_modules is not a mountpoint (detached, SMI-6516)${NC}\n" "$DOCKER_CONTAINER"
+                printf "${RED}  ✗ %s has a node_modules mount problem (SMI-6516)${NC}\n" "$DOCKER_CONTAINER"
                 printf "${RED}━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━${NC}\n"
                 printf '\n'
-                printf '  %s'\''s /app/node_modules is NOT currently a mountpoint of its own\n' "$DOCKER_CONTAINER"
-                printf '  named volume — an npm install here would write into the HOST tree\n'
-                printf '  instead. Refusing to self-heal against a detached mount.\n'
+                printf '  One or more of %s'\''s node_modules paths is NOT currently mounted\n' "$DOCKER_CONTAINER"
+                printf '  with a volume-shaped root — an npm install here would write into\n'
+                printf '  the HOST tree instead, or the mount state is ambiguous. Refusing to\n'
+                printf '  self-heal. Affected path(s):\n'
+                printf '%s\n' "$OUTPUT" | grep -E '^(MOUNT_DETACHED|MOUNT_NOT_VOLUME|MOUNT_AMBIGUOUS) ' | sed -E 's/^(MOUNT_DETACHED|MOUNT_NOT_VOLUME|MOUNT_AMBIGUOUS) /    - /'
                 ;;
         esac
         printf '\n'
         printf "  ${YELLOW}Fix:${NC} recreate %s from the MAIN checkout, then verify and retry:\n" "$DOCKER_CONTAINER"
         printf '    docker compose --profile dev up -d --force-recreate dev\n'
-        printf '    docker exec %s mountpoint -q /app/node_modules && echo OK\n' "$DOCKER_CONTAINER"
+        printf '    docker exec -w /app %s sh scripts/lib/node-modules-mount-gate.sh && echo OK\n' "$DOCKER_CONTAINER"
         printf '    git push   # retry\n'
         printf '\n'
         printf '  Full plan: docs/internal/implementation/smi-6516-6520-native-binding-mount-topology.md\n'

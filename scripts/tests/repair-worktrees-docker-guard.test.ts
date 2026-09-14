@@ -109,7 +109,14 @@ exit 0
 /**
  * Write a docker shim that prints `dockerPsOutput` for `docker ps ...`
  * invocations, recording all calls to logPath. Pass empty string to
- * simulate "no containers running".
+ * simulate "no containers running". `docker inspect --format ... <name>`
+ * falls through to the bare `exit 0` below with NO output — every EXISTING
+ * caller of this helper (pre-round-4) never populates a Compose label, so
+ * every container it names resolves as "unknown" under round-4's
+ * classification, which is deliberate: those tests only assert on the
+ * outer guard behavior (fires / doesn't, rebuild runs / doesn't), never on
+ * per-container advice wording, so an unclassified label changes nothing
+ * they check.
  */
 function writeDockerShim(binDir: string, logPath: string, dockerPsOutput: string): void {
   // Quote the output for embedding in the shell shim
@@ -120,6 +127,55 @@ case "$1" in
   ps)
     printf '%s' '${escaped}'
     if [ -n '${escaped}' ]; then printf '\\n'; fi
+    exit 0
+    ;;
+esac
+exit 0
+`
+  const shimPath = join(binDir, 'docker')
+  writeFileSync(shimPath, shim)
+  chmodSync(shimPath, 0o755)
+}
+
+/**
+ * round-4 (finding 3): a docker shim that ALSO answers `docker inspect
+ * --format '{{index .Config.Labels "com.docker.compose.project.working_dir"}}'
+ * <name>` per container, from `labelsByName` — a name absent from the map
+ * (or mapped to `undefined`) prints nothing (empty label), matching real
+ * `docker inspect`'s behavior for a missing label key (measured live
+ * against skillsmith-dev-1 with a made-up label name: empty stdout, rc=0).
+ */
+function writeDockerShimWithLabels(
+  binDir: string,
+  logPath: string,
+  dockerPsOutput: string,
+  labelsByName: Record<string, string | undefined>
+): void {
+  const escapedPs = dockerPsOutput.replace(/'/g, `'\\''`)
+  const cases = Object.entries(labelsByName)
+    .map(([name, label]) => {
+      const escapedName = name.replace(/'/g, `'\\''`)
+      const escapedLabel = (label ?? '').replace(/'/g, `'\\''`)
+      return `    '${escapedName}') printf '%s' '${escapedLabel}' ;;`
+    })
+    .join('\n')
+  const shim = `#!/bin/sh
+echo "$@" >> "${logPath}"
+case "$1" in
+  ps)
+    printf '%s' '${escapedPs}'
+    if [ -n '${escapedPs}' ]; then printf '\\n'; fi
+    exit 0
+    ;;
+  inspect)
+    shift
+    # Last arg is the container name (real invocation:
+    # docker inspect --format '<fmt>' <name>).
+    for _a in "$@"; do _name="$_a"; done
+    case "$_name" in
+${cases}
+      *) printf '' ;;
+    esac
     exit 0
     ;;
 esac
@@ -306,6 +362,156 @@ describe('SMI-4698: repair-worktrees.sh Docker-active guard', () => {
     expect(combined).toMatch(/skillsmith-dev-1/)
     // Rebuild step must NOT have run — guard fired even without
     // `timeout` available, proving the unbounded fallback executed.
+    expect(existsSync(rebuildLog)).toBe(false)
+  })
+})
+
+describe('SMI-6614 round-4 finding 3: per-container advice by Compose label', () => {
+  it('a single main-checkout container -> gated rebuild names it', () => {
+    const tempRoot = makeFixtureTempDir('rw-guard-label-main')
+    tempDirs.push(tempRoot)
+    const { repoDir, binDir, rebuildLog } = setupRepo(tempRoot)
+    writeDockerShimWithLabels(binDir, join(tempRoot, 'docker.log'), 'skillsmith-dev-1', {
+      'skillsmith-dev-1': repoDir,
+    })
+
+    const result = runScript(repoDir, '', binDir)
+
+    expect(result.status).not.toBe(0)
+    const combined = result.stderr + result.stdout
+    expect(combined).toMatch(/Active Docker container detected/)
+    expect(combined).toContain('skillsmith-dev-1 (main checkout)')
+    expect(combined).toContain(
+      "docker exec -w /app skillsmith-dev-1 sh -c 'sh scripts/lib/node-modules-mount-gate.sh && npm rebuild better-sqlite3 onnxruntime-node'"
+    )
+    // The worktree recovery form must NOT appear for a main-checkout container.
+    expect(combined).not.toContain('docker compose --profile dev restart dev')
+    expect(existsSync(rebuildLog)).toBe(false)
+  })
+
+  it('main plus a worktree container -> one line each, correct form per container, no two-name docker exec', () => {
+    const tempRoot = makeFixtureTempDir('rw-guard-label-main-and-worktree')
+    tempDirs.push(tempRoot)
+    const { repoDir, binDir, rebuildLog } = setupRepo(tempRoot)
+    const worktreeDir = join(tempRoot, 'fake-worktree-checkout')
+    mkdirSync(worktreeDir, { recursive: true })
+    writeDockerShimWithLabels(
+      binDir,
+      join(tempRoot, 'docker.log'),
+      'skillsmith-dev-1\nskillsmith-feat-dev-2',
+      {
+        'skillsmith-dev-1': repoDir,
+        'skillsmith-feat-dev-2': worktreeDir,
+      }
+    )
+
+    const result = runScript(repoDir, '', binDir)
+
+    expect(result.status).not.toBe(0)
+    const combined = result.stderr + result.stdout
+    // Main container: the gated rebuild, naming ONLY skillsmith-dev-1.
+    expect(combined).toContain(
+      "docker exec -w /app skillsmith-dev-1 sh -c 'sh scripts/lib/node-modules-mount-gate.sh && npm rebuild better-sqlite3 onnxruntime-node'"
+    )
+    // Worktree container: the restart form, naming its own checkout path.
+    expect(combined).toContain(`( cd ${worktreeDir} && docker compose --profile dev restart dev )`)
+    // The exact bug this finding fixes: no single docker exec/compose line
+    // ever names BOTH containers at once.
+    expect(combined).not.toMatch(/skillsmith-dev-1 skillsmith-feat-dev-2/)
+    expect(combined).not.toMatch(/skillsmith-feat-dev-2 skillsmith-dev-1/)
+    expect(existsSync(rebuildLog)).toBe(false)
+  })
+
+  it('S-1 variant (skillsmith-prod-dev-1) whose label -ef the fixture repo root -> gated rebuild', () => {
+    const tempRoot = makeFixtureTempDir('rw-guard-label-s1-variant')
+    tempDirs.push(tempRoot)
+    const { repoDir, binDir, rebuildLog } = setupRepo(tempRoot)
+    writeDockerShimWithLabels(binDir, join(tempRoot, 'docker.log'), 'skillsmith-prod-dev-1', {
+      'skillsmith-prod-dev-1': repoDir,
+    })
+
+    const result = runScript(repoDir, '', binDir)
+
+    expect(result.status).not.toBe(0)
+    const combined = result.stderr + result.stdout
+    expect(combined).toContain('skillsmith-prod-dev-1 (main checkout)')
+    expect(combined).toContain(
+      "docker exec -w /app skillsmith-prod-dev-1 sh -c 'sh scripts/lib/node-modules-mount-gate.sh && npm rebuild better-sqlite3 onnxruntime-node'"
+    )
+    expect(existsSync(rebuildLog)).toBe(false)
+  })
+
+  it('a missing/unreadable Compose label -> both options, clearly labelled', () => {
+    const tempRoot = makeFixtureTempDir('rw-guard-label-missing')
+    tempDirs.push(tempRoot)
+    const { repoDir, binDir, rebuildLog } = setupRepo(tempRoot)
+    // No entry for this name in the labels map -> empty label, same as a
+    // real `docker inspect` on a container with no such Compose label.
+    writeDockerShimWithLabels(binDir, join(tempRoot, 'docker.log'), 'skillsmith-dev-1', {})
+
+    const result = runScript(repoDir, '', binDir)
+
+    expect(result.status).not.toBe(0)
+    const combined = result.stderr + result.stdout
+    expect(combined).toMatch(/could not be identified/)
+    expect(combined).toContain("IF skillsmith-dev-1 is the MAIN checkout's container:")
+    expect(combined).toContain("IF skillsmith-dev-1 is a WORKTREE's container:")
+    expect(combined).toContain(
+      "docker exec -w /app skillsmith-dev-1 sh -c 'sh scripts/lib/node-modules-mount-gate.sh && npm rebuild better-sqlite3 onnxruntime-node'"
+    )
+    expect(combined).toContain('docker compose --profile dev restart dev')
+    expect(existsSync(rebuildLog)).toBe(false)
+  })
+
+  // Round 5: a `<no value>` rendering or a label naming a directory that
+  // doesn't exist on this host must read as unknown, never as a worktree.
+  it.each([
+    ['<no value>', () => '<no value>'],
+    ['a directory that does not exist here', (root: string) => join(root, 'no-such-checkout')],
+  ])('a label of %s -> unknown (both options), not a worktree', (_label, labelFor) => {
+    const tempRoot = makeFixtureTempDir('rw-guard-label-unknown')
+    tempDirs.push(tempRoot)
+    const { repoDir, binDir, rebuildLog } = setupRepo(tempRoot)
+    const label = labelFor(tempRoot)
+    writeDockerShimWithLabels(binDir, join(tempRoot, 'docker.log'), 'skillsmith-dev-1', {
+      'skillsmith-dev-1': label,
+    })
+
+    const result = runScript(repoDir, '', binDir)
+
+    expect(result.status).not.toBe(0)
+    const combined = result.stderr + result.stdout
+    expect(combined).toMatch(/could not be identified/)
+    expect(combined).not.toContain('(worktree checkout at')
+    expect(existsSync(rebuildLog)).toBe(false)
+  })
+
+  it('a worktree path with spaces and shell metacharacters is shell-quoted in the printed command', () => {
+    const tempRoot = makeFixtureTempDir('rw-guard-label-quoting')
+    tempDirs.push(tempRoot)
+    const { repoDir, binDir, rebuildLog } = setupRepo(tempRoot)
+    const worktreeDir = join(tempRoot, 'wt with space $x;rm')
+    mkdirSync(worktreeDir, { recursive: true })
+    writeDockerShimWithLabels(binDir, join(tempRoot, 'docker.log'), 'skillsmith-feat-dev-2', {
+      'skillsmith-feat-dev-2': worktreeDir,
+    })
+
+    const result = runScript(repoDir, '', binDir)
+
+    expect(result.status).not.toBe(0)
+    const combined = result.stderr + result.stdout
+    const match = combined.match(/\( cd (.+) && docker compose --profile dev restart dev \)/)
+    expect(match).not.toBeNull()
+    // The printed argument, evaluated by a real shell, must be the directory
+    // itself (one word, no command separator taking effect). The printed text
+    // is passed as $1, so the only shell parse it gets is the eval, the same
+    // parse a user's shell applies when pasting the command.
+    const evaluated = spawnSync(
+      'bash',
+      ['-c', `eval "set -- $1"; printf '%s|%s' "$#" "$1"`, '_', match![1]],
+      { encoding: 'utf8' }
+    )
+    expect(evaluated.stdout).toBe(`1|${worktreeDir}`)
     expect(existsSync(rebuildLog)).toBe(false)
   })
 })

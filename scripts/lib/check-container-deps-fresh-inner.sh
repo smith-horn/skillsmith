@@ -96,29 +96,45 @@ release() {
     fi
 }
 
-# SMI-6516/6520/6614 (ADR-158, change 5): mount-identity check before any
-# self-heal install. `mountpoint -q /app/node_modules` distinguishes a real
-# bind mount (exit 0) from skillsmith-dev-1's named volumes having runtime-
-# detached (exit 32, /app/node_modules resolves to the host bind instead) —
-# a device-number comparison alone can't tell the two apart (same source
-# device either way; see the plan's "Mount identity" table).
+# SMI-6516/6520/6614 (ADR-158, change 5): mount check before any self-heal
+# install. Delegates to the shared scripts/lib/node-modules-mount-gate.sh
+# (round-2b) rather than checking `/app/node_modules` alone — that was the
+# ONLY mount checked through round 2, but skillsmith-dev-1 declares nine
+# node_modules volumes (root + one per packages/*), and SMI-6516 detached
+# nine of ten individually; a root-only check misses "root attached, one
+# workspace detached" exactly the way SMI-6516 happened. The shared helper
+# normalizes every outcome to 0 (every path mounted with a volume-shaped
+# root) / 32 (>=1 detached, or mounted but not volume-shaped, or ambiguous
+# — stderr names each) / 127 (/proc/self/mountinfo unreadable) — see that
+# file's own header for the full contract, its "no fourth error bucket"
+# note, and the residual it states plainly (this checks a mount's SHAPE,
+# not Docker/Podman identity, which is unreachable from inside the
+# container).
 #
-# Test seam is gated behind a dedicated master switch,
-# SKILLSMITH_MOUNTPOINT_TEST=1 (mirrors the SKILLSMITH_AUTOHEAL_TEST /
-# SKILLSMITH_AUTOHEAL_PROBE_CMD master-switch-plus-satellite-vars shape in
-# retrieval-autoheal.sh), honoured ONLY here, in THIS process's own
-# environment. Both SKILLSMITH_MOUNTPOINT_TEST and
-# SKILLSMITH_MOUNTPOINT_TEST_RC are forwarded via `docker exec -e` by
-# check-container-deps-fresh.sh, which itself only forwards a non-default
-# SKILLSMITH_MOUNTPOINT_TEST_RC when its OWN host-side
-# SKILLSMITH_MOUNTPOINT_TEST=1 is set — so a stray
-# SKILLSMITH_MOUNTPOINT_TEST_RC in the environment can never silently bypass
-# the real check in production; both sides must agree it's test mode.
+# round-3: the helper no longer uses `mountpoint` at all — it parses
+# /proc/self/mountinfo directly. `mountpoint -q` follows symlinks and
+# returns 0 for ANY mount at the resolved path, so a worktree container
+# whose /app/node_modules is a SYMLINK to a real mount elsewhere (measured:
+# post-merge-lockfile-drift-classifier-dev-1's mounts sit at /node_modules,
+# not /app/node_modules) was reported as mounted when it genuinely wasn't —
+# a false negative for exactly the class of bug this check exists to catch.
+#
+# No env-var test seam (round 2 review, Finding A): an earlier version
+# honoured a SKILLSMITH_MOUNTPOINT_TEST=1 master switch plus a
+# SKILLSMITH_MOUNTPOINT_TEST_RC override, forwarded in by
+# check-container-deps-fresh.sh's own `docker exec -e ...`. Review found
+# that forwarding path itself was the vulnerability: a stray host
+# environment carrying both variables (e.g. left over from manual testing)
+# reached this process unconditionally and bypassed the real check, however
+# tightly the override was gated once it arrived. check-container-deps-fresh.sh
+# now forwards nothing mount-related at all, so this function always runs the
+# real command — there is no branch left to bypass. Tests exercise this by
+# pointing the helper's NODE_MODULES_MOUNT_GATE_MOUNTINFO seam at a fixture
+# mountinfo file (round-3 — the `mountpoint` PATH-shim this file's own
+# comment used to describe is gone; nothing left to shim) — this runs the
+# exact production code path instead of a parallel test-only branch.
 _check_mountpoint() {
-    if [ "${SKILLSMITH_MOUNTPOINT_TEST:-0}" = "1" ] && [ -n "${SKILLSMITH_MOUNTPOINT_TEST_RC:-}" ]; then
-        return "$SKILLSMITH_MOUNTPOINT_TEST_RC"
-    fi
-    mountpoint -q /app/node_modules
+    sh scripts/lib/node-modules-mount-gate.sh
 }
 
 if [ "${SKILLSMITH_LOCK_TEST_SOURCE:-0}" = "1" ]; then
@@ -137,15 +153,22 @@ if sh scripts/lib/check-node-modules-fresh.sh; then
 fi
 
 # Mount check sits AFTER the freshness check on purpose: a fresh or cosmetic
-# tree needs no install at all, so a detached mount must not block an
+# tree needs no install at all, so a mount problem must not block an
 # unrelated push. Both non-zero outcomes fail closed and print a distinct
-# reason: 32 (not a mountpoint — detached) vs anything else (cannot verify at
-# all, e.g. 127 if `mountpoint` itself is unavailable).
-_check_mountpoint
+# reason: 32 (>=1 path detached, mounted but not volume-shaped, or
+# ambiguous) vs 127 (cannot verify at all — /proc/self/mountinfo is
+# unreadable). Captures the helper's own stderr (swap-redirect: `2>&1
+# 1>/dev/null` sends stderr to this command-substitution's target and
+# discards real stdout, which the helper never uses anyway) so the per-path
+# "MOUNT_DETACHED <path>" / "MOUNT_NOT_VOLUME <path> ..." / "MOUNT_AMBIGUOUS
+# <path>" lines it prints relay all the way up to
+# check-container-deps-fresh.sh's own $OUTPUT capture, naming exactly which
+# path(s) are at fault instead of only ever blaming the root.
+_mp_out="$(_check_mountpoint 2>&1 1>/dev/null)"
 _mp_rc=$?
 if [ "$_mp_rc" -ne 0 ]; then
     case "$_mp_rc" in
-        32) echo "MOUNT_DETACHED $_mp_rc" >&2 ;;
+        32) printf '%s\n' "$_mp_out" >&2 ;;
         127) echo "MOUNT_CHECK_UNAVAILABLE $_mp_rc" >&2 ;;
         *) echo "MOUNT_CHECK_ERROR $_mp_rc" >&2 ;;
     esac

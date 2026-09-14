@@ -71,8 +71,13 @@ docker compose --profile dev up -d
 
 ```bash
 docker compose --profile dev up -d            # Exits 1: "node_modules not initialised"
-docker exec <container-name> npm install      # Re-initialise
-docker compose --profile dev down && docker compose --profile dev up -d
+```
+
+A worktree container's `node_modules` is bind-mounted **read-only** from the HOST (SMI-5560/5626) — `docker exec <worktree-container-name> npm install` here would `EROFS` by design, not silently fix anything (SMI-6614, ADR-158). Fix it on the HOST, from the MAIN checkout — this then propagates to every worktree automatically. Print the full ordered refresh sequence (stops worktree containers, clears the SMI-6034 ACLs, regenerates + syncs, repairs Tier-B mount sources, restarts worktrees) rather than jumping straight to one step of it:
+
+```bash
+( cd <main-checkout-path> && sh scripts/lib/print-deps-refresh-advice.sh <main-checkout-path> )
+docker compose --profile dev up -d            # (from this worktree) retry, after following the printed steps
 ```
 
 **After `docker volume rm skillsmith_node_modules`** (common troubleshooting step), Turbo's cache is also lost. The next `npm run build` is a full cold build (~30-45s). This is expected — volume removal resets all cached state.
@@ -88,7 +93,12 @@ For minor changes and adding dependencies:
 ```bash
 docker compose --profile dev down
 docker compose --profile dev up -d
-docker exec skillsmith-dev-1 npm install
+docker exec -w /app skillsmith-dev-1 sh -c 'sh scripts/lib/node-modules-mount-gate.sh && npm install'
+# Exit non-zero with no npm output means at least one node_modules named
+# volume (root, or a packages/*/node_modules) isn't currently mounted
+# (SMI-6516/SMI-6520/SMI-6614, ADR-158; round-2b widened this from root-only) —
+# recreate instead (`docker compose --profile dev up -d --force-recreate
+# dev`), then retry, rather than assuming the install itself failed.
 ```
 
 ### Full Rebuild (Thorough)
@@ -158,16 +168,21 @@ it is down, a *silent* squat on 3001 that breaks main's next `up` instead.
 docker compose --profile dev down
 docker volume rm skillsmith_node_modules
 docker compose --profile dev up -d
-docker exec skillsmith-dev-1 npm install
+docker exec -w /app skillsmith-dev-1 sh -c 'sh scripts/lib/node-modules-mount-gate.sh && npm install'
+# Exit non-zero with no npm output means at least one node_modules named
+# volume (root, or a packages/*/node_modules) isn't currently mounted
+# (SMI-6516/SMI-6520/SMI-6614, ADR-158; round-2b widened this from root-only) —
+# recreate again (`docker compose --profile dev up -d --force-recreate
+# dev`), then retry.
 ```
 
 ### Native Module Errors
 
-If you see `ERR_DLOPEN_FAILED` or `NODE_MODULE_VERSION` mismatch:
+If you see `ERR_DLOPEN_FAILED` or `NODE_MODULE_VERSION` mismatch (mount-gated, SMI-6614 — a non-zero exit with no rebuild output means a node_modules mount is detached or not a volume; recreate first, `docker compose --profile dev up -d --force-recreate dev`):
 
 ```bash
-docker exec skillsmith-dev-1 npm rebuild better-sqlite3
-docker exec skillsmith-dev-1 npm rebuild onnxruntime-node
+docker exec -w /app skillsmith-dev-1 sh -c 'sh scripts/lib/node-modules-mount-gate.sh && npm rebuild better-sqlite3'
+docker exec -w /app skillsmith-dev-1 sh -c 'sh scripts/lib/node-modules-mount-gate.sh && npm rebuild onnxruntime-node'
 ```
 
 ### VSCode Extension esbuild Not Found
@@ -175,7 +190,7 @@ docker exec skillsmith-dev-1 npm rebuild onnxruntime-node
 Occurs when `npm ci --ignore-scripts` skips esbuild's postinstall script:
 
 ```bash
-docker exec skillsmith-dev-1 npm rebuild esbuild
+docker exec -w /app skillsmith-dev-1 sh -c 'sh scripts/lib/node-modules-mount-gate.sh && npm rebuild esbuild'
 ```
 
 The Dockerfile already handles this via `npm rebuild better-sqlite3 onnxruntime-node esbuild`.
@@ -190,7 +205,7 @@ The Dockerfile already handles this via `npm rebuild better-sqlite3 onnxruntime-
 
 ```bash
 rm -rf packages/*/node_modules/better-sqlite3 packages/*/node_modules/onnxruntime-node
-docker exec skillsmith-dev-1 npm rebuild better-sqlite3 onnxruntime-node
+docker exec -w /app skillsmith-dev-1 sh -c 'sh scripts/lib/node-modules-mount-gate.sh && npm rebuild better-sqlite3 onnxruntime-node'
 ```
 
 **Prevention**: Always rebuild native modules after switching between Docker and host development. The root `node_modules/` is fine (managed by Docker volume), but package-level duplicates can cause issues.

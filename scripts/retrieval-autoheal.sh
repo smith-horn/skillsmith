@@ -98,7 +98,7 @@ probe_binding() {
 # --- Real-time concurrent-install detector (D2) ------------------------------
 # An mtime heuristic would false-positive on post-merge's OWN just-finished
 # install; a live-process check does not (the heal has spawned no npm yet, so any
-# match is foreign). pgrep is on macOS (BSD) and Linux (procps). Absent → skip.
+# match is foreign). pgrep is on macOS (BSD) and Linux (procps).
 #
 # SMI-6614 (ADR-158, change 5c/2): also defers while scripts/regen-lockfile.sh
 # is running — that script is the advised refresh for a real/unknown
@@ -108,16 +108,39 @@ probe_binding() {
 # the shared running_script_pids() helper, not the raw npm-pattern pgrep
 # above (regen-lockfile.sh's own `npm install`/`npm rebuild` calls run INSIDE
 # the container via `docker exec`, invisible to a host-side pgrep).
+#
+# round-2 code-review (Finding B): "cannot tell whether a foreign install is
+# running" is not a green light to proceed — it is the SAME race this
+# detector exists to prevent, just undetectable instead of detected. Both
+# missing-tool paths (running_script_pids itself failing — e.g. `ps`
+# unavailable — and pgrep being absent for the npm-pattern check below) now
+# make this function return "yes, treat as running" (defer) rather than "no,
+# proceed", logging exactly which tool is missing each time. There is no
+# proceed-anyway path left; the caller no longer needs its own warn-and-go
+# fallback.
 HAVE_PGREP=0
 command -v pgrep >/dev/null 2>&1 && HAVE_PGREP=1
 foreign_install_running() {
   if [ "$AUTOHEAL_TEST" = "1" ] && [ "${SKILLSMITH_AUTOHEAL_FORCE_INSTALL:-}" = "1" ]; then
     return 0
   fi
-  if [ -n "$(running_script_pids regen-lockfile.sh 2>/dev/null)" ]; then
+  local rsp_stderr_file rsp_pids rsp_rc
+  rsp_stderr_file="$(mktemp)"
+  rsp_pids="$(running_script_pids regen-lockfile.sh 2>"$rsp_stderr_file")"
+  rsp_rc=$?
+  if [ "$rsp_rc" -ne 0 ]; then
+    log "defer: cannot verify regen-lockfile.sh isn't running ($(cat "$rsp_stderr_file" 2>/dev/null)) — treating as maybe-running rather than proceeding blind"
+    rm -f "$rsp_stderr_file"
     return 0
   fi
-  [ "$HAVE_PGREP" = "1" ] || return 1
+  rm -f "$rsp_stderr_file"
+  if [ -n "$rsp_pids" ]; then
+    return 0
+  fi
+  if [ "$HAVE_PGREP" != "1" ]; then
+    log "defer: pgrep unavailable — cannot verify no concurrent npm install/build is running, treating as maybe-running rather than proceeding blind"
+    return 0
+  fi
   pgrep -f 'npm (install|ci)|build-release' >/dev/null 2>&1
 }
 
@@ -280,13 +303,14 @@ if probe_binding; then
 fi
 
 # 5. Concurrent-install detector (pre-lock). foreign_install_running() owns the
-#    whole decision (incl. the FORCE_INSTALL test seam), so it works regardless
-#    of whether pgrep is present; warn separately when pgrep is missing.
+#    whole decision (incl. the FORCE_INSTALL test seam) AND the missing-tool
+#    fail-closed defer (round-2 Finding B) — it already logs when it defers
+#    because a detection tool is unavailable, so there is nothing left for
+#    this call site to warn about separately.
 if foreign_install_running; then
   log "defer: concurrent npm install/build detected (pre-lock)"
   exit 0
 fi
-[ "$HAVE_PGREP" = "1" ] || log "warn: pgrep unavailable — concurrent-install detector skipped (residual race accepted)"
 
 # 6. Acquire the lock (defer, never evict a live holder).
 if ! acquire_lock; then

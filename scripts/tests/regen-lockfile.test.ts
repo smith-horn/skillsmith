@@ -64,6 +64,11 @@ const REPO_SCRIPTS_DIR = join(__dirname, '..')
 const SOURCE_REGEN_SH = join(REPO_SCRIPTS_DIR, 'regen-lockfile.sh')
 const SOURCE_LIB_SH = join(REPO_SCRIPTS_DIR, '_lib.sh')
 const SOURCE_RUNNING_SCRIPT_PIDS_SH = join(REPO_SCRIPTS_DIR, 'lib', 'running-script-pids.sh')
+const SOURCE_NODE_MODULES_MOUNT_GATE_SH = join(
+  REPO_SCRIPTS_DIR,
+  'lib',
+  'node-modules-mount-gate.sh'
+)
 
 const GIT_ENV = makeFixtureEnv()
 
@@ -104,12 +109,17 @@ function setupRepo(tempRoot: string): {
   binDir: string
   dockerLog: string
   npmLog: string
+  mountinfoPath: string
 } {
   const repoDir = join(tempRoot, 'repo')
   const scriptsDir = join(repoDir, 'scripts')
   const binDir = join(tempRoot, 'bin')
   const dockerLog = join(tempRoot, 'docker.log')
   const npmLog = join(tempRoot, 'npm.log')
+  // round-3: runScript()'s env below points NODE_MODULES_MOUNT_GATE_MOUNTINFO
+  // at join(dirname(cwd), 'mountinfo') — cwd is always repoDir for every test
+  // that reaches the mount gate, so this resolves to the same path.
+  const mountinfoPath = join(tempRoot, 'mountinfo')
 
   const scriptsLibDir = join(scriptsDir, 'lib')
   mkdirSync(scriptsLibDir, { recursive: true })
@@ -123,6 +133,22 @@ function setupRepo(tempRoot: string): {
   chmodSync(join(scriptsDir, 'regen-lockfile.sh'), 0o755)
   copyFileSync(SOURCE_LIB_SH, join(scriptsDir, '_lib.sh'))
   copyFileSync(SOURCE_RUNNING_SCRIPT_PIDS_SH, join(scriptsLibDir, 'running-script-pids.sh'))
+  // round-2b: regen-lockfile.sh's in-container gate now delegates to the
+  // shared node-modules-mount-gate.sh helper (relative path, resolved
+  // against the fake docker exec's cwd == repoDir via APP_ROOT=repoDir in
+  // runScript()'s env below) instead of calling `mountpoint` directly.
+  copyFileSync(SOURCE_NODE_MODULES_MOUNT_GATE_SH, join(scriptsLibDir, 'node-modules-mount-gate.sh'))
+  chmodSync(join(scriptsLibDir, 'node-modules-mount-gate.sh'), 0o755)
+  // The helper's root check needs a real directory to stat before it will
+  // even search mountinfo (a missing dir counts as "not mounted") — every
+  // test that doesn't care about the mount state gets a working default (a
+  // real directory + a fixture mountinfo line reporting it as a genuine
+  // volume-shaped root); tests that DO care overwrite the mountinfo fixture
+  // (and, where relevant, add more directories) via their own setup.
+  mkdirSync(join(repoDir, 'node_modules'), { recursive: true })
+  writeMountinfoFixture(mountinfoPath, [
+    mountedVolumeLine(100, join(repoDir, 'node_modules'), 'fixture_node_modules'),
+  ])
 
   writeFileSync(
     join(repoDir, 'package.json'),
@@ -138,7 +164,19 @@ function setupRepo(tempRoot: string): {
   execFileSync('git', ['-C', repoDir, 'add', '-A'], { env: GIT_ENV })
   execFileSync('git', ['-C', repoDir, 'commit', '--quiet', '-m', 'init'], { env: GIT_ENV })
 
-  return { repoDir, binDir, dockerLog, npmLog }
+  // round-2 code-review (Finding B): refuse_if_native_repair_running() now
+  // fails CLOSED (error, refuses) when pgrep/ps can't be checked, rather
+  // than warning and proceeding — so every test that doesn't care about that
+  // check needs a default pgrep/ps pair that succeeds and finds nothing
+  // (pgrep's own convention: no match -> exit 1), mirroring writePgrepPsStubs'
+  // shape. A test that DOES care overwrites these (writePgrepPsStubs, or the
+  // dedicated missing-tool tests below, which delete one or both).
+  writeFileSync(join(binDir, 'pgrep'), '#!/bin/sh\nexit 1\n', 'utf8')
+  chmodSync(join(binDir, 'pgrep'), 0o755)
+  writeFileSync(join(binDir, 'ps'), '#!/bin/sh\nexit 1\n', 'utf8')
+  chmodSync(join(binDir, 'ps'), 0o755)
+
+  return { repoDir, binDir, dockerLog, npmLog, mountinfoPath }
 }
 
 /**
@@ -183,24 +221,40 @@ exit ${rc}
   chmodSync(shimPath, 0o755)
 }
 
-/** Write a `mountpoint` shim (SMI-6614 change 5b) that always exits `rc`,
- * ignoring its args (`-q /app/node_modules`). */
-function writeMountpointShim(binDir: string, rc: number): void {
-  const shim = `#!/bin/sh\nexit ${rc}\n`
-  const shimPath = join(binDir, 'mountpoint')
-  writeFileSync(shimPath, shim)
-  chmodSync(shimPath, 0o755)
+/**
+ * round-3: node-modules-mount-gate.sh no longer shells out to `mountpoint`
+ * at all — it parses /proc/self/mountinfo directly (mountpoint follows
+ * symlinks and can't tell a real mount from anything else
+ * mounted wherever a symlink resolves to; see that file's own header). The
+ * `mountpoint` PATH-shims this file used to write are dead code now — the
+ * helper never calls that binary, so shimming it would silently test
+ * nothing (the exact SMI-6598 trap: a test that used to exercise a real
+ * code path, still green, but for the wrong reason). Every mount-state test
+ * below instead writes a fixture mountinfo file and points the helper's own
+ * NODE_MODULES_MOUNT_GATE_MOUNTINFO seam at it.
+ */
+
+/** One mountinfo line for `mountPoint` as a genuine Docker/Podman named-
+ * volume mount (root ending in `.../volumes/<volumeName>/_data`) — the
+ * "properly mounted" case node-modules-mount-gate.sh accepts. */
+function mountedVolumeLine(id: number, mountPoint: string, volumeName: string): string {
+  return `${id} 1 254:1 /docker/volumes/${volumeName}/_data ${mountPoint} rw,relatime master:1 - ext4 /dev/vda1 rw,discard`
+}
+
+/** Write `lines` (mountinfo-format strings) to `path`, one per line. */
+function writeMountinfoFixture(path: string, lines: string[]): void {
+  writeFileSync(path, lines.join('\n') + '\n', 'utf8')
 }
 
 /**
  * Write a `docker` shim that, for `exec CONTAINER sh -c '<payload>' […]`
  * specifically, ACTUALLY RUNS the trailing `sh -c` command — so a stubbed
- * `mountpoint`/`npm` on the SAME PATH genuinely gets invoked, exercising
- * the mount-gate logic for real (SMI-6614 change 5b's T-E scenarios). Any
- * OTHER `exec` payload (e.g. the unrelated `node -e …` native-verify call)
- * is logged and no-op'd, exactly like the passive writeDockerShim above —
- * only the mount-gated `sh -c` form needs real execution. `ps` also
- * behaves identically to the passive shim.
+ * `npm` on the SAME PATH genuinely gets invoked, exercising the mount-gate
+ * logic for real (SMI-6614 change 5b's T-E scenarios). Any OTHER `exec`
+ * payload (e.g. the unrelated `node -e …` native-verify call) is logged and
+ * no-op'd, exactly like the passive writeDockerShim above — only the
+ * mount-gated `sh -c` form needs real execution. `ps` also behaves
+ * identically to the passive shim.
  */
 function writeExecutingDockerShim(binDir: string, logPath: string, dockerPsOutput: string): void {
   const escaped = dockerPsOutput.replace(/'/g, `'\\''`)
@@ -214,6 +268,9 @@ case "$1" in
     ;;
   exec)
     shift
+    if [ "\${1:-}" = "-w" ]; then
+      shift 2
+    fi
     shift
     if [ "\${1:-}" = "sh" ]; then
       "$@"
@@ -303,13 +360,35 @@ function writeFailingGitShim(binDir: string, failingFlag: string): void {
 function runScript(
   cwd: string,
   args: string[],
-  binDir: string
+  binDir: string,
+  extraPathDirs: string[] = ['/usr/bin', '/bin']
 ): { status: number; stdout: string; stderr: string } {
   const scriptPath = join(cwd, 'scripts', 'regen-lockfile.sh')
   const r = spawnSync('bash', [scriptPath, ...args], {
     encoding: 'utf8',
     timeout: 30_000,
-    env: { ...GIT_ENV, PATH: `${binDir}:/usr/bin:/bin` },
+    // APP_ROOT: round-2b's node-modules-mount-gate.sh test seam — points
+    // the helper's root/packages/* checks at this fixture repo (standing in
+    // for the container's /app) instead of its own default. Inherited by
+    // the fake docker exec subprocess and everything IT spawns (normal
+    // subprocess env inheritance), never forwarded via any real `docker
+    // exec -e` in production code (SMI-6614 round-2 Finding A).
+    //
+    // NODE_MODULES_MOUNT_GATE_MOUNTINFO (round-3): same test-seam status as
+    // APP_ROOT above — points the helper's mountinfo parsing at this
+    // fixture repo's own mountinfo file (setupRepo()'s mountinfoPath,
+    // always tempRoot/mountinfo — cwd here is always repoDir, i.e.
+    // tempRoot/repo, so dirname(cwd) resolves back to tempRoot) instead of
+    // the real /proc/self/mountinfo.
+    //
+    // extraPathDirs defaults to the real system dirs (needed for git/sed/
+    // mktemp/etc).
+    env: {
+      ...GIT_ENV,
+      PATH: [binDir, ...extraPathDirs].join(':'),
+      APP_ROOT: cwd,
+      NODE_MODULES_MOUNT_GATE_MOUNTINFO: join(dirname(cwd), 'mountinfo'),
+    },
     cwd,
   })
   return { status: r.status ?? 1, stdout: r.stdout ?? '', stderr: r.stderr ?? '' }
@@ -362,11 +441,11 @@ describe('regen-lockfile.sh worktree routing (SMI-5724)', () => {
     tempDirs.push(tempRoot)
     const { repoDir, binDir, dockerLog, npmLog } = setupRepo(tempRoot)
     // SMI-6614 change 5b: install/rebuild now run via `docker exec … sh -c
-    // 'mountpoint …; exec npm …'` — an EXECUTING shim (mountpoint bound,
-    // rc=0) is needed so the mount-gate logic runs for real and reaches the
-    // stubbed npm, matching "today's call sequence" (T-E).
+    // 'sh scripts/lib/node-modules-mount-gate.sh && exec npm …'` — an
+    // EXECUTING shim (real sh -c payload, rc=0) is needed so the mount-gate
+    // logic runs for real and reaches the stubbed npm, matching "today's
+    // call sequence" (T-E).
     writeExecutingDockerShim(binDir, dockerLog, 'skillsmith-dev-1')
-    writeMountpointShim(binDir, 0)
     writeNpmShim(binDir, npmLog)
 
     const result = runScript(repoDir, [], binDir)
@@ -377,10 +456,16 @@ describe('regen-lockfile.sh worktree routing (SMI-5724)', () => {
 
     const dockerCalls = readFileSync(dockerLog, 'utf8')
     // Atomicity (T-E): every mutating docker exec's payload carries the
-    // mountpoint check AND the npm call in the SAME argv — no bare
-    // `docker exec … npm install`/`npm rebuild` remains.
-    expect(dockerCalls).toMatch(/exec skillsmith-dev-1 sh -c .*mountpoint.*exec npm install/)
-    expect(dockerCalls).toMatch(/exec skillsmith-dev-1 sh -c .*mountpoint.*exec npm rebuild/)
+    // shared node-modules-mount-gate.sh check AND the npm call in the SAME
+    // argv — no bare `docker exec … npm install`/`npm rebuild` remains.
+    // round-2b: -w /app is now required (the helper resolves as a relative
+    // path against cwd).
+    expect(dockerCalls).toMatch(
+      /exec -w \/app skillsmith-dev-1 sh -c .*node-modules-mount-gate\.sh.*exec npm install/
+    )
+    expect(dockerCalls).toMatch(
+      /exec -w \/app skillsmith-dev-1 sh -c .*node-modules-mount-gate\.sh.*exec npm rebuild/
+    )
     expect(dockerCalls).toMatch(/exec skillsmith-dev-1 node -e/)
 
     // The stubbed npm was actually invoked (through the executing shim) for
@@ -398,26 +483,66 @@ describe('regen-lockfile.sh worktree routing (SMI-5724)', () => {
   it('mount detached (rc32): script exits non-zero, stubbed npm inside the payload never ran, no host npm install', () => {
     const tempRoot = makeFixtureTempDir('regen-mount-32')
     tempDirs.push(tempRoot)
-    const { repoDir, binDir, dockerLog, npmLog } = setupRepo(tempRoot)
+    const { repoDir, binDir, dockerLog, npmLog, mountinfoPath } = setupRepo(tempRoot)
     writeExecutingDockerShim(binDir, dockerLog, 'skillsmith-dev-1')
-    writeMountpointShim(binDir, 32)
+    // No mountinfo entry at all for root's node_modules -> MOUNT_DETACHED
+    // (overwrites setupRepo()'s own default "mounted" fixture).
+    writeMountinfoFixture(mountinfoPath, [])
     writeNpmShim(binDir, npmLog)
 
     const result = runScript(repoDir, [], binDir)
 
     expect(result.status).not.toBe(0)
     const combined = stripAnsi(result.stdout + result.stderr)
-    expect(combined).toMatch(/not a mountpoint/)
+    // round-4: "has a node_modules mount problem" + the actual affected
+    // path(s) — renamed from round-2b/3's "detached node_modules mount" /
+    // "Detached path(s):" since round-4 widened this same message to also
+    // cover MOUNT_NOT_VOLUME and MOUNT_AMBIGUOUS, neither of which is
+    // literally "detached".
+    expect(combined).toMatch(/has a node_modules mount problem/)
+    expect(combined).toMatch(/Affected path\(s\):/)
+    expect(existsSync(npmLog)).toBe(false)
+  })
+
+  // round-2b: SMI-6516 detached nine of ten declared node_modules mounts
+  // INDIVIDUALLY — a root-only check misses exactly this shape.
+  it('mount PARTIALLY detached: root attached, one packages/*/node_modules detached -> refuses, no install', () => {
+    const tempRoot = makeFixtureTempDir('regen-mount-partial')
+    tempDirs.push(tempRoot)
+    const { repoDir, binDir, dockerLog, npmLog, mountinfoPath } = setupRepo(tempRoot)
+    writeExecutingDockerShim(binDir, dockerLog, 'skillsmith-dev-1')
+    mkdirSync(join(repoDir, 'packages', 'doc-retrieval-mcp', 'node_modules'), { recursive: true })
+    // The gate only checks directories holding a package.json (npm workspaces).
+    writeFileSync(join(repoDir, 'packages', 'doc-retrieval-mcp', 'package.json'), '{}\n')
+    // Root keeps its own mounted-volume entry (re-asserted here since this
+    // overwrites setupRepo()'s default fixture); the workspace package gets
+    // NO entry at all -> MOUNT_DETACHED for it alone.
+    writeMountinfoFixture(mountinfoPath, [
+      mountedVolumeLine(100, join(repoDir, 'node_modules'), 'fixture_node_modules'),
+    ])
+    writeNpmShim(binDir, npmLog)
+
+    const result = runScript(repoDir, [], binDir)
+
+    expect(result.status).not.toBe(0)
+    const combined = stripAnsi(result.stdout + result.stderr)
+    expect(combined).toMatch(/has a node_modules mount problem/)
+    expect(combined).toContain('packages/doc-retrieval-mcp/node_modules')
     expect(existsSync(npmLog)).toBe(false)
   })
 
   it('mount check unavailable (rc127): same refusal shape, "cannot verify" text', () => {
     const tempRoot = makeFixtureTempDir('regen-mount-127')
     tempDirs.push(tempRoot)
-    const { repoDir, binDir, dockerLog, npmLog } = setupRepo(tempRoot)
+    const { repoDir, binDir, dockerLog, npmLog, mountinfoPath } = setupRepo(tempRoot)
     writeExecutingDockerShim(binDir, dockerLog, 'skillsmith-dev-1')
-    writeMountpointShim(binDir, 127)
     writeNpmShim(binDir, npmLog)
+    // round-3: 127 means /proc/self/mountinfo (or its
+    // NODE_MODULES_MOUNT_GATE_MOUNTINFO override) cannot be READ — simulate
+    // by removing setupRepo()'s own default fixture file entirely, rather
+    // than the old "mountpoint binary genuinely absent from PATH" mechanism
+    // (obsolete: the helper no longer calls `mountpoint` at all).
+    rmSync(mountinfoPath, { force: true })
 
     const result = runScript(repoDir, [], binDir)
 
@@ -432,7 +557,6 @@ describe('regen-lockfile.sh worktree routing (SMI-5724)', () => {
     tempDirs.push(tempRoot)
     const { repoDir, binDir, dockerLog, npmLog } = setupRepo(tempRoot)
     writeExecutingDockerShim(binDir, dockerLog, 'skillsmith-dev-1')
-    writeMountpointShim(binDir, 0)
     writeNpmShim(binDir, npmLog)
 
     const result = runScript(repoDir, [], binDir)
@@ -443,12 +567,11 @@ describe('regen-lockfile.sh worktree routing (SMI-5724)', () => {
     expect(npmCalls).toMatch(/^rebuild /m)
   })
 
-  it('atomicity: every mutating docker exec payload carries the mountpoint check in the SAME argv — no bare install/rebuild remains', () => {
+  it('atomicity: every mutating docker exec payload carries the mount gate check in the SAME argv — no bare install/rebuild remains', () => {
     const tempRoot = makeFixtureTempDir('regen-mount-atomicity')
     tempDirs.push(tempRoot)
     const { repoDir, binDir, dockerLog, npmLog } = setupRepo(tempRoot)
     writeExecutingDockerShim(binDir, dockerLog, 'skillsmith-dev-1')
-    writeMountpointShim(binDir, 0)
     writeNpmShim(binDir, npmLog)
 
     const result = runScript(repoDir, [], binDir)
@@ -460,28 +583,38 @@ describe('regen-lockfile.sh worktree routing (SMI-5724)', () => {
     )
     expect(mutatingLines.length).toBeGreaterThan(0)
     for (const line of mutatingLines) {
-      expect(line).toContain('mountpoint -q /app/node_modules')
+      // round-2b: the gate is now the shared node-modules-mount-gate.sh
+      // helper (checks every node_modules path), not a root-only
+      // `mountpoint -q /app/node_modules` one-liner.
+      expect(line).toContain('sh scripts/lib/node-modules-mount-gate.sh')
     }
     // No bare (un-mount-gated) docker exec … npm install/rebuild remains.
     const bareLines = lines.filter(
-      (l) => /^exec skillsmith-dev-1 npm (install|rebuild)\b/.test(l) && !l.includes('mountpoint')
+      (l) =>
+        /^exec .*skillsmith-dev-1 npm (install|rebuild)\b/.test(l) &&
+        !l.includes('node-modules-mount-gate.sh')
     )
     expect(bareLines).toEqual([])
   })
 
-  it('--lockfile-only never calls mountpoint', () => {
+  it('--lockfile-only never invokes the mount gate', () => {
     const tempRoot = makeFixtureTempDir('regen-mount-lockfile-only')
     tempDirs.push(tempRoot)
     const { repoDir, binDir, dockerLog, npmLog } = setupRepo(tempRoot)
     writeExecutingDockerShim(binDir, dockerLog, 'skillsmith-dev-1')
-    // No mountpoint shim at all — if the script ever called it, PATH
-    // resolution would fail loudly (command not found) rather than
-    // silently succeeding.
     writeNpmShim(binDir, npmLog)
 
     const result = runScript(repoDir, ['--lockfile-only'], binDir)
     expect(result.status).toBe(0)
-    expect(readFileSync(dockerLog, 'utf8')).not.toContain('mountpoint')
+    // round-3 (SMI-6598 trap): a literal `.not.toContain('mountpoint')`
+    // assertion here would be VACUOUS — the docker log can never contain
+    // that string post-rewrite regardless of whether --lockfile-only
+    // correctly skips the gate, since the gate itself is now
+    // node-modules-mount-gate.sh and never prints/execs the word
+    // "mountpoint" at all. The only assertion that actually proves the gate
+    // was never invoked in lockfile-only mode is checking for ITS filename.
+    const dockerLogContent = readFileSync(dockerLog, 'utf8')
+    expect(dockerLogContent).not.toContain('node-modules-mount-gate.sh')
   })
 
   it('R3-1: stderr has no MOUNT_GATE line but the payload exits 97 (npm itself) → reported as an npm failure, not a mount failure', () => {
@@ -489,7 +622,6 @@ describe('regen-lockfile.sh worktree routing (SMI-5724)', () => {
     tempDirs.push(tempRoot)
     const { repoDir, binDir, dockerLog, npmLog } = setupRepo(tempRoot)
     writeExecutingDockerShim(binDir, dockerLog, 'skillsmith-dev-1')
-    writeMountpointShim(binDir, 0)
     // npm itself exits 97 (e.g. its own lifecycle-script exit code) with no
     // MOUNT_GATE token anywhere in its output.
     writeNpmShimWithRc(binDir, npmLog, 97)
@@ -498,7 +630,12 @@ describe('regen-lockfile.sh worktree routing (SMI-5724)', () => {
 
     expect(result.status).not.toBe(0)
     const combined = stripAnsi(result.stdout + result.stderr)
-    expect(combined).not.toMatch(/not a mountpoint/)
+    // round-4: regen-lockfile.sh's actual phrasing is "has a node_modules
+    // mount problem" (MOUNT_DETACHED/MOUNT_NOT_VOLUME/MOUNT_AMBIGUOUS) or
+    // "Cannot verify" (MOUNT_CHECK_UNAVAILABLE) — a stale check against an
+    // EARLIER round's wording would assert against text the script no
+    // longer emits, so it would prove nothing about this scenario.
+    expect(combined).not.toMatch(/has a node_modules mount problem/)
     expect(combined).not.toMatch(/[Cc]annot verify/)
     expect(combined).toMatch(/npm install failed inside/)
   })
@@ -508,7 +645,6 @@ describe('regen-lockfile.sh worktree routing (SMI-5724)', () => {
     tempDirs.push(tempRoot)
     const { repoDir, binDir, dockerLog, npmLog } = setupRepo(tempRoot)
     writeExecutingDockerShim(binDir, dockerLog, 'skillsmith-dev-1')
-    writeMountpointShim(binDir, 0)
     writeNpmShim(binDir, npmLog)
     writePgrepPsStubs(binDir, 'retrieval-autoheal.sh', 424242, 'sh scripts/retrieval-autoheal.sh')
 
@@ -523,12 +659,55 @@ describe('regen-lockfile.sh worktree routing (SMI-5724)', () => {
     expect(dockerCalls).not.toContain('exec')
   })
 
+  // round-2 code-review (Finding B): "cannot tell whether a repair is
+  // running" must now REFUSE, not proceed with a warning — the two tests
+  // below cover each missing-tool direction inside running_script_pids
+  // (pgrep vs ps), deleting the default working stubs setupRepo() writes.
+  it('refuse_if_native_repair_running: pgrep unavailable -> refuses, does not proceed (round-2 Finding B)', () => {
+    const tempRoot = makeFixtureTempDir('regen-refuse-missing-pgrep')
+    tempDirs.push(tempRoot)
+    const { repoDir, binDir, dockerLog, npmLog } = setupRepo(tempRoot)
+    writeExecutingDockerShim(binDir, dockerLog, 'skillsmith-dev-1')
+    writeNpmShim(binDir, npmLog)
+    // Remove ONLY the default pgrep stub — ps stays present, isolating this
+    // test to the "pgrep specifically missing" cause (running_script_pids'
+    // FIRST missing-tool check).
+    rmSync(join(binDir, 'pgrep'))
+
+    const result = runScript(repoDir, [], binDir)
+    expect(result.status).not.toBe(0)
+    const combined = stripAnsi(result.stdout + result.stderr)
+    expect(combined).toMatch(/[Cc]annot verify no host native repair is currently running/)
+    expect(combined).toMatch(/pgrep unavailable/i)
+    const dockerCalls = existsSync(dockerLog) ? readFileSync(dockerLog, 'utf8') : ''
+    expect(dockerCalls).not.toContain('exec')
+  })
+
+  it('refuse_if_native_repair_running: ps unavailable (pgrep present) -> refuses, does not proceed (round-2 Finding B)', () => {
+    const tempRoot = makeFixtureTempDir('regen-refuse-missing-ps')
+    tempDirs.push(tempRoot)
+    const { repoDir, binDir, dockerLog, npmLog } = setupRepo(tempRoot)
+    writeExecutingDockerShim(binDir, dockerLog, 'skillsmith-dev-1')
+    writeNpmShim(binDir, npmLog)
+    // Remove ONLY the default ps stub — pgrep stays present, isolating this
+    // test to the "ps specifically missing" cause (running_script_pids'
+    // SECOND missing-tool check).
+    rmSync(join(binDir, 'ps'))
+
+    const result = runScript(repoDir, [], binDir)
+    expect(result.status).not.toBe(0)
+    const combined = stripAnsi(result.stdout + result.stderr)
+    expect(combined).toMatch(/[Cc]annot verify no host native repair is currently running/)
+    expect(combined).toMatch(/ps unavailable/i)
+    const dockerCalls = existsSync(dockerLog) ? readFileSync(dockerLog, 'utf8') : ''
+    expect(dockerCalls).not.toContain('exec')
+  })
+
   it('successful full sync kicks the auto-heal once, after the sentinel write', async () => {
     const tempRoot = makeFixtureTempDir('regen-kick-autoheal')
     tempDirs.push(tempRoot)
     const { repoDir, binDir, dockerLog, npmLog } = setupRepo(tempRoot)
     writeExecutingDockerShim(binDir, dockerLog, 'skillsmith-dev-1')
-    writeMountpointShim(binDir, 0)
     writeNpmShim(binDir, npmLog)
     const kickLog = join(tempRoot, 'kick.log')
     writeAutohealStub(join(repoDir, 'scripts'), kickLog)
@@ -546,7 +725,6 @@ describe('regen-lockfile.sh worktree routing (SMI-5724)', () => {
     tempDirs.push(tempRoot)
     const { repoDir, binDir, dockerLog, npmLog } = setupRepo(tempRoot)
     writeExecutingDockerShim(binDir, dockerLog, 'skillsmith-dev-1')
-    writeMountpointShim(binDir, 0)
     writeNpmShim(binDir, npmLog)
     // pgrep -f WOULD find this (a decoy whose argv mentions the script
     // path) — but its argv[0] is `perl`, not `sh`/`bash`, so
@@ -571,7 +749,6 @@ describe('regen-lockfile.sh worktree routing (SMI-5724)', () => {
     tempDirs.push(tempRoot)
     const { repoDir, binDir, dockerLog, npmLog } = setupRepo(tempRoot)
     writeExecutingDockerShim(binDir, dockerLog, 'skillsmith-dev-1')
-    writeMountpointShim(binDir, 0)
     writeNpmShim(binDir, npmLog)
     writePgrepPsStubs(binDir, 'retrieval-autoheal.sh', 424244, 'bash scripts/retrieval-autoheal.sh')
 
@@ -586,7 +763,6 @@ describe('regen-lockfile.sh worktree routing (SMI-5724)', () => {
     tempDirs.push(tempRoot)
     const { repoDir, binDir, dockerLog, npmLog } = setupRepo(tempRoot)
     writeExecutingDockerShim(binDir, dockerLog, 'skillsmith-dev-1')
-    writeMountpointShim(binDir, 0)
     writeNpmShim(binDir, npmLog)
     // A whitespace-split predicate would misparse this into "/Users/test",
     // "user/scripts/retrieval-autoheal.sh" and wrongly reject it.
@@ -603,7 +779,14 @@ describe('regen-lockfile.sh worktree routing (SMI-5724)', () => {
     expect(combined).toMatch(/already running/)
   })
 
-  it('running_script_pids: missing ps warns (stderr) and fails open — real mountpoint path runs (code review finding 5)', () => {
+  // Title note (round-2 Finding B): this exercises running_script_pids() in
+  // isolation only — its own contract (warn + return failure on a missing
+  // tool) is unchanged and correct. The OLD title's "…real mountpoint path
+  // runs" implied the CALLER then proceeds past that failure — true for
+  // regen-lockfile.sh's refuse_if_native_repair_running() before this round,
+  // false now (see the two dedicated refuse_if_native_repair_running tests
+  // above): a failure here now makes both callers refuse/defer, not proceed.
+  it('running_script_pids: missing ps warns (stderr) and returns failure, rc=1 (code review finding 5)', () => {
     const tempRoot = makeFixtureTempDir('regen-rsp-missing-ps')
     tempDirs.push(tempRoot)
     const isoBin = join(tempRoot, 'iso-bin')
