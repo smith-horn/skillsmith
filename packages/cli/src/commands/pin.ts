@@ -2,6 +2,7 @@
  * @fileoverview skillsmith pin / unpin — content-hash pinning for installed skills
  * @module @skillsmith/cli/commands/pin
  * @see SMI-skill-version-tracking Wave 2
+ * @see SMI-6358: keys through manifestKeyFor(name, client), locked write
  *
  * pin <name>:   writes the current contentHash as pinnedVersion in the manifest
  * unpin <name>: removes pinnedVersion from the manifest entry
@@ -11,15 +12,31 @@
  * to enforce an update hold.
  *
  * Tier gate: Individual (requires requireTier('individual')).
+ *
+ * Client scoping (SMI-6358): a skill installed under a non-canonical client
+ * (e.g. `cursor`) is keyed in the manifest as `name::client`
+ * (manifestKeyFor()), NOT bare `name` — bare `name` is reserved for the
+ * canonical `claude-code` client. Before this fix, pin/unpin always read and
+ * wrote the bare-name key regardless of --client, so pinning a non-canonical
+ * client's skill could read/mutate an unrelated canonical entry of the same
+ * name (or silently no-op against a key that was never written). --client
+ * resolution mirrors update/remove/install (resolveEffectiveClient in
+ * manage.action.ts): an explicit --client wins, else SKILLSMITH_CLIENT, else
+ * canonical — for the canonical client, manifestKeyFor(name, 'claude-code')
+ * === name, so this is byte-identical to the old behavior for every
+ * existing (single-client) install.
  */
 
 import { Command } from 'commander'
 import chalk from 'chalk'
 import { getCliLogger } from '../cli-logger.js'
 import { withTelemetry } from '@skillsmith/core/telemetry'
+import { manifestKeyFor } from '@skillsmith/core'
+import { resolveClientId, type ClientId } from '@skillsmith/core/install'
 import { requireTier } from '../utils/require-tier.js'
 import { sanitizeError } from '../utils/sanitize.js'
 import { loadManifest, updateManifestEntry } from '../utils/manifest.js'
+import { VALID_CLIENT_HINT } from './install.js'
 
 const logger = getCliLogger()
 
@@ -36,6 +53,17 @@ function truncateHash(hash: string): string {
   return hash.slice(0, 8)
 }
 
+/**
+ * SMI-6358: resolve the effective client the same way update/install/remove
+ * do (manage.action.ts's resolveEffectiveClient) — an explicit --client
+ * wins, else SKILLSMITH_CLIENT, else the canonical client. pin/unpin have no
+ * scope/skillsDir concept of their own (they only ever touch the manifest,
+ * never the filesystem), so this is the full extent of parity needed.
+ */
+function resolveEffectiveClient(explicit: string | undefined): ClientId {
+  return resolveClientId(explicit ?? process.env['SKILLSMITH_CLIENT'])
+}
+
 // ============================================================================
 // Command factories
 // ============================================================================
@@ -43,12 +71,18 @@ function truncateHash(hash: string): string {
 // SMI-5128 batch B: extracted from inline .action() closures so withTelemetry
 // can wrap them at the export boundary (SMI-5018 coverage gate).
 
-async function pinActionImpl(skillName: string): Promise<void> {
+async function pinActionImpl(
+  skillName: string,
+  opts: Record<string, string | boolean | undefined> = {}
+): Promise<void> {
   try {
     await requireTier('individual')
 
+    const client = resolveEffectiveClient(opts['client'] as string | undefined)
+    const manifestKey = manifestKeyFor(skillName, client)
+
     const manifest = await loadManifest()
-    const entry = manifest.installedSkills[skillName]
+    const entry = manifest.installedSkills[manifestKey]
 
     if (!entry) {
       logger.error(
@@ -75,13 +109,13 @@ async function pinActionImpl(skillName: string): Promise<void> {
     const pinHash = truncateHash(hash)
 
     await updateManifestEntry((m) => {
-      const existingEntry = m.installedSkills[skillName]
+      const existingEntry = m.installedSkills[manifestKey]
       if (!existingEntry) return m
       return {
         ...m,
         installedSkills: {
           ...m.installedSkills,
-          [skillName]: {
+          [manifestKey]: {
             ...existingEntry,
             pinnedVersion: pinHash,
           },
@@ -102,12 +136,18 @@ export const pinAction = withTelemetry(pinActionImpl, {
   extractFramework: () => 'cli',
 })
 
-async function unpinActionImpl(skillName: string): Promise<void> {
+async function unpinActionImpl(
+  skillName: string,
+  opts: Record<string, string | boolean | undefined> = {}
+): Promise<void> {
   try {
     await requireTier('individual')
 
+    const client = resolveEffectiveClient(opts['client'] as string | undefined)
+    const manifestKey = manifestKeyFor(skillName, client)
+
     const manifest = await loadManifest()
-    const entry = manifest.installedSkills[skillName]
+    const entry = manifest.installedSkills[manifestKey]
 
     if (!entry) {
       logger.error(chalk.red(`Skill "${skillName}" not found in manifest.`))
@@ -122,7 +162,7 @@ async function unpinActionImpl(skillName: string): Promise<void> {
     const previousPin = entry.pinnedVersion
 
     await updateManifestEntry((m) => {
-      const existingEntry = m.installedSkills[skillName]
+      const existingEntry = m.installedSkills[manifestKey]
       if (!existingEntry) return m
 
       const { pinnedVersion: _removed, ...rest } = existingEntry
@@ -130,7 +170,7 @@ async function unpinActionImpl(skillName: string): Promise<void> {
         ...m,
         installedSkills: {
           ...m.installedSkills,
-          [skillName]: rest,
+          [manifestKey]: rest,
         },
       }
     })
@@ -155,6 +195,10 @@ export function createPinCommand(): Command {
   return new Command('pin')
     .description('Pin an installed skill to its current content hash (Individual tier)')
     .argument('<skill>', 'Skill name to pin')
+    .option(
+      '--client <id>',
+      `pin the copy installed for a specific agent (defaults to SKILLSMITH_CLIENT env or claude-code; ${VALID_CLIENT_HINT})`
+    )
     .action(pinAction)
 }
 
@@ -165,5 +209,9 @@ export function createUnpinCommand(): Command {
   return new Command('unpin')
     .description('Remove the content-hash pin from an installed skill (Individual tier)')
     .argument('<skill>', 'Skill name to unpin')
+    .option(
+      '--client <id>',
+      `unpin the copy installed for a specific agent (defaults to SKILLSMITH_CLIENT env or claude-code; ${VALID_CLIENT_HINT})`
+    )
     .action(unpinAction)
 }

@@ -26,12 +26,14 @@ import {
   defaultSkillsRoot,
   backfillManifest,
   hashContent,
+  manifestKeyFor,
   METHOD_LABELS,
   type RecoveryCandidate,
   type RecoveryConfidence,
   type RecoveryReport,
   type SkillRecoveryResult,
 } from '@skillsmith/core'
+import { resolveClientId, type ClientId } from '@skillsmith/core/install'
 import { getCliLogger } from '../cli-logger.js'
 import { withTelemetry } from '@skillsmith/core/telemetry'
 import { openCliDatabase } from '../utils/open-database.js'
@@ -92,12 +94,17 @@ function parseMinConfidence(value: string | undefined): RecoveryConfidence {
  * know the current manifest state).
  *
  * Mutates `report.skills` in place and recomputes `report.summary`.
+ *
+ * SMI-6358: keyed by manifestKeyFor(skillName, client) — a bare-name lookup
+ * would read the CANONICAL client's entry (or nothing) for every skill when
+ * scanning a non-canonical client's skillsRoot, mis-marking an
+ * already-tracked skill as recoverable (or vice versa).
  */
-async function overlayAlreadyTracked(report: RecoveryReport): Promise<void> {
+async function overlayAlreadyTracked(report: RecoveryReport, client: ClientId): Promise<void> {
   const manifest = await loadManifest()
   const installed = manifest.installedSkills ?? {}
   for (const skill of report.skills) {
-    const entry = installed[skill.skillName]
+    const entry = installed[manifestKeyFor(skill.skillName, client)]
     if (entry && typeof entry.source === 'string' && entry.source.trim().length > 0) {
       skill.status = 'already_tracked'
     }
@@ -235,16 +242,32 @@ export interface AuditSourcesOptions {
   writeFrontmatter: boolean
   forceWriteFrontmatter: boolean
   db: string
+  /**
+   * SMI-6358: which client the scanned skillsRoot belongs to. Resolved the
+   * same way update/install/remove resolve --client (explicit value, else
+   * SKILLSMITH_CLIENT, else canonical) — see resolveEffectiveClient() below.
+   */
+  client: string | undefined
 }
 
 // ============================================================================
 // Main entry
 // ============================================================================
 
+/**
+ * SMI-6358: resolve the effective client the same way update/install/remove
+ * do (manage.action.ts's resolveEffectiveClient) — an explicit --client
+ * wins, else SKILLSMITH_CLIENT, else the canonical client.
+ */
+function resolveEffectiveClient(explicit: string | undefined): ClientId {
+  return resolveClientId(explicit ?? process.env['SKILLSMITH_CLIENT'])
+}
+
 export async function runAuditSources(options: AuditSourcesOptions): Promise<void> {
   const skillsRoot = options.skillsRoot ?? defaultSkillsRoot()
   const setOverrides = parseSetPairs(options.set)
   const minConfidence = parseMinConfidence(options.minConfidence)
+  const client = resolveEffectiveClient(options.client)
 
   // --write-frontmatter requires --force-write-frontmatter.
   if (options.writeFrontmatter && !options.forceWriteFrontmatter) {
@@ -292,7 +315,7 @@ export async function runAuditSources(options: AuditSourcesOptions): Promise<voi
   }
 
   // Overlay already_tracked status from the current manifest.
-  await overlayAlreadyTracked(report)
+  await overlayAlreadyTracked(report, client)
 
   // --json: emit raw data, no prompts, no writes.
   if (options.json) {
@@ -317,6 +340,7 @@ export async function runAuditSources(options: AuditSourcesOptions): Promise<voi
     apply: true,
     setOverrides,
     writeFrontmatter: options.writeFrontmatter,
+    client,
   })
 
   if (outcome.written.length > 0) {
@@ -352,6 +376,7 @@ async function auditSourcesActionImpl(
       writeFrontmatter: (opts['writeFrontmatter'] as boolean) ?? false,
       forceWriteFrontmatter: (opts['forceWriteFrontmatter'] as boolean) ?? false,
       db: (opts['db'] as string | undefined) ?? DEFAULT_DB_PATH,
+      client: opts['client'] as string | undefined,
     })
   } catch (error) {
     const msg = error instanceof Error ? error.message : sanitizeError(error)

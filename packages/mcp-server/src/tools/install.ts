@@ -349,7 +349,8 @@ async function installSkillImpl(input: unknown, _context?: ToolContext): Promise
           installPath,
           manifest,
           validInput.conflictAction,
-          validInput.skillId
+          validInput.skillId,
+          effectiveClient
         )
 
         if (!conflictCheck.shouldProceed) {

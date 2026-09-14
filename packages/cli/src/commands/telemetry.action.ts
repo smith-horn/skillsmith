@@ -10,6 +10,17 @@
  * Privacy invariants (plan line 719):
  *   - anonymousId is NEVER printed in full. Only the last 8 hex chars appear in stdout.
  *   - The full SHA-256 hex travels only to the events endpoint in hook payloads.
+ *
+ * SMI-6358: every write below now goes through updateManifestEntry()
+ * (manifest.ts) instead of a bare loadManifest()+saveManifest() pair — the
+ * old pattern read the manifest, computed an update from that snapshot, and
+ * saved it back with no lock, so a `skillsmith telemetry enable` racing a
+ * `skillsmith pin`/`unpin` (or two overlapping telemetry commands) could
+ * lose one side's write. updateManifestEntry() now takes the same
+ * cross-process lock @skillsmith/core's ManifestManager uses and returns
+ * the manifest AFTER the update, so functions that need the resulting value
+ * (e.g. runEnable's printed anonymousId) read it off that return rather
+ * than a second, unlocked loadManifest() call.
  */
 
 import { existsSync, copyFileSync, chmodSync, mkdirSync } from 'node:fs'
@@ -22,7 +33,7 @@ import chalk from 'chalk'
 
 import {
   loadManifest,
-  saveManifest,
+  updateManifestEntry,
   generateAnonymousId,
   shouldRotateAnonymousId,
   rotateAnonymousId,
@@ -96,26 +107,31 @@ function gcOrphanRunFiles(): void {
 // ---------------------------------------------------------------------------
 
 async function runEnable(): Promise<void> {
-  const manifest = await loadManifest()
-  const t: TelemetryManifest = manifest.telemetry ?? { enabled: false }
-
-  if (t.enabled) {
+  // Unlocked peek only for the "already enabled" fast-path message — the
+  // actual mutation (and the SAME check, re-applied) happens inside the
+  // locked updateFn below so a racing enable/rotate never lose each other.
+  const peek = await loadManifest()
+  if ((peek.telemetry ?? { enabled: false }).enabled) {
+    const t = peek.telemetry as TelemetryManifest
     console.log(chalk.green('Telemetry is already enabled.'))
     console.log(chalk.dim(`  Anonymous ID tail: ${idTail(t.anonymousId)}`))
     return
   }
 
   const now = new Date().toISOString()
-  const updated: TelemetryManifest = {
-    ...t,
-    enabled: true,
-    anonymousId: t.anonymousId ?? generateAnonymousId(),
-    anonymousIdCreatedAt: t.anonymousIdCreatedAt ?? now,
-    scope: t.scope ?? 'personal',
-    endpoint: t.endpoint ?? DEFAULT_ENDPOINT,
-  }
-
-  await saveManifest({ ...manifest, telemetry: updated })
+  let updated: TelemetryManifest = { enabled: false }
+  await updateManifestEntry((manifest) => {
+    const t: TelemetryManifest = manifest.telemetry ?? { enabled: false }
+    updated = {
+      ...t,
+      enabled: true,
+      anonymousId: t.anonymousId ?? generateAnonymousId(),
+      anonymousIdCreatedAt: t.anonymousIdCreatedAt ?? now,
+      scope: t.scope ?? 'personal',
+      endpoint: t.endpoint ?? DEFAULT_ENDPOINT,
+    }
+    return { ...manifest, telemetry: updated }
+  })
 
   console.log(chalk.green('Telemetry enabled.'))
   console.log()
@@ -134,15 +150,18 @@ async function runEnable(): Promise<void> {
 // ---------------------------------------------------------------------------
 
 async function runDisable(): Promise<void> {
-  const manifest = await loadManifest()
-  const t: TelemetryManifest = manifest.telemetry ?? { enabled: false }
-
-  if (!t.enabled) {
+  // Unlocked peek only for the "already disabled" fast-path message — same
+  // rationale as runEnable() above.
+  const peek = await loadManifest()
+  if (!(peek.telemetry ?? { enabled: false }).enabled) {
     console.log(chalk.dim('Telemetry is already disabled.'))
     return
   }
 
-  await saveManifest({ ...manifest, telemetry: { ...t, enabled: false } })
+  await updateManifestEntry((manifest) => {
+    const t: TelemetryManifest = manifest.telemetry ?? { enabled: false }
+    return { ...manifest, telemetry: { ...t, enabled: false } }
+  })
 
   console.log(chalk.yellow('Telemetry disabled.'))
   console.log(
@@ -158,22 +177,32 @@ async function runDisable(): Promise<void> {
 // ---------------------------------------------------------------------------
 
 async function runStatus(): Promise<void> {
+  // Unlocked peek to decide WHETHER a write is needed at all — avoids
+  // taking the lock (and rewriting the file) on every plain `status` call,
+  // the overwhelmingly common case where neither rotation nor sweep apply.
+  // The actual decision is re-evaluated fresh INSIDE the lock below, so a
+  // stale peek only costs a skipped fast-path, never a wrong write.
   let manifest = await loadManifest()
   let rotationTriggered = false
+  const peekNeedsRotation = shouldRotateAnonymousId(manifest)
+  const peekSwept = sweepExpiredPreviousId(manifest)
+  const peekNeedsSweep = peekSwept !== manifest.telemetry
 
-  // Annual auto-rotation (plan line 706, 713)
-  if (shouldRotateAnonymousId(manifest)) {
-    const rotated = rotateAnonymousId(manifest)
-    manifest = { ...manifest, telemetry: rotated }
-    await saveManifest(manifest)
-    rotationTriggered = true
-  }
-
-  // Sweep expired previous id
-  const swept = sweepExpiredPreviousId(manifest)
-  if (swept !== manifest.telemetry) {
-    manifest = { ...manifest, telemetry: swept }
-    await saveManifest(manifest)
+  if (peekNeedsRotation || peekNeedsSweep) {
+    manifest = await updateManifestEntry((current) => {
+      let next = current
+      // Annual auto-rotation (plan line 706, 713)
+      if (shouldRotateAnonymousId(next)) {
+        next = { ...next, telemetry: rotateAnonymousId(next) }
+        rotationTriggered = true
+      }
+      // Sweep expired previous id
+      const swept = sweepExpiredPreviousId(next)
+      if (swept !== next.telemetry) {
+        next = { ...next, telemetry: swept }
+      }
+      return next
+    })
   }
 
   // GC orphan run files (plan line 714)
@@ -254,17 +283,17 @@ async function runInstallHook(options: {
   // Persist settings.json atomically
   writeClaudeSettings(scope, updated)
 
-  // Record installation timestamp in manifest
-  const manifest = await loadManifest()
-  const t: TelemetryManifest = manifest.telemetry ?? { enabled: false }
-  await saveManifest({ ...manifest, telemetry: { ...t, installedAt: new Date().toISOString() } })
-
-  // Update endpoint in manifest if provided
-  if (options.endpoint) {
-    const m2 = await loadManifest()
-    const t2 = m2.telemetry ?? { enabled: false }
-    await saveManifest({ ...m2, telemetry: { ...t2, endpoint: options.endpoint } })
-  }
+  // Record installation timestamp (and endpoint, if provided) in the
+  // manifest — both fields written in ONE locked update rather than two
+  // separate unlocked load+save round trips, so a racing writer can't land
+  // between them and have one of the two fields lost.
+  const installedAt = new Date().toISOString()
+  await updateManifestEntry((manifest) => {
+    const t: TelemetryManifest = manifest.telemetry ?? { enabled: false }
+    const next: TelemetryManifest = { ...t, installedAt }
+    if (options.endpoint) next.endpoint = options.endpoint
+    return { ...manifest, telemetry: next }
+  })
 
   const scopeLabel = scope === 'user' ? '~/.claude/settings.json' : './.claude/settings.json'
   console.log(chalk.green('Skillsmith telemetry hook installed.'))
@@ -306,9 +335,11 @@ async function runUninstallHook(options: { scope: 'user' | 'project' }): Promise
 // ---------------------------------------------------------------------------
 
 async function runResetId(): Promise<void> {
-  const manifest = await loadManifest()
-  const rotated = rotateAnonymousId(manifest) // unconditional rotation
-  await saveManifest({ ...manifest, telemetry: rotated })
+  let rotated: TelemetryManifest = { enabled: false }
+  await updateManifestEntry((manifest) => {
+    rotated = rotateAnonymousId(manifest) // unconditional rotation
+    return { ...manifest, telemetry: rotated }
+  })
 
   console.log(chalk.green('Anonymous ID rotated.'))
   console.log(chalk.dim(`  New ID tail:      ${idTail(rotated.anonymousId)}`))

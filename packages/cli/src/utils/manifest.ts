@@ -3,29 +3,40 @@
  * @module @skillsmith/cli/utils/manifest
  * @see SMI-skill-version-tracking Wave 2
  * @see SMI-5012 Wave 3: telemetry block + annual anonymous_id rotation
+ * @see SMI-6358: updateManifestEntry() now locks (below)
  *
  * Reads (and optionally writes) the ~/.skillsmith/manifest.json file.
  * This mirrors the SkillManifest types defined in
  * @skillsmith/mcp-server/tools/install.types without creating a cross-package
  * dependency on mcp-server.
  *
- * The CLI owns its own read path; write operations (pin/unpin) use
- * updateManifestEntry below which does an atomic temp-file rename.
+ * The CLI owns its own read path; write operations (pin/unpin/telemetry) go
+ * through updateManifestEntry below, which now delegates the actual
+ * lock+load+save cycle to @skillsmith/core's ManifestManager.updateSafely()
+ * (SMI-6358) rather than reimplementing a fourth lock. This file's own
+ * loadManifest()/saveManifest() stay as they were (SMI-6360 governs NOT
+ * merging the three manifest *implementations* into one) — only the write
+ * PATH used by every caller in this package now shares core's lock.
  *
- * Concurrency note (v1): the atomic temp-file rename guarantees readers never
- * see partial writes (POSIX rename(2) is atomic). A full file-lock (proper-lockfile)
- * is NOT used here because proper-lockfile is not in the CLI's dependencies.
- * v1 assumes single-writer-per-process; concurrent writers from the same machine
- * (e.g., two concurrent `skillsmith telemetry` calls) may last-write-wins.
- * This matches the shared-state matrix entry (plan line 715) which notes the
- * proper-lockfile pattern but is aspirational for v2.
+ * Concurrency note (SMI-6358 supersedes the v1 note this replaced): every
+ * caller of updateManifestEntry() now takes the SAME cross-process file
+ * lock (`<MANIFEST_PATH>.lock`, wx-flag exclusive create) that
+ * @skillsmith/core's ManifestManager uses for SkillInstallationService,
+ * apply_manifest_reconcile, and manage.update.helpers.ts's adoption path —
+ * and that @skillsmith/mcp-server's install.helpers.manifest.ts's
+ * updateManifestSafely() ALSO already used (independently implemented, but
+ * the identical target path + wx-flag protocol makes it interoperable with
+ * this lock without any code sharing). A direct saveManifest() call
+ * (bypassing updateManifestEntry) is still NOT locked and must never be used
+ * for a read-modify-write sequence — see saveManifest()'s own doc comment.
  */
 
 import { createHash, randomUUID } from 'crypto'
 import { readFile, writeFile, mkdir, rename, unlink } from 'fs/promises'
 import { join, dirname } from 'path'
 import { homedir } from 'os'
-import { assertNotRealUserHome } from '@skillsmith/core'
+import { assertNotRealUserHome, ManifestManager } from '@skillsmith/core'
+import type { SkillManifest as CoreSkillManifest } from '@skillsmith/core'
 import type { ClientId } from '@skillsmith/core/install'
 
 // ============================================================================
@@ -147,6 +158,13 @@ export async function loadManifest(manifestPath: string = MANIFEST_PATH): Promis
  * before rethrowing the original error (mirrors `ManifestManager.save()` in
  * `@skillsmith/core`, and `sqljsDriver.ts`'s `persist()`, SMI-5997) — the
  * error is never swallowed.
+ *
+ * SMI-6358: this function on its own provides NO locking — it is safe as a
+ * one-shot write of a manifest you already hold exclusively (e.g. inside a
+ * ManifestManager.updateSafely() callback), but a caller that does
+ * `loadManifest()` then computes an update then calls `saveManifest()`
+ * directly has an unlocked read-modify-write and can lose a concurrent
+ * writer's update. Use updateManifestEntry() below for that shape instead.
  */
 export async function saveManifest(manifest: SkillManifest): Promise<void> {
   // SMI-6343 follow-up (adversarial review): a third parallel manifest-write
@@ -169,14 +187,51 @@ export async function saveManifest(manifest: SkillManifest): Promise<void> {
 }
 
 /**
- * Load the manifest, apply an update function, and save atomically.
+ * SMI-6358: the single locked read-modify-write path this file exposes.
+ * Delegates to @skillsmith/core's ManifestManager.updateSafely() rather than
+ * reimplementing the lock a fourth time — that gives this file's callers
+ * (pin.ts, unpin, telemetry.action.ts) three things a bare
+ * loadManifest()+saveManifest() pair did not have:
+ *
+ *   1. Locking: mutually exclusive with every other manifest writer in the
+ *      repo that targets the SAME `~/.skillsmith/manifest.json` path (core's
+ *      SkillInstallationService/apply_manifest_reconcile/manage.update
+ *      adoption path, and mcp-server's own install.helpers.manifest.ts,
+ *      which locks the identical `<path>.lock` file via the same wx-flag
+ *      protocol even though it is a separately-maintained implementation).
+ *   2. Fail-closed reads: ManifestManager.load() throws on a non-ENOENT read
+ *      error (corrupt JSON, EACCES, ...) instead of this file's own
+ *      loadManifest(), which still silently returns an empty manifest on
+ *      ANY error (SMI-5909) — a write built on that empty snapshot would
+ *      erase every existing entry. Callers that need a locked, fail-closed
+ *      write MUST go through this function, not loadManifest()+saveManifest().
+ *   3. Returns the manifest AFTER the update, so a caller that needs the
+ *      freshly-computed value (e.g. telemetry's rotated anonymousId) does
+ *      not need a second, unlocked read that could see a different writer's
+ *      change land in between.
+ *
+ * Does NOT change this file's own SkillManifest/TelemetryManifest types or
+ * loadManifest()/saveManifest() — SMI-6360 governs NOT consolidating the
+ * three manifest *implementations* into one; this only reuses the
+ * ALREADY-locked primitive for the write step. `manifest` inside the
+ * updateSafely() callback is core's own (structurally-mirrored, slightly
+ * narrower) SkillManifest type — the casts below are the one integration
+ * point between the two mirrored type declarations, same pattern this
+ * file's header already documents for the shape overall.
  */
+const manifestManager = new ManifestManager(MANIFEST_PATH)
+
 export async function updateManifestEntry(
   updateFn: (manifest: SkillManifest) => SkillManifest
-): Promise<void> {
-  const manifest = await loadManifest()
-  const updated = updateFn(manifest)
-  await saveManifest(updated)
+): Promise<SkillManifest> {
+  let result: SkillManifest | undefined
+  await manifestManager.updateSafely((manifest): CoreSkillManifest => {
+    result = updateFn(manifest as SkillManifest)
+    return result as CoreSkillManifest
+  })
+  // updateSafely()'s callback always runs exactly once before it resolves —
+  // result is always assigned by the time we get here.
+  return result as SkillManifest
 }
 
 // ============================================================================

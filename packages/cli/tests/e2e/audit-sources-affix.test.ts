@@ -53,6 +53,7 @@ function makeOpts(skillsRoot: string, db: string): AuditSourcesOptions {
     writeFrontmatter: false,
     forceWriteFrontmatter: false,
     db,
+    client: undefined,
   }
 }
 
