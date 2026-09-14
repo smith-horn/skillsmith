@@ -17,8 +17,10 @@
  *
  * Stand one up and run the suite:
  *
- *   docker run -d --name smi6345-devicelock-test-pg -e POSTGRES_PASSWORD=testpass \
+ *   docker run -d --rm --name smi6345-devicelock-test-pg -e POSTGRES_PASSWORD=testpass \
  *     -e POSTGRES_DB=postgres -p 15645:5432 postgres:15-alpine
+ *   # Tear down with `docker stop smi6345-devicelock-test-pg`: --rm then removes the container and
+ *   # its anonymous data volume (a bare `docker rm` would leak the volume, SMI-6619).
  *   SMI6345_TEST_PGHOST=host.docker.internal SMI6345_TEST_PGPORT=15645 \
  *   SMI6345_TEST_PGUSER=postgres SMI6345_TEST_PGPASSWORD=testpass \
  *   SMI6345_TEST_PGDATABASE=postgres \

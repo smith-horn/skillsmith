@@ -10,6 +10,8 @@ docker compose --profile dev down       # Stop container
 docker logs skillsmith-dev-1            # View logs
 ```
 
+**Throwaway containers**: start any ad-hoc verification container (a scratch `postgres:*`, a one-off image test) with `--rm`, and stop it with `docker stop <name>`. Images that declare a `VOLUME`, such as `postgres`, create an anonymous data volume per container. `--rm` removes it with the container; a bare `docker rm` leaves it dangling (SMI-6619).
+
 ## Host-side install workflow (SMI-4672)
 
 `.npmrc` sets `ignore-scripts=true` (Wave 3a, SMI-4672). All `npm install` invocations — host or container — skip lifecycle scripts (`preinstall`, `install`, `postinstall`, `prepare`). The container path is fully covered: `Dockerfile:73` rebuilds the four native modules at image build, and `docker-entrypoint.sh` re-validates and rebuilds them at every container start.

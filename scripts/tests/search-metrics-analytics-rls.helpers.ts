@@ -277,8 +277,9 @@ if (noLiveTestPg) {
       'analytics_team_reporting_coverage() suppression ladder and the shipped ' +
       'search_metrics_team_scoped_read policy — a mocked test cannot prove either. Not covered ' +
       'by CI (same tracked gap as SMI-5946). Stand one up:\n' +
-      '  docker run -d --name smi6362-analytics-test-pg -e POSTGRES_PASSWORD=testpass \\\n' +
+      '  docker run -d --rm --name smi6362-analytics-test-pg -e POSTGRES_PASSWORD=testpass \\\n' +
       '    -e POSTGRES_DB=postgres -p 15636:5432 postgres:15-alpine\n' +
+      '  # Tear down with `docker stop smi6362-analytics-test-pg` (--rm also removes its data volume, SMI-6619)\n' +
       '  SMI6362_TEST_PGHOST=host.docker.internal SMI6362_TEST_PGPORT=15636 \\\n' +
       '  SMI6362_TEST_PGUSER=postgres SMI6362_TEST_PGPASSWORD=testpass \\\n' +
       '  SMI6362_TEST_PGDATABASE=postgres \\\n' +
