@@ -2,12 +2,17 @@
  * @fileoverview End-to-end team resolution for private-registry tools with only SKILLSMITH_API_KEY
  * @see SMI-6080: `private_registry_publish` / `private_registry_manage` could not resolve a team
  *      from a complimentary/admin-granted API key
+ * @see SMI-6622: `registry-tools.ts`'s `resolveTeamId()` now delegates to the registry-only
+ *      `registry-tools.team.ts` (not `team-resolver.ts`'s `resolveLicenseTeamId()` directly), but
+ *      that new module reuses `team-resolver.ts`'s `readLicenseKey()` as-is for its env-credential
+ *      half — so the env-var precedence this file exercises is unchanged. Its own dedicated
+ *      config.json-fallback and error-typing coverage lives in registry-tools.team.test.ts.
  *
- * Every OTHER registry-tools test mocks `./team-resolver.js` wholesale, so none of them exercise
- * the real credential-resolution chain. This file deliberately does NOT mock it: it stubs only the
- * Supabase surface underneath (`isSupabaseConfigured` + a recording `rpc()`), so
- * `readLicenseKey()` → `resolveLicenseTeamId()` → `resolve_team_from_license` runs for real and a
- * regression in the fallback fails here instead of silently passing everywhere.
+ * Every OTHER registry-tools test mocks `./team-resolver.js` (now: `./registry-tools.team.js`)
+ * wholesale, so none of them exercise the real credential-resolution chain. This file deliberately
+ * does NOT mock either: it stubs only the Supabase surface underneath (`isSupabaseConfigured` + a
+ * recording `rpc()`), so `readLicenseKey()` → `resolveRegistryTeamId()` → `resolve_team_from_license`
+ * runs for real and a regression in the fallback fails here instead of silently passing everywhere.
  *
  * Scope: this covers TEAM RESOLUTION only — "which team is this call for". The publish / install /
  * submissions / approve / deprecate actions additionally require a signed-in user's own Supabase
@@ -76,7 +81,12 @@ describe('private-registry team resolution — SKILLSMITH_API_KEY fallback (SMI-
     const result = await executePrivateRegistryManage({ action: 'list' }, makeContext())
 
     expect(result.success).toBe(true)
-    expect(result.dataSource).toBe('live')
+    // SMI-6622/SMI-6184: dataSource now reflects which SERVICE is actually wired in
+    // (dataSourceFor(service)), not isSupabaseConfigured() — this file's own beforeEach injects
+    // createStubRegistryService() deliberately (so CRUD stays safe/offline) while still exercising
+    // REAL team resolution against the mocked RPC below, so 'stub' here is correct, not a
+    // regression: it is the exact drift SMI-6184 fixed for the other tool families.
+    expect(result.dataSource).toBe('stub')
     expect(result.error).toBeUndefined()
     // The API key is what actually reached the RPC — the whole point of the fallback.
     expect(rpcMock).toHaveBeenCalledWith('resolve_team_from_license', {

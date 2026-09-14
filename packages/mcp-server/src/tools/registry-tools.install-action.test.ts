@@ -27,7 +27,7 @@
  * gap into a real regression in THIS file; fixed in the same pass, not deferred.
  */
 
-import { describe, it, expect, beforeEach, afterEach } from 'vitest'
+import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest'
 import * as fs from 'fs/promises'
 import * as path from 'path'
 import * as os from 'os'
@@ -48,6 +48,16 @@ import {
   setPrivateRegistryService,
   type StubRegistryService,
 } from './registry-tools.js'
+
+// SMI-6622: the "Dispatch" tests below go through `executePrivateRegistryManage`, which now
+// ALWAYS attempts real team resolution (never a placeholder id just because the stub SERVICE is
+// injected — see registry-tools.ts's `useRegistryStub()`/`resolveTeamId()` doc comments). The
+// "Round-trip" tests bypass this entirely (they call `executeRegistryInstall`/`service.publish()`
+// directly with an explicit `TEAM`), so only the dispatch tests actually need this mock — added
+// uniformly since both share this file's team-resolver.js-less setup.
+vi.mock('./registry-tools.team.js', () => ({
+  resolveRegistryTeamId: vi.fn(async () => 'team-alpha'),
+}))
 
 /** Distinct admin identity used to approve every fixture published in this file (SMI-5949 D-6
  *  blocks self-approval — see registry-tools.test.ts's own ADMIN_ACTOR for the established

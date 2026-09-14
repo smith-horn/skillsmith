@@ -38,10 +38,18 @@ vi.mock('../supabase-client.js', () => ({
   resetSupabaseClients: vi.fn(),
 }))
 
+// readLicenseKey is kept — registry-tools.live.audit.ts still calls it directly for the audit
+// row's masked-credential metadata. resolveLicenseTeamId is dropped: registry-tools.ts no longer
+// calls it (SMI-6622 — see the registry-tools.team.js mock below).
 vi.mock('./team-resolver.js', () => ({
   readLicenseKey: vi.fn(() => 'sk_test_fake_license'),
-  resolveLicenseTeamId: vi.fn(async () => 'team-alpha'),
   resolveUserAccessToken: vi.fn(async () => 'fake-user-access-token'),
+}))
+
+// SMI-6622: registry-tools.ts's resolveTeamId() now delegates to registry-tools.team.js, not
+// team-resolver.js's resolveLicenseTeamId.
+vi.mock('./registry-tools.team.js', () => ({
+  resolveRegistryTeamId: vi.fn(async () => 'team-alpha'),
 }))
 
 beforeEach(() => {

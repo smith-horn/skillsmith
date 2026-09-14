@@ -4,24 +4,26 @@
  * @see SMI-3902: Private Registry MCP Tools (original stub)
  * @see SMI-5816: Private skill registry — real implementation
  * @see ADR-129: Postgres-native (JSONB) storage + real team-auth (migration 071)
+ * @see SMI-6622: the public `@skillsmith/mcp-server` package must never need Supabase env vars —
+ *   service selection and team resolution below are NOT gated on `isSupabaseConfigured()`.
  *
  * Enables enterprise teams to publish and manage skills in a private registry scoped to their
  * organization. Metadata + packaged content live in `private_registry_skills` (JSONB, not S3 —
  * ADR-129); team-scoped RLS + an in-query team_id filter (ADR-116, SMI-6109 addendum).
  *
  * Backing service is selected at module load: the live Supabase-backed service
- * (registry-tools.live.ts) when Supabase is configured, else an in-memory stub
- * (registry-tools.stub.ts) for local dev / tests.
+ * (registry-tools.live.ts) is the DEFAULT — an in-memory stub (registry-tools.stub.ts) is used
+ * only under the explicit `SKILLSMITH_REGISTRY_STUB` test opt-in (see `useRegistryStub()` below).
  *
  * Tier gate: Enterprise (private_registry feature flag — toolFeatureMapping.ts).
  */
 
 import type { ToolContext } from '../context.js'
-import { isSupabaseConfigured } from '../supabase-client.js'
-import { resolveLicenseTeamId, readLicenseKey } from './team-resolver.js'
 import { withTelemetry } from '@skillsmith/core/telemetry'
 import { createStubRegistryService } from './registry-tools.stub.js'
 import { createLiveRegistryService } from './registry-tools.live.js'
+import { resolveRegistryTeamId } from './registry-tools.team.js'
+import { dataSourceFor } from './stub-data-source.js'
 import { executeRegistryInstall } from './registry-tools.install-action.js'
 import {
   executeRegistrySubmissions,
@@ -189,13 +191,20 @@ export interface PrivateRegistryService extends PrivateRegistryReviewService {
 }
 
 /**
- * Module-level singleton. Picks the live Supabase-backed service when
- * SUPABASE_URL + SUPABASE_ANON_KEY are configured; otherwise the in-memory stub
- * (local dev / tests).
+ * Explicit, test-only stub opt-in (SMI-6622) — NOT `isSupabaseConfigured()`. The live service
+ * already has an anon-key production fallback (`supabase-client.ts`, SMI-6109), so no Supabase env
+ * var is needed to reach it. `vitest.setup.ts` sets this for the whole test run; a test wanting the
+ * live service still calls `setPrivateRegistryService(createLiveRegistryService())` to override.
  */
-let service: PrivateRegistryService = isSupabaseConfigured()
-  ? createLiveRegistryService()
-  : createStubRegistryService()
+function useRegistryStub(): boolean {
+  const v = process.env.SKILLSMITH_REGISTRY_STUB
+  return v === '1' || v === 'true'
+}
+
+/** Module-level singleton. Live is the DEFAULT (SMI-6622); stub only under the opt-in above. */
+let service: PrivateRegistryService = useRegistryStub()
+  ? createStubRegistryService()
+  : createLiveRegistryService()
 
 /** Replace the registry service implementation (for testing or production swap) */
 export function setPrivateRegistryService(svc: PrivateRegistryService): void {
@@ -212,33 +221,14 @@ export function getPrivateRegistryService(): PrivateRegistryService {
 // ============================================================================
 
 /**
- * Resolve team ID from the team credential (license key, or API key — SMI-6080).
- *
- * SMI-4292 (finding C3): unified resolution — calls the same `resolve_team_from_license` RPC as
- * team-workspace.ts. A missing/invalid credential surfaces as a typed error (thrown) when Supabase
- * is configured; falls back to a static stub id when it is not (local dev).
- *
- * SMI-6080: `readLicenseKey()` also accepts `SKILLSMITH_API_KEY`, so an admin-granted account
- * (which holds no signed JWT license blob) can resolve its team. Team resolution ONLY — the
- * publish/install/submissions/approve/deprecate actions also require `skillsmith login`.
+ * Resolve team ID (license key, API key, or `~/.skillsmith/config.json` — SMI-6080/SMI-6622).
+ * Delegates to `registry-tools.team.ts`'s dedicated resolver — NOT `team-resolver.ts`'s shared
+ * `resolveLicenseTeamId()` (unchanged, still used by other tool families, SMI-6623) — and is never
+ * gated on `isSupabaseConfigured()`. Throws on every failure; never falls back to a stub team id,
+ * independent of whether `useRegistryStub()` picked the stub SERVICE above.
  */
 async function resolveTeamId(): Promise<string> {
-  if (!isSupabaseConfigured()) return 'team_stub_00000000-0000-0000-0000-000000000000'
-  const licenseKey = readLicenseKey()
-  if (!licenseKey) {
-    throw new Error(
-      'SKILLSMITH_LICENSE_KEY or SKILLSMITH_API_KEY is required for private registry operations. ' +
-        'Set one in your MCP server config — shell exports do not reach MCP subprocesses. ' +
-        'Publishing, installing, and reviewing submissions additionally require `skillsmith login`.'
-    )
-  }
-  const teamId = await resolveLicenseTeamId(licenseKey)
-  if (!teamId) {
-    throw new Error(
-      'Unable to resolve team from the configured key. Ensure SKILLSMITH_LICENSE_KEY or SKILLSMITH_API_KEY is active and attached to an Enterprise-tier subscription.'
-    )
-  }
-  return teamId
+  return resolveRegistryTeamId()
 }
 
 /**
@@ -248,7 +238,10 @@ async function executePrivateRegistryPublishImpl(
   input: PrivateRegistryPublishInput,
   _context: ToolContext
 ): Promise<PrivateRegistryPublishResult> {
-  const dataSource: 'stub' | 'live' = isSupabaseConfigured() ? 'live' : 'stub'
+  // SMI-6622/SMI-6184 pattern: reflects which service is ACTUALLY wired in
+  // (`setPrivateRegistryService()` may have swapped it), not merely whether Supabase env happens
+  // to be configured.
+  const dataSource: 'stub' | 'live' = dataSourceFor(service)
   let teamId: string
   try {
     teamId = await resolveTeamId()
@@ -324,7 +317,8 @@ async function executePrivateRegistryManageImpl(
   input: PrivateRegistryManageInput,
   context: ToolContext
 ): Promise<PrivateRegistryManageResult> {
-  const dataSource: 'stub' | 'live' = isSupabaseConfigured() ? 'live' : 'stub'
+  // SMI-6622/SMI-6184 pattern — see executePrivateRegistryPublishImpl's identical comment above.
+  const dataSource: 'stub' | 'live' = dataSourceFor(service)
   let teamId: string
   try {
     teamId = await resolveTeamId()

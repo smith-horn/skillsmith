@@ -4,11 +4,16 @@
  * the 500-line pre-commit file-length gate.
  * @see SMI-5949: Approval Gate -- Submitter/Approver Role Split for `private_registry_publish`
  *
- * These exercise the handlers against the in-memory stub (no Supabase configured). Live
- * Supabase-backed behaviour is in registry-tools.live.review-decision.test.ts.
+ * These exercise the handlers against the in-memory stub, injected directly via
+ * `setPrivateRegistryService()`. Live Supabase-backed behaviour is in
+ * registry-tools.live.review-decision.test.ts.
+ *
+ * SMI-6622: `resolveTeamId()` now always attempts real team resolution regardless of which
+ * service is injected, so this file mocks `registry-tools.team.js` directly — same as every other
+ * registry-tools*.test.ts file that drives the dispatcher without a real credential.
  */
 
-import { describe, it, expect, beforeEach } from 'vitest'
+import { describe, it, expect, beforeEach, vi } from 'vitest'
 import type { ToolContext } from '../context.js'
 import {
   executePrivateRegistryPublish,
@@ -17,6 +22,10 @@ import {
   setPrivateRegistryService,
   type StubRegistryService,
 } from './registry-tools.js'
+
+vi.mock('./registry-tools.team.js', () => ({
+  resolveRegistryTeamId: vi.fn(async () => 'team-alpha'),
+}))
 
 const mockContext = {} as ToolContext
 

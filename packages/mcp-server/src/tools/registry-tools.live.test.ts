@@ -44,10 +44,20 @@ vi.mock('../supabase-client.js', () => ({
   resetSupabaseClients: vi.fn(),
 }))
 
+// readLicenseKey is kept here — registry-tools.live.audit.ts still calls it directly (for the
+// audit row's masked-credential metadata), unrelated to team resolution. resolveLicenseTeamId is
+// dropped: registry-tools.ts no longer calls it (SMI-6622 — see the registry-tools.team.js mock
+// below).
 vi.mock('./team-resolver.js', () => ({
   readLicenseKey: vi.fn(() => 'sk_test_fake_license'),
-  resolveLicenseTeamId: vi.fn(async () => 'team-alpha'),
   resolveUserAccessToken: vi.fn(async () => 'fake-user-access-token'),
+}))
+
+// SMI-6622: registry-tools.ts's resolveTeamId() now delegates to registry-tools.team.js (NOT
+// team-resolver.js's resolveLicenseTeamId). Mocked here to the same 'team-alpha' value the rest of
+// this file (and registry-tools.live.test-helpers.ts's RESOLVED_TEAM constant) already assumes.
+vi.mock('./registry-tools.team.js', () => ({
+  resolveRegistryTeamId: vi.fn(async () => 'team-alpha'),
 }))
 
 // ============================================================================
@@ -139,6 +149,37 @@ describe('private_registry_publish live mode — SMI-5816', () => {
     expect(result.error).toMatch(/immutable|already exists/i)
   })
 
+  // SMI-6622 item 3/8: a license-key-team-vs-signed-in-user-membership mismatch (the license key
+  // resolves 'team-alpha' here, but the signed-in user is not actually a member of that team) is
+  // enforced by RLS (`private_registry_skills_member_insert`'s WITH CHECK), not by this file's own
+  // application code — see registry-tools.live.ts:36-42's header comment. The explicit
+  // `.eq('team_id', teamId)` filter this service already carries on every read means a mismatch on
+  // list/get surfaces as the SAME empty/not-found result already covered by this file's and
+  // registry-tools.test.ts's "not found" tests; this test covers the INSERT side specifically,
+  // proving a mismatch on publish refuses with a clear error rather than silently succeeding under
+  // the license key's resolved team (the exact silent-cross-team-write this filter exists to
+  // prevent).
+  it('refuses publish, never silently succeeding, when the license-resolved team and the RLS-authorized team mismatch', async () => {
+    const { client } = createFakeClient({
+      thenResponder: () => ({
+        data: null,
+        error: { code: '42501', message: 'new row violates row-level security policy' },
+      }),
+    })
+    const { getSupabaseAdminClient, getSupabaseUserClient } = await import('../supabase-client.js')
+    vi.mocked(getSupabaseAdminClient).mockResolvedValue(client)
+    vi.mocked(getSupabaseUserClient).mockResolvedValue(client)
+
+    const result = await executePrivateRegistryPublish(
+      { skillId: 'myteam/skill-a', version: '1.0.0', content: SAMPLE_CONTENT },
+      makeContext()
+    )
+
+    expect(result.success).toBe(false)
+    expect(result.error).toMatch(/row-level security|permission/i)
+    expect(result.skill).toBeUndefined()
+  })
+
   it('rejects content over the 2 MB cap before hitting the database', async () => {
     const { client, calls } = createFakeClient()
     const { getSupabaseAdminClient } = await import('../supabase-client.js')
@@ -182,6 +223,12 @@ describe('private_registry_publish live mode — SMI-5816', () => {
   // the success path. That is a real behavior change worth its own regression test, not just a
   // deletion: a reader could otherwise assume (wrongly) that publish still needs the service-role
   // key, the way it did before this Wave.
+  //
+  // SMI-6622 item 5: this is also the "publish still succeeds and logs, not throws" coverage
+  // SMI-6622 asked for — recordRegistryAudit() (registry-tools.live.audit.ts) console.error()s the
+  // rejected admin-client construction internally (fail-soft) instead of letting it propagate;
+  // `result.success === true` below is proof it never reaches this test as a thrown exception.
+  // SMI-6114 tracks fixing the audit path's own service-role dependency; not this issue's scope.
   it('publish succeeds via the user client even when SUPABASE_SERVICE_ROLE_KEY is entirely unavailable (D-7)', async () => {
     const { client: userClient } = createFakeClient()
     const { getSupabaseAdminClient, getSupabaseUserClient } = await import('../supabase-client.js')
