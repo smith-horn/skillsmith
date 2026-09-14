@@ -26,6 +26,41 @@ const PRODUCTION_ANON_KEY =
   'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6InZyY256cG1uZHRyb3F4eG9xa3p5Iiwicm9sZSI6ImFub24iLCJpYXQiOjE3Njc4MzgwNzQsImV4cCI6MjA4MzQxNDA3NH0.WNK5jaNG3twxApOva5A1ZlCaZb5hVqBYtNJezRrR4t8'
 
 /**
+ * Reject a Supabase URL that embeds userinfo (`https://user:pass@host`) — SMI-6622 round 7.
+ *
+ * Client construction succeeds silently for such a URL; the FIRST real query then fails with
+ * `error.message = "TypeError: Request cannot be constructed from a URL that includes
+ * credentials: https://user:pass@host/rest/v1/..."` (confirmed against real `@supabase/
+ * supabase-js` 2.114.0 + Node 22 with marker credentials) — the credentials embedded VERBATIM in
+ * the message text. Every `resp.error.message`-forwarding call site in this codebase (this PR's
+ * own, and the pre-existing ones tracked in SMI-6649) would copy that straight into a tool result.
+ * This is the one leak that measurement run found real (every other class it probed — PostgREST,
+ * auth-refresh, transport, config-parse, client-construction — produced no credential material).
+ *
+ * Runs BEFORE `createClient()`, at the point each factory resolves its URL, so no request bound
+ * for a credentialed URL is ever built. The thrown message names neither the URL nor any part of
+ * it — only that credentials were present.
+ *
+ * An unparseable URL is left alone: `new URL()` throwing here just means this guard has nothing to
+ * check, and `createClient()` itself already throws its own authored "Invalid supabaseUrl" for
+ * that case — unchanged.
+ */
+function assertNoUrlCredentials(url: string): void {
+  let parsed: URL
+  try {
+    parsed = new URL(url)
+  } catch {
+    return
+  }
+  if (parsed.username || parsed.password) {
+    throw new Error(
+      'The configured Supabase URL contains a username or password. Remove the credentials from ' +
+        'the URL and retry.'
+    )
+  }
+}
+
+/**
  * Resolve the Supabase URL/anon key for the anon-key client paths: an explicit env var always
  * wins, falling back to the hardcoded production values only when unset (SMI-6109). Mirrors
  * packages/core/src/api/utils.ts's DEFAULT_BASE_URL pattern — an explicit override (e.g.
@@ -43,7 +78,9 @@ const PRODUCTION_ANON_KEY =
  * comment below) — it reads neither this function's fallback nor isSupabaseConfigured() itself.
  */
 function resolveSupabaseUrl(): string {
-  return process.env.SUPABASE_URL || PRODUCTION_SUPABASE_URL
+  const url = process.env.SUPABASE_URL || PRODUCTION_SUPABASE_URL
+  assertNoUrlCredentials(url)
+  return url
 }
 
 function resolveSupabaseAnonKey(): string {
@@ -102,6 +139,10 @@ export async function getSupabaseAdminClient(): Promise<unknown> {
   if (!url || !serviceKey) {
     throw new Error('Supabase admin not configured: SUPABASE_SERVICE_ROLE_KEY required')
   }
+  // This factory has no fallback (SMI-6109) so it never calls resolveSupabaseUrl() — the same
+  // credentials-in-URL guard runs here explicitly (SMI-6622 round 7; see assertNoUrlCredentials()'s
+  // own doc comment above).
+  assertNoUrlCredentials(url)
   try {
     const { createClient } = await import('@supabase/supabase-js')
     _adminClient = createClient(url, serviceKey)

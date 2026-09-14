@@ -16,6 +16,9 @@ All notable changes to `@skillsmith/mcp-server` are documented here.
   team, `list`, `namespace` and `publish` say so and name the credential that resolved it.
   If the membership check itself fails (signed out, network or auth error), `list` and
   `namespace` return that error instead of an empty success (#2845).
+- **Fix**: SMI-6622 -- a configured Supabase URL that embeds a username or password is now
+  rejected with a clear error up front, instead of letting the credentials show up later in
+  an error message (#2845).
 
 ## v0.7.16
 
