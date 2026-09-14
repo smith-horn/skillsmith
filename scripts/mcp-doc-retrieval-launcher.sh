@@ -9,7 +9,8 @@
 # directly like `skillsmith`'s launcher does. If you change the probe
 # contract here, check whether mcp-skillsmith-launcher.sh needs the same
 # change — the two scripts are intentionally duplicated (not extracted into
-# a shared lib; see the plan's Open Questions) and can drift.
+# a shared lib; see the plan's Open Questions) and can drift. SMI-6618's
+# platform-skip + Tier-B guard (check 3 below) was applied to both.
 #
 # This wrapper detects four states and prints an actionable message to
 # stderr (surfaced in the MCP host's per-server log expansion) before
@@ -26,6 +27,13 @@
 #      root-hoisted zod-to-json-schema (a new transitive dependency the
 #      SMI-5718 code hardening makes load-bearing — see the plan's "New
 #      transitive-dependency exposure" section).
+#
+#      SMI-6618: an empty nested dir for a package this runtime never loads
+#      (a Tier-B mount source, SMI-6050) is expected state, not corruption,
+#      and is SKIPPED via a platform-match check against the root
+#      package-lock.json descriptor. A genuinely broken Tier-B directory for
+#      a package this runtime DOES use is a fifth state, tier-b-mount-source
+#      — never nested-corrupt — whose remedy never deletes the path.
 #
 # The dependency probe (check 3) runs in ESM context with cwd at the dist
 # entry dir, INSIDE THE CONTAINER via `docker exec` (SMI-6453). `/app/node_modules`
@@ -158,11 +166,148 @@ fi
 # exit 1. Exit 0 = all resolve. Exit 2 = probe infrastructure error.
 DEP_PROBE_JS='
 import { existsSync, readdirSync, readFileSync } from "node:fs";
-import { fileURLToPath } from "node:url";
+import { fileURLToPath, pathToFileURL } from "node:url";
 import { join } from "node:path";
 
 const repoRoot = process.env.SKILLSMITH_LAUNCHER_REPO_ROOT;
 const pkgDir = join(repoRoot, "packages", "doc-retrieval-mcp");
+const pkgNestedPrefix = "packages/doc-retrieval-mcp/node_modules/";
+
+// SMI-6618: platform-skip + Tier-B mount-source guard. An empty nested
+// placeholder for a package this runtime never loads (a Tier-B mount
+// source, SMI-6050) is expected state, not corruption. A nested name is
+// skipped only on a DEFINITE platform mismatch drawn from its
+// package-lock.json descriptor, using the same matching rules as
+// npm-install-checks (checkList / current-env, npm 10.9.7). A FAIL that IS a
+// Tier-B mount source is reported as tier-b-mount-source below, never
+// nested-corrupt, so no remedy branch in the shell wrapper can ever print an
+// rm -rf for it.
+
+const PROBE_TEST_MODE = process.env.SKILLSMITH_LAUNCHER_PROBE_TEST === "1";
+
+// Mirrors npm-install-checks checkList(): match none of the negated
+// entries, and at least one of the non-negated entries, if any are
+// present. A single ["any"] entry matches everything.
+function checkList(value, list) {
+  if (typeof list === "string") list = [list];
+  if (list.length === 1 && list[0] === "any") return true;
+  let negated = 0;
+  let match = false;
+  for (const entry of list) {
+    const negate = entry.charAt(0) === "!";
+    const test = negate ? entry.slice(1) : entry;
+    if (negate) {
+      negated++;
+      if (value === test) return false;
+    } else {
+      match = match || value === test;
+    }
+  }
+  return match || negated === list.length;
+}
+
+// Mirrors npm-install-checks current-env.js libc(): /usr/bin/ldd content
+// first, then a process.report fallback. Returns null/undefined when the
+// libc family cannot be determined -- treated as UNKNOWN by the caller, not
+// as a mismatch.
+function detectLibc(platform) {
+  if (platform !== "linux") return undefined;
+  try {
+    const content = readFileSync("/usr/bin/ldd", "utf8");
+    if (content.includes("musl")) return "musl";
+    if (content.includes("GNU C Library")) return "glibc";
+    return null;
+  } catch {
+    // fall through to the process.report fallback below
+  }
+  try {
+    const originalExclude = process.report.excludeNetwork;
+    process.report.excludeNetwork = true;
+    const report = process.report.getReport();
+    process.report.excludeNetwork = originalExclude;
+    if (report.header && report.header.glibcVersionRuntime) return "glibc";
+    if (
+      Array.isArray(report.sharedObjects) &&
+      report.sharedObjects.some((s) => s.includes("libc.musl-") || s.includes("ld-musl-"))
+    ) {
+      return "musl";
+    }
+    return null;
+  } catch {
+    return null;
+  }
+}
+
+// SMI-6618 test seam: the four SKILLSMITH_LAUNCHER_PROBE_* overrides apply
+// ONLY when the gate is set to exactly "1" -- without it every override is
+// ignored and the real process.platform / process.arch / detected libc are
+// used, even if the variables happen to be present in this process env.
+function currentPlatform() {
+  const platform =
+    (PROBE_TEST_MODE && process.env.SKILLSMITH_LAUNCHER_PROBE_PLATFORM) || process.platform;
+  const arch = (PROBE_TEST_MODE && process.env.SKILLSMITH_LAUNCHER_PROBE_ARCH) || process.arch;
+  const libc =
+    PROBE_TEST_MODE && process.env.SKILLSMITH_LAUNCHER_PROBE_LIBC !== undefined
+      ? process.env.SKILLSMITH_LAUNCHER_PROBE_LIBC || null
+      : detectLibc(platform);
+  return { platform, arch, libc };
+}
+
+let lockfilePackages = null;
+try {
+  const lockRaw = readFileSync(join(repoRoot, "package-lock.json"), "utf8");
+  const lockParsed = JSON.parse(lockRaw);
+  // A lockfile with no "packages" map is unusable, not empty: throw so the
+  // Tier-B list counts as unavailable and no rm -rf is printed.
+  if (!lockParsed || !lockParsed.packages || typeof lockParsed.packages !== "object")
+    throw new Error("no packages map");
+  lockfilePackages = lockParsed.packages;
+} catch (err) {
+  console.log(
+    "PROBE_WARN lockfile unreadable or unparseable at " +
+      join(repoRoot, "package-lock.json") +
+      ": " +
+      (err && err.message ? err.message : err)
+  );
+}
+
+// True when `name` (nested under pkgNestedPrefix) is DEFINITELY excluded on
+// this runtime by its package-lock.json descriptor. No descriptor, or no
+// usable lockfile at all, means never skip -- the "check it" default.
+function platformExcluded(name) {
+  if (!lockfilePackages) return false;
+  const descriptor = lockfilePackages[pkgNestedPrefix + name];
+  if (!descriptor || typeof descriptor !== "object") return false;
+
+  const { platform, arch, libc } = currentPlatform();
+
+  if (descriptor.os && !checkList(platform, descriptor.os)) return true;
+  if (descriptor.cpu && !checkList(arch, descriptor.cpu)) return true;
+  if (descriptor.libc && libc && !checkList(libc, descriptor.libc)) return true;
+
+  return false;
+}
+
+// Tier-B mount-source paths (SMI-6050), derived from the SAME lockfile.
+// Attempted only when the lockfile itself parsed above -- a broken lockfile
+// already produced the warning above, and a second, independent read here
+// would only throw for the identical reason.
+let tierBPaths = null;
+if (lockfilePackages) {
+  try {
+    const tierBModuleUrl = pathToFileURL(
+      join(repoRoot, "scripts", "lib", "linux-optional-packages.mjs")
+    ).href;
+    const tierBModule = await import(tierBModuleUrl);
+    tierBPaths = new Set(
+      tierBModule.deriveLinuxOptionalPackagePaths(join(repoRoot, "package-lock.json"))
+    );
+  } catch (err) {
+    console.log(
+      "PROBE_WARN tier-b list unavailable: " + (err && err.message ? err.message : err)
+    );
+  }
+}
 
 function classify(name, { rootOnly = false } = {}) {
   try {
@@ -208,7 +353,11 @@ try {
 
 let failed = false;
 for (const name of names) {
-  const state = classify(name);
+  if (platformExcluded(name)) continue;
+  let state = classify(name);
+  if (state === "nested-corrupt" && tierBPaths && tierBPaths.has(pkgNestedPrefix + name)) {
+    state = "tier-b-mount-source";
+  }
   if (state) {
     console.log("FAIL " + name + " " + state);
     failed = true;
@@ -230,15 +379,45 @@ if (ztjsState) {
 process.exit(failed ? 1 : 0);
 '
 
+# SMI-6618 test seam: forward the SKILLSMITH_LAUNCHER_PROBE_* vars into the
+# container only when the gate is set here (docker exec inherits no host env);
+# the JS-side gate in DEP_PROBE_JS is a second, independent layer.
+declare -a probe_test_env_args=()
+if [ "${SKILLSMITH_LAUNCHER_PROBE_TEST:-}" = "1" ]; then
+  probe_test_env_args+=(-e "SKILLSMITH_LAUNCHER_PROBE_TEST=$SKILLSMITH_LAUNCHER_PROBE_TEST")
+  if [ -n "${SKILLSMITH_LAUNCHER_PROBE_PLATFORM:-}" ]; then
+    probe_test_env_args+=(-e "SKILLSMITH_LAUNCHER_PROBE_PLATFORM=$SKILLSMITH_LAUNCHER_PROBE_PLATFORM")
+  fi
+  if [ -n "${SKILLSMITH_LAUNCHER_PROBE_ARCH:-}" ]; then
+    probe_test_env_args+=(-e "SKILLSMITH_LAUNCHER_PROBE_ARCH=$SKILLSMITH_LAUNCHER_PROBE_ARCH")
+  fi
+  if [ "${SKILLSMITH_LAUNCHER_PROBE_LIBC+set}" = "set" ]; then
+    probe_test_env_args+=(-e "SKILLSMITH_LAUNCHER_PROBE_LIBC=$SKILLSMITH_LAUNCHER_PROBE_LIBC")
+  fi
+fi
+
 set +e
 # SMI-6453: run INSIDE the container. /app/node_modules and
 # /app/packages/*/node_modules are named volumes (docker-compose.yml:41,
 # :65-72), so the host's view of those paths is a different filesystem
 # from the one server.js resolves against. No -i: never attach the MCP
 # host's stdin to a preflight exec.
-probe_out="$(docker exec -w "$CONTAINER_DIST_DIR" -e "SKILLSMITH_LAUNCHER_REPO_ROOT=$CONTAINER_APP_ROOT" "$CONTAINER_NAME" node --input-type=module -e "$DEP_PROBE_JS" 2>&1)"
+# "${arr[@]+"${arr[@]}"}": bash 3.2 (macOS) errors on an EMPTY array under set -u.
+probe_out="$(docker exec -w "$CONTAINER_DIST_DIR" -e "SKILLSMITH_LAUNCHER_REPO_ROOT=$CONTAINER_APP_ROOT" "${probe_test_env_args[@]+"${probe_test_env_args[@]}"}" "$CONTAINER_NAME" node --input-type=module -e "$DEP_PROBE_JS" 2>&1)"
 probe_status=$?
 set -e
+
+# SMI-6618: forward every PROBE_WARN line to stderr on EVERY exit path (0, 1,
+# or 2) — previously only "^FAIL " lines survived a recognized failure, and a
+# probe-level warning (unreadable lockfile, unavailable Tier-B list) was
+# silently dropped.
+if printf '%s\n' "$probe_out" | grep -q '^PROBE_WARN '; then
+  printf '%s\n' "$probe_out" | grep '^PROBE_WARN ' | sed 's/^PROBE_WARN /[doc-retrieval] preflight: /' >&2
+fi
+tier_b_list_unavailable=0
+if printf '%s\n' "$probe_out" | grep -qE '^PROBE_WARN (lockfile unreadable|tier-b list unavailable)'; then
+  tier_b_list_unavailable=1
+fi
 
 if [ "$probe_status" -eq 1 ] && printf '%s\n' "$probe_out" | grep -q '^FAIL '; then
   first_fail="$(printf '%s\n' "$probe_out" | grep '^FAIL ' | head -1)"
@@ -249,16 +428,46 @@ if [ "$probe_status" -eq 1 ] && printf '%s\n' "$probe_out" | grep -q '^FAIL '; t
       emit_error "$dep_name dependency unresolvable (workspace package not built)" \
         "$REMEDIATION_INSTALL_BUILD"
       ;;
+    tier-b-mount-source)
+      # SMI-6618: a Tier-B mount source (SMI-6050) — worktree containers
+      # bind-mount it, so no remedy here may delete it. Always targets the
+      # SHARED skillsmith-dev-1 (never a worktree's own container), so a
+      # force-recreate restarts both MCP servers for every session. Checks
+      # the host-side placeholder (ensure_tier_b_mount_sources, _lib.sh)
+      # directly; only when IT is missing does repair-worktrees.sh run first.
+      host_mount_source="$MAIN_CHECKOUT/packages/doc-retrieval-mcp/node_modules/$dep_name"
+      if [ -d "$host_mount_source" ]; then
+        tier_b_remedy_prereq=""
+        tier_b_mount_detail="the host mount-source directory is present at $host_mount_source"
+      else
+        tier_b_remedy_prereq="    ( cd \"$MAIN_CHECKOUT\" && ./scripts/repair-worktrees.sh )
+"
+        tier_b_mount_detail="the host mount-source directory is MISSING at $host_mount_source"
+      fi
+      emit_error "$dep_name is a Tier-B mount source at packages/doc-retrieval-mcp/node_modules/$dep_name and must not be removed ($tier_b_mount_detail)" \
+"${tier_b_remedy_prereq}    ( cd \"$MAIN_CHECKOUT\" && docker compose --profile dev up -d --force-recreate dev )
+    # restarts BOTH MCP servers for every session; verify the mount recovers —
+    # see docs/internal/implementation/smi-6516-6520-native-binding-mount-topology.md"
+      ;;
     nested-corrupt)
       # packages/doc-retrieval-mcp/node_modules is a NAMED VOLUME
       # (docker-compose.yml:67, SMI-5957 correction #5): the host directory at
       # that path is a different filesystem from the container's copy, so the
       # rm -rf must run INSIDE the container, then npm install repopulates the
       # volume (SMI-6453). A host-side rm -rf here was a confirmed no-op.
-      emit_error "$dep_name dependency corrupt at packages/doc-retrieval-mcp/node_modules/$dep_name (container-side, not host)" \
+      if [ "$tier_b_list_unavailable" -eq 1 ]; then
+        # SMI-6618: the Tier-B mount-source list could not be derived (see
+        # the forwarded PROBE_WARN above), so this FAIL cannot be confirmed
+        # NOT to be a Tier-B path. Fail safe: never print an rm -rf.
+        emit_error "$dep_name dependency corrupt at packages/doc-retrieval-mcp/node_modules/$dep_name (container-side, not host); the Tier-B mount-source list was unavailable, so automatic removal is not suggested" \
+"    ( cd \"$MAIN_CHECKOUT\" && docker compose --profile dev up -d )
+    docker exec $CONTAINER_NAME npm install"
+      else
+        emit_error "$dep_name dependency corrupt at packages/doc-retrieval-mcp/node_modules/$dep_name (container-side, not host)" \
 "    ( cd \"$MAIN_CHECKOUT\" && docker compose --profile dev up -d )
     docker exec $CONTAINER_NAME rm -rf $CONTAINER_APP_ROOT/packages/doc-retrieval-mcp/node_modules/$dep_name
     docker exec $CONTAINER_NAME npm install"
+      fi
       ;;
     root-hoisted-corrupt)
       # Root node_modules is likewise a NAMED VOLUME (docker-compose.yml:41);

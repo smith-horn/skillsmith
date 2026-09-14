@@ -38,8 +38,9 @@ import { fileURLToPath } from 'node:url'
 
 const __dirname = dirname(fileURLToPath(import.meta.url))
 const LAUNCHER_SRC = resolve(__dirname, '..', 'mcp-skillsmith-launcher.sh')
+const LINUX_OPTIONAL_PACKAGES_SRC = resolve(__dirname, '..', 'lib', 'linux-optional-packages.mjs')
 
-interface RunResult {
+export interface RunResult {
   status: number
   stdout: string
   stderr: string
@@ -51,9 +52,13 @@ interface RunResult {
  * execFileSync only exposes stderr via the thrown error, which made
  * zero-exit stderr assertions (fail-open warning, absence checks) vacuous.
  */
-function runLauncher(root: string, extraPath?: string): RunResult {
+export function runLauncher(
+  root: string,
+  extraPath?: string,
+  extraEnv?: Record<string, string>
+): RunResult {
   const launcher = join(root, 'scripts', 'mcp-skillsmith-launcher.sh')
-  const env = { ...process.env }
+  const env = { ...process.env, ...extraEnv }
   if (extraPath) {
     env.PATH = `${extraPath}:${env.PATH ?? ''}`
   }
@@ -65,28 +70,56 @@ function runLauncher(root: string, extraPath?: string): RunResult {
   return { status: r.status ?? 1, stdout: r.stdout ?? '', stderr: r.stderr ?? '' }
 }
 
-function makeRoot(): string {
+/**
+ * SMI-6618: the probe reads `<root>/package-lock.json` and dynamically
+ * imports `<root>/scripts/lib/linux-optional-packages.mjs`. `makeRoot()`
+ * below installs a DEFAULT valid-but-empty lockfile + a real copy of the
+ * module, so a fixture that does not care about platform-skip / Tier-B
+ * behavior sees neither PROBE_WARN line. A case that DOES care overwrites
+ * the lockfile via `addLockfile()`.
+ */
+export function addLockfile(root: string, packages: Record<string, unknown> = {}): void {
+  writeFileSync(
+    join(root, 'package-lock.json'),
+    JSON.stringify({ name: 'skillsmith-fixture', lockfileVersion: 3, packages }),
+    'utf8'
+  )
+}
+
+export function addLinuxOptionalPackagesModule(root: string): void {
+  const dir = join(root, 'scripts', 'lib')
+  mkdirSync(dir, { recursive: true })
+  copyFileSync(LINUX_OPTIONAL_PACKAGES_SRC, join(dir, 'linux-optional-packages.mjs'))
+}
+
+export function removeLinuxOptionalPackagesModule(root: string): void {
+  rmSync(join(root, 'scripts', 'lib', 'linux-optional-packages.mjs'), { force: true })
+}
+
+export function makeRoot(): string {
   const suffix = `${Date.now()}-${Math.random().toString(36).slice(2)}`
   const root = mkdtempSync(join(tmpdir(), `mcp-launcher-${suffix}-`))
   mkdirSync(join(root, 'scripts'), { recursive: true })
   copyFileSync(LAUNCHER_SRC, join(root, 'scripts', 'mcp-skillsmith-launcher.sh'))
   chmodSync(join(root, 'scripts', 'mcp-skillsmith-launcher.sh'), 0o755)
+  addLinuxOptionalPackagesModule(root)
+  addLockfile(root)
   return root
 }
 
-function addNodeModules(root: string): void {
+export function addNodeModules(root: string): void {
   mkdirSync(join(root, 'node_modules'), { recursive: true })
   writeFileSync(join(root, 'node_modules', '.package-lock.json'), '{}', 'utf8')
 }
 
-function addDist(root: string): void {
+export function addDist(root: string): void {
   const distDir = join(root, 'packages', 'mcp-server', 'dist', 'src')
   mkdirSync(distDir, { recursive: true })
   writeFileSync(join(distDir, 'index.js'), '// stub entry\n', 'utf8')
 }
 
 /** Declare the mcp-server package with runtime deps the probe must verify. */
-function addMcpServerPackageJson(root: string, dependencies: Record<string, string>): void {
+export function addMcpServerPackageJson(root: string, dependencies: Record<string, string>): void {
   const pkgDir = join(root, 'packages', 'mcp-server')
   mkdirSync(pkgDir, { recursive: true })
   writeFileSync(
@@ -97,7 +130,7 @@ function addMcpServerPackageJson(root: string, dependencies: Record<string, stri
 }
 
 /** Write a minimal resolvable package at `dir` (package.json main + index.js). */
-function writeMinimalPackage(dir: string, name: string): void {
+export function writeMinimalPackage(dir: string, name: string): void {
   mkdirSync(dir, { recursive: true })
   writeFileSync(
     join(dir, 'package.json'),
@@ -108,12 +141,12 @@ function writeMinimalPackage(dir: string, name: string): void {
 }
 
 /** Install `name` hoisted at `<root>/node_modules/<name>`. */
-function addHoistedDep(root: string, name: string): void {
+export function addHoistedDep(root: string, name: string): void {
   writeMinimalPackage(join(root, 'node_modules', name), name)
 }
 
 /** Install `name` nested at `<root>/packages/mcp-server/node_modules/<name>`. */
-function addNestedDep(root: string, name: string, opts: { empty?: boolean } = {}): void {
+export function addNestedDep(root: string, name: string, opts: { empty?: boolean } = {}): void {
   const dir = join(root, 'packages', 'mcp-server', 'node_modules', name)
   if (opts.empty) {
     mkdirSync(dir, { recursive: true }) // the SMI-5451 state: dir exists, no contents
@@ -129,7 +162,7 @@ function addNestedDep(root: string, name: string, opts: { empty?: boolean } = {}
  *   so the launcher's dependency probe executes for real
  * - otherwise (the server exec) touches a marker and exits 0
  */
-function makeNodeStub(): { binDir: string; marker: string; invocationsLog: string } {
+export function makeNodeStub(): { binDir: string; marker: string; invocationsLog: string } {
   const binDir = mkdtempSync(join(tmpdir(), `nodestub-${Date.now()}-`))
   const marker = join(binDir, 'invoked')
   const invocationsLog = join(binDir, 'invocations.log')
@@ -153,7 +186,7 @@ exit 0
 }
 
 /** A fully healthy fixture: sentinel, dist, package.json + resolvable dep. */
-function makeHealthyRoot(): string {
+export function makeHealthyRoot(): string {
   const root = makeRoot()
   addNodeModules(root)
   addDist(root)
