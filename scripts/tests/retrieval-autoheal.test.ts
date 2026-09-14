@@ -16,7 +16,15 @@
 
 import { describe, it, expect, afterEach } from 'vitest'
 import { execFileSync, spawn, spawnSync } from 'node:child_process'
-import { existsSync, mkdirSync, readdirSync, readFileSync, rmSync, writeFileSync } from 'node:fs'
+import {
+  chmodSync,
+  existsSync,
+  mkdirSync,
+  readdirSync,
+  readFileSync,
+  rmSync,
+  writeFileSync,
+} from 'node:fs'
 import { dirname, join, resolve } from 'node:path'
 import { fileURLToPath } from 'node:url'
 
@@ -413,6 +421,41 @@ describe('heal path', () => {
       SKILLSMITH_AUTOHEAL_PROBE_CMD: 'false',
       SKILLSMITH_AUTOHEAL_FORCE_INSTALL: '1',
       SKILLSMITH_AUTOHEAL_REPAIR_CMD: `touch ${ranFile}`,
+    })
+    expect(log).toContain('defer: concurrent npm install/build detected')
+    expect(existsSync(ranFile)).toBe(false)
+  })
+
+  // SMI-6614 (ADR-158, change 5c/2): foreign_install_running() also defers
+  // while scripts/regen-lockfile.sh is running (detected via the shared
+  // running_script_pids() helper, not the FORCE_INSTALL seam above) — a
+  // heal kicked mid-refresh must defer to it. Stubs `pgrep`/`ps` on a
+  // dedicated bin dir prepended to PATH rather than spawning a real process
+  // + relying on the system's real pgrep — measured ABSENT inside this
+  // repo's dev container image (present on macOS host), so a real-process
+  // version of this test would be silently vacuous in Docker CI.
+  it('foreign_install_running: regen-lockfile.sh running (pgrep/ps stub) → "defer: concurrent npm install"', () => {
+    const home = makeHome()
+    const ranFile = join(home, 'RAN')
+    const binDir = join(home, '_bin')
+    mkdirSync(binDir, { recursive: true })
+    writeFileSync(
+      join(binDir, 'pgrep'),
+      '#!/bin/sh\ncase "$*" in\n  *regen-lockfile.sh*) echo 555555 ;;\nesac\nexit 0\n',
+      'utf8'
+    )
+    chmodSync(join(binDir, 'pgrep'), 0o755)
+    writeFileSync(
+      join(binDir, 'ps'),
+      '#!/bin/sh\nif [ "$4" = "555555" ]; then echo "bash scripts/regen-lockfile.sh"; fi\nexit 0\n',
+      'utf8'
+    )
+    chmodSync(join(binDir, 'ps'), 0o755)
+
+    const { log } = runHeal(home, {
+      SKILLSMITH_AUTOHEAL_PROBE_CMD: 'false',
+      SKILLSMITH_AUTOHEAL_REPAIR_CMD: `touch ${ranFile}`,
+      PATH: `${binDir}:${process.env['PATH'] ?? '/usr/local/bin:/usr/bin:/bin'}`,
     })
     expect(log).toContain('defer: concurrent npm install/build detected')
     expect(existsSync(ranFile)).toBe(false)

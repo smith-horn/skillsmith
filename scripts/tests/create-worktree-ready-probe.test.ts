@@ -334,6 +334,12 @@ describe('create-worktree.sh Step 8 readiness probe (SMI-5596)', () => {
     expect(result.output).toMatch(/WARNING \(non-blocking — worktree created successfully\)/)
     expect(result.output).toMatch(/Docker Desktop's macOS file-sharing/)
     expect(result.output).toMatch(/node_modules named volume is not built/)
+    // SMI-6614: the install remedy runs only behind the mount gate, and the
+    // build runs in the container, never on the host after `docker exec` exits.
+    expect(result.output).toContain(
+      "sh -c 'mountpoint -q /app/node_modules && npm install && npm run build'"
+    )
+    expect(result.output).not.toMatch(/docker exec \S+ npm install/)
     expect(result.output).toMatch(/timed out after 2s/)
   }, 20_000)
 })

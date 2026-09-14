@@ -63,6 +63,7 @@ const __dirname = dirname(fileURLToPath(import.meta.url))
 const REPO_SCRIPTS_DIR = join(__dirname, '..')
 const SOURCE_REGEN_SH = join(REPO_SCRIPTS_DIR, 'regen-lockfile.sh')
 const SOURCE_LIB_SH = join(REPO_SCRIPTS_DIR, '_lib.sh')
+const SOURCE_RUNNING_SCRIPT_PIDS_SH = join(REPO_SCRIPTS_DIR, 'lib', 'running-script-pids.sh')
 
 const GIT_ENV = makeFixtureEnv()
 
@@ -110,7 +111,8 @@ function setupRepo(tempRoot: string): {
   const dockerLog = join(tempRoot, 'docker.log')
   const npmLog = join(tempRoot, 'npm.log')
 
-  mkdirSync(scriptsDir, { recursive: true })
+  const scriptsLibDir = join(scriptsDir, 'lib')
+  mkdirSync(scriptsLibDir, { recursive: true })
   mkdirSync(binDir, { recursive: true })
 
   execFileSync('git', ['-c', 'init.defaultBranch=main', 'init', '--quiet', repoDir], {
@@ -120,6 +122,7 @@ function setupRepo(tempRoot: string): {
   copyFileSync(SOURCE_REGEN_SH, join(scriptsDir, 'regen-lockfile.sh'))
   chmodSync(join(scriptsDir, 'regen-lockfile.sh'), 0o755)
   copyFileSync(SOURCE_LIB_SH, join(scriptsDir, '_lib.sh'))
+  copyFileSync(SOURCE_RUNNING_SCRIPT_PIDS_SH, join(scriptsLibDir, 'running-script-pids.sh'))
 
   writeFileSync(
     join(repoDir, 'package.json'),
@@ -165,13 +168,112 @@ exit 0
 
 /** Write an `npm` shim that logs every invocation to `logPath` and exits 0. */
 function writeNpmShim(binDir: string, logPath: string): void {
+  writeNpmShimWithRc(binDir, logPath, 0)
+}
+
+/** Same as writeNpmShim, but exits `rc` (for R3-1's "npm itself exits 97"
+ * case) instead of always 0. */
+function writeNpmShimWithRc(binDir: string, logPath: string, rc: number): void {
   const shim = `#!/bin/sh
 echo "$@" >> "${logPath}"
-exit 0
+exit ${rc}
 `
   const shimPath = join(binDir, 'npm')
   writeFileSync(shimPath, shim)
   chmodSync(shimPath, 0o755)
+}
+
+/** Write a `mountpoint` shim (SMI-6614 change 5b) that always exits `rc`,
+ * ignoring its args (`-q /app/node_modules`). */
+function writeMountpointShim(binDir: string, rc: number): void {
+  const shim = `#!/bin/sh\nexit ${rc}\n`
+  const shimPath = join(binDir, 'mountpoint')
+  writeFileSync(shimPath, shim)
+  chmodSync(shimPath, 0o755)
+}
+
+/**
+ * Write a `docker` shim that, for `exec CONTAINER sh -c '<payload>' […]`
+ * specifically, ACTUALLY RUNS the trailing `sh -c` command — so a stubbed
+ * `mountpoint`/`npm` on the SAME PATH genuinely gets invoked, exercising
+ * the mount-gate logic for real (SMI-6614 change 5b's T-E scenarios). Any
+ * OTHER `exec` payload (e.g. the unrelated `node -e …` native-verify call)
+ * is logged and no-op'd, exactly like the passive writeDockerShim above —
+ * only the mount-gated `sh -c` form needs real execution. `ps` also
+ * behaves identically to the passive shim.
+ */
+function writeExecutingDockerShim(binDir: string, logPath: string, dockerPsOutput: string): void {
+  const escaped = dockerPsOutput.replace(/'/g, `'\\''`)
+  const shim = `#!/bin/sh
+echo "$@" >> "${logPath}"
+case "$1" in
+  ps)
+    printf '%s' '${escaped}'
+    if [ -n '${escaped}' ]; then printf '\\n'; fi
+    exit 0
+    ;;
+  exec)
+    shift
+    shift
+    if [ "\${1:-}" = "sh" ]; then
+      "$@"
+      exit $?
+    fi
+    ;;
+esac
+exit 0
+`
+  const shimPath = join(binDir, 'docker')
+  writeFileSync(shimPath, shim)
+  chmodSync(shimPath, 0o755)
+}
+
+/** Write a `retrieval-autoheal.sh` stub at `<binDir>/../repo/scripts/` that
+ * logs its own invocation — used to assert regen-lockfile.sh's post-refresh
+ * kick (change 5c/3). */
+function writeAutohealStub(scriptsDir: string, logPath: string): void {
+  const shim = `#!/bin/sh
+echo "kicked $*" >> "${logPath}"
+exit 0
+`
+  const shimPath = join(scriptsDir, 'retrieval-autoheal.sh')
+  writeFileSync(shimPath, shim)
+  chmodSync(shimPath, 0o755)
+}
+
+/**
+ * Write `pgrep`/`ps` stubs on `binDir` that make running_script_pids()
+ * (scripts/lib/running-script-pids.sh) see exactly ONE fake process, with
+ * PID `fakePid`, whose `ps -o args=` output is `fakeArgs` — but ONLY when
+ * `pgrep -f` is called with `matchName`; any other name reports nothing.
+ * `pgrep` itself is not reliably present in every environment this suite
+ * runs in (measured absent inside this repo's dev container image, present
+ * on macOS host) — stubbing both `pgrep` and `ps` makes the test
+ * deterministic regardless.
+ */
+function writePgrepPsStubs(
+  binDir: string,
+  matchName: string,
+  fakePid: number,
+  fakeArgs: string
+): void {
+  const pgrepShim = `#!/bin/sh
+case "$*" in
+  *${matchName}*) echo ${fakePid} ;;
+esac
+exit 0
+`
+  writeFileSync(join(binDir, 'pgrep'), pgrepShim)
+  chmodSync(join(binDir, 'pgrep'), 0o755)
+
+  const psShim = `#!/bin/sh
+if [ "$4" = "${fakePid}" ]; then
+  echo "${fakeArgs}"
+fi
+exit 0
+`
+  writeFileSync(join(binDir, 'ps'), psShim)
+  chmodSync(join(binDir, 'ps'), 0o755)
 }
 
 /**
@@ -222,6 +324,21 @@ afterEach(() => {
   tempDirs.length = 0
 })
 
+/** Poll for `path` to exist and be non-empty, bounded — used for
+ * regen-lockfile.sh's detached post-refresh auto-heal kick (nohup … &),
+ * which returns before the background process is guaranteed to have run. */
+async function waitForFile(path: string, timeoutMs: number): Promise<string> {
+  const deadline = Date.now() + timeoutMs
+  while (Date.now() < deadline) {
+    if (existsSync(path)) {
+      const content = readFileSync(path, 'utf8')
+      if (content.length > 0) return content
+    }
+    await new Promise((r) => setTimeout(r, 50))
+  }
+  return existsSync(path) ? readFileSync(path, 'utf8') : ''
+}
+
 describe('regen-lockfile.sh worktree routing (SMI-5724)', () => {
   it('main checkout --lockfile-only routes through docker exec and states the container target', () => {
     const tempRoot = makeFixtureTempDir('regen-main-lockfile-only')
@@ -240,11 +357,16 @@ describe('regen-lockfile.sh worktree routing (SMI-5724)', () => {
     )
   })
 
-  it('main checkout full-sync routes every npm/rebuild call through docker exec and states the container target', () => {
+  it('main checkout full-sync routes every npm/rebuild call through a mount-gated docker exec and states the container target', () => {
     const tempRoot = makeFixtureTempDir('regen-main-full-sync')
     tempDirs.push(tempRoot)
     const { repoDir, binDir, dockerLog, npmLog } = setupRepo(tempRoot)
-    writeDockerShim(binDir, dockerLog, 'skillsmith-dev-1')
+    // SMI-6614 change 5b: install/rebuild now run via `docker exec … sh -c
+    // 'mountpoint …; exec npm …'` — an EXECUTING shim (mountpoint bound,
+    // rc=0) is needed so the mount-gate logic runs for real and reaches the
+    // stubbed npm, matching "today's call sequence" (T-E).
+    writeExecutingDockerShim(binDir, dockerLog, 'skillsmith-dev-1')
+    writeMountpointShim(binDir, 0)
     writeNpmShim(binDir, npmLog)
 
     const result = runScript(repoDir, [], binDir)
@@ -254,14 +376,266 @@ describe('regen-lockfile.sh worktree routing (SMI-5724)', () => {
     expect(combined).toContain('(container: skillsmith-dev-1)')
 
     const dockerCalls = readFileSync(dockerLog, 'utf8')
-    expect(dockerCalls).toMatch(/exec skillsmith-dev-1 npm install\s*$/m)
-    expect(dockerCalls).toMatch(/exec skillsmith-dev-1 npm rebuild/)
+    // Atomicity (T-E): every mutating docker exec's payload carries the
+    // mountpoint check AND the npm call in the SAME argv — no bare
+    // `docker exec … npm install`/`npm rebuild` remains.
+    expect(dockerCalls).toMatch(/exec skillsmith-dev-1 sh -c .*mountpoint.*exec npm install/)
+    expect(dockerCalls).toMatch(/exec skillsmith-dev-1 sh -c .*mountpoint.*exec npm rebuild/)
     expect(dockerCalls).toMatch(/exec skillsmith-dev-1 node -e/)
 
-    // The pre-existing host `npm install --ignore-scripts` full-sync step is
-    // unchanged by this fix — still runs on the host, main checkout or not.
+    // The stubbed npm was actually invoked (through the executing shim) for
+    // both the container install/rebuild AND the pre-existing host
+    // `npm install --ignore-scripts` full-sync step (unchanged by this fix).
     expect(existsSync(npmLog)).toBe(true)
-    expect(readFileSync(npmLog, 'utf8')).toMatch(/install --ignore-scripts/)
+    const npmCalls = readFileSync(npmLog, 'utf8')
+    expect(npmCalls).toMatch(/^install\s*$/m)
+    expect(npmCalls).toMatch(/^rebuild .*--ignore-scripts=false\s*$/m)
+    expect(npmCalls).toMatch(/install --ignore-scripts/)
+  })
+
+  // ── T-E: mount gate (SMI-6614 change 5b/5c) ──────────────────────────────
+
+  it('mount detached (rc32): script exits non-zero, stubbed npm inside the payload never ran, no host npm install', () => {
+    const tempRoot = makeFixtureTempDir('regen-mount-32')
+    tempDirs.push(tempRoot)
+    const { repoDir, binDir, dockerLog, npmLog } = setupRepo(tempRoot)
+    writeExecutingDockerShim(binDir, dockerLog, 'skillsmith-dev-1')
+    writeMountpointShim(binDir, 32)
+    writeNpmShim(binDir, npmLog)
+
+    const result = runScript(repoDir, [], binDir)
+
+    expect(result.status).not.toBe(0)
+    const combined = stripAnsi(result.stdout + result.stderr)
+    expect(combined).toMatch(/not a mountpoint/)
+    expect(existsSync(npmLog)).toBe(false)
+  })
+
+  it('mount check unavailable (rc127): same refusal shape, "cannot verify" text', () => {
+    const tempRoot = makeFixtureTempDir('regen-mount-127')
+    tempDirs.push(tempRoot)
+    const { repoDir, binDir, dockerLog, npmLog } = setupRepo(tempRoot)
+    writeExecutingDockerShim(binDir, dockerLog, 'skillsmith-dev-1')
+    writeMountpointShim(binDir, 127)
+    writeNpmShim(binDir, npmLog)
+
+    const result = runScript(repoDir, [], binDir)
+
+    expect(result.status).not.toBe(0)
+    const combined = stripAnsi(result.stdout + result.stderr)
+    expect(combined).toMatch(/[Cc]annot verify/)
+    expect(existsSync(npmLog)).toBe(false)
+  })
+
+  it("mount bound (rc0): today's call sequence — install then rebuild, both succeed", () => {
+    const tempRoot = makeFixtureTempDir('regen-mount-0')
+    tempDirs.push(tempRoot)
+    const { repoDir, binDir, dockerLog, npmLog } = setupRepo(tempRoot)
+    writeExecutingDockerShim(binDir, dockerLog, 'skillsmith-dev-1')
+    writeMountpointShim(binDir, 0)
+    writeNpmShim(binDir, npmLog)
+
+    const result = runScript(repoDir, [], binDir)
+
+    expect(result.status).toBe(0)
+    const npmCalls = readFileSync(npmLog, 'utf8')
+    expect(npmCalls).toMatch(/^install\s*$/m)
+    expect(npmCalls).toMatch(/^rebuild /m)
+  })
+
+  it('atomicity: every mutating docker exec payload carries the mountpoint check in the SAME argv — no bare install/rebuild remains', () => {
+    const tempRoot = makeFixtureTempDir('regen-mount-atomicity')
+    tempDirs.push(tempRoot)
+    const { repoDir, binDir, dockerLog, npmLog } = setupRepo(tempRoot)
+    writeExecutingDockerShim(binDir, dockerLog, 'skillsmith-dev-1')
+    writeMountpointShim(binDir, 0)
+    writeNpmShim(binDir, npmLog)
+
+    const result = runScript(repoDir, [], binDir)
+    expect(result.status).toBe(0)
+
+    const lines = readFileSync(dockerLog, 'utf8').split('\n').filter(Boolean)
+    const mutatingLines = lines.filter(
+      (l) => l.startsWith('exec ') && (l.includes('npm install') || l.includes('npm rebuild'))
+    )
+    expect(mutatingLines.length).toBeGreaterThan(0)
+    for (const line of mutatingLines) {
+      expect(line).toContain('mountpoint -q /app/node_modules')
+    }
+    // No bare (un-mount-gated) docker exec … npm install/rebuild remains.
+    const bareLines = lines.filter(
+      (l) => /^exec skillsmith-dev-1 npm (install|rebuild)\b/.test(l) && !l.includes('mountpoint')
+    )
+    expect(bareLines).toEqual([])
+  })
+
+  it('--lockfile-only never calls mountpoint', () => {
+    const tempRoot = makeFixtureTempDir('regen-mount-lockfile-only')
+    tempDirs.push(tempRoot)
+    const { repoDir, binDir, dockerLog, npmLog } = setupRepo(tempRoot)
+    writeExecutingDockerShim(binDir, dockerLog, 'skillsmith-dev-1')
+    // No mountpoint shim at all — if the script ever called it, PATH
+    // resolution would fail loudly (command not found) rather than
+    // silently succeeding.
+    writeNpmShim(binDir, npmLog)
+
+    const result = runScript(repoDir, ['--lockfile-only'], binDir)
+    expect(result.status).toBe(0)
+    expect(readFileSync(dockerLog, 'utf8')).not.toContain('mountpoint')
+  })
+
+  it('R3-1: stderr has no MOUNT_GATE line but the payload exits 97 (npm itself) → reported as an npm failure, not a mount failure', () => {
+    const tempRoot = makeFixtureTempDir('regen-mount-r3-1')
+    tempDirs.push(tempRoot)
+    const { repoDir, binDir, dockerLog, npmLog } = setupRepo(tempRoot)
+    writeExecutingDockerShim(binDir, dockerLog, 'skillsmith-dev-1')
+    writeMountpointShim(binDir, 0)
+    // npm itself exits 97 (e.g. its own lifecycle-script exit code) with no
+    // MOUNT_GATE token anywhere in its output.
+    writeNpmShimWithRc(binDir, npmLog, 97)
+
+    const result = runScript(repoDir, [], binDir)
+
+    expect(result.status).not.toBe(0)
+    const combined = stripAnsi(result.stdout + result.stderr)
+    expect(combined).not.toMatch(/not a mountpoint/)
+    expect(combined).not.toMatch(/[Cc]annot verify/)
+    expect(combined).toMatch(/npm install failed inside/)
+  })
+
+  it('pgrep stub matching retrieval-autoheal.sh refuses before any docker exec', () => {
+    const tempRoot = makeFixtureTempDir('regen-refuse-running-repair')
+    tempDirs.push(tempRoot)
+    const { repoDir, binDir, dockerLog, npmLog } = setupRepo(tempRoot)
+    writeExecutingDockerShim(binDir, dockerLog, 'skillsmith-dev-1')
+    writeMountpointShim(binDir, 0)
+    writeNpmShim(binDir, npmLog)
+    writePgrepPsStubs(binDir, 'retrieval-autoheal.sh', 424242, 'sh scripts/retrieval-autoheal.sh')
+
+    const result = runScript(repoDir, [], binDir)
+    expect(result.status).not.toBe(0)
+    const combined = stripAnsi(result.stdout + result.stderr)
+    expect(combined).toMatch(/already running/)
+    // The container-liveness check (`docker ps`) legitimately runs before
+    // the refuse check — asserting no `exec` call (an actual mutation) is
+    // the meaningful claim here.
+    const dockerCalls = existsSync(dockerLog) ? readFileSync(dockerLog, 'utf8') : ''
+    expect(dockerCalls).not.toContain('exec')
+  })
+
+  it('successful full sync kicks the auto-heal once, after the sentinel write', async () => {
+    const tempRoot = makeFixtureTempDir('regen-kick-autoheal')
+    tempDirs.push(tempRoot)
+    const { repoDir, binDir, dockerLog, npmLog } = setupRepo(tempRoot)
+    writeExecutingDockerShim(binDir, dockerLog, 'skillsmith-dev-1')
+    writeMountpointShim(binDir, 0)
+    writeNpmShim(binDir, npmLog)
+    const kickLog = join(tempRoot, 'kick.log')
+    writeAutohealStub(join(repoDir, 'scripts'), kickLog)
+
+    const result = runScript(repoDir, [], binDir)
+    expect(result.status).toBe(0)
+
+    const log = await waitForFile(kickLog, 3000)
+    expect(log).toContain('kicked')
+    expect((log.match(/kicked/g) ?? []).length).toBe(1)
+  })
+
+  it('running_script_pids: a decoy process mentioning the script path but not sh/bash-running-it is not matched (R3-2)', () => {
+    const tempRoot = makeFixtureTempDir('regen-decoy-not-matched')
+    tempDirs.push(tempRoot)
+    const { repoDir, binDir, dockerLog, npmLog } = setupRepo(tempRoot)
+    writeExecutingDockerShim(binDir, dockerLog, 'skillsmith-dev-1')
+    writeMountpointShim(binDir, 0)
+    writeNpmShim(binDir, npmLog)
+    // pgrep -f WOULD find this (a decoy whose argv mentions the script
+    // path) — but its argv[0] is `perl`, not `sh`/`bash`, so
+    // running_script_pids()'s own ps-based validation must exclude it.
+    writePgrepPsStubs(
+      binDir,
+      'retrieval-autoheal.sh',
+      424243,
+      'perl -e $0=vim scripts/retrieval-autoheal.sh; sleep 30'
+    )
+
+    const result = runScript(repoDir, [], binDir)
+    // The decoy must NOT be mistaken for a running retrieval-autoheal.sh —
+    // the sync proceeds normally.
+    expect(result.status).toBe(0)
+    const combined = stripAnsi(result.stdout + result.stderr)
+    expect(combined).not.toMatch(/already running/)
+  })
+
+  it('running_script_pids: a real sh …/regen-lockfile.sh sleeper IS matched (R3-2, sanity)', () => {
+    const tempRoot = makeFixtureTempDir('regen-real-sleeper-matched')
+    tempDirs.push(tempRoot)
+    const { repoDir, binDir, dockerLog, npmLog } = setupRepo(tempRoot)
+    writeExecutingDockerShim(binDir, dockerLog, 'skillsmith-dev-1')
+    writeMountpointShim(binDir, 0)
+    writeNpmShim(binDir, npmLog)
+    writePgrepPsStubs(binDir, 'retrieval-autoheal.sh', 424244, 'bash scripts/retrieval-autoheal.sh')
+
+    const result = runScript(repoDir, [], binDir)
+    expect(result.status).not.toBe(0)
+    const combined = stripAnsi(result.stdout + result.stderr)
+    expect(combined).toMatch(/already running/)
+  })
+
+  it('running_script_pids: a script path containing spaces still matches (code review finding 5)', () => {
+    const tempRoot = makeFixtureTempDir('regen-rsp-path-with-spaces')
+    tempDirs.push(tempRoot)
+    const { repoDir, binDir, dockerLog, npmLog } = setupRepo(tempRoot)
+    writeExecutingDockerShim(binDir, dockerLog, 'skillsmith-dev-1')
+    writeMountpointShim(binDir, 0)
+    writeNpmShim(binDir, npmLog)
+    // A whitespace-split predicate would misparse this into "/Users/test",
+    // "user/scripts/retrieval-autoheal.sh" and wrongly reject it.
+    writePgrepPsStubs(
+      binDir,
+      'retrieval-autoheal.sh',
+      424245,
+      'bash /Users/test user/scripts/retrieval-autoheal.sh'
+    )
+
+    const result = runScript(repoDir, [], binDir)
+    expect(result.status).not.toBe(0)
+    const combined = stripAnsi(result.stdout + result.stderr)
+    expect(combined).toMatch(/already running/)
+  })
+
+  it('running_script_pids: missing ps warns (stderr) and fails open — real mountpoint path runs (code review finding 5)', () => {
+    const tempRoot = makeFixtureTempDir('regen-rsp-missing-ps')
+    tempDirs.push(tempRoot)
+    const isoBin = join(tempRoot, 'iso-bin')
+    mkdirSync(isoBin, { recursive: true })
+    // pgrep IS present (would find a candidate) but ps is NOT on PATH at
+    // all — command -v ps must fail, not just return an unhelpful result.
+    writeFileSync(join(isoBin, 'pgrep'), '#!/bin/sh\necho 999999\nexit 0\n')
+    chmodSync(join(isoBin, 'pgrep'), 0o755)
+
+    const wrapper = join(tempRoot, 'wrapper.sh')
+    writeFileSync(
+      wrapper,
+      [
+        '#!/bin/sh',
+        `. "${SOURCE_RUNNING_SCRIPT_PIDS_SH}"`,
+        'running_script_pids retrieval-autoheal.sh',
+        'echo "rc=$?"',
+        '',
+      ].join('\n')
+    )
+    chmodSync(wrapper, 0o755)
+
+    // Absolute path for the command itself (Node resolves `sh` via the
+    // GIVEN env's PATH too, and that env is deliberately restricted to
+    // isoBin so no real system `ps` leaks in from elsewhere).
+    const r = spawnSync('/bin/sh', [wrapper], {
+      encoding: 'utf8',
+      env: { PATH: isoBin },
+    })
+    expect(r.stdout).toContain('rc=1')
+    expect(r.stdout).not.toContain('999999')
+    expect(r.stderr).toMatch(/ps unavailable/i)
   })
 
   it('worktree --lockfile-only routes to host npm (never docker exec) and states the host target', () => {

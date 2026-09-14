@@ -1,13 +1,19 @@
 #!/bin/sh
-# Post-checkout hook — SMI-5343: auto-install / advise when package-lock.json
-# differs between the old and new HEAD after a branch switch.
+# Post-checkout hook — SMI-5343: originally auto-installed / advised when
+# package-lock.json differed between the old and new HEAD after a branch
+# switch. SMI-6614 (ADR-158): no longer installs anything here — see
+# .husky/post-merge's header for the full rationale (this hook answers the
+# same "does the lockfile delta need an install?" question and must not
+# disagree with post-merge about it). Classify, then either do nothing
+# (fresh/cosmetic) or print the shared, ordered refresh advice (real/
+# unknown) for a human to run.
 #
 # Git invokes this hook with three positional arguments:
 #   $1 = prev_HEAD  (SHA before checkout)
 #   $2 = new_HEAD   (SHA after checkout)
 #   $3 = branch_flag  (1 = branch checkout, 0 = file checkout)
 #
-# Guard conditions — ALL must hold before attempting any install:
+# Guard conditions — ALL must hold before classifying anything:
 #   1. $3 == 1   — branch checkout only; skip file/path checkouts ($3 == 0)
 #   2. $1 is NOT all-zeros — skip initial / orphan checkout (detached new worktree)
 #   3. $1 != $2  — skip no-op checkouts
@@ -17,9 +23,7 @@
 # diff gate (condition 4) makes that a no-op for the common case where the
 # rebase doesn't change package-lock.json.
 #
-# Auto-install is confined to the Docker-running single-session path; if Docker
-# is down, an advisory is printed instead. Non-blocking (git ignores the exit
-# code of post-checkout; we always exit 0).
+# Non-blocking (git ignores the exit code of post-checkout; we always exit 0).
 
 # Color codes (match post-merge style)
 GREEN='\033[0;32m'
@@ -27,7 +31,6 @@ YELLOW='\033[1;33m'
 BLUE='\033[0;34m'
 NC='\033[0m'
 
-DOCKER_CONTAINER="skillsmith-dev-1"
 PREV_HEAD="${1:-}"
 NEW_HEAD="${2:-}"
 BRANCH_FLAG="${3:-0}"
@@ -57,15 +60,8 @@ echo ""
 echo "${BLUE}=== Post-Checkout: package-lock.json changed ===${NC}"
 echo ""
 
-# --- Docker path (single-session auto-install) --------------------------------
-# Confine auto-install to the case where Docker is running — this matches the
-# deliberate single-session scope of post-merge (P-5: check mode stays read-
-# only; writes are in install/post-merge/post-checkout only, not pre-commit/
-# pre-push which may run on a shared worktree tree).
 # SMI-5628: linked-worktree detection (same idiom as .husky/post-merge's
-# SMI-5624 guard and scripts/lib/check-node-modules-fresh.sh). Hoisted here
-# rather than after the Docker block, since the host advisory below also
-# reads $_IS_LINKED_WT/$_MAIN_CHECKOUT.
+# SMI-5624 guard and scripts/lib/check-node-modules-fresh.sh).
 _gcd="$(git rev-parse --git-common-dir 2>/dev/null)"
 _gd="$(git rev-parse --git-dir 2>/dev/null)"
 _IS_LINKED_WT=0
@@ -74,51 +70,64 @@ if [ -n "$_gcd" ] && [ "$_gcd" != "$_gd" ]; then
   _IS_LINKED_WT=1
   _MAIN_CHECKOUT="$(cd "$_gcd/.." 2>/dev/null && pwd || echo '')"
 fi
-
-if [ "$_IS_LINKED_WT" = "1" ]; then
-  echo "${YELLOW}Skipping Docker npm install — this is a linked worktree.${NC}"
-  echo "  Installing here would target MAIN's container by mistake, and installing"
-  echo "  into this worktree's OWN container would fail (EROFS) — its node_modules"
-  echo "  mounts are read-only views of main's tree (SMI-5560/SMI-5626)."
-  if [ -n "$_MAIN_CHECKOUT" ]; then
-    echo "  Run instead: ( cd \"$_MAIN_CHECKOUT\" && docker exec -w /app $DOCKER_CONTAINER npm install )"
-  else
-    echo "  Run instead: docker exec -w /app $DOCKER_CONTAINER npm install"
-  fi
-elif command -v docker > /dev/null 2>&1 && \
-   docker ps --format '{{.Names}}' 2>/dev/null | grep -q "^${DOCKER_CONTAINER}$"; then
-  echo "${YELLOW}Installing updated dependencies in Docker...${NC}"
-  if docker exec -w /app "$DOCKER_CONTAINER" npm install; then
-    echo "${GREEN}  Docker dependencies updated successfully.${NC}"
-  else
-    echo "${YELLOW}  Docker npm install failed. Run manually:${NC}"
-    echo "    docker exec $DOCKER_CONTAINER npm install"
-  fi
-else
-  echo "${YELLOW}Docker container '${DOCKER_CONTAINER}' is not running.${NC}"
-  echo "  Dependencies may be stale — install when the container is up:"
-  echo "    docker compose --profile dev up -d"
-  echo "    docker exec $DOCKER_CONTAINER npm install"
+_ADVICE_MAIN="$_MAIN_CHECKOUT"
+if [ -z "$_ADVICE_MAIN" ]; then
+  _ADVICE_MAIN="$(git rev-parse --show-toplevel 2>/dev/null || pwd)"
 fi
 
-echo ""
+# --- One classifier decides everything below (SMI-6606/SMI-6614) -----------
+# Same shape as .husky/post-merge — resolved relative to THIS hook file's own
+# location, overridable via the same test seam name so a shared stub works
+# for both hooks' tests.
+CLASSIFY_LIB="${SKILLSMITH_DEPS_CLASSIFY_SCRIPT_TEST:-$(dirname "$0")/../scripts/lib/check-node-modules-fresh.sh}"
+ADVICE_LIB="$(dirname "$0")/../scripts/lib/print-deps-refresh-advice.sh"
 
-# --- Host advisory -----------------------------------------------------------
-# Always remind about the host tree; don't auto-run npm here because the hook
-# could fire in any interactive-rebase/worktree context where a silent install
-# would be surprising. The pre-commit/pre-push freshness guard is the backstop.
-# SMI-5628: worktree-aware — a worktree's node_modules is a symlink into main's
-# tree (SMI-4377/SMI-4381); running npm install in place would unlink it.
-echo "${YELLOW}Also run on the host to keep tooling + worktree symlinks in sync:${NC}"
+# Status and token are captured SEPARATELY — a classifier that prints a
+# valid token but exits non-zero must NOT be trusted; only exit 0 with a
+# recognized token is accepted. See .husky/post-merge's identical logic.
+VERDICT="unknown"
+if [ -r "$CLASSIFY_LIB" ]; then
+  _CLASSIFY_OUT="$(sh "$CLASSIFY_LIB" --classify 2>/dev/null)"
+  _CLASSIFY_RC=$?
+  if [ "$_CLASSIFY_RC" -eq 0 ]; then
+    case "$_CLASSIFY_OUT" in
+      fresh | cosmetic | real | unknown) VERDICT="$_CLASSIFY_OUT" ;;
+      *) VERDICT="unknown" ;;
+    esac
+  fi
+fi
+
 if [ "$_IS_LINKED_WT" = "1" ]; then
-  if [ -n "$_MAIN_CHECKOUT" ]; then
-    echo "  Run instead: ( cd \"$_MAIN_CHECKOUT\" && npm install )"
-  else
-    echo "  Run npm install in the main checkout instead."
+  echo "${YELLOW}Linked worktree — no install runs from here.${NC}"
+  echo "  node_modules here is a symlink into the main checkout, and this worktree's"
+  echo "  own container mounts node_modules read-only (SMI-5560/SMI-5626) — installing"
+  echo "  in either place would corrupt state or fail (EROFS)."
+  echo ""
+  if [ -r "$ADVICE_LIB" ]; then
+    sh "$ADVICE_LIB" "$_ADVICE_MAIN"
   fi
 else
-  echo "  npm install"
+  case "$VERDICT" in
+    fresh)
+      echo "${GREEN}Dependencies already match package-lock.json — nothing to do.${NC}"
+      ;;
+    cosmetic)
+      echo "${GREEN}package-lock.json changed only in workspace-self version fields —${NC}"
+      echo "${GREEN}installed dependencies still match. No install needed.${NC}"
+      ;;
+    *)
+      echo "${YELLOW}A real dependency change was detected (or the classifier result${NC}"
+      echo "${YELLOW}could not be determined) — this hook no longer installs${NC}"
+      echo "${YELLOW}automatically (SMI-6614, ADR-158): an unattended install here has${NC}"
+      echo "${YELLOW}broken other sessions' containers before. Refresh manually:${NC}"
+      echo ""
+      if [ -r "$ADVICE_LIB" ]; then
+        sh "$ADVICE_LIB" "$_ADVICE_MAIN"
+      fi
+      ;;
+  esac
 fi
+
 echo ""
 
 exit 0

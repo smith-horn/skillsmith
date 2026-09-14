@@ -7,9 +7,11 @@
 # concurrent-install detector, a macOS-safe NON-evicting lock, an atomic
 # cooldown/attempt-cap state, and a banner that cannot go silent.
 #
-# Launched detached from .husky/post-merge AFTER that hook's own `npm install`:
+# Launched detached from .husky/post-merge ON lockfile change (SMI-6614,
+# ADR-158) — kicked only when the classifier finds nothing to install
+# (fresh/cosmetic); deferred on a real/unknown verdict, and re-kicked by
+# scripts/regen-lockfile.sh once that refresh finishes:
 #   nohup bash scripts/retrieval-autoheal.sh </dev/null >/dev/null 2>&1 &
-# so the spawning install has already returned before this child starts.
 #
 # Modes:
 #   (default)        run the guarded auto-heal (detached; exit code irrelevant).
@@ -23,6 +25,8 @@
 set -uo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+# shellcheck source=./lib/running-script-pids.sh
+source "$SCRIPT_DIR/lib/running-script-pids.sh"
 
 # --- Resolve the main repo (state key + probe cwd + repair target) -----------
 # Identical derivation to autoheal-state.ts resolveMainRepoKey(): the first
@@ -95,10 +99,22 @@ probe_binding() {
 # An mtime heuristic would false-positive on post-merge's OWN just-finished
 # install; a live-process check does not (the heal has spawned no npm yet, so any
 # match is foreign). pgrep is on macOS (BSD) and Linux (procps). Absent → skip.
+#
+# SMI-6614 (ADR-158, change 5c/2): also defers while scripts/regen-lockfile.sh
+# is running — that script is the advised refresh for a real/unknown
+# classifier verdict, and it kicks this heal itself once it finishes
+# (regen-lockfile.sh's kick_autoheal_after_exit) — a heal kicked mid-refresh
+# by something else (e.g. a later cosmetic post-merge) must defer to it via
+# the shared running_script_pids() helper, not the raw npm-pattern pgrep
+# above (regen-lockfile.sh's own `npm install`/`npm rebuild` calls run INSIDE
+# the container via `docker exec`, invisible to a host-side pgrep).
 HAVE_PGREP=0
 command -v pgrep >/dev/null 2>&1 && HAVE_PGREP=1
 foreign_install_running() {
   if [ "$AUTOHEAL_TEST" = "1" ] && [ "${SKILLSMITH_AUTOHEAL_FORCE_INSTALL:-}" = "1" ]; then
+    return 0
+  fi
+  if [ -n "$(running_script_pids regen-lockfile.sh 2>/dev/null)" ]; then
     return 0
   fi
   [ "$HAVE_PGREP" = "1" ] || return 1

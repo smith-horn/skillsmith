@@ -194,6 +194,110 @@ assert_eq "S13: self-heal succeeds but native-probe script is missing -> hard fa
 assert_eq "S13: output names the missing-probe reason" "yes" "$(grep -q "could not be verified" "$GUARD_LAST_OUTPUT" && echo yes || echo no)"
 assert_eq "S13: real NATIVE_LIB restored" "yes" "$([ -x "$NATIVE_LIB" ] && echo yes || echo no)"
 
+# =========================================================================
+# Scenario 14 (SMI-6516/6520/6614, ADR-158 change 5): stale tree + mountpoint
+# exit 32 (detached) -> outer exits 1, prints the detached-mount recovery,
+# no SELF_HEAL_START, no npm install.
+# =========================================================================
+MAIN14="$TMP_ROOT/main14"
+APP14="$TMP_ROOT/app14"
+setup_main_repo "$MAIN14"
+setup_fake_app_dir "$APP14" stale
+FAKE_APP_DIR="$APP14"
+FAKE_DOCKER_LOG=$(mktemp)
+: > "$NPM_CALL_LOG"
+SKILLSMITH_MOUNTPOINT_TEST=1
+SKILLSMITH_MOUNTPOINT_TEST_RC=32
+rc=$(run_guard "$MAIN14")
+unset SKILLSMITH_MOUNTPOINT_TEST SKILLSMITH_MOUNTPOINT_TEST_RC
+assert_eq "S14: detached mount (rc32) -> outer exits 1" "1" "$rc"
+assert_eq "S14: npm install NOT called" "0" "$(npm_call_count)"
+assert_eq "S14: output does NOT show SELF_HEAL_START" "no" "$(grep -q "SELF_HEAL_START" "$GUARD_LAST_OUTPUT" && echo yes || echo no)"
+assert_eq "S14: output names the detached-mount recovery" "yes" "$(grep -q "not a mountpoint" "$GUARD_LAST_OUTPUT" && echo yes || echo no)"
+
+# =========================================================================
+# Scenario 15: stale tree + mountpoint exit 0 (bound) -> today's self-heal
+# path is unaffected by the new mount check.
+# =========================================================================
+MAIN15="$TMP_ROOT/main15"
+APP15="$TMP_ROOT/app15"
+setup_main_repo "$MAIN15"
+setup_fake_app_dir "$APP15" stale
+FAKE_APP_DIR="$APP15"
+FAKE_DOCKER_LOG=$(mktemp)
+: > "$NPM_CALL_LOG"
+SKILLSMITH_MOUNTPOINT_TEST=1
+SKILLSMITH_MOUNTPOINT_TEST_RC=0
+rc=$(run_guard "$MAIN15")
+unset SKILLSMITH_MOUNTPOINT_TEST SKILLSMITH_MOUNTPOINT_TEST_RC
+assert_eq "S15: bound mount (rc0) -> self-heals and exits 0" "0" "$rc"
+assert_eq "S15: npm install called exactly once" "1" "$(npm_call_count)"
+
+# =========================================================================
+# Scenario 16: cosmetic/fresh tree + mountpoint exit 32 -> exit 0 (no install
+# needed at all, so a detached mount on an UNRELATED push must not block it —
+# the mount check only runs after the freshness check has already failed).
+# =========================================================================
+MAIN16="$TMP_ROOT/main16"
+APP16="$TMP_ROOT/app16"
+setup_main_repo "$MAIN16"
+setup_fake_app_dir "$APP16" fresh
+FAKE_APP_DIR="$APP16"
+FAKE_DOCKER_LOG=$(mktemp)
+: > "$NPM_CALL_LOG"
+SKILLSMITH_MOUNTPOINT_TEST=1
+SKILLSMITH_MOUNTPOINT_TEST_RC=32
+rc=$(run_guard "$MAIN16")
+unset SKILLSMITH_MOUNTPOINT_TEST SKILLSMITH_MOUNTPOINT_TEST_RC
+assert_eq "S16: fresh tree + detached mount -> exit 0 (no block)" "0" "$rc"
+assert_eq "S16: npm install NOT called" "0" "$(npm_call_count)"
+
+# =========================================================================
+# Scenario 17: stale tree + mountpoint exit 127 (mountpoint unavailable) ->
+# outer exits 1 with the "cannot verify" message, no install.
+# =========================================================================
+MAIN17="$TMP_ROOT/main17"
+APP17="$TMP_ROOT/app17"
+setup_main_repo "$MAIN17"
+setup_fake_app_dir "$APP17" stale
+FAKE_APP_DIR="$APP17"
+FAKE_DOCKER_LOG=$(mktemp)
+: > "$NPM_CALL_LOG"
+SKILLSMITH_MOUNTPOINT_TEST=1
+SKILLSMITH_MOUNTPOINT_TEST_RC=127
+rc=$(run_guard "$MAIN17")
+unset SKILLSMITH_MOUNTPOINT_TEST SKILLSMITH_MOUNTPOINT_TEST_RC
+assert_eq "S17: mountpoint unavailable (rc127) -> outer exits 1" "1" "$rc"
+assert_eq "S17: npm install NOT called" "0" "$(npm_call_count)"
+assert_eq "S17: output names the 'cannot verify' reason" "yes" "$(grep -q "Cannot verify" "$GUARD_LAST_OUTPUT" && echo yes || echo no)"
+
+# =========================================================================
+# Scenario 18 (code-review finding 2): WITHOUT the master switch
+# (SKILLSMITH_MOUNTPOINT_TEST unset/0), SKILLSMITH_MOUNTPOINT_TEST_RC=0 must
+# be IGNORED — the real `mountpoint` command must run instead. Stubs
+# `mountpoint` on PATH to return 32 (detached) so the real-path outcome is
+# distinguishable from what the (ignored) override would have produced.
+# =========================================================================
+MAIN18="$TMP_ROOT/main18"
+APP18="$TMP_ROOT/app18"
+setup_main_repo "$MAIN18"
+setup_fake_app_dir "$APP18" stale
+FAKE_APP_DIR="$APP18"
+FAKE_DOCKER_LOG=$(mktemp)
+: > "$NPM_CALL_LOG"
+cat > "$FAKE_BIN/mountpoint" <<'MOUNTPOINT_EOF'
+#!/usr/bin/env bash
+exit 32
+MOUNTPOINT_EOF
+chmod +x "$FAKE_BIN/mountpoint"
+SKILLSMITH_MOUNTPOINT_TEST_RC=0
+rc=$(run_guard "$MAIN18")
+unset SKILLSMITH_MOUNTPOINT_TEST_RC
+rm -f "$FAKE_BIN/mountpoint"
+assert_eq "S18: override ignored without the master switch -> real mountpoint (rc32) blocks" "1" "$rc"
+assert_eq "S18: npm install NOT called" "0" "$(npm_call_count)"
+assert_eq "S18: output names the detached-mount recovery" "yes" "$(grep -q "not a mountpoint" "$GUARD_LAST_OUTPUT" && echo yes || echo no)"
+
 echo ""
 echo "======================================"
 echo "Results: $pass passed, $fail failed"

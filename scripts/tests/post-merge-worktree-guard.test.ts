@@ -1,48 +1,42 @@
 /**
- * SMI-5623: Tests for the linked-worktree guard in `.husky/post-merge`.
+ * SMI-5623/SMI-5624 (linked-worktree guard) + SMI-6606/SMI-6614 (ADR-158,
+ * lockfile-drift classifier) — tests for `.husky/post-merge`.
  *
- * `.husky/post-merge` (SMI-2552, extended SMI-5343) runs `npm install` twice
- * whenever `package-lock.json` changes between `ORIG_HEAD` and `HEAD`: once in
- * the `skillsmith-dev-1` Docker container (fixed path `/app`, immune to cwd),
- * once directly on the host in the hook's own cwd. In a linked worktree
- * created by `./scripts/create-worktree.sh`, `node_modules` (root + every
- * `packages/&#42;/node_modules`) is a SYMLINK into the main checkout's tree
- * (SMI-4377/SMI-4381) — running `npm install` there unlinks the symlink and
- * rebuilds a real directory in its place, corrupting the worktree's local
- * dependency state. The fix detects a linked worktree via `git rev-parse
- * --git-common-dir` vs `--git-dir` divergence (same idiom as
- * `scripts/lib/check-node-modules-fresh.sh`) and skips-and-advises instead of
- * installing.
+ * `.husky/post-merge` used to run `npm install` twice (container + host)
+ * whenever `package-lock.json` changed between `ORIG_HEAD` and `HEAD` —
+ * unconditionally, even for a release-cadence version-only bump. SMI-6614
+ * (ADR-158) replaced that with a single shared classifier
+ * (`check-node-modules-fresh.sh --classify`): the hook now NEVER installs.
+ * It prints one informational line on `fresh`/`cosmetic`, or the shared
+ * ordered refresh advice on `real`/`unknown`, and a linked worktree always
+ * gets the advice (regardless of verdict) with the main-checkout path.
  *
  * This suite builds a REAL git fixture with an ACTUAL linked worktree (`git
  * worktree add`, not a simulated one) — the guard condition depends on
- * genuine git-dir/git-common-dir divergence, which only a real linked
- * worktree produces. `npm` and `docker` are stubbed on a fixture-local PATH
- * (logging invocations, never doing a real install). A REAL merge that
- * changes `package-lock.json` is performed independently in both the main
- * checkout and the worktree (each worktree has its own `ORIG_HEAD` — it is
- * per-worktree state, not shared via the common git dir), so `ORIG_HEAD` is
- * set by git itself in both locations, not hand-set as an env var. The real
- * `.husky/post-merge` script is invoked in place via `sh <path>` with `cwd`
- * set to each fixture location — never against the live repo tree.
+ * genuine git-dir/git-common-dir divergence. The real `.husky/post-merge`
+ * script is invoked in place via `sh <path>` with `cwd` set to each fixture
+ * location — never against the live repo tree. `scripts/retrieval-autoheal.sh`
+ * is stubbed at a fixture-local path (resolved by the hook CWD-relative, so
+ * the stub — not this worktree's real auto-heal script — is what runs).
  *
  * Cases covered:
- *   (a) LINKED WORKTREE: cwd = the linked worktree's root. Host npm install
- *       is skipped (no "install" logged); the Docker install is ALSO skipped
- *       (no "exec" logged — SMI-5624 widened the SMI-5623 guard, which
- *       originally left the Docker block untouched, to cover both install
- *       paths via one shared `_IS_LINKED_WT` detection); stdout names
- *       "linked worktree", both "Skipping Docker npm install" and "Skipping
- *       host npm install" advisories, and the resolved main-checkout path.
- *   (b) MAIN CHECKOUT (regression): cwd = the fixture's main repo root (NOT a
- *       linked worktree). Host npm install AND the Docker `exec` install
- *       still run normally — proves both guards are worktree-scoped only.
+ *   (a) LINKED WORKTREE: advice printed, names the main-checkout path,
+ *       regardless of verdict.
+ *   (b) MAIN CHECKOUT real merge (regression, updated for SMI-6614): no
+ *       install (there is none left to skip); advice printed.
+ *   (c) MAIN CHECKOUT cosmetic merge: no advice, one informational line,
+ *       auto-heal kicked.
+ *   (d) MAIN CHECKOUT real merge: advice printed in order, auto-heal
+ *       deferred (not kicked), deferral line printed.
+ *   (e) Malformed classifier output (non-zero exit, empty stdout, or an
+ *       unrecognized token) → treated as `unknown` (advice, auto-heal
+ *       deferred).
  *
  * SMI-4693: uses makeFixtureEnv (strips GIT_DISCOVERY_VARS) and
  * makeFixtureTempDir (realpath-canonical tmpdir) for git fixture isolation.
  */
 import { describe, it, expect, beforeEach, afterEach } from 'vitest'
-import { spawnSync, execFileSync } from 'node:child_process'
+import { execFileSync, spawnSync } from 'node:child_process'
 import { mkdirSync, writeFileSync, readFileSync, rmSync, existsSync, chmodSync } from 'node:fs'
 import { join, resolve, dirname } from 'node:path'
 import { fileURLToPath } from 'node:url'
@@ -51,16 +45,42 @@ import { makeFixtureEnv, makeFixtureTempDir } from './_lib/git-fixture-env.js'
 
 const __dirname = dirname(fileURLToPath(import.meta.url))
 
-// Absolute path to the real hook under test — stable regardless of cwd, and
-// invoked directly via `sh`, never installed as a live git hook.
 const POST_MERGE_SCRIPT = resolve(__dirname, '..', '..', '.husky', 'post-merge')
+const NORMALIZE_SRC = resolve(__dirname, '..', 'lib', 'normalize-lockfile-for-freshness.mjs')
+const CLASSIFY_SCRIPT = resolve(__dirname, '..', 'lib', 'check-node-modules-fresh.sh')
+
+const BASE_PACKAGE_JSON = { name: 'root', version: '1.0.0', workspaces: ['packages/*'] }
+function baseLock() {
+  return {
+    name: 'root',
+    version: '1.0.0',
+    lockfileVersion: 3,
+    packages: {
+      '': { name: 'root', version: '1.0.0', workspaces: ['packages/*'] },
+      'node_modules/external-x': {
+        version: '0.3.11',
+        resolved: 'https://registry.npmjs.org/external-x/-/external-x-0.3.11.tgz',
+        integrity: 'sha512-AAAA',
+      },
+    },
+  }
+}
+// eslint-disable-next-line @typescript-eslint/no-explicit-any
+function cosmeticMutate(l: any) {
+  l.packages[''].version = '1.0.1'
+  return l
+}
+// eslint-disable-next-line @typescript-eslint/no-explicit-any
+function realMutate(l: any) {
+  l.packages['node_modules/external-x'].version = '0.3.12'
+  l.packages['node_modules/external-x'].integrity = 'sha512-BBBB'
+  return l
+}
 
 interface Fixture {
   root: string
   worktreeDir: string
-  binDir: string
-  npmLog: string
-  dockerLog: string
+  autohealLog: string
 }
 
 /** Read a log file, returning '' if it was never created (nothing logged). */
@@ -68,62 +88,44 @@ function readLogSafe(path: string): string {
   return existsSync(path) ? readFileSync(path, 'utf8') : ''
 }
 
-/**
- * Write fake `npm` and `docker` executables to `binDir` on a fixture-local
- * PATH. Both just append an invocation marker to a log file and exit 0 — no
- * real install, no real container access.
- *
- * The `docker` stub answers `docker ps --format '{{.Names}}'` with a line
- * containing `skillsmith-dev-1` (so the hook's `command -v docker` +
- * `docker ps | grep -q` gate passes and enters the Docker-install branch),
- * and handles `docker exec -w /app skillsmith-dev-1 npm install` (log + exit
- * 0) — both code paths the hook exercises need a response, not just the
- * install call.
- */
-function makeStubBin(binDir: string, npmLog: string, dockerLog: string): void {
-  mkdirSync(binDir, { recursive: true })
-
-  const npmShim = `#!/bin/sh\necho "npm $*" >> "${npmLog}"\nexit 0\n`
-  writeFileSync(join(binDir, 'npm'), npmShim, 'utf8')
-  chmodSync(join(binDir, 'npm'), 0o755)
-
-  const dockerShim = `#!/bin/sh
-echo "docker $*" >> "${dockerLog}"
-case "$1" in
-  ps)
-    echo "skillsmith-dev-1"
-    ;;
-esac
+/** Fixture-local stub for scripts/retrieval-autoheal.sh, resolved CWD-relative
+ * by the hook (unlike the classifier, which is $0-relative to the real repo)
+ * — so this stub, not the real auto-heal script, is what the hook invokes. */
+function writeAutohealStub(root: string, logPath: string): void {
+  mkdirSync(join(root, 'scripts'), { recursive: true })
+  const shim = `#!/bin/sh
+if [ "$1" = "--print-banner" ]; then
+  echo "banner" >> "${logPath}"
+else
+  echo "kick" >> "${logPath}"
+fi
 exit 0
 `
-  writeFileSync(join(binDir, 'docker'), dockerShim, 'utf8')
-  chmodSync(join(binDir, 'docker'), 0o755)
+  const p = join(root, 'scripts', 'retrieval-autoheal.sh')
+  writeFileSync(p, shim, 'utf8')
+  chmodSync(p, 0o755)
 }
 
 /**
- * Commit a package-lock.json change on a throwaway topic branch, then merge
- * it (--no-ff) back into `targetBranch` in `dir` — a REAL merge, so git
- * itself sets ORIG_HEAD (to the pre-merge tip) and HEAD (to the merge
- * commit) exactly as a `git pull`/`git merge` would in practice. ORIG_HEAD is
- * per-worktree state (stored in each worktree's own git-dir, not the shared
- * common dir), so this must be run independently in the main checkout AND in
- * the linked worktree for each to get its own genuine ORIG_HEAD.
+ * Commit a package-lock.json mutation on a throwaway topic branch, then
+ * merge it (--no-ff) back into `targetBranch` in `dir` — a REAL merge, so
+ * git itself sets ORIG_HEAD (to the pre-merge tip) and HEAD (to the merge
+ * commit) exactly as a `git pull`/`git merge` would in practice.
  */
 function bumpLockfileViaMerge(
   dir: string,
   env: NodeJS.ProcessEnv,
   targetBranch: string,
-  suffix: string
+  suffix: string,
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  mutate: (l: any) => any
 ): void {
   const topicBranch = `lockfile-bump-${suffix}`
   execFileSync('git', ['-C', dir, 'checkout', '-q', '-b', topicBranch], { env })
+  const current = JSON.parse(readFileSync(join(dir, 'package-lock.json'), 'utf8'))
   writeFileSync(
     join(dir, 'package-lock.json'),
-    JSON.stringify(
-      { lockfileVersion: 3, packages: { [`node_modules/${suffix}`]: { version: '1.0.0' } } },
-      null,
-      2
-    ),
+    JSON.stringify(mutate(current), null, 2) + '\n',
     'utf8'
   )
   execFileSync('git', ['-C', dir, 'add', 'package-lock.json'], { env })
@@ -135,62 +137,71 @@ function bumpLockfileViaMerge(
 /**
  * Build the fixture:
  *   root/               — main checkout, branch `main`, real node_modules/
- *     package-lock.json
- *     node_modules/
+ *                          with a sentinel written against the base lockfile
+ *     package.json / package-lock.json / scripts/lib/normalize-lockfile-for-freshness.mjs
  *   <root>-wt/           — linked worktree (git worktree add), branch `wt-branch`
  *
- * Both `root` (on `main`) and the worktree (on `wt-branch`) then get their
- * own independent real merge that changes package-lock.json, so each has its
- * own genuine ORIG_HEAD pointing at its own pre-merge tip.
+ * The worktree gets its own lockfile bump (arbitrary — irrelevant to its
+ * messaging, which is verdict-independent) so it has a genuine ORIG_HEAD.
+ * Root's own lockfile is left UNBUMPED here — individual tests call
+ * bumpLockfileViaMerge(fixture.root, …) with the mutation they need.
  */
 function makeFixture(): Fixture {
   const root = makeFixtureTempDir('post-merge-guard-test')
   const env = makeFixtureEnv()
 
   execFileSync('git', ['-c', 'init.defaultBranch=main', 'init', '--quiet', root], { env })
+  mkdirSync(join(root, 'scripts', 'lib'), { recursive: true })
+  execFileSync('cp', [
+    NORMALIZE_SRC,
+    join(root, 'scripts', 'lib', 'normalize-lockfile-for-freshness.mjs'),
+  ])
   writeFileSync(
-    join(root, 'package-lock.json'),
-    JSON.stringify({ lockfileVersion: 3, packages: {} }, null, 2),
+    join(root, 'package.json'),
+    JSON.stringify(BASE_PACKAGE_JSON, null, 2) + '\n',
     'utf8'
   )
-  mkdirSync(join(root, 'node_modules'), { recursive: true })
-  writeFileSync(join(root, 'node_modules', '.gitkeep'), '', 'utf8')
-  execFileSync('git', ['-C', root, 'add', 'package-lock.json', 'node_modules/.gitkeep'], { env })
+  writeFileSync(join(root, 'package-lock.json'), JSON.stringify(baseLock(), null, 2) + '\n', 'utf8')
+  execFileSync('git', ['-C', root, 'add', '-A'], { env })
   execFileSync('git', ['-C', root, 'commit', '--quiet', '-m', 'init'], { env })
 
-  // Real linked worktree off the initial commit, on its own branch.
+  mkdirSync(join(root, 'node_modules'), { recursive: true })
+  const autohealLog = join(root, 'autoheal.log')
+  writeAutohealStub(root, autohealLog)
+
+  // Write the sentinel against the base state (a real install would have).
+  const write = spawnSync('bash', [CLASSIFY_SCRIPT, '--write-sentinel'], {
+    cwd: root,
+    env: makeFixtureEnv(),
+    encoding: 'utf8',
+  })
+  expect(write.status).toBe(0)
+
+  // Real linked worktree off the initial commit, on its own branch, with its
+  // own (irrelevant-to-messaging) lockfile bump for a genuine ORIG_HEAD.
   const worktreeDir = `${root}-wt`
   execFileSync(
     'git',
     ['-C', root, 'worktree', 'add', '-q', '-b', 'wt-branch', worktreeDir, 'main'],
-    {
-      env,
-    }
+    { env }
   )
+  bumpLockfileViaMerge(worktreeDir, env, 'wt-branch', 'wt', realMutate)
 
-  // Independent real merges: each location gets its own genuine ORIG_HEAD.
-  bumpLockfileViaMerge(root, env, 'main', 'main')
-  bumpLockfileViaMerge(worktreeDir, env, 'wt-branch', 'wt')
-
-  const binDir = join(root, '.test-bin')
-  const npmLog = join(binDir, 'npm.log')
-  const dockerLog = join(binDir, 'docker.log')
-  makeStubBin(binDir, npmLog, dockerLog)
-
-  return { root, worktreeDir, binDir, npmLog, dockerLog }
+  return { root, worktreeDir, autohealLog }
 }
 
-/** Run the real post-merge hook with the fixture's stubbed PATH prepended. */
-function runHook(cwd: string, binDir: string): { status: number; stdout: string; stderr: string } {
+/** Run the real post-merge hook with the fixture's own scripts/ dir first on
+ * PATH-independent resolution — the hook resolves the classifier $0-relative
+ * (the real, checked-out script) and the auto-heal CWD-relative (this
+ * fixture's stub); no PATH manipulation is needed for either. */
+function runHook(
+  cwd: string,
+  extraEnv: NodeJS.ProcessEnv = {}
+): { status: number; stdout: string; stderr: string } {
   const result = spawnSync('sh', [POST_MERGE_SCRIPT], {
     cwd,
     encoding: 'utf8',
-    env: {
-      ...makeFixtureEnv(),
-      // Prepend the stub bin dir so it shadows any real npm/docker further
-      // down PATH; keep the rest of PATH so git/sh/grep/etc. still resolve.
-      PATH: `${binDir}:${process.env['PATH'] ?? '/usr/bin:/bin'}`,
-    },
+    env: { ...makeFixtureEnv(), ...extraEnv },
     stdio: ['ignore', 'pipe', 'pipe'],
     timeout: 15_000,
   })
@@ -201,7 +212,20 @@ function runHook(cwd: string, binDir: string): { status: number; stdout: string;
   }
 }
 
-describe('.husky/post-merge — linked-worktree host+Docker install guard (SMI-5623/SMI-5624)', () => {
+/** Poll for the auto-heal log to contain `needle`, bounded — the "kick" is a
+ * detached background process (`nohup … &`); the hook returns before it's
+ * guaranteed to have written its log line. */
+async function waitForLog(path: string, needle: string, timeoutMs = 3000): Promise<string> {
+  const deadline = Date.now() + timeoutMs
+  let content = readLogSafe(path)
+  while (!content.includes(needle) && Date.now() < deadline) {
+    await new Promise((r) => setTimeout(r, 50))
+    content = readLogSafe(path)
+  }
+  return content
+}
+
+describe('.husky/post-merge — linked-worktree guard + lockfile-drift classifier (SMI-5623/5624, SMI-6606/6614)', () => {
   let fixture: Fixture | null = null
 
   beforeEach(() => {
@@ -216,7 +240,7 @@ describe('.husky/post-merge — linked-worktree host+Docker install guard (SMI-5
           env: makeFixtureEnv(),
         })
       } catch {
-        // best-effort — fall through to directory removal below regardless
+        /* best-effort — fall through to directory removal below regardless */
       }
       if (existsSync(worktreeDir)) rmSync(worktreeDir, { recursive: true, force: true })
       if (existsSync(root)) rmSync(root, { recursive: true, force: true })
@@ -224,42 +248,95 @@ describe('.husky/post-merge — linked-worktree host+Docker install guard (SMI-5
     fixture = null
   })
 
-  it('(a) linked worktree: skips both host and Docker npm install, advises the main-checkout path', () => {
-    const { root, worktreeDir, binDir, npmLog, dockerLog } = fixture!
+  it('(a) linked worktree: no install, advises the main-checkout path (verdict-independent)', () => {
+    const { root, worktreeDir } = fixture!
 
-    const result = runHook(worktreeDir, binDir)
+    const result = runHook(worktreeDir)
     expect(result.status).toBe(0)
 
-    // Host npm install must be skipped entirely — no "install" invocation logged.
-    const npmLogContent = readLogSafe(npmLog)
-    expect(npmLogContent).not.toMatch(/install/)
-
-    // The advisory names the linked-worktree condition and the resolved
-    // main-checkout path (git-common-dir's parent), for BOTH the Docker and
-    // host blocks (SMI-5624 widened the SMI-5623 guard to cover both).
-    expect(result.stdout).toMatch(/linked worktree/i)
-    expect(result.stdout).toContain('Skipping Docker npm install')
-    expect(result.stdout).toContain('Skipping host npm install')
+    expect(result.stdout).toMatch(/Linked worktree — no install runs from here/)
     expect(result.stdout).toContain(root)
-
-    // The Docker path (previously untouched by the SMI-5623 guard) is
-    // now ALSO guarded (SMI-5624, the anticipated follow-up to SMI-5623's
-    // narrower host-only scope documented above) — docker exec must NOT
-    // have been invoked.
-    const dockerLogContent = readLogSafe(dockerLog)
-    expect(dockerLogContent).not.toMatch(/exec/)
+    // Never a bare npm install / bare docker compose up line (the mountpoint
+    // CHECK in step 0 legitimately runs `docker exec … mountpoint`, which is
+    // not an install — only a bare, unqualified install line is banned).
+    expect(result.stdout).not.toMatch(/^\s*npm install\s*$/m)
+    expect(result.stdout).not.toContain('npm install')
+    // The shared advice's numbered steps appear.
+    expect(result.stdout).toMatch(/regen-lockfile\.sh/)
   })
 
-  it('(b) main checkout (regression): host npm install still runs when cwd is not a linked worktree', () => {
-    const { root, binDir, npmLog } = fixture!
+  it('(b) main checkout real merge (regression): no install, advice printed', () => {
+    const { root } = fixture!
+    bumpLockfileViaMerge(root, makeFixtureEnv(), 'main', 'main-real', realMutate)
 
-    const result = runHook(root, binDir)
+    const result = runHook(root)
     expect(result.status).toBe(0)
 
-    const npmLogContent = readLogSafe(npmLog)
-    expect(npmLogContent).toMatch(/install/)
-
-    // No linked-worktree advisory should appear for the main checkout.
     expect(result.stdout).not.toMatch(/linked worktree/i)
+    expect(result.stdout).not.toMatch(/^\s*npm install\s*$/m)
+    expect(result.stdout).not.toContain('npm install')
+    expect(result.stdout).toMatch(/real dependency change/i)
+    expect(result.stdout).toMatch(/regen-lockfile\.sh/)
+  })
+
+  it('(c) main checkout cosmetic merge: no advice, one informational line, auto-heal kicked', async () => {
+    const { root, autohealLog } = fixture!
+    bumpLockfileViaMerge(root, makeFixtureEnv(), 'main', 'main-cosmetic', cosmeticMutate)
+
+    const result = runHook(root)
+    expect(result.status).toBe(0)
+    expect(result.stdout).toMatch(/No install needed/)
+    expect(result.stdout).not.toMatch(/regen-lockfile\.sh/)
+
+    const log = await waitForLog(autohealLog, 'kick')
+    expect(log).toContain('banner')
+    expect(log).toContain('kick')
+  })
+
+  it('(d) main checkout real merge: advice printed in order, auto-heal deferred', () => {
+    const { root, autohealLog } = fixture!
+    bumpLockfileViaMerge(root, makeFixtureEnv(), 'main', 'main-real-2', realMutate)
+
+    const result = runHook(root)
+    expect(result.status).toBe(0)
+
+    const advice = result.stdout
+    const idx0 = advice.indexOf('0. Confirm')
+    const idx3 = advice.indexOf('3. Regenerate')
+    const idx6 = advice.indexOf('6. Re-run')
+    expect(idx0).toBeGreaterThanOrEqual(0)
+    expect(idx3).toBeGreaterThan(idx0)
+    expect(idx6).toBeGreaterThan(idx3)
+
+    expect(result.stdout).toContain('Retrieval auto-heal deferred')
+    const log = readLogSafe(autohealLog)
+    expect(log).toContain('banner')
+    expect(log).not.toContain('kick')
+  })
+
+  it.each([
+    ['non-zero exit, empty output', 'exit 1'],
+    ['zero exit, empty output', 'exit 0'],
+    ['zero exit, unrecognized token', "printf 'garbage\\n'"],
+    // Code-review finding 1: a VALID token printed but a non-zero exit
+    // (e.g. a crash right after the classifier's own stdout write) must
+    // NOT be trusted — status and token are checked together, not token
+    // alone.
+    ['valid token (fresh) but non-zero exit', 'echo fresh; exit 9'],
+  ])('(e) malformed classifier output (%s) → treated as unknown', (_label, body) => {
+    const { root, autohealLog } = fixture!
+    bumpLockfileViaMerge(root, makeFixtureEnv(), 'main', 'main-malformed', cosmeticMutate)
+
+    const stubPath = join(root, 'fake-classify.sh')
+    writeFileSync(stubPath, `#!/bin/sh\n${body}\n`, 'utf8')
+    chmodSync(stubPath, 0o755)
+
+    const result = runHook(root, { SKILLSMITH_DEPS_CLASSIFY_SCRIPT_TEST: stubPath })
+    expect(result.status).toBe(0)
+    expect(result.stdout).toMatch(/real dependency change/i)
+    expect(result.stdout).toMatch(/regen-lockfile\.sh/)
+    expect(result.stdout).toContain('Retrieval auto-heal deferred')
+    const log = readLogSafe(autohealLog)
+    expect(log).not.toContain('kick')
   })
 })

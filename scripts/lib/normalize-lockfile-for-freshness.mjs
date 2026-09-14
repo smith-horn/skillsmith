@@ -11,11 +11,12 @@
  * trips the guard for no reason.
  *
  * This module computes a second, normalized hash ("shadow hash") of the
- * lockfile with workspace-self version bumps neutralized. Wave 1 uses it
- * only as a diagnostic label alongside the existing raw-hash decision — see
- * check-node-modules-fresh.sh's shadow-hash block. Wave 2 (after the shadow
- * soak period in docs/internal/process/guards-and-opt-outs.md ends) flips
- * the actual pass/fail decision onto this hash.
+ * lockfile with workspace-self version bumps neutralized. Since SMI-6606 /
+ * SMI-6614 (ADR-158), this hash is load-bearing, not diagnostic-only: it is
+ * one of the two inputs `check-node-modules-fresh.sh --classify` uses to
+ * distinguish a `cosmetic` verdict (check mode passes) from a `real` one
+ * (check mode still blocks) — see that script's `_classify()` function and
+ * docs/internal/adr/158-lockfile-drift-classifier-single-install-oracle.md.
  *
  * Algorithm (normalize()):
  *   1. Derive the internal-package-name set from package-lock.json itself:

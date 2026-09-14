@@ -96,6 +96,31 @@ release() {
     fi
 }
 
+# SMI-6516/6520/6614 (ADR-158, change 5): mount-identity check before any
+# self-heal install. `mountpoint -q /app/node_modules` distinguishes a real
+# bind mount (exit 0) from skillsmith-dev-1's named volumes having runtime-
+# detached (exit 32, /app/node_modules resolves to the host bind instead) —
+# a device-number comparison alone can't tell the two apart (same source
+# device either way; see the plan's "Mount identity" table).
+#
+# Test seam is gated behind a dedicated master switch,
+# SKILLSMITH_MOUNTPOINT_TEST=1 (mirrors the SKILLSMITH_AUTOHEAL_TEST /
+# SKILLSMITH_AUTOHEAL_PROBE_CMD master-switch-plus-satellite-vars shape in
+# retrieval-autoheal.sh), honoured ONLY here, in THIS process's own
+# environment. Both SKILLSMITH_MOUNTPOINT_TEST and
+# SKILLSMITH_MOUNTPOINT_TEST_RC are forwarded via `docker exec -e` by
+# check-container-deps-fresh.sh, which itself only forwards a non-default
+# SKILLSMITH_MOUNTPOINT_TEST_RC when its OWN host-side
+# SKILLSMITH_MOUNTPOINT_TEST=1 is set — so a stray
+# SKILLSMITH_MOUNTPOINT_TEST_RC in the environment can never silently bypass
+# the real check in production; both sides must agree it's test mode.
+_check_mountpoint() {
+    if [ "${SKILLSMITH_MOUNTPOINT_TEST:-0}" = "1" ] && [ -n "${SKILLSMITH_MOUNTPOINT_TEST_RC:-}" ]; then
+        return "$SKILLSMITH_MOUNTPOINT_TEST_RC"
+    fi
+    mountpoint -q /app/node_modules
+}
+
 if [ "${SKILLSMITH_LOCK_TEST_SOURCE:-0}" = "1" ]; then
     return 0 2>/dev/null || exit 0
 fi
@@ -109,6 +134,22 @@ fi
 
 if sh scripts/lib/check-node-modules-fresh.sh; then
     exit 0
+fi
+
+# Mount check sits AFTER the freshness check on purpose: a fresh or cosmetic
+# tree needs no install at all, so a detached mount must not block an
+# unrelated push. Both non-zero outcomes fail closed and print a distinct
+# reason: 32 (not a mountpoint — detached) vs anything else (cannot verify at
+# all, e.g. 127 if `mountpoint` itself is unavailable).
+_check_mountpoint
+_mp_rc=$?
+if [ "$_mp_rc" -ne 0 ]; then
+    case "$_mp_rc" in
+        32) echo "MOUNT_DETACHED $_mp_rc" >&2 ;;
+        127) echo "MOUNT_CHECK_UNAVAILABLE $_mp_rc" >&2 ;;
+        *) echo "MOUNT_CHECK_ERROR $_mp_rc" >&2 ;;
+    esac
+    exit 5
 fi
 
 echo "SELF_HEAL_START"
