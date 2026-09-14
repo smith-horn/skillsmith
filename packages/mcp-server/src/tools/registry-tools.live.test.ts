@@ -44,11 +44,31 @@ vi.mock('../supabase-client.js', () => ({
   resetSupabaseClients: vi.fn(),
 }))
 
+// readLicenseKey is kept here — registry-tools.live.audit.ts still calls it directly (for the
+// audit row's masked-credential metadata), unrelated to team resolution. resolveLicenseTeamId is
+// dropped: registry-tools.ts no longer calls it (SMI-6622 — see the registry-tools.team.js mock
+// below).
 vi.mock('./team-resolver.js', () => ({
   readLicenseKey: vi.fn(() => 'sk_test_fake_license'),
-  resolveLicenseTeamId: vi.fn(async () => 'team-alpha'),
   resolveUserAccessToken: vi.fn(async () => 'fake-user-access-token'),
 }))
+
+// SMI-6622: registry-tools.ts's resolveTeamId() now delegates to registry-tools.team.js (NOT
+// team-resolver.js's resolveLicenseTeamId). Mocked here to the same 'team-alpha' value the rest of
+// this file (and registry-tools.live.test-helpers.ts's RESOLVED_TEAM constant) already assumes.
+// importOriginal + spread (SMI-6622 round 2) — see registry-tools.install-action.test.ts's
+// identical comment for why (a future new export never needs re-adding to every mock).
+vi.mock('./registry-tools.team.js', async (importOriginal) => {
+  const actual = await importOriginal<typeof import('./registry-tools.team.js')>()
+  return {
+    ...actual,
+    resolveRegistryTeamId: vi.fn(async () => ({
+      teamId: 'team-alpha',
+      source: 'env:SKILLSMITH_LICENSE_KEY',
+    })),
+    readRegistryCredential: vi.fn(() => 'sk_test_fake_license'),
+  }
+})
 
 // ============================================================================
 // Shared setup
@@ -139,6 +159,66 @@ describe('private_registry_publish live mode — SMI-5816', () => {
     expect(result.error).toMatch(/immutable|already exists/i)
   })
 
+  // SMI-6622 round 2 finding 4: renamed from "...team mismatch" — this fixture's own responder
+  // ignores teamId and always returns the same 42501, so it cannot actually fail for identity
+  // reasons; what it genuinely proves is narrower (and still worth its own test): a live INSERT
+  // denied by RLS surfaces as a clean `{success:false}` refusal, never a silent `{success:true}`.
+  // Membership here is INCONCLUSIVE (no `singleResponder` configured, so the new membership-check
+  // probe's `.single()` call — see registry-tools.membership-check.ts — gets the fake client's
+  // default `{data:null, error:null}`, i.e. "member"), so the message below is the generic RLS
+  // one, unmodified. The genuinely CONFIRMED-non-member case is the next test.
+  it('refuses publish with a clean error (never success:true) on a live RLS insert denial', async () => {
+    const { client } = createFakeClient({
+      thenResponder: () => ({
+        data: null,
+        error: { code: '42501', message: 'new row violates row-level security policy' },
+      }),
+    })
+    const { getSupabaseAdminClient, getSupabaseUserClient } = await import('../supabase-client.js')
+    vi.mocked(getSupabaseAdminClient).mockResolvedValue(client)
+    vi.mocked(getSupabaseUserClient).mockResolvedValue(client)
+
+    const result = await executePrivateRegistryPublish(
+      { skillId: 'myteam/skill-a', version: '1.0.0', content: SAMPLE_CONTENT },
+      makeContext()
+    )
+
+    expect(result.success).toBe(false)
+    expect(result.error).toMatch(/row-level security|permission/i)
+    expect(result.skill).toBeUndefined()
+  })
+
+  // SMI-6622 round 2 finding 3: "Add tests for ... the non-member message." Here membership is
+  // POSITIVELY confirmed denied — the membership-check probe's `.single()` call (a structurally
+  // different terminal method from the INSERT's `.then()`-based call above, so createFakeClient's
+  // singleResponder/thenResponder split cleanly separates the two without needing table-awareness)
+  // returns PGRST116, "no visible row" — proving the generic RLS message gets REPLACED with the
+  // specific, actionable "not a member of the team resolved from ..." error naming the credential
+  // source (env:SKILLSMITH_LICENSE_KEY, per this file's own team-resolution mock).
+  it('replaces the generic RLS error with the specific non-member message when membership is positively disconfirmed', async () => {
+    const { client } = createFakeClient({
+      thenResponder: () => ({
+        data: null,
+        error: { code: '42501', message: 'new row violates row-level security policy' },
+      }),
+      singleResponder: () => ({ data: null, error: { code: 'PGRST116', message: 'no rows' } }),
+    })
+    const { getSupabaseAdminClient, getSupabaseUserClient } = await import('../supabase-client.js')
+    vi.mocked(getSupabaseAdminClient).mockResolvedValue(client)
+    vi.mocked(getSupabaseUserClient).mockResolvedValue(client)
+
+    const result = await executePrivateRegistryPublish(
+      { skillId: 'myteam/skill-a', version: '1.0.0', content: SAMPLE_CONTENT },
+      makeContext()
+    )
+
+    expect(result.success).toBe(false)
+    expect(result.error).toMatch(/not a member of the team resolved from/i)
+    expect(result.error).toMatch(/SKILLSMITH_LICENSE_KEY environment variable/)
+    expect(result.error).not.toMatch(/row-level security/i)
+    expect(result.skill).toBeUndefined()
+  })
+
   it('rejects content over the 2 MB cap before hitting the database', async () => {
     const { client, calls } = createFakeClient()
     const { getSupabaseAdminClient } = await import('../supabase-client.js')
@@ -182,6 +262,12 @@ describe('private_registry_publish live mode — SMI-5816', () => {
   // the success path. That is a real behavior change worth its own regression test, not just a
   // deletion: a reader could otherwise assume (wrongly) that publish still needs the service-role
   // key, the way it did before this Wave.
+  //
+  // SMI-6622 item 5: this is also the "publish still succeeds and logs, not throws" coverage
+  // SMI-6622 asked for — recordRegistryAudit() (registry-tools.live.audit.ts) console.error()s the
+  // rejected admin-client construction internally (fail-soft) instead of letting it propagate;
+  // `result.success === true` below is proof it never reaches this test as a thrown exception.
+  // SMI-6114 tracks fixing the audit path's own service-role dependency; not this issue's scope.
   it('publish succeeds via the user client even when SUPABASE_SERVICE_ROLE_KEY is entirely unavailable (D-7)', async () => {
     const { client: userClient } = createFakeClient()
     const { getSupabaseAdminClient, getSupabaseUserClient } = await import('../supabase-client.js')

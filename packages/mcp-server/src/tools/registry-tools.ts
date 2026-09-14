@@ -4,33 +4,34 @@
  * @see SMI-3902: Private Registry MCP Tools (original stub)
  * @see SMI-5816: Private skill registry — real implementation
  * @see ADR-129: Postgres-native (JSONB) storage + real team-auth (migration 071)
+ * @see SMI-6622: the public `@skillsmith/mcp-server` package must never need Supabase env vars —
+ *   service selection and team resolution below are NOT gated on `isSupabaseConfigured()`. Round 2
+ *   (adversarial review) added credential-source-aware error text and a best-effort non-member
+ *   check (registry-tools.membership-check.ts) for an otherwise-ambiguous list/namespace/publish
+ *   result.
  *
  * Enables enterprise teams to publish and manage skills in a private registry scoped to their
  * organization. Metadata + packaged content live in `private_registry_skills` (JSONB, not S3 —
  * ADR-129); team-scoped RLS + an in-query team_id filter (ADR-116, SMI-6109 addendum).
  *
  * Backing service is selected at module load: the live Supabase-backed service
- * (registry-tools.live.ts) when Supabase is configured, else an in-memory stub
- * (registry-tools.stub.ts) for local dev / tests.
+ * (registry-tools.live.ts) is the DEFAULT — an in-memory stub (registry-tools.stub.ts) is used
+ * only under the explicit `SKILLSMITH_REGISTRY_STUB` test opt-in (see `useRegistryStub()` below).
  *
  * Tier gate: Enterprise (private_registry feature flag — toolFeatureMapping.ts).
  */
 
 import type { ToolContext } from '../context.js'
-import { isSupabaseConfigured } from '../supabase-client.js'
-import { resolveLicenseTeamId, readLicenseKey } from './team-resolver.js'
 import { withTelemetry } from '@skillsmith/core/telemetry'
 import { createStubRegistryService } from './registry-tools.stub.js'
 import { createLiveRegistryService } from './registry-tools.live.js'
-import { executeRegistryInstall } from './registry-tools.install-action.js'
-import {
-  executeRegistrySubmissions,
-  executeRegistryReview,
-} from './registry-tools.review-action.js'
-import {
-  registrySkillNotFoundMessage,
-  type PrivateRegistryInstallSummary,
-  type RegistrySkillContent,
+import { resolveRegistryTeamId, type RegistryCredentialSource } from './registry-tools.team.js'
+import { confirmedNonMemberMessage } from './registry-tools.membership-check.js'
+import { executePrivateRegistryManageAction } from './registry-tools.manage-action.js'
+import { dataSourceFor } from './stub-data-source.js'
+import type {
+  PrivateRegistryInstallSummary,
+  RegistrySkillContent,
 } from './registry-tools.content.types.js'
 import type {
   RegistryReviewDecision,
@@ -189,13 +190,36 @@ export interface PrivateRegistryService extends PrivateRegistryReviewService {
 }
 
 /**
- * Module-level singleton. Picks the live Supabase-backed service when
- * SUPABASE_URL + SUPABASE_ANON_KEY are configured; otherwise the in-memory stub
- * (local dev / tests).
+ * Explicit, test-only stub opt-in (SMI-6622) — NOT `isSupabaseConfigured()`. The live service
+ * already has an anon-key production fallback (`supabase-client.ts`, SMI-6109), so no Supabase env
+ * var is needed to reach it. `vitest.setup.ts` sets this for the whole test run; a test wanting the
+ * live service still calls `setPrivateRegistryService(createLiveRegistryService())` to override.
+ *
+ * Adversarial-review finding (SMI-6622 round 2): honoring this flag unconditionally made it a
+ * production footgun, not just a test convenience — a stray `SKILLSMITH_REGISTRY_STUB=1` in a real
+ * MCP host's config would make `publish` return `success:true` with nothing written, the exact
+ * silent-success class this issue exists to remove. Only ever honored when `process.env.VITEST`
+ * is `'true'` (Vitest sets this itself — see e.g. `client.events.ts`/`rotation.ts` for the same
+ * convention) — outside the test runner the flag is ignored and a warning is logged so a stray
+ * value is diagnosable rather than silently inert.
  */
-let service: PrivateRegistryService = isSupabaseConfigured()
-  ? createLiveRegistryService()
-  : createStubRegistryService()
+function useRegistryStub(): boolean {
+  const v = process.env.SKILLSMITH_REGISTRY_STUB
+  if (v !== '1' && v !== 'true') return false
+  if (process.env.VITEST !== 'true') {
+    console.error(
+      '[skillsmith] SKILLSMITH_REGISTRY_STUB is set but ignored outside the Vitest test runner ' +
+        '(process.env.VITEST is not "true"); the live registry service is used regardless.'
+    )
+    return false
+  }
+  return true
+}
+
+/** Module-level singleton. Live is the DEFAULT (SMI-6622); stub only under the opt-in above. */
+let service: PrivateRegistryService = useRegistryStub()
+  ? createStubRegistryService()
+  : createLiveRegistryService()
 
 /** Replace the registry service implementation (for testing or production swap) */
 export function setPrivateRegistryService(svc: PrivateRegistryService): void {
@@ -212,46 +236,22 @@ export function getPrivateRegistryService(): PrivateRegistryService {
 // ============================================================================
 
 /**
- * Resolve team ID from the team credential (license key, or API key — SMI-6080).
- *
- * SMI-4292 (finding C3): unified resolution — calls the same `resolve_team_from_license` RPC as
- * team-workspace.ts. A missing/invalid credential surfaces as a typed error (thrown) when Supabase
- * is configured; falls back to a static stub id when it is not (local dev).
- *
- * SMI-6080: `readLicenseKey()` also accepts `SKILLSMITH_API_KEY`, so an admin-granted account
- * (which holds no signed JWT license blob) can resolve its team. Team resolution ONLY — the
- * publish/install/submissions/approve/deprecate actions also require `skillsmith login`.
- */
-async function resolveTeamId(): Promise<string> {
-  if (!isSupabaseConfigured()) return 'team_stub_00000000-0000-0000-0000-000000000000'
-  const licenseKey = readLicenseKey()
-  if (!licenseKey) {
-    throw new Error(
-      'SKILLSMITH_LICENSE_KEY or SKILLSMITH_API_KEY is required for private registry operations. ' +
-        'Set one in your MCP server config — shell exports do not reach MCP subprocesses. ' +
-        'Publishing, installing, and reviewing submissions additionally require `skillsmith login`.'
-    )
-  }
-  const teamId = await resolveLicenseTeamId(licenseKey)
-  if (!teamId) {
-    throw new Error(
-      'Unable to resolve team from the configured key. Ensure SKILLSMITH_LICENSE_KEY or SKILLSMITH_API_KEY is active and attached to an Enterprise-tier subscription.'
-    )
-  }
-  return teamId
-}
-
-/**
  * Execute a private_registry_publish operation.
  */
 async function executePrivateRegistryPublishImpl(
   input: PrivateRegistryPublishInput,
   _context: ToolContext
 ): Promise<PrivateRegistryPublishResult> {
-  const dataSource: 'stub' | 'live' = isSupabaseConfigured() ? 'live' : 'stub'
+  // One read of the module-level singleton, so provenance and data can never come from two
+  // different instances if `setPrivateRegistryService()` lands during an await below (SMI-6203
+  // pattern, as in rbac-tools.action.ts). `dataSource` reflects which service is ACTUALLY wired in,
+  // not merely whether Supabase env happens to be configured (SMI-6622/SMI-6184).
+  const svc = service
+  const dataSource: 'stub' | 'live' = dataSourceFor(svc)
   let teamId: string
+  let credentialSource: RegistryCredentialSource
   try {
-    teamId = await resolveTeamId()
+    ;({ teamId, source: credentialSource } = await resolveRegistryTeamId())
   } catch (err) {
     return {
       success: false,
@@ -264,7 +264,7 @@ async function executePrivateRegistryPublishImpl(
   // security boundary. getNamespace() never throws (SMI-6109) — a lookup failure resolves to
   // `null`, so this pre-check is simply skipped and the trigger remains the sole gate.
   let skillNamespace: string | undefined
-  const namespace = await service.getNamespace(teamId)
+  const namespace = await svc.getNamespace(teamId)
   if (namespace) {
     skillNamespace = namespace
     const requestedNamespace = input.skillId.split('/')[0]
@@ -280,7 +280,7 @@ async function executePrivateRegistryPublishImpl(
   // Service errors (immutability conflict, size cap, missing SKILL.md, missing
   // service-role key) surface as typed {success:false} results, not exceptions.
   try {
-    const skill = await service.publish(
+    const skill = await svc.publish(
       teamId,
       input.skillId,
       input.version,
@@ -309,25 +309,39 @@ async function executePrivateRegistryPublishImpl(
       message,
     }
   } catch (err) {
-    return {
-      success: false,
-      dataSource,
-      error: err instanceof Error ? err.message : 'Failed to publish skill.',
+    const message = err instanceof Error ? err.message : 'Failed to publish skill.'
+    // SMI-6622 round 2 finding 3: an RLS-shaped insert denial is indistinguishable from a genuine
+    // permission problem UNTIL we positively confirm non-membership — see
+    // registry-tools.membership-check.ts's own header for why this never fires on a mere guess.
+    if (dataSource === 'live' && /row-level security|permission denied|42501/i.test(message)) {
+      const nonMember = await confirmedNonMemberMessage(teamId, credentialSource)
+      if (nonMember) return { success: false, dataSource, error: nonMember }
     }
+    return { success: false, dataSource, error: message }
   }
 }
 
 /**
  * Execute a private_registry_manage operation.
+ *
+ * Resolves the team/credential source and reads the module-level `service` singleton (both fresh,
+ * at call time — never captured once at import time, so `setPrivateRegistryService()`'s test/
+ * production swap keeps working), then delegates the actual action switch to
+ * `registry-tools.manage-action.ts` (SMI-6622 round 3 — split out to keep this file comfortably
+ * under the pre-commit 500-line file-length gate; see that file's own header for the full
+ * rationale, including why `service` is passed as a parameter rather than re-fetched there).
  */
 async function executePrivateRegistryManageImpl(
   input: PrivateRegistryManageInput,
   context: ToolContext
 ): Promise<PrivateRegistryManageResult> {
-  const dataSource: 'stub' | 'live' = isSupabaseConfigured() ? 'live' : 'stub'
+  // Single singleton read — see executePrivateRegistryPublishImpl's identical comment above.
+  const svc = service
+  const dataSource: 'stub' | 'live' = dataSourceFor(svc)
   let teamId: string
+  let credentialSource: RegistryCredentialSource
   try {
-    teamId = await resolveTeamId()
+    ;({ teamId, source: credentialSource } = await resolveRegistryTeamId())
   } catch (err) {
     return {
       success: false,
@@ -336,154 +350,14 @@ async function executePrivateRegistryManageImpl(
     }
   }
 
-  // Wrap service calls so live-mode errors (e.g. missing service-role key) surface
-  // as typed {success:false} results instead of propagating as unhandled exceptions.
-  try {
-    switch (input.action) {
-      case 'list': {
-        const skills = await service.list(teamId, input.version, input.includeDeprecated)
-        return {
-          success: true,
-          dataSource,
-          skills,
-          message: `Found ${skills.length} skill(s) in private registry.`,
-        }
-      }
-
-      case 'get': {
-        if (!input.skillId) {
-          return { success: false, dataSource, error: 'skillId is required for action "get".' }
-        }
-        const skill = await service.get(teamId, input.skillId, input.version)
-        if (!skill) {
-          // Non-leaking (plan-review finding M11): the same message covers "does not exist",
-          // "wrong team", and "exists but is pending/rejected and therefore RLS-invisible" — a
-          // caller must not be able to distinguish those from this response.
-          return {
-            success: false,
-            dataSource,
-            error: registrySkillNotFoundMessage(input.skillId),
-          }
-        }
-        return { success: true, dataSource, skill }
-      }
-
-      // SMI-5905 Wave 3. Handler lives in a companion file (this one was 466/500 lines).
-      // `await` is load-bearing here (SMI-5949 Wave 2 Step 4 finding): `return promise` inside a
-      // try block does NOT let a rejection reach this function's own `catch` below — the promise
-      // adoption happens outside the try/catch's synchronous scope, so an unawaited rejection
-      // bypasses it and becomes an unhandled rejection at the caller instead of a typed
-      // {success:false} result. Confirmed empirically; applies to every delegating case below too.
-      case 'install':
-        return await executeRegistryInstall({ input, teamId, dataSource, service, context })
-
-      case 'deprecate': {
-        if (!input.skillId) {
-          return {
-            success: false,
-            dataSource,
-            error: 'skillId is required for action "deprecate".',
-          }
-        }
-        const deprecated = await service.deprecate(teamId, input.skillId)
-        if (!deprecated) {
-          return {
-            success: false,
-            dataSource,
-            error: registrySkillNotFoundMessage(input.skillId),
-          }
-        }
-        return {
-          success: true,
-          dataSource,
-          // SMI-5949 Wave 3: corrected from "will no longer appear in search results" — the
-          // private registry has no search surface at all (Context § "precedent warning" in the
-          // plan doc). This is the actual, now-enforced behavior: `list`/`get`/`install` (both the
-          // MCP and Edge Function transports) all carry a `deprecated = FALSE` predicate with no
-          // per-call bypass, so an approved-then-deprecated version is invisible everywhere,
-          // including to a caller who already knows its exact skillId+version.
-          //
-          // SMI-5949 adversarial-review corrections (M-1, M-3): this UPDATE has no `.eq('version',
-          // …)`, but PostgreSQL applies the SELECT policy to it too (migration
-          // 20260809000000_private_registry_approval_gate.sql:78-86), so it only ever actually
-          // affects this skillId's currently-APPROVED row(s) — a `pending`/`rejected` sibling
-          // version, if one exists, is untouched by this call and can still be independently
-          // approved and installed later, regardless of this deprecation. And the
-          // `includeDeprecated:true` opt-in is NOT admin-gated — it is a plain, unauthenticated
-          // query parameter on `list()`, checked nowhere against role (see
-          // `registry-tools.live.reads.ts`'s own doc comment on `listSkills()`), so any team
-          // member can pass it, not only a team admin. Since SMI-6109, `list()` runs on the
-          // signed-in user's own JWT, not the shared license key — so the message below says
-          // "signed-in team member," not "anyone holding the license key."
-          message: `Skill "${input.skillId}" has been deprecated. Its approved version(s) will no longer be returned by list, get, or install — even by an exact version — for any team member; a separate pending or rejected version of this skillId, if one exists, is unaffected. Any signed-in team member can still see deprecated versions via private_registry_manage {action:'list', includeDeprecated:true} — this is not restricted to team admins.`,
-        }
-      }
-
-      case 'undeprecate': {
-        if (!input.skillId) {
-          return {
-            success: false,
-            dataSource,
-            error: 'skillId is required for action "undeprecate".',
-          }
-        }
-        const undeprecated = await service.undeprecate(teamId, input.skillId)
-        if (!undeprecated) {
-          return {
-            success: false,
-            dataSource,
-            error: registrySkillNotFoundMessage(input.skillId),
-          }
-        }
-        return {
-          success: true,
-          dataSource,
-          // SMI-5949 Wave 3: same correction as the deprecate message above — "search results" was
-          // never accurate for a private registry with no search surface.
-          message: `Skill "${input.skillId}" has been undeprecated and is visible again via list, get, and install.`,
-        }
-      }
-
-      // SMI-5852, AC-11: discover the team's publish namespace without attempting a
-      // publish (the required skill_id prefix, e.g. "acme" for "acme/my-skill").
-      case 'namespace': {
-        const namespace = await service.getNamespace(teamId)
-        if (!namespace) {
-          // getNamespace() never throws, so "not logged in" and "genuinely unconfigured" both
-          // collapse to this one message (unlike list/get's actionable login error) — hinting at
-          // login here is a partial fix for that UX gap (SMI-6109 cross-provider review).
-          return {
-            success: false,
-            dataSource,
-            error:
-              "Unable to resolve this team's private registry namespace. If you haven't run " +
-              '`skillsmith login` yet, do that and try again.',
-          }
-        }
-        return {
-          success: true,
-          dataSource,
-          namespace,
-          message: `Your team's private registry namespace is "${namespace}".`,
-        }
-      }
-
-      // SMI-5949 D-5/D-12 — handlers in a companion file, same reason 'install' is. `await`
-      // is load-bearing — see the comment on 'install' above.
-      case 'submissions':
-        return await executeRegistrySubmissions({ input, teamId, dataSource, service })
-
-      case 'approve':
-      case 'reject':
-        return await executeRegistryReview({ input, teamId, dataSource, service })
-    }
-  } catch (err) {
-    return {
-      success: false,
-      dataSource,
-      error: err instanceof Error ? err.message : 'Registry operation failed.',
-    }
-  }
+  return executePrivateRegistryManageAction({
+    input,
+    context,
+    teamId,
+    credentialSource,
+    dataSource,
+    service: svc,
+  })
 }
 
 // SMI-5017 W2.S2: wrap at export boundary

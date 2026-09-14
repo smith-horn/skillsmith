@@ -26,22 +26,61 @@ const PRODUCTION_ANON_KEY =
   'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6InZyY256cG1uZHRyb3F4eG9xa3p5Iiwicm9sZSI6ImFub24iLCJpYXQiOjE3Njc4MzgwNzQsImV4cCI6MjA4MzQxNDA3NH0.WNK5jaNG3twxApOva5A1ZlCaZb5hVqBYtNJezRrR4t8'
 
 /**
+ * Reject a Supabase URL that embeds userinfo (`https://user:pass@host`) — SMI-6622 round 7.
+ *
+ * Client construction succeeds silently for such a URL; the FIRST real query then fails with
+ * `error.message = "TypeError: Request cannot be constructed from a URL that includes
+ * credentials: https://user:pass@host/rest/v1/..."` (confirmed against real `@supabase/
+ * supabase-js` 2.114.0 + Node 22 with marker credentials) — the credentials embedded VERBATIM in
+ * the message text. Every `resp.error.message`-forwarding call site in this codebase (this PR's
+ * own, and the pre-existing ones tracked in SMI-6649) would copy that straight into a tool result.
+ * This is the one leak that measurement run found real (every other class it probed — PostgREST,
+ * auth-refresh, transport, config-parse, client-construction — produced no credential material).
+ *
+ * Runs BEFORE `createClient()`, at the point each factory resolves its URL, so no request bound
+ * for a credentialed URL is ever built. The thrown message names neither the URL nor any part of
+ * it — only that credentials were present.
+ *
+ * An unparseable URL is left alone: `new URL()` throwing here just means this guard has nothing to
+ * check, and `createClient()` itself already throws its own authored "Invalid supabaseUrl" for
+ * that case — unchanged.
+ */
+function assertNoUrlCredentials(url: string): void {
+  let parsed: URL
+  try {
+    parsed = new URL(url)
+  } catch {
+    return
+  }
+  if (parsed.username || parsed.password) {
+    throw new Error(
+      'The configured Supabase URL contains a username or password. Remove the credentials from ' +
+        'the URL and retry.'
+    )
+  }
+}
+
+/**
  * Resolve the Supabase URL/anon key for the anon-key client paths: an explicit env var always
  * wins, falling back to the hardcoded production values only when unset (SMI-6109). Mirrors
  * packages/core/src/api/utils.ts's DEFAULT_BASE_URL pattern — an explicit override (e.g.
  * private-registry-e2e.yml's `mcp-live` leg pointing SUPABASE_URL/SUPABASE_ANON_KEY at staging)
  * keeps working exactly as before; only a genuinely-unset var reaches the fallback.
  *
- * Deliberately NOT applied to isSupabaseConfigured() below: that flag also gates several unrelated
+ * Deliberately NOT applied to isSupabaseConfigured() below: that flag still gates several other
  * tool families' own live/stub selection (sso-tools, team-workspace, compliance-tools,
- * integration-tools, rbac-tools, team-resolver), each of which still needs real Supabase config
- * for its own (unrelated, still service-role-backed) live path — flipping it here would silently
- * move all of them from a working stub to a broken "live" attempt, well outside SMI-6109's scope
- * (removing SUPABASE_SERVICE_ROLE_KEY from the *customer-facing* surface, not making every tool
- * family Supabase-config-optional).
+ * integration-tools, rbac-tools, team-resolver's own shared resolveLicenseTeamId() — SMI-6623),
+ * each of which still needs real Supabase config for its own (unrelated, still service-role-backed)
+ * live path — flipping it here would silently move all of them from a working stub to a broken
+ * "live" attempt, well outside SMI-6109's scope (removing SUPABASE_SERVICE_ROLE_KEY from the
+ * *customer-facing* surface, not making every tool family Supabase-config-optional). `registry-
+ * tools.ts` is no longer one of these families (SMI-6622: see isSupabaseConfigured()'s own doc
+ * comment below) — it reads neither this function's fallback nor isSupabaseConfigured() itself.
  */
 function resolveSupabaseUrl(): string {
-  return process.env.SUPABASE_URL || PRODUCTION_SUPABASE_URL
+  const url = process.env.SUPABASE_URL || PRODUCTION_SUPABASE_URL
+  assertNoUrlCredentials(url)
+  return url
 }
 
 function resolveSupabaseAnonKey(): string {
@@ -52,10 +91,30 @@ let _client: unknown = null
 let _adminClient: unknown = null
 
 /**
+ * Guard against a test silently reaching production Supabase through the anon-key fallback above
+ * (SMI-6622 round-2 adversarial finding: a probe recorded real `resolve_team_from_license` POSTs
+ * reaching the hardcoded prod URL from an unmocked test). Lives here, not in registry-tools.ts —
+ * EVERY tool family's tests rely on this fallback being inert under Vitest, not registry's alone.
+ * Fires only when `SUPABASE_URL` itself is unset: an explicit override (even to a real environment,
+ * e.g. private-registry-e2e.yml's staging leg) is a deliberate choice this guard must not
+ * second-guess, so it never fires when SUPABASE_URL is set to anything, including prod itself.
+ */
+function assertNoProdFallbackUnderTest(): void {
+  if (process.env.VITEST === 'true' && !process.env.SUPABASE_URL) {
+    throw new Error(
+      'test attempted to reach production Supabase; mock supabase-client.js or set SUPABASE_URL ' +
+        'to a local stub.'
+    )
+  }
+}
+
+/**
  * Get the Supabase anon-key client (lazy singleton).
- * Uses SUPABASE_URL/SUPABASE_ANON_KEY when set, else the production defaults (SMI-6109).
+ * Uses SUPABASE_URL/SUPABASE_ANON_KEY when set, else the production defaults (SMI-6109) — except
+ * under Vitest with no SUPABASE_URL, where that fallback throws instead (see the guard above).
  */
 export async function getSupabaseClient(): Promise<unknown> {
+  assertNoProdFallbackUnderTest()
   if (_client) return _client
   const url = resolveSupabaseUrl()
   const anonKey = resolveSupabaseAnonKey()
@@ -80,6 +139,10 @@ export async function getSupabaseAdminClient(): Promise<unknown> {
   if (!url || !serviceKey) {
     throw new Error('Supabase admin not configured: SUPABASE_SERVICE_ROLE_KEY required')
   }
+  // This factory has no fallback (SMI-6109) so it never calls resolveSupabaseUrl() — the same
+  // credentials-in-URL guard runs here explicitly (SMI-6622 round 7; see assertNoUrlCredentials()'s
+  // own doc comment above).
+  assertNoUrlCredentials(url)
   try {
     const { createClient } = await import('@supabase/supabase-js')
     _adminClient = createClient(url, serviceKey)
@@ -101,11 +164,12 @@ export async function getSupabaseAdminClient(): Promise<unknown> {
  * that authorizes them, rather than app-level logic that can drift from the policy.
  *
  * Uses SUPABASE_URL/SUPABASE_ANON_KEY when set, else the production defaults (SMI-6109) — same
- * fallback as getSupabaseClient() above.
+ * fallback as getSupabaseClient() above, including the same test-time guard against reaching it.
  *
  * @param accessToken - a Supabase user access token (from `skillsmith login`)
  */
 export async function getSupabaseUserClient(accessToken: string): Promise<unknown> {
+  assertNoProdFallbackUnderTest()
   const url = resolveSupabaseUrl()
   const anonKey = resolveSupabaseAnonKey()
   if (!accessToken) {
@@ -129,18 +193,19 @@ export async function getSupabaseUserClient(accessToken: string): Promise<unknow
  *
  * Deliberately NOT affected by the anon-key fallback above (SMI-6109) — see that comment for why.
  *
- * Cross-provider review correction (SMI-6109): this means the fallback does NOT make the private
- * registry usable with zero Supabase config. `registry-tools.ts`'s own module-load service
- * selection AND its `resolveTeamId()` both still gate on this exact flag, so a customer with
- * neither `SUPABASE_URL` nor `SUPABASE_ANON_KEY` set gets the in-memory STUB service, never
- * reaching `getMemberUserClient()`/the fallback at all — by design, so a genuinely unconfigured
- * host still gets fast, offline-safe stub behavior instead of a live network call against a
- * license key that was never set up. The fallback's real, narrower benefit: once a customer HAS
- * set both vars (the expected Team/Enterprise setup — see the README), a *later* drift where one
- * of the two is missing in some specific execution context (e.g. propagated inconsistently to an
- * MCP subprocess) degrades gracefully instead of failing, and — matching
- * packages/core/src/api/utils.ts's identical DEFAULT_BASE_URL pattern — the anon-key surface never
- * needs a bespoke "not configured" error path of its own.
+ * SMI-6622 correction (this flag's role narrowed — read this before assuming it gates the private
+ * registry): `registry-tools.ts`'s module-load service selection and its `resolveTeamId()` used to
+ * both gate on this exact flag, so a customer with neither `SUPABASE_URL` nor `SUPABASE_ANON_KEY`
+ * set got the in-memory STUB service and `publish` silently returned `success:true` with nothing
+ * written — the public `@skillsmith/mcp-server` package must never require Supabase env vars, and
+ * the anon-key fallback above already made the live path reachable with zero config, so that gate
+ * was actively wrong, not merely conservative. `registry-tools.ts` no longer reads this flag at
+ * all (`registry-tools.team.ts` resolves the team unconditionally instead). This flag's remaining,
+ * *narrower* role: `sso-tools`, `team-workspace`, `compliance-tools`, `integration-tools`,
+ * `rbac-tools`, and `team-resolver.ts`'s own shared `resolveLicenseTeamId()` (SMI-6623 — still used
+ * directly by some of those) each still gate their own (unrelated, still service-role-backed) live
+ * path on it, and matching `packages/core/src/api/utils.ts`'s identical `DEFAULT_BASE_URL` pattern,
+ * the anon-key surface itself never needs a bespoke "not configured" error path of its own.
  */
 export function isSupabaseConfigured(): boolean {
   return !!(process.env.SUPABASE_URL && process.env.SUPABASE_ANON_KEY)

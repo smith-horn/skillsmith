@@ -2,12 +2,17 @@
  * @fileoverview End-to-end team resolution for private-registry tools with only SKILLSMITH_API_KEY
  * @see SMI-6080: `private_registry_publish` / `private_registry_manage` could not resolve a team
  *      from a complimentary/admin-granted API key
+ * @see SMI-6622: `registry-tools.ts`'s `resolveTeamId()` now delegates to the registry-only
+ *      `registry-tools.team.ts` (not `team-resolver.ts`'s `resolveLicenseTeamId()` directly), but
+ *      that new module reuses `team-resolver.ts`'s `readLicenseKey()` as-is for its env-credential
+ *      half — so the env-var precedence this file exercises is unchanged. Its own dedicated
+ *      config.json-fallback and error-typing coverage lives in registry-tools.team.test.ts.
  *
- * Every OTHER registry-tools test mocks `./team-resolver.js` wholesale, so none of them exercise
- * the real credential-resolution chain. This file deliberately does NOT mock it: it stubs only the
- * Supabase surface underneath (`isSupabaseConfigured` + a recording `rpc()`), so
- * `readLicenseKey()` → `resolveLicenseTeamId()` → `resolve_team_from_license` runs for real and a
- * regression in the fallback fails here instead of silently passing everywhere.
+ * Every OTHER registry-tools test mocks `./team-resolver.js` (now: `./registry-tools.team.js`)
+ * wholesale, so none of them exercise the real credential-resolution chain. This file deliberately
+ * does NOT mock either: it stubs only the Supabase surface underneath (`isSupabaseConfigured` + a
+ * recording `rpc()`), so `readLicenseKey()` → `resolveRegistryTeamId()` → `resolve_team_from_license`
+ * runs for real and a regression in the fallback fails here instead of silently passing everywhere.
  *
  * Scope: this covers TEAM RESOLUTION only — "which team is this call for". The publish / install /
  * submissions / approve / deprecate actions additionally require a signed-in user's own Supabase
@@ -76,7 +81,12 @@ describe('private-registry team resolution — SKILLSMITH_API_KEY fallback (SMI-
     const result = await executePrivateRegistryManage({ action: 'list' }, makeContext())
 
     expect(result.success).toBe(true)
-    expect(result.dataSource).toBe('live')
+    // SMI-6622/SMI-6184: dataSource now reflects which SERVICE is actually wired in
+    // (dataSourceFor(service)), not isSupabaseConfigured() — this file's own beforeEach injects
+    // createStubRegistryService() deliberately (so CRUD stays safe/offline) while still exercising
+    // REAL team resolution against the mocked RPC below, so 'stub' here is correct, not a
+    // regression: it is the exact drift SMI-6184 fixed for the other tool families.
+    expect(result.dataSource).toBe('stub')
     expect(result.error).toBeUndefined()
     // The API key is what actually reached the RPC — the whole point of the fallback.
     expect(rpcMock).toHaveBeenCalledWith('resolve_team_from_license', {
@@ -135,5 +145,104 @@ describe('private-registry team resolution — SKILLSMITH_API_KEY fallback (SMI-
     expect(result.success).toBe(false)
     expect(result.error).toContain('Unable to resolve team')
     expect(result.error).toContain('SKILLSMITH_API_KEY')
+  })
+
+  // ============================================================================
+  // SMI-6622 round 6 PR-07 finding 4: end-to-end through the actual MCP tool handlers —
+  // registry-tools.ts's publish/manage catch blocks (lines ~253-258, ~341-347) forward
+  // resolveRegistryTeamId()'s thrown `.message` directly into the result. A team-resolution
+  // failure with credential-shaped text anywhere upstream (an RPC error, a thrown exception, or
+  // getSupabaseClient() itself failing) must never let that text reach either tool's result.
+  // ============================================================================
+
+  describe('team-resolution failures never leak secrets into either tool result (round 6 PR-07)', () => {
+    const jwt = 'eyJhbGciOiJIUzI1NiJ9.eyJzdWIiOiJ4In0.sig'
+    const apiKey = 'sk_live_abcdefghijklmnopqrstuvwx'
+    const licenseKey = 'sk_test_fake_license'
+
+    it('rpc_error: an RPC error.message containing secrets reaches neither the manage nor the publish result', async () => {
+      process.env.SKILLSMITH_API_KEY = 'sk_live_x'
+      rpcMock.mockResolvedValue({
+        data: null,
+        error: {
+          message: `permission denied for token ${jwt} key ${apiKey} license ${licenseKey}`,
+        },
+      })
+
+      const manageResult = await executePrivateRegistryManage({ action: 'list' }, makeContext())
+      expect(manageResult.success).toBe(false)
+      expect(manageResult.error).not.toContain(jwt)
+      expect(manageResult.error).not.toContain(apiKey)
+      expect(manageResult.error).not.toContain(licenseKey)
+
+      const publishResult = await executePrivateRegistryPublish(
+        {
+          skillId: 'myteam/my-skill',
+          version: '1.0.0',
+          content: { 'SKILL.md': '# My Skill\n\nDoes a useful thing.' },
+        },
+        makeContext()
+      )
+      expect(publishResult.success).toBe(false)
+      expect(publishResult.error).not.toContain(jwt)
+      expect(publishResult.error).not.toContain(apiKey)
+      expect(publishResult.error).not.toContain(licenseKey)
+    })
+
+    it('transport_error: a thrown RPC-call exception containing secrets reaches neither the manage nor the publish result', async () => {
+      process.env.SKILLSMITH_API_KEY = 'sk_live_x'
+      rpcMock.mockRejectedValue(
+        new Error(`upstream failure: token ${jwt} key ${apiKey} license ${licenseKey}`)
+      )
+
+      const manageResult = await executePrivateRegistryManage({ action: 'list' }, makeContext())
+      expect(manageResult.success).toBe(false)
+      expect(manageResult.error).not.toContain(jwt)
+      expect(manageResult.error).not.toContain(apiKey)
+      expect(manageResult.error).not.toContain(licenseKey)
+
+      const publishResult = await executePrivateRegistryPublish(
+        {
+          skillId: 'myteam/my-skill',
+          version: '1.0.0',
+          content: { 'SKILL.md': '# My Skill\n\nDoes a useful thing.' },
+        },
+        makeContext()
+      )
+      expect(publishResult.success).toBe(false)
+      expect(publishResult.error).not.toContain(jwt)
+      expect(publishResult.error).not.toContain(apiKey)
+      expect(publishResult.error).not.toContain(licenseKey)
+    })
+
+    it('client_unavailable: getSupabaseClient() throwing with secrets in its message reaches neither the manage nor the publish result', async () => {
+      process.env.SKILLSMITH_API_KEY = 'sk_live_x'
+      const { getSupabaseClient } = await import('../supabase-client.js')
+      vi.mocked(getSupabaseClient).mockRejectedValue(
+        new Error(`client init failed: token ${jwt} key ${apiKey} license ${licenseKey}`)
+      )
+
+      const manageResult = await executePrivateRegistryManage({ action: 'list' }, makeContext())
+      expect(manageResult.success).toBe(false)
+      expect(manageResult.error).not.toContain(jwt)
+      expect(manageResult.error).not.toContain(apiKey)
+      expect(manageResult.error).not.toContain(licenseKey)
+
+      const publishResult = await executePrivateRegistryPublish(
+        {
+          skillId: 'myteam/my-skill',
+          version: '1.0.0',
+          content: { 'SKILL.md': '# My Skill\n\nDoes a useful thing.' },
+        },
+        makeContext()
+      )
+      expect(publishResult.success).toBe(false)
+      expect(publishResult.error).not.toContain(jwt)
+      expect(publishResult.error).not.toContain(apiKey)
+      expect(publishResult.error).not.toContain(licenseKey)
+
+      vi.mocked(getSupabaseClient).mockReset()
+      vi.mocked(getSupabaseClient).mockImplementation(async () => ({ rpc: rpcMock }))
+    })
   })
 })

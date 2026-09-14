@@ -55,7 +55,10 @@
 
 import { createHash } from 'node:crypto'
 import { getSupabaseAdminClient } from '../supabase-client.js'
-import { readLicenseKey } from './team-resolver.js'
+// SMI-6622 round 2: readRegistryCredential() also covers ~/.skillsmith/config.json, unlike
+// team-resolver.ts's env-only readLicenseKey() this replaced — see registry-tools.team.ts's own
+// doc comment on the export.
+import { readRegistryCredential } from './registry-tools.team.js'
 
 /**
  * Registry operations worth an audit row.
@@ -144,13 +147,13 @@ const MAX_JWT_PAYLOAD_BYTES = 8192
  * anything that could be replayed. Returns null when no key is readable, so an absent credential
  * is recorded as absent rather than as some default bucket.
  *
- * SMI-6080: "the presented credential" is whatever `readLicenseKey()` resolved — a license key, or
- * `SKILLSMITH_API_KEY` when that fallback applied. Both hash into the same `license_keys.key_hash`
- * row, so a fingerprint stays a stable per-key correlator either way; it just no longer implies the
- * caller configured `SKILLSMITH_LICENSE_KEY` specifically.
+ * SMI-6080: "the presented credential" is whatever the registry credential chain resolved — a
+ * license key, `SKILLSMITH_API_KEY`, or (SMI-6622 round 2) `~/.skillsmith/config.json`'s `apiKey`.
+ * All three hash into the same `license_keys.key_hash` row, so a fingerprint stays a stable
+ * per-key correlator regardless of source; it just no longer implies any one of them specifically.
  */
 export function licenseKeyFingerprint(licenseKey?: string): string | null {
-  const key = readLicenseKey(licenseKey)
+  const key = licenseKey ?? readRegistryCredential()
   if (!key) return null
   // codeql[js/insufficient-password-hash] Not password storage — a truncated,
   // one-way correlation fingerprint for audit rows (see doc comment above).

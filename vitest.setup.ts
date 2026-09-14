@@ -4,6 +4,16 @@
 // defense-in-depth ceiling guard, not a root-cause fix.
 process.setMaxListeners(20)
 
+// SMI-6622: packages/mcp-server/src/tools/registry-tools.ts picks its live Supabase-backed
+// service by DEFAULT (no isSupabaseConfigured() gate — the public @skillsmith/mcp-server package
+// must never require Supabase env vars). Set unconditionally, mirroring the $HOME sandbox above,
+// so a test that forgets to call setPrivateRegistryService() never falls through to a real network
+// call against production by accident. A test exercising the true default (module-load selection
+// with no override) deletes this itself before a fresh `vi.resetModules()` import — see
+// registry-tools.team.test.ts; a test wanting the live service calls
+// setPrivateRegistryService(createLiveRegistryService()) — see registry-tools.live.*.test.ts.
+process.env.SKILLSMITH_REGISTRY_STUB = '1'
+
 // ---------------------------------------------------------------------------
 // SMI-6343 Wave 1: $HOME sandbox
 // ---------------------------------------------------------------------------

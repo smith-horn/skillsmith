@@ -27,7 +27,7 @@
  * gap into a real regression in THIS file; fixed in the same pass, not deferred.
  */
 
-import { describe, it, expect, beforeEach, afterEach } from 'vitest'
+import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest'
 import * as fs from 'fs/promises'
 import * as path from 'path'
 import * as os from 'os'
@@ -48,6 +48,28 @@ import {
   setPrivateRegistryService,
   type StubRegistryService,
 } from './registry-tools.js'
+
+// SMI-6622: the "Dispatch" tests below go through `executePrivateRegistryManage`, which now
+// ALWAYS attempts real team resolution (never a placeholder id just because the stub SERVICE is
+// injected — see registry-tools.ts's `useRegistryStub()`/`resolveTeamId()` doc comments). The
+// "Round-trip" tests bypass this entirely (they call `executeRegistryInstall`/`service.publish()`
+// directly with an explicit `TEAM`), so only the dispatch tests actually need this mock — added
+// uniformly since both share this file's team-resolver.js-less setup.
+// importOriginal + spread (SMI-6622 round 2), not a bare replacement factory — the real module's
+// other exports (describeCredentialSource, RegistryTeamResolutionError, etc.) stay real, so a
+// future new export never needs to be re-added to every mock across the repo (see
+// call-tool-handler.test.ts's identical rationale for the same pattern on supabase-client.js).
+vi.mock('./registry-tools.team.js', async (importOriginal) => {
+  const actual = await importOriginal<typeof import('./registry-tools.team.js')>()
+  return {
+    ...actual,
+    resolveRegistryTeamId: vi.fn(async () => ({
+      teamId: 'team-alpha',
+      source: 'env:SKILLSMITH_LICENSE_KEY',
+    })),
+    readRegistryCredential: vi.fn(() => 'sk_test_fake_license'),
+  }
+})
 
 /** Distinct admin identity used to approve every fixture published in this file (SMI-5949 D-6
  *  blocks self-approval — see registry-tools.test.ts's own ADMIN_ACTOR for the established
