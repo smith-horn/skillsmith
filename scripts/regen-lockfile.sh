@@ -32,6 +32,26 @@
 #   (container, :ro mount) or corrupt main's real node_modules via the
 #   SMI-4377 symlink (host). See SMI-5724.
 #
+# SMI-6614 (ADR-158, change 5b): this is the advised refresh command for a
+# real lockfile-drift verdict. Every container node_modules mutation
+# (`npm install`, `npm rebuild`) is mount-gated: the mount-identity check and
+# the mutation run in ONE `docker exec … sh -c` process, so a container recreated
+# between them can't redirect the mutation onto a freshly-detached mount
+# (R2-1). The gate is identified by BOTH exit 97 AND a literal
+# `MOUNT_GATE <rc>` line on the captured stderr (R3-1) — `npm rebuild`'s own
+# lifecycle scripts can independently exit 97, and that must read as an npm
+# failure, not a mount failure. `--lockfile-only` never touches node_modules
+# and is unaffected.
+#
+# SMI-6614 (ADR-158, change 5c): refuses to start a full sync while
+# retrieval-autoheal.sh or repair-host-native-deps.sh is already running
+# (both are host native-repair writers), and kicks the detached auto-heal
+# once its own host repair + sentinel write finish — restoring the
+# "heal after install" ordering .husky/post-merge's deferral (change 4)
+# depends on. Both checks are point-in-time `pgrep` snapshots — the same
+# residual class the auto-heal already documents for a human install; true
+# mutual exclusion is SMI-6627's scope.
+#
 # Prerequisites: Docker container running (main checkout path only).
 
 set -euo pipefail
@@ -39,6 +59,8 @@ set -euo pipefail
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 # shellcheck source=./_lib.sh
 source "$SCRIPT_DIR/_lib.sh"
+# shellcheck source=./lib/running-script-pids.sh
+source "$SCRIPT_DIR/lib/running-script-pids.sh"
 
 CONTAINER="skillsmith-dev-1"
 NATIVE_MODULES="better-sqlite3 onnxruntime-node esbuild hnswlib-node"
@@ -81,6 +103,80 @@ IS_WORKTREE=false
 verify_container_native() {
   docker exec "$CONTAINER" node -e \
     "require('@skillsmith/core').createDatabaseSync(':memory:').close()" >/dev/null 2>&1
+}
+
+# SMI-6614 (ADR-158): reports a failed docker-exec-wrapped npm mutation and
+# exits. Distinguishes a mount-gate refusal (exit 97 AND a literal
+# `MOUNT_GATE <rc>` line on the captured stderr — BOTH required, since `npm
+# rebuild`'s own lifecycle scripts can independently exit 97) from an
+# ordinary npm failure. The gate is scripts/lib/node-modules-mount-gate.sh
+# (checks root + every packages/*/node_modules); its own "MOUNT_DETACHED
+# <path>" / "MOUNT_NOT_VOLUME <path> root=... fstype=..." / "MOUNT_AMBIGUOUS
+# <path>" lines flow straight through into $err_text (the sh -c payload
+# below never redirects the gate's stderr away), so rc=32 names the actual
+# affected path(s) instead of assuming /app/node_modules specifically. The
+# helper checks a mount's root SHAPE, not Docker/Podman identity (which is
+# unreachable from inside the container) — hence "volume-shaped" below, not
+# "named volume".
+report_docker_npm_failure() {
+  local label="$1" rc="$2" err_text="$3" mount_rc affected_paths
+  if [ "$rc" -eq 97 ] && printf '%s\n' "$err_text" | grep -q '^MOUNT_GATE '; then
+    mount_rc="$(printf '%s\n' "$err_text" | sed -n 's/^MOUNT_GATE //p' | head -1)"
+    case "$mount_rc" in
+      32)
+        affected_paths="$(printf '%s\n' "$err_text" | grep -E '^(MOUNT_DETACHED|MOUNT_NOT_VOLUME|MOUNT_AMBIGUOUS) ' | sed -E 's/^(MOUNT_DETACHED|MOUNT_NOT_VOLUME|MOUNT_AMBIGUOUS) /    - /')"
+        error "$CONTAINER has a node_modules mount problem (SMI-6516) — refusing to run $label, which would write into the HOST tree instead.
+Affected path(s):
+${affected_paths:-    (path unavailable — see raw output below)}
+Recreate: docker compose --profile dev up -d --force-recreate dev (from the main checkout), verify with 'docker exec -w /app $CONTAINER sh scripts/lib/node-modules-mount-gate.sh && echo OK', then retry."
+        ;;
+      127)
+        error "Cannot verify $CONTAINER's node_modules mounts (cannot read /proc/self/mountinfo inside the container) — refusing to run $label blind."
+        ;;
+      *)
+        error "Mount check for $CONTAINER's node_modules failed unexpectedly (exit $mount_rc) — refusing to run $label."
+        ;;
+    esac
+  fi
+  printf '%s\n' "$err_text" >&2
+  error "$label failed inside $CONTAINER (see output above, exit $rc)."
+}
+
+# SMI-6614 (ADR-158): refuses to start a full sync while a host native
+# repair (retrieval-autoheal.sh or repair-host-native-deps.sh) is already
+# running — both mutate the same host tree this script is about to mutate.
+# "Cannot tell whether a repair is running" fails closed rather than
+# proceeding with only a warning: it is the SAME hazard this check exists
+# to prevent, just undetectable instead of detected. `ps`/`pgrep`
+# unavailable REFUSES, naming whichever tool running_script_pids reported
+# missing.
+refuse_if_native_repair_running() {
+  local pids detect_stderr_file detect_err
+  detect_stderr_file="$(mktemp)"
+  if ! pids="$(running_script_pids retrieval-autoheal.sh repair-host-native-deps.sh 2>"$detect_stderr_file")"; then
+    detect_err="$(cat "$detect_stderr_file" 2>/dev/null || true)"
+    rm -f "$detect_stderr_file"
+    error "Cannot verify no host native repair is currently running (${detect_err:-process-detection tool unavailable}) — refusing to start a full sync blind. Install the missing tool and retry."
+  fi
+  rm -f "$detect_stderr_file"
+  if [ -n "$pids" ]; then
+    error "A host native repair is already running (retrieval-autoheal.sh or repair-host-native-deps.sh, pid(s): $(printf '%s' "$pids" | tr '\n' ' ')) — retry when it finishes."
+  fi
+}
+
+# SMI-6614 (ADR-158, change 5c/3): kicks the detached auto-heal AFTER this
+# script's own host repair + sentinel write finish, restoring the
+# "heal after install" ordering .husky/post-merge's deferral depends on
+# (change 4). MUST wait for THIS process to exit first — retrieval-autoheal.sh's
+# own foreign_install_running() detector (change 5c/2) would otherwise see the
+# still-running refresh and defer, silently dropping the retrigger. The wait
+# is bounded in practice since this script exits on the next line after
+# backgrounding it.
+kick_autoheal_after_exit() {
+  local autoheal="$SCRIPT_DIR/retrieval-autoheal.sh"
+  [ -r "$autoheal" ] || return 0
+  nohup sh -c 'while kill -0 "$1" 2>/dev/null; do sleep 1; done; exec bash "$2"' \
+    _ "$$" "$autoheal" </dev/null >/dev/null 2>&1 &
 }
 
 if $IS_WORKTREE; then
@@ -133,12 +229,34 @@ if $LOCKFILE_ONLY; then
 fi
 
 # ---- Full safe sync ----
+refuse_if_native_repair_running
+
 info "Regenerating lockfile + syncing container node_modules… (container: skillsmith-dev-1)"
-docker exec "$CONTAINER" npm install
+# SMI-6614 (ADR-158, change 5b): mount check + mutation run as ONE `sh -c`
+# process inside the container (R2-1) — no window opens between the two for
+# a container recreate to redirect the install onto a freshly-detached
+# mount.
+INSTALL_ERR_FILE="$(mktemp)"
+if docker exec -w /app "$CONTAINER" sh -c 'sh scripts/lib/node-modules-mount-gate.sh; rc=$?; [ "$rc" -eq 0 ] || { echo "MOUNT_GATE $rc" >&2; exit 97; }; exec npm install' 2>"$INSTALL_ERR_FILE"; then
+  rm -f "$INSTALL_ERR_FILE"
+else
+  INSTALL_RC=$?
+  INSTALL_ERR_TEXT="$(cat "$INSTALL_ERR_FILE" 2>/dev/null || true)"
+  rm -f "$INSTALL_ERR_FILE"
+  report_docker_npm_failure "npm install" "$INSTALL_RC" "$INSTALL_ERR_TEXT"
+fi
 
 info "Rebuilding native modules with build scripts (the anti-wipe step)…"
+REBUILD_ERR_FILE="$(mktemp)"
 # shellcheck disable=SC2086
-docker exec "$CONTAINER" npm rebuild $NATIVE_MODULES --ignore-scripts=false
+if docker exec -w /app "$CONTAINER" sh -c 'sh scripts/lib/node-modules-mount-gate.sh; rc=$?; [ "$rc" -eq 0 ] || { echo "MOUNT_GATE $rc" >&2; exit 97; }; exec npm rebuild "$@"' _ $NATIVE_MODULES --ignore-scripts=false 2>"$REBUILD_ERR_FILE"; then
+  rm -f "$REBUILD_ERR_FILE"
+else
+  REBUILD_RC=$?
+  REBUILD_ERR_TEXT="$(cat "$REBUILD_ERR_FILE" 2>/dev/null || true)"
+  rm -f "$REBUILD_ERR_FILE"
+  report_docker_npm_failure "npm rebuild" "$REBUILD_RC" "$REBUILD_ERR_TEXT"
+fi
 
 info "Verifying the native binding via its real consumer (@skillsmith/core)…"
 if ! verify_container_native; then
@@ -164,6 +282,11 @@ if [ -r "$SCRIPT_DIR/lib/check-node-modules-fresh.sh" ]; then
   info "Refreshing deps-freshness sentinel (host)…"
   bash "$SCRIPT_DIR/lib/check-node-modules-fresh.sh" --write-sentinel || true
 fi
+
+# SMI-6614 (ADR-158, change 5c/3): re-kick the detached retrieval auto-heal
+# now that this refresh has finished — .husky/post-merge defers it (change 4)
+# precisely so it doesn't race this script; this is the retrigger.
+kick_autoheal_after_exit
 
 echo ""
 git --no-pager diff --stat package-lock.json || true

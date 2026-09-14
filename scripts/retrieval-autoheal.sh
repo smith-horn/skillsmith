@@ -7,9 +7,11 @@
 # concurrent-install detector, a macOS-safe NON-evicting lock, an atomic
 # cooldown/attempt-cap state, and a banner that cannot go silent.
 #
-# Launched detached from .husky/post-merge AFTER that hook's own `npm install`:
+# Launched detached from .husky/post-merge ON lockfile change (SMI-6614,
+# ADR-158) — kicked only when the classifier finds nothing to install
+# (fresh/cosmetic); deferred on a real/unknown verdict, and re-kicked by
+# scripts/regen-lockfile.sh once that refresh finishes:
 #   nohup bash scripts/retrieval-autoheal.sh </dev/null >/dev/null 2>&1 &
-# so the spawning install has already returned before this child starts.
 #
 # Modes:
 #   (default)        run the guarded auto-heal (detached; exit code irrelevant).
@@ -23,13 +25,15 @@
 set -uo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+# shellcheck source=./lib/running-script-pids.sh
+source "$SCRIPT_DIR/lib/running-script-pids.sh"
 
 # --- Resolve the main repo (state key + probe cwd + repair target) -----------
 # Identical derivation to autoheal-state.ts resolveMainRepoKey(): the first
 # `worktree` entry of `git worktree list --porcelain` is always the main tree.
 # Use sed (full line after the prefix), NOT `awk '{print $2}'` — awk would
 # truncate a path containing a space, diverging from the TS full-path slice and
-# silently breaking the heal + banner on such a path (round-2 retro Low-1).
+# silently breaking the heal + banner on such a path.
 MAIN_REPO="$(git -C "$SCRIPT_DIR" worktree list --porcelain 2>/dev/null | sed -n 's/^worktree //p' | head -1)"
 if [ -z "${MAIN_REPO:-}" ]; then
   MAIN_REPO="$(git -C "$SCRIPT_DIR" rev-parse --show-toplevel 2>/dev/null || echo "")"
@@ -94,14 +98,47 @@ probe_binding() {
 # --- Real-time concurrent-install detector (D2) ------------------------------
 # An mtime heuristic would false-positive on post-merge's OWN just-finished
 # install; a live-process check does not (the heal has spawned no npm yet, so any
-# match is foreign). pgrep is on macOS (BSD) and Linux (procps). Absent → skip.
+# match is foreign). pgrep is on macOS (BSD) and Linux (procps).
+#
+# SMI-6614 (ADR-158, change 5c/2): also defers while scripts/regen-lockfile.sh
+# is running — that script is the advised refresh for a real/unknown
+# classifier verdict, and it kicks this heal itself once it finishes
+# (regen-lockfile.sh's kick_autoheal_after_exit) — a heal kicked mid-refresh
+# by something else (e.g. a later cosmetic post-merge) must defer to it via
+# the shared running_script_pids() helper, not the raw npm-pattern pgrep
+# above (regen-lockfile.sh's own `npm install`/`npm rebuild` calls run INSIDE
+# the container via `docker exec`, invisible to a host-side pgrep).
+#
+# "Cannot tell whether a foreign install is running" is not a green light
+# to proceed — it is the SAME race this detector exists to prevent, just
+# undetectable instead of detected. Both missing-tool paths
+# (running_script_pids itself failing — e.g. `ps` unavailable — and pgrep
+# being absent for the npm-pattern check below) make this function return
+# "yes, treat as running" (defer) rather than "no, proceed", logging
+# exactly which tool is missing each time.
 HAVE_PGREP=0
 command -v pgrep >/dev/null 2>&1 && HAVE_PGREP=1
 foreign_install_running() {
   if [ "$AUTOHEAL_TEST" = "1" ] && [ "${SKILLSMITH_AUTOHEAL_FORCE_INSTALL:-}" = "1" ]; then
     return 0
   fi
-  [ "$HAVE_PGREP" = "1" ] || return 1
+  local rsp_stderr_file rsp_pids rsp_rc
+  rsp_stderr_file="$(mktemp)"
+  rsp_pids="$(running_script_pids regen-lockfile.sh 2>"$rsp_stderr_file")"
+  rsp_rc=$?
+  if [ "$rsp_rc" -ne 0 ]; then
+    log "defer: cannot verify regen-lockfile.sh isn't running ($(cat "$rsp_stderr_file" 2>/dev/null)) — treating as maybe-running rather than proceeding blind"
+    rm -f "$rsp_stderr_file"
+    return 0
+  fi
+  rm -f "$rsp_stderr_file"
+  if [ -n "$rsp_pids" ]; then
+    return 0
+  fi
+  if [ "$HAVE_PGREP" != "1" ]; then
+    log "defer: pgrep unavailable — cannot verify no concurrent npm install/build is running, treating as maybe-running rather than proceeding blind"
+    return 0
+  fi
   pgrep -f 'npm (install|ci)|build-release' >/dev/null 2>&1
 }
 
@@ -199,9 +236,8 @@ acquire_lock() {
 
 # --- ANSI strip — portable across BSD (macOS) + GNU sed --------------------
 # The GNU hex-escape form for ESC is a no-op on BSD/macOS sed (it matches the
-# literal characters, not the control byte), so the prior strip silently did
-# nothing on the host target (round-2 retro Low-2). A bash $'\033' yields a real
-# ESC byte that BOTH seds match.
+# literal characters, not the control byte), silently stripping nothing on
+# the host target. A bash $'\033' yields a real ESC byte that BOTH seds match.
 strip_ansi() { sed $'s/\033\\[[0-9;]*m//g'; }
 
 # --- Reason extraction from repair output (strip ANSI; prefer the Error: line)-
@@ -263,14 +299,15 @@ if probe_binding; then
   exit 0
 fi
 
-# 5. Concurrent-install detector (pre-lock). foreign_install_running() owns the
-#    whole decision (incl. the FORCE_INSTALL test seam), so it works regardless
-#    of whether pgrep is present; warn separately when pgrep is missing.
+# 5. Concurrent-install detector (pre-lock). foreign_install_running() owns
+#    the whole decision (incl. the FORCE_INSTALL test seam) AND the
+#    missing-tool fail-closed defer — it already logs when it defers
+#    because a detection tool is unavailable, so there is nothing left for
+#    this call site to warn about separately.
 if foreign_install_running; then
   log "defer: concurrent npm install/build detected (pre-lock)"
   exit 0
 fi
-[ "$HAVE_PGREP" = "1" ] || log "warn: pgrep unavailable — concurrent-install detector skipped (residual race accepted)"
 
 # 6. Acquire the lock (defer, never evict a live holder).
 if ! acquire_lock; then

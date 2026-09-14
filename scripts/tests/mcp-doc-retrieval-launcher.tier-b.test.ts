@@ -152,9 +152,12 @@ describe('mcp-doc-retrieval-launcher.sh — SMI-6618 platform-skip + Tier-B guar
 
     expect(result.status).toBe(1)
     expect(result.stderr).toContain(`FAIL ${dep} nested-corrupt`)
+    // round-2 code-review (Finding C): mount-gated — the rm -rf + reinstall
+    // must never run against a detached /app/node_modules mount.
     expect(result.stderr).toContain(
-      `docker exec skillsmith-dev-1 rm -rf /app/packages/doc-retrieval-mcp/node_modules/${dep}`
+      `docker exec -w /app skillsmith-dev-1 sh -c 'sh scripts/lib/node-modules-mount-gate.sh && rm -rf /app/packages/doc-retrieval-mcp/node_modules/${dep} && npm install'`
     )
+    expect(result.stderr).not.toMatch(/docker exec \S+ npm install/)
   })
 
   it('T5: an unparseable lockfile fails closed and emits exactly one lockfile PROBE_WARN line', () => {
@@ -194,6 +197,11 @@ describe('mcp-doc-retrieval-launcher.sh — SMI-6618 platform-skip + Tier-B guar
 
     expect(result.status).toBe(1)
     expect(result.stderr).not.toContain('rm -rf')
+    // round-2 code-review (Finding C): mount-gated, never a bare install.
+    expect(result.stderr).toContain(
+      "docker exec -w /app skillsmith-dev-1 sh -c 'sh scripts/lib/node-modules-mount-gate.sh && npm install'"
+    )
+    expect(result.stderr).not.toMatch(/docker exec \S+ npm install/)
     expect(
       countOccurrences(result.stderr, '[doc-retrieval] preflight: tier-b list unavailable')
     ).toBe(1)

@@ -1,24 +1,49 @@
 #!/bin/sh
 # scripts/lib/check-node-modules-fresh.sh
 # SMI-5343 / SMI-5344: node_modules freshness sentinel.
+# SMI-6606 / SMI-6614 (ADR-158): one classifier, --classify, decides
+# fresh|cosmetic|real|unknown for every consumer (this script's own check
+# mode, .husky/post-merge, .husky/post-checkout, the SMI-6006 container
+# self-heal, scripts/regen-lockfile.sh's advice text). See
+# docs/internal/adr/158-lockfile-drift-classifier-single-install-oracle.md
+# and docs/internal/implementation/smi-6614-6606-lockfile-drift-classifier.md.
 #
 # Answers "does the installed node_modules satisfy the current
 # package-lock.json?" without a network round-trip, mirroring the content-hash
 # sentinel idiom already used by scripts/submodule-hash.sh.
 #
-# Two modes:
+# Three modes:
 #   --write-sentinel  (postinstall) — write sha256(package-lock.json) →
-#                     node_modules/.skillsmith-deps-hash. Idempotent, fail-soft.
-#   default (check)   (hooks)        — if the sentinel is absent → drift
-#                     ("dependencies not installed — run npm install"); else
-#                     compare sha256(package-lock.json) to the sentinel:
-#                     equal → fresh (exit 0); differ → drift (exit 1).
-#                     Honors SKILLSMITH_SKIP_DEPS_FRESHNESS=1 → fresh.
+#                     node_modules/.skillsmith-deps-hash, plus a normalized
+#                     "shadow hash" (see SENTINEL_SHADOW_NAME below) →
+#                     node_modules/.skillsmith-deps-hash-shadow. Idempotent,
+#                     fail-soft.
+#   --classify        (hooks, guards) — READ-ONLY. Prints exactly one of
+#                     fresh|cosmetic|real|unknown to stdout and exits 0. Every
+#                     consumer that decides install-or-not, or block-or-not,
+#                     on a lockfile delta calls this instead of re-deriving
+#                     its own answer. Never honors
+#                     SKILLSMITH_SKIP_DEPS_FRESHNESS — that var is a
+#                     check-mode-only escape hatch, applied by check mode
+#                     below BEFORE this is consulted.
+#   default (check)   (hooks) — re-expresses the SAME classifier's verdict as
+#                     a pass/fail: fresh/cosmetic → exit 0 (cosmetic prints
+#                     one informational line); real/unknown → exit 1 with the
+#                     drift banner + the shared refresh advice
+#                     (print-deps-refresh-advice.sh). Honors
+#                     SKILLSMITH_SKIP_DEPS_FRESHNESS=1 → exit 0. Two fail-soft
+#                     exits predate the classifier and are unchanged: no
+#                     lockfile, no hashing tool → exit 0 silently (pinned by
+#                     scripts/tests/check-node-modules-fresh.test.ts's
+#                     P-6 FAIL-SOFT case) — --classify reports `unknown` for
+#                     both instead of guessing.
 #
-# READ-ONLY in check mode (P-5 invariant): never runs npm install, never
-# mutates node_modules, never rewrites the sentinel. A worktree commit must not
-# mutate the shared main tree a parallel session may be mid-test on. The ONLY
-# write path is --write-sentinel (install time).
+# READ-ONLY in --classify and check mode (P-5 invariant): never runs npm
+# install, never mutates node_modules, never rewrites the sentinel. A
+# worktree commit must not mutate the shared main tree a parallel session may
+# be mid-test on. The ONLY write path is --write-sentinel (install time) —
+# per ADR-158's "the sentinel stays install-time evidence" decision, nothing
+# else writes it, including a cosmetic verdict.
 #
 # Why a sha256 sentinel and not `cmp node_modules/.package-lock.json
 # package-lock.json`: npm's hidden lockfile omits the root "" workspace key, so
@@ -29,17 +54,17 @@
 # is the MAIN checkout's (symlinked by create-worktree.sh), written at main's
 # last install; package-lock.json is the WORKTREE branch's own file. Equal
 # hashes ⇒ main's tree satisfies the worktree's lockfile (fresh); differing
-# hashes ⇒ the worktree added/changed a dep the symlinked tree lacks (drift →
-# "install in main"). This is the desired semantics.
+# hashes ⇒ the worktree added/changed a dep the symlinked tree lacks (drift).
+# This is the desired semantics, unaffected by the classifier flip.
 #
 # POSIX sh — no `local`, no `[[ ]]`, no arrays.
 
 SENTINEL_NAME=".skillsmith-deps-hash"
-# SMI-6496 Fix 2 (Wave 1, shadow-only): a second sentinel, alongside the raw
-# one, storing a normalized "shadow hash" that neutralizes workspace-self
-# version bumps. Written whenever the raw sentinel is (see --write-sentinel
-# below); used only to LABEL a drift already decided by the raw hash — see
-# the "shadow-hash diagnostic label" block near the bottom of this file.
+# SMI-6496 Fix 2: a second sentinel, alongside the raw one, storing a
+# normalized "shadow hash" that neutralizes workspace-self version bumps.
+# Written whenever the raw sentinel is (see --write-sentinel below). Since
+# SMI-6606/SMI-6614 (ADR-158) this is no longer diagnostic-only — --classify
+# and check mode both use it to distinguish `cosmetic` from `real` drift.
 SENTINEL_SHADOW_NAME=".skillsmith-deps-hash-shadow"
 
 # --- repo-root resolution (robust from main repo OR a worktree) -------------
@@ -58,6 +83,7 @@ SENTINEL="$REPO_ROOT/node_modules/$SENTINEL_NAME"
 SENTINEL_SHADOW="$REPO_ROOT/node_modules/$SENTINEL_SHADOW_NAME"
 NORMALIZE_SCRIPT="$REPO_ROOT/scripts/lib/normalize-lockfile-for-freshness.mjs"
 PACKAGE_JSON="$REPO_ROOT/package.json"
+ADVICE_SCRIPT="$REPO_ROOT/scripts/lib/print-deps-refresh-advice.sh"
 
 # sha256 helper — prefer sha256sum (Linux/Docker), fall back to shasum -a 256
 # (macOS host). Prints the bare hash (hex), nothing else.
@@ -71,15 +97,61 @@ _lockfile_sha256() {
     fi
 }
 
-# Shadow-hash helper (SMI-6496 Fix 2). Fail-soft (M4 in the plan): any
-# problem here prints nothing and the caller must treat that as "shadow hash
-# unavailable" — fall back to no label, never to "treat as fresh".
+# Shadow-hash helper (SMI-6496 Fix 2). Fail-soft: any problem here prints
+# nothing and the caller must treat that as "shadow hash unavailable" — the
+# classifier below reads that as `unknown`, never as `cosmetic`.
 _shadow_hash() {
     [ "${SKILLSMITH_DEPS_FRESHNESS_SHADOW_HASH_DISABLE:-0}" = "1" ] && { printf ''; return; }
     command -v node >/dev/null 2>&1 || { printf ''; return; }
     [ -r "$NORMALIZE_SCRIPT" ] || { printf ''; return; }
     [ -r "$PACKAGE_JSON" ] || { printf ''; return; }
     node "$NORMALIZE_SCRIPT" "$LOCKFILE" "$PACKAGE_JSON" 2>/dev/null
+}
+
+# --- classifier (SMI-6606 / SMI-6614, ADR-158) -------------------------------
+# Prints exactly one of: fresh | cosmetic | real | unknown. Pure function of
+# on-disk state — never mutates anything. See the token table in the plan
+# doc's "What Changes" § 1.
+_classify() {
+    if [ ! -f "$LOCKFILE" ]; then
+        echo unknown
+        return 0
+    fi
+
+    _cur_hash="$(_lockfile_sha256)"
+    if [ -z "$_cur_hash" ]; then
+        echo unknown
+        return 0
+    fi
+
+    if [ ! -f "$SENTINEL" ]; then
+        echo unknown
+        return 0
+    fi
+    _sentinel_hash="$(cat "$SENTINEL" 2>/dev/null || echo '')"
+    if [ "$_sentinel_hash" = "$_cur_hash" ]; then
+        echo fresh
+        return 0
+    fi
+
+    # Raw differs — only the shadow hash can tell cosmetic from real. Both a
+    # stored shadow sentinel and a freshly-computed current shadow hash are
+    # required to compare; anything missing falls through to `unknown` below
+    # (fail-soft — never guess `cosmetic`).
+    if [ -f "$SENTINEL_SHADOW" ]; then
+        _sentinel_shadow_hash="$(cat "$SENTINEL_SHADOW" 2>/dev/null || echo '')"
+        _cur_shadow_hash="$(_shadow_hash)"
+        if [ -n "$_sentinel_shadow_hash" ] && [ -n "$_cur_shadow_hash" ]; then
+            if [ "$_sentinel_shadow_hash" = "$_cur_shadow_hash" ]; then
+                echo cosmetic
+            else
+                echo real
+            fi
+            return 0
+        fi
+    fi
+
+    echo unknown
 }
 
 # --- mode: --write-sentinel (install time only) -----------------------------
@@ -91,11 +163,10 @@ if [ "${1:-}" = "--write-sentinel" ]; then
     NEW_HASH="$(_lockfile_sha256)"
     [ -n "$NEW_HASH" ] || exit 0
 
-    # SMI-6496 Fix 2 (Wave 1, shadow-only): compute and store the shadow hash
-    # unconditionally, independent of the idempotent raw-sentinel skip below
-    # — an install right after this feature ships must not wait for the next
-    # real lockfile change before a shadow sentinel exists. Best-effort: a
-    # failure here (see _shadow_hash's fail-soft contract) never blocks or
+    # Compute and store the shadow hash unconditionally, independent of the
+    # idempotent raw-sentinel skip below — an install must not wait for the
+    # next real lockfile change before a shadow sentinel exists. Best-effort:
+    # a failure here (see _shadow_hash's fail-soft contract) never blocks or
     # fails the raw sentinel write that follows.
     NEW_SHADOW="$(_shadow_hash)"
     if [ -n "$NEW_SHADOW" ]; then
@@ -112,8 +183,16 @@ if [ "${1:-}" = "--write-sentinel" ]; then
     exit 0
 fi
 
+# --- mode: --classify (SMI-6606 / SMI-6614) — READ-ONLY ----------------------
+if [ "${1:-}" = "--classify" ]; then
+    _classify
+    exit 0
+fi
+
 # --- mode: default (check) — READ-ONLY --------------------------------------
-# Escape hatch for a false positive (env drift the developer is sure is benign).
+# Escape hatch for a false positive (env drift the developer is sure is
+# benign). Does NOT apply to --classify above — that mode always reports the
+# real verdict.
 if [ "${SKILLSMITH_SKIP_DEPS_FRESHNESS:-0}" = "1" ]; then
     exit 0
 fi
@@ -125,36 +204,29 @@ CUR_HASH="$(_lockfile_sha256)"
 # Hashing tool unavailable — cannot enforce; fail-soft to avoid false drift.
 [ -n "$CUR_HASH" ] || exit 0
 
-DRIFT_REASON=""
-SHADOW_LABEL=""
+VERDICT="$(_classify)"
+
+case "$VERDICT" in
+    fresh)
+        exit 0
+        ;;
+    cosmetic)
+        printf 'package-lock.json changed only in workspace-self version fields; installed dependencies still match. No install needed.\n'
+        exit 0
+        ;;
+esac
+
+# real, unknown, or (defensively) anything else _classify could somehow
+# print — block with the drift banner.
 if [ ! -f "$SENTINEL" ]; then
     DRIFT_REASON="dependencies not installed"
 else
-    SENTINEL_HASH="$(cat "$SENTINEL" 2>/dev/null || echo '')"
-    if [ "$SENTINEL_HASH" != "$CUR_HASH" ]; then
-        DRIFT_REASON="node_modules is stale vs package-lock.json"
-        # SMI-6496 Fix 2 (Wave 1, shadow-only, OUTPUT-ONLY): this only picks
-        # which diagnostic label to print alongside the drift decision
-        # already made above — it never changes that decision. Both a
-        # stored shadow sentinel and a freshly-computed current shadow hash
-        # are required to compare; anything missing leaves SHADOW_LABEL
-        # empty (fail-soft — no label, never a wrong one).
-        if [ -f "$SENTINEL_SHADOW" ]; then
-            SENTINEL_SHADOW_HASH="$(cat "$SENTINEL_SHADOW" 2>/dev/null || echo '')"
-            CUR_SHADOW_HASH="$(_shadow_hash)"
-            if [ -n "$SENTINEL_SHADOW_HASH" ] && [ -n "$CUR_SHADOW_HASH" ]; then
-                if [ "$SENTINEL_SHADOW_HASH" = "$CUR_SHADOW_HASH" ]; then
-                    SHADOW_LABEL="Cosmetic-only drift detected — package-lock.json changed but only in workspace-self version fields (release-cadence bump). npm install is likely NOT required for this. Still blocking pending SMI-6496 Wave 2 (shadow soak in progress, see guards-and-opt-outs.md)."
-                else
-                    SHADOW_LABEL="Real dependency change detected (not workspace-version-only) — npm install required."
-                fi
-            fi
-        fi
-    fi
+    DRIFT_REASON="node_modules is stale vs package-lock.json"
 fi
-
-# Fresh — exit silently (the hooks expect a quiet pass).
-[ -z "$DRIFT_REASON" ] && exit 0
+SHADOW_LABEL=""
+if [ "$VERDICT" = "real" ]; then
+    SHADOW_LABEL="Real dependency change detected (not workspace-version-only) — npm install required."
+fi
 
 # --- drift: print the canonical actionable message --------------------------
 # Reuse the hook color vars when sourced; define safe fallbacks for standalone.
@@ -164,18 +236,16 @@ NC="${NC:-${HOOK_DETECT_NC:-\033[0m}}"
 
 # This check runs ON THE HOST in both hooks (invoked via `sh`, not `run_cmd`),
 # so it measures the host node_modules tree (in a worktree, that is the MAIN
-# checkout's tree, symlinked in). This repo keeps TWO trees on macOS — the
-# Docker container's and the host's — and a stale lockfile usually leaves BOTH
-# behind, so we advise refreshing both rather than guessing from env vars that
-# (a) may be unset here and (b) don't cross the host/container boundary anyway.
-# The host install for a worktree must run in the MAIN checkout (its host
-# node_modules is a symlink there) — resolve that path from git, not from env.
+# checkout's tree, symlinked in). Resolve the main-checkout path from git, not
+# from env, for the advice text below.
 _MAIN_CHECKOUT=""
 if _gcd="$(git rev-parse --git-common-dir 2>/dev/null)" \
     && _gd="$(git rev-parse --git-dir 2>/dev/null)" \
     && [ -n "$_gcd" ] && [ "$_gcd" != "$_gd" ]; then
     _MAIN_CHECKOUT="$(cd "$_gcd/.." 2>/dev/null && pwd || echo '')"
 fi
+ADVICE_MAIN="$_MAIN_CHECKOUT"
+[ -n "$ADVICE_MAIN" ] || ADVICE_MAIN="$REPO_ROOT"
 
 printf '\n'
 printf "${RED}━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━${NC}\n"
@@ -190,36 +260,24 @@ if [ -n "$SHADOW_LABEL" ]; then
 fi
 printf '\n'
 printf "  ${YELLOW}How to fix${NC} — refresh the installed deps to match package-lock.json:\n"
-# Only the MAIN checkout has a container with its own writable dependency
-# tree. A worktree container reads the host tree read-only, so an install
-# inside it cannot help and is actively dangerous (SMI-6378: npm reify races
-# the read-only bind and can break the container's view of /app/node_modules).
-# Printing the main container's command to a worktree user is also the SMI-5559
-# trap -- it silently "succeeds" against a different checkout's container.
-if [ -z "$_MAIN_CHECKOUT" ]; then
-    printf '    docker exec skillsmith-dev-1 npm install   # container tree (Docker build/typecheck)\n'
-    printf '\n'
+printf '\n'
+if [ -r "$ADVICE_SCRIPT" ]; then
+    sh "$ADVICE_SCRIPT" "$ADVICE_MAIN"
 else
-    printf '    (you are in a worktree: its container reads the host tree read-only,\n'
-    printf '     so there is no separate container install to run -- fix the host tree below)\n'
-    printf '\n'
+    printf '  ( cd "%s" && ./scripts/regen-lockfile.sh )\n' "$ADVICE_MAIN"
 fi
-printf '  Host tree: a bare npm install will not clear this guard. This repo sets\n'
-printf '  ignore-scripts=true in .npmrc, so npm install also skips the postinstall\n'
-printf '  step that writes the sentinel this guard reads. Run the script that writes\n'
-printf '  the sentinel directly instead:\n'
-if [ -n "$_MAIN_CHECKOUT" ]; then
-    printf '    ( cd "%s" \\\n        && ./scripts/regen-lockfile.sh )   # host tree, from the MAIN checkout\n' "$_MAIN_CHECKOUT"
-else
-    printf '    ./scripts/regen-lockfile.sh                 # host tree\n'
-fi
+printf '\n'
+printf "  ${YELLOW}Careful:${NC} running --write-sentinel or regen-lockfile.sh directly from a\n"
+printf '  worktree stamps the shared MAIN checkout'\''s tree (node_modules there is a\n'
+printf '  symlink into main) — run the refresh steps above from the MAIN checkout path\n'
+printf '  shown, not from this worktree.\n'
 printf '\n'
 printf '  Stale-detection false positive? Re-run with:\n'
 printf "    ${YELLOW}SKILLSMITH_SKIP_DEPS_FRESHNESS=1 git commit${NC}   (or git push)\n"
 printf '\n'
 # NOTE: deliberately NO `--no-verify` footer here. For an environmental drift,
 # --no-verify is the wrong tool — it also skips prettier/lint/gitleaks. The
-# ~10-second `npm install` above is the actual fix, so we never advertise the
+# refresh sequence above is the actual fix, so we never advertise the
 # footgun that a stale tree must not manufacture pressure toward (SMI-5344 #1).
 
 exit 1

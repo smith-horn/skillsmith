@@ -72,6 +72,13 @@ on:
       - 'scripts/tests/mcp-doc-retrieval-launcher.test.ts'
       - 'scripts/tests/mcp-skillsmith-launcher.tier-b.test.ts'
       - 'scripts/tests/mcp-doc-retrieval-launcher.tier-b.test.ts'
+      - 'scripts/lib/node-modules-mount-gate.sh'
+      - 'scripts/tests/node-modules-mount-gate.test.ts'
+      - 'scripts/lib/check-node-modules-fresh.sh'
+      - 'scripts/lib/print-deps-refresh-advice.sh'
+      - 'scripts/lib/running-script-pids.sh'
+      - 'scripts/regen-lockfile.sh'
+      - 'scripts/tests/repair-worktrees-docker-guard.test.ts'
       - '.github/workflows/validate-hooks.yml'
 
 permissions:
@@ -141,7 +148,12 @@ jobs:
             scripts/tests/claude-hooks-xargs-regression.test.sh \
             scripts/tests/claude-hooks-log-wrapper.test.sh \
             scripts/mcp-skillsmith-launcher.sh \
-            scripts/mcp-doc-retrieval-launcher.sh
+            scripts/mcp-doc-retrieval-launcher.sh \
+            scripts/lib/node-modules-mount-gate.sh \
+            scripts/lib/check-node-modules-fresh.sh \
+            scripts/lib/print-deps-refresh-advice.sh \
+            scripts/lib/running-script-pids.sh \
+            scripts/regen-lockfile.sh
 
       - name: Syntax check (bash -n)
         run: |
@@ -164,6 +176,11 @@ jobs:
           sh -n scripts/lib/check-container-deps-fresh.sh
           sh -n scripts/lib/check-container-deps-fresh-inner.sh
           sh -n scripts/lib/check-hooks-path.sh
+          sh -n scripts/lib/node-modules-mount-gate.sh
+          sh -n scripts/lib/check-node-modules-fresh.sh
+          sh -n scripts/lib/print-deps-refresh-advice.sh
+          sh -n scripts/lib/running-script-pids.sh
+          bash -n scripts/regen-lockfile.sh
           bash -n scripts/tests/check-container-deps-fresh.test.sh
           bash -n scripts/tests/check-container-deps-fresh-lock.test.sh
           bash -n scripts/tests/_lib/check-container-deps-fresh-fixtures.sh

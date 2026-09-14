@@ -105,7 +105,19 @@ FAKE_NPM_DELAY=2   # A stays "inside" the install long enough for B to attempt e
 
 LOG_A="$TMP_ROOT/s7-a.rc"
 LOG_B="$TMP_ROOT/s7-b.rc"
-( cd "$MAIN7A" && FAKE_APP_DIR="$APP7" FAKE_DOCKER_LOG="$FAKE_DOCKER_LOG_A" FAKE_NPM_DELAY="$FAKE_NPM_DELAY" SKILLSMITH_NATIVE_CHECK_TEST=ok "$GUARD" </dev/null; echo $? > "$LOG_A" ) &
+# This scenario invokes $GUARD directly (bypassing run_guard()'s wrapper,
+# since it needs two independently-timed invocations sharing one APP7) —
+# so, unlike every run_guard()-mediated scenario above, it must forward
+# SKILLSMITH_MOUNT_GATE_APP_ROOT_TEST/SKILLSMITH_MOUNT_GATE_MOUNTINFO_TEST
+# itself. Without this, node-modules-mount-gate.sh falls through to its
+# real defaults (/app, /proc/self/mountinfo) and reports THIS CONTAINER's
+# actual mount state instead of $APP7's fixture — irrelevant to the
+# concurrency behavior this scenario exists to test, and (inside a
+# worktree container) usually a real detached mount, which would make the
+# guard refuse before ever reaching the lock/install logic under test.
+( cd "$MAIN7A" && FAKE_APP_DIR="$APP7" SKILLSMITH_MOUNT_GATE_APP_ROOT_TEST="$APP7" \
+    SKILLSMITH_MOUNT_GATE_MOUNTINFO_TEST="$(fake_mountinfo_path "$APP7")" \
+    FAKE_DOCKER_LOG="$FAKE_DOCKER_LOG_A" FAKE_NPM_DELAY="$FAKE_NPM_DELAY" SKILLSMITH_NATIVE_CHECK_TEST=ok "$GUARD" </dev/null; echo $? > "$LOG_A" ) &
 PID_A=$!
 
 # Barrier: block here until A's fake npm has actually recorded a call —
@@ -118,7 +130,9 @@ while [ ! -s "$NPM_CALL_LOG" ] && [ "$barrier_tries" -lt 100 ]; do
 done
 assert_eq "S7: barrier — A's install actually started before B launches" "yes" "$([ -s "$NPM_CALL_LOG" ] && echo yes || echo no)"
 
-( cd "$MAIN7B" && FAKE_APP_DIR="$APP7" FAKE_DOCKER_LOG="$FAKE_DOCKER_LOG_B" FAKE_NPM_DELAY="$FAKE_NPM_DELAY" SKILLSMITH_NATIVE_CHECK_TEST=ok "$GUARD" </dev/null; echo $? > "$LOG_B" ) &
+( cd "$MAIN7B" && FAKE_APP_DIR="$APP7" SKILLSMITH_MOUNT_GATE_APP_ROOT_TEST="$APP7" \
+    SKILLSMITH_MOUNT_GATE_MOUNTINFO_TEST="$(fake_mountinfo_path "$APP7")" \
+    FAKE_DOCKER_LOG="$FAKE_DOCKER_LOG_B" FAKE_NPM_DELAY="$FAKE_NPM_DELAY" SKILLSMITH_NATIVE_CHECK_TEST=ok "$GUARD" </dev/null; echo $? > "$LOG_B" ) &
 PID_B=$!
 wait "$PID_A" "$PID_B"
 FAKE_NPM_DELAY=0
@@ -157,9 +171,16 @@ printf '%s:0\n' "$DEAD_PID8" > "$APP8/node_modules/.skillsmith-deps-lock/owner"
 
 LOG_8A="$TMP_ROOT/s8-a.rc"
 LOG_8B="$TMP_ROOT/s8-b.rc"
-( cd "$MAIN8A" && FAKE_APP_DIR="$APP8" FAKE_DOCKER_LOG="$(mktemp)" SKILLSMITH_NATIVE_CHECK_TEST=ok "$GUARD" </dev/null; echo $? > "$LOG_8A" ) &
+# Direct $GUARD invocation (see Scenario 7's comment above) — must forward
+# SKILLSMITH_MOUNT_GATE_APP_ROOT_TEST/SKILLSMITH_MOUNT_GATE_MOUNTINFO_TEST
+# itself.
+( cd "$MAIN8A" && FAKE_APP_DIR="$APP8" SKILLSMITH_MOUNT_GATE_APP_ROOT_TEST="$APP8" \
+    SKILLSMITH_MOUNT_GATE_MOUNTINFO_TEST="$(fake_mountinfo_path "$APP8")" \
+    FAKE_DOCKER_LOG="$(mktemp)" SKILLSMITH_NATIVE_CHECK_TEST=ok "$GUARD" </dev/null; echo $? > "$LOG_8A" ) &
 PID_8A=$!
-( cd "$MAIN8B" && FAKE_APP_DIR="$APP8" FAKE_DOCKER_LOG="$(mktemp)" SKILLSMITH_NATIVE_CHECK_TEST=ok "$GUARD" </dev/null; echo $? > "$LOG_8B" ) &
+( cd "$MAIN8B" && FAKE_APP_DIR="$APP8" SKILLSMITH_MOUNT_GATE_APP_ROOT_TEST="$APP8" \
+    SKILLSMITH_MOUNT_GATE_MOUNTINFO_TEST="$(fake_mountinfo_path "$APP8")" \
+    FAKE_DOCKER_LOG="$(mktemp)" SKILLSMITH_NATIVE_CHECK_TEST=ok "$GUARD" </dev/null; echo $? > "$LOG_8B" ) &
 PID_8B=$!
 wait "$PID_8A" "$PID_8B"
 RC_8A=$(cat "$LOG_8A"); RC_8B=$(cat "$LOG_8B")

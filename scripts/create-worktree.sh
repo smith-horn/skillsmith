@@ -574,7 +574,7 @@ The worktree has been left intact. Fix with:
     # checkout this worktree has no working-tree content at all yet. Like
     # Step 3c's git-crypt filter registration, this key is repo-shared: one
     # write here also fixes the main checkout and every other worktree.
-    # `|| true`: this script also runs under `set -euo pipefail` (line 13).
+    # `|| true`: this script also runs under its own top-of-file `set -euo pipefail`.
     # ensure_hooks_path_relative() legitimately `return 1`s in its
     # refuse-to-write case, already logged as a WARN -- not a reason to
     # abort worktree creation entirely (Docker override generation,
@@ -721,8 +721,13 @@ _print_probe_timeout_warning() {
     echo "    (a) Docker Desktop's macOS file-sharing is still propagating the new"
     echo "        worktree tree into the container. Usually clears within"
     echo "        seconds — retry the commit, or wait a bit before your first one."
-    echo "    (b) The container's node_modules named volume is not built yet:"
-    echo "        docker exec $SHARED_CONTAINER npm install && npm run build"
+    echo "    (b) One of the container's node_modules named volumes (root, or a"
+    echo "        packages/*/node_modules) is not built yet. Build it inside the"
+    echo "        container, only while EVERY such volume is really attached (a"
+    echo "        detached volume makes npm write the host's macOS tree, SMI-6516):"
+    echo "        docker exec -w /app $SHARED_CONTAINER sh -c 'sh scripts/lib/node-modules-mount-gate.sh && npm install && npm run build'"
+    echo "        If it exits non-zero with no npm output, a node_modules mount is detached or not a volume: recreate"
+    echo "        the container from the main checkout (docker compose --profile dev up -d --force-recreate dev)."
     echo ""
     echo "  Last probe output ($container_wd):"
     if [[ -n "$final_probe_output" ]]; then

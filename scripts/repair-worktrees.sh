@@ -53,8 +53,9 @@ Options:
         Run the native-rebuild step even when a skillsmith dev container
         is detected. The rebuild writes host-arch binaries into the
         symlinked node_modules and clobbers the container's ELF *.node
-        files; you must run \`docker exec -w /app <container> npm rebuild
-        better-sqlite3 onnxruntime-node\` afterward to restore them.
+        files; you must run \`docker exec -w /app <container> sh -c "sh scripts/lib/node-modules-mount-gate.sh && npm rebuild better-sqlite3 onnxruntime-node"\`
+        afterward to restore them (SMI-6614: non-zero exit, no rebuild
+        output -> a node_modules mount is detached or not a volume -- recreate first).
         See SMI-4698.
 EOF
             exit 0
@@ -65,17 +66,83 @@ EOF
     esac
 done
 
+# Classifies container $1 by its Compose
+# `com.docker.compose.project.working_dir` label against $REPO_ROOT — a
+# `docker ps` match can be the MAIN checkout's container, a WORKTREE's own
+# container, or (rare) something whose label can't be read at all. Each
+# needs DIFFERENT recovery advice: the main checkout's container is the one
+# this repair script's own host-side native-rebuild step corrupts and can
+# safely gated-rebuild in place; a worktree's container never gets an
+# npm-mutating command at all (CLAUDE.md: never npm-mutate a worktree
+# container — `docker compose restart dev` self-heals native bindings
+# instead, SMI-5351).
+#
+# Prints "main <label>" / "worktree <label>" / "unknown" to stdout.
+#
+# Compared with `-ef` (same-file test), NOT a string compare — measured
+# live 2026-09-14: `skillsmith-dev-1`'s label reports
+# `/Users/williamsmith/documents/github/smith-horn/skillsmith` (lower-case
+# — APFS is case-insensitive, Compose recorded it that way) while
+# $REPO_ROOT keeps the real-case spelling; `-ef` is TRUE for that exact
+# pair (same file, different spelling) in both sh and bash, and FALSE for a
+# worktree's container label vs $REPO_ROOT — confirmed with both real
+# containers before writing this.
+_gate_classify_container() {
+    local name="$1" label
+    label="$(docker inspect --format '{{index .Config.Labels "com.docker.compose.project.working_dir"}}' "$name" 2>/dev/null || true)"
+    # Measured 2026-09-14: this Docker CLI prints an empty string for a
+    # missing label; older Go-template renderings print `<no value>`. A label
+    # naming a directory that doesn't exist on this host can't be a checkout
+    # we can cd into, so it's unknown too, never "worktree".
+    case "$label" in
+        '' | '<no value>')
+            printf 'unknown\n'
+            return
+            ;;
+    esac
+    if [ ! -d "$label" ]; then
+        printf 'unknown\n'
+        return
+    fi
+    if [ "$label" -ef "$REPO_ROOT" ] 2>/dev/null; then
+        printf 'main %s\n' "$label"
+    else
+        printf 'worktree %s\n' "$label"
+    fi
+}
+
+# Prints the recovery advice for ONE container ($1 = name, $2 = this
+# container's own `_gate_classify_container` output) — never interpolates
+# more than one container name into a single command line.
+_gate_container_advice() {
+    local name="$1" classification="$2" dir
+    case "$classification" in
+        main\ *)
+            printf '  %s (main checkout): docker exec -w /app %s sh -c '\''sh scripts/lib/node-modules-mount-gate.sh && npm rebuild better-sqlite3 onnxruntime-node'\''\n' "$name" "$name"
+            printf '    (SMI-6614: non-zero exit, no rebuild output -> a node_modules mount problem, recreate first)\n'
+            ;;
+        worktree\ *)
+            dir="${classification#worktree }"
+            # %q shell-quotes the directory, so a path with spaces or shell
+            # metacharacters still prints a command that runs as written.
+            printf '  %s (worktree checkout at %s): ( cd %q && docker compose --profile dev restart dev )\n' "$name" "$dir" "$dir"
+            printf '    (self-heals native bindings, SMI-5351 — never run an npm-mutating command against a worktree container, CLAUDE.md)\n'
+            ;;
+        *)
+            printf "  %s: this container's checkout could not be identified (its Compose\n" "$name"
+            printf "    working_dir label is missing, unreadable, or names a directory that doesn't exist here) — both options:\n"
+            printf "      IF %s is the MAIN checkout's container:\n" "$name"
+            printf '        docker exec -w /app %s sh -c '\''sh scripts/lib/node-modules-mount-gate.sh && npm rebuild better-sqlite3 onnxruntime-node'\''\n' "$name"
+            printf "      IF %s is a WORKTREE's container:\n" "$name"
+            printf '        ( cd <that worktree'\''s path> && docker compose --profile dev restart dev )\n'
+            ;;
+    esac
+}
+
 # SMI-4698: gate the native-rebuild step (repair-host-native-deps.sh) when
 # a running Docker container shares the symlinked node_modules. Symlink
 # repair is safe with active Docker — only this step writes binaries.
 check_docker_safety_for_rebuild() {
-    if [ "$FORCE_WITH_ACTIVE_DOCKER" = true ]; then
-        warn "  --force-with-active-docker set — proceeding despite active container."
-        warn "  After this script completes, run:"
-        warn "    docker exec -w /app <container-name> npm rebuild better-sqlite3 onnxruntime-node"
-        warn "  to restore the container's ELF native bindings."
-        return 0
-    fi
     if ! command -v docker >/dev/null 2>&1; then
         return 0  # No docker CLI — no risk
     fi
@@ -94,7 +161,7 @@ check_docker_safety_for_rebuild() {
     # today's macOS reality (a wedged daemon would have hung the script
     # anyway since the guard never executed) but at least lets the guard
     # fire when Docker is responsive. Pattern mirrors
-    # scripts/session-start-priming.sh:143-156, with the addition of
+    # scripts/session-start-priming.sh's own capability probe, with the addition of
     # validating `gtimeout` (priming-script only validates `timeout`) so a
     # broken Homebrew coreutils install can't trip the same trap. Extracted
     # into run_with_timeout so create-worktree.sh's Step 8 readiness probe
@@ -115,16 +182,38 @@ check_docker_safety_for_rebuild() {
     if [ -z "$match" ]; then
         return 0
     fi
+
+    # Classify EACH matched container individually and build one advice
+    # block with exactly one `docker exec`/`docker compose` line per
+    # container — never a single command interpolating several names at
+    # once: `$match` can be multiple lines, and a naive `docker exec …
+    # $match …` would splice all of them into one argv.
+    local advice="" name classification
+    while IFS= read -r name; do
+        [ -n "$name" ] || continue
+        classification="$(_gate_classify_container "$name")"
+        advice="${advice}$(_gate_container_advice "$name" "$classification")
+"
+    done <<< "$match"
+
+    if [ "$FORCE_WITH_ACTIVE_DOCKER" = true ]; then
+        warn "  --force-with-active-docker set — proceeding despite active container(s)."
+        warn "  After this script completes, restore each affected container:"
+        echo "$advice" >&2
+        return 0
+    fi
+
     error "Active Docker container detected: $match
 
 repair-worktrees.sh would rebuild host-arch native bindings (better-sqlite3,
-onnxruntime-node) into the symlinked node_modules. This corrupts the
-container's ELF binary and breaks all tests inside Docker.
+onnxruntime-node) into the symlinked node_modules. This corrupts each
+affected container's ELF binary and breaks all tests inside Docker.
 
 Choose one:
-  1. Stop the container first:  docker compose --profile dev down
-  2. Rebuild on Docker side:     docker exec -w /app $match npm rebuild better-sqlite3 onnxruntime-node
-  3. Force (then rebuild Docker side):  ./scripts/repair-worktrees.sh --force-with-active-docker"
+  1. Stop the container(s) first:  docker compose --profile dev down (from each affected checkout)
+  2. Recover each container individually:
+$advice
+  3. Force (then recover as above):  ./scripts/repair-worktrees.sh --force-with-active-docker"
 }
 
 REPO_ROOT="$(git rev-parse --show-toplevel 2>/dev/null || echo "")"
@@ -158,8 +247,8 @@ ensure_git_crypt_filter_registered "$REPO_ROOT"
 # main checkout AND every worktree at once, not just whichever tree this
 # script happens to be iterating.
 #
-# `|| true` is required under `set -e` (this script's own set -euo
-# pipefail, line 27): ensure_hooks_path_relative() legitimately `return 1`s
+# `|| true` is required under `set -e` (this script's own top-of-file
+# `set -euo pipefail`): ensure_hooks_path_relative() legitimately `return 1`s
 # in its refuse-to-write case (target tree's .husky/_/h missing) -- a
 # non-fatal, already-logged WARN, not a reason to abort the rest of this
 # script's OTHER repair steps (node_modules symlinks, docker override

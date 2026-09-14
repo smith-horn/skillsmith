@@ -26,6 +26,25 @@
 #     assert exactly how many times it was really called), sleeps
 #     $FAKE_NPM_DELAY, then exits 0, or exits 1 if $FAKE_NPM_FAIL=1.
 #
+# Mount state: node-modules-mount-gate.sh parses /proc/self/mountinfo
+# directly rather than shelling out to `mountpoint` (which follows symlinks
+# and can't tell a real mount from anything else mounted wherever a
+# symlink resolves to; see that file's own header). A `mountpoint` PATH
+# shim here would be dead code against it and would silently test nothing
+# (the SMI-6598 trap). Every scenario instead points the helper's own
+# SKILLSMITH_MOUNT_GATE_MOUNTINFO_TEST seam at a small per-FAKE_APP_DIR
+# fixture mountinfo file (fake_mountinfo_path()/write_mountinfo_fixture()
+# below). setup_fake_app_dir() writes a DEFAULT "root node_modules is
+# mounted with a volume-shaped root" fixture; a scenario that needs a
+# different mount state (detached, host-bind, mountinfo unreadable)
+# overwrites that file (or, for "unreadable", points
+# FAKE_MOUNTINFO_OVERRIDE at a path that was never written) before calling
+# run_guard. check-container-deps-fresh-inner.sh's own mount check has no
+# env-var test seam of its own — it always runs the real helper, so a
+# stray host environment can never reach it in production (S18 below
+# proves this for the retired SKILLSMITH_MOUNTPOINT_TEST/_RC names
+# specifically).
+#
 # hook-docker-detect.sh's own IS_WORKTREE/USE_DOCKER detection is NOT faked
 # — it runs for real against small real git repos/worktrees this file
 # creates, mirroring create-worktree-hooks.test.sh's Scenario 11 approach.
@@ -45,6 +64,9 @@ REPO_ROOT=$(cd "$SCRIPT_DIR/.." && pwd)
 GUARD="$REPO_ROOT/scripts/lib/check-container-deps-fresh.sh"
 INNER="$REPO_ROOT/scripts/lib/check-container-deps-fresh-inner.sh"
 REAL_FRESH_CHECK="$REPO_ROOT/scripts/lib/check-node-modules-fresh.sh"
+# check-container-deps-fresh-inner.sh's _check_mountpoint() delegates to
+# this shared helper.
+MOUNT_GATE_LIB="$REPO_ROOT/scripts/lib/node-modules-mount-gate.sh"
 # SMI-6437: the real, committed sibling script GUARD resolves at its own new
 # call sites. A dedicated scenario temporarily renames this exact file (via
 # absolute path, restored by an EXIT trap) to test the "probe script itself
@@ -155,6 +177,45 @@ chmod +x "$FAKE_BIN/npm"
 
 export PATH="$FAKE_BIN:$PATH"
 
+# --- mountinfo fixture helpers -------------------------------------------
+# Deterministic path for a given FAKE_APP_DIR's own mountinfo fixture — kept
+# OUTSIDE the dir itself (a sibling "<dir>.mountinfo" file) so it can never
+# be mistaken for part of the fake container tree by check-node-modules-fresh.sh
+# or anything else that walks $dir.
+fake_mountinfo_path() {
+  printf '%s.mountinfo' "$1"
+}
+
+# One mountinfo line for `mount_point` as a genuine Docker/Podman named-
+# volume mount (root ending in `.../volumes/<volume_name>/_data`) — the
+# "properly mounted" case node-modules-mount-gate.sh accepts.
+mountinfo_volume_line() {
+  printf '%s 1 254:1 /docker/volumes/%s/_data %s rw,relatime master:1 - ext4 /dev/vda1 rw,discard\n' \
+    "$1" "$3" "$2"
+}
+
+# One mountinfo line for `mount_point` as a HOST bind mount (root is a plain
+# host path, fstype virtiofs) — a REAL mount at the target, but not a named
+# volume; node-modules-mount-gate.sh must reject this (MOUNT_NOT_VOLUME).
+mountinfo_hostbind_line() {
+  printf '%s 1 0:43 %s %s ro,nosuid,nodev,relatime - virtiofs virtiofs0 rw\n' \
+    "$1" "${3:-/host/path}" "$2"
+}
+
+# write_mountinfo_fixture <path> [line...] — truncates path, then writes
+# each remaining argument as one line (zero extra args -> an empty, but
+# still READABLE, fixture file: every declared target is then simply
+# absent from it, i.e. MOUNT_DETACHED for all of them).
+write_mountinfo_fixture() {
+  local path="$1"
+  shift
+  : > "$path"
+  local line
+  for line in "$@"; do
+    printf '%s\n' "$line" >> "$path"
+  done
+}
+
 # --- helper: a fresh FAKE_APP_DIR (stands in for the container's /app) --
 setup_fake_app_dir() {
   local dir="$1" hash_state="$2"   # hash_state: fresh|stale|missing
@@ -162,6 +223,7 @@ setup_fake_app_dir() {
   mkdir -p "$dir/scripts/lib" "$dir/node_modules"
   cp "$REAL_FRESH_CHECK" "$dir/scripts/lib/check-node-modules-fresh.sh"
   cp "$INNER" "$dir/scripts/lib/check-container-deps-fresh-inner.sh"
+  cp "$MOUNT_GATE_LIB" "$dir/scripts/lib/node-modules-mount-gate.sh"
   echo '{"name":"fake"}' > "$dir/package-lock.json"
   local real_hash
   real_hash=$(sha256sum "$dir/package-lock.json" | cut -d' ' -f1)
@@ -170,6 +232,15 @@ setup_fake_app_dir() {
     stale)   printf '%s\n' "0000000000000000000000000000000000000000000000000000000000000000" > "$dir/node_modules/.skillsmith-deps-hash" ;;
     missing) ;;
   esac
+  # Default mount state: root node_modules is mounted with a volume-shaped root.
+  # No packages/*/ subdirectory exists yet at this point (a scenario that
+  # needs one, e.g. S19, mkdir's it afterward — since the helper only checks
+  # a packages/* dir holding a package.json, and the default fixture has no
+  # entry for a package path a scenario later adds, "root attached, that
+  # ONE workspace detached" is the fixture's natural state with zero extra
+  # overrides needed).
+  write_mountinfo_fixture "$(fake_mountinfo_path "$dir")" \
+    "$(mountinfo_volume_line 100 "$dir/node_modules" fake_root_nm)"
 }
 
 # --- helper: a plain (non-worktree) real git repo, main-checkout-shaped -
@@ -216,14 +287,50 @@ setup_worktree() {
 # rather than letting them fall through to a REAL (non-test-seam) probe
 # attempt that would hit this file's own strict fake-docker exec-shape
 # validation and spuriously fail.
+# SKILLSMITH_MOUNTPOINT_TEST / SKILLSMITH_MOUNTPOINT_TEST_RC below are
+# forwarded ONLY so a scenario can simulate "a stray host environment has
+# these set" and prove they now have zero effect on $GUARD, which no
+# longer reads either name — the current mechanism is the mountinfo
+# fixture below.
+#
+# SKILLSMITH_MOUNT_GATE_MOUNTINFO_TEST points node-modules-mount-gate.sh's
+# own test seam at $FAKE_APP_DIR's mountinfo fixture (fake_mountinfo_path())
+# by default — a scenario that wants a DIFFERENT mount state overwrites that
+# fixture file's content before calling run_guard (write_mountinfo_fixture),
+# or, for "mountinfo unreadable", sets FAKE_MOUNTINFO_OVERRIDE to a path that
+# was never written. Never forwarded via any real `docker exec -e` in
+# production code — same test-seam status as
+# SKILLSMITH_MOUNT_GATE_APP_ROOT_TEST below.
 GUARD_LAST_OUTPUT="$TMP_ROOT/guard-last-output.txt"
 run_guard() {
   local cwd="$1"
+  # Snapshotted into its own local BEFORE the assignment-prefix line below —
+  # the static analyzer correctly flags
+  # `SKILLSMITH_MOUNT_GATE_APP_ROOT_TEST="$FAKE_APP_DIR"` next to
+  # `FAKE_APP_DIR="$FAKE_APP_DIR"` on the same logical (backslash-continued)
+  # line as ambiguous (checks SC2097/SC2098): every assignment in a
+  # `VAR=val cmd` prefix takes effect simultaneously for the forked command,
+  # never sequentially, so its value is always the AMBIENT $FAKE_APP_DIR
+  # from before this line (which is what's wanted) — but a reader could
+  # easily mistake it for depending on the FAKE_APP_DIR= assignment right
+  # next to it.
+  local _fake_app_dir="$FAKE_APP_DIR"
+  local _fake_mountinfo="${FAKE_MOUNTINFO_OVERRIDE:-$(fake_mountinfo_path "$_fake_app_dir")}"
+  # node-modules-mount-gate.sh's own test seam: points the helper's
+  # root/packages/* checks at FAKE_APP_DIR (the same directory the fake
+  # docker exec `cd`s into before running the inner script) instead of the
+  # helper's own default (/app) — inherited by every subprocess in the
+  # chain (docker fake -> inner script -> the helper itself), never
+  # forwarded via any real `docker exec -e` in production code.
   ( cd "$cwd" && FAKE_DOCKER_LOG="$FAKE_DOCKER_LOG" FAKE_APP_DIR="$FAKE_APP_DIR" \
+      SKILLSMITH_MOUNT_GATE_APP_ROOT_TEST="$_fake_app_dir" \
+      SKILLSMITH_MOUNT_GATE_MOUNTINFO_TEST="$_fake_mountinfo" \
       FAKE_NPM_FAIL="${FAKE_NPM_FAIL:-0}" FAKE_NPM_DELAY="${FAKE_NPM_DELAY:-0}" \
       SKILLSMITH_LOCK_MAX_TRIES="${SKILLSMITH_LOCK_MAX_TRIES:-45}" \
       SKILLSMITH_LOCK_SLEEP_SECS="${SKILLSMITH_LOCK_SLEEP_SECS:-2}" \
       SKILLSMITH_NATIVE_CHECK_TEST="${SKILLSMITH_NATIVE_CHECK_TEST:-ok}" \
+      SKILLSMITH_MOUNTPOINT_TEST="${SKILLSMITH_MOUNTPOINT_TEST:-0}" \
+      SKILLSMITH_MOUNTPOINT_TEST_RC="${SKILLSMITH_MOUNTPOINT_TEST_RC:-}" \
       "$GUARD" </dev/null >"$GUARD_LAST_OUTPUT" 2>&1 )
   echo $?
 }

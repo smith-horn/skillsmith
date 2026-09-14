@@ -194,6 +194,137 @@ assert_eq "S13: self-heal succeeds but native-probe script is missing -> hard fa
 assert_eq "S13: output names the missing-probe reason" "yes" "$(grep -q "could not be verified" "$GUARD_LAST_OUTPUT" && echo yes || echo no)"
 assert_eq "S13: real NATIVE_LIB restored" "yes" "$([ -x "$NATIVE_LIB" ] && echo yes || echo no)"
 
+# =========================================================================
+# Scenario 14 (SMI-6516/6520/6614, ADR-158 change 5): stale tree + root
+# node_modules mount detached (empty mountinfo fixture, round-3) -> outer
+# exits 1, prints the detached-mount recovery, no SELF_HEAL_START, no npm
+# install.
+# =========================================================================
+MAIN14="$TMP_ROOT/main14"
+APP14="$TMP_ROOT/app14"
+setup_main_repo "$MAIN14"
+setup_fake_app_dir "$APP14" stale
+FAKE_APP_DIR="$APP14"
+FAKE_DOCKER_LOG=$(mktemp)
+: > "$NPM_CALL_LOG"
+write_mountinfo_fixture "$(fake_mountinfo_path "$APP14")"
+rc=$(run_guard "$MAIN14")
+assert_eq "S14: detached mount (rc32) -> outer exits 1" "1" "$rc"
+assert_eq "S14: npm install NOT called" "0" "$(npm_call_count)"
+assert_eq "S14: output does NOT show SELF_HEAL_START" "no" "$(grep -q "SELF_HEAL_START" "$GUARD_LAST_OUTPUT" && echo yes || echo no)"
+assert_eq "S14: output names the mount-problem recovery" "yes" "$(grep -q "is NOT currently mounted" "$GUARD_LAST_OUTPUT" && echo yes || echo no)"
+assert_eq "S14: output names the specific affected path(s)" "yes" "$(grep -q "Affected path(s):" "$GUARD_LAST_OUTPUT" && echo yes || echo no)"
+
+# =========================================================================
+# Scenario 15: stale tree + root mount bound (the default fixture
+# setup_fake_app_dir() writes) -> today's self-heal path is unaffected by
+# the mount check.
+# =========================================================================
+MAIN15="$TMP_ROOT/main15"
+APP15="$TMP_ROOT/app15"
+setup_main_repo "$MAIN15"
+setup_fake_app_dir "$APP15" stale
+FAKE_APP_DIR="$APP15"
+FAKE_DOCKER_LOG=$(mktemp)
+: > "$NPM_CALL_LOG"
+rc=$(run_guard "$MAIN15")
+assert_eq "S15: bound mount (rc0) -> self-heals and exits 0" "0" "$rc"
+assert_eq "S15: npm install called exactly once" "1" "$(npm_call_count)"
+
+# =========================================================================
+# Scenario 16: cosmetic/fresh tree + root mount detached (empty mountinfo
+# fixture) -> exit 0 (no install needed at all, so a detached mount on an
+# UNRELATED push must not block it — the mount check only runs after the
+# freshness check has already failed).
+# =========================================================================
+MAIN16="$TMP_ROOT/main16"
+APP16="$TMP_ROOT/app16"
+setup_main_repo "$MAIN16"
+setup_fake_app_dir "$APP16" fresh
+FAKE_APP_DIR="$APP16"
+FAKE_DOCKER_LOG=$(mktemp)
+: > "$NPM_CALL_LOG"
+write_mountinfo_fixture "$(fake_mountinfo_path "$APP16")"
+rc=$(run_guard "$MAIN16")
+assert_eq "S16: fresh tree + detached mount -> exit 0 (no block)" "0" "$rc"
+assert_eq "S16: npm install NOT called" "0" "$(npm_call_count)"
+
+# =========================================================================
+# Scenario 17: stale tree + mountinfo genuinely UNREADABLE (points
+# SKILLSMITH_MOUNT_GATE_MOUNTINFO_TEST — via FAKE_MOUNTINFO_OVERRIDE — at a
+# path that was never written) -> outer exits 1 with the "cannot verify"
+# message, no install.
+# =========================================================================
+MAIN17="$TMP_ROOT/main17"
+APP17="$TMP_ROOT/app17"
+setup_main_repo "$MAIN17"
+setup_fake_app_dir "$APP17" stale
+FAKE_APP_DIR="$APP17"
+FAKE_DOCKER_LOG=$(mktemp)
+: > "$NPM_CALL_LOG"
+FAKE_MOUNTINFO_OVERRIDE="$TMP_ROOT/s17-does-not-exist-mountinfo"
+rc=$(run_guard "$MAIN17")
+unset FAKE_MOUNTINFO_OVERRIDE
+assert_eq "S17: mountinfo unreadable (rc127) -> outer exits 1" "1" "$rc"
+assert_eq "S17: npm install NOT called" "0" "$(npm_call_count)"
+assert_eq "S17: output names the 'cannot verify' reason" "yes" "$(grep -q "Cannot verify" "$GUARD_LAST_OUTPUT" && echo yes || echo no)"
+
+# =========================================================================
+# Scenario 18 (SMI-6614 round-2 code-review, Finding A): a stray host
+# environment carrying BOTH SKILLSMITH_MOUNTPOINT_TEST=1 and
+# SKILLSMITH_MOUNTPOINT_TEST_RC=0 (e.g. left over from earlier manual
+# testing) must have ZERO effect now that the env-var test seam has been
+# removed from both check-container-deps-fresh.sh (the forwarder) and
+# check-container-deps-fresh-inner.sh (the honourer) entirely — round 1's
+# master-switch gate still forwarded the switch itself unconditionally,
+# which is exactly what let this bypass a real detached mount in
+# production. Asserts three independent things: (1) the guard still blocks
+# against a real detached mount (empty mountinfo fixture, round-3), (2)
+# nothing installs, and (3) the recorded `docker exec` argv never even mentions
+# SKILLSMITH_MOUNTPOINT_TEST — proving the variable was never forwarded,
+# not merely that forwarding it happened to be harmless.
+# =========================================================================
+MAIN18="$TMP_ROOT/main18"
+APP18="$TMP_ROOT/app18"
+setup_main_repo "$MAIN18"
+setup_fake_app_dir "$APP18" stale
+FAKE_APP_DIR="$APP18"
+FAKE_DOCKER_LOG=$(mktemp)
+: > "$NPM_CALL_LOG"
+write_mountinfo_fixture "$(fake_mountinfo_path "$APP18")"
+SKILLSMITH_MOUNTPOINT_TEST=1
+SKILLSMITH_MOUNTPOINT_TEST_RC=0
+rc=$(run_guard "$MAIN18")
+unset SKILLSMITH_MOUNTPOINT_TEST SKILLSMITH_MOUNTPOINT_TEST_RC
+assert_eq "S18: stray host mount-test-seam env has no effect -> real detached mount (rc32) still blocks" "1" "$rc"
+assert_eq "S18: npm install NOT called" "0" "$(npm_call_count)"
+assert_eq "S18: output names the mount-problem recovery" "yes" "$(grep -q "is NOT currently mounted" "$GUARD_LAST_OUTPUT" && echo yes || echo no)"
+assert_eq "S18: docker exec argv never mentions SKILLSMITH_MOUNTPOINT_TEST" "" "$(grep -o 'SKILLSMITH_MOUNTPOINT_TEST[A-Z_]*' "$FAKE_DOCKER_LOG" || true)"
+
+# =========================================================================
+# Scenario 19 (round-2b): root attached, ONE packages/*/node_modules
+# detached -> outer still blocks, no install. SMI-6516 detached nine of ten
+# declared node_modules mounts INDIVIDUALLY; a root-only check misses
+# exactly this shape. round-3: the default fixture (root mounted, no entry
+# for any packages/*) already produces exactly this shape once a workspace
+# directory is added below — no override needed, since the newly-added
+# package path is simply absent from the fixture.
+# =========================================================================
+MAIN19="$TMP_ROOT/main19"
+APP19="$TMP_ROOT/app19"
+setup_main_repo "$MAIN19"
+setup_fake_app_dir "$APP19" stale
+mkdir -p "$APP19/packages/doc-retrieval-mcp/node_modules"
+# The gate only checks directories holding a package.json (npm workspaces).
+printf '{"name":"doc-retrieval-mcp"}\n' > "$APP19/packages/doc-retrieval-mcp/package.json"
+FAKE_APP_DIR="$APP19"
+FAKE_DOCKER_LOG=$(mktemp)
+: > "$NPM_CALL_LOG"
+rc=$(run_guard "$MAIN19")
+assert_eq "S19: root attached, one workspace detached -> outer exits 1" "1" "$rc"
+assert_eq "S19: npm install NOT called" "0" "$(npm_call_count)"
+assert_eq "S19: output names the specific detached workspace path" "yes" "$(grep -q "packages/doc-retrieval-mcp/node_modules" "$GUARD_LAST_OUTPUT" && echo yes || echo no)"
+
 echo ""
 echo "======================================"
 echo "Results: $pass passed, $fail failed"

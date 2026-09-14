@@ -295,8 +295,13 @@ Dependabot PRs are generated from different lockfile snapshots. Merging them seq
 **Lockfile refresh pattern** (when `npm ci` fails after a batch):
 
 ```bash
-docker exec skillsmith-dev-1 npm ci 2>&1 | tail -5    # Fail-fast detection
-docker exec skillsmith-dev-1 npm install               # Regenerate lockfile
+# SMI-6614 (ADR-158; round-2b): print the full ordered refresh sequence
+# rather than jumping straight to one step of it — never a bare
+# `docker exec skillsmith-dev-1 npm install`, which would silently write
+# into the HOST tree if any node_modules path isn't mounted with a
+# volume-shaped root (SMI-6516/SMI-6520).
+( cd <main-checkout-path> && sh scripts/lib/print-deps-refresh-advice.sh <main-checkout-path> )
+# then follow the printed steps (includes ./scripts/regen-lockfile.sh)
 git add package-lock.json && git commit -m "chore: refresh lockfile after Dependabot batch"
 git push
 ```

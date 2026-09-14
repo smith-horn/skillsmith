@@ -479,6 +479,12 @@ describe('mcp-doc-retrieval-launcher.sh', () => {
     expect(result.stderr).toContain('[doc-retrieval]')
     expect(result.stderr).toContain('node_modules missing')
     expect(result.stderr).toContain('npm install')
+    // round-2 code-review (Finding C): the remedy must be mount-gated, never
+    // a bare `docker exec <container> npm install`.
+    expect(result.stderr).toContain(
+      "docker exec -w /app skillsmith-dev-1 sh -c 'sh scripts/lib/node-modules-mount-gate.sh && npm install && npm run build'"
+    )
+    expect(result.stderr).not.toMatch(/docker exec \S+ npm install/)
   })
 
   it('reads Check 1 sentinel from the container when host node_modules is absent', () => {
@@ -603,9 +609,12 @@ describe('mcp-doc-retrieval-launcher.sh', () => {
     expect(result.stderr).toContain(
       `${corruptDep} dependency corrupt at packages/doc-retrieval-mcp/node_modules/${corruptDep} (container-side, not host)`
     )
+    // round-2 code-review (Finding C): mount-gated — the rm -rf + reinstall
+    // must never run against a detached /app/node_modules mount.
     expect(result.stderr).toContain(
-      `docker exec skillsmith-dev-1 rm -rf /app/packages/doc-retrieval-mcp/node_modules/${corruptDep}`
+      `docker exec -w /app skillsmith-dev-1 sh -c 'sh scripts/lib/node-modules-mount-gate.sh && rm -rf /app/packages/doc-retrieval-mcp/node_modules/${corruptDep} && npm install'`
     )
+    expect(result.stderr).not.toMatch(/docker exec \S+ npm install/)
   })
 
   it('empty container nested dir fails despite a healthy container-hoisted copy', () => {
@@ -695,6 +704,11 @@ describe('mcp-doc-retrieval-launcher.sh', () => {
     expect(result.status).toBe(1)
     expect(result.stderr).toContain(`${missingDep} dependency missing`)
     expect(result.stderr).toContain('npm install')
+    // round-2 code-review (Finding C): mount-gated, never a bare install.
+    expect(result.stderr).toContain(
+      "docker exec -w /app skillsmith-dev-1 sh -c 'sh scripts/lib/node-modules-mount-gate.sh && npm install'"
+    )
+    expect(result.stderr).not.toMatch(/docker exec \S+ npm install/)
   })
 
   it('fails open when the container-side probe package.json is invalid', () => {
@@ -740,6 +754,11 @@ describe('mcp-doc-retrieval-launcher.sh', () => {
     expect(result.stderr).toContain(workspaceDep)
     expect(result.stderr).not.toContain('rm -rf')
     expect(result.stderr).toContain('npm run build')
+    // round-2 code-review (Finding C): mount-gated, never a bare install.
+    expect(result.stderr).toContain(
+      "docker exec -w /app skillsmith-dev-1 sh -c 'sh scripts/lib/node-modules-mount-gate.sh && npm install && npm run build'"
+    )
+    expect(result.stderr).not.toMatch(/docker exec \S+ npm install/)
   })
 
   it('fails open twice when both preflight docker exec calls exit 127', () => {

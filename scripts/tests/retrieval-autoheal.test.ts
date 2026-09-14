@@ -16,7 +16,15 @@
 
 import { describe, it, expect, afterEach } from 'vitest'
 import { execFileSync, spawn, spawnSync } from 'node:child_process'
-import { existsSync, mkdirSync, readdirSync, readFileSync, rmSync, writeFileSync } from 'node:fs'
+import {
+  chmodSync,
+  existsSync,
+  mkdirSync,
+  readdirSync,
+  readFileSync,
+  rmSync,
+  writeFileSync,
+} from 'node:fs'
 import { dirname, join, resolve } from 'node:path'
 import { fileURLToPath } from 'node:url'
 
@@ -97,10 +105,32 @@ interface RunResult {
   stderr: string
 }
 
+/**
+ * round-2 code-review (Finding B): foreign_install_running() now fails
+ * CLOSED (defers) when pgrep/ps can't be checked, rather than proceeding —
+ * so every test that doesn't care about that check needs a default
+ * pgrep/ps pair that succeeds and finds nothing (pgrep's own convention: no
+ * match -> exit 1), same as regen-lockfile.test.ts's setupRepo(). Created
+ * once per `home` (each test gets a fresh one via makeHome()). A test that
+ * DOES care — stubbing a MATCHING process, or exercising a missing tool —
+ * overrides PATH itself, which fully replaces this default (see baseEnv()).
+ */
+function defaultStubBinDir(home: string): string {
+  const dir = join(home, '_default_bin')
+  if (!existsSync(dir)) {
+    mkdirSync(dir, { recursive: true })
+    writeFileSync(join(dir, 'pgrep'), '#!/bin/sh\nexit 1\n', 'utf8')
+    chmodSync(join(dir, 'pgrep'), 0o755)
+    writeFileSync(join(dir, 'ps'), '#!/bin/sh\nexit 1\n', 'utf8')
+    chmodSync(join(dir, 'ps'), 0o755)
+  }
+  return dir
+}
+
 function baseEnv(home: string, extra: Record<string, string> = {}): NodeJS.ProcessEnv {
   return {
     ...makeFixtureEnv(),
-    PATH: process.env['PATH'] ?? '/usr/local/bin:/usr/bin:/bin',
+    PATH: `${defaultStubBinDir(home)}:${process.env['PATH'] ?? '/usr/local/bin:/usr/bin:/bin'}`,
     SKILLSMITH_AUTOHEAL_TEST: '1',
     SKILLSMITH_AUTOHEAL_HOME: home,
     ...extra,
@@ -415,6 +445,93 @@ describe('heal path', () => {
       SKILLSMITH_AUTOHEAL_REPAIR_CMD: `touch ${ranFile}`,
     })
     expect(log).toContain('defer: concurrent npm install/build detected')
+    expect(existsSync(ranFile)).toBe(false)
+  })
+
+  // SMI-6614 (ADR-158, change 5c/2): foreign_install_running() also defers
+  // while scripts/regen-lockfile.sh is running (detected via the shared
+  // running_script_pids() helper, not the FORCE_INSTALL seam above) — a
+  // heal kicked mid-refresh must defer to it. Stubs `pgrep`/`ps` on a
+  // dedicated bin dir prepended to PATH rather than spawning a real process
+  // + relying on the system's real pgrep — measured ABSENT inside this
+  // repo's dev container image (present on macOS host), so a real-process
+  // version of this test would be silently vacuous in Docker CI.
+  it('foreign_install_running: regen-lockfile.sh running (pgrep/ps stub) → "defer: concurrent npm install"', () => {
+    const home = makeHome()
+    const ranFile = join(home, 'RAN')
+    const binDir = join(home, '_bin')
+    mkdirSync(binDir, { recursive: true })
+    writeFileSync(
+      join(binDir, 'pgrep'),
+      '#!/bin/sh\ncase "$*" in\n  *regen-lockfile.sh*) echo 555555 ;;\nesac\nexit 0\n',
+      'utf8'
+    )
+    chmodSync(join(binDir, 'pgrep'), 0o755)
+    writeFileSync(
+      join(binDir, 'ps'),
+      '#!/bin/sh\nif [ "$4" = "555555" ]; then echo "bash scripts/regen-lockfile.sh"; fi\nexit 0\n',
+      'utf8'
+    )
+    chmodSync(join(binDir, 'ps'), 0o755)
+
+    const { log } = runHeal(home, {
+      SKILLSMITH_AUTOHEAL_PROBE_CMD: 'false',
+      SKILLSMITH_AUTOHEAL_REPAIR_CMD: `touch ${ranFile}`,
+      PATH: `${binDir}:${process.env['PATH'] ?? '/usr/local/bin:/usr/bin:/bin'}`,
+    })
+    expect(log).toContain('defer: concurrent npm install/build detected')
+    expect(existsSync(ranFile)).toBe(false)
+  })
+
+  // round-2 code-review (Finding B): "cannot tell whether a foreign install
+  // is running" must now DEFER, not proceed — the two tests below cover
+  // each missing-tool direction (pgrep vs ps), each overriding PATH with a
+  // dedicated bin dir that fully replaces defaultStubBinDir()'s default
+  // (see baseEnv() above), isolating this test to exactly one missing tool.
+  it('foreign_install_running: pgrep unavailable -> defer, not proceed (round-2 Finding B)', () => {
+    const home = makeHome()
+    const ranFile = join(home, 'RAN')
+    const binDir = join(home, '_bin_no_pgrep')
+    mkdirSync(binDir, { recursive: true })
+    // A working `ps` stub paired with NO `pgrep` file at all, isolating this
+    // test to the "pgrep specifically missing" cause.
+    writeFileSync(join(binDir, 'ps'), '#!/bin/sh\nexit 1\n', 'utf8')
+    chmodSync(join(binDir, 'ps'), 0o755)
+
+    const { log } = runHeal(home, {
+      SKILLSMITH_AUTOHEAL_PROBE_CMD: 'false',
+      SKILLSMITH_AUTOHEAL_REPAIR_CMD: `touch ${ranFile}`,
+      PATH: `${binDir}:${process.env['PATH'] ?? '/usr/local/bin:/usr/bin:/bin'}`,
+    })
+    expect(log).toContain('defer: concurrent npm install/build detected')
+    expect(log).toMatch(/cannot verify regen-lockfile\.sh isn't running/)
+    expect(log).toMatch(/pgrep unavailable/i)
+    expect(existsSync(ranFile)).toBe(false)
+  })
+
+  it('foreign_install_running: ps unavailable (pgrep present) -> defer, not proceed (round-2 Finding B)', () => {
+    const home = makeHome()
+    const ranFile = join(home, 'RAN')
+    const binDir = join(home, '_bin_no_ps')
+    mkdirSync(binDir, { recursive: true })
+    // A working `pgrep` stub (would find a candidate if asked) paired with
+    // NO `ps` file at all, isolating this test to the "ps specifically
+    // missing" cause, distinct from the sibling "pgrep missing" test above.
+    writeFileSync(
+      join(binDir, 'pgrep'),
+      '#!/bin/sh\ncase "$*" in\n  *regen-lockfile.sh*) echo 555555 ;;\nesac\nexit 0\n',
+      'utf8'
+    )
+    chmodSync(join(binDir, 'pgrep'), 0o755)
+
+    const { log } = runHeal(home, {
+      SKILLSMITH_AUTOHEAL_PROBE_CMD: 'false',
+      SKILLSMITH_AUTOHEAL_REPAIR_CMD: `touch ${ranFile}`,
+      PATH: `${binDir}:${process.env['PATH'] ?? '/usr/local/bin:/usr/bin:/bin'}`,
+    })
+    expect(log).toContain('defer: concurrent npm install/build detected')
+    expect(log).toMatch(/cannot verify regen-lockfile\.sh isn't running/)
+    expect(log).toMatch(/ps unavailable/i)
     expect(existsSync(ranFile)).toBe(false)
   })
 

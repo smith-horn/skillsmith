@@ -120,6 +120,20 @@ fi
 # from both self-heal outcome branches below.
 NATIVE_CHECK_LIB="$(dirname "$0")/check-native-modules.sh"
 
+# SMI-6614 (ADR-158): the shared refresh advice, resolved the same way.
+# This script only ever runs on the main checkout (IS_WORKTREE=0 is
+# enforced below), so the main-checkout path is simply the current repo
+# root.
+ADVICE_LIB="$(dirname "$0")/print-deps-refresh-advice.sh"
+_print_container_deps_advice() {
+    _advice_main="$(git rev-parse --show-toplevel 2>/dev/null || pwd)"
+    if [ -r "$ADVICE_LIB" ]; then
+        sh "$ADVICE_LIB" "$_advice_main"
+    else
+        printf '    ( cd "%s" && ./scripts/regen-lockfile.sh )\n' "$_advice_main"
+    fi
+}
+
 # Only meaningful for the main checkout's own container. Worktree containers
 # mount node_modules :ro (self-heal there would EROFS) and are already
 # covered by the host-tree sentinel via the shared host mount.
@@ -146,6 +160,19 @@ esac
 case "$LOCK_SLEEP_SECS" in
     ''|*[!0-9]*) LOCK_SLEEP_SECS=2 ;;
 esac
+
+# SMI-6614 (ADR-158): this script forwards NO mount-check test-seam
+# variable into the container, ever, regardless of what this (host)
+# process's own environment happens to contain — a forwarded override
+# cannot be gated safely when the host environment invoking this script is
+# itself untrusted (e.g. a stray leftover test variable from manual
+# testing). check-container-deps-fresh-inner.sh's own mount check
+# (_check_mountpoint()) has no env-var seam either — it always runs the
+# real scripts/lib/node-modules-mount-gate.sh helper. Tests exercise that
+# real code path by pointing the helper's own
+# SKILLSMITH_MOUNT_GATE_MOUNTINFO_TEST seam at a fixture mountinfo file,
+# never by forwarding a variable through this script — see
+# scripts/tests/_lib/check-container-deps-fresh-fixtures.sh.
 
 # The actual lock + self-heal logic lives in check-container-deps-fresh-inner.sh
 # (bind-mounted into the container the same way check-node-modules-fresh.sh
@@ -215,8 +242,11 @@ case "$RC" in
         printf '\n'
         printf '  %s\n' "$OUTPUT"
         printf '\n'
-        printf "  ${YELLOW}Fix — retry manually:${NC}\n"
-        printf '    docker exec %s npm install\n' "$DOCKER_CONTAINER"
+        # SMI-6614 (ADR-158): never advertise a bare `docker exec … npm
+        # install` retry — point at the same mount-gated, scripted refresh
+        # path every other remedy in this file uses.
+        printf "  ${YELLOW}Fix — refresh via the scripted, mount-gated path:${NC}\n"
+        _print_container_deps_advice
         # SMI-6437: a failed install can leave native bindings broken as a
         # side effect, even though the FIX above targets the npm error, not
         # this. Silenced (>/dev/null 2>&1) and folded into one extra line —
@@ -234,8 +264,52 @@ case "$RC" in
             printf '\n'
             printf "${RED}  Native module bindings are ALSO currently broken as a result of this failed install.${NC}\n"
             printf "  ${YELLOW}Recover those FIRST:${NC} docker compose --profile dev restart dev\n"
-            printf '  Then retry the npm install fix above.\n'
+            printf '  Then retry the refresh above.\n'
         fi
+        ;;
+    5)
+        # SMI-6516/6520/6614 (ADR-158): the shared
+        # scripts/lib/node-modules-mount-gate.sh ran (after the freshness
+        # check failed) and found at least one of skillsmith-dev-1's
+        # declared node_modules paths (root, or a packages/*/node_modules)
+        # is NOT currently mounted with a volume-shaped root — installing
+        # here would write into that path's HOST tree instead (SMI-6516
+        # detached nine of ten declared mounts individually, so a
+        # root-only check would have missed most of that incident).
+        # Distinguishes MOUNT_CHECK_UNAVAILABLE (127, mountinfo unreadable
+        # inside the container) from everything else (32 — MOUNT_DETACHED,
+        # MOUNT_NOT_VOLUME, or MOUNT_AMBIGUOUS) — all fail closed and
+        # install nothing. The helper cannot prove a mount is a genuine
+        # Docker/Podman-managed volume from inside the container (that
+        # metadata isn't reachable there); it checks the mount's ROOT
+        # SHAPE (`.../volumes/<name>/_data`), hence "volume-shaped root"
+        # below, not "named volume".
+        case "$OUTPUT" in
+            *MOUNT_CHECK_UNAVAILABLE*)
+                printf "${RED}  ✗ Cannot verify %s's node_modules mounts${NC}\n" "$DOCKER_CONTAINER"
+                printf "${RED}━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━${NC}\n"
+                printf '\n'
+                printf "  Cannot read /proc/self/mountinfo inside %s — refusing to\n" "$DOCKER_CONTAINER"
+                printf '  self-heal blind rather than risk writing into the wrong tree.\n'
+                ;;
+            *)
+                printf "${RED}  ✗ %s has a node_modules mount problem (SMI-6516)${NC}\n" "$DOCKER_CONTAINER"
+                printf "${RED}━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━${NC}\n"
+                printf '\n'
+                printf '  One or more of %s'\''s node_modules paths is NOT currently mounted\n' "$DOCKER_CONTAINER"
+                printf '  with a volume-shaped root — an npm install here would write into\n'
+                printf '  the HOST tree instead, or the mount state is ambiguous. Refusing to\n'
+                printf '  self-heal. Affected path(s):\n'
+                printf '%s\n' "$OUTPUT" | grep -E '^(MOUNT_DETACHED|MOUNT_NOT_VOLUME|MOUNT_AMBIGUOUS) ' | sed -E 's/^(MOUNT_DETACHED|MOUNT_NOT_VOLUME|MOUNT_AMBIGUOUS) /    - /'
+                ;;
+        esac
+        printf '\n'
+        printf "  ${YELLOW}Fix:${NC} recreate %s from the MAIN checkout, then verify and retry:\n" "$DOCKER_CONTAINER"
+        printf '    docker compose --profile dev up -d --force-recreate dev\n'
+        printf '    docker exec -w /app %s sh scripts/lib/node-modules-mount-gate.sh && echo OK\n' "$DOCKER_CONTAINER"
+        printf '    git push   # retry\n'
+        printf '\n'
+        printf '  Full plan: docs/internal/implementation/smi-6516-6520-native-binding-mount-topology.md\n'
         ;;
     *)
         # Any other code (docker itself failing, sh unable to start, an
