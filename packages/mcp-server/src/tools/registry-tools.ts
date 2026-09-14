@@ -242,10 +242,12 @@ async function executePrivateRegistryPublishImpl(
   input: PrivateRegistryPublishInput,
   _context: ToolContext
 ): Promise<PrivateRegistryPublishResult> {
-  // SMI-6622/SMI-6184 pattern: reflects which service is ACTUALLY wired in
-  // (`setPrivateRegistryService()` may have swapped it), not merely whether Supabase env happens
-  // to be configured.
-  const dataSource: 'stub' | 'live' = dataSourceFor(service)
+  // One read of the module-level singleton, so provenance and data can never come from two
+  // different instances if `setPrivateRegistryService()` lands during an await below (SMI-6203
+  // pattern, as in rbac-tools.action.ts). `dataSource` reflects which service is ACTUALLY wired in,
+  // not merely whether Supabase env happens to be configured (SMI-6622/SMI-6184).
+  const svc = service
+  const dataSource: 'stub' | 'live' = dataSourceFor(svc)
   let teamId: string
   let credentialSource: RegistryCredentialSource
   try {
@@ -262,7 +264,7 @@ async function executePrivateRegistryPublishImpl(
   // security boundary. getNamespace() never throws (SMI-6109) — a lookup failure resolves to
   // `null`, so this pre-check is simply skipped and the trigger remains the sole gate.
   let skillNamespace: string | undefined
-  const namespace = await service.getNamespace(teamId)
+  const namespace = await svc.getNamespace(teamId)
   if (namespace) {
     skillNamespace = namespace
     const requestedNamespace = input.skillId.split('/')[0]
@@ -278,7 +280,7 @@ async function executePrivateRegistryPublishImpl(
   // Service errors (immutability conflict, size cap, missing SKILL.md, missing
   // service-role key) surface as typed {success:false} results, not exceptions.
   try {
-    const skill = await service.publish(
+    const skill = await svc.publish(
       teamId,
       input.skillId,
       input.version,
@@ -333,8 +335,9 @@ async function executePrivateRegistryManageImpl(
   input: PrivateRegistryManageInput,
   context: ToolContext
 ): Promise<PrivateRegistryManageResult> {
-  // SMI-6622/SMI-6184 pattern — see executePrivateRegistryPublishImpl's identical comment above.
-  const dataSource: 'stub' | 'live' = dataSourceFor(service)
+  // Single singleton read — see executePrivateRegistryPublishImpl's identical comment above.
+  const svc = service
+  const dataSource: 'stub' | 'live' = dataSourceFor(svc)
   let teamId: string
   let credentialSource: RegistryCredentialSource
   try {
@@ -353,7 +356,7 @@ async function executePrivateRegistryManageImpl(
     teamId,
     credentialSource,
     dataSource,
-    service,
+    service: svc,
   })
 }
 
