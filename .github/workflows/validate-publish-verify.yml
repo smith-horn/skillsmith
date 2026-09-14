@@ -3,14 +3,19 @@
 # they now call scripts/ci/verify-npm-publish.sh. That helper is the only place
 # the SMI-6493 retry policy is written down.
 #
-# THREE REPLACEMENTS ARE WIRED HERE, and each would otherwise never run:
-#   1. verify-npm-publish.test.sh   - a .test.sh is not a vitest pattern at all.
-#   2. publish-verify-call-sites.test.ts  } both ARE vitest patterns, but ci.yml's
-#   3. publish-smoke-tail-guards.test.ts  } root test job is conditional on affected-
-#      package detection AND invokes `npx vitest run scripts/tests supabase/functions
-#      --passWithNoTests`, so a filter selecting nothing is a GREEN run. Relying on it
-#      reproduces the exact "never ran, scored as found nothing" outcome these
-#      replacements exist to remove -- one level up.
+# THREE REPLACEMENTS ARE WIRED HERE. They are not equally at risk, and saying so
+# accurately matters more than making the case sound stronger:
+#   1. verify-npm-publish.test.sh -- a `.test.sh` is not a vitest pattern at all,
+#      so ci.yml NEVER executes it. This workflow is its only CI execution. That
+#      is the load-bearing reason this file exists.
+#   2/3. publish-verify-call-sites.test.ts and publish-smoke-tail-guards.test.ts
+#      ARE vitest patterns, and ci.yml's `Test (root)` job does run them on a
+#      code-tier diff -- its condition is `tier == 'code' || tier == 'deps'`, not
+#      an affected-package set. They are named here anyway for two reasons: that
+#      job invokes `npx vitest run scripts/tests supabase/functions
+#      --passWithNoTests`, so a sweep selecting nothing is a GREEN run; and a
+#      tier classification that ever stops reaching these paths would remove
+#      their only other execution without any signal.
 # Hence: named in `paths:` AND executed by explicit path. Never a directory sweep.
 name: Validate Publish Verify
 

@@ -54,6 +54,7 @@
 import crypto from 'node:crypto'
 import fs from 'node:fs'
 import path from 'node:path'
+import { createRequire } from 'node:module'
 import { fileURLToPath } from 'node:url'
 
 import { afterEach, describe, expect, it } from 'vitest'
@@ -336,6 +337,41 @@ const REAL_TAIL_LINES = [
 ]
 
 describe('the re-anchor (SMI-6497 Edit A)', () => {
+  // SMI-6497 / PR-15. The step split is a state flip on an IRREVERSIBLE path, and
+  // the condition below is the only thing standing between it and a smoke run
+  // against a publish that never happened. Nothing else in either replacement
+  // suite looks at this field, so without this case a future deletion of the
+  // `if:` passes everything.
+  it('the smoke step carries the same `if:` as the step it was split from', () => {
+    const req = createRequire(import.meta.url)
+    const YAML = req('yaml') as { parse: (t: string) => unknown }
+    const wf = YAML.parse(WORKFLOW_TEXT) as {
+      jobs?: Record<string, { steps?: Array<{ name?: string; if?: string }> }>
+    }
+    const steps = wf.jobs?.[JOB_ID]?.steps ?? []
+    const pick = (n: string) => {
+      const hits = steps.filter((st) => st.name === n)
+      expect(hits.length, `expected exactly one ${JOB_ID} step named ${n}`).toBe(1)
+      return hits[0]
+    }
+    const verify = pick('Verify skillsmith-cli on npm')
+    const smoke = pick(STEP_NAME)
+
+    // A step with no `if:` carries only the implicit success(). A SKIPPED publish
+    // is not a FAILED one: `Publish skillsmith-cli` is gated on
+    // `steps.version-check.outputs.exists != 'true'`, so on the already-published
+    // path it skips, the verify step skips with it, and a skipped step does not
+    // fail the job -- leaving the smoke to run against a publish that never
+    // happened. The two conditions must stay identical.
+    expect(smoke.if, 'the smoke step must carry an explicit `if:`').toBeTruthy()
+    expect(smoke.if).toBe(verify.if)
+
+    // And it must contain NO status-check function, because that is precisely
+    // what keeps GitHub's default success() applied -- which is what preserves
+    // FT-2: a verify step that fails must stop the smoke.
+    expect(smoke.if).not.toMatch(/\b(success|failure|cancelled|always)\s*\(/)
+  })
+
   it('resolves the tail by (jobId, stepName), not by any marker', () => {
     expect(REAL_TAIL.length).toBeGreaterThan(0)
     expect(REAL_TAIL).toContain('if ! SMOKE_DIR="$(mktemp -d)"; then')

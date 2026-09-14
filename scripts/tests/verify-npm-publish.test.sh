@@ -63,6 +63,11 @@ chmod +x "$STUBDIR/sleep"
 cat > "$STUBDIR/npm" <<'NPM_STUB'
 #!/usr/bin/env bash
 echo x >> "$NPM_STUB_COUNTER"
+# Record the COMPLETE argument vector, one invocation per line. Reading only
+# the package spec would let any probe flag be deleted from the helper with
+# every case still green -- which is exactly the gap the retired
+# VB-R3-FRAGMENT-LOST guard used to cover.
+[ -n "${NPM_STUB_ARGV:-}" ] && printf '%s\n' "$*" >> "$NPM_STUB_ARGV"
 CALLNUM=$(wc -l < "$NPM_STUB_COUNTER" | tr -d ' ')
 MODE=$(cat "$NPM_STUB_MODE")
 # args: view "<pkg>@<version>" version --no-json ... -- extract the
@@ -115,6 +120,7 @@ run_case() {
 
   set +e
   env "$@" PATH="$STUBDIR:$PATH" NPM_STUB_COUNTER="$counter" NPM_STUB_MODE="$modefile" \
+    NPM_STUB_ARGV="$casedir/argv" \
     bash "$HELPER" "$pkg" "$version" > "$casedir/stdout" 2> "$casedir/stderr"
   actual_exit=$?
   set -e
@@ -221,6 +227,39 @@ run_case "M4b_both_args_normal" "otherpkg" "9.9.9" "succeed_first" \
 run_case "budget_override_ignored" "mypkg" "1.2.3" "never" \
   1 31 "30 attempts over 300s" "VERIFY_MAX_ATTEMPTS=2" "VERIFY_INTERVAL=1"
 
+# Registry-safety flags. SMI-6493's whole point is that an unpinned probe agrees
+# with a redirected publish and both go green while npmjs never received the
+# release. The retired VB-R3-FRAGMENT-LOST guard is what used to stop one of
+# these being dropped; this case is its successor. It asserts on EVERY recorded
+# invocation, so it covers the loop probe and the final probe alike -- pinning
+# only one of the two would leave the other free to drift.
+REQUIRED_FLAGS='--no-json --offline=false --prefer-offline=false --registry=https://registry.npmjs.org'
+flagdir=$(mktemp -d)
+: > "$flagdir/calls"
+printf '%s' never > "$flagdir/mode"
+: > "$flagdir/argv"
+set +e
+PATH="$STUBDIR:$PATH" NPM_STUB_COUNTER="$flagdir/calls" NPM_STUB_MODE="$flagdir/mode" \
+  NPM_STUB_ARGV="$flagdir/argv" \
+  bash "$HELPER" mypkg 1.2.3 > "$flagdir/stdout" 2> "$flagdir/stderr"
+set -e
+flag_calls=$(wc -l < "$flagdir/argv" | tr -d ' ')
+flag_ok=1
+# 31 = 30 in-loop probes + 1 final probe. If this drifts, the case below is
+# silently checking fewer invocations than it claims to.
+[ "$flag_calls" = "31" ] || flag_ok=0
+for f in $REQUIRED_FLAGS; do
+  missing=$(grep -cvF -- "$f" "$flagdir/argv" || true)
+  [ "$missing" = "0" ] || { flag_ok=0; echo "  missing '$f' on $missing/$flag_calls invocation(s)"; }
+done
+if [ "$flag_ok" = "1" ]; then
+  echo "PASS registry_flags_pinned_on_every_probe ($flag_calls/31 invocations, 4/4 flags)"
+else
+  echo "FAIL registry_flags_pinned_on_every_probe: calls=$flag_calls(want 31)"
+  fail=1
+fi
+rm -rf "$flagdir"
+
 if [ "$fail" -eq 1 ]; then
   echo ""
   echo "FAILURES above"
@@ -228,4 +267,4 @@ if [ "$fail" -eq 1 ]; then
 fi
 
 echo ""
-echo "all 7 cases passed"
+echo "all 8 cases passed"
