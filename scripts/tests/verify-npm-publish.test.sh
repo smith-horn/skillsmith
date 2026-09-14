@@ -255,32 +255,88 @@ PATH="$STUBDIR:$PATH" NPM_STUB_COUNTER="$flagdir/calls" NPM_STUB_MODE="$flagdir/
   bash "$HELPER" mypkg 1.2.3 > "$flagdir/stdout" 2> "$flagdir/stderr"
 set -e
 flag_ok=1
-# 31 = 30 in-loop probes + 1 final probe. If this drifts, everything below is
-# checking fewer invocations than it claims to.
-flag_calls=$(grep -c '^--INVOCATION-- ' "$flagdir/argv" || true)
-[ "$flag_calls" = "31" ] || flag_ok=0
-# Every invocation must report the SAME argument count, and the file must hold
-# exactly that many lines. This is what makes an argument containing a newline
-# fail closed rather than smuggle in a forged flag line.
-argcs=$(grep '^--INVOCATION-- ' "$flagdir/argv" | awk '{print $2}' | sort -u | wc -l | tr -d ' ')
-argc=$(grep -m1 '^--INVOCATION-- ' "$flagdir/argv" | awk '{print $2}')
-total=$(wc -l < "$flagdir/argv" | tr -d ' ')
-expected_total=$(( flag_calls + flag_calls * argc ))
-[ "$argcs" = "1" ] || { flag_ok=0; echo "  invocations disagree on argument count ($argcs distinct values)"; }
-[ "$total" = "$expected_total" ] || { flag_ok=0; echo "  argv line total $total, expected $expected_total (embedded newline?)"; }
-# Exact WHOLE-LINE match. Unlike a substring or a delimiter scheme, this cannot
-# be satisfied by an argument that merely contains the flag.
-for f in $REQUIRED_FLAGS; do
-  n=$(grep -Fxc -- "$f" "$flagdir/argv" || true)
-  [ "$n" = "$flag_calls" ] || { flag_ok=0; echo "  exact argument '$f' on $n/$flag_calls invocation(s)"; }
-done
+# Validate each invocation as its OWN bounded record. Counting occurrences across
+# the whole file is not sufficient: a flag supplied twice in one probe and zero
+# times in another can hit the same global total while leaving a probe unpinned.
+# That is an assertion-design property, not an encoding one -- the encoding below
+# was already adequate when this hole was found.
+#
+# check_argv FILE EXPECTED_RECORDS -- prints a diagnostic per violation, exits 1.
+check_argv() {
+  awk -v flagstr="$REQUIRED_FLAGS" -v want_records="$2" '
+    function flush(  i) {
+      if (!started) return
+      records++
+      if (nargs != argc)
+        { printf "  record %d: %d argument line(s), header said %d\n", records, nargs, argc; bad++ }
+      for (i = 1; i <= nf; i++)
+        if (cnt[i] != 1)
+          { printf "  record %d: exact argument %s appears %d time(s), want exactly 1\n", records, F[i], cnt[i]; bad++ }
+    }
+    BEGIN { nf = split(flagstr, F, " ") }
+    /^--INVOCATION-- / {
+      flush()
+      started = 1; argc = $2 + 0; nargs = 0
+      for (i = 1; i <= nf; i++) cnt[i] = 0
+      next
+    }
+    { nargs++; for (i = 1; i <= nf; i++) if ($0 == F[i]) cnt[i]++ }
+    END {
+      flush()
+      if (records != want_records)
+        { printf "  %d invocation record(s), want %d\n", records, want_records; bad++ }
+      printf "RECORDS=%d FLAGS=%d\n", records, nf
+      exit (bad > 0)
+    }
+  ' "$1"
+}
+
+flag_summary=$(check_argv "$flagdir/argv" 31) || flag_ok=0
 if [ "$flag_ok" = "1" ]; then
-  echo "PASS registry_flags_pinned_on_every_probe ($flag_calls/31 invocations, ${argc} args each, 4/4 flags exact)"
+  echo "PASS registry_flags_pinned_on_every_probe (${flag_summary##*$'\n'}, each flag exactly once per record)"
 else
-  echo "FAIL registry_flags_pinned_on_every_probe: calls=$flag_calls(want 31)"
+  echo "FAIL registry_flags_pinned_on_every_probe"
   fail=1
 fi
 rm -rf "$flagdir"
+
+# Self-test of check_argv, in BOTH directions. The production run above can only
+# show the checker staying silent; that is indistinguishable from a checker that
+# examines nothing. These two synthetic records exercise it directly.
+#
+# The REJECT fixture is the exact hole round 5 of the cross-family review found:
+# global occurrence counting is satisfied by a flag appearing twice in one record
+# and zero times in another, while a per-record check is not.
+st_dir=$(mktemp -d)
+mk_record() { # mk_record FILE ARGS...
+  local f="$1"; shift
+  printf -- '--INVOCATION-- %s\n' "$#" >> "$f"
+  printf '%s\n' "$@" >> "$f"
+}
+FLAGSET='--no-json --offline=false --prefer-offline=false --registry=https://registry.npmjs.org'
+# Accept: two well-formed records.
+: > "$st_dir/good"
+# shellcheck disable=SC2086 # deliberate word-splitting: these are separate args
+mk_record "$st_dir/good" view "pkg@1.0.0" version $FLAGSET
+# shellcheck disable=SC2086
+mk_record "$st_dir/good" view "pkg@1.0.0" version $FLAGSET
+# Reject: --no-json twice in record 1, absent from record 2. Global count is 2
+# across 2 records -- exactly what the old whole-file assertion accepted.
+: > "$st_dir/redistributed"
+mk_record "$st_dir/redistributed" view "pkg@1.0.0" --no-json --no-json --offline=false --prefer-offline=false --registry=https://registry.npmjs.org
+mk_record "$st_dir/redistributed" view "pkg@1.0.0" version --offline=false --prefer-offline=false --registry=https://registry.npmjs.org
+st_ok=1
+check_argv "$st_dir/good" 2 > /dev/null 2>&1 || { st_ok=0; echo "  check_argv rejected a well-formed record set"; }
+if check_argv "$st_dir/redistributed" 2 > /dev/null 2>&1; then
+  st_ok=0; echo "  check_argv ACCEPTED a redistributed record set -- the detector is blind"
+fi
+if [ "$st_ok" = "1" ]; then
+  echo "PASS check_argv_self_test (accepts well-formed, rejects cross-record redistribution)"
+else
+  echo "FAIL check_argv_self_test"
+  fail=1
+fi
+rm -rf "$st_dir"
 
 if [ "$fail" -eq 1 ]; then
   echo ""
@@ -289,4 +345,4 @@ if [ "$fail" -eq 1 ]; then
 fi
 
 echo ""
-echo "all 8 cases passed"
+echo "all 9 cases passed"
