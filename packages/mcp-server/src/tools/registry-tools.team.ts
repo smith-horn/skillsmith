@@ -69,33 +69,86 @@ export class RegistryTeamResolutionError extends Error {
 }
 
 /**
- * Read the registry team-resolution credential: env first (`SKILLSMITH_LICENSE_KEY` then
- * `SKILLSMITH_API_KEY`, via `readLicenseKey()`), then `~/.skillsmith/config.json`'s `apiKey` field
- * (`getApiKey()` already re-checks `SKILLSMITH_API_KEY` internally before the file — harmless
- * redundancy, not a behavior change, since `readLicenseKey()` already covered that case).
+ * Which of the three supported places the registry credential actually came from (SMI-6622 round
+ * 2 finding 3) — named in resolution results and in error text, so a confusing fail-closed result
+ * (empty list, null namespace, RLS denial on publish) can say WHICH credential produced the team
+ * it resolved, not just that resolution "worked."
  */
-function readRegistryCredential(): string | null {
-  const envKey = readLicenseKey()
-  if (envKey) return envKey
-  const configKey = getApiKey()
-  return configKey && configKey.length > 0 ? configKey : null
+export type RegistryCredentialSource =
+  | 'env:SKILLSMITH_LICENSE_KEY'
+  | 'env:SKILLSMITH_API_KEY'
+  | 'config.json'
+
+/** Human-readable label for {@link RegistryCredentialSource}, for error/result text. */
+export function describeCredentialSource(source: RegistryCredentialSource): string {
+  switch (source) {
+    case 'env:SKILLSMITH_LICENSE_KEY':
+      return 'the SKILLSMITH_LICENSE_KEY environment variable'
+    case 'env:SKILLSMITH_API_KEY':
+      return 'the SKILLSMITH_API_KEY environment variable'
+    case 'config.json':
+      return '~/.skillsmith/config.json'
+  }
 }
 
 /**
- * Resolve the caller's team_id for the private registry. See this module's header for the full
- * credential order, no-env-gate rationale, and failure-mode contract. Never returns a
- * placeholder/stub id — every failure path throws instead.
+ * Resolve the credential AND which source produced it. Labels the source by replicating
+ * `readLicenseKey()`'s own env precedence check (team-resolver.ts) rather than re-deriving the
+ * value a second, potentially-divergent way — `readLicenseKey()` stays the single source of truth
+ * for the VALUE; this only decides which branch of it won, for display purposes.
  */
-export async function resolveRegistryTeamId(): Promise<string> {
-  const key = readRegistryCredential()
-  if (!key) {
-    throw new Error(
-      'SKILLSMITH_LICENSE_KEY or SKILLSMITH_API_KEY is required for private registry operations. ' +
-        'Set one in your MCP server config (shell exports do not reach MCP subprocesses), or run ' +
-        '`skillsmith login` / configure an API key so it is saved to ~/.skillsmith/config.json. ' +
-        'Publishing, installing, and reviewing submissions additionally require `skillsmith login`.'
-    )
+function resolveCredentialWithSource(): { key: string; source: RegistryCredentialSource } | null {
+  const licenseEnv = process.env.SKILLSMITH_LICENSE_KEY
+  const envKey = readLicenseKey()
+  if (envKey) {
+    const source: RegistryCredentialSource =
+      licenseEnv !== undefined && licenseEnv.length > 0
+        ? 'env:SKILLSMITH_LICENSE_KEY'
+        : 'env:SKILLSMITH_API_KEY'
+    return { key: envKey, source }
   }
+  const configKey = getApiKey()
+  return configKey && configKey.length > 0 ? { key: configKey, source: 'config.json' } : null
+}
+
+/**
+ * Read the registry team-resolution credential value only (no source label) — env first
+ * (`SKILLSMITH_LICENSE_KEY` then `SKILLSMITH_API_KEY`), then `~/.skillsmith/config.json`'s `apiKey`
+ * field. Exported (SMI-6622 round 2) so `registry-tools.live.audit.ts`'s `licenseKeyFingerprint()`
+ * can fingerprint the SAME credential team resolution actually used — that call site previously
+ * read only `readLicenseKey()` (env-only), so a config.json-only credential fingerprinted as absent
+ * even though it was the credential in use.
+ */
+export function readRegistryCredential(): string | null {
+  return resolveCredentialWithSource()?.key ?? null
+}
+
+/** {@link resolveRegistryTeamId}'s full result — the resolved team plus which credential source
+ *  resolved it. */
+export interface RegistryTeamResolution {
+  teamId: string
+  source: RegistryCredentialSource
+}
+
+const NO_CREDENTIAL_MESSAGE =
+  'SKILLSMITH_LICENSE_KEY or SKILLSMITH_API_KEY is required for private registry operations. ' +
+  'Set one in your MCP server config (shell exports do not reach MCP subprocesses), or run ' +
+  '`skillsmith login` / configure an API key so it is saved to ~/.skillsmith/config.json. ' +
+  'Publishing, installing, and reviewing submissions additionally require `skillsmith login`.'
+
+/**
+ * Resolve the caller's team_id for the private registry, AND which credential source resolved it
+ * (SMI-6622 round 2 finding 3). See this module's header for the full credential order, no-env-gate
+ * rationale, and failure-mode contract. Never returns a placeholder/stub id — every failure path
+ * throws instead, naming the source where one was found.
+ */
+export async function resolveRegistryTeamId(): Promise<RegistryTeamResolution> {
+  const credential = resolveCredentialWithSource()
+  if (!credential) {
+    throw new Error(NO_CREDENTIAL_MESSAGE)
+  }
+  const { key, source } = credential
+  const sourceLabel = describeCredentialSource(source)
 
   let rpcResult: SupabaseRpcResult<string>
   try {
@@ -103,7 +156,7 @@ export async function resolveRegistryTeamId(): Promise<string> {
     rpcResult = await client.rpc<string>('resolve_team_from_license', { p_license_key: key })
   } catch (err) {
     throw new RegistryTeamResolutionError(
-      `Failed to resolve your team from the configured credential: ${
+      `Failed to resolve your team from the credential in ${sourceLabel}: ${
         err instanceof Error ? err.message : 'unknown error'
       }`,
       { cause: err }
@@ -112,7 +165,7 @@ export async function resolveRegistryTeamId(): Promise<string> {
 
   if (rpcResult.error) {
     throw new RegistryTeamResolutionError(
-      `Failed to resolve your team from the configured credential: ${
+      `Failed to resolve your team from the credential in ${sourceLabel}: ${
         rpcResult.error.message ?? 'unknown error'
       }`
     )
@@ -120,11 +173,10 @@ export async function resolveRegistryTeamId(): Promise<string> {
 
   if (!rpcResult.data) {
     throw new Error(
-      'Unable to resolve team from the configured key. Ensure SKILLSMITH_LICENSE_KEY or ' +
-        'SKILLSMITH_API_KEY (or the apiKey saved in ~/.skillsmith/config.json) is active and ' +
+      `Unable to resolve team from the credential in ${sourceLabel}. Ensure it is active and ` +
         'attached to an Enterprise-tier subscription.'
     )
   }
 
-  return rpcResult.data
+  return { teamId: rpcResult.data, source }
 }

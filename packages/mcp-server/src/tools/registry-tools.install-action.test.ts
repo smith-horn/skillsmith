@@ -55,9 +55,21 @@ import {
 // "Round-trip" tests bypass this entirely (they call `executeRegistryInstall`/`service.publish()`
 // directly with an explicit `TEAM`), so only the dispatch tests actually need this mock — added
 // uniformly since both share this file's team-resolver.js-less setup.
-vi.mock('./registry-tools.team.js', () => ({
-  resolveRegistryTeamId: vi.fn(async () => 'team-alpha'),
-}))
+// importOriginal + spread (SMI-6622 round 2), not a bare replacement factory — the real module's
+// other exports (describeCredentialSource, RegistryTeamResolutionError, etc.) stay real, so a
+// future new export never needs to be re-added to every mock across the repo (see
+// call-tool-handler.test.ts's identical rationale for the same pattern on supabase-client.js).
+vi.mock('./registry-tools.team.js', async (importOriginal) => {
+  const actual = await importOriginal<typeof import('./registry-tools.team.js')>()
+  return {
+    ...actual,
+    resolveRegistryTeamId: vi.fn(async () => ({
+      teamId: 'team-alpha',
+      source: 'env:SKILLSMITH_LICENSE_KEY',
+    })),
+    readRegistryCredential: vi.fn(() => 'sk_test_fake_license'),
+  }
+})
 
 /** Distinct admin identity used to approve every fixture published in this file (SMI-5949 D-6
  *  blocks self-approval — see registry-tools.test.ts's own ADMIN_ACTOR for the established

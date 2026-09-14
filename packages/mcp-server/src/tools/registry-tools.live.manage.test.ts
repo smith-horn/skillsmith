@@ -56,9 +56,19 @@ vi.mock('./team-resolver.js', () => ({
 
 // SMI-6622: registry-tools.ts's resolveTeamId() now delegates to registry-tools.team.js, not
 // team-resolver.js's resolveLicenseTeamId.
-vi.mock('./registry-tools.team.js', () => ({
-  resolveRegistryTeamId: vi.fn(async () => 'team-alpha'),
-}))
+// importOriginal + spread (SMI-6622 round 2) — see registry-tools.install-action.test.ts's
+// identical comment for why (a future new export never needs re-adding to every mock).
+vi.mock('./registry-tools.team.js', async (importOriginal) => {
+  const actual = await importOriginal<typeof import('./registry-tools.team.js')>()
+  return {
+    ...actual,
+    resolveRegistryTeamId: vi.fn(async () => ({
+      teamId: 'team-alpha',
+      source: 'env:SKILLSMITH_LICENSE_KEY',
+    })),
+    readRegistryCredential: vi.fn(() => 'sk_test_fake_license'),
+  }
+})
 
 // ============================================================================
 // Shared setup
@@ -109,6 +119,24 @@ describe('private_registry_manage namespace action — SMI-5852 AC-11', () => {
     const auditInsert = calls.find((c) => c.table === 'audit_logs')
     expect(auditInsert).toBeDefined()
     expect(auditInsert!.payload?.result).toBe('error')
+  })
+
+  // SMI-6622 round 2 finding 3: "Add tests for ... the non-member message." PGRST116 on EVERY
+  // `.single()` call covers both getNamespace()'s own query and the membership-check probe's —
+  // both are genuinely "no visible row for this team" under an RLS-scoped caller, so returning the
+  // SAME PGRST116 for both is not a shortcut, it is the real scenario this test targets.
+  it('replaces the generic namespace-unresolved message with the specific non-member message when confirmed', async () => {
+    const { client } = createFakeClient({
+      singleResponder: () => ({ data: null, error: { code: 'PGRST116', message: 'no rows' } }),
+    })
+    await mockBothClients(client)
+
+    const result = await executePrivateRegistryManage({ action: 'namespace' }, makeContext())
+
+    expect(result.success).toBe(false)
+    expect(result.error).toMatch(/not a member of the team resolved from/i)
+    expect(result.error).toMatch(/SKILLSMITH_LICENSE_KEY environment variable/)
+    expect(result.error).not.toMatch(/unable to resolve/i)
   })
 })
 
@@ -405,7 +433,12 @@ describe('private_registry_manage live mode — SMI-6109 member-credential requi
   // why that contract itself is deliberate.
   it('namespace resolves to an "unable to resolve" message that hints at login, when no user is signed in', async () => {
     const { resolveUserAccessToken } = await import('./team-resolver.js')
-    vi.mocked(resolveUserAccessToken).mockResolvedValueOnce(null)
+    // SMI-6622 round 2 finding 3: persistent (not `...Once`) — a genuinely-signed-out caller
+    // returns null on EVERY resolveUserAccessToken() call, including the membership-check probe
+    // this handler now also attempts. A single queued `null` only covered auditedGetNamespace()'s
+    // own call and let the probe's own (second) getMemberUserClient() call fall through to this
+    // mock's default token, incorrectly reaching a real `teams` query.
+    vi.mocked(resolveUserAccessToken).mockResolvedValue(null)
     const { client, calls } = createFakeClient()
     await mockBothClients(client)
 

@@ -56,9 +56,19 @@ vi.mock('./team-resolver.js', () => ({
 // SMI-6622: registry-tools.ts's resolveTeamId() now delegates to registry-tools.team.js (NOT
 // team-resolver.js's resolveLicenseTeamId). Mocked here to the same 'team-alpha' value the rest of
 // this file (and registry-tools.live.test-helpers.ts's RESOLVED_TEAM constant) already assumes.
-vi.mock('./registry-tools.team.js', () => ({
-  resolveRegistryTeamId: vi.fn(async () => 'team-alpha'),
-}))
+// importOriginal + spread (SMI-6622 round 2) — see registry-tools.install-action.test.ts's
+// identical comment for why (a future new export never needs re-adding to every mock).
+vi.mock('./registry-tools.team.js', async (importOriginal) => {
+  const actual = await importOriginal<typeof import('./registry-tools.team.js')>()
+  return {
+    ...actual,
+    resolveRegistryTeamId: vi.fn(async () => ({
+      teamId: 'team-alpha',
+      source: 'env:SKILLSMITH_LICENSE_KEY',
+    })),
+    readRegistryCredential: vi.fn(() => 'sk_test_fake_license'),
+  }
+})
 
 // ============================================================================
 // Shared setup
@@ -149,17 +159,15 @@ describe('private_registry_publish live mode — SMI-5816', () => {
     expect(result.error).toMatch(/immutable|already exists/i)
   })
 
-  // SMI-6622 item 3/8: a license-key-team-vs-signed-in-user-membership mismatch (the license key
-  // resolves 'team-alpha' here, but the signed-in user is not actually a member of that team) is
-  // enforced by RLS (`private_registry_skills_member_insert`'s WITH CHECK), not by this file's own
-  // application code — see registry-tools.live.ts:36-42's header comment. The explicit
-  // `.eq('team_id', teamId)` filter this service already carries on every read means a mismatch on
-  // list/get surfaces as the SAME empty/not-found result already covered by this file's and
-  // registry-tools.test.ts's "not found" tests; this test covers the INSERT side specifically,
-  // proving a mismatch on publish refuses with a clear error rather than silently succeeding under
-  // the license key's resolved team (the exact silent-cross-team-write this filter exists to
-  // prevent).
-  it('refuses publish, never silently succeeding, when the license-resolved team and the RLS-authorized team mismatch', async () => {
+  // SMI-6622 round 2 finding 4: renamed from "...team mismatch" — this fixture's own responder
+  // ignores teamId and always returns the same 42501, so it cannot actually fail for identity
+  // reasons; what it genuinely proves is narrower (and still worth its own test): a live INSERT
+  // denied by RLS surfaces as a clean `{success:false}` refusal, never a silent `{success:true}`.
+  // Membership here is INCONCLUSIVE (no `singleResponder` configured, so the new membership-check
+  // probe's `.single()` call — see registry-tools.membership-check.ts — gets the fake client's
+  // default `{data:null, error:null}`, i.e. "member"), so the message below is the generic RLS
+  // one, unmodified. The genuinely CONFIRMED-non-member case is the next test.
+  it('refuses publish with a clean error (never success:true) on a live RLS insert denial', async () => {
     const { client } = createFakeClient({
       thenResponder: () => ({
         data: null,
@@ -177,6 +185,37 @@ describe('private_registry_publish live mode — SMI-5816', () => {
 
     expect(result.success).toBe(false)
     expect(result.error).toMatch(/row-level security|permission/i)
+    expect(result.skill).toBeUndefined()
+  })
+
+  // SMI-6622 round 2 finding 3: "Add tests for ... the non-member message." Here membership is
+  // POSITIVELY confirmed denied — the membership-check probe's `.single()` call (a structurally
+  // different terminal method from the INSERT's `.then()`-based call above, so createFakeClient's
+  // singleResponder/thenResponder split cleanly separates the two without needing table-awareness)
+  // returns PGRST116, "no visible row" — proving the generic RLS message gets REPLACED with the
+  // specific, actionable "not a member of the team resolved from ..." error naming the credential
+  // source (env:SKILLSMITH_LICENSE_KEY, per this file's own team-resolution mock).
+  it('replaces the generic RLS error with the specific non-member message when membership is positively disconfirmed', async () => {
+    const { client } = createFakeClient({
+      thenResponder: () => ({
+        data: null,
+        error: { code: '42501', message: 'new row violates row-level security policy' },
+      }),
+      singleResponder: () => ({ data: null, error: { code: 'PGRST116', message: 'no rows' } }),
+    })
+    const { getSupabaseAdminClient, getSupabaseUserClient } = await import('../supabase-client.js')
+    vi.mocked(getSupabaseAdminClient).mockResolvedValue(client)
+    vi.mocked(getSupabaseUserClient).mockResolvedValue(client)
+
+    const result = await executePrivateRegistryPublish(
+      { skillId: 'myteam/skill-a', version: '1.0.0', content: SAMPLE_CONTENT },
+      makeContext()
+    )
+
+    expect(result.success).toBe(false)
+    expect(result.error).toMatch(/not a member of the team resolved from/i)
+    expect(result.error).toMatch(/SKILLSMITH_LICENSE_KEY environment variable/)
+    expect(result.error).not.toMatch(/row-level security/i)
     expect(result.skill).toBeUndefined()
   })
 

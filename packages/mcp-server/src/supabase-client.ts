@@ -54,10 +54,30 @@ let _client: unknown = null
 let _adminClient: unknown = null
 
 /**
+ * Guard against a test silently reaching production Supabase through the anon-key fallback above
+ * (SMI-6622 round-2 adversarial finding: a probe recorded real `resolve_team_from_license` POSTs
+ * reaching the hardcoded prod URL from an unmocked test). Lives here, not in registry-tools.ts —
+ * EVERY tool family's tests rely on this fallback being inert under Vitest, not registry's alone.
+ * Fires only when `SUPABASE_URL` itself is unset: an explicit override (even to a real environment,
+ * e.g. private-registry-e2e.yml's staging leg) is a deliberate choice this guard must not
+ * second-guess, so it never fires when SUPABASE_URL is set to anything, including prod itself.
+ */
+function assertNoProdFallbackUnderTest(): void {
+  if (process.env.VITEST === 'true' && !process.env.SUPABASE_URL) {
+    throw new Error(
+      'test attempted to reach production Supabase; mock supabase-client.js or set SUPABASE_URL ' +
+        'to a local stub.'
+    )
+  }
+}
+
+/**
  * Get the Supabase anon-key client (lazy singleton).
- * Uses SUPABASE_URL/SUPABASE_ANON_KEY when set, else the production defaults (SMI-6109).
+ * Uses SUPABASE_URL/SUPABASE_ANON_KEY when set, else the production defaults (SMI-6109) — except
+ * under Vitest with no SUPABASE_URL, where that fallback throws instead (see the guard above).
  */
 export async function getSupabaseClient(): Promise<unknown> {
+  assertNoProdFallbackUnderTest()
   if (_client) return _client
   const url = resolveSupabaseUrl()
   const anonKey = resolveSupabaseAnonKey()
@@ -103,11 +123,12 @@ export async function getSupabaseAdminClient(): Promise<unknown> {
  * that authorizes them, rather than app-level logic that can drift from the policy.
  *
  * Uses SUPABASE_URL/SUPABASE_ANON_KEY when set, else the production defaults (SMI-6109) — same
- * fallback as getSupabaseClient() above.
+ * fallback as getSupabaseClient() above, including the same test-time guard against reaching it.
  *
  * @param accessToken - a Supabase user access token (from `skillsmith login`)
  */
 export async function getSupabaseUserClient(accessToken: string): Promise<unknown> {
+  assertNoProdFallbackUnderTest()
   const url = resolveSupabaseUrl()
   const anonKey = resolveSupabaseAnonKey()
   if (!accessToken) {

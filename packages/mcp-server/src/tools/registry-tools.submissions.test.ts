@@ -23,9 +23,19 @@ import {
   type StubRegistryService,
 } from './registry-tools.js'
 
-vi.mock('./registry-tools.team.js', () => ({
-  resolveRegistryTeamId: vi.fn(async () => 'team-alpha'),
-}))
+// importOriginal + spread (SMI-6622 round 2) — see registry-tools.install-action.test.ts's
+// identical comment for why (a future new export never needs re-adding to every mock).
+vi.mock('./registry-tools.team.js', async (importOriginal) => {
+  const actual = await importOriginal<typeof import('./registry-tools.team.js')>()
+  return {
+    ...actual,
+    resolveRegistryTeamId: vi.fn(async () => ({
+      teamId: 'team-alpha',
+      source: 'env:SKILLSMITH_LICENSE_KEY',
+    })),
+    readRegistryCredential: vi.fn(() => 'sk_test_fake_license'),
+  }
+})
 
 const mockContext = {} as ToolContext
 
