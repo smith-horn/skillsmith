@@ -446,7 +446,7 @@ if [ "$probe_status" -eq 1 ] && printf '%s\n' "$probe_out" | grep -q '^FAIL '; t
       fi
       emit_error "$dep_name is a Tier-B mount source at packages/doc-retrieval-mcp/node_modules/$dep_name and must not be removed ($tier_b_mount_detail)" \
 "${tier_b_remedy_prereq}    ( cd \"$MAIN_CHECKOUT\" && docker compose --profile dev up -d --force-recreate dev )
-    # restarts BOTH MCP servers for this session; verify the mount recovers —
+    # restarts BOTH MCP servers for every session; verify the mount recovers —
     # see docs/internal/implementation/smi-6516-6520-native-binding-mount-topology.md"
       ;;
     nested-corrupt)
