@@ -451,3 +451,13 @@ their outcomes, are the concrete facts to bring to the harness team.
   remediation; if you're seeing the raw Codex 404 instead of `dispatch.sh`'s
   own clearer error, you likely bypassed `dispatch.sh` and called `codex
   exec` directly.
+- **Dispatch killed with "stopped because the system is running low on
+  memory".** The Claude Code harness killed its own background task, not
+  NEEDLE. The workspace keeps an `in_progress` bead, so close it
+  (`bf list --status in_progress --workspace <dir>`, then
+  `bf close <id> --workspace <dir>`) before retrying, or the retry refuses
+  with exit 2. Check `.beads/traces/<bead>/stdout.txt` first: if it holds an
+  `agent_message` with the full review, use it. Otherwise relaunch detached,
+  outside the harness's task tracking:
+  `nohup sh -c './scripts/needle/dispatch.sh … > <log> 2>&1; echo $? > <rc>' </dev/null >/dev/null 2>&1 & disown`,
+  and wait for the rc file to appear.

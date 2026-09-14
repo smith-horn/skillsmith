@@ -130,7 +130,7 @@ this if we adopt a longer-context model.
 The indexer uses `GIT_OPTIONAL_LOCKS=0` and passes
 `--no-optional-locks` to every `git diff` invocation, avoiding the
 SMI-2536 smudge-filter branch-switch hazard. Hook failure is non-fatal
-and non-blocking. Sessions opened in worktrees share the same corpus — the Docker container bind-mounts the main repo at `/app` and there is no per-worktree index.
+and non-blocking. Sessions opened in worktrees share the same corpus: the Docker container bind-mounts the main repo at `/app` and there is no per-worktree index. The index refreshes automatically only when someone commits in the main checkout itself. Commits made in worktrees skip it, because the hook's sentinel `.ruvector/skillsmith-docs/vectors` is gitignored and exists only in the main checkout. Commits inside `docs/internal` and `git pull`/merges don't trigger it either (SMI-5790, SMI-6422). After pulling `main` in the main checkout, run `skill_docs_reindex` (incremental by default; it resolves `docs/internal` submodule commits, SMI-5786). `skill_docs_status` shows `lastIndexedSha`, which you can compare with `git rev-parse HEAD`.
 
 To disable the auto-reindex: `rm -rf .ruvector/skillsmith-docs/` (first-run
 branch skips), or remove `packages/doc-retrieval-mcp/dist/`.
