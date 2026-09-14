@@ -15,8 +15,10 @@
  *   SMI5879_TEST_PGHOST / SMI5879_TEST_PGPORT / SMI5879_TEST_PGUSER /
  *   SMI5879_TEST_PGPASSWORD / SMI5879_TEST_PGDATABASE
  *
- *   docker run -d --name smi5879-census-test-pg -e POSTGRES_PASSWORD=testpass \
+ *   docker run -d --rm --name smi5879-census-test-pg -e POSTGRES_PASSWORD=testpass \
  *     -e POSTGRES_DB=postgres -p 15499:5432 postgres:15-alpine
+ *   # Tear down with `docker stop smi5879-census-test-pg`: --rm then removes the container and
+ *   # its anonymous data volume (a bare `docker rm` would leak the volume, SMI-6619).
  *   SMI5879_TEST_PGHOST=host.docker.internal SMI5879_TEST_PGPORT=15499 \
  *   SMI5879_TEST_PGUSER=postgres SMI5879_TEST_PGPASSWORD=testpass \
  *   SMI5879_TEST_PGDATABASE=postgres npx vitest run scripts/tests/indexer/merge-duplicate-skills.test.ts

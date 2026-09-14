@@ -18,8 +18,10 @@
  *
  * Stand one up and run the suite:
  *
- *   docker run -d --name smi6321-toctou-test-pg -e POSTGRES_PASSWORD=testpass \
+ *   docker run -d --rm --name smi6321-toctou-test-pg -e POSTGRES_PASSWORD=testpass \
  *     -e POSTGRES_DB=postgres -p 15621:5432 postgres:15-alpine
+ *   # Tear down with `docker stop smi6321-toctou-test-pg`: --rm then removes the container and
+ *   # its anonymous data volume (a bare `docker rm` would leak the volume, SMI-6619).
  *   SMI6321_TEST_PGHOST=host.docker.internal SMI6321_TEST_PGPORT=15621 \
  *   SMI6321_TEST_PGUSER=postgres SMI6321_TEST_PGPASSWORD=testpass \
  *   SMI6321_TEST_PGDATABASE=postgres \
