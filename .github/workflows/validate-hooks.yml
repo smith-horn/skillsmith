@@ -70,6 +70,8 @@ on:
       - 'scripts/mcp-doc-retrieval-launcher.sh'
       - 'scripts/tests/mcp-skillsmith-launcher.test.ts'
       - 'scripts/tests/mcp-doc-retrieval-launcher.test.ts'
+      - 'scripts/tests/mcp-skillsmith-launcher.tier-b.test.ts'
+      - 'scripts/tests/mcp-doc-retrieval-launcher.tier-b.test.ts'
       - '.github/workflows/validate-hooks.yml'
 
 permissions:

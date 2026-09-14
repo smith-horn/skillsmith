@@ -45,16 +45,21 @@ import { makeFixtureEnv, makeFixtureTempDir } from './_lib/git-fixture-env.js'
 
 const __dirname = dirname(fileURLToPath(import.meta.url))
 const LAUNCHER_SRC = resolve(__dirname, '..', 'mcp-doc-retrieval-launcher.sh')
+const LINUX_OPTIONAL_PACKAGES_SRC = resolve(__dirname, '..', 'lib', 'linux-optional-packages.mjs')
 
-interface RunResult {
+export interface RunResult {
   status: number
   stdout: string
   stderr: string
 }
 
-function runLauncher(root: string, extraPath?: string): RunResult {
+export function runLauncher(
+  root: string,
+  extraPath?: string,
+  extraEnv?: Record<string, string>
+): RunResult {
   const launcher = join(root, 'scripts', 'mcp-doc-retrieval-launcher.sh')
-  const env = { ...process.env }
+  const env = { ...process.env, ...extraEnv }
 
   if (extraPath) {
     env.PATH = `${extraPath}:${env.PATH ?? ''}`
@@ -73,7 +78,7 @@ function runLauncher(root: string, extraPath?: string): RunResult {
   }
 }
 
-function makeRoot(): string {
+export function makeRoot(): string {
   const suffix = `${Date.now()}-${Math.random().toString(36).slice(2)}`
   const root = mkdtempSync(join(tmpdir(), `mcp-doc-retrieval-launcher-${suffix}-`))
 
@@ -85,33 +90,67 @@ function makeRoot(): string {
 }
 
 /**
- * Every container tree has the probe workdir. Without it, the docker stub's
- * natural `cd` failure would turn an intended dependency assertion into a
- * generic fail-open infrastructure warning.
+ * SMI-6618: the probe reads `<repoRoot>/package-lock.json` and dynamically
+ * imports `<repoRoot>/scripts/lib/linux-optional-packages.mjs`. Every
+ * container fixture gets a DEFAULT valid-but-empty lockfile via
+ * `makeContainerRoot()` below, so a fixture that does not care about
+ * platform-skip / Tier-B behavior sees neither PROBE_WARN line. A case that
+ * DOES care overwrites it via `addLockfile()`.
  */
-function makeContainerRoot(): string {
+export function addLockfile(root: string, packages: Record<string, unknown> = {}): void {
+  writeFileSync(
+    join(root, 'package-lock.json'),
+    JSON.stringify({ name: 'skillsmith-fixture', lockfileVersion: 3, packages }),
+    'utf8'
+  )
+}
+
+export function addLinuxOptionalPackagesModule(root: string): void {
+  const dir = join(root, 'scripts', 'lib')
+  mkdirSync(dir, { recursive: true })
+  copyFileSync(LINUX_OPTIONAL_PACKAGES_SRC, join(dir, 'linux-optional-packages.mjs'))
+}
+
+export function removeLinuxOptionalPackagesModule(root: string): void {
+  rmSync(join(root, 'scripts', 'lib', 'linux-optional-packages.mjs'), { force: true })
+}
+
+/**
+ * Every container tree has the probe workdir, a default valid-but-empty
+ * lockfile, and a real copy of linux-optional-packages.mjs (SMI-6618).
+ * Without the workdir, the docker stub's natural `cd` failure would turn an
+ * intended dependency assertion into a generic fail-open infrastructure
+ * warning; without the lockfile/module defaults, every pre-existing
+ * container-reaching test would pick up a spurious PROBE_WARN line.
+ */
+export function makeContainerRoot(): string {
   const suffix = `${Date.now()}-${Math.random().toString(36).slice(2)}`
   const root = mkdtempSync(join(tmpdir(), `mcp-doc-retrieval-container-${suffix}-`))
 
   mkdirSync(join(root, 'packages', 'doc-retrieval-mcp', 'dist', 'src'), {
     recursive: true,
   })
+  addLinuxOptionalPackagesModule(root)
+  addLockfile(root)
 
   return root
 }
 
-function addNodeModules(root: string): void {
+export function addNodeModules(root: string): void {
   mkdirSync(join(root, 'node_modules'), { recursive: true })
   writeFileSync(join(root, 'node_modules', '.package-lock.json'), '{}', 'utf8')
 }
 
-function addDist(root: string): void {
+export function addDist(root: string): void {
   const distDir = join(root, 'packages', 'doc-retrieval-mcp', 'dist', 'src')
   mkdirSync(distDir, { recursive: true })
   writeFileSync(join(distDir, 'server.js'), '// stub entry\n', 'utf8')
 }
 
-function addDocRetrievalPackageJson(root: string, dependencies: Record<string, string>): void {
+export function addDocRetrievalPackageJson(
+  root: string,
+  dependencies: Record<string, string>
+): void {
   const pkgDir = join(root, 'packages', 'doc-retrieval-mcp')
   mkdirSync(pkgDir, { recursive: true })
   writeFileSync(
@@ -125,7 +164,7 @@ function addDocRetrievalPackageJson(root: string, dependencies: Record<string, s
   )
 }
 
-function writeMinimalPackage(dir: string, name: string): void {
+export function writeMinimalPackage(dir: string, name: string): void {
   mkdirSync(dir, { recursive: true })
   writeFileSync(
     join(dir, 'package.json'),
@@ -135,11 +174,11 @@ function writeMinimalPackage(dir: string, name: string): void {
   writeFileSync(join(dir, 'index.js'), 'module.exports = {}\n', 'utf8')
 }
 
-function addHoistedDep(root: string, name: string): void {
+export function addHoistedDep(root: string, name: string): void {
   writeMinimalPackage(join(root, 'node_modules', name), name)
 }
 
-function addNestedDep(root: string, name: string, opts: { empty?: boolean } = {}): void {
+export function addNestedDep(root: string, name: string, opts: { empty?: boolean } = {}): void {
   const dir = join(root, 'packages', 'doc-retrieval-mcp', 'node_modules', name)
 
   if (opts.empty) {
@@ -155,7 +194,7 @@ function addNestedDep(root: string, name: string, opts: { empty?: boolean } = {}
  * run inside the container and must not be encouraged to depend on host-side
  * package or node_modules fixtures.
  */
-function makeHealthyHost(): string {
+export function makeHealthyHost(): string {
   const root = makeRoot()
   addDist(root)
   return root
@@ -166,7 +205,7 @@ function makeHealthyHost(): string {
  * declared dependency, and zod-to-json-schema. The latter is checked
  * explicitly by the launcher but is not declared by doc-retrieval-mcp.
  */
-function makeHealthyContainer(): string {
+export function makeHealthyContainer(): string {
   const root = makeContainerRoot()
   addNodeModules(root)
   addDocRetrievalPackageJson(root, { '__smi-6453-fixture-healthy-dep__': '1.0.0' })
@@ -175,13 +214,13 @@ function makeHealthyContainer(): string {
   return root
 }
 
-interface DockerStubOptions {
+export interface DockerStubOptions {
   running: boolean
   containerRoot: string
   execFailureStatus?: number
 }
 
-function makeDockerStub(opts: DockerStubOptions): {
+export function makeDockerStub(opts: DockerStubOptions): {
   binDir: string
   execMarker: string
   invocationsLog: string
