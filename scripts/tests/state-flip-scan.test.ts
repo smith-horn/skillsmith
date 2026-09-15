@@ -208,11 +208,11 @@ describe('scan-state-flip.sh (SMI-6514 P-7 scanner) -- Group A: portable', () =>
     }
   )
 
-  // SMI-6659 / SMI-6678. Both bugs understate or corrupt the denominator, which is the
-  // one number P-7's design rests on (SMI-6514 s2.4). Each case was measured against the
-  // pre-fix scanner first, and the BEFORE value is in the test name so a reader can see
-  // what it caught rather than trusting that it caught something.
-  function setupMetacharRepo(): string {
+  // SMI-6659 / SMI-6678. Three defects, all of which understate or corrupt the
+  // STEP-1 denominator -- the one number P-7's design rests on (SMI-6514 s2.4).
+  // Each BEFORE value below was measured against the pre-fix scanner, and is in the
+  // test name so a reader can see what the case caught rather than trust that it did.
+  function setupMetacharRepo(): { repoDir: string } {
     const repoDir = makeFixtureTempDir('state-flip-metachar-fixture')
     createdRepoDirs.push(repoDir)
     git(repoDir, ['init', '-q', '-b', 'main'])
@@ -224,20 +224,37 @@ describe('scan-state-flip.sh (SMI-6514 P-7 scanner) -- Group A: portable', () =>
         '# widget.tool is not installed by design',
         '# widgetXtool is not installed by design',
         '# thing(alpha) is not installed by design',
-        '# a|b is not installed by design',
+        '# cache[fast] is not installed by design',
+        // The next three exist to make STEP 2 depend on the NOUN. A line like
+        // "# a|b is not installed by design" cannot test escape_ere() at all: it
+        // matches STEP 2 through the noun-INDEPENDENT alternatives `not installed`
+        // and `by design`, so deleting the escaping entirely still scores 1.
+        '# no a|b here',
+        '# a|b appears in this line',
         '# an unrelated line mentioning b on its own',
         '',
       ].join('\n')
     )
-    // Directly under scripts/, NO intermediate directory. The pre-SMI-6678 pathspec
-    // could not see this file at all.
+    // Directly under scripts/, NO intermediate directory -- invisible to the
+    // pre-SMI-6678 pathspec. One of each extension, so fixing `.sh` while leaving
+    // `.ts` broken fails.
     writeFileSync(
       join(repoDir, 'scripts', 'toplevel.sh'),
-      ['# toplevelonly is not installed by design', ''].join('\n')
+      ['# toplevelsh is not installed by design', ''].join('\n')
+    )
+    writeFileSync(
+      join(repoDir, 'scripts', 'toplevel.ts'),
+      ['// toplevelts is not installed by design', ''].join('\n')
     )
     git(repoDir, ['add', '.'])
     git(repoDir, ['commit', '-q', '-m', 'metacharacter + top-level fixtures'])
-    return repoDir
+    // Written AFTER the commit and never added: only a working-tree scan that
+    // passes --untracked can see it.
+    writeFileSync(
+      join(subDir, 'never-added.sh'),
+      ['# untrackednoun is not installed by design', ''].join('\n')
+    )
+    return { repoDir }
   }
 
   const scanNoun = (repoDir: string, noun: string): string =>
@@ -246,46 +263,111 @@ describe('scan-state-flip.sh (SMI-6514 P-7 scanner) -- Group A: portable', () =>
   it.skipIf(!SCANNER_PRESENT)(
     'SMI-6659: a `.` in the noun does not over-match (was 2, want 1)',
     () => {
-      // The dangerous direction: `widget.tool` as a regex also matches `widgetXtool`,
-      // inflating the denominator rather than zeroing it, so the vacuous-success guard
-      // never fires and the result reads as thorough.
-      expect(scanNoun(setupMetacharRepo(), 'widget.tool')).toContain('STEP 1 (denominator): 1')
+      // The dangerous direction: as a regex, `widget.tool` also matches `widgetXtool`,
+      // inflating the denominator rather than zeroing it, so the vacuous-success
+      // guard never fires and the output reads as a thorough scan.
+      expect(scanNoun(setupMetacharRepo().repoDir, 'widget.tool')).toContain(
+        'STEP 1 (denominator): 1'
+      )
     }
   )
 
   it.skipIf(!SCANNER_PRESENT)(
     'SMI-6659: parentheses do not zero the denominator (was 0, want 1)',
     () => {
-      expect(scanNoun(setupMetacharRepo(), 'thing(alpha)')).toContain('STEP 1 (denominator): 1')
+      expect(scanNoun(setupMetacharRepo().repoDir, 'thing(alpha)')).toContain(
+        'STEP 1 (denominator): 1'
+      )
     }
   )
 
-  it.skipIf(!SCANNER_PRESENT)('SMI-6659: a `|` does not match every line (was 10, want 1)', () => {
-    // The worst case: unescaped, the alternation escapes the noun and a bare `b`
-    // matched every line in this fixture.
-    const out = scanNoun(setupMetacharRepo(), 'a|b')
-    expect(out).toContain('STEP 1 (denominator): 1')
-    // STEP 2 interpolates the noun into an ERE alternation, so -F alone cannot fix
-    // it. This asserts the separate escape_ere() path.
-    expect(out).toContain('STEP 2: noun x absence-vocabulary (1 hit(s))')
+  it.skipIf(!SCANNER_PRESENT)(
+    'SMI-6659: a bracket expression does not zero the denominator (was 0, want 1)',
+    () => {
+      // Distinct from the parenthesis case on purpose: a fix that special-cased only
+      // `(` and `)` would pass that test and fail this one.
+      expect(scanNoun(setupMetacharRepo().repoDir, 'cache[fast]')).toContain(
+        'STEP 1 (denominator): 1'
+      )
+    }
+  )
+
+  it.skipIf(!SCANNER_PRESENT)(
+    'SMI-6659: `|` does not match every line, and STEP 2 depends on the escaped noun',
+    () => {
+      const out = scanNoun(setupMetacharRepo().repoDir, 'a|b')
+      // STEP 1 was 10 before the fix -- the alternation escaped the noun and matched
+      // every line in the fixture.
+      expect(out).toContain('STEP 1 (denominator): 2')
+      // STEP 2 is the assertion that actually pins escape_ere(), which `-F` cannot
+      // fix because ABSENCE_VOCAB interpolates the noun into a real ERE alternation.
+      // Escaped, only `# no a|b here` matches via `no <noun>` -> 1.
+      // Unescaped, `no a|b|without a|b` becomes the alternatives `no a`, `b`,
+      // `without a`, `b`, and the bare `b` also matches `# a|b appears in this line`
+      // and `# an unrelated line mentioning b on its own` -> 3.
+      expect(out).toContain('STEP 2: noun x absence-vocabulary (1 hit(s))')
+    }
+  )
+
+  it.skipIf(!SCANNER_PRESENT)(
+    'SMI-6678: a .sh directly under scripts/ is scanned (was 0, want 1)',
+    () => {
+      // `scripts/**/*.sh` requires an intervening directory; `scripts/*.sh` does not.
+      // 75 top-level shell scripts were invisible, scripts/_lib.sh among them.
+      expect(scanNoun(setupMetacharRepo().repoDir, 'toplevelsh')).toContain(
+        'STEP 1 (denominator): 1'
+      )
+    }
+  )
+
+  it.skipIf(!SCANNER_PRESENT)(
+    'SMI-6678: a .ts directly under scripts/ is scanned (was 0, want 1)',
+    () => {
+      // Separate from the .sh case: fixing one pathspec and not the other passes that
+      // test and fails this one. 57 top-level TypeScript files were invisible.
+      expect(scanNoun(setupMetacharRepo().repoDir, 'toplevelts')).toContain(
+        'STEP 1 (denominator): 1'
+      )
+    }
+  )
+
+  it.skipIf(!SCANNER_PRESENT)('working-tree mode sees an untracked file (was 0, want 1)', () => {
+    // `git grep` without --untracked searches tracked content only, so a newly
+    // written script carrying the noun AND a stale assertion contributed nothing.
+    // Every other fixture here is committed before scanning, which is exactly why
+    // no existing test could expose this.
+    expect(scanNoun(setupMetacharRepo().repoDir, 'untrackednoun')).toContain(
+      'STEP 1 (denominator): 1'
+    )
+  })
+
+  it.skipIf(!SCANNER_PRESENT)('a noun containing a newline is rejected, not silently split', () => {
+    // `git grep -F` treats each line of a multi-line pattern as its own fixed
+    // pattern, so the denominator becomes the union of the parts. Measured on the
+    // real repo: a two-line noun reported its first component's 43 hits for a
+    // whole-noun truth of 0.
+    const { repoDir } = setupMetacharRepo()
+    let status = 0
+    try {
+      execFileSync('bash', [SCANNER_PATH, 'toplevelsh\nTHIS_COMPONENT_DOES_NOT_EXIST'], {
+        cwd: repoDir,
+        encoding: 'utf8',
+        stdio: 'pipe',
+      })
+    } catch (err) {
+      status = (err as { status: number }).status
+    }
+    expect(status).toBe(2)
   })
 
   it.skipIf(!SCANNER_PRESENT)(
-    'SMI-6678: a file directly under scripts/ is scanned (was 0, want 1)',
+    'control: a metacharacter-free noun is unaffected by any of the fixes',
     () => {
-      // `scripts/**/*.sh` requires an intervening directory; `scripts/*.sh` does not.
-      // 75 top-level shell scripts and 57 TypeScript files were invisible, including
-      // scripts/_lib.sh.
-      expect(scanNoun(setupMetacharRepo(), 'toplevelonly')).toContain('STEP 1 (denominator): 1')
-    }
-  )
-
-  it.skipIf(!SCANNER_PRESENT)(
-    'control: a metacharacter-free noun is unaffected by either fix',
-    () => {
-      // Without this, a change that broke ordinary scanning would still pass the four
-      // cases above.
-      expect(scanNoun(setupMetacharRepo(), 'widgetXtool')).toContain('STEP 1 (denominator): 1')
+      // Without this, a change that broke ordinary scanning would still satisfy every
+      // case above.
+      expect(scanNoun(setupMetacharRepo().repoDir, 'widgetXtool')).toContain(
+        'STEP 1 (denominator): 1'
+      )
     }
   )
 
