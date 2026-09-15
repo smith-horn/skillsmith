@@ -80,14 +80,40 @@ function listTrackedEntries(repoRoot) {
   for (const k of Object.keys(env)) {
     if (GIT_DISCOVERY_ENV_RE.test(k)) delete env[k]
   }
+  // CI's Test (root) container checks the repo out under a different UID than
+  // the process running git, so git refuses with "detected dubious ownership"
+  // (PR #2857 CI). Trust exactly the repo being audited, from command-line
+  // (protected) config. `core.fsmonitor=false` is required alongside it:
+  // measured, `ls-files` runs a repo-configured fsmonitor hook once the repo is
+  // trusted, and this read must never execute repo-controlled code.
+  let trustedRoot = resolve(repoRoot)
+  try {
+    trustedRoot = realpathSync(trustedRoot)
+  } catch {
+    // Unresolvable root: git reports the real error below.
+  }
   let out
   try {
-    out = execFileSync('git', ['-C', repoRoot, 'ls-files', '-z', '--stage'], {
-      encoding: 'utf8',
-      maxBuffer: 256 * 1024 * 1024,
-      stdio: ['ignore', 'pipe', 'pipe'],
-      env,
-    })
+    out = execFileSync(
+      'git',
+      [
+        '-c',
+        `safe.directory=${trustedRoot}`,
+        '-c',
+        'core.fsmonitor=false',
+        '-C',
+        repoRoot,
+        'ls-files',
+        '-z',
+        '--stage',
+      ],
+      {
+        encoding: 'utf8',
+        maxBuffer: 256 * 1024 * 1024,
+        stdio: ['ignore', 'pipe', 'pipe'],
+        env,
+      }
+    )
   } catch (err) {
     const stderr = err && err.stderr ? String(err.stderr).trim().split('\n')[0] : ''
     const detail = stderr || (err instanceof Error ? err.message : String(err)).split('\n')[0]
