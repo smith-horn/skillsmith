@@ -48,7 +48,7 @@
  */
 import { execFileSync } from 'node:child_process'
 import { existsSync, mkdirSync, rmSync, writeFileSync } from 'node:fs'
-import { join } from 'node:path'
+import { dirname, join } from 'node:path'
 
 import { afterEach, describe, expect, it } from 'vitest'
 
@@ -475,6 +475,100 @@ describe('scan-state-flip.sh (SMI-6514 P-7 scanner) -- Group A: portable', () =>
       // would hold whether or not the fix exists.
       expect(stderr).not.toContain('does not appear anywhere')
       expect(stdout).not.toContain('STEP 2')
+    }
+  )
+
+  it.skipIf(!SCANNER_PRESENT)(
+    'STEP 2 and STEP 3 match file CONTENT, not the ref/path prefix of the grep record',
+    () => {
+      // SMI-6659, 9th gap. A plain post-filter over STEP1_OUT sees the whole record
+      // -- "path:line:content", or "ref:path:line:content" with --ref -- so absence
+      // vocabulary in the PATH matched lines whose content carried none. An ordinary
+      // filename is enough; no exotic ref syntax is needed.
+      const repoDir = makeFixtureTempDir('state-flip-prefix-fixture')
+      createdRepoDirs.push(repoDir)
+      git(repoDir, ['init', '-q', '-b', 'main'])
+      mkdirSync(join(repoDir, 'scripts'), { recursive: true })
+      // Path says "absent"; content says nothing of the kind.
+      writeFileSync(
+        join(repoDir, 'scripts', 'absent-handler.sh'),
+        'widget-tool is configured here\nwidget-tool runs twice\n'
+      )
+      // The only genuine casualty.
+      writeFileSync(join(repoDir, 'scripts', 'real.sh'), 'widget-tool is not installed by design\n')
+      git(repoDir, ['add', '-A'])
+      git(repoDir, ['-c', 'user.email=t@t', '-c', 'user.name=t', 'commit', '-qm', 'init'])
+      // Both modes: the ref record carries an extra "ref:" field, so a fix applied to
+      // one arm and not the other would pass on the strength of the covered one.
+      for (const args of [['widget-tool', '--ref', 'HEAD'], ['widget-tool']]) {
+        const out = execFileSync('bash', [SCANNER_PATH, ...args], {
+          cwd: repoDir,
+          encoding: 'utf8',
+        })
+        const label = `args: ${args.join(' ')}`
+        expect(out, label).toContain('STEP 1 (denominator): 3')
+        expect(out, label).toContain('STEP 2: noun x absence-vocabulary (1 hit(s))')
+        // Decisive: the two plain-content lines must not be counted as casualties.
+        expect(out, label).not.toContain('STEP 2: noun x absence-vocabulary (3 hit(s))')
+        expect(out, label).not.toContain('absent-handler.sh')
+      }
+    }
+  )
+
+  it.skipIf(!SCANNER_PRESENT)(
+    'a colon in a pathname does not corrupt the scaffold location',
+    () => {
+      // SMI-6659, 10th gap. Splitting at the FIRST colon assumed the path had none:
+      // scripts/a:b.sh:1:content yielded loc=scripts/a, lineno=b.sh, and the row
+      // rendered as `scripts/a:b.sh` -- which READS like a correct path while the
+      // line number is silently gone. That plausibility is what makes it dangerous.
+      const repoDir = makeFixtureTempDir('state-flip-colon-fixture')
+      createdRepoDirs.push(repoDir)
+      git(repoDir, ['init', '-q', '-b', 'main'])
+      mkdirSync(join(repoDir, 'scripts'), { recursive: true })
+      writeFileSync(join(repoDir, 'scripts', 'a:b.sh'), 'widget-tool is not installed by design\n')
+      git(repoDir, ['add', '-A'])
+      git(repoDir, ['-c', 'user.email=t@t', '-c', 'user.name=t', 'commit', '-qm', 'init'])
+      const out = execFileSync('bash', [SCANNER_PATH, 'widget-tool', '--ref', 'HEAD'], {
+        cwd: repoDir,
+        encoding: 'utf8',
+      })
+      expect(out).toContain('| `scripts/a:b.sh:1` |')
+    }
+  )
+
+  it.skipIf(!SCANNER_PRESENT)(
+    'test directories are in scope -- packages/*/tests, root tests, .mts and .cjs',
+    () => {
+      // SMI-6659, 8th gap. The scanner's own header names "tests whose premise was
+      // the old state" as the FIRST P-7 casualty category, yet packages/*/tests/**
+      // and root tests/** were outside PATHSPECS. Measured on the live tree before
+      // the fix: `API_MOCKS.errorServiceUnavailable` reported a denominator of 0
+      // under "does not appear anywhere" while living in a package test.
+      const repoDir = makeFixtureTempDir('state-flip-testdirs-fixture')
+      createdRepoDirs.push(repoDir)
+      git(repoDir, ['init', '-q', '-b', 'main'])
+      // One occurrence per newly-covered location, so a partial revert of the
+      // widening reddens rather than passing on the strength of the others.
+      const places = [
+        'packages/core/tests/thing.test.ts',
+        'tests/integration/thing.test.ts',
+        'scripts/lib/thing.d.mts',
+        'scripts/thing.cjs',
+      ]
+      for (const rel of places) {
+        mkdirSync(join(repoDir, dirname(rel)), { recursive: true })
+        writeFileSync(join(repoDir, rel), '// widget-tool is referenced here\n')
+      }
+      git(repoDir, ['add', '-A'])
+      git(repoDir, ['-c', 'user.email=t@t', '-c', 'user.name=t', 'commit', '-qm', 'init'])
+      for (const args of [['widget-tool', '--ref', 'HEAD'], ['widget-tool']]) {
+        const out = execFileSync('bash', [SCANNER_PATH, ...args], {
+          cwd: repoDir,
+          encoding: 'utf8',
+        })
+        expect(out, `args: ${args.join(' ')}`).toContain(`STEP 1 (denominator): ${places.length}`)
+      }
     }
   )
 
