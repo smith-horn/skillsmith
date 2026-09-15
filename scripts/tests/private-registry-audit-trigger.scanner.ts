@@ -18,7 +18,20 @@
  * are all built from the tokens below plus ordinary punctuation, not a new one):
  *   1. Single-quoted string constant `'...'` -- own branch below, `''` embeds a literal quote.
  *   2. Escape string constant `E'...'`/`e'...'` -- own branch below, `\` escapes the next char too.
- *   3. Dollar-quoted string constant `$$...$$`/`$tag$...$tag$` -- own branch below.
+ *   3. Dollar-quoted string constant `$$...$$`/`$tag$...$tag$` -- own branch below. CAVEAT: the tag
+ *      match in that branch (`literalSpanEnd()`'s `$` case, `^\$[A-Za-z_][A-Za-z0-9_]*\$|^\$\$`) is
+ *      ASCII-only, while Postgres dollar-quote tags follow the broader unquoted-identifier rules,
+ *      which admit non-ASCII letters. A non-ASCII tag falls through this branch entirely -- it is
+ *      scanned as ordinary text instead of an atomic span, so a `;` inside the body is treated as a
+ *      real statement separator. This is fail-closed: the failure direction is always over-split,
+ *      never a miss (a mis-scanned body can only break one statement into extra chunks a detector
+ *      still sees, never merge two into one that hides a dangerous statement inside inert text).
+ *      Verified: `CREATE FUNCTION f() ... AS $tagé$ BEGIN x := 1; END $tagé$ LANGUAGE plpgsql;` --
+ *      whose two `;`s both sit inside the (mis-scanned, non-atomic) `$tagé$...$tagé$` body -- yields
+ *      3 chunks from `splitStatements()`, not 1. No real migration currently has a non-ASCII
+ *      dollar-quote tag (`grep -rlP '\$[^$\s]*[^\x00-\x7F][^$\s]*\$' supabase/migrations/` matches 0
+ *      files), so this is a documentation-accuracy gap in an enumeration whose whole value is being
+ *      an audited, complete list -- not a live security gap.
  *   4. Quoted (delimited) identifier `"..."` -- own branch below (PR #2860 finding 1's fix), `""`
  *      embeds a literal quote, same doubling rule as (1).
  *   5. Unicode-escape string constant `U&'...'` -- NOT a separate branch: per the Postgres docs,
@@ -35,6 +48,15 @@
  *   8. A trailing `UESCAPE '<char>'` clause on (5) or (6) -- NOT special-cased: it is its own,
  *      independent plain string constant (one character), parsed by branch (1) when the scanner
  *      reaches it, same as any other `'...'`.
+ *   9. Adjacent string constant continuation: `'a'` NEWLINE `'b'` -- NOT a separate branch, and
+ *      needs none: per the Postgres docs, two string constants separated only by whitespace with at
+ *      least one newline (comments allowed in the gap too) are concatenated into a single constant,
+ *      and nothing else may appear between the parts. The gap is therefore always exactly what
+ *      `stripComments()`/`splitStatements()` already handle correctly outside any literal span
+ *      (whitespace passed through, comments stripped), so no `;` can ever hide there. Verified: in a
+ *      scratch Postgres instance, `SELECT 'a' ; 'b';` is a syntax error (the `;` is never swallowed
+ *      into the continuation), while `SELECT 'a'` NEWLINE `'b';` and `SELECT 'a' -- comment` NEWLINE
+ *      `'b';` both parse and evaluate to `'ab'`.
  * Line comments (`--`) and block comments (`/* *\/`) are NOT part of this enumeration -- they are
  * handled directly by `stripComments()`/`splitStatements()` themselves, not by this function, since
  * they can nest (block comments) or need active suppression at the top level rather than atomic
@@ -53,7 +75,7 @@
  * the doubled-quote `''` embed alongside `\'` (Postgres accepts both), and the `E`/`e` is only
  * recognized as an escape-string opener when it is not the tail of a longer identifier -- checked
  * via the character immediately before it. Verified against a 5-case table (SMI-6114 retro round 4,
- * PR #2855) -- see `private-registry-audit-trigger.static.test.ts`'s `stripComments()`
+ * PR #2855) -- see `private-registry-audit-trigger.scanner.test.ts`'s `stripComments()`
  * escape-string `it()` blocks.
  */
 

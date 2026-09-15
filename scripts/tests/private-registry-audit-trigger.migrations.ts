@@ -4,7 +4,7 @@
  * (SMI-6680 governance retro F1) so every non-test file here stays under the repo's 500-line gate.
  *
  * `dir` is threaded through every function here (default `MIGRATIONS_DIR`, the real directory) so
- * `private-registry-audit-trigger.static.test.ts` can point the whole detector pipeline at a
+ * `private-registry-audit-trigger.detectors.test.ts` can point the whole detector pipeline at a
  * `mkdtempSync()` fixture directory instead -- the fix for SMI-6680 F1: every detector in
  * `private-registry-audit-trigger.detectors.ts` iterates `laterMigrationFiles()`, which returns
  * `[]` against the real directory (the pinned migration is the newest of 207 files today), so none
@@ -49,7 +49,7 @@ export const PROD_COLUMNS = [
 /**
  * Reads one migration file from `dir`, returning `null` (not throwing) on a git-crypt-locked file
  * when `SKILLSMITH_GIT_CRYPT_EXPECTED_LOCKED=1` -- see the module doc comment on the real suite in
- * `private-registry-audit-trigger.static.test.ts` for the git-crypt contract (SMI-5984). Fixture
+ * `private-registry-audit-trigger.pins.test.ts` for the git-crypt contract (SMI-5984). Fixture
  * directories used by the F1 tripwire suite are always plaintext, so this branch never fires for
  * them.
  */

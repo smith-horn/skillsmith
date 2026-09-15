@@ -119,20 +119,33 @@ const REGISTRY_VERBS: Record<string, { done: string; attempt: string }> = {
   content_read: { done: 'downloaded', attempt: 'download' },
 }
 
-// PR #2860 gate finding 3: this map is registrySentence()'s vocabulary for `private_registry:*`
-// attempt outcomes only. It deliberately does NOT carry a `failure` entry even though the
-// team-invite-send edge function (index.ts:261) writes that literal word for a non-2xx/thrown
-// Resend call: no registry writer ever emits `result: 'failure'` (they use denied/not_found/
-// error), and the email_sent branch below never reads this map -- it renders its own two-branch
-// sentence directly, because "tried to send an invitation email, which failed" (this map's
-// template) reads worse than the branch's own "An invitation email failed to send," and the
-// registry's denied/not_found/error taxonomy doesn't meaningfully apply to an email send anyway.
-// Reusing this map there would be accidental coupling between two different event shapes, not a
-// design improvement -- so it's left unentered rather than added just to give it a reader.
-const ATTEMPT_OUTCOMES: Record<string, string> = {
+/**
+ * PR #2860 gate finding 3 follow-up: `ATTEMPT_OUTCOMES` is keyed off this tuple's type, not typed
+ * independently, so widening it -- a new `private_registry:*` writer, or either real writer union
+ * (`RegistryAuditEvent['result']` in `registry-tools.live.audit.ts`, `AuditResult` in
+ * `private-registry-get/access.ts`) growing a member -- fails typecheck until the map below gains
+ * a matching entry. No registry writer emits `result: 'failure'`; the one function that does,
+ * `handleTeamInviteSend` (`supabase/functions/team-invite-send/index.ts`), is a different event
+ * shape (`team_invitation:email_sent`) that renders its own two-branch sentence in the `email_sent`
+ * arm below instead of going through this map -- the registry's denied/not_found/error taxonomy
+ * doesn't meaningfully apply to an email send, so reusing this map there would be accidental
+ * coupling between two unrelated event shapes, not a design improvement.
+ */
+export const REGISTRY_RESULTS = ['success', 'denied', 'not_found', 'error'] as const
+const ATTEMPT_OUTCOMES: Record<Exclude<(typeof REGISTRY_RESULTS)[number], 'success'>, string> = {
   denied: 'was refused',
   not_found: 'matched nothing',
   error: 'failed',
+}
+
+/**
+ * Own keys only: an empty string or a prototype name such as `constructor` must fall through, not
+ * index the prototype chain. A user-defined type guard (rather than an inline `hasOwnProperty`
+ * check) so the exact-key `ATTEMPT_OUTCOMES` type above narrows `result` for the lookup below —
+ * `Record<string, string>` allowed any string index; the tightened type needs one.
+ */
+function isAttemptOutcomeKey(value: string): value is keyof typeof ATTEMPT_OUTCOMES {
+  return Object.prototype.hasOwnProperty.call(ATTEMPT_OUTCOMES, value)
 }
 
 /** `private skill ns/skill@1.0.0`, or `a private skill` when metadata does not name one. */
@@ -159,9 +172,8 @@ function registrySentence(ev: ActivityEvent, who: string | null, operation: stri
   if (result === 'success') {
     return withActor(who, `${verbs.done} ${subject}`, `${capitalize(subject)} was ${verbs.done}`)
   }
-  // Own keys only: an empty string or a prototype name such as `constructor` must fall back too.
   const outcome =
-    typeof result === 'string' && Object.prototype.hasOwnProperty.call(ATTEMPT_OUTCOMES, result)
+    typeof result === 'string' && isAttemptOutcomeKey(result)
       ? ATTEMPT_OUTCOMES[result]
       : 'did not complete'
   return withActor(
