@@ -479,6 +479,72 @@ describe('scan-state-flip.sh (SMI-6514 P-7 scanner) -- Group A: portable', () =>
   )
 
   it.skipIf(!SCANNER_PRESENT)(
+    'a --ref value beginning with a dash is rejected, not consumed by git grep as an option',
+    () => {
+      // SMI-6659, 6th gap. The ref is passed positionally, so `--ref --cached`
+      // made git search the INDEX and exit 0 while the report named `--cached` as
+      // the thing searched -- a denominator for something other than the named
+      // ref. Exit 0 means the run_grep error check cannot see it; the ref has to
+      // be verified before use.
+      const { repoDir } = setupSyntheticStateFlipRepo()
+      for (const badRef of ['--cached', '--all', '-q']) {
+        let status: number | undefined
+        let stdout = ''
+        let stderr = ''
+        try {
+          execFileSync('bash', [SCANNER_PATH, 'widget-tool', '--ref', badRef], {
+            cwd: repoDir,
+            encoding: 'utf8',
+          })
+        } catch (err) {
+          const e = err as { status?: number; stdout?: string; stderr?: string }
+          status = e.status
+          stdout = e.stdout ?? ''
+          stderr = e.stderr ?? ''
+        }
+        expect(status, `--ref ${badRef} must exit 2`).toBe(2)
+        expect(stderr).toContain("begins with '-'")
+        expect(stderr).toContain('consume it as an OPTION')
+        // Decisive: no denominator may be reported for a ref that was never used.
+        expect(stdout).not.toContain('STEP 1 (denominator)')
+      }
+    }
+  )
+
+  it.skipIf(!SCANNER_PRESENT)(
+    'a NUL-containing source file contributes every matching line, not one "Binary file" record',
+    () => {
+      // SMI-6659, 7th gap. Without -a, git grep collapses a binary-classified file
+      // to a single "Binary file X matches" line regardless of how many lines match,
+      // so STEP 1 undercounts and STEP 2 never sees those lines at all.
+      // `packages/*/src/**` is not extension-restricted, so a fixture or generated
+      // artifact under a package's src lands in scope.
+      const repoDir = makeFixtureTempDir('state-flip-nul-fixture')
+      createdRepoDirs.push(repoDir)
+      git(repoDir, ['init', '-q', '-b', 'main'])
+      mkdirSync(join(repoDir, 'scripts'), { recursive: true })
+      writeFileSync(
+        join(repoDir, 'scripts', 'withnul.sh'),
+        Buffer.from('widget-tool a\nwidget-tool b\n\u0000\nwidget-tool c\n', 'binary')
+      )
+      git(repoDir, ['add', '-A'])
+      git(repoDir, ['-c', 'user.email=t@t', '-c', 'user.name=t', 'commit', '-qm', 'init'])
+      // Both call sites, deliberately. -a has to be added twice -- they are separate
+      // lines -- and a mutation sweep showed that dropping it from the working-tree
+      // branch alone reddened nothing while the --ref case was covered. That is the
+      // same fix-one-site-miss-the-other asymmetry as the earlier -e defect.
+      for (const args of [['widget-tool', '--ref', 'HEAD'], ['widget-tool']]) {
+        const out = execFileSync('bash', [SCANNER_PATH, ...args], {
+          cwd: repoDir,
+          encoding: 'utf8',
+        })
+        expect(out, `args: ${args.join(' ')}`).toContain('STEP 1 (denominator): 3')
+        expect(out).not.toContain('STEP 1 (denominator): 1')
+      }
+    }
+  )
+
+  it.skipIf(!SCANNER_PRESENT)(
     'an unresolvable ref in working-tree-adjacent usage still surfaces git own stderr, not silence',
     () => {
       // Pins the removal of `2>/dev/null`: git's own diagnosis of WHY the search
