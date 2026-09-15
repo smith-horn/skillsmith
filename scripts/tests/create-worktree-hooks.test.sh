@@ -633,6 +633,575 @@ case "$out" in
 esac
 
 # -----------------------------------------------------------------------
+# Scenario 13 (SMI-6568): pre-commit's docs-only carve-out must classify
+# the STAGED set, not the committed range. Library cases source the REAL
+# scripts/lib/hook-docker-detect.sh once per shell (sh, dash, bash);
+# launcher cases exercise real `git commit` invocations (pathspec/-a/
+# --allow-empty/--amend), once under bash — those forms only manifest
+# through git's own temporary-index machinery, which a manual `git add`/
+# `git rm` cannot reproduce. Design:
+# docs/internal/implementation/smi-6568-precommit-docs-only-staged-set.md.
+#
+# Scope note: the plan's Caller-pairs bullet names S1/S3/S2c as producing
+# an IDENTICAL outcome triple (already measured 72-of-72 cells, 0
+# divergence, in the plan's own prototype fixture, per that doc's state
+# table). This harness exercises one representative state from that family
+# (S1) plus S2 (the genuinely different, bug-fix-relevant state) rather
+# than re-deriving all three — keeps the fixture small per the host's
+# memory-pressure constraint without losing coverage of a NEW invariant.
+# -----------------------------------------------------------------------
+SCN13_PASS_FAIL_BEFORE_S13=$((pass + fail))
+SCN13_ROOT=$(mktemp -d)
+trap 'rm -rf "$SCN13_ROOT"' EXIT
+SCN13_ORIGIN="$SCN13_ROOT/origin.git"
+git init -q --bare "$SCN13_ORIGIN" >/dev/null 2>&1
+
+SCN13_MAIN="$SCN13_ROOT/main"
+mkdir -p "$SCN13_MAIN"
+SCN13_MAIN=$(cd "$SCN13_MAIN" && pwd -P)
+(
+  cd "$SCN13_MAIN"
+  git init -q -b main
+  git config user.email "test@skillsmith.local"
+  git config user.name "Test"
+  git remote add origin "$SCN13_ORIGIN"
+  mkdir -p docs scripts
+  echo "ok" > README.md
+  # git never tracks an empty directory — commit a placeholder so every
+  # worktree checked out from main has a REAL docs/ directory on disk.
+  touch docs/.gitkeep
+  printf '#!/bin/sh\necho hi\n' > scripts/tracked.sh
+  printf '#!/bin/sh\n' > scripts/a.sh
+  printf '#!/bin/sh\n' > scripts/b.sh
+  git add README.md docs/.gitkeep scripts/tracked.sh scripts/a.sh scripts/b.sh
+  git -c core.hooksPath=/dev/null commit -q -m "initial"
+  git push -q origin main
+) >/dev/null 2>&1
+
+# docker shim: `command -v docker` succeeds (so detection reaches the
+# worktree-own-container-down branch); actually invoking it always exits 1
+# (container/daemon unreachable) — same technique as Scenario 11's
+# run_helper_with_uname.
+SCN13_SHIM=$(mktemp -d)
+cat > "$SCN13_SHIM/docker" <<'DOCKEREOF'
+#!/bin/sh
+exit 1
+DOCKEREOF
+chmod +x "$SCN13_SHIM/docker"
+# node shim: default success (skips the D4 rollup/esbuild repair probe
+# entirely); SCN13_NODE_FAIL=1 flips it to fail, to deliberately trigger
+# that probe for the D4 marker cases below.
+cat > "$SCN13_SHIM/node" <<'NODEEOF'
+#!/bin/sh
+[ "${SCN13_NODE_FAIL:-0}" = "1" ] && exit 1
+exit 0
+NODEEOF
+chmod +x "$SCN13_SHIM/node"
+# git shim: delegates to the REAL git for everything, EXCEPT when
+# SCN13_GIT_DIFF_PARTIAL_FAIL=1 and the invocation is `git diff --cached
+# ...`, in which case it reproduces the plan's own measured shell
+# primitive directly — `if x=$(printf partial; exit 1)` leaves partial
+# stdout in x on failure — rather than hunting for a REAL index
+# corruption that happens to behave this way (the plan's own F1 table
+# found none for the corruption shapes it tried). Used by exactly one
+# case below (mutation-detection for the else-branch's explicit clear).
+SCN13_REAL_GIT=$(command -v git)
+cat > "$SCN13_SHIM/git" <<GITEOF
+#!/bin/sh
+if [ "\${SCN13_GIT_DIFF_PARTIAL_FAIL:-0}" = "1" ] && [ "\$1" = "diff" ]; then
+  case "\$*" in
+    *--cached*)
+      printf 'scripts/partial-garbage.sh\n'
+      exit 1
+      ;;
+  esac
+fi
+exec "$SCN13_REAL_GIT" "\$@"
+GITEOF
+chmod +x "$SCN13_SHIM/git"
+
+# scn13_new_wt <name> — creates an in-tree worktree off main, no upstream
+# tracking (git worktree add -b never sets one). node_modules is
+# pre-created so the D4 block's earlier "host node_modules missing" check
+# never fires — irrelevant to what these cases test.
+scn13_new_wt() {
+  _wt="$SCN13_MAIN/.worktrees/$1"
+  ( cd "$SCN13_MAIN" && git worktree add -q -b "scn13-$1" "$_wt" main ) >/dev/null 2>&1
+  mkdir -p "$_wt/node_modules"
+  printf '%s' "$_wt"
+}
+
+# scn13_run <shell> <caller|""> <cwd> [VAR=val ...] — sources the REAL
+# repo lib in a fresh <shell> process from <cwd>, with HOOK_DETECT_CALLER
+# set to <caller> (unset if ""), PATH shimmed, extra VAR=val pairs
+# exported first. Prints classification state to stdout — only reached on
+# a fallback/no-op outcome, since a hard-fail `exit 1` inside the sourced
+# lib terminates the shell before the trailing printf runs (mirrors
+# Scenario 11's run_helper_with_uname). stderr goes to SCN13_STDERR
+# (truncated fresh each call) for the text-assertion cases.
+SCN13_STDERR="$SCN13_ROOT/stderr.out"
+scn13_run() {
+  _sh="$1"; _caller="$2"; _cwd="$3"; shift 3
+  : > "$SCN13_STDERR"
+  (
+    cd "$_cwd" || exit 99
+    if [ -n "$_caller" ]; then
+      HOOK_DETECT_CALLER="$_caller"
+      export HOOK_DETECT_CALLER
+    else
+      unset HOOK_DETECT_CALLER 2>/dev/null || true
+    fi
+    for _kv in "$@"; do
+      export "${_kv?}"
+    done
+    HOOK_DETECT_LIB="${SCN13_LIB_OVERRIDE:-$REPO_ROOT/scripts/lib/hook-docker-detect.sh}"
+    export HOOK_DETECT_LIB
+    PATH="$SCN13_SHIM:$PATH"
+    export PATH
+    "$_sh" -c '
+      . "$HOOK_DETECT_LIB"
+      _changed_empty=0
+      [ -z "${_HOOK_CHANGED_FILES:-}" ] && _changed_empty=1
+      printf "NEEDS_FALLBACK=%s USE_DOCKER=%s STAGED_EMPTY=%s DOCS_ONLY=%s CHANGED_EMPTY=%s\n" \
+        "$NEEDS_FALLBACK" "$USE_DOCKER" "${_HOOK_STAGED_EMPTY:-}" "${_HOOK_DOCS_ONLY:-}" "$_changed_empty"
+    '
+  ) 2>"$SCN13_STDERR"
+}
+
+# scn13_expect <shell> <name> <FB|HF> <caller|""> <cwd> [VAR=val ...]
+# Increments the per-shell SCN13_SHELL_EXEC counter as a side effect.
+scn13_expect() {
+  _shell="$1"; _name="$2"; _expect="$3"; shift 3
+  SCN13_SHELL_EXEC=$((SCN13_SHELL_EXEC + 1))
+  if out=$(scn13_run "$_shell" "$@"); then
+    if [ "$_expect" = "FB" ]; then
+      echo "PASS Scenario 13 [$_shell]: $_name -> FB"
+      pass=$((pass + 1))
+    else
+      echo "FAIL Scenario 13 [$_shell]: $_name expected HF but got FB ($out)"
+      fail=$((fail + 1))
+    fi
+  else
+    if [ "$_expect" = "HF" ]; then
+      echo "PASS Scenario 13 [$_shell]: $_name -> HF"
+      pass=$((pass + 1))
+    else
+      echo "FAIL Scenario 13 [$_shell]: $_name expected FB but got HF"
+      fail=$((fail + 1))
+    fi
+  fi
+}
+
+# scn13_pair_guard <name> <expect1> <expect2> — B-2: assert each pair's
+# expectations differ BEFORE running the pair's cases.
+scn13_pair_guard() {
+  SCN13_SHELL_EXEC=$((SCN13_SHELL_EXEC + 1))
+  if [ "$2" != "$3" ]; then
+    echo "PASS Scenario 13 pair-guard: $1 (expectations differ: $2 vs $3)"
+    pass=$((pass + 1))
+  else
+    echo "FAIL Scenario 13 pair-guard: $1 (expectations must differ, both '$2')"
+    fail=$((fail + 1))
+  fi
+}
+
+# --- Shared, read-only fixture state (built once, reused across shells) ---
+
+# S1: no upstream, no commits beyond the shared initial commit — docs/empty
+# family (S1/S3/S2c in the plan's state table all share this outcome
+# triple; S1 is this harness's representative).
+SCN13_WT_S1=$(scn13_new_wt s1)
+
+# S2: no upstream, 1 docs commit already made (committed range = docs),
+# THEN a code file staged on top (staged set = code) — the fix-relevant
+# state where pre-commit and pre-push must now disagree.
+SCN13_WT_S2=$(scn13_new_wt s2)
+(
+  cd "$SCN13_WT_S2"
+  echo "s2 docs" > docs/s2.md
+  git add docs/s2.md
+  git -c core.hooksPath=/dev/null commit -q -m "s2 docs commit"
+  echo "echo s2" >> scripts/tracked.sh
+  git add scripts/tracked.sh
+) >/dev/null 2>&1
+
+# D4: 1 docs commit (pre-push committed range) + a second docs file staged
+# on top (pre-commit staged set) — both callers reach the docs-only
+# fallback path from this one state. Carries its own
+# repair-host-native-deps.sh stub so the D4 gate's marker-touch is
+# observable.
+SCN13_WT_D4=$(scn13_new_wt d4)
+mkdir -p "$SCN13_WT_D4/scripts"
+SCN13_D4_MARKER_PC="$SCN13_ROOT/d4-marker-pre-commit"
+SCN13_D4_MARKER_PP="$SCN13_ROOT/d4-marker-pre-push"
+cat > "$SCN13_WT_D4/scripts/repair-host-native-deps.sh" <<'REPAIREOF'
+#!/bin/sh
+touch "$SCN13_D4_MARKER"
+exit 0
+REPAIREOF
+chmod +x "$SCN13_WT_D4/scripts/repair-host-native-deps.sh"
+(
+  cd "$SCN13_WT_D4"
+  echo "d4 docs" > docs/d4.md
+  git add docs/d4.md
+  git -c core.hooksPath=/dev/null commit -q -m "d4 docs commit"
+  echo "d4 more docs" > docs/d4b.md
+  git add docs/d4b.md
+) >/dev/null 2>&1
+
+# nodop: a throwaway COPY of the real lib with no sibling
+# docs-only-patterns.sh (never the real repo's own copy — that file stays
+# untouched). Read via SCN13_LIB_OVERRIDE.
+SCN13_NODOP_DIR="$SCN13_ROOT/nodop"
+mkdir -p "$SCN13_NODOP_DIR"
+cp "$REPO_ROOT/scripts/lib/hook-docker-detect.sh" "$SCN13_NODOP_DIR/hook-docker-detect.sh"
+
+# Index-corruption fixtures, built once from S1's real (intact) index —
+# the test never corrupts the fixture's live index; these are separate
+# files pointed to via GIT_INDEX_FILE.
+SCN13_S1_GITDIR=$(cd "$SCN13_WT_S1" && git rev-parse --git-dir)
+case "$SCN13_S1_GITDIR" in
+  /*) : ;;
+  *) SCN13_S1_GITDIR="$SCN13_WT_S1/$SCN13_S1_GITDIR" ;;
+esac
+SCN13_S1_REAL_INDEX="$SCN13_S1_GITDIR/index"
+printf 'garbage not an index' > "$SCN13_ROOT/index-garbage"
+cp "$SCN13_S1_REAL_INDEX" "$SCN13_ROOT/index-valid-copy"
+cp "$SCN13_S1_REAL_INDEX" "$SCN13_ROOT/index-truncated"
+: > "$SCN13_ROOT/index-truncated"
+cp "$SCN13_S1_REAL_INDEX" "$SCN13_ROOT/index-unreadable"
+chmod 000 "$SCN13_ROOT/index-unreadable"
+
+# Fixed per-shell case+pair-guard count (CALLER 7, F1-EMPTY 3, F1-INDEX 4,
+# F1-CLEAR 1, F1-NODOP 3, F1-UNREADABLE 1, SHAPES 5, D4 3, LEAK 3,
+# R2-F1 6 = 36).
+SCN13_EXPECTED_PER_SHELL=36
+
+for SCN13_SH in sh dash bash; do
+  SCN13_SHELL_EXEC=0
+  if ! command -v "$SCN13_SH" >/dev/null 2>&1; then
+    echo "FAIL Scenario 13: $SCN13_SH not found"
+    fail=$((fail + 1))
+    continue
+  fi
+
+  # --- Group CALLER (S1 + S2 families) ---
+  # S1 starts clean (nothing staged): stage docs, check, unstage, stage
+  # code, check.
+  ( cd "$SCN13_WT_S1" && echo "s1 docs" > docs/s1.md && git add docs/s1.md ) >/dev/null 2>&1
+  scn13_expect "$SCN13_SH" "S1 pre-commit docs staged" FB pre-commit "$SCN13_WT_S1"
+  ( cd "$SCN13_WT_S1" && git reset -q -- docs/s1.md && rm -f docs/s1.md ) >/dev/null 2>&1
+  ( cd "$SCN13_WT_S1" && echo "echo s1" >> scripts/tracked.sh && git add scripts/tracked.sh ) >/dev/null 2>&1
+  scn13_expect "$SCN13_SH" "S1 pre-commit code staged" HF pre-commit "$SCN13_WT_S1"
+  ( cd "$SCN13_WT_S1" && git reset -q -- scripts/tracked.sh && git checkout -q -- scripts/tracked.sh ) >/dev/null 2>&1
+  scn13_expect "$SCN13_SH" "S1 pre-push (no commits, no upstream)" HF pre-push "$SCN13_WT_S1"
+  scn13_pair_guard "caller-S1 docs-vs-code" FB HF
+
+  scn13_expect "$SCN13_SH" "S2 pre-commit code staged (committed=docs)" HF pre-commit "$SCN13_WT_S2"
+  scn13_expect "$SCN13_SH" "S2 pre-push (committed=docs)" FB pre-push "$SCN13_WT_S2"
+  scn13_pair_guard "caller-S2 pre-commit-vs-pre-push" HF FB
+
+  # --- Group F1-EMPTY (fresh worktree, this shell only) ---
+  SCN13_WT_F1=$(scn13_new_wt "f1-$SCN13_SH")
+  scn13_expect "$SCN13_SH" "F1 nothing staged" FB pre-commit "$SCN13_WT_F1"
+  ( cd "$SCN13_WT_F1" && echo "echo f1" >> scripts/tracked.sh && git add scripts/tracked.sh ) >/dev/null 2>&1
+  scn13_expect "$SCN13_SH" "F1 code staged (same state)" HF pre-commit "$SCN13_WT_F1"
+  scn13_pair_guard "F1-nothing-vs-code" FB HF
+
+  # --- Group F1-INDEX (GIT_INDEX_FILE triple, from S1's real index) ---
+  scn13_expect "$SCN13_SH" "F1 GIT_INDEX_FILE valid copy, nothing staged" FB pre-commit "$SCN13_WT_S1" "GIT_INDEX_FILE=$SCN13_ROOT/index-valid-copy"
+  scn13_expect "$SCN13_SH" "F1 GIT_INDEX_FILE garbage bytes" HF pre-commit "$SCN13_WT_S1" "GIT_INDEX_FILE=$SCN13_ROOT/index-garbage"
+  scn13_expect "$SCN13_SH" "F1 GIT_INDEX_FILE 0-byte-truncated" HF pre-commit "$SCN13_WT_S1" "GIT_INDEX_FILE=$SCN13_ROOT/index-truncated"
+  scn13_pair_guard "F1-index-valid-vs-garbage" FB HF
+
+  # --- Group F1-CLEAR: regression guard for the else branch's explicit
+  # `_HOOK_CHANGED_FILES=""` clear on a failed diff. Not observable via
+  # FB/HF alone (_HOOK_DOCS_ONLY=0 forces the same branch either way), so
+  # SKILLSMITH_WORKTREE_PREPUSH_HARDFAIL_DISABLE=1 forces the fallback
+  # path regardless of DOCS_ONLY, making the printed CHANGED_EMPTY field
+  # observable. SCN13_GIT_DIFF_PARTIAL_FAIL=1 reproduces the plan's own
+  # measured shell primitive (`if x=$(printf partial; exit 1)` leaves
+  # partial stdout in x on failure) directly via the git shim, since no
+  # real index corruption the plan tried produces partial stdout on a
+  # nonzero exit.
+  SCN13_SHELL_EXEC=$((SCN13_SHELL_EXEC + 1))
+  SCN13_F1CLEAR_OUT=$(scn13_run "$SCN13_SH" pre-commit "$SCN13_WT_S1" "SCN13_GIT_DIFF_PARTIAL_FAIL=1" "SKILLSMITH_WORKTREE_PREPUSH_HARDFAIL_DISABLE=1")
+  case "$SCN13_F1CLEAR_OUT" in
+    *"CHANGED_EMPTY=1"*)
+      echo "PASS Scenario 13 [$SCN13_SH]: failed git diff clears _HOOK_CHANGED_FILES (no partial-stdout leak)"
+      pass=$((pass + 1))
+      ;;
+    *)
+      echo "FAIL Scenario 13 [$SCN13_SH]: failed git diff left _HOOK_CHANGED_FILES non-empty ($SCN13_F1CLEAR_OUT)"
+      fail=$((fail + 1))
+      ;;
+  esac
+
+  # --- Group F1-NODOP ---
+  scn13_expect "$SCN13_SH" "nothing staged, lib present" FB pre-commit "$SCN13_WT_S1" "GIT_INDEX_FILE=$SCN13_ROOT/index-valid-copy"
+  SCN13_LIB_OVERRIDE="$SCN13_NODOP_DIR/hook-docker-detect.sh"
+  scn13_expect "$SCN13_SH" "nothing staged, docs-only-patterns.sh sibling absent (nodop)" HF pre-commit "$SCN13_WT_S1" "GIT_INDEX_FILE=$SCN13_ROOT/index-valid-copy"
+  unset SCN13_LIB_OVERRIDE
+  scn13_pair_guard "F1-nodop" FB HF
+
+  # --- Group F1-UNREADABLE ---
+  if [ "$(id -u)" = "0" ]; then
+    echo "SKIP Scenario 13 [$SCN13_SH]: chmod-000 index case vacuous (running as root — root can read a 000-mode file)"
+    pass=$((pass + 1))
+    SCN13_SHELL_EXEC=$((SCN13_SHELL_EXEC + 1))
+  else
+    scn13_expect "$SCN13_SH" "F1 GIT_INDEX_FILE chmod 000 (unreadable)" HF pre-commit "$SCN13_WT_S1" "GIT_INDEX_FILE=$SCN13_ROOT/index-unreadable"
+  fi
+
+  # --- Group SHAPES (fresh worktree, this shell only) ---
+  SCN13_WT_SHAPES=$(scn13_new_wt "shapes-$SCN13_SH")
+  ( cd "$SCN13_WT_SHAPES" && git mv scripts/b.sh docs/b.sh ) >/dev/null 2>&1
+  scn13_expect "$SCN13_SH" "rename tracked script into docs/ (--no-renames catches it)" HF pre-commit "$SCN13_WT_SHAPES"
+  ( cd "$SCN13_WT_SHAPES" && git reset -q; git checkout -q -- scripts/b.sh 2>/dev/null; rm -f docs/b.sh; true ) >/dev/null 2>&1
+  ( cd "$SCN13_WT_SHAPES" && git rm -q scripts/a.sh ) >/dev/null 2>&1
+  scn13_expect "$SCN13_SH" "deletion of tracked script" HF pre-commit "$SCN13_WT_SHAPES"
+  ( cd "$SCN13_WT_SHAPES" && git reset -q -- scripts/a.sh && git checkout -q -- scripts/a.sh ) >/dev/null 2>&1
+  SCN13_FAKE_SHA=$(head -c 40 /dev/zero | tr '\0' '1')
+  ( cd "$SCN13_WT_SHAPES" && git update-index --add --cacheinfo "160000,$SCN13_FAKE_SHA,vendor/thing" ) >/dev/null 2>&1
+  scn13_expect "$SCN13_SH" "staged gitlink (--ignore-submodules=none catches it)" HF pre-commit "$SCN13_WT_SHAPES"
+  ( cd "$SCN13_WT_SHAPES" && git reset -q -- vendor/thing ) >/dev/null 2>&1
+  ( cd "$SCN13_WT_SHAPES" && echo "plain docs" > docs/plain.md && git add docs/plain.md ) >/dev/null 2>&1
+  scn13_expect "$SCN13_SH" "plain docs-only (baseline)" FB pre-commit "$SCN13_WT_SHAPES"
+  scn13_pair_guard "shapes-vs-plain-docs" HF FB
+
+  # --- Group D4 (shared, read-only) ---
+  rm -f "$SCN13_D4_MARKER_PC" "$SCN13_D4_MARKER_PP"
+  scn13_run "$SCN13_SH" pre-commit "$SCN13_WT_D4" "SCN13_NODE_FAIL=1" "SCN13_D4_MARKER=$SCN13_D4_MARKER_PC" >/dev/null
+  SCN13_SHELL_EXEC=$((SCN13_SHELL_EXEC + 1))
+  if [ ! -e "$SCN13_D4_MARKER_PC" ]; then
+    echo "PASS Scenario 13 [$SCN13_SH]: D4 pre-commit never runs the host native repair (marker absent)"
+    pass=$((pass + 1))
+  else
+    echo "FAIL Scenario 13 [$SCN13_SH]: D4 pre-commit ran the host native repair (marker present, should be absent)"
+    fail=$((fail + 1))
+  fi
+  scn13_run "$SCN13_SH" pre-push "$SCN13_WT_D4" "SCN13_NODE_FAIL=1" "SCN13_D4_MARKER=$SCN13_D4_MARKER_PP" >/dev/null
+  SCN13_SHELL_EXEC=$((SCN13_SHELL_EXEC + 1))
+  if [ -e "$SCN13_D4_MARKER_PP" ]; then
+    echo "PASS Scenario 13 [$SCN13_SH]: D4 pre-push still runs the host native repair (marker present)"
+    pass=$((pass + 1))
+  else
+    echo "FAIL Scenario 13 [$SCN13_SH]: D4 pre-push did not run the host native repair (marker absent, should be present)"
+    fail=$((fail + 1))
+  fi
+  scn13_pair_guard "D4-marker-pre-commit-vs-pre-push" ABSENT PRESENT
+
+  # --- Group LEAK (reuse S2, read-only) ---
+  # .husky/pre-commit's own HOOK_DETECT_CALLER=pre-commit assignment is
+  # deliberately UNEXPORTED (D3) — it must not leak to a genuinely
+  # separate child process. Simulate that here: set it without export,
+  # then exec a fresh child shell that sources the lib. An unpinned child
+  # must see it as unset and default to pre-push semantics (committed
+  # range = docs, so FB) — [MEASURED equivalent: "not-in-env+pinned
+  # unset"].
+  SCN13_SHELL_EXEC=$((SCN13_SHELL_EXEC + 1))
+  if out=$(
+    cd "$SCN13_WT_S2" || exit 99
+    HOOK_DETECT_CALLER=pre-commit
+    HOOK_DETECT_LIB="$REPO_ROOT/scripts/lib/hook-docker-detect.sh"
+    export HOOK_DETECT_LIB
+    PATH="$SCN13_SHIM:$PATH"
+    export PATH
+    "$SCN13_SH" -c '. "$HOOK_DETECT_LIB"; printf "NEEDS_FALLBACK=%s\n" "$NEEDS_FALLBACK"'
+  ); then
+    echo "PASS Scenario 13 [$SCN13_SH]: unexported pre-commit caller does not leak to a child -> FB (pre-push default)"
+    pass=$((pass + 1))
+  else
+    echo "FAIL Scenario 13 [$SCN13_SH]: unexported pre-commit caller unexpectedly leaked to the child (hard-failed)"
+    fail=$((fail + 1))
+  fi
+  # Contrast: a HYPOTHETICALLY exported pre-commit caller (the mistake D3's
+  # "unexported" choice guards against) WOULD leak to an unpinned child —
+  # [MEASURED equivalent: "leaked+unpinned child sees pre-commit"].
+  scn13_expect "$SCN13_SH" "hypothetically-exported pre-commit caller leaks to an unpinned child" HF pre-commit "$SCN13_WT_S2"
+  scn13_pair_guard "leak-unexported-vs-exported" FB HF
+
+  # --- Group R2-F1 (fresh worktree, this shell only) ---
+  SCN13_WT_R2F1=$(scn13_new_wt "r2f1-$SCN13_SH")
+  ( cd "$SCN13_WT_R2F1" && echo "r2f1 docs" > docs/r2f1.md && git add docs/r2f1.md ) >/dev/null 2>&1
+  scn13_expect "$SCN13_SH" "R2-F1 docs staged, SKILLSMITH_PRE_PUSH_DOCKER=1" HF pre-commit "$SCN13_WT_R2F1" "SKILLSMITH_PRE_PUSH_DOCKER=1"
+  scn13_expect "$SCN13_SH" "R2-F1 docs staged, without the var" FB pre-commit "$SCN13_WT_R2F1"
+  scn13_pair_guard "R2-F1-docs" HF FB
+  ( cd "$SCN13_WT_R2F1" && git reset -q -- docs/r2f1.md && rm -f docs/r2f1.md ) >/dev/null 2>&1
+  scn13_expect "$SCN13_SH" "R2-F1 nothing staged, SKILLSMITH_PRE_PUSH_DOCKER=1" HF pre-commit "$SCN13_WT_R2F1" "SKILLSMITH_PRE_PUSH_DOCKER=1"
+  scn13_expect "$SCN13_SH" "R2-F1 nothing staged, without the var" FB pre-commit "$SCN13_WT_R2F1"
+  scn13_pair_guard "R2-F1-empty" HF FB
+
+  if [ "$SCN13_SHELL_EXEC" -eq "$SCN13_EXPECTED_PER_SHELL" ]; then
+    echo "Scenario 13 [$SCN13_SH]: executed $SCN13_SHELL_EXEC of $SCN13_EXPECTED_PER_SHELL"
+  else
+    echo "FAIL Scenario 13 [$SCN13_SH]: executed $SCN13_SHELL_EXEC of $SCN13_EXPECTED_PER_SHELL (mismatch)"
+    fail=$((fail + 1))
+  fi
+done
+
+# -----------------------------------------------------------------------
+# Scenario 13 structural guards (Scenario 9b-style, static/grep — not
+# per-shell): the caller contract must be set BEFORE the lib is sourced in
+# each hook.
+# -----------------------------------------------------------------------
+if awk '/HOOK_DETECT_CALLER=pre-commit/{f=NR} /\. "\$HOOK_DETECT_LIB"/{s=NR} END{exit !(f && s && f < s)}' "$REPO_ROOT/.husky/pre-commit"; then
+  echo "PASS Scenario 13: .husky/pre-commit sets HOOK_DETECT_CALLER before sourcing the lib"
+  pass=$((pass + 1))
+else
+  echo "FAIL Scenario 13: .husky/pre-commit does not set HOOK_DETECT_CALLER before sourcing the lib"
+  fail=$((fail + 1))
+fi
+
+if awk '/export HOOK_DETECT_CALLER=pre-push/{f=NR} /sh "\$CONTAINER_DEPS_LIB"/{s=NR} END{exit !(f && s && f < s)}' "$REPO_ROOT/.husky/pre-push"; then
+  echo "PASS Scenario 13: .husky/pre-push pins HOOK_DETECT_CALLER before its first child sourcer"
+  pass=$((pass + 1))
+else
+  echo "FAIL Scenario 13: .husky/pre-push does not pin HOOK_DETECT_CALLER before its first child sourcer"
+  fail=$((fail + 1))
+fi
+
+# -----------------------------------------------------------------------
+# Scenario 13 launcher cases (bash only): real `git commit` invocations,
+# since pathspec/-a/--allow-empty/--amend semantics only manifest through
+# git's own temporary-index machinery (GIT_INDEX_FILE pointed at a
+# next-index-<pid>.lock / index.lock git creates itself), which a manual
+# `git add`/`git rm` on the real index cannot reproduce.
+# -----------------------------------------------------------------------
+SCN13_LAUNCH_HOOKS="$SCN13_ROOT/launch-hooks"
+mkdir -p "$SCN13_LAUNCH_HOOKS"
+cat > "$SCN13_LAUNCH_HOOKS/pre-commit" <<LAUNCHEOF
+#!/bin/sh
+PATH="$SCN13_SHIM:\$PATH"
+export PATH
+HOOK_DETECT_CALLER=pre-commit
+HOOK_DETECT_LIB="$REPO_ROOT/scripts/lib/hook-docker-detect.sh"
+. "\$HOOK_DETECT_LIB"
+exit 0
+LAUNCHEOF
+chmod +x "$SCN13_LAUNCH_HOOKS/pre-commit"
+
+SCN13_WT_LAUNCH=$(scn13_new_wt launch)
+( cd "$SCN13_WT_LAUNCH" && git config core.hooksPath "$SCN13_LAUNCH_HOOKS" ) >/dev/null 2>&1
+
+# L1: pathspec restricts the commit's own temp index to docs/x.md even
+# though scripts/tracked.sh is ALSO staged — --cached honours
+# GIT_INDEX_FILE, which git points at that temp index for the hook's
+# duration.
+(
+  cd "$SCN13_WT_LAUNCH"
+  echo "l1 docs" > docs/x.md
+  git add docs/x.md scripts/tracked.sh 2>/dev/null
+  echo "l1 code" >> scripts/tracked.sh
+  git add docs/x.md scripts/tracked.sh
+) >/dev/null 2>&1
+if ( cd "$SCN13_WT_LAUNCH" && git commit -q -m "L1 pathspec" -- docs/x.md ) >/dev/null 2>"$SCN13_STDERR"; then
+  echo "PASS Scenario 13 [bash launcher]: pathspec -- docs/x.md with code also staged -> commit succeeds (FB)"
+  pass=$((pass + 1))
+else
+  echo "FAIL Scenario 13 [bash launcher]: pathspec -- docs/x.md with code also staged should have succeeded"
+  fail=$((fail + 1))
+fi
+( cd "$SCN13_WT_LAUNCH" && git reset -q -- scripts/tracked.sh && git checkout -q -- scripts/tracked.sh ) >/dev/null 2>&1
+
+# L2: `-a` auto-stages the tracked code modification into a temp index —
+# HF (commit must fail).
+( cd "$SCN13_WT_LAUNCH" && echo "l2 code" >> scripts/tracked.sh ) >/dev/null 2>&1
+if ( cd "$SCN13_WT_LAUNCH" && git commit -q -a -m "L2 -a code" ) >/dev/null 2>"$SCN13_STDERR"; then
+  echo "FAIL Scenario 13 [bash launcher]: git commit -a with tracked code should have hard-failed"
+  fail=$((fail + 1))
+else
+  echo "PASS Scenario 13 [bash launcher]: git commit -a with tracked code -> hard-fails (HF)"
+  pass=$((pass + 1))
+fi
+( cd "$SCN13_WT_LAUNCH" && git reset -q -- scripts/tracked.sh; git checkout -q -- scripts/tracked.sh; true ) >/dev/null 2>&1
+
+# L3: --allow-empty -> nothing staged -> FB, commit created.
+if ( cd "$SCN13_WT_LAUNCH" && git commit -q --allow-empty -m "L3 empty" ) >/dev/null 2>"$SCN13_STDERR"; then
+  echo "PASS Scenario 13 [bash launcher]: git commit --allow-empty -> succeeds (FB)"
+  pass=$((pass + 1))
+else
+  echo "FAIL Scenario 13 [bash launcher]: git commit --allow-empty should have succeeded"
+  fail=$((fail + 1))
+fi
+
+# L4: message-only --amend -> index still equals the commit being amended
+# -> empty diff -> FB. Amends a NON-empty commit (git refuses to amend an
+# already-empty commit into another empty one without its own
+# --allow-empty, an unrelated git restriction, not what's under test here)
+# made fresh with nothing else staged.
+( cd "$SCN13_WT_LAUNCH" && echo "l4 docs" > docs/amend-target.md && git add docs/amend-target.md && git commit -q -m "L4 amend target" ) >/dev/null 2>&1
+if ( cd "$SCN13_WT_LAUNCH" && git commit -q --amend -m "L4 amend target (message only)" ) >/dev/null 2>"$SCN13_STDERR"; then
+  echo "PASS Scenario 13 [bash launcher]: message-only --amend -> succeeds (FB)"
+  pass=$((pass + 1))
+else
+  echo "FAIL Scenario 13 [bash launcher]: message-only --amend should have succeeded"
+  fail=$((fail + 1))
+fi
+
+# L5: plain code commit -> HF; stderr text check (F4: no un-runnable
+# "<same arguments>" placeholder, 0 "git push" mentions).
+( cd "$SCN13_WT_LAUNCH" && echo "l5 code" >> scripts/tracked.sh && git add scripts/tracked.sh ) >/dev/null 2>&1
+if ( cd "$SCN13_WT_LAUNCH" && git commit -q -m "L5 code" ) >/dev/null 2>"$SCN13_STDERR"; then
+  echo "FAIL Scenario 13 [bash launcher]: plain code commit should have hard-failed"
+  fail=$((fail + 1))
+else
+  echo "PASS Scenario 13 [bash launcher]: plain code commit -> hard-fails (HF)"
+  pass=$((pass + 1))
+fi
+SCN13_L5_TEXT=$(cat "$SCN13_STDERR")
+case "$SCN13_L5_TEXT" in
+  *"re-run your original git commit command prefixed with SKILLSMITH_PRE_PUSH_HOST=1"*)
+    if printf '%s' "$SCN13_L5_TEXT" | grep -q 'git push'; then
+      echo "FAIL Scenario 13 [bash launcher]: pre-commit HF stderr unexpectedly mentions 'git push'"
+      fail=$((fail + 1))
+    else
+      echo "PASS Scenario 13 [bash launcher]: pre-commit HF stderr has escape-hatch text and 0 'git push' mentions"
+      pass=$((pass + 1))
+    fi
+    ;;
+  *)
+    echo "FAIL Scenario 13 [bash launcher]: pre-commit HF stderr missing escape-hatch text: $SCN13_L5_TEXT"
+    fail=$((fail + 1))
+    ;;
+esac
+
+# L6: pre-push HF stderr contains the unchanged SKILLSMITH_PRE_PUSH_HOST=1
+# git push escape hatch (library-level check — no real `git push` needed,
+# since no pathspec/-a/--amend semantics are under test here).
+scn13_run bash pre-push "$SCN13_WT_S1" >/dev/null || true
+SCN13_L6_TEXT=$(cat "$SCN13_STDERR")
+case "$SCN13_L6_TEXT" in
+  *"SKILLSMITH_PRE_PUSH_HOST=1 git push"*)
+    echo "PASS Scenario 13 [bash launcher]: pre-push HF stderr contains 'SKILLSMITH_PRE_PUSH_HOST=1 git push'"
+    pass=$((pass + 1))
+    ;;
+  *)
+    echo "FAIL Scenario 13 [bash launcher]: pre-push HF stderr missing the unchanged escape hatch: $SCN13_L6_TEXT"
+    fail=$((fail + 1))
+    ;;
+esac
+
+# -----------------------------------------------------------------------
+# Scenario 13 B-3: pinned total against SMI6568_EXPECTED_CASES (set by
+# validate-hooks.yml, D8) — fails loudly on drift instead of silently
+# accepting a shrunk or padded case count.
+# -----------------------------------------------------------------------
+SCN13_TOTAL_AFTER=$((pass + fail))
+SCN13_TOTAL_EXECUTED=$((SCN13_TOTAL_AFTER - SCN13_PASS_FAIL_BEFORE_S13))
+if [ -n "${SMI6568_EXPECTED_CASES:-}" ]; then
+  if [ "$SCN13_TOTAL_EXECUTED" -eq "$SMI6568_EXPECTED_CASES" ]; then
+    echo "PASS Scenario 13: total executed ($SCN13_TOTAL_EXECUTED) matches SMI6568_EXPECTED_CASES"
+    pass=$((pass + 1))
+  else
+    echo "FAIL Scenario 13: total executed ($SCN13_TOTAL_EXECUTED) != SMI6568_EXPECTED_CASES ($SMI6568_EXPECTED_CASES)"
+    fail=$((fail + 1))
+  fi
+else
+  echo "Scenario 13: SMI6568_EXPECTED_CASES not set — executed $SCN13_TOTAL_EXECUTED cases+checks (local run)"
+fi
+
+# -----------------------------------------------------------------------
 # Summary
 # -----------------------------------------------------------------------
 total=$((pass + fail))

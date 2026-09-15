@@ -1,6 +1,8 @@
 #!/bin/sh
 # scripts/lib/hook-docker-detect.sh
-# SMI-4681: Shared Docker-vs-host detection for pre-push hook chain.
+# SMI-4681: Shared Docker-vs-host detection for the pre-commit/pre-push hook
+# chain. SMI-6568: caller-aware — pre-commit classifies the STAGED set,
+# pre-push classifies the COMMITTED range (see the caller contract below).
 #
 # Sourced by:
 #   .husky/pre-commit
@@ -17,6 +19,11 @@
 # node_modules/dist freshness checks) are separately, explicitly WARN-only —
 # see .husky/pre-commit's own comments — never make this file itself do
 # anything mutating, since pre-commit sourcing it must stay read-only.
+# SMI-6568/D4: that invariant was not actually enforced before this fix —
+# the host native-repair probe further below (npm rebuild / package
+# replacement) ran unconditionally on host fallback regardless of caller.
+# It is now gated on HOOK_DETECT_CALLER != pre-commit, so pre-commit's own
+# path through this file is genuinely read-only.
 #
 # CONTRACT (sets these vars in caller's scope):
 #   DOCKER_AVAILABLE 0|1     — whether Docker daemon + the resolved
@@ -94,6 +101,20 @@ if [ -n "${_HOOK_DETECT_LOADED:-}" ]; then
     return 0 2>/dev/null || exit 0
 fi
 _HOOK_DETECT_LOADED=1
+
+# SMI-6568: explicit caller contract. .husky/pre-commit sets
+# HOOK_DETECT_CALLER=pre-commit (unexported, same-shell source) before
+# sourcing this file; .husky/pre-push pins HOOK_DETECT_CALLER=pre-push
+# (exported, since pre-push's own callers reach this file via CHILD `sh`/
+# `bash` processes) as its first executable line, overwriting any leaked
+# inherited value before those children run. Unset or any other value
+# defaults to pre-push semantics — today's behaviour, unchanged. Not
+# inferred from $0: a sourced file's $0 is whatever husky's launcher
+# passed, and the name is unused elsewhere in the repo.
+case "${HOOK_DETECT_CALLER:-}" in
+    pre-commit) _HOOK_CALLER=pre-commit; _HOOK_GIT_VERB=commit ;;
+    *)          _HOOK_CALLER=pre-push;   _HOOK_GIT_VERB=push ;;
+esac
 
 # Color codes — defined here so all callers get consistent output style.
 HOOK_DETECT_BLUE='\033[0;34m'
@@ -216,16 +237,24 @@ fi
 # worktree's OWN container isn't running (or wasn't resolvable). Applies on
 # ANY OS — the underlying mechanism (main's shared container silently
 # substituting its own state) is not macOS-specific; see Background.
+# SMI-6568: this whole block now also gates pre-commit
+# (HOOK_DETECT_CALLER=pre-commit), not just pre-push — the classification
+# below picks its subject by caller: pre-commit classifies the STAGED set
+# (git diff --cached), pre-push classifies the COMMITTED range
+# (@{u}..HEAD or origin/main..HEAD), unchanged.
 #
-# Three branches, mirroring SMI-4767/SMI-5548's existing precedence:
+# Three branches, mirroring SMI-4767/SMI-5548's existing precedence (now
+# shared by both hooks):
 #   1. SKILLSMITH_PRE_PUSH_DOCKER=1 — strict opt-in, hard-fails if the
 #      worktree's own container isn't up (pre-existing SMI-4767 behavior,
-#      now targeting the worktree's own container instead of main's).
+#      now targeting the worktree's own container instead of main's; R2-F1:
+#      evaluated before any classification and without checking the caller,
+#      so it applies to pre-commit too and wins over the fallbacks below).
 #   2. Default — hard-fail with worktree-docker.sh's own remediation
-#      message, UNLESS this push is docs-only (SMI-4249-style
-#      classification — see DOCS_ONLY below) or
-#      SKILLSMITH_WORKTREE_PREPUSH_HARDFAIL_DISABLE=1 is set, in which case
-#      fall back to host (with a loud warning) instead.
+#      message, UNLESS this commit/push is docs-only (SMI-4249-style
+#      classification — see DOCS_ONLY below), or (pre-commit only) nothing
+#      is staged, or SKILLSMITH_WORKTREE_PREPUSH_HARDFAIL_DISABLE=1 is set,
+#      in which case fall back to host (with a loud warning) instead.
 #   3. SKILLSMITH_PRE_PUSH_HOST=1 — explicit opt-out, always falls back to
 #      host regardless of change-tier.
 #
@@ -266,22 +295,56 @@ if [ "$IS_WORKTREE" = "1" ] && command -v docker >/dev/null 2>&1 && [ "$DOCKER_A
                 . "$_HOOK_DOP_LIB"
             fi
         fi
-        if _HOOK_UPSTREAM=$(git rev-parse --abbrev-ref --symbolic-full-name '@{u}' 2>/dev/null); then
-            _HOOK_CHANGED_FILES=$(git diff --name-only "$_HOOK_UPSTREAM..HEAD" 2>/dev/null || true)
+        _HOOK_STAGED_EMPTY=0
+        if [ "$_HOOK_CALLER" = "pre-commit" ]; then
+            # SMI-6568: pre-commit's subject is the STAGED set, not the
+            # committed range — the index hasn't become a commit yet.
+            # `if x=$(cmd)` takes the else branch on failure without
+            # aborting under `set -e` [MEASURED sh/dash/bash]; on failure
+            # the variable keeps any partial stdout, so the else branch
+            # below must explicitly clear it. A successful empty diff
+            # (nothing staged, or --allow-empty / message-only --amend)
+            # falls back — the commit changes no files, so no code needs
+            # the container. A FAILED diff (corrupt/truncated/unreadable
+            # index) hard-fails instead of silently treating "unknown" as
+            # "docs-only" (D5/F1).
+            if _HOOK_CHANGED_FILES=$(git diff --cached --name-only --no-renames --ignore-submodules=none 2>/dev/null); then
+                if command -v is_docs_only >/dev/null 2>&1; then
+                    if [ -z "$_HOOK_CHANGED_FILES" ]; then
+                        _HOOK_DOCS_ONLY=1
+                        _HOOK_STAGED_EMPTY=1
+                    elif printf '%s\n' "$_HOOK_CHANGED_FILES" | is_docs_only; then
+                        _HOOK_DOCS_ONLY=1
+                    fi
+                fi
+            else
+                _HOOK_CHANGED_FILES=""
+                _HOOK_DOCS_ONLY=0
+            fi
         else
-            git fetch origin main --quiet 2>/dev/null || true
-            _HOOK_CHANGED_FILES=$(git diff --name-only origin/main..HEAD 2>/dev/null || true)
-        fi
-        if command -v is_docs_only >/dev/null 2>&1; then
-            if printf '%s\n' "$_HOOK_CHANGED_FILES" | is_docs_only; then
-                _HOOK_DOCS_ONLY=1
+            if _HOOK_UPSTREAM=$(git rev-parse --abbrev-ref --symbolic-full-name '@{u}' 2>/dev/null); then
+                _HOOK_CHANGED_FILES=$(git diff --name-only "$_HOOK_UPSTREAM..HEAD" 2>/dev/null || true)
+            else
+                git fetch origin main --quiet 2>/dev/null || true
+                _HOOK_CHANGED_FILES=$(git diff --name-only origin/main..HEAD 2>/dev/null || true)
+            fi
+            if command -v is_docs_only >/dev/null 2>&1; then
+                if printf '%s\n' "$_HOOK_CHANGED_FILES" | is_docs_only; then
+                    _HOOK_DOCS_ONLY=1
+                fi
             fi
         fi
 
         if [ "${SKILLSMITH_WORKTREE_PREPUSH_HARDFAIL_DISABLE:-0}" = "1" ] || [ "$_HOOK_DOCS_ONLY" = "1" ]; then
             NEEDS_FALLBACK=1
-            if [ "$_HOOK_DOCS_ONLY" = "1" ]; then
-                printf "${HOOK_DETECT_YELLOW}📂 Docs-only push — falling back to host execution instead of hard-failing (worktree's own container '${DOCKER_CONTAINER}' isn't running)${HOOK_DETECT_NC}\n"
+            if [ "$_HOOK_STAGED_EMPTY" = "1" ]; then
+                printf "${HOOK_DETECT_YELLOW}📂 No staged file changes — falling back to host execution instead of hard-failing (worktree's own container '${DOCKER_CONTAINER}' isn't running)${HOOK_DETECT_NC}\n"
+            elif [ "$_HOOK_DOCS_ONLY" = "1" ]; then
+                if [ "$_HOOK_CALLER" = "pre-commit" ]; then
+                    printf "${HOOK_DETECT_YELLOW}📂 Docs-only commit — falling back to host execution instead of hard-failing (worktree's own container '${DOCKER_CONTAINER}' isn't running)${HOOK_DETECT_NC}\n"
+                else
+                    printf "${HOOK_DETECT_YELLOW}📂 Docs-only push — falling back to host execution instead of hard-failing (worktree's own container '${DOCKER_CONTAINER}' isn't running)${HOOK_DETECT_NC}\n"
+                fi
             else
                 printf "${HOOK_DETECT_YELLOW}📂 SKILLSMITH_WORKTREE_PREPUSH_HARDFAIL_DISABLE=1 — falling back to host execution${HOOK_DETECT_NC}\n"
             fi
@@ -294,9 +357,18 @@ if [ "$IS_WORKTREE" = "1" ] && command -v docker >/dev/null 2>&1 && [ "$DOCKER_A
             printf "${HOOK_DETECT_YELLOW}Start it first:${HOOK_DETECT_NC}\n" >&2
             printf "${HOOK_DETECT_YELLOW}  ${_HOOK_WORKTREE_ROOT}/scripts/worktree-docker.sh start ${_HOOK_WORKTREE_ROOT}${HOOK_DETECT_NC}\n" >&2
             printf "\n" >&2
-            printf "${HOOK_DETECT_YELLOW}Escape hatches:${HOOK_DETECT_NC}\n" >&2
-            printf "${HOOK_DETECT_YELLOW}  SKILLSMITH_PRE_PUSH_HOST=1 git push       # fall back to host this once${HOOK_DETECT_NC}\n" >&2
-            printf "${HOOK_DETECT_YELLOW}  SKILLSMITH_WORKTREE_PREPUSH_HARDFAIL_DISABLE=1 git push  # always fall back for this push${HOOK_DETECT_NC}\n" >&2
+            if [ "$_HOOK_CALLER" = "pre-commit" ]; then
+                # SMI-6568/F4: no un-runnable "<same arguments>" placeholder —
+                # tell the user to re-run their OWN original command instead
+                # of trying to reconstruct it. D6: HARDFAIL_DISABLE stays
+                # honoured at pre-commit but is not advertised here.
+                printf "${HOOK_DETECT_YELLOW}Escape hatch (this commit only): re-run your original git commit command prefixed with SKILLSMITH_PRE_PUSH_HOST=1${HOOK_DETECT_NC}\n" >&2
+                printf "${HOOK_DETECT_YELLOW}A commit that stages only docs, or nothing, falls back to host without it, unless SKILLSMITH_PRE_PUSH_DOCKER=1 requires Docker.${HOOK_DETECT_NC}\n" >&2
+            else
+                printf "${HOOK_DETECT_YELLOW}Escape hatches:${HOOK_DETECT_NC}\n" >&2
+                printf "${HOOK_DETECT_YELLOW}  SKILLSMITH_PRE_PUSH_HOST=1 git push       # fall back to host this once${HOOK_DETECT_NC}\n" >&2
+                printf "${HOOK_DETECT_YELLOW}  SKILLSMITH_WORKTREE_PREPUSH_HARDFAIL_DISABLE=1 git push  # always fall back for this push${HOOK_DETECT_NC}\n" >&2
+            fi
             exit 1
         fi
     fi
@@ -318,7 +390,11 @@ if [ "$NEEDS_FALLBACK" = "1" ] && [ "$IS_WORKTREE" = "1" ] && [ -n "$CONTAINER_W
     if [ ! -e "node_modules" ]; then
         printf "${HOOK_DETECT_RED}❌ Host node_modules missing in worktree.${HOOK_DETECT_NC}\n"
         printf "${HOOK_DETECT_YELLOW}   Run: ./scripts/repair-worktrees.sh${HOOK_DETECT_NC}\n"
-        printf "${HOOK_DETECT_YELLOW}   Bypass: git push --no-verify${HOOK_DETECT_NC}\n"
+        if [ "$_HOOK_CALLER" = "pre-commit" ]; then
+            printf "${HOOK_DETECT_YELLOW}   Bypass: git commit --no-verify${HOOK_DETECT_NC}\n"
+        else
+            printf "${HOOK_DETECT_YELLOW}   Bypass: git push --no-verify${HOOK_DETECT_NC}\n"
+        fi
         exit 1
     fi
 
@@ -330,8 +406,12 @@ if [ "$NEEDS_FALLBACK" = "1" ] && [ "$IS_WORKTREE" = "1" ] && [ -n "$CONTAINER_W
     # The rollup probe loads its native binding at require-time; esbuild
     # resolves its binary lazily, so transformSync('') is needed to force
     # the platform-binary spawn (a bare require is a false-negative).
-    if ! node -e "require('rollup')" >/dev/null 2>&1 ||
-       ! node -e "require('esbuild').transformSync('')" >/dev/null 2>&1; then
+    # SMI-6568/D4: pre-commit sourcing this file must stay read-only (see
+    # header) — never run the mutating repair (npm rebuild / package
+    # replacement) below when HOOK_DETECT_CALLER=pre-commit, regardless of
+    # what the probe finds.
+    if [ "$_HOOK_CALLER" != "pre-commit" ] && { ! node -e "require('rollup')" >/dev/null 2>&1 ||
+       ! node -e "require('esbuild').transformSync('')" >/dev/null 2>&1; }; then
         printf "${HOOK_DETECT_YELLOW}🔧 Host platform native packages missing (rollup/esbuild).${HOOK_DETECT_NC}\n"
         printf "${HOOK_DETECT_YELLOW}   Auto-repairing via scripts/repair-host-native-deps.sh …${HOOK_DETECT_NC}\n"
         _HOOK_REPAIR_TOP=$(git rev-parse --show-toplevel 2>/dev/null)

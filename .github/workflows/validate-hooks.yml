@@ -232,7 +232,11 @@ jobs:
           bash scripts/tests/check-container-deps-fresh.test.sh
           bash scripts/tests/check-container-deps-fresh-lock.test.sh
           bash scripts/tests/session-mcp-disconnect-guard.test.sh
-          bash scripts/tests/create-worktree-hooks.test.sh
+          # SMI-6568 (D8): pinned Scenario 13 case+check total (36 per
+          # shell x 3 shells + 2 structural guards + 7 launcher checks =
+          # 117) — the harness fails loudly if a future edit silently
+          # drops or duplicates a case instead of updating this count.
+          SMI6568_EXPECTED_CASES=117 bash scripts/tests/create-worktree-hooks.test.sh
           bash scripts/tests/worktree-hookspath.test.sh
           bash scripts/tests/session-start-audit.test.sh
           bash scripts/tests/reclaim-node-modules.test.sh
