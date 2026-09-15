@@ -44,9 +44,18 @@ Nothing here ships: see `harness/assert-unshipped.mjs` and the plan's §7.
   bind + guard-pass + post-order removal skeleton; only the removal pass's
   per-entry checks differ (none / identity / identity+content+quarantine).
 - `native-c/` -- C1, the thin N-API shim (§4.1): `src/shim.c`, `binding.gyp`,
-  `load.mjs`. Build: `cd native-c && npx --yes node-gyp@13.0.2 rebuild`
-  (per-platform -- rebuild after switching between host and container, the
-  build output isn't multi-platform-aware yet; that's step 9's job).
+  `load.mjs` (dev loader, reads `build/`), `load-packaged.mjs` (the loader a
+  real install would use, reads `prebuilds/<platform>-<arch>/shim.node` --
+  see its own top comment for why this is a separate file and what it
+  proves about the fallback). `prebuilds/` is gitignored (compiled
+  binaries, same policy as `feasibility/`) -- regenerate per platform:
+  `cd native-c && rm -rf build && npx --yes node-gyp@13.0.2 rebuild && cp
+  build/Release/shim.node prebuilds/$(node -p process.platform)-$(node -p
+  process.arch)/shim.node` (host), or the same rebuild inside a
+  `node:22-slim` container for `linux-arm64`/`linux-x64` (`--platform
+  linux/amd64` for the latter). `package.json` has `files` scoped to
+  `prebuilds` + the loader only -- no source, no build script reachable
+  from an install -- and deliberately no `install`/`postinstall` hook.
 - `harness/attacks/` also has `a5-vr.mjs`, `a6-vr.mjs` (VR's own timing-
   equivalent attacks, since VR has no rmdir-probe to hook), `mount-
   shared.mjs` (real Linux mount/umount helpers for A1/A2, privileged-
