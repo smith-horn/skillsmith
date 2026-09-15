@@ -430,14 +430,11 @@ console.log(`\n${BOLD}9. Script Docker Compliance${RESET}`)
 
 // Check if scripts use local npm commands (anti-pattern)
 // Excludes:
-//   - launch-*.sh (workflow launchers run locally by design)
 //   - run_cmd npm (Docker wrapper function per SMI-1366)
 //   - Documentation/descriptive text (e.g., "Add npm run benchmark script")
 const scriptsDir = 'scripts'
 if (existsSync(scriptsDir)) {
-  const scriptFiles = readdirSync(scriptsDir).filter(
-    (f) => (f.endsWith('.sh') || f.endsWith('.md')) && !f.startsWith('launch-')
-  )
+  const scriptFiles = readdirSync(scriptsDir).filter((f) => f.endsWith('.sh') || f.endsWith('.md'))
   let localNpmCount = 0
   const violatingFiles = []
 
@@ -485,7 +482,7 @@ if (existsSync(scriptsDir)) {
   if (localNpmCount === 0) {
     pass('All scripts use Docker for npm commands')
   } else {
-    // Changed to warn - launch scripts are expected to run locally
+    // Warn, not fail: some host-side npm usage in scripts/ is legitimate.
     warn(
       `${violatingFiles.length} scripts use local npm commands`,
       'Consider: docker exec skillsmith-dev-1 npm ...'
