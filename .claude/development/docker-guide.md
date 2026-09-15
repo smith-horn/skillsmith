@@ -73,7 +73,9 @@ docker compose --profile dev up -d
 docker compose --profile dev up -d            # Exits 1: "node_modules not initialised"
 ```
 
-**`docker volume rm skillsmith_node_modules` is not that case (SMI-6674).** On the main checkout the root `node_modules` named volume re-seeds from the image's own `npm ci` output the first time it is mounted, so the entrypoint's check passes and the container comes up normally — that is why CLAUDE.md's "Container won't start" recipe ends at `up -d`. It does leave a **mixed** dependency state, though, which is the part worth refreshing before you trust a build: the root volume is back to the image's `npm ci` output, the eight per-package `*-node-modules` volumes still hold whatever they held (that command removes one volume, not nine), and neither necessarily matches your current lockfile. Refresh via README's Troubleshooting section or CLAUDE.md's "After fresh clone or volume wipe" row.
+**`docker volume rm skillsmith_node_modules` does not trip that check (SMI-6674).** On the main checkout the root `node_modules` named volume re-seeds from the image's own `npm ci` output the first time it is mounted, so the pre-check above passes instead of exiting 1. That is measured, and it is all that is measured — the rest of startup (dist checks, native-module validation) can still fail for its own reasons, so treat a wipe as "not blocked at this gate", not as "known good".
+
+It also leaves a **mixed** dependency state, which is the part to refresh before trusting a build: the root volume is back to the image's `npm ci` output, the eight per-package `*-node-modules` volumes still hold whatever they held (that command removes one volume, not nine), and neither necessarily matches your current lockfile. Use the ordered refresh sequence (`sh scripts/lib/print-deps-refresh-advice.sh <main-checkout-path>`, shown below) — the same one README's Troubleshooting section prints — rather than any single install step.
 
 The exit-1 case above is instead a **worktree** container, whose `node_modules` is a read-only bind of the HOST tree with no volume to re-seed from, or a main-checkout container whose image is itself broken.
 

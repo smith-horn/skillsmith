@@ -366,7 +366,7 @@ docker volume rm skillsmith_node_modules
 docker compose --profile dev up -d
 ```
 
-The container does come back up — the root `node_modules` volume re-seeds from the image (SMI-6674). What the wipe leaves behind is a mixed dependency state, so don't follow it with a bare install. Print and follow the ordered refresh sequence instead (ADR-158; SMI-6614):
+The wipe does not leave the container unable to start: the root `node_modules` volume re-seeds from the image, so the entrypoint's `node_modules` pre-check passes rather than exiting (SMI-6674). What it does leave is a mixed dependency state, so don't follow it with a bare install. Print and follow the ordered refresh sequence instead (ADR-158; SMI-6614):
 
 ```bash
 ( cd <main-checkout-path> && sh scripts/lib/print-deps-refresh-advice.sh <main-checkout-path> )
