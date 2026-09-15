@@ -22,15 +22,23 @@ FAIL_COUNT=0
 # production defect (66/66 real dispatches left in_progress forever).
 EXIT_CODE="$(run_case 8 clean 0 "$GIT_WORKTREE_DIR")"
 BEAD_STATUS_8="$(PATH="$TEST_PATH" bf show test-bead-1 --format json --workspace "$GIT_WORKTREE_DIR" | jq -r '.[0].status')"
+OUT_8=/tmp/needle-dispatch-test-case8.out
+LOG_BLOCK_8="$(last_log_block)"
 if [[ "$EXIT_CODE" -ne 0 ]] \
-    || ! grep -q "outcome=success" /tmp/needle-dispatch-test-case8.out \
     || [[ "$BEAD_STATUS_8" != "closed" ]] \
-    || ! grep -q "bead_closed=yes" <<<"$(last_log_block)"; then
-    echo "FAIL (case 8): expected exit 0, outcome=success, the bead's real state to be 'closed' (got '$BEAD_STATUS_8'), and bead_closed=yes in the log, got exit $EXIT_CODE" >&2
-    cat /tmp/needle-dispatch-test-case8.out >&2
+    || ! grep -q "outcome=success" "$OUT_8" \
+    || ! grep -q "outcome=success" <<<"$LOG_BLOCK_8" \
+    || ! grep -q "bead_state_pre_close=in_progress" "$OUT_8" \
+    || ! grep -q "bead_state_pre_close=in_progress" <<<"$LOG_BLOCK_8" \
+    || ! grep -q "bead_closed=yes" "$OUT_8" \
+    || ! grep -q "bead_closed=yes" <<<"$LOG_BLOCK_8" \
+    || grep -qE '(^|[^_])bead_state=' "$OUT_8" \
+    || grep -qE '(^|[^_])bead_state=' <<<"$LOG_BLOCK_8"; then
+    echo "FAIL (case 8): expected exit 0 (got $EXIT_CODE), bf show -> closed (got '$BEAD_STATUS_8'), and on BOTH stdout and the log block: outcome=success, bead_state_pre_close=in_progress, bead_closed=yes, and no legacy exact field bead_state=" >&2
+    cat "$OUT_8" >&2; printf '%s\n' "--- log block:" "$LOG_BLOCK_8" >&2
     FAIL_COUNT=$((FAIL_COUNT + 1))
 else
-    echo "PASS (case 8): analysis-only success actually closes the bead (bf show -> closed, bead_closed=yes)"
+    echo "PASS (case 8): success closes the bead (bf show -> closed); stdout AND log block both carry outcome=success, bead_state_pre_close=in_progress, bead_closed=yes; legacy bead_state= absent from both"
 fi
 
 # Case 9: a 'bf close' failure (FAKE_CLOSE_FAIL=1) is non-fatal -- the
@@ -38,16 +46,24 @@ fi
 # and a loud WARNING names the manual remediation command. Pins the '|| true'
 # load-bearing detail in needle_close_bead()/lib.sh.
 EXIT_CODE="$(FAKE_CLOSE_FAIL=1 run_case 9 clean 0 "$GIT_WORKTREE_DIR")"
+OUT_9=/tmp/needle-dispatch-test-case9.out
+LOG_BLOCK_9="$(last_log_block)"
 if [[ "$EXIT_CODE" -ne 0 ]] \
-    || ! grep -q "outcome=success" /tmp/needle-dispatch-test-case9.out \
-    || ! grep -q "WARNING: bead .* is NOT closed" /tmp/needle-dispatch-test-case9.out \
-    || ! grep -q "bf close test-bead-1 --workspace" /tmp/needle-dispatch-test-case9.out \
-    || ! grep -q "bead_closed=no" <<<"$(last_log_block)"; then
-    echo "FAIL (case 9): expected exit 0, outcome=success, a NOT-closed WARNING with the manual remediation command, and bead_closed=no in the log, got exit $EXIT_CODE" >&2
-    cat /tmp/needle-dispatch-test-case9.out >&2
+    || ! grep -q "WARNING: bead .* is NOT closed" "$OUT_9" \
+    || ! grep -q "bf close test-bead-1 --workspace" "$OUT_9" \
+    || ! grep -q "outcome=success" "$OUT_9" \
+    || ! grep -q "outcome=success" <<<"$LOG_BLOCK_9" \
+    || ! grep -q "bead_state_pre_close=in_progress" "$OUT_9" \
+    || ! grep -q "bead_state_pre_close=in_progress" <<<"$LOG_BLOCK_9" \
+    || ! grep -q "bead_closed=no" "$OUT_9" \
+    || ! grep -q "bead_closed=no" <<<"$LOG_BLOCK_9" \
+    || grep -qE '(^|[^_])bead_state=' "$OUT_9" \
+    || grep -qE '(^|[^_])bead_state=' <<<"$LOG_BLOCK_9"; then
+    echo "FAIL (case 9): expected exit 0 (got $EXIT_CODE), a NOT-closed WARNING naming 'bf close test-bead-1 --workspace', and on BOTH stdout and the log block: outcome=success, bead_state_pre_close=in_progress, bead_closed=no, and no legacy exact field bead_state=" >&2
+    cat "$OUT_9" >&2; printf '%s\n' "--- log block:" "$LOG_BLOCK_9" >&2
     FAIL_COUNT=$((FAIL_COUNT + 1))
 else
-    echo "PASS (case 9): a 'bf close' failure is non-fatal — dispatch still succeeds, log block still written, WARNING names the manual remediation"
+    echo "PASS (case 9): a 'bf close' failure is non-fatal and names the manual remediation; stdout AND log block both carry outcome=success, bead_state_pre_close=in_progress, bead_closed=no; legacy bead_state= absent from both"
 fi
 
 # Case 10: pre-flight refusal on a pre-seeded stale (in_progress) bead ->
@@ -134,14 +150,16 @@ fi
 # silently reverse it back into an orphan on this path.
 EXIT_CODE="$(run_case 13 no_outcome 0 "$GIT_WORKTREE_DIR")"
 BEAD_STATUS_13="$(PATH="$TEST_PATH" bf show test-bead-1 --format json --workspace "$GIT_WORKTREE_DIR" | jq -r '.[0].status')"
+LOG_BLOCK_13="$(last_log_block)"
 if [[ "$EXIT_CODE" -ne 1 ]] \
     || [[ "$BEAD_STATUS_13" != "closed" ]] \
-    || ! grep -q "bead_closed=yes" <<<"$(last_log_block)"; then
-    echo "FAIL (case 13): expected exit 1, the bead's real state to be 'closed' (got '$BEAD_STATUS_13'), and bead_closed=yes in the log, got exit $EXIT_CODE" >&2
+    || ! grep -q "bead_closed=yes" <<<"$LOG_BLOCK_13" \
+    || grep -qE '(^|[^_])bead_state=' <<<"$LOG_BLOCK_13"; then
+    echo "FAIL (case 13): expected exit 1, the bead's real state to be 'closed' (got '$BEAD_STATUS_13'), bead_closed=yes in the log, and no legacy exact field bead_state= in the log, got exit $EXIT_CODE" >&2
     cat /tmp/needle-dispatch-test-case13.out >&2
     FAIL_COUNT=$((FAIL_COUNT + 1))
 else
-    echo "PASS (case 13): the bead is closed even when the poll loop never finds a classified outcome"
+    echo "PASS (case 13): the bead is closed even when the poll loop never finds a classified outcome; log carries bead_closed=yes with no legacy bead_state="
 fi
 
 # Case 14: zero-agent_message downgrade (Wave 2 Step 3).

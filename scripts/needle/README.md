@@ -226,7 +226,17 @@ guaranteed for every model/prompt.
   exit code — it re-reads via `bf show` and, if the bead is still not
   closed (e.g. a transient `bf` error), prints a loud `WARNING` with the
   exact manual remediation command; this never changes the dispatch's own
-  outcome or exit code.
+  outcome or exit code. **Both the results log and the final stdout summary
+  carry two bead fields (SMI-6658).** `bead_state_pre_close=` is the
+  `bf show` snapshot taken *before* the close call, on purpose: re-reading
+  after the close would destroy the diagnostic signature SMI-5847 relies
+  on. `bead_closed=yes`/`no` says whether the bead actually ended up closed.
+  To ask "is this bead still open?", read `bead_closed=`.
+- **`needle_run_exit=137` is the normal result, not a failure.** Once
+  polling finds a classified outcome, `dispatch.sh` stops the idle NEEDLE
+  worker itself (TERM, then KILL), and the KILL is what exits 137. Read
+  `outcome=` to learn whether the dispatch succeeded; `needle_run_exit`
+  doesn't tell you.
 - **A `needle run --count 1` worker drains the ENTIRE ready queue in the
   workspace's `.beads` store, oldest-first — not just the bead this
   dispatch just created — and `dispatch.sh` refuses to dispatch into a
