@@ -3,7 +3,7 @@
  * `audit_private_registry_skills_change()` and its two triggers, plus the column-coverage check
  * they feed. Split out of the single ~1000-line test file (SMI-6680 governance retro) so every
  * non-test file here stays under the repo's 500-line gate. See
- * `private-registry-audit-trigger.static.test.ts`'s module doc comment for the full MODEL
+ * `private-registry-audit-trigger.pins.test.ts`'s module doc comment for the full MODEL
  * (pin vs. tripwire) and DOES-NOT-DETECT list -- this file only holds the pin *mechanics*.
  */
 

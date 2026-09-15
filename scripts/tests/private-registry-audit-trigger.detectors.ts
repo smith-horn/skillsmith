@@ -2,11 +2,11 @@
  * SMI-6114 / SMI-6680: the five fail-closed "later migration" tripwire detectors for
  * `audit_private_registry_skills_change()` and its audit_logs sink. Split out of the single
  * ~1000-line test file (SMI-6680 governance retro F1) so every non-test file here stays under the
- * repo's 500-line gate. See `private-registry-audit-trigger.static.test.ts`'s module doc comment
+ * repo's 500-line gate. See `private-registry-audit-trigger.pins.test.ts`'s module doc comment
  * for the full MODEL and DOES-NOT-DETECT list.
  *
  * Every detector accepts an optional `dir` (default the real `MIGRATIONS_DIR`), threaded down into
- * `laterMigrationFiles()`/`readMigration()`, so the static test file's F1 fixture suite can point
+ * `laterMigrationFiles()`/`readMigration()`, so `.detectors.test.ts`'s F1 fixture suite can point
  * these at a `mkdtempSync()` directory instead of the real one (SMI-6680 F1 -- the real directory
  * makes `laterMigrationFiles()` return `[]`, so a committed test pointed only at the real directory
  * can never exercise any of this file's logic).
