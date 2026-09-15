@@ -73,7 +73,7 @@ docker compose --profile dev up -d
 docker compose --profile dev up -d            # Exits 1: "node_modules not initialised"
 ```
 
-A worktree container's `node_modules` is bind-mounted **read-only** from the HOST (SMI-5560/5626) — `docker exec <worktree-container-name> npm install` here would `EROFS` by design, not silently fix anything (SMI-6614, ADR-158). Fix it on the HOST, from the MAIN checkout — this then propagates to every worktree automatically. Print the full ordered refresh sequence (stops worktree containers, clears the SMI-6034 ACLs, regenerates + syncs, repairs Tier-B mount sources, restarts worktrees) rather than jumping straight to one step of it:
+A worktree container's `node_modules` is bind-mounted **read-only** from the HOST (SMI-5560/5626) — an ungated container `npm install` here would `EROFS` by design, not silently fix anything (SMI-6614, ADR-158). Fix it on the HOST, from the MAIN checkout — this then propagates to every worktree automatically. Print the full ordered refresh sequence (stops worktree containers, clears the SMI-6034 ACLs, regenerates + syncs, repairs Tier-B mount sources, restarts worktrees) rather than jumping straight to one step of it:
 
 ```bash
 ( cd <main-checkout-path> && sh scripts/lib/print-deps-refresh-advice.sh <main-checkout-path> )

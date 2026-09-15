@@ -342,7 +342,7 @@ if [ $VALIDATION_FAILED -eq 1 ]; then
 
     if [ $REBUILD_FAILED -eq 1 ]; then
         echo -e "${RED}[entrypoint] Native module validation failed after rebuild.${NC}"
-        echo -e "${YELLOW}For verbose rebuild output (run on host): docker exec skillsmith-dev-1 npm rebuild ${FAILED_MODULES} --ignore-scripts=false${NC}"
+        echo -e "${YELLOW}For verbose rebuild output (run on host): docker exec -w /app skillsmith-dev-1 sh -c 'sh scripts/lib/node-modules-mount-gate.sh && npm rebuild ${FAILED_MODULES} --ignore-scripts=false'${NC}"
         # Probe CDN reachability before recommending a network-dependent recovery path.
         # --max-time 5 is mandatory: a CDN hang must not stall container start (M11/F2).
         if curl -fsS --max-time 5 https://registry.npmjs.org/ >/dev/null 2>&1; then

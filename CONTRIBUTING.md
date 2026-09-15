@@ -47,7 +47,7 @@ cp .env.example .env
 docker compose --profile dev up -d
 
 # 4. Install dependencies
-docker exec skillsmith-dev-1 npm install
+docker exec -w /app skillsmith-dev-1 sh -c 'sh scripts/lib/node-modules-mount-gate.sh && npm install'
 
 # 5. Run tests to verify setup
 docker exec skillsmith-dev-1 npm test

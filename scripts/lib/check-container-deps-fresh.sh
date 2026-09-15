@@ -10,7 +10,7 @@
 # container reads read-only — it has no visibility into skillsmith-dev-1's
 # own, independently-drifting volumes. When a dependency merges to
 # origin/main, this container silently falls behind until someone happens to
-# run `docker exec skillsmith-dev-1 npm install` by hand; pre-push's
+# run an ungated container `npm install` by hand; pre-push's
 # Docker-routed test phase then fails deep inside vitest with a confusing
 # "Cannot find module" that reads like an installation bug. See
 # docs/internal/implementation/smi-6006-container-deps-freshness.md.

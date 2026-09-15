@@ -296,8 +296,8 @@ Dependabot PRs are generated from different lockfile snapshots. Merging them seq
 
 ```bash
 # SMI-6614 (ADR-158; round-2b): print the full ordered refresh sequence
-# rather than jumping straight to one step of it — never a bare
-# `docker exec skillsmith-dev-1 npm install`, which would silently write
+# rather than jumping straight to one step of it — never an ungated
+# container `npm install`, which would silently write
 # into the HOST tree if any node_modules path isn't mounted with a
 # volume-shaped root (SMI-6516/SMI-6520).
 ( cd <main-checkout-path> && sh scripts/lib/print-deps-refresh-advice.sh <main-checkout-path> )

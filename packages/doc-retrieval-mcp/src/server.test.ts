@@ -130,4 +130,20 @@ describe('jsonSchemaOf', () => {
     // rather than silently sliding to the already-covered `!obj` branch.
     expect(() => jsonSchemaOf(brokenV4Object)).toThrow(/failed to convert a recognized zod schema/)
   })
+
+  it('both remediation messages route through the mount gate, not a bare npm mutation (SMI-6654)', () => {
+    // SMI-6654 Wave 2 collapsed each two-line `docker exec ... rm -rf ...` /
+    // `docker exec ... npm install` remediation pair into one gated
+    // `sh -c "gate && rm -rf ... && npm install"` line (A27s shape) so this
+    // file's own printed remediation text doesn't itself trip audit:standards
+    // Check 72. Pin the printed command to the gate script so a future edit
+    // can't silently drop it back to an ungated form.
+    const malformed = { _def: {} } as unknown as z.ZodType
+    expect(() => jsonSchemaOf(malformed)).toThrow(/node-modules-mount-gate\.sh/)
+
+    const brokenV4Object = {
+      _zod: { def: { type: 'object', shape: { bad: null } } },
+    } as unknown as z.ZodType
+    expect(() => jsonSchemaOf(brokenV4Object)).toThrow(/node-modules-mount-gate\.sh/)
+  })
 })

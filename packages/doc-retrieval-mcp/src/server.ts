@@ -148,8 +148,7 @@ export function jsonSchemaOf(schema: z.ZodType): Record<string, unknown> {
         '— possible zod version drift. Run:\n\n' +
         '    From the MAIN checkout, not this worktree if you are in one:\n' +
         '    docker compose --profile dev up -d\n' +
-        '    docker exec skillsmith-dev-1 rm -rf /app/packages/doc-retrieval-mcp/node_modules/zod\n' +
-        '    docker exec skillsmith-dev-1 npm install\n\n' +
+        '    docker exec skillsmith-dev-1 sh -c "sh scripts/lib/node-modules-mount-gate.sh && rm -rf /app/packages/doc-retrieval-mcp/node_modules/zod && npm install"\n\n' +
         '(packages/doc-retrieval-mcp pins zod@3.25.76 — this fires when a hoisted ' +
         'different-major zod resolves instead. See CLAUDE.md > Troubleshooting.)'
     )
@@ -168,8 +167,7 @@ export function jsonSchemaOf(schema: z.ZodType): Record<string, unknown> {
         'JSON Schema. Run:\n\n' +
         '    From the MAIN checkout, not this worktree if you are in one:\n' +
         '    docker compose --profile dev up -d\n' +
-        '    docker exec skillsmith-dev-1 rm -rf /app/packages/doc-retrieval-mcp/node_modules/zod\n' +
-        '    docker exec skillsmith-dev-1 npm install\n\n' +
+        '    docker exec skillsmith-dev-1 sh -c "sh scripts/lib/node-modules-mount-gate.sh && rm -rf /app/packages/doc-retrieval-mcp/node_modules/zod && npm install"\n\n' +
         '(possible zod version drift, or a zod-to-json-schema conversion bug — ' +
         `original error: ${err instanceof Error ? err.message : String(err)})`
     )
