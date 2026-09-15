@@ -5,15 +5,45 @@
  * gate.
  *
  * `literalSpanEnd()` is the one piece of state machine `stripComments()` and `splitStatements()`
- * (SMI-6680 F2) share: given an index that starts a Postgres string literal, escape-string literal
- * (`E'...'`/`e'...'`), or dollar-quoted body (`$$...$$`/`$tag$...$tag$`), it returns the index
- * immediately past that literal's real close -- or `null` if no literal starts there. Both callers
- * treat everything inside as atomic: a `;`, or a `--`/`/* *\/` sequence, inside a literal can never
- * split a statement or start a real comment. `stripComments()` was refactored to call this helper
- * instead of inlining the three literal branches itself; the refactor was verified byte-identical
- * to the pre-refactor implementation across the 9-case table this module's `it()` blocks below
- * exercise, plus two extra dollar-quote/nesting cases, before being relied on (SMI-6680, measure-
- * don't-reason).
+ * (SMI-6680 F2) share: given an index that starts a Postgres atomic quoted/escaped span, it returns
+ * the index immediately past that span's real close -- or `null` if no such span starts there. Both
+ * callers treat everything inside as atomic: a `;`, or a `--`/`/* *\/` sequence, inside one of these
+ * spans can never split a statement or start a real comment.
+ *
+ * ENUMERATION (PR #2860 gate finding 1): every PostgreSQL lexical form whose closing delimiter is
+ * NOT just "the next occurrence of the opening character," cross-checked against the Lexical
+ * Structure chapter of the PostgreSQL docs (identifiers/key words + constants sections are the
+ * only two sections that define a quote-delimited atomic token -- nothing elsewhere in the grammar
+ * introduces a new quoting convention; array/row constructors, casts, and type-prefixed constants
+ * are all built from the tokens below plus ordinary punctuation, not a new one):
+ *   1. Single-quoted string constant `'...'` -- own branch below, `''` embeds a literal quote.
+ *   2. Escape string constant `E'...'`/`e'...'` -- own branch below, `\` escapes the next char too.
+ *   3. Dollar-quoted string constant `$$...$$`/`$tag$...$tag$` -- own branch below.
+ *   4. Quoted (delimited) identifier `"..."` -- own branch below (PR #2860 finding 1's fix), `""`
+ *      embeds a literal quote, same doubling rule as (1).
+ *   5. Unicode-escape string constant `U&'...'` -- NOT a separate branch: per the Postgres docs,
+ *      "except for the addition of Unicode escapes, U&'...' string constants otherwise work
+ *      exactly like standard string constants," so the leading `U&` is just ordinary text scanned
+ *      before branch (1)'s own `'` triggers, and closing-quote detection is identical. Verified
+ *      empirically, not just cited (see this file's own `it()` blocks).
+ *   6. Unicode-escape quoted identifier `U&"..."` -- NOT a separate branch, same reasoning as (5)
+ *      applied to branch (4): the docs state U&"..." "is otherwise the same as regular quoted
+ *      identifiers" apart from the escapes.
+ *   7. Bit-string constant `B'...'`/`b'...'` and hex string constant `X'...'`/`x'...'` -- NOT
+ *      separate branches: the `B`/`X` prefix is ordinary text before branch (1)'s `'` triggers,
+ *      identical closing-quote detection.
+ *   8. A trailing `UESCAPE '<char>'` clause on (5) or (6) -- NOT special-cased: it is its own,
+ *      independent plain string constant (one character), parsed by branch (1) when the scanner
+ *      reaches it, same as any other `'...'`.
+ * Line comments (`--`) and block comments (`/* *\/`) are NOT part of this enumeration -- they are
+ * handled directly by `stripComments()`/`splitStatements()` themselves, not by this function, since
+ * they can nest (block comments) or need active suppression at the top level rather than atomic
+ * span reproduction.
+ *
+ * `stripComments()` was refactored to call this helper instead of inlining the literal branches
+ * itself; the refactor was verified byte-identical to the pre-refactor implementation across the
+ * 9-case table this module's `it()` blocks below exercise, plus two extra dollar-quote/nesting
+ * cases, before being relied on (SMI-6680, measure-don't-reason).
  *
  * ASSUMES `standard_conforming_strings = on` (Postgres' default, and this project's): in a plain
  * `'...'` string a backslash is a literal character and `''` is the only way to embed a quote, so
@@ -82,6 +112,28 @@ export function literalSpanEnd(sql: string, i: number): number | null {
       const closeIdx = sql.indexOf(tag, i + tag.length)
       return closeIdx === -1 ? n : closeIdx + tag.length
     }
+  }
+  if (c === '"') {
+    // Quoted (delimited) identifier: "" is an escaped double-quote, not a terminator -- same
+    // doubling rule as the plain-string branch above, just with `"` instead of `'` (PR #2860 gate
+    // finding 1: `ADD COLUMN "note;field" text` previously split inside the quoted identifier,
+    // since nothing treated it as atomic). This branch also transparently covers `U&"..."`
+    // Unicode-escape identifiers -- the leading `U&` is ordinary text before this same
+    // quote-closing rule takes over, and Postgres documents U&"..." as behaving exactly like a
+    // regular quoted identifier except for the added \XXXX escapes, which this scanner has no
+    // need to interpret (it only needs to find where the atomic span ends, not decode it).
+    let j = i + 1
+    while (j < n) {
+      if (sql[j] === '"') {
+        if (sql[j + 1] === '"') {
+          j += 2
+          continue
+        }
+        return j + 1
+      }
+      j += 1
+    }
+    return n
   }
   return null
 }

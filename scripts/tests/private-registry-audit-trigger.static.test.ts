@@ -340,6 +340,39 @@ describe.skipIf(locked)('20260913000000_private_registry_audit_trigger.sql (SMI-
 })
 
 /**
+ * pinRemediation() (SMI-6680 F5, PR #2860 gate finding 3). Previously exercised only as vitest's
+ * failure-message argument -- with the pins matching (the normal, passing state), that argument is
+ * never even evaluated for its content by the assertion, so a regression in the message text alone
+ * (wrong wording, a dropped clause, a broken template literal) would leave every pin test green.
+ * Assert its return value directly, independent of any pin passing or failing.
+ */
+describe('pinRemediation() (SMI-6680 F5, PR #2860 gate finding 3)', () => {
+  it('names the file, the changed thing, and states plainly that a comment-only edit trips the check', () => {
+    const message = pinRemediation(
+      'the function header',
+      '20990101000000_x.sql',
+      'PINNED_HEADER_SHA256'
+    )
+    expect(message).toBe(
+      'the function header changed in 20990101000000_x.sql. A comment-only or whitespace-only ' +
+        'edit trips this too, by design (raw text is hashed/compared, not normalized -- see ' +
+        "this file's own header). Review the diff against ADR-164, then set PINNED_HEADER_SHA256 " +
+        'to the "Received" value above and say in the PR that you did the review.'
+    )
+  })
+
+  it('substitutes a different what/file/constant triple correctly (not just the header case)', () => {
+    const message = pinRemediation(
+      'the trg_prs_audit_truncate trigger',
+      '20990101000001_y.sql',
+      'EXPECTED_TRG_PRS_AUDIT_TRUNCATE'
+    )
+    expect(message).toContain('the trg_prs_audit_truncate trigger changed in 20990101000001_y.sql')
+    expect(message).toContain('set EXPECTED_TRG_PRS_AUDIT_TRUNCATE to the "Received" value above')
+  })
+})
+
+/**
  * Fixture-driven exercise of the five later-migration detectors in
  * `private-registry-audit-trigger.detectors.ts`, plus `unprefixedMigrationFiles()`
  * (SMI-6680 F1/F6). Deliberately NOT gated by describe.skipIf(locked): every detector accepts an
@@ -361,15 +394,49 @@ describe('later-migration tripwires (SMI-6114 retro F1, SMI-6680)', () => {
     rmSync(dir, { recursive: true, force: true })
   }
 
-  it('triggerOrFunctionTamperViolations() catches a later migration dropping the pinned trigger by name', () => {
-    const dir = withFixtureDir({
-      '20990101000000_drop_trigger.sql': 'DROP TRIGGER IF EXISTS public.trg_prs_audit;',
-    })
+  // PR #2860 gate finding 2: the whole-detector fixture above (now folded into this table) proved
+  // the detector isn't a no-op, but individual branches -- ALTER TRIGGER, DROP FUNCTION, ALTER
+  // FUNCTION, and the trg_prs_audit_truncate-named half of both DROP/ALTER TRIGGER -- were still
+  // deletable without failing anything, since each is a separately-deletable `if` block in
+  // triggerOrFunctionTamperViolations(). One row per distinct branch, matching the source
+  // one-for-one; all 6 verified against the real detector via tsx before being written down.
+  it.each([
+    [
+      'DROP TRIGGER trg_prs_audit_truncate',
+      'DROP TRIGGER IF EXISTS public.trg_prs_audit_truncate;',
+      'DROP TRIGGER trg_prs_audit_truncate',
+    ],
+    [
+      'DROP TRIGGER trg_prs_audit',
+      'DROP TRIGGER IF EXISTS public.trg_prs_audit;',
+      'DROP TRIGGER trg_prs_audit',
+    ],
+    [
+      'DROP FUNCTION',
+      'DROP FUNCTION public.audit_private_registry_skills_change();',
+      'DROP FUNCTION',
+    ],
+    [
+      'ALTER FUNCTION',
+      'ALTER FUNCTION public.audit_private_registry_skills_change() RENAME TO foo;',
+      'ALTER FUNCTION',
+    ],
+    [
+      'ALTER TRIGGER trg_prs_audit_truncate',
+      'ALTER TRIGGER trg_prs_audit_truncate ON private_registry_skills RENAME TO x_old;',
+      'ALTER TRIGGER trg_prs_audit_truncate',
+    ],
+    [
+      'ALTER TRIGGER trg_prs_audit',
+      'ALTER TRIGGER trg_prs_audit ON private_registry_skills RENAME TO x_old;',
+      'ALTER TRIGGER trg_prs_audit',
+    ],
+  ])('triggerOrFunctionTamperViolations() catches %s', (_label, stmt, expectedSubstring) => {
+    const dir = withFixtureDir({ '20990101000000_tamper.sql': stmt })
     try {
       const offenders = triggerOrFunctionTamperViolations(dir)
       expect(offenders).toHaveLength(1)
-      expect(offenders[0]).toContain('20990101000000_drop_trigger.sql')
-      expect(offenders[0]).toContain('DROP TRIGGER trg_prs_audit')
+      expect(offenders[0]).toContain(expectedSubstring)
     } finally {
       cleanup(dir)
     }
@@ -409,8 +476,37 @@ describe('later-migration tripwires (SMI-6114 retro F1, SMI-6680)', () => {
     }
   })
 
-  it('disableTriggerViolations() catches ALTER TABLE ... DISABLE TRIGGER ALL, and honours REVIEWED_LATER_MIGRATIONS', () => {
-    const file = '20990101000002_disable.sql'
+  // PR #2860 gate finding 2: only DISABLE TRIGGER ALL was covered; ENABLE REPLICA/ALWAYS TRIGGER
+  // (the re-enable-under-a-non-default-firing-mode branch) was not.
+  it.each([
+    [
+      'ALTER TABLE ... DISABLE TRIGGER ALL',
+      'ALTER TABLE private_registry_skills DISABLE TRIGGER ALL;',
+      'disables a trigger',
+    ],
+    [
+      'ALTER TABLE ... ENABLE REPLICA TRIGGER',
+      'ALTER TABLE private_registry_skills ENABLE REPLICA TRIGGER trg_prs_audit;',
+      're-enables an audit trigger',
+    ],
+    [
+      'ALTER TABLE ... ENABLE ALWAYS TRIGGER',
+      'ALTER TABLE private_registry_skills ENABLE ALWAYS TRIGGER trg_prs_audit;',
+      're-enables an audit trigger',
+    ],
+  ])('disableTriggerViolations() catches %s', (_label, stmt, expectedSubstring) => {
+    const dir = withFixtureDir({ '20990101000002_disable.sql': stmt })
+    try {
+      const offenders = disableTriggerViolations(dir)
+      expect(offenders).toHaveLength(1)
+      expect(offenders[0]).toContain(expectedSubstring)
+    } finally {
+      cleanup(dir)
+    }
+  })
+
+  it('disableTriggerViolations() honours REVIEWED_LATER_MIGRATIONS', () => {
+    const file = '20990101000002b_disable_reviewed.sql'
     const dir = withFixtureDir({
       [file]: 'ALTER TABLE private_registry_skills DISABLE TRIGGER ALL;',
     })
@@ -452,8 +548,66 @@ describe('later-migration tripwires (SMI-6114 retro F1, SMI-6680)', () => {
     }
   })
 
-  it('auditSinkViolations() catches CREATE RULE ... TO audit_logs, and honours REVIEWED_LATER_MIGRATIONS', () => {
-    const file = '20990101000005_rule.sql'
+  // PR #2860 gate finding 2: only CREATE RULE and DROP COLUMN were covered, out of 9 distinct
+  // branches in auditSinkViolations() (trigger creation, table drop, rename, trigger disable,
+  // column-type change, SET NOT NULL, and constraint addition were not). One row per branch,
+  // matching the source one-for-one; all verified against the real detector via tsx first.
+  it.each([
+    [
+      'CREATE RULE targeting audit_logs',
+      'CREATE RULE suppress_registry_audit AS ON INSERT TO public.audit_logs DO INSTEAD NOTHING;',
+      'CREATE RULE targeting audit_logs',
+    ],
+    [
+      'CREATE TRIGGER on audit_logs',
+      'CREATE TRIGGER trg_fake AFTER INSERT ON audit_logs FOR EACH ROW EXECUTE FUNCTION noop();',
+      'CREATE TRIGGER on audit_logs',
+    ],
+    ['DROP TABLE audit_logs', 'DROP TABLE audit_logs;', 'DROP TABLE audit_logs'],
+    [
+      'ALTER TABLE audit_logs ... RENAME',
+      'ALTER TABLE audit_logs RENAME TO audit_logs_old;',
+      'RENAME',
+    ],
+    [
+      'ALTER TABLE audit_logs ... DISABLE TRIGGER',
+      'ALTER TABLE audit_logs DISABLE TRIGGER ALL;',
+      'DISABLE TRIGGER',
+    ],
+    [
+      'ALTER TABLE audit_logs ... DROP COLUMN, with a semicolon-bearing literal earlier in the ' +
+        'statement (SMI-6680 F2 measured repro)',
+      "ALTER TABLE public.audit_logs ADD COLUMN note TEXT DEFAULT 'a;b', DROP COLUMN metadata;",
+      'DROP COLUMN',
+    ],
+    [
+      'ALTER TABLE audit_logs ... ALTER COLUMN ... TYPE',
+      'ALTER TABLE audit_logs ALTER COLUMN metadata TYPE TEXT;',
+      'ALTER COLUMN ... TYPE',
+    ],
+    [
+      'ALTER TABLE audit_logs ... SET NOT NULL',
+      'ALTER TABLE audit_logs ALTER COLUMN metadata SET NOT NULL;',
+      'SET NOT NULL',
+    ],
+    [
+      'ALTER TABLE audit_logs ... ADD CONSTRAINT/CHECK',
+      'ALTER TABLE audit_logs ADD CONSTRAINT chk_x CHECK (true);',
+      'ADD CONSTRAINT/CHECK',
+    ],
+  ])('auditSinkViolations() catches %s', (_label, stmt, expectedSubstring) => {
+    const dir = withFixtureDir({ '20990101000005_sink.sql': stmt })
+    try {
+      const offenders = auditSinkViolations(dir)
+      expect(offenders).toHaveLength(1)
+      expect(offenders[0]).toContain(expectedSubstring)
+    } finally {
+      cleanup(dir)
+    }
+  })
+
+  it('auditSinkViolations() honours REVIEWED_LATER_MIGRATIONS', () => {
+    const file = '20990101000005b_sink_reviewed.sql'
     const dir = withFixtureDir({
       [file]:
         'CREATE RULE suppress_registry_audit AS ON INSERT TO public.audit_logs DO INSTEAD NOTHING;',
@@ -466,10 +620,12 @@ describe('later-migration tripwires (SMI-6114 retro F1, SMI-6680)', () => {
     }
   })
 
-  it('auditSinkViolations() catches ALTER TABLE audit_logs ... DROP COLUMN even with a semicolon-bearing literal earlier in the statement (SMI-6680 F2 measured repro)', () => {
+  it("auditSinkViolations() catches ALTER TABLE audit_logs ... DROP COLUMN even with a semicolon inside a double-quoted identifier earlier in the statement (PR #2860 gate finding 1, the reviewer's exact case)", () => {
     const dir = withFixtureDir({
-      '20990101000006_drop_column.sql':
-        "ALTER TABLE public.audit_logs ADD COLUMN note TEXT DEFAULT 'a;b', DROP COLUMN metadata;",
+      '20990101000006b_drop_column_quoted.sql':
+        'ALTER TABLE public.audit_logs\n' +
+        '  ADD COLUMN "note;field" text,\n' +
+        '  DROP COLUMN metadata;',
     })
     try {
       const offenders = auditSinkViolations(dir)
@@ -521,33 +677,55 @@ describe('later-migration tripwires (SMI-6114 retro F1, SMI-6680)', () => {
  * quote-aware; only the naive `sql.split(';')` calls that consumed its output weren't).
  */
 describe('splitStatements() (SMI-6680 F2)', () => {
-  it('does not split on a semicolon inside a single-quoted literal, an E-string, a dollar-quoted body, or a comment', () => {
-    expect(splitStatements("SELECT 'a;b' AS x; DROP TABLE foo;")).toEqual([
-      "SELECT 'a;b' AS x",
-      ' DROP TABLE foo',
-      '',
-    ])
-    expect(splitStatements("SELECT e'a;b' AS x; DROP TABLE foo;")).toEqual([
-      "SELECT e'a;b' AS x",
-      ' DROP TABLE foo',
-      '',
-    ])
-    expect(splitStatements('SELECT $$a;b$$ AS x; DROP TABLE foo;')).toEqual([
-      'SELECT $$a;b$$ AS x',
-      ' DROP TABLE foo',
-      '',
-    ])
-    expect(splitStatements('SELECT 1; -- a;b\nDROP TABLE foo;')).toEqual([
-      'SELECT 1',
-      ' \nDROP TABLE foo',
-      '',
-    ])
-    expect(splitStatements('SELECT 1; /* a;b */ DROP TABLE foo;')).toEqual([
-      'SELECT 1',
-      '  DROP TABLE foo',
-      '',
-    ])
-  })
+  it(
+    'does not split on a semicolon inside a single-quoted literal, an E-string, a dollar-quoted ' +
+      'body, a double-quoted identifier (incl. doubled "" and U&"..."), or a comment',
+    () => {
+      expect(splitStatements("SELECT 'a;b' AS x; DROP TABLE foo;")).toEqual([
+        "SELECT 'a;b' AS x",
+        ' DROP TABLE foo',
+        '',
+      ])
+      expect(splitStatements("SELECT e'a;b' AS x; DROP TABLE foo;")).toEqual([
+        "SELECT e'a;b' AS x",
+        ' DROP TABLE foo',
+        '',
+      ])
+      expect(splitStatements('SELECT $$a;b$$ AS x; DROP TABLE foo;')).toEqual([
+        'SELECT $$a;b$$ AS x',
+        ' DROP TABLE foo',
+        '',
+      ])
+      // PR #2860 gate finding 1: quoted identifiers were not atomic before this fix.
+      expect(splitStatements('SELECT "a;b" AS x; DROP TABLE foo;')).toEqual([
+        'SELECT "a;b" AS x',
+        ' DROP TABLE foo',
+        '',
+      ])
+      // Doubled "" inside a quoted identifier embeds a literal quote, not a terminator.
+      expect(splitStatements('SELECT "a""b;c" AS x; DROP TABLE foo;')).toEqual([
+        'SELECT "a""b;c" AS x',
+        ' DROP TABLE foo',
+        '',
+      ])
+      // U&"..." Unicode-escape identifiers close exactly like a plain quoted identifier.
+      expect(splitStatements('SELECT U&"a;b" AS x; DROP TABLE foo;')).toEqual([
+        'SELECT U&"a;b" AS x',
+        ' DROP TABLE foo',
+        '',
+      ])
+      expect(splitStatements('SELECT 1; -- a;b\nDROP TABLE foo;')).toEqual([
+        'SELECT 1',
+        ' \nDROP TABLE foo',
+        '',
+      ])
+      expect(splitStatements('SELECT 1; /* a;b */ DROP TABLE foo;')).toEqual([
+        'SELECT 1',
+        '  DROP TABLE foo',
+        '',
+      ])
+    }
+  )
 
   it('measured repro: a naive sql.split(";") never puts the audit_logs table reference and DROP COLUMN in the same chunk when a semicolon sits inside a preceding literal; splitStatements() does', () => {
     // This is the actual defect (SMI-6680 F2): a detector requiring BOTH markers in one chunk
