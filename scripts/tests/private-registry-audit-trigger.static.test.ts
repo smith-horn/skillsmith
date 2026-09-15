@@ -17,7 +17,12 @@
  *
  * WHAT THIS FILE DOES NOT, AND CANNOT, DETECT:
  *   - role-membership grants (`GRANT audit_runner TO authenticated;`) that hand a broader role the
- *     EXECUTE privilege this file's own GRANT check already denies to that role by name;
+ *     EXECUTE privilege this file's own GRANT check already denies to that role by name, or any
+ *     other GRANT/REVOKE against audit_logs itself (e.g. `REVOKE INSERT ON audit_logs FROM ...`);
+ *   - RLS policy changes on audit_logs (`CREATE POLICY`, `ALTER POLICY`, `DROP POLICY`, or
+ *     `ENABLE`/`DISABLE ROW LEVEL SECURITY`) that narrow or widen who can read or write the sink;
+ *   - a retention/cleanup job (a pg_cron `DELETE FROM audit_logs ...` or similar scheduled job)
+ *     that prunes rows the pinned insert wrote;
  *   - dynamic SQL assembled inside a `DO $$ ... $$` block or an `EXECUTE '...'` string, where the
  *     protected keywords never appear as contiguous, parseable statement text;
  *   - any change applied outside a migration file altogether (a manual `psql` session against
@@ -42,9 +47,15 @@
  *      (Postgres does not use `ALTER TRIGGER` for this -- gate finding 1), that creates ANY new
  *      trigger on `private_registry_skills` or ANY overload of
  *      `audit_private_registry_skills_change` regardless of name (gate finding 2), or that
- *      rewrites, drops, renames or adds a trigger/rule to the `audit_logs` sink itself (gate
- *      finding 3) fails this suite. The only way past any of the three is to add the migration's
- *      filename to REVIEWED_LATER_MIGRATIONS below, after review -- never to weaken the regex.
+ *      rewrites, drops, renames or adds a trigger/rule to the `audit_logs` sink itself, or changes
+ *      its column shape underneath the pinned insert -- `DROP COLUMN`, `ALTER COLUMN ... TYPE` /
+ *      `SET DATA TYPE`, `RENAME COLUMN`, `RENAME TO`, `SET NOT NULL`, or `ADD CONSTRAINT` /
+ *      `ADD CHECK` (gate finding 3, extended by round-3 gate finding 1) -- fails this suite. All
+ *      three scans, plus the by-name tamper and GRANT scans, run against comment-stripped text
+ *      (`stripComments()`, round-3 gate finding 2) so a block comment mentioning any of these
+ *      shapes cannot false-positive and a real statement hidden after one cannot false-negative.
+ *      The only way past any of the three is to add the migration's filename to
+ *      REVIEWED_LATER_MIGRATIONS below, after review -- never to weaken the regex.
  *   3. THE SEMANTIC CHECKS DOCUMENT WHY THE PINNED BODY WAS APPROVED, not police future changes:
  *      no EXCEPTION handler (fail-closed), the exact untag CASE, one team_id write, and full
  *      column coverage. They run against the LATEST parsed definition (not just this file) so
@@ -137,6 +148,92 @@ function laterMigrationFiles(): string[] {
 }
 
 const stripLineComments = (sql: string): string => sql.replace(/--[^\n]*/g, '')
+
+/**
+ * Strips both `--` line comments and `/* ... *\/` block comments (Postgres allows nesting, so this
+ * tracks depth) WITHOUT touching text inside single-quoted string literals or dollar-quoted bodies
+ * (`$$ ... $$` / `$tag$ ... $tag$`) -- a character-scanning state machine, not a regex, since
+ * comment/string/dollar-quote nesting isn't a regular language. Used only by the checks that need
+ * to see through comments to find a real statement, or avoid a false-positive on a commented-out
+ * example: the disabled-trigger, later-trigger and audit-sink tripwires, plus the by-name tamper
+ * and GRANT scans. NEVER applied to the raw function/trigger pins above -- those hash/compare the
+ * exact text, comments included, by design (round-2 gate finding 4). Verified against a 5-case
+ * table (a block comment containing a fake CREATE RULE, a string literal containing `/* x *\/`, a
+ * dollar-quoted body containing `--`, nested `/* /* *\/ *\/`, and a real CREATE RULE right after a
+ * comment) before being relied on (SMI-6114 retro round 3, gate finding 2, PR #2855).
+ */
+function stripComments(sql: string): string {
+  let out = ''
+  let i = 0
+  const n = sql.length
+  while (i < n) {
+    const c = sql[i]
+    const c2 = i + 1 < n ? sql[i + 1] : ''
+    if (c === "'") {
+      // Single-quoted string literal: '' is an escaped quote, not a terminator.
+      let j = i + 1
+      while (j < n) {
+        if (sql[j] === "'") {
+          if (sql[j + 1] === "'") {
+            j += 2
+            continue
+          }
+          j += 1
+          break
+        }
+        j += 1
+      }
+      out += sql.slice(i, j)
+      i = j
+      continue
+    }
+    if (c === '$') {
+      // Dollar-quoted body: $$ ... $$ or $tag$ ... $tag$. Matched by literal tag re-occurrence,
+      // not nesting -- Postgres dollar-quote bodies do not nest with the same tag.
+      const tagMatch = /^\$[A-Za-z_][A-Za-z0-9_]*\$|^\$\$/.exec(sql.slice(i))
+      if (tagMatch) {
+        const tag = tagMatch[0]
+        const closeIdx = sql.indexOf(tag, i + tag.length)
+        const end = closeIdx === -1 ? n : closeIdx + tag.length
+        out += sql.slice(i, end)
+        i = end
+        continue
+      }
+    }
+    if (c === '-' && c2 === '-') {
+      // Line comment: drop through end of line, keep the newline itself (matches
+      // stripLineComments' own behavior above).
+      let j = sql.indexOf('\n', i)
+      if (j === -1) j = n
+      i = j
+      continue
+    }
+    if (c === '/' && c2 === '*') {
+      // Block comment, Postgres-style nested: track depth, drop the whole span including any
+      // nested /* ... */ inside it.
+      let depth = 1
+      let j = i + 2
+      while (j < n && depth > 0) {
+        if (sql[j] === '/' && sql[j + 1] === '*') {
+          depth += 1
+          j += 2
+          continue
+        }
+        if (sql[j] === '*' && sql[j + 1] === '/') {
+          depth -= 1
+          j += 2
+          continue
+        }
+        j += 1
+      }
+      i = j
+      continue
+    }
+    out += c
+    i += 1
+  }
+  return out
+}
 
 const sha256 = (text: string): string => createHash('sha256').update(text, 'utf8').digest('hex')
 
@@ -342,7 +439,7 @@ function triggerOrFunctionTamperViolations(): string[] {
   for (const file of laterMigrationFiles()) {
     const content = readMigration(file)
     if (content === null) continue
-    const sql = stripLineComments(content)
+    const sql = stripComments(content)
     if (dropTriggerRe('trg_prs_audit_truncate').test(sql)) {
       offenders.push(`${file}: DROP TRIGGER trg_prs_audit_truncate`)
     }
@@ -377,7 +474,7 @@ function grantExecuteViolations(): string[] {
   for (const file of laterMigrationFiles()) {
     const content = readMigration(file)
     if (content === null) continue
-    const sql = stripLineComments(content)
+    const sql = stripComments(content)
     for (const stmt of sql.split(';')) {
       if (!/\bGRANT\b/i.test(stmt) || !/\bEXECUTE\b/i.test(stmt)) continue
       if (!/\bON\s+FUNCTION\b/i.test(stmt) || !nameRe.test(stmt)) continue
@@ -424,7 +521,7 @@ function disableTriggerViolations(): string[] {
     if (REVIEWED_LATER_MIGRATIONS.includes(file)) continue
     const content = readMigration(file)
     if (content === null) continue
-    const sql = stripLineComments(content)
+    const sql = stripComments(content)
     for (const m of sql.matchAll(disableRe)) {
       offenders.push(
         `${file}: disables a trigger on private_registry_skills -- ` +
@@ -465,7 +562,7 @@ function laterTriggerViolations(): string[] {
     if (REVIEWED_LATER_MIGRATIONS.includes(file)) continue
     const content = readMigration(file)
     if (content === null) continue
-    const sql = stripLineComments(content)
+    const sql = stripComments(content)
     for (const stmt of sql.split(';')) {
       if (!/\bCREATE\s+(?:OR\s+REPLACE\s+)?(?:CONSTRAINT\s+)?TRIGGER\b/i.test(stmt)) continue
       if (!onTableRe.test(stmt)) continue
@@ -488,15 +585,22 @@ function laterTriggerViolations(): string[] {
  * Every migration strictly after MIGRATION_FILE that rewrites, drops, renames, or adds a
  * trigger/rule to the audit_logs sink itself: `CREATE [OR REPLACE] RULE ... TO audit_logs`,
  * `CREATE [OR REPLACE] [CONSTRAINT] TRIGGER ... ON audit_logs`, `DROP TABLE audit_logs`,
- * `ALTER TABLE audit_logs ... RENAME`, or `ALTER TABLE audit_logs ... DISABLE TRIGGER`. The
- * function pin only protects the write -- `INSERT INTO audit_logs`; it says nothing about what
- * happens to that INSERT once the statement leaves the trigger, and a rule on audit_logs can turn
- * it into a no-op without the function changing at all (round-2 gate finding 3 -- the gate's own
- * PoC was `CREATE RULE suppress_registry_audit AS ON INSERT TO public.audit_logs ... DO INSTEAD
- * NOTHING`; note CREATE RULE's table reference uses `TO`, not `ON` -- `ON` in that grammar
- * introduces the event). Statement-scoped. Exempt only via REVIEWED_LATER_MIGRATIONS. Checked
- * against every migration currently newer than MIGRATION_FILE before being written (none exist yet
- * as of SMI-6114 round 2, so there is nothing pre-existing for this check to have to tolerate).
+ * `ALTER TABLE audit_logs ... RENAME`, or `ALTER TABLE audit_logs ... DISABLE TRIGGER` -- OR that
+ * changes the sink's column shape underneath the pinned insert: `ALTER TABLE audit_logs ...
+ * DROP COLUMN`, `ALTER COLUMN ... TYPE` / `SET DATA TYPE`, `SET NOT NULL`, or `ADD CONSTRAINT` /
+ * `ADD CHECK` (round-3 gate finding 1, PR #2855 -- any of these can make the pinned
+ * `INSERT INTO audit_logs` fail outright, or accept it while silently storing something other
+ * than what the pinned function body computed). The function pin only protects the write --
+ * `INSERT INTO audit_logs`; it says nothing about what happens to that INSERT once the statement
+ * leaves the trigger, and a rule on audit_logs can turn it into a no-op without the function
+ * changing at all (round-2 gate finding 3 -- the gate's own PoC was `CREATE RULE
+ * suppress_registry_audit AS ON INSERT TO public.audit_logs ... DO INSTEAD NOTHING`; note CREATE
+ * RULE's table reference uses `TO`, not `ON` -- `ON` in that grammar introduces the event).
+ * Statement-scoped, and run against stripComments()-cleaned text (round-3 gate finding 2) so a
+ * block comment mentioning any of the above cannot false-positive and a real statement hidden
+ * right after one cannot false-negative. Exempt only via REVIEWED_LATER_MIGRATIONS. This still
+ * cannot see an RLS policy change, a `REVOKE INSERT`, a retention job, a broader role grant, or
+ * dynamic SQL against audit_logs -- see the file-header DOES NOT DETECT list.
  */
 function auditSinkViolations(): string[] {
   const offenders: string[] = []
@@ -513,11 +617,19 @@ function auditSinkViolations(): string[] {
     String.raw`\bALTER\s+TABLE\s+(?:IF\s+EXISTS\s+)?(?:ONLY\s+)?${AUDIT_LOGS_REF_SRC}\b`,
     'i'
   )
+  // Column-shape changes to audit_logs (round-3 gate finding 1). Each is only checked within a
+  // statement already confirmed to be an ALTER TABLE against audit_logs (alterAuditLogsRe above),
+  // so these can stay loose keyword matches without false-positiving on unrelated tables.
+  const dropColumnRe = /\bDROP\s+COLUMN\b/i
+  const alterColumnTypeRe =
+    /\bALTER\s+COLUMN\s+"?[A-Za-z_][A-Za-z0-9_]*"?\s+(?:SET\s+DATA\s+)?TYPE\b/i
+  const setNotNullRe = /\bSET\s+NOT\s+NULL\b/i
+  const addConstraintRe = /\bADD\s+(?:CONSTRAINT|CHECK)\b/i
   for (const file of laterMigrationFiles()) {
     if (REVIEWED_LATER_MIGRATIONS.includes(file)) continue
     const content = readMigration(file)
     if (content === null) continue
-    const sql = stripLineComments(content)
+    const sql = stripComments(content)
     for (const stmt of sql.split(';')) {
       const trimmed = () => stmt.replace(/\s+/g, ' ').trim().slice(0, 160)
       if (/\bCREATE\s+(?:OR\s+REPLACE\s+)?RULE\b/i.test(stmt) && ruleToAuditLogsRe.test(stmt)) {
@@ -544,6 +656,30 @@ function auditSinkViolations(): string[] {
       if (alterAuditLogsRe.test(stmt) && /\bDISABLE\s+TRIGGER\b/i.test(stmt)) {
         offenders.push(
           `${file}: ALTER TABLE audit_logs ... DISABLE TRIGGER -- ${trimmed()}. ` +
+            reviewRemediation(file)
+        )
+      }
+      if (alterAuditLogsRe.test(stmt) && dropColumnRe.test(stmt)) {
+        offenders.push(
+          `${file}: ALTER TABLE audit_logs ... DROP COLUMN -- ${trimmed()}. ` +
+            reviewRemediation(file)
+        )
+      }
+      if (alterAuditLogsRe.test(stmt) && alterColumnTypeRe.test(stmt)) {
+        offenders.push(
+          `${file}: ALTER TABLE audit_logs ... ALTER COLUMN ... TYPE -- ${trimmed()}. ` +
+            reviewRemediation(file)
+        )
+      }
+      if (alterAuditLogsRe.test(stmt) && setNotNullRe.test(stmt)) {
+        offenders.push(
+          `${file}: ALTER TABLE audit_logs ... SET NOT NULL -- ${trimmed()}. ` +
+            reviewRemediation(file)
+        )
+      }
+      if (alterAuditLogsRe.test(stmt) && addConstraintRe.test(stmt)) {
+        offenders.push(
+          `${file}: ALTER TABLE audit_logs ... ADD CONSTRAINT/CHECK -- ${trimmed()}. ` +
             reviewRemediation(file)
         )
       }
