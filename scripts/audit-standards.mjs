@@ -78,6 +78,10 @@ import {
   gitDirWriterReportLines,
 } from './audit-gitdir-writer-helpers.mjs'
 import { dockerEnvCoherenceReportLines } from './audit-docker-env-coherence-helpers.mjs'
+import {
+  evaluateContainerNpmGate,
+  containerNpmGateReportLines,
+} from './audit-container-npm-gate-helpers.mjs'
 import { findMissingHuskyStubs } from './audit-husky-stub-coverage-helpers.mjs'
 import {
   listManifestHygieneTestFiles,
@@ -6170,6 +6174,36 @@ console.log(`\n${BOLD}Check 70: SKILLSMITH_DOCKER default coherence (SMI-6518)${
   // produced them) rather than refactored here.
   const reporters = { pass, warn, fail }
   for (const line of dockerEnvCoherenceReportLines({ isCI: Boolean(process.env.CI) })) {
+    reporters[line.severity](line.message, line.fix)
+  }
+}
+
+// Check 72: container npm mutations go through the mount gate (SMI-6654)
+//
+// ADR-158 Decision 3 makes scripts/lib/node-modules-mount-gate.sh the only
+// sanctioned gate for a node_modules mutation inside a dev container. Arm A
+// flags a container launcher followed by an npm mutation verb unless it has one
+// of two structurally safe shapes; arm B flags a mount-table probe of a
+// node_modules path. Shadow through CHECK_72_SHADOW_END_DATE (UTC), then
+// FINDING lines fail. No marker, no disable var.
+//
+// Numbered 72, not 71: Check 71 was retired by SMI-6497 after this plan was
+// reviewed as Check 72, and the owner kept 72.
+//
+// Every outcome, including NOT-EVALUATED (fail under CI, warn in a worktree
+// container), is decided in the helper, so this stays a flat dispatch with no
+// branch-local bindings (the SMI-6575 lesson from Checks 69 and 70).
+//
+// scripts/tests/audit-container-npm-gate.test.ts is the executable twin of
+// this check -- same helper, same invariant.
+console.log(
+  `\n${BOLD}Check 72: container npm mutations go through the mount gate (SMI-6654)${RESET}`
+)
+{
+  const reporters = { pass, warn, fail }
+  for (const line of containerNpmGateReportLines(
+    evaluateContainerNpmGate('.', { isCI: Boolean(process.env.CI), now: new Date() })
+  )) {
     reporters[line.severity](line.message, line.fix)
   }
 }
