@@ -44,16 +44,58 @@ import { brokenMigrationSql } from './private-registry-content-release.test-reve
 
 const NULL_SENTINEL = '<null>'
 
-/** Extracts the step-4 content re-read's own `SELECT ... ;` verbatim out of a migration text, for
- *  Finding-5(a)'s STRUCTURAL predicate assertions -- see that test's own comment for why a static
- *  text check, not a live two-session interleaving, is what this guard's own timing constraints
- *  leave available. */
+/** Strips `--` line comments and `/* *\/` block comments from a SQL fragment, honoring `'...'`
+ *  string literals (`''` is an escaped quote, not a terminator) so a `--`/`/*` inside a literal is
+ *  never mistaken for a comment start. Finding 2 (Sol gate follow-up round): a predicate commented
+ *  out as `-- AND prs.team_id = v_row.team_id` still contains the plain substring
+ *  `AND prs.team_id = v_row.team_id`, so a `.toContain()` check against the RAW extracted text
+ *  passes even though the guard is now inert SQL -- proven against the CURRENT (pre-fix) helper in
+ *  a temporary before-state proof file before this fix was written (SMI-6598 rule). Every
+ *  structural assertion below runs against the STRIPPED text instead, so a commented-out predicate
+ *  reads as genuinely absent. */
+function stripSqlComments(sql: string): string {
+  let out = ''
+  let i = 0
+  while (i < sql.length) {
+    if (sql[i] === "'") {
+      out += sql[i++]
+      while (i < sql.length) {
+        if (sql[i] === "'" && sql[i + 1] === "'") {
+          out += sql.slice(i, i + 2)
+          i += 2
+          continue
+        }
+        out += sql[i]
+        if (sql[i] === "'") {
+          i++
+          break
+        }
+        i++
+      }
+    } else if (sql[i] === '-' && sql[i + 1] === '-') {
+      while (i < sql.length && sql[i] !== '\n') i++
+    } else if (sql[i] === '/' && sql[i + 1] === '*') {
+      i += 2
+      while (i < sql.length && !(sql[i] === '*' && sql[i + 1] === '/')) i++
+      i += 2
+    } else {
+      out += sql[i++]
+    }
+  }
+  return out
+}
+
+/** Extracts the step-4 content re-read's own `SELECT ... ;` out of a migration text, WITH SQL
+ *  COMMENTS STRIPPED, for Finding-5(a)'s STRUCTURAL predicate assertions -- see that test's own
+ *  comment for why a static text check, not a live two-session interleaving, is what this guard's
+ *  own timing constraints leave available. Stripped (not raw) is load-bearing: see
+ *  `stripSqlComments`'s own comment for the forged-substring bug this closes (Finding 2). */
 function extractReReadSelect(sql: string): string {
   const start = sql.indexOf('SELECT prs.content INTO v_content')
   if (start === -1) throw new Error('extractReReadSelect: anchor not found')
   const end = sql.indexOf(';', start)
   if (end === -1) throw new Error('extractReReadSelect: unterminated statement')
-  return sql.slice(start, end + 1)
+  return stripSqlComments(sql.slice(start, end + 1))
 }
 
 let conn: TestConn
@@ -677,6 +719,24 @@ describe.skipIf(noLiveTestPg)('SMI-6651 — release_private_registry_skill_conte
     expect(block).toContain("AND prs.approval_status = 'approved'")
     expect(block).toContain('AND prs.deprecated = false')
   })
+
+  it.each([
+    ['team_id', 'm' as const, 'AND prs.team_id = v_row.team_id'],
+    ['approval_status', 'n' as const, "AND prs.approval_status = 'approved'"],
+    ['deprecated', 'o' as const, 'AND prs.deprecated = false'],
+  ])(
+    'Finding 5(a)/Finding 2 fix: commenting out the %s predicate (not deleting it) is correctly seen as ABSENT',
+    (_label, variant, predicate) => {
+      // Finding 2 (Sol gate follow-up round): the structural assertion above must not accept a
+      // forged substring -- a predicate commented out as `-- AND ...` still contains the plain
+      // text `AND ...`, so a `.toContain()` check against RAW extracted SQL would pass against
+      // inert SQL (proven against the pre-fix helper in a temporary before-state proof file,
+      // SMI-6598 rule, before this fix was written). `extractReReadSelect` now strips comments
+      // before returning, so the stripped block must NOT contain the commented-out predicate.
+      const block = extractReReadSelect(brokenMigrationSql(variant))
+      expect(block).not.toContain(predicate)
+    }
+  )
 
   it.each([
     ['p_skill_id blank', rpcCall('', null, null, null, 'b1'), /22023/],
