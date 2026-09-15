@@ -11,24 +11,88 @@ and says, for each one, MET / NOT MET / NOT MEASURED.
 ## Recommendation
 
 **Native, shipped as C5 with C4 as the fallback — with the child-process
-probe as a requirement, not a footnote.** Every fallback trigger this spike
-forced ends in a safe quarantine with one message and no crash, including
-the one failure mode (a genuinely tampered macOS code signature) that
-SIGKILLs the process that `require()`s it. That fact is why "native" here
-specifically means "native behind a cached child-process probe" — an
-in-process `require()`-then-catch is not a variant of the same
-recommendation, it is a different, unsafe design this spike's own P9
-measurement rules out.
+probe AND a caller-supplied guard hash both as requirements, not
+footnotes.** The probe requirement is unchanged from checkpoint 4: every
+fallback trigger this spike forced ends in a safe quarantine with one
+message and no crash, including the one failure mode (a genuinely tampered
+macOS code signature) that SIGKILLs the process that `require()`s it, and
+an in-process `require()`-then-catch remains a different, unsafe design
+this spike's own P9 measurement rules out. The guard-hash requirement is
+new this pass, and without it the recommendation below is not honestly
+stated.
+
+**The mechanism the fallback was expected to lean on does not work, and
+this pass measured why.** C0's UD25 gate compares a directory's real
+birthtime against a threshold established from two filesystem probes taken
+*after* `removeC0()` is called (`c0-walk.mjs`'s `establishThreshold()`,
+quoted in full under criterion 1/A9 below). Anything that already existed
+before that moment — a substitute created seconds, minutes, or days
+earlier, with no forgery of any field — passes the check by construction.
+This is not a race: there is no window to miss, because the threshold is
+set after the attacker's substitute already exists. Measured directly
+(`harness/measure-preaged-gate-defeat.mjs`, both APFS and overlayfs, five
+age gaps from 0ms to 2000ms, independently reproduced by the coordinator):
+C0 is defeated in every cell, including the 0ms gap.
+
+**What works in its place, measured on the same cells**: a caller-supplied
+`guardHash` — a content hash of the tree computed before the operation,
+compared against a fresh hash taken at removal time — passes every one of
+those same cells, on every candidate (V0, V1, V2), at every age gap,
+because it never reads a clock or any other timestamp field at all
+(`wrapStatAtFieldLog` confirms zero timestamp-shaped keys ever appear in
+what the native shim returns). This property is **not native-specific**:
+nothing about comparing two content hashes depends on held file
+descriptors, `openat`, or any syscall this spike's C1 shim provides — a
+pure-JS candidate could implement the identical check. The pre-aged
+finding does not favor native over a JS design or the reverse; it favors
+verifying a caller-supplied hash over not verifying one, which is
+orthogonal to the native-vs-JS question this memo otherwise argues.
+
+**What this does to the recommendation's shape.** Checked directly against
+this spike's own code, not assumed: `walk.mjs`'s `removeVR()` already wires
+`guardHash` in and enforces it correctly (`if (guardHash !== undefined &&
+guardHash !== treeHash) { ...return { status: 'kept' } }`) — but it is an
+*optional* parameter (`const { ..., guardHash, ... } = options`), so a
+caller that omits it gets the same unguarded exposure as C0. More
+consequentially, `quarantine.mjs`'s `quarantineTree()` — **the fallback
+path C4 actually runs, precisely when native is unavailable** — accepts a
+`treeHash` option and only ever writes it into the sidecar as inert
+metadata (`treeHash: options.treeHash ?? null`); it is never computed
+fresh and compared against anything before `fs.renameSync()` moves the
+tree. As built today, **the fallback path has no guard-hash enforcement at
+all** — it is at least as exposed to a pre-aged substitute as C0's gate,
+with not even a threshold check standing in the way. This is a specific,
+already-checked-against-the-code gap, not a general worry: `quarantineTree`
+needs the same verify-before-act step `removeVR` already has, and does not
+have it yet.
+
+**So: C4-as-fallback stands, but not as currently built, and not
+optionally.** The evidence supports making a verified guard hash mandatory
+at both of the places this spike's own code shows it currently is not
+mandatory: (1) every call site that invokes `removeTree()` must compute and
+pass `guardHash`, the same discipline already established for the
+child-process probe; and (2) `quarantineTree()` itself needs a
+verify-before-rename step equivalent to `removeVR`'s, since today it has
+none, and the fallback is exactly the path that runs when the system is
+already in a degraded state. Native remains the recommendation for the
+reasons checkpoint 4 already established (P9's SIGKILL handling chief among
+them) — this finding does not change which primitive to ship. It changes
+what "shipping it safely" requires or, said the other way, **without a
+mandatory, code-enforced guard hash on both paths, this recommendation
+inherits a gap identical in kind to the one the gate-based design already
+had**, just relocated from "the JS walk's own gate" to "whichever code path
+the caller forgot to pass a hash into."
 
 This recommendation is **conditional on the gaps below being closed**,
 primarily full C1 platform coverage (only 2 of 4 in-scope targets have a
-built, tested binary). The attack-matrix gap named in the checkpoint-4
-version of this line is now largely closed: A3, A4, A7, A8, A9, A10, A11,
-A12 and A13 have all been run against V0/V1/V2 with C0 as control, on both
-APFS and overlayfs, at the plan's own run counts (see criterion 1 below) —
-N1-VR (a formal, multi-filesystem false-positive sweep for the native
-candidate, distinct from the attack matrix) remains open, unchanged from
-checkpoint 4.
+built, tested binary) and the guard-hash enforcement gap in
+`quarantineTree()` named above. The attack-matrix gap named in the
+checkpoint-4 version of this line is now largely closed: A3, A4, A7, A8,
+A9, A10, A11, A12 and A13 have all been run against V0/V1/V2 with C0 as
+control, on both APFS and overlayfs, at the plan's own run counts (see
+criterion 1 below) — N1-VR (a formal, multi-filesystem false-positive
+sweep for the native candidate, distinct from the attack matrix) remains
+open, unchanged from checkpoint 4.
 
 ## §10 criterion 1 — attacks: every A1–A8, A10(a), A11, A12, A13, N1 PASS on APFS/overlayfs/tmpfs/ext4/virtiofs; A9 no timestamp reads; A7 PASS
 
@@ -93,7 +157,13 @@ protection — `unlinkAt`'s plain unlink refuses on the still-non-empty
 replacement directory, not a designed check); V1/V2 stop `identity-changed`
 (the *designed* protection). All four PASS 30/30, both filesystems, no
 guard split (the fd is pinned regardless of guard mode, so there is nothing
-for a guard hash to add here).
+for a guard hash to add here). **Caveat, added when A9's pre-aged-substitute
+finding surfaced the same claim elsewhere in this memo**: C0's gate
+"correctly rejects" the replacement here only because A4's swap is
+genuinely FRESH — created same-tick, after the threshold. A9 measures the
+same gate against a substitute that existed before the call instead, and
+it does not reject that one at all. This line describes A4's own result
+accurately; it is not evidence the gate is reliable in general.
 
 ### A7 — file/symlink substitution, 'between' (post-guard) and 'before-unlink' (last-moment)
 
@@ -331,7 +401,13 @@ earlier; (b) passes trivially via `unlink(2)`'s property. **Matched
 exactly, both filesystems.** (a): C0 PASS 30/30 (the real, un-forged gate
 correctly catches a genuinely-fresh replacement here, unlike A9's forged
 case); VR guard=none FAIL 30/30 (same residual as A6/root/none), guard=hash
-PASS 30/30. (b): C0 and V0/V1/V2 all PASS 30/30, both filesystems.
+PASS 30/30. (b): C0 and V0/V1/V2 all PASS 30/30, both filesystems. **Same
+caveat as A4**: A10(a)'s own swap technique (same-tick delete+recreate) is
+still a genuinely fresh replacement, timed after the threshold — the
+scenario the gate was built for and correctly rejects. It is not the
+scenario A9's pre-aged-substitute finding tests (a substitute that existed
+before the call), which this same real, un-forged gate does not reject at
+all. A10's own PASS here says nothing about that case.
 
 ### A11 — hard link to an outside file, property check, no attack
 
@@ -466,6 +542,8 @@ findings rather than confirming what was already assumed. It is not yet
 
 **NOT MET as stated — measured for C0 only.** C0's N1 is PASS 300/300 on every filesystem tested. VR's own N1-equivalent was only run as an unrecorded ad hoc check (180/180 clean on virtiofs, the one filesystem where a spurious-stop risk was actually observed for a *different* reason — see the virtiofs finding below). No formal `n1-vr.mjs` attack module exists, so this criterion has no JSONL evidence backing it for the actual native candidate.
 
+**Re-checked against the pre-aged-substitute finding (A9): the score survives, and the reason is that N1 and A9 are the same mechanism seen from opposite sides, not in tension.** N1's fixture is ordinary, legitimate content that already exists by the time the walk starts — exactly the shape the gate's call-time threshold is *designed* to let through without incident. A9's finding is that a pre-aged *attacker* substitute passes the identical check for the identical reason. The gate being permissive toward anything that predates the call is what makes N1 pass 300/300 for C0, and it is also why A9 succeeds — one finding explains the other; neither undermines it. Nothing here touches whether VR's own N1-equivalent has real, recorded, multi-filesystem coverage, which is still the actual gap this criterion is NOT MET for.
+
 ## §10 criterion 3 — installs: clean, no-toolchain, `--ignore-scripts` load on all 4 in-scope targets; one binary loads under Node 20/22/24
 
 **Partially met.**
@@ -489,6 +567,27 @@ findings rather than confirming what was already assumed. It is not yet
 The probe cost (spawn + require + self-test, child process, cached per
 process) measured **~22.5ms median, 26.4ms max** across 10 runs
 (checkpoint 3) — inside the plan's ≤100ms bar. **Criterion 4: MET.**
+
+**Re-checked against the pre-aged-substitute finding: the score survives,
+because criterion 4 and the finding measure different properties of the
+same fallback.** Criterion 4 asks whether a broken native load degrades
+safely — no crash, one message, content not destroyed — and all six
+triggers forced through the real `removeTree()` dispatcher confirmed
+exactly that; none of the six triggers (env-disable, missing prebuild,
+wrong-platform binary, no matching prebuild, glibc floor, signature
+tamper) involves C0's gate, a timestamp, or anything the pre-aged finding
+touches. What the pre-aged finding adds is a **separate, real gap in the
+same fallback**, found while re-checking the code for the Recommendation
+above: `quarantineTree()` (what `quarantineFallback()` actually calls)
+accepts a `treeHash` option and only ever stores it as inert sidecar
+metadata — it is never computed fresh and compared before the rename, so
+the fallback has no guard-hash enforcement at all today. That is real and
+is carried in the Recommendation section's own conditions, not folded into
+this score: criterion 4's own wording is about crash-safety and message
+behavior, which this gap does not change — the fallback still degrades
+without crashing, it just degrades to an unverified quarantine rather than
+a verified one, which is a claim criterion 4 never made in the first
+place.
 
 ## §10 criterion 5 — size: ≤150KB/platform binary, ≤1MB total install
 
