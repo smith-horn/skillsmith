@@ -89,7 +89,25 @@ function stripSqlComments(sql: string): string {
  *  COMMENTS STRIPPED, for Finding-5(a)'s STRUCTURAL predicate assertions -- see that test's own
  *  comment for why a static text check, not a live two-session interleaving, is what this guard's
  *  own timing constraints leave available. Stripped (not raw) is load-bearing: see
- *  `stripSqlComments`'s own comment for the forged-substring bug this closes (Finding 2). */
+ *  `stripSqlComments`'s own comment for the forged-substring bug this closes (Finding 2).
+ *
+ *  KNOWN LIMITATION -- read this before trusting what the assertions below prove (SMI-6685).
+ *  Comment-stripping closes ONE bypass (a predicate that exists only inside a comment). It does
+ *  not make `toContain` a proof that a predicate is EFFECTIVE, because substring presence is a
+ *  lexical property and effectiveness is a semantic one. Measured, against the real
+ *  `migrationSql()`: mutating the statement to `AND prs.deprecated = false OR TRUE` leaves all
+ *  three predicate substrings present -- every `toContain` here still passes, and every
+ *  `.not.toContain` below is equally blind -- while `AND` binding tighter than `OR` turns the
+ *  whole WHERE clause into an unconditional match and disables the tenant guard outright.
+ *  Two further gaps, also measured: this `indexOf` anchor has no uniqueness guard (unlike its
+ *  sibling `replaceExactlyOnce` in the test-reverts module, which enforces exactly-once for
+ *  precisely this reason), so a future duplicate anchor would silently extract the wrong
+ *  statement; and `stripSqlComments` does not nest `/* *\/` the way real Postgres does.
+ *  Neither is reachable from today's call site. SMI-6685 replaces this whole mechanism with a
+ *  semantic check (SQL-AST or behavioural) rather than patching it a third time -- per
+ *  `pr-reviewer`'s delete-and-re-derive rule, this being the second consecutive review round to
+ *  find a defect in it. Until then: treat these as a smoke check, NOT as proof of the security
+ *  property. The real proof of that property is the behavioural RPC tests in this file. */
 function extractReReadSelect(sql: string): string {
   const start = sql.indexOf('SELECT prs.content INTO v_content')
   if (start === -1) throw new Error('extractReReadSelect: anchor not found')
