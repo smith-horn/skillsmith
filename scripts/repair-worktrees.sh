@@ -16,7 +16,7 @@
 # node_modules. Because per-package node_modules are symlinked between
 # the host and the running Docker dev container, that rebuild overwrites
 # the container's ELF (linux-x64) binary, breaking every test inside
-# Docker until `docker exec ... npm rebuild` runs. The guard below
+# Docker until a container-side `npm rebuild` runs. The guard below
 # refuses to run the native-rebuild step when a `skillsmith*-dev-N`
 # container is detected, unless --force-with-active-docker is set.
 # Symlink-repair phases run unconditionally (no binary writes).

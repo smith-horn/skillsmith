@@ -2242,7 +2242,7 @@ is_main_checkout() {
 # bucketed pair (3070/3071 for branch `main`), and on macOS bind-mounts
 # main's own node_modules READ-ONLY over /app/node_modules (_lib.sh:703-704),
 # replacing the base named volume at docker-compose.yml:26 -- so
-# `docker exec skillsmith-dev-1 npm install` afterwards fails EROFS against
+# an ungated container `npm install` afterwards fails EROFS against
 # a container that no longer exists under that name. Nothing undoes it: the
 # file is gitignored (.gitignore:190) and repair_worktrees_compose_override
 # skips the repo root (_lib.sh:1611).

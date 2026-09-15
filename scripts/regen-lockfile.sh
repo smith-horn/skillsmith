@@ -4,7 +4,7 @@
 # SMI-5513: Regenerate package-lock.json (and sync node_modules) WITHOUT wiping
 # the container's native bindings.
 #
-# The trap this replaces: a bare `docker exec skillsmith-dev-1 npm install`
+# The trap this replaces: an ungated container `npm install`
 # regenerates the lockfile but, with .npmrc ignore-scripts=true, leaves
 # better-sqlite3 unbuilt ("invalid ELF header") — surfacing later as ~51 cryptic
 # db.close()-on-undefined test failures. (The pre-push native guard,
@@ -88,7 +88,7 @@ done
 # defaults to "main checkout" — correct there, because the consequence is
 # only recomputing a path for a fail-soft freshness check (exit 0 if nothing
 # usable). Here, the consequence of the same silent default is a live
-# `docker exec`/`npm install` ROUTING decision — silently falling back to
+# container-launch / npm-mutation ROUTING decision — silently falling back to
 # "main checkout" on a `rev-parse` failure would BE the exact silent-misroute
 # bug this script exists to fix, reproduced inside the fix itself. So:
 # hard-error (exit 1) if either `rev-parse` call fails, rather than falling

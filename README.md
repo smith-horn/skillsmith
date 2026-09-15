@@ -307,7 +307,7 @@ cp .env.example .env
 docker compose --profile dev up -d
 
 # 4. Install dependencies (first time only)
-docker exec skillsmith-dev-1 npm install
+docker exec -w /app skillsmith-dev-1 sh -c 'sh scripts/lib/node-modules-mount-gate.sh && npm install'
 
 # 5. Build and test
 docker exec skillsmith-dev-1 npm run build
@@ -352,7 +352,7 @@ docker compose --profile dev up -d
 When you pull changes that modify `package.json` or `package-lock.json`:
 
 ```bash
-docker exec skillsmith-dev-1 npm install
+docker exec -w /app skillsmith-dev-1 sh -c 'sh scripts/lib/node-modules-mount-gate.sh && npm install'
 docker exec skillsmith-dev-1 npm run build
 ```
 
@@ -364,15 +364,22 @@ docker exec skillsmith-dev-1 npm run build
 docker compose --profile dev down
 docker volume rm skillsmith_node_modules
 docker compose --profile dev up -d
-docker exec skillsmith-dev-1 npm install
 ```
+
+Then repopulate the wiped volume through the mount gate, not with a bare install (ADR-158; SMI-6614):
+
+```bash
+docker exec -w /app skillsmith-dev-1 sh -c 'sh scripts/lib/node-modules-mount-gate.sh && npm install && npm run build'
+```
+
+A non-zero exit with no npm output means a `node_modules` mount isn't volume-shaped yet: recreate the container (`docker compose --profile dev up -d --force-recreate dev`) and run it again.
 
 #### Native module errors (`ERR_DLOPEN_FAILED`)
 
 Native modules like `better-sqlite3` and `onnxruntime-node` may need rebuilding:
 
 ```bash
-docker exec skillsmith-dev-1 npm rebuild
+docker exec -w /app skillsmith-dev-1 sh -c 'sh scripts/lib/node-modules-mount-gate.sh && npm rebuild'
 ```
 
 #### Tests fail with shared library errors
