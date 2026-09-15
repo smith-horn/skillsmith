@@ -1,0 +1,3 @@
+none same-tick race       n=300 {"removed":93,"identity-changed":207,"identity-unverifiable":0,"replacementEmptied":93,"sharedInoAndBirth":93,"treeUntouchedOnStop":0,"maxWaitIters":0,"ms":10}
+C    same-tick race       n=300 {"removed":0,"identity-changed":300,"identity-unverifiable":0,"replacementEmptied":0,"sharedInoAndBirth":0,"treeUntouchedOnStop":0,"maxWaitIters":0,"ms":14}
+{"node":"v22.23.2","fsType":"overlay"}

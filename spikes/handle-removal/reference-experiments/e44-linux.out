@@ -1,0 +1,7 @@
+{"node":"v22.23.2","platform":"linux"}
+3x swap after first rmdir | none | removed | replacementSurvives=false | originalAside=true
+3x swap after first rmdir | after-enotempty | removed | replacementSurvives=false | originalAside=true
+3x swap after first rmdir | pre-rmdir | stopped: identity-changed at sub | replacementSurvives=true | originalAside=true
+3x swap between readdir and unlink | none | stopped: ENOENT at sub/b.txt | replacementSurvives=false | originalAside=true
+3x swap between readdir and unlink | after-enotempty | stopped: identity-changed at sub | replacementSurvives=true | originalAside=true
+3x swap between readdir and unlink | pre-rmdir | stopped: identity-changed at sub | replacementSurvives=true | originalAside=true
