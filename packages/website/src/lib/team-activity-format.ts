@@ -6,6 +6,13 @@
  * `resource/uuid`) into plain-English sentences with relative timestamps and no
  * raw UUIDs. Returns plain text — the caller (`index.astro`) is responsible for
  * HTML-escaping every field before inserting into the DOM.
+ *
+ * SMI-6114: private-registry rows (`private_registry:*`) name the skill version
+ * (`namespace/skill@version`, from metadata — never the resource path or a UUID)
+ * and read their `result`, since client-side rows record refused attempts too.
+ * Only member-visible registry rows reach this feed: the trigger omits
+ * `metadata.team_id` from events about pending or rejected versions, and the
+ * feed's query filters on that key.
  */
 
 export interface ActivityEvent {
@@ -13,6 +20,8 @@ export interface ActivityEvent {
   actor: string | null
   action: string | null
   resource: string | null
+  /** `success` / `denied` / `not_found` / `error`; absent on rows selected without it. */
+  result?: string | null
   timestamp: string
   metadata: Record<string, unknown> | null
 }
@@ -32,14 +41,26 @@ const LITERAL_SYSTEM_ACTOR = 'authenticated_user'
 const FALLBACK_ACTOR = 'A team member'
 
 /**
+ * Actor prefixes that name a credential or database session, never a person
+ * (SMI-6114 trigger: `jwt_role:service_role`, `db_session:postgres`; legacy MCP
+ * rows: `license_key:<fingerprint>`). Rendered passively, not as "A team member".
+ */
+const SYSTEM_ACTOR_PREFIXES = ['jwt_role:', 'db_session:', 'license_key:']
+/** Prefix the registry writers put before a user id (`user:<uuid>`). */
+const USER_ACTOR_PREFIX = 'user:'
+
+/**
  * Resolve an audit actor to a display name, or `null` for the system/passive
  * actor. Branch order is significant (plan-review #2): the `authenticated_user`
- * literal is handled before the UUID lookup so an unknown UUID never falls into
- * the passive branch — it resolves to {@link FALLBACK_ACTOR} instead.
+ * literal and the system prefixes are handled before the UUID lookup so an
+ * unknown UUID never falls into the passive branch — it resolves to
+ * {@link FALLBACK_ACTOR} instead. `user:<uuid>` is looked up by its uuid.
  */
 function resolveActor(actor: string | null, nameMap: Map<string, string>): string | null {
-  if (!actor || actor === LITERAL_SYSTEM_ACTOR) return null
-  return nameMap.get(actor) ?? FALLBACK_ACTOR
+  if (!actor || actor === LITERAL_SYSTEM_ACTOR || actor === 'anonymous') return null
+  if (SYSTEM_ACTOR_PREFIXES.some((prefix) => actor.startsWith(prefix))) return null
+  const userId = actor.startsWith(USER_ACTOR_PREFIX) ? actor.slice(USER_ACTOR_PREFIX.length) : actor
+  return nameMap.get(userId) ?? FALLBACK_ACTOR
 }
 
 /**
@@ -86,8 +107,58 @@ export function formatRelativeTime(iso: string, now: Date = new Date()): string 
   })
 }
 
+/** Active verb for a successful registry event, and the bare verb for an attempt. */
+const REGISTRY_VERBS: Record<string, { done: string; attempt: string }> = {
+  publish: { done: 'submitted', attempt: 'submit' },
+  approve: { done: 'approved', attempt: 'approve' },
+  reject: { done: 'rejected', attempt: 'reject' },
+  deprecate: { done: 'deprecated', attempt: 'deprecate' },
+  undeprecate: { done: 'undeprecated', attempt: 'undeprecate' },
+  update: { done: 'changed', attempt: 'change' },
+  delete: { done: 'deleted', attempt: 'delete' },
+  content_read: { done: 'downloaded', attempt: 'download' },
+}
+
+const ATTEMPT_OUTCOMES: Record<string, string> = {
+  denied: 'was refused',
+  not_found: 'matched nothing',
+  error: 'failed',
+}
+
+/** `private skill ns/skill@1.0.0`, or `a private skill` when metadata does not name one. */
+function registrySubject(metadata: Record<string, unknown> | null): string {
+  const skill = metadata && typeof metadata.skill_id === 'string' ? metadata.skill_id : ''
+  if (!skill) return 'a private skill'
+  const version = metadata && typeof metadata.version === 'string' ? metadata.version : ''
+  return `private skill ${skill}${version ? `@${version}` : ''}`
+}
+
+const capitalize = (text: string): string => text.charAt(0).toUpperCase() + text.slice(1)
+
+/** Sentence for a `private_registry:*` row (SMI-6114). */
+function registrySentence(ev: ActivityEvent, who: string | null, operation: string): string {
+  if (operation === 'truncate') return 'The private registry was cleared'
+  const verbs = REGISTRY_VERBS[operation]
+  if (!verbs)
+    return withActor(who, 'viewed the private registry', 'The private registry was viewed')
+  const subject = registrySubject(ev.metadata)
+  const result = ev.result ?? 'success'
+  if (result === 'success') {
+    return withActor(who, `${verbs.done} ${subject}`, `${capitalize(subject)} was ${verbs.done}`)
+  }
+  const outcome = ATTEMPT_OUTCOMES[result] ?? 'did not complete'
+  return withActor(
+    who,
+    `tried to ${verbs.attempt} ${subject}, which ${outcome}`,
+    `An attempt to ${verbs.attempt} ${subject} ${outcome}`
+  )
+}
+
 /** Build the plain-English sentence for one event. Never includes the raw resource/UUID. */
 function buildSentence(ev: ActivityEvent, who: string | null): string {
+  if (ev.event_type?.startsWith('private_registry:')) {
+    return registrySentence(ev, who, ev.event_type.slice('private_registry:'.length))
+  }
   switch (ev.event_type) {
     case 'team_invitation:created':
       return withActor(

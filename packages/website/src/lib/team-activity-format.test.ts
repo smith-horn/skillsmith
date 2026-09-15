@@ -165,3 +165,98 @@ describe('humanizeActivity — never leaks raw identifiers', () => {
     }
   })
 })
+
+describe('humanizeActivity — private registry (SMI-6114)', () => {
+  const registry = (partial: Partial<ActivityEvent>): ActivityEvent =>
+    ev({
+      resource: `private_registry_skills/team-1/acme/widget@1.2.0`,
+      result: 'success',
+      metadata: { team_id: 'team-1', skill_id: 'acme/widget', version: '1.2.0' },
+      ...partial,
+    })
+
+  it('resolves a `user:<uuid>` actor through the name map', () => {
+    const out = humanizeActivity(
+      registry({ event_type: 'private_registry:approve', actor: `user:${RYAN}` }),
+      nameMap
+    )
+    expect(out.text).toBe('Ryan Smith approved private skill acme/widget@1.2.0')
+  })
+
+  it.each([
+    ['publish', 'Tony Lee submitted private skill acme/widget@1.2.0'],
+    ['reject', 'Tony Lee rejected private skill acme/widget@1.2.0'],
+    ['deprecate', 'Tony Lee deprecated private skill acme/widget@1.2.0'],
+    ['undeprecate', 'Tony Lee undeprecated private skill acme/widget@1.2.0'],
+    ['update', 'Tony Lee changed private skill acme/widget@1.2.0'],
+    ['delete', 'Tony Lee deleted private skill acme/widget@1.2.0'],
+    ['content_read', 'Tony Lee downloaded private skill acme/widget@1.2.0'],
+  ])('%s reads as a sentence, not a raw verb', (operation, expected) => {
+    const out = humanizeActivity(
+      registry({ event_type: `private_registry:${operation}`, actor: `user:${TONY}` }),
+      nameMap
+    )
+    expect(out.text).toBe(expected)
+  })
+
+  it('an unknown `user:` id is "A team member", never the raw id', () => {
+    const out = humanizeActivity(
+      registry({ event_type: 'private_registry:deprecate', actor: `user:${INVITE_UUID}` }),
+      nameMap
+    )
+    expect(out.text).toBe('A team member deprecated private skill acme/widget@1.2.0')
+    expect(out.text).not.toContain(INVITE_UUID)
+  })
+
+  it('a role or session actor is rendered passively', () => {
+    for (const actor of ['jwt_role:service_role', 'db_session:postgres', 'anonymous']) {
+      const out = humanizeActivity(
+        registry({ event_type: 'private_registry:update', actor }),
+        nameMap
+      )
+      expect(out.text).toBe('Private skill acme/widget@1.2.0 was changed')
+    }
+  })
+
+  it('a refused attempt never reads as if it happened', () => {
+    const denied = humanizeActivity(
+      registry({
+        event_type: 'private_registry:content_read',
+        actor: 'anonymous',
+        result: 'denied',
+      }),
+      nameMap
+    )
+    expect(denied.text).toBe('An attempt to download private skill acme/widget@1.2.0 was refused')
+
+    const notFound = humanizeActivity(
+      registry({
+        event_type: 'private_registry:deprecate',
+        actor: `user:${RYAN}`,
+        result: 'not_found',
+      }),
+      nameMap
+    )
+    expect(notFound.text).toBe(
+      'Ryan Smith tried to deprecate private skill acme/widget@1.2.0, which matched nothing'
+    )
+  })
+
+  it('falls back to "a private skill" when metadata names none, and never leaks the resource', () => {
+    const out = humanizeActivity(
+      registry({ event_type: 'private_registry:approve', actor: `user:${RYAN}`, metadata: null }),
+      nameMap
+    )
+    expect(out.text).toBe('Ryan Smith approved a private skill')
+    expect(out.text).not.toContain('private_registry_skills/')
+    expect(out.text).not.toContain('team-1')
+  })
+
+  it('team_invitation rows are unchanged by the registry branch', () => {
+    const out = humanizeActivity(
+      ev({ event_type: 'team_invitation:revoked', actor: `user:${RYAN}` }),
+      nameMap
+    )
+    expect(out.text).toBe('Ryan Smith revoked an invitation')
+  })
+})

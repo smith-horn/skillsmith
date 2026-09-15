@@ -19,6 +19,11 @@ All notable changes to `@skillsmith/mcp-server` are documented here.
 - **Fix**: SMI-6622 -- a configured Supabase URL that embeds a username or password is now
   rejected with a clear error up front, instead of letting the credentials show up later in
   an error message (#2845).
+- **Fix**: SMI-6114 -- private-registry publish, approve, reject, deprecate and undeprecate are
+  now audited by the database itself, on every path including hosts without a service-role key,
+  where they previously went unrecorded. The MCP server no longer writes its own success audit
+  rows for those mutations, and `audit_query` shows them with `transport: database_trigger`.
+  Rows about pending or rejected versions stay hidden from the rest of the team (#2850).
 
 ## v0.7.16
 

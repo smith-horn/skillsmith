@@ -8,7 +8,7 @@
  * file covers the four documented D-5 failure paths — non-admin (`42501`), self-approval,
  * already-decided/terminal-state, and missing `published_by` (`23514`, the old-client case) — and
  * proves each RPC error message reaches the MCP caller VERBATIM (plan-review finding M10), plus
- * the audit rows both `approve`/`reject` write on success and on denial.
+ * the audit rows `approve`/`reject` write on denial (and, since SMI-6114, do not write on success).
  *
  * Every scenario here is scripted purely at the fake-client/RPC-response level: this file does NOT
  * re-verify the RPC's own SQL logic (that is Wave 1's migration smoke suite + staging harness,
@@ -189,31 +189,35 @@ describe('review_private_registry_submission RPC errors — verbatim passthrough
 })
 
 // ============================================================================
-// Audit rows — success and denied (matching the existing publish/deprecate pattern)
+// Audit rows. SMI-6114: a SUCCESSFUL approve/reject writes no client-side row — the RPC's UPDATE
+// fires trg_prs_audit, which records the decision in the same transaction (pinned against a real
+// Postgres in scripts/tests/private-registry-audit-trigger.test.ts). This client still records the
+// attempts that did not commit.
 // ============================================================================
 
-describe('approve/reject audit rows — SMI-5949 Wave 2 Step 4', () => {
-  it('writes a success audit row with the correct event_type and actor', async () => {
-    const { client, calls } = createFakeClient()
-    await mockBothClients(client)
+describe('approve/reject audit rows — SMI-5949 Wave 2 Step 4, SMI-6114', () => {
+  it.each(['approve', 'reject'] as const)(
+    'a successful %s writes no client-side audit row (the trigger owns it)',
+    async (action) => {
+      const { client, calls } = createFakeClient()
+      await mockBothClients(client)
+      const { getSupabaseAdminClient } = await import('../supabase-client.js')
 
-    await executePrivateRegistryManage(
-      { action: 'approve', skillId: 'myteam/skill-a', version: '1.0.0' },
-      makeContext()
+      const result = await executePrivateRegistryManage(
+        { action, skillId: 'myteam/skill-a', version: '1.0.0' },
+        makeContext()
+      )
+
+      expect(result.success).toBe(true)
+      expect(calls.some((c) => c.table === 'audit_logs')).toBe(false)
+      expect(vi.mocked(getSupabaseAdminClient)).not.toHaveBeenCalled()
+    }
+  )
+
+  it('attributes a denied review to the JWT user, never to the license key', async () => {
+    const { client, calls } = createFakeClient(
+      reviewRpcError({ code: '42501', message: 'Only team admins can review submissions.' })
     )
-
-    const audit = calls.find((c) => c.table === 'audit_logs' && c.op === 'insert')
-    expect(audit).toBeDefined()
-    expect(audit!.payload?.event_type).toBe('private_registry:approve')
-    expect(audit!.payload?.result).toBe('success')
-    expect(audit!.payload?.actor).toBe(`user:${FAKE_USER_ID}`)
-    // The license key did not authorize this (D-7 has no service-role fallback), so it must not
-    // appear as the actor — mirrors registry-tools.live.admin-auth.test.ts's assertion.
-    expect(String(audit!.payload?.actor)).not.toContain('license_key')
-  })
-
-  it('writes a "reject" audit row distinctly from "approve"', async () => {
-    const { client, calls } = createFakeClient()
     await mockBothClients(client)
 
     await executePrivateRegistryManage(
@@ -223,6 +227,10 @@ describe('approve/reject audit rows — SMI-5949 Wave 2 Step 4', () => {
 
     const audit = calls.find((c) => c.table === 'audit_logs' && c.op === 'insert')
     expect(audit!.payload?.event_type).toBe('private_registry:reject')
+    expect(audit!.payload?.actor).toBe(`user:${FAKE_USER_ID}`)
+    // The license key did not authorize this (D-7 has no service-role fallback), so it must not
+    // appear as the actor — mirrors registry-tools.live.admin-auth.test.ts's assertion.
+    expect(String(audit!.payload?.actor)).not.toContain('license_key')
   })
 
   it('writes a denied audit row (not "error") for every documented RPC rejection', async () => {
@@ -243,7 +251,9 @@ describe('approve/reject audit rows — SMI-5949 Wave 2 Step 4', () => {
   })
 
   it('audit rows carry team_id/skill_id/version scoped to this operation', async () => {
-    const { client, calls } = createFakeClient()
+    const { client, calls } = createFakeClient(
+      reviewRpcError({ code: '55000', message: 'this submission is already approved' })
+    )
     await mockBothClients(client)
 
     await executePrivateRegistryManage(
@@ -253,7 +263,10 @@ describe('approve/reject audit rows — SMI-5949 Wave 2 Step 4', () => {
 
     const audit = calls.find((c) => c.table === 'audit_logs' && c.op === 'insert')
     const metadata = audit!.payload?.metadata as Record<string, unknown>
-    expect(metadata.team_id).toBe(RESOLVED_TEAM)
+    // SMI-6114 untag rule: a refused review names a pending submission, so the team is recorded
+    // only where BYPASSRLS readers see it, never under the `team_id` key members' RLS reads.
+    expect(metadata.registry_team_id).toBe(RESOLVED_TEAM)
+    expect(metadata.team_id).toBeUndefined()
     expect(metadata.skill_id).toBe('myteam/skill-a')
     expect(metadata.version).toBe('2.1.0')
     expect(metadata.auth_path).toBe('user_jwt')

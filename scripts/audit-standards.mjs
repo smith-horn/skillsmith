@@ -430,14 +430,11 @@ console.log(`\n${BOLD}9. Script Docker Compliance${RESET}`)
 
 // Check if scripts use local npm commands (anti-pattern)
 // Excludes:
-//   - launch-*.sh (workflow launchers run locally by design)
 //   - run_cmd npm (Docker wrapper function per SMI-1366)
 //   - Documentation/descriptive text (e.g., "Add npm run benchmark script")
 const scriptsDir = 'scripts'
 if (existsSync(scriptsDir)) {
-  const scriptFiles = readdirSync(scriptsDir).filter(
-    (f) => (f.endsWith('.sh') || f.endsWith('.md')) && !f.startsWith('launch-')
-  )
+  const scriptFiles = readdirSync(scriptsDir).filter((f) => f.endsWith('.sh') || f.endsWith('.md'))
   let localNpmCount = 0
   const violatingFiles = []
 
@@ -485,7 +482,7 @@ if (existsSync(scriptsDir)) {
   if (localNpmCount === 0) {
     pass('All scripts use Docker for npm commands')
   } else {
-    // Changed to warn - launch scripts are expected to run locally
+    // Warn, not fail: some host-side npm usage in scripts/ is legitimate.
     warn(
       `${violatingFiles.length} scripts use local npm commands`,
       'Consider: docker exec skillsmith-dev-1 npm ...'
@@ -5317,7 +5314,7 @@ console.log(`\n${BOLD}Check 62: MCP server service-role usage lockdown (SMI-6109
   // an entry; keeping it would itself have been a silent, unnecessary allowlist grant.
   const MCP_SERVICE_ROLE_ALLOWLIST_JUSTIFICATIONS = {
     'packages/mcp-server/src/tools/registry-tools.live.audit.ts':
-      'audit-log write path — a system-table insert, fail-soft, structurally different from a tenant-data read',
+      'best-effort audit-log write for reads and uncommitted attempts only — fail-soft, a no-op without the key; committed mutations are audited by the trg_prs_audit trigger (SMI-6114)',
     // registry-tools.live.content.ts's entry was removed here (SMI-6111, 2026-08-24): its
     // getContent()/install() entitlement check now uses check_registry_team_entitlement(), a
     // SECURITY DEFINER RPC via the member client — no getSupabaseAdminClient() call remains in

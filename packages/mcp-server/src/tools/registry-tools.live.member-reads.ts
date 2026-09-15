@@ -15,7 +15,9 @@
  * user dual-identity-signal gap this credential move introduces is observable rather than
  * invisible: the license key resolves one team, the signed-in user's own membership can silently
  * point at a different one (or none), and RLS fails closed on the mismatch indistinguishably from
- * "genuinely not found."
+ * "genuinely not found." SMI-6114 caveat: that row needs a service-role key, which production MCP
+ * hosts never carry, so on those hosts the mismatch is visible only as a stderr line, not in
+ * audit_logs (see registry-tools.live.audit.ts's docstring).
  *
  * getNamespace()'s wrapper deliberately swallows a getMemberUserClient() failure and returns null
  * rather than throwing — its documented contract (registry-tools.ts's PrivateRegistryService

@@ -294,8 +294,13 @@ describe('getAdminUserClient / getMemberUserClient are never swapped at a call s
     expect(lastAuditMetadata().auth_role).toBe('member')
     expect(auditRows[auditRows.length - 1].event_type).toBe('private_registry:content_read')
 
+    // SMI-6114: a successful deprecate writes no client-side row (trg_prs_audit records it), so
+    // observe the admin binding on a deprecate the database refused instead.
     auditRows = []
-    await createLiveRegistryService().deprecate(TEAM_A, SKILL)
+    metadataError = { code: 'PGRST301', message: 'JWT expired' }
+    await expect(createLiveRegistryService().deprecate(TEAM_A, SKILL)).rejects.toThrow(
+      /JWT expired/
+    )
     expect(lastAuditMetadata().auth_role).toBe('admin')
   })
 
