@@ -128,7 +128,9 @@ export function establishThreshold(probeParentDir) {
  *   attack-table controls.
  * @param {Record<string, Function>} [options.hooks] - beforeBind(),
  *   betweenBindAndWalk(), afterProbe(relPath, probeResult),
- *   afterListing(relPath, entries).
+ *   afterListing(relPath, entries), beforeUnlink(relPath) [fired right
+ *   before a FILE's fs.unlinkSync -- directories go through afterProbe/
+ *   check() instead, which already have their own hook points].
  * @returns {{status:'removed'}|{status:'stopped', reason:string, path:string, errno:string|null}}
  */
 export function removeC0(targetRoot, options = {}) {
@@ -281,6 +283,7 @@ export function removeC0(targetRoot, options = {}) {
         if (stopped) return
       } else {
         if (!check()) return
+        callHook('beforeUnlink', childRel)
         try {
           fs.unlinkSync(childAbs)
         } catch (err) {
