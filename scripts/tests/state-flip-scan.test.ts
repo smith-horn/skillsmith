@@ -232,6 +232,9 @@ describe('scan-state-flip.sh (SMI-6514 P-7 scanner) -- Group A: portable', () =>
         '# no a|b here',
         '# a|b appears in this line',
         '# an unrelated line mentioning b on its own',
+        // A noun that begins with `-`. The script's own usage names "a flag name"
+        // as a valid noun, so this is inside the contract, not an edge case.
+        '# --force-flag is not installed by design',
         '',
       ].join('\n')
     )
@@ -359,6 +362,34 @@ describe('scan-state-flip.sh (SMI-6514 P-7 scanner) -- Group A: portable', () =>
     }
     expect(status).toBe(2)
   })
+
+  it.skipIf(!SCANNER_PRESENT)(
+    'a noun beginning with `-` is a pattern, not an option -- working tree (was 0, want 1)',
+    () => {
+      // Without `-e`, git grep parses a leading-dash noun as an OPTION. Measured on
+      // the real repo: `--force` reported a denominator of 0 against a true count of
+      // 209, and exited 1 -- the vacuous-success shape, for a noun the script's usage
+      // explicitly says it accepts.
+      expect(scanNoun(setupMetacharRepo().repoDir, '--force-flag')).toContain(
+        'STEP 1 (denominator): 1'
+      )
+    }
+  )
+
+  it.skipIf(!SCANNER_PRESENT)(
+    'a noun beginning with `-` is a pattern, not an option -- --ref mode (was 0, want 1)',
+    () => {
+      // Separate from the working-tree case: the two git grep call sites are distinct
+      // lines, so fixing one and not the other passes that test and fails this one.
+      const { repoDir } = setupMetacharRepo()
+      const sha = git(repoDir, ['rev-parse', 'HEAD']).trim()
+      const out = execFileSync('bash', [SCANNER_PATH, '--force-flag', '--ref', sha], {
+        cwd: repoDir,
+        encoding: 'utf8',
+      })
+      expect(out).toContain('STEP 1 (denominator): 1')
+    }
+  )
 
   it.skipIf(!SCANNER_PRESENT)(
     'control: a metacharacter-free noun is unaffected by any of the fixes',
