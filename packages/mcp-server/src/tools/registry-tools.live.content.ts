@@ -10,98 +10,54 @@
  * everything that decides WHETHER a caller may read a team's packaged content belongs together.
  *
  * Imports from `registry-tools.live.ts` are TYPE-ONLY, deliberately: `live.ts` imports
- * `getSkillContent` from here at runtime, so a value import back would be a real cycle. The two
- * shared constants live in `registry-tools.content.types.ts` for that reason.
+ * `getSkillContent` from here at runtime, so a value import back would be a real cycle.
  *
  * ============================================================================
- * TEAM-SCOPED ENTITLEMENT (Sol plan-review finding #1, critical, confirmed; SMI-6111)
+ * METADATA LOOKUP, ENTITLEMENT, AND CONTENT ARE NOW ONE RELEASE RPC (SMI-6651 / D14)
  * ============================================================================
- * `profiles.tier` is `MAX(tier_rank)` over the user's own subscription AND every team they belong
- * to (`20260524000002_team_member_tier_sync.sql`, `recompute_user_tier`). A user who is Enterprise
- * via Team A and also a member of a since-downgraded Team B still reads `tier = 'enterprise'`
- * globally — so a `profiles.tier` check does not prove the team that owns the requested row is
- * entitled. `profiles` is therefore never read on this path.
+ * Before SMI-6651 this function ran a metadata select, a `check_registry_team_entitlement` RPC,
+ * and a separate `content` select — three client-side calls over the caller's own JWT.
+ * `authenticated` no longer holds table-level SELECT on `private_registry_skills` at all
+ * (`20260915000000_private_registry_content_release_rpc.sql`), so a client-side `content` read is
+ * no longer merely unnecessary, it is impossible.
  *
- * Neither is the outer `private_registry_manage` handler's license-derived `teamId` treated as
- * proof of entitlement on its own. That id, plus RLS, establishes *membership*: `resolve_team_from
- * _license` resolves a team from a shared key, and `private_registry_skills_member_read` filters
- * rows to teams the caller belongs to. Membership is not a live subscription tier — a team that
- * downgrades from Enterprise without removing its members would keep indefinite content access if
- * membership were the only gate (the exact scenario ADR-129's Enterprise gate exists to prevent).
- *
- * So: the metadata read is RLS-scoped AND explicitly `team_id`-filtered (the ADR-116 invariant
- * every method on this service honors), and the entitlement check is then resolved against
- * `row.team_id` — the value read back off the row — via the `check_registry_team_entitlement`
- * SECURITY DEFINER RPC. Reading it back off the row rather than reusing the parameter keeps this
- * function's logic identical to the Edge Function's, where RLS is the only tenant scope; the two
- * transports cannot drift into disagreeing about which team is being checked.
- *
- * SMI-6111: this used to require the SERVICE-ROLE client, because `subscriptions`' only read
- * policy is "Users can view own subscriptions" (`011_users_subscriptions.sql`, `user_id =
- * auth.uid()`), so a team member who is not the subscription's purchaser sees zero rows through
- * their own JWT and every non-owner would be spuriously denied. That's now handled server-side by
- * `check_registry_team_entitlement(p_team_id)` (`20260824000000_check_registry_team_entitlement
- * .sql`), a narrowly-scoped `SECURITY DEFINER` function callable by `authenticated` — it answers
- * only "is team X's own subscription Enterprise-entitled," with no personal-subscription
- * fallback. It is deliberately NOT built on `resolve_effective_entitlement(p_user_id, p_team_id)`
- * (`20260819000001_resolve_effective_entitlement.sql`): that function's personal-subscription
- * UNION leg has no team correlation and ranks ahead of team-correlated candidates by tier, so a
- * caller with their own personal Enterprise subscription who is merely a member of some other,
- * non-Enterprise team would resolve to entitled=true for that team via their personal leg —
- * reintroducing the exact cross-team leak `profiles.tier` was excluded above to prevent. See
- * `docs/internal/implementation/smi-6111-registry-content-install-entitlement-rpc.md` for the
- * full design rationale. The member-authenticated client is used for the RPC call, same as the
- * metadata and content reads — no service-role client exists anywhere in this file anymore.
- *
- * ORDER IS LOAD-BEARING: metadata (no `content` column) → entitlement → content. A denied read
- * therefore never transfers a byte of content, and a not-found never reads one.
+ * All three steps are now one `release_private_registry_skill_content` SECURITY DEFINER RPC call,
+ * over the same member-authenticated client `getMemberUserClient()` already produced. It resolves
+ * entitlement against the ROW'S OWN team — never the caller's globally denormalized
+ * `profiles.tier`, which would let a caller entitled via a different team bypass a downgraded
+ * team's gate (see
+ * docs/internal/implementation/smi-6111-registry-content-install-entitlement-rpc.md) — and writes
+ * its own `audit_logs` row for every outcome (`not_found`/`denied`/`released`). `recordRegistryAudit`
+ * below is reached only for outcomes the RPC itself cannot audit: the RPC call failing or
+ * returning no data, an unrecognized `status`, and a `released` response with malformed content.
+ * See `supabase/migrations/20260915000000_private_registry_content_release_rpc.sql` for the RPC's
+ * full contract.
  */
 
 import { recordRegistryAudit, type RegistryReadAuditEvent } from './registry-tools.live.audit.js'
-import {
-  REGISTRY_METADATA_COLUMNS,
-  REGISTRY_TABLE,
-  type RegistrySkillContent,
-} from './registry-tools.content.types.js'
+import type { RegistrySkillContent } from './registry-tools.content.types.js'
 import type { SkillContent } from './registry-tools.js'
-import type { MinimalSupabaseClient, PrivateRegistrySkillRow } from './registry-tools.live.js'
 import type { UserClientBinding } from './registry-tools.live.auth.js'
 
 /** Audit `operation` for this path. Matches the Edge Function's `action: 'content_read'`. */
 const OPERATION = 'content_read' as const
 
-/** Shape of `check_registry_team_entitlement`'s JSONB return value. */
-interface RegistryTeamEntitlement {
-  entitled: boolean
-  detail: string
-}
-
 /**
- * Is THIS team currently entitled to Enterprise? See the header — resolved server-side, from the
- * team that owns the row, never from the caller's denormalized `profiles.tier`.
- *
- * A lookup failure throws rather than returning `{entitled: false}`: an unreachable
- * `check_registry_team_entitlement` call is an outage, and reporting it as "not entitled" would
- * tell a paying customer their subscription had lapsed. Fail loud, not fail-wrong.
- *
- * @param teamId - the row's own `team_id`, already RLS-authorized for this caller.
- * @param client - the caller's own member-authenticated client (from `UserClientBinding`); no
- *   service-role client exists in this file (SMI-6111).
+ * Shape of `release_private_registry_skill_content`'s JSONB return value (SMI-6651 / D14). See
+ * `supabase/migrations/20260915000000_private_registry_content_release_rpc.sql` for the
+ * authoritative contract — this is a client-side echo of it, not a second source of truth.
  */
-export async function isTeamEnterpriseEntitled(
-  teamId: string,
-  client: MinimalSupabaseClient
-): Promise<RegistryTeamEntitlement> {
-  const resp = await client.rpc<RegistryTeamEntitlement>('check_registry_team_entitlement', {
-    p_team_id: teamId,
-  })
-  if (resp.error) {
-    throw new Error(`Entitlement lookup failed: ${resp.error.message ?? 'unknown error'}`)
-  }
-  if (!resp.data) {
-    throw new Error('Entitlement lookup failed: check_registry_team_entitlement returned no data')
-  }
-  return resp.data
+interface ReleaseRpcResult {
+  status: 'not_found' | 'denied' | 'released'
+  detail?: string
+  skill_id?: string
+  team_id?: string
+  version?: string
+  description?: string | null
+  content_hash?: string | null
+  deprecated?: boolean
+  published_at?: string
+  content?: SkillContent
 }
 
 export interface GetSkillContentParams {
@@ -134,13 +90,14 @@ function auditBase(params: GetSkillContentParams): RegistryReadAuditEvent & { re
  * Returns `null` when nothing visible matches (a genuine absence, or a cross-team `skillId` that
  * RLS + the tenant filter removed — the two are deliberately indistinguishable to the caller, so
  * this is never an existence oracle for another team's registry). Throws when the caller's own
- * team is no longer entitled, or on a real query failure: an outage must never be reported as
+ * team is no longer entitled, or on a real RPC failure: an outage must never be reported as
  * "not found".
  *
- * Version selection mirrors `registry-tools.live.ts`'s `get(teamId, skillId, version)` exactly —
- * an explicit `version` pins it, otherwise the MOST RECENTLY PUBLISHED version wins (not the
- * highest semver), chosen with the same `published_at` reduce — so `get` and `install` can never
- * disagree about what "no version specified" means.
+ * Version selection (an explicit `version` pins it, otherwise the MOST RECENTLY PUBLISHED version
+ * wins, not the highest semver) is now entirely the RPC's own concern — see
+ * `release_private_registry_skill_content`'s SQL for the exact `ORDER BY published_at DESC, id`
+ * tie-break, matched to `registry-tools.live.ts`'s `get(teamId, skillId, version)` reduce so `get`
+ * and `install` can never disagree about what "no version specified" means.
  */
 export async function getSkillContent(
   params: GetSkillContentParams
@@ -148,58 +105,46 @@ export async function getSkillContent(
   const { binding, teamId, skillId, version } = params
   const audit = auditBase(params)
 
-  // (1) Metadata only — `content` is deliberately not selected here, so neither a not-found nor a
-  //     denied outcome pulls up to 2 MB over the wire.
-  let query = binding.client
-    .from<PrivateRegistrySkillRow>(REGISTRY_TABLE)
-    .select(REGISTRY_METADATA_COLUMNS)
-    .eq('team_id', teamId)
-    .eq('skill_id', skillId)
-    // SMI-5949 Wave 3 (deprecated read-filter closure): unlike approval_status, `deprecated` is
-    // NOT enforced by RLS (private_registry_skills_member_read only ever scoped team_id and, since
-    // Wave 2, approval_status), so this predicate must be explicit here too, even though this
-    // query already runs over the caller's own JWT. No opt-in — install must never resolve a
-    // deprecated version, including by an exact version pin; see registry-tools.live.reads.ts's
-    // getSkill() for the identical no-opt-in rule on the MCP metadata read.
-    .eq('deprecated', false)
-  if (version) query = query.eq('version', version)
-  const metadata = await query
+  // SMI-6651 (plan D14): metadata lookup, entitlement, and content read — all one release RPC,
+  // over the caller's own member-authenticated client. `p_team_id` is the ADR-116 in-query
+  // tenant filter this service has always applied — not a substitute for the RPC's own
+  // membership/entitlement checks.
+  const resp = await binding.client.rpc<ReleaseRpcResult>(
+    'release_private_registry_skill_content',
+    {
+      p_skill_id: skillId,
+      p_version: version ?? null,
+      p_team_id: teamId,
+      p_transport: 'mcp_server',
+      p_request_id: null,
+    }
+  )
 
-  if (metadata.error) {
-    await recordRegistryAudit({ ...audit, detail: metadata.error.code ?? 'metadata_query_error' })
+  if (resp.error) {
+    // The only outcome this function still audits itself: the RPC call failing outright is a
+    // transport/outage error, never a business outcome the RPC could have recorded.
+    await recordRegistryAudit({ ...audit, detail: 'release_rpc_failed' })
     throw new Error(
-      `Failed to read registry skill content: ${metadata.error.message ?? 'unknown error'}`
+      `Failed to read registry skill content: ${resp.error.message ?? 'unknown error'}`
     )
   }
-  const rows = metadata.data ?? []
-  if (rows.length === 0) {
-    await recordRegistryAudit({ ...audit, result: 'not_found', detail: 'no_visible_row' })
+
+  const result = resp.data
+  if (!result) {
+    // The RPC always returns jsonb; null data with no error means something broke server-side
+    // (a transport/driver anomaly), never a legitimate "nothing to see here" — an outage must
+    // never be reported as not-found.
+    await recordRegistryAudit({ ...audit, detail: 'release_rpc_no_data' })
+    throw new Error('Failed to read registry skill content: release_rpc_no_data')
+  }
+
+  if (result.status === 'not_found') {
+    // No app-side audit: the RPC already wrote the `not_found` row.
     return null
   }
-  // Same reduce (and same first-wins tie-break) as `get()`'s no-version branch.
-  const row = rows.reduce((a, b) => (a.published_at >= b.published_at ? a : b))
 
-  // (2) Entitlement, scoped to the ROW's team — not the caller's global tier.
-  let entitlement: { entitled: boolean; detail: string }
-  try {
-    entitlement = await isTeamEnterpriseEntitled(row.team_id, binding.client)
-  } catch (err) {
-    // An outage in the entitlement lookup is an `error` outcome, not a denial — audited as such
-    // (Sol review #8 wants all four outcomes covered) and rethrown unchanged.
-    await recordRegistryAudit({
-      ...audit,
-      version: row.version,
-      detail: 'entitlement_lookup_failed',
-    })
-    throw err
-  }
-  if (!entitlement.entitled) {
-    await recordRegistryAudit({
-      ...audit,
-      result: 'denied',
-      version: row.version,
-      detail: entitlement.detail,
-    })
+  if (result.status === 'denied') {
+    // No app-side audit: the RPC already wrote the `denied` row.
     throw new Error(
       `Installing "${skillId}" from the private registry requires an active Enterprise ` +
         "subscription on the team that owns it, and that team's subscription is not currently " +
@@ -207,49 +152,44 @@ export async function getSkillContent(
     )
   }
 
-  // (3) Content, still as the caller. Reached only after both gates pass.
-  const contentResp = await binding.client
-    .from<{ content: SkillContent }>(REGISTRY_TABLE)
-    .select('content')
-    .eq('id', row.id)
-  if (contentResp.error) {
-    await recordRegistryAudit({
-      ...audit,
-      version: row.version,
-      detail: contentResp.error.code ?? 'content_query_error',
-    })
-    throw new Error(
-      `Failed to read registry skill content: ${contentResp.error.message ?? 'unknown error'}`
-    )
-  }
-  const content = contentResp.data?.[0]?.content
-  if (!content || typeof content !== 'object' || Array.isArray(content)) {
-    // The row was visible a moment ago; a vanished or misshapen payload is a not-found, never an
-    // empty install.
-    await recordRegistryAudit({
-      ...audit,
-      result: 'not_found',
-      version: row.version,
-      detail: 'content_missing_or_malformed',
-    })
-    return null
+  if (result.status !== 'released') {
+    // Defensive: the RPC's own `status` values are a closed set. Anything else here is not a
+    // business outcome the RPC could have audited, so this function must, with its own detail so
+    // it can be told apart from a malformed `content` payload in `audit_logs`.
+    await recordRegistryAudit({ ...audit, detail: 'release_rpc_unrecognized_status' })
+    throw new Error('Failed to read registry skill content: release_rpc_unrecognized_status')
   }
 
-  await recordRegistryAudit({
-    ...audit,
-    result: 'success',
-    version: row.version,
-    fileCount: Object.keys(content).length,
-    contentHash: row.content_hash,
-  })
+  // `result.status === 'released'` from here — its step 4 (`jsonb_typeof(v_content) <> 'object'`)
+  // already guarantees `content` is a plain object before the RPC ever returns `released`, but
+  // NOT that every value inside it is a string: the DB's own CHECK only requires a non-empty
+  // string `SKILL.md`, every other key can be any JSON type, and `authenticated` still keeps
+  // `GRANT INSERT (... content)` — a malicious or buggy publish can land
+  // `{"SKILL.md":"ok","x":123}`. `installFromContent()` expects every value to be text, so this
+  // is a defensive check against the payload arriving malformed some other way (a non-object
+  // shape, or an object with a non-string value) — never inventing an empty install for it.
+  const content = result.content
+  if (
+    !content ||
+    typeof content !== 'object' ||
+    Array.isArray(content) ||
+    !Object.values(content).every((value) => typeof value === 'string')
+  ) {
+    await recordRegistryAudit({
+      ...audit,
+      version: result.version,
+      detail: 'content_malformed_after_release',
+    })
+    throw new Error('Failed to read registry skill content: content_malformed_after_release')
+  }
 
   return {
-    skillId: row.skill_id,
-    version: row.version,
-    teamId: row.team_id,
+    skillId: result.skill_id as string,
+    version: result.version as string,
+    teamId: result.team_id as string,
     content,
-    contentHash: row.content_hash,
-    deprecated: row.deprecated,
-    publishedAt: row.published_at,
+    contentHash: result.content_hash ?? null,
+    deprecated: Boolean(result.deprecated),
+    publishedAt: result.published_at as string,
   }
 }

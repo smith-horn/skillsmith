@@ -257,13 +257,14 @@ function resolveActor(event: RegistryAuditEvent, fingerprint: string | null): st
  * failed publish, a `get`/`content_read` miss), so it carries the team only as `registry_team_id`,
  * readable by BYPASSRLS roles alone.
  *
- * Differs from the Edge Function here — not a mirror of it. `getSkillContent()` (content.ts) can
- * write a `denied`/`error`/`not_found` `content_read` row *after* its own RLS-gated metadata read
- * has already returned an approved, member-visible row (e.g. the content fetch itself fails). This
- * function untags all four of those outcomes — only `result === 'success'` is tagged for a
- * non-mutation operation — while `private-registry-get`'s Edge Function tags the same post-read
- * outcomes as member-visible. Nothing leaks either way; the MCP side is simply the stricter of the
- * two for this one case, not the matching one.
+ * The Edge Function now applies the same rule (SMI-6651). It used to tag post-read outcomes as
+ * member-visible — a `denied`/`error`/`not_found` `content_read` row written *after* its RLS-gated
+ * metadata read had already returned an approved row — which made the MCP side the stricter of the
+ * two. Since SMI-6651 both transports untag every non-`success` read: `private-registry-get`'s
+ * `recordAudit()` carries its own `isMemberVisible()` with this predicate, and the outcomes that
+ * used to be written there are written by `release_private_registry_skill_content()` instead, in
+ * the same transaction as the read. Rows written before that migration keep the old tagging, so a
+ * query spanning the cutover sees both conventions.
  */
 function isMemberVisible(event: RegistryAuditEvent): boolean {
   if (!MUTATION_OPERATIONS.has(event.operation)) return event.result === 'success'

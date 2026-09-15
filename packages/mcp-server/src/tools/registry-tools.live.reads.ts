@@ -24,9 +24,9 @@
  * `team_id` (and, since Wave 2, `approval_status`) — never `deprecated`. The plan doc's Context
  * section names this precisely: `deprecated` was documented ("hidden from search") and messaged
  * (`private_registry_manage(action:'deprecate')`'s response text) as hiding a skill, while no read
- * path actually filtered on it. This module closes that gap for `list`/`get`;
- * `registry-tools.live.content.ts` and the Edge Function close it for their own two surfaces
- * separately, since neither imports from here.
+ * path actually filtered on it. This module closes that gap for `list`/`get`; the
+ * `release_private_registry_skill_content` RPC closes it for install and the Edge Function
+ * (SMI-6651), which import nothing from here.
  *
  * `listSkills()` gains an explicit `includeDeprecated` opt-in — so a team admin can still see what
  * they deprecated — deliberately NOT extended to `getSkill()`. See `getSkill()`'s own doc comment

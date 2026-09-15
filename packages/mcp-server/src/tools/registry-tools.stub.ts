@@ -25,9 +25,10 @@
  *
  * WHAT THIS STUB DOES NOT DO, and must never be read as evidence about:
  *   - **Entitlement.** `getContent()` here has no Enterprise/subscription check at all. That gate
- *     is a live-service concern (registry-tools.live.content.ts) because it is a query against
- *     `teams`/`subscriptions`, which the stub has no analogue of. A test that passes against this
- *     stub proves nothing about entitlement; those tests drive the live service instead.
+ *     is a live-service concern (the release RPC behind registry-tools.live.content.ts) because it
+ *     is a query against `teams`/`subscriptions`, which the stub has no analogue of. A test that
+ *     passes against this stub proves nothing about entitlement; those tests drive the live
+ *     service instead.
  *   - **Version immutability.** The real table's UNIQUE(team_id, skill_id, version) is what
  *     enforces that; re-publishing the same triple here just overwrites.
  *   - **RLS / cross-team isolation.** Approximated only: entries are keyed by (teamId, skillId) so

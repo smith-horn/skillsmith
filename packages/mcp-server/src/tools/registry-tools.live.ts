@@ -60,11 +60,12 @@
  *   SMI-6080), and surface an actionable error when no user credential is present.
  *
  * - **Content reads** (`getContent`, SMI-5905 Wave 3) are member-level like the operations above:
- *   the signed-in user's own JWT (so `_member_read` decides visibility against a real
- *   `auth.uid()`). `getAdminUserClient()` / `getMemberUserClient()` (`registry-tools.live.auth.ts`)
+ *   the signed-in user's own JWT, so the release RPC resolves visibility against a real
+ *   `auth.uid()`. `getAdminUserClient()` / `getMemberUserClient()` (`registry-tools.live.auth.ts`)
  *   are two explicitly-named getters for exactly this reason — the choice cannot be defaulted or
- *   omitted at a call site. What decides whether a content read is *entitled* is in
- *   `registry-tools.live.content.ts`, and is scoped to the row's own team, not the caller's tier.
+ *   omitted at a call site. Visibility, entitlement (scoped to the row's own team, not the
+ *   caller's tier) and the audit row all live in the `release_private_registry_skill_content`
+ *   RPC that `registry-tools.live.content.ts` calls (SMI-6651).
  *
  * - **`publish`** (SMI-5949 Wave 2 Step 2, D-7) is member-level like `getContent` — not admin: any
  *   team member may submit a version, not only admins. `published_by` is `DEFAULT auth.uid()`
@@ -412,8 +413,8 @@ export function createLiveRegistryService(): PrivateRegistryService {
 
     // SMI-5905 Wave 3. MEMBER getter — never getAdminUserClient(): reading a skill you may
     // install is not an admin action, and claiming it is would lock every non-admin member out of
-    // their own team's registry. The entitlement check that DOES gate this lives in
-    // registry-tools.live.content.ts and is scoped to the row's own team, not the caller's tier.
+    // their own team's registry. The entitlement check that DOES gate this runs inside the
+    // release RPC that registry-tools.live.content.ts calls, scoped to the row's own team.
     async getContent(teamId, skillId, version): Promise<RegistrySkillContent | null> {
       const binding = await getMemberUserClient('install')
       return getSkillContent({ binding, teamId, skillId, version })
@@ -421,9 +422,9 @@ export function createLiveRegistryService(): PrivateRegistryService {
 
     // Deprecates every version of the skill within this team. SMI-5949 Wave 3: no longer just
     // "hidden from search, remains installable" — since the deprecated=false predicate below is
-    // now real (registry-tools.live.reads.ts, registry-tools.live.content.ts, the Edge Function),
-    // this makes every version genuinely unreachable through list/get/install, not just absent
-    // from a search surface the private registry never had. Admin-gated: runs as the signed-in
+    // now real (registry-tools.live.reads.ts, plus the release RPC behind install and the Edge
+    // Function), this makes every version genuinely unreachable through list/get/install, not
+    // just absent from a search surface the private registry never had. Admin-gated: runs as the signed-in
     // user so RLS authorizes it (SMI-5822). The team_id filter is still load-bearing — never
     // cross-team — and is now backed by `_admin_update`'s own USING clause rather than standing
     // alone.
