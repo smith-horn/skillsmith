@@ -48,7 +48,7 @@
  */
 import { execFileSync } from 'node:child_process'
 import { existsSync, mkdirSync, rmSync, writeFileSync } from 'node:fs'
-import { join } from 'node:path'
+import { dirname, join } from 'node:path'
 
 import { afterEach, describe, expect, it } from 'vitest'
 
@@ -208,6 +208,200 @@ describe('scan-state-flip.sh (SMI-6514 P-7 scanner) -- Group A: portable', () =>
     }
   )
 
+  // SMI-6659 / SMI-6678. Three defects, all of which understate or corrupt the
+  // STEP-1 denominator -- the one number P-7's design rests on (SMI-6514 s2.4).
+  // Each BEFORE value below was measured against the pre-fix scanner, and is in the
+  // test name so a reader can see what the case caught rather than trust that it did.
+  function setupMetacharRepo(): { repoDir: string } {
+    const repoDir = makeFixtureTempDir('state-flip-metachar-fixture')
+    createdRepoDirs.push(repoDir)
+    git(repoDir, ['init', '-q', '-b', 'main'])
+    const subDir = join(repoDir, 'scripts', 'sub')
+    mkdirSync(subDir, { recursive: true })
+    writeFileSync(
+      join(subDir, 'fixture.sh'),
+      [
+        '# widget.tool is not installed by design',
+        '# widgetXtool is not installed by design',
+        '# thing(alpha) is not installed by design',
+        '# cache[fast] is not installed by design',
+        // The next three exist to make STEP 2 depend on the NOUN. A line like
+        // "# a|b is not installed by design" cannot test escape_ere() at all: it
+        // matches STEP 2 through the noun-INDEPENDENT alternatives `not installed`
+        // and `by design`, so deleting the escaping entirely still scores 1.
+        '# no a|b here',
+        '# a|b appears in this line',
+        '# an unrelated line mentioning b on its own',
+        // A noun that begins with `-`. The script's own usage names "a flag name"
+        // as a valid noun, so this is inside the contract, not an edge case.
+        '# --force-flag is not installed by design',
+        '',
+      ].join('\n')
+    )
+    // Directly under scripts/, NO intermediate directory -- invisible to the
+    // pre-SMI-6678 pathspec. One of each extension, so fixing `.sh` while leaving
+    // `.ts` broken fails.
+    writeFileSync(
+      join(repoDir, 'scripts', 'toplevel.sh'),
+      ['# toplevelsh is not installed by design', ''].join('\n')
+    )
+    writeFileSync(
+      join(repoDir, 'scripts', 'toplevel.ts'),
+      ['// toplevelts is not installed by design', ''].join('\n')
+    )
+    git(repoDir, ['add', '.'])
+    git(repoDir, ['commit', '-q', '-m', 'metacharacter + top-level fixtures'])
+    // Written AFTER the commit and never added: only a working-tree scan that
+    // passes --untracked can see it.
+    writeFileSync(
+      join(subDir, 'never-added.sh'),
+      ['# untrackednoun is not installed by design', ''].join('\n')
+    )
+    return { repoDir }
+  }
+
+  const scanNoun = (repoDir: string, noun: string): string =>
+    execFileSync('bash', [SCANNER_PATH, noun], { cwd: repoDir, encoding: 'utf8' })
+
+  it.skipIf(!SCANNER_PRESENT)(
+    'SMI-6659: a `.` in the noun does not over-match (was 2, want 1)',
+    () => {
+      // The dangerous direction: as a regex, `widget.tool` also matches `widgetXtool`,
+      // inflating the denominator rather than zeroing it, so the vacuous-success
+      // guard never fires and the output reads as a thorough scan.
+      expect(scanNoun(setupMetacharRepo().repoDir, 'widget.tool')).toContain(
+        'STEP 1 (denominator): 1'
+      )
+    }
+  )
+
+  it.skipIf(!SCANNER_PRESENT)(
+    'SMI-6659: parentheses do not zero the denominator (was 0, want 1)',
+    () => {
+      expect(scanNoun(setupMetacharRepo().repoDir, 'thing(alpha)')).toContain(
+        'STEP 1 (denominator): 1'
+      )
+    }
+  )
+
+  it.skipIf(!SCANNER_PRESENT)(
+    'SMI-6659: a bracket expression does not zero the denominator (was 0, want 1)',
+    () => {
+      // Distinct from the parenthesis case on purpose: a fix that special-cased only
+      // `(` and `)` would pass that test and fail this one.
+      expect(scanNoun(setupMetacharRepo().repoDir, 'cache[fast]')).toContain(
+        'STEP 1 (denominator): 1'
+      )
+    }
+  )
+
+  it.skipIf(!SCANNER_PRESENT)(
+    'SMI-6659: `|` does not match every line, and STEP 2 depends on the escaped noun',
+    () => {
+      const out = scanNoun(setupMetacharRepo().repoDir, 'a|b')
+      // STEP 1 was 10 before the fix -- the alternation escaped the noun and matched
+      // every line in the fixture.
+      expect(out).toContain('STEP 1 (denominator): 2')
+      // STEP 2 is the assertion that actually pins escape_ere(), which `-F` cannot
+      // fix because ABSENCE_VOCAB interpolates the noun into a real ERE alternation.
+      // Escaped, only `# no a|b here` matches via `no <noun>` -> 1.
+      // Unescaped, `no a|b|without a|b` becomes the alternatives `no a`, `b`,
+      // `without a`, `b`, and the bare `b` also matches `# a|b appears in this line`
+      // and `# an unrelated line mentioning b on its own` -> 3.
+      expect(out).toContain('STEP 2: noun x absence-vocabulary (1 hit(s))')
+    }
+  )
+
+  it.skipIf(!SCANNER_PRESENT)(
+    'SMI-6678: a .sh directly under scripts/ is scanned (was 0, want 1)',
+    () => {
+      // `scripts/**/*.sh` requires an intervening directory; `scripts/*.sh` does not.
+      // 75 top-level shell scripts were invisible, scripts/_lib.sh among them.
+      expect(scanNoun(setupMetacharRepo().repoDir, 'toplevelsh')).toContain(
+        'STEP 1 (denominator): 1'
+      )
+    }
+  )
+
+  it.skipIf(!SCANNER_PRESENT)(
+    'SMI-6678: a .ts directly under scripts/ is scanned (was 0, want 1)',
+    () => {
+      // Separate from the .sh case: fixing one pathspec and not the other passes that
+      // test and fails this one. 57 top-level TypeScript files were invisible.
+      expect(scanNoun(setupMetacharRepo().repoDir, 'toplevelts')).toContain(
+        'STEP 1 (denominator): 1'
+      )
+    }
+  )
+
+  it.skipIf(!SCANNER_PRESENT)('working-tree mode sees an untracked file (was 0, want 1)', () => {
+    // `git grep` without --untracked searches tracked content only, so a newly
+    // written script carrying the noun AND a stale assertion contributed nothing.
+    // Every other fixture here is committed before scanning, which is exactly why
+    // no existing test could expose this.
+    expect(scanNoun(setupMetacharRepo().repoDir, 'untrackednoun')).toContain(
+      'STEP 1 (denominator): 1'
+    )
+  })
+
+  it.skipIf(!SCANNER_PRESENT)('a noun containing a newline is rejected, not silently split', () => {
+    // `git grep -F` treats each line of a multi-line pattern as its own fixed
+    // pattern, so the denominator becomes the union of the parts. Measured on the
+    // real repo: a two-line noun reported its first component's 43 hits for a
+    // whole-noun truth of 0.
+    const { repoDir } = setupMetacharRepo()
+    let status = 0
+    try {
+      execFileSync('bash', [SCANNER_PATH, 'toplevelsh\nTHIS_COMPONENT_DOES_NOT_EXIST'], {
+        cwd: repoDir,
+        encoding: 'utf8',
+        stdio: 'pipe',
+      })
+    } catch (err) {
+      status = (err as { status: number }).status
+    }
+    expect(status).toBe(2)
+  })
+
+  it.skipIf(!SCANNER_PRESENT)(
+    'a noun beginning with `-` is a pattern, not an option -- working tree (was 0, want 1)',
+    () => {
+      // Without `-e`, git grep parses a leading-dash noun as an OPTION. Measured on
+      // the real repo: `--force` reported a denominator of 0 against a true count of
+      // 209, and exited 1 -- the vacuous-success shape, for a noun the script's usage
+      // explicitly says it accepts.
+      expect(scanNoun(setupMetacharRepo().repoDir, '--force-flag')).toContain(
+        'STEP 1 (denominator): 1'
+      )
+    }
+  )
+
+  it.skipIf(!SCANNER_PRESENT)(
+    'a noun beginning with `-` is a pattern, not an option -- --ref mode (was 0, want 1)',
+    () => {
+      // Separate from the working-tree case: the two git grep call sites are distinct
+      // lines, so fixing one and not the other passes that test and fails this one.
+      const { repoDir } = setupMetacharRepo()
+      const sha = git(repoDir, ['rev-parse', 'HEAD']).trim()
+      const out = execFileSync('bash', [SCANNER_PATH, '--force-flag', '--ref', sha], {
+        cwd: repoDir,
+        encoding: 'utf8',
+      })
+      expect(out).toContain('STEP 1 (denominator): 1')
+    }
+  )
+
+  it.skipIf(!SCANNER_PRESENT)(
+    'control: a metacharacter-free noun is unaffected by any of the fixes',
+    () => {
+      // Without this, a change that broke ordinary scanning would still satisfy every
+      // case above.
+      expect(scanNoun(setupMetacharRepo().repoDir, 'widgetXtool')).toContain(
+        'STEP 1 (denominator): 1'
+      )
+    }
+  )
+
   it.skipIf(!SCANNER_PRESENT)(
     'correctly counts the post-flip working tree with no --ref (STEP1=1, STEP2=0, STEP3=0)',
     () => {
@@ -223,15 +417,244 @@ describe('scan-state-flip.sh (SMI-6514 P-7 scanner) -- Group A: portable', () =>
   )
 
   it.skipIf(!SCANNER_PRESENT)(
-    'exits non-zero on a zero STEP-1 denominator against a real, working repo (the vacuous-success guard)',
+    'exits with code 1 -- not merely non-zero -- on a genuine zero STEP-1 denominator (the vacuous-success guard)',
     () => {
+      // Pinned to 1 specifically, not `.toThrow()`. The error path below exits 2,
+      // and a bare "non-zero" assertion would be satisfied by either, so the two
+      // cases could not tell each other apart -- the exact shape of a test that
+      // exercises code without constraining it.
       const { repoDir } = setupSyntheticStateFlipRepo()
-      expect(() =>
+      let status: number | undefined
+      let stderr = ''
+      try {
         execFileSync('bash', [SCANNER_PATH, 'zzz-totally-absent-noun-smi-6514', '--ref', 'HEAD'], {
           cwd: repoDir,
           encoding: 'utf8',
         })
-      ).toThrow()
+      } catch (err) {
+        const e = err as { status?: number; stderr?: string }
+        status = e.status
+        stderr = e.stderr ?? ''
+      }
+      expect(status).toBe(1)
+      // stderr, not stdout -- the scanner writes its verdict to stderr. Asserting
+      // this on stdout passes vacuously, which is what the first draft of the
+      // sibling case below did.
+      expect(stderr).toContain('does not appear anywhere')
+    }
+  )
+
+  it.skipIf(!SCANNER_PRESENT)(
+    'an unresolvable --ref exits 2 and never claims the noun is absent (git grep error vs no-match)',
+    () => {
+      // SMI-6659, 5th denominator gap. `git grep` exits 1 for "no match" and 128
+      // for an unresolvable revision. The old `2>/dev/null || true` collapsed both
+      // into an empty result, so a search that NEVER RAN was reported as a
+      // denominator of 0 under "The noun does not appear anywhere in the scanned
+      // paths" -- a false statement about the codebase, offering two explanations
+      // of which neither was the real cause.
+      const { repoDir } = setupSyntheticStateFlipRepo()
+      let status: number | undefined
+      let stdout = ''
+      let stderr = ''
+      try {
+        execFileSync('bash', [SCANNER_PATH, 'widget-tool', '--ref', 'no-such-ref-smi-6659'], {
+          cwd: repoDir,
+          encoding: 'utf8',
+        })
+      } catch (err) {
+        const e = err as { status?: number; stdout?: string; stderr?: string }
+        status = e.status
+        stdout = e.stdout ?? ''
+        stderr = e.stderr ?? ''
+      }
+      expect(status).toBe(2)
+      expect(stderr).toContain('is an ERROR, not a no-match result')
+      // The decisive assertion, and it has to be on stderr: that is where the
+      // vacuous-success verdict is written, so asserting its ABSENCE on stdout
+      // would hold whether or not the fix exists.
+      expect(stderr).not.toContain('does not appear anywhere')
+      expect(stdout).not.toContain('STEP 2')
+    }
+  )
+
+  it.skipIf(!SCANNER_PRESENT)(
+    'STEP 2 and STEP 3 match file CONTENT, not the ref/path prefix of the grep record',
+    () => {
+      // SMI-6659, 9th gap. A plain post-filter over STEP1_OUT sees the whole record
+      // -- "path:line:content", or "ref:path:line:content" with --ref -- so absence
+      // vocabulary in the PATH matched lines whose content carried none. An ordinary
+      // filename is enough; no exotic ref syntax is needed.
+      const repoDir = makeFixtureTempDir('state-flip-prefix-fixture')
+      createdRepoDirs.push(repoDir)
+      git(repoDir, ['init', '-q', '-b', 'main'])
+      mkdirSync(join(repoDir, 'scripts'), { recursive: true })
+      // Path says "absent"; content says nothing of the kind.
+      writeFileSync(
+        join(repoDir, 'scripts', 'absent-handler.sh'),
+        'widget-tool is configured here\nwidget-tool runs twice\n'
+      )
+      // The only genuine casualty.
+      writeFileSync(join(repoDir, 'scripts', 'real.sh'), 'widget-tool is not installed by design\n')
+      git(repoDir, ['add', '-A'])
+      git(repoDir, ['-c', 'user.email=t@t', '-c', 'user.name=t', 'commit', '-qm', 'init'])
+      // Both modes: the ref record carries an extra "ref:" field, so a fix applied to
+      // one arm and not the other would pass on the strength of the covered one.
+      for (const args of [['widget-tool', '--ref', 'HEAD'], ['widget-tool']]) {
+        const out = execFileSync('bash', [SCANNER_PATH, ...args], {
+          cwd: repoDir,
+          encoding: 'utf8',
+        })
+        const label = `args: ${args.join(' ')}`
+        expect(out, label).toContain('STEP 1 (denominator): 3')
+        expect(out, label).toContain('STEP 2: noun x absence-vocabulary (1 hit(s))')
+        // Decisive: the two plain-content lines must not be counted as casualties.
+        expect(out, label).not.toContain('STEP 2: noun x absence-vocabulary (3 hit(s))')
+        expect(out, label).not.toContain('absent-handler.sh')
+      }
+    }
+  )
+
+  it.skipIf(!SCANNER_PRESENT)(
+    'a colon in a pathname does not corrupt the scaffold location',
+    () => {
+      // SMI-6659, 10th gap. Splitting at the FIRST colon assumed the path had none:
+      // scripts/a:b.sh:1:content yielded loc=scripts/a, lineno=b.sh, and the row
+      // rendered as `scripts/a:b.sh` -- which READS like a correct path while the
+      // line number is silently gone. That plausibility is what makes it dangerous.
+      const repoDir = makeFixtureTempDir('state-flip-colon-fixture')
+      createdRepoDirs.push(repoDir)
+      git(repoDir, ['init', '-q', '-b', 'main'])
+      mkdirSync(join(repoDir, 'scripts'), { recursive: true })
+      writeFileSync(join(repoDir, 'scripts', 'a:b.sh'), 'widget-tool is not installed by design\n')
+      git(repoDir, ['add', '-A'])
+      git(repoDir, ['-c', 'user.email=t@t', '-c', 'user.name=t', 'commit', '-qm', 'init'])
+      const out = execFileSync('bash', [SCANNER_PATH, 'widget-tool', '--ref', 'HEAD'], {
+        cwd: repoDir,
+        encoding: 'utf8',
+      })
+      expect(out).toContain('| `scripts/a:b.sh:1` |')
+    }
+  )
+
+  it.skipIf(!SCANNER_PRESENT)(
+    'test directories are in scope -- packages/*/tests, root tests, .mts and .cjs',
+    () => {
+      // SMI-6659, 8th gap. The scanner's own header names "tests whose premise was
+      // the old state" as the FIRST P-7 casualty category, yet packages/*/tests/**
+      // and root tests/** were outside PATHSPECS. Measured on the live tree before
+      // the fix: `API_MOCKS.errorServiceUnavailable` reported a denominator of 0
+      // under "does not appear anywhere" while living in a package test.
+      const repoDir = makeFixtureTempDir('state-flip-testdirs-fixture')
+      createdRepoDirs.push(repoDir)
+      git(repoDir, ['init', '-q', '-b', 'main'])
+      // One occurrence per newly-covered location, so a partial revert of the
+      // widening reddens rather than passing on the strength of the others.
+      const places = [
+        'packages/core/tests/thing.test.ts',
+        'tests/integration/thing.test.ts',
+        'scripts/lib/thing.d.mts',
+        'scripts/thing.cjs',
+      ]
+      for (const rel of places) {
+        mkdirSync(join(repoDir, dirname(rel)), { recursive: true })
+        writeFileSync(join(repoDir, rel), '// widget-tool is referenced here\n')
+      }
+      git(repoDir, ['add', '-A'])
+      git(repoDir, ['-c', 'user.email=t@t', '-c', 'user.name=t', 'commit', '-qm', 'init'])
+      for (const args of [['widget-tool', '--ref', 'HEAD'], ['widget-tool']]) {
+        const out = execFileSync('bash', [SCANNER_PATH, ...args], {
+          cwd: repoDir,
+          encoding: 'utf8',
+        })
+        expect(out, `args: ${args.join(' ')}`).toContain(`STEP 1 (denominator): ${places.length}`)
+      }
+    }
+  )
+
+  it.skipIf(!SCANNER_PRESENT)(
+    'a --ref value beginning with a dash is rejected, not consumed by git grep as an option',
+    () => {
+      // SMI-6659, 6th gap. The ref is passed positionally, so `--ref --cached`
+      // made git search the INDEX and exit 0 while the report named `--cached` as
+      // the thing searched -- a denominator for something other than the named
+      // ref. Exit 0 means the run_grep error check cannot see it; the ref has to
+      // be verified before use.
+      const { repoDir } = setupSyntheticStateFlipRepo()
+      for (const badRef of ['--cached', '--all', '-q']) {
+        let status: number | undefined
+        let stdout = ''
+        let stderr = ''
+        try {
+          execFileSync('bash', [SCANNER_PATH, 'widget-tool', '--ref', badRef], {
+            cwd: repoDir,
+            encoding: 'utf8',
+          })
+        } catch (err) {
+          const e = err as { status?: number; stdout?: string; stderr?: string }
+          status = e.status
+          stdout = e.stdout ?? ''
+          stderr = e.stderr ?? ''
+        }
+        expect(status, `--ref ${badRef} must exit 2`).toBe(2)
+        expect(stderr).toContain("begins with '-'")
+        expect(stderr).toContain('consume it as an OPTION')
+        // Decisive: no denominator may be reported for a ref that was never used.
+        expect(stdout).not.toContain('STEP 1 (denominator)')
+      }
+    }
+  )
+
+  it.skipIf(!SCANNER_PRESENT)(
+    'a NUL-containing source file contributes every matching line, not one "Binary file" record',
+    () => {
+      // SMI-6659, 7th gap. Without -a, git grep collapses a binary-classified file
+      // to a single "Binary file X matches" line regardless of how many lines match,
+      // so STEP 1 undercounts and STEP 2 never sees those lines at all.
+      // `packages/*/src/**` is not extension-restricted, so a fixture or generated
+      // artifact under a package's src lands in scope.
+      const repoDir = makeFixtureTempDir('state-flip-nul-fixture')
+      createdRepoDirs.push(repoDir)
+      git(repoDir, ['init', '-q', '-b', 'main'])
+      mkdirSync(join(repoDir, 'scripts'), { recursive: true })
+      writeFileSync(
+        join(repoDir, 'scripts', 'withnul.sh'),
+        Buffer.from('widget-tool a\nwidget-tool b\n\u0000\nwidget-tool c\n', 'binary')
+      )
+      git(repoDir, ['add', '-A'])
+      git(repoDir, ['-c', 'user.email=t@t', '-c', 'user.name=t', 'commit', '-qm', 'init'])
+      // Both call sites, deliberately. -a has to be added twice -- they are separate
+      // lines -- and a mutation sweep showed that dropping it from the working-tree
+      // branch alone reddened nothing while the --ref case was covered. That is the
+      // same fix-one-site-miss-the-other asymmetry as the earlier -e defect.
+      for (const args of [['widget-tool', '--ref', 'HEAD'], ['widget-tool']]) {
+        const out = execFileSync('bash', [SCANNER_PATH, ...args], {
+          cwd: repoDir,
+          encoding: 'utf8',
+        })
+        expect(out, `args: ${args.join(' ')}`).toContain('STEP 1 (denominator): 3')
+        expect(out).not.toContain('STEP 1 (denominator): 1')
+      }
+    }
+  )
+
+  it.skipIf(!SCANNER_PRESENT)(
+    'an unresolvable ref in working-tree-adjacent usage still surfaces git own stderr, not silence',
+    () => {
+      // Pins the removal of `2>/dev/null`: git's own diagnosis of WHY the search
+      // failed has to reach the reader, or the exit-2 message alone leaves them
+      // guessing which of ref, pathspec, or repo state was wrong.
+      const { repoDir } = setupSyntheticStateFlipRepo()
+      let stderr = ''
+      try {
+        execFileSync('bash', [SCANNER_PATH, 'widget-tool', '--ref', 'no-such-ref-smi-6659'], {
+          cwd: repoDir,
+          encoding: 'utf8',
+        })
+      } catch (err) {
+        stderr = (err as { stderr?: string }).stderr ?? ''
+      }
+      expect(stderr).toMatch(/fatal:.*no-such-ref-smi-6659/)
     }
   )
 })
