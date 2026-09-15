@@ -119,14 +119,20 @@ const REGISTRY_VERBS: Record<string, { done: string; attempt: string }> = {
   content_read: { done: 'downloaded', attempt: 'download' },
 }
 
+// PR #2860 gate finding 3: this map is registrySentence()'s vocabulary for `private_registry:*`
+// attempt outcomes only. It deliberately does NOT carry a `failure` entry even though the
+// team-invite-send edge function (index.ts:261) writes that literal word for a non-2xx/thrown
+// Resend call: no registry writer ever emits `result: 'failure'` (they use denied/not_found/
+// error), and the email_sent branch below never reads this map -- it renders its own two-branch
+// sentence directly, because "tried to send an invitation email, which failed" (this map's
+// template) reads worse than the branch's own "An invitation email failed to send," and the
+// registry's denied/not_found/error taxonomy doesn't meaningfully apply to an email send anyway.
+// Reusing this map there would be accidental coupling between two different event shapes, not a
+// design improvement -- so it's left unentered rather than added just to give it a reader.
 const ATTEMPT_OUTCOMES: Record<string, string> = {
   denied: 'was refused',
   not_found: 'matched nothing',
   error: 'failed',
-  // SMI-6114 retro F4: the edge function (team-invite-send/index.ts:261) writes the literal
-  // 'failure', a different vocabulary word than the registry writers' 'denied'/'not_found'/
-  // 'error' -- adding it here keeps both feeds sharing one outcome map.
-  failure: 'failed',
 }
 
 /** `private skill ns/skill@1.0.0`, or `a private skill` when metadata does not name one. */
