@@ -86,7 +86,7 @@ A worktree container's `node_modules` is bind-mounted **read-only** from the HOS
 docker compose --profile dev up -d            # (from this worktree) retry, after following the printed steps
 ```
 
-**After `docker volume rm skillsmith_node_modules`** (common troubleshooting step), Turbo's cache is also lost. The next `npm run build` is a full cold build (~30-45s). This is expected. It is not a clean slate, though: that command removes only the **root** volume. The eight per-package `*-node-modules` volumes and `website-vercel-output` declared in `docker-compose.yml` survive it, so a problem living in one of those is untouched — remove the specific volume instead of assuming the root wipe covered it.
+**After `docker volume rm skillsmith_node_modules`** (common troubleshooting step), Turbo's cache is also lost. The next `npm run build` is a full cold build (~30-45s). This is expected. It is not a clean slate, though: that command removes only the **root** volume. The eight per-package `*-node-modules` volumes and `website-vercel-output` declared in `docker-compose.yml` survive it, so a problem living in one of those is untouched — remove the specific volume instead of assuming the root wipe covered it (§ Full Rebuild below shows how to find its Compose-prefixed name).
 
 ## Container Rebuild
 
@@ -118,7 +118,13 @@ docker compose --profile dev build --no-cache
 docker compose --profile dev up -d
 ```
 
-"Thorough" is about the image, not the volumes: this removes the **root** `node_modules` volume only. The eight per-package `*-node-modules` volumes are not named here and are not removed. If the fault you are chasing could live in one of those — a native module or a nested version pin under `packages/<pkg>/node_modules` — remove that volume by name as well, rather than assuming this recipe reached it (SMI-6674).
+"Thorough" is about the image, not the volumes: this removes the **root** `node_modules` volume only. The eight per-package `*-node-modules` volumes are not named here and are not removed. If the fault you are chasing could live in one of those — a native module or a nested version pin under `packages/<pkg>/node_modules` — remove that volume as well, rather than assuming this recipe reached it (SMI-6674). Compose prefixes each volume with the project name, so find the real name first — and filter, because a bare `grep skillsmith` also matches ~130 `native-seed-*` volumes:
+
+```bash
+docker volume ls --format '{{.Name}}' | grep -E '^skillsmith_[a-z-]+-node-modules$'   # the 8 per-package volumes
+```
+
+The one backing `packages/core/node_modules` is `skillsmith_core-node-modules`. The root volume is `skillsmith_node_modules` and does not match that pattern.
 
 ### When to Use Which
 
