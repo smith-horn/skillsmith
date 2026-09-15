@@ -47,7 +47,7 @@
  *     assertions are the invariant the plan states, not the integers.
  */
 import { execFileSync } from 'node:child_process'
-import { existsSync, mkdirSync, rmSync, writeFileSync } from 'node:fs'
+import { existsSync, mkdirSync, readFileSync, rmSync, writeFileSync } from 'node:fs'
 import { dirname, join } from 'node:path'
 
 import { afterEach, describe, expect, it } from 'vitest'
@@ -475,6 +475,127 @@ describe('scan-state-flip.sh (SMI-6514 P-7 scanner) -- Group A: portable', () =>
       // would hold whether or not the fix exists.
       expect(stderr).not.toContain('does not appear anywhere')
       expect(stdout).not.toContain('STEP 2')
+    }
+  )
+
+  it.skipIf(!SCANNER_PRESENT)(
+    'supabase functions and package e2e specs are in scope (working-tree mode)',
+    () => {
+      // SMI-6659, 11th gap. supabase/functions/** was entirely outside PATHSPECS
+      // -- 145 tracked *.test.ts files, the same casualty category as the 8th gap.
+      // Measured before the fix: a real noun living there reported denominator 0
+      // under "does not appear anywhere" while occurring 4 times in the tree.
+      const repoDir = makeFixtureTempDir('state-flip-supabase-fixture')
+      createdRepoDirs.push(repoDir)
+      git(repoDir, ['init', '-q', '-b', 'main'])
+      const places = [
+        'supabase/functions/_shared/thing.test.ts',
+        'packages/vscode-extension/e2e/specs/thing.spec.ts',
+      ]
+      for (const rel of places) {
+        mkdirSync(join(repoDir, dirname(rel)), { recursive: true })
+        writeFileSync(join(repoDir, rel), '// widget-tool is referenced here\n')
+      }
+      git(repoDir, ['add', '-A'])
+      git(repoDir, ['-c', 'user.email=t@t', '-c', 'user.name=t', 'commit', '-qm', 'init'])
+      const out = execFileSync('bash', [SCANNER_PATH, 'widget-tool'], {
+        cwd: repoDir,
+        encoding: 'utf8',
+      })
+      expect(out).toContain(`STEP 1 (denominator): ${places.length}`)
+    }
+  )
+
+  it.skipIf(!SCANNER_PRESENT)(
+    'ref mode discloses git-crypt encrypted pathspecs instead of counting them as 0',
+    () => {
+      // SMI-6659, 13th gap -- created by fixing the 11th. git-crypt stores blobs
+      // ENCRYPTED in the object database, so `git grep <ref>` over supabase reads
+      // ciphertext and contributes 0 while the "Scanned paths" line claims cover.
+      // Measured on a real noun: 4 working-tree hits, 0 against HEAD.
+      //
+      // The fixture writes git-crypt's own \0GITCRYPT\0 magic rather than running
+      // git-crypt, because the probe checks exactly that signature -- so this pins
+      // the detector against the bytes it actually reads.
+      const repoDir = makeFixtureTempDir('state-flip-gitcrypt-fixture')
+      createdRepoDirs.push(repoDir)
+      git(repoDir, ['init', '-q', '-b', 'main'])
+      mkdirSync(join(repoDir, 'supabase', 'functions'), { recursive: true })
+      writeFileSync(
+        join(repoDir, 'supabase', 'functions', 'enc.ts'),
+        Buffer.concat([
+          Buffer.from('\u0000GITCRYPT\u0000', 'binary'),
+          Buffer.from('opaque-ciphertext-widget-tool\n'),
+        ])
+      )
+      mkdirSync(join(repoDir, 'scripts'), { recursive: true })
+      writeFileSync(join(repoDir, 'scripts', 'plain.sh'), 'widget-tool in plaintext\n')
+      git(repoDir, ['add', '-A'])
+      git(repoDir, ['-c', 'user.email=t@t', '-c', 'user.name=t', 'commit', '-qm', 'init'])
+
+      const refOut = execFileSync('bash', [SCANNER_PATH, 'widget-tool', '--ref', 'HEAD'], {
+        cwd: repoDir,
+        encoding: 'utf8',
+      })
+      expect(refOut).toContain('Scope warning')
+      expect(refOut).toContain('could not read')
+      // It must name the offending pathspec, not warn generically.
+      expect(refOut).toMatch(/supabase\/functions/)
+
+      // And it must NOT fire where nothing is encrypted -- a warning on every run
+      // is a warning nobody reads.
+      const plainOut = execFileSync('bash', [SCANNER_PATH, 'widget-tool'], {
+        cwd: repoDir,
+        encoding: 'utf8',
+      })
+      expect(plainOut).not.toContain('Scope warning')
+    }
+  )
+
+  it.skipIf(!SCANNER_PRESENT)(
+    'the report states the paths it searched, and the line matches PATHSPECS itself',
+    () => {
+      // SMI-6659, 11th gap. The report gave a denominator and never said over
+      // WHAT. The script's header claims it "reports its own denominator so a
+      // reviewer cannot satisfy P-7 by pasting a bare number for the wrong noun"
+      // -- that guards the noun, not the scope, and a number for the right noun
+      // over the wrong paths is the same defect. The 8th gap (tests outside
+      // PATHSPECS) is one a reader would have caught on sight from this line.
+      //
+      // Parsed from the script's own array rather than hardcoded, so adding a
+      // pathspec without the report following reddens here.
+      const src = readFileSync(SCANNER_PATH, 'utf8')
+      const arr = src.match(/^PATHSPECS=\(([\s\S]*?)^\)/m)
+      expect(arr, 'PATHSPECS array not found -- parser drifted from the script').toBeTruthy()
+      const specs = (arr![1].match(/'([^']+)'/g) ?? []).map((q) => q.slice(1, -1))
+      expect(specs.length).toBeGreaterThan(4)
+
+      const { repoDir } = setupSyntheticStateFlipRepo()
+      const out = execFileSync('bash', [SCANNER_PATH, 'widget-tool', '--ref', 'HEAD'], {
+        cwd: repoDir,
+        encoding: 'utf8',
+      })
+      expect(out).toContain('Scanned paths:')
+      for (const spec of specs) {
+        expect(out, `report omits pathspec ${spec}`).toContain(spec)
+      }
+    }
+  )
+
+  it.skipIf(!SCANNER_PRESENT)(
+    'the header documents exit 2 as three causes, not just "usage error"',
+    () => {
+      // SMI-6659, 12th gap. exit 2 was documented as "usage error" while it had
+      // grown to cover a dash-leading --ref and a git grep failure meaning the
+      // search never ran. A reader handed "usage error" for a repo-state failure
+      // looks in the wrong place -- the scanner's own category 3, diagnostic text
+      // naming an explanation that is not the real one, so the wrong fix ships.
+      const src = readFileSync(SCANNER_PATH, 'utf8')
+      const header = src.slice(0, src.indexOf('set -euo pipefail'))
+      expect(header).toMatch(/THE SEARCH DID NOT RUN/)
+      expect(header).toMatch(/never read an exit 2 as/i)
+      // The bare old wording must be gone, not merely supplemented.
+      expect(header).not.toMatch(/^#\s+2\s+usage error\s*$/m)
     }
   )
 
