@@ -255,8 +255,15 @@ function resolveActor(event: RegistryAuditEvent, fingerprint: string | null): st
  * undeprecate refused for a non-admin, which `setDeprecated()` only reports after the member-read
  * probe saw the rows. Anything else may name a pending submission (a refused approve/reject, a
  * failed publish, a `get`/`content_read` miss), so it carries the team only as `registry_team_id`,
- * readable by BYPASSRLS roles alone. Mirrors the trigger's rule and the Edge Function, which sets
- * a team only after the RLS-gated metadata read returns a row.
+ * readable by BYPASSRLS roles alone.
+ *
+ * Differs from the Edge Function here — not a mirror of it. `getSkillContent()` (content.ts) can
+ * write a `denied`/`error`/`not_found` `content_read` row *after* its own RLS-gated metadata read
+ * has already returned an approved, member-visible row (e.g. the content fetch itself fails). This
+ * function untags all four of those outcomes — only `result === 'success'` is tagged for a
+ * non-mutation operation — while `private-registry-get`'s Edge Function tags the same post-read
+ * outcomes as member-visible. Nothing leaks either way; the MCP side is simply the stricter of the
+ * two for this one case, not the matching one.
  */
 function isMemberVisible(event: RegistryAuditEvent): boolean {
   if (!MUTATION_OPERATIONS.has(event.operation)) return event.result === 'success'
