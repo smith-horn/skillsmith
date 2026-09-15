@@ -174,12 +174,13 @@ it is down, a *silent* squat on 3001 that breaks main's next `up` instead.
 docker compose --profile dev down
 docker volume rm skillsmith_node_modules
 docker compose --profile dev up -d
-docker exec -w /app skillsmith-dev-1 sh -c 'sh scripts/lib/node-modules-mount-gate.sh && npm install'
-# Exit non-zero with no npm output means at least one node_modules named
-# volume (root, or a packages/*/node_modules) isn't currently mounted
-# (SMI-6516/SMI-6520/SMI-6614, ADR-158; round-2b widened this from root-only) —
-# recreate again (`docker compose --profile dev up -d --force-recreate
-# dev`), then retry.
+# The container comes back — the root volume re-seeds from the image — but the
+# wipe leaves a mixed dependency state (it removes one volume, not the eight
+# per-package ones). Finish with the ordered refresh sequence, not a single
+# install step (SMI-6674). Its step 0 is the node_modules mount check, and it
+# tells you to recreate with --force-recreate if that check fails
+# (SMI-6516/SMI-6520/SMI-6614, ADR-158).
+( cd <main-checkout-path> && sh scripts/lib/print-deps-refresh-advice.sh <main-checkout-path> )
 ```
 
 ### Native Module Errors
