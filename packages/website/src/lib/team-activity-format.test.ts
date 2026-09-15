@@ -259,4 +259,39 @@ describe('humanizeActivity — private registry (SMI-6114)', () => {
     )
     expect(out.text).toBe('Ryan Smith revoked an invitation')
   })
+
+  it('a missing `result` (e.g. the select dropped the column) never reads as success (SMI-6114 retro F3)', () => {
+    // Built via `ev()`, not `registry()`, so `result` is genuinely absent, not defaulted to
+    // 'success' — the exact shape a select that forgot the `result` column would produce.
+    const out = humanizeActivity(
+      ev({
+        event_type: 'private_registry:content_read',
+        actor: 'anonymous',
+        resource: 'private_registry_skills/team-1/acme/widget@1.2.0',
+        metadata: { team_id: 'team-1', skill_id: 'acme/widget', version: '1.2.0' },
+      }),
+      nameMap
+    )
+    expect(out.text).not.toContain('downloaded')
+    expect(out.text).toBe('An attempt to download private skill acme/widget@1.2.0 did not complete')
+  })
+
+  it.each(['', 'constructor', 'toString'])(
+    'an unknown `result` %j falls back to "did not complete", never an empty or prototype outcome',
+    (result) => {
+      const out = humanizeActivity(
+        ev({
+          event_type: 'private_registry:content_read',
+          actor: 'anonymous',
+          resource: 'private_registry_skills/team-1/acme/widget@1.2.0',
+          result,
+          metadata: { team_id: 'team-1', skill_id: 'acme/widget', version: '1.2.0' },
+        }),
+        nameMap
+      )
+      expect(out.text).toBe(
+        'An attempt to download private skill acme/widget@1.2.0 did not complete'
+      )
+    }
+  )
 })
