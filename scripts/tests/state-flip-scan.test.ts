@@ -417,15 +417,84 @@ describe('scan-state-flip.sh (SMI-6514 P-7 scanner) -- Group A: portable', () =>
   )
 
   it.skipIf(!SCANNER_PRESENT)(
-    'exits non-zero on a zero STEP-1 denominator against a real, working repo (the vacuous-success guard)',
+    'exits with code 1 -- not merely non-zero -- on a genuine zero STEP-1 denominator (the vacuous-success guard)',
     () => {
+      // Pinned to 1 specifically, not `.toThrow()`. The error path below exits 2,
+      // and a bare "non-zero" assertion would be satisfied by either, so the two
+      // cases could not tell each other apart -- the exact shape of a test that
+      // exercises code without constraining it.
       const { repoDir } = setupSyntheticStateFlipRepo()
-      expect(() =>
+      let status: number | undefined
+      let stderr = ''
+      try {
         execFileSync('bash', [SCANNER_PATH, 'zzz-totally-absent-noun-smi-6514', '--ref', 'HEAD'], {
           cwd: repoDir,
           encoding: 'utf8',
         })
-      ).toThrow()
+      } catch (err) {
+        const e = err as { status?: number; stderr?: string }
+        status = e.status
+        stderr = e.stderr ?? ''
+      }
+      expect(status).toBe(1)
+      // stderr, not stdout -- the scanner writes its verdict to stderr. Asserting
+      // this on stdout passes vacuously, which is what the first draft of the
+      // sibling case below did.
+      expect(stderr).toContain('does not appear anywhere')
+    }
+  )
+
+  it.skipIf(!SCANNER_PRESENT)(
+    'an unresolvable --ref exits 2 and never claims the noun is absent (git grep error vs no-match)',
+    () => {
+      // SMI-6659, 5th denominator gap. `git grep` exits 1 for "no match" and 128
+      // for an unresolvable revision. The old `2>/dev/null || true` collapsed both
+      // into an empty result, so a search that NEVER RAN was reported as a
+      // denominator of 0 under "The noun does not appear anywhere in the scanned
+      // paths" -- a false statement about the codebase, offering two explanations
+      // of which neither was the real cause.
+      const { repoDir } = setupSyntheticStateFlipRepo()
+      let status: number | undefined
+      let stdout = ''
+      let stderr = ''
+      try {
+        execFileSync('bash', [SCANNER_PATH, 'widget-tool', '--ref', 'no-such-ref-smi-6659'], {
+          cwd: repoDir,
+          encoding: 'utf8',
+        })
+      } catch (err) {
+        const e = err as { status?: number; stdout?: string; stderr?: string }
+        status = e.status
+        stdout = e.stdout ?? ''
+        stderr = e.stderr ?? ''
+      }
+      expect(status).toBe(2)
+      expect(stderr).toContain('is an ERROR, not a no-match result')
+      // The decisive assertion, and it has to be on stderr: that is where the
+      // vacuous-success verdict is written, so asserting its ABSENCE on stdout
+      // would hold whether or not the fix exists.
+      expect(stderr).not.toContain('does not appear anywhere')
+      expect(stdout).not.toContain('STEP 2')
+    }
+  )
+
+  it.skipIf(!SCANNER_PRESENT)(
+    'an unresolvable ref in working-tree-adjacent usage still surfaces git own stderr, not silence',
+    () => {
+      // Pins the removal of `2>/dev/null`: git's own diagnosis of WHY the search
+      // failed has to reach the reader, or the exit-2 message alone leaves them
+      // guessing which of ref, pathspec, or repo state was wrong.
+      const { repoDir } = setupSyntheticStateFlipRepo()
+      let stderr = ''
+      try {
+        execFileSync('bash', [SCANNER_PATH, 'widget-tool', '--ref', 'no-such-ref-smi-6659'], {
+          cwd: repoDir,
+          encoding: 'utf8',
+        })
+      } catch (err) {
+        stderr = (err as { stderr?: string }).stderr ?? ''
+      }
+      expect(stderr).toMatch(/fatal:.*no-such-ref-smi-6659/)
     }
   )
 })
