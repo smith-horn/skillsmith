@@ -39,10 +39,26 @@ Nothing here ships: see `harness/assert-unshipped.mjs` and the plan's §7.
   (e42*, e44, e45, e47, e48, e51-e55), including e53.mjs/e54.mjs. **Use these
   directly for anything gate-shaped rather than rebuilding from prose** --
   see its own README for why.
+- `hash.mjs` -- VR's guard pass: hash through held handles (§3.4, §4.1).
+- `walk.mjs` -- VR (`removeVR`), the V0/V1/V2 candidate. V0/V1/V2 share one
+  bind + guard-pass + post-order removal skeleton; only the removal pass's
+  per-entry checks differ (none / identity / identity+content+quarantine).
+- `native-c/` -- C1, the thin N-API shim (§4.1): `src/shim.c`, `binding.gyp`,
+  `load.mjs`. Build: `cd native-c && npx --yes node-gyp@13.0.2 rebuild`
+  (per-platform -- rebuild after switching between host and container, the
+  build output isn't multi-platform-aware yet; that's step 9's job).
+- `harness/attacks/` also has `a5-vr.mjs`, `a6-vr.mjs` (VR's own timing-
+  equivalent attacks, since VR has no rmdir-probe to hook), `mount-
+  shared.mjs` (real Linux mount/umount helpers for A1/A2, privileged-
+  container only), and two more runners: `run-vr-attacks.mjs`,
+  `run-mount-attacks.mjs` (Linux-only, refuses to run elsewhere).
 - `results/` -- `raw/` (gitignored JSONL) plus, eventually, `SUMMARY.md`
   regenerated from it (plan §8 step 14 -- not yet built).
 - `feasibility/` -- the pre-build feasibility scripts (F1-F5), already
   committed; see its own README.
+- `reference-experiments/` -- the real A1-design experiment scripts
+  (e42-e55, including e53/e54, the gate's actual source). Use these
+  directly for anything gate-shaped; see its own README.
 
 ## Running
 

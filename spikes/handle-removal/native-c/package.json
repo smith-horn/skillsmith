@@ -1,0 +1,9 @@
+{
+  "name": "@skillsmith-spike/handle-removal-native-c",
+  "private": true,
+  "version": "0.0.0",
+  "description": "SMI-6676 C1: N-API shim for handle-relative tree removal. Never shipped.",
+  "scripts": {
+    "build": "node-gyp rebuild"
+  }
+}
