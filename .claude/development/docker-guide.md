@@ -118,6 +118,8 @@ docker compose --profile dev build --no-cache
 docker compose --profile dev up -d
 ```
 
+"Thorough" is about the image, not the volumes: this removes the **root** `node_modules` volume only. The eight per-package `*-node-modules` volumes are not named here and are not removed. If the fault you are chasing could live in one of those — a native module or a nested version pin under `packages/<pkg>/node_modules` — remove that volume by name as well, rather than assuming this recipe reached it (SMI-6674).
+
 ### When to Use Which
 
 | Scenario | Method |
