@@ -151,16 +151,36 @@ const stripLineComments = (sql: string): string => sql.replace(/--[^\n]*/g, '')
 
 /**
  * Strips both `--` line comments and `/* ... *\/` block comments (Postgres allows nesting, so this
- * tracks depth) WITHOUT touching text inside single-quoted string literals or dollar-quoted bodies
- * (`$$ ... $$` / `$tag$ ... $tag$`) -- a character-scanning state machine, not a regex, since
- * comment/string/dollar-quote nesting isn't a regular language. Used only by the checks that need
- * to see through comments to find a real statement, or avoid a false-positive on a commented-out
- * example: the disabled-trigger, later-trigger and audit-sink tripwires, plus the by-name tamper
- * and GRANT scans. NEVER applied to the raw function/trigger pins above -- those hash/compare the
- * exact text, comments included, by design (round-2 gate finding 4). Verified against a 5-case
- * table (a block comment containing a fake CREATE RULE, a string literal containing `/* x *\/`, a
- * dollar-quoted body containing `--`, nested `/* /* *\/ *\/`, and a real CREATE RULE right after a
- * comment) before being relied on (SMI-6114 retro round 3, gate finding 2, PR #2855).
+ * tracks depth) WITHOUT touching text inside single-quoted string literals, escape-string literals
+ * (`E'...'` / `e'...'`), or dollar-quoted bodies (`$$ ... $$` / `$tag$ ... $tag$`) -- a
+ * character-scanning state machine, not a regex, since comment/string/dollar-quote nesting isn't a
+ * regular language. Used only by the checks that need to see through comments to find a real
+ * statement, or avoid a false-positive on a commented-out example: the disabled-trigger,
+ * later-trigger and audit-sink tripwires, plus the by-name tamper and GRANT scans. NEVER applied to
+ * the raw function/trigger pins above -- those hash/compare the exact text, comments included, by
+ * design (round-2 gate finding 4). Verified against a 5-case table (a block comment containing a
+ * fake CREATE RULE, a string literal containing `/* x *\/`, a dollar-quoted body containing `--`,
+ * nested `/* /* *\/ *\/`, and a real CREATE RULE right after a comment) before being relied on
+ * (SMI-6114 retro round 3, gate finding 2, PR #2855).
+ *
+ * ASSUMES `standard_conforming_strings = on` (Postgres' default, and this project's): in a plain
+ * `'...'` string a backslash is a literal character and `''` is the only way to embed a quote, so
+ * the plain-string branch below never treats `\` specially. An `E'...'`/`e'...'` ESCAPE string is
+ * different regardless of that setting -- Postgres always interprets backslash escapes inside one,
+ * so `\` there DOES escape the next character, including a quote (`E'prefix \' /*'` is one complete
+ * string, not one that ends at the `\'`). A prior version of this scanner had no E-string branch and
+ * fell through to the plain-string rule, which closes at that `\'` early because it never treats `\`
+ * as an escape -- turning the text after it (`/*';\nALTER TABLE ...`) into what looks like a real
+ * block comment, hiding a real statement from every check below (round-4 gate finding, PR #2855).
+ * Escape strings also still allow the doubled-quote `''` embed alongside `\'` (Postgres accepts
+ * both), and the `E`/`e` is only recognized as an escape-string opener when it is not the tail of a
+ * longer identifier -- checked via the character immediately before it, so `type'x'` parses as
+ * plain text followed by an ordinary string, not as an (invalid) escape-string opener. Verified
+ * against a 5-case table (the exact hidden-DROP shape above, a real backslash-escaped backslash
+ * `e'\\'` ahead of a real statement, doubled quotes inside an escape string `E'it''s'`, the
+ * preceding-identifier-char guard via `type'x'`/`CASE'...'`, and a plain string ending at the quote
+ * right after a backslash) before being relied on (SMI-6114 retro round 4, PR #2855) -- see the
+ * `stripComments()` `it()` blocks below.
  */
 function stripComments(sql: string): string {
   let out = ''
@@ -169,8 +189,35 @@ function stripComments(sql: string): string {
   while (i < n) {
     const c = sql[i]
     const c2 = i + 1 < n ? sql[i + 1] : ''
+    if ((c === 'E' || c === 'e') && c2 === "'" && !/[A-Za-z0-9_]/.test(i > 0 ? sql[i - 1] : '')) {
+      // Postgres escape-string literal: E'...' / e'...', recognized only when the E/e isn't the
+      // tail of a longer identifier (the preceding-character check above). Inside one, a backslash
+      // escapes the next character -- including a quote -- and, same as a plain string, '' still
+      // embeds a literal quote (Postgres allows both forms in an escape string).
+      let j = i + 2
+      while (j < n) {
+        if (sql[j] === '\\') {
+          j += 2
+          continue
+        }
+        if (sql[j] === "'") {
+          if (sql[j + 1] === "'") {
+            j += 2
+            continue
+          }
+          j += 1
+          break
+        }
+        j += 1
+      }
+      out += sql.slice(i, j)
+      i = j
+      continue
+    }
     if (c === "'") {
-      // Single-quoted string literal: '' is an escaped quote, not a terminator.
+      // Single-quoted string literal: '' is an escaped quote, not a terminator. Under
+      // standard_conforming_strings=on a backslash here is a literal character, not an escape, so
+      // (unlike the E-string branch above) it is never special-cased.
       let j = i + 1
       while (j < n) {
         if (sql[j] === "'") {
@@ -870,4 +917,107 @@ describe.skipIf(locked)('20260913000000_private_registry_audit_trigger.sql (SMI-
     const rollbackCode = stripLineComments(readFileSync(ROLLBACK_FILE, 'utf8'))
     expect(rollbackCode.match(/DELETE FROM schema_version WHERE version = 116;/g)).toHaveLength(1)
   })
+})
+
+/**
+ * stripComments() escape-string case table (SMI-6114 retro round 4, gate finding on PR #2855).
+ * Deliberately NOT gated by describe.skipIf(locked): stripComments() is a pure function of its
+ * string argument and reads no migration file, so these regression cases must keep running even
+ * when supabase/migrations/ is git-crypt-locked -- unlike the suite above, which needs the real
+ * pinned migration content. Each case was executed against this exact implementation (node, outside
+ * vitest) before being written down here, per the repo's "measure, don't reason" rule.
+ */
+describe('stripComments() escape-string handling (SMI-6114 retro round 4)', () => {
+  it(
+    "does not let a Postgres escape string's own /* hide a real statement after it -- the " +
+      "reviewer's exact case (gate round 4)",
+    () => {
+      const sql =
+        "SELECT E'prefix \\' /*';\n" +
+        'ALTER TABLE public.audit_logs DROP COLUMN metadata;\n' +
+        '/* ordinary comment */'
+      const stripped = stripComments(sql)
+      // The real ALTER TABLE, hidden by the pre-fix parser closing the E-string early at \', stays
+      // visible to auditSinkViolations() ...
+      expect(stripped).toMatch(/ALTER\s+TABLE\s+public\.audit_logs\s+DROP\s+COLUMN\s+metadata/)
+      // ... and the real trailing block comment is still genuinely stripped, not left behind by an
+      // over-correction that stops treating anything named /* as a comment.
+      expect(stripped).not.toMatch(/ordinary comment/)
+    }
+  )
+
+  it(
+    "handles a real backslash-escaped backslash inside an escape string (e'\\\\'), without " +
+      'losing the statement that follows it',
+    () => {
+      const sql =
+        "SELECT e'\\\\';\n" +
+        'CREATE RULE suppress_registry_audit AS ON INSERT TO audit_logs DO INSTEAD NOTHING;'
+      const stripped = stripComments(sql)
+      expect(stripped).toMatch(/CREATE\s+(?:OR\s+REPLACE\s+)?RULE\s+suppress_registry_audit/)
+    }
+  )
+
+  it(
+    "allows doubled quotes inside an escape string (E'it''s'), which Postgres accepts " +
+      'alongside backslash-escaping within the same literal',
+    () => {
+      // Doubling alone (no backslash in the string) is not a real differentiator here: if an
+      // E-string closed too early because doubling were unimplemented, the leftover quote just
+      // starts a NEW standard-quoted string, whose own (pre-existing, untouched) doubling support
+      // resynchronizes to the same final boundary by coincidence -- a broken-doubling
+      // implementation would pass this shape identically to a correct one, the exact decorative-
+      // test trap CLAUDE.md's SMI-6598 rule warns about. Mixing a doubled pair with a
+      // backslash-escaped quote in the SAME literal breaks that coincidence: verified in node that
+      // a doubling-unaware E-string scanner mis-closes after "it", then (lacking backslash-escape
+      // awareness in the fallback standard-string branch it lands in) also mis-closes the
+      // remaining `'s \' fine'` right after the backslash, leaving a stray quote that starts an
+      // unterminated string -- which leaves the real comment below un-stripped (still literal
+      // "string" content) where the correct implementation strips it.
+      const sql =
+        "SELECT E'it''s \\' fine';\n" +
+        '/* real comment, must be stripped */ ALTER TABLE public.audit_logs DROP COLUMN metadata;'
+      const stripped = stripComments(sql)
+      expect(stripped).not.toMatch(/real comment/)
+      expect(stripped).toMatch(/ALTER\s+TABLE\s+public\.audit_logs\s+DROP\s+COLUMN\s+metadata/)
+    }
+  )
+
+  it(
+    'only treats E/e as an escape-string opener when it is not the tail of a longer ' +
+      'identifier, checked via the preceding character',
+    () => {
+      // `type` ends in 'e', but the character right before it ('p') is an identifier character,
+      // so the quote after it is NOT an escape-string opener. This parses as plain text `type`
+      // followed by an ordinary single-quoted string 'x' -- not valid SQL on its own (`type` isn't
+      // a legal token there), but it proves the scanner doesn't misparse the quote boundary.
+      const sanity = "SELECT type'x';"
+      expect(stripComments(sanity)).toBe(sanity)
+
+      // Differentiator: CASE also ends in 'E'. If the preceding-character guard were missing, the
+      // backslash right before the first quote would be wrongly read as an escape-string escape,
+      // swallowing the real comment that follows as literal (unstripped) string content instead of
+      // genuinely stripping it -- proving the guard, not just documenting it.
+      const sql =
+        "SELECT CASE'\\' /* would stay hidden if wrongly treated as an escape string */' END;\n" +
+        'ALTER TABLE public.audit_logs DROP COLUMN metadata;'
+      const stripped = stripComments(sql)
+      expect(stripped).not.toMatch(/would stay hidden/)
+      expect(stripped).toMatch(/ALTER\s+TABLE\s+public\.audit_logs\s+DROP\s+COLUMN\s+metadata/)
+    }
+  )
+
+  it(
+    'agrees that a plain string ends at the quote right after a backslash -- under ' +
+      'standard_conforming_strings=on the backslash is literal, not an escape',
+    () => {
+      const sql =
+        "SELECT 'a\\' /* real comment -- only stripped if the string closed at the quote right " +
+        "after the backslash */';\n" +
+        'ALTER TABLE public.audit_logs DROP COLUMN metadata;'
+      const stripped = stripComments(sql)
+      expect(stripped).not.toMatch(/only stripped if the string closed/)
+      expect(stripped).toMatch(/ALTER\s+TABLE\s+public\.audit_logs\s+DROP\s+COLUMN\s+metadata/)
+    }
+  )
 })
