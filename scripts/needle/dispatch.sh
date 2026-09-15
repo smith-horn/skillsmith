@@ -448,7 +448,10 @@ fi
 {
     echo "=== DISPATCH: $BEAD_ID ($(date -u +%Y-%m-%dT%H:%M:%SZ 2>/dev/null || echo unknown) UTC) ==="
     echo "workspace=$WORKSPACE model=$MODEL codex_version=$CODEX_VERSION"
-    echo "needle_run_exit=$NEEDLE_EXIT bead_state=$BEAD_STATE bead_closed=$BEAD_CLOSED outcome=$OUTCOME expect_write=$EXPECT_WRITE sandbox_write_rejected=$SANDBOX_WRITE_REJECTED"
+    # bead_state_pre_close: BEAD_STATE is read before needle_close_bead on
+    # purpose (SMI-5847). Named so it isn't mistaken for post-close state
+    # (SMI-6658); bead_closed is the post-close result.
+    echo "needle_run_exit=$NEEDLE_EXIT bead_state_pre_close=$BEAD_STATE bead_closed=$BEAD_CLOSED outcome=$OUTCOME expect_write=$EXPECT_WRITE sandbox_write_rejected=$SANDBOX_WRITE_REJECTED"
     echo "trace=$TRACE_PATH"
     echo "stdout=$STDOUT_PATH"
     case "$OUTCOME" in
@@ -469,7 +472,7 @@ fi
     echo ""
 } >> "$LOG"
 
-echo "[needle-dispatch] outcome=$OUTCOME bead_state=$BEAD_STATE${INCIDENTAL_NOTE:+ note=incidental-write-rejected}"
+echo "[needle-dispatch] outcome=$OUTCOME bead_state_pre_close=$BEAD_STATE bead_closed=$BEAD_CLOSED${INCIDENTAL_NOTE:+ note=incidental-write-rejected}"
 echo "[needle-dispatch] trace: $TRACE_PATH"
 echo "[needle-dispatch] stdout: $STDOUT_PATH"
 echo "[needle-dispatch] log: $LOG"
