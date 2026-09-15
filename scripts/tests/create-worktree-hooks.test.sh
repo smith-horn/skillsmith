@@ -74,7 +74,14 @@ get_inode() {
 # Fixture: throwaway repo with a fake node_modules/.bin/lint-staged.
 # -----------------------------------------------------------------------
 TMPROOT=$(mktemp -d)
-trap 'rm -rf "$TMPROOT"' EXIT
+# One EXIT trap for every temp root this file creates. A later
+# `trap '…' EXIT` replaces the earlier handler rather than adding to it, so
+# per-scenario traps leaked every root but the last (SMI-6568 gate F1).
+# Scenarios that make a new top-level temp dir add it here, not a new trap.
+cleanup_tmp_roots() {
+  rm -rf "$TMPROOT" ${SCN11_ROOT:+"$SCN11_ROOT"} ${SCN13_ROOT:+"$SCN13_ROOT"} ${SCN13_SHIM:+"$SCN13_SHIM"}
+}
+trap cleanup_tmp_roots EXIT
 
 FAKE_MAIN="$TMPROOT/main"
 mkdir -p "$FAKE_MAIN/node_modules/.bin"
@@ -461,8 +468,7 @@ done
 # the four matrix cells: {Darwin, Linux} × {main-repo, in-tree-worktree}.
 # -----------------------------------------------------------------------
 # Build a minimal fake repo with a worktree.
-SCN11_ROOT=$(mktemp -d)
-trap 'rm -rf "$SCN11_ROOT"' EXIT
+SCN11_ROOT=$(mktemp -d)  # removed by cleanup_tmp_roots (EXIT trap above)
 SCN11_MAIN="$SCN11_ROOT/main"
 mkdir -p "$SCN11_MAIN"
 SCN11_MAIN=$(cd "$SCN11_MAIN" && pwd -P)
@@ -651,8 +657,7 @@ esac
 # memory-pressure constraint without losing coverage of a NEW invariant.
 # -----------------------------------------------------------------------
 SCN13_PASS_FAIL_BEFORE_S13=$((pass + fail))
-SCN13_ROOT=$(mktemp -d)
-trap 'rm -rf "$SCN13_ROOT"' EXIT
+SCN13_ROOT=$(mktemp -d)  # removed by cleanup_tmp_roots (EXIT trap above)
 SCN13_ORIGIN="$SCN13_ROOT/origin.git"
 git init -q --bare "$SCN13_ORIGIN" >/dev/null 2>&1
 
@@ -682,7 +687,7 @@ SCN13_MAIN=$(cd "$SCN13_MAIN" && pwd -P)
 # worktree-own-container-down branch); actually invoking it always exits 1
 # (container/daemon unreachable) — same technique as Scenario 11's
 # run_helper_with_uname.
-SCN13_SHIM=$(mktemp -d)
+SCN13_SHIM=$(mktemp -d)  # removed by cleanup_tmp_roots (EXIT trap above)
 cat > "$SCN13_SHIM/docker" <<'DOCKEREOF'
 #!/bin/sh
 exit 1
