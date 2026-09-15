@@ -366,13 +366,11 @@ docker volume rm skillsmith_node_modules
 docker compose --profile dev up -d
 ```
 
-Then repopulate the wiped volume through the mount gate, not with a bare install (ADR-158; SMI-6614):
+Don't follow the volume wipe with a bare install. Print and follow the ordered refresh sequence instead (ADR-158; SMI-6614), the same recovery `.claude/development/docker-guide.md` gives for a missing `node_modules`:
 
 ```bash
-docker exec -w /app skillsmith-dev-1 sh -c 'sh scripts/lib/node-modules-mount-gate.sh && npm install && npm run build'
+( cd <main-checkout-path> && sh scripts/lib/print-deps-refresh-advice.sh <main-checkout-path> )
 ```
-
-A non-zero exit with no npm output means a `node_modules` mount isn't volume-shaped yet: recreate the container (`docker compose --profile dev up -d --force-recreate dev`) and run it again.
 
 #### Native module errors (`ERR_DLOPEN_FAILED`)
 

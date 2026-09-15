@@ -805,6 +805,52 @@ const ARM_A: Row[] = [
     expect: '-',
     note: '\\" delimiter',
   },
+  // PR #2857 gate finding SMI-6654-1: a shorter or other-character fence line
+  // inside a fenced block is content, not a fence transition (CommonMark). The
+  // old toggle flipped into prose mode on the inner line, split the launcher and
+  // the verb onto separate units, and reported nothing.
+  {
+    id: 'N09',
+    kind: 'md',
+    text: "````bash\n```\ndocker exec c sh -c '\nnpm install\n'\n```\n````",
+    expect: 'F',
+    note: 'triple-backtick line inside a four-backtick fence',
+  },
+  {
+    id: 'N09s',
+    kind: 'md',
+    text: `\`\`\`\`bash\n\`\`\`\ndocker exec c sh -c '${G} && npm install'\n\`\`\`\n\`\`\`\``,
+    expect: '-',
+    safeTwinOf: 'N09',
+  },
+  {
+    id: 'N10',
+    kind: 'md',
+    text: "```bash\n~~~\ndocker exec c sh -c '\nnpm install\n'\n~~~\n```",
+    expect: 'F',
+    note: 'tilde fence line inside a backtick fence',
+  },
+  {
+    id: 'N10s',
+    kind: 'md',
+    text: `\`\`\`bash\n~~~\ndocker exec c sh -c '${G} && npm install'\n~~~\n\`\`\``,
+    expect: '-',
+    safeTwinOf: 'N10',
+  },
+  {
+    id: 'N11',
+    kind: 'md',
+    text: "~~~bash\n```\ndocker exec c sh -c '\nnpm install\n'\n```\n~~~",
+    expect: 'F',
+    note: 'backtick fence line inside a tilde fence',
+  },
+  {
+    id: 'N11s',
+    kind: 'md',
+    text: `~~~bash\n\`\`\`\ndocker exec c sh -c '${G} && npm install'\n\`\`\`\n~~~`,
+    expect: '-',
+    safeTwinOf: 'N11',
+  },
 ]
 
 // ── B-1: one row per npm mutation alias, with a hand-authored safe twin ─────
@@ -944,7 +990,14 @@ function shellFragmentsOf(row: Row): string[] {
     const m = /(docker|\.\/scripts\/worktree-docker\.sh)[^\\]*/.exec(row.text)
     return m ? [m[0]] : []
   }
-  const fenced = [...row.text.matchAll(/```\w*\n([\s\S]*?)\n```/g)].map((m) => m[1])
+  // Outermost fence of either character and any length; fence-looking lines
+  // nested inside it are markdown, not shell, so they're dropped before `sh -n`.
+  const fenced = [...row.text.matchAll(/^(`{3,}|~{3,})[^\n]*\n([\s\S]*?)\n\1\s*$/gm)].map((m) =>
+    m[2]
+      .split('\n')
+      .filter((l) => !/^\s*(`{3,}|~{3,})/.test(l))
+      .join('\n')
+  )
   if (fenced.length > 0) return fenced
   return row.text.split('`').filter((span) => /\bdocker\b|worktree-docker\.sh/.test(span))
 }

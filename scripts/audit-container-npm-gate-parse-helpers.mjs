@@ -89,7 +89,21 @@ const GATE_CMD_RE = /^(?:sh|bash)\s+(?:\/app\/)?scripts\/lib\/node-modules-mount
 const RC_FORM_RE =
   /^sh scripts\/lib\/node-modules-mount-gate\.sh; rc=\$\?; \[ "\$rc" -eq 0 \] \|\| \{ echo "MOUNT_GATE \$rc" >&2; exit 97; \}; exec npm (?:install|rebuild "\$@")$/
 const HEREDOC_RE = /(?<!<)<<-?\s*(['"]?)([A-Za-z_]\w*)\1/
-const FENCE_RE = /^\s*(```|~~~)/
+// Markdown fences (CommonMark): an opener is a run of 3+ backticks or tildes; a
+// closer is a run of the SAME character, at least as long, with nothing after
+// it. A shorter or other-character fence line inside a block is content, not a
+// transition (PR #2857 gate finding SMI-6654-1: a four-backtick block holding a
+// triple-backtick line used to flip the scanner into prose mode).
+const FENCE_OPEN_RE = /^\s*(`{3,}|~{3,})/
+const FENCE_CLOSE_RE = /^\s*(`{3,}|~{3,})\s*$/
+function fenceOpener(line) {
+  const m = FENCE_OPEN_RE.exec(line)
+  return m ? { ch: m[1][0], len: m[1].length } : null
+}
+function closesFence(line, fence) {
+  const m = FENCE_CLOSE_RE.exec(line)
+  return Boolean(m) && m[1][0] === fence.ch && m[1].length >= fence.len
+}
 
 /** R5(a): only container options and exactly one container name before `sh -c`. */
 function isContainerPrefix(stretch, launcherText) {
@@ -243,16 +257,24 @@ function pendingJoin(seg, heredocDone) {
 export function logicalUnits(text, isMd) {
   const lines = text.split('\n')
   const out = []
-  let fence = false
-  const blocked = (idx) => idx >= lines.length || (isMd && FENCE_RE.test(lines[idx]))
+  let fence = null
+  // A join inside a fenced block stops only at that block's own closing fence.
+  const blocked = (idx) =>
+    idx >= lines.length || (isMd && fence !== null && closesFence(lines[idx], fence))
   for (let i = 0; i < lines.length; i++) {
     const line = lines[i]
     const base = { line: i + 1, lineText: line.trim(), joined: 0, splitUnresolved: false }
-    if (isMd && FENCE_RE.test(line)) {
-      fence = !fence
+    if (isMd && fence === null) {
+      const opener = fenceOpener(line)
+      if (opener) {
+        fence = opener
+        continue
+      }
+    } else if (isMd && closesFence(line, fence)) {
+      fence = null
       continue
     }
-    if (isMd && !fence) {
+    if (isMd && fence === null) {
       for (const span of line.split('`')) out.push({ ...base, seg: span })
       continue
     }
