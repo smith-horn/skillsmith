@@ -173,8 +173,12 @@ Disposition is one of: `FIX-NOW` (stale, fixed in this PR), `STILL-TRUE` (assert
 - [ ] If this plan includes a genuine architecture decision (not just an implementation detail), flag it and confirm whether it warrants its own `docs/internal/adr/` entry — `plan-review-skill`'s VP Engineering rubric checks for this (standing rule since 2026-08-24, see CLAUDE.md § Infrastructure Change Policy)
 - [ ] **If this change targets a non-Docker CI workflow** (e.g. `post-merge-verify.yml`,
       any workflow running on `ubuntu-latest` without the Docker dev container):
-      verify in a clean-install environment — `npm ci` in a fresh clone or after
-      `docker volume rm skillsmith_node_modules`. Do NOT rely on a pre-built Docker
-      volume where native modules (better-sqlite3, onnxruntime-node) are already
-      compiled. The pre-built state masks `--ignore-scripts` and similar install
-      flag errors. (Lesson: SMI-4221/SMI-4239)
+      verify in a clean-install environment — `npm ci` in a fresh clone. Do NOT rely
+      on a pre-built Docker volume where native modules (better-sqlite3,
+      onnxruntime-node) are already compiled. The pre-built state masks
+      `--ignore-scripts` and similar install flag errors. (Lesson: SMI-4221/SMI-4239.)
+      **`docker volume rm skillsmith_node_modules` does not give you a clean
+      environment** — the new volume re-seeds from the image, which already holds
+      that `npm ci` output (the image also runs `npm rebuild` for those native
+      modules), so it reproduces the pre-built state this check exists to avoid
+      (SMI-6674).

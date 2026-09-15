@@ -67,11 +67,17 @@ docker compose --profile dev down
 docker compose --profile dev up -d
 ```
 
-**If node_modules is missing** (e.g., after `docker volume rm`), the entrypoint exits before attempting the build:
+**If `node_modules` is genuinely missing or partial**, the entrypoint exits before attempting the build:
 
 ```bash
 docker compose --profile dev up -d            # Exits 1: "node_modules not initialised"
 ```
+
+**`docker volume rm skillsmith_node_modules` does not trip that check (SMI-6674).** On the main checkout the root `node_modules` named volume re-seeds from the image's own `npm ci` output the first time it is mounted, so the pre-check above passes instead of exiting 1. That is measured, and it is all that is measured — the rest of startup (dist checks, native-module validation) can still fail for its own reasons, so treat a wipe as "not blocked at this gate", not as "known good".
+
+It also leaves a **mixed** dependency state, which is the part to refresh before trusting a build: the root volume is back to the image's `npm ci` output, the eight per-package `*-node-modules` volumes still hold whatever they held (that command removes one volume, not nine), and neither necessarily matches your current lockfile. Use the ordered refresh sequence (`sh scripts/lib/print-deps-refresh-advice.sh <main-checkout-path>`, shown below) — the same one README's Troubleshooting section prints — rather than any single install step.
+
+The exit-1 case above is instead a **worktree** container, whose `node_modules` is a read-only bind of the HOST tree with no volume to re-seed from, or a main-checkout container whose image is itself broken.
 
 A worktree container's `node_modules` is bind-mounted **read-only** from the HOST (SMI-5560/5626) — an ungated container `npm install` here would `EROFS` by design, not silently fix anything (SMI-6614, ADR-158). Fix it on the HOST, from the MAIN checkout — this then propagates to every worktree automatically. Print the full ordered refresh sequence (stops worktree containers, clears the SMI-6034 ACLs, regenerates + syncs, repairs Tier-B mount sources, restarts worktrees) rather than jumping straight to one step of it:
 
@@ -80,7 +86,7 @@ A worktree container's `node_modules` is bind-mounted **read-only** from the HOS
 docker compose --profile dev up -d            # (from this worktree) retry, after following the printed steps
 ```
 
-**After `docker volume rm skillsmith_node_modules`** (common troubleshooting step), Turbo's cache is also lost. The next `npm run build` is a full cold build (~30-45s). This is expected — volume removal resets all cached state.
+**After `docker volume rm skillsmith_node_modules`** (common troubleshooting step), Turbo's cache is also lost. The next `npm run build` is a full cold build (~30-45s). This is expected. It is not a clean slate, though: that command removes only the **root** volume. The eight per-package `*-node-modules` volumes and `website-vercel-output` declared in `docker-compose.yml` survive it, so a problem living in one of those is untouched — remove the specific volume instead of assuming the root wipe covered it (§ Full Rebuild below shows how to find its Compose-prefixed name).
 
 ## Container Rebuild
 
@@ -111,6 +117,14 @@ docker volume rm skillsmith_node_modules
 docker compose --profile dev build --no-cache
 docker compose --profile dev up -d
 ```
+
+"Thorough" is about the image, not the volumes: this removes the **root** `node_modules` volume only. The eight per-package `*-node-modules` volumes are not named here and are not removed. If the fault you are chasing could live in one of those — a native module or a nested version pin under `packages/<pkg>/node_modules` — remove that volume as well, rather than assuming this recipe reached it (SMI-6674). Compose prefixes each volume with the project name, so find the real name first — and filter, because a bare `grep skillsmith` also matches ~130 `native-seed-*` volumes:
+
+```bash
+docker volume ls --format '{{.Name}}' | grep -E '^skillsmith_[a-z-]+-node-modules$'   # the 8 per-package volumes
+```
+
+The one backing `packages/core/node_modules` is `skillsmith_core-node-modules`. The root volume is `skillsmith_node_modules` and does not match that pattern.
 
 ### When to Use Which
 
@@ -168,12 +182,13 @@ it is down, a *silent* squat on 3001 that breaks main's next `up` instead.
 docker compose --profile dev down
 docker volume rm skillsmith_node_modules
 docker compose --profile dev up -d
-docker exec -w /app skillsmith-dev-1 sh -c 'sh scripts/lib/node-modules-mount-gate.sh && npm install'
-# Exit non-zero with no npm output means at least one node_modules named
-# volume (root, or a packages/*/node_modules) isn't currently mounted
-# (SMI-6516/SMI-6520/SMI-6614, ADR-158; round-2b widened this from root-only) —
-# recreate again (`docker compose --profile dev up -d --force-recreate
-# dev`), then retry.
+# The container comes back — the root volume re-seeds from the image — but the
+# wipe leaves a mixed dependency state (it removes one volume, not the eight
+# per-package ones). Finish with the ordered refresh sequence, not a single
+# install step (SMI-6674). Its step 0 is the node_modules mount check, and it
+# tells you to recreate with --force-recreate if that check fails
+# (SMI-6516/SMI-6520/SMI-6614, ADR-158).
+( cd <main-checkout-path> && sh scripts/lib/print-deps-refresh-advice.sh <main-checkout-path> )
 ```
 
 ### Native Module Errors
