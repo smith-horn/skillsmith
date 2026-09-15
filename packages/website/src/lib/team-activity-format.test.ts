@@ -56,10 +56,36 @@ describe('formatRelativeTime', () => {
 describe('humanizeActivity — actor resolution (three branches)', () => {
   it('literal authenticated_user → passive voice (no actor name)', () => {
     const out = humanizeActivity(
-      ev({ event_type: 'team_invitation:email_sent', actor: 'authenticated_user' }),
+      ev({
+        event_type: 'team_invitation:email_sent',
+        actor: 'authenticated_user',
+        result: 'success',
+      }),
       nameMap
     )
     expect(out.text).toBe('An invitation email was sent')
+  })
+
+  it('a failed send never reads as sent (SMI-6114 retro F4)', () => {
+    // The edge function (team-invite-send/index.ts:261) writes result: 'failure' on a non-2xx
+    // or thrown Resend call -- the row still reaches this feed via metadata.team_id (:264).
+    const out = humanizeActivity(
+      ev({
+        event_type: 'team_invitation:email_sent',
+        actor: 'authenticated_user',
+        result: 'failure',
+      }),
+      nameMap
+    )
+    expect(out.text).toBe('An invitation email failed to send')
+  })
+
+  it('a missing/unknown result on email_sent never reads as sent either (SMI-6114 retro F4)', () => {
+    const out = humanizeActivity(
+      ev({ event_type: 'team_invitation:email_sent', actor: 'authenticated_user' }),
+      nameMap
+    )
+    expect(out.text).toBe('An invitation email failed to send')
   })
 
   it('actor UUID present in nameMap → display name', () => {
@@ -276,7 +302,15 @@ describe('humanizeActivity — private registry (SMI-6114)', () => {
     expect(out.text).toBe('An attempt to download private skill acme/widget@1.2.0 did not complete')
   })
 
-  it.each(['', 'constructor', 'toString'])(
+  // SMI-6680 F7: '' used to sit in this list alongside 'constructor'/'toString', but it cannot
+  // fail: under the pre-fix `ATTEMPT_OUTCOMES[result] ?? 'did not complete'`,
+  // `ATTEMPT_OUTCOMES['']` is `undefined`, so `??` produces the identical "did not complete"
+  // string the fixed `hasOwnProperty` guard also produces -- the fixture passed with the fix
+  // fully reverted. `__proto__` differs: `ATTEMPT_OUTCOMES.__proto__` returns `Object.prototype`
+  // (a non-nullish object, via the JS accessor) under the OLD code, so `??` does NOT fire and the
+  // outcome renders wrong -- a real, detectable divergence. Verified in node before writing this
+  // down (measure, don't reason): reverting the guard makes exactly this case fail.
+  it.each(['__proto__', 'constructor', 'toString'])(
     'an unknown `result` %j falls back to "did not complete", never an empty or prototype outcome',
     (result) => {
       const out = humanizeActivity(

@@ -123,6 +123,10 @@ const ATTEMPT_OUTCOMES: Record<string, string> = {
   denied: 'was refused',
   not_found: 'matched nothing',
   error: 'failed',
+  // SMI-6114 retro F4: the edge function (team-invite-send/index.ts:261) writes the literal
+  // 'failure', a different vocabulary word than the registry writers' 'denied'/'not_found'/
+  // 'error' -- adding it here keeps both feeds sharing one outcome map.
+  failure: 'failed',
 }
 
 /** `private skill ns/skill@1.0.0`, or `a private skill` when metadata does not name one. */
@@ -161,7 +165,23 @@ function registrySentence(ev: ActivityEvent, who: string | null, operation: stri
   )
 }
 
-/** Build the plain-English sentence for one event. Never includes the raw resource/UUID. */
+/**
+ * Build the plain-English sentence for one event. Never includes the raw resource/UUID.
+ *
+ * SMI-6114 retro F4 sibling sweep: of the arms below, only `email_sent` (an edge function,
+ * `supabase/functions/team-invite-send/index.ts:261`) can ever write a non-'success' `result` --
+ * it writes 'failure' on a non-2xx/thrown Resend call, hence the fix just above. `created`
+ * (`supabase/migrations/20260520000001_team_invitations.sql:182`), `accepted` (:304), `revoked`
+ * (:371), and `team_member:removed`
+ * (`supabase/migrations/20260521000001_team_member_visibility_and_removal.sql:160`) are each
+ * written by a single SQL RPC whose `audit_logs` INSERT hardcodes the literal `'success'` and is
+ * itself wrapped in a `BEGIN ... EXCEPTION WHEN OTHERS ... END` block that only `RAISE WARNING`s
+ * on failure (never writing a 'failure' row) -- so today these four rows either carry
+ * `result: 'success'` or were never written at all; there is no non-success row for them to
+ * misrender, and no fix is needed for those arms. The `default:` humanize-action fallback never
+ * asserts success or failure in the first place (it paraphrases the raw action verb, present
+ * tense, ambiguous), so it carries no equivalent defect to guard against either.
+ */
 function buildSentence(ev: ActivityEvent, who: string | null): string {
   if (ev.event_type?.startsWith('private_registry:')) {
     return registrySentence(ev, who, ev.event_type.slice('private_registry:'.length))
@@ -174,7 +194,15 @@ function buildSentence(ev: ActivityEvent, who: string | null): string {
         'An invitation was created'
       )
     case 'team_invitation:email_sent':
-      return 'An invitation email was sent'
+      // SMI-6114 retro F4: this arm rendered every row as "was sent" regardless of `ev.result`,
+      // the same silent-success defect `registrySentence()` above was hardened against --
+      // team-invite-send/index.ts:261 writes `result: 'failure'` on a non-2xx/thrown Resend
+      // call, and that row's `metadata.team_id` (:264) reaches this feed the same way a
+      // successful send's does. Strict `=== 'success'` (not `!== 'failure'`) so a missing/
+      // unknown result never reads as success either, matching registrySentence()'s own rule.
+      return ev.result === 'success'
+        ? 'An invitation email was sent'
+        : 'An invitation email failed to send'
     case 'team_invitation:accepted':
       return withActor(who, 'accepted their invitation', 'An invitation was accepted')
     case 'team_invitation:revoked':
