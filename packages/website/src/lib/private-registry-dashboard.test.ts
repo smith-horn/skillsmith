@@ -241,7 +241,7 @@ describe('reviewRegistrySubmission', () => {
 })
 
 describe('setRegistryVersionDeprecated', () => {
-  it('updates only the deprecated column, fully scoped, and calls the load-bearing .select()', async () => {
+  it("updates only the deprecated column, fully scoped, and calls the load-bearing .select('id')", async () => {
     const { client, tableCalls } = mockRegistryClient({
       registry: { data: [registryRow('acme/skill', '1.0.0', { deprecated: true })], error: null },
     })
@@ -253,9 +253,30 @@ describe('setRegistryVersionDeprecated', () => {
     expect(calls).toContainEqual({ method: 'eq', args: ['team_id', 'team_1'] })
     expect(calls).toContainEqual({ method: 'eq', args: ['skill_id', 'acme/skill'] })
     expect(calls).toContainEqual({ method: 'eq', args: ['version', '1.0.0'] })
-    // Without .select(), Supabase reports success with null data even when
-    // RLS matched zero rows — the next assertion's zero-row test depends on it.
-    expect(calls.some((c) => c.method === 'select')).toBe(true)
+    // Without .select(), Supabase reports success with null data even when RLS matched zero
+    // rows — the next assertion's zero-row test depends on it. SMI-6651: scoped to 'id', never
+    // a bare .select() — `authenticated` no longer holds table-level SELECT on this table at
+    // all, so an unqualified select would fail outright rather than merely over-fetch.
+    expect(calls).toContainEqual({ method: 'select', args: ['id'] })
+  })
+
+  it('never requests `content` in the affected-row echo — the returned rows can never carry it', async () => {
+    // The real grant (20260915000000_private_registry_content_release_rpc.sql) REVOKEs
+    // table-level SELECT on this table from `authenticated` entirely, so an unqualified
+    // `.select()` or an explicit `.select('content')` here would fail outright, not merely
+    // over-fetch. This pins the query shape that makes that structurally impossible: the
+    // affected-row echo can only ever come back as `{ id }`.
+    const { client, tableCalls } = mockRegistryClient({
+      registry: { data: [registryRow('acme/skill', '1.0.0', { deprecated: true })], error: null },
+    })
+
+    await setRegistryVersionDeprecated(client, 'team_1', 'acme/skill', '1.0.0', true)
+
+    const selectCalls = (tableCalls['private_registry_skills'] ?? []).filter(
+      (c) => c.method === 'select'
+    )
+    expect(selectCalls).toHaveLength(1)
+    expect(selectCalls[0].args).toEqual(['id'])
   })
 
   it('throws when RLS filtered the update to zero rows (non-admin silent no-op)', async () => {

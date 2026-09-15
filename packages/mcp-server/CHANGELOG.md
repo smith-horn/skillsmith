@@ -4,6 +4,13 @@ All notable changes to `@skillsmith/mcp-server` are documented here.
 
 ## [Unreleased]
 
+- **Fix**: SMI-6651 -- private-registry skill installs now read a skill's packaged content
+  through an audited, server-side `release_private_registry_skill_content` RPC instead of a
+  direct table read over the caller's own token. This version needs that RPC to already exist
+  on the server (the accompanying SMI-6651 migration). Once that migration is applied,
+  `authenticated` no longer has table-level SELECT on `private_registry_skills` at all, so an
+  earlier `@skillsmith/mcp-server` version can no longer install private-registry skills --
+  it reads `content` directly, and that read will simply fail. (#2861)
 - **Fix**: SMI-6622 -- `private_registry_publish` and `private_registry_manage` now reach
   the real private registry with no Supabase environment variables. Before, a server
   without `SUPABASE_URL` and `SUPABASE_ANON_KEY` quietly used an in-memory test registry:

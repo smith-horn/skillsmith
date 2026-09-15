@@ -30,10 +30,9 @@ export const REGISTRY_TABLE = 'private_registry_skills'
 // SMI-5949 Wave 2 Step 3: approval_status/approval_mode added so mapRow() can populate
 // RegistrySkill's new fields with the real column value rather than inferring it from the
 // .eq('approval_status','approved') predicate list()/get() now carry (which would silently go
-// stale the moment that predicate ever changed). Harmless on the two surfaces that reuse this
-// constant without an approval_status predicate of their own (getSkillContent(),
-// registry-tools.live.content.ts) — those are protected structurally by RLS (D-4 surface 2), not
-// by this column list, and simply carry two extra unread columns.
+// stale the moment that predicate ever changed). getSkillContent() no longer reads this table at
+// all: since SMI-6651 (D14) it calls the release_private_registry_skill_content RPC, which applies
+// its own approval_status and deprecated predicates.
 export const REGISTRY_METADATA_COLUMNS =
   'id, team_id, skill_id, version, description, content_hash, deprecated, published_by, published_at, approval_status, approval_mode'
 
