@@ -1,34 +1,55 @@
 /**
- * SMI-6114: always-on structural assertions for
- * supabase/migrations/20260913000000_private_registry_audit_trigger.sql.
+ * SMI-6114: an HONEST TRIPWIRE for
+ * supabase/migrations/20260913000000_private_registry_audit_trigger.sql -- NOT a security
+ * boundary. Text scanning cannot be one: a third adversarial review round (the round-2 gate on
+ * PR #2855, which prompted this rescope) kept finding new bypass classes the previous rewrite
+ * hadn't closed (Postgres disables a trigger through
+ * ALTER TABLE, not ALTER TRIGGER; a second, differently-named trigger on the same table is outside
+ * any name-pinned check; the audit sink itself, audit_logs, can be rewritten out from under an
+ * unchanged function via CREATE RULE). Rather than chase a fourth bypass class with a fifth regex,
+ * the owner rescoped this file: it is a tripwire that forces a human to look at any migration that
+ * touches this trigger, this function, or its audit_logs sink, not a proof that no unreviewed
+ * change can happen. THE REAL INVARIANT (one row per committed change, no text columns copied, the
+ * untag rule) is enforced by live-Postgres suites once SMI-5946 wires Postgres into CI:
+ * `private-registry-audit-trigger.test.ts` (row-shape / fail-closed / actor derivation) and
+ * `private-registry-audit-visibility.test.ts` (audit visibility never exceeds data visibility).
+ * Both skip today without a test database and do not run in CI yet.
  *
- * The behaviour is pinned against a real Postgres in `private-registry-audit-trigger.test.ts`,
- * which skips without a test database (and does not run in CI yet, SMI-5946). This file is the
- * part CI always runs.
+ * WHAT THIS FILE DOES NOT, AND CANNOT, DETECT:
+ *   - role-membership grants (`GRANT audit_runner TO authenticated;`) that hand a broader role the
+ *     EXECUTE privilege this file's own GRANT check already denies to that role by name;
+ *   - dynamic SQL assembled inside a `DO $$ ... $$` block or an `EXECUTE '...'` string, where the
+ *     protected keywords never appear as contiguous, parseable statement text;
+ *   - any change applied outside a migration file altogether (a manual `psql` session against
+ *     prod, for instance) -- this file only ever reads `supabase/migrations/`.
  *
- * MODEL (rewritten after the cross-family review gate on PR #2855 found the prior denylist
- * approach -- an enumerated list of banned serializers, and a per-column "allowed occurrence"
- * regex -- could not be made complete; see F1/F2 below):
- *
- *   1. THE PIN FORCES HUMAN REVIEW OF ANY CHANGE. A fail-closed parser (DEF_RE) finds every
- *      CREATE [OR REPLACE] FUNCTION of audit_private_registry_skills_change() across all
- *      migrations regardless of schema qualification, dollar-quote tag or case, and a separate
- *      mention counter catches anything DEF_RE could not parse (e.g. a single-quoted `AS '...'`
- *      body) instead of silently ignoring it (gate finding F1). The latest definition's header
- *      and body are then normalized and pinned by sha256: any change to either -- a new metadata
- *      key, an appended snapshot expression, SECURITY INVOKER instead of DEFINER, anything -- must
- *      change the pinned hash, which means a human has to look at the diff and update the
- *      constant. The triggers are pinned the same way, against exact expected text. THIS is the
- *      real defense against gate finding F2 (a redefinition serializing the whole row via
- *      `jsonb_build_array(NEW)`, which no enumerable denylist could rule out completely): the pin
- *      does not try to characterize every unsafe body, it just refuses to let the body change
- *      unreviewed.
- *   2. THE SEMANTIC CHECKS DOCUMENT WHY THE PINNED BODY WAS APPROVED, not police future changes:
+ * MODEL:
+ *   1. THE PIN FORCES HUMAN REVIEW OF ANY CHANGE, INCLUDING A COMMENT. A fail-closed parser
+ *      (DEF_RE) finds every CREATE [OR REPLACE] FUNCTION of audit_private_registry_skills_change()
+ *      across all migrations regardless of schema qualification, dollar-quote tag or case, and a
+ *      separate mention counter catches anything DEF_RE could not parse (e.g. a single-quoted
+ *      `AS '...'` body) instead of silently ignoring it (gate finding F1). The latest definition's
+ *      RAW header and body -- no comment stripping, no whitespace collapsing -- are pinned by
+ *      sha256: any change to either, down to a single added comment, must change the pinned hash,
+ *      which means a human has to look at the diff and update the constant. Hashing the raw text
+ *      (not a normalized form) is deliberate: a prior version of this file stripped `/* *\/`
+ *      comments before hashing, which let a body change hide inside what looked like a comment
+ *      (`'database_trigger'` -> `'data/*ignored*\/base_trigger'` normalizes back to the original
+ *      string but changes what actually runs) -- round-2 gate finding 4. The triggers are pinned
+ *      the same way, against exact raw expected text.
+ *   2. THREE MORE FAIL-CLOSED CHECKS, ONE PER ROUND-2 GATE FINDING, EACH EXEMPTABLE ONLY BY NAME.
+ *      A later migration that disables either audit trigger via `ALTER TABLE ... DISABLE TRIGGER`
+ *      (Postgres does not use `ALTER TRIGGER` for this -- gate finding 1), that creates ANY new
+ *      trigger on `private_registry_skills` or ANY overload of
+ *      `audit_private_registry_skills_change` regardless of name (gate finding 2), or that
+ *      rewrites, drops, renames or adds a trigger/rule to the `audit_logs` sink itself (gate
+ *      finding 3) fails this suite. The only way past any of the three is to add the migration's
+ *      filename to REVIEWED_LATER_MIGRATIONS below, after review -- never to weaken the regex.
+ *   3. THE SEMANTIC CHECKS DOCUMENT WHY THE PINNED BODY WAS APPROVED, not police future changes:
  *      no EXCEPTION handler (fail-closed), the exact untag CASE, one team_id write, and full
  *      column coverage. They run against the LATEST parsed definition (not just this file) so
  *      they keep describing reality after a future reviewed redefinition, but the pin above -- not
  *      these regexes -- is what makes a bad change fail loudly.
- *   3. LIVE-POSTGRES BEHAVIOUR IS IN THE LIVE SUITES, which don't run in CI (SMI-5946).
  *
  * Column coverage is the one guard the live suite cannot provide even when it does run: the
  * trigger lists every private_registry_skills column explicitly so it can report an exact
@@ -117,19 +138,26 @@ function laterMigrationFiles(): string[] {
 
 const stripLineComments = (sql: string): string => sql.replace(/--[^\n]*/g, '')
 
-/**
- * strip `--` line comments and `/* *\/` block comments, collapse whitespace runs to one space,
- * trim. Keeps case. Used for both the pinned-hash inputs and the pinned-trigger-text comparison,
- * so a reformatting-only edit (SMI-6598 revert check (g)) cannot change either pin.
- */
-function normalizeSql(text: string): string {
-  return stripLineComments(text)
-    .replace(/\/\*[\s\S]*?\*\//g, '')
-    .replace(/\s+/g, ' ')
-    .trim()
-}
-
 const sha256 = (text: string): string => createHash('sha256').update(text, 'utf8').digest('hex')
+
+/**
+ * List of migrations exempt from the three fail-closed checks below (disabled triggers, any other
+ * trigger/overload on private_registry_skills, tampering with the audit_logs sink) -- EMPTY BY
+ * DEFAULT. Add a filename only after reviewing that migration against ADR-164. This never exempts
+ * the pin checks above: a reviewed later migration that also redefines the function still has to
+ * carry a matching PINNED_HEADER_SHA256 / PINNED_BODY_SHA256 update, reviewed the same way (SMI-6114
+ * retro round 2, item 5).
+ *
+ *   REVIEWED_LATER_MIGRATIONS: string[] = [
+ *     // '20991231000000_example.sql', // reviewed by <name> on <yyyy-mm-dd>: <why this is safe>
+ *   ]
+ */
+const REVIEWED_LATER_MIGRATIONS: string[] = []
+
+/** Standard remediation text appended to every fail-closed offender message below. */
+const reviewRemediation = (file: string): string =>
+  `If this change is intended, review it against ADR-164, then add ${file} to ` +
+  'REVIEWED_LATER_MIGRATIONS with the reviewer and date.'
 
 /**
  * Matches every CREATE [OR REPLACE] FUNCTION definition of audit_private_registry_skills_change(),
@@ -234,22 +262,28 @@ function columnsFromMigrations(): Set<string> {
 }
 
 /**
- * PINNED (SMI-6114, PR #2855 retro). Changing either hash requires a security review against
- * ADR-164 (no text columns copied, `team_id` only under the untag rule, fails closed): update the
- * pin only after that review, and say so in the PR.
+ * PINNED (SMI-6114, PR #2855 round-2 retro, finding 4). Changing either hash requires a security
+ * review against ADR-164 (no text columns copied, `team_id` only under the untag rule, fails
+ * closed): update the pin only after that review, and say so in the PR.
  *
- * Computed from the currently-approved migration: normalizeSql() applied to the header/body DEF_RE
- * captures, sha256 hex digest (scripts/tests/private-registry-audit-trigger.static.test.ts, this
- * file's own history has the derivation script).
+ * Computed from the RAW header/body DEF_RE captures of the currently-approved migration -- sha256
+ * hex digest of the exact text, with NO comment stripping and NO whitespace collapsing. Raw, not
+ * normalized: normalizing before hashing is what let a comment-shaped edit change runtime behaviour
+ * without changing the pin (gate finding 4 -- `'database_trigger'` -> a string that LOOKS like it
+ * has a block comment inside it but is really a different literal). A comment-only or
+ * whitespace-only edit to the function now changes this hash, and that is intended: every edit gets
+ * reviewed, not just semantic ones.
  */
-const PINNED_HEADER_SHA256 = '2d49649af8f23b018f3dc58efdd19ec86860e8593b2f8a9e51bec2b11c1760fa'
-const PINNED_BODY_SHA256 = '7cfe25b46b334a5e13dc487ac65c107d2da7989773201da12f7f68101159cf0e'
+const PINNED_HEADER_SHA256 = '8e5be9781814e5026ef64be2396c75055321d51858293a11811c376a61b03c04'
+const PINNED_BODY_SHA256 = 'b075d28db93da60b7e012e6f87957b6c03eb2ccdab7ef724de99e5ea66082ca1'
 
 /**
  * Every `CREATE [OR REPLACE] TRIGGER <name> ... ;` statement for the given trigger name, across
- * all migrations, normalized (SMI-6114 retro F1). `\b` after the name keeps `trg_prs_audit` from
- * matching as a prefix of `trg_prs_audit_truncate` (both `t` and `_` are word characters, so no
- * boundary exists between them) -- verified against a two-trigger fixture before being relied on.
+ * all migrations, RAW -- no comment stripping, no whitespace collapsing (SMI-6114 retro round 2,
+ * finding 4: the pin has to see the exact text, the same reasoning as the function header/body
+ * hashes above). `\b` after the name keeps `trg_prs_audit` from matching as a prefix of
+ * `trg_prs_audit_truncate` (both `t` and `_` are word characters, so no boundary exists between
+ * them) -- verified against a two-trigger fixture before being relied on.
  */
 function triggerDefinitions(name: string): Array<{ file: string; text: string }> {
   const re = new RegExp(
@@ -261,18 +295,24 @@ function triggerDefinitions(name: string): Array<{ file: string; text: string }>
     const content = readMigration(file)
     if (content === null) continue
     for (const m of content.matchAll(re)) {
-      defs.push({ file, text: normalizeSql(m[0]) })
+      defs.push({ file, text: m[0] })
     }
   }
   return defs
 }
 
-/** PINNED (SMI-6114). Normalized `CREATE OR REPLACE TRIGGER ...` text, computed from the
- * currently-approved migration the same way as the function hashes above. */
+/** PINNED (SMI-6114). Exact RAW `CREATE OR REPLACE TRIGGER ...` text (including the migration's
+ * own line breaks and indentation), computed from the currently-approved migration the same way
+ * as the function hashes above -- not normalized, so a comment or reformatting change inside the
+ * statement also fails this check. */
 const EXPECTED_TRG_PRS_AUDIT =
-  'CREATE OR REPLACE TRIGGER trg_prs_audit AFTER INSERT OR UPDATE OR DELETE ON private_registry_skills FOR EACH ROW EXECUTE FUNCTION audit_private_registry_skills_change();'
+  'CREATE OR REPLACE TRIGGER trg_prs_audit\n' +
+  '  AFTER INSERT OR UPDATE OR DELETE ON private_registry_skills\n' +
+  '  FOR EACH ROW EXECUTE FUNCTION audit_private_registry_skills_change();'
 const EXPECTED_TRG_PRS_AUDIT_TRUNCATE =
-  'CREATE OR REPLACE TRIGGER trg_prs_audit_truncate AFTER TRUNCATE ON private_registry_skills FOR EACH STATEMENT EXECUTE FUNCTION audit_private_registry_skills_change();'
+  'CREATE OR REPLACE TRIGGER trg_prs_audit_truncate\n' +
+  '  AFTER TRUNCATE ON private_registry_skills\n' +
+  '  FOR EACH STATEMENT EXECUTE FUNCTION audit_private_registry_skills_change();'
 
 function dropTriggerRe(name: string): RegExp {
   return new RegExp(
@@ -351,6 +391,167 @@ function grantExecuteViolations(): string[] {
   return offenders
 }
 
+/** Regex source for `[public.]private_registry_skills`, optionally quoted, either half optional. */
+const TABLE_REF_SRC = String.raw`(?:"?public"?\s*\.\s*)?"?private_registry_skills"?`
+/** Regex source for `[public.]audit_logs`, optionally quoted, either half optional. */
+const AUDIT_LOGS_REF_SRC = String.raw`(?:"?public"?\s*\.\s*)?"?audit_logs"?`
+/** A trigger target for DISABLE TRIGGER: any bare/quoted identifier, or the keywords ALL/USER. */
+const ANY_TRIGGER_TARGET_SRC = String.raw`(?:"?[A-Za-z_][A-Za-z0-9_]*"?|ALL|USER)`
+/** A trigger target scoped to the two audit triggers (or ALL/USER, which include them). */
+const AUDIT_TRIGGER_TARGET_SRC = String.raw`(?:"?trg_prs_audit_truncate"?|"?trg_prs_audit"?|ALL|USER)`
+
+/**
+ * Every migration strictly after MIGRATION_FILE that disables an audit trigger, or re-enables it
+ * under a non-default firing mode, via `ALTER TABLE`. Postgres disables/re-enables a trigger
+ * through `ALTER TABLE ... DISABLE|ENABLE TRIGGER`, NOT `ALTER TRIGGER` -- the tamper check above
+ * only ever looked at `ALTER TRIGGER`, so a later migration could disable `trg_prs_audit` with
+ * every existing static assertion still passing (round-2 gate finding 1). `DISABLE TRIGGER` also
+ * accepts the bare keywords ALL and USER as a target, which disable every trigger on the table
+ * including ours, so those match too. Case-insensitive, quoted/schema-qualified, matches across
+ * line breaks (`\s` includes `\n`). Exempt only via REVIEWED_LATER_MIGRATIONS.
+ */
+function disableTriggerViolations(): string[] {
+  const offenders: string[] = []
+  const disableRe = new RegExp(
+    String.raw`ALTER\s+TABLE\s+(?:IF\s+EXISTS\s+)?(?:ONLY\s+)?${TABLE_REF_SRC}\s+DISABLE\s+TRIGGER\s+${ANY_TRIGGER_TARGET_SRC}\b`,
+    'gi'
+  )
+  const enableRe = new RegExp(
+    String.raw`ALTER\s+TABLE\s+(?:IF\s+EXISTS\s+)?(?:ONLY\s+)?${TABLE_REF_SRC}\s+ENABLE\s+(?:REPLICA|ALWAYS)\s+TRIGGER\s+${AUDIT_TRIGGER_TARGET_SRC}\b`,
+    'gi'
+  )
+  for (const file of laterMigrationFiles()) {
+    if (REVIEWED_LATER_MIGRATIONS.includes(file)) continue
+    const content = readMigration(file)
+    if (content === null) continue
+    const sql = stripLineComments(content)
+    for (const m of sql.matchAll(disableRe)) {
+      offenders.push(
+        `${file}: disables a trigger on private_registry_skills -- ` +
+          `${m[0].replace(/\s+/g, ' ').trim()}. ${reviewRemediation(file)}`
+      )
+    }
+    for (const m of sql.matchAll(enableRe)) {
+      offenders.push(
+        `${file}: re-enables an audit trigger under a non-default firing mode -- ` +
+          `${m[0].replace(/\s+/g, ' ').trim()}. ${reviewRemediation(file)}`
+      )
+    }
+  }
+  return offenders
+}
+
+/**
+ * Every migration strictly after MIGRATION_FILE that either (a) CREATEs ANY trigger --
+ * whatever its name, timing, event list or backing function -- on private_registry_skills, or
+ * (b) redefines audit_private_registry_skills_change() with a non-empty argument list (an
+ * overload). Neither shape is visible to DEF_RE or the by-name tamper check above, both of which
+ * only ever look at the two pinned trigger names and the zero-arg function signature: a later
+ * migration is free to add a second, differently-named trigger (or a same-named overload) that
+ * writes something else entirely, or nothing at all, while every existing assertion keeps passing
+ * (round-2 gate finding 2 -- the gate's own PoC created `trg_prs_snapshot` calling
+ * `audit_prs_snapshot()`, an unrelated function). Statement-scoped (split on `;`) so a trigger on
+ * an unrelated table, or an unrelated function, does not false-positive. Exempt only via
+ * REVIEWED_LATER_MIGRATIONS.
+ */
+function laterTriggerViolations(): string[] {
+  const offenders: string[] = []
+  const onTableRe = new RegExp(String.raw`\bON\s+(?:ONLY\s+)?${TABLE_REF_SRC}\b`, 'i')
+  const overloadRe = new RegExp(
+    String.raw`CREATE\s+(?:OR\s+REPLACE\s+)?FUNCTION\s+(?:"?public"?\s*\.\s*)?"?${FUNCTION_NAME}"?\s*\(\s*([^()]+)\)`,
+    'gi'
+  )
+  for (const file of laterMigrationFiles()) {
+    if (REVIEWED_LATER_MIGRATIONS.includes(file)) continue
+    const content = readMigration(file)
+    if (content === null) continue
+    const sql = stripLineComments(content)
+    for (const stmt of sql.split(';')) {
+      if (!/\bCREATE\s+(?:OR\s+REPLACE\s+)?(?:CONSTRAINT\s+)?TRIGGER\b/i.test(stmt)) continue
+      if (!onTableRe.test(stmt)) continue
+      offenders.push(
+        `${file}: unreviewed trigger on private_registry_skills -- ` +
+          `${stmt.replace(/\s+/g, ' ').trim().slice(0, 160)}. ${reviewRemediation(file)}`
+      )
+    }
+    for (const m of sql.matchAll(overloadRe)) {
+      if (m[1].trim().length === 0) continue // the pinned zero-arg signature; not an overload.
+      offenders.push(
+        `${file}: unreviewed overload ${FUNCTION_NAME}(${m[1].trim()}). ${reviewRemediation(file)}`
+      )
+    }
+  }
+  return offenders
+}
+
+/**
+ * Every migration strictly after MIGRATION_FILE that rewrites, drops, renames, or adds a
+ * trigger/rule to the audit_logs sink itself: `CREATE [OR REPLACE] RULE ... TO audit_logs`,
+ * `CREATE [OR REPLACE] [CONSTRAINT] TRIGGER ... ON audit_logs`, `DROP TABLE audit_logs`,
+ * `ALTER TABLE audit_logs ... RENAME`, or `ALTER TABLE audit_logs ... DISABLE TRIGGER`. The
+ * function pin only protects the write -- `INSERT INTO audit_logs`; it says nothing about what
+ * happens to that INSERT once the statement leaves the trigger, and a rule on audit_logs can turn
+ * it into a no-op without the function changing at all (round-2 gate finding 3 -- the gate's own
+ * PoC was `CREATE RULE suppress_registry_audit AS ON INSERT TO public.audit_logs ... DO INSTEAD
+ * NOTHING`; note CREATE RULE's table reference uses `TO`, not `ON` -- `ON` in that grammar
+ * introduces the event). Statement-scoped. Exempt only via REVIEWED_LATER_MIGRATIONS. Checked
+ * against every migration currently newer than MIGRATION_FILE before being written (none exist yet
+ * as of SMI-6114 round 2, so there is nothing pre-existing for this check to have to tolerate).
+ */
+function auditSinkViolations(): string[] {
+  const offenders: string[] = []
+  const ruleToAuditLogsRe = new RegExp(String.raw`\bTO\s+${AUDIT_LOGS_REF_SRC}\b`, 'i')
+  const triggerOnAuditLogsRe = new RegExp(
+    String.raw`\bON\s+(?:ONLY\s+)?${AUDIT_LOGS_REF_SRC}\b`,
+    'i'
+  )
+  const dropAuditLogsRe = new RegExp(
+    String.raw`\bDROP\s+TABLE\s+(?:IF\s+EXISTS\s+)?${AUDIT_LOGS_REF_SRC}\b`,
+    'i'
+  )
+  const alterAuditLogsRe = new RegExp(
+    String.raw`\bALTER\s+TABLE\s+(?:IF\s+EXISTS\s+)?(?:ONLY\s+)?${AUDIT_LOGS_REF_SRC}\b`,
+    'i'
+  )
+  for (const file of laterMigrationFiles()) {
+    if (REVIEWED_LATER_MIGRATIONS.includes(file)) continue
+    const content = readMigration(file)
+    if (content === null) continue
+    const sql = stripLineComments(content)
+    for (const stmt of sql.split(';')) {
+      const trimmed = () => stmt.replace(/\s+/g, ' ').trim().slice(0, 160)
+      if (/\bCREATE\s+(?:OR\s+REPLACE\s+)?RULE\b/i.test(stmt) && ruleToAuditLogsRe.test(stmt)) {
+        offenders.push(
+          `${file}: CREATE RULE targeting audit_logs -- ${trimmed()}. ${reviewRemediation(file)}`
+        )
+      }
+      if (
+        /\bCREATE\s+(?:OR\s+REPLACE\s+)?(?:CONSTRAINT\s+)?TRIGGER\b/i.test(stmt) &&
+        triggerOnAuditLogsRe.test(stmt)
+      ) {
+        offenders.push(
+          `${file}: CREATE TRIGGER on audit_logs -- ${trimmed()}. ${reviewRemediation(file)}`
+        )
+      }
+      if (dropAuditLogsRe.test(stmt)) {
+        offenders.push(`${file}: DROP TABLE audit_logs -- ${trimmed()}. ${reviewRemediation(file)}`)
+      }
+      if (alterAuditLogsRe.test(stmt) && /\bRENAME\b/i.test(stmt)) {
+        offenders.push(
+          `${file}: ALTER TABLE audit_logs ... RENAME -- ${trimmed()}. ${reviewRemediation(file)}`
+        )
+      }
+      if (alterAuditLogsRe.test(stmt) && /\bDISABLE\s+TRIGGER\b/i.test(stmt)) {
+        offenders.push(
+          `${file}: ALTER TABLE audit_logs ... DISABLE TRIGGER -- ${trimmed()}. ` +
+            reviewRemediation(file)
+        )
+      }
+    }
+  }
+  return offenders
+}
+
 describe.skipIf(locked)('20260913000000_private_registry_audit_trigger.sql (SMI-6114)', () => {
   const sql = triggerSql ?? ''
   const code = stripLineComments(sql)
@@ -390,7 +591,7 @@ describe.skipIf(locked)('20260913000000_private_registry_audit_trigger.sql (SMI-
       const defs = allFunctionDefinitions()
       // Denominator first: an empty defs list would make the hash check below vacuous.
       expect(defs.length, 'no parseable definition found in any migration').toBeGreaterThan(0)
-      const header = normalizeSql(defs[defs.length - 1].header)
+      const header = defs[defs.length - 1].header // RAW: no comment stripping, no normalizing.
       expect(
         sha256(header),
         'the function header changed -- review against ADR-164 before updating PINNED_HEADER_SHA256'
@@ -401,7 +602,7 @@ describe.skipIf(locked)('20260913000000_private_registry_audit_trigger.sql (SMI-
   it('pins the function body against a reviewed hash -- ADR-164 (SMI-6114 retro F1/F2)', () => {
     const defs = allFunctionDefinitions()
     expect(defs.length, 'no parseable definition found in any migration').toBeGreaterThan(0)
-    const body = normalizeSql(defs[defs.length - 1].body)
+    const body = defs[defs.length - 1].body // RAW: no comment stripping, no normalizing.
     expect(
       sha256(body),
       'the function body changed -- review against ADR-164 before updating PINNED_BODY_SHA256'
@@ -426,6 +627,30 @@ describe.skipIf(locked)('20260913000000_private_registry_audit_trigger.sql (SMI-
   it('no later migration drops or alters the pinned function or triggers by name (SMI-6114 retro F1)', () => {
     expect(triggerOrFunctionTamperViolations()).toEqual([])
   })
+
+  it(
+    'no later migration disables an audit trigger via ALTER TABLE, or re-enables it under a ' +
+      'non-default firing mode (SMI-6114 retro round 2, finding 1)',
+    () => {
+      expect(disableTriggerViolations()).toEqual([])
+    }
+  )
+
+  it(
+    'no later migration creates another trigger on private_registry_skills, or an overload of ' +
+      'the pinned function (SMI-6114 retro round 2, finding 2)',
+    () => {
+      expect(laterTriggerViolations()).toEqual([])
+    }
+  )
+
+  it(
+    'no later migration rewrites, drops, renames or adds a trigger/rule to the audit_logs sink ' +
+      '(SMI-6114 retro round 2, finding 3)',
+    () => {
+      expect(auditSinkViolations()).toEqual([])
+    }
+  )
 
   it(
     'revokes EXECUTE from anon and authenticated (Check 51/52), and no later migration re-grants ' +
