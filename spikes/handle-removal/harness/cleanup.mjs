@@ -5,7 +5,17 @@
 // (never through a truncating pipe) and return a structured result rather
 // than throwing, so a caller can assert on it explicitly.
 
+// CLI: `node harness/cleanup.mjs [--tag <tag>] [--volume <name>]`. Until this
+// existed the module was import-only, so the README's own instruction to run
+// it produced a silent exit 0 that checked nothing -- a clean-looking result
+// from an instrument that never ran, which is precisely the failure class this
+// spike exists to detect. The CLI prints each check's COUNT beside its verdict
+// and exits non-zero when anything is left behind, so "clean" and "did not
+// look" can no longer read the same.
+
 import { execFileSync, execSync } from 'node:child_process'
+import { fileURLToPath } from 'node:url'
+import path from 'node:path'
 
 /**
  * Runs a shell pipeline via execSync but returns {stdout, status} instead of
@@ -85,4 +95,44 @@ export function assertCleanupComplete(tag, dockerVolumeName) {
   const volume = dockerVolumeName ? removeDockerVolume(dockerVolumeName) : null
   const clean = mounts.clean && images.clean && (!volume || volume.error === undefined)
   return { clean, mounts, images, volume }
+}
+
+/**
+ * Runs the full assertion and reports it, one line per check, each carrying the
+ * count it actually observed -- so a reader can tell a real zero from a check
+ * that never looked. Exits 1 when anything is left behind.
+ */
+function main(argv) {
+  let tag = 's6676'
+  let volume = null
+  for (let i = 0; i < argv.length; i += 1) {
+    if (argv[i] === '--tag') tag = argv[++i]
+    else if (argv[i] === '--volume') volume = argv[++i]
+  }
+
+  const r = assertCleanupComplete(tag, volume)
+  console.log(`[cleanup] tag=${JSON.stringify(tag)} platform=${process.platform}`)
+  console.log(
+    `  mounts      : ${r.mounts.clean ? 'clean' : 'LEFTOVER'} (matched ${r.mounts.count})`
+  )
+  console.log(
+    `  disk images : ${r.images.clean ? 'clean' : 'LEFTOVER'} (matched ${r.images.count})` +
+      (process.platform === 'darwin' ? '' : ' [skipped: not darwin]')
+  )
+  if (volume === null) {
+    console.log('  docker vol  : not checked (no --volume given)')
+  } else if (r.volume.alreadyAbsent) {
+    console.log(`  docker vol  : clean (${volume} already absent)`)
+  } else if (r.volume.removed) {
+    console.log(`  docker vol  : removed ${volume}`)
+  } else {
+    console.log(`  docker vol  : ERROR removing ${volume}: ${r.volume.error}`)
+  }
+  console.log(`[cleanup] ${r.clean ? 'CLEAN' : 'NOT CLEAN'}`)
+  return r.clean ? 0 : 1
+}
+
+// Only when invoked directly -- importing this module must stay side-effect free.
+if (process.argv[1] && path.resolve(process.argv[1]) === fileURLToPath(import.meta.url)) {
+  process.exit(main(process.argv.slice(2)))
 }

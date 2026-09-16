@@ -1,16 +1,16 @@
 # SMI-6676 spike results summary
 
-Regenerated from 33 `results/raw/*.jsonl` files, 46760 total records. Do not hand-edit -- run `node results/generate-summary.mjs` after any new attack run.
+Regenerated from 37 `results/raw/*.jsonl` files, 47240 total records. Do not hand-edit -- run `node results/generate-summary.mjs` after any new attack run.
 
 ## Verdict tally
 
 | Verdict | Cells |
 |---|---|
-| FAIL | 151 |
-| NEVER-RAN (control) | 93 |
+| FAIL | 159 |
+| NEVER-RAN (control) | 56 |
 | NEVER-RAN | 51 |
 | PASS (control unverified) | 90 |
-| PASS | 175 |
+| PASS | 220 |
 
 The verdict applies the WHOLE plan §9 rule: `PASS` requires `ran == target`, `never-ran == 0`, `failed == 0` **and** a same-filesystem control cell with `failed >= 1`. `NEVER-RAN (control)` means the candidate itself was clean but the plan's named control never demonstrated the loss on that filesystem, so the fixture proves nothing. `PASS (control unverified)` means the control the plan names is real but lives outside this JSONL (a feasibility script, or a cited earlier experiment) and this harness can neither confirm nor refute it.
 
@@ -18,12 +18,12 @@ The verdict applies the WHOLE plan §9 rule: `PASS` requires `ran == target`, `n
 
 | Control state | Cells |
 |---|---|
-| ABSENT | 88 |
+| ABSENT | 15 |
 | DID-NOT-FAIL | 62 |
 | external-unverified | 105 |
-| is-control | 63 |
+| is-control | 71 |
 | none-by-design | 50 |
-| ok | 192 |
+| ok | 273 |
 
 ## Cells
 
@@ -154,37 +154,37 @@ The verdict applies the WHOLE plan §9 rule: `PASS` requires `ran == target`, `n
 | A12 | ebusy-rmdir | V1 | virtiofsroot | 10 | 10 | 0 | 0 | ok | PASS |
 | A12 | eacces-unlink | V2 | virtiofsroot | 10 | 10 | 0 | 0 | ok | PASS |
 | A12 | ebusy-rmdir | V2 | virtiofsroot | 10 | 10 | 0 | 0 | ok | PASS |
-| A13-TIMING | guard-guardHash | V2 | darwin-apfs | 300 | 170 | 0 | 130 | ABSENT | NEVER-RAN |
-| A13-TIMING | guard-none | V2 | darwin-apfs | 300 | 134 | 1 | 165 | ABSENT | NEVER-RAN |
-| A13-TIMING | guard-guardHash | V2 | ext4vol | 300 | 145 | 0 | 155 | ABSENT | NEVER-RAN |
-| A13-TIMING | guard-none | V2 | ext4vol | 300 | 173 | 30 | 97 | ABSENT | NEVER-RAN |
+| A13-TIMING | guard-guardHash | V2 | darwin-apfs | 300 | 170 | 0 | 130 | ok | NEVER-RAN |
+| A13-TIMING | guard-none | V2 | darwin-apfs | 300 | 134 | 1 | 165 | ok | NEVER-RAN |
+| A13-TIMING | guard-guardHash | V2 | ext4vol | 300 | 145 | 0 | 155 | ok | NEVER-RAN |
+| A13-TIMING | guard-none | V2 | ext4vol | 300 | 173 | 30 | 97 | ok | NEVER-RAN |
 | A13-TIMING | guard-guardHash | V2 | overlayfs | 300 | 156 | 0 | 144 | ok | NEVER-RAN |
 | A13-TIMING | guard-none | V2 | overlayfs | 300 | 185 | 41 | 74 | ok | NEVER-RAN |
-| A13-TIMING | guard-guardHash | V2 | tmpfsroot | 300 | 145 | 0 | 155 | ABSENT | NEVER-RAN |
-| A13-TIMING | guard-none | V2 | tmpfsroot | 300 | 108 | 64 | 128 | ABSENT | NEVER-RAN |
-| A13-TIMING | guard-none | V1 | virtiofsroot | 300 | 170 | 127 | 3 | ABSENT | NEVER-RAN |
-| A13-TIMING | guard-guardHash | V2 | virtiofsroot | 300 | 300 | 0 | 0 | ABSENT | NEVER-RAN (control) |
-| A13-TIMING | guard-none | V2 | virtiofsroot | 300 | 192 | 108 | 0 | ABSENT | FAIL |
-| A13 | default | C0 | darwin-apfs | 300 | 98 | 16 | 186 | ABSENT | NEVER-RAN |
-| A13 | default | V0 | darwin-apfs | 300 | 107 | 9 | 184 | ABSENT | NEVER-RAN |
-| A13 | default | V1 | darwin-apfs | 300 | 114 | 0 | 186 | ABSENT | NEVER-RAN |
-| A13 | default | V2 | darwin-apfs | 300 | 115 | 0 | 185 | ABSENT | NEVER-RAN |
-| A13 | default | C0 | ext4vol | 300 | 58 | 172 | 70 | ABSENT | NEVER-RAN |
-| A13 | default | V0 | ext4vol | 300 | 49 | 38 | 213 | ABSENT | NEVER-RAN |
-| A13 | default | V1 | ext4vol | 300 | 53 | 37 | 210 | ABSENT | NEVER-RAN |
-| A13 | default | V2 | ext4vol | 300 | 113 | 30 | 157 | ABSENT | NEVER-RAN |
+| A13-TIMING | guard-guardHash | V2 | tmpfsroot | 300 | 145 | 0 | 155 | ok | NEVER-RAN |
+| A13-TIMING | guard-none | V2 | tmpfsroot | 300 | 108 | 64 | 128 | ok | NEVER-RAN |
+| A13-TIMING | guard-none | V1 | virtiofsroot | 300 | 170 | 127 | 3 | ok | NEVER-RAN |
+| A13-TIMING | guard-guardHash | V2 | virtiofsroot | 300 | 300 | 0 | 0 | ok | PASS |
+| A13-TIMING | guard-none | V2 | virtiofsroot | 300 | 192 | 108 | 0 | ok | FAIL |
+| A13 | default | C0 | darwin-apfs | 300 | 98 | 16 | 186 | ok | NEVER-RAN |
+| A13 | default | V0 | darwin-apfs | 300 | 107 | 9 | 184 | ok | NEVER-RAN |
+| A13 | default | V1 | darwin-apfs | 300 | 114 | 0 | 186 | ok | NEVER-RAN |
+| A13 | default | V2 | darwin-apfs | 300 | 115 | 0 | 185 | ok | NEVER-RAN |
+| A13 | default | C0 | ext4vol | 300 | 58 | 172 | 70 | ok | NEVER-RAN |
+| A13 | default | V0 | ext4vol | 300 | 49 | 38 | 213 | ok | NEVER-RAN |
+| A13 | default | V1 | ext4vol | 300 | 53 | 37 | 210 | ok | NEVER-RAN |
+| A13 | default | V2 | ext4vol | 300 | 113 | 30 | 157 | ok | NEVER-RAN |
 | A13 | default | C0 | overlayfs | 300 | 36 | 206 | 58 | ok | NEVER-RAN |
 | A13 | default | V0 | overlayfs | 300 | 50 | 39 | 211 | ok | NEVER-RAN |
 | A13 | default | V1 | overlayfs | 300 | 65 | 38 | 197 | ok | NEVER-RAN |
 | A13 | default | V2 | overlayfs | 300 | 105 | 22 | 173 | ok | NEVER-RAN |
-| A13 | default | C0 | tmpfsroot | 300 | 44 | 178 | 78 | ABSENT | NEVER-RAN |
-| A13 | default | V0 | tmpfsroot | 300 | 24 | 55 | 221 | ABSENT | NEVER-RAN |
-| A13 | default | V1 | tmpfsroot | 300 | 51 | 68 | 181 | ABSENT | NEVER-RAN |
-| A13 | default | V2 | tmpfsroot | 300 | 74 | 73 | 153 | ABSENT | NEVER-RAN |
-| A13 | default | C0 | virtiofsroot | 300 | 164 | 106 | 30 | ABSENT | NEVER-RAN |
-| A13 | default | V0 | virtiofsroot | 300 | 185 | 112 | 3 | ABSENT | NEVER-RAN |
-| A13 | default | V1 | virtiofsroot | 300 | 163 | 137 | 0 | ABSENT | FAIL |
-| A13 | default | V2 | virtiofsroot | 300 | 174 | 126 | 0 | ABSENT | FAIL |
+| A13 | default | C0 | tmpfsroot | 300 | 44 | 178 | 78 | ok | NEVER-RAN |
+| A13 | default | V0 | tmpfsroot | 300 | 24 | 55 | 221 | ok | NEVER-RAN |
+| A13 | default | V1 | tmpfsroot | 300 | 51 | 68 | 181 | ok | NEVER-RAN |
+| A13 | default | V2 | tmpfsroot | 300 | 74 | 73 | 153 | ok | NEVER-RAN |
+| A13 | default | C0 | virtiofsroot | 300 | 164 | 106 | 30 | ok | NEVER-RAN |
+| A13 | default | V0 | virtiofsroot | 300 | 185 | 112 | 3 | ok | NEVER-RAN |
+| A13 | default | V1 | virtiofsroot | 300 | 163 | 137 | 0 | ok | FAIL |
+| A13 | default | V2 | virtiofsroot | 300 | 174 | 126 | 0 | ok | FAIL |
 | A1 | bind | c0 | overlayfs | 10 | 10 | 0 | 0 | external-unverified | PASS (control unverified) |
 | A1 | tmpfs | c0 | overlayfs | 10 | 10 | 0 | 0 | external-unverified | PASS (control unverified) |
 | A1 | bind | v0 | overlayfs | 10 | 10 | 0 | 0 | external-unverified | PASS (control unverified) |
@@ -201,22 +201,26 @@ The verdict applies the WHOLE plan §9 rule: `PASS` requires `ran == target`, `n
 | A2 | tmpfs | v1 | overlayfs | 10 | 10 | 0 | 0 | DID-NOT-FAIL | NEVER-RAN (control) |
 | A2 | bind | v2 | overlayfs | 10 | 10 | 0 | 0 | DID-NOT-FAIL | NEVER-RAN (control) |
 | A2 | tmpfs | v2 | overlayfs | 10 | 10 | 0 | 0 | DID-NOT-FAIL | NEVER-RAN (control) |
-| A3 | guardHash | C0 | darwin-apfs | 30 | 30 | 0 | 0 | ABSENT | NEVER-RAN (control) |
-| A3 | none | C0 | darwin-apfs | 30 | 30 | 0 | 0 | ABSENT | NEVER-RAN (control) |
-| A3 | guardHash | V0 | darwin-apfs | 30 | 30 | 0 | 0 | ABSENT | NEVER-RAN (control) |
-| A3 | none | V0 | darwin-apfs | 30 | 0 | 30 | 0 | ABSENT | FAIL |
-| A3 | guardHash | V1 | darwin-apfs | 30 | 30 | 0 | 0 | ABSENT | NEVER-RAN (control) |
-| A3 | none | V1 | darwin-apfs | 30 | 0 | 30 | 0 | ABSENT | FAIL |
-| A3 | guardHash | V2 | darwin-apfs | 30 | 30 | 0 | 0 | ABSENT | NEVER-RAN (control) |
-| A3 | none | V2 | darwin-apfs | 30 | 0 | 30 | 0 | ABSENT | FAIL |
-| A3 | guardHash | C0 | ext4vol | 30 | 30 | 0 | 0 | ABSENT | NEVER-RAN (control) |
-| A3 | none | C0 | ext4vol | 30 | 30 | 0 | 0 | ABSENT | NEVER-RAN (control) |
-| A3 | guardHash | V0 | ext4vol | 30 | 30 | 0 | 0 | ABSENT | NEVER-RAN (control) |
-| A3 | none | V0 | ext4vol | 30 | 0 | 30 | 0 | ABSENT | FAIL |
-| A3 | guardHash | V1 | ext4vol | 30 | 30 | 0 | 0 | ABSENT | NEVER-RAN (control) |
-| A3 | none | V1 | ext4vol | 30 | 0 | 30 | 0 | ABSENT | FAIL |
-| A3 | guardHash | V2 | ext4vol | 30 | 30 | 0 | 0 | ABSENT | NEVER-RAN (control) |
-| A3 | none | V2 | ext4vol | 30 | 0 | 30 | 0 | ABSENT | FAIL |
+| A3 | baseline | baseline | darwin-apfs | 30 | 0 | 30 | 0 | is-control | FAIL |
+| A3 | guardHash | C0 | darwin-apfs | 30 | 30 | 0 | 0 | ok | PASS |
+| A3 | none | C0 | darwin-apfs | 30 | 30 | 0 | 0 | ok | PASS |
+| A3 | ud25 | ud25 | darwin-apfs | 30 | 30 | 0 | 0 | ok | PASS |
+| A3 | guardHash | V0 | darwin-apfs | 30 | 30 | 0 | 0 | ok | PASS |
+| A3 | none | V0 | darwin-apfs | 30 | 0 | 30 | 0 | ok | FAIL |
+| A3 | guardHash | V1 | darwin-apfs | 30 | 30 | 0 | 0 | ok | PASS |
+| A3 | none | V1 | darwin-apfs | 30 | 0 | 30 | 0 | ok | FAIL |
+| A3 | guardHash | V2 | darwin-apfs | 30 | 30 | 0 | 0 | ok | PASS |
+| A3 | none | V2 | darwin-apfs | 30 | 0 | 30 | 0 | ok | FAIL |
+| A3 | baseline | baseline | ext4vol | 30 | 0 | 30 | 0 | is-control | FAIL |
+| A3 | guardHash | C0 | ext4vol | 30 | 30 | 0 | 0 | ok | PASS |
+| A3 | none | C0 | ext4vol | 30 | 30 | 0 | 0 | ok | PASS |
+| A3 | ud25 | ud25 | ext4vol | 30 | 30 | 0 | 0 | ok | PASS |
+| A3 | guardHash | V0 | ext4vol | 30 | 30 | 0 | 0 | ok | PASS |
+| A3 | none | V0 | ext4vol | 30 | 0 | 30 | 0 | ok | FAIL |
+| A3 | guardHash | V1 | ext4vol | 30 | 30 | 0 | 0 | ok | PASS |
+| A3 | none | V1 | ext4vol | 30 | 0 | 30 | 0 | ok | FAIL |
+| A3 | guardHash | V2 | ext4vol | 30 | 30 | 0 | 0 | ok | PASS |
+| A3 | none | V2 | ext4vol | 30 | 0 | 30 | 0 | ok | FAIL |
 | A3 | baseline | baseline | overlayfs | 30 | 0 | 30 | 0 | is-control | FAIL |
 | A3 | guardHash | C0 | overlayfs | 30 | 30 | 0 | 0 | ok | PASS |
 | A3 | none | C0 | overlayfs | 30 | 30 | 0 | 0 | ok | PASS |
@@ -227,44 +231,56 @@ The verdict applies the WHOLE plan §9 rule: `PASS` requires `ran == target`, `n
 | A3 | none | V1 | overlayfs | 30 | 0 | 30 | 0 | ok | FAIL |
 | A3 | guardHash | V2 | overlayfs | 30 | 30 | 0 | 0 | ok | PASS |
 | A3 | none | V2 | overlayfs | 30 | 0 | 30 | 0 | ok | FAIL |
-| A3 | guardHash | C0 | tmpfsroot | 30 | 30 | 0 | 0 | ABSENT | NEVER-RAN (control) |
-| A3 | none | C0 | tmpfsroot | 30 | 30 | 0 | 0 | ABSENT | NEVER-RAN (control) |
-| A3 | guardHash | V0 | tmpfsroot | 30 | 30 | 0 | 0 | ABSENT | NEVER-RAN (control) |
-| A3 | none | V0 | tmpfsroot | 30 | 0 | 30 | 0 | ABSENT | FAIL |
-| A3 | guardHash | V1 | tmpfsroot | 30 | 30 | 0 | 0 | ABSENT | NEVER-RAN (control) |
-| A3 | none | V1 | tmpfsroot | 30 | 0 | 30 | 0 | ABSENT | FAIL |
-| A3 | guardHash | V2 | tmpfsroot | 30 | 30 | 0 | 0 | ABSENT | NEVER-RAN (control) |
-| A3 | none | V2 | tmpfsroot | 30 | 0 | 30 | 0 | ABSENT | FAIL |
-| A3 | guardHash | C0 | virtiofsroot | 30 | 30 | 0 | 0 | ABSENT | NEVER-RAN (control) |
-| A3 | none | C0 | virtiofsroot | 30 | 30 | 0 | 0 | ABSENT | NEVER-RAN (control) |
-| A3 | guardHash | V0 | virtiofsroot | 30 | 30 | 0 | 0 | ABSENT | NEVER-RAN (control) |
-| A3 | none | V0 | virtiofsroot | 30 | 0 | 30 | 0 | ABSENT | FAIL |
-| A3 | guardHash | V1 | virtiofsroot | 30 | 30 | 0 | 0 | ABSENT | NEVER-RAN (control) |
-| A3 | none | V1 | virtiofsroot | 30 | 2 | 28 | 0 | ABSENT | FAIL |
-| A3 | guardHash | V2 | virtiofsroot | 30 | 30 | 0 | 0 | ABSENT | NEVER-RAN (control) |
-| A3 | none | V2 | virtiofsroot | 30 | 11 | 19 | 0 | ABSENT | FAIL |
-| A4 | default | C0 | darwin-apfs | 30 | 30 | 0 | 0 | ABSENT | NEVER-RAN (control) |
-| A4 | default | V0 | darwin-apfs | 30 | 30 | 0 | 0 | ABSENT | NEVER-RAN (control) |
-| A4 | default | V1 | darwin-apfs | 30 | 30 | 0 | 0 | ABSENT | NEVER-RAN (control) |
-| A4 | default | V2 | darwin-apfs | 30 | 30 | 0 | 0 | ABSENT | NEVER-RAN (control) |
-| A4 | default | C0 | ext4vol | 30 | 30 | 0 | 0 | ABSENT | NEVER-RAN (control) |
-| A4 | default | V0 | ext4vol | 30 | 30 | 0 | 0 | ABSENT | NEVER-RAN (control) |
-| A4 | default | V1 | ext4vol | 30 | 30 | 0 | 0 | ABSENT | NEVER-RAN (control) |
-| A4 | default | V2 | ext4vol | 30 | 30 | 0 | 0 | ABSENT | NEVER-RAN (control) |
+| A3 | baseline | baseline | tmpfsroot | 30 | 0 | 30 | 0 | is-control | FAIL |
+| A3 | guardHash | C0 | tmpfsroot | 30 | 30 | 0 | 0 | ok | PASS |
+| A3 | none | C0 | tmpfsroot | 30 | 30 | 0 | 0 | ok | PASS |
+| A3 | ud25 | ud25 | tmpfsroot | 30 | 30 | 0 | 0 | ok | PASS |
+| A3 | guardHash | V0 | tmpfsroot | 30 | 30 | 0 | 0 | ok | PASS |
+| A3 | none | V0 | tmpfsroot | 30 | 0 | 30 | 0 | ok | FAIL |
+| A3 | guardHash | V1 | tmpfsroot | 30 | 30 | 0 | 0 | ok | PASS |
+| A3 | none | V1 | tmpfsroot | 30 | 0 | 30 | 0 | ok | FAIL |
+| A3 | guardHash | V2 | tmpfsroot | 30 | 30 | 0 | 0 | ok | PASS |
+| A3 | none | V2 | tmpfsroot | 30 | 0 | 30 | 0 | ok | FAIL |
+| A3 | baseline | baseline | virtiofsroot | 30 | 0 | 30 | 0 | is-control | FAIL |
+| A3 | guardHash | C0 | virtiofsroot | 30 | 30 | 0 | 0 | ok | PASS |
+| A3 | none | C0 | virtiofsroot | 30 | 30 | 0 | 0 | ok | PASS |
+| A3 | ud25 | ud25 | virtiofsroot | 30 | 30 | 0 | 0 | ok | PASS |
+| A3 | guardHash | V0 | virtiofsroot | 30 | 30 | 0 | 0 | ok | PASS |
+| A3 | none | V0 | virtiofsroot | 30 | 0 | 30 | 0 | ok | FAIL |
+| A3 | guardHash | V1 | virtiofsroot | 30 | 30 | 0 | 0 | ok | PASS |
+| A3 | none | V1 | virtiofsroot | 30 | 2 | 28 | 0 | ok | FAIL |
+| A3 | guardHash | V2 | virtiofsroot | 30 | 30 | 0 | 0 | ok | PASS |
+| A3 | none | V2 | virtiofsroot | 30 | 11 | 19 | 0 | ok | FAIL |
+| A4 | baseline | baseline | darwin-apfs | 30 | 0 | 30 | 0 | is-control | FAIL |
+| A4 | default | C0 | darwin-apfs | 30 | 30 | 0 | 0 | ok | PASS |
+| A4 | ud25 | ud25 | darwin-apfs | 30 | 30 | 0 | 0 | ok | PASS |
+| A4 | default | V0 | darwin-apfs | 30 | 30 | 0 | 0 | ok | PASS |
+| A4 | default | V1 | darwin-apfs | 30 | 30 | 0 | 0 | ok | PASS |
+| A4 | default | V2 | darwin-apfs | 30 | 30 | 0 | 0 | ok | PASS |
+| A4 | baseline | baseline | ext4vol | 30 | 0 | 30 | 0 | is-control | FAIL |
+| A4 | default | C0 | ext4vol | 30 | 30 | 0 | 0 | ok | PASS |
+| A4 | ud25 | ud25 | ext4vol | 30 | 30 | 0 | 0 | ok | PASS |
+| A4 | default | V0 | ext4vol | 30 | 30 | 0 | 0 | ok | PASS |
+| A4 | default | V1 | ext4vol | 30 | 30 | 0 | 0 | ok | PASS |
+| A4 | default | V2 | ext4vol | 30 | 30 | 0 | 0 | ok | PASS |
 | A4 | baseline | baseline | overlayfs | 30 | 0 | 30 | 0 | is-control | FAIL |
 | A4 | default | C0 | overlayfs | 30 | 30 | 0 | 0 | ok | PASS |
 | A4 | ud25 | ud25 | overlayfs | 30 | 30 | 0 | 0 | ok | PASS |
 | A4 | default | V0 | overlayfs | 30 | 30 | 0 | 0 | ok | PASS |
 | A4 | default | V1 | overlayfs | 30 | 30 | 0 | 0 | ok | PASS |
 | A4 | default | V2 | overlayfs | 30 | 30 | 0 | 0 | ok | PASS |
-| A4 | default | C0 | tmpfsroot | 30 | 30 | 0 | 0 | ABSENT | NEVER-RAN (control) |
-| A4 | default | V0 | tmpfsroot | 30 | 30 | 0 | 0 | ABSENT | NEVER-RAN (control) |
-| A4 | default | V1 | tmpfsroot | 30 | 30 | 0 | 0 | ABSENT | NEVER-RAN (control) |
-| A4 | default | V2 | tmpfsroot | 30 | 30 | 0 | 0 | ABSENT | NEVER-RAN (control) |
-| A4 | default | C0 | virtiofsroot | 30 | 30 | 0 | 0 | ABSENT | NEVER-RAN (control) |
-| A4 | default | V0 | virtiofsroot | 30 | 30 | 0 | 0 | ABSENT | NEVER-RAN (control) |
-| A4 | default | V1 | virtiofsroot | 30 | 30 | 0 | 0 | ABSENT | NEVER-RAN (control) |
-| A4 | default | V2 | virtiofsroot | 30 | 30 | 0 | 0 | ABSENT | NEVER-RAN (control) |
+| A4 | baseline | baseline | tmpfsroot | 30 | 0 | 30 | 0 | is-control | FAIL |
+| A4 | default | C0 | tmpfsroot | 30 | 30 | 0 | 0 | ok | PASS |
+| A4 | ud25 | ud25 | tmpfsroot | 30 | 30 | 0 | 0 | ok | PASS |
+| A4 | default | V0 | tmpfsroot | 30 | 30 | 0 | 0 | ok | PASS |
+| A4 | default | V1 | tmpfsroot | 30 | 30 | 0 | 0 | ok | PASS |
+| A4 | default | V2 | tmpfsroot | 30 | 30 | 0 | 0 | ok | PASS |
+| A4 | baseline | baseline | virtiofsroot | 30 | 0 | 30 | 0 | is-control | FAIL |
+| A4 | default | C0 | virtiofsroot | 30 | 30 | 0 | 0 | ok | PASS |
+| A4 | ud25 | ud25 | virtiofsroot | 30 | 30 | 0 | 0 | ok | PASS |
+| A4 | default | V0 | virtiofsroot | 30 | 30 | 0 | 0 | ok | PASS |
+| A4 | default | V1 | virtiofsroot | 30 | 30 | 0 | 0 | ok | PASS |
+| A4 | default | V2 | virtiofsroot | 30 | 30 | 0 | 0 | ok | PASS |
 | A5-VR | V0 | V0 | apfs | 300 | 300 | 0 | 0 | DID-NOT-FAIL | NEVER-RAN (control) |
 | A5-VR | V1 | V1 | apfs | 300 | 300 | 0 | 0 | DID-NOT-FAIL | NEVER-RAN (control) |
 | A5-VR | V2 | V2 | apfs | 300 | 300 | 0 | 0 | DID-NOT-FAIL | NEVER-RAN (control) |
@@ -590,37 +606,12 @@ The verdict applies the WHOLE plan §9 rule: `PASS` requires `ran == target`, `n
 | N1 | ud25 | ud25 | apfs | 300 | 300 | 0 | 0 | external-unverified | PASS (control unverified) |
 | N1 | ud25 | ud25 | overlayfs | 300 | 300 | 0 | 0 | external-unverified | PASS (control unverified) |
 
-Total: 560 cells, 46760 runs.
+Total: 576 cells, 47240 runs.
 
 ## Cells whose control did not bite
 
 | Attack | Variant | Candidate | FS | Control state | Why |
 |---|---|---|---|---|---|
-| A13-TIMING | guard-guardHash | V2 | darwin-apfs | ABSENT | plan §5.1 A13: 'C0 without UD24' -- no A3/baseline cell exists on darwin-apfs |
-| A13-TIMING | guard-none | V2 | darwin-apfs | ABSENT | plan §5.1 A13: 'C0 without UD24' -- no A3/baseline cell exists on darwin-apfs |
-| A13-TIMING | guard-guardHash | V2 | ext4vol | ABSENT | plan §5.1 A13: 'C0 without UD24' -- no A3/baseline cell exists on ext4vol |
-| A13-TIMING | guard-none | V2 | ext4vol | ABSENT | plan §5.1 A13: 'C0 without UD24' -- no A3/baseline cell exists on ext4vol |
-| A13-TIMING | guard-guardHash | V2 | tmpfsroot | ABSENT | plan §5.1 A13: 'C0 without UD24' -- no A3/baseline cell exists on tmpfsroot |
-| A13-TIMING | guard-none | V2 | tmpfsroot | ABSENT | plan §5.1 A13: 'C0 without UD24' -- no A3/baseline cell exists on tmpfsroot |
-| A13-TIMING | guard-none | V1 | virtiofsroot | ABSENT | plan §5.1 A13: 'C0 without UD24' -- no A3/baseline cell exists on virtiofsroot |
-| A13-TIMING | guard-guardHash | V2 | virtiofsroot | ABSENT | plan §5.1 A13: 'C0 without UD24' -- no A3/baseline cell exists on virtiofsroot |
-| A13-TIMING | guard-none | V2 | virtiofsroot | ABSENT | plan §5.1 A13: 'C0 without UD24' -- no A3/baseline cell exists on virtiofsroot |
-| A13 | default | C0 | darwin-apfs | ABSENT | plan §5.1 A13: 'C0 without UD24' -- no A3/baseline cell exists on darwin-apfs |
-| A13 | default | V0 | darwin-apfs | ABSENT | plan §5.1 A13: 'C0 without UD24' -- no A3/baseline cell exists on darwin-apfs |
-| A13 | default | V1 | darwin-apfs | ABSENT | plan §5.1 A13: 'C0 without UD24' -- no A3/baseline cell exists on darwin-apfs |
-| A13 | default | V2 | darwin-apfs | ABSENT | plan §5.1 A13: 'C0 without UD24' -- no A3/baseline cell exists on darwin-apfs |
-| A13 | default | C0 | ext4vol | ABSENT | plan §5.1 A13: 'C0 without UD24' -- no A3/baseline cell exists on ext4vol |
-| A13 | default | V0 | ext4vol | ABSENT | plan §5.1 A13: 'C0 without UD24' -- no A3/baseline cell exists on ext4vol |
-| A13 | default | V1 | ext4vol | ABSENT | plan §5.1 A13: 'C0 without UD24' -- no A3/baseline cell exists on ext4vol |
-| A13 | default | V2 | ext4vol | ABSENT | plan §5.1 A13: 'C0 without UD24' -- no A3/baseline cell exists on ext4vol |
-| A13 | default | C0 | tmpfsroot | ABSENT | plan §5.1 A13: 'C0 without UD24' -- no A3/baseline cell exists on tmpfsroot |
-| A13 | default | V0 | tmpfsroot | ABSENT | plan §5.1 A13: 'C0 without UD24' -- no A3/baseline cell exists on tmpfsroot |
-| A13 | default | V1 | tmpfsroot | ABSENT | plan §5.1 A13: 'C0 without UD24' -- no A3/baseline cell exists on tmpfsroot |
-| A13 | default | V2 | tmpfsroot | ABSENT | plan §5.1 A13: 'C0 without UD24' -- no A3/baseline cell exists on tmpfsroot |
-| A13 | default | C0 | virtiofsroot | ABSENT | plan §5.1 A13: 'C0 without UD24' -- no A3/baseline cell exists on virtiofsroot |
-| A13 | default | V0 | virtiofsroot | ABSENT | plan §5.1 A13: 'C0 without UD24' -- no A3/baseline cell exists on virtiofsroot |
-| A13 | default | V1 | virtiofsroot | ABSENT | plan §5.1 A13: 'C0 without UD24' -- no A3/baseline cell exists on virtiofsroot |
-| A13 | default | V2 | virtiofsroot | ABSENT | plan §5.1 A13: 'C0 without UD24' -- no A3/baseline cell exists on virtiofsroot |
 | A2 | bind | c0 | overlayfs | DID-NOT-FAIL | plan §5.1 A2 -- A2/c0 on overlayfs recorded 0 failures |
 | A2 | tmpfs | c0 | overlayfs | DID-NOT-FAIL | plan §5.1 A2 -- A2/c0 on overlayfs recorded 0 failures |
 | A2 | bind | v0 | overlayfs | DID-NOT-FAIL | plan §5.1 A2 -- A2/c0 on overlayfs recorded 0 failures |
@@ -629,54 +620,6 @@ Total: 560 cells, 46760 runs.
 | A2 | tmpfs | v1 | overlayfs | DID-NOT-FAIL | plan §5.1 A2 -- A2/c0 on overlayfs recorded 0 failures |
 | A2 | bind | v2 | overlayfs | DID-NOT-FAIL | plan §5.1 A2 -- A2/c0 on overlayfs recorded 0 failures |
 | A2 | tmpfs | v2 | overlayfs | DID-NOT-FAIL | plan §5.1 A2 -- A2/c0 on overlayfs recorded 0 failures |
-| A3 | guardHash | C0 | darwin-apfs | ABSENT | plan §5.1 A3: 'C0 without UD24' -- no A3/baseline cell exists on darwin-apfs |
-| A3 | none | C0 | darwin-apfs | ABSENT | plan §5.1 A3: 'C0 without UD24' -- no A3/baseline cell exists on darwin-apfs |
-| A3 | guardHash | V0 | darwin-apfs | ABSENT | plan §5.1 A3: 'C0 without UD24' -- no A3/baseline cell exists on darwin-apfs |
-| A3 | none | V0 | darwin-apfs | ABSENT | plan §5.1 A3: 'C0 without UD24' -- no A3/baseline cell exists on darwin-apfs |
-| A3 | guardHash | V1 | darwin-apfs | ABSENT | plan §5.1 A3: 'C0 without UD24' -- no A3/baseline cell exists on darwin-apfs |
-| A3 | none | V1 | darwin-apfs | ABSENT | plan §5.1 A3: 'C0 without UD24' -- no A3/baseline cell exists on darwin-apfs |
-| A3 | guardHash | V2 | darwin-apfs | ABSENT | plan §5.1 A3: 'C0 without UD24' -- no A3/baseline cell exists on darwin-apfs |
-| A3 | none | V2 | darwin-apfs | ABSENT | plan §5.1 A3: 'C0 without UD24' -- no A3/baseline cell exists on darwin-apfs |
-| A3 | guardHash | C0 | ext4vol | ABSENT | plan §5.1 A3: 'C0 without UD24' -- no A3/baseline cell exists on ext4vol |
-| A3 | none | C0 | ext4vol | ABSENT | plan §5.1 A3: 'C0 without UD24' -- no A3/baseline cell exists on ext4vol |
-| A3 | guardHash | V0 | ext4vol | ABSENT | plan §5.1 A3: 'C0 without UD24' -- no A3/baseline cell exists on ext4vol |
-| A3 | none | V0 | ext4vol | ABSENT | plan §5.1 A3: 'C0 without UD24' -- no A3/baseline cell exists on ext4vol |
-| A3 | guardHash | V1 | ext4vol | ABSENT | plan §5.1 A3: 'C0 without UD24' -- no A3/baseline cell exists on ext4vol |
-| A3 | none | V1 | ext4vol | ABSENT | plan §5.1 A3: 'C0 without UD24' -- no A3/baseline cell exists on ext4vol |
-| A3 | guardHash | V2 | ext4vol | ABSENT | plan §5.1 A3: 'C0 without UD24' -- no A3/baseline cell exists on ext4vol |
-| A3 | none | V2 | ext4vol | ABSENT | plan §5.1 A3: 'C0 without UD24' -- no A3/baseline cell exists on ext4vol |
-| A3 | guardHash | C0 | tmpfsroot | ABSENT | plan §5.1 A3: 'C0 without UD24' -- no A3/baseline cell exists on tmpfsroot |
-| A3 | none | C0 | tmpfsroot | ABSENT | plan §5.1 A3: 'C0 without UD24' -- no A3/baseline cell exists on tmpfsroot |
-| A3 | guardHash | V0 | tmpfsroot | ABSENT | plan §5.1 A3: 'C0 without UD24' -- no A3/baseline cell exists on tmpfsroot |
-| A3 | none | V0 | tmpfsroot | ABSENT | plan §5.1 A3: 'C0 without UD24' -- no A3/baseline cell exists on tmpfsroot |
-| A3 | guardHash | V1 | tmpfsroot | ABSENT | plan §5.1 A3: 'C0 without UD24' -- no A3/baseline cell exists on tmpfsroot |
-| A3 | none | V1 | tmpfsroot | ABSENT | plan §5.1 A3: 'C0 without UD24' -- no A3/baseline cell exists on tmpfsroot |
-| A3 | guardHash | V2 | tmpfsroot | ABSENT | plan §5.1 A3: 'C0 without UD24' -- no A3/baseline cell exists on tmpfsroot |
-| A3 | none | V2 | tmpfsroot | ABSENT | plan §5.1 A3: 'C0 without UD24' -- no A3/baseline cell exists on tmpfsroot |
-| A3 | guardHash | C0 | virtiofsroot | ABSENT | plan §5.1 A3: 'C0 without UD24' -- no A3/baseline cell exists on virtiofsroot |
-| A3 | none | C0 | virtiofsroot | ABSENT | plan §5.1 A3: 'C0 without UD24' -- no A3/baseline cell exists on virtiofsroot |
-| A3 | guardHash | V0 | virtiofsroot | ABSENT | plan §5.1 A3: 'C0 without UD24' -- no A3/baseline cell exists on virtiofsroot |
-| A3 | none | V0 | virtiofsroot | ABSENT | plan §5.1 A3: 'C0 without UD24' -- no A3/baseline cell exists on virtiofsroot |
-| A3 | guardHash | V1 | virtiofsroot | ABSENT | plan §5.1 A3: 'C0 without UD24' -- no A3/baseline cell exists on virtiofsroot |
-| A3 | none | V1 | virtiofsroot | ABSENT | plan §5.1 A3: 'C0 without UD24' -- no A3/baseline cell exists on virtiofsroot |
-| A3 | guardHash | V2 | virtiofsroot | ABSENT | plan §5.1 A3: 'C0 without UD24' -- no A3/baseline cell exists on virtiofsroot |
-| A3 | none | V2 | virtiofsroot | ABSENT | plan §5.1 A3: 'C0 without UD24' -- no A3/baseline cell exists on virtiofsroot |
-| A4 | default | C0 | darwin-apfs | ABSENT | plan §5.1 A4: 'C0 without UD24' -- no A4/baseline cell exists on darwin-apfs |
-| A4 | default | V0 | darwin-apfs | ABSENT | plan §5.1 A4: 'C0 without UD24' -- no A4/baseline cell exists on darwin-apfs |
-| A4 | default | V1 | darwin-apfs | ABSENT | plan §5.1 A4: 'C0 without UD24' -- no A4/baseline cell exists on darwin-apfs |
-| A4 | default | V2 | darwin-apfs | ABSENT | plan §5.1 A4: 'C0 without UD24' -- no A4/baseline cell exists on darwin-apfs |
-| A4 | default | C0 | ext4vol | ABSENT | plan §5.1 A4: 'C0 without UD24' -- no A4/baseline cell exists on ext4vol |
-| A4 | default | V0 | ext4vol | ABSENT | plan §5.1 A4: 'C0 without UD24' -- no A4/baseline cell exists on ext4vol |
-| A4 | default | V1 | ext4vol | ABSENT | plan §5.1 A4: 'C0 without UD24' -- no A4/baseline cell exists on ext4vol |
-| A4 | default | V2 | ext4vol | ABSENT | plan §5.1 A4: 'C0 without UD24' -- no A4/baseline cell exists on ext4vol |
-| A4 | default | C0 | tmpfsroot | ABSENT | plan §5.1 A4: 'C0 without UD24' -- no A4/baseline cell exists on tmpfsroot |
-| A4 | default | V0 | tmpfsroot | ABSENT | plan §5.1 A4: 'C0 without UD24' -- no A4/baseline cell exists on tmpfsroot |
-| A4 | default | V1 | tmpfsroot | ABSENT | plan §5.1 A4: 'C0 without UD24' -- no A4/baseline cell exists on tmpfsroot |
-| A4 | default | V2 | tmpfsroot | ABSENT | plan §5.1 A4: 'C0 without UD24' -- no A4/baseline cell exists on tmpfsroot |
-| A4 | default | C0 | virtiofsroot | ABSENT | plan §5.1 A4: 'C0 without UD24' -- no A4/baseline cell exists on virtiofsroot |
-| A4 | default | V0 | virtiofsroot | ABSENT | plan §5.1 A4: 'C0 without UD24' -- no A4/baseline cell exists on virtiofsroot |
-| A4 | default | V1 | virtiofsroot | ABSENT | plan §5.1 A4: 'C0 without UD24' -- no A4/baseline cell exists on virtiofsroot |
-| A4 | default | V2 | virtiofsroot | ABSENT | plan §5.1 A4: 'C0 without UD24' -- no A4/baseline cell exists on virtiofsroot |
 | A5-VR | V0 | V0 | apfs | DID-NOT-FAIL | plan §5.1 A5: 'C0 without the gate' -- A5/ud24Only on apfs recorded 0 failures |
 | A5-VR | V1 | V1 | apfs | DID-NOT-FAIL | plan §5.1 A5: 'C0 without the gate' -- A5/ud24Only on apfs recorded 0 failures |
 | A5-VR | V2 | V2 | apfs | DID-NOT-FAIL | plan §5.1 A5: 'C0 without the gate' -- A5/ud24Only on apfs recorded 0 failures |
