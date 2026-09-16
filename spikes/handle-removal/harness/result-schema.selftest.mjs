@@ -2,7 +2,16 @@
 // a dummy attack with a forced precondition miss must be reported never-ran,
 // not passed -- even when its outcome otherwise looks clean.
 
-import { makeRecord, classifyRecord, aggregateCell, formatVerdict } from './result-schema.mjs'
+import {
+  makeRecord,
+  classifyRecord,
+  aggregateCell,
+  formatVerdict,
+  scanQuarantineLeftovers,
+} from './result-schema.mjs'
+import { mkdtempSync, mkdirSync, writeFileSync, rmSync } from 'node:fs'
+import { tmpdir } from 'node:os'
+import path from 'node:path'
 
 function baseCell() {
   return { attack: 'DUMMY', candidate: 'dummy-candidate', fs: 'dummy-fs', runner: 'self-test' }
@@ -103,6 +112,62 @@ check(
 const aggControlFailed = aggregateCell(cleanCell, () => false, { target: 2, controlFailed: true })
 check('aggregateCell verdict, clean cell + control failed', aggControlFailed.verdict, 'PASS')
 console.log(formatVerdict('DUMMY/dummy-candidate/dummy-fs', aggControlFailed))
+
+// ---------------------------------------------------------------------------
+// scanQuarantineLeftovers: all five directions, pinned.
+//
+// The POSITIVE direction (entries > 0) had never fired in any real run when
+// these were added -- 16,134 records, every one zero. An instrument that has
+// only ever returned zero cannot distinguish "nothing was stranded" from
+// "cannot detect stranding", so the zero it reports is worth nothing until
+// something makes it report non-zero. That is what case Q1 is for.
+// ---------------------------------------------------------------------------
+
+const qTmp = mkdtempSync(path.join(tmpdir(), 's6676-selftest-q-'))
+
+// Q1 (the red direction): a real stranded entry must be COUNTED.
+const qStranded = path.join(qTmp, 'stranded')
+mkdirSync(path.join(qStranded, '.skillsmith-rm-deadbeef', 'leftover'), { recursive: true })
+writeFileSync(path.join(qStranded, '.skillsmith-rm-deadbeef', 'leftover', 'f.txt'), 'x')
+const q1 = scanQuarantineLeftovers(qStranded)
+check('Q1 stranded entry counted', q1.entries, 1)
+check('Q1 stranded dir counted', q1.dirs, 1)
+check('Q1 path reported', q1.paths[0], '.skillsmith-rm-deadbeef/leftover')
+check('Q1 no scan error', q1.scanError, null)
+
+// Q2: a clean parent is a real zero, distinguishable from Q1.
+const qClean = path.join(qTmp, 'clean')
+mkdirSync(qClean, { recursive: true })
+const q2 = scanQuarantineLeftovers(qClean)
+check('Q2 clean parent, no dirs', q2.dirs, 0)
+check('Q2 clean parent, no entries', q2.entries, 0)
+check('Q2 clean parent, no error', q2.scanError, null)
+
+// Q3: an EMPTY quarantine directory is litter, not lost data -- dirs without
+// entries. Collapsing the two would make every stopped run look like a loss.
+const qEmpty = path.join(qTmp, 'empty')
+mkdirSync(path.join(qEmpty, '.skillsmith-rm-cafe'), { recursive: true })
+const q3 = scanQuarantineLeftovers(qEmpty)
+check('Q3 empty quarantine dir counted', q3.dirs, 1)
+check('Q3 empty quarantine has no entries', q3.entries, 0)
+
+// Q4: a parent that cannot be read reports null, NEVER 0 -- "could not look"
+// must not read as "nothing there".
+const q4 = scanQuarantineLeftovers(path.join(qTmp, 'does-not-exist'))
+check('Q4 missing parent: dirs null not 0', q4.dirs, null)
+check('Q4 missing parent: entries null not 0', q4.entries, null)
+check('Q4 missing parent: errno reported', q4.scanError, 'ENOENT')
+
+// Q5: V0/V1 create no quarantine directory at all (walk.mjs guards the mkdirAt
+// on variant === 'V2'), so a zero there would be a confident statement about a
+// mechanism that does not exist.
+const q5 = scanQuarantineLeftovers(qStranded, 'V0')
+check('Q5 V0 is not-applicable, not zero', q5.scanError, 'n/a:no-quarantine-in-V0')
+check('Q5 V0 dirs null', q5.dirs, null)
+const q5b = scanQuarantineLeftovers(qStranded, 'V2')
+check('Q5 V2 still scans (entries found)', q5b.entries, 1)
+
+rmSync(qTmp, { recursive: true, force: true })
 
 if (!allOk) {
   console.error('[result-schema self-test] FAIL')
