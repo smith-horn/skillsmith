@@ -57,9 +57,12 @@ function fstatIdentity(fd) {
  *   afterListing(relPath, entries) [guard pass], afterOpen(relPath, type)
  *   [guard pass -- fired the instant a directory is opened and its fd
  *   starts being held, before its own children are listed], AND fired for
- *   files/symlinks too, right after they're read/readlinked, betweenGuard
- *   AndRemoval(), beforeUnlink(relPath, type) [removal pass, fired once per
- *   entry right before it is acted on].
+ *   files/symlinks too, right after they're read/readlinked,
+ *   afterSubtree(relPath) [guard pass -- fired for a directory once its
+ *   whole subtree has been recorded, and only when that subtree completed;
+ *   see hash.mjs for why the pair brackets one entry's observation window],
+ *   betweenGuardAndRemoval(), beforeUnlink(relPath, type) [removal pass,
+ *   fired once per entry right before it is acted on].
  * @returns {{status:'removed'|'kept', treeHash?:string}
  *          |{status:'stopped', reason:string, path:string, errno:number|null}}
  */

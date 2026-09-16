@@ -6,14 +6,96 @@
 // never fired (hook didn't fire, mutation didn't land, mount inactive,
 // reuse not observed where required) must never be counted as "passed".
 
-import { appendFileSync, mkdirSync } from 'node:fs'
+import { appendFileSync, mkdirSync, readdirSync } from 'node:fs'
 import path from 'node:path'
+
+/**
+ * Anything the removal machinery creates beside a tree it is removing is
+ * named with this prefix -- V2's own private quarantine directory
+ * (`.skillsmith-rm-<opId>`, walk.mjs) and C4's trash root
+ * (`.skillsmith-trash`, quarantine.mjs). Matching on the PREFIX rather than
+ * either exact name is deliberate: a leftover from a naming scheme this
+ * scanner has not been told about must still be counted, not silently
+ * reported as zero.
+ */
+const QUARANTINE_PREFIX = '.skillsmith-'
+
+const MAX_REPORTED_PATHS = 8
+
+/**
+ * Looks in `parentAbs` -- the directory that held the removed tree, and the
+ * directory V2 puts its quarantine beside -- for anything the removal left
+ * behind, and reports WHAT IS THERE rather than inferring it from an outcome
+ * reason code.
+ *
+ * Why this measurement and not another:
+ *
+ *  - `entries` counts the IMMEDIATE names inside each quarantine directory,
+ *    not files recursively and not bytes. One stranded directory holding
+ *    fifty files is one stranding event -- one name a caller, or a
+ *    doctor-style scan, would fail to find where it expects it -- not fifty.
+ *    walk.mjs's own `*-left-in-quarantine` reasons are per-entry for the same
+ *    reason, and §4.1 step 6 bounds it at one.
+ *  - `dirs` is reported separately because an EMPTY leftover quarantine
+ *    directory is a different and much milder fact: removeVR only rmdir's Q
+ *    on a clean run, so any stop leaves an empty `.skillsmith-rm-<opId>`
+ *    behind. That is litter, not stranded user data, and collapsing the two
+ *    into one number would make a stop look like a loss.
+ *  - `paths` (bounded) is carried so a non-zero count is diagnosable from the
+ *    record alone, without re-running anything.
+ *  - `scanError` exists so a scan that could not run is never indistinguish-
+ *    able from a scan that found nothing: on failure `dirs`/`entries` are
+ *    null, not 0.
+ *
+ * Call it AFTER the removal returns and after any concurrent racer has been
+ * joined, and BEFORE the fixture root is torn down.
+ *
+ * @param {string} parentAbs
+ * @returns {{dirs:number|null, entries:number|null, paths:string[], scanError:string|null}}
+ */
+export function scanQuarantineLeftovers(parentAbs) {
+  let names
+  try {
+    names = readdirSync(parentAbs)
+  } catch (err) {
+    return { dirs: null, entries: null, paths: [], scanError: err.code ?? String(err) }
+  }
+  let dirs = 0
+  let entries = 0
+  const paths = []
+  for (const name of names.sort()) {
+    if (!name.startsWith(QUARANTINE_PREFIX)) continue
+    dirs += 1
+    let inner
+    try {
+      inner = readdirSync(path.join(parentAbs, name))
+    } catch (err) {
+      // A quarantine directory we cannot list is NOT evidence of zero
+      // leftovers -- fail the whole scan rather than under-report.
+      return { dirs: null, entries: null, paths: [], scanError: err.code ?? String(err) }
+    }
+    entries += inner.length
+    for (const child of inner.sort()) {
+      if (paths.length < MAX_REPORTED_PATHS) paths.push(`${name}/${child}`)
+    }
+  }
+  return { dirs, entries, paths, scanError: null }
+}
 
 /** @typedef {'removed'|'kept'|'stopped'|'harness-error'} Outcome */
 
 /**
  * Builds a normalized run record. Callers fill in `cell`, `precondition`,
  * `outcome` and `userFiles`; everything else defaults.
+ *
+ * `quarantineLeft` may be supplied either as a top-level field (preferred) or
+ * on `outcome.quarantineLeft`, which is hoisted out here and never copied into
+ * `record.outcome`. The second path exists because the field is produced by an
+ * ATTACK MODULE (only it knows which directory held the tree) while makeRecord
+ * is called by a RUNNER, and `outcome` is the one object every runner already
+ * forwards. Without it the field stayed `null` on all 47,240 records ever
+ * written, which made "zero stranding" a claim about `outcome.reason` -- a
+ * proxy -- rather than about what was actually left on disk.
  *
  * @param {object} fields
  * @returns {object}
@@ -26,10 +108,11 @@ export function makeRecord(fields) {
     outcome,
     userFiles,
     outsideIntact = true,
-    quarantineLeft = null,
     durationMs = null,
     fsCheck = null,
   } = fields
+  const quarantineLeft =
+    fields.quarantineLeft ?? (outcome && outcome.quarantineLeft ? outcome.quarantineLeft : null)
 
   if (!cell || typeof cell !== 'object') {
     throw new TypeError('makeRecord: cell is required')
