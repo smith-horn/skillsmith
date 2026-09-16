@@ -14,14 +14,34 @@
  * ciphertext, not SQL, and `post-merge-verify.yml` runs locked by design. An UNEXPECTED lock
  * throws rather than skipping, so a real unlock failure cannot hide inside the skip.
  *
+ * ONE LANE THIS GATE DOES NOT RESCUE, stated because deleting the claim was worse than correcting
+ * it (SMI-6690 round 4). `ci.yml`'s `Test (root)` also runs locked on fork and dependabot PRs —
+ * its unlock step is gated on `GIT_CRYPT_KEY != ''`, and those PRs get no secret — but it never
+ * sets `SKILLSMITH_GIT_CRYPT_EXPECTED_LOCKED`, which is set in exactly one workflow repo-wide
+ * (`post-merge-verify.yml`). So in that lane the gate does not skip; it throws, for the whole
+ * module graph that imports it. That is a pre-existing lane hazard rather than this suite's
+ * defect, and it needs a decision on `ci.yml` — either declare the lock there, or exclude
+ * migration-text suites under `gitCryptLocked()`. Tracked separately; do not silently delete this
+ * paragraph to make the file read cleaner.
+ *
  * THIS IS A TRIPWIRE, NOT A SECURITY PROOF. It forces a human to look at any change to the step-4
- * re-read. What it cannot prove:
+ * re-read. The full list of what it cannot prove — an enumeration, not a summary, because two
+ * earlier versions of this list were wrong by omission:
  *
  *   1. Whether the predicates are EFFECTIVE. That property is transactional; the behavioural
  *      proof needs the live test Postgres SMI-5946 provisions, and is tracked in SMI-6685.
  *   2. A SECOND read of a skill body under a DIFFERENT table alias or into a different target
  *      variable. The exclusivity test below counts two token sequences, case- and
  *      whitespace-insensitively; it does not parse SQL, so an aliased read evades it.
+ *   3. A NEW reader added by a later migration — a second `SECURITY DEFINER` function selecting
+ *      `content`, or a plain `GRANT SELECT` on the table or its `content` column, either of which
+ *      re-opens the whole vulnerability with no change to this function at all. Nothing here or
+ *      in the audit-trigger suite scans for that; tracked as its own issue.
+ *   4. A redefinition in a schema other than `public` that `search_path` happens to reach. Not
+ *      scanned, and judged low-risk rather than closed: PostgREST resolves `/rpc/<name>` against
+ *      its exposed schema, so reaching a shadow copy needs a second, non-migration change.
+ *   5. Ordering by APPLY time rather than by filename version, and the same-prefix narrowing —
+ *      both documented on `laterMigrationFiles` in `../lib/migration-text-guards.ts`.
  *
  * WHY AN EXACT-TEXT PIN RATHER THAN `toContain` PER PREDICATE (SMI-6685). A substring check is a
  * lexical stand-in for a semantic property, and two review rounds found it blind in two different
@@ -65,6 +85,7 @@ import {
   dropFunctionRe,
   laterMigrationFiles,
   readMigrationText,
+  stripComments,
 } from '../lib/migration-text-guards.ts'
 
 const FUNCTION_NAME = 'release_private_registry_skill_content'
@@ -86,33 +107,36 @@ const READS_CONTENT_RE = /select\s+prs\s*\.\s*content\b/gi
 const WRITES_V_CONTENT_RE = /\binto\s+v_content\b/gi
 
 /**
- * Migrations after `NEW_MIGRATION` that a human has read and confirmed keep the step-4 tenant
- * guard intact. Add a FILENAME here after reading its diff — never weaken the imported regexes.
+ * Later migrations that redefine, drop or alter the RPC.
  *
- * Allowlisting a file exempts it from the VIOLATION scan only, never from the pin: a reviewed
- * later migration that redefines the function still has to leave `STEP4_REREAD` matching, or the
- * first test fails. That is deliberate — an allowlist that silenced both checks would be an
- * off-switch with no residual assertion (round-3 finding F5), and the same shape the
- * audit-trigger precedent explicitly avoids.
+ * NO ALLOWLIST, deliberately (SMI-6690 round 4). An earlier version had a
+ * `REVIEWED_LATER_MIGRATIONS` array and a comment claiming it "exempts a file from the VIOLATION
+ * scan only, never from the pin." That was false: the pin reads `migrationSql()`, which is
+ * `NEW_MIGRATION` and nothing else, so a later migration's text never reaches it. Allowlisting a
+ * filename silenced EVERY assertion about that file — an off-switch with no residual assertion.
+ * The comment also claimed to match the audit-trigger precedent, which in fact has no allowlist
+ * skip on its tamper scan at all; only its three softer scans honour one. So the file adopted
+ * exactly the shape its own comment said the precedent rejects, and then claimed the precedent's
+ * protection. If a reviewed redefinition ever needs to land, add a residual assertion against the
+ * LATEST definition first — do not reintroduce a bare skip.
  *
- * `20260915000001` is absent because it corrects catalog comments only and never matches.
+ * Comments are stripped before matching. This repo's migration convention includes commented-out
+ * rollback blocks naming the function (`20260915000000` has one), and the patterns are broad
+ * enough to read those as live statements otherwise.
  */
-const REVIEWED_LATER_MIGRATIONS: readonly string[] = []
-
-/** Later migrations that redefine, drop or alter the RPC without having been reviewed by name. */
 function tamperViolations(): string[] {
   const offenders: string[] = []
   for (const file of laterMigrationFiles(NEW_MIGRATION)) {
-    if (REVIEWED_LATER_MIGRATIONS.includes(file)) continue
-    const sql = readMigrationText(file)
+    const raw = readMigrationText(file)
     // The suite gate proved NEW_MIGRATION is plaintext, so a ciphertext sibling means an
     // inconsistent tree rather than a normal locked checkout. readMigrationText() has already
     // thrown if the lock was undeclared; a null here is a declared lock, which cannot happen
     // alongside a readable NEW_MIGRATION.
-    if (sql === null) {
+    if (raw === null) {
       offenders.push(`${file}: git-crypt ciphertext while ${NEW_MIGRATION} is plaintext`)
       continue
     }
+    const sql = stripComments(raw)
     if (createFunctionRe(FUNCTION_NAME).test(sql)) offenders.push(`${file}: CREATE FUNCTION`)
     if (dropFunctionRe(FUNCTION_NAME).test(sql)) offenders.push(`${file}: DROP FUNCTION`)
     if (alterFunctionRe(FUNCTION_NAME).test(sql)) offenders.push(`${file}: ALTER FUNCTION`)
