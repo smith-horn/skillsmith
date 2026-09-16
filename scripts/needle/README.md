@@ -446,18 +446,19 @@ their outcomes, are the concrete facts to bring to the harness team.
   independently converged on "absent `stdout.txt` means a kill" that
   evening; it is sufficient but **not necessary**, and each of them then
   reached for `reason="signal received during idle (SIGTERM)"` in the
-  NEEDLE log — which fires on the **overwhelming majority** of dispatches,
-  because it is the normal teardown the bullet above already describes.
-  Recompute it yourself rather than trusting this sentence; the results
-  logs are gitignored, so no committed artifact can substantiate a number
-  here:
+  NEEDLE log — which fires on **816 of 917** dispatch logs, because it is the
+  normal teardown the bullet above already describes.
 
-      grep -hoE 'outcome=[a-z-]+' scripts/needle/results/codex-*.log \
-        | sort | uniq -c
+  **That field is NOT in this repo's results log**, and an earlier version of
+  this bullet said it was. Measured: `scripts/needle/results/` contains **zero**
+  occurrences of `reason=`. It lives in NEEDLE's own logs, which line 328 above
+  already calls `needle logs`. Recompute both yourself:
 
-  A 2026-09-15 sample read ~70 of 78 as `outcome=success` alongside
-  `needle_run_exit=137`. That figure is local evidence only and is
-  recorded as such. Two wrong rules were derived from scratch while
+      grep -rl 'signal received during idle' ~/.needle/logs | wc -l   # 816
+      find ~/.needle/logs -type f -name '*.jsonl' | wc -l             # 917
+
+  Those paths are outside any repository, so no committed artifact can
+  substantiate the ratio; it is local evidence and is recorded as such. Two wrong rules were derived from scratch while
   the correct one was written down here.
 
   **Read the OUTPUT against the contract you asked for.** Every dispatch
