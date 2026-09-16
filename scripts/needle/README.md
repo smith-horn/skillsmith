@@ -446,9 +446,18 @@ their outcomes, are the concrete facts to bring to the harness team.
   independently converged on "absent `stdout.txt` means a kill" that
   evening; it is sufficient but **not necessary**, and each of them then
   reached for `reason="signal received during idle (SIGTERM)"` in the
-  NEEDLE log — which fires on **roughly 70 of 78** dispatches in this
-  repo's own results log, because it is the normal teardown the bullet
-  above already describes. Two wrong rules were derived from scratch while
+  NEEDLE log — which fires on the **overwhelming majority** of dispatches,
+  because it is the normal teardown the bullet above already describes.
+  Recompute it yourself rather than trusting this sentence; the results
+  logs are gitignored, so no committed artifact can substantiate a number
+  here:
+
+      grep -hoE 'outcome=[a-z-]+' scripts/needle/results/codex-*.log \
+        | sort | uniq -c
+
+  A 2026-09-15 sample read ~70 of 78 as `outcome=success` alongside
+  `needle_run_exit=137`. That figure is local evidence only and is
+  recorded as such. Two wrong rules were derived from scratch while
   the correct one was written down here.
 
   **Read the OUTPUT against the contract you asked for.** Every dispatch
