@@ -1203,7 +1203,7 @@ describe('scan-state-flip.sh (SMI-6514 P-7 scanner) -- Group A: portable', () =>
   )
 
   it.skipIf(!SCANNER_PRESENT)(
-    'the header documents exit 2 as three causes, not just "usage error"',
+    'the header documents exit 2 as distinct causes, not just "usage error"',
     () => {
       // SMI-6659, 12th gap. exit 2 was documented as "usage error" while it had
       // grown to cover a dash-leading --ref and a git grep failure meaning the
