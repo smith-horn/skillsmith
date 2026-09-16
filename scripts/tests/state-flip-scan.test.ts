@@ -514,6 +514,80 @@ describe('scan-state-flip.sh (SMI-6514 P-7 scanner) -- Group A: portable', () =>
   )
 
   it.skipIf(!SCANNER_PRESENT)(
+    'an entirely readable tree emits NO scope warning, in either mode',
+    () => {
+      // The other half of the disclosure contract, and it needs its own fixture: a
+      // warning that fires on every run is a warning nobody reads. Asserted in both
+      // modes because the check now runs in both.
+      const repoDir = makeFixtureTempDir('state-flip-allreadable-fixture')
+      createdRepoDirs.push(repoDir)
+      git(repoDir, ['init', '-q', '-b', 'main'])
+      mkdirSync(join(repoDir, 'supabase', 'functions'), { recursive: true })
+      mkdirSync(join(repoDir, 'scripts'), { recursive: true })
+      writeFileSync(join(repoDir, 'scripts', 'plain.sh'), 'widget-tool in plaintext\n')
+      writeFileSync(
+        join(repoDir, 'supabase', 'functions', 'also-plain.ts'),
+        '// widget-tool, entirely readable\n'
+      )
+      git(repoDir, ['add', '-A'])
+      git(repoDir, ['-c', 'user.email=t@t', '-c', 'user.name=t', 'commit', '-qm', 'init'])
+      for (const args of [['widget-tool', '--ref', 'HEAD'], ['widget-tool']]) {
+        const out = execFileSync('bash', [SCANNER_PATH, ...args], {
+          cwd: repoDir,
+          encoding: 'utf8',
+        })
+        expect(out, `args: ${args.join(' ')}`).not.toContain('Scope warning')
+        expect(out, `args: ${args.join(' ')}`).toContain('STEP 1 (denominator): 2')
+      }
+    }
+  )
+
+  it.skipIf(!SCANNER_PRESENT)(
+    'a pathspec mixing plaintext and unreadable blobs is disclosed regardless of order',
+    () => {
+      // Second PR-16 pre-merge finding. The first two implementations SAMPLED one
+      // blob per pathspec, so whichever filename sorted first decided the verdict:
+      // with 000-plain.ts beside zzz-encrypted.ts, the probe read the plaintext and
+      // emitted nothing. Reproduced at 0 warnings against a wanted 1.
+      //
+      // The mechanism was re-derived rather than patched a third time, per the
+      // reviewer skill's stop-patching rule. It no longer samples or looks for
+      // git-crypt's magic: it asks git which in-scope blobs are not text
+      // (`grep -l -a` minus `grep -lI`), which is the complete set and cannot
+      // depend on ordering.
+      const repoDir = makeFixtureTempDir('state-flip-mixed-fixture')
+      createdRepoDirs.push(repoDir)
+      git(repoDir, ['init', '-q', '-b', 'main'])
+      mkdirSync(join(repoDir, 'supabase', 'functions'), { recursive: true })
+      mkdirSync(join(repoDir, 'scripts'), { recursive: true })
+      writeFileSync(join(repoDir, 'scripts', 'plain.sh'), 'widget-tool in plaintext\n')
+      // Sorts FIRST, and is ordinary text -- the blob the old probe would have read.
+      writeFileSync(
+        join(repoDir, 'supabase', 'functions', '000-plain.ts'),
+        '// an ordinary plaintext function\n'
+      )
+      // Sorts LAST, and is the one that matters.
+      writeFileSync(
+        join(repoDir, 'supabase', 'functions', 'zzz-encrypted.ts'),
+        Buffer.concat([
+          Buffer.from('\u0000GITCRYPT\u0000', 'binary'),
+          Buffer.from('opaque-ciphertext\n'),
+        ])
+      )
+      git(repoDir, ['add', '-A'])
+      git(repoDir, ['-c', 'user.email=t@t', '-c', 'user.name=t', 'commit', '-qm', 'init'])
+      const out = execFileSync('bash', [SCANNER_PATH, 'widget-tool', '--ref', 'HEAD'], {
+        cwd: repoDir,
+        encoding: 'utf8',
+      })
+      expect(out).toContain('could not read')
+      // 1 of the 2 blobs under that pathspec, which is the whole point: a partial
+      // count has to be reported as partial.
+      expect(out).toMatch(/supabase\/functions\/\*\* \(1 of 2\)/)
+    }
+  )
+
+  it.skipIf(!SCANNER_PRESENT)(
     'a path git would QUOTE still gets probed, so the scope warning is not lost',
     () => {
       // PR-07 pre-merge finding. Without -z, git quotes any path containing a
@@ -541,16 +615,13 @@ describe('scan-state-flip.sh (SMI-6514 P-7 scanner) -- Group A: portable', () =>
         cwd: repoDir,
         encoding: 'utf8',
       })
-      // 'Scope warning' ALONE is not enough, and the first draft of this test made
-      // exactly that mistake. Reverting -lz does not silence the warning -- it
-      // trips the INDETERMINATE branch instead, which also prints 'Scope warning'
-      // and also names supabase/functions. Both assertions passed with the defect
-      // restored. The distinguishing claim is that the path was actually READ and
-      // found encrypted, so assert that wording.
-      expect(out).toContain('ENCRYPTED blobs')
+      // 'Scope warning' ALONE is not enough. The INDETERMINATE branch prints that
+      // string too, and names the same pathspec, so an earlier draft of this test
+      // passed with the defect restored. Assert the claim that distinguishes them:
+      // the content was examined and found unreadable, with its extent.
       expect(out).toContain('could not read')
-      expect(out).not.toContain('could not be probed')
-      expect(out).toMatch(/supabase\/functions/)
+      expect(out).not.toContain('could not be examined')
+      expect(out).toMatch(/supabase\/functions\/\*\* \(1 of 1\)/)
     }
   )
 
@@ -587,16 +658,21 @@ describe('scan-state-flip.sh (SMI-6514 P-7 scanner) -- Group A: portable', () =>
       })
       expect(refOut).toContain('Scope warning')
       expect(refOut).toContain('could not read')
-      // It must name the offending pathspec, not warn generically.
-      expect(refOut).toMatch(/supabase\/functions/)
+      // Naming the pathspec is not enough either -- report the EXTENT, so a reader
+      // can tell "one stray binary" from "the whole tree is opaque".
+      expect(refOut).toMatch(/supabase\/functions\/\*\* \(1 of 1\)/)
 
-      // And it must NOT fire where nothing is encrypted -- a warning on every run
-      // is a warning nobody reads.
+      // Working-tree mode warns HERE too, and that is correct rather than a false
+      // positive: this fixture writes real binary bytes to disk, so the blob is
+      // unreadable in the working tree as well. The real repo differs only because
+      // git-crypt decrypts on checkout. An earlier draft asserted absence here and
+      // was asserting the wrong property -- the no-false-positive claim needs a
+      // fixture that is genuinely plaintext, which is the next case.
       const plainOut = execFileSync('bash', [SCANNER_PATH, 'widget-tool'], {
         cwd: repoDir,
         encoding: 'utf8',
       })
-      expect(plainOut).not.toContain('Scope warning')
+      expect(plainOut).toContain('could not read')
     }
   )
 
