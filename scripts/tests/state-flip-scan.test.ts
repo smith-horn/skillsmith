@@ -548,9 +548,23 @@ describe('scan-state-flip.sh (SMI-6514 P-7 scanner) -- Group A: portable', () =>
       })
       // The blob is disclosed as non-text...
       expect(out).toMatch(/supabase\/functions\/\*\* \(1 of 1\)/)
-      // ...and the warning must NOT claim exclusion, because it is counted:
+      // ...and the warning must make ALL THREE semantic claims, not just the two
+      // that happen to be easy to grep. The pre-merge reviewer flagged this exact
+      // gap before its dispatch was killed mid-run: asserting selected phrases
+      // "may permit a different false description while the counts stay correct".
+      // Concretely, this passes a 'not text' + 'DO contribute' + counts check while
+      // being false about the only thing that matters:
+      //
+      //   "...they DO contribute to the counts below, and every hit in them is a
+      //    genuine source reference."
+      //
+      // So pin the unreliability claim too, in both directions, which is the claim
+      // the warning exists to make.
       expect(out).toContain('DO contribute')
       expect(out).not.toContain('exclude their contents entirely')
+      expect(out).toContain('byte coincidence rather than a source reference')
+      expect(out).toContain('a miss is not evidence')
+      expect(out).toContain('unreliable over these paths in both directions')
       // ...and here is the count itself, which is what the old assertions missed.
       // 2 = the plaintext hit plus the byte-wise hit inside the non-text blob.
       expect(out).toContain('STEP 1 (denominator): 2')
