@@ -14,6 +14,7 @@
 import { removeVR } from '../../walk.mjs'
 import { loadShim } from '../../native-c/load.mjs'
 import { makeFixtureRoot } from '../fixture-root.mjs'
+import { scanQuarantineLeftovers } from '../result-schema.mjs'
 import { writeFileTree, injectErrnoOnceAcrossFns } from './_shared.mjs'
 import fs from 'node:fs'
 import path from 'node:path'
@@ -66,6 +67,11 @@ export function runOnce({ harnessRoot, candidate, subcase }) {
         reason: outcome.reason,
         path: outcome.path,
         errno: outcome.errno,
+        // `fx.root` is the directory that HELD the tree, so V2's quarantine
+        // (`.skillsmith-rm-<opId>`) lands beside it, i.e. here. Scanning it makes
+        // stranding OBSERVED rather than inferred from `outcome.reason`; see
+        // result-schema.mjs for why a failed scan reports null and never 0.
+        quarantineLeft: scanQuarantineLeftovers(fx.root),
       },
       userFiles,
       durationMs,
