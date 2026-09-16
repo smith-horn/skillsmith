@@ -105,9 +105,28 @@ export function assertCleanupComplete(tag, dockerVolumeName) {
 function main(argv) {
   let tag = 's6676'
   let volume = null
+  // Every rejection below exists because the alternative is this script's own
+  // failure mode: `--tag` with no value would leave `tag` undefined and grep for
+  // the literal string "undefined", and a misspelled `--tags` would be skipped
+  // and the default tag checked instead. Both report CLEAN while checking
+  // something nobody asked about, which is the exact defect this file exists to
+  // catch. Refuse the input rather than survey the wrong thing.
   for (let i = 0; i < argv.length; i += 1) {
-    if (argv[i] === '--tag') tag = argv[++i]
-    else if (argv[i] === '--volume') volume = argv[++i]
+    const arg = argv[i]
+    if (arg === '--tag' || arg === '--volume') {
+      const value = argv[i + 1]
+      if (value === undefined || value.startsWith('--')) {
+        console.error(`[cleanup] ${arg} needs a value`)
+        return 2
+      }
+      if (arg === '--tag') tag = value
+      else volume = value
+      i += 1
+    } else {
+      console.error(`[cleanup] unknown argument ${JSON.stringify(arg)}`)
+      console.error('[cleanup] usage: node harness/cleanup.mjs [--tag <tag>] [--volume <name>]')
+      return 2
+    }
   }
 
   const r = assertCleanupComplete(tag, volume)
@@ -115,11 +134,19 @@ function main(argv) {
   console.log(
     `  mounts      : ${r.mounts.clean ? 'clean' : 'LEFTOVER'} (matched ${r.mounts.count})`
   )
-  console.log(
-    `  disk images : ${r.images.clean ? 'clean' : 'LEFTOVER'} (matched ${r.images.count})` +
-      (process.platform === 'darwin' ? '' : ' [skipped: not darwin]')
-  )
-  if (volume === null) {
+  // count === -1 is assertNoLeftoverDiskImages' signal that `hdiutil info`
+  // itself failed. That is "could not look", not "found leftovers" -- reporting
+  // it as LEFTOVER would be wrong in the other direction, and reporting it as
+  // clean would be the failure this file exists to prevent.
+  if (r.images.count === -1) {
+    console.log(`  disk images : COULD NOT CHECK -- ${r.images.raw}`)
+  } else {
+    console.log(
+      `  disk images : ${r.images.clean ? 'clean' : 'LEFTOVER'} (matched ${r.images.count})` +
+        (process.platform === 'darwin' ? '' : ' [skipped: not darwin]')
+    )
+  }
+  if (r.volume === null) {
     console.log('  docker vol  : not checked (no --volume given)')
   } else if (r.volume.alreadyAbsent) {
     console.log(`  docker vol  : clean (${volume} already absent)`)
