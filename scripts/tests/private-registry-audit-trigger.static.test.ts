@@ -77,8 +77,16 @@
 
 import { describe, expect, it } from 'vitest'
 import { createHash } from 'node:crypto'
-import { readdirSync, readFileSync } from 'node:fs'
-import { join } from 'node:path'
+import { readFileSync } from 'node:fs'
+import {
+  allMigrationFiles,
+  alterFunctionRe,
+  dropFunctionRe,
+  laterMigrationFiles,
+  qualifiedIdent,
+  readMigrationText,
+  stripComments,
+} from './lib/migration-text-guards.ts'
 
 const helpers = (await import('../audit-standards-helpers.mjs')) as {
   auditSecdefAnonGrants: (
@@ -87,14 +95,14 @@ const helpers = (await import('../audit-standards-helpers.mjs')) as {
   ) => Array<{ file: string; fn: string; signature: string; reason: string }>
 }
 
-const MIGRATIONS_DIR = 'supabase/migrations'
+// MIGRATIONS_DIR, the git-crypt lock contract, migration enumeration and the qualified-identifier
+// fragment are imported from ./lib/migration-text-guards.ts (SMI-6690). They were worked out here
+// first, over several review rounds; a second suite then re-derived them by hand and omitted one
+// of them in each of three consecutive rounds, so they now live in one module both suites import.
 const MIGRATION_FILE = '20260913000000_private_registry_audit_trigger.sql'
-const PINNED_VERSION = Number(MIGRATION_FILE.match(/^(\d+)/)![1])
 // Not git-crypt-scoped (only supabase/functions/ and supabase/migrations/ are), so this is always
 // plaintext and needs no GIT_CRYPT_MAGIC handling of its own.
 const ROLLBACK_FILE = 'supabase/rollbacks/20260913000000_private_registry_audit_trigger_down.sql'
-const GIT_CRYPT_MAGIC = Buffer.from([0x00, 0x47, 0x49, 0x54, 0x43, 0x52, 0x59, 0x50, 0x54])
-const EXPECT_LOCKED_ENV_VAR = 'SKILLSMITH_GIT_CRYPT_EXPECTED_LOCKED'
 const FUNCTION_NAME = 'audit_private_registry_skills_change'
 
 /** The 15 columns read from prod's information_schema on 2026-09-13. */
@@ -116,171 +124,12 @@ const PROD_COLUMNS = [
   'review_note',
 ]
 
-function readMigration(name: string): string | null {
-  const raw = readFileSync(join(MIGRATIONS_DIR, name))
-  if (raw.subarray(0, GIT_CRYPT_MAGIC.length).equals(GIT_CRYPT_MAGIC)) {
-    if (process.env[EXPECT_LOCKED_ENV_VAR] !== '1') {
-      throw new Error(
-        `${name} is git-crypt-locked but ${EXPECT_LOCKED_ENV_VAR} is not set — treat as an unlock ` +
-          'failure, not a lock-state edge case (SMI-5984).'
-      )
-    }
-    return null
-  }
-  return raw.toString('utf8')
-}
+const readMigration = readMigrationText
 
 const triggerSql = readMigration(MIGRATION_FILE)
 const locked = triggerSql === null
 
-function allMigrationFiles(): string[] {
-  return readdirSync(MIGRATIONS_DIR)
-    .filter((f) => f.endsWith('.sql'))
-    .sort()
-}
-
-/** Every migration whose numeric-prefix version is strictly after MIGRATION_FILE's own. */
-function laterMigrationFiles(): string[] {
-  return allMigrationFiles().filter((f) => {
-    const m = f.match(/^(\d+)/)
-    return m !== null && Number(m[1]) > PINNED_VERSION
-  })
-}
-
 const stripLineComments = (sql: string): string => sql.replace(/--[^\n]*/g, '')
-
-/**
- * Strips both `--` line comments and `/* ... *\/` block comments (Postgres allows nesting, so this
- * tracks depth) WITHOUT touching text inside single-quoted string literals, escape-string literals
- * (`E'...'` / `e'...'`), or dollar-quoted bodies (`$$ ... $$` / `$tag$ ... $tag$`) -- a
- * character-scanning state machine, not a regex, since comment/string/dollar-quote nesting isn't a
- * regular language. Used only by the checks that need to see through comments to find a real
- * statement, or avoid a false-positive on a commented-out example: the disabled-trigger,
- * later-trigger and audit-sink tripwires, plus the by-name tamper and GRANT scans. NEVER applied to
- * the raw function/trigger pins above -- those hash/compare the exact text, comments included, by
- * design (round-2 gate finding 4). Verified against a 5-case table (a block comment containing a
- * fake CREATE RULE, a string literal containing `/* x *\/`, a dollar-quoted body containing `--`,
- * nested `/* /* *\/ *\/`, and a real CREATE RULE right after a comment) before being relied on
- * (SMI-6114 retro round 3, gate finding 2, PR #2855).
- *
- * ASSUMES `standard_conforming_strings = on` (Postgres' default, and this project's): in a plain
- * `'...'` string a backslash is a literal character and `''` is the only way to embed a quote, so
- * the plain-string branch below never treats `\` specially. An `E'...'`/`e'...'` ESCAPE string is
- * different regardless of that setting -- Postgres always interprets backslash escapes inside one,
- * so `\` there DOES escape the next character, including a quote (`E'prefix \' /*'` is one complete
- * string, not one that ends at the `\'`). A prior version of this scanner had no E-string branch and
- * fell through to the plain-string rule, which closes at that `\'` early because it never treats `\`
- * as an escape -- turning the text after it (`/*';\nALTER TABLE ...`) into what looks like a real
- * block comment, hiding a real statement from every check below (round-4 gate finding, PR #2855).
- * Escape strings also still allow the doubled-quote `''` embed alongside `\'` (Postgres accepts
- * both), and the `E`/`e` is only recognized as an escape-string opener when it is not the tail of a
- * longer identifier -- checked via the character immediately before it, so `type'x'` parses as
- * plain text followed by an ordinary string, not as an (invalid) escape-string opener. Verified
- * against a 5-case table (the exact hidden-DROP shape above, a real backslash-escaped backslash
- * `e'\\'` ahead of a real statement, doubled quotes inside an escape string `E'it''s'`, the
- * preceding-identifier-char guard via `type'x'`/`CASE'...'`, and a plain string ending at the quote
- * right after a backslash) before being relied on (SMI-6114 retro round 4, PR #2855) -- see the
- * `stripComments()` `it()` blocks below.
- */
-function stripComments(sql: string): string {
-  let out = ''
-  let i = 0
-  const n = sql.length
-  while (i < n) {
-    const c = sql[i]
-    const c2 = i + 1 < n ? sql[i + 1] : ''
-    if ((c === 'E' || c === 'e') && c2 === "'" && !/[A-Za-z0-9_]/.test(i > 0 ? sql[i - 1] : '')) {
-      // Postgres escape-string literal: E'...' / e'...', recognized only when the E/e isn't the
-      // tail of a longer identifier (the preceding-character check above). Inside one, a backslash
-      // escapes the next character -- including a quote -- and, same as a plain string, '' still
-      // embeds a literal quote (Postgres allows both forms in an escape string).
-      let j = i + 2
-      while (j < n) {
-        if (sql[j] === '\\') {
-          j += 2
-          continue
-        }
-        if (sql[j] === "'") {
-          if (sql[j + 1] === "'") {
-            j += 2
-            continue
-          }
-          j += 1
-          break
-        }
-        j += 1
-      }
-      out += sql.slice(i, j)
-      i = j
-      continue
-    }
-    if (c === "'") {
-      // Single-quoted string literal: '' is an escaped quote, not a terminator. Under
-      // standard_conforming_strings=on a backslash here is a literal character, not an escape, so
-      // (unlike the E-string branch above) it is never special-cased.
-      let j = i + 1
-      while (j < n) {
-        if (sql[j] === "'") {
-          if (sql[j + 1] === "'") {
-            j += 2
-            continue
-          }
-          j += 1
-          break
-        }
-        j += 1
-      }
-      out += sql.slice(i, j)
-      i = j
-      continue
-    }
-    if (c === '$') {
-      // Dollar-quoted body: $$ ... $$ or $tag$ ... $tag$. Matched by literal tag re-occurrence,
-      // not nesting -- Postgres dollar-quote bodies do not nest with the same tag.
-      const tagMatch = /^\$[A-Za-z_][A-Za-z0-9_]*\$|^\$\$/.exec(sql.slice(i))
-      if (tagMatch) {
-        const tag = tagMatch[0]
-        const closeIdx = sql.indexOf(tag, i + tag.length)
-        const end = closeIdx === -1 ? n : closeIdx + tag.length
-        out += sql.slice(i, end)
-        i = end
-        continue
-      }
-    }
-    if (c === '-' && c2 === '-') {
-      // Line comment: drop through end of line, keep the newline itself (matches
-      // stripLineComments' own behavior above).
-      let j = sql.indexOf('\n', i)
-      if (j === -1) j = n
-      i = j
-      continue
-    }
-    if (c === '/' && c2 === '*') {
-      // Block comment, Postgres-style nested: track depth, drop the whole span including any
-      // nested /* ... */ inside it.
-      let depth = 1
-      let j = i + 2
-      while (j < n && depth > 0) {
-        if (sql[j] === '/' && sql[j + 1] === '*') {
-          depth += 1
-          j += 2
-          continue
-        }
-        if (sql[j] === '*' && sql[j + 1] === '/') {
-          depth -= 1
-          j += 2
-          continue
-        }
-        j += 1
-      }
-      i = j
-      continue
-    }
-    out += c
-    i += 1
-  }
-  return out
-}
 
 const sha256 = (text: string): string => createHash('sha256').update(text, 'utf8').digest('hex')
 
@@ -312,7 +161,7 @@ const reviewRemediation = (file: string): string =>
  * written down (SMI-6114 retro gate finding F1, PR #2855).
  */
 const DEF_RE = new RegExp(
-  String.raw`CREATE\s+(?:OR\s+REPLACE\s+)?FUNCTION\s+(?:(?:"?public"?)\s*\.\s*)?"?${FUNCTION_NAME}"?\s*\(\s*\)([\s\S]*?)\bAS\s+(\$[A-Za-z_]*\$)([\s\S]*?)\2`,
+  String.raw`CREATE\s+(?:OR\s+REPLACE\s+)?FUNCTION\s+${qualifiedIdent(FUNCTION_NAME)}\s*\(\s*\)([\s\S]*?)\bAS\s+(\$[A-Za-z_]*\$)([\s\S]*?)\2`,
   'gi'
 )
 
@@ -324,7 +173,7 @@ const DEF_RE = new RegExp(
  * fails on any gap, instead of silently treating the unparsed definition as absent.
  */
 const FUNCTION_CREATE_MENTION_RE = new RegExp(
-  String.raw`CREATE\s+(?:OR\s+REPLACE\s+)?FUNCTION\s+(?:(?:"?public"?)\s*\.\s*)?"?${FUNCTION_NAME}"?\s*\(\s*\)`,
+  String.raw`CREATE\s+(?:OR\s+REPLACE\s+)?FUNCTION\s+${qualifiedIdent(FUNCTION_NAME)}\s*\(\s*\)`,
   'gi'
 )
 
@@ -467,14 +316,8 @@ function dropTriggerRe(name: string): RegExp {
 function alterTriggerRe(name: string): RegExp {
   return new RegExp(String.raw`ALTER\s+TRIGGER\s+(?:"?public"?\s*\.\s*)?"?${name}"?\b`, 'i')
 }
-const DROP_FUNCTION_RE = new RegExp(
-  String.raw`DROP\s+FUNCTION\s+(?:IF\s+EXISTS\s+)?(?:"?public"?\s*\.\s*)?"?${FUNCTION_NAME}"?\s*\(`,
-  'i'
-)
-const ALTER_FUNCTION_RE = new RegExp(
-  String.raw`ALTER\s+FUNCTION\s+(?:"?public"?\s*\.\s*)?"?${FUNCTION_NAME}"?\s*\(`,
-  'i'
-)
+const DROP_FUNCTION_RE = dropFunctionRe(FUNCTION_NAME)
+const ALTER_FUNCTION_RE = alterFunctionRe(FUNCTION_NAME)
 
 /**
  * Every migration strictly after MIGRATION_FILE that drops or alters the pinned function or
@@ -483,7 +326,7 @@ const ALTER_FUNCTION_RE = new RegExp(
  */
 function triggerOrFunctionTamperViolations(): string[] {
   const offenders: string[] = []
-  for (const file of laterMigrationFiles()) {
+  for (const file of laterMigrationFiles(MIGRATION_FILE)) {
     const content = readMigration(file)
     if (content === null) continue
     const sql = stripComments(content)
@@ -518,7 +361,7 @@ function triggerOrFunctionTamperViolations(): string[] {
 function grantExecuteViolations(): string[] {
   const offenders: string[] = []
   const nameRe = new RegExp(String.raw`\b${FUNCTION_NAME}\b`, 'i')
-  for (const file of laterMigrationFiles()) {
+  for (const file of laterMigrationFiles(MIGRATION_FILE)) {
     const content = readMigration(file)
     if (content === null) continue
     const sql = stripComments(content)
@@ -564,7 +407,7 @@ function disableTriggerViolations(): string[] {
     String.raw`ALTER\s+TABLE\s+(?:IF\s+EXISTS\s+)?(?:ONLY\s+)?${TABLE_REF_SRC}\s+ENABLE\s+(?:REPLICA|ALWAYS)\s+TRIGGER\s+${AUDIT_TRIGGER_TARGET_SRC}\b`,
     'gi'
   )
-  for (const file of laterMigrationFiles()) {
+  for (const file of laterMigrationFiles(MIGRATION_FILE)) {
     if (REVIEWED_LATER_MIGRATIONS.includes(file)) continue
     const content = readMigration(file)
     if (content === null) continue
@@ -605,7 +448,7 @@ function laterTriggerViolations(): string[] {
     String.raw`CREATE\s+(?:OR\s+REPLACE\s+)?FUNCTION\s+(?:"?public"?\s*\.\s*)?"?${FUNCTION_NAME}"?\s*\(\s*([^()]+)\)`,
     'gi'
   )
-  for (const file of laterMigrationFiles()) {
+  for (const file of laterMigrationFiles(MIGRATION_FILE)) {
     if (REVIEWED_LATER_MIGRATIONS.includes(file)) continue
     const content = readMigration(file)
     if (content === null) continue
@@ -672,7 +515,7 @@ function auditSinkViolations(): string[] {
     /\bALTER\s+COLUMN\s+"?[A-Za-z_][A-Za-z0-9_]*"?\s+(?:SET\s+DATA\s+)?TYPE\b/i
   const setNotNullRe = /\bSET\s+NOT\s+NULL\b/i
   const addConstraintRe = /\bADD\s+(?:CONSTRAINT|CHECK)\b/i
-  for (const file of laterMigrationFiles()) {
+  for (const file of laterMigrationFiles(MIGRATION_FILE)) {
     if (REVIEWED_LATER_MIGRATIONS.includes(file)) continue
     const content = readMigration(file)
     if (content === null) continue

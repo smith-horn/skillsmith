@@ -4,11 +4,18 @@
  * `authenticated`. Harness, env vars, real-vs-stub inventory: ./private-registry-content-
  * release.test-helpers.ts.
  *
+ * WHICH HALF RUNS WHERE, AND WHY (SMI-6690). Everything below sits inside ONE top-level
+ * `describe.skipIf(noLiveTestPg)`, because nearly every assertion here is a PRIVILEGE or
+ * TRANSACTIONAL property that only a real Postgres catalog can prove. Every assertion about the
+ * migration's own TEXT now lives in the sibling
+ * `private-registry-content-release.structural.test.ts`, which has no `skipIf` and runs
+ * unconditionally. Nothing in this file reads migration text for its own sake any more.
+ *
  * Every `it()` asserts VALUES, never just "did not throw" (CLAUDE.md's SMI-6598 rule). The
- * "revert-then-restore" describe block at the bottom breaks each of 11 guards (a-e, g-l — f
- * reuses d's break against a different scenario; (i) is an explicitly-labeled STRUCTURAL check,
- * not a behavioral one -- see its own comment), confirms the targeted assertion FAILS, then
- * restores the real migration and confirms it passes again.
+ * "revert-then-restore" describe block at the bottom breaks each of 10 guards (a-e, g-h, j-l — f
+ * reuses d's break against a different scenario; i has no test here, see that block's own note),
+ * confirms the targeted assertion FAILS, then restores the real migration and confirms it passes
+ * again.
  *
  * SMI-6114 untag rule (round 3, after the SMI-6651 branch rebased onto PR #2850): audit rows now
  * carry `metadata.registry_team_id` + `metadata.member_visible` always, and the `team_id` KEY
@@ -43,78 +50,6 @@ import {
 import { brokenMigrationSql } from './private-registry-content-release.test-reverts.ts'
 
 const NULL_SENTINEL = '<null>'
-
-/** Strips `--` line comments and `/* *\/` block comments from a SQL fragment, honoring `'...'`
- *  string literals (`''` is an escaped quote, not a terminator) so a `--`/`/*` inside a literal is
- *  never mistaken for a comment start. Finding 2 (Sol gate follow-up round): a predicate commented
- *  out as `-- AND prs.team_id = v_row.team_id` still contains the plain substring
- *  `AND prs.team_id = v_row.team_id`, so a `.toContain()` check against the RAW extracted text
- *  passes even though the guard is now inert SQL -- proven against the CURRENT (pre-fix) helper in
- *  a temporary before-state proof file before this fix was written (SMI-6598 rule). Every
- *  structural assertion below runs against the STRIPPED text instead, so a commented-out predicate
- *  reads as genuinely absent. */
-function stripSqlComments(sql: string): string {
-  let out = ''
-  let i = 0
-  while (i < sql.length) {
-    if (sql[i] === "'") {
-      out += sql[i++]
-      while (i < sql.length) {
-        if (sql[i] === "'" && sql[i + 1] === "'") {
-          out += sql.slice(i, i + 2)
-          i += 2
-          continue
-        }
-        out += sql[i]
-        if (sql[i] === "'") {
-          i++
-          break
-        }
-        i++
-      }
-    } else if (sql[i] === '-' && sql[i + 1] === '-') {
-      while (i < sql.length && sql[i] !== '\n') i++
-    } else if (sql[i] === '/' && sql[i + 1] === '*') {
-      i += 2
-      while (i < sql.length && !(sql[i] === '*' && sql[i + 1] === '/')) i++
-      i += 2
-    } else {
-      out += sql[i++]
-    }
-  }
-  return out
-}
-
-/** Extracts the step-4 content re-read's own `SELECT ... ;` out of a migration text, WITH SQL
- *  COMMENTS STRIPPED, for Finding-5(a)'s STRUCTURAL predicate assertions -- see that test's own
- *  comment for why a static text check, not a live two-session interleaving, is what this guard's
- *  own timing constraints leave available. Stripped (not raw) is load-bearing: see
- *  `stripSqlComments`'s own comment for the forged-substring bug this closes (Finding 2).
- *
- *  KNOWN LIMITATION -- read this before trusting what the assertions below prove (SMI-6685).
- *  Comment-stripping closes ONE bypass (a predicate that exists only inside a comment). It does
- *  not make `toContain` a proof that a predicate is EFFECTIVE, because substring presence is a
- *  lexical property and effectiveness is a semantic one. Measured, against the real
- *  `migrationSql()`: mutating the statement to `AND prs.deprecated = false OR TRUE` leaves all
- *  three predicate substrings present -- every `toContain` here still passes, and every
- *  `.not.toContain` below is equally blind -- while `AND` binding tighter than `OR` turns the
- *  whole WHERE clause into an unconditional match and disables the tenant guard outright.
- *  Two further gaps, also measured: this `indexOf` anchor has no uniqueness guard (unlike its
- *  sibling `replaceExactlyOnce` in the test-reverts module, which enforces exactly-once for
- *  precisely this reason), so a future duplicate anchor would silently extract the wrong
- *  statement; and `stripSqlComments` does not nest `/* *\/` the way real Postgres does.
- *  Neither is reachable from today's call site. SMI-6685 replaces this whole mechanism with a
- *  semantic check (SQL-AST or behavioural) rather than patching it a third time -- per
- *  `pr-reviewer`'s delete-and-re-derive rule, this being the second consecutive review round to
- *  find a defect in it. Until then: treat these as a smoke check, NOT as proof of the security
- *  property. The real proof of that property is the behavioural RPC tests in this file. */
-function extractReReadSelect(sql: string): string {
-  const start = sql.indexOf('SELECT prs.content INTO v_content')
-  if (start === -1) throw new Error('extractReReadSelect: anchor not found')
-  const end = sql.indexOf(';', start)
-  if (end === -1) throw new Error('extractReReadSelect: unterminated statement')
-  return stripSqlComments(sql.slice(start, end + 1))
-}
 
 let conn: TestConn
 let ctl: PsqlSession
@@ -718,44 +653,6 @@ describe.skipIf(noLiveTestPg)('SMI-6651 — release_private_registry_skill_conte
     expect(row.noBodyLeak).toBe('t')
   })
 
-  it('Finding 5(a) STRUCTURAL: the step-4 re-read re-applies team/approval/deprecated predicates against v_row -- not a behavioral (interleaving) proof, see comment', async () => {
-    // Genuine two-session interleaving would need to land a concurrent UPDATE strictly between
-    // this function's own step-2 SELECT and step-4 SELECT -- a window that is unlocked, on
-    // purpose (ADR-159 §3), and only microseconds wide with no externally-observable pause point
-    // inside a single atomic RPC call. PsqlSession supports running two independent sessions
-    // (confirmed: it is a plain spawn()-backed psql child process, nothing ties one instance to
-    // another), but there is nothing in this specific gap for a second session to synchronize on
-    // without instrumenting a sleep into the function body -- which would mean testing a modified
-    // copy, not the shipped one. So this check is an EXPLICIT, clearly-labeled STATIC/STRUCTURAL
-    // assertion against the real migration text instead, per the fallback the round-4 review
-    // explicitly allows for exactly this shape of guard. It is deliberately paired with the
-    // BEHAVIORAL revert-then-restore tests below (a, d/f, i) that DO exercise these same three
-    // predicates' real effect on step 2's lookup / step 4's re-read outcome, just not via live
-    // concurrency landing inside the gap between the two reads.
-    const block = extractReReadSelect(migrationSql())
-    expect(block).toContain('AND prs.team_id = v_row.team_id')
-    expect(block).toContain("AND prs.approval_status = 'approved'")
-    expect(block).toContain('AND prs.deprecated = false')
-  })
-
-  it.each([
-    ['team_id', 'm' as const, 'AND prs.team_id = v_row.team_id'],
-    ['approval_status', 'n' as const, "AND prs.approval_status = 'approved'"],
-    ['deprecated', 'o' as const, 'AND prs.deprecated = false'],
-  ])(
-    'Finding 5(a)/Finding 2 fix: commenting out the %s predicate (not deleting it) is correctly seen as ABSENT',
-    (_label, variant, predicate) => {
-      // Finding 2 (Sol gate follow-up round): the structural assertion above must not accept a
-      // forged substring -- a predicate commented out as `-- AND ...` still contains the plain
-      // text `AND ...`, so a `.toContain()` check against RAW extracted SQL would pass against
-      // inert SQL (proven against the pre-fix helper in a temporary before-state proof file,
-      // SMI-6598 rule, before this fix was written). `extractReReadSelect` now strips comments
-      // before returning, so the stripped block must NOT contain the commented-out predicate.
-      const block = extractReReadSelect(brokenMigrationSql(variant))
-      expect(block).not.toContain(predicate)
-    }
-  )
-
   it.each([
     ['p_skill_id blank', rpcCall('', null, null, null, 'b1'), /22023/],
     ['p_skill_id over 256 chars', rpcCall('x'.repeat(257), null, null, null, 'b2'), /22023/],
@@ -965,31 +862,18 @@ describe.skipIf(noLiveTestPg)('SMI-6651 — release_private_registry_skill_conte
       )
     })
 
-    it('(i) STRUCTURAL: removing the team_id re-pin drops it from the shipped step-4 re-read text (see Finding 5(a) comment for why this is structural, not a live-interleaving proof)', async () => {
-      const brokenSql = brokenMigrationSql('i')
-      expect(extractReReadSelect(brokenSql)).not.toContain('AND prs.team_id = v_row.team_id')
-      // The broken build still applies cleanly and behaves identically to the fixed one for
-      // every scenario this suite's fixtures can express without genuine cross-call concurrency
-      // (id already pins exactly one row with exactly one current team_id absent a race) --
-      // confirmed live rather than assumed, so this revert does not silently mislabel "no
-      // reachable difference in this harness" as "the guard does nothing".
-      await rebuildWith(brokenSql)
-      const broken = await callAs(
-        'authenticated',
-        MEMBER,
-        rpcCall('smi6651/happy', '2.0.0', null, null, 'revert-i')
-      )
-      expect(broken.stdout).toContain('"status": "released"')
-
-      await rebuildWith(migrationSql())
-      expect(extractReReadSelect(migrationSql())).toContain('AND prs.team_id = v_row.team_id')
-      const fixed = await callAs(
-        'authenticated',
-        MEMBER,
-        rpcCall('smi6651/happy', '2.0.0', null, null, 'revert-i-restored')
-      )
-      expect(fixed.stdout).toContain('"status": "released"')
-    })
+    // Variant (i) has no test here on purpose (SMI-6690). Its text assertions on the step-4
+    // re-read now run unconditionally in the structural sibling, where they execute instead of
+    // being skipped with the rest of this block.
+    //
+    // One property DID go with it, and it is not covered anywhere right now: `rebuildWith`
+    // asserts the build's stderr has no /ERROR/, so feeding `brokenMigrationSql('i')` to Postgres
+    // proved variant (i) still produces SQL Postgres accepts. `replaceExactlyOnce`'s fail-closed
+    // anchor check catches drift in the text it SEARCHES for, not a syntax error in the text it
+    // SUBSTITUTES. Nothing feeds variant (i) to a database today. The loss is local-only for now,
+    // since this whole block is skipped in every lane until SMI-5946 provisions Postgres, but it
+    // becomes real the moment that lands. SMI-6685 restores (i) as a genuine behavioural test
+    // using the entitlement-call seam, which re-covers this too.
 
     it('(j) removing the string-value guard lets malformed content leak through', async () => {
       await rebuildWith(brokenMigrationSql('j'))

@@ -46,8 +46,8 @@ import { extractFunction, extractStatement, type TestConn } from './pg-session.t
 
 export { PsqlSession, type TestConn } from './pg-session.ts'
 
-const MIGRATIONS_DIR = 'supabase/migrations'
-const NEW_MIGRATION = '20260915000000_private_registry_content_release_rpc.sql'
+export const MIGRATIONS_DIR = 'supabase/migrations'
+export const NEW_MIGRATION = '20260915000000_private_registry_content_release_rpc.sql'
 const TEAM_HELPERS_MIGRATION = '071_team_workspaces.sql'
 const ENTITLEMENT_MIGRATION = '20260824000000_check_registry_team_entitlement.sql'
 const BASE_TABLE_MIGRATION = '20260724000000_private_registry_skills.sql'
@@ -74,12 +74,15 @@ export const noLiveTestPg = !testConnFromEnv()
 
 if (noLiveTestPg) {
   console.warn(
-    '[smi6651-content-release] SKIPPED: no live test Postgres configured ' +
-      '(SMI6651_TEST_PGHOST/PORT/USER/PASSWORD/DATABASE unset). This suite is the ONLY coverage ' +
-      'that executes the shipped release_private_registry_skill_content() body, its column-vs-' +
-      "table SELECT privilege split, and the migration file's own internal smoke block against " +
-      'a real Postgres catalog — a mocked test cannot prove any of the three. Not covered by CI ' +
-      "(same tracked gap as SMI-5946). See this file's header for the docker one-liner."
+    '[smi6651-content-release] no live test Postgres configured ' +
+      '(SMI6651_TEST_PGHOST/PORT/USER/PASSWORD/DATABASE unset), so the live-Postgres half of this ' +
+      'suite (.pg.test.ts) will SKIP. The PG-free assertions live in the sibling ' +
+      '.structural.test.ts, which has no Postgres gate — include it in your run, or run the ' +
+      'directory, to exercise them (SMI-6690). The skipped half is the ONLY coverage that ' +
+      'executes the shipped release_private_registry_skill_content() body, its column-vs-table ' +
+      "SELECT privilege split, and the migration file's own internal smoke block against a real " +
+      'Postgres catalog — a mocked test cannot prove any of the three. Not covered by CI (same ' +
+      "tracked gap as SMI-5946). See this file's header for the docker one-liner."
   )
 }
 
@@ -236,6 +239,31 @@ export function migrationSql(): string {
   const path = join(process.cwd(), MIGRATIONS_DIR, NEW_MIGRATION)
   return readFileSync(path, 'utf8')
 }
+
+const GIT_CRYPT_MAGIC = Buffer.from([0x00, 0x47, 0x49, 0x54, 0x43, 0x52, 0x59, 0x50, 0x54])
+const EXPECT_LOCKED_ENV_VAR = 'SKILLSMITH_GIT_CRYPT_EXPECTED_LOCKED'
+
+/** True when this migration is git-crypt ciphertext on disk AND that was expected (SMI-5984).
+ *  `supabase/migrations/` is git-crypt-scoped, so `migrationSql()` returns ciphertext rather than
+ *  SQL on a locked checkout — `post-merge-verify.yml` runs locked by design, and `Test (root)`
+ *  runs locked on fork/dependabot PRs where the unlock step is gated on a secret.
+ *
+ *  ANY suite asserting on migration TEXT must gate on this, or it fails in those lanes with a
+ *  message that reads as migration drift rather than as a lock state (SMI-6690 governance
+ *  finding). An UNEXPECTED lock throws instead of returning true, so a genuine unlock failure
+ *  can never be silently absorbed as a skip — that three-way outcome is the point of the
+ *  contract. Mirrors `../private-registry-audit-trigger.static.test.ts`'s `readMigration()`. */
+export const migrationTextLocked: boolean = (() => {
+  const raw = readFileSync(join(process.cwd(), MIGRATIONS_DIR, NEW_MIGRATION))
+  if (!raw.subarray(0, GIT_CRYPT_MAGIC.length).equals(GIT_CRYPT_MAGIC)) return false
+  if (process.env[EXPECT_LOCKED_ENV_VAR] !== '1') {
+    throw new Error(
+      `${NEW_MIGRATION} is git-crypt-locked but ${EXPECT_LOCKED_ENV_VAR} is not set — treat as ` +
+        'an unlock failure, not a lock-state edge case (SMI-5984).'
+    )
+  }
+  return true
+})()
 
 // ============================================================================
 // Minimal schema (stub tables/roles/auth) + REAL extracted functions/policies/grants. Does NOT
