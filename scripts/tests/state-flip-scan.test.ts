@@ -166,23 +166,41 @@ function resolveRefStatus(ref: string): { resolvable: boolean; reason: string } 
   }
 }
 
-// THE COMPLETE WARNING CONTRACT, asserted as one exact string.
+// The complete expected report for the mixed plaintext/non-text fixture, asserted
+// with toBe so exactly one output is admitted.
 //
-// This replaces a growing pile of substring checks, and the pile is the point: four
-// separate phrase-level patches were each defeated by a DIFFERENT unconstrained
-// phrase -- the wording, then the extent, then the semantics, then the remediation.
-// The last one, found by the pre-merge gate, was the worst: inverting `re-run
-// WITHOUT --ref` to `WITH --ref` sends the reader straight back through the
-// ciphertext path, and all 32 tests stayed green.
-//
-// Any isolated assertion leaves everything it does not name unconstrained, so the
-// fifth patch would have been defeated by the fifth phrase. Exact-matching the whole
-// line is the only assertion whose complement is empty. Its cost is real and worth
-// stating: a deliberate wording change must be re-stated here, which forces the
-// change to be SEEN rather than silently absorbed.
-function expectedScopeWarning(specs: string): string {
-  return `> **Scope warning.** These pathspecs hold blobs that are not text -- git-crypt ciphertext in \`--ref\` mode, or genuine binaries: \`${specs}\`. Their bytes ARE searched (this scan passes \`-a\`) and so they DO contribute to the counts below, but any hit in them is a byte coincidence rather than a source reference, and a miss is not evidence about whatever the bytes encode. Treat the counts as unreliable over these paths in both directions. For git-crypt paths, re-run WITHOUT \`--ref\` to search their decrypted working-tree contents.`
-}
+// This replaced a helper that built only the warning LINE, which in turn replaced a
+// pile of substring checks. Each narrower form was defeated by the pre-merge gate in
+// turn -- the contradiction moved from inside a phrase, to inside the line, to a
+// sibling line -- so the helper is gone rather than kept alongside: two assertions
+// with different strengths on the same text is an invitation to assert the weak one.
+const EXPECTED_MIXED_REPORT = `## State-Flip Assertion Audit (P-7) for \`widget-tool\`
+
+Noun: \`widget-tool\`
+Ref: \`HEAD\`
+Scanned paths: \`scripts/*.ts scripts/*.sh scripts/*.mjs scripts/*.mts scripts/*.cjs packages/*/src/** packages/*/tests/** packages/*/e2e/** tests/** supabase/functions/** .github/**\`
+
+> **Scope warning.** These pathspecs hold blobs that are not text -- git-crypt ciphertext in \`--ref\` mode, or genuine binaries: \`supabase/functions/** (1 of 1)\`. Their bytes ARE searched (this scan passes \`-a\`) and so they DO contribute to the counts below, but any hit in them is a byte coincidence rather than a source reference, and a miss is not evidence about whatever the bytes encode. Treat the counts as unreliable over these paths in both directions. For git-crypt paths, re-run WITHOUT \`--ref\` to search their decrypted working-tree contents.
+STEP 1 (denominator): 2
+
+### STEP 2: noun x absence-vocabulary (1 hit(s)), MANDATED OUTPUT
+
+HEAD:supabase/functions/enc.ts:1:GITCRYPTwidget-tool is not installed by design
+
+### STEP 3: high-yield triage subset (1 hit(s)), reading order only, NOT a filter
+
+_Read STEP 3 first for triage, but STEP 2 is the check. STEP 3 is measured to miss real casualties (SMI-6514 D-11); do not stop at STEP 3._
+
+HEAD:supabase/functions/enc.ts:1:GITCRYPTwidget-tool is not installed by design
+
+### Suggested P-7 matrix (scaffold)
+
+Copy this into the plan's \`## State-Flip Assertion Audit (P-7)\` section, or into the pr-reviewer PR-15 finding. One row per STEP 2 hit. Category is one of: 1 (test), 2 (comment/doc), 3 (diagnostic/error text), 4 (catch block). Disposition is one of: FIX-NOW, STILL-TRUE, FALSE-POSITIVE, OUT-OF-SCOPE (requires owner + SMI-NNNN).
+
+| Hit (file:line) | Category | Disposition | Notes |
+|------------------|----------|--------------|-------|
+| \`supabase/functions/enc.ts:1\` | _<1-4>_ | _<disposition>_ | _<one sentence>_ |
+`
 
 describe('scan-state-flip.sh (SMI-6514 P-7 scanner) -- Group A: portable', () => {
   it.skipIf(!SCANNER_PRESENT)('parses cleanly under `bash -n`', () => {
@@ -564,22 +582,33 @@ describe('scan-state-flip.sh (SMI-6514 P-7 scanner) -- Group A: portable', () =>
         cwd: repoDir,
         encoding: 'utf8',
       })
-      // The whole warning LINE, exactly -- split first, then match an element.
+      // THE WHOLE REPORT, exactly. Not a substring, not a line -- the entire document.
       //
-      // The previous form was `expect(out).toContain(expected)`, and the commit that
-      // introduced it claimed the assertion's "complement is empty". That claim was
-      // FALSE and the pre-merge gate caught it: string toContain is a SUBSTRING
-      // check, so appending a contradictory clause to the same line keeps the
-      // expected text as a substring and passes. Measured -- appending
-      // " However, every hit is a genuine source reference." left all 32 tests green.
+      // Three narrower forms were each defeated in turn by the pre-merge gate, and
+      // the progression is why this one is absolute:
       //
-      // Array toContain compares elements exactly, so the line must be the expected
-      // string and nothing else. Only now is the complement actually empty.
-      expect(out.split('\n')).toContain(expectedScopeWarning('supabase/functions/** (1 of 1)'))
-      // ...and here is the count itself, which is what the old assertions missed.
-      // 2 = the plaintext hit plus the byte-wise hit inside the non-text blob.
-      expect(out).toContain('STEP 1 (denominator): 2')
-      expect(out).toContain('STEP 2: noun x absence-vocabulary (1 hit(s))')
+      //   toContain(phrase)   a different phrase was always unconstrained; four
+      //                       patches, four different escapes
+      //   toContain(line)     string toContain is a SUBSTRING check, so appending
+      //                       " However, every hit is a genuine source reference."
+      //                       to that same line still passed
+      //   split.toContain()   exact on ONE element, but a contradictory SIBLING
+      //                       line alongside it still passed
+      //
+      // Each fix moved the contradiction one boundary outward: inside the phrase,
+      // then inside the line, then across the newline. Whole-document equality has
+      // nowhere left to move it to.
+      //
+      // Twice I wrote in prose that the assertion's "complement is empty" while it
+      // was not. So this comment states the property the matcher ACTUALLY has
+      // rather than the one I hoped for: toBe on the entire stdout admits exactly
+      // one output, and the counts and warning below are part of that document
+      // rather than separately asserted.
+      //
+      // The cost is deliberate: any change to this report -- wording, ordering, a
+      // new line anywhere -- fails here and must be restated, which forces it to be
+      // read rather than absorbed.
+      expect(out).toBe(EXPECTED_MIXED_REPORT)
     }
   )
 
