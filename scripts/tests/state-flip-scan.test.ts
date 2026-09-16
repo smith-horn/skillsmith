@@ -174,7 +174,35 @@ function resolveRefStatus(ref: string): { resolvable: boolean; reason: string } 
 // turn -- the contradiction moved from inside a phrase, to inside the line, to a
 // sibling line -- so the helper is gone rather than kept alongside: two assertions
 // with different strengths on the same text is an invitation to assert the weak one.
-const EXPECTED_MIXED_REPORT_WORKTREE = `## State-Flip Assertion Audit (P-7) for \`widget-tool\`
+const EXPECTED_ONE_REF = `## State-Flip Assertion Audit (P-7) for \`widget-tool\`
+
+Noun: \`widget-tool\`
+Ref: \`HEAD\`
+Scanned paths: \`scripts/*.ts scripts/*.sh scripts/*.mjs scripts/*.mts scripts/*.cjs packages/*/src/** packages/*/tests/** packages/*/e2e/** tests/** supabase/functions/** .github/**\`
+
+> **Scope warning.** These pathspecs hold blobs that are not text -- git-crypt ciphertext in \`--ref\` mode, or genuine binaries: \`supabase/functions/** (1 of 1)\`. Their bytes ARE searched (this scan passes \`-a\`) and so they DO contribute to the counts below, but any hit in them is a byte coincidence rather than a source reference, and a miss is not evidence about whatever the bytes encode. Treat the counts as unreliable over these paths in both directions. For git-crypt paths, re-run WITHOUT \`--ref\` to search their decrypted working-tree contents.
+STEP 1 (denominator): 2
+
+### STEP 2: noun x absence-vocabulary (1 hit(s)), MANDATED OUTPUT
+
+HEAD:supabase/functions/enc.ts:1:GITCRYPTwidget-tool is not installed by design
+
+### STEP 3: high-yield triage subset (1 hit(s)), reading order only, NOT a filter
+
+_Read STEP 3 first for triage, but STEP 2 is the check. STEP 3 is measured to miss real casualties (SMI-6514 D-11); do not stop at STEP 3._
+
+HEAD:supabase/functions/enc.ts:1:GITCRYPTwidget-tool is not installed by design
+
+### Suggested P-7 matrix (scaffold)
+
+Copy this into the plan's \`## State-Flip Assertion Audit (P-7)\` section, or into the pr-reviewer PR-15 finding. One row per STEP 2 hit. Category is one of: 1 (test), 2 (comment/doc), 3 (diagnostic/error text), 4 (catch block). Disposition is one of: FIX-NOW, STILL-TRUE, FALSE-POSITIVE, OUT-OF-SCOPE (requires owner + SMI-NNNN).
+
+| Hit (file:line) | Category | Disposition | Notes |
+|------------------|----------|--------------|-------|
+| \`supabase/functions/enc.ts:1\` | _<1-4>_ | _<disposition>_ | _<one sentence>_ |
+`
+
+const EXPECTED_ONE_WT = `## State-Flip Assertion Audit (P-7) for \`widget-tool\`
 
 Noun: \`widget-tool\`
 Ref: \`working tree\`
@@ -202,17 +230,18 @@ Copy this into the plan's \`## State-Flip Assertion Audit (P-7)\` section, or in
 | \`supabase/functions/enc.ts:1\` | _<1-4>_ | _<disposition>_ | _<one sentence>_ |
 `
 
-const EXPECTED_MIXED_REPORT = `## State-Flip Assertion Audit (P-7) for \`widget-tool\`
+const EXPECTED_TWO_REF = `## State-Flip Assertion Audit (P-7) for \`widget-tool\`
 
 Noun: \`widget-tool\`
 Ref: \`HEAD\`
 Scanned paths: \`scripts/*.ts scripts/*.sh scripts/*.mjs scripts/*.mts scripts/*.cjs packages/*/src/** packages/*/tests/** packages/*/e2e/** tests/** supabase/functions/** .github/**\`
 
-> **Scope warning.** These pathspecs hold blobs that are not text -- git-crypt ciphertext in \`--ref\` mode, or genuine binaries: \`supabase/functions/** (1 of 1)\`. Their bytes ARE searched (this scan passes \`-a\`) and so they DO contribute to the counts below, but any hit in them is a byte coincidence rather than a source reference, and a miss is not evidence about whatever the bytes encode. Treat the counts as unreliable over these paths in both directions. For git-crypt paths, re-run WITHOUT \`--ref\` to search their decrypted working-tree contents.
-STEP 1 (denominator): 2
+> **Scope warning.** These pathspecs hold blobs that are not text -- git-crypt ciphertext in \`--ref\` mode, or genuine binaries: \`packages/*/src/** (1 of 1) supabase/functions/** (1 of 1)\`. Their bytes ARE searched (this scan passes \`-a\`) and so they DO contribute to the counts below, but any hit in them is a byte coincidence rather than a source reference, and a miss is not evidence about whatever the bytes encode. Treat the counts as unreliable over these paths in both directions. For git-crypt paths, re-run WITHOUT \`--ref\` to search their decrypted working-tree contents.
+STEP 1 (denominator): 3
 
-### STEP 2: noun x absence-vocabulary (1 hit(s)), MANDATED OUTPUT
+### STEP 2: noun x absence-vocabulary (2 hit(s)), MANDATED OUTPUT
 
+HEAD:packages/core/src/bin.ts:1:GITCRYPTwidget-tool is absent
 HEAD:supabase/functions/enc.ts:1:GITCRYPTwidget-tool is not installed by design
 
 ### STEP 3: high-yield triage subset (1 hit(s)), reading order only, NOT a filter
@@ -227,6 +256,37 @@ Copy this into the plan's \`## State-Flip Assertion Audit (P-7)\` section, or in
 
 | Hit (file:line) | Category | Disposition | Notes |
 |------------------|----------|--------------|-------|
+| \`packages/core/src/bin.ts:1\` | _<1-4>_ | _<disposition>_ | _<one sentence>_ |
+| \`supabase/functions/enc.ts:1\` | _<1-4>_ | _<disposition>_ | _<one sentence>_ |
+`
+
+const EXPECTED_TWO_WT = `## State-Flip Assertion Audit (P-7) for \`widget-tool\`
+
+Noun: \`widget-tool\`
+Ref: \`working tree\`
+Scanned paths: \`scripts/*.ts scripts/*.sh scripts/*.mjs scripts/*.mts scripts/*.cjs packages/*/src/** packages/*/tests/** packages/*/e2e/** tests/** supabase/functions/** .github/**\`
+
+> **Scope warning.** These pathspecs hold blobs that are not text -- git-crypt ciphertext in \`--ref\` mode, or genuine binaries: \`packages/*/src/** (1 of 1) supabase/functions/** (1 of 1)\`. Their bytes ARE searched (this scan passes \`-a\`) and so they DO contribute to the counts below, but any hit in them is a byte coincidence rather than a source reference, and a miss is not evidence about whatever the bytes encode. Treat the counts as unreliable over these paths in both directions. For git-crypt paths, re-run WITHOUT \`--ref\` to search their decrypted working-tree contents.
+STEP 1 (denominator): 3
+
+### STEP 2: noun x absence-vocabulary (2 hit(s)), MANDATED OUTPUT
+
+packages/core/src/bin.ts:1:GITCRYPTwidget-tool is absent
+supabase/functions/enc.ts:1:GITCRYPTwidget-tool is not installed by design
+
+### STEP 3: high-yield triage subset (1 hit(s)), reading order only, NOT a filter
+
+_Read STEP 3 first for triage, but STEP 2 is the check. STEP 3 is measured to miss real casualties (SMI-6514 D-11); do not stop at STEP 3._
+
+supabase/functions/enc.ts:1:GITCRYPTwidget-tool is not installed by design
+
+### Suggested P-7 matrix (scaffold)
+
+Copy this into the plan's \`## State-Flip Assertion Audit (P-7)\` section, or into the pr-reviewer PR-15 finding. One row per STEP 2 hit. Category is one of: 1 (test), 2 (comment/doc), 3 (diagnostic/error text), 4 (catch block). Disposition is one of: FIX-NOW, STILL-TRUE, FALSE-POSITIVE, OUT-OF-SCOPE (requires owner + SMI-NNNN).
+
+| Hit (file:line) | Category | Disposition | Notes |
+|------------------|----------|--------------|-------|
+| \`packages/core/src/bin.ts:1\` | _<1-4>_ | _<disposition>_ | _<one sentence>_ |
 | \`supabase/functions/enc.ts:1\` | _<1-4>_ | _<disposition>_ | _<one sentence>_ |
 `
 
@@ -577,85 +637,85 @@ describe('scan-state-flip.sh (SMI-6514 P-7 scanner) -- Group A: portable', () =>
     }
   )
 
+  // MODE x CARDINALITY matrix for the scope warning.
+  //
+  // Five consecutive pre-merge findings landed in this one assertion, and each fix
+  // constrained the surface the reviewer had shown me while the contradiction moved
+  // to the nearest surface I had not:
+  //
+  //   phrase       a different phrase was unconstrained, four times over
+  //   line         string toContain is a substring check; a suffix survived
+  //   document     a contradictory SIBLING line survived
+  //   mode         whole-document equality covered --ref only; working tree survived
+  //   cardinality  both modes pinned, but every fixture had exactly ONE unreadable
+  //                pathspec, so a branch on `${#UNREADABLE_SPECS[@]} > 1` never fired
+  //
+  // The warning is emitted from one printf reached along two independent axes, so
+  // coverage is expressed as their PRODUCT rather than as another isolated case.
+  // Every cell compares the COMPLETE stdout; nothing here is a substring check.
+  const UNREADABLE_MATRIX = [
+    {
+      label: 'one pathspec, --ref',
+      two: false,
+      args: ['widget-tool', '--ref', 'HEAD'],
+      expected: EXPECTED_ONE_REF,
+    },
+    {
+      label: 'one pathspec, working tree',
+      two: false,
+      args: ['widget-tool'],
+      expected: EXPECTED_ONE_WT,
+    },
+    {
+      label: 'two pathspecs, --ref',
+      two: true,
+      args: ['widget-tool', '--ref', 'HEAD'],
+      expected: EXPECTED_TWO_REF,
+    },
+    {
+      label: 'two pathspecs, working tree',
+      two: true,
+      args: ['widget-tool'],
+      expected: EXPECTED_TWO_WT,
+    },
+  ]
+
   it.skipIf(!SCANNER_PRESENT)(
-    'a non-text blob is COUNTED, and the warning says so rather than claiming exclusion',
+    'scope warning: every mode x cardinality cell matches its complete expected report',
     () => {
-      // SMI-6659, 17th gap, and the sharpest one: the warning used to say these
-      // blobs' contents were "excluded entirely", which was falsified by this
-      // script's OWN earlier fix -- -a (7th gap) forces byte-wise matching, so a
-      // non-text blob is searched and does contribute.
-      //
-      // The pre-merge reviewer's real critique was about the TESTS, not the prose:
-      // every assertion constrained warning wording and the (1 of N) extent, and
-      // none constrained whether the warned blob reached the counts. So this case
-      // pins the counts, which is the claim that was wrong.
-      const repoDir = makeFixtureTempDir('state-flip-counted-binary-fixture')
-      createdRepoDirs.push(repoDir)
-      git(repoDir, ['init', '-q', '-b', 'main'])
-      mkdirSync(join(repoDir, 'supabase', 'functions'), { recursive: true })
-      mkdirSync(join(repoDir, 'scripts'), { recursive: true })
-      writeFileSync(join(repoDir, 'scripts', 'plain.sh'), 'widget-tool in plaintext\n')
-      // Non-text (leading NUL) AND carrying the noun plus absence vocabulary, so it
-      // must land in BOTH steps.
-      writeFileSync(
-        join(repoDir, 'supabase', 'functions', 'enc.ts'),
-        Buffer.concat([
-          Buffer.from('\u0000GITCRYPT\u0000', 'binary'),
-          Buffer.from('widget-tool is not installed by design\n'),
-        ])
-      )
-      git(repoDir, ['add', '-A'])
-      git(repoDir, ['-c', 'user.email=t@t', '-c', 'user.name=t', 'commit', '-qm', 'init'])
-      const out = execFileSync('bash', [SCANNER_PATH, 'widget-tool', '--ref', 'HEAD'], {
-        cwd: repoDir,
-        encoding: 'utf8',
-      })
-      // THE WHOLE REPORT, exactly. Not a substring, not a line -- the entire document.
-      //
-      // Three narrower forms were each defeated in turn by the pre-merge gate, and
-      // the progression is why this one is absolute:
-      //
-      //   toContain(phrase)   a different phrase was always unconstrained; four
-      //                       patches, four different escapes
-      //   toContain(line)     string toContain is a SUBSTRING check, so appending
-      //                       " However, every hit is a genuine source reference."
-      //                       to that same line still passed
-      //   split.toContain()   exact on ONE element, but a contradictory SIBLING
-      //                       line alongside it still passed
-      //
-      // Each fix moved the contradiction one boundary outward: inside the phrase,
-      // then inside the line, then across the newline. Whole-document equality has
-      // nowhere left to move it to.
-      //
-      // Twice I wrote in prose that the assertion's "complement is empty" while it
-      // was not. So this comment states the property the matcher ACTUALLY has
-      // rather than the one I hoped for: toBe on the entire stdout admits exactly
-      // one output, and the counts and warning below are part of that document
-      // rather than separately asserted.
-      //
-      // The cost is deliberate: any change to this report -- wording, ordering, a
-      // new line anywhere -- fails here and must be restated, which forces it to be
-      // read rather than absorbed.
-      expect(out).toBe(EXPECTED_MIXED_REPORT)
-      // AND working-tree mode, as its own complete document.
-      //
-      // The 21st defect was the same boundary moved outward one more time:
-      // phrase -> line -> document -> INVOCATION MODE. Whole-document equality on the
-      // --ref run alone left working-tree mode asserted only by substring, so this
-      // survived with all 32 tests green:
-      //
-      //   if [[ -z "$REF" ]]; then
-      //     printf '> However, every hit is a genuine source reference.\n'
-      //   fi
-      //
-      // Both modes emit this warning, so both need the document pinned. The two
-      // expected texts differ by exactly the `Ref:` line, which is why neither can
-      // stand in for the other.
-      const wtOut = execFileSync('bash', [SCANNER_PATH, 'widget-tool'], {
-        cwd: repoDir,
-        encoding: 'utf8',
-      })
-      expect(wtOut).toBe(EXPECTED_MIXED_REPORT_WORKTREE)
+      const GITCRYPT_MAGIC = Buffer.from([
+        0x00, 0x47, 0x49, 0x54, 0x43, 0x52, 0x59, 0x50, 0x54, 0x00,
+      ])
+      const blob = (tail: string): Buffer => Buffer.concat([GITCRYPT_MAGIC, Buffer.from(tail)])
+
+      for (const cell of UNREADABLE_MATRIX) {
+        const repoDir = makeFixtureTempDir('state-flip-matrix-fixture')
+        createdRepoDirs.push(repoDir)
+        git(repoDir, ['init', '-q', '-b', 'main'])
+        mkdirSync(join(repoDir, 'supabase', 'functions'), { recursive: true })
+        mkdirSync(join(repoDir, 'scripts'), { recursive: true })
+        writeFileSync(join(repoDir, 'scripts', 'plain.sh'), 'widget-tool in plaintext\n')
+        writeFileSync(
+          join(repoDir, 'supabase', 'functions', 'enc.ts'),
+          blob('widget-tool is not installed by design\n')
+        )
+        if (cell.two) {
+          // A SECOND unreadable pathspec, so any branch keyed on "more than one" is
+          // actually reached.
+          mkdirSync(join(repoDir, 'packages', 'core', 'src'), { recursive: true })
+          writeFileSync(
+            join(repoDir, 'packages', 'core', 'src', 'bin.ts'),
+            blob('widget-tool is absent\n')
+          )
+        }
+        git(repoDir, ['add', '-A'])
+        git(repoDir, ['-c', 'user.email=t@t', '-c', 'user.name=t', 'commit', '-qm', 'init'])
+        const out = execFileSync('bash', [SCANNER_PATH, ...cell.args], {
+          cwd: repoDir,
+          encoding: 'utf8',
+        })
+        expect(out, cell.label).toBe(cell.expected)
+      }
     }
   )
 
