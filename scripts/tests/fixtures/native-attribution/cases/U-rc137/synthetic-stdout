@@ -1,0 +1,10 @@
+[mount-composition] mode=worktree service=dev scope=/app
+[mount-composition] compose: /app/docker-compose.yml /app/docker-compose.override.yml
+[mount-composition] declared volume entries (all destinations): 178 (parse errors: 0)
+[mount-composition] in-scope declared destinations: 167 | mounted: 140 | MISSING: 27
+FAIL [A2] declared but NOT mounted: /packages/cli/node_modules/.astro (declared as /app/packages/cli/node_modules/.astro, source=/HOST/skillsmith/packages/cli/node_modules/.astro)
+FAIL [A2] declared but NOT mounted: /packages/cli/node_modules/.vite (declared as /app/packages/cli/node_modules/.vite, source=/HOST/skillsmith/packages/cli/node_modules/.vite)
+FAIL [A2] declared but NOT mounted: /packages/cli/node_modules/.vite-temp (declared as /app/packages/cli/node_modules/.vite-temp, source=/HOST/skillsmith/packages/cli/node_modules/.vite-temp)
+FAIL [A2] declared but NOT mounted: /packages/core/node_modules/.astro (declared as /app/packages/core/node_modules/.astro, source=/HOST/skillsmith/packages/core/node_modules/.astro)
+FAIL [A2] declared but NOT mounted: /packages/core/node_modules/.vite (declared as /app/packages/core/node_modules/.vite, source=/HOST/skillsmith/packages/core/node_modules/.vite)
+FAIL [A2] declared but NOT mounted: /packages/core/node_modules/.vite-temp (declared as /app/packages/core/node_modules/.vite-temp, source=/HOST/skillsmith/packages/core/node_modules/.vite-temp)
