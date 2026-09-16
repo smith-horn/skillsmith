@@ -174,6 +174,34 @@ function resolveRefStatus(ref: string): { resolvable: boolean; reason: string } 
 // turn -- the contradiction moved from inside a phrase, to inside the line, to a
 // sibling line -- so the helper is gone rather than kept alongside: two assertions
 // with different strengths on the same text is an invitation to assert the weak one.
+const EXPECTED_MIXED_REPORT_WORKTREE = `## State-Flip Assertion Audit (P-7) for \`widget-tool\`
+
+Noun: \`widget-tool\`
+Ref: \`working tree\`
+Scanned paths: \`scripts/*.ts scripts/*.sh scripts/*.mjs scripts/*.mts scripts/*.cjs packages/*/src/** packages/*/tests/** packages/*/e2e/** tests/** supabase/functions/** .github/**\`
+
+> **Scope warning.** These pathspecs hold blobs that are not text -- git-crypt ciphertext in \`--ref\` mode, or genuine binaries: \`supabase/functions/** (1 of 1)\`. Their bytes ARE searched (this scan passes \`-a\`) and so they DO contribute to the counts below, but any hit in them is a byte coincidence rather than a source reference, and a miss is not evidence about whatever the bytes encode. Treat the counts as unreliable over these paths in both directions. For git-crypt paths, re-run WITHOUT \`--ref\` to search their decrypted working-tree contents.
+STEP 1 (denominator): 2
+
+### STEP 2: noun x absence-vocabulary (1 hit(s)), MANDATED OUTPUT
+
+supabase/functions/enc.ts:1:GITCRYPTwidget-tool is not installed by design
+
+### STEP 3: high-yield triage subset (1 hit(s)), reading order only, NOT a filter
+
+_Read STEP 3 first for triage, but STEP 2 is the check. STEP 3 is measured to miss real casualties (SMI-6514 D-11); do not stop at STEP 3._
+
+supabase/functions/enc.ts:1:GITCRYPTwidget-tool is not installed by design
+
+### Suggested P-7 matrix (scaffold)
+
+Copy this into the plan's \`## State-Flip Assertion Audit (P-7)\` section, or into the pr-reviewer PR-15 finding. One row per STEP 2 hit. Category is one of: 1 (test), 2 (comment/doc), 3 (diagnostic/error text), 4 (catch block). Disposition is one of: FIX-NOW, STILL-TRUE, FALSE-POSITIVE, OUT-OF-SCOPE (requires owner + SMI-NNNN).
+
+| Hit (file:line) | Category | Disposition | Notes |
+|------------------|----------|--------------|-------|
+| \`supabase/functions/enc.ts:1\` | _<1-4>_ | _<disposition>_ | _<one sentence>_ |
+`
+
 const EXPECTED_MIXED_REPORT = `## State-Flip Assertion Audit (P-7) for \`widget-tool\`
 
 Noun: \`widget-tool\`
@@ -609,6 +637,25 @@ describe('scan-state-flip.sh (SMI-6514 P-7 scanner) -- Group A: portable', () =>
       // new line anywhere -- fails here and must be restated, which forces it to be
       // read rather than absorbed.
       expect(out).toBe(EXPECTED_MIXED_REPORT)
+      // AND working-tree mode, as its own complete document.
+      //
+      // The 21st defect was the same boundary moved outward one more time:
+      // phrase -> line -> document -> INVOCATION MODE. Whole-document equality on the
+      // --ref run alone left working-tree mode asserted only by substring, so this
+      // survived with all 32 tests green:
+      //
+      //   if [[ -z "$REF" ]]; then
+      //     printf '> However, every hit is a genuine source reference.\n'
+      //   fi
+      //
+      // Both modes emit this warning, so both need the document pinned. The two
+      // expected texts differ by exactly the `Ref:` line, which is why neither can
+      // stand in for the other.
+      const wtOut = execFileSync('bash', [SCANNER_PATH, 'widget-tool'], {
+        cwd: repoDir,
+        encoding: 'utf8',
+      })
+      expect(wtOut).toBe(EXPECTED_MIXED_REPORT_WORKTREE)
     }
   )
 
