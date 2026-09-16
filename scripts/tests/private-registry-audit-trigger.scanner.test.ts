@@ -92,6 +92,20 @@ describe('splitStatements() (SMI-6680 F2)', () => {
     expect(bothInOneChunk(splitStatements(stmt))).toBe(true)
   })
 
+  // PR #2860 gate LOW-1: `stripComments()`'s block-comment branch tracks nesting depth
+  // (`depth += 1` / `depth -= 1`) so an inner `/* */` doesn't end the OUTER comment early. Nothing
+  // in the suite exercised actual nesting before this case -- every existing block-comment fixture
+  // above uses a single, non-nested `/* ... */`, which passes identically whether or not depth
+  // tracking works at all. Mutation-proven (SMI-6598): changing `depth += 1` to `depth += 0` makes
+  // `stripComments()` close the whole span at the FIRST `*/` it sees (the inner one) instead of the
+  // real, matching outer one, leaking ` DROP TABLE x; */` as unstripped text -- verified directly
+  // against the mutated implementation before writing this case down, then reverted.
+  it('does not end an outer block comment at an inner, nested /* */ (PR #2860 gate LOW-1)', () => {
+    const sql = '/* /* */ DROP TABLE x; */'
+    expect(stripComments(sql)).toBe('')
+    expect(splitStatements(sql)).toEqual([''])
+  })
+
   it(
     'columnsFromMigrations() (pins.ts) finds a column added after a semicolon-bearing literal in ' +
       'the same ALTER TABLE statement -- the same defect shape as the three detectors above, found ' +

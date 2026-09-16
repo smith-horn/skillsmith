@@ -6,10 +6,10 @@
  * `dir` is threaded through every function here (default `MIGRATIONS_DIR`, the real directory) so
  * `private-registry-audit-trigger.detectors.test.ts` can point the whole detector pipeline at a
  * `mkdtempSync()` fixture directory instead -- the fix for SMI-6680 F1: every detector in
- * `private-registry-audit-trigger.detectors.ts` iterates `laterMigrationFiles()`, which returns
- * `[]` against the real directory (the pinned migration is the newest of 207 files today), so none
- * of the five detectors' logic was ever exercised by a committed test until this override existed.
- * Follows the same pattern as `private-registry-rls.test.ts`'s
+ * `private-registry-audit-trigger.detectors.ts` iterates `laterMigrationFiles()`, and what that
+ * returns against the real directory changes every time a migration lands after the pinned one, so
+ * a test pointed only at the real directory cannot give any detector a fixed, deterministic input
+ * to react to. A fixture directory can. Follows the same pattern as `private-registry-rls.test.ts`'s
  * `loadPrivateRegistryMigration(dir = MIGRATIONS_DIR)`.
  */
 

@@ -7,9 +7,9 @@
  *
  * Every detector accepts an optional `dir` (default the real `MIGRATIONS_DIR`), threaded down into
  * `laterMigrationFiles()`/`readMigration()`, so `.detectors.test.ts`'s F1 fixture suite can point
- * these at a `mkdtempSync()` directory instead of the real one (SMI-6680 F1 -- the real directory
- * makes `laterMigrationFiles()` return `[]`, so a committed test pointed only at the real directory
- * can never exercise any of this file's logic).
+ * these at a `mkdtempSync()` directory instead of the real one (SMI-6680 F1) -- a fixture directory
+ * gives a test a fixed, chosen set of "later" migrations, rather than depending on whatever real
+ * migrations happen to have landed after the pinned one by the time the suite runs.
  */
 
 import {
@@ -116,8 +116,7 @@ export function grantExecuteViolations(dir?: string): string[] {
   for (const file of laterMigrationFiles(dir)) {
     const content = readMigration(file, dir)
     if (content === null) continue
-    const sql = stripComments(content)
-    for (const stmt of splitStatements(sql)) {
+    for (const stmt of splitStatements(content)) {
       if (!/\bGRANT\b/i.test(stmt) || !/\bEXECUTE\b/i.test(stmt)) continue
       const toIdx = stmt.search(/\bTO\b/i)
       if (toIdx === -1 || !/\b(anon|authenticated|PUBLIC)\b/i.test(stmt.slice(toIdx))) continue
@@ -211,7 +210,7 @@ export function laterTriggerViolations(
     const content = readMigration(file, dir)
     if (content === null) continue
     const sql = stripComments(content)
-    for (const stmt of splitStatements(sql)) {
+    for (const stmt of splitStatements(content)) {
       if (!/\bCREATE\s+(?:OR\s+REPLACE\s+)?(?:CONSTRAINT\s+)?TRIGGER\b/i.test(stmt)) continue
       if (!onTableRe.test(stmt)) continue
       offenders.push(
@@ -264,8 +263,7 @@ export function auditSinkViolations(
     if (reviewed.includes(file)) continue
     const content = readMigration(file, dir)
     if (content === null) continue
-    const sql = stripComments(content)
-    for (const stmt of splitStatements(sql)) {
+    for (const stmt of splitStatements(content)) {
       const trimmed = () => stmt.replace(/\s+/g, ' ').trim().slice(0, 160)
       if (/\bCREATE\s+(?:OR\s+REPLACE\s+)?RULE\b/i.test(stmt) && ruleToAuditLogsRe.test(stmt)) {
         offenders.push(

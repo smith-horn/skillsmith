@@ -85,7 +85,7 @@ export const stripLineComments = (sql: string): string => sql.replace(/--[^\n]*/
  * If a Postgres string/escape-string/dollar-quoted literal starts at index `i` in `sql`, returns
  * the index immediately after it; otherwise `null`. See the module doc comment above.
  */
-export function literalSpanEnd(sql: string, i: number): number | null {
+function literalSpanEnd(sql: string, i: number): number | null {
   const n = sql.length
   const c = sql[i]
   const c2 = i + 1 < n ? sql[i + 1] : ''
@@ -218,14 +218,26 @@ export function stripComments(sql: string): string {
 /**
  * Splits `sql` into `;`-delimited statement chunks, treating a `;` inside a literal span (string,
  * escape string, dollar-quoted body) or a comment as ordinary text, never a separator (SMI-6680
- * F2). Comments are dropped from the output, matching `stripComments()`'s own rule, so a caller
- * that already ran `stripComments()` first sees no behavior change from switching to this
- * function; a caller that doesn't still gets a comment-safe split. Runs `stripComments()` first
- * and then re-scans the (now comment-free) text with the same `literalSpanEnd()` helper, splitting
- * on any `;` that isn't inside a literal span -- extracted from `stripComments()`'s own scanner
- * (SMI-6114 retro F2): the two share the literal-detection state machine, and this function's own
- * remaining logic (comment removal, `;` splitting) is a strict subset of what `stripComments()`
- * already had to do.
+ * F2). Comments are dropped from the output, matching `stripComments()`'s own rule. Runs
+ * `stripComments()` internally, exactly once, and then re-scans the (now comment-free) text with
+ * the same `literalSpanEnd()` helper, splitting on any `;` that isn't inside a literal span --
+ * extracted from `stripComments()`'s own scanner (SMI-6114 retro F2): the two share the
+ * literal-detection state machine, and this function's own remaining logic (comment removal, `;`
+ * splitting) is a strict subset of what `stripComments()` already had to do.
+ *
+ * CALLERS MUST PASS RAW (UNSTRIPPED) CONTENT -- never pre-strip with `stripComments()` before
+ * calling this function (PR #2860 gate finding HIGH-3, measured: a caller that pre-stripped and
+ * then called this on the result does NOT see "no behavior change", the opposite of what an
+ * earlier version of this comment claimed). `stripComments()` is not idempotent: removing a
+ * comment can juxtapose characters that were not adjacent in the original text into a new comment
+ * opener. `SELECT 1-/**\/-1; ALTER TABLE public.audit_logs DROP COLUMN metadata;` strips once to
+ * `SELECT 1--1; ALTER TABLE public.audit_logs DROP COLUMN metadata;` (a real, correct strip). Feed
+ * that already-stripped text into this function and its internal `stripComments()` call strips it
+ * a second time, this time reading the newly-formed `--` as a line comment and erasing everything
+ * after it, including the `;` and the whole `ALTER TABLE` statement -- three detectors in
+ * `private-registry-audit-trigger.detectors.ts` did exactly this and silently stopped seeing a
+ * `DROP COLUMN`, a `GRANT EXECUTE ... TO authenticated`, and a `CREATE TRIGGER` each, until fixed
+ * to pass `content` (raw) instead of a pre-stripped `sql` variable.
  *
  * Fixes a real defect (SMI-6680 F2, measured): naive `sql.split(';')` on
  * `ALTER TABLE public.audit_logs ADD COLUMN note TEXT DEFAULT 'a;b', DROP COLUMN metadata;` yields

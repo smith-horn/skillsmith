@@ -120,24 +120,19 @@ const REGISTRY_VERBS: Record<string, { done: string; attempt: string }> = {
 }
 
 /**
- * PR #2860 gate finding 1 (SMI-6680): `ATTEMPT_OUTCOMES` is keyed off this tuple's type
- * (`Exclude<(typeof REGISTRY_RESULTS)[number], 'success'>`), so *that* relationship -- this file's
- * map staying exhaustive over this file's own tuple -- is genuinely typechecked: dropping a member
- * from `REGISTRY_RESULTS` or adding one without updating the map below fails `astro check`.
- *
- * What the type does NOT constrain, despite an earlier version of this comment claiming otherwise:
- * `REGISTRY_RESULTS` itself is not tied to the two real registry-result writer unions
- * (`RegistryReadAuditEvent`/`RegistryMutationAuditEvent['result']` in
- * `registry-tools.live.audit.ts`, `AuditResult` in `private-registry-get/access.ts`). It is a
- * website-local `as const` tuple that nothing in `packages/website` imports it into or out of --
- * TypeScript has no mechanism to relate an independently-declared tuple to a type in another
- * package (or, for `access.ts`, another runtime), so widening a writer union changes nothing about
- * `(typeof REGISTRY_RESULTS)[number]` and would NOT fail typecheck. The two staying in sync is
- * instead asserted at runtime by
- * `team-activity-format.registry-results-sync.test.ts`, which reads all three files' source text
- * and fails if the sets diverge -- deliberately a runtime check rather than a type one, since the
- * root `tsconfig.json` doesn't reference `packages/website` (SMI-6300), so a type-only constraint
- * here would be invisible to `npm run typecheck`.
+ * `ATTEMPT_OUTCOMES` is this renderer's own vocabulary for a non-success registry result -- it is
+ * not, and cannot be, machine-checked against what a writer can actually produce. Four writers
+ * emit `private_registry:*` audit_logs rows and no single one of them is authoritative over the
+ * full result vocabulary: two in TypeScript (`registry-tools.live.audit.ts`'s
+ * `RegistryReadAuditEvent`/`RegistryMutationAuditEvent`, and `private-registry-get/access.ts`'s
+ * `AuditResult`) and two in SQL (the audit trigger and the content-release RPC migrations) --
+ * a prior version of this map was checked at runtime against only the two TypeScript writers,
+ * which asserted a completeness it never actually had, since the RPC migration's own `'denied'`
+ * and `'not_found'` writes were invisible to that check the whole time it existed (PR #2860 gate).
+ * What actually keeps this map safe is `registrySentence()`'s own fallback: any `result` this map
+ * doesn't recognise -- a new writer, a new outcome, a typo -- renders as `'did not complete'`
+ * rather than crashing or ever reading as success. Add a writer's new outcome here for a better
+ * sentence; the fallback is what makes leaving one out safe rather than silently wrong.
  *
  * No registry writer emits `result: 'failure'`; the one function that does, `handleTeamInviteSend`
  * (`supabase/functions/team-invite-send/index.ts`), is a different event shape
@@ -146,8 +141,7 @@ const REGISTRY_VERBS: Record<string, { done: string; attempt: string }> = {
  * doesn't meaningfully apply to an email send, so reusing this map there would be accidental
  * coupling between two unrelated event shapes, not a design improvement.
  */
-export const REGISTRY_RESULTS = ['success', 'denied', 'not_found', 'error'] as const
-const ATTEMPT_OUTCOMES: Record<Exclude<(typeof REGISTRY_RESULTS)[number], 'success'>, string> = {
+const ATTEMPT_OUTCOMES: Record<string, string> = {
   denied: 'was refused',
   not_found: 'matched nothing',
   error: 'failed',

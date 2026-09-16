@@ -344,4 +344,47 @@ describe('later-migration tripwires (SMI-6114 retro F1, SMI-6680)', () => {
       cleanup(dir)
     }
   })
+
+  // PR #2860 gate finding HIGH-3: `stripComments()` is not idempotent -- stripping
+  // `SELECT 1-/**/-1;` once yields `SELECT 1--1;`, a real and correct strip. But
+  // `splitStatements()` strips internally too, so a caller that had ALREADY stripped and then
+  // handed that once-stripped text to `splitStatements()` triggered a SECOND strip, which reads
+  // the newly-formed `--` as a line comment and erases everything after it -- including the real
+  // statement a detector exists to catch. `grantExecuteViolations()`, `laterTriggerViolations()`,
+  // and `auditSinkViolations()` each did exactly this (passing a pre-stripped `sql` variable into
+  // `splitStatements()` instead of the raw `content`) and silently returned zero offenders against
+  // every fixture below before the fix (measured directly, not inferred: 0 detections on the
+  // unfixed code, 1 on the fixed code, for each of the three). This must fail if that regresses.
+  const HIGH3_PREFIX = 'SELECT 1-/**/-1; '
+  const high3Cases: Array<[string, (dir?: string) => string[], string]> = [
+    [
+      'grantExecuteViolations',
+      grantExecuteViolations,
+      HIGH3_PREFIX +
+        'GRANT EXECUTE ON FUNCTION public.audit_private_registry_skills_change() TO authenticated;',
+    ],
+    [
+      'laterTriggerViolations',
+      laterTriggerViolations,
+      HIGH3_PREFIX +
+        'CREATE TRIGGER trg_prs_snapshot AFTER INSERT ON private_registry_skills ' +
+        'FOR EACH ROW EXECUTE FUNCTION audit_prs_snapshot();',
+    ],
+    [
+      'auditSinkViolations',
+      auditSinkViolations,
+      HIGH3_PREFIX + 'ALTER TABLE public.audit_logs DROP COLUMN metadata;',
+    ],
+  ]
+  it.each(high3Cases)(
+    '%s still detects a later statement hidden behind a stripComments() double-strip trap (PR #2860 HIGH-3)',
+    (_label, fn, stmt) => {
+      const dir = withFixtureDir({ '20990101000009_high3.sql': stmt })
+      try {
+        expect(fn(dir)).toHaveLength(1)
+      } finally {
+        cleanup(dir)
+      }
+    }
+  )
 })
