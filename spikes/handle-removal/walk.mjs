@@ -148,23 +148,48 @@ export function removeVR(targetRoot, options = {}) {
 
   // Shared V2 primitive (§4.1 step 4/5): rename an entry into Q under a
   // random name, ask `verifyFn(rnd)` whether what landed in Q is really the
-  // thing that was pinned/expected, and if not, rename it BACK to its
-  // original (D, name) before stopping -- a detected substitution must
-  // leave the substitute exactly where it was, not relocate it into Q.
-  // (A real bug caught by A6-VR/root/none/V2 during this checkpoint: three
-  // of the four call sites below originally skipped this revert step and
-  // only the file path had it -- see the checkpoint-2 report.)
-  function quarantineEntry(D, name, verifyFn) {
+  // thing that was pinned/expected, unlink it from Q, and revert the rename
+  // (back to its original (D, name)) on ANY failure past the initial
+  // rename -- not just a verify mismatch. (A real bug caught by
+  // A6-VR/root/none/V2 during checkpoint 2: three of the four call sites
+  // originally skipped the revert step for a verify mismatch and only the
+  // file path had it. A SECOND instance of the identical three-of-four-
+  // sites shape was found via A13's real concurrent racer, checkpoint 6's
+  // closing pass: all four call sites reverted on a verify mismatch, but
+  // NONE of them reverted when the final unlinkAt/rmdir itself failed AFTER
+  // a successful verify -- e.g. a racing process adds a new file inside a
+  // directory before it's quarantined but after its own children were
+  // already processed, so the directory's OWN identity still verifies
+  // (rename doesn't change dev/ino) but the final rmdir then fails
+  // ENOTEMPTY. That left the entry (and the racer's own content inside it)
+  // correctly un-destroyed but permanently stranded under a random name in
+  // the operation's own quarantine directory instead of restored to where
+  // a caller or a doctor-style scan would expect to find it. Reverting is
+  // safe here for the same reason it's safe on a verify mismatch: rename(2)
+  // moves the entry (and whatever it currently contains) atomically,
+  // regardless of what raced its way inside it first.)
+  function quarantineAndRemove(D, name, isDir, verifyFn) {
     const rnd = randSuffix()
     const rn = shim.renameAtNoReplace(D, name, Q, rnd)
     if (rn.errno !== 0) return { ok: false, reason: 'entry-substituted', errno: rn.errno }
-    if (verifyFn(rnd)) return { ok: true, rnd }
-    const back = shim.renameAtNoReplace(Q, rnd, D, name)
-    return {
-      ok: false,
-      reason: back.errno === 0 ? 'entry-substituted' : 'entry-substituted-left-in-quarantine',
-      errno: null,
+    if (!verifyFn(rnd)) {
+      const back = shim.renameAtNoReplace(Q, rnd, D, name)
+      return {
+        ok: false,
+        reason: back.errno === 0 ? 'entry-substituted' : 'entry-substituted-left-in-quarantine',
+        errno: null,
+      }
     }
+    const un = shim.unlinkAt(Q, rnd, isDir)
+    if (un.errno !== 0) {
+      const back = shim.renameAtNoReplace(Q, rnd, D, name)
+      return {
+        ok: false,
+        reason: back.errno === 0 ? 'removal-failed' : 'removal-failed-left-in-quarantine',
+        errno: un.errno,
+      }
+    }
+    return { ok: true, rnd }
   }
 
   function removeFileV2(D, name, rel, rec) {
@@ -184,14 +209,12 @@ export function removeVR(targetRoot, options = {}) {
       return stop('entry-changed', rel, null)
     }
     callHook('beforeUnlink', rel, rec.type)
-    const q = quarantineEntry(D, name, (rnd) => {
+    const q = quarantineAndRemove(D, name, false, (rnd) => {
       const qst = shim.statAt(Q, rnd)
       return qst.errno === 0 && qst.dev === pinned.dev && qst.ino === pinned.ino
     })
     fs.closeSync(opened.fd)
     if (!q.ok) return stop(q.reason, rel, q.errno)
-    const un = shim.unlinkAt(Q, q.rnd, false)
-    if (un.errno !== 0) return stop('removal-failed', rel, un.errno)
   }
 
   function removeSymlinkV2(D, name, rel, rec) {
@@ -199,13 +222,11 @@ export function removeVR(targetRoot, options = {}) {
     if (rl.errno !== 0) return stop('entry-removed', rel, rl.errno)
     if (rl.target !== rec.linkText) return stop('entry-changed', rel, null)
     callHook('beforeUnlink', rel, rec.type)
-    const q = quarantineEntry(D, name, (rnd) => {
+    const q = quarantineAndRemove(D, name, false, (rnd) => {
       const qrl = shim.readlinkAt(Q, rnd)
       return qrl.errno === 0 && qrl.target === rec.linkText
     })
     if (!q.ok) return stop(q.reason, rel, q.errno)
-    const un = shim.unlinkAt(Q, q.rnd, false)
-    if (un.errno !== 0) return stop('removal-failed', rel, un.errno)
   }
 
   function removeDirV2(D, name, rel, rec) {
@@ -217,13 +238,14 @@ export function removeVR(targetRoot, options = {}) {
     if (id.st.dev !== pinned.dev || id.st.ino !== pinned.ino)
       return stop('identity-changed', rel, null)
     callHook('beforeUnlink', rel, rec.type)
-    const q = quarantineEntry(D, name, (rnd) => {
+    // isDir=true here means the final step is an rmdir (ENOTEMPTY/EBUSY
+    // land in the un.errno check inside quarantineAndRemove) -- on failure
+    // the rename is now reverted instead of leaving the entry stranded in Q.
+    const q = quarantineAndRemove(D, name, true, (rnd) => {
       const qst = shim.statAt(Q, rnd)
       return qst.errno === 0 && qst.dev === pinned.dev && qst.ino === pinned.ino
     })
     if (!q.ok) return stop(q.reason, rel, q.errno)
-    const un = shim.unlinkAt(Q, q.rnd, true)
-    if (un.errno !== 0) return stop('removal-failed', rel, un.errno) // ENOTEMPTY/EBUSY land here
     fs.closeSync(heldFd)
   }
 
@@ -275,15 +297,11 @@ export function removeVR(targetRoot, options = {}) {
   if (!stopped) {
     if (variant === 'V2') {
       const pinned = fstatIdentity(T.fd)
-      const q = quarantineEntry(P.fd, name, (rnd) => {
+      const q = quarantineAndRemove(P.fd, name, true, (rnd) => {
         const qst = shim.statAt(Q, rnd)
         return qst.errno === 0 && qst.dev === pinned.dev && qst.ino === pinned.ino
       })
       if (!q.ok) stop(q.reason, '', q.errno)
-      else {
-        const un = shim.unlinkAt(Q, q.rnd, true)
-        if (un.errno !== 0) stop('removal-failed', '', un.errno)
-      }
     } else {
       if (variant === 'V1') {
         const id = statIdentity(shim, P.fd, name)
