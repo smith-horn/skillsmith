@@ -45,7 +45,9 @@ import { describe, expect, it } from 'vitest'
 import { existsSync, readFileSync } from 'node:fs'
 import { fileURLToPath } from 'node:url'
 import { dirname, resolve } from 'node:path'
-import * as ts from 'typescript'
+// Default import, not `* as ts`: astro check emits ts(80003) for the namespace
+// form and the website enforces a 0 errors / 0 warnings / 0 hints baseline.
+import ts from 'typescript'
 import { REGISTRY_RESULTS } from './team-activity-format'
 
 const here = dirname(fileURLToPath(import.meta.url))
