@@ -74,12 +74,14 @@ export const noLiveTestPg = !testConnFromEnv()
 
 if (noLiveTestPg) {
   console.warn(
-    '[smi6651-content-release] SKIPPED: no live test Postgres configured ' +
-      '(SMI6651_TEST_PGHOST/PORT/USER/PASSWORD/DATABASE unset). This suite is the ONLY coverage ' +
-      'that executes the shipped release_private_registry_skill_content() body, its column-vs-' +
-      "table SELECT privilege split, and the migration file's own internal smoke block against " +
-      'a real Postgres catalog — a mocked test cannot prove any of the three. Not covered by CI ' +
-      "(same tracked gap as SMI-5946). See this file's header for the docker one-liner."
+    '[smi6651-content-release] no live test Postgres configured ' +
+      '(SMI6651_TEST_PGHOST/PORT/USER/PASSWORD/DATABASE unset), so the live-Postgres half of this ' +
+      'suite (.pg.test.ts) will SKIP. The PG-free structural half (.structural.test.ts) still ' +
+      'runs — do not read this warning as "nothing ran" (SMI-6690). The skipped half is the ONLY ' +
+      'coverage that executes the shipped release_private_registry_skill_content() body, its ' +
+      "column-vs-table SELECT privilege split, and the migration file's own internal smoke block " +
+      'against a real Postgres catalog — a mocked test cannot prove any of the three. Not covered ' +
+      "by CI (same tracked gap as SMI-5946). See this file's header for the docker one-liner."
   )
 }
 
