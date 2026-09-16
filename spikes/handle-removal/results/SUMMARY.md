@@ -1,6 +1,6 @@
 # SMI-6676 spike results summary
 
-Regenerated from 37 `results/raw/*.jsonl` files, 47240 total records. Do not hand-edit -- run `node results/generate-summary.mjs` after any new attack run.
+Regenerated from 60 `results/raw/*.jsonl` files, 136240 total records. Do not hand-edit -- run `node results/generate-summary.mjs` after any new attack run.
 
 ## Verdict tally
 
@@ -8,7 +8,7 @@ Regenerated from 37 `results/raw/*.jsonl` files, 47240 total records. Do not han
 |---|---|
 | FAIL | 159 |
 | NEVER-RAN (control) | 56 |
-| NEVER-RAN | 51 |
+| NEVER-RAN | 81 |
 | PASS (control unverified) | 90 |
 | PASS | 220 |
 
@@ -22,8 +22,8 @@ The verdict applies the WHOLE plan §9 rule: `PASS` requires `ran == target`, `n
 | DID-NOT-FAIL | 62 |
 | external-unverified | 105 |
 | is-control | 71 |
-| none-by-design | 50 |
-| ok | 273 |
+| none-by-design | 76 |
+| ok | 277 |
 
 ## Cells
 
@@ -165,6 +165,32 @@ The verdict applies the WHOLE plan §9 rule: `PASS` requires `ran == target`, `n
 | A13-TIMING | guard-none | V1 | virtiofsroot | 300 | 170 | 127 | 3 | ok | NEVER-RAN |
 | A13-TIMING | guard-guardHash | V2 | virtiofsroot | 300 | 300 | 0 | 0 | ok | PASS |
 | A13-TIMING | guard-none | V2 | virtiofsroot | 300 | 192 | 108 | 0 | ok | FAIL |
+| A13-VALIDATE | perEntryTiming-off | V2 | darwin-apfs | 700 | 326 | 66 | 308 | none-by-design | NEVER-RAN |
+| A13-VALIDATE | perEntryTiming-on | V2 | darwin-apfs | 700 | 315 | 66 | 319 | none-by-design | NEVER-RAN |
+| A13-WARMARM | arm-A | V2 | darwin-apfs | 4800 | 2430 | 31 | 2339 | none-by-design | NEVER-RAN |
+| A13-WARMARM | arm-A0 | V2 | darwin-apfs | 4800 | 2438 | 42 | 2320 | none-by-design | NEVER-RAN |
+| A13-WARMARM | arm-B | V2 | darwin-apfs | 4800 | 2379 | 0 | 2421 | none-by-design | NEVER-RAN |
+| A13-WARMARM | arm-B0 | V2 | darwin-apfs | 4800 | 2448 | 0 | 2352 | none-by-design | NEVER-RAN |
+| A13-WARMARM | arm-C | V2 | darwin-apfs | 4800 | 2401 | 25 | 2374 | none-by-design | NEVER-RAN |
+| A13-WARMARM | arm-P | V2 | darwin-apfs | 4800 | 0 | 0 | 4800 | none-by-design | NEVER-RAN |
+| A13-WARMARM | arm-A | V2 | ext4vol | 2400 | 757 | 221 | 1422 | none-by-design | NEVER-RAN |
+| A13-WARMARM | arm-A0 | V2 | ext4vol | 2400 | 753 | 232 | 1415 | none-by-design | NEVER-RAN |
+| A13-WARMARM | arm-B | V2 | ext4vol | 2400 | 965 | 0 | 1435 | none-by-design | NEVER-RAN |
+| A13-WARMARM | arm-B0 | V2 | ext4vol | 2400 | 960 | 0 | 1440 | none-by-design | NEVER-RAN |
+| A13-WARMARM | arm-C | V2 | ext4vol | 2400 | 734 | 199 | 1467 | none-by-design | NEVER-RAN |
+| A13-WARMARM | arm-P | V2 | ext4vol | 2400 | 0 | 0 | 2400 | none-by-design | NEVER-RAN |
+| A13-WARMARM | arm-A | V2 | overlayfs | 4800 | 1789 | 489 | 2522 | none-by-design | NEVER-RAN |
+| A13-WARMARM | arm-A0 | V2 | overlayfs | 4800 | 1706 | 546 | 2548 | none-by-design | NEVER-RAN |
+| A13-WARMARM | arm-B | V2 | overlayfs | 4800 | 2213 | 0 | 2587 | none-by-design | NEVER-RAN |
+| A13-WARMARM | arm-B0 | V2 | overlayfs | 4800 | 2209 | 0 | 2591 | none-by-design | NEVER-RAN |
+| A13-WARMARM | arm-C | V2 | overlayfs | 4800 | 1786 | 457 | 2557 | none-by-design | NEVER-RAN |
+| A13-WARMARM | arm-P | V2 | overlayfs | 4800 | 0 | 0 | 4800 | none-by-design | NEVER-RAN |
+| A13-WARMARM | arm-A | V2 | tmpfsroot | 2400 | 661 | 258 | 1481 | none-by-design | NEVER-RAN |
+| A13-WARMARM | arm-A0 | V2 | tmpfsroot | 2400 | 629 | 236 | 1535 | none-by-design | NEVER-RAN |
+| A13-WARMARM | arm-B | V2 | tmpfsroot | 2400 | 889 | 0 | 1511 | none-by-design | NEVER-RAN |
+| A13-WARMARM | arm-B0 | V2 | tmpfsroot | 2400 | 859 | 0 | 1541 | none-by-design | NEVER-RAN |
+| A13-WARMARM | arm-C | V2 | tmpfsroot | 2400 | 621 | 208 | 1571 | none-by-design | NEVER-RAN |
+| A13-WARMARM | arm-P | V2 | tmpfsroot | 2400 | 0 | 0 | 2400 | none-by-design | NEVER-RAN |
 | A13 | default | C0 | darwin-apfs | 300 | 98 | 16 | 186 | ok | NEVER-RAN |
 | A13 | default | V0 | darwin-apfs | 300 | 107 | 9 | 184 | ok | NEVER-RAN |
 | A13 | default | V1 | darwin-apfs | 300 | 114 | 0 | 186 | ok | NEVER-RAN |
@@ -174,9 +200,13 @@ The verdict applies the WHOLE plan §9 rule: `PASS` requires `ran == target`, `n
 | A13 | default | V1 | ext4vol | 300 | 53 | 37 | 210 | ok | NEVER-RAN |
 | A13 | default | V2 | ext4vol | 300 | 113 | 30 | 157 | ok | NEVER-RAN |
 | A13 | default | C0 | overlayfs | 300 | 36 | 206 | 58 | ok | NEVER-RAN |
+| A13 | guardHash | C0 | overlayfs | 300 | 51 | 176 | 73 | ok | NEVER-RAN |
 | A13 | default | V0 | overlayfs | 300 | 50 | 39 | 211 | ok | NEVER-RAN |
+| A13 | guardHash | V0 | overlayfs | 300 | 69 | 7 | 224 | ok | NEVER-RAN |
 | A13 | default | V1 | overlayfs | 300 | 65 | 38 | 197 | ok | NEVER-RAN |
+| A13 | guardHash | V1 | overlayfs | 300 | 85 | 7 | 208 | ok | NEVER-RAN |
 | A13 | default | V2 | overlayfs | 300 | 105 | 22 | 173 | ok | NEVER-RAN |
+| A13 | guardHash | V2 | overlayfs | 300 | 117 | 0 | 183 | ok | NEVER-RAN |
 | A13 | default | C0 | tmpfsroot | 300 | 44 | 178 | 78 | ok | NEVER-RAN |
 | A13 | default | V0 | tmpfsroot | 300 | 24 | 55 | 221 | ok | NEVER-RAN |
 | A13 | default | V1 | tmpfsroot | 300 | 51 | 68 | 181 | ok | NEVER-RAN |
@@ -606,7 +636,7 @@ The verdict applies the WHOLE plan §9 rule: `PASS` requires `ran == target`, `n
 | N1 | ud25 | ud25 | apfs | 300 | 300 | 0 | 0 | external-unverified | PASS (control unverified) |
 | N1 | ud25 | ud25 | overlayfs | 300 | 300 | 0 | 0 | external-unverified | PASS (control unverified) |
 
-Total: 576 cells, 47240 runs.
+Total: 606 cells, 136240 runs.
 
 ## Cells whose control did not bite
 

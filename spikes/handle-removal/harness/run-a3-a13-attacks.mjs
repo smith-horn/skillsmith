@@ -41,11 +41,18 @@ import * as a13 from './attacks/a13.mjs'
 import * as a13vr from './attacks/a13-vr.mjs'
 
 function parseArgs(argv) {
-  const opts = { out: null, only: null, fsLabel: process.platform }
+  const opts = { out: null, only: null, fsLabel: process.platform, a13Tags: null }
   for (let i = 0; i < argv.length; i += 1) {
     if (argv[i] === '--out') opts.out = argv[++i]
     else if (argv[i] === '--only') opts.only = argv[++i].split(',')
     else if (argv[i] === '--fs-label') opts.fsLabel = argv[++i]
+    // Selects which A13 case tag(s) run, without touching the other A13/A3/
+    // A9/A10 attacks selected by --only. Exists so the criterion-1-scored
+    // guardHash arm (SMI-6676 R2) can be measured on its own, WITHOUT
+    // re-running the already-fully-measured 'default' (guard=none) arm --
+    // see the A13 block below for why re-running it would be wasted, slow,
+    // real-concurrency work rather than merely redundant.
+    else if (argv[i] === '--a13-tags') opts.a13Tags = argv[++i].split(',')
   }
   return opts
 }
@@ -423,12 +430,30 @@ async function main() {
     console.log('')
   }
 
-  // --- A13: real concurrent racer -----------------------------------------
+  // --- A13: real concurrent racer, guard none/hash (same split as A3/A9/A10)
+  // 'default' (guard=none, i.e. a13vr.runOnce's own guardMode default) is the
+  // ORIGINAL arm -- its records and label are untouched by this addition.
+  // 'guardHash' is the NEW arm this block adds: the decision memo's own
+  // recommended configuration (a caller-supplied guard hash) is FORBIDDEN
+  // under 'default', so until this cell existed the scored A3-A13 criterion-1
+  // matrix never measured the configuration it actually recommends -- only
+  // a separate, non-criterion-1 label (A13-TIMING, measure-a13-race-timing.mjs)
+  // ever ran guard=guardHash. C0 has no guard concept, same as A3/A9/A10:
+  // guardMode is passed to a13.runOnce too but silently ignored (it
+  // destructures only {harnessRoot, candidate}), so C0's cell under BOTH
+  // tags exercises the identical algorithm -- included anyway for the same
+  // reason A3 includes it, so this attack's own shape is uniform across cases
+  // rather than special-cased per candidate.
   if (want('a13')) {
+    const a13Cases = [
+      { tag: 'default', extraArgs: {} },
+      { tag: 'guardHash', extraArgs: { guardMode: 'guardHash' } },
+    ]
+    const cases = opts.a13Tags ? a13Cases.filter((c) => opts.a13Tags.includes(c.tag)) : a13Cases
     await runMatrix({
       attackId: 'A13',
       target: 300,
-      cases: [{ tag: 'default', extraArgs: {} }],
+      cases,
       runFnFor: (kind) => (kind === 'c0' ? a13.runOnce : a13vr.runOnce),
       harnessRoot,
       fsLabel: opts.fsLabel,

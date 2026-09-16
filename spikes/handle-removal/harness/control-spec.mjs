@@ -174,6 +174,29 @@ export const CONTROL_SPEC = {
       fromAttack: 'A3',
     },
   },
+  // The two rows below are METHODOLOGY EXPERIMENTS, not attacks on a candidate.
+  // They exist to measure the INSTRUMENT -- whether the guarded and unguarded
+  // arms were run under comparable timing, and whether the quarantine scanner
+  // detects stranding -- so §5.1's control clause does not apply to them and
+  // `unspecified` would misreport that as a gap.
+  //
+  // They are declared here so they carry an honest label, NOT so they can be
+  // read as criterion-1 evidence. A13-WARMARM alone is larger than the entire
+  // rest of the corpus, so any tally that sums it together with attack cells is
+  // meaningless -- the memo's own "sums across cells are not sound" rule, with a
+  // sharper edge.
+  'A13-VALIDATE': {
+    control: {
+      kind: 'none',
+      cite: 'methodology experiment (quarantineLeft instrument validation), not a §5.1 attack cell',
+    },
+  },
+  'A13-WARMARM': {
+    control: {
+      kind: 'none',
+      cite: 'methodology experiment (arm-C warming confound), not a §5.1 attack cell',
+    },
+  },
   N1: { control: { kind: 'external', cite: "plan §5.1 N1: 'gate B (E48) for C0 only'" } },
   'N1-VR': {
     control: {
