@@ -46,8 +46,8 @@ import { extractFunction, extractStatement, type TestConn } from './pg-session.t
 
 export { PsqlSession, type TestConn } from './pg-session.ts'
 
-const MIGRATIONS_DIR = 'supabase/migrations'
-const NEW_MIGRATION = '20260915000000_private_registry_content_release_rpc.sql'
+export const MIGRATIONS_DIR = 'supabase/migrations'
+export const NEW_MIGRATION = '20260915000000_private_registry_content_release_rpc.sql'
 const TEAM_HELPERS_MIGRATION = '071_team_workspaces.sql'
 const ENTITLEMENT_MIGRATION = '20260824000000_check_registry_team_entitlement.sql'
 const BASE_TABLE_MIGRATION = '20260724000000_private_registry_skills.sql'

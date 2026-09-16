@@ -862,10 +862,18 @@ describe.skipIf(noLiveTestPg)('SMI-6651 — release_private_registry_skill_conte
       )
     })
 
-    // Variant (i) has no test here on purpose. Its only real assertion was a text check on the
-    // step-4 re-read, which now runs unconditionally in the structural sibling; its two live legs
-    // asserted `"status": "released"` both before and after the revert, so they constrained
-    // nothing. SMI-6685 restores it as a genuine behavioural test.
+    // Variant (i) has no test here on purpose (SMI-6690). Its text assertions on the step-4
+    // re-read now run unconditionally in the structural sibling, where they execute instead of
+    // being skipped with the rest of this block.
+    //
+    // One property DID go with it, and it is not covered anywhere right now: `rebuildWith`
+    // asserts the build's stderr has no /ERROR/, so feeding `brokenMigrationSql('i')` to Postgres
+    // proved variant (i) still produces SQL Postgres accepts. `replaceExactlyOnce`'s fail-closed
+    // anchor check catches drift in the text it SEARCHES for, not a syntax error in the text it
+    // SUBSTITUTES. Nothing feeds variant (i) to a database today. The loss is local-only for now,
+    // since this whole block is skipped in every lane until SMI-5946 provisions Postgres, but it
+    // becomes real the moment that lands. SMI-6685 restores (i) as a genuine behavioural test
+    // using the entitlement-call seam, which re-covers this too.
 
     it('(j) removing the string-value guard lets malformed content leak through', async () => {
       await rebuildWith(brokenMigrationSql('j'))
