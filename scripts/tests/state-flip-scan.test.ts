@@ -290,6 +290,62 @@ Copy this into the plan's \`## State-Flip Assertion Audit (P-7)\` section, or in
 | \`supabase/functions/enc.ts:1\` | _<1-4>_ | _<disposition>_ | _<one sentence>_ |
 `
 
+const IDENTITY_BASE_REF = `## State-Flip Assertion Audit (P-7) for \`widget-tool\`
+
+Noun: \`widget-tool\`
+Ref: \`HEAD\`
+Scanned paths: \`scripts/*.ts scripts/*.sh scripts/*.mjs scripts/*.mts scripts/*.cjs packages/*/src/** packages/*/tests/** packages/*/e2e/** tests/** supabase/functions/** .github/**\`
+
+> **Scope warning.** These pathspecs hold blobs that are not text -- git-crypt ciphertext in \`--ref\` mode, or genuine binaries: \`scripts/*.ts (1 of 1)\`. Their bytes ARE searched (this scan passes \`-a\`) and so they DO contribute to the counts below, but any hit in them is a byte coincidence rather than a source reference, and a miss is not evidence about whatever the bytes encode. Treat the counts as unreliable over these paths in both directions. For git-crypt paths, re-run WITHOUT \`--ref\` to search their decrypted working-tree contents.
+STEP 1 (denominator): 1
+
+### STEP 2: noun x absence-vocabulary (0 hit(s)), MANDATED OUTPUT
+
+_None. STEP 1 found the noun 1 time(s) but none carried absence-vocabulary._
+
+### STEP 3: high-yield triage subset (0 hit(s)), reading order only, NOT a filter
+
+_Read STEP 3 first for triage, but STEP 2 is the check. STEP 3 is measured to miss real casualties (SMI-6514 D-11); do not stop at STEP 3._
+
+_None._
+
+### Suggested P-7 matrix (scaffold)
+
+Copy this into the plan's \`## State-Flip Assertion Audit (P-7)\` section, or into the pr-reviewer PR-15 finding. One row per STEP 2 hit. Category is one of: 1 (test), 2 (comment/doc), 3 (diagnostic/error text), 4 (catch block). Disposition is one of: FIX-NOW, STILL-TRUE, FALSE-POSITIVE, OUT-OF-SCOPE (requires owner + SMI-NNNN).
+
+| Hit (file:line) | Category | Disposition | Notes |
+|------------------|----------|--------------|-------|
+| _<none, STEP 2 was empty>_ | | | |
+`
+
+const IDENTITY_BASE_WT = `## State-Flip Assertion Audit (P-7) for \`widget-tool\`
+
+Noun: \`widget-tool\`
+Ref: \`working tree\`
+Scanned paths: \`scripts/*.ts scripts/*.sh scripts/*.mjs scripts/*.mts scripts/*.cjs packages/*/src/** packages/*/tests/** packages/*/e2e/** tests/** supabase/functions/** .github/**\`
+
+> **Scope warning.** These pathspecs hold blobs that are not text -- git-crypt ciphertext in \`--ref\` mode, or genuine binaries: \`scripts/*.ts (1 of 1)\`. Their bytes ARE searched (this scan passes \`-a\`) and so they DO contribute to the counts below, but any hit in them is a byte coincidence rather than a source reference, and a miss is not evidence about whatever the bytes encode. Treat the counts as unreliable over these paths in both directions. For git-crypt paths, re-run WITHOUT \`--ref\` to search their decrypted working-tree contents.
+STEP 1 (denominator): 1
+
+### STEP 2: noun x absence-vocabulary (0 hit(s)), MANDATED OUTPUT
+
+_None. STEP 1 found the noun 1 time(s) but none carried absence-vocabulary._
+
+### STEP 3: high-yield triage subset (0 hit(s)), reading order only, NOT a filter
+
+_Read STEP 3 first for triage, but STEP 2 is the check. STEP 3 is measured to miss real casualties (SMI-6514 D-11); do not stop at STEP 3._
+
+_None._
+
+### Suggested P-7 matrix (scaffold)
+
+Copy this into the plan's \`## State-Flip Assertion Audit (P-7)\` section, or into the pr-reviewer PR-15 finding. One row per STEP 2 hit. Category is one of: 1 (test), 2 (comment/doc), 3 (diagnostic/error text), 4 (catch block). Disposition is one of: FIX-NOW, STILL-TRUE, FALSE-POSITIVE, OUT-OF-SCOPE (requires owner + SMI-NNNN).
+
+| Hit (file:line) | Category | Disposition | Notes |
+|------------------|----------|--------------|-------|
+| _<none, STEP 2 was empty>_ | | | |
+`
+
 describe('scan-state-flip.sh (SMI-6514 P-7 scanner) -- Group A: portable', () => {
   it.skipIf(!SCANNER_PRESENT)('parses cleanly under `bash -n`', () => {
     expect(() => execFileSync('bash', ['-n', SCANNER_PATH], { encoding: 'utf8' })).not.toThrow()
@@ -679,6 +735,77 @@ describe('scan-state-flip.sh (SMI-6514 P-7 scanner) -- Group A: portable', () =>
       expected: EXPECTED_TWO_WT,
     },
   ]
+
+  it.skipIf(!SCANNER_PRESENT)(
+    'scope warning: EVERY pathspec identity, in both modes, derived from PATHSPECS itself',
+    () => {
+      // The 23rd defect was a THIRD axis: pathspec identity. Mode x cardinality was
+      // pinned, but the matrix exercised only two of the eleven pathspecs, so a false
+      // clause conditional on `.github/**` being unreadable survived untouched.
+      //
+      // Enumerating examples would have been the same mistake a seventh time, so the
+      // inventory is PARSED FROM THE SCANNER'S OWN PATHSPECS ARRAY. Adding a twelfth
+      // pathspec extends this coverage automatically; it cannot drift.
+      //
+      // The unreadable blob is deliberately NOUN-FREE, which makes the only
+      // identity-dependent text in the whole report the pathspec name in the warning.
+      // So each cell's expected document is the base document with the name and extent
+      // substituted -- a rule, not a stored document per cell.
+      const src = readFileSync(SCANNER_PATH, 'utf8')
+      const arr = src.match(/^PATHSPECS=\(([\s\S]*?)^\)/m)
+      expect(arr, 'PATHSPECS array not found -- parser drifted').toBeTruthy()
+      const specs = [...arr![1].matchAll(/'([^']+)'/g)].map((m) => m[1])
+      expect(specs.length).toBeGreaterThan(8)
+
+      const REF_SPEC = specs[0]
+      const GITCRYPT_MAGIC = Buffer.from([
+        0x00, 0x47, 0x49, 0x54, 0x43, 0x52, 0x59, 0x50, 0x54, 0x00,
+      ])
+      // One concrete file under each pathspec.
+      const materialise = (spec: string): string =>
+        spec
+          .replace('packages/*/src/**', 'packages/core/src/opaque.bin')
+          .replace('packages/*/tests/**', 'packages/core/tests/opaque.bin')
+          .replace('packages/*/e2e/**', 'packages/core/e2e/opaque.bin')
+          .replace('tests/**', 'tests/opaque.bin')
+          .replace('supabase/functions/**', 'supabase/functions/opaque.bin')
+          .replace('.github/**', '.github/opaque.bin')
+          .replace(/^scripts\/\*\.(\w+)$/, 'scripts/opaque.$1')
+
+      for (const spec of specs) {
+        const repoDir = makeFixtureTempDir('state-flip-identity-fixture')
+        createdRepoDirs.push(repoDir)
+        git(repoDir, ['init', '-q', '-b', 'main'])
+        mkdirSync(join(repoDir, 'scripts'), { recursive: true })
+        writeFileSync(join(repoDir, 'scripts', 'plain.sh'), 'widget-tool in plaintext\n')
+        const rel = materialise(spec)
+        mkdirSync(join(repoDir, dirname(rel)), { recursive: true })
+        writeFileSync(
+          join(repoDir, rel),
+          Buffer.concat([GITCRYPT_MAGIC, Buffer.from('nothing relevant\n')])
+        )
+        git(repoDir, ['add', '-A'])
+        git(repoDir, ['-c', 'user.email=t@t', '-c', 'user.name=t', 'commit', '-qm', 'init'])
+
+        // The carrier at scripts/plain.sh shares a pathspec with scripts/*.sh, so that
+        // one cell legitimately reports two files. One rule, not an exception list.
+        const extent = spec === 'scripts/*.sh' ? '(1 of 2)' : '(1 of 1)'
+        const subst = (base: string): string =>
+          base.split(`${REF_SPEC} (1 of 1)`).join(`${spec} ${extent}`)
+
+        for (const [args, base] of [
+          [['widget-tool', '--ref', 'HEAD'], IDENTITY_BASE_REF],
+          [['widget-tool'], IDENTITY_BASE_WT],
+        ] as [string[], string][]) {
+          const out = execFileSync('bash', [SCANNER_PATH, ...args], {
+            cwd: repoDir,
+            encoding: 'utf8',
+          })
+          expect(out, `${spec} / ${args.join(' ')}`).toBe(subst(base))
+        }
+      }
+    }
+  )
 
   it.skipIf(!SCANNER_PRESENT)(
     'scope warning: every mode x cardinality cell matches its complete expected report',
