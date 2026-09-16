@@ -10,7 +10,9 @@
  *
  * SKIPS without SMI5879_TEST_PG* env vars, like every live-Postgres suite in this repo (none of
  * them run in CI yet — SMI-5946). The always-on structural assertions live in
- * `private-registry-audit-trigger.static.test.ts`. Standup: see the helpers file header.
+ * `private-registry-audit-trigger.pins.test.ts`, `.detectors.test.ts`, and `.scanner.test.ts`
+ * (split from the original `.static.test.ts`, SMI-6680 governance retro, PR #2860 gate). Standup:
+ * see the helpers file header.
  */
 
 import { beforeAll, describe, expect, it } from 'vitest'

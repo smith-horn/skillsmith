@@ -119,10 +119,42 @@ const REGISTRY_VERBS: Record<string, { done: string; attempt: string }> = {
   content_read: { done: 'downloaded', attempt: 'download' },
 }
 
+/**
+ * `ATTEMPT_OUTCOMES` is this renderer's own vocabulary for a non-success registry result -- it is
+ * not, and cannot be, machine-checked against what a writer can actually produce. Four writers
+ * emit `private_registry:*` audit_logs rows and no single one of them is authoritative over the
+ * full result vocabulary: two in TypeScript (`registry-tools.live.audit.ts`'s
+ * `RegistryReadAuditEvent`/`RegistryMutationAuditEvent`, and `private-registry-get/access.ts`'s
+ * `AuditResult`) and two in SQL (the audit trigger and the content-release RPC migrations) --
+ * a prior version of this map was checked at runtime against only the two TypeScript writers,
+ * which asserted a completeness it never actually had, since the RPC migration's own `'denied'`
+ * and `'not_found'` writes were invisible to that check the whole time it existed (PR #2860 gate).
+ * What actually keeps this map safe is `registrySentence()`'s own fallback: any `result` this map
+ * doesn't recognise -- a new writer, a new outcome, a typo -- renders as `'did not complete'`
+ * rather than crashing or ever reading as success. Add a writer's new outcome here for a better
+ * sentence; the fallback is what makes leaving one out safe rather than silently wrong.
+ *
+ * No registry writer emits `result: 'failure'`; the one function that does, `handleTeamInviteSend`
+ * (`supabase/functions/team-invite-send/index.ts`), is a different event shape
+ * (`team_invitation:email_sent`) that renders its own two-branch sentence in the `email_sent` arm
+ * below instead of going through this map -- the registry's denied/not_found/error taxonomy
+ * doesn't meaningfully apply to an email send, so reusing this map there would be accidental
+ * coupling between two unrelated event shapes, not a design improvement.
+ */
 const ATTEMPT_OUTCOMES: Record<string, string> = {
   denied: 'was refused',
   not_found: 'matched nothing',
   error: 'failed',
+}
+
+/**
+ * Own keys only: an empty string or a prototype name such as `constructor` must fall through, not
+ * index the prototype chain. A user-defined type guard (rather than an inline `hasOwnProperty`
+ * check) so the exact-key `ATTEMPT_OUTCOMES` type above narrows `result` for the lookup below —
+ * `Record<string, string>` allowed any string index; the tightened type needs one.
+ */
+function isAttemptOutcomeKey(value: string): value is keyof typeof ATTEMPT_OUTCOMES {
+  return Object.prototype.hasOwnProperty.call(ATTEMPT_OUTCOMES, value)
 }
 
 /** `private skill ns/skill@1.0.0`, or `a private skill` when metadata does not name one. */
@@ -149,9 +181,8 @@ function registrySentence(ev: ActivityEvent, who: string | null, operation: stri
   if (result === 'success') {
     return withActor(who, `${verbs.done} ${subject}`, `${capitalize(subject)} was ${verbs.done}`)
   }
-  // Own keys only: an empty string or a prototype name such as `constructor` must fall back too.
   const outcome =
-    typeof result === 'string' && Object.prototype.hasOwnProperty.call(ATTEMPT_OUTCOMES, result)
+    typeof result === 'string' && isAttemptOutcomeKey(result)
       ? ATTEMPT_OUTCOMES[result]
       : 'did not complete'
   return withActor(
@@ -161,7 +192,23 @@ function registrySentence(ev: ActivityEvent, who: string | null, operation: stri
   )
 }
 
-/** Build the plain-English sentence for one event. Never includes the raw resource/UUID. */
+/**
+ * Build the plain-English sentence for one event. Never includes the raw resource/UUID.
+ *
+ * SMI-6114 retro F4 sibling sweep: of the arms below, only `email_sent` (an edge function,
+ * `supabase/functions/team-invite-send/index.ts:261`) can ever write a non-'success' `result` --
+ * it writes 'failure' on a non-2xx/thrown Resend call, hence the fix just above. `created`
+ * (`supabase/migrations/20260520000001_team_invitations.sql:182`), `accepted` (:304), `revoked`
+ * (:371), and `team_member:removed`
+ * (`supabase/migrations/20260521000001_team_member_visibility_and_removal.sql:160`) are each
+ * written by a single SQL RPC whose `audit_logs` INSERT hardcodes the literal `'success'` and is
+ * itself wrapped in a `BEGIN ... EXCEPTION WHEN OTHERS ... END` block that only `RAISE WARNING`s
+ * on failure (never writing a 'failure' row) -- so today these four rows either carry
+ * `result: 'success'` or were never written at all; there is no non-success row for them to
+ * misrender, and no fix is needed for those arms. The `default:` humanize-action fallback never
+ * asserts success or failure in the first place (it paraphrases the raw action verb, present
+ * tense, ambiguous), so it carries no equivalent defect to guard against either.
+ */
 function buildSentence(ev: ActivityEvent, who: string | null): string {
   if (ev.event_type?.startsWith('private_registry:')) {
     return registrySentence(ev, who, ev.event_type.slice('private_registry:'.length))
@@ -174,7 +221,15 @@ function buildSentence(ev: ActivityEvent, who: string | null): string {
         'An invitation was created'
       )
     case 'team_invitation:email_sent':
-      return 'An invitation email was sent'
+      // SMI-6114 retro F4: this arm rendered every row as "was sent" regardless of `ev.result`,
+      // the same silent-success defect `registrySentence()` above was hardened against --
+      // team-invite-send/index.ts:261 writes `result: 'failure'` on a non-2xx/thrown Resend
+      // call, and that row's `metadata.team_id` (:264) reaches this feed the same way a
+      // successful send's does. Strict `=== 'success'` (not `!== 'failure'`) so a missing/
+      // unknown result never reads as success either, matching registrySentence()'s own rule.
+      return ev.result === 'success'
+        ? 'An invitation email was sent'
+        : 'An invitation email failed to send'
     case 'team_invitation:accepted':
       return withActor(who, 'accepted their invitation', 'An invitation was accepted')
     case 'team_invitation:revoked':
