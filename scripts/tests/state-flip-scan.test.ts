@@ -564,10 +564,18 @@ describe('scan-state-flip.sh (SMI-6514 P-7 scanner) -- Group A: portable', () =>
         cwd: repoDir,
         encoding: 'utf8',
       })
-      // The whole warning, exactly. See expectedScopeWarning's own note for why a
-      // pile of substring checks was abandoned: each of four patches was defeated by
-      // a different phrase none of them named.
-      expect(out).toContain(expectedScopeWarning('supabase/functions/** (1 of 1)'))
+      // The whole warning LINE, exactly -- split first, then match an element.
+      //
+      // The previous form was `expect(out).toContain(expected)`, and the commit that
+      // introduced it claimed the assertion's "complement is empty". That claim was
+      // FALSE and the pre-merge gate caught it: string toContain is a SUBSTRING
+      // check, so appending a contradictory clause to the same line keeps the
+      // expected text as a substring and passes. Measured -- appending
+      // " However, every hit is a genuine source reference." left all 32 tests green.
+      //
+      // Array toContain compares elements exactly, so the line must be the expected
+      // string and nothing else. Only now is the complement actually empty.
+      expect(out.split('\n')).toContain(expectedScopeWarning('supabase/functions/** (1 of 1)'))
       // ...and here is the count itself, which is what the old assertions missed.
       // 2 = the plaintext hit plus the byte-wise hit inside the non-text blob.
       expect(out).toContain('STEP 1 (denominator): 2')
