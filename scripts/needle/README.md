@@ -433,6 +433,34 @@ their outcomes, are the concrete facts to bring to the harness team.
   real failure back to success). A missing or corrupt `stdout.txt` never
   changes the outcome or exit code by itself — extraction failure degrades
   to "treat it as having no answer," not to a crash.
+- **A dispatch produces agent output that is PRESENT but INCOMPLETE — a
+  fragment read as a verdict.** (2026-09-15, three sessions in one evening.)
+  The `success-without-agent-message` downgrade above catches **zero**
+  `agent_message` items. It does not catch *one or more* items that stop
+  mid-task: a worker killed after 165s had written 54 KB of `stdout.txt`
+  whose last agent message was Codex announcing it was about to start
+  reading files. Everything the transport reports looks fine, and the
+  content is a fragment.
+
+  **Do not build a kill-detector out of transport signals.** Three sessions
+  independently converged on "absent `stdout.txt` means a kill" that
+  evening; it is sufficient but **not necessary**, and each of them then
+  reached for `reason="signal received during idle (SIGTERM)"` in the
+  NEEDLE log — which fires on **roughly 70 of 78** dispatches in this
+  repo's own results log, because it is the normal teardown the bullet
+  above already describes. Two wrong rules were derived from scratch while
+  the correct one was written down here.
+
+  **Read the OUTPUT against the contract you asked for.** Every dispatch
+  brief should name the sections it wants back — a findings table, a
+  verdict line, "checked", "could not check". Then the test is whether the
+  final `agent_message` contains them. That is content-based, needs no
+  knowledge of NEEDLE internals, survives any change to the signal layer,
+  and catches the fragment case that every transport-level signal misses.
+  Corroborate with `outcome=` and `bead_state_pre_close=` (`in_progress`
+  means the worker claimed and processed the bead; `open` means it died
+  before claiming) — but the contract is the test, not the corroboration.
+
 - **A `bf` bead ends up `closed` with NO trace directory at all under
   `.beads/traces/<bead-id>/`** (SMI-6015 retro, 2026-08-25) — a different,
   earlier failure mode than the `success-without-agent-message` case above
