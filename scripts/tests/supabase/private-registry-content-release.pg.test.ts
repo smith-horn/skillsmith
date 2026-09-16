@@ -6,19 +6,16 @@
  *
  * WHICH HALF RUNS WHERE, AND WHY (SMI-6690). Everything below sits inside ONE top-level
  * `describe.skipIf(noLiveTestPg)`, because nearly every assertion here is a PRIVILEGE or
- * TRANSACTIONAL property that only a real Postgres catalog can prove. The PG-free assertions that
- * used to live here — predicate presence in the shipped migration text — are now in the sibling
+ * TRANSACTIONAL property that only a real Postgres catalog can prove. Every assertion about the
+ * migration's own TEXT now lives in the sibling
  * `private-registry-content-release.structural.test.ts`, which has no `skipIf` and runs
- * unconditionally. Their shared text helpers are in
- * `private-registry-content-release.test-sqltext.ts`; test (i) below still calls
- * `extractReReadSelect`, as one leg of a BEHAVIORAL test that also rebuilds the schema and calls
- * the live RPC.
+ * unconditionally. Nothing in this file reads migration text for its own sake any more.
  *
  * Every `it()` asserts VALUES, never just "did not throw" (CLAUDE.md's SMI-6598 rule). The
- * "revert-then-restore" describe block at the bottom breaks each of 11 guards (a-e, g-l — f
- * reuses d's break against a different scenario; (i) is an explicitly-labeled STRUCTURAL check,
- * not a behavioral one -- see its own comment), confirms the targeted assertion FAILS, then
- * restores the real migration and confirms it passes again.
+ * "revert-then-restore" describe block at the bottom breaks each of 10 guards (a-e, g-h, j-l — f
+ * reuses d's break against a different scenario; i has no test here, see that block's own note),
+ * confirms the targeted assertion FAILS, then restores the real migration and confirms it passes
+ * again.
  *
  * SMI-6114 untag rule (round 3, after the SMI-6651 branch rebased onto PR #2850): audit rows now
  * carry `metadata.registry_team_id` + `metadata.member_visible` always, and the `team_id` KEY
@@ -51,7 +48,6 @@ import {
   type TestConn,
 } from './private-registry-content-release.test-helpers.ts'
 import { brokenMigrationSql } from './private-registry-content-release.test-reverts.ts'
-import { extractReReadSelect } from './private-registry-content-release.test-sqltext.ts'
 
 const NULL_SENTINEL = '<null>'
 
@@ -866,31 +862,10 @@ describe.skipIf(noLiveTestPg)('SMI-6651 — release_private_registry_skill_conte
       )
     })
 
-    it('(i) STRUCTURAL: removing the team_id re-pin drops it from the shipped step-4 re-read text (see Finding 5(a) comment for why this is structural, not a live-interleaving proof)', async () => {
-      const brokenSql = brokenMigrationSql('i')
-      expect(extractReReadSelect(brokenSql)).not.toContain('AND prs.team_id = v_row.team_id')
-      // The broken build still applies cleanly and behaves identically to the fixed one for
-      // every scenario this suite's fixtures can express without genuine cross-call concurrency
-      // (id already pins exactly one row with exactly one current team_id absent a race) --
-      // confirmed live rather than assumed, so this revert does not silently mislabel "no
-      // reachable difference in this harness" as "the guard does nothing".
-      await rebuildWith(brokenSql)
-      const broken = await callAs(
-        'authenticated',
-        MEMBER,
-        rpcCall('smi6651/happy', '2.0.0', null, null, 'revert-i')
-      )
-      expect(broken.stdout).toContain('"status": "released"')
-
-      await rebuildWith(migrationSql())
-      expect(extractReReadSelect(migrationSql())).toContain('AND prs.team_id = v_row.team_id')
-      const fixed = await callAs(
-        'authenticated',
-        MEMBER,
-        rpcCall('smi6651/happy', '2.0.0', null, null, 'revert-i-restored')
-      )
-      expect(fixed.stdout).toContain('"status": "released"')
-    })
+    // Variant (i) has no test here on purpose. Its only real assertion was a text check on the
+    // step-4 re-read, which now runs unconditionally in the structural sibling; its two live legs
+    // asserted `"status": "released"` both before and after the revert, so they constrained
+    // nothing. SMI-6685 restores it as a genuine behavioural test.
 
     it('(j) removing the string-value guard lets malformed content leak through', async () => {
       await rebuildWith(brokenMigrationSql('j'))
