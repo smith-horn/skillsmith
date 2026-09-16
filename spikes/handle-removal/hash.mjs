@@ -40,21 +40,32 @@ function childRel(parentRel, name) {
  *   it is opened/stat'd during the guard pass -- and afterSubtree(relPath),
  *   fired for a DIRECTORY once its whole subtree has been recorded.
  *
- *   afterOpen and afterSubtree bracket the window during which this pass was
- *   still reading anything about `relPath`: afterOpen is the instant its
- *   identity was pinned (for a directory, the instant its fd started being
- *   held; for a file, the instant its content hash was taken), afterSubtree
- *   the instant nothing under it would be read again. A caller timestamping
- *   those two hooks can therefore say, for ONE entry, whether a concurrent
- *   mutation could have been visible to this pass -- which the pass-level
- *   "guard started / guard ended" pair cannot (see harness/attacks/a13-vr.mjs
- *   classifyEntryPhase). afterSubtree fires ONLY on a subtree that completed;
- *   a pass that stopped part-way leaves it unfired for the enclosing
- *   directories, deliberately, so its absence means "not fully observed"
- *   rather than an instant that overstates what was read.
+ *   These hooks bracket the window during which this pass was still reading
+ *   anything about `relPath`, and WHICH HOOK MARKS THE START DEPENDS ON THE
+ *   TYPE -- the asymmetry that matters most here:
  *
- *   Both are no-ops when the caller registers no such hook (the `typeof`
- *   check below), so adding afterSubtree costs existing callers nothing.
+ *     directory        afterOpen (fd starts being held)  ..  afterSubtree
+ *     file / symlink   beforeRead                        ..  afterOpen
+ *
+ *   afterOpen fires for a directory immediately after its openAt, but for a
+ *   file only after its content has been read and hashed, and for a symlink
+ *   after readlinkAt. So for a non-directory afterOpen is the window's END.
+ *   `beforeRead(relPath, type)` supplies the missing START for those two
+ *   types. Without it a consumer treating afterOpen as a start labels a
+ *   mutation landing between the openAt and the hash as "the guard hashed the
+ *   substitute" -- which is false, because the fd pinned the inode at openAt,
+ *   and false in the direction that HIDES a V2 gap.
+ *
+ *   A caller timestamping the pair for an entry can say, for ONE entry,
+ *   whether a concurrent mutation could have been visible to this pass --
+ *   which the pass-level "guard started / guard ended" pair cannot (see
+ *   harness/attacks/a13-vr.mjs classifyEntryPhase). afterSubtree fires ONLY on
+ *   a subtree that completed; a pass that stopped part-way leaves it unfired
+ *   for the enclosing directories, deliberately, so its absence means "not
+ *   fully observed" rather than an instant that overstates what was read.
+ *
+ *   All are no-ops when the caller registers no such hook (the `typeof`
+ *   check below), so they cost existing callers nothing.
  * @param {number} [options.maxHeldFds=512] - §4.1 step 3's cap.
  * @returns {{status:'ok', record:Map, heldFds:Map, treeHash:string}
  *          |{status:'stopped', reason:string, path:string, errno:number|null}}
@@ -139,6 +150,15 @@ export function guardPass(shim, topFd, options = {}) {
         walk(rel, opened.fd)
         if (!stopped) callHook('afterSubtree', rel)
       } else if (st.type === 'file') {
+        // `beforeRead` marks the START of a non-directory's observation window.
+        // A directory's window is bracketed by afterOpen..afterSubtree, but a
+        // file's afterOpen fires only AFTER the content hash is taken -- so
+        // afterOpen is its window's END, and a consumer treating it as a start
+        // misreads a mutation landing between the openAt below and the hash as
+        // "the guard hashed the substitute". It did not: the fd pins the inode
+        // at openAt, so the guard provably read the ORIGINAL. That mislabelling
+        // ran in the direction that HIDES a V2 gap.
+        callHook('beforeRead', rel, 'file')
         const opened = shim.openAt(dirFd, name, false)
         if (opened.errno !== 0) return stop('entry-removed', rel, opened.errno)
         const size = Number(st.size)
@@ -156,6 +176,9 @@ export function guardPass(shim, topFd, options = {}) {
         })
         callHook('afterOpen', rel, 'file')
       } else if (st.type === 'symlink') {
+        // Same asymmetry as the file branch: afterOpen fires after readlinkAt,
+        // so it is this entry's window END, not its start.
+        callHook('beforeRead', rel, 'symlink')
         const rl = shim.readlinkAt(dirFd, name)
         if (rl.errno !== 0) return stop('entry-removed', rel, rl.errno)
         record.set(rel, {

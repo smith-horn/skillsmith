@@ -234,6 +234,7 @@ export function classifyPassPhase({
 export function classifyEntryPhase({
   targetRel,
   observedAt,
+  windowStartAt,
   doneAt,
   callEndedAt,
   mutationStartedAt,
@@ -256,7 +257,14 @@ export function classifyEntryPhase({
   // switch, not from a guard pass that stopped early.
   if (instrumented === false) return 'entry-not-instrumented'
   if (observedAt == null) return 'entry-unobserved'
-  if (landedAt <= observedAt) return 'pre-entry-observation'
+  // The window's START, which is NOT `observedAt` for a file or symlink -- for
+  // those, `observedAt` (hash.mjs's afterOpen) is the window's END. Callers
+  // supply `windowStartAt` from the `beforeRead` hook. A record written before
+  // that hook existed has no start for a non-directory, and cannot be
+  // bracketed at all: say so rather than falling back to `observedAt`, which
+  // is what produced the mislabelling in the first place.
+  if (windowStartAt == null) return 'entry-window-unbracketed'
+  if (landedAt <= windowStartAt) return 'pre-entry-observation'
   if (doneAt == null) return 'entry-subtree-incomplete'
   if (mutationStartedAt > doneAt) return 'post-entry-observation'
   return 'straddles-entry-observation'
@@ -335,6 +343,11 @@ export async function runOnce({
     const entryObserved = new Map()
     // rel -> at: the instant the guard pass stopped reading under this entry.
     const entrySubtreeDone = new Map()
+    // rel -> at: the instant the guard pass STARTED reading a file or symlink.
+    // A directory's start is its afterOpen, but a non-directory's afterOpen
+    // fires only after its content is hashed, so for those this is the window
+    // start and afterOpen is the end. See hash.mjs's hook table.
+    const entryReadStarted = new Map()
     const hooks = {
       afterBind: () => {
         guardStartedAt = nowAbs()
@@ -353,6 +366,11 @@ export async function runOnce({
       }
       hooks.afterSubtree = (rel) => {
         entrySubtreeDone.set(rel, nowAbs())
+      }
+      hooks.beforeRead = (rel) => {
+        // First only, for the same reason as afterOpen: a later duplicate must
+        // not be able to move the window start later and narrow the ambiguity.
+        if (!entryReadStarted.has(rel)) entryReadStarted.set(rel, nowAbs())
       }
     }
 
@@ -424,8 +442,22 @@ export async function runOnce({
     const observed = targetRel != null ? entryObserved.get(targetRel) : undefined
     const observedAt = observed ? observed.at : null
     const entryType = observed ? observed.type : null
-    // A file or symlink is observed at an instant; a directory is observed
-    // across its whole subtree walk, so its window closes at afterSubtree.
+    // Neither a file nor a directory is observed at an INSTANT; both have a
+    // window, and the hook marking its start differs by type (hash.mjs):
+    //
+    //   directory        afterOpen  ..  afterSubtree
+    //   file / symlink   beforeRead ..  afterOpen
+    //
+    // Treating afterOpen as the start for all three types -- which this did --
+    // collapsed a non-directory's window to its own END, so any mutation
+    // landing while the file was being read scored `pre-entry-observation`,
+    // "the guard hashed the substitute". It did not: openAt pinned the inode
+    // first, so the guard provably read the original. 35 of 69
+    // pre-entry-observation records in the corpus target a file or symlink and
+    // 30 of those are losses, all filed in the residual class -- the direction
+    // that hides a V2 gap.
+    const windowStartAt =
+      entryType === 'dir' ? observedAt : (entryReadStarted.get(targetRel) ?? null)
     const doneAt = entryType === 'dir' ? (entrySubtreeDone.get(targetRel) ?? null) : observedAt
 
     const timingCommon = {
@@ -485,6 +517,7 @@ export async function runOnce({
             targetRel,
             entryType,
             observedAt,
+            windowStartAt,
             doneAt,
             observedCount: entryObserved.size,
             // The whole map is 4-5 numbers on this fixture; carrying it makes
@@ -492,12 +525,14 @@ export async function runOnce({
             // different entry without re-running the cell.
             allObservedAt: Object.fromEntries([...entryObserved].map(([rel, v]) => [rel, v.at])),
             allSubtreeDoneAt: Object.fromEntries(entrySubtreeDone),
+            allReadStartedAt: Object.fromEntries(entryReadStarted),
           },
           phase: classifyPhase(timingCommon),
           passPhase: classifyPassPhase(timingCommon),
           entryPhase: classifyEntryPhase({
             targetRel,
             observedAt,
+            windowStartAt,
             doneAt,
             instrumented: perEntryTiming,
             ...timingCommon,
