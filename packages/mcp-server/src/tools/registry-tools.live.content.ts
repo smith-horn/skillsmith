@@ -27,7 +27,9 @@
  * `profiles.tier`, which would let a caller entitled via a different team bypass a downgraded
  * team's gate (see
  * docs/internal/implementation/smi-6111-registry-content-install-entitlement-rpc.md) — and writes
- * its own `audit_logs` row for every outcome (`not_found`/`denied`/`released`). `recordRegistryAudit`
+ * its own `audit_logs` row for every outcome it RETURNS (`not_found`/`denied`/`released`) -- not for
+ * every call: a NULL `auth.uid()` or any input-validation failure raises before the first audit
+ * insert, so those calls audit nothing. `recordRegistryAudit`
  * below is reached only for outcomes the RPC itself cannot audit: the RPC call failing or
  * returning no data, an unrecognized `status`, and a `released` response with malformed content.
  * See `supabase/migrations/20260915000000_private_registry_content_release_rpc.sql` for the RPC's
@@ -162,8 +164,11 @@ export async function getSkillContent(
 
   // `result.status === 'released'` from here. The RPC's own malformed-content guard withholds a
   // row unless `content` is a plain object whose every top-level value is a string, so a stored
-  // `{"SKILL.md":"ok","x":123}` never arrives as `released`. (The DB's CHECK is weaker — a
-  // non-empty string `SKILL.md`, nothing about other keys — and `authenticated` keeps
+  // `{"SKILL.md":"ok","x":123}` never arrives as `released`. (The WRITE side is weaker, and the
+  // guard there is a TRIGGER, not a CHECK: `enforce_private_registry_content_hash()` requires an
+  // object with a non-empty string `SKILL.md` and says nothing about other keys. The only CHECK
+  // constraint on this column is a 2 MB size cap — verified against live prod — so looking for
+  // "the CHECK" finds no `SKILL.md` guard at all. `authenticated` also keeps
   // `GRANT INSERT (... content)`, so such a row IS storable; the read side refuses it.)
   // `installFromContent()` expects every value to be text, so this repeats the shape check as
   // defense in depth against transport mangling or a future RPC change — never inventing an
