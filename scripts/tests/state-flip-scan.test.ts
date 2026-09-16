@@ -514,6 +514,51 @@ describe('scan-state-flip.sh (SMI-6514 P-7 scanner) -- Group A: portable', () =>
   )
 
   it.skipIf(!SCANNER_PRESENT)(
+    'a non-text blob is COUNTED, and the warning says so rather than claiming exclusion',
+    () => {
+      // SMI-6659, 17th gap, and the sharpest one: the warning used to say these
+      // blobs' contents were "excluded entirely", which was falsified by this
+      // script's OWN earlier fix -- -a (7th gap) forces byte-wise matching, so a
+      // non-text blob is searched and does contribute.
+      //
+      // The pre-merge reviewer's real critique was about the TESTS, not the prose:
+      // every assertion constrained warning wording and the (1 of N) extent, and
+      // none constrained whether the warned blob reached the counts. So this case
+      // pins the counts, which is the claim that was wrong.
+      const repoDir = makeFixtureTempDir('state-flip-counted-binary-fixture')
+      createdRepoDirs.push(repoDir)
+      git(repoDir, ['init', '-q', '-b', 'main'])
+      mkdirSync(join(repoDir, 'supabase', 'functions'), { recursive: true })
+      mkdirSync(join(repoDir, 'scripts'), { recursive: true })
+      writeFileSync(join(repoDir, 'scripts', 'plain.sh'), 'widget-tool in plaintext\n')
+      // Non-text (leading NUL) AND carrying the noun plus absence vocabulary, so it
+      // must land in BOTH steps.
+      writeFileSync(
+        join(repoDir, 'supabase', 'functions', 'enc.ts'),
+        Buffer.concat([
+          Buffer.from('\u0000GITCRYPT\u0000', 'binary'),
+          Buffer.from('widget-tool is not installed by design\n'),
+        ])
+      )
+      git(repoDir, ['add', '-A'])
+      git(repoDir, ['-c', 'user.email=t@t', '-c', 'user.name=t', 'commit', '-qm', 'init'])
+      const out = execFileSync('bash', [SCANNER_PATH, 'widget-tool', '--ref', 'HEAD'], {
+        cwd: repoDir,
+        encoding: 'utf8',
+      })
+      // The blob is disclosed as non-text...
+      expect(out).toMatch(/supabase\/functions\/\*\* \(1 of 1\)/)
+      // ...and the warning must NOT claim exclusion, because it is counted:
+      expect(out).toContain('DO contribute')
+      expect(out).not.toContain('exclude their contents entirely')
+      // ...and here is the count itself, which is what the old assertions missed.
+      // 2 = the plaintext hit plus the byte-wise hit inside the non-text blob.
+      expect(out).toContain('STEP 1 (denominator): 2')
+      expect(out).toContain('STEP 2: noun x absence-vocabulary (1 hit(s))')
+    }
+  )
+
+  it.skipIf(!SCANNER_PRESENT)(
     'an entirely readable tree emits NO scope warning, in either mode',
     () => {
       // The other half of the disclosure contract, and it needs its own fixture: a
@@ -580,7 +625,7 @@ describe('scan-state-flip.sh (SMI-6514 P-7 scanner) -- Group A: portable', () =>
         cwd: repoDir,
         encoding: 'utf8',
       })
-      expect(out).toContain('could not read')
+      expect(out).toContain('are not text')
       // 1 of the 2 blobs under that pathspec, which is the whole point: a partial
       // count has to be reported as partial.
       expect(out).toMatch(/supabase\/functions\/\*\* \(1 of 2\)/)
@@ -619,7 +664,7 @@ describe('scan-state-flip.sh (SMI-6514 P-7 scanner) -- Group A: portable', () =>
       // string too, and names the same pathspec, so an earlier draft of this test
       // passed with the defect restored. Assert the claim that distinguishes them:
       // the content was examined and found unreadable, with its extent.
-      expect(out).toContain('could not read')
+      expect(out).toContain('are not text')
       expect(out).not.toContain('could not be examined')
       expect(out).toMatch(/supabase\/functions\/\*\* \(1 of 1\)/)
     }
@@ -657,7 +702,7 @@ describe('scan-state-flip.sh (SMI-6514 P-7 scanner) -- Group A: portable', () =>
         encoding: 'utf8',
       })
       expect(refOut).toContain('Scope warning')
-      expect(refOut).toContain('could not read')
+      expect(refOut).toContain('are not text')
       // Naming the pathspec is not enough either -- report the EXTENT, so a reader
       // can tell "one stray binary" from "the whole tree is opaque".
       expect(refOut).toMatch(/supabase\/functions\/\*\* \(1 of 1\)/)
@@ -672,7 +717,7 @@ describe('scan-state-flip.sh (SMI-6514 P-7 scanner) -- Group A: portable', () =>
         cwd: repoDir,
         encoding: 'utf8',
       })
-      expect(plainOut).toContain('could not read')
+      expect(plainOut).toContain('are not text')
     }
   )
 
