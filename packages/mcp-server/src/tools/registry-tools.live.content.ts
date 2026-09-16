@@ -33,7 +33,12 @@
  * below is reached only for outcomes the RPC itself cannot audit: the RPC call failing or
  * returning no data, an unrecognized `status`, and a `released` response with malformed content.
  * See `supabase/migrations/20260915000000_private_registry_content_release_rpc.sql` for the RPC's
- * full contract.
+ * full contract -- with one caveat. That file's own `COMMENT ON` text is SUPERSEDED: it still says
+ * the RPC "audits every call" and "writes exactly one audit_logs row per call", both of which
+ * overclaim for the reasons above. `20260915000001_private_registry_release_rpc_comment_fix.sql`
+ * corrected them, and the LIVE catalog carries the corrected text on staging and production.
+ * Migrations are immutable, so the older file keeps its original wording as a historical record --
+ * read it for the RPC's LOGIC, not for its comments.
  */
 
 import { recordRegistryAudit, type RegistryReadAuditEvent } from './registry-tools.live.audit.js'
