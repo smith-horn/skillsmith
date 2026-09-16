@@ -18,11 +18,17 @@
  * it (SMI-6690 round 4). `ci.yml`'s `Test (root)` also runs locked on fork and dependabot PRs —
  * its unlock step is gated on `GIT_CRYPT_KEY != ''`, and those PRs get no secret — but it never
  * sets `SKILLSMITH_GIT_CRYPT_EXPECTED_LOCKED`, which is set in exactly one workflow repo-wide
- * (`post-merge-verify.yml`). So in that lane the gate does not skip; it throws, for the whole
- * module graph that imports it. That is a pre-existing lane hazard rather than this suite's
- * defect, and it needs a decision on `ci.yml` — either declare the lock there, or exclude
- * migration-text suites under `gitCryptLocked()`. Tracked separately; do not silently delete this
- * paragraph to make the file read cleaner.
+ * (`post-merge-verify.yml`). So in that lane the gate does not skip; it throws.
+ *
+ * The LANE is pre-existing. An earlier version of this paragraph said the throw was too, which
+ * was wrong (SMI-6690 retro, finding 4): before SMI-6690 nothing read migration text at module
+ * scope, so that lane skipped cleanly via `describe.skipIf(noLiveTestPg)`, and the eager `const`
+ * this suite introduced turned a clean skip into an import-time failure that took `.pg.test.ts`
+ * down with it — a file that reads no migration text of its own. `migrationTextLocked` is now a
+ * function, so the throw is scoped to the suites that actually assert on that text and
+ * `.pg.test.ts` skips cleanly again. The lane still needs a decision on `ci.yml` — declare the
+ * lock there, or exclude migration-text suites under `gitCryptLocked()` — tracked as SMI-6703.
+ * Do not silently delete this paragraph to make the file read cleaner.
  *
  * THIS IS A TRIPWIRE, NOT A SECURITY PROOF. It forces a human to look at any change to the step-4
  * re-read. The full list of what it cannot prove — an enumeration, not a summary, because two
@@ -36,7 +42,7 @@
  *   3. A NEW reader added by a later migration — a second `SECURITY DEFINER` function selecting
  *      `content`, or a plain `GRANT SELECT` on the table or its `content` column, either of which
  *      re-opens the whole vulnerability with no change to this function at all. Nothing here or
- *      in the audit-trigger suite scans for that; tracked as its own issue.
+ *      in the audit-trigger suite scans for that; tracked as SMI-6702.
  *   4. A redefinition in a schema other than `public` that `search_path` happens to reach. Not
  *      scanned, and judged low-risk rather than closed: PostgREST resolves `/rpc/<name>` against
  *      its exposed schema, so reaching a shadow copy needs a second, non-migration change.
@@ -64,10 +70,17 @@
  * approval and deprecation predicates all removed, spelled `"public"."release_…"`, passed all
  * eight tests. It also matched only `CREATE`, so `ALTER FUNCTION … RESET ALL` — which strips the
  * pinned `search_path` from a `SECURITY DEFINER` function, the exact hazard this migration's own
- * smoke block guards — was invisible. Both were already solved in
- * `../private-registry-audit-trigger.static.test.ts`, which this file had cited as its precedent
- * through three rounds while re-deriving its machinery badly each time. The primitives now live in
- * `../lib/migration-text-guards.ts` and are imported, not copied.
+ * smoke block guards — was invisible.
+ *
+ * Only the CREATE-side identifier tolerance was already solved in
+ * `../private-registry-audit-trigger.static.test.ts`. The ALTER/DROP side was NOT: that suite's
+ * own regexes required an argument list too, so the paren-free `RESET ALL` spelling cited above
+ * was invisible there as well — measured against its pre-SMI-6690 source. An earlier version of
+ * this header said both were "already solved" there, crediting a precedent that did not hold
+ * (SMI-6690 retro, finding 3). Both suites are fixed by the shared `alterFunctionRe` and
+ * `dropFunctionRe`. The primitives now live in `../lib/migration-text-guards.ts` and are
+ * imported, not copied — though that file had also cited this precedent through three rounds
+ * while re-deriving its machinery badly each time.
  *
  * @module scripts/tests/supabase/private-registry-content-release.structural
  */
@@ -124,9 +137,10 @@ const WRITES_V_CONTENT_RE = /\binto\s+v_content\b/gi
  * rollback blocks naming the function (`20260915000000` has one), and the patterns are broad
  * enough to read those as live statements otherwise.
  */
-function tamperViolations(): string[] {
+function tamperViolations(): { scanned: string[]; offenders: string[] } {
+  const scanned = laterMigrationFiles(NEW_MIGRATION)
   const offenders: string[] = []
-  for (const file of laterMigrationFiles(NEW_MIGRATION)) {
+  for (const file of scanned) {
     const raw = readMigrationText(file)
     // The suite gate proved NEW_MIGRATION is plaintext, so a ciphertext sibling means an
     // inconsistent tree rather than a normal locked checkout. readMigrationText() has already
@@ -141,10 +155,10 @@ function tamperViolations(): string[] {
     if (dropFunctionRe(FUNCTION_NAME).test(sql)) offenders.push(`${file}: DROP FUNCTION`)
     if (alterFunctionRe(FUNCTION_NAME).test(sql)) offenders.push(`${file}: ALTER FUNCTION`)
   }
-  return offenders
+  return { scanned, offenders }
 }
 
-describe.skipIf(migrationTextLocked)(
+describe.skipIf(migrationTextLocked())(
   'SMI-6651/SMI-6690 — release_private_registry_skill_content() step-4 re-read (PG-free)',
   () => {
     it('the shipped migration contains the step-4 re-read exactly once, byte-for-byte', () => {
@@ -207,7 +221,13 @@ describe.skipIf(migrationTextLocked)(
       // established pattern, so this is the likely vector rather than a hypothetical one — and
       // `ALTER FUNCTION` needs no redefinition at all to strip the pinned search_path off a
       // SECURITY DEFINER function.
-      expect(tamperViolations()).toEqual([])
+      const { scanned, offenders } = tamperViolations()
+      expect(offenders).toEqual([])
+      // A clean scan over an EMPTY set proves nothing, and this assertion passed identically over
+      // 1 file and over 0 when it was first written (SMI-6690 retro, finding 5). Zero is reachable
+      // only if the pinned migration becomes the newest one, or if laterMigrationFiles() regressed
+      // its prefix parsing. Either way, say so rather than reporting a green.
+      expect(scanned.length, 'the tamper scan had no later migrations to scan').toBeGreaterThan(0)
     })
   }
 )

@@ -24,9 +24,15 @@
 import { readFileSync, readdirSync } from 'node:fs'
 import { join } from 'node:path'
 
-export const GIT_CRYPT_MAGIC = Buffer.from([0x00, 0x47, 0x49, 0x54, 0x43, 0x52, 0x59, 0x50, 0x54])
-export const EXPECT_LOCKED_ENV_VAR = 'SKILLSMITH_GIT_CRYPT_EXPECTED_LOCKED'
-export const MIGRATIONS_DIR = 'supabase/migrations'
+// Module-private on purpose. These were exported when this module landed and had ZERO importers,
+// while four other files re-declared them locally — the de-duplication this module exists for,
+// unperformed, six lines from a header claiming it (SMI-6690 retro, finding 2). A caller that
+// needs the lock contract should call `readMigrationText`, which is the behaviour; a caller that
+// needs these constants is re-implementing it. The remaining repo-wide copies are tracked
+// separately — un-exporting here stops this module pretending they are consolidated.
+const GIT_CRYPT_MAGIC = Buffer.from([0x00, 0x47, 0x49, 0x54, 0x43, 0x52, 0x59, 0x50, 0x54])
+const EXPECT_LOCKED_ENV_VAR = 'SKILLSMITH_GIT_CRYPT_EXPECTED_LOCKED'
+const MIGRATIONS_DIR = 'supabase/migrations'
 
 /**
  * Reads a migration, returning `null` when it is git-crypt ciphertext AND that was declared
@@ -116,7 +122,10 @@ export function qualifiedIdent(name: string): string {
         'name; the optional schema prefix is already part of this fragment'
     )
   }
-  return String.raw`(?:"?public"?\s*\.\s*)?"?${name}"?`
+  // `U&"name"` is a Unicode-escape identifier. With no `\XXXX` escapes inside it, Postgres
+  // resolves it to exactly `name`, so accepting the optional prefix is a true positive rather
+  // than a widening. Measured valid on PG 17.11 (SMI-6690 retro, finding 7).
+  return String.raw`(?:(?:[Uu]&)?"?public"?\s*\.\s*)?(?:[Uu]&)?"?${name}"?`
 }
 
 /** `CREATE [OR REPLACE] FUNCTION <name>(` — any argument list, any case, any spelling. */
@@ -134,6 +143,22 @@ export function createFunctionRe(name: string): RegExp {
 const NOT_IDENT_CHAR = String.raw`(?![A-Za-z0-9_$])`
 
 /**
+ * `DROP FUNCTION a, public.fn;` is valid Postgres — the grammar is `DROP FUNCTION name [, ...]` —
+ * so the guarded name need NOT be the first name after the verb. Without this prefix, putting any
+ * other function ahead of it evades the scan while still dropping the target; measured valid AND
+ * effective on PG 17.11, with the target gone from `pg_proc` and the scan silent (SMI-6690 retro,
+ * finding 1).
+ *
+ * `[^;]*?` is bounded to the statement: lazy, and it cannot cross a `;`, so it consumes at most
+ * one statement's own list. Callers already split on statements and strip comments.
+ *
+ * ASYMMETRY, deliberate and measured: `ALTER` takes no list — `ALTER FUNCTION a, b RESET ALL` is a
+ * syntax error — so `alterFunctionRe` neither needs nor uses this. Do not "fix" that by adding it
+ * there; it would only widen the match for no valid statement.
+ */
+const DROP_LIST_PREFIX = String.raw`(?:[^;]*?,\s*)?`
+
+/**
  * `DROP FUNCTION|ROUTINE [IF EXISTS] <name>` — removing the function is tampering too.
  *
  * The argument list is OPTIONAL and `ROUTINE` is a synonym; see `alterFunctionRe` for the
@@ -141,7 +166,7 @@ const NOT_IDENT_CHAR = String.raw`(?![A-Za-z0-9_$])`
  */
 export function dropFunctionRe(name: string): RegExp {
   return new RegExp(
-    String.raw`DROP\s+(?:FUNCTION|ROUTINE)\s+(?:IF\s+EXISTS\s+)?${qualifiedIdent(name)}${NOT_IDENT_CHAR}`,
+    String.raw`DROP\s+(?:FUNCTION|ROUTINE)\s+(?:IF\s+EXISTS\s+)?${DROP_LIST_PREFIX}${qualifiedIdent(name)}${NOT_IDENT_CHAR}`,
     'i'
   )
 }

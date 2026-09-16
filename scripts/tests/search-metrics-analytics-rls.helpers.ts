@@ -25,6 +25,7 @@
 
 import { readdirSync, readFileSync } from 'node:fs'
 import { join } from 'node:path'
+import { readMigrationText } from './lib/migration-text-guards.ts'
 import {
   extractFunction,
   extractLatestFunction,
@@ -345,8 +346,10 @@ export function migrationsRedefiningUserTeamIds(dir: string = MIGRATIONS_DIR): s
     .filter((f) => f.endsWith('.sql'))
     .sort()
     .filter((f) => {
-      const body = readFileSync(join(dir, f), 'utf8')
-      if (body.includes('\u0000')) return false // git-crypt ciphertext, not readable SQL
+      // Must go through the SMI-5984 primitive, never a bare NUL-byte test: it throws on an
+      // UNDECLARED lock instead of reporting a clean scan over unreadable files (SMI-6690 F6).
+      const body = readMigrationText(f, dir)
+      if (body === null) return false
       return body
         .split('\n')
         .some(
