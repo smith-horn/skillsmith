@@ -17,20 +17,83 @@
 
 import { spawnSync } from 'node:child_process'
 import { fileURLToPath } from 'node:url'
+import { createHash } from 'node:crypto'
+import fs from 'node:fs'
 import path from 'node:path'
 import { removeVR } from './walk.mjs'
 import { quarantineTree } from './quarantine.mjs'
+import { prebuildPath } from './native-c/load-packaged.mjs'
 
-const PROBE_CHILD_PATH = path.join(
-  path.dirname(fileURLToPath(import.meta.url)),
-  'native-c',
-  'probe-child.mjs'
-)
+const HERE = path.dirname(fileURLToPath(import.meta.url))
+const PROBE_CHILD_PATH = path.join(HERE, 'native-c', 'probe-child.mjs')
+
+// The binary the native walk will ACTUALLY load. It is not the one the probe
+// checks: probe-child.mjs goes through load-packaged.mjs (`prebuilds/`), while
+// walk.mjs goes through load.mjs (`build/Release/`). In a shipped package there
+// would be one loader and one binary; in this spike there are two, so the cache
+// key below covers BOTH -- a probe verdict about one file must not survive a
+// change to the other.
+const DEV_BUILD_PATH = path.join(HERE, 'native-c', 'build', 'Release', 'shim.node')
+
+/**
+ * Identity of a binary, for cache keying. sha256 rather than size+mtime,
+ * because a package update can restore a timestamp (this repo has already seen
+ * a tar extraction land an `Oct 26 1985` mtime) and a same-size replacement is
+ * exactly the case a version key has to catch. Hashing 50-70 KB costs well
+ * under a millisecond against the probe's own ~22.5 ms, so the cheap-but-wrong
+ * fingerprint buys nothing.
+ *
+ * A file that cannot be read returns a marker rather than throwing: "absent" is
+ * a legitimate and important key, since it must invalidate a cached `ok` from
+ * when the file was present.
+ */
+function binaryIdentity(p) {
+  try {
+    return createHash('sha256').update(fs.readFileSync(p)).digest('hex')
+  } catch (err) {
+    return `unreadable:${err.code ?? 'ERR'}`
+  }
+}
+
+function probeCacheKey() {
+  return `${binaryIdentity(prebuildPath())}|${binaryIdentity(DEV_BUILD_PATH)}`
+}
 
 let cachedProbe = null
+let cachedProbeKey = null
 
 function runProbe() {
-  if (cachedProbe) return cachedProbe
+  // §10 criterion 4 asks for "a cached child probe [that] costs <= 100 ms ONCE
+  // PER BINARY VERSION". The previous cache was `let cachedProbe = null`, keyed
+  // on nothing at all -- a per-process memo. Harmless here, where nothing
+  // replaces a prebuild mid-process, but in a long-lived process surviving a
+  // package update it would reuse a verdict about a binary no longer on disk:
+  // the invisible-success shape this spike keeps finding, in the code meant to
+  // prevent it.
+  const key = probeCacheKey()
+  if (cachedProbe && cachedProbeKey === key) return cachedProbe
+  cachedProbeKey = key
+
+  // Reading the dev build to key on it also proves it exists and is readable,
+  // so the native path cannot be entered for a binary that is simply missing.
+  // It does NOT prove a readable-but-corrupt binary will load: that still
+  // throws inside require(), and the probe cannot check it in-process without
+  // risking the SIGKILL this whole design exists to avoid.
+  // Only the DEV-build half is checked here. An unreadable PREBUILD is a
+  // different, already-covered case: it is one of criterion 4's six real
+  // triggers, and the child probe reports it properly, so it must reach the
+  // probe rather than being short-circuited here. The key's two halves are
+  // separated by `|` and a sha256 is hex, so `|unreadable:` can only ever match
+  // the second half.
+  if (cachedProbeKey.includes('|unreadable:')) {
+    cachedProbe = {
+      ok: false,
+      trigger: 'native-dev-build-unreadable',
+      detail: `cannot read ${DEV_BUILD_PATH}`,
+    }
+    return cachedProbe
+  }
+
   const r = spawnSync(process.execPath, [PROBE_CHILD_PATH], { encoding: 'utf8', timeout: 10000 })
   if (r.signal) {
     cachedProbe = { ok: false, trigger: 'native-probe-killed', detail: `signal ${r.signal}` }
@@ -58,6 +121,12 @@ function runProbe() {
 /** Test-only: forces the next removeTree() call to re-probe. */
 export function resetProbeCache() {
   cachedProbe = null
+  cachedProbeKey = null
+}
+
+/** Test-only: the current cache key, so a test can assert it CHANGED. */
+export function probeCacheKeyForTest() {
+  return probeCacheKey()
 }
 
 function quarantineFallback(targetRoot, options, trigger) {
