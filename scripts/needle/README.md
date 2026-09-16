@@ -471,6 +471,45 @@ their outcomes, are the concrete facts to bring to the harness team.
   means the worker claimed and processed the bead; `open` means it died
   before claiming) — but the contract is the test, not the corroboration.
 
+- **A killed dispatch, a quota-failed one and a capacity-failed one look
+  alike from outside. Read the trace's event mix first**, before
+  `reason=`, `stdout.txt` or elapsed time. Each leaves a bead that stopped
+  without a clean agent message; only `trace.jsonl` separates them. Count
+  its event types, and check `total=` (the denominator) and `unparsed=`
+  before trusting the counts:
+
+      node -e 'const L=require("fs").readFileSync(process.argv[1],"utf8").split("\n").filter(Boolean);const c={};let bad=0;for(const s of L){try{const t=JSON.parse(s).type;c[t]=(c[t]||0)+1}catch(e){bad++}}console.log(JSON.stringify(c),"total="+L.length,"unparsed="+bad)' <workspace>/.beads/traces/<bead-id>/trace.jsonl
+      echo "exit=$?"
+
+  Read the mix like this:
+
+  - **Matched `tool_call`/`tool_result` pairs, a trailing `tokens` event,
+    no `error`**: real work that finished its turn.
+  - **One or more `error` events**: the backend refused the turn. Read the
+    `message`. `Selected model is at capacity` is a capacity failure, not
+    a quota failure, and it can arrive after completed tool calls, not
+    only before the first one. When there is no `trace.jsonl` at all,
+    check the tail of `stdout.txt`, where the same message can appear.
+  - **`error` events with zero `tool_call` events**: the shape ADR-165
+    reports for a quota (usage-limit) failure. Treat it as reported, not
+    reproduced: no quota-failed trace has been examined to confirm it.
+  - **A `tool_call` with no matching `tool_result`, and no `error`**:
+    **PREDICTED, NOT MEASURED** as the shape of a kill mid-work. No killed
+    trace has been examined to confirm it. Do not match against it as a
+    rule.
+
+  **Compare against a known-good run before concluding anything.** Run the
+  same command on a trace you already know finished cleanly, such as your
+  own last verified `success` bead, and compare the two mixes. A shape you
+  have never seen on a good run is a question, not a verdict.
+
+  **Elapsed time is corroboration only.** NEEDLE's `uptime_secs`
+  (`worker.idle_sleep_entered` events in `~/.needle/logs/*.jsonl`) and a
+  bead's `duration_ms` (`.beads/traces/<bead-id>/metadata.json`) say how
+  long a process lived, not why it stopped. A capacity failure and a clean
+  run can take nearly the same time. The measurements behind this bullet
+  are on SMI-6684.
+
 - **A `bf` bead ends up `closed` with NO trace directory at all under
   `.beads/traces/<bead-id>/`** (SMI-6015 retro, 2026-08-25) — a different,
   earlier failure mode than the `success-without-agent-message` case above
