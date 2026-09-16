@@ -339,9 +339,16 @@ describe('scan-state-flip.sh (SMI-6514 P-7 scanner) -- Group A: portable', () =>
     // written script carrying the noun AND a stale assertion contributed nothing.
     // Every other fixture here is committed before scanning, which is exactly why
     // no existing test could expose this.
-    expect(scanNoun(setupMetacharRepo().repoDir, 'untrackednoun')).toContain(
-      'STEP 1 (denominator): 1'
-    )
+    const out = scanNoun(setupMetacharRepo().repoDir, 'untrackednoun')
+    expect(out).toContain('STEP 1 (denominator): 1')
+    // STEP 2 as well, not just the denominator. run_grep_and carries its OWN
+    // --untracked, on a separate line from run_grep's, so a STEP-1-only assertion
+    // left that arm unconstrained: removing --untracked from run_grep_and alone
+    // dropped STEP 2 from 1 to 0 while all 28 tests stayed green. Found by the
+    // PR-16 pre-merge check (author-chosen-mutation review) -- it is exactly the
+    // mutation the author would not pick, being the author's own blind spot.
+    expect(out).toContain('STEP 2: noun x absence-vocabulary (1 hit(s))')
+    expect(out).toMatch(/never-added\.sh:1:/)
   })
 
   it.skipIf(!SCANNER_PRESENT)('a noun containing a newline is rejected, not silently split', () => {
@@ -503,6 +510,47 @@ describe('scan-state-flip.sh (SMI-6514 P-7 scanner) -- Group A: portable', () =>
         encoding: 'utf8',
       })
       expect(out).toContain(`STEP 1 (denominator): ${places.length}`)
+    }
+  )
+
+  it.skipIf(!SCANNER_PRESENT)(
+    'a path git would QUOTE still gets probed, so the scope warning is not lost',
+    () => {
+      // PR-07 pre-merge finding. Without -z, git quotes any path containing a
+      // special character -- a committed `supabase/functions/odd<LF>name.ts` comes
+      // back as the literal `HEAD:"supabase/functions/odd\nname.ts"`, quotes and
+      // all. That is not a valid object name, so `git show` failed, its stderr went
+      // to /dev/null, and the run reported a clean denominator with the encrypted
+      // pathspec undisclosed: the probe's own failure read as "nothing encrypted".
+      const repoDir = makeFixtureTempDir('state-flip-quotedpath-fixture')
+      createdRepoDirs.push(repoDir)
+      git(repoDir, ['init', '-q', '-b', 'main'])
+      mkdirSync(join(repoDir, 'supabase', 'functions'), { recursive: true })
+      mkdirSync(join(repoDir, 'scripts'), { recursive: true })
+      writeFileSync(join(repoDir, 'scripts', 'plain.sh'), 'widget-tool in plaintext\n')
+      writeFileSync(
+        join(repoDir, 'supabase', 'functions', 'odd\nname.ts'),
+        Buffer.concat([
+          Buffer.from('\u0000GITCRYPT\u0000', 'binary'),
+          Buffer.from('opaque-ciphertext\n'),
+        ])
+      )
+      git(repoDir, ['add', '-A'])
+      git(repoDir, ['-c', 'user.email=t@t', '-c', 'user.name=t', 'commit', '-qm', 'init'])
+      const out = execFileSync('bash', [SCANNER_PATH, 'widget-tool', '--ref', 'HEAD'], {
+        cwd: repoDir,
+        encoding: 'utf8',
+      })
+      // 'Scope warning' ALONE is not enough, and the first draft of this test made
+      // exactly that mistake. Reverting -lz does not silence the warning -- it
+      // trips the INDETERMINATE branch instead, which also prints 'Scope warning'
+      // and also names supabase/functions. Both assertions passed with the defect
+      // restored. The distinguishing claim is that the path was actually READ and
+      // found encrypted, so assert that wording.
+      expect(out).toContain('ENCRYPTED blobs')
+      expect(out).toContain('could not read')
+      expect(out).not.toContain('could not be probed')
+      expect(out).toMatch(/supabase\/functions/)
     }
   )
 
