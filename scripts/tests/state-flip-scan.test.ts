@@ -140,14 +140,28 @@ function scannerPathspecs(): string[] {
   return specs
 }
 
-/** Fills an expected report's scope line from the one runtime PATHSPECS reader. */
+/**
+ * Fills an expected report's pathspec text from the one runtime PATHSPECS reader:
+ * `__RUNTIME_PATHSPECS__` becomes the whole space-joined scope line, `{{spec0}}` the
+ * first entry, and `{{spec:<glob>}}` whichever entry bears that glob.
+ *
+ * Spelling the entries out literally instead would pin one spelling of the magic
+ * prefix, so rewriting the array to an equivalent spelling -- `:/` for `:(top)` --
+ * would red every stored document while the scan behaved identically.
+ */
 function withRuntimeScope(doc: string): string {
-  return doc.split(RUNTIME_SCOPE).join(scannerPathspecs().join(' '))
+  const specs = scannerPathspecs()
+  let out = doc.split(RUNTIME_SCOPE).join(specs.join(' ')).split('{{spec0}}').join(specs[0])
+  for (const spec of specs) out = out.split(`{{spec:${bareSpec(spec)}}}`).join(spec)
+  if (out.includes('{{spec')) {
+    throw new Error(`expected report references a pathspec the scanner no longer has: ${out}`)
+  }
+  return out
 }
 
-/** A pathspec with its leading `:(magic)` removed, leaving the path glob alone. */
+/** A pathspec with its leading magic removed -- long `:(…)` or short `:/` -- leaving the glob. */
 function bareSpec(spec: string): string {
-  return spec.replace(/^:\([^)]*\)/, '')
+  return spec.replace(/^:\([^)]*\)/, '').replace(/^:\//, '')
 }
 
 /**
@@ -239,7 +253,7 @@ Noun: \`widget-tool\`
 Ref: \`HEAD\`
 Scanned paths: \`__RUNTIME_PATHSPECS__\`
 
-> **Scope warning.** These pathspecs hold blobs that are not text -- git-crypt ciphertext in \`--ref\` mode, or genuine binaries: \`:(top)supabase/functions/** (1 of 1)\`. Their bytes ARE searched (this scan passes \`-a\`) and so they DO contribute to the counts below, but any hit in them is a byte coincidence rather than a source reference, and a miss is not evidence about whatever the bytes encode. Treat the counts as unreliable over these paths in both directions. For git-crypt paths, re-run WITHOUT \`--ref\` to search their decrypted working-tree contents.
+> **Scope warning.** These pathspecs hold blobs that are not text -- git-crypt ciphertext in \`--ref\` mode, or genuine binaries: \`{{spec:supabase/functions/**}} (1 of 1)\`. Their bytes ARE searched (this scan passes \`-a\`) and so they DO contribute to the counts below, but any hit in them is a byte coincidence rather than a source reference, and a miss is not evidence about whatever the bytes encode. Treat the counts as unreliable over these paths in both directions. For git-crypt paths, re-run WITHOUT \`--ref\` to search their decrypted working-tree contents.
 STEP 1 (denominator): 2
 
 ### STEP 2: noun x absence-vocabulary (1 hit(s)), MANDATED OUTPUT
@@ -267,7 +281,7 @@ Noun: \`widget-tool\`
 Ref: \`working tree\`
 Scanned paths: \`__RUNTIME_PATHSPECS__\`
 
-> **Scope warning.** These pathspecs hold blobs that are not text -- git-crypt ciphertext in \`--ref\` mode, or genuine binaries: \`:(top)supabase/functions/** (1 of 1)\`. Their bytes ARE searched (this scan passes \`-a\`) and so they DO contribute to the counts below, but any hit in them is a byte coincidence rather than a source reference, and a miss is not evidence about whatever the bytes encode. Treat the counts as unreliable over these paths in both directions. For git-crypt paths, re-run WITHOUT \`--ref\` to search their decrypted working-tree contents.
+> **Scope warning.** These pathspecs hold blobs that are not text -- git-crypt ciphertext in \`--ref\` mode, or genuine binaries: \`{{spec:supabase/functions/**}} (1 of 1)\`. Their bytes ARE searched (this scan passes \`-a\`) and so they DO contribute to the counts below, but any hit in them is a byte coincidence rather than a source reference, and a miss is not evidence about whatever the bytes encode. Treat the counts as unreliable over these paths in both directions. For git-crypt paths, re-run WITHOUT \`--ref\` to search their decrypted working-tree contents.
 STEP 1 (denominator): 2
 
 ### STEP 2: noun x absence-vocabulary (1 hit(s)), MANDATED OUTPUT
@@ -295,7 +309,7 @@ Noun: \`widget-tool\`
 Ref: \`HEAD\`
 Scanned paths: \`__RUNTIME_PATHSPECS__\`
 
-> **Scope warning.** These pathspecs hold blobs that are not text -- git-crypt ciphertext in \`--ref\` mode, or genuine binaries: \`:(top)packages/*/src/** (1 of 1) :(top)supabase/functions/** (1 of 1)\`. Their bytes ARE searched (this scan passes \`-a\`) and so they DO contribute to the counts below, but any hit in them is a byte coincidence rather than a source reference, and a miss is not evidence about whatever the bytes encode. Treat the counts as unreliable over these paths in both directions. For git-crypt paths, re-run WITHOUT \`--ref\` to search their decrypted working-tree contents.
+> **Scope warning.** These pathspecs hold blobs that are not text -- git-crypt ciphertext in \`--ref\` mode, or genuine binaries: \`{{spec:packages/*/src/**}} (1 of 1) {{spec:supabase/functions/**}} (1 of 1)\`. Their bytes ARE searched (this scan passes \`-a\`) and so they DO contribute to the counts below, but any hit in them is a byte coincidence rather than a source reference, and a miss is not evidence about whatever the bytes encode. Treat the counts as unreliable over these paths in both directions. For git-crypt paths, re-run WITHOUT \`--ref\` to search their decrypted working-tree contents.
 STEP 1 (denominator): 3
 
 ### STEP 2: noun x absence-vocabulary (2 hit(s)), MANDATED OUTPUT
@@ -325,7 +339,7 @@ Noun: \`widget-tool\`
 Ref: \`working tree\`
 Scanned paths: \`__RUNTIME_PATHSPECS__\`
 
-> **Scope warning.** These pathspecs hold blobs that are not text -- git-crypt ciphertext in \`--ref\` mode, or genuine binaries: \`:(top)packages/*/src/** (1 of 1) :(top)supabase/functions/** (1 of 1)\`. Their bytes ARE searched (this scan passes \`-a\`) and so they DO contribute to the counts below, but any hit in them is a byte coincidence rather than a source reference, and a miss is not evidence about whatever the bytes encode. Treat the counts as unreliable over these paths in both directions. For git-crypt paths, re-run WITHOUT \`--ref\` to search their decrypted working-tree contents.
+> **Scope warning.** These pathspecs hold blobs that are not text -- git-crypt ciphertext in \`--ref\` mode, or genuine binaries: \`{{spec:packages/*/src/**}} (1 of 1) {{spec:supabase/functions/**}} (1 of 1)\`. Their bytes ARE searched (this scan passes \`-a\`) and so they DO contribute to the counts below, but any hit in them is a byte coincidence rather than a source reference, and a miss is not evidence about whatever the bytes encode. Treat the counts as unreliable over these paths in both directions. For git-crypt paths, re-run WITHOUT \`--ref\` to search their decrypted working-tree contents.
 STEP 1 (denominator): 3
 
 ### STEP 2: noun x absence-vocabulary (2 hit(s)), MANDATED OUTPUT
@@ -355,7 +369,7 @@ Noun: \`widget-tool\`
 Ref: \`HEAD\`
 Scanned paths: \`__RUNTIME_PATHSPECS__\`
 
-> **Scope warning.** These pathspecs hold blobs that are not text -- git-crypt ciphertext in \`--ref\` mode, or genuine binaries: \`:(top)scripts/*.ts (1 of 1)\`. Their bytes ARE searched (this scan passes \`-a\`) and so they DO contribute to the counts below, but any hit in them is a byte coincidence rather than a source reference, and a miss is not evidence about whatever the bytes encode. Treat the counts as unreliable over these paths in both directions. For git-crypt paths, re-run WITHOUT \`--ref\` to search their decrypted working-tree contents.
+> **Scope warning.** These pathspecs hold blobs that are not text -- git-crypt ciphertext in \`--ref\` mode, or genuine binaries: \`{{spec0}} (1 of 1)\`. Their bytes ARE searched (this scan passes \`-a\`) and so they DO contribute to the counts below, but any hit in them is a byte coincidence rather than a source reference, and a miss is not evidence about whatever the bytes encode. Treat the counts as unreliable over these paths in both directions. For git-crypt paths, re-run WITHOUT \`--ref\` to search their decrypted working-tree contents.
 STEP 1 (denominator): 1
 
 ### STEP 2: noun x absence-vocabulary (0 hit(s)), MANDATED OUTPUT
@@ -383,7 +397,7 @@ Noun: \`widget-tool\`
 Ref: \`working tree\`
 Scanned paths: \`__RUNTIME_PATHSPECS__\`
 
-> **Scope warning.** These pathspecs hold blobs that are not text -- git-crypt ciphertext in \`--ref\` mode, or genuine binaries: \`:(top)scripts/*.ts (1 of 1)\`. Their bytes ARE searched (this scan passes \`-a\`) and so they DO contribute to the counts below, but any hit in them is a byte coincidence rather than a source reference, and a miss is not evidence about whatever the bytes encode. Treat the counts as unreliable over these paths in both directions. For git-crypt paths, re-run WITHOUT \`--ref\` to search their decrypted working-tree contents.
+> **Scope warning.** These pathspecs hold blobs that are not text -- git-crypt ciphertext in \`--ref\` mode, or genuine binaries: \`{{spec0}} (1 of 1)\`. Their bytes ARE searched (this scan passes \`-a\`) and so they DO contribute to the counts below, but any hit in them is a byte coincidence rather than a source reference, and a miss is not evidence about whatever the bytes encode. Treat the counts as unreliable over these paths in both directions. For git-crypt paths, re-run WITHOUT \`--ref\` to search their decrypted working-tree contents.
 STEP 1 (denominator): 1
 
 ### STEP 2: noun x absence-vocabulary (0 hit(s)), MANDATED OUTPUT
@@ -1078,23 +1092,28 @@ describe('scan-state-flip.sh (SMI-6514 P-7 scanner) -- Group A: portable', () =>
   )
 
   it.skipIf(!SCANNER_PRESENT)(
-    'every PATHSPECS entry is one :(top)-anchored token, so the scan cannot narrow by cwd',
+    'every PATHSPECS entry is one top-anchored token, so the scan cannot narrow by cwd',
     () => {
-      // `top` anchors a pathspec to the repository root. An entry without it is
-      // resolved against the invoking cwd instead, so a scan from a subdirectory
-      // silently covers less while still exiting 0 on a non-zero denominator.
-      // Whitespace inside an entry narrows the same way -- git reads it as one path
-      // that matches nothing, and the report's space-joined scope line renders it
-      // indistinguishable from two anchored entries.
+      // Top-anchoring resolves a pathspec against the repository root. An entry
+      // without it is resolved against the invoking cwd instead, so a scan from a
+      // subdirectory silently covers less while still exiting 0 on a non-zero
+      // denominator. Whitespace inside an entry narrows the same way -- git reads it
+      // as one path that matches nothing, and the report's space-joined scope line
+      // renders it indistinguishable from two anchored entries.
       //
-      // The magic is parsed as its comma-separated word list rather than matched as
-      // the literal `:(top)`, because `top` anchors wherever it appears in that list:
-      // `:(glob,top)` and `:(icase,top)` are equally anchored, and a test that
-      // accepted only one spelling would red on a correct change. Matching on the
-      // literal would also accept `:(topology)`, which is not anchored at all.
+      // Git spells top-anchoring two ways and both are accepted here: the long form
+      // `:(top)`, where `top` is one word of a comma-separated magic list, and the
+      // short form `:/`. The long form is parsed as a word list rather than matched
+      // as a literal so that `:(topology)`, which anchors nothing, is not mistaken
+      // for it.
       for (const spec of scannerPathspecs()) {
+        const short = spec.match(/^:\/(\S+)$/)
+        if (short) continue
         const magic = spec.match(/^:\(([^)]*)\)(\S+)$/)
-        expect(magic, `PATHSPECS entry is not one :(magic)-prefixed token: ${spec}`).toBeTruthy()
+        expect(
+          magic,
+          `PATHSPECS entry is neither a :/ nor a :(magic) prefixed single token: ${spec}`
+        ).toBeTruthy()
         expect(magic![1].split(','), `PATHSPECS entry is not top-anchored: ${spec}`).toContain(
           'top'
         )
@@ -1140,10 +1159,12 @@ describe('scan-state-flip.sh (SMI-6514 P-7 scanner) -- Group A: portable', () =>
       git(repoDir, ['add', '-A'])
       git(repoDir, ['-c', 'user.email=t@t', '-c', 'user.name=t', 'commit', '-qm', 'init'])
 
+      // stderr is compared alongside stdout: a diagnostic that named the invoking cwd
+      // would otherwise drift freely, since none of the counts or the report carry it.
       const observe = (cwd: string, args: string[]) => {
         const run = spawnSync('bash', [SCANNER_PATH, ...args], { cwd, encoding: 'utf8' })
         if (run.error) throw run.error
-        return { status: run.status, stdout: run.stdout }
+        return { status: run.status, stdout: run.stdout, stderr: run.stderr }
       }
 
       for (const args of [['widget-tool'], ['widget-tool', '--ref', 'HEAD']]) {
@@ -1165,11 +1186,9 @@ describe('scan-state-flip.sh (SMI-6514 P-7 scanner) -- Group A: portable', () =>
         }
 
         const sub = observe(join(repoDir, 'packages', 'core'), args)
-        // Ordered before the equality on purpose. These two are deliberately
-        // redundant, and a single defect reaches only whichever runs first: an
-        // upward-rendered path would be reported by the equality as an opaque
-        // whole-document mismatch, while this names the mechanism. The equality
-        // still covers every cwd-dependent difference that is not an upward path.
+        // Each of the three below catches a class the others cannot, so all three
+        // stay. The upward-path check is first because it names the mechanism where
+        // the equality would report only an opaque whole-document mismatch.
         for (const [where, out] of [
           ['root', root.stdout],
           ['subdirectory', sub.stdout],
@@ -1177,6 +1196,7 @@ describe('scan-state-flip.sh (SMI-6514 P-7 scanner) -- Group A: portable', () =>
           expect(out, `${where} report renders an upward path for ${label}`).not.toContain('../')
         }
         expect(sub.status, `exit status drifted by cwd for ${label}`).toBe(root.status)
+        expect(sub.stderr, `stderr drifted by cwd for ${label}`).toBe(root.stderr)
         expect(sub.stdout, `report drifted by cwd for ${label}`).toBe(root.stdout)
       }
     }
@@ -1200,28 +1220,36 @@ describe('scan-state-flip.sh (SMI-6514 P-7 scanner) -- Group A: portable', () =>
   )
 
   it.skipIf(!SCANNER_PRESENT)(
-    '--help emits the whole header block the source carries, to its last line',
+    '--help emits exactly the source header block, no line dropped and none added',
     () => {
       // Two surfaces carry the same header: the assertions above read it from the
-      // SOURCE, and `--help` prints it at RUNTIME. A printer bounded by a hardcoded
-      // line range drifts the moment the header grows, dropping trailing lines from
-      // `--help` alone while every source-reading assertion stays green.
+      // SOURCE, and `--help` prints it at RUNTIME. They can drift in both directions
+      // and each direction is silent on its own -- a printer bounded below the header
+      // drops trailing lines, and one with no upper bound spills the file's body
+      // comments into the help text.
       //
-      // The boundary is derived on both sides, so neither a count nor a line number
-      // appears here: the last comment line above `set -euo pipefail` is whatever
-      // the source says it is, and `--help` has to reach it.
-      const src = readFileSync(SCANNER_PATH, 'utf8')
-      const headerLines = src
-        .slice(0, src.indexOf('set -euo pipefail'))
-        .split('\n')
-        .filter((line) => line.startsWith('#'))
-      const lastHeaderLine = headerLines[headerLines.length - 1]
-      expect(lastHeaderLine, 'no comment lines above `set -euo pipefail`').toBeTruthy()
+      // So this is equality of the whole block, not containment of any one line:
+      // containment is satisfied by a printer that emits the body comments too, and
+      // is satisfied by a single surviving line when the rest are dropped. Both
+      // boundaries are derived rather than counted -- the block is the contiguous
+      // comment run from the top of the file, less the shebang and the shellcheck
+      // directive, ending at the first line that is not a comment.
+      const block: string[] = []
+      for (const line of readFileSync(SCANNER_PATH, 'utf8').split('\n')) {
+        if (!line.startsWith('#')) break
+        if (/^#!/.test(line) || /^# shellcheck/.test(line)) continue
+        block.push(line)
+      }
+      expect(
+        block.length,
+        'no header comment block found at the top of the scanner'
+      ).toBeGreaterThan(0)
 
       const help = execFileSync('bash', [SCANNER_PATH, '--help'], { encoding: 'utf8' })
-      expect(help, '--help stops short of the last header line the source carries').toContain(
-        lastHeaderLine
-      )
+      const emitted = help.split('\n')
+      // A trailing newline on the last line is printf's, not a line of its own.
+      if (emitted[emitted.length - 1] === '') emitted.pop()
+      expect(emitted, '--help output is not exactly the source header block').toEqual(block)
     }
   )
 
@@ -1499,6 +1527,38 @@ describe(
       expect(Number.isNaN(step3), `could not parse STEP 3 out of:\n${out}`).toBe(false)
       expect(step1, 'STEP 1 denominator must be > 0 -- a real historical flip').toBeGreaterThan(0)
       expect(step2, 'STEP 2 must find real casualties for a known real flip').toBeGreaterThan(0)
+
+      // `step2` is the DENOMINATOR of the collapse ratio below, so that ratio RISES
+      // when the scanner's mandated output shrinks: a regression losing real
+      // casualties makes the gate pass more comfortably, not less. It therefore
+      // cannot be the only constraint on `step2`. The two below bound it directly,
+      // and they bind in different regimes rather than as a stricter/looser pair --
+      // the ceiling when STEP 2 alone shrinks, the floor when STEP 1 shrinks with it
+      // and the ceiling consequently stays satisfied. The ceiling is checked first
+      // because it is the arm that answers the question this block exists for.
+      //
+      // The ref is a frozen SHA, so both are constants against an immutable subject
+      // rather than numbers that rot as the tree changes.
+      //
+      // Ceiling: three independent measurements of STEP 1 / STEP 2 against this same
+      // ref cluster near 20 -- the plan's two, pre- and post-fix, plus the live value
+      // under the widened pathspec set. 40 is roughly double the highest of them, so
+      // a modest vocabulary or scope change passes and a collapse does not.
+      //
+      // Floor: the current pathspec set is a strict superset of the narrower one the
+      // plan measured this ref under (a plain `*` matches `/`, so `scripts/*.ts`
+      // covers everything `scripts/**/*.ts` did), and the plan recorded 29 there. 20
+      // sits below that with room for a vocabulary tightening that legitimately
+      // reduces false positives.
+      expect(
+        step1 / step2,
+        `STEP 1 ${step1} / STEP 2 ${step2} = ${(step1 / step2).toFixed(1)}x: the mandated ` +
+          `output is too small a fraction of the denominator for frozen ref '${HISTORICAL_REF}'`
+      ).toBeLessThanOrEqual(40)
+      expect(
+        step2,
+        `STEP 2 for frozen ref '${HISTORICAL_REF}' fell below its floor`
+      ).toBeGreaterThanOrEqual(20)
 
       const unscopedCount = countUnscopedAbsenceVocab(HISTORICAL_REF, scannerPathspecs())
       const ratio = unscopedCount / step2
