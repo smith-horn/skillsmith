@@ -4,6 +4,8 @@ All notable changes to `@skillsmith/mcp-server` are documented here.
 
 ## [Unreleased]
 
+## v0.7.17
+
 - **Fix**: SMI-6651 -- private-registry skill installs now read a skill's packaged content
   through an audited, server-side `release_private_registry_skill_content` RPC instead of a
   direct table read over the caller's own token. This version needs that RPC to already exist
