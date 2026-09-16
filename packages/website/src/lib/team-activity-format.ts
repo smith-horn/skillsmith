@@ -120,14 +120,29 @@ const REGISTRY_VERBS: Record<string, { done: string; attempt: string }> = {
 }
 
 /**
- * PR #2860 gate finding 3 follow-up: `ATTEMPT_OUTCOMES` is keyed off this tuple's type, not typed
- * independently, so widening it -- a new `private_registry:*` writer, or either real writer union
- * (`RegistryAuditEvent['result']` in `registry-tools.live.audit.ts`, `AuditResult` in
- * `private-registry-get/access.ts`) growing a member -- fails typecheck until the map below gains
- * a matching entry. No registry writer emits `result: 'failure'`; the one function that does,
- * `handleTeamInviteSend` (`supabase/functions/team-invite-send/index.ts`), is a different event
- * shape (`team_invitation:email_sent`) that renders its own two-branch sentence in the `email_sent`
- * arm below instead of going through this map -- the registry's denied/not_found/error taxonomy
+ * PR #2860 gate finding 1 (SMI-6680): `ATTEMPT_OUTCOMES` is keyed off this tuple's type
+ * (`Exclude<(typeof REGISTRY_RESULTS)[number], 'success'>`), so *that* relationship -- this file's
+ * map staying exhaustive over this file's own tuple -- is genuinely typechecked: dropping a member
+ * from `REGISTRY_RESULTS` or adding one without updating the map below fails `astro check`.
+ *
+ * What the type does NOT constrain, despite an earlier version of this comment claiming otherwise:
+ * `REGISTRY_RESULTS` itself is not tied to the two real registry-result writer unions
+ * (`RegistryReadAuditEvent`/`RegistryMutationAuditEvent['result']` in
+ * `registry-tools.live.audit.ts`, `AuditResult` in `private-registry-get/access.ts`). It is a
+ * website-local `as const` tuple that nothing in `packages/website` imports it into or out of --
+ * TypeScript has no mechanism to relate an independently-declared tuple to a type in another
+ * package (or, for `access.ts`, another runtime), so widening a writer union changes nothing about
+ * `(typeof REGISTRY_RESULTS)[number]` and would NOT fail typecheck. The two staying in sync is
+ * instead asserted at runtime by
+ * `team-activity-format.registry-results-sync.test.ts`, which reads all three files' source text
+ * and fails if the sets diverge -- deliberately a runtime check rather than a type one, since the
+ * root `tsconfig.json` doesn't reference `packages/website` (SMI-6300), so a type-only constraint
+ * here would be invisible to `npm run typecheck`.
+ *
+ * No registry writer emits `result: 'failure'`; the one function that does, `handleTeamInviteSend`
+ * (`supabase/functions/team-invite-send/index.ts`), is a different event shape
+ * (`team_invitation:email_sent`) that renders its own two-branch sentence in the `email_sent` arm
+ * below instead of going through this map -- the registry's denied/not_found/error taxonomy
  * doesn't meaningfully apply to an email send, so reusing this map there would be accidental
  * coupling between two unrelated event shapes, not a design improvement.
  */

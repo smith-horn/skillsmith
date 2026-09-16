@@ -209,20 +209,29 @@ describe('later-migration tripwires (SMI-6114 retro F1, SMI-6680)', () => {
     [
       'CREATE RULE targeting audit_logs',
       'CREATE RULE suppress_registry_audit AS ON INSERT TO public.audit_logs DO INSTEAD NOTHING;',
-      'CREATE RULE targeting audit_logs',
+      'CREATE RULE targeting audit_logs --',
     ],
     [
       'CREATE TRIGGER on audit_logs',
       'CREATE TRIGGER trg_fake AFTER INSERT ON audit_logs FOR EACH ROW EXECUTE FUNCTION noop();',
-      'CREATE TRIGGER on audit_logs',
+      'CREATE TRIGGER on audit_logs --',
     ],
-    // PR #2860 gate finding 4: these five expectedSubstring values used to be plain labels
-    // ('RENAME', 'DISABLE TRIGGER', 'DROP COLUMN', 'SET NOT NULL', 'DROP TABLE audit_logs') that
-    // also appear verbatim inside each row's own `stmt` -- since every offender message embeds
-    // `trimmed()` (the echoed statement text), a `toContain(expectedSubstring)` assertion using one
-    // of those labels passes on the echo alone and pins nothing about the branch's own message
-    // wording. Switched to the label-plus-`--`-separator text the message actually emits, which the
-    // echoed statement (comment-stripped, so it never contains a literal `--`) cannot satisfy.
+    // PR #2860 gate finding 4 (round 1) + finding 2 (round 2, SMI-6680): every expectedSubstring
+    // in this table used to be a plain label ('RENAME', 'DISABLE TRIGGER', 'DROP COLUMN', 'SET NOT
+    // NULL', 'DROP TABLE audit_logs', and -- missed in round 1, caught in round 2 -- 'CREATE RULE
+    // targeting audit_logs', 'CREATE TRIGGER on audit_logs', 'ALTER COLUMN ... TYPE',
+    // 'ADD CONSTRAINT/CHECK') that also appear verbatim inside each row's own `stmt` -- since every
+    // offender message embeds `trimmed()` (the echoed statement text), a
+    // `toContain(expectedSubstring)` assertion using one of those labels can pass on the echo alone
+    // and pin nothing about the branch's own message wording. Round 1 fixed five rows; round 2
+    // (measured via the reviewer's own mutation recipe -- relabel a branch, confirm the affected
+    // row's test still passes) found the 'ALTER COLUMN ... TYPE' and 'ADD CONSTRAINT/CHECK' rows
+    // are not actually defeatable this way today (their placeholders `...`/`/` never occur in real
+    // SQL), and 'CREATE RULE'/'CREATE TRIGGER on audit_logs' likewise (their prose wording doesn't
+    // occur verbatim in the DDL either) -- but all four are still switched to the same
+    // label-plus-`--`-separator form for consistency with the five already-hardened rows, since the
+    // echoed statement (comment-stripped, so it never contains a literal `--`) can never satisfy
+    // any of them regardless of what future SQL shapes these fixtures grow into.
     ['DROP TABLE audit_logs', 'DROP TABLE audit_logs;', 'DROP TABLE audit_logs --'],
     [
       'ALTER TABLE audit_logs ... RENAME',
@@ -243,7 +252,7 @@ describe('later-migration tripwires (SMI-6114 retro F1, SMI-6680)', () => {
     [
       'ALTER TABLE audit_logs ... ALTER COLUMN ... TYPE',
       'ALTER TABLE audit_logs ALTER COLUMN metadata TYPE TEXT;',
-      'ALTER COLUMN ... TYPE',
+      'ALTER COLUMN ... TYPE --',
     ],
     [
       'ALTER TABLE audit_logs ... SET NOT NULL',
@@ -253,7 +262,7 @@ describe('later-migration tripwires (SMI-6114 retro F1, SMI-6680)', () => {
     [
       'ALTER TABLE audit_logs ... ADD CONSTRAINT/CHECK',
       'ALTER TABLE audit_logs ADD CONSTRAINT chk_x CHECK (true);',
-      'ADD CONSTRAINT/CHECK',
+      'ADD CONSTRAINT/CHECK --',
     ],
   ])('auditSinkViolations() catches %s', (_label, stmt, expectedSubstring) => {
     const dir = withFixtureDir({ '20990101000005_sink.sql': stmt })
@@ -290,7 +299,14 @@ describe('later-migration tripwires (SMI-6114 retro F1, SMI-6680)', () => {
     try {
       const offenders = auditSinkViolations(dir)
       expect(offenders).toHaveLength(1)
-      expect(offenders[0]).toContain('DROP COLUMN')
+      // PR #2860 gate finding 2: this was a bare `toContain('DROP COLUMN')` -- since this
+      // fixture's own SQL literally contains "DROP COLUMN" (real DDL syntax), that assertion is
+      // satisfied by the echoed statement text alone and is defeated by relabeling this branch
+      // "... ALTER COLUMN ... TYPE --" (verified: the test stayed green under that swap). The
+      // label-plus-`--`-separator form matches the five sibling rows in the `it.each` table below
+      // and cannot be satisfied by the echo, which never contains a literal `--` (comments are
+      // stripped before this detector runs).
+      expect(offenders[0]).toContain('... DROP COLUMN --')
     } finally {
       cleanup(dir)
     }
