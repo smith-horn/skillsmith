@@ -411,8 +411,9 @@ their outcomes, are the concrete facts to bring to the harness team.
   the original guidance below to go read `~/.codex/sessions/` was wrong;
   read on for the corrected location.** The trace file `dispatch.sh` prints
   as `trace=`/`trace:` (built by `needle_bead_trace_path()` in
-  `scripts/needle/lib.sh`, pointing at `trace.jsonl`) only ever contains
-  `tool_call`/`tool_result`/`tokens` events — never the dispatched model's
+  `scripts/needle/lib.sh`, pointing at `trace.jsonl`) carries
+  `tool_call`/`tool_result`/`tokens` events, plus `error` events when the
+  backend refuses the turn — never the dispatched model's
   final text response, regardless of `--expect-write`. This originally led
   us to document `~/.codex/sessions/<year>/<month>/<day>/rollout-<timestamp>-<uuid>.jsonl`
   as the place to find it — **that was wrong.** The final answer actually
@@ -470,6 +471,62 @@ their outcomes, are the concrete facts to bring to the harness team.
   Corroborate with `outcome=` and `bead_state_pre_close=` (`in_progress`
   means the worker claimed and processed the bead; `open` means it died
   before claiming) — but the contract is the test, not the corroboration.
+
+- **A killed dispatch, a quota-failed one and a capacity-failed one look
+  alike from outside. Read the trace's error message first**, before
+  `reason=`, `stdout.txt` or elapsed time. Each leaves a bead that stopped
+  without a complete agent message; only `trace.jsonl` separates them. Count
+  its event types, and check `total=` (the denominator) and `unparsed=`
+  before trusting the counts:
+
+      node -e 'const L=require("fs").readFileSync(process.argv[1],"utf8").split("\n").filter(Boolean);const c={};let bad=0;for(const s of L){try{const t=JSON.parse(s).type;c[t]=(c[t]||0)+1}catch(e){bad++}}console.log(JSON.stringify(c),"total="+L.length,"unparsed="+bad)' <workspace>/.beads/traces/<bead-id>/trace.jsonl
+      echo "exit=$?"
+
+  Read the result like this:
+
+  - **Any `error` event: the backend refused the turn, and its `message` is
+    the only thing that says which refusal.** `You've hit your usage limit`
+    is quota; `Selected model is at capacity` is capacity. **The tool-call
+    count does not discriminate**, in either direction: a usage-limit
+    failure can arrive after several completed calls, and a capacity failure
+    usually does too. So when the counts show `error`, print the messages:
+
+          node -e 'const L=require("fs").readFileSync(process.argv[1],"utf8").split("\n").filter(Boolean);let n=0;for(const s of L){const e=JSON.parse(s);if(e.type==="error"){n++;console.log(e.message)}}console.log("errors="+n,"total="+L.length)' <trace.jsonl or stdout.txt>
+          echo "exit=$?"
+  - **No `error`, matched counts, a trailing `tokens` event**: the turn
+    finished. Equal counts are weak evidence, not proof of pairing — the
+    command reports counts, not matching, so a returned-out-of-order or
+    unreturned call can still read as equal.
+  - **A `tool_call` count above `tool_result`, with no `error`**:
+    **PREDICTED, NOT MEASURED** as the shape of a kill mid-work. No killed
+    trace has been examined to confirm it, and an unequal count on its own
+    does not imply a kill: a real usage-limit failure produced 6 calls and 5
+    results. Treat it as a hypothesis, not a rule.
+  - **`total=0`**: you learned nothing. An empty trace exits 0 and prints
+    `{}`, which is not evidence that the run was clean. A missing file exits
+    non-zero and says so.
+  - **`unparsed=0`**: every line was valid JSON, which is not the same as
+    understood. An event whose type key ever changes buckets as
+    `"undefined"`, with `unparsed` still 0, so read the keys, not just the
+    counts.
+  - **No `trace.jsonl` at all**: run the message command above against
+    `stdout.txt`, which carries `error` events too. Do not apply the count
+    rules to it: `stdout.txt` uses a different vocabulary
+    (`thread.started`, `turn.started`, `item.started`, `item.completed`,
+    `turn.failed`) and has no `tool_call` events at all, so a zero
+    tool-call count there means nothing.
+
+  **Compare against a known-good run before concluding anything.** Run the
+  same command on a trace you already know finished cleanly, such as your
+  own last verified `success` bead, and compare the two shapes. A shape you
+  have never seen on a good run is a question, not a verdict.
+
+  **Elapsed time is corroboration only.** NEEDLE's `uptime_secs`
+  (`worker.idle_sleep_entered` and `worker.stopped` events in
+  `~/.needle/logs/*.jsonl`) and a bead's `duration_ms`
+  (`.beads/traces/<bead-id>/metadata.json`) say how long a process lived,
+  not why it stopped. A capacity failure and a clean run can take nearly the
+  same time. The measurements behind this bullet are on SMI-6684.
 
 - **A `bf` bead ends up `closed` with NO trace directory at all under
   `.beads/traces/<bead-id>/`** (SMI-6015 retro, 2026-08-25) — a different,
