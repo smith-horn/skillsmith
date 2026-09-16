@@ -407,15 +407,37 @@ export function injectFsErrnoOnce(fsModule, fnName, matchFn, code) {
  * @returns {{wait: () => void, result: Promise<{applied:string|null, error:string|null}>}}
  */
 export function spawnConcurrentRacer(targetAbs, readyMarkerPath) {
+  // The `now()` timestamps below are `process.hrtime.bigint()` in
+  // milliseconds: the SYSTEM monotonic clock (CLOCK_MONOTONIC on Linux,
+  // mach time on macOS), whose origin is the boot, not this process. That is
+  // what makes them comparable with the parent's own timestamps and lets
+  // a13-vr.mjs place a landed mutation before, during or after the guard pass
+  // instead of inferring it.
+  //
+  // `performance.timeOrigin + performance.now()` was tried first and is
+  // WRONG for this: timeOrigin is calibrated per process, so a child measured
+  // its own marker write AFTER the parent observed the file -- 8 of 8 runs on
+  // the first smoke test, an impossible ordering, which is exactly what the
+  // parent's clockSkewCheckMs assertion exists to catch. Do not switch back.
   const script = `
     const fs = require('node:fs');
+    const now = () => Number(process.hrtime.bigint()) / 1e6;
     const target = process.argv[1];
     const delayMs = Number(process.argv[2]);
     const mutation = process.argv[3];
     const readyMarker = process.argv[4];
+    // Timestamped BEFORE the write, not after: the parent's tight poll can
+    // see the file the instant writeFileSync returns, which is microseconds
+    // BEFORE a now() placed on the next line would run -- that ordering made
+    // the parent's clockSkewCheckMs look negative in 22 of 23 smoke runs and
+    // was read as a clock-comparability failure when it was a placement bug.
+    // Taken here, markerWrittenAt <= markerObservedAt holds by construction,
+    // so a negative value really does mean the clocks disagree.
+    const markerWrittenAt = now();
     fs.writeFileSync(readyMarker, '1');
     const start = Date.now();
     while (Date.now() - start < delayMs) { /* busy-wait: real jitter, no timer overhead */ }
+    const mutationStartedAt = now();
     try {
       let writtenContent = null;
       let writtenPath = null;
@@ -443,10 +465,16 @@ export function spawnConcurrentRacer(targetAbs, readyMarkerPath) {
         writtenPath = target;
       }
       process.stdout.write(
-        JSON.stringify({ applied: mutation, error: null, writtenPath, writtenContent })
+        JSON.stringify({
+          applied: mutation, error: null, writtenPath, writtenContent,
+          markerWrittenAt, mutationStartedAt, landedAt: now(), delayMs,
+        })
       );
     } catch (err) {
-      process.stdout.write(JSON.stringify({ applied: null, error: err.code || String(err) }));
+      process.stdout.write(JSON.stringify({
+        applied: null, error: err.code || String(err),
+        markerWrittenAt, mutationStartedAt, landedAt: now(), delayMs,
+      }));
     }
   `
   const mutations = ['a3', 'a5', 'a7', 'a8']
@@ -472,12 +500,19 @@ export function spawnConcurrentRacer(targetAbs, readyMarkerPath) {
     child.on('error', (err) => resolve({ applied: null, error: err.message }))
   })
   return {
-    /** Blocks synchronously (tight poll, not a timer) until the child confirms it is alive. */
+    /**
+     * Blocks synchronously (tight poll, not a timer) until the child confirms
+     * it is alive. Returns the moment the marker was OBSERVED, on the parent's
+     * own clock -- the caller pairs it with the child's `markerWrittenAt` to
+     * check the two processes' clocks agree before trusting any cross-process
+     * ordering derived from them.
+     */
     wait(timeoutMs = 2000) {
       const deadline = Date.now() + timeoutMs
       while (!existsSync(readyMarkerPath) && Date.now() < deadline) {
         /* tight poll -- deliberately not a timer, to not yield the event loop */
       }
+      return Number(process.hrtime.bigint()) / 1e6
     },
     result,
   }

@@ -9,6 +9,7 @@ import path from 'node:path'
 import { fileURLToPath } from 'node:url'
 import { appendJsonl, makeRecord, aggregateCell, formatVerdict } from './result-schema.mjs'
 import { resolveHarnessRoot } from './fixture-root.mjs'
+import { resolveControl, controlFailedFlag, controlTag } from './control-spec.mjs'
 import * as a5vr from './attacks/a5-vr.mjs'
 import * as a6vr from './attacks/a6-vr.mjs'
 
@@ -86,8 +87,21 @@ function main() {
         variant,
         variant
       )
-      const agg = aggregateCell(records, () => false, { target, controlFailed: true })
-      console.log(formatVerdict(`A5-VR/${variant}`, agg))
+      // `controlFailed: true` was hardcoded here. That is an assertion about
+      // another cell (plan §5.1 A5's own control, run by run-c0-control.mjs on
+      // a different filesystem set) that this process never observed, so it
+      // could only ever be right by luck. Resolved from control-spec.mjs
+      // instead; when the control is not in THIS run's data it resolves to
+      // `absent` and the cell is reported as NEVER-RAN (control), not PASS.
+      const cell5 = { attack: 'A5-VR', variant, candidate: variant, fs: opts.fsLabel }
+      const control5 = resolveControl(cell5, [cell5])
+      const agg = aggregateCell(records, () => false, {
+        target,
+        controlFailed: controlFailedFlag(control5.state),
+      })
+      console.log(
+        `${formatVerdict(`A5-VR/${variant}`, agg)}\tcontrol=${controlTag(control5.state)}`
+      )
       const reuseCount = extras.filter((e) => e && e.reuseObserved === true).length
       console.log(
         `      inode+birthtime reuse observed: ${reuseCount}/${target} (held-fd pinning should keep this at or near 0)`
@@ -111,8 +125,21 @@ function main() {
             variant,
             `${variant2}/${guardMode}`
           )
-          const agg = aggregateCell(records, () => false, { target, controlFailed: true })
-          console.log(formatVerdict(`A6-VR/${variant2}/${guardMode}/${variant}`, agg))
+          // Same correction as A5-VR above: resolved, not asserted.
+          const cell6 = {
+            attack: 'A6-VR',
+            variant: `${variant2}/${guardMode}`,
+            candidate: variant,
+            fs: opts.fsLabel,
+          }
+          const control6 = resolveControl(cell6, [cell6])
+          const agg = aggregateCell(records, () => false, {
+            target,
+            controlFailed: controlFailedFlag(control6.state),
+          })
+          console.log(
+            `${formatVerdict(`A6-VR/${variant2}/${guardMode}/${variant}`, agg)}\tcontrol=${controlTag(control6.state)}`
+          )
         }
       }
     }

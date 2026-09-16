@@ -8,6 +8,7 @@ import path from 'node:path'
 import { fileURLToPath } from 'node:url'
 import { appendJsonl, makeRecord, aggregateCell, formatVerdict } from './result-schema.mjs'
 import { resolveHarnessRoot } from './fixture-root.mjs'
+import { resolveControl, controlFailedFlag, controlTag } from './control-spec.mjs'
 import * as n1vr from './attacks/n1-vr.mjs'
 
 function parseArgs(argv) {
@@ -50,7 +51,13 @@ function main() {
           }
         }
         const record = makeRecord({
-          cell: { attack: 'N1-VR', variant: guardMode, candidate: variant, fs: opts.fsLabel, runner: 'run-n1-vr.mjs' },
+          cell: {
+            attack: 'N1-VR',
+            variant: guardMode,
+            candidate: variant,
+            fs: opts.fsLabel,
+            runner: 'run-n1-vr.mjs',
+          },
           run,
           precondition: raw.precondition,
           outcome: raw.outcome,
@@ -60,8 +67,21 @@ function main() {
         records.push(record)
         if (out) appendJsonl(out, { ...record, extra: raw.extra ?? null })
       }
-      const agg = aggregateCell(records, () => false, { target: opts.target })
-      console.log(formatVerdict(`N1-VR/${guardMode}/${variant}`, agg))
+      // Plan §9's control clause, supplied rather than omitted. For N1-VR it
+      // resolves to `none` (the plan names a control for C0's N1 only, not for
+      // VR), so `controlFailedFlag` is `undefined` and no control requirement
+      // applies -- but that is now a stated resolution from control-spec.mjs
+      // rather than the silence of never passing the option at all, which read
+      // identically and meant something different.
+      const cell = { attack: 'N1-VR', variant: guardMode, candidate: variant, fs: opts.fsLabel }
+      const control = resolveControl(cell, [cell])
+      const agg = aggregateCell(records, () => false, {
+        target: opts.target,
+        controlFailed: controlFailedFlag(control.state),
+      })
+      console.log(
+        `${formatVerdict(`N1-VR/${guardMode}/${variant}`, agg)}\tcontrol=${controlTag(control.state)}`
+      )
     }
   }
   console.log('')

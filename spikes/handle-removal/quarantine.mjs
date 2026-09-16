@@ -20,11 +20,98 @@
 import fs from 'node:fs'
 import path from 'node:path'
 import crypto from 'node:crypto'
+import { computeTreeHash } from './hash.mjs'
 
 const SPIKE_VERSION = 'smi-6676-spike-c4-prototype'
 
 function randSuffix() {
   return crypto.randomBytes(4).toString('hex')
+}
+
+/**
+ * Builds a §3.4 tree-hash record from a PATH walk, in the same shape
+ * `guardPass()` builds from held handles, so `computeTreeHash()` -- the same
+ * function, imported, not reimplemented -- yields the identical digest for
+ * the identical tree. That equality is what lets ONE `guardHash` value from a
+ * caller be checked on either path; `harness/test-guard-hash-parity.mjs`
+ * measures it rather than assuming it.
+ *
+ * This walk is path-based and therefore inherently TOCTOU-prone -- it is the
+ * FALLBACK, which runs precisely when no native shim is available to hold
+ * handles. It closes the pre-aged-substitute class (something that was already
+ * sitting under the target's name before the call). It does NOT close the
+ * concurrent-race class the way VR's held-fd guard pass does, and must not be
+ * described as if it did.
+ *
+ * @returns {{ok:true, record:Map}|{ok:false, reason:string, path:string, errno:string|null}}
+ */
+function pathTreeRecord(absRoot) {
+  const record = new Map()
+  function visit(rel, abs) {
+    let st
+    try {
+      st = fs.lstatSync(abs, { bigint: true })
+    } catch (err) {
+      return { ok: false, reason: 'guard-unreadable', path: abs, errno: err.code ?? null }
+    }
+    const mode = Number(st.mode)
+    const size = st.size
+    if (st.isDirectory()) {
+      record.set(rel, { type: 'dir', mode, size })
+      let names
+      try {
+        names = fs.readdirSync(abs).sort()
+      } catch (err) {
+        return { ok: false, reason: 'guard-unreadable', path: abs, errno: err.code ?? null }
+      }
+      for (const name of names) {
+        const r = visit(rel ? `${rel}/${name}` : name, path.join(abs, name))
+        if (r && r.ok === false) return r
+      }
+      return null
+    }
+    if (st.isSymbolicLink()) {
+      try {
+        record.set(rel, { type: 'symlink', mode, size, linkText: fs.readlinkSync(abs) })
+      } catch (err) {
+        return { ok: false, reason: 'guard-unreadable', path: abs, errno: err.code ?? null }
+      }
+      return null
+    }
+    if (st.isFile()) {
+      let buf
+      try {
+        buf = fs.readFileSync(abs)
+      } catch (err) {
+        return { ok: false, reason: 'guard-unreadable', path: abs, errno: err.code ?? null }
+      }
+      record.set(rel, {
+        type: 'file',
+        mode,
+        size,
+        contentHash: crypto.createHash('sha256').update(buf).digest('hex'),
+      })
+      return null
+    }
+    return { ok: false, reason: 'guard-unsupported-type', path: abs, errno: null }
+  }
+  const failure = visit('', absRoot)
+  if (failure) return failure
+  return { ok: true, record }
+}
+
+/**
+ * The fallback path's verify-before-act step.
+ *
+ * Exported so `harness/test-guard-hash-parity.mjs` can measure that this and
+ * `removeVR`'s guard pass agree, which is the whole premise of a caller
+ * passing one `guardHash` to `removeTree()` without knowing which path will
+ * run.
+ */
+export function computePathTreeHash(absRoot) {
+  const r = pathTreeRecord(absRoot)
+  if (!r.ok) return r
+  return { ok: true, treeHash: computeTreeHash(r.record) }
 }
 
 function treeBytes(absPath) {
@@ -109,14 +196,45 @@ function ensureTrashRoot(parentAbs, nativeShim) {
  * @param {string} [options.kind]
  * @param {string} [options.client]
  * @param {string} [options.rootKey]
- * @param {string} [options.treeHash]
+ * @param {string} [options.guardHash] - if given, the tree's own hash,
+ *   recomputed here, must equal this or nothing is moved and the call returns
+ *   `kept`. SAME OPTION NAME as `removeVR`'s, deliberately: `removeTree()`
+ *   forwards its options verbatim to whichever path runs, and while this one
+ *   read `options.treeHash` instead, a caller doing exactly what the decision
+ *   memo's condition (1) requires -- pass a guardHash to removeTree() -- was
+ *   silently UNGUARDED on the fallback path, and the hash was dropped into the
+ *   sidecar as `null`. Reproduced before the fix: `removeTree(target, {
+ *   guardHash: 'DELIBERATELY-WRONG-HASH' })` with SKILLSMITH_REMOVAL_NATIVE_
+ *   DISABLE=1 returned `{"status":"quarantined"}`, the original path was gone,
+ *   and `sidecar.treeHash` was `null`. `harness/test-guard-hash-parity.mjs`
+ *   is the behavioural acceptance test that now pins it on BOTH paths.
+ * @param {string} [options.treeHash] - deprecated alias for `guardHash`,
+ *   accepted only so an older caller is not silently ignored; it is treated
+ *   as a guard hash, not as inert sidecar metadata.
  * @param {object} [options.nativeShim] - optional, for the extra mnt_id check only
  * @returns {{status:'quarantined', path:string, sidecarPath:string, opId:string}
+ *          |{status:'kept', reason:string, path:string, treeHash:string}
  *          |{status:'stopped', reason:string, path:string, entry:string, errno:string|null}}
  */
 export function quarantineTree(parentAbs, name, options = {}) {
   const opId = options.opId ?? randSuffix()
   const originPath = path.join(parentAbs, name)
+
+  // Verify BEFORE anything moves. `rename(2)` is the destructive step here --
+  // once the tree is in the trash directory under a random name, a caller
+  // that expected `kept` has already lost the thing it was protecting.
+  const guardHash = options.guardHash ?? options.treeHash
+  let observedTreeHash = null
+  if (guardHash !== undefined && guardHash !== null) {
+    const h = computePathTreeHash(originPath)
+    if (!h.ok) {
+      return { status: 'stopped', reason: h.reason, path: h.path, entry: name, errno: h.errno }
+    }
+    observedTreeHash = h.treeHash
+    if (h.treeHash !== guardHash) {
+      return { status: 'kept', reason: 'identity-changed', path: originPath, treeHash: h.treeHash }
+    }
+  }
 
   const trash = ensureTrashRoot(parentAbs, options.nativeShim)
   if (!trash.ok) {
@@ -178,7 +296,11 @@ export function quarantineTree(parentAbs, name, options = {}) {
       client: options.client ?? 'spike',
       rootKey: options.rootKey ?? null,
       originPath,
-      treeHash: options.treeHash ?? null,
+      // The hash this call actually VERIFIED, not one handed in and never
+      // checked. `null` now means "no guard hash was supplied", which is a
+      // different and honest claim from the old `null`, which meant "a hash
+      // may have been supplied under a name nothing read".
+      treeHash: observedTreeHash,
       bytes,
       createdAt: new Date().toISOString(),
       skillsmithVersion: SPIKE_VERSION,

@@ -11,6 +11,15 @@ import path from 'node:path'
 import { fileURLToPath } from 'node:url'
 import { appendJsonl, makeRecord, aggregateCell, formatVerdict } from './result-schema.mjs'
 import { resolveHarnessRoot } from './fixture-root.mjs'
+import { resolveControl, controlFailedFlag, controlTag } from './control-spec.mjs'
+
+// Every cell this process runs, kept so the plan §9 control clause can be
+// applied at the end. Until this existed, `aggregateCell` was always called
+// without `controlFailed`, so its `NEVER-RAN (control)` branch -- the clause
+// that says "if the control didn't fail, the fixture is invalid" -- was
+// unreachable from this runner, and an uncontrolled cell printed as a plain
+// PASS. See harness/control-spec.mjs.
+const ALL_CELLS = []
 
 import * as a3 from './attacks/a3.mjs'
 import * as a3vr from './attacks/a3-vr.mjs'
@@ -52,9 +61,18 @@ const CANDIDATES = {
  * Runs one cell: `target` invocations of `runFn({harnessRoot, candidate,
  * ...extraArgs})`, recording + aggregating. `runFn` may be async.
  */
-async function runCell({ runFn, attackId, tag, candidateKey, target, extraArgs, harnessRoot, fsLabel, out }) {
-  const candidate =
-    candidateKey === 'C0' ? {} : { variant: candidateKey }
+async function runCell({
+  runFn,
+  attackId,
+  tag,
+  candidateKey,
+  target,
+  extraArgs,
+  harnessRoot,
+  fsLabel,
+  out,
+}) {
+  const candidate = candidateKey === 'C0' ? {} : { variant: candidateKey }
   const records = []
   for (let run = 0; run < target; run += 1) {
     let raw
@@ -69,7 +87,13 @@ async function runCell({ runFn, attackId, tag, candidateKey, target, extraArgs, 
       }
     }
     const record = makeRecord({
-      cell: { attack: attackId, variant: tag, candidate: candidateKey, fs: fsLabel, runner: 'run-a3-a13-attacks.mjs' },
+      cell: {
+        attack: attackId,
+        variant: tag,
+        candidate: candidateKey,
+        fs: fsLabel,
+        runner: 'run-a3-a13-attacks.mjs',
+      },
       run,
       precondition: raw.precondition,
       outcome: raw.outcome,
@@ -80,7 +104,46 @@ async function runCell({ runFn, attackId, tag, candidateKey, target, extraArgs, 
     if (out) appendJsonl(out, { ...record, extra: raw.extra ?? null })
   }
   const agg = aggregateCell(records, () => false, { target })
+  ALL_CELLS.push({
+    attack: attackId,
+    variant: tag,
+    candidate: candidateKey,
+    fs: fsLabel,
+    target,
+    records,
+    failed: agg.failed,
+  })
   return { agg, records }
+}
+
+/**
+ * Re-scores every cell this process ran with the plan §9 control clause
+ * applied, and prints the difference. The per-cell lines printed live above
+ * are control-blind by necessity (a cell's control may not have run yet when
+ * it prints); THIS is the verdict the plan defines.
+ */
+function reportWithControls() {
+  console.log('')
+  console.log('=== plan §9 verdicts, control clause applied ===')
+  console.log('(a cell whose named control never demonstrated the loss proves nothing)')
+  const changed = []
+  for (const cell of ALL_CELLS) {
+    const c = resolveControl(cell, ALL_CELLS)
+    const agg = aggregateCell(cell.records, () => false, {
+      target: cell.target,
+      controlFailed: controlFailedFlag(c.state),
+    })
+    const label = `${cell.attack}/${cell.variant}/${cell.candidate}`
+    console.log(`${formatVerdict(label, agg)}\tcontrol=${controlTag(c.state)}`)
+    if (agg.verdict !== 'PASS' && agg.verdict.startsWith('NEVER-RAN (control)')) {
+      changed.push(`${label}: ${c.detail}`)
+    }
+  }
+  if (changed.length) {
+    console.log('')
+    console.log(`${changed.length} cell(s) are NOT PASS because their control never bit:`)
+    for (const line of changed) console.log(`  ${line}`)
+  }
 }
 
 async function runMatrix({
@@ -131,7 +194,9 @@ async function main() {
     `a3-a13-attacks-${opts.fsLabel}.jsonl`
   )
   const out = opts.out ?? outDefault
-  console.log(`[run-a3-a13-attacks] harnessRoot=${harnessRoot} out=${out} platform=${process.platform}`)
+  console.log(
+    `[run-a3-a13-attacks] harnessRoot=${harnessRoot} out=${out} platform=${process.platform}`
+  )
   console.log('')
 
   const want = (id) => !opts.only || opts.only.includes(id)
@@ -145,8 +210,7 @@ async function main() {
         { tag: 'none', extraArgs: { guardMode: 'none' } },
         { tag: 'guardHash', extraArgs: { guardMode: 'guardHash' } },
       ],
-      runFnFor: (kind, c) =>
-        kind === 'c0' ? a3.runOnce : a3vr.runOnce,
+      runFnFor: (kind, c) => (kind === 'c0' ? a3.runOnce : a3vr.runOnce),
       harnessRoot,
       fsLabel: opts.fsLabel,
       out,
@@ -209,7 +273,8 @@ async function main() {
   if (want('a9')) {
     const isDarwin = process.platform === 'darwin'
     const cases = [{ tag: 'stub', target: 30, extraArgs: { subcase: 'stub' } }]
-    if (isDarwin) cases.push({ tag: 'apfs-setfile', target: 30, extraArgs: { subcase: 'apfs-setfile' } })
+    if (isDarwin)
+      cases.push({ tag: 'apfs-setfile', target: 30, extraArgs: { subcase: 'apfs-setfile' } })
     // C0 has no guard concept -- run once per subcase, C0 candidate only
     // (a9.runOnce always calls removeC0 regardless of what candidate label
     // it's given -- restricting candidateKeys here is load-bearing, not
@@ -327,7 +392,13 @@ async function main() {
       for (let run = 0; run < 10; run += 1) {
         const raw = a12.runControl({ harnessRoot, subcase })
         const record = makeRecord({
-          cell: { attack: 'A12', variant: subcase, candidate: 'control-continues-past-errors', fs: opts.fsLabel, runner: 'run-a3-a13-attacks.mjs' },
+          cell: {
+            attack: 'A12',
+            variant: subcase,
+            candidate: 'control-continues-past-errors',
+            fs: opts.fsLabel,
+            runner: 'run-a3-a13-attacks.mjs',
+          },
           run,
           precondition: raw.precondition,
           outcome: raw.outcome,
@@ -338,6 +409,15 @@ async function main() {
         if (out) appendJsonl(out, { ...record, extra: raw.extra ?? null })
       }
       const agg = aggregateCell(records, () => false, { target: 10 })
+      ALL_CELLS.push({
+        attack: 'A12',
+        variant: subcase,
+        candidate: 'control-continues-past-errors',
+        fs: opts.fsLabel,
+        target: 10,
+        records,
+        failed: agg.failed,
+      })
       console.log(formatVerdict(`A12/${subcase}/control-continues-past-errors`, agg))
     }
     console.log('')
@@ -357,6 +437,7 @@ async function main() {
     console.log('')
   }
 
+  reportWithControls()
   console.log('[run-a3-a13-attacks] done')
 }
 
