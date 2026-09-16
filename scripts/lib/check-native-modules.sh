@@ -31,6 +31,8 @@
 # The one DURABLE exception is one append-only JSON line written to
 # $HOME/.skillsmith/logs/native-attribution.jsonl on every failure-path run
 # (SMI-6684 Wave 3); never on success, never when USE_DOCKER != 1.
+# RETENTION: none, deliberately -- one line per FAILED push, and ADR-165's
+# falsifier and retirement test need a lifetime denominator to divide by.
 # Opt-out: SKILLSMITH_SKIP_NATIVE_CHECK=1 (see docs/internal/process/guards-and-opt-outs.md).
 # Attribution-only opt-out: SKILLSMITH_NATIVE_CHECK_ATTRIBUTION_DISABLE=1
 # (still records; see nca_record below). Watchdog override (test-only, not a
@@ -308,17 +310,18 @@ nca_attrib() {
         NCA_MISMATCH=1
     fi
 
-    # ---- cause: separate layer; precedence per tier (spec §4.4) ----
+    # ---- cause: separate layer; precedence per tier ----
+    # nca_ct: nca_t is nca_tier()'s return (3rd such collision; no `local`).
     if [ "$NCA_MISMATCH" != 1 ]; then
-        for nca_t in 1 2; do
-            eval "nca_fa=\$nca_FALL$nca_t nca_mi=\$nca_MISS$nca_t nca_su=\$nca_SUBS$nca_t nca_se=\$nca_SEED$nca_t nca_ot=\$nca_OTHR$nca_t"
+        for nca_ct in 1 2; do
+            eval "nca_fa=\$nca_FALL$nca_ct nca_mi=\$nca_MISS$nca_ct nca_su=\$nca_SUBS$nca_ct nca_se=\$nca_SEED$nca_ct nca_ot=\$nca_OTHR$nca_ct"
             if [ -n "$nca_fa" ]; then NCA_CAUSE=FALL-THROUGH NCA_EVIDENCE=$nca_fa
             elif [ -n "$nca_mi" ]; then NCA_CAUSE=MOUNT-MISSING NCA_EVIDENCE=$nca_mi
             elif [ -n "$nca_su" ]; then NCA_CAUSE=MOUNT-SUBSTITUTED NCA_EVIDENCE=$nca_su
             elif [ -n "$nca_se" ]; then NCA_CAUSE=SEED-CONTENT NCA_EVIDENCE=$nca_se
             elif [ -n "$nca_ot" ]; then NCA_CAUSE=OTHER-NATIVE-FINDING NCA_EVIDENCE=$nca_ot
             else continue; fi
-            NCA_TIER=$nca_t
+            NCA_TIER=$nca_ct
             break
         done
         if [ -z "$NCA_TIER" ] && [ "$nca_grid" = 1 ] && [ "$nca_summary" = 1 ]; then
