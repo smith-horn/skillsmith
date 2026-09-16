@@ -31,7 +31,12 @@
 
 import { removeC0 } from '../../c0-walk.mjs'
 import { makeFixtureRoot } from '../fixture-root.mjs'
-import { buildSwapFixture, swapDirectorySameTick, verifyReplacementIntact, withStubbedBirthtime } from './_shared.mjs'
+import {
+  buildSwapFixture,
+  swapDirectorySameTick,
+  verifyReplacementIntact,
+  withStubbedBirthtime,
+} from './_shared.mjs'
 import { execFileSync } from 'node:child_process'
 import fs from 'node:fs'
 
