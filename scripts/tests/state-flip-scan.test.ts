@@ -751,11 +751,46 @@ describe('scan-state-flip.sh (SMI-6514 P-7 scanner) -- Group A: portable', () =>
       // identity-dependent text in the whole report the pathspec name in the warning.
       // So each cell's expected document is the base document with the name and extent
       // substituted -- a rule, not a stored document per cell.
-      const src = readFileSync(SCANNER_PATH, 'utf8')
-      const arr = src.match(/^PATHSPECS=\(([\s\S]*?)^\)/m)
-      expect(arr, 'PATHSPECS array not found -- parser drifted').toBeTruthy()
-      const specs = [...arr![1].matchAll(/'([^']+)'/g)].map((m) => m[1])
-      expect(specs.length).toBeGreaterThan(8)
+      // Enumerated by BASH ITSELF, not by a regex over the source.
+      //
+      // The 24th defect killed the regex version, and it is worth being precise about
+      // why, because it is a different class from the six before it. The old parser
+      // matched only single-quoted entries, so changing ONE entry to double quotes --
+      // semantically identical to bash -- silently dropped it from 11 to 10 while the
+      // scanner went on using it. The permissive `> 8` guard did not notice. The claim
+      // "parsed from the scanner's own array, cannot drift" was therefore false: what
+      // it parsed was a single-quote dialect that happened to coincide with the array.
+      //
+      // Evaluating the array declaration in bash removes the second parser entirely,
+      // and with it the possibility of the two disagreeing. NUL separation because a
+      // pathspec may legally contain anything but NUL.
+      const specsRaw = execFileSync(
+        'bash',
+        [
+          '-c',
+          'eval "$(sed -n "/^PATHSPECS=(/,/^)/p" "$1")"; printf "%s\\0" "${PATHSPECS[@]}"',
+          'bash',
+          SCANNER_PATH,
+        ],
+        { encoding: 'utf8' }
+      )
+      const specs = specsRaw.split('\0').filter((x) => x.length > 0)
+      // Not a "looks about right" threshold: the count must match what bash reports for
+      // the same declaration, so an extraction that silently truncates fails here.
+      const declaredCount = Number(
+        execFileSync(
+          'bash',
+          [
+            '-c',
+            'eval "$(sed -n "/^PATHSPECS=(/,/^)/p" "$1")"; echo "${#PATHSPECS[@]}"',
+            'bash',
+            SCANNER_PATH,
+          ],
+          { encoding: 'utf8' }
+        ).trim()
+      )
+      expect(specs.length, 'enumeration lost entries').toBe(declaredCount)
+      expect(declaredCount, 'PATHSPECS block not found or empty').toBeGreaterThan(0)
 
       const REF_SPEC = specs[0]
       const GITCRYPT_MAGIC = Buffer.from([
