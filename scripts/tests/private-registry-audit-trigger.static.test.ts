@@ -77,8 +77,15 @@
 
 import { describe, expect, it } from 'vitest'
 import { createHash } from 'node:crypto'
-import { readdirSync, readFileSync } from 'node:fs'
-import { join } from 'node:path'
+import { readFileSync } from 'node:fs'
+import {
+  allMigrationFiles,
+  alterFunctionRe,
+  dropFunctionRe,
+  laterMigrationFiles,
+  qualifiedIdent,
+  readMigrationText,
+} from './lib/migration-text-guards.ts'
 
 const helpers = (await import('../audit-standards-helpers.mjs')) as {
   auditSecdefAnonGrants: (
@@ -87,14 +94,14 @@ const helpers = (await import('../audit-standards-helpers.mjs')) as {
   ) => Array<{ file: string; fn: string; signature: string; reason: string }>
 }
 
-const MIGRATIONS_DIR = 'supabase/migrations'
+// MIGRATIONS_DIR, the git-crypt lock contract, migration enumeration and the qualified-identifier
+// fragment are imported from ./lib/migration-text-guards.ts (SMI-6690). They were worked out here
+// first, over several review rounds; a second suite then re-derived them by hand and omitted one
+// of them in each of three consecutive rounds, so they now live in one module both suites import.
 const MIGRATION_FILE = '20260913000000_private_registry_audit_trigger.sql'
-const PINNED_VERSION = Number(MIGRATION_FILE.match(/^(\d+)/)![1])
 // Not git-crypt-scoped (only supabase/functions/ and supabase/migrations/ are), so this is always
 // plaintext and needs no GIT_CRYPT_MAGIC handling of its own.
 const ROLLBACK_FILE = 'supabase/rollbacks/20260913000000_private_registry_audit_trigger_down.sql'
-const GIT_CRYPT_MAGIC = Buffer.from([0x00, 0x47, 0x49, 0x54, 0x43, 0x52, 0x59, 0x50, 0x54])
-const EXPECT_LOCKED_ENV_VAR = 'SKILLSMITH_GIT_CRYPT_EXPECTED_LOCKED'
 const FUNCTION_NAME = 'audit_private_registry_skills_change'
 
 /** The 15 columns read from prod's information_schema on 2026-09-13. */
@@ -116,36 +123,10 @@ const PROD_COLUMNS = [
   'review_note',
 ]
 
-function readMigration(name: string): string | null {
-  const raw = readFileSync(join(MIGRATIONS_DIR, name))
-  if (raw.subarray(0, GIT_CRYPT_MAGIC.length).equals(GIT_CRYPT_MAGIC)) {
-    if (process.env[EXPECT_LOCKED_ENV_VAR] !== '1') {
-      throw new Error(
-        `${name} is git-crypt-locked but ${EXPECT_LOCKED_ENV_VAR} is not set — treat as an unlock ` +
-          'failure, not a lock-state edge case (SMI-5984).'
-      )
-    }
-    return null
-  }
-  return raw.toString('utf8')
-}
+const readMigration = readMigrationText
 
 const triggerSql = readMigration(MIGRATION_FILE)
 const locked = triggerSql === null
-
-function allMigrationFiles(): string[] {
-  return readdirSync(MIGRATIONS_DIR)
-    .filter((f) => f.endsWith('.sql'))
-    .sort()
-}
-
-/** Every migration whose numeric-prefix version is strictly after MIGRATION_FILE's own. */
-function laterMigrationFiles(): string[] {
-  return allMigrationFiles().filter((f) => {
-    const m = f.match(/^(\d+)/)
-    return m !== null && Number(m[1]) > PINNED_VERSION
-  })
-}
 
 const stripLineComments = (sql: string): string => sql.replace(/--[^\n]*/g, '')
 
@@ -312,7 +293,7 @@ const reviewRemediation = (file: string): string =>
  * written down (SMI-6114 retro gate finding F1, PR #2855).
  */
 const DEF_RE = new RegExp(
-  String.raw`CREATE\s+(?:OR\s+REPLACE\s+)?FUNCTION\s+(?:(?:"?public"?)\s*\.\s*)?"?${FUNCTION_NAME}"?\s*\(\s*\)([\s\S]*?)\bAS\s+(\$[A-Za-z_]*\$)([\s\S]*?)\2`,
+  String.raw`CREATE\s+(?:OR\s+REPLACE\s+)?FUNCTION\s+${qualifiedIdent(FUNCTION_NAME)}\s*\(\s*\)([\s\S]*?)\bAS\s+(\$[A-Za-z_]*\$)([\s\S]*?)\2`,
   'gi'
 )
 
@@ -324,7 +305,7 @@ const DEF_RE = new RegExp(
  * fails on any gap, instead of silently treating the unparsed definition as absent.
  */
 const FUNCTION_CREATE_MENTION_RE = new RegExp(
-  String.raw`CREATE\s+(?:OR\s+REPLACE\s+)?FUNCTION\s+(?:(?:"?public"?)\s*\.\s*)?"?${FUNCTION_NAME}"?\s*\(\s*\)`,
+  String.raw`CREATE\s+(?:OR\s+REPLACE\s+)?FUNCTION\s+${qualifiedIdent(FUNCTION_NAME)}\s*\(\s*\)`,
   'gi'
 )
 
@@ -467,14 +448,8 @@ function dropTriggerRe(name: string): RegExp {
 function alterTriggerRe(name: string): RegExp {
   return new RegExp(String.raw`ALTER\s+TRIGGER\s+(?:"?public"?\s*\.\s*)?"?${name}"?\b`, 'i')
 }
-const DROP_FUNCTION_RE = new RegExp(
-  String.raw`DROP\s+FUNCTION\s+(?:IF\s+EXISTS\s+)?(?:"?public"?\s*\.\s*)?"?${FUNCTION_NAME}"?\s*\(`,
-  'i'
-)
-const ALTER_FUNCTION_RE = new RegExp(
-  String.raw`ALTER\s+FUNCTION\s+(?:"?public"?\s*\.\s*)?"?${FUNCTION_NAME}"?\s*\(`,
-  'i'
-)
+const DROP_FUNCTION_RE = dropFunctionRe(FUNCTION_NAME)
+const ALTER_FUNCTION_RE = alterFunctionRe(FUNCTION_NAME)
 
 /**
  * Every migration strictly after MIGRATION_FILE that drops or alters the pinned function or
@@ -483,7 +458,7 @@ const ALTER_FUNCTION_RE = new RegExp(
  */
 function triggerOrFunctionTamperViolations(): string[] {
   const offenders: string[] = []
-  for (const file of laterMigrationFiles()) {
+  for (const file of laterMigrationFiles(MIGRATION_FILE)) {
     const content = readMigration(file)
     if (content === null) continue
     const sql = stripComments(content)
@@ -518,7 +493,7 @@ function triggerOrFunctionTamperViolations(): string[] {
 function grantExecuteViolations(): string[] {
   const offenders: string[] = []
   const nameRe = new RegExp(String.raw`\b${FUNCTION_NAME}\b`, 'i')
-  for (const file of laterMigrationFiles()) {
+  for (const file of laterMigrationFiles(MIGRATION_FILE)) {
     const content = readMigration(file)
     if (content === null) continue
     const sql = stripComments(content)
@@ -564,7 +539,7 @@ function disableTriggerViolations(): string[] {
     String.raw`ALTER\s+TABLE\s+(?:IF\s+EXISTS\s+)?(?:ONLY\s+)?${TABLE_REF_SRC}\s+ENABLE\s+(?:REPLICA|ALWAYS)\s+TRIGGER\s+${AUDIT_TRIGGER_TARGET_SRC}\b`,
     'gi'
   )
-  for (const file of laterMigrationFiles()) {
+  for (const file of laterMigrationFiles(MIGRATION_FILE)) {
     if (REVIEWED_LATER_MIGRATIONS.includes(file)) continue
     const content = readMigration(file)
     if (content === null) continue
@@ -605,7 +580,7 @@ function laterTriggerViolations(): string[] {
     String.raw`CREATE\s+(?:OR\s+REPLACE\s+)?FUNCTION\s+(?:"?public"?\s*\.\s*)?"?${FUNCTION_NAME}"?\s*\(\s*([^()]+)\)`,
     'gi'
   )
-  for (const file of laterMigrationFiles()) {
+  for (const file of laterMigrationFiles(MIGRATION_FILE)) {
     if (REVIEWED_LATER_MIGRATIONS.includes(file)) continue
     const content = readMigration(file)
     if (content === null) continue
@@ -672,7 +647,7 @@ function auditSinkViolations(): string[] {
     /\bALTER\s+COLUMN\s+"?[A-Za-z_][A-Za-z0-9_]*"?\s+(?:SET\s+DATA\s+)?TYPE\b/i
   const setNotNullRe = /\bSET\s+NOT\s+NULL\b/i
   const addConstraintRe = /\bADD\s+(?:CONSTRAINT|CHECK)\b/i
-  for (const file of laterMigrationFiles()) {
+  for (const file of laterMigrationFiles(MIGRATION_FILE)) {
     if (REVIEWED_LATER_MIGRATIONS.includes(file)) continue
     const content = readMigration(file)
     if (content === null) continue
