@@ -109,7 +109,7 @@ export function runOnce({ harnessRoot, candidate, variant2, guardMode }) {
         // (`.skillsmith-rm-<opId>`) lands beside it, i.e. here. Scanning it makes
         // stranding OBSERVED rather than inferred from `outcome.reason`; see
         // result-schema.mjs for why a failed scan reports null and never 0.
-        quarantineLeft: scanQuarantineLeftovers(fx.root),
+        quarantineLeft: scanQuarantineLeftovers(fx.root, candidate?.variant),
       },
       userFiles,
       durationMs,

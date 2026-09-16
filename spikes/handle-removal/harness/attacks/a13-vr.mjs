@@ -29,13 +29,22 @@
 //
 //  1. `timing.phase`   -- classifyPhase(), the ORIGINAL per-pass label.
 //     RETAINED UNCHANGED although it is known to be wrong (see
-//     classifyPhase's own header), because 47,240 existing records carry it
+//     classifyPhase's own header), because records already written carry it
 //     and a relabelled field cannot be compared against them. Do not quote it
-//     without quoting `timing.passPhase` beside it.
+//     without quoting `timing.passPhase` beside it. (An earlier version of
+//     this comment justified the retention with a specific record count. It
+//     was wrong -- it had reused the corpus TOTAL rather than the number
+//     carrying this field -- and it began rotting the moment it was written,
+//     since every run changes it. The reason to retain the field does not
+//     depend on how many records carry it.)
 //  2. `timing.passPhase` -- classifyPassPhase(), the CORRECTED per-pass label.
 //     Same inputs, same clock, fixed branch order; it is a pure function of
-//     fields the old records already carry, so it can be recomputed over the
-//     whole existing corpus without re-running anything.
+//     fields the old records already carry, so it can be recomputed WITHOUT
+//     re-running -- but only for records that actually carry `extra.timing`.
+//     A large share of A13 records do not (notably the `a3-a13-attacks-*`
+//     files, which are the ones behind results/SUMMARY.md's A13 cells), so
+//     "recomputable over the whole corpus" is false: check for the field
+//     rather than assuming it, and report the denominator you actually had.
 //  3. `timing.entryPhase` -- classifyEntryPhase(), the PER-ENTRY label. Uses
 //     per-entry guard timestamps that older records do NOT carry, so it
 //     cannot be back-applied: it only exists for runs made after this change.
@@ -146,22 +155,34 @@ export function classifyPassPhase({
   // Window first, from landedAt alone.
   if (landedAt <= guardStartedAt) return 'pre-guard'
 
-  const startsBeforeGuard = mutationStartedAt != null && mutationStartedAt < guardStartedAt
+  // Every label below this point distinguishes two cases by WHERE the mutation
+  // began, so a null start cannot pick between them. The original code let
+  // `mutationStartedAt != null && ...` collapse to false and then returned the
+  // CONFIDENT side of each pair -- `during-guard`, `post-call`, `post-guard` --
+  // which is the exact inversion of this function's stated invariant that an
+  // unknown start may only ever WIDEN ambiguity. `pre-guard` above is kept
+  // because it is decided by `landedAt` alone and needs no start.
+  if (mutationStartedAt == null) return 'unknown'
+
+  const startsBeforeGuard = mutationStartedAt < guardStartedAt
 
   if (landedAt <= guardEndedAt) {
     return startsBeforeGuard ? 'straddles-guard-start' : 'during-guard'
   }
 
   if (callEndedAt != null && landedAt > callEndedAt) {
-    return mutationStartedAt != null && mutationStartedAt <= callEndedAt
-      ? 'straddles-call-end'
-      : 'post-call'
+    return mutationStartedAt <= callEndedAt ? 'straddles-call-end' : 'post-call'
   }
+
+  // Without callEndedAt the landing cannot be placed inside or outside the
+  // call, so the window below is not established. Saying `post-guard` here
+  // would claim a genuine V2 gap on unmeasured data.
+  if (callEndedAt == null) return 'unknown'
 
   // guardEndedAt < landedAt <= callEndedAt -- the window a post-guard V2 gap
   // would have to live in.
   if (startsBeforeGuard) return 'straddles-guard-span'
-  if (mutationStartedAt != null && mutationStartedAt <= guardEndedAt) return 'straddles-guard-end'
+  if (mutationStartedAt <= guardEndedAt) return 'straddles-guard-end'
   return 'post-guard'
 }
 
@@ -217,12 +238,23 @@ export function classifyEntryPhase({
   callEndedAt,
   mutationStartedAt,
   landedAt,
+  instrumented,
 }) {
   if (targetRel == null) return 'entry-unknown'
   if (landedAt == null || mutationStartedAt == null) return 'unknown'
   if (callEndedAt != null && landedAt > callEndedAt) {
     return mutationStartedAt <= callEndedAt ? 'straddles-call-end' : 'post-call'
   }
+  // `entry-not-instrumented` vs `entry-unobserved`: the difference between
+  // "the instrument was switched off" and "the instrument ran and the guard
+  // pass never reached this entry". Both leave `observedAt` null, and folding
+  // them together asserts a measured fact about the guard pass on runs where
+  // nothing per-entry was measured at all -- the same
+  // confident-label-for-an-unmeasured-quantity defect this classifier exists
+  // to remove, one level up. Every `entry-unobserved` record in the corpus
+  // when this was found (53 of 53, 52 of them losses) came from the off
+  // switch, not from a guard pass that stopped early.
+  if (instrumented === false) return 'entry-not-instrumented'
   if (observedAt == null) return 'entry-unobserved'
   if (landedAt <= observedAt) return 'pre-entry-observation'
   if (doneAt == null) return 'entry-subtree-incomplete'
@@ -341,7 +373,7 @@ export async function runOnce({
     //
     // `fx.root` is the directory that HELD the tree: removeVR puts V2's
     // quarantine (`.skillsmith-rm-<opId>`) beside the tree, i.e. here.
-    const quarantineLeft = scanQuarantineLeftovers(fx.root)
+    const quarantineLeft = scanQuarantineLeftovers(fx.root, candidate?.variant)
 
     let userFiles = { checked: 0, lost: 0, changed: 0 }
     if (racerResult.applied && racerResult.writtenPath) {
@@ -463,7 +495,13 @@ export async function runOnce({
           },
           phase: classifyPhase(timingCommon),
           passPhase: classifyPassPhase(timingCommon),
-          entryPhase: classifyEntryPhase({ targetRel, observedAt, doneAt, ...timingCommon }),
+          entryPhase: classifyEntryPhase({
+            targetRel,
+            observedAt,
+            doneAt,
+            instrumented: perEntryTiming,
+            ...timingCommon,
+          }),
         },
       },
     }

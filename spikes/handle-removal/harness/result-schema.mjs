@@ -53,7 +53,16 @@ const MAX_REPORTED_PATHS = 8
  * @param {string} parentAbs
  * @returns {{dirs:number|null, entries:number|null, paths:string[], scanError:string|null}}
  */
-export function scanQuarantineLeftovers(parentAbs) {
+export function scanQuarantineLeftovers(parentAbs, variant) {
+  // Only V2 creates a quarantine directory (`walk.mjs`: `if (variant === 'V2')`
+  // guards the mkdirAt). For V0 and V1 a scan can only ever return
+  // `{dirs:0, entries:0}` -- a confident zero about a mechanism that does not
+  // exist, which reads identically to "this variant stranded nothing". Report
+  // it as not-applicable instead, so the two cannot be confused once
+  // run-vr-attacks.mjs starts iterating V0/V1/V2 over the newly-wired modules.
+  if (variant != null && variant !== 'V2') {
+    return { dirs: null, entries: null, paths: [], scanError: `n/a:no-quarantine-in-${variant}` }
+  }
   let names
   try {
     names = readdirSync(parentAbs)
@@ -111,8 +120,12 @@ export function makeRecord(fields) {
     durationMs = null,
     fsCheck = null,
   } = fields
-  const quarantineLeft =
-    fields.quarantineLeft ?? (outcome && outcome.quarantineLeft ? outcome.quarantineLeft : null)
+  // `??` on BOTH sides. The inner test used to be truthiness, so a caller
+  // passing `0`/`false`/`''` on outcome.quarantineLeft collapsed to null --
+  // indistinguishable from "no scan ran" -- while the same value passed
+  // top-level survived. Two paths disagreeing about one value is how a null
+  // starts meaning two things at once.
+  const quarantineLeft = fields.quarantineLeft ?? outcome?.quarantineLeft ?? null
 
   if (!cell || typeof cell !== 'object') {
     throw new TypeError('makeRecord: cell is required')
