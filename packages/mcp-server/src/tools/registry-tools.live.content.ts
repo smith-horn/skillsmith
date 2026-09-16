@@ -160,14 +160,14 @@ export async function getSkillContent(
     throw new Error('Failed to read registry skill content: release_rpc_unrecognized_status')
   }
 
-  // `result.status === 'released'` from here — its step 4 (`jsonb_typeof(v_content) <> 'object'`)
-  // already guarantees `content` is a plain object before the RPC ever returns `released`, but
-  // NOT that every value inside it is a string: the DB's own CHECK only requires a non-empty
-  // string `SKILL.md`, every other key can be any JSON type, and `authenticated` still keeps
-  // `GRANT INSERT (... content)` — a malicious or buggy publish can land
-  // `{"SKILL.md":"ok","x":123}`. `installFromContent()` expects every value to be text, so this
-  // is a defensive check against the payload arriving malformed some other way (a non-object
-  // shape, or an object with a non-string value) — never inventing an empty install for it.
+  // `result.status === 'released'` from here. The RPC's own malformed-content guard withholds a
+  // row unless `content` is a plain object whose every top-level value is a string, so a stored
+  // `{"SKILL.md":"ok","x":123}` never arrives as `released`. (The DB's CHECK is weaker — a
+  // non-empty string `SKILL.md`, nothing about other keys — and `authenticated` keeps
+  // `GRANT INSERT (... content)`, so such a row IS storable; the read side refuses it.)
+  // `installFromContent()` expects every value to be text, so this repeats the shape check as
+  // defense in depth against transport mangling or a future RPC change — never inventing an
+  // empty install for it.
   const content = result.content
   if (
     !content ||

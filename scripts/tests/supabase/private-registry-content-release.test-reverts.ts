@@ -56,7 +56,21 @@ function replaceExactlyOnce(sql: string, anchor: string, replacement: string, id
   return sql.replace(anchor, replacement)
 }
 
-export type RevertVariant = 'a' | 'b' | 'c' | 'd' | 'e' | 'g' | 'h' | 'i' | 'j' | 'k' | 'l'
+export type RevertVariant =
+  | 'a'
+  | 'b'
+  | 'c'
+  | 'd'
+  | 'e'
+  | 'g'
+  | 'h'
+  | 'i'
+  | 'j'
+  | 'k'
+  | 'l'
+  | 'm'
+  | 'n'
+  | 'o'
 
 export function brokenMigrationSql(variant: RevertVariant): string {
   const real = migrationSql()
@@ -272,5 +286,42 @@ export function brokenMigrationSql(variant: RevertVariant): string {
       )
       return sql
     }
+    case 'm':
+      // (m) COMMENT OUT (not delete) the step-4 team_id predicate -- Finding 2 (Sol gate
+      // follow-up round): a plain `.toContain()` structural check against RAW extracted text
+      // would still see the substring inside the comment and pass against inert SQL. This
+      // variant, paired with the fixed (comment-stripping) structural assertion, is the proof
+      // that assertion genuinely discriminates active SQL from a commented-out lookalike.
+      return replaceExactlyOnce(
+        real,
+        '     AND prs.team_id = v_row.team_id\n',
+        '     -- AND prs.team_id = v_row.team_id -- SMI-6651 REVERT-TEST (m): commented out\n',
+        'm'
+      )
+    case 'n':
+      // (n) COMMENT OUT the step-4 approval_status predicate -- same Finding 2 proof, second
+      // predicate. `AND prs.approval_status = 'approved'` alone appears in BOTH step 2 and step
+      // 4, so the anchor widens to include the preceding `AND prs.team_id = v_row.team_id` line,
+      // which is unique to step 4 (step 2's own team_id predicates read differently).
+      return replaceExactlyOnce(
+        real,
+        "     AND prs.team_id = v_row.team_id\n     AND prs.approval_status = 'approved'\n",
+        '     AND prs.team_id = v_row.team_id\n' +
+          "     -- AND prs.approval_status = 'approved' -- SMI-6651 REVERT-TEST (n): commented out\n",
+        'n'
+      )
+    case 'o':
+      // (o) COMMENT OUT the step-4 deprecated predicate -- same Finding 2 proof, third predicate.
+      // Anchored on the terminating `;` so this does not collide with (d)'s STEP-2 deprecated
+      // anchor, which has no trailing semicolon. The `;` is moved to its own line (rather than
+      // commented out along with the predicate) so the SELECT statement stays syntactically
+      // terminated -- a real syntax error here would test something other than "predicate
+      // silently ignored," which is the property Finding 2 is about.
+      return replaceExactlyOnce(
+        real,
+        '     AND prs.deprecated = false;\n',
+        '     -- AND prs.deprecated = false -- SMI-6651 REVERT-TEST (o): commented out\n     ;\n',
+        'o'
+      )
   }
 }
