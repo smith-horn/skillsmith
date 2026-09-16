@@ -74,13 +74,11 @@ if run_cmd node -e "require('@skillsmith/core').createDatabaseSync(':memory:').c
     exit 0
 fi
 
-# ============================================================================
-# ---- failure path (everything below runs only after a failed probe) ----
-# Everything from here down is defined AFTER the success-path `exit 0` above,
-# so a healthy push never parses it. Design: ADR-165 + docs/internal/
-# implementation/smi-6684-verification-surface-integrity.md § Wave 3
-# (SMI-6684) — this file implements that design, it does not restate it.
-# ============================================================================
+# ---- failure path (everything below runs only after a failed probe) ------
+# Defined AFTER the success-path `exit 0` above, so a healthy push never
+# parses it. Design: ADR-165 + smi-6684-verification-surface-integrity.md §
+# Wave 3 (SMI-6684) -- this file implements that design, not restates it.
+# ----------------------------------------------------------------------------
 trap 'exit 1' PIPE
 
 # ---- attribution: constants, JSON validator, in-container producer -------
@@ -141,11 +139,9 @@ echo "NCA1 eof"
 # <path> is AT a better-sqlite3 path on @skillsmith/core's resolution chain:
 # equal, a descendant, or an ancestor. Both /app and clamp-resolved forms.
 nca_tier() {
-    # Fix-round: this loop var was named `nca_c` -- colliding with the
-    # GLOBAL `nca_c` (container name; no `local` in POSIX sh). Invisible
-    # before D-a because nca_render() always reset `nca_c` first; D-a's
-    # record-before-render reorder exposed it (R-JSONL-2/R-PIPE went red
-    # against real behaviour). Renamed to stop the collision.
+    # This loop var was `nca_c` -- colliding with the GLOBAL `nca_c`
+    # (container name; no `local` in POSIX sh). D-a's record-before-render
+    # reorder exposed it (R-JSONL-2/R-PIPE went red); renamed to stop it.
     nca_x=${1%/}
     [ -n "$nca_x" ] || return 1
     for nca_cand in 1:/app/packages/core/node_modules/better-sqlite3 \
@@ -186,9 +182,10 @@ nca_scan_line() { # one COMPLETE line of checker stdout
             nca_r=${1#'FAIL [A4] '}; nca_s=${nca_r%% *}; nca_k=SEED ;;
         'FAIL [A2] '*' is mounted but SUBSTITUTED: '*)
             nca_r=${1#'FAIL [A2] '}; nca_s=${nca_r%% *}; nca_k=SUBS ;;
+        'FAIL [A6] declared :ro but mounted rw: '*) return 0 ;; # MED-1: mode mismatch on an ALREADY-mounted dest says nothing about the binding
         'FAIL ['*'] '*)
-            # F-6/F-7: any assertion ID; subject is the first " /"-prefixed
-            # token -- some checker messages open with prose, not the path.
+            # F-6/F-7: any assertion ID; subject is the FIRST " /"-prefixed
+            # token, then stops scanning (LOW-4) -- some lines open with prose.
             nca_r=" ${1#*'] '}"
             case $nca_r in *' /'*) ;; *) return 0 ;; esac
             nca_s=/${nca_r#*' /'}; nca_s=${nca_s%% *}; nca_s=${nca_s%[:,)]}; nca_k=OTHR ;;
@@ -213,15 +210,15 @@ nca_attrib() {
     nca_pre= nca_rc= nca_report= nca_parse= nca_eof=0 nca_fails=0 nca_summary=0 nca_disable=0
     nca_env=$(mktemp 2>/dev/null) || { NCA_CATEGORY=UNEXPECTED; NCA_REASON=host-mktemp; return 0; }
     nca_wd=$((NCA_TIMEOUT_SECS + NCA_EXEC_MARGIN_SECS))
-    # F-8: a range check, not a single `0` exclusion -- `00`/`000` are
-    # all-digits and not literally `0`, so a single-value check let them
-    # through and turned every attribution into a false TIMEOUT.
+    # F-8: a range check, not a single `0` exclusion -- `00`/`000` pass an
+    # all-digits check without being literally `0`. LOW-2: normalize
+    # leading zeros too (`05`/`010`), or they survive verbatim into the reason.
     case ${SKILLSMITH_NATIVE_CHECK_ATTRIBUTION_WATCHDOG_SECS:-} in
         '') ;;
         *[!0-9]*) ;;
-        *) [ "$SKILLSMITH_NATIVE_CHECK_ATTRIBUTION_WATCHDOG_SECS" -ge 1 ] 2>/dev/null \
-            && [ "$SKILLSMITH_NATIVE_CHECK_ATTRIBUTION_WATCHDOG_SECS" -le 600 ] 2>/dev/null \
-            && nca_wd=$SKILLSMITH_NATIVE_CHECK_ATTRIBUTION_WATCHDOG_SECS ;;
+        *) nca_kv=$SKILLSMITH_NATIVE_CHECK_ATTRIBUTION_WATCHDOG_SECS
+            while :; do case $nca_kv in 0?*) nca_kv=${nca_kv#0} ;; *) break ;; esac; done
+            [ "$nca_kv" -ge 1 ] 2>/dev/null && [ "$nca_kv" -le 600 ] 2>/dev/null && nca_wd=$nca_kv ;;
     esac
 
     (run_cmd sh -c "$NCA_PRODUCER" nca "$NCA_TIMEOUT_SECS" "$NCA_CHECKER" \
@@ -242,9 +239,9 @@ nca_attrib() {
     wait "$nca_wdp" 2>/dev/null
 
     nca_st=meta nca_prev= nca_hp=0
-    # F-10: nca_nl tracks whether this line ended in a real newline. A
-    # truncated exec can leave an unterminated final "NCA1 missing ..."
-    # line -- never trustworthy evidence, so meta skips it.
+    # F-10/MED-2: nca_nl tracks whether this line ended in a real newline --
+    # an unterminated final line is never trustworthy evidence, so BOTH meta
+    # (e.g. a cut "NCA1 missing ...") and tail (a cut "NCA1 eof") skip it.
     while nca_nl=1; IFS= read -r nca_line || { nca_nl=0; [ -n "$nca_line" ]; }; do
         case $nca_st in
             meta)
@@ -270,7 +267,7 @@ nca_attrib() {
                     [ "$nca_hp" = 1 ] && nca_scan_line "$nca_prev"
                     nca_prev=$nca_line nca_hp=1
                 fi ;;
-            tail) [ "$nca_line" = 'NCA1 eof' ] && nca_eof=1 ;;
+            tail) [ "$nca_nl" = 1 ] && [ "$nca_line" = 'NCA1 eof' ] && nca_eof=1 ;;
         esac
     done <"$nca_env"
 
@@ -480,14 +477,14 @@ else
         # one row even then. wall_secs stays scoped to nca_attrib alone.
         nca_t0=$(date +%s 2>/dev/null || echo 0)
         nca_attrib
-        nca_rc=$?
+        nca_attrib_rc=$? # LOW-3: was `nca_rc`, colliding with nca_attrib's OWN internal nca_rc (checker rc) -- same class as nca_cand
         nca_t1=$(date +%s 2>/dev/null || echo 0)
         nca_rec_state=$NCA_CATEGORY
         if [ "$NCA_MISMATCH" = 1 ]; then nca_rec_state="$NCA_CATEGORY, REPORT/OUTPUT MISMATCH"; fi
         nca_record "$nca_c" "${NCA_MODE:-unknown}" "$nca_rec_state" "$NCA_REASON" "$NCA_CAUSE" \
             "${NCA_TIER:-0}" "$((nca_t1 - nca_t0))"
-        if [ "$nca_rc" = 0 ]; then nca_render; fi
-        [ "$nca_rc" = 0 ]
+        if [ "$nca_attrib_rc" = 0 ]; then nca_render; fi
+        [ "$nca_attrib_rc" = 0 ]
     ) || printf '  Mount check: UNEXPECTED -- cause: NOT-DETERMINED [attribution-error]\n'
 fi
 

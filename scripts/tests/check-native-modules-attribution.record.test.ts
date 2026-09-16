@@ -476,7 +476,7 @@ describe('check-native-modules.sh attribution: record, render, robustness (fix r
       expect(recs[0]).toMatchObject({ container: C, mode: 'main', cause: 'FALL-THROUGH' })
     })
 
-    it.each(['0', '00', '-5'])(
+    it.each(['0', '00', '05', '010', '-5', 'abc', '1.5', ' 3', '0x5', '600', '601', '1e3'])(
       'R-KNOB: watchdog knob %j never forces an instant host-watchdog TIMEOUT',
       (v) => {
         const r = runCase(fx, 'R-wt-floor', {
@@ -486,6 +486,21 @@ describe('check-native-modules.sh attribution: record, render, robustness (fix r
         expect(parseAttribution(r.stdout)?.state).toBe('FINDINGS')
       }
     )
+
+    // LOW-2 (SMI-6684 Wave 3 round 2): `05`/`010` are ACCEPTED (5s/10s), but
+    // the raw string used to survive verbatim into the reason. Force a real
+    // host-watchdog TIMEOUT with a small knob so the normalized value is
+    // observable in both the rendered L1 and the JSONL `reason` field.
+    it('R-KNOB-ZERO: a leading zero in the watchdog knob does not survive into the reason', () => {
+      const r = runCase(fx, 'T-host-watchdog', {
+        fakeDockerSleep: '6',
+        env: { SKILLSMITH_NATIVE_CHECK_ATTRIBUTION_WATCHDOG_SECS: '05' },
+      })
+      expect(parseAttribution(r.stdout)?.detail).toBe('host-watchdog:5s')
+      const recs = records(r.home)
+      expect(recs).toHaveLength(1)
+      expect(recs[0]?.['reason']).toBe('host-watchdog:5s')
+    })
 
     it('R-TMP: no host temp file survives a failure run, a watchdog run, or a healthy run', () => {
       for (const [id, opts] of [
@@ -542,6 +557,77 @@ describe('check-native-modules.sh attribution: record, render, robustness (fix r
       ]) {
         expect(probes.includes(f), f).toBe(true)
       }
+    })
+
+    // MED-1 (SMI-6684 Wave 3 round 2): A6 has TWO shapes and they are not the
+    // same kind of evidence -- separate them rather than trust one test.
+    const A4_ORIG =
+      'FAIL [A4] /app/node_modules/@ruvector/attention-linux-arm64-gnu/attention.linux-arm64-gnu.node is MACHO, expected ELF (declared /app/node_modules/@ruvector/attention-linux-arm64-gnu, volume=native-seed-ruvector-attention-linux-arm64-gnu, version=0.1.32) -- destination IS mounted, so the SEEDED VOLUME CONTENT itself is wrong (not a fall-through)'
+
+    it('MED-1a: an A6 ":ro but mounted rw" finding is excluded -- the mount IS present, so a mode mismatch is not binding evidence', () => {
+      const staged = stageCase(fx.root, 'R-wt-floor')
+      const out = join(staged, 'stdout')
+      const txt = readFileSync(out, 'utf8')
+      expect(txt).toContain(A4_ORIG)
+      const replaced =
+        'FAIL [A6] declared :ro but mounted rw: /app/packages/core/node_modules (declared /app/packages/core/node_modules, source=core-node-modules, kind=bind)'
+      writeFileSync(out, txt.replace(A4_ORIG, replaced))
+      const p = parseAttribution(runFromCaseDir(fx, staged).stdout)
+      expect(p?.state).toBe('FINDINGS')
+      expect(p?.cause).toBe('NO-NATIVE-FINDING')
+    })
+
+    it('MED-1b: an A6 "not mounted at all" finding at a better-sqlite3 ancestor still classifies, naming the path it actually names', () => {
+      const staged = stageCase(fx.root, 'R-wt-floor')
+      const out = join(staged, 'stdout')
+      const txt = readFileSync(out, 'utf8')
+      expect(txt).toContain(A4_ORIG)
+      const replaced =
+        'FAIL [A6] declared read-only parent is not mounted at all: /app/packages/core/node_modules (declared /app/packages/core/node_modules)'
+      writeFileSync(out, txt.replace(A4_ORIG, replaced))
+      const r = runFromCaseDir(fx, staged)
+      const p = parseAttribution(r.stdout)
+      expect(p?.cause).toBe('OTHER-NATIVE-FINDING')
+      expect(p?.evidence).toBe('/app/packages/core/node_modules')
+      // The rendered text must be true of what running "the full check
+      // below" reproduces -- and this EXACT FAIL line is what it shows.
+      expect(block(r.stdout).at(-2)).toBe(
+        '  Next: run the full check below and act on its better-sqlite3 FAIL line'
+      )
+    })
+
+    // MED-2 (SMI-6684 Wave 3 round 2): a BYTE-level truncation lever (harness
+    // `truncAfter`) reaches what `fakeDockerHead` (line-based) cannot -- an
+    // unterminated final line, in BOTH the `meta` and `tail` read states.
+    it('MED-2a: an envelope truncated right after "NCA1 eof" (unterminated tail) is envelope-truncated, not a clean EOF', () => {
+      const r = runCase(fx, 'S-clean', { truncAfter: 'NCA1 eof' })
+      const p = parseAttribution(r.stdout)
+      expect(p?.state).toBe('UNEXPECTED')
+      expect(p?.detail).toBe('envelope-truncated')
+    })
+
+    it('MED-2b: an envelope truncated right after a "NCA1 missing" meta line never fabricates MOUNT-MISSING from the cut content', () => {
+      // The cut line's own surviving content ("NCA1 missing
+      // /app/packages/core/node_modules") IS itself a valid better-sqlite3
+      // ancestor -- the exact fabrication hazard F-10's guard defuses.
+      const r = runCase(fx, 'R-meta-trunc', { truncAfter: 'NCA1 missing' })
+      const p = parseAttribution(r.stdout)
+      expect(p?.state).toBe('UNEXPECTED')
+      expect(p?.detail).toBe('envelope-truncated')
+      expect(p?.cause).toBe('NOT-DETERMINED')
+    })
+
+    // MED-3 (SMI-6684 Wave 3 round 2): a runtime probe of `café-dev-1`
+    // (R-JSONL-9) cannot fail in a container whose only locales are
+    // C/C.utf8/POSIX -- pin the SOURCE instead, so a regression to an
+    // A-Za-z RANGE is caught regardless of which locale the suite runs under.
+    it('MED-3: nca_json_safe is a literal ASCII charset, never an A-Za-z RANGE (F-17)', () => {
+      const src = readFileSync(SCRIPT, 'utf8')
+      const m = src.match(/nca_json_safe\(\) \{[\s\S]*?\n\}/)
+      expect(m, 'nca_json_safe function body found in source').toBeTruthy()
+      const body = m![0]
+      expect(body).toContain('ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789')
+      expect(body).not.toMatch(/A-Za-z/)
     })
   })
 })

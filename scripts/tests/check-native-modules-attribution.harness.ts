@@ -86,6 +86,14 @@ if [ -n "\${FAKE_DOCKER_HEAD:-}" ]; then
   env -i PATH="$FAKE_CONTAINER_PATH" HOME="$HOME" FAKE_CASE_DIR="$FAKE_CASE_DIR" FAKE_LOG="$FAKE_LOG" "$@" | head -n "$FAKE_DOCKER_HEAD"
   exit 0
 fi
+if [ -n "\${FAKE_DOCKER_TRUNC_AFTER:-}" ]; then
+  # MED-2 (SMI-6684 Wave 3 round 2): a BYTE-level truncation lever -- unlike
+  # FAKE_DOCKER_HEAD (head -n, always cuts on a line boundary), this drops
+  # the trailing newline of the FIRST matched line and everything after it,
+  # so the read loop sees a real unterminated final line (nca_nl=0).
+  env -i PATH="$FAKE_CONTAINER_PATH" HOME="$HOME" FAKE_CASE_DIR="$FAKE_CASE_DIR" FAKE_LOG="$FAKE_LOG" "$@" | awk -v m="$FAKE_DOCKER_TRUNC_AFTER" 'index($0,m){printf "%s", $0; exit} {print}'
+  exit 0
+fi
 exec env -i PATH="$FAKE_CONTAINER_PATH" HOME="$HOME" FAKE_CASE_DIR="$FAKE_CASE_DIR" FAKE_LOG="$FAKE_LOG" \${FAKE_CONTAINER_ENV:-} "$@"
 `
 
@@ -255,6 +263,9 @@ export interface RunOpts {
   fakeDockerRc?: string
   fakeDockerSleep?: string
   fakeDockerHead?: string
+  /** MED-2: truncate the envelope right after the FIRST line containing this
+   * substring, dropping its trailing newline (and everything after). */
+  truncAfter?: string
   fakeContainerEnv?: string
   cbin?: string
   appDir?: string
@@ -306,6 +317,7 @@ export function runFromCaseDir(fx: Fixtures, caseDir: string, opts: RunOpts = {}
     ...(opts.fakeDockerRc !== undefined ? { FAKE_DOCKER_RC: opts.fakeDockerRc } : {}),
     ...(opts.fakeDockerSleep !== undefined ? { FAKE_DOCKER_SLEEP: opts.fakeDockerSleep } : {}),
     ...(opts.fakeDockerHead !== undefined ? { FAKE_DOCKER_HEAD: opts.fakeDockerHead } : {}),
+    ...(opts.truncAfter !== undefined ? { FAKE_DOCKER_TRUNC_AFTER: opts.truncAfter } : {}),
     ...(opts.fakeContainerEnv !== undefined ? { FAKE_CONTAINER_ENV: opts.fakeContainerEnv } : {}),
     ...opts.env,
   }
