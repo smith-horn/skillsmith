@@ -257,7 +257,73 @@ export function quarantineTree(parentAbs, name, options = {}) {
   // that expected `kept` has already lost the thing it was protecting.
   const guardHash = options.guardHash ?? options.treeHash
   let observedTreeHash = null
+  // B2: THIS FUNCTION VERIFIED ONE TREE AND MOVED ANOTHER.
+  //
+  // `computePathTreeHash(originPath)` walks by path; `renameSync(originPath, ...)`
+  // resolves that path again, independently. Between them, anything that can
+  // write to `parentAbs` can swap what the name refers to -- so the caller's
+  // guard hash certified tree X while `rename(2)` moved tree Y into quarantine,
+  // and the guard bought nothing. That is the spike's own subject, in the
+  // spike's own fallback.
+  //
+  // FIXED BY APPLYING THE A1 PLAN'S MECHANISM RATHER THAN INVENTING A SECOND ONE.
+  // UD24 (owner decision 2026-09-15) binds a directory's identity as
+  // (dev, ino, birthtimeNs) from a bigint lstat and re-compares it immediately
+  // before each destructive step. UD25 adds the clock gate that makes the
+  // comparison sound: E47 measured overlayfs handing back the SAME inode AND
+  // birthtime in 1703 of 2000 immediate delete-recreate pairs, so identity alone
+  // is forgeable on a same-tick replacement (E53: 224 of 300 emptied).
+  //
+  // `expectIdentity` lets a caller bind the identity EARLIER than this function
+  // can -- UD24 requires the walked directory to match the identity its caller
+  // bound, not one this function invents after the fact. `maxBirthtimeNs` is
+  // probe 2's birthtime from UD25's gate; the gate itself belongs to the caller
+  // (§3.8), because it must run before the caller's own guard.
+  const bindIdentity = (p) => {
+    try {
+      const st = fs.lstatSync(p, { bigint: true })
+      return { ok: true, dev: st.dev, ino: st.ino, birthtimeNs: st.birthtimeNs }
+    } catch (err) {
+      return { ok: false, errno: err.code ?? null }
+    }
+  }
+  const sameIdentity = (a, b) =>
+    a.dev === b.dev && a.ino === b.ino && a.birthtimeNs === b.birthtimeNs
+
+  let boundIdentity = options.expectIdentity ?? null
+
   if (guardHash !== undefined && guardHash !== null) {
+    const before = bindIdentity(originPath)
+    if (!before.ok) {
+      return {
+        status: 'stopped',
+        reason: 'quarantine-failed',
+        path: originPath,
+        entry: name,
+        errno: before.errno,
+      }
+    }
+    // A caller-bound identity wins; otherwise bind it here, before the walk.
+    if (boundIdentity && !sameIdentity(boundIdentity, before)) {
+      return { status: 'kept', reason: 'identity-changed', path: originPath, treeHash: null }
+    }
+    boundIdentity = boundIdentity ?? before
+
+    // UD25's gate: a directory that existed before the gate ran is strictly
+    // older than probe 2. A same-tick replacement is not.
+    if (
+      options.maxBirthtimeNs !== undefined &&
+      options.maxBirthtimeNs !== null &&
+      !(boundIdentity.birthtimeNs < options.maxBirthtimeNs)
+    ) {
+      return {
+        status: 'kept',
+        reason: 'identity-not-older-than-probe',
+        path: originPath,
+        treeHash: null,
+      }
+    }
+
     const h = computePathTreeHash(originPath)
     if (!h.ok) {
       return { status: 'stopped', reason: h.reason, path: h.path, entry: name, errno: h.errno }
@@ -297,6 +363,44 @@ export function quarantineTree(parentAbs, name, options = {}) {
   const rnd = randSuffix()
   const destName = `${name}-${rnd}`
   const destPath = path.join(opDir, destName)
+
+  // THE RE-CHECK THAT ACTUALLY CLOSES B2, IMMEDIATELY BEFORE THE DESTRUCTIVE
+  // STEP. Everything above verified the tree; between that verification and
+  // this line the function created a trash root and an op directory, both of
+  // which touch the filesystem and take time. Re-comparing here is UD24's rule:
+  // the identity is checked immediately before each destructive step, not once
+  // at the top.
+  //
+  // RESIDUAL, STATED RATHER THAN IMPLIED: a window remains between this lstat
+  // and the rename(2) below, and it cannot be closed in this design, because
+  // closing it needs renameat(2) against a held directory handle and Node 22's
+  // fs has no renameat -- which is the reason this spike exists at all. UD25's
+  // clock gate is what makes the residual survivable: a replacement created
+  // after the gate ran cannot have a birthtime older than probe 2, so the
+  // same-tick forge that E47 measured on overlayfs (same inode AND birthtime in
+  // 1703 of 2000 pairs) is rejected even when dev/ino/birthtime all match.
+  // Without a caller-supplied maxBirthtimeNs, that protection is absent and the
+  // residual is the full UD24 residual.
+  if (boundIdentity) {
+    const atRename = bindIdentity(originPath)
+    if (!atRename.ok) {
+      return {
+        status: 'stopped',
+        reason: 'quarantine-failed',
+        path: originPath,
+        entry: name,
+        errno: atRename.errno,
+      }
+    }
+    if (!sameIdentity(boundIdentity, atRename)) {
+      return {
+        status: 'kept',
+        reason: 'identity-changed',
+        path: originPath,
+        treeHash: observedTreeHash,
+      }
+    }
+  }
 
   try {
     fs.renameSync(originPath, destPath)
