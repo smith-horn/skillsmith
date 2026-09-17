@@ -218,7 +218,25 @@ function ensureTrashRoot(parentAbs, nativeShim) {
     }
   }
 
-  return { ok: true, trashRoot }
+  // FINDING 3: return the trash root's IDENTITY, not just its path. Everything
+  // below trusts this value across mkdirSync(opDir), randSuffix(), an lstat and
+  // renameSync without rebinding it -- so the source got a bound identity
+  // re-checked immediately before the destructive step and the DESTINATION got
+  // none, under the identical threat model ("anything that can write to the
+  // parent"). Returning it here is what lets the caller close that asymmetry.
+  let trashIdentity = null
+  try {
+    const ts = fs.lstatSync(trashRoot, { bigint: true })
+    trashIdentity = { dev: ts.dev, ino: ts.ino, birthtimeNs: ts.birthtimeNs }
+  } catch {
+    return { ok: false, reason: 'quarantine-failed', detail: 'trash-unusable', errno: null }
+  }
+  // parentStat comes from statSync() WITHOUT bigint, so its `dev` is a Number
+  // while every lstat below uses { bigint: true } and yields a BigInt. `!==`
+  // across those two types is ALWAYS true, so an unconverted comparison rejects
+  // every legitimate call -- which is exactly what it did: 2a, 3d and 5g all
+  // flipped to `stopped` the first time this shipped. Normalize here, once.
+  return { ok: true, trashRoot, trashIdentity, parentDev: BigInt(parentStat.dev) }
 }
 
 /**
@@ -399,6 +417,31 @@ function quarantineTreeInner(parentAbs, name, options = {}) {
     }
   }
 
+  // FINDING 3, part 2: the op directory was created and then trusted. lstat it
+  // and require the parent's device -- a destination on another device would
+  // make the rename either fail with EXDEV or, worse, land somewhere the
+  // returned path does not describe.
+  try {
+    const od = fs.lstatSync(opDir, { bigint: true })
+    if (trash.parentDev !== undefined && od.dev !== trash.parentDev) {
+      return {
+        status: 'stopped',
+        reason: 'quarantine-failed',
+        path: opDir,
+        entry: name,
+        errno: null,
+      }
+    }
+  } catch (err) {
+    return {
+      status: 'stopped',
+      reason: 'quarantine-failed',
+      path: opDir,
+      entry: name,
+      errno: err.code ?? null,
+    }
+  }
+
   const rnd = randSuffix()
   const destName = `${name}-${rnd}`
   const destPath = path.join(opDir, destName)
@@ -435,6 +478,22 @@ function quarantineTreeInner(parentAbs, name, options = {}) {
       return {
         status: 'kept',
         reason: 'identity-changed',
+        path: originPath,
+        treeHash: observedTreeHash,
+      }
+    }
+  }
+
+  // FINDING 3, part 3: THE DESTINATION GETS THE SAME RE-CHECK AS THE SOURCE.
+  // Symmetry is the whole point -- the earlier fix hardened one end of a
+  // rename(2) and left the other end validated once, far upstream, and trusted
+  // across four intervening operations.
+  if (trash.trashIdentity) {
+    const trashNow = bindIdentity(trash.trashRoot)
+    if (!trashNow.ok || !sameIdentity(trash.trashIdentity, trashNow)) {
+      return {
+        status: 'kept',
+        reason: 'quarantine-destination-changed',
         path: originPath,
         treeHash: observedTreeHash,
       }

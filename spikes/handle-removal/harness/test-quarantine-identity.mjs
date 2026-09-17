@@ -235,6 +235,71 @@ function fixture() {
   fs.rmSync(f.root, { recursive: true, force: true })
 }
 
+// --- 6. THE DESTINATION GETS THE SAME RE-CHECK AS THE SOURCE -------------
+//
+// Gate review FINDING 3. `ensureTrashRoot` validated `.skillsmith-trash` once --
+// not a symlink, a directory, same device -- and the value was then trusted
+// across mkdirSync(opDir), randSuffix(), an lstat and renameSync. Nothing
+// rebound it. So the B2 fix hardened the SOURCE end of a rename(2) and left the
+// DESTINATION validated once, far upstream, under the identical threat model.
+//
+// The reviewer was honest that it could not win this with a natural racer --
+// 6,600 APFS trials, zero wins, because a win needs the swap absent at the
+// lstat then present and stable across two later operations. It is blocking as
+// a RESIDUAL STATEMENT, not as a demonstrated exploit: the code's residual
+// paragraph described only the source-side window, so a reader deciding whether
+// C4 is safe enough was reading coverage it never gave.
+//
+// Forced deterministically here by swapping the trash root after the op
+// directory exists, which is inside the window and needs no race.
+{
+  const f = fixture()
+  const bound = ident(f.origin)
+  const guardHash = computePathTreeHash(f.origin).treeHash
+  const trashRoot = path.join(f.parent, '.skillsmith-trash')
+
+  const origMkdir = fs.mkdirSync
+  let swapped = false
+  fs.mkdirSync = (p, ...rest) => {
+    const out = origMkdir(p, ...rest)
+    // Once the op dir exists, replace the whole trash root with a different
+    // directory: same name, different inode.
+    if (!swapped && String(p).startsWith(trashRoot) && String(p) !== trashRoot) {
+      swapped = true
+      // Swap the trash root for a different directory, but RECREATE the op
+      // directory inside it at the same path. A cruder swap that destroys the
+      // op dir is caught earlier by the opDir lstat as stopped/
+      // quarantine-failed -- also safe, but it tests a different clause. The
+      // threat Finding 3 describes is a destination that still LOOKS right, so
+      // the test has to preserve the structure and change only the identity.
+      const opDirPath = String(p)
+      fs.renameSync(trashRoot, path.join(f.root, 'trash-aside'))
+      origMkdir(opDirPath, { recursive: true })
+    }
+    return out
+  }
+
+  let r
+  try {
+    r = quarantineTree(f.parent, 'tree', { guardHash, expectIdentity: bound })
+  } finally {
+    fs.mkdirSync = origMkdir
+  }
+
+  check('6a the destination swap landed', swapped, true)
+  check('6b a swapped destination is not used', r.status, 'kept')
+  check('6c and the reason names the destination', r.reason, 'quarantine-destination-changed')
+  check('6d the source tree is untouched', fs.existsSync(f.origin), true)
+  let bytes
+  try {
+    bytes = fs.readFileSync(path.join(f.origin, 'sub', 'f.txt'), 'utf8')
+  } catch (err) {
+    bytes = `UNREADABLE:${err.code}`
+  }
+  check('6e the source bytes are intact', bytes, 'exact same bytes')
+  fs.rmSync(f.root, { recursive: true, force: true })
+}
+
 if (!allOk) {
   console.error('[quarantine-identity] FAIL')
   process.exit(1)
