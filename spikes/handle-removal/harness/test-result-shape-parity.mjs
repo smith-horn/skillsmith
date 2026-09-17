@@ -184,6 +184,94 @@ check(
   fs.rmSync(b.root, { recursive: true, force: true })
 }
 
+// --- 5. THE INPUT SIDE OF THE CONTRACT (Findings 4 and 6) ----------------
+//
+// N-1 made the RETURN shapes agree and the parameter-rename fix made the input
+// NAME agree. The input SEMANTICS were still divergent, which is the third
+// instance of one class. Measured before the fix, same call, same fixture:
+//
+//   native   removeVR(t, { guardHash: null })   -> kept,        origin PRESERVED
+//   fallback quarantineTree(...{ guardHash: null }) -> quarantined, origin MOVED
+//
+// A caller writing `guardHash: maybeHash() ?? null` got a destructive removal
+// on one path and a refusal on the other, decided by an env var and a probe it
+// cannot see. Neither reading was adopted: `null` is now a loud error, because
+// a caller passing it has not said which they meant, and guessing at missing
+// evidence is the defect this spike documents.
+//
+// `grep -rn 'guardHash: null' harness/` returned NOTHING before these cases --
+// the one input value that meant different things on the two paths was the one
+// value neither suite passed.
+{
+  const threw = (fn) => {
+    try {
+      fn()
+      return 'returned'
+    } catch (e) {
+      return e.constructor.name
+    }
+  }
+  const a = fixture()
+  check(
+    '5a native refuses guardHash: null',
+    threw(() => removeVR(a.target, { guardHash: null })),
+    'TypeError'
+  )
+  check('5b and the origin survives', fs.existsSync(a.target), true)
+  fs.rmSync(a.root, { recursive: true, force: true })
+
+  const b = fixture()
+  check(
+    '5c fallback refuses guardHash: null',
+    threw(() => quarantineTree(b.parent, 'tree', { guardHash: null })),
+    'TypeError'
+  )
+  check('5d and the origin survives', fs.existsSync(b.target), true)
+  fs.rmSync(b.root, { recursive: true, force: true })
+
+  // Omission still means "no guard" -- the fix must not make the guard
+  // mandatory, or it passes by refusing everything.
+  const c = fixture()
+  check(
+    '5e omitting guardHash still quarantines',
+    quarantineTree(c.parent, 'tree', {}).status,
+    'quarantined'
+  )
+  fs.rmSync(c.root, { recursive: true, force: true })
+
+  // Finding 6: opId and name are joined into a path and must be single
+  // segments. Measured before the fix: opId '../../OUTSIDE/pwned' quarantined
+  // OUTSIDE .skillsmith-trash entirely and reported success.
+  // THE LANDING DIRECTORY IS PRE-CREATED, and that detail is the whole case.
+  // A traversal to a NON-existent path ('../../OUTSIDE/pwned') is blocked
+  // anyway by mkdirSync(opDir, { recursive: false }) failing ENOENT -- so a
+  // test using it passes even with the validation removed, for a reason
+  // unrelated to the fix. Measured with validation removed and the directory
+  // pre-created, which is what a concurrent process can trivially arrange:
+  //
+  //   opId '../../loot' -> status quarantined, origin GONE,
+  //                        user bytes at loot/tree-<rnd>/sub/f.txt
+  const d = fixture()
+  const loot = path.join(d.root, 'loot')
+  fs.mkdirSync(loot, { recursive: true })
+  check(
+    '5f opId traversal is refused',
+    threw(() => quarantineTree(d.parent, 'tree', { opId: '../../loot' })),
+    'TypeError'
+  )
+  check('5g nothing landed in the attacker directory', fs.readdirSync(loot).length, 0)
+  check('5h and the origin survives', fs.existsSync(d.target), true)
+  fs.rmSync(d.root, { recursive: true, force: true })
+
+  const e = fixture()
+  check(
+    '5i name traversal is refused',
+    threw(() => quarantineTree(e.parent, '../escape', {})),
+    'TypeError'
+  )
+  fs.rmSync(e.root, { recursive: true, force: true })
+}
+
 if (!allOk) {
   console.error('[result-parity] FAIL')
   process.exit(1)

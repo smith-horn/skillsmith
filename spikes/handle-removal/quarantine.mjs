@@ -18,7 +18,7 @@
 //     up to a different parent.
 
 import fs from 'node:fs'
-import { shapeResult } from './result-shape.mjs'
+import { shapeResult, normalizeGuardHash } from './result-shape.mjs'
 import path from 'node:path'
 import crypto from 'node:crypto'
 import { computeTreeHash } from './hash.mjs'
@@ -599,7 +599,37 @@ function quarantineTreeInner(parentAbs, name, options = {}) {
  * N-1: the single exported entry point, so every caller gets one shape.
  * See result-shape.mjs for why this exists rather than 13 edited returns.
  */
+/**
+ * FINDING 6: `opId` and `name` are joined into a path, so they must be single
+ * segments. `opId` went straight into `path.join(trashRoot, opId)` with no
+ * validation and `hybrid.mjs` forwards options verbatim. Measured:
+ *
+ *   quarantineTree(parent, 'tree', { opId: '../../OUTSIDE/pwned' })
+ *     -> status: quarantined
+ *     -> path:   <root>/OUTSIDE/pwned/tree-...   (outside .skillsmith-trash entirely)
+ *
+ * `name` had the same exposure. `hybrid.mjs` happens to pass path.basename(),
+ * so it was safe TODAY -- a convention with no enforcement, which is precisely
+ * the failure native-c/load.mjs already identifies and fixes for shimPath().
+ * The lesson was learned in one file and not this one.
+ */
+function assertPathSegment(label, value) {
+  if (typeof value !== 'string' || value.length === 0) {
+    throw new TypeError(`${label} must be a non-empty string, got ${String(value)}`)
+  }
+  if (value.includes('/') || value.includes('\\') || value === '.' || value === '..') {
+    throw new TypeError(
+      `${label} must be a single path segment, not a path. Got ${JSON.stringify(value)}. ` +
+        `A traversing value escapes .skillsmith-trash entirely and quarantines into ` +
+        `attacker-chosen storage while reporting success.`
+    )
+  }
+}
+
 export function quarantineTree(parentAbs, name, options = {}) {
+  normalizeGuardHash(options.guardHash)
+  assertPathSegment('name', name)
+  if (options.opId !== undefined) assertPathSegment('opId', options.opId)
   const r = quarantineTreeInner(parentAbs, name, options)
   return shapeResult({ entry: name, ...r })
 }

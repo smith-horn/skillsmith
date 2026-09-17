@@ -70,3 +70,46 @@ export function shapeResult(partial) {
 export function isSuccess(result) {
   return result.status === 'removed' || result.status === 'quarantined'
 }
+
+/**
+ * ONE MEANING FOR `guardHash`, ENFORCED RATHER THAN CONVENTIONAL.
+ *
+ * `null` used to mean OPPOSITE things on the two removal paths, and the
+ * destructive reading won on the path that ships. Measured, same call, same
+ * fixture:
+ *
+ *   native   removeVR(t, { guardHash: null })        -> kept,        origin PRESERVED
+ *   fallback quarantineTree(p, n, { guardHash: null }) -> quarantined, origin MOVED
+ *
+ * `walk.mjs` tested `guardHash !== undefined && guardHash !== treeHash`, so
+ * `null` was a mismatch and refused. `quarantine.mjs` tested
+ * `guardHash !== undefined && guardHash !== null`, so `null` was "no guard,
+ * proceed". Which path runs depends on an env var and a child-process probe the
+ * caller cannot see, so `guardHash: maybeHash() ?? null` -- an idiom a caller
+ * would write without thinking -- destroys data on one path and refuses on the
+ * other, unpredictably.
+ *
+ * This is the THIRD instance of one class. The parameter-rename fix made the
+ * input NAME agree; `shapeResult` made the RETURN agree; the input SEMANTICS
+ * were still divergent.
+ *
+ * NEITHER READING IS ADOPTED, because both are defensible and a caller passing
+ * `null` has not said which they meant. Treating a genuinely ambiguous input as
+ * either "guard" or "no guard" is a function guessing at missing evidence,
+ * which is the defect this whole spike documents. So:
+ *
+ *   undefined  -> no guard. Explicit, and the caller had to omit the key.
+ *   string     -> guard with that hash.
+ *   anything else, null included -> TypeError, before anything is touched.
+ */
+export function normalizeGuardHash(guardHash) {
+  if (guardHash === undefined) return undefined
+  if (typeof guardHash === 'string' && guardHash.length > 0) return guardHash
+  throw new TypeError(
+    `guardHash must be a non-empty string, or omitted entirely for no guard. ` +
+      `Got ${guardHash === null ? 'null' : typeof guardHash}. ` +
+      `null is refused deliberately: it read as "no guard" on one removal path ` +
+      `and "a hash that never matches" on the other, so it could delete or refuse ` +
+      `depending on which path ran.`
+  )
+}

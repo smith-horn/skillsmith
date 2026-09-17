@@ -15,7 +15,7 @@
 // is measuring.
 
 import fs from 'node:fs'
-import { shapeResult } from './result-shape.mjs'
+import { shapeResult, normalizeGuardHash } from './result-shape.mjs'
 import path from 'node:path'
 import crypto from 'node:crypto'
 import os from 'node:os'
@@ -411,6 +411,10 @@ function closeQuiet(fd) {
  * remembering, and leaves the walk's own returns readable.
  */
 export function removeVR(targetRoot, options = {}) {
+  // One meaning for guardHash across both removal paths; see
+  // result-shape.mjs. Throws on `null` rather than picking a reading, because
+  // the two paths picked OPPOSITE ones and the destructive one shipped.
+  normalizeGuardHash(options.guardHash)
   const r = removeVRInner(targetRoot, options)
   // `path` defaults to the tree the caller named: on this path a `kept` or a
   // `removed` is always about targetRoot itself, and a caller should not have
