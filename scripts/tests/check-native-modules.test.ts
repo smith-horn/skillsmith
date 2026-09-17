@@ -13,8 +13,10 @@
  *   broken:       seam=fail → exit 1, actionable remedy (docker restart +
  *                 regen-lockfile + scoped opt-out), and does NOT advertise the
  *                 blanket `--no-verify` footgun (SMI-5344 consistency).
- *   source guard: no line runs `npm install` / a real `docker exec` outside a
- *                 comment/printf (READ-ONLY P-5 discipline).
+ *   source guard: no line runs `npm install` or a real `docker exec` --
+ *                 directly or via `run_cmd` -- outside a comment, a
+ *                 `printf`, or the two allow-listed read-only invocations
+ *                 (READ-ONLY P-5 discipline).
  */
 import { describe, it, expect } from 'vitest'
 import { spawnSync } from 'node:child_process'
@@ -72,13 +74,26 @@ describe('check-native-modules.sh (SMI-5513)', () => {
 
   it('READ-ONLY: no mutating command outside comments/printf/test-seam', () => {
     const src = readFileSync(SCRIPT, 'utf8')
+    // F-3 (SMI-6684 Wave 3 pre-merge gate): `run_cmd` IS `docker exec`
+    // (scripts/lib/hook-docker-detect.sh) — the guard used to grep only the
+    // literal text `docker exec`, so a SECOND `run_cmd` call site
+    // (`run_cmd sh -c "$NCA_PRODUCER"`) needed no exemption because the
+    // guard could not see it at all. Treat `run_cmd` as a first-class
+    // docker-exec surface with an explicit allow-list, so a future third
+    // call site has to justify itself here.
+    const ALLOWED_RUN_CMD = [
+      /run_cmd node -e/, // the read-only createDatabaseSync(':memory:') probe
+      /run_cmd sh -c "\$NCA_PRODUCER"/, // SMI-6684 Wave 3: read-only mount-composition attribution
+    ]
     const offenders = src.split('\n').filter((line) => {
       const t = line.trim()
       if (t.startsWith('#')) return false
       if (/^\s*printf\b/.test(line)) return false
-      // The probe is a read-only `run_cmd node -e "...createDatabaseSync(':memory:')..."`
-      // (opens an in-memory DB; touches nothing on disk) — allowed.
-      if (/run_cmd node -e/.test(line)) return false
+      if (/\brun_cmd\b/.test(line)) {
+        if (/^\s*fail\)/.test(line)) return false // the test seam's run_cmd() { return 1; }
+        if (/run_cmd\(\)/.test(line)) return false // the run_cmd() definition itself
+        return !ALLOWED_RUN_CMD.some((re) => re.test(line))
+      }
       return /npm\s+(install|ci|rebuild)\b|docker\s+exec\b/.test(line)
     })
     expect(offenders).toEqual([])

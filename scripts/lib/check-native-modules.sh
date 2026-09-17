@@ -106,8 +106,8 @@ console.log("NCA1 f "+o.findings);console.log("NCA1 e "+o.not_evaluated);
 for(const x of m)console.log("NCA1 missing "+x);
 '
 
-# Runs INSIDE the container via run_cmd. Always exits 0 once it starts;
-# every outcome is reported in the envelope, terminated by "NCA1 eof".
+# Runs INSIDE the container via run_cmd. Exits 0 on every outcome it
+# controls, each terminated by "NCA1 eof"; a signal instead exits 143, no eof.
 NCA_PRODUCER='
 t=$1 c=$2 dis=$3 js=$4
 if [ ! -f "$c" ]; then echo "NCA1 pre checker-absent"; echo "NCA1 eof"; exit 0; fi
@@ -209,7 +209,7 @@ nca_attrib() {
     NCA_MODE= NCA_F= NCA_E= NCA_MISMATCH=0
     nca_FALL1= nca_FALL2= nca_MISS1= nca_MISS2= nca_SUBS1= nca_SUBS2=
     nca_SEED1= nca_SEED2= nca_OTHR1= nca_OTHR2=
-    nca_pre= nca_rc= nca_report= nca_parse= nca_eof=0 nca_fails=0 nca_summary=0 nca_disable=0
+    nca_pre= nca_rc= nca_report= nca_parse= nca_eof=0 nca_fails=0 nca_summary=0 nca_disable=0 nca_grid=0
     nca_env=$(mktemp 2>/dev/null) || { NCA_CATEGORY=UNEXPECTED; NCA_REASON=host-mktemp; return 0; }
     nca_wd=$((NCA_TIMEOUT_SECS + NCA_EXEC_MARGIN_SECS))
     # F-8: a range check, not a single `0` exclusion -- `00`/`000` pass an

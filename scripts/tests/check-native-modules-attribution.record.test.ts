@@ -107,6 +107,11 @@ describe('check-native-modules.sh attribution: record, render, robustness (fix r
       })
       expect(Number.isInteger(rec['wall_secs'])).toBe(true)
       expect(rec['wall_secs'] as number).toBeGreaterThanOrEqual(0)
+      // F-2 (SMI-6684 Wave 3 pre-merge gate): nothing previously bounded
+      // wall_secs from above, so recording the wall clock instead of the
+      // elapsed time (nca_t1 alone, not nca_t1 - nca_t0) was invisible. The
+      // harness caps every spawn at 20s, so this cannot flake.
+      expect(rec['wall_secs'] as number).toBeLessThan(60) // elapsed, not the wall clock (SMI-6684)
     })
 
     const ROWS: [string, RunOpts, Record<string, unknown>][] = [
@@ -219,22 +224,36 @@ describe('check-native-modules.sh attribution: record, render, robustness (fix r
       const recs = records(r.home)
       expect(recs).toHaveLength(1)
       expect(recs[0]!['wall_secs'] as number).toBeGreaterThanOrEqual(1)
+      expect(recs[0]!['wall_secs'] as number).toBeLessThan(60) // F-2: elapsed, not the wall clock
     })
 
-    it('R-JSONL-7: a JSON-unsafe container name is recorded as "invalid", never raw', () => {
-      const home = mkdtempSync(join(fx.root, 'home-'))
-      const r = runSeam({ HOME: home, DOCKER_CONTAINER: 'bad"name\\x' })
-      expect(r.status).toBe(1)
-      const raw = readFileSync(jsonlPath(home), 'utf8')
-      expect(raw).not.toContain('\\')
-      expect(records(home)).toEqual([
-        expect.objectContaining({
-          container: 'invalid',
-          state: 'UNEXPECTED',
-          reason: 'exec-exit:1',
-        }),
-      ])
-    })
+    // F-1 (SMI-6684 Wave 3 pre-merge gate, PR #2873): the original probe fed
+    // TWO disallowed characters (`"` and `\`) in one name and asserted only
+    // "no backslash in the raw line" -- satisfied by the backslash alone, so
+    // it said nothing about whether `"` (the character that actually breaks
+    // JSON) is rejected. One row per character, each on its own merit.
+    it.each([
+      ['a double quote', 'bad"name'],
+      ['a backslash', 'bad\\name'],
+      ['a tab', 'bad\tname'],
+      ['a non-ASCII letter', 'café-dev-1'],
+    ])(
+      'R-JSONL-7: a container name whose ONLY unsafe character is %s is recorded as "invalid"',
+      (_label, name) => {
+        const home = mkdtempSync(join(fx.root, 'home-'))
+        const r = runSeam({ HOME: home, DOCKER_CONTAINER: name })
+        expect(r.status).toBe(1)
+        const raw = readFileSync(jsonlPath(home), 'utf8')
+        expect(raw).not.toContain(name)
+        expect(records(home)).toEqual([
+          expect.objectContaining({
+            container: 'invalid',
+            state: 'UNEXPECTED',
+            reason: 'exec-exit:1',
+          }),
+        ])
+      }
+    )
 
     // F-17 (SMI-6684 Wave 3 review): the allow-list must reject a non-ASCII
     // letter regardless of locale -- a bracket-expression RANGE (A-Za-z) is
@@ -331,6 +350,19 @@ describe('check-native-modules.sh attribution: record, render, robustness (fix r
           '  Mount check: FINDINGS -- cause: MOUNT-SUBSTITUTED [3 findings, 0 not evaluated]',
           '    something other than the declared volume is mounted at better-sqlite3: /packages/core/node_modules/better-sqlite3',
           '  Next: ./scripts/worktree-docker.sh stop && ./scripts/worktree-docker.sh start',
+          DRILL,
+        ],
+      ],
+      // F-4 (SMI-6684 Wave 3 pre-merge gate): every prior MOUNT-SUBSTITUTED
+      // fixture was worktree mode, so the main-checkout remedy line
+      // (check-native-modules.sh:388's `else` arm) had no covering case.
+      [
+        'S-subst-main',
+        {},
+        [
+          '  Mount check: FINDINGS -- cause: MOUNT-SUBSTITUTED [3 findings, 0 not evaluated]',
+          '    something other than the declared volume is mounted at better-sqlite3: /packages/core/node_modules/better-sqlite3',
+          '  Next: docker compose --profile dev up -d --force-recreate dev   (from the main checkout)',
           DRILL,
         ],
       ],
@@ -628,6 +660,44 @@ describe('check-native-modules.sh attribution: record, render, robustness (fix r
       const body = m![0]
       expect(body).toContain('ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789')
       expect(body).not.toMatch(/A-Za-z/)
+    })
+
+    // F-5 (SMI-6684 Wave 3 pre-merge gate): cause precedence is
+    // FALL-THROUGH > MOUNT-MISSING > MOUNT-SUBSTITUTED > SEED-CONTENT >
+    // OTHER-NATIVE-FINDING (check-native-modules.sh:318-322). MISS > SUBS
+    // was unpinned -- no fixture carries a tier-1 MISS and a tier-1 SUBS
+    // together, so swapping those two lines broke nothing. Stage-and-modify,
+    // same shape as MED-1a/MED-1b, so nothing is written inside the
+    // committed fixtures tree.
+    it('MED-4: MOUNT-MISSING outranks MOUNT-SUBSTITUTED at the same tier', () => {
+      const staged = stageCase(fx.root, 'S-subst-wt')
+      const rep = join(staged, 'report')
+      const txt = readFileSync(rep, 'utf8')
+      expect(txt).toContain('"missing":0,')
+      writeFileSync(
+        rep,
+        txt
+          .replace('"missing":0,', '"missing":1,')
+          .replace(
+            '"missing_destinations":[]',
+            '"missing_destinations":["/app/packages/core/node_modules"]'
+          )
+      )
+      const p = parseAttribution(runFromCaseDir(fx, staged).stdout)
+      expect(p?.cause).toBe('MOUNT-MISSING')
+      expect(p?.evidence).toBe('/app/packages/core/node_modules')
+    })
+
+    // F-6 (SMI-6684 Wave 3 pre-merge gate): R-KNOB's '600'/'601' rows above
+    // assert only that state === 'FINDINGS', which both render regardless of
+    // whether the -le 600 clamp fires -- the assertion cannot distinguish
+    // accepted (600) from rejected (601, falls back to the default) at the
+    // upper boundary. Pin the clamp in SOURCE instead, same as MED-3 pins
+    // the nca_json_safe charset.
+    it('R-KNOB-CLAMP: the watchdog knob is range-clamped, not merely digit-checked', () => {
+      const src = readFileSync(SCRIPT, 'utf8')
+      expect(src).toMatch(/-ge 1 \]/)
+      expect(src).toMatch(/-le 600 \]/)
     })
   })
 })
