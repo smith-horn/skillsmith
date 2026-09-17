@@ -188,6 +188,53 @@ function fixture() {
   fs.rmSync(f.root, { recursive: true, force: true })
 }
 
+// --- 5. THE GATE MUST WORK WITHOUT A guardHash ---------------------------
+//
+// Gate review FINDING 2. The identity binding and the clock gate used to sit
+// inside `if (guardHash != null)`, so a caller supplying expectIdentity and
+// maxBirthtimeNs but NO hash got neither — silently. No error, no field, no
+// difference in the result shape. That caller is the shape the function's own
+// comment describes, since expectIdentity exists precisely so a caller can bind
+// identity independently of the hash.
+//
+// Every case above passes a guardHash, which is exactly why the suite could not
+// see it. These cases are the negative control the suite was missing.
+{
+  // 5a/5b: the clock gate, with no hash anywhere.
+  const f = fixture()
+  const bound = ident(f.origin)
+  const r = quarantineTree(f.parent, 'tree', {
+    expectIdentity: bound,
+    maxBirthtimeNs: bound.birthtimeNs,
+  })
+  check('5a clock gate fires without a guardHash', r.status, 'kept')
+  check('5b and names the gate', r.reason, 'identity-not-older-than-probe')
+  check('5c the tree is untouched', fs.existsSync(f.origin), true)
+  fs.rmSync(f.root, { recursive: true, force: true })
+}
+{
+  // 5d/5e: expectIdentity mismatch, with no hash anywhere. The swap is
+  // hash-identical, so a hash would not have caught it even if one were given.
+  const f = fixture()
+  const bound = ident(f.origin)
+  fs.renameSync(f.origin, path.join(f.root, 'aside'))
+  fs.renameSync(f.spare, f.origin)
+  const r = quarantineTree(f.parent, 'tree', { expectIdentity: bound })
+  check('5d expectIdentity is honoured without a guardHash', r.status, 'kept')
+  check('5e and names identity', r.reason, 'identity-changed')
+  check('5f the replacement survived', fs.existsSync(f.origin), true)
+  fs.rmSync(f.root, { recursive: true, force: true })
+}
+{
+  // 5g: and a caller supplying NEITHER still gets the old behaviour — the
+  // guard is opt-in, not newly mandatory. Without this, the fix could pass by
+  // refusing everything, which is not a guard.
+  const f = fixture()
+  const r = quarantineTree(f.parent, 'tree', {})
+  check('5g no identity, no hash -> still quarantines', r.status, 'quarantined')
+  fs.rmSync(f.root, { recursive: true, force: true })
+}
+
 if (!allOk) {
   console.error('[quarantine-identity] FAIL')
   process.exit(1)

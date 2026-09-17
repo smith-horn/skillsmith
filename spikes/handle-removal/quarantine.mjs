@@ -293,7 +293,41 @@ function quarantineTreeInner(parentAbs, name, options = {}) {
 
   let boundIdentity = options.expectIdentity ?? null
 
-  if (guardHash !== undefined && guardHash !== null) {
+  // IDENTITY AND THE CLOCK GATE RUN INDEPENDENTLY OF THE HASH.
+  //
+  // They used to sit INSIDE `if (guardHash != null)`, which made both silently
+  // inert for a caller that supplied `expectIdentity` and `maxBirthtimeNs` but
+  // no hash. That caller is not hypothetical — it is the shape this function's
+  // own comment describes, since `expectIdentity` exists precisely so a caller
+  // can bind identity independently of the hash. Measured, one process, same
+  // fixture, only `guardHash` differing:
+  //
+  //   WITH guardHash      kept / identity-not-older-than-probe, tree preserved
+  //   WITHOUT guardHash   quarantined, tree moved
+  //
+  // No error, no field, no difference in the result shape — a silent-success
+  // defect inside the fix written to remove a silent-success defect, which is
+  // exactly what CLAUDE.md predicts of any race-shaped fix. The existing suite
+  // could not see it because every case passed a guardHash.
+  //
+  // PRECISELY WHICH HALF WAS INERT, because the distinction matters and an
+  // earlier draft of this comment got it wrong. Measured by reverting the hoist
+  // and re-running each half separately:
+  //
+  //   the CLOCK GATE       genuinely inert — a same-tick replacement passed
+  //   `expectIdentity`     NOT inert — the pre-rename re-check still caught it
+  //                        (`kept / identity-changed`), because boundIdentity is
+  //                        assigned outside this block and that check reads it
+  //
+  // So the exposure was narrower than "both are dead" and is still real: UD25's
+  // gate is the only thing standing between a forged same-inode, same-birthtime
+  // replacement and the rename, and it was the half that did not run.
+  const needIdentity =
+    boundIdentity !== null ||
+    (options.maxBirthtimeNs !== undefined && options.maxBirthtimeNs !== null) ||
+    (guardHash !== undefined && guardHash !== null)
+
+  if (needIdentity) {
     const before = bindIdentity(originPath)
     if (!before.ok) {
       return {
@@ -324,7 +358,11 @@ function quarantineTreeInner(parentAbs, name, options = {}) {
         treeHash: null,
       }
     }
+  }
 
+  // The hash comparison stays conditional on a hash being supplied — that part
+  // was always correct, and is the only half that genuinely needs one.
+  if (guardHash !== undefined && guardHash !== null) {
     const h = computePathTreeHash(originPath)
     if (!h.ok) {
       return { status: 'stopped', reason: h.reason, path: h.path, entry: name, errno: h.errno }
