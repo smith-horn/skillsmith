@@ -7,7 +7,8 @@
  * guard by hand and omitted one of those in each of three consecutive rounds. So the primitives
  * live here once; a third suite should import them too.
  *
- * SQL lexing and the by-name tamper matchers live in `./sql-statement-guards.ts` — a separate
+ * SQL lexing lives in `./sql-statement-guards.ts`, the verb matchers in `./sql-verb-matchers.ts`,
+ * and the fail-closed tripwire in `./sql-name-tripwire.ts` — separate
  * module because nothing here depends on them and nothing there depends on this: migration
  * enumeration and SQL lexing are independent concerns, kept apart rather than combined into one
  * file (SMI-6690, SMI-6696).

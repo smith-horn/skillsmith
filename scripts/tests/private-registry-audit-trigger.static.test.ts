@@ -325,12 +325,15 @@ function alterTriggerRe(name: string): RegExp {
  * either trigger by name. Case-insensitive, schema-qualification and IF EXISTS tolerant
  * (SMI-6114 retro F1, revert checks (c)/(d)).
  *
- * THE FUNCTION CHECK IS GATED BY `mentionsIdentifier` (SMI-6690 round 5+,
- * `./lib/sql-name-tripwire.ts`), fail-closed: it fires when the bare name appears ANYWHERE in
- * executable SQL, including inside a `DO $$ ... $$` block no statement-grammar parser can read at
- * all. `matchesDropFunction`/`matchesAlterFunction` run only AFTER the tripwire has already
- * fired, to NAME which verb was seen for the offender message -- their own silence never
- * suppresses a firing tripwire; a mention with no recognised verb still reports, worded to say so.
+ * THE FUNCTION CHECK IS A UNION OF TWO MECHANISMS, NEITHER GATING THE OTHER (SMI-6690 round 9).
+ * `mentionsIdentifier` (`./lib/sql-name-tripwire.ts`) is fail-closed over executable text and
+ * fires when the bare name appears anywhere in it, including inside a `DO $$ ... $$` block no
+ * statement-grammar parser can read. `matchesDropFunction`/`matchesAlterFunction`
+ * (`./lib/sql-verb-matchers.ts`) read a statement's grammar and catch a plain top-level DROP in
+ * text the tripwire can lose. BOTH run unconditionally and a hit from either is an offender; a
+ * mention with no recognised verb still reports, worded to say so. Do not restore a gate in
+ * either direction -- gating the matchers behind the tripwire silenced a plain DROP for the sake
+ * of one stray `"` in an unrelated block.
  *
  * THE TRIGGER CHECKS are plain phrase regexes (`dropTriggerRe`/`alterTriggerRe`), tested per
  * STATEMENT against `executableText(stmt)`, not whole-file text. An earlier version of this

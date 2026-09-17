@@ -158,14 +158,21 @@ export function opaqueSpanAt(sql: string, i: number): { kind: SpanKind; end: num
     return { kind: 'quoted-ident', end: scanDoubleQuoted(sql, i) }
   }
   if (c === '$') {
-    // Tag characters follow Postgres' UNQUOTED-IDENTIFIER rules, which admit letters with
-    // diacritics and non-Latin letters — so `$café$` is a legal tag (SMI-6690 round 9). An
-    // ASCII-only class here left the tag unrecognised, and an unrecognised opener routes the
-    // body's interior strings through the top-level-string branch, which blanks them: the
-    // `EXECUTE 'DROP FUNCTION <fn>'` inside `DO $café$ … $café$` vanished before the tripwire
-    // saw it. Recognising MORE tags is the fail-closed direction, since a recognised dollar
-    // body is emitted verbatim and therefore stays scannable.
-    const tagMatch = /^\$(?:[\p{L}_][\p{L}\p{N}_$]*)?\$/u.exec(sql.slice(i))
+    // Postgres' tag rule is BYTE-BASED, not letter-based: an identifier character is an ASCII
+    // letter, digit or underscore, or ANY byte >= 0x80. Verified on PG 17.11 — `$٣$` (Nd), `$☃$`
+    // (So), a combining acute (Mn), `$·$` (Po) and `$😀$` (astral) are all legal tags, and none is
+    // a "letter". An earlier fix used `\p{L}`, which is the right idea in the wrong encoding and
+    // left every one of those unrecognised (SMI-6690 round 10).
+    //
+    // Why that direction is dangerous rather than merely incomplete: an unrecognised opener routes
+    // the body's interior strings through the top-level-string branch, which BLANKS them, so
+    // `EXECUTE 'DROP FUNCTION <fn>'` inside `DO $٣$ … $٣$` vanished before any scan ran. Matching
+    // the engine by construction — rather than enumerating letters — is what closes the class.
+    // `$` is deliberately absent from the continuation set: PG ends the tag at the first `$`.
+    // `-￿` is "any non-ASCII code unit" written as a positive range: negating the ASCII
+    // range instead trips `no-control-regex`. Surrogate pairs are covered code-unit-wise, so an
+    // astral tag like `$😀$` matches (measured).
+    const tagMatch = /^\$\$|^\$[A-Za-z_-￿][A-Za-z0-9_-￿]*\$/.exec(sql.slice(i))
     if (tagMatch) {
       const tag = tagMatch[0]
       const closeIdx = sql.indexOf(tag, i + tag.length)
@@ -357,7 +364,13 @@ export function normalizeIdent(raw: string): string {
     const quoteAt = uMatch[0].length - 1
     const bodyEnd = scanDoubleQuoted(trimmed, quoteAt)
     const body = trimmed.slice(quoteAt + 1, bodyEnd - 1).replace(/""/g, '"')
-    const uesc = /UESCAPE\s*'(.)'\s*$/i.exec(trimmed.slice(bodyEnd))
+    // Comments run through `stripComments` first, because Postgres accepts one on EITHER side of
+    // the `UESCAPE` keyword and honours the custom escape character regardless — verified on
+    // PG 17.11: `U&"!0072x" UESCAPE /*c*/ '!'` yields a column named `rx`. A bare `\s*` here
+    // matched neither side, so `escChar` silently fell back to `\` and the escapes never decoded.
+    // `readIdentAt` folds a comment BEFORE the keyword into `raw`, which bought nothing until this
+    // line agreed with it (SMI-6690 round 10).
+    const uesc = /UESCAPE\s*'(.)'\s*$/i.exec(stripComments(trimmed.slice(bodyEnd)))
     const escChar = uesc ? uesc[1] : '\\'
     const esc = escapeRegExpChar(escChar)
     const escRe = new RegExp(`${esc}${esc}|${esc}\\+([0-9A-Fa-f]{6})|${esc}([0-9A-Fa-f]{4})`, 'g')

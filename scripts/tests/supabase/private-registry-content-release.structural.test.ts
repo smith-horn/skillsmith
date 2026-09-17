@@ -79,20 +79,28 @@
  * offender. An earlier version gated the matchers behind the tripwire, and one stray `"` inside an
  * unrelated `DO` block then silenced row one of this guard's own case table.
  *
- * WHAT NO TEXT-BASED GUARD CAN DO, measured (SMI-6690 round 9). This is fail-closed over TEXT, not
- * over EFFECTS. When the function's name never appears as a contiguous identifier token, nothing
- * here can see it:
+ * WHAT NO TEXT-BASED GUARD CAN DO, measured on PG 17.11 — accepted by the engine, and the function
+ * actually dropped. This is fail-closed over TEXT, not over EFFECTS, in two distinct ways.
+ *
+ * The name can be ABSENT from the migration's text, and then nothing here can see it:
  *
  *   - runtime assembly — `EXECUTE 'DROP FUNCTION public.rele' || 'ase_...'`;
- *   - the name as a PARAMETER — `EXECUTE format('DROP FUNCTION public.%I(uuid,uuid)', n)`, which
- *     is the very construct that motivated abandoning grammar-parsing, and is equally out of reach
- *     for the tripwire;
+ *   - the name as a PARAMETER — `EXECUTE format('DROP FUNCTION public.%I(uuid,uuid)', n)`, the very
+ *     construct that motivated abandoning grammar-parsing, and equally out of reach for the
+ *     tripwire;
  *   - catalog-driven drops — a loop over `pg_proc` that never spells the name;
  *   - collateral removal that names nothing — `DROP SCHEMA public CASCADE;`.
  *
- * Only a live-catalog assertion closes that class: `private-registry-content-release.pg.test.ts`
- * once SMI-5946 provisions Postgres in CI, tracked for this function in SMI-6685. Do not describe
- * this file as proof that no unreviewed change can happen.
+ * And a name that IS present and contiguous can still be missed. Three were, each by one exotic
+ * character — `İ` (U+0130) desynchronising an index space, a byte-based dollar tag like `$٣$`, a
+ * comment on the far side of `UESCAPE` — and each is fixed (SMI-6690 round 10). They are recorded
+ * because they show the KIND of thing that defeats a text scan, not because the list is closed.
+ *
+ * So a clean scan here means "no spelling the tokenizer models was found," never "the name is not
+ * in this file." Only a live-catalog assertion closes the gap:
+ * `private-registry-content-release.pg.test.ts` once SMI-5946 provisions Postgres in CI, tracked
+ * for this function in SMI-6685. Do not describe this file as proof that no unreviewed change can
+ * happen.
  *
  * @module scripts/tests/supabase/private-registry-content-release.structural
  */
@@ -152,12 +160,12 @@ const WRITES_V_CONTENT_RE = /\binto\s+v_content\b/gi
  * protection. If a reviewed redefinition ever needs to land, add a residual assertion against the
  * LATEST definition first — do not reintroduce a bare skip.
  *
- * THE OFFENDER DECISION IS `mentionsIdentifier` (SMI-6690 round 5+, `../lib/sql-name-tripwire.ts`),
- * fail-closed: it fires on the bare function name appearing ANYWHERE in executable SQL, over
- * `executableText()`, which never parses a verb, a statement, or a list — so it also fires on a
- * DROP/ALTER hidden inside a `DO $$ ... $$` block that no grammar-based matcher can read at all.
- * `matchesCreateFunction`/`matchesDropFunction`/`matchesAlterFunction` run only AFTER the tripwire
- * has already fired, one statement at a time (comments stripped, split via `splitStatements` —
+ * THE OFFENDER DECISION IS A UNION of `mentionsIdentifier` (`../lib/sql-name-tripwire.ts`) and the
+ * three verb matchers (`../lib/sql-verb-matchers.ts`), NEITHER gating the other — see this
+ * module's header. The tripwire is fail-closed over executable text and fires on the bare name
+ * appearing anywhere in it, including inside a `DO $$ ... $$` block no grammar-based matcher can
+ * read; the matchers read one statement at a time and catch a plain top-level DROP the tripwire
+ * can lose. Both run unconditionally (comments stripped, split via `splitStatements` —
  * this repo's migration convention includes commented-out rollback blocks naming the function,
  * `20260915000000` has one, and whole-file text let a differently-shaped statement elsewhere in
  * the file produce a false positive or negative), to NAME which verb was seen. Their own silence

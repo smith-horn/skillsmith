@@ -1,7 +1,7 @@
 /**
  * The fail-closed identifier tripwire: `executableText` and `mentionsIdentifier` (SMI-6690).
  *
- * WHY THIS EXISTS, SEPARATELY FROM `./sql-statement-guards.ts`. That module's `matches*` functions
+ * WHY THIS EXISTS, SEPARATELY FROM `./sql-verb-matchers.ts`. That module's `matches*` functions
  * parse a statement's grammar — a verb, a list, an argument list — and grammar-parsing can only
  * ever be as complete as parsing DDL is possible. DDL assembled at runtime by `EXECUTE
  * format(...)` inside a `DO $$ ... $$` block is not parseable text at any point, by any lexer, no
@@ -22,9 +22,11 @@
  * remove.
  *
  * WHAT THIS DOES NOT DO. It never parses a verb, a statement, or a list, so it cannot name which
- * one fired — callers pair it with the `matches*` functions in `./sql-statement-guards.ts` to
- * report a verb once the tripwire has already decided to fire (never the reverse: a matcher's
- * silence must never suppress a firing tripwire). It is also, deliberately, over-inclusive: see
+ * one fired — callers pair it with the `matches*` functions in `./sql-verb-matchers.ts` IN UNION,
+ * a hit from either being a hit, and let NEITHER gate the other. Do not make this a gate on them:
+ * a stray `"` in a dollar body makes this module swallow the name, and a plain top-level DROP the
+ * matchers read correctly then went unreported (SMI-6690 round 9). It is also, deliberately,
+ * over-inclusive: see
  * `executableText`'s own doc comment for the one accepted false-positive class this trades for
  * being fail-closed everywhere else.
  *
@@ -75,21 +77,34 @@ function quotedIdentSpanEnd(sql: string, i: number): number {
  * `mentionsIdentifier` fire. That is the correct trade for a fail-closed tripwire — the escape
  * hatch is a reviewed assertion at the call site, never a weaker span policy here.
  *
- * THE CEILING: THIS IS FAIL-CLOSED OVER TEXT, NOT OVER EFFECTS (SMI-6690 round 9, each shape
- * measured on PG 17.11 as accepted and as actually dropping the function). When the guarded name
- * never appears as a contiguous identifier token, nothing in this module can see it:
+ * THE CEILING: THIS IS FAIL-CLOSED OVER TEXT, NOT OVER EFFECTS. Every shape below was measured on
+ * PG 17.11 as accepted and as actually dropping the guarded function.
+ *
+ * FIRST, the name can be absent from the text entirely, and then nothing here can see it:
  *
  *   - runtime assembly            `EXECUTE 'DROP FUNCTION public.rele' || 'ase_...'`
  *   - the name as a PARAMETER     `EXECUTE format('DROP FUNCTION public.%I(uuid,uuid)', n)`
  *   - catalog-driven              a loop over `pg_proc` that never spells the name
  *   - collateral, names nothing   `DROP SCHEMA public CASCADE;`
  *
- * The second is worth singling out: `EXECUTE format(...)` is the construct that motivated
- * abandoning grammar-parsing in the first place, and it defeats this tripwire too whenever the name
- * arrives as an argument. So a clean scan from this module is evidence about a migration's TEXT and
- * nothing more. Closing that class needs a live-catalog assertion — Postgres in CI, SMI-5946, with
- * the per-function behavioural proof tracked in SMI-6685. Do not let a caller's prose upgrade this
- * to a security boundary.
+ * `EXECUTE format(...)` is worth singling out: it is the construct that motivated abandoning
+ * grammar-parsing in the first place, and it defeats this tripwire too when the name is an argument.
+ *
+ * SECOND — and this is the part an earlier version of this comment got wrong — A NAME THAT IS
+ * PRESENT AND CONTIGUOUS CAN STILL BE MISSED. Three were, each by a single exotic character, and
+ * each is fixed; they are recorded because they are evidence about the KIND of thing that defeats a
+ * text scan, not a closed list (SMI-6690 round 10):
+ *
+ *   - `İ` (U+0130) anywhere earlier — the only codepoint whose `toLowerCase()` changes UTF-16
+ *     length, which desynchronised the bareword pass's index space;
+ *   - a non-ASCII dollar tag (`$٣$`, `$☃$`) — Postgres' tag rule is byte-based, so a letter-based
+ *     class left the tag unrecognised and blanked the body's strings as data;
+ *   - a comment on the far side of `UESCAPE` — the escape character never decoded.
+ *
+ * So do not read a clean scan as "the name is not in this file." Read it as "no spelling this
+ * tokenizer models was found." Closing the gap needs a live-catalog assertion — Postgres in CI,
+ * SMI-5946, with the per-function behavioural proof tracked in SMI-6685. Do not let a caller's
+ * prose upgrade this to a security boundary.
  *
  * Pair `mentionsIdentifier` with a grammar matcher IN UNION rather than gating one behind the
  * other: a stray `"` in a dollar body makes this module's re-tokenisation swallow the rest of the
@@ -190,14 +205,25 @@ export function mentionsIdentifier(sql: string, name: string): boolean {
 
 const IDENT_CHAR = /[A-Za-z0-9_$]/
 
-/** True when `target` occurs in `text` as a standalone identifier, ignoring all quote context. */
+/**
+ * True when `target` occurs in `text` as a standalone identifier, ignoring all quote context.
+ *
+ * Indices come from `hay` and the boundary characters are read from `hay` TOO — never from `text`.
+ * `String.prototype.toLowerCase` is not length-preserving: `İ` (U+0130) lowercases to two UTF-16
+ * code units, and it is the ONLY codepoint in U+0000..U+10FFFF that does (swept, count 1). One of
+ * them anywhere earlier in the text shifts every later index by one, and a boundary read against
+ * `text` then lands INSIDE the name — so `openBoundary` was false for every occurrence and the
+ * scan went silent. Measured on PG 17.11: one `İ` in a `RAISE NOTICE` hid a `DROP FUNCTION` in the
+ * same block, and the function was dropped (SMI-6690 round 10). Reading both from `hay` keeps the
+ * index space single; `IDENT_CHAR` is closed under lower-casing, so the test is unaffected.
+ */
 function mentionsBareword(text: string, target: string): boolean {
   const hay = text.toLowerCase()
   const needle = target.toLowerCase()
   if (needle === '') return false
   for (let at = hay.indexOf(needle); at !== -1; at = hay.indexOf(needle, at + 1)) {
-    const before = at === 0 ? undefined : text[at - 1]
-    const after = text[at + needle.length]
+    const before = at === 0 ? undefined : hay[at - 1]
+    const after = hay[at + needle.length]
     const openBoundary = before === undefined || !IDENT_CHAR.test(before)
     const closeBoundary = after === undefined || !IDENT_CHAR.test(after)
     if (openBoundary && closeBoundary) return true
