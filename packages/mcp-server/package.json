@@ -1,6 +1,6 @@
 {
   "name": "@skillsmith/mcp-server",
-  "version": "0.7.16",
+  "version": "0.7.17",
   "mcpName": "io.github.smith-horn/skillsmith",
   "description": "A registry for sharing, scanning, and tracking agent skills across teams.",
   "type": "module",
