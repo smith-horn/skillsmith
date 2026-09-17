@@ -282,3 +282,62 @@ export function controlTag(state) {
     unspecified: 'UNSPECIFIED',
   }[state]
 }
+
+/**
+ * ATTACKS THAT ARE PROBABILISTIC BY SPECIFICATION (owner decision, R6,
+ * 2026-09-16).
+ *
+ * §10 criterion 1 required every A13 cell to PASS; §9 defined PASS as requiring
+ * `never-ran == 0`; §5.1 specified A13 as a probabilistic racer. Those three
+ * could not hold together -- A13 could not reach PASS against ANY candidate,
+ * including a perfect one, because a racer that sometimes fails to land makes
+ * `never-ran > 0` by construction. The scored guarded cell demonstrated it:
+ * V2 + guardHash on overlayfs recorded 0 failures in 117 landed races and still
+ * scored NEVER-RAN, purely because the racer did not land in the other 183.
+ *
+ * The owner chose: score a probabilistic attack on the LANDED SUBSET. A run
+ * where the racer did not land leaves the denominator rather than counting
+ * against the cell.
+ *
+ * THE FLOOR EXISTS SO THAT CANNOT BE GAMED. Without it a cell that landed twice
+ * and lost nothing would PASS, which is worse than the rule it replaces. 100 is
+ * not arbitrary: by the rule of three, observing 0 failures in n trials puts the
+ * 95% upper confidence bound on the failure rate at about 3/n, so 100 landed
+ * races bound it at ~3%. At 30 the bound is ~10%, which is too weak to certify a
+ * data-loss property. A cell that lands fewer than the floor is reported
+ * NEVER-RAN (underpowered) -- honest about having too few real races rather than
+ * passing on a handful.
+ */
+export const PROBABILISTIC_ATTACKS = new Set(['A13', 'A13-VR', 'A13-TIMING'])
+export const LANDED_FLOOR = 100
+
+/** Whether §9's `never-ran == 0` clause applies to this attack. */
+export function isProbabilistic(attack) {
+  return PROBABILISTIC_ATTACKS.has(attack)
+}
+
+/**
+ * The §9 verdict, with R6's landed-subset rule applied.
+ *
+ * @param {{attack:string, passed:number, failed:number, neverRan:number}} row
+ * @param {boolean|undefined} controlFailed - as controlFailedFlag() returns
+ * @param {'external'|string} [controlState]
+ */
+export function verdictFor(row, controlFailed, controlState) {
+  const probabilistic = isProbabilistic(row.attack)
+  const landed = row.passed + row.failed
+
+  if (!probabilistic && row.neverRan > 0) return 'NEVER-RAN'
+  // FAILURES BEAT THE FLOOR. One observed loss proves the defect; no sample size
+  // is required to conclude "this destroyed user data". The floor exists to stop
+  // a cell PASSING on thin evidence, not to suppress failures it actually saw --
+  // and putting it first did exactly that: A13/default/V0/overlayfs, with 39
+  // real failures in 89 landed races, was reported NEVER-RAN (underpowered),
+  // hiding a measured data loss behind an insufficient-sample label. That is the
+  // same class as a confident label for an unmeasured quantity, inverted.
+  if (row.failed > 0) return 'FAIL'
+  if (probabilistic && landed < LANDED_FLOOR) return 'NEVER-RAN (underpowered)'
+  if (controlFailed === false) return 'NEVER-RAN (control)'
+  if (controlState === 'external') return 'PASS (control unverified)'
+  return 'PASS'
+}

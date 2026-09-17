@@ -8,6 +8,10 @@
 
 import { appendFileSync, mkdirSync, readdirSync } from 'node:fs'
 import path from 'node:path'
+// One implementation of the §9 verdict rule, shared with
+// results/generate-summary.mjs. control-spec.mjs imports nothing from here, so
+// there is no cycle.
+import { verdictFor } from './control-spec.mjs'
 
 /**
  * Anything the removal machinery creates beside a tree it is removing is
@@ -257,14 +261,17 @@ export function aggregateCell(records, isContradictory = () => false, options = 
   let verdict
   if (ran !== target) {
     verdict = `INCOMPLETE (ran ${ran}/${target})`
-  } else if (neverRan > 0) {
-    verdict = 'NEVER-RAN'
-  } else if (failed > 0) {
-    verdict = 'FAIL'
-  } else if (options.controlFailed === false) {
-    verdict = 'NEVER-RAN (control)'
   } else {
-    verdict = 'PASS'
+    // Delegates to the one implementation of §9, so this and
+    // results/generate-summary.mjs cannot drift. `options.attack` lets a caller
+    // opt a cell into R6's landed-subset rule; without it the strict
+    // never-ran == 0 clause applies, which is the correct default for every
+    // deterministic attack.
+    verdict = verdictFor(
+      { attack: options.attack ?? null, passed, failed, neverRan },
+      options.controlFailed,
+      options.controlState
+    )
   }
 
   return { ran, passed, failed, neverRan, verdict }

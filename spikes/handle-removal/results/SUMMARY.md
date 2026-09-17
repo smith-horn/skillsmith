@@ -6,11 +6,11 @@ Regenerated from 60 `results/raw/*.jsonl` files, 136240 total records. Do not ha
 
 | Verdict | Cells |
 |---|---|
-| FAIL | 159 |
+| FAIL | 183 |
 | NEVER-RAN (control) | 56 |
-| NEVER-RAN | 81 |
+| NEVER-RAN | 50 |
 | PASS (control unverified) | 90 |
-| PASS | 220 |
+| PASS | 227 |
 
 The verdict applies the WHOLE plan §9 rule: `PASS` requires `ran == target`, `never-ran == 0`, `failed == 0` **and** a same-filesystem control cell with `failed >= 1`. `NEVER-RAN (control)` means the candidate itself was clean but the plan's named control never demonstrated the loss on that filesystem, so the fixture proves nothing. `PASS (control unverified)` means the control the plan names is real but lives outside this JSONL (a feasibility script, or a cited earlier experiment) and this harness can neither confirm nor refute it.
 
@@ -154,15 +154,15 @@ The verdict applies the WHOLE plan §9 rule: `PASS` requires `ran == target`, `n
 | A12 | ebusy-rmdir | V1 | virtiofsroot | 10 | 10 | 0 | 0 | ok | PASS |
 | A12 | eacces-unlink | V2 | virtiofsroot | 10 | 10 | 0 | 0 | ok | PASS |
 | A12 | ebusy-rmdir | V2 | virtiofsroot | 10 | 10 | 0 | 0 | ok | PASS |
-| A13-TIMING | guard-guardHash | V2 | darwin-apfs | 300 | 170 | 0 | 130 | ok | NEVER-RAN |
-| A13-TIMING | guard-none | V2 | darwin-apfs | 300 | 134 | 1 | 165 | ok | NEVER-RAN |
-| A13-TIMING | guard-guardHash | V2 | ext4vol | 300 | 145 | 0 | 155 | ok | NEVER-RAN |
-| A13-TIMING | guard-none | V2 | ext4vol | 300 | 173 | 30 | 97 | ok | NEVER-RAN |
-| A13-TIMING | guard-guardHash | V2 | overlayfs | 300 | 156 | 0 | 144 | ok | NEVER-RAN |
-| A13-TIMING | guard-none | V2 | overlayfs | 300 | 185 | 41 | 74 | ok | NEVER-RAN |
-| A13-TIMING | guard-guardHash | V2 | tmpfsroot | 300 | 145 | 0 | 155 | ok | NEVER-RAN |
-| A13-TIMING | guard-none | V2 | tmpfsroot | 300 | 108 | 64 | 128 | ok | NEVER-RAN |
-| A13-TIMING | guard-none | V1 | virtiofsroot | 300 | 170 | 127 | 3 | ok | NEVER-RAN |
+| A13-TIMING | guard-guardHash | V2 | darwin-apfs | 300 | 170 | 0 | 130 | ok | PASS |
+| A13-TIMING | guard-none | V2 | darwin-apfs | 300 | 134 | 1 | 165 | ok | FAIL |
+| A13-TIMING | guard-guardHash | V2 | ext4vol | 300 | 145 | 0 | 155 | ok | PASS |
+| A13-TIMING | guard-none | V2 | ext4vol | 300 | 173 | 30 | 97 | ok | FAIL |
+| A13-TIMING | guard-guardHash | V2 | overlayfs | 300 | 156 | 0 | 144 | ok | PASS |
+| A13-TIMING | guard-none | V2 | overlayfs | 300 | 185 | 41 | 74 | ok | FAIL |
+| A13-TIMING | guard-guardHash | V2 | tmpfsroot | 300 | 145 | 0 | 155 | ok | PASS |
+| A13-TIMING | guard-none | V2 | tmpfsroot | 300 | 108 | 64 | 128 | ok | FAIL |
+| A13-TIMING | guard-none | V1 | virtiofsroot | 300 | 170 | 127 | 3 | ok | FAIL |
 | A13-TIMING | guard-guardHash | V2 | virtiofsroot | 300 | 300 | 0 | 0 | ok | PASS |
 | A13-TIMING | guard-none | V2 | virtiofsroot | 300 | 192 | 108 | 0 | ok | FAIL |
 | A13-VALIDATE | perEntryTiming-off | V2 | darwin-apfs | 700 | 326 | 66 | 308 | none-by-design | NEVER-RAN |
@@ -191,28 +191,28 @@ The verdict applies the WHOLE plan §9 rule: `PASS` requires `ran == target`, `n
 | A13-WARMARM | arm-B0 | V2 | tmpfsroot | 2400 | 859 | 0 | 1541 | none-by-design | NEVER-RAN |
 | A13-WARMARM | arm-C | V2 | tmpfsroot | 2400 | 621 | 208 | 1571 | none-by-design | NEVER-RAN |
 | A13-WARMARM | arm-P | V2 | tmpfsroot | 2400 | 0 | 0 | 2400 | none-by-design | NEVER-RAN |
-| A13 | default | C0 | darwin-apfs | 300 | 98 | 16 | 186 | ok | NEVER-RAN |
-| A13 | default | V0 | darwin-apfs | 300 | 107 | 9 | 184 | ok | NEVER-RAN |
-| A13 | default | V1 | darwin-apfs | 300 | 114 | 0 | 186 | ok | NEVER-RAN |
-| A13 | default | V2 | darwin-apfs | 300 | 115 | 0 | 185 | ok | NEVER-RAN |
-| A13 | default | C0 | ext4vol | 300 | 58 | 172 | 70 | ok | NEVER-RAN |
-| A13 | default | V0 | ext4vol | 300 | 49 | 38 | 213 | ok | NEVER-RAN |
-| A13 | default | V1 | ext4vol | 300 | 53 | 37 | 210 | ok | NEVER-RAN |
-| A13 | default | V2 | ext4vol | 300 | 113 | 30 | 157 | ok | NEVER-RAN |
-| A13 | default | C0 | overlayfs | 300 | 36 | 206 | 58 | ok | NEVER-RAN |
-| A13 | guardHash | C0 | overlayfs | 300 | 51 | 176 | 73 | ok | NEVER-RAN |
-| A13 | default | V0 | overlayfs | 300 | 50 | 39 | 211 | ok | NEVER-RAN |
-| A13 | guardHash | V0 | overlayfs | 300 | 69 | 7 | 224 | ok | NEVER-RAN |
-| A13 | default | V1 | overlayfs | 300 | 65 | 38 | 197 | ok | NEVER-RAN |
-| A13 | guardHash | V1 | overlayfs | 300 | 85 | 7 | 208 | ok | NEVER-RAN |
-| A13 | default | V2 | overlayfs | 300 | 105 | 22 | 173 | ok | NEVER-RAN |
-| A13 | guardHash | V2 | overlayfs | 300 | 117 | 0 | 183 | ok | NEVER-RAN |
-| A13 | default | C0 | tmpfsroot | 300 | 44 | 178 | 78 | ok | NEVER-RAN |
-| A13 | default | V0 | tmpfsroot | 300 | 24 | 55 | 221 | ok | NEVER-RAN |
-| A13 | default | V1 | tmpfsroot | 300 | 51 | 68 | 181 | ok | NEVER-RAN |
-| A13 | default | V2 | tmpfsroot | 300 | 74 | 73 | 153 | ok | NEVER-RAN |
-| A13 | default | C0 | virtiofsroot | 300 | 164 | 106 | 30 | ok | NEVER-RAN |
-| A13 | default | V0 | virtiofsroot | 300 | 185 | 112 | 3 | ok | NEVER-RAN |
+| A13 | default | C0 | darwin-apfs | 300 | 98 | 16 | 186 | ok | FAIL |
+| A13 | default | V0 | darwin-apfs | 300 | 107 | 9 | 184 | ok | FAIL |
+| A13 | default | V1 | darwin-apfs | 300 | 114 | 0 | 186 | ok | PASS |
+| A13 | default | V2 | darwin-apfs | 300 | 115 | 0 | 185 | ok | PASS |
+| A13 | default | C0 | ext4vol | 300 | 58 | 172 | 70 | ok | FAIL |
+| A13 | default | V0 | ext4vol | 300 | 49 | 38 | 213 | ok | FAIL |
+| A13 | default | V1 | ext4vol | 300 | 53 | 37 | 210 | ok | FAIL |
+| A13 | default | V2 | ext4vol | 300 | 113 | 30 | 157 | ok | FAIL |
+| A13 | default | C0 | overlayfs | 300 | 36 | 206 | 58 | ok | FAIL |
+| A13 | guardHash | C0 | overlayfs | 300 | 51 | 176 | 73 | ok | FAIL |
+| A13 | default | V0 | overlayfs | 300 | 50 | 39 | 211 | ok | FAIL |
+| A13 | guardHash | V0 | overlayfs | 300 | 69 | 7 | 224 | ok | FAIL |
+| A13 | default | V1 | overlayfs | 300 | 65 | 38 | 197 | ok | FAIL |
+| A13 | guardHash | V1 | overlayfs | 300 | 85 | 7 | 208 | ok | FAIL |
+| A13 | default | V2 | overlayfs | 300 | 105 | 22 | 173 | ok | FAIL |
+| A13 | guardHash | V2 | overlayfs | 300 | 117 | 0 | 183 | ok | PASS |
+| A13 | default | C0 | tmpfsroot | 300 | 44 | 178 | 78 | ok | FAIL |
+| A13 | default | V0 | tmpfsroot | 300 | 24 | 55 | 221 | ok | FAIL |
+| A13 | default | V1 | tmpfsroot | 300 | 51 | 68 | 181 | ok | FAIL |
+| A13 | default | V2 | tmpfsroot | 300 | 74 | 73 | 153 | ok | FAIL |
+| A13 | default | C0 | virtiofsroot | 300 | 164 | 106 | 30 | ok | FAIL |
+| A13 | default | V0 | virtiofsroot | 300 | 185 | 112 | 3 | ok | FAIL |
 | A13 | default | V1 | virtiofsroot | 300 | 163 | 137 | 0 | ok | FAIL |
 | A13 | default | V2 | virtiofsroot | 300 | 174 | 126 | 0 | ok | FAIL |
 | A1 | bind | c0 | overlayfs | 10 | 10 | 0 | 0 | external-unverified | PASS (control unverified) |
