@@ -126,8 +126,7 @@ import { mentionsIdentifier } from '../lib/sql-name-tripwire.ts'
 
 // Directories `mkdtempSync` creates below for the positive control (SMI-6690 finding F7): tracked
 // here and removed in `afterEach` rather than left on disk -- one per planted case, unbounded
-// over time otherwise. (An earlier version of this line said "7 per CI run"; measured, it is 3 --
-// one `mkdtempSync` call site inside a three-element loop. SMI-6712's class, in a code comment.)
+// over time otherwise.
 const tempDirs: string[] = []
 
 const FUNCTION_NAME = 'release_private_registry_skill_content'
@@ -316,35 +315,47 @@ describe.skipIf(migrationTextLocked())(
     })
 
     it('positive control: the scan names a planted tampering migration', () => {
-      // `scanned.length > 0` above proves only that filenames were ENUMERATED. This proves the
-      // scan can fail, which is what makes the clean result above meaningful: it drives the whole
-      // path — enumeration, the git-crypt read, comment stripping, statement splitting and the
-      // matchers — and requires each tamper verb to be reported (SMI-6690 retro, finding 5).
-      const planted: Array<[string, string]> = [
+      // A clean scan is evidence only if the scan can fail. Each case below plants one shape and
+      // pins the EXACT offender array, so every case is also a negative control for the others.
+      //
+      // ONE CASE PER PREDICATE `tamperViolations` CALLS, not one per verb (SMI-6690). It calls
+      // four: the three verb matchers and `mentionsIdentifier`. The last row covers the tripwire,
+      // whose branch the verb rows can never reach — it is an `else if`, and they all match a
+      // verb. Without it, stubbing `mentionsIdentifier` to false left this control fully green.
+      //
+      // Assert exact equality, never `toContain`: the tripwire's own fallback message contains
+      // the literal `ALTER FUNCTION`, so a substring check on that row passed on the fallback
+      // alone. Do not relax these back to substrings.
+      const PLANTED_FILE = '29999999999999_planted_tamper.sql'
+      const noVerb =
+        `${FUNCTION_NAME} appears in executable SQL without a recognised CREATE/DROP/` +
+        'ALTER FUNCTION verb -- review manually'
+      const planted: Array<[string, string, string]> = [
         [
           'CREATE FUNCTION',
           `CREATE OR REPLACE FUNCTION public.${FUNCTION_NAME}(a text)\n` +
             ` RETURNS void AS $$ SELECT 1 $$ LANGUAGE sql;`,
+          'CREATE FUNCTION',
         ],
         // The quoted `;` spelling is the delimiter forgery a `[^;]`-bounded regex missed.
-        ['DROP FUNCTION', `DROP FUNCTION IF EXISTS "a;b", public.${FUNCTION_NAME};`],
-        ['ALTER FUNCTION', `ALTER FUNCTION public.${FUNCTION_NAME} RESET ALL;`],
+        [
+          'DROP FUNCTION',
+          `DROP FUNCTION IF EXISTS "a;b", public.${FUNCTION_NAME};`,
+          'DROP FUNCTION',
+        ],
+        ['ALTER FUNCTION', `ALTER FUNCTION public.${FUNCTION_NAME} RESET ALL;`, 'ALTER FUNCTION'],
+        // The tripwire arm: a mention with no recognised verb. No matcher fires, so only
+        // `mentionsIdentifier` can produce this offender.
+        ['verb-less mention', `COMMENT ON FUNCTION public.${FUNCTION_NAME}(uuid) IS 'x';`, noVerb],
       ]
-      for (const [verb, sql] of planted) {
+      for (const [label, sql, expected] of planted) {
         const dir = mkdtempSync(join(tmpdir(), 'smi6690-tamper-'))
         tempDirs.push(dir)
         writeFileSync(join(dir, NEW_MIGRATION), '-- pinned migration, plaintext\n')
-        writeFileSync(join(dir, '29999999999999_planted_tamper.sql'), sql)
+        writeFileSync(join(dir, PLANTED_FILE), sql)
         const { scanned, offenders } = tamperViolations(dir)
-        expect(scanned, verb).toEqual(['29999999999999_planted_tamper.sql'])
-        // EXACT equality, not `toContain` (SMI-6690 post-merge retro). The tripwire's no-verb
-        // fallback message reads "...without a recognised CREATE/DROP/ALTER FUNCTION verb...",
-        // which CONTAINS the literal `ALTER FUNCTION`. So a substring assertion on the ALTER row
-        // was satisfied by that fallback, and stubbing `matchesAlterFunction` to false left the
-        // whole suite green — measured. `CREATE FUNCTION` and `DROP FUNCTION` are not substrings
-        // of it, so only one of the three rows was decorative, and it was not the one the
-        // author's own red-test mutated.
-        expect(offenders, verb).toEqual([`29999999999999_planted_tamper.sql: ${verb}`])
+        expect(scanned, label).toEqual([PLANTED_FILE])
+        expect(offenders, label).toEqual([`${PLANTED_FILE}: ${expected}`])
       }
     })
   }
