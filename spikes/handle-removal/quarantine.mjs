@@ -457,12 +457,33 @@ function quarantineTreeInner(parentAbs, name, options = {}) {
   // and the rename(2) below, and it cannot be closed in this design, because
   // closing it needs renameat(2) against a held directory handle and Node 22's
   // fs has no renameat -- which is the reason this spike exists at all. UD25's
-  // clock gate is what makes the residual survivable: a replacement created
-  // after the gate ran cannot have a birthtime older than probe 2, so the
-  // same-tick forge that E47 measured on overlayfs (same inode AND birthtime in
-  // 1703 of 2000 pairs) is rejected even when dev/ino/birthtime all match.
-  // Without a caller-supplied maxBirthtimeNs, that protection is absent and the
-  // residual is the full UD24 residual.
+  // WHAT THE CLOCK GATE ACTUALLY BUYS, corrected 2026-09-17. An earlier version
+  // of this comment — written the same day, by me — said the gate means the
+  // same-tick forge E47 measured on overlayfs "is rejected even when
+  // dev/ino/birthtime all match."
+  //
+  // THAT IS FALSE, and it is false by the gate's own predicate. The gate tests
+  // `boundIdentity.birthtimeNs < maxBirthtimeNs`, evaluated ONCE, against the
+  // identity bound before the walk. If a substitute matches all three fields
+  // then its birthtime equals the original's BY STIPULATION, so the predicate
+  // returns whatever it returned for the original — which was "pass". A
+  // predicate over a field that is stipulated equal cannot discriminate. The
+  // gate never sees the substitute's birthtime at all.
+  //
+  // What it does buy: it rejects a substitute planted BEFORE this call whose
+  // birthtime is fresh — the pre-aged-substitute class, where the thing sitting
+  // under the target's name was created after the caller's probe ran. That is
+  // real and it is why UD25 exists. It adds nothing in the one case UD24's
+  // identity check also fails, which is overlayfs recycling inode and birthtime
+  // together — exactly the case E47 was run to measure.
+  //
+  // So the honest residual is larger than the old comment implied: against a
+  // filesystem that recycles both fields, neither the identity check nor the
+  // gate discriminates, and the window below is open. Recorded here rather than
+  // softened, because a comment asserting an invariant the code beneath it does
+  // not deliver is the precise defect this spike exists to document — and this
+  // one was mine, found by the gate review reasoning from the predicate rather
+  // than from the prose.
   if (boundIdentity) {
     const atRename = bindIdentity(originPath)
     if (!atRename.ok) {
