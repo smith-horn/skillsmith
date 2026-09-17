@@ -133,6 +133,61 @@ function fixture() {
   fs.rmSync(f.root, { recursive: true, force: true })
 }
 
+// --- 4. THE PRE-RENAME RE-CHECK, which cases 1-3 do NOT pin ---------------
+//
+// Found by the SMI-6711 gate review, and confirmed by deleting the 21-line
+// re-check block and watching this whole suite stay GREEN. Cases 1-3 swap the
+// tree BEFORE quarantineTree is called, so the FIRST identity comparison
+// catches it and the re-check immediately before rename(2) never matters. The
+// block commented "THE RE-CHECK THAT ACTUALLY CLOSES B2" was therefore
+// unpinned, in a commit whose message said the fix was red-tested. It was --
+// but the red test covered a different clause than the one it claimed.
+//
+// To exercise the real window the swap must land BETWEEN the hash verification
+// and the rename. `ensureTrashRoot` and the op-directory `mkdirSync` both run
+// in that gap, so stubbing mkdirSync to swap after it creates the op directory
+// is a genuine mid-flight attack, not a simulation of one.
+{
+  const f = fixture()
+  const bound = ident(f.origin)
+  const guardHash = computePathTreeHash(f.origin).treeHash
+
+  const origMkdir = fs.mkdirSync
+  let swapped = false
+  fs.mkdirSync = (p, ...rest) => {
+    const out = origMkdir(p, ...rest)
+    // Swap once, after the op directory exists: the hash has been verified and
+    // the identity bound, and rename(2) has not happened yet.
+    if (!swapped && String(p).includes('.skillsmith-trash')) {
+      swapped = true
+      origMkdir(path.join(f.root, 'holder'), { recursive: true })
+      fs.renameSync(f.origin, path.join(f.root, 'holder', 'aside'))
+      fs.renameSync(f.spare, f.origin)
+    }
+    return out
+  }
+
+  let r
+  try {
+    r = quarantineTree(f.parent, 'tree', { guardHash, expectIdentity: bound })
+  } finally {
+    fs.mkdirSync = origMkdir
+  }
+
+  check('4a the swap actually landed mid-flight', swapped, true)
+  check('4b a mid-flight swap is not quarantined', r.status, 'kept')
+  check('4c and the reason names identity', r.reason, 'identity-changed')
+  check('4d the replacement is still in place', fs.existsSync(f.origin), true)
+  let bytes
+  try {
+    bytes = fs.readFileSync(path.join(f.origin, 'sub', 'f.txt'), 'utf8')
+  } catch (err) {
+    bytes = `UNREADABLE:${err.code}`
+  }
+  check('4e the replacement bytes survived', bytes, 'exact same bytes')
+  fs.rmSync(f.root, { recursive: true, force: true })
+}
+
 if (!allOk) {
   console.error('[quarantine-identity] FAIL')
   process.exit(1)
