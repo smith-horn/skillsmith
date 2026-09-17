@@ -355,7 +355,8 @@ describe('check-native-modules.sh attribution: record, render, robustness (fix r
       ],
       // F-4 (SMI-6684 Wave 3 pre-merge gate): every prior MOUNT-SUBSTITUTED
       // fixture was worktree mode, so the main-checkout remedy line
-      // (check-native-modules.sh:388's `else` arm) had no covering case.
+      // (the `Next: docker compose ... --force-recreate` else arm in
+      // check-native-modules.sh) had no covering case.
       [
         'S-subst-main',
         {},
@@ -664,7 +665,9 @@ describe('check-native-modules.sh attribution: record, render, robustness (fix r
 
     // F-5 (SMI-6684 Wave 3 pre-merge gate): cause precedence is
     // FALL-THROUGH > MOUNT-MISSING > MOUNT-SUBSTITUTED > SEED-CONTENT >
-    // OTHER-NATIVE-FINDING (check-native-modules.sh:318-322). MISS > SUBS
+    // OTHER-NATIVE-FINDING -- the `NCA_CAUSE=` if/elif chain in
+    // check-native-modules.sh (`grep -n 'NCA_CAUSE=FALL-THROUGH'`; a line
+    // number here rots on any edit above it, and did). MISS > SUBS
     // was unpinned -- no fixture carries a tier-1 MISS and a tier-1 SUBS
     // together, so swapping those two lines broke nothing. Stage-and-modify,
     // same shape as MED-1a/MED-1b, so nothing is written inside the

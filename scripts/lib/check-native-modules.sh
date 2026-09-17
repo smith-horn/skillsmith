@@ -1,44 +1,38 @@
 #!/bin/sh
 # scripts/lib/check-native-modules.sh
-# SMI-5513: Container native-binding health preflight.
+# SMI-5513: container native-binding health preflight. Design lives in ADR-165
+# and docs/internal/implementation/smi-6684-verification-surface-integrity.md
+# (Wave 3); this file implements it rather than restating it.
 #
-# Catches a broken better-sqlite3 binding in the dev container, whatever the
-# cause -- see ADR-165 and the SMI-6684 Wave 3 spec. A broken binding
-# otherwise surfaces DOWNSTREAM as dozens of cryptic `db.close()`-on-undefined
-# test failures in unrelated suites during the pre-push coverage phase. Turn
-# that invisible failure into a loud, actionable one: fail fast, and on
-# failure ask the mount-composition checker
-# (scripts/lib/check-mount-composition.sh) WHY the binding is broken, before
-# the Phase 2/4 test runs.
+# Fail fast on a broken better-sqlite3 binding, whatever the cause, and on
+# failure ask scripts/lib/check-mount-composition.sh WHY -- before the Phase
+# 2/4 runs turn it into dozens of cryptic `db.close()`-on-undefined failures
+# in unrelated suites. Probe THROUGH the real consumer (`@skillsmith/core`'s
+# createDatabaseSync), never a root `require('better-sqlite3')`: a non-hoisted
+# workspace-local copy exists (packages/core/node_modules), so a root probe
+# can pass while the copy the tests use is broken, and the SYNC path has no
+# WASM fallback -- createDatabaseSync throws -- so a break is loud.
+# Runs only when the pre-push TESTS run in the container (USE_DOCKER=1); the
+# host-fallback route (macOS worktree without SKILLSMITH_PRE_PUSH_DOCKER) uses
+# WASM, where a container binding is irrelevant.
 #
-# Probe strategy: load better-sqlite3 THROUGH its real consumer —
-# `@skillsmith/core`'s createDatabaseSync — not a root-level
-# `require('better-sqlite3')`. better-sqlite3 has non-hoisted workspace-local
-# copies (packages/core/node_modules, packages/doc-retrieval-mcp/...), so a root
-# probe can pass while the copy the tests actually use is broken. The consumer
-# path resolves whichever copy core uses, and the SYNC path has no WASM fallback,
-# so a broken binding fails loudly — exactly what the DB/repository tests hit.
+# READ-ONLY (P-5) toward tree and container apart from transient temp state (a
+# host mktemp(1) file and an in-container `mktemp -d`), cleaned up on every
+# exit path the code controls. One DURABLE exception: a single append-only
+# JSON line to $HOME/.skillsmith/logs/native-attribution.jsonl per
+# failure-path run, never on success, never when USE_DOCKER != 1. RETENTION:
+# none, deliberately -- ADR-165's falsifier and retirement test need a
+# lifetime denominator to divide by.
 #
-# Runs only when the pre-push TESTS run in the container (USE_DOCKER=1). On the
-# host-fallback route (macOS worktree without SKILLSMITH_PRE_PUSH_DOCKER) the
-# tests use the WASM fallback, so a container native binding is irrelevant.
+# Opt-outs (docs/internal/process/guards-and-opt-outs.md):
+# SKILLSMITH_SKIP_NATIVE_CHECK=1 (whole probe),
+# SKILLSMITH_NATIVE_CHECK_ATTRIBUTION_DISABLE=1 (attribution only; still
+# records, see nca_record), SKILLSMITH_MOUNT_COMPOSITION_DISABLE=1 (the
+# checker itself, which renders NO-REPORT [checker-disabled]).
+# SKILLSMITH_NATIVE_CHECK_ATTRIBUTION_WATCHDOG_SECS is a test-only override,
+# not a disable var.
 #
-# READ-ONLY (P-5) toward the repo tree and container, aside from transient
-# temp state: loads a module, opens an in-memory DB, and -- only inside the
-# failure path -- runs a read-only mount-composition check (ADR-165), which
-# creates/removes a host mktemp(1) file and an in-container `mktemp -d` dir,
-# both cleaned up on every exit path the code controls (Wave 3 spec §1.2/§6).
-# The one DURABLE exception is one append-only JSON line written to
-# $HOME/.skillsmith/logs/native-attribution.jsonl on every failure-path run
-# (SMI-6684 Wave 3); never on success, never when USE_DOCKER != 1.
-# RETENTION: none, deliberately -- one line per FAILED push, and ADR-165's
-# falsifier and retirement test need a lifetime denominator to divide by.
-# Opt-out: SKILLSMITH_SKIP_NATIVE_CHECK=1 (see docs/internal/process/guards-and-opt-outs.md).
-# Attribution-only opt-out: SKILLSMITH_NATIVE_CHECK_ATTRIBUTION_DISABLE=1
-# (still records; see nca_record below). Watchdog override (test-only, not a
-# disable var): SKILLSMITH_NATIVE_CHECK_ATTRIBUTION_WATCHDOG_SECS.
-#
-# POSIX sh — no `local`, no `[[ ]]`, no arrays.
+# POSIX sh -- no `local`, no `[[ ]]`, no arrays.
 
 # Opt-out escape hatch.
 if [ "${SKILLSMITH_SKIP_NATIVE_CHECK:-0}" = "1" ]; then
@@ -405,17 +399,15 @@ nca_render() {
 }
 
 # nca_json_safe <value>: prints <value> if every char is in the conservative
-# allow-list, else prints "invalid" -- addendum A-1. Never trust a container
-# name or other operator-influenced string to be JSON-safe on its own.
-# `=` is added to the addendum's literal allow-list ([A-Za-z0-9 ._:/+,@-]):
-# measured (2026-09-16, host smoke test) that without it the OFF reason
-# "SKILLSMITH_NATIVE_CHECK_ATTRIBUTION_DISABLE=1" -- the exact label this
-# same spec's §7.1 requires -- always degraded to "invalid" on the one
-# guaranteed-legitimate OFF run. `=` carries no JSON-escaping risk.
-# F-17: letters are spelled out literally, not an A-Z/a-z RANGE -- a shell
-# bracket-expression range is collation-order-dependent: measured under
-# LC_ALL=en_US.UTF-8 that an accented letter sorts inside A-Z and wrongly
-# passes as "safe". The literal set depends only on the ASCII bytes.
+# allow-list, else "invalid" -- addendum A-1. Never trust a container name or
+# other operator-influenced string to be JSON-safe. `=` extends the addendum's
+# literal set ([A-Za-z0-9 ._:/+,@-]) and carries no JSON-escaping risk: without
+# it the OFF reason "SKILLSMITH_NATIVE_CHECK_ATTRIBUTION_DISABLE=1", the exact
+# label §7.1 requires, always degraded to "invalid" (measured 2026-09-16).
+# F-17: keep the letters spelled out, never an A-Z/a-z RANGE -- a shell
+# bracket-expression range is collation-order-dependent, and under
+# LC_ALL=en_US.UTF-8 an accented letter sorts inside A-Z and wrongly passes as
+# "safe". The literal set depends only on the ASCII bytes.
 nca_json_safe() {
     case $1 in
         *[!ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789\ ._:/+,@=-]*) printf 'invalid' ;;
