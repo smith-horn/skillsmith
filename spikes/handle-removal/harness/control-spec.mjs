@@ -308,6 +308,22 @@ export function controlTag(state) {
  * NEVER-RAN (underpowered) -- honest about having too few real races rather than
  * passing on a handful.
  */
+/**
+ * THE EXCLUSIONS ARE DELIBERATE -- do not "fix" them by adding the rest of the
+ * A13 family. `A13-VALIDATE` and `A13-WARMARM` are racers by the same mechanism
+ * (100% of their 54,456 never-ran records are `mutationApplied === false`,
+ * identical to A13), so the omission looks like an oversight and is not: R6's
+ * owner decided 2026-09-17 to leave them out, because they are METHODOLOGY
+ * EXPERIMENTS -- warming arms and per-entry-timing validation -- and not the
+ * §5.1 attack cells criterion 1 scores. Their FAIL verdicts are honest: those
+ * arms really did lose user bytes, and R6 was never meant to relabel them.
+ *
+ * Adding them would move arm-B/arm-B0 to PASS and arm-P (0 landed) to
+ * NEVER-RAN (underpowered), changing published verdicts in the memo that gates
+ * the UAT. harness/test-verdict-rule.mjs case 6f pins this set's exact
+ * contents, so an edit here fails a test rather than silently rescoring a
+ * family.
+ */
 export const PROBABILISTIC_ATTACKS = new Set(['A13', 'A13-VR', 'A13-TIMING'])
 export const LANDED_FLOOR = 100
 
