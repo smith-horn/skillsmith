@@ -125,7 +125,9 @@ import {
 import { mentionsIdentifier } from '../lib/sql-name-tripwire.ts'
 
 // Directories `mkdtempSync` creates below for the positive control (SMI-6690 finding F7): tracked
-// here and removed in `afterEach` rather than left on disk -- 7 per CI run, unbounded over time.
+// here and removed in `afterEach` rather than left on disk -- one per planted case, unbounded
+// over time otherwise. (An earlier version of this line said "7 per CI run"; measured, it is 3 --
+// one `mkdtempSync` call site inside a three-element loop. SMI-6712's class, in a code comment.)
 const tempDirs: string[] = []
 
 const FUNCTION_NAME = 'release_private_registry_skill_content'
@@ -335,7 +337,14 @@ describe.skipIf(migrationTextLocked())(
         writeFileSync(join(dir, '29999999999999_planted_tamper.sql'), sql)
         const { scanned, offenders } = tamperViolations(dir)
         expect(scanned, verb).toEqual(['29999999999999_planted_tamper.sql'])
-        expect(offenders.join(' | '), verb).toContain(verb)
+        // EXACT equality, not `toContain` (SMI-6690 post-merge retro). The tripwire's no-verb
+        // fallback message reads "...without a recognised CREATE/DROP/ALTER FUNCTION verb...",
+        // which CONTAINS the literal `ALTER FUNCTION`. So a substring assertion on the ALTER row
+        // was satisfied by that fallback, and stubbing `matchesAlterFunction` to false left the
+        // whole suite green — measured. `CREATE FUNCTION` and `DROP FUNCTION` are not substrings
+        // of it, so only one of the three rows was decorative, and it was not the one the
+        // author's own red-test mutated.
+        expect(offenders, verb).toEqual([`29999999999999_planted_tamper.sql: ${verb}`])
       }
     })
   }
