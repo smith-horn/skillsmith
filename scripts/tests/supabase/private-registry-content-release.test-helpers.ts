@@ -43,6 +43,7 @@
 import { readFileSync } from 'node:fs'
 import { join } from 'node:path'
 import { extractFunction, extractStatement, type TestConn } from './pg-session.ts'
+import { readMigrationText } from '../lib/migration-text-guards.ts'
 
 export { PsqlSession, type TestConn } from './pg-session.ts'
 
@@ -240,30 +241,25 @@ export function migrationSql(): string {
   return readFileSync(path, 'utf8')
 }
 
-const GIT_CRYPT_MAGIC = Buffer.from([0x00, 0x47, 0x49, 0x54, 0x43, 0x52, 0x59, 0x50, 0x54])
-const EXPECT_LOCKED_ENV_VAR = 'SKILLSMITH_GIT_CRYPT_EXPECTED_LOCKED'
-
 /** True when this migration is git-crypt ciphertext on disk AND that was expected (SMI-5984).
  *  `supabase/migrations/` is git-crypt-scoped, so `migrationSql()` returns ciphertext rather than
- *  SQL on a locked checkout — `post-merge-verify.yml` runs locked by design, and `Test (root)`
- *  runs locked on fork/dependabot PRs where the unlock step is gated on a secret.
+ *  SQL on a locked checkout, and `post-merge-verify.yml` runs locked by design.
  *
  *  ANY suite asserting on migration TEXT must gate on this, or it fails in those lanes with a
- *  message that reads as migration drift rather than as a lock state (SMI-6690 governance
- *  finding). An UNEXPECTED lock throws instead of returning true, so a genuine unlock failure
- *  can never be silently absorbed as a skip — that three-way outcome is the point of the
- *  contract. Mirrors `../private-registry-audit-trigger.static.test.ts`'s `readMigration()`. */
-export const migrationTextLocked: boolean = (() => {
-  const raw = readFileSync(join(process.cwd(), MIGRATIONS_DIR, NEW_MIGRATION))
-  if (!raw.subarray(0, GIT_CRYPT_MAGIC.length).equals(GIT_CRYPT_MAGIC)) return false
-  if (process.env[EXPECT_LOCKED_ENV_VAR] !== '1') {
-    throw new Error(
-      `${NEW_MIGRATION} is git-crypt-locked but ${EXPECT_LOCKED_ENV_VAR} is not set — treat as ` +
-        'an unlock failure, not a lock-state edge case (SMI-5984).'
-    )
-  }
-  return true
-})()
+ *  message that reads as migration drift rather than as a lock state. An UNEXPECTED lock throws
+ *  rather than returning true, so a genuine unlock failure can never be absorbed as a skip —
+ *  that three-way outcome is the point of the contract.
+ *
+ *  A FUNCTION, not an eager `const` (SMI-6690 retro, finding 4). The first version evaluated at
+ *  module scope, so on a locked-and-undeclared checkout it threw at IMPORT and took every
+ *  importer down with it — including `.pg.test.ts`, which had skipped cleanly in that lane before
+ *  and reads no migration text of its own. Deferring the read scopes the throw to the suites that
+ *  actually assert on that text. It also delegates to `readMigrationText` rather than
+ *  re-implementing the magic-bytes check, which is the de-duplication the shared module exists
+ *  for and which this file previously undercut. */
+export function migrationTextLocked(): boolean {
+  return readMigrationText(NEW_MIGRATION) === null
+}
 
 // ============================================================================
 // Minimal schema (stub tables/roles/auth) + REAL extracted functions/policies/grants. Does NOT
