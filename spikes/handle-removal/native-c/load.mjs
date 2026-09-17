@@ -22,9 +22,27 @@ const here = path.dirname(fileURLToPath(import.meta.url))
 let cached = null
 let cachedFrom = null
 
-/** The file loadShim() will require. Exported so a run can RECORD what it loaded. */
+/**
+ * The file loadShim() will require. Exported so a run can RECORD what it loaded,
+ * and so `hybrid.mjs` can key its probe cache on the binary actually loaded.
+ *
+ * ALWAYS ABSOLUTE, resolved against this directory -- the same base `require()`
+ * uses, since the require here is `createRequire(import.meta.url)`. Returning the
+ * raw env value was wrong in a way a comment could not fix: two consumers applied
+ * two different resolution rules to one string. `binaryIdentity()`'s
+ * `fs.readFileSync` resolves a relative path against `process.cwd()`, while
+ * `require()` resolves it against this file's directory. Measured with two
+ * different real binaries planted at the same relative path under each base: the
+ * cache key hashed one, `require()` loaded the other, and replacing the loaded
+ * one did not move the key. An earlier version of this file said "deliberately an
+ * absolute path" -- a convention with no enforcement, which `hybrid.mjs` then
+ * depended on for correctness. Resolving here makes the two agree by
+ * construction instead of by everyone remembering.
+ */
 export function shimPath() {
-  return process.env.SMI6676_SHIM_PATH || path.join(here, 'build', 'Release', 'shim.node')
+  const override = process.env.SMI6676_SHIM_PATH
+  if (override) return path.resolve(here, override)
+  return path.join(here, 'build', 'Release', 'shim.node')
 }
 
 export function loadShim() {

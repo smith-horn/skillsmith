@@ -200,6 +200,43 @@ const q7 = scanQuarantineLeftovers(qTwo)
 check('Q7 counts BOTH quarantine dirs', q7.dirs, 2)
 check('Q7 counts entries across both', q7.entries, 2)
 
+// Q8 (mutation four, found by a reviewer after three others). The prefix
+// constant's own doc says it must catch TWO things: V2's `.skillsmith-rm-<opId>`
+// AND C4's trash root `.skillsmith-trash` -- and that matching on the PREFIX
+// rather than either exact name is deliberate. Every fixture above uses
+// `.skillsmith-rm-*`, so the second half of that contract was entirely
+// unasserted: narrowing the constant to `.skillsmith-rm-` passed all 21
+// assertions and would have reported a confident zero for every C4/C5 stranding
+// forever. This is the real shape `quarantine.mjs` leaves behind.
+const qTrash = path.join(qTmp, 'c4-trash')
+mkdirSync(path.join(qTrash, '.skillsmith-trash', 'op1234'), { recursive: true })
+writeFileSync(path.join(qTrash, '.skillsmith-trash', 'op1234', 'tree-9f3a'), 'x')
+writeFileSync(path.join(qTrash, '.racer-ready'), '')
+const q8 = scanQuarantineLeftovers(qTrash)
+check('Q8 C4 trash root is counted, not just .skillsmith-rm-', q8.dirs, 1)
+check('Q8 C4 trash entries counted', q8.entries, 1)
+check('Q8 C4 path named', q8.paths[0], '.skillsmith-trash/op1234')
+
+// Q9: a DOT-named entry inside a quarantine dir must still count. Without this,
+// filtering entries on a leading dot passes every assertion above.
+const qDot = path.join(qTmp, 'dot-entry')
+mkdirSync(path.join(qDot, '.skillsmith-rm-dot'), { recursive: true })
+writeFileSync(path.join(qDot, '.skillsmith-rm-dot', '.hidden-leftover'), 'x')
+const q9 = scanQuarantineLeftovers(qDot)
+check('Q9 dot-named leftover is counted', q9.entries, 1)
+
+// Q10: MAX_REPORTED_PATHS must actually bound `paths` while `entries` keeps
+// counting past it. With one path per fixture the truncation was unconstrained,
+// so setting the bound to 1 passed everything.
+const qMany = path.join(qTmp, 'many')
+mkdirSync(path.join(qMany, '.skillsmith-rm-many'), { recursive: true })
+for (let i = 0; i < 12; i += 1) {
+  writeFileSync(path.join(qMany, '.skillsmith-rm-many', `leftover-${i}`), 'x')
+}
+const q10 = scanQuarantineLeftovers(qMany)
+check('Q10 entries counts past the paths cap', q10.entries, 12)
+check('Q10 paths is capped at 8, not 1 and not 12', q10.paths.length, 8)
+
 rmSync(qTmp, { recursive: true, force: true })
 
 if (!allOk) {

@@ -54,7 +54,10 @@ function fstatIdentity(fd) {
  * @param {string} [options.opId] - used to name V2's quarantine directory.
  * @param {Record<string, Function>} [options.hooks] - beforeBind(),
  *   afterBind() [T is open and held; the guard pass has not started],
- *   afterListing(relPath, entries) [guard pass], afterOpen(relPath, type)
+ *   afterListing(relPath, entries) [guard pass], beforeRead(relPath, type)
+ *   [guard pass, non-directories only -- the START of an entry's observation
+ *   window, since afterOpen fires for a file only AFTER its content is hashed],
+ *   afterOpen(relPath, type)
  *   [guard pass -- fired the instant a directory is opened and its fd
  *   starts being held, before its own children are listed], AND fired for
  *   files/symlinks too, right after they're read/readlinked,

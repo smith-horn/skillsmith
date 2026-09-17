@@ -101,7 +101,11 @@ function runProbe() {
     cachedProbe = {
       ok: false,
       trigger: 'native-dev-build-unreadable',
-      detail: `cannot read ${devBuildPath()}`,
+      // The path is named because under SMI6676_SHIM_PATH there may be no "dev
+      // build" involved at all -- the unreadable file is whatever the override
+      // points at. The trigger string is kept stable for the existing
+      // assertions; the detail is what tells you which file actually failed.
+      detail: `cannot read ${devBuildPath()} (the binary walk.mjs would load)`,
     }
     return cachedProbe
   }

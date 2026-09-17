@@ -9,10 +9,14 @@
 // PARENT (which only ever spawned it) observes that via signal, not a crash
 // of its own.
 
-import { loadNative } from './load-packaged.mjs'
+import { createRequire } from 'node:module'
+import { loadNative, prebuildPath } from './load-packaged.mjs'
+import { shimPath } from './load.mjs'
 import fs from 'node:fs'
 import path from 'node:path'
 import os from 'node:os'
+
+const require = createRequire(import.meta.url)
 
 function result(ok, trigger, detail) {
   process.stdout.write(
@@ -30,6 +34,28 @@ if (!loaded.ok) {
   const trigger =
     loaded.error.code === 'MODULE_NOT_FOUND' ? 'no-prebuild-or-missing-file' : 'dlopen-failed'
   result(false, trigger, loaded.error.message)
+}
+
+// A GATE MUST DESCRIBE THE BINARY IT GATES. The probe above loads the PREBUILD
+// (`load-packaged.mjs`), which models a real install and is what criterion 4's
+// six triggers perturb -- but `walk.mjs` loads `shimPath()` (`load.mjs`), and
+// under SMI6676_SHIM_PATH those are different files. Probing only the prebuild
+// let a readable-but-unloadable override pass the gate and then throw
+// ERR_DLOPEN_FAILED out of removeTree(), leaving the tree neither removed nor
+// quarantined -- the opposite of criterion 4's "no crash, one message".
+//
+// So probe BOTH, and do it HERE rather than in the parent: that is the whole
+// point of the child. A tampered signed binary SIGKILLs whatever process
+// require()s it, and the parent must not be that process.
+const walkPath = shimPath()
+if (path.resolve(walkPath) !== path.resolve(prebuildPath())) {
+  try {
+    require(walkPath)
+  } catch (err) {
+    const trigger =
+      err.code === 'MODULE_NOT_FOUND' ? 'no-prebuild-or-missing-file' : 'dlopen-failed'
+    result(false, trigger, `native walk binary ${walkPath}: ${err.message}`)
+  }
 }
 
 const shim = loaded.shim
