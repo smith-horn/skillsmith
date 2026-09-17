@@ -31,27 +31,67 @@ const SCRIPT = resolve(__dirname, '..', 'lib', 'check-native-modules.sh')
 // `run_cmd` IS `docker exec` (scripts/lib/hook-docker-detect.sh), so it is a
 // first-class docker-exec surface here, not just the literal text. The
 // allow-list is closed: a third call site has to justify itself in this file.
+// It is matched against ONE COMMAND, never a whole line — a substring match
+// against a line lets an allowed call vouch for whatever is chained after it.
 const ALLOWED_RUN_CMD = [
-  /run_cmd node -e/, // the read-only createDatabaseSync(':memory:') probe
-  /run_cmd sh -c "\$NCA_PRODUCER"/, // SMI-6684 Wave 3: read-only mount-composition attribution
+  /^run_cmd node -e/, // the read-only createDatabaseSync(':memory:') probe
+  /^run_cmd sh -c "\$NCA_PRODUCER"/, // SMI-6684 Wave 3: read-only mount-composition attribution
 ]
 
-/** Lines that run a mutating command for real, outside a comment or printf. */
+/**
+ * Commands that mutate for real. `npm i` is `npm install`, and `docker exec`
+ * has three spellings.
+ *
+ * KNOWN GAP, stated rather than implied: a flag between the command and its
+ * subcommand still evades it (`npm --prefix /app install`). Closing that needs
+ * argument parsing, not a wider alternation, and nothing in this repo writes
+ * npm that way today. It is a guard against an accidental line, not an
+ * adversary.
+ */
+const MUTATING = /\bnpm\s+(install|i|ci|rebuild)\b|\bdocker\s+(container\s+|compose\s+)?exec\b/
+
+/**
+ * Lines that run a mutating command for real, outside a comment or printf.
+ *
+ * Re-derived rather than patched a third time (pr-reviewer skill: "after the
+ * second consecutive finding on the same mechanism, delete it and re-derive").
+ * Three rounds found three holes in the line-at-a-time version: it could not
+ * see `run_cmd` at all; then its allow-list matched a substring; then its
+ * one-per-line rule counted only `run_cmd`, so `run_cmd <allowed> ; npm install`
+ * still passed. Each fix was locally correct and the shape stayed wrong.
+ *
+ * The requirement is per-COMMAND, so this is too: strip the trailing comment,
+ * split the line into commands, and judge each one alone. An exemption can then
+ * only ever excuse the command it applies to.
+ */
 function mutatingOffenders(src: string): string[] {
   return src.split('\n').filter((line) => {
-    const t = line.trim()
-    if (t.startsWith('#')) return false
-    if (/^\s*printf\b/.test(line)) return false
-    if (/\brun_cmd\b/.test(line)) {
-      if (/^\s*fail\)/.test(line)) return false // the test seam's run_cmd() { return 1; }
-      if (/run_cmd\(\)/.test(line)) return false // the run_cmd() definition itself
-      // One per line, or the allow-list does not apply: it matches a
-      // substring, so an allowed call plus a chained second one would
-      // otherwise satisfy it.
-      if ((line.match(/\brun_cmd\b/g) ?? []).length > 1) return true
-      return !ALLOWED_RUN_CMD.some((re) => re.test(line))
-    }
-    return /npm\s+(install|ci|rebuild)\b|docker\s+exec\b/.test(line)
+    if (/^\s*#/.test(line)) return false // a whole-line comment runs nothing
+    if (/^\s*run_cmd\(\)\s*\{/.test(line)) return false // the run_cmd() definition itself
+    if (/^\s*fail\)/.test(line)) return false // the test seam's run_cmd() { return 1; }
+
+    const code = line.replace(/\s#.*$/, '') // a trailing comment runs nothing either
+    return code
+      .split(/;|&&|\|\||\||&/) // one command per segment
+      .map((seg) => {
+        // Peel the shell words that PRECEDE a command without being one, so the
+        // allow-list can anchor on the command itself. `if npm install` still
+        // flags: peeling `if` leaves the mutating command exposed, not excused.
+        let cmd = seg.trim()
+        for (;;) {
+          const peeled = cmd.replace(
+            /^(?:[([{]\s*|!\s*|(?:if|then|elif|else|while|until|do|time)\s+)/,
+            ''
+          )
+          if (peeled === cmd) return cmd
+          cmd = peeled
+        }
+      })
+      .some((cmd) => {
+        if (cmd === '' || /^printf\b/.test(cmd)) return false // printf only prints
+        if (/\brun_cmd\b/.test(cmd)) return !ALLOWED_RUN_CMD.some((re) => re.test(cmd))
+        return MUTATING.test(cmd)
+      })
   })
 }
 
@@ -103,21 +143,44 @@ describe('check-native-modules.sh (SMI-5513)', () => {
     expect(mutatingOffenders(readFileSync(SCRIPT, 'utf8'))).toEqual([])
   })
 
-  // Post-merge retro on PR #2873. The predicate above is only as good as its
-  // own edge cases, and the previous version's allow-list matched a SUBSTRING:
-  // a line carrying an allowed call AND a chained second one satisfied it and
-  // would have shipped invisibly. That is the same unanchored-predicate class
-  // the pre-merge gate found one round earlier, reintroduced by its own fix —
-  // which nothing caught, because no round reviewed that fix. So the guard now
-  // has its own cases, each carrying exactly one reason to fail.
+  // The predicate above is only as good as its own cases. Three review rounds
+  // found three holes in it, each inside the previous round's fix, so it was
+  // re-derived per-command rather than patched again. Every row below differs
+  // from a passing line in EXACTLY ONE way: a row with two defects verifies
+  // only whichever the predicate notices first, and tightening the predicate
+  // then keeps the row green while the second defect ships.
   it.each([
+    // --- must flag: one mutating command each -------------------------------
     ['a bare mutating run_cmd', '    run_cmd rm -rf /app/node_modules', true],
     [
-      'a second run_cmd chained onto an allowed one',
+      'a run_cmd chained after an allowed one',
       '    run_cmd sh -c "$NCA_PRODUCER" ; run_cmd rm -rf /app/node_modules',
       true,
     ],
-    ['a raw docker exec', '    docker exec "$C" npm install', true],
+    [
+      'npm chained after an allowed run_cmd',
+      '    run_cmd sh -c "$NCA_PRODUCER" ; npm install',
+      true,
+    ],
+    [
+      'docker exec chained after an allowed run_cmd',
+      '    run_cmd node -e "x" ; docker exec "$C" true',
+      true,
+    ],
+    [
+      'a chained command hidden behind a trailing run_cmd() comment',
+      '    run_cmd sh -c "$NCA_PRODUCER" ; run_cmd rm -rf /app # run_cmd()',
+      true,
+    ],
+    ['a raw docker exec', '    docker exec "$C" true', true],
+    ['docker container exec', '    docker container exec "$C" true', true],
+    ['docker compose exec', '    docker compose exec dev true', true],
+    ['npm install', '    npm install', true],
+    ['npm i, the short spelling', '    npm i', true],
+    // Pins the allow-list ANCHORS: unanchored, the allowed text vouches for a
+    // command that merely contains it.
+    ['an allowed call smuggled behind eval', '    eval run_cmd node -e "x"', true],
+    // --- must not flag: one exemption each -----------------------------------
     [
       'the allowed producer call',
       '    ( run_cmd sh -c "$NCA_PRODUCER" nca "$T" ) >"$env" &',
@@ -134,6 +197,15 @@ describe('check-native-modules.sh (SMI-5513)', () => {
       '    printf "  docker exec -w /app %s ...\\n" "$C"',
       false,
     ],
+    // Pins the trailing-comment strip: without it, prose in a comment reads as
+    // a command and the guard cries wolf on an inert line.
+    [
+      'a trailing comment mentioning npm install',
+      '    target=/app # npm install would be wrong',
+      false,
+    ],
+    ['the run_cmd() definition', '    run_cmd() {', false],
+    ['the test seam arm', '        fail) USE_DOCKER=1 ; run_cmd() { return 1; } ;;', false],
   ])('READ-ONLY guard: %s', (_label, line, shouldFlag) => {
     expect(mutatingOffenders(line)).toEqual(shouldFlag ? [line] : [])
   })
