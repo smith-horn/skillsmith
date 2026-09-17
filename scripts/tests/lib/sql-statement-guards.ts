@@ -1,31 +1,26 @@
 /**
- * One tokenizer for Postgres SQL text (`opaqueSpanAt`, and the `stripComments`/`splitStatements`/
- * identifier readers built on it), plus by-name CREATE/DROP/ALTER FUNCTION matchers that REPORT
- * which verb a tamper scan found (SMI-6690).
- *
- * THE MATCHERS DO NOT DETECT — SMI-6690's own case table is why. Each matcher parses one
- * statement's grammar (a verb, a list, an argument list), and grammar-parsing can only ever be as
- * complete as parsing DDL is possible: DDL assembled at runtime by `EXECUTE format(...)` inside a
- * `DO $$ ... $$` block is not parseable text at all, at any point, by any lexer. Four review rounds
- * closed a delimiter forgery, a Unicode-escape identifier and two whole-file false positives one at
- * a time, and PG 17.11 still accepts every one of: a DROP hidden inside a `DO` block (plain, or via
- * `EXECUTE '...'`), an `ALTER ... RESET ALL` hidden the same way, a `café`/`if`-named list entry a
- * list parser abandons past, a `/* *\/`-fused verb, and a three-part `db.public.<fn>` name (SMI-6696).
- * A caller that needs to KNOW whether a name is mentioned in executable SQL, fail-closed, uses
- * `mentionsIdentifier` in `./sql-name-tripwire.ts` instead: it never parses a verb, a statement, or
- * a list, so none of the above has anything to bypass. The matchers here keep a narrower job once
- * that tripwire has already fired — naming WHICH verb (CREATE/DROP/ALTER) was seen, for a
- * human-readable message.
+ * ONE TOKENIZER for Postgres SQL text: `opaqueSpanAt`, plus `stripComments`, `splitStatements`,
+ * `normalizeIdent` and the identifier readers built on it (SMI-6690).
  *
  * `opaqueSpanAt` is the single source of truth for which spans of SQL are not ordinary code.
- * `stripComments`, `splitStatements`, the identifier reader here, and `./sql-name-tripwire.ts`'s
- * `executableText` all consume it, so a span rule is fixed in one place rather than several.
+ * Everything here and in both sibling modules defers to it rather than each re-deciding by regex —
+ * that re-deciding is what let a `;` inside a quoted identifier forge a statement delimiter
+ * undetected, and what let a deleted comment span fuse `DROP/* x *\/FUNCTION` into one token.
  *
- * NOT HERE: git-crypt lock state and migration enumeration (`./migration-text-guards.ts`); the
- * fail-closed identifier tripwire, `executableText`/`mentionsIdentifier` (`./sql-name-tripwire.ts`
- * — kept in its own module so this file's matchers stay under the file-length gate); and anything
- * shaped by one function's own signature or body — the audit-trigger suite's `DEF_RE` pins a
- * header/body via backreference; that stays in that file.
+ * NOT HERE, and each for a reason:
+ *
+ *   - `./sql-verb-matchers.ts` — the by-name CREATE/DROP/ALTER FUNCTION matchers. They REPORT which
+ *     verb a scan found; they do not decide whether to fire. Moved out when this module reached 487
+ *     of the 500-line commit gate: a tokenizer accretes cases, and the matchers need none of it
+ *     beyond the readers below (SMI-6696).
+ *   - `./sql-name-tripwire.ts` — `executableText`/`mentionsIdentifier`, the fail-closed detector,
+ *     which applies a deliberately DIFFERENT span policy to the same spans.
+ *   - `./migration-text-guards.ts` — git-crypt lock state and migration enumeration.
+ *   - Anything shaped by one function's own signature or body: the audit-trigger suite's `DEF_RE`
+ *     pins a header/body via backreference, and stays in that file.
+ *
+ * A tamper scan uses the tripwire and the matchers IN UNION — a hit from either is a hit — and lets
+ * neither gate the other. See `./sql-verb-matchers.ts` for why, and for what neither can do.
  *
  * @module scripts/tests/lib/sql-statement-guards
  */
@@ -43,8 +38,7 @@ export const BARE_IDENT_RE = /^[A-Za-z_][A-Za-z0-9_$]*$/
  * schema qualification, optional double quotes on either part, and arbitrary whitespace around the
  * dot. `public.fn`, `"public"."fn"`, `"fn"`, and `public . fn` all name the same object. Used by
  * the definition/trigger regexes in `private-registry-audit-trigger.static.test.ts`; the by-name
- * tamper decision below (`matchesCreateFunction`/`matchesDropFunction`/`matchesAlterFunction`)
- * uses `normalizeIdent` instead of a regex fragment.
+ * verb matchers in `./sql-verb-matchers.ts` use `normalizeIdent` instead of a regex fragment.
  */
 export function qualifiedIdent(name: string): string {
   // `name` is interpolated unescaped, so a non-bare-identifier argument builds a pattern meaning
@@ -164,7 +158,14 @@ export function opaqueSpanAt(sql: string, i: number): { kind: SpanKind; end: num
     return { kind: 'quoted-ident', end: scanDoubleQuoted(sql, i) }
   }
   if (c === '$') {
-    const tagMatch = /^\$[A-Za-z_][A-Za-z0-9_]*\$|^\$\$/.exec(sql.slice(i))
+    // Tag characters follow Postgres' UNQUOTED-IDENTIFIER rules, which admit letters with
+    // diacritics and non-Latin letters — so `$café$` is a legal tag (SMI-6690 round 9). An
+    // ASCII-only class here left the tag unrecognised, and an unrecognised opener routes the
+    // body's interior strings through the top-level-string branch, which blanks them: the
+    // `EXECUTE 'DROP FUNCTION <fn>'` inside `DO $café$ … $café$` vanished before the tripwire
+    // saw it. Recognising MORE tags is the fail-closed direction, since a recognised dollar
+    // body is emitted verbatim and therefore stays scannable.
+    const tagMatch = /^\$(?:[\p{L}_][\p{L}\p{N}_$]*)?\$/u.exec(sql.slice(i))
     if (tagMatch) {
       const tag = tagMatch[0]
       const closeIdx = sql.indexOf(tag, i + tag.length)
@@ -267,10 +268,24 @@ export function splitStatements(sql: string): string[] {
   return statements.filter((s) => s.trim().length > 0)
 }
 
-function skipWs(s: string, i: number): number {
+/**
+ * Advances past a TOKEN GAP: whitespace and comments alike. Postgres treats a comment as
+ * whitespace, so `DROP/* x *\/FUNCTION` and `U&"…" -- c` + newline + `UESCAPE '!'` are both single
+ * token sequences to the engine. Skipping only whitespace here silently truncated the `UESCAPE`
+ * look-ahead, which dropped the custom escape character and left the identifier undecoded
+ * (SMI-6690 round 9). Callers that have already run `stripComments` are unaffected.
+ */
+export function skipTokenGap(s: string, i: number): number {
   let j = i
-  while (j < s.length && /\s/.test(s[j])) j += 1
-  return j
+  for (;;) {
+    while (j < s.length && /\s/.test(s[j])) j += 1
+    const span = opaqueSpanAt(s, j)
+    if (span && (span.kind === 'line-comment' || span.kind === 'block-comment')) {
+      j = span.end
+      continue
+    }
+    return j
+  }
 }
 
 /**
@@ -278,8 +293,8 @@ function skipWs(s: string, i: number): number {
  * requiring a non-identifier character (or end of input) right after it — so keyword `FUNCTION`
  * does not match inside `FUNCTIONX`. Returns the index just past the keyword, or null.
  */
-function matchWord(s: string, i: number, word: string): number | null {
-  const j = skipWs(s, i)
+export function matchWord(s: string, i: number, word: string): number | null {
+  const j = skipTokenGap(s, i)
   if (s.slice(j, j + word.length).toLowerCase() !== word.toLowerCase()) return null
   const after = s[j + word.length]
   if (after !== undefined && /[A-Za-z0-9_$]/.test(after)) return null
@@ -298,7 +313,7 @@ export function readIdentAt(s: string, i: number): IdentToken | null {
     if (s[i] === 'U' || s[i] === 'u') {
       const uesc = matchWord(s, end, 'UESCAPE')
       if (uesc !== null) {
-        const strAt = skipWs(s, uesc)
+        const strAt = skipTokenGap(s, uesc)
         const strSpan = opaqueSpanAt(s, strAt)
         if (strSpan && strSpan.kind === 'string') end = strSpan.end
       }
@@ -309,47 +324,18 @@ export function readIdentAt(s: string, i: number): IdentToken | null {
   return m ? { raw: m[0], end: i + m[0].length } : null
 }
 
-type QualifiedName = { schema: string | null; name: string; end: number }
+export type QualifiedName = { schema: string | null; name: string; end: number }
 
 /** Reads `[schema.]name`, tolerating whitespace and quoting on either side of the dot. */
-function readQualifiedName(s: string, i: number): QualifiedName | null {
+export function readQualifiedName(s: string, i: number): QualifiedName | null {
   const first = readIdentAt(s, i)
   if (!first) return null
-  const dotAt = skipWs(s, first.end)
+  const dotAt = skipTokenGap(s, first.end)
   if (s[dotAt] === '.') {
-    const second = readIdentAt(s, skipWs(s, dotAt + 1))
+    const second = readIdentAt(s, skipTokenGap(s, dotAt + 1))
     if (second) return { schema: first.raw, name: second.raw, end: second.end }
   }
   return { schema: null, name: first.raw, end: first.end }
-}
-
-/** Skips a balanced `(...)` at `i` (must be `(`), honoring opaque spans inside so a string or
- *  quoted identifier can't unbalance the count. Returns the index past `)`, or null if unclosed. */
-function skipBalancedParens(s: string, i: number): number | null {
-  if (s[i] !== '(') return null
-  const n = s.length
-  let depth = 0
-  let j = i
-  while (j < n) {
-    const span = opaqueSpanAt(s, j)
-    if (span) {
-      j = span.end
-      continue
-    }
-    if (s[j] === '(') {
-      depth += 1
-      j += 1
-      continue
-    }
-    if (s[j] === ')') {
-      depth -= 1
-      j += 1
-      if (depth === 0) return j
-      continue
-    }
-    j += 1
-  }
-  return null
 }
 
 function escapeRegExpChar(ch: string): string {
@@ -361,7 +347,7 @@ function escapeRegExpChar(ch: string): string {
  * resolve it to (SMI-6690): a bareword folds to lower case; `"Foo"` keeps case, `""` inside is one
  * literal `"`; `U&"..."` [`UESCAPE '<char>'`] resolves `\XXXX` (4 hex) / `\+XXXXXX` (6 hex) to code
  * points, `\\` (or `<char><char>` under a custom `UESCAPE`) a literal escape character. DOES NOT
- * resolve a schema/`search_path` (`nameMatchesTarget` compares that separately), or validate a
+ * resolve a schema/`search_path` (`./sql-verb-matchers.ts` compares that separately), or validate a
  * `\+XXXXXX` code point is ≤ 10FFFF — an out-of-range one throws from `String.fromCodePoint`.
  */
 export function normalizeIdent(raw: string): string {
@@ -385,77 +371,4 @@ export function normalizeIdent(raw: string): string {
     return trimmed.slice(1, -1).replace(/""/g, '"')
   }
   return trimmed.toLowerCase()
-}
-
-/** True when `qname` names `target`: unqualified, or qualified to exactly `public` (any
- *  spelling/quoting). `target` must already be the bare, lower-case function name. */
-function nameMatchesTarget(qname: QualifiedName, target: string): boolean {
-  if (normalizeIdent(qname.name) !== target) return false
-  return qname.schema === null || normalizeIdent(qname.schema) === 'public'
-}
-
-/** `CREATE [OR REPLACE] FUNCTION <name>(` — any args, any case, any spelling `normalizeIdent`
- *  resolves to `name`. `CREATE OR REPLACE ROUTINE` is a Postgres syntax error, deliberately not
- *  accepted (SMI-6690) — do not widen this to `FUNCTION|ROUTINE`. */
-export function matchesCreateFunction(stmt: string, name: string): boolean {
-  let i = matchWord(stmt, 0, 'CREATE')
-  if (i === null) return false
-  const or = matchWord(stmt, i, 'OR')
-  if (or !== null) {
-    const replace = matchWord(stmt, or, 'REPLACE')
-    if (replace === null) return false
-    i = replace
-  }
-  const fn = matchWord(stmt, i, 'FUNCTION')
-  if (fn === null) return false
-  const qname = readQualifiedName(stmt, skipWs(stmt, fn))
-  if (!qname || !nameMatchesTarget(qname, name)) return false
-  return stmt[skipWs(stmt, qname.end)] === '('
-}
-
-/**
- * `DROP FUNCTION|ROUTINE [IF EXISTS] <name>[(args)][, <name>[(args)]...] [CASCADE|RESTRICT]` —
- * `name` may be anywhere in the list, args optional per name. Parses the list token by token
- * rather than matching a `[^;]*?` span across it (SMI-6690), so a quoted identifier's own `;`, or
- * an unrelated statement glued on after an unterminated one, cannot extend or truncate the list.
- */
-export function matchesDropFunction(stmt: string, name: string): boolean {
-  let i = matchWord(stmt, 0, 'DROP')
-  if (i === null) return false
-  let verb = matchWord(stmt, i, 'FUNCTION')
-  if (verb === null) verb = matchWord(stmt, i, 'ROUTINE')
-  if (verb === null) return false
-  i = verb
-  const ifTok = matchWord(stmt, i, 'IF')
-  if (ifTok !== null) {
-    const existsTok = matchWord(stmt, ifTok, 'EXISTS')
-    if (existsTok === null) return false
-    i = existsTok
-  }
-  for (;;) {
-    const qname = readQualifiedName(stmt, skipWs(stmt, i))
-    if (!qname) return false
-    i = skipWs(stmt, qname.end)
-    if (stmt[i] === '(') {
-      const afterArgs = skipBalancedParens(stmt, i)
-      if (afterArgs === null) return false
-      i = skipWs(stmt, afterArgs)
-    }
-    if (nameMatchesTarget(qname, name)) return true
-    if (stmt[i] !== ',') return false
-    i += 1
-  }
-}
-
-/** `ALTER FUNCTION|ROUTINE <name>[(args)]` — the verb needing no `CREATE`: e.g.
- *  `ALTER FUNCTION public.<fn> RESET ALL` strips a pinned `search_path` with no arg list and no
- *  redefinition, so a `CREATE`-anchored guard never sees it (SMI-6690). Matches on name alone. */
-export function matchesAlterFunction(stmt: string, name: string): boolean {
-  const i = matchWord(stmt, 0, 'ALTER')
-  if (i === null) return false
-  let verb = matchWord(stmt, i, 'FUNCTION')
-  if (verb === null) verb = matchWord(stmt, i, 'ROUTINE')
-  if (verb === null) return false
-  const qname = readQualifiedName(stmt, skipWs(stmt, verb))
-  return qname !== null && nameMatchesTarget(qname, name)
 }

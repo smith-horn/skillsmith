@@ -73,8 +73,27 @@ function quotedIdentSpanEnd(sql: string, i: number): number {
  * ACCEPTED CONSEQUENCE, stated rather than hidden: a dollar-quoted string used purely as DATA
  * (`COMMENT ON FUNCTION f IS $$ ... f ... $$`) is treated as code under this policy and WILL make
  * `mentionsIdentifier` fire. That is the correct trade for a fail-closed tripwire — the escape
- * hatch is a reviewed allowlist at the call site (e.g. `REVIEWED_LATER_MIGRATIONS`), never a
- * weaker span policy here.
+ * hatch is a reviewed assertion at the call site, never a weaker span policy here.
+ *
+ * THE CEILING: THIS IS FAIL-CLOSED OVER TEXT, NOT OVER EFFECTS (SMI-6690 round 9, each shape
+ * measured on PG 17.11 as accepted and as actually dropping the function). When the guarded name
+ * never appears as a contiguous identifier token, nothing in this module can see it:
+ *
+ *   - runtime assembly            `EXECUTE 'DROP FUNCTION public.rele' || 'ase_...'`
+ *   - the name as a PARAMETER     `EXECUTE format('DROP FUNCTION public.%I(uuid,uuid)', n)`
+ *   - catalog-driven              a loop over `pg_proc` that never spells the name
+ *   - collateral, names nothing   `DROP SCHEMA public CASCADE;`
+ *
+ * The second is worth singling out: `EXECUTE format(...)` is the construct that motivated
+ * abandoning grammar-parsing in the first place, and it defeats this tripwire too whenever the name
+ * arrives as an argument. So a clean scan from this module is evidence about a migration's TEXT and
+ * nothing more. Closing that class needs a live-catalog assertion — Postgres in CI, SMI-5946, with
+ * the per-function behavioural proof tracked in SMI-6685. Do not let a caller's prose upgrade this
+ * to a security boundary.
+ *
+ * Pair `mentionsIdentifier` with a grammar matcher IN UNION rather than gating one behind the
+ * other: a stray `"` in a dollar body makes this module's re-tokenisation swallow the rest of the
+ * text, and a plain top-level DROP that `matchesDropFunction` reads correctly then goes unreported.
  */
 export function executableText(sql: string): string {
   let out = ''
@@ -118,11 +137,19 @@ export function executableText(sql: string): string {
  * parse the surrounding list grammar — lets the scan keep going and still find the real target
  * later in the same list. It is also why a quote character left over from a dollar-body's verbatim
  * (unprocessed) interior — e.g. the string inside `EXECUTE 'DROP FUNCTION f'` — never blocks
- * tokenization: `readIdentAt` returns null for a bare quote (it is not an identifier start), so the
- * scan steps past it one character at a time and picks the identifiers up on the far side, INSIDE
- * what looks like a string. That is deliberate, not a gap: `executableText` already decided that
- * content is code, and re-treating its quotes as data here would reopen the exact bypass this
- * module exists to close.
+ * tokenization. TWO PASSES, because one is not enough (SMI-6690 round 9):
+ *
+ *   1. An IDENTIFIER-TOKEN pass, which is what resolves `U&"…\0074"` and `UESCAPE` spellings.
+ *   2. A QUOTE-BLIND BAREWORD pass, which exists because pass 1 can lose the name entirely. A
+ *      dollar body is emitted verbatim, so `executableText`'s output can carry an UNBALANCED `"` —
+ *      Postgres never lexes a dollar body's interior as SQL, but this scan does. `readIdentAt` then
+ *      reads that `"` as opening a quoted identifier and runs to end of input, swallowing the name
+ *      inside one token whose normalised value is not the target. Measured: one `"` in a `RAISE
+ *      NOTICE` silenced a `DROP FUNCTION` later in the same block. Pass 2 compares the bare name
+ *      with identifier boundaries and no quote context at all, so quote parity cannot affect it.
+ *
+ * An earlier version of this comment claimed `readIdentAt` "returns null for a bare quote, so the
+ * scan steps past it one character at a time." That is false, and was the bypass.
  *
  * A three-part name like `postgres.public.f` needs no special case: it tokenizes as three separate
  * identifiers, and one of them equals the target.
@@ -142,6 +169,8 @@ export function mentionsIdentifier(sql: string, name: string): boolean {
   }
   const target = normalizeIdent(name)
   const text = executableText(sql)
+
+  // Pass 1 — identifier tokens, which is what resolves `U&"…"`/`UESCAPE` spellings.
   const n = text.length
   let i = 0
   while (i < n) {
@@ -152,6 +181,26 @@ export function mentionsIdentifier(sql: string, name: string): boolean {
       continue
     }
     i += 1
+  }
+
+  // Pass 2 — quote-blind bareword, immune to the quote parity that can make pass 1 swallow the
+  // name. Identifier boundaries on both sides keep `<name>_v2` and `x<name>` from matching.
+  return mentionsBareword(text, target)
+}
+
+const IDENT_CHAR = /[A-Za-z0-9_$]/
+
+/** True when `target` occurs in `text` as a standalone identifier, ignoring all quote context. */
+function mentionsBareword(text: string, target: string): boolean {
+  const hay = text.toLowerCase()
+  const needle = target.toLowerCase()
+  if (needle === '') return false
+  for (let at = hay.indexOf(needle); at !== -1; at = hay.indexOf(needle, at + 1)) {
+    const before = at === 0 ? undefined : text[at - 1]
+    const after = text[at + needle.length]
+    const openBoundary = before === undefined || !IDENT_CHAR.test(before)
+    const closeBoundary = after === undefined || !IDENT_CHAR.test(after)
+    if (openBoundary && closeBoundary) return true
   }
   return false
 }

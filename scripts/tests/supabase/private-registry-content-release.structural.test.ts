@@ -71,16 +71,28 @@
  * — which strips the pinned `search_path` off a `SECURITY DEFINER` function, the exact hazard this
  * migration's own smoke block guards — was invisible.
  *
- * THE MATCHERS NO LONGER DECIDE WHETHER TO FIRE (SMI-6690 round 5+). Grammar-parsing — a verb, a
- * list, an argument list — can only ever be as complete as parsing DDL is possible, and DDL
- * assembled at runtime by `EXECUTE format(...)` inside a `DO $$ ... $$` block is not parseable
- * text at all, at any point, by any lexer. The offender decision below is `mentionsIdentifier`
- * (`../lib/sql-name-tripwire.ts`), fail-closed over `executableText()`: it never parses a verb, a
- * statement, or a list, so it has no grammar left to be wrong about. `matchesCreateFunction`/
- * `matchesDropFunction`/`matchesAlterFunction` from `../lib/sql-statement-guards.ts` still run,
- * one statement at a time, but only AFTER the tripwire has fired — to name which verb was seen, not
- * to decide whether one was. Four consecutive rounds of bypasses, and the measurements behind
- * each, are recorded on SMI-6690.
+ * TWO MECHANISMS IN UNION, NEITHER GATING THE OTHER (SMI-6690 round 9). `mentionsIdentifier`
+ * (`../lib/sql-name-tripwire.ts`) reads no grammar, so it catches a DROP inside `DO $$ ... $$`, a
+ * non-ASCII or keyword list head, comment fusion and a three-part name. The three matchers in
+ * `../lib/sql-verb-matchers.ts` read the statement, so they catch a plain
+ * `DROP FUNCTION public.<fn>;` even when the tripwire has lost the name. A hit from EITHER is an
+ * offender. An earlier version gated the matchers behind the tripwire, and one stray `"` inside an
+ * unrelated `DO` block then silenced row one of this guard's own case table.
+ *
+ * WHAT NO TEXT-BASED GUARD CAN DO, measured (SMI-6690 round 9). This is fail-closed over TEXT, not
+ * over EFFECTS. When the function's name never appears as a contiguous identifier token, nothing
+ * here can see it:
+ *
+ *   - runtime assembly — `EXECUTE 'DROP FUNCTION public.rele' || 'ase_...'`;
+ *   - the name as a PARAMETER — `EXECUTE format('DROP FUNCTION public.%I(uuid,uuid)', n)`, which
+ *     is the very construct that motivated abandoning grammar-parsing, and is equally out of reach
+ *     for the tripwire;
+ *   - catalog-driven drops — a loop over `pg_proc` that never spells the name;
+ *   - collateral removal that names nothing — `DROP SCHEMA public CASCADE;`.
+ *
+ * Only a live-catalog assertion closes that class: `private-registry-content-release.pg.test.ts`
+ * once SMI-5946 provisions Postgres in CI, tracked for this function in SMI-6685. Do not describe
+ * this file as proof that no unreviewed change can happen.
  *
  * @module scripts/tests/supabase/private-registry-content-release.structural
  */
@@ -96,13 +108,12 @@ import {
 } from './private-registry-content-release.test-helpers.ts'
 import { brokenMigrationSql } from './private-registry-content-release.test-reverts.ts'
 import { laterMigrationFiles, readMigrationText } from '../lib/migration-text-guards.ts'
+import { splitStatements, stripComments } from '../lib/sql-statement-guards.ts'
 import {
   matchesAlterFunction,
   matchesCreateFunction,
   matchesDropFunction,
-  splitStatements,
-  stripComments,
-} from '../lib/sql-statement-guards.ts'
+} from '../lib/sql-verb-matchers.ts'
 import { mentionsIdentifier } from '../lib/sql-name-tripwire.ts'
 
 // Directories `mkdtempSync` creates below for the positive control (SMI-6690 finding F7): tracked
@@ -171,7 +182,16 @@ function tamperViolations(dir?: string): { scanned: string[]; offenders: string[
       offenders.push(`${file}: git-crypt ciphertext while ${NEW_MIGRATION} is plaintext`)
       continue
     }
-    if (!mentionsIdentifier(raw, FUNCTION_NAME)) continue
+    // UNION, NOT A GATE (SMI-6690 round 9). Both mechanisms run unconditionally and a hit from
+    // EITHER is an offender, because each covers a blind spot of the other:
+    //   - the tripwire reads no grammar, so it sees a DROP inside `DO $$ ... $$`, a non-ASCII or
+    //     keyword list head, comment fusion and a three-part name -- none of which the matchers do;
+    //   - the matchers read the statement, so they still see a plain `DROP FUNCTION public.<fn>;`
+    //     when the tripwire has lost the name.
+    // Gating the matchers behind the tripwire regressed exactly that: one stray `"` inside an
+    // unrelated `DO` block makes the tripwire's re-tokenisation swallow the rest of the file, and a
+    // plain top-level DROP -- row one of this guard's own case table -- went silent. Round 7 caught
+    // it; round 8 did not. Neither mechanism may suppress the other.
     const statements = splitStatements(stripComments(raw))
     const verbs: string[] = []
     if (statements.some((s) => matchesCreateFunction(s, FUNCTION_NAME)))
@@ -180,7 +200,7 @@ function tamperViolations(dir?: string): { scanned: string[]; offenders: string[
     if (statements.some((s) => matchesAlterFunction(s, FUNCTION_NAME))) verbs.push('ALTER FUNCTION')
     if (verbs.length > 0) {
       for (const verb of verbs) offenders.push(`${file}: ${verb}`)
-    } else {
+    } else if (mentionsIdentifier(raw, FUNCTION_NAME)) {
       offenders.push(
         `${file}: ${FUNCTION_NAME} appears in executable SQL without a recognised CREATE/DROP/` +
           'ALTER FUNCTION verb -- review manually'

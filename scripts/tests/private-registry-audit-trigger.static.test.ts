@@ -87,13 +87,8 @@ import {
   laterMigrationFiles,
   readMigrationText,
 } from './lib/migration-text-guards.ts'
-import {
-  matchesAlterFunction,
-  matchesDropFunction,
-  qualifiedIdent,
-  splitStatements,
-  stripComments,
-} from './lib/sql-statement-guards.ts'
+import { qualifiedIdent, splitStatements, stripComments } from './lib/sql-statement-guards.ts'
+import { matchesAlterFunction, matchesDropFunction } from './lib/sql-verb-matchers.ts'
 import { executableText, mentionsIdentifier } from './lib/sql-name-tripwire.ts'
 
 const helpers = (await import('../audit-standards-helpers.mjs')) as {
@@ -104,7 +99,8 @@ const helpers = (await import('../audit-standards-helpers.mjs')) as {
 }
 
 // The git-crypt lock contract and migration enumeration come from ./lib/migration-text-guards.ts;
-// the qualified-identifier fragment and the statement matchers from ./lib/sql-statement-guards.ts.
+// the qualified-identifier fragment and tokenizer from ./lib/sql-statement-guards.ts; the verb
+// matchers from ./lib/sql-verb-matchers.ts; the fail-closed tripwire from ./lib/sql-name-tripwire.ts.
 // Import them rather than re-deriving: a second suite hand-rolled these and omitted a different
 // one in each of three consecutive rounds (SMI-6690).
 const MIGRATION_FILE = '20260913000000_private_registry_audit_trigger.sql'
@@ -363,19 +359,22 @@ function triggerOrFunctionTamperViolations(): string[] {
     if (statements.some((s) => dropTriggerRe('trg_prs_audit').test(executableText(s)))) {
       offenders.push(`${file}: DROP TRIGGER trg_prs_audit`)
     }
-    if (mentionsIdentifier(content, FUNCTION_NAME)) {
-      const verbs: string[] = []
-      if (statements.some((s) => matchesDropFunction(s, FUNCTION_NAME))) verbs.push('DROP FUNCTION')
-      if (statements.some((s) => matchesAlterFunction(s, FUNCTION_NAME)))
-        verbs.push('ALTER FUNCTION')
-      if (verbs.length > 0) {
-        for (const verb of verbs) offenders.push(`${file}: ${verb} ${FUNCTION_NAME}`)
-      } else {
-        offenders.push(
-          `${file}: ${FUNCTION_NAME} appears in executable SQL without a recognised DROP/ALTER ` +
-            'FUNCTION verb -- review manually'
-        )
-      }
+    // UNION, NOT A GATE (SMI-6690 round 9): a hit from EITHER the matchers or the tripwire is an
+    // offender, and neither may suppress the other. Gating the matchers behind the tripwire let one
+    // stray `"` in an unrelated `DO` block silence a plain top-level `DROP FUNCTION public.<fn>;`
+    // that the matchers detect correctly. See the same comment in
+    // `supabase/private-registry-content-release.structural.test.ts` for the full reasoning.
+    const fnVerbs: string[] = []
+    if (statements.some((s) => matchesDropFunction(s, FUNCTION_NAME))) fnVerbs.push('DROP FUNCTION')
+    if (statements.some((s) => matchesAlterFunction(s, FUNCTION_NAME)))
+      fnVerbs.push('ALTER FUNCTION')
+    if (fnVerbs.length > 0) {
+      for (const verb of fnVerbs) offenders.push(`${file}: ${verb} ${FUNCTION_NAME}`)
+    } else if (mentionsIdentifier(content, FUNCTION_NAME)) {
+      offenders.push(
+        `${file}: ${FUNCTION_NAME} appears in executable SQL without a recognised DROP/ALTER ` +
+          'FUNCTION verb -- review manually'
+      )
     }
     if (statements.some((s) => alterTriggerRe('trg_prs_audit_truncate').test(executableText(s)))) {
       offenders.push(`${file}: ALTER TRIGGER trg_prs_audit_truncate`)
