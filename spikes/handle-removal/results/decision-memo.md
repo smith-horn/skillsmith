@@ -36,6 +36,18 @@ checked by anyone, including its author.
 
 ## Read this first
 
+**This memo is checkpoint 7 and has since been partly superseded. Five
+adversarial rounds ran against it and the code on 2026-09-16; four of its claims
+are corrected inline below and marked SUPERSEDED / CLOSED / DONE / ATTEMPTED.
+The corrections are written at the point of the original claim rather than
+collected here, because a correction filed elsewhere leaves two surfaces
+disagreeing and the wrong one is read first. Where this memo and the plan's
+"Spike results" section disagree, THE PLAN IS NEWER. In particular: its "all but
+7" residual figure is wrong by roughly 5x, its `quarantineLeft` gap is closed,
+and the 1.047 ms overlayfs timing gap cited for Linux was an artifact of
+comparing two runs made nine minutes apart -- measured within one process it is
+0.043 ms.**
+
 This memo now gates a customer-facing UAT, so the headline goes first and
 unhedged:
 
@@ -358,10 +370,21 @@ Results, V2, `guard=none`, 300 runs per filesystem:
 | virtiofs | 300 | 286 | 108 | 2 | **0** |
 | virtiofs, V1 | 297 | 285 | 127 | 1 | **0** |
 
-**Across 10 unambiguous post-guard landings, zero losses. All but 7 of the
+**SUPERSEDED 2026-09-16 -- the sentence below was produced by a defective
+classifier and its "all but 7" is wrong by roughly 5x.** `classifyPhase`'s
+`straddles-guard-start` branch tested `mutationStartedAt` alone and never looked
+at where `landedAt` fell, so it swallowed during-guard, post-guard and post-call
+landings alike. Re-measured with the corrected classifier: **115 landings fell
+after the guard pass ended and before the call returned, and 34 of them were
+losses** -- 32 carrying `straddles-guard-start` purely by branch order. The
+per-entry instrument built to resolve those 34 could not: the racer's mutation
+runs 10-37x longer than the window it is compared against. See the plan's
+"Adversarial review" and "Fourth round" sections. The original sentence, kept so
+the correction has a subject:
+~~Across 10 unambiguous post-guard landings, zero losses. All but 7 of the
 remaining losses landed pre-guard, during-guard, or straddling the guard pass's
 start; the other 7 straddled its end and are reported as ambiguous immediately
-below rather than claimed for either side.** The virtiofs `a7` losses are
+below rather than claimed for either side.~~ The virtiofs `a7` losses are
 `a7`-*shaped mutations* that landed
 before or during the guard pass, not in the post-guard window A7's controlled
 test probes — which is why A7's clean result and A13's losses were never in
@@ -457,7 +480,13 @@ removal-failures across four filesystems, none of them losing a user file.*
 **A13 has no stranding instrument of its own, and that is a gap, not a result.**
 The plan's §9 record shape includes `quarantineLeft`. `a13-vr.mjs` never sets
 it — and neither does anything else: `quarantineLeft` is `null` in **all 46,760
-records in the corpus**, not just A13's 1,500. So the "zero stranding" claim
+records in the corpus**, not just A13's 1,500. **CLOSED 2026-09-16:** all twelve
+VR attack modules now populate it, red-tested for discrimination (a clean
+removal reports 0; a stopped one reports the leftover directory), and the
+scanner is pinned by 27 selftest assertions covering five directions. The gap
+that remains is narrower and is stated in the plan: `entries > 0` has still
+never fired in a real run, so the instrument is proven on constructed fixtures
+rather than in situ. So the "zero stranding" claim
 above rests entirely on `outcome.reason`, which is a reasonable proxy and is not
 the same thing as looking in the quarantine directory afterwards. A13 cannot
 observe stranding directly. Populating `quarantineLeft` would close that.
@@ -571,13 +600,19 @@ Bounded, and in rough order of value per hour:
 2. **Run A13 as a scored cell with `guardHash`**, not only as the `A13-TIMING`
    side measurement, so the recommended configuration appears in the criterion-1
    matrix rather than beside it.
-3. **Populate `quarantineLeft`** in `a13-vr.mjs` (and everywhere else — it is
-   `null` in the whole corpus), so stranding is observed rather than inferred
-   from `outcome.reason`.
+3. ~~**Populate `quarantineLeft`**~~ **DONE 2026-09-16** in all twelve VR
+   modules, so stranding is observed rather than inferred from
+   `outcome.reason`.
 4. **Decide, at owner level, whether A8's macOS-only control is acceptable for
    the Linux rows**, or whether a Linux failing control must be built. This is a
    scope question, not a measurement.
-5. **Narrow the 7 `straddles-guard-end` losses** with per-entry guard timing.
+5. ~~**Narrow the 7 `straddles-guard-end` losses**~~ **ATTEMPTED AND DID NOT
+   SUCCEED, 2026-09-16.** The count was never 7 -- it is 34 (see the correction
+   above) -- and per-entry guard timing was built and cannot resolve them: the
+   racer's mutation runs 1.771 ms (APFS) / 2.834 ms (Linux) against an entry
+   observation window of 0.048 ms, so it engulfs the window. Closing them needs
+   the racer's decisive step to become a single `renameat`, not a better
+   classifier.
 6. **Resolve a contradiction in the plan itself, which no amount of measuring
    will fix.** Criterion 1 requires every A13 cell to be `PASS`; §9 makes `PASS`
    require `never-ran == 0`; and A13 is specified as a *probabilistic* racer,
