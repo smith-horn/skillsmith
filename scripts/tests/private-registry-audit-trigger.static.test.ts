@@ -51,9 +51,13 @@
  *      its column shape underneath the pinned insert -- `DROP COLUMN`, `ALTER COLUMN ... TYPE` /
  *      `SET DATA TYPE`, `RENAME COLUMN`, `RENAME TO`, `SET NOT NULL`, or `ADD CONSTRAINT` /
  *      `ADD CHECK` (gate finding 3, extended by round-3 gate finding 1) -- fails this suite. All
- *      three scans, plus the by-name tamper and GRANT scans, run against comment-stripped text
- *      (`stripComments()`, round-3 gate finding 2) so a block comment mentioning any of these
- *      shapes cannot false-positive and a real statement hidden after one cannot false-negative.
+ *      three scans, the GRANT scan, and the by-name tamper's verb-naming sub-checks run against
+ *      comment-stripped, statement-split text (`stripComments()`/`splitStatements()`, round-3 gate
+ *      finding 2) so a block comment mentioning any of these shapes cannot false-positive and a
+ *      real statement hidden after one cannot false-negative. The by-name tamper's FIRING decision
+ *      is separate and stricter (`mentionsIdentifier`, SMI-6690 round 5+, fail-closed over
+ *      `executableText()`-processed text): it is not limited to what a statement grammar can
+ *      parse at all, which is what closes a DROP/ALTER hidden inside a `DO $$ ... $$` block.
  *      The only way past any of the three is to add the migration's filename to
  *      REVIEWED_LATER_MIGRATIONS below, after review -- never to weaken the regex.
  *   3. THE SEMANTIC CHECKS DOCUMENT WHY THE PINNED BODY WAS APPROVED, not police future changes:
@@ -90,6 +94,7 @@ import {
   splitStatements,
   stripComments,
 } from './lib/sql-statement-guards.ts'
+import { executableText, mentionsIdentifier } from './lib/sql-name-tripwire.ts'
 
 const helpers = (await import('../audit-standards-helpers.mjs')) as {
   auditSecdefAnonGrants: (
@@ -322,9 +327,28 @@ function alterTriggerRe(name: string): RegExp {
 /**
  * Every migration strictly after MIGRATION_FILE that drops or alters the pinned function or
  * either trigger by name. Case-insensitive, schema-qualification and IF EXISTS tolerant
- * (SMI-6114 retro F1, revert checks (c)/(d)). The function checks are statement-scoped via
- * `matchesDropFunction`/`matchesAlterFunction` (SMI-6690); the trigger checks stay whole-file
- * regexes, out of that rewrite's scope since `DROP/ALTER TRIGGER` takes no comma-separated list.
+ * (SMI-6114 retro F1, revert checks (c)/(d)).
+ *
+ * THE FUNCTION CHECK IS GATED BY `mentionsIdentifier` (SMI-6690 round 5+,
+ * `./lib/sql-name-tripwire.ts`), fail-closed: it fires when the bare name appears ANYWHERE in
+ * executable SQL, including inside a `DO $$ ... $$` block no statement-grammar parser can read at
+ * all. `matchesDropFunction`/`matchesAlterFunction` run only AFTER the tripwire has already
+ * fired, to NAME which verb was seen for the offender message -- their own silence never
+ * suppresses a firing tripwire; a mention with no recognised verb still reports, worded to say so.
+ *
+ * THE TRIGGER CHECKS are plain phrase regexes (`dropTriggerRe`/`alterTriggerRe`), tested per
+ * STATEMENT against `executableText(stmt)`, not whole-file text. An earlier version of this
+ * comment said they stayed whole-file because "`DROP/ALTER TRIGGER` takes no comma-separated
+ * list" -- true, but that was never the only defect: measured false positives came from the same
+ * phrase appearing inside a top-level DATA string (`COMMENT ON TABLE t IS 'rollback: DROP TRIGGER
+ * trg_prs_audit ...'`, `SELECT 'ALTER TRIGGER trg_prs_audit'`), and per-statement scoping ALONE
+ * does not fix that (measured: identical match either way, since the phrase is still literally
+ * present in the statement's own text) -- only blanking top-level strings via `executableText`
+ * does. One residual false positive is accepted rather than chased: the same phrase inside a
+ * string that is itself DATA inside a dollar-quoted function body (`... AS $$ SELECT 'DROP
+ * TRIGGER ...' $$`) still fires, because `executableText` never recurses into a dollar body to
+ * tell code from data within it -- the same trade-off its own doc comment states for the by-name
+ * function check above.
  */
 function triggerOrFunctionTamperViolations(): string[] {
   const offenders: string[] = []
@@ -333,22 +357,30 @@ function triggerOrFunctionTamperViolations(): string[] {
     if (content === null) continue
     const sql = stripComments(content)
     const statements = splitStatements(sql)
-    if (dropTriggerRe('trg_prs_audit_truncate').test(sql)) {
+    if (statements.some((s) => dropTriggerRe('trg_prs_audit_truncate').test(executableText(s)))) {
       offenders.push(`${file}: DROP TRIGGER trg_prs_audit_truncate`)
     }
-    if (dropTriggerRe('trg_prs_audit').test(sql)) {
+    if (statements.some((s) => dropTriggerRe('trg_prs_audit').test(executableText(s)))) {
       offenders.push(`${file}: DROP TRIGGER trg_prs_audit`)
     }
-    if (statements.some((s) => matchesDropFunction(s, FUNCTION_NAME))) {
-      offenders.push(`${file}: DROP FUNCTION ${FUNCTION_NAME}`)
+    if (mentionsIdentifier(content, FUNCTION_NAME)) {
+      const verbs: string[] = []
+      if (statements.some((s) => matchesDropFunction(s, FUNCTION_NAME))) verbs.push('DROP FUNCTION')
+      if (statements.some((s) => matchesAlterFunction(s, FUNCTION_NAME)))
+        verbs.push('ALTER FUNCTION')
+      if (verbs.length > 0) {
+        for (const verb of verbs) offenders.push(`${file}: ${verb} ${FUNCTION_NAME}`)
+      } else {
+        offenders.push(
+          `${file}: ${FUNCTION_NAME} appears in executable SQL without a recognised DROP/ALTER ` +
+            'FUNCTION verb -- review manually'
+        )
+      }
     }
-    if (statements.some((s) => matchesAlterFunction(s, FUNCTION_NAME))) {
-      offenders.push(`${file}: ALTER FUNCTION ${FUNCTION_NAME}`)
-    }
-    if (alterTriggerRe('trg_prs_audit_truncate').test(sql)) {
+    if (statements.some((s) => alterTriggerRe('trg_prs_audit_truncate').test(executableText(s)))) {
       offenders.push(`${file}: ALTER TRIGGER trg_prs_audit_truncate`)
     }
-    if (alterTriggerRe('trg_prs_audit').test(sql)) {
+    if (statements.some((s) => alterTriggerRe('trg_prs_audit').test(executableText(s)))) {
       offenders.push(`${file}: ALTER TRIGGER trg_prs_audit`)
     }
   }

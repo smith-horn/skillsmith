@@ -12,8 +12,8 @@
  * a pass that means nothing, which is the defect class SMI-6690 exists to remove.
  */
 
-import { describe, it, expect } from 'vitest'
-import { mkdtempSync, writeFileSync } from 'node:fs'
+import { describe, it, expect, afterEach } from 'vitest'
+import { mkdtempSync, rmSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { readMigrationText } from './migration-text-guards.ts'
@@ -24,8 +24,13 @@ const ENV_VAR = 'SKILLSMITH_GIT_CRYPT_EXPECTED_LOCKED'
 const FILE = '20260101000000_fixture.sql'
 const PLAINTEXT = '-- plaintext fixture\nSELECT 1;\n'
 
+// Directories `fixtureDir` creates below, removed in `afterEach` rather than left on disk (SMI-6690
+// finding F7) — one per call, unbounded over time otherwise.
+const tempDirs: string[] = []
+
 function fixtureDir(contents: string | Buffer): string {
   const dir = mkdtempSync(join(tmpdir(), 'smi6690-guards-'))
+  tempDirs.push(dir)
   writeFileSync(join(dir, FILE), contents)
   return dir
 }
@@ -44,6 +49,10 @@ function withExpectLocked<T>(declared: boolean, fn: () => T): T {
 }
 
 describe('SMI-5984 — readMigrationText resolves all three git-crypt lock states', () => {
+  afterEach(() => {
+    for (const dir of tempDirs.splice(0)) rmSync(dir, { recursive: true, force: true })
+  })
+
   it('unlocked: returns the file text verbatim', () => {
     const dir = fixtureDir(PLAINTEXT)
     expect(withExpectLocked(false, () => readMigrationText(FILE, dir))).toBe(PLAINTEXT)

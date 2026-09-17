@@ -8,8 +8,9 @@
  * live here once; a third suite should import them too.
  *
  * SQL lexing and the by-name tamper matchers live in `./sql-statement-guards.ts` — a separate
- * module because nothing here depends on them and nothing there depends on this, and combined they
- * ran to 493 lines against a 500-line commit gate (SMI-6690, SMI-6696).
+ * module because nothing here depends on them and nothing there depends on this: migration
+ * enumeration and SQL lexing are independent concerns, kept apart rather than combined into one
+ * file (SMI-6690, SMI-6696).
  *
  * @module scripts/tests/lib/migration-text-guards
  */

@@ -71,15 +71,22 @@
  * — which strips the pinned `search_path` off a `SECURITY DEFINER` function, the exact hazard this
  * migration's own smoke block guards — was invisible.
  *
- * So use `matchesCreateFunction`/`matchesDropFunction`/`matchesAlterFunction` from
- * `../lib/sql-statement-guards.ts`, one statement at a time, and do not re-derive them here. Four
- * consecutive rounds of bypasses, and the measurements behind each, are recorded on SMI-6690.
+ * THE MATCHERS NO LONGER DECIDE WHETHER TO FIRE (SMI-6690 round 5+). Grammar-parsing — a verb, a
+ * list, an argument list — can only ever be as complete as parsing DDL is possible, and DDL
+ * assembled at runtime by `EXECUTE format(...)` inside a `DO $$ ... $$` block is not parseable
+ * text at all, at any point, by any lexer. The offender decision below is `mentionsIdentifier`
+ * (`../lib/sql-name-tripwire.ts`), fail-closed over `executableText()`: it never parses a verb, a
+ * statement, or a list, so it has no grammar left to be wrong about. `matchesCreateFunction`/
+ * `matchesDropFunction`/`matchesAlterFunction` from `../lib/sql-statement-guards.ts` still run,
+ * one statement at a time, but only AFTER the tripwire has fired — to name which verb was seen, not
+ * to decide whether one was. Four consecutive rounds of bypasses, and the measurements behind
+ * each, are recorded on SMI-6690.
  *
  * @module scripts/tests/supabase/private-registry-content-release.structural
  */
 
-import { describe, it, expect } from 'vitest'
-import { mkdtempSync, writeFileSync } from 'node:fs'
+import { describe, it, expect, afterEach } from 'vitest'
+import { mkdtempSync, rmSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import {
@@ -96,6 +103,11 @@ import {
   splitStatements,
   stripComments,
 } from '../lib/sql-statement-guards.ts'
+import { mentionsIdentifier } from '../lib/sql-name-tripwire.ts'
+
+// Directories `mkdtempSync` creates below for the positive control (SMI-6690 finding F7): tracked
+// here and removed in `afterEach` rather than left on disk -- 7 per CI run, unbounded over time.
+const tempDirs: string[] = []
 
 const FUNCTION_NAME = 'release_private_registry_skill_content'
 
@@ -129,10 +141,19 @@ const WRITES_V_CONTENT_RE = /\binto\s+v_content\b/gi
  * protection. If a reviewed redefinition ever needs to land, add a residual assertion against the
  * LATEST definition first — do not reintroduce a bare skip.
  *
- * Comments are stripped and text is split into statements before matching (SMI-6690) — this
- * repo's migration convention includes commented-out rollback blocks naming the function
- * (`20260915000000` has one), and testing whole-file text let a differently-shaped statement
- * elsewhere in the file produce a false positive or negative.
+ * THE OFFENDER DECISION IS `mentionsIdentifier` (SMI-6690 round 5+, `../lib/sql-name-tripwire.ts`),
+ * fail-closed: it fires on the bare function name appearing ANYWHERE in executable SQL, over
+ * `executableText()`, which never parses a verb, a statement, or a list — so it also fires on a
+ * DROP/ALTER hidden inside a `DO $$ ... $$` block that no grammar-based matcher can read at all.
+ * `matchesCreateFunction`/`matchesDropFunction`/`matchesAlterFunction` run only AFTER the tripwire
+ * has already fired, one statement at a time (comments stripped, split via `splitStatements` —
+ * this repo's migration convention includes commented-out rollback blocks naming the function,
+ * `20260915000000` has one, and whole-file text let a differently-shaped statement elsewhere in
+ * the file produce a false positive or negative), to NAME which verb was seen. Their own silence
+ * never suppresses a firing tripwire: a mention with no recognised verb still reports, worded to
+ * say so — the correct behaviour for, e.g., a `COMMENT ON FUNCTION` naming the function, which is
+ * exactly what `20260915000001_private_registry_release_rpc_comment_fix.sql` does, a genuine
+ * tripwire hit the owner reviewed and accepted rather than something this scan should silence.
  */
 function tamperViolations(dir?: string): { scanned: string[]; offenders: string[] } {
   // `dir` exists so a test can plant a known tampering migration and require this to name it —
@@ -150,15 +171,20 @@ function tamperViolations(dir?: string): { scanned: string[]; offenders: string[
       offenders.push(`${file}: git-crypt ciphertext while ${NEW_MIGRATION} is plaintext`)
       continue
     }
+    if (!mentionsIdentifier(raw, FUNCTION_NAME)) continue
     const statements = splitStatements(stripComments(raw))
-    if (statements.some((s) => matchesCreateFunction(s, FUNCTION_NAME))) {
-      offenders.push(`${file}: CREATE FUNCTION`)
-    }
-    if (statements.some((s) => matchesDropFunction(s, FUNCTION_NAME))) {
-      offenders.push(`${file}: DROP FUNCTION`)
-    }
-    if (statements.some((s) => matchesAlterFunction(s, FUNCTION_NAME))) {
-      offenders.push(`${file}: ALTER FUNCTION`)
+    const verbs: string[] = []
+    if (statements.some((s) => matchesCreateFunction(s, FUNCTION_NAME)))
+      verbs.push('CREATE FUNCTION')
+    if (statements.some((s) => matchesDropFunction(s, FUNCTION_NAME))) verbs.push('DROP FUNCTION')
+    if (statements.some((s) => matchesAlterFunction(s, FUNCTION_NAME))) verbs.push('ALTER FUNCTION')
+    if (verbs.length > 0) {
+      for (const verb of verbs) offenders.push(`${file}: ${verb}`)
+    } else {
+      offenders.push(
+        `${file}: ${FUNCTION_NAME} appears in executable SQL without a recognised CREATE/DROP/` +
+          'ALTER FUNCTION verb -- review manually'
+      )
     }
   }
   return { scanned, offenders }
@@ -167,6 +193,10 @@ function tamperViolations(dir?: string): { scanned: string[]; offenders: string[
 describe.skipIf(migrationTextLocked())(
   'SMI-6651/SMI-6690 — release_private_registry_skill_content() step-4 re-read (PG-free)',
   () => {
+    afterEach(() => {
+      for (const dir of tempDirs.splice(0)) rmSync(dir, { recursive: true, force: true })
+    })
+
     it('the shipped migration contains the step-4 re-read exactly once, byte-for-byte', () => {
       const sql = migrationSql()
       const anchor = sql.indexOf('SELECT prs.content INTO v_content')
@@ -228,7 +258,26 @@ describe.skipIf(migrationTextLocked())(
       // `ALTER FUNCTION` needs no redefinition at all to strip the pinned search_path off a
       // SECURITY DEFINER function.
       const { scanned, offenders } = tamperViolations()
-      expect(offenders).toEqual([])
+
+      // ONE KNOWN, REVIEWED HIT — asserted rather than allowlisted (SMI-6690 round 5+).
+      //
+      // The fail-closed tripwire fires on the function name appearing in executable SQL at all, so
+      // it fires on `20260915000001_..._comment_fix.sql`, which carries
+      // `COMMENT ON FUNCTION public.<fn>(...) IS '...'`. That is a real reviewed catalog-comment
+      // correction, and it is the same file this module's header cites as the precedent for
+      // shipping corrections as follow-up migrations — so this hit recurs by convention, not by
+      // accident.
+      //
+      // Pinning the exact offender string is the RESIDUAL ASSERTION this scan's own doc requires
+      // instead of a bare skip: the file stays scanned, and the message names every verb found, so
+      // adding a CREATE/DROP/ALTER to it changes the string and fails here. An allowlist entry
+      // would instead silence every assertion about the file (the round-4 finding). Red-tested by
+      // planting a DROP into a copy of this migration: the assertion fails.
+      expect(offenders).toEqual([
+        `20260915000001_private_registry_release_rpc_comment_fix.sql: ${FUNCTION_NAME} appears in ` +
+          'executable SQL without a recognised CREATE/DROP/ALTER FUNCTION verb -- review manually',
+      ])
+
       // A clean scan over an EMPTY set proves nothing, and this assertion passed identically over
       // 1 file and over 0 when it was first written (SMI-6690 retro, finding 5). Zero is reachable
       // only if the pinned migration becomes the newest one, or if laterMigrationFiles() regressed
@@ -253,6 +302,7 @@ describe.skipIf(migrationTextLocked())(
       ]
       for (const [verb, sql] of planted) {
         const dir = mkdtempSync(join(tmpdir(), 'smi6690-tamper-'))
+        tempDirs.push(dir)
         writeFileSync(join(dir, NEW_MIGRATION), '-- pinned migration, plaintext\n')
         writeFileSync(join(dir, '29999999999999_planted_tamper.sql'), sql)
         const { scanned, offenders } = tamperViolations(dir)

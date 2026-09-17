@@ -1,25 +1,42 @@
 /**
- * One tokenizer for Postgres SQL text, and the by-name tamper matchers built on it (SMI-6690).
+ * One tokenizer for Postgres SQL text (`opaqueSpanAt`, and the `stripComments`/`splitStatements`/
+ * identifier readers built on it), plus by-name CREATE/DROP/ALTER FUNCTION matchers that REPORT
+ * which verb a tamper scan found (SMI-6690).
  *
- * WHY A TOKENIZER. The three matchers were regexes doing lexical work with no lexer, and drew
- * findings in four consecutive review rounds: a delimiter forgery (`;` is legal inside a quoted
- * identifier, so a bounded `[^;]` list prefix can be walked past), a Unicode-escape identifier
- * (`U&"...\0074"` with a caller-chosen `UESCAPE` character, so no finite regex alphabet covers it),
- * and two false positives from matching whole-file text instead of one statement.
+ * THE MATCHERS DO NOT DETECT — SMI-6690's own case table is why. Each matcher parses one
+ * statement's grammar (a verb, a list, an argument list), and grammar-parsing can only ever be as
+ * complete as parsing DDL is possible: DDL assembled at runtime by `EXECUTE format(...)` inside a
+ * `DO $$ ... $$` block is not parseable text at all, at any point, by any lexer. Four review rounds
+ * closed a delimiter forgery, a Unicode-escape identifier and two whole-file false positives one at
+ * a time, and PG 17.11 still accepts every one of: a DROP hidden inside a `DO` block (plain, or via
+ * `EXECUTE '...'`), an `ALTER ... RESET ALL` hidden the same way, a `café`/`if`-named list entry a
+ * list parser abandons past, a `/* *\/`-fused verb, and a three-part `db.public.<fn>` name (SMI-6696).
+ * A caller that needs to KNOW whether a name is mentioned in executable SQL, fail-closed, uses
+ * `mentionsIdentifier` in `./sql-name-tripwire.ts` instead: it never parses a verb, a statement, or
+ * a list, so none of the above has anything to bypass. The matchers here keep a narrower job once
+ * that tripwire has already fired — naming WHICH verb (CREATE/DROP/ALTER) was seen, for a
+ * human-readable message.
  *
  * `opaqueSpanAt` is the single source of truth for which spans of SQL are not ordinary code.
- * `stripComments`, `splitStatements` and the identifier reader the matchers use all consume it, so
- * a span rule is fixed in one place rather than three.
+ * `stripComments`, `splitStatements`, the identifier reader here, and `./sql-name-tripwire.ts`'s
+ * `executableText` all consume it, so a span rule is fixed in one place rather than several.
  *
- * Match per STATEMENT, never against whole-file text: pass each `splitStatements(stripComments(sql))`
- * element to a matcher. Scanning the whole file is what produced the two false positives.
- *
- * NOT HERE: git-crypt lock state and migration enumeration (`./migration-text-guards.ts`), and
- * anything shaped by one function's own signature or body — the audit-trigger suite's `DEF_RE` pins
- * a header/body via backreference; that stays in that file.
+ * NOT HERE: git-crypt lock state and migration enumeration (`./migration-text-guards.ts`); the
+ * fail-closed identifier tripwire, `executableText`/`mentionsIdentifier` (`./sql-name-tripwire.ts`
+ * — kept in its own module so this file's matchers stay under the file-length gate); and anything
+ * shaped by one function's own signature or body — the audit-trigger suite's `DEF_RE` pins a
+ * header/body via backreference; that stays in that file.
  *
  * @module scripts/tests/lib/sql-statement-guards
  */
+
+/**
+ * A legal, case-sensitive, unqualified Postgres bareword identifier — no schema qualification, no
+ * quoting. Shared by `qualifiedIdent` below and by `mentionsIdentifier` (`./sql-name-tripwire.ts`)
+ * so a qualified or quoted argument is rejected the same way in both places (SMI-6690 finding F4)
+ * instead of one throwing and the other silently returning `false`.
+ */
+export const BARE_IDENT_RE = /^[A-Za-z_][A-Za-z0-9_$]*$/
 
 /**
  * Regex source matching a `public`-qualified identifier the way Postgres resolves it: optional
@@ -33,7 +50,7 @@ export function qualifiedIdent(name: string): string {
   // `name` is interpolated unescaped, so a non-bare-identifier argument builds a pattern meaning
   // something else SILENTLY (e.g. `qualifiedIdent('public.fn')` -> the `.` becomes a wildcard
   // matching `publicXfn`). Throwing names the mistake instead (SMI-6690 round 4).
-  if (!/^[A-Za-z_][A-Za-z0-9_$]*$/.test(name)) {
+  if (!BARE_IDENT_RE.test(name)) {
     throw new Error(
       `qualifiedIdent: ${JSON.stringify(name)} is not a bare identifier — pass the unqualified ` +
         'name; the optional schema prefix is already part of this fragment'
@@ -92,8 +109,12 @@ function scanDoubleQuoted(sql: string, start: number): number {
  * `quoted-ident` is the sixth, added here: a double-quoted identifier, optionally `U&`-prefixed
  * (the `U&` is part of the span). Nothing recognized this before, so `;` or a comment marker
  * inside one — `"a;b"`, `"a--b"` — read as ordinary code.
+ *
+ * Exported so `./sql-name-tripwire.ts`'s `executableText` can apply its own (deliberately
+ * different) span policy without re-deriving span recognition — a second hand-rolled version is
+ * exactly the kind of drift this function exists to prevent (SMI-6690).
  */
-function opaqueSpanAt(sql: string, i: number): { kind: SpanKind; end: number } | null {
+export function opaqueSpanAt(sql: string, i: number): { kind: SpanKind; end: number } | null {
   const n = sql.length
   const c = sql[i]
   const c2 = i + 1 < n ? sql[i + 1] : ''
@@ -194,7 +215,15 @@ export function stripComments(sql: string): string {
   while (i < n) {
     const span = opaqueSpanAt(sql, i)
     if (span) {
-      if (span.kind !== 'line-comment' && span.kind !== 'block-comment') {
+      if (span.kind === 'line-comment' || span.kind === 'block-comment') {
+        // A single space, not deletion (SMI-6690 finding F3): deleting a `/* */` span fuses the
+        // tokens on either side of it into one (`DROP/*x*/FUNCTION` -> `DROPFUNCTION`), which
+        // breaks every consumer that tokenizes on whitespace, including the matchers below and
+        // `splitStatements`. The `--` form was already safe (its span ends right before the `\n`,
+        // which this loop preserves on the next iteration either way) but gets the same treatment
+        // for symmetry — one space is harmless where a real separator already exists.
+        out += ' '
+      } else {
         out += sql.slice(i, span.end)
       }
       i = span.end
@@ -257,11 +286,12 @@ function matchWord(s: string, i: number, word: string): number | null {
   return j + word.length
 }
 
-type IdentToken = { raw: string; end: number }
+export type IdentToken = { raw: string; end: number }
 
 /** Reads one identifier at `i`: bareword, `"quoted"`, or `U&"escaped"` with an optional trailing
- *  `UESCAPE '<char>'` folded into `raw` so `normalizeIdent` sees the whole expression. */
-function readIdentAt(s: string, i: number): IdentToken | null {
+ *  `UESCAPE '<char>'` folded into `raw` so `normalizeIdent` sees the whole expression. Exported so
+ *  `mentionsIdentifier` (`./sql-name-tripwire.ts`) reuses this reader rather than a second one. */
+export function readIdentAt(s: string, i: number): IdentToken | null {
   const span = opaqueSpanAt(s, i)
   if (span && span.kind === 'quoted-ident') {
     let end = span.end
