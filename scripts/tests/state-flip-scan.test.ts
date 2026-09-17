@@ -165,6 +165,33 @@ function bareSpec(spec: string): string {
 }
 
 /**
+ * The scanner's header comment block: the contiguous `#` run from the top of the
+ * file, less the shebang and the shellcheck directive, ending at the first line
+ * that is not a comment. Both boundaries are derived, so no line number appears.
+ */
+function scannerHeaderBlock(): string[] {
+  const block: string[] = []
+  for (const line of readFileSync(SCANNER_PATH, 'utf8').split('\n')) {
+    if (!line.startsWith('#')) break
+    if (/^#!/.test(line) || /^# shellcheck/.test(line)) continue
+    block.push(line)
+  }
+  return block
+}
+
+/**
+ * The header block as one prose string. Header sentences wrap across comment
+ * lines, so a phrase has to be matched against the unwrapped prose or it matches
+ * nothing through no fault of the text.
+ */
+function scannerHeaderProse(): string {
+  return scannerHeaderBlock()
+    .map((line) => line.replace(/^#\s?/, ''))
+    .join(' ')
+    .replace(/\s+/g, ' ')
+}
+
+/**
  * Build a small, self-contained, hermetic git repo (SMI-4693 fixture-env
  * convention) with two commits: a "pre-flip" commit whose `scripts/fixture.ts`
  * carries a known STEP1/2/3 hit shape for the noun `widget-tool`, and a
@@ -1231,15 +1258,8 @@ describe('scan-state-flip.sh (SMI-6514 P-7 scanner) -- Group A: portable', () =>
       // So this is equality of the whole block, not containment of any one line:
       // containment is satisfied by a printer that emits the body comments too, and
       // is satisfied by a single surviving line when the rest are dropped. Both
-      // boundaries are derived rather than counted -- the block is the contiguous
-      // comment run from the top of the file, less the shebang and the shellcheck
-      // directive, ending at the first line that is not a comment.
-      const block: string[] = []
-      for (const line of readFileSync(SCANNER_PATH, 'utf8').split('\n')) {
-        if (!line.startsWith('#')) break
-        if (/^#!/.test(line) || /^# shellcheck/.test(line)) continue
-        block.push(line)
-      }
+      // boundaries are derived rather than counted, in the shared helper.
+      const block = scannerHeaderBlock()
       expect(
         block.length,
         'no header comment block found at the top of the scanner'
@@ -1250,6 +1270,151 @@ describe('scan-state-flip.sh (SMI-6514 P-7 scanner) -- Group A: portable', () =>
       // A trailing newline on the last line is printf's, not a line of its own.
       if (emitted[emitted.length - 1] === '') emitted.pop()
       expect(emitted, '--help output is not exactly the source header block').toEqual(block)
+    }
+  )
+
+  it.skipIf(!SCANNER_PRESENT)(
+    'the header and the invariant guard name the same cause, on a single-assignment PATHSPECS',
+    () => {
+      // The header's exit-2 clause and the guard's own runtime stderr are two
+      // descriptions of ONE mechanism, and nothing coupled them, so they drifted:
+      // both came to assert the two passes had searched different scopes. That cause
+      // is impossible while PATHSPECS is assigned once and never appended to, which
+      // is why the premise is asserted here as well -- an appended pathspec would
+      // make it reachable and both texts would then need revisiting.
+      const src = readFileSync(SCANNER_PATH, 'utf8')
+      expect(
+        (src.match(/^\s*PATHSPECS=\(/gm) ?? []).length,
+        'PATHSPECS is not assigned exactly once'
+      ).toBe(1)
+      expect(
+        (src.match(/PATHSPECS\+=/g) ?? []).length,
+        'PATHSPECS is appended to, so a scope change between the passes is reachable'
+      ).toBe(0)
+
+      const guardStart = src.indexOf('if ((STEP2_COUNT > STEP1_COUNT)); then')
+      expect(guardStart, 'invariant guard not found by its own condition').toBeGreaterThan(-1)
+      const guard = src.slice(guardStart, src.indexOf('exit 2', guardStart))
+      expect(guard, 'invariant guard emits no stderr before exiting').toContain('>&2')
+
+      for (const [surface, text] of [
+        ['header', scannerHeaderProse()],
+        ['guard stderr', guard],
+      ] as [string, string][]) {
+        expect(text, `${surface} does not name content changing between the passes`).toMatch(
+          /content\b[^.]*\bchanged between the two passes/
+        )
+        for (const ruledOut of [
+          /searched different scopes/,
+          /passes disagree about/,
+          /PATHSPECS differed/,
+        ]) {
+          expect(
+            text,
+            `${surface} still claims a cause a single-assignment PATHSPECS rules out`
+          ).not.toMatch(ruledOut)
+        }
+      }
+    }
+  )
+
+  it.skipIf(!SCANNER_PRESENT)(
+    'the STEP 2 > STEP 1 guard exits 2, names the reachable cause, and suppresses STEP 2',
+    () => {
+      // Reached through a PATH `git` shim, not a modified scanner: the shim runs the
+      // real git, then plants extra matching lines, so the STEP 2 pass sees strictly
+      // more than the STEP 1 pass did. That is the one reachable cause the two texts
+      // above name, and it exercises the shipped script unmodified.
+      const repoDir = makeFixtureTempDir('state-flip-invariant-fixture')
+      createdRepoDirs.push(repoDir)
+      git(repoDir, ['init', '-q', '-b', 'main'])
+      mkdirSync(join(repoDir, 'scripts'), { recursive: true })
+      // Noun only, no absence-vocabulary: STEP 1 sees one line, STEP 2 sees none.
+      writeFileSync(join(repoDir, 'scripts', 'fixture.sh'), 'widget-tool here\n')
+      git(repoDir, ['add', '-A'])
+      git(repoDir, ['-c', 'user.email=t@t', '-c', 'user.name=t', 'commit', '-qm', 'init'])
+
+      const shimDir = makeFixtureTempDir('state-flip-git-shim')
+      createdRepoDirs.push(shimDir)
+      const realGit = execFileSync('bash', ['-c', 'command -v git'], { encoding: 'utf8' }).trim()
+      expect(realGit, 'no real git on PATH to delegate to').toBeTruthy()
+      const marker = join(shimDir, 'fired')
+      const planted = join(repoDir, 'scripts', 'planted.sh')
+      writeFileSync(
+        join(shimDir, 'git'),
+        [
+          '#!/bin/sh',
+          `if [ ! -e ${JSON.stringify(marker)} ]; then`,
+          `  : > ${JSON.stringify(marker)}`,
+          `  ${JSON.stringify(realGit)} "$@"; rc=$?`,
+          // Three lines carrying noun AND absence-vocabulary, so STEP 2 > STEP 1.
+          `  printf 'widget-tool is not installed by design\\n%.0s' 1 2 3 > ${JSON.stringify(planted)}`,
+          '  exit $rc',
+          'fi',
+          `exec ${JSON.stringify(realGit)} "$@"`,
+          '',
+        ].join('\n'),
+        { mode: 0o755 }
+      )
+
+      const run = spawnSync('bash', [SCANNER_PATH, 'widget-tool'], {
+        cwd: repoDir,
+        encoding: 'utf8',
+        env: { ...process.env, PATH: `${shimDir}:${process.env.PATH ?? ''}` },
+      })
+      if (run.error) throw run.error
+
+      expect(run.status, 'the invariant guard did not exit 2').toBe(2)
+      expect(run.stderr, 'guard stderr does not name the reachable cause').toMatch(
+        /content\b[^.]*\bchanged between the two passes/
+      )
+      // Non-vacuity: the run reached STEP 1 rather than refusing earlier.
+      expect(run.stdout, 'the run never reached a STEP 1 denominator').toContain(
+        'STEP 1 (denominator):'
+      )
+      // The guard suppresses STEP 2, which is what keeps the header's "all measured
+      // against the same denominator" true on every exit-0 path.
+      expect(run.stdout, 'a STEP 2 section was emitted despite the broken invariant').not.toContain(
+        '### STEP 2'
+      )
+    }
+  )
+
+  it.skipIf(!SCANNER_PRESENT)(
+    'the header enumerates a cause for every exit 2 site the script has',
+    () => {
+      // A cause added to the code and not to the header is invisible, because the
+      // header is what a reader consults on seeing exit 2. The site count is read
+      // from the file rather than written down, so a new site fails the coverage
+      // check instead of landing unnoticed; each row then has to match BOTH surfaces,
+      // so a reworded stderr and a dropped header cause each fail on their own.
+      const src = readFileSync(SCANNER_PATH, 'utf8')
+      const sites = src.split('\n').filter((line) => /^\s*exit 2\s*$/.test(line))
+      const prose = scannerHeaderProse()
+
+      // One row per exit-2 site: the stderr signature that site emits, and the
+      // header text that has to account for it.
+      const causes: [RegExp, RegExp][] = [
+        [/--ref requires a value/, /--ref without a value/],
+        [/unexpected extra arg/, /extra arg/],
+        [/usage: \$0 <noun>/, /missing noun/],
+        [/newline or carriage return/, /newline or carriage return/],
+        [/begins with '-'/, /beginning with '-'/],
+        [/git grep exited %d searching/, /git grep itself failing/],
+        [/git grep exited %d narrowing/, /git grep itself failing/],
+        [/STEP 2 narrows STEP 1 and cannot exceed it/, /STEP 2 exceeding STEP 1/],
+      ]
+
+      expect(
+        causes.length,
+        `the script has ${sites.length} exit-2 site(s) and this table accounts for ${causes.length}`
+      ).toBe(sites.length)
+      for (const [signature, headerCause] of causes) {
+        expect(src, `no exit-2 site emits ${signature}`).toMatch(signature)
+        expect(prose, `the header does not account for the site emitting ${signature}`).toMatch(
+          headerCause
+        )
+      }
     }
   )
 
