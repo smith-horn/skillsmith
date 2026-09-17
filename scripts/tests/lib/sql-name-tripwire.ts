@@ -129,6 +129,15 @@ export function executableText(sql: string): string {
         case 'quoted-ident':
           out += sql.slice(i, end)
           break
+        default: {
+          // A new SpanKind must state its own policy here rather than inherit one by omission.
+          // Falling through would DROP the span from executable text, blinding the fail-closed
+          // detector to its contents — and `stripComments` defaults the opposite way (copies
+          // verbatim), so silence is not even consistent between the two consumers. The `never`
+          // annotation makes a seventh kind a compile error instead of a silent hole (SMI-6690).
+          const unmodelled: never = span.kind
+          throw new Error(`executableText: unmodelled span kind ${String(unmodelled)}`)
+        }
       }
       i = end
       continue

@@ -85,4 +85,25 @@ describe('SMI-5984 — readMigrationText resolves all three git-crypt lock state
     // leave `code` undefined — this distinguishes absent from encrypted.
     expect(code).toBe('ENOENT')
   })
+
+  // THE NEXT TWO PIN THE WIDTH OF THE MAGIC, and without them the suite cannot (SMI-6690).
+  // Every other fixture here is either NUL-prefixed AND genuinely ciphertext, or not NUL-prefixed
+  // at all — so a guard checking only `raw[0] === 0x00` instead of all nine bytes passes all of
+  // them. Measured: that exact one-byte mutation passed the whole 67-test suite. The consequence
+  // is the invisible-success shape this module exists to remove — a binary or NUL-prefixed
+  // PLAINTEXT migration would read as ciphertext and, on a declared-locked run, return null: a
+  // clean stand-down over a readable file. Declared-locked is set in both, so a misread returns
+  // null rather than throwing, and the assertion sees it.
+  it('a NUL-prefixed file that is NOT git-crypt ciphertext is read, not reported as locked', () => {
+    const body = Buffer.concat([Buffer.from([0x00]), Buffer.from('not git-crypt\n')])
+    const dir = fixtureDir(body)
+    expect(withExpectLocked(true, () => readMigrationText(FILE, dir))).toBe(body.toString('utf8'))
+  })
+
+  it('a near-miss magic is read, not reported as locked', () => {
+    // "\x00GITCRYPX" — right length, right shape, final byte wrong. Pins the boundary the case
+    // above leaves open: a prefix-length check that stops short would still accept this.
+    const dir = fixtureDir(Buffer.from([0x00, 0x47, 0x49, 0x54, 0x43, 0x52, 0x59, 0x50, 0x58]))
+    expect(withExpectLocked(true, () => readMigrationText(FILE, dir))).not.toBeNull()
+  })
 })

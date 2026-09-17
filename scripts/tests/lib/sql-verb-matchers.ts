@@ -3,9 +3,9 @@
  * (SMI-6690). They do NOT decide whether to fire.
  *
  * Split out of `./sql-statement-guards.ts` because that module holds the tokenizer every other
- * consumer needs, and a tokenizer accretes cases: it reached 487 of the 500-line commit gate while
- * these matchers sat beside it (SMI-6696). Nothing here is needed to tokenize SQL, and nothing
- * there needs a verb.
+ * consumer needs, and a tokenizer accretes cases: it was approaching the 500-line commit gate while
+ * these matchers sat beside it (SMI-6696 holds the measurements). Nothing here is needed to
+ * tokenize SQL, and nothing there needs a verb.
  *
  * PAIR THESE WITH `mentionsIdentifier` (`./sql-name-tripwire.ts`) IN UNION -- a hit from either is
  * a hit -- and let neither gate the other. Each covers the other's blind spot: these read one
@@ -21,6 +21,7 @@
  */
 
 import {
+  BARE_IDENT_RE,
   matchWord,
   normalizeIdent,
   opaqueSpanAt,
@@ -28,6 +29,23 @@ import {
   skipTokenGap,
   type QualifiedName,
 } from './sql-statement-guards.ts'
+
+/**
+ * Rejects a target these matchers could never match, instead of returning `false` silently — the
+ * same contract `qualifiedIdent` and `mentionsIdentifier` already enforce (SMI-6690 finding F4).
+ * Before this, `qualifiedIdent('public.fn')` threw while `matchesDropFunction(stmt, 'public.fn')`
+ * returned `false`, so a caller who qualified or quoted the name got a matcher that could never
+ * fire and no error saying why. Schema qualification is `nameMatchesTarget`'s job, not the
+ * caller's.
+ */
+function assertBareTarget(name: string): void {
+  if (!BARE_IDENT_RE.test(name)) {
+    throw new Error(
+      `sql-verb-matchers: ${JSON.stringify(name)} is not a bare identifier — pass the ` +
+        'unqualified, unquoted name'
+    )
+  }
+}
 
 /** Skips a balanced `(...)` at `i` (must be `(`), honoring opaque spans inside so a string or
  *  quoted identifier can't unbalance the count. Returns the index past `)`, or null if unclosed. */
@@ -69,6 +87,7 @@ function nameMatchesTarget(qname: QualifiedName, target: string): boolean {
  *  resolves to `name`. `CREATE OR REPLACE ROUTINE` is a Postgres syntax error, deliberately not
  *  accepted (SMI-6690) — do not widen this to `FUNCTION|ROUTINE`. */
 export function matchesCreateFunction(stmt: string, name: string): boolean {
+  assertBareTarget(name)
   let i = matchWord(stmt, 0, 'CREATE')
   if (i === null) return false
   const or = matchWord(stmt, i, 'OR')
@@ -91,6 +110,7 @@ export function matchesCreateFunction(stmt: string, name: string): boolean {
  * an unrelated statement glued on after an unterminated one, cannot extend or truncate the list.
  */
 export function matchesDropFunction(stmt: string, name: string): boolean {
+  assertBareTarget(name)
   let i = matchWord(stmt, 0, 'DROP')
   if (i === null) return false
   let verb = matchWord(stmt, i, 'FUNCTION')
@@ -122,6 +142,7 @@ export function matchesDropFunction(stmt: string, name: string): boolean {
  *  `ALTER FUNCTION public.<fn> RESET ALL` strips a pinned `search_path` with no arg list and no
  *  redefinition, so a `CREATE`-anchored guard never sees it (SMI-6690). Matches on name alone. */
 export function matchesAlterFunction(stmt: string, name: string): boolean {
+  assertBareTarget(name)
   const i = matchWord(stmt, 0, 'ALTER')
   if (i === null) return false
   let verb = matchWord(stmt, i, 'FUNCTION')

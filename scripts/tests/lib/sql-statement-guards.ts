@@ -10,9 +10,9 @@
  * NOT HERE, and each for a reason:
  *
  *   - `./sql-verb-matchers.ts` — the by-name CREATE/DROP/ALTER FUNCTION matchers. They REPORT which
- *     verb a scan found; they do not decide whether to fire. Moved out when this module reached 487
- *     of the 500-line commit gate: a tokenizer accretes cases, and the matchers need none of it
- *     beyond the readers below (SMI-6696).
+ *     verb a scan found; they do not decide whether to fire. Moved out because a tokenizer accretes
+ *     cases and this module was approaching the 500-line commit gate, while the matchers need none
+ *     of it beyond the readers below (SMI-6696 holds the measurements).
  *   - `./sql-name-tripwire.ts` — `executableText`/`mentionsIdentifier`, the fail-closed detector,
  *     which applies a deliberately DIFFERENT span policy to the same spans.
  *   - `./migration-text-guards.ts` — git-crypt lock state and migration enumeration.
