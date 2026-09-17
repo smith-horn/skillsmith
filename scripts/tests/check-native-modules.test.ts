@@ -28,6 +28,33 @@ import { fileURLToPath } from 'node:url'
 const __dirname = dirname(fileURLToPath(import.meta.url))
 const SCRIPT = resolve(__dirname, '..', 'lib', 'check-native-modules.sh')
 
+// `run_cmd` IS `docker exec` (scripts/lib/hook-docker-detect.sh), so it is a
+// first-class docker-exec surface here, not just the literal text. The
+// allow-list is closed: a third call site has to justify itself in this file.
+const ALLOWED_RUN_CMD = [
+  /run_cmd node -e/, // the read-only createDatabaseSync(':memory:') probe
+  /run_cmd sh -c "\$NCA_PRODUCER"/, // SMI-6684 Wave 3: read-only mount-composition attribution
+]
+
+/** Lines that run a mutating command for real, outside a comment or printf. */
+function mutatingOffenders(src: string): string[] {
+  return src.split('\n').filter((line) => {
+    const t = line.trim()
+    if (t.startsWith('#')) return false
+    if (/^\s*printf\b/.test(line)) return false
+    if (/\brun_cmd\b/.test(line)) {
+      if (/^\s*fail\)/.test(line)) return false // the test seam's run_cmd() { return 1; }
+      if (/run_cmd\(\)/.test(line)) return false // the run_cmd() definition itself
+      // One per line, or the allow-list does not apply: it matches a
+      // substring, so an allowed call plus a chained second one would
+      // otherwise satisfy it.
+      if ((line.match(/\brun_cmd\b/g) ?? []).length > 1) return true
+      return !ALLOWED_RUN_CMD.some((re) => re.test(line))
+    }
+    return /npm\s+(install|ci|rebuild)\b|docker\s+exec\b/.test(line)
+  })
+}
+
 function run(env: Record<string, string> = {}): { status: number; output: string } {
   // SMI-6684 Wave 3 / addendum A-1: the failure path now writes one JSONL
   // line to $HOME/.skillsmith/logs on every failure-path run. HOME is
@@ -73,29 +100,41 @@ describe('check-native-modules.sh (SMI-5513)', () => {
   })
 
   it('READ-ONLY: no mutating command outside comments/printf/test-seam', () => {
-    const src = readFileSync(SCRIPT, 'utf8')
-    // F-3 (SMI-6684 Wave 3 pre-merge gate): `run_cmd` IS `docker exec`
-    // (scripts/lib/hook-docker-detect.sh) — the guard used to grep only the
-    // literal text `docker exec`, so a SECOND `run_cmd` call site
-    // (`run_cmd sh -c "$NCA_PRODUCER"`) needed no exemption because the
-    // guard could not see it at all. Treat `run_cmd` as a first-class
-    // docker-exec surface with an explicit allow-list, so a future third
-    // call site has to justify itself here.
-    const ALLOWED_RUN_CMD = [
-      /run_cmd node -e/, // the read-only createDatabaseSync(':memory:') probe
-      /run_cmd sh -c "\$NCA_PRODUCER"/, // SMI-6684 Wave 3: read-only mount-composition attribution
-    ]
-    const offenders = src.split('\n').filter((line) => {
-      const t = line.trim()
-      if (t.startsWith('#')) return false
-      if (/^\s*printf\b/.test(line)) return false
-      if (/\brun_cmd\b/.test(line)) {
-        if (/^\s*fail\)/.test(line)) return false // the test seam's run_cmd() { return 1; }
-        if (/run_cmd\(\)/.test(line)) return false // the run_cmd() definition itself
-        return !ALLOWED_RUN_CMD.some((re) => re.test(line))
-      }
-      return /npm\s+(install|ci|rebuild)\b|docker\s+exec\b/.test(line)
-    })
-    expect(offenders).toEqual([])
+    expect(mutatingOffenders(readFileSync(SCRIPT, 'utf8'))).toEqual([])
+  })
+
+  // Post-merge retro on PR #2873. The predicate above is only as good as its
+  // own edge cases, and the previous version's allow-list matched a SUBSTRING:
+  // a line carrying an allowed call AND a chained second one satisfied it and
+  // would have shipped invisibly. That is the same unanchored-predicate class
+  // the pre-merge gate found one round earlier, reintroduced by its own fix —
+  // which nothing caught, because no round reviewed that fix. So the guard now
+  // has its own cases, each carrying exactly one reason to fail.
+  it.each([
+    ['a bare mutating run_cmd', '    run_cmd rm -rf /app/node_modules', true],
+    [
+      'a second run_cmd chained onto an allowed one',
+      '    run_cmd sh -c "$NCA_PRODUCER" ; run_cmd rm -rf /app/node_modules',
+      true,
+    ],
+    ['a raw docker exec', '    docker exec "$C" npm install', true],
+    [
+      'the allowed producer call',
+      '    ( run_cmd sh -c "$NCA_PRODUCER" nca "$T" ) >"$env" &',
+      false,
+    ],
+    [
+      'the allowed probe call',
+      '    if run_cmd node -e "require(\'@skillsmith/core\')"; then',
+      false,
+    ],
+    ['a comment naming a mutating command', '    # never: run_cmd npm install', false],
+    [
+      'a printf naming a mutating command',
+      '    printf "  docker exec -w /app %s ...\\n" "$C"',
+      false,
+    ],
+  ])('READ-ONLY guard: %s', (_label, line, shouldFlag) => {
+    expect(mutatingOffenders(line)).toEqual(shouldFlag ? [line] : [])
   })
 })
