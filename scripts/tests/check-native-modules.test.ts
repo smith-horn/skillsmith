@@ -63,15 +63,35 @@ const MUTATING = /\bnpm\s+(install|i|ci|rebuild)\b|\bdocker\s+(container\s+|comp
  * The requirement is per-COMMAND, so this is too: strip the trailing comment,
  * split the line into commands, and judge each one alone. An exemption can then
  * only ever excuse the command it applies to.
+ *
+ * KNOWN GAP, stated rather than implied: this reads ONE LINE AT A TIME, so a
+ * command split across a `\` continuation is invisible to it
+ * (`docker \` + newline + `exec "$C" true`). The script already writes the
+ * allow-listed producer call that way, so it is the house style at that very
+ * call site. Closing it needs line-joining, not a wider predicate.
  */
 function mutatingOffenders(src: string): string[] {
+  /** Cut a trailing comment, but only at a `#` that is not inside quotes. */
+  const stripComment = (s: string): string => {
+    let quote: string | null = null
+    for (let i = 0; i < s.length; i++) {
+      const c = s[i]
+      if (quote) {
+        if (c === quote) quote = null
+        continue
+      }
+      if (c === '"' || c === "'") quote = c
+      else if (c === '#' && (i === 0 || /\s/.test(s[i - 1] as string))) return s.slice(0, i)
+    }
+    return s
+  }
+
   return src.split('\n').filter((line) => {
     if (/^\s*#/.test(line)) return false // a whole-line comment runs nothing
     if (/^\s*run_cmd\(\)\s*\{/.test(line)) return false // the run_cmd() definition itself
     if (/^\s*fail\)/.test(line)) return false // the test seam's run_cmd() { return 1; }
 
-    const code = line.replace(/\s#.*$/, '') // a trailing comment runs nothing either
-    return code
+    return stripComment(line)
       .split(/;|&&|\|\||\||&/) // one command per segment
       .map((seg) => {
         // Peel the shell words that PRECEDE a command without being one, so the
@@ -88,9 +108,11 @@ function mutatingOffenders(src: string): string[] {
         }
       })
       .some((cmd) => {
-        if (cmd === '' || /^printf\b/.test(cmd)) return false // printf only prints
-        if (/\brun_cmd\b/.test(cmd)) return !ALLOWED_RUN_CMD.some((re) => re.test(cmd))
-        return MUTATING.test(cmd)
+        if (cmd === '' || /^(printf|echo)\b/.test(cmd)) return false // these only print
+        // A mutating command substituted INTO an allowed command's arguments
+        // still runs, so the allow-list never suppresses this check.
+        if (MUTATING.test(cmd)) return true
+        return /\brun_cmd\b/.test(cmd) && !ALLOWED_RUN_CMD.some((re) => re.test(cmd))
       })
   })
 }
@@ -162,6 +184,23 @@ describe('check-native-modules.sh (SMI-5513)', () => {
       '    run_cmd sh -c "$NCA_PRODUCER" ; npm install',
       true,
     ],
+    // One row per separator, and each chains a RUN_CMD rather than an `npm`:
+    // `MUTATING` matches anywhere on the line, so an npm-based row flags with
+    // or without the split and pins nothing. Only a second `run_cmd` forces the
+    // splitter to do the work. Every chained row used `;` before, so narrowing
+    // the splitter to /;/ was caught by nothing — found by the delta review.
+    ['a run_cmd chained with &&', '    run_cmd node -e "x" && run_cmd rm -rf /app', true],
+    ['a run_cmd chained with ||', '    run_cmd node -e "x" || run_cmd rm -rf /app', true],
+    ['a run_cmd chained with a pipe', '    run_cmd node -e "x" | run_cmd rm -rf /app', true],
+    [
+      'a run_cmd chained with a background &',
+      '    run_cmd node -e "x" & run_cmd rm -rf /app',
+      true,
+    ],
+    // A `#` inside quotes is not a comment; truncating there hid the rest.
+    ['npm after a quoted hash', '    msg="a # b" ; npm install', true],
+    // A mutating command substituted into an allowed command's own arguments.
+    ['npm inside an allowed command substitution', '    run_cmd node -e "x$(npm install)"', true],
     [
       'docker exec chained after an allowed run_cmd',
       '    run_cmd node -e "x" ; docker exec "$C" true',
@@ -191,7 +230,11 @@ describe('check-native-modules.sh (SMI-5513)', () => {
       '    if run_cmd node -e "require(\'@skillsmith/core\')"; then',
       false,
     ],
-    ['a comment naming a mutating command', '    # never: run_cmd npm install', false],
+    ['an indented comment naming a mutating command', '    # never: run_cmd npm install', false],
+    // Pins the `^\s*#` skip on its own: the only other column-0 comment cover
+    // was one incidental line in the real script.
+    ['a column-0 comment naming a mutating command', '# docker exec is described here', false],
+    ['an echo naming a mutating command', '    echo "run: docker exec $C npm install"', false],
     [
       'a printf naming a mutating command',
       '    printf "  docker exec -w /app %s ...\\n" "$C"',
