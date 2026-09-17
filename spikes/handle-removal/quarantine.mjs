@@ -18,6 +18,7 @@
 //     up to a different parent.
 
 import fs from 'node:fs'
+import { shapeResult } from './result-shape.mjs'
 import path from 'node:path'
 import crypto from 'node:crypto'
 import { computeTreeHash } from './hash.mjs'
@@ -248,7 +249,7 @@ function ensureTrashRoot(parentAbs, nativeShim) {
  *          |{status:'kept', reason:string, path:string, treeHash:string}
  *          |{status:'stopped', reason:string, path:string, entry:string, errno:string|null}}
  */
-export function quarantineTree(parentAbs, name, options = {}) {
+function quarantineTreeInner(parentAbs, name, options = {}) {
   const opId = options.opId ?? randSuffix()
   const originPath = path.join(parentAbs, name)
 
@@ -443,14 +444,44 @@ export function quarantineTree(parentAbs, name, options = {}) {
     }
     fs.writeFileSync(sidecarPath, JSON.stringify(sidecar, null, 2))
   } catch (err) {
+    // THE SECOND SUCCESS RETURN, AND IT HAD THE SAME GAP AS THE FIRST.
+    // A sidecar write can fail (ENOSPC, found during this checkpoint's own
+    // ENOSPC test) after the tree is already safely quarantined. That is still
+    // a success -- nothing was lost -- so it must carry the same fields as the
+    // success below. It did not: no `treeHash`, no `entry`. `shapeResult` would
+    // fill both with null, which is worse than absent, because null here means
+    // "nothing was verified" and a hash HAD just been verified.
     return {
       status: 'quarantined',
       path: destPath,
+      entry: name,
+      treeHash: observedTreeHash,
       sidecarPath,
       opId,
       sidecarError: err.code ?? err.message,
     }
   }
 
-  return { status: 'quarantined', path: destPath, sidecarPath, opId }
+  // `treeHash` is the hash this call VERIFIED, or null when the caller supplied
+  // no guard hash and nothing was verified. It is not "the hash of whatever is
+  // now in quarantine" -- reporting that would be a confident label for a
+  // quantity nobody checked. Null here means unverified, and the A1 plan's
+  // UD14/UD15/UD17 require a non-null value before a removal is authorized.
+  return {
+    status: 'quarantined',
+    path: destPath,
+    entry: name,
+    treeHash: observedTreeHash,
+    sidecarPath,
+    opId,
+  }
+}
+
+/**
+ * N-1: the single exported entry point, so every caller gets one shape.
+ * See result-shape.mjs for why this exists rather than 13 edited returns.
+ */
+export function quarantineTree(parentAbs, name, options = {}) {
+  const r = quarantineTreeInner(parentAbs, name, options)
+  return shapeResult({ entry: name, ...r })
 }

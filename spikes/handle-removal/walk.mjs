@@ -15,6 +15,7 @@
 // is measuring.
 
 import fs from 'node:fs'
+import { shapeResult } from './result-shape.mjs'
 import path from 'node:path'
 import crypto from 'node:crypto'
 import os from 'node:os'
@@ -69,7 +70,7 @@ function fstatIdentity(fd) {
  * @returns {{status:'removed'|'kept', treeHash?:string}
  *          |{status:'stopped', reason:string, path:string, errno:number|null}}
  */
-export function removeVR(targetRoot, options = {}) {
+function removeVRInner(targetRoot, options = {}) {
   const { variant = 'V2', guardHash, opId = randSuffix(), hooks = {} } = options
   const shim = loadShim()
   const callHook = (name, ...args) => {
@@ -398,4 +399,21 @@ function closeQuiet(fd) {
   } catch {
     /* already gone */
   }
+}
+
+/**
+ * N-1: the single exported entry point, so every caller gets one shape.
+ *
+ * The internal walk has five separate `return` statements and each was a chance
+ * to omit a field -- which is exactly how this path's `kept` came to lack the
+ * `reason` and `path` that the fallback's `kept` carries. Normalizing here
+ * makes the two paths agree by construction rather than by everyone
+ * remembering, and leaves the walk's own returns readable.
+ */
+export function removeVR(targetRoot, options = {}) {
+  const r = removeVRInner(targetRoot, options)
+  // `path` defaults to the tree the caller named: on this path a `kept` or a
+  // `removed` is always about targetRoot itself, and a caller should not have
+  // to know which module answered to learn what the result is about.
+  return shapeResult({ path: targetRoot, ...r })
 }
