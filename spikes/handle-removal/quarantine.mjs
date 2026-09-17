@@ -421,8 +421,45 @@ function quarantineTreeInner(parentAbs, name, options = {}) {
   // and require the parent's device -- a destination on another device would
   // make the rename either fail with EXDEV or, worse, land somewhere the
   // returned path does not describe.
+  //
+  // FINDING 9 (governance review of ADR-166, 2026-09-17): THE DEVICE CHECK WAS
+  // THE ONLY CHECK, AND A SYMLINK PASSES IT.
+  //
+  // `mkdirSync` above accepts EEXIST, so a process that can write to the parent
+  // -- this mechanism's own stated threat model -- pre-creates
+  // `<trash>/<opId>` as a SYMLINK to a directory it controls on the same
+  // device. `lstat` then reports the symlink's own dev, which matches, and the
+  // check passes. `renameSync` resolves the symlink at syscall time. Measured
+  // before this fix, with a VALID guardHash in place:
+  //
+  //   status: 'quarantined'   (success)
+  //   origin: gone
+  //   reported path: <trash>/op-abc123/tree-c61e2beb
+  //   ACTUAL bytes: <attacker-storage>/tree-c61e2beb/sub/f.txt
+  //   ...and the sidecar, carrying originPath and treeHash, landed there too.
+  //
+  // The guard hash does not help: it binds the SOURCE identity, and this
+  // substitutes the DESTINATION. That is `0abee8e93` -- "hardened the source of
+  // the rename and left the destination trusted under the identical threat
+  // model" -- reproduced exactly one directory level down, because that fix
+  // rebound the trash root and never rebound the op directory inside it.
+  //
+  // `assertPathSegment` cannot catch this: `op-abc123` is a legal single
+  // segment. The defect is the directory's TYPE, not the name's shape.
   try {
     const od = fs.lstatSync(opDir, { bigint: true })
+    if (od.isSymbolicLink() || !od.isDirectory()) {
+      return {
+        status: 'stopped',
+        reason: 'quarantine-destination-changed',
+        path: opDir,
+        entry: name,
+        errno: null,
+        detail: od.isSymbolicLink()
+          ? 'op directory is a symlink; rename(2) would resolve it and land the tree elsewhere'
+          : 'op directory exists but is not a directory',
+      }
+    }
     if (trash.parentDev !== undefined && od.dev !== trash.parentDev) {
       return {
         status: 'stopped',
@@ -430,6 +467,7 @@ function quarantineTreeInner(parentAbs, name, options = {}) {
         path: opDir,
         entry: name,
         errno: null,
+        detail: 'op directory is on a different device than the parent',
       }
     }
   } catch (err) {
@@ -627,7 +665,43 @@ function assertPathSegment(label, value) {
 }
 
 export function quarantineTree(parentAbs, name, options = {}) {
+  // FINDING 8 (governance review of ADR-166, 2026-09-17): THE FIX FOR
+  // `guardHash: null` VALIDATED ONE SPELLING AND THE FUNCTION READ TWO.
+  //
+  // This line used to be `normalizeGuardHash(options.guardHash)`, while
+  // `quarantineTreeInner` resolved `options.guardHash ?? options.treeHash`. So
+  // the alias was never validated, and the entire `87dc4038d` fix was reachable
+  // around. Measured before this fix, same fixture:
+  //
+  //   quarantineTree(p, n, { guardHash: null })  -> TypeError, origin PRESERVED
+  //   quarantineTree(p, n, { treeHash:  null })  -> quarantined, origin MOVED
+  //
+  // `treeHash` is the OLD parameter name, kept as a compatibility alias when the
+  // rename landed. Keeping an unvalidated second spelling of a guarded input is
+  // the same defect the rename was fixing, one identifier over -- and my own
+  // test suite missed it because I wrote the tests and I tested the spelling I
+  // had just fixed. That is SMI-6497's rule exactly: the author picks the
+  // mutation, so the author's blind spot picks it too.
+  //
+  // Both spellings are now normalized. Supplying BOTH with different values is
+  // refused rather than silently resolved by `??` precedence: a caller that
+  // passed two different hashes has not said which it meant, and guessing at
+  // missing evidence is the defect class this whole spike documents.
   normalizeGuardHash(options.guardHash)
+  normalizeGuardHash(options.treeHash)
+  if (
+    options.guardHash !== undefined &&
+    options.treeHash !== undefined &&
+    options.guardHash !== options.treeHash
+  ) {
+    throw new TypeError(
+      `guardHash and treeHash were both supplied with different values ` +
+        `(${JSON.stringify(options.guardHash)} vs ${JSON.stringify(options.treeHash)}). ` +
+        `treeHash is a deprecated alias for guardHash; pass exactly one. ` +
+        `Resolving this by precedence would silently guard against a hash the ` +
+        `caller may not have meant, on the destructive path.`
+    )
+  }
   assertPathSegment('name', name)
   if (options.opId !== undefined) assertPathSegment('opId', options.opId)
   const r = quarantineTreeInner(parentAbs, name, options)

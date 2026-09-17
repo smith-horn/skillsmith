@@ -272,6 +272,72 @@ check(
   fs.rmSync(e.root, { recursive: true, force: true })
 }
 
+// --- 6. THE ALIAS (Finding 8) -------------------------------------------
+//
+// Case 5 above pinned `guardHash: null`. It pinned ONE SPELLING, and the
+// function read two: `quarantineTreeInner` resolved
+// `options.guardHash ?? options.treeHash`, while the entry point validated only
+// `options.guardHash`. So the whole of case 5 was reachable around by using the
+// deprecated alias. Measured before the fix, same fixture:
+//
+//   quarantineTree(p, n, { guardHash: null })  -> TypeError, origin PRESERVED
+//   quarantineTree(p, n, { treeHash:  null })  -> quarantined, origin MOVED
+//
+// I wrote case 5 and I wrote the fix it pins, and I tested the spelling I had
+// just fixed. That is SMI-6497's rule landing on its author: the author picks
+// the mutation, so the author's blind spot picks it too. A cross-family
+// reviewer named the alias within minutes of reading the same file.
+{
+  const threw = (fn) => {
+    try {
+      fn()
+      return 'returned'
+    } catch (e) {
+      return e.constructor.name
+    }
+  }
+  const a = fixture()
+  check(
+    '6a the deprecated treeHash alias refuses null too',
+    threw(() => quarantineTree(a.parent, 'tree', { treeHash: null })),
+    'TypeError'
+  )
+  check('6b and the origin survives', fs.existsSync(a.target), true)
+  fs.rmSync(a.root, { recursive: true, force: true })
+
+  // The fix must not make the alias unusable -- that would pass by refusing
+  // everything, the failure mode case 5e exists to catch on the other spelling.
+  const b = fixture()
+  const bHash = computePathTreeHash(b.target).treeHash
+  check(
+    '6c a VALID treeHash still quarantines',
+    quarantineTree(b.parent, 'tree', { treeHash: bHash }).status,
+    'quarantined'
+  )
+  fs.rmSync(b.root, { recursive: true, force: true })
+
+  // Both spellings with DIFFERENT values is ambiguous, and `??` precedence
+  // would silently resolve it on the destructive path.
+  const c = fixture()
+  const cHash = computePathTreeHash(c.target).treeHash
+  check(
+    '6d both spellings, same value, accepted',
+    quarantineTree(c.parent, 'tree', { guardHash: cHash, treeHash: cHash }).status,
+    'quarantined'
+  )
+  fs.rmSync(c.root, { recursive: true, force: true })
+
+  const d = fixture()
+  const dHash = computePathTreeHash(d.target).treeHash
+  check(
+    '6e both spellings, different values, refused rather than resolved',
+    threw(() => quarantineTree(d.parent, 'tree', { guardHash: dHash, treeHash: 'other' })),
+    'TypeError'
+  )
+  check('6f and the origin survives', fs.existsSync(d.target), true)
+  fs.rmSync(d.root, { recursive: true, force: true })
+}
+
 if (!allOk) {
   console.error('[result-parity] FAIL')
   process.exit(1)

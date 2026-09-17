@@ -300,6 +300,79 @@ function fixture() {
   fs.rmSync(f.root, { recursive: true, force: true })
 }
 
+// --- 7. THE OP DIRECTORY, PRE-CREATED AS A SYMLINK (Finding 9) -----------
+//
+// Case 6 above rebound the TRASH ROOT and pinned that a swapped trash root is
+// refused. It stopped one directory short. The rename's actual destination is
+// `<trashRoot>/<opId>/<name>-<rnd>`, and `<opId>` was created with EEXIST
+// accepted and then validated by DEVICE ALONE -- no symlink check, no type
+// check. A symlink reports its own dev under lstat, so it passes.
+//
+// Measured before the fix, with a VALID guardHash in place:
+//
+//   status:        'quarantined'   (reported as success)
+//   origin:        gone
+//   reported path: <trash>/op-abc123/tree-c61e2beb
+//   ACTUAL bytes:  <attacker-storage>/tree-c61e2beb/sub/f.txt
+//
+// ...and the sidecar, which carries originPath and treeHash, landed there too.
+// The guard hash is no defence: it binds the SOURCE identity, and this
+// substitutes the DESTINATION. That is `0abee8e93`'s own finding -- "hardened
+// the source and left the destination trusted" -- reproduced one level down,
+// because that fix rebound the trash root and never rebound the op directory.
+//
+// `assertPathSegment` cannot catch it either: `op-abc123` is a legal single
+// segment. Finding 6's fix was about the NAME's shape; this is the directory's
+// TYPE. Two different defects behind one identifier.
+{
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), 's6676-opsym-'))
+  const parent = path.join(root, 'parent')
+  fs.mkdirSync(path.join(parent, 'tree', 'sub'), { recursive: true })
+  fs.writeFileSync(path.join(parent, 'tree', 'sub', 'f.txt'), 'USERBYTES')
+
+  // A directory the attacker controls, deliberately on the SAME device so the
+  // device check -- the only check there was -- cannot be what refuses this.
+  const loot = path.join(root, 'attacker-storage')
+  fs.mkdirSync(loot, { recursive: true })
+
+  const trash = path.join(parent, '.skillsmith-trash')
+  fs.mkdirSync(trash, { recursive: true })
+  const opId = 'op-abc123'
+  fs.symlinkSync(loot, path.join(trash, opId))
+
+  check(
+    '7a the planted symlink is on the same device (so device alone cannot refuse it)',
+    fs.lstatSync(trash).dev === fs.lstatSync(loot).dev,
+    true
+  )
+
+  const guardHash = computePathTreeHash(path.join(parent, 'tree')).treeHash
+  const r = quarantineTree(parent, 'tree', { opId, guardHash })
+
+  check('7b a symlinked op directory is refused', r.status, 'stopped')
+  check('7c and the reason names the destination', r.reason, 'quarantine-destination-changed')
+  check('7d the origin survives', fs.existsSync(path.join(parent, 'tree')), true)
+  check('7e nothing landed in the attacker directory', fs.readdirSync(loot).length, 0)
+  fs.rmSync(root, { recursive: true, force: true })
+}
+
+// --- 7b. and the fix must not refuse a legitimate pre-existing op dir ----
+// Without this the suite would pass by refusing every pre-created op
+// directory, which is the failure mode that makes a red test decorative.
+{
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), 's6676-opreal-'))
+  const parent = path.join(root, 'parent')
+  fs.mkdirSync(path.join(parent, 'tree', 'sub'), { recursive: true })
+  fs.writeFileSync(path.join(parent, 'tree', 'sub', 'f.txt'), 'x')
+  fs.mkdirSync(path.join(parent, '.skillsmith-trash', 'op-reuse'), { recursive: true })
+  check(
+    '7f a REAL pre-existing op directory is still accepted',
+    quarantineTree(parent, 'tree', { opId: 'op-reuse' }).status,
+    'quarantined'
+  )
+  fs.rmSync(root, { recursive: true, force: true })
+}
+
 if (!allOk) {
   console.error('[quarantine-identity] FAIL')
   process.exit(1)
