@@ -192,6 +192,72 @@ function scannerHeaderProse(): string {
 }
 
 /**
+ * A reference to the scanner's two-pass structure. Deliberately not a bare
+ * `pass`: the header uses that word for the vacuous-success case too ("not a
+ * clean pass"), which is a different sense and not a claim about the passes.
+ */
+const PASS_REFERENCE =
+  /\b(?:two passes|both passes|the passes|between the passes|pass to pass|each pass|either pass|first pass|second pass|one pass|other pass)\b/gi
+
+/**
+ * The text surrounding a two-pass reference, when `probe` matches near one.
+ *
+ * Proximity rather than sentence-splitting: the header's prose contains `e.g.`
+ * and `--` clauses, so any sentence boundary rule fragments it somewhere useful
+ * to an evader. Proximity has no such seam to aim at.
+ */
+function nearPassReference(text: string, probe: RegExp): string | undefined {
+  for (const match of text.matchAll(PASS_REFERENCE)) {
+    const at = match.index ?? 0
+    const slice = text.slice(Math.max(0, at - 120), at + match[0].length + 120)
+    if (probe.test(slice)) return slice.replace(/\s+/g, ' ')
+  }
+  return undefined
+}
+
+/**
+ * `exit 2` as a STATEMENT rather than as prose: a statement boundary before it
+ * and a statement end after. This counts the two shapes a bare-line match misses
+ * and that both have live precedent in this repo's own scripts -- a trailing
+ * comment (`exit 2 # why`) and an `&&`/`||`-guarded exit -- while an `exit 2`
+ * inside a quoted string has no boundary before it and is not counted.
+ */
+const EXIT_TWO_STATEMENT = /(?:^|[;&|{]|\bthen\b|\belse\b|\bdo\b)\s*exit\s+2\s*(?:$|[;&|#)}])/
+
+/**
+ * Every `exit 2` site with the emitting statement that site itself reaches,
+ * found by walking back from the site to its nearest `echo`/`printf` and halting
+ * at a block boundary, so a neighbouring block's message is never attributed
+ * here. Comment lines are skipped, so a stale wording left behind as a comment
+ * cannot stand in for the message the site actually prints.
+ */
+function exitTwoSites(src: string): { line: number; statement: string; emit?: string }[] {
+  const lines = src.split('\n')
+  const sites: { line: number; statement: string; emit?: string }[] = []
+  for (let i = 0; i < lines.length; i++) {
+    if (/^\s*#/.test(lines[i]) || !EXIT_TWO_STATEMENT.test(lines[i])) continue
+    let emit: string | undefined
+    const collected: string[] = []
+    for (let j = i; j >= 0 && i - j <= 12; j--) {
+      const line = lines[j]
+      const boundary =
+        /^\s*$/.test(line) ||
+        /^\s*(fi|done|esac|\})\s*$/.test(line) ||
+        EXIT_TWO_STATEMENT.test(line)
+      if (j !== i && boundary) break
+      if (/^\s*#/.test(line)) continue
+      collected.unshift(line)
+      if (/\b(echo|printf)\b/.test(line)) {
+        emit = collected.join(' ')
+        break
+      }
+    }
+    sites.push({ line: i + 1, statement: lines[i].trim(), emit })
+  }
+  return sites
+}
+
+/**
  * Build a small, self-contained, hermetic git repo (SMI-4693 fixture-env
  * convention) with two commits: a "pre-flip" commit whose `scripts/fixture.ts`
  * carries a known STEP1/2/3 hit shape for the noun `widget-tool`, and a
@@ -1297,23 +1363,32 @@ describe('scan-state-flip.sh (SMI-6514 P-7 scanner) -- Group A: portable', () =>
       const guard = src.slice(guardStart, src.indexOf('exit 2', guardStart))
       expect(guard, 'invariant guard emits no stderr before exiting').toContain('>&2')
 
+      // Both halves are matched as CONCEPTS, not phrasings. A phrase match fails in
+      // both directions: it reds on a legitimate rewording, and it is evaded by a
+      // near-miss. Both happened -- the guard's own wording was rewritten from
+      // "content may have changed" to "a write landing between the passes", and one
+      // inserted word ("different path scopes") slipped past a literal ban.
+      //
+      // Positive: something that mutates the searched content is named near a
+      // reference to the passes. Negative: scope, paths and PATHSPECS are not,
+      // because a single-assignment PATHSPECS makes a scope difference impossible and
+      // there is no honest reason to name scope in the same breath as the passes.
+      // Naming no difference verb is what makes the negative paraphrase-proof.
       for (const [surface, text] of [
         ['header', scannerHeaderProse()],
         ['guard stderr', guard],
       ] as [string, string][]) {
-        expect(text, `${surface} does not name content changing between the passes`).toMatch(
-          /content\b[^.]*\bchanged between the two passes/
-        )
-        for (const ruledOut of [
-          /searched different scopes/,
-          /passes disagree about/,
-          /PATHSPECS differed/,
-        ]) {
-          expect(
+        expect(
+          nearPassReference(
             text,
-            `${surface} still claims a cause a single-assignment PATHSPECS rules out`
-          ).not.toMatch(ruledOut)
-        }
+            /\b(?:chang\w*|writ\w*|wrote|edit\w*|modif\w*|content|land\w*)\b/
+          ),
+          `${surface} names no mutation of the searched content near the passes`
+        ).toBeTruthy()
+        expect(
+          nearPassReference(text, /\b(?:scopes?|paths?|pathspecs?|PATHSPECS)\b/),
+          `${surface} couples scope to the passes, which a single-assignment PATHSPECS rules out`
+        ).toBeUndefined()
       }
     }
   )
@@ -1365,9 +1440,16 @@ describe('scan-state-flip.sh (SMI-6514 P-7 scanner) -- Group A: portable', () =>
       if (run.error) throw run.error
 
       expect(run.status, 'the invariant guard did not exit 2').toBe(2)
-      expect(run.stderr, 'guard stderr does not name the reachable cause').toMatch(
-        /content\b[^.]*\bchanged between the two passes/
-      )
+      // Concept, not phrasing, for the same reason as the source-level check above:
+      // this ran against the shipped wording and a phrase match reds when that
+      // wording is legitimately rewritten.
+      expect(
+        nearPassReference(
+          run.stderr,
+          /\b(?:chang\w*|writ\w*|wrote|edit\w*|modif\w*|content|land\w*)\b/
+        ),
+        'guard stderr names no mutation of the searched content near the passes'
+      ).toBeTruthy()
       // Non-vacuity: the run reached STEP 1 rather than refusing earlier.
       expect(run.stdout, 'the run never reached a STEP 1 denominator').toContain(
         'STEP 1 (denominator):'
@@ -1388,12 +1470,11 @@ describe('scan-state-flip.sh (SMI-6514 P-7 scanner) -- Group A: portable', () =>
       // from the file rather than written down, so a new site fails the coverage
       // check instead of landing unnoticed; each row then has to match BOTH surfaces,
       // so a reworded stderr and a dropped header cause each fail on their own.
-      const src = readFileSync(SCANNER_PATH, 'utf8')
-      const sites = src.split('\n').filter((line) => /^\s*exit 2\s*$/.test(line))
+      const sites = exitTwoSites(readFileSync(SCANNER_PATH, 'utf8'))
       const prose = scannerHeaderProse()
 
-      // One row per exit-2 site: the stderr signature that site emits, and the
-      // header text that has to account for it.
+      // One row per exit-2 site: the signature that site's OWN emitting statement
+      // carries, and the header text that has to account for it.
       const causes: [RegExp, RegExp][] = [
         [/--ref requires a value/, /--ref without a value/],
         [/unexpected extra arg/, /extra arg/],
@@ -1409,8 +1490,25 @@ describe('scan-state-flip.sh (SMI-6514 P-7 scanner) -- Group A: portable', () =>
         causes.length,
         `the script has ${sites.length} exit-2 site(s) and this table accounts for ${causes.length}`
       ).toBe(sites.length)
+
+      // Matched per SITE, not against the whole file. Searching the whole source
+      // only establishes that a string exists somewhere in it -- satisfied by a
+      // stale wording left behind as a comment while the site prints something the
+      // table never mentions.
+      for (const site of sites) {
+        expect(site.emit, `the exit-2 site at line ${site.line} emits nothing`).toBeTruthy()
+        const matched = causes.filter(([signature]) => signature.test(site.emit as string))
+        expect(
+          matched.length,
+          `the exit-2 site at line ${site.line} matches ${matched.length} table row(s): ${site.emit}`
+        ).toBe(1)
+      }
+      // And the other direction, so an obsolete row cannot linger unmatched.
       for (const [signature, headerCause] of causes) {
-        expect(src, `no exit-2 site emits ${signature}`).toMatch(signature)
+        expect(
+          sites.filter((site) => site.emit && signature.test(site.emit)).length,
+          `no exit-2 site's own message matches ${signature}`
+        ).toBeGreaterThan(0)
         expect(prose, `the header does not account for the site emitting ${signature}`).toMatch(
           headerCause
         )
