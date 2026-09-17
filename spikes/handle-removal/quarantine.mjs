@@ -168,20 +168,52 @@ function ensureTrashRoot(parentAbs, nativeShim) {
     return { ok: false, reason: 'quarantine-failed', detail: 'trash-other-mount', errno: null }
   }
   if (nativeShim) {
+    // EVERY openDir() HERE MUST BE CLOSED, INCLUDING ON THE RETURN PATH.
+    //
+    // This read `statAt(openDir(parentAbs).fd, '.')` on both lines and discarded
+    // each handle, leaking two descriptors per call. Three things hid it: the
+    // spike's dispatcher never passes `options.nativeShim`, so it does not fire
+    // today; the `catch` below swallows any failure silently; and M2's held-fd
+    // audit was scoped to walk.mjs. D1 asks for this mnt_id check, so wiring it
+    // as specified is what activates the leak -- in the file Option C ships.
+    //
+    // The early `return` inside the comparison is the part worth noticing: a
+    // try/finally is required, not just a close at the end, because the
+    // mismatch branch leaves before any trailing cleanup would run.
+    let pDir = null
+    let tDir = null
     try {
-      const pStat = nativeShim.statAt(nativeShim.openDir(parentAbs).fd, '.')
-      const tStat = nativeShim.statAt(nativeShim.openDir(trashRoot).fd, '.')
-      if (pStat.mntId !== undefined && tStat.mntId !== undefined && pStat.mntId !== tStat.mntId) {
-        return {
-          ok: false,
-          reason: 'quarantine-failed',
-          detail: 'trash-other-mount-mntid',
-          errno: null,
+      pDir = nativeShim.openDir(parentAbs)
+      tDir = nativeShim.openDir(trashRoot)
+      if (pDir.errno === 0 && tDir.errno === 0) {
+        const pStat = nativeShim.statAt(pDir.fd, '.')
+        const tStat = nativeShim.statAt(tDir.fd, '.')
+        if (pStat.mntId !== undefined && tStat.mntId !== undefined && pStat.mntId !== tStat.mntId) {
+          return {
+            ok: false,
+            reason: 'quarantine-failed',
+            detail: 'trash-other-mount-mntid',
+            errno: null,
+          }
         }
       }
     } catch {
       // Best-effort only -- a native probe failure here does not block C4,
       // since C4 must work with no native shim at all.
+    } finally {
+      // Closed inline rather than via a shared helper: walk.mjs's closeQuiet()
+      // is local to that module and takes a bare fd, while these are shim
+      // handles. Importing it would couple C4 to the native walk, which is the
+      // opposite of what C4 is for -- it must work with no shim at all.
+      for (const d of [pDir, tDir]) {
+        if (d && d.errno === 0) {
+          try {
+            nativeShim.closeFd(d.fd)
+          } catch {
+            // A close failure cannot be acted on and must not mask the result.
+          }
+        }
+      }
     }
   }
 
