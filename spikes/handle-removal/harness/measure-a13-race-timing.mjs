@@ -271,6 +271,9 @@ async function runOnceLocal({ harnessRoot, candidate, armMode }) {
     let guardEndedAt = null
     const entryObserved = new Map()
     const entrySubtreeDone = new Map()
+    // A non-directory's window STARTS at beforeRead; its afterOpen is the END.
+    // Omitting this hook is what left 139 records here unbracketed.
+    const entryReadStarted = new Map()
     const hooks = {
       afterBind: () => {
         guardStartedAt = nowAbs()
@@ -284,6 +287,9 @@ async function runOnceLocal({ harnessRoot, candidate, armMode }) {
       afterSubtree: (rel) => {
         entrySubtreeDone.set(rel, nowAbs())
       },
+      beforeRead: (rel) => {
+        if (!entryReadStarted.has(rel)) entryReadStarted.set(rel, nowAbs())
+      },
     }
 
     const callStartedAt = nowAbs()
@@ -293,7 +299,7 @@ async function runOnceLocal({ harnessRoot, candidate, armMode }) {
     const callEndedAt = nowAbs()
 
     const racerResult = await racer.result
-    const quarantineLeft = scanQuarantineLeftovers(fx.root)
+    const quarantineLeft = scanQuarantineLeftovers(fx.root, candidate?.variant)
 
     let userFiles = { checked: 0, lost: 0, changed: 0 }
     if (racerResult.applied && racerResult.writtenPath) {
@@ -325,6 +331,9 @@ async function runOnceLocal({ harnessRoot, candidate, armMode }) {
     const observedAt = observed ? observed.at : null
     const entryType = observed ? observed.type : null
     const doneAt = entryType === 'dir' ? (entrySubtreeDone.get(targetRel) ?? null) : observedAt
+    // A directory's window start IS its observedAt; a file's/symlink's is beforeRead.
+    const windowStartAt =
+      entryType === 'dir' ? observedAt : (entryReadStarted.get(targetRel) ?? null)
 
     const timingCommon = {
       guardStartedAt,
@@ -369,10 +378,28 @@ async function runOnceLocal({ harnessRoot, candidate, armMode }) {
             racerResult.markerWrittenAt == null
               ? null
               : markerObservedAt - racerResult.markerWrittenAt,
-          entry: { targetRel, entryType, observedAt, doneAt },
+          entry: { targetRel, entryType, observedAt, windowStartAt, doneAt },
           phase: a13vr.classifyPhase(timingCommon),
           passPhase: a13vr.classifyPassPhase(timingCommon),
-          entryPhase: a13vr.classifyEntryPhase({ targetRel, observedAt, doneAt, ...timingCommon }),
+          // Generation marker. `entryPhase` was REDEFINED in place when the
+          // window-bracketing fix landed, against this file's own convention
+          // -- `phase` and `passPhase` coexist precisely because "a relabelled
+          // field cannot be compared against" older records. Records written
+          // before that fix carry entry-relative labels computed by the
+          // superseded classifier under the SAME field name, discriminable
+          // only by whether a sibling `windowStartAt` happens to exist. This
+          // makes the generation explicit: absent or 1 = pre-fix semantics
+          // (a non-directory's window collapsed to its own END), 2 = windows
+          // bracketed by type.
+          entryPhaseRev: 2,
+          entryPhase: a13vr.classifyEntryPhase({
+            targetRel,
+            observedAt,
+            windowStartAt,
+            doneAt,
+            instrumented: true,
+            ...timingCommon,
+          }),
         },
       },
     }

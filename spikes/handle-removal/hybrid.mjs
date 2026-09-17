@@ -23,17 +23,29 @@ import path from 'node:path'
 import { removeVR } from './walk.mjs'
 import { quarantineTree } from './quarantine.mjs'
 import { prebuildPath } from './native-c/load-packaged.mjs'
+import { shimPath } from './native-c/load.mjs'
 
 const HERE = path.dirname(fileURLToPath(import.meta.url))
 const PROBE_CHILD_PATH = path.join(HERE, 'native-c', 'probe-child.mjs')
 
 // The binary the native walk will ACTUALLY load. It is not the one the probe
 // checks: probe-child.mjs goes through load-packaged.mjs (`prebuilds/`), while
-// walk.mjs goes through load.mjs (`build/Release/`). In a shipped package there
-// would be one loader and one binary; in this spike there are two, so the cache
-// key below covers BOTH -- a probe verdict about one file must not survive a
-// change to the other.
-const DEV_BUILD_PATH = path.join(HERE, 'native-c', 'build', 'Release', 'shim.node')
+// walk.mjs goes through load.mjs. In a shipped package there would be one
+// loader and one binary; in this spike there are two, so the cache key below
+// covers BOTH -- a probe verdict about one file must not survive a change to
+// the other.
+//
+// ASK THE LOADER, never recompute its path. This was a hardcoded
+// `build/Release/shim.node`, which was correct for exactly 42 minutes: adding
+// SMI6676_SHIM_PATH to load.mjs meant walk.mjs could load a different file
+// while this key and gate still described the old one. Under the override --
+// the sanctioned way to run this spike on Linux, and the way its own scored A13
+// arm ran -- the binary actually loaded could be replaced byte-for-byte without
+// moving the key, leaving open the exact invisible-success defect this cache
+// key exists to close. Each commit was correct alone; the pair was not. Deriving
+// the path from `shimPath()` makes that class unrepresentable rather than
+// merely fixed.
+const devBuildPath = () => shimPath()
 
 /**
  * Identity of a binary, for cache keying. sha256 rather than size+mtime,
@@ -56,7 +68,7 @@ function binaryIdentity(p) {
 }
 
 function probeCacheKey() {
-  return `${binaryIdentity(prebuildPath())}|${binaryIdentity(DEV_BUILD_PATH)}`
+  return `${binaryIdentity(prebuildPath())}|${binaryIdentity(devBuildPath())}`
 }
 
 let cachedProbe = null
@@ -89,7 +101,7 @@ function runProbe() {
     cachedProbe = {
       ok: false,
       trigger: 'native-dev-build-unreadable',
-      detail: `cannot read ${DEV_BUILD_PATH}`,
+      detail: `cannot read ${devBuildPath()}`,
     }
     return cachedProbe
   }

@@ -167,6 +167,39 @@ check('Q5 V0 dirs null', q5.dirs, null)
 const q5b = scanQuarantineLeftovers(qStranded, 'V2')
 check('Q5 V2 still scans (entries found)', q5b.entries, 1)
 
+// Q6 (the mutation the AUTHOR's own red-tests missed). Every fixture above
+// holds at most ONE entry in the parent, so none of them exercises iteration
+// or the discriminating power of the prefix filter. A scanner mutated to
+// `names.sort().slice(0, 1)` passes all fifteen assertions above -- and then
+// returns a confident zero on every real A13-VR run forever, because the
+// racer's own `.racer-ready` marker sorts before `.skillsmith-` and would be
+// the only name ever examined. That is the hiding direction, and it is the
+// shape a reviewer found after two author-chosen mutations had both been
+// caught: the author picks the mutation, so the author's blind spot picks it
+// too (SMI-6497).
+//
+// This fixture is the real parent's shape: a non-quarantine sibling that sorts
+// BEFORE the quarantine directory, plus one that sorts after.
+const qReal = path.join(qTmp, 'real-shaped')
+mkdirSync(path.join(qReal, '.skillsmith-rm-beef', 'leftover'), { recursive: true })
+writeFileSync(path.join(qReal, '.skillsmith-rm-beef', 'leftover', 'f.txt'), 'x')
+writeFileSync(path.join(qReal, '.racer-ready'), '') // sorts BEFORE .skillsmith-
+mkdirSync(path.join(qReal, 'tree')) // sorts after
+const q6 = scanQuarantineLeftovers(qReal)
+check('Q6 finds quarantine past an earlier-sorting sibling', q6.entries, 1)
+check('Q6 counts the quarantine dir', q6.dirs, 1)
+check('Q6 does not count non-quarantine siblings', q6.paths.length, 1)
+check('Q6 names the right path', q6.paths[0], '.skillsmith-rm-beef/leftover')
+
+// Q7: two quarantine directories must BOTH be counted -- iteration, not just
+// first-match.
+const qTwo = path.join(qTmp, 'two')
+mkdirSync(path.join(qTwo, '.skillsmith-rm-aaa', 'x'), { recursive: true })
+mkdirSync(path.join(qTwo, '.skillsmith-rm-bbb', 'y'), { recursive: true })
+const q7 = scanQuarantineLeftovers(qTwo)
+check('Q7 counts BOTH quarantine dirs', q7.dirs, 2)
+check('Q7 counts entries across both', q7.entries, 2)
+
 rmSync(qTmp, { recursive: true, force: true })
 
 if (!allOk) {

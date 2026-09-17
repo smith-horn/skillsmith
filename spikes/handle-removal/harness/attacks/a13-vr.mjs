@@ -529,6 +529,17 @@ export async function runOnce({
           },
           phase: classifyPhase(timingCommon),
           passPhase: classifyPassPhase(timingCommon),
+          // Generation marker. `entryPhase` was REDEFINED in place when the
+          // window-bracketing fix landed, against this file's own convention
+          // -- `phase` and `passPhase` coexist precisely because "a relabelled
+          // field cannot be compared against" older records. Records written
+          // before that fix carry entry-relative labels computed by the
+          // superseded classifier under the SAME field name, discriminable
+          // only by whether a sibling `windowStartAt` happens to exist. This
+          // makes the generation explicit: absent or 1 = pre-fix semantics
+          // (a non-directory's window collapsed to its own END), 2 = windows
+          // bracketed by type.
+          entryPhaseRev: 2,
           entryPhase: classifyEntryPhase({
             targetRel,
             observedAt,
