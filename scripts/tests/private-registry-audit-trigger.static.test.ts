@@ -80,13 +80,16 @@ import { createHash } from 'node:crypto'
 import { readFileSync } from 'node:fs'
 import {
   allMigrationFiles,
-  alterFunctionRe,
-  dropFunctionRe,
   laterMigrationFiles,
-  qualifiedIdent,
   readMigrationText,
-  stripComments,
 } from './lib/migration-text-guards.ts'
+import {
+  matchesAlterFunction,
+  matchesDropFunction,
+  qualifiedIdent,
+  splitStatements,
+  stripComments,
+} from './lib/sql-statement-guards.ts'
 
 const helpers = (await import('../audit-standards-helpers.mjs')) as {
   auditSecdefAnonGrants: (
@@ -95,10 +98,10 @@ const helpers = (await import('../audit-standards-helpers.mjs')) as {
   ) => Array<{ file: string; fn: string; signature: string; reason: string }>
 }
 
-// MIGRATIONS_DIR, the git-crypt lock contract, migration enumeration and the qualified-identifier
-// fragment are imported from ./lib/migration-text-guards.ts (SMI-6690). They were worked out here
-// first, over several review rounds; a second suite then re-derived them by hand and omitted one
-// of them in each of three consecutive rounds, so they now live in one module both suites import.
+// The git-crypt lock contract and migration enumeration come from ./lib/migration-text-guards.ts;
+// the qualified-identifier fragment and the statement matchers from ./lib/sql-statement-guards.ts.
+// Import them rather than re-deriving: a second suite hand-rolled these and omitted a different
+// one in each of three consecutive rounds (SMI-6690).
 const MIGRATION_FILE = '20260913000000_private_registry_audit_trigger.sql'
 // Not git-crypt-scoped (only supabase/functions/ and supabase/migrations/ are), so this is always
 // plaintext and needs no GIT_CRYPT_MAGIC handling of its own.
@@ -235,7 +238,7 @@ function columnsFromMigrations(): Set<string> {
         if (col) columns.add(col[1].toLowerCase())
       }
     }
-    for (const stmt of sql.split(';')) {
+    for (const stmt of splitStatements(sql)) {
       if (
         !/ALTER\s+TABLE\s+(?:IF\s+EXISTS\s+)?(?:ONLY\s+)?(?:public\.)?private_registry_skills\b/i.test(
           stmt
@@ -316,13 +319,12 @@ function dropTriggerRe(name: string): RegExp {
 function alterTriggerRe(name: string): RegExp {
   return new RegExp(String.raw`ALTER\s+TRIGGER\s+(?:"?public"?\s*\.\s*)?"?${name}"?\b`, 'i')
 }
-const DROP_FUNCTION_RE = dropFunctionRe(FUNCTION_NAME)
-const ALTER_FUNCTION_RE = alterFunctionRe(FUNCTION_NAME)
-
 /**
  * Every migration strictly after MIGRATION_FILE that drops or alters the pinned function or
  * either trigger by name. Case-insensitive, schema-qualification and IF EXISTS tolerant
- * (SMI-6114 retro F1, revert checks (c)/(d)).
+ * (SMI-6114 retro F1, revert checks (c)/(d)). The function checks are statement-scoped via
+ * `matchesDropFunction`/`matchesAlterFunction` (SMI-6690); the trigger checks stay whole-file
+ * regexes, out of that rewrite's scope since `DROP/ALTER TRIGGER` takes no comma-separated list.
  */
 function triggerOrFunctionTamperViolations(): string[] {
   const offenders: string[] = []
@@ -330,16 +332,17 @@ function triggerOrFunctionTamperViolations(): string[] {
     const content = readMigration(file)
     if (content === null) continue
     const sql = stripComments(content)
+    const statements = splitStatements(sql)
     if (dropTriggerRe('trg_prs_audit_truncate').test(sql)) {
       offenders.push(`${file}: DROP TRIGGER trg_prs_audit_truncate`)
     }
     if (dropTriggerRe('trg_prs_audit').test(sql)) {
       offenders.push(`${file}: DROP TRIGGER trg_prs_audit`)
     }
-    if (DROP_FUNCTION_RE.test(sql)) {
+    if (statements.some((s) => matchesDropFunction(s, FUNCTION_NAME))) {
       offenders.push(`${file}: DROP FUNCTION ${FUNCTION_NAME}`)
     }
-    if (ALTER_FUNCTION_RE.test(sql)) {
+    if (statements.some((s) => matchesAlterFunction(s, FUNCTION_NAME))) {
       offenders.push(`${file}: ALTER FUNCTION ${FUNCTION_NAME}`)
     }
     if (alterTriggerRe('trg_prs_audit_truncate').test(sql)) {
@@ -355,8 +358,9 @@ function triggerOrFunctionTamperViolations(): string[] {
 /**
  * Every migration strictly after MIGRATION_FILE that GRANTs EXECUTE on the pinned function to
  * anon, authenticated or PUBLIC (SMI-6114 retro F1, revert check (f)). Splits each migration into
- * `;`-delimited statements so a GRANT on some unrelated function does not false-positive just
- * because the pinned function name appears elsewhere in the same file.
+ * statements via `splitStatements` (SMI-6690 — a raw `sql.split(';')` has the same quoted-identifier
+ * delimiter-forgery flaw the by-name tamper matchers were fixed for) so a GRANT on some unrelated
+ * function does not false-positive just because the pinned function name appears elsewhere.
  */
 function grantExecuteViolations(): string[] {
   const offenders: string[] = []
@@ -365,7 +369,7 @@ function grantExecuteViolations(): string[] {
     const content = readMigration(file)
     if (content === null) continue
     const sql = stripComments(content)
-    for (const stmt of sql.split(';')) {
+    for (const stmt of splitStatements(sql)) {
       if (!/\bGRANT\b/i.test(stmt) || !/\bEXECUTE\b/i.test(stmt)) continue
       if (!/\bON\s+FUNCTION\b/i.test(stmt) || !nameRe.test(stmt)) continue
       const toIdx = stmt.search(/\bTO\b/i)
@@ -453,7 +457,7 @@ function laterTriggerViolations(): string[] {
     const content = readMigration(file)
     if (content === null) continue
     const sql = stripComments(content)
-    for (const stmt of sql.split(';')) {
+    for (const stmt of splitStatements(sql)) {
       if (!/\bCREATE\s+(?:OR\s+REPLACE\s+)?(?:CONSTRAINT\s+)?TRIGGER\b/i.test(stmt)) continue
       if (!onTableRe.test(stmt)) continue
       offenders.push(
@@ -520,7 +524,7 @@ function auditSinkViolations(): string[] {
     const content = readMigration(file)
     if (content === null) continue
     const sql = stripComments(content)
-    for (const stmt of sql.split(';')) {
+    for (const stmt of splitStatements(sql)) {
       const trimmed = () => stmt.replace(/\s+/g, ' ').trim().slice(0, 160)
       if (/\bCREATE\s+(?:OR\s+REPLACE\s+)?RULE\b/i.test(stmt) && ruleToAuditLogsRe.test(stmt)) {
         offenders.push(

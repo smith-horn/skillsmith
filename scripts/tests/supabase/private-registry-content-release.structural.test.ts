@@ -65,41 +65,37 @@
  * `20260915000001_private_registry_release_rpc_comment_fix.sql` is the precedent. The text is
  * frozen by CONVENTION, not by nature, and a loud failure on any change is the forcing function.
  *
- * WHY THE TAMPER SCAN IS IMPORTED RATHER THAN WRITTEN HERE (SMI-6690 round 3). A hand-rolled
- * version of it was bypassed end-to-end: a later migration redefining the RPC with the tenant,
- * approval and deprecation predicates all removed, spelled `"public"."release_…"`, passed all
- * eight tests. It also matched only `CREATE`, so `ALTER FUNCTION … RESET ALL` — which strips the
- * pinned `search_path` from a `SECURITY DEFINER` function, the exact hazard this migration's own
- * smoke block guards — was invisible.
+ * WHY THE TAMPER SCAN IS IMPORTED RATHER THAN WRITTEN HERE. A hand-rolled version passed all
+ * eight tests against a later migration that redefined the RPC with the tenant, approval and
+ * deprecation predicates removed; it also matched only `CREATE`, so `ALTER FUNCTION … RESET ALL`
+ * — which strips the pinned `search_path` off a `SECURITY DEFINER` function, the exact hazard this
+ * migration's own smoke block guards — was invisible.
  *
- * Only the CREATE-side identifier tolerance was already solved in
- * `../private-registry-audit-trigger.static.test.ts`. The ALTER/DROP side was NOT: that suite's
- * own regexes required an argument list too, so the paren-free `RESET ALL` spelling cited above
- * was invisible there as well — measured against its pre-SMI-6690 source. An earlier version of
- * this header said both were "already solved" there, crediting a precedent that did not hold
- * (SMI-6690 retro, finding 3). Both suites are fixed by the shared `alterFunctionRe` and
- * `dropFunctionRe`. The primitives now live in `../lib/migration-text-guards.ts` and are
- * imported, not copied — though that file had also cited this precedent through three rounds
- * while re-deriving its machinery badly each time.
+ * So use `matchesCreateFunction`/`matchesDropFunction`/`matchesAlterFunction` from
+ * `../lib/sql-statement-guards.ts`, one statement at a time, and do not re-derive them here. Four
+ * consecutive rounds of bypasses, and the measurements behind each, are recorded on SMI-6690.
  *
  * @module scripts/tests/supabase/private-registry-content-release.structural
  */
 
 import { describe, it, expect } from 'vitest'
+import { mkdtempSync, writeFileSync } from 'node:fs'
+import { tmpdir } from 'node:os'
+import { join } from 'node:path'
 import {
   NEW_MIGRATION,
   migrationSql,
   migrationTextLocked,
 } from './private-registry-content-release.test-helpers.ts'
 import { brokenMigrationSql } from './private-registry-content-release.test-reverts.ts'
+import { laterMigrationFiles, readMigrationText } from '../lib/migration-text-guards.ts'
 import {
-  alterFunctionRe,
-  createFunctionRe,
-  dropFunctionRe,
-  laterMigrationFiles,
-  readMigrationText,
+  matchesAlterFunction,
+  matchesCreateFunction,
+  matchesDropFunction,
+  splitStatements,
   stripComments,
-} from '../lib/migration-text-guards.ts'
+} from '../lib/sql-statement-guards.ts'
 
 const FUNCTION_NAME = 'release_private_registry_skill_content'
 
@@ -133,15 +129,19 @@ const WRITES_V_CONTENT_RE = /\binto\s+v_content\b/gi
  * protection. If a reviewed redefinition ever needs to land, add a residual assertion against the
  * LATEST definition first — do not reintroduce a bare skip.
  *
- * Comments are stripped before matching. This repo's migration convention includes commented-out
- * rollback blocks naming the function (`20260915000000` has one), and the patterns are broad
- * enough to read those as live statements otherwise.
+ * Comments are stripped and text is split into statements before matching (SMI-6690) — this
+ * repo's migration convention includes commented-out rollback blocks naming the function
+ * (`20260915000000` has one), and testing whole-file text let a differently-shaped statement
+ * elsewhere in the file produce a false positive or negative.
  */
-function tamperViolations(): { scanned: string[]; offenders: string[] } {
-  const scanned = laterMigrationFiles(NEW_MIGRATION)
+function tamperViolations(dir?: string): { scanned: string[]; offenders: string[] } {
+  // `dir` exists so a test can plant a known tampering migration and require this to name it —
+  // a clean scan over the real tree is only evidence if the scan is known to be able to fail
+  // (SMI-6690). Both helpers default the directory, so `undefined` reads the real one.
+  const scanned = laterMigrationFiles(NEW_MIGRATION, dir)
   const offenders: string[] = []
   for (const file of scanned) {
-    const raw = readMigrationText(file)
+    const raw = readMigrationText(file, dir)
     // The suite gate proved NEW_MIGRATION is plaintext, so a ciphertext sibling means an
     // inconsistent tree rather than a normal locked checkout. readMigrationText() has already
     // thrown if the lock was undeclared; a null here is a declared lock, which cannot happen
@@ -150,10 +150,16 @@ function tamperViolations(): { scanned: string[]; offenders: string[] } {
       offenders.push(`${file}: git-crypt ciphertext while ${NEW_MIGRATION} is plaintext`)
       continue
     }
-    const sql = stripComments(raw)
-    if (createFunctionRe(FUNCTION_NAME).test(sql)) offenders.push(`${file}: CREATE FUNCTION`)
-    if (dropFunctionRe(FUNCTION_NAME).test(sql)) offenders.push(`${file}: DROP FUNCTION`)
-    if (alterFunctionRe(FUNCTION_NAME).test(sql)) offenders.push(`${file}: ALTER FUNCTION`)
+    const statements = splitStatements(stripComments(raw))
+    if (statements.some((s) => matchesCreateFunction(s, FUNCTION_NAME))) {
+      offenders.push(`${file}: CREATE FUNCTION`)
+    }
+    if (statements.some((s) => matchesDropFunction(s, FUNCTION_NAME))) {
+      offenders.push(`${file}: DROP FUNCTION`)
+    }
+    if (statements.some((s) => matchesAlterFunction(s, FUNCTION_NAME))) {
+      offenders.push(`${file}: ALTER FUNCTION`)
+    }
   }
   return { scanned, offenders }
 }
@@ -228,6 +234,31 @@ describe.skipIf(migrationTextLocked())(
       // only if the pinned migration becomes the newest one, or if laterMigrationFiles() regressed
       // its prefix parsing. Either way, say so rather than reporting a green.
       expect(scanned.length, 'the tamper scan had no later migrations to scan').toBeGreaterThan(0)
+    })
+
+    it('positive control: the scan names a planted tampering migration', () => {
+      // `scanned.length > 0` above proves only that filenames were ENUMERATED. This proves the
+      // scan can fail, which is what makes the clean result above meaningful: it drives the whole
+      // path — enumeration, the git-crypt read, comment stripping, statement splitting and the
+      // matchers — and requires each tamper verb to be reported (SMI-6690 retro, finding 5).
+      const planted: Array<[string, string]> = [
+        [
+          'CREATE FUNCTION',
+          `CREATE OR REPLACE FUNCTION public.${FUNCTION_NAME}(a text)\n` +
+            ` RETURNS void AS $$ SELECT 1 $$ LANGUAGE sql;`,
+        ],
+        // The quoted `;` spelling is the delimiter forgery a `[^;]`-bounded regex missed.
+        ['DROP FUNCTION', `DROP FUNCTION IF EXISTS "a;b", public.${FUNCTION_NAME};`],
+        ['ALTER FUNCTION', `ALTER FUNCTION public.${FUNCTION_NAME} RESET ALL;`],
+      ]
+      for (const [verb, sql] of planted) {
+        const dir = mkdtempSync(join(tmpdir(), 'smi6690-tamper-'))
+        writeFileSync(join(dir, NEW_MIGRATION), '-- pinned migration, plaintext\n')
+        writeFileSync(join(dir, '29999999999999_planted_tamper.sql'), sql)
+        const { scanned, offenders } = tamperViolations(dir)
+        expect(scanned, verb).toEqual(['29999999999999_planted_tamper.sql'])
+        expect(offenders.join(' | '), verb).toContain(verb)
+      }
     })
   }
 )
