@@ -565,8 +565,13 @@ NEVER-RAN (control)  A4/default/V2  ran=30 passed=30 failed=0 never-ran=0  contr
   ...
 ```
 
-**Re-scored corpus** (560 cells / 46,760 records / 34 raw files — the original
-549 cells plus 11 new `A13-TIMING` cells). **These are the numbers as of this
+**Re-scored corpus** (560 cells / 46,760 records / **33** raw files — the original
+549 cells plus 11 new `A13-TIMING` cells). **Corrected 2026-09-17: the file count
+read 34; the record count 46,760 was right all along.** Counted from `results/raw/`
+in mtime order, the prefix ending at the last `A13-TIMING` file — `a13-race-timing-
+virtiofsroot.jsonl`, which is this corpus's own stated cutoff — is 33 files holding
+exactly 46,760 records. Two independent quantities agreeing to the record is what
+settles it. **These are the numbers as of this
 memo's writing, not a live `SUMMARY.md` query**: that file now reads 606 cells /
 136,240 records / 60 raw files because the corpus grew afterwards. See the
 correction near the top:
@@ -606,8 +611,12 @@ retracts, so it is corrected here rather than repeated:
   are entirely NEVER-RAN (inode reuse was never observed), so they recorded 0
   failures. That is the plan working as designed ("must be ≥1 on overlayfs or
   the cell is never-ran"), surfaced rather than hidden.
-- **A10** — the plan's control is C3, which was never built. All 40 A10 cells
-  are `external-unverified`.
+- **A10** — the plan's control is C3, which was never built. All **55** A10 cells
+  (10 `A10-C0` + 45 `A10-VR`, the latter 15 each under `V0`/`V1`/`V2`) are
+  `external-unverified`. **Corrected 2026-09-17: this line read "40" while §A10
+  below reads "55" with the correct breakdown** — two surfaces of one document
+  disagreeing about a count in the same document, which is the defect class this
+  memo spends its §11 documenting. Counted from `SUMMARY.md`'s Cells table: 55.
 
 `results/SUMMARY.md` now carries a per-cell Control column and a dedicated
 "Cells whose control did not bite" table, so this is re-derivable without
