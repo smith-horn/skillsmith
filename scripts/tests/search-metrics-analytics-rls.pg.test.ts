@@ -36,8 +36,8 @@
 
 import { describe, it, expect, beforeAll, afterAll } from 'vitest'
 import { PsqlSession } from './supabase/pg-session.ts'
+import { AC9_MATRIX } from './search-metrics-analytics-rls.helpers.ts'
 import {
-  AC9_MATRIX,
   COVERAGE_NULL_SENTINEL,
   coverageQuery,
   fixtureUserId,
@@ -47,7 +47,7 @@ import {
   schemaSql,
   seedCoverageCaseSql,
   type TestConn,
-} from './search-metrics-analytics-rls.helpers.ts'
+} from './search-metrics-analytics-rls.pg-helpers.ts'
 
 const TEAM_A = 'smi6362-rls-team-a'
 const TEAM_B = 'smi6362-rls-team-b'

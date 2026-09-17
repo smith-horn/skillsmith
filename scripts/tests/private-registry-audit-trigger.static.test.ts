@@ -51,9 +51,13 @@
  *      its column shape underneath the pinned insert -- `DROP COLUMN`, `ALTER COLUMN ... TYPE` /
  *      `SET DATA TYPE`, `RENAME COLUMN`, `RENAME TO`, `SET NOT NULL`, or `ADD CONSTRAINT` /
  *      `ADD CHECK` (gate finding 3, extended by round-3 gate finding 1) -- fails this suite. All
- *      three scans, plus the by-name tamper and GRANT scans, run against comment-stripped text
- *      (`stripComments()`, round-3 gate finding 2) so a block comment mentioning any of these
- *      shapes cannot false-positive and a real statement hidden after one cannot false-negative.
+ *      three scans, the GRANT scan, and the by-name tamper's verb-naming sub-checks run against
+ *      comment-stripped, statement-split text (`stripComments()`/`splitStatements()`, round-3 gate
+ *      finding 2) so a block comment mentioning any of these shapes cannot false-positive and a
+ *      real statement hidden after one cannot false-negative. The by-name tamper's FIRING decision
+ *      is separate and stricter (`mentionsIdentifier`, SMI-6690 round 5+, fail-closed over
+ *      `executableText()`-processed text): it is not limited to what a statement grammar can
+ *      parse at all, which is what closes a DROP/ALTER hidden inside a `DO $$ ... $$` block.
  *      The only way past any of the three is to add the migration's filename to
  *      REVIEWED_LATER_MIGRATIONS below, after review -- never to weaken the regex.
  *   3. THE SEMANTIC CHECKS DOCUMENT WHY THE PINNED BODY WAS APPROVED, not police future changes:
@@ -80,13 +84,12 @@ import { createHash } from 'node:crypto'
 import { readFileSync } from 'node:fs'
 import {
   allMigrationFiles,
-  alterFunctionRe,
-  dropFunctionRe,
   laterMigrationFiles,
-  qualifiedIdent,
   readMigrationText,
-  stripComments,
 } from './lib/migration-text-guards.ts'
+import { qualifiedIdent, splitStatements, stripComments } from './lib/sql-statement-guards.ts'
+import { matchesAlterFunction, matchesDropFunction } from './lib/sql-verb-matchers.ts'
+import { executableText, mentionsIdentifier } from './lib/sql-name-tripwire.ts'
 
 const helpers = (await import('../audit-standards-helpers.mjs')) as {
   auditSecdefAnonGrants: (
@@ -95,10 +98,11 @@ const helpers = (await import('../audit-standards-helpers.mjs')) as {
   ) => Array<{ file: string; fn: string; signature: string; reason: string }>
 }
 
-// MIGRATIONS_DIR, the git-crypt lock contract, migration enumeration and the qualified-identifier
-// fragment are imported from ./lib/migration-text-guards.ts (SMI-6690). They were worked out here
-// first, over several review rounds; a second suite then re-derived them by hand and omitted one
-// of them in each of three consecutive rounds, so they now live in one module both suites import.
+// The git-crypt lock contract and migration enumeration come from ./lib/migration-text-guards.ts;
+// the qualified-identifier fragment and tokenizer from ./lib/sql-statement-guards.ts; the verb
+// matchers from ./lib/sql-verb-matchers.ts; the fail-closed tripwire from ./lib/sql-name-tripwire.ts.
+// Import them rather than re-deriving: a second suite hand-rolled these and omitted a different
+// one in each of three consecutive rounds (SMI-6690).
 const MIGRATION_FILE = '20260913000000_private_registry_audit_trigger.sql'
 // Not git-crypt-scoped (only supabase/functions/ and supabase/migrations/ are), so this is always
 // plaintext and needs no GIT_CRYPT_MAGIC handling of its own.
@@ -235,7 +239,7 @@ function columnsFromMigrations(): Set<string> {
         if (col) columns.add(col[1].toLowerCase())
       }
     }
-    for (const stmt of sql.split(';')) {
+    for (const stmt of splitStatements(sql)) {
       if (
         !/ALTER\s+TABLE\s+(?:IF\s+EXISTS\s+)?(?:ONLY\s+)?(?:public\.)?private_registry_skills\b/i.test(
           stmt
@@ -316,13 +320,34 @@ function dropTriggerRe(name: string): RegExp {
 function alterTriggerRe(name: string): RegExp {
   return new RegExp(String.raw`ALTER\s+TRIGGER\s+(?:"?public"?\s*\.\s*)?"?${name}"?\b`, 'i')
 }
-const DROP_FUNCTION_RE = dropFunctionRe(FUNCTION_NAME)
-const ALTER_FUNCTION_RE = alterFunctionRe(FUNCTION_NAME)
-
 /**
  * Every migration strictly after MIGRATION_FILE that drops or alters the pinned function or
  * either trigger by name. Case-insensitive, schema-qualification and IF EXISTS tolerant
  * (SMI-6114 retro F1, revert checks (c)/(d)).
+ *
+ * THE FUNCTION CHECK IS A UNION OF TWO MECHANISMS, NEITHER GATING THE OTHER (SMI-6690 round 9).
+ * `mentionsIdentifier` (`./lib/sql-name-tripwire.ts`) is fail-closed over executable text and
+ * fires when the bare name appears anywhere in it, including inside a `DO $$ ... $$` block no
+ * statement-grammar parser can read. `matchesDropFunction`/`matchesAlterFunction`
+ * (`./lib/sql-verb-matchers.ts`) read a statement's grammar and catch a plain top-level DROP in
+ * text the tripwire can lose. BOTH run unconditionally and a hit from either is an offender; a
+ * mention with no recognised verb still reports, worded to say so. Do not restore a gate in
+ * either direction -- gating the matchers behind the tripwire silenced a plain DROP for the sake
+ * of one stray `"` in an unrelated block.
+ *
+ * THE TRIGGER CHECKS are plain phrase regexes (`dropTriggerRe`/`alterTriggerRe`), tested per
+ * STATEMENT against `executableText(stmt)`, not whole-file text. An earlier version of this
+ * comment said they stayed whole-file because "`DROP/ALTER TRIGGER` takes no comma-separated
+ * list" -- true, but that was never the only defect: measured false positives came from the same
+ * phrase appearing inside a top-level DATA string (`COMMENT ON TABLE t IS 'rollback: DROP TRIGGER
+ * trg_prs_audit ...'`, `SELECT 'ALTER TRIGGER trg_prs_audit'`), and per-statement scoping ALONE
+ * does not fix that (measured: identical match either way, since the phrase is still literally
+ * present in the statement's own text) -- only blanking top-level strings via `executableText`
+ * does. One residual false positive is accepted rather than chased: the same phrase inside a
+ * string that is itself DATA inside a dollar-quoted function body (`... AS $$ SELECT 'DROP
+ * TRIGGER ...' $$`) still fires, because `executableText` never recurses into a dollar body to
+ * tell code from data within it -- the same trade-off its own doc comment states for the by-name
+ * function check above.
  */
 function triggerOrFunctionTamperViolations(): string[] {
   const offenders: string[] = []
@@ -330,22 +355,34 @@ function triggerOrFunctionTamperViolations(): string[] {
     const content = readMigration(file)
     if (content === null) continue
     const sql = stripComments(content)
-    if (dropTriggerRe('trg_prs_audit_truncate').test(sql)) {
+    const statements = splitStatements(sql)
+    if (statements.some((s) => dropTriggerRe('trg_prs_audit_truncate').test(executableText(s)))) {
       offenders.push(`${file}: DROP TRIGGER trg_prs_audit_truncate`)
     }
-    if (dropTriggerRe('trg_prs_audit').test(sql)) {
+    if (statements.some((s) => dropTriggerRe('trg_prs_audit').test(executableText(s)))) {
       offenders.push(`${file}: DROP TRIGGER trg_prs_audit`)
     }
-    if (DROP_FUNCTION_RE.test(sql)) {
-      offenders.push(`${file}: DROP FUNCTION ${FUNCTION_NAME}`)
+    // UNION, NOT A GATE (SMI-6690 round 9): a hit from EITHER the matchers or the tripwire is an
+    // offender, and neither may suppress the other. Gating the matchers behind the tripwire let one
+    // stray `"` in an unrelated `DO` block silence a plain top-level `DROP FUNCTION public.<fn>;`
+    // that the matchers detect correctly. See the same comment in
+    // `supabase/private-registry-content-release.structural.test.ts` for the full reasoning.
+    const fnVerbs: string[] = []
+    if (statements.some((s) => matchesDropFunction(s, FUNCTION_NAME))) fnVerbs.push('DROP FUNCTION')
+    if (statements.some((s) => matchesAlterFunction(s, FUNCTION_NAME)))
+      fnVerbs.push('ALTER FUNCTION')
+    if (fnVerbs.length > 0) {
+      for (const verb of fnVerbs) offenders.push(`${file}: ${verb} ${FUNCTION_NAME}`)
+    } else if (mentionsIdentifier(content, FUNCTION_NAME)) {
+      offenders.push(
+        `${file}: ${FUNCTION_NAME} appears in executable SQL without a recognised DROP/ALTER ` +
+          'FUNCTION verb -- review manually'
+      )
     }
-    if (ALTER_FUNCTION_RE.test(sql)) {
-      offenders.push(`${file}: ALTER FUNCTION ${FUNCTION_NAME}`)
-    }
-    if (alterTriggerRe('trg_prs_audit_truncate').test(sql)) {
+    if (statements.some((s) => alterTriggerRe('trg_prs_audit_truncate').test(executableText(s)))) {
       offenders.push(`${file}: ALTER TRIGGER trg_prs_audit_truncate`)
     }
-    if (alterTriggerRe('trg_prs_audit').test(sql)) {
+    if (statements.some((s) => alterTriggerRe('trg_prs_audit').test(executableText(s)))) {
       offenders.push(`${file}: ALTER TRIGGER trg_prs_audit`)
     }
   }
@@ -355,8 +392,9 @@ function triggerOrFunctionTamperViolations(): string[] {
 /**
  * Every migration strictly after MIGRATION_FILE that GRANTs EXECUTE on the pinned function to
  * anon, authenticated or PUBLIC (SMI-6114 retro F1, revert check (f)). Splits each migration into
- * `;`-delimited statements so a GRANT on some unrelated function does not false-positive just
- * because the pinned function name appears elsewhere in the same file.
+ * statements via `splitStatements` (SMI-6690 — a raw `sql.split(';')` has the same quoted-identifier
+ * delimiter-forgery flaw the by-name tamper matchers were fixed for) so a GRANT on some unrelated
+ * function does not false-positive just because the pinned function name appears elsewhere.
  */
 function grantExecuteViolations(): string[] {
   const offenders: string[] = []
@@ -365,7 +403,7 @@ function grantExecuteViolations(): string[] {
     const content = readMigration(file)
     if (content === null) continue
     const sql = stripComments(content)
-    for (const stmt of sql.split(';')) {
+    for (const stmt of splitStatements(sql)) {
       if (!/\bGRANT\b/i.test(stmt) || !/\bEXECUTE\b/i.test(stmt)) continue
       if (!/\bON\s+FUNCTION\b/i.test(stmt) || !nameRe.test(stmt)) continue
       const toIdx = stmt.search(/\bTO\b/i)
@@ -453,7 +491,7 @@ function laterTriggerViolations(): string[] {
     const content = readMigration(file)
     if (content === null) continue
     const sql = stripComments(content)
-    for (const stmt of sql.split(';')) {
+    for (const stmt of splitStatements(sql)) {
       if (!/\bCREATE\s+(?:OR\s+REPLACE\s+)?(?:CONSTRAINT\s+)?TRIGGER\b/i.test(stmt)) continue
       if (!onTableRe.test(stmt)) continue
       offenders.push(
@@ -520,7 +558,7 @@ function auditSinkViolations(): string[] {
     const content = readMigration(file)
     if (content === null) continue
     const sql = stripComments(content)
-    for (const stmt of sql.split(';')) {
+    for (const stmt of splitStatements(sql)) {
       const trimmed = () => stmt.replace(/\s+/g, ' ').trim().slice(0, 160)
       if (/\bCREATE\s+(?:OR\s+REPLACE\s+)?RULE\b/i.test(stmt) && ruleToAuditLogsRe.test(stmt)) {
         offenders.push(
