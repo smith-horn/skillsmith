@@ -97,7 +97,20 @@ export function removeVR(targetRoot, options = {}) {
   callHook('afterBind')
 
   // Guard pass: hash through handles, holding every directory fd.
-  const guard = guardPass(shim, T.fd, { hooks })
+  // `maxHeldFds` MUST be forwarded. It was accepted by removeVR's options and
+  // silently dropped here, so the cap was permanently the guardPass default of
+  // 512 and a caller raising it had no effect whatsoever -- measured: 600
+  // directories with maxHeldFds:100000 still stopped at the 512th.
+  //
+  // The cap matters more than a spike fixture suggests. This design holds one
+  // fd per directory for the WHOLE tree, because the guard pass and the removal
+  // pass are separate; a realistic skills layout (a directory per skill plus
+  // references/ and assets/) reaches 512 at roughly 170 skills, which is an
+  // ordinary power user, and the reported `path` is then whichever directory
+  // happened to be 512th rather than anything actually wrong. SMI-6531 should
+  // decide whether to raise the cap, or to fuse the two passes so only
+  // depth-many fds are held at once.
+  const guard = guardPass(shim, T.fd, { hooks, maxHeldFds: options.maxHeldFds })
   if (guard.status === 'stopped') {
     fs.closeSync(P.fd)
     return guard
@@ -252,6 +265,14 @@ export function removeVR(targetRoot, options = {}) {
       return qst.errno === 0 && qst.dev === pinned.dev && qst.ino === pinned.ino
     })
     if (!q.ok) return stop(q.reason, rel, q.errno)
+    // DELETE BEFORE CLOSE. The final sweep closes everything still in
+    // `heldFds`; leaving an already-closed fd in the map made that sweep close
+    // the same number a SECOND time. `closeQuiet` swallows EBADF, so while the
+    // number is still free the bug is invisible -- but once the process has
+    // recycled it, the second close SUCCEEDS and closes an unrelated
+    // descriptor. In the MCP server this runs inside, that could be the skills
+    // database handle or a socket, and it would report success.
+    heldFds.delete(rel)
     fs.closeSync(heldFd)
   }
 
@@ -283,7 +304,13 @@ export function removeVR(targetRoot, options = {}) {
           callHook('beforeUnlink', rel, rec.type)
           const r = shim.unlinkAt(D, name, true)
           if (r.errno !== 0) stop('removal-failed', rel, r.errno)
-          else fs.closeSync(heldFds.get(rel))
+          else {
+            // Same ownership rule as removeDirV2: out of the map before the
+            // close, so the final sweep cannot close it again.
+            const doneFd = heldFds.get(rel)
+            heldFds.delete(rel)
+            fs.closeSync(doneFd)
+          }
         }
       } else if (rec.type === 'file') {
         if (variant === 'V2') removeFileV2(D, name, rel, rec)
