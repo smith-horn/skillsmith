@@ -123,6 +123,9 @@ unset SKILLSMITH_NATIVE_CHECK_TEST
 assert_eq "S10: self-heal succeeds but broken native bindings -> hard failure" "1" "$rc"
 assert_eq "S10: npm install still called exactly once" "1" "$(npm_call_count)"
 assert_eq "S10: output mentions the SMI-6437 native-binding failure" "yes" "$(grep -q "native module bindings are still broken" "$GUARD_LAST_OUTPUT" && echo yes || echo no)"
+# SMI-6684 Wave 3 (adversarial review F-1): the attribution row must land in
+# the sandboxed HOME the fixtures export above, never a real operator log.
+assert_eq "S10: attribution row lands in the sandboxed HOME" "yes" "$(grep -q '"state":"UNEXPECTED"' "$TMP_ROOT/home/.skillsmith/logs/native-attribution.jsonl" 2>/dev/null && echo yes || echo no)"
 
 # =========================================================================
 # Scenario 11 (SMI-6437): self-heal succeeds AND native bindings are

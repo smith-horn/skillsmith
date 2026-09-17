@@ -10,25 +10,33 @@
  * Cases:
  *   opt-out:      SKILLSMITH_SKIP_NATIVE_CHECK=1 wins even with a failing seam.
  *   healthy:      seam=ok → exit 0, silent.
- *   broken:       seam=fail → exit 1, actionable remedy (restart dev +
+ *   broken:       seam=fail → exit 1, actionable remedy (docker restart +
  *                 regen-lockfile + scoped opt-out), and does NOT advertise the
  *                 blanket `--no-verify` footgun (SMI-5344 consistency).
- *   source guard: no line runs `npm install` / a real `docker exec` outside a
- *                 comment/printf (READ-ONLY P-5 discipline).
+ *   source guard: no line runs `npm install` or a real `docker exec` --
+ *                 directly or via `run_cmd` -- outside a comment, a
+ *                 `printf`, or the two allow-listed read-only invocations
+ *                 (READ-ONLY P-5 discipline).
  */
 import { describe, it, expect } from 'vitest'
 import { spawnSync } from 'node:child_process'
-import { readFileSync } from 'node:fs'
-import { resolve, dirname } from 'node:path'
+import { mkdtempSync, readFileSync } from 'node:fs'
+import { tmpdir } from 'node:os'
+import { resolve, dirname, join } from 'node:path'
 import { fileURLToPath } from 'node:url'
 
 const __dirname = dirname(fileURLToPath(import.meta.url))
 const SCRIPT = resolve(__dirname, '..', 'lib', 'check-native-modules.sh')
 
 function run(env: Record<string, string> = {}): { status: number; output: string } {
+  // SMI-6684 Wave 3 / addendum A-1: the failure path now writes one JSONL
+  // line to $HOME/.skillsmith/logs on every failure-path run. HOME is
+  // always pointed at a fresh temp dir here (SMI-5847 precedent) so no
+  // test can ever touch a real operator's ~/.skillsmith.
+  const home = mkdtempSync(join(tmpdir(), 'nca-legacy-home-'))
   const r = spawnSync('sh', [SCRIPT], {
     encoding: 'utf8',
-    env: { PATH: process.env['PATH'] ?? '/usr/bin:/bin', ...env },
+    env: { PATH: process.env['PATH'] ?? '/usr/bin:/bin', HOME: home, ...env },
     stdio: ['ignore', 'pipe', 'pipe'],
     timeout: 15_000,
   })
@@ -48,10 +56,15 @@ describe('check-native-modules.sh (SMI-5513)', () => {
     expect(r.output).toBe('')
   })
 
-  it('broken probe (seam=fail) exits 1 with the actionable remedy', () => {
+  it('broken probe (seam=fail) exits 1 with the actionable remedy (T-LEGACY, spec §6.5)', () => {
     const r = run({ SKILLSMITH_NATIVE_CHECK_TEST: 'fail' })
     expect(r.status).toBe(1)
-    expect(r.output).toMatch(/restart dev/)
+    // Under the SKILLSMITH_NATIVE_CHECK_TEST=fail seam, run_cmd() { return 1; }
+    // is used for BOTH the probe and the attribution exec, so attribution
+    // classifies UNEXPECTED [exec-exit:1] without ever invoking docker
+    // (spec §6.5) — this replaces the pre-SMI-6684 `/restart dev/` grep,
+    // which no longer matches (the text is now `docker restart <C>`).
+    expect(r.output).toMatch(/Mount check: UNEXPECTED -- cause: NOT-DETERMINED \[exec-exit:1\]/)
     expect(r.output).toMatch(/regen-lockfile/)
     expect(r.output).toMatch(/SKILLSMITH_SKIP_NATIVE_CHECK/)
     // SMI-5344: an environmental guard must not advertise the blanket
@@ -61,13 +74,26 @@ describe('check-native-modules.sh (SMI-5513)', () => {
 
   it('READ-ONLY: no mutating command outside comments/printf/test-seam', () => {
     const src = readFileSync(SCRIPT, 'utf8')
+    // F-3 (SMI-6684 Wave 3 pre-merge gate): `run_cmd` IS `docker exec`
+    // (scripts/lib/hook-docker-detect.sh) — the guard used to grep only the
+    // literal text `docker exec`, so a SECOND `run_cmd` call site
+    // (`run_cmd sh -c "$NCA_PRODUCER"`) needed no exemption because the
+    // guard could not see it at all. Treat `run_cmd` as a first-class
+    // docker-exec surface with an explicit allow-list, so a future third
+    // call site has to justify itself here.
+    const ALLOWED_RUN_CMD = [
+      /run_cmd node -e/, // the read-only createDatabaseSync(':memory:') probe
+      /run_cmd sh -c "\$NCA_PRODUCER"/, // SMI-6684 Wave 3: read-only mount-composition attribution
+    ]
     const offenders = src.split('\n').filter((line) => {
       const t = line.trim()
       if (t.startsWith('#')) return false
       if (/^\s*printf\b/.test(line)) return false
-      // The probe is a read-only `run_cmd node -e "...createDatabaseSync(':memory:')..."`
-      // (opens an in-memory DB; touches nothing on disk) — allowed.
-      if (/run_cmd node -e/.test(line)) return false
+      if (/\brun_cmd\b/.test(line)) {
+        if (/^\s*fail\)/.test(line)) return false // the test seam's run_cmd() { return 1; }
+        if (/run_cmd\(\)/.test(line)) return false // the run_cmd() definition itself
+        return !ALLOWED_RUN_CMD.some((re) => re.test(line))
+      }
       return /npm\s+(install|ci|rebuild)\b|docker\s+exec\b/.test(line)
     })
     expect(offenders).toEqual([])

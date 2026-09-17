@@ -1,0 +1,46 @@
+[mount-composition] mode=worktree service=dev scope=/app
+[mount-composition] compose: /app/docker-compose.yml /app/docker-compose.override.yml
+[mount-composition] declared volume entries (all destinations): 178 (parse errors: 0)
+[mount-composition] in-scope declared destinations: 167 | mounted: 140 | MISSING: 27
+FAIL [A2] declared but NOT mounted: /packages/cli/node_modules/.astro (declared as /app/packages/cli/node_modules/.astro, source=/HOST/skillsmith/packages/cli/node_modules/.astro)
+FAIL [A2] declared but NOT mounted: /packages/cli/node_modules/.vite (declared as /app/packages/cli/node_modules/.vite, source=/HOST/skillsmith/packages/cli/node_modules/.vite)
+FAIL [A2] declared but NOT mounted: /packages/cli/node_modules/.vite-temp (declared as /app/packages/cli/node_modules/.vite-temp, source=/HOST/skillsmith/packages/cli/node_modules/.vite-temp)
+FAIL [A2] declared but NOT mounted: /packages/core/node_modules/.astro (declared as /app/packages/core/node_modules/.astro, source=/HOST/skillsmith/packages/core/node_modules/.astro)
+FAIL [A2] declared but NOT mounted: /packages/core/node_modules/.vite (declared as /app/packages/core/node_modules/.vite, source=/HOST/skillsmith/packages/core/node_modules/.vite)
+FAIL [A2] declared but NOT mounted: /packages/core/node_modules/.vite-temp (declared as /app/packages/core/node_modules/.vite-temp, source=/HOST/skillsmith/packages/core/node_modules/.vite-temp)
+FAIL [A2] declared but NOT mounted: /packages/core/node_modules/better-sqlite3 (declared as /app/packages/core/node_modules/better-sqlite3, source=native-seed-core-better-sqlite3)
+FAIL [A2] declared but NOT mounted: /packages/doc-retrieval-mcp/node_modules/.astro (declared as /app/packages/doc-retrieval-mcp/node_modules/.astro, source=/HOST/skillsmith/packages/doc-retrieval-mcp/node_modules/.astro)
+FAIL [A2] declared but NOT mounted: /packages/doc-retrieval-mcp/node_modules/.vite (declared as /app/packages/doc-retrieval-mcp/node_modules/.vite, source=/HOST/skillsmith/packages/doc-retrieval-mcp/node_modules/.vite)
+FAIL [A2] declared but NOT mounted: /packages/doc-retrieval-mcp/node_modules/.vite-temp (declared as /app/packages/doc-retrieval-mcp/node_modules/.vite-temp, source=/HOST/skillsmith/packages/doc-retrieval-mcp/node_modules/.vite-temp)
+FAIL [A2] declared but NOT mounted: /packages/doc-retrieval-mcp/node_modules/ruvector-core-linux-arm64-gnu (declared as /app/packages/doc-retrieval-mcp/node_modules/ruvector-core-linux-arm64-gnu, source=native-seed-packages-doc-retrieval-mcp-node_modules-ruvector-core-linux-arm64-gnu)
+FAIL [A2] declared but NOT mounted: /packages/doc-retrieval-mcp/node_modules/ruvector-core-linux-x64-gnu (declared as /app/packages/doc-retrieval-mcp/node_modules/ruvector-core-linux-x64-gnu, source=native-seed-packages-doc-retrieval-mcp-node_modules-ruvector-core-linux-x64-gnu)
+FAIL [A2] declared but NOT mounted: /packages/enterprise/node_modules/.astro (declared as /app/packages/enterprise/node_modules/.astro, source=/HOST/skillsmith/packages/enterprise/node_modules/.astro)
+FAIL [A2] declared but NOT mounted: /packages/enterprise/node_modules/.vite (declared as /app/packages/enterprise/node_modules/.vite, source=/HOST/skillsmith/packages/enterprise/node_modules/.vite)
+FAIL [A2] declared but NOT mounted: /packages/enterprise/node_modules/.vite-temp (declared as /app/packages/enterprise/node_modules/.vite-temp, source=/HOST/skillsmith/packages/enterprise/node_modules/.vite-temp)
+FAIL [A2] declared but NOT mounted: /packages/mcp-server/node_modules/.astro (declared as /app/packages/mcp-server/node_modules/.astro, source=/HOST/skillsmith/packages/mcp-server/node_modules/.astro)
+FAIL [A2] declared but NOT mounted: /packages/mcp-server/node_modules/.vite (declared as /app/packages/mcp-server/node_modules/.vite, source=/HOST/skillsmith/packages/mcp-server/node_modules/.vite)
+FAIL [A2] declared but NOT mounted: /packages/mcp-server/node_modules/.vite-temp (declared as /app/packages/mcp-server/node_modules/.vite-temp, source=/HOST/skillsmith/packages/mcp-server/node_modules/.vite-temp)
+FAIL [A2] declared but NOT mounted: /packages/skillsmith-cli/node_modules/.astro (declared as /app/packages/skillsmith-cli/node_modules/.astro, source=/HOST/skillsmith/packages/skillsmith-cli/node_modules/.astro)
+FAIL [A2] declared but NOT mounted: /packages/skillsmith-cli/node_modules/.vite (declared as /app/packages/skillsmith-cli/node_modules/.vite, source=/HOST/skillsmith/packages/skillsmith-cli/node_modules/.vite)
+FAIL [A2] declared but NOT mounted: /packages/skillsmith-cli/node_modules/.vite-temp (declared as /app/packages/skillsmith-cli/node_modules/.vite-temp, source=/HOST/skillsmith/packages/skillsmith-cli/node_modules/.vite-temp)
+FAIL [A2] declared but NOT mounted: /packages/vscode-extension/node_modules/.astro (declared as /app/packages/vscode-extension/node_modules/.astro, source=/HOST/skillsmith/packages/vscode-extension/node_modules/.astro)
+FAIL [A2] declared but NOT mounted: /packages/vscode-extension/node_modules/.vite (declared as /app/packages/vscode-extension/node_modules/.vite, source=/HOST/skillsmith/packages/vscode-extension/node_modules/.vite)
+FAIL [A2] declared but NOT mounted: /packages/vscode-extension/node_modules/.vite-temp (declared as /app/packages/vscode-extension/node_modules/.vite-temp, source=/HOST/skillsmith/packages/vscode-extension/node_modules/.vite-temp)
+FAIL [A2] declared but NOT mounted: /packages/website/node_modules/.astro (declared as /app/packages/website/node_modules/.astro, source=/HOST/skillsmith/packages/website/node_modules/.astro)
+FAIL [A2] declared but NOT mounted: /packages/website/node_modules/.vite (declared as /app/packages/website/node_modules/.vite, source=/HOST/skillsmith/packages/website/node_modules/.vite)
+FAIL [A2] declared but NOT mounted: /packages/website/node_modules/.vite-temp (declared as /app/packages/website/node_modules/.vite-temp, source=/HOST/skillsmith/packages/website/node_modules/.vite-temp)
+
+[mount-composition] REMEDY: an explicit `docker restart` re-applies the mount
+  spec. A restart's EXIT CODE says the restart ran, not that the binding works --
+  re-run this checker (and open a database) to confirm.
+ok   [A2] backing identity (volume/bind/tmpfs + volume name) compared for 140 mounted destination(s); 0 substituted
+ok   [A6] 9 declared :ro destination(s) mode-checked
+FAIL [A4] /app/node_modules/@ruvector/attention-linux-arm64-gnu/attention.linux-arm64-gnu.node is MACHO, expected ELF (declared /app/node_modules/@ruvector/attention-linux-arm64-gnu, volume=native-seed-ruvector-attention-linux-arm64-gnu, version=0.1.32) -- destination IS mounted, so the SEEDED VOLUME CONTENT itself is wrong (not a fall-through)
+FAIL [A4] /app/packages/core/node_modules/better-sqlite3/build/Release/test_extension.node is MACHO, expected ELF (declared /app/packages/core/node_modules/better-sqlite3, volume=native-seed-core-better-sqlite3, version=12.10.0) -- destination is NOT mounted -- READ-ONLY-PARENT FALL-THROUGH: the host's macOS binary is being served at a Linux path (SMI-6516 signature)
+FAIL [A4] /app/packages/core/node_modules/better-sqlite3/build/Release/better_sqlite3.node is MACHO, expected ELF (declared /app/packages/core/node_modules/better-sqlite3, volume=native-seed-core-better-sqlite3, version=12.10.0) -- destination is NOT mounted -- READ-ONLY-PARENT FALL-THROUGH: the host's macOS binary is being served at a Linux path (SMI-6516 signature)
+ok   [A4] asserted on 39 native binary/binaries for aarch64 across 129 declared native target(s) (mounted AND unmounted); 3 failed; 0 skipped as foreign-platform payloads
+ok   [A4] seeded version compared against the image seed for 44 mounted target(s); 0 stale; 82 had no seed reference
+ok   [A7] scanned 28 dot-directory/ies under 9 declared read-only parent(s); 0 undeclared
+SKIP [A5] --live-write not set: the A5 traversal-writability and A6 read-only-parent write probes did not run
+[mount-composition] 167 in-scope destination(s) checked; 30 finding(s), 0 not evaluated, 1 skipped by flag.
+[mount-composition] warn-only (D-20); pass --strict to make this blocking.
