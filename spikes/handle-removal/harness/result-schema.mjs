@@ -249,12 +249,20 @@ export function aggregateCell(records, isContradictory = () => false, options = 
   let passed = 0
   let failed = 0
   let neverRan = 0
+  let otherNeverRan = 0
 
   for (const record of records) {
     const cls = classifyRecord(record, isContradictory)
     if (cls === 'passed') passed += 1
     else if (cls === 'failed') failed += 1
-    else neverRan += 1
+    else {
+      neverRan += 1
+      // R6 drops a run where the RACER DID NOT LAND. Any other reason a run did
+      // not happen -- a harness error, an unmet precondition of some other kind
+      // -- still disqualifies the cell, so it is counted separately here rather
+      // than folded into one number the verdict cannot tell apart.
+      if (record?.precondition?.mutationApplied !== false) otherNeverRan += 1
+    }
   }
 
   const ran = records.length
@@ -262,13 +270,20 @@ export function aggregateCell(records, isContradictory = () => false, options = 
   if (ran !== target) {
     verdict = `INCOMPLETE (ran ${ran}/${target})`
   } else {
-    // Delegates to the one implementation of §9, so this and
-    // results/generate-summary.mjs cannot drift. `options.attack` lets a caller
-    // opt a cell into R6's landed-subset rule; without it the strict
-    // never-ran == 0 clause applies, which is the correct default for every
-    // deterministic attack.
+    // DERIVED, NOT REQUESTED. This used to read `options.attack ?? null`, an
+    // opt-in that no caller ever took: all 20 call sites across the harness pass
+    // only `{ target }` and/or `{ controlFailed }`, so `attack` was always null,
+    // `isProbabilistic(null)` was always false, and R6 never applied on this
+    // path at all. The commit that introduced it claimed the rule "lives in ONE
+    // place so the two deciders cannot drift" -- one IMPLEMENTATION, yes, but
+    // two argument derivations, which diverged on the very cell that commit
+    // headlined (A13/guardHash/V2/overlayfs: PASS from the summary generator,
+    // NEVER-RAN from here). That is the same drift, moved from the body of the
+    // function to its call sites, where it is harder to see. The records carry
+    // the attack id already, so derive it and leave callers nothing to forget.
+    const attack = options.attack ?? records[0]?.cell?.attack ?? null
     verdict = verdictFor(
-      { attack: options.attack ?? null, passed, failed, neverRan },
+      { attack, passed, failed, neverRan, otherNeverRan },
       options.controlFailed,
       options.controlState
     )

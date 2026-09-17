@@ -6,9 +6,9 @@ Regenerated from 60 `results/raw/*.jsonl` files, 136240 total records. Do not ha
 
 | Verdict | Cells |
 |---|---|
-| FAIL | 183 |
+| FAIL | 197 |
 | NEVER-RAN (control) | 56 |
-| NEVER-RAN | 50 |
+| NEVER-RAN | 36 |
 | PASS (control unverified) | 90 |
 | PASS | 227 |
 
@@ -165,31 +165,31 @@ The verdict applies the WHOLE plan §9 rule: `PASS` requires `ran == target`, `n
 | A13-TIMING | guard-none | V1 | virtiofsroot | 300 | 170 | 127 | 3 | ok | FAIL |
 | A13-TIMING | guard-guardHash | V2 | virtiofsroot | 300 | 300 | 0 | 0 | ok | PASS |
 | A13-TIMING | guard-none | V2 | virtiofsroot | 300 | 192 | 108 | 0 | ok | FAIL |
-| A13-VALIDATE | perEntryTiming-off | V2 | darwin-apfs | 700 | 326 | 66 | 308 | none-by-design | NEVER-RAN |
-| A13-VALIDATE | perEntryTiming-on | V2 | darwin-apfs | 700 | 315 | 66 | 319 | none-by-design | NEVER-RAN |
-| A13-WARMARM | arm-A | V2 | darwin-apfs | 4800 | 2430 | 31 | 2339 | none-by-design | NEVER-RAN |
-| A13-WARMARM | arm-A0 | V2 | darwin-apfs | 4800 | 2438 | 42 | 2320 | none-by-design | NEVER-RAN |
+| A13-VALIDATE | perEntryTiming-off | V2 | darwin-apfs | 700 | 326 | 66 | 308 | none-by-design | FAIL |
+| A13-VALIDATE | perEntryTiming-on | V2 | darwin-apfs | 700 | 315 | 66 | 319 | none-by-design | FAIL |
+| A13-WARMARM | arm-A | V2 | darwin-apfs | 4800 | 2430 | 31 | 2339 | none-by-design | FAIL |
+| A13-WARMARM | arm-A0 | V2 | darwin-apfs | 4800 | 2438 | 42 | 2320 | none-by-design | FAIL |
 | A13-WARMARM | arm-B | V2 | darwin-apfs | 4800 | 2379 | 0 | 2421 | none-by-design | NEVER-RAN |
 | A13-WARMARM | arm-B0 | V2 | darwin-apfs | 4800 | 2448 | 0 | 2352 | none-by-design | NEVER-RAN |
-| A13-WARMARM | arm-C | V2 | darwin-apfs | 4800 | 2401 | 25 | 2374 | none-by-design | NEVER-RAN |
+| A13-WARMARM | arm-C | V2 | darwin-apfs | 4800 | 2401 | 25 | 2374 | none-by-design | FAIL |
 | A13-WARMARM | arm-P | V2 | darwin-apfs | 4800 | 0 | 0 | 4800 | none-by-design | NEVER-RAN |
-| A13-WARMARM | arm-A | V2 | ext4vol | 2400 | 757 | 221 | 1422 | none-by-design | NEVER-RAN |
-| A13-WARMARM | arm-A0 | V2 | ext4vol | 2400 | 753 | 232 | 1415 | none-by-design | NEVER-RAN |
+| A13-WARMARM | arm-A | V2 | ext4vol | 2400 | 757 | 221 | 1422 | none-by-design | FAIL |
+| A13-WARMARM | arm-A0 | V2 | ext4vol | 2400 | 753 | 232 | 1415 | none-by-design | FAIL |
 | A13-WARMARM | arm-B | V2 | ext4vol | 2400 | 965 | 0 | 1435 | none-by-design | NEVER-RAN |
 | A13-WARMARM | arm-B0 | V2 | ext4vol | 2400 | 960 | 0 | 1440 | none-by-design | NEVER-RAN |
-| A13-WARMARM | arm-C | V2 | ext4vol | 2400 | 734 | 199 | 1467 | none-by-design | NEVER-RAN |
+| A13-WARMARM | arm-C | V2 | ext4vol | 2400 | 734 | 199 | 1467 | none-by-design | FAIL |
 | A13-WARMARM | arm-P | V2 | ext4vol | 2400 | 0 | 0 | 2400 | none-by-design | NEVER-RAN |
-| A13-WARMARM | arm-A | V2 | overlayfs | 4800 | 1789 | 489 | 2522 | none-by-design | NEVER-RAN |
-| A13-WARMARM | arm-A0 | V2 | overlayfs | 4800 | 1706 | 546 | 2548 | none-by-design | NEVER-RAN |
+| A13-WARMARM | arm-A | V2 | overlayfs | 4800 | 1789 | 489 | 2522 | none-by-design | FAIL |
+| A13-WARMARM | arm-A0 | V2 | overlayfs | 4800 | 1706 | 546 | 2548 | none-by-design | FAIL |
 | A13-WARMARM | arm-B | V2 | overlayfs | 4800 | 2213 | 0 | 2587 | none-by-design | NEVER-RAN |
 | A13-WARMARM | arm-B0 | V2 | overlayfs | 4800 | 2209 | 0 | 2591 | none-by-design | NEVER-RAN |
-| A13-WARMARM | arm-C | V2 | overlayfs | 4800 | 1786 | 457 | 2557 | none-by-design | NEVER-RAN |
+| A13-WARMARM | arm-C | V2 | overlayfs | 4800 | 1786 | 457 | 2557 | none-by-design | FAIL |
 | A13-WARMARM | arm-P | V2 | overlayfs | 4800 | 0 | 0 | 4800 | none-by-design | NEVER-RAN |
-| A13-WARMARM | arm-A | V2 | tmpfsroot | 2400 | 661 | 258 | 1481 | none-by-design | NEVER-RAN |
-| A13-WARMARM | arm-A0 | V2 | tmpfsroot | 2400 | 629 | 236 | 1535 | none-by-design | NEVER-RAN |
+| A13-WARMARM | arm-A | V2 | tmpfsroot | 2400 | 661 | 258 | 1481 | none-by-design | FAIL |
+| A13-WARMARM | arm-A0 | V2 | tmpfsroot | 2400 | 629 | 236 | 1535 | none-by-design | FAIL |
 | A13-WARMARM | arm-B | V2 | tmpfsroot | 2400 | 889 | 0 | 1511 | none-by-design | NEVER-RAN |
 | A13-WARMARM | arm-B0 | V2 | tmpfsroot | 2400 | 859 | 0 | 1541 | none-by-design | NEVER-RAN |
-| A13-WARMARM | arm-C | V2 | tmpfsroot | 2400 | 621 | 208 | 1571 | none-by-design | NEVER-RAN |
+| A13-WARMARM | arm-C | V2 | tmpfsroot | 2400 | 621 | 208 | 1571 | none-by-design | FAIL |
 | A13-WARMARM | arm-P | V2 | tmpfsroot | 2400 | 0 | 0 | 2400 | none-by-design | NEVER-RAN |
 | A13 | default | C0 | darwin-apfs | 300 | 98 | 16 | 186 | ok | FAIL |
 | A13 | default | V0 | darwin-apfs | 300 | 107 | 9 | 184 | ok | FAIL |

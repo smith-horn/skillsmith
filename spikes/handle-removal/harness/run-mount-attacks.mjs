@@ -12,6 +12,7 @@ import { removeC0 } from '../c0-walk.mjs'
 import { removeVR } from '../walk.mjs'
 import { makeFixtureRoot, resolveHarnessRoot } from './fixture-root.mjs'
 import { appendJsonl, makeRecord, aggregateCell, formatVerdict } from './result-schema.mjs'
+import { resolveControl, controlFailedFlag, controlTag } from './control-spec.mjs'
 import {
   bindMount,
   tmpfsMount,
@@ -203,8 +204,27 @@ function run(label, fn, candidateKey, mountKind, target, out) {
     records.push(record)
     if (out) appendJsonl(out, { ...record, extra: raw.extra ?? null })
   }
-  const agg = aggregateCell(records, () => false, { target, controlFailed: true })
-  console.log(formatVerdict(label, agg))
+  // `controlFailed: true` was hardcoded here, the same defect control-spec.mjs's
+  // header records for run-vr-attacks.mjs and claims to have retired -- it
+  // survived in two other files. It asserts that a paired control demonstrated
+  // the loss, without this process having observed any control at all, so it
+  // could only ever be right by luck. A1's control is `external` (it resolves to
+  // `undefined`, and the cell reports PASS (control unverified) rather than a
+  // clean PASS); A2's is an in-data C0 cell, which resolves to `absent` when this
+  // run does not contain it, reporting NEVER-RAN (control).
+  const cell = {
+    attack: label.split('/')[0],
+    variant: mountKind,
+    candidate: candidateKey,
+    fs: 'overlayfs',
+  }
+  const control = resolveControl(cell, [cell])
+  const agg = aggregateCell(records, () => false, {
+    target,
+    controlFailed: controlFailedFlag(control.state),
+    controlState: control.state,
+  })
+  console.log(`${formatVerdict(label, agg)}\tcontrol=${controlTag(control.state)}`)
   return { records, agg }
 }
 

@@ -319,25 +319,75 @@ export function isProbabilistic(attack) {
 /**
  * The §9 verdict, with R6's landed-subset rule applied.
  *
- * @param {{attack:string, passed:number, failed:number, neverRan:number}} row
+ * @param {{attack:string, passed:number, failed:number, neverRan:number,
+ *          otherNeverRan?:number}} row - `otherNeverRan` counts never-ran runs
+ *   NOT explained by the racer failing to land. It defaults to `neverRan`, the
+ *   conservative direction: a caller that has not measured the split cannot
+ *   claim R6's benefit. See the note on its guard clause below.
  * @param {boolean|undefined} controlFailed - as controlFailedFlag() returns
- * @param {'external'|string} [controlState]
+ * @param {'external'|'unspecified'|string} [controlState]
  */
 export function verdictFor(row, controlFailed, controlState) {
+  // A ROW WITH NO COUNTS MUST NOT CERTIFY ANYTHING. Without this, `verdictFor({
+  // attack: 'A13' }, true)` returned PASS: `undefined + undefined` is NaN, and
+  // every comparison against NaN is false, so BOTH the failure clause and the
+  // floor were skipped and control fell through to PASS. String counts were
+  // worse than they look -- '0' + '5' is the string '05', which the floor then
+  // compared lexically. Throwing is the only safe answer; a verdict function
+  // that guesses at missing evidence is the defect this whole file exists for.
+  for (const k of ['passed', 'failed', 'neverRan']) {
+    if (!Number.isInteger(row[k])) {
+      throw new TypeError(`verdictFor: ${k} must be an integer, got ${String(row[k])}`)
+    }
+  }
+
+  // FAILURES BEAT EVERYTHING, AND THIS CLAUSE GOES FIRST.
+  //
+  // One observed loss proves the defect; no sample size is required to conclude
+  // "this destroyed user data". Nothing below may pre-empt it -- not the floor,
+  // and not the never-ran clause.
+  //
+  // This function has now had that wrong TWICE, in the same release, in two
+  // different ways, and both times the comment saying failures come first sat
+  // directly below a clause that beat them:
+  //
+  //   1. the floor ran first, so A13/default/V0/overlayfs -- 39 real failures in
+  //      89 landed races -- reported NEVER-RAN (underpowered).
+  //   2. the non-probabilistic never-ran clause ran first, so ANY deterministic
+  //      attack with failures AND never-runs reported NEVER-RAN. That shipped:
+  //      14 cells in results/SUMMARY.md carried 3,076 records of measured user
+  //      -file loss under a NEVER-RAN label, and the label flipped on nothing
+  //      but set membership -- the same counts scored FAIL as 'A13' and
+  //      NEVER-RAN as 'A13-WARMARM'.
+  //
+  // Both are the same class the spike keeps finding: a confident label standing
+  // in for an unmeasured quantity. Hoisting can only move a cell toward a more
+  // alarming label, never away from one, so it cannot overstate confidence
+  // anywhere. The counts print beside every verdict, so nothing is lost.
+  if (row.failed > 0) return 'FAIL'
+
   const probabilistic = isProbabilistic(row.attack)
   const landed = row.passed + row.failed
+  const otherNeverRan = row.otherNeverRan ?? row.neverRan
 
   if (!probabilistic && row.neverRan > 0) return 'NEVER-RAN'
-  // FAILURES BEAT THE FLOOR. One observed loss proves the defect; no sample size
-  // is required to conclude "this destroyed user data". The floor exists to stop
-  // a cell PASSING on thin evidence, not to suppress failures it actually saw --
-  // and putting it first did exactly that: A13/default/V0/overlayfs, with 39
-  // real failures in 89 landed races, was reported NEVER-RAN (underpowered),
-  // hiding a measured data loss behind an insufficient-sample label. That is the
-  // same class as a confident label for an unmeasured quantity, inverted.
-  if (row.failed > 0) return 'FAIL'
+  // R6 DROPS NON-LANDINGS FROM THE DENOMINATOR, NOT EVERY FALSE PRECONDITION.
+  // The rule the owner settled is "a run where the RACER DID NOT LAND leaves the
+  // denominator". Ignoring `neverRan` wholesale would also swallow harness
+  // errors and every other unmet precondition, which §9 must never do. Measured
+  // across all 4,435 never-ran records in A13 and A13-TIMING: 100% are
+  // `precondition.mutationApplied === false`, so today the two are the same set
+  // -- but "the same today" is not a rule, and the default above makes an
+  // unmeasured split fail safe rather than silently lenient.
+  if (otherNeverRan > 0) return 'NEVER-RAN'
   if (probabilistic && landed < LANDED_FLOOR) return 'NEVER-RAN (underpowered)'
   if (controlFailed === false) return 'NEVER-RAN (control)'
+  // resolveControl() invents 'unspecified' precisely so a missing CONTROL_SPEC
+  // row is never counted as satisfied -- this file's own header says it never
+  // guesses. Falling through to a bare PASS here made it indistinguishable from
+  // a control-verified one. A13-VR is one run away from that: it is in
+  // PROBABILISTIC_ATTACKS and has no CONTROL_SPEC row.
+  if (controlState === 'unspecified') return 'NEVER-RAN (control unspecified)'
   if (controlState === 'external') return 'PASS (control unverified)'
   return 'PASS'
 }

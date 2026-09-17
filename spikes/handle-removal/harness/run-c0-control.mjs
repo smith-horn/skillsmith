@@ -18,6 +18,7 @@ import {
   aggregateCell,
   formatVerdict,
 } from './result-schema.mjs'
+import { resolveControl, controlFailedFlag, controlTag } from './control-spec.mjs'
 import { resolveHarnessRoot } from './fixture-root.mjs'
 import * as a3 from './attacks/a3.mjs'
 import * as a4 from './attacks/a4.mjs'
@@ -255,8 +256,23 @@ function main() {
       fsLabel: opts.fsLabel,
       out,
     })
-    const agg = aggregateCell(records, () => false, { target, controlFailed: true })
-    record('N1', formatVerdict('N1/ud25 (no attack)', agg))
+    // `controlFailed: true` was hardcoded here -- an assertion that a paired
+    // control demonstrated the loss, made for a NO-ATTACK baseline cell, by a
+    // process that observed no control at all. §5.1 gives N1 an `external`
+    // control (gate B / E48, and for C0 only), which resolves to `undefined`
+    // and reports PASS (control unverified): honest about a citation this
+    // harness cannot check, rather than laundering it into a verified fact.
+    const n1Cell = { attack: 'N1', variant: 'ud25', candidate: 'ud25', fs: opts.fsLabel }
+    const n1Control = resolveControl(n1Cell, [n1Cell])
+    const agg = aggregateCell(records, () => false, {
+      target,
+      controlFailed: controlFailedFlag(n1Control.state),
+      controlState: n1Control.state,
+    })
+    record(
+      'N1',
+      formatVerdict('N1/ud25 (no attack)', agg) + `\tcontrol=${controlTag(n1Control.state)}`
+    )
     console.log('')
   }
 
