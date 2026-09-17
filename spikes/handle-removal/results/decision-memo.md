@@ -16,9 +16,30 @@ therefore **machine-local — they are not on the branch**, and an owner reading
 this from `main` cannot re-derive a single number in it from the raw data. What
 IS on the branch and tracked: every harness and attack script, this memo, and
 `results/SUMMARY.md` — which is regenerated from the raw data and carries the
-per-cell ran/passed/failed/never-ran counts and the control status for all 560
-cells, so the cell-level claims here ARE checkable from the branch even though
-the record-level ones are not. Digests of the two binaries, so a later build can
+per-cell ran/passed/failed/never-ran counts and the control status.
+
+> **CORRECTION 2026-09-17 — this memo's own reproducibility instruction was
+> broken, and it is the most consequential error found in it.** The sentence
+> here used to say `SUMMARY.md` carries those counts "for all 560 cells, so the
+> cell-level claims here ARE checkable from the branch." **Follow that today and
+> the numbers contradict this memo with nothing explaining why.** `SUMMARY.md`
+> now reads **606 cells / 136,240 records / 60 raw files**; every figure in this
+> memo was computed against **560 cells / 46,760 records / 34 raw files**.
+>
+> The corpus is not corrupt and the memo is not stale in its conclusions — the
+> corpus GREW. The `A13-WARMARM` arms alone added 86,400 records, and the scored
+> `guardHash` cell, the `A13-VALIDATE` runs and the Linux filesystem passes
+> added the rest. Nothing was removed.
+>
+> **So read this memo's tables as a point-in-time snapshot of the 560-cell
+> corpus, not as a live query against `SUMMARY.md`.** Where the two disagree on a
+> total, `SUMMARY.md` is current and this memo describes an earlier state.
+> Where they disagree on a *verdict*, see the plan's R6 section: `verdictFor`'s
+> clause order was corrected on 2026-09-17 and 14 cells legitimately changed
+> verdict.
+>
+> This is the same defect class this memo exists to document, turned on the memo
+> itself: a confident, checkable-looking instruction that nobody executed. Digests of the two binaries, so a later build can
 be compared against what was measured:
 
 | Artifact | Bytes | sha256 |
@@ -544,8 +565,11 @@ NEVER-RAN (control)  A4/default/V2  ran=30 passed=30 failed=0 never-ran=0  contr
   ...
 ```
 
-**Re-scored corpus** (`results/SUMMARY.md`, 560 cells / 46,760 records / 34 raw
-files — the original 549 cells plus 11 new `A13-TIMING` cells):
+**Re-scored corpus** (560 cells / 46,760 records / 34 raw files — the original
+549 cells plus 11 new `A13-TIMING` cells). **These are the numbers as of this
+memo's writing, not a live `SUMMARY.md` query**: that file now reads 606 cells /
+136,240 records / 60 raw files because the corpus grew afterwards. See the
+correction near the top:
 
 | Verdict | Cells | Was, control-blind |
 |---|---|---|
