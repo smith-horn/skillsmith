@@ -227,7 +227,7 @@ export function computeTreeHash(record) {
   for (const rel of rels) {
     const e = record.get(rel)
     const contentPart = e.type === 'file' ? e.contentHash : e.type === 'symlink' ? e.linkText : ''
-    hash.update(`${rel} ${e.type} ${e.mode} ${e.size} ${contentPart}\n`)
+    hash.update(`${rel}\u0000${e.type}\u0000${e.mode}\u0000${e.size}\u0000${contentPart}\n`)
   }
   return hash.digest('hex')
 }
