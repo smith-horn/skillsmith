@@ -102,14 +102,35 @@ export function removeVR(targetRoot, options = {}) {
   // 512 and a caller raising it had no effect whatsoever -- measured: 600
   // directories with maxHeldFds:100000 still stopped at the 512th.
   //
-  // The cap matters more than a spike fixture suggests. This design holds one
-  // fd per directory for the WHOLE tree, because the guard pass and the removal
-  // pass are separate; a realistic skills layout (a directory per skill plus
-  // references/ and assets/) reaches 512 at roughly 170 skills, which is an
-  // ordinary power user, and the reported `path` is then whichever directory
-  // happened to be 512th rather than anything actually wrong. SMI-6531 should
-  // decide whether to raise the cap, or to fuse the two passes so only
-  // depth-many fds are held at once.
+  // THE CAP IS ALREADY EXCEEDED BY A SINGLE REAL SKILL, AND AN EARLIER VERSION
+  // OF THIS COMMENT COUNTED THE WRONG THING.
+  //
+  // It said the cap "reaches 512 at roughly 170 skills, which is an ordinary
+  // power user" -- counting directories PER SKILL AT THE ROOT. The shape that
+  // matters is directories WITHIN ONE SKILL, and the removal walk runs against
+  // one skill at a time. Measured on the author's machine, 2026-09-17:
+  //
+  //   ~/.claude/skills/linear        1,630 dirs   3x over the cap
+  //   ~/.claude/skills/.backups      4,130 dirs   8x
+  //   ~/.claude/skills/dev-browser     529 dirs
+  //   ~/.agents/skills/linear        1,585 dirs
+  //
+  // So this is not a power-user ceiling reached after 170 installs. ONE skill
+  // blows it, today, and Skillsmith could not uninstall its own `linear` skill
+  // through this path.
+  //
+  // It surfaces badly too: exceeding the cap is a STOP, not a fallback trigger,
+  // so the caller reports "uninstall failed" with a `path` naming whichever
+  // directory happened to be 512th rather than anything actually wrong.
+  //
+  // This design holds one fd per directory for the WHOLE tree because the guard
+  // pass and the removal pass are separate. The fix is to fuse the two passes so
+  // only depth-many fds are held at once; raising the cap trades one arbitrary
+  // limit for a larger one and still fails on `.backups`.
+  //
+  // Bearing on the owner's 2026-09-17 decision: this is one of the measurements
+  // that moved the recommendation from the native track to C4 quarantine-by-
+  // rename, which has no per-directory fd cost at all because it is one rename.
   const guard = guardPass(shim, T.fd, { hooks, maxHeldFds: options.maxHeldFds })
   if (guard.status === 'stopped') {
     fs.closeSync(P.fd)
