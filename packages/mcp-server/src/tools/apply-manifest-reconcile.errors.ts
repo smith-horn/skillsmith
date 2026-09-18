@@ -100,15 +100,35 @@ export function describeReconcileError(
       // `unreclaimable_legacy`/`unreclaimable_unparseable` fail on the FIRST
       // attempt (never in `RETRYABLE_REASONS`) and never clear on their own —
       // "timed out ... waiting" would wrongly imply retrying helps.
+      //
+      // `reclaim_disabled` (SMI-6759) reaches here a different way and needs
+      // the same verb. It IS waited out — it is in `RETRYABLE_REASONS`,
+      // because a differently-configured peer without the opt-out can still
+      // reclaim the lock and release it — but THIS process will never reclaim
+      // it: `classifyRefusal` returns that reason only when auto-reclaim is
+      // off AND the v1 owner is already dead (`owned-lock.claim.ts`, and a
+      // LIVE owner yields `held` instead). So the wait is real, the 30s is
+      // real, and retrying here still cannot help. Saying "timed out waiting"
+      // describes the elapsed time correctly and the remedy wrongly.
       const nonRetryable =
-        ctx.lockReason === 'unreclaimable_legacy' || ctx.lockReason === 'unreclaimable_unparseable'
+        ctx.lockReason === 'unreclaimable_legacy' ||
+        ctx.lockReason === 'unreclaimable_unparseable' ||
+        ctx.lockReason === 'reclaim_disabled'
       const verb = nonRetryable
         ? `Could not acquire the manifest lock at '${ctx.path ?? '<unknown>'}'`
         : `Timed out waiting for the manifest lock at '${ctx.path ?? '<unknown>'}'`
       const lockPath = ctx.path ?? '<manifest>.lock'
       const namesReclaim = Boolean(ctx.reclaimPath)
+      // Only `reclaim_disabled` has a remedy that touches no files at all, and
+      // step 1 below is already answered for it — the holder being dead is
+      // what the reason MEANS. Say both, so the user is not sent to `ps` to
+      // confirm something the error already knows (SMI-6759).
+      const optOutHint =
+        ctx.lockReason === 'reclaim_disabled'
+          ? ` The holder is already dead and auto-reclaim is disabled here, so this will not clear on its own: either unset SKILLSMITH_LOCK_NO_AUTO_RECLAIM and retry, or remove the file named below.`
+          : ''
       return (
-        `${verb}${ctx.lockReason ? ` (reason: ${ctx.lockReason})` : ''}. Manual unstick -- ` +
+        `${verb}${ctx.lockReason ? ` (reason: ${ctx.lockReason})` : ''}.${optOutHint} Manual unstick -- ` +
         `1) confirm no skillsmith process is running: ps -ax | grep -E '[s]killsmith|[s]klx'; ` +
         `2) inspect (read-only): cat ${lockPath}${namesReclaim ? ` ; cat ${ctx.reclaimPath}` : ''}; ` +
         `3) if stale, remove it: rm ${lockPath}${namesReclaim ? ` ; rm ${ctx.reclaimPath}` : ''}.`

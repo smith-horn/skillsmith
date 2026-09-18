@@ -4,6 +4,14 @@ All notable changes to `@skillsmith/mcp-server` are documented here.
 
 ## [Unreleased]
 
+- **Fix**: SMI-6759 -- a dead lock holder is no longer reported as a timeout. When
+  `SKILLSMITH_LOCK_NO_AUTO_RECLAIM` is set and a process was killed holding the manifest lock,
+  `apply_manifest_reconcile` waited 30s and said "Timed out waiting", which reads as transient
+  contention. That reason (`reclaim_disabled`) is returned only when auto-reclaim is off AND the
+  holder is already dead, so retrying in that process can never help. It now says the lock could
+  not be acquired, states that the holder is dead and auto-reclaim is disabled, and names the one
+  remedy that touches no files: unset `SKILLSMITH_LOCK_NO_AUTO_RECLAIM`. (#TBD)
+
 - **Fix**: SMI-6735 -- this package's own manifest lock is gone, not fixed in place.
   `acquireManifestLock()`/`releaseManifestLock()` hand-rolled a second, independent age-based lock
   against the **byte-identical** path `@skillsmith/core`'s `ManifestManager` locks, and this server runs
