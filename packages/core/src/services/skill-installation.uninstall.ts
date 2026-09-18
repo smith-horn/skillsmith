@@ -20,6 +20,7 @@ import { removeIfSame } from '../install/remove-if-same.js'
 import type { SkillDependencyRepository } from '../repositories/SkillDependencyRepository.js'
 import type { ProgressCallback, UninstallResult } from './skill-installation.types.js'
 import { checkForModifications } from './skill-installation.io.js'
+import { checkRemovalTarget } from './skill-installation.removal-guard.js'
 import { hashContent, manifestKeyFor } from './skill-installation.helpers.js'
 import type { ManifestManager } from './skill-manifest.js'
 import { CANONICAL_CLIENT, type ClientId } from '../install/paths.js'
@@ -284,6 +285,25 @@ export async function performUninstall(params: {
       }
       skillEntry = adoptResult.entry
       adopted = adoptResult.adopted
+    }
+
+    // SMI-6732: the manifest is not a trusted input. Until this check the
+    // uninstall path deleted whatever `installPath` named -- a folder outside
+    // the skills dir, a RELATIVE path resolved against process.cwd(), or the
+    // skills root itself -- and reported "uninstalled successfully" each time.
+    // The absoluteness and containment rules already existed in
+    // `skill-installation.target-guard.ts` for the WRITE path and were never
+    // called here. `removeIfSame` cannot stand in for them: it verifies
+    // IDENTITY ("I deleted the thing I inspected"), not AUTHORITY ("I was
+    // allowed to delete it"), and knows nothing about `skillsDir`.
+    const allowed = await checkRemovalTarget(skillEntry.installPath, skillsDir)
+    if (!allowed.ok) {
+      return {
+        success: false,
+        skillName,
+        message: `Skill "${skillName}" was not removed: ${allowed.reason}`,
+        ...listenerWarning(),
+      }
     }
 
     const installPath = skillEntry.installPath

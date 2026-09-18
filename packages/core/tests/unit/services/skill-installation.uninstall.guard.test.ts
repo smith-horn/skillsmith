@@ -560,3 +560,132 @@ describe('uninstall removes only the folder it checked (SMI-6529 round 15)', () 
     expect(await manifestEntry('swapped-skill')).toBeDefined()
   })
 })
+
+describe('uninstall only deletes inside the skills directory (SMI-6732)', () => {
+  // The manifest is not a trusted input. Its workspace-scoped form lives at
+  // `<workspaceRoot>/.skillsmith/manifest.json` -- inside the project tree and
+  // not gitignored -- so a cloned repository can carry an entry naming any path
+  // on the machine. Measured before the fix, all with `force: true`, all
+  // returning `success: true, "uninstalled successfully"`.
+  //
+  // THESE CASES GO THROUGH `uninstall()`, NOT `checkRemovalTarget()` DIRECTLY,
+  // on purpose. The defect being fixed was not a missing predicate -- absoluteness
+  // and containment already existed in `skill-installation.target-guard.ts` -- it
+  // was that the destructive path never CALLED one. A unit test of the guard
+  // alone would pass against the unfixed code and prove nothing.
+
+  it('refuses an installPath outside the skills directory, and leaves it on disk', async () => {
+    const victim = path.join(tmpDir, 'not-a-skill')
+    await fs.mkdir(victim, { recursive: true })
+    await fs.writeFile(path.join(victim, 'important.txt'), 'user data\n')
+    await track('escaped', victim)
+
+    const result = await createService().uninstall('escaped', { force: true })
+
+    expect(result.success).toBe(false)
+    expect(result.message).toContain('outside the')
+    expect(await fs.readFile(path.join(victim, 'important.txt'), 'utf-8')).toBe('user data\n')
+    expect(await manifestEntry('escaped')).toBeDefined()
+  })
+
+  it('refuses a RELATIVE installPath rather than resolving it against the cwd', async () => {
+    // The pre-fix behaviour deleted `<process.cwd()>/rel-target` and reported
+    // `removedPath: "rel-target"`, which names a path the user cannot locate.
+    await track('relative', 'rel-target')
+
+    const result = await createService().uninstall('relative', { force: true })
+
+    expect(result.success).toBe(false)
+    expect(result.message).toContain('not absolute')
+    expect(await manifestEntry('relative')).toBeDefined()
+  })
+
+  it('refuses the skills directory itself, which would delete every skill', async () => {
+    const bystander = path.join(skillsDir, 'other-skill')
+    await fs.mkdir(bystander, { recursive: true })
+    await fs.writeFile(path.join(bystander, 'SKILL.md'), '# Other\n')
+    await track('theroot', skillsDir)
+
+    const result = await createService().uninstall('theroot', { force: true })
+
+    expect(result.success).toBe(false)
+    expect(result.message).toContain('every installed skill')
+    expect(await fs.readFile(path.join(bystander, 'SKILL.md'), 'utf-8')).toBe('# Other\n')
+  })
+
+  it('refuses a traversal that climbs back out of the skills directory', async () => {
+    const victim = path.join(tmpDir, 'loot')
+    await fs.mkdir(victim, { recursive: true })
+    await fs.writeFile(path.join(victim, 'keep.txt'), 'keep\n')
+    await track('climber', path.join(skillsDir, '..', 'loot'))
+
+    const result = await createService().uninstall('climber', { force: true })
+
+    expect(result.success).toBe(false)
+    expect(await fs.readFile(path.join(victim, 'keep.txt'), 'utf-8')).toBe('keep\n')
+  })
+
+  it('refuses an entry whose PARENT is a symlink pointing outside', async () => {
+    // Lexical containment alone would accept this: the string sits under
+    // skillsDir. The delete would land in `outside/child`.
+    const outside = path.join(tmpDir, 'outside')
+    await fs.mkdir(path.join(outside, 'child'), { recursive: true })
+    await fs.writeFile(path.join(outside, 'child', 'data.txt'), 'data\n')
+    await fs.symlink(outside, path.join(skillsDir, 'hop'))
+    await track('hopper', path.join(skillsDir, 'hop', 'child'))
+
+    const result = await createService().uninstall('hopper', { force: true })
+
+    expect(result.success).toBe(false)
+    expect(await fs.readFile(path.join(outside, 'child', 'data.txt'), 'utf-8')).toBe('data\n')
+  })
+
+  it('refuses an entry with no installPath at all, naming the repair', async () => {
+    const manifest = {
+      version: '1.0.0',
+      installedSkills: {
+        broken: { id: 'author/broken', name: 'broken', version: '1.0.0', source: 'x' },
+      },
+    }
+    await fs.writeFile(manifestPath, JSON.stringify(manifest, null, 2))
+
+    const result = await createService().uninstall('broken', { force: true })
+
+    expect(result.success).toBe(false)
+    expect(result.message).toContain('no usable installPath')
+  })
+
+  // POSITIVE CONTROLS. Without these the guard could pass by refusing every
+  // uninstall, which is the failure mode a red test alone does not catch.
+
+  it('still uninstalls a normal skill inside the skills directory', async () => {
+    const good = path.join(skillsDir, 'good-skill')
+    await fs.mkdir(good, { recursive: true })
+    await fs.writeFile(path.join(good, 'SKILL.md'), '# Good\n')
+    await track('good-skill', good)
+
+    const result = await createService().uninstall('good-skill', { force: true })
+
+    expect(result.success).toBe(true)
+    await expect(fs.lstat(good)).rejects.toMatchObject({ code: 'ENOENT' })
+  })
+
+  it('still uninstalls a SYMLINKED skill and leaves its target alone', async () => {
+    // The guard checks the entry's PARENT, not the entry, precisely so this
+    // keeps working: removing a symlink removes the link, never its target.
+    // Realpathing the entry instead would refuse this and break a normal
+    // develop-in-place workflow.
+    const checkout = path.join(tmpDir, 'dev', 'my-skill')
+    await fs.mkdir(checkout, { recursive: true })
+    await fs.writeFile(path.join(checkout, 'SKILL.md'), '# Local work\n')
+    const link = path.join(skillsDir, 'my-skill')
+    await fs.symlink(checkout, link)
+    await track('my-skill', link)
+
+    const result = await createService().uninstall('my-skill', { force: true })
+
+    expect(result.success).toBe(true)
+    await expect(fs.lstat(link)).rejects.toMatchObject({ code: 'ENOENT' })
+    expect(await fs.readFile(path.join(checkout, 'SKILL.md'), 'utf-8')).toBe('# Local work\n')
+  })
+})
