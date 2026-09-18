@@ -17,7 +17,8 @@
 #      string is run through it and MUST fail; the NEW (live) command
 #      string no longer calls xargs at all, so it trivially isn't affected
 #      by the shim, and is asserted to succeed with the full untruncated
-#      value reaching the downstream flag.
+#      value reaching the wrapper's JSONL log `identifier` field (ruflo's
+#      argv before SMI-6724).
 #   3. Real BSD xargs (macOS only, BEST-EFFORT/INFORMATIONAL): same OLD
 #      command string against the actual system `xargs` binary. Skipped
 #      (not failed) on Linux, since GNU xargs' `-I` has a much larger
@@ -154,7 +155,15 @@ STUB_DIR=$(mktemp -d)
 mkdir -p "$STUB_DIR/node_modules/ruflo/bin" "$STUB_DIR/scripts"
 # The live call site routes through the real wrapper script (Part B) -- copy
 # it into the stub project dir so this integration test exercises the real
-# xargs-removal -> wrapper -> ruflo pipeline end-to-end, not just a fragment.
+# xargs-removal -> wrapper pipeline end-to-end, not just a fragment.
+#
+# SMI-6724 removed the wrapper's ruflo invocation, so the downstream
+# observable moved. The full untruncated command value now lands in the
+# wrapper's own JSONL log `identifier` field rather than in ruflo's argv.
+# This layer's INTENT is unchanged -- prove no truncation occurs between the
+# hook and the thing that records the command -- only the place it reads.
+# The ruflo stub is kept, and its capture file is now asserted ABSENT, so
+# this test doubles as a second guard that the invocation stays removed.
 cp "$REPO_ROOT/scripts/claude-hooks-log-wrapper.sh" "$STUB_DIR/scripts/claude-hooks-log-wrapper.sh"
 chmod +x "$STUB_DIR/scripts/claude-hooks-log-wrapper.sh"
 cat > "$STUB_DIR/node_modules/ruflo/bin/ruflo.js" << 'NODE_EOF'
@@ -163,18 +172,34 @@ const fs = require('fs');
 fs.writeFileSync('/tmp/claude-hooks-regression-argv-capture.json', JSON.stringify(process.argv.slice(2)));
 process.exit(0);
 NODE_EOF
+# SMI-6724 review (PR #2889, PR-16): expose the stub the way npm does, so a
+# re-add spelled `node_modules/.bin/ruflo` cannot ENOENT its way past this guard.
+chmod +x "$STUB_DIR/node_modules/ruflo/bin/ruflo.js"
+mkdir -p "$STUB_DIR/node_modules/.bin"
+ln -s ../ruflo/bin/ruflo.js "$STUB_DIR/node_modules/.bin/ruflo"
 rm -f /tmp/claude-hooks-regression-argv-capture.json
 mkdir -p "$STUB_DIR/fakehome"
 (cd "$STUB_DIR" && printf '%s' "$TEST_INPUT" | CLAUDE_PROJECT_DIR="$STUB_DIR" HOME="$STUB_DIR/fakehome" sh -c "$NEW_CMD" >/dev/null 2>&1)
 NEW_RC=$?
 assert_true "NEW command string succeeds (rc=$NEW_RC)" "$([ "$NEW_RC" -eq 0 ] && echo 0 || echo 1)"
-if [ -f /tmp/claude-hooks-regression-argv-capture.json ]; then
-  CAPTURED=$(cat /tmp/claude-hooks-regression-argv-capture.json)
-  assert_contains "full untruncated command value reached the downstream --command flag" \
-    "$CAPTURED" "a moderately long commit message that exceeds the buffer"
-  rm -f /tmp/claude-hooks-regression-argv-capture.json
+# SMI-6724: the stub must NOT run. If the invocation is ever re-added, the
+# capture file appears and this fails -- the same marker guard the wrapper's
+# own suite uses.
+# A fire-and-forget re-add (`... &`) returns before its child writes; let it land.
+sleep 0.5
+assert_true "ruflo stub was NOT invoked (SMI-6724)" \
+  "$([ ! -f /tmp/claude-hooks-regression-argv-capture.json ] && echo 0 || echo 1)"
+rm -f /tmp/claude-hooks-regression-argv-capture.json
+
+# The untruncated value must still reach the recorder. That is now the
+# wrapper's JSONL log, not ruflo's argv.
+NEW_LOG="$STUB_DIR/fakehome/.skillsmith/logs/claude-hooks-$(date -u +%Y-%m-%d).log"
+if [ -f "$NEW_LOG" ]; then
+  LOGGED=$(tail -n 1 "$NEW_LOG")
+  assert_contains "full untruncated command value reached the wrapper log" \
+    "$LOGGED" "a moderately long commit message that exceeds the buffer"
 else
-  echo "FAIL argv capture file was not written (NEW command may not have invoked ruflo.js)"
+  echo "FAIL wrapper log was not written at $NEW_LOG (hook may not have run at all)"
   fail=$((fail + 1))
 fi
 rm -rf "$STUB_DIR"

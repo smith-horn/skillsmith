@@ -1,42 +1,35 @@
 #!/usr/bin/env sh
-# Wraps a `ruflo hooks <subcommand>` invocation called from .claude/settings.json's
-# PreToolUse/PostToolUse hooks with best-effort JSON-lines logging to
+# Records one JSON-lines entry per Claude Code hook invocation to
 # ~/.skillsmith/logs/claude-hooks-<date>.log, mirroring the existing
 # session-audit logging convention (scripts/lib/session-start-audit-helper.ts's
 # {timestamp, code, payload} shape) and session-stop-hook-safe.sh's
 # retention-day env-var precedent.
 #
-# Usage: claude-hooks-log-wrapper.sh <hook-name> <identifier> -- <ruflo-args...>
-#   hook-name   pre-command | post-command | pre-edit | post-edit  (log field only)
+# Usage: claude-hooks-log-wrapper.sh <hook-name> <identifier> [-- <ignored...>]
+#   hook-name   pre-command | post-command | pre-edit | post-edit  (log field)
 #   identifier  the (already-truncated by caller) command/file string, logged
-#               (after best-effort secret redaction) for the log record
-#   -- <args>   forwarded verbatim to `node .../ruflo.js hooks <hook-name> <args>`
+#               after best-effort secret redaction
+#   -- <args>   accepted and ignored. Retained so a stale call site cannot
+#               break. SMI-6724 Wave 1 removed the ruflo invocation these
+#               were forwarded to; see the note further down.
 #
-# Always exits 0 -- wrapping/logging must never turn a call that previously
-# succeeded (or was already suppressed) into a blocking hook error. This
-# uniformly normalizes all 4 call sites to non-blocking, INCLUDING
-# PreToolUse:Write|Edit|MultiEdit, which previously surfaced raw ruflo
-# failures (no `2>/dev/null || true`). That's a deliberate, recorded
-# plan-review decision (SMI-5813) -- the bounded stderr excerpt captured
-# below into the log record is the mitigation for the lost raw-surfacing
-# behavior: a failure is no longer visible live, but it is now durably
-# inspectable with its actual error text, which the pre-fix state never had.
+# Always exits 0 -- logging must never turn a tool call into a blocking hook
+# error. This uniformly normalizes all 4 call sites to non-blocking, a
+# deliberate recorded plan-review decision (SMI-5813). That decision still
+# holds and is now trivially satisfied: since SMI-6724 Wave 1 there is no
+# downstream process whose failure could be surfaced or suppressed.
 set -u
 umask 077
 
 HOOK_NAME="${1:-unknown}"
 IDENTIFIER="${2:-}"
-# `shift 2` is a fatal (uncatchable-by-`|| true`) error under dash when
-# $# < 2 -- guard the count explicitly instead.
-[ $# -ge 2 ] && shift 2 || shift $#
-[ "${1:-}" = "--" ] && shift
-
-PROJECT_DIR="${CLAUDE_PROJECT_DIR:-$(pwd)}"
+# Any further arguments are ignored. Before SMI-6724 they were shifted off
+# and forwarded to ruflo, and PROJECT_DIR located that binary; with the
+# invocation gone both the shifts and PROJECT_DIR had no reader, so they are
+# removed rather than left as dead code that implies a consumer. Trailing
+# arguments (including a `--` separator) remain harmless -- the wrapper
+# simply does not read them.
 LOG_RETENTION_DAYS="${SKILLSMITH_HOOK_LOG_RETENTION_DAYS:-14}"
-HOOK_TIMEOUT_SECONDS="${SKILLSMITH_HOOK_TIMEOUT_SECONDS:-3}"
-case "$HOOK_TIMEOUT_SECONDS" in
-  ''|*[!0-9]*|0) HOOK_TIMEOUT_SECONDS=3 ;;
-esac
 # `set -u` aborts on an unset $HOME -- guard it explicitly rather than
 # relying on HOME always being set in every context this hook's shell runs in.
 LOG_DIR="${HOME:-/tmp}/.skillsmith/logs"
@@ -96,39 +89,26 @@ redact() {
     -e 's/([A-Z][A-Z0-9_]*_(TOKEN|KEY|SECRET|PASSWORD|CREDENTIAL)[A-Z0-9_]*=)[^ ]+/\1[REDACTED]/g'
 }
 
-# Ruflo is advisory on this hot path. Run it behind an internal watchdog so
-# a wedged state/database/network operation cannot consume Claude Code's much
-# larger command-hook timeout before an ordinary Bash/Edit tool is dispatched.
-STDERR_FILE=$(mktemp -t skillsmith-hook-stderr.XXXXXX 2>/dev/null) || STDERR_FILE=""
-TIMEOUT_FILE=$(mktemp -t skillsmith-hook-timeout.XXXXXX 2>/dev/null) || TIMEOUT_FILE=""
-if [ -n "$STDERR_FILE" ] && [ -n "$TIMEOUT_FILE" ]; then
-  node "$PROJECT_DIR/node_modules/ruflo/bin/ruflo.js" hooks "$HOOK_NAME" "$@" \
-    > /dev/null 2>"$STDERR_FILE" &
-  RUFLO_PID=$!
-  (
-    sleep "$HOOK_TIMEOUT_SECONDS"
-    printf '1' >"$TIMEOUT_FILE"
-    kill "$RUFLO_PID" 2>/dev/null || true
-  ) &
-  WATCHDOG_PID=$!
-  wait "$RUFLO_PID" 2>/dev/null
-  EXIT_CODE=$?
-  kill "$WATCHDOG_PID" 2>/dev/null || true
-  wait "$WATCHDOG_PID" 2>/dev/null || true
-  STDERR_OUT=$(cat "$STDERR_FILE" 2>/dev/null)
-  if [ -s "$TIMEOUT_FILE" ]; then
-    STDERR_OUT="${STDERR_OUT}${STDERR_OUT:+
-}ruflo hook timed out after ${HOOK_TIMEOUT_SECONDS}s"
-  fi
-  rm -f "$STDERR_FILE" "$TIMEOUT_FILE"
-else
-  # If temporary-file creation fails, fail open without invoking an unbounded
-  # downstream process. Logging below still records the local failure.
-  EXIT_CODE=1
-  STDERR_OUT="ruflo hook skipped: unable to create watchdog files"
-  [ -n "$STDERR_FILE" ] && rm -f "$STDERR_FILE"
-  [ -n "$TIMEOUT_FILE" ] && rm -f "$TIMEOUT_FILE"
-fi
+# SMI-6724 Wave 1: the ruflo invocation is removed. Measured before removal:
+# `ruflo hooks post-command` blocked for the wrapper's FULL watchdog timeout
+# on every Bash tool call -- 1.05s / 3.06s / 10.06s at timeouts of 1/3/10s,
+# so the cost tracked the timeout, not the work. It recorded the shell no-op
+# `true` rather than the real command, because `--success true` (space form)
+# is parsed as a boolean flag whose trailing "true" falls through to a
+# positional, and @claude-flow/cli's hooks.js prefers `ctx.args[0]` over the
+# explicit `--command` flag. Result: 53,605 rows holding ONE distinct value.
+#
+# Nothing read them. The `commands` namespace has exactly two references in
+# @claude-flow/cli and both are write sites, and `access_count` -- which IS
+# incremented on every point-get -- is 0 across all ~60,000 rows.
+#
+# The JSONL log below is deliberately KEPT. It records the real command text
+# and is what made that diagnosis possible: 2,667 distinct commands in a
+# single day against the store's 1. It costs one shell append.
+#
+# Full evidence: SMI-6724.
+EXIT_CODE=0
+STDERR_OUT=""
 STDERR_EXCERPT=$(redact "$STDERR_OUT" | head -c 500)
 
 TS=$(date -u +%Y-%m-%dT%H:%M:%SZ)
