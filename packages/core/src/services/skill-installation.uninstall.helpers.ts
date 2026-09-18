@@ -11,7 +11,7 @@
  * `@skillsmith/core`'s public export surface.
  */
 
-import type { Stats } from 'fs'
+import type { BigIntStats } from 'fs'
 import * as fs from 'fs/promises'
 
 import { checkGitAtRoot } from '../install/fan-out.overwrite.js'
@@ -26,13 +26,21 @@ import type { ProgressCallback, SkillManifestEntry } from './skill-installation.
  * it. A symlink or a file needs no such check, since removing it leaves what
  * it points at alone. Returns the entry's identity (null when nothing is
  * there), so the delete can confirm it is still the same entry.
+ *
+ * Round 8 (SMI-6732 C1): reads `{bigint: true}` -- a `number`-typed `st_ino`
+ * has already lost precision above 2^53 on some filesystems (see
+ * `skill-installation.removal-identity.ts`'s `DirIdentity` docblock), and
+ * `performUninstall` feeds this same result into `identityChanged` and
+ * `removeIfSame`'s own identity comparisons. Deliberately ONE lstat, not two
+ * -- a split read between "what was inspected" and "what gets compared" was
+ * the round-5 defect this guards against.
  */
 export async function inspectForRemoval(
   installPath: string
-): Promise<{ stat: Stats | null } | { refusal: string }> {
-  let stat: Stats
+): Promise<{ stat: BigIntStats | null } | { refusal: string }> {
+  let stat: BigIntStats
   try {
-    stat = await fs.lstat(installPath)
+    stat = await fs.lstat(installPath, { bigint: true })
   } catch (error) {
     const code = (error as NodeJS.ErrnoException).code
     if (code === 'ENOENT') return { stat: null }
