@@ -38,8 +38,24 @@
  * be one segment inside a directory we own. See the comment at the check itself.
  */
 
+import * as fs from 'node:fs/promises'
 import * as path from 'node:path'
 import { resolveRealOrFallback } from './skill-installation.target-guard.js'
+
+/**
+ * Whether `s` reaches the filesystem as itself. Node encodes a path string as
+ * UTF-8 and substitutes U+FFFD for an unpaired surrogate on the way, so such a
+ * string names a DIFFERENT entry from the one it spells. Measured (round 5, F3):
+ * removing a lone U+D800 deleted a directory named U+FFFD, on BOTH macOS and
+ * Linux, through the tracked path as well as adoption.
+ *
+ * That is the same second string this file exists to refuse -- produced by the
+ * encoder rather than by `path.resolve`. `String.prototype.isWellFormed` is the
+ * same test but is ES2024, and this package compiles against ES2022.
+ */
+function survivesEncoding(s: string): boolean {
+  return Buffer.from(s, 'utf8').toString('utf8') === s
+}
 
 /**
  * Why a removal was refused. Always names the offending path.
@@ -98,7 +114,77 @@ export function checkRemovableSkillName(skillName: string): RemovalTargetCheck {
         `Use \`apply_manifest_reconcile\` if a stale manifest record needs clearing.`,
     }
   }
+  if (!survivesEncoding(skillName)) {
+    return {
+      ok: false,
+      reason:
+        `the name contains an unpaired surrogate, so it cannot name a directory: the ` +
+        `filesystem call would substitute U+FFFD and act on a different name. Nothing was removed.`,
+    }
+  }
   return { ok: true }
+}
+
+/**
+ * IS THIS NAME AN ENTRY OF `skillsDir`, SPELLED AS THE FILESYSTEM SPELLS IT?
+ * Asked only on the adoption path, after `fs.access` has established that the
+ * spelling resolves to something there.
+ *
+ * Round 5 (pre-merge gate, F2): a case- or normalization-insensitive volume
+ * (APFS, HFS+) resolves the NFD spelling (e + U+0301) onto a directory named
+ * with U+00E9, and `myskill` onto `MySkill`, while `manifestKeyFor` keys on the
+ * raw string. So a second spelling of a TRACKED skill misses its manifest
+ * record, is adopted as untracked, has `installedAt` backdated to its newest
+ * mtime, and is deleted WITHOUT `force` -- the modification gate never sees it,
+ * and the real record is left behind. Measured: the honest spelling was refused
+ * ("modified since installation") while the NFD spelling reported
+ * "uninstalled successfully" and destroyed the user's edits.
+ *
+ * This is round 2's B2 exactly -- `./x`, `x/.`, `a/../x` reaching a tracked
+ * directory past its own record -- reopened by the volume instead of by
+ * `path.join`.
+ *
+ * NO SECOND STRING. Normalizing or case-folding here would produce one, and
+ * this file's rule is that the raw value must already BE the canonical one. So
+ * the directory is asked how the entry is actually spelled and the caller must
+ * have spelled it that way. On a strict volume every alias already fails
+ * `fs.access` with ENOENT, so this makes the platforms agree rather than adding
+ * a macOS-only rule.
+ *
+ * Failure follows the convention `performUninstall` set in rounds 25/26: only
+ * ENOENT is absence; anything else, including an error carrying no `code`, is
+ * "could not tell", said in those words. Nothing is removed either way.
+ */
+export async function checkExactEntryName(
+  skillsDir: string,
+  skillName: string
+): Promise<{ ok: true } | { ok: false; message: string }> {
+  let entries: string[]
+  try {
+    entries = await fs.readdir(skillsDir)
+  } catch (err) {
+    const code = (err as NodeJS.ErrnoException | null)?.code
+    if (code === 'ENOENT') {
+      return { ok: false, message: `Skill "${skillName}" is not installed.` }
+    }
+    const detail = code ?? (err instanceof Error ? err.message : String(err))
+    return {
+      ok: false,
+      message:
+        `Could not tell whether "${skillName}" is installed: ${skillsDir} could not be ` +
+        `listed (${detail}). Nothing was removed.`,
+    }
+  }
+  if (entries.includes(skillName)) return { ok: true }
+  return {
+    ok: false,
+    message:
+      `Skill "${skillName}" was not removed: no entry in ${skillsDir} is spelled exactly ` +
+      `that way, although this volume resolves the spelling to one (it matches by case or ` +
+      `by Unicode normalization). Skillsmith removes a directory only under its exact name, ` +
+      `so a tracked skill cannot be reached under a second spelling that skips its manifest ` +
+      `record and its modification check. List ${skillsDir} for the exact spelling and retry.`,
+  }
 }
 
 /**
@@ -135,6 +221,21 @@ export async function checkRemovalTarget(
         `the manifest entry has no usable installPath (got ${got}), so there is nothing safe ` +
         `to remove. Repair the entry with the \`apply_manifest_reconcile\` tool ` +
         `(\`drop_entry\` removes a stale record whose install path no longer resolves).`,
+    }
+  }
+
+  // Round 5 (F3, the manifest-side twin of the name rule above): a lone
+  // surrogate in `installPath` reaches the filesystem as U+FFFD, so the path
+  // checked here and the path removed would differ -- the same second string
+  // the canonical-form check below refuses, produced by the encoder rather than
+  // by `resolve`. Measured deleting a U+FFFD directory on macOS AND Linux.
+  if (!survivesEncoding(installPath)) {
+    return {
+      ok: false,
+      reason:
+        `the manifest entry's installPath contains an unpaired surrogate, which the ` +
+        `filesystem call would replace with U+FFFD, so the path checked and the path removed ` +
+        `would differ. It is refused rather than substituted. Nothing was removed.`,
     }
   }
 
