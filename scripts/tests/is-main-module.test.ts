@@ -79,7 +79,11 @@ describe('isMainModule', () => {
     } finally {
       process.argv = saved
     }
-    expect(isMainModule(pathToFileURL('/x/y.mjs').href, '')).toBe(false)
+    // cwd-based URL on purpose: a helper that fell THROUGH the guard would
+    // compare canonicalize('') === cwd and return true, so this fails
+    // loudly; with '/x/y.mjs' it returned false for a reason unrelated to
+    // the guard (measured: three guard-weakening mutations survived it).
+    expect(isMainModule(pathToFileURL(process.cwd()).href, '')).toBe(false)
   })
 
   it('a non-file module URL: not main, by design, and does not throw', () => {

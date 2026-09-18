@@ -259,36 +259,40 @@ describe('predicate source drift (skips when no derived-from tree is installed)'
   let unreadable = 0
   // The scan itself is guarded too: an unreadable _npx (EACCES) at module
   // evaluation would otherwise fail collection and take every test in this
-  // file with it, including the degraded red arm. Four states, because
-  // `existsSync` returns false whenever it cannot STAT, so an unreadable
-  // PARENT (`.npm` with mode 000) would otherwise read as "never installed":
-  // absent (no .npm, or .npm with no _npx), unreachable (.npm cannot be
-  // stat'ed for a reason other than ENOENT), present, unscannable (_npx
-  // itself cannot be listed).
+  // file with it, including the degraded red arm. Four states: absent (no
+  // .npm, or .npm with no _npx), unreachable (the target cannot be stat'ed
+  // for a reason other than ENOENT -- .npm at mode 000, HOME at mode 000, a
+  // file where a directory belongs), present, unscannable (_npx itself
+  // cannot be listed). Stat the TARGET, not its parent: POSIX stat() needs
+  // search permission on the path PREFIX only, so stat'ing `.npm` succeeds
+  // at mode 000 and the EACCES surfaces one level down inside
+  // existsSync('.npm/_npx'), which swallows it and returns false. Measured:
+  // the parent-stat form rendered (absent) over a real cached tree hidden
+  // behind an unreadable .npm -- the conflation it claimed to remove, and a
+  // red arm that had been declared as passing without its output ever
+  // being read past the column where the state token sat.
   let root: 'present' | 'absent' | 'unreachable' | 'unscannable' = 'absent'
-  let parentOk = true
+  let reachable = false
   try {
-    statSync(path.dirname(npxRoot))
+    statSync(npxRoot)
+    reachable = true
+    root = 'present'
   } catch (err) {
-    parentOk = false
     root = (err as { code?: string }).code === 'ENOENT' ? 'absent' : 'unreachable'
   }
-  if (parentOk) {
+  if (reachable) {
     try {
-      if (existsSync(npxRoot)) {
-        root = 'present'
-        for (const hash of readdirSync(npxRoot)) {
-          cacheDirs++
-          const pkg = path.join(npxRoot, hash, 'node_modules', '@claude-flow', 'cli')
-          const pj = path.join(pkg, 'package.json')
-          if (!existsSync(pj)) continue
-          try {
-            const version = (JSON.parse(readFileSync(pj, 'utf8')) as { version: string }).version
-            withCli++
-            if (wanted.has(version)) trees.push({ dir: pkg, version })
-          } catch {
-            unreadable++
-          }
+      for (const hash of readdirSync(npxRoot)) {
+        cacheDirs++
+        const pkg = path.join(npxRoot, hash, 'node_modules', '@claude-flow', 'cli')
+        const pj = path.join(pkg, 'package.json')
+        if (!existsSync(pj)) continue
+        try {
+          const version = (JSON.parse(readFileSync(pj, 'utf8')) as { version: string }).version
+          withCli++
+          if (wanted.has(version)) trees.push({ dir: pkg, version })
+        } catch {
+          unreadable++
         }
       }
     } catch {
@@ -346,14 +350,27 @@ describe('predicate source drift (skips when no derived-from tree is installed)'
           // the set quietly. A site with no literal at all is incomplete.
           let sites = 0
           let incomplete = 0
-          for (const m of src.matchAll(/(?<![A-Za-z0-9_$])["']?backend["']?\s*:\s*/g)) {
+          // The lookbehind also excludes `.`, so `x ? obj.backend : y` (a
+          // member access before a ternary colon) is not read as a site.
+          for (const m of src.matchAll(/(?<![A-Za-z0-9_$.])["']?backend["']?\s*:\s*/g)) {
             sites++
             const start = (m.index ?? 0) + m[0].length
             let depth = 0
+            let quote: string | null = null
             let end = start
             for (; end < src.length; end++) {
               const ch = src[end]
-              if (ch === '(' || ch === '{' || ch === '[') depth++
+              // A quoted span is opaque: a `,` or `}` inside 'a,b' must not
+              // end the value (measured: without this, a quoted separator
+              // placed after both members bounded the value early and the
+              // set passed while missing them).
+              if (quote !== null) {
+                if (ch === '\\') end++
+                else if (ch === quote) quote = null
+                continue
+              }
+              if (ch === "'" || ch === '"' || ch === '`') quote = ch
+              else if (ch === '(' || ch === '{' || ch === '[') depth++
               else if (ch === ')' || ch === '}' || ch === ']') {
                 if (depth === 0) break
                 depth--
