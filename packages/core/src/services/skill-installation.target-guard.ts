@@ -73,7 +73,7 @@ export type CheckInstallTargetResult =
 
 /** `fs.realpath`, falling back to a lexical `path.resolve` when the path can't be resolved
  * (e.g. it doesn't exist, or a component was removed mid-check) — never throws. */
-async function resolveRealOrFallback(target: string): Promise<string> {
+export async function resolveRealOrFallback(target: string): Promise<string> {
   try {
     return await fs.realpath(target)
   } catch {
