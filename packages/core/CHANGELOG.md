@@ -4,6 +4,12 @@ All notable changes to `@skillsmith/core` are documented here.
 
 ## [Unreleased]
 
+- **Docs**: SMI-6759 -- `file-lock.ts`'s `RETRYABLE_REASONS` comment justified waiting out
+  `reclaim_disabled` with "it still ends when that holder releases". That holder is dead by
+  construction, so it never releases. The reason stays retryable -- a differently-configured peer
+  without the opt-out can still reclaim and release it -- but the comment now states that actual
+  mechanism instead of one that cannot occur. No behaviour change. (#TBD)
+
 - **Fix**: SMI-6735 -- the installed-skills manifest lock is now ownership-verified. `ManifestManager`
   previously judged an existing lock stale by its file age and released by unconditional `unlink`, so a
   holder could delete a lock it did not own and two writers could each believe they held it exclusively.

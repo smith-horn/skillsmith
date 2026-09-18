@@ -748,6 +748,49 @@ describe('withLockTimeoutMapping — lock-timeout error mapping (SMI-6735 findin
     expect(guardErr.ctx.lockReason).toBe('held')
     // 'held' never implicates the reclaim lock — no reclaimPath.
     expect(guardErr.ctx.reclaimPath).toBeUndefined()
+    // SMI-6759: assert the RENDERED sentence, not just the context object.
+    // Without this line the whole suite passes under a mutation that inverts
+    // the verb for every reason except `reclaim_unavailable` — because the
+    // three tests that render a message happen to cover exactly the three
+    // reasons such a mutation leaves alone. `held` is the common real case,
+    // and it is the one where retrying genuinely IS the right advice, so it
+    // must keep the waiting verb.
+    expect(describeReconcileError(guardErr.code, guardErr.ctx)).toMatch(/Timed out waiting/)
+    expect(describeReconcileError(guardErr.code, guardErr.ctx)).not.toMatch(/Could not acquire/)
+  })
+
+  it('reclaim_disabled says the lock cannot clear here and names the opt-out, not a plain timeout (SMI-6759)', async () => {
+    const err = new StuckLockError(
+      '/home/user/.skillsmith/manifest.json.lock',
+      '/home/user/.skillsmith/manifest.json.lock.reclaim',
+      'manifest update',
+      'reclaim_disabled',
+      claim
+    )
+
+    let caught: unknown
+    try {
+      await withLockTimeoutMapping(async () => {
+        throw err
+      })
+    } catch (e) {
+      caught = e
+    }
+
+    const guardErr = caught as ReconcileGuardError
+    expect(guardErr.code).toBe('manifest.reconcile.lock_timeout')
+    const msg = describeReconcileError(guardErr.code, guardErr.ctx)
+
+    // `classifyRefusal` returns this reason ONLY when auto-reclaim is off and
+    // the v1 owner is already dead, so "timed out waiting" describes the 30s
+    // correctly and the remedy wrongly — a dead holder never releases.
+    expect(msg).toMatch(/Could not acquire/)
+    expect(msg).not.toMatch(/Timed out waiting/)
+    // The remedy that touches no files, which no other reason has.
+    expect(msg).toMatch(/SKILLSMITH_LOCK_NO_AUTO_RECLAIM/)
+    // This reason never implicates the reclaim lock: `isOwnerDefinitelyDead`
+    // short-circuits before `tryReclaimUnderLock` is ever reached.
+    expect(guardErr.ctx.reclaimPath).toBeUndefined()
   })
 
   it('a reclaim_unavailable error carries the reclaim path through, and the rendered message names both files', async () => {
