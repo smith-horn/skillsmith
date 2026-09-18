@@ -20,8 +20,16 @@ const FILE_LOCK_TIMEOUT_MS = 30_000
 const FILE_LOCK_POLL_MS = 50
 /**
  * Refusals that are waited out rather than failed at once: a live holder, a
- * busy reclaim lock, and `reclaim_disabled`. An unparseable or legacy claim
- * never goes away by itself, so it fails immediately.
+ * busy reclaim lock, and `reclaim_disabled`.
+ *
+ * The two excluded reasons fail on the FIRST attempt. For `unreclaimable_
+ * unparseable` that is plainly right. For `unreclaimable_legacy` it is a
+ * judgement call this comment used to misstate as a fact (SMI-6764): the
+ * claim is never auto-*reclaimed* in any configuration (D-5), but a legacy
+ * holder that is still ALIVE releases normally, so the lock can go away by
+ * itself and waiting could pay off. Failing at once is deliberate, not
+ * forced — revisiting it is owned by the update-safety plan, which already
+ * records the opposite recommendation.
  *
  * `reclaim_disabled` is the one that needs its reason stated, because the
  * obvious one is wrong (SMI-6759). It does NOT end when the holder releases:
@@ -30,9 +38,10 @@ const FILE_LOCK_POLL_MS = 50
  * yields `held` instead. It stays here because a differently-configured peer
  * process, one without `SKILLSMITH_LOCK_NO_AUTO_RECLAIM` set, can still
  * reclaim the dead claim and release it, so waiting can pay off in a mixed
- * configuration. In a uniformly opted-out one it cannot, which is why the
- * user-facing message for this reason says so rather than reporting a plain
- * timeout (`apply-manifest-reconcile.errors.ts`).
+ * configuration. In a uniformly opted-out one it cannot, which is why
+ * `StuckLockError`'s own remedy clause for this reason says exactly that —
+ * retrying HERE cannot reclaim it, a peer without the opt-out still can
+ * (`owned-lock.acquire.ts`'s `describeRemedy`).
  */
 const RETRYABLE_REASONS: ReadonlySet<StuckLockReason> = new Set([
   'held',

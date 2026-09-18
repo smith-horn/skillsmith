@@ -4,11 +4,26 @@ All notable changes to `@skillsmith/core` are documented here.
 
 ## [Unreleased]
 
+- **Fix**: SMI-6764 -- lock-failure messages no longer guess whether retrying will help. Every
+  reason now opens `Could not acquire <label> at <path>`, followed by a reason-specific remedy.
+  The previous message picked between "Timed out waiting" and "Could not acquire" per reason; that
+  split is **removed**, not corrected, because `StuckLockReason` does not determine the thing the
+  verb asserted. Three of the five reasons depend on facts the reason does not carry:
+  `reclaim_unavailable` on whether the reclaim lock is merely busy or was orphaned by a crash,
+  `unreclaimable_legacy` on whether the legacy holder is still alive, and `reclaim_disabled` on
+  whether a differently-configured peer exists. The verb had to guess, and for an orphaned reclaim
+  lock -- which never clears, since nothing probes the reclaim lock's own owner -- it guessed
+  "Timed out waiting". The new `describeRemedy` (exported from the package root) states each case,
+  including "it depends, and on this" where that is the truth. Two related corrections in the same
+  message: `held` no longer claims the holder is "(still alive)", which was rendered for pids that
+  were never probed, and the unstick procedure is unchanged for every reason -- step 1 stays,
+  because an `unreclaimable_legacy` claim can be a perfectly live process. (#2894)
+
 - **Docs**: SMI-6759 -- `file-lock.ts`'s `RETRYABLE_REASONS` comment justified waiting out
   `reclaim_disabled` with "it still ends when that holder releases". That holder is dead by
   construction, so it never releases. The reason stays retryable -- a differently-configured peer
   without the opt-out can still reclaim and release it -- but the comment now states that actual
-  mechanism instead of one that cannot occur. No behaviour change. (#TBD)
+  mechanism instead of one that cannot occur. No behaviour change. (#2893)
 
 - **Fix**: SMI-6735 -- the installed-skills manifest lock is now ownership-verified. `ManifestManager`
   previously judged an existing lock stale by its file age and released by unconditional `unlink`, so a

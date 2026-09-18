@@ -65,10 +65,14 @@ const LOCK_ACQUIRE_TIMEOUT_MS = 5_000
  *  3. The on-disk lock content changes from a bare PID to a v1 JSON record.
  *     No in-repo consumer parses it directly (only this module's own
  *     `acquireConfigLock`/release touch the file).
- *  4. The timeout message keeps the stable prefix "Timed out waiting for
- *     config lock" (via `label: 'config lock'`) so existing assertions
- *     still match, with the failure reason and the manual unstick procedure
- *     appended.
+ *  4. The failure message names `label: 'config lock'` plus the failure
+ *     reason and a reason-specific remedy, with the manual unstick procedure
+ *     appended. The opening verb is "Could not acquire config lock" for EVERY
+ *     reason (SMI-6764) — the earlier per-reason verb split was removed
+ *     because `StuckLockReason` does not determine whether retrying helps.
+ *     So the verb is a stable prefix again, but it no longer discriminates:
+ *     an assertion that needs to tell two reasons apart must match the reason
+ *     clause or the remedy, not the verb.
  *
  * @param configPath - Path to the config file being guarded (NOT the lock
  * file itself — the lock file is `${configPath}.lock`).

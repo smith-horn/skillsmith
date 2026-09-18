@@ -380,7 +380,7 @@ export {
 // @skillsmith/mcp-server's manifest write path) can share the SAME lock
 // mechanism instead of hand-rolling its own age-based lock protocol.
 export { withFileLock } from './config/file-lock.js'
-export { StuckLockError, type StuckLockReason } from './config/owned-lock.js'
+export { describeRemedy, StuckLockError, type StuckLockReason } from './config/owned-lock.js'
 
 // ============================================================================
 // LIVE SERVICES WORKTREE STUBS (Phase 0 - Conflict Prevention)

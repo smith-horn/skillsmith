@@ -11,7 +11,7 @@
  * and each message embeds the exact next remediation command inline.
  */
 
-import type { StuckLockReason } from '@skillsmith/core'
+import { describeRemedy, type StuckLockReason } from '@skillsmith/core'
 import type { ManifestReconcileErrorCode } from './apply-manifest-reconcile.types.js'
 
 export interface ReconcileErrorContext {
@@ -24,11 +24,15 @@ export interface ReconcileErrorContext {
   path?: string
   /**
    * lock_timeout only: the underlying `StuckLockError.reason` (SMI-6735
-   * adversarial-review finding 1). Drives wording — `unreclaimable_legacy`
-   * and `unreclaimable_unparseable` never clear on their own (they are not
-   * in `file-lock.ts`'s `RETRYABLE_REASONS`, so `withFileLock` fails on the
-   * FIRST attempt), so telling the caller it "timed out" implies a retry
-   * will help when it never will.
+   * adversarial-review finding 1). Reported to the caller as a stable
+   * discriminant, and used to select the reason-specific remedy clause below.
+   *
+   * It no longer selects a VERB (SMI-6764). Three attempts to derive one from
+   * this field failed, the last structurally: `reclaim_unavailable` depends on
+   * whether the reclaim lock is busy or orphaned, `unreclaimable_legacy` on
+   * whether the legacy holder is alive, and `reclaim_disabled` on whether a
+   * differently-configured peer exists — none of which this value carries. A
+   * remedy clause can say "it depends, on this"; a verb cannot.
    */
   lockReason?: StuckLockReason
   /**
@@ -97,38 +101,38 @@ export function describeReconcileError(
     case 'manifest.reconcile.backup_failed':
       return `Failed to create the pre-mutation manifest backup${ctx.detail ? `: ${ctx.detail}` : '.'} No write was made.`
     case 'manifest.reconcile.lock_timeout': {
-      // `unreclaimable_legacy`/`unreclaimable_unparseable` fail on the FIRST
-      // attempt (never in `RETRYABLE_REASONS`) and never clear on their own —
-      // "timed out ... waiting" would wrongly imply retrying helps.
-      //
-      // `reclaim_disabled` (SMI-6759) reaches here a different way and needs
-      // the same verb. It IS waited out — it is in `RETRYABLE_REASONS`,
-      // because a differently-configured peer without the opt-out can still
-      // reclaim the lock and release it — but THIS process will never reclaim
-      // it: `classifyRefusal` returns that reason only when auto-reclaim is
-      // off AND the v1 owner is already dead (`owned-lock.claim.ts`, and a
-      // LIVE owner yields `held` instead). So the wait is real, the 30s is
-      // real, and retrying here still cannot help. Saying "timed out waiting"
-      // describes the elapsed time correctly and the remedy wrongly.
-      const nonRetryable =
-        ctx.lockReason === 'unreclaimable_legacy' ||
-        ctx.lockReason === 'unreclaimable_unparseable' ||
-        ctx.lockReason === 'reclaim_disabled'
-      const verb = nonRetryable
-        ? `Could not acquire the manifest lock at '${ctx.path ?? '<unknown>'}'`
-        : `Timed out waiting for the manifest lock at '${ctx.path ?? '<unknown>'}'`
+      // One verb, every reason — matching `StuckLockError` (SMI-6764). Two
+      // rounds tried to split "timed out" from "could not acquire" per reason;
+      // the third found the partition does not exist, because three of the
+      // five reasons depend on facts `lockReason` does not carry. Do not
+      // reintroduce a split here: this file is the consumer that drifted from
+      // the primitive last time, and a second verb has nothing true to say.
+      const verb = `Could not acquire the manifest lock at '${ctx.path ?? '<unknown>'}'`
       const lockPath = ctx.path ?? '<manifest>.lock'
       const namesReclaim = Boolean(ctx.reclaimPath)
-      // Only `reclaim_disabled` has a remedy that touches no files at all, and
-      // step 1 below is already answered for it — the holder being dead is
-      // what the reason MEANS. Say both, so the user is not sent to `ps` to
-      // confirm something the error already knows (SMI-6759).
-      const optOutHint =
+      // The per-reason remedy comes from core, verbatim (SMI-6764). This file
+      // is the one that drifted from the primitive last time — it got the new
+      // verb while `StuckLockError` kept the old one, on the same lock file —
+      // so it now consumes the prose rather than maintaining a second copy.
+      //
+      // What stays here is only what core cannot know: core's remedy for
+      // `reclaim_disabled` says to restart "this process", and this tool runs
+      // inside a long-lived MCP stdio server. A shell `unset` never reaches an
+      // already-running child (measured), and `isAutoReclaimDisabled()` re-reads
+      // the same value on every retry, so naming the server is load-bearing.
+      //
+      // Note what neither part says: that the lock "will not clear on its own".
+      // A peer without the opt-out can reclaim and release it, and pairing that
+      // false certainty with an unqualified `rm` is how a LIVE holder's lock
+      // gets deleted — the mutual-exclusion break SMI-6735 removed. Step 3
+      // below keeps its "if stale" qualifier for the same reason.
+      const remedy = ctx.lockReason ? ` ${describeRemedy(ctx.lockReason)}` : ''
+      const mcpAddendum =
         ctx.lockReason === 'reclaim_disabled'
-          ? ` The holder is already dead and auto-reclaim is disabled here, so this will not clear on its own: either unset SKILLSMITH_LOCK_NO_AUTO_RECLAIM and retry, or remove the file named below.`
+          ? ` This tool runs inside the MCP server, so restarting "this process" means restarting the server.`
           : ''
       return (
-        `${verb}${ctx.lockReason ? ` (reason: ${ctx.lockReason})` : ''}.${optOutHint} Manual unstick -- ` +
+        `${verb}${ctx.lockReason ? ` (reason: ${ctx.lockReason})` : ''}.${remedy}${mcpAddendum} Manual unstick -- ` +
         `1) confirm no skillsmith process is running: ps -ax | grep -E '[s]killsmith|[s]klx'; ` +
         `2) inspect (read-only): cat ${lockPath}${namesReclaim ? ` ; cat ${ctx.reclaimPath}` : ''}; ` +
         `3) if stale, remove it: rm ${lockPath}${namesReclaim ? ` ; rm ${ctx.reclaimPath}` : ''}.`
