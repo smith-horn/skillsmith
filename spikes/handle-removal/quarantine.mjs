@@ -18,7 +18,7 @@
 //     up to a different parent.
 
 import fs from 'node:fs'
-import { shapeResult, resolveGuardHash } from './result-shape.mjs'
+import { shapeResult, resolveRemovalOptions, assertPathSegment } from './result-shape.mjs'
 import path from 'node:path'
 import crypto from 'node:crypto'
 import { computeTreeHash } from './hash.mjs'
@@ -503,7 +503,13 @@ function quarantineTreeInner(parentAbs, name, options = {}) {
         detail: 'op directory is owned by another user',
       }
     }
-    if ((od.mode & 0o077n) !== 0n) {
+    // R5-9: the uid check above is guarded by `typeof process.getuid === 'function'`
+    // and this one was not. `process.getuid` is POSIX-only, and Windows reports
+    // directory modes that do not carry POSIX permission semantics -- measured
+    // against the three plausible shapes (0o40777, 0o40666, 0o40555), ALL of
+    // them fail this mask, which would make every call on Windows return
+    // `kept` and render the fallback path inert. One guard, both checks.
+    if (typeof process.getuid === 'function' && (od.mode & 0o077n) !== 0n) {
       return {
         status: 'kept',
         reason: 'quarantine-destination-changed',
@@ -531,6 +537,71 @@ function quarantineTreeInner(parentAbs, name, options = {}) {
   const rnd = randSuffix()
   const destName = `${name}-${rnd}`
   const destPath = path.join(opDir, destName)
+
+  // R5-4: THE DESTINATION RE-CHECKS RUN BEFORE THE SOURCE ONE, DELIBERATELY.
+  // They used to run after it, which put two extra lstats between the source
+  // re-check and rename(2) and measurably widened the window that check exists
+  // to narrow: source-rebind-to-rename median 2,125 ns before the op rebind was
+  // added, 3,833 ns after (n=300 each). Ordering the destination checks first
+  // restores the source window and costs nothing -- a destination swap is caught
+  // just as well before the source check as after it.
+
+  // FINDING 3, part 3: THE DESTINATION GETS THE SAME RE-CHECK AS THE SOURCE.
+  // Symmetry is the whole point -- the earlier fix hardened one end of a
+  // rename(2) and left the other end validated once, far upstream, and trusted
+  // across four intervening operations.
+  if (trash.trashIdentity) {
+    const trashNow = bindIdentity(trash.trashRoot)
+    if (!trashNow.ok || !sameIdentity(trash.trashIdentity, trashNow)) {
+      return {
+        status: 'kept',
+        reason: 'quarantine-destination-changed',
+        path: originPath,
+        treeHash: observedTreeHash,
+        // R5-8: this was the one destination refusal of six with no `detail`,
+        // so a caller could not tell a trash-root swap from the five diagnosed
+        // cases. That is the exact defect the `detail` work was meant to remove,
+        // reduced from three-of-five to one-of-six rather than closed.
+        detail: 'trash root was substituted between validation and rename',
+      }
+    }
+  }
+
+  // F11: AND THE OP DIRECTORY, which is the rename's actual destination parent.
+  // The rebind above covers `.skillsmith-trash` and stops one level short of the
+  // directory the tree actually lands in. Replacing an ENTRY inside a directory
+  // leaves that directory's own (dev, ino, birthtimeNs) byte-identical, so the
+  // trash rebind provably cannot see an op-directory swap; it needs its own.
+  //
+  // WHAT THIS DOES NOT DO, MEASURED. The commit that added it said "now rebound
+  // immediately before rename(2), like the source", which reads as closure. It
+  // is not. A/B against a continuing racer, same harness, same machine, back to
+  // back: bytes reached attacker storage in 205/71,416 trials WITH this rebind
+  // and 221/73,635 WITHOUT (z=0.46, p~0.65 -- indistinguishable). What it
+  // changes is the REPORTED OUTCOME, converting a noisy ENOENT from rename(2)
+  // into a clean `kept` with a reason: 37,703 -> 22,278 `kept`, 33,437 ->
+  // 51,075 `stopped`.
+  //
+  // The reason it cannot close the race is the same one the source residual
+  // below gives: the gap between this lstat and rename(2) is 167 ns median
+  // (p95 250 ns), and anything that can hit that gap could hit the pre-fix gap
+  // too. Closing it needs renameat(2) against a held handle, which Node 22 does
+  // not expose -- the reason this spike exists.
+  //
+  // It is kept because a diagnosable refusal beats an opaque ENOENT and it costs
+  // one lstat, NOT because it makes the operation safe against a live attacker.
+  if (opIdentity) {
+    const opNow = bindIdentity(opDir)
+    if (!opNow.ok || !sameIdentity(opIdentity, opNow)) {
+      return {
+        status: 'kept',
+        reason: 'quarantine-destination-changed',
+        path: originPath,
+        treeHash: observedTreeHash,
+        detail: 'op directory was substituted between validation and rename',
+      }
+    }
+  }
 
   // THE RE-CHECK THAT ACTUALLY CLOSES B2, IMMEDIATELY BEFORE THE DESTRUCTIVE
   // STEP. Everything above verified the tree; between that verification and
@@ -587,41 +658,6 @@ function quarantineTreeInner(parentAbs, name, options = {}) {
         reason: 'identity-changed',
         path: originPath,
         treeHash: observedTreeHash,
-      }
-    }
-  }
-
-  // FINDING 3, part 3: THE DESTINATION GETS THE SAME RE-CHECK AS THE SOURCE.
-  // Symmetry is the whole point -- the earlier fix hardened one end of a
-  // rename(2) and left the other end validated once, far upstream, and trusted
-  // across four intervening operations.
-  if (trash.trashIdentity) {
-    const trashNow = bindIdentity(trash.trashRoot)
-    if (!trashNow.ok || !sameIdentity(trash.trashIdentity, trashNow)) {
-      return {
-        status: 'kept',
-        reason: 'quarantine-destination-changed',
-        path: originPath,
-        treeHash: observedTreeHash,
-      }
-    }
-  }
-
-  // F11: AND THE OP DIRECTORY, which is the rename's actual destination parent.
-  // The rebind above covers `.skillsmith-trash` and stops one level short of the
-  // directory the tree actually lands in -- the same off-by-one-level as the fix
-  // it was written to complete. Replacing an ENTRY inside a directory leaves that
-  // directory's own (dev, ino, birthtimeNs) byte-identical, so the trash rebind
-  // provably cannot see an op-directory swap; it needs its own.
-  if (opIdentity) {
-    const opNow = bindIdentity(opDir)
-    if (!opNow.ok || !sameIdentity(opIdentity, opNow)) {
-      return {
-        status: 'kept',
-        reason: 'quarantine-destination-changed',
-        path: originPath,
-        treeHash: observedTreeHash,
-        detail: 'op directory was substituted between validation and rename',
       }
     }
   }
@@ -718,7 +754,7 @@ function quarantineTreeInner(parentAbs, name, options = {}) {
  * the failure native-c/load.mjs already identifies and fixes for shimPath().
  * The lesson was learned in one file and not this one.
  */
-function assertPathSegment(label, value) {
+function _unusedLocalAssertPathSegment(label, value) {
   if (typeof value !== 'string' || value.length === 0) {
     throw new TypeError(`${label} must be a non-empty string, got ${String(value)}`)
   }
@@ -758,13 +794,13 @@ export function quarantineTree(parentAbs, name, options = {}) {
   // (`walk.mjs` did not call the previous in-file version at all), and the
   // resolved value is passed DOWN rather than re-read from `options` -- a
   // second read is a second chance for a getter to answer differently.
-  const resolvedGuardHash = resolveGuardHash(options)
+  // R5-1: the previous version resolved `guardHash` once and left `opId`
+  // validated on reads 1-2 while the SPREAD below supplied read 3 -- the value
+  // actually used. `resolveRemovalOptions` materialises every property once and
+  // validates the snapshot, so "validated equals used" holds for every option,
+  // not just the one a reviewer happened to name.
   assertPathSegment('name', name)
-  if (options.opId !== undefined) assertPathSegment('opId', options.opId)
-  const r = quarantineTreeInner(parentAbs, name, {
-    ...options,
-    guardHash: resolvedGuardHash,
-    treeHash: undefined,
-  })
+  const resolved = resolveRemovalOptions(options)
+  const r = quarantineTreeInner(parentAbs, name, resolved)
   return shapeResult({ entry: name, ...r })
 }

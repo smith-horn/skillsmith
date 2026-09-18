@@ -44,6 +44,13 @@ export const RESULT_FIELDS = [
   // a caller reading it gets `undefined` and cannot tell "no diagnosis" from
   // "diagnosis thrown away". Declared, so every result has it.
   'detail',
+  // R5-10: `hybrid.mjs` added this on the fallback branch and not the native
+  // one, so `removeTree` -- the SHIPPED entry point, and the surface this
+  // module's own header is about -- returned 10 keys one way and 9 the other.
+  // That is the N-1 defect itself, on the dispatcher, surviving the fix for it
+  // because the parity suite compared `removeVR` against `quarantineTree`
+  // directly and never `removeTree` against `removeTree`.
+  'fallbackTrigger',
 ]
 
 /** Outcomes either path may report. `removed` and `quarantined` are both success. */
@@ -105,6 +112,58 @@ export function isSuccess(result) {
  *
  * @returns {string|undefined} the resolved guard hash, or undefined for no guard
  */
+/**
+ * A single path segment, never a path. Shared so both removal paths enforce it.
+ */
+export function assertPathSegment(label, value) {
+  if (typeof value !== 'string' || value.length === 0) {
+    throw new TypeError(`${label} must be a non-empty string, got ${String(value)}`)
+  }
+  if (value.includes('/') || value.includes('\\') || value === '.' || value === '..') {
+    throw new TypeError(
+      `${label} must be a single path segment, not a path. Got ${JSON.stringify(value)}. ` +
+        `A traversing value escapes the parked root entirely and lands the tree in ` +
+        `attacker-chosen storage while reporting success.`
+    )
+  }
+}
+
+/**
+ * SNAPSHOT EVERY OPTION ONCE, VALIDATE THE SNAPSHOT, RETURN PLAIN DATA.
+ *
+ * R5-1/R5-2 (round 5, 2026-09-17). The previous fix resolved `guardHash` once
+ * and passed it down -- and did that for `guardHash` ALONE. `opId` was still
+ * validated by reading `options.opId` twice and then USED from a third read, the
+ * object spread that forwarded options to the inner function. Measured: a getter
+ * answering `'op-benign'` for reads 1-2 and `'../../loot'` for read 3, with a
+ * valid `guardHash` and a 0700 landing directory, produced
+ *
+ *   status: 'quarantined', origin GONE,
+ *   user bytes AND the sidecar (carrying originPath + treeHash) in attacker storage
+ *
+ * -- the exact `../../loot` escape an existing case was written to prevent, and
+ * the exact sentence the previous fix's own comment used, one identifier over.
+ *
+ * And `walk.mjs` never validated `opId` at all, interpolating it straight into a
+ * directory name: the one-file shape again, in the commit that fixed the
+ * one-file shape for `guardHash`.
+ *
+ * Both were instances of one thing: **the fix was applied per-option instead of
+ * to the mechanism.** So this returns a fully-materialised plain object. Every
+ * property is read exactly once, here; nothing downstream consults `options`
+ * again; and a getter cannot answer differently on a later read because there
+ * are no later reads. A new option added tomorrow is covered without anyone
+ * remembering this rule.
+ */
+export function resolveRemovalOptions(options = {}) {
+  // ONE read of each property, into plain data, before any validation.
+  const snap = { ...options }
+  snap.guardHash = resolveGuardHash(snap)
+  snap.treeHash = undefined
+  if (snap.opId !== undefined) assertPathSegment('opId', snap.opId)
+  return snap
+}
+
 export function resolveGuardHash(options = {}) {
   // Exactly one read of each, captured before any validation. A getter that
   // changes its answer between reads cannot make the validated value differ

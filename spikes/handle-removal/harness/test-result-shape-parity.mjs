@@ -21,6 +21,7 @@
 // its branching against.
 
 import { removeVR } from '../walk.mjs'
+import { removeTree } from '../hybrid.mjs'
 import { quarantineTree, computePathTreeHash } from '../quarantine.mjs'
 import { RESULT_FIELDS, shapeResult, isSuccess } from '../result-shape.mjs'
 import fs from 'node:fs'
@@ -46,10 +47,36 @@ function fixture() {
 }
 
 // --- 1. the contract itself ----------------------------------------------
+// R5-7: this compared `keys(shapeResult(...))` against `RESULT_FIELDS` -- BOTH
+// SIDES DERIVED FROM THE SAME ARRAY, so deleting a field from `RESULT_FIELDS`
+// changed both sides together and the case could never fail. Measured: removing
+// `'detail'` left this suite green. A tautology shaped like an assertion, in the
+// file whose subject is tests that look like coverage and give none.
+//
+// The contract is now written out literally. If a field is added, this fails and
+// someone decides deliberately whether it belongs in the contract -- which is the
+// point of having one.
+const CONTRACT_FIELDS = [
+  'status',
+  'reason',
+  'path',
+  'entry',
+  'treeHash',
+  'errno',
+  'opId',
+  'sidecarPath',
+  'detail',
+  'fallbackTrigger',
+]
 check(
   '1a every declared field is present after shaping',
   keys(shapeResult({ status: 'kept' })),
-  [...RESULT_FIELDS].sort().join(',')
+  [...CONTRACT_FIELDS].sort().join(',')
+)
+check(
+  '1a2 and RESULT_FIELDS itself still matches the written contract',
+  [...RESULT_FIELDS].sort().join(','),
+  [...CONTRACT_FIELDS].sort().join(',')
 )
 check('1b absent fields are null, never undefined', shapeResult({ status: 'kept' }).reason, null)
 check(
@@ -456,8 +483,147 @@ check(
     r2 = e.constructor.name
   }
   check('8b the FIRST read is the value enforced, not a later one', r2, 'ret:quarantined')
-  check('8c the getter did change its answer (the case is live)', n > 1, true)
+  // 8c asserted `n > 1` -- "the getter did change its answer, so the case is
+  // live" -- and that became FALSE when the fix landed, because a single read is
+  // exactly what the fix establishes. An earlier version of this file asserted
+  // `reads === 1` and was told off for testing the implementation; the
+  // difference is that back then the code legitimately read twice (spread, then
+  // an overwriting key) so the count was incidental. Now one read IS the
+  // contract: `resolveRemovalOptions` materialises the whole options object once
+  // and nothing downstream consults it again, which is what makes
+  // "validated equals used" hold for every option rather than for whichever one
+  // a reviewer last named. So the count is the property, and a second read
+  // reappearing is the regression.
+  check('8c the guard property is read exactly once', n, 1)
   fs.rmSync(b.root, { recursive: true, force: true })
+}
+
+// --- 9. EVERY option, not just the one that was named (R5-1, R5-2) -------
+//
+// Sections 7 and 8 fixed `guardHash` on both paths and pinned it. `opId` was
+// still validated on reads 1 and 2 and USED from read 3 -- the object spread
+// that forwarded options onward. Measured before this fix, with a valid
+// `guardHash` and a 0700 landing directory:
+//
+//   opId getter: 'op-benign', 'op-benign', '../../loot'
+//     -> status 'quarantined', origin GONE,
+//        user bytes AND the sidecar in <root>/loot/
+//
+// That is the traversal case 5f already covers for a plain string, reached by a
+// value that passes 5f's own check twice on the way in. And `walk.mjs` never
+// validated `opId` at all while interpolating it into a directory name -- the
+// one-file shape from section 7, inside the commit that fixed the one-file
+// shape.
+//
+// Both were one defect: the fix had been applied per-option instead of to the
+// mechanism. These cases assert the mechanism.
+{
+  const threw = (fn) => {
+    try {
+      return `ret:${fn().status}`
+    } catch (e) {
+      return e.constructor.name
+    }
+  }
+  // 9a: a getter cannot smuggle a traversal past validation.
+  const a = fixture()
+  const aHash = computePathTreeHash(a.target).treeHash
+  const loot = path.join(a.root, 'loot')
+  fs.mkdirSync(loot)
+  fs.chmodSync(loot, 0o700)
+  let reads = 0
+  const sneaky = {
+    guardHash: aHash,
+    get opId() {
+      reads += 1
+      return reads <= 2 ? 'op-benign' : '../../loot'
+    },
+  }
+  const out = threw(() => quarantineTree(a.parent, 'tree', sneaky))
+  check('9a a late-changing opId cannot redirect the landing', fs.readdirSync(loot).length, 0)
+  check('9b opId is read exactly once', reads, 1)
+  check('9c and the call still succeeds on the benign value', out, 'ret:quarantined')
+  fs.rmSync(a.root, { recursive: true, force: true })
+
+  // 9d-9f: opId validation is on BOTH paths, not one. Before the fix the native
+  // path accepted every one of these.
+  for (const [label, bad] of [
+    ['traversal', '../../loot'],
+    ['dotdot', '..'],
+    ['separator', 'a/b'],
+  ]) {
+    const n = fixture()
+    const nat = (() => {
+      try {
+        return threw(() => removeVR(n.target, { variant: 'V2', opId: bad }))
+      } catch {
+        return 'SHIM-ABSENT'
+      }
+    })()
+    fs.rmSync(n.root, { recursive: true, force: true })
+    const f = fixture()
+    const fb = threw(() => quarantineTree(f.parent, 'tree', { opId: bad }))
+    fs.rmSync(f.root, { recursive: true, force: true })
+    if (nat === 'SHIM-ABSENT') {
+      console.log(`[result-parity] 9* ${label} SKIP -- the native shim did not load here`)
+      continue
+    }
+    check(`9 opId ${label}: native refuses`, nat, 'TypeError')
+    check(`9 opId ${label}: fallback refuses`, fb, 'TypeError')
+  }
+}
+
+// --- 10. THE DISPATCHER ITSELF (R5-10) ----------------------------------
+//
+// This file's header is about `removeTree` -- "hybrid.mjs's removeTree()
+// returns whichever path ran, verbatim" -- and every case in it tested
+// `removeVR` against `quarantineTree` DIRECTLY. The shipped entry point was
+// never compared against itself. Measured: `fallbackTrigger` was added on the
+// fallback branch only, so `removeTree` returned 10 keys one way and 9 the
+// other. The N-1 defect, on the exact surface N-1 named, surviving the fix
+// because the test aimed one layer below it.
+//
+// `SKILLSMITH_REMOVAL_NATIVE_DISABLE=1` is the only lever that forces the
+// branch deterministically, and it is a real shipped lever rather than a stub.
+{
+  const runBranch = (nativeDisabled) => {
+    const f = fixture()
+    const prev = process.env.SKILLSMITH_REMOVAL_NATIVE_DISABLE
+    if (nativeDisabled) process.env.SKILLSMITH_REMOVAL_NATIVE_DISABLE = '1'
+    else delete process.env.SKILLSMITH_REMOVAL_NATIVE_DISABLE
+    let out
+    try {
+      out = removeTree(f.target, {})
+    } catch {
+      out = null
+    } finally {
+      if (prev === undefined) delete process.env.SKILLSMITH_REMOVAL_NATIVE_DISABLE
+      else process.env.SKILLSMITH_REMOVAL_NATIVE_DISABLE = prev
+      fs.rmSync(f.root, { recursive: true, force: true })
+    }
+    return out
+  }
+  const fb = runBranch(true)
+  const nat = runBranch(false)
+  if (fb === null || nat === null) {
+    console.log('[result-parity] 10* SKIP -- a dispatcher branch did not run here')
+  } else {
+    check(
+      '10a fallback branch matches the contract',
+      keys(fb),
+      [...CONTRACT_FIELDS].sort().join(',')
+    )
+    check(
+      '10b native branch matches the contract',
+      keys(nat),
+      [...CONTRACT_FIELDS].sort().join(',')
+    )
+    check('10c and the two branches agree with each other', keys(nat), keys(fb))
+    // The trigger must still be reported -- shaping must not erase the thing
+    // the field exists for.
+    check('10d the fallback still names its trigger', typeof fb.fallbackTrigger, 'string')
+    check('10e the native branch reports null, not undefined', nat.fallbackTrigger, null)
+  }
 }
 
 if (!allOk) {

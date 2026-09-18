@@ -15,7 +15,7 @@
 // is measuring.
 
 import fs from 'node:fs'
-import { shapeResult, resolveGuardHash } from './result-shape.mjs'
+import { shapeResult, resolveRemovalOptions } from './result-shape.mjs'
 import path from 'node:path'
 import crypto from 'node:crypto'
 import os from 'node:os'
@@ -420,12 +420,12 @@ export function removeVR(targetRoot, options = {}) {
   // `removeVR(t, { treeHash: 'WRONG' })` removed the tree while the fallback
   // refused it. `resolveGuardHash` reads both exactly once and returns the
   // single resolved value, which is passed DOWN rather than re-read (F14).
-  const resolvedGuardHash = resolveGuardHash(options)
-  const r = removeVRInner(targetRoot, {
-    ...options,
-    guardHash: resolvedGuardHash,
-    treeHash: undefined,
-  })
+  // R5-2: `opId` was validated on the fallback path and NOT here, while this
+  // path interpolates it straight into a directory name -- the same one-file
+  // shape as the guardHash alias, inside the commit that fixed that alias. One
+  // shared resolver now covers both paths and every option, not just the one a
+  // reviewer happened to name.
+  const r = removeVRInner(targetRoot, resolveRemovalOptions(options))
   // `path` defaults to the tree the caller named: on this path a `kept` or a
   // `removed` is always about targetRoot itself, and a caller should not have
   // to know which module answered to learn what the result is about.

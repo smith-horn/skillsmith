@@ -353,6 +353,18 @@ function fixture() {
   // string must not carry two statuses depending on which end changed.
   check('7b a symlinked op directory is refused', r.status, 'kept')
   check('7c and the reason names the destination', r.reason, 'quarantine-destination-changed')
+  // R5-6: THIS ASSERTION IS WHY THE CASE PINS WHAT IT CLAIMS. Before it, 7b/7c
+  // checked only `status` and `reason` -- and F12's later mode check produces
+  // BOTH identically for a symlink, because a symlink's own lstat mode is
+  // 0o120755 and `& 0o077` is non-zero. Measured: deleting the symlink/type
+  // check alone left this whole suite GREEN, with the mode clause refusing the
+  // symlink for an unrelated reason. `detail` is the only field that separates
+  // them, so it is the only thing that makes this a test of the type check.
+  check(
+    '7c2 and it is the TYPE check refusing, not the mode check',
+    r.detail,
+    'op directory is a symlink; rename(2) would resolve it and land the tree elsewhere'
+  )
   check('7d the origin survives', fs.existsSync(path.join(parent, 'tree')), true)
   check('7e nothing landed in the attacker directory', fs.readdirSync(loot).length, 0)
   fs.rmSync(root, { recursive: true, force: true })
@@ -409,6 +421,11 @@ function fixture() {
   const r = quarantineTree(parent, 'tree', { opId: 'op-open' })
   check('7h a world-accessible op directory is refused', r.status, 'kept')
   check('7i and the reason names the destination', r.reason, 'quarantine-destination-changed')
+  check(
+    '7i2 and it is the MODE check refusing',
+    r.detail,
+    'op directory is group- or world-accessible (mode 777)'
+  )
   check('7j the origin survives', fs.existsSync(path.join(parent, 'tree')), true)
   fs.rmSync(root, { recursive: true, force: true })
 }
@@ -470,6 +487,84 @@ function fixture() {
   check('7n the origin survives', fs.existsSync(path.join(parent, 'tree')), true)
   const landed = fs.existsSync(loot) ? fs.readdirSync(loot).length : -1
   check('7o nothing landed in the attacker directory', landed, 0)
+  fs.rmSync(root, { recursive: true, force: true })
+}
+
+// --- 7e. R5-5: the OWNERSHIP clause, which nothing pinned -----------------
+//
+// F12 added two conditions -- ownership and mode -- and only the mode one was
+// tested. Deleting the entire `od.uid !== BigInt(process.getuid())` block left
+// both suites green. It was never untestable: a real cross-uid directory needs
+// root, but the clause reads `process.getuid()`, so stubbing that to a
+// different uid exercises the comparison exactly as a foreign-owned directory
+// would, without needing privileges.
+//
+// This matters beyond tidiness: on a shared machine the op directory is the one
+// place the user's bytes and the sidecar (carrying `originPath` and `treeHash`)
+// come to rest, and ownership is the only check that says whose directory it is.
+{
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), 's6676-opuid-'))
+  const parent = path.join(root, 'parent')
+  fs.mkdirSync(path.join(parent, 'tree', 'sub'), { recursive: true })
+  fs.writeFileSync(path.join(parent, 'tree', 'sub', 'f.txt'), 'USERBYTES')
+  const opDir = path.join(parent, '.skillsmith-trash', 'op-foreign')
+  fs.mkdirSync(opDir, { recursive: true })
+  fs.chmodSync(opDir, 0o700) // mode is fine, so ONLY ownership can refuse this
+
+  const realGetuid = process.getuid
+  let r
+  try {
+    process.getuid = () => realGetuid.call(process) + 1
+    r = quarantineTree(parent, 'tree', { opId: 'op-foreign' })
+  } finally {
+    process.getuid = realGetuid
+  }
+
+  check('7p a foreign-owned op directory is refused', r.status, 'kept')
+  check('7q and the reason names the destination', r.reason, 'quarantine-destination-changed')
+  check(
+    '7r and it is the OWNERSHIP clause refusing',
+    r.detail,
+    'op directory is owned by another user'
+  )
+  check('7s the origin survives', fs.existsSync(path.join(parent, 'tree')), true)
+
+  // And the clause must not refuse our OWN directory -- otherwise it passes by
+  // refusing everything, which is the failure mode 7f guards on the mode side.
+  const r2 = quarantineTree(parent, 'tree', { opId: 'op-foreign' })
+  check('7t our own op directory is still accepted', r2.status, 'quarantined')
+  fs.rmSync(root, { recursive: true, force: true })
+}
+
+// --- 7f. R5-7: the `detail` FORWARD on a trash-unusable stop ---------------
+//
+// `detail` was declared in RESULT_FIELDS and forwarded at the trash-unusable
+// stop, and NOTHING asserted either. Three independent mutations -- removing the
+// field from the contract, removing this forward, and removing the rebind's own
+// detail string -- all left both suites green. The forward is the one the
+// original commit message named as the fix, so it was the claim least supported
+// by a test.
+//
+// `.skillsmith-trash` pre-created as a SYMLINK makes `ensureTrashRoot` return
+// `trash-unusable`, which is the shape that exercises the forward. Asserting
+// only `status`/`reason` here would repeat R5-6's mistake: every stop in this
+// function shares `quarantine-failed`, so `detail` is the only field that says
+// WHICH one.
+{
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), 's6676-trashdet-'))
+  const parent = path.join(root, 'parent')
+  fs.mkdirSync(path.join(parent, 'tree', 'sub'), { recursive: true })
+  fs.writeFileSync(path.join(parent, 'tree', 'sub', 'f.txt'), 'USERBYTES')
+  const elsewhere = path.join(root, 'elsewhere')
+  fs.mkdirSync(elsewhere)
+  fs.symlinkSync(elsewhere, path.join(parent, '.skillsmith-trash'))
+
+  const r = quarantineTree(parent, 'tree', {})
+  check('7u a symlinked trash root stops the call', r.status, 'stopped')
+  check('7v with D1 own single reason code', r.reason, 'quarantine-failed')
+  check('7w and the detail survives the result rebuild', r.detail, 'trash-unusable')
+  check('7x the origin survives', fs.existsSync(path.join(parent, 'tree')), true)
+  check('7y and nothing landed through the symlink', fs.readdirSync(elsewhere).length, 0)
   fs.rmSync(root, { recursive: true, force: true })
 }
 

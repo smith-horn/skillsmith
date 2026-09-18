@@ -22,6 +22,7 @@ import fs from 'node:fs'
 import path from 'node:path'
 import { removeVR } from './walk.mjs'
 import { quarantineTree } from './quarantine.mjs'
+import { shapeResult } from './result-shape.mjs'
 import { prebuildPath } from './native-c/load-packaged.mjs'
 import { shimPath } from './native-c/load.mjs'
 
@@ -155,7 +156,7 @@ function quarantineFallback(targetRoot, options, trigger) {
       `Run \`skillsmith doctor backups --prune --apply\` to reclaim space.\n`
   )
   const result = quarantineTree(parent, name, options)
-  return { ...result, fallbackTrigger: trigger }
+  return shapeResult({ ...result, fallbackTrigger: trigger })
 }
 
 /**
@@ -172,5 +173,10 @@ export function removeTree(targetRoot, options = {}) {
   if (!probe.ok) {
     return quarantineFallback(targetRoot, options, probe.trigger)
   }
-  return removeVR(targetRoot, { variant: 'V2', ...options })
+  // R5-10: both branches go through `shapeResult`, so `removeTree`'s two
+  // outcomes carry the SAME key set. `fallbackTrigger` is null on the native
+  // branch rather than absent -- absent is what a caller cannot distinguish
+  // from "this path forgot to set it", which is the defect this whole module
+  // exists to remove.
+  return shapeResult(removeVR(targetRoot, { variant: 'V2', ...options }))
 }
