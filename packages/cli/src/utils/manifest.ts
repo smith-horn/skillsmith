@@ -219,11 +219,19 @@ export async function saveManifest(manifest: SkillManifest): Promise<void> {
  * point between the two mirrored type declarations, same pattern this
  * file's header already documents for the shape overall.
  */
-const manifestManager = new ManifestManager(MANIFEST_PATH)
-
 export async function updateManifestEntry(
   updateFn: (manifest: SkillManifest) => SkillManifest
 ): Promise<SkillManifest> {
+  // Constructed per-call, not at module scope. A module-scope instance made
+  // merely *importing* this file construct a ManifestManager, which broke every
+  // exhaustive `vi.mock('@skillsmith/core')` factory whose subject transitively
+  // imports this module — those factories return only the exports their test
+  // needs, so a new module-load-time dependency fails them at collection rather
+  // than at the call site. Nothing is lost by moving it: the constructor only
+  // stores the path, and updateSafely() acquires its own lock per call. This
+  // also matches skills-directory.ts and manage.update.helpers.ts, which
+  // already construct inside the functions that use it.
+  const manifestManager = new ManifestManager(MANIFEST_PATH)
   let result: SkillManifest | undefined
   await manifestManager.updateSafely((manifest): CoreSkillManifest => {
     result = updateFn(manifest as SkillManifest)
