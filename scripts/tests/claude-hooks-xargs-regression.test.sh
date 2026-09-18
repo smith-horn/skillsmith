@@ -17,7 +17,8 @@
 #      string is run through it and MUST fail; the NEW (live) command
 #      string no longer calls xargs at all, so it trivially isn't affected
 #      by the shim, and is asserted to succeed with the full untruncated
-#      value reaching the downstream flag.
+#      value reaching the wrapper's JSONL log `identifier` field (ruflo's
+#      argv before SMI-6724).
 #   3. Real BSD xargs (macOS only, BEST-EFFORT/INFORMATIONAL): same OLD
 #      command string against the actual system `xargs` binary. Skipped
 #      (not failed) on Linux, since GNU xargs' `-I` has a much larger
@@ -171,6 +172,11 @@ const fs = require('fs');
 fs.writeFileSync('/tmp/claude-hooks-regression-argv-capture.json', JSON.stringify(process.argv.slice(2)));
 process.exit(0);
 NODE_EOF
+# SMI-6724 review (PR #2889, PR-16): expose the stub the way npm does, so a
+# re-add spelled `node_modules/.bin/ruflo` cannot ENOENT its way past this guard.
+chmod +x "$STUB_DIR/node_modules/ruflo/bin/ruflo.js"
+mkdir -p "$STUB_DIR/node_modules/.bin"
+ln -s ../ruflo/bin/ruflo.js "$STUB_DIR/node_modules/.bin/ruflo"
 rm -f /tmp/claude-hooks-regression-argv-capture.json
 mkdir -p "$STUB_DIR/fakehome"
 (cd "$STUB_DIR" && printf '%s' "$TEST_INPUT" | CLAUDE_PROJECT_DIR="$STUB_DIR" HOME="$STUB_DIR/fakehome" sh -c "$NEW_CMD" >/dev/null 2>&1)
@@ -179,6 +185,8 @@ assert_true "NEW command string succeeds (rc=$NEW_RC)" "$([ "$NEW_RC" -eq 0 ] &&
 # SMI-6724: the stub must NOT run. If the invocation is ever re-added, the
 # capture file appears and this fails -- the same marker guard the wrapper's
 # own suite uses.
+# A fire-and-forget re-add (`... &`) returns before its child writes; let it land.
+sleep 0.5
 assert_true "ruflo stub was NOT invoked (SMI-6724)" \
   "$([ ! -f /tmp/claude-hooks-regression-argv-capture.json ] && echo 0 || echo 1)"
 rm -f /tmp/claude-hooks-regression-argv-capture.json

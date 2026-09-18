@@ -13,9 +13,11 @@
 # found and fixed during SMI-5813's own plan-review).
 #
 # Covers:
-#   A. Normal invocation: exit-code capture, JSON validity, all 5 fields
-#      present, secret redaction applied to both identifier and stderr.
-#   B. Always exits 0 regardless of the wrapped ruflo call's exit code.
+#   A. Normal invocation: JSON validity, all 5 fields present (exitCode and
+#      stderr are constants since SMI-6724), secret redaction applied to
+#      the identifier.
+#   B. Always exits 0; a failing ruflo fixture cannot affect the record
+#      because it is never run (SMI-6724).
 #   C. Dash-safety: 0 args and 1 arg do not crash the wrapper (the
 #      `shift 2` guard fix).
 #   D. `set -u` does not abort when $HOME is unset.
@@ -185,7 +187,9 @@ for SHELL_BIN in bash dash; do
   assert_not_contains "[$SHELL_BIN] Bearer token redacted from identifier" "$ID_FIELD" "abcDEF123token"
   assert_not_contains "[$SHELL_BIN] quoted password value redacted from identifier" "$ID_FIELD" "two words"
   assert_not_contains "[$SHELL_BIN] env-var-style secret redacted from identifier" "$ID_FIELD" "shouldnotleak123"
-  assert_not_contains "[$SHELL_BIN] Bearer token redacted from stderr" "$ERR_FIELD" "abcDEF123token"
+  # SMI-6724: nothing writes stderr any more, so a "redacted" assertion here
+  # could never fail. Assert the shape that IS now guaranteed instead.
+  assert_eq "[$SHELL_BIN] stderr field carries nothing to redact (always empty since SMI-6724)" "" "$ERR_FIELD"
   assert_contains "[$SHELL_BIN] non-secret surrounding text preserved in identifier" "$ID_FIELD" "curl -H"
   teardown_fixture
 
@@ -199,8 +203,7 @@ for SHELL_BIN in bash dash; do
   echo ""
   echo "=== Group G: SMI-6724 -- the wrapper must NOT invoke ruflo at all ==="
   setup_fixture 0 "unused"
-  # A fixture that leaves a durable marker if it is ever executed. If the
-  # ruflo exec is re-added to the wrapper, the marker appears and this fails.
+  # A fixture that leaves a durable marker if it is ever executed.
   MARKER="$FIXTURE_DIR/ruflo-was-invoked"
   cat > "$FIXTURE_DIR/node_modules/ruflo/bin/ruflo.js" << NODE_EOF
 #!/usr/bin/env node
@@ -211,14 +214,36 @@ require('fs').writeFileSync('$MARKER', 'invoked');
 // which is no test at all (SMI-6598).
 require('child_process').execSync('sleep 5');
 NODE_EOF
-  # POSITIVE CONTROL first: execute the REAL fixture and prove the marker
-  # appears. Without this, "no marker" below is indistinguishable from "this
-  # fixture could never have produced a marker" -- the failed/never-ran
-  # collapse. Writing the marker with a separate `node -e` is NOT sufficient:
-  # it proves only that node can write a file, and was measured passing
-  # against a fixture containing a deliberate syntax error.
-  # The fixture blocks on purpose, so run it in the background and reap it.
-  node "$FIXTURE_DIR/node_modules/ruflo/bin/ruflo.js" >/dev/null 2>&1 &
+  # Expose the stub the way npm does. A re-add spelled `node_modules/.bin/ruflo`
+  # -- the symlink npm installs, and what `npx ruflo` resolves to -- would
+  # otherwise ENOENT inside this fixture, write no marker, return instantly,
+  # and pass every assertion below while restoring the full per-call block in
+  # production, where that symlink exists. Measured 46/46 green against exactly
+  # that mutant before this symlink was added (PR #2889 review, PR-16).
+  chmod +x "$FIXTURE_DIR/node_modules/ruflo/bin/ruflo.js"
+  mkdir -p "$FIXTURE_DIR/node_modules/.bin"
+  ln -s ../ruflo/bin/ruflo.js "$FIXTURE_DIR/node_modules/.bin/ruflo"
+  # A re-add naming NO fixture path at all (`npx ruflo ...`, `node <other
+  # path>`) is caught one layer down: every node/npx resolution during the
+  # wrapper run goes through a PATH shim that marks before exec'ing the real
+  # binary.
+  SHIM_DIR="$FIXTURE_DIR/shim"
+  NODE_MARKER="$FIXTURE_DIR/node-was-spawned"
+  mkdir -p "$SHIM_DIR"
+  for tool in node npx; do
+    real=$(command -v "$tool")
+    [ -n "$real" ] || continue
+    printf '#!/bin/sh\ntouch "%s"\nexec "%s" "$@"\n' "$NODE_MARKER" "$real" > "$SHIM_DIR/$tool"
+    chmod +x "$SHIM_DIR/$tool"
+  done
+  # POSITIVE CONTROLS first: prove each guard can observe what it claims to.
+  # Without them, "no marker" is indistinguishable from "this fixture could
+  # never have produced a marker" -- the failed/never-ran collapse. Writing
+  # the marker with a separate `node -e` is NOT sufficient: it proves only
+  # that node can write a file, and was measured passing against a fixture
+  # containing a deliberate syntax error. Invoked through the .bin symlink so
+  # the control proves the whole chain a re-add would use.
+  "$FIXTURE_DIR/node_modules/.bin/ruflo" >/dev/null 2>&1 &
   CONTROL_PID=$!
   CONTROL_WAIT=0
   while [ ! -f "$MARKER" ] && [ "$CONTROL_WAIT" -lt 50 ]; do
@@ -227,16 +252,26 @@ NODE_EOF
   done
   kill "$CONTROL_PID" 2>/dev/null
   wait "$CONTROL_PID" 2>/dev/null
-  assert_true "[$SHELL_BIN] control: marker DOES appear when the fixture is invoked" \
+  assert_true "[$SHELL_BIN] control: marker DOES appear when the fixture is invoked via .bin/ruflo" \
     "$([ -f "$MARKER" ] && echo 0 || echo 1)"
   rm -f "$MARKER"
+  PATH="$SHIM_DIR:$PATH" node -e 'process.exit(0)' >/dev/null 2>&1
+  assert_true "[$SHELL_BIN] control: PATH shim DOES leave its marker when node is spawned" \
+    "$([ -f "$NODE_MARKER" ] && echo 0 || echo 1)"
+  rm -f "$NODE_MARKER"
   START_SECONDS=$(date +%s)
-  run_wrapper "$SHELL_BIN" pre-command "pwd" -- --command "pwd" >/dev/null 2>&1
+  PATH="$SHIM_DIR:$PATH" run_wrapper "$SHELL_BIN" pre-command "pwd" -- --command "pwd" >/dev/null 2>&1
   RC=$?
   ELAPSED_SECONDS=$(($(date +%s) - START_SECONDS))
+  # A fire-and-forget re-add (`node ... &`) returns before its child has
+  # written anything, so an immediate check races it -- measured missed in 5
+  # of 12 bash+dash iterations (PR #2889 review, PR-16). Let the child land.
+  sleep 0.5
   assert_eq "[$SHELL_BIN] wrapper still exits 0" "0" "$RC"
   assert_true "[$SHELL_BIN] ruflo fixture was NOT invoked (no marker)" \
     "$([ ! -f "$MARKER" ] && echo 0 || echo 1)"
+  assert_true "[$SHELL_BIN] no node/npx process was spawned at all (no shim marker)" \
+    "$([ ! -f "$NODE_MARKER" ] && echo 0 || echo 1)"
   assert_true "[$SHELL_BIN] returns without blocking on ruflo (elapsed=${ELAPSED_SECONDS}s)" \
     "$([ "$ELAPSED_SECONDS" -le 1 ] && echo 0 || echo 1)"
   teardown_fixture
