@@ -41,8 +41,16 @@
 import * as path from 'node:path'
 import { resolveRealOrFallback } from './skill-installation.target-guard.js'
 
-/** Why a removal was refused. Always names the offending path. */
-export type RemovalTargetCheck = { ok: true; resolved: string } | { ok: false; reason: string }
+/**
+ * Why a removal was refused. Always names the offending path.
+ *
+ * m1: deliberately carries NO resolved path. An earlier version returned one and
+ * the caller went on using the raw `installPath` anyway, which implies a
+ * canonicalisation guarantee the code does not give -- the window between this
+ * guard's realpath and the later `removeIfSame` cannot be closed without `*at`
+ * syscalls, so a path resolved here is not necessarily the path removed.
+ */
+export type RemovalTargetCheck = { ok: true } | { ok: false; reason: string }
 
 /**
  * Decides whether `installPath` is a path this uninstall is allowed to destroy.
@@ -60,11 +68,24 @@ export async function checkRemovalTarget(
   skillsDir: string
 ): Promise<RemovalTargetCheck> {
   if (typeof installPath !== 'string' || installPath.length === 0) {
+    // M2: the first version pointed at `skillsmith doctor`, which does not
+    // exist (grep over cli/mcp-server/core src finds no such command). The
+    // install-side twin points at `apply_manifest_reconcile`, whose `drop_entry`
+    // is documented for exactly this -- a stale entry whose path no longer
+    // resolves. It also reported an empty string as "got string", which is true
+    // and useless.
+    const got =
+      installPath === null
+        ? 'null'
+        : typeof installPath === 'string'
+          ? 'an empty string'
+          : typeof installPath
     return {
       ok: false,
       reason:
-        `the manifest entry has no usable installPath (got ${installPath === null ? 'null' : typeof installPath}), ` +
-        `so there is nothing safe to remove. Run \`skillsmith doctor\` to repair the manifest entry.`,
+        `the manifest entry has no usable installPath (got ${got}), so there is nothing safe ` +
+        `to remove. Repair the entry with the \`apply_manifest_reconcile\` tool ` +
+        `(\`drop_entry\` removes a stale record whose install path no longer resolves).`,
     }
   }
 
@@ -95,8 +116,16 @@ export async function checkRemovalTarget(
   // strictly inside it, and require the entry to be a single segment of that
   // parent. The entry may then be anything -- directory, symlink -- because
   // whatever it is, it lives in a directory we own.
-  const parent = path.dirname(path.resolve(installPath))
-  const base = path.basename(path.resolve(installPath))
+  // ONE resolve, used for both halves. Chasing a surviving mutant showed that
+  // `path.resolve` is redundant on the PARENT (realpath normalizes `.` and `..`
+  // components anyway) and LOAD-BEARING on the base: without it,
+  // `<skillsDir>/./..` yields parent `<skillsDir>/.` -- which realpaths to the
+  // root and PASSES -- with base `..`, so the delete lands on the skills
+  // directory's own parent. Resolving first collapses that to the parent
+  // directory, whose own parent is outside the root, and it is refused.
+  const resolved = path.resolve(installPath)
+  const parent = path.dirname(resolved)
+  const base = path.basename(resolved)
   const realParent = await resolveRealOrFallback(parent)
   const root = await resolveRealOrFallback(skillsDir)
 
@@ -106,8 +135,7 @@ export async function checkRemovalTarget(
   // "installPath is outside the skills directory" about a path that IS the
   // skills directory -- true by the rule, useless to read. Checking by value
   // first names the real problem.
-  const resolvedEntry = path.join(realParent, base)
-  if (resolvedEntry === root) {
+  if (path.join(realParent, base) === root) {
     return {
       ok: false,
       reason:
@@ -116,15 +144,28 @@ export async function checkRemovalTarget(
     }
   }
 
-  const parentIsRootOrInside = realParent === root || realParent.startsWith(root + path.sep)
-  if (!parentIsRootOrInside) {
+  // B1 (adversarial review of the first fix): this accepted ANY depth under the
+  // root, and depth is what defeats the git-worktree refusal. `checkGitAtRoot`
+  // looks for `.git` at the TARGET only, never at an ancestor -- so with a
+  // nested entry the manifest this guard exists to distrust could name
+  // `<skillsDir>/clone-skill/src` (deleting uncommitted work) or
+  // `<skillsDir>/clone-skill/.git` (deleting the history, leaving SKILL.md), and
+  // both returned "uninstalled successfully". SMI-6529 round 15, defeated from
+  // one segment deeper.
+  //
+  // Nothing legitimate nests. Every writer records `path.join(skillsDir, <one
+  // segment>)`, `skillNameFromSkillId` rejects empty/`.`/`..`, `mark_local`
+  // spreads the existing entry and `relink` never sets a new installPath. So the
+  // parent must be the root EXACTLY.
+  if (realParent !== root) {
     return {
       ok: false,
       reason:
-        `the manifest entry's installPath resolves into ${realParent}, which is outside the ` +
-        `skills directory (${root}). Nothing was removed.`,
+        `the manifest entry's installPath resolves into ${realParent}, which is not directly ` +
+        `inside the skills directory (${root}). Skillsmith only removes entries it installed ` +
+        `there, one level down. Nothing was removed.`,
     }
   }
 
-  return { ok: true, resolved: resolvedEntry }
+  return { ok: true }
 }
