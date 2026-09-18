@@ -28,7 +28,7 @@ import {
 // whole mocked `uninstall()` call -- see that test's own comment for why.
 import { inspectForRemoval } from '../../../src/services/skill-installation.uninstall.helpers.js'
 // Round 8 (C1): the regression-control tests below call `removeIfSame`
-// directly, to pin the five OTHER (unmodified) callers' `number`-typed
+// directly, to pin the six OTHER (unmodified) callers' `number`-typed
 // behaviour independently of the uninstall path.
 import { removeIfSame } from '../../../src/install/remove-if-same.js'
 
@@ -120,6 +120,25 @@ const lstatFlipFor = vi.hoisted(() => ({
 // by, matching what an actually-huge inode would do. Narrowed to `Number`
 // automatically when the call did not request `{bigint: true}`.
 const lstatFakeInoFor = vi.hoisted(() => ({ entries: new Map<bigint, bigint>() }))
+// Round 10 (R1): the ONE lstat call naming this exact path throws ENOENT --
+// as if the entry genuinely vanished at that instant -- and, as a side effect
+// of that SAME call, a REAL rename lands `swapFromPath`'s directory at
+// `path`, so every read AFTER this one sees the swapped-in directory rather
+// than nothing. Reproduces the exact window round 9 measured:
+// `checkNotTrackedElsewhere`'s OWN lstat lands in the gap between the
+// original vanishing and a DIFFERENT, tracked and modified skill's directory
+// landing in its place.
+const vanishThenSwapFor = vi.hoisted(() => ({
+  path: null as string | null,
+  swapFromPath: null as string | null,
+}))
+// Round 10 (R5): overlay a fabricated `birthtimeNs: 0n` onto exactly the
+// FIRST lstat of this exact path (the removal guard's own read, which
+// becomes `adoptedIdentity`), leaving every LATER read of the same path (the
+// second `inspectForRemoval`, which becomes `seen.stat`) at its real,
+// non-zero value -- so `identityChanged` sees one side reporting "no
+// birthtime" while `dev`/`ino` genuinely agree.
+const lstatZeroBirthtimeOnceFor = vi.hoisted(() => ({ path: null as string | null, seen: 0 }))
 // Round 8 (C2): a REAL (not mocked) filesystem swap, triggered the one time
 // `fs.rename` targets `manifestPath` -- `ManifestManager.save`'s own
 // write-then-rename, which lands reliably between adoption (which reads the
@@ -224,6 +243,24 @@ const makeFsMock = vi.hoisted(() => (actual: typeof import('node:fs/promises')) 
     if (lstatFailFor.path !== null && key === lstatFailFor.path) {
       throw lstatFailFor.throws === null ? new Error('lstat failed') : lstatFailFor.throws.value
     }
+    // Round 10 (R1): this ONE call throws ENOENT and, as its own side effect,
+    // performs the REAL swap-in rename -- see `vanishThenSwapFor`'s own doc
+    // comment above. The original entry at `key` is vacated first (a bare
+    // rename onto a non-empty directory fails with ENOTEMPTY, which is not
+    // the window this hook reproduces), so the net effect is exactly "the
+    // original vanished, then something else was renamed into its place."
+    if (vanishThenSwapFor.path !== null && key === vanishThenSwapFor.path) {
+      const swapFrom = vanishThenSwapFor.swapFromPath
+      vanishThenSwapFor.path = null
+      vanishThenSwapFor.swapFromPath = null
+      if (swapFrom !== null) {
+        await actual.rm(key, { recursive: true, force: true })
+        await actual.rename(swapFrom, key)
+      }
+      throw Object.assign(new Error(`ENOENT: no such file or directory, lstat '${key}'`), {
+        code: 'ENOENT',
+      })
+    }
     // Round 8: both redirects below now forward `args.slice(1)` (the lstat
     // OPTIONS, e.g. `{bigint: true}`), not just the substituted path -- the
     // original version silently downgraded a redirected read to a
@@ -263,6 +300,21 @@ const makeFsMock = vi.hoisted(() => (actual: typeof import('node:fs/promises')) 
     if (fakeIno !== undefined) {
       const finalIno = typeof realIno === 'bigint' ? fakeIno : Number(fakeIno)
       result = overrideField(result, 'ino', finalIno)
+    }
+    // Round 10 (R5): overlay `birthtimeNs: 0n` onto exactly the FIRST lstat of
+    // this path -- see `lstatZeroBirthtimeOnceFor`'s own doc comment above.
+    if (lstatZeroBirthtimeOnceFor.path !== null && key === lstatZeroBirthtimeOnceFor.path) {
+      lstatZeroBirthtimeOnceFor.seen += 1
+      const current = result as { birthtimeNs?: unknown }
+      if (lstatZeroBirthtimeOnceFor.seen === 1 && typeof current.birthtimeNs === 'bigint') {
+        result = Object.assign(
+          Object.create(Object.getPrototypeOf(result)) as typeof result,
+          result,
+          {
+            birthtimeNs: 0n,
+          }
+        )
+      }
     }
     return result
   }) as typeof actual.lstat
@@ -442,6 +494,10 @@ afterEach(async () => {
   lstatAliasFor.targetPath = null
   lstatFakeDeviceFor.path = null
   lstatFakeInoFor.entries.clear()
+  vanishThenSwapFor.path = null
+  vanishThenSwapFor.swapFromPath = null
+  lstatZeroBirthtimeOnceFor.path = null
+  lstatZeroBirthtimeOnceFor.seen = 0
   swapDiskOnManifestWrite.manifestPath = null
   swapDiskOnManifestWrite.diskPath = null
   swapDiskOnManifestWrite.victimContent = null
@@ -1884,7 +1940,9 @@ describe('uninstall compares identity in bigint, not Number (SMI-6732 round 8, C
     // A `number`-typed comparison would have read both as the SAME ino and
     // refused this as "already tracked under the name tracked-big-ino" --
     // wrongly, since these are two distinct real directories.
-    expect(result.success).toBe(true)
+    // Round 10 (R6): this assertion failed 1 of 4 runs under load with
+    // nothing captured -- carry the message so a future flake is diagnosable.
+    expect(result.success, result.message).toBe(true)
     await expect(fs.lstat(untracked)).rejects.toMatchObject({ code: 'ENOENT' })
     expect(await manifestEntry('tracked-big-ino')).toBeDefined()
   })
@@ -1901,7 +1959,7 @@ describe('uninstall compares identity in bigint, not Number (SMI-6732 round 8, C
 })
 
 describe('removeIfSame still compares number-typed identities exactly as before (SMI-6732 round 8, C1 regression)', () => {
-  // The five OTHER callers of `removeIfSame` (fan-out cleanup, fan-out
+  // The six OTHER callers of `removeIfSame` (fan-out cleanup, fan-out
   // overwrite, install rollback) still pass a plain `fs.Stats`-derived
   // (`number`-typed) identity, never `{bigint: true}`. These pin that they
   // are unaffected by the uninstall path's switch to `bigint`.
@@ -2076,5 +2134,196 @@ describe('identityChanged catches an inode reused by a delete-and-recreate (SMI-
 
     expect(message).not.toBeNull()
     expect(message).toContain('replaced by a different directory')
+  })
+})
+
+describe('checkNotTrackedElsewhere refuses instead of adopting through its own ENOENT window (SMI-6732 round 10, R1)', () => {
+  it('refuses directly when the target has never existed, rather than reporting ok with no identity', async () => {
+    const neverExisted = path.join(skillsDir, 'never-existed-at-all')
+
+    const result = await checkNotTrackedElsewhere(neverExisted, 'never-existed-at-all', {})
+
+    expect(result.ok).toBe(false)
+    if (result.ok) throw new Error('unreachable: already asserted !result.ok above')
+    expect(result.message).toContain('disappeared while it was being checked')
+    expect(result.message).toContain(neverExisted)
+  })
+
+  it('refuses end to end rather than adopting and deleting whatever a tracked, modified skill got renamed into the gap (round 9 finding)', async () => {
+    const victimName = 'victim-skill'
+    const potentialPath = path.join(skillsDir, victimName)
+    await fs.mkdir(potentialPath, { recursive: true })
+    await fs.writeFile(path.join(potentialPath, 'SKILL.md'), '# original untracked\n')
+
+    // A DIFFERENT skill, tracked, and modified since its OWN installedAt --
+    // the entry that must survive this uninstall untouched.
+    const trackedName = 'other-tracked-skill'
+    const trackedPath = path.join(skillsDir, trackedName)
+    await fs.mkdir(trackedPath, { recursive: true })
+    await fs.writeFile(path.join(trackedPath, 'SKILL.md'), '# tracked, about to be modified\n')
+    await track(trackedName, trackedPath)
+    await fs.writeFile(path.join(trackedPath, 'SKILL.md'), '# tracked, MODIFIED\n')
+
+    // checkNotTrackedElsewhere's OWN lstat of `potentialPath` sees ENOENT, and
+    // -- as that same call's side effect -- the tracked+modified directory
+    // lands at `potentialPath` immediately after, matching what round 9
+    // measured: `fs.access` still sees the original, then the guard's own
+    // read lands in the vanish-then-replace gap.
+    vanishThenSwapFor.path = potentialPath
+    vanishThenSwapFor.swapFromPath = trackedPath
+
+    const result = await createService().uninstall(victimName, { force: false })
+
+    expect(result.success, result.message).toBe(false)
+    expect(result.message).toContain('disappeared while it was being checked')
+    // The swapped-in tracked+modified skill is still there, untouched --
+    // never adopted, never deleted.
+    expect(await fs.readFile(path.join(potentialPath, 'SKILL.md'), 'utf-8')).toBe(
+      '# tracked, MODIFIED\n'
+    )
+    // No adoption entry was ever written for the victim name.
+    expect(await manifestEntry(victimName)).toBeUndefined()
+    // The tracked skill's own record is untouched by this uninstall (its
+    // installPath now names the vacated original location -- an artifact of
+    // this test's own swap, not something this fix is responsible for
+    // repairing).
+    expect(await manifestEntry(trackedName)).toBeDefined()
+  })
+})
+
+describe('sameIdentity is pinned exactly, not merely equivalent (SMI-6732 round 10, R2)', () => {
+  // Round 9 measured both branches of `sameIdentity` (remove-if-same.ts)
+  // revertible to a wrong-but-plausible rule with the entire suite green.
+  // These three cases, run through the real `removeIfSame`, are the ones
+  // round 9 found that discriminate.
+  const inoA = (35n << 48n) | 90356n
+  const inoB = (35n << 48n) | 90357n
+
+  it('the precondition these cases probe', () => {
+    expect(inoA).not.toBe(inoB)
+    expect(Number(inoA)).toBe(Number(inoB))
+    expect(BigInt(Number(inoB))).not.toBe(inoB)
+  })
+
+  it('CASE U: refuses when the bigint expected and actual inodes differ but collapse to the same Number (kills the bigint-branch Number() mutant)', async () => {
+    const dir = await fs.mkdtemp(path.join(tmpDir, 'sameidentity-caseu-'))
+    const real = await fs.lstat(dir, { bigint: true })
+    lstatFakeInoFor.entries.set(real.ino, inoB)
+
+    const result = await removeIfSame(dir, { dev: real.dev, ino: inoA })
+
+    expect(result.removed).toBe(false)
+    if (!result.removed) expect(result.reason).toContain('replaced by something else')
+    await expect(fs.lstat(dir)).resolves.toBeDefined()
+  })
+
+  it('CASE L2: still matches when expected is a lossy Number() capture of the same real (large) inode (kills the number-branch BigInt() mutant)', async () => {
+    const dir = await fs.mkdtemp(path.join(tmpDir, 'sameidentity-casel2-'))
+    const real = await fs.lstat(dir, { bigint: true })
+    lstatFakeInoFor.entries.set(real.ino, inoB)
+
+    const result = await removeIfSame(dir, { dev: Number(real.dev), ino: Number(inoB) })
+
+    expect(result.removed).toBe(true)
+    await expect(fs.lstat(dir)).rejects.toMatchObject({ code: 'ENOENT' })
+  })
+
+  it('CASE U2 (positive control): matches when the bigint expected and actual inodes genuinely agree', async () => {
+    const dir = await fs.mkdtemp(path.join(tmpDir, 'sameidentity-caseu2-'))
+    const real = await fs.lstat(dir, { bigint: true })
+    lstatFakeInoFor.entries.set(real.ino, inoB)
+
+    const result = await removeIfSame(dir, { dev: real.dev, ino: inoB })
+
+    expect(result.removed).toBe(true)
+    await expect(fs.lstat(dir)).rejects.toMatchObject({ code: 'ENOENT' })
+  })
+})
+
+describe('removeIfSame catches an inode reused by a delete-and-recreate inside its OWN window (SMI-6732 round 10, R3)', () => {
+  it('birthtimeNs discriminates a recreated directory that reuses the same inode, inside removeIfSame itself (real filesystem, no mock)', async () => {
+    const dir = path.join(tmpDir, 'recreated-before-removeifsame')
+    await fs.mkdir(dir, { recursive: true })
+    await fs.writeFile(path.join(dir, 'SKILL.md'), '# original\n')
+
+    // Same retry technique as the C4 test above: inode reuse across a
+    // delete/recreate cycle is measured deterministic on this filesystem, but
+    // `birthtimeNs`'s resolution is coarser than one cycle takes, so several
+    // back-to-back cycles can share an identical birthtime. Retry, bounded,
+    // rolling `expected` forward each time, until a cycle both reuses the
+    // inode AND crosses that resolution boundary.
+    let expected = await fs.lstat(dir, { bigint: true })
+    let recreated: typeof expected | undefined
+    for (let attempt = 0; attempt < 200 && recreated === undefined; attempt++) {
+      await fs.rm(dir, { recursive: true, force: true })
+      await fs.mkdir(dir, { recursive: true })
+      await fs.writeFile(path.join(dir, 'SKILL.md'), `# recreated ${attempt}\n`)
+      const candidate = await fs.lstat(dir, { bigint: true })
+      if (
+        candidate.dev === expected.dev &&
+        candidate.ino === expected.ino &&
+        candidate.birthtimeNs !== expected.birthtimeNs
+      ) {
+        recreated = candidate
+      } else {
+        expected = candidate
+      }
+    }
+    if (recreated === undefined) {
+      throw new Error(
+        'could not reproduce a same-inode, different-birthtime delete/recreate cycle in 200 ' +
+          'attempts on this filesystem -- the precondition this test probes did not hold here'
+      )
+    }
+
+    // The property this test exists to probe, restated as an assertion:
+    // dev/ino ALONE cannot tell the directory `removeIfSame` is about to
+    // touch apart from the STALE identity `expected` describes.
+    expect(recreated.dev).toBe(expected.dev)
+    expect(recreated.ino).toBe(expected.ino)
+    expect(recreated.birthtimeNs).not.toBe(expected.birthtimeNs)
+
+    // `expected` is the STALE identity, as if captured by a caller earlier;
+    // `removeIfSame`'s own internal `before` lstat will see the directory
+    // currently on disk -- the recreated one.
+    const result = await removeIfSame(dir, {
+      dev: expected.dev,
+      ino: expected.ino,
+      birthtimeNs: expected.birthtimeNs,
+    })
+
+    expect(result.removed).toBe(false)
+    if (!result.removed) expect(result.reason).toContain('replaced by something else')
+    expect(await fs.readdir(dir)).toContain('SKILL.md')
+  })
+})
+
+describe('identityChanged only compares birthtimeNs when BOTH sides report one (SMI-6732 round 10, R5)', () => {
+  it('does not refuse when the BEFORE identity has no birthtime (0n) even though AFTER genuinely differs', () => {
+    const before = { dev: 7n, ino: 9n, birthtimeNs: 0n }
+    const after = { dev: 7n, ino: 9n, birthtimeNs: 500n }
+
+    expect(identityChanged(before, after, 'probe-skill')).toBeNull()
+  })
+
+  it('does not refuse when the AFTER identity has no birthtime (0n) even though BEFORE genuinely differs', () => {
+    const before = { dev: 7n, ino: 9n, birthtimeNs: 500n }
+    const after = { dev: 7n, ino: 9n, birthtimeNs: 0n }
+
+    expect(identityChanged(before, after, 'probe-skill')).toBeNull()
+  })
+
+  it("proceeds normally end to end when the removal guard's own read reports a zero birthtimeNs but dev/ino genuinely match", async () => {
+    const untracked = path.join(skillsDir, 'zero-birthtime-skill')
+    await fs.mkdir(untracked, { recursive: true })
+    await fs.writeFile(path.join(untracked, 'SKILL.md'), '# zero birthtime\n')
+
+    lstatZeroBirthtimeOnceFor.path = untracked
+
+    const result = await createService().uninstall('zero-birthtime-skill', { force: true })
+
+    expect(result.success, result.message).toBe(true)
+    expect(result.message).not.toContain('replaced by a different directory')
+    await expect(fs.lstat(untracked)).rejects.toMatchObject({ code: 'ENOENT' })
   })
 })
