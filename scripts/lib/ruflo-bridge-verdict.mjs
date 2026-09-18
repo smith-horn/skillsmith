@@ -41,11 +41,19 @@
  * on the substrate (not-evaluated, malformed, unrecognized, unreadable input).
  */
 import { readFileSync } from 'node:fs'
-import { pathToFileURL } from 'node:url'
+import { realpathSync } from 'node:fs'
+import { fileURLToPath } from 'node:url'
 
 export const DERIVED_FROM = Object.freeze({
   package: '@claude-flow/cli',
   version: '3.14.2',
+  // `version` is @claude-flow/cli's, not the wrapper's. `.mcp.json` pins the
+  // wrapper (`ruflo@3.14.2`) and the wrapper's dependency range is open
+  // (`>=3.0.0-alpha.1`), so the two numbers coincide today by accident: the
+  // repo's own ruflo@3.5.42 resolves cli 3.5.80, and a fresh install of
+  // ruflo@3.14.2 resolved cli 3.42.4 on 2026-09-18. Bumping the wrapper pin
+  // does not re-derive this predicate; only re-reading the cli source does.
+  servedBy: 'npx ruflo@3.14.2 (.mcp.json)',
   // The same five source literals were re-read, unchanged, at this later
   // version (the one `npm install ruflo@3.14.2` resolves to on 2026-09-18).
   alsoVerifiedAt: Object.freeze(['3.42.4']),
@@ -180,6 +188,23 @@ function main(argv) {
   return EXIT[result.verdict]
 }
 
-if (process.argv[1] && import.meta.url === pathToFileURL(process.argv[1]).href) {
+/**
+ * True only when this file is the process entry point. Compares REAL paths:
+ * `import.meta.url` is the resolved file, `process.argv[1]` is the invoked
+ * one, and they differ under any symlink (npm `bin` links, `~/bin` shims).
+ * The earlier `import.meta.url === pathToFileURL(argv[1]).href` form
+ * measured exit 0 with no output through a symlink -- the healthy verdict,
+ * for a degraded payload, silently. The test pins this with a real symlink.
+ */
+function isMain() {
+  if (!process.argv[1]) return false
+  try {
+    return realpathSync(fileURLToPath(import.meta.url)) === realpathSync(process.argv[1])
+  } catch {
+    return false
+  }
+}
+
+if (isMain()) {
   process.exit(main(process.argv))
 }

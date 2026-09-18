@@ -1,9 +1,12 @@
 {
-  "captured": "2026-09-18T21:40:02Z",
-  "tool": "memory_bridge_status over MCP stdio",
-  "serving_build": "scratch `npm install ruflo@3.14.2 --no-save --ignore-scripts=false` (resolved @claude-flow/cli@3.42.4), darwin-arm64, fresh cwd with no .swarm",
-  "embedding_loader_per_stderr": "Transformers.js loaded: Xenova/all-MiniLM-L6-v2",
-  "wall_ms": 21531,
+  "_provenance": {
+    "captured": "2026-09-18T21:40:02Z",
+    "tool": "memory_bridge_status over MCP stdio",
+    "serving_build": "scratch `npm install ruflo@3.14.2 --no-save --ignore-scripts=false` (resolved @claude-flow/cli@3.42.4), darwin-arm64, fresh cwd with no .swarm",
+    "embedding_loader_per_stderr": "Transformers.js loaded: Xenova/all-MiniLM-L6-v2",
+    "wall_ms": 21531,
+    "note": "envelope, not part of the tool payload; the detector reads agentdb.*, bridge.*, intelligence.* only"
+  },
   "claudeCode": {
     "memoryFiles": 337,
     "projects": 12

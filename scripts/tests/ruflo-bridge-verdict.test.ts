@@ -11,11 +11,12 @@
  */
 import { describe, expect, it } from 'vitest'
 import { execFileSync } from 'node:child_process'
-import { existsSync, readFileSync, readdirSync } from 'node:fs'
-import { homedir } from 'node:os'
+import { existsSync, mkdtempSync, readFileSync, readdirSync, rmSync, symlinkSync } from 'node:fs'
+import { homedir, tmpdir } from 'node:os'
 import path from 'node:path'
 import { fileURLToPath } from 'node:url'
 
+import { resolveRealHome } from './_lib/resolve-real-home.js'
 import {
   DERIVED_FROM,
   EMBEDDING_BACKENDS,
@@ -27,6 +28,7 @@ import {
 const here = path.dirname(fileURLToPath(import.meta.url))
 const FIXTURE_DIR = path.join(here, 'fixtures', 'ruflo-bridge-status')
 const DEGRADED = path.join(FIXTURE_DIR, 'degraded-2026-09-18T21-16-11Z.json')
+const HEALTHY = path.join(FIXTURE_DIR, 'healthy-2026-09-18T21-40-02Z.json')
 const CLI = path.join(here, '..', 'lib', 'ruflo-bridge-verdict.mjs')
 
 type Section = Record<string, unknown>
@@ -73,17 +75,17 @@ describe('ruflo-bridge-verdict (SMI-6744 Wave 0)', () => {
     expect(bridgeVerdict(syntheticHealthy()).verdict).toBe('healthy')
   })
 
-  const measuredHealthy = existsSync(FIXTURE_DIR)
-    ? readdirSync(FIXTURE_DIR).filter((f) => f.startsWith('healthy-') && f.endsWith('.json'))
-    : []
-  it.skipIf(measuredHealthy.length === 0)(
-    `measured healthy captures verdict healthy (n=${measuredHealthy.length})`,
-    () => {
-      for (const f of measuredHealthy) {
-        expect(bridgeVerdict(load(path.join(FIXTURE_DIR, f))).verdict, f).toBe('healthy')
-      }
+  it('every committed healthy capture verdicts healthy, and at least one exists', () => {
+    // Not skipIf: the captures are in git, so an empty list can only mean a
+    // rename or deletion, and that must fail, not skip.
+    const measuredHealthy = readdirSync(FIXTURE_DIR).filter(
+      (f) => f.startsWith('healthy-') && f.endsWith('.json')
+    )
+    expect(measuredHealthy.length, 'committed healthy captures').toBeGreaterThan(0)
+    for (const f of measuredHealthy) {
+      expect(bridgeVerdict(load(path.join(FIXTURE_DIR, f))).verdict, f).toBe('healthy')
     }
-  )
+  })
 
   it('a probe that did not complete is a third outcome, not a pass', () => {
     const r = bridgeVerdict(setBackend(syntheticHealthy(), 'unknown'))
@@ -158,15 +160,21 @@ describe('ruflo-bridge-verdict (SMI-6744 Wave 0)', () => {
   })
 
   describe('CLI exit status is three-way', () => {
-    function run(file: string): { status: number; out: string } {
+    function run(file: string, cli: string = CLI): { status: number; out: string } {
       try {
-        const out = execFileSync(process.execPath, [CLI, file], { encoding: 'utf8' })
+        const out = execFileSync(process.execPath, [cli, file], { encoding: 'utf8' })
         return { status: 0, out }
       } catch (err) {
         const e = err as { status?: number; stdout?: string }
         return { status: e.status ?? -1, out: e.stdout ?? '' }
       }
     }
+
+    it('healthy fixture -> exit 0 and says so', () => {
+      const r = run(HEALTHY)
+      expect(r.status).toBe(EXIT.healthy)
+      expect(r.out).toContain('ruflo-bridge-verdict: healthy')
+    })
 
     it('degraded fixture -> exit 1 and the denominator is printed', () => {
       const r = run(DEGRADED)
@@ -179,6 +187,24 @@ describe('ruflo-bridge-verdict (SMI-6744 Wave 0)', () => {
       const r = run(path.join(FIXTURE_DIR, 'does-not-exist.json'))
       expect(r.status).toBe(EXIT.unreadable)
       expect(r.out).toContain('unreadable')
+    })
+
+    it('invoked through a symlink, the degraded fixture still exits 1 with output', () => {
+      // npm bin entries and ~/bin shims are symlinks. The first main-guard
+      // compared import.meta.url (resolved) with argv[1] (invoked), which
+      // differ through a link -- measured: exit 0, zero bytes, for a degraded
+      // payload. Exit 0 is the healthy verdict. This pins the realpath form.
+      const dir = mkdtempSync(path.join(tmpdir(), 'ruflo-bridge-verdict-link-'))
+      try {
+        const link = path.join(dir, 'verdict-link.mjs')
+        symlinkSync(CLI, link)
+        const r = run(DEGRADED, link)
+        expect(r.status).toBe(EXIT.degraded)
+        expect(r.out.length, 'stdout bytes through the symlink').toBeGreaterThan(0)
+        expect(r.out).toContain('ruflo-bridge-verdict: degraded')
+      } finally {
+        rmSync(dir, { recursive: true, force: true })
+      }
     })
   })
 })
@@ -195,20 +221,42 @@ describe('predicate source drift (skips when no derived-from tree is installed)'
   // the npx cache, so it looks there; a bare homedir() would always be the
   // empty sandbox and the guard would skip on every machine, including the
   // one that has the tree.
-  const npxRoot = path.join(process.env.SKILLSMITH_TEST_REAL_HOME ?? homedir(), '.npm', '_npx')
+  // resolveRealHome, not `?? homedir()`: an empty or whitespace value would
+  // make this path RELATIVE and the guard would skip forever while printing
+  // a root that reads as absolute. scripts/tests/_lib/resolve-real-home.ts
+  // pins that exact bug.
+  const npxRoot = path.join(
+    resolveRealHome(process.env.SKILLSMITH_TEST_REAL_HOME, homedir),
+    '.npm',
+    '_npx'
+  )
   const trees: Array<{ dir: string; version: string }> = []
-  let scanned = 0
+  // Three counts, because "0 at a derived-from version" has two causes that
+  // must render differently: ruflo was never cached here (withCli = 0), or
+  // it was and every cached version is one this predicate was not read at
+  // (withCli > 0). A truncated package.json from an interrupted npx counts
+  // as unreadable rather than crashing collection.
+  let cacheDirs = 0
+  let withCli = 0
+  let unreadable = 0
   if (existsSync(npxRoot)) {
     for (const hash of readdirSync(npxRoot)) {
-      scanned++
+      cacheDirs++
       const pkg = path.join(npxRoot, hash, 'node_modules', '@claude-flow', 'cli')
       const pj = path.join(pkg, 'package.json')
       if (!existsSync(pj)) continue
-      const version = (JSON.parse(readFileSync(pj, 'utf8')) as { version: string }).version
-      if (wanted.has(version)) trees.push({ dir: pkg, version })
+      try {
+        const version = (JSON.parse(readFileSync(pj, 'utf8')) as { version: string }).version
+        withCli++
+        if (wanted.has(version)) trees.push({ dir: pkg, version })
+      } catch {
+        unreadable++
+      }
     }
   }
-  const scope = `searched ${npxRoot}: ${scanned} cache dirs, ${trees.length} at a derived-from version`
+  const scope =
+    `searched ${npxRoot}: ${cacheDirs} cache dirs, ${withCli} with @claude-flow/cli, ` +
+    `${trees.length} at a derived-from version, ${unreadable} unreadable`
 
   const LITERALS: Array<[string, string]> = [
     ['dist/src/mcp-tools/memory-tools.js', "probe.backend ?? 'unknown'"],
@@ -243,10 +291,25 @@ describe('predicate source drift (skips when no derived-from tree is installed)'
         ]) {
           const src = readFileSync(path.join(t.dir, rel), 'utf8')
           const found = new Set<string>()
+          // A `backend:` site whose value holds no literal on its line is
+          // the case the set comparison cannot see: a new member on a
+          // continuation line (`backend: isMock\n ? 'mock'\n : 'ruvector'`)
+          // leaves `found` at exactly {mock, onnx} -- measured to pass
+          // vacuously before this counter existed. Zero such sites today
+          // on both derived-from trees; a real gate the day one appears.
+          let barren = 0
           for (const m of src.matchAll(/\bbackend:\s*([^,\n]+)/g)) {
-            for (const s of m[1].matchAll(/'([a-z-]+)'/g)) found.add(s[1])
+            let n = 0
+            for (const s of m[1].matchAll(/'([a-z-]+)'/g)) {
+              found.add(s[1])
+              n++
+            }
+            if (n === 0) barren++
           }
           expect([...found].sort(), `${t.version} ${rel}`).toEqual(['mock', 'onnx'])
+          expect(barren, `${t.version} ${rel}: backend: sites with no literal on their line`).toBe(
+            0
+          )
         }
       }
     }

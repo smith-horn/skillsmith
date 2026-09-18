@@ -1,16 +1,28 @@
 {
-  "captured": "2026-09-18T21:16:11Z",
-  "tool": "mcp__ruflo__memory_bridge_status",
-  "serving_build": "npx ruflo@3.14.2 (~/.npm/_npx/5136ad6db8e498e9)",
-  "claudeCode": { "memoryFiles": 337, "projects": 12 },
+  "_provenance": {
+    "captured": "2026-09-18T21:16:11Z",
+    "tool": "mcp__ruflo__memory_bridge_status",
+    "serving_build": "npx ruflo@3.14.2 (~/.npm/_npx/5136ad6db8e498e9)",
+    "note": "envelope, not part of the tool payload; the detector reads agentdb.*, bridge.*, intelligence.* only"
+  },
+  "claudeCode": {
+    "memoryFiles": 337,
+    "projects": 12
+  },
   "agentdb": {
     "totalEntries": 61271,
     "claudeMemoryEntries": 0,
-    "namespaces": { "default": 29 },
+    "namespaces": {
+      "default": 29
+    },
     "backend": "sql.js + MOCK (hash fallback)",
     "embeddingBackend": "mock"
   },
-  "intelligence": { "sonaEnabled": true, "patternsLearned": 0, "trajectoriesRecorded": 0 },
+  "intelligence": {
+    "sonaEnabled": true,
+    "patternsLearned": 0,
+    "trajectoriesRecorded": 0
+  },
   "bridge": {
     "status": "connected",
     "embedding": "all-MiniLM-L6-v2 (384-dim, backend=mock)",
