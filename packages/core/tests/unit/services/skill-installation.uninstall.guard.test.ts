@@ -764,12 +764,12 @@ describe('uninstall refuses nested and mis-spelled targets (SMI-6732 round 2)', 
     const result = await createService().uninstall('parentesc', { force: true })
 
     expect(result.success).toBe(false)
-    // Assert the GUARD's own wording, not merely `success: false`. Measured:
-    // with `path.resolve` removed the guard ACCEPTS this path, and something
-    // downstream refuses it anyway -- so a bare `success: false` assertion
-    // passes against the mutant and pins nothing. Only `checkRemovalTarget`
-    // emits this phrase.
-    expect(result.message).toContain('not directly inside')
+    // Assert the GUARD's own wording, not merely `success: false` -- several
+    // things downstream also refuse this path, so a bare outcome assertion pins
+    // nothing. Round 3 moved WHICH clause catches it: `<skillsDir>/./..` is
+    // non-canonical, so the canonical-form rule now refuses it earlier and more
+    // precisely than the parent rule did.
+    expect(result.message).toContain('not in canonical form')
     expect(await fs.readFile(path.join(bystander, 'SKILL.md'), 'utf-8')).toBe('# Survivor\n')
     await expect(fs.lstat(skillsDir)).resolves.toBeDefined()
   })
@@ -832,5 +832,81 @@ describe('uninstall refuses nested and mis-spelled targets (SMI-6732 round 2)', 
     await expect(fs.lstat(path.join(realRoot, 'linked-root-skill'))).rejects.toMatchObject({
       code: 'ENOENT',
     })
+  })
+})
+
+describe('uninstall requires a canonical installPath (SMI-6732 round 3, pre-merge gate)', () => {
+  // The guard used to VALIDATE `path.resolve(installPath)` while `performUninstall`
+  // went on to DELETE the raw string. `path.resolve` is lexical -- it collapses
+  // `seg/..` before resolving a symlink in `seg`, and strips trailing slashes.
+  // The kernel does neither. Two deterministic escapes followed, both measured
+  // on macOS with force:true and both reporting "uninstalled successfully".
+  //
+  // These are the mutations the author did not pick: round 2 tested a symlink as
+  // the immediate PARENT and never a symlink followed by `..`, nor a trailing
+  // slash on one.
+
+  it('refuses `..` after a symlinked segment, which escapes lexical resolution', async () => {
+    const elsewhere = path.join(tmpDir, 'elsewhere')
+    await fs.mkdir(elsewhere, { recursive: true })
+    const victim = path.join(tmpDir, 'victim')
+    await fs.mkdir(victim, { recursive: true })
+    await fs.writeFile(path.join(victim, 'data.txt'), 'USER DATA\n')
+    await fs.symlink(elsewhere, path.join(skillsDir, 'hop'))
+    // path.resolve collapses `hop/..` to skillsDir BEFORE the symlink is
+    // followed, so the old guard validated `<skillsDir>/victim` while the kernel
+    // deleted `<tmpDir>/victim`.
+    await track('escape', `${skillsDir}/hop/../victim`)
+
+    const result = await createService().uninstall('escape', { force: true })
+
+    expect(result.success).toBe(false)
+    expect(result.message).toContain('not in canonical form')
+    expect(await fs.readFile(path.join(victim, 'data.txt'), 'utf-8')).toBe('USER DATA\n')
+  })
+
+  it('refuses a trailing slash on a symlinked skill, which would delete the target', async () => {
+    // This is the case that falsified the previous design claim. With a trailing
+    // slash, `lstat(...).isSymbolicLink()` is FALSE on macOS -- the slash follows
+    // the link -- so removal took the checkout, not the link.
+    const checkout = path.join(tmpDir, 'devcheckout')
+    await fs.mkdir(checkout, { recursive: true })
+    await fs.writeFile(path.join(checkout, 'SKILL.md'), '# Local work\n')
+    await fs.symlink(checkout, path.join(skillsDir, 'slashlink'))
+    await track('slashed', `${skillsDir}/slashlink/`)
+
+    const result = await createService().uninstall('slashed', { force: true })
+
+    expect(result.success).toBe(false)
+    expect(result.message).toContain('not in canonical form')
+    expect(await fs.readFile(path.join(checkout, 'SKILL.md'), 'utf-8')).toBe('# Local work\n')
+  })
+
+  it('refuses a doubled separator, the same normalization gap', async () => {
+    const victim = path.join(tmpDir, 'dbl')
+    await fs.mkdir(victim, { recursive: true })
+    await track('doubled', `${skillsDir}//dbl`)
+
+    const result = await createService().uninstall('doubled', { force: true })
+
+    expect(result.success).toBe(false)
+    await expect(fs.lstat(victim)).resolves.toBeDefined()
+  })
+
+  // POSITIVE CONTROL, and the one that matters most: requiring canonical form
+  // must not break the develop-in-place workflow the parent-check exists for.
+  it('still uninstalls a symlinked skill spelled canonically, target intact', async () => {
+    const checkout = path.join(tmpDir, 'dev2', 'canon-skill')
+    await fs.mkdir(checkout, { recursive: true })
+    await fs.writeFile(path.join(checkout, 'SKILL.md'), '# Keep me\n')
+    const link = path.join(skillsDir, 'canon-skill')
+    await fs.symlink(checkout, link)
+    await track('canon-skill', link)
+
+    const result = await createService().uninstall('canon-skill', { force: true })
+
+    expect(result.success).toBe(true)
+    await expect(fs.lstat(link)).rejects.toMatchObject({ code: 'ENOENT' })
+    expect(await fs.readFile(path.join(checkout, 'SKILL.md'), 'utf-8')).toBe('# Keep me\n')
   })
 })

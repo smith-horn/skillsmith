@@ -116,16 +116,62 @@ export async function checkRemovalTarget(
   // strictly inside it, and require the entry to be a single segment of that
   // parent. The entry may then be anything -- directory, symlink -- because
   // whatever it is, it lives in a directory we own.
-  // ONE resolve, used for both halves. Chasing a surviving mutant showed that
-  // `path.resolve` is redundant on the PARENT (realpath normalizes `.` and `..`
-  // components anyway) and LOAD-BEARING on the base: without it,
-  // `<skillsDir>/./..` yields parent `<skillsDir>/.` -- which realpaths to the
-  // root and PASSES -- with base `..`, so the delete lands on the skills
-  // directory's own parent. Resolving first collapses that to the parent
-  // directory, whose own parent is outside the root, and it is refused.
-  const resolved = path.resolve(installPath)
-  const parent = path.dirname(resolved)
-  const base = path.basename(resolved)
+  // CANONICAL FORM IS REQUIRED, NOT PRODUCED. This is the fix for two BLOCKING
+  // bypasses found by the pre-merge gate, and it replaces a normalize-then-trust
+  // design that was wrong in principle.
+  //
+  // The earlier version validated `path.resolve(installPath)` while
+  // `performUninstall` went on to delete the RAW string. `path.resolve` is
+  // LEXICAL: it collapses `seg/..` before any symlink in `seg` is resolved, and
+  // it strips trailing slashes. The kernel does neither. So the guard approved
+  // one path and the filesystem removed another. Both measured on macOS, both
+  // `force: true`, both reporting "uninstalled successfully":
+  //
+  //   <skillsDir>/hop/../victim   (hop is a symlink out of the tree)
+  //     guard validated  <skillsDir>/victim      -> ok
+  //     kernel deleted   <realBase>/victim       -> OUTSIDE the skills dir
+  //
+  //   <skillsDir>/link/           (trailing slash, link -> a checkout outside)
+  //     guard validated  <skillsDir>/link        -> ok
+  //     lstat("<...>/link/").isSymbolicLink() === FALSE, so removal followed the
+  //     link and deleted the CHECKOUT
+  //
+  // The second one falsifies this guard's own former design claim -- "removing a
+  // symlink removes the link, never its target". With a trailing slash on macOS
+  // it removes the target. That claim was the stated reason for checking the
+  // parent rather than the entry, so it could not be patched around.
+  //
+  // An earlier comment here dismissed the resolve-vs-delete divergence as an
+  // unavoidable TOCTOU *race*. It is not a race. It is deterministic and needs
+  // no concurrent writer at all.
+  //
+  // THE FIX IS TO REMOVE THE GAP RATHER THAN TO OUT-THINK IT. A normalization
+  // step creates a second string, and every such step is a chance for the
+  // validated string and the deleted string to differ. So the raw value must
+  // ALREADY equal its own normalization; if it does not, it is refused. There is
+  // then no second string to diverge, and the path the caller deletes is
+  // by construction the path this function approved.
+  //
+  // This over-refuses nothing: every writer records `path.join(skillsDir, name)`,
+  // and `path.join` returns a normalized path.
+  if (path.resolve(installPath) !== installPath) {
+    return {
+      ok: false,
+      reason:
+        `the manifest entry's installPath "${installPath}" is not in canonical form ` +
+        `(it normalizes to "${path.resolve(installPath)}"). A path containing "." or ".." ` +
+        `segments, a trailing slash, or a doubled separator is resolved differently by this ` +
+        `check than by the filesystem, so it is refused rather than normalized. Nothing was ` +
+        `removed.`,
+    }
+  }
+
+  // No normalization here, deliberately. The check above has already established
+  // that `installPath` equals its own `path.resolve`, so splitting the raw value
+  // is splitting the canonical one -- and re-resolving would reintroduce the
+  // second string this guard exists to avoid having.
+  const parent = path.dirname(installPath)
+  const base = path.basename(installPath)
   const realParent = await resolveRealOrFallback(parent)
   const root = await resolveRealOrFallback(skillsDir)
 
