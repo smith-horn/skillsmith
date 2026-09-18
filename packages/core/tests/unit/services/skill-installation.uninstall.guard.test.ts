@@ -601,6 +601,13 @@ describe('uninstall only deletes inside the skills directory (SMI-6732)', () => 
   })
 
   it('refuses the skills directory itself, which would delete every skill', async () => {
+    // F5: the by-value S3 check is ordered FIRST so the message explains the
+    // real problem rather than saying a path that IS the skills directory is
+    // "not directly inside" it. A mutant replacing the by-value compare with
+    // `installPath === skillsDir` survived, because the parent rule refuses this
+    // spelling anyway -- only the MESSAGE differs. The assertion below is
+    // therefore on the wording, and the aliased-root case that follows covers
+    // the spelling where the two rules genuinely diverge.
     const bystander = path.join(skillsDir, 'other-skill')
     await fs.mkdir(bystander, { recursive: true })
     await fs.writeFile(path.join(bystander, 'SKILL.md'), '# Other\n')
@@ -730,7 +737,14 @@ describe('uninstall refuses nested and mis-spelled targets (SMI-6732 round 2)', 
   // while `manifestKeyFor` keys on the raw string, so a mis-spelling reaches a
   // tracked skill's directory without finding its entry -- which skipped the
   // force gate entirely.
-  for (const spelling of ['./other-skill', 'other-skill/.', 'x/../other-skill', '..', '.']) {
+  for (const spelling of [
+    './other-skill',
+    'other-skill/.',
+    'x/../other-skill',
+    '..',
+    '.',
+    'a\\b',
+  ]) {
     it(`refuses the skill name ${JSON.stringify(spelling)} and writes nothing`, async () => {
       const real = path.join(skillsDir, 'other-skill')
       await fs.mkdir(real, { recursive: true })
@@ -743,6 +757,14 @@ describe('uninstall refuses nested and mis-spelled targets (SMI-6732 round 2)', 
       const result = await createService().uninstall(spelling)
 
       expect(result.success).toBe(false)
+      // Assert the NAME RULE's own message. A bare `success: false` passes
+      // without the rule: `a\\b` is simply "not installed" on POSIX, and the
+      // path spellings are refused by the modification gate. Measured -- the
+      // backslash clause survived mutation until this assertion existed. That is
+      // the same wrong-reason failure as the traversal and parent-escape cases
+      // above; on a path with several refusers, only the message identifies which
+      // one fired.
+      expect(result.message).toContain('single directory name')
       expect(await fs.readFile(path.join(real, 'SKILL.md'), 'utf-8')).toBe('# Edited\n')
       // M1: a refusal must write nothing. Round 1's guard ran after adoption,
       // so a refused uninstall left a bogus manifest entry behind.
@@ -869,6 +891,12 @@ describe('uninstall requires a canonical installPath (SMI-6732 round 3, pre-merg
     // This is the case that falsified the previous design claim. With a trailing
     // slash, `lstat(...).isSymbolicLink()` is FALSE on macOS -- the slash follows
     // the link -- so removal took the checkout, not the link.
+    //
+    // F4: the DATA assertion below cannot fail on Linux, where `rename("link/")`
+    // returns ENOTDIR and the checkout survives even against the unfixed guard.
+    // CI is Linux-only, so the `'not in canonical form'` assertion is the only
+    // thing pinning this bypass there. Do not weaken it to a bare
+    // `success: false`.
     const checkout = path.join(tmpDir, 'devcheckout')
     await fs.mkdir(checkout, { recursive: true })
     await fs.writeFile(path.join(checkout, 'SKILL.md'), '# Local work\n')
@@ -883,14 +911,21 @@ describe('uninstall requires a canonical installPath (SMI-6732 round 3, pre-merg
   })
 
   it('refuses a doubled separator, the same normalization gap', async () => {
-    const victim = path.join(tmpDir, 'dbl')
-    await fs.mkdir(victim, { recursive: true })
+    // F3: this case used to place its victim at `<tmpDir>/dbl` and assert the
+    // victim survived. `<skillsDir>//dbl` cannot address `<tmpDir>/dbl` under
+    // ANY resolution, so that assertion could never fail and the case pinned
+    // nothing. It pins the RULE, not an escape -- so the victim is inside the
+    // skills dir and the assertion is on the guard's own wording.
+    const inside = path.join(skillsDir, 'dbl')
+    await fs.mkdir(inside, { recursive: true })
+    await fs.writeFile(path.join(inside, 'SKILL.md'), '# Dbl\n')
     await track('doubled', `${skillsDir}//dbl`)
 
     const result = await createService().uninstall('doubled', { force: true })
 
     expect(result.success).toBe(false)
-    await expect(fs.lstat(victim)).resolves.toBeDefined()
+    expect(result.message).toContain('not in canonical form')
+    expect(await fs.readFile(path.join(inside, 'SKILL.md'), 'utf-8')).toBe('# Dbl\n')
   })
 
   // POSITIVE CONTROL, and the one that matters most: requiring canonical form
@@ -908,5 +943,48 @@ describe('uninstall requires a canonical installPath (SMI-6732 round 3, pre-merg
     expect(result.success).toBe(true)
     await expect(fs.lstat(link)).rejects.toMatchObject({ code: 'ENOENT' })
     expect(await fs.readFile(path.join(checkout, 'SKILL.md'), 'utf-8')).toBe('# Keep me\n')
+  })
+})
+
+describe('uninstall refuses dot-prefixed names (SMI-6732 round 4, pre-merge gate F1)', () => {
+  it("refuses uninstall('.git') and leaves the skills directory's history", async () => {
+    // Measured before the fix, with force NOT set: success:true,
+    // "uninstalled successfully", and the skills directory's entire git history
+    // deleted. This file already refuses a target that HAS `.git` at its root
+    // (ADR-155) and accepted a target that IS `.git` -- the same principle, one
+    // level off. Reachable from MCP `uninstall_skill` (`z.string().min(1)`).
+    await fs.mkdir(path.join(skillsDir, '.git'), { recursive: true })
+    await fs.writeFile(path.join(skillsDir, '.git', 'HEAD'), 'ref: refs/heads/main\n')
+
+    const result = await createService().uninstall('.git')
+
+    expect(result.success).toBe(false)
+    expect(result.message).toContain('dot-prefixed')
+    expect(await fs.readFile(path.join(skillsDir, '.git', 'HEAD'), 'utf-8')).toContain('main')
+  })
+
+  it('refuses a dot-prefixed name even with force, and even when tracked', async () => {
+    const parked = path.join(skillsDir, '.hidden-thing')
+    await fs.mkdir(parked, { recursive: true })
+    await fs.writeFile(path.join(parked, 'data.txt'), 'keep\n')
+    await track('.hidden-thing', parked)
+
+    const result = await createService().uninstall('.hidden-thing', { force: true })
+
+    expect(result.success).toBe(false)
+    expect(await fs.readFile(path.join(parked, 'data.txt'), 'utf-8')).toBe('keep\n')
+  })
+
+  // POSITIVE CONTROL: a name merely CONTAINING a dot is a normal skill.
+  it('still uninstalls a skill whose name contains a dot', async () => {
+    const dotted = path.join(skillsDir, 'my.skill.v2')
+    await fs.mkdir(dotted, { recursive: true })
+    await fs.writeFile(path.join(dotted, 'SKILL.md'), '# Dotted\n')
+    await track('my.skill.v2', dotted)
+
+    const result = await createService().uninstall('my.skill.v2', { force: true })
+
+    expect(result.success).toBe(true)
+    await expect(fs.lstat(dotted)).rejects.toMatchObject({ code: 'ENOENT' })
   })
 })
