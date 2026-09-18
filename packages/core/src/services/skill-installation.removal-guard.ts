@@ -53,6 +53,55 @@ import { resolveRealOrFallback } from './skill-installation.target-guard.js'
 export type RemovalTargetCheck = { ok: true } | { ok: false; reason: string }
 
 /**
+ * MAY THIS NAME BE REMOVED? The caller-supplied name, before it is joined to
+ * anything or used to look anything up.
+ *
+ * Two rules, and they close different holes.
+ *
+ * PATH SPELLINGS. `path.join(skillsDir, skillName)` normalizes while
+ * `manifestKeyFor` keys on the raw string, so `./other-skill`,
+ * `other-skill/.` and `x/../other-skill` reach a TRACKED skill's directory
+ * without finding its entry -- adoption then runs, backdates `installedAt` so
+ * the modification gate sees nothing, and deletes without `force`, where the
+ * honest spelling is correctly refused.
+ *
+ * DOT-PREFIXED NAMES. Measured: `uninstall('.git')` with force NOT set returned
+ * `success: true, "uninstalled successfully"` and deleted a git-versioned skills
+ * directory's entire history. This file already refuses a target that HAS `.git`
+ * at its root (ADR-155, git owns it) -- and accepted a target that IS `.git`.
+ * The same principle, one level off.
+ *
+ * A dot-prefixed entry is never a skill: every enumerator skips them, so such a
+ * directory is invisible to install, list and audit. Refusing to remove one
+ * costs nothing that was reachable anyway, and `apply_manifest_reconcile`
+ * remains available for a stale record.
+ */
+export function checkRemovableSkillName(skillName: string): RemovalTargetCheck {
+  if (
+    skillName.length === 0 ||
+    skillName === '.' ||
+    skillName === '..' ||
+    skillName.includes('/') ||
+    skillName.includes('\\')
+  ) {
+    return {
+      ok: false,
+      reason: `a skill name must be a single directory name, not a path. Nothing was removed.`,
+    }
+  }
+  if (skillName.startsWith('.')) {
+    return {
+      ok: false,
+      reason:
+        `"${skillName}" is a dot-prefixed directory, which is never a skill -- every enumerator ` +
+        `skips them, and this one may belong to git or another tool. Nothing was removed. ` +
+        `Use \`apply_manifest_reconcile\` if a stale manifest record needs clearing.`,
+    }
+  }
+  return { ok: true }
+}
+
+/**
  * Decides whether `installPath` is a path this uninstall is allowed to destroy.
  *
  * Fails CLOSED: anything that cannot be shown to be strictly inside `skillsDir`
@@ -168,8 +217,12 @@ export async function checkRemovalTarget(
 
   // No normalization here, deliberately. The check above has already established
   // that `installPath` equals its own `path.resolve`, so splitting the raw value
-  // is splitting the canonical one -- and re-resolving would reintroduce the
-  // second string this guard exists to avoid having.
+  // is splitting the canonical one. Re-adding a resolve here would be a provable
+  // no-op rather than a bug -- an earlier version of this comment claimed it
+  // would "reintroduce the second string", which overstates it: a mutant that
+  // re-adds it survives every test, which is the signature of an equivalent
+  // mutant, not of an untested hazard. It is omitted because it is dead, not
+  // because it is dangerous.
   const parent = path.dirname(installPath)
   const base = path.basename(installPath)
   const realParent = await resolveRealOrFallback(parent)
