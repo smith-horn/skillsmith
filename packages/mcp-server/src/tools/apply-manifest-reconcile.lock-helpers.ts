@@ -8,11 +8,19 @@
  * two copies drifting apart.
  */
 
+import { StuckLockError } from '@skillsmith/core'
 import { ReconcileGuardError } from './apply-manifest-reconcile.helpers.js'
 
-/** `ManifestManager.acquireLock()`'s 30s-timeout error has no typed shape — match its message. */
+/**
+ * SMI-6735: both manifest write paths now lock via `withFileLock`, which
+ * throws the typed `StuckLockError` on timeout — no more string-matching a
+ * message that "has no typed shape" (that was true of the old hand-rolled
+ * `ManifestManager.acquireLock()`/`acquireManifestLock()` protocols this
+ * replaced; `StuckLockError` carries `reason`, `lockPath`, and `reclaimPath`,
+ * and its message does not contain the old literal this used to match).
+ */
 function isLockTimeoutError(err: unknown): boolean {
-  return err instanceof Error && err.message.includes('Failed to acquire manifest lock')
+  return err instanceof StuckLockError
 }
 
 export async function withLockTimeoutMapping<T>(
