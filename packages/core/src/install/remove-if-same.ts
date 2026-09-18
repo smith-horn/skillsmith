@@ -40,11 +40,25 @@ export const PARK_TAG = '.skillsmith-removing-'
  * {@link removeIfSame}'s own `sameIdentity` comparison for how the two
  * domains are reconciled without changing what a `number`-typed caller has
  * always compared.
+ *
+ * Round 10 (SMI-6732 R4): a plain `{dev: number | bigint; ino: number | bigint}`
+ * permitted a MIXED pair -- `{dev: number, ino: bigint}` -- that no producer
+ * writes today but that the type nonetheless allowed. A mixed pair falls to
+ * the `Number` branch below and silently discards the `ino` half's precision,
+ * which is exactly the hazard `bigint` was added to close. A union of the two
+ * legitimate shapes makes the mixed pair unrepresentable, so `sameIdentity`
+ * can branch on one field and the type system guarantees the other agrees.
+ *
+ * Round 10 (SMI-6732 R3): the bigint arm also carries an OPTIONAL
+ * `birthtimeNs`, for the same reason `DirIdentity` does -- see
+ * {@link sameIdentity}'s own comparison. Optional, not required: a caller
+ * that only has `dev`/`ino` (there is none today, but nothing here should
+ * require inventing a birthtime to satisfy the type) still type-checks, and
+ * the comparison simply skips the check it cannot make.
  */
-export interface EntryIdentity {
-  dev: number | bigint
-  ino: number | bigint
-}
+export type EntryIdentity =
+  | { dev: number; ino: number }
+  | { dev: bigint; ino: bigint; birthtimeNs?: bigint }
 
 /**
  * Result of {@link removeIfSame}. `reason` reads after the path, e.g.
@@ -129,8 +143,8 @@ export function parkedLeftoverWarning(parked: string): string {
  * Compares `expected` and `actual` in the domain of `expected`. `actual` is
  * always read `bigint` (every caller here reads via `{bigint: true}`), but
  * `expected` may still be a plain `fs.Stats`-derived `number`, from one of
- * {@link removeIfSame}'s five other, unmodified call sites (fan-out cleanup,
- * fan-out overwrite, install rollback).
+ * {@link removeIfSame}'s six other, unmodified call sites (fan-out cleanup x2,
+ * fan-out overwrite x3, install rollback).
  *
  * A caller that captured its identity as a `number` has already lost any
  * bits above 2^53 -- widening it to `BigInt` cannot recover them, so
@@ -139,10 +153,50 @@ export function parkedLeftoverWarning(parked: string): string {
  * `number` instead reproduces EXACTLY the comparison those callers have
  * always made; only a caller that itself captured a `bigint` identity (the
  * uninstall path) gets the wider, precision-preserving comparison.
+ *
+ * Round 10 (SMI-6732 R2): both branches were previously unpinned -- reverting
+ * the bigint branch to a `Number()` comparison, or reverting the number
+ * branch to widen `expected` to `BigInt` instead of narrowing `actual` to
+ * `Number`, left the whole suite green. The bigint-branch mutant is caught
+ * only by two inodes that are DISTINCT as `bigint` but collapse to the SAME
+ * `Number` -- see `skill-installation.uninstall.guard.test.ts`'s CASE U. The
+ * number-branch mutant is caught only when `expected` is a LOSSY `Number()`
+ * capture of an inode past 2^53 -- every existing regression test used a
+ * small, real inode, where `BigInt(Number(x)) === x` holds trivially and
+ * cannot discriminate the two rules -- see CASE L2.
+ *
+ * Round 10 (SMI-6732 R3): the bigint branch also compares `birthtimeNs`, by
+ * the SAME both-non-zero rule `identityChanged`
+ * (`skill-installation.removal-identity.ts`) uses, closing a gap that rule
+ * does not reach. `identityChanged` only covers the window from the removal
+ * guard's own read to `performUninstall`'s `seen` read; `removeIfSame` opens
+ * TWO MORE windows after that -- `seen` to this function's own `before`
+ * lstat, and `before` to the re-check after the park rename -- and a
+ * filesystem that reuses a freed inode immediately (ext4) can be swapped
+ * through either one. The number branch is deliberately left alone: every
+ * caller there passes a plain `fs.Stats`, which has no `birthtimeNs` at all.
  */
-function sameIdentity(expected: EntryIdentity, actual: { dev: bigint; ino: bigint }): boolean {
-  if (typeof expected.dev === 'bigint' && typeof expected.ino === 'bigint') {
-    return expected.dev === actual.dev && expected.ino === actual.ino
+function isBigintIdentity(
+  id: EntryIdentity
+): id is { dev: bigint; ino: bigint; birthtimeNs?: bigint } {
+  return typeof id.dev === 'bigint' && typeof id.ino === 'bigint'
+}
+
+function sameIdentity(
+  expected: EntryIdentity,
+  actual: { dev: bigint; ino: bigint; birthtimeNs: bigint }
+): boolean {
+  if (isBigintIdentity(expected)) {
+    if (expected.dev !== actual.dev || expected.ino !== actual.ino) return false
+    if (
+      expected.birthtimeNs !== undefined &&
+      expected.birthtimeNs !== 0n &&
+      actual.birthtimeNs !== 0n &&
+      expected.birthtimeNs !== actual.birthtimeNs
+    ) {
+      return false
+    }
+    return true
   }
   return Number(expected.dev) === Number(actual.dev) && Number(expected.ino) === Number(actual.ino)
 }
@@ -164,7 +218,7 @@ function sameIdentity(expected: EntryIdentity, actual: { dev: bigint; ino: bigin
  * is parked, so the ordinary mismatch moves nothing at all.
  *
  * Round 8 (SMI-6732 C1): both `lstat`s below read `{bigint: true}` — see
- * {@link sameIdentity} for how that stays behaviour-identical for the five
+ * {@link sameIdentity} for how that stays behaviour-identical for the six
  * other callers, which still pass a `number`-typed identity.
  */
 export async function removeIfSame(

@@ -40,10 +40,19 @@ All notable changes to `@skillsmith/core` are documented here.
   directory's history, and a removal target that cannot be checked is now refused rather
   than assumed absent. Previously any error while checking a path was treated as "nothing
   there", so a transient permissions error could let a tracked, modified skill be deleted.
+- **Fix (data loss)**: SMI-6732 -- if the skill directory disappears *while* uninstall is
+  checking it, the removal is now refused instead of continuing. Previously the check
+  treated that as "nothing here" and carried on, so anything that appeared at the same path
+  in the intervening moment -- including one of your other, modified skills renamed into
+  place -- was adopted and deleted, reported as success, leaving the real record pointing at
+  a path that no longer existed. You now get a message saying the directory changed under
+  the check, and nothing is removed.
 - **Known limits**, stated because they are real: on filesystems that reuse a freed inode
   number immediately (ext4, so most Linux installs), a directory deleted and recreated
   during the removal's own check window is still not reliably detected -- birthtime narrows
-  this but catches roughly one case in five (measured). On Windows, identity comparisons
+  this but does not close it, and how much it catches depends on the filesystem and on
+  load — measured between roughly a sixth and three quarters of cases, so treat it as a
+  narrowing rather than a fix. On Windows, identity comparisons
   elsewhere in the install path can still collapse two distinct entries into one for
   directories whose underlying record has been reused many times (SMI-6763). Neither
   affects the containment fixes above.

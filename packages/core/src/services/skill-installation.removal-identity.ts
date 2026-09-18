@@ -108,21 +108,39 @@ export async function checkNotTrackedElsewhere(
   potentialPath: string,
   skillName: string,
   installedSkills: unknown
-): Promise<{ ok: true; identity: DirIdentity | null } | { ok: false; message: string }> {
+): Promise<{ ok: true; identity: DirIdentity } | { ok: false; message: string }> {
   let target: BigIntStats
   try {
     target = await fs.lstat(potentialPath, { bigint: true })
   } catch (err) {
-    // Round 7 (F1): ONLY ENOENT is absence. The first version treated every
-    // error as "nothing here", which is fail-OPEN under a transient fault --
-    // measured: an EACCES that cleared before `inspectForRemoval`'s own lstat
-    // (the very next call on the same path) let a tracked, modified skill be
-    // adopted and deleted WITHOUT `force`, reported as success. "A later guard
-    // catches it" held only for a PERSISTENT fault. This is the convention
-    // `checkExactEntryName` above already states; this function had drifted
-    // from it.
+    // Round 7 (F1): ONLY ENOENT is absence -- any OTHER error means we could
+    // not tell, and is refused below exactly as before.
+    //
+    // Round 10 (R1): ENOENT itself is no longer treated as absence EITHER.
+    // The caller already proved `potentialPath` exists (`fs.access`,
+    // immediately before this is ever reached), so an ENOENT here means the
+    // entry vanished IN THE GAP -- not that there was never anything to adopt.
+    // The first version returned `{ok: true, identity: null}`, which made
+    // `identityChanged`'s later swap check ("before === null -> unchanged") a
+    // permanent no-op for this call: with no identity to contradict, adoption
+    // proceeded against whatever landed in the gap next. Measured, `force:
+    // false`: the target vanished in exactly this window, a tracked and
+    // modified skill was renamed into its place, and it was deleted reporting
+    // `success: true` -- its own manifest record left pointing at a path that
+    // no longer resolved. Refusing here closes the gap the same way the C2 fix
+    // closed the scalar-`installedSkills` gap: not by handling one more
+    // producer of `identity: null`, but by making `identity: null` impossible
+    // to produce at all -- see this function's return type.
     const code = (err as NodeJS.ErrnoException | null)?.code
-    if (code === 'ENOENT') return { ok: true, identity: null }
+    if (code === 'ENOENT') {
+      return {
+        ok: false,
+        message:
+          `Skill "${skillName}" was not removed: ${potentialPath} disappeared while it was ` +
+          `being checked, so whatever is there now is not what was inspected. Nothing was ` +
+          `removed; try again.`,
+      }
+    }
     const detail = code ?? (err instanceof Error ? err.message : String(err))
     return {
       ok: false,
@@ -211,9 +229,15 @@ export async function checkNotTrackedElsewhere(
  * concurrent rename during the guard's scan put a tracked, modified skill where
  * an untracked one had been, and it was deleted with "uninstalled successfully".
  *
- * So the identity is threaded forward instead. `null` means the guard never
- * established one (no manifest object, or the path was absent), in which case
- * there is nothing to contradict and the later check is skipped.
+ * So the identity is threaded forward instead. Round 10 (R1): `null` used to
+ * also mean "no manifest object" or "the path was absent" -- both are now
+ * impossible ({@link checkNotTrackedElsewhere}'s success case always carries a
+ * real {@link DirIdentity}). The ONLY remaining source of `before === null` is
+ * the OTHER call site in `performUninstall` -- a skill already found in the
+ * manifest, which never goes through the guard at all and so never
+ * establishes one. There, `null` correctly means "nothing to contradict":
+ * that path has its own, independent modification gate and its own
+ * `removeIfSame` identity compare at delete time.
  *
  * Round 8 (C4): `dev`/`ino` matching is not sufficient on a filesystem that
  * reuses a freed inode number immediately (ext4 -- see {@link DirIdentity}),
@@ -225,23 +249,36 @@ export async function checkNotTrackedElsewhere(
  * records legitimately naming the SAME directory share one birthtime and a
  * birthtime mismatch there would mean nothing.
  *
+ * A SECOND degraded mode, not just `0n`: Node's own `fs.Stats` docs say a
+ * filesystem without birthtime support may report it as EITHER `0` (Unix
+ * epoch) OR an alias of `ctime`. Under the ctime alias, `birthtimeNs` moves on
+ * every metadata change to the SAME inode, not only on creation -- so this
+ * check can fire on an unrelated ctime bump (a permission change, an
+ * unrelated write) with no swap having happened at all. That failure is the
+ * opposite of the gap below: a SPURIOUS refusal (fail-closed), not a missed
+ * one, and is bounded the same way -- the caller is told to try again, not
+ * left believing something was removed that was not.
+ *
  * THIS NARROWS THE ext4 GAP; IT DOES NOT CLOSE IT. Stated plainly because
  * three claims on this issue have already been published stronger than what
- * was measured. A recreate that lands inside the birthtime's own resolution
- * reports an IDENTICAL `birthtimeNs`, and on ext4 that is the common case, not
- * the rare one -- measured, 200 delete/recreate cycles on container `/tmp`:
+ * was measured, and the number itself is a SAMPLE, not a property of the
+ * mechanism -- it moves with the filesystem and with load. The mechanism is
+ * fixed: a recreate that lands inside the birthtime's own resolution reports
+ * an IDENTICAL `birthtimeNs`, so `dev`/`ino` reuse alone (measured 200/200,
+ * every environment checked) is not always caught by adding birthtime. The
+ * MEASURED detection rate is not: container `/tmp` measured 17%, 20%, and 22%
+ * across three independent 200-cycle samples; a separate measurement on this
+ * container's overlay filesystem measured 45%, and on an ext4 named volume,
+ * 72%. Read this as "roughly 17-72% depending on filesystem and load," not as
+ * a single number to cite.
  *
- *     inode reused (dev/ino blind)    200 / 200
- *       birthtime differed (caught)    36
- *       birthtime identical (MISSED)  164   -> 18% detection
- *
- * So a directory deleted and recreated inside the guard's window is still
- * deleted roughly four times in five on ext4. The residual is bounded -- the
- * victim is a directory that appeared DURING the window, so the loss is
- * another writer's brand-new work rather than the user's tracked skill -- and
- * closing it properly needs an identity the filesystem cannot recycle (a
- * generation token recorded in the manifest, SMI-6531), not a fourth stat
- * field.
+ * So a directory deleted and recreated inside the guard's window can still be
+ * deleted the majority of the time, on the filesystems measured so far. The
+ * residual is bounded -- the victim is a directory that appeared DURING the
+ * window, so the loss is another writer's brand-new work rather than the
+ * user's tracked skill -- and closing it properly needs an identity the
+ * filesystem cannot recycle (a generation token recorded in the manifest,
+ * SMI-6531), not a fourth stat field.
  *
  * @returns a refusal message when the directory changed under us, else null
  */
