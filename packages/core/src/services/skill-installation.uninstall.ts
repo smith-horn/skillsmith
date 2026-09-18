@@ -4,12 +4,10 @@
  * @module @skillsmith/core/services/skill-installation.uninstall
  *
  * Split out of `skill-installation.helpers.ts` to stay under the 500-line
- * standard once ADR-139's adoption logic was added — mirrors the existing
- * `skill-installation.io.ts` sibling-split convention. Round 25 split its own
- * helpers out again, into `skill-installation.uninstall.helpers.ts`, for the
- * same reason. `performUninstall`
- * has exactly one internal consumer (`skill-installation.service.ts`) and
- * is not part of `@skillsmith/core`'s public export surface.
+ * standard, per the `skill-installation.io.ts` sibling-split convention; round
+ * 25 split `.uninstall.helpers.ts` out again for the same reason, and round 7
+ * split `.removal-identity.ts` off the guard module. One internal consumer
+ * (`skill-installation.service.ts`); not part of the public export surface.
  */
 
 import * as fs from 'fs/promises'
@@ -24,8 +22,12 @@ import {
   checkExactEntryName,
   checkRemovalTarget,
   checkRemovableSkillName,
-  checkNotTrackedElsewhere,
 } from './skill-installation.removal-guard.js'
+import {
+  checkNotTrackedElsewhere,
+  identityChanged,
+  type DirIdentity,
+} from './skill-installation.removal-identity.js'
 import { hashContent, manifestKeyFor } from './skill-installation.helpers.js'
 import type { ManifestManager } from './skill-manifest.js'
 import { CANONICAL_CLIENT, type ClientId } from '../install/paths.js'
@@ -225,6 +227,7 @@ export async function performUninstall(params: {
     const manifestData = await manifest.load()
     let skillEntry = manifestData.installedSkills[manifestKey]
     let adopted = false
+    let adoptedIdentity: DirIdentity | null = null
 
     if (!skillEntry) {
       const potentialPath = path.join(skillsDir, skillName)
@@ -274,6 +277,7 @@ export async function performUninstall(params: {
       if (!elsewhere.ok) {
         return { success: false, skillName, message: elsewhere.message, ...listenerWarning() }
       }
+      adoptedIdentity = elsewhere.identity
       // SMI-6529 round 15: refuse a git working tree before adopting it, so a
       // refusal writes nothing to the manifest.
       const early = await inspectForRemoval(potentialPath)
@@ -281,20 +285,9 @@ export async function performUninstall(params: {
         return { success: false, skillName, message: early.refusal, ...listenerWarning() }
       }
 
-      // ADR-139 (SMI-6274 Wave 4): a skill present on disk with no manifest
-      // entry is ADOPTED — reconciled by writing a manifest entry derived
-      // from disk — rather than requiring force=true just to remove it (the
-      // previous behavior). This closes the "untracked install" recovery
-      // gap ADR-139 point 1 requires: `update`/`remove` must not fail
-      // obscurely on an untracked skill.
-      //
-      // GPT-5.6-Sol PR review round 4: routed through the shared, race-safe
-      // {@link adoptUntrackedSkillEntry} instead of an inline write — this
-      // call site previously wrote the guessed entry unconditionally,
-      // without re-checking the manifest state under lock, so a concurrent
-      // real `install()` landing in that window could be silently
-      // clobbered. `adopted` now reflects whether OUR guess actually won
-      // (false when a concurrent writer's real entry was found instead).
+      // ADR-139: a skill on disk with no manifest entry is ADOPTED rather than
+      // requiring force just to remove it. Routed through the race-safe shared
+      // {@link adoptUntrackedSkillEntry}, whose docblock carries the rationale.
       notify(
         onProgress,
         listenerProblems,
@@ -354,6 +347,13 @@ export async function performUninstall(params: {
     const seen = await inspectForRemoval(installPath)
     if ('refusal' in seen) {
       return { success: false, skillName, message: seen.refusal, ...listenerWarning() }
+    }
+    // Round 7 (F2): prove this is still the directory the guard identified.
+    // `removeIfSame` anchors on `seen.stat`, which is read HERE -- after
+    // adoption -- so a swap before this point was invisible to everything.
+    const swapped = identityChanged(adoptedIdentity, seen.stat, skillName)
+    if (swapped !== null) {
+      return { success: false, skillName, message: swapped, ...listenerWarning() }
     }
 
     if (!force) {
