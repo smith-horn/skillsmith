@@ -18,7 +18,7 @@
 //     up to a different parent.
 
 import fs from 'node:fs'
-import { shapeResult, normalizeGuardHash } from './result-shape.mjs'
+import { shapeResult, resolveGuardHash } from './result-shape.mjs'
 import path from 'node:path'
 import crypto from 'node:crypto'
 import { computeTreeHash } from './hash.mjs'
@@ -274,7 +274,9 @@ function quarantineTreeInner(parentAbs, name, options = {}) {
   // Verify BEFORE anything moves. `rename(2)` is the destructive step here --
   // once the tree is in the trash directory under a random name, a caller
   // that expected `kept` has already lost the thing it was protecting.
-  const guardHash = options.guardHash ?? options.treeHash
+  // Already resolved and validated by `quarantineTree` and passed in; the `??`
+  // that used to be here was the second read F14 exploited.
+  const guardHash = options.guardHash
   let observedTreeHash = null
   // B2: THIS FUNCTION VERIFIED ONE TREE AND MOVED ANOTHER.
   //
@@ -399,6 +401,10 @@ function quarantineTreeInner(parentAbs, name, options = {}) {
       path: parentAbs,
       entry: name,
       errno: trash.errno,
+      // F13: this rebuilt the result and dropped `detail`, so a trash-unusable
+      // stop reached the caller with the diagnosis missing while the comment
+      // above claimed `detail` carried it.
+      detail: trash.detail ?? null,
     }
   }
 
@@ -446,14 +452,28 @@ function quarantineTreeInner(parentAbs, name, options = {}) {
   //
   // `assertPathSegment` cannot catch this: `op-abc123` is a legal single
   // segment. The defect is the directory's TYPE, not the name's shape.
+  //
+  // F13: these refusals are `kept`, not `stopped`. Nothing moved and nothing was
+  // deleted -- a check declined to proceed, which is exactly D-8's definition of
+  // `kept`, and it is what the trash-root rebind below already returns for the
+  // same class of problem. The first version of this fix returned `stopped`,
+  // giving ONE reason string TWO statuses depending on which end changed.
+  //
+  // F12: the type check is not enough either. `mkdirSync`'s `mode: 0o700` above
+  // is a REQUEST, discarded when EEXIST is accepted, so a pre-created 0777 op
+  // directory passes. Measured: origin gone, tree and sidecar -- which carry
+  // `originPath` and `treeHash` -- sitting in a directory any local user can
+  // read or rename away. Ownership and mode are now required.
+  let opIdentity = null
   try {
     const od = fs.lstatSync(opDir, { bigint: true })
     if (od.isSymbolicLink() || !od.isDirectory()) {
       return {
-        status: 'stopped',
+        status: 'kept',
         reason: 'quarantine-destination-changed',
-        path: opDir,
+        path: originPath,
         entry: name,
+        treeHash: observedTreeHash,
         errno: null,
         detail: od.isSymbolicLink()
           ? 'op directory is a symlink; rename(2) would resolve it and land the tree elsewhere'
@@ -462,14 +482,42 @@ function quarantineTreeInner(parentAbs, name, options = {}) {
     }
     if (trash.parentDev !== undefined && od.dev !== trash.parentDev) {
       return {
-        status: 'stopped',
-        reason: 'quarantine-failed',
-        path: opDir,
+        status: 'kept',
+        reason: 'quarantine-destination-changed',
+        path: originPath,
         entry: name,
+        treeHash: observedTreeHash,
         errno: null,
         detail: 'op directory is on a different device than the parent',
       }
     }
+    // F12: ours, and not writable by anyone else.
+    if (typeof process.getuid === 'function' && od.uid !== BigInt(process.getuid())) {
+      return {
+        status: 'kept',
+        reason: 'quarantine-destination-changed',
+        path: originPath,
+        entry: name,
+        treeHash: observedTreeHash,
+        errno: null,
+        detail: 'op directory is owned by another user',
+      }
+    }
+    if ((od.mode & 0o077n) !== 0n) {
+      return {
+        status: 'kept',
+        reason: 'quarantine-destination-changed',
+        path: originPath,
+        entry: name,
+        treeHash: observedTreeHash,
+        errno: null,
+        detail: `op directory is group- or world-accessible (mode ${(od.mode & 0o777n).toString(8)})`,
+      }
+    }
+    // F11: BIND IT. Validating once and trusting it across randSuffix() and two
+    // further lstats is precisely the mistake the source rebind below exists to
+    // correct, and a real concurrent race won it 6 times in 65,211 trials.
+    opIdentity = { ok: true, dev: od.dev, ino: od.ino, birthtimeNs: od.birthtimeNs }
   } catch (err) {
     return {
       status: 'stopped',
@@ -555,6 +603,25 @@ function quarantineTreeInner(parentAbs, name, options = {}) {
         reason: 'quarantine-destination-changed',
         path: originPath,
         treeHash: observedTreeHash,
+      }
+    }
+  }
+
+  // F11: AND THE OP DIRECTORY, which is the rename's actual destination parent.
+  // The rebind above covers `.skillsmith-trash` and stops one level short of the
+  // directory the tree actually lands in -- the same off-by-one-level as the fix
+  // it was written to complete. Replacing an ENTRY inside a directory leaves that
+  // directory's own (dev, ino, birthtimeNs) byte-identical, so the trash rebind
+  // provably cannot see an op-directory swap; it needs its own.
+  if (opIdentity) {
+    const opNow = bindIdentity(opDir)
+    if (!opNow.ok || !sameIdentity(opIdentity, opNow)) {
+      return {
+        status: 'kept',
+        reason: 'quarantine-destination-changed',
+        path: originPath,
+        treeHash: observedTreeHash,
+        detail: 'op directory was substituted between validation and rename',
       }
     }
   }
@@ -687,23 +754,17 @@ export function quarantineTree(parentAbs, name, options = {}) {
   // refused rather than silently resolved by `??` precedence: a caller that
   // passed two different hashes has not said which it meant, and guessing at
   // missing evidence is the defect class this whole spike documents.
-  normalizeGuardHash(options.guardHash)
-  normalizeGuardHash(options.treeHash)
-  if (
-    options.guardHash !== undefined &&
-    options.treeHash !== undefined &&
-    options.guardHash !== options.treeHash
-  ) {
-    throw new TypeError(
-      `guardHash and treeHash were both supplied with different values ` +
-        `(${JSON.stringify(options.guardHash)} vs ${JSON.stringify(options.treeHash)}). ` +
-        `treeHash is a deprecated alias for guardHash; pass exactly one. ` +
-        `Resolving this by precedence would silently guard against a hash the ` +
-        `caller may not have meant, on the destructive path.`
-    )
-  }
+  // F10/F14: this logic now lives in ONE place that BOTH removal paths call
+  // (`walk.mjs` did not call the previous in-file version at all), and the
+  // resolved value is passed DOWN rather than re-read from `options` -- a
+  // second read is a second chance for a getter to answer differently.
+  const resolvedGuardHash = resolveGuardHash(options)
   assertPathSegment('name', name)
   if (options.opId !== undefined) assertPathSegment('opId', options.opId)
-  const r = quarantineTreeInner(parentAbs, name, options)
+  const r = quarantineTreeInner(parentAbs, name, {
+    ...options,
+    guardHash: resolvedGuardHash,
+    treeHash: undefined,
+  })
   return shapeResult({ entry: name, ...r })
 }

@@ -338,6 +338,128 @@ check(
   fs.rmSync(d.root, { recursive: true, force: true })
 }
 
+// --- 7. THE ALIAS, ON BOTH PATHS (Finding 10) ----------------------------
+//
+// Section 6 fixed the alias and tested it. Every one of its six cases called
+// `quarantineTree` -- in this file, which imports `removeVR` on line 23. So the
+// fix landed in `quarantine.mjs` only, `walk.mjs` neither validated nor read
+// `treeHash`, and the commit message claimed "both spellings now normalize"
+// while measuring one file. Measured before the fix:
+//
+//            removeVR (native)        quarantineTree (fallback)
+//   WRONG    removed, origin GONE     kept, origin intact
+//   null     removed, origin GONE     TypeError
+//   both     removed, origin GONE     TypeError
+//
+// That is the ORIGINAL parameter-name defect with the paths swapped, recreated
+// by its own fix. These cases assert the two paths AGREE, which is the only
+// formulation that could have caught it -- testing either path alone passes.
+{
+  const threw = (fn) => {
+    try {
+      return `ret:${fn().status}`
+    } catch (e) {
+      return e.constructor.name
+    }
+  }
+  const both = (label, opts, expected) => {
+    const a = fixture()
+    const nat = (() => {
+      try {
+        return threw(() => removeVR(a.target, { variant: 'V2', ...opts }))
+      } catch {
+        return 'SHIM-ABSENT'
+      }
+    })()
+    const natAlive = fs.existsSync(a.target)
+    fs.rmSync(a.root, { recursive: true, force: true })
+
+    const b = fixture()
+    const fb = threw(() => quarantineTree(b.parent, 'tree', opts))
+    const fbAlive = fs.existsSync(b.target)
+    fs.rmSync(b.root, { recursive: true, force: true })
+
+    if (nat === 'SHIM-ABSENT') {
+      console.log(`[result-parity] ${label} SKIP -- the native shim did not load here`)
+      return
+    }
+    check(`${label} native`, nat, expected)
+    check(`${label} fallback`, fb, expected)
+    check(`${label} both origins survive`, natAlive && fbAlive, true)
+  }
+
+  both('7a treeHash: null refused on', { treeHash: null }, 'TypeError')
+  both('7b both spellings differing refused on', { guardHash: 'a', treeHash: 'b' }, 'TypeError')
+  // A wrong-but-well-formed alias must REFUSE, not remove. Before the fix the
+  // native path removed the tree here.
+  both('7c a wrong treeHash keeps the tree on', { treeHash: 'WRONG' }, 'ret:kept')
+}
+
+// --- 8. ONE READ, NOT TWO (Finding 14) -----------------------------------
+//
+// The alias fix validated `options.guardHash` at the entry point and let the
+// inner function RE-READ the same property. That is an assertion about a value
+// the function does not own. Measured with a getter answering a valid hash on
+// read 1 and `null` afterwards: validation passed, the second read resolved to
+// no guard, and the tree was moved UNGUARDED.
+//
+// The property under test is "the value validated is the value used", so the
+// case is a getter that changes its answer -- exactly what a hostile or merely
+// lazy caller object does.
+{
+  const a = fixture()
+  const realHash = computePathTreeHash(a.target).treeHash
+  let reads = 0
+  const opts = {
+    get guardHash() {
+      reads += 1
+      return reads === 1 ? realHash : null
+    },
+  }
+  let outcome
+  try {
+    outcome = `ret:${quarantineTree(a.parent, 'tree', opts).status}`
+  } catch (e) {
+    outcome = e.constructor.name
+  }
+  // Whichever way it resolves, it must NOT be "moved with no guard": either the
+  // single read saw the real hash and quarantined it under that guard, or it
+  // refused. What must never happen is a second read downgrading to no-guard.
+  check('8a a value-changing getter cannot downgrade the guard', outcome, 'ret:quarantined')
+  fs.rmSync(a.root, { recursive: true, force: true })
+
+  // 8b originally asserted `reads === 1`. It measured 2 -- the object spread
+  // that forwards options to the inner function invokes the getter again -- and
+  // that assertion was testing the IMPLEMENTATION, not the property. The spread's
+  // read is immediately overwritten by the explicit `guardHash:` that follows it,
+  // so the value used is still the validated one.
+  //
+  // The property that actually matters is "the value VALIDATED is the value
+  // USED", and the sharp way to test it is a getter whose later reads return a
+  // DIFFERENT WELL-FORMED HASH. A wrong-but-valid string cannot be caught by
+  // `normalizeGuardHash`; only using the first-read value gives a match. If any
+  // later read won, the guard would mismatch and the tree would be kept.
+  const b = fixture()
+  const bHash = computePathTreeHash(b.target).treeHash
+  const decoy = 'f'.repeat(bHash.length)
+  let n = 0
+  const shifty = {
+    get guardHash() {
+      n += 1
+      return n === 1 ? bHash : decoy
+    },
+  }
+  let r2
+  try {
+    r2 = `ret:${quarantineTree(b.parent, 'tree', shifty).status}`
+  } catch (e) {
+    r2 = e.constructor.name
+  }
+  check('8b the FIRST read is the value enforced, not a later one', r2, 'ret:quarantined')
+  check('8c the getter did change its answer (the case is live)', n > 1, true)
+  fs.rmSync(b.root, { recursive: true, force: true })
+}
+
 if (!allOk) {
   console.error('[result-parity] FAIL')
   process.exit(1)

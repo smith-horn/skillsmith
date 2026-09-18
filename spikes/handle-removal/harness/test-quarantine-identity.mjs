@@ -349,7 +349,9 @@ function fixture() {
   const guardHash = computePathTreeHash(path.join(parent, 'tree')).treeHash
   const r = quarantineTree(parent, 'tree', { opId, guardHash })
 
-  check('7b a symlinked op directory is refused', r.status, 'stopped')
+  // F13: `kept`, not `stopped` -- nothing moved, a check declined. One reason
+  // string must not carry two statuses depending on which end changed.
+  check('7b a symlinked op directory is refused', r.status, 'kept')
   check('7c and the reason names the destination', r.reason, 'quarantine-destination-changed')
   check('7d the origin survives', fs.existsSync(path.join(parent, 'tree')), true)
   check('7e nothing landed in the attacker directory', fs.readdirSync(loot).length, 0)
@@ -364,12 +366,110 @@ function fixture() {
   const parent = path.join(root, 'parent')
   fs.mkdirSync(path.join(parent, 'tree', 'sub'), { recursive: true })
   fs.writeFileSync(path.join(parent, 'tree', 'sub', 'f.txt'), 'x')
-  fs.mkdirSync(path.join(parent, '.skillsmith-trash', 'op-reuse'), { recursive: true })
+  // 0o700 -- the mode quarantineTree itself creates an op directory with. The
+  // first version of this case used mkdirSync's DEFAULT mode and asserted the
+  // result was accepted, which pinned the ENABLING CONDITION for F12 rather than
+  // the property: it certified that a group-readable op directory was fine.
+  fs.mkdirSync(path.join(parent, '.skillsmith-trash', 'op-reuse'), {
+    recursive: true,
+    mode: 0o700,
+  })
+  fs.chmodSync(path.join(parent, '.skillsmith-trash', 'op-reuse'), 0o700) // defeat umask
   check(
-    '7f a REAL pre-existing op directory is still accepted',
+    '7f a REAL pre-existing 0700 op directory is still accepted',
     quarantineTree(parent, 'tree', { opId: 'op-reuse' }).status,
     'quarantined'
   )
+  fs.rmSync(root, { recursive: true, force: true })
+}
+
+// --- 7c. F12: a pre-created op directory ANYONE can write to -------------
+//
+// `mkdirSync(opDir, { mode: 0o700 })` is a REQUEST, and the EEXIST branch
+// discards it. Measured before the fix: pre-create `<trash>/<opId>` at 0777 and
+// the tree is quarantined into it -- origin gone, and the user's bytes plus the
+// sidecar (which carries `originPath` and `treeHash`) sitting in a directory any
+// local user can read, modify, or rename away wholesale. The type check added
+// for the symlink case does not see this at all: it is a real directory, on the
+// right device, just not private.
+{
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), 's6676-opmode-'))
+  const parent = path.join(root, 'parent')
+  fs.mkdirSync(path.join(parent, 'tree', 'sub'), { recursive: true })
+  fs.writeFileSync(path.join(parent, 'tree', 'sub', 'f.txt'), 'USERBYTES')
+  const opDir = path.join(parent, '.skillsmith-trash', 'op-open')
+  fs.mkdirSync(opDir, { recursive: true })
+  fs.chmodSync(opDir, 0o777)
+
+  check(
+    '7g the planted directory really is world-writable',
+    (fs.lstatSync(opDir).mode & 0o777).toString(8),
+    '777'
+  )
+  const r = quarantineTree(parent, 'tree', { opId: 'op-open' })
+  check('7h a world-accessible op directory is refused', r.status, 'kept')
+  check('7i and the reason names the destination', r.reason, 'quarantine-destination-changed')
+  check('7j the origin survives', fs.existsSync(path.join(parent, 'tree')), true)
+  fs.rmSync(root, { recursive: true, force: true })
+}
+
+// --- 7d. F11: THE OP DIRECTORY SWAPPED *AFTER* VALIDATION ----------------
+//
+// THIS CASE EXISTS BECAUSE THE FIX WAS UNPINNED WITHOUT IT. Cases 7a-7j all
+// plant their symlink or bad mode BEFORE the call, so the single lstat catches
+// every one of them and the rebind added immediately before rename(2) never
+// runs. Deleting that rebind left this entire suite GREEN -- the same way the
+// B2 re-check was deletable in case 4's own commit, which is why case 4 exists.
+// Two fixes in this file have now shipped with a test that watched a different
+// clause than the one it claimed to pin.
+//
+// The real window is between the op-directory lstat and rename(2), and it is
+// genuinely reachable: `randSuffix()`, the source rebind and the trash rebind
+// all run inside it. A separate process won it 6 times in 65,211 trials. Here it
+// is made deterministic by stubbing `fs.lstatSync` to perform the swap on the
+// call immediately after the op directory has been validated -- a real
+// mid-flight substitution, not a simulation of one.
+{
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), 's6676-optoctou-'))
+  const parent = path.join(root, 'parent')
+  fs.mkdirSync(path.join(parent, 'tree', 'sub'), { recursive: true })
+  fs.writeFileSync(path.join(parent, 'tree', 'sub', 'f.txt'), 'USERBYTES')
+  const loot = path.join(root, 'attacker-storage')
+  fs.mkdirSync(loot, { recursive: true })
+  const opDir = path.join(parent, '.skillsmith-trash', 'op-swap')
+  fs.mkdirSync(opDir, { recursive: true })
+  fs.chmodSync(opDir, 0o700)
+
+  const realLstat = fs.lstatSync
+  let seenOpDir = false
+  let swapped = false
+  fs.lstatSync = (p, ...rest) => {
+    const out = realLstat(p, ...rest)
+    if (seenOpDir && !swapped) {
+      // The op directory has already been validated. Replace it with a symlink
+      // to attacker storage before rename(2) resolves the path.
+      swapped = true
+      realLstat(opDir) // keep the path live for the rmdir below
+      fs.rmdirSync(opDir)
+      fs.symlinkSync(loot, opDir)
+    }
+    if (String(p) === opDir) seenOpDir = true
+    return out
+  }
+
+  let r
+  try {
+    r = quarantineTree(parent, 'tree', { opId: 'op-swap' })
+  } finally {
+    fs.lstatSync = realLstat
+  }
+
+  check('7k the mid-flight swap actually happened', swapped, true)
+  check('7l a post-validation op-directory swap is refused', r.status, 'kept')
+  check('7m and the reason names the destination', r.reason, 'quarantine-destination-changed')
+  check('7n the origin survives', fs.existsSync(path.join(parent, 'tree')), true)
+  const landed = fs.existsSync(loot) ? fs.readdirSync(loot).length : -1
+  check('7o nothing landed in the attacker directory', landed, 0)
   fs.rmSync(root, { recursive: true, force: true })
 }
 

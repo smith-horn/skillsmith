@@ -38,6 +38,12 @@ export const RESULT_FIELDS = [
   'errno',
   'opId',
   'sidecarPath',
+  // F13: `detail` was carried by some returns and silently dropped by others,
+  // surviving only through the pass-through loop below. A field observable on
+  // two returns and discarded on three is worse than one that never existed:
+  // a caller reading it gets `undefined` and cannot tell "no diagnosis" from
+  // "diagnosis thrown away". Declared, so every result has it.
+  'detail',
 ]
 
 /** Outcomes either path may report. `removed` and `quarantined` are both success. */
@@ -69,6 +75,54 @@ export function shapeResult(partial) {
 /** True when the tree is gone from its original location. */
 export function isSuccess(result) {
   return result.status === 'removed' || result.status === 'quarantined'
+}
+
+/**
+ * THE ONE PLACE EITHER REMOVAL PATH LEARNS WHAT ITS GUARD IS.
+ *
+ * F10/F14 (confirmation round, 2026-09-17). The fix before this one validated
+ * the `treeHash` alias inside `quarantine.mjs` and its commit message claimed
+ * "both spellings now normalize". Measured, that was true of ONE FILE:
+ * `walk.mjs` neither validated the alias nor read it, so on the native path
+ *
+ *   removeVR(t, { treeHash: 'WRONG' })  -> removed, origin GONE
+ *   removeVR(t, { treeHash: null })     -> removed, origin GONE
+ *
+ * while the fallback refused all three. That is the ORIGINAL parameter-name
+ * defect with the two paths swapped, re-created by the fix for it -- and my new
+ * tests missed it because all six cases called `quarantineTree`, in a file that
+ * already imports `removeVR`. Second time in one commit that the author
+ * red-tested the spelling in the file he had just edited.
+ *
+ * It also closes F14, a TOCTOU inside the same fix: validating `options.guardHash`
+ * and then letting the inner function RE-READ `options.guardHash` is an assertion
+ * about a property the function does not own. Measured with a getter returning a
+ * valid hash on read 1 and `null` after: validation passed, the second read
+ * yielded no guard, and the tree was moved unguarded.
+ *
+ * So: read each property EXACTLY ONCE, resolve, validate, and return the value.
+ * Callers must pass the RESULT down and never consult `options` again.
+ *
+ * @returns {string|undefined} the resolved guard hash, or undefined for no guard
+ */
+export function resolveGuardHash(options = {}) {
+  // Exactly one read of each, captured before any validation. A getter that
+  // changes its answer between reads cannot make the validated value differ
+  // from the used value, because there is only one read and one value.
+  const g = options.guardHash
+  const t = options.treeHash
+  normalizeGuardHash(g)
+  normalizeGuardHash(t)
+  if (g !== undefined && t !== undefined && g !== t) {
+    throw new TypeError(
+      `guardHash and treeHash were both supplied with different values ` +
+        `(${JSON.stringify(g)} vs ${JSON.stringify(t)}). ` +
+        `treeHash is a deprecated alias for guardHash; pass exactly one. ` +
+        `Resolving this by precedence would silently guard against a hash the ` +
+        `caller may not have meant, on the destructive path.`
+    )
+  }
+  return g ?? t
 }
 
 /**

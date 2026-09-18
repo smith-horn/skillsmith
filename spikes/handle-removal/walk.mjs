@@ -15,7 +15,7 @@
 // is measuring.
 
 import fs from 'node:fs'
-import { shapeResult, normalizeGuardHash } from './result-shape.mjs'
+import { shapeResult, resolveGuardHash } from './result-shape.mjs'
 import path from 'node:path'
 import crypto from 'node:crypto'
 import os from 'node:os'
@@ -414,8 +414,18 @@ export function removeVR(targetRoot, options = {}) {
   // One meaning for guardHash across both removal paths; see
   // result-shape.mjs. Throws on `null` rather than picking a reading, because
   // the two paths picked OPPOSITE ones and the destructive one shipped.
-  normalizeGuardHash(options.guardHash)
-  const r = removeVRInner(targetRoot, options)
+  //
+  // F10: this used to be `normalizeGuardHash(options.guardHash)`, which
+  // validated one spelling and IGNORED the `treeHash` alias entirely -- so
+  // `removeVR(t, { treeHash: 'WRONG' })` removed the tree while the fallback
+  // refused it. `resolveGuardHash` reads both exactly once and returns the
+  // single resolved value, which is passed DOWN rather than re-read (F14).
+  const resolvedGuardHash = resolveGuardHash(options)
+  const r = removeVRInner(targetRoot, {
+    ...options,
+    guardHash: resolvedGuardHash,
+    treeHash: undefined,
+  })
   // `path` defaults to the tree the caller named: on this path a `kept` or a
   // `removed` is always about targetRoot itself, and a caller should not have
   // to know which module answered to learn what the result is about.
