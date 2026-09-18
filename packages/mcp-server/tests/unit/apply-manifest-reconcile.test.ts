@@ -301,6 +301,28 @@ describe('drop_entry', () => {
     // Refused, not removed.
     expect(readManifest().installedSkills['commit']).toBeDefined()
   })
+
+  it('removes an entry whose installPath fails with a non-ENOENT error (SMI-6732 round 8, C7 — deliberately opposite of the uninstall guard)', async () => {
+    // `assertDropTargetNoLongerResolves` treats ANY stat failure as
+    // "no longer resolves", not just ENOENT -- the deliberate opposite of
+    // `checkNotTrackedElsewhere`'s ENOENT-only convention (see the
+    // cross-reference comments at both sites). A file where a directory is
+    // expected produces a real, unmocked ENOTDIR -- no fs mock needed, and
+    // no fixture that merely doesn't exist (which would only prove the
+    // ENOENT case, already covered above).
+    const parentFile = path.join(
+      fs.mkdtempSync(path.join(os.tmpdir(), 'skillsmith-reconcile-notdir-')),
+      'a-file-not-a-directory'
+    )
+    fs.writeFileSync(parentFile, 'not a directory', 'utf-8')
+    const installPath = path.join(parentFile, 'nested-child')
+    writeManifest({ commit: makeEntry({ installPath }) })
+
+    const result = await reconcile({ action: 'drop_entry', name: 'commit' }, makeContext())
+
+    expect(result.success).toBe(true)
+    expect(readManifest().installedSkills['commit']).toBeUndefined()
+  })
 })
 
 // ============================================================================

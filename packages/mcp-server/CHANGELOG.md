@@ -37,6 +37,14 @@ All notable changes to `@skillsmith/mcp-server` are documented here.
   literal error message that no longer occurs, and now matches the typed `StuckLockError`. Its guard
   error additionally names the reclaim-lock path when that is what is held, and distinguishes a genuine
   timeout from a permanently unacquirable lock -- `errorCode` is unchanged. (#2891)
+- **Docs (no behaviour change)**: SMI-6732 -- `apply_manifest_reconcile`'s `drop_entry`
+  deliberately treats *any* error while checking a record's path as "no longer resolves",
+  which is the opposite of the convention the uninstall guard uses (only a missing path
+  counts as absent). That divergence is intentional and load-bearing: `drop_entry` is the
+  only supported way to clear a manifest record that is blocking an uninstall, so making it
+  stricter would leave affected users with no way out. Both sites now carry a comment naming
+  the other, and a test pins the behaviour, so a future pass that "harmonizes" the two
+  cannot quietly remove the escape hatch.
 - **Fix**: SMI-6651 -- private-registry skill installs now read a skill's packaged content
   through an audited, server-side `release_private_registry_skill_content` RPC instead of a
   direct table read over the caller's own token. This version needs that RPC to already exist
