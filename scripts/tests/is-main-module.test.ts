@@ -64,8 +64,21 @@ describe('isMainModule', () => {
     })
   })
 
-  it('no argv[1] (node -e, REPL): not main', () => {
-    expect(isMainModule(pathToFileURL('/x/y.mjs').href, undefined)).toBe(false)
+  it('no argv[1] (node -e, REPL): not main -- and does not throw', () => {
+    // The vitest worker has its own argv[1] (forks.js), so passing
+    // `undefined` explicitly just triggers the default parameter and
+    // compares against that file -- a duplicate of the "different file"
+    // arm that never reaches the `!argv1` guard. Measured: with the guard
+    // deleted, that form still passed while `node --input-type=module -e`
+    // threw ERR_INVALID_ARG_TYPE in resolve(). So make argv[1] genuinely
+    // absent and call with ONE argument, the shape production uses.
+    const saved = process.argv
+    try {
+      process.argv = [process.argv[0]]
+      expect(isMainModule(pathToFileURL('/x/y.mjs').href)).toBe(false)
+    } finally {
+      process.argv = saved
+    }
     expect(isMainModule(pathToFileURL('/x/y.mjs').href, '')).toBe(false)
   })
 

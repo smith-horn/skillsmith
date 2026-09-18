@@ -11,7 +11,15 @@
  */
 import { describe, expect, it } from 'vitest'
 import { execFileSync } from 'node:child_process'
-import { existsSync, mkdtempSync, readFileSync, readdirSync, rmSync, symlinkSync } from 'node:fs'
+import {
+  existsSync,
+  mkdtempSync,
+  readFileSync,
+  readdirSync,
+  rmSync,
+  statSync,
+  symlinkSync,
+} from 'node:fs'
 import { homedir, tmpdir } from 'node:os'
 import path from 'node:path'
 import { fileURLToPath } from 'node:url'
@@ -251,28 +259,41 @@ describe('predicate source drift (skips when no derived-from tree is installed)'
   let unreadable = 0
   // The scan itself is guarded too: an unreadable _npx (EACCES) at module
   // evaluation would otherwise fail collection and take every test in this
-  // file with it, including the degraded red arm. It renders as its own
-  // state, and "no _npx at all" is told apart from "_npx present, empty".
-  let root: 'present' | 'absent' | 'unscannable' = 'absent'
+  // file with it, including the degraded red arm. Four states, because
+  // `existsSync` returns false whenever it cannot STAT, so an unreadable
+  // PARENT (`.npm` with mode 000) would otherwise read as "never installed":
+  // absent (no .npm, or .npm with no _npx), unreachable (.npm cannot be
+  // stat'ed for a reason other than ENOENT), present, unscannable (_npx
+  // itself cannot be listed).
+  let root: 'present' | 'absent' | 'unreachable' | 'unscannable' = 'absent'
+  let parentOk = true
   try {
-    if (existsSync(npxRoot)) {
-      root = 'present'
-      for (const hash of readdirSync(npxRoot)) {
-        cacheDirs++
-        const pkg = path.join(npxRoot, hash, 'node_modules', '@claude-flow', 'cli')
-        const pj = path.join(pkg, 'package.json')
-        if (!existsSync(pj)) continue
-        try {
-          const version = (JSON.parse(readFileSync(pj, 'utf8')) as { version: string }).version
-          withCli++
-          if (wanted.has(version)) trees.push({ dir: pkg, version })
-        } catch {
-          unreadable++
+    statSync(path.dirname(npxRoot))
+  } catch (err) {
+    parentOk = false
+    root = (err as { code?: string }).code === 'ENOENT' ? 'absent' : 'unreachable'
+  }
+  if (parentOk) {
+    try {
+      if (existsSync(npxRoot)) {
+        root = 'present'
+        for (const hash of readdirSync(npxRoot)) {
+          cacheDirs++
+          const pkg = path.join(npxRoot, hash, 'node_modules', '@claude-flow', 'cli')
+          const pj = path.join(pkg, 'package.json')
+          if (!existsSync(pj)) continue
+          try {
+            const version = (JSON.parse(readFileSync(pj, 'utf8')) as { version: string }).version
+            withCli++
+            if (wanted.has(version)) trees.push({ dir: pkg, version })
+          } catch {
+            unreadable++
+          }
         }
       }
+    } catch {
+      root = 'unscannable'
     }
-  } catch {
-    root = 'unscannable'
   }
   const scope =
     `searched ${npxRoot} (${root}): ${cacheDirs} cache dirs, ${withCli} with @claude-flow/cli, ` +
@@ -305,42 +326,47 @@ describe('predicate source drift (skips when no derived-from tree is installed)'
         // option's destructuring default) and `let backend = 'unknown'` are
         // different variables in the same file, and a `[:=]` scan read them
         // as enum members -- measured on both trees before this was narrowed.
-        for (const rel of [
-          'dist/src/memory/memory-initializer.js',
-          'dist/src/memory/memory-bridge.js',
-        ]) {
+        for (const [rel, expectedSites] of [
+          ['dist/src/memory/memory-initializer.js', 2],
+          ['dist/src/memory/memory-bridge.js', 1],
+        ] as const) {
           const src = readFileSync(path.join(t.dir, rel), 'utf8')
           const found = new Set<string>()
-          // Assemble each `backend:` value across continuation lines (a line
-          // starting with `?`, `:`, `&&`, `||`, `+` or `.`) BEFORE counting
-          // its literals. The line-bounded scan measured vacuous twice: first
-          // when the first line held no literal (a barren counter caught
-          // that), then when it held one and the new member sat on the next
-          // line -- `backend: isMock ? 'mock'\n : 'ruvector'` left the set at
-          // exactly {mock, onnx}. A site whose assembled value holds no
-          // literal at all (a variable, double quotes) is incomplete and must
-          // be zero; a file with no sites at all must not pass either.
-          const lines = src.split('\n')
+          // Sites are found over the WHOLE source, so a second `backend:` on
+          // the same physical line is seen (a per-line scan measured silent
+          // on that shape), with an optional quoted key and a spaced colon.
+          // Each value is bounded at the first `,`, `;`, `}`, `)` or `]` at
+          // brace/paren depth 0, across newlines: a ternary arm or a call
+          // argument on a continuation line is read, and a comma inside a
+          // call is not a terminator. Two earlier line-bounded scans each
+          // measured vacuous on a shape the previous one had not tested.
+          // The per-file site count is pinned EXACTLY (2 and 1 at 3.14.2 and
+          // 3.42.4): a site upstream removes, or moves to object shorthand
+          // where the value is a variable, fails loudly instead of shrinking
+          // the set quietly. A site with no literal at all is incomplete.
           let sites = 0
           let incomplete = 0
-          for (let i = 0; i < lines.length; i++) {
-            const m = /\bbackend:\s*(.*)$/.exec(lines[i])
-            if (!m) continue
+          for (const m of src.matchAll(/(?<![A-Za-z0-9_$])["']?backend["']?\s*:\s*/g)) {
             sites++
-            let value = m[1]
-            let j = i + 1
-            while (j < lines.length && /^\s*(\?|:|&&|\|\||\+|\.)/.test(lines[j])) {
-              value += ` ${lines[j].trim()}`
-              j++
+            const start = (m.index ?? 0) + m[0].length
+            let depth = 0
+            let end = start
+            for (; end < src.length; end++) {
+              const ch = src[end]
+              if (ch === '(' || ch === '{' || ch === '[') depth++
+              else if (ch === ')' || ch === '}' || ch === ']') {
+                if (depth === 0) break
+                depth--
+              } else if ((ch === ',' || ch === ';') && depth === 0) break
             }
             let n = 0
-            for (const s of value.split(',')[0].matchAll(/'([a-z-]+)'/g)) {
+            for (const s of src.slice(start, end).matchAll(/'([a-z-]+)'/g)) {
               found.add(s[1])
               n++
             }
             if (n === 0) incomplete++
           }
-          expect(sites, `${t.version} ${rel}: backend: sites`).toBeGreaterThan(0)
+          expect(sites, `${t.version} ${rel}: backend: sites`).toBe(expectedSites)
           expect([...found].sort(), `${t.version} ${rel}`).toEqual(['mock', 'onnx'])
           expect(incomplete, `${t.version} ${rel}: backend: sites with no literal`).toBe(0)
         }
