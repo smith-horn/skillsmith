@@ -202,6 +202,43 @@ export async function performUninstall(params: {
   const listenerWarning = (): { warning?: string } =>
     listenerProblems.length > 0 ? { warning: listenerProblems.join(' ') } : {}
   try {
+    // B2 (adversarial review): `path.join(skillsDir, skillName)` NORMALIZES,
+    // while `manifestKeyFor` keys on the RAW string -- so `./other-skill`,
+    // `other-skill/.`, `x/../other-skill` and `../skills/other-skill` all
+    // resolve to a TRACKED skill's directory while failing to find its manifest
+    // entry. The adoption branch below then runs, sets `installedAt` to the
+    // newest mtime so the "modified since installation" gate sees nothing, and
+    // deletes the directory WITHOUT force -- where the honest spelling is
+    // correctly refused. The real entry is left dangling.
+    //
+    // Reachable from the MCP `uninstall_skill` tool, whose schema is
+    // `z.string().min(1)` with no separator or dot rejection.
+    //
+    // M1: checked HERE, before the manifest is loaded and before adoption,
+    // because a refusal must write nothing -- the same invariant the
+    // git-working-tree check below states ("refuse ... before adopting it, so a
+    // refusal writes nothing to the manifest"). A guard placed after adoption
+    // still leaves a bogus entry behind.
+    //
+    // Stricter than `skillNameFromSkillId` on purpose: on the removal side this
+    // is a directory name, never an `author/name` pair.
+    if (
+      skillName.length === 0 ||
+      skillName === '.' ||
+      skillName === '..' ||
+      skillName.includes('/') ||
+      skillName.includes('\\')
+    ) {
+      return {
+        success: false,
+        skillName,
+        message:
+          `Skill "${skillName}" was not removed: a skill name must be a single directory name, ` +
+          `not a path. Nothing was removed.`,
+        ...listenerWarning(),
+      }
+    }
+
     notify(onProgress, listenerProblems, 'manifest', 'Loading manifest')
     const manifestData = await manifest.load()
     let skillEntry = manifestData.installedSkills[manifestKey]

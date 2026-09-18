@@ -583,7 +583,7 @@ describe('uninstall only deletes inside the skills directory (SMI-6732)', () => 
     const result = await createService().uninstall('escaped', { force: true })
 
     expect(result.success).toBe(false)
-    expect(result.message).toContain('outside the')
+    expect(result.message).toContain('not directly inside')
     expect(await fs.readFile(path.join(victim, 'important.txt'), 'utf-8')).toBe('user data\n')
     expect(await manifestEntry('escaped')).toBeDefined()
   })
@@ -617,7 +617,13 @@ describe('uninstall only deletes inside the skills directory (SMI-6732)', () => 
     const victim = path.join(tmpDir, 'loot')
     await fs.mkdir(victim, { recursive: true })
     await fs.writeFile(path.join(victim, 'keep.txt'), 'keep\n')
-    await track('climber', path.join(skillsDir, '..', 'loot'))
+    // The literal string matters. An earlier version of this case built the
+    // path with `path.join(skillsDir, '..', 'loot')`, which COLLAPSES to
+    // `<tmp>/loot` before it is ever written to the manifest -- so the guard
+    // never received a `..` at all and the case passed through the "outside"
+    // branch while claiming to test traversal. String concatenation keeps the
+    // `..` intact all the way into the guard.
+    await track('climber', `${skillsDir}/../loot`)
 
     const result = await createService().uninstall('climber', { force: true })
 
@@ -687,5 +693,144 @@ describe('uninstall only deletes inside the skills directory (SMI-6732)', () => 
     expect(result.success).toBe(true)
     await expect(fs.lstat(link)).rejects.toMatchObject({ code: 'ENOENT' })
     expect(await fs.readFile(path.join(checkout, 'SKILL.md'), 'utf-8')).toBe('# Local work\n')
+  })
+})
+
+describe('uninstall refuses nested and mis-spelled targets (SMI-6732 round 2)', () => {
+  // Round 1's guard accepted any depth under the skills root. Depth is exactly
+  // what defeats the git-worktree refusal, because `checkGitAtRoot` looks for
+  // `.git` at the TARGET only, never at an ancestor.
+
+  it('refuses a path nested inside a cloned skill, leaving uncommitted work', async () => {
+    const clone = path.join(skillsDir, 'clone-skill')
+    await makeClone(clone)
+    const src = path.join(clone, 'src')
+    await fs.mkdir(src, { recursive: true })
+    await fs.writeFile(path.join(src, 'work.txt'), 'uncommitted\n')
+    await track('nested', src)
+
+    const result = await createService().uninstall('nested', { force: true })
+
+    expect(result.success).toBe(false)
+    expect(await fs.readFile(path.join(src, 'work.txt'), 'utf-8')).toBe('uncommitted\n')
+  })
+
+  it("refuses a path naming a cloned skill's .git, leaving the history", async () => {
+    const clone = path.join(skillsDir, 'hist-skill')
+    await makeClone(clone)
+    await track('thegit', path.join(clone, '.git'))
+
+    const result = await createService().uninstall('thegit', { force: true })
+
+    expect(result.success).toBe(false)
+    expect(await fs.readFile(path.join(clone, '.git', 'HEAD'), 'utf-8')).toContain('main')
+  })
+
+  // A caller-supplied NAME, not a manifest value. `path.join` normalizes it
+  // while `manifestKeyFor` keys on the raw string, so a mis-spelling reaches a
+  // tracked skill's directory without finding its entry -- which skipped the
+  // force gate entirely.
+  for (const spelling of ['./other-skill', 'other-skill/.', 'x/../other-skill', '..', '.']) {
+    it(`refuses the skill name ${JSON.stringify(spelling)} and writes nothing`, async () => {
+      const real = path.join(skillsDir, 'other-skill')
+      await fs.mkdir(real, { recursive: true })
+      await fs.writeFile(path.join(real, 'SKILL.md'), '# Other\n')
+      // Tracked, and edited after install, so the honest spelling is refused
+      // without force. The mis-spelling must not get further than that.
+      await track('other-skill', real)
+      await fs.writeFile(path.join(real, 'SKILL.md'), '# Edited\n')
+
+      const result = await createService().uninstall(spelling)
+
+      expect(result.success).toBe(false)
+      expect(await fs.readFile(path.join(real, 'SKILL.md'), 'utf-8')).toBe('# Edited\n')
+      // M1: a refusal must write nothing. Round 1's guard ran after adoption,
+      // so a refused uninstall left a bogus manifest entry behind.
+      expect(await manifestEntry(spelling)).toBeUndefined()
+    })
+  }
+
+  it('refuses an installPath that resolves to the skills directory PARENT', async () => {
+    // Found by chasing a surviving mutant, not by imagination. Without the
+    // `path.resolve` before dirname/basename, `<skillsDir>/./..` yields parent
+    // `<skillsDir>/.` -- which realpaths to the root and PASSES the parent
+    // rule -- with base `..`, so `removeIfSame` would be handed the skills
+    // directory's own parent. Resolving first refuses it.
+    const bystander = path.join(skillsDir, 'survivor')
+    await fs.mkdir(bystander, { recursive: true })
+    await fs.writeFile(path.join(bystander, 'SKILL.md'), '# Survivor\n')
+    await track('parentesc', `${skillsDir}/./..`)
+
+    const result = await createService().uninstall('parentesc', { force: true })
+
+    expect(result.success).toBe(false)
+    // Assert the GUARD's own wording, not merely `success: false`. Measured:
+    // with `path.resolve` removed the guard ACCEPTS this path, and something
+    // downstream refuses it anyway -- so a bare `success: false` assertion
+    // passes against the mutant and pins nothing. Only `checkRemovalTarget`
+    // emits this phrase.
+    expect(result.message).toContain('not directly inside')
+    expect(await fs.readFile(path.join(bystander, 'SKILL.md'), 'utf-8')).toBe('# Survivor\n')
+    await expect(fs.lstat(skillsDir)).resolves.toBeDefined()
+  })
+
+  it('refuses a directory whose name merely starts with the skills dir name', async () => {
+    // Prefix collision. `startsWith(root)` without the separator would accept
+    // this; `startsWith(root + sep)` does not. The code was already correct --
+    // nothing tested it, so a mutation to the looser form survived.
+    const sibling = `${skillsDir}-evil`
+    await fs.mkdir(sibling, { recursive: true })
+    await fs.writeFile(path.join(sibling, 'keep.txt'), 'keep\n')
+    await track('prefix', path.join(sibling, 'foo'))
+
+    const result = await createService().uninstall('prefix', { force: true })
+
+    expect(result.success).toBe(false)
+    expect(await fs.readFile(path.join(sibling, 'keep.txt'), 'utf-8')).toBe('keep\n')
+  })
+
+  it('refuses an empty installPath with a message that says so', async () => {
+    const manifest = {
+      version: '1.0.0',
+      installedSkills: {
+        blank: { id: 'a/blank', name: 'blank', version: '1.0.0', source: 'x', installPath: '' },
+      },
+    }
+    await fs.writeFile(manifestPath, JSON.stringify(manifest, null, 2))
+
+    const result = await createService().uninstall('blank', { force: true })
+
+    expect(result.success).toBe(false)
+    // Not "got string", which is true and useless; and it must name a tool that
+    // exists -- `skillsmith doctor` does not.
+    expect(result.message).toContain('an empty string')
+    expect(result.message).toContain('apply_manifest_reconcile')
+  })
+
+  it('still uninstalls when the skills directory is reached through a symlink', async () => {
+    // Positive control for resolving the ROOT through realpath: without it the
+    // root and the parent are compared on different methodologies and a
+    // legitimate uninstall is refused.
+    const realRoot = path.join(tmpDir, 'real-skills')
+    await fs.mkdir(path.join(realRoot, 'linked-root-skill'), { recursive: true })
+    await fs.writeFile(path.join(realRoot, 'linked-root-skill', 'SKILL.md'), '# S\n')
+    const aliasRoot = path.join(tmpDir, 'alias-skills')
+    await fs.symlink(realRoot, aliasRoot)
+
+    const svc = new SkillInstallationService({
+      db,
+      skillRepo: new SkillRepository(db),
+      skillDependencyRepo: new SkillDependencyRepository(db),
+      skillsDir: aliasRoot,
+      manifestPath,
+    })
+    await track('linked-root-skill', path.join(aliasRoot, 'linked-root-skill'))
+
+    const result = await svc.uninstall('linked-root-skill', { force: true })
+
+    expect(result.success).toBe(true)
+    await expect(fs.lstat(path.join(realRoot, 'linked-root-skill'))).rejects.toMatchObject({
+      code: 'ENOENT',
+    })
   })
 })
