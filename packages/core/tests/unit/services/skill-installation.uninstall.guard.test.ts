@@ -14,6 +14,12 @@ import { SkillRepository } from '../../../src/repositories/SkillRepository.js'
 import { SkillDependencyRepository } from '../../../src/repositories/SkillDependencyRepository.js'
 import { createTestDatabase } from '../../helpers/database.js'
 import type { Database } from '../../../src/db/database-interface.js'
+// F-A (SMI-6732 round 6): `checkNotTrackedElsewhere`'s own malformed-
+// `installedSkills` guard is unreachable through `uninstall()` for two of its
+// three shapes (see the tests that use it below) -- `manifestData.installedSkills[key]`
+// at the uninstall() call site throws first for `undefined`/`null`, so only a
+// direct call exercises those two branches.
+import { checkNotTrackedElsewhere } from '../../../src/services/skill-installation.removal-guard.js'
 
 // One-shot: the next rename of this exact path first has another program move
 // the folder aside and put its own folder there.
@@ -57,6 +63,25 @@ const readdirFailFor = vi.hoisted(() => ({
   path: null as string | null,
   throws: null as { value: unknown } | null,
 }))
+// F-A (SMI-6732 round 6, Linux CI): `checkNotTrackedElsewhere`'s identity
+// check compares two `lstat()` results by dev+ino. No two on-disk
+// directories in this sandbox ever share an inode, so a naive F-A test could
+// never reach the comparison the way a case-/normalization-insensitive
+// volume (APFS, HFS+) does natively -- the same problem `accessSucceedFor`
+// solves for `checkExactEntryName`'s own alias tests above. This hook makes
+// `lstat(aliasPath)` resolve through the REAL `lstat` of `targetPath`
+// instead, so both sides of the comparison come from the SAME real
+// directory and genuinely share dev+ino.
+const lstatAliasFor = vi.hoisted(() => ({
+  aliasPath: null as string | null,
+  targetPath: null as string | null,
+}))
+// Pins the DEV half of that same comparison in isolation. Every path in this
+// sandbox shares one device, so no pair of real files can produce "same ino,
+// different dev" -- the one case that tells "compare both fields" apart from
+// "compare ino alone". This overlays a fabricated, never-real `dev` onto the
+// REAL lstat result for one exact (pre-alias) path, leaving `ino` untouched.
+const lstatFakeDeviceFor = vi.hoisted(() => ({ path: null as string | null }))
 
 // `removeIfSame` imports `node:fs/promises`; `ManifestManager` imports
 // `fs/promises`. Both get the same hooks.
@@ -118,12 +143,28 @@ const makeFsMock = vi.hoisted(() => (actual: typeof import('node:fs/promises')) 
     }
     return actual.readdir(...args)
   }) as typeof actual.readdir
+  const lstat = (async (...args: Parameters<typeof actual.lstat>) => {
+    const key = String(args[0])
+    const effectiveArgs = (
+      lstatAliasFor.aliasPath !== null && key === lstatAliasFor.aliasPath
+        ? [lstatAliasFor.targetPath, ...args.slice(1)]
+        : args
+    ) as Parameters<typeof actual.lstat>
+    const stat = await actual.lstat(...effectiveArgs)
+    if (lstatFakeDeviceFor.path !== null && key === lstatFakeDeviceFor.path) {
+      // A device number that can never equal a real one, so only `ino`
+      // still agrees with the unmodified `target` stat.
+      return { ...stat, dev: -1 } as unknown as typeof stat
+    }
+    return stat
+  }) as typeof actual.lstat
   return {
     ...actual,
-    default: { ...actual, rename, access, readdir },
+    default: { ...actual, rename, access, readdir, lstat },
     rename,
     access,
     readdir,
+    lstat,
   }
 })
 
@@ -258,6 +299,9 @@ afterEach(async () => {
   accessSucceedFor.path = null
   readdirFailFor.path = null
   readdirFailFor.throws = null
+  lstatAliasFor.aliasPath = null
+  lstatAliasFor.targetPath = null
+  lstatFakeDeviceFor.path = null
   manifestLoadSpy?.mockRestore()
   manifestLoadSpy = null
   db.close()
@@ -1148,6 +1192,11 @@ describe('uninstall refuses a second spelling of a tracked skill (SMI-6732 round
     expect(result.message).toContain('is spelled exactly')
     expect(await fs.readFile(path.join(real, 'SKILL.md'), 'utf-8')).toBe('# Edited\n')
     expect(await manifestEntry(nfc)).toMatchObject({ installPath: real })
+    // F-C (round 6): a refusal must write NOTHING -- including under the
+    // ALIAS key. The original assertion above pins only that the tracked
+    // key survives; a mutant that adopts under the alias and still returns
+    // this refusal would survive every test in this file without this line.
+    expect(await manifestEntry(nfd)).toBeUndefined()
   })
 
   it('refuses the wrong-case spelling of a tracked, modified skill', async () => {
@@ -1166,6 +1215,8 @@ describe('uninstall refuses a second spelling of a tracked skill (SMI-6732 round
     expect(result.message).toContain('is spelled exactly')
     expect(await fs.readFile(path.join(real, 'SKILL.md'), 'utf-8')).toBe('# Edited\n')
     expect(await manifestEntry('myskill')).toMatchObject({ installPath: real })
+    // F-C (round 6): same gap, same fix -- see the NFD test above.
+    expect(await manifestEntry('MySkill')).toBeUndefined()
   })
 
   // POSITIVE CONTROLS. Without these, `checkExactEntryName` could pass by
@@ -1315,5 +1366,200 @@ describe('uninstall refuses an unpaired surrogate (SMI-6732 round 5, F3)', () =>
     expect(result.message).toContain('unpaired surrogate')
     expect(result.message).toContain('the path checked and the path removed')
     expect(await manifestEntry('surrogate-path-skill')).toBeDefined()
+  })
+})
+
+describe('uninstall refuses a directory already tracked under another name (SMI-6732 round 6, F-A)', () => {
+  // Round 6 (pre-merge gate, F-A): `checkExactEntryName` anchors on the DISK
+  // spelling, so it is satisfied whenever the caller types what the
+  // filesystem stores. It says nothing about the MANIFEST holding the
+  // alias instead. Measured on APFS, force NOT set: disk `myskill`
+  // (modified now) / manifest key `MySkill` (installedAt 2020) --
+  // uninstall("MySkill") refused, "modified since installation", dir
+  // survives; uninstall("myskill") "uninstalled successfully", DIR DELETED,
+  // edits gone. Identical outcome for disk NFD `café` / manifest key NFC
+  // `café`.
+  //
+  // CI is Linux-only, where two on-disk directories never share a dev/ino,
+  // so the alias is forced via `lstatAliasFor` exactly as
+  // `accessSucceedFor` forces the F2 alias tests above -- the refusal
+  // itself is still produced by `checkNotTrackedElsewhere`'s own (real,
+  // unmocked) dev/ino comparison.
+
+  it('refuses the disk spelling when the manifest holds a different case', async () => {
+    const real = path.join(skillsDir, 'myskill')
+    await fs.mkdir(real, { recursive: true })
+    await fs.writeFile(path.join(real, 'SKILL.md'), '# Original\n')
+    const trackedPath = path.join(skillsDir, 'MySkill')
+    await track('MySkill', trackedPath)
+    lstatAliasFor.aliasPath = trackedPath
+    lstatAliasFor.targetPath = real
+
+    const result = await createService().uninstall('myskill')
+
+    expect(result.success).toBe(false)
+    expect(result.message).toContain('already tracked under the name "MySkill"')
+    await expect(fs.lstat(real)).resolves.toBeDefined()
+    expect(await fs.readFile(path.join(real, 'SKILL.md'), 'utf-8')).toBe('# Original\n')
+    expect(await manifestEntry('MySkill')).toMatchObject({ installPath: trackedPath })
+    // F-C: nothing is written under the alias key either.
+    expect(await manifestEntry('myskill')).toBeUndefined()
+  })
+
+  it('refuses the disk NFD spelling when the manifest holds the NFC spelling', async () => {
+    const nfc = 'café-tracked-skill' // e + U+00E9 (precomposed)
+    const nfd = nfc.normalize('NFD') // e + U+0065 U+0301 (decomposed)
+    expect(nfd).not.toBe(nfc)
+    const real = path.join(skillsDir, nfd)
+    await fs.mkdir(real, { recursive: true })
+    await fs.writeFile(path.join(real, 'SKILL.md'), '# Original\n')
+    const trackedPath = path.join(skillsDir, nfc)
+    await track(nfc, trackedPath)
+    lstatAliasFor.aliasPath = trackedPath
+    lstatAliasFor.targetPath = real
+
+    const result = await createService().uninstall(nfd)
+
+    expect(result.success).toBe(false)
+    expect(result.message).toContain(`already tracked under the name "${nfc}"`)
+    await expect(fs.lstat(real)).resolves.toBeDefined()
+    expect(await fs.readFile(path.join(real, 'SKILL.md'), 'utf-8')).toBe('# Original\n')
+    expect(await manifestEntry(nfc)).toMatchObject({ installPath: trackedPath })
+    expect(await manifestEntry(nfd)).toBeUndefined()
+  })
+})
+
+describe('checkNotTrackedElsewhere does not refuse everything (SMI-6732 round 6, F-A positive controls)', () => {
+  // Without these, the guard could pass every F-A test above by refusing
+  // every removal -- the failure mode a red test alone does not catch.
+
+  it('still adopts and uninstalls an untracked skill when an unrelated tracked skill exists', async () => {
+    const other = path.join(skillsDir, 'other-tracked-skill')
+    await fs.mkdir(other, { recursive: true })
+    await fs.writeFile(path.join(other, 'SKILL.md'), '# Other\n')
+    await track('other-tracked-skill', other)
+    const untracked = path.join(skillsDir, 'brand-new-skill')
+    await fs.mkdir(untracked, { recursive: true })
+    await fs.writeFile(path.join(untracked, 'SKILL.md'), '# New\n')
+
+    const result = await createService().uninstall('brand-new-skill', { force: true })
+
+    expect(result.success).toBe(true)
+    await expect(fs.lstat(untracked)).rejects.toMatchObject({ code: 'ENOENT' })
+    // The unrelated tracked skill, at its own distinct inode, is untouched.
+    expect(await fs.readFile(path.join(other, 'SKILL.md'), 'utf-8')).toBe('# Other\n')
+    expect(await manifestEntry('other-tracked-skill')).toBeDefined()
+  })
+
+  it('does not let a tracked entry whose installPath no longer resolves block an unrelated adoption', async () => {
+    const staleTrackedPath = path.join(skillsDir, 'ghost-skill')
+    // Never created on disk, so `lstat(staleTrackedPath)` throws ENOENT for
+    // real -- exercising the deliberate "skip records we cannot lstat"
+    // branch, not a mock.
+    await track('ghost-entry', staleTrackedPath)
+    const untracked = path.join(skillsDir, 'fresh-skill')
+    await fs.mkdir(untracked, { recursive: true })
+    await fs.writeFile(path.join(untracked, 'SKILL.md'), '# Fresh\n')
+
+    const result = await createService().uninstall('fresh-skill', { force: true })
+
+    expect(result.success).toBe(true)
+    await expect(fs.lstat(untracked)).rejects.toMatchObject({ code: 'ENOENT' })
+    // The stale record itself was never touched by this uninstall.
+    expect(await manifestEntry('ghost-entry')).toBeDefined()
+  })
+
+  it('leaves two distinct symlinks to one target independently removable', async () => {
+    // `lstat` compares the LINKS, not the target they resolve to --
+    // realpathing would defeat the develop-in-place workflow the existing
+    // symlink tests elsewhere in this file pin. Two links to the same
+    // target must stay two distinct, independently-removable entries.
+    const checkout = path.join(tmpDir, 'dev-shared', 'shared-checkout')
+    await fs.mkdir(checkout, { recursive: true })
+    await fs.writeFile(path.join(checkout, 'SKILL.md'), '# Shared checkout\n')
+    const linkA = path.join(skillsDir, 'link-a')
+    const linkB = path.join(skillsDir, 'link-b')
+    await fs.symlink(checkout, linkA)
+    await fs.symlink(checkout, linkB)
+    await track('link-a', linkA)
+
+    const result = await createService().uninstall('link-b', { force: true })
+
+    expect(result.success).toBe(true)
+    await expect(fs.lstat(linkB)).rejects.toMatchObject({ code: 'ENOENT' })
+    await expect(fs.lstat(linkA)).resolves.toBeDefined()
+    expect(await fs.readFile(path.join(checkout, 'SKILL.md'), 'utf-8')).toBe('# Shared checkout\n')
+    expect(await manifestEntry('link-a')).toBeDefined()
+  })
+
+  // The outer `manifestData.installedSkills[manifestKey]` lookup at the
+  // uninstall() call site throws BEFORE `checkNotTrackedElsewhere` is ever
+  // reached when `installedSkills` is undefined or null -- only a STRING
+  // value reaches the guard through `uninstall()` itself (indexing a string
+  // by a non-numeric key resolves to `undefined` rather than throwing). So
+  // the undefined/null shapes are exercised directly against the exported
+  // guard; `potentialPath` is a real directory in both, so execution
+  // reaches the guard's own `Object.entries(installedSkills)` line rather
+  // than short-circuiting earlier through the (also real) ENOENT branch.
+
+  it('does not throw when installedSkills is undefined', async () => {
+    const real = path.join(skillsDir, 'exists-for-undefined-test')
+    await fs.mkdir(real, { recursive: true })
+
+    await expect(checkNotTrackedElsewhere(real, 'whatever', undefined)).resolves.toEqual({
+      ok: true,
+    })
+  })
+
+  it('does not throw when installedSkills is null', async () => {
+    const real = path.join(skillsDir, 'exists-for-null-test')
+    await fs.mkdir(real, { recursive: true })
+
+    await expect(checkNotTrackedElsewhere(real, 'whatever', null)).resolves.toEqual({
+      ok: true,
+    })
+  })
+
+  it('does not throw end to end when installedSkills is a string', async () => {
+    const manifest = { version: '1.0.0', installedSkills: 'not-an-object' }
+    await fs.writeFile(manifestPath, JSON.stringify(manifest, null, 2))
+    const real = path.join(skillsDir, 'stringy-skill')
+    await fs.mkdir(real, { recursive: true })
+    await fs.writeFile(path.join(real, 'SKILL.md'), '# Stringy\n')
+
+    const result = await createService().uninstall('stringy-skill', { force: true })
+
+    expect(result.success).toBe(true)
+    await expect(fs.lstat(real)).rejects.toMatchObject({ code: 'ENOENT' })
+  })
+
+  it('does not let a null tracked-entry value block an unrelated adoption', async () => {
+    const manifest = { version: '1.0.0', installedSkills: { 'null-entry': null } }
+    await fs.writeFile(manifestPath, JSON.stringify(manifest, null, 2))
+    const untracked = path.join(skillsDir, 'clean-skill')
+    await fs.mkdir(untracked, { recursive: true })
+    await fs.writeFile(path.join(untracked, 'SKILL.md'), '# Clean\n')
+
+    const result = await createService().uninstall('clean-skill', { force: true })
+
+    expect(result.success).toBe(true)
+    await expect(fs.lstat(untracked)).rejects.toMatchObject({ code: 'ENOENT' })
+  })
+
+  it('does not treat a same-ino, different-device pair as the same directory', async () => {
+    const real = path.join(skillsDir, 'device-target')
+    await fs.mkdir(real, { recursive: true })
+    await fs.writeFile(path.join(real, 'SKILL.md'), '# Real\n')
+    const trackedPath = path.join(skillsDir, 'device-tracked')
+    await track('device-tracked', trackedPath)
+    // Same underlying inode as `real` (via the alias), but a fabricated,
+    // never-real device number reported on the TRACKED side only.
+    lstatAliasFor.aliasPath = trackedPath
+    lstatAliasFor.targetPath = real
+    lstatFakeDeviceFor.path = trackedPath
+
+    const result = await createService().uninstall('device-target', { force: true })
+
+    expect(result.success).toBe(true)
   })
 })

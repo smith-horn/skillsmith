@@ -24,6 +24,7 @@ import {
   checkExactEntryName,
   checkRemovalTarget,
   checkRemovableSkillName,
+  checkNotTrackedElsewhere,
 } from './skill-installation.removal-guard.js'
 import { hashContent, manifestKeyFor } from './skill-installation.helpers.js'
 import type { ManifestManager } from './skill-manifest.js'
@@ -256,15 +257,22 @@ export async function performUninstall(params: {
           ...listenerWarning(),
         }
       }
-      // Round 5 (pre-merge gate, F2): `access` says the spelling resolves to
-      // something; this says whether it IS that something's name. A second
-      // spelling of a tracked skill (NFD for NFC, `myskill` for `MySkill`)
-      // reaches here past its own manifest record, and adoption would then
-      // delete it without the modification check. Refused before anything below
-      // inspects or records `potentialPath`, so a refusal writes nothing.
+      // Two halves of ONE rule: a name must not reach a directory past that
+      // directory's own record, because adoption then backdates `installedAt` and
+      // deletes without the modification check. F2 catches the CALLER holding the
+      // alias, F-A the MANIFEST, by inode identity rather than a sixth string
+      // rule. Both refuse before `potentialPath` is inspected or recorded.
       const exact = await checkExactEntryName(skillsDir, skillName)
       if (!exact.ok) {
         return { success: false, skillName, message: exact.message, ...listenerWarning() }
+      }
+      const elsewhere = await checkNotTrackedElsewhere(
+        potentialPath,
+        skillName,
+        manifestData.installedSkills
+      )
+      if (!elsewhere.ok) {
+        return { success: false, skillName, message: elsewhere.message, ...listenerWarning() }
       }
       // SMI-6529 round 15: refuse a git working tree before adopting it, so a
       // refusal writes nothing to the manifest.
