@@ -74,7 +74,13 @@ export function shapeResult(partial) {
   // Preserve anything a path adds beyond the contract rather than dropping it
   // silently -- dropping would be this defect's own failure mode, inverted.
   for (const k of Object.keys(partial)) {
-    if (!(k in out)) out[k] = partial[k]
+    // m-6: this used `!(k in out)`, and `in` walks the prototype chain -- so any
+    // extra key that collides with `Object.prototype` (`toString`,
+    // `constructor`, `valueOf`, `hasOwnProperty`, `isPrototypeOf`) was reported
+    // as already present and SILENTLY DROPPED. Measured: all five dropped, while
+    // a control key (`sidecarError`) survived. That is precisely the failure the
+    // comment above says this loop prevents, inside the loop that prevents it.
+    if (!Object.prototype.hasOwnProperty.call(out, k)) out[k] = partial[k]
   }
   return out
 }
@@ -155,10 +161,65 @@ export function assertPathSegment(label, value) {
  * are no later reads. A new option added tomorrow is covered without anyone
  * remembering this rule.
  */
+/**
+ * Every option either removal path consumes. Derived from the actual reads in
+ * `quarantine.mjs`, `walk.mjs` and `hybrid.mjs` -- not from memory. A read this
+ * list misses falls back to the extras loop below, which is own-enumerable-only,
+ * so ADD TO THIS LIST when you add an option that matters.
+ */
+export const REMOVAL_OPTION_KEYS = [
+  'guardHash',
+  'treeHash',
+  'opId',
+  'expectIdentity',
+  'maxBirthtimeNs',
+  'nativeShim',
+  'variant',
+  'hooks',
+  'kind',
+  'client',
+  'rootKey',
+  'maxHeldFds',
+]
+
 export function resolveRemovalOptions(options = {}) {
-  // ONE read of each property, into plain data, before any validation.
-  const snap = { ...options }
-  snap.guardHash = resolveGuardHash(snap)
+  // C-1 (round 6, 2026-09-17): THE PREVIOUS VERSION WAS `{ ...options }`, AND A
+  // SPREAD IS OWN-ENUMERABLE-ONLY. The code it replaced read `options.guardHash`
+  // DIRECTLY, which traverses the prototype chain. So the "read once" fix
+  // silently narrowed what could be read at all -- and the narrowing resolved to
+  // `undefined`, which this module defines as "no guard, proceed".
+  //
+  // Measured, parent commit vs that commit, ordinary non-hostile option shapes:
+  //
+  //   class R { get guardHash() { return 'WRONG' } }
+  //     before -> kept, origin SURVIVES      after -> quarantined, origin GONE
+  //     native: before -> kept               after -> removed, UNRECOVERABLE
+  //   Object.create({ guardHash: null })
+  //     before -> TypeError (refused)        after -> quarantined, origin GONE
+  //
+  // A fail-CLOSED guard became fail-OPEN, on both paths, in the commit whose
+  // message claimed "validated equals used, for every option". Neither shape is
+  // hostile: a class instance with a getter and `Object.create(defaults)` are
+  // ordinary JavaScript. No case in either suite passed anything but an object
+  // literal, which is why it landed.
+  //
+  // THE RULE THIS ENCODES: an option that cannot be read must fail CLOSED. So
+  // every known option is read by DIRECT PROPERTY ACCESS -- prototype-aware,
+  // non-enumerable-aware -- exactly once, and the snapshot is built from those
+  // reads rather than from a spread.
+  const snap = {}
+
+  // Extras first: anything a caller attaches that this module does not know
+  // about. Own-enumerable-only is correct HERE -- these are pass-through values,
+  // not security inputs, and the known keys are excluded so none is read twice.
+  for (const k of Object.keys(options)) {
+    if (!REMOVAL_OPTION_KEYS.includes(k)) snap[k] = options[k]
+  }
+
+  // The known options: one direct read each. This is the line that fixes C-1.
+  for (const k of REMOVAL_OPTION_KEYS) snap[k] = options[k]
+
+  snap.guardHash = resolveGuardHash({ guardHash: snap.guardHash, treeHash: snap.treeHash })
   snap.treeHash = undefined
   if (snap.opId !== undefined) assertPathSegment('opId', snap.opId)
   return snap

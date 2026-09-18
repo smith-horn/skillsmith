@@ -23,6 +23,22 @@ import path from 'node:path'
 import crypto from 'node:crypto'
 import { computeTreeHash } from './hash.mjs'
 
+/**
+ * Whether POSIX ownership/permission semantics apply to a directory mode here.
+ * M-1: gated on `process.platform`, which is always defined, rather than on
+ * `typeof process.getuid === 'function'` -- a writable property whose removal
+ * silently disabled BOTH F12 checks and left no trace in the result.
+ */
+const POSIX_PERM_CHECKS = process.platform !== 'win32' && typeof process.getuid === 'function'
+/**
+ * Our own uid, captured once at load. Reading it per-call let a deleted
+ * `process.getuid` throw INSIDE the checked block, which the enclosing catch
+ * turned into `quarantine-failed` with `detail: null` -- fail-closed, which is
+ * the right direction, but undiagnosable and for the wrong reason. Captured
+ * here, the check cannot throw and cannot be switched off after load.
+ */
+const SELF_UID = POSIX_PERM_CHECKS ? BigInt(process.getuid()) : null
+
 const SPIKE_VERSION = 'smi-6676-spike-c4-prototype'
 
 function randSuffix() {
@@ -492,7 +508,14 @@ function quarantineTreeInner(parentAbs, name, options = {}) {
       }
     }
     // F12: ours, and not writable by anyone else.
-    if (typeof process.getuid === 'function' && od.uid !== BigInt(process.getuid())) {
+    // M-1: this guarded on `typeof process.getuid === 'function'`, and
+    // `process.getuid` is a WRITABLE property -- this suite's own case 7p stubs
+    // it. Measured: deleting it made a 0777 op directory ACCEPTED, with no field
+    // saying a check had been skipped. Gating on `process.platform` instead is
+    // not spoof-proof either, but it is always defined, so absence cannot
+    // silently disable the check; and the skip is now recorded rather than
+    // indistinguishable from a pass.
+    if (POSIX_PERM_CHECKS && od.uid !== SELF_UID) {
       return {
         status: 'kept',
         reason: 'quarantine-destination-changed',
@@ -509,7 +532,7 @@ function quarantineTreeInner(parentAbs, name, options = {}) {
     // against the three plausible shapes (0o40777, 0o40666, 0o40555), ALL of
     // them fail this mask, which would make every call on Windows return
     // `kept` and render the fallback path inert. One guard, both checks.
-    if (typeof process.getuid === 'function' && (od.mode & 0o077n) !== 0n) {
+    if (POSIX_PERM_CHECKS && (od.mode & 0o077n) !== 0n) {
       return {
         status: 'kept',
         reason: 'quarantine-destination-changed',
@@ -543,8 +566,17 @@ function quarantineTreeInner(parentAbs, name, options = {}) {
   // re-check and rename(2) and measurably widened the window that check exists
   // to narrow: source-rebind-to-rename median 2,125 ns before the op rebind was
   // added, 3,833 ns after (n=300 each). Ordering the destination checks first
-  // restores the source window and costs nothing -- a destination swap is caught
-  // just as well before the source check as after it.
+  // restores the source window. It is a TRADE, not a free win, and the previous
+  // wording ("costs nothing") was an unmeasured harm claim of exactly the shape
+  // retracted two blocks below. Both numbers, n=400 each:
+  //
+  //   source-compare -> rename   3,542 ns  ->  125 ns   (28x shorter)
+  //   op-rebind      -> rename      42 ns  ->  1,916 ns (45x longer)
+  //
+  // Whether that is net-better depends on which end is cheaper to attack, and
+  // nobody has measured that. The source end is the one carrying the documented
+  // residual and the one whose substitution is unrecoverable, so it gets the
+  // shorter window -- a reasoned choice, stated as one rather than as a result.
 
   // FINDING 3, part 3: THE DESTINATION GETS THE SAME RE-CHECK AS THE SOURCE.
   // Symmetry is the whole point -- the earlier fix hardened one end of a
@@ -583,9 +615,18 @@ function quarantineTreeInner(parentAbs, name, options = {}) {
   // 51,075 `stopped`.
   //
   // The reason it cannot close the race is the same one the source residual
-  // below gives: the gap between this lstat and rename(2) is 167 ns median
-  // (p95 250 ns), and anything that can hit that gap could hit the pre-fix gap
-  // too. Closing it needs renameat(2) against a held handle, which Node 22 does
+  // below gives: a gap remains between this lstat and rename(2), and anything
+  // that can hit it could hit the pre-fix gap too.
+  //
+  // M-2: THE FIGURE THAT USED TO SIT HERE WAS 167 ns, AND R5-4's OWN REORDER
+  // INVALIDATED IT. That number was measured when this rebind ran LAST; the
+  // reorder moved it above the source re-check, so an entire lstat-and-compare
+  // now separates it from rename(2). Re-measured in the shipped order, n=400:
+  // op-rebind -> rename is 1,916 ns median (p95 3,625), source-compare ->
+  // rename is 125 ns median (p95 209). A stale measured claim, inside the
+  // comment block rewritten to be honest about measurement -- which is why
+  // every remaining nanosecond figure in this file should be treated as
+  // unverified until re-run. Closing it needs renameat(2) against a held handle, which Node 22 does
   // not expose -- the reason this spike exists.
   //
   // It is kept because a diagnosable refusal beats an opaque ENOENT and it costs
@@ -656,6 +697,12 @@ function quarantineTreeInner(parentAbs, name, options = {}) {
       return {
         status: 'kept',
         reason: 'identity-changed',
+        // M-5: the `detail` audit was scoped to one reason code and stopped
+        // there. Measured: a caller passing a wrong `expectIdentity` (a benign
+        // programming error) and a successfully-detected live attack on the
+        // rename window returned BYTE-IDENTICAL objects. That is this spike's
+        // central threat detection, indistinguishable from a typo.
+        detail: 'bound identity does not match the tree now at this path',
         path: originPath,
         treeHash: observedTreeHash,
       }
@@ -736,36 +783,9 @@ function quarantineTreeInner(parentAbs, name, options = {}) {
   }
 }
 
-/**
- * N-1: the single exported entry point, so every caller gets one shape.
- * See result-shape.mjs for why this exists rather than 13 edited returns.
- */
-/**
- * FINDING 6: `opId` and `name` are joined into a path, so they must be single
- * segments. `opId` went straight into `path.join(trashRoot, opId)` with no
- * validation and `hybrid.mjs` forwards options verbatim. Measured:
- *
- *   quarantineTree(parent, 'tree', { opId: '../../OUTSIDE/pwned' })
- *     -> status: quarantined
- *     -> path:   <root>/OUTSIDE/pwned/tree-...   (outside .skillsmith-trash entirely)
- *
- * `name` had the same exposure. `hybrid.mjs` happens to pass path.basename(),
- * so it was safe TODAY -- a convention with no enforcement, which is precisely
- * the failure native-c/load.mjs already identifies and fixes for shimPath().
- * The lesson was learned in one file and not this one.
- */
-function _unusedLocalAssertPathSegment(label, value) {
-  if (typeof value !== 'string' || value.length === 0) {
-    throw new TypeError(`${label} must be a non-empty string, got ${String(value)}`)
-  }
-  if (value.includes('/') || value.includes('\\') || value === '.' || value === '..') {
-    throw new TypeError(
-      `${label} must be a single path segment, not a path. Got ${JSON.stringify(value)}. ` +
-        `A traversing value escapes .skillsmith-trash entirely and quarantines into ` +
-        `attacker-chosen storage while reporting success.`
-    )
-  }
-}
+// m-7: the local `assertPathSegment` was superseded by the shared one in
+// result-shape.mjs and left behind, renamed but not deleted -- zero references,
+// carrying a 12-line comment that read as live policy. Deleted.
 
 export function quarantineTree(parentAbs, name, options = {}) {
   // FINDING 8 (governance review of ADR-166, 2026-09-17): THE FIX FOR

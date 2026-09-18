@@ -79,6 +79,23 @@ check(
   [...CONTRACT_FIELDS].sort().join(',')
 )
 check('1b absent fields are null, never undefined', shapeResult({ status: 'kept' }).reason, null)
+// m-6: the pass-through loop used `!(k in out)`, and `in` walks the prototype
+// chain -- so an extra key colliding with `Object.prototype` read as already
+// present and was SILENTLY DROPPED. Measured: `toString`, `constructor`,
+// `valueOf`, `hasOwnProperty`, `isPrototypeOf` all dropped; a control key
+// survived. The loop exists to stop silent dropping, and dropped silently.
+for (const k of ['toString', 'constructor', 'valueOf', 'hasOwnProperty', 'isPrototypeOf']) {
+  check(
+    `1e an extra key named ${k} survives shaping`,
+    shapeResult({ status: 'kept', [k]: 'carried' })[k],
+    'carried'
+  )
+}
+check(
+  '1f and a non-colliding extra still survives (control)',
+  shapeResult({ status: 'kept', sidecarError: 'carried' }).sidecarError,
+  'carried'
+)
 check(
   '1c an unknown status is refused',
   (() => {
@@ -118,7 +135,12 @@ check(
   if (nativeOk === null) {
     console.log('[result-parity] 2* SKIP -- the native shim did not load here')
   } else {
-    check('2a native success key set', keys(nativeOk), [...RESULT_FIELDS].sort().join(','))
+    // m-5: this still compared against RESULT_FIELDS two cases below the one
+    // rewritten to remove that tautology -- so removing a field from the array
+    // changed both sides here and 2a stayed green while 1a/1a2 went red. The
+    // de-tautologising was applied to the case a reviewer named, not to the
+    // pattern. Same per-instance-instead-of-mechanism shape as C-1's own cause.
+    check('2a native success key set', keys(nativeOk), [...CONTRACT_FIELDS].sort().join(','))
     check('2b fallback success key set matches native', keys(fallback), keys(nativeOk))
     check('2c both report success', isSuccess(nativeOk) && isSuccess(fallback), true)
     // The field the A1 plan needs, on the path that ships.
@@ -624,6 +646,99 @@ check(
     check('10d the fallback still names its trigger', typeof fb.fallbackTrigger, 'string')
     check('10e the native branch reports null, not undefined', nat.fallbackTrigger, null)
   }
+}
+
+// --- 11. THE SHAPE OF THE OPTIONS OBJECT, NOT ITS VALUES (C-1) -----------
+//
+// THE GAP THIS CLOSES IS THE ONE THAT LET A CRITICAL REGRESSION LAND. Every
+// case above this one passes an object LITERAL. `grep -rn "Object.create|
+// defineProperty|setPrototypeOf" harness/` returned nothing. So when a fix
+// replaced direct property reads with `{ ...options }` -- own-enumerable-only --
+// nothing noticed that an inherited or non-enumerable `guardHash` had stopped
+// being readable, and the drop resolved to `undefined`, which this module
+// defines as "no guard, proceed".
+//
+// Measured before the fix, parent commit vs that commit:
+//
+//   class R { get guardHash() { return 'WRONG' } }
+//     before: kept, origin SURVIVES     after: quarantined, origin GONE
+//     native: before kept               after REMOVED, unrecoverable
+//   Object.create({ guardHash: null })
+//     before: TypeError                 after: quarantined, origin GONE
+//
+// A fail-closed guard turned fail-open, on both paths, in a commit carrying
+// eight suites and an explicit red-test discipline. Neither shape is hostile:
+// a class instance with a getter and `Object.create(defaults)` are ordinary.
+//
+// The author and the reviewer both instinctively write `{ guardHash: x }`, which
+// is why this dimension needs its own cases rather than more value cases.
+{
+  const threw = (fn) => {
+    try {
+      return `ret:${fn().status}`
+    } catch (e) {
+      return e.constructor.name
+    }
+  }
+  class WithGetter {
+    get guardHash() {
+      return 'DELIBERATELY-WRONG'
+    }
+  }
+  const nonEnumerable = () => {
+    const o = {}
+    Object.defineProperty(o, 'guardHash', { value: 'DELIBERATELY-WRONG', enumerable: false })
+    return o
+  }
+  const shapes = [
+    ['class instance, prototype getter', () => new WithGetter(), 'ret:kept'],
+    [
+      'Object.create with a wrong hash',
+      () => Object.create({ guardHash: 'DELIBERATELY-WRONG' }),
+      'ret:kept',
+    ],
+    ['Object.create with null', () => Object.create({ guardHash: null }), 'TypeError'],
+    ['non-enumerable own property', nonEnumerable, 'ret:kept'],
+    ['plain literal (control)', () => ({ guardHash: 'DELIBERATELY-WRONG' }), 'ret:kept'],
+  ]
+  for (const [label, make, expected] of shapes) {
+    const a = fixture()
+    const fb = threw(() => quarantineTree(a.parent, 'tree', make()))
+    const fbAlive = fs.existsSync(a.target)
+    fs.rmSync(a.root, { recursive: true, force: true })
+
+    const b = fixture()
+    const opts = make()
+    opts.variant = 'V2'
+    const nat = (() => {
+      try {
+        return threw(() => removeVR(b.target, opts))
+      } catch {
+        return 'SHIM-ABSENT'
+      }
+    })()
+    const natAlive = fs.existsSync(b.target)
+    fs.rmSync(b.root, { recursive: true, force: true })
+
+    check(`11 ${label}: fallback`, fb, expected)
+    check(`11 ${label}: fallback preserved the tree`, fbAlive, true)
+    if (nat === 'SHIM-ABSENT') continue
+    check(`11 ${label}: native`, nat, expected)
+    check(`11 ${label}: native preserved the tree`, natAlive, true)
+  }
+
+  // And a guard supplied through a prototype must still WORK when correct --
+  // otherwise this section passes by refusing every non-literal, which is the
+  // refuse-everything failure mode each negative control here exists to catch.
+  const good = fixture()
+  const goodHash = computePathTreeHash(good.target).treeHash
+  const viaProto = Object.create({ guardHash: goodHash })
+  check(
+    '11 a CORRECT hash via the prototype still quarantines',
+    quarantineTree(good.parent, 'tree', viaProto).status,
+    'quarantined'
+  )
+  fs.rmSync(good.root, { recursive: true, force: true })
 }
 
 if (!allOk) {

@@ -493,15 +493,21 @@ function fixture() {
 // --- 7e. R5-5: the OWNERSHIP clause, which nothing pinned -----------------
 //
 // F12 added two conditions -- ownership and mode -- and only the mode one was
-// tested. Deleting the entire `od.uid !== BigInt(process.getuid())` block left
-// both suites green. It was never untestable: a real cross-uid directory needs
-// root, but the clause reads `process.getuid()`, so stubbing that to a
-// different uid exercises the comparison exactly as a foreign-owned directory
-// would, without needing privileges.
+// tested. Deleting the whole ownership block left both suites green.
 //
-// This matters beyond tidiness: on a shared machine the op directory is the one
-// place the user's bytes and the sidecar (carrying `originPath` and `treeHash`)
-// come to rest, and ownership is the only check that says whose directory it is.
+// HOW THIS CASE FAKES A FOREIGN OWNER, AND WHY THE OBVIOUS WAY IS WRONG.
+// The first version stubbed `process.getuid` to return a different uid. That
+// worked only while the code read `process.getuid()` PER CALL -- and reading it
+// per call is exactly the defect M-1 fixed, because deleting the function then
+// disabled the check. Once the uid is captured at module load (so it cannot be
+// switched off afterwards), a `process.getuid` stub has no effect and this case
+// silently stopped testing anything.
+//
+// So the fake moved to the other side of the comparison: `fs.lstatSync` returns
+// a different `uid` for the op directory only. That tests the real predicate --
+// "this directory belongs to someone else" -- rather than "our own uid changed",
+// and it survives the hardening instead of being defeated by it. A real
+// cross-uid directory would need root, which a test must not require.
 {
   const root = fs.mkdtempSync(path.join(os.tmpdir(), 's6676-opuid-'))
   const parent = path.join(root, 'parent')
@@ -511,13 +517,22 @@ function fixture() {
   fs.mkdirSync(opDir, { recursive: true })
   fs.chmodSync(opDir, 0o700) // mode is fine, so ONLY ownership can refuse this
 
-  const realGetuid = process.getuid
+  const realLstat = fs.lstatSync
   let r
   try {
-    process.getuid = () => realGetuid.call(process) + 1
+    fs.lstatSync = (p, ...rest) => {
+      const st = realLstat(p, ...rest)
+      if (String(p) === opDir && typeof st.uid === 'bigint') {
+        return new Proxy(st, {
+          get: (t, k) =>
+            k === 'uid' ? t.uid + 1n : (Reflect.get(t, k).bind?.(t) ?? Reflect.get(t, k)),
+        })
+      }
+      return st
+    }
     r = quarantineTree(parent, 'tree', { opId: 'op-foreign' })
   } finally {
-    process.getuid = realGetuid
+    fs.lstatSync = realLstat
   }
 
   check('7p a foreign-owned op directory is refused', r.status, 'kept')
@@ -529,8 +544,8 @@ function fixture() {
   )
   check('7s the origin survives', fs.existsSync(path.join(parent, 'tree')), true)
 
-  // And the clause must not refuse our OWN directory -- otherwise it passes by
-  // refusing everything, which is the failure mode 7f guards on the mode side.
+  // And it must not refuse our OWN directory -- otherwise it passes by refusing
+  // everything, the failure mode every negative control here exists to catch.
   const r2 = quarantineTree(parent, 'tree', { opId: 'op-foreign' })
   check('7t our own op directory is still accepted', r2.status, 'quarantined')
   fs.rmSync(root, { recursive: true, force: true })
@@ -565,6 +580,47 @@ function fixture() {
   check('7w and the detail survives the result rebuild', r.detail, 'trash-unusable')
   check('7x the origin survives', fs.existsSync(path.join(parent, 'tree')), true)
   check('7y and nothing landed through the symlink', fs.readdirSync(elsewhere).length, 0)
+  fs.rmSync(root, { recursive: true, force: true })
+}
+
+// --- 7g. M-1: the permission checks must not be disableable at runtime ----
+//
+// Both F12 checks were gated on `typeof process.getuid === 'function'`, and
+// `process.getuid` is a WRITABLE property -- case 7p above stubs it, which is
+// the proof. Measured: deleting it made a 0777 op directory ACCEPTED, with no
+// field saying a check had been skipped. Any same-realm shim, sandbox or mock
+// that removes it silently disabled both checks.
+//
+// The gate is now computed once at module load from `process.platform`, so
+// removing `process.getuid` afterwards cannot turn the checks off. That is the
+// difference this case pins: with the old per-call `typeof` test the tree is
+// quarantined into a world-writable directory; with the load-time constant it
+// is still refused.
+{
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), 's6676-noguid-'))
+  const parent = path.join(root, 'parent')
+  fs.mkdirSync(path.join(parent, 'tree', 'sub'), { recursive: true })
+  fs.writeFileSync(path.join(parent, 'tree', 'sub', 'f.txt'), 'USERBYTES')
+  const opDir = path.join(parent, '.skillsmith-trash', 'op-noguid')
+  fs.mkdirSync(opDir, { recursive: true })
+  fs.chmodSync(opDir, 0o777)
+
+  const realGetuid = process.getuid
+  let r
+  try {
+    delete process.getuid
+    r = quarantineTree(parent, 'tree', { opId: 'op-noguid' })
+  } finally {
+    process.getuid = realGetuid
+  }
+
+  check('7z removing process.getuid does not disable the mode check', r.status, 'kept')
+  check(
+    '7z2 and the reason still names the destination',
+    r.reason,
+    'quarantine-destination-changed'
+  )
+  check('7z3 the origin survives', fs.existsSync(path.join(parent, 'tree')), true)
   fs.rmSync(root, { recursive: true, force: true })
 }
 

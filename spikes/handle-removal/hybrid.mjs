@@ -173,10 +173,16 @@ export function removeTree(targetRoot, options = {}) {
   if (!probe.ok) {
     return quarantineFallback(targetRoot, options, probe.trigger)
   }
-  // R5-10: both branches go through `shapeResult`, so `removeTree`'s two
-  // outcomes carry the SAME key set. `fallbackTrigger` is null on the native
-  // branch rather than absent -- absent is what a caller cannot distinguish
-  // from "this path forgot to set it", which is the defect this whole module
-  // exists to remove.
+  // R5-10: `removeTree`'s two outcomes carry the SAME key set, with
+  // `fallbackTrigger` null on the native branch rather than absent -- absent is
+  // what a caller cannot distinguish from "this path forgot to set it".
+  //
+  // M-4: THE ACTUAL FIX WAS ADDING `fallbackTrigger` TO `RESULT_FIELDS`, not
+  // these `shapeResult` wrappers. Measured: `removeVR` and `quarantineTree`
+  // already shape their own returns, so wrapping them again is byte-identical
+  // in key order and content, and removing either wrapper leaves every suite
+  // green. The commit message credited the wrappers with the fix; they are
+  // defence-in-depth against a future return path that forgets to shape itself,
+  // which is worth keeping and is not what closed the divergence.
   return shapeResult(removeVR(targetRoot, { variant: 'V2', ...options }))
 }
