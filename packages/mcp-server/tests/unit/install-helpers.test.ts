@@ -362,20 +362,27 @@ Use this skill to do things.
       expect(existsSync(MANIFEST_PATH + '.lock')).toBe(false)
     })
 
-    it('releases lock even on error', async () => {
+    it('releases lock after loadManifest recovers a read failure into an empty manifest (does NOT exercise the release-on-throw path)', async () => {
       // Mock load - throw error
       mockReadFile.mockRejectedValueOnce(new Error('Read error'))
-      // Mock save (loadManifest swallows the read error into an empty
-      // manifest, so save() still runs)
+      // loadManifest's own catch-all (install.helpers.manifest.ts) turns
+      // ANY readFile rejection into an empty manifest rather than
+      // propagating it, so `updateFn` below is called normally and save()
+      // still runs — this test never reaches withFileLock's `finally`
+      // release with an in-flight exception. That contract (release on an
+      // actual throw from inside the locked callback) has its own dedicated
+      // coverage: packages/core/src/config/file-lock.test.ts (SMI-6735
+      // adversarial-review finding 2b) — this test was previously titled
+      // "releases lock even on error" and read as if it covered that case;
+      // it does not.
       mockMkdir.mockResolvedValueOnce(undefined)
       mockWriteFile.mockResolvedValueOnce(undefined)
       mockRename.mockResolvedValueOnce(undefined)
 
       const updateFn = vi.fn((m) => m)
 
-      // loadManifest catches errors and returns empty manifest
-      // so this should still succeed
       await expect(updateManifestSafely(updateFn)).resolves.toBeUndefined()
+      expect(updateFn).toHaveBeenCalled()
       expect(existsSync(MANIFEST_PATH + '.lock')).toBe(false)
     })
   })
