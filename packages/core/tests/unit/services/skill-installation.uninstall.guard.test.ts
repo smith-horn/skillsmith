@@ -19,7 +19,7 @@ import type { Database } from '../../../src/db/database-interface.js'
 // three shapes (see the tests that use it below) -- `manifestData.installedSkills[key]`
 // at the uninstall() call site throws first for `undefined`/`null`, so only a
 // direct call exercises those two branches.
-import { checkNotTrackedElsewhere } from '../../../src/services/skill-installation.removal-guard.js'
+import { checkNotTrackedElsewhere } from '../../../src/services/skill-installation.removal-identity.js'
 
 // One-shot: the next rename of this exact path first has another program move
 // the folder aside and put its own folder there.
@@ -82,6 +82,23 @@ const lstatAliasFor = vi.hoisted(() => ({
 // "compare ino alone". This overlays a fabricated, never-real `dev` onto the
 // REAL lstat result for one exact (pre-alias) path, leaving `ino` untouched.
 const lstatFakeDeviceFor = vi.hoisted(() => ({ path: null as string | null }))
+// Round 7 (F1): make ONE exact path's `lstat` fail with a chosen error, so the
+// guard's non-ENOENT branch can be exercised. A transient fault here used to be
+// treated as absence -- fail-OPEN -- which let a tracked, modified skill be
+// adopted and deleted without `force`.
+const lstatFailFor = vi.hoisted(() => ({
+  path: null as string | null,
+  throws: null as { value: unknown } | null,
+}))
+// Round 7 (F2): after `after` successful lstats of `path`, resolve it through
+// `targetPath` instead -- a directory replaced under us between the guard's
+// identity reading and the one `removeIfSame` anchors on.
+const lstatFlipFor = vi.hoisted(() => ({
+  path: null as string | null,
+  targetPath: null as string | null,
+  after: 0,
+  seen: 0,
+}))
 
 // `removeIfSame` imports `node:fs/promises`; `ManifestManager` imports
 // `fs/promises`. Both get the same hooks.
@@ -145,6 +162,15 @@ const makeFsMock = vi.hoisted(() => (actual: typeof import('node:fs/promises')) 
   }) as typeof actual.readdir
   const lstat = (async (...args: Parameters<typeof actual.lstat>) => {
     const key = String(args[0])
+    if (lstatFailFor.path !== null && key === lstatFailFor.path) {
+      throw lstatFailFor.throws === null ? new Error('lstat failed') : lstatFailFor.throws.value
+    }
+    if (lstatFlipFor.path !== null && key === lstatFlipFor.path) {
+      lstatFlipFor.seen += 1
+      if (lstatFlipFor.seen > lstatFlipFor.after) {
+        return actual.lstat(lstatFlipFor.targetPath as string)
+      }
+    }
     const effectiveArgs = (
       lstatAliasFor.aliasPath !== null && key === lstatAliasFor.aliasPath
         ? [lstatAliasFor.targetPath, ...args.slice(1)]
@@ -266,6 +292,31 @@ async function trackWithExtra(name: string, installPath: string, extra: unknown)
   await fs.writeFile(manifestPath, JSON.stringify(manifest, null, 2))
 }
 
+/**
+ * Round 7 (F3): record SEVERAL skills at once. Every earlier fixture used
+ * `track()`, which overwrites, so every test ran against a ONE-entry manifest
+ * and the guard's central property -- scan EVERY record -- was unpinned. Two
+ * data-loss mutants (stop at the first stale record; return ok at the first
+ * non-match) passed all 69 tests because the fixture could not express the
+ * precondition.
+ */
+async function trackMany(entries: Array<[string, string]>): Promise<void> {
+  const later = new Date(Date.now() + 60_000).toISOString()
+  const installedSkills: Record<string, unknown> = {}
+  for (const [name, installPath] of entries) {
+    installedSkills[name] = {
+      id: `author/${name}`,
+      name,
+      version: '1.0.0',
+      source: `github:author/${name}`,
+      installPath,
+      installedAt: later,
+      lastUpdated: later,
+    }
+  }
+  await fs.writeFile(manifestPath, JSON.stringify({ version: '1.0.0', installedSkills }, null, 2))
+}
+
 async function manifestEntry(name: string): Promise<unknown> {
   const raw = await fs.readFile(manifestPath, 'utf-8').catch(() => null)
   if (raw === null) return undefined
@@ -299,6 +350,12 @@ afterEach(async () => {
   accessSucceedFor.path = null
   readdirFailFor.path = null
   readdirFailFor.throws = null
+  lstatFailFor.path = null
+  lstatFailFor.throws = null
+  lstatFlipFor.path = null
+  lstatFlipFor.targetPath = null
+  lstatFlipFor.after = 0
+  lstatFlipFor.seen = 0
   lstatAliasFor.aliasPath = null
   lstatAliasFor.targetPath = null
   lstatFakeDeviceFor.path = null
@@ -1506,18 +1563,24 @@ describe('checkNotTrackedElsewhere does not refuse everything (SMI-6732 round 6,
     const real = path.join(skillsDir, 'exists-for-undefined-test')
     await fs.mkdir(real, { recursive: true })
 
-    await expect(checkNotTrackedElsewhere(real, 'whatever', undefined)).resolves.toEqual({
-      ok: true,
-    })
+    const r = await checkNotTrackedElsewhere(real, 'whatever', undefined)
+    // round 7: the guard now also returns the identity it established, so the
+    // caller can prove the directory did not change under it. Assert the
+    // DECISION, not the whole shape -- a deep-equal here would break on any
+    // future field and says nothing about the clause under test.
+    expect(r.ok).toBe(true)
   })
 
   it('does not throw when installedSkills is null', async () => {
     const real = path.join(skillsDir, 'exists-for-null-test')
     await fs.mkdir(real, { recursive: true })
 
-    await expect(checkNotTrackedElsewhere(real, 'whatever', null)).resolves.toEqual({
-      ok: true,
-    })
+    const r = await checkNotTrackedElsewhere(real, 'whatever', null)
+    // round 7: the guard now also returns the identity it established, so the
+    // caller can prove the directory did not change under it. Assert the
+    // DECISION, not the whole shape -- a deep-equal here would break on any
+    // future field and says nothing about the clause under test.
+    expect(r.ok).toBe(true)
   })
 
   it('does not throw end to end when installedSkills is a string', async () => {
@@ -1561,5 +1624,110 @@ describe('checkNotTrackedElsewhere does not refuse everything (SMI-6732 round 6,
     const result = await createService().uninstall('device-target', { force: true })
 
     expect(result.success).toBe(true)
+  })
+})
+
+describe('the identity guard scans every record and fails closed (SMI-6732 round 7)', () => {
+  // F3: the guard's central property. A one-entry manifest cannot distinguish
+  // "scans all records" from "checks the first one", so two data-loss mutants
+  // survived the whole suite. The alias record is placed LAST, behind a stale
+  // record and a live non-matching one, so both mutants must fail.
+  it('finds an alias record that sits behind a stale record and a live one', async () => {
+    const disk = path.join(skillsDir, 'myskill')
+    await fs.mkdir(disk, { recursive: true })
+    await fs.writeFile(path.join(disk, 'SKILL.md'), '# myskill')
+    const other = path.join(skillsDir, 'other')
+    await fs.mkdir(other, { recursive: true })
+
+    await trackMany([
+      ['ghost', path.join(skillsDir, 'never-existed')], // stale: lstat ENOENT
+      ['other', other], // live, different inode
+      ['MySkill', path.join(skillsDir, 'MySkill')], // the alias, LAST
+    ])
+    lstatAliasFor.aliasPath = path.join(skillsDir, 'MySkill')
+    lstatAliasFor.targetPath = disk
+
+    const result = await createService().uninstall('myskill', { force: false })
+
+    expect(result.success).toBe(false)
+    expect(result.message).toContain('already tracked under the name "MySkill"')
+    expect(await fs.readdir(disk)).toContain('SKILL.md')
+    expect(await manifestEntry('myskill')).toBeUndefined()
+  })
+
+  // F1: a transient non-ENOENT fault must refuse, not wave the removal through.
+  // "inspectForRemoval catches it downstream" held only for a PERSISTENT fault.
+  it('refuses when the target cannot be checked, rather than assuming absence', async () => {
+    const disk = path.join(skillsDir, 'myskill')
+    await fs.mkdir(disk, { recursive: true })
+    await fs.writeFile(path.join(disk, 'SKILL.md'), '# myskill')
+    await trackMany([['other', path.join(skillsDir, 'other')]])
+
+    lstatFailFor.path = disk
+    lstatFailFor.throws = { value: Object.assign(new Error('denied'), { code: 'EACCES' }) }
+
+    const result = await createService().uninstall('myskill', { force: true })
+
+    expect(result.success).toBe(false)
+    expect(result.message).toContain('could not be checked (EACCES)')
+    expect(await fs.readdir(disk)).toContain('SKILL.md')
+  })
+
+  it('refuses when a tracked record cannot be checked, rather than skipping it', async () => {
+    const disk = path.join(skillsDir, 'myskill')
+    await fs.mkdir(disk, { recursive: true })
+    await fs.writeFile(path.join(disk, 'SKILL.md'), '# myskill')
+    const unreadable = path.join(skillsDir, 'unreadable')
+    await trackMany([['unreadable', unreadable]])
+
+    lstatFailFor.path = unreadable
+    lstatFailFor.throws = { value: Object.assign(new Error('io'), { code: 'EIO' }) }
+
+    const result = await createService().uninstall('myskill', { force: true })
+
+    expect(result.success).toBe(false)
+    expect(result.message).toContain('could not be checked')
+    expect(await fs.readdir(disk)).toContain('SKILL.md')
+  })
+
+  // F2: the round-6 commit claimed a mid-window swap "yields a refusal because
+  // removeIfSame compares identity at delete time". It compares `seen.stat`,
+  // read AFTER adoption -- the guard's own reading was compared to nothing.
+  it('refuses when the directory is replaced between the guard and the removal', async () => {
+    const disk = path.join(skillsDir, 'myskill')
+    await fs.mkdir(disk, { recursive: true })
+    await fs.writeFile(path.join(disk, 'SKILL.md'), '# myskill')
+    const swappedIn = path.join(skillsDir, 'swapped-in')
+    await fs.mkdir(swappedIn, { recursive: true })
+    await fs.writeFile(path.join(swappedIn, 'SKILL.md'), '# precious')
+    await trackMany([['other', path.join(skillsDir, 'other')]])
+
+    // the guard's own lstat is the first; every later one sees a different dir
+    lstatFlipFor.path = disk
+    lstatFlipFor.targetPath = swappedIn
+    lstatFlipFor.after = 1
+
+    const result = await createService().uninstall('myskill', { force: true })
+
+    expect(result.success).toBe(false)
+    expect(result.message).toContain('replaced by a different directory')
+    expect(await fs.readdir(swappedIn)).toContain('SKILL.md')
+  })
+
+  // F4: the target side must use lstat, not stat. Under `stat` an untracked
+  // symlink resolves into its tracked target's inode and becomes unremovable.
+  it('still removes an untracked symlink that points at a tracked skill', async () => {
+    const real = path.join(skillsDir, 'real')
+    await fs.mkdir(real, { recursive: true })
+    await fs.writeFile(path.join(real, 'SKILL.md'), '# real')
+    await track('real', real)
+    const link = path.join(skillsDir, 'link')
+    await fs.symlink(real, link)
+
+    const result = await createService().uninstall('link', { force: true })
+
+    expect(result.success).toBe(true)
+    expect(await fs.readdir(real)).toContain('SKILL.md')
+    await expect(fs.lstat(link)).rejects.toThrow()
   })
 })
