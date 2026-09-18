@@ -28,12 +28,13 @@ import * as os from 'node:os'
 
 import {
   acquireOwnedLock,
+  describeRemedy,
   RECLAIM_LOCK_TIMEOUT_MS,
   StuckLockError,
   type StuckLockReason,
 } from './owned-lock.js'
 import { acquireOwnedLockCore, toTimingMs } from './owned-lock.acquire.js'
-import { createLockExclusive } from './owned-lock.claim.js'
+import { createLockExclusive, isOwnerDefinitelyDead } from './owned-lock.claim.js'
 import { mintDeadPid } from '../../tests/helpers/deterministic-dead-pid.js'
 
 let dir: string
@@ -677,6 +678,21 @@ describe('SMI-6764: one verb for every reason, and a remedy that may say "it dep
     expect(render('reclaim_disabled')).toMatch(/retrying HERE cannot reclaim it/)
   })
 
+  /**
+   * Every spelling of "the holder is alive" this message has carried, plus the
+   * one that replaced it. A list of literals is a weak instrument -- it only
+   * ever catches a phrasing someone already thought of -- which is precisely
+   * how the second entry shipped: the first version of test 4 grepped for
+   * `/still alive/` alone, so moving the same assertion one sentence to the
+   * right, into `describeRemedy`, passed it. Test 6 below is the property
+   * test this list cannot be; keep both.
+   */
+  const LIVENESS_ASSERTIONS: RegExp[] = [
+    /still alive/,
+    /A live holder is expected to release/,
+    /the holder is (still )?(alive|running|live)/i,
+  ]
+
   it('4. no reason asserts liveness that was never probed', () => {
     // Known-positive control FIRST: prove this fixture reaches the branch the
     // assertion is about. Without it the negative below is vacuous, which is
@@ -685,8 +701,10 @@ describe('SMI-6764: one verb for every reason, and a remedy that may say "it dep
     // `held` is also the SAFE DEFAULT when the probe never ran, so the old
     // "(still alive)" rendered for a deliberately dead pid. Measured.
     for (const reason of REASONS) {
-      expect(renderV1(reason), `v1/${reason}`).not.toMatch(/still alive/)
-      expect(render(reason), `absent/${reason}`).not.toMatch(/still alive/)
+      for (const pattern of LIVENESS_ASSERTIONS) {
+        expect(renderV1(reason), `v1/${reason} vs ${pattern}`).not.toMatch(pattern)
+        expect(render(reason), `absent/${reason} vs ${pattern}`).not.toMatch(pattern)
+      }
     }
   })
 
@@ -696,6 +714,91 @@ describe('SMI-6764: one verb for every reason, and a remedy that may say "it dep
       expect(message, reason).toContain('1) confirm no skillsmith process is running')
       expect(message, reason).toContain('2) inspect (read-only)')
       expect(message, reason).toContain('3) remove ONLY the file(s) named above')
+    }
+  })
+
+  /**
+   * The property test tests 1-5 are not. Those all construct `StuckLockError`
+   * directly, so they assert what the message SAYS for a reason chosen by the
+   * test. This one drives the real acquire loop into the state where `held`'s
+   * remedy would be false, and reads what it actually renders there.
+   *
+   * That distinction is what the previous round missed. `describeRemedy` takes
+   * only `reason` -- it cannot see the claim at all, strictly less than
+   * `describeReason`, which at least gets the pid -- and `held` is not the
+   * determined case it was treated as. Three states reach it with no live
+   * holder, each measured (SMI-6764 round 5):
+   *
+   *   a. the probe never ran (`timeoutMs` < `reclaimProbeAfterMs`), so `held`
+   *      is the safe default and the pid may be long dead;
+   *   b. the claim names another host -- `isV1OwnerDead` returns false on the
+   *      host mismatch, before it signals anything;
+   *   c. the claim carries a pid `isV1OwnerDead` refuses to probe at all
+   *      (non-integer, or <= 0) -- which `parseClaim` accepts as v1, and which
+   *      therefore nothing will ever reclaim.
+   *
+   * (b) and (c) are the sharper half: there the lock does NOT clear by
+   * retrying, so a remedy promising that it will is the same never-clears trap
+   * SMI-6759/SMI-6764 removed from `reclaim_unavailable`, surviving under the
+   * one reason nobody re-examined.
+   */
+  it('6. `held` renders no liveness claim in the states that produce it without one', () => {
+    const cases: { name: string; claim: Record<string, unknown>; opts: object }[] = [
+      {
+        // Known-positive control is asserted inline below: this pid is dead.
+        name: 'a. definitely-dead pid, this host, probe never runs',
+        claim: { v: 1, pid: mintDeadPid(), token: 'a'.repeat(16), host: hostname(), acquiredAt: 0 },
+        opts: { timeoutMs: 50 }, // < RECLAIM_PROBE_AFTER_MS (250)
+      },
+      {
+        name: 'b. claim from another host -- liveness never probed',
+        claim: {
+          v: 1,
+          pid: process.pid,
+          token: 'b'.repeat(16),
+          host: `not-${hostname()}`,
+          acquiredAt: 0,
+        },
+        opts: { timeoutMs: 0, reclaimProbeAfterMs: 0, reclaimLockTimeoutMs: 0 },
+      },
+      {
+        name: 'c. pid <= 0 -- unprobeable, so never auto-reclaimed',
+        claim: { v: 1, pid: -1, token: 'c'.repeat(16), host: hostname(), acquiredAt: 0 },
+        opts: { timeoutMs: 0, reclaimProbeAfterMs: 0, reclaimLockTimeoutMs: 0 },
+      },
+    ]
+
+    for (const { name, claim, opts } of cases) {
+      rmSync(lockPath, { force: true })
+      writeFileSync(lockPath, JSON.stringify(claim) + '\n')
+
+      // Known-positive control: prove the fixture reaches the state it names,
+      // so a failure to render the liveness claim cannot be a fixture that
+      // simply never got there. For (a) the pid must genuinely be dead; for
+      // (b) and (c) the probe must genuinely decline to call it dead.
+      const parsed = { kind: 'v1', ...claim } as unknown as Parameters<
+        typeof isOwnerDefinitelyDead
+      >[0]
+      expect(isOwnerDefinitelyDead(parsed), `${name}: control`).toBe(name.startsWith('a.'))
+
+      let caught: unknown
+      try {
+        acquireOwnedLockCore(target, { label: 'config lock', ...opts })()
+      } catch (err) {
+        caught = err
+      }
+      expect(caught, `${name}: must refuse`).toBeInstanceOf(StuckLockError)
+      const error = caught as StuckLockError
+      // Guard the guard: if any of these ever stops classifying as `held`,
+      // this test silently stops covering `held` at all.
+      expect(error.reason, `${name}: must classify as held`).toBe('held')
+
+      for (const pattern of LIVENESS_ASSERTIONS) {
+        expect(error.message, `${name} vs ${pattern}`).not.toMatch(pattern)
+      }
+      // Tie the rendered text to its single source, so re-wording `held`'s
+      // remedy has to come back through this test and its three states.
+      expect(error.message, name).toContain(describeRemedy('held'))
     }
   })
 })
