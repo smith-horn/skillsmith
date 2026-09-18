@@ -21,6 +21,32 @@ All notable changes to `@skillsmith/core` are documented here.
   **Note for anyone upgrading past a running older process**: a lock file written by a pre-fix version
   carries a bare PID, which `owned-lock` classifies as a legacy claim and never auto-reclaims by design
   (SMI-5883 D-5). A `StuckLockError` names the exact file to remove. (#2891)
+- **Fix (data loss)**: SMI-6732 -- uninstalling a skill no longer deletes whatever the
+  manifest happens to name. `installPath` was read straight out of manifest JSON and passed
+  to the removal with no absoluteness or containment check, so an entry naming a folder
+  outside the skills directory, a relative path (resolved against the current working
+  directory), or the skills root itself was deleted and reported as
+  `"uninstalled successfully"`. The workspace-scoped manifest lives inside the project tree
+  and is not gitignored, so a cloned repository could carry such an entry. Removal now
+  refuses anything that is not a direct child of the skills directory.
+- **Fix (data loss)**: SMI-6732 -- a skill reached by a *second spelling* of its name is no
+  longer deleted past its own manifest record. On case-insensitive or Unicode-normalizing
+  volumes (APFS, HFS+), removing `myskill` when the manifest recorded `MySkill` -- or an NFD
+  spelling of an NFC name -- adopted the directory as untracked, backdated its install time,
+  and so skipped the "modified since installation" check that the honest spelling correctly
+  tripped. Your edited work was deleted without `force`. Removal now compares kernel
+  identity rather than spellings, which no alias can defeat.
+- **Fix**: SMI-6732 -- `uninstall('.git')` no longer deletes a git-versioned skills
+  directory's history, and a removal target that cannot be checked is now refused rather
+  than assumed absent. Previously any error while checking a path was treated as "nothing
+  there", so a transient permissions error could let a tracked, modified skill be deleted.
+- **Known limits**, stated because they are real: on filesystems that reuse a freed inode
+  number immediately (ext4, so most Linux installs), a directory deleted and recreated
+  during the removal's own check window is still not reliably detected -- birthtime narrows
+  this but catches roughly one case in five (measured). On Windows, identity comparisons
+  elsewhere in the install path can still collapse two distinct entries into one for
+  directories whose underlying record has been reused many times (SMI-6763). Neither
+  affects the containment fixes above.
 
 ## v0.12.5
 
