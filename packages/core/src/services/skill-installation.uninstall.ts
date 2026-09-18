@@ -20,7 +20,11 @@ import { removeIfSame } from '../install/remove-if-same.js'
 import type { SkillDependencyRepository } from '../repositories/SkillDependencyRepository.js'
 import type { ProgressCallback, UninstallResult } from './skill-installation.types.js'
 import { checkForModifications } from './skill-installation.io.js'
-import { checkRemovalTarget, checkRemovableSkillName } from './skill-installation.removal-guard.js'
+import {
+  checkExactEntryName,
+  checkRemovalTarget,
+  checkRemovableSkillName,
+} from './skill-installation.removal-guard.js'
 import { hashContent, manifestKeyFor } from './skill-installation.helpers.js'
 import type { ManifestManager } from './skill-manifest.js'
 import { CANONICAL_CLIENT, type ClientId } from '../install/paths.js'
@@ -252,6 +256,16 @@ export async function performUninstall(params: {
           ...listenerWarning(),
         }
       }
+      // Round 5 (pre-merge gate, F2): `access` says the spelling resolves to
+      // something; this says whether it IS that something's name. A second
+      // spelling of a tracked skill (NFD for NFC, `myskill` for `MySkill`)
+      // reaches here past its own manifest record, and adoption would then
+      // delete it without the modification check. Refused before anything below
+      // inspects or records `potentialPath`, so a refusal writes nothing.
+      const exact = await checkExactEntryName(skillsDir, skillName)
+      if (!exact.ok) {
+        return { success: false, skillName, message: exact.message, ...listenerWarning() }
+      }
       // SMI-6529 round 15: refuse a git working tree before adopting it, so a
       // refusal writes nothing to the manifest.
       const early = await inspectForRemoval(potentialPath)
@@ -310,7 +324,16 @@ export async function performUninstall(params: {
     // called here. `removeIfSame` cannot stand in for them: it verifies
     // IDENTITY ("I deleted the thing I inspected"), not AUTHORITY ("I was
     // allowed to delete it"), and knows nothing about `skillsDir`.
-    const allowed = await checkRemovalTarget(skillEntry.installPath, skillsDir)
+    // READ ONCE (round 5, F1). This and the read that fed `inspectForRemoval`
+    // were two separate property accesses, so the guard validated read 1 while
+    // the delete used read 2. Measured: a getter returning a benign path then a
+    // hostile one deleted outside the tree, and returning the root deleted every
+    // installed skill -- "uninstalled successfully" both times, force or not.
+    // Unreachable from shipped callers (both parse their own manifest JSON),
+    // which is why it survived five rounds. The hazard is the SPLIT, not the
+    // caller: one read cannot disagree with itself.
+    const installPath = skillEntry.installPath
+    const allowed = await checkRemovalTarget(installPath, skillsDir)
     if (!allowed.ok) {
       return {
         success: false,
@@ -320,7 +343,6 @@ export async function performUninstall(params: {
       }
     }
 
-    const installPath = skillEntry.installPath
     const seen = await inspectForRemoval(installPath)
     if ('refusal' in seen) {
       return { success: false, skillName, message: seen.refusal, ...listenerWarning() }

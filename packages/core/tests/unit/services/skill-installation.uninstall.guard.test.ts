@@ -9,6 +9,7 @@ import * as fs from 'fs/promises'
 import * as path from 'path'
 import * as os from 'os'
 import { SkillInstallationService } from '../../../src/services/skill-installation.service.js'
+import { ManifestManager } from '../../../src/services/skill-manifest.js'
 import { SkillRepository } from '../../../src/repositories/SkillRepository.js'
 import { SkillDependencyRepository } from '../../../src/repositories/SkillDependencyRepository.js'
 import { createTestDatabase } from '../../helpers/database.js'
@@ -38,9 +39,24 @@ const accessFailFor = vi.hoisted(() => ({
   path: null as string | null,
   throws: null as { value: unknown } | null,
 }))
+// F2 (SMI-6732, Linux CI): on ext4 a mis-spelled or NFD alias already fails
+// `fs.access` with ENOENT, so a naive F2 test would never reach
+// `checkExactEntryName` at all on the only platform CI measures -- that is a
+// decorative test, green for the wrong reason. This hook forces `fs.access`
+// of one EXACT path to succeed without throwing, standing in for what a
+// case-/normalization-insensitive volume (APFS, HFS+) does natively, so the
+// Linux run is forced down the same code path macOS takes and
+// `checkExactEntryName` itself -- a REAL, unmocked `readdir` -- is what
+// produces the refusal.
+const accessSucceedFor = vi.hoisted(() => ({ path: null as string | null }))
 // Round 25: `readdir` of this exact folder fails, so the parked-leftover scan
-// cannot look.
-const readdirFailFor = vi.hoisted(() => ({ path: null as string | null }))
+// cannot look. F2 failure-mode tests (SMI-6732) reuse this for
+// `checkExactEntryName`'s own `readdir(skillsDir)` call, and need a chosen
+// error shape rather than always EACCES -- `throws` mirrors `accessFailFor`.
+const readdirFailFor = vi.hoisted(() => ({
+  path: null as string | null,
+  throws: null as { value: unknown } | null,
+}))
 
 // `removeIfSame` imports `node:fs/promises`; `ManifestManager` imports
 // `fs/promises`. Both get the same hooks.
@@ -84,6 +100,7 @@ const makeFsMock = vi.hoisted(() => (actual: typeof import('node:fs/promises')) 
     return actual.rename(from, to)
   }
   const access = async (p: string, mode?: number): Promise<void> => {
+    if (String(p) === accessSucceedFor.path) return
     if (String(p) === accessFailFor.path) {
       if (accessFailFor.throws !== null) throw accessFailFor.throws.value
       throw Object.assign(new Error(`EACCES: permission denied, access '${String(p)}'`), {
@@ -94,6 +111,7 @@ const makeFsMock = vi.hoisted(() => (actual: typeof import('node:fs/promises')) 
   }
   const readdir = (async (...args: Parameters<typeof actual.readdir>) => {
     if (String(args[0]) === readdirFailFor.path) {
+      if (readdirFailFor.throws !== null) throw readdirFailFor.throws.value
       throw Object.assign(new Error(`EACCES: permission denied, scandir '${String(args[0])}'`), {
         code: 'EACCES',
       })
@@ -120,6 +138,9 @@ let tmpDir: string
 let skillsDir: string
 let manifestPath: string
 let db: Database
+// F1 (SMI-6732): set only by tests that spy on `ManifestManager.prototype.load`
+// to hand `performUninstall` an entry whose `installPath` is a getter.
+let manifestLoadSpy: ReturnType<typeof vi.spyOn> | null = null
 
 function createService(
   onProgress?: (stage: string, detail: string) => void
@@ -132,6 +153,17 @@ function createService(
     manifestPath,
     ...(onProgress !== undefined && { onProgress }),
   })
+}
+
+// F2 (SMI-6732): a timestamp reliably AFTER `track()`'s own +60s
+// `installedAt`, for a test that needs a file to genuinely trip the
+// modification gate rather than merely being rewritten (which `track()`'s
+// own future-dated `installedAt` absorbs harmlessly -- see the comment on
+// `track()` below). Computed fresh per call, not as a module-level constant,
+// so it stays ahead of `installedAt` no matter how long the suite has been
+// running by the time a given test reaches it.
+function farFuture(): Date {
+  return new Date(Date.now() + 120_000)
 }
 
 /** Record `name` in the manifest as installed at `installPath`. */
@@ -223,7 +255,11 @@ afterEach(async () => {
   failRenameTo.path = null
   accessFailFor.path = null
   accessFailFor.throws = null
+  accessSucceedFor.path = null
   readdirFailFor.path = null
+  readdirFailFor.throws = null
+  manifestLoadSpy?.mockRestore()
+  manifestLoadSpy = null
   db.close()
   await fs.rm(tmpDir, { recursive: true, force: true })
 })
@@ -986,5 +1022,298 @@ describe('uninstall refuses dot-prefixed names (SMI-6732 round 4, pre-merge gate
 
     expect(result.success).toBe(true)
     await expect(fs.lstat(dotted)).rejects.toMatchObject({ code: 'ENOENT' })
+  })
+})
+
+describe('uninstall reads installPath exactly once (SMI-6732 round 5, F1)', () => {
+  // `skillEntry.installPath` used to be read TWICE -- once by the guard, once
+  // by the delete -- so a getter that answers differently on each read let
+  // the guard validate one path while the delete acted on another. Neither
+  // shipped caller can produce this (both parse plain manifest JSON), so this
+  // spies `ManifestManager.prototype.load` to hand `performUninstall` an
+  // entry whose `installPath` really is a getter -- the only way to observe
+  // HOW MANY TIMES the property is read, not merely what value it eventually
+  // holds.
+
+  it('does not let a benign-then-hostile getter delete outside the skills directory', async () => {
+    const good = path.join(skillsDir, 'getter-good-1')
+    await fs.mkdir(good, { recursive: true })
+    await fs.writeFile(path.join(good, 'SKILL.md'), '# Good\n')
+    const victim = path.join(tmpDir, 'getter-victim-1')
+    await fs.mkdir(victim, { recursive: true })
+    await fs.writeFile(path.join(victim, 'important.txt'), 'victim data\n')
+
+    let reads = 0
+    const trackedEntry = {
+      id: 'author/getter-skill-1',
+      name: 'getter-skill-1',
+      version: '1.0.0',
+      source: 'github:author/getter-skill-1',
+      installedAt: new Date(Date.now() + 60_000).toISOString(),
+      lastUpdated: new Date(Date.now() + 60_000).toISOString(),
+      get installPath() {
+        reads += 1
+        // Read 1 -- the fixed code's ONE hoisted read -- answers benignly;
+        // any further read, which only a regression would trigger, answers
+        // with a path outside the skills directory entirely.
+        return reads === 1 ? good : victim
+      },
+    }
+    manifestLoadSpy = vi.spyOn(ManifestManager.prototype, 'load').mockResolvedValue({
+      version: '1.0.0',
+      installedSkills: { 'getter-skill-1': trackedEntry },
+    })
+
+    const result = await createService().uninstall('getter-skill-1', { force: true })
+
+    expect(result.success).toBe(true)
+    expect(result.removedPath).toBe(good)
+    // The in-tree target is what was acted on...
+    await expect(fs.lstat(good)).rejects.toMatchObject({ code: 'ENOENT' })
+    // ...and the out-of-tree victim a second read would have named survives.
+    expect(await fs.readFile(path.join(victim, 'important.txt'), 'utf-8')).toBe('victim data\n')
+  })
+
+  it('does not let a benign-then-root getter delete every installed skill', async () => {
+    const good = path.join(skillsDir, 'getter-good-2')
+    await fs.mkdir(good, { recursive: true })
+    await fs.writeFile(path.join(good, 'SKILL.md'), '# Good\n')
+    const bystander = path.join(skillsDir, 'getter-bystander-2')
+    await fs.mkdir(bystander, { recursive: true })
+    await fs.writeFile(path.join(bystander, 'SKILL.md'), '# Bystander\n')
+
+    let reads = 0
+    const trackedEntry = {
+      id: 'author/getter-skill-2',
+      name: 'getter-skill-2',
+      version: '1.0.0',
+      source: 'github:author/getter-skill-2',
+      installedAt: new Date(Date.now() + 60_000).toISOString(),
+      lastUpdated: new Date(Date.now() + 60_000).toISOString(),
+      get installPath() {
+        reads += 1
+        // Read 1 answers benignly; any further read answers with the skills
+        // root itself -- the shape that deleted every installed skill.
+        return reads === 1 ? good : skillsDir
+      },
+    }
+    manifestLoadSpy = vi.spyOn(ManifestManager.prototype, 'load').mockResolvedValue({
+      version: '1.0.0',
+      installedSkills: { 'getter-skill-2': trackedEntry },
+    })
+
+    const result = await createService().uninstall('getter-skill-2', { force: true })
+
+    expect(result.success).toBe(true)
+    expect(result.removedPath).toBe(good)
+    await expect(fs.lstat(good)).rejects.toMatchObject({ code: 'ENOENT' })
+    // The bystander, and the skills directory itself, survive.
+    expect(await fs.readFile(path.join(bystander, 'SKILL.md'), 'utf-8')).toBe('# Bystander\n')
+    await expect(fs.lstat(skillsDir)).resolves.toBeDefined()
+  })
+})
+
+describe('uninstall refuses a second spelling of a tracked skill (SMI-6732 round 5, F2)', () => {
+  // CI is Linux-only, and ext4 already fails `fs.access` with ENOENT for an
+  // NFD or wrong-case alias -- a naive test would never reach
+  // `checkExactEntryName` there at all. `accessSucceedFor` forces `fs.access`
+  // of the alias to succeed, standing in for what APFS/HFS+ does natively, so
+  // the refusal below is produced by `checkExactEntryName`'s own (real,
+  // unmocked) `readdir` comparison on every platform CI runs.
+
+  it('refuses the NFD spelling of an NFC-tracked, modified skill', async () => {
+    const nfc = 'café-skill' // e + U+00E9 (precomposed)
+    const nfd = nfc.normalize('NFD') // e + U+0065 U+0301 (decomposed)
+    expect(nfd).not.toBe(nfc)
+
+    const real = path.join(skillsDir, nfc)
+    await fs.mkdir(real, { recursive: true })
+    await fs.writeFile(path.join(real, 'SKILL.md'), '# Original\n')
+    await track(nfc, real)
+    // Modified after install, so the HONEST spelling would also be refused --
+    // proving the assertion below is the exact-name rule, not a side effect
+    // of the modification gate. `track()` sets `installedAt` 60s into the
+    // future (so a routine rewrite right after tracking does NOT register as
+    // a modification -- that is the whole point of that offset for every
+    // OTHER test in this file); genuinely tripping the modification gate
+    // needs the file's mtime pushed past that.
+    await fs.writeFile(path.join(real, 'SKILL.md'), '# Edited\n')
+    await fs.utimes(path.join(real, 'SKILL.md'), farFuture(), farFuture())
+    accessSucceedFor.path = path.join(skillsDir, nfd)
+
+    const result = await createService().uninstall(nfd)
+
+    expect(result.success).toBe(false)
+    expect(result.message).toContain('no entry in')
+    expect(result.message).toContain('is spelled exactly')
+    expect(await fs.readFile(path.join(real, 'SKILL.md'), 'utf-8')).toBe('# Edited\n')
+    expect(await manifestEntry(nfc)).toMatchObject({ installPath: real })
+  })
+
+  it('refuses the wrong-case spelling of a tracked, modified skill', async () => {
+    const real = path.join(skillsDir, 'myskill')
+    await fs.mkdir(real, { recursive: true })
+    await fs.writeFile(path.join(real, 'SKILL.md'), '# Original\n')
+    await track('myskill', real)
+    await fs.writeFile(path.join(real, 'SKILL.md'), '# Edited\n')
+    await fs.utimes(path.join(real, 'SKILL.md'), farFuture(), farFuture())
+    accessSucceedFor.path = path.join(skillsDir, 'MySkill')
+
+    const result = await createService().uninstall('MySkill')
+
+    expect(result.success).toBe(false)
+    expect(result.message).toContain('no entry in')
+    expect(result.message).toContain('is spelled exactly')
+    expect(await fs.readFile(path.join(real, 'SKILL.md'), 'utf-8')).toBe('# Edited\n')
+    expect(await manifestEntry('myskill')).toMatchObject({ installPath: real })
+  })
+
+  // POSITIVE CONTROLS. Without these, `checkExactEntryName` could pass by
+  // refusing every adoption, which the two mis-spelling tests above would not
+  // catch on their own.
+
+  it('still gates the HONEST spelling on modification (F2 positive control)', async () => {
+    const real = path.join(skillsDir, 'honest-mod-skill')
+    await fs.mkdir(real, { recursive: true })
+    await fs.writeFile(path.join(real, 'SKILL.md'), '# Original\n')
+    await track('honest-mod-skill', real)
+    await fs.writeFile(path.join(real, 'SKILL.md'), '# Edited\n')
+    await fs.utimes(path.join(real, 'SKILL.md'), farFuture(), farFuture())
+
+    const result = await createService().uninstall('honest-mod-skill')
+
+    expect(result.success).toBe(false)
+    expect(result.message).toContain('has been modified since installation')
+    expect(await fs.readFile(path.join(real, 'SKILL.md'), 'utf-8')).toBe('# Edited\n')
+  })
+
+  it('still uninstalls the HONEST spelling when unmodified (F2 positive control)', async () => {
+    const real = path.join(skillsDir, 'honest-clean-skill')
+    await fs.mkdir(real, { recursive: true })
+    await fs.writeFile(path.join(real, 'SKILL.md'), '# Original\n')
+    await track('honest-clean-skill', real)
+
+    const result = await createService().uninstall('honest-clean-skill')
+
+    expect(result.success).toBe(true)
+    await expect(fs.lstat(real)).rejects.toMatchObject({ code: 'ENOENT' })
+  })
+
+  it('still adopts and uninstalls an untracked ASCII skill (F2 positive control)', async () => {
+    const real = path.join(skillsDir, 'untracked-ascii-skill')
+    await fs.mkdir(real, { recursive: true })
+    await fs.writeFile(path.join(real, 'SKILL.md'), '# Untracked\n')
+
+    const result = await createService().uninstall('untracked-ascii-skill', { force: true })
+
+    expect(result.success).toBe(true)
+    await expect(fs.lstat(real)).rejects.toMatchObject({ code: 'ENOENT' })
+  })
+
+  it('still adopts and uninstalls an untracked SYMLINKED skill, target intact (F2 positive control)', async () => {
+    const checkout = path.join(tmpDir, 'dev-f2', 'untracked-symlink-skill')
+    await fs.mkdir(checkout, { recursive: true })
+    await fs.writeFile(path.join(checkout, 'SKILL.md'), '# Local work\n')
+    const link = path.join(skillsDir, 'untracked-symlink-skill')
+    await fs.symlink(checkout, link)
+
+    const result = await createService().uninstall('untracked-symlink-skill', { force: true })
+
+    expect(result.success).toBe(true)
+    await expect(fs.lstat(link)).rejects.toMatchObject({ code: 'ENOENT' })
+    expect(await fs.readFile(path.join(checkout, 'SKILL.md'), 'utf-8')).toBe('# Local work\n')
+  })
+})
+
+describe("checkExactEntryName's own failure modes (SMI-6732, rounds 25/26 convention)", () => {
+  // Untracked in every case, so the adoption path is what reaches
+  // `checkExactEntryName`: `fs.access` succeeds for real (the directory
+  // really is there under its own name), and only the LISTING fails.
+
+  it('says "not installed" when the listing itself is absent (ENOENT)', async () => {
+    const untracked = path.join(skillsDir, 'enoent-listing-skill')
+    await fs.mkdir(untracked, { recursive: true })
+    await fs.writeFile(path.join(untracked, 'SKILL.md'), '# Untracked\n')
+    readdirFailFor.path = skillsDir
+    readdirFailFor.throws = {
+      value: Object.assign(new Error("ENOENT: no such file or directory, scandir '...'"), {
+        code: 'ENOENT',
+      }),
+    }
+
+    const result = await createService().uninstall('enoent-listing-skill', { force: true })
+
+    expect(result.success).toBe(false)
+    expect(result.message).toBe('Skill "enoent-listing-skill" is not installed.')
+    expect(await fs.readFile(path.join(untracked, 'SKILL.md'), 'utf-8')).toBe('# Untracked\n')
+    expect(await manifestEntry('enoent-listing-skill')).toBeUndefined()
+  })
+
+  it('says it could not tell when the listing fails with EACCES', async () => {
+    const untracked = path.join(skillsDir, 'eacces-listing-skill')
+    await fs.mkdir(untracked, { recursive: true })
+    await fs.writeFile(path.join(untracked, 'SKILL.md'), '# Untracked\n')
+    readdirFailFor.path = skillsDir
+
+    const result = await createService().uninstall('eacces-listing-skill', { force: true })
+
+    expect(result.success).toBe(false)
+    expect(result.message).toContain('Could not tell whether')
+    expect(result.message).toContain('could not be listed (EACCES)')
+    expect(await fs.readFile(path.join(untracked, 'SKILL.md'), 'utf-8')).toBe('# Untracked\n')
+    expect(await manifestEntry('eacces-listing-skill')).toBeUndefined()
+  })
+
+  it('says it could not tell when the listing fails with an error carrying no code', async () => {
+    const untracked = path.join(skillsDir, 'uncoded-listing-skill')
+    await fs.mkdir(untracked, { recursive: true })
+    await fs.writeFile(path.join(untracked, 'SKILL.md'), '# Untracked\n')
+    readdirFailFor.path = skillsDir
+    readdirFailFor.throws = { value: new Error('filesystem went away') }
+
+    const result = await createService().uninstall('uncoded-listing-skill', { force: true })
+
+    expect(result.success).toBe(false)
+    expect(result.message).toContain('Could not tell whether')
+    expect(result.message).toContain('could not be listed (filesystem went away)')
+    expect(await fs.readFile(path.join(untracked, 'SKILL.md'), 'utf-8')).toBe('# Untracked\n')
+    expect(await manifestEntry('uncoded-listing-skill')).toBeUndefined()
+  })
+
+  it('survives a thrown value that is not an Error at all', async () => {
+    const untracked = path.join(skillsDir, 'nonerror-listing-skill')
+    await fs.mkdir(untracked, { recursive: true })
+    await fs.writeFile(path.join(untracked, 'SKILL.md'), '# Untracked\n')
+    readdirFailFor.path = skillsDir
+    readdirFailFor.throws = { value: null }
+
+    const result = await createService().uninstall('nonerror-listing-skill', { force: true })
+
+    expect(result.success).toBe(false)
+    expect(result.message).toContain('Could not tell whether')
+    expect(await fs.readFile(path.join(untracked, 'SKILL.md'), 'utf-8')).toBe('# Untracked\n')
+    expect(await manifestEntry('nonerror-listing-skill')).toBeUndefined()
+  })
+})
+
+describe('uninstall refuses an unpaired surrogate (SMI-6732 round 5, F3)', () => {
+  it("refuses uninstall('\\uD800') by the name rule", async () => {
+    const result = await createService().uninstall('\uD800')
+
+    expect(result.success).toBe(false)
+    expect(result.message).toContain('unpaired surrogate')
+    expect(await manifestEntry('\uD800')).toBeUndefined()
+  })
+
+  it("refuses a manifest installPath containing a lone surrogate, in checkRemovalTarget's own wording", async () => {
+    const surrogatePath = path.join(skillsDir, '\uD800')
+    await track('surrogate-path-skill', surrogatePath)
+
+    const result = await createService().uninstall('surrogate-path-skill', { force: true })
+
+    expect(result.success).toBe(false)
+    expect(result.message).toContain('unpaired surrogate')
+    expect(result.message).toContain('the path checked and the path removed')
+    expect(await manifestEntry('surrogate-path-skill')).toBeDefined()
   })
 })
