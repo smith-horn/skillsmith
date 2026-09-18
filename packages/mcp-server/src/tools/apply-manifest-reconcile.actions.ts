@@ -71,7 +71,7 @@ export async function runMarkLocal(
   let beforeState: SkillManifestEntry | undefined
   let afterState: SkillManifestEntry | undefined
 
-  await withLockTimeoutMapping(scopeTarget.manifestPath, () =>
+  await withLockTimeoutMapping(() =>
     manager.updateSafely((manifest: SkillManifest) => {
       const { key, entry } = resolveReconcileEntry(manifest, name, scopeTarget.client)
       resolvedKey = key
@@ -148,7 +148,7 @@ export async function runRelink(
   let beforeState: SkillManifestEntry | undefined
   let afterState: SkillManifestEntry | undefined
 
-  await withLockTimeoutMapping(scopeTarget.manifestPath, () =>
+  await withLockTimeoutMapping(() =>
     manager.updateSafely((manifest: SkillManifest) => {
       const { key, entry } = resolveReconcileEntry(manifest, name, scopeTarget.client)
       resolvedKey = key
@@ -217,7 +217,7 @@ export async function runDropEntry(
   let resolvedKey = ''
   let beforeState: SkillManifestEntry | undefined
 
-  await withLockTimeoutMapping(scopeTarget.manifestPath, () =>
+  await withLockTimeoutMapping(() =>
     manager.updateSafely((manifest: SkillManifest) => {
       const { key, entry } = resolveReconcileEntry(manifest, name, scopeTarget.client)
       resolvedKey = key
@@ -307,7 +307,7 @@ export async function runRevert(
   const key = reconcileKeyForLedgerEntry(target.name, target.client)
   const manager = new ManifestManager(target.manifestPath)
 
-  await withLockTimeoutMapping(target.manifestPath, () =>
+  await withLockTimeoutMapping(() =>
     manager.updateSafely((manifest: SkillManifest) => {
       const current = manifest.installedSkills[key] as unknown as
         | Record<string, unknown>

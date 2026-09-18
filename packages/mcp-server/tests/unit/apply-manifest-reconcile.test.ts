@@ -38,6 +38,9 @@ import {
 } from '../../src/tools/apply-manifest-reconcile.js'
 import { assertBackupTargetIsFile } from '../../src/tools/apply-manifest-reconcile.helpers.js'
 import { ReconcileGuardError } from '../../src/tools/apply-manifest-reconcile.helpers.js'
+import { withLockTimeoutMapping } from '../../src/tools/apply-manifest-reconcile.lock-helpers.js'
+import { describeReconcileError } from '../../src/tools/apply-manifest-reconcile.errors.js'
+import { StuckLockError } from '@skillsmith/core'
 import type { ToolContext } from '../../src/context.js'
 
 const mockedLookup = vi.mocked(lookupSkillFromRegistry)
@@ -695,5 +698,161 @@ describe('input validation', () => {
   it('accepts verify with no name (batch)', async () => {
     const parsed = applyManifestReconcileInputSchema.safeParse({ action: 'verify' })
     expect(parsed.success).toBe(true)
+  })
+})
+
+// ============================================================================
+// SMI-6735 adversarial-review finding 1 — lock-timeout error mapping
+// ============================================================================
+//
+// `isLockTimeoutError` (apply-manifest-reconcile.lock-helpers.ts) used to
+// detect a lock timeout by matching the literal string
+// 'Failed to acquire manifest lock' — a string `StuckLockError`'s own
+// message never contains, so that check silently never fired. It is now an
+// `instanceof StuckLockError` check; these tests pin BOTH that mapping (a
+// regression test for the exact near-miss the SMI-6735 commit message leads
+// with) and the fix for the finding itself: the mapping used to discard
+// `err.lockPath`/`err.reclaimPath` and rebuild a path from `manifestPath`
+// instead — defeating owned-lock.ts's own documented two-file diagnostic for
+// its R1 residual risk (an orphaned reclaim lock).
+
+describe('withLockTimeoutMapping — lock-timeout error mapping (SMI-6735 finding 1)', () => {
+  /** Minimal, deliberately-absent claim — `describeReason`'s `absent` path is never reached for any reason this suite exercises. */
+  const claim = { kind: 'absent' } as const
+
+  it('maps a StuckLockError to errorCode manifest.reconcile.lock_timeout, using err.lockPath (not a re-derived path)', async () => {
+    const err = new StuckLockError(
+      '/home/user/.skillsmith/manifest.json.lock',
+      '/home/user/.skillsmith/manifest.json.lock.reclaim',
+      'manifest update',
+      'held',
+      claim
+    )
+
+    let caught: unknown
+    try {
+      await withLockTimeoutMapping(async () => {
+        throw err
+      })
+    } catch (e) {
+      caught = e
+    }
+
+    expect(caught).toBeInstanceOf(ReconcileGuardError)
+    const guardErr = caught as ReconcileGuardError
+    expect(guardErr.code).toBe('manifest.reconcile.lock_timeout')
+    // The load-bearing part of the fix: the SAME path StuckLockError itself
+    // named, not `${manifestPath}.lock` re-derived from a caller-supplied
+    // string (the second, independently-drifting copy SMI-6735 removed).
+    expect(guardErr.ctx.path).toBe(err.lockPath)
+    expect(guardErr.ctx.lockReason).toBe('held')
+    // 'held' never implicates the reclaim lock — no reclaimPath.
+    expect(guardErr.ctx.reclaimPath).toBeUndefined()
+  })
+
+  it('a reclaim_unavailable error carries the reclaim path through, and the rendered message names both files', async () => {
+    const err = new StuckLockError(
+      '/home/user/.skillsmith/manifest.json.lock',
+      '/home/user/.skillsmith/manifest.json.lock.reclaim',
+      'manifest update',
+      'reclaim_unavailable',
+      claim
+    )
+
+    let caught: unknown
+    try {
+      await withLockTimeoutMapping(async () => {
+        throw err
+      })
+    } catch (e) {
+      caught = e
+    }
+
+    expect(caught).toBeInstanceOf(ReconcileGuardError)
+    const guardErr = caught as ReconcileGuardError
+    expect(guardErr.code).toBe('manifest.reconcile.lock_timeout')
+    expect(guardErr.ctx.path).toBe(err.lockPath)
+    expect(guardErr.ctx.lockReason).toBe('reclaim_unavailable')
+    expect(guardErr.ctx.reclaimPath).toBe(err.reclaimPath)
+
+    const message = describeReconcileError(guardErr.code, guardErr.ctx)
+    expect(message).toContain(err.lockPath)
+    expect(message).toContain(err.reclaimPath)
+    // Retryable reason — the caller DID wait out withFileLock's budget, so
+    // "timed out" is the accurate word.
+    expect(message).toMatch(/Timed out waiting/)
+  })
+
+  it('a non-retryable reason (unreclaimable_legacy) does NOT carry a reclaimPath, and the rendered message says the lock could not be acquired — not that it timed out', async () => {
+    const err = new StuckLockError(
+      '/home/user/.skillsmith/manifest.json.lock',
+      '/home/user/.skillsmith/manifest.json.lock.reclaim',
+      'manifest update',
+      'unreclaimable_legacy',
+      claim
+    )
+
+    let caught: unknown
+    try {
+      await withLockTimeoutMapping(async () => {
+        throw err
+      })
+    } catch (e) {
+      caught = e
+    }
+
+    expect(caught).toBeInstanceOf(ReconcileGuardError)
+    const guardErr = caught as ReconcileGuardError
+    expect(guardErr.code).toBe('manifest.reconcile.lock_timeout')
+    expect(guardErr.ctx.lockReason).toBe('unreclaimable_legacy')
+    // unreclaimable_legacy never touches the reclaim lock.
+    expect(guardErr.ctx.reclaimPath).toBeUndefined()
+
+    const message = describeReconcileError(guardErr.code, guardErr.ctx)
+    expect(message).not.toMatch(/Timed out/)
+    expect(message).toMatch(/Could not acquire/)
+    expect(message).not.toContain(err.reclaimPath)
+  })
+
+  it('the same reason (unreclaimable_unparseable) also renders "could not be acquired", not "timed out"', async () => {
+    const err = new StuckLockError(
+      '/home/user/.skillsmith/manifest.json.lock',
+      '/home/user/.skillsmith/manifest.json.lock.reclaim',
+      'manifest update',
+      'unreclaimable_unparseable',
+      claim
+    )
+
+    let caught: unknown
+    try {
+      await withLockTimeoutMapping(async () => {
+        throw err
+      })
+    } catch (e) {
+      caught = e
+    }
+
+    const guardErr = caught as ReconcileGuardError
+    const message = describeReconcileError(guardErr.code, guardErr.ctx)
+    expect(message).not.toMatch(/Timed out/)
+    expect(message).toMatch(/Could not acquire/)
+  })
+
+  it('a non-StuckLockError, non-ReconcileGuardError error is rethrown as-is', async () => {
+    const raw = new Error('some unrelated failure')
+    await expect(
+      withLockTimeoutMapping(async () => {
+        throw raw
+      })
+    ).rejects.toBe(raw)
+  })
+
+  it('an existing ReconcileGuardError from run() is rethrown unmapped', async () => {
+    const guard = new ReconcileGuardError('manifest.reconcile.entry_not_found', { name: 'x' })
+    await expect(
+      withLockTimeoutMapping(async () => {
+        throw guard
+      })
+    ).rejects.toBe(guard)
   })
 })
