@@ -160,9 +160,17 @@ describe('ruflo-bridge-verdict (SMI-6744 Wave 0)', () => {
   })
 
   describe('CLI exit status is three-way', () => {
-    function run(file: string, cli: string = CLI): { status: number; out: string } {
+    // `direct` execs the file itself, so the shebang and the executable bit
+    // are load-bearing; without it, `node <file>` would pass with neither.
+    function run(
+      file: string,
+      cli: string = CLI,
+      direct: boolean = false
+    ): { status: number; out: string } {
       try {
-        const out = execFileSync(process.execPath, [cli, file], { encoding: 'utf8' })
+        const out = direct
+          ? execFileSync(cli, [file], { encoding: 'utf8' })
+          : execFileSync(process.execPath, [cli, file], { encoding: 'utf8' })
         return { status: 0, out }
       } catch (err) {
         const e = err as { status?: number; stdout?: string }
@@ -189,16 +197,18 @@ describe('ruflo-bridge-verdict (SMI-6744 Wave 0)', () => {
       expect(r.out).toContain('unreadable')
     })
 
-    it('invoked through a symlink, the degraded fixture still exits 1 with output', () => {
-      // npm bin entries and ~/bin shims are symlinks. The first main-guard
-      // compared import.meta.url (resolved) with argv[1] (invoked), which
-      // differ through a link -- measured: exit 0, zero bytes, for a degraded
-      // payload. Exit 0 is the healthy verdict. This pins the realpath form.
+    it('executed directly through a symlink, the degraded fixture still exits 1 with output', () => {
+      // npm bin entries and ~/bin shims are symlinks, executed directly. The
+      // first main-guard compared import.meta.url (resolved) with argv[1]
+      // (invoked), which differ through a link -- measured: exit 0, zero
+      // bytes, for a degraded payload. Exit 0 is the healthy verdict. Direct
+      // exec (not `node <link>`) also makes the shebang and the executable
+      // bit part of what this test constrains.
       const dir = mkdtempSync(path.join(tmpdir(), 'ruflo-bridge-verdict-link-'))
       try {
         const link = path.join(dir, 'verdict-link.mjs')
         symlinkSync(CLI, link)
-        const r = run(DEGRADED, link)
+        const r = run(DEGRADED, link, true)
         expect(r.status).toBe(EXIT.degraded)
         expect(r.out.length, 'stdout bytes through the symlink').toBeGreaterThan(0)
         expect(r.out).toContain('ruflo-bridge-verdict: degraded')
@@ -239,23 +249,33 @@ describe('predicate source drift (skips when no derived-from tree is installed)'
   let cacheDirs = 0
   let withCli = 0
   let unreadable = 0
-  if (existsSync(npxRoot)) {
-    for (const hash of readdirSync(npxRoot)) {
-      cacheDirs++
-      const pkg = path.join(npxRoot, hash, 'node_modules', '@claude-flow', 'cli')
-      const pj = path.join(pkg, 'package.json')
-      if (!existsSync(pj)) continue
-      try {
-        const version = (JSON.parse(readFileSync(pj, 'utf8')) as { version: string }).version
-        withCli++
-        if (wanted.has(version)) trees.push({ dir: pkg, version })
-      } catch {
-        unreadable++
+  // The scan itself is guarded too: an unreadable _npx (EACCES) at module
+  // evaluation would otherwise fail collection and take every test in this
+  // file with it, including the degraded red arm. It renders as its own
+  // state, and "no _npx at all" is told apart from "_npx present, empty".
+  let root: 'present' | 'absent' | 'unscannable' = 'absent'
+  try {
+    if (existsSync(npxRoot)) {
+      root = 'present'
+      for (const hash of readdirSync(npxRoot)) {
+        cacheDirs++
+        const pkg = path.join(npxRoot, hash, 'node_modules', '@claude-flow', 'cli')
+        const pj = path.join(pkg, 'package.json')
+        if (!existsSync(pj)) continue
+        try {
+          const version = (JSON.parse(readFileSync(pj, 'utf8')) as { version: string }).version
+          withCli++
+          if (wanted.has(version)) trees.push({ dir: pkg, version })
+        } catch {
+          unreadable++
+        }
       }
     }
+  } catch {
+    root = 'unscannable'
   }
   const scope =
-    `searched ${npxRoot}: ${cacheDirs} cache dirs, ${withCli} with @claude-flow/cli, ` +
+    `searched ${npxRoot} (${root}): ${cacheDirs} cache dirs, ${withCli} with @claude-flow/cli, ` +
     `${trees.length} at a derived-from version, ${unreadable} unreadable`
 
   const LITERALS: Array<[string, string]> = [
@@ -291,25 +311,38 @@ describe('predicate source drift (skips when no derived-from tree is installed)'
         ]) {
           const src = readFileSync(path.join(t.dir, rel), 'utf8')
           const found = new Set<string>()
-          // A `backend:` site whose value holds no literal on its line is
-          // the case the set comparison cannot see: a new member on a
-          // continuation line (`backend: isMock\n ? 'mock'\n : 'ruvector'`)
-          // leaves `found` at exactly {mock, onnx} -- measured to pass
-          // vacuously before this counter existed. Zero such sites today
-          // on both derived-from trees; a real gate the day one appears.
-          let barren = 0
-          for (const m of src.matchAll(/\bbackend:\s*([^,\n]+)/g)) {
+          // Assemble each `backend:` value across continuation lines (a line
+          // starting with `?`, `:`, `&&`, `||`, `+` or `.`) BEFORE counting
+          // its literals. The line-bounded scan measured vacuous twice: first
+          // when the first line held no literal (a barren counter caught
+          // that), then when it held one and the new member sat on the next
+          // line -- `backend: isMock ? 'mock'\n : 'ruvector'` left the set at
+          // exactly {mock, onnx}. A site whose assembled value holds no
+          // literal at all (a variable, double quotes) is incomplete and must
+          // be zero; a file with no sites at all must not pass either.
+          const lines = src.split('\n')
+          let sites = 0
+          let incomplete = 0
+          for (let i = 0; i < lines.length; i++) {
+            const m = /\bbackend:\s*(.*)$/.exec(lines[i])
+            if (!m) continue
+            sites++
+            let value = m[1]
+            let j = i + 1
+            while (j < lines.length && /^\s*(\?|:|&&|\|\||\+|\.)/.test(lines[j])) {
+              value += ` ${lines[j].trim()}`
+              j++
+            }
             let n = 0
-            for (const s of m[1].matchAll(/'([a-z-]+)'/g)) {
+            for (const s of value.split(',')[0].matchAll(/'([a-z-]+)'/g)) {
               found.add(s[1])
               n++
             }
-            if (n === 0) barren++
+            if (n === 0) incomplete++
           }
+          expect(sites, `${t.version} ${rel}: backend: sites`).toBeGreaterThan(0)
           expect([...found].sort(), `${t.version} ${rel}`).toEqual(['mock', 'onnx'])
-          expect(barren, `${t.version} ${rel}: backend: sites with no literal on their line`).toBe(
-            0
-          )
+          expect(incomplete, `${t.version} ${rel}: backend: sites with no literal`).toBe(0)
         }
       }
     }

@@ -41,8 +41,8 @@
  * on the substrate (not-evaluated, malformed, unrecognized, unreadable input).
  */
 import { readFileSync } from 'node:fs'
-import { realpathSync } from 'node:fs'
-import { fileURLToPath } from 'node:url'
+
+import { isMainModule } from './is-main-module.mjs'
 
 export const DERIVED_FROM = Object.freeze({
   package: '@claude-flow/cli',
@@ -188,23 +188,11 @@ function main(argv) {
   return EXIT[result.verdict]
 }
 
-/**
- * True only when this file is the process entry point. Compares REAL paths:
- * `import.meta.url` is the resolved file, `process.argv[1]` is the invoked
- * one, and they differ under any symlink (npm `bin` links, `~/bin` shims).
- * The earlier `import.meta.url === pathToFileURL(argv[1]).href` form
- * measured exit 0 with no output through a symlink -- the healthy verdict,
- * for a degraded payload, silently. The test pins this with a real symlink.
- */
-function isMain() {
-  if (!process.argv[1]) return false
-  try {
-    return realpathSync(fileURLToPath(import.meta.url)) === realpathSync(process.argv[1])
-  } catch {
-    return false
-  }
-}
-
-if (isMain()) {
+// Entry-point guard: scripts/lib/is-main-module.mjs. Two earlier spellings
+// each measured exit 0 with no output -- the healthy verdict, for a degraded
+// payload, silently: a URL comparison that differs through a symlink, then a
+// realpath comparison whose catch returned false when argv[1] could not be
+// resolved. The test pins both with a real symlink and a direct exec.
+if (isMainModule(import.meta.url)) {
   process.exit(main(process.argv))
 }

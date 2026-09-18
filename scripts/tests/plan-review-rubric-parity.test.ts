@@ -135,6 +135,16 @@ describe('resolveRealHome (SMI-6514 finding 2)', () => {
     expect(resolveRealHome('   ', () => '/fallback')).toBe('/fallback')
   })
 
+  it('returns a padded value TRIMMED -- passed through verbatim, join() would make it relative', () => {
+    expect(resolveRealHome('  /Users/x  ', () => '/fallback')).toBe('/Users/x')
+    expect(
+      join(
+        resolveRealHome('  /Users/x  ', () => '/fallback'),
+        '.npm'
+      )
+    ).toBe('/Users/x/.npm')
+  })
+
   it('reproduces the real aliasing bug: `?? ` alone lets an empty value make the path relative', () => {
     const suffix = '.claude/skills/plan-review-skill/agent-prompt.md'
     // Pre-fix shape: `process.env.SKILLSMITH_TEST_REAL_HOME ?? homedir()` with
