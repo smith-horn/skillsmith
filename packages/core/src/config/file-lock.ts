@@ -19,10 +19,20 @@ const FILE_LOCK_TIMEOUT_MS = 30_000
 /** Pause between attempts while another process holds the lock (ms). */
 const FILE_LOCK_POLL_MS = 50
 /**
- * Refusals that end on their own, so they are waited out: a live holder, a
- * busy reclaim lock, and a holder we may not reclaim because auto-reclaim is
- * off (it still ends when that holder releases). An unparseable or legacy
- * claim never goes away by itself, so it fails at once.
+ * Refusals that are waited out rather than failed at once: a live holder, a
+ * busy reclaim lock, and `reclaim_disabled`. An unparseable or legacy claim
+ * never goes away by itself, so it fails immediately.
+ *
+ * `reclaim_disabled` is the one that needs its reason stated, because the
+ * obvious one is wrong (SMI-6759). It does NOT end when the holder releases:
+ * `classifyRefusal` returns it only when auto-reclaim is off AND the v1 owner
+ * is already dead, so that holder will never release anything — a LIVE owner
+ * yields `held` instead. It stays here because a differently-configured peer
+ * process, one without `SKILLSMITH_LOCK_NO_AUTO_RECLAIM` set, can still
+ * reclaim the dead claim and release it, so waiting can pay off in a mixed
+ * configuration. In a uniformly opted-out one it cannot, which is why the
+ * user-facing message for this reason says so rather than reporting a plain
+ * timeout (`apply-manifest-reconcile.errors.ts`).
  */
 const RETRYABLE_REASONS: ReadonlySet<StuckLockReason> = new Set([
   'held',
