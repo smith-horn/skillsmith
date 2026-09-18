@@ -9,79 +9,8 @@
 
 import * as fs from 'fs/promises'
 import * as path from 'path'
-import { assertNotRealUserHome } from '@skillsmith/core'
+import { assertNotRealUserHome, withFileLock } from '@skillsmith/core'
 import { MANIFEST_PATH, SKILLSMITH_DIR, type SkillManifest } from './install.types.js'
-
-// ============================================================================
-// Manifest Locking
-// ============================================================================
-
-/**
- * SMI-1533: Lock file path for manifest operations
- */
-const MANIFEST_LOCK_PATH = MANIFEST_PATH + '.lock'
-const LOCK_TIMEOUT_MS = 30000 // 30 seconds max wait for lock
-const LOCK_RETRY_INTERVAL_MS = 100
-
-/**
- * Acquire a file lock for manifest operations
- * SMI-1533: Prevents race conditions during concurrent installs
- */
-export async function acquireManifestLock(): Promise<void> {
-  // SMI-6343 follow-up (adversarial review): this is a second, complete
-  // manifest write stack parallel to `@skillsmith/core`'s `ManifestManager`
-  // — MANIFEST_PATH is homedir-derived (install.types.ts) with no override
-  // parameter, so nothing here could ever be redirected even by a test that
-  // wanted to. Only the $HOME sandbox (vitest.setup.ts) protected this path;
-  // this guard restores the second, independent layer the rest of Wave 1 has.
-  assertNotRealUserHome(MANIFEST_PATH, 'lock')
-  const startTime = Date.now()
-
-  // Ensure the skillsmith directory exists before attempting to create lock file
-  // This fixes ENOENT errors in CI environments where ~/.skillsmith doesn't exist
-  await fs.mkdir(SKILLSMITH_DIR, { recursive: true })
-
-  while (Date.now() - startTime < LOCK_TIMEOUT_MS) {
-    try {
-      // Try to create lock file exclusively
-      await fs.writeFile(MANIFEST_LOCK_PATH, String(process.pid), { flag: 'wx' })
-      return // Lock acquired
-    } catch (error) {
-      if ((error as NodeJS.ErrnoException).code === 'EEXIST') {
-        // Lock exists, check if it's stale (older than timeout)
-        try {
-          const stats = await fs.stat(MANIFEST_LOCK_PATH)
-          const lockAge = Date.now() - stats.mtimeMs
-          if (lockAge > LOCK_TIMEOUT_MS) {
-            // Stale lock, remove it and retry
-            await fs.unlink(MANIFEST_LOCK_PATH).catch(() => {})
-            continue
-          }
-        } catch {
-          // Lock file disappeared, retry
-          continue
-        }
-        // Wait before retrying
-        await new Promise((resolve) => setTimeout(resolve, LOCK_RETRY_INTERVAL_MS))
-      } else {
-        throw error
-      }
-    }
-  }
-
-  throw new Error('Failed to acquire manifest lock after ' + LOCK_TIMEOUT_MS + 'ms')
-}
-
-/**
- * Release the manifest lock
- */
-export async function releaseManifestLock(): Promise<void> {
-  try {
-    await fs.unlink(MANIFEST_LOCK_PATH)
-  } catch {
-    // Ignore errors - lock may already be released
-  }
-}
 
 // ============================================================================
 // Manifest Operations
@@ -129,16 +58,30 @@ export async function saveManifest(manifest: SkillManifest): Promise<void> {
 /**
  * SMI-1533: Safely update manifest with locking
  * Prevents race conditions during concurrent install operations
+ *
+ * SMI-6735: locking now delegates to `withFileLock` (`@skillsmith/core`'s
+ * owned-lock primitive) instead of a hand-rolled age-based EEXIST/mtime
+ * protocol — this module and `@skillsmith/core`'s own `ManifestManager` used
+ * to run two independent age-based lock implementations against the
+ * BYTE-IDENTICAL `MANIFEST_PATH + '.lock'` file in the same MCP server
+ * process, which is not mutual exclusion.
+ *
+ * The guard fires FIRST, before `withFileLock` ever attempts to create a
+ * lock file (SMI-6343 follow-up: MANIFEST_PATH is homedir-derived with no
+ * override parameter, so only this guard — and the $HOME test sandbox —
+ * protects it).
  */
 export async function updateManifestSafely(
   updateFn: (manifest: SkillManifest) => SkillManifest
 ): Promise<void> {
-  await acquireManifestLock()
-  try {
+  assertNotRealUserHome(MANIFEST_PATH, 'lock')
+  // Ensure the skillsmith directory exists before attempting to create the
+  // lock file — fixes ENOENT errors in CI environments where ~/.skillsmith
+  // doesn't exist yet.
+  await fs.mkdir(SKILLSMITH_DIR, { recursive: true })
+  await withFileLock(MANIFEST_PATH, 'manifest update', async () => {
     const manifest = await loadManifest()
     const updatedManifest = updateFn(manifest)
     await saveManifest(updatedManifest)
-  } finally {
-    await releaseManifestLock()
-  }
+  })
 }

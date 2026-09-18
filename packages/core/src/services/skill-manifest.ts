@@ -9,10 +9,8 @@ import * as os from 'os'
 import * as path from 'path'
 import { randomUUID } from 'node:crypto'
 
+import { withFileLock } from '../config/file-lock.js'
 import type { SkillManifest } from './skill-installation.types.js'
-
-const MANIFEST_LOCK_TIMEOUT_MS = 30000
-const MANIFEST_LOCK_RETRY_MS = 100
 
 /**
  * SMI-6343 Wave 1 — runtime backstop for the test-fixture manifest leak.
@@ -164,65 +162,27 @@ export class ManifestManager {
     }
   }
 
-  async acquireLock(): Promise<void> {
-    // Guarded here as well as in save(): updateSafely() acquires the lock
-    // BEFORE it loads, so without this the guard would fire only after a
-    // `manifest.json.lock` file had already been created in the real home.
-    assertNotRealUserHome(this.manifestPath, 'lock')
-    const lockPath = this.manifestPath + '.lock'
-    const startTime = Date.now()
-
-    await fs.mkdir(path.dirname(this.manifestPath), { recursive: true })
-
-    while (Date.now() - startTime < MANIFEST_LOCK_TIMEOUT_MS) {
-      try {
-        await fs.writeFile(lockPath, String(process.pid), { flag: 'wx' })
-        return
-      } catch (error) {
-        if ((error as NodeJS.ErrnoException).code === 'EEXIST') {
-          try {
-            const stats = await fs.stat(lockPath)
-            if (Date.now() - stats.mtimeMs > MANIFEST_LOCK_TIMEOUT_MS) {
-              await fs.unlink(lockPath).catch(() => {})
-              continue
-            }
-          } catch {
-            continue
-          }
-          await new Promise((resolve) => setTimeout(resolve, MANIFEST_LOCK_RETRY_MS))
-        } else {
-          throw error
-        }
-      }
-    }
-
-    throw new Error('Failed to acquire manifest lock after ' + MANIFEST_LOCK_TIMEOUT_MS + 'ms')
-  }
-
-  async releaseLock(): Promise<void> {
-    // Guarded (adversarial-review finding, SMI-6343 follow-up): a caller that
-    // invokes releaseLock() directly against a real-home-derived path (a
-    // cleanup helper, an afterEach) would otherwise delete a lock a live
-    // skillsmith process is holding on the real manifest, silently breaking
-    // that process's mutual exclusion. save()/acquireLock() reach this only
-    // through updateSafely()'s already-guarded acquireLock(), so this is
-    // belt-and-suspenders for a caller that skips that path.
-    assertNotRealUserHome(this.manifestPath, 'unlock')
-    try {
-      await fs.unlink(this.manifestPath + '.lock')
-    } catch {
-      // Ignore — lock may have been cleaned up by timeout
-    }
-  }
-
+  /**
+   * SMI-6735: locking now delegates to `withFileLock` (the owned-lock
+   * primitive) instead of a hand-rolled age-based EEXIST/mtime protocol —
+   * see `../config/file-lock.ts`'s module comment for why: this manifest
+   * path and `@skillsmith/mcp-server`'s `install.helpers.manifest.ts` used
+   * to run two independent age-based lock implementations against the
+   * BYTE-IDENTICAL `<manifestPath>.lock` file in the same MCP server
+   * process, which is not mutual exclusion.
+   *
+   * The guard fires FIRST, before `withFileLock` ever attempts to create a
+   * lock file — this ordering is load-bearing, exactly as it was for the
+   * former `acquireLock()`: without it, a real-home-derived path would have
+   * a lock file created in the real home before the guard ever ran.
+   */
   async updateSafely(updateFn: (manifest: SkillManifest) => SkillManifest): Promise<void> {
-    await this.acquireLock()
-    try {
+    assertNotRealUserHome(this.manifestPath, 'lock')
+    await fs.mkdir(path.dirname(this.manifestPath), { recursive: true })
+    await withFileLock(this.manifestPath, 'manifest update', async () => {
       const manifest = await this.load()
       const updated = updateFn(manifest)
       await this.save(updated)
-    } finally {
-      await this.releaseLock()
-    }
+    })
   }
 }

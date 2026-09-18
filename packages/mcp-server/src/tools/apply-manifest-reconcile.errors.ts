@@ -11,6 +11,7 @@
  * and each message embeds the exact next remediation command inline.
  */
 
+import type { StuckLockReason } from '@skillsmith/core'
 import type { ManifestReconcileErrorCode } from './apply-manifest-reconcile.types.js'
 
 export interface ReconcileErrorContext {
@@ -21,6 +22,23 @@ export interface ReconcileErrorContext {
   id?: string
   source?: string
   path?: string
+  /**
+   * lock_timeout only: the underlying `StuckLockError.reason` (SMI-6735
+   * adversarial-review finding 1). Drives wording — `unreclaimable_legacy`
+   * and `unreclaimable_unparseable` never clear on their own (they are not
+   * in `file-lock.ts`'s `RETRYABLE_REASONS`, so `withFileLock` fails on the
+   * FIRST attempt), so telling the caller it "timed out" implies a retry
+   * will help when it never will.
+   */
+  lockReason?: StuckLockReason
+  /**
+   * lock_timeout only, present when `lockReason === 'reclaim_unavailable'`:
+   * the second file `owned-lock.ts`'s own module docstring documents as the
+   * accepted mitigation for its R1 residual risk (a `SIGKILL` inside the
+   * reclaim critical section orphans `<lock>.reclaim`) — naming ONLY the
+   * main lock path here would leave that orphan permanently un-diagnosable.
+   */
+  reclaimPath?: string
   ledgerEntryId?: string
   /** entry_changed: the value recorded at write time vs. what is on disk now. */
   recordedValue?: unknown
@@ -78,13 +96,24 @@ export function describeReconcileError(
       return `Refusing to back up '${ctx.path ?? '<unknown>'}' — it is not a regular file (C8 guard rail; see createProseBackup's single-file contract).`
     case 'manifest.reconcile.backup_failed':
       return `Failed to create the pre-mutation manifest backup${ctx.detail ? `: ${ctx.detail}` : '.'} No write was made.`
-    case 'manifest.reconcile.lock_timeout':
+    case 'manifest.reconcile.lock_timeout': {
+      // `unreclaimable_legacy`/`unreclaimable_unparseable` fail on the FIRST
+      // attempt (never in `RETRYABLE_REASONS`) and never clear on their own —
+      // "timed out ... waiting" would wrongly imply retrying helps.
+      const nonRetryable =
+        ctx.lockReason === 'unreclaimable_legacy' || ctx.lockReason === 'unreclaimable_unparseable'
+      const verb = nonRetryable
+        ? `Could not acquire the manifest lock at '${ctx.path ?? '<unknown>'}'`
+        : `Timed out waiting for the manifest lock at '${ctx.path ?? '<unknown>'}'`
+      const lockPath = ctx.path ?? '<manifest>.lock'
+      const namesReclaim = Boolean(ctx.reclaimPath)
       return (
-        `Timed out waiting for the manifest lock at '${ctx.path ?? '<unknown>'}'. Manual unstick -- ` +
+        `${verb}${ctx.lockReason ? ` (reason: ${ctx.lockReason})` : ''}. Manual unstick -- ` +
         `1) confirm no skillsmith process is running: ps -ax | grep -E '[s]killsmith|[s]klx'; ` +
-        `2) inspect (read-only): cat ${ctx.path ?? '<manifest>.lock'}; ` +
-        `3) if stale, remove it: rm ${ctx.path ?? '<manifest>.lock'}.`
+        `2) inspect (read-only): cat ${lockPath}${namesReclaim ? ` ; cat ${ctx.reclaimPath}` : ''}; ` +
+        `3) if stale, remove it: rm ${lockPath}${namesReclaim ? ` ; rm ${ctx.reclaimPath}` : ''}.`
       )
+    }
     case 'manifest.reconcile.entry_changed':
       return (
         `Refusing to revert ledger entry '${ctx.ledgerEntryId ?? '<unknown>'}' for '${ctx.name ?? '<unknown>'}': ` +

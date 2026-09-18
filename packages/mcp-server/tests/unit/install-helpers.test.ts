@@ -9,23 +9,26 @@
  * 500-line/file cap.
  */
 
-import { describe, it, expect, vi, beforeEach } from 'vitest'
+import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest'
 import * as fs from 'fs/promises'
-import type { Stats } from 'fs'
+import { existsSync, mkdirSync, rmSync } from 'fs'
 import {
   parseSkillId,
   parseRepoUrl,
   validateSkillMd,
   generateTips,
-  acquireManifestLock,
-  releaseManifestLock,
   loadManifest,
   saveManifest,
   updateManifestSafely,
   assertNotEncrypted,
 } from '../../src/tools/install.helpers.js'
+import { MANIFEST_PATH, SKILLSMITH_DIR } from '../../src/tools/install.types.js'
 
-// Mock fs module
+// Mock fs module. SMI-6735: `updateManifestSafely()` now locks via
+// `withFileLock` (`@skillsmith/core`'s owned-lock primitive), which takes a
+// REAL cross-process lock through synchronous `node:fs` — independent of
+// this mock, which only replaces `fs/promises`. See the `updateManifestSafely`
+// describe block below for how that's accounted for.
 vi.mock('fs/promises')
 
 describe('install.helpers', () => {
@@ -213,90 +216,24 @@ Use this skill to do things.
   // SMI-1721: New tests for async/file system functions
   // ============================================================================
 
-  describe('acquireManifestLock', () => {
-    const mockWriteFile = vi.mocked(fs.writeFile)
-    const mockStat = vi.mocked(fs.stat)
-    const mockUnlink = vi.mocked(fs.unlink)
-
-    beforeEach(() => {
-      vi.clearAllMocks()
-    })
-
-    it('acquires lock successfully on first try', async () => {
-      mockWriteFile.mockResolvedValueOnce(undefined)
-
-      await expect(acquireManifestLock()).resolves.toBeUndefined()
-      expect(mockWriteFile).toHaveBeenCalledWith(
-        expect.stringContaining('manifest.json.lock'),
-        expect.any(String),
-        { flag: 'wx' }
-      )
-    })
-
-    it('retries when lock exists and eventually succeeds', async () => {
-      // First call fails with EEXIST, second succeeds
-      const existsError = new Error('EEXIST') as NodeJS.ErrnoException
-      existsError.code = 'EEXIST'
-
-      mockWriteFile.mockRejectedValueOnce(existsError).mockResolvedValueOnce(undefined)
-
-      // Mock stat to show lock is NOT stale (recent)
-      mockStat.mockResolvedValueOnce({
-        mtimeMs: Date.now() - 1000, // 1 second old
-      } as Stats)
-
-      await expect(acquireManifestLock()).resolves.toBeUndefined()
-      expect(mockWriteFile).toHaveBeenCalledTimes(2)
-    })
-
-    it('removes stale lock and acquires', async () => {
-      const existsError = new Error('EEXIST') as NodeJS.ErrnoException
-      existsError.code = 'EEXIST'
-
-      mockWriteFile.mockRejectedValueOnce(existsError).mockResolvedValueOnce(undefined)
-
-      // Mock stat to show lock is stale (old)
-      mockStat.mockResolvedValueOnce({
-        mtimeMs: Date.now() - 60000, // 60 seconds old (stale)
-      } as Stats)
-
-      mockUnlink.mockResolvedValueOnce(undefined)
-
-      await expect(acquireManifestLock()).resolves.toBeUndefined()
-      expect(mockUnlink).toHaveBeenCalled()
-    })
-
-    it('throws non-EEXIST errors immediately', async () => {
-      const permError = new Error('EACCES') as NodeJS.ErrnoException
-      permError.code = 'EACCES'
-
-      mockWriteFile.mockRejectedValueOnce(permError)
-
-      await expect(acquireManifestLock()).rejects.toThrow('EACCES')
-    })
-  })
-
-  describe('releaseManifestLock', () => {
-    const mockUnlink = vi.mocked(fs.unlink)
-
-    beforeEach(() => {
-      vi.clearAllMocks()
-    })
-
-    it('releases lock successfully', async () => {
-      mockUnlink.mockResolvedValueOnce(undefined)
-
-      await expect(releaseManifestLock()).resolves.toBeUndefined()
-      expect(mockUnlink).toHaveBeenCalledWith(expect.stringContaining('manifest.json.lock'))
-    })
-
-    it('ignores errors when lock already released', async () => {
-      mockUnlink.mockRejectedValueOnce(new Error('ENOENT'))
-
-      // Should not throw
-      await expect(releaseManifestLock()).resolves.toBeUndefined()
-    })
-  })
+  // SMI-6735: `acquireManifestLock()`/`releaseManifestLock()` were removed —
+  // locking moved onto the shared `withFileLock` (owned-lock) primitive,
+  // which no longer has an age-based EEXIST/mtime retry protocol for this
+  // suite's `fs/promises` mocks to drive (`fs.writeFile` with `{flag:'wx'}`,
+  // `fs.stat().mtimeMs` staleness, `fs.unlink` on reclaim). That mechanism's
+  // own EEXIST-retry, dead-holder-reclaim, and non-retryable-error-propagation
+  // behavior is now exercised directly, against the REAL synchronous
+  // `node:fs` calls it actually makes, by `owned-lock.test.ts`'s own suite
+  // (e.g. its items 2, 6, 7, and 14 cover contended-lock timeout, dead-owner
+  // reclaim, live-owner refusal, and a non-EEXIST creation failure failing
+  // closed with no lock file left behind) — so this is a coverage
+  // *relocation*, not a loss. What genuinely cannot be reproduced here is the
+  // exact former scenario of "a `fs/promises.writeFile` call for the lock
+  // file rejects with EACCES": the new lock file is created via synchronous
+  // `node:fs` (`openSync`/`linkSync`) internal to `@skillsmith/core`, which
+  // this file's `vi.mock('fs/promises')` cannot see or drive. The
+  // `updateManifestSafely` block below is rewritten to account for
+  // `withFileLock` taking a REAL lock outside this mock.
 
   describe('loadManifest', () => {
     const mockReadFile = vi.mocked(fs.readFile)
@@ -379,19 +316,26 @@ Use this skill to do things.
   })
 
   describe('updateManifestSafely', () => {
-    const mockWriteFile = vi.mocked(fs.writeFile)
     const mockReadFile = vi.mocked(fs.readFile)
     const mockMkdir = vi.mocked(fs.mkdir)
+    const mockWriteFile = vi.mocked(fs.writeFile)
     const mockRename = vi.mocked(fs.rename)
-    const mockUnlink = vi.mocked(fs.unlink)
 
     beforeEach(() => {
       vi.clearAllMocks()
+      // SMI-6735: withFileLock takes a REAL cross-process lock through
+      // synchronous node:fs, independent of this file's `fs/promises` mock —
+      // the sandboxed $HOME directory the lock file lives under must
+      // physically exist on disk (this file's mocked fs.mkdir is a no-op and
+      // never creates it for real).
+      mkdirSync(SKILLSMITH_DIR, { recursive: true })
+    })
+
+    afterEach(() => {
+      rmSync(MANIFEST_PATH + '.lock', { force: true })
     })
 
     it('acquires lock, updates, and releases lock', async () => {
-      // Mock lock acquisition
-      mockWriteFile.mockResolvedValue(undefined)
       // Mock load
       mockReadFile.mockResolvedValueOnce(
         JSON.stringify({
@@ -401,9 +345,8 @@ Use this skill to do things.
       )
       // Mock save
       mockMkdir.mockResolvedValueOnce(undefined)
+      mockWriteFile.mockResolvedValueOnce(undefined)
       mockRename.mockResolvedValueOnce(undefined)
-      // Mock release
-      mockUnlink.mockResolvedValueOnce(undefined)
 
       const updateFn = vi.fn((m) => ({
         ...m,
@@ -413,22 +356,34 @@ Use this skill to do things.
       await updateManifestSafely(updateFn)
 
       expect(updateFn).toHaveBeenCalled()
-      expect(mockUnlink).toHaveBeenCalled() // Lock released
+      // Lock released: withFileLock's release unlinks the REAL owned-lock
+      // file it created — a mocked fs/promises.unlink can't observe this,
+      // since that lock lives outside this file's mock (see beforeEach).
+      expect(existsSync(MANIFEST_PATH + '.lock')).toBe(false)
     })
 
-    it('releases lock even on error', async () => {
-      // Mock lock acquisition
-      mockWriteFile.mockResolvedValue(undefined)
+    it('releases lock after loadManifest recovers a read failure into an empty manifest (does NOT exercise the release-on-throw path)', async () => {
       // Mock load - throw error
       mockReadFile.mockRejectedValueOnce(new Error('Read error'))
-      // Mock release
-      mockUnlink.mockResolvedValueOnce(undefined)
+      // loadManifest's own catch-all (install.helpers.manifest.ts) turns
+      // ANY readFile rejection into an empty manifest rather than
+      // propagating it, so `updateFn` below is called normally and save()
+      // still runs — this test never reaches withFileLock's `finally`
+      // release with an in-flight exception. That contract (release on an
+      // actual throw from inside the locked callback) has its own dedicated
+      // coverage: packages/core/src/config/file-lock.test.ts (SMI-6735
+      // adversarial-review finding 2b) — this test was previously titled
+      // "releases lock even on error" and read as if it covered that case;
+      // it does not.
+      mockMkdir.mockResolvedValueOnce(undefined)
+      mockWriteFile.mockResolvedValueOnce(undefined)
+      mockRename.mockResolvedValueOnce(undefined)
 
-      const updateFn = vi.fn()
+      const updateFn = vi.fn((m) => m)
 
-      // loadManifest catches errors and returns empty manifest
-      // so this should still succeed
       await expect(updateManifestSafely(updateFn)).resolves.toBeUndefined()
+      expect(updateFn).toHaveBeenCalled()
+      expect(existsSync(MANIFEST_PATH + '.lock')).toBe(false)
     })
   })
 

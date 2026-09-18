@@ -15,7 +15,8 @@
  *
  * These tests use a real temp directory + real fs/promises calls (not an
  * in-memory mock) so the concurrent cases exercise actual OS-level file
- * operations — `acquireLock()`'s `wx`-flag file creation is only
+ * operations — `save()`'s exclusive temp-file creation and (SMI-6735)
+ * `updateSafely()`'s `withFileLock`-based cross-process lock are each only
  * meaningfully racy against real fs semantics.
  */
 import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest'
@@ -42,6 +43,9 @@ vi.mock('fs/promises', async (importOriginal) => {
 })
 
 import * as fs from 'fs/promises'
+// Sync read, deliberately: this file mocks `fs/promises`, and the SMI-6735
+// ownership-claim assertions must observe the real lock file, not a mock.
+import { readFileSync } from 'node:fs'
 import { ManifestManager } from './skill-manifest.js'
 import type { SkillManifest, SkillManifestEntry } from './skill-installation.types.js'
 
@@ -241,29 +245,89 @@ describe('ManifestManager concurrency hardening (SMI-6007)', () => {
     })
   })
 
-  // SMI-6343 Wave 1 follow-up (adversarial review): releaseLock() was
-  // previously unguarded. save()/acquireLock() already refuse a real-home
-  // path (their own guard), so updateSafely() never reaches releaseLock()
-  // for a real-home path via that route — this exists for a caller that
-  // invokes releaseLock() directly (a cleanup helper, an afterEach) on a
-  // real-home-derived path, which would otherwise delete a lock a live
-  // skillsmith process is holding.
-  describe('releaseLock() real-home write guard', () => {
-    it('refuses to unlock when the manifest path resolves under the (simulated) real home', async () => {
+  // SMI-6343 Wave 1 follow-up (adversarial review), re-expressed for SMI-6735:
+  // `acquireLock()`/`releaseLock()` were removed when locking moved onto the
+  // shared `withFileLock` (owned-lock) primitive — `updateSafely()` is now the
+  // only entry point, and it calls `assertNotRealUserHome(this.manifestPath,
+  // 'lock')` FIRST, before `withFileLock` ever attempts to create a lock
+  // file. These two tests re-express the same guard through that single
+  // entry point instead of the deleted standalone methods.
+  describe('updateSafely() real-home write guard', () => {
+    it('refuses to update (and never creates a lock file) when the manifest path resolves under the (simulated) real home', async () => {
       const previous = process.env.SKILLSMITH_TEST_REAL_HOME
       process.env.SKILLSMITH_TEST_REAL_HOME = tmpDir
       try {
-        await expect(manager.releaseLock()).rejects.toThrow(/SMI-6343/)
+        await expect(manager.updateSafely((m) => m)).rejects.toThrow(/SMI-6343/)
       } finally {
         if (previous === undefined) delete process.env.SKILLSMITH_TEST_REAL_HOME
         else process.env.SKILLSMITH_TEST_REAL_HOME = previous
       }
+      // The guard fired before withFileLock() ever ran — no lock file exists.
+      await expect(fs.access(manifestPath + '.lock')).rejects.toThrow()
     })
 
-    it('still unlocks normally when the manifest path is NOT under the real home', async () => {
-      await manager.acquireLock()
-      await expect(manager.releaseLock()).resolves.toBeUndefined()
+    it('updates normally and leaves no lock file behind when the manifest path is NOT under the real home', async () => {
+      await expect(manager.updateSafely((m) => m)).resolves.toBeUndefined()
+      // withFileLock's release unlinks the owned-lock file on success.
       await expect(fs.access(manifestPath + '.lock')).rejects.toThrow()
+    })
+  })
+
+  // SMI-6735. The two guard tests above prove the refactor did not break the
+  // real-home guard; neither of them would fail if someone reintroduced the
+  // age-based steal this issue was filed for. This one would.
+  //
+  // The defect was that the lock carried `String(process.pid)` and nothing
+  // else, so no holder could tell its own claim from another's: release was an
+  // unconditional unlink, and a contender judged staleness by mtime. The
+  // property that fixes it is an ownership TOKEN, and the only moment it is
+  // observable is from inside the critical section — which is exactly where
+  // `updateFn` runs.
+  //
+  // Red-tested against the old protocol (reintroduced, run, reverted). Note
+  // where it fails, because the obvious guess is wrong: `JSON.parse` does NOT
+  // throw on a bare pid — `JSON.parse('12345')` succeeds and yields the NUMBER
+  // 12345 (measured, not reasoned). It fails on the missing claim fields
+  // instead, which is why the object-shape assertion below is explicit rather
+  // than left implicit in the parse.
+  describe('updateSafely() holds an ownership-tokened lock (SMI-6735)', () => {
+    it('writes a versioned owned-lock claim bearing a random per-acquire token for the duration of the update', async () => {
+      let raw: string | undefined
+      await manager.updateSafely((m) => {
+        // Sync read: this file mocks `fs/promises`, and owned-lock creates the
+        // claim through sync `node:fs` anyway.
+        raw = readFileSync(manifestPath + '.lock', 'utf8')
+        return m
+      })
+
+      expect(raw, 'no lock file existed while the update was running').toBeDefined()
+
+      const claim = JSON.parse(raw as string) as Record<string, unknown>
+      // The discriminator: a bare pid parses to a number, an owned-lock claim
+      // to an object. Asserted before the field checks so a regression reports
+      // the shape it got rather than three undefined fields.
+      expect(typeof claim).toBe('object')
+      expect(claim.v).toBe(1)
+      expect(claim.pid).toBe(process.pid)
+      // `randomHex(8)` — 8 random bytes, hex-encoded. This is the field that
+      // makes a release verifiable, and the field the old protocol lacked.
+      expect(claim.token).toMatch(/^[0-9a-f]{16}$/)
+      expect(typeof claim.acquiredAt).toBe('number')
+    })
+
+    it('uses a different token on each acquisition, so one holder cannot release another', async () => {
+      const tokens: string[] = []
+      for (let i = 0; i < 2; i++) {
+        await manager.updateSafely((m) => {
+          const claim = JSON.parse(readFileSync(manifestPath + '.lock', 'utf8')) as {
+            token: string
+          }
+          tokens.push(claim.token)
+          return m
+        })
+      }
+      expect(tokens).toHaveLength(2)
+      expect(tokens[0]).not.toBe(tokens[1])
     })
   })
 })

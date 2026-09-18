@@ -192,9 +192,10 @@ describe('SMI-6343: $HOME sandbox is inherited by vitest.config.integration.ts',
           /SMI-6343/
         )
 
-        // acquireLock() is guarded too, so updateSafely() failed BEFORE creating
-        // a lockfile — the whole point of guarding both entry points rather than
-        // save() alone. Neither the manifest nor its lock was ever created.
+        // updateSafely() checks the guard itself, before withFileLock() ever
+        // attempts to create a lockfile (SMI-6735) — so it failed BEFORE
+        // creating one, the whole point of guarding both entry points rather
+        // than save() alone. Neither the manifest nor its lock was ever created.
         expect(existsSync(manifestPath)).toBe(false)
         expect(existsSync(manifestPath + '.lock')).toBe(false)
       } finally {

@@ -101,7 +101,7 @@ export async function runVerify(
     priorEntry: SkillManifestEntry
   }> = []
 
-  await withLockTimeoutMapping(scopeTarget.manifestPath, () =>
+  await withLockTimeoutMapping(() =>
     manager.updateSafely((m: SkillManifest) => {
       const updatedSkills = { ...m.installedSkills }
       for (const { key, verifiedAt } of writes) {

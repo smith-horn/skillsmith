@@ -5782,6 +5782,8 @@ console.log(`\n${BOLD}Check 65: test-suite manifest hygiene (SMI-6343)${RESET}`)
     // again, that is a genuine regression, not a missing allowlist row.
     'packages/mcp-server/src/tools/__meta__/telemetry-coverage.test.ts':
       "'installSkill' is a string literal inside a tool->handler coverage data map, not a call",
+    'packages/core/src/config/file-lock.test.ts':
+      "updateManifestSafely appears only in a comment explaining WHY this suite exists — that the manifest suites exercise fn() succeeding, so withFileLock's release-on-throw path had no coverage (SMI-6735). The file tests a generic file lock against its own os.tmpdir() target and imports no manifest module at all",
     'packages/mcp-server/src/tools/skill-recover-source.test.ts':
       'backfillManifest appears only in comments documenting that this read-only tool deliberately never calls it',
     'packages/mcp-server/tests/onboarding/tier1-self-heal.test.ts':
