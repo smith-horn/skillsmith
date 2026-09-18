@@ -4,6 +4,17 @@ All notable changes to `@skillsmith/mcp-server` are documented here.
 
 ## [Unreleased]
 
+- **Fix**: SMI-6735 -- this package's own manifest lock is gone, not fixed in place.
+  `acquireManifestLock()`/`releaseManifestLock()` hand-rolled a second, independent age-based lock
+  against the **byte-identical** path `@skillsmith/core`'s `ManifestManager` locks, and this server runs
+  both in one process -- two protocols on one lock file is not mutual exclusion, so fixing either alone
+  would not have closed it. Both now delegate to core's shared `withFileLock` (`owned-lock`).
+  `updateManifestSafely()` is the only locked entry point; the two lock functions are **removed** and no
+  longer re-exported from `install.helpers.ts`. Neither had a production caller outside this module.
+  `apply_manifest_reconcile`'s lock-timeout mapping also changed: it detected the timeout by matching a
+  literal error message that no longer occurs, and now matches the typed `StuckLockError`. Its guard
+  error additionally names the reclaim-lock path when that is what is held, and distinguishes a genuine
+  timeout from a permanently unacquirable lock -- `errorCode` is unchanged. (#2891)
 - **Fix**: SMI-6651 -- private-registry skill installs now read a skill's packaged content
   through an audited, server-side `release_private_registry_skill_content` RPC instead of a
   direct table read over the caller's own token. This version needs that RPC to already exist

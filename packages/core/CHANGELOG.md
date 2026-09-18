@@ -4,6 +4,18 @@ All notable changes to `@skillsmith/core` are documented here.
 
 ## [Unreleased]
 
+- **Fix**: SMI-6735 -- the installed-skills manifest lock is now ownership-verified. `ManifestManager`
+  previously judged an existing lock stale by its file age and released by unconditional `unlink`, so a
+  holder could delete a lock it did not own and two writers could each believe they held it exclusively.
+  Locking now delegates to the `owned-lock` primitive (random per-acquire token, liveness-checked
+  staleness, ownership-verified release) through a new shared `withFileLock` helper. The lock file path
+  and the 30s acquisition budget are unchanged. `acquireLock()`/`releaseLock()` are **removed** --
+  `updateSafely()` is now the only locked entry point, so an unchecked release is unreachable rather
+  than guarded. `withFileLock` and `StuckLockError` are newly exported from the package root.
+  **Note for anyone upgrading past a running older process**: a lock file written by a pre-fix version
+  carries a bare PID, which `owned-lock` classifies as a legacy claim and never auto-reclaims by design
+  (SMI-5883 D-5). A `StuckLockError` names the exact file to remove. (#2891)
+
 ## v0.12.5
 
 - **Cadence**: Mechanical cadence alignment (no changes since v0.12.4).
