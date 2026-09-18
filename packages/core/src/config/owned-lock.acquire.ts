@@ -40,8 +40,14 @@ import type { Claim, ReclaimOutcome, RefusalCategory, StuckLockReason } from './
 function describeReason(reason: StuckLockReason, claim: Claim, reclaimPath: string): string {
   switch (reason) {
     case 'held':
+      // No "(still alive)" here (SMI-6764): `held` is also the SAFE DEFAULT
+      // when the liveness probe never ran -- a `timeoutMs` shorter than
+      // `reclaimProbeAfterMs` expires first -- so this branch is reachable
+      // with a pid that was never probed, and measurably was: a deliberately
+      // dead pid rendered "still alive". Report the claim, not a liveness
+      // conclusion this function has no standing to draw.
       return claim.kind === 'v1'
-        ? `held by pid ${claim.pid} on host '${claim.host}' (still alive)`
+        ? `held by pid ${claim.pid} on host '${claim.host}'`
         : 'held by another process'
     case 'unreclaimable_legacy':
       return (
@@ -63,10 +69,76 @@ function describeReason(reason: StuckLockReason, claim: Claim, reclaimPath: stri
 }
 
 /**
+ * What the caller should do about this refusal, per reason.
+ *
+ * This exists because the opening verb used to carry it and could not
+ * (SMI-6764). A verb is binary; three of these five reasons have an answer
+ * that depends on facts `reason` does not carry, so any binary split has to
+ * guess at them. Saying "it depends, and on this" is both honest and more
+ * useful than a guess -- and unlike a verb, it can be right.
+ */
+export function describeRemedy(reason: StuckLockReason): string {
+  switch (reason) {
+    case 'held':
+      return 'A live holder is expected to release, so retrying is the right first response.'
+    case 'reclaim_unavailable':
+      // The two halves `describeReason` already names have OPPOSITE answers,
+      // and nothing in `reason` separates them: a concurrent reclaim clears in
+      // milliseconds, while an orphaned reclaim lock never clears at all --
+      // nothing probes the reclaim lock's own owner for liveness.
+      return (
+        'If a reclaim is in flight, retrying clears this. If it persists, the reclaim lock named ' +
+        'below was orphaned by a crash inside the critical section; nothing reclaims that one ' +
+        'automatically, so only the manual steps clear it.'
+      )
+    case 'unreclaimable_legacy':
+      return (
+        'A legacy claim is never auto-reclaimed, in any configuration (SMI-5883 D-5). If its ' +
+        'process is alive it still releases on its own; if it is dead, only the manual steps clear it.'
+      )
+    case 'unreclaimable_unparseable':
+      return 'An unparseable claim is never auto-reclaimed, so only the manual steps clear it.'
+    case 'reclaim_disabled':
+      return (
+        'The holder is already dead and auto-reclaim is off in this process, so retrying HERE ' +
+        'cannot reclaim it -- though a peer process without SKILLSMITH_LOCK_NO_AUTO_RECLAIM set ' +
+        'still can. Unset it here and restart this process, or use the manual steps.'
+      )
+    default: {
+      const exhaustive: never = reason
+      return exhaustive
+    }
+  }
+}
+
+/**
  * Thrown when {@link acquireOwnedLockCore} (and, through it, the public
- * `acquireOwnedLock`) times out. `reason` is a stable discriminant for
+ * `acquireOwnedLock`) gives up. `reason` is a stable discriminant for
  * mechanical triage (never prose-matching); the message embeds the manual
  * unstick procedure verbatim.
+ *
+ * **One verb, for every reason (SMI-6764).** Two earlier rounds tried to pick
+ * between "Timed out waiting" and "Could not acquire" per reason, to separate
+ * ordinary contention from a state needing action. Round 1 got the reason list
+ * wrong; round 2 found it duplicated across two layers; round 3 found the
+ * partition does not exist. `StuckLockReason` is not a total function onto
+ * "retry helps / retry does not": `reclaim_unavailable` depends on whether the
+ * reclaim lock is busy or orphaned, `unreclaimable_legacy` on whether the
+ * legacy holder is alive, and `reclaim_disabled` on whether a
+ * differently-configured peer exists. The binary verb had to guess, and it
+ * guessed wrong for an orphaned reclaim lock -- which never clears, and read
+ * "Timed out waiting".
+ *
+ * "Could not acquire" is the honest superset: true for every reason, and it
+ * asserts nothing about elapsed time or about whether retrying helps. The old
+ * verb also claimed a timeout this class frequently never measured --
+ * `file-lock.ts` calls in with `timeoutMs: 0` and keeps its own 30s budget
+ * outside, so the wait that message described was zero milliseconds.
+ * {@link describeRemedy} now carries what the verb was reaching for, per
+ * reason, and can say "it depends, on this" where that is the truth.
+ *
+ * The unstick procedure is identical for every reason. Step 1 in particular is
+ * load-bearing for `unreclaimable_legacy`, whose claim may be a LIVE process.
  */
 export class StuckLockError extends Error {
   readonly lockPath: string
@@ -82,7 +154,8 @@ export class StuckLockError extends Error {
   ) {
     const namesReclaim = reason === 'reclaim_unavailable'
     const message =
-      `[skillsmith] Timed out waiting for ${label} at ${lockPath}: ${describeReason(reason, claim, reclaimPath)}. ` +
+      `[skillsmith] Could not acquire ${label} at ${lockPath}: ` +
+      `${describeReason(reason, claim, reclaimPath)}. ${describeRemedy(reason)} ` +
       `Manual unstick -- 1) confirm no skillsmith process is running: ps -ax | grep -E '[s]killsmith|[s]klx'; ` +
       `2) inspect (read-only): cat ${lockPath}${namesReclaim ? ` ; cat ${reclaimPath}` : ''}; ` +
       `3) remove ONLY the file(s) named above: rm ${lockPath}${namesReclaim ? ` ; rm ${reclaimPath}` : ''}.`
