@@ -11,19 +11,63 @@ import type { Probe } from './_lib/probe-path.js'
 export const BACKEND_SITE_RE = /(?<![A-Za-z0-9_$.])["']?backend["']?\s*:\s*/g
 
 /**
- * Matches a fully-static single-, double-, or backtick-quoted string literal
- * (lowercase letters/hyphens only, the enum's own character set). SMI-6772
- * F8: the original single-quote-only regex silently dropped a literal
- * spelled with a different quote style inside the same site --
- * `backend: a ? 'mock' : b ? 'onnx' : "gpu"` kept that site's own-literal
- * count above zero (from the two single-quoted arms), so it never tripped
- * the `incomplete` counter, while "gpu" vanished from `found` with no
- * failure anywhere. A template literal containing `${` cannot match any of
- * the three alternatives (interpolation breaks the `[a-z-]+`-only class),
- * so a genuinely dynamic arm still falls through to `incomplete` -- it is
- * never miscounted as a literal.
+ * The CONTENT of a fully-static string literal: lowercase letters/hyphens
+ * only, the enum's own character set. Tested against the inside of a quoted
+ * region that `tokenizeSpan` has already delimited -- never against raw
+ * span text. SMI-6772 F8 made the extractor quote-style-agnostic (a
+ * single-quote-only regex let `"gpu"` vanish from `found` beside two
+ * single-quoted arms); the governance round on f8134e340 then found that a
+ * regex over the raw span ignores escapes, so `'a\'b'` matched at the
+ * escaped quote and yielded a phantom `'b'`. A template literal's `${`
+ * fails this class, so a dynamic arm is never miscounted as a literal.
  */
-const LITERAL_RE = /'([a-z-]+)'|"([a-z-]+)"|`([a-z-]+)`/g
+const STATIC_LITERAL_RE = /^[a-z-]+$/
+
+interface QuotedRegion {
+  /** Raw source between the quotes, escapes untouched. */
+  content: string
+  /** False when the span ended before the closing quote was seen. */
+  terminated: boolean
+}
+
+interface SpanTokens {
+  regions: QuotedRegion[]
+  /** Every character outside a quoted region, in order. */
+  unquoted: string
+}
+
+/**
+ * One escape-aware walk over a value span, shared by concatenation
+ * detection and literal extraction so the two cannot disagree about where
+ * a string ends. A backslash inside a string skips the next character, so
+ * an escaped quote is content and an escaped backslash does not close the
+ * string on the following quote. A span that ends inside a string yields an
+ * unterminated region, which the caller must treat as unrecognised: a
+ * truncated read is not evidence about the value.
+ */
+function tokenizeSpan(span: string): SpanTokens {
+  const regions: QuotedRegion[] = []
+  let unquoted = ''
+  let quote: string | null = null
+  let start = 0
+  for (let i = 0; i < span.length; i++) {
+    const ch = span[i]
+    if (quote !== null) {
+      if (ch === '\\') i++
+      else if (ch === quote) {
+        regions.push({ content: span.slice(start, i), terminated: true })
+        quote = null
+      }
+      continue
+    }
+    if (ch === "'" || ch === '"' || ch === '`') {
+      quote = ch
+      start = i + 1
+    } else unquoted += ch
+  }
+  if (quote !== null) regions.push({ content: span.slice(start), terminated: false })
+  return { regions, unquoted }
+}
 
 export interface BackendScan {
   sites: number
@@ -63,22 +107,30 @@ export function scanBackendSites(src: string): BackendScan {
       } else if ((ch === ',' || ch === ';') && depth === 0) break
     }
     const span = src.slice(start, end)
+    const { regions, unquoted } = tokenizeSpan(span)
     // Governance on B1.2 (2026-09-19): a concatenation-built value such as
-    // `'on' + 'nx'` matched LITERAL_RE twice and was counted as two static
-    // literals ('on', 'nx') instead of as dynamic. A `+` outside every quoted
-    // region in the span means the value is computed, so the site is
-    // `incomplete`, the same treatment as template interpolation.
-    if (hasUnquotedPlus(span)) {
+    // `'on' + 'nx'` used to be counted as two static literals ('on', 'nx')
+    // instead of as dynamic. A `+` outside every quoted region in the span
+    // means the value is computed, so the site is `incomplete`, the same
+    // treatment as template interpolation.
+    if (hasUnquotedPlus(unquoted)) {
       incomplete++
       continue
     }
-    let n = 0
-    for (const lit of span.matchAll(LITERAL_RE)) {
-      const value = lit[1] ?? lit[2] ?? lit[3]
-      found.add(value)
-      n++
+    // Every quoted region is either a recognised static literal or it is
+    // not; one unrecognised region (an escaped quote, an interpolation, an
+    // upper-case label, an unterminated string) marks the site incomplete
+    // even when another arm was recognised -- otherwise that arm vanishes
+    // from the report with no failure, the F8 shape again.
+    let recognised = 0
+    let unrecognised = 0
+    for (const r of regions) {
+      if (r.terminated && STATIC_LITERAL_RE.test(r.content)) {
+        found.add(r.content)
+        recognised++
+      } else unrecognised++
     }
-    if (n === 0) incomplete++
+    if (recognised === 0 || unrecognised > 0) incomplete++
   }
   return { sites, found: [...found].sort(), incomplete }
 }
@@ -123,25 +175,12 @@ export function resolveDriftGuardOutcome(state: DriftGuardState): DriftGuardOutc
 }
 
 /**
- * True when a `+` occurs in `span` outside every quoted region. A `+` inside a
- * template literal's `${...}` is NOT seen here (the whole backtick span counts
- * as quoted); such a site still reads as `incomplete` because LITERAL_RE's
- * `[a-z-]+`-only class cannot match anything containing `${`, so it collects
- * no literal and falls through to the `n === 0` path. The backslash skip is
- * load-bearing: without it an escaped quote closes the string early and the
- * rest of the span leaks phantom literals (see the escaped-quote test).
+ * True when a `+` occurs in the span's unquoted text (`tokenizeSpan`'s
+ * `unquoted`). A `+` inside a template literal's `${...}` is NOT seen here
+ * -- the whole backtick region is quoted -- and such a site still reads as
+ * `incomplete`, because its region content contains `${` and so fails
+ * STATIC_LITERAL_RE.
  */
-function hasUnquotedPlus(span: string): boolean {
-  let quote: string | null = null
-  for (let i = 0; i < span.length; i++) {
-    const ch = span[i]
-    if (quote !== null) {
-      if (ch === '\\') i++
-      else if (ch === quote) quote = null
-      continue
-    }
-    if (ch === "'" || ch === '"' || ch === '`') quote = ch
-    else if (ch === '+') return true
-  }
-  return false
+function hasUnquotedPlus(unquoted: string): boolean {
+  return unquoted.includes('+')
 }

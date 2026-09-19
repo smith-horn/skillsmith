@@ -279,10 +279,19 @@ export function render(result, source) {
  * table with an INHERITED NUMERIC property (`Object.create({ x: 2 })`) is
  * the one shape only the own-key half can reject, and it needs an
  * injectable table to construct.
+ *
+ * The value half requires a process exit integer, not merely a number
+ * (PR #2900 gate round 1): `typeof NaN === 'number'`, and measured on Node
+ * 22, process.exit(NaN), (1.5) and (Infinity) throw RangeError and end the
+ * process 1 -- the degraded verdict, with a stack trace in place of the
+ * verdict line -- while exit(256) wraps to 0, the healthy verdict, and
+ * exit(-1) to 255. Number.isInteger plus the 0..255 status-byte range
+ * rejects every one of those; a numeric string is rejected by the same
+ * check even though process.exit would have accepted it.
  */
 export function exitCodeFor(verdict, table = EXIT) {
   const code = Object.hasOwn(table, verdict) ? table[verdict] : undefined
-  return typeof code === 'number' ? code : null
+  return Number.isInteger(code) && code >= 0 && code <= 255 ? code : null
 }
 
 // SMI-6772 F9: exactly one positional argument (or none, for stdin).

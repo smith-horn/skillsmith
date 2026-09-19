@@ -337,6 +337,23 @@ describe('ruflo-bridge-verdict (SMI-6744 Wave 0)', () => {
     it('the default table is still EXIT when none is supplied', () => {
       expect(exitCodeFor('healthy')).toBe(EXIT.healthy)
     })
+
+    it('an own value that is not a process exit integer is rejected -- NaN, a fraction, a numeric string, out of range', () => {
+      // PR #2900 gate round 1 (PR-16 f): `typeof NaN === 'number'`, so an own
+      // key holding NaN passed the type check and reached process.exit.
+      // Measured on Node 22: exit(NaN), exit(1.5) and exit(Infinity) throw
+      // RangeError and the process ends 1 -- the DEGRADED verdict, with a
+      // stack trace where the verdict line should be; exit(256) wraps to 0,
+      // the HEALTHY verdict; exit(-1) wraps to 255; exit('3') is accepted as
+      // 3. The predicate is now Number.isInteger plus the 0..255 range a
+      // status byte can carry, so every shape below is null and main() ends
+      // with UNCLASSIFIED_EXIT instead of a coerced or thrown code.
+      for (const bad of [NaN, 1.5, '3', -1, 256, Infinity]) {
+        expect(exitCodeFor('stale', { stale: bad }), `own value ${String(bad)}`).toBeNull()
+      }
+      expect(exitCodeFor('stale', { stale: 0 }), 'own value 0 is the floor').toBe(0)
+      expect(exitCodeFor('stale', { stale: 255 }), 'own value 255 is the ceiling').toBe(255)
+    })
   })
 
   it('non-object payloads are malformed', () => {
@@ -715,25 +732,72 @@ describe('scanBackendSites (SMI-6772 F8)', () => {
   })
 
   it('a backslash-escaped quote inside a literal does not defeat plus-detection', () => {
-    // Governance on 8f1e1afbc: hasUnquotedPlus() skips the character after a
-    // backslash so an escaped quote does not close the string early. With
-    // that skip broken (e.g. comparing against a two-character '\\\\'), the
-    // tracker closes the literal at \\' and the trailing `+ 'c'` reads as two
-    // static literals ('b', 'c') -- the exact phantom-literal defect this
-    // guard exists to reject -- and nothing else in the suite noticed.
+    // Governance on 8f1e1afbc. The concatenation path must still win when
+    // the first operand carries an escaped quote. (The backslash skip itself
+    // is pinned by the escaped-quote-as-content test below, whose found=[]
+    // a walker without the skip cannot produce.)
     const scan = scanBackendSites("backend: 'a\\'b' + 'c',")
     expect(scan.found).toEqual([])
     expect(scan.incomplete).toBe(1)
   })
 
   it('an escaped backslash as literal content does not defeat plus-detection either', () => {
-    // Governance on 793fe460d: the escaped-quote test above is satisfied by a
-    // tracker that closes the string on a backslash (`quote = null`) because
-    // the very next character re-opens it; an escaped backslash as content
-    // (`'a\\\\'` in source, the value a\\) is the shape that tells the correct
-    // skip (`i++`) from that mutation, which reads the trailing `+ 'b'` as a
-    // phantom literal 'b'.
+    // Governance on 793fe460d: a tracker that closes the string ON a
+    // backslash (`quote = null`) re-opens it on the next character for an
+    // escaped quote, but not for an escaped backslash (`'a\\\\'` in source,
+    // the value a\\) -- there the trailing `+ 'b'` is read inside a string
+    // and the site is not seen as concatenation.
     const scan = scanBackendSites("backend: 'a\\\\' + 'b',")
+    expect(scan.found).toEqual([])
+    expect(scan.incomplete).toBe(1)
+  })
+
+  it('an escaped same-type quote as literal content, with no concatenation, is not a phantom literal -- all three quote styles', () => {
+    // Governance on f8134e340: LITERAL_RE ran over the RAW span text, so
+    // `'a\'b'` (the value a'b) matched at the escaped quote and yielded a
+    // phantom found=['b'] with incomplete=0 -- and nothing in the suite
+    // noticed, because every earlier escaped-quote case carried a trailing
+    // `+` that routed the site through the concatenation path before the
+    // regex ran. Literals are now extracted by the same escape-aware walker
+    // that finds the concatenation, and a quoted region whose content is not
+    // [a-z-]+ marks the site incomplete. The second shape per quote style
+    // (two escaped quotes around a lowercase word) is the mutation pin: a
+    // walker that does NOT skip the character after a backslash re-syncs on
+    // the second escaped quote and still extracts a recognised 'c' --
+    // found=[] is what catches that; incomplete=1 alone does not.
+    for (const q of ["'", '"', '`']) {
+      const single = scanBackendSites(`backend: ${q}a\\${q}b${q},`)
+      expect(single.found, `${q} single escaped quote`).toEqual([])
+      expect(single.incomplete, `${q} single escaped quote`).toBe(1)
+      const doubled = scanBackendSites(`backend: ${q}a\\${q}b\\${q}c${q},`)
+      expect(doubled.found, `${q} two escaped quotes`).toEqual([])
+      expect(doubled.incomplete, `${q} two escaped quotes`).toBe(1)
+    }
+  })
+
+  it('a quoted region the scanner cannot classify marks the site incomplete even beside a recognised arm', () => {
+    // The F8 vanishing class in its escape form: with `n === 0` as the only
+    // incomplete trigger, `a ? 'mock' : 'x\'y'` reported found=['mock'] with
+    // incomplete=0 and the second arm vanished (an upper-case label did the
+    // same, for the unrelated reason that it never matched the regex). Any
+    // region that is not a static [a-z-]+ literal now counts the site
+    // incomplete; the recognised arm stays in `found` so the report still
+    // names what it did see.
+    const escaped = scanBackendSites("backend: a ? 'mock' : 'x\\'y',")
+    expect(escaped.found).toEqual(['mock'])
+    expect(escaped.incomplete).toBe(1)
+    const upper = scanBackendSites("backend: a ? 'mock' : 'ONNX',")
+    expect(upper.found).toEqual(['mock'])
+    expect(upper.incomplete).toBe(1)
+  })
+
+  it('an unterminated quote at the end of the source is incomplete, never a literal', () => {
+    // The span bounder treats quotes as opaque, so a source that ends inside
+    // a string (a truncated read) runs the span to the end. The region's
+    // content is a clean `onnx`; only its missing closing quote says the
+    // read was cut. Pins the `terminated` half of the recognition predicate.
+    const scan = scanBackendSites("backend: 'onnx")
+    expect(scan.sites).toBe(1)
     expect(scan.found).toEqual([])
     expect(scan.incomplete).toBe(1)
   })
