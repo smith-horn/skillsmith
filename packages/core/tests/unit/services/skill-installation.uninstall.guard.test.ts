@@ -12,7 +12,7 @@ import { SkillInstallationService } from '../../../src/services/skill-installati
 import { ManifestManager } from '../../../src/services/skill-manifest.js'
 import { SkillRepository } from '../../../src/repositories/SkillRepository.js'
 import { SkillDependencyRepository } from '../../../src/repositories/SkillDependencyRepository.js'
-import type { SkillDependencyRow } from '../../../src/types/dependencies.js'
+import type { DepSource, SkillDependencyRow } from '../../../src/types/dependencies.js'
 import { createTestDatabase } from '../../helpers/database.js'
 import type { Database } from '../../../src/db/database-interface.js'
 // F-A (SMI-6732 round 6): `checkNotTrackedElsewhere`'s own malformed-
@@ -2380,21 +2380,37 @@ describe('uninstall clears skill_dependencies for the exact skill it removed (SM
     const installPath = path.join(skillsDir, 'dep-cleared-skill')
     await fs.mkdir(installPath)
     await fs.writeFile(path.join(installPath, 'SKILL.md'), '# Installed\n')
-    await track('dep-cleared-skill', installPath)
+    // Round 13: the bystander is INSTALLED, not merely present in the table.
+    // Round 12 tracked only the removed skill, so the manifest held exactly
+    // one entry and the bystander differed from it on two variables at once
+    // -- its id AND its installed-ness. A `clearAll` widened along the
+    // installed-ness axis (loop the manifest, clear each entry's id) was
+    // therefore invisible: with one entry that loop calls `clearAll` exactly
+    // once with exactly the expected id, so every assertion below still
+    // passed. Measured SURVIVED before this change. Two installed skills make
+    // that mutant destroy the bystander's rows and call `clearAll` twice.
+    const bystanderPath = path.join(skillsDir, 'bystander-skill')
+    await fs.mkdir(bystanderPath)
+    await fs.writeFile(path.join(bystanderPath, 'SKILL.md'), '# Bystander\n')
+    await trackMany([
+      ['dep-cleared-skill', installPath],
+      ['bystander-skill', bystanderPath],
+    ])
 
     // Round 12 (cross-family review): the first version of this test asserted
     // only that the spy below was CALLED, which a called-but-no-op `clearAll`
     // would satisfy, and which says nothing about whether the right rows go.
-    // Seeding a second, unrelated skill turns it into an outcome assertion
-    // that also pins SELECTIVITY -- a `clearAll` widened to drop the whole
-    // table would pass an it-was-called test and fail this one.
     const deps = new SkillDependencyRepository(db)
-    const row = (skillId: string, target: string): SkillDependencyRow => ({
+    const row = (
+      skillId: string,
+      target: string,
+      source: DepSource = 'declared'
+    ): SkillDependencyRow => ({
       skill_id: skillId,
       dep_type: 'skill_hard',
       dep_target: target,
       dep_version: null,
-      dep_source: 'declared',
+      dep_source: source,
       confidence: null,
       metadata: null,
     })
@@ -2403,14 +2419,29 @@ describe('uninstall clears skill_dependencies for the exact skill it removed (SM
       [row('author/dep-cleared-skill', 'a/one')],
       'declared'
     )
+    // Round 13: a SECOND source for the same skill. Every seeded row used to
+    // be `declared`, so a `clearAll` narrowed with `AND dep_source =
+    // 'declared'` deleted the only row present and passed. That is not a
+    // contrived edit -- the sibling `clearInferred` directly above it in the
+    // repository already carries exactly such a predicate, so copying it down
+    // is a one-line slip. Measured SURVIVED before this change. Uninstall must
+    // clear a skill's rows whatever produced them, or `getDependents` keeps
+    // reporting a removed skill as a live dependent forever.
+    deps.setDependencies(
+      'author/dep-cleared-skill',
+      [row('author/dep-cleared-skill', 'a/three', 'inferred_static')],
+      'inferred_static'
+    )
     deps.setDependencies(
       'author/bystander-skill',
       [row('author/bystander-skill', 'a/two')],
       'declared'
     )
     // Asserted, not assumed: a seed that silently wrote nothing would make
-    // the "rows are gone" assertion below pass vacuously.
-    expect(deps.getDependencies('author/dep-cleared-skill')).toHaveLength(1)
+    // the "rows are gone" assertion below pass vacuously. `setDependencies`
+    // swallows a missing table, so this is the only thing standing between a
+    // dropped table and a vacuous green.
+    expect(deps.getDependencies('author/dep-cleared-skill')).toHaveLength(2)
     expect(deps.getDependencies('author/bystander-skill')).toHaveLength(1)
 
     const clearAllSpy = vi.spyOn(SkillDependencyRepository.prototype, 'clearAll')
@@ -2419,12 +2450,13 @@ describe('uninstall clears skill_dependencies for the exact skill it removed (SM
       const result = await createService().uninstall('dep-cleared-skill', { force: true })
 
       expect(result.success).toBe(true)
-      // The outcome: this skill's rows are gone, the bystander's remain.
+      // The outcome: BOTH of this skill's rows are gone regardless of source,
+      // and the other installed skill's row survives untouched.
       expect(deps.getDependencies('author/dep-cleared-skill')).toHaveLength(0)
       expect(deps.getDependencies('author/bystander-skill')).toHaveLength(1)
-      // The interaction, kept alongside it only because it names the exact id
-      // in the failure message when the outcome assertion goes red.
-      // `track()` records this skill's id as `author/<name>`.
+      // The interaction, kept alongside the outcome only because it names the
+      // exact id in the failure message when an outcome assertion goes red.
+      // `trackMany()` records each skill's id as `author/<name>`.
       expect(clearAllSpy).toHaveBeenCalledTimes(1)
       expect(clearAllSpy).toHaveBeenCalledWith('author/dep-cleared-skill')
     } finally {
