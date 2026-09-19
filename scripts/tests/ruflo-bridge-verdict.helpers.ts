@@ -7,8 +7,15 @@
  */
 import type { Probe } from './_lib/probe-path.js'
 
-/** Matches a `backend:`-shaped object-property site, key optionally quoted. */
-export const BACKEND_SITE_RE = /(?<![A-Za-z0-9_$.])["']?backend["']?\s*:\s*/g
+/**
+ * Matches a `backend:`-shaped object-property site, key optionally quoted.
+ * Module-private on purpose (governance on 8edd4fcef, F8): a `/g` regex
+ * carries `lastIndex`, and one `.test()` by an outside consumer would make
+ * the next `matchAll` here start mid-source and silently halve the site
+ * count -- the exact quiet shrink the drift guard's exact-count assertion
+ * exists to catch.
+ */
+const BACKEND_SITE_RE = /(?<![A-Za-z0-9_$.])["']?backend["']?\s*:\s*/g
 
 /**
  * The CONTENT of a fully-static string literal: lowercase letters/hyphens
@@ -36,14 +43,33 @@ interface SpanTokens {
   unquoted: string
 }
 
+/** The three characters that open a string literal in JavaScript source. */
+function isQuote(ch: string): boolean {
+  return ch === "'" || ch === '"' || ch === '`'
+}
+
 /**
- * One escape-aware walk over a value span, shared by concatenation
- * detection and literal extraction so the two cannot disagree about where
- * a string ends. A backslash inside a string skips the next character, so
- * an escaped quote is content and an escaped backslash does not close the
- * string on the following quote. A span that ends inside a string yields an
- * unterminated region, which the caller must treat as unrecognised: a
- * truncated read is not evidence about the value.
+ * One step of the string sub-machine, taken while inside a string that
+ * `quote` opened. The character at `i` is consumed; a backslash consumes
+ * the next character too, so an escaped quote is content and an escaped
+ * backslash does not close the string on the quote that follows it; the
+ * matching quote closes the string. Returns the index of the last consumed
+ * character and whether the string closed there. Both tokenizeSpan and
+ * scanBackendSites's span bounder take their steps here (governance on
+ * 8edd4fcef, F4: they used to carry textually identical copies), so the
+ * escape rule exists in exactly one place and the two cannot disagree
+ * about where a string ends.
+ */
+function stepInsideString(s: string, i: number, quote: string): { last: number; closed: boolean } {
+  if (s[i] === '\\') return { last: i + 1, closed: false }
+  return { last: i, closed: s[i] === quote }
+}
+
+/**
+ * One escape-aware walk over a value span, feeding both computed-syntax
+ * detection and literal extraction. A span that ends inside a string
+ * yields an unterminated region, which the caller must treat as
+ * unrecognised: a truncated read is not evidence about the value.
  */
 function tokenizeSpan(span: string): SpanTokens {
   const regions: QuotedRegion[] = []
@@ -53,14 +79,15 @@ function tokenizeSpan(span: string): SpanTokens {
   for (let i = 0; i < span.length; i++) {
     const ch = span[i]
     if (quote !== null) {
-      if (ch === '\\') i++
-      else if (ch === quote) {
+      const step = stepInsideString(span, i, quote)
+      if (step.closed) {
         regions.push({ content: span.slice(start, i), terminated: true })
         quote = null
       }
+      i = step.last
       continue
     }
-    if (ch === "'" || ch === '"' || ch === '`') {
+    if (isQuote(ch)) {
       quote = ch
       start = i + 1
     } else unquoted += ch
@@ -95,11 +122,12 @@ export function scanBackendSites(src: string): BackendScan {
     for (; end < src.length; end++) {
       const ch = src[end]
       if (quote !== null) {
-        if (ch === '\\') end++
-        else if (ch === quote) quote = null
+        const step = stepInsideString(src, end, quote)
+        if (step.closed) quote = null
+        end = step.last
         continue
       }
-      if (ch === "'" || ch === '"' || ch === '`') quote = ch
+      if (isQuote(ch)) quote = ch
       else if (ch === '(' || ch === '{' || ch === '[') depth++
       else if (ch === ')' || ch === '}' || ch === ']') {
         if (depth === 0) break
@@ -110,10 +138,17 @@ export function scanBackendSites(src: string): BackendScan {
     const { regions, unquoted } = tokenizeSpan(span)
     // Governance on B1.2 (2026-09-19): a concatenation-built value such as
     // `'on' + 'nx'` used to be counted as two static literals ('on', 'nx')
-    // instead of as dynamic. A `+` outside every quoted region in the span
-    // means the value is computed, so the site is `incomplete`, the same
-    // treatment as template interpolation.
-    if (hasUnquotedPlus(unquoted)) {
+    // instead of as dynamic. Governance on 8edd4fcef (F3) generalised the
+    // rule from "a `+` outside every quoted region" to "anything outside
+    // the quoted regions that a literal-or-ternary value does not need" --
+    // a call, an index, `||`, `??` -- because `pick('mock','onnx')` read as
+    // two static literals under the `+`-only rule, the same defect one
+    // operator over. Unlike the unrecognised-region path below, this one
+    // deliberately adds NOTHING to `found`: a computed value's quoted
+    // operands are inputs to the computation ('on' + 'nx';
+    // pick('mock','onnx')), not the value, so reporting them would name a
+    // backend label that may never exist.
+    if (hasComputedSyntax(unquoted)) {
       incomplete++
       continue
     }
@@ -175,12 +210,20 @@ export function resolveDriftGuardOutcome(state: DriftGuardState): DriftGuardOutc
 }
 
 /**
- * True when a `+` occurs in the span's unquoted text (`tokenizeSpan`'s
- * `unquoted`). A `+` inside a template literal's `${...}` is NOT seen here
- * -- the whole backtick region is quoted -- and such a site still reads as
- * `incomplete`, because its region content contains `${` and so fails
- * STATIC_LITERAL_RE.
+ * True when the span's unquoted text (`tokenizeSpan`'s `unquoted`) contains
+ * anything the scanner does not model as a literal-or-ternary value. It
+ * understands exactly two shapes: a bare literal, and a chain of ternaries
+ * whose conditions are identifiers, member accesses or optional chains.
+ * Everything else -- `+`, a call `(`, an index `[`, `||`, `??`, `!`, `=`
+ * -- means the value is COMPUTED and the site is `incomplete`. `?` and `:`
+ * are allowed for the ternary itself, so `??` needs its own alternation
+ * (a first draft without it let `opts.backend ?? 'mock'` through). A `+`
+ * inside a template literal's `${...}` is not seen here -- the backtick
+ * region is quoted -- and such a site is still incomplete, its region
+ * content failing STATIC_LITERAL_RE. A negated condition (`!isMock ? ...`)
+ * reads as computed: the loud direction, and no upstream site uses it.
  */
-function hasUnquotedPlus(unquoted: string): boolean {
-  return unquoted.includes('+')
+const COMPUTED_SYNTAX_RE = /[^A-Za-z0-9_$.?:\s]|\?\?/
+function hasComputedSyntax(unquoted: string): boolean {
+  return COMPUTED_SYNTAX_RE.test(unquoted)
 }

@@ -759,12 +759,19 @@ describe('scanBackendSites (SMI-6772 F8)', () => {
     // noticed, because every earlier escaped-quote case carried a trailing
     // `+` that routed the site through the concatenation path before the
     // regex ran. Literals are now extracted by the same escape-aware walker
-    // that finds the concatenation, and a quoted region whose content is not
-    // [a-z-]+ marks the site incomplete. The second shape per quote style
-    // (two escaped quotes around a lowercase word) is the mutation pin: a
-    // walker that does NOT skip the character after a backslash re-syncs on
-    // the second escaped quote and still extracts a recognised 'c' --
-    // found=[] is what catches that; incomplete=1 alone does not.
+    // that finds computed syntax, and a quoted region whose content is not
+    // [a-z-]+ marks the site incomplete. The third shape per quote style is
+    // the pin for the backslash skip (governance on 8edd4fcef: the
+    // two-escaped-quotes shape stopped pinning it once the computed-syntax
+    // rule landed, because a walker that does NOT skip the character after
+    // a backslash leaks the second backslash into the unquoted text, which
+    // reads as computed and lands on the right verdict for the wrong
+    // reason). With the escaped arm FIRST, that walker closes the string at
+    // the escaped quote, re-opens it at the real closing quote, and from
+    // there every quote is read with flipped parity: 'mock' becomes
+    // unquoted text and vanishes from `found`. Only the escaped-first order
+    // exposes that; escaped-last (the mixed-arm test below) recognises
+    // 'mock' before the parity flips.
     for (const q of ["'", '"', '`']) {
       const single = scanBackendSites(`backend: ${q}a\\${q}b${q},`)
       expect(single.found, `${q} single escaped quote`).toEqual([])
@@ -772,6 +779,9 @@ describe('scanBackendSites (SMI-6772 F8)', () => {
       const doubled = scanBackendSites(`backend: ${q}a\\${q}b\\${q}c${q},`)
       expect(doubled.found, `${q} two escaped quotes`).toEqual([])
       expect(doubled.incomplete, `${q} two escaped quotes`).toBe(1)
+      const escapedFirst = scanBackendSites(`backend: a ? ${q}x\\${q}y${q} : ${q}mock${q},`)
+      expect(escapedFirst.found, `${q} escaped arm before a recognised one`).toEqual(['mock'])
+      expect(escapedFirst.incomplete, `${q} escaped arm before a recognised one`).toBe(1)
     }
   })
 
@@ -800,6 +810,65 @@ describe('scanBackendSites (SMI-6772 F8)', () => {
     expect(scan.sites).toBe(1)
     expect(scan.found).toEqual([])
     expect(scan.incomplete).toBe(1)
+  })
+
+  it('a truncated arm BESIDE a recognised one is incomplete -- pins the unterminated push', () => {
+    // Governance on 8edd4fcef (F1). The single-arm case above cannot tell
+    // "the unterminated region was pushed and marked unrecognised" from "no
+    // region was pushed at all": there `recognised === 0` fires either way.
+    // With a recognised arm beside it, dropping the trailing push leaves
+    // recognised=1, unrecognised=0, and the truncated arm vanishes at
+    // incomplete=0 -- the F8 shape in its truncation form.
+    const beside = scanBackendSites("backend: a ? 'mock' : 'onnx")
+    expect(beside.found).toEqual(['mock'])
+    expect(beside.incomplete).toBe(1)
+  })
+
+  it('an empty string literal is not a static enum label -- pins the class quantifier', () => {
+    // Governance on 8edd4fcef (F2). `''` is a TERMINATED region whose content
+    // is the empty string. Under `[a-z-]*` it is recognised, lands in `found`
+    // as '', and satisfies `recognised > 0`, so a site that is entirely an
+    // empty label reads incomplete=0. The `+` quantifier is the only thing
+    // rejecting it.
+    const alone = scanBackendSites("backend: '',")
+    expect(alone.found).toEqual([])
+    expect(alone.incomplete).toBe(1)
+    const beside = scanBackendSites("backend: a ? '' : 'mock',")
+    expect(beside.found).toEqual(['mock'])
+    expect(beside.incomplete).toBe(1)
+  })
+
+  it('a computed value built by a call, an index or a default is incomplete', () => {
+    // Governance on 8edd4fcef (F3). `+` was one instance of "computed", not
+    // the rule; each of these reported its operands as static literals at
+    // incomplete=0, the B1.2 defect one operator over.
+    for (const src of [
+      "backend: pick('mock','onnx'),",
+      "backend: cfg['mock'],",
+      "backend: opts.backend || 'mock',",
+      "backend: opts.backend ?? 'mock',",
+    ]) {
+      const scan = scanBackendSites(src)
+      expect(scan.found, src).toEqual([])
+      expect(scan.incomplete, src).toBe(1)
+    }
+  })
+
+  it('a ternary over an identifier, a member or an optional chain is still static -- pins what the computed-syntax class allows', () => {
+    // The generalised rule must not swallow the shapes the real upstream
+    // trees use: `?`, `:`, `.` and whitespace are the only non-identifier
+    // characters a ternary condition needs, and the minified form has no
+    // whitespace at all.
+    for (const src of [
+      "backend: isMock ? 'mock' : 'onnx',",
+      "backend: opts.mode ? 'mock' : 'onnx',",
+      "backend: a?.b ? 'mock' : 'onnx',",
+      'backend:t?"mock":"onnx"}',
+    ]) {
+      const scan = scanBackendSites(src)
+      expect(scan.found, src).toEqual(['mock', 'onnx'])
+      expect(scan.incomplete, src).toBe(0)
+    }
   })
 
   it('a bare identifier with no literal at all is incomplete, not silently skipped', () => {
