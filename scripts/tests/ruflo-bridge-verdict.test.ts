@@ -11,28 +11,30 @@
  */
 import { describe, expect, it } from 'vitest'
 import { execFileSync } from 'node:child_process'
-import {
-  mkdtempSync,
-  readFileSync,
-  readdirSync,
-  rmSync,
-  statSync,
-  symlinkSync,
-  writeFileSync,
-} from 'node:fs'
+import { mkdtempSync, readFileSync, readdirSync, rmSync, symlinkSync, writeFileSync } from 'node:fs'
 import { homedir, tmpdir } from 'node:os'
 import path from 'node:path'
 import { fileURLToPath } from 'node:url'
 
 import { resolveRealHome } from './_lib/resolve-real-home.js'
+import { probePath, type Probe } from './_lib/probe-path.js'
+import { resolveDriftGuardOutcome, scanBackendSites } from './ruflo-bridge-verdict.helpers.js'
 import {
   DERIVED_FROM,
   EMBEDDING_BACKENDS,
   EXIT,
   FIELDS_READ,
+  FIELD_EMBEDDING_TOKEN,
   bridgeVerdict,
   exitCodeFor,
 } from '../lib/ruflo-bridge-verdict.mjs'
+
+// SMI-6772 F3: named, with the aggregate stated where it is defined -- 8
+// call sites (one `it` calls run() 4 times), so a reader is never left to
+// compute the worst case by hand. vitest's own testTimeout does not bound a
+// sync exec (measured: a 500ms testTimeout let a 3s sleep run to
+// completion), so this is the only budget that actually applies.
+const EXEC_BUDGET_MS = 30_000 // block worst case: 8 x 30s = 240s
 
 const here = path.dirname(fileURLToPath(import.meta.url))
 const FIXTURE_DIR = path.join(here, 'fixtures', 'ruflo-bridge-status')
@@ -52,21 +54,48 @@ function load(file: string): Payload {
 }
 
 /**
- * Synthetic healthy arm: the degraded capture with ONLY the two read fields
- * flipped to the value the implementation emits for real ONNX output. It is
- * labelled synthetic on purpose; the measured healthy captures from the
- * Wave 0 Step 3 scratch build are the `healthy-*.json` files tested below.
+ * Synthetic healthy arm: the degraded capture with the two read fields, AND
+ * bridge.embedding's own backend=X token, flipped to the value the
+ * implementation emits for real ONNX output. It is labelled synthetic on
+ * purpose; the measured healthy captures from the Wave 0 Step 3 scratch
+ * build are the `healthy-*.json` files tested below.
+ *
+ * SMI-6772 F5: the original version of this function flipped ONLY the two
+ * embeddingBackend fields and left `bridge.embedding` reading "... (384-dim,
+ * backend=mock)" -- internally CONTRADICTORY (two fields say onnx, a third
+ * says mock in the same object) and, before the FIELD_EMBEDDING_TOKEN
+ * cross-check existed, silently accepted as 'healthy'. This function must
+ * produce a payload that is genuinely self-consistent, not merely one whose
+ * two READ fields happen to agree.
  */
 function syntheticHealthy(): Payload {
   const p = load(DEGRADED)
   p.agentdb.embeddingBackend = 'onnx'
   p.bridge.embeddingBackend = 'onnx'
+  const embedding = p.bridge.embedding
+  if (typeof embedding === 'string') {
+    p.bridge.embedding = embedding.replace(/backend=mock/, 'backend=onnx')
+  }
   return p
 }
 
 function setBackend(p: Payload, value: unknown): Payload {
   p.agentdb.embeddingBackend = value
   p.bridge.embeddingBackend = value
+  // Keep bridge.embedding's own backend=X token in sync too (SMI-6772 F5):
+  // setBackend() sets arbitrary test values on the two READ fields to
+  // exercise not-evaluated/unrecognized/disagreement, none of which is
+  // about the embedding-token cross-check -- leaving that token at
+  // whatever syntheticHealthy() set ("backend=onnx") would trip the NEW
+  // cross-check for a reason unrelated to what each call site actually
+  // tests. Only meaningful for a string value: setBackend's non-string
+  // call sites (true, 1, {}, []) already hit the typeof guard before the
+  // cross-check ever runs, so bridge.embedding staying stale there is
+  // harmless. The character class matches EMBEDDING_TOKEN_RE's own (case
+  // preserved, unlike that regex's matching, which is case-insensitive).
+  if (typeof value === 'string' && typeof p.bridge.embedding === 'string') {
+    p.bridge.embedding = p.bridge.embedding.replace(/backend=[a-zA-Z0-9._-]*/, `backend=${value}`)
+  }
   return p
 }
 
@@ -96,6 +125,43 @@ describe('ruflo-bridge-verdict (SMI-6744 Wave 0)', () => {
     }
   })
 
+  describe('fixture provenance schema (SMI-6772 F10, partial)', () => {
+    // F10 asked for two things: (1) validate the `_provenance` schema
+    // instead of trusting only the filename prefix, and (2) keep raw
+    // stdout/stderr and an installed-package manifest as SEPARATE artifacts
+    // with hashes. Only (1) is implemented here -- (2) would require
+    // re-running the original 2026-09-18 scratch-build captures that
+    // produced these fixtures to obtain real raw output and a real package
+    // manifest; fabricating either now would be fictitious provenance data,
+    // which defeats the point of provenance. Recorded, not silently
+    // dropped: see this file's own migration report for the follow-up.
+    function assertProvenanceShape(raw: unknown, label: string): void {
+      const envelope = raw as { _provenance?: Record<string, unknown> }
+      const prov = envelope._provenance
+      expect(prov, `${label}: _provenance present`).toBeTypeOf('object')
+      expect(typeof prov?.captured, `${label}: _provenance.captured is a string`).toBe('string')
+      expect(
+        Number.isNaN(Date.parse(String(prov?.captured))),
+        `${label}: _provenance.captured parses as a date`
+      ).toBe(false)
+      expect(typeof prov?.tool, `${label}: _provenance.tool is a string`).toBe('string')
+      expect(typeof prov?.note, `${label}: _provenance.note is a string`).toBe('string')
+    }
+
+    it('the committed degraded capture has a well-formed provenance envelope', () => {
+      assertProvenanceShape(JSON.parse(readFileSync(DEGRADED, 'utf8')), 'degraded fixture')
+    })
+
+    it('every committed healthy capture has a well-formed provenance envelope', () => {
+      const measuredHealthy = readdirSync(FIXTURE_DIR).filter(
+        (f) => f.startsWith('healthy-') && f.endsWith('.json')
+      )
+      for (const f of measuredHealthy) {
+        assertProvenanceShape(JSON.parse(readFileSync(path.join(FIXTURE_DIR, f), 'utf8')), f)
+      }
+    })
+  })
+
   it('a probe that did not complete is a third outcome, not a pass', () => {
     const r = bridgeVerdict(setBackend(syntheticHealthy(), 'unknown'))
     expect(r.verdict).toBe('not-evaluated')
@@ -120,6 +186,59 @@ describe('ruflo-bridge-verdict (SMI-6744 Wave 0)', () => {
     const q = load(DEGRADED)
     q.bridge.status = 'connected'
     expect(bridgeVerdict(q).verdict).toBe('degraded')
+  })
+
+  describe('bridge.embedding cross-check (SMI-6772 F5)', () => {
+    it('FIRST TEST: flipping only embeddingBackend, leaving bridge.embedding saying backend=mock, must not be healthy', () => {
+      // This is the exact shape the finding reports: syntheticHealthy()'s
+      // ORIGINAL body, reproduced inline (not via the now-fixed helper) so
+      // this test still pins the bug even if syntheticHealthy() changes
+      // again later.
+      const p = load(DEGRADED)
+      p.agentdb.embeddingBackend = 'onnx'
+      p.bridge.embeddingBackend = 'onnx'
+      // bridge.embedding is deliberately left untouched: still "... backend=mock".
+      const r = bridgeVerdict(p)
+      expect(r.verdict).not.toBe('healthy')
+      expect(r.verdict).toBe('malformed')
+      expect(r.reason).toContain('backend=mock')
+      expect(r.reason).toContain('contradicting')
+      expect(r.observed[FIELD_EMBEDDING_TOKEN]).toContain('backend=mock')
+    })
+
+    it('the synthetic healthy fixture is now genuinely self-consistent', () => {
+      const p = syntheticHealthy()
+      expect(p.bridge.embedding).toContain('backend=onnx')
+      expect(p.bridge.embedding).not.toContain('backend=mock')
+      expect(bridgeVerdict(p).verdict).toBe('healthy')
+    })
+
+    it('a missing bridge.embedding does not change the verdict -- never a primary source of truth', () => {
+      const p = syntheticHealthy()
+      delete p.bridge.embedding
+      expect(bridgeVerdict(p).verdict).toBe('healthy')
+    })
+
+    it('a non-string bridge.embedding does not crash and does not change the verdict', () => {
+      const p = syntheticHealthy()
+      p.bridge.embedding = 12345
+      expect(() => bridgeVerdict(p)).not.toThrow()
+      expect(bridgeVerdict(p).verdict).toBe('healthy')
+    })
+
+    it('a bridge.embedding string with no backend= token does not change the verdict', () => {
+      const p = syntheticHealthy()
+      p.bridge.embedding = 'all-MiniLM-L6-v2 (384-dim)'
+      expect(bridgeVerdict(p).verdict).toBe('healthy')
+    })
+
+    it('never reads agentdb.backend for this cross-check either', () => {
+      // agentdb.backend stays unread by documented design (it renders
+      // 'unknown' as 'sql.js + ONNX'); only bridge.embedding is cross-checked.
+      const p = syntheticHealthy()
+      p.agentdb.backend = 'this string is not read at all'
+      expect(bridgeVerdict(p).verdict).toBe('healthy')
+    })
   })
 
   it('a value outside the enumerated set is unrecognized, never healthy', () => {
@@ -153,6 +272,55 @@ describe('ruflo-bridge-verdict (SMI-6744 Wave 0)', () => {
     expect(r.present).toEqual(['agentdb.embeddingBackend'])
   })
 
+  describe('own-data-property reads (SMI-6772 F6)', () => {
+    it('an inherited (prototype) embeddingBackend is not read, not even as evidence of presence', () => {
+      const p = syntheticHealthy()
+      delete p.agentdb.embeddingBackend
+      Object.setPrototypeOf(p.agentdb, { embeddingBackend: 'onnx' })
+      const r = bridgeVerdict(p)
+      expect(r.verdict).toBe('malformed')
+      expect(r.missing).toContain('agentdb.embeddingBackend')
+    })
+
+    it('a throwing getter for embeddingBackend is never invoked -- get() reads own DATA properties only', () => {
+      const p = syntheticHealthy()
+      delete p.agentdb.embeddingBackend
+      Object.defineProperty(p.agentdb, 'embeddingBackend', {
+        get(): string {
+          throw new Error('should never be invoked')
+        },
+        enumerable: true,
+        configurable: true,
+      })
+      expect(() => bridgeVerdict(p)).not.toThrow()
+      expect(bridgeVerdict(p).verdict).toBe('malformed')
+    })
+
+    it('a boxed String object for embeddingBackend is malformed, never unwrapped to its primitive', () => {
+      const p = syntheticHealthy()
+      // Deliberately a boxed String (not a primitive), to pin that it is
+      // never unwrapped before the type check.
+      const boxed = new String('onnx')
+      p.agentdb.embeddingBackend = boxed as unknown as string
+      p.bridge.embeddingBackend = boxed as unknown as string
+      expect(bridgeVerdict(p).verdict).toBe('malformed')
+    })
+  })
+
+  describe('exitCodeFor table seam (SMI-6772 F1)', () => {
+    it('an inherited (prototype) NUMERIC property on a custom table is never used -- own keys only', () => {
+      expect(exitCodeFor('stale', Object.create({ stale: 2 })), 'inherited numeric').toBeNull()
+    })
+
+    it('an own numeric property on a custom table IS used -- the seam works both ways', () => {
+      expect(exitCodeFor('stale', { stale: 3 })).toBe(3)
+    })
+
+    it('the default table is still EXIT when none is supplied', () => {
+      expect(exitCodeFor('healthy')).toBe(EXIT.healthy)
+    })
+  })
+
   it('non-object payloads are malformed', () => {
     for (const bad of [null, undefined, 'x', 42, true]) {
       expect(bridgeVerdict(bad).verdict, String(bad)).toBe('malformed')
@@ -171,19 +339,27 @@ describe('ruflo-bridge-verdict (SMI-6744 Wave 0)', () => {
   describe('CLI exit status is three-way', () => {
     // `direct` execs the file itself, so the shebang and the executable bit
     // are load-bearing; without it, `node <file>` would pass with neither.
+    // `file` accepts more than one positional (SMI-6772 F9's own regression
+    // lock passes two) -- every existing call site below passes a single
+    // string, unaffected by the array branch.
     function run(
-      file: string,
+      file: string | string[],
       cli: string = CLI,
       direct: boolean = false
     ): { status: number; out: string } {
+      const args = Array.isArray(file) ? file : [file]
       try {
         // A sync exec is not interrupted by vitest's testTimeout (measured:
         // a 500 ms testTimeout let a 3 s sleep run to completion), so the
-        // budget lives on the call. On timeout `status` is null -> -1 below
-        // -> every toBe(EXIT.x) fails loudly.
+        // budget lives on the call (SMI-6772 F3: EXEC_BUDGET_MS, module
+        // level). On timeout `status` is null -> -1 below -> every
+        // toBe(EXIT.x) fails loudly.
         const out = direct
-          ? execFileSync(cli, [file], { encoding: 'utf8', timeout: 30_000 })
-          : execFileSync(process.execPath, [cli, file], { encoding: 'utf8', timeout: 30_000 })
+          ? execFileSync(cli, args, { encoding: 'utf8', timeout: EXEC_BUDGET_MS })
+          : execFileSync(process.execPath, [cli, ...args], {
+              encoding: 'utf8',
+              timeout: EXEC_BUDGET_MS,
+            })
         return { status: 0, out }
       } catch (err) {
         const e = err as { status?: number; stdout?: string }
@@ -211,10 +387,17 @@ describe('ruflo-bridge-verdict (SMI-6744 Wave 0)', () => {
     })
 
     it('every verdict the detector can return maps to a numeric exit; prototype keys and unknown names map to null', () => {
-      // The verdict list is DERIVED from the detector's own source, not
-      // retyped: a future `verdict: 'stale'` added without an EXIT key must
-      // fail here, and a retyped list would not see it. `EXIT[x]` for an
-      // unnamed verdict is undefined and process.exit(undefined) is exit 0;
+      // The verdict list is DERIVED from the detector's own source via
+      // `/verdict: '([^']+)'/g` -- narrow about what that spelling actually
+      // covers (SMI-6772 F2): it sees only a single-quoted string literal
+      // directly after a `verdict:` key, so `verdict: VERDICT_STALE`, a
+      // ternary (`verdict: cond ? 'stale' : 'x'` reads only the FIRST
+      // literal), and the `{ ...base, verdict }` shorthand are all
+      // invisible to it, and a docblock EXAMPLE spelled the same way would
+      // inject a phantom member. It is right about today's five verdicts by
+      // construction (every real return site is spelled exactly this way),
+      // not by being a general-purpose extractor. `EXIT[x]` for an unnamed
+      // verdict is undefined and process.exit(undefined) is exit 0;
       // Object.freeze leaves inherited keys, so `EXIT['constructor']` is a
       // function and process.exit(<function>) is exit 1 -- both measured.
       // exitCodeFor answers own-key-and-number, or null, and the guard in
@@ -242,6 +425,16 @@ describe('ruflo-bridge-verdict (SMI-6744 Wave 0)', () => {
       for (const v of ['constructor', 'toString', 'valueOf', 'hasOwnProperty', 'nope', '']) {
         expect(exitCodeFor(v), v).toBeNull()
       }
+      // SMI-6772 F2 reverse-direction assertion: the forward direction above
+      // only ever asked "does every derived verdict have an EXIT entry" --
+      // nothing asserted the reverse, so a return site deleted from the
+      // source while its EXIT key stayed behind would pass silently forever.
+      // 'unreadable' is EXIT's one key with no `verdict:`-shaped return site
+      // (it is a CLI-only outcome -- a file that could not even be parsed),
+      // so it is the one deliberate exception.
+      expect(Object.keys(EXIT).filter((k) => !verdicts.includes(k) && k !== 'unreadable')).toEqual(
+        []
+      )
     })
 
     it('the three non-verdict outcomes reach the CLI as exit 2, each naming itself and its denominator', () => {
@@ -275,6 +468,16 @@ describe('ruflo-bridge-verdict (SMI-6744 Wave 0)', () => {
       } finally {
         rmSync(dir, { recursive: true, force: true })
       }
+    })
+
+    it('extra CLI positional arguments are a usage error, exit 2, not the last path silently picked (SMI-6772 F9/M5)', () => {
+      // M5's surviving mutation (argv.at(-1) instead of argv[2]) would
+      // silently read HEALTHY here and exit 0 -- the usage check below runs
+      // BEFORE any path is selected, so which of the two paths a mutated
+      // selector would have picked is moot.
+      const r = run([DEGRADED, HEALTHY])
+      expect(r.status).toBe(2)
+      expect(r.out).toContain('usage')
     })
 
     it('executed directly through a symlink in a percent-encoded directory, the degraded fixture still exits 1 with output', () => {
@@ -325,26 +528,18 @@ describe('predicate source drift (skips when no derived-from tree is installed)'
     '_npx'
   )
   const trees: Array<{ dir: string; version: string }> = []
-  // ONE classifier for every path the scan touches. Four rounds of review
-  // found the same conflation at successive levels -- _npx, then its parent,
-  // then each cache entry's package.json -- because each level had its own
-  // existsSync, and existsSync returns false whenever it cannot STAT, so an
-  // unreadable path reads as "not there". POSIX stat() needs search
-  // permission on the PREFIX only, so stat'ing the target itself is what
-  // separates the cases: ENOENT is absent; any other error (EACCES on the
-  // path or on HOME, ENOTDIR on a file where a directory belongs) is
-  // unreachable, and the cache may well be there. The one classifier is used
-  // for the root and for each entry, so there is no fourth special case to
-  // add later.
-  type Probe = 'present' | 'absent' | 'unreachable'
-  const probe = (p: string): Probe => {
-    try {
-      statSync(p)
-      return 'present'
-    } catch (err) {
-      return (err as { code?: string }).code === 'ENOENT' ? 'absent' : 'unreachable'
-    }
-  }
+  // ONE classifier for every path the scan touches (SMI-6771: shared with
+  // every other existsSync-based present/absent gate in this test tree via
+  // ./_lib/probe-path.js). Four rounds of review found the same conflation
+  // at successive levels -- _npx, then its parent, then each cache entry's
+  // package.json -- because each level had its own existsSync, and
+  // existsSync returns false whenever it cannot STAT, so an unreadable path
+  // reads as "not there". POSIX stat() needs search permission on the
+  // PREFIX only, so stat'ing the target itself is what separates the cases:
+  // ENOENT is absent; any other error (EACCES on the path or on HOME,
+  // ENOTDIR on a file where a directory belongs) is unreachable, and the
+  // cache may well be there. The one classifier is used for the root and
+  // for each entry, so there is no fourth special case to add later.
   // Counts, because "0 at a derived-from version" has several causes that
   // must render differently: ruflo was never cached here (withCli = 0); it
   // was, and every cached version is one this predicate was not read at
@@ -355,14 +550,14 @@ describe('predicate source drift (skips when no derived-from tree is installed)'
   let withCli = 0
   let unreadable = 0
   let unreachable = 0
-  let root: Probe | 'unscannable' = probe(npxRoot)
+  let root: Probe | 'unscannable' = probePath(npxRoot)
   if (root === 'present') {
     try {
       for (const hash of readdirSync(npxRoot)) {
         cacheDirs++
         const pkg = path.join(npxRoot, hash, 'node_modules', '@claude-flow', 'cli')
         const pj = path.join(pkg, 'package.json')
-        const state = probe(pj)
+        const state = probePath(pj)
         if (state === 'absent') continue
         if (state === 'unreachable') {
           unreachable++
@@ -396,9 +591,26 @@ describe('predicate source drift (skips when no derived-from tree is installed)'
     ['dist/src/memory/memory-bridge.js', "backend: isMock ? 'mock' : 'onnx'"],
   ]
 
-  it.skipIf(trees.length === 0)(
+  // SMI-6772 F7: `it.skipIf(trees.length === 0)` treated a genuinely absent
+  // npx cache (legitimate skip) the same as a PRESENT cache the scan could
+  // not conclude anything about (dangling symlink, malformed/BOM-prefixed
+  // JSON, an unscannable root, an unreachable entry) -- both silently
+  // rendered as the same skip. resolveDriftGuardOutcome distinguishes them:
+  // it still skips only on a genuinely empty/absent cache, and fails,
+  // naming why, when the scan itself was incomplete.
+  const driftOutcome = resolveDriftGuardOutcome({
+    root,
+    treesLength: trees.length,
+    unreadable,
+    unreachable,
+  })
+
+  it.skipIf(driftOutcome.skip)(
     `the cited literals are present in each derived-from tree (${scope})`,
     () => {
+      if (!driftOutcome.skip && driftOutcome.fail) {
+        throw new Error(driftOutcome.fail)
+      }
       for (const t of trees) {
         for (const [rel, literal] of LITERALS) {
           const src = readFileSync(path.join(t.dir, rel), 'utf8')
@@ -411,64 +623,142 @@ describe('predicate source drift (skips when no derived-from tree is installed)'
         // option's destructuring default) and `let backend = 'unknown'` are
         // different variables in the same file, and a `[:=]` scan read them
         // as enum members -- measured on both trees before this was narrowed.
+        // The per-file site count is pinned EXACTLY (2 and 1 at 3.14.2 and
+        // 3.42.4): a site upstream removes, or moves to object shorthand
+        // where the value is a variable, fails loudly instead of shrinking
+        // the set quietly. scanBackendSites (SMI-6772 F8) additionally sees
+        // double-quoted and template-literal values, not single-quote only.
         for (const [rel, expectedSites] of [
           ['dist/src/memory/memory-initializer.js', 2],
           ['dist/src/memory/memory-bridge.js', 1],
         ] as const) {
           const src = readFileSync(path.join(t.dir, rel), 'utf8')
-          const found = new Set<string>()
-          // Sites are found over the WHOLE source, so a second `backend:` on
-          // the same physical line is seen (a per-line scan measured silent
-          // on that shape), with an optional quoted key and a spaced colon.
-          // Each value is bounded at the first `,`, `;`, `}`, `)` or `]` at
-          // brace/paren depth 0, across newlines: a ternary arm or a call
-          // argument on a continuation line is read, and a comma inside a
-          // call is not a terminator. Two earlier line-bounded scans each
-          // measured vacuous on a shape the previous one had not tested.
-          // The per-file site count is pinned EXACTLY (2 and 1 at 3.14.2 and
-          // 3.42.4): a site upstream removes, or moves to object shorthand
-          // where the value is a variable, fails loudly instead of shrinking
-          // the set quietly. A site with no literal at all is incomplete.
-          let sites = 0
-          let incomplete = 0
-          // The lookbehind also excludes `.`, so `x ? obj.backend : y` (a
-          // member access before a ternary colon) is not read as a site.
-          for (const m of src.matchAll(/(?<![A-Za-z0-9_$.])["']?backend["']?\s*:\s*/g)) {
-            sites++
-            const start = (m.index ?? 0) + m[0].length
-            let depth = 0
-            let quote: string | null = null
-            let end = start
-            for (; end < src.length; end++) {
-              const ch = src[end]
-              // A quoted span is opaque: a `,` or `}` inside 'a,b' must not
-              // end the value (measured: without this, a quoted separator
-              // placed after both members bounded the value early and the
-              // set passed while missing them).
-              if (quote !== null) {
-                if (ch === '\\') end++
-                else if (ch === quote) quote = null
-                continue
-              }
-              if (ch === "'" || ch === '"' || ch === '`') quote = ch
-              else if (ch === '(' || ch === '{' || ch === '[') depth++
-              else if (ch === ')' || ch === '}' || ch === ']') {
-                if (depth === 0) break
-                depth--
-              } else if ((ch === ',' || ch === ';') && depth === 0) break
-            }
-            let n = 0
-            for (const s of src.slice(start, end).matchAll(/'([a-z-]+)'/g)) {
-              found.add(s[1])
-              n++
-            }
-            if (n === 0) incomplete++
-          }
-          expect(sites, `${t.version} ${rel}: backend: sites`).toBe(expectedSites)
-          expect([...found].sort(), `${t.version} ${rel}`).toEqual(['mock', 'onnx'])
-          expect(incomplete, `${t.version} ${rel}: backend: sites with no literal`).toBe(0)
+          const scan = scanBackendSites(src)
+          expect(scan.sites, `${t.version} ${rel}: backend: sites`).toBe(expectedSites)
+          expect(scan.found, `${t.version} ${rel}`).toEqual(['mock', 'onnx'])
+          expect(scan.incomplete, `${t.version} ${rel}: backend: sites with no literal`).toBe(0)
         }
       }
     }
   )
+})
+
+describe('scanBackendSites (SMI-6772 F8)', () => {
+  it('single-quoted literals, matching the original scanner exactly', () => {
+    const scan = scanBackendSites("backend: 'onnx',\nbackend: 'mock',")
+    expect(scan.sites).toBe(2)
+    expect(scan.found).toEqual(['mock', 'onnx'])
+    expect(scan.incomplete).toBe(0)
+  })
+
+  it('double-quoted and template-literal values are no longer silently dropped', () => {
+    // The exact surviving shape the finding names: two single-quoted arms
+    // keep the site's own literal count above zero, so a single-quote-only
+    // scanner never trips `incomplete` while "gpu" vanishes from `found`.
+    const scan = scanBackendSites("backend: a ? 'mock' : b ? 'onnx' : \"gpu\",")
+    expect(scan.sites).toBe(1)
+    expect(scan.found).toEqual(['gpu', 'mock', 'onnx'])
+    expect(scan.incomplete).toBe(0)
+  })
+
+  it('a fully-static template literal is recognized too', () => {
+    const scan = scanBackendSites('backend: `onnx`,')
+    expect(scan.found).toEqual(['onnx'])
+    expect(scan.incomplete).toBe(0)
+  })
+
+  it('a template literal with interpolation is dynamic, not a literal -- counted incomplete, never miscounted as a match', () => {
+    // A lowercase single-letter interpolated identifier on purpose: a
+    // widened-but-still-lowercase-only character class mutation (adding
+    // '$', '{', '}' to "support template literals") would fully match
+    // `${x}` and silently treat this dynamic expression as the literal
+    // value "x" -- a mixed-case identifier like `${dynamicValue}` alone
+    // does not expose that mutation (the class's own lowercase-only
+    // restriction already breaks the match on the capital letter, for an
+    // unrelated reason), so both are asserted.
+    const dynamic = scanBackendSites('backend: `${dynamicValue}`,')
+    expect(dynamic.found).toEqual([])
+    expect(dynamic.incomplete).toBe(1)
+
+    const dynamicLowercase = scanBackendSites('backend: `${x}`,')
+    expect(dynamicLowercase.found).toEqual([])
+    expect(dynamicLowercase.incomplete).toBe(1)
+  })
+
+  it('a bare identifier with no literal at all is incomplete, not silently skipped', () => {
+    const scan = scanBackendSites('backend: someVariable,')
+    expect(scan.found).toEqual([])
+    expect(scan.incomplete).toBe(1)
+  })
+
+  it('sites are found independently across the whole source, not nested inside a prior span', () => {
+    const scan = scanBackendSites("backend: 'mock', backend: 'onnx',")
+    expect(scan.sites).toBe(2)
+    expect(scan.found).toEqual(['mock', 'onnx'])
+    expect(scan.incomplete).toBe(0)
+  })
+})
+
+describe('resolveDriftGuardOutcome (SMI-6772 F7)', () => {
+  it('a genuinely absent npx cache is a legitimate skip', () => {
+    expect(
+      resolveDriftGuardOutcome({ root: 'absent', treesLength: 0, unreadable: 0, unreachable: 0 })
+    ).toEqual({ skip: true })
+  })
+
+  it('present, fully scanned, zero matching versions is a legitimate skip', () => {
+    expect(
+      resolveDriftGuardOutcome({ root: 'present', treesLength: 0, unreadable: 0, unreachable: 0 })
+    ).toEqual({ skip: true })
+  })
+
+  it('present with matching versions never skips and never fails', () => {
+    expect(
+      resolveDriftGuardOutcome({ root: 'present', treesLength: 1, unreadable: 0, unreachable: 0 })
+    ).toEqual({ skip: false, fail: null })
+  })
+
+  it('an unscannable root fails loudly rather than skipping', () => {
+    const r = resolveDriftGuardOutcome({
+      root: 'unscannable',
+      treesLength: 0,
+      unreadable: 0,
+      unreachable: 0,
+    })
+    expect(r.skip).toBe(false)
+    expect(!r.skip && r.fail).toContain('unscannable')
+  })
+
+  it('an unreachable root fails loudly rather than skipping', () => {
+    const r = resolveDriftGuardOutcome({
+      root: 'unreachable',
+      treesLength: 0,
+      unreadable: 0,
+      unreachable: 0,
+    })
+    expect(r.skip).toBe(false)
+    expect(!r.skip && r.fail).toContain('unreachable')
+  })
+
+  it('a present cache with an unreadable entry fails loudly even with zero trees found', () => {
+    const r = resolveDriftGuardOutcome({
+      root: 'present',
+      treesLength: 0,
+      unreadable: 1,
+      unreachable: 0,
+    })
+    expect(r.skip).toBe(false)
+    expect(!r.skip && r.fail).toContain('unreadable=1')
+  })
+
+  it('a present cache with an unreachable entry fails loudly even with zero trees found', () => {
+    const r = resolveDriftGuardOutcome({
+      root: 'present',
+      treesLength: 0,
+      unreadable: 0,
+      unreachable: 1,
+    })
+    expect(r.skip).toBe(false)
+    expect(!r.skip && r.fail).toContain('unreachable=1')
+  })
 })
