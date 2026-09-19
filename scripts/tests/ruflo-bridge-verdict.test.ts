@@ -714,6 +714,18 @@ describe('scanBackendSites (SMI-6772 F8)', () => {
     expect(quoted.incomplete).toBe(0)
   })
 
+  it('a backslash-escaped quote inside a literal does not defeat plus-detection', () => {
+    // Governance on 8f1e1afbc: hasUnquotedPlus() skips the character after a
+    // backslash so an escaped quote does not close the string early. With
+    // that skip broken (e.g. comparing against a two-character '\\\\'), the
+    // tracker closes the literal at \\' and the trailing `+ 'c'` reads as two
+    // static literals ('b', 'c') -- the exact phantom-literal defect this
+    // guard exists to reject -- and nothing else in the suite noticed.
+    const scan = scanBackendSites("backend: 'a\\'b' + 'c',")
+    expect(scan.found).toEqual([])
+    expect(scan.incomplete).toBe(1)
+  })
+
   it('a bare identifier with no literal at all is incomplete, not silently skipped', () => {
     const scan = scanBackendSites('backend: someVariable,')
     expect(scan.found).toEqual([])

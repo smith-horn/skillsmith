@@ -122,7 +122,15 @@ export function resolveDriftGuardOutcome(state: DriftGuardState): DriftGuardOutc
   return { skip: false, fail: null }
 }
 
-/** True when a `+` occurs in `span` outside every quoted region. */
+/**
+ * True when a `+` occurs in `span` outside every quoted region. A `+` inside a
+ * template literal's `${...}` is NOT seen here (the whole backtick span counts
+ * as quoted); such a site still reads as `incomplete` because LITERAL_RE's
+ * `[a-z-]+`-only class cannot match anything containing `${`, so it collects
+ * no literal and falls through to the `n === 0` path. The backslash skip is
+ * load-bearing: without it an escaped quote closes the string early and the
+ * rest of the span leaks phantom literals (see the escaped-quote test).
+ */
 function hasUnquotedPlus(span: string): boolean {
   let quote: string | null = null
   for (let i = 0; i < span.length; i++) {
