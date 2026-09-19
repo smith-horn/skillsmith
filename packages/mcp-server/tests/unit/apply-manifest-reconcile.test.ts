@@ -40,7 +40,7 @@ import { assertBackupTargetIsFile } from '../../src/tools/apply-manifest-reconci
 import { ReconcileGuardError } from '../../src/tools/apply-manifest-reconcile.helpers.js'
 import { withLockTimeoutMapping } from '../../src/tools/apply-manifest-reconcile.lock-helpers.js'
 import { describeReconcileError } from '../../src/tools/apply-manifest-reconcile.errors.js'
-import { StuckLockError } from '@skillsmith/core'
+import { describeRemedy, StuckLockError, type StuckLockReason } from '@skillsmith/core'
 import type { ToolContext } from '../../src/context.js'
 
 const mockedLookup = vi.mocked(lookupSkillFromRegistry)
@@ -755,8 +755,17 @@ describe('withLockTimeoutMapping — lock-timeout error mapping (SMI-6735 findin
     // reasons such a mutation leaves alone. `held` is the common real case,
     // and it is the one where retrying genuinely IS the right advice, so it
     // must keep the waiting verb.
-    expect(describeReconcileError(guardErr.code, guardErr.ctx)).toMatch(/Timed out waiting/)
-    expect(describeReconcileError(guardErr.code, guardErr.ctx)).not.toMatch(/Could not acquire/)
+    expect(describeReconcileError(guardErr.code, guardErr.ctx)).toMatch(/Could not acquire/)
+    expect(describeReconcileError(guardErr.code, guardErr.ctx)).not.toMatch(/Timed out/)
+    // SMI-6764 F4: the verb is one dimension, the opt-out hint is another, and
+    // only the first was pinned. Ungating the hint (or gating it on the verb
+    // instead of the reason) makes `held` — a LIVE holder — render "The holder
+    // is already dead ... remove the file", with the whole suite still green.
+    // That is the SMI-6735 data-integrity break rebuilt out of prose.
+    expect(describeReconcileError(guardErr.code, guardErr.ctx)).not.toMatch(
+      /SKILLSMITH_LOCK_NO_AUTO_RECLAIM/
+    )
+    expect(describeReconcileError(guardErr.code, guardErr.ctx)).not.toMatch(/already dead/)
   })
 
   it('reclaim_disabled says the lock cannot clear here and names the opt-out, not a plain timeout (SMI-6759)', async () => {
@@ -786,8 +795,19 @@ describe('withLockTimeoutMapping — lock-timeout error mapping (SMI-6735 findin
     // correctly and the remedy wrongly — a dead holder never releases.
     expect(msg).toMatch(/Could not acquire/)
     expect(msg).not.toMatch(/Timed out waiting/)
-    // The remedy that touches no files, which no other reason has.
-    expect(msg).toMatch(/SKILLSMITH_LOCK_NO_AUTO_RECLAIM/)
+    // The remedy that touches no files, which no other reason has. Matching
+    // the bare variable name is not enough (SMI-6764 F4): "either SET
+    // SKILLSMITH_LOCK_NO_AUTO_RECLAIM and retry" — advising the user to set
+    // the very thing that caused the failure — passes that. Pin the instruction.
+    expect(msg).toMatch(/Unset it here and restart this process/)
+    // The MCP-specific half core cannot know: a shell `unset` never reaches an
+    // already-running stdio server, so "restart this process" needs naming.
+    expect(msg).toMatch(/restarting "this process" means restarting the server/)
+    // The lock CAN clear without the user: a peer without the opt-out may
+    // reclaim and release it, and this message must say so rather than promise
+    // the opposite next to an unqualified `rm`.
+    expect(msg).toMatch(/a peer process without SKILLSMITH_LOCK_NO_AUTO_RECLAIM set still can/)
+    expect(msg).not.toMatch(/will not clear on its own/)
     // This reason never implicates the reclaim lock: `isOwnerDefinitelyDead`
     // short-circuits before `tryReclaimUnderLock` is ever reached.
     expect(guardErr.ctx.reclaimPath).toBeUndefined()
@@ -821,9 +841,17 @@ describe('withLockTimeoutMapping — lock-timeout error mapping (SMI-6735 findin
     const message = describeReconcileError(guardErr.code, guardErr.ctx)
     expect(message).toContain(err.lockPath)
     expect(message).toContain(err.reclaimPath)
-    // Retryable reason — the caller DID wait out withFileLock's budget, so
-    // "timed out" is the accurate word.
-    expect(message).toMatch(/Timed out waiting/)
+    // SMI-6764 F1: this reason is TWO cases with opposite answers — a busy
+    // reclaim lock (clears in ms) and one orphaned by a crash (never clears,
+    // because nothing probes the reclaim lock's own owner). It was the last
+    // reason still on the "timed out" verb, and for the orphan half that verb
+    // was measurably wrong. One verb now; the remedy names both halves.
+    expect(message).toMatch(/Could not acquire/)
+    expect(message).not.toMatch(/Timed out/)
+    expect(message).toMatch(/If a reclaim is in flight, retrying clears this/)
+    expect(message).toMatch(/orphaned by a crash/)
+    // SMI-6764 F4: the opt-out is irrelevant here and must not be suggested.
+    expect(message).not.toMatch(/SKILLSMITH_LOCK_NO_AUTO_RECLAIM/)
   })
 
   it('a non-retryable reason (unreclaimable_legacy) does NOT carry a reclaimPath, and the rendered message says the lock could not be acquired — not that it timed out', async () => {
@@ -855,6 +883,14 @@ describe('withLockTimeoutMapping — lock-timeout error mapping (SMI-6735 findin
     expect(message).not.toMatch(/Timed out/)
     expect(message).toMatch(/Could not acquire/)
     expect(message).not.toContain(err.reclaimPath)
+    // SMI-6764 F4: shares the verb with `reclaim_disabled` but NOT the remedy
+    // — unsetting the opt-out does nothing for a legacy claim, which is never
+    // auto-reclaimed whatever the configuration (D-5). Gating the hint on the
+    // verb rather than the reason leaks it here, and the suite stayed green.
+    expect(message).not.toMatch(/SKILLSMITH_LOCK_NO_AUTO_RECLAIM/)
+    // Nor is the holder known dead here: a legacy claim can be a live process
+    // (see `config-atomic-write.test.ts`'s D-5 case, which plants a live pid).
+    expect(message).not.toMatch(/already dead/)
   })
 
   it('the same reason (unreclaimable_unparseable) also renders "could not be acquired", not "timed out"', async () => {
@@ -879,6 +915,69 @@ describe('withLockTimeoutMapping — lock-timeout error mapping (SMI-6735 findin
     const message = describeReconcileError(guardErr.code, guardErr.ctx)
     expect(message).not.toMatch(/Timed out/)
     expect(message).toMatch(/Could not acquire/)
+    // SMI-6764 F4: same verb, no opt-out remedy. An unparseable claim says
+    // nothing about the holder, so neither the hint nor "already dead" applies.
+    expect(message).not.toMatch(/SKILLSMITH_LOCK_NO_AUTO_RECLAIM/)
+    expect(message).not.toMatch(/already dead/)
+  })
+
+  it('renders core’s remedy verbatim for every reason — the drift THIS file caused (SMI-6764)', () => {
+    // SMI-6764 was this exact shape: SMI-6759 changed the verb here and left
+    // `StuckLockError` saying something else about the same lock file. The
+    // per-reason prose now has one source, and this is what holds it there.
+    // A re-inlined copy passes only while it is byte-identical; the moment it
+    // drifts — which is the failure mode, not the duplication itself — this
+    // fails and names the reason that drifted.
+    const reasons: StuckLockReason[] = [
+      'held',
+      'reclaim_unavailable',
+      'unreclaimable_legacy',
+      'unreclaimable_unparseable',
+      'reclaim_disabled',
+    ]
+    // Guard the oracle before trusting it. `toContain('')` is true of every
+    // string, so a `describeRemedy` that collapsed to '' would make the
+    // positive assertion below pass for all five reasons while asserting
+    // nothing at all -- the check would survive the very regression it exists
+    // to catch. Distinctness matters for the same reason on the negative half.
+    for (const reason of reasons) {
+      expect(describeRemedy(reason), `${reason} remedy must be non-empty`).not.toBe('')
+    }
+    expect(new Set(reasons.map(describeRemedy)).size, 'remedies must be pairwise distinct').toBe(
+      reasons.length
+    )
+    for (const reason of reasons) {
+      const message = describeReconcileError('manifest.reconcile.lock_timeout', {
+        lockReason: reason,
+        path: '/home/user/.skillsmith/manifest.json.lock',
+      })
+      expect(message, reason).toContain(describeRemedy(reason))
+      // `toContain` is blind to EXTRA content, so the positive half alone lets
+      // this file append a second reason's remedy verbatim and stay green --
+      // measured (SMI-6764 review round 4). That renders, for a LIVE holder,
+      // "retrying is the right first response. ... only the manual steps clear
+      // it", sending the user to `rm` on a lock a live process holds: the
+      // SMI-6735 mutual-exclusion break rebuilt out of prose. Core's own suite
+      // cross-checks each reason against every other's remedy; nothing did so
+      // on THIS side, which is where the drift actually happened.
+      for (const other of reasons) {
+        if (other === reason) continue
+        expect(message, `${reason} must not also render ${other}'s remedy`).not.toContain(
+          describeRemedy(other)
+        )
+      }
+      // The MCP addendum is gated on the REASON, but the harm it removes is a
+      // property of core's PROSE: core telling the user to restart "this
+      // process" is ambiguous inside a long-lived stdio server. Those are two
+      // different quantities that merely coincide today, and nothing held them
+      // together (SMI-6764 review round 4). If core ever adds that phrase to
+      // another reason's remedy, that reason silently loses the disambiguation.
+      // Pin the biconditional, not the reason.
+      expect(
+        message.includes('means restarting the server'),
+        `${reason}: the MCP addendum must appear exactly when core's remedy says to restart "this process"`
+      ).toBe(/restart this process/.test(describeRemedy(reason)))
+    }
   })
 
   it('a non-StuckLockError, non-ReconcileGuardError error is rethrown as-is', async () => {

@@ -26,7 +26,12 @@ import { hostname } from 'node:os'
 import * as path from 'node:path'
 import * as os from 'node:os'
 
-import { acquireOwnedLock, RECLAIM_LOCK_TIMEOUT_MS, StuckLockError } from './owned-lock.js'
+import {
+  acquireOwnedLock,
+  RECLAIM_LOCK_TIMEOUT_MS,
+  StuckLockError,
+  type StuckLockReason,
+} from './owned-lock.js'
 import { acquireOwnedLockCore, toTimingMs } from './owned-lock.acquire.js'
 import { createLockExclusive } from './owned-lock.claim.js'
 import { mintDeadPid } from '../../tests/helpers/deterministic-dead-pid.js'
@@ -591,4 +596,106 @@ describe('unreleasable locks and timing options (SMI-6529 round 9)', () => {
     expect(child.signal, child.stderr).toBeNull()
     expect(child.stdout.trim()).toBe('reclaim_unavailable')
   }, 20_000)
+})
+
+describe('SMI-6764: one verb for every reason, and a remedy that may say "it depends"', () => {
+  const ABSENT = { kind: 'absent' } as const
+  const REASONS: StuckLockReason[] = [
+    'held',
+    'reclaim_unavailable',
+    'unreclaimable_legacy',
+    'unreclaimable_unparseable',
+    'reclaim_disabled',
+  ]
+
+  const render = (reason: StuckLockReason): string =>
+    new StuckLockError('/tmp/t.lock', '/tmp/t.lock.reclaim', 'config lock', reason, ABSENT).message
+
+  // A v1 claim, because `describeReason`'s `held` branch renders the pid/host
+  // text ONLY for `kind: 'v1'`. The first version of test 4 below used the
+  // absent claim above and therefore never reached that branch: restoring
+  // "(still alive)" passed it. A probe that cannot reach the code it is about
+  // returns the same answer whichever state is true.
+  const V1 = {
+    kind: 'v1',
+    pid: 4242,
+    token: 'a'.repeat(16),
+    host: 'testhost',
+    acquiredAt: 0,
+  } as const
+  const renderV1 = (reason: StuckLockReason): string =>
+    new StuckLockError('/tmp/t.lock', '/tmp/t.lock.reclaim', 'config lock', reason, V1).message
+
+  /**
+   * One phrase per reason, quoted from `describeRemedy`. The previous version
+   * of this suite used a reason -> classification table that was BOTH the spec
+   * and the oracle, so inverting two entries in the table and in the code
+   * together passed every assertion. These are cross-checked instead: each
+   * message must match its own phrase AND fail every other reason's, so a
+   * swapped or collapsed remedy fails even when code and table agree.
+   */
+  const SIGNATURE: Record<StuckLockReason, RegExp> = {
+    held: /retrying is the right first response/,
+    reclaim_unavailable: /orphaned by a crash inside the critical section/,
+    unreclaimable_legacy: /If its process is alive it still releases on its own/,
+    unreclaimable_unparseable: /An unparseable claim is never auto-reclaimed/,
+    reclaim_disabled: /a peer process without SKILLSMITH_LOCK_NO_AUTO_RECLAIM set still can/,
+  }
+
+  it('1. every reason opens with the same verb, and none claims a timeout', () => {
+    // "Timed out waiting" asserted a wait this class often never measured:
+    // `file-lock.ts` calls in with `timeoutMs: 0` and keeps its own 30s budget
+    // outside, so the wait the old message described was zero milliseconds.
+    for (const reason of REASONS) {
+      expect(render(reason), reason).toMatch(/^\[skillsmith\] Could not acquire config lock at /)
+      expect(render(reason), reason).not.toMatch(/Timed out/)
+    }
+  })
+
+  it('2. each reason renders its own remedy and no other reason’s', () => {
+    for (const reason of REASONS) {
+      const message = render(reason)
+      for (const other of REASONS) {
+        if (other === reason) {
+          expect(message, `${reason} must state its own remedy`).toMatch(SIGNATURE[other])
+        } else {
+          expect(message, `${reason} must not state ${other}'s remedy`).not.toMatch(
+            SIGNATURE[other]
+          )
+        }
+      }
+    }
+  })
+
+  it('3. the reasons whose answer is not determined say so, rather than guessing', () => {
+    // This is why the verb had to go. Each of these three depends on a fact
+    // `reason` does not carry, so a binary verb could only guess -- and for an
+    // orphaned reclaim lock, which never clears, it guessed "Timed out waiting".
+    expect(render('reclaim_unavailable')).toMatch(/If a reclaim is in flight, retrying clears this/)
+    expect(render('reclaim_unavailable')).toMatch(/only the manual steps clear it/)
+    expect(render('unreclaimable_legacy')).toMatch(/if it is dead, only the manual steps clear it/)
+    expect(render('reclaim_disabled')).toMatch(/retrying HERE cannot reclaim it/)
+  })
+
+  it('4. no reason asserts liveness that was never probed', () => {
+    // Known-positive control FIRST: prove this fixture reaches the branch the
+    // assertion is about. Without it the negative below is vacuous, which is
+    // exactly how it passed once already.
+    expect(renderV1('held')).toMatch(/held by pid 4242 on host 'testhost'/)
+    // `held` is also the SAFE DEFAULT when the probe never ran, so the old
+    // "(still alive)" rendered for a deliberately dead pid. Measured.
+    for (const reason of REASONS) {
+      expect(renderV1(reason), `v1/${reason}`).not.toMatch(/still alive/)
+      expect(render(reason), `absent/${reason}`).not.toMatch(/still alive/)
+    }
+  })
+
+  it('5. the unstick procedure is identical under every reason', () => {
+    for (const reason of REASONS) {
+      const message = render(reason)
+      expect(message, reason).toContain('1) confirm no skillsmith process is running')
+      expect(message, reason).toContain('2) inspect (read-only)')
+      expect(message, reason).toContain('3) remove ONLY the file(s) named above')
+    }
+  })
 })

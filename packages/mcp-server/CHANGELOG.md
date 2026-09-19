@@ -4,13 +4,27 @@ All notable changes to `@skillsmith/mcp-server` are documented here.
 
 ## [Unreleased]
 
+- **Fix**: SMI-6764 -- `apply_manifest_reconcile`'s lock-timeout message now renders `@skillsmith/core`'s
+  per-reason remedy verbatim instead of maintaining its own, and drops the per-reason verb along
+  with the primitive (see `@skillsmith/core`'s entry). This file is the one that drifted last time:
+  SMI-6759 changed the verb here and left `StuckLockError` saying something else about the same
+  lock file, in the same process. Three corrections to the text SMI-6759 added, each measured.
+  (1) It claimed the lock "will not clear on its own". A peer process without
+  `SKILLSMITH_LOCK_NO_AUTO_RECLAIM` set can reclaim and release it, measured clearing in under two
+  seconds -- and pairing that false certainty with an unqualified "remove the file" invited
+  deleting a lock a live peer had just taken, the exact break SMI-6735 removed. (2) It advised
+  "unset `SKILLSMITH_LOCK_NO_AUTO_RECLAIM` and retry", which cannot work here: this tool is
+  MCP-only and the server is a long-lived stdio process, so a shell `unset` never reaches it. The
+  message now names the server restart -- the one thing core cannot know, and so the only
+  reason-specific text this file still owns. (#2894)
+
 - **Fix**: SMI-6759 -- a dead lock holder is no longer reported as a timeout. When
   `SKILLSMITH_LOCK_NO_AUTO_RECLAIM` is set and a process was killed holding the manifest lock,
   `apply_manifest_reconcile` waited 30s and said "Timed out waiting", which reads as transient
   contention. That reason (`reclaim_disabled`) is returned only when auto-reclaim is off AND the
   holder is already dead, so retrying in that process can never help. It now says the lock could
-  not be acquired, states that the holder is dead and auto-reclaim is disabled, and names the one
-  remedy that touches no files: unset `SKILLSMITH_LOCK_NO_AUTO_RECLAIM`. (#TBD)
+  not be acquired, states that the holder is dead and auto-reclaim is disabled, and names the
+  remedy that touches no files. (#2893)
 
 - **Fix**: SMI-6735 -- this package's own manifest lock is gone, not fixed in place.
   `acquireManifestLock()`/`releaseManifestLock()` hand-rolled a second, independent age-based lock
