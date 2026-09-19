@@ -4,6 +4,22 @@ All notable changes to `@skillsmith/core` are documented here.
 
 ## [Unreleased]
 
+- **Fix**: SMI-6764 (post-merge round 5) -- `held`'s remedy no longer asserts the holder is alive.
+  The round-4 message read "A live holder is expected to release", which is the same liveness claim
+  the same commit had just deleted from `describeReason` as "a conclusion this function has no
+  standing to draw" -- relocated one sentence to the right rather than removed. `describeRemedy`
+  has strictly less standing than `describeReason`: it receives only `reason`, never the claim.
+  Three states reach `held` with no live holder, each measured: a definitely-dead pid when the
+  probe never ran (`timeoutMs` below `RECLAIM_PROBE_AFTER_MS`), a claim naming another host
+  (`isV1OwnerDead` bails on the host mismatch before signalling), and a pid `<= 0` or non-integer
+  (which `parseClaim` accepts as v1 and nothing will ever reclaim). The last two do not clear by
+  retrying, so the old wording also promised a recovery that cannot happen -- the same never-clears
+  trap this issue removed from `reclaim_unavailable`, surviving under the one reason the first four
+  rounds read as determined. `held` now states what is known and names the two cases that need the
+  manual steps. Test 4 was strengthened (it grepped the single literal `still alive`, so the
+  replacement phrasing passed it) and a new test 6 drives the real acquire loop into all three
+  states.
+
 - **Fix**: SMI-6764 -- lock-failure messages no longer guess whether retrying will help. Every
   reason now opens `Could not acquire <label> at <path>`, followed by a reason-specific remedy.
   The previous message picked between "Timed out waiting" and "Could not acquire" per reason; that

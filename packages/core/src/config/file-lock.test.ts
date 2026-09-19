@@ -24,9 +24,24 @@ import { afterEach, beforeEach, describe, expect, it } from 'vitest'
 import { existsSync, mkdirSync, rmSync, writeFileSync } from 'node:fs'
 import * as os from 'node:os'
 import * as path from 'node:path'
+import { hostname } from 'node:os'
 
 import { withFileLock } from './file-lock.js'
 import { StuckLockError } from './owned-lock.js'
+import { mintDeadPid } from '../../tests/helpers/deterministic-dead-pid.js'
+
+/** A well-formed v1 claim for `pid`, so the refusal reason is the one under test. */
+function v1(pid: number): string {
+  return (
+    JSON.stringify({
+      v: 1,
+      pid,
+      token: 'a'.repeat(16),
+      host: hostname(),
+      acquiredAt: Date.now(),
+    }) + '\n'
+  )
+}
 
 let dir: string
 let target: string
@@ -42,6 +57,71 @@ beforeEach(() => {
 
 afterEach(() => {
   rmSync(dir, { recursive: true, force: true })
+})
+
+describe('withFileLock — RETRYABLE_REASONS membership is behaviour (SMI-6776 round 2)', () => {
+  /**
+   * Membership in `RETRYABLE_REASONS` decides whether a refusal is waited out
+   * or fails at once. Three mutations to that set survived every test: dropping
+   * `reclaim_unavailable`, dropping `reclaim_disabled`, and adding
+   * `unreclaimable_unparseable`. Only the legacy reason was exercised through
+   * this wrapper, so the rest of the set was free.
+   *
+   * The discriminator does not need the full 30s budget. A non-retryable
+   * refusal rejects on the FIRST attempt; a retryable one is still polling.
+   * Sampling at 400ms separates them cleanly and keeps the suite fast.
+   */
+  const SETTLE_MS = 400
+
+  /** Resolves 'settled' if the acquire rejected quickly, 'pending' if it is still polling. */
+  async function settlesFast(): Promise<'settled' | 'pending'> {
+    const attempt = withFileLock(target, 'probe', async () => 'acquired').then(
+      () => 'settled' as const,
+      () => 'settled' as const
+    )
+    const timer = new Promise<'pending'>((r) => setTimeout(() => r('pending'), SETTLE_MS))
+    return Promise.race([attempt, timer])
+  }
+
+  it('an unparseable claim fails at once — it is NOT waited out', async () => {
+    writeFileSync(lockPath, 'not a claim at all')
+    await expect(settlesFast()).resolves.toBe('settled')
+  })
+
+  it('a live holder IS waited out — still polling when an unparseable claim would have failed', async () => {
+    // Known-positive control for the probe above: same harness, same window,
+    // opposite answer. Without this, "settled" could mean the probe is broken.
+    writeFileSync(lockPath, v1(process.pid))
+    await expect(settlesFast()).resolves.toBe('pending')
+  })
+
+  it('a busy reclaim lock IS waited out — the reason nothing else here reaches', async () => {
+    // `reclaim_unavailable`. This was the last of the three retry-set mutations
+    // still surviving after the other two were pinned, for the plain reason
+    // that no test produced this reason through `withFileLock` at all.
+    //
+    // Reaching it needs both halves: a dead owner on the main lock, so a
+    // reclaim is attempted, AND a reclaim lock that refuses. `file-lock.ts`
+    // passes `reclaimLockTimeoutMs: 0`, so a held reclaim lock yields
+    // 'unavailable' immediately rather than blocking.
+    writeFileSync(lockPath, v1(mintDeadPid()))
+    writeFileSync(`${lockPath}.reclaim`, v1(process.pid))
+    await expect(settlesFast()).resolves.toBe('pending')
+  })
+
+  it('a dead holder under SKILLSMITH_LOCK_NO_AUTO_RECLAIM IS waited out', async () => {
+    // `reclaim_disabled`. A differently-configured peer can still reclaim and
+    // release, so waiting can pay off -- which is why it is in the set.
+    const prev = process.env.SKILLSMITH_LOCK_NO_AUTO_RECLAIM
+    process.env.SKILLSMITH_LOCK_NO_AUTO_RECLAIM = '1'
+    try {
+      writeFileSync(lockPath, v1(mintDeadPid()))
+      await expect(settlesFast()).resolves.toBe('pending')
+    } finally {
+      if (prev === undefined) delete process.env.SKILLSMITH_LOCK_NO_AUTO_RECLAIM
+      else process.env.SKILLSMITH_LOCK_NO_AUTO_RECLAIM = prev
+    }
+  })
 })
 
 describe('withFileLock', () => {
