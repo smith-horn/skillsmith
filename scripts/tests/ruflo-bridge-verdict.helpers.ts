@@ -39,8 +39,14 @@ interface QuotedRegion {
 
 interface SpanTokens {
   regions: QuotedRegion[]
-  /** Every character outside a quoted region, in order. */
-  unquoted: string
+  /**
+   * The span with every quoted region collapsed to a single `'` marker and
+   * every unquoted character kept in place -- the string the ternary
+   * grammar below is checked against. A quote character can never occur in
+   * unquoted text (it would have opened a region), so the marker cannot
+   * collide with content.
+   */
+  shape: string
 }
 
 /** The three characters that open a string literal in JavaScript source. */
@@ -66,14 +72,15 @@ function stepInsideString(s: string, i: number, quote: string): { last: number; 
 }
 
 /**
- * One escape-aware walk over a value span, feeding both computed-syntax
- * detection and literal extraction. A span that ends inside a string
- * yields an unterminated region, which the caller must treat as
- * unrecognised: a truncated read is not evidence about the value.
+ * One escape-aware walk over a value span, feeding both the shape check
+ * and literal extraction. A span that ends inside a string yields an
+ * unterminated region (its marker still lands in `shape`), which the
+ * caller must treat as unrecognised: a truncated read is not evidence
+ * about the value.
  */
 function tokenizeSpan(span: string): SpanTokens {
   const regions: QuotedRegion[] = []
-  let unquoted = ''
+  let shape = ''
   let quote: string | null = null
   let start = 0
   for (let i = 0; i < span.length; i++) {
@@ -82,6 +89,7 @@ function tokenizeSpan(span: string): SpanTokens {
       const step = stepInsideString(span, i, quote)
       if (step.closed) {
         regions.push({ content: span.slice(start, i), terminated: true })
+        shape += "'"
         quote = null
       }
       i = step.last
@@ -90,10 +98,13 @@ function tokenizeSpan(span: string): SpanTokens {
     if (isQuote(ch)) {
       quote = ch
       start = i + 1
-    } else unquoted += ch
+    } else shape += ch
   }
-  if (quote !== null) regions.push({ content: span.slice(start), terminated: false })
-  return { regions, unquoted }
+  if (quote !== null) {
+    regions.push({ content: span.slice(start), terminated: false })
+    shape += "'"
+  }
+  return { regions, shape }
 }
 
 export interface BackendScan {
@@ -135,37 +146,39 @@ export function scanBackendSites(src: string): BackendScan {
       } else if ((ch === ',' || ch === ';') && depth === 0) break
     }
     const span = src.slice(start, end)
-    const { regions, unquoted } = tokenizeSpan(span)
+    const { regions, shape } = tokenizeSpan(span)
     // Governance on B1.2 (2026-09-19): a concatenation-built value such as
     // `'on' + 'nx'` used to be counted as two static literals ('on', 'nx')
     // instead of as dynamic. Governance on 8edd4fcef (F3) generalised the
-    // rule from "a `+` outside every quoted region" to "anything outside
-    // the quoted regions that a literal-or-ternary value does not need" --
-    // a call, an index, `||`, `??` -- because `pick('mock','onnx')` read as
-    // two static literals under the `+`-only rule, the same defect one
-    // operator over. Unlike the unrecognised-region path below, this one
-    // deliberately adds NOTHING to `found`: a computed value's quoted
+    // rule from "a `+` outside every quoted region" to a character class;
+    // PR #2900 gate round 3 then showed a class cannot tell an unquoted
+    // ARM from a condition (`x ? 'mock' : y ? 'onnx' : fallback` read as
+    // complete with the expected labels), so the rule is now the grammar
+    // itself, checked positionally over `shape`: a bare literal, or a chain
+    // of ternaries whose conditions are identifiers (with member or
+    // optional-chain access) and whose arms are literals. Anything else --
+    // a call, an index, `||`, `??`, `+`, a numeric or negated condition, an
+    // unquoted arm, two adjacent literals -- is a computed value. This
+    // path deliberately adds NOTHING to `found`: a computed value's quoted
     // operands are inputs to the computation ('on' + 'nx';
     // pick('mock','onnx')), not the value, so reporting them would name a
     // backend label that may never exist.
-    if (hasComputedSyntax(unquoted)) {
+    if (!isLiteralOrTernaryShape(shape)) {
       incomplete++
       continue
     }
-    // Every quoted region is either a recognised static literal or it is
-    // not; one unrecognised region (an escaped quote, an interpolation, an
-    // upper-case label, an unterminated string) marks the site incomplete
-    // even when another arm was recognised -- otherwise that arm vanishes
-    // from the report with no failure, the F8 shape again.
-    let recognised = 0
+    // The grammar guarantees at least one region. Each is either a
+    // recognised static literal or it is not; one unrecognised region (an
+    // escaped quote, an interpolation, an upper-case label, an unterminated
+    // string) marks the site incomplete even when another arm was
+    // recognised -- otherwise that arm vanishes from the report with no
+    // failure, the F8 shape again.
     let unrecognised = 0
     for (const r of regions) {
-      if (r.terminated && STATIC_LITERAL_RE.test(r.content)) {
-        found.add(r.content)
-        recognised++
-      } else unrecognised++
+      if (r.terminated && STATIC_LITERAL_RE.test(r.content)) found.add(r.content)
+      else unrecognised++
     }
-    if (recognised === 0 || unrecognised > 0) incomplete++
+    if (unrecognised > 0) incomplete++
   }
   return { sites, found: [...found].sort(), incomplete }
 }
@@ -210,20 +223,26 @@ export function resolveDriftGuardOutcome(state: DriftGuardState): DriftGuardOutc
 }
 
 /**
- * True when the span's unquoted text (`tokenizeSpan`'s `unquoted`) contains
- * anything the scanner does not model as a literal-or-ternary value. It
- * understands exactly two shapes: a bare literal, and a chain of ternaries
- * whose conditions are identifiers, member accesses or optional chains.
- * Everything else -- `+`, a call `(`, an index `[`, `||`, `??`, `!`, `=`
- * -- means the value is COMPUTED and the site is `incomplete`. `?` and `:`
- * are allowed for the ternary itself, so `??` needs its own alternation
- * (a first draft without it let `opts.backend ?? 'mock'` through). A `+`
- * inside a template literal's `${...}` is not seen here -- the backtick
- * region is quoted -- and such a site is still incomplete, its region
- * content failing STATIC_LITERAL_RE. A negated condition (`!isMock ? ...`)
- * reads as computed: the loud direction, and no upstream site uses it.
+ * The two value shapes the scanner models, as a grammar over a span's
+ * `shape` (every quoted region is a `'` marker): a bare literal, or a
+ * chain of ternaries `COND ? ' : COND ? ' : ... : '` whose conditions are
+ * identifiers with member (`a.b`) or optional-chain (`a?.b`) access and
+ * whose arms are literals. PR #2900 gate round 3: the previous character
+ * allowlist admitted `x ? 'mock' : y ? 'onnx' : fallback` as complete,
+ * because identifier characters are needed in condition position and a
+ * class cannot see position. Anything the grammar rejects is a computed
+ * value: `+`, a call, an index, `||`, `??`, a comparison, a negation
+ * (`!isMock ? ...` -- the loud direction, and no upstream site uses it), a
+ * numeric or spread condition, an object literal, an unquoted arm, a
+ * literal in condition position, two adjacent literals. Measured against
+ * a thirty-shape case table before it was written here. A `+` inside a
+ * template literal's `${...}` is not seen here -- the backtick region is
+ * one marker -- and such a site is still incomplete, its region content
+ * failing STATIC_LITERAL_RE.
  */
-const COMPUTED_SYNTAX_RE = /[^A-Za-z0-9_$.?:\s]|\?\?/
-function hasComputedSyntax(unquoted: string): boolean {
-  return COMPUTED_SYNTAX_RE.test(unquoted)
+const IDENTIFIER = String.raw`[A-Za-z_$][A-Za-z0-9_$]*`
+const CONDITION = `${IDENTIFIER}(?:\\??\\.${IDENTIFIER})*`
+const LITERAL_OR_TERNARY_SHAPE_RE = new RegExp(`^\\s*(?:${CONDITION}\\s*\\?\\s*'\\s*:\\s*)*'\\s*$`)
+function isLiteralOrTernaryShape(shape: string): boolean {
+  return LITERAL_OR_TERNARY_SHAPE_RE.test(shape)
 }

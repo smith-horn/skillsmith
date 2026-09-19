@@ -694,6 +694,20 @@ describe('scanBackendSites (SMI-6772 F8)', () => {
     expect(scan.sites).toBe(1)
     expect(scan.found).toEqual(['gpu', 'mock', 'onnx'])
     expect(scan.incomplete).toBe(0)
+    // Governance on 243912894 (F-B): a string closes only on its OWN quote
+    // type; a foreign quote inside it is content. Under the old character
+    // class a walker closing on ANY quote (`isQuote(s[i])` for
+    // `s[i] === quote`) yielded the phantom label found=['o']; under the
+    // positional grammar the leaked `nnx` fails the shape and the site
+    // reads computed, so found=[] no longer tells the two apart. The third
+    // assertion does: with a recognised arm FIRST, the pristine walker
+    // keeps 'mock' beside the unrecognised region, and the broken one
+    // loses it to the computed path.
+    expect(scanBackendSites(`backend: "o'nnx",`).found).toEqual([])
+    expect(scanBackendSites(`backend: 'a"b',`).found).toEqual([])
+    const mixedAfterArm = scanBackendSites(`backend: a ? 'mock' : "o'nnx",`)
+    expect(mixedAfterArm.found).toEqual(['mock'])
+    expect(mixedAfterArm.incomplete).toBe(1)
   })
 
   it('a fully-static template literal is recognized too', () => {
@@ -753,7 +767,7 @@ describe('scanBackendSites (SMI-6772 F8)', () => {
   })
 
   it('an escaped same-type quote as literal content, with no concatenation, is not a phantom literal -- all three quote styles', () => {
-    // Governance on f8134e340: LITERAL_RE ran over the RAW span text, so
+    // Governance on f8134e340: the literal regex ran over the RAW span text, so
     // `'a\'b'` (the value a'b) matched at the escaped quote and yielded a
     // phantom found=['b'] with incomplete=0 -- and nothing in the suite
     // noticed, because every earlier escaped-quote case carried a trailing
@@ -854,16 +868,61 @@ describe('scanBackendSites (SMI-6772 F8)', () => {
     }
   })
 
-  it('a ternary over an identifier, a member or an optional chain is still static -- pins what the computed-syntax class allows', () => {
-    // The generalised rule must not swallow the shapes the real upstream
-    // trees use: `?`, `:`, `.` and whitespace are the only non-identifier
-    // characters a ternary condition needs, and the minified form has no
-    // whitespace at all.
+  it('an unquoted arm, a literal in condition position, or two adjacent literals is computed -- the grammar sees position, a character class cannot', () => {
+    // PR #2900 gate round 3: `x ? 'mock' : y ? 'onnx' : fallback` read as
+    // found=['mock','onnx'], incomplete=0 under the character allowlist,
+    // because identifier characters must be allowed in condition position
+    // and a class cannot tell an arm from a condition. The drift guard's
+    // `found` equality AND its `incomplete === 0` both passed on that
+    // shape. The grammar is now checked positionally over the span's
+    // shape; every row here is rejected by it, and the last three were
+    // reachable holes the previous rounds had named (adjacent literals,
+    // a numeric condition, a spread).
+    for (const src of [
+      "backend: x ? 'mock' : y ? 'onnx' : fallback,",
+      "backend: x ? 'mock' : fallback,",
+      "backend: x === 'a' ? 'mock' : 'onnx',",
+      "backend: a ? b : c ? 'mock' : 'onnx',",
+      "backend: 'a' ? 'mock' : 'onnx',",
+      "backend: { a: 'mock' },",
+      "backend: 'onnx' 'mock',",
+      "backend: 1.5 ? 'mock' : 'onnx',",
+      "backend: ...x ? 'mock' : 'onnx',",
+      // Governance on 243912894 (F-A): the decisive shape simulates the
+      // real memory-bridge.js site gaining one unquoted arm -- sites, found
+      // AND incomplete all sat at their expected values while upstream
+      // emitted a third, unnamed backend. And the rest of that family:
+      // a member, an optional chain, a number, a keyword in a VALUE position.
+      "backend: isMock ? 'mock' : useGpu ? 'onnx' : gpuLabel,",
+      "backend: a ? 'mock' : cfg.backend,",
+      "backend: a ? 'mock' : a?.b,",
+      "backend: a ? 'mock' : 1.5,",
+      "backend: a ? 'mock' : null,",
+      // Governance on 243912894 (F-C): the grammar is closed -- a negated
+      // or compared condition is not an identifier chain.
+      "backend: !isMock ? 'mock' : 'onnx',",
+      "backend: x === 1 ? 'mock' : 'onnx',",
+    ]) {
+      const scan = scanBackendSites(src)
+      expect(scan.found, src).toEqual([])
+      expect(scan.incomplete, src).toBe(1)
+    }
+  })
+
+  it('a ternary over an identifier, a member or an optional chain is still static -- pins what the grammar allows', () => {
+    // The grammar must not swallow the shapes the real upstream trees use:
+    // an identifier, a member chain or an optional chain in condition
+    // position, literal arms, any whitespace including none (the minified
+    // form), and a condition that happens to be spelled like an arm name.
     for (const src of [
       "backend: isMock ? 'mock' : 'onnx',",
       "backend: opts.mode ? 'mock' : 'onnx',",
       "backend: a?.b ? 'mock' : 'onnx',",
       'backend:t?"mock":"onnx"}',
+      "backend: fallback ? 'mock' : 'onnx',",
+      "backend: isMock\n  ? 'mock'\n  : 'onnx',",
+      "backend: $isMock ? 'mock' : 'onnx',",
+      "backend: _is_mock ? 'mock' : 'onnx',",
     ]) {
       const scan = scanBackendSites(src)
       expect(scan.found, src).toEqual(['mock', 'onnx'])
@@ -882,6 +941,13 @@ describe('scanBackendSites (SMI-6772 F8)', () => {
     expect(scan.sites).toBe(2)
     expect(scan.found).toEqual(['mock', 'onnx'])
     expect(scan.incomplete).toBe(0)
+  })
+
+  it('a key that merely ends in `backend` is not a site -- pins the lookbehind behind the exact site count', () => {
+    // Governance on 243912894 (F-F): the drift guard pins `sites` exactly,
+    // and the negative lookbehind is the only thing keeping `dbBackend:`
+    // and `x.backend:` out of that count.
+    expect(scanBackendSites("dbBackend: 'mock', a.backend: 'onnx',").sites).toBe(0)
   })
 })
 
