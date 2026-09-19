@@ -37,6 +37,13 @@ import { removeIfSame } from '../../../src/install/remove-if-same.js'
 // One-shot: the next rename of this exact path first has another program move
 // the folder aside and put its own folder there.
 const swapBeforeRename = vi.hoisted(() => ({ path: null as string | null }))
+// Round 16: one-shot, fires during `checkForModifications`'s readdir of the
+// skill's own directory -- the window between the identity snapshot and the
+// delete. For a TRACKED skill `adoptedIdentity` is null, so `identityChanged`
+// returns null and does not guard this; the only thing that does is `seen`
+// being captured BEFORE the scan and re-checked by `removeIfSame` at delete
+// time. Moving that capture below the scan survives the whole suite.
+const swapDuringModScan = vi.hoisted(() => ({ path: null as string | null }))
 // One-shot: while this path is being parked, another install claims the same
 // manifest key by rewriting that record's installPath.
 const claimOnRename = vi.hoisted(() => ({
@@ -237,6 +244,17 @@ const makeFsMock = vi.hoisted(() => (actual: typeof import('node:fs/promises')) 
       throw Object.assign(new Error(`EACCES: permission denied, scandir '${String(args[0])}'`), {
         code: 'EACCES',
       })
+    }
+    // Round 16: one-shot, and the ONLY readdir of the skill's own directory
+    // is `checkForModifications`'s -- so this fires INSIDE the modification
+    // scan, which is the window the ordering mutation opened. The swap uses
+    // the REAL fs, so what lands at the path is a genuinely different inode.
+    if (swapDuringModScan.path !== null && String(args[0]) === swapDuringModScan.path) {
+      const victim = swapDuringModScan.path
+      swapDuringModScan.path = null
+      await actual.rename(victim, `${victim}-moved-aside`)
+      await actual.mkdir(victim)
+      await actual.writeFile(path.join(victim, 'THEIRS.md'), 'not ours\n', 'utf-8')
     }
     return actual.readdir(...args)
   }) as typeof actual.readdir
@@ -475,6 +493,7 @@ beforeEach(async () => {
 
 afterEach(async () => {
   swapBeforeRename.path = null
+  swapDuringModScan.path = null
   claimOnRename.path = null
   claimOnRename.manifestPath = null
   claimOnRename.reinstalledAt = null
@@ -716,6 +735,54 @@ describe('uninstall keeps the manifest honest (SMI-6529 round 16)', () => {
     expect(result.warning).toContain(parked)
   })
 
+  // SMI-6732 round 16, the other half of the ordering window. Round 14 pinned
+  // that dependency cleanup must not run BEFORE a successful removal. Nothing
+  // pinned that it must run before the manifest write can fail out of the
+  // function -- measured, deferring the block past that write survived the
+  // whole suite. The window was bounded on one side only.
+  //
+  // With the cleanup deferred, a manifest write that fails takes the early
+  // return and the rows are never cleared: the user is left with a deleted
+  // directory, a stale manifest record AND stale dependency rows, so
+  // `getDependents` keeps reporting an absent skill as a live dependent.
+  it('clears dependency rows even when the manifest write then fails', async () => {
+    const installPath = path.join(skillsDir, 'stuck-deps-skill')
+    await fs.mkdir(installPath)
+    await fs.writeFile(path.join(installPath, 'SKILL.md'), '# Installed\n')
+    await track('stuck-deps-skill', installPath)
+
+    const deps = new SkillDependencyRepository(db)
+    deps.setDependencies(
+      'author/stuck-deps-skill',
+      [
+        {
+          skill_id: 'author/stuck-deps-skill',
+          dep_type: 'skill_hard',
+          dep_target: 'a/five',
+          dep_version: null,
+          dep_source: 'declared',
+          confidence: null,
+          metadata: null,
+        },
+      ],
+      'declared'
+    )
+    expect(deps.getDependencies('author/stuck-deps-skill')).toHaveLength(1)
+    failRenameTo.path = manifestPath
+
+    const result = await createService().uninstall('stuck-deps-skill', { force: true })
+
+    // Preconditions, asserted so the row assertion cannot pass for the wrong
+    // reason: the removal must have SUCCEEDED and the manifest write must have
+    // FAILED. If either is untrue this test is exercising a different path.
+    expect(result.success).toBe(false)
+    expect(result.message).toContain('could not be updated')
+    await expect(fs.lstat(installPath)).rejects.toMatchObject({ code: 'ENOENT' })
+    // The property: the folder is gone, so the dependency rows go with it,
+    // whatever the manifest does afterwards.
+    expect(deps.getDependencies('author/stuck-deps-skill')).toHaveLength(0)
+  })
+
   it('says what to do when the folder is gone but its record could not be updated', async () => {
     const installPath = path.join(skillsDir, 'stuck-skill')
     await fs.mkdir(installPath)
@@ -814,6 +881,47 @@ describe('uninstall keeps the manifest honest (SMI-6529 round 16)', () => {
 })
 
 describe('uninstall removes only the folder it checked (SMI-6529 round 15)', () => {
+  // SMI-6732 round 16, from an ordering-axis mutation hunt. Every prior round
+  // mutated VALUES and PREDICATES; this one relocated a statement. Moving the
+  // identity snapshot
+  //
+  //     const seen = await inspectForRemoval(installPath)
+  //
+  // from ABOVE the `if (!force)` modification scan to BELOW it survived all
+  // 6,466 tests, and it opens a real deletion window.
+  //
+  // Why nothing caught it. For a TRACKED skill `adoptedIdentity` stays null
+  // (it is assigned only in the adoption branch), so `identityChanged` returns
+  // null and guards nothing here. The ONLY protection is that `seen` is taken
+  // before the scan and `removeIfSame` re-checks the entry against it at
+  // delete time. Capture it after the scan instead and a directory swapped in
+  // DURING the scan becomes the expected object -- and gets deleted.
+  //
+  // Every existing swap test injects during adoption or immediately before the
+  // park-rename. None injected during the modification scan, which is the
+  // longest window in the function because it stats every file in the folder.
+  it('leaves a folder swapped in DURING the modification scan, and keeps the manifest entry', async () => {
+    const installPath = path.join(skillsDir, 'modscan-skill')
+    await fs.mkdir(installPath)
+    await fs.writeFile(path.join(installPath, 'SKILL.md'), '# Installed\n')
+    await track('modscan-skill', installPath)
+    // Fires inside `checkForModifications`, so `force` must NOT be set --
+    // asserted below, because a forced uninstall skips the scan entirely and
+    // this test would then be exercising nothing.
+    swapDuringModScan.path = installPath
+
+    const result = await createService().uninstall('modscan-skill')
+
+    // The hook must actually have fired, or the assertions below pass for the
+    // wrong reason: a one-shot that never ran leaves `path` set.
+    expect(swapDuringModScan.path).toBeNull()
+    expect(result.success).toBe(false)
+    // Their folder is untouched -- this is the whole point.
+    expect(await fs.readFile(path.join(installPath, 'THEIRS.md'), 'utf-8')).toBe('not ours\n')
+    // And the record survives, so the user can retry.
+    expect(await manifestEntry('modscan-skill')).toBeDefined()
+  })
+
   it('leaves a folder another program swapped in, and keeps the manifest entry', async () => {
     const installPath = path.join(skillsDir, 'swapped-skill')
     await fs.mkdir(installPath)
