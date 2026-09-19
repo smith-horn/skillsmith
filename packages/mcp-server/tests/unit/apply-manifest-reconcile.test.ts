@@ -716,6 +716,14 @@ describe('input validation', () => {
 // instead — defeating owned-lock.ts's own documented two-file diagnostic for
 // its R1 residual risk (an orphaned reclaim lock).
 
+// SMI-6776 C4/C5: these are the literals passed to `new StuckLockError(...)`
+// below. Assertions must compare against THESE, not against `err.lockPath` /
+// `err.reclaimPath` -- mutating `this.lockPath` made the property its own
+// oracle, and two mutations survived every round until a cross-family pass
+// named the shape. An expected value read off the subject is not an oracle.
+const CTOR_LOCK_PATH = '/home/user/.skillsmith/manifest.json.lock'
+const CTOR_RECLAIM_PATH = '/home/user/.skillsmith/manifest.json.lock.reclaim'
+
 describe('withLockTimeoutMapping — lock-timeout error mapping (SMI-6735 finding 1)', () => {
   /** Minimal, deliberately-absent claim — `describeReason`'s `absent` path is never reached for any reason this suite exercises. */
   const claim = { kind: 'absent' } as const
@@ -744,7 +752,7 @@ describe('withLockTimeoutMapping — lock-timeout error mapping (SMI-6735 findin
     // The load-bearing part of the fix: the SAME path StuckLockError itself
     // named, not `${manifestPath}.lock` re-derived from a caller-supplied
     // string (the second, independently-drifting copy SMI-6735 removed).
-    expect(guardErr.ctx.path).toBe(err.lockPath)
+    expect(guardErr.ctx.path).toBe(CTOR_LOCK_PATH)
     expect(guardErr.ctx.lockReason).toBe('held')
     // 'held' never implicates the reclaim lock — no reclaimPath.
     expect(guardErr.ctx.reclaimPath).toBeUndefined()
@@ -834,13 +842,13 @@ describe('withLockTimeoutMapping — lock-timeout error mapping (SMI-6735 findin
     expect(caught).toBeInstanceOf(ReconcileGuardError)
     const guardErr = caught as ReconcileGuardError
     expect(guardErr.code).toBe('manifest.reconcile.lock_timeout')
-    expect(guardErr.ctx.path).toBe(err.lockPath)
+    expect(guardErr.ctx.path).toBe(CTOR_LOCK_PATH)
     expect(guardErr.ctx.lockReason).toBe('reclaim_unavailable')
-    expect(guardErr.ctx.reclaimPath).toBe(err.reclaimPath)
+    expect(guardErr.ctx.reclaimPath).toBe(CTOR_RECLAIM_PATH)
 
     const message = describeReconcileError(guardErr.code, guardErr.ctx)
-    expect(message).toContain(err.lockPath)
-    expect(message).toContain(err.reclaimPath)
+    expect(message).toContain(CTOR_LOCK_PATH)
+    expect(message).toContain(CTOR_RECLAIM_PATH)
     // SMI-6764 F1: this reason is TWO cases with opposite answers — a busy
     // reclaim lock (clears in ms) and one orphaned by a crash (never clears,
     // because nothing probes the reclaim lock's own owner). It was the last
@@ -882,7 +890,7 @@ describe('withLockTimeoutMapping — lock-timeout error mapping (SMI-6735 findin
     const message = describeReconcileError(guardErr.code, guardErr.ctx)
     expect(message).not.toMatch(/Timed out/)
     expect(message).toMatch(/Could not acquire/)
-    expect(message).not.toContain(err.reclaimPath)
+    expect(message).not.toContain(CTOR_RECLAIM_PATH)
     // SMI-6764 F4: shares the verb with `reclaim_disabled` but NOT the remedy
     // — unsetting the opt-out does nothing for a legacy claim, which is never
     // auto-reclaimed whatever the configuration (D-5). Gating the hint on the
@@ -947,9 +955,15 @@ describe('withLockTimeoutMapping — lock-timeout error mapping (SMI-6735 findin
       reasons.length
     )
     for (const reason of reasons) {
+      // Pass `reclaimPath` exactly where the real mapper does, so the
+      // two-path branch is actually exercised rather than skipped. Without
+      // this the loop only ever rendered the one-path form, and the branch
+      // that names the reclaim file went untested from this side.
+      const LOCK = '/home/user/.skillsmith/manifest.json.lock'
       const message = describeReconcileError('manifest.reconcile.lock_timeout', {
         lockReason: reason,
-        path: '/home/user/.skillsmith/manifest.json.lock',
+        path: LOCK,
+        ...(reason === 'reclaim_unavailable' ? { reclaimPath: `${LOCK}.reclaim` } : {}),
       })
       expect(message, reason).toContain(describeRemedy(reason))
       // `toContain` permits ADDITIONS as well as omissions, and this file is
@@ -965,6 +979,24 @@ describe('withLockTimeoutMapping — lock-timeout error mapping (SMI-6735 findin
           ? ` ${describeRemedy(reason)} This tool runs inside the MCP server, so restarting "this process" means restarting the server.`
           : ` ${describeRemedy(reason)}`
       expect(segment, `${reason}: nothing may be added between reason and steps`).toBe(expected)
+      // SMI-6776 C4/C5/C7/C8. Four mutations survived here, and the root cause
+      // is that every assertion read its expected value off the object under
+      // test. `expect(ctx.path).toBe(err.lockPath)` compares two things that
+      // BOTH move when `this.lockPath` is mutated -- the property became its
+      // own oracle. These literals are owned by the test and move only when a
+      // human edits them. The steps are composed the same way, so `cat` under
+      // "inspect (read-only)" and `rm` under "remove" are asserted rather than
+      // assumed; swapping them was a Critical survivor.
+      const paths = reason === 'reclaim_unavailable' ? [LOCK, `${LOCK}.reclaim`] : [LOCK]
+      const expectedSteps =
+        `Manual unstick -- 1) confirm no skillsmith process is running: ps -ax | grep -E '[s]killsmith|[s]klx'; ` +
+        `2) inspect (read-only): ${paths.map((x) => `cat ${x}`).join(' ; ')}; ` +
+        `3) if stale, remove it: ${paths.map((x) => `rm ${x}`).join(' ; ')}.`
+      expect(
+        message,
+        `${reason}: steps must name exactly these paths, with these commands`
+      ).toContain(expectedSteps)
+      expect(message, `${reason}: no undefined may reach the user`).not.toMatch(/undefined/)
       // `toContain` is blind to EXTRA content, so the positive half alone lets
       // this file append a second reason's remedy verbatim and stay green --
       // measured (SMI-6764 review round 4). That renders, for a LIVE holder,
