@@ -124,10 +124,19 @@ describe('acquireOwnedLock', () => {
     release2()
   })
 
-  it('4. release is idempotent — a second call neither throws nor unlinks', () => {
+  it('4. release is idempotent — a second call neither throws, unlinks, nor warns', () => {
     const release = acquireOwnedLock(target, { timeoutMs: 1_000 })
     release()
+    const warnSpy = vi.spyOn(console, 'warn').mockImplementation(() => undefined)
     expect(() => release()).not.toThrow()
+    // SMI-6776 round 2: "does not throw" was the whole assertion, so deleting
+    // the one-shot flag survived. Without it the second call re-enters the
+    // ownership check, finds the file already gone, and emits a spurious
+    // `lock_release_not_owner` warning -- which is the exact signal that
+    // means "something else took your lock". Crying wolf on a release path
+    // teaches people to ignore the one case that matters.
+    expect(warnSpy).not.toHaveBeenCalled()
+    warnSpy.mockRestore()
   })
 
   it('5. ownership-verified release: a foreign token in the lock file is never unlinked', () => {
