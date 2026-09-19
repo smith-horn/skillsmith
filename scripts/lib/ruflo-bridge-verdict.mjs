@@ -110,13 +110,23 @@ export const FIELDS_CONTEXT = Object.freeze([
  */
 export const FIELD_EMBEDDING_TOKEN = 'bridge.embedding'
 
-/** Matches the `backend=X` token inside FIELD_EMBEDDING_TOKEN's free text. */
-const EMBEDDING_TOKEN_RE = /backend=([a-z0-9._-]+)/i
+/**
+ * Matches every `backend=X` token inside FIELD_EMBEDDING_TOKEN's free text.
+ * Global on purpose: a non-global match read only the FIRST token, so a
+ * string carrying `backend=onnx` and then `backend=mock` read as agreeing
+ * (governance on B1.2, 2026-09-19). Every occurrence is returned and the
+ * caller treats more than one distinct value as its own contradiction.
+ */
+const EMBEDDING_TOKEN_RE = /backend=([a-z0-9._-]+)/gi
 
-function extractEmbeddingToken(value) {
-  if (typeof value !== 'string') return null
-  const m = value.match(EMBEDDING_TOKEN_RE)
-  return m ? m[1] : null
+/** Distinct `backend=` tokens in document order; [] when none or not a string. */
+function extractEmbeddingTokens(value) {
+  if (typeof value !== 'string') return []
+  const seen = []
+  for (const m of value.matchAll(EMBEDDING_TOKEN_RE)) {
+    if (!seen.includes(m[1])) seen.push(m[1])
+  }
+  return seen
 }
 
 export const EXIT = Object.freeze({
@@ -193,7 +203,13 @@ export function bridgeVerdict(payload) {
   // embeddingBackend fields and leaves this string saying "backend=mock"
   // is exactly the shape this check exists to reject -- see the fixture
   // generator's own comment in ruflo-bridge-verdict.test.ts.
-  const embeddingToken = extractEmbeddingToken(observed[FIELD_EMBEDDING_TOKEN])
+  const embeddingTokens = extractEmbeddingTokens(observed[FIELD_EMBEDDING_TOKEN])
+  if (embeddingTokens.length > 1) {
+    return malformed(
+      `${FIELD_EMBEDDING_TOKEN} names ${embeddingTokens.length} distinct backend= tokens (${embeddingTokens.join(', ')}); the handler renders exactly one`
+    )
+  }
+  const embeddingToken = embeddingTokens.length === 1 ? embeddingTokens[0] : null
   if (embeddingToken !== null && embeddingToken !== a) {
     return malformed(
       `${FIELD_EMBEDDING_TOKEN} names backend=${embeddingToken}, contradicting embeddingBackend=${a}`

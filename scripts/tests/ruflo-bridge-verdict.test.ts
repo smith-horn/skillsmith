@@ -226,6 +226,24 @@ describe('ruflo-bridge-verdict (SMI-6744 Wave 0)', () => {
       expect(bridgeVerdict(p).verdict).toBe('healthy')
     })
 
+    it('two contradicting backend= tokens in one string are malformed, whichever comes first', () => {
+      // Governance on B1.2: a non-global match read only the FIRST token, so
+      // "backend=onnx ... backend=mock" agreed with embeddingBackend=onnx and
+      // verdicted healthy. Both orders must be rejected.
+      const p = syntheticHealthy()
+      p.bridge.embedding = 'all-MiniLM-L6-v2 (384-dim, backend=onnx) fallback backend=mock'
+      const r = bridgeVerdict(p)
+      expect(r.verdict).toBe('malformed')
+      expect(r.reason).toContain('2 distinct backend= tokens')
+      const q = syntheticHealthy()
+      q.bridge.embedding = 'backend=mock then backend=onnx'
+      expect(bridgeVerdict(q).verdict).toBe('malformed')
+      // The same token repeated is not a contradiction.
+      const same = syntheticHealthy()
+      same.bridge.embedding = 'backend=onnx (backend=onnx)'
+      expect(bridgeVerdict(same).verdict).toBe('healthy')
+    })
+
     it('a bridge.embedding string with no backend= token does not change the verdict', () => {
       const p = syntheticHealthy()
       p.bridge.embedding = 'all-MiniLM-L6-v2 (384-dim)'
@@ -683,6 +701,17 @@ describe('scanBackendSites (SMI-6772 F8)', () => {
     const dynamicLowercase = scanBackendSites('backend: `${x}`,')
     expect(dynamicLowercase.found).toEqual([])
     expect(dynamicLowercase.incomplete).toBe(1)
+  })
+
+  it('a concatenation-built value is incomplete, never two phantom literals', () => {
+    // Governance on B1.2: `'on' + 'nx'` used to scan as found=['nx','on'].
+    const scan = scanBackendSites("backend: 'on' + 'nx',")
+    expect(scan.found).toEqual([])
+    expect(scan.incomplete).toBe(1)
+    // A `+` inside a quoted literal is content, not concatenation.
+    const quoted = scanBackendSites("backend: 'onnx',\nlabel: 'a+b',")
+    expect(quoted.found).toEqual(['onnx'])
+    expect(quoted.incomplete).toBe(0)
   })
 
   it('a bare identifier with no literal at all is incomplete, not silently skipped', () => {

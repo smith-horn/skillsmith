@@ -62,8 +62,18 @@ export function scanBackendSites(src: string): BackendScan {
         depth--
       } else if ((ch === ',' || ch === ';') && depth === 0) break
     }
+    const span = src.slice(start, end)
+    // Governance on B1.2 (2026-09-19): a concatenation-built value such as
+    // `'on' + 'nx'` matched LITERAL_RE twice and was counted as two static
+    // literals ('on', 'nx') instead of as dynamic. A `+` outside every quoted
+    // region in the span means the value is computed, so the site is
+    // `incomplete`, the same treatment as template interpolation.
+    if (hasUnquotedPlus(span)) {
+      incomplete++
+      continue
+    }
     let n = 0
-    for (const lit of src.slice(start, end).matchAll(LITERAL_RE)) {
+    for (const lit of span.matchAll(LITERAL_RE)) {
       const value = lit[1] ?? lit[2] ?? lit[3]
       found.add(value)
       n++
@@ -110,4 +120,20 @@ export function resolveDriftGuardOutcome(state: DriftGuardState): DriftGuardOutc
     }
   }
   return { skip: false, fail: null }
+}
+
+/** True when a `+` occurs in `span` outside every quoted region. */
+function hasUnquotedPlus(span: string): boolean {
+  let quote: string | null = null
+  for (let i = 0; i < span.length; i++) {
+    const ch = span[i]
+    if (quote !== null) {
+      if (ch === '\\') i++
+      else if (ch === quote) quote = null
+      continue
+    }
+    if (ch === "'" || ch === '"' || ch === '`') quote = ch
+    else if (ch === '+') return true
+  }
+  return false
 }
