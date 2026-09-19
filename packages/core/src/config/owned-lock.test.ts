@@ -628,20 +628,54 @@ describe('SMI-6764: one verb for every reason, and a remedy that may say "it dep
     new StuckLockError('/tmp/t.lock', '/tmp/t.lock.reclaim', 'config lock', reason, V1).message
 
   /**
-   * One phrase per reason, quoted from `describeRemedy`. The previous version
-   * of this suite used a reason -> classification table that was BOTH the spec
-   * and the oracle, so inverting two entries in the table and in the code
-   * together passed every assertion. These are cross-checked instead: each
-   * message must match its own phrase AND fail every other reason's, so a
-   * swapped or collapsed remedy fails even when code and table agree.
+   * EXACT expected remedy per reason, not a phrase from it (SMI-6768 round 6).
+   *
+   * Two rounds of phrase lists failed here, and the second failure is the
+   * argument for abandoning the technique rather than extending it. A list of
+   * spellings only ever catches a wording someone already imagined: round 5
+   * re-stated a liveness claim one sentence to the right and passed a
+   * `/still alive/` grep; round 6 then defeated the broadened list with "The
+   * lock is held by a running process that will release it", and separately
+   * showed that DELETING both new sentences, or INVERTING their truth, left
+   * every assertion green. A phrase list constrains the absence of known
+   * strings. It cannot constrain presence, and it cannot constrain truth.
+   *
+   * `toBe` constrains all three. It does not understand the prose -- nothing
+   * available here does -- but it makes every change to it fail, which forces
+   * the change back through a human. That is the honest guarantee, and it is
+   * strictly more than the list gave.
    */
-  const SIGNATURE: Record<StuckLockReason, RegExp> = {
-    held: /retrying is the right first response/,
-    reclaim_unavailable: /orphaned by a crash inside the critical section/,
-    unreclaimable_legacy: /If its process is alive it still releases on its own/,
-    unreclaimable_unparseable: /An unparseable claim is never auto-reclaimed/,
-    reclaim_disabled: /a peer process without SKILLSMITH_LOCK_NO_AUTO_RECLAIM set still can/,
+  const EXPECTED_REMEDY: Record<StuckLockReason, string> = {
+    held:
+      'The holder was not established to be gone, so retrying is the right first response. ' +
+      'If it persists, the claim may name another host or a pid this process cannot probe; ' +
+      'neither is auto-reclaimed from here, so only the manual steps clear those.',
+    reclaim_unavailable:
+      'If a reclaim is in flight, retrying clears this. If it persists, the reclaim lock named ' +
+      'below was orphaned by a crash inside the critical section; nothing reclaims that one ' +
+      'automatically, so only the manual steps clear it.',
+    unreclaimable_legacy:
+      'A legacy claim is never auto-reclaimed, in any configuration (SMI-5883 D-5). If its ' +
+      'process is alive it still releases on its own; if it is dead, only the manual steps clear it.',
+    unreclaimable_unparseable:
+      'An unparseable claim is never auto-reclaimed, so only the manual steps clear it.',
+    reclaim_disabled:
+      'The holder is already dead and auto-reclaim is off in this process, so retrying HERE ' +
+      'cannot reclaim it -- though a peer process without SKILLSMITH_LOCK_NO_AUTO_RECLAIM set ' +
+      'still can. Unset it here and restart this process, or use the manual steps.',
   }
+
+  /**
+   * The `held` reason clause, both claim kinds, exact. Round 6 showed the
+   * remedy table alone leaves `describeReason` free: appending "(the process
+   * is still running)" to the v1 branch, or ", which is still running" to the
+   * non-v1 branch, both rendered a false liveness claim with the suite green.
+   * The message has two prose layers and pinning one is not pinning it.
+   */
+  const EXPECTED_HELD_REASON = {
+    v1: "held by pid 4242 on host 'testhost'",
+    absent: 'held by another process',
+  } as const
 
   it('1. every reason opens with the same verb, and none claims a timeout', () => {
     // "Timed out waiting" asserted a wait this class often never measured:
@@ -653,19 +687,24 @@ describe('SMI-6764: one verb for every reason, and a remedy that may say "it dep
     }
   })
 
-  it('2. each reason renders its own remedy and no other reason’s', () => {
+  it('2. every reason renders its remedy EXACTLY, and no other reason\u2019s', () => {
     for (const reason of REASONS) {
+      // Presence and truth, not just absence of a known-bad phrase.
+      expect(describeRemedy(reason), `${reason} remedy must be exact`).toBe(EXPECTED_REMEDY[reason])
       const message = render(reason)
+      expect(message, `${reason} must render its own remedy`).toContain(EXPECTED_REMEDY[reason])
       for (const other of REASONS) {
-        if (other === reason) {
-          expect(message, `${reason} must state its own remedy`).toMatch(SIGNATURE[other])
-        } else {
-          expect(message, `${reason} must not state ${other}'s remedy`).not.toMatch(
-            SIGNATURE[other]
-          )
-        }
+        if (other === reason) continue
+        expect(message, `${reason} must not state ${other}'s remedy`).not.toContain(
+          EXPECTED_REMEDY[other]
+        )
       }
     }
+  })
+
+  it('2b. `held`\u2019s reason clause is exact too, on both claim kinds', () => {
+    expect(renderV1('held')).toContain(`: ${EXPECTED_HELD_REASON.v1}. `)
+    expect(render('held')).toContain(`: ${EXPECTED_HELD_REASON.absent}. `)
   })
 
   it('3. the reasons whose answer is not determined say so, rather than guessing', () => {
@@ -754,7 +793,13 @@ describe('SMI-6764: one verb for every reason, and a remedy that may say "it dep
         name: 'b. claim from another host -- liveness never probed',
         claim: {
           v: 1,
-          pid: process.pid,
+          // DEAD, deliberately (SMI-6768 round 6). With a live pid, `false`
+          // from the control below is equally consistent with "probed and
+          // found alive", so it cannot witness the host-mismatch bail this
+          // case is named for. Dead + foreign host makes `false` mean
+          // "declined to probe" and nothing else. Verified: removing the host
+          // guard from `isV1OwnerDead` now fails this case by name.
+          pid: mintDeadPid(),
           token: 'b'.repeat(16),
           host: `not-${hostname()}`,
           acquiredAt: 0,
@@ -799,6 +844,16 @@ describe('SMI-6764: one verb for every reason, and a remedy that may say "it dep
       // Tie the rendered text to its single source, so re-wording `held`'s
       // remedy has to come back through this test and its three states.
       expect(error.message, name).toContain(describeRemedy('held'))
+      // Case (a) is the only path that reaches the deadline's final read-only
+      // claim fetch. Deleting that fetch left every test green while the
+      // message silently degraded from the holder's pid and host to "held by
+      // another process" -- and `file-lock.ts` passes `timeoutMs: 0`, so every
+      // caller through it takes this path (SMI-6768 round 6).
+      if (name.startsWith('a.')) {
+        expect(error.message, `${name}: must name the holder it read`).toMatch(
+          new RegExp(`held by pid ${String(claim.pid)} on host '${hostname()}'`)
+        )
+      }
     }
   })
 })

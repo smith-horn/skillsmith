@@ -952,6 +952,19 @@ describe('withLockTimeoutMapping — lock-timeout error mapping (SMI-6735 findin
         path: '/home/user/.skillsmith/manifest.json.lock',
       })
       expect(message, reason).toContain(describeRemedy(reason))
+      // `toContain` permits ADDITIONS as well as omissions, and this file is
+      // the one that drifted from the primitive before. Round 6 measured it:
+      // adding ` The process named above is still running and will release the
+      // lock shortly.` for `held` rendered a liveness claim contradicting
+      // core's careful wording one sentence earlier, with the suite green.
+      // Pin the whole segment between the reason and the unstick steps, so the
+      // only thing this file may add is the MCP-specific sentence it owns.
+      const segment = message.split(`(reason: ${reason}).`)[1]?.split(' Manual unstick --')[0]
+      const expected =
+        reason === 'reclaim_disabled'
+          ? ` ${describeRemedy(reason)} This tool runs inside the MCP server, so restarting "this process" means restarting the server.`
+          : ` ${describeRemedy(reason)}`
+      expect(segment, `${reason}: nothing may be added between reason and steps`).toBe(expected)
       // `toContain` is blind to EXTRA content, so the positive half alone lets
       // this file append a second reason's remedy verbatim and stay green --
       // measured (SMI-6764 review round 4). That renders, for a LIVE holder,
