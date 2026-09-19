@@ -729,6 +729,10 @@ describe('uninstall keeps the manifest honest (SMI-6529 round 16)', () => {
     expect(result.message).toContain('run the same remove again once that file is writable')
     await expect(fs.lstat(installPath)).rejects.toMatchObject({ code: 'ENOENT' })
     expect(await manifestEntry('stuck-skill')).toBeDefined()
+    // SMI-6732 M4: the folder was actually removed before the manifest write
+    // failed -- `removedPath` is what tells a caller that, distinct from the
+    // "nothing was removed" shape every other failure in this file returns.
+    expect(result.removedPath).toBe(installPath)
   })
 
   // Round 18 (cross-model review): timestamps are not a unique generation
@@ -2325,5 +2329,70 @@ describe('identityChanged only compares birthtimeNs when BOTH sides report one (
     expect(result.success, result.message).toBe(true)
     expect(result.message).not.toContain('replaced by a different directory')
     await expect(fs.lstat(untracked)).rejects.toMatchObject({ code: 'ENOENT' })
+  })
+})
+
+describe('checkNotTrackedElsewhere establishes the REAL creation identity (SMI-6732 M2)', () => {
+  // A mutant that zeroes `birthtimeNs` in the returned `DirIdentity` is
+  // invisible to every other test here, because none of them compares the
+  // returned identity's birthtime against anything -- they only ever read
+  // `dev`/`ino` back out, or feed a HAND-CONSTRUCTED identity into
+  // `identityChanged` directly (see the `M-D` and `R5` describes above),
+  // which never round-trips through `checkNotTrackedElsewhere` at all. This
+  // calls `checkNotTrackedElsewhere` on a real directory and checks the
+  // birthtime it hands back against an independently-taken `lstat` of the
+  // SAME directory, taken before the call and never mutated afterward, so
+  // the two reads must report the identical creation instant.
+  it('returns the real filesystem birthtimeNs, not a zeroed one', async () => {
+    const target = path.join(skillsDir, 'identity-birthtime-target')
+    await fs.mkdir(target)
+    await fs.writeFile(path.join(target, 'SKILL.md'), '# real\n')
+
+    // Precondition, asserted loudly: this test can only discriminate a real
+    // birthtime from a zeroed one on a filesystem that reports one at all.
+    // An equality assertion below would pass vacuously (0n === 0n) on a
+    // filesystem that does not, which would test nothing -- so that case
+    // fails the test outright here instead of silently validating a
+    // zeroed-out mutant. Both this container's /tmp and its overlay
+    // filesystem report a real birthtime.
+    const precondition = await fs.lstat(target, { bigint: true })
+    expect(precondition.birthtimeNs).not.toBe(0n)
+
+    const result = await checkNotTrackedElsewhere(target, 'identity-birthtime-target', {})
+
+    expect(result.ok).toBe(true)
+    if (!result.ok) throw new Error('unreachable: asserted result.ok above')
+    expect(result.identity.birthtimeNs).not.toBe(0n)
+    expect(result.identity.birthtimeNs).toBe(precondition.birthtimeNs)
+  })
+})
+
+describe('uninstall clears skill_dependencies for the exact skill it removed (SMI-6732 M5)', () => {
+  // Every existing fixture in this file constructs `SkillInstallationService`
+  // with a REAL `SkillDependencyRepository` (see `createService` above) and
+  // never asserts on it, so a deleted `skillDependencyRepo.clearAll(...)`
+  // call is invisible to the rest of the suite -- the manifest and disk
+  // state it checks come out identical either way. A spy on the prototype
+  // method observes the call itself, independent of the underlying table
+  // existing.
+  it("calls skillDependencyRepo.clearAll with the removed skill's id", async () => {
+    const installPath = path.join(skillsDir, 'dep-cleared-skill')
+    await fs.mkdir(installPath)
+    await fs.writeFile(path.join(installPath, 'SKILL.md'), '# Installed\n')
+    await track('dep-cleared-skill', installPath)
+    const clearAllSpy = vi.spyOn(SkillDependencyRepository.prototype, 'clearAll')
+
+    try {
+      const result = await createService().uninstall('dep-cleared-skill', { force: true })
+
+      expect(result.success).toBe(true)
+      expect(clearAllSpy).toHaveBeenCalledTimes(1)
+      // `track()` records this skill's id as `author/<name>` -- asserting the
+      // call argument, not merely that some call happened, is what a
+      // deleted-call mutant cannot satisfy vacuously.
+      expect(clearAllSpy).toHaveBeenCalledWith('author/dep-cleared-skill')
+    } finally {
+      clearAllSpy.mockRestore()
+    }
   })
 })

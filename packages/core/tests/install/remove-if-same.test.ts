@@ -384,4 +384,89 @@ describe('removeIfSame (SMI-6529 round 15)', () => {
     expect(left).toHaveLength(1)
     expect(left[0]).toMatch(PARKED)
   })
+
+  // SMI-6732 M1: the park name's unpredictability -- not merely its shape --
+  // is what makes the recursive delete un-raceable. A shape check
+  // (`PARKED`, `[0-9a-f]{32}`) is satisfied by 32 literal zeroes just as well
+  // as by real randomness, so it cannot tell `randomBytes(16)` apart from a
+  // constant. Two removals of entries with the SAME basename can only differ
+  // in their random suffix -- the tag and basename are identical -- so
+  // comparing those two suffixes directly is a test of the unpredictability
+  // itself, not of the pattern it happens to match.
+  it('parks two equivalent removals under two different random names', async () => {
+    mockFs(
+      'rm',
+      () =>
+        (async (p: PathLike) => {
+          throw eacces(p)
+        }) as RealFs['rm']
+    )
+    const { removeIfSame } = await load()
+
+    const groupA = path.join(root, 'group-a')
+    const groupB = path.join(root, 'group-b')
+    await mkdir(groupA)
+    await mkdir(groupB)
+    // Same basename in both groups: `parkedName` derives its non-random
+    // portion from `path.basename(target)` + the fixed `PARK_TAG`, so an
+    // identical basename isolates the random suffix as the only thing that
+    // can differ between the two parked names below.
+    const targetA = path.join(groupA, 'skill')
+    const targetB = path.join(groupB, 'skill')
+    await mkdir(targetA)
+    await mkdir(targetB)
+
+    const resultA = await removeIfSame(targetA, await lstat(targetA))
+    const resultB = await removeIfSame(targetB, await lstat(targetB))
+
+    expect(resultA.removed).toBe(false)
+    expect(resultB.removed).toBe(false)
+    const reasonA = resultA.removed ? '' : resultA.reason
+    const reasonB = resultB.removed ? '' : resultB.reason
+    const parkedA = reasonA.slice(reasonA.lastIndexOf(' ') + 1)
+    const parkedB = reasonB.slice(reasonB.lastIndexOf(' ') + 1)
+    expect(path.basename(parkedA)).toMatch(PARKED)
+    expect(path.basename(parkedB)).toMatch(PARKED)
+    const hexA = path.basename(parkedA).match(/[0-9a-f]{32}$/)?.[0]
+    const hexB = path.basename(parkedB).match(/[0-9a-f]{32}$/)?.[0]
+    expect(hexA).toBeDefined()
+    expect(hexB).toBeDefined()
+    // The property under test: real randomness makes these differ. A
+    // constant-hex mutant produces the SAME suffix both times.
+    expect(hexA).not.toBe(hexB)
+  })
+
+  // SMI-6732 M3: `force: true` on the final `fsp.rm(parked, ...)` call means
+  // "tolerate the parked directory already being gone" -- the two only
+  // differ when the parked path is absent at `rm` time. This constructs
+  // that race for real: another actor deletes the parked directory (by
+  // calling the REAL `rm` from inside this mock) in the instant before
+  // `removeIfSame`'s own `fsp.rm(parked, {...})` call runs against it, so
+  // that call always lands on an already-absent path. With the real
+  // `force: true` that still reports success; a `force: false` mutant makes
+  // that same call throw ENOENT, which `removeIfSame` cannot recover from
+  // for a directory (only a regular file can be linked back).
+  it('still reports success when the parked directory is removed by another actor an instant before its own rm call', async () => {
+    const target = path.join(root, 'skill')
+    await mkdir(target)
+    await writeFile(path.join(target, 'SKILL.md'), 'ours', 'utf-8')
+    mockFs(
+      'rm',
+      (actual) =>
+        (async (...args: Parameters<RealFs['rm']>) => {
+          // Another actor wins the race and removes the parked directory
+          // first, using the REAL rm -- this always succeeds regardless of
+          // the options `removeIfSame` itself will pass a moment later.
+          await actual.rm(args[0], { recursive: true, force: true })
+          // `removeIfSame`'s own call, now against an already-absent path.
+          return actual.rm(...args)
+        }) as RealFs['rm']
+    )
+    const { removeIfSame } = await load()
+
+    const result = await removeIfSame(target, await lstat(target))
+
+    expect(result).toEqual({ removed: true })
+    await expect(lstat(target)).rejects.toMatchObject({ code: 'ENOENT' })
+  })
 })
