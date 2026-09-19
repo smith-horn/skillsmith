@@ -8,6 +8,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import * as fs from 'fs/promises'
 import * as path from 'path'
 import * as os from 'os'
+import { randomBytes } from 'node:crypto'
 import { SkillInstallationService } from '../../../src/services/skill-installation.service.js'
 import { ManifestManager } from '../../../src/services/skill-manifest.js'
 import { SkillRepository } from '../../../src/repositories/SkillRepository.js'
@@ -1257,6 +1258,46 @@ describe('uninstall refuses dot-prefixed names (SMI-6732 round 4, pre-merge gate
 
     expect(result.success).toBe(false)
     expect(await fs.readFile(path.join(parked, 'data.txt'), 'utf-8')).toBe('keep\n')
+  })
+
+  // SMI-6732 round 15, from the cross-family pre-merge gate (PR-16). The two
+  // tests above are the ONLY coverage this rule had, and both name a literal.
+  // Measured: narrowing the guard to
+  //
+  //     if (skillName === '.git' || skillName === '.hidden-thing')
+  //
+  // typechecks and passes all 6,465 tests, while letting `.ssh`, `.npmrc`,
+  // `.config` and every other dot-prefixed directory through to deletion.
+  // The rule's property is "EVERY dot-prefixed name is refused"; the suite
+  // pinned two instances of it.
+  //
+  // Same defect as the park name asserted by its 32-hex SHAPE, and it is
+  // older than any of the mutation rounds -- this guard is round 4 code,
+  // written because `uninstall('.git')` deleted a repository's history. So
+  // the fixed names get a GENERATED sibling: an implementation cannot
+  // special-case a name it cannot predict, which is the only way to state
+  // "every" in a test rather than enumerate it.
+  it('refuses EVERY dot-prefixed name, including ones no test names', async () => {
+    const generated = '.' + randomBytes(8).toString('hex')
+    // Real dot-directories a user would be devastated to lose, plus the
+    // generated one that no special case can anticipate.
+    const names = ['.ssh', '.npmrc', '.config', generated]
+
+    for (const name of names) {
+      const dir = path.join(skillsDir, name)
+      await fs.mkdir(dir, { recursive: true })
+      await fs.writeFile(path.join(dir, 'precious.txt'), 'keep\n')
+
+      const result = await createService().uninstall(name, { force: true })
+
+      // One reason to fail per assertion, and the name in the message, so a
+      // failure says WHICH name got through rather than just that one did.
+      expect(`${name}: ${result.success}`).toBe(`${name}: false`)
+      expect(`${name}: ${result.message}`).toContain('dot-prefixed')
+      expect(`${name}: ${await fs.readFile(path.join(dir, 'precious.txt'), 'utf-8')}`).toBe(
+        `${name}: keep\n`
+      )
+    }
   })
 
   // POSITIVE CONTROL: a name merely CONTAINING a dot is a normal skill.
