@@ -9,11 +9,18 @@ import type { Probe } from './_lib/probe-path.js'
 
 /**
  * Matches a `backend:`-shaped object-property site, key optionally quoted.
- * Module-private on purpose (governance on 8edd4fcef, F8): a `/g` regex
- * carries `lastIndex`, and one `.test()` by an outside consumer would make
- * the next `matchAll` here start mid-source and silently halve the site
- * count -- the exact quiet shrink the drift guard's exact-count assertion
- * exists to catch.
+ * It runs over raw source; a match counts as a site only when its colon
+ * is code by `maskedPositions` (SMI-6781, PR #2900 gate round 4: a
+ * `backend:` inside a string, template or comment used to count, so a
+ * vanished real site could be masked by same-shaped quoted text with the
+ * exact expected counts). The colon, not the match start, is the test: a
+ * string whose CONTENT begins with `backend` starts its match at the
+ * string's own opening quote, which is code, and only the colon tells it
+ * from a quoted key. Module-private on purpose (governance on 8edd4fcef,
+ * F8): a `/g` regex carries `lastIndex`, and one `.test()` by an outside
+ * consumer would make the next `matchAll` here start mid-source and
+ * silently halve the site count -- the exact quiet shrink the drift
+ * guard's exact-count assertion exists to catch.
  */
 const BACKEND_SITE_RE = /(?<![A-Za-z0-9_$.])["']?backend["']?\s*:\s*/g
 
@@ -72,6 +79,69 @@ function stepInsideString(s: string, i: number, quote: string): { last: number; 
 }
 
 /**
+ * A content map of `src`: `masked[i]` is 1 when `src[i]` is string or
+ * template CONTENT (between the delimiters) or part of a line (`//`) or
+ * block comment (delimiters included), 0 for everything else. The site
+ * regex runs over the ORIGINAL source and consults this map at exactly one
+ * position, its colon, so the string delimiters' own status is immaterial
+ * (a mutation that masks them survives every test, and rightly: it changes
+ * no verdict); they are left at 0 only so the map reads as "content".
+ * String state is consulted before a comment opener is looked for, so a
+ * URL's `//` or a `/*` inside a string starts nothing. Steps inside strings come from
+ * stepInsideString, the same step the value scan uses. Not modelled, and
+ * stated rather than implied: a regular-expression literal. One that
+ * contains a quote or a comment opener desyncs this map from that point
+ * on, in the loud direction -- sites vanish or appear and the drift
+ * guard's exact site count fails -- never as a silent same-count mask. A
+ * block comment left open masks to the end of the source, also loud.
+ * Measured against a twenty-four-shape case table on the host before it
+ * was written here.
+ */
+function maskedPositions(src: string): Uint8Array {
+  const masked = new Uint8Array(src.length)
+  let quote: string | null = null
+  let comment: 'none' | 'line' | 'block' = 'none'
+  for (let i = 0; i < src.length; i++) {
+    const ch = src[i]
+    if (quote !== null) {
+      const step = stepInsideString(src, i, quote)
+      if (step.closed) {
+        quote = null
+        continue
+      }
+      for (let k = i; k <= Math.min(step.last, src.length - 1); k++) masked[k] = 1
+      i = step.last
+      continue
+    }
+    if (comment === 'line') {
+      if (ch === '\n') comment = 'none'
+      else masked[i] = 1
+      continue
+    }
+    if (comment === 'block') {
+      masked[i] = 1
+      if (ch === '*' && src[i + 1] === '/') {
+        masked[i + 1] = 1
+        i++
+        comment = 'none'
+      }
+      continue
+    }
+    if (isQuote(ch)) {
+      quote = ch
+      continue
+    }
+    if (ch === '/' && (src[i + 1] === '/' || src[i + 1] === '*')) {
+      comment = src[i + 1] === '/' ? 'line' : 'block'
+      masked[i] = 1
+      masked[i + 1] = 1
+      i++
+    }
+  }
+  return masked
+}
+
+/**
  * One escape-aware walk over a value span, feeding both the shape check
  * and literal extraction. A span that ends inside a string yields an
  * unterminated region (its marker still lands in `shape`), which the
@@ -124,7 +194,11 @@ export function scanBackendSites(src: string): BackendScan {
   const found = new Set<string>()
   let sites = 0
   let incomplete = 0
+  const masked = maskedPositions(src)
   for (const m of src.matchAll(BACKEND_SITE_RE)) {
+    // SMI-6781: a match whose colon is string, template or comment content
+    // is text about a site, not a site.
+    if (masked[(m.index ?? 0) + m[0].indexOf(':')]) continue
     sites++
     const start = (m.index ?? 0) + m[0].length
     let depth = 0

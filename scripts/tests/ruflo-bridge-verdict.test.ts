@@ -356,6 +356,27 @@ describe('ruflo-bridge-verdict (SMI-6744 Wave 0)', () => {
     })
   })
 
+  it('a disagreement between the two backend fields is malformed whatever their types (SMI-6783)', () => {
+    // A peer session's mutation: narrowing the disagreement check to
+    // `a !== b && typeof a === 'string' && typeof b === 'string'` survived
+    // this whole suite, because every disagreement fixture used two
+    // strings -- and under it `agentdb='onnx', bridge=5` skips the
+    // disagreement branch, clears the string check on `a`, and reads
+    // HEALTHY, exit 0. The property is "a disagreement is malformed
+    // whatever the types"; each order and a same-type non-string pair are
+    // asserted so the narrowing cannot be re-introduced in either half.
+    const stringVsNumber = syntheticHealthy()
+    stringVsNumber.bridge.embeddingBackend = 5 as unknown as string
+    expect(bridgeVerdict(stringVsNumber).verdict, 'agentdb string, bridge number').toBe('malformed')
+    const numberVsString = syntheticHealthy()
+    numberVsString.agentdb.embeddingBackend = 5 as unknown as string
+    expect(bridgeVerdict(numberVsString).verdict, 'agentdb number, bridge string').toBe('malformed')
+    const bothNumbers = syntheticHealthy()
+    bothNumbers.agentdb.embeddingBackend = 5 as unknown as string
+    bothNumbers.bridge.embeddingBackend = 5 as unknown as string
+    expect(bridgeVerdict(bothNumbers).verdict, 'two equal numbers').toBe('malformed')
+  })
+
   it('non-object payloads are malformed', () => {
     for (const bad of [null, undefined, 'x', 42, true]) {
       expect(bridgeVerdict(bad).verdict, String(bad)).toBe('malformed')
@@ -941,6 +962,59 @@ describe('scanBackendSites (SMI-6772 F8)', () => {
     expect(scan.sites).toBe(2)
     expect(scan.found).toEqual(['mock', 'onnx'])
     expect(scan.incomplete).toBe(0)
+  })
+
+  it('a `backend:` inside a string, template or comment is not a site -- the colon must be code (SMI-6781)', () => {
+    // PR #2900 gate round 4, recorded unfixed under the stopping rule and
+    // fixed here under the owner's named exception: BACKEND_SITE_RE ran over
+    // raw source, so `const note = "backend: 'mock',"; const x={backend:
+    // 'onnx'}` scanned as sites=2, found=['mock','onnx'], incomplete=0 -- a
+    // vanished real site could be masked by same-shaped quoted text with
+    // every drift-guard assertion green. A content map now marks string and
+    // template content and both comment kinds; a match counts only when its
+    // colon is code. The colon, not the match start: a string whose CONTENT
+    // begins with `backend` starts its match at the string's own opening
+    // quote, which is code, and only the colon tells it from a quoted key.
+    for (const src of [
+      "const note = \"backend: 'mock',\"; const x={backend: 'onnx'}",
+      "backend: 'onnx', note: \"backend: 'mock',\",",
+      "const note = \"'backend': 'mock',\"; backend: 'onnx',",
+      "backend: 'onnx', // backend: 'mock',\nx: 1",
+      "// 'backend': 'mock',\nbackend: 'onnx',",
+      "/* backend: 'mock', */ backend: 'onnx',",
+      "backend: 'onnx', /* 'backend': 'mock' */",
+      "label: `backend: 'mock',`, backend: 'onnx',",
+      "s: `backend: ${x}`, backend: 'onnx',",
+    ]) {
+      const scan = scanBackendSites(src)
+      expect(scan.sites, src).toBe(1)
+      expect(scan.found, src).toEqual(['onnx'])
+      expect(scan.incomplete, src).toBe(0)
+    }
+  })
+
+  it('a quoted key is still a site, and `//` or `/*` inside a string is not a comment', () => {
+    // The content map keeps string delimiters visible (so `'backend':` still
+    // matches) and consults the string state before looking for a comment
+    // opener (so a URL or a `/*` inside a string does not start one).
+    for (const src of [
+      "'backend': 'onnx',",
+      '"backend": \'onnx\',',
+      "url: 'http://x', backend: 'onnx',",
+      "s: 'a/*b', backend: 'onnx',",
+      'x="//";backend:\'onnx\',',
+      "s: 'it\\'s', backend: 'onnx',",
+      "s: 'a\\\\', backend: 'onnx',",
+      "a / b; backend: 'onnx',",
+    ]) {
+      const scan = scanBackendSites(src)
+      expect(scan.sites, src).toBe(1)
+      expect(scan.found, src).toEqual(['onnx'])
+    }
+  })
+
+  it('an unclosed block comment masks to the end of the source -- loud, never a phantom site', () => {
+    expect(scanBackendSites("/* never closed backend: 'onnx',").sites).toBe(0)
   })
 
   it('a key that merely ends in `backend` is not a site -- pins the lookbehind behind the exact site count', () => {
