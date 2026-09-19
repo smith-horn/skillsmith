@@ -4,6 +4,13 @@ All notable changes to `@skillsmith/mcp-server` are documented here.
 
 ## [Unreleased]
 
+- **Fix**: SMI-6768 -- the `held` remedy this file renders verbatim from `@skillsmith/core` no
+  longer asserts the holder is alive; see `@skillsmith/core`'s entry for why that claim was false
+  in three reachable states. Nothing changes in this package's own behaviour. The `lockReason`
+  docstring and the `lock_timeout` comment are corrected: **four** of the five reasons depend on a
+  fact this value does not carry, not three -- `held` was added to that list in round 5, after four
+  rounds had read it as determined. (#2896)
+
 - **Fix**: SMI-6764 -- `apply_manifest_reconcile`'s lock-timeout message now renders `@skillsmith/core`'s
   per-reason remedy verbatim instead of maintaining its own, and drops the per-reason verb along
   with the primitive (see `@skillsmith/core`'s entry). This file is the one that drifted last time:
