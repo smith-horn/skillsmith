@@ -75,13 +75,26 @@ function v1(
 
 describe('acquireOwnedLock', () => {
   it('1. acquire on a free path succeeds; the lock file is 0600, v1, this pid/host, 16-hex token', () => {
+    const before = Date.now() - 1
     const release = acquireOwnedLock(target, { timeoutMs: 1_000 })
     const raw = readFileSync(lockPath, 'utf-8')
-    const parsed = JSON.parse(raw) as { v: number; pid: number; token: string; host: string }
+    const parsed = JSON.parse(raw) as {
+      v: number
+      pid: number
+      token: string
+      host: string
+      acquiredAt: number
+    }
     expect(parsed.v).toBe(1)
     expect(parsed.pid).toBe(process.pid)
     expect(parsed.host).toBe(hostname())
     expect(/^[0-9a-f]{16}$/.test(parsed.token)).toBe(true)
+    // SMI-6776 C1: nothing asserted this, so `acquiredAt: 0` shipped a claim
+    // stamped at the Unix epoch past the whole suite. Anyone inspecting a lock
+    // file read a false timestamp. A window, not an exact value -- the point is
+    // that it tracks now, not that it equals any particular instant.
+    expect(parsed.acquiredAt).toBeGreaterThan(before)
+    expect(parsed.acquiredAt).toBeLessThanOrEqual(Date.now())
     release()
   })
 
@@ -676,6 +689,104 @@ describe('SMI-6764: one verb for every reason, and a remedy that may say "it dep
     v1: "held by pid 4242 on host 'testhost'",
     absent: 'held by another process',
   } as const
+
+  /**
+   * The full rendered message, composed from parts THIS TEST owns (SMI-6776).
+   *
+   * The cross-family round proposed nine mutations and all nine survived. Six
+   * same-family rounds had never generated any of their categories. The common
+   * shape: every assertion checked the PRESENCE of a string -- a heading, a
+   * path, a phrase -- and none checked what that string was doing. So step 2
+   * could be made to run `rm` under the heading "inspect (read-only)", the
+   * headline could name the reclaim lock, and `namesReclaim` could be inverted,
+   * all with the suite green.
+   *
+   * Composing the expectation fixes the class rather than the nine instances:
+   * the test states which paths each reason may name and which command belongs
+   * to each step, so any change to either side fails. Nothing here is read off
+   * the implementation.
+   */
+  const L = '/tmp/t.lock'
+  const R = '/tmp/t.lock.reclaim'
+
+  /** Which paths each reason is allowed to name. Pinned in BOTH directions. */
+  const PATHS_NAMED: Record<StuckLockReason, string[]> = {
+    held: [L],
+    reclaim_unavailable: [L, R],
+    unreclaimable_legacy: [L],
+    unreclaimable_unparseable: [L],
+    reclaim_disabled: [L],
+  }
+
+  /** Step 2 inspects (read-only). Step 3 removes. Asserted, not assumed. */
+  const steps = (paths: string[]): string =>
+    `Manual unstick -- 1) confirm no skillsmith process is running: ps -ax | grep -E '[s]killsmith|[s]klx'; ` +
+    `2) inspect (read-only): ${paths.map((x) => `cat ${x}`).join(' ; ')}; ` +
+    `3) remove ONLY the file(s) named above: ${paths.map((x) => `rm ${x}`).join(' ; ')}.`
+
+  const EXPECTED_REASON_CLAUSE: Record<StuckLockReason, string> = {
+    held: 'held by another process',
+    reclaim_unavailable: `the reclaim lock at ${R} is held or was orphaned by a crash inside the reclaim critical section (residual R1)`,
+    unreclaimable_legacy:
+      'held by a legacy (pre-v1) claim -- legacy claims carry no host attribution and are NEVER auto-reclaimed (SMI-5883 D-5)',
+    unreclaimable_unparseable:
+      'the lock file could not be parsed as a recognized claim -- never auto-reclaimed',
+    reclaim_disabled: 'auto-reclaim is disabled (SKILLSMITH_LOCK_NO_AUTO_RECLAIM=1)',
+  }
+
+  const fullMessage = (reason: StuckLockReason): string =>
+    `[skillsmith] Could not acquire config lock at ${L}: ` +
+    `${EXPECTED_REASON_CLAUSE[reason]}. ${EXPECTED_REMEDY[reason]} ${steps(PATHS_NAMED[reason])}`
+
+  it('0. every reason renders EXACTLY the composed message, headline to final period', () => {
+    for (const reason of REASONS) {
+      expect(render(reason), reason).toBe(fullMessage(reason))
+    }
+  })
+
+  it('0a. the public lockPath/reclaimPath properties equal the constructor inputs', () => {
+    // Nothing in core asserted these, and they are public API -- CLAUDE.md's
+    // StuckLockError troubleshooting row tells users to read them and remove
+    // ONLY the files they name. Two mutations (SMI-6776 C4/C5) swapped them
+    // for each other and survived every message assertion, because the message
+    // is built from the constructor's locals rather than from `this`.
+    for (const reason of REASONS) {
+      const err = new StuckLockError(L, R, 'config lock', reason, ABSENT)
+      expect(err.lockPath, `${reason}: lockPath`).toBe(L)
+      expect(err.reclaimPath, `${reason}: reclaimPath`).toBe(R)
+      expect(err.lockPath, `${reason}: the two must never collapse`).not.toBe(err.reclaimPath)
+    }
+  })
+
+  it('0b. the reclaim path is named by exactly one reason, and by no other', () => {
+    // Pinned both ways: inverting `namesReclaim` strips it from the reason that
+    // needs it AND adds it to four that never implicate that file. One
+    // direction alone leaves the other free (SMI-6776 C2, superseding SMI-6769).
+    for (const reason of REASONS) {
+      const shouldName = reason === 'reclaim_unavailable'
+      expect(render(reason).includes(R), `${reason} names reclaim path?`).toBe(shouldName)
+    }
+  })
+
+  it('0c. the unparseable remedy names no single cause, because several produce it', () => {
+    // Not closable by exact-match alone: production and its oracle can be
+    // reworded together. But the invariant is real and independent of wording --
+    // `unparseable` is reached by malformed JSON, an oversized claim, an empty
+    // file, a permission failure, a dangling symlink and an unsupported version,
+    // so naming any one of them is false for the rest (SMI-6776 C9).
+    const remedy = EXPECTED_REMEDY.unreclaimable_unparseable
+    for (const cause of [
+      /JSON/i,
+      /symlink/i,
+      /permission/i,
+      /empty file/i,
+      /version/i,
+      /too large/i,
+    ]) {
+      expect(remedy, `must not name a single cause: ${cause}`).not.toMatch(cause)
+    }
+    expect(describeRemedy('unreclaimable_unparseable')).toBe(remedy)
+  })
 
   it('1. every reason opens with the same verb, and none claims a timeout', () => {
     // "Timed out waiting" asserted a wait this class often never measured:
