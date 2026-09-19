@@ -28,6 +28,7 @@ import * as os from 'node:os'
 
 import {
   acquireOwnedLock,
+  MAX_LOCK_BYTES,
   describeRemedy,
   RECLAIM_LOCK_TIMEOUT_MS,
   StuckLockError,
@@ -35,6 +36,10 @@ import {
 } from './owned-lock.js'
 import { acquireOwnedLockCore, toTimingMs } from './owned-lock.acquire.js'
 import { createLockExclusive, isOwnerDefinitelyDead } from './owned-lock.claim.js'
+// Not re-exported by `owned-lock.ts` (MAX_LOCK_BYTES is; this is not), so it
+// comes from the module that declares it. Driving the table from the real set
+// is the point -- a retyped copy would go stale exactly when it matters.
+import { HARDLINK_UNAVAILABLE_CODES } from './owned-lock.types.js'
 import { mintDeadPid } from '../../tests/helpers/deterministic-dead-pid.js'
 
 let dir: string
@@ -338,6 +343,50 @@ describe('acquireOwnedLock', () => {
     expect(readdirSync(dir).some((f) => f.endsWith('.tmp'))).toBe(false)
   })
 
+  it('14b. EVERY declared hardlink-unavailable code fails closed, and an undeclared one passes through', () => {
+    // SMI-6776 round 3: only ENOSYS was tested, so removing any other member
+    // of the set -- EXDEV, EPERM, EACCES -- survived. On that platform the
+    // user stops getting the explanatory fail-closed message and gets a raw
+    // syscall error instead, for a condition this code knows how to explain.
+    //
+    // The membership list is OWNED BY THIS TEST, not read from the set under
+    // test. My first version iterated `HARDLINK_UNAVAILABLE_CODES` itself,
+    // which is a self-referential oracle: deleting EXDEV from production also
+    // deleted it from the table, so the loop ran one fewer iteration and
+    // passed. That is the same shape as SMI-6776 C4/C5 -- an expected value
+    // read off the subject is not an oracle -- reintroduced by me in the fix
+    // for it, one round later.
+    //
+    // Equality both ways: a member removed fails, and a member added without a
+    // test here fails too, so the list cannot silently drift from production.
+    const EXPECTED_CODES = ['EPERM', 'EACCES', 'ENOSYS', 'EXDEV', 'EMLINK', 'EOPNOTSUPP', 'ENOTSUP']
+    expect([...HARDLINK_UNAVAILABLE_CODES].sort()).toEqual([...EXPECTED_CODES].sort())
+    for (const code of EXPECTED_CODES) {
+      rmSync(lockPath, { force: true })
+      const thrower = (): never => {
+        const err = new Error(code) as NodeJS.ErrnoException
+        err.code = code
+        throw err
+      }
+      expect(() => createLockExclusive(lockPath, '{"v":1}\n', thrower), code).toThrow(
+        /does not support hardlinks/
+      )
+      expect(existsSync(lockPath), `${code}: no lock left behind`).toBe(false)
+    }
+
+    // Known-negative: an unrelated errno must NOT be swallowed by that branch.
+    // Without this, widening the set to catch everything would also pass.
+    const eio = (): never => {
+      const err = new Error('EIO') as NodeJS.ErrnoException
+      err.code = 'EIO'
+      throw err
+    }
+    expect(() => createLockExclusive(lockPath, '{"v":1}\n', eio)).toThrow(/EIO/)
+    expect(() => createLockExclusive(lockPath, '{"v":1}\n', eio)).not.toThrow(
+      /does not support hardlinks/
+    )
+  })
+
   it('15. no litter: after acquire/release cycles above, the directory holds no *.tmp and no *.reclaim', () => {
     const release = acquireOwnedLock(target, { timeoutMs: 1_000 })
     release()
@@ -619,6 +668,116 @@ describe('unreleasable locks and timing options (SMI-6529 round 9)', () => {
     expect(child.signal, child.stderr).toBeNull()
     expect(child.stdout.trim()).toBe('reclaim_unavailable')
   }, 20_000)
+})
+
+describe('SMI-6776 round 3: claim-admission policy is safety, not parsing', () => {
+  /**
+   * A third cross-family round found this class, after two rounds on the
+   * message and six of my own. Four mutations here survived 4,863 tests.
+   *
+   * These are not parser trivia. `parseClaim` deciding a malformed record is
+   * v1 turns a claim that was NEVER auto-reclaimed into one that IS -- so a
+   * dead-owner record missing a field goes from "refuse and keep the bytes"
+   * to "delete someone else's lock file". The existing coverage tested
+   * empty/truncated/garbage/wrong-version claims, which are whole-document
+   * shapes; no test omitted an INDIVIDUAL required field, and none touched
+   * the size cap at all.
+   */
+  const deadOwner = (over: Record<string, unknown>): string =>
+    JSON.stringify({
+      v: 1,
+      pid: mintDeadPid(),
+      token: 'a'.repeat(16),
+      host: hostname(),
+      acquiredAt: Date.now() - 60_000,
+      ...over,
+    })
+
+  /** Every required v1 field, missing and wrong-typed. */
+  const REQUIRED = ['pid', 'token', 'host', 'acquiredAt'] as const
+  const WRONG: Record<(typeof REQUIRED)[number], unknown> = {
+    pid: 'not-a-number',
+    token: 12345,
+    host: null,
+    acquiredAt: 'yesterday',
+  }
+
+  it('1. a dead-owner v1 record missing ANY required field is never reclaimed', () => {
+    for (const field of REQUIRED) {
+      rmSync(lockPath, { force: true })
+      const { [field]: _omitted, ...rest } = JSON.parse(deadOwner({})) as Record<string, unknown>
+      seed(JSON.stringify(rest))
+      const before = readFileSync(lockPath)
+      let caught: StuckLockError | undefined
+      try {
+        acquireOwnedLock(target, { timeoutMs: 150, reclaimProbeAfterMs: 0 })
+      } catch (err) {
+        caught = err as StuckLockError
+      }
+      expect(caught?.reason, `missing ${field}`).toBe('unreclaimable_unparseable')
+      expect(readFileSync(lockPath).equals(before), `missing ${field}: bytes`).toBe(true)
+    }
+  })
+
+  it('2. ...and the same for a wrong-typed required field', () => {
+    for (const field of REQUIRED) {
+      rmSync(lockPath, { force: true })
+      seed(deadOwner({ [field]: WRONG[field] }))
+      const before = readFileSync(lockPath)
+      let caught: StuckLockError | undefined
+      try {
+        acquireOwnedLock(target, { timeoutMs: 150, reclaimProbeAfterMs: 0 })
+      } catch (err) {
+        caught = err as StuckLockError
+      }
+      expect(caught?.reason, `${field} wrong type`).toBe('unreclaimable_unparseable')
+      expect(readFileSync(lockPath).equals(before), `${field} wrong type: bytes`).toBe(true)
+    }
+  })
+
+  it('3. known-positive control: the SAME record, complete, IS reclaimed', () => {
+    // Without this the two tests above pass for a fixture that never reached
+    // the reclaim path at all -- the failure that has bitten this suite twice.
+    rmSync(lockPath, { force: true })
+    seed(deadOwner({}))
+    const release = acquireOwnedLock(target, { timeoutMs: 5_000, reclaimProbeAfterMs: 0 })
+    expect(existsSync(lockPath)).toBe(true)
+    release()
+  })
+
+  it('4. the size cap is a boundary, and both sides of it are exercised', () => {
+    // A valid JSON claim padded past MAX_LOCK_BYTES must be REFUSED, not
+    // parsed. Nothing exercised 4096 at all, so disabling the cap was free.
+    const live = JSON.stringify({
+      v: 1,
+      pid: process.pid,
+      token: 'b'.repeat(16),
+      host: hostname(),
+      acquiredAt: Date.now(),
+    })
+    const pad = (total: number): string => live + ' '.repeat(total - live.length)
+
+    rmSync(lockPath, { force: true })
+    seed(pad(MAX_LOCK_BYTES))
+    let atCap: StuckLockError | undefined
+    try {
+      acquireOwnedLock(target, { timeoutMs: 150, reclaimProbeAfterMs: 0 })
+    } catch (err) {
+      atCap = err as StuckLockError
+    }
+    // At exactly the cap the claim is still read, so a LIVE owner reads `held`.
+    expect(atCap?.reason, 'at cap').toBe('held')
+
+    rmSync(lockPath, { force: true })
+    seed(pad(MAX_LOCK_BYTES + 1))
+    let overCap: StuckLockError | undefined
+    try {
+      acquireOwnedLock(target, { timeoutMs: 150, reclaimProbeAfterMs: 0 })
+    } catch (err) {
+      overCap = err as StuckLockError
+    }
+    expect(overCap?.reason, 'one byte over').toBe('unreclaimable_unparseable')
+  })
 })
 
 describe('SMI-6764: one verb for every reason, and a remedy that may say "it depends"', () => {
