@@ -2463,4 +2463,58 @@ describe('uninstall clears skill_dependencies for the exact skill it removed (SM
       clearAllSpy.mockRestore()
     }
   })
+
+  // SMI-6732 C3, round 14. The cross-family hunt proposed moving the whole
+  // `clearAll` block from AFTER the removeIfSame success gate to BEFORE it.
+  // That is a block MOVE rather than a substitution, which is why the
+  // round-11 harness could not encode it and why it went unmeasured until
+  // now; measured on 2026-09-19 it SURVIVED the full 6,464-test suite.
+  //
+  // It is not a spelling of the tests above. Every one of them takes the
+  // success path, where the cleanup runs either way and the move is
+  // invisible. The move only changes behaviour when the removal FAILS --
+  // and then the skill is still on disk, its manifest record is still
+  // there, and its dependency metadata has already been destroyed. The user
+  // is told nothing was removed, which is true of the directory and false
+  // of the database.
+  it('keeps the dependency rows when the removal itself is refused', async () => {
+    const installPath = path.join(skillsDir, 'dep-kept-skill')
+    await fs.mkdir(installPath)
+    await fs.writeFile(path.join(installPath, 'SKILL.md'), '# Installed\n')
+    await track('dep-kept-skill', installPath)
+
+    const deps = new SkillDependencyRepository(db)
+    deps.setDependencies(
+      'author/dep-kept-skill',
+      [
+        {
+          skill_id: 'author/dep-kept-skill',
+          dep_type: 'skill_hard',
+          dep_target: 'a/four',
+          dep_version: null,
+          dep_source: 'declared',
+          confidence: null,
+          metadata: null,
+        },
+      ],
+      'declared'
+    )
+    expect(deps.getDependencies('author/dep-kept-skill')).toHaveLength(1)
+
+    // Another program swaps its own folder in before the park-rename, so
+    // `removeIfSame` refuses: the entry is no longer the one that was
+    // inspected. This is the existing round-15 mechanism, reused.
+    swapBeforeRename.path = installPath
+
+    const result = await createService().uninstall('dep-kept-skill', { force: true })
+
+    // Precondition, asserted rather than assumed: if the removal had
+    // SUCCEEDED, the rows would be legitimately gone and the assertion
+    // below would be testing the opposite of what it claims.
+    expect(result.success).toBe(false)
+    expect(result.message).toMatch(/was not removed/)
+    // The property: nothing was removed, so nothing was forgotten either.
+    expect(deps.getDependencies('author/dep-kept-skill')).toHaveLength(1)
+    expect(await manifestEntry('dep-kept-skill')).toBeDefined()
+  })
 })
