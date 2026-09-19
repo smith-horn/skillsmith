@@ -3,15 +3,21 @@
  * replaces (see the helper's header). Each arm names the spelling it fails.
  */
 import { describe, expect, it } from 'vitest'
-import { mkdtempSync, rmSync, symlinkSync, writeFileSync } from 'node:fs'
+import { mkdirSync, mkdtempSync, rmSync, symlinkSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import path from 'node:path'
 import { pathToFileURL } from 'node:url'
 
 import { canonicalize, isMainModule } from '../lib/is-main-module.mjs'
 
+// The prefix carries a space and a non-ASCII char on purpose: every arm then
+// runs through a percent-encoded import.meta.url (`%20`, `%C3%BC`), which is
+// the case the helper exists for -- SMI-6767's dominant spelling compares
+// the encoded URL against the raw path and measured exit 0 with no output
+// from such a directory. A helper that skipped percent-decoding passed every
+// arm until this prefix changed.
 function withTempDir(fn: (dir: string) => void): void {
-  const dir = mkdtempSync(path.join(tmpdir(), 'is-main-module-'))
+  const dir = mkdtempSync(path.join(tmpdir(), 'is main module ü-'))
   try {
     fn(dir)
   } finally {
@@ -28,13 +34,25 @@ describe('isMainModule', () => {
     })
   })
 
-  it('through a symlink: still main (the pathToFileURL(argv[1]).href spelling says false)', () => {
+  it('through a symlink chain and a symlinked directory: still main (the pathToFileURL(argv[1]).href spelling says false)', () => {
     withTempDir((dir) => {
-      const f = path.join(dir, 'a.mjs')
-      const link = path.join(dir, 'a-link.mjs')
+      // real/a.mjs; linkdir -> real (a symlinked directory prefix);
+      // link1 -> real/a.mjs (a target RELATIVE to the link's own directory);
+      // link2 -> link1 (a chain). A one-level readlink resolves none of these
+      // fully; realpathSync does.
+      const real = path.join(dir, 'real')
+      mkdirSync(real)
+      const f = path.join(real, 'a.mjs')
       writeFileSync(f, '')
-      symlinkSync(f, link)
-      expect(isMainModule(pathToFileURL(f).href, link)).toBe(true)
+      const linkdir = path.join(dir, 'linkdir')
+      symlinkSync(real, linkdir)
+      const link1 = path.join(dir, 'link1.mjs')
+      symlinkSync(path.join('real', 'a.mjs'), link1)
+      const link2 = path.join(dir, 'link2.mjs')
+      symlinkSync(link1, link2)
+      expect(isMainModule(pathToFileURL(f).href, link1)).toBe(true)
+      expect(isMainModule(pathToFileURL(f).href, link2)).toBe(true)
+      expect(isMainModule(pathToFileURL(f).href, path.join(linkdir, 'a.mjs'))).toBe(true)
     })
   })
 
@@ -52,6 +70,10 @@ describe('isMainModule', () => {
     const gone = path.join(tmpdir(), 'is-main-module-gone', 'never-written.mjs')
     expect(isMainModule(pathToFileURL(gone).href, gone)).toBe(true)
     expect(canonicalize(gone)).toBe(gone)
+    // The joint case: a RELATIVE argv[1] naming a path that cannot be
+    // realpath'ed. A fallback that returned the raw input instead of the
+    // resolved path passed both single-case arms and failed this one.
+    expect(isMainModule(pathToFileURL(gone).href, path.relative(process.cwd(), gone))).toBe(true)
   })
 
   it('a different file: not main', () => {

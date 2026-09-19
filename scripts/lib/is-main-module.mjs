@@ -10,7 +10,11 @@
  * the silent-success class SMI-6744 exists to remove), and the shape below,
  * from scripts/check-file-length.mjs: resolve, then realpath, and on a throw
  * fall back to the RESOLVED path rather than deny. Two paths that both fail
- * to realpath still compare equal when they name the same file.
+ * to realpath compare equal when they are spelled identically after
+ * resolve(); a symlinked prefix on a path that cannot be realpath'ed is not
+ * recovered (measured: /var/... and /private/var/... naming one missing
+ * file compare unequal). Unreachable in practice -- the module just loaded
+ * from that path -- but stated so nobody reads "same file" into it.
  *
  * A module whose URL is not `file:` (a bundle, a `data:` import) is never the
  * entry point in the filesystem sense argv[1] describes; it returns false, and

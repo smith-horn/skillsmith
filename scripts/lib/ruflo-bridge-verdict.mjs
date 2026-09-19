@@ -54,7 +54,7 @@ export const DERIVED_FROM = Object.freeze({
   // ruflo@3.14.2 resolved cli 3.42.4 on 2026-09-18. Bumping the wrapper pin
   // does not re-derive this predicate; only re-reading the cli source does.
   servedBy: 'npx ruflo@3.14.2 (.mcp.json)',
-  // The same five source literals were re-read, unchanged, at this later
+  // The same six source literals were re-read, unchanged, at this later
   // version (the one `npm install ruflo@3.14.2` resolves to on 2026-09-18).
   alsoVerifiedAt: Object.freeze(['3.42.4']),
   files: Object.freeze([
@@ -185,7 +185,17 @@ function main(argv) {
   }
   const result = bridgeVerdict(payload)
   process.stdout.write(`${render(result, src)}\n`)
-  return EXIT[result.verdict]
+  // Never fall through: `EXIT[x]` for a verdict this table does not name is
+  // `undefined`, and `process.exit(undefined)` is exit 0 -- the healthy
+  // verdict, for an outcome nobody classified. Measured on a renamed key.
+  const code = EXIT[result.verdict]
+  if (code === undefined) {
+    process.stdout.write(
+      `ruflo-bridge-verdict: unmapped verdict ${JSON.stringify(result.verdict)}\n`
+    )
+    return EXIT.unreadable
+  }
+  return code
 }
 
 // Entry-point guard: scripts/lib/is-main-module.mjs. Two earlier spellings

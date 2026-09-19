@@ -12,13 +12,13 @@
 import { describe, expect, it } from 'vitest'
 import { execFileSync } from 'node:child_process'
 import {
-  existsSync,
   mkdtempSync,
   readFileSync,
   readdirSync,
   rmSync,
   statSync,
   symlinkSync,
+  writeFileSync,
 } from 'node:fs'
 import { homedir, tmpdir } from 'node:os'
 import path from 'node:path'
@@ -205,14 +205,70 @@ describe('ruflo-bridge-verdict (SMI-6744 Wave 0)', () => {
       expect(r.out).toContain('unreadable')
     })
 
-    it('executed directly through a symlink, the degraded fixture still exits 1 with output', () => {
+    it('every verdict bridgeVerdict can return maps to a numeric exit; the non-verdicts all map to 2', () => {
+      // `EXIT[x]` for an unmapped verdict is undefined, and
+      // process.exit(undefined) is exit 0 -- measured on a renamed key. This
+      // arm pins the table; the arms below pin the CLI end-to-end.
+      for (const v of [
+        'healthy',
+        'degraded',
+        'not-evaluated',
+        'malformed',
+        'unrecognized',
+        'unreadable',
+      ]) {
+        expect(typeof EXIT[v as keyof typeof EXIT], v).toBe('number')
+      }
+      for (const v of ['not-evaluated', 'malformed', 'unrecognized', 'unreadable']) {
+        expect(EXIT[v as keyof typeof EXIT], v).toBe(2)
+      }
+    })
+
+    it('the three non-verdict outcomes reach the CLI as exit 2, each naming itself and its denominator', () => {
+      // Written to a temp dir so each payload is a real file the CLI reads,
+      // not a mutation of a committed fixture.
+      const dir = mkdtempSync(path.join(tmpdir(), 'ruflo bridge verdict ü-'))
+      try {
+        const write = (name: string, payload: unknown): string => {
+          const p = path.join(dir, name)
+          writeFileSync(p, JSON.stringify(payload))
+          return p
+        }
+        const ne = run(write('not-evaluated.json', setBackend(syntheticHealthy(), 'unknown')))
+        expect(ne.status).toBe(EXIT['not-evaluated'])
+        expect(ne.out).toContain('ruflo-bridge-verdict: not-evaluated')
+
+        const empty = run(write('empty.json', {}))
+        expect(empty.status).toBe(EXIT.malformed)
+        expect(empty.out).toContain('ruflo-bridge-verdict: malformed')
+        expect(empty.out).toContain('read (0/2 present)')
+
+        const half = syntheticHealthy()
+        delete half.bridge.embeddingBackend
+        const one = run(write('one-field.json', half))
+        expect(one.status).toBe(EXIT.malformed)
+        expect(one.out).toContain('read (1/2 present)')
+
+        const unk = run(write('unrecognized.json', setBackend(syntheticHealthy(), 'onnx-v2')))
+        expect(unk.status).toBe(EXIT.unrecognized)
+        expect(unk.out).toContain('ruflo-bridge-verdict: unrecognized')
+      } finally {
+        rmSync(dir, { recursive: true, force: true })
+      }
+    })
+
+    it('executed directly through a symlink in a percent-encoded directory, the degraded fixture still exits 1 with output', () => {
       // npm bin entries and ~/bin shims are symlinks, executed directly. The
       // first main-guard compared import.meta.url (resolved) with argv[1]
       // (invoked), which differ through a link -- measured: exit 0, zero
       // bytes, for a degraded payload. Exit 0 is the healthy verdict. Direct
       // exec (not `node <link>`) also makes the shebang and the executable
-      // bit part of what this test constrains.
-      const dir = mkdtempSync(path.join(tmpdir(), 'ruflo-bridge-verdict-link-'))
+      // bit part of what this test constrains. The directory name carries a
+      // space and a non-ASCII char on purpose: import.meta.url is then
+      // percent-encoded, and a guard that compares an undecoded pathname
+      // measured exit 0 with no output from such a directory (SMI-6767's
+      // dominant spelling). tmpdir() is outside the vitest $HOME sandbox.
+      const dir = mkdtempSync(path.join(tmpdir(), 'ruflo bridge verdict ü-'))
       try {
         const link = path.join(dir, 'verdict-link.mjs')
         symlinkSync(CLI, link)
@@ -229,7 +285,7 @@ describe('ruflo-bridge-verdict (SMI-6744 Wave 0)', () => {
 
 /**
  * Drift guard. Finds any installed @claude-flow/cli whose version is one the
- * predicate was derived from or verified at, and re-reads the five source
+ * predicate was derived from or verified at, and re-reads the six source
  * literals the header cites. Skips, visibly, when no such tree is present.
  */
 describe('predicate source drift (skips when no derived-from tree is installed)', () => {
@@ -249,44 +305,49 @@ describe('predicate source drift (skips when no derived-from tree is installed)'
     '_npx'
   )
   const trees: Array<{ dir: string; version: string }> = []
-  // Three counts, because "0 at a derived-from version" has two causes that
-  // must render differently: ruflo was never cached here (withCli = 0), or
-  // it was and every cached version is one this predicate was not read at
-  // (withCli > 0). A truncated package.json from an interrupted npx counts
-  // as unreadable rather than crashing collection.
+  // ONE classifier for every path the scan touches. Four rounds of review
+  // found the same conflation at successive levels -- _npx, then its parent,
+  // then each cache entry's package.json -- because each level had its own
+  // existsSync, and existsSync returns false whenever it cannot STAT, so an
+  // unreadable path reads as "not there". POSIX stat() needs search
+  // permission on the PREFIX only, so stat'ing the target itself is what
+  // separates the cases: ENOENT is absent; any other error (EACCES on the
+  // path or on HOME, ENOTDIR on a file where a directory belongs) is
+  // unreachable, and the cache may well be there. The one classifier is used
+  // for the root and for each entry, so there is no fourth special case to
+  // add later.
+  type Probe = 'present' | 'absent' | 'unreachable'
+  const probe = (p: string): Probe => {
+    try {
+      statSync(p)
+      return 'present'
+    } catch (err) {
+      return (err as { code?: string }).code === 'ENOENT' ? 'absent' : 'unreachable'
+    }
+  }
+  // Counts, because "0 at a derived-from version" has several causes that
+  // must render differently: ruflo was never cached here (withCli = 0); it
+  // was, and every cached version is one this predicate was not read at
+  // (withCli > 0); an entry's package.json was unreadable (truncated by an
+  // interrupted npx -- unreadable) or could not be reached at all (mode
+  // bits -- unreachable). None of them crashes collection.
   let cacheDirs = 0
   let withCli = 0
   let unreadable = 0
-  // The scan itself is guarded too: an unreadable _npx (EACCES) at module
-  // evaluation would otherwise fail collection and take every test in this
-  // file with it, including the degraded red arm. Four states: absent (no
-  // .npm, or .npm with no _npx), unreachable (the target cannot be stat'ed
-  // for a reason other than ENOENT -- .npm at mode 000, HOME at mode 000, a
-  // file where a directory belongs), present, unscannable (_npx itself
-  // cannot be listed). Stat the TARGET, not its parent: POSIX stat() needs
-  // search permission on the path PREFIX only, so stat'ing `.npm` succeeds
-  // at mode 000 and the EACCES surfaces one level down inside
-  // existsSync('.npm/_npx'), which swallows it and returns false. Measured:
-  // the parent-stat form rendered (absent) over a real cached tree hidden
-  // behind an unreadable .npm -- the conflation it claimed to remove, and a
-  // red arm that had been declared as passing without its output ever
-  // being read past the column where the state token sat.
-  let root: 'present' | 'absent' | 'unreachable' | 'unscannable' = 'absent'
-  let reachable = false
-  try {
-    statSync(npxRoot)
-    reachable = true
-    root = 'present'
-  } catch (err) {
-    root = (err as { code?: string }).code === 'ENOENT' ? 'absent' : 'unreachable'
-  }
-  if (reachable) {
+  let unreachable = 0
+  let root: Probe | 'unscannable' = probe(npxRoot)
+  if (root === 'present') {
     try {
       for (const hash of readdirSync(npxRoot)) {
         cacheDirs++
         const pkg = path.join(npxRoot, hash, 'node_modules', '@claude-flow', 'cli')
         const pj = path.join(pkg, 'package.json')
-        if (!existsSync(pj)) continue
+        const state = probe(pj)
+        if (state === 'absent') continue
+        if (state === 'unreachable') {
+          unreachable++
+          continue
+        }
         try {
           const version = (JSON.parse(readFileSync(pj, 'utf8')) as { version: string }).version
           withCli++
@@ -301,7 +362,7 @@ describe('predicate source drift (skips when no derived-from tree is installed)'
   }
   const scope =
     `searched ${npxRoot} (${root}): ${cacheDirs} cache dirs, ${withCli} with @claude-flow/cli, ` +
-    `${trees.length} at a derived-from version, ${unreadable} unreadable`
+    `${trees.length} at a derived-from version, ${unreadable} unreadable, ${unreachable} unreachable`
 
   const LITERALS: Array<[string, string]> = [
     ['dist/src/mcp-tools/memory-tools.js', "probe.backend ?? 'unknown'"],
