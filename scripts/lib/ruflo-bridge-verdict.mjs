@@ -173,6 +173,22 @@ export function render(result, source) {
   return lines.join('\n')
 }
 
+/**
+ * The exit code for a verdict, or null when the table does not name it.
+ * Exported so the guard is REACHABLE from a test: bridgeVerdict returns five
+ * literals and all five are own keys of EXIT, so an inline guard in main()
+ * measured unreachable -- deleting it left the suite green. Two failure
+ * shapes, both measured: `EXIT[x]` for an unnamed verdict is undefined and
+ * process.exit(undefined) is exit 0, the healthy verdict; and Object.freeze
+ * does not remove inherited keys, so `EXIT['constructor']` is a function and
+ * process.exit(<function>) is exit 1, the degraded verdict, with no line
+ * saying why. Own key and a number, or null.
+ */
+export function exitCodeFor(verdict) {
+  const code = Object.hasOwn(EXIT, verdict) ? EXIT[verdict] : undefined
+  return typeof code === 'number' ? code : null
+}
+
 function main(argv) {
   const src = argv[2] ?? '/dev/stdin'
   let payload
@@ -185,11 +201,8 @@ function main(argv) {
   }
   const result = bridgeVerdict(payload)
   process.stdout.write(`${render(result, src)}\n`)
-  // Never fall through: `EXIT[x]` for a verdict this table does not name is
-  // `undefined`, and `process.exit(undefined)` is exit 0 -- the healthy
-  // verdict, for an outcome nobody classified. Measured on a renamed key.
-  const code = EXIT[result.verdict]
-  if (code === undefined) {
+  const code = exitCodeFor(result.verdict)
+  if (code === null) {
     process.stdout.write(
       `ruflo-bridge-verdict: unmapped verdict ${JSON.stringify(result.verdict)}\n`
     )

@@ -31,6 +31,7 @@ import {
   EXIT,
   FIELDS_READ,
   bridgeVerdict,
+  exitCodeFor,
 } from '../lib/ruflo-bridge-verdict.mjs'
 
 const here = path.dirname(fileURLToPath(import.meta.url))
@@ -176,9 +177,13 @@ describe('ruflo-bridge-verdict (SMI-6744 Wave 0)', () => {
       direct: boolean = false
     ): { status: number; out: string } {
       try {
+        // A sync exec is not interrupted by vitest's testTimeout (measured:
+        // a 500 ms testTimeout let a 3 s sleep run to completion), so the
+        // budget lives on the call. On timeout `status` is null -> -1 below
+        // -> every toBe(EXIT.x) fails loudly.
         const out = direct
-          ? execFileSync(cli, [file], { encoding: 'utf8' })
-          : execFileSync(process.execPath, [cli, file], { encoding: 'utf8' })
+          ? execFileSync(cli, [file], { encoding: 'utf8', timeout: 30_000 })
+          : execFileSync(process.execPath, [cli, file], { encoding: 'utf8', timeout: 30_000 })
         return { status: 0, out }
       } catch (err) {
         const e = err as { status?: number; stdout?: string }
@@ -205,22 +210,37 @@ describe('ruflo-bridge-verdict (SMI-6744 Wave 0)', () => {
       expect(r.out).toContain('unreadable')
     })
 
-    it('every verdict bridgeVerdict can return maps to a numeric exit; the non-verdicts all map to 2', () => {
-      // `EXIT[x]` for an unmapped verdict is undefined, and
-      // process.exit(undefined) is exit 0 -- measured on a renamed key. This
-      // arm pins the table; the arms below pin the CLI end-to-end.
-      for (const v of [
-        'healthy',
-        'degraded',
-        'not-evaluated',
-        'malformed',
-        'unrecognized',
-        'unreadable',
-      ]) {
-        expect(typeof EXIT[v as keyof typeof EXIT], v).toBe('number')
+    it('every verdict the detector can return maps to a numeric exit; prototype keys and unknown names map to null', () => {
+      // The verdict list is DERIVED from the detector's own source, not
+      // retyped: a future `verdict: 'stale'` added without an EXIT key must
+      // fail here, and a retyped list would not see it. `EXIT[x]` for an
+      // unnamed verdict is undefined and process.exit(undefined) is exit 0;
+      // Object.freeze leaves inherited keys, so `EXIT['constructor']` is a
+      // function and process.exit(<function>) is exit 1 -- both measured.
+      // exitCodeFor answers own-key-and-number, or null, and the guard in
+      // main() is reachable only through it; an inline guard measured
+      // unreachable (every returned verdict is an own key), so deleting it
+      // left the suite green.
+      const src = readFileSync(CLI, 'utf8')
+      const verdicts = [...new Set([...src.matchAll(/verdict: '([^']+)'/g)].map((m) => m[1]))]
+      expect(verdicts.length, 'derivation returned nothing; the regex is stale').toBeGreaterThan(0)
+      expect(verdicts).toEqual(
+        expect.arrayContaining([
+          'healthy',
+          'degraded',
+          'not-evaluated',
+          'malformed',
+          'unrecognized',
+        ])
+      )
+      for (const v of [...verdicts, 'unreadable']) {
+        expect(exitCodeFor(v), v).toBeTypeOf('number')
       }
       for (const v of ['not-evaluated', 'malformed', 'unrecognized', 'unreadable']) {
-        expect(EXIT[v as keyof typeof EXIT], v).toBe(2)
+        expect(exitCodeFor(v), v).toBe(2)
+      }
+      for (const v of ['constructor', 'toString', 'valueOf', 'hasOwnProperty', 'nope', '']) {
+        expect(exitCodeFor(v), v).toBeNull()
       }
     })
 
