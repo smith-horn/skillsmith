@@ -726,6 +726,18 @@ describe('scanBackendSites (SMI-6772 F8)', () => {
     expect(scan.incomplete).toBe(1)
   })
 
+  it('an escaped backslash as literal content does not defeat plus-detection either', () => {
+    // Governance on 793fe460d: the escaped-quote test above is satisfied by a
+    // tracker that closes the string on a backslash (`quote = null`) because
+    // the very next character re-opens it; an escaped backslash as content
+    // (`'a\\\\'` in source, the value a\\) is the shape that tells the correct
+    // skip (`i++`) from that mutation, which reads the trailing `+ 'b'` as a
+    // phantom literal 'b'.
+    const scan = scanBackendSites("backend: 'a\\\\' + 'b',")
+    expect(scan.found).toEqual([])
+    expect(scan.incomplete).toBe(1)
+  })
+
   it('a bare identifier with no literal at all is incomplete, not silently skipped', () => {
     const scan = scanBackendSites('backend: someVariable,')
     expect(scan.found).toEqual([])
