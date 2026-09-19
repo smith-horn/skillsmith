@@ -26,7 +26,11 @@ export function resolveRealHome(
   fallbackHomedir: () => string
 ): string {
   if (envValue !== undefined && envValue.trim().length > 0) {
-    return envValue
+    // Return the TRIMMED value: a padded `'  /Users/x  '` passed through
+    // verbatim makes `path.join(value, ...)` a relative path, the exact
+    // failure this helper exists to prevent (found by the SMI-6744 round-2
+    // review; the whitespace-only case was pinned, the padded one was not).
+    return envValue.trim()
   }
   return fallbackHomedir()
 }
