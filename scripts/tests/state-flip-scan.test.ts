@@ -698,9 +698,23 @@ describe('scan-state-flip.sh (SMI-6514 P-7 scanner) -- Group A: portable', () =>
   // time it has been found and the first time it is pinned: the SMI-6714 plan has
   // carried "owed: a case-mismatch fixture" as prose with nothing behind it.
   //
-  // TWO tests, because `-i` lives in two places and one fixture cannot pin both. A
-  // repair that restores `-i` to `run_grep` alone passes the STEP 1 test and fails
-  // the STEP 2 one, and vice versa.
+  // The two mutations are NOT symmetric, and an earlier revision of this comment
+  // claimed they were. Measured:
+  //
+  //   -i off run_grep      -> STEP 1 drops below STEP 2, the subset invariant fires,
+  //                           the scanner EXITS 2 and never prints STEP 2. Both
+  //                           tests fail, so the STEP 2 test also catches this one.
+  //   -i off run_grep_and  -> exit 0, STEP 1 unmoved, STEP 2 -> 0. Only that test
+  //                           fails. This direction alone is independent.
+  //
+  // What the pair does guarantee is the thing that matters: a repair restoring `-i`
+  // to one function and not the other cannot go green. It does not guarantee one
+  // test per site, and saying so was an overclaim.
+  //
+  // Each line earns its place, checked by REMOVING it and confirming a discrimination
+  // collapses. An all-lower control line was removed after that check showed it
+  // changed no verdict -- the exact counts plus the scanner's own zero-denominator
+  // guard already separate a passing fixture from one matching nothing.
   function setupCaseRepo(): string {
     const repoDir = makeFixtureTempDir('state-flip-case-fixture')
     createdRepoDirs.push(repoDir)
@@ -710,16 +724,14 @@ describe('scan-state-flip.sh (SMI-6514 P-7 scanner) -- Group A: portable', () =>
     writeFileSync(
       join(subDir, 'case-fixture.sh'),
       [
-        // Noun UPPER, vocabulary lower. Only `-i` on run_grep puts this in STEP 1.
+        // L1 -- noun UPPER. The ONLY line that pins `-i` on run_grep: remove it and
+        // the run_grep mutation stops being distinguishable from the shipped scanner.
         '# WIDGET-TOOL is not installed by design',
-        // Noun lower, vocabulary UPPER. STEP 1 sees it either way, so this line
-        // isolates run_grep_and: without `-i` there, the vocabulary stops matching
-        // while the denominator is unmoved. ABSENCE_VOCAB carries mixed case on
-        // purpose (`isn't`, `is NOT`), and this is what makes that deliberate.
-        '# widget-tool is NOT INSTALLED by design',
-        // All lower: the control. Found whatever happens to `-i`, so a fixture that
-        // scored zero everywhere could not be mistaken for a passing one.
-        '# widget-tool is not installed by design',
+        // L2 -- noun lower, and the vocabulary matches through `isn't` ALONE. No other
+        // ABSENCE_VOCAB alternative is present: not `by design`, not `not installed`.
+        // That is what makes it the only line catching a mutation that lowercases
+        // ABSENCE_VOCAB's own mixed-case entries, which `-i` is what makes work.
+        "# widget-tool ISN'T here",
         '',
       ].join('\n')
     )
@@ -729,24 +741,28 @@ describe('scan-state-flip.sh (SMI-6514 P-7 scanner) -- Group A: portable', () =>
   }
 
   it.skipIf(!SCANNER_PRESENT)(
-    'SMI-6695: `-i` on run_grep -- an upper-case occurrence counts toward the denominator (3, not 2)',
+    'SMI-6695: `-i` on run_grep -- an upper-case occurrence counts toward the denominator (2, not 1)',
     () => {
       // The denominator is the one number P-7's whole design rests on (SMI-6514 s2.4).
       // Case-sensitive, `WIDGET-TOOL` vanishes from it and the report still reads as a
       // thorough scan -- an understated denominator, never an error.
-      expect(scanNoun(setupCaseRepo(), 'widget-tool')).toContain('STEP 1 (denominator): 3')
+      expect(scanNoun(setupCaseRepo(), 'widget-tool')).toContain('STEP 1 (denominator): 2')
     }
   )
 
   it.skipIf(!SCANNER_PRESENT)(
-    'SMI-6695: `-i` on run_grep_and -- upper-case absence-vocabulary still narrows (3, not 1)',
+    'SMI-6695: `-i` on run_grep_and -- both records survive into the MANDATED output',
     () => {
-      // STEP 2 is the MANDATED output. Dropping `-i` here takes it to 1 while STEP 1
-      // stays at 3, so the subset invariant holds and the guard never fires: two real
-      // casualties silently absent from the block a reviewer pastes.
-      expect(scanNoun(setupCaseRepo(), 'widget-tool')).toContain(
-        'STEP 2: noun x absence-vocabulary (3 hit(s))'
+      const out = scanNoun(setupCaseRepo(), 'widget-tool')
+      // The count alone is not enough. A mutation that holds the totals while
+      // substituting or suppressing the case-mismatched records would leave a
+      // count-only assertion green while users lose exactly the diagnostics `-i`
+      // exists to preserve -- so assert the RECORDS, byte-exact, not just how many.
+      expect(out).toContain('STEP 2: noun x absence-vocabulary (2 hit(s))')
+      expect(out).toContain(
+        'scripts/sub/case-fixture.sh:1:# WIDGET-TOOL is not installed by design'
       )
+      expect(out).toContain("scripts/sub/case-fixture.sh:2:# widget-tool ISN'T here")
     }
   )
 
