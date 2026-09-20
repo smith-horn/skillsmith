@@ -92,27 +92,39 @@ describe('withFileLock — RETRYABLE_REASONS membership is behaviour (SMI-6776 r
    *
    * The outcome alone is still too coarse, and the post-merge retro on #2904
    * measured why: discarding the rejection makes 'refused' mean "rejected for
-   * ANY reason". A mutation throwing a plain Error instead of StuckLockError --
-   * losing `reason`, both paths and the whole manual-unstick remedy (SMI-5883,
-   * SMI-6764) -- survived every test here. So the error travels with the
-   * outcome and the refusal tests assert its identity, the way test (ii) below
-   * already does for the legacy path.
+   * ANY reason", so the tests cannot tell the DOCUMENTED refusal from any
+   * rejection. The mutation that demonstrates it is a REASON SWAP -- return
+   * `unreclaimable_legacy` where `mapRefusalToReason` returns
+   * `unreclaimable_unparseable`. Both are non-retryable, so no outcome moves,
+   * and it passed 6 of 6 before the error-identity assertions existed. So the
+   * error travels with the outcome and the refusal test asserts its identity
+   * AND its reason, the way test (ii) below already does for the legacy path.
    *
-   * The timer's type is deliberately the NARROW `{ outcome: 'pending' }`, not
-   * the wide return type. Under the wide one it is type-legal to wire the
-   * timeout arm to a refusal, which would make every "IS waited out" test
-   * silently assert a refusal-shaped value -- the same arm-to-value mis-binding
-   * this block exists to remove, one level down. The narrow type makes that a
-   * TS2322 at compile time (measured, not predicted), and costs nothing: it
-   * still races fine.
+   * (An earlier revision of this comment cited "a plain Error instead of
+   * StuckLockError" as having survived every test. That is only true of the
+   * NARROW form -- a plain Error thrown for the unparseable reason alone.
+   * Replacing the whole throw site was already caught four ways at the parent
+   * commit. Conflating the two overstated what the new assertions buy, inside
+   * a comment whose subject is measuring; the reason swap is the true and
+   * stronger claim, so it is the one stated above.)
+   *
+   * ALL THREE race arms carry their own narrow literal type, not the wide
+   * `Settled`. Any arm annotated with the union can be mis-wired to another
+   * arm's value and still typecheck, which is the arm-to-value mis-binding
+   * this whole block exists to remove. Measured: with the fulfilment arm left
+   * wide, wiring it to 'pending' is `tsc`-clean and makes a real lock-theft
+   * regression pass 6 of 6 -- inside the test named "a live holder IS waited
+   * out". Narrow on every arm turns each such mis-wiring into a TS2322
+   * (measured, not predicted) and costs nothing: `Promise.race` still infers
+   * a union assignable to the declared return type.
    */
   type Outcome = 'refused' | 'acquired' | 'pending'
   type Settled = { outcome: Outcome; error?: unknown }
 
   async function settle(): Promise<Settled> {
     const attempt = withFileLock(target, 'probe', async () => 'ok').then(
-      (): Settled => ({ outcome: 'acquired' }),
-      (error: unknown): Settled => ({ outcome: 'refused', error })
+      (): { outcome: 'acquired' } => ({ outcome: 'acquired' }),
+      (error: unknown): { outcome: 'refused'; error: unknown } => ({ outcome: 'refused', error })
     )
     const timer = new Promise<{ outcome: 'pending' }>((r) =>
       setTimeout(() => r({ outcome: 'pending' }), SETTLE_MS)
