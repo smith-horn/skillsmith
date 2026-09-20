@@ -15,7 +15,15 @@
  */
 
 import { describe, it, expect } from 'vitest'
-import { existsSync, mkdirSync, readFileSync, readdirSync, utimesSync, writeFileSync } from 'fs'
+import {
+  existsSync,
+  mkdirSync,
+  readFileSync,
+  readdirSync,
+  statSync,
+  utimesSync,
+  writeFileSync,
+} from 'fs'
 import * as path from 'path'
 import * as os from 'os'
 import { hostname } from 'node:os'
@@ -234,5 +242,16 @@ describe('atomicWriteFile', () => {
     atomicWriteFile(filePath, '{}', 0o600)
 
     expect(existsSync(filePath)).toBe(true)
+    // SMI-6776 round 2: this test asserted ONLY existence while its name
+    // claimed to check the mode. `chmodSync(filePath, 0o644)` therefore passed
+    // it -- and 0o644 on `~/.skillsmith/config.json`, which holds the API key,
+    // is readable by every local account. A test whose name asserts a property
+    // it never checks is worse than no test: it occupies the slot.
+    expect(statSync(filePath).mode & 0o777).toBe(0o600)
+    // Known-negative: prove the assertion can observe a difference. Without
+    // it, the line above could be reading a constant.
+    const other = path.join(dir, 'other.json')
+    atomicWriteFile(other, '{}', 0o644)
+    expect(statSync(other).mode & 0o777).toBe(0o644)
   })
 })

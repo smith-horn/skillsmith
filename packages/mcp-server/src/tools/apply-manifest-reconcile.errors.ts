@@ -30,9 +30,11 @@ export interface ReconcileErrorContext {
    * It no longer selects a VERB (SMI-6764). Three attempts to derive one from
    * this field failed, the last structurally: `reclaim_unavailable` depends on
    * whether the reclaim lock is busy or orphaned, `unreclaimable_legacy` on
-   * whether the legacy holder is alive, and `reclaim_disabled` on whether a
-   * differently-configured peer exists — none of which this value carries. A
-   * remedy clause can say "it depends, on this"; a verb cannot.
+   * whether the legacy holder is alive, `reclaim_disabled` on whether a
+   * differently-configured peer exists, and `held` on whether the holder was
+   * ever probed — none of which this value carries. (`held` was added to that
+   * list in round 5; the four rounds before it all read `held` as determined.)
+   * A remedy clause can say "it depends, on this"; a verb cannot.
    */
   lockReason?: StuckLockReason
   /**
@@ -103,8 +105,8 @@ export function describeReconcileError(
     case 'manifest.reconcile.lock_timeout': {
       // One verb, every reason — matching `StuckLockError` (SMI-6764). Two
       // rounds tried to split "timed out" from "could not acquire" per reason;
-      // the third found the partition does not exist, because three of the
-      // five reasons depend on facts `lockReason` does not carry. Do not
+      // the third found the partition does not exist, because all but one of
+      // the five reasons depend on facts `lockReason` does not carry. Do not
       // reintroduce a split here: this file is the consumer that drifted from
       // the primitive last time, and a second verb has nothing true to say.
       const verb = `Could not acquire the manifest lock at '${ctx.path ?? '<unknown>'}'`

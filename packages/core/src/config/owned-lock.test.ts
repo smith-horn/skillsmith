@@ -28,12 +28,18 @@ import * as os from 'node:os'
 
 import {
   acquireOwnedLock,
+  MAX_LOCK_BYTES,
+  describeRemedy,
   RECLAIM_LOCK_TIMEOUT_MS,
   StuckLockError,
   type StuckLockReason,
 } from './owned-lock.js'
 import { acquireOwnedLockCore, toTimingMs } from './owned-lock.acquire.js'
-import { createLockExclusive } from './owned-lock.claim.js'
+import { createLockExclusive, isOwnerDefinitelyDead } from './owned-lock.claim.js'
+// Not re-exported by `owned-lock.ts` (MAX_LOCK_BYTES is; this is not), so it
+// comes from the module that declares it. Driving the table from the real set
+// is the point -- a retyped copy would go stale exactly when it matters.
+import { HARDLINK_UNAVAILABLE_CODES } from './owned-lock.types.js'
 import { mintDeadPid } from '../../tests/helpers/deterministic-dead-pid.js'
 
 let dir: string
@@ -74,13 +80,26 @@ function v1(
 
 describe('acquireOwnedLock', () => {
   it('1. acquire on a free path succeeds; the lock file is 0600, v1, this pid/host, 16-hex token', () => {
+    const before = Date.now() - 1
     const release = acquireOwnedLock(target, { timeoutMs: 1_000 })
     const raw = readFileSync(lockPath, 'utf-8')
-    const parsed = JSON.parse(raw) as { v: number; pid: number; token: string; host: string }
+    const parsed = JSON.parse(raw) as {
+      v: number
+      pid: number
+      token: string
+      host: string
+      acquiredAt: number
+    }
     expect(parsed.v).toBe(1)
     expect(parsed.pid).toBe(process.pid)
     expect(parsed.host).toBe(hostname())
     expect(/^[0-9a-f]{16}$/.test(parsed.token)).toBe(true)
+    // SMI-6776 C1: nothing asserted this, so `acquiredAt: 0` shipped a claim
+    // stamped at the Unix epoch past the whole suite. Anyone inspecting a lock
+    // file read a false timestamp. A window, not an exact value -- the point is
+    // that it tracks now, not that it equals any particular instant.
+    expect(parsed.acquiredAt).toBeGreaterThan(before)
+    expect(parsed.acquiredAt).toBeLessThanOrEqual(Date.now())
     release()
   })
 
@@ -110,10 +129,19 @@ describe('acquireOwnedLock', () => {
     release2()
   })
 
-  it('4. release is idempotent — a second call neither throws nor unlinks', () => {
+  it('4. release is idempotent — a second call neither throws, unlinks, nor warns', () => {
     const release = acquireOwnedLock(target, { timeoutMs: 1_000 })
     release()
+    const warnSpy = vi.spyOn(console, 'warn').mockImplementation(() => undefined)
     expect(() => release()).not.toThrow()
+    // SMI-6776 round 2: "does not throw" was the whole assertion, so deleting
+    // the one-shot flag survived. Without it the second call re-enters the
+    // ownership check, finds the file already gone, and emits a spurious
+    // `lock_release_not_owner` warning -- which is the exact signal that
+    // means "something else took your lock". Crying wolf on a release path
+    // teaches people to ignore the one case that matters.
+    expect(warnSpy).not.toHaveBeenCalled()
+    warnSpy.mockRestore()
   })
 
   it('5. ownership-verified release: a foreign token in the lock file is never unlinked', () => {
@@ -313,6 +341,50 @@ describe('acquireOwnedLock', () => {
     expect(existsSync(lockPath)).toBe(false)
     // No stray temp file left behind either.
     expect(readdirSync(dir).some((f) => f.endsWith('.tmp'))).toBe(false)
+  })
+
+  it('14b. EVERY declared hardlink-unavailable code fails closed, and an undeclared one passes through', () => {
+    // SMI-6776 round 3: only ENOSYS was tested, so removing any other member
+    // of the set -- EXDEV, EPERM, EACCES -- survived. On that platform the
+    // user stops getting the explanatory fail-closed message and gets a raw
+    // syscall error instead, for a condition this code knows how to explain.
+    //
+    // The membership list is OWNED BY THIS TEST, not read from the set under
+    // test. My first version iterated `HARDLINK_UNAVAILABLE_CODES` itself,
+    // which is a self-referential oracle: deleting EXDEV from production also
+    // deleted it from the table, so the loop ran one fewer iteration and
+    // passed. That is the same shape as SMI-6776 C4/C5 -- an expected value
+    // read off the subject is not an oracle -- reintroduced by me in the fix
+    // for it, one round later.
+    //
+    // Equality both ways: a member removed fails, and a member added without a
+    // test here fails too, so the list cannot silently drift from production.
+    const EXPECTED_CODES = ['EPERM', 'EACCES', 'ENOSYS', 'EXDEV', 'EMLINK', 'EOPNOTSUPP', 'ENOTSUP']
+    expect([...HARDLINK_UNAVAILABLE_CODES].sort()).toEqual([...EXPECTED_CODES].sort())
+    for (const code of EXPECTED_CODES) {
+      rmSync(lockPath, { force: true })
+      const thrower = (): never => {
+        const err = new Error(code) as NodeJS.ErrnoException
+        err.code = code
+        throw err
+      }
+      expect(() => createLockExclusive(lockPath, '{"v":1}\n', thrower), code).toThrow(
+        /does not support hardlinks/
+      )
+      expect(existsSync(lockPath), `${code}: no lock left behind`).toBe(false)
+    }
+
+    // Known-negative: an unrelated errno must NOT be swallowed by that branch.
+    // Without this, widening the set to catch everything would also pass.
+    const eio = (): never => {
+      const err = new Error('EIO') as NodeJS.ErrnoException
+      err.code = 'EIO'
+      throw err
+    }
+    expect(() => createLockExclusive(lockPath, '{"v":1}\n', eio)).toThrow(/EIO/)
+    expect(() => createLockExclusive(lockPath, '{"v":1}\n', eio)).not.toThrow(
+      /does not support hardlinks/
+    )
   })
 
   it('15. no litter: after acquire/release cycles above, the directory holds no *.tmp and no *.reclaim', () => {
@@ -598,6 +670,116 @@ describe('unreleasable locks and timing options (SMI-6529 round 9)', () => {
   }, 20_000)
 })
 
+describe('SMI-6776 round 3: claim-admission policy is safety, not parsing', () => {
+  /**
+   * A third cross-family round found this class, after two rounds on the
+   * message and six of my own. Four mutations here survived 4,863 tests.
+   *
+   * These are not parser trivia. `parseClaim` deciding a malformed record is
+   * v1 turns a claim that was NEVER auto-reclaimed into one that IS -- so a
+   * dead-owner record missing a field goes from "refuse and keep the bytes"
+   * to "delete someone else's lock file". The existing coverage tested
+   * empty/truncated/garbage/wrong-version claims, which are whole-document
+   * shapes; no test omitted an INDIVIDUAL required field, and none touched
+   * the size cap at all.
+   */
+  const deadOwner = (over: Record<string, unknown>): string =>
+    JSON.stringify({
+      v: 1,
+      pid: mintDeadPid(),
+      token: 'a'.repeat(16),
+      host: hostname(),
+      acquiredAt: Date.now() - 60_000,
+      ...over,
+    })
+
+  /** Every required v1 field, missing and wrong-typed. */
+  const REQUIRED = ['pid', 'token', 'host', 'acquiredAt'] as const
+  const WRONG: Record<(typeof REQUIRED)[number], unknown> = {
+    pid: 'not-a-number',
+    token: 12345,
+    host: null,
+    acquiredAt: 'yesterday',
+  }
+
+  it('1. a dead-owner v1 record missing ANY required field is never reclaimed', () => {
+    for (const field of REQUIRED) {
+      rmSync(lockPath, { force: true })
+      const { [field]: _omitted, ...rest } = JSON.parse(deadOwner({})) as Record<string, unknown>
+      seed(JSON.stringify(rest))
+      const before = readFileSync(lockPath)
+      let caught: StuckLockError | undefined
+      try {
+        acquireOwnedLock(target, { timeoutMs: 150, reclaimProbeAfterMs: 0 })
+      } catch (err) {
+        caught = err as StuckLockError
+      }
+      expect(caught?.reason, `missing ${field}`).toBe('unreclaimable_unparseable')
+      expect(readFileSync(lockPath).equals(before), `missing ${field}: bytes`).toBe(true)
+    }
+  })
+
+  it('2. ...and the same for a wrong-typed required field', () => {
+    for (const field of REQUIRED) {
+      rmSync(lockPath, { force: true })
+      seed(deadOwner({ [field]: WRONG[field] }))
+      const before = readFileSync(lockPath)
+      let caught: StuckLockError | undefined
+      try {
+        acquireOwnedLock(target, { timeoutMs: 150, reclaimProbeAfterMs: 0 })
+      } catch (err) {
+        caught = err as StuckLockError
+      }
+      expect(caught?.reason, `${field} wrong type`).toBe('unreclaimable_unparseable')
+      expect(readFileSync(lockPath).equals(before), `${field} wrong type: bytes`).toBe(true)
+    }
+  })
+
+  it('3. known-positive control: the SAME record, complete, IS reclaimed', () => {
+    // Without this the two tests above pass for a fixture that never reached
+    // the reclaim path at all -- the failure that has bitten this suite twice.
+    rmSync(lockPath, { force: true })
+    seed(deadOwner({}))
+    const release = acquireOwnedLock(target, { timeoutMs: 5_000, reclaimProbeAfterMs: 0 })
+    expect(existsSync(lockPath)).toBe(true)
+    release()
+  })
+
+  it('4. the size cap is a boundary, and both sides of it are exercised', () => {
+    // A valid JSON claim padded past MAX_LOCK_BYTES must be REFUSED, not
+    // parsed. Nothing exercised 4096 at all, so disabling the cap was free.
+    const live = JSON.stringify({
+      v: 1,
+      pid: process.pid,
+      token: 'b'.repeat(16),
+      host: hostname(),
+      acquiredAt: Date.now(),
+    })
+    const pad = (total: number): string => live + ' '.repeat(total - live.length)
+
+    rmSync(lockPath, { force: true })
+    seed(pad(MAX_LOCK_BYTES))
+    let atCap: StuckLockError | undefined
+    try {
+      acquireOwnedLock(target, { timeoutMs: 150, reclaimProbeAfterMs: 0 })
+    } catch (err) {
+      atCap = err as StuckLockError
+    }
+    // At exactly the cap the claim is still read, so a LIVE owner reads `held`.
+    expect(atCap?.reason, 'at cap').toBe('held')
+
+    rmSync(lockPath, { force: true })
+    seed(pad(MAX_LOCK_BYTES + 1))
+    let overCap: StuckLockError | undefined
+    try {
+      acquireOwnedLock(target, { timeoutMs: 150, reclaimProbeAfterMs: 0 })
+    } catch (err) {
+      overCap = err as StuckLockError
+    }
+    expect(overCap?.reason, 'one byte over').toBe('unreclaimable_unparseable')
+  })
+})
+
 describe('SMI-6764: one verb for every reason, and a remedy that may say "it depends"', () => {
   const ABSENT = { kind: 'absent' } as const
   const REASONS: StuckLockReason[] = [
@@ -627,20 +809,152 @@ describe('SMI-6764: one verb for every reason, and a remedy that may say "it dep
     new StuckLockError('/tmp/t.lock', '/tmp/t.lock.reclaim', 'config lock', reason, V1).message
 
   /**
-   * One phrase per reason, quoted from `describeRemedy`. The previous version
-   * of this suite used a reason -> classification table that was BOTH the spec
-   * and the oracle, so inverting two entries in the table and in the code
-   * together passed every assertion. These are cross-checked instead: each
-   * message must match its own phrase AND fail every other reason's, so a
-   * swapped or collapsed remedy fails even when code and table agree.
+   * EXACT expected remedy per reason, not a phrase from it (SMI-6768 round 6).
+   *
+   * Two rounds of phrase lists failed here, and the second failure is the
+   * argument for abandoning the technique rather than extending it. A list of
+   * spellings only ever catches a wording someone already imagined: round 5
+   * re-stated a liveness claim one sentence to the right and passed a
+   * `/still alive/` grep; round 6 then defeated the broadened list with "The
+   * lock is held by a running process that will release it", and separately
+   * showed that DELETING both new sentences, or INVERTING their truth, left
+   * every assertion green. A phrase list constrains the absence of known
+   * strings. It cannot constrain presence, and it cannot constrain truth.
+   *
+   * `toBe` constrains all three. It does not understand the prose -- nothing
+   * available here does -- but it makes every change to it fail, which forces
+   * the change back through a human. That is the honest guarantee, and it is
+   * strictly more than the list gave.
    */
-  const SIGNATURE: Record<StuckLockReason, RegExp> = {
-    held: /retrying is the right first response/,
-    reclaim_unavailable: /orphaned by a crash inside the critical section/,
-    unreclaimable_legacy: /If its process is alive it still releases on its own/,
-    unreclaimable_unparseable: /An unparseable claim is never auto-reclaimed/,
-    reclaim_disabled: /a peer process without SKILLSMITH_LOCK_NO_AUTO_RECLAIM set still can/,
+  const EXPECTED_REMEDY: Record<StuckLockReason, string> = {
+    held:
+      'The holder was not established to be gone, so retrying is the right first response. ' +
+      'If it persists, the claim may name another host or a pid this process cannot probe; ' +
+      'neither is auto-reclaimed from here, so only the manual steps clear those.',
+    reclaim_unavailable:
+      'If a reclaim is in flight, retrying clears this. If it persists, the reclaim lock named ' +
+      'below was orphaned by a crash inside the critical section; nothing reclaims that one ' +
+      'automatically, so only the manual steps clear it.',
+    unreclaimable_legacy:
+      'A legacy claim is never auto-reclaimed, in any configuration (SMI-5883 D-5). If its ' +
+      'process is alive it still releases on its own; if it is dead, only the manual steps clear it.',
+    unreclaimable_unparseable:
+      'An unparseable claim is never auto-reclaimed, so only the manual steps clear it.',
+    reclaim_disabled:
+      'The holder is already dead and auto-reclaim is off in this process, so retrying HERE ' +
+      'cannot reclaim it -- though a peer process without SKILLSMITH_LOCK_NO_AUTO_RECLAIM set ' +
+      'still can. Unset it here and restart this process, or use the manual steps.',
   }
+
+  /**
+   * The `held` reason clause, both claim kinds, exact. Round 6 showed the
+   * remedy table alone leaves `describeReason` free: appending "(the process
+   * is still running)" to the v1 branch, or ", which is still running" to the
+   * non-v1 branch, both rendered a false liveness claim with the suite green.
+   * The message has two prose layers and pinning one is not pinning it.
+   */
+  const EXPECTED_HELD_REASON = {
+    v1: "held by pid 4242 on host 'testhost'",
+    absent: 'held by another process',
+  } as const
+
+  /**
+   * The full rendered message, composed from parts THIS TEST owns (SMI-6776).
+   *
+   * The cross-family round proposed nine mutations and all nine survived. Six
+   * same-family rounds had never generated any of their categories. The common
+   * shape: every assertion checked the PRESENCE of a string -- a heading, a
+   * path, a phrase -- and none checked what that string was doing. So step 2
+   * could be made to run `rm` under the heading "inspect (read-only)", the
+   * headline could name the reclaim lock, and `namesReclaim` could be inverted,
+   * all with the suite green.
+   *
+   * Composing the expectation fixes the class rather than the nine instances:
+   * the test states which paths each reason may name and which command belongs
+   * to each step, so any change to either side fails. Nothing here is read off
+   * the implementation.
+   */
+  const L = '/tmp/t.lock'
+  const R = '/tmp/t.lock.reclaim'
+
+  /** Which paths each reason is allowed to name. Pinned in BOTH directions. */
+  const PATHS_NAMED: Record<StuckLockReason, string[]> = {
+    held: [L],
+    reclaim_unavailable: [L, R],
+    unreclaimable_legacy: [L],
+    unreclaimable_unparseable: [L],
+    reclaim_disabled: [L],
+  }
+
+  /** Step 2 inspects (read-only). Step 3 removes. Asserted, not assumed. */
+  const steps = (paths: string[]): string =>
+    `Manual unstick -- 1) confirm no skillsmith process is running: ps -ax | grep -E '[s]killsmith|[s]klx'; ` +
+    `2) inspect (read-only): ${paths.map((x) => `cat ${x}`).join(' ; ')}; ` +
+    `3) remove ONLY the file(s) named above: ${paths.map((x) => `rm ${x}`).join(' ; ')}.`
+
+  const EXPECTED_REASON_CLAUSE: Record<StuckLockReason, string> = {
+    held: 'held by another process',
+    reclaim_unavailable: `the reclaim lock at ${R} is held or was orphaned by a crash inside the reclaim critical section (residual R1)`,
+    unreclaimable_legacy:
+      'held by a legacy (pre-v1) claim -- legacy claims carry no host attribution and are NEVER auto-reclaimed (SMI-5883 D-5)',
+    unreclaimable_unparseable:
+      'the lock file could not be parsed as a recognized claim -- never auto-reclaimed',
+    reclaim_disabled: 'auto-reclaim is disabled (SKILLSMITH_LOCK_NO_AUTO_RECLAIM=1)',
+  }
+
+  const fullMessage = (reason: StuckLockReason): string =>
+    `[skillsmith] Could not acquire config lock at ${L}: ` +
+    `${EXPECTED_REASON_CLAUSE[reason]}. ${EXPECTED_REMEDY[reason]} ${steps(PATHS_NAMED[reason])}`
+
+  it('0. every reason renders EXACTLY the composed message, headline to final period', () => {
+    for (const reason of REASONS) {
+      expect(render(reason), reason).toBe(fullMessage(reason))
+    }
+  })
+
+  it('0a. the public lockPath/reclaimPath properties equal the constructor inputs', () => {
+    // Nothing in core asserted these, and they are public API -- CLAUDE.md's
+    // StuckLockError troubleshooting row tells users to read them and remove
+    // ONLY the files they name. Two mutations (SMI-6776 C4/C5) swapped them
+    // for each other and survived every message assertion, because the message
+    // is built from the constructor's locals rather than from `this`.
+    for (const reason of REASONS) {
+      const err = new StuckLockError(L, R, 'config lock', reason, ABSENT)
+      expect(err.lockPath, `${reason}: lockPath`).toBe(L)
+      expect(err.reclaimPath, `${reason}: reclaimPath`).toBe(R)
+      expect(err.lockPath, `${reason}: the two must never collapse`).not.toBe(err.reclaimPath)
+    }
+  })
+
+  it('0b. the reclaim path is named by exactly one reason, and by no other', () => {
+    // Pinned both ways: inverting `namesReclaim` strips it from the reason that
+    // needs it AND adds it to four that never implicate that file. One
+    // direction alone leaves the other free (SMI-6776 C2, superseding SMI-6769).
+    for (const reason of REASONS) {
+      const shouldName = reason === 'reclaim_unavailable'
+      expect(render(reason).includes(R), `${reason} names reclaim path?`).toBe(shouldName)
+    }
+  })
+
+  it('0c. the unparseable remedy names no single cause, because several produce it', () => {
+    // Not closable by exact-match alone: production and its oracle can be
+    // reworded together. But the invariant is real and independent of wording --
+    // `unparseable` is reached by malformed JSON, an oversized claim, an empty
+    // file, a permission failure, a dangling symlink and an unsupported version,
+    // so naming any one of them is false for the rest (SMI-6776 C9).
+    const remedy = EXPECTED_REMEDY.unreclaimable_unparseable
+    for (const cause of [
+      /JSON/i,
+      /symlink/i,
+      /permission/i,
+      /empty file/i,
+      /version/i,
+      /too large/i,
+    ]) {
+      expect(remedy, `must not name a single cause: ${cause}`).not.toMatch(cause)
+    }
+    expect(describeRemedy('unreclaimable_unparseable')).toBe(remedy)
+  })
 
   it('1. every reason opens with the same verb, and none claims a timeout', () => {
     // "Timed out waiting" asserted a wait this class often never measured:
@@ -652,19 +966,24 @@ describe('SMI-6764: one verb for every reason, and a remedy that may say "it dep
     }
   })
 
-  it('2. each reason renders its own remedy and no other reason’s', () => {
+  it('2. every reason renders its remedy EXACTLY, and no other reason\u2019s', () => {
     for (const reason of REASONS) {
+      // Presence and truth, not just absence of a known-bad phrase.
+      expect(describeRemedy(reason), `${reason} remedy must be exact`).toBe(EXPECTED_REMEDY[reason])
       const message = render(reason)
+      expect(message, `${reason} must render its own remedy`).toContain(EXPECTED_REMEDY[reason])
       for (const other of REASONS) {
-        if (other === reason) {
-          expect(message, `${reason} must state its own remedy`).toMatch(SIGNATURE[other])
-        } else {
-          expect(message, `${reason} must not state ${other}'s remedy`).not.toMatch(
-            SIGNATURE[other]
-          )
-        }
+        if (other === reason) continue
+        expect(message, `${reason} must not state ${other}'s remedy`).not.toContain(
+          EXPECTED_REMEDY[other]
+        )
       }
     }
+  })
+
+  it('2b. `held`\u2019s reason clause is exact too, on both claim kinds', () => {
+    expect(renderV1('held')).toContain(`: ${EXPECTED_HELD_REASON.v1}. `)
+    expect(render('held')).toContain(`: ${EXPECTED_HELD_REASON.absent}. `)
   })
 
   it('3. the reasons whose answer is not determined say so, rather than guessing', () => {
@@ -677,6 +996,21 @@ describe('SMI-6764: one verb for every reason, and a remedy that may say "it dep
     expect(render('reclaim_disabled')).toMatch(/retrying HERE cannot reclaim it/)
   })
 
+  /**
+   * Every spelling of "the holder is alive" this message has carried, plus the
+   * one that replaced it. A list of literals is a weak instrument -- it only
+   * ever catches a phrasing someone already thought of -- which is precisely
+   * how the second entry shipped: the first version of test 4 grepped for
+   * `/still alive/` alone, so moving the same assertion one sentence to the
+   * right, into `describeRemedy`, passed it. Test 6 below is the property
+   * test this list cannot be; keep both.
+   */
+  const LIVENESS_ASSERTIONS: RegExp[] = [
+    /still alive/,
+    /A live holder is expected to release/,
+    /the holder is (still )?(alive|running|live)/i,
+  ]
+
   it('4. no reason asserts liveness that was never probed', () => {
     // Known-positive control FIRST: prove this fixture reaches the branch the
     // assertion is about. Without it the negative below is vacuous, which is
@@ -685,8 +1019,10 @@ describe('SMI-6764: one verb for every reason, and a remedy that may say "it dep
     // `held` is also the SAFE DEFAULT when the probe never ran, so the old
     // "(still alive)" rendered for a deliberately dead pid. Measured.
     for (const reason of REASONS) {
-      expect(renderV1(reason), `v1/${reason}`).not.toMatch(/still alive/)
-      expect(render(reason), `absent/${reason}`).not.toMatch(/still alive/)
+      for (const pattern of LIVENESS_ASSERTIONS) {
+        expect(renderV1(reason), `v1/${reason} vs ${pattern}`).not.toMatch(pattern)
+        expect(render(reason), `absent/${reason} vs ${pattern}`).not.toMatch(pattern)
+      }
     }
   })
 
@@ -696,6 +1032,107 @@ describe('SMI-6764: one verb for every reason, and a remedy that may say "it dep
       expect(message, reason).toContain('1) confirm no skillsmith process is running')
       expect(message, reason).toContain('2) inspect (read-only)')
       expect(message, reason).toContain('3) remove ONLY the file(s) named above')
+    }
+  })
+
+  /**
+   * The property test tests 1-5 are not. Those all construct `StuckLockError`
+   * directly, so they assert what the message SAYS for a reason chosen by the
+   * test. This one drives the real acquire loop into the state where `held`'s
+   * remedy would be false, and reads what it actually renders there.
+   *
+   * That distinction is what the previous round missed. `describeRemedy` takes
+   * only `reason` -- it cannot see the claim at all, strictly less than
+   * `describeReason`, which at least gets the pid -- and `held` is not the
+   * determined case it was treated as. Three states reach it with no live
+   * holder, each measured (SMI-6764 round 5):
+   *
+   *   a. the probe never ran (`timeoutMs` < `reclaimProbeAfterMs`), so `held`
+   *      is the safe default and the pid may be long dead;
+   *   b. the claim names another host -- `isV1OwnerDead` returns false on the
+   *      host mismatch, before it signals anything;
+   *   c. the claim carries a pid `isV1OwnerDead` refuses to probe at all
+   *      (non-integer, or <= 0) -- which `parseClaim` accepts as v1, and which
+   *      therefore nothing will ever reclaim.
+   *
+   * (b) and (c) are the sharper half: there the lock does NOT clear by
+   * retrying, so a remedy promising that it will is the same never-clears trap
+   * SMI-6759/SMI-6764 removed from `reclaim_unavailable`, surviving under the
+   * one reason nobody re-examined.
+   */
+  it('6. `held` renders no liveness claim in the states that produce it without one', () => {
+    const cases: { name: string; claim: Record<string, unknown>; opts: object }[] = [
+      {
+        // Known-positive control is asserted inline below: this pid is dead.
+        name: 'a. definitely-dead pid, this host, probe never runs',
+        claim: { v: 1, pid: mintDeadPid(), token: 'a'.repeat(16), host: hostname(), acquiredAt: 0 },
+        opts: { timeoutMs: 50 }, // < RECLAIM_PROBE_AFTER_MS (250)
+      },
+      {
+        name: 'b. claim from another host -- liveness never probed',
+        claim: {
+          v: 1,
+          // DEAD, deliberately (SMI-6768 round 6). With a live pid, `false`
+          // from the control below is equally consistent with "probed and
+          // found alive", so it cannot witness the host-mismatch bail this
+          // case is named for. Dead + foreign host makes `false` mean
+          // "declined to probe" and nothing else. Verified: removing the host
+          // guard from `isV1OwnerDead` now fails this case by name.
+          pid: mintDeadPid(),
+          token: 'b'.repeat(16),
+          host: `not-${hostname()}`,
+          acquiredAt: 0,
+        },
+        opts: { timeoutMs: 0, reclaimProbeAfterMs: 0, reclaimLockTimeoutMs: 0 },
+      },
+      {
+        name: 'c. pid <= 0 -- unprobeable, so never auto-reclaimed',
+        claim: { v: 1, pid: -1, token: 'c'.repeat(16), host: hostname(), acquiredAt: 0 },
+        opts: { timeoutMs: 0, reclaimProbeAfterMs: 0, reclaimLockTimeoutMs: 0 },
+      },
+    ]
+
+    for (const { name, claim, opts } of cases) {
+      rmSync(lockPath, { force: true })
+      writeFileSync(lockPath, JSON.stringify(claim) + '\n')
+
+      // Known-positive control: prove the fixture reaches the state it names,
+      // so a failure to render the liveness claim cannot be a fixture that
+      // simply never got there. For (a) the pid must genuinely be dead; for
+      // (b) and (c) the probe must genuinely decline to call it dead.
+      const parsed = { kind: 'v1', ...claim } as unknown as Parameters<
+        typeof isOwnerDefinitelyDead
+      >[0]
+      expect(isOwnerDefinitelyDead(parsed), `${name}: control`).toBe(name.startsWith('a.'))
+
+      let caught: unknown
+      try {
+        acquireOwnedLockCore(target, { label: 'config lock', ...opts })()
+      } catch (err) {
+        caught = err
+      }
+      expect(caught, `${name}: must refuse`).toBeInstanceOf(StuckLockError)
+      const error = caught as StuckLockError
+      // Guard the guard: if any of these ever stops classifying as `held`,
+      // this test silently stops covering `held` at all.
+      expect(error.reason, `${name}: must classify as held`).toBe('held')
+
+      for (const pattern of LIVENESS_ASSERTIONS) {
+        expect(error.message, `${name} vs ${pattern}`).not.toMatch(pattern)
+      }
+      // Tie the rendered text to its single source, so re-wording `held`'s
+      // remedy has to come back through this test and its three states.
+      expect(error.message, name).toContain(describeRemedy('held'))
+      // Case (a) is the only path that reaches the deadline's final read-only
+      // claim fetch. Deleting that fetch left every test green while the
+      // message silently degraded from the holder's pid and host to "held by
+      // another process" -- and `file-lock.ts` passes `timeoutMs: 0`, so every
+      // caller through it takes this path (SMI-6768 round 6).
+      if (name.startsWith('a.')) {
+        expect(error.message, `${name}: must name the holder it read`).toMatch(
+          new RegExp(`held by pid ${String(claim.pid)} on host '${hostname()}'`)
+        )
+      }
     }
   })
 })
