@@ -18,10 +18,11 @@
  */
 
 import { describe, it, expect } from 'vitest'
-import { existsSync, readFileSync } from 'node:fs'
+import { readFileSync } from 'node:fs'
 import { resolve, dirname } from 'node:path'
 import { fileURLToPath } from 'node:url'
 import { HIGH_TRUST_AUTHORS } from '../../../scripts/indexer/high-trust-authors.js'
+import { probePath, requirePresence } from '../_lib/probe-path.js'
 
 const __filename = fileURLToPath(import.meta.url)
 const __dirname = dirname(__filename)
@@ -70,7 +71,14 @@ describe('SMI-4843 Phase 5 leaderboard coverage', () => {
     expect(missing).toEqual([])
   })
 
-  const researchDocMissing = !existsSync(RESEARCH_DOC)
+  // SMI-6771: probePath + requirePresence replace a bare existsSync() here
+  // -- see plan-review-rubric-parity.test.ts's own migration comment for
+  // why existsSync's EACCES/ENOTDIR-as-false collapse matters for a
+  // submodule path like this research doc.
+  const researchDocMissing = !requirePresence(
+    probePath(RESEARCH_DOC),
+    `research doc (${RESEARCH_DOC})`
+  )
 
   it.skipIf(researchDocMissing)(
     'every Phase 5 publisher appears at least once in the research doc',
