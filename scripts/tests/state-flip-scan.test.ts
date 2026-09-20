@@ -688,6 +688,68 @@ describe('scan-state-flip.sh (SMI-6514 P-7 scanner) -- Group A: portable', () =>
     }
   )
 
+  // SMI-6695 / SMI-6714. `-i` is bundled as `-aniF` and `-aniE`, which is why two
+  // review rounds read straight past it. Dropping it from both functions leaves the
+  // whole suite BYTE-IDENTICAL to baseline -- 39 passed / 1 skipped -- while the real
+  // scan of `git-crypt` falls from STEP 1 872 / STEP 2 44 to 859 / 32. Twelve real
+  // category-3 diagnostics disappear at exit 0.
+  //
+  // A cross-family reviewer proposed this mutation independently, which is the second
+  // time it has been found and the first time it is pinned: the SMI-6714 plan has
+  // carried "owed: a case-mismatch fixture" as prose with nothing behind it.
+  //
+  // TWO tests, because `-i` lives in two places and one fixture cannot pin both. A
+  // repair that restores `-i` to `run_grep` alone passes the STEP 1 test and fails
+  // the STEP 2 one, and vice versa.
+  function setupCaseRepo(): string {
+    const repoDir = makeFixtureTempDir('state-flip-case-fixture')
+    createdRepoDirs.push(repoDir)
+    git(repoDir, ['init', '-q', '-b', 'main'])
+    const subDir = join(repoDir, 'scripts', 'sub')
+    mkdirSync(subDir, { recursive: true })
+    writeFileSync(
+      join(subDir, 'case-fixture.sh'),
+      [
+        // Noun UPPER, vocabulary lower. Only `-i` on run_grep puts this in STEP 1.
+        '# WIDGET-TOOL is not installed by design',
+        // Noun lower, vocabulary UPPER. STEP 1 sees it either way, so this line
+        // isolates run_grep_and: without `-i` there, the vocabulary stops matching
+        // while the denominator is unmoved. ABSENCE_VOCAB carries mixed case on
+        // purpose (`isn't`, `is NOT`), and this is what makes that deliberate.
+        '# widget-tool is NOT INSTALLED by design',
+        // All lower: the control. Found whatever happens to `-i`, so a fixture that
+        // scored zero everywhere could not be mistaken for a passing one.
+        '# widget-tool is not installed by design',
+        '',
+      ].join('\n')
+    )
+    git(repoDir, ['add', '.'])
+    git(repoDir, ['commit', '-q', '-m', 'case-mismatch fixture'])
+    return repoDir
+  }
+
+  it.skipIf(!SCANNER_PRESENT)(
+    'SMI-6695: `-i` on run_grep -- an upper-case occurrence counts toward the denominator (3, not 2)',
+    () => {
+      // The denominator is the one number P-7's whole design rests on (SMI-6514 s2.4).
+      // Case-sensitive, `WIDGET-TOOL` vanishes from it and the report still reads as a
+      // thorough scan -- an understated denominator, never an error.
+      expect(scanNoun(setupCaseRepo(), 'widget-tool')).toContain('STEP 1 (denominator): 3')
+    }
+  )
+
+  it.skipIf(!SCANNER_PRESENT)(
+    'SMI-6695: `-i` on run_grep_and -- upper-case absence-vocabulary still narrows (3, not 1)',
+    () => {
+      // STEP 2 is the MANDATED output. Dropping `-i` here takes it to 1 while STEP 1
+      // stays at 3, so the subset invariant holds and the guard never fires: two real
+      // casualties silently absent from the block a reviewer pastes.
+      expect(scanNoun(setupCaseRepo(), 'widget-tool')).toContain(
+        'STEP 2: noun x absence-vocabulary (3 hit(s))'
+      )
+    }
+  )
+
   it.skipIf(!SCANNER_PRESENT)('working-tree mode sees an untracked file (was 0, want 1)', () => {
     // `git grep` without --untracked searches tracked content only, so a newly
     // written script carrying the noun AND a stale assertion contributed nothing.
