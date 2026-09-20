@@ -33,6 +33,10 @@ beforeEach(async () => {
 
 afterEach(async () => {
   vi.doUnmock('node:fs/promises')
+  // SMI-6732 round 12: the park-name mechanism test stubs `node:crypto`, and
+  // a stub that outlived its own case would hand every later case a constant
+  // park name. Unmocking a module no case mocked is a no-op.
+  vi.doUnmock('node:crypto')
   vi.resetModules()
   await rm(root, { recursive: true, force: true })
 })
@@ -62,6 +66,29 @@ function mockFs<K extends 'rename' | 'lstat' | 'rm' | 'unlink' | 'readdir'>(
     const fn = make(actual)
     return { ...actual, default: { ...actual, [name]: fn }, [name]: fn }
   })
+}
+
+/**
+ * The 32-hex suffix of the single parked entry `removeIfSame` left in `dir`
+ * for `basename`, read from the filesystem itself.
+ *
+ * SMI-6732 round 12: the park-name tests take the name from the directory
+ * rather than from a failure message, so they pin where the name actually
+ * lands and cannot be broken by rewording that message. `parkedPattern` comes
+ * from the module under test, so the match is the production definition of a
+ * parked name and never a second copy of it that could drift.
+ */
+async function parkedSuffix(
+  dir: string,
+  basename: string,
+  parkedPattern: (target: string) => RegExp
+): Promise<string> {
+  const pattern = parkedPattern(path.join(dir, basename))
+  const hits = (await readdir(dir)).filter((entry) => pattern.test(entry))
+  // Exactly one: zero means nothing was parked, more than one means this
+  // reads a name some other case left behind.
+  expect(hits).toHaveLength(1)
+  return hits[0].slice(-32)
 }
 
 describe('removeIfSame (SMI-6529 round 15)', () => {
@@ -383,5 +410,135 @@ describe('removeIfSame (SMI-6529 round 15)', () => {
     const left = await readdir(root)
     expect(left).toHaveLength(1)
     expect(left[0]).toMatch(PARKED)
+  })
+
+  // SMI-6732 M1a: the park name's unpredictability -- not merely its shape --
+  // is what makes the recursive delete un-raceable. A shape check
+  // (`PARKED`, `[0-9a-f]{32}`) is satisfied by 32 literal zeroes just as well
+  // as by real randomness, so it cannot tell `randomBytes(16)` apart from a
+  // constant. Two removals of entries with the SAME basename can only differ
+  // in their random suffix -- the tag and basename are identical -- so
+  // comparing those two suffixes kills the constant mutant.
+  //
+  // WHAT THIS DOES NOT PROVE (round 12, cross-family review). Two draws
+  // differing is NON-REPETITION, which is strictly weaker than
+  // unpredictability: a counter, a timestamp, a pid or a hash of the path all
+  // produce differing suffixes and all let an attacker predict the next park
+  // destination and pre-create it. No finite black-box test can close that
+  // gap -- any observed sequence is reproducible by a deterministic generator
+  // tailored to it -- so the mechanism itself is pinned white-box by the next
+  // test, and this one is kept for the constant mutant it does kill.
+  it('parks two equivalent removals under two different random names', async () => {
+    mockFs(
+      'rm',
+      () =>
+        (async (p: PathLike) => {
+          throw eacces(p)
+        }) as RealFs['rm']
+    )
+    const { removeIfSame, parkedPattern } = await load()
+
+    const groupA = path.join(root, 'group-a')
+    const groupB = path.join(root, 'group-b')
+    await mkdir(groupA)
+    await mkdir(groupB)
+    // Same basename in both groups: `parkedName` derives its non-random
+    // portion from `path.basename(target)` + the fixed `PARK_TAG`, so an
+    // identical basename isolates the random suffix as the only thing that
+    // can differ between the two parked names below.
+    const targetA = path.join(groupA, 'skill')
+    const targetB = path.join(groupB, 'skill')
+    await mkdir(targetA)
+    await mkdir(targetB)
+
+    const resultA = await removeIfSame(targetA, await lstat(targetA))
+    const resultB = await removeIfSame(targetB, await lstat(targetB))
+
+    expect(resultA.removed).toBe(false)
+    expect(resultB.removed).toBe(false)
+    // Read the two names off the filesystem rather than out of the failure
+    // prose. An earlier version sliced them from `reason` at its last space,
+    // which coupled a security test to a message's wording: rephrasing the
+    // message, or adding a trailing period, would have broken it while the
+    // behaviour under test stayed correct (round 12, cross-family review).
+    const hexA = await parkedSuffix(groupA, 'skill', parkedPattern)
+    const hexB = await parkedSuffix(groupB, 'skill', parkedPattern)
+    // The property this test does pin: real randomness makes these differ.
+    // A constant-hex mutant produces the SAME suffix both times.
+    expect(hexA).not.toBe(hexB)
+  })
+
+  // SMI-6732 M1b: pins the MECHANISM the test above cannot reach. The park
+  // name must come from a CSPRNG, because unpredictability -- not uniqueness
+  // -- is what stops an attacker pre-creating the name the rename is about to
+  // land on. Stubbing `node:crypto` and asserting the parked name carries
+  // exactly the stubbed bytes kills every unique-but-predictable generator
+  // (counter, timestamp, pid, path hash), none of which calls `randomBytes`.
+  // Asserting the draw SIZE too keeps the entropy from being narrowed: a
+  // `randomBytes(2)` mutant leaves only 65,536 guesses.
+  it('derives the parked name from crypto.randomBytes, not from anything predictable', async () => {
+    const draws: number[] = []
+    const stub = Buffer.alloc(16, 0xab)
+    vi.doMock('node:crypto', async () => {
+      const actual = await vi.importActual<typeof import('node:crypto')>('node:crypto')
+      const randomBytes = (size: number): Buffer => {
+        draws.push(size)
+        return stub
+      }
+      return { ...actual, default: { ...actual, randomBytes }, randomBytes }
+    })
+    mockFs(
+      'rm',
+      () =>
+        (async (p: PathLike) => {
+          throw eacces(p)
+        }) as RealFs['rm']
+    )
+    const { removeIfSame, parkedPattern } = await load()
+
+    const target = path.join(root, 'skill')
+    await mkdir(target)
+
+    const result = await removeIfSame(target, await lstat(target))
+
+    expect(result.removed).toBe(false)
+    // Exactly one draw, of the full 16 bytes -- not zero (a predictable
+    // generator), not a narrowed size.
+    expect(draws).toEqual([16])
+    expect(await parkedSuffix(root, 'skill', parkedPattern)).toBe(stub.toString('hex'))
+  })
+
+  // SMI-6732 M3: `force: true` on the final `fsp.rm(parked, ...)` call means
+  // "tolerate the parked directory already being gone" -- the two only
+  // differ when the parked path is absent at `rm` time. This constructs
+  // that race for real: another actor deletes the parked directory (by
+  // calling the REAL `rm` from inside this mock) in the instant before
+  // `removeIfSame`'s own `fsp.rm(parked, {...})` call runs against it, so
+  // that call always lands on an already-absent path. With the real
+  // `force: true` that still reports success; a `force: false` mutant makes
+  // that same call throw ENOENT, which `removeIfSame` cannot recover from
+  // for a directory (only a regular file can be linked back).
+  it('still reports success when the parked directory is removed by another actor an instant before its own rm call', async () => {
+    const target = path.join(root, 'skill')
+    await mkdir(target)
+    await writeFile(path.join(target, 'SKILL.md'), 'ours', 'utf-8')
+    mockFs(
+      'rm',
+      (actual) =>
+        (async (...args: Parameters<RealFs['rm']>) => {
+          // Another actor wins the race and removes the parked directory
+          // first, using the REAL rm -- this always succeeds regardless of
+          // the options `removeIfSame` itself will pass a moment later.
+          await actual.rm(args[0], { recursive: true, force: true })
+          // `removeIfSame`'s own call, now against an already-absent path.
+          return actual.rm(...args)
+        }) as RealFs['rm']
+    )
+    const { removeIfSame } = await load()
+
+    const result = await removeIfSame(target, await lstat(target))
+
+    expect(result).toEqual({ removed: true })
+    await expect(lstat(target)).rejects.toMatchObject({ code: 'ENOENT' })
   })
 })

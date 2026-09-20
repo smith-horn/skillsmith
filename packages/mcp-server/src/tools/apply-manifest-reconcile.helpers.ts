@@ -164,6 +164,19 @@ export function reconcileKeyForLedgerEntry(name: string, client: string): string
  * record. Refuses when `installPath` still resolves to an existing
  * directory; any stat failure (ENOENT or otherwise) is treated as
  * "no longer resolves" — exactly the case this action exists for.
+ *
+ * This is the DELIBERATE OPPOSITE of the uninstall guard's own convention
+ * (`checkNotTrackedElsewhere`, `packages/core/src/services/
+ * skill-installation.removal-identity.ts`): there, only ENOENT counts as
+ * absence, and any other stat failure is a REFUSAL, on the theory that a
+ * record it cannot check might still be real. Here, ANY failure clears the
+ * record, on the theory that `drop_entry` is the only way a user has to get
+ * an unhelpable record out of their way. Harmonizing the two in either
+ * direction would wedge users permanently — an ENOENT-only `drop_entry`
+ * could never clear a record blocked by, say, a permission error on its
+ * `installPath`; an any-failure uninstall guard could be made to silently
+ * proceed past a transient fault (SMI-6732 round 7's own F1 finding). Keep
+ * them divergent on purpose.
  */
 export async function assertDropTargetNoLongerResolves(
   name: string,
