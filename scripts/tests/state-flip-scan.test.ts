@@ -47,12 +47,13 @@
  *     assertions are the invariant the plan states, not the integers.
  */
 import { execFileSync, spawnSync } from 'node:child_process'
-import { existsSync, mkdirSync, readFileSync, rmSync, writeFileSync } from 'node:fs'
+import { mkdirSync, readFileSync, rmSync, writeFileSync } from 'node:fs'
 import { dirname, join } from 'node:path'
 
 import { afterEach, describe, expect, it } from 'vitest'
 
 import { makeFixtureEnv, makeFixtureTempDir } from './_lib/git-fixture-env.js'
+import { probePath, requirePresence } from './_lib/probe-path.js'
 
 // Every synthetic repo created by setupSyntheticStateFlipRepo() this file,
 // drained and removed in afterEach (SMI-4693 fixture convention: retried
@@ -71,7 +72,14 @@ afterEach(() => {
 // audit-standards.test.ts and audit-workflow-sha-pin.test.ts).
 const REPO_ROOT = join(__dirname, '..', '..')
 const SCANNER_PATH = join(REPO_ROOT, '.claude/skills/plan-review-skill/scripts/scan-state-flip.sh')
-const SCANNER_PRESENT = existsSync(SCANNER_PATH)
+// SMI-6771: probePath + requirePresence replace a bare existsSync() here --
+// see plan-review-rubric-parity.test.ts's own migration comment for why
+// existsSync's EACCES/ENOTDIR-as-false collapse matters for a submodule
+// path like this one.
+const SCANNER_PRESENT = requirePresence(
+  probePath(SCANNER_PATH),
+  `state-flip scanner (${SCANNER_PATH})`
+)
 
 const GIT_ENV = makeFixtureEnv()
 
