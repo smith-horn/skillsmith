@@ -4,12 +4,10 @@
  * @module @skillsmith/core/services/skill-installation.uninstall
  *
  * Split out of `skill-installation.helpers.ts` to stay under the 500-line
- * standard once ADR-139's adoption logic was added — mirrors the existing
- * `skill-installation.io.ts` sibling-split convention. Round 25 split its own
- * helpers out again, into `skill-installation.uninstall.helpers.ts`, for the
- * same reason. `performUninstall`
- * has exactly one internal consumer (`skill-installation.service.ts`) and
- * is not part of `@skillsmith/core`'s public export surface.
+ * standard, per the `skill-installation.io.ts` sibling-split convention; round
+ * 25 split `.uninstall.helpers.ts` out again for the same reason, and round 7
+ * split `.removal-identity.ts` off the guard module. One internal consumer
+ * (`skill-installation.service.ts`); not part of the public export surface.
  */
 
 import * as fs from 'fs/promises'
@@ -20,6 +18,16 @@ import { removeIfSame } from '../install/remove-if-same.js'
 import type { SkillDependencyRepository } from '../repositories/SkillDependencyRepository.js'
 import type { ProgressCallback, UninstallResult } from './skill-installation.types.js'
 import { checkForModifications } from './skill-installation.io.js'
+import {
+  checkExactEntryName,
+  checkRemovalTarget,
+  checkRemovableSkillName,
+} from './skill-installation.removal-guard.js'
+import {
+  checkNotTrackedElsewhere,
+  identityChanged,
+  type DirIdentity,
+} from './skill-installation.removal-identity.js'
 import { hashContent, manifestKeyFor } from './skill-installation.helpers.js'
 import type { ManifestManager } from './skill-manifest.js'
 import { CANONICAL_CLIENT, type ClientId } from '../install/paths.js'
@@ -201,10 +209,25 @@ export async function performUninstall(params: {
   const listenerWarning = (): { warning?: string } =>
     listenerProblems.length > 0 ? { warning: listenerProblems.join(' ') } : {}
   try {
+    // Both "may this NAME be removed" rules live in the guard module alongside
+    // "may this PATH be removed" -- see `checkRemovableSkillName`. Checked HERE,
+    // before the manifest is loaded and before adoption, because a refusal must
+    // write nothing: the git-working-tree check below states that same invariant.
+    const nameOk = checkRemovableSkillName(skillName)
+    if (!nameOk.ok) {
+      return {
+        success: false,
+        skillName,
+        message: `Skill "${skillName}" was not removed: ${nameOk.reason}`,
+        ...listenerWarning(),
+      }
+    }
+
     notify(onProgress, listenerProblems, 'manifest', 'Loading manifest')
     const manifestData = await manifest.load()
     let skillEntry = manifestData.installedSkills[manifestKey]
     let adopted = false
+    let adoptedIdentity: DirIdentity | null = null
 
     if (!skillEntry) {
       const potentialPath = path.join(skillsDir, skillName)
@@ -237,6 +260,24 @@ export async function performUninstall(params: {
           ...listenerWarning(),
         }
       }
+      // Two halves of ONE rule: a name must not reach a directory past that
+      // directory's own record, because adoption then backdates `installedAt` and
+      // deletes without the modification check. F2 catches the CALLER holding the
+      // alias, F-A the MANIFEST, by inode identity rather than a sixth string
+      // rule. Both refuse before `potentialPath` is inspected or recorded.
+      const exact = await checkExactEntryName(skillsDir, skillName)
+      if (!exact.ok) {
+        return { success: false, skillName, message: exact.message, ...listenerWarning() }
+      }
+      const elsewhere = await checkNotTrackedElsewhere(
+        potentialPath,
+        skillName,
+        manifestData.installedSkills
+      )
+      if (!elsewhere.ok) {
+        return { success: false, skillName, message: elsewhere.message, ...listenerWarning() }
+      }
+      adoptedIdentity = elsewhere.identity
       // SMI-6529 round 15: refuse a git working tree before adopting it, so a
       // refusal writes nothing to the manifest.
       const early = await inspectForRemoval(potentialPath)
@@ -244,20 +285,9 @@ export async function performUninstall(params: {
         return { success: false, skillName, message: early.refusal, ...listenerWarning() }
       }
 
-      // ADR-139 (SMI-6274 Wave 4): a skill present on disk with no manifest
-      // entry is ADOPTED — reconciled by writing a manifest entry derived
-      // from disk — rather than requiring force=true just to remove it (the
-      // previous behavior). This closes the "untracked install" recovery
-      // gap ADR-139 point 1 requires: `update`/`remove` must not fail
-      // obscurely on an untracked skill.
-      //
-      // GPT-5.6-Sol PR review round 4: routed through the shared, race-safe
-      // {@link adoptUntrackedSkillEntry} instead of an inline write — this
-      // call site previously wrote the guessed entry unconditionally,
-      // without re-checking the manifest state under lock, so a concurrent
-      // real `install()` landing in that window could be silently
-      // clobbered. `adopted` now reflects whether OUR guess actually won
-      // (false when a concurrent writer's real entry was found instead).
+      // ADR-139: a skill on disk with no manifest entry is ADOPTED rather than
+      // requiring force just to remove it. Routed through the race-safe shared
+      // {@link adoptUntrackedSkillEntry}, whose docblock carries the rationale.
       notify(
         onProgress,
         listenerProblems,
@@ -286,10 +316,44 @@ export async function performUninstall(params: {
       adopted = adoptResult.adopted
     }
 
+    // SMI-6732: the manifest is not a trusted input. Until this check the
+    // uninstall path deleted whatever `installPath` named -- a folder outside
+    // the skills dir, a RELATIVE path resolved against process.cwd(), or the
+    // skills root itself -- and reported "uninstalled successfully" each time.
+    // The absoluteness and containment rules already existed in
+    // `skill-installation.target-guard.ts` for the WRITE path and were never
+    // called here. `removeIfSame` cannot stand in for them: it verifies
+    // IDENTITY ("I deleted the thing I inspected"), not AUTHORITY ("I was
+    // allowed to delete it"), and knows nothing about `skillsDir`.
+    // READ ONCE (round 5, F1). This and the read that fed `inspectForRemoval`
+    // were two separate property accesses, so the guard validated read 1 while
+    // the delete used read 2. Measured: a getter returning a benign path then a
+    // hostile one deleted outside the tree, and returning the root deleted every
+    // installed skill -- "uninstalled successfully" both times, force or not.
+    // Unreachable from shipped callers (both parse their own manifest JSON),
+    // which is why it survived five rounds. The hazard is the SPLIT, not the
+    // caller: one read cannot disagree with itself.
     const installPath = skillEntry.installPath
+    const allowed = await checkRemovalTarget(installPath, skillsDir)
+    if (!allowed.ok) {
+      return {
+        success: false,
+        skillName,
+        message: `Skill "${skillName}" was not removed: ${allowed.reason}`,
+        ...listenerWarning(),
+      }
+    }
+
     const seen = await inspectForRemoval(installPath)
     if ('refusal' in seen) {
       return { success: false, skillName, message: seen.refusal, ...listenerWarning() }
+    }
+    // Round 7 (F2): prove this is still the directory the guard identified.
+    // `removeIfSame` anchors on `seen.stat`, which is read HERE -- after
+    // adoption -- so a swap before this point was invisible to everything.
+    const swapped = identityChanged(adoptedIdentity, seen.stat, skillName)
+    if (swapped !== null) {
+      return { success: false, skillName, message: swapped, ...listenerWarning() }
     }
 
     if (!force) {
