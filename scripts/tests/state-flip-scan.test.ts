@@ -688,6 +688,84 @@ describe('scan-state-flip.sh (SMI-6514 P-7 scanner) -- Group A: portable', () =>
     }
   )
 
+  // SMI-6695 / SMI-6714. `-i` is bundled as `-aniF` and `-aniE`, which is why two
+  // review rounds read straight past it. Dropping it from both functions leaves the
+  // whole suite BYTE-IDENTICAL to baseline -- 39 passed / 1 skipped -- while the real
+  // scan of `git-crypt` falls from STEP 1 872 / STEP 2 44 to 859 / 32. Twelve real
+  // category-3 diagnostics disappear at exit 0.
+  //
+  // A cross-family reviewer proposed this mutation independently, which is the second
+  // time it has been found and the first time it is pinned: the SMI-6714 plan has
+  // carried "owed: a case-mismatch fixture" as prose with nothing behind it.
+  //
+  // The two mutations are NOT symmetric, and an earlier revision of this comment
+  // claimed they were. Measured:
+  //
+  //   -i off run_grep      -> STEP 1 drops below STEP 2, the subset invariant fires,
+  //                           the scanner EXITS 2 and never prints STEP 2. Both
+  //                           tests fail, so the STEP 2 test also catches this one.
+  //   -i off run_grep_and  -> exit 0, STEP 1 unmoved, STEP 2 -> 0. Only that test
+  //                           fails. This direction alone is independent.
+  //
+  // What the pair does guarantee is the thing that matters: a repair restoring `-i`
+  // to one function and not the other cannot go green. It does not guarantee one
+  // test per site, and saying so was an overclaim.
+  //
+  // Each line earns its place, checked by REMOVING it and confirming a discrimination
+  // collapses. An all-lower control line was removed after that check showed it
+  // changed no verdict -- the exact counts plus the scanner's own zero-denominator
+  // guard already separate a passing fixture from one matching nothing.
+  function setupCaseRepo(): string {
+    const repoDir = makeFixtureTempDir('state-flip-case-fixture')
+    createdRepoDirs.push(repoDir)
+    git(repoDir, ['init', '-q', '-b', 'main'])
+    const subDir = join(repoDir, 'scripts', 'sub')
+    mkdirSync(subDir, { recursive: true })
+    writeFileSync(
+      join(subDir, 'case-fixture.sh'),
+      [
+        // L1 -- noun UPPER. The ONLY line that pins `-i` on run_grep: remove it and
+        // the run_grep mutation stops being distinguishable from the shipped scanner.
+        '# WIDGET-TOOL is not installed by design',
+        // L2 -- noun lower, and the vocabulary matches through `isn't` ALONE. No other
+        // ABSENCE_VOCAB alternative is present: not `by design`, not `not installed`.
+        // That is what makes it the only line catching a mutation that lowercases
+        // ABSENCE_VOCAB's own mixed-case entries, which `-i` is what makes work.
+        "# widget-tool ISN'T here",
+        '',
+      ].join('\n')
+    )
+    git(repoDir, ['add', '.'])
+    git(repoDir, ['commit', '-q', '-m', 'case-mismatch fixture'])
+    return repoDir
+  }
+
+  it.skipIf(!SCANNER_PRESENT)(
+    'SMI-6695: `-i` on run_grep -- an upper-case occurrence counts toward the denominator (2, not 1)',
+    () => {
+      // The denominator is the one number P-7's whole design rests on (SMI-6514 s2.4).
+      // Case-sensitive, `WIDGET-TOOL` vanishes from it and the report still reads as a
+      // thorough scan -- an understated denominator, never an error.
+      expect(scanNoun(setupCaseRepo(), 'widget-tool')).toContain('STEP 1 (denominator): 2')
+    }
+  )
+
+  it.skipIf(!SCANNER_PRESENT)(
+    'SMI-6695: `-i` on run_grep_and -- both records survive into the MANDATED output',
+    () => {
+      const out = scanNoun(setupCaseRepo(), 'widget-tool')
+      // The count alone is not enough. A mutation that holds the totals while
+      // substituting or suppressing the case-mismatched records would leave a
+      // count-only assertion green while users lose exactly the diagnostics `-i`
+      // exists to preserve -- so assert the RECORDS, byte-exact, not just how many.
+      expect(out).toContain('STEP 2: noun x absence-vocabulary (2 hit(s))')
+      expect(out).toContain(
+        'scripts/sub/case-fixture.sh:1:# WIDGET-TOOL is not installed by design'
+      )
+      expect(out).toContain("scripts/sub/case-fixture.sh:2:# widget-tool ISN'T here")
+    }
+  )
+
   it.skipIf(!SCANNER_PRESENT)('working-tree mode sees an untracked file (was 0, want 1)', () => {
     // `git grep` without --untracked searches tracked content only, so a newly
     // written script carrying the noun AND a stale assertion contributed nothing.
