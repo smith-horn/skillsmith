@@ -6,6 +6,10 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/), and this
 
 ## [Unreleased]
 
+## v0.7.13
+
+- **Cadence**: Mechanical cadence alignment (no changes since v0.7.12).
+
 ## v0.7.12
 
 - **Cadence**: Mechanical cadence alignment (no changes since v0.7.11).
