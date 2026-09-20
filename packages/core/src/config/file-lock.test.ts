@@ -88,36 +88,62 @@ describe('withFileLock — RETRYABLE_REASONS membership is behaviour (SMI-6776 r
    * test written to guard the retry set.
    *
    * A control that returns one value for two opposite outcomes is not
-   * measuring the thing it names. The refusal outcome is first, deliberately:
-   * it is the one these tests are about, and the one the collapse hid.
+   * measuring the thing it names.
+   *
+   * The outcome alone is still too coarse, and the post-merge retro on #2904
+   * measured why: discarding the rejection makes 'refused' mean "rejected for
+   * ANY reason". A mutation throwing a plain Error instead of StuckLockError --
+   * losing `reason`, both paths and the whole manual-unstick remedy (SMI-5883,
+   * SMI-6764) -- survived every test here. So the error travels with the
+   * outcome and the refusal tests assert its identity, the way test (ii) below
+   * already does for the legacy path.
+   *
+   * The timer's type is deliberately the NARROW `{ outcome: 'pending' }`, not
+   * the wide return type. Under the wide one it is type-legal to wire the
+   * timeout arm to a refusal, which would make every "IS waited out" test
+   * silently assert a refusal-shaped value -- the same arm-to-value mis-binding
+   * this block exists to remove, one level down. The narrow type makes that a
+   * TS2322 at compile time (measured, not predicted), and costs nothing: it
+   * still races fine.
    */
   type Outcome = 'refused' | 'acquired' | 'pending'
+  type Settled = { outcome: Outcome; error?: unknown }
 
-  async function settle(): Promise<Outcome> {
+  async function settle(): Promise<Settled> {
     const attempt = withFileLock(target, 'probe', async () => 'ok').then(
-      (): Outcome => 'acquired',
-      (): Outcome => 'refused'
+      (): Settled => ({ outcome: 'acquired' }),
+      (error: unknown): Settled => ({ outcome: 'refused', error })
     )
-    const timer = new Promise<Outcome>((r) => setTimeout(() => r('pending'), SETTLE_MS))
+    const timer = new Promise<{ outcome: 'pending' }>((r) =>
+      setTimeout(() => r({ outcome: 'pending' }), SETTLE_MS)
+    )
     return Promise.race([attempt, timer])
   }
 
-  it('an unparseable claim is REFUSED at once — not waited out, and not acquired', async () => {
+  it('an unparseable claim is REFUSED at once, as a StuckLockError naming its reason', async () => {
     writeFileSync(lockPath, 'not a claim at all')
     const before = readFileSync(lockPath)
+    const settled = await settle()
     // `refused`, not merely "not pending". The distinction is the whole point:
     // an unparseable claim that became acquirable would be a lock-safety
     // regression, and the two-way version could not tell them apart.
-    await expect(settle()).resolves.toBe('refused')
+    expect(settled.outcome).toBe('refused')
+    // And it must be the DOCUMENTED refusal, not any rejection. Without these
+    // two lines a plain `throw new Error(...)` in place of StuckLockError
+    // passes -- measured, post-merge retro on #2904 -- taking `reason`, both
+    // paths and the manual-unstick remedy with it while the suite stays green.
+    expect(settled.error).toBeInstanceOf(StuckLockError)
+    expect((settled.error as StuckLockError).reason).toBe('unreclaimable_unparseable')
     // And the bytes survive, because a refusal must not delete anything.
     expect(readFileSync(lockPath).equals(before)).toBe(true)
   })
 
   it('a live holder IS waited out — still polling when an unparseable claim would have failed', async () => {
     // Known-positive control for the probe above: same harness, same window,
-    // opposite answer. Without this, "settled" could mean the probe is broken.
+    // opposite answer. Without this, 'pending' could mean the probe is broken
+    // rather than that the acquire is genuinely still polling.
     writeFileSync(lockPath, v1(process.pid))
-    await expect(settle()).resolves.toBe('pending')
+    await expect(settle()).resolves.toEqual({ outcome: 'pending' })
   })
 
   it('a busy reclaim lock IS waited out — the reason nothing else here reaches', async () => {
@@ -131,7 +157,7 @@ describe('withFileLock — RETRYABLE_REASONS membership is behaviour (SMI-6776 r
     // 'unavailable' immediately rather than blocking.
     writeFileSync(lockPath, v1(mintDeadPid()))
     writeFileSync(`${lockPath}.reclaim`, v1(process.pid))
-    await expect(settle()).resolves.toBe('pending')
+    await expect(settle()).resolves.toEqual({ outcome: 'pending' })
   })
 
   it('a dead holder under SKILLSMITH_LOCK_NO_AUTO_RECLAIM IS waited out', async () => {
@@ -141,7 +167,7 @@ describe('withFileLock — RETRYABLE_REASONS membership is behaviour (SMI-6776 r
     process.env.SKILLSMITH_LOCK_NO_AUTO_RECLAIM = '1'
     try {
       writeFileSync(lockPath, v1(mintDeadPid()))
-      await expect(settle()).resolves.toBe('pending')
+      await expect(settle()).resolves.toEqual({ outcome: 'pending' })
     } finally {
       if (prev === undefined) delete process.env.SKILLSMITH_LOCK_NO_AUTO_RECLAIM
       else process.env.SKILLSMITH_LOCK_NO_AUTO_RECLAIM = prev
