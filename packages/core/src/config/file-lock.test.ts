@@ -21,7 +21,7 @@
  */
 
 import { afterEach, beforeEach, describe, expect, it } from 'vitest'
-import { existsSync, mkdirSync, rmSync, writeFileSync } from 'node:fs'
+import { existsSync, mkdirSync, readFileSync, rmSync, writeFileSync } from 'node:fs'
 import * as os from 'node:os'
 import * as path from 'node:path'
 import { hostname } from 'node:os'
@@ -73,26 +73,51 @@ describe('withFileLock — RETRYABLE_REASONS membership is behaviour (SMI-6776 r
    */
   const SETTLE_MS = 400
 
-  /** Resolves 'settled' if the acquire rejected quickly, 'pending' if it is still polling. */
-  async function settlesFast(): Promise<'settled' | 'pending'> {
-    const attempt = withFileLock(target, 'probe', async () => 'acquired').then(
-      () => 'settled' as const,
-      () => 'settled' as const
+  /**
+   * THREE outcomes, because two cannot express what these tests assert.
+   *
+   * The first version mapped both fulfilment and rejection to 'settled':
+   *
+   *   withFileLock(...).then(() => 'settled', () => 'settled')
+   *
+   * So "the acquire was REFUSED at once" and "the acquire SUCCEEDED at once"
+   * returned the same value, and a test asserting the first would accept the
+   * second. Measured: making an unparseable claim reclaimable -- so the acquire
+   * succeeds and DELETES the lock file -- passed all six tests here. That is
+   * the claim-admission class (SMI-6776 round 3) walking straight through a
+   * test written to guard the retry set.
+   *
+   * A control that returns one value for two opposite outcomes is not
+   * measuring the thing it names. The refusal outcome is first, deliberately:
+   * it is the one these tests are about, and the one the collapse hid.
+   */
+  type Outcome = 'refused' | 'acquired' | 'pending'
+
+  async function settle(): Promise<Outcome> {
+    const attempt = withFileLock(target, 'probe', async () => 'ok').then(
+      (): Outcome => 'acquired',
+      (): Outcome => 'refused'
     )
-    const timer = new Promise<'pending'>((r) => setTimeout(() => r('pending'), SETTLE_MS))
+    const timer = new Promise<Outcome>((r) => setTimeout(() => r('pending'), SETTLE_MS))
     return Promise.race([attempt, timer])
   }
 
-  it('an unparseable claim fails at once — it is NOT waited out', async () => {
+  it('an unparseable claim is REFUSED at once — not waited out, and not acquired', async () => {
     writeFileSync(lockPath, 'not a claim at all')
-    await expect(settlesFast()).resolves.toBe('settled')
+    const before = readFileSync(lockPath)
+    // `refused`, not merely "not pending". The distinction is the whole point:
+    // an unparseable claim that became acquirable would be a lock-safety
+    // regression, and the two-way version could not tell them apart.
+    await expect(settle()).resolves.toBe('refused')
+    // And the bytes survive, because a refusal must not delete anything.
+    expect(readFileSync(lockPath).equals(before)).toBe(true)
   })
 
   it('a live holder IS waited out — still polling when an unparseable claim would have failed', async () => {
     // Known-positive control for the probe above: same harness, same window,
     // opposite answer. Without this, "settled" could mean the probe is broken.
     writeFileSync(lockPath, v1(process.pid))
-    await expect(settlesFast()).resolves.toBe('pending')
+    await expect(settle()).resolves.toBe('pending')
   })
 
   it('a busy reclaim lock IS waited out — the reason nothing else here reaches', async () => {
@@ -106,7 +131,7 @@ describe('withFileLock — RETRYABLE_REASONS membership is behaviour (SMI-6776 r
     // 'unavailable' immediately rather than blocking.
     writeFileSync(lockPath, v1(mintDeadPid()))
     writeFileSync(`${lockPath}.reclaim`, v1(process.pid))
-    await expect(settlesFast()).resolves.toBe('pending')
+    await expect(settle()).resolves.toBe('pending')
   })
 
   it('a dead holder under SKILLSMITH_LOCK_NO_AUTO_RECLAIM IS waited out', async () => {
@@ -116,7 +141,7 @@ describe('withFileLock — RETRYABLE_REASONS membership is behaviour (SMI-6776 r
     process.env.SKILLSMITH_LOCK_NO_AUTO_RECLAIM = '1'
     try {
       writeFileSync(lockPath, v1(mintDeadPid()))
-      await expect(settlesFast()).resolves.toBe('pending')
+      await expect(settle()).resolves.toBe('pending')
     } finally {
       if (prev === undefined) delete process.env.SKILLSMITH_LOCK_NO_AUTO_RECLAIM
       else process.env.SKILLSMITH_LOCK_NO_AUTO_RECLAIM = prev
