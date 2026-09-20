@@ -974,7 +974,10 @@ describe('scanBackendSites (SMI-6772 F8)', () => {
     // template content and both comment kinds; a match counts only when its
     // colon is code. The colon, not the match start: a string whose CONTENT
     // begins with `backend` starts its match at the string's own opening
-    // quote, which is code, and only the colon tells it from a quoted key.
+    // quote, which is code, and the colon is what tells that case from a
+    // quoted key. Not covered, and recorded on SMI-6781 with a verified fix:
+    // a string whose content ENDS with `backend`, and a regex literal that
+    // carries a quote.
     for (const src of [
       "const note = \"backend: 'mock',\"; const x={backend: 'onnx'}",
       "backend: 'onnx', note: \"backend: 'mock',\",",
@@ -994,9 +997,11 @@ describe('scanBackendSites (SMI-6772 F8)', () => {
   })
 
   it('a quoted key is still a site, and `//` or `/*` inside a string is not a comment', () => {
-    // The content map keeps string delimiters visible (so `'backend':` still
-    // matches) and consults the string state before looking for a comment
-    // opener (so a URL or a `/*` inside a string does not start one).
+    // The map's one consulted position is the colon, which is code for a
+    // quoted key (`'backend':`) and content for a `backend:` inside a string;
+    // string state is consulted before a comment opener, so a URL or a `/*`
+    // inside a string starts nothing. (An earlier comment here credited the
+    // delimiters staying unmasked; masking them changes no verdict.)
     for (const src of [
       "'backend': 'onnx',",
       '"backend": \'onnx\',',

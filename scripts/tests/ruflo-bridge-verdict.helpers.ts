@@ -15,8 +15,12 @@ import type { Probe } from './_lib/probe-path.js'
  * vanished real site could be masked by same-shaped quoted text with the
  * exact expected counts). The colon, not the match start, is the test: a
  * string whose CONTENT begins with `backend` starts its match at the
- * string's own opening quote, which is code, and only the colon tells it
- * from a quoted key. Module-private on purpose (governance on 8edd4fcef,
+ * string's own opening quote, which is code, and the colon is what tells
+ * that case from a quoted key. Necessary, not sufficient: a string whose
+ * content ENDS with `backend` (a ternary arm `x ? 'backend' : 'onnx'`, a
+ * longer quoted key `'db-backend':`) closes before a code colon and still
+ * counts -- SMI-6781, recorded with a verified fix. Module-private on
+ * purpose (governance on 8edd4fcef,
  * F8): a `/g` regex carries `lastIndex`, and one `.test()` by an outside
  * consumer would make the next `matchAll` here start mid-source and
  * silently halve the site count -- the exact quiet shrink the drift
@@ -87,15 +91,19 @@ function stepInsideString(s: string, i: number, quote: string): { last: number; 
  * (a mutation that masks them survives every test, and rightly: it changes
  * no verdict); they are left at 0 only so the map reads as "content".
  * String state is consulted before a comment opener is looked for, so a
- * URL's `//` or a `/*` inside a string starts nothing. Steps inside strings come from
- * stepInsideString, the same step the value scan uses. Not modelled, and
- * stated rather than implied: a regular-expression literal. One that
- * contains a quote or a comment opener desyncs this map from that point
- * on, in the loud direction -- sites vanish or appear and the drift
- * guard's exact site count fails -- never as a silent same-count mask. A
- * block comment left open masks to the end of the source, also loud.
- * Measured against a twenty-four-shape case table on the host before it
- * was written here.
+ * URL's `//` or a `/*` inside a string starts nothing. Steps inside
+ * strings come from stepInsideString, the same step the value scan uses.
+ * Not modelled: a regular-expression literal. One that contains a quote
+ * inverts code/content from that point on; sites usually vanish or appear
+ * (loud, the exact site count fails), but a compensating pair can hold the
+ * count and swap the label set -- a silent same-count mask, measured by
+ * both review families on the commit that added this map (SMI-6781 holds
+ * the shapes and the fix direction). Also not modelled here: a backtick
+ * reachable inside a template's `${}`; the value-span bounder's own walk
+ * does not see comments. A block comment left open masks to the end of
+ * the source, loud. Twenty-four shapes were measured on the host before
+ * this was written; the counterexamples above were found afterwards, by
+ * reviewers, which is why the limits are listed and not bounded.
  */
 function maskedPositions(src: string): Uint8Array {
   const masked = new Uint8Array(src.length)
