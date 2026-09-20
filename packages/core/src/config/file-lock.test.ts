@@ -141,9 +141,11 @@ describe('withFileLock — RETRYABLE_REASONS membership is behaviour (SMI-6776 r
     // regression, and the two-way version could not tell them apart.
     expect(settled.outcome).toBe('refused')
     // And it must be the DOCUMENTED refusal, not any rejection. Without these
-    // two lines a plain `throw new Error(...)` in place of StuckLockError
-    // passes -- measured, post-merge retro on #2904 -- taking `reason`, both
-    // paths and the manual-unstick remedy with it while the suite stays green.
+    // two lines, returning `unreclaimable_legacy` where `mapRefusalToReason`
+    // returns `unreclaimable_unparseable` passes 6 of 6 -- measured -- taking
+    // `reason` and the manual-unstick remedy with it while the suite stays
+    // green. See the block comment above for why an earlier plain-Error framing
+    // of this same point was withdrawn; it is wrong for the whole throw site.
     expect(settled.error).toBeInstanceOf(StuckLockError)
     expect((settled.error as StuckLockError).reason).toBe('unreclaimable_unparseable')
     // And the bytes survive, because a refusal must not delete anything.
