@@ -72,15 +72,39 @@ function describeReason(reason: StuckLockReason, claim: Claim, reclaimPath: stri
  * What the caller should do about this refusal, per reason.
  *
  * This exists because the opening verb used to carry it and could not
- * (SMI-6764). A verb is binary; three of these five reasons have an answer
- * that depends on facts `reason` does not carry, so any binary split has to
- * guess at them. Saying "it depends, and on this" is both honest and more
- * useful than a guess -- and unlike a verb, it can be right.
+ * (SMI-6764). A verb is binary; only `unreclaimable_unparseable` has an answer
+ * this function can give outright. Every other reason depends on a fact
+ * `reason` does not carry -- `reclaim_unavailable` on whether the reclaim lock
+ * is busy or orphaned, `unreclaimable_legacy` on whether the legacy holder is
+ * alive, `reclaim_disabled` on whether a differently-configured peer exists,
+ * and `held` on whether the holder was ever probed at all (round 5). So any
+ * binary split has to guess at them. Saying "it depends, and on this" is both
+ * honest and more useful than a guess -- and unlike a verb, it can be right.
+ *
+ * Note this function's own standing: it receives ONLY `reason`, never the
+ * claim. It therefore knows strictly less than `describeReason`, and must not
+ * assert anything about the holder that `reason` alone cannot support.
  */
 export function describeRemedy(reason: StuckLockReason): string {
   switch (reason) {
     case 'held':
-      return 'A live holder is expected to release, so retrying is the right first response.'
+      // No liveness claim here, for the same reason `describeReason` dropped
+      // "(still alive)" one sentence earlier -- and a stronger one. This
+      // function receives ONLY `reason`; it cannot see the claim at all, so it
+      // has strictly less standing than `describeReason`, which at least gets
+      // the pid. `held` turns on a fact the reason does not carry, exactly like
+      // the three above it: it is the
+      // safe default when the liveness probe never ran, and `classifyRefusal`
+      // also returns it for a claim naming another host or a pid that cannot
+      // be probed (`isV1OwnerDead` bails on both before it ever signals).
+      // Measured, all three rendering under `held`: a pid `isOwnerDefinitelyDead`
+      // reports dead, a foreign-host claim, and `pid: -1` -- which `parseClaim`
+      // accepts as v1 and nothing will ever reclaim.
+      return (
+        'The holder was not established to be gone, so retrying is the right first response. ' +
+        'If it persists, the claim may name another host or a pid this process cannot probe; ' +
+        'neither is auto-reclaimed from here, so only the manual steps clear those.'
+      )
     case 'reclaim_unavailable':
       // The two halves `describeReason` already names have OPPOSITE answers,
       // and nothing in `reason` separates them: a concurrent reclaim clears in
@@ -124,10 +148,12 @@ export function describeRemedy(reason: StuckLockReason): string {
  * partition does not exist. `StuckLockReason` is not a total function onto
  * "retry helps / retry does not": `reclaim_unavailable` depends on whether the
  * reclaim lock is busy or orphaned, `unreclaimable_legacy` on whether the
- * legacy holder is alive, and `reclaim_disabled` on whether a
- * differently-configured peer exists. The binary verb had to guess, and it
- * guessed wrong for an orphaned reclaim lock -- which never clears, and read
- * "Timed out waiting".
+ * legacy holder is alive, `reclaim_disabled` on whether a
+ * differently-configured peer exists, and `held` -- added in round 5, after
+ * the first four rounds all treated it as determined -- on whether the holder
+ * was probed at all, and on whether it is even probeable from here. The binary
+ * verb had to guess, and it guessed wrong for an orphaned reclaim lock --
+ * which never clears, and read "Timed out waiting".
  *
  * "Could not acquire" is the honest superset: true for every reason, and it
  * asserts nothing about elapsed time or about whether retrying helps. The old
