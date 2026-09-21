@@ -28,6 +28,7 @@ import { hostname } from 'node:os'
 
 import { withFileLock } from './file-lock.js'
 import { StuckLockError } from './owned-lock.js'
+import { LOCK_RETRY_DELAY_MS } from './owned-lock.types.js'
 import { mintDeadPid } from '../../tests/helpers/deterministic-dead-pid.js'
 
 /** A well-formed v1 claim for `pid`, so the refusal reason is the one under test. */
@@ -119,6 +120,7 @@ describe('withFileLock — RETRYABLE_REASONS membership is behaviour (SMI-6776 r
     // earlier revision did -- lets a stateful mutant throw the wrong reason on
     // the first and the right one on the second, and pass.
     let caught: unknown
+    const t0 = performance.now()
     const attempt = withFileLock(target, 'probe', async () => 'ok').then(
       (): 'acquired' => 'acquired',
       (err: unknown): 'refused' => {
@@ -128,6 +130,7 @@ describe('withFileLock — RETRYABLE_REASONS membership is behaviour (SMI-6776 r
     )
     const timer = new Promise<'pending'>((r) => setTimeout(() => r('pending'), SETTLE_MS))
     const outcome = await Promise.race([attempt, timer])
+    const elapsed = performance.now() - t0
 
     // `refused`, not merely "not pending". The distinction is the whole point:
     // an unparseable claim that became acquirable would be a lock-safety
@@ -139,6 +142,13 @@ describe('withFileLock — RETRYABLE_REASONS membership is behaviour (SMI-6776 r
     // `reason` and the manual-unstick remedy with it while the suite stays green.
     expect(caught).toBeInstanceOf(StuckLockError)
     expect((caught as StuckLockError).reason).toBe('unreclaimable_unparseable')
+    // On the FIRST attempt, which is a stronger claim than "inside the window"
+    // and needs its own predicate. Threshold is the real retry delay, imported
+    // rather than guessed: anything at or past it necessarily slept at least
+    // once, so it polled. Measured -- misclassifying the first attempt as a
+    // RETRYABLE reason and the second correctly rejects at ~1x the delay, well
+    // inside SETTLE_MS, and passed every other assertion here.
+    expect(elapsed).toBeLessThan(LOCK_RETRY_DELAY_MS)
     // And the bytes survive, because a refusal must not delete anything.
     expect(readFileSync(lockPath).equals(before)).toBe(true)
   })
