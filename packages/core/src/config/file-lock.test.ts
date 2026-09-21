@@ -74,80 +74,61 @@ describe('withFileLock — RETRYABLE_REASONS membership is behaviour (SMI-6776 r
   const SETTLE_MS = 400
 
   /**
-   * THREE outcomes, because two cannot express what these tests assert.
+   * THREE outcomes, because two cannot express what these tests assert. Keep
+   * all three, and keep each race arm on its OWN narrow literal type -- never
+   * the wide `Outcome`. An arm annotated with the union can be mis-wired to
+   * another arm's value and still typecheck; narrow, each mis-wiring is a
+   * compile error.
    *
-   * The first version mapped both fulfilment and rejection to 'settled':
+   * `settle()` answers one question -- which outcome, inside the window -- and
+   * the error never passes through it. Assert a refusal's IDENTITY from
+   * `withFileLock` directly, with the try/catch inline at the assertion site,
+   * as test (ii) does. Any test-owned function between the throw and the
+   * assertion can be edited to reconstruct the error, and then a wrong
+   * production `reason` ships green.
    *
-   *   withFileLock(...).then(() => 'settled', () => 'settled')
+   * Inlining does not make that impossible -- no test can defend against edits
+   * to itself. It makes the defeating edit obvious: you would be writing the
+   * expected value three lines above the assertion that checks it.
    *
-   * So "the acquire was REFUSED at once" and "the acquire SUCCEEDED at once"
-   * returned the same value, and a test asserting the first would accept the
-   * second. Measured: making an unparseable claim reclaimable -- so the acquire
-   * succeeds and DELETES the lock file -- passed all six tests here. That is
-   * the claim-admission class (SMI-6776 round 3) walking straight through a
-   * test written to guard the retry set.
-   *
-   * A control that returns one value for two opposite outcomes is not
-   * measuring the thing it names.
-   *
-   * The outcome alone is still too coarse, and the post-merge retro on #2904
-   * measured why: discarding the rejection makes 'refused' mean "rejected for
-   * ANY reason", so the tests cannot tell the DOCUMENTED refusal from any
-   * rejection. The mutation that demonstrates it is a REASON SWAP -- return
-   * `unreclaimable_legacy` where `mapRefusalToReason` returns
-   * `unreclaimable_unparseable`. Both are non-retryable, so no outcome moves,
-   * and it passed 6 of 6 before the error-identity assertions existed. So the
-   * error travels with the outcome and the refusal test asserts its identity
-   * AND its reason, the way test (ii) below already does for the legacy path.
-   *
-   * (An earlier revision of this comment cited "a plain Error instead of
-   * StuckLockError" as having survived every test. That is only true of the
-   * NARROW form -- a plain Error thrown for the unparseable reason alone.
-   * Replacing the whole throw site was already caught four ways at the parent
-   * commit. Conflating the two overstated what the new assertions buy, inside
-   * a comment whose subject is measuring; the reason swap is the true and
-   * stronger claim, so it is the one stated above.)
-   *
-   * ALL THREE race arms carry their own narrow literal type, not the wide
-   * `Settled`. Any arm annotated with the union can be mis-wired to another
-   * arm's value and still typecheck, which is the arm-to-value mis-binding
-   * this whole block exists to remove. Measured: with the fulfilment arm left
-   * wide, wiring it to 'pending' is `tsc`-clean and makes a real lock-theft
-   * regression pass 6 of 6 -- inside the test named "a live holder IS waited
-   * out". Narrow on every arm turns each such mis-wiring into a TS2322
-   * (measured, not predicted) and costs nothing: `Promise.race` still infers
-   * a union assignable to the declared return type.
+   * Every claim above was measured, and the numbers live in the issues rather
+   * than here, where they would rot: SMI-6776 (the two-way collapse),
+   * SMI-6786 (reason swap, arm typing), SMI-6796 (the helper-as-oracle).
    */
   type Outcome = 'refused' | 'acquired' | 'pending'
-  type Settled = { outcome: Outcome; error?: unknown }
 
-  async function settle(): Promise<Settled> {
+  async function settle(): Promise<Outcome> {
     const attempt = withFileLock(target, 'probe', async () => 'ok').then(
-      (): { outcome: 'acquired' } => ({ outcome: 'acquired' }),
-      (error: unknown): { outcome: 'refused'; error: unknown } => ({ outcome: 'refused', error })
+      (): 'acquired' => 'acquired',
+      (): 'refused' => 'refused'
     )
-    const timer = new Promise<{ outcome: 'pending' }>((r) =>
-      setTimeout(() => r({ outcome: 'pending' }), SETTLE_MS)
-    )
+    const timer = new Promise<'pending'>((r) => setTimeout(() => r('pending'), SETTLE_MS))
     return Promise.race([attempt, timer])
   }
 
   it('an unparseable claim is REFUSED at once, as a StuckLockError naming its reason', async () => {
     writeFileSync(lockPath, 'not a claim at all')
     const before = readFileSync(lockPath)
-    const settled = await settle()
     // `refused`, not merely "not pending". The distinction is the whole point:
     // an unparseable claim that became acquirable would be a lock-safety
     // regression, and the two-way version could not tell them apart.
-    expect(settled.outcome).toBe('refused')
-    // And it must be the DOCUMENTED refusal, not any rejection. Without these
-    // two lines, returning `unreclaimable_legacy` where `mapRefusalToReason`
-    // returns `unreclaimable_unparseable` passes 6 of 6 -- measured -- taking
-    // `reason` and the manual-unstick remedy with it while the suite stays
-    // green. See the block comment above for why an earlier plain-Error framing
-    // of this same point was withdrawn; it is wrong for the whole throw site.
-    expect(settled.error).toBeInstanceOf(StuckLockError)
-    expect((settled.error as StuckLockError).reason).toBe('unreclaimable_unparseable')
+    await expect(settle()).resolves.toBe('refused')
+    // And it must be the DOCUMENTED refusal, not any rejection -- asserted on
+    // the error `withFileLock` actually threw, with nothing this file owns in
+    // between. Without these two lines, returning `unreclaimable_legacy` where
+    // `mapRefusalToReason` returns `unreclaimable_unparseable` passes 6 of 6 --
+    // measured -- taking `reason` and the manual-unstick remedy with it while
+    // the suite stays green. See the block comment above for why an earlier
+    // plain-Error framing of this point was withdrawn; it is wrong for the
+    // whole throw site.
+    let caught: unknown
+    try {
+      await withFileLock(target, 'probe', async () => 'ok')
+    } catch (err) {
+      caught = err
+    }
+    expect(caught).toBeInstanceOf(StuckLockError)
+    expect((caught as StuckLockError).reason).toBe('unreclaimable_unparseable')
     // And the bytes survive, because a refusal must not delete anything.
     expect(readFileSync(lockPath).equals(before)).toBe(true)
   })
@@ -157,7 +138,7 @@ describe('withFileLock — RETRYABLE_REASONS membership is behaviour (SMI-6776 r
     // opposite answer. Without this, 'pending' could mean the probe is broken
     // rather than that the acquire is genuinely still polling.
     writeFileSync(lockPath, v1(process.pid))
-    await expect(settle()).resolves.toEqual({ outcome: 'pending' })
+    await expect(settle()).resolves.toBe('pending')
   })
 
   it('a busy reclaim lock IS waited out — the reason nothing else here reaches', async () => {
@@ -171,7 +152,7 @@ describe('withFileLock — RETRYABLE_REASONS membership is behaviour (SMI-6776 r
     // 'unavailable' immediately rather than blocking.
     writeFileSync(lockPath, v1(mintDeadPid()))
     writeFileSync(`${lockPath}.reclaim`, v1(process.pid))
-    await expect(settle()).resolves.toEqual({ outcome: 'pending' })
+    await expect(settle()).resolves.toBe('pending')
   })
 
   it('a dead holder under SKILLSMITH_LOCK_NO_AUTO_RECLAIM IS waited out', async () => {
@@ -181,7 +162,7 @@ describe('withFileLock — RETRYABLE_REASONS membership is behaviour (SMI-6776 r
     process.env.SKILLSMITH_LOCK_NO_AUTO_RECLAIM = '1'
     try {
       writeFileSync(lockPath, v1(mintDeadPid()))
-      await expect(settle()).resolves.toEqual({ outcome: 'pending' })
+      await expect(settle()).resolves.toBe('pending')
     } finally {
       if (prev === undefined) delete process.env.SKILLSMITH_LOCK_NO_AUTO_RECLAIM
       else process.env.SKILLSMITH_LOCK_NO_AUTO_RECLAIM = prev
