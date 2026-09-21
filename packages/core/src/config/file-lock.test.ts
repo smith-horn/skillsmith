@@ -80,16 +80,20 @@ describe('withFileLock — RETRYABLE_REASONS membership is behaviour (SMI-6776 r
    * another arm's value and still typecheck; narrow, each mis-wiring is a
    * compile error.
    *
-   * `settle()` answers one question -- which outcome, inside the window -- and
-   * the error never passes through it. Assert a refusal's IDENTITY from
-   * `withFileLock` directly, with the try/catch inline at the assertion site,
-   * as test (ii) does. Any test-owned function between the throw and the
-   * assertion can be edited to reconstruct the error, and then a wrong
-   * production `reason` ships green.
+   * `settle()` answers one question -- which outcome, inside the window -- for
+   * the three tests that need only that. A test asserting a refusal's IDENTITY
+   * races its OWN acquisition and captures that attempt's rejection inline, so
+   * promptness, identity and reason all describe the SAME `withFileLock` call.
    *
-   * Inlining does not make that impossible -- no test can defend against edits
-   * to itself. It makes the defeating edit obvious: you would be writing the
-   * expected value three lines above the assertion that checks it.
+   * Two things this protects against, both measured. A test-owned function
+   * between the throw and the assertion can be edited to reconstruct the error.
+   * And two separate acquisitions let a stateful mutant answer the first one
+   * wrongly and the second one correctly -- the test name then claims of one
+   * refusal what was observed of two.
+   *
+   * Neither is made impossible: no test can defend against edits to itself.
+   * What one invocation buys is that the defeating edit has to be written
+   * beside the assertion it defeats.
    *
    * Every claim above was measured, and the numbers live in the issues rather
    * than here, where they would rot: SMI-6776 (the two-way collapse),
@@ -109,24 +113,30 @@ describe('withFileLock — RETRYABLE_REASONS membership is behaviour (SMI-6776 r
   it('an unparseable claim is REFUSED at once, as a StuckLockError naming its reason', async () => {
     writeFileSync(lockPath, 'not a claim at all')
     const before = readFileSync(lockPath)
+    // ONE acquisition, raced against the window, with its rejection captured.
+    // Promptness, identity and reason are then all asserted about the SAME
+    // attempt. Splitting them across two `withFileLock` calls -- which an
+    // earlier revision did -- lets a stateful mutant throw the wrong reason on
+    // the first and the right one on the second, and pass.
+    let caught: unknown
+    const attempt = withFileLock(target, 'probe', async () => 'ok').then(
+      (): 'acquired' => 'acquired',
+      (err: unknown): 'refused' => {
+        caught = err
+        return 'refused'
+      }
+    )
+    const timer = new Promise<'pending'>((r) => setTimeout(() => r('pending'), SETTLE_MS))
+    const outcome = await Promise.race([attempt, timer])
+
     // `refused`, not merely "not pending". The distinction is the whole point:
     // an unparseable claim that became acquirable would be a lock-safety
     // regression, and the two-way version could not tell them apart.
-    await expect(settle()).resolves.toBe('refused')
-    // And it must be the DOCUMENTED refusal, not any rejection -- asserted on
-    // the error `withFileLock` actually threw, with nothing this file owns in
-    // between. Without these two lines, returning `unreclaimable_legacy` where
-    // `mapRefusalToReason` returns `unreclaimable_unparseable` passes 6 of 6 --
-    // measured -- taking `reason` and the manual-unstick remedy with it while
-    // the suite stays green. See the block comment above for why an earlier
-    // plain-Error framing of this point was withdrawn; it is wrong for the
-    // whole throw site.
-    let caught: unknown
-    try {
-      await withFileLock(target, 'probe', async () => 'ok')
-    } catch (err) {
-      caught = err
-    }
+    expect(outcome).toBe('refused')
+    // And it must be the DOCUMENTED refusal, not any rejection. Without these
+    // two lines, returning `unreclaimable_legacy` where `mapRefusalToReason`
+    // returns `unreclaimable_unparseable` passes 6 of 6 -- measured -- taking
+    // `reason` and the manual-unstick remedy with it while the suite stays green.
     expect(caught).toBeInstanceOf(StuckLockError)
     expect((caught as StuckLockError).reason).toBe('unreclaimable_unparseable')
     // And the bytes survive, because a refusal must not delete anything.
