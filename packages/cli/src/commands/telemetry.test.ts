@@ -16,6 +16,9 @@
  */
 
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest'
+import { resolve as resolvePath, sep, dirname, basename, join as joinPath } from 'node:path'
+import { homedir } from 'node:os'
+import { realpathSync } from 'node:fs'
 
 // ---------------------------------------------------------------------------
 // fs/promises mock (for manifest.ts)
@@ -33,7 +36,13 @@ vi.mock('fs/promises', async (importOriginal) => {
   const actual = await importOriginal<typeof import('fs/promises')>()
   return {
     ...actual,
-    mkdir: vi.fn(async () => undefined),
+    // SMI-6358: REAL mkdir, not a no-op. The manifest lock creates
+    // `<MANIFEST_PATH>.lock.<id>.tmp` beside the manifest, so
+    // `~/.skillsmith/` has to exist on disk even though the manifest's own
+    // contents stay in `memfsAsync`. A no-op here left the lock opening a
+    // temp file in a directory nothing had created — ENOENT, all 19 tests.
+    // Safe: vitest.setup.ts sandboxes $HOME per test file.
+    mkdir: vi.fn(async (p: string, opts?: unknown) => actual.mkdir(p, opts as never)),
     writeFile: vi.fn(async (path: string, content: string) => {
       memfsAsync[path] = content
     }),
@@ -59,33 +68,203 @@ vi.mock('fs/promises', async (importOriginal) => {
 
 const memfsSync: Record<string, string> = {}
 
-vi.mock('node:fs', () => ({
-  existsSync: vi.fn((p: string) => p in memfsSync),
-  readFileSync: vi.fn((path: string) => {
-    const c = memfsSync[path]
-    if (c === undefined) throw Object.assign(new Error(`ENOENT: ${path}`), { code: 'ENOENT' })
-    return c
-  }),
-  writeFileSync: vi.fn((path: string, content: string) => {
-    memfsSync[path] = content
-  }),
-  renameSync: vi.fn((src: string, dst: string) => {
-    const c = memfsSync[src]
-    if (c === undefined) throw new Error(`ENOENT: ${src}`)
-    memfsSync[dst] = c
-    delete memfsSync[src]
-  }),
-  mkdirSync: vi.fn(() => undefined),
-  chmodSync: vi.fn(() => undefined),
-  copyFileSync: vi.fn((src: string, dst: string) => {
-    memfsSync[dst] = memfsSync[src] ?? '# stub hook script'
-  }),
-  unlinkSync: vi.fn((p: string) => {
-    delete memfsSync[p]
-  }),
-  readdirSync: vi.fn(() => []),
-  statSync: vi.fn(() => ({ mtimeMs: Date.now() - 1000 })),
-}))
+// SMI-6358: telemetry's writes now route through `updateManifestEntry()`,
+// which takes @skillsmith/core's manifest lock. That lock's claim path
+// (`owned-lock.claim.ts`) calls openSync/linkSync/fstatSync/readSync/
+// closeSync — none of which a full-replacement factory supplies, so
+// collection threw `No "openSync" export is defined on the "node:fs" mock`
+// and took all 19 tests in this file with it. Same defect the `fs/promises`
+// mock above already carries a comment about, one mock down.
+//
+// Partial-mock via importOriginal so those six fall through to real fs, and
+// additionally delegate `writeFileSync`/`unlinkSync` for paths this file does
+// NOT fake — those two the lock genuinely uses, and intercepting them left it
+// writing its claim into memory while `openSync` had created a real file, then
+// failing to remove it (a stale lock on the second call).
+//
+// Deliberately NOT path-scoped: existsSync, readFileSync, mkdirSync,
+// copyFileSync, readdirSync, statSync. The lock touches none of those, and
+// `copyFileSync` in particular must stay fully faked — it copies the hook
+// TEMPLATE from a path that does not exist in the container, so delegating it
+// to real fs breaks the install-hook tests.
+//
+// `chmodSync` is the exception, and is deliberately left fully faked even
+// though the lock DOES call it: `owned-lock.claim.ts`'s `writeTempClaimExclusive`
+// runs `chmodSync(tmp, 0o600)` on every acquisition, to re-assert the mode
+// under a permissive umask. No-opping it is safe because `openSync(…, 'wx',
+// 0o600)` already caps the temp file's mode and nothing writes it afterwards,
+// so the chmod is belt-and-braces rather than load-bearing — and core's own
+// `owned-lock.test.ts` exercises it against real fs. If it ever becomes
+// load-bearing, this mock would hide the failure; path-scope it then.
+//
+// `includes`, not `endsWith`: telemetry.helpers.ts writes settings atomically
+// via `settings.json.<id>.tmp` + rename, and a predicate anchored on the
+// suffix missed that temp file — it fell through to real fs and threw ENOENT
+// because nothing had created `.claude/`. A check narrower than the thing it
+// models is how that happens.
+//
+// The `includes` arm is wider than any path in play today (measured: no
+// manifest or lock path contains the substring). The shape it would catch
+// wrongly is a lock whose TARGET is a settings.json — that fails
+// asymmetrically and silently, because `openSync`/`linkSync` would create the
+// real lock file while the faked `unlinkSync` never removes it, leaving a
+// permanent stale lock. Stating the constraint so it stays deliberate.
+//
+// Each half of this predicate was mutated separately (SMI-6497's rule). Only
+// `includes('settings.json')` is pinned: dropping it turns 4 tests red.
+// Dropping `p in memfsSync` leaves all 19 GREEN — no memfs-backed path that
+// lacks the `settings.json` substring reaches any of the three functions that
+// consult this predicate (the hook script arrives via the fully-faked
+// `copyFileSync`, and `uninstall-hook` only edits settings entries, it never
+// unlinks the script). It is kept as insurance, not because a test holds it:
+// "I have faked this path's content, so keep faking it" stays the right rule
+// if a future writer does route one of those paths through writeFileSync.
+// A third clause, `p.startsWith('/stub/')`, was REMOVED as genuinely dead —
+// its one path is seeded into memfsSync, so the first clause always caught it
+// and it could never be the deciding arm.
+//
+// Real-fs writes here are safe: vitest.setup.ts redirects $HOME to a
+// per-test-file sandbox before this module graph is evaluated, the same
+// guarantee manifest-lock.test.ts relies on.
+const isFakedSyncPath = (p: unknown): boolean =>
+  typeof p === 'string' && (p in memfsSync || p.includes('settings.json'))
+
+// Fail loudly instead of falling through into the repo.
+//
+// `resolveSettingsPath('project')` resolves to `<cwd>/.claude/settings.json` —
+// the REAL, TRACKED repo file. vitest.setup.ts redirects $HOME to a sandbox
+// but it does not redirect cwd, so the only thing keeping this test file out
+// of the repo's own config is `isFakedSyncPath` returning true for it. That
+// predicate has already been wrong once (the `endsWith` miss above), and when
+// it is wrong the write escapes silently: `.gitignore` matches `*.tmp`, so
+// `git status --untracked-files=all` shows nothing at all.
+//
+// ALLOWLIST, not denylist. The first version of this guard refused paths under
+// `process.cwd()`, which is too narrow in three measurable ways: it permits the
+// MAIN checkout and sibling worktrees (same hazard, different tree), it misses
+// a path reaching this tree through a symlink (`resolve()` does not call
+// realpath), and it permits everything else on the machine.
+//
+// Instrumenting the real-fs branches over a full run shows every path that
+// actually reaches them is HOME-derived — 12 of them, all the manifest lock's
+// own claim temp files and lockfile, all under the per-test-file sandbox
+// vitest.setup.ts creates. So the correct rule is the positive one: a real-fs
+// write here belongs in the sandbox, and anywhere else is a bug. That also
+// fails in the right direction — a genuinely new legitimate path outside HOME
+// stops loudly and names itself, rather than quietly mutating something.
+// COMPARE REAL PATHS, NOT LEXICAL ONES. A cross-family reviewer caught this:
+// `resolve()` normalizes `..` but never follows symlinks, so a lexical prefix
+// check is satisfied by a path that points somewhere else entirely — a link
+// under the sandbox aimed at the working tree passes, and the real syscall
+// then follows it. The same lexical assumption breaks the guard in the
+// opposite, far more likely direction on macOS, where `/tmp` IS a symlink to
+// `/private/tmp`: `homedir()` yielding one spelling and a path arriving in the
+// other makes `startsWith` false and the guard throws on a legitimate write.
+// `realpathSync` on both sides settles both cases at once.
+//
+// The target usually does not exist yet — it is about to be created — so
+// realpath it when it does (which catches a symlinked final component, the
+// actual escape) and otherwise realpath its parent and re-append the name.
+// If even the parent is absent the check degrades to lexical, which is
+// acceptable only because a write into a non-existent directory fails anyway.
+// Only a non-existent path is a legitimate realpath miss — the target is
+// usually about to be created. Every other errno is this guard's own subject
+// matter: ELOOP is a symlink cycle, EACCES a directory this process cannot
+// resolve through. A bare `catch` swallowing those would degrade the check
+// back to the lexical compare in exactly the cases realpath was added for,
+// which is `pr-reviewer`'s PR-07 shape — a silent catch on a write path,
+// found by reading that check against code written minutes earlier.
+const realOrSelf = (q: string): string => {
+  try {
+    return realpathSync(q)
+  } catch (err) {
+    const code = (err as NodeJS.ErrnoException).code
+    if (code === 'ENOENT' || code === 'ENOTDIR') return q
+    throw err
+  }
+}
+
+const assertInSandbox = (p: string, fn: string): void => {
+  const sandbox = realOrSelf(resolvePath(homedir()))
+  const abs = resolvePath(p)
+  let real: string
+  try {
+    real = realpathSync(abs)
+  } catch {
+    real = joinPath(realOrSelf(dirname(abs)), basename(abs))
+  }
+  if (!real.startsWith(sandbox + sep))
+    throw new Error(
+      `[telemetry.test] ${fn} would touch real fs outside the test sandbox:\n` +
+        `  path:    ${p}\n` +
+        `  real:    ${real}\n` +
+        `  sandbox: ${sandbox}\n` +
+        `Either isFakedSyncPath() returned false for a path it should fake ` +
+        `(fix the predicate), or a new real-fs path is legitimately outside ` +
+        `$HOME (widen this allowlist deliberately). Never widen it to cover ` +
+        `the repo working tree.`
+    )
+}
+
+vi.mock('node:fs', async (importOriginal) => {
+  const actual = await importOriginal<typeof import('node:fs')>()
+  return {
+    ...actual,
+    existsSync: vi.fn((p: string) => p in memfsSync),
+    readFileSync: vi.fn((path: string) => {
+      const c = memfsSync[path]
+      if (c === undefined) throw Object.assign(new Error(`ENOENT: ${path}`), { code: 'ENOENT' })
+      return c
+    }),
+    writeFileSync: vi.fn((path: string, content: string, ...rest: unknown[]) => {
+      if (!isFakedSyncPath(path)) {
+        // `path` is a number (an fd) on the lock's own claim write — that is a
+        // correct real-fs fallthrough, and has no path to guard.
+        if (typeof path === 'string') assertInSandbox(path, 'writeFileSync')
+        return (actual.writeFileSync as (...a: unknown[]) => unknown)(path, content, ...rest)
+      }
+      memfsSync[path] = content
+      return undefined
+    }),
+    // Path-scoped for the same reason as writeFileSync/unlinkSync: an atomic
+    // write is a writeFileSync+renameSync PAIR, and scoping only the first
+    // half splits the pair across two backing stores. `atomicWriteFile`
+    // (config-atomic-write.ts) writes `<dir>/.<hex>.tmp` — no `settings.json`
+    // substring — so the temp file lands on real disk while a fully-faked
+    // renameSync looks for it in memfs and throws ENOENT naming a file that
+    // demonstrably exists, leaking the temp. It is reachable from this
+    // module graph (the @skillsmith/core barrel → device-identity.ts), and is
+    // un-called today only because these tests exercise the unwrapped run*
+    // helpers rather than the withTelemetry-wrapped exports.
+    renameSync: vi.fn((src: string, dst: string) => {
+      if (!isFakedSyncPath(src)) {
+        assertInSandbox(src, 'renameSync')
+        assertInSandbox(dst, 'renameSync')
+        return actual.renameSync(src, dst)
+      }
+      const c = memfsSync[src]
+      if (c === undefined) throw new Error(`ENOENT: ${src}`)
+      memfsSync[dst] = c
+      delete memfsSync[src]
+      return undefined
+    }),
+    mkdirSync: vi.fn(() => undefined),
+    chmodSync: vi.fn(() => undefined),
+    copyFileSync: vi.fn((src: string, dst: string) => {
+      memfsSync[dst] = memfsSync[src] ?? '# stub hook script'
+    }),
+    unlinkSync: vi.fn((p: string) => {
+      if (!isFakedSyncPath(p)) {
+        assertInSandbox(p, 'unlinkSync')
+        return actual.unlinkSync(p)
+      }
+      delete memfsSync[p]
+      return undefined
+    }),
+    readdirSync: vi.fn(() => []),
+    statSync: vi.fn(() => ({ mtimeMs: Date.now() - 1000 })),
+  }
+})
 
 // ---------------------------------------------------------------------------
 // Import after mocks are registered
