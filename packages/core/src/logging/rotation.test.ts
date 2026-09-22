@@ -156,19 +156,32 @@ describe('rotation.ts — retention sweep', () => {
     // particular is kept for its lifetime (ADR-165). Red arm: remove OWNED_LOG's
     // test in pruneExpiredLogs and the two "survives" expectations fail.
     const fifteenDaysAgoSec = Math.floor((Date.now() - 15 * 24 * 60 * 60 * 1000) / 1000)
-    const own = join(tempDir, 'skillsmith-mcp-2020-01-01.jsonl')
-    const ownRolled = join(tempDir, 'skillsmith-cli-2020-01-01.jsonl.1')
-    const attribution = join(tempDir, 'native-attribution.jsonl')
-    const audit = join(tempDir, 'session-audit-2020-01-01.log')
-    for (const f of [own, ownRolled, attribution, audit]) {
+    // Own: every listed surface shape, including a .<n> continuation and a hyphenated surface.
+    const own = [
+      'skillsmith-mcp-2020-01-01.jsonl',
+      'skillsmith-cli-2020-01-01.jsonl.1',
+      'skillsmith-doc-retrieval-2020-01-01.jsonl',
+    ]
+    // Foreign: other classes, plus owned-SHAPED names the pattern must still refuse -- an
+    // unlisted surface, a prefixed name (the ^ anchor), a suffixed name (the $ anchor) and
+    // an unescaped-dot look-alike. Each of these is the fixture that kills one mutation of
+    // OWNED_LOG (PR #2921 gate, PR-16/PR-17).
+    const foreign = [
+      'native-attribution.jsonl',
+      'session-audit-2020-01-01.log',
+      'skillsmith-foreign-2020-01-01.jsonl',
+      'old-skillsmith-mcp-2020-01-01.jsonl',
+      'skillsmith-mcp-2020-01-01.jsonl.bak',
+      'skillsmith-mcp-2020-01-01xjsonl',
+    ]
+    for (const name of [...own, ...foreign]) {
+      const f = join(tempDir, name)
       writeFileSync(f, 'x\n')
       utimesSync(f, fifteenDaysAgoSec, fifteenDaysAgoSec)
     }
     await pruneExpiredLogs()
-    expect(existsSync(own)).toBe(false)
-    expect(existsSync(ownRolled)).toBe(false)
-    expect(existsSync(attribution)).toBe(true)
-    expect(existsSync(audit)).toBe(true)
+    for (const name of own) expect(existsSync(join(tempDir, name)), name).toBe(false)
+    for (const name of foreign) expect(existsSync(join(tempDir, name)), name).toBe(true)
   })
 
   it('deletes files older than 14 days and keeps recent ones', async () => {
