@@ -1,5 +1,9 @@
 # hooks session-end
 
+> The Stop hook that ran this on every session end was removed 2026-09-21 (SMI-6744 A1.9b).
+> Running `hooks session-end` on the host writes macOS rows into the store that ADR-170 has a
+> Linux container serve; do not run it on the host until A5.5.6 decides re-introduction.
+
 Cleanup and persist session state before ending work.
 
 ## Usage

@@ -22,7 +22,9 @@
 #      `shift 2` guard fix).
 #   D. `set -u` does not abort when $HOME is unset.
 #   E. Retention sweep deletes a log file older than the configured
-#      SKILLSMITH_HOOK_LOG_RETENTION_DAYS, and only on a new-day rollover.
+#      SKILLSMITH_HOOK_LOG_RETENTION_DAYS, and only on a new-day rollover;
+#      since SMI-6744 A1.9b it also carries the removed Stop hook's
+#      ruflo-session-end-*.log class (stale swept, fresh kept).
 #   F. Redaction breadth: each secret shape added during plan-review
 #      (Bearer, provider-key prefixes, GitHub PAT, env-var assignment,
 #      quoted flag value) is actually stripped, and an ordinary command
@@ -283,6 +285,14 @@ NODE_EOF
   STALE_FILE="$LOG_DIR/claude-hooks-2020-01-01.log"
   echo '{"stale":"entry"}' > "$STALE_FILE"
   touch -d "30 days ago" "$STALE_FILE" 2>/dev/null || touch -t "$(date -v-30d +%Y%m%d%H%M 2>/dev/null || date -d '30 days ago' +%Y%m%d%H%M)" "$STALE_FILE" 2>/dev/null || true
+  # SMI-6744 A1.9b: the removed Stop hook's ruflo-session-end-*.log files lost
+  # their only pruner with the hook; the same sweep now carries them. Two arms
+  # on one rollover: a stale one is swept, a fresh one is kept.
+  STALE_RUFLO="$LOG_DIR/ruflo-session-end-1600000000.log"
+  FRESH_RUFLO="$LOG_DIR/ruflo-session-end-1700000000.log"
+  echo 'stale' > "$STALE_RUFLO"
+  echo 'fresh' > "$FRESH_RUFLO"
+  touch -d "30 days ago" "$STALE_RUFLO" 2>/dev/null || touch -t "$(date -v-30d +%Y%m%d%H%M 2>/dev/null || date -d '30 days ago' +%Y%m%d%H%M)" "$STALE_RUFLO" 2>/dev/null || true
   SKILLSMITH_HOOK_LOG_RETENTION_DAYS=7 run_wrapper "$SHELL_BIN" pre-command "trigger a new day's file" -- --command "x" >/dev/null 2>&1
   if [ -f "$STALE_FILE" ]; then
     echo "FAIL [$SHELL_BIN] stale log file was not swept (this can be a false failure on a fresh mtime touch across platforms; verify manually if it recurs)"
@@ -291,6 +301,10 @@ NODE_EOF
     echo "PASS [$SHELL_BIN] stale log file (30 days old, 7-day retention) was swept"
     pass=$((pass + 1))
   fi
+  assert_true "[$SHELL_BIN] stale ruflo-session-end log (30 days old, 7-day retention) was swept" \
+    "$([ ! -f "$STALE_RUFLO" ] && echo 0 || echo 1)"
+  assert_true "[$SHELL_BIN] fresh ruflo-session-end log was kept by the sweep" \
+    "$([ -f "$FRESH_RUFLO" ] && echo 0 || echo 1)"
   teardown_fixture
 done
 
