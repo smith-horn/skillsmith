@@ -23,30 +23,64 @@ import { describe, it, expect, vi, beforeEach } from 'vitest'
 // found entry deterministically reports "modified" — that turns "did we find
 // the entry?" into an observable difference in the return value, which is the
 // only thing these tests are about.
-const { mockDetectModifications } = vi.hoisted(() => ({
+const {
+  mockDetectModifications,
+  mockLoadOriginal,
+  mockStoreOriginal,
+  mockUpdateManifestSafely,
+  mockThreeWayMerge,
+} = vi.hoisted(() => ({
   mockDetectModifications: vi.fn(),
+  mockLoadOriginal: vi.fn(),
+  mockStoreOriginal: vi.fn(),
+  mockUpdateManifestSafely: vi.fn(),
+  mockThreeWayMerge: vi.fn(),
 }))
 
+// install.helpers.ts RE-EXPORTS detectModifications from install.conflict-helpers.ts,
+// so mocking the source module intercepts the re-export. Verified rather than
+// assumed: inverting the "was called" assertion below makes that test fail, which
+// it could not do if the mock were unwired.
 vi.mock('./install.conflict-helpers.js', async (importActual) => {
   const actual = await importActual<typeof import('./install.conflict-helpers.js')>()
-  return { ...actual, detectModifications: mockDetectModifications }
+  return {
+    ...actual,
+    detectModifications: mockDetectModifications,
+    loadOriginal: mockLoadOriginal,
+    storeOriginal: mockStoreOriginal,
+    createSkillBackup: vi.fn(async () => '/tmp/backup'),
+    cleanupOldBackups: vi.fn(async () => undefined),
+    hashContent: vi.fn(() => 'upstream-hash'),
+  }
 })
 
-import { checkForConflicts } from './install.conflict.js'
+vi.mock('./install.helpers.manifest.js', async (importActual) => {
+  const actual = await importActual<typeof import('./install.helpers.manifest.js')>()
+  return { ...actual, updateManifestSafely: mockUpdateManifestSafely }
+})
+
+vi.mock('./merge.js', async (importActual) => {
+  const actual = await importActual<typeof import('./merge.js')>()
+  return { ...actual, threeWayMerge: mockThreeWayMerge }
+})
+
+// NOT mocked: `manifestKeyFor` from @skillsmith/core. It is the subject.
+
+import { checkForConflicts, handleMergeAction } from './install.conflict.js'
 import type { SkillManifest } from './install.types.js'
 
 const CANONICAL = 'claude-code' as const
 const OTHER = 'cursor' as const
 
 /** A manifest holding exactly one entry, under `key`, that would conflict. */
-function manifestWithEntry(key: string): SkillManifest {
+function manifestWithEntry(key: string, version = '1.0.0'): SkillManifest {
   return {
     version: '1',
     installedSkills: {
       [key]: {
         id: 'owner/repo/my-skill',
         name: 'my-skill',
-        version: '1.0.0',
+        version,
         source: 'registry',
         installPath: '/installed/my-skill',
         installedAt: '2026-01-01T00:00:00Z',
@@ -65,6 +99,11 @@ beforeEach(() => {
     currentHash: 'hash-local',
     originalHash: 'hash-abc',
   })
+  // handleMergeAction reaches its manifestKey use only through the CONFLICTING
+  // merge branch, so drive it there: an original exists, and the merge fails.
+  mockLoadOriginal.mockResolvedValue('original content')
+  mockThreeWayMerge.mockReturnValue({ success: false, merged: '<<<<<<< conflict' })
+  mockUpdateManifestSafely.mockResolvedValue(undefined)
 })
 
 describe('checkForConflicts keys by client, not by bare name (SMI-6358)', () => {
@@ -134,5 +173,110 @@ describe('checkForConflicts keys by client, not by bare name (SMI-6358)', () => 
 
     expect(result.shouldProceed).toBe(true)
     expect(mockDetectModifications).not.toHaveBeenCalled()
+  })
+})
+
+describe('handleMergeAction keys by client too (SMI-6358 retro)', () => {
+  // The twin. install.conflict.ts has TWO manifestKeyFor call sites and the
+  // first version of this file covered only checkForConflicts. The gate caught
+  // it, and the reason it survived MY red-test is worth stating: that mutation
+  // was a global substitution reverting both sites at once, so "2 of 4 failed"
+  // proved the union was covered and said nothing about either member. A
+  // mutation applied to every instance of a pattern cannot measure per-instance
+  // coverage — and it fails reassuringly, because a global revert is MORE
+  // likely to go red than a targeted one.
+  //
+  // Each site below is therefore mutated on its own, not together.
+
+  it('reads the client-scoped entry, not the canonical one', async () => {
+    // Only the CANONICAL entry exists, and it carries a distinctive version.
+    // handleMergeAction feeds `existingEntry?.version || '1.0.0'` to
+    // storeOriginal, so a bare-name lookup would surface '9.9.9' there.
+    await handleMergeAction(
+      'my-skill',
+      '/installed/my-skill',
+      'upstream content',
+      manifestWithEntry('my-skill', '9.9.9'),
+      'owner',
+      'repo',
+      'owner/repo/my-skill',
+      OTHER
+    )
+
+    expect(mockStoreOriginal).toHaveBeenCalledOnce()
+    const meta = mockStoreOriginal.mock.calls[0]![2] as { version: string }
+    expect(meta.version).toBe('1.0.0')
+  })
+
+  it('finds the client-scoped entry when it exists', async () => {
+    await handleMergeAction(
+      'my-skill',
+      '/installed/my-skill',
+      'upstream content',
+      manifestWithEntry(`my-skill::${OTHER}`, '9.9.9'),
+      'owner',
+      'repo',
+      'owner/repo/my-skill',
+      OTHER
+    )
+
+    const meta = mockStoreOriginal.mock.calls[0]![2] as { version: string }
+    expect(meta.version).toBe('9.9.9')
+  })
+
+  it('writes the manifest back under the client-scoped key', async () => {
+    await handleMergeAction(
+      'my-skill',
+      '/installed/my-skill',
+      'upstream content',
+      manifestWithEntry(`my-skill::${OTHER}`, '9.9.9'),
+      'owner',
+      'repo',
+      'owner/repo/my-skill',
+      OTHER
+    )
+
+    // The write is expressed as an updater function; run it against a known
+    // manifest and inspect which key it touched.
+    expect(mockUpdateManifestSafely).toHaveBeenCalledOnce()
+    const updater = mockUpdateManifestSafely.mock.calls[0]![0] as (m: unknown) => {
+      installedSkills: Record<string, unknown>
+    }
+    const written = updater({ version: '1', installedSkills: {} })
+    expect(Object.keys(written.installedSkills)).toEqual([`my-skill::${OTHER}`])
+  })
+})
+
+describe('a second non-canonical client (SMI-6358 retro)', () => {
+  // Closes the third-implementation gap the gate named: a predicate special-cased
+  // to one client — `client === 'cursor' ? `${name}::cursor` : name` — passes every
+  // test that only ever uses 'cursor'. Exercising a DIFFERENT non-canonical client
+  // is what rules that out.
+  const THIRD = 'windsurf' as const
+
+  it('checkForConflicts scopes a third client too', async () => {
+    const result = await checkForConflicts(
+      'my-skill',
+      '/installed/my-skill',
+      manifestWithEntry('my-skill'),
+      undefined,
+      'owner/repo/my-skill',
+      THIRD
+    )
+    expect(result.shouldProceed).toBe(true)
+    expect(mockDetectModifications).not.toHaveBeenCalled()
+  })
+
+  it('checkForConflicts finds that third client own entry', async () => {
+    const result = await checkForConflicts(
+      'my-skill',
+      '/installed/my-skill',
+      manifestWithEntry(`my-skill::${THIRD}`),
+      undefined,
+      'owner/repo/my-skill',
+      THIRD
+    )
+    expect(mockDetectModifications).toHaveBeenCalledOnce()
+    expect(result.shouldProceed).toBe(false)
   })
 })
