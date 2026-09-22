@@ -4,6 +4,10 @@ All notable changes to `@skillsmith/cli` are documented here.
 
 ## [Unreleased]
 
+## v0.8.13
+
+- **Cadence**: Mechanical cadence alignment (no changes since v0.8.12).
+
 ## v0.8.12
 
 - **Cadence**: Mechanical cadence alignment (no changes since v0.8.11).

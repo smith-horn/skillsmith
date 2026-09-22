@@ -4,6 +4,8 @@ All notable changes to `@skillsmith/mcp-server` are documented here.
 
 ## [Unreleased]
 
+## v0.7.17
+
 - **Fix**: SMI-6768 -- the `held` remedy this file renders verbatim from `@skillsmith/core` no
   longer asserts the holder is alive; see `@skillsmith/core`'s entry for why that claim was false
   in three reachable states. Nothing changes in this package's own behaviour. The `lockReason`

@@ -4,6 +4,9 @@ All notable changes to `@skillsmith/core` are documented here.
 
 ## [Unreleased]
 
+## v0.12.6
+
+- **Fix**: SMI-6768 -- `held` asserted the liveness the line above had just disowned (#2896)
 - **Fix**: SMI-6764 (post-merge round 5) -- `held`'s remedy no longer asserts the holder is alive.
   The round-4 message read "A live holder is expected to release", which is the same liveness claim
   the same commit had just deleted from `describeReason` as "a conclusion this function has no
