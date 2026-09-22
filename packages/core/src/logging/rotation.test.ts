@@ -204,9 +204,19 @@ describe('rotation.ts — retention sweep', () => {
     expect(pattern.test('skillsmith-bar-2020-01-01.jsonl')).toBe(false)
     expect(pattern.test('skillsmith-mcp-2020-01-01.jsonl.3')).toBe(true)
     expect(pattern.test('skillsmith-mcp-2020-01-01.jsonl.bak')).toBe(false)
-    // The exported seam accepts arbitrary input, so its degenerate case is part of its
-    // contract: an empty surface list must own nothing, not `skillsmith--<date>.jsonl`.
-    expect(ownedLogPattern([]).test('skillsmith--2020-01-01.jsonl')).toBe(false)
+  })
+
+  it('owns nothing when the surface list is empty or all-empty', () => {
+    // The exported seam accepts arbitrary input, so its degenerate cases are part of
+    // its contract: `[]` and `['']` both used to degenerate the alternation to `()`
+    // and own `skillsmith--<date>.jsonl`. Red arms: drop the guard (the `[]` row),
+    // drop the empty-name filter (the `['']` rows), or make the filter drop every
+    // name (the `mcp` positive).
+    const degenerate = 'skillsmith--2020-01-01.jsonl'
+    expect(ownedLogPattern([]).test(degenerate)).toBe(false)
+    expect(ownedLogPattern(['']).test(degenerate)).toBe(false)
+    expect(ownedLogPattern(['mcp', '']).test(degenerate)).toBe(false)
+    expect(ownedLogPattern(['mcp', '']).test('skillsmith-mcp-2020-01-01.jsonl')).toBe(true)
   })
 
   it('deletes files older than 14 days and keeps recent ones', async () => {
