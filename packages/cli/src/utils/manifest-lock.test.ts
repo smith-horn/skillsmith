@@ -13,22 +13,35 @@
  *
  * Safety: never touches the developer's real ~/.skillsmith — vitest.setup.ts
  * redirects $HOME to a per-test-FILE sandbox temp directory BEFORE this
- * module graph is evaluated, so MANIFEST_PATH (homedir-derived) already
+ * module graph is evaluated, so manifestPath (homedir-derived) already
  * resolves under the sandbox by the time any test here runs. No per-test
  * temp-HOME plumbing needed; this file just relies on the project-wide
  * sandbox every other vitest file already depends on.
  */
 import { describe, it, expect, afterEach } from 'vitest'
 import { readFile, writeFile, unlink, mkdir } from 'fs/promises'
-import { dirname } from 'path'
+import { mkdtempSync } from 'node:fs'
+import { tmpdir } from 'node:os'
+import { dirname, join } from 'path'
 import { ManifestManager } from '@skillsmith/core'
 import {
-  MANIFEST_PATH,
   updateManifestEntry,
   loadManifest,
   type SkillManifest,
   type SkillManifestEntry,
 } from './manifest.js'
+
+// An EXPLICIT manifest path, not the homedir-derived default.
+//
+// `audit:standards` Check 65 requires this of any test naming a
+// manifest-writing symbol, and the requirement is not bookkeeping: SMI-6343
+// found `test-skill` rows in a real user's ~/.skillsmith/manifest.json,
+// because two tests mocked their install-target paths and left the manifest
+// path defaulting to `os.homedir()`. vitest.setup.ts's $HOME sandbox is the
+// runtime defence against that; naming the path is the review-time one, and
+// this file's earlier version relied on the sandbox alone — which is the
+// exact reasoning the check exists to reject.
+const manifestPath = join(mkdtempSync(join(tmpdir(), 'manifest-lock-')), 'manifest.json')
 
 // ============================================================================
 // Helpers
@@ -48,8 +61,8 @@ function makeEntry(name: string): SkillManifestEntry {
 }
 
 async function resetManifest(): Promise<void> {
-  await unlink(MANIFEST_PATH).catch(() => {})
-  await unlink(`${MANIFEST_PATH}.lock`).catch(() => {})
+  await unlink(manifestPath).catch(() => {})
+  await unlink(`${manifestPath}.lock`).catch(() => {})
 }
 
 // ============================================================================
@@ -67,17 +80,23 @@ describe('updateManifestEntry() locking (SMI-6358)', () => {
 
   it('two overlapping updateManifestEntry() calls both survive — no lost update', async () => {
     await Promise.all([
-      updateManifestEntry((m: SkillManifest) => ({
-        ...m,
-        installedSkills: { ...m.installedSkills, 'skill-a': makeEntry('skill-a') },
-      })),
-      updateManifestEntry((m: SkillManifest) => ({
-        ...m,
-        installedSkills: { ...m.installedSkills, 'skill-b': makeEntry('skill-b') },
-      })),
+      updateManifestEntry(
+        (m: SkillManifest) => ({
+          ...m,
+          installedSkills: { ...m.installedSkills, 'skill-a': makeEntry('skill-a') },
+        }),
+        manifestPath
+      ),
+      updateManifestEntry(
+        (m: SkillManifest) => ({
+          ...m,
+          installedSkills: { ...m.installedSkills, 'skill-b': makeEntry('skill-b') },
+        }),
+        manifestPath
+      ),
     ])
 
-    const loaded = await loadManifest()
+    const loaded = await loadManifest(manifestPath)
     expect(Object.keys(loaded.installedSkills).sort()).toEqual(['skill-a', 'skill-b'])
   })
 
@@ -90,20 +109,23 @@ describe('updateManifestEntry() locking (SMI-6358)', () => {
   // --------------------------------------------------------------------------
 
   it('a cli updateManifestEntry() write racing a core ManifestManager.updateSafely() write on the SAME manifest — no lost update', async () => {
-    const coreManager = new ManifestManager(MANIFEST_PATH)
+    const coreManager = new ManifestManager(manifestPath)
 
     await Promise.all([
-      updateManifestEntry((m: SkillManifest) => ({
-        ...m,
-        installedSkills: { ...m.installedSkills, 'from-cli': makeEntry('from-cli') },
-      })),
+      updateManifestEntry(
+        (m: SkillManifest) => ({
+          ...m,
+          installedSkills: { ...m.installedSkills, 'from-cli': makeEntry('from-cli') },
+        }),
+        manifestPath
+      ),
       coreManager.updateSafely((m) => ({
         ...m,
         installedSkills: { ...m.installedSkills, 'from-core': makeEntry('from-core') },
       })),
     ])
 
-    const loaded = await loadManifest()
+    const loaded = await loadManifest(manifestPath)
     expect(Object.keys(loaded.installedSkills).sort()).toEqual(['from-cli', 'from-core'])
   })
 
@@ -115,15 +137,18 @@ describe('updateManifestEntry() locking (SMI-6358)', () => {
   // --------------------------------------------------------------------------
 
   it('an unparseable existing manifest fails the write loudly instead of being silently clobbered with an empty manifest', async () => {
-    await mkdir(dirname(MANIFEST_PATH), { recursive: true })
+    await mkdir(dirname(manifestPath), { recursive: true })
     const corrupt = '{ this is not valid json'
-    await writeFile(MANIFEST_PATH, corrupt)
+    await writeFile(manifestPath, corrupt)
 
     await expect(
-      updateManifestEntry((m: SkillManifest) => ({
-        ...m,
-        installedSkills: { ...m.installedSkills, x: makeEntry('x') },
-      }))
+      updateManifestEntry(
+        (m: SkillManifest) => ({
+          ...m,
+          installedSkills: { ...m.installedSkills, x: makeEntry('x') },
+        }),
+        manifestPath
+      )
     ).rejects.toThrow(/corrupt|unparseable/i)
 
     // The corrupt file must be left EXACTLY as it was — not replaced with an
@@ -131,7 +156,7 @@ describe('updateManifestEntry() locking (SMI-6358)', () => {
     // loadManifest(), which swallows every read error into `{ version:
     // '1.0.0', installedSkills: {} }`) would have silently written that
     // empty snapshot back out here, erasing every pre-existing entry.
-    const raw = await readFile(MANIFEST_PATH, 'utf-8')
+    const raw = await readFile(manifestPath, 'utf-8')
     expect(raw).toBe(corrupt)
   })
 })

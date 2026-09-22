@@ -214,13 +214,21 @@ export async function saveManifest(manifest: SkillManifest): Promise<void> {
  * loadManifest()/saveManifest() — SMI-6360 governs NOT consolidating the
  * three manifest *implementations* into one; this only reuses the
  * ALREADY-locked primitive for the write step. `manifest` inside the
+ * The optional `manifestPath` mirrors `loadManifest()`'s own signature and
+ * exists so a test can name the file it writes instead of inheriting the
+ * homedir default. `audit:standards` Check 65 requires that (SMI-6343 found
+ * test rows in a real user's manifest because two tests mocked their install
+ * paths but not their manifest path); the $HOME sandbox is a runtime defence
+ * and this is the review-time one.
+ *
  * updateSafely() callback is core's own (structurally-mirrored, slightly
  * narrower) SkillManifest type — the casts below are the one integration
  * point between the two mirrored type declarations, same pattern this
  * file's header already documents for the shape overall.
  */
 export async function updateManifestEntry(
-  updateFn: (manifest: SkillManifest) => SkillManifest
+  updateFn: (manifest: SkillManifest) => SkillManifest,
+  manifestPath: string = MANIFEST_PATH
 ): Promise<SkillManifest> {
   // Constructed per-call, not at module scope. A module-scope instance made
   // merely *importing* this file construct a ManifestManager, which broke every
@@ -231,7 +239,7 @@ export async function updateManifestEntry(
   // stores the path, and updateSafely() acquires its own lock per call. This
   // also matches skills-directory.ts and manage.update.helpers.ts, which
   // already construct inside the functions that use it.
-  const manifestManager = new ManifestManager(MANIFEST_PATH)
+  const manifestManager = new ManifestManager(manifestPath)
   let result: SkillManifest | undefined
   await manifestManager.updateSafely((manifest): CoreSkillManifest => {
     result = updateFn(manifest as SkillManifest)

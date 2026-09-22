@@ -16,9 +16,8 @@
  */
 
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest'
-import { resolve as resolvePath, sep, dirname, basename, join as joinPath } from 'node:path'
 import { homedir } from 'node:os'
-import { realpathSync } from 'node:fs'
+import { assertInside } from '../utils/sandbox-path.js'
 
 // ---------------------------------------------------------------------------
 // fs/promises mock (for manifest.ts)
@@ -129,82 +128,23 @@ const memfsSync: Record<string, string> = {}
 const isFakedSyncPath = (p: unknown): boolean =>
   typeof p === 'string' && (p in memfsSync || p.includes('settings.json'))
 
-// Fail loudly instead of falling through into the repo.
+// Real-fs pass-throughs must stay inside the test sandbox.
 //
 // `resolveSettingsPath('project')` resolves to `<cwd>/.claude/settings.json` —
 // the REAL, TRACKED repo file. vitest.setup.ts redirects $HOME to a sandbox
-// but it does not redirect cwd, so the only thing keeping this test file out
-// of the repo's own config is `isFakedSyncPath` returning true for it. That
-// predicate has already been wrong once (the `endsWith` miss above), and when
-// it is wrong the write escapes silently: `.gitignore` matches `*.tmp`, so
-// `git status --untracked-files=all` shows nothing at all.
+// but not cwd, so the only thing keeping this file out of the repo's own
+// config is `isFakedSyncPath` returning true for it. That predicate has been
+// wrong once already, and when it is wrong the write escapes silently:
+// `.gitignore` matches `*.tmp`, so `git status --untracked-files=all` shows
+// nothing.
 //
-// ALLOWLIST, not denylist. The first version of this guard refused paths under
-// `process.cwd()`, which is too narrow in three measurable ways: it permits the
-// MAIN checkout and sibling worktrees (same hazard, different tree), it misses
-// a path reaching this tree through a symlink (`resolve()` does not call
-// realpath), and it permits everything else on the machine.
-//
-// Instrumenting the real-fs branches over a full run shows every path that
-// actually reaches them is HOME-derived — 12 of them, all the manifest lock's
-// own claim temp files and lockfile, all under the per-test-file sandbox
-// vitest.setup.ts creates. So the correct rule is the positive one: a real-fs
-// write here belongs in the sandbox, and anywhere else is a bug. That also
-// fails in the right direction — a genuinely new legitimate path outside HOME
-// stops loudly and names itself, rather than quietly mutating something.
-// COMPARE REAL PATHS, NOT LEXICAL ONES. A cross-family reviewer caught this:
-// `resolve()` normalizes `..` but never follows symlinks, so a lexical prefix
-// check is satisfied by a path that points somewhere else entirely — a link
-// under the sandbox aimed at the working tree passes, and the real syscall
-// then follows it. The same lexical assumption breaks the guard in the
-// opposite, far more likely direction on macOS, where `/tmp` IS a symlink to
-// `/private/tmp`: `homedir()` yielding one spelling and a path arriving in the
-// other makes `startsWith` false and the guard throws on a legitimate write.
-// `realpathSync` on both sides settles both cases at once.
-//
-// The target usually does not exist yet — it is about to be created — so
-// realpath it when it does (which catches a symlinked final component, the
-// actual escape) and otherwise realpath its parent and re-append the name.
-// If even the parent is absent the check degrades to lexical, which is
-// acceptable only because a write into a non-existent directory fails anyway.
-// Only a non-existent path is a legitimate realpath miss — the target is
-// usually about to be created. Every other errno is this guard's own subject
-// matter: ELOOP is a symlink cycle, EACCES a directory this process cannot
-// resolve through. A bare `catch` swallowing those would degrade the check
-// back to the lexical compare in exactly the cases realpath was added for,
-// which is `pr-reviewer`'s PR-07 shape — a silent catch on a write path,
-// found by reading that check against code written minutes earlier.
-const realOrSelf = (q: string): string => {
-  try {
-    return realpathSync(q)
-  } catch (err) {
-    const code = (err as NodeJS.ErrnoException).code
-    if (code === 'ENOENT' || code === 'ENOTDIR') return q
-    throw err
-  }
-}
-
-const assertInSandbox = (p: string, fn: string): void => {
-  const sandbox = realOrSelf(resolvePath(homedir()))
-  const abs = resolvePath(p)
-  let real: string
-  try {
-    real = realpathSync(abs)
-  } catch {
-    real = joinPath(realOrSelf(dirname(abs)), basename(abs))
-  }
-  if (!real.startsWith(sandbox + sep))
-    throw new Error(
-      `[telemetry.test] ${fn} would touch real fs outside the test sandbox:\n` +
-        `  path:    ${p}\n` +
-        `  real:    ${real}\n` +
-        `  sandbox: ${sandbox}\n` +
-        `Either isFakedSyncPath() returned false for a path it should fake ` +
-        `(fix the predicate), or a new real-fs path is legitimately outside ` +
-        `$HOME (widen this allowlist deliberately). Never widen it to cover ` +
-        `the repo working tree.`
-    )
-}
+// The check lives in `../utils/sandbox-path.js` rather than inline here, so
+// its own behaviour is pinned by tests. It answers a question about ONE path
+// and enforces nothing on its own: only the three delegating branches below
+// consult it. `openSync`, `linkSync`, async `mkdir` and an fd-based
+// `writeFileSync` reach real fs without passing through it — their paths are
+// HOME-derived today, which is a property of those callers, not a guarantee
+// this file makes.
 
 vi.mock('node:fs', async (importOriginal) => {
   const actual = await importOriginal<typeof import('node:fs')>()
@@ -220,7 +160,7 @@ vi.mock('node:fs', async (importOriginal) => {
       if (!isFakedSyncPath(path)) {
         // `path` is a number (an fd) on the lock's own claim write — that is a
         // correct real-fs fallthrough, and has no path to guard.
-        if (typeof path === 'string') assertInSandbox(path, 'writeFileSync')
+        if (typeof path === 'string') assertInside(path, homedir(), 'writeFileSync')
         return (actual.writeFileSync as (...a: unknown[]) => unknown)(path, content, ...rest)
       }
       memfsSync[path] = content
@@ -238,8 +178,8 @@ vi.mock('node:fs', async (importOriginal) => {
     // helpers rather than the withTelemetry-wrapped exports.
     renameSync: vi.fn((src: string, dst: string) => {
       if (!isFakedSyncPath(src)) {
-        assertInSandbox(src, 'renameSync')
-        assertInSandbox(dst, 'renameSync')
+        assertInside(src, homedir(), 'renameSync')
+        assertInside(dst, homedir(), 'renameSync')
         return actual.renameSync(src, dst)
       }
       const c = memfsSync[src]
@@ -255,7 +195,7 @@ vi.mock('node:fs', async (importOriginal) => {
     }),
     unlinkSync: vi.fn((p: string) => {
       if (!isFakedSyncPath(p)) {
-        assertInSandbox(p, 'unlinkSync')
+        assertInside(p, homedir(), 'unlinkSync')
         return actual.unlinkSync(p)
       }
       delete memfsSync[p]
