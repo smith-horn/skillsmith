@@ -42,9 +42,11 @@ LOG_FILE="$LOG_DIR/claude-hooks-$(date -u +%Y-%m-%d).log"
 # session-stop-hook-safe.sh's once-per-session cadence), so an unconditional
 # `find -delete` per call would add needless I/O to the hot path this fix
 # exists to make less fragile. (historical: the Stop hook and
-# session-stop-hook-safe.sh were removed 2026-09-21, SMI-6744 A1.9b)
+# session-stop-hook-safe.sh were removed 2026-09-21, SMI-6744 A1.9b; its
+# ruflo-session-end-*.log files lost their only pruner with it, so this
+# sweep carries them under the same retention)
 if [ ! -f "$LOG_FILE" ]; then
-  find "$LOG_DIR" -maxdepth 1 -name 'claude-hooks-*.log' -mtime "+${LOG_RETENTION_DAYS}" -delete 2>/dev/null
+  find "$LOG_DIR" -maxdepth 1 \( -name 'claude-hooks-*.log' -o -name 'ruflo-session-end-*.log' \) -mtime "+${LOG_RETENTION_DAYS}" -delete 2>/dev/null
 fi
 
 # Best-effort secret redaction (defense-in-depth, not exhaustive -- Varlock
