@@ -4,6 +4,11 @@ All notable changes to `@skillsmith/mcp-server` are documented here.
 
 ## [Unreleased]
 
+- **Fix (data integrity)**: SMI-6358 -- `checkForConflicts()` takes `client` and resolves the
+  manifest key through `manifestKeyFor(name, client)` rather than assuming the canonical client.
+  Installing for one client could previously report a conflict belonging to another, or miss a real
+  one. Every caller passes the argument; no export was removed. (#2920)
+
 - **Fix**: SMI-6768 -- the `held` remedy this file renders verbatim from `@skillsmith/core` no
   longer asserts the holder is alive; see `@skillsmith/core`'s entry for why that claim was false
   in three reachable states. Nothing changes in this package's own behaviour. The `lockReason`

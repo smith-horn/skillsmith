@@ -4,6 +4,18 @@ All notable changes to `@skillsmith/cli` are documented here.
 
 ## [Unreleased]
 
+- **Fix (data integrity)**: SMI-6358 -- `pin` and `unpin` gained `--client` and key through
+  `manifestKeyFor(name, client)`. They previously read and wrote the bare name whatever client you
+  asked for, so pinning a non-canonical install either silently did nothing or modified the
+  canonical client's record instead. Client resolution matches `update`/`remove`/`install`:
+  explicit flag, then `SKILLSMITH_CLIENT`, then canonical. (#2920)
+
+- **Fix (concurrency)**: SMI-6358 -- `updateManifestEntry()` takes the same cross-process lock as
+  every other manifest writer in the repo, via `ManifestManager.updateSafely()`, instead of doing an
+  unlocked read-modify-write. It also reads fail-closed and returns the post-update manifest, so a
+  caller needing the fresh value does not take a second unlocked read. It accepts an optional
+  explicit manifest path, mirroring `loadManifest()`. (#2920)
+
 ## v0.8.12
 
 - **Cadence**: Mechanical cadence alignment (no changes since v0.8.11).

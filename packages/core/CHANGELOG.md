@@ -4,6 +4,13 @@ All notable changes to `@skillsmith/core` are documented here.
 
 ## [Unreleased]
 
+- **Fix (data integrity)**: SMI-6358 -- `backfillProvenance()` keys manifest writes through
+  `manifestKeyFor(name, client)` instead of the bare name. A skill installed for a non-canonical
+  client is stored as `name::client`; writing provenance under the bare name landed it on the
+  canonical client's entry instead, or on nothing. Red-tested: reverting the key takes down 2 of 15
+  tests in `backfill.test.ts`. For the canonical client the key is byte-identical to the old one,
+  so single-client installs are unaffected. (#2920)
+
 - **Fix**: SMI-6764 (post-merge round 5) -- `held`'s remedy no longer asserts the holder is alive.
   The round-4 message read "A live holder is expected to release", which is the same liveness claim
   the same commit had just deleted from `describeReason` as "a conclusion this function has no
