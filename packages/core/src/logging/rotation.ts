@@ -294,9 +294,19 @@ const SURFACE_NAMES = {
   vscode: true,
   'doc-retrieval': true,
 } satisfies Record<Surface, true>
-const OWNED_LOG = new RegExp(
-  `^skillsmith-(${Object.keys(SURFACE_NAMES).join('|')})-\\d{4}-\\d{2}-\\d{2}\\.jsonl(\\.\\d+)?$`
-)
+/**
+ * Builds the ownership pattern from a surface list. Exported so the escaping
+ * is testable with a surface the type does not (yet) contain: every name is
+ * regex-escaped before interpolation, so a future surface such as `foo.bar`
+ * matches only itself, never `fooXbar` (PR #2921 gate round 2, PR-16). No
+ * current surface carries a metacharacter, so only this seam can go red on it.
+ */
+export function ownedLogPattern(surfaces: readonly string[]): RegExp {
+  const escaped = surfaces.map((name) => name.replace(/[.*+?^${}()|[\]\\]/g, '\\$&'))
+  return new RegExp(`^skillsmith-(${escaped.join('|')})-\\d{4}-\\d{2}-\\d{2}\\.jsonl(\\.\\d+)?$`)
+}
+
+const OWNED_LOG = ownedLogPattern(Object.keys(SURFACE_NAMES))
 
 export async function pruneExpiredLogs(): Promise<void> {
   const dir = getLogDir()

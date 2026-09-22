@@ -21,7 +21,12 @@ import {
 } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
-import { __resetLoggingStateForTests, pruneExpiredLogs, writeLogLine } from './rotation.js'
+import {
+  __resetLoggingStateForTests,
+  ownedLogPattern,
+  pruneExpiredLogs,
+  writeLogLine,
+} from './rotation.js'
 
 // SMI-5793: `homedir()` reads the OS passwd record and does NOT respect
 // `process.env.HOME` mutations (SMI-4711 precedent, see
@@ -182,6 +187,17 @@ describe('rotation.ts — retention sweep', () => {
     await pruneExpiredLogs()
     for (const name of own) expect(existsSync(join(tempDir, name)), name).toBe(false)
     for (const name of foreign) expect(existsSync(join(tempDir, name)), name).toBe(true)
+  })
+
+  it('regex-escapes surface names, so a metacharacter in a future surface cannot widen ownership', () => {
+    // No current Surface carries a metacharacter, so this is the only arm that can go
+    // red on the escaping (PR #2921 gate round 2, PR-16): drop the escape and
+    // 'skillsmith-fooXbar-2020-01-01.jsonl' matches the 'foo.bar' alternative.
+    const pattern = ownedLogPattern(['mcp', 'foo.bar'])
+    expect(pattern.test('skillsmith-foo.bar-2020-01-01.jsonl')).toBe(true)
+    expect(pattern.test('skillsmith-fooXbar-2020-01-01.jsonl')).toBe(false)
+    expect(pattern.test('skillsmith-mcp-2020-01-01.jsonl.3')).toBe(true)
+    expect(pattern.test('skillsmith-mcp-2020-01-01.jsonl.bak')).toBe(false)
   })
 
   it('deletes files older than 14 days and keeps recent ones', async () => {
