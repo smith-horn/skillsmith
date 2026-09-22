@@ -193,9 +193,15 @@ describe('rotation.ts — retention sweep', () => {
     // No current Surface carries a metacharacter, so this is the only arm that can go
     // red on the escaping (PR #2921 gate round 2, PR-16): drop the escape and
     // 'skillsmith-fooXbar-2020-01-01.jsonl' matches the 'foo.bar' alternative.
-    const pattern = ownedLogPattern(['mcp', 'foo.bar'])
+    const pattern = ownedLogPattern(['mcp', 'foo.bar', 'foo|bar'])
     expect(pattern.test('skillsmith-foo.bar-2020-01-01.jsonl')).toBe(true)
     expect(pattern.test('skillsmith-fooXbar-2020-01-01.jsonl')).toBe(false)
+    // A second metacharacter with different semantics: an unescaped '|' would split
+    // one surface into two alternatives, so 'foo' and 'bar' alone would become owned
+    // (PR #2921 gate round 3: an "escape dots only" implementation survived the arm above).
+    expect(pattern.test('skillsmith-foo|bar-2020-01-01.jsonl')).toBe(true)
+    expect(pattern.test('skillsmith-foo-2020-01-01.jsonl')).toBe(false)
+    expect(pattern.test('skillsmith-bar-2020-01-01.jsonl')).toBe(false)
     expect(pattern.test('skillsmith-mcp-2020-01-01.jsonl.3')).toBe(true)
     expect(pattern.test('skillsmith-mcp-2020-01-01.jsonl.bak')).toBe(false)
   })
