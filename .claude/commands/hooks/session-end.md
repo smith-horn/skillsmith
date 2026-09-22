@@ -79,12 +79,10 @@ hooks session-end --save-state true
 
 ## Integration
 
-This hook is automatically called by Claude Code when:
-
-- Ending a conversation
-- Closing work session
-- Before shutdown
-- Switching contexts
+Nothing in this repo calls this automatically. The Stop hook that did was removed
+2026-09-21 (SMI-6744 A1.9b) — see the note at the top of this file. Upstream ruflo
+documents it as Claude-Code-invoked at conversation end; that is the wiring this repo
+deliberately does not have, and re-introduction is A5.5.6's to propose.
 
 Manual usage in agents:
 

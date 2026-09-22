@@ -7,15 +7,16 @@
 npx -y ruflo@3.14.2 init hooks
 ```
 
-MCP equivalent: `mcp__ruflo__hooks_init`.
+**Do not run this in this repo, by either path below.** The hooks block in
+`.claude/settings.json` is hand-maintained, and the Stop hook `init hooks` would
+re-create was removed 2026-09-21 (SMI-6744 A1.9b).
+
+MCP equivalent (same caveat): `mcp__ruflo__hooks_init`.
 
 This automatically creates:
 - `.claude/settings.json` with hook configurations
 - Hook command documentation
 - Default hook handlers
-
-Do not run it in this repo: the hooks block in `.claude/settings.json` is hand-maintained, and the
-Stop hook it would re-create was removed 2026-09-21 (SMI-6744 A1.9b).
 
 ### 2. Test Hook Functionality
 ```bash
