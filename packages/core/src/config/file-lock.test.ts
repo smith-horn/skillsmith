@@ -20,7 +20,7 @@
  * never observe it.
  */
 
-import { afterEach, beforeEach, describe, expect, it } from 'vitest'
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { existsSync, mkdirSync, readFileSync, rmSync, writeFileSync } from 'node:fs'
 import * as os from 'node:os'
 import * as path from 'node:path'
@@ -28,7 +28,6 @@ import { hostname } from 'node:os'
 
 import { withFileLock } from './file-lock.js'
 import { StuckLockError } from './owned-lock.js'
-import { LOCK_RETRY_DELAY_MS } from './owned-lock.types.js'
 import { mintDeadPid } from '../../tests/helpers/deterministic-dead-pid.js'
 
 /** A well-formed v1 claim for `pid`, so the refusal reason is the one under test. */
@@ -68,23 +67,37 @@ describe('withFileLock — RETRYABLE_REASONS membership is behaviour (SMI-6776 r
    * `unreclaimable_unparseable`. Only the legacy reason was exercised through
    * this wrapper, so the rest of the set was free.
    *
-   * The discriminator does not need the full 30s budget. A non-retryable
-   * refusal rejects on the FIRST attempt; a retryable one is still polling.
-   * Sampling at 400ms separates them cleanly and keeps the suite fast.
+   * The discriminator is a FAKE clock, and it observes the mechanism rather
+   * than a duration. `acquireFileLock` waits by awaiting
+   * `delay(FILE_LOCK_POLL_MS)` (`file-lock.ts`); a non-retryable refusal throws
+   * before ever reaching that line. So advancing fake time by ZERO settles a
+   * non-retryable refusal and cannot settle a retryable one, which is parked on
+   * a timer nothing has let fire. "Did it sleep" is the question, and this
+   * answers exactly it.
+   *
+   * Do not reintroduce a wall-clock threshold. Two revisions did, and both
+   * passed while resting on something false, because the real refusal takes
+   * ~0.2ms and any plausible bound holds whether or not it is the right one.
+   * The second bound imported `LOCK_RETRY_DELAY_MS` and called it "the real
+   * retry delay" -- but `withFileLock` passes `timeoutMs: 0`, so
+   * `acquireOwnedLock`'s own `sleepSync(LOCK_RETRY_DELAY_MS)` loop never runs
+   * under this wrapper at all. A threshold-free predicate has nothing to get
+   * wrong, which is why this one takes no constant from either module.
    */
-  const SETTLE_MS = 400
 
   /**
    * THREE outcomes, because two cannot express what these tests assert. Keep
-   * all three, and keep each race arm on its OWN narrow literal type -- never
-   * the wide `Outcome`. An arm annotated with the union can be mis-wired to
-   * another arm's value and still typecheck; narrow, each mis-wiring is a
-   * compile error.
+   * all three, and keep each settlement arm on its OWN narrow literal type --
+   * never the wide `Outcome`. An arm annotated with the union can be mis-wired
+   * to another arm's value and still typecheck; narrow, each mis-wiring is a
+   * compile error. `settled` is deliberately the SAME assignment in both arms,
+   * so it carries no outcome information and cannot be mis-wired either.
    *
-   * `settle()` answers one question -- which outcome, inside the window -- for
-   * the three tests that need only that. A test asserting a refusal's IDENTITY
-   * races its OWN acquisition and captures that attempt's rejection inline, so
-   * promptness, identity and reason all describe the SAME `withFileLock` call.
+   * `settle()` answers one question -- which outcome, before any timer fires --
+   * for the three tests that need only that. A test asserting a refusal's
+   * IDENTITY runs its OWN acquisition and captures that attempt's rejection
+   * inline, so outcome, identity and reason all describe the SAME
+   * `withFileLock` call.
    *
    * Two things this protects against, both measured. A test-owned function
    * between the throw and the assertion can be edited to reconstruct the error.
@@ -98,43 +111,69 @@ describe('withFileLock — RETRYABLE_REASONS membership is behaviour (SMI-6776 r
    *
    * Every claim above was measured, and the numbers live in the issues rather
    * than here, where they would rot: SMI-6776 (the two-way collapse),
-   * SMI-6786 (reason swap, arm typing), SMI-6796 (the helper-as-oracle).
+   * SMI-6786 (reason swap, arm typing), SMI-6796 (the helper-as-oracle and the
+   * wall-clock thresholds that replaced it).
    */
   type Outcome = 'refused' | 'acquired' | 'pending'
 
+  // Scoped to this describe: the tests below assert on whether a timer was
+  // reached, so they need to own the clock. The `withFileLock` block further
+  // down awaits no timer and runs on the real one.
+  beforeEach(() => {
+    vi.useFakeTimers()
+  })
+
+  afterEach(() => {
+    vi.useRealTimers()
+  })
+
   async function settle(): Promise<Outcome> {
+    let settled = false
     const attempt = withFileLock(target, 'probe', async () => 'ok').then(
-      (): 'acquired' => 'acquired',
-      (): 'refused' => 'refused'
+      (): 'acquired' => {
+        settled = true
+        return 'acquired'
+      },
+      (): 'refused' => {
+        settled = true
+        return 'refused'
+      }
     )
-    const timer = new Promise<'pending'>((r) => setTimeout(() => r('pending'), SETTLE_MS))
-    return Promise.race([attempt, timer])
+    await vi.advanceTimersByTimeAsync(0)
+    return settled ? attempt : 'pending'
   }
 
-  it('an unparseable claim is REFUSED at once, as a StuckLockError naming its reason', async () => {
+  it('an unparseable claim is REFUSED without sleeping, as a StuckLockError naming its reason', async () => {
     writeFileSync(lockPath, 'not a claim at all')
     const before = readFileSync(lockPath)
-    // ONE acquisition, raced against the window, with its rejection captured.
-    // Promptness, identity and reason are then all asserted about the SAME
-    // attempt. Splitting them across two `withFileLock` calls -- which an
-    // earlier revision did -- lets a stateful mutant throw the wrong reason on
-    // the first and the right one on the second, and pass.
+    // ONE acquisition, with its rejection captured, asserted before any timer
+    // has been allowed to fire. Outcome, identity and reason then all describe
+    // the SAME attempt. Splitting them across two `withFileLock` calls -- which
+    // an earlier revision did -- lets a stateful mutant throw the wrong reason
+    // on the first and the right one on the second, and pass.
+    let settled = false
     let caught: unknown
-    const t0 = performance.now()
     const attempt = withFileLock(target, 'probe', async () => 'ok').then(
-      (): 'acquired' => 'acquired',
+      (): 'acquired' => {
+        settled = true
+        return 'acquired'
+      },
       (err: unknown): 'refused' => {
+        settled = true
         caught = err
         return 'refused'
       }
     )
-    const timer = new Promise<'pending'>((r) => setTimeout(() => r('pending'), SETTLE_MS))
-    const outcome = await Promise.race([attempt, timer])
-    const elapsed = performance.now() - t0
+    await vi.advanceTimersByTimeAsync(0)
+    const outcome: Outcome = settled ? await attempt : 'pending'
 
     // `refused`, not merely "not pending". The distinction is the whole point:
     // an unparseable claim that became acquirable would be a lock-safety
-    // regression, and the two-way version could not tell them apart.
+    // regression, and the two-way version could not tell them apart. And
+    // `refused` HERE -- with the clock advanced by zero -- is the first-attempt
+    // claim: a retryable classification would still be parked on its timer.
+    // Measured: misclassifying attempt 1 as retryable and attempt 2 correctly
+    // leaves this 'pending', where the previous wall-clock bound passed it.
     expect(outcome).toBe('refused')
     // And it must be the DOCUMENTED refusal, not any rejection. Without these
     // two lines, returning `unreclaimable_legacy` where `mapRefusalToReason`
@@ -142,22 +181,21 @@ describe('withFileLock — RETRYABLE_REASONS membership is behaviour (SMI-6776 r
     // `reason` and the manual-unstick remedy with it while the suite stays green.
     expect(caught).toBeInstanceOf(StuckLockError)
     expect((caught as StuckLockError).reason).toBe('unreclaimable_unparseable')
-    // On the FIRST attempt, which is a stronger claim than "inside the window"
-    // and needs its own predicate. Threshold is the real retry delay, imported
-    // rather than guessed: anything at or past it necessarily slept at least
-    // once, so it polled. Measured -- misclassifying the first attempt as a
-    // RETRYABLE reason and the second correctly rejects at ~1x the delay, well
-    // inside SETTLE_MS, and passed every other assertion here.
-    expect(elapsed).toBeLessThan(LOCK_RETRY_DELAY_MS)
     // And the bytes survive, because a refusal must not delete anything.
     expect(readFileSync(lockPath).equals(before)).toBe(true)
   })
 
   it('a live holder IS waited out — still polling when an unparseable claim would have failed', async () => {
-    // Known-positive control for the probe above: same harness, same window,
+    // Known-positive control for the probe above: same harness, same clock,
     // opposite answer. Without this, 'pending' could mean the probe is broken
-    // rather than that the acquire is genuinely still polling.
+    // rather than that the acquire is genuinely waiting.
     writeFileSync(lockPath, v1(process.pid))
+    await expect(settle()).resolves.toBe('pending')
+    // 'pending' at +0 only says "did not settle". Advancing past several poll
+    // intervals and finding it STILL unsettled is what distinguishes a lock
+    // being polled from an acquire that hung: the loop re-read the claim, was
+    // refused again, and re-armed its timer.
+    await vi.advanceTimersByTimeAsync(500)
     await expect(settle()).resolves.toBe('pending')
   })
 
