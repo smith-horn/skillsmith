@@ -67,22 +67,33 @@ describe('withFileLock — RETRYABLE_REASONS membership is behaviour (SMI-6776 r
    * `unreclaimable_unparseable`. Only the legacy reason was exercised through
    * this wrapper, so the rest of the set was free.
    *
-   * The discriminator is a FAKE clock, and it observes the mechanism rather
-   * than a duration. `acquireFileLock` waits by awaiting
-   * `delay(FILE_LOCK_POLL_MS)` (`file-lock.ts`); a non-retryable refusal throws
-   * before ever reaching that line. So advancing fake time by ZERO settles a
-   * non-retryable refusal and cannot settle a retryable one, which is parked on
-   * a timer nothing has let fire. "Did it sleep" is the question, and this
-   * answers exactly it.
+   * The discriminator is a FROZEN CLOCK, not a faked timer. Vitest's fake
+   * timers do NOT patch `node:timers/promises`, which is where
+   * `acquireFileLock`'s `delay(FILE_LOCK_POLL_MS)` comes from -- measured,
+   * `vi.getTimerCount()` is 0 while an acquisition sits on it. Two mechanisms
+   * do the work, and neither is the one an earlier revision of this comment
+   * claimed:
    *
-   * Do not reintroduce a wall-clock threshold. Two revisions did, and both
-   * passed while resting on something false, because the real refusal takes
-   * ~0.2ms and any plausible bound holds whether or not it is the right one.
-   * The second bound imported `LOCK_RETRY_DELAY_MS` and called it "the real
-   * retry delay" -- but `withFileLock` passes `timeoutMs: 0`, so
-   * `acquireOwnedLock`'s own `sleepSync(LOCK_RETRY_DELAY_MS)` loop never runs
-   * under this wrapper at all. A threshold-free predicate has nothing to get
-   * wrong, which is why this one takes no constant from either module.
+   *   - a NON-retryable refusal rejects, and `advanceTimersByTimeAsync(0)`
+   *     drains the microtask queue, so it settles. One tick is needed and
+   *     ~200 are available.
+   *   - a RETRYABLE refusal cannot settle at all, because `Date.now()` is
+   *     frozen and `acquireFileLock`'s deadline (`file-lock.ts:61`) is
+   *     therefore never reached. That half is immune to load; it is not a
+   *     race against the real 50ms poll.
+   *
+   * So the margin is implicit, not absent. Do NOT describe this as
+   * threshold-free, and do not reintroduce an explicit threshold either: two
+   * revisions asserted a wall-clock bound and both passed while resting on
+   * something false, the second importing `LOCK_RETRY_DELAY_MS` -- a constant
+   * this wrapper never reaches, since `timeoutMs: 0` means `acquireOwnedLock`'s
+   * own retry loop never sleeps. Measurements in SMI-6776, SMI-6786, SMI-6796.
+   *
+   * One mutation this does not reject cleanly: replacing the poll's `delay()`
+   * with a microtask-only yield. The zero advance drains it, the loop spins,
+   * and with the clock frozen it never reaches the deadline -- so the suite
+   * HANGS to a timeout instead of failing an assertion. Still caught; read
+   * such a timeout as this rather than as flake.
    */
 
   /**
@@ -93,8 +104,8 @@ describe('withFileLock — RETRYABLE_REASONS membership is behaviour (SMI-6776 r
    * compile error. `settled` is deliberately the SAME assignment in both arms,
    * so it carries no outcome information and cannot be mis-wired either.
    *
-   * `settle()` answers one question -- which outcome, before any timer fires --
-   * for the three tests that need only that. A test asserting a refusal's
+   * `settle()` answers one question -- which outcome, within one microtask
+   * drain -- for the three tests that need only that. A test asserting a refusal's
    * IDENTITY runs its OWN acquisition and captures that attempt's rejection
    * inline, so outcome, identity and reason all describe the SAME
    * `withFileLock` call.
@@ -116,9 +127,12 @@ describe('withFileLock — RETRYABLE_REASONS membership is behaviour (SMI-6776 r
    */
   type Outcome = 'refused' | 'acquired' | 'pending'
 
-  // Scoped to this describe: the tests below assert on whether a timer was
-  // reached, so they need to own the clock. The `withFileLock` block further
-  // down awaits no timer and runs on the real one.
+  // Scoped to this describe. What these tests need from it is the FROZEN
+  // `Date.now()` -- that is what keeps a retryable acquisition from ever
+  // reaching its deadline. The `withFileLock` block further down needs neither
+  // and runs on the real clock; measured, hooks nest outer-then-inner on entry
+  // and inner-then-outer on exit, so the tmpdir is built on a live clock and
+  // `useRealTimers()` runs before the outer `rmSync`.
   beforeEach(() => {
     vi.useFakeTimers()
   })
@@ -146,8 +160,8 @@ describe('withFileLock — RETRYABLE_REASONS membership is behaviour (SMI-6776 r
   it('an unparseable claim is REFUSED without sleeping, as a StuckLockError naming its reason', async () => {
     writeFileSync(lockPath, 'not a claim at all')
     const before = readFileSync(lockPath)
-    // ONE acquisition, with its rejection captured, asserted before any timer
-    // has been allowed to fire. Outcome, identity and reason then all describe
+    // ONE acquisition, with its rejection captured, asserted within a single
+    // microtask drain. Outcome, identity and reason then all describe
     // the SAME attempt. Splitting them across two `withFileLock` calls -- which
     // an earlier revision did -- lets a stateful mutant throw the wrong reason
     // on the first and the right one on the second, and pass.
@@ -169,9 +183,13 @@ describe('withFileLock — RETRYABLE_REASONS membership is behaviour (SMI-6776 r
 
     // `refused`, not merely "not pending". The distinction is the whole point:
     // an unparseable claim that became acquirable would be a lock-safety
-    // regression, and the two-way version could not tell them apart. And
-    // `refused` HERE -- with the clock advanced by zero -- is the first-attempt
-    // claim: a retryable classification would still be parked on its timer.
+    // regression, and the two-way version could not tell them apart.
+    //
+    // What `refused` after a ZERO advance establishes, stated exactly: the
+    // rejection arrived within one microtask drain, so the acquisition did not
+    // reach `delay(FILE_LOCK_POLL_MS)` -- given that the retry is a real timer
+    // and the clock is frozen. It does not, on its own, exclude a retry that
+    // yields only on microtasks; see the block comment above.
     // Measured: misclassifying attempt 1 as retryable and attempt 2 correctly
     // leaves this 'pending', where the previous wall-clock bound passed it.
     expect(outcome).toBe('refused')
@@ -189,13 +207,14 @@ describe('withFileLock — RETRYABLE_REASONS membership is behaviour (SMI-6776 r
     // Known-positive control for the probe above: same harness, same clock,
     // opposite answer. Without this, 'pending' could mean the probe is broken
     // rather than that the acquire is genuinely waiting.
+    // An earlier revision advanced +500ms here and asserted 'pending' again,
+    // claiming that proved the lock was being POLLED rather than hung. It
+    // proved nothing: `settle()` starts a NEW acquisition, so the second call
+    // observed a fresh first attempt and never re-read the original -- deleting
+    // the advance changed no verdict. Polled-vs-hung is not reachable from this
+    // shape at all, since a hung acquire returns the same 'pending'. Both
+    // round-4 reviewers found it independently; deleted rather than patched.
     writeFileSync(lockPath, v1(process.pid))
-    await expect(settle()).resolves.toBe('pending')
-    // 'pending' at +0 only says "did not settle". Advancing past several poll
-    // intervals and finding it STILL unsettled is what distinguishes a lock
-    // being polled from an acquire that hung: the loop re-read the claim, was
-    // refused again, and re-armed its timer.
-    await vi.advanceTimersByTimeAsync(500)
     await expect(settle()).resolves.toBe('pending')
   })
 
