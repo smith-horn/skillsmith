@@ -277,6 +277,14 @@ export function writeLogLine(surface: Surface, line: string): Promise<void> {
  * deterministic run against a temp directory rather than racing the
  * fire-and-forget call below.
  */
+// Only this module's own files are ever deleted. ~/.skillsmith/logs is shared
+// with other writers -- session-audit-*, retrieval-autoheal-*, retrieval-liveness-*,
+// eval-cron-*, the hook wrapper's claude-hooks-*.log, and native-attribution.jsonl,
+// which ADR-165 keeps for its lifetime as a denominator. An unfiltered sweep
+// deleted all of them once they aged past RETENTION_DAYS (SMI-6744 A1.9b
+// post-merge retro, governance C1). Dated files and their .<n> continuations only.
+const OWNED_LOG = /^skillsmith-[a-z-]+-\d{4}-\d{2}-\d{2}\.jsonl(\.\d+)?$/
+
 export async function pruneExpiredLogs(): Promise<void> {
   const dir = getLogDir()
   try {
@@ -285,6 +293,7 @@ export async function pruneExpiredLogs(): Promise<void> {
     const cutoff = Date.now() - RETENTION_DAYS * 24 * 60 * 60 * 1000
     await Promise.all(
       entries.map(async (name) => {
+        if (!OWNED_LOG.test(name)) return
         const full = join(dir, name)
         try {
           const info = await stat(full)

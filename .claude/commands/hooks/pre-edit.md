@@ -77,7 +77,7 @@ hooks pre-edit -f "production.env" -c "high-risk production config edit"
 
 ## Integration
 
-This hook is automatically called by Claude Code when:
+Claude Code fires a PreToolUse/PostToolUse hook on Write|Edit|MultiEdit in this repo, but it runs `scripts/claude-hooks-log-wrapper.sh`, which has not invoked ruflo since SMI-6724 — this command is not called automatically here. Upstream ruflo documents it as invoked when:
 
 - Using Edit or MultiEdit tools
 - Before file modifications

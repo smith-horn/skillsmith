@@ -310,6 +310,11 @@ NODE_EOF
   for _f in "$STALE_OTHER" "$STALE_ATTR"; do
     touch -d "30 days ago" "$_f" 2>/dev/null || touch -t "$(date -v-30d +%Y%m%d%H%M 2>/dev/null || date -d '30 days ago' +%Y%m%d%H%M)" "$_f" 2>/dev/null || true
   done
+  # Captured before the sweep so a broadened glob cannot produce two failures for one
+  # cause: if the backdating above silently failed, both negative arms would pass for the
+  # wrong reason (a fresh file is outside -mtime +N whatever the glob). Measured: with the
+  # loop neutered and the second glob broadened to '*', the two arms stayed green.
+  BACKDATED_COUNT=$(find "$LOG_DIR" -maxdepth 1 \( -name 'session-audit-2020-01-01.log' -o -name 'native-attribution.jsonl' \) -mtime +7 | wc -l | tr -d ' ')
   SKILLSMITH_HOOK_LOG_RETENTION_DAYS=7 run_wrapper "$SHELL_BIN" pre-command "trigger a new day's file" -- --command "x" >/dev/null 2>&1
   if [ -f "$STALE_FILE" ]; then
     echo "FAIL [$SHELL_BIN] stale log file was not swept (this can be a false failure on a fresh mtime touch across platforms; verify manually if it recurs)"
@@ -326,6 +331,7 @@ NODE_EOF
     "$([ -f "$STALE_OTHER" ] && echo 0 || echo 1)"
   assert_true "[$SHELL_BIN] stale native-attribution.jsonl (never rotated, ADR-165) was NOT swept" \
     "$([ -f "$STALE_ATTR" ] && echo 0 || echo 1)"
+  assert_eq "[$SHELL_BIN] both negative-arm fixtures were backdated past retention (arms not vacuous)" "2" "$BACKDATED_COUNT"
   teardown_fixture
 done
 

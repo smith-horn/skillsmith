@@ -23,12 +23,14 @@ v3 `session-end` takes no session-id argument (**`-s` now means `--save-state`, 
 ### Basic session end
 
 ```bash
+# do not run on the host -- see the note at the top of this file (SMI-6744 A1.9b)
 hooks session-end
 ```
 
 ### With metrics export
 
 ```bash
+# do not run on the host -- see the note at the top of this file (SMI-6744 A1.9b)
 hooks session-end
 ```
 
@@ -37,12 +39,14 @@ View exported metrics separately via `hooks metrics`.
 ### Quick close
 
 ```bash
+# do not run on the host -- see the note at the top of this file (SMI-6744 A1.9b)
 hooks session-end --save-state false
 ```
 
 ### Complete persistence
 
 ```bash
+# do not run on the host -- see the note at the top of this file (SMI-6744 A1.9b)
 hooks session-end --save-state true
 ```
 
@@ -88,6 +92,7 @@ Manual usage in agents:
 
 ```bash
 # At session end
+# do not run on the host -- see the note at the top of this file (SMI-6744 A1.9b)
 hooks session-end
 ```
 

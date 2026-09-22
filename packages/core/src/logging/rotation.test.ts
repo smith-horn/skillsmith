@@ -151,6 +151,26 @@ describe('rotation.ts — size-cap rollover', () => {
 })
 
 describe('rotation.ts — retention sweep', () => {
+  it('deletes only its own skillsmith-<surface>-<date>.jsonl[.n] files, never other classes sharing the directory', async () => {
+    // ~/.skillsmith/logs is shared with other writers; native-attribution.jsonl in
+    // particular is kept for its lifetime (ADR-165). Red arm: remove OWNED_LOG's
+    // test in pruneExpiredLogs and the two "survives" expectations fail.
+    const fifteenDaysAgoSec = Math.floor((Date.now() - 15 * 24 * 60 * 60 * 1000) / 1000)
+    const own = join(tempDir, 'skillsmith-mcp-2020-01-01.jsonl')
+    const ownRolled = join(tempDir, 'skillsmith-cli-2020-01-01.jsonl.1')
+    const attribution = join(tempDir, 'native-attribution.jsonl')
+    const audit = join(tempDir, 'session-audit-2020-01-01.log')
+    for (const f of [own, ownRolled, attribution, audit]) {
+      writeFileSync(f, 'x\n')
+      utimesSync(f, fifteenDaysAgoSec, fifteenDaysAgoSec)
+    }
+    await pruneExpiredLogs()
+    expect(existsSync(own)).toBe(false)
+    expect(existsSync(ownRolled)).toBe(false)
+    expect(existsSync(attribution)).toBe(true)
+    expect(existsSync(audit)).toBe(true)
+  })
+
   it('deletes files older than 14 days and keeps recent ones', async () => {
     const oldFile = join(tempDir, 'skillsmith-mcp-2020-01-01.jsonl')
     const recentFile = join(tempDir, 'skillsmith-mcp-2026-01-01.jsonl')
