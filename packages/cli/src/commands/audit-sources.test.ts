@@ -125,6 +125,7 @@ function baseOptions(overrides: Partial<AuditSourcesOptions> = {}): AuditSources
     writeFrontmatter: false,
     forceWriteFrontmatter: false,
     db: ':memory:',
+    client: undefined,
     ...overrides,
   }
 }
@@ -230,6 +231,40 @@ describe('runAuditSources', () => {
     expect(mockBackfillManifest).toHaveBeenCalledWith(
       expect.objectContaining({ summary: expect.any(Object) }),
       expect.objectContaining({ apply: true })
+    )
+
+    logSpy.mockRestore()
+  })
+
+  // --------------------------------------------------------------------------
+  // SMI-6358: --client wiring — resolveEffectiveClient's output must reach
+  // BOTH overlayAlreadyTracked (via the manifest lookup, not directly
+  // observable through this mock) and backfillManifest's options.
+  // --------------------------------------------------------------------------
+
+  it('SMI-6358: --client cursor resolves to "cursor" and is passed to backfillManifest', async () => {
+    mockBackfillManifest.mockResolvedValue({ planned: [], written: [], skipped: [] })
+    const logSpy = vi.spyOn(console, 'log').mockImplementation(() => {})
+
+    await runAuditSources(baseOptions({ apply: true, yes: true, client: 'cursor' }))
+
+    expect(mockBackfillManifest).toHaveBeenCalledWith(
+      expect.objectContaining({ summary: expect.any(Object) }),
+      expect.objectContaining({ client: 'cursor' })
+    )
+
+    logSpy.mockRestore()
+  })
+
+  it('SMI-6358: omitting --client defaults to the canonical client (claude-code) in backfillManifest', async () => {
+    mockBackfillManifest.mockResolvedValue({ planned: [], written: [], skipped: [] })
+    const logSpy = vi.spyOn(console, 'log').mockImplementation(() => {})
+
+    await runAuditSources(baseOptions({ apply: true, yes: true }))
+
+    expect(mockBackfillManifest).toHaveBeenCalledWith(
+      expect.objectContaining({ summary: expect.any(Object) }),
+      expect.objectContaining({ client: 'claude-code' })
     )
 
     logSpy.mockRestore()
