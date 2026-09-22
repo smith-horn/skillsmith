@@ -14,12 +14,16 @@ This automatically creates:
 - Hook command documentation
 - Default hook handlers
 
+Do not run it in this repo: the hooks block in `.claude/settings.json` is hand-maintained, and the
+Stop hook it would re-create was removed 2026-09-21 (SMI-6744 A1.9b).
+
 ### 2. Test Hook Functionality
 ```bash
 # Test pre-edit hook
 hooks pre-edit --file test.js
 
 # Test session summary
+# (do not run on the host: the Stop hook was removed 2026-09-21, SMI-6744 A1.9b; see session-end.md)
 hooks session-end
 ```
 
