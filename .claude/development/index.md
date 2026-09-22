@@ -6,6 +6,7 @@ Developer guides for local development, testing, and debugging.
 
 | Document | Description |
 |----------|-------------|
+| [concurrency-patterns.md](concurrency-patterns.md) | Pattern-to-incident-to-canonical-fix index for the six `concurrency-auditor` patterns (SMI-4895/4896/4861/4887/6428) |
 | [docker-guide.md](docker-guide.md) | Container management, rebuild scenarios, native modules, troubleshooting |
 | [git-crypt-guide.md](git-crypt-guide.md) | Encrypted docs, unlock, worktree setup, rebase workaround, host native bindings & SessionStart instrumentation (SMI-4549) |
 | [ci-reference.md](ci-reference.md) | Change classification, branch protection, Turborepo, CI scripts |

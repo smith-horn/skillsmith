@@ -2,24 +2,27 @@
 
 ## Quick Start
 
+**Do not run `init hooks` in this repo, by either path below.** The hooks block in
+`.claude/settings.json` is hand-maintained, and the Stop hook `init hooks` would
+re-create was removed 2026-09-21 (SMI-6744 A1.9b). The Write|Edit hooks that exist
+run `scripts/claude-hooks-log-wrapper.sh`, which has not invoked ruflo since SMI-6724.
+
 ### 1. Initialize with Hooks
 ```bash
 npx -y ruflo@3.14.2 init hooks
 ```
 
-MCP equivalent: `mcp__ruflo__hooks_init`.
+MCP equivalent (same caveat): `mcp__ruflo__hooks_init`.
 
 This automatically creates:
 - `.claude/settings.json` with hook configurations
 - Hook command documentation
 - Default hook handlers
 
-Do not run it in this repo: the hooks block in `.claude/settings.json` is hand-maintained, and the
-Stop hook it would re-create was removed 2026-09-21 (SMI-6744 A1.9b).
-
 ### 2. Test Hook Functionality
 ```bash
 # Test pre-edit hook
+# (not wired in this repo: the Write|Edit hooks run the log wrapper, which has not invoked ruflo since SMI-6724)
 hooks pre-edit --file test.js
 
 # Test session summary
@@ -29,7 +32,8 @@ hooks session-end
 
 ### 3. Customize Hooks
 
-Edit `.claude/settings.json` to customize:
+Edit `.claude/settings.json` to customize. **Do not wire ruflo into it here** — SMI-6724
+measured and removed that invocation; the block below is upstream's shape, kept for reference:
 
 ```json
 {
@@ -75,6 +79,7 @@ Example blocking response:
 ## Debugging Hooks
 ```bash
 # Test specific hook
+# (host-side ruflo hooks are not wired in this repo; see the note at the top of this file)
 hooks pre-edit --file app.js
 ```
 

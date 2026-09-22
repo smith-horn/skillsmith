@@ -23,12 +23,14 @@ v3 `session-end` takes no session-id argument (**`-s` now means `--save-state`, 
 ### Basic session end
 
 ```bash
+# do not run on the host -- see the note at the top of this file (SMI-6744 A1.9b)
 hooks session-end
 ```
 
 ### With metrics export
 
 ```bash
+# do not run on the host -- see the note at the top of this file (SMI-6744 A1.9b)
 hooks session-end
 ```
 
@@ -37,12 +39,14 @@ View exported metrics separately via `hooks metrics`.
 ### Quick close
 
 ```bash
+# do not run on the host -- see the note at the top of this file (SMI-6744 A1.9b)
 hooks session-end --save-state false
 ```
 
 ### Complete persistence
 
 ```bash
+# do not run on the host -- see the note at the top of this file (SMI-6744 A1.9b)
 hooks session-end --save-state true
 ```
 
@@ -79,17 +83,16 @@ hooks session-end --save-state true
 
 ## Integration
 
-This hook is automatically called by Claude Code when:
-
-- Ending a conversation
-- Closing work session
-- Before shutdown
-- Switching contexts
+Nothing in this repo calls this automatically. The Stop hook that did was removed
+2026-09-21 (SMI-6744 A1.9b) — see the note at the top of this file. Upstream ruflo
+documents it as Claude-Code-invoked at conversation end; that is the wiring this repo
+deliberately does not have, and re-introduction is A5.5.6's to propose.
 
 Manual usage in agents:
 
 ```bash
 # At session end
+# do not run on the host -- see the note at the top of this file (SMI-6744 A1.9b)
 hooks session-end
 ```
 

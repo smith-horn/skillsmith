@@ -277,6 +277,37 @@ export function writeLogLine(surface: Surface, line: string): Promise<void> {
  * deterministic run against a temp directory rather than racing the
  * fire-and-forget call below.
  */
+// Only this module's own files are ever deleted. ~/.skillsmith/logs is shared
+// with other writers -- session-audit-*, retrieval-autoheal-*, retrieval-liveness-*,
+// eval-cron-*, the hook wrapper's claude-hooks-*.log, and native-attribution.jsonl,
+// which ADR-165 keeps for its lifetime as a denominator. An unfiltered sweep
+// deleted all of them once they aged past RETENTION_DAYS (SMI-6744 A1.9b
+// post-merge retro, governance C1). Dated files and their .<n> continuations only,
+// and only for the surfaces this module actually writes: ownership is the surface
+// list, not a filename shape, so an owned-shaped foreign name such as
+// skillsmith-foreign-<date>.jsonl is left alone (PR #2921 gate, PR-17). Every Surface
+// must appear in SURFACE_NAMES -- `satisfies Record<Surface, true>` makes adding a
+// surface without listing it a type error, so the pattern cannot drift from the type.
+const SURFACE_NAMES = {
+  mcp: true,
+  cli: true,
+  vscode: true,
+  'doc-retrieval': true,
+} satisfies Record<Surface, true>
+/**
+ * Builds the ownership pattern from a surface list. Exported so the escaping
+ * is testable with a surface the type does not (yet) contain: every name is
+ * regex-escaped before interpolation, so a future surface such as `foo.bar`
+ * matches only itself, never `fooXbar` (PR #2921 gate round 2, PR-16). No
+ * current surface carries a metacharacter, so only this seam can go red on it.
+ */
+export function ownedLogPattern(surfaces: readonly string[]): RegExp {
+  const escaped = surfaces.map((name) => name.replace(/[.*+?^${}()|[\]\\]/g, '\\$&'))
+  return new RegExp(`^skillsmith-(${escaped.join('|')})-\\d{4}-\\d{2}-\\d{2}\\.jsonl(\\.\\d+)?$`)
+}
+
+const OWNED_LOG = ownedLogPattern(Object.keys(SURFACE_NAMES))
+
 export async function pruneExpiredLogs(): Promise<void> {
   const dir = getLogDir()
   try {
@@ -285,6 +316,7 @@ export async function pruneExpiredLogs(): Promise<void> {
     const cutoff = Date.now() - RETENTION_DAYS * 24 * 60 * 60 * 1000
     await Promise.all(
       entries.map(async (name) => {
+        if (!OWNED_LOG.test(name)) return
         const full = join(dir, name)
         try {
           const info = await stat(full)

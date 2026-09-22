@@ -21,7 +21,12 @@ import {
 } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
-import { __resetLoggingStateForTests, pruneExpiredLogs, writeLogLine } from './rotation.js'
+import {
+  __resetLoggingStateForTests,
+  ownedLogPattern,
+  pruneExpiredLogs,
+  writeLogLine,
+} from './rotation.js'
 
 // SMI-5793: `homedir()` reads the OS passwd record and does NOT respect
 // `process.env.HOME` mutations (SMI-4711 precedent, see
@@ -151,6 +156,56 @@ describe('rotation.ts — size-cap rollover', () => {
 })
 
 describe('rotation.ts — retention sweep', () => {
+  it('deletes only its own skillsmith-<surface>-<date>.jsonl[.n] files, never other classes sharing the directory', async () => {
+    // ~/.skillsmith/logs is shared with other writers; native-attribution.jsonl in
+    // particular is kept for its lifetime (ADR-165). Red arm: remove OWNED_LOG's
+    // test in pruneExpiredLogs and the two "survives" expectations fail.
+    const fifteenDaysAgoSec = Math.floor((Date.now() - 15 * 24 * 60 * 60 * 1000) / 1000)
+    // Own: every listed surface shape, including a .<n> continuation and a hyphenated surface.
+    const own = [
+      'skillsmith-mcp-2020-01-01.jsonl',
+      'skillsmith-cli-2020-01-01.jsonl.1',
+      'skillsmith-doc-retrieval-2020-01-01.jsonl',
+    ]
+    // Foreign: other classes, plus owned-SHAPED names the pattern must still refuse -- an
+    // unlisted surface, a prefixed name (the ^ anchor), a suffixed name (the $ anchor) and
+    // an unescaped-dot look-alike. Each of these is the fixture that kills one mutation of
+    // OWNED_LOG (PR #2921 gate, PR-16/PR-17).
+    const foreign = [
+      'native-attribution.jsonl',
+      'session-audit-2020-01-01.log',
+      'skillsmith-foreign-2020-01-01.jsonl',
+      'old-skillsmith-mcp-2020-01-01.jsonl',
+      'skillsmith-mcp-2020-01-01.jsonl.bak',
+      'skillsmith-mcp-2020-01-01xjsonl',
+    ]
+    for (const name of [...own, ...foreign]) {
+      const f = join(tempDir, name)
+      writeFileSync(f, 'x\n')
+      utimesSync(f, fifteenDaysAgoSec, fifteenDaysAgoSec)
+    }
+    await pruneExpiredLogs()
+    for (const name of own) expect(existsSync(join(tempDir, name)), name).toBe(false)
+    for (const name of foreign) expect(existsSync(join(tempDir, name)), name).toBe(true)
+  })
+
+  it('regex-escapes surface names, so a metacharacter in a future surface cannot widen ownership', () => {
+    // No current Surface carries a metacharacter, so this is the only arm that can go
+    // red on the escaping (PR #2921 gate round 2, PR-16): drop the escape and
+    // 'skillsmith-fooXbar-2020-01-01.jsonl' matches the 'foo.bar' alternative.
+    const pattern = ownedLogPattern(['mcp', 'foo.bar', 'foo|bar'])
+    expect(pattern.test('skillsmith-foo.bar-2020-01-01.jsonl')).toBe(true)
+    expect(pattern.test('skillsmith-fooXbar-2020-01-01.jsonl')).toBe(false)
+    // A second metacharacter with different semantics: an unescaped '|' would split
+    // one surface into two alternatives, so 'foo' and 'bar' alone would become owned
+    // (PR #2921 gate round 3: an "escape dots only" implementation survived the arm above).
+    expect(pattern.test('skillsmith-foo|bar-2020-01-01.jsonl')).toBe(true)
+    expect(pattern.test('skillsmith-foo-2020-01-01.jsonl')).toBe(false)
+    expect(pattern.test('skillsmith-bar-2020-01-01.jsonl')).toBe(false)
+    expect(pattern.test('skillsmith-mcp-2020-01-01.jsonl.3')).toBe(true)
+    expect(pattern.test('skillsmith-mcp-2020-01-01.jsonl.bak')).toBe(false)
+  })
+
   it('deletes files older than 14 days and keeps recent ones', async () => {
     const oldFile = join(tempDir, 'skillsmith-mcp-2020-01-01.jsonl')
     const recentFile = join(tempDir, 'skillsmith-mcp-2026-01-01.jsonl')

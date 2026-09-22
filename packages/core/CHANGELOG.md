@@ -4,6 +4,13 @@ All notable changes to `@skillsmith/core` are documented here.
 
 ## [Unreleased]
 
+- **Fix (data loss)**: SMI-6744 (PR #2919 post-merge retro, governance C1) -- `pruneExpiredLogs()`
+  deleted every file older than 14 days in `~/.skillsmith/logs`, a directory shared with other
+  writers, including `native-attribution.jsonl`, which ADR-165 keeps for its lifetime as a
+  denominator. It now deletes only this module's own `skillsmith-<surface>-<date>.jsonl[.n]`
+  files. Red-tested: removing the name filter fails the two new "survives" expectations in
+  `rotation.test.ts`.
+
 - **Fix (data integrity)**: SMI-6358 -- `backfillProvenance()` keys manifest writes through
   `manifestKeyFor(name, client)` instead of the bare name. A skill installed for a non-canonical
   client is stored as `name::client`; writing provenance under the bare name landed it on the

@@ -9,3 +9,4 @@ Commands for hooks operations in Ruflo.
 - [pre-edit](./pre-edit.md)
 - [post-edit](./post-edit.md)
 - [session-end](./session-end.md)
+- [setup](./setup.md)

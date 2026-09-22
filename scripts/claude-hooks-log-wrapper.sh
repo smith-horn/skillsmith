@@ -44,7 +44,11 @@ LOG_FILE="$LOG_DIR/claude-hooks-$(date -u +%Y-%m-%d).log"
 # exists to make less fragile. (historical: the Stop hook and
 # session-stop-hook-safe.sh were removed 2026-09-21, SMI-6744 A1.9b; its
 # ruflo-session-end-*.log files lost their only pruner with it, so this
-# sweep carries them under the same retention)
+# sweep carries them under this wrapper's own retention -- 14 days by
+# default, not the removed hook's 7. The class has no writer while the Stop
+# hook is gone, so this arm is a bounded cleanup: keep it only until A5.5.6
+# decides re-introduction. Nothing else in ~/.skillsmith/logs is touched;
+# the test pins that boundary, native-attribution.jsonl included)
 if [ ! -f "$LOG_FILE" ]; then
   find "$LOG_DIR" -maxdepth 1 \( -name 'claude-hooks-*.log' -o -name 'ruflo-session-end-*.log' \) -mtime "+${LOG_RETENTION_DAYS}" -delete 2>/dev/null
 fi
