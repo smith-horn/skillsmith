@@ -218,6 +218,83 @@ describe('runAuditSources', () => {
     expect(parsed.summary.already_tracked).toBe(1)
   })
 
+  // SMI-6358 post-merge (PR #2920 retro): the overlay's OWN keying, which the
+  // note below the --client test conceded was "not directly observable through
+  // this mock". It is observable here, through the JSON report, and it needed
+  // to be: reverting `installed[manifestKeyFor(skill.skillName, client)]` to
+  // `installed[skill.skillName]` left all five audit-sources test files green.
+  //
+  // The two tests below are a matched pair. Either alone is satisfiable by a
+  // wrong implementation — always-bare passes the first, always-suffixed passes
+  // the second — so it is the pair that pins the keying.
+
+  it('SMI-6358: a canonical entry does not mark a non-canonical client already_tracked', async () => {
+    // Manifest holds ONLY the bare-name (canonical) entry.
+    mockLoadManifest.mockResolvedValue({
+      version: '1.0.0',
+      installedSkills: {
+        linear: {
+          id: 'uuid-linear',
+          name: 'linear',
+          version: '1.0.0',
+          source: 'https://github.com/williamsmith/linear',
+          installPath: '/home/user/.claude/skills/linear',
+          installedAt: '2024-01-01T00:00:00.000Z',
+          lastUpdated: '2024-01-01T00:00:00.000Z',
+        },
+      },
+    })
+
+    const jsonChunks: string[] = []
+    vi.spyOn(process.stdout, 'write').mockImplementation((chunk) => {
+      if (typeof chunk === 'string') jsonChunks.push(chunk)
+      return true
+    })
+
+    await runAuditSources(baseOptions({ json: true, client: 'cursor' }))
+
+    const parsed = JSON.parse(jsonChunks.join('')) as {
+      skills: Array<{ status: string }>
+      summary: { already_tracked: number; recovered: number }
+    }
+
+    // A bare-name lookup would find the canonical entry and mark this tracked.
+    expect(parsed.summary.already_tracked).toBe(0)
+    expect(parsed.summary.recovered).toBe(1)
+  })
+
+  it('SMI-6358: a client-scoped entry does mark that client already_tracked', async () => {
+    mockLoadManifest.mockResolvedValue({
+      version: '1.0.0',
+      installedSkills: {
+        'linear::cursor': {
+          id: 'uuid-linear',
+          name: 'linear',
+          version: '1.0.0',
+          source: 'https://github.com/williamsmith/linear',
+          installPath: '/home/user/.cursor/skills/linear',
+          installedAt: '2024-01-01T00:00:00.000Z',
+          lastUpdated: '2024-01-01T00:00:00.000Z',
+        },
+      },
+    })
+
+    const jsonChunks: string[] = []
+    vi.spyOn(process.stdout, 'write').mockImplementation((chunk) => {
+      if (typeof chunk === 'string') jsonChunks.push(chunk)
+      return true
+    })
+
+    await runAuditSources(baseOptions({ json: true, client: 'cursor' }))
+
+    const parsed = JSON.parse(jsonChunks.join('')) as {
+      skills: Array<{ status: string }>
+      summary: { already_tracked: number }
+    }
+
+    expect(parsed.summary.already_tracked).toBe(1)
+  })
+
   // --------------------------------------------------------------------------
   // --apply --yes writes the manifest
   // --------------------------------------------------------------------------

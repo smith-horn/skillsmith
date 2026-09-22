@@ -24,9 +24,13 @@
  * @skillsmith/core's ManifestManager uses for SkillInstallationService,
  * apply_manifest_reconcile, and manage.update.helpers.ts's adoption path —
  * and that @skillsmith/mcp-server's install.helpers.manifest.ts's
- * updateManifestSafely() ALSO already used (independently implemented, but
- * the identical target path + wx-flag protocol makes it interoperable with
- * this lock without any code sharing). A direct saveManifest() call
+ * updateManifestSafely() ALSO already used -- and uses by importing the SAME
+ * `withFileLock` from @skillsmith/core (see install.helpers.manifest.ts's
+ * import), not by reimplementing it. An earlier version of this comment
+ * called it an independent implementation interoperating through a shared
+ * wx-flag protocol; both halves were wrong, and the second would point a
+ * future StuckLockError debugger at a plain exclusive-create rather than at
+ * the owned-lock primitive's reclaim semantics. A direct saveManifest() call
  * (bypassing updateManifestEntry) is still NOT locked and must never be used
  * for a read-modify-write sequence — see saveManifest()'s own doc comment.
  */
@@ -214,17 +218,17 @@ export async function saveManifest(manifest: SkillManifest): Promise<void> {
  * loadManifest()/saveManifest() — SMI-6360 governs NOT consolidating the
  * three manifest *implementations* into one; this only reuses the
  * ALREADY-locked primitive for the write step. `manifest` inside the
+ * updateSafely() callback is core's own (structurally-mirrored, slightly
+ * narrower) SkillManifest type — the casts below are the one integration
+ * point between the two mirrored type declarations, same pattern this
+ * file's header already documents for the shape overall.
+ *
  * The optional `manifestPath` mirrors `loadManifest()`'s own signature and
  * exists so a test can name the file it writes instead of inheriting the
  * homedir default. `audit:standards` Check 65 requires that (SMI-6343 found
  * test rows in a real user's manifest because two tests mocked their install
  * paths but not their manifest path); the $HOME sandbox is a runtime defence
  * and this is the review-time one.
- *
- * updateSafely() callback is core's own (structurally-mirrored, slightly
- * narrower) SkillManifest type — the casts below are the one integration
- * point between the two mirrored type declarations, same pattern this
- * file's header already documents for the shape overall.
  */
 export async function updateManifestEntry(
   updateFn: (manifest: SkillManifest) => SkillManifest,
