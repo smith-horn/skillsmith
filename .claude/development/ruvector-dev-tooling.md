@@ -105,8 +105,7 @@ this if we adopt a longer-context model.
 1. `.ruvector/` is **git-ignored** and **CI-refused**. The indexer exits
    non-zero if `CI=true` or `SKILLSMITH_CI=true`. It also refuses to write
    outside `$REPO_ROOT/.ruvector/`.
-2. `.claude/settings.json` carries a `permissions.deny` list covering 42 Ruflo
-   tools with remote-persistence surfaces (AgentDB, hive-mind_memory,
+2. `.claude/settings.json` carries a `permissions.deny` list covering every Ruflo tool classified Blocked in the classification doc ([`ruflo-tool-classification.md`](../../docs/internal/architecture/ruflo-tool-classification.md), whose paste block is kept in lockstep with the array's `mcp__ruflo__*` entries; the count lives there, not here) with remote-persistence surfaces (AgentDB, hive-mind_memory,
    managed_agent_*, memory_store, etc.). This is the only Claude Code-enforced
    mechanism — `.mcp.json` `disabledTools` is silently ignored (SMI-4427).
    Authoritative list lives in

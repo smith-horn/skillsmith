@@ -55,6 +55,8 @@
       "mcp__ruflo__hive-mind_shutdown",
       "mcp__ruflo__hooks_intelligence_pattern-store",
       "mcp__ruflo__hooks_intelligence_pattern-search",
+      "mcp__ruflo__memory_import",
+      "mcp__ruflo__memory_import_claude",
       "mcp__ruflo__memory_migrate",
       "mcp__ruflo__memory_search",
       "mcp__ruflo__memory_search_unified",
