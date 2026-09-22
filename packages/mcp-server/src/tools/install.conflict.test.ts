@@ -267,6 +267,33 @@ describe('a second non-canonical client (SMI-6358 retro)', () => {
     expect(mockDetectModifications).not.toHaveBeenCalled()
   })
 
+  it('handleMergeAction scopes a third client too', async () => {
+    // The gate caught this as a fourth instance of the same twin: the windsurf
+    // cases above reach checkForConflicts only, so a site-local special-case at
+    // handleMergeAction -- `client === 'cursor' ? manifestKeyFor(...) : name` --
+    // satisfied all three of its tests. Second-client coverage has to reach
+    // BOTH sites, not the one the previous finding was about.
+    await handleMergeAction(
+      'my-skill',
+      '/installed/my-skill',
+      'upstream content',
+      manifestWithEntry(`my-skill::${THIRD}`, '7.7.7'),
+      'owner',
+      'repo',
+      'owner/repo/my-skill',
+      THIRD
+    )
+
+    const meta = mockStoreOriginal.mock.calls[0]![2] as { version: string }
+    expect(meta.version).toBe('7.7.7')
+
+    const updater = mockUpdateManifestSafely.mock.calls[0]![0] as (m: unknown) => {
+      installedSkills: Record<string, unknown>
+    }
+    const written = updater({ version: '1', installedSkills: {} })
+    expect(Object.keys(written.installedSkills)).toEqual([`my-skill::${THIRD}`])
+  })
+
   it('checkForConflicts finds that third client own entry', async () => {
     const result = await checkForConflicts(
       'my-skill',
