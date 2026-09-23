@@ -75,8 +75,10 @@ describe('withFileLock — RETRYABLE_REASONS membership is behaviour (SMI-6776 r
    * claimed:
    *
    *   - a NON-retryable refusal rejects, and `advanceTimersByTimeAsync(0)`
-   *     drains the microtask queue, so it settles. One tick is needed and
-   *     ~200 are available.
+   *     drains the microtask queue, so it settles. One tick is needed, and the
+   *     advance crosses a macrotask boundary, so the queue drains to
+   *     EXHAUSTION -- measured, a 5000-deep `.then` chain settles in one call.
+   *     There is no budget to exceed.
    *   - a RETRYABLE refusal cannot settle at all, because `Date.now()` is
    *     frozen and `acquireFileLock`'s deadline (`file-lock.ts:61`) is
    *     therefore never reached. That half is immune to load; it is not a
@@ -133,12 +135,53 @@ describe('withFileLock — RETRYABLE_REASONS membership is behaviour (SMI-6776 r
   // and runs on the real clock; measured, hooks nest outer-then-inner on entry
   // and inner-then-outer on exit, so the tmpdir is built on a live clock and
   // `useRealTimers()` runs before the outer `rmSync`.
+  /**
+   * ENV POLICY FOR THIS DESCRIBE: NEUTRALIZE, then restore.
+   *
+   * An INHERITED `SKILLSMITH_LOCK_NO_AUTO_RECLAIM=1` -- the documented switch a
+   * developer exports to unstick a lock, then forgets -- silently disarms the
+   * `reclaim_unavailable` test below. Measured: with it set, the same fixture
+   * yields `reclaim_disabled` instead; both reasons are retryable, so every
+   * assertion still passes while 14 production lines and 14 branches stop being
+   * exercised (SMI-6807).
+   *
+   * THE RULE: a switch that DISARMS silently gets cleared; a switch that BREAKS
+   * loudly gets kept. It is about which failure the variable produces, not
+   * about the variable -- so each hazard declares its own policy in its own
+   * file, and they are not "unified" into a shared helper, because the correct
+   * answer differs per variable. This describe is the NEUTRALIZE case; the
+   * PRESERVE case is `SKILLSMITH_DISABLE_CLIENT_CACHE`, per SMI-6810.
+   *
+   * The policy governs the AMBIENT baseline only, and one test below breaks it
+   * on purpose: "a dead holder under SKILLSMITH_LOCK_NO_AUTO_RECLAIM IS waited
+   * out" sets the variable in its own body and restores it in its own
+   * `finally`, composing with the `afterEach` here. That is not a policy
+   * violation -- it is the only test that reaches `reclaim_disabled`. Removing
+   * it to satisfy NEUTRALIZE would re-open SMI-6807 from the other side.
+   *
+   * Restoring in `afterEach` matters, and the first version of this fix omitted
+   * it: a bare `delete` in `beforeEach` neutralizes for THIS describe and then
+   * stays deleted for the rest of the process -- the same unconditional-
+   * teardown shape this fix exists to remove, reproduced inside the fix itself.
+   * That was the hazard in the omitted-`afterEach` version specifically. With
+   * the restore below in place it is closed: anything appended after this
+   * describe sees the variable as the process supplied it.
+   */
+  let prevNoAutoReclaim: string | undefined
+
   beforeEach(() => {
+    prevNoAutoReclaim = process.env.SKILLSMITH_LOCK_NO_AUTO_RECLAIM
+    delete process.env.SKILLSMITH_LOCK_NO_AUTO_RECLAIM
     vi.useFakeTimers()
   })
 
   afterEach(() => {
     vi.useRealTimers()
+    if (prevNoAutoReclaim === undefined) {
+      delete process.env.SKILLSMITH_LOCK_NO_AUTO_RECLAIM
+    } else {
+      process.env.SKILLSMITH_LOCK_NO_AUTO_RECLAIM = prevNoAutoReclaim
+    }
   })
 
   async function settle(): Promise<Outcome> {
