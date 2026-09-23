@@ -11,7 +11,7 @@ Developer guides for local development, testing, and debugging.
 | [git-crypt-guide.md](git-crypt-guide.md) | Encrypted docs, unlock, worktree setup, rebase workaround, host native bindings & SessionStart instrumentation (SMI-4549) |
 | [ci-reference.md](ci-reference.md) | Change classification, branch protection, Turborepo, CI scripts |
 | [deployment-guide.md](deployment-guide.md) | Edge function deployment, CORS, website, monitoring & alerts |
-| [claude-flow-guide.md](claude-flow-guide.md) | Agent spawning, swarm orchestration, hive mind, SPARC modes |
+| [claude-flow-guide.md](claude-flow-guide.md) | Agent spawning, swarm orchestration, hive mind, SPARC modes; `scripts/mcp-ruflo-launcher.sh` (guard checks, exit codes) serving the dedicated `skillsmith-ruflo-1` compose service (ADR-170) |
 | [mcp-registry.md](mcp-registry.md) | MCP Registry publishing workflow and CI setup |
 | [mcp-tools-guide.md](mcp-tools-guide.md) | Skillsmith MCP server tool reference, authentication, CLI |
 | [edge-function-patterns.md](edge-function-patterns.md) | Supabase Edge Function patterns and Deno gotchas |

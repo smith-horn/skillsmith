@@ -21,9 +21,10 @@
 # fields this script alone is responsible for minting and recording):
 #   1. volume absent, no local authority file  -> fresh creation (mint
 #      nonce + generation UUID, write authority file 0600, create the
-#      labelled volume, run the one-off store_generation init, then up).
-#   2. volume present, label matches, store present    -> no create, no
-#      init, up (the common case).
+#      labelled volume, run the one-off store_generation init AGAINST BOTH
+#      store files (see "Two stores, one marker" below), then up).
+#   2. volume present, label matches, both stores present    -> no create,
+#      no init, up (the common case).
 #   3. volume absent, authority file PRESENT    -> refuse. Silently
 #      recreating here would mint a NEW nonce/generation while the local
 #      file still names the OLD one -- exactly the "wrong generation"
@@ -34,12 +35,28 @@
 #   5. volume present, label DOES NOT match the local authority file's
 #      instanceNonce -> refuse (H-5). This is the launcher's authority quad
 #      (b) refusal; re-running this script must not loop forever on it.
-#   6. volume present, label matches, but no store at the expected path ->
-#      the partial-creation hole: create_volume() succeeded on an earlier
-#      run and then write_authority_file() or init_store() died before
-#      completing, leaving a labelled, still-empty volume. Runs init_store()
-#      with the authority file's own generationUuid rather than skipping
-#      (H-5). This is the launcher's authority quad (d) refusal.
+#   6. volume present, label matches, but one or both stores lack the
+#      marker at the expected path -> the partial-creation hole:
+#      create_volume() succeeded on an earlier run and then
+#      write_authority_file() or init_store() died before completing,
+#      leaving a labelled, still-empty volume. Runs init_store() with the
+#      authority file's own generationUuid for whichever file(s) lack the
+#      marker rather than skipping (H-5). This is the launcher's authority
+#      quad (d) refusal. reconcile_store_pair() (below) also covers the
+#      narrower "one store already has the marker, the other predates it"
+#      shape -- a same-generation repair, not a fresh-creation hole -- and
+#      refuses distinctly if the two stores disagree on generation.
+#
+# Two stores, one marker (SMI-6744 A1.4 defect, measured 2026-09-23):
+# ADR-170 SS5 (c) speaks of "the store's store_generation row" singular, but
+# the served @claude-flow/cli@3.42.4 keeps TWO SQLite databases under
+# .swarm/: sql.js writes memory.db (possibly encrypted at rest under
+# CLAUDE_FLOW_ENCRYPT_AT_REST, which this service does not set) and AgentDB
+# owns agentdb-memory.db via native better-sqlite3 -- see getAgentDbPath() in
+# @claude-flow/cli's memory-bridge.js ("Resolve AgentDB's native
+# better-sqlite3 database path (#2786)"). Both files get the marker so
+# either one authenticates the same generation; scripts/mcp-ruflo-launcher.sh
+# requires BOTH.
 #
 # bash 3.2-safe (macOS default bash: no associative arrays, no `${v,,}`).
 # Lint-clean under `shellcheck -S warning`.
@@ -50,11 +67,13 @@ COMPOSE_FILE="$REPO_ROOT/docker-compose.yml"
 VOLUME_NAME="skillsmith-ruflo-data"
 LABEL_KEY="app.skillsmith.ruflo.instance"
 AUTHORITY_FILE="$HOME/.skillsmith/ruflo-store.json"
-# H-5: the exact path scripts/mcp-ruflo-launcher.sh's authority-quad (d) check
-# probes (STORE_DB_PATH there) -- read from that script rather than guessed,
-# so this script's own store-presence probe agrees with the launcher's.
+# H-5: the exact paths scripts/mcp-ruflo-launcher.sh's authority-quad (c)/(d)
+# checks probe (STORE_DB_PATH/AGENTDB_DB_PATH there) -- read from that script
+# rather than guessed, so this script's own store probes agree with the
+# launcher's. Two files, not one -- see "Two stores, one marker" above.
 SERVICE_CWD="/srv/ruflo"
 STORE_DB_PATH="$SERVICE_CWD/.swarm/memory.db"
+AGENTDB_DB_PATH="$SERVICE_CWD/.swarm/agentdb-memory.db"
 # The expected seed digest lives outside the image (ADR-170 SS7): committed beside the
 # lockfile, derived by acceptance from the accepted build, exported into the service's
 # environment here so the entrypoint can compare its candidate digest against it.
@@ -75,7 +94,9 @@ volume_exists() {
     docker volume inspect "$VOLUME_NAME" >/dev/null 2>&1
 }
 
-# One-off store_generation-row init. Runs through --entrypoint node so
+# One-off store_generation-row init, run ONCE PER FILE (the caller passes
+# db_filename="memory.db" or "agentdb-memory.db" -- see "Two stores, one
+# marker" above). Runs through --entrypoint node so
 # scripts/ruflo-service-entrypoint.sh (which the `ruflo` service's own
 # entrypoint: normally is) is bypassed entirely for this call -- that
 # script always holds forever and ignores its own "$@" by design, so
@@ -85,8 +106,8 @@ volume_exists() {
 # this is the one supported way anything other than the entrypoint's own
 # probes ever touches a freshly-created, still-empty volume.
 init_store() {
-    local generation="$1"
-    log "initialising store_generation row (generation=$generation) via a one-off run"
+    local generation="$1" db_filename="$2"
+    log "initialising store_generation row (generation=$generation) in .swarm/$db_filename via a one-off run"
     local init_js
     init_js=$(
         cat <<'JS'
@@ -95,7 +116,7 @@ const fs = require('fs');
 const Database = require('/opt/ruflo-seed/node_modules/better-sqlite3');
 const dir = path.join(process.cwd(), '.swarm');
 fs.mkdirSync(dir, { recursive: true });
-const dbPath = path.join(dir, 'memory.db');
+const dbPath = path.join(dir, process.env.RUFLO_STORE_DB_FILENAME);
 const db = new Database(dbPath);
 db.pragma('journal_mode = WAL');
 db.exec('CREATE TABLE IF NOT EXISTS store_generation (id TEXT PRIMARY KEY)');
@@ -108,12 +129,12 @@ const info = db.prepare('INSERT OR IGNORE INTO store_generation (id) VALUES (?)'
 // asked to initialise, before declaring success.
 const rows = db.prepare('SELECT id FROM store_generation').all();
 if (rows.length !== 1 || rows[0].id !== expected) {
-  console.error('store_generation rows: ' + JSON.stringify(rows.map((r) => r.id)) + ' (expected exactly one row equal to ' + expected + ')');
+  console.error('store_generation rows in ' + process.env.RUFLO_STORE_DB_FILENAME + ': ' + JSON.stringify(rows.map((r) => r.id)) + ' (expected exactly one row equal to ' + expected + ')');
   db.close();
   process.exit(1);
 }
 db.close();
-console.log('store_generation row for ' + expected + ': ' + (info.changes === 1 ? 'inserted' : 'already present'));
+console.log('store_generation row for ' + expected + ' in ' + process.env.RUFLO_STORE_DB_FILENAME + ': ' + (info.changes === 1 ? 'inserted' : 'already present'));
 JS
     )
     # M-6: the shell caller must propagate the node script's failure -- it
@@ -124,10 +145,11 @@ JS
     if ! docker compose -f "$COMPOSE_FILE" --profile ruflo run --rm --no-deps \
         --entrypoint node \
         -e RUFLO_GENERATION_UUID="$generation" \
+        -e RUFLO_STORE_DB_FILENAME="$db_filename" \
         ruflo -e "$init_js"; then
-        die "one-off store_generation init run failed: docker compose -f $COMPOSE_FILE --profile ruflo run --rm --no-deps --entrypoint node ruflo -e '<init script>' (requires /opt/ruflo-seed/node_modules/better-sqlite3 in the image; a non-zero exit here can mean an existing store_generation row for a DIFFERENT generation was found -- ADR-170 SS5 (c), a manual-intervention case, not a retryable one)"
+        die "one-off store_generation init run for .swarm/$db_filename failed: docker compose -f $COMPOSE_FILE --profile ruflo run --rm --no-deps --entrypoint node ruflo -e '<init script>' (requires /opt/ruflo-seed/node_modules/better-sqlite3 in the image; a non-zero exit here can mean an existing store_generation row for a DIFFERENT generation was found -- ADR-170 SS5 (c), a manual-intervention case, not a retryable one)"
     fi
-    log "store_generation row initialised"
+    log "store_generation row initialised in .swarm/$db_filename"
 }
 
 write_authority_file() {
@@ -201,24 +223,92 @@ read_authority_field() {
     ' "$AUTHORITY_FILE" "$field"
 }
 
-# H-5: probe whether a database already exists on the volume, WITHOUT
-# starting (or waiting on) the entrypoint's own hold -- `--entrypoint sh`
-# bypasses scripts/ruflo-service-entrypoint.sh entirely, the same deliberate,
-# narrow exception init_store() already documents above for touching a
+# H-5/H-6: probe a single file's store_generation marker, WITHOUT starting
+# (or waiting on) the entrypoint's own hold -- `--entrypoint node` bypasses
+# scripts/ruflo-service-entrypoint.sh entirely, the same deliberate, narrow
+# exception init_store() already documents above for touching a
 # freshly-created volume. RUFLO_SEED_EXPECTED_DIGEST is already exported by
 # the time this runs (main() calls export_expected_digest first), which this
 # probe does not need but does not have to avoid either.
-probe_store_present() {
+#
+# Prints exactly one of:
+#   ABSENT       -- the file doesn't exist, the store_generation table
+#                    doesn't exist, or the row count isn't exactly 1. This
+#                    collapses several distinct failure causes into one
+#                    signal deliberately: init_store()'s own idempotent
+#                    CREATE TABLE IF NOT EXISTS + INSERT OR IGNORE + verify
+#                    (M-6) is the thing that re-derives and refuses on a
+#                    genuine anomaly (e.g. a corrupted file) when this probe
+#                    routes into it -- this probe only needs to decide
+#                    "does init_store need to run against this file".
+#   <generation> -- the store_generation row's id, when exactly one exists.
+probe_generation() {
+    local db_path="$1"
+    local probe_js
+    probe_js=$(
+        cat <<'JS'
+const Database = require('/opt/ruflo-seed/node_modules/better-sqlite3');
+const dbPath = process.env.RUFLO_PROBE_DB_PATH;
+try {
+  const db = new Database(dbPath, { readonly: true });
+  const rows = db.prepare('SELECT id FROM store_generation').all();
+  db.close();
+  if (rows.length === 1) {
+    console.log('RUFLO_GEN=' + rows[0].id);
+  } else {
+    console.log('RUFLO_GEN_ABSENT');
+  }
+} catch {
+  console.log('RUFLO_GEN_ABSENT');
+}
+JS
+    )
     local probe
     probe="$(docker compose -f "$COMPOSE_FILE" --profile ruflo run --rm --no-deps \
-        --entrypoint sh \
-        ruflo -c '[ -f "$1" ] && echo RUFLO_DB_PRESENT || echo RUFLO_DB_ABSENT' _ "$STORE_DB_PATH" 2>&1)" \
-        || die "probe for $STORE_DB_PATH on volume $VOLUME_NAME failed: docker compose -f $COMPOSE_FILE --profile ruflo run --rm --no-deps --entrypoint sh ruflo -c '[ -f \"\$1\" ] && echo RUFLO_DB_PRESENT || echo RUFLO_DB_ABSENT' _ $STORE_DB_PATH"
+        --entrypoint node \
+        -e RUFLO_PROBE_DB_PATH="$db_path" \
+        ruflo -e "$probe_js" 2>&1)" \
+        || die "probe for store_generation at $db_path on volume $VOLUME_NAME failed: docker compose -f $COMPOSE_FILE --profile ruflo run --rm --no-deps --entrypoint node ruflo -e '<probe script>'"
     case "$probe" in
-        *RUFLO_DB_PRESENT*) return 0 ;;
-        *RUFLO_DB_ABSENT*) return 1 ;;
-        *) die "probe for $STORE_DB_PATH on volume $VOLUME_NAME returned unexpected output: $probe" ;;
+        *RUFLO_GEN_ABSENT*) printf '%s' "ABSENT" ;;
+        *RUFLO_GEN=*) printf '%s' "${probe##*RUFLO_GEN=}" ;;
+        *) die "probe for store_generation at $db_path on volume $VOLUME_NAME returned unexpected output: $probe" ;;
     esac
+}
+
+# H-6: reconcile the two stores' markers against each other and against the
+# authority file's expected generation. Three legitimate outcomes plus one
+# refusal -- see the "Two stores, one marker" header comment for why this
+# needs to consider two files rather than one.
+reconcile_store_pair() {
+    local mem_gen="$1" agentdb_gen="$2" expected="$3"
+
+    if [[ "$mem_gen" == "ABSENT" ]] && [[ "$agentdb_gen" == "ABSENT" ]]; then
+        log "volume $VOLUME_NAME is labelled but has no store_generation marker in .swarm/memory.db or .swarm/agentdb-memory.db -- this is the partial-creation hole (create_volume succeeded on an earlier run, then write_authority_file or init_store died before completing); running init_store now with $AUTHORITY_FILE's generationUuid=$expected for both files"
+        init_store "$expected" "memory.db"
+        init_store "$expected" "agentdb-memory.db"
+        return
+    fi
+
+    if [[ "$mem_gen" == "$expected" ]] && [[ "$agentdb_gen" == "$expected" ]]; then
+        log "store already present on volume $VOLUME_NAME at $STORE_DB_PATH and $AGENTDB_DB_PATH, both at generation ${expected:0:12}... -- no init needed"
+        return
+    fi
+
+    if [[ "$mem_gen" == "$expected" ]] && [[ "$agentdb_gen" == "ABSENT" ]]; then
+        log "memory.db carries the store_generation marker at $AUTHORITY_FILE's generation (${expected:0:12}...) but agentdb-memory.db has no marker table -- this is the live-volume state predating the two-store fix (SMI-6744 A1.4), NOT a wrong-generation hazard (the generation is proven by memory.db and $AUTHORITY_FILE agreeing); repairing agentdb-memory.db with a same-generation marker"
+        init_store "$expected" "agentdb-memory.db"
+        return
+    fi
+
+    # Every remaining combination is a genuine disagreement: memory.db
+    # itself disagrees with the authority file, agentdb-memory.db carries
+    # its OWN marker that disagrees with memory.db/the authority file (a
+    # forked or copied agentdb-memory.db), or memory.db is absent while
+    # agentdb-memory.db already carries a marker (backwards from the normal
+    # creation order). Refuse -- this is a manual-intervention case, the
+    # same class ADR-170 SS5 (c) already refuses for a single store.
+    die "memory.db and agentdb-memory.db on volume $VOLUME_NAME carry DIFFERENT generations (ADR-170 SS5 (c) -- a forked or restored store): memory.db=${mem_gen:0:12}... agentdb-memory.db=${agentdb_gen:0:12}... authority file $AUTHORITY_FILE expects ${expected:0:12}.... This is not auto-repaired; confirm which generation is intended before proceeding."
 }
 
 # H-5: main()'s old volume_exists branch short-circuited unconditionally
@@ -228,7 +318,8 @@ probe_store_present() {
 # volume/no database) looped forever: re-running this script after either
 # refusal landed right back on the same no-op branch. This closes both, plus
 # the partial-creation hole between create_volume() succeeding and
-# write_authority_file()/init_store() dying (a labelled, still-empty volume).
+# write_authority_file()/init_store() dying (a labelled, still-empty
+# volume), extended by H-6/reconcile_store_pair() to both store files.
 check_existing_volume() {
     if [[ ! -e "$AUTHORITY_FILE" ]]; then
         log "no local authority file at $AUTHORITY_FILE -- volume $VOLUME_NAME predates this machine's authority tracking (or the file was removed); bringing the service up without a generation check (the launcher's authority quad b/c will catch a real mismatch)"
@@ -248,14 +339,12 @@ check_existing_volume() {
     if [[ "$volume_label" != "$expected_nonce" ]]; then
         die "volume $VOLUME_NAME's $LABEL_KEY label ($volume_label) does not match $AUTHORITY_FILE's instanceNonce ($expected_nonce) -- this is the wrong-generation hazard ADR-170 SS5 (b) exists to catch (the volume was deleted and recreated under the same name, or a different generation's authority file is present on this machine). This is a manual-intervention case; the script never resolves it on its own -- confirm which generation is intended, then either restore the volume that matches $AUTHORITY_FILE or remove $AUTHORITY_FILE and re-run this script only if a fresh store is genuinely intended."
     fi
-    log "volume $VOLUME_NAME's $LABEL_KEY label matches $AUTHORITY_FILE (instanceNonce=$expected_nonce) -- no create, no store-init"
+    log "volume $VOLUME_NAME's $LABEL_KEY label matches $AUTHORITY_FILE (instanceNonce=$expected_nonce) -- checking both stores' generation markers"
 
-    if probe_store_present; then
-        log "store already present on volume $VOLUME_NAME at $STORE_DB_PATH -- no init needed"
-    else
-        log "volume $VOLUME_NAME is labelled but has no store at $STORE_DB_PATH -- this is the partial-creation hole (create_volume succeeded on an earlier run, then write_authority_file or init_store died before completing); running init_store now with $AUTHORITY_FILE's generationUuid=$expected_generation"
-        init_store "$expected_generation"
-    fi
+    local mem_gen agentdb_gen
+    mem_gen="$(probe_generation "$STORE_DB_PATH")"
+    agentdb_gen="$(probe_generation "$AGENTDB_DB_PATH")"
+    reconcile_store_pair "$mem_gen" "$agentdb_gen" "$expected_generation"
 }
 
 main() {
@@ -280,7 +369,8 @@ main() {
         # never a real wrong-generation hazard.
         create_volume "$nonce"
         write_authority_file "$nonce" "$generation"
-        init_store "$generation"
+        init_store "$generation" "memory.db"
+        init_store "$generation" "agentdb-memory.db"
     fi
 
     bring_up_service

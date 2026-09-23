@@ -14,10 +14,11 @@ import { execFileSync } from 'node:child_process'
 import { mkdtempSync, readFileSync, readdirSync, rmSync, symlinkSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import path from 'node:path'
-import { fileURLToPath } from 'node:url'
+import { fileURLToPath, pathToFileURL } from 'node:url'
 
 import { probePath, type Probe } from './_lib/probe-path.js'
 import { resolveDriftGuardOutcome, scanBackendSites } from './ruflo-bridge-verdict.helpers.js'
+import { findUnpinnedRufloLauncherPin } from '../audit-cli-pin-drift-helpers.mjs'
 import {
   DERIVED_FROM,
   EMBEDDING_BACKENDS,
@@ -558,6 +559,84 @@ describe('ruflo-bridge-verdict (SMI-6744 Wave 0)', () => {
         rmSync(dir, { recursive: true, force: true })
       }
     })
+  })
+})
+
+/**
+ * SMI-6744 A1.5: pin coupling. scripts/mcp-ruflo-launcher.sh's RUFLO_CLI_PIN
+ * is the ONE pin literal for the tree the `ruflo` service actually serves
+ * (ADR-170 § 7). DERIVED_FROM (scripts/lib/ruflo-bridge-verdict.mjs:47-65)
+ * is a separate, hand-maintained record of which tree the predicate was
+ * re-read against. Nothing forces the two to agree -- a launcher bump with
+ * no matching DERIVED_FROM update would silently serve a pin this detector
+ * never verified. This test is that missing link.
+ */
+describe('RUFLO_CLI_PIN pin coupling (SMI-6744 A1.5)', () => {
+  // SMI-6744 A1.5 RED ARM 1: test-only override so a scratch copy of the
+  // launcher can be exercised without touching the tracked script.
+  const LAUNCHER_PATH =
+    process.env.RUFLO_LAUNCHER_PATH_OVERRIDE ?? path.join(here, '..', 'mcp-ruflo-launcher.sh')
+
+  // findUnpinnedRufloLauncherPin (scripts/audit-cli-pin-drift-helpers.mjs,
+  // SMI-5746 Check 59 sub-check 3) reads RUFLO_CLI_PIN with this exact
+  // anchored regex, but only to DETECT drift: on a well-formed exact-semver
+  // pin it returns null and never exposes the matched value, so it cannot
+  // itself supply the string this test needs to assert against. That file
+  // is owned by a different task and is not edited here to export the
+  // value instead -- its regex is reused verbatim below (not a second one
+  // written from scratch) purely to capture it. The helper is still called
+  // in the test body so a launcher pin that stops being a well-formed exact
+  // semver fails loudly here too, not just silently falls through to a
+  // membership check against garbage.
+  const RUFLO_CLI_PIN_RE = /^RUFLO_CLI_PIN=(\S+)$/m
+
+  function readLauncherPin(launcherPath: string): string {
+    const src = readFileSync(launcherPath, 'utf8')
+    const m = src.match(RUFLO_CLI_PIN_RE)
+    if (!m) throw new Error(`RUFLO_CLI_PIN not found in ${launcherPath}`)
+    return m[1]
+  }
+
+  // SMI-6744 A1.5 RED ARM 2: a module-path override so a scratch copy of
+  // ruflo-bridge-verdict.mjs's DERIVED_FROM can be swapped in without
+  // editing the tracked module -- the module-path analogue of
+  // LAUNCHER_PATH above, per the task's own "or a module-path override".
+  async function loadDerivedFromVersionSet(): Promise<{
+    version: string
+    alsoVerifiedAt: readonly string[]
+  }> {
+    const override = process.env.RUFLO_VERDICT_MODULE_PATH_OVERRIDE
+    if (!override) return DERIVED_FROM
+    const mod = (await import(pathToFileURL(override).href)) as {
+      DERIVED_FROM: typeof DERIVED_FROM
+    }
+    return mod.DERIVED_FROM
+  }
+
+  it('RUFLO_CLI_PIN is a member of {DERIVED_FROM.version} ∪ DERIVED_FROM.alsoVerifiedAt', async () => {
+    const finding = findUnpinnedRufloLauncherPin(LAUNCHER_PATH)
+    expect(finding, `launcher pin drift finding: ${JSON.stringify(finding)}`).toBeNull()
+
+    const launcherPin = readLauncherPin(LAUNCHER_PATH)
+    const derived = await loadDerivedFromVersionSet()
+    const verdictVersions = [derived.version, ...derived.alsoVerifiedAt]
+
+    // Failure must name BOTH values: the launcher's actual pin and the
+    // verdict module's whole version set, not just "not found".
+    expect(
+      verdictVersions.includes(launcherPin),
+      `RUFLO_CLI_PIN=${launcherPin} (${LAUNCHER_PATH}) is not a member of ` +
+        `DERIVED_FROM's version set [${verdictVersions.join(', ')}] ` +
+        '(scripts/lib/ruflo-bridge-verdict.mjs)'
+    ).toBe(true)
+  })
+
+  it('servedBy names the launcher and the ruflo Compose service', () => {
+    // A1.4 already set this; pinned here so a future edit that drops either
+    // half is caught alongside the pin-membership check above.
+    expect(DERIVED_FROM.servedBy).toContain('mcp-ruflo-launcher.sh')
+    expect(DERIVED_FROM.servedBy).toContain('ruflo')
+    expect(DERIVED_FROM.servedBy).toContain('skillsmith-ruflo-1')
   })
 })
 

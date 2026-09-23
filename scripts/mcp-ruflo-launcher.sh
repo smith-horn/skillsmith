@@ -56,10 +56,24 @@
 #      bare docker-exec exit code.
 #   4. Authority quad (§ 5): (a) the /srv/ruflo mount is Type volume, Name
 #      the committed literal; (b) the volume carries the expected instance
-#      nonce label; (c) the store's store_generation row matches the
-#      machine-local authority file's generation UUID; (d) an empty volume
-#      with no database is refused by name, distinctly from a generation
-#      mismatch, naming scripts/ruflo-service-up.sh as the remediation.
+#      nonce label; (c) EACH of the two store files' store_generation row
+#      matches the machine-local authority file's generation UUID; (d)
+#      BOTH store files must be present -- an empty volume missing either
+#      one is refused by name, distinctly from a generation mismatch,
+#      naming scripts/ruflo-service-up.sh as the remediation. Two files,
+#      not one, because the served @claude-flow/cli@3.42.4 keeps TWO SQLite
+#      databases under .swarm/: sql.js writes memory.db (possibly encrypted
+#      at rest under CLAUDE_FLOW_ENCRYPT_AT_REST) and AgentDB owns
+#      agentdb-memory.db via native better-sqlite3 (see getAgentDbPath() in
+#      @claude-flow/cli's memory-bridge.js, "Resolve AgentDB's native
+#      better-sqlite3 database path (#2786)") -- ADR-170 § 5 (c) speaks of
+#      "the store's store_generation row" singular, but authenticating only
+#      memory.db leaves agentdb-memory.db (where memory_store's rows
+#      actually live) unauthenticated: a swapped or copied
+#      agentdb-memory.db would pass every check (SMI-6744 A1.4 defect,
+#      measured 2026-09-23). Quad (c) also refuses distinctly when a file
+#      is not a readable SQLite database (e.g. an encrypted memory.db read
+#      by a plain SQLite client).
 #   5. Per-spawn guard (§ 4, § 7): scripts/ruflo-launch-guard.mjs, run inside
 #      the container immediately before exec, performs the writability
 #      probes and the sibling-lock staleness decision and refuses by name on
@@ -83,6 +97,15 @@ CLI_DIR="/opt/ruflo-seed/node_modules/@claude-flow/cli"
 CLI_PATH="$CLI_DIR/bin/cli.js"
 CLI_PKG_JSON="$CLI_DIR/package.json"
 STORE_DB_PATH="$SERVICE_CWD/.swarm/memory.db"
+# SMI-6744 A1.4 defect (measured 2026-09-23): the served @claude-flow/cli
+# keeps a SECOND SQLite database next to memory.db — AgentDB's own native
+# better-sqlite3 store, opened via getAgentDbPath() in memory-bridge.js
+# ("Resolve AgentDB's native better-sqlite3 database path (#2786)"), because
+# native better-sqlite3 cannot open memory.db when it's encrypted at rest
+# under CLAUDE_FLOW_ENCRYPT_AT_REST. This is where memory_store's rows
+# actually live. scripts/ruflo-service-up.sh writes the SAME
+# store_generation marker into both files; this launcher requires both.
+AGENTDB_DB_PATH="$SERVICE_CWD/.swarm/agentdb-memory.db"
 GUARD_SCRIPT="$REPO_ROOT/scripts/ruflo-launch-guard.mjs"
 AUTHORITY_FILE="$HOME/.skillsmith/ruflo-store.json"
 VOLUME_LABEL_KEY="app.skillsmith.ruflo.instance" # the key scripts/ruflo-service-up.sh applies
@@ -90,7 +113,7 @@ VOLUME_LABEL_KEY="app.skillsmith.ruflo.instance" # the key scripts/ruflo-service
 # table/column name — the schema is owned by the seed/manifest work (A1.4
 # parts i/ii), not this launcher. These two are the documented assumption;
 # adjust here if that work names it differently.
-# scripts/ruflo-service-up.sh initialises the store with exactly one row:
+# scripts/ruflo-service-up.sh initialises EACH store file with exactly one row:
 #   CREATE TABLE IF NOT EXISTS store_generation (id TEXT PRIMARY KEY); INSERT ... (id)
 STORE_GENERATION_TABLE="store_generation"
 
@@ -303,59 +326,107 @@ if [ "$volume_label" != "$expected_nonce" ]; then
   exit 1
 fi
 
-# (d) an empty volume with no database is refused distinctly from (c).
-set +e
-db_probe="$(docker exec "$cid" sh -c '[ -f "$1" ] && echo RUFLO_DB_PRESENT || echo RUFLO_DB_ABSENT' _ "$STORE_DB_PATH" 2>&1)"
-db_probe_status=$?
-set -e
-if [ "$db_probe_status" -ne 0 ] || { [ "$db_probe" != "RUFLO_DB_PRESENT" ] && [ "$db_probe" != "RUFLO_DB_ABSENT" ]; }; then
-  emit_error "could not check for $STORE_DB_PATH inside $CONTAINER_NAME (authority quad d)" "$REMEDIATION_START_SERVICE"
-  exit 1
-fi
-if [ "$db_probe" = "RUFLO_DB_ABSENT" ]; then
-  emit_error "the $VOLUME_NAME volume is empty (no database at $STORE_DB_PATH) — this is a fresh volume, not a generation mismatch (authority quad d)" "$REMEDIATION_START_SERVICE"
-  exit 1
-fi
+# (d) BOTH store files must be present -- an empty or partially-initialised
+# volume is refused distinctly from (c), by name of the missing file (see
+# the "Two stores, one marker" note in the Constants section above for why
+# there are two files to check, not one).
+check_db_present() {
+  local db_path="$1"
+  set +e
+  local probe
+  probe="$(docker exec "$cid" sh -c '[ -f "$1" ] && echo RUFLO_DB_PRESENT || echo RUFLO_DB_ABSENT' _ "$db_path" 2>&1)"
+  local status=$?
+  set -e
+  if [ "$status" -ne 0 ] || { [ "$probe" != "RUFLO_DB_PRESENT" ] && [ "$probe" != "RUFLO_DB_ABSENT" ]; }; then
+    emit_error "could not check for $db_path inside $CONTAINER_NAME (authority quad d)" "$REMEDIATION_START_SERVICE"
+    exit 1
+  fi
+  if [ "$probe" = "RUFLO_DB_ABSENT" ]; then
+    emit_error "the $VOLUME_NAME volume is missing $db_path — this is a fresh or partially-initialised volume, not a generation mismatch (authority quad d)" "$REMEDIATION_START_SERVICE"
+    exit 1
+  fi
+}
+check_db_present "$STORE_DB_PATH"
+check_db_present "$AGENTDB_DB_PATH"
 
-# (c) the store's store_generation row equals the authority file's generation.
+# (c) EACH store file's store_generation row equals the authority file's
+# generation. Reads memory.db first, then agentdb-memory.db -- either one
+# disagreeing (or being unreadable as a SQLite database at all) refuses,
+# naming the specific file, what it held, and the truncated values.
 read_store_generation() {
+  local db_path="$1"
   set +e
   local out
   out="$(docker exec "$cid" sh -c '
     if command -v sqlite3 >/dev/null 2>&1; then
-      n="$(sqlite3 "$1" "SELECT count(*) FROM $2;" 2>/dev/null)"
-      [ "$n" = "1" ] || { echo "store_generation rows=$n (expected exactly 1)"; exit 3; }
+      n="$(sqlite3 "$1" "SELECT count(*) FROM $2;" 2>&1)"
+      case "$n" in
+        *"file is not a database"*) printf "RUFLO_NOTADB:%s" "$n"; exit 4 ;;
+      esac
+      case "$n" in
+        ""|*[!0-9]*) printf "RUFLO_ERR:%s" "$n"; exit 5 ;;
+      esac
+      [ "$n" = "1" ] || { printf "store_generation rows=%s (expected exactly 1)" "$n"; exit 3; }
       sqlite3 "$1" "SELECT id FROM $2;" 2>/dev/null
     else
       node -e "
         const Database = require(\"/opt/ruflo-seed/node_modules/better-sqlite3\");
-        const db = new Database(process.argv[1], { readonly: true });
-        const rows = db.prepare(\"SELECT id FROM \" + process.argv[2]).all();
-        if (rows.length !== 1) { process.stdout.write(\"store_generation rows=\" + rows.length + \" (expected exactly 1)\"); process.exit(3); }
-        process.stdout.write(String(rows[0].id));
+        const dbPath = process.argv[1];
+        const table = process.argv[2];
+        try {
+          const db = new Database(dbPath, { readonly: true });
+          const rows = db.prepare(\"SELECT id FROM \" + table).all();
+          if (rows.length !== 1) { process.stdout.write(\"store_generation rows=\" + rows.length + \" (expected exactly 1)\"); process.exit(3); }
+          process.stdout.write(String(rows[0].id));
+        } catch (e) {
+          const msg = e && e.message ? e.message : String(e);
+          if (msg.indexOf(\"file is not a database\") !== -1) {
+            process.stdout.write(\"RUFLO_NOTADB:\" + msg);
+            process.exit(4);
+          }
+          process.stdout.write(\"RUFLO_ERR:\" + msg);
+          process.exit(5);
+        }
       " "$1" "$2" 2>/dev/null
     fi
-  ' _ "$STORE_DB_PATH" "$STORE_GENERATION_TABLE" 2>&1)"
+  ' _ "$db_path" "$STORE_GENERATION_TABLE" 2>&1)"
   local status=$?
   set -e
   printf '%s\t%s' "$status" "$out"
 }
-_gen_result="$(read_store_generation)"
-_gen_status="${_gen_result%%$'\t'*}"
-_gen_value="${_gen_result#*$'\t'}"
-if [ "$_gen_status" -ne 0 ] || [ -z "$_gen_value" ]; then
-  emit_error "could not read store_generation from $STORE_DB_PATH inside $CONTAINER_NAME (authority quad c)" \
-"    docker exec $CONTAINER_NAME sh -c 'sqlite3 $STORE_DB_PATH \"SELECT id FROM $STORE_GENERATION_TABLE;\"'
+check_store_generation() {
+  local db_path="$1"
+  local _result _status _value
+  _result="$(read_store_generation "$db_path")"
+  _status="${_result%%$'\t'*}"
+  _value="${_result#*$'\t'}"
+  case "$_value" in
+    RUFLO_NOTADB:*)
+      emit_error "$db_path is not a readable SQLite database (authority quad c)" \
+"    file:  $db_path
+    error: ${_value#RUFLO_NOTADB:}
+    # if CLAUDE_FLOW_ENCRYPT_AT_REST is set, this file may be encrypted at rest and unreadable by a plain SQLite reader (see this launcher's header note on memory.db vs agentdb-memory.db)
+    docker exec $CONTAINER_NAME sh -c 'sqlite3 $db_path \"SELECT id FROM $STORE_GENERATION_TABLE;\"'"
+      exit 1
+      ;;
+  esac
+  if [ "$_status" -ne 0 ] || [ -z "$_value" ]; then
+    emit_error "could not read store_generation from $db_path inside $CONTAINER_NAME (authority quad c)" \
+"    docker exec $CONTAINER_NAME sh -c 'sqlite3 $db_path \"SELECT id FROM $STORE_GENERATION_TABLE;\"'
     # if this is a freshly created store, run: $REMEDIATION_START_SERVICE"
-  exit 1
-fi
-if [ "$_gen_value" != "$expected_generation" ]; then
-  emit_error "the served store's generation does not match $AUTHORITY_FILE (authority quad c — a forked or restored store)" \
-"    expected generation: ${expected_generation:0:12}...
-    served   generation: ${_gen_value:0:12}...
+    exit 1
+  fi
+  if [ "$_value" != "$expected_generation" ]; then
+    emit_error "$db_path's store_generation does not match $AUTHORITY_FILE (authority quad c — a forked or restored store)" \
+"    file:                $db_path
+    expected generation: ${expected_generation:0:12}...
+    held     generation: ${_value:0:12}...
     # this is not auto-repaired; see ADR-170 § 5 (Store authority) before proceeding"
-  exit 1
-fi
+    exit 1
+  fi
+}
+check_store_generation "$STORE_DB_PATH"
+check_store_generation "$AGENTDB_DB_PATH"
 
 # ---- Check 5: per-spawn guard (ADR-170 §§ 4, 7) ----------------------------
 # Runs INSIDE the container, immediately before exec, under the server's own

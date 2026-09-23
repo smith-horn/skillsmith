@@ -56,6 +56,7 @@ CONTAINER_NAME="skillsmith-ruflo-1"
 CLI_PATH="/opt/ruflo-seed/node_modules/@claude-flow/cli/bin/cli.js"
 DEFAULT_ARGS_JSON="[\"node\",\"$CLI_PATH\",\"mcp\",\"start\"]"
 SERVICE_CWD="/srv/ruflo"
+STORE_DB_PATH="$SERVICE_CWD/.swarm/memory.db"
 # The container ID the docker stub returns for `docker inspect -f '{{.Id}}'`
 # by default (governance review finding L-17/TOCTOU) — a fixed 64-hex
 # constant distinct from $CONTAINER_NAME, so an assertion that the final
@@ -133,6 +134,17 @@ case "$cmd" in
     ;;
   exec)
     joined="$*"
+    # SMI-6744 A1.4 defect fix: the launcher now probes TWO files
+    # (memory.db and agentdb-memory.db) for both quad (d) presence and
+    # quad (c) generation. Distinguish WHICH file a given call targets by
+    # the more specific substring "agentdb-memory.db" — "memory.db" alone
+    # is itself a substring of "agentdb-memory.db", so the specific check
+    # must run first (same ordering discipline the comment below already
+    # uses for "better-sqlite3" vs "require(").
+    is_agentdb=0
+    case "$joined" in
+      *"agentdb-memory.db"*) is_agentdb=1 ;;
+    esac
     case "$joined" in
       # NOTE: the store_generation script (better-sqlite3 fallback branch)
       # ALSO contains the substring "require(" — its more specific pattern
@@ -141,12 +153,29 @@ case "$cmd" in
       # contains "require(" (it wraps the same require() call in a sentinel
       # string concatenation) so it still matches this same pattern.
       *"RUFLO_DB_PRESENT"*)
-        printf '%s' "${FAKE_DB_PROBE-RUFLO_DB_PRESENT}"
+        if [ "$is_agentdb" = "1" ]; then
+          printf '%s' "${FAKE_DB_PROBE_AGENTDB-RUFLO_DB_PRESENT}"
+        else
+          printf '%s' "${FAKE_DB_PROBE-RUFLO_DB_PRESENT}"
+        fi
         exit "${FAKE_DB_PROBE_STATUS:-0}"
         ;;
       *"better-sqlite3"*)
-        printf '%s' "${FAKE_STORE_GENERATION-gen-123}"
-        exit "${FAKE_GENERATION_STATUS:-0}"
+        if [ "$is_agentdb" = "1" ]; then
+          if [ "${FAKE_NOTADB_TARGET-}" = "agentdb" ]; then
+            printf 'RUFLO_NOTADB:file is not a database'
+            exit 4
+          fi
+          printf '%s' "${FAKE_STORE_GENERATION_AGENTDB-gen-123}"
+          exit "${FAKE_GENERATION_STATUS_AGENTDB:-${FAKE_GENERATION_STATUS:-0}}"
+        else
+          if [ "${FAKE_NOTADB_TARGET-}" = "memory" ]; then
+            printf 'RUFLO_NOTADB:file is not a database'
+            exit 4
+          fi
+          printf '%s' "${FAKE_STORE_GENERATION-gen-123}"
+          exit "${FAKE_GENERATION_STATUS:-0}"
+        fi
         ;;
       *"require("*)
         if [ -n "${FAKE_VERSION_STDERR-}" ]; then
@@ -387,6 +416,60 @@ else
 fi
 unset FAKE_DB_PROBE
 
+# ---- arm: authority quad (d) — agentdb-memory.db missing (SMI-6744 A1.4) ---
+# The two-store defect fix: memory.db present is no longer sufficient --
+# agentdb-memory.db (where memory_store's rows live) must be present too,
+# and the refusal must name IT specifically, not memory.db.
+export FAKE_DB_PROBE_AGENTDB="RUFLO_DB_ABSENT"
+rc="$(run quad-d-agentdb-missing)"
+out="/tmp/mcp-ruflo-launcher-test-quad-d-agentdb-missing.out"
+if [ "$rc" -eq 1 ] \
+  && grep -q "authority quad d" "$out" \
+  && grep -qF "agentdb-memory.db" "$out" \
+  && grep -q "ruflo-service-up.sh" "$out"; then
+  pass quad-d-agentdb-missing "refuses naming authority quad d for agentdb-memory.db specifically"
+else
+  fail quad-d-agentdb-missing "expected exit 1 naming authority quad d for agentdb-memory.db (got rc=$rc)"
+fi
+unset FAKE_DB_PROBE_AGENTDB
+
+# ---- arm: authority quad (c) — agentdb-memory.db marker absent (SMI-6744 A1.4) --
+# memory.db is healthy (matches the authority file); agentdb-memory.db is
+# present (quad d passes) but its store_generation read fails outright (no
+# marker table / no row) -- the "could not read" refusal must name
+# agentdb-memory.db, not memory.db, proving quad (c) checks EACH file
+# independently rather than stopping after memory.db passes.
+export FAKE_GENERATION_STATUS_AGENTDB="1"
+rc="$(run quad-c-agentdb-marker-absent)"
+out="/tmp/mcp-ruflo-launcher-test-quad-c-agentdb-marker-absent.out"
+if [ "$rc" -eq 1 ] \
+  && grep -q "could not read store_generation" "$out" \
+  && grep -qF "agentdb-memory.db" "$out" \
+  && grep -q "authority quad c" "$out"; then
+  pass quad-c-agentdb-marker-absent "refuses naming authority quad c for agentdb-memory.db's absent marker"
+else
+  fail quad-c-agentdb-marker-absent "expected exit 1 naming authority quad c for agentdb-memory.db (got rc=$rc)"
+fi
+unset FAKE_GENERATION_STATUS_AGENTDB
+
+# ---- arm: authority quad (c) — not a readable SQLite database (SMI-6744 A1.4) --
+# CLAUDE_FLOW_ENCRYPT_AT_REST possibility: a file that opens but fails on the
+# actual read with "file is not a database" must get a DISTINCT refusal from
+# the generic "could not read"/"generation mismatch" ones, naming the file
+# and raising the encryption-at-rest possibility by name.
+export FAKE_NOTADB_TARGET="memory"
+rc="$(run quad-c-not-a-database)"
+out="/tmp/mcp-ruflo-launcher-test-quad-c-not-a-database.out"
+if [ "$rc" -eq 1 ] \
+  && grep -q "is not a readable SQLite database" "$out" \
+  && grep -qi "CLAUDE_FLOW_ENCRYPT_AT_REST" "$out" \
+  && grep -qF "memory.db" "$out"; then
+  pass quad-c-not-a-database "refuses naming the not-a-database file and CLAUDE_FLOW_ENCRYPT_AT_REST"
+else
+  fail quad-c-not-a-database "expected exit 1 naming a not-a-database file with CLAUDE_FLOW_ENCRYPT_AT_REST mentioned (got rc=$rc)"
+fi
+unset FAKE_NOTADB_TARGET
+
 # ---- arm: per-spawn guard refuses ------------------------------------------
 export FAKE_GUARD_EXIT="5"
 export FAKE_GUARD_OUTPUT="[ruflo] guard: state.lock held by a live server"
@@ -410,7 +493,11 @@ out="/tmp/mcp-ruflo-launcher-test-healthy.out"
 # "exec"/"node"/the container id individually.
 last_call_start="$(grep -n "^--- CALL ---$" "$DOCKER_LOG" | tail -1 | cut -d: -f1)"
 last_call="$(tail -n +"$((last_call_start + 1))" "$DOCKER_LOG")"
+# SMI-6744 A1.4: a healthy run must have probed BOTH store files for
+# presence (quad d) and generation (quad c) -- not just memory.db.
 if [ "$rc" -eq 0 ] \
+  && grep -qF "agentdb-memory.db" "$DOCKER_LOG" \
+  && grep -qF "$STORE_DB_PATH" "$DOCKER_LOG" \
   && grep -qF "serving @claude-flow/cli@3.42.4 from $EXPECTED_MAIN_CHECKOUT via $CONTAINER_NAME" "$out" \
   && printf '%s\n' "$last_call" | grep -q "^exec$" \
   && printf '%s\n' "$last_call" | grep -q "^-i$" \
@@ -537,6 +624,54 @@ if [ "$red_rc" != "1" ]; then
   pass red-quad-b "mutated launcher no longer refuses on a volume-label mismatch (rc=$red_rc, expected != 1)"
 else
   fail red-quad-b "mutation had no effect: still exited 1 on a quad-b mismatch"
+fi
+
+# red arm 7 (SMI-6744 A1.4): delete the agentdb-memory.db presence check --
+# quad (d) must no longer be satisfiable by memory.db alone.
+export FAKE_DB_PROBE_AGENTDB="RUFLO_DB_ABSENT"
+red_rc="$(mutate_run red-quad-d-agentdb \
+  '/^check_db_present "\$AGENTDB_DB_PATH"$/d' \
+  "delete the agentdb-memory.db presence check (quad d no longer covers the second store file)")"
+unset FAKE_DB_PROBE_AGENTDB
+if [ "$red_rc" != "1" ]; then
+  pass red-quad-d-agentdb "mutated launcher no longer refuses when agentdb-memory.db is absent (rc=$red_rc, expected != 1)"
+else
+  fail red-quad-d-agentdb "mutation had no effect: still exited 1 with the agentdb-memory.db presence check neutered"
+fi
+
+# red arm 8 (SMI-6744 A1.4): delete the agentdb-memory.db generation check --
+# quad (c) must no longer be satisfiable by memory.db alone (this is the
+# exact SMI-6744 A1.4 defect: a swapped/copied agentdb-memory.db passing
+# every check because only memory.db was ever authenticated).
+export FAKE_STORE_GENERATION_AGENTDB="some-other-generation"
+red_rc="$(mutate_run red-quad-c-agentdb \
+  '/^check_store_generation "\$AGENTDB_DB_PATH"$/d' \
+  "delete the agentdb-memory.db generation check (quad c no longer covers the second store file)")"
+unset FAKE_STORE_GENERATION_AGENTDB
+if [ "$red_rc" != "1" ]; then
+  pass red-quad-c-agentdb "mutated launcher no longer refuses on an agentdb-memory.db generation mismatch (rc=$red_rc, expected != 1)"
+else
+  fail red-quad-c-agentdb "mutation had no effect: still exited 1 with the agentdb-memory.db generation check neutered"
+fi
+
+# red arm 9 (SMI-6744 A1.4): delete the not-a-database special case inside
+# check_store_generation. The launcher still refuses either way (the
+# generic "could not read store_generation" branch also fires on a
+# nonzero status), so the meaningful property here is the DIAGNOSTIC, not
+# the exit code -- assert the distinct "is not a readable SQLite database"
+# / CLAUDE_FLOW_ENCRYPT_AT_REST message is gone even though rc stays 1,
+# proving that diagnostic is load-bearing code, not decoration (a bare
+# `rc != 1` check would have missed this mutation entirely).
+export FAKE_NOTADB_TARGET="memory"
+red_rc="$(mutate_run red-notadb-check \
+  '/RUFLO_NOTADB:\*)/,/;;/d' \
+  "delete the not-a-database special case (falls through to the generic could-not-read refusal)")"
+unset FAKE_NOTADB_TARGET
+red_out="/tmp/mcp-ruflo-launcher-test-red-notadb-check.out"
+if [ "$red_rc" = "1" ] && ! grep -q "is not a readable SQLite database" "$red_out"; then
+  pass red-notadb-check "mutated launcher still refuses via the generic path but loses the distinct not-a-database diagnostic (rc=$red_rc)"
+else
+  fail red-notadb-check "mutation had no effect: the distinct not-a-database diagnostic still appears, or the launcher stopped refusing entirely (rc=$red_rc)"
 fi
 
 rm -rf "$STUB_DIR" "$TEST_HOME"

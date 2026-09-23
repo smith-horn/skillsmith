@@ -2,7 +2,7 @@
 
 Agent spawning, swarm orchestration, and SPARC development reference.
 
-> **Note**: The package was renamed from `claude-flow` to `ruflo` in v3.5.x. MCP tool prefixes remain `mcp__claude-flow__` for backwards compatibility.
+> **Note**: The package was renamed from `claude-flow` to `ruflo` in v3.5.x. The `.mcp.json` server key is `ruflo`, so every tool is exposed as `mcp__ruflo__<name>` (confirmed live, 2026-09-23, against the served `@claude-flow/cli@3.42.4`) — not the old `mcp__claude-flow__` prefix an earlier revision of this guide used.
 
 ## Setup
 
@@ -53,13 +53,21 @@ Disable the launcher entirely (no `npx` fallback): `SKILLSMITH_RUFLO_LAUNCHER_DI
 
 ## MCP Tools
 
-| Tool | Purpose |
-|------|---------|
-| `mcp__claude-flow__swarm_init` | Initialize swarm with topology (hierarchical, mesh, etc.) |
-| `mcp__claude-flow__agent_spawn` | Spawn specialist agents |
-| `mcp__claude-flow__task_orchestrate` | Coordinate task execution |
-| `mcp__claude-flow__memory_usage` | Shared memory operations |
-| `mcp__claude-flow__swarm_destroy` | Cleanup swarm after completion |
+The live registry serves **353 tools** total (measured 2026-09-23 via `tools/list` against the running `skillsmith-ruflo-1` service, `@claude-flow/cli@3.42.4`) — most of it is not granted. `CLAUDE.md`'s § Ruflo MCP Server names the small subset this repo actually uses; the rest needs an explicit ask, and a large share of the memory-mutating surface (`memory_import`, `memory_import_claude`, `memory_migrate`, `memory_search`, `memory_search_unified`, `memory_store`, and more) sits in `.claude/settings.json`'s `permissions.deny` by design (SMI-6744 A0.6: no corpus content enters ruflo's index before Wave 4's structural guarantee). `hooks_route`/`hooks_model-route` are also denied (SMI-5659) — never call them.
+
+| Tool | Purpose | Required input | Notes |
+|------|---------|-----------------|-------|
+| `mcp__ruflo__swarm_init` | Initialize a swarm with persistent state tracking (topology, consensus) | none — `topology`, `maxAgents`, `strategy`, `config` all optional | `topology` enum includes hierarchical/mesh/hierarchical-mesh/ring/star/hybrid/adaptive/pheromone-adaptive |
+| `mcp__ruflo__agent_spawn` | Spawn a Ruflo-tracked agent (cost attribution + memory persistence + swarm coordination) | `agentType` | `model` enum: `haiku`/`sonnet`/`opus`/`opus-4.7`/`inherit` |
+| `mcp__ruflo__coordination_orchestrate` | Orchestrate multi-agent coordination (vote/sync/load-balance) | `task` | `strategy` enum: `parallel`/`sequential`/`pipeline`/`broadcast` |
+| `mcp__ruflo__swarm_shutdown` | Shutdown a swarm and update persistent state | none — `swarmId`, `graceful` optional | |
+| `mcp__ruflo__memory_retrieve` | Read back a value previously stored via `memory_store`, by exact (namespace, key) | `key` | `namespace` optional, default `"default"` |
+| `mcp__ruflo__memory_list` | Enumerate stored memory entries without semantic search | none — `namespace`, `limit`, `offset` optional | |
+| `mcp__ruflo__memory_delete` | Remove a stored memory entry by exact (namespace, key) | `key` | `namespace` optional, default `"default"` |
+| `mcp__ruflo__memory_bridge_status` | Report memory bridge status — AgentDB vectors, SONA learning, intelligence patterns, connection health | none | |
+| `mcp__ruflo__memory_store` | Persistent key-value store with vector embedding | `key`, `value` | **denied** in `.claude/settings.json`'s `permissions.deny` — present in the live registry (confirmed 2026-09-23) but not currently callable from this repo |
+
+**Retired names, not live tools**: `task_orchestrate`, `memory_usage`, and `swarm_destroy` do **not** exist in the live registry (SMI-5777) — `coordination_orchestrate`, `memory_retrieve`/`memory_list`/`memory_delete`, and `swarm_shutdown` above are their respective replacements. Full list: `tools/list` (353 tools).
 
 ## Specialist Agent Types
 
@@ -74,25 +82,29 @@ Disable the launcher entirely (no `npx` fallback): `SKILLSMITH_RUFLO_LAUNCHER_DI
 ## Example: Spawning Agents for a Wave
 
 ```javascript
-// 1. Initialize swarm (use "laptop" profile for MacBook)
-mcp__claude-flow__swarm_init({
+// 1. Initialize swarm
+mcp__ruflo__swarm_init({
   topology: "hierarchical",
-  maxAgents: 2,  // MacBook constraint
-  queen_model: "sonnet",
-  worker_model: "haiku"
+  maxAgents: 8,
+  strategy: "specialized"
 })
 
-// 2. Spawn specialist team (all in single message for parallel execution)
-mcp__claude-flow__agent_spawn({ type: "architect" })
-mcp__claude-flow__agent_spawn({ type: "coder" })
-mcp__claude-flow__agent_spawn({ type: "tester" })
-mcp__claude-flow__agent_spawn({ type: "reviewer" })
+// 2. Spawn specialist team (all in a single message for parallel execution;
+//    agentType is a free-form string — architect/coder/tester/reviewer/researcher
+//    per this guide's own convention below, not an enum the schema enforces)
+mcp__ruflo__agent_spawn({ agentType: "architect", model: "opus", task: "Design the API contract" })
+mcp__ruflo__agent_spawn({ agentType: "coder", model: "sonnet", task: "Implement SMI-XXX feature" })
+mcp__ruflo__agent_spawn({ agentType: "tester", model: "sonnet", task: "Write tests for SMI-XXX" })
+mcp__ruflo__agent_spawn({ agentType: "reviewer", model: "opus", task: "Review the SMI-XXX diff" })
 
-// 3. Execute and coordinate via task_orchestrate
-mcp__claude-flow__task_orchestrate({
+// 3. Coordinate via coordination_orchestrate (task_orchestrate does not exist, SMI-5777)
+mcp__ruflo__coordination_orchestrate({
   task: "Implement SMI-XXX feature",
   strategy: "parallel"
 })
+
+// 4. Shut down when the wave is done
+mcp__ruflo__swarm_shutdown({ graceful: true })
 ```
 
 ## Hive Mind Orchestration

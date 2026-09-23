@@ -73,21 +73,39 @@ elif [[ "$sub1 $sub2" == "volume create" ]]; then
     exit 0
 elif [[ "$sub1" == "compose" ]]; then
     if [[ "$*" == *" run "* ]]; then
-        if [[ "$*" == *"--entrypoint sh"* ]]; then
-            # H-5: probe_store_present()'s throwaway probe.
-            if [[ -f "$FAKE_STATE_DIR/store-present" ]]; then
-                echo "RUFLO_DB_PRESENT"
+        if [[ "$*" == *"RUFLO_PROBE_DB_PATH="* ]]; then
+            # H-6: probe_generation()'s per-file read-only probe. Distinguish
+            # WHICH file by the presence of "agentdb-memory.db" in the argv
+            # (the -e RUFLO_PROBE_DB_PATH=<path> value) -- check the MORE
+            # SPECIFIC substring first, since "memory.db" is itself a
+            # substring of "agentdb-memory.db" (same ordering discipline as
+            # scripts/tests/mcp-ruflo-launcher.test.sh's own docker stub).
+            if [[ "$*" == *"agentdb-memory.db"* ]]; then
+                gen="${FAKE_AGENTDB_GENERATION-}"
             else
-                echo "RUFLO_DB_ABSENT"
+                gen="${FAKE_MEMORY_GENERATION-}"
+            fi
+            if [[ -n "$gen" ]]; then
+                echo "RUFLO_GEN=$gen"
+            else
+                echo "RUFLO_GEN_ABSENT"
             fi
             exit 0
         fi
-        # --entrypoint node: init_store()'s one-off store_generation run.
+        # --entrypoint node without RUFLO_PROBE_DB_PATH: init_store()'s
+        # one-off store_generation WRITE run, once per file (H-6). Record a
+        # per-file marker (from RUFLO_STORE_DB_FILENAME=<name>) plus the
+        # shared init-ran marker the existing arms already check.
         if [[ "${FAKE_INIT_STORE_ROW_MISMATCH:-0}" == "1" ]]; then
             # M-6: simulates the node script's own SELECT-back finding an
             # EXISTING row for a DIFFERENT generation and exiting 1.
             echo "store_generation rows: [\"some-other-generation\"] (expected exactly one row equal to the requested generation)" >&2
             exit 1
+        fi
+        if [[ "$*" == *"RUFLO_STORE_DB_FILENAME=agentdb-memory.db"* ]]; then
+            touch "$FAKE_STATE_DIR/init-ran-agentdb-memory.db"
+        elif [[ "$*" == *"RUFLO_STORE_DB_FILENAME=memory.db"* ]]; then
+            touch "$FAKE_STATE_DIR/init-ran-memory.db"
         fi
         touch "$FAKE_STATE_DIR/init-ran"
         exit 0
@@ -113,6 +131,8 @@ reset_fixture() {
     export FAKE_STATE_DIR FAKE_DOCKER_CALL_LOG HOME RUFLO_SEED_EXPECTED_DIGEST_FILE
     unset FAKE_VOLUME_CREATE_FAIL || true
     unset FAKE_INIT_STORE_ROW_MISMATCH || true
+    unset FAKE_MEMORY_GENERATION || true
+    unset FAKE_AGENTDB_GENERATION || true
 }
 
 # H-5/M-6 shared fixture: an existing, labelled volume whose label and
@@ -149,6 +169,8 @@ elif ! grep -q "volume create --label $LABEL_KEY=.* $VOLUME_NAME" "$FAKE_DOCKER_
     fail_case "1-fresh" "expected a 'volume create --label $LABEL_KEY=... $VOLUME_NAME' call, log:\n$(cat "$FAKE_DOCKER_CALL_LOG")"
 elif [[ ! -f "$FAKE_STATE_DIR/init-ran" ]]; then
     fail_case "1-fresh" "expected the one-off store-init run (docker compose ... run ...) to have executed"
+elif [[ ! -f "$FAKE_STATE_DIR/init-ran-memory.db" ]] || [[ ! -f "$FAKE_STATE_DIR/init-ran-agentdb-memory.db" ]]; then
+    fail_case "1-fresh" "expected TWO init calls, one per store file (memory.db and agentdb-memory.db) -- SMI-6744 A1.4 defect fix"
 elif [[ ! -f "$FAKE_STATE_DIR/up-ran" ]]; then
     fail_case "1-fresh" "expected docker compose ... up -d ruflo to have executed"
 elif [[ ! -f "$HOME/.skillsmith/ruflo-store.json" ]]; then
@@ -235,26 +257,27 @@ else
     echo "applied=refuse-label-mismatch PASS (5-label-mismatch): refused naming the file and the wrong-generation hazard, no init"
 fi
 
-# ---- Arm 6 (H-5): existing volume, label matches, but no store at the
-# expected path (the partial-creation hole) -- must re-run init_store with
-# the authority file's own generationUuid, then still bring the service up.
-# ----
+# ---- Arm 6 (H-5): existing volume, label matches, but NEITHER store file
+# has a store_generation marker (the partial-creation hole) -- must re-run
+# init_store with the authority file's own generationUuid for BOTH files,
+# then still bring the service up. ----
 reset_fixture
 setup_labelled_volume "matching-nonce" "gen-6-from-authority-file"
-# Deliberately no $FAKE_STATE_DIR/store-present -- the probe answers ABSENT.
+# Deliberately no FAKE_MEMORY_GENERATION/FAKE_AGENTDB_GENERATION -- both
+# probes answer ABSENT.
 EXIT_CODE="$(run_script)"
 if [[ "$EXIT_CODE" -ne 0 ]]; then
     fail_case "6-missing-store-reinit" "expected exit 0, got $EXIT_CODE"
 elif grep -q "volume create" "$FAKE_DOCKER_CALL_LOG"; then
     fail_case "6-missing-store-reinit" "expected NO 'volume create' call (the volume already exists), log:\n$(cat "$FAKE_DOCKER_CALL_LOG")"
-elif [[ ! -f "$FAKE_STATE_DIR/init-ran" ]]; then
-    fail_case "6-missing-store-reinit" "expected init_store() to re-run against a labelled-but-empty volume"
+elif [[ ! -f "$FAKE_STATE_DIR/init-ran-memory.db" ]] || [[ ! -f "$FAKE_STATE_DIR/init-ran-agentdb-memory.db" ]]; then
+    fail_case "6-missing-store-reinit" "expected init_store() to re-run against BOTH store files on a labelled-but-empty volume"
 elif ! grep -q "RUFLO_GENERATION_UUID=gen-6-from-authority-file" "$FAKE_DOCKER_CALL_LOG"; then
     fail_case "6-missing-store-reinit" "expected init_store() to run with the authority file's own generationUuid, log:\n$(cat "$FAKE_DOCKER_CALL_LOG")"
 elif [[ ! -f "$FAKE_STATE_DIR/up-ran" ]]; then
     fail_case "6-missing-store-reinit" "expected docker compose ... up -d ruflo to have executed after re-init"
 else
-    echo "applied=reinit-missing-store PASS (6-missing-store-reinit): label matched, store absent, init_store re-ran with the authority file's generation, up ran"
+    echo "applied=reinit-missing-store PASS (6-missing-store-reinit): label matched, both stores absent, init_store re-ran for both with the authority file's generation, up ran"
 fi
 
 # ---- Arm 7 (M-6): existing volume, label matches, store absent, but the
@@ -267,7 +290,7 @@ export FAKE_INIT_STORE_ROW_MISMATCH=1
 EXIT_CODE="$(run_script)"
 if [[ "$EXIT_CODE" -eq 0 ]]; then
     fail_case "7-row-mismatch-propagates" "expected non-zero exit (M-6 propagation), got 0"
-elif ! grep -q "one-off store_generation init run failed" "$SCRATCH_ROOT/out.log"; then
+elif ! grep -q "one-off store_generation init run for .swarm/memory.db failed" "$SCRATCH_ROOT/out.log"; then
     fail_case "7-row-mismatch-propagates" "expected the init_store() failure message to be surfaced by name"
 elif [[ -f "$FAKE_STATE_DIR/up-ran" ]]; then
     fail_case "7-row-mismatch-propagates" "expected docker compose ... up -d ruflo NOT to run after a propagated init failure"
@@ -276,11 +299,65 @@ else
 fi
 unset FAKE_INIT_STORE_ROW_MISMATCH
 
+# ---- Arm 8 (SMI-6744 A1.4 two-store defect): existing volume, label
+# matches, memory.db ALREADY carries the marker at the authority file's own
+# generation, but agentdb-memory.db has none -- the live-volume state this
+# fix targets. Must repair ONLY agentdb-memory.db (memory.db already correct,
+# no need to re-init it), log it as a same-generation repair (not a
+# wrong-generation refusal), then bring the service up. ----
+reset_fixture
+setup_labelled_volume "matching-nonce-8" "gen-8-authority"
+export FAKE_MEMORY_GENERATION="gen-8-authority"
+# FAKE_AGENTDB_GENERATION deliberately unset -- probe answers ABSENT.
+EXIT_CODE="$(run_script)"
+if [[ "$EXIT_CODE" -ne 0 ]]; then
+    fail_case "8-agentdb-repair" "expected exit 0, got $EXIT_CODE"
+elif grep -q "volume create" "$FAKE_DOCKER_CALL_LOG"; then
+    fail_case "8-agentdb-repair" "expected NO 'volume create' call, log:\n$(cat "$FAKE_DOCKER_CALL_LOG")"
+elif [[ -f "$FAKE_STATE_DIR/init-ran-memory.db" ]]; then
+    fail_case "8-agentdb-repair" "expected NO re-init of memory.db (it already carries the correct marker)"
+elif [[ ! -f "$FAKE_STATE_DIR/init-ran-agentdb-memory.db" ]]; then
+    fail_case "8-agentdb-repair" "expected init_store() to repair agentdb-memory.db"
+elif ! grep -q "RUFLO_GENERATION_UUID=gen-8-authority" "$FAKE_DOCKER_CALL_LOG"; then
+    fail_case "8-agentdb-repair" "expected the repair to use memory.db's own (== authority file's) generation, log:\n$(cat "$FAKE_DOCKER_CALL_LOG")"
+elif ! grep -qi "same-generation repair\|NOT a wrong-generation hazard" "$SCRATCH_ROOT/out.log"; then
+    fail_case "8-agentdb-repair" "expected the log to distinguish this from a wrong-generation refusal"
+elif [[ ! -f "$FAKE_STATE_DIR/up-ran" ]]; then
+    fail_case "8-agentdb-repair" "expected docker compose ... up -d ruflo to have executed after the repair"
+else
+    echo "applied=same-generation-repair PASS (8-agentdb-repair): memory.db already correct, agentdb-memory.db repaired with the same generation, logged as a repair (not a refusal), up ran"
+fi
+unset FAKE_MEMORY_GENERATION
+
+# ---- Arm 9 (SMI-6744 A1.4 two-store defect): existing volume, label
+# matches, but memory.db and agentdb-memory.db carry DIFFERENT
+# store_generation rows -- a forked/copied store. Must refuse naming BOTH
+# files, with NO init and NO up. ----
+reset_fixture
+setup_labelled_volume "matching-nonce-9" "gen-9-authority"
+export FAKE_MEMORY_GENERATION="gen-9-authority"
+export FAKE_AGENTDB_GENERATION="gen-9-DIFFERENT"
+EXIT_CODE="$(run_script)"
+if [[ "$EXIT_CODE" -eq 0 ]]; then
+    fail_case "9-two-stores-disagree" "expected non-zero exit (refusal), got 0"
+elif ! grep -q "memory.db" "$SCRATCH_ROOT/out.log" || ! grep -q "agentdb-memory.db" "$SCRATCH_ROOT/out.log"; then
+    fail_case "9-two-stores-disagree" "expected the refusal message to name BOTH memory.db and agentdb-memory.db"
+elif ! grep -qi "DIFFERENT generations" "$SCRATCH_ROOT/out.log"; then
+    fail_case "9-two-stores-disagree" "expected the refusal message to name the generation disagreement"
+elif [[ -f "$FAKE_STATE_DIR/init-ran" ]]; then
+    fail_case "9-two-stores-disagree" "expected NO init run when the two stores disagree"
+elif [[ -f "$FAKE_STATE_DIR/up-ran" ]]; then
+    fail_case "9-two-stores-disagree" "expected docker compose ... up -d ruflo NOT to run on a store disagreement"
+else
+    echo "applied=refuse-two-stores-disagree PASS (9-two-stores-disagree): refused naming both files and the generation disagreement, no init, no up"
+fi
+unset FAKE_MEMORY_GENERATION FAKE_AGENTDB_GENERATION
+
 echo ""
 if [[ "$FAIL_COUNT" -eq 0 ]]; then
-    echo "SUMMARY: 7/7 arms passed"
+    echo "SUMMARY: 9/9 arms passed"
     exit 0
 else
-    echo "SUMMARY: $FAIL_COUNT/7 arms FAILED"
+    echo "SUMMARY: $FAIL_COUNT/9 arms FAILED"
     exit 1
 fi
