@@ -218,6 +218,121 @@ describe('runAuditSources', () => {
     expect(parsed.summary.already_tracked).toBe(1)
   })
 
+  // SMI-6358 post-merge (PR #2920 retro): the overlay's OWN keying, which the
+  // note below the --client test conceded was "not directly observable through
+  // this mock". It is observable here, through the JSON report, and it needed
+  // to be: reverting `installed[manifestKeyFor(skill.skillName, client)]` to
+  // `installed[skill.skillName]` left all five audit-sources test files green.
+  //
+  // The pin is the THREE-test set, not the two added here — a correction the
+  // pre-merge gate made to an earlier version of this comment, which claimed the
+  // new pair was self-sufficient. Both new tests pass `client: 'cursor'`, so an
+  // always-suffixed implementation satisfies both; what rules that out is the
+  // pre-existing default-client test directly above, which is therefore
+  // load-bearing and must not be deleted as redundant.
+  //
+  // The third test below uses a SECOND non-canonical client, which rules out the
+  // remaining wrong implementation the gate named: a predicate special-cased to
+  // one client (`client === 'cursor' ? ... : name`) passes everything that only
+  // ever exercises cursor.
+
+  it('SMI-6358: a canonical entry does not mark a non-canonical client already_tracked', async () => {
+    // Manifest holds ONLY the bare-name (canonical) entry.
+    mockLoadManifest.mockResolvedValue({
+      version: '1.0.0',
+      installedSkills: {
+        linear: {
+          id: 'uuid-linear',
+          name: 'linear',
+          version: '1.0.0',
+          source: 'https://github.com/williamsmith/linear',
+          installPath: '/home/user/.claude/skills/linear',
+          installedAt: '2024-01-01T00:00:00.000Z',
+          lastUpdated: '2024-01-01T00:00:00.000Z',
+        },
+      },
+    })
+
+    const jsonChunks: string[] = []
+    vi.spyOn(process.stdout, 'write').mockImplementation((chunk) => {
+      if (typeof chunk === 'string') jsonChunks.push(chunk)
+      return true
+    })
+
+    await runAuditSources(baseOptions({ json: true, client: 'cursor' }))
+
+    const parsed = JSON.parse(jsonChunks.join('')) as {
+      skills: Array<{ status: string }>
+      summary: { already_tracked: number; recovered: number }
+    }
+
+    // A bare-name lookup would find the canonical entry and mark this tracked.
+    expect(parsed.summary.already_tracked).toBe(0)
+    expect(parsed.summary.recovered).toBe(1)
+  })
+
+  it('SMI-6358: a client-scoped entry does mark that client already_tracked', async () => {
+    mockLoadManifest.mockResolvedValue({
+      version: '1.0.0',
+      installedSkills: {
+        'linear::cursor': {
+          id: 'uuid-linear',
+          name: 'linear',
+          version: '1.0.0',
+          source: 'https://github.com/williamsmith/linear',
+          installPath: '/home/user/.cursor/skills/linear',
+          installedAt: '2024-01-01T00:00:00.000Z',
+          lastUpdated: '2024-01-01T00:00:00.000Z',
+        },
+      },
+    })
+
+    const jsonChunks: string[] = []
+    vi.spyOn(process.stdout, 'write').mockImplementation((chunk) => {
+      if (typeof chunk === 'string') jsonChunks.push(chunk)
+      return true
+    })
+
+    await runAuditSources(baseOptions({ json: true, client: 'cursor' }))
+
+    const parsed = JSON.parse(jsonChunks.join('')) as {
+      skills: Array<{ status: string }>
+      summary: { already_tracked: number }
+    }
+
+    expect(parsed.summary.already_tracked).toBe(1)
+  })
+
+  it('SMI-6358: keying is not special-cased to one client', async () => {
+    mockLoadManifest.mockResolvedValue({
+      version: '1.0.0',
+      installedSkills: {
+        'linear::windsurf': {
+          id: 'uuid-linear',
+          name: 'linear',
+          version: '1.0.0',
+          source: 'https://github.com/williamsmith/linear',
+          installPath: '/home/user/.windsurf/skills/linear',
+          installedAt: '2024-01-01T00:00:00.000Z',
+          lastUpdated: '2024-01-01T00:00:00.000Z',
+        },
+      },
+    })
+
+    const jsonChunks: string[] = []
+    vi.spyOn(process.stdout, 'write').mockImplementation((chunk) => {
+      if (typeof chunk === 'string') jsonChunks.push(chunk)
+      return true
+    })
+
+    await runAuditSources(baseOptions({ json: true, client: 'windsurf' }))
+
+    const parsed = JSON.parse(jsonChunks.join('')) as {
+      summary: { already_tracked: number }
+    }
+    expect(parsed.summary.already_tracked).toBe(1)
+  })
+
   // --------------------------------------------------------------------------
   // --apply --yes writes the manifest
   // --------------------------------------------------------------------------

@@ -132,7 +132,7 @@ describe('updateManifestEntry() locking (SMI-6358)', () => {
   // --------------------------------------------------------------------------
   // Fail-closed on a corrupt manifest (SMI-5909 gap this fix closes for the
   // WRITE path) — shared by every caller of updateManifestEntry() (pin,
-  // unpin, and all six telemetry.action.ts write sites), so one test here
+  // unpin, and all five telemetry.action.ts write sites), so one test here
   // covers all of them: they all go through this exact function.
   // --------------------------------------------------------------------------
 

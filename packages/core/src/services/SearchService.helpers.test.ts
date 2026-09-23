@@ -18,6 +18,12 @@
  *         `toLowerCase()` can shift (U+0130 grows) or lose (Greek final sigma),
  *         so the window could exclude the match and drop the highlight.
  *         Red arm: restore the `indexOf` line in place of `match.index`.
+ *   C1/C2/C3/C5/C11 -- (PR #2924 post-merge retro) properties the first ten
+ *         arms left unpinned: the window clamp at 0, the FTS-operator filter,
+ *         the ellipsis added after (not before) the mark replacement, the `u`
+ *         flag's case folding, and the full escaped-metacharacter class.
+ *         Red arms: remove the clamp; delete the operator filter; wrap before
+ *         replacing; drop `u`; drop `[` from the escape class.
  */
 
 import { describe, expect, it } from 'vitest'
@@ -117,6 +123,164 @@ describe('buildHighlights -- snippet window', () => {
     const s = skill({ name: 'n/a', description: 'x'.repeat(80) + ' ΟΔΟΣ ' + 'y'.repeat(80) })
     expect(buildHighlights(s, 'σ').description).toContain('<mark>Σ</mark>')
   })
+
+  it('clamps the window at 0 for a match in the first 50 characters', () => {
+    // Without the clamp a negative start reaches String.slice(), which counts
+    // from the end, and every early match in a long description renders as "...".
+    const s = skill({ name: 'n/a', description: 'needle ' + 'z'.repeat(200) })
+    expect(buildHighlights(s, 'needle').description).toBe(
+      '<mark>needle</mark> ' + 'z'.repeat(49) + '...'
+    )
+  })
+
+  it('never highlights the truncation ellipsis it inserted itself', () => {
+    // The "..." markers are added after the replacement, so a term of dots can
+    // only match dots that are in the description.
+    const s = skill({ name: 'n/a', description: 'x'.repeat(80) + ' a.b ' + 'y'.repeat(80) })
+    const d = buildHighlights(s, '.').description ?? ''
+    expect(d.startsWith('...')).toBe(true)
+    expect(d.endsWith('...')).toBe(true)
+    expect(d.match(/<mark>/g)?.length).toBe(1)
+    expect(d).toContain('a<mark>.</mark>b')
+  })
+})
+
+describe('buildHighlights -- query normalisation', () => {
+  it('strips quotes and parentheses from the query before matching', () => {
+    const s = skill()
+    expect(buildHighlights(s, '"foo"')).toEqual(buildHighlights(s, 'foo'))
+    expect(buildHighlights(s, '(foo)')).toEqual(buildHighlights(s, 'foo'))
+    expect(buildHighlights(s, '"foo"').name).toBe('<mark>foo</mark> tool')
+  })
+
+  it('strips a trailing prefix-match star from a term', () => {
+    const s = skill()
+    expect(buildHighlights(s, 'foo*')).toEqual(buildHighlights(s, 'foo'))
+    expect(buildHighlights(s, 'foo*').name).toBe('<mark>foo</mark> tool')
+  })
+})
+
+describe('buildHighlights -- FTS operators', () => {
+  it('drops AND / OR / NOT as terms, not merely as an empty result', () => {
+    // The fixture contains "and", "or" and "not" as substrings on purpose, so a
+    // missing operator filter would highlight them instead of returning {}.
+    // NOTE: `buildFtsQuery` (same file) uses a DIFFERENT operator model -- it passes a
+    // query through raw only when it contains a space-delimited uppercase ` AND ` /
+    // ` OR ` / ` NOT `. So 'and or not' yields no highlights here but a real FTS query
+    // there; the reconciliation (and `AND*`'s meaning) is SMI-6817, so the ordering of
+    // the operator filter and the trailing-* strip is deliberately NOT pinned here.
+    const s = skill({ name: 'command center', description: 'a tool for annotation and notes' })
+    expect(buildHighlights(s, 'AND OR NOT')).toEqual({})
+    expect(buildHighlights(s, 'and or not')).toEqual({})
+  })
+})
+
+describe('buildHighlights -- Unicode case folding', () => {
+  it('matches a query of U+0130 against itself (the term is not lowercased)', () => {
+    // 'İ'.toLowerCase() is two code units ('i' + U+0307), which matches nothing.
+    const s = skill({
+      name: 'n/a',
+      description: 'x'.repeat(80) + ' \u0130stanbul ' + 'y'.repeat(80),
+    })
+    expect(buildHighlights(s, '\u0130').description).toContain('<mark>\u0130</mark>stanbul')
+  })
+
+  it('folds the Kelvin sign to k (the u flag, not just i)', () => {
+    const s = skill({ name: 'n/a', description: 'x'.repeat(80) + ' \u212A ' + 'y'.repeat(80) })
+    expect(buildHighlights(s, 'k').description).toContain('<mark>\u212A</mark>')
+  })
+})
+
+describe('buildHighlights -- multiple terms', () => {
+  // Three counts, and the expectation is DERIVED from the term list rather than
+  // hardcoded: `terms.slice(0, 1).map(` and `terms.slice(0, 2).map(` are the same
+  // defect one index apart, and a two-term query kills only the first (governance on
+  // f7ba25392 measured `terms.slice(0, 2).map(` surviving all 22 arms). Red arms:
+  // slice(0, 1) and slice(0, 2) (PR #2925 retro F-A).
+  it.each([2, 3, 5])('highlights all %i terms, not a prefix of them', (n) => {
+    const terms = Array.from({ length: n }, (_, i) => `t${i}`)
+    const text = terms.join(' ')
+    const marked = terms.map((t) => `<mark>${t}</mark>`).join(' ')
+    const h = buildHighlights(skill({ name: text, description: text }), text)
+    expect(h.name).toBe(marked)
+    expect(h.description).toBe(marked)
+  })
+})
+
+describe('buildHighlights -- surrogate pairs', () => {
+  const LONE = /[\uD800-\uDBFF](?![\uDC00-\uDFFF])|(?<![\uD800-\uDBFF])[\uDC00-\uDFFF]/
+
+  it('never cuts the window start through a surrogate pair', () => {
+    // 49 x, an astral character (two code units at 49-50), 49 y, then the match at
+    // 100: start = index - 50 = 50 lands on the low surrogate.
+    const s = skill({
+      name: 'n/a',
+      description: 'x'.repeat(49) + '\u{1F600}' + 'y'.repeat(49) + 'needle' + 'z'.repeat(60),
+    })
+    const d = buildHighlights(s, 'needle').description ?? ''
+    expect(LONE.test(d)).toBe(false)
+    expect(d).toContain('\u{1F600}')
+  })
+
+  it('never cuts the window end through a surrogate pair', () => {
+    // The match at 0, 49 y, then the astral character at 55-56: end = 6 + 50 = 56
+    // lands between its two code units.
+    const s = skill({
+      name: 'n/a',
+      description: 'needle' + 'y'.repeat(49) + '\u{1F600}' + 'z'.repeat(60),
+    })
+    const d = buildHighlights(s, 'needle').description ?? ''
+    expect(LONE.test(d)).toBe(false)
+    expect(d).toContain('\u{1F600}')
+  })
+
+  it('leaves an already-lone surrogate at the edge alone instead of pulling in a second', () => {
+    // Malformed input: two lone low surrogates at code units 49-50, the window start at
+    // 50. The snap must not step back onto the first one; the output carries exactly the
+    // one lone unit the window already held (governance on f7ba25392, F2).
+    const s = skill({
+      name: 'n/a',
+      description: 'x'.repeat(49) + '\uDC00\uDC00' + 'y'.repeat(49) + 'needle' + 'z'.repeat(60),
+    })
+    const d = buildHighlights(s, 'needle').description ?? ''
+    expect(d.match(new RegExp(LONE.source, 'g'))?.length).toBe(1)
+  })
+
+  it('does not pull a lone HIGH surrogate in when the unit at the start edge is ordinary', () => {
+    // Malformed input: a lone high surrogate at code unit 49, an ordinary 'y' at 50, the
+    // window start at 50. A snap that checked only the high side (description[start - 1])
+    // would step back onto it; the real-pair check also needs description[start] to be a
+    // low surrogate, so nothing moves and the output holds no lone unit (gate round 1,
+    // PR-16 survivor).
+    const s = skill({
+      name: 'n/a',
+      description: 'x'.repeat(49) + '\uD83D' + 'y'.repeat(50) + 'needle' + 'z'.repeat(60),
+    })
+    const d = buildHighlights(s, 'needle').description ?? ''
+    expect(LONE.test(d)).toBe(false)
+  })
+
+  it('does not pull a lone LOW surrogate in when the unit at the end edge is ordinary', () => {
+    // The mirror: the match at 0, 50 y, a lone low surrogate at 56, the window end at 56.
+    // A snap that checked only the low side (description[end]) would step onto it.
+    const s = skill({
+      name: 'n/a',
+      description: 'needle' + 'y'.repeat(50) + '\uDC00' + 'z'.repeat(60),
+    })
+    const d = buildHighlights(s, 'needle').description ?? ''
+    expect(LONE.test(d)).toBe(false)
+  })
+})
+
+describe('buildHighlights -- key presence', () => {
+  it('omits the key for the side that does not match', () => {
+    // `toEqual({})` cannot see this: vitest ignores keys whose value is `undefined`, so
+    // only `Object.keys` distinguishes an absent key from an undefined-valued one.
+    const nameOnly = skill({ name: 'foo tool', description: 'unrelated text' })
+    expect(Object.keys(buildHighlights(nameOnly, 'foo'))).toEqual(['name'])
+    const descOnly = skill({ name: 'unrelated', description: 'a foo tool' })
+    expect(Object.keys(buildHighlights(descOnly, 'foo'))).toEqual(['description'])
+  })
 })
 
 describe('buildHighlights -- escaping', () => {
@@ -125,5 +289,52 @@ describe('buildHighlights -- escaping', () => {
     const h = buildHighlights(s, 'c++')
     expect(h.name).toBe('<mark>c++</mark> helper')
     expect(h.description).toBe('for <mark>c++</mark> and c.')
+  })
+
+  it('never throws and never over-matches on any escaped metacharacter', () => {
+    const s = skill({
+      name: 'n/a',
+      description: 'literal a.b a*b a|b a[b a(b a\\b a^b a$b a+b a?b a{b a}b a]b a)b here',
+    })
+    for (const q of [
+      'a.b',
+      'a*b',
+      'a|b',
+      'a[b',
+      'a(b',
+      'a\\b',
+      'a?b',
+      'a^b',
+      'a$b',
+      'a{b',
+      'a}b',
+      'a]b',
+      'a)b',
+      'a+b',
+    ]) {
+      expect(() => buildHighlights(s, q), q).not.toThrow()
+    }
+    // One positive per reachable class member: an UNescaped metacharacter changes the
+    // pattern's meaning, so the literal spelling stops matching itself (or throws under
+    // `u`). `(` and `)` are unreachable -- `query.replace(/["()]/g, '')` strips them
+    // before the escaper ever sees them. `.` needs the negative below instead: an
+    // unescaped `.` still matches a literal dot, so only an over-match can catch it.
+    for (const q of [
+      'a.b',
+      'a*b',
+      'a|b',
+      'a[b',
+      'a\\b',
+      'a^b',
+      'a$b',
+      'a+b',
+      'a?b',
+      'a{b',
+      'a}b',
+      'a]b',
+    ]) {
+      expect(buildHighlights(s, q).description, q).toContain(`<mark>${q}</mark>`)
+    }
+    expect(buildHighlights(skill({ name: 'axb', description: 'axb' }), 'a.b')).toEqual({})
   })
 })

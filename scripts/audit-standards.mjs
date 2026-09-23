@@ -5798,6 +5798,23 @@ console.log(`\n${BOLD}Check 65: test-suite manifest hygiene (SMI-6343)${RESET}`)
       "'skillsmith.installSkill' is a VS Code command id string passed to handleTierDenied",
     'packages/vscode-extension/src/commands/__meta__/telemetry-coverage.test.ts':
       "'skillsmith.installSkill' is a command-id key in a command->action coverage map",
+    // SMI-6358 retro. Added by a later issue than the SMI-6343 block above, so
+    // it sits outside that comment's "the four rows below" count rather than
+    // inside it — inserting a fifth row there would leave that comment naming a
+    // smaller set than it now covers.
+    //
+    // Residual gap this row does NOT close, stated so nobody assumes it does:
+    // a RENAME of the test file goes stale loudly (evaluateManifestHygiene
+    // reports it via staleAllowlistEntries). Deleting the vi.mock while keeping
+    // the updateManifestSafely reference does NOT — the row keeps matching and
+    // silently grants an exemption it no longer earns. After any edit to that
+    // file's mocks, re-confirm the row by deleting
+    // `updateManifestSafely: mockUpdateManifestSafely` from its vi.mock factory
+    // and running that file: 2 of 10 tests must fail. If they all still pass,
+    // the mock is no longer load-bearing and this row must be removed, not
+    // reworded.
+    'packages/mcp-server/src/tools/install.conflict.test.ts':
+      "updateManifestSafely is the only writer symbol this file matches, and it is replaced wholesale by vi.mock('./install.helpers.manifest.js', ...) returning { ...actual, updateManifestSafely: mockUpdateManifestSafely } — the assertions read the updater function off the mock's call record and run it against a literal object, so no manifest module, path or fs call is reachable. The subject under test is manifestKeyFor's keying, which is deliberately NOT mocked",
   }
 
   const CHECK_65_SHADOW_END_DATE = '2026-09-15'
