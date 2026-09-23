@@ -99,4 +99,49 @@ describe('isBackupDir', () => {
     // non-digit suffix must never match.
     expect(isBackupDir('my.backup-notes')).toBe(false)
   })
+
+  // SMI-6532 F4: `/\.backup-\d+(-\d+)*$/` (this branch's own prior
+  // version) end-anchored the match, which NARROWED it below even the
+  // original `/\.backup-\d{8}-/` for any name carrying a suffix after the
+  // digit run — a real false negative, the opposite of the direction the
+  // predicate's docstring claims it errs toward. Every row below is
+  // load-bearing regression coverage for that defect, grouped by how each
+  // regex generation treated it:
+  //   - widened:            old `\d{8}-` regex missed it, current matches.
+  //   - same:                every regex generation matches it.
+  //   - previously-narrowed: old `\d{8}-` regex matched it, but the
+  //                          `$`-anchored intermediate regex did not.
+  //   - controls:            must never match, under any generation.
+  describe('case table (widened / same / previously-narrowed / controls)', () => {
+    const cases: Array<[name: string, expected: boolean]> = [
+      // widened
+      ['x.backup-1758600000000', true],
+      ['y.backup-20260419', true],
+      // same
+      ['linear.backup-20260419-124019', true],
+      // previously-narrowed — the `$`-anchored regex rejected all five.
+      ['foo.backup-20260419-124019.old', true],
+      ['foo.backup-20260419-124019-bak', true],
+      ['foo.backup-20260419-', true],
+      ['foo.backup-20260419-124019 (1)', true],
+      ['foo.backup-20260419-124019.tmp', true],
+      // controls
+      ['plain-skill', false],
+      ['my.backup-notes', false],
+    ]
+
+    // A parameterized suite over an empty or truncated table reports PASS
+    // (measured in this repo: forcing a fixture array to `[]` took a file
+    // from 31 tests to "7 passed", silently, per SMI-6598) — pin the
+    // table's own length against a literal so a future edit that empties
+    // or truncates it fails loudly instead of reporting a clean, vacuous
+    // run.
+    it('covers exactly 10 cases (2 widened + 1 same + 5 previously-narrowed + 2 controls)', () => {
+      expect(cases.length).toBe(10)
+    })
+
+    it.each(cases)('isBackupDir(%j) === %j', (name, expected) => {
+      expect(isBackupDir(name)).toBe(expected)
+    })
+  })
 })

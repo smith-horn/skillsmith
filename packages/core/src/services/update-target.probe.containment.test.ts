@@ -120,3 +120,36 @@ describe('the containment guard runs BEFORE the read, not merely before the retu
     expect(calls.lstat).not.toContain(canary)
   })
 })
+
+describe('the absolute-path guard runs before path.join, not merely before the return (F3)', () => {
+  // `path.join(dir, <absolute path>)` DISCARDS `dir` entirely
+  // (`path.join('/a/b', '/etc/passwd')` -> `/a/b/etc/passwd`), so a mutant
+  // that checks `path.isAbsolute` only AFTER joining -- or folds it into
+  // `isContained` on the JOINED path instead of the raw entry -- would see a
+  // path that (wrongly) looks contained and would stat/read it. This is not
+  // a same-answer relocation like the `isContained`-vs-`probeOneFile` one
+  // above: moving the absolute check past the join reintroduces the exact
+  // F3 bug, so the syscall recorder below is what proves the guard runs on
+  // the entry BEFORE it is ever joined onto `dir`.
+  it('never stats or reads an absolute write-set member, at either its own path or the joined-onto-dir path', async () => {
+    const outcome = await probeUpdateTarget({
+      dir,
+      skillsDir,
+      dirName: 'my-skill',
+      writeSet: ['SKILL.md', canary],
+    })
+
+    expect(outcome).toEqual({
+      kind: 'unreadable',
+      error: { path: canary, errno: 'EINVAL' },
+    })
+
+    // What a join-then-check mutant would have looked at instead.
+    const joinedButWrongPath = join(dir, canary)
+
+    expect(calls.read).not.toContain(canary)
+    expect(calls.read).not.toContain(joinedButWrongPath)
+    expect(calls.lstat).not.toContain(canary)
+    expect(calls.lstat).not.toContain(joinedButWrongPath)
+  })
+})

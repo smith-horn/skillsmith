@@ -39,7 +39,11 @@ import { hashContent } from './skill-installation.helpers.js'
 // `skill-installation.target-guard.ts`'s own `fs.lstat` calls during the git
 // walk) see the SAME mocked module, so injecting a path here reaches the
 // probe's transitive git-walk call too (T-G2's "on an ancestor during the
-// git walk" fixture).
+// git walk" fixture). The `lstat` set gates BOTH `fs.lstat` AND `fs.stat` --
+// F1 (SMI-6532) changed `checkPresence`'s directory check from `lstat` to
+// `stat` (follow symlinks, so a symlinked skill dir isn't fabricated-ENOTDIR),
+// so a fixture asserting "the target dir itself is inaccessible" must deny
+// whichever syscall the implementation actually uses, not pin one of them.
 const eaccesInjections = vi.hoisted(() => ({
   lstat: new Set<string>(),
   readFile: new Set<string>(),
@@ -56,11 +60,15 @@ function makeFsMock(actual: typeof import('fs/promises')) {
     if (typeof p === 'string' && eaccesInjections.lstat.has(p)) throw eaccesError('lstat', p)
     return (actual.lstat as (...a: unknown[]) => unknown)(p, ...rest)
   }) as typeof actual.lstat
+  const stat = (async (p: unknown, ...rest: unknown[]) => {
+    if (typeof p === 'string' && eaccesInjections.lstat.has(p)) throw eaccesError('stat', p)
+    return (actual.stat as (...a: unknown[]) => unknown)(p, ...rest)
+  }) as typeof actual.stat
   const readFile = (async (p: unknown, ...rest: unknown[]) => {
     if (typeof p === 'string' && eaccesInjections.readFile.has(p)) throw eaccesError('open', p)
     return (actual.readFile as (...a: unknown[]) => unknown)(p, ...rest)
   }) as typeof actual.readFile
-  return { ...actual, default: { ...actual, lstat, readFile }, lstat, readFile }
+  return { ...actual, default: { ...actual, lstat, stat, readFile }, lstat, stat, readFile }
 }
 
 vi.mock('node:fs/promises', async (importOriginal) =>
@@ -287,6 +295,171 @@ describe('probeUpdateTarget — retry rule (§4.2)', () => {
 
     expect(sleep).not.toHaveBeenCalled()
     expect(outcome).toEqual({ kind: 'probe-failed', error: { path: dir, errno: 'ENOTDIR' } })
+  })
+})
+
+describe('probeUpdateTarget — F1: a symlinked skill directory is probed, not fabricated-ENOTDIR', () => {
+  it('a symlink-to-directory target counts as present, not a metadata error', async () => {
+    const realDir = mkSkill('f1-real', 'body')
+    const linkDir = path.join(root, 'f1-linked')
+    fs.symlinkSync(realDir, linkDir, 'dir')
+
+    const outcome = await probeUpdateTarget({
+      dir: linkDir,
+      skillsDir: root,
+      dirName: 'f1-linked',
+      writeSet: [],
+    })
+
+    expect(outcome.kind).toBe('ok')
+  })
+
+  it('a broken symlink target falls into the retry/missing path (ENOENT), not an immediate ENOTDIR', async () => {
+    const linkDir = path.join(root, 'f1-broken-link')
+    fs.symlinkSync(path.join(root, 'nonexistent-target'), linkDir, 'dir')
+    const sleep = vi.fn(async () => {})
+
+    const outcome = await probeUpdateTarget({
+      dir: linkDir,
+      skillsDir: root,
+      dirName: 'f1-broken-link',
+      writeSet: [],
+      sleep,
+      checkRecoveryPending: async () => false,
+    })
+
+    expect(sleep).toHaveBeenCalledTimes(2)
+    expect(outcome).toEqual({
+      kind: 'probe-failed',
+      error: { path: linkDir, errno: 'ENOENT' },
+    })
+  })
+
+  it("reaches hasGitAncestorBetween's realpath branch through a symlinked dir — a git clone visible only via the symlink target is detected", async () => {
+    // Shape from the spec (fan-out.ts:226): skillsDir/pdf -> skillsDir/clone/docs/pdf,
+    // where `clone` (not `pdf`'s own lexical parent) has `.git`. Only a walk
+    // starting from `dir`'s REALPATH ever visits `clone` — reaching this walk
+    // at all first requires checkPresence to accept the symlinked `dir` (F1).
+    const clone = path.join(root, 'f1-clone')
+    fs.mkdirSync(path.join(clone, '.git'), { recursive: true })
+    const realSkillDir = path.join(clone, 'docs', 'pdf')
+    fs.mkdirSync(realSkillDir, { recursive: true })
+    fs.writeFileSync(path.join(realSkillDir, 'SKILL.md'), 'body')
+    const linkPath = path.join(root, 'f1-pdf')
+    fs.symlinkSync(realSkillDir, linkPath, 'dir')
+
+    const outcome = await probeUpdateTarget({
+      dir: linkPath,
+      skillsDir: root,
+      dirName: 'f1-pdf',
+      writeSet: [],
+    })
+
+    expect(outcome.kind).toBe('ok')
+    if (outcome.kind !== 'ok') throw new Error('unreachable')
+    expect(outcome.gitAncestor).toEqual({ kind: 'found', path: clone })
+  })
+})
+
+describe('probeUpdateTarget — F2: a non-regular SKILL.md is data for the classifier, not a probe failure', () => {
+  it('SKILL.md as a symlink -> ok, entryType symlink, skillMdHash null, never probe-failed', async () => {
+    const dir = path.join(root, 'f2-symlink-skillmd')
+    fs.mkdirSync(dir, { recursive: true })
+    const targetFile = path.join(dir, 'target.txt')
+    fs.writeFileSync(targetFile, 'target body')
+    fs.symlinkSync(targetFile, path.join(dir, 'SKILL.md'))
+
+    const outcome = await probeUpdateTarget({
+      dir,
+      skillsDir: root,
+      dirName: 'f2-symlink-skillmd',
+      writeSet: [],
+    })
+
+    expect(outcome.kind).toBe('ok')
+    if (outcome.kind !== 'ok') throw new Error('unreachable')
+    expect(outcome.skillMdHash).toBeNull()
+    expect(outcome.files[0]).toEqual({ rel: 'SKILL.md', sha256: null, entryType: 'symlink' })
+  })
+
+  it('SKILL.md as a directory -> ok, entryType directory, skillMdHash null, never probe-failed', async () => {
+    const dir = path.join(root, 'f2-dir-skillmd')
+    fs.mkdirSync(path.join(dir, 'SKILL.md'), { recursive: true })
+
+    const outcome = await probeUpdateTarget({
+      dir,
+      skillsDir: root,
+      dirName: 'f2-dir-skillmd',
+      writeSet: [],
+    })
+
+    expect(outcome.kind).toBe('ok')
+    if (outcome.kind !== 'ok') throw new Error('unreachable')
+    expect(outcome.skillMdHash).toBeNull()
+    expect(outcome.files[0]).toEqual({ rel: 'SKILL.md', sha256: null, entryType: 'directory' })
+  })
+})
+
+describe('probeUpdateTarget — F3: an absolute write-set entry is refused, not silently contained', () => {
+  it('refuses an absolute write-set entry rather than joining it onto dir', async () => {
+    const dir = mkSkill('f3-abs-escaper')
+    const outsideAbs = path.join(root, 'etc-passwd-stand-in.txt')
+    fs.writeFileSync(outsideAbs, 'root:x:0:0::/root:/bin/bash\n')
+
+    const outcome = await probeUpdateTarget({
+      dir,
+      skillsDir: root,
+      dirName: 'f3-abs-escaper',
+      writeSet: [outsideAbs],
+    })
+
+    expect(outcome).toEqual({
+      kind: 'unreadable',
+      error: { path: outsideAbs, errno: 'EINVAL' },
+    })
+  })
+})
+
+describe('probeUpdateTarget — F7: dedupes a write-set member against its normalized spelling', () => {
+  it('./SKILL.md and SKILL.md collapse into one probed entry, one hash', async () => {
+    const dir = mkSkill('f7-dedupe', 'the content')
+
+    const outcome = await probeUpdateTarget({
+      dir,
+      skillsDir: root,
+      dirName: 'f7-dedupe',
+      writeSet: ['./SKILL.md', 'SKILL.md'],
+    })
+
+    expect(outcome.kind).toBe('ok')
+    if (outcome.kind !== 'ok') throw new Error('unreachable')
+    expect(outcome.files).toHaveLength(1)
+    expect(outcome.files[0]?.rel).toBe('SKILL.md')
+    expect(outcome.skillMdHash).toBe(
+      createHash('sha256').update(Buffer.from('the content')).digest('hex')
+    )
+  })
+})
+
+describe('probeUpdateTarget — F8: an injected checkRecoveryPending that rejects fails closed', () => {
+  it('a throwing injected checkRecoveryPending becomes probe-failed, never an uncaught rejection', async () => {
+    const dir = path.join(root, 'f8-seam-throws')
+    const sleep = vi.fn(async () => {})
+    const checkRecoveryPending = vi.fn(async () => {
+      throw new Error('seam exploded')
+    })
+
+    const outcome = await probeUpdateTarget({
+      dir,
+      skillsDir: root,
+      dirName: 'f8-seam-throws',
+      writeSet: [],
+      sleep,
+      checkRecoveryPending,
+    })
+
+    expect(checkRecoveryPending).toHaveBeenCalledTimes(1)
+    expect(outcome.kind).toBe('probe-failed')
   })
 })
 

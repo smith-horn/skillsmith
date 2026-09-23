@@ -92,8 +92,8 @@ export interface ProbeOk {
   kind: 'ok'
   /** A real `.git` ancestor between `dir` and `skillsDir`, or `null` when none exists. */
   gitAncestor: ProbeGitAncestor | null
-  /** sha256 of SKILL.md's current raw bytes — duplicated into `files` too, exposed directly since the retry rule is keyed on SKILL.md specifically. */
-  skillMdHash: string
+  /** sha256 of SKILL.md's current raw bytes — duplicated into `files` too, exposed directly since the retry rule is keyed on SKILL.md specifically. `null` when SKILL.md exists but is not a regular file (a symlink, a directory, or another non-regular type) — check `files[0].entryType` (SKILL.md is always first) to tell that case apart. A genuinely missing/unreadable SKILL.md never reaches `ok` at all; it is `probe-failed` or `unreadable` instead. */
+  skillMdHash: string | null
   /** One entry per write-set member, `SKILL.md` first. */
   files: ProbedFile[]
 }
@@ -154,10 +154,25 @@ type PresenceResult =
   | { status: 'missing' }
   | { status: 'error'; error: ProbeError }
 
-/** Rule (missing check): `dir` must exist AND be a directory, and its SKILL.md must exist. A non-directory occupying `dir` is not "missing" (retrying won't fix it) — it is an immediate metadata error. */
+/** Rule (missing check): `dir` must exist AND be a directory, and its SKILL.md must exist. A non-directory occupying `dir` is not "missing" (retrying won't fix it) — it is an immediate metadata error.
+ *
+ * `dir` is `stat`'d (follows symlinks), never `lstat`'d — a fan-out-symlinked
+ * skill directory (`fan-out.ts:226`'s `fsp.symlink(relTarget, staged, 'dir')`)
+ * is a shipped install shape, and `skill-installation.target-guard.ts`'s own
+ * `isUsableDirectory` rule (c) already treats "a symlink that resolves to a
+ * directory inside `skillsDir`" as usable — this probe must classify the
+ * same shape the same way, not fabricate an `ENOTDIR` no syscall produced
+ * (an `lstat` on a symlink-to-directory reports the symlink itself, never a
+ * directory). Following the link also makes the git walk below reachable
+ * through it: `hasGitAncestorBetween`'s realpath branch only ever runs when
+ * this function lets a symlinked `dir` past this check. A broken symlink
+ * correctly falls into the retry/missing path below (`stat` reports `ENOENT`
+ * for a symlink whose target is gone); a real non-directory file still fails
+ * `isDirectory()` with a genuine `ENOTDIR`.
+ */
 async function checkPresence(dir: string, skillMdPath: string): Promise<PresenceResult> {
   try {
-    const dirStat = await fs.lstat(dir)
+    const dirStat = await fs.stat(dir)
     if (!dirStat.isDirectory()) {
       return { status: 'error', error: { path: dir, errno: 'ENOTDIR' } }
     }
@@ -251,11 +266,16 @@ async function probeOneFile(
   }
 }
 
-/** Dedupe `writeSet` against a leading `SKILL.md`, preserving first-seen order (determinism). */
+/** Dedupe `writeSet` against a leading `SKILL.md`, preserving first-seen order
+ * (determinism). Dedupes by NORMALIZED path, not the raw string —
+ * `'./SKILL.md'` and `'SKILL.md'` name the same file and must collapse to
+ * one probed entry with one hash, not two `files` rows where only the
+ * literal `'SKILL.md'` spelling ever populates `skillMdHash`. */
 function orderedWriteSet(writeSet: readonly string[]): string[] {
   const seen = new Set<string>()
   const out: string[] = []
-  for (const rel of ['SKILL.md', ...writeSet]) {
+  for (const raw of ['SKILL.md', ...writeSet]) {
+    const rel = path.normalize(raw)
     if (seen.has(rel)) continue
     seen.add(rel)
     out.push(rel)
@@ -263,7 +283,14 @@ function orderedWriteSet(writeSet: readonly string[]): string[] {
   return out
 }
 
-/** A write-set member must resolve inside `dir` — refuses a `..`-escaping or absolute entry rather than reading whatever it points at. */
+/** A write-set member must resolve inside `dir` — refuses a `..`-escaping
+ * entry rather than reading whatever it points at. An ABSOLUTE entry is
+ * refused earlier, by the caller, before it ever reaches `path.join`:
+ * joining an absolute path onto `dir` silently DISCARDS `dir`
+ * (`path.join('/root/skill', '/etc/passwd')` -> `'/root/skill/etc/passwd'`),
+ * so this containment check alone would pass on a path it never actually
+ * contained, and the `rel` reported back would describe different bytes
+ * than the ones hashed. */
 function isContained(dir: string, abs: string): boolean {
   return abs === dir || abs.startsWith(dir + path.sep)
 }
@@ -295,7 +322,18 @@ export async function probeUpdateTarget(input: ProbeInput): Promise<ProbeOutcome
   }
 
   if (missing) {
-    const pending = await checkRecoveryPending({ skillsDir, dir, dirName })
+    // The default checker never throws (it fails safe to `false`
+    // internally), but an INJECTED `checkRecoveryPending` (`ProbeInput`) is
+    // caller-supplied and can reject — the only uncaught surface left in
+    // this probe. Contain it the same way every other failure mode here is
+    // contained: a seam crash fails CLOSED into `probe-failed`, never
+    // propagates past this function as an unhandled rejection.
+    let pending: boolean
+    try {
+      pending = await checkRecoveryPending({ skillsDir, dir, dirName })
+    } catch (err) {
+      return { kind: 'probe-failed', error: sanitizeError(dir, err) }
+    }
     if (pending) return { kind: 'recovery-pending' }
     return { kind: 'probe-failed', error: { path: dir, errno: 'ENOENT' } }
   }
@@ -306,8 +344,15 @@ export async function probeUpdateTarget(input: ProbeInput): Promise<ProbeOutcome
   }
 
   const files: ProbedFile[] = []
-  let skillMdHash: string | null = null
+  let skillMdFile: ProbedFile | undefined
   for (const rel of orderedWriteSet(writeSet)) {
+    // Refuse an absolute entry BEFORE `path.join`, not after: joining one
+    // onto `dir` discards `dir` and produces a path that WOULD pass the
+    // containment check below, hashing bytes at a location the reported
+    // `rel` disagrees with (§4.2, F3).
+    if (path.isAbsolute(rel)) {
+      return { kind: 'unreadable', error: { path: rel, errno: 'EINVAL' } }
+    }
     const abs = path.join(dir, rel)
     if (!isContained(dir, abs)) {
       return { kind: 'unreadable', error: { path: abs, errno: 'EINVAL' } }
@@ -315,16 +360,30 @@ export async function probeUpdateTarget(input: ProbeInput): Promise<ProbeOutcome
     const probed = await probeOneFile(abs, rel)
     if ('error' in probed) return { kind: 'unreadable', error: probed.error }
     files.push(probed.file)
-    if (rel === 'SKILL.md') skillMdHash = probed.file.sha256
+    if (rel === 'SKILL.md') skillMdFile = probed.file
   }
 
-  if (skillMdHash === null) {
-    // The presence check above just confirmed SKILL.md exists; a null hash
-    // here means it vanished in the gap between that check and this read —
-    // a fresh miss, not a crash. Report it the same way plain-missing is
-    // reported, never as a permissive `ok`.
+  // orderedWriteSet always puts a normalized 'SKILL.md' first, so the loop
+  // above always ran probeOneFile for it — this branch is defensive, not a
+  // real path through the code.
+  if (skillMdFile === undefined) {
     return { kind: 'probe-failed', error: { path: skillMdPath, errno: 'ENOENT' } }
   }
 
-  return { kind: 'ok', gitAncestor: gitWalk, skillMdHash, files }
+  if (skillMdFile.sha256 === null && skillMdFile.entryType === undefined) {
+    // The presence check above just confirmed SKILL.md exists as SOME
+    // filesystem entry; a null hash with NO entryType means probeOneFile's
+    // own lstat hit ENOENT — it vanished in the gap between that check and
+    // this read, a fresh miss, not a crash. Report it the same way
+    // plain-missing is reported, never as a permissive `ok`.
+    //
+    // A null hash WITH an entryType (symlink/directory/other) is a
+    // DIFFERENT case: SKILL.md exists but isn't a regular file. That is
+    // data for the (pure) classifier to route into §4.3 row 12
+    // (`unsupported-entry`), not a probe failure — it falls through to `ok`
+    // below with `skillMdHash: null` and the type preserved on `files[0]`.
+    return { kind: 'probe-failed', error: { path: skillMdPath, errno: 'ENOENT' } }
+  }
+
+  return { kind: 'ok', gitAncestor: gitWalk, skillMdHash: skillMdFile.sha256, files }
 }
