@@ -118,10 +118,11 @@ export function buildHighlights(skill: Skill, query: string): SearchResult['high
 
   const source = `(${terms.map((t) => t.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')).join('|')})`
   // Two objects on purpose: a global regex carries lastIndex across .test() calls. The
-  // shipped code was safe only by accident -- the .replace() between the two .test()
-  // calls ran on the same object and reset lastIndex to 0 -- so any reordering, or a
-  // second object, would have made a description silently lose its highlight after a
-  // name match (PR #2923 retro G4, measured: the shipped sequence never lost one). The
+  // shipped code never saw a leaked lastIndex, but for three different reasons -- a
+  // falsy name short-circuits before the first .test(), a failing name .test() resets
+  // lastIndex itself, and only on a matching name did the interleaved .replace() do the
+  // resetting (PR #2923 retro G4, measured: 11 reachable paths, none lost a highlight).
+  // Depending on one of three coincidences is the hazard; two objects removes it. The
   // non-global one answers "does it match"; the global one does the replacement.
   const matcher = new RegExp(source, 'i')
   const replacer = new RegExp(source, 'gi')
@@ -136,7 +137,14 @@ export function buildHighlights(skill: Skill, query: string): SearchResult['high
     // Find the first match and extract surrounding context
     const match = skill.description.match(matcher)
     if (match) {
-      const index = skill.description.toLowerCase().indexOf(match[0].toLowerCase())
+      // `matcher` is non-global, so `.match()` returns the exec result and carries the
+      // real offset into `skill.description`. Do NOT re-derive it from a lowercased
+      // copy: `toLowerCase()` is context-sensitive (Greek final sigma, `Σ` -> `ς`) and
+      // length-changing (U+0130), so an offset into the lowercased string is not an
+      // offset into the original and the window can silently exclude the match
+      // (governance F1 on the PR #2924 core commit). `?? 0` because
+      // `RegExpMatchArray.index` is declared optional.
+      const index = match.index ?? 0
       const start = Math.max(0, index - 50)
       const end = Math.min(skill.description.length, index + match[0].length + 50)
 

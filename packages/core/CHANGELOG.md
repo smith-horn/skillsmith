@@ -7,19 +7,25 @@ All notable changes to `@skillsmith/core` are documented here.
 - **Fix**: SMI-6744 (PR #2923 post-merge retro, G3/G4) -- `buildHighlights()` no longer wraps every
   character of a result in `<mark></mark>` when the query carries an empty term (a trailing
   space, a lone `*`, an empty query): empty terms are dropped before the alternation is built,
-  the same filter-then-guard shape as the log sweep below. It also no longer relies on a shared
-  global-flag regex: the two `.test()` calls were safe only because the `.replace()` between
-  them reset the same object's `lastIndex` (measured, no highlight was lost in the shipped
-  sequence); matching and replacing now use separate objects, and the matcher is non-global, so
-  a reordering cannot make a description silently lose its highlight after a name match.
+  the same filter-then-guard shape as the log sweep below. The description snippet is now
+  placed at the match's real offset instead of an `indexOf()` into a lowercased copy, which
+  `toLowerCase()` can shift (U+0130) or lose (Greek final sigma), so a description whose only
+  match sat past such a character lost its highlight. It also no longer relies on a shared
+  global-flag regex between the two `.test()` calls: the shipped sequence never saw a leaked
+  `lastIndex`, but for three different reasons (a falsy name short-circuits, a failing name test
+  resets it itself, and only on a matching name did the interleaved `.replace()` reset it);
+  matching and replacing now use separate objects and the matcher is non-global, so a
+  reordering cannot make a description silently lose its highlight after a name match.
   Red-tested: removing the empty-term filter fails the trailing-space test; making the matcher
-  global fails the name-then-description test.
+  global fails the name-then-description test; restoring the lowercased `indexOf()` fails the
+  final-sigma test. (#2924)
 
-- **Fix (data loss)**: SMI-6744 / SMI-6806 (PR #2919 post-merge retro, governance C1) -- `pruneExpiredLogs()`
-  deleted every file older than 14 days in `~/.skillsmith/logs`, a directory shared with other
-  writers, including `native-attribution.jsonl`, which ADR-165 keeps for its lifetime as a
-  denominator. It now deletes only this module's own `skillsmith-<surface>-<date>.jsonl[.n]`
-  files, where `<surface>` is the enumerated `mcp|cli|vscode|doc-retrieval` set (regex-escaped),
+- **Fix (data loss)**: SMI-6744 / SMI-6806 (PR #2919 post-merge retro, governance C1) --
+  `pruneExpiredLogs()` deleted every file older than 14 days in `~/.skillsmith/logs`, a
+  directory shared with other writers, including `native-attribution.jsonl`, which ADR-165
+  keeps for its lifetime as a denominator. It now deletes only this module's own
+  `skillsmith-<surface>-<date>.jsonl[.n]` files, where `<surface>` is the enumerated
+  `mcp|cli|vscode|doc-retrieval` set (regex-escaped),
   so an owned-shaped foreign name such as `skillsmith-foreign-<date>.jsonl` is left alone.
   Red-tested: removing `OWNED_LOG`'s test in `pruneExpiredLogs()` fails the new ownership test's
   `foreign` survives-expectation (six fixtures, including `native-attribution.jsonl` and four
