@@ -280,10 +280,10 @@ export function writeLogLine(surface: Surface, line: string): Promise<void> {
 // Only this module's own files are ever deleted. ~/.skillsmith/logs is shared
 // with other writers -- session-audit-*, retrieval-autoheal-*, retrieval-liveness-*,
 // eval-cron-*, mcp-disconnect-*, the hook wrapper's claude-hooks-*.log, and
-// native-attribution.jsonl, which ADR-165 keeps for its lifetime as a denominator. An
-// unfiltered sweep
-// deleted all of them once they aged past RETENTION_DAYS (SMI-6744 A1.9b
-// post-merge retro, governance C1). Dated files and their .<n> continuations only,
+// native-attribution.jsonl, which ADR-165 keeps for its lifetime as a denominator.
+// An unfiltered sweep deleted all of them once they aged past RETENTION_DAYS
+// (SMI-6744 A1.9b post-merge retro, governance C1). Dated files and their .<n>
+// continuations only,
 // and only for the surfaces this module actually writes: ownership is the surface
 // list, not a filename shape, so an owned-shaped foreign name such as
 // skillsmith-foreign-<date>.jsonl is left alone (PR #2921 gate, PR-17). Every Surface

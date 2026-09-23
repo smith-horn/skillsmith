@@ -107,24 +107,34 @@ export function buildHighlights(skill: Skill, query: string): SearchResult['high
     .split(/\s+/)
     .filter((t) => !['AND', 'OR', 'NOT'].includes(t.toUpperCase()))
     .map((t) => t.replace(/\*$/, '').toLowerCase())
+    // An empty term (a trailing space, a lone "*", an empty query) would make the
+    // alternation below `(foo|)` or `()`, which matches at every character boundary
+    // and wraps the whole name in <mark></mark> pairs. Same shape as the log sweep's
+    // empty-surface case (SMI-6744 A1.9b, PR #2923 retro G3): filter, then guard.
+    .filter((t) => t.length > 0)
 
   // Build regex for matching
   if (terms.length === 0) return highlights
 
-  const regex = new RegExp(
-    `(${terms.map((t) => t.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')).join('|')})`,
-    'gi'
-  )
+  const source = `(${terms.map((t) => t.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')).join('|')})`
+  // Two objects on purpose: a global regex carries lastIndex across .test() calls. The
+  // shipped code was safe only by accident -- the .replace() between the two .test()
+  // calls ran on the same object and reset lastIndex to 0 -- so any reordering, or a
+  // second object, would have made a description silently lose its highlight after a
+  // name match (PR #2923 retro G4, measured: the shipped sequence never lost one). The
+  // non-global one answers "does it match"; the global one does the replacement.
+  const matcher = new RegExp(source, 'i')
+  const replacer = new RegExp(source, 'gi')
 
   // Highlight in name
-  if (skill.name && regex.test(skill.name)) {
-    highlights.name = skill.name.replace(regex, '<mark>$1</mark>')
+  if (skill.name && matcher.test(skill.name)) {
+    highlights.name = skill.name.replace(replacer, '<mark>$1</mark>')
   }
 
   // Highlight in description
-  if (skill.description && regex.test(skill.description)) {
+  if (skill.description && matcher.test(skill.description)) {
     // Find the first match and extract surrounding context
-    const match = skill.description.match(regex)
+    const match = skill.description.match(matcher)
     if (match) {
       const index = skill.description.toLowerCase().indexOf(match[0].toLowerCase())
       const start = Math.max(0, index - 50)
@@ -134,7 +144,7 @@ export function buildHighlights(skill: Skill, query: string): SearchResult['high
       if (start > 0) snippet = '...' + snippet
       if (end < skill.description.length) snippet = snippet + '...'
 
-      highlights.description = snippet.replace(regex, '<mark>$1</mark>')
+      highlights.description = snippet.replace(replacer, '<mark>$1</mark>')
     }
   }
 
