@@ -157,7 +157,7 @@ async function walkForGitEntry(startAbs: string, stopAtAbs: string): Promise<Git
  * proven a symlinked `installPath`'s realpath resolves inside (real)
  * `skillsDir` before this ever runs.
  */
-async function hasGitAncestorBetween(
+export async function hasGitAncestorBetween(
   installPath: string,
   skillsDir: string
 ): Promise<GitWalkResult | null> {

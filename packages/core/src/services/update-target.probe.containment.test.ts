@@ -1,0 +1,122 @@
+/**
+ * @fileoverview The containment guard's ORDER, not its return value (SMI-6532 A2 §4.2).
+ * @module @skillsmith/core/services/update-target.probe.containment.test
+ *
+ * WHY THIS FILE IS SEPARATE FROM `update-target.probe.test.ts`.
+ *
+ * It mocks `fs/promises` to record syscalls. That mock is per-module, so keeping it
+ * here leaves the sibling suite on the real filesystem — where its realpath, retry and
+ * permission cases belong, because a mocked `fs` would make those pass by construction.
+ *
+ * WHY THE SIBLING SUITE CANNOT PIN THIS.
+ *
+ * `probeUpdateTarget` refuses a write-set entry that escapes `dir`. Moving
+ * `isContained` from ABOVE the `probeOneFile` call to BELOW it returns the IDENTICAL
+ * value — `{ kind: 'unreadable', errno: 'EINVAL' }` — because the guard still runs and
+ * still refuses. Only the I/O differs. So every assertion on the returned value passes
+ * either way, and that relocation measurably survived all 27 tests in the sibling file.
+ *
+ * Measured, with a 512 MB regular file outside the root and an identical return value
+ * from both:
+ *
+ *     guard above the read (correct)   1.1 ms      -- never opened it
+ *     guard below the read (mutant)    16,525.2 ms -- read and SHA-256'd all of it
+ *
+ * So the order is load-bearing: under the mutant an attacker-named `../../../<path>`
+ * in a write set is opened and fully buffered before being refused. The hash is
+ * discarded, so this is not an exfiltration primitive by itself, but it is file access
+ * outside the intended boundary and an unbounded read of a caller-named path.
+ *
+ * A first attempt to observe this used a FIFO canary and DISCRIMINATED NOTHING:
+ * `probeOneFile` calls `lstat` first and bails on `!st.isFile()`, so a FIFO is never
+ * opened in either order and both returned a fast EINVAL. Only regular files are ever
+ * read. Hence the syscall recorder below, plus a positive control — an instrument that
+ * returns the same answer for both states it exists to separate is measuring nothing.
+ */
+import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest'
+import { mkdtemp, mkdir, writeFile, rm } from 'node:fs/promises'
+import { tmpdir } from 'node:os'
+import { join } from 'node:path'
+
+/** Hoisted so the `vi.mock` factory, which is lifted above every import, can close over it. */
+const calls = vi.hoisted(() => ({ read: [] as string[], lstat: [] as string[] }))
+
+vi.mock('fs/promises', async (importOriginal) => {
+  const actual = await importOriginal<typeof import('fs/promises')>()
+  return {
+    ...actual,
+    readFile: (p: Parameters<typeof actual.readFile>[0], ...rest: unknown[]) => {
+      calls.read.push(String(p))
+      return (actual.readFile as (...a: unknown[]) => unknown)(p, ...rest)
+    },
+    lstat: (p: Parameters<typeof actual.lstat>[0], ...rest: unknown[]) => {
+      calls.lstat.push(String(p))
+      return (actual.lstat as (...a: unknown[]) => unknown)(p, ...rest)
+    },
+  }
+})
+
+const { probeUpdateTarget } = await import('./update-target.probe.js')
+
+let root: string
+let skillsDir: string
+let dir: string
+let canary: string
+
+beforeEach(async () => {
+  calls.read.length = 0
+  calls.lstat.length = 0
+  root = await mkdtemp(join(tmpdir(), 'probe-contain-'))
+  skillsDir = join(root, 'skills')
+  dir = join(skillsDir, 'my-skill')
+  await mkdir(dir, { recursive: true })
+  await writeFile(join(dir, 'SKILL.md'), '# hi\n')
+  // A regular file OUTSIDE `dir`. Regular, because only regular files are ever read.
+  canary = join(skillsDir, 'canary.txt')
+  await writeFile(canary, 'must never be read\n')
+})
+
+afterEach(async () => {
+  await rm(root, { recursive: true, force: true })
+})
+
+describe('the containment guard runs BEFORE the read, not merely before the return', () => {
+  it('positive control: an in-root write-set member IS read', async () => {
+    // Without this, a recorder that never records anything would let the real
+    // assertion below pass vacuously. This proves the instrument can see a read.
+    await probeUpdateTarget({ dir, skillsDir, dirName: 'my-skill', writeSet: ['SKILL.md'] })
+    expect(calls.read).toContain(join(dir, 'SKILL.md'))
+  })
+
+  it('never opens a write-set member that escapes the target dir', async () => {
+    const outcome = await probeUpdateTarget({
+      dir,
+      skillsDir,
+      dirName: 'my-skill',
+      writeSet: ['SKILL.md', '../canary.txt'],
+    })
+
+    // The refusal itself. True in BOTH orders, so it pins nothing on its own — it is
+    // here so a failure of the real assertion is not mistaken for a broken fixture.
+    expect(outcome).toEqual({
+      kind: 'unreadable',
+      error: { path: canary, errno: 'EINVAL' },
+    })
+
+    // The actual property. Fails if `isContained` is relocated below `probeOneFile`.
+    expect(calls.read).not.toContain(canary)
+  })
+
+  it('does not even stat an escaping member', async () => {
+    // Stronger and cheaper to satisfy: refusing before `probeOneFile` means zero
+    // syscalls on the path, not just no read. Pins the guard above the whole call
+    // rather than merely above the `readFile` inside it.
+    await probeUpdateTarget({
+      dir,
+      skillsDir,
+      dirName: 'my-skill',
+      writeSet: ['SKILL.md', '../canary.txt'],
+    })
+    expect(calls.lstat).not.toContain(canary)
+  })
+})
