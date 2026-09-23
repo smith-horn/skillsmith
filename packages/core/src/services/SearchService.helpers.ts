@@ -126,18 +126,22 @@ export function buildHighlights(skill: Skill, query: string): SearchResult['high
   if (terms.length === 0) return highlights
 
   const source = `(${terms.map((t) => t.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')).join('|')})`
-  // Two objects on purpose: a global regex carries lastIndex across .test() calls. The
-  // shipped code never saw a leaked lastIndex, but for three different reasons -- a
-  // falsy name short-circuits before the first .test(), a failing name .test() resets
+  // Two objects on purpose: a global regex carries lastIndex across .test()/.exec() calls.
+  // The code before PR #2924 used ONE global object for both .test() calls and both
+  // .replace() calls and never saw a leaked lastIndex, but for three different reasons --
+  // a falsy name short-circuited before the first .test(), a failing name .test() reset
   // lastIndex itself, and only on a matching name did the interleaved .replace() do the
   // resetting (PR #2923 retro G4, measured: 11 reachable paths, none lost a highlight).
-  // Depending on one of three coincidences is the hazard; two objects removes it. The
-  // non-global one answers "does it match"; the global one does the replacement.
+  // Depending on one of three coincidences is the hazard; a non-global matcher for the
+  // name .test() and the description .exec(), and a global replacer for .replace(), removes it.
   // `u` as well as `i`: without it, 32 BMP code points (the Kelvin sign, Ohm, Angstrom,
-  // capital sharp s, 27 Greek iota-subscript capitals) fail to match their own lowercase
-  // form (PR #2924 retro C5, full-BMP sweep: 33 misses with `i`, 1 with `iu`, the one
-  // being U+0130, whose lowercase is two code units). Every escaped metacharacter above
-  // is a legal identity escape under `u`.
+  // capital sharp s, the Greek capital theta symbol U+03F4, and the 27 iota-subscript
+  // capitals) fail to match their own lowercase form (PR #2924 retro C5, full-BMP sweep:
+  // 33 misses with `i`, 1 with `iu`, the one being U+0130, whose lowercase is two code
+  // units). Every escaped metacharacter above is a legal identity escape under `u` -- the
+  // escape class IS the ECMAScript SyntaxCharacter set (governance on the PR #2925 commit:
+  // 674,140 constructions over every BMP code point in seven query shapes, every SMP code
+  // point and lone surrogates; none throws).
   const matcher = new RegExp(source, 'iu')
   const replacer = new RegExp(source, 'giu')
 
@@ -146,32 +150,31 @@ export function buildHighlights(skill: Skill, query: string): SearchResult['high
     highlights.name = skill.name.replace(replacer, '<mark>$1</mark>')
   }
 
-  // Highlight in description
-  if (skill.description && matcher.test(skill.description)) {
-    // Find the first match and extract surrounding context
-    // `exec()` on the non-global matcher: `RegExpExecArray.index` is required, so there is
-    // no fallback to write and a future global-flag regression cannot silently place the
-    // window at 0 (PR #2924 retro C4). Do NOT re-derive the offset from a lowercased
-    // copy: `toLowerCase()` is context-sensitive (Greek final sigma, `Σ` -> `ς`) and
-    // length-changing (U+0130), so an offset into the lowercased string is not an
-    // offset into the original and the window silently excluded the match (governance
-    // F1 on the PR #2924 core commit).
-    const match = matcher.exec(skill.description)
-    if (match) {
-      const index = match.index
-      // Clamp at 0: a negative start reaches String.slice(), which counts from the end,
-      // and every early match in a long description would render as a bare "...".
-      const start = Math.max(0, index - 50)
-      const end = Math.min(skill.description.length, index + match[0].length + 50)
+  // Highlight in description. `exec()` alone on the non-global matcher: a preceding
+  // `.test()` would be a second full scan whose answer `exec()` already carries, and the
+  // two can never disagree on a stateless regex (governance on the PR #2925 commit, F7:
+  // 134,871 query/subject pairs, 0 disagreements). `RegExpExecArray.index` is required, so
+  // there is no fallback to write and a future global-flag regression cannot silently place
+  // the window at 0 (PR #2924 retro C4). Do NOT re-derive the offset from a lowercased
+  // copy: `toLowerCase()` is context-sensitive (Greek final sigma, `Σ` -> `ς`) and
+  // length-changing (U+0130), so an offset into the lowercased string is not an offset
+  // into the original and the window silently excluded the match (governance F1 on the
+  // PR #2924 core commit).
+  const match = skill.description ? matcher.exec(skill.description) : null
+  if (match && skill.description) {
+    const index = match.index
+    // Clamp at 0: a negative start reaches String.slice(), which counts from the end,
+    // and every early match in a long description would render as a bare "...".
+    const start = Math.max(0, index - 50)
+    const end = Math.min(skill.description.length, index + match[0].length + 50)
 
-      // Replace first, then add the truncation markers, so a term of dots can only
-      // match dots that are in the description (PR #2924 retro C3).
-      let snippet = skill.description.slice(start, end).replace(replacer, '<mark>$1</mark>')
-      if (start > 0) snippet = '...' + snippet
-      if (end < skill.description.length) snippet = snippet + '...'
+    // Replace first, then add the truncation markers, so a term of dots can only
+    // match dots that are in the description (PR #2924 retro C3).
+    let snippet = skill.description.slice(start, end).replace(replacer, '<mark>$1</mark>')
+    if (start > 0) snippet = '...' + snippet
+    if (end < skill.description.length) snippet = snippet + '...'
 
-      highlights.description = snippet
-    }
+    highlights.description = snippet
   }
 
   return highlights

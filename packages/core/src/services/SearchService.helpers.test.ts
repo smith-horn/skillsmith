@@ -164,6 +164,11 @@ describe('buildHighlights -- FTS operators', () => {
   it('drops AND / OR / NOT as terms, not merely as an empty result', () => {
     // The fixture contains "and", "or" and "not" as substrings on purpose, so a
     // missing operator filter would highlight them instead of returning {}.
+    // NOTE: `buildFtsQuery` (same file) uses a DIFFERENT operator model -- it passes a
+    // query through raw only when it contains a space-delimited uppercase ` AND ` /
+    // ` OR ` / ` NOT `. So 'and or not' yields no highlights here but a real FTS query
+    // there; the reconciliation (and `AND*`'s meaning) is SMI-6817, so the ordering of
+    // the operator filter and the trailing-* strip is deliberately NOT pinned here.
     const s = skill({ name: 'command center', description: 'a tool for annotation and notes' })
     expect(buildHighlights(s, 'AND OR NOT')).toEqual({})
     expect(buildHighlights(s, 'and or not')).toEqual({})
@@ -186,6 +191,17 @@ describe('buildHighlights -- Unicode case folding', () => {
   })
 })
 
+describe('buildHighlights -- key presence', () => {
+  it('omits the key for the side that does not match', () => {
+    // `toEqual({})` cannot see this: vitest ignores keys whose value is `undefined`, so
+    // only `Object.keys` distinguishes an absent key from an undefined-valued one.
+    const nameOnly = skill({ name: 'foo tool', description: 'unrelated text' })
+    expect(Object.keys(buildHighlights(nameOnly, 'foo'))).toEqual(['name'])
+    const descOnly = skill({ name: 'unrelated', description: 'a foo tool' })
+    expect(Object.keys(buildHighlights(descOnly, 'foo'))).toEqual(['description'])
+  })
+})
+
 describe('buildHighlights -- escaping', () => {
   it('treats regex metacharacters in a term literally', () => {
     const s = skill({ name: 'c++ helper', description: 'for c++ and c.' })
@@ -195,7 +211,10 @@ describe('buildHighlights -- escaping', () => {
   })
 
   it('never throws and never over-matches on any escaped metacharacter', () => {
-    const s = skill({ name: 'n/a', description: 'literal a.b a*b a|b a[b a(b a\\b here' })
+    const s = skill({
+      name: 'n/a',
+      description: 'literal a.b a*b a|b a[b a(b a\\b a^b a$b a+b a?b a{b a}b a]b a)b here',
+    })
     for (const q of [
       'a.b',
       'a*b',
@@ -214,9 +233,27 @@ describe('buildHighlights -- escaping', () => {
     ]) {
       expect(() => buildHighlights(s, q), q).not.toThrow()
     }
-    expect(buildHighlights(s, 'a.b').description).toContain('<mark>a.b</mark>')
-    expect(buildHighlights(s, 'a[b').description).toContain('<mark>a[b</mark>')
-    expect(buildHighlights(s, 'a\\b').description).toContain('<mark>a\\b</mark>')
+    // One positive per reachable class member: an UNescaped metacharacter changes the
+    // pattern's meaning, so the literal spelling stops matching itself (or throws under
+    // `u`). `(` and `)` are unreachable -- `query.replace(/["()]/g, '')` strips them
+    // before the escaper ever sees them. `.` needs the negative below instead: an
+    // unescaped `.` still matches a literal dot, so only an over-match can catch it.
+    for (const q of [
+      'a.b',
+      'a*b',
+      'a|b',
+      'a[b',
+      'a\\b',
+      'a^b',
+      'a$b',
+      'a+b',
+      'a?b',
+      'a{b',
+      'a}b',
+      'a]b',
+    ]) {
+      expect(buildHighlights(s, q).description, q).toContain(`<mark>${q}</mark>`)
+    }
     expect(buildHighlights(skill({ name: 'axb', description: 'axb' }), 'a.b')).toEqual({})
   })
 })
