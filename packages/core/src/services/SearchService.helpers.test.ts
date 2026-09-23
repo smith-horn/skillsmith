@@ -191,6 +191,45 @@ describe('buildHighlights -- Unicode case folding', () => {
   })
 })
 
+describe('buildHighlights -- multiple terms', () => {
+  it('highlights every term, not just the first', () => {
+    // The thirteen earlier mutations each perturb ONE term's handling; none perturbs
+    // the set. Red arm: `terms.map(` -> `terms.slice(0, 1).map(` (PR #2925 retro F-A).
+    const s = skill({ name: 'foo bar tool', description: 'a foo and a bar' })
+    const h = buildHighlights(s, 'foo bar')
+    expect(h.name).toBe('<mark>foo</mark> <mark>bar</mark> tool')
+    expect(h.description).toBe('a <mark>foo</mark> and a <mark>bar</mark>')
+  })
+})
+
+describe('buildHighlights -- surrogate pairs', () => {
+  const LONE = /[\uD800-\uDBFF](?![\uDC00-\uDFFF])|(?<![\uD800-\uDBFF])[\uDC00-\uDFFF]/
+
+  it('never cuts the window start through a surrogate pair', () => {
+    // 49 x, an astral character (two code units at 49-50), 49 y, then the match at
+    // 100: start = index - 50 = 50 lands on the low surrogate.
+    const s = skill({
+      name: 'n/a',
+      description: 'x'.repeat(49) + '\u{1F600}' + 'y'.repeat(49) + 'needle' + 'z'.repeat(60),
+    })
+    const d = buildHighlights(s, 'needle').description ?? ''
+    expect(LONE.test(d)).toBe(false)
+    expect(d).toContain('\u{1F600}')
+  })
+
+  it('never cuts the window end through a surrogate pair', () => {
+    // The match at 0, 49 y, then the astral character at 55-56: end = 6 + 50 = 56
+    // lands between its two code units.
+    const s = skill({
+      name: 'n/a',
+      description: 'needle' + 'y'.repeat(49) + '\u{1F600}' + 'z'.repeat(60),
+    })
+    const d = buildHighlights(s, 'needle').description ?? ''
+    expect(LONE.test(d)).toBe(false)
+    expect(d).toContain('\u{1F600}')
+  })
+})
+
 describe('buildHighlights -- key presence', () => {
   it('omits the key for the side that does not match', () => {
     // `toEqual({})` cannot see this: vitest ignores keys whose value is `undefined`, so

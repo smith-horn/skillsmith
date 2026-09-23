@@ -165,8 +165,15 @@ export function buildHighlights(skill: Skill, query: string): SearchResult['high
     const index = match.index
     // Clamp at 0: a negative start reaches String.slice(), which counts from the end,
     // and every early match in a long description would render as a bare "...".
-    const start = Math.max(0, index - 50)
-    const end = Math.min(skill.description.length, index + match[0].length + 50)
+    let start = Math.max(0, index - 50)
+    let end = Math.min(skill.description.length, index + match[0].length + 50)
+    // Snap both edges to code-point boundaries: slice() counts code units, so an astral
+    // character (an emoji) straddling an edge would be cut into a lone surrogate -- the
+    // same code-unit-vs-code-point axis the `u` flag fixes for matching (PR #2925 retro
+    // F-B). Either edge moves outward, so the whole character stays in the window.
+    if (start > 0 && /[\uDC00-\uDFFF]/.test(skill.description[start])) start -= 1
+    if (end < skill.description.length && /[\uD800-\uDBFF]/.test(skill.description[end - 1]))
+      end += 1
 
     // Replace first, then add the truncation markers, so a term of dots can only
     // match dots that are in the description (PR #2924 retro C3).
