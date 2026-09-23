@@ -5,30 +5,34 @@ All notable changes to `@skillsmith/core` are documented here.
 ## [Unreleased]
 
 - **Fix**: SMI-6744 / SMI-6814 (PR #2923 post-merge retro G3/G4; PR #2924 governance F1 and retro
-  C3/C4/C5/C8) -- `buildHighlights()` no longer wraps every character of a result in `<mark></mark>`
-  when the query carries an empty term (a trailing space, a lone `*`, an empty query): empty
-  terms are dropped before the alternation is built, the same filter-then-guard shape as the log
-  sweep below. The description snippet is placed at the match's real offset (`exec()`, whose
-  `index` is required) instead of an `indexOf()` into a lowercased copy, which `toLowerCase()`
-  can shift (U+0130) or lose (Greek final sigma), so a description whose only match sat past such
-  a character lost its highlight. The truncation `...` markers are added after the `<mark>`
-  replacement, so a term of dots no longer highlights the markers themselves. Matching uses the
-  `u` flag as well as `i`, so the Kelvin sign, Ohm, Angstrom, capital sharp s, the Greek capital
-  theta symbol and the Greek iota-subscript capitals fold to their lowercase forms, and the query
-  term is no longer lowercased (the flags fold case; lowercasing turned a query of U+0130 into two
-  code units that matched nothing). It also no longer relies on a shared
-  global-flag regex between the two `.test()` calls: the shipped sequence never saw a leaked
-  `lastIndex`, but for three different reasons (a falsy name short-circuits, a failing name test
-  resets it itself, and only on a matching name did the interleaved `.replace()` reset it);
-  matching and replacing now use separate objects and the matcher is non-global, so a
-  reordering cannot make a description silently lose its highlight after a name match. The
-  docblock now states that the return values are HTML fragments around un-escaped registry
-  text (escaping inside the function is SMI-6815). Red-tested, thirteen mutations, each watched to
-  fail against the committed tests: removing the empty-term filter; making the matcher global;
-  restoring the lowercased `indexOf()`; removing the window clamp; deleting the operator filter;
-  wrapping before replacing; dropping `u`; dropping `[` and, separately, `*` from the escape
-  class; deleting the quote/paren strip; deleting the trailing-`*` strip; restoring the term
-  lowercasing; and forcing the name branch on. (#2924)
+  C3/C4/C5/C8; PR #2925 retro F-A/F-B) -- `buildHighlights()` no longer wraps every character of
+  a result in `<mark></mark>` when the query carries an empty term (a trailing space, a lone `*`,
+  an empty query): empty terms are dropped before the alternation is built, the same
+  filter-then-guard shape as the log sweep below. The description snippet is placed at the
+  match's real offset (`exec()`, whose `index` is required) instead of an `indexOf()` into a
+  lowercased copy, which `toLowerCase()` can shift (U+0130) or lose (Greek final sigma), so a
+  description whose only match sat past such a character lost its highlight. The truncation `...`
+  markers are added after the `<mark>` replacement, so a term of dots no longer highlights the
+  markers themselves, and the window is snapped to code-point boundaries, so an emoji straddling
+  its edge is no longer cut into a lone surrogate (an already-lone surrogate in the description
+  is left alone). Matching uses the `u` flag as well as `i`, so the Kelvin sign, Ohm, Angstrom,
+  capital sharp s, the Greek capital theta symbol and the Greek iota-subscript capitals fold to
+  their lowercase forms, and the query term is no longer lowercased (the flags fold case;
+  lowercasing turned a query of U+0130 into two code units that matched nothing). It also no
+  longer relies on a shared global-flag regex between the two `.test()` calls: the shipped
+  sequence never saw a leaked `lastIndex`, but for three different reasons (a falsy name
+  short-circuits, a failing name test resets it itself, and only on a matching name did the
+  interleaved `.replace()` reset it); matching and replacing now use separate objects and the
+  matcher is non-global, so a reordering cannot make a description silently lose its highlight
+  after a name match. The docblock now states that the return values are HTML fragments around
+  un-escaped registry text (escaping inside the function is SMI-6815). Red-tested, nineteen
+  mutations, each watched to fail against the committed tests: removing the empty-term filter;
+  making the matcher global; restoring the lowercased `indexOf()`; removing the window clamp;
+  deleting the operator filter; wrapping before replacing; dropping `u`; dropping `[` and,
+  separately, `*` from the escape class; deleting the quote/paren strip; deleting the
+  trailing-`*` strip; restoring the term lowercasing; forcing the name branch on; dropping every
+  term after the first and, separately, after the second; removing the window's surrogate snap;
+  and dropping the snap's real-pair check, whole or either half alone. (#2924, #2925, #2927)
 
 - **Fix (data loss)**: SMI-6744 / SMI-6806 (PR #2919 post-merge retro, governance C1) --
   `pruneExpiredLogs()` deleted every file older than 14 days in `~/.skillsmith/logs`, a
