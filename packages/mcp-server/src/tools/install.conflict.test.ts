@@ -81,6 +81,27 @@ const OTHER = 'cursor' as const
  */
 const NON_CANONICAL = CLIENT_IDS.filter((c) => c !== CANONICAL_CLIENT)
 
+// A parameterized suite reports a PASS when its table is empty -- it generates
+// no cases and the file goes green with the coverage silently gone. Measured
+// rather than assumed: forcing NON_CANONICAL to [] takes this file from 31
+// tests to 7 passed, with nothing failing and nothing saying so.
+//
+// That is the same invisible-success shape the rest of this file exists to
+// prevent, so the table is pinned before it is used. This describe block is
+// NOT redundant with the cases below: those cannot fail if they do not exist,
+// and this one can.
+describe('the client table this file parameterizes over', () => {
+  it('is the whole non-canonical domain, and is not empty', () => {
+    // Deliberately NOT compared against `CLIENT_IDS.filter(...)` — that is the
+    // expression NON_CANONICAL is defined by, so asserting it against itself
+    // could never fail. An earlier draft of this guard did exactly that.
+    expect(NON_CANONICAL.length).toBe(CLIENT_IDS.length - 1)
+    expect(NON_CANONICAL.length).toBeGreaterThan(0)
+    expect(NON_CANONICAL).not.toContain(CANONICAL_CLIENT)
+    expect(CLIENT_IDS).toContain(CANONICAL_CLIENT)
+  })
+})
+
 /** A manifest holding exactly one entry, under `key`, that would conflict. */
 function manifestWithEntry(key: string, version = '1.0.0'): SkillManifest {
   return {
