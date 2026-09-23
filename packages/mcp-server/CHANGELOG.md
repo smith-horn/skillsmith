@@ -4,6 +4,12 @@ All notable changes to `@skillsmith/mcp-server` are documented here.
 
 ## [Unreleased]
 
+- **Test**: SMI-6358 post-merge retro -- `checkForConflicts`'s client keying is now pinned by
+  `install.conflict.test.ts`. `install.test.ts` mocks the whole module, so it asserts what is
+  passed and never executes the function; the e2e file passes `CANONICAL_CLIENT` everywhere, for
+  which `manifestKeyFor` is the identity function. Reverting both keying calls to a bare name
+  previously left all 24 unit and all 11 e2e tests green. (#2920 follow-up)
+
 - **Fix (data integrity)**: SMI-6358 -- `checkForConflicts()` takes `client` and resolves the
   manifest key through `manifestKeyFor(name, client)` rather than assuming the canonical client.
   Installing for one client could previously report a conflict belonging to another, or miss a real

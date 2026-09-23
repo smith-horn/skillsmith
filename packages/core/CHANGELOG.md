@@ -41,7 +41,7 @@ All notable changes to `@skillsmith/core` are documented here.
   `foreign` survives-expectation (six fixtures, including `native-attribution.jsonl` and four
   owned-shaped names). (#2921)
 
-- **Fix (data integrity)**: SMI-6358 -- `backfillProvenance()` keys manifest writes through
+- **Fix (data integrity)**: SMI-6358 -- `backfillManifest()` keys manifest writes through
   `manifestKeyFor(name, client)` instead of the bare name. A skill installed for a non-canonical
   client is stored as `name::client`; writing provenance under the bare name landed it on the
   canonical client's entry instead, or on nothing. Red-tested: reverting the key takes down 2 of 15
