@@ -4,8 +4,18 @@
  * Covers the wiring in client.ts + client.cache.ts — hits, misses, per-call
  * no-store, env kill-switch, and stable cache key for getRecommendations.
  *
- * SMI-6796: Closes three gaps — order-dependent env teardown, untested TTL
+ * SMI-6810: Closes three gaps — order-dependent env teardown, untested TTL
  * expiry, and untested eviction-at-maxEntries behavior.
+ *
+ * ENV POLICY FOR THIS FILE: PRESERVE, do not neutralize.
+ * `SKILLSMITH_DISABLE_CLIENT_CACHE=1` makes six of these tests FAIL, loudly, so
+ * a developer who exported it and forgot finds out. Its sibling policy is the
+ * opposite and deliberately so: `packages/core/src/config/file-lock.test.ts`
+ * NEUTRALIZES `SKILLSMITH_LOCK_NO_AUTO_RECLAIM`, because that variable leaves
+ * its suite passing 6/6 while silently testing less -- invisible, so the suite
+ * must not depend on it. The rule is about which failure the variable produces,
+ * not about the variable: a switch that DISARMS gets cleared, a switch that
+ * BREAKS gets kept. Do not "unify" these two files (SMI-6807, SMI-6810).
  */
 
 import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest'
@@ -52,7 +62,7 @@ describe('SMI-4120: Client response cache', () => {
 
   beforeEach(() => {
     fetchSpy = vi.spyOn(globalThis, 'fetch')
-    // SMI-6796: Snapshot whatever the environment held BEFORE this test ran
+    // SMI-6810: Snapshot whatever the environment held BEFORE this test ran
     // (absent, or inherited from the shell) so afterEach can restore that
     // exact prior state instead of unconditionally deleting it.
     prevDisableCache = process.env.SKILLSMITH_DISABLE_CLIENT_CACHE
@@ -60,7 +70,7 @@ describe('SMI-4120: Client response cache', () => {
 
   afterEach(() => {
     fetchSpy.mockRestore()
-    // SMI-6796: Restore the PRIOR value rather than always deleting. An
+    // SMI-6810: Restore the PRIOR value rather than always deleting. An
     // unconditional `delete` here destroys a value inherited from the
     // environment on the very first test that runs, and every later test in
     // this file then runs as if the variable had never been set — an
@@ -176,7 +186,7 @@ describe('SMI-4120: Client response cache', () => {
     expect(fetchSpy).toHaveBeenCalledTimes(2)
   })
 
-  // SMI-6796: TTL expiry was untested anywhere in the repo — deleting
+  // SMI-6810: TTL expiry was untested anywhere in the repo — deleting
   // ApiCache.get()'s `Date.now() > entry.expiresAt` check left no failing
   // assertion. vitest's fake timers do NOT patch `node:timers/promises`, and
   // `vi.getTimerCount()` reads 0 while a pending `delay()` is outstanding —
@@ -205,34 +215,103 @@ describe('SMI-4120: Client response cache', () => {
       // entry is treated as a miss and removed from the cache.
       vi.setSystemTime(Date.now() + 2)
       expect(cache.get<string>('k')).toBeUndefined()
-      expect(cache.has('k')).toBe(false)
+    })
+
+    // `cache.ts` carries FOUR independent copies of the expiry comparison --
+    // get(), has(), prune() and evictLeastUsed()'s early return. The test
+    // above pins only get()'s. Measured: deleting any of the other three left
+    // all 12 tests green, so each needs its own arm. A single mutation over N
+    // copies proves only that at least one is covered.
+    it('has() expires independently of get() -- its own copy of the guard', () => {
+      vi.useFakeTimers()
+      const cache = new ApiCache({ defaultTtl: 1000 })
+      cache.set('untouched', 'v')
+
+      expect(cache.has('untouched')).toBe(true)
+      vi.setSystemTime(Date.now() + 1001)
+      // Deliberately never calls get() on this key. An earlier revision
+      // asserted has() only AFTER a get() had already deleted the entry,
+      // which passes with has()'s own guard removed -- a decorative
+      // assertion that reads as coverage.
+      expect(cache.has('untouched')).toBe(false)
+    })
+
+    it('prune() drops expired entries and leaves live ones', () => {
+      vi.useFakeTimers()
+      const cache = new ApiCache({ defaultTtl: 1000, enableStats: true })
+      cache.set('old', 'v')
+      vi.setSystemTime(Date.now() + 900)
+      cache.set('new', 'v')
+
+      // 'old' is now 1001ms into a 1000ms TTL; 'new' is 101ms into its own.
+      vi.setSystemTime(Date.now() + 101)
+
+      // Assert prune()'s OWN observables -- its return count and the map size.
+      // Asserting `has('old') === false` instead would be decorative: has()
+      // carries its own expiry guard and answers false for an expired entry
+      // whether or not prune removed it. Measured -- that version left
+      // prune()'s comparison mutable with every test still green.
+      expect(cache.prune()).toBe(1)
+      expect(cache.getStats().entries).toBe(1)
+      expect(cache.get<string>('new')).toBe('v')
+    })
+
+    it('evictLeastUsed() reclaims an expired entry rather than a live one', () => {
+      vi.useFakeTimers()
+      // maxEntries 2, so the third set() triggers eviction. 'stale' is
+      // expired by then; 'fresh' is not. evictLeastUsed()'s early return
+      // should take the expired one regardless of hit counts -- so give
+      // 'stale' MORE hits than 'fresh', making lowest-hitCount pick 'fresh'.
+      const cache = new ApiCache({ defaultTtl: 1000, maxEntries: 2 })
+      cache.set('stale', 'v')
+      cache.get('stale')
+      cache.get('stale')
+      vi.setSystemTime(Date.now() + 1001)
+      cache.set('fresh', 'v')
+
+      cache.set('third', 'v')
+
+      // Assert on the LIVE entry, not the expired one. `has('stale')` is
+      // false either way -- has() has its own guard -- so it cannot tell
+      // "the early return reclaimed the expired entry" from "the lowest-
+      // hitCount entry was evicted instead". Without the early return the
+      // loop reaches the hitCount comparison and evicts 'fresh' (1 hit)
+      // over 'stale' (3 hits), so 'fresh' surviving is the discriminator.
+      expect(cache.get<string>('fresh')).toBe('v')
+      expect(cache.get<string>('third')).toBe('v')
     })
 
     it('an expired search response is not served from the client cache — it re-fetches', async () => {
       vi.useFakeTimers()
       fetchSpy.mockImplementation(async () => mockJsonResponse(SAMPLE_SEARCH_RESPONSE))
-      const client = new SkillsmithApiClient({ baseUrl: 'http://x' })
+      // A NON-default defaultTtl, deliberately. `new ApiCache({})` defaults
+      // defaultTtl to DEFAULT_TTL.search -- the very constant `set(..., 'search')`
+      // selects -- so with the default the two are the same number and this test
+      // cannot tell the endpoint-type lookup from the constructor fallback.
+      // Measured: replacing `DEFAULT_TTL[endpointType]` with `this.defaultTtl`
+      // left all 12 tests green. Diverging them makes that mutation fail.
+      const cache = new ApiCache({ defaultTtl: 60_000 })
+      const client = new SkillsmithApiClient({ baseUrl: 'http://x', cache })
 
       await client.search({ query: 'go' })
       expect(fetchSpy).toHaveBeenCalledTimes(1)
 
-      // Still inside the search TTL (DEFAULT_TTL.search, 1 hour): served
-      // from cache, no second fetch.
-      vi.setSystemTime(Date.now() + DEFAULT_TTL.search - 1)
+      // Past the constructor default (60s) but far inside DEFAULT_TTL.search
+      // (1h). A correct endpoint-type lookup still serves from cache here; a
+      // fallback to defaultTtl would have expired and re-fetched.
+      vi.setSystemTime(Date.now() + 60_001)
       await client.search({ query: 'go' })
       expect(fetchSpy).toHaveBeenCalledTimes(1)
 
-      // One millisecond past the TTL: the cached entry is now expired and a
-      // fresh fetch is required. Without the expiry check in
-      // ApiCache.get(), this would still be served from cache and the
-      // fetch count would stay at 1 forever.
-      vi.setSystemTime(Date.now() + 2)
+      // Past DEFAULT_TTL.search itself: expired under either reading, so the
+      // re-fetch here pins get()'s expiry check rather than the TTL source.
+      vi.setSystemTime(Date.now() + DEFAULT_TTL.search)
       await client.search({ query: 'go' })
       expect(fetchSpy).toHaveBeenCalledTimes(2)
     })
   })
 
-  // SMI-6796: evictLeastUsed() evicts the entry with the lowest hitCount,
+  // SMI-6810: evictLeastUsed() evicts the entry with the lowest hitCount,
   // which is NOT least-recently-used despite the method's name — pin that
   // actual behavior, not the name.
   describe('eviction at maxEntries', () => {
