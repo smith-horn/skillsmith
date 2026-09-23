@@ -25,14 +25,14 @@ All notable changes to `@skillsmith/core` are documented here.
   interleaved `.replace()` reset it); matching and replacing now use separate objects and the
   matcher is non-global, so a reordering cannot make a description silently lose its highlight
   after a name match. The docblock now states that the return values are HTML fragments around
-  un-escaped registry text (escaping inside the function is SMI-6815). Red-tested, seventeen
+  un-escaped registry text (escaping inside the function is SMI-6815). Red-tested, nineteen
   mutations, each watched to fail against the committed tests: removing the empty-term filter;
   making the matcher global; restoring the lowercased `indexOf()`; removing the window clamp;
   deleting the operator filter; wrapping before replacing; dropping `u`; dropping `[` and,
   separately, `*` from the escape class; deleting the quote/paren strip; deleting the
   trailing-`*` strip; restoring the term lowercasing; forcing the name branch on; dropping every
   term after the first and, separately, after the second; removing the window's surrogate snap;
-  and dropping the snap's real-pair check. (#2924, #2925, #2927)
+  and dropping the snap's real-pair check, whole or either half alone. (#2924, #2925, #2927)
 
 - **Fix (data loss)**: SMI-6744 / SMI-6806 (PR #2919 post-merge retro, governance C1) --
   `pruneExpiredLogs()` deleted every file older than 14 days in `~/.skillsmith/logs`, a

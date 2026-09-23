@@ -245,6 +245,31 @@ describe('buildHighlights -- surrogate pairs', () => {
     const d = buildHighlights(s, 'needle').description ?? ''
     expect(d.match(new RegExp(LONE.source, 'g'))?.length).toBe(1)
   })
+
+  it('does not pull a lone HIGH surrogate in when the unit at the start edge is ordinary', () => {
+    // Malformed input: a lone high surrogate at code unit 49, an ordinary 'y' at 50, the
+    // window start at 50. A snap that checked only the high side (description[start - 1])
+    // would step back onto it; the real-pair check also needs description[start] to be a
+    // low surrogate, so nothing moves and the output holds no lone unit (gate round 1,
+    // PR-16 survivor).
+    const s = skill({
+      name: 'n/a',
+      description: 'x'.repeat(49) + '\uD83D' + 'y'.repeat(50) + 'needle' + 'z'.repeat(60),
+    })
+    const d = buildHighlights(s, 'needle').description ?? ''
+    expect(LONE.test(d)).toBe(false)
+  })
+
+  it('does not pull a lone LOW surrogate in when the unit at the end edge is ordinary', () => {
+    // The mirror: the match at 0, 50 y, a lone low surrogate at 56, the window end at 56.
+    // A snap that checked only the low side (description[end]) would step onto it.
+    const s = skill({
+      name: 'n/a',
+      description: 'needle' + 'y'.repeat(50) + '\uDC00' + 'z'.repeat(60),
+    })
+    const d = buildHighlights(s, 'needle').description ?? ''
+    expect(LONE.test(d)).toBe(false)
+  })
 })
 
 describe('buildHighlights -- key presence', () => {
