@@ -14,9 +14,9 @@ All notable changes to `@skillsmith/core` are documented here.
   a character lost its highlight. The truncation `...` markers are added after the `<mark>`
   replacement, so a term of dots no longer highlights the markers themselves. Matching uses the
   `u` flag as well as `i`, so the Kelvin sign, Ohm, Angstrom, capital sharp s, the Greek capital
-  theta symbol and the Greek iota-subscript capitals fold to their lowercase forms, and the query term is no longer
-  lowercased (the flags fold case; lowercasing turned a query of U+0130 into two code units
-  that matched nothing). It also no longer relies on a shared
+  theta symbol and the Greek iota-subscript capitals fold to their lowercase forms, and the query
+  term is no longer lowercased (the flags fold case; lowercasing turned a query of U+0130 into two
+  code units that matched nothing). It also no longer relies on a shared
   global-flag regex between the two `.test()` calls: the shipped sequence never saw a leaked
   `lastIndex`, but for three different reasons (a falsy name short-circuits, a failing name test
   resets it itself, and only on a matching name did the interleaved `.replace()` reset it);
