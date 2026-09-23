@@ -100,30 +100,34 @@ export function findUnpinnedBareNpxCliInPackageJson(repoRoot) {
 }
 
 /**
- * Sub-check 3: `.mcp.json`'s `ruflo` npx entry must pin an exact semver.
- * Deliberately scoped to `ruflo` only, not "every npx entry" — a git
- * worktree's `.mcp.json` gets auto-patched (skip-worktree, never committed)
- * to a bare unversioned `npx` command for `skillsmith`; that worktree-local
- * artifact is not a real invariant violation. See the plan doc's Review
- * Summary (Codex plan-review finding #2) for the full explanation.
+ * Sub-check 3: `scripts/mcp-ruflo-launcher.sh` must define `RUFLO_CLI_PIN`
+ * as a plain, anchored, exact-semver assignment (SMI-6744 ADR-170 § 7).
+ *
+ * The pin moved here from `.mcp.json`'s `ruflo` npx entry (SMI-5746's
+ * original scope) once ADR-170 replaced that entry with a launcher script
+ * that `docker exec`s into a lockfile-pinned, image-baked `@claude-flow/cli`
+ * tree — there is no `npx` entry left to read a version out of. This check
+ * and `scripts/cli-pin-drift-check.sh` both read the SAME one-line literal
+ * from the launcher, rather than skipping when a pin can't be found: an
+ * absent or malformed pin is exactly the drift this check exists to catch,
+ * not a "nothing to check" case.
  */
-export function findUnpinnedRufloMcpEntry(mcpJsonPath) {
-  if (!existsSync(mcpJsonPath)) return null
-  let mcp
-  try {
-    mcp = JSON.parse(readFileSync(mcpJsonPath, 'utf8'))
-  } catch {
-    return null
+export function findUnpinnedRufloLauncherPin(launcherPath) {
+  if (!existsSync(launcherPath)) {
+    return { reason: `RUFLO_CLI_PIN launcher not found at ${launcherPath}`, launcherPath }
   }
-  const ruflo = mcp.mcpServers && mcp.mcpServers.ruflo
-  if (!ruflo || ruflo.command !== 'npx') return null
-  const args = ruflo.args || []
-  const pkgArg = args[0] || ''
-  const m = pkgArg.match(/^ruflo@(.+)$/)
-  if (!m) return { reason: 'ruflo npx entry missing an @version suffix', pkgArg }
-  const version = m[1]
-  if (!/^\d+\.\d+\.\d+$/.test(version)) {
-    return { reason: `ruflo npx entry pinned to a non-exact-semver tag '${version}'`, pkgArg }
+  const src = readFileSync(launcherPath, 'utf8')
+  const m = src.match(/^RUFLO_CLI_PIN=(\S+)$/m)
+  if (!m) {
+    return { reason: `RUFLO_CLI_PIN not found in ${launcherPath}`, launcherPath }
+  }
+  const pin = m[1]
+  if (!/^\d+\.\d+\.\d+$/.test(pin)) {
+    return {
+      reason: `RUFLO_CLI_PIN '${pin}' in ${launcherPath} is not an exact semver`,
+      launcherPath,
+      pin,
+    }
   }
   return null
 }

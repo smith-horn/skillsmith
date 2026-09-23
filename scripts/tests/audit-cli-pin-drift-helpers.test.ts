@@ -22,7 +22,7 @@ import { join } from 'node:path'
 import {
   findFloatingSupabaseCliInstalls,
   findUnpinnedBareNpxCliInPackageJson,
-  findUnpinnedRufloMcpEntry,
+  findUnpinnedRufloLauncherPin,
   findClaudeFlowReintroductions,
 } from '../audit-cli-pin-drift-helpers.mjs'
 
@@ -156,75 +156,72 @@ describe('findUnpinnedBareNpxCliInPackageJson (SMI-5746 Check 59, sub-check 2)',
   })
 })
 
-describe('findUnpinnedRufloMcpEntry (SMI-5746 Check 59, sub-check 3)', () => {
-  it('flags a ruflo npx entry pinned to a non-exact-semver tag', () => {
+describe('findUnpinnedRufloLauncherPin (SMI-5746 Check 59, sub-check 3; SMI-6744 ADR-170 §7)', () => {
+  // ADR-170 § 7: the pin moved from .mcp.json's npx entry (retired --
+  // ruflo is now invoked via scripts/mcp-ruflo-launcher.sh, which docker
+  // execs into an image-baked tree) into one RUFLO_CLI_PIN=<semver>
+  // assignment in that launcher script itself.
+  it('flags a launcher with no RUFLO_CLI_PIN line at all', () => {
     const dir = scratchDir()
-    const mcpPath = join(dir, 'mcp.json')
-    writeFileSync(
-      mcpPath,
-      JSON.stringify({
-        mcpServers: { ruflo: { command: 'npx', args: ['ruflo@latest', 'mcp', 'start'] } },
-      })
-    )
+    const launcherPath = join(dir, 'mcp-ruflo-launcher.sh')
+    writeFileSync(launcherPath, '#!/usr/bin/env bash\nset -euo pipefail\necho hi\n')
 
-    const finding = findUnpinnedRufloMcpEntry(mcpPath)
-
-    expect(finding).toEqual({
-      reason: "ruflo npx entry pinned to a non-exact-semver tag 'latest'",
-      pkgArg: 'ruflo@latest',
+    expect(findUnpinnedRufloLauncherPin(launcherPath)).toEqual({
+      reason: `RUFLO_CLI_PIN not found in ${launcherPath}`,
+      launcherPath,
     })
   })
 
-  it('flags a ruflo npx entry missing an @version suffix entirely', () => {
+  it('flags a RUFLO_CLI_PIN pinned to a non-exact-semver value', () => {
     const dir = scratchDir()
-    const mcpPath = join(dir, 'mcp.json')
-    writeFileSync(
-      mcpPath,
-      JSON.stringify({ mcpServers: { ruflo: { command: 'npx', args: ['ruflo', 'mcp'] } } })
-    )
+    const launcherPath = join(dir, 'mcp-ruflo-launcher.sh')
+    writeFileSync(launcherPath, '#!/usr/bin/env bash\nRUFLO_CLI_PIN=latest\necho hi\n')
 
-    expect(findUnpinnedRufloMcpEntry(mcpPath)).toEqual({
-      reason: 'ruflo npx entry missing an @version suffix',
-      pkgArg: 'ruflo',
+    expect(findUnpinnedRufloLauncherPin(launcherPath)).toEqual({
+      reason: `RUFLO_CLI_PIN 'latest' in ${launcherPath} is not an exact semver`,
+      launcherPath,
+      pin: 'latest',
     })
   })
 
-  it('does not flag a ruflo entry pinned to an exact semver', () => {
+  it('does not flag a RUFLO_CLI_PIN pinned to an exact semver', () => {
     const dir = scratchDir()
-    const mcpPath = join(dir, 'mcp.json')
-    writeFileSync(
-      mcpPath,
-      JSON.stringify({
-        mcpServers: { ruflo: { command: 'npx', args: ['ruflo@3.14.2', 'mcp', 'start'] } },
-      })
-    )
+    const launcherPath = join(dir, 'mcp-ruflo-launcher.sh')
+    writeFileSync(launcherPath, '#!/usr/bin/env bash\nRUFLO_CLI_PIN=3.42.4\necho hi\n')
 
-    expect(findUnpinnedRufloMcpEntry(mcpPath)).toBeNull()
+    expect(findUnpinnedRufloLauncherPin(launcherPath)).toBeNull()
   })
 
-  it('does not flag a non-npx server entry (the worktree .mcp.json auto-patch case)', () => {
-    // Regression guard for Codex plan-review finding #2: create-worktree.sh
-    // step 6 auto-patches the `skillsmith` entry to a bare unversioned npx
-    // command in a worktree's local .mcp.json (skip-worktree, never
-    // committed). Check 59 is deliberately scoped to `ruflo` only so that
-    // worktree-local artifact is never mistaken for a real violation.
+  it('requires the assignment to be anchored to its own line (not embedded in other text)', () => {
     const dir = scratchDir()
-    const mcpPath = join(dir, 'mcp.json')
-    writeFileSync(
-      mcpPath,
-      JSON.stringify({
-        mcpServers: {
-          skillsmith: { command: 'npx', args: ['-y', '@skillsmith/mcp-server'] },
-          ruflo: { command: 'npx', args: ['ruflo@3.14.2', 'mcp', 'start'] },
-        },
-      })
-    )
+    const launcherPath = join(dir, 'mcp-ruflo-launcher.sh')
+    // A reference to RUFLO_CLI_PIN inside a comment or a larger line (not a
+    // bare "RUFLO_CLI_PIN=<value>" line by itself) must not satisfy the
+    // anchored regex -- this is what "found" actually means for Check 59
+    // and for cli-pin-drift-check.sh's own grep, which read the same shape.
+    writeFileSync(launcherPath, '# see RUFLO_CLI_PIN=3.42.4 below for context\necho hi\n')
 
-    expect(findUnpinnedRufloMcpEntry(mcpPath)).toBeNull()
+    expect(findUnpinnedRufloLauncherPin(launcherPath)).toEqual({
+      reason: `RUFLO_CLI_PIN not found in ${launcherPath}`,
+      launcherPath,
+    })
   })
 
-  it('returns null when .mcp.json does not exist', () => {
-    expect(findUnpinnedRufloMcpEntry(join(scratchDir(), 'nonexistent.json'))).toBeNull()
+  it('flags a missing launcher file by name', () => {
+    const launcherPath = join(scratchDir(), 'nonexistent-launcher.sh')
+
+    expect(findUnpinnedRufloLauncherPin(launcherPath)).toEqual({
+      reason: `RUFLO_CLI_PIN launcher not found at ${launcherPath}`,
+      launcherPath,
+    })
+  })
+
+  it('does not flag the real, committed scripts/mcp-ruflo-launcher.sh', () => {
+    // End-to-end regression anchor: this check must actually pass against
+    // the real launcher this PR ships, not only against fixtures.
+    const realLauncherPath = join(process.cwd(), 'scripts', 'mcp-ruflo-launcher.sh')
+
+    expect(findUnpinnedRufloLauncherPin(realLauncherPath)).toBeNull()
   })
 })
 

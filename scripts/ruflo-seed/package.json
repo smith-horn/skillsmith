@@ -1,0 +1,10 @@
+{
+  "name": "ruflo-seed",
+  "private": true,
+  "version": "1.0.0",
+  "description": "SMI-6744 ADR-170 -- harness-owned, lockfile-pinned ruflo (@claude-flow/cli) seed baked into the ruflo image stage at /opt/ruflo-seed. Not a repo workspace member; never installed on the host or in the dev container. See docs/internal/adr/170-ruflo-mcp-server-tree-store-and-topology.md section 1. The explicit @metaharness/router 0.4.0 satisfies @claude-flow/cli@3.42.4's declared peerDependency (^0.4.0); its transitive ruvector@0.2.41 pins 0.3.2 exactly and keeps that copy nested under node_modules/ruvector/node_modules -- without the explicit root entry, npm ci refuses the lockfile as out of sync (measured 2026-09-23, build step 3/5).",
+  "dependencies": {
+    "@claude-flow/cli": "3.42.4",
+    "@metaharness/router": "0.4.0"
+  }
+}

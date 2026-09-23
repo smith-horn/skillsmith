@@ -37,20 +37,26 @@ function makeTmp(prefix: string): string {
   return d
 }
 
-/** Fixture repo: a .mcp.json + root package.json + packages/website/package.json. */
+/**
+ * Fixture repo: scripts/mcp-ruflo-launcher.sh (RUFLO_CLI_PIN=<semver>,
+ * SMI-6744 ADR-170 § 7 — the pin's new home, retired from .mcp.json's npx
+ * entry) + root package.json + packages/website/package.json.
+ *
+ * `rufloPin: null` omits the RUFLO_CLI_PIN line entirely (the "absent pin"
+ * fixture); omitting `rufloPin` from opts keeps the '3.14.2' default every
+ * pre-existing call site here relies on.
+ */
 function makeFixtureRepo(opts: {
-  rufloPin?: string
+  rufloPin?: string | null
   supabasePin?: string
   wranglerPin?: string
 }): string {
   const dir = makeTmp('cli-pin-drift-repo')
+  mkdirSync(join(dir, 'scripts'), { recursive: true })
+  const pinLine = opts.rufloPin === null ? '' : `RUFLO_CLI_PIN=${opts.rufloPin ?? '3.14.2'}\n`
   writeFileSync(
-    join(dir, '.mcp.json'),
-    JSON.stringify({
-      mcpServers: {
-        ruflo: { command: 'npx', args: [`ruflo@${opts.rufloPin ?? '3.14.2'}`, 'mcp', 'start'] },
-      },
-    })
+    join(dir, 'scripts', 'mcp-ruflo-launcher.sh'),
+    `#!/usr/bin/env bash\nset -euo pipefail\n${pinLine}echo hi\n`
   )
   writeFileSync(
     join(dir, 'package.json'),
@@ -164,6 +170,65 @@ describe('cli-pin-drift-check.sh (SMI-5746)', () => {
 
     expect(status).toBe(0)
     expect(state).toEqual({})
+  })
+
+  // SMI-6744 ADR-170 § 7: unlike every other soft-fail path in this script,
+  // a missing or non-semver RUFLO_CLI_PIN is a hard exit 1 — see the
+  // header's "Exit code" note and the block right above check_tool's calls.
+  it('exits 1 when RUFLO_CLI_PIN is absent from the launcher', () => {
+    const repo = makeFixtureRepo({ rufloPin: null })
+    const npm = makeFakeNpm({})
+    const { scriptPath: gh } = makeFakeGh()
+
+    const { status, log } = run({
+      SKILLSMITH_CLI_PIN_DRIFT_REPO_ROOT: repo,
+      SKILLSMITH_CLI_PIN_DRIFT_NPM_CMD: npm,
+      SKILLSMITH_CLI_PIN_DRIFT_GH_CMD: gh,
+    })
+
+    expect(status).toBe(1)
+    expect(log).toContain('RUFLO_CLI_PIN not found or not valid semver')
+    expect(log).toContain('mcp-ruflo-launcher.sh')
+    expect(log).not.toContain('no pin found, skipping')
+  })
+
+  it('exits 1 when RUFLO_CLI_PIN is not a valid semver', () => {
+    const repo = makeFixtureRepo({ rufloPin: 'latest' })
+    const npm = makeFakeNpm({})
+    const { scriptPath: gh } = makeFakeGh()
+
+    const { status, log } = run({
+      SKILLSMITH_CLI_PIN_DRIFT_REPO_ROOT: repo,
+      SKILLSMITH_CLI_PIN_DRIFT_NPM_CMD: npm,
+      SKILLSMITH_CLI_PIN_DRIFT_GH_CMD: gh,
+    })
+
+    expect(status).toBe(1)
+    expect(log).toContain('RUFLO_CLI_PIN not found or not valid semver')
+  })
+
+  it('prints "ruflo: pinned <X>..." (never "no pin found, skipping") once a valid pin is read from the launcher', () => {
+    // A drifted-but-within-grace-period pin is what actually produces a
+    // "pinned $pinned, first newer minor/major $first_newer" log line (the
+    // up-to-date branch instead logs "up to date ($pinned)") — this is the
+    // shape the plan row's "dry run prints ruflo: pinned <X>" refers to.
+    const repo = makeFixtureRepo({ rufloPin: '3.14.2' })
+    const npm = makeFakeNpm({
+      ruflo: { latest: '3.15.0', versions: ['3.14.2', '3.15.0'] },
+      supabase: { latest: '2.107.0', versions: ['2.107.0'] },
+      wrangler: { latest: '4.112.0', versions: ['4.112.0'] },
+    })
+    const { scriptPath: gh } = makeFakeGh()
+
+    const { status, log } = run({
+      SKILLSMITH_CLI_PIN_DRIFT_REPO_ROOT: repo,
+      SKILLSMITH_CLI_PIN_DRIFT_NPM_CMD: npm,
+      SKILLSMITH_CLI_PIN_DRIFT_GH_CMD: gh,
+    })
+
+    expect(status).toBe(0)
+    expect(log).toContain('ruflo: pinned 3.14.2, first newer minor/major 3.15.0')
+    expect(log).not.toContain('no pin found, skipping')
   })
 
   it('logs but does not page when the pin is already up to date', () => {

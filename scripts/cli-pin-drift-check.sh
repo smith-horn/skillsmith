@@ -42,9 +42,15 @@
 # Usage:
 #   ./scripts/cli-pin-drift-check.sh
 #
-# Exit code: always 0 (best-effort — matches the `|| true` calling convention
-#            already used for retrieval-liveness-check.sh; internal failures
-#            are logged, never propagated as a hard fail).
+# Exit code: 0 for every soft-fail condition (best-effort — matches the
+#            `|| true` calling convention already used for
+#            retrieval-liveness-check.sh; internal failures are logged,
+#            never propagated as a hard fail) -- EXCEPT one: a missing or
+#            non-semver RUFLO_CLI_PIN in scripts/mcp-ruflo-launcher.sh
+#            (SMI-6744 ADR-170 § 7) exits 1. That pin lives in a committed
+#            file this script can always read; its absence is drift, not an
+#            environment condition to shrug off, and this is the one path
+#            through this script where "no pin found, skipping" is wrong.
 
 set -uo pipefail
 
@@ -354,9 +360,29 @@ read_json_field() {
   ' "$1" "$2" 2>/dev/null || true
 }
 
-RUFLO_PIN_ARG="$(read_json_field "$REPO_ROOT/.mcp.json" "mcpServers.ruflo.args.0")"
-RUFLO_PIN="${RUFLO_PIN_ARG#ruflo@}"
-[ "$RUFLO_PIN" = "$RUFLO_PIN_ARG" ] && RUFLO_PIN="" # no "ruflo@" prefix present — not a version pin
+# SMI-6744 ADR-170 § 7: the ruflo pin moved out of .mcp.json's npx entry
+# (retired — ruflo is now scripts/mcp-ruflo-launcher.sh, which docker execs
+# into an image-baked tree) into one RUFLO_CLI_PIN=<semver> assignment in
+# that launcher script. Read with an anchored, semver-validating regex —
+# the same shape scripts/audit-cli-pin-drift-helpers.mjs Check 59 reads.
+#
+# This one pin is NOT "no pin found, skipping" when absent or malformed —
+# unlike every other soft-fail path in this script (see the header's
+# "Exit code: always 0" note), an absent or non-semver RUFLO_CLI_PIN in a
+# COMMITTED file is itself the drift this script exists to catch, not an
+# environment/network condition to shrug off. Supabase/wrangler below keep
+# the original soft-fail behavior unchanged.
+RUFLO_LAUNCHER="$REPO_ROOT/scripts/mcp-ruflo-launcher.sh"
+RUFLO_PIN=""
+if [ -f "$RUFLO_LAUNCHER" ]; then
+  RUFLO_PIN="$(grep -E '^RUFLO_CLI_PIN=[0-9]+\.[0-9]+\.[0-9]+$' "$RUFLO_LAUNCHER" 2>/dev/null | head -1 | sed 's/^RUFLO_CLI_PIN=//')"
+fi
+if [ -z "$RUFLO_PIN" ]; then
+  log "[cli-pin-drift] ruflo: RUFLO_CLI_PIN not found or not valid semver in $RUFLO_LAUNCHER"
+  echo "[cli-pin-drift] ruflo: RUFLO_CLI_PIN not found or not valid semver in $RUFLO_LAUNCHER" >&2
+  exit 1
+fi
+
 SUPABASE_PIN="$(read_json_field "$REPO_ROOT/package.json" "devDependencies.supabase")"
 WRANGLER_PIN="$(read_json_field "$REPO_ROOT/packages/website/package.json" "devDependencies.wrangler")"
 

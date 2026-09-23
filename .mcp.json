@@ -11,12 +11,7 @@
     },
     "ruflo": {
       "type": "stdio",
-      "command": "npx",
-      "args": ["ruflo@3.14.2", "mcp", "start"],
-      "env": {
-        "CLAUDE_FLOW_LOG_LEVEL": "info",
-        "CLAUDE_FLOW_MEMORY_BACKEND": "sqlite"
-      }
+      "command": "./scripts/mcp-ruflo-launcher.sh"
     }
   }
 }

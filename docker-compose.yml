@@ -156,6 +156,85 @@ services:
     profiles:
       - test
 
+  # ADR-170 (docs/internal/adr/170-ruflo-mcp-server-tree-store-and-topology.md)
+  # SS1/SS3/SS4/SS6/SS8: one shared MCP-server-serving container for the
+  # `ruflo` (claude-flow) MCP backend, started once per MACHINE, never once
+  # per worktree -- unlike `dev`/`test` above this service's profile is
+  # `ruflo`, never `dev` (SS3: worktree-docker.sh's `--profile dev up -d`
+  # would otherwise start a second instance per worktree). It is brought up
+  # from the main checkout via scripts/ruflo-service-up.sh, never a bare
+  # `docker compose --profile ruflo up -d`. Sessions never talk to this
+  # service's own PID 1 -- scripts/mcp-ruflo-launcher.sh (a parallel A1.4
+  # lane) `docker exec -i`s a fresh `cli.js mcp start` process into this
+  # already-running container per session (SS3: "N sessions produce N
+  # server processes inside a single container"), so this service exists
+  # only to hold the seed image and the one shared /srv/ruflo store volume
+  # alive and validated between exec's.
+  ruflo:
+    build:
+      context: .
+      dockerfile: Dockerfile
+      target: ruflo
+    container_name: skillsmith-ruflo-1
+    restart: unless-stopped
+    # SS3: "a blast-radius bound, not a measurement" (ADR-170's own words)
+    # -- override per developer machine via SKILLSMITH_RUFLO_DOCKER_CPUS /
+    # SKILLSMITH_RUFLO_DOCKER_MEM, the same ${VAR:-default} shape the `dev`
+    # service above uses for SKILLSMITH_DOCKER_CPUS / SKILLSMITH_DOCKER_MEM.
+    cpus: '${SKILLSMITH_RUFLO_DOCKER_CPUS:-2}'
+    mem_limit: ${SKILLSMITH_RUFLO_DOCKER_MEM:-2g}
+    working_dir: /srv/ruflo
+    # SS6: no attached network at all -- the service reads no repo bind
+    # mount and no Docker socket, and A0.7 measured that DNS resolution
+    # itself fails under this rather than the container merely being
+    # firewalled off.
+    network_mode: none
+    # SS4: a private working directory backed by ONE volume over the whole
+    # tree, not two -- ADR-170 SS4 records a measured `ruvector.db`
+    # placement discrepancy (cwd root vs cwd/.swarm/) across cli runs that a
+    # narrower two-volume mount would silently miss on whichever run landed
+    # the file outside its coverage.
+    # The expected seed digest comes from OUTSIDE the image (ADR-170 § 7): the up
+    # script exports it from the committed scripts/ruflo-seed/SEED-MANIFEST.sha256.
+    # Default-empty (":-"), NOT required (":?"): compose interpolates the whole
+    # file before it applies profiles, so a required variable here made every
+    # "docker compose" invocation from this tree fail -- the dev profile, the
+    # pre-commit and pre-push hooks -- whenever the digest was not exported
+    # (measured 2026-09-23, A1.4). The refusal lives in the entrypoint instead:
+    # it exits non-zero on an empty or non-64-hex digest, so a bare
+    # "docker compose --profile ruflo up" without the up script yields a
+    # visibly Restarting container, never a serving one.
+    environment:
+      - RUFLO_SEED_EXPECTED_DIGEST=${RUFLO_SEED_EXPECTED_DIGEST:-}
+    volumes:
+      - ruflo-data:/srv/ruflo
+    # ADR-170 SS1's literal, verbatim, and the ONLY form the ADR gives.
+    # This is NEVER what this container's own PID 1 execs -- see the header
+    # comment above and scripts/ruflo-service-entrypoint.sh: `entrypoint:`
+    # below always holds instead of running this. It is declared here so
+    # `docker inspect`'s Config.Cmd carries the exact ADR-170 SS1 literal as
+    # inspectable acceptance evidence (round-4 finding 6, ADR-170 SS1),
+    # independent of what scripts/mcp-ruflo-launcher.sh separately runs
+    # per-session via `docker exec`.
+    command: ['node', '/opt/ruflo-seed/node_modules/@claude-flow/cli/bin/cli.js', 'mcp', 'start']
+    # scripts/ruflo-service-entrypoint.sh is this container's real PID 1: it
+    # validates the installed seed against its build-time manifest record,
+    # proves /srv/ruflo (and its three derived-state subdirectories) are
+    # actually writable via write-and-remove probes (ADR-170 SS4: a bare
+    # `mkdir -p` success proves nothing about writing into an EXISTING
+    # read-only directory), prints the served CLI version, then holds
+    # forever -- it deliberately never execs the trailing `command:` argv
+    # above (ADR-170 SS3/SS4/SS6). Shipped via COPY in the Dockerfile's
+    # `ruflo` build stage -- add
+    # `COPY scripts/ruflo-service-entrypoint.sh /opt/ruflo-service-entrypoint.sh`
+    # to that stage (flagged to the Dockerfile-stage owner; not yet landed
+    # as of this comment) -- deliberately NOT a bind mount here: ADR-170 SS6
+    # states the only mount this service carries is the data volume above,
+    # and a bind mount of even one repo file would contradict that.
+    entrypoint: ['/bin/sh', '/opt/ruflo-service-entrypoint.sh']
+    profiles:
+      - ruflo
+
 volumes:
   node_modules:
     # SMI-5750: positive ownership marker so prune-orphaned-docker-volumes.sh
@@ -200,3 +279,17 @@ volumes:
   website-vercel-output:
     labels:
       app.skillsmith.owned: 'true'
+  # ADR-170 SS8: external:true (never a bare `name:`-only declaration --
+  # SS8's own measured hazard is that a `name:`-only volume is deleted by
+  # ANY declaring project's `down -v`, including an unrelated worktree's
+  # teardown; `external: true` is measured, not assumed, to survive that:
+  # ADR-170 SS8's arm V-ext). This is why it is NOT grouped with the
+  # `app.skillsmith.owned`-labelled volumes above: Compose refuses
+  # `labels:`/other creation-time keys on an `external: true` volume, since
+  # Compose itself never creates or removes it -- scripts/ruflo-service-up.sh
+  # creates it exactly once (ADR-170 SS5's instance-nonce Docker volume
+  # label is applied by that script's own `docker volume create --label`,
+  # not by Compose).
+  ruflo-data:
+    external: true
+    name: skillsmith-ruflo-data

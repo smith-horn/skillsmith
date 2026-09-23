@@ -91,7 +91,7 @@ import {
 import {
   findFloatingSupabaseCliInstalls,
   findUnpinnedBareNpxCliInPackageJson,
-  findUnpinnedRufloMcpEntry,
+  findUnpinnedRufloLauncherPin,
   findClaudeFlowReintroductions,
 } from './audit-cli-pin-drift-helpers.mjs'
 import { TEST_PATTERNS } from './ci/source-patterns.mjs'
@@ -5148,10 +5148,14 @@ console.log(`\n${BOLD}Check 59: CLI-tool pin invariants (SMI-5746)${RESET}`)
     )
   }
 
-  const rufloFinding = findUnpinnedRufloMcpEntry('.mcp.json')
+  const rufloLauncherPath = join('scripts', 'mcp-ruflo-launcher.sh')
+  const rufloFinding = findUnpinnedRufloLauncherPin(rufloLauncherPath)
   if (rufloFinding) {
     check59Violations++
-    report(`Check 59: .mcp.json — ${rufloFinding.reason} (${rufloFinding.pkgArg})${shadowSuffix}`)
+    report(
+      `Check 59: ${rufloLauncherPath} — ${rufloFinding.reason}${shadowSuffix}`,
+      `Add a plain, anchored "RUFLO_CLI_PIN=<exact-semver>" assignment near the top of ${rufloLauncherPath} (ADR-170 § 7).`
+    )
   }
 
   const claudeFlowHits = findClaudeFlowReintroductions(resolvePath('.'))

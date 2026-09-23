@@ -12,11 +12,10 @@
 import { describe, expect, it } from 'vitest'
 import { execFileSync } from 'node:child_process'
 import { mkdtempSync, readFileSync, readdirSync, rmSync, symlinkSync, writeFileSync } from 'node:fs'
-import { homedir, tmpdir } from 'node:os'
+import { tmpdir } from 'node:os'
 import path from 'node:path'
 import { fileURLToPath } from 'node:url'
 
-import { resolveRealHome } from './_lib/resolve-real-home.js'
 import { probePath, type Probe } from './_lib/probe-path.js'
 import { resolveDriftGuardOutcome, scanBackendSites } from './ruflo-bridge-verdict.helpers.js'
 import {
@@ -563,76 +562,54 @@ describe('ruflo-bridge-verdict (SMI-6744 Wave 0)', () => {
 })
 
 /**
- * Drift guard. Finds any installed @claude-flow/cli whose version is one the
- * predicate was derived from or verified at, and re-reads the six source
- * literals the header cites. Skips, visibly, when no such tree is present.
+ * Drift guard. SMI-6744 ADR-170 § 7: the served tree is no longer the host
+ * npx cache -- C3 bakes a single pinned @claude-flow/cli into the `ruflo`
+ * service image at /opt/ruflo-seed, read-only, inside the container (never
+ * the host, never this dev container). This guard has no host-side view of
+ * that tree by default, so the covered root is read from
+ * SKILLSMITH_RUFLO_SEED_ROOT, defaulting to the container path
+ * (/opt/ruflo-seed); on an ordinary host session that path does not exist
+ * and the guard SKIPS, visibly, naming the exact path it looked for and
+ * why -- the same honest-skip shape the retired npx-cache guard used for
+ * "cache never populated". Running this arm for real needs either the
+ * `ruflo` service container itself or a copy of its seed mounted at that
+ * path; scripts/tests/mcp-ruflo-launcher.test.sh's own container-dependent
+ * arms are the closer analogue for CI wiring, not this file.
  */
-describe('predicate source drift (skips when no derived-from tree is installed)', () => {
+describe('predicate source drift (skips when the served ruflo seed tree is unreachable)', () => {
   const wanted = new Set([DERIVED_FROM.version, ...DERIVED_FROM.alsoVerifiedAt])
-  // vitest.setup.ts rewrites $HOME to a temp sandbox before any test runs and
-  // exports the real one as SKILLSMITH_TEST_REAL_HOME. This guard only READS
-  // the npx cache, so it looks there; a bare homedir() would always be the
-  // empty sandbox and the guard would skip on every machine, including the
-  // one that has the tree.
-  // resolveRealHome, not `?? homedir()`: an empty or whitespace value would
-  // make this path RELATIVE and the guard would skip forever while printing
-  // a root that reads as absolute. scripts/tests/_lib/resolve-real-home.ts
-  // pins that exact bug.
-  const npxRoot = path.join(
-    resolveRealHome(process.env.SKILLSMITH_TEST_REAL_HOME, homedir),
-    '.npm',
-    '_npx'
-  )
+  const seedRoot = process.env.SKILLSMITH_RUFLO_SEED_ROOT ?? '/opt/ruflo-seed'
+  const pkg = path.join(seedRoot, 'node_modules', '@claude-flow', 'cli')
+  const pj = path.join(pkg, 'package.json')
+
   const trees: Array<{ dir: string; version: string }> = []
-  // ONE classifier for every path the scan touches (SMI-6771: shared with
-  // every other existsSync-based present/absent gate in this test tree via
-  // ./_lib/probe-path.js). Four rounds of review found the same conflation
-  // at successive levels -- _npx, then its parent, then each cache entry's
-  // package.json -- because each level had its own existsSync, and
-  // existsSync returns false whenever it cannot STAT, so an unreadable path
-  // reads as "not there". POSIX stat() needs search permission on the
-  // PREFIX only, so stat'ing the target itself is what separates the cases:
-  // ENOENT is absent; any other error (EACCES on the path or on HOME,
-  // ENOTDIR on a file where a directory belongs) is unreachable, and the
-  // cache may well be there. The one classifier is used for the root and
-  // for each entry, so there is no fourth special case to add later.
-  // Counts, because "0 at a derived-from version" has several causes that
-  // must render differently: ruflo was never cached here (withCli = 0); it
-  // was, and every cached version is one this predicate was not read at
-  // (withCli > 0); an entry's package.json was unreadable (truncated by an
-  // interrupted npx -- unreadable) or could not be reached at all (mode
-  // bits -- unreachable). None of them crashes collection.
-  let cacheDirs = 0
+  // ONE classifier for the single path this scan touches (SMI-6771: shared
+  // with every other existsSync-based present/absent gate in this test tree
+  // via ./_lib/probe-path.js) -- ENOENT is absent; any other stat() error
+  // (EACCES, ENOTDIR on an ancestor) is unreachable, and the tree may well
+  // be there. withCli/unreadable/unreachable are still counted (not just
+  // booleans) so the printed `scope` string distinguishes "no seed reached
+  // at all" from "a seed was reached but its package.json was unreadable"
+  // from "reached, readable, just not a derived-from version" -- the same
+  // three-way distinction SMI-6772 F7 required of the old multi-entry scan,
+  // now over a single candidate instead of a directory listing.
   let withCli = 0
   let unreadable = 0
   let unreachable = 0
-  let root: Probe | 'unscannable' = probePath(npxRoot)
+  const root: Probe | 'unscannable' = probePath(pj)
   if (root === 'present') {
     try {
-      for (const hash of readdirSync(npxRoot)) {
-        cacheDirs++
-        const pkg = path.join(npxRoot, hash, 'node_modules', '@claude-flow', 'cli')
-        const pj = path.join(pkg, 'package.json')
-        const state = probePath(pj)
-        if (state === 'absent') continue
-        if (state === 'unreachable') {
-          unreachable++
-          continue
-        }
-        try {
-          const version = (JSON.parse(readFileSync(pj, 'utf8')) as { version: string }).version
-          withCli++
-          if (wanted.has(version)) trees.push({ dir: pkg, version })
-        } catch {
-          unreadable++
-        }
-      }
+      const version = (JSON.parse(readFileSync(pj, 'utf8')) as { version: string }).version
+      withCli = 1
+      if (wanted.has(version)) trees.push({ dir: pkg, version })
     } catch {
-      root = 'unscannable'
+      unreadable = 1
     }
+  } else if (root === 'unreachable') {
+    unreachable = 1
   }
   const scope =
-    `searched ${npxRoot} (${root}): ${cacheDirs} cache dirs, ${withCli} with @claude-flow/cli, ` +
+    `checked ${pj} (${root}): ${withCli} with @claude-flow/cli, ` +
     `${trees.length} at a derived-from version, ${unreadable} unreadable, ${unreachable} unreachable`
 
   const LITERALS: Array<[string, string]> = [
