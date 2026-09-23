@@ -135,21 +135,45 @@ describe('withFileLock — RETRYABLE_REASONS membership is behaviour (SMI-6776 r
   // and runs on the real clock; measured, hooks nest outer-then-inner on entry
   // and inner-then-outer on exit, so the tmpdir is built on a live clock and
   // `useRealTimers()` runs before the outer `rmSync`.
+  /**
+   * ENV POLICY FOR THIS DESCRIBE: NEUTRALIZE, then restore.
+   *
+   * An INHERITED `SKILLSMITH_LOCK_NO_AUTO_RECLAIM=1` -- the documented switch a
+   * developer exports to unstick a lock, then forgets -- silently disarms the
+   * `reclaim_unavailable` test below. Measured: with it set, the same fixture
+   * yields `reclaim_disabled` instead; both reasons are retryable, so every
+   * assertion still passes while 14 production lines and 14 branches stop being
+   * exercised (SMI-6807).
+   *
+   * The sibling file takes the OPPOSITE policy on purpose:
+   * `packages/core/tests/api/client.cache.test.ts` PRESERVES
+   * `SKILLSMITH_DISABLE_CLIENT_CACHE`, because that switch makes six of its
+   * tests FAIL and a developer finds out. The rule is about which failure the
+   * variable produces, not about the variable: a switch that DISARMS gets
+   * cleared, a switch that BREAKS gets kept. Do not unify the two files.
+   *
+   * Restoring in `afterEach` matters and the first version of this fix omitted
+   * it: a bare `delete` in `beforeEach` neutralizes for THIS describe and stays
+   * deleted for the rest of the process, which is the same unconditional-
+   * teardown shape the sibling file was fixed for. Today the second describe is
+   * insensitive either way, so nothing breaks -- but any env-sensitive test
+   * appended below would silently run under a cleared variable.
+   */
+  let prevNoAutoReclaim: string | undefined
+
   beforeEach(() => {
-    // An INHERITED `SKILLSMITH_LOCK_NO_AUTO_RECLAIM=1` -- the documented switch
-    // a developer exports to unstick a lock, then forgets -- silently disarms
-    // the reclaim_unavailable test below. Measured: with it set, the same
-    // fixture yields `reclaim_disabled` instead, both reasons are retryable, so
-    // every assertion still passes while 14 production lines and 14 branches
-    // stop being exercised. Clearing it here makes the suite's coverage
-    // independent of the ambient environment (SMI-6807). Test (iv) sets and
-    // restores it around its own body, so this does not interfere.
+    prevNoAutoReclaim = process.env.SKILLSMITH_LOCK_NO_AUTO_RECLAIM
     delete process.env.SKILLSMITH_LOCK_NO_AUTO_RECLAIM
     vi.useFakeTimers()
   })
 
   afterEach(() => {
     vi.useRealTimers()
+    if (prevNoAutoReclaim === undefined) {
+      delete process.env.SKILLSMITH_LOCK_NO_AUTO_RECLAIM
+    } else {
+      process.env.SKILLSMITH_LOCK_NO_AUTO_RECLAIM = prevNoAutoReclaim
+    }
   })
 
   async function settle(): Promise<Outcome> {
