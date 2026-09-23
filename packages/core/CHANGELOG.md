@@ -8,8 +8,11 @@ All notable changes to `@skillsmith/core` are documented here.
   deleted every file older than 14 days in `~/.skillsmith/logs`, a directory shared with other
   writers, including `native-attribution.jsonl`, which ADR-165 keeps for its lifetime as a
   denominator. It now deletes only this module's own `skillsmith-<surface>-<date>.jsonl[.n]`
-  files. Red-tested: removing the name filter fails the two new "survives" expectations in
-  `rotation.test.ts`.
+  files, where `<surface>` is the enumerated `mcp|cli|vscode|doc-retrieval` set (regex-escaped),
+  so an owned-shaped foreign name such as `skillsmith-foreign-<date>.jsonl` is left alone.
+  Red-tested: removing the name filter fails the new ownership test's `foreign`
+  survives-expectation (six fixtures, including `native-attribution.jsonl` and four owned-shaped
+  names). (#2921)
 
 - **Fix (data integrity)**: SMI-6358 -- `backfillProvenance()` keys manifest writes through
   `manifestKeyFor(name, client)` instead of the bare name. A skill installed for a non-canonical

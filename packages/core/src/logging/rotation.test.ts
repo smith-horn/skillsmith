@@ -159,7 +159,7 @@ describe('rotation.ts — retention sweep', () => {
   it('deletes only its own skillsmith-<surface>-<date>.jsonl[.n] files, never other classes sharing the directory', async () => {
     // ~/.skillsmith/logs is shared with other writers; native-attribution.jsonl in
     // particular is kept for its lifetime (ADR-165). Red arm: remove OWNED_LOG's
-    // test in pruneExpiredLogs and the two "survives" expectations fail.
+    // test in pruneExpiredLogs and the foreign survives-expectation fails.
     const fifteenDaysAgoSec = Math.floor((Date.now() - 15 * 24 * 60 * 60 * 1000) / 1000)
     // Own: every listed surface shape, including a .<n> continuation and a hyphenated surface.
     const own = [
@@ -204,6 +204,19 @@ describe('rotation.ts — retention sweep', () => {
     expect(pattern.test('skillsmith-bar-2020-01-01.jsonl')).toBe(false)
     expect(pattern.test('skillsmith-mcp-2020-01-01.jsonl.3')).toBe(true)
     expect(pattern.test('skillsmith-mcp-2020-01-01.jsonl.bak')).toBe(false)
+  })
+
+  it('owns nothing when the surface list is empty or all-empty', () => {
+    // The exported seam accepts arbitrary input, so its degenerate cases are part of
+    // its contract: `[]` and `['']` both used to degenerate the alternation to `()`
+    // and own `skillsmith--<date>.jsonl`. Red arms: drop the guard (the `[]` row),
+    // drop the empty-name filter (the `['']` rows), or make the filter drop every
+    // name (the `mcp` positive).
+    const degenerate = 'skillsmith--2020-01-01.jsonl'
+    expect(ownedLogPattern([]).test(degenerate)).toBe(false)
+    expect(ownedLogPattern(['']).test(degenerate)).toBe(false)
+    expect(ownedLogPattern(['mcp', '']).test(degenerate)).toBe(false)
+    expect(ownedLogPattern(['mcp', '']).test('skillsmith-mcp-2020-01-01.jsonl')).toBe(true)
   })
 
   it('deletes files older than 14 days and keeps recent ones', async () => {
