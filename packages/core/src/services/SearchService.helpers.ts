@@ -170,9 +170,20 @@ export function buildHighlights(skill: Skill, query: string): SearchResult['high
     // Snap both edges to code-point boundaries: slice() counts code units, so an astral
     // character (an emoji) straddling an edge would be cut into a lone surrogate -- the
     // same code-unit-vs-code-point axis the `u` flag fixes for matching (PR #2925 retro
-    // F-B). Either edge moves outward, so the whole character stays in the window.
-    if (start > 0 && /[\uDC00-\uDFFF]/.test(skill.description[start])) start -= 1
-    if (end < skill.description.length && /[\uD800-\uDBFF]/.test(skill.description[end - 1]))
+    // F-B). Each edge moves outward only when the unit it steps onto is the other half of
+    // a REAL pair: an already-lone surrogate in the description is left where it is rather
+    // than joined by a second one (governance on f7ba25392, F2).
+    if (
+      start > 0 &&
+      /[\uDC00-\uDFFF]/.test(skill.description[start]) &&
+      /[\uD800-\uDBFF]/.test(skill.description[start - 1])
+    )
+      start -= 1
+    if (
+      end < skill.description.length &&
+      /[\uD800-\uDBFF]/.test(skill.description[end - 1]) &&
+      /[\uDC00-\uDFFF]/.test(skill.description[end])
+    )
       end += 1
 
     // Replace first, then add the truncation markers, so a term of dots can only

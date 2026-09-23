@@ -192,13 +192,18 @@ describe('buildHighlights -- Unicode case folding', () => {
 })
 
 describe('buildHighlights -- multiple terms', () => {
-  it('highlights every term, not just the first', () => {
-    // The thirteen earlier mutations each perturb ONE term's handling; none perturbs
-    // the set. Red arm: `terms.map(` -> `terms.slice(0, 1).map(` (PR #2925 retro F-A).
-    const s = skill({ name: 'foo bar tool', description: 'a foo and a bar' })
-    const h = buildHighlights(s, 'foo bar')
-    expect(h.name).toBe('<mark>foo</mark> <mark>bar</mark> tool')
-    expect(h.description).toBe('a <mark>foo</mark> and a <mark>bar</mark>')
+  // Three counts, and the expectation is DERIVED from the term list rather than
+  // hardcoded: `terms.slice(0, 1).map(` and `terms.slice(0, 2).map(` are the same
+  // defect one index apart, and a two-term query kills only the first (governance on
+  // f7ba25392 measured `terms.slice(0, 2).map(` surviving all 22 arms). Red arms:
+  // slice(0, 1) and slice(0, 2) (PR #2925 retro F-A).
+  it.each([2, 3, 5])('highlights all %i terms, not a prefix of them', (n) => {
+    const terms = Array.from({ length: n }, (_, i) => `t${i}`)
+    const text = terms.join(' ')
+    const marked = terms.map((t) => `<mark>${t}</mark>`).join(' ')
+    const h = buildHighlights(skill({ name: text, description: text }), text)
+    expect(h.name).toBe(marked)
+    expect(h.description).toBe(marked)
   })
 })
 
@@ -227,6 +232,18 @@ describe('buildHighlights -- surrogate pairs', () => {
     const d = buildHighlights(s, 'needle').description ?? ''
     expect(LONE.test(d)).toBe(false)
     expect(d).toContain('\u{1F600}')
+  })
+
+  it('leaves an already-lone surrogate at the edge alone instead of pulling in a second', () => {
+    // Malformed input: two lone low surrogates at code units 49-50, the window start at
+    // 50. The snap must not step back onto the first one; the output carries exactly the
+    // one lone unit the window already held (governance on f7ba25392, F2).
+    const s = skill({
+      name: 'n/a',
+      description: 'x'.repeat(49) + '\uDC00\uDC00' + 'y'.repeat(49) + 'needle' + 'z'.repeat(60),
+    })
+    const d = buildHighlights(s, 'needle').description ?? ''
+    expect(d.match(new RegExp(LONE.source, 'g'))?.length).toBe(1)
   })
 })
 
