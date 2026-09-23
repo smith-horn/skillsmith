@@ -6,8 +6,10 @@ All notable changes to `@skillsmith/cli` are documented here.
 
 - **Test**: SMI-6358 post-merge retro -- the `audit sources` already-tracked overlay's own client
   keying is now pinned. Reverting it to a bare-name lookup previously left all five audit-sources
-  test files green; the two new tests are a matched pair, so neither an always-bare nor an
-  always-suffixed implementation passes. Also pins the telemetry hook script's `0o755` mode, which
+  test files green; what pins it is the THREE-test set, not the two added here. Both new tests use
+  a non-canonical client, so an always-suffixed implementation satisfies both; the arm that rules
+  that out is the pre-existing default-client test, which is therefore load-bearing and must not be
+  deleted as redundant. Also pins the telemetry hook script's `0o755` mode, which
   a fully-faked `chmodSync` had made invisible -- a dropped executable bit would have registered a
   hook that could not run. Corrections to comments that described mechanisms the code does not
   have. (#2920 follow-up)

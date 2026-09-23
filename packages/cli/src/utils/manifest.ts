@@ -20,7 +20,9 @@
  *
  * Concurrency note (SMI-6358 supersedes the v1 note this replaced): every
  * caller of updateManifestEntry() now takes the SAME cross-process file
- * lock (`<MANIFEST_PATH>.lock`, wx-flag exclusive create) that
+ * lock (`<MANIFEST_PATH>.lock`, core's `withFileLock` -> `acquireOwnedLock`,
+ * which carries reclaim semantics rather than being a plain exclusive
+ * create) that
  * @skillsmith/core's ManifestManager uses for SkillInstallationService,
  * apply_manifest_reconcile, and manage.update.helpers.ts's adoption path —
  * and that @skillsmith/mcp-server's install.helpers.manifest.ts's
@@ -200,9 +202,12 @@ export async function saveManifest(manifest: SkillManifest): Promise<void> {
  *   1. Locking: mutually exclusive with every other manifest writer in the
  *      repo that targets the SAME `~/.skillsmith/manifest.json` path (core's
  *      SkillInstallationService/apply_manifest_reconcile/manage.update
- *      adoption path, and mcp-server's own install.helpers.manifest.ts,
- *      which locks the identical `<path>.lock` file via the same wx-flag
- *      protocol even though it is a separately-maintained implementation).
+ *      adoption path, and mcp-server's install.helpers.manifest.ts, which
+ *      locks the identical `<path>.lock` file by importing the SAME
+ *      `withFileLock` from `@skillsmith/core` — not a separate
+ *      implementation, and not a bare wx-flag create. See the file header
+ *      above, which corrects the same claim; this sentence is the twin that
+ *      correction missed, found by the round-3 pre-merge gate.
  *   2. Fail-closed reads: ManifestManager.load() throws on a non-ENOENT read
  *      error (corrupt JSON, EACCES, ...) instead of this file's own
  *      loadManifest(), which still silently returns an empty manifest on

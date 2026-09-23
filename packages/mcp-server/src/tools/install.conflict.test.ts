@@ -66,11 +66,20 @@ vi.mock('./merge.js', async (importActual) => {
 
 // NOT mocked: `manifestKeyFor` from @skillsmith/core. It is the subject.
 
+import { CLIENT_IDS, CANONICAL_CLIENT } from '@skillsmith/core/install'
 import { checkForConflicts, handleMergeAction } from './install.conflict.js'
 import type { SkillManifest } from './install.types.js'
 
-const CANONICAL = 'claude-code' as const
+const CANONICAL = CANONICAL_CLIENT
 const OTHER = 'cursor' as const
+
+/**
+ * Every client the union admits except the canonical one. `ClientId` is a
+ * closed union of nine values and `CLIENT_IDS` is its frozen runtime twin, so
+ * this is the WHOLE domain rather than a sample of it — and it grows by itself
+ * when a tenth client is added.
+ */
+const NON_CANONICAL = CLIENT_IDS.filter((c) => c !== CANONICAL_CLIENT)
 
 /** A manifest holding exactly one entry, under `key`, that would conflict. */
 function manifestWithEntry(key: string, version = '1.0.0'): SkillManifest {
@@ -119,11 +128,22 @@ describe('checkForConflicts keys by client, not by bare name (SMI-6358)', () => 
       OTHER
     )
 
-    expect(result.shouldProceed).toBe(true)
     // The decisive assertion: a bare-name lookup would have found the entry
     // and gone on to compare hashes. Never reaching that call is what proves
     // the key was client-scoped.
-    expect(mockDetectModifications).not.toHaveBeenCalled()
+    //
+    // Written as ONE assertion over `result` plus the call count, rather than
+    // a bare `expect(mock).not.toHaveBeenCalled()`, because round 3's gate
+    // found that the bare form is true both BEFORE and AFTER the call: moved
+    // above it, the assertion passes vacuously and all ten tests stay green.
+    // Its whole meaning lived in its position and nothing enforced that.
+    // Referencing `result` makes the position load-bearing to the compiler --
+    // hoisting this above the call is a use-before-declaration error, not a
+    // silent pass.
+    expect({
+      proceeded: result.shouldProceed,
+      consulted: mockDetectModifications.mock.calls.length,
+    }).toEqual({ proceeded: true, consulted: 0 })
   })
 
   it('does consult the client-scoped entry when one exists', async () => {
@@ -171,8 +191,11 @@ describe('checkForConflicts keys by client, not by bare name (SMI-6358)', () => 
       CANONICAL
     )
 
-    expect(result.shouldProceed).toBe(true)
-    expect(mockDetectModifications).not.toHaveBeenCalled()
+    // Same order-bound form as the first case, for the same reason.
+    expect({
+      proceeded: result.shouldProceed,
+      consulted: mockDetectModifications.mock.calls.length,
+    }).toEqual({ proceeded: true, consulted: 0 })
   })
 })
 
@@ -247,41 +270,65 @@ describe('handleMergeAction keys by client too (SMI-6358 retro)', () => {
   })
 })
 
-describe('a second non-canonical client (SMI-6358 retro)', () => {
-  // Closes the third-implementation gap the gate named: a predicate special-cased
-  // to one client — `client === 'cursor' ? `${name}::cursor` : name` — passes every
-  // test that only ever uses 'cursor'. Exercising a DIFFERENT non-canonical client
-  // is what rules that out.
-  const THIRD = 'windsurf' as const
-
-  it('checkForConflicts scopes a third client too', async () => {
+// EVERY non-canonical client, at BOTH call sites (SMI-6358 retro, round 3).
+//
+// An earlier version of this block sampled one extra client ('windsurf') to rule
+// out a predicate special-cased to 'cursor'. The round-3 gate showed what a
+// two-client sample still cannot distinguish: a lookup table admitting exactly
+// {claude-code, cursor, windsurf}, or `client === 'cursor' || client ===
+// 'windsurf'`, passes every one of those tests while being wrong for the six
+// remaining clients the union admits.
+//
+// A third sampled client would have killed that particular table and pinned the
+// same sampled property again. `ClientId` is a CLOSED union and `CLIENT_IDS` is
+// its frozen runtime twin, so the domain can be enumerated instead of sampled --
+// and a tenth client added later is covered without anyone remembering to.
+describe.each(NON_CANONICAL)('non-canonical client %s', (client) => {
+  it('checkForConflicts does not consult the canonical entry', async () => {
     const result = await checkForConflicts(
       'my-skill',
       '/installed/my-skill',
       manifestWithEntry('my-skill'),
       undefined,
       'owner/repo/my-skill',
-      THIRD
+      client
     )
-    expect(result.shouldProceed).toBe(true)
-    expect(mockDetectModifications).not.toHaveBeenCalled()
+    expect({
+      proceeded: result.shouldProceed,
+      consulted: mockDetectModifications.mock.calls.length,
+    }).toEqual({ proceeded: true, consulted: 0 })
   })
 
-  it('handleMergeAction scopes a third client too', async () => {
-    // The gate caught this as a fourth instance of the same twin: the windsurf
-    // cases above reach checkForConflicts only, so a site-local special-case at
-    // handleMergeAction -- `client === 'cursor' ? manifestKeyFor(...) : name` --
-    // satisfied all three of its tests. Second-client coverage has to reach
-    // BOTH sites, not the one the previous finding was about.
+  it('checkForConflicts finds this client own entry', async () => {
+    const result = await checkForConflicts(
+      'my-skill',
+      '/installed/my-skill',
+      manifestWithEntry(`my-skill::${client}`),
+      undefined,
+      'owner/repo/my-skill',
+      client
+    )
+    expect({
+      proceeded: result.shouldProceed,
+      consulted: mockDetectModifications.mock.calls.length,
+    }).toEqual({ proceeded: false, consulted: 1 })
+  })
+
+  it('handleMergeAction reads and writes under this client key', async () => {
+    // Both halves matter and they fail independently: `version` proves the READ
+    // resolved to the client-scoped entry, the written key proves the WRITE did.
+    // A site-local special-case at one of install.conflict.ts's two
+    // manifestKeyFor calls satisfied the checkForConflicts cases alone -- that
+    // was the round-2 finding, and this is the arm that reaches the other site.
     await handleMergeAction(
       'my-skill',
       '/installed/my-skill',
       'upstream content',
-      manifestWithEntry(`my-skill::${THIRD}`, '7.7.7'),
+      manifestWithEntry(`my-skill::${client}`, '7.7.7'),
       'owner',
       'repo',
       'owner/repo/my-skill',
-      THIRD
+      client
     )
 
     const meta = mockStoreOriginal.mock.calls[0]![2] as { version: string }
@@ -291,19 +338,6 @@ describe('a second non-canonical client (SMI-6358 retro)', () => {
       installedSkills: Record<string, unknown>
     }
     const written = updater({ version: '1', installedSkills: {} })
-    expect(Object.keys(written.installedSkills)).toEqual([`my-skill::${THIRD}`])
-  })
-
-  it('checkForConflicts finds that third client own entry', async () => {
-    const result = await checkForConflicts(
-      'my-skill',
-      '/installed/my-skill',
-      manifestWithEntry(`my-skill::${THIRD}`),
-      undefined,
-      'owner/repo/my-skill',
-      THIRD
-    )
-    expect(mockDetectModifications).toHaveBeenCalledOnce()
-    expect(result.shouldProceed).toBe(false)
+    expect(Object.keys(written.installedSkills)).toEqual([`my-skill::${client}`])
   })
 })
