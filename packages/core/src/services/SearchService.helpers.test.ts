@@ -18,6 +18,12 @@
  *         `toLowerCase()` can shift (U+0130 grows) or lose (Greek final sigma),
  *         so the window could exclude the match and drop the highlight.
  *         Red arm: restore the `indexOf` line in place of `match.index`.
+ *   C1/C2/C3/C5/C11 -- (PR #2924 post-merge retro) properties the first ten
+ *         arms left unpinned: the window clamp at 0, the FTS-operator filter,
+ *         the ellipsis added after (not before) the mark replacement, the `u`
+ *         flag's case folding, and the full escaped-metacharacter class.
+ *         Red arms: remove the clamp; delete the operator filter; wrap before
+ *         replacing; drop `u`; drop `[` from the escape class.
  */
 
 import { describe, expect, it } from 'vitest'
@@ -117,6 +123,83 @@ describe('buildHighlights -- snippet window', () => {
     const s = skill({ name: 'n/a', description: 'x'.repeat(80) + ' ΟΔΟΣ ' + 'y'.repeat(80) })
     expect(buildHighlights(s, 'σ').description).toContain('<mark>Σ</mark>')
   })
+
+  it('clamps the window at 0 for a match in the first 50 characters', () => {
+    // Without the clamp a negative start reaches String.slice(), which counts
+    // from the end, and every early match in a long description renders as "...".
+    const s = skill({ name: 'n/a', description: 'needle ' + 'z'.repeat(200) })
+    expect(buildHighlights(s, 'needle').description).toBe(
+      '<mark>needle</mark> ' + 'z'.repeat(49) + '...'
+    )
+  })
+
+  it('never highlights the truncation ellipsis it inserted itself', () => {
+    // The "..." markers are added after the replacement, so a term of dots can
+    // only match dots that are in the description.
+    const s = skill({ name: 'n/a', description: 'x'.repeat(80) + ' a.b ' + 'y'.repeat(80) })
+    const d = buildHighlights(s, '.').description ?? ''
+    expect(d.startsWith('...')).toBe(true)
+    expect(d.endsWith('...')).toBe(true)
+    expect(d.match(/<mark>/g)?.length).toBe(1)
+    expect(d).toContain('a<mark>.</mark>b')
+  })
+})
+
+describe('buildHighlights -- query normalisation', () => {
+  it('strips quotes and parentheses from the query before matching', () => {
+    const s = skill()
+    expect(buildHighlights(s, '"foo"')).toEqual(buildHighlights(s, 'foo'))
+    expect(buildHighlights(s, '(foo)')).toEqual(buildHighlights(s, 'foo'))
+    expect(buildHighlights(s, '"foo"').name).toBe('<mark>foo</mark> tool')
+  })
+
+  it('strips a trailing prefix-match star from a term', () => {
+    const s = skill()
+    expect(buildHighlights(s, 'foo*')).toEqual(buildHighlights(s, 'foo'))
+    expect(buildHighlights(s, 'foo*').name).toBe('<mark>foo</mark> tool')
+  })
+})
+
+describe('buildHighlights -- FTS operators', () => {
+  it('drops AND / OR / NOT as terms, not merely as an empty result', () => {
+    // The fixture contains "and", "or" and "not" as substrings on purpose, so a
+    // missing operator filter would highlight them instead of returning {}.
+    // NOTE: `buildFtsQuery` (same file) uses a DIFFERENT operator model -- it passes a
+    // query through raw only when it contains a space-delimited uppercase ` AND ` /
+    // ` OR ` / ` NOT `. So 'and or not' yields no highlights here but a real FTS query
+    // there; the reconciliation (and `AND*`'s meaning) is SMI-6817, so the ordering of
+    // the operator filter and the trailing-* strip is deliberately NOT pinned here.
+    const s = skill({ name: 'command center', description: 'a tool for annotation and notes' })
+    expect(buildHighlights(s, 'AND OR NOT')).toEqual({})
+    expect(buildHighlights(s, 'and or not')).toEqual({})
+  })
+})
+
+describe('buildHighlights -- Unicode case folding', () => {
+  it('matches a query of U+0130 against itself (the term is not lowercased)', () => {
+    // 'İ'.toLowerCase() is two code units ('i' + U+0307), which matches nothing.
+    const s = skill({
+      name: 'n/a',
+      description: 'x'.repeat(80) + ' \u0130stanbul ' + 'y'.repeat(80),
+    })
+    expect(buildHighlights(s, '\u0130').description).toContain('<mark>\u0130</mark>stanbul')
+  })
+
+  it('folds the Kelvin sign to k (the u flag, not just i)', () => {
+    const s = skill({ name: 'n/a', description: 'x'.repeat(80) + ' \u212A ' + 'y'.repeat(80) })
+    expect(buildHighlights(s, 'k').description).toContain('<mark>\u212A</mark>')
+  })
+})
+
+describe('buildHighlights -- key presence', () => {
+  it('omits the key for the side that does not match', () => {
+    // `toEqual({})` cannot see this: vitest ignores keys whose value is `undefined`, so
+    // only `Object.keys` distinguishes an absent key from an undefined-valued one.
+    const nameOnly = skill({ name: 'foo tool', description: 'unrelated text' })
+    expect(Object.keys(buildHighlights(nameOnly, 'foo'))).toEqual(['name'])
+    const descOnly = skill({ name: 'unrelated', description: 'a foo tool' })
+    expect(Object.keys(buildHighlights(descOnly, 'foo'))).toEqual(['description'])
+  })
 })
 
 describe('buildHighlights -- escaping', () => {
@@ -125,5 +208,52 @@ describe('buildHighlights -- escaping', () => {
     const h = buildHighlights(s, 'c++')
     expect(h.name).toBe('<mark>c++</mark> helper')
     expect(h.description).toBe('for <mark>c++</mark> and c.')
+  })
+
+  it('never throws and never over-matches on any escaped metacharacter', () => {
+    const s = skill({
+      name: 'n/a',
+      description: 'literal a.b a*b a|b a[b a(b a\\b a^b a$b a+b a?b a{b a}b a]b a)b here',
+    })
+    for (const q of [
+      'a.b',
+      'a*b',
+      'a|b',
+      'a[b',
+      'a(b',
+      'a\\b',
+      'a?b',
+      'a^b',
+      'a$b',
+      'a{b',
+      'a}b',
+      'a]b',
+      'a)b',
+      'a+b',
+    ]) {
+      expect(() => buildHighlights(s, q), q).not.toThrow()
+    }
+    // One positive per reachable class member: an UNescaped metacharacter changes the
+    // pattern's meaning, so the literal spelling stops matching itself (or throws under
+    // `u`). `(` and `)` are unreachable -- `query.replace(/["()]/g, '')` strips them
+    // before the escaper ever sees them. `.` needs the negative below instead: an
+    // unescaped `.` still matches a literal dot, so only an over-match can catch it.
+    for (const q of [
+      'a.b',
+      'a*b',
+      'a|b',
+      'a[b',
+      'a\\b',
+      'a^b',
+      'a$b',
+      'a+b',
+      'a?b',
+      'a{b',
+      'a}b',
+      'a]b',
+    ]) {
+      expect(buildHighlights(s, q).description, q).toContain(`<mark>${q}</mark>`)
+    }
+    expect(buildHighlights(skill({ name: 'axb', description: 'axb' }), 'a.b')).toEqual({})
   })
 })
