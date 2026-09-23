@@ -37,6 +37,23 @@ sub1="${1:-}"
 sub2="${2:-}"
 
 if [[ "$sub1 $sub2" == "volume inspect" ]]; then
+    # H-5: a `-f <format>` flag (check_existing_volume()'s label read) is a
+    # DIFFERENT call from the plain existence probe (volume_exists()) below
+    # it -- detect it and answer with the label content instead of a bare
+    # exit code.
+    fmt=""
+    shift 2
+    while [[ $# -gt 0 ]]; do
+        case "$1" in
+            -f) shift; fmt="${1:-}" ;;
+        esac
+        shift
+    done
+    if [[ -n "$fmt" ]]; then
+        [[ -f "$FAKE_STATE_DIR/volume-exists" ]] || exit 1
+        cat "$FAKE_STATE_DIR/volume-label" 2>/dev/null || true
+        exit 0
+    fi
     [[ -f "$FAKE_STATE_DIR/volume-exists" ]] && exit 0 || exit 1
 elif [[ "$sub1 $sub2" == "volume create" ]]; then
     if [[ "${FAKE_VOLUME_CREATE_FAIL:-0}" == "1" ]]; then
@@ -56,6 +73,22 @@ elif [[ "$sub1 $sub2" == "volume create" ]]; then
     exit 0
 elif [[ "$sub1" == "compose" ]]; then
     if [[ "$*" == *" run "* ]]; then
+        if [[ "$*" == *"--entrypoint sh"* ]]; then
+            # H-5: probe_store_present()'s throwaway probe.
+            if [[ -f "$FAKE_STATE_DIR/store-present" ]]; then
+                echo "RUFLO_DB_PRESENT"
+            else
+                echo "RUFLO_DB_ABSENT"
+            fi
+            exit 0
+        fi
+        # --entrypoint node: init_store()'s one-off store_generation run.
+        if [[ "${FAKE_INIT_STORE_ROW_MISMATCH:-0}" == "1" ]]; then
+            # M-6: simulates the node script's own SELECT-back finding an
+            # EXISTING row for a DIFFERENT generation and exiting 1.
+            echo "store_generation rows: [\"some-other-generation\"] (expected exactly one row equal to the requested generation)" >&2
+            exit 1
+        fi
         touch "$FAKE_STATE_DIR/init-ran"
         exit 0
     elif [[ "$*" == *" up "* ]]; then
@@ -79,6 +112,19 @@ reset_fixture() {
     printf '%s\n' "$(printf 'a%.0s' $(seq 1 64))" > "$RUFLO_SEED_EXPECTED_DIGEST_FILE"
     export FAKE_STATE_DIR FAKE_DOCKER_CALL_LOG HOME RUFLO_SEED_EXPECTED_DIGEST_FILE
     unset FAKE_VOLUME_CREATE_FAIL || true
+    unset FAKE_INIT_STORE_ROW_MISMATCH || true
+}
+
+# H-5/M-6 shared fixture: an existing, labelled volume whose label and
+# authority-file instanceNonce agree (so authority quad (a)/(b) both pass),
+# leaving only the store-presence probe (d) and the generation row (c) to
+# vary per arm below.
+setup_labelled_volume() {
+    local nonce="$1" generation="$2"
+    mkdir -p "$FAKE_STATE_DIR" && touch "$FAKE_STATE_DIR/volume-exists"
+    echo "$nonce" > "$FAKE_STATE_DIR/volume-label"
+    mkdir -p "$HOME/.skillsmith"
+    printf '{"instanceNonce":"%s","generationUuid":"%s","createdAt":"2020-01-01T00:00:00Z"}\n' "$nonce" "$generation" > "$HOME/.skillsmith/ruflo-store.json"
 }
 
 run_script() {
@@ -169,11 +215,72 @@ else
 fi
 unset FAKE_VOLUME_CREATE_FAIL
 
+# ---- Arm 5 (H-5): existing volume, label MISMATCHES the authority file's
+# instanceNonce -- must die naming the ADR-170 SS5 manual-resolution text,
+# without ever probing the store or running init. ----
+reset_fixture
+setup_labelled_volume "actual-nonce-on-volume" "gen-5"
+# Authority file names a DIFFERENT nonce than the volume actually carries.
+printf '{"instanceNonce":"%s","generationUuid":"%s","createdAt":"2020-01-01T00:00:00Z"}\n' "expected-nonce-from-authority-file" "gen-5" > "$HOME/.skillsmith/ruflo-store.json"
+EXIT_CODE="$(run_script)"
+if [[ "$EXIT_CODE" -eq 0 ]]; then
+    fail_case "5-label-mismatch" "expected non-zero exit (refusal), got 0"
+elif ! grep -q "$HOME/.skillsmith/ruflo-store.json" "$SCRATCH_ROOT/out.log"; then
+    fail_case "5-label-mismatch" "expected the refusal message to name the authority file path"
+elif ! grep -qi "wrong-generation hazard" "$SCRATCH_ROOT/out.log"; then
+    fail_case "5-label-mismatch" "expected the refusal message to name the wrong-generation hazard (ADR-170 SS5 (b))"
+elif [[ -f "$FAKE_STATE_DIR/init-ran" ]]; then
+    fail_case "5-label-mismatch" "expected NO store-init run on a label mismatch"
+else
+    echo "applied=refuse-label-mismatch PASS (5-label-mismatch): refused naming the file and the wrong-generation hazard, no init"
+fi
+
+# ---- Arm 6 (H-5): existing volume, label matches, but no store at the
+# expected path (the partial-creation hole) -- must re-run init_store with
+# the authority file's own generationUuid, then still bring the service up.
+# ----
+reset_fixture
+setup_labelled_volume "matching-nonce" "gen-6-from-authority-file"
+# Deliberately no $FAKE_STATE_DIR/store-present -- the probe answers ABSENT.
+EXIT_CODE="$(run_script)"
+if [[ "$EXIT_CODE" -ne 0 ]]; then
+    fail_case "6-missing-store-reinit" "expected exit 0, got $EXIT_CODE"
+elif grep -q "volume create" "$FAKE_DOCKER_CALL_LOG"; then
+    fail_case "6-missing-store-reinit" "expected NO 'volume create' call (the volume already exists), log:\n$(cat "$FAKE_DOCKER_CALL_LOG")"
+elif [[ ! -f "$FAKE_STATE_DIR/init-ran" ]]; then
+    fail_case "6-missing-store-reinit" "expected init_store() to re-run against a labelled-but-empty volume"
+elif ! grep -q "RUFLO_GENERATION_UUID=gen-6-from-authority-file" "$FAKE_DOCKER_CALL_LOG"; then
+    fail_case "6-missing-store-reinit" "expected init_store() to run with the authority file's own generationUuid, log:\n$(cat "$FAKE_DOCKER_CALL_LOG")"
+elif [[ ! -f "$FAKE_STATE_DIR/up-ran" ]]; then
+    fail_case "6-missing-store-reinit" "expected docker compose ... up -d ruflo to have executed after re-init"
+else
+    echo "applied=reinit-missing-store PASS (6-missing-store-reinit): label matched, store absent, init_store re-ran with the authority file's generation, up ran"
+fi
+
+# ---- Arm 7 (M-6): existing volume, label matches, store absent, but the
+# one-off init run itself reports a pre-existing DIFFERENT generation row --
+# the shell caller (init_store()) must propagate that failure as a non-zero
+# exit rather than treating "docker compose run" completing as success. ----
+reset_fixture
+setup_labelled_volume "matching-nonce-7" "gen-7-requested"
+export FAKE_INIT_STORE_ROW_MISMATCH=1
+EXIT_CODE="$(run_script)"
+if [[ "$EXIT_CODE" -eq 0 ]]; then
+    fail_case "7-row-mismatch-propagates" "expected non-zero exit (M-6 propagation), got 0"
+elif ! grep -q "one-off store_generation init run failed" "$SCRATCH_ROOT/out.log"; then
+    fail_case "7-row-mismatch-propagates" "expected the init_store() failure message to be surfaced by name"
+elif [[ -f "$FAKE_STATE_DIR/up-ran" ]]; then
+    fail_case "7-row-mismatch-propagates" "expected docker compose ... up -d ruflo NOT to run after a propagated init failure"
+else
+    echo "applied=row-mismatch-propagates PASS (7-row-mismatch-propagates): a pre-existing different generation row's exit 1 propagated through the shell caller as a non-zero exit, no up"
+fi
+unset FAKE_INIT_STORE_ROW_MISMATCH
+
 echo ""
 if [[ "$FAIL_COUNT" -eq 0 ]]; then
-    echo "SUMMARY: 4/4 arms passed"
+    echo "SUMMARY: 7/7 arms passed"
     exit 0
 else
-    echo "SUMMARY: $FAIL_COUNT/4 arms FAILED"
+    echo "SUMMARY: $FAIL_COUNT/7 arms FAILED"
     exit 1
 fi

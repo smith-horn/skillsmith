@@ -37,7 +37,13 @@ CONTAINER_NAME="skillsmith-ruflo-1"
 LABEL_KEY="app.skillsmith.ruflo.instance"
 
 log() { echo "[ruflo-federation] $*"; }
-fail() { echo "[ruflo-federation] FAIL: $*" >&2; exit 1; }
+# L-19: a literal `\n` in a plain `echo` argument is NOT a newline -- `%b`
+# (not `%s`) makes printf expand it, same as `echo -e` would, so the two
+# multi-line FAIL messages below (case A's unexpected success, case B's
+# missing version line) render as real newlines instead of a literal
+# backslash-n. $* is supplied as %b's DATA argument, never re-parsed as a
+# format string itself, so a stray `%` inside a docker log line is safe.
+fail() { printf '%b\n' "[ruflo-federation] FAIL: $*" >&2; exit 1; }
 pass() { echo "[ruflo-federation] PASS: $*"; }
 
 usage() {
@@ -51,11 +57,37 @@ CHECKOUT_2="$(cd "$2" && pwd)"
 [[ -f "$CHECKOUT_1/docker-compose.yml" ]] || fail "no docker-compose.yml under $CHECKOUT_1"
 [[ -f "$CHECKOUT_2/docker-compose.yml" ]] || fail "no docker-compose.yml under $CHECKOUT_2"
 [[ -x "$CHECKOUT_1/scripts/ruflo-service-up.sh" ]] || fail "missing $CHECKOUT_1/scripts/ruflo-service-up.sh"
+# L-19: case B was calling a bare `docker compose ... up -d ruflo` for checkout
+# 2, skipping ruflo-service-up.sh's volume-creation/authority-quad checks
+# AND its RUFLO_SEED_EXPECTED_DIGEST export -- the entrypoint then refused on
+# an empty digest and the "serving @claude-flow/cli@" grep could never match.
+[[ -x "$CHECKOUT_2/scripts/ruflo-service-up.sh" ]] || fail "missing $CHECKOUT_2/scripts/ruflo-service-up.sh"
+# L-19: project_name() below shells out to jq -- fail with a clear reason up
+# front rather than a bare "jq: command not found" surfacing mid-run.
+command -v jq >/dev/null 2>&1 || fail "jq is required (project_name() parses 'docker compose config --format json' with it) but was not found on PATH"
 
 project_name() {
     local checkout="$1"
     (cd "$checkout" && docker compose -f docker-compose.yml config --format json 2>/dev/null | jq -r '.name // empty')
 }
+
+# L-19: `docker rm -f skillsmith-ruflo-1` in case B below destroys the
+# SHARED service (every session's launcher targets this fixed container
+# name) with no restoration -- registered as early as possible so ANY exit
+# path (a case A/B assertion failing under `set -e`, or normal completion)
+# leaves checkout 1's service running again rather than torn down.
+restore_checkout_1() {
+    local rc=0
+    log "EXIT trap: removing checkout 2's container (if present) and re-running $CHECKOUT_1/scripts/ruflo-service-up.sh to restore the shared service"
+    docker rm -f "$CONTAINER_NAME" >/dev/null 2>&1 || true
+    if "$CHECKOUT_1/scripts/ruflo-service-up.sh" >/tmp/ruflo-federation-restore.log 2>&1; then
+        log "restoration: checkout 1's service is back up"
+    else
+        rc=$?
+        echo "[ruflo-federation] RESTORATION FAILED (exit $rc) -- the shared skillsmith-ruflo-1 service may be left down. See /tmp/ruflo-federation-restore.log and re-run: $CHECKOUT_1/scripts/ruflo-service-up.sh" >&2
+    fi
+}
+trap restore_checkout_1 EXIT
 
 volume_snapshot() {
     # Name|CreatedAt|instance-label, joined so a single string compare
@@ -92,6 +124,14 @@ BASELINE_SNAPSHOT="$(volume_snapshot)"
 log "baseline volume snapshot (Name|CreatedAt|label): $BASELINE_SNAPSHOT"
 
 # ---- A. checkout 1 running: checkout 2's up must fail on the name collision ----
+# L-19: export RUFLO_SEED_EXPECTED_DIGEST for THIS attempt too (from checkout
+# 2's own committed digest file) so a missing/empty digest can never be a
+# second, confounding reason for the up to fail -- the ONLY possible failure
+# reason left is the container-name collision this case exists to prove.
+CHECKOUT_2_DIGEST_FILE="$CHECKOUT_2/scripts/ruflo-seed/SEED-MANIFEST.sha256"
+[[ -f "$CHECKOUT_2_DIGEST_FILE" ]] || fail "missing $CHECKOUT_2_DIGEST_FILE -- cannot rule out an empty-digest refusal as an alternate reason for case A's expected failure"
+RUFLO_SEED_EXPECTED_DIGEST="$(tr -d '[:space:]' < "$CHECKOUT_2_DIGEST_FILE")"
+export RUFLO_SEED_EXPECTED_DIGEST
 log "attempting checkout 2's up while checkout 1's container is running (expect failure): docker compose -f $CHECKOUT_2/docker-compose.yml --profile ruflo up -d ruflo"
 set +e
 (cd "$CHECKOUT_2" && docker compose -f docker-compose.yml --profile ruflo up -d ruflo) >/tmp/ruflo-federation-case-a.log 2>&1
@@ -101,7 +141,14 @@ log "checkout 2's up exit code while checkout 1 is running: $CASE_A_EXIT"
 if [[ "$CASE_A_EXIT" -eq 0 ]]; then
     fail "checkout 2's up SUCCEEDED while checkout 1's container was running -- expected a container-name collision. Output:\n$(cat /tmp/ruflo-federation-case-a.log)"
 fi
-pass "checkout 2's up failed as expected (exit $CASE_A_EXIT) while checkout 1's container held skillsmith-ruflo-1"
+# L-19: exit != 0 alone is also satisfied by a compose parse error or a
+# missing image -- the queen MEASURED the real collision text, so require it
+# verbatim rather than trusting a bare non-zero exit code.
+COLLISION_TEXT="Conflict. The container name \"/$CONTAINER_NAME\" is already in use"
+if ! grep -qF "$COLLISION_TEXT" /tmp/ruflo-federation-case-a.log; then
+    fail "checkout 2's up failed (exit $CASE_A_EXIT) but NOT with the expected collision message ('$COLLISION_TEXT') -- some other failure reason. Output:\n$(cat /tmp/ruflo-federation-case-a.log)"
+fi
+pass "checkout 2's up failed as expected (exit $CASE_A_EXIT) with the container-name collision message, while checkout 1's container held $CONTAINER_NAME"
 
 PROJECT_2_NETWORKS="$(docker network ls --filter "label=com.docker.compose.project=$PROJECT_2" --format '{{.Name}}' | tr '\n' ' ')"
 log "networks labelled for checkout 2's project after the failed up: ${PROJECT_2_NETWORKS:-<none>}"
@@ -118,8 +165,8 @@ log "removing checkout 1's container: docker rm -f $CONTAINER_NAME"
 docker rm -f "$CONTAINER_NAME" >/dev/null
 container_running && fail "container $CONTAINER_NAME still reports running after docker rm -f"
 
-log "bringing up checkout 2's service now that checkout 1's container is gone"
-(cd "$CHECKOUT_2" && docker compose -f docker-compose.yml --profile ruflo up -d ruflo)
+log "bringing up checkout 2's service now that checkout 1's container is gone: $CHECKOUT_2/scripts/ruflo-service-up.sh"
+"$CHECKOUT_2/scripts/ruflo-service-up.sh"
 container_running || fail "checkout 2's container did not come up after checkout 1's was removed"
 
 FINAL_SNAPSHOT="$(volume_snapshot)"
@@ -129,10 +176,28 @@ if [[ "$FINAL_SNAPSHOT" != "$BASELINE_SNAPSHOT" ]]; then
 fi
 pass "checkout 2 attached the same volume instance (Name/CreatedAt/label all equal to the baseline)"
 
-LOG_TAIL="$(docker logs "$CONTAINER_NAME" 2>&1 | tail -20)"
-if ! grep -q '\[ruflo-entrypoint\] serving @claude-flow/cli@' <<<"$LOG_TAIL"; then
-    fail "entrypoint version line not found in docker logs $CONTAINER_NAME. Last 20 lines:\n$LOG_TAIL"
+# The entrypoint prints its version line only AFTER walking the served tree for
+# the digest check (measured ~11 s on the calibration machine), so a single read
+# right after `up -d` races it -- the first live run of this test failed here for
+# exactly that reason (2026-09-23). Poll up to RUFLO_FED_LOG_DEADLINE_S (default
+# 60) seconds; a refusing entrypoint never prints the line, so the deadline is
+# the failure path, not a fallback.
+LOG_DEADLINE_S="${RUFLO_FED_LOG_DEADLINE_S:-60}"
+LOG_TAIL=""
+log_line_seen=0
+elapsed=0
+while [[ "$elapsed" -lt "$LOG_DEADLINE_S" ]]; do
+    LOG_TAIL="$(docker logs "$CONTAINER_NAME" 2>&1 | tail -20)"
+    if grep -q '\[ruflo-entrypoint\] serving @claude-flow/cli@' <<<"$LOG_TAIL"; then
+        log_line_seen=1
+        break
+    fi
+    sleep 2
+    elapsed=$((elapsed + 2))
+done
+if [[ "$log_line_seen" -ne 1 ]]; then
+    fail "entrypoint version line not found in docker logs $CONTAINER_NAME within ${LOG_DEADLINE_S}s. Last 20 lines:\n$LOG_TAIL"
 fi
-pass "entrypoint version line present in docker logs $CONTAINER_NAME"
+pass "entrypoint version line present in docker logs $CONTAINER_NAME after ${elapsed}s"
 
 log "all federation assertions passed"

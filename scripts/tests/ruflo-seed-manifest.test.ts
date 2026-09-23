@@ -13,8 +13,9 @@
  * mocked fs calls -- matching this repo's SMI-6015-derived convention for
  * SQL/graph-correctness-shaped logic (see scripts/tests/check-submodule-pointer.test.ts).
  *
- * Ten correctness properties (one `it()` each, matching the task's own
- * numbering):
+ * Twelve correctness properties (one `it()` each; 1-10 match the task's own
+ * original numbering, 11-12 were added for the SMI-6744 governance review
+ * round, 2026-09-23, finding L-20 a/b/c):
  *   1. two generations of the same tree are byte-identical
  *   2. modifying one file's content changes the digest
  *   3. adding an empty directory changes the digest
@@ -22,13 +23,18 @@
  *   5. a newline-containing filename and a non-ASCII filename are both
  *      covered, and ordered by bytes
  *   6. a setuid/setgid/sticky-only change to a regular file changes the digest
- *   7. a FIFO under the root makes generation FAIL, naming path and type
+ *   7. a FIFO under the root makes generation FAIL, naming path and type,
+ *      and exits 3 (L-20b: distinct from an uncaught-exception's exit 1)
  *   8. two same-content files hard-linked to one inode make generation FAIL,
- *      naming path, link count and type
+ *      naming path, link count and type, and exits 3 (L-20b, as above)
  *   9. a dangling symlink is accepted, and its raw target is recorded
  *   10. ordering is unsigned BYTE comparison, not locale collation
+ *   11. chmod of the COVERED ROOT ITSELF changes the digest (L-20a: the
+ *       root's own mode is now the manifest's leading ROOT_MODE field)
+ *   12. a symlink's mode is masked to a fixed constant -- a symlink's mode
+ *       never affects the digest, while its target still does (L-20c)
  *
- * Then five RED-ARM tests (SMI-6598's "revert the fix, watch it fail"
+ * Then eight RED-ARM tests (SMI-6598's "revert the fix, watch it fail"
  * rule, applied to a generator rather than a bug fix): each takes the
  * generator's own source, applies ONE targeted mutation that disables the
  * invariant a specific `it()` above depends on, runs the MUTATED copy
@@ -39,12 +45,20 @@
  * `describe` block's own `afterAll` re-reads the real file and asserts its
  * md5 is unchanged from what was read at the start of the suite, so "the
  * file restored, its md5 compared" is verified directly rather than merely
- * assumed from "we only touched a copy".
+ * assumed from "we only touched a copy". Three of the eight (L-20 a/b/c)
+ * were added for the same governance round as properties 11-12 above; the
+ * L-20c arm degrades to a documented no-op assertion on a platform where a
+ * fresh symlink's real mode is already 0777 (e.g. Linux), since there is no
+ * way to construct a symlink whose real mode differs from the masked
+ * constant on such a platform -- an intrinsic platform limitation, not a
+ * gap in the test.
  */
 import { afterAll, afterEach, beforeEach, describe, expect, it } from 'vitest'
 import {
   chmodSync,
+  lchmodSync,
   linkSync,
+  lstatSync,
   mkdirSync,
   mkdtempSync,
   readFileSync,
@@ -96,8 +110,16 @@ interface ManifestRecord {
  * importing manifest.mjs's internals, so a test using it is a genuine check
  * of the ON-THE-WIRE bytes, not a check that agrees with itself by
  * construction.
+ *
+ * L-20a: `rootMode` is the 4-byte ROOT_MODE field emitted right after
+ * VERSION_BYTES, before any record -- decoded independently here too, not
+ * inferred from manifest.mjs's own source.
  */
-function parseManifest(buf: Buffer): { version: string; records: ManifestRecord[] } {
+function parseManifest(buf: Buffer): {
+  version: string
+  rootMode: string
+  records: ManifestRecord[]
+} {
   let offset = 0
   function readLP(): Buffer {
     const len = buf.readUInt32BE(offset)
@@ -107,6 +129,8 @@ function parseManifest(buf: Buffer): { version: string; records: ManifestRecord[
     return b
   }
   const version = readLP().toString('ascii')
+  const rootMode = buf.subarray(offset, offset + 4).toString('ascii')
+  offset += 4
   const records: ManifestRecord[] = []
   while (offset < buf.length) {
     const path = readLP()
@@ -129,7 +153,7 @@ function parseManifest(buf: Buffer): { version: string; records: ManifestRecord[
       )
     }
   }
-  return { version, records }
+  return { version, rootMode, records }
 }
 
 let workDir: string
@@ -208,23 +232,23 @@ describe('ruflo-seed manifest generator (SMI-6744, ADR-170 § 7)', () => {
     expect(runDigestOnly(workDir)).toBe(base) // restored cleanly between bits
   })
 
-  it('7. a FIFO under the root makes generation FAIL, naming the path and type', () => {
+  it('7. a FIFO under the root makes generation FAIL (exit 3, L-20b), naming the path and type', () => {
     buildBaseTree(workDir)
     execFileSync('mkfifo', [join(workDir, 'myfifo')])
     const result = runFull(workDir)
-    expect(result.status).not.toBe(0)
+    expect(result.status).toBe(3) // ManifestRefusal, not an uncaught exception's exit 1
     const stderr = result.stderr.toString('utf8')
     expect(stderr).toContain('myfifo')
     expect(stderr).toContain('FIFO')
   })
 
-  it('8. two same-content files hard-linked to one inode make generation FAIL, naming path, link count and type', () => {
+  it('8. two same-content files hard-linked to one inode make generation FAIL (exit 3, L-20b), naming path, link count and type', () => {
     buildBaseTree(workDir)
     const orig = join(workDir, 'dup-orig.txt')
     writeFileSync(orig, 'same content')
     linkSync(orig, join(workDir, 'dup-link.txt'))
     const result = runFull(workDir)
-    expect(result.status).not.toBe(0)
+    expect(result.status).toBe(3) // ManifestRefusal, not an uncaught exception's exit 1
     const stderr = result.stderr.toString('utf8')
     expect(stderr).toMatch(/dup-(orig|link)\.txt/)
     expect(stderr).toContain('st_nlink=2')
@@ -260,6 +284,58 @@ describe('ruflo-seed manifest generator (SMI-6744, ADR-170 § 7)', () => {
     expect(paths).toContain('émile.txt')
     // byte order: 'z' (0x7a) < first byte of 'é' (0xc3) -- zebra.txt sorts FIRST
     expect(paths.indexOf('zebra.txt')).toBeLessThan(paths.indexOf('émile.txt'))
+  })
+
+  it('11. chmod of the covered root itself changes the digest (L-20a: the root has its own ROOT_MODE field)', () => {
+    buildBaseTree(workDir)
+    const base = runDigestOnly(workDir)
+    const baseRootMode = statSync(workDir).mode & 0o777
+    // Pick a target mode guaranteed to differ from whatever this platform's
+    // mkdtempSync happened to default to (measured: 0700 on this host, but
+    // never assumed) rather than hardcoding a specific "before" value.
+    const newRootMode = baseRootMode === 0o755 ? 0o700 : 0o755
+    chmodSync(workDir, newRootMode)
+    try {
+      expect(runDigestOnly(workDir)).not.toBe(base)
+    } finally {
+      chmodSync(workDir, baseRootMode)
+    }
+  })
+
+  it("12. a symlink's mode is masked to a fixed constant, so a symlink's mode never affects the digest while its target still does (L-20c)", () => {
+    buildBaseTree(workDir)
+    const linkPath = join(workDir, 'link-to-a')
+
+    const result = runFull(workDir)
+    expect(result.status).toBe(0)
+    const { records } = parseManifest(result.stdout)
+    const rec = records.find((r) => r.path.toString('utf8') === 'link-to-a')
+    // Masked to the fixed constant regardless of the real filesystem mode
+    // (which is itself platform-dependent -- see manifest.mjs's own header).
+    expect(rec?.mode).toBe('0777')
+
+    const base = runDigestOnly(workDir)
+
+    // Best-effort: where the platform actually supports changing a
+    // symlink's own mode (macOS via fs.lchmodSync), prove the masked
+    // digest really is unaffected by a real mode change. Linux has no such
+    // capability at all -- every symlink is unconditionally reported as
+    // 0777 -- so this block legitimately no-ops there.
+    let lchmodSupported = true
+    try {
+      lchmodSync(linkPath, 0o700)
+    } catch {
+      lchmodSupported = false
+    }
+    if (lchmodSupported) {
+      expect(runDigestOnly(workDir)).toBe(base)
+      lchmodSync(linkPath, 0o755) // restore before the target-change assertion below
+    }
+
+    // The target, unlike the mode, is never masked -- changing it changes the digest.
+    rmSync(linkPath)
+    symlinkSync('sub/nested.txt', linkPath)
+    expect(runDigestOnly(workDir)).not.toBe(base)
   })
 })
 
@@ -378,5 +454,73 @@ describe('manifest.mjs red-arm tests (scratch-copy mutations)', () => {
       .toString('utf8')
       .trim()
     expect(afterModeChange).toBe(baseDigest) // property 4 FAILS under this mutant
+  })
+
+  // -------------------------------------------------------------------------
+  // L-20 a/b/c red arms (SMI-6744 governance review, 2026-09-23)
+  // -------------------------------------------------------------------------
+
+  it('dropping ROOT_MODE from serialize() makes property 11 (root chmod) fail to hold', () => {
+    buildBaseTree(workDir)
+    const mutantPath = writeMutant((src) =>
+      replaceOnce(
+        src,
+        'const parts = [lp(VERSION_BYTES), rootModeField]',
+        'const parts = [lp(VERSION_BYTES)]'
+      )
+    )
+    const baseDigest = execFileSync(process.execPath, [mutantPath, workDir, '--digest'])
+      .toString('utf8')
+      .trim()
+
+    const baseRootMode = statSync(workDir).mode & 0o777
+    const newRootMode = baseRootMode === 0o755 ? 0o700 : 0o755
+    chmodSync(workDir, newRootMode)
+    try {
+      const afterChmod = execFileSync(process.execPath, [mutantPath, workDir, '--digest'])
+        .toString('utf8')
+        .trim()
+      expect(afterChmod).toBe(baseDigest) // property 11 FAILS under this mutant
+    } finally {
+      chmodSync(workDir, baseRootMode)
+    }
+  })
+
+  it('reverting exit 3 to exit 1 makes the refusal-exit-code distinction (properties 7/8) fail to hold', () => {
+    buildBaseTree(workDir)
+    execFileSync('mkfifo', [join(workDir, 'myfifo')])
+    const mutantPath = writeMutant((src) => replaceOnce(src, 'process.exit(3)', 'process.exit(1)'))
+    const result = spawnSync(process.execPath, [mutantPath, workDir])
+    expect(result.status).toBe(1) // the exit-3-vs-1 distinction FAILS under this mutant
+  })
+
+  it('using the real fs mode for symlinks instead of the masked constant makes property 12 fail to hold where the platform allows it', () => {
+    buildBaseTree(workDir)
+    const linkPath = join(workDir, 'link-to-a')
+    const realModeOctal = (lstatSync(linkPath).mode & 0o7777).toString(8).padStart(4, '0')
+
+    const mutantPath = writeMutant((src) =>
+      replaceOnce(src, 'modeField: SYMLINK_MODE_MASK,', 'modeField,')
+    )
+    const result = spawnSync(process.execPath, [mutantPath, workDir])
+    expect(result.status).toBe(0)
+    const { records } = parseManifest(result.stdout)
+    const rec = records.find((r) => r.path.toString('utf8') === 'link-to-a')
+
+    if (realModeOctal === '0777') {
+      // On a platform where a fresh symlink is ALREADY reported as 0777
+      // (e.g. Linux -- manifest.mjs's own header measurement), this specific
+      // mutation is a no-op: there is no way to construct a Linux symlink
+      // whose real mode differs from the masked constant, so the mutant and
+      // the correct implementation are indistinguishable by mode alone here.
+      // Intrinsic platform limitation, not a gap in this test.
+      expect(rec?.mode).toBe('0777')
+    } else {
+      // On a platform where the real mode differs (macOS defaults a fresh
+      // symlink to 0755), the un-masked mutant diverges from the constant --
+      // property 12 (mode is always masked) FAILS under this mutant.
+      expect(rec?.mode).toBe(realModeOctal)
+      expect(rec?.mode).not.toBe('0777')
+    }
   })
 })

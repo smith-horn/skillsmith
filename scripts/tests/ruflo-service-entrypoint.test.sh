@@ -16,6 +16,18 @@
 # signal, per this repo's "a mount flag is an inference; a successful write
 # ... demonstrates that operation succeeds" rule.
 #
+# Read this before trusting Arms 2-4 as full coverage of a privilege limit:
+# they hold ONLY under whatever non-root host user runs this test suite --
+# `chmod 500` denies a NON-owning process, but the real `ruflo` service
+# container runs this entrypoint as root (ADR-170 SS3), and root can write
+# through a 500-mode directory it owns regardless. These three arms test
+# the writability PROBE's own write-and-remove mechanics (a `mkdir -p`
+# success proving nothing about writing into an EXISTING read-only
+# directory, ADR-170 SS4) -- they are not, and do not claim to be, coverage
+# of what happens when the real uid IS root; that privilege-limit class is
+# the scripts/ruflo-launch-guard.mjs per-spawn probe's own Linux arms, owned
+# by a parallel A1.4 lane, not this entrypoint's test suite.
+#
 # Usage: ./scripts/tests/ruflo-service-entrypoint.test.sh
 set -euo pipefail
 
@@ -62,11 +74,22 @@ esac
 FAKE_NODE
 chmod +x "$FAKE_BIN_DIR/node"
 
-# ---- fake sleep: records the call and exits immediately (the real
-# `exec sleep infinity` would hang this test forever). ----
-cat > "$FAKE_BIN_DIR/sleep" << 'FAKE_SLEEP'
+# ---- fake sleep: records the call and, by default, exits immediately (the
+# real backgrounded `sleep infinity` would hang this test forever for every
+# arm that doesn't care about the hold itself). H-2's SIGTERM arm (8) is the
+# one exception: it sets FAKE_SLEEP_BLOCK so this fake genuinely blocks (via
+# the REAL system `sleep`, captured below before FAKE_BIN_DIR shadows it),
+# which is what lets that arm observe the entrypoint actually holding before
+# it sends SIGTERM -- an already-exited fake proves nothing about the trap.
+# A fixed 100 real seconds regardless of the "infinity" argument: BSD `sleep`
+# (macOS, this repo's default host) does not accept "infinity" as GNU's does.
+REAL_SLEEP="$(command -v sleep)"
+cat > "$FAKE_BIN_DIR/sleep" << FAKE_SLEEP
 #!/usr/bin/env bash
-echo "sleep $*" >> "$FAKE_SLEEP_CALL_LOG"
+echo "sleep \$*" >> "\$FAKE_SLEEP_CALL_LOG"
+if [ -n "\${FAKE_SLEEP_BLOCK:-}" ]; then
+    exec "$REAL_SLEEP" 100
+fi
 exit 0
 FAKE_SLEEP
 chmod +x "$FAKE_BIN_DIR/sleep"
@@ -217,11 +240,50 @@ else
     echo "applied=digest-mismatch PASS (7-digest-mismatch): refused naming both digests, hold never called"
 fi
 
+# ---- Arm 8 (H-2): the hold responds to SIGTERM by exiting 0 within 2s.
+# FAKE_SLEEP_BLOCK makes the fake `sleep` genuinely block (real system
+# sleep, see above) so the entrypoint is actually parked in `wait $!` when
+# the signal arrives -- an instantly-exiting fake would prove nothing about
+# the trap. Started in the background (not via run_script(), which blocks
+# until exit) so this arm can send SIGTERM while the entrypoint still holds.
+reset_fixture
+export FAKE_SLEEP_BLOCK=1
+PATH="$FAKE_BIN_DIR:$PATH" "$SCRIPT_UNDER_TEST" >"$SCRATCH_ROOT/out-8.log" 2>&1 &
+ENTRYPOINT_PID=$!
+sleep 0.5
+if ! kill -0 "$ENTRYPOINT_PID" 2>/dev/null; then
+    fail_case "8-sigterm" "entrypoint exited before reaching the hold: $(cat "$SCRATCH_ROOT/out-8.log")"
+else
+    # Watchdog: forces the test to fail fast (not hang) if the trap never
+    # fires, by SIGKILLing past the 2s budget -- `wait` below then observes
+    # a non-zero (signalled) exit status rather than the required 0.
+    ( sleep 2; kill -0 "$ENTRYPOINT_PID" 2>/dev/null && kill -KILL "$ENTRYPOINT_PID" 2>/dev/null ) &
+    WATCHDOG_PID=$!
+    START_S="$(date +%s)"
+    kill -TERM "$ENTRYPOINT_PID"
+    set +e
+    wait "$ENTRYPOINT_PID"
+    SIGTERM_EXIT=$?
+    set -e
+    END_S="$(date +%s)"
+    kill "$WATCHDOG_PID" 2>/dev/null || true
+    wait "$WATCHDOG_PID" 2>/dev/null || true
+    ELAPSED=$((END_S - START_S))
+    if [[ "$SIGTERM_EXIT" -ne 0 ]]; then
+        fail_case "8-sigterm" "expected exit 0 within 2s of SIGTERM, got exit $SIGTERM_EXIT after ${ELAPSED}s (0 usually means the watchdog SIGKILLed it): $(cat "$SCRATCH_ROOT/out-8.log")"
+    elif [[ "$ELAPSED" -gt 1 ]]; then
+        fail_case "8-sigterm" "expected the trap to fire near-instantly (well under the 2s watchdog budget), took ${ELAPSED}s"
+    else
+        echo "applied=sigterm-exit0 PASS (8-sigterm): entrypoint exited 0 in ${ELAPSED}s of SIGTERM (budget 2s)"
+    fi
+fi
+unset FAKE_SLEEP_BLOCK
+
 echo ""
 if [[ "$FAIL_COUNT" -eq 0 ]]; then
-    echo "SUMMARY: 7/7 arms passed"
+    echo "SUMMARY: 8/8 arms passed"
     exit 0
 else
-    echo "SUMMARY: $FAIL_COUNT/7 arms FAILED"
+    echo "SUMMARY: $FAIL_COUNT/8 arms FAILED"
     exit 1
 fi

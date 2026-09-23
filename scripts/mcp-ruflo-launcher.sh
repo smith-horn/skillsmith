@@ -28,14 +28,32 @@
 #      neither `docker` nor the network.
 #   1. Container liveness (§ 3: one server process per session, N docker
 #      execs into one container) — remediation: scripts/ruflo-service-up.sh.
-#   2. Service command authentication (§ 1, round-4 finding 6): the RUNNING
-#      container's configured Path/Args must equal the literal
+#      Immediately after, the container's ID is resolved ONCE (`docker
+#      inspect -f '{{.Id}}'`) and every later docker inspect/exec — Checks
+#      2-5, the guard pipe, and the final exec — targets that ID, never the
+#      name again, so a container swapped in under the same name between
+#      this check and the exec fails closed with "no such container"
+#      instead of silently attaching to the replacement (governance review
+#      TOCTOU finding, Q2).
+#   2. Service command authentication (§ 1, round-4 finding 6; § 4 for the
+#      cwd leg): the RUNNING container's configured Entrypoint/Cmd must
+#      equal the literal
 #      `node /opt/ruflo-seed/node_modules/@claude-flow/cli/bin/cli.js mcp start`
-#      verbatim — a launcher that runs the right argv establishes nothing
-#      about the Compose/image command, so this is authenticated separately.
+#      verbatim, and its configured WorkingDir must equal $SERVICE_CWD — a
+#      launcher that runs the right argv (or passes -w itself) establishes
+#      nothing about the Compose/image configuration, so all three are
+#      authenticated on the running container separately (governance review
+#      finding H-3: a recreated container with a different working_dir
+#      passed every prior check and served onto a silently forked store,
+#      since cwd decides the store location per § 4).
 #   3. RUFLO_CLI_PIN vs the served version (§ 7): the one pin literal,
-#      compared text-gated against `require(<cli>/package.json).version`
-#      run inside the container — never trust a bare docker-exec exit code.
+#      compared against a sentinel-tagged `require(<cli>/package.json).version`
+#      run inside the container, text-gated on the LAST `RUFLO_VER=` token
+#      rather than the whole probe output — a bare Node stderr line
+#      (an ExperimentalWarning, a deprecation notice) must not cause a false
+#      refusal, and an absent sentinel must not be silently accepted as a
+#      raw version string (governance review finding M-9). Never trust a
+#      bare docker-exec exit code.
 #   4. Authority quad (§ 5): (a) the /srv/ruflo mount is Type volume, Name
 #      the committed literal; (b) the volume carries the expected instance
 #      nonce label; (c) the store's store_generation row matches the
@@ -125,20 +143,47 @@ if [ -z "$(docker ps --filter "name=^/${CONTAINER_NAME}\$" --filter "status=runn
   exit 1
 fi
 
-# ---- Check 2: service command authentication (ADR-170 § 1, round-4 f.6) ---
+# Resolve the container's ID ONCE, here, and use it — never $CONTAINER_NAME —
+# for every docker inspect/exec below, including the guard pipe and the
+# final exec (TOCTOU, governance review Q2). A name-based lookup can be
+# satisfied by a DIFFERENT container between this check and the exec (the
+# original stopped and a same-named one started, or `docker rename`d into
+# place); an ID-pinned call instead fails closed with "no such container"
+# the instant the original is gone, rather than silently authenticating the
+# original and then attaching the exec to whatever now holds the name.
+# $CONTAINER_NAME is still used in human-facing messages below.
+set +e
+cid="$(docker inspect -f '{{.Id}}' "$CONTAINER_NAME" 2>&1)"
+cid_status=$?
+set -e
+if [ "$cid_status" -ne 0 ] || [ -z "$cid" ]; then
+  emit_error "could not resolve the container id for $CONTAINER_NAME" \
+"    docker inspect $CONTAINER_NAME
+    # confirm the container is running and this host can reach the Docker daemon"
+  exit 1
+fi
+
+# ---- Check 2: service command authentication (ADR-170 § 1, round-4 f.6; ---
+# ---- § 4 for the cwd leg, governance review finding H-3) -------------------
 # The daemon reports Path/Args as the concatenation of the compose entrypoint (the
 # holding script ADR-170 §§ 3 and 6 require) and the § 1 command literal, so the
 # literal is authenticated as Config.Cmd and the wrapper as Config.Entrypoint --
 # both exact, no shell wrapper or override anywhere else (recorded for v5.4).
+# Config.WorkingDir is authenticated too: § 4 makes cwd decide the store
+# location, so a container recreated with a different working_dir would
+# otherwise pass Entrypoint/Cmd authentication and serve onto a silently
+# forked store.
 EXPECTED_PATH='["/bin/sh","/opt/ruflo-service-entrypoint.sh"]'
 EXPECTED_ARGS_JSON="[\"node\",\"$CLI_PATH\",\"mcp\",\"start\"]"
 set +e
-actual_path="$(docker inspect -f '{{json .Config.Entrypoint}}' "$CONTAINER_NAME" 2>&1)"
+actual_path="$(docker inspect -f '{{json .Config.Entrypoint}}' "$cid" 2>&1)"
 path_status=$?
-actual_args="$(docker inspect -f '{{json .Config.Cmd}}' "$CONTAINER_NAME" 2>&1)"
+actual_args="$(docker inspect -f '{{json .Config.Cmd}}' "$cid" 2>&1)"
 args_status=$?
+actual_workdir="$(docker inspect -f '{{.Config.WorkingDir}}' "$cid" 2>&1)"
+workdir_status=$?
 set -e
-if [ "$path_status" -ne 0 ] || [ "$args_status" -ne 0 ]; then
+if [ "$path_status" -ne 0 ] || [ "$args_status" -ne 0 ] || [ "$workdir_status" -ne 0 ]; then
   emit_error "could not authenticate the running container's configured command (docker inspect failed)" \
 "    docker inspect $CONTAINER_NAME
     # confirm the container is running and this host can reach the Docker daemon"
@@ -151,22 +196,48 @@ if [ "$actual_path" != "$EXPECTED_PATH" ] || [ "$actual_args" != "$EXPECTED_ARGS
     ( cd \"$MAIN_CHECKOUT\" && docker compose --profile ruflo up -d --force-recreate ruflo )"
   exit 1
 fi
+if [ "$actual_workdir" != "$SERVICE_CWD" ]; then
+  emit_error "the running container's configured working directory does not match ADR-170 § 4" \
+"    expected: workdir $SERVICE_CWD
+    actual:   workdir $actual_workdir
+    ( cd \"$MAIN_CHECKOUT\" && docker compose --profile ruflo up -d --force-recreate ruflo )"
+  exit 1
+fi
 
 # ---- Check 3: RUFLO_CLI_PIN vs the served version --------------------------
 # Content-based, not exit-code-based (mirrors mcp-doc-retrieval-launcher.sh
 # Check 1): a bare docker-exec exit 1 is ambiguous (also what docker exec
 # itself returns on a daemon-level failure), so branch on the probe's own
-# stdout text.
+# stdout text. The probe emits a sentinel-tagged value rather than the bare
+# version (governance review finding M-9): comparing the WHOLE 2>&1-captured
+# output to RUFLO_CLI_PIN made any Node stderr line (an ExperimentalWarning,
+# a deprecation notice) a false refusal, since that text rides along on the
+# same fd. Extracting the value after the LAST "RUFLO_VER=" token is immune
+# to stderr noise appearing anywhere else in the captured text.
 set +e
-served_version="$(docker exec "$CONTAINER_NAME" node -p "require('$CLI_PKG_JSON').version" 2>&1)"
+version_probe_out="$(docker exec "$cid" node -p "'RUFLO_VER='+require('$CLI_PKG_JSON').version" 2>&1)"
 version_status=$?
 set -e
-if [ "$version_status" -ne 0 ] || [ -z "$served_version" ]; then
+if [ "$version_status" -ne 0 ] || [ -z "$version_probe_out" ]; then
   emit_error "could not read the served @claude-flow/cli version from the container" \
-"    docker exec $CONTAINER_NAME node -p \"require('$CLI_PKG_JSON').version\"
+"    docker exec $CONTAINER_NAME node -p \"'RUFLO_VER='+require('$CLI_PKG_JSON').version\"
     # inspect the output above; the ruflo image may need a rebuild"
   exit 1
 fi
+case "$version_probe_out" in
+  *RUFLO_VER=*) sentinel_found=1 ;;
+  *) sentinel_found=0 ;;
+esac
+if [ "$sentinel_found" != "1" ]; then
+  emit_error "the served-version probe produced no RUFLO_VER= sentinel (unexpected Node output)" \
+"$(printf '%s' "$version_probe_out" | sed 's/^/    /')"
+  exit 1
+fi
+# ##*RUFLO_VER= strips the longest matching prefix, i.e. up to and including
+# the LAST occurrence of the sentinel, so trailing stderr text before it
+# cannot be mistaken for the version; trimming to [0-9.] then discards
+# anything the sentinel's own line still carries (e.g. a trailing newline).
+served_version="$(printf '%s' "${version_probe_out##*RUFLO_VER=}" | tr -cd '0-9.')"
 if [ "$served_version" != "$RUFLO_CLI_PIN" ]; then
   emit_error "RUFLO_CLI_PIN=$RUFLO_CLI_PIN does not match the served @claude-flow/cli@$served_version" \
 "    pinned:  $RUFLO_CLI_PIN
@@ -178,7 +249,7 @@ fi
 # ---- Check 4: authority quad (ADR-170 § 5) ---------------------------------
 # (a) the /srv/ruflo mount is Type volume, Name the committed literal.
 set +e
-mount_info="$(docker inspect -f "{{range .Mounts}}{{if eq .Destination \"$SERVICE_CWD\"}}{{.Type}} {{.Name}}{{end}}{{end}}" "$CONTAINER_NAME" 2>&1)"
+mount_info="$(docker inspect -f "{{range .Mounts}}{{if eq .Destination \"$SERVICE_CWD\"}}{{.Type}} {{.Name}}{{end}}{{end}}" "$cid" 2>&1)"
 mount_status=$?
 set -e
 if [ "$mount_status" -ne 0 ]; then
@@ -226,15 +297,15 @@ if [ "$label_status" -ne 0 ]; then
 fi
 if [ "$volume_label" != "$expected_nonce" ]; then
   emit_error "volume $VOLUME_NAME's instance-nonce label does not match $AUTHORITY_FILE (authority quad b — the volume was deleted and recreated)" \
-"    expected label $VOLUME_LABEL_KEY=$expected_nonce
-    actual   label $VOLUME_LABEL_KEY=$volume_label
-    $REMEDIATION_START_SERVICE"
+"    expected label $VOLUME_LABEL_KEY=${expected_nonce:0:12}...
+    actual   label $VOLUME_LABEL_KEY=${volume_label:0:12}...
+    # this is not auto-repaired; see ADR-170 § 5 (Store authority) before proceeding"
   exit 1
 fi
 
 # (d) an empty volume with no database is refused distinctly from (c).
 set +e
-db_probe="$(docker exec "$CONTAINER_NAME" sh -c '[ -f "$1" ] && echo RUFLO_DB_PRESENT || echo RUFLO_DB_ABSENT' _ "$STORE_DB_PATH" 2>&1)"
+db_probe="$(docker exec "$cid" sh -c '[ -f "$1" ] && echo RUFLO_DB_PRESENT || echo RUFLO_DB_ABSENT' _ "$STORE_DB_PATH" 2>&1)"
 db_probe_status=$?
 set -e
 if [ "$db_probe_status" -ne 0 ] || { [ "$db_probe" != "RUFLO_DB_PRESENT" ] && [ "$db_probe" != "RUFLO_DB_ABSENT" ]; }; then
@@ -250,7 +321,7 @@ fi
 read_store_generation() {
   set +e
   local out
-  out="$(docker exec "$CONTAINER_NAME" sh -c '
+  out="$(docker exec "$cid" sh -c '
     if command -v sqlite3 >/dev/null 2>&1; then
       n="$(sqlite3 "$1" "SELECT count(*) FROM $2;" 2>/dev/null)"
       [ "$n" = "1" ] || { echo "store_generation rows=$n (expected exactly 1)"; exit 3; }
@@ -280,8 +351,8 @@ if [ "$_gen_status" -ne 0 ] || [ -z "$_gen_value" ]; then
 fi
 if [ "$_gen_value" != "$expected_generation" ]; then
   emit_error "the served store's generation does not match $AUTHORITY_FILE (authority quad c — a forked or restored store)" \
-"    expected generation: $expected_generation
-    served   generation: $_gen_value
+"    expected generation: ${expected_generation:0:12}...
+    served   generation: ${_gen_value:0:12}...
     # this is not auto-repaired; see ADR-170 § 5 (Store authority) before proceeding"
   exit 1
 fi
@@ -298,7 +369,7 @@ if [ ! -f "$GUARD_SCRIPT" ]; then
   exit 1
 fi
 set +e
-guard_out="$(docker exec -i -w "$SERVICE_CWD" -e RUFLO_GUARD_CLI_PATH="$CLI_PATH" "$CONTAINER_NAME" node - <"$GUARD_SCRIPT" 2>&1)"
+guard_out="$(docker exec -i -w "$SERVICE_CWD" -e RUFLO_GUARD_CLI_PATH="$CLI_PATH" "$cid" node - <"$GUARD_SCRIPT" 2>&1)"
 guard_status=$?
 set -e
 if [ "$guard_status" -ne 0 ]; then
@@ -310,4 +381,9 @@ fi
 # ---- Success ----------------------------------------------------------------
 echo "[ruflo] serving @claude-flow/cli@$served_version from $MAIN_CHECKOUT via $CONTAINER_NAME" >&2
 
-exec docker exec -i -e CLAUDE_FLOW_LOG_LEVEL=info -e CLAUDE_FLOW_MEMORY_BACKEND=sqlite "$CONTAINER_NAME" node "$CLI_PATH" mcp start
+# -w "$SERVICE_CWD" (governance review finding H-3): the guard exec above
+# already pins the working directory explicitly; the final exec must match
+# it rather than rely on the image's default Config.WorkingDir, which Check
+# 2 authenticates but which a future image/compose edit could still change
+# out from under this literal exec.
+exec docker exec -i -w "$SERVICE_CWD" -e CLAUDE_FLOW_LOG_LEVEL=info -e CLAUDE_FLOW_MEMORY_BACKEND=sqlite "$cid" node "$CLI_PATH" mcp start

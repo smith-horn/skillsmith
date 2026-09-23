@@ -177,10 +177,18 @@ services:
       target: ruflo
     container_name: skillsmith-ruflo-1
     restart: unless-stopped
+    # H-2 (governance review): docker-init as PID 1 forwards SIGTERM to the
+    # entrypoint and reaps orphaned children, so `docker stop` no longer SIGKILLs in-flight sessions.
+    init: true
     # SS3: "a blast-radius bound, not a measurement" (ADR-170's own words)
     # -- override per developer machine via SKILLSMITH_RUFLO_DOCKER_CPUS /
     # SKILLSMITH_RUFLO_DOCKER_MEM, the same ${VAR:-default} shape the `dev`
     # service above uses for SKILLSMITH_DOCKER_CPUS / SKILLSMITH_DOCKER_MEM.
+    # M-13: mem_limit is a per-container budget SHARED by every concurrent
+    # session's own `mcp start` server process (SS3: "N sessions produce N
+    # server processes inside a single container") -- it is not a per-session
+    # allowance, so a busier machine lowers the effective headroom per
+    # process rather than each session getting its own 2g.
     cpus: '${SKILLSMITH_RUFLO_DOCKER_CPUS:-2}'
     mem_limit: ${SKILLSMITH_RUFLO_DOCKER_MEM:-2g}
     working_dir: /srv/ruflo
@@ -218,19 +226,24 @@ services:
     # per-session via `docker exec`.
     command: ['node', '/opt/ruflo-seed/node_modules/@claude-flow/cli/bin/cli.js', 'mcp', 'start']
     # scripts/ruflo-service-entrypoint.sh is this container's real PID 1: it
-    # validates the installed seed against its build-time manifest record,
+    # validates the installed seed candidate digest against
+    # RUFLO_SEED_EXPECTED_DIGEST above (never a build-time manifest record --
+    # ADR-170 SS7 round-4 finding 2: nothing inside the image is authority),
     # proves /srv/ruflo (and its three derived-state subdirectories) are
     # actually writable via write-and-remove probes (ADR-170 SS4: a bare
     # `mkdir -p` success proves nothing about writing into an EXISTING
     # read-only directory), prints the served CLI version, then holds
-    # forever -- it deliberately never execs the trailing `command:` argv
-    # above (ADR-170 SS3/SS4/SS6). Shipped via COPY in the Dockerfile's
-    # `ruflo` build stage -- add
+    # (H-2: via a TERM/INT trap around a backgrounded `sleep infinity`, not
+    # a bare `exec sleep infinity` -- see the script's own header) -- it
+    # deliberately never execs the trailing `command:` argv above (ADR-170
+    # SS3/SS4/SS6). M-13: this COPY landed -- the Dockerfile's `ruflo` build
+    # stage carries both
     # `COPY scripts/ruflo-service-entrypoint.sh /opt/ruflo-service-entrypoint.sh`
-    # to that stage (flagged to the Dockerfile-stage owner; not yet landed
-    # as of this comment) -- deliberately NOT a bind mount here: ADR-170 SS6
-    # states the only mount this service carries is the data volume above,
-    # and a bind mount of even one repo file would contradict that.
+    # and `COPY scripts/ruflo-seed/manifest.mjs /opt/ruflo-manifest/generate-manifest.mjs`
+    # (confirmed by direct read, 2026-09-23) -- deliberately NOT a bind mount
+    # here: ADR-170 SS6 states the only mount this service carries is the
+    # data volume above, and a bind mount of even one repo file would
+    # contradict that.
     entrypoint: ['/bin/sh', '/opt/ruflo-service-entrypoint.sh']
     profiles:
       - ruflo

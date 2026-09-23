@@ -304,15 +304,32 @@ RUN unreadable="$(find /opt/ruflo-seed -type f ! -perm -u+r | wc -l)" \
 
 # ADR-170 § 2: the one package-relative cache the served chain reads,
 # node_modules/@huggingface/transformers/.cache/Xenova/all-MiniLM-L6-v2/, warmed by one
-# embedding with network available (measured 2026-09-23: this exact invocation wrote the
-# four files § 2 names at its recorded sizes and sha256 digests). No manifest is written
-# here: the expected digest lives outside the image (§ 7).
+# embedding with network available (measured 2026-09-23: wrote the four files § 2 names at
+# its recorded sizes and sha256 digests). No manifest is written; the expected digest lives outside the image (§ 7).
+# M-7 (governance review): pinning THIS call's `revision` (finding's literal ask) is REJECTED
+# as measured -- transformers@4.3.0's buildResourcePaths() keys the on-disk FileCache by
+# `<repo>/<file>` only for revision "main"; every served caller (agentdb EmbeddingService.js:107
+# +2 copies, @claude-flow/cli's task-embedder.js:50) calls pipeline() with NO revision, i.e.
+# always "main". Pinning here alone warms a key runtime never reads -- a `network_mode: none`
+# (§ 6) miss then becomes an unreachable fetch, silently downgrading `embeddingBackend` to the hash
+# fallback. The digest check below catches a `main`-ref republish without moving the key (upstream commit, provenance only: Xenova/all-MiniLM-L6-v2 751bff37182d3f1213fa05d7196b954e230abad9).
 RUN node --input-type=module -e "\
 import { pipeline } from '@huggingface/transformers'; \
 const extractor = await pipeline('feature-extraction', 'Xenova/all-MiniLM-L6-v2'); \
 await extractor('SMI-6744 ADR-170 section 2 build-time cache warm', { pooling: 'mean', normalize: true }); \
 console.log('[ruflo-seed] model cache warmed: Xenova/all-MiniLM-L6-v2');\
 "
+# M-7: verify the warm against ADR-170 § 2's sha256 digests (reconfirmed live against the
+# serving container, 2026-09-23); a mismatch is the tampering/republish class this finding names.
+RUN cache_root=/opt/ruflo-seed/node_modules/@huggingface/transformers/.cache/Xenova/all-MiniLM-L6-v2 \
+    && fail=0 \
+    && verify() { f="$cache_root/$1"; [ -f "$f" ] || { echo "FATAL: missing $f (M-7)"; fail=1; return; }; a="$(sha256sum "$f" | cut -d' ' -f1)"; [ "$a" = "$2" ] || { echo "FATAL: mismatch $f want=$2 got=$a (M-7)"; fail=1; }; } \
+    && verify "onnx/model.onnx" 759c3cd2b7fe7e93933ad23c4c9181b7396442a2ed746ec7c1d46192c469c46e \
+    && verify "config.json" 7135149f7cffa1a573466c6e4d8423ed73b62fd2332c575bf738a0d033f70df7 \
+    && verify "tokenizer.json" da0e79933b9ed51798a3ae27893d3c5fa4a201126cef75586296df9b4d2c62a0 \
+    && verify "tokenizer_config.json" 9261e7d79b44c8195c1cada2b453e55b00aeb81e907a6664974b4d7776172ab3 \
+    && [ "$fail" -eq 0 ] \
+    && echo "[ruflo-seed] model cache digest verification passed: all 4 files match ADR-170 section 2"
 
 # The service entrypoint (ADR-170 § 6: it does not reuse docker-entrypoint.sh) and the
 # tree-manifest generator ride in the image so the entrypoint can compute the CANDIDATE

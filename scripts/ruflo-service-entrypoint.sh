@@ -25,13 +25,19 @@
 # entirely rather than `exec "$@"`-ing into it.
 #
 # ---- Interface contract this script expects the ruflo image stage to
-# satisfy (A1.4 part (i): seed lockfile + Dockerfile `ruflo` stage +
-# manifest generator, a parallel, in-progress lane). scripts/ruflo-seed/*
-# and the Dockerfile are out of scope for this worker to EDIT, but both had
-# already landed real content by the time this script was written, so the
-# generator's own CLI contract below is MEASURED (read from
-# scripts/ruflo-seed/manifest.mjs's own header and `main()`), not assumed --
-#   - RUFLO_MANIFEST_GENERATOR: confirmed usage is
+# satisfy (ADR-170 SS1/SS6/SS7, A1.4 part (i): seed lockfile + Dockerfile
+# `ruflo` stage + manifest generator). scripts/ruflo-seed/* and the
+# Dockerfile are out of scope for this worker to EDIT; both already ship the
+# contract below, confirmed by direct read of the Dockerfile's `ruflo` stage
+# and the currently-serving container, 2026-09-23. M-13 fix: this block
+# previously described a superseded design ("neither ... will exist at ANY
+# path, and this script will always refuse"; a SEED-MANIFEST.json this
+# script would validate against) that never shipped as written -- the
+# generator landed in the same wave that added this script's Check 1 above,
+# so the description had already gone stale by the time it was committed.
+#   - RUFLO_MANIFEST_GENERATOR (default /opt/ruflo-manifest/generate-manifest.mjs):
+#     COPYed into the image by the Dockerfile's `ruflo` stage from the
+#     repo's own scripts/ruflo-seed/manifest.mjs. Confirmed usage is
 #     `node manifest.mjs <covered-root> --digest`, which writes ONLY the
 #     lowercase-hex sha256 digest (newline-terminated) to stdout; WITHOUT
 #     `--digest` stdout instead carries the raw serialized manifest BYTES
@@ -40,24 +46,21 @@
 #     covered-root entry that isn't a directory/regular-file/symlink, or any
 #     regular file whose st_nlink != 1 (ADR-170 SS7's own generator-failure
 #     requirements) -- confirmed in the script's own `walk()`.
-#   - RUFLO_MANIFEST_RECORD / MANIFEST_DIGEST_FIELD: UNCONFIRMED and, as
-#     measured against the Dockerfile's `ruflo` stage (2026-09-23), almost
-#     certainly WRONG for the current build: that stage's own comment states
-#     verbatim "This stage does NOT write `SEED-MANIFEST.json`" and "No RUN
-#     step in this stage invokes manifest.mjs, by design" -- deferring both
-#     to "a later part of A1.4". So under today's actual image, neither
-#     RUFLO_MANIFEST_GENERATOR nor RUFLO_MANIFEST_RECORD will exist at ANY
-#     path, and this script will always refuse at container start (see this
-#     worker's handback report for the full analysis and the two ways to
-#     reconcile it: land a build step that copies manifest.mjs plus a
-#     build-time SEED-MANIFEST.json into the image at the paths below, or
-#     have the queen amend ADR-170 SS6 to make this script's seed check
-#     acceptance-time-only, matching SS7's "nothing inside the image is
-#     authority" for the full CI digest comparison). Kept as a hard refusal
-#     rather than a silent skip, per this task's own instruction and this
-#     repo's fail-loudly-over-fall-through convention -- an entrypoint that
-#     silently skipped validation because its inputs were missing would be
-#     exactly the invisible-success class this file exists to avoid.
+#   - RUFLO_SEED_EXPECTED_DIGEST: the EXPECTED digest never ships inside the
+#     image (ADR-170 SS7 round-4 finding 2: "nothing inside the image is
+#     authority") -- it arrives from OUTSIDE at container-start time.
+#     scripts/ruflo-service-up.sh reads it from the committed
+#     scripts/ruflo-seed/SEED-MANIFEST.sha256 and exports it as
+#     RUFLO_SEED_EXPECTED_DIGEST; docker-compose.yml's `ruflo` service passes
+#     it through default-empty (`${VAR:-}` -- a required `${VAR:?}` form
+#     broke `docker compose --profile dev config` whenever the digest was
+#     not exported, A1.4 measured deviation 3). This script refuses
+#     immediately below on an empty or non-64-hex value rather than silently
+#     skipping validation -- there is no in-image manifest record of any
+#     kind for it to fall back to, by design (fail-loudly-over-fall-through:
+#     an entrypoint that silently skipped validation because its inputs were
+#     missing would be exactly the invisible-success class this file exists
+#     to avoid).
 #
 # POSIX sh (Compose declares entrypoint: ["/bin/sh", ...]). Lint-clean under
 # `shellcheck -S warning -s sh` and `dash -n`.
@@ -93,7 +96,11 @@ if [ "${#EXPECTED_DIGEST}" -ne 64 ]; then
     refuse "RUFLO_SEED_EXPECTED_DIGEST has length ${#EXPECTED_DIGEST}, expected 64 hex characters"
 fi
 
-if ! ACTUAL_DIGEST="$(node "$MANIFEST_GENERATOR" "$SEED_ROOT" --digest 2>/dev/null)"; then
+if ! ACTUAL_DIGEST="$(node "$MANIFEST_GENERATOR" "$SEED_ROOT" --digest)"; then
+    # L-15: stderr is deliberately NOT redirected here (unlike the version-string
+    # probe below) -- the generator's own refusal reason (e.g. "refused:
+    # unsupported entry type=FIFO ...") is diagnostic content this container's
+    # log must carry, not noise to discard. Only its stdout is captured above.
     refuse "manifest generator ($MANIFEST_GENERATOR) failed against $SEED_ROOT"
 fi
 if [ -z "$ACTUAL_DIGEST" ]; then
@@ -136,5 +143,20 @@ echo "[ruflo-entrypoint] serving @claude-flow/cli@$SEED_VERSION from $SEED_ROOT,
 # ---- 4. hold. `sleep infinity` over `tail -f /dev/null`: it opens no file
 # descriptor and depends on no /dev/null semantics, and this script must
 # deliberately ignore its own "$@" (the trailing Compose `command:` literal)
-# rather than exec it -- see the header comment. ----
-exec sleep infinity
+# rather than exec it -- see the header comment.
+#
+# H-2 fix: NOT `exec sleep infinity`. Exec'ing replaces this shell's process
+# image with `sleep`, which installs no handler of its own and so receives
+# SIGTERM only as an unconditional kill (measured: /proc/1/status SigCgt
+# 0000000000000000 under the old form) -- `docker stop` then burns the full
+# 10 s grace period before SIGKILLing PID 1, taking every in-flight
+# `docker exec`-spawned `mcp start` session down mid-write with it. Trapping
+# TERM/INT in this script (still PID 1) and backgrounding `sleep infinity`
+# lets the trap fire and `exit 0` immediately on SIGTERM instead. This holds
+# even without docker-compose.yml's own `init: true` on the `ruflo` service,
+# which is the belt-and-suspenders fix for the same signal reaching every
+# OTHER process in the container (the docker-exec'd `mcp start` sessions
+# themselves, which this script does not and cannot trap on their behalf).
+trap 'exit 0' TERM INT
+sleep infinity &
+wait $!

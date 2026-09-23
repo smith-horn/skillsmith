@@ -8,16 +8,22 @@
 # never `docker compose --profile ruflo up -d` bare, which skips this
 # script's volume-creation and store-init steps on a fresh machine).
 #
-# Idempotent: on a volume that already exists, this is exactly
+# Idempotent on the common case: on a volume that already exists, carries a
+# matching label, and already has a store, this is exactly
 # `docker compose --profile ruflo up -d ruflo` plus a fact printout -- no
-# volume create, no store-init run.
+# volume create, no store-init run. H-5: an existing volume is no longer
+# trusted blindly, though -- see check_existing_volume() below, which is
+# what closes shapes 5 and 6 (this script is the named remedy for the
+# launcher's authority-quad (b) and (d) refusals, so it must be able to
+# actually resolve the states those refusals report, not just repeat them).
 #
-# Four failure/success shapes (ADR-170 SS5's "store authority" quad, the
+# Six failure/success shapes (ADR-170 SS5's "store authority" quad, the
 # fields this script alone is responsible for minting and recording):
 #   1. volume absent, no local authority file  -> fresh creation (mint
 #      nonce + generation UUID, write authority file 0600, create the
 #      labelled volume, run the one-off store_generation init, then up).
-#   2. volume present                          -> no create, no init, up.
+#   2. volume present, label matches, store present    -> no create, no
+#      init, up (the common case).
 #   3. volume absent, authority file PRESENT    -> refuse. Silently
 #      recreating here would mint a NEW nonce/generation while the local
 #      file still names the OLD one -- exactly the "wrong generation"
@@ -25,6 +31,15 @@
 #      manual-intervention case; the script never resolves it on its own.
 #   4. `docker volume create` itself fails      -> non-zero exit naming
 #      the exact command that failed.
+#   5. volume present, label DOES NOT match the local authority file's
+#      instanceNonce -> refuse (H-5). This is the launcher's authority quad
+#      (b) refusal; re-running this script must not loop forever on it.
+#   6. volume present, label matches, but no store at the expected path ->
+#      the partial-creation hole: create_volume() succeeded on an earlier
+#      run and then write_authority_file() or init_store() died before
+#      completing, leaving a labelled, still-empty volume. Runs init_store()
+#      with the authority file's own generationUuid rather than skipping
+#      (H-5). This is the launcher's authority quad (d) refusal.
 #
 # bash 3.2-safe (macOS default bash: no associative arrays, no `${v,,}`).
 # Lint-clean under `shellcheck -S warning`.
@@ -35,6 +50,11 @@ COMPOSE_FILE="$REPO_ROOT/docker-compose.yml"
 VOLUME_NAME="skillsmith-ruflo-data"
 LABEL_KEY="app.skillsmith.ruflo.instance"
 AUTHORITY_FILE="$HOME/.skillsmith/ruflo-store.json"
+# H-5: the exact path scripts/mcp-ruflo-launcher.sh's authority-quad (d) check
+# probes (STORE_DB_PATH there) -- read from that script rather than guessed,
+# so this script's own store-presence probe agrees with the launcher's.
+SERVICE_CWD="/srv/ruflo"
+STORE_DB_PATH="$SERVICE_CWD/.swarm/memory.db"
 # The expected seed digest lives outside the image (ADR-170 SS7): committed beside the
 # lockfile, derived by acceptance from the accepted build, exported into the service's
 # environment here so the entrypoint can compare its candidate digest against it.
@@ -79,16 +99,33 @@ const dbPath = path.join(dir, 'memory.db');
 const db = new Database(dbPath);
 db.pragma('journal_mode = WAL');
 db.exec('CREATE TABLE IF NOT EXISTS store_generation (id TEXT PRIMARY KEY)');
-const info = db.prepare('INSERT OR IGNORE INTO store_generation (id) VALUES (?)').run(process.env.RUFLO_GENERATION_UUID);
+const expected = process.env.RUFLO_GENERATION_UUID;
+const info = db.prepare('INSERT OR IGNORE INTO store_generation (id) VALUES (?)').run(expected);
+// M-6: INSERT OR IGNORE reporting changes===0 as "already present" without
+// checking the EXISTING row's id would let a store carrying a DIFFERENT
+// generation's row silently pass as "initialised" for this one. Read the
+// row back and require exactly one, equal to the generation this call was
+// asked to initialise, before declaring success.
+const rows = db.prepare('SELECT id FROM store_generation').all();
+if (rows.length !== 1 || rows[0].id !== expected) {
+  console.error('store_generation rows: ' + JSON.stringify(rows.map((r) => r.id)) + ' (expected exactly one row equal to ' + expected + ')');
+  db.close();
+  process.exit(1);
+}
 db.close();
-console.log('store_generation row for ' + process.env.RUFLO_GENERATION_UUID + ': ' + (info.changes === 1 ? 'inserted' : 'already present'));
+console.log('store_generation row for ' + expected + ': ' + (info.changes === 1 ? 'inserted' : 'already present'));
 JS
     )
+    # M-6: the shell caller must propagate the node script's failure -- it
+    # already does, via this `if ! docker compose ... run ...` -- `docker
+    # compose run --rm` exits with the container's own exit status, so the
+    # node script's `process.exit(1)` above surfaces here as a non-zero
+    # `docker compose run` exit and this branch's `die`, not a false success.
     if ! docker compose -f "$COMPOSE_FILE" --profile ruflo run --rm --no-deps \
         --entrypoint node \
         -e RUFLO_GENERATION_UUID="$generation" \
         ruflo -e "$init_js"; then
-        die "one-off store_generation init run failed: docker compose -f $COMPOSE_FILE --profile ruflo run --rm --no-deps --entrypoint node ruflo -e '<init script>' (requires /opt/ruflo-seed/node_modules/better-sqlite3 in the image)"
+        die "one-off store_generation init run failed: docker compose -f $COMPOSE_FILE --profile ruflo run --rm --no-deps --entrypoint node ruflo -e '<init script>' (requires /opt/ruflo-seed/node_modules/better-sqlite3 in the image; a non-zero exit here can mean an existing store_generation row for a DIFFERENT generation was found -- ADR-170 SS5 (c), a manual-intervention case, not a retryable one)"
     fi
     log "store_generation row initialised"
 }
@@ -150,10 +187,82 @@ export_expected_digest() {
     log "expected seed digest ${digest:0:12}... exported from $EXPECTED_DIGEST_FILE"
 }
 
+# H-5: read one field out of the local authority file. Mirrors
+# scripts/mcp-ruflo-launcher.sh's own inline `node -e` reads of the same
+# file, so both scripts agree on what "present and well-formed" means.
+read_authority_field() {
+    local field="$1"
+    node -e '
+      const fs = require("fs");
+      try {
+        const j = JSON.parse(fs.readFileSync(process.argv[1], "utf8"));
+        process.stdout.write(typeof j[process.argv[2]] === "string" ? j[process.argv[2]] : "");
+      } catch { process.stdout.write(""); }
+    ' "$AUTHORITY_FILE" "$field"
+}
+
+# H-5: probe whether a database already exists on the volume, WITHOUT
+# starting (or waiting on) the entrypoint's own hold -- `--entrypoint sh`
+# bypasses scripts/ruflo-service-entrypoint.sh entirely, the same deliberate,
+# narrow exception init_store() already documents above for touching a
+# freshly-created volume. RUFLO_SEED_EXPECTED_DIGEST is already exported by
+# the time this runs (main() calls export_expected_digest first), which this
+# probe does not need but does not have to avoid either.
+probe_store_present() {
+    local probe
+    probe="$(docker compose -f "$COMPOSE_FILE" --profile ruflo run --rm --no-deps \
+        --entrypoint sh \
+        ruflo -c '[ -f "$1" ] && echo RUFLO_DB_PRESENT || echo RUFLO_DB_ABSENT' _ "$STORE_DB_PATH" 2>&1)" \
+        || die "probe for $STORE_DB_PATH on volume $VOLUME_NAME failed: docker compose -f $COMPOSE_FILE --profile ruflo run --rm --no-deps --entrypoint sh ruflo -c '[ -f \"\$1\" ] && echo RUFLO_DB_PRESENT || echo RUFLO_DB_ABSENT' _ $STORE_DB_PATH"
+    case "$probe" in
+        *RUFLO_DB_PRESENT*) return 0 ;;
+        *RUFLO_DB_ABSENT*) return 1 ;;
+        *) die "probe for $STORE_DB_PATH on volume $VOLUME_NAME returned unexpected output: $probe" ;;
+    esac
+}
+
+# H-5: main()'s old volume_exists branch short-circuited unconditionally
+# ("no create, no store-init") without checking the volume's label or the
+# store's presence -- so the two launcher refusals that name THIS script as
+# the remedy ("authority quad b" label mismatch, "authority quad d" empty
+# volume/no database) looped forever: re-running this script after either
+# refusal landed right back on the same no-op branch. This closes both, plus
+# the partial-creation hole between create_volume() succeeding and
+# write_authority_file()/init_store() dying (a labelled, still-empty volume).
+check_existing_volume() {
+    if [[ ! -e "$AUTHORITY_FILE" ]]; then
+        log "no local authority file at $AUTHORITY_FILE -- volume $VOLUME_NAME predates this machine's authority tracking (or the file was removed); bringing the service up without a generation check (the launcher's authority quad b/c will catch a real mismatch)"
+        return
+    fi
+
+    local expected_nonce expected_generation
+    expected_nonce="$(read_authority_field instanceNonce)"
+    expected_generation="$(read_authority_field generationUuid)"
+    if [[ -z "$expected_nonce" ]] || [[ -z "$expected_generation" ]]; then
+        die "$AUTHORITY_FILE is missing instanceNonce or generationUuid -- cannot verify volume $VOLUME_NAME against it (ADR-170 SS5). This is a manual-intervention case; resolve the authority file's contents before re-running this script."
+    fi
+
+    local volume_label
+    volume_label="$(docker volume inspect -f "{{index .Labels \"$LABEL_KEY\"}}" "$VOLUME_NAME" 2>&1)" \
+        || die "could not inspect volume $VOLUME_NAME to read its $LABEL_KEY label"
+    if [[ "$volume_label" != "$expected_nonce" ]]; then
+        die "volume $VOLUME_NAME's $LABEL_KEY label ($volume_label) does not match $AUTHORITY_FILE's instanceNonce ($expected_nonce) -- this is the wrong-generation hazard ADR-170 SS5 (b) exists to catch (the volume was deleted and recreated under the same name, or a different generation's authority file is present on this machine). This is a manual-intervention case; the script never resolves it on its own -- confirm which generation is intended, then either restore the volume that matches $AUTHORITY_FILE or remove $AUTHORITY_FILE and re-run this script only if a fresh store is genuinely intended."
+    fi
+    log "volume $VOLUME_NAME's $LABEL_KEY label matches $AUTHORITY_FILE (instanceNonce=$expected_nonce) -- no create, no store-init"
+
+    if probe_store_present; then
+        log "store already present on volume $VOLUME_NAME at $STORE_DB_PATH -- no init needed"
+    else
+        log "volume $VOLUME_NAME is labelled but has no store at $STORE_DB_PATH -- this is the partial-creation hole (create_volume succeeded on an earlier run, then write_authority_file or init_store died before completing); running init_store now with $AUTHORITY_FILE's generationUuid=$expected_generation"
+        init_store "$expected_generation"
+    fi
+}
+
 main() {
     export_expected_digest
     if volume_exists; then
-        log "volume $VOLUME_NAME already exists -- no create, no store-init"
+        log "volume $VOLUME_NAME already exists -- checking its label and store before bringing the service up"
+        check_existing_volume
     else
         if [[ -e "$AUTHORITY_FILE" ]]; then
             die "volume $VOLUME_NAME is absent but the local authority file $AUTHORITY_FILE already exists -- refusing to auto-create (wrong-generation hazard: a freshly created volume would mint a NEW nonce/generation while $AUTHORITY_FILE still names the OLD one). Resolve manually: confirm whether the volume was deleted deliberately, then either restore it from its own backup or remove $AUTHORITY_FILE and re-run this script to mint a fresh generation."

@@ -17,15 +17,42 @@
  * serialization be versioned and byte-defined, not any one particular byte
  * layout; this is "RUFLO_SEED_MANIFEST_V1"):
  *
- *   MANIFEST := LP(VERSION_BYTES) RECORD*      -- records sorted ascending
- *                                                  by unsigned byte comparison
- *                                                  of their relative-path bytes
+ *   MANIFEST := LP(VERSION_BYTES) ROOT_MODE RECORD*   -- records sorted
+ *                                                  ascending by unsigned byte
+ *                                                  comparison of their
+ *                                                  relative-path bytes
+ *   ROOT_MODE := 4 ASCII bytes: the COVERED ROOT DIRECTORY's own
+ *               (st_mode & 0o7777), same fixed-width zero-padded lowercase
+ *               octal encoding as a RECORD's MODE field below. The root
+ *               itself is never a RECORD (a RECORD always carries a
+ *               relative path, and the root's own relative path is empty),
+ *               so without this field a `chmod` of the covered root itself
+ *               was invisible to the digest (governance review L-20a,
+ *               2026-09-23) — this field is what makes it visible. Emitted
+ *               once, immediately after VERSION_BYTES, before any RECORD.
  *   RECORD   := LP(PATH_BYTES) TYPE MODE PAYLOAD
  *   TYPE     := 1 byte: 'd' (0x64) directory | 'f' (0x66) regular file
  *                       | 'l' (0x6c) symlink
  *   MODE     := 4 ASCII bytes: (st_mode & 0o7777) as fixed-width, zero-
  *               padded lowercase octal (e.g. "0644", "4755") — includes
- *               setuid/setgid/sticky, per § 7's "full st_mode & 07777"
+ *               setuid/setgid/sticky, per § 7's "full st_mode & 07777".
+ *               EXCEPTION: for a symlink record (TYPE='l') this field is
+ *               NEVER the filesystem's own reported mode — symlink
+ *               permission bits are platform-dependent (measured: Linux
+ *               always reports 0777 for every symlink, unconditionally;
+ *               macOS reports whatever mode the symlink was created with,
+ *               e.g. 0755 by default, and macOS-only `fs.lchmodSync` can
+ *               change it further) — so a manifest generated from a
+ *               `docker cp`-extracted tree on macOS would otherwise digest
+ *               differently from the same tree read natively on Linux, for
+ *               no content difference at all (governance review L-20c,
+ *               2026-09-23). This field is instead always the fixed
+ *               constant SYMLINK_MODE_MASK = "0777" below, matching what
+ *               every acceptance run already observes in practice (the
+ *               generator only ever runs against a Linux-mounted tree, via
+ *               `docker cp`/`docker exec`), so masking is a no-op against
+ *               the real served tree and only removes the macOS-vs-Linux
+ *               divergence for a host-side dry run.
  *   PAYLOAD  := directory: (empty)
  *               regular file: SIZE(8-byte big-endian unsigned) SHA256HEX
  *                              (64 ASCII bytes, lowercase hex)
@@ -40,14 +67,26 @@
  * ordering or platform-default collation participates anywhere in this
  * format, per § 7.
  *
- * Refusals (§ 7, retro F5; § 7, round-5 finding 4) — non-zero exit, no
- * manifest is printed, and the offending path is named on stderr:
+ * Refusals (§ 7, retro F5; § 7, round-5 finding 4) — exit 3 (see "Exit
+ * codes" below), no manifest is printed, and the offending path is named on
+ * stderr:
  *   - any covered-root entry that is not a directory, regular file or
  *     symlink (FIFO, socket, block/character device, ...) — path and type
  *   - any regular file whose st_nlink is not exactly 1 (two same-content
  *     files hard-linked to one inode would otherwise compare equal, since
  *     this serialization has no inode-identity field) — path, link count
  *     and type
+ *
+ * Exit codes:
+ *   0   success
+ *   2   usage error (wrong argument count) — no filesystem access attempted
+ *   3   ManifestRefusal (see "Refusals" above) — a deliberate, named
+ *       decision to produce no manifest, distinct from a crash so the two
+ *       are never conflated by status code alone (governance review L-20b,
+ *       2026-09-23; previously refusal and an uncaught exception both
+ *       exited 1 and were indistinguishable by status)
+ *   1   anything else: an uncaught exception (a genuine bug, an unreadable
+ *       root, etc.) — Node's own default exit code, never assigned here
  *
  * Usage: node manifest.mjs <covered-root> [--digest]
  *   (no flag)  writes the serialized manifest bytes to stdout, and its
@@ -62,6 +101,10 @@ import { resolve } from 'node:path'
 
 const VERSION_BYTES = Buffer.from('RUFLO_SEED_MANIFEST_V1', 'ascii')
 const SLASH = Buffer.from('/', 'ascii')
+// L-20c: every symlink record's MODE field is masked to this fixed constant
+// instead of its own lstat-reported mode — see the header's MODE definition
+// for why (Linux always reports 0777 for a symlink; macOS does not).
+const SYMLINK_MODE_MASK = Buffer.from('0777', 'ascii')
 
 /** Length-prefix a byte buffer: 4-byte big-endian length, then the bytes. */
 function lp(buf) {
@@ -99,7 +142,7 @@ function walk(rootBuf) {
         records.push({
           pathBuf: entryRelBuf,
           type: 'l',
-          modeField,
+          modeField: SYMLINK_MODE_MASK,
           payload: lp(targetBuf),
         })
       } else if (st.isFile()) {
@@ -142,8 +185,13 @@ function sortRecords(records) {
   return records.slice().sort((a, b) => Buffer.compare(a.pathBuf, b.pathBuf))
 }
 
-function serialize(records) {
-  const parts = [lp(VERSION_BYTES)]
+/**
+ * L-20a: `rootModeField` is the covered root DIRECTORY's own mode (see the
+ * header's ROOT_MODE definition) — never a RECORD, since the root has no
+ * relative path of its own; emitted once, right after VERSION_BYTES.
+ */
+function serialize(records, rootModeField) {
+  const parts = [lp(VERSION_BYTES), rootModeField]
   for (const r of sortRecords(records)) {
     parts.push(lp(r.pathBuf))
     parts.push(Buffer.from(r.type, 'ascii'))
@@ -164,17 +212,24 @@ function main() {
   const rootBuf = Buffer.from(resolve(positional[0]))
 
   let records
+  let rootModeField
   try {
+    // L-20a: the covered root's OWN mode, read before walking its contents —
+    // an lstat failure here (e.g. the root itself doesn't exist) is a normal
+    // uncaught exception, exit 1, exactly as it always was (readdirSync
+    // inside walk() would have thrown the same class of error previously).
+    const rootStat = lstatSync(rootBuf)
+    rootModeField = Buffer.from((rootStat.mode & 0o7777).toString(8).padStart(4, '0'), 'ascii')
     records = walk(rootBuf)
   } catch (err) {
     if (err instanceof ManifestRefusal) {
       process.stderr.write(`[ruflo-seed manifest] ${err.message}\n`)
-      process.exit(1)
+      process.exit(3) // L-20b: distinguish a deliberate refusal from a crash (exit 1)
     }
     throw err
   }
 
-  const manifest = serialize(records)
+  const manifest = serialize(records, rootModeField)
   const digestHex = createHash('sha256').update(manifest).digest('hex')
 
   if (digestOnly) {
