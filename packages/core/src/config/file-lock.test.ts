@@ -145,27 +145,27 @@ describe('withFileLock — RETRYABLE_REASONS membership is behaviour (SMI-6776 r
    * assertion still passes while 14 production lines and 14 branches stop being
    * exercised (SMI-6807).
    *
-   * THE RULE, which is what binds here and does not depend on any other file's
-   * current contents: a switch that DISARMS silently gets cleared; a switch
-   * that BREAKS loudly gets kept. It is about which failure the variable
-   * produces, not about the variable. So each hazard declares its own policy in
-   * its own file -- do not "unify" them into one shared helper, because the
-   * correct answer differs per variable.
+   * THE RULE: a switch that DISARMS silently gets cleared; a switch that BREAKS
+   * loudly gets kept. It is about which failure the variable produces, not
+   * about the variable -- so each hazard declares its own policy in its own
+   * file, and they are not "unified" into a shared helper, because the correct
+   * answer differs per variable. This describe is the NEUTRALIZE case; the
+   * PRESERVE case is `SKILLSMITH_DISABLE_CLIENT_CACHE`, per SMI-6810.
    *
-   * This describe is the NEUTRALIZE case. The PRESERVE case is
-   * `SKILLSMITH_DISABLE_CLIENT_CACHE` in
-   * `packages/core/tests/api/client.cache.test.ts`, whose policy is established
-   * by SMI-6810, not by this commit. Read that as a pointer to the issue, not
-   * as a claim about what that file does in this tree -- it is a separate
-   * branch, and until it merges that file still clears its variable outright.
+   * The policy governs the AMBIENT baseline only, and one test below breaks it
+   * on purpose: "a dead holder under SKILLSMITH_LOCK_NO_AUTO_RECLAIM IS waited
+   * out" sets the variable in its own body and restores it in its own
+   * `finally`, composing with the `afterEach` here. That is not a policy
+   * violation -- it is the only test that reaches `reclaim_disabled`. Removing
+   * it to satisfy NEUTRALIZE would re-open SMI-6807 from the other side.
    *
-   * Restoring in `afterEach` matters and the first version of this fix omitted
-   * it: a bare `delete` in `beforeEach` neutralizes for THIS describe and stays
-   * deleted for the rest of the process -- the same unconditional-teardown
-   * shape this fix exists to remove, reproduced inside the fix itself. Today
-   * the second describe is insensitive either way, so nothing breaks -- but any
-   * env-sensitive test appended below would silently run under a cleared
-   * variable.
+   * Restoring in `afterEach` matters, and the first version of this fix omitted
+   * it: a bare `delete` in `beforeEach` neutralizes for THIS describe and then
+   * stays deleted for the rest of the process -- the same unconditional-
+   * teardown shape this fix exists to remove, reproduced inside the fix itself.
+   * That was the hazard in the omitted-`afterEach` version specifically. With
+   * the restore below in place it is closed: anything appended after this
+   * describe sees the variable as the process supplied it.
    */
   let prevNoAutoReclaim: string | undefined
 
