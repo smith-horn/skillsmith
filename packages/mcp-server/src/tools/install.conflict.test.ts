@@ -95,8 +95,19 @@ describe('the client table this file parameterizes over', () => {
     // Deliberately NOT compared against `CLIENT_IDS.filter(...)` — that is the
     // expression NON_CANONICAL is defined by, so asserting it against itself
     // could never fail. An earlier draft of this guard did exactly that.
+    //
+    // These four are chosen to FORCE the contents without that tautology.
+    // Length alone does not: a table of eight duplicate 'cursor' entries has
+    // the right length, excludes the canonical client, and passed all of an
+    // earlier version of this guard while generating 24 cases that exercised
+    // ONE client. Measured — 32 passed, silently. Adding distinctness closes
+    // it: 8 distinct values, every one drawn from a 9-value union, none of
+    // them the canonical one, admits exactly the non-canonical set and
+    // nothing else.
     expect(NON_CANONICAL.length).toBe(CLIENT_IDS.length - 1)
     expect(NON_CANONICAL.length).toBeGreaterThan(0)
+    expect(new Set(NON_CANONICAL).size).toBe(NON_CANONICAL.length)
+    expect(NON_CANONICAL.every((c) => CLIENT_IDS.includes(c))).toBe(true)
     expect(NON_CANONICAL).not.toContain(CANONICAL_CLIENT)
     expect(CLIENT_IDS).toContain(CANONICAL_CLIENT)
   })
