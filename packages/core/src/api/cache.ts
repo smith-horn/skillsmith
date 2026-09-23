@@ -5,7 +5,9 @@
  * SMI-1245: Caching layer for API responses
  *
  * Provides in-memory caching with TTL for offline support.
- * Eviction is by lowest `hitCount`, not by recency. See `evictLeastUsed()`.
+ * When full, eviction takes the first EXPIRED entry the scan meets; failing
+ * that, the one with the lowest `hitCount`. Recency is never consulted. See
+ * `evictLeastUsed()`, whose name is the misleading part.
  */
 
 // Types imported for potential future use
