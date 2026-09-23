@@ -8,26 +8,25 @@
  * expiry, and untested eviction-at-maxEntries behavior.
  *
  * ENV POLICY FOR THIS FILE: PRESERVE, do not neutralize.
- * `SKILLSMITH_DISABLE_CLIENT_CACHE=1` makes these tests FAIL, loudly, so a
- * developer who exported it and forgot finds out. Measured 2026-09-23:
- * `6 failed | 9 passed (15)` with it set, `15 passed (15)` with it unset. The
- * denominator is stated because "six fail" and "six of fifteen fail" are
- * different claims, and because a count written from reading rather than
- * running is the defect this whole file exists to catch.
+ * An inherited `SKILLSMITH_DISABLE_CLIENT_CACHE=1` makes tests here FAIL,
+ * loudly, so a developer who exported it and forgot finds out. That PROPERTY
+ * is what the policy rests on, not any particular count. Both arms were
+ * measured; the numbers and the method are in SMI-6810 rather than here, where
+ * a total rots silently the next time a test is added to this file.
  *
- * THE RULE, which binds here and does not depend on any other file's current
- * contents: a switch that DISARMS silently gets cleared; a switch that BREAKS
+ * THE RULE: a switch that DISARMS silently gets cleared; a switch that BREAKS
  * loudly gets kept. It is about which failure the variable produces, not about
- * the variable. So each hazard declares its own policy in its own file -- do
- * not "unify" them into one shared helper, because the correct answer differs
- * per variable.
+ * the variable -- so each hazard declares its own policy in its own file, and
+ * they are not "unified" into a shared helper, because the correct answer
+ * differs per variable. This file is the PRESERVE case; the NEUTRALIZE case is
+ * `SKILLSMITH_LOCK_NO_AUTO_RECLAIM`, per SMI-6807.
  *
- * This file is the PRESERVE case. The NEUTRALIZE case is
- * `SKILLSMITH_LOCK_NO_AUTO_RECLAIM` in
- * `packages/core/src/config/file-lock.test.ts`, whose policy is established by
- * SMI-6807, not by this commit. Read that as a pointer to the issue, not as a
- * claim about what that file does in this tree -- it is a separate branch, and
- * until it merges that file does not clear its variable at all.
+ * The policy governs the AMBIENT baseline only, and one test here breaks it on
+ * purpose: "SKILLSMITH_DISABLE_CLIENT_CACHE=1 disables cache entirely" sets the
+ * variable inside its own body, and the `afterEach` below restores whatever was
+ * there before. That is not a policy violation -- it is the test OF the
+ * kill-switch. Removing it to satisfy PRESERVE would delete the only coverage
+ * of the disabled path.
  */
 
 import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest'
