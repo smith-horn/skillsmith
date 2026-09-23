@@ -5,7 +5,7 @@
  * SMI-1245: Caching layer for API responses
  *
  * Provides in-memory caching with TTL for offline support.
- * Uses a simple LRU-like eviction strategy.
+ * Eviction is by lowest `hitCount`, not by recency. See `evictLeastUsed()`.
  */
 
 // Types imported for potential future use
@@ -277,7 +277,14 @@ export class ApiCache {
   }
 
   /**
-   * Evict least recently used entries
+   * Evict one entry to make room: an expired one if the scan meets it first,
+   * otherwise the one with the LOWEST `hitCount`.
+   *
+   * NOT least-recently-used, despite this method's name. Recency is never
+   * consulted -- an entry touched a moment ago is evicted ahead of a stale one
+   * if it has fewer hits. `client.cache.test.ts`'s "evicts the lowest-hitCount
+   * entry, not the least-recently-used one" pins exactly that difference
+   * (SMI-6810), and this JSDoc contradicted it until SMI-6826.
    */
   private evictLeastUsed(): void {
     // Find entry with lowest hit count
