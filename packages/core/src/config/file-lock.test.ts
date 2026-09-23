@@ -75,8 +75,10 @@ describe('withFileLock — RETRYABLE_REASONS membership is behaviour (SMI-6776 r
    * claimed:
    *
    *   - a NON-retryable refusal rejects, and `advanceTimersByTimeAsync(0)`
-   *     drains the microtask queue, so it settles. One tick is needed and
-   *     ~200 are available.
+   *     drains the microtask queue, so it settles. One tick is needed, and the
+   *     advance crosses a macrotask boundary, so the queue drains to
+   *     EXHAUSTION -- measured, a 5000-deep `.then` chain settles in one call.
+   *     There is no budget to exceed.
    *   - a RETRYABLE refusal cannot settle at all, because `Date.now()` is
    *     frozen and `acquireFileLock`'s deadline (`file-lock.ts:61`) is
    *     therefore never reached. That half is immune to load; it is not a
@@ -134,6 +136,15 @@ describe('withFileLock — RETRYABLE_REASONS membership is behaviour (SMI-6776 r
   // and inner-then-outer on exit, so the tmpdir is built on a live clock and
   // `useRealTimers()` runs before the outer `rmSync`.
   beforeEach(() => {
+    // An INHERITED `SKILLSMITH_LOCK_NO_AUTO_RECLAIM=1` -- the documented switch
+    // a developer exports to unstick a lock, then forgets -- silently disarms
+    // the reclaim_unavailable test below. Measured: with it set, the same
+    // fixture yields `reclaim_disabled` instead, both reasons are retryable, so
+    // every assertion still passes while 14 production lines and 14 branches
+    // stop being exercised. Clearing it here makes the suite's coverage
+    // independent of the ambient environment (SMI-6807). Test (iv) sets and
+    // restores it around its own body, so this does not interfere.
+    delete process.env.SKILLSMITH_LOCK_NO_AUTO_RECLAIM
     vi.useFakeTimers()
   })
 
