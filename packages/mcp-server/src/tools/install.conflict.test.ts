@@ -82,9 +82,17 @@ const OTHER = 'cursor' as const
 const NON_CANONICAL = CLIENT_IDS.filter((c) => c !== CANONICAL_CLIENT)
 
 // A parameterized suite reports a PASS when its table is empty -- it generates
-// no cases and the file goes green with the coverage silently gone. Measured
-// rather than assumed: forcing NON_CANONICAL to [] takes this file from 31
-// tests to 7 passed, with nothing failing and nothing saying so.
+// no cases and the file goes green with the coverage silently gone.
+//
+// Measured rather than assumed, on the file as it stood BEFORE this guard
+// existed: forcing NON_CANONICAL to [] took it from 31 tests to 7 passed, with
+// nothing failing and nothing saying so.
+//
+// Stated as history because this guard is what changed it. Run that same
+// mutation today and you get 1 failed | 7 passed -- the failure is this block.
+// A comment describing the pre-fix world in the present tense is the defect
+// this file's own subject is about, and an earlier version of these four lines
+// did exactly that.
 //
 // That is the same invisible-success shape the rest of this file exists to
 // prevent, so the table is pinned before it is used. This describe block is
