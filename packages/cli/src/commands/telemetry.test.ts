@@ -87,14 +87,26 @@ const memfsSync: Record<string, string> = {}
 // TEMPLATE from a path that does not exist in the container, so delegating it
 // to real fs breaks the install-hook tests.
 //
-// `chmodSync` is the exception, and is deliberately left fully faked even
-// though the lock DOES call it: `owned-lock.claim.ts`'s `writeTempClaimExclusive`
-// runs `chmodSync(tmp, 0o600)` on every acquisition, to re-assert the mode
-// under a permissive umask. No-opping it is safe because `openSync(…, 'wx',
-// 0o600)` already caps the temp file's mode and nothing writes it afterwards,
-// so the chmod is belt-and-braces rather than load-bearing — and core's own
-// `owned-lock.test.ts` exercises it against real fs. If it ever becomes
-// load-bearing, this mock would hide the failure; path-scope it then.
+// `chmodSync` is fully faked, and that is a DOCUMENTED GAP rather than a safe
+// choice. Three callers reach it from this module graph:
+//
+//   owned-lock.claim.ts   chmodSync(tmp, 0o600)   re-assert mode under a
+//                                                 permissive umask
+//   telemetry.action.ts   chmodSync(dest, 0o755)  the hook script's EXECUTABLE
+//                                                 bit
+//   telemetry.helpers.ts  chmodSync(path, 0o600)  settings.json's mode
+//
+// Only the first is harmless to no-op: `openSync(…, 'wx', 0o600)` already caps
+// the lock temp file's mode, and core's `owned-lock.test.ts` exercises it
+// against real fs. The other two are behaviour of the code under test. An
+// earlier version of this comment reasoned about the lock alone and concluded
+// the fake was safe -- narrower than its subject, the shape this file keeps
+// producing.
+//
+// The install-hook test below now asserts the 0o755 call, so dropping the
+// executable bit is no longer invisible. Mode assertions are the pin;
+// path-scoping chmodSync would route the lock's own chmod to real fs for no
+// gain.
 //
 // `includes`, not `endsWith`: telemetry.helpers.ts writes settings atomically
 // via `settings.json.<id>.tmp` + rename, and a predicate anchored on the
@@ -134,9 +146,10 @@ const isFakedSyncPath = (p: unknown): boolean =>
 // the REAL, TRACKED repo file. vitest.setup.ts redirects $HOME to a sandbox
 // but not cwd, so the only thing keeping this file out of the repo's own
 // config is `isFakedSyncPath` returning true for it. That predicate has been
-// wrong once already, and when it is wrong the write escapes silently:
-// `.gitignore` matches `*.tmp`, so `git status --untracked-files=all` shows
-// nothing.
+// wrong once already. Before the boundary below existed a miss escaped
+// SILENTLY -- `.gitignore` matches `*.tmp`, so `git status
+// --untracked-files=all` showed nothing at all. It throws now; the silence is
+// what the boundary removed, not a hazard that still stands.
 //
 // The check lives in `../utils/sandbox-path.js` rather than inline here, so
 // its own behaviour is pinned by tests. It answers a question about ONE path
@@ -514,6 +527,17 @@ describe('telemetry install-hook', () => {
     const parsed = JSON.parse(raw!) as { hooks: { PreToolUse: unknown[]; PostToolUse: unknown[] } }
     expect(parsed.hooks.PreToolUse).toHaveLength(1)
     expect(parsed.hooks.PostToolUse).toHaveLength(1)
+
+    // The hook is a script Claude Code EXECUTES, so its mode is behaviour, not
+    // housekeeping. chmodSync is fully faked in this file (see the node:fs mock
+    // comment), which means a dropped 0o755 would be invisible in the settings
+    // JSON asserted above — the hook would be registered and unrunnable.
+    // Asserting the call is what closes that.
+    const { chmodSync } = await import('node:fs')
+    expect(chmodSync as ReturnType<typeof vi.fn>).toHaveBeenCalledWith(
+      expect.stringContaining('skill-telemetry.sh'),
+      0o755
+    )
   })
 
   it('is idempotent — installing twice does not add duplicate entries', async () => {
