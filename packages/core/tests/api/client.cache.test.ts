@@ -1,8 +1,17 @@
 /**
- * SMI-4120: Client LRU cache integration tests.
+ * SMI-4120: Client response-cache integration tests, plus `ApiCache` behaviour.
  *
- * Covers the wiring in client.ts + client.cache.ts — hits, misses, per-call
- * no-store, env kill-switch, and stable cache key for getRecommendations.
+ * NOT an "LRU cache", despite `evictLeastUsed`'s name: eviction is by lowest
+ * `hitCount`, and the test below named for that pins the difference. The
+ * original header said LRU; this file now disproves it.
+ *
+ * Two layers, and the second is wider than this file's original scope:
+ *   - the WIRING in client.ts + client.cache.ts — hits, misses, per-call
+ *     no-store, env kill-switch, stable cache key for getRecommendations.
+ *   - `cache.ts`'s OWN behaviour (SMI-6810) — the four independent copies of
+ *     the expiry comparison (`get`, `has`, `prune`, `evictLeastUsed`'s early
+ *     return), each pinned by a test asserting that function's own observable,
+ *     and the per-endpoint TTL lookup rather than the configured fallback.
  *
  * SMI-6810: Closes three gaps — order-dependent env teardown, untested TTL
  * expiry, and untested eviction-at-maxEntries behavior.
@@ -286,8 +295,9 @@ describe('SMI-4120: Client response cache', () => {
       // false either way -- has() has its own guard -- so it cannot tell
       // "the early return reclaimed the expired entry" from "the lowest-
       // hitCount entry was evicted instead". Without the early return the
-      // loop reaches the hitCount comparison and evicts 'fresh' (1 hit)
-      // over 'stale' (3 hits), so 'fresh' surviving is the discriminator.
+      // loop reaches the hitCount comparison and evicts 'fresh' (0 hits --
+      // `set()` starts at 0 and nothing reads it) over 'stale' (2 hits, from
+      // the two `get`s above), so 'fresh' surviving is the discriminator.
       expect(cache.get<string>('fresh')).toBe('v')
       expect(cache.get<string>('third')).toBe('v')
     })
