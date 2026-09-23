@@ -8,14 +8,26 @@
  * expiry, and untested eviction-at-maxEntries behavior.
  *
  * ENV POLICY FOR THIS FILE: PRESERVE, do not neutralize.
- * `SKILLSMITH_DISABLE_CLIENT_CACHE=1` makes six of these tests FAIL, loudly, so
- * a developer who exported it and forgot finds out. Its sibling policy is the
- * opposite and deliberately so: `packages/core/src/config/file-lock.test.ts`
- * NEUTRALIZES `SKILLSMITH_LOCK_NO_AUTO_RECLAIM`, because that variable leaves
- * its suite passing 6/6 while silently testing less -- invisible, so the suite
- * must not depend on it. The rule is about which failure the variable produces,
- * not about the variable: a switch that DISARMS gets cleared, a switch that
- * BREAKS gets kept. Do not "unify" these two files (SMI-6807, SMI-6810).
+ * `SKILLSMITH_DISABLE_CLIENT_CACHE=1` makes these tests FAIL, loudly, so a
+ * developer who exported it and forgot finds out. Measured 2026-09-23:
+ * `6 failed | 9 passed (15)` with it set, `15 passed (15)` with it unset. The
+ * denominator is stated because "six fail" and "six of fifteen fail" are
+ * different claims, and because a count written from reading rather than
+ * running is the defect this whole file exists to catch.
+ *
+ * THE RULE, which binds here and does not depend on any other file's current
+ * contents: a switch that DISARMS silently gets cleared; a switch that BREAKS
+ * loudly gets kept. It is about which failure the variable produces, not about
+ * the variable. So each hazard declares its own policy in its own file -- do
+ * not "unify" them into one shared helper, because the correct answer differs
+ * per variable.
+ *
+ * This file is the PRESERVE case. The NEUTRALIZE case is
+ * `SKILLSMITH_LOCK_NO_AUTO_RECLAIM` in
+ * `packages/core/src/config/file-lock.test.ts`, whose policy is established by
+ * SMI-6807, not by this commit. Read that as a pointer to the issue, not as a
+ * claim about what that file does in this tree -- it is a separate branch, and
+ * until it merges that file does not clear its variable at all.
  */
 
 import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest'
