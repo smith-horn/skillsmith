@@ -63,7 +63,11 @@ All notable changes to `@skillsmith/core` are documented here.
   closed -- a permission or read error becomes an explicit `probe-failed`/`unreadable` outcome
   rather than a value that reads as "nothing to do". New export: `isBackupDir` (below).
   `hasGitAncestorBetween` is unrelated to this seam -- it is A0's own pre-write install-target
-  guard, already shipped, and was never exported outside its own module.
+  guard, already shipped. An earlier commit on this work did add an `export` keyword to it so a
+  test could import it directly; that is reverted, and it is module-private again. It was never
+  reachable by a consumer of this package in either state: it is absent from the root barrel
+  (`src/index.ts`) and there is no `exports` subpath for its file, so no published entrypoint
+  led to it.
 
 - **Fix**: SMI-6532 -- the backup-directory check matched only a `<name>.backup-YYYYMMDD-HHMMSS`
   form that no code in the tree actually writes, and missed the `<name>.backup-<epoch-ms>` form

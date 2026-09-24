@@ -489,10 +489,11 @@ describe('remediationFor — reason/result string overlap (recovery-pending, rec
  * `ArrayLiteralExpression`'s `.elements` can only ever contain nodes that
  * are actually live code — a commented-out entry was never in that array
  * to begin with, structurally, not merely filtered out after the fact.
- * See the "parser — blind-spot controls" describe block below for the four
- * permanent cases (an unmutated positive control, plus deletion, reordering
- * and comment-out) that pin this against regressing back to a
- * text-matching approach. Module scope, not inside a `describe`, so both
+ * See the "parser — blind-spot controls" describe block below for the six
+ * permanent cases (an unmutated positive control, plus deletion, reordering,
+ * comment-out, and the namespace-nesting refusal/acceptance pair) that pin
+ * this against regressing back to a text-matching or whole-tree-walking
+ * approach. Module scope, not inside a `describe`, so both
  * this file's real-file parity tests AND that synthetic-fixture describe
  * block can call it directly.
  */
@@ -505,9 +506,22 @@ function extractArrayLiteral(source: string, exportName: string, fileName = 'sou
     ts.ScriptKind.TS
   )
 
+  // TOP-LEVEL STATEMENTS ONLY -- deliberately not `ts.forEachChild` (SMI-6841
+  // round 4). The `export` keyword means two different things depending on
+  // where it sits: at the top level of a module it makes the binding reachable
+  // by an importer, but inside `namespace Hidden { export const X = [...] }` or
+  // `declare module '...' { ... }` it only makes X visible on that namespace
+  // object, and no importer of this FILE can reach it. A recursive walk found
+  // both and reported them identically, so the parity check verified the
+  // members were WRITTEN somewhere in the mirror file while proving nothing
+  // about whether they were EXPORTED from it -- a subject broader than the
+  // thing it names, the same shape as every other finding on this branch.
+  // `sourceFile.statements` is exactly the module's own top level, so a nested
+  // declaration is now structurally out of reach rather than filtered out
+  // afterwards. Pinned by the `namespace`-nesting control below.
   let found: string[] | undefined
-  const visit = (node: ts.Node): void => {
-    if (found !== undefined) return
+  for (const node of sourceFile.statements) {
+    if (found !== undefined) break
     if (
       ts.isVariableStatement(node) &&
       node.modifiers?.some((m) => m.kind === ts.SyntaxKind.ExportKeyword)
@@ -534,9 +548,7 @@ function extractArrayLiteral(source: string, exportName: string, fileName = 'sou
         })
       }
     }
-    if (found === undefined) ts.forEachChild(node, visit)
   }
-  visit(sourceFile)
 
   if (found === undefined) {
     throw new Error(
@@ -582,12 +594,18 @@ describe('VS Code manifestReader.ts mirror parity (T-R4, member-list scope)', ()
 // extractArrayLiteral — parser blind-spot controls (SMI-6841 finding 7)
 // ─────────────────────────────────────────────────────────────────────────────
 //
-// Four permanent cases against small, synthetic source snippets (never the
+// Six permanent cases against small, synthetic source snippets (never the
 // real manifestReader.ts, so these never depend on that file's own current
-// contents) pinning the AST-based parser against the exact blind spot the
-// prior regex-based one had, plus a positive control proving the parser
-// isn't simply incapable of matching anything. All four were run for real
+// contents) pinning the AST-based parser against the exact blind spots the
+// prior implementations had, plus a positive control proving the parser
+// isn't simply incapable of matching anything. All six were run for real
 // (not merely reasoned about) before being written down here.
+//
+// The last two are the pair that pins the top-level-only scan: a `namespace`
+// member the parser must REFUSE, and a plain top-level export it must still
+// accept. Either alone is satisfiable by a broken parser -- a parser that
+// matched nothing would pass the refusal case, and the recursive one this
+// replaced passed the acceptance case. Together they discriminate.
 describe('extractArrayLiteral — parser blind-spot controls (SMI-6841 finding 7)', () => {
   const baseline = "export const SAMPLE = [\n  'alpha',\n  'beta',\n  'gamma',\n] as const\n"
 
@@ -611,5 +629,19 @@ describe('extractArrayLiteral — parser blind-spot controls (SMI-6841 finding 7
     const commented = "export const SAMPLE = [\n  'alpha',\n  // 'beta',\n  'gamma',\n] as const\n"
     expect(extractArrayLiteral(commented, 'SAMPLE')).toEqual(['alpha', 'gamma'])
     expect(extractArrayLiteral(commented, 'SAMPLE')).not.toContain('beta')
+  })
+
+  it('namespace-nested member: an `export` inside `namespace` is REFUSED, because no importer of the file can reach it', () => {
+    // The recursive `ts.forEachChild` walk this replaced accepted this and
+    // returned ['alpha', 'beta', 'gamma'], so the parity check would have
+    // passed on a mirror file that exported nothing at all. `export` inside a
+    // namespace is visibility on the namespace object, not a module export.
+    const nested = `namespace Hidden {\n  export const SAMPLE = [\n    'alpha',\n    'beta',\n    'gamma',\n  ] as const\n}\n`
+    expect(() => extractArrayLiteral(nested, 'SAMPLE')).toThrow(/mirror missing or renamed/)
+  })
+
+  it('top-level member alongside a namespace: the real top-level export is still found, so the refusal above is not simply "matches nothing"', () => {
+    const mixed = `namespace Hidden {\n  export const SAMPLE = [\n    'wrong',\n  ] as const\n}\n\n${baseline}`
+    expect(extractArrayLiteral(mixed, 'SAMPLE')).toEqual(['alpha', 'beta', 'gamma'])
   })
 })

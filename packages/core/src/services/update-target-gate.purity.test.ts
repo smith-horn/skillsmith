@@ -284,3 +284,43 @@ describe('classifyUpdateTarget — T-G3 purity', () => {
     expect(recordedCalls).toEqual([])
   })
 })
+
+// ── Known-positive control for the recorder itself ──────────────────────
+//
+// Every test above asserts `recordedCalls` is EMPTY. That is a known-negative
+// only. An instrument that returns the same value for both states measures
+// nothing, and this one has now been wrong three times in three different ways
+// (see `recordingModule`'s comment) — each version passed every test in this
+// file while recording strictly less than it claimed to.
+//
+// Named mutation, measured: replacing `recordingModule`'s body with
+// `return actual` — disabling the recorder completely, so a real fs call does
+// real I/O and leaves no trace — left the two purity tests above GREEN
+// (`Tests 2 passed (2)`). It fails all three tests below.
+//
+// One arm per access path, because the recorder reaches them by three
+// different code routes and a defect has historically lived in exactly one:
+// the named export, the `default` re-export (the `import fs from 'fs/promises'`
+// style, live in this package at `analysis/file-streamer.ts:11`), and the
+// nested `promises` object on `node:fs`. Each asserts BOTH halves of the
+// mechanism — that the call is recorded, and that it throws — because a
+// recorder that logs without throwing would let a rule's I/O complete.
+describe('the fs recorder — known-positive control (T-G3)', () => {
+  it('records and throws on a named-export call', async () => {
+    const fsp = await import('node:fs/promises')
+    expect(() => fsp.readdir('/control-named')).toThrow(/must be pure/)
+    expect(recordedCalls).toEqual(['node:fs/promises.readdir(/control-named)'])
+  })
+
+  it('records and throws on a call reached through `default`', async () => {
+    const fsp = await import('node:fs/promises')
+    expect(() => fsp.default.readdir('/control-default')).toThrow(/must be pure/)
+    expect(recordedCalls).toEqual(['node:fs/promises.default.readdir(/control-default)'])
+  })
+
+  it('records and throws on a call reached through `promises`', async () => {
+    const fs = await import('node:fs')
+    expect(() => fs.promises.readdir('/control-promises')).toThrow(/must be pure/)
+    expect(recordedCalls).toEqual(['node:fs.promises.readdir(/control-promises)'])
+  })
+})
