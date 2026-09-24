@@ -67,6 +67,14 @@ const DETECTION_PATTERNS = {
     { pattern: /xoxp-[a-zA-Z0-9-]+/g, name: 'Slack user token' },
     { pattern: /xoxa-[a-zA-Z0-9-]+/g, name: 'Slack app token' },
 
+    // Skillsmith's own API key. SMI-6840: it shares Stripe's `sk_live_` prefix but NOT its
+    // alphabet — generateLicenseKey() emits base64url, so the body can contain `-` and `_`.
+    // Measured over 10,000 keys from the real generator (controls passing), the Stripe rule
+    // below missed 5,232 of them (52.3%). Kept as its own entry rather than widening the
+    // Stripe rule, because Stripe's alphabet has not been measured here and changing an
+    // issuer's pattern without evidence for that issuer is what caused the original bug.
+    { pattern: /sk_live_[A-Za-z0-9_-]{24,}/g, name: 'Skillsmith API key' },
+
     // Payment Processing
     { pattern: /sk_live_[a-zA-Z0-9]{24,}/g, name: 'Stripe secret key (live)' },
     { pattern: /sk_test_[a-zA-Z0-9]{24,}/g, name: 'Stripe secret key (test)' },
