@@ -59,15 +59,30 @@
  * writeup) lives in a sibling file, re-exported from here; this module only
  * owns the injectable seam (`ProbeInput.checkRecoveryPending`) and the call
  * site that invokes it.
+ *
+ * GIT-ANCESTOR DETECTION IS A DELIBERATE DEVIATION FROM THE PLAN.
+ * `update-safety-and-source-resolution.md` §4.2 says "Git detection reuses
+ * A0's walk (`hasGitAncestorBetween`, exported unchanged)." This probe does
+ * NOT do that: `gitAncestor` below is produced by this probe's OWN walk,
+ * `probeGitAncestor` (`update-target.probe.git-ancestor.ts`), after three
+ * consecutive review rounds found a defect in the reuse chain — see that
+ * module's fileoverview for the full history. `hasGitAncestorBetween` itself
+ * is unchanged and stays A0's own install-time gate
+ * (`skill-installation.target-guard.ts`); this probe simply never calls it.
  */
 
 import { createHash } from 'crypto'
 import * as fs from 'fs/promises'
 import * as path from 'path'
 
-import { hasGitAncestorBetween, type GitWalkResult } from './skill-installation.target-guard.js'
-import { isRealpathInside } from './skill-installation.realpath-containment.js'
+import { probeGitAncestor, type ProbeGitAncestor } from './update-target.probe.git-ancestor.js'
 import { defaultRecoveryPendingChecker } from './update-target.probe.recovery.js'
+import {
+  errnoOf,
+  sanitizeError,
+  type ProbeError,
+  type RecoveryPendingChecker,
+} from './update-target.probe.types.js'
 
 /** Re-exported so `update-target.probe.ts` remains the one public import
  * point for this probe's whole surface — the implementation lives in
@@ -75,48 +90,13 @@ import { defaultRecoveryPendingChecker } from './update-target.probe.recovery.js
  * module's fileoverview). */
 export { defaultRecoveryPendingChecker }
 
-/** Sanitized `{ path, errno }` — see this module's fileoverview. */
-export interface ProbeError {
-  path: string
-  errno: string
-}
-
-/** The `hasGitAncestorBetween` result kind this probe ever surfaces inside an `ok` outcome — a real `.git` ancestor. A `kind: 'error'` walk result short-circuits into `probe-failed` instead and never reaches here. */
-export type ProbeGitAncestorFound = Extract<GitWalkResult, { kind: 'found' }>
-
-/**
- * Three-state git-ancestor result — `found` and `none` both mean the walk
- * RAN and reached a conclusive answer; `undetermined` means it did NOT run
- * at all.
- *
- * `hasGitAncestorBetween` bounds its walk at `skillsDir`'s own realpath, but
- * its own doc comment states that bound is safe only as a PRECONDITION the
- * caller has already proven ("rule (c) has already proven a symlinked
- * `installPath`'s realpath resolves inside (real) `skillsDir` before this
- * ever runs") — `hasGitAncestorBetween` does not verify this itself. A prior
- * fix here made `checkPresence` follow a symlinked `dir` to a directory
- * (matching rule (c)'s FIRST clause) but never checked the SECOND clause
- * (realpath containment) before calling `hasGitAncestorBetween` anyway. For
- * a symlink whose realpath resolves OUTSIDE `skillsDir` — the shipped
- * `fan-out.ts:224-226` relative-symlink shape (e.g. `~/.cursor/skills/<skill>`
- * -> `../../.claude/skills/<skill>`) is exactly this, not a hypothetical
- * attack — the walk's stop condition (`current === stopAtAbs`) is never met,
- * so it climbs ancestors until its own 64-iteration cap or the filesystem
- * root, and can report a `.git` far outside `skillsDir` (e.g. at `$HOME`) as
- * a legitimate ancestor.
- *
- * `undetermined` is the fix: when {@link isRealpathInside} says `dir`'s
- * realpath does not resolve inside `skillsDir`, the walk is never called at
- * all — `undetermined` is reported instead. It is NOT a permissive "no git
- * repo found" (that is `none`); it means "the walk that would tell us was
- * never run," and it is what the classifier (not this probe) must decide
- * what to do with — see §4.3 row 10 / UD22 ("one folder, several manifest
- * keys") in the design doc. The probe reports; it never decides.
- */
-export type ProbeGitAncestor =
-  | ProbeGitAncestorFound
-  | { kind: 'none' }
-  | { kind: 'undetermined'; reason: 'realpath-escapes-skills-dir' }
+/** Re-exported for the same reason: `ProbeError` and `RecoveryPendingChecker`
+ * are defined in `update-target.probe.types.ts` (shared with
+ * `update-target.probe.recovery.ts` and `update-target.probe.git-ancestor.ts`
+ * — see that module's fileoverview for why), and `ProbeGitAncestor` is
+ * defined in `update-target.probe.git-ancestor.ts` — but this module stays
+ * the one public import point for all of it. */
+export type { ProbeError, RecoveryPendingChecker, ProbeGitAncestor }
 
 /** One probed write-set member (SKILL.md is always included, first). */
 export interface ProbedFile {
@@ -146,13 +126,6 @@ export type ProbeOutcome =
   | { kind: 'probe-failed'; error: ProbeError }
   | { kind: 'unreadable'; error: ProbeError }
 
-/** Asked when a tracked folder is missing on every retry attempt: does a `.skillsmith-staging/` record name it? See this module's fileoverview. */
-export type RecoveryPendingChecker = (input: {
-  skillsDir: string
-  dir: string
-  dirName: string
-}) => Promise<boolean>
-
 export interface ProbeInput {
   /** Absolute directory being probed (the update target's current location). */
   dir: string
@@ -179,16 +152,6 @@ function defaultSleep(ms: number): Promise<void> {
   return new Promise((resolve) => setTimeout(resolve, ms))
 }
 
-/** `err.code`, sanitized to a bounded, known-shape errno string. See fileoverview. */
-function errnoOf(err: unknown): string {
-  const code = (err as NodeJS.ErrnoException)?.code
-  return typeof code === 'string' && code ? code : 'UNKNOWN'
-}
-
-function sanitizeError(intendedPath: string, err: unknown): ProbeError {
-  return { path: intendedPath, errno: errnoOf(err) }
-}
-
 type PresenceResult =
   | { status: 'present' }
   | { status: 'missing' }
@@ -204,13 +167,14 @@ type PresenceResult =
  * same shape the same way, not fabricate an `ENOTDIR` no syscall produced
  * (an `lstat` on a symlink-to-directory reports the symlink itself, never a
  * directory). Following the link also makes the git walk below reachable
- * through it: `hasGitAncestorBetween`'s realpath branch runs whenever `dir`'s
- * realpath differs from its lexical path — which this check letting a
- * symlinked `dir` past is ONE way to reach (measured: it also runs for a
- * perfectly ordinary, non-symlink `dir` whose LEXICAL ANCESTOR is a symlink,
- * since `fs.realpath` resolves every path component, not just the final
- * one — this check says nothing about that case one way or the other). A
- * broken symlink correctly falls into the retry/missing path below (`stat`
+ * through it: `probeGitAncestor` (`update-target.probe.git-ancestor.ts`)
+ * always resolves `dir` through realpath before walking, so a symlinked
+ * `dir` this check lets past is probed the same way as an ordinary
+ * non-symlink `dir` whose LEXICAL ANCESTOR happens to be a symlink — `fs.
+ * realpath` resolves every path component, not just the final one, and this
+ * check says nothing about that ancestor case one way or the other; both
+ * reach the same realpath-only walk regardless. A broken symlink correctly
+ * falls into the retry/missing path below (`stat`
  * reports `ENOENT` for a symlink whose target is gone); a real non-directory
  * file still fails `isDirectory()` with a genuine `ENOTDIR`.
  */
@@ -344,29 +308,32 @@ export async function probeUpdateTarget(input: ProbeInput): Promise<ProbeOutcome
     return { kind: 'probe-failed', error: { path: dir, errno: 'ENOENT' } }
   }
 
-  // Finding SMI-6532 (round following A0.6): `hasGitAncestorBetween` may
-  // only be called once its precondition — `dir`'s realpath resolves inside
-  // `skillsDir` — is PROVEN, never assumed. `checkPresence` above (F1) only
-  // proved `dir` follows to A directory; it never proved that directory is
-  // inside `skillsDir`. Without this check, a symlink whose realpath escapes
-  // `skillsDir` (the shipped `fan-out.ts:224-226` shape) makes the walk's
-  // stop condition unreachable, and it climbs ancestors until its own
-  // 64-iteration cap or the filesystem root — see `ProbeGitAncestor`'s own
-  // doc comment for the full mechanism and why the escaping case reports
-  // `undetermined`, never `probe-failed` (that would erase F1's benefit for
-  // every in-bounds symlinked target) and never a bare `null`/`none` (that
-  // would be exactly the permissive-value-from-undetermined-state shape this
-  // module's fileoverview says it exists to remove).
-  let gitAncestor: ProbeGitAncestor
-  if (await isRealpathInside(dir, skillsDir)) {
-    const gitWalk = await hasGitAncestorBetween(dir, skillsDir)
-    if (gitWalk !== null && gitWalk.kind === 'error') {
-      return { kind: 'probe-failed', error: { path: gitWalk.path, errno: gitWalk.errorCode } }
-    }
-    gitAncestor = gitWalk ?? { kind: 'none' }
-  } else {
-    gitAncestor = { kind: 'undetermined', reason: 'realpath-escapes-skills-dir' }
+  // SMI-6532 (round following A0.6, finding 3): git-ancestor detection is
+  // this probe's OWN bounded walk (`probeGitAncestor`,
+  // `update-target.probe.git-ancestor.ts`), never a reuse of A0's
+  // `hasGitAncestorBetween` — a DELIBERATE DEVIATION from
+  // `update-safety-and-source-resolution.md` §4.2, which specifies reuse.
+  // Three consecutive review rounds found a defect in that reuse chain (a
+  // fabricated `ENOTDIR`, an unbounded walk for an escaping symlink, and
+  // then a realpath-vs-lexical gap in the round-2 FIX for the unbounded
+  // walk); see `update-target.probe.git-ancestor.ts`'s fileoverview for the
+  // full history. `probeGitAncestor` asserts containment INTERNALLY — it is
+  // never a precondition this call site must prove, the exact arrangement
+  // that produced all three findings.
+  //
+  // A real `lstat` failure during the walk (`undetermined; reason:
+  // 'stat-error'`) is a METADATA error, same as every other directory-level
+  // `lstat` in this probe (see fileoverview, "METADATA vs READ/HASH
+  // ERRORS") — intercepted into `probe-failed` here, never placed on
+  // `ok.gitAncestor`. Every other outcome (`found`, `none`, or
+  // `undetermined` with reason `escapes-root`/`depth-cap`) IS
+  // `ProbeGitAncestor` already — see that type's own doc comment for why
+  // `undetermined` is reported rather than a permissive `none`/`null`.
+  const gitWalk = await probeGitAncestor(dir, skillsDir)
+  if (gitWalk.kind === 'undetermined' && gitWalk.reason === 'stat-error') {
+    return { kind: 'probe-failed', error: gitWalk.error }
   }
+  const gitAncestor: ProbeGitAncestor = gitWalk
 
   const files: ProbedFile[] = []
   let skillMdFile: ProbedFile | undefined

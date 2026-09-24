@@ -170,10 +170,11 @@ export async function hasGitAncestorBetween(
 
 /** Rule (c): `installPath` is a usable directory, either directly or via a symlink
  * that resolves to a directory inside `skillsDir`. The containment half of
- * this rule is `isRealpathInside` (`skill-installation.realpath-containment.ts`)
- * — the SAME predicate the probe (`update-target.probe.ts`) must check before
- * it may treat `hasGitAncestorBetween`'s bounded-walk precondition as met; see
- * that module's fileoverview for why this is one shared function, not two. */
+ * this rule is `isRealpathInside` (`skill-installation.realpath-containment.ts`).
+ * `update-target.probe.ts` does NOT reuse this predicate as a precondition
+ * for `hasGitAncestorBetween` the way an earlier round had it do — see
+ * `update-target.probe.git-ancestor.ts`'s fileoverview for why the probe now
+ * runs its own, fully self-contained walk instead. */
 async function isUsableDirectory(
   installPath: string,
   skillsDir: string,

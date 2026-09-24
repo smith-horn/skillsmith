@@ -25,12 +25,18 @@
  * swapped out entire belongs in its own file, so that swap is a clean file
  * replacement (plus updating the one import in `update-target.probe.ts`),
  * never a diff threaded through code that has nothing to do with A1.
+ *
+ * `RecoveryPendingChecker` is imported from `update-target.probe.types.ts`,
+ * NOT from `update-target.probe.ts` — this module and `probe.ts` never
+ * import from each other (see `update-target.probe.types.ts`'s own
+ * fileoverview for why that appearance, even as a type-only import that
+ * erases before any runtime cycle could exist, was worth removing).
  */
 
 import * as fs from 'fs/promises'
 import * as path from 'path'
 
-import type { RecoveryPendingChecker } from './update-target.probe.js'
+import type { RecoveryPendingChecker } from './update-target.probe.types.js'
 
 const STAGING_DIRNAME = '.skillsmith-staging'
 const STAGING_RESERVED = new Set(['.kept', '.trash', '.quarantine'])

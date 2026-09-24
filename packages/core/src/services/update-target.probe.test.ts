@@ -33,21 +33,18 @@ import { createHash } from 'crypto'
 import { probeUpdateTarget, defaultRecoveryPendingChecker } from './update-target.probe.js'
 import { hasRecordedLocalEdit } from './skill-identity-classification.js'
 import { hashContent } from './skill-installation.helpers.js'
-import { hasGitAncestorBetween } from './skill-installation.target-guard.js'
 
-// Wraps (never replaces) `hasGitAncestorBetween` so a test can assert it was
-// NOT called -- the mechanism, not just the returned value -- for the
-// realpath-escapes-skillsDir case (Finding 1). Every other test in this file
-// gets the real walk, since the wrapper forwards to `actual` by default; the
-// Node ESM module namespace object is not configurable, so a plain
-// `vi.spyOn(targetGuard, 'hasGitAncestorBetween')` throws "Cannot redefine
-// property" under this runtime (see `skill-manifest.test.ts`'s own note) --
-// `vi.fn(actual.fn)` wrapping at mock-registration time is the pattern that
-// works.
-vi.mock('./skill-installation.target-guard.js', async (importOriginal) => {
-  const actual = await importOriginal<typeof import('./skill-installation.target-guard.js')>()
-  return { ...actual, hasGitAncestorBetween: vi.fn(actual.hasGitAncestorBetween) }
-})
+// This file no longer mocks `skill-installation.target-guard.js`. Before
+// SMI-6532's round-following-A0.6 fix, `probeUpdateTarget` called
+// `hasGitAncestorBetween` and this file wrapped it (`vi.fn(actual.fn)`) so a
+// test could assert it was NOT called for the realpath-escapes-skillsDir
+// case. The probe no longer calls that function AT ALL — see
+// `update-target.probe.git-ancestor.ts`'s fileoverview for why — so "was it
+// called" is no longer a meaningful assertion here; the dedicated
+// `update-target.probe.git-ancestor.test.ts` tests that module's own walk
+// directly, mechanism included (its own RED-TEST CONTROL block reproduces
+// the bug this change fixes using the still-exported, unmodified
+// `hasGitAncestorBetween`/`isRealpathInside`).
 
 // Hoisted, mutable EACCES-injection registry read by the mocked fs/promises
 // below -- both this file and everything it imports (including
@@ -196,9 +193,12 @@ describe('probeUpdateTarget — T-G2 probe errors fail closed', () => {
       writeSet: [],
     })
 
-    // `hasGitAncestorBetween`'s own GitWalkResult reports the DIRECTORY being
-    // checked (`root`), not the joined `.git` path it lstat'd internally —
-    // that directory is `root` here (the ancestor one level above `dir`).
+    // `probeGitAncestor`'s own walk (`update-target.probe.git-ancestor.ts`)
+    // sanitizes the error against the DIRECTORY being checked (`root`), not
+    // the joined `.git` path it lstat'd internally — that directory is
+    // `root` here (the ancestor one level above `dir`). `probeUpdateTarget`
+    // intercepts the walk's `undetermined; reason: 'stat-error'` exit and
+    // converts it into this same `probe-failed` shape.
     expect(outcome).toEqual({
       kind: 'probe-failed',
       error: { path: root, errno: 'EACCES' },
@@ -325,6 +325,32 @@ describe('probeUpdateTarget — retry rule (§4.2)', () => {
     expect(outcome).toEqual({ kind: 'recovery-pending' })
   })
 
+  it('the DEFAULT checker also says NO when no staging record names the dir', async () => {
+    // The companion to the test above, and the reason it exists is worth
+    // stating: that one alone pins only that the default is REACHED, not that
+    // it DISCRIMINATES. Red-testing it with `async () => false` (the author's
+    // own choice of mutation) catches nothing here, because a default hardwired
+    // to `async () => true` passes it — measured, it survived. A test that
+    // would still pass if the code computed its answer some other way is
+    // pinning an output shape, not a behaviour (SMI-6732).
+    //
+    // The two together pin both directions: record present -> recovery-pending,
+    // record absent -> probe-failed. Neither constant default satisfies both.
+    const dir = path.join(root, 'gone-no-record')
+    // Deliberately NO .skillsmith-staging/ anywhere under `root`.
+
+    const outcome = await probeUpdateTarget({
+      dir,
+      skillsDir: root,
+      dirName: 'gone-no-record',
+      writeSet: [],
+      sleep: async () => {},
+      // checkRecoveryPending deliberately omitted — that is the point.
+    })
+
+    expect(outcome).toEqual({ kind: 'probe-failed', error: { path: dir, errno: 'ENOENT' } })
+  })
+
   it('a non-directory occupying dir is an immediate probe-failed (ENOTDIR), never retried', async () => {
     const dir = path.join(root, 'a-plain-file')
     fs.writeFileSync(dir, 'not a dir')
@@ -380,7 +406,7 @@ describe('probeUpdateTarget — F1: a symlinked skill directory is probed, not f
     })
   })
 
-  it("reaches hasGitAncestorBetween's realpath branch through a symlinked dir — a git clone visible only via the symlink target is detected", async () => {
+  it("reaches a `.git` through a symlinked dir's realpath chain — a git clone visible only via the symlink target is detected", async () => {
     // Shape from the spec (fan-out.ts:226): skillsDir/pdf -> skillsDir/clone/docs/pdf,
     // where `clone` (not `pdf`'s own lexical parent) has `.git`. Only a walk
     // starting from `dir`'s REALPATH ever visits `clone` — reaching this walk
@@ -407,15 +433,19 @@ describe('probeUpdateTarget — F1: a symlinked skill directory is probed, not f
 })
 
 describe('probeUpdateTarget — CRITICAL fix: a symlink whose realpath escapes skillsDir never runs the (unbounded) git walk', () => {
-  it('the shipped fan-out shape (relative symlink out of its own skillsDir) reports gitAncestor: undetermined and never calls hasGitAncestorBetween — a `.git` far outside skillsDir is never found', async () => {
+  it('the shipped fan-out shape (relative symlink out of its own skillsDir) reports gitAncestor: undetermined/escapes-root — a `.git` far outside skillsDir is never found', async () => {
     // Mirrors fan-out.ts:224-226's shipped install shape and the finding's
     // own repro: `~/.cursor/skills/<skill>` -> `../../.claude/skills/<skill>`,
     // a RELATIVE symlink whose realpath resolves OUTSIDE its own skillsDir.
     // A `.git` sits at the role $HOME plays in the finding — an ancestor far
     // above skillsDir that an UNBOUNDED walk (the bug) would wrongly reach
-    // and report as `found`, since walkForGitEntry's stop condition
-    // (`current === stopAtAbs`) is never met once the realpath has already
-    // escaped `stopAtAbs`'s own subtree.
+    // and report as `found`. `probeGitAncestor` (`update-target.probe.git-
+    // ancestor.ts`) asserts containment BEFORE any walk starts, so this
+    // never gets that far — the dedicated
+    // `update-target.probe.git-ancestor.test.ts` covers the mechanism
+    // directly (including a RED-TEST CONTROL reproducing the old bug via
+    // the still-unmodified `hasGitAncestorBetween`); this integration test
+    // pins the value `probeUpdateTarget`'s own `ok` outcome surfaces.
     const home = path.join(root, 'gov-home')
     const cursorSkills = path.join(home, '.cursor', 'skills')
     const claudeSkills = path.join(home, '.claude', 'skills')
@@ -431,8 +461,6 @@ describe('probeUpdateTarget — CRITICAL fix: a symlink whose realpath escapes s
     const relTarget = path.relative(path.dirname(linkPath), realSkillDir)
     fs.symlinkSync(relTarget, linkPath, 'dir')
 
-    vi.mocked(hasGitAncestorBetween).mockClear()
-
     const outcome = await probeUpdateTarget({
       dir: linkPath,
       skillsDir: cursorSkills,
@@ -440,16 +468,14 @@ describe('probeUpdateTarget — CRITICAL fix: a symlink whose realpath escapes s
       writeSet: [],
     })
 
-    // THE MECHANISM: the walk that would (wrongly) find $HOME's `.git` never
-    // ran at all — not "ran and correctly found nothing."
-    expect(hasGitAncestorBetween).not.toHaveBeenCalled()
-
-    // THE VALUE: `undetermined`, never a permissive `found`/`none`/`null`.
+    // `undetermined`, never a permissive `found`/`none`/`null` — and never
+    // `probe-failed` either (that would erase the F1 symlink-following fix
+    // for every in-bounds symlinked target).
     expect(outcome.kind).toBe('ok')
     if (outcome.kind !== 'ok') throw new Error('unreachable')
     expect(outcome.gitAncestor).toEqual({
       kind: 'undetermined',
-      reason: 'realpath-escapes-skills-dir',
+      reason: 'escapes-root',
     })
   })
 })
