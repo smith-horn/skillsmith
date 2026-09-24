@@ -33,6 +33,21 @@ import { createHash } from 'crypto'
 import { probeUpdateTarget, defaultRecoveryPendingChecker } from './update-target.probe.js'
 import { hasRecordedLocalEdit } from './skill-identity-classification.js'
 import { hashContent } from './skill-installation.helpers.js'
+import { hasGitAncestorBetween } from './skill-installation.target-guard.js'
+
+// Wraps (never replaces) `hasGitAncestorBetween` so a test can assert it was
+// NOT called -- the mechanism, not just the returned value -- for the
+// realpath-escapes-skillsDir case (Finding 1). Every other test in this file
+// gets the real walk, since the wrapper forwards to `actual` by default; the
+// Node ESM module namespace object is not configurable, so a plain
+// `vi.spyOn(targetGuard, 'hasGitAncestorBetween')` throws "Cannot redefine
+// property" under this runtime (see `skill-manifest.test.ts`'s own note) --
+// `vi.fn(actual.fn)` wrapping at mock-registration time is the pattern that
+// works.
+vi.mock('./skill-installation.target-guard.js', async (importOriginal) => {
+  const actual = await importOriginal<typeof import('./skill-installation.target-guard.js')>()
+  return { ...actual, hasGitAncestorBetween: vi.fn(actual.hasGitAncestorBetween) }
+})
 
 // Hoisted, mutable EACCES-injection registry read by the mocked fs/promises
 // below -- both this file and everything it imports (including
@@ -361,6 +376,54 @@ describe('probeUpdateTarget — F1: a symlinked skill directory is probed, not f
   })
 })
 
+describe('probeUpdateTarget — CRITICAL fix: a symlink whose realpath escapes skillsDir never runs the (unbounded) git walk', () => {
+  it('the shipped fan-out shape (relative symlink out of its own skillsDir) reports gitAncestor: undetermined and never calls hasGitAncestorBetween — a `.git` far outside skillsDir is never found', async () => {
+    // Mirrors fan-out.ts:224-226's shipped install shape and the finding's
+    // own repro: `~/.cursor/skills/<skill>` -> `../../.claude/skills/<skill>`,
+    // a RELATIVE symlink whose realpath resolves OUTSIDE its own skillsDir.
+    // A `.git` sits at the role $HOME plays in the finding — an ancestor far
+    // above skillsDir that an UNBOUNDED walk (the bug) would wrongly reach
+    // and report as `found`, since walkForGitEntry's stop condition
+    // (`current === stopAtAbs`) is never met once the realpath has already
+    // escaped `stopAtAbs`'s own subtree.
+    const home = path.join(root, 'gov-home')
+    const cursorSkills = path.join(home, '.cursor', 'skills')
+    const claudeSkills = path.join(home, '.claude', 'skills')
+    fs.mkdirSync(cursorSkills, { recursive: true })
+    const realSkillDir = path.join(claudeSkills, 'escaper')
+    fs.mkdirSync(realSkillDir, { recursive: true })
+    fs.writeFileSync(path.join(realSkillDir, 'SKILL.md'), 'body')
+    // The `.git` an unbounded walk would wrongly find — at $HOME, well above
+    // `cursorSkills` (the `skillsDir` this probe is given).
+    fs.mkdirSync(path.join(home, '.git'))
+
+    const linkPath = path.join(cursorSkills, 'escaper')
+    const relTarget = path.relative(path.dirname(linkPath), realSkillDir)
+    fs.symlinkSync(relTarget, linkPath, 'dir')
+
+    vi.mocked(hasGitAncestorBetween).mockClear()
+
+    const outcome = await probeUpdateTarget({
+      dir: linkPath,
+      skillsDir: cursorSkills,
+      dirName: 'escaper',
+      writeSet: [],
+    })
+
+    // THE MECHANISM: the walk that would (wrongly) find $HOME's `.git` never
+    // ran at all — not "ran and correctly found nothing."
+    expect(hasGitAncestorBetween).not.toHaveBeenCalled()
+
+    // THE VALUE: `undetermined`, never a permissive `found`/`none`/`null`.
+    expect(outcome.kind).toBe('ok')
+    if (outcome.kind !== 'ok') throw new Error('unreachable')
+    expect(outcome.gitAncestor).toEqual({
+      kind: 'undetermined',
+      reason: 'realpath-escapes-skills-dir',
+    })
+  })
+})
+
 describe('probeUpdateTarget — F2: a non-regular SKILL.md is data for the classifier, not a probe failure', () => {
   it('SKILL.md as a symlink -> ok, entryType symlink, skillMdHash null, never probe-failed', async () => {
     const dir = path.join(root, 'f2-symlink-skillmd')
@@ -379,6 +442,10 @@ describe('probeUpdateTarget — F2: a non-regular SKILL.md is data for the class
     expect(outcome.kind).toBe('ok')
     if (outcome.kind !== 'ok') throw new Error('unreachable')
     expect(outcome.skillMdHash).toBeNull()
+    // Finding 3: the reason for the null hash sits on the SAME object, not
+    // only one level down in files[0] — see ProbeOk.skillMdEntryType's own
+    // doc comment for why a bare null must never be readable alone.
+    expect(outcome.skillMdEntryType).toBe('symlink')
     expect(outcome.files[0]).toEqual({ rel: 'SKILL.md', sha256: null, entryType: 'symlink' })
   })
 
@@ -396,7 +463,24 @@ describe('probeUpdateTarget — F2: a non-regular SKILL.md is data for the class
     expect(outcome.kind).toBe('ok')
     if (outcome.kind !== 'ok') throw new Error('unreachable')
     expect(outcome.skillMdHash).toBeNull()
+    expect(outcome.skillMdEntryType).toBe('directory')
     expect(outcome.files[0]).toEqual({ rel: 'SKILL.md', sha256: null, entryType: 'directory' })
+  })
+
+  it('Finding 3: skillMdEntryType is undefined (not set) for an ordinary regular-file SKILL.md — only a null skillMdHash ever carries a reason', async () => {
+    const dir = mkSkill('f2-regular-skillmd', 'ordinary content')
+
+    const outcome = await probeUpdateTarget({
+      dir,
+      skillsDir: root,
+      dirName: 'f2-regular-skillmd',
+      writeSet: [],
+    })
+
+    expect(outcome.kind).toBe('ok')
+    if (outcome.kind !== 'ok') throw new Error('unreachable')
+    expect(outcome.skillMdHash).not.toBeNull()
+    expect(outcome.skillMdEntryType).toBeUndefined()
   })
 })
 
@@ -570,7 +654,7 @@ describe('probeUpdateTarget — ok outcome contents', () => {
     expect(outcome.error.errno).toBe('EINVAL')
   })
 
-  it('gitAncestor is null when no .git ancestor exists', async () => {
+  it('gitAncestor is { kind: "none" } when no .git ancestor exists — the walk ran and found nothing, never a bare null', async () => {
     const dir = mkSkill('no-git')
     const outcome = await probeUpdateTarget({
       dir,
@@ -580,7 +664,7 @@ describe('probeUpdateTarget — ok outcome contents', () => {
     })
     expect(outcome.kind).toBe('ok')
     if (outcome.kind !== 'ok') throw new Error('unreachable')
-    expect(outcome.gitAncestor).toBeNull()
+    expect(outcome.gitAncestor).toEqual({ kind: 'none' })
   })
 
   it('gitAncestor is populated when a real .git ancestor exists', async () => {

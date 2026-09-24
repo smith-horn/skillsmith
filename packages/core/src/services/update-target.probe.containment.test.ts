@@ -41,6 +41,15 @@ import { join } from 'node:path'
 /** Hoisted so the `vi.mock` factory, which is lifted above every import, can close over it. */
 const calls = vi.hoisted(() => ({ read: [] as string[], lstat: [] as string[] }))
 
+// Finding 2 seam: lets a test make the Nth `lstat` call on a SPECIFIC path
+// throw ENOENT while every other call (and every other path) forwards to the
+// real filesystem untouched -- e.g. checkPresence's presence-check lstat on
+// skillMdPath (call 1) succeeds normally, and probeOneFile's own later lstat
+// on the identical path (call 2, inside the write-set loop) is the one made
+// to vanish, reaching the fail-closed branch this seam exists to test.
+const lstatEnoentAtCall = vi.hoisted(() => new Map<string, number>())
+const lstatCallCounts = vi.hoisted(() => new Map<string, number>())
+
 vi.mock('fs/promises', async (importOriginal) => {
   const actual = await importOriginal<typeof import('fs/promises')>()
   return {
@@ -50,7 +59,17 @@ vi.mock('fs/promises', async (importOriginal) => {
       return (actual.readFile as (...a: unknown[]) => unknown)(p, ...rest)
     },
     lstat: (p: Parameters<typeof actual.lstat>[0], ...rest: unknown[]) => {
-      calls.lstat.push(String(p))
+      const key = String(p)
+      calls.lstat.push(key)
+      const count = (lstatCallCounts.get(key) ?? 0) + 1
+      lstatCallCounts.set(key, count)
+      if (lstatEnoentAtCall.get(key) === count) {
+        const err = new Error(
+          `ENOENT: no such file or directory, lstat '${key}'`
+        ) as NodeJS.ErrnoException
+        err.code = 'ENOENT'
+        throw err
+      }
       return (actual.lstat as (...a: unknown[]) => unknown)(p, ...rest)
     },
   }
@@ -66,6 +85,8 @@ let canary: string
 beforeEach(async () => {
   calls.read.length = 0
   calls.lstat.length = 0
+  lstatEnoentAtCall.clear()
+  lstatCallCounts.clear()
   root = await mkdtemp(join(tmpdir(), 'probe-contain-'))
   skillsDir = join(root, 'skills')
   dir = join(skillsDir, 'my-skill')
@@ -151,5 +172,29 @@ describe('the absolute-path guard runs before path.join, not merely before the r
     expect(calls.read).not.toContain(joinedButWrongPath)
     expect(calls.lstat).not.toContain(canary)
     expect(calls.lstat).not.toContain(joinedButWrongPath)
+  })
+})
+
+describe('Finding 2: the fail-closed branch — SKILL.md vanishes AFTER checkPresence already saw it present', () => {
+  // `probeUpdateTarget`'s guard is `if (sha256 === null && entryType === undefined)`.
+  // The `entryType !== undefined` arm (SKILL.md exists but isn't a regular
+  // file) has coverage elsewhere; this arm — a genuine vanish between
+  // checkPresence's presence-check lstat and probeOneFile's own later lstat
+  // on the SAME path — had none. Deleting the whole `if` block survives all
+  // other tests in this module (measured, SMI-6598 discipline): this is the
+  // one that catches it.
+  it('reports probe-failed, not a permissive ok, when SKILL.md is present at the presence check but gone by the write-set read', async () => {
+    const skillMdPath = join(dir, 'SKILL.md')
+    // Call 1: checkPresence's own `fs.lstat(skillMdPath)` — real, succeeds.
+    // Call 2: probeOneFile's `fs.lstat(abs)` for the SAME path, inside the
+    // write-set loop below — made to vanish.
+    lstatEnoentAtCall.set(skillMdPath, 2)
+
+    const outcome = await probeUpdateTarget({ dir, skillsDir, dirName: 'my-skill', writeSet: [] })
+
+    expect(outcome).toEqual({
+      kind: 'probe-failed',
+      error: { path: skillMdPath, errno: 'ENOENT' },
+    })
   })
 })

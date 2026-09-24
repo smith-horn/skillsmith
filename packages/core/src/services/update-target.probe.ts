@@ -29,8 +29,10 @@
  *     intended path avoids ever surfacing where an attacker-planted symlink
  *     actually pointed.
  *   - No secrets are read onto this path in the first place: it is always
- *     one of `dir`, `skillMdPath`, or a `writeSet` member joined onto `dir`
- *     — filesystem paths the caller already owns, never file content.
+ *     one of `dir`, `skillMdPath`, a `writeSet` member joined onto `dir`, or
+ *     (F3: an absolute write-set entry, refused before `path.join` so it is
+ *     never silently re-rooted under `dir`) the caller-supplied absolute path
+ *     itself — filesystem paths the caller already owns, never file content.
  *
  * METADATA vs READ/HASH ERRORS (§4.2's own boundary, disambiguated here —
  * see this module's `## Ambiguity notes` in the fileoverview of the test
@@ -68,6 +70,7 @@ import * as fs from 'fs/promises'
 import * as path from 'path'
 
 import { hasGitAncestorBetween, type GitWalkResult } from './skill-installation.target-guard.js'
+import { isRealpathInside } from './skill-installation.realpath-containment.js'
 
 /** Sanitized `{ path, errno }` — see this module's fileoverview. */
 export interface ProbeError {
@@ -76,7 +79,41 @@ export interface ProbeError {
 }
 
 /** The `hasGitAncestorBetween` result kind this probe ever surfaces inside an `ok` outcome — a real `.git` ancestor. A `kind: 'error'` walk result short-circuits into `probe-failed` instead and never reaches here. */
-export type ProbeGitAncestor = Extract<GitWalkResult, { kind: 'found' }>
+export type ProbeGitAncestorFound = Extract<GitWalkResult, { kind: 'found' }>
+
+/**
+ * Three-state git-ancestor result — `found` and `none` both mean the walk
+ * RAN and reached a conclusive answer; `undetermined` means it did NOT run
+ * at all.
+ *
+ * `hasGitAncestorBetween` bounds its walk at `skillsDir`'s own realpath, but
+ * its own doc comment states that bound is safe only as a PRECONDITION the
+ * caller has already proven ("rule (c) has already proven a symlinked
+ * `installPath`'s realpath resolves inside (real) `skillsDir` before this
+ * ever runs") — `hasGitAncestorBetween` does not verify this itself. A prior
+ * fix here made `checkPresence` follow a symlinked `dir` to a directory
+ * (matching rule (c)'s FIRST clause) but never checked the SECOND clause
+ * (realpath containment) before calling `hasGitAncestorBetween` anyway. For
+ * a symlink whose realpath resolves OUTSIDE `skillsDir` — the shipped
+ * `fan-out.ts:224-226` relative-symlink shape (e.g. `~/.cursor/skills/<skill>`
+ * -> `../../.claude/skills/<skill>`) is exactly this, not a hypothetical
+ * attack — the walk's stop condition (`current === stopAtAbs`) is never met,
+ * so it climbs ancestors until its own 64-iteration cap or the filesystem
+ * root, and can report a `.git` far outside `skillsDir` (e.g. at `$HOME`) as
+ * a legitimate ancestor.
+ *
+ * `undetermined` is the fix: when {@link isRealpathInside} says `dir`'s
+ * realpath does not resolve inside `skillsDir`, the walk is never called at
+ * all — `undetermined` is reported instead. It is NOT a permissive "no git
+ * repo found" (that is `none`); it means "the walk that would tell us was
+ * never run," and it is what the classifier (not this probe) must decide
+ * what to do with — see §4.3 row 10 / UD22 ("one folder, several manifest
+ * keys") in the design doc. The probe reports; it never decides.
+ */
+export type ProbeGitAncestor =
+  | ProbeGitAncestorFound
+  | { kind: 'none' }
+  | { kind: 'undetermined'; reason: 'realpath-escapes-skills-dir' }
 
 /** One probed write-set member (SKILL.md is always included, first). */
 export interface ProbedFile {
@@ -90,10 +127,12 @@ export interface ProbedFile {
 /** Everything the (pure) classifier needs about one on-disk target. */
 export interface ProbeOk {
   kind: 'ok'
-  /** A real `.git` ancestor between `dir` and `skillsDir`, or `null` when none exists. */
-  gitAncestor: ProbeGitAncestor | null
-  /** sha256 of SKILL.md's current raw bytes — duplicated into `files` too, exposed directly since the retry rule is keyed on SKILL.md specifically. `null` when SKILL.md exists but is not a regular file (a symlink, a directory, or another non-regular type) — check `files[0].entryType` (SKILL.md is always first) to tell that case apart. A genuinely missing/unreadable SKILL.md never reaches `ok` at all; it is `probe-failed` or `unreadable` instead. */
+  /** Never `null` — see {@link ProbeGitAncestor}'s own doc comment for the three states and why there is deliberately no permissive default for "the walk didn't run." */
+  gitAncestor: ProbeGitAncestor
+  /** sha256 of SKILL.md's current raw bytes — duplicated into `files` too, exposed directly since the retry rule is keyed on SKILL.md specifically. `null` when SKILL.md exists but is not a regular file (a symlink, a directory, or another non-regular type) — check `skillMdEntryType` (or, equivalently, `files[0].entryType`; SKILL.md is always first) to tell that case apart. A genuinely missing/unreadable SKILL.md never reaches `ok` at all; it is `probe-failed` or `unreadable` instead. */
   skillMdHash: string | null
+  /** Set only when `skillMdHash` is `null` — the reason it's null, placed on THIS SAME object so a `null` hash can never be read bare, one level removed from its own explanation in `files[0]`. This module's fileoverview (THE CENTRAL PROPERTY) names exactly that shape — `hasRecordedLocalEdit` (`skill-identity-classification.ts`) reading a bare `null` local hash as "no edit evidence, safe to overwrite" — as the permissive-value-from-undetermined-state bug this probe exists to remove; a type change from `string` to `string | null` on `skillMdHash` alone would let `if (!probe.skillMdHash)` compile silently past that same shape one level down. */
+  skillMdEntryType?: 'symlink' | 'directory' | 'other'
   /** One entry per write-set member, `SKILL.md` first. */
   files: ProbedFile[]
 }
@@ -164,11 +203,15 @@ type PresenceResult =
  * same shape the same way, not fabricate an `ENOTDIR` no syscall produced
  * (an `lstat` on a symlink-to-directory reports the symlink itself, never a
  * directory). Following the link also makes the git walk below reachable
- * through it: `hasGitAncestorBetween`'s realpath branch only ever runs when
- * this function lets a symlinked `dir` past this check. A broken symlink
- * correctly falls into the retry/missing path below (`stat` reports `ENOENT`
- * for a symlink whose target is gone); a real non-directory file still fails
- * `isDirectory()` with a genuine `ENOTDIR`.
+ * through it: `hasGitAncestorBetween`'s realpath branch runs whenever `dir`'s
+ * realpath differs from its lexical path — which this check letting a
+ * symlinked `dir` past is ONE way to reach (measured: it also runs for a
+ * perfectly ordinary, non-symlink `dir` whose LEXICAL ANCESTOR is a symlink,
+ * since `fs.realpath` resolves every path component, not just the final
+ * one — this check says nothing about that case one way or the other). A
+ * broken symlink correctly falls into the retry/missing path below (`stat`
+ * reports `ENOENT` for a symlink whose target is gone); a real non-directory
+ * file still fails `isDirectory()` with a genuine `ENOTDIR`.
  */
 async function checkPresence(dir: string, skillMdPath: string): Promise<PresenceResult> {
   try {
@@ -270,7 +313,16 @@ async function probeOneFile(
  * (determinism). Dedupes by NORMALIZED path, not the raw string —
  * `'./SKILL.md'` and `'SKILL.md'` name the same file and must collapse to
  * one probed entry with one hash, not two `files` rows where only the
- * literal `'SKILL.md'` spelling ever populates `skillMdHash`. */
+ * literal `'SKILL.md'` spelling ever populates `skillMdHash`. This does NOT
+ * collapse every equivalent spelling: `path.normalize` strips a leading
+ * `./` and redundant/internal separators, but a TRAILING separator survives
+ * (`path.normalize('SKILL.md/')` -> `'SKILL.md/'`, measured), so that spells
+ * a second, undeduped row. That's deliberately left as-is rather than
+ * stripped: a trailing separator asserts "this must be a directory" to
+ * `lstat` on some platforms, a genuinely different filesystem question than
+ * the bare name — collapsing it would hide a case where the two entries can
+ * legitimately behave differently. The extra row is fail-closed (an
+ * unnecessary probe, never a missed one), not a regression. */
 function orderedWriteSet(writeSet: readonly string[]): string[] {
   const seen = new Set<string>()
   const out: string[] = []
@@ -335,12 +387,38 @@ export async function probeUpdateTarget(input: ProbeInput): Promise<ProbeOutcome
       return { kind: 'probe-failed', error: sanitizeError(dir, err) }
     }
     if (pending) return { kind: 'recovery-pending' }
+    // `path: dir` here names an entry that, for the dangling-symlink case
+    // (F1), DOES still exist on disk — `dir` is the symlink itself, which
+    // `readdir`/`ls` on its parent would still list. The ENOENT describes
+    // its TARGET (what `stat` tried to follow and couldn't), not `dir`'s own
+    // presence. Don't read this as a second, fabricated "no such entry" on
+    // top of a real one — it's the same single failure `checkPresence`
+    // already observed, reported through the one path this probe ever names.
     return { kind: 'probe-failed', error: { path: dir, errno: 'ENOENT' } }
   }
 
-  const gitWalk = await hasGitAncestorBetween(dir, skillsDir)
-  if (gitWalk !== null && gitWalk.kind === 'error') {
-    return { kind: 'probe-failed', error: { path: gitWalk.path, errno: gitWalk.errorCode } }
+  // Finding SMI-6532 (round following A0.6): `hasGitAncestorBetween` may
+  // only be called once its precondition — `dir`'s realpath resolves inside
+  // `skillsDir` — is PROVEN, never assumed. `checkPresence` above (F1) only
+  // proved `dir` follows to A directory; it never proved that directory is
+  // inside `skillsDir`. Without this check, a symlink whose realpath escapes
+  // `skillsDir` (the shipped `fan-out.ts:224-226` shape) makes the walk's
+  // stop condition unreachable, and it climbs ancestors until its own
+  // 64-iteration cap or the filesystem root — see `ProbeGitAncestor`'s own
+  // doc comment for the full mechanism and why the escaping case reports
+  // `undetermined`, never `probe-failed` (that would erase F1's benefit for
+  // every in-bounds symlinked target) and never a bare `null`/`none` (that
+  // would be exactly the permissive-value-from-undetermined-state shape this
+  // module's fileoverview says it exists to remove).
+  let gitAncestor: ProbeGitAncestor
+  if (await isRealpathInside(dir, skillsDir)) {
+    const gitWalk = await hasGitAncestorBetween(dir, skillsDir)
+    if (gitWalk !== null && gitWalk.kind === 'error') {
+      return { kind: 'probe-failed', error: { path: gitWalk.path, errno: gitWalk.errorCode } }
+    }
+    gitAncestor = gitWalk ?? { kind: 'none' }
+  } else {
+    gitAncestor = { kind: 'undetermined', reason: 'realpath-escapes-skills-dir' }
   }
 
   const files: ProbedFile[] = []
@@ -381,9 +459,16 @@ export async function probeUpdateTarget(input: ProbeInput): Promise<ProbeOutcome
     // DIFFERENT case: SKILL.md exists but isn't a regular file. That is
     // data for the (pure) classifier to route into §4.3 row 12
     // (`unsupported-entry`), not a probe failure — it falls through to `ok`
-    // below with `skillMdHash: null` and the type preserved on `files[0]`.
+    // below with `skillMdHash: null` and the type preserved on
+    // `skillMdEntryType` (and, equivalently, `files[0].entryType`).
     return { kind: 'probe-failed', error: { path: skillMdPath, errno: 'ENOENT' } }
   }
 
-  return { kind: 'ok', gitAncestor: gitWalk, skillMdHash: skillMdFile.sha256, files }
+  return {
+    kind: 'ok',
+    gitAncestor,
+    skillMdHash: skillMdFile.sha256,
+    skillMdEntryType: skillMdFile.entryType,
+    files,
+  }
 }
