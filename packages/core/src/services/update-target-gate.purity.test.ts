@@ -125,9 +125,18 @@ const recordedCalls: string[] = []
  *
  * Everything else non-function (`constants`, `F_OK`, and similar) does pass
  * through: reading a value is not I/O, and replacing it would break importers
- * that only read it. Classes (`Stats`, `Dirent`, `ReadStream`) are functions
- * and so become throwing spies, which is stricter than the alternative and
- * fine — the classifier constructs none of them.
+ * that only read it.
+ *
+ * Classes (`Stats`, `Dirent`, `ReadStream`) are functions and so become spies
+ * too. An earlier version of this comment said they "become throwing spies,
+ * which is stricter than the alternative and fine" — measured, that was wrong
+ * in the direction that reads as reassuring. While the spy body was an arrow,
+ * `new fs.Stats()` threw V8's own `is not a constructor` TypeError BEFORE the
+ * body ran and recorded nothing: containment held, detection did not, so a
+ * construction attempt behind a catch-and-continue left the purity verdict
+ * green. The body is a `function` expression now, so construction records and
+ * throws this file's own diagnostic like any other call, and the control
+ * exercises `new` as its own call path.
  */
 async function recordingModule(moduleName: string): Promise<Record<string, unknown>> {
   const actual = (await vi.importActual(moduleName)) as Record<string, unknown>
@@ -147,7 +156,14 @@ function wrapNamespace(ns: Record<string, unknown>, moduleName: string): Record<
       out[name] = value
       continue
     }
-    out[name] = vi.fn((...args: unknown[]) => {
+    // A `function` expression, deliberately NOT an arrow: an arrow is not a
+    // constructor, so `new fs.Stats()` threw V8's own `is not a constructor`
+    // TypeError and recorded NOTHING (measured). Containment survived, since
+    // the TypeError still stops the caller, but detection did not — behind a
+    // catch-and-continue the purity verdict stayed green through a live
+    // construction attempt. A `function` expression records and throws this
+    // file's own diagnostic whether called or constructed.
+    out[name] = vi.fn(function (...args: unknown[]) {
       // Render defensively: `String(Object.create(null))` THROWS (measured
       // in-container), and the template literal is evaluated before `push`
       // completes — so an argument that cannot be stringified would make this
@@ -402,8 +418,12 @@ describe('the fs recorder — known-positive control (T-G3)', () => {
       const canonical = canonicalNameOf(specifier)
       const failures: string[] = []
       const visitedPaths: string[] = []
-      let rootFunctions = 0
+      // Which function names were actually exercised, per namespace path. The
+      // expectation for this is computed below from `vi.importActual`, NOT
+      // from anything the walk produced.
+      const examined = new Map<string, string[]>()
       let calls = 0
+      let constructions = 0
       const visited = new WeakSet<object>()
 
       const walk = (obj: Record<string, unknown>, path: string, depth: number): void => {
@@ -414,7 +434,7 @@ describe('the fs recorder — known-positive control (T-G3)', () => {
         for (const [key, value] of Object.entries(obj)) {
           const label = `${path}.${key}`
           if (typeof value === 'function') {
-            if (depth === 0) rootFunctions += 1
+            examined.set(path, [...(examined.get(path) ?? []), key])
             // Never CALL something that is not a spy — that would be real I/O
             // against the real module.
             if (!vi.isMockFunction(value)) {
@@ -442,6 +462,26 @@ describe('the fs recorder — known-positive control (T-G3)', () => {
               if (!added[0].startsWith(`${label}(`)) {
                 failures.push(`${label}[${args.length} args]: recorded as ${added[0]}`)
               }
+            }
+
+            // Construction is a SEPARATE call path, not another arity. With an
+            // arrow implementation `new` threw V8's `is not a constructor`
+            // before the body ran, recording nothing — detection lost behind
+            // any catch-and-continue, even though containment held.
+            constructions += 1
+            const beforeNew = recordedCalls.length
+            let threwOnNew = false
+            try {
+              new (value as unknown as new (...a: unknown[]) => unknown)('/probe-path')
+            } catch {
+              threwOnNew = true
+            }
+            const addedByNew = recordedCalls.slice(beforeNew)
+            if (!threwOnNew) failures.push(`${label}[new]: did not throw`)
+            if (addedByNew.length !== 1) {
+              failures.push(`${label}[new]: recorded ${addedByNew.length} entries`)
+            } else if (!addedByNew[0].startsWith(`${label}(`)) {
+              failures.push(`${label}[new]: recorded as ${addedByNew[0]}`)
             }
             continue
           }
@@ -475,8 +515,52 @@ describe('the fs recorder — known-positive control (T-G3)', () => {
       expect([...visitedPaths].sort()).toEqual(
         expectedSuffixes.map((s) => `${canonical}${s}`).sort()
       )
-      expect(rootFunctions).toBeGreaterThan(25)
-      expect(calls).toBeGreaterThan(rootFunctions * ARGUMENT_SHAPES.length)
+
+      // THE DENOMINATOR COMES FROM AN INDEPENDENT SOURCE. The previous version
+      // was `rootFunctions > 25`, counted from the mock — the very thing under
+      // test — so anything that made the mock smaller made the denominator
+      // smaller with it, and the literal `25` was the only real constraint.
+      // Measured, all three green at the time: a walk skipping every `*Sync`
+      // name dropped 42 of 98 top-level functions; a walk stopping at 26
+      // examined 27%; and — the strong form, in the MECHANISM rather than the
+      // control — `if (name === 'readFileSync') continue` in `wrapNamespace`
+      // left that function out of the mock altogether. A real call then hit
+      // vitest's own `No "readFileSync" export is defined` with
+      // `recordedCalls` EMPTY: the round-1 Proxy defect reinstated for one
+      // function, and invisible for the same reason it was the first time.
+      //
+      // So the expected set is derived from `vi.importActual` — the real
+      // module — and compared per namespace. It is computed FLATLY at each
+      // known path (`Object.entries`, one level, no recursion), never by
+      // re-walking, because a walk sharing the traversal bug would shrink both
+      // sides equally and agree with itself.
+      const actual = (await vi.importActual(canonical)) as Record<string, unknown>
+      const resolve = (suffix: string): Record<string, unknown> =>
+        suffix
+          .split('.')
+          .filter(Boolean)
+          .reduce((o, k) => o[k] as Record<string, unknown>, actual)
+
+      let expectedTotal = 0
+      for (const suffix of expectedSuffixes) {
+        const path = `${canonical}${suffix}`
+        const expectedNames = Object.entries(resolve(suffix))
+          .filter(([, v]) => typeof v === 'function')
+          .map(([k]) => k)
+          .sort()
+        expectedTotal += expectedNames.length
+        expect({ path, names: [...(examined.get(path) ?? [])].sort() }).toEqual({
+          path,
+          names: expectedNames,
+        })
+      }
+
+      // Guards the guard: if `vi.importActual` ever handed back an empty or
+      // stub module, every set comparison above would pass vacuously by
+      // matching [] against [].
+      expect(expectedTotal).toBeGreaterThan(25)
+      expect(calls).toBe(expectedTotal * ARGUMENT_SHAPES.length)
+      expect(constructions).toBe(expectedTotal)
     }
   )
 
