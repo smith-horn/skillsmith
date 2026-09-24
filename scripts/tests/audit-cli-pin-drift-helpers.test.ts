@@ -23,6 +23,7 @@ import {
   findFloatingSupabaseCliInstalls,
   findUnpinnedBareNpxCliInPackageJson,
   findUnpinnedRufloLauncherPin,
+  findRufloSeedPinDrift,
   findClaudeFlowReintroductions,
 } from '../audit-cli-pin-drift-helpers.mjs'
 
@@ -222,6 +223,78 @@ describe('findUnpinnedRufloLauncherPin (SMI-5746 Check 59, sub-check 3; SMI-6744
     const realLauncherPath = join(process.cwd(), 'scripts', 'mcp-ruflo-launcher.sh')
 
     expect(findUnpinnedRufloLauncherPin(realLauncherPath)).toBeNull()
+  })
+})
+
+describe('findRufloSeedPinDrift (SMI-6744 M-3, post-merge governance retro on PR #2931)', () => {
+  function writeLauncher(dir: string, pin: string): string {
+    const p = join(dir, 'mcp-ruflo-launcher.sh')
+    writeFileSync(p, `#!/usr/bin/env bash\nRUFLO_CLI_PIN=${pin}\necho hi\n`)
+    return p
+  }
+  function writeSeedPackageJson(dir: string, pin: string | undefined): string {
+    mkdirSync(join(dir, 'ruflo-seed'), { recursive: true })
+    const p = join(dir, 'ruflo-seed', 'package.json')
+    const body = pin === undefined ? {} : { dependencies: { '@claude-flow/cli': pin } }
+    writeFileSync(p, JSON.stringify(body))
+    return p
+  }
+
+  it('does not flag matching pins', () => {
+    const dir = scratchDir()
+    const launcherPath = writeLauncher(dir, '3.42.4')
+    const seedPath = writeSeedPackageJson(dir, '3.42.4')
+
+    expect(findRufloSeedPinDrift(launcherPath, seedPath)).toBeNull()
+  })
+
+  it('flags a seed package.json pin that differs from the launcher pin, naming both values and both paths', () => {
+    const dir = scratchDir()
+    const launcherPath = writeLauncher(dir, '3.42.4')
+    const seedPath = writeSeedPackageJson(dir, '3.41.0')
+
+    expect(findRufloSeedPinDrift(launcherPath, seedPath)).toEqual({
+      reason: `RUFLO_CLI_PIN=3.42.4 in ${launcherPath} does not match dependencies["@claude-flow/cli"]=3.41.0 in ${seedPath}`,
+      launcherPath,
+      seedPackageJsonPath: seedPath,
+      launcherPin: '3.42.4',
+      seedPin: '3.41.0',
+    })
+  })
+
+  it('flags a missing dependencies["@claude-flow/cli"] entry in the seed package.json', () => {
+    const dir = scratchDir()
+    const launcherPath = writeLauncher(dir, '3.42.4')
+    const seedPath = writeSeedPackageJson(dir, undefined)
+
+    expect(findRufloSeedPinDrift(launcherPath, seedPath)).toEqual({
+      reason: `${seedPath} has no dependencies["@claude-flow/cli"] entry`,
+      launcherPath,
+      seedPackageJsonPath: seedPath,
+      launcherPin: '3.42.4',
+    })
+  })
+
+  it('flags a missing seed package.json file by name', () => {
+    const dir = scratchDir()
+    const launcherPath = writeLauncher(dir, '3.42.4')
+    const seedPath = join(dir, 'ruflo-seed', 'package.json')
+
+    expect(findRufloSeedPinDrift(launcherPath, seedPath)).toEqual({
+      reason: `seed package.json not found at ${seedPath}`,
+      launcherPath,
+      seedPackageJsonPath: seedPath,
+      launcherPin: '3.42.4',
+    })
+  })
+
+  it('does not flag the real, committed pair (scripts/mcp-ruflo-launcher.sh, scripts/ruflo-seed/package.json)', () => {
+    // End-to-end regression anchor, same convention as
+    // findUnpinnedRufloLauncherPin's own real-file test above.
+    const realLauncherPath = join(process.cwd(), 'scripts', 'mcp-ruflo-launcher.sh')
+    const realSeedPath = join(process.cwd(), 'scripts', 'ruflo-seed', 'package.json')
+
+    expect(findRufloSeedPinDrift(realLauncherPath, realSeedPath)).toBeNull()
   })
 })
 

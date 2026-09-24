@@ -25,13 +25,13 @@ Verify: `claude mcp list | grep ruflo`
 
 ## Launcher
 
-`scripts/mcp-ruflo-launcher.sh` runs five checks, in order, before it `exec`s into the running `skillsmith-ruflo-1` container ([ADR-170](../../docs/internal/adr/170-ruflo-mcp-server-tree-store-and-topology.md)):
+`scripts/mcp-ruflo-launcher.sh` runs six checks (0-5), in order, before it `exec`s into the running `skillsmith-ruflo-1` container ([ADR-170](../../docs/internal/adr/170-ruflo-mcp-server-tree-store-and-topology.md)):
 
 0. `SKILLSMITH_RUFLO_LAUNCHER_DISABLE=1` kill switch — checked first, before any docker call. No `npx` fallback by design.
 1. Container liveness, then the container's ID is resolved once and used for every later docker call, so a container swapped in under the same name fails closed instead of silently being attached to.
 2. Service command authentication: the running container's Entrypoint, Cmd, and WorkingDir must equal the § 1 / § 4 literals exactly.
 3. `RUFLO_CLI_PIN` vs the served `@claude-flow/cli` version, read via a sentinel-tagged probe run inside the container.
-4. Authority quad (§ 5): the `/srv/ruflo` mount's volume identity, instance-nonce label, and `store_generation` row must all match the machine-local authority file at `~/.skillsmith/ruflo-store.json`; an empty volume is refused by name, distinct from a generation mismatch.
+4. Authority quad (§ 5): the `/srv/ruflo` mount's volume identity, instance-nonce label, and EACH of the two store files' `store_generation` row (`.swarm/memory.db` and `.swarm/agentdb-memory.db` -- the served `@claude-flow/cli` keeps both, and a swapped or copied copy of either one must be caught independently) must all match the machine-local authority file at `~/.skillsmith/ruflo-store.json`; an empty or partially-initialised volume is refused by name, distinct from a generation mismatch.
 5. Per-spawn guard (`scripts/ruflo-launch-guard.mjs`), piped into the container immediately before exec — writability probes, then the runtime's `state.lock` decision taken under an OS-released mutex (SQLite `BEGIN IMMEDIATE` on `state.lock.launcher.db`, a kernel lock the holder's death releases) — the guard never deletes the runtime's lock; a stale one is waited out (the runtime clears it after 30 s), a live one refuses.
 
 **Guard exit codes** (each prints one `[ruflo] guard: ...` line naming the failing check — read the guard's own header for the current message text):
@@ -47,7 +47,7 @@ Verify: `claude mcp list | grep ruflo`
 | 6 | retired — a malformed real `state.lock` warns and proceeds; a stale one is waited out (the runtime clears a lock older than 30 s on its next acquire) | — |
 | 7 | internal error, including a missing `better-sqlite3` in the image (an image defect, not a lock problem) | file a Linear issue |
 
-Nothing under `/srv/ruflo/.claude-flow/policy/` is deleted by hand for codes 3, 5 or 6. For code 4 only: `docker exec skillsmith-ruflo-1 rm -f /srv/ruflo/.claude-flow/policy/state.lock.launcher.db` (the mutex database carries no state and is recreated on the next spawn). To see who holds what: `docker exec skillsmith-ruflo-1 ps -eo pid,etimes,args` is not available (the image has no `ps`); use `docker exec skillsmith-ruflo-1 sh -c 'for p in /proc/[0-9]*; do tr "\0" " " < $p/cmdline; echo; done'`.
+Nothing under `/srv/ruflo/.claude-flow/policy/` is deleted by hand for codes 3, 5 or 6. For code 4 only: `docker exec skillsmith-ruflo-1 rm -f /srv/ruflo/.claude-flow/policy/state.lock.launcher.db` (the mutex database carries no state and is recreated on the next spawn). To see who holds what: `docker exec skillsmith-ruflo-1 ps -eo pid,etimes,args` is not available (the image has no `ps`); use the literal copy of `scripts/ruflo-launch-guard.mjs`'s own `PROC_SCAN_CMD_HINT` constant -- `docker exec skillsmith-ruflo-1 sh -c 'for p in /proc/[0-9]*; do printf "%s " "${p#/proc/}"; tr "\0" " " < "$p/cmdline"; echo; done'` -- which that file's own header now says this guide must be updated together with.
 
 Disable the launcher entirely (no `npx` fallback): `SKILLSMITH_RUFLO_LAUNCHER_DISABLE=1`.
 

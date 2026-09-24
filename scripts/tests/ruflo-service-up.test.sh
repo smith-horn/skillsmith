@@ -112,15 +112,70 @@ elif [[ "$sub1" == "compose" ]]; then
     elif [[ "$*" == *" up "* ]]; then
         touch "$FAKE_STATE_DIR/up-ran"
         exit 0
+    elif [[ "$*" == *" config "* ]]; then
+        # H-3(c): check_foreign_project()'s own project-name resolution
+        # (docker compose ... config --format json | jq -r .name).
+        printf '{"name":"%s"}\n' "${FAKE_THIS_PROJECT:-test-fixture-project}"
+        exit 0
     fi
     exit 0
 elif [[ "$sub1" == "inspect" ]]; then
-    echo "  (fake mount fact)"
-    exit 0
+    # H-3(c): default is NO container (the pre-H-3(c) behavior every
+    # existing arm below already assumes) -- only "exists" when a dedicated
+    # arm sets FAKE_CONTAINER_PROJECT. Answer the MORE SPECIFIC
+    # ".project.working_dir" query before the plain ".project" one, since
+    # the latter is a substring of the former's label key.
+    if [[ -z "${FAKE_CONTAINER_PROJECT:-}" ]]; then
+        echo "Error: No such object: skillsmith-ruflo-1" >&2
+        exit 1
+    fi
+    if [[ "$*" == *"com.docker.compose.project.working_dir"* ]]; then
+        printf '%s' "${FAKE_CONTAINER_WORKDIR:-}"
+        exit 0
+    elif [[ "$*" == *"com.docker.compose.project"* ]]; then
+        printf '%s' "${FAKE_CONTAINER_PROJECT:-}"
+        exit 0
+    else
+        echo "  (fake mount fact)"
+        exit 0
+    fi
 fi
 exit 0
 FAKE_DOCKER
 chmod +x "$FAKE_BIN_DIR/docker"
+
+# ---- fake git: answers ONLY the two `rev-parse` calls
+# check_not_linked_worktree() (scripts/ruflo-service-up.helpers.sh, H-3(b))
+# makes -- `-C <dir> rev-parse --git-dir` and `-C <dir> rev-parse
+# --git-common-dir` -- from FAKE_GIT_DIR/FAKE_GIT_COMMON_DIR, so the
+# worktree-vs-not decision is driven by the fixture, never by this test
+# file's OWN real git state (this file itself may be running inside a real
+# linked worktree). FAKE_GIT_NOT_A_REPO simulates "not inside a git
+# repository" (git's own real exit code and stderr shape). ----
+cat > "$FAKE_BIN_DIR/git" << 'FAKE_GIT'
+#!/usr/bin/env bash
+set -euo pipefail
+if [[ "${1:-}" == "-C" ]]; then
+    shift 2
+fi
+if [[ "${FAKE_GIT_NOT_A_REPO:-0}" == "1" ]]; then
+    echo "fatal: not a git repository (or any of the parent directories): .git" >&2
+    exit 128
+fi
+case "${1:-} ${2:-}" in
+    "rev-parse --git-dir")
+        printf '%s\n' "${FAKE_GIT_DIR:-.git}"
+        exit 0
+        ;;
+    "rev-parse --git-common-dir")
+        printf '%s\n' "${FAKE_GIT_COMMON_DIR:-.git}"
+        exit 0
+        ;;
+esac
+echo "fake git: unexpected invocation: $*" >&2
+exit 1
+FAKE_GIT
+chmod +x "$FAKE_BIN_DIR/git"
 
 reset_fixture() {
     FAKE_STATE_DIR="$(mktemp -d)"
@@ -129,6 +184,15 @@ reset_fixture() {
     RUFLO_SEED_EXPECTED_DIGEST_FILE="$HOME/SEED-MANIFEST.sha256"
     printf '%s\n' "$(printf 'a%.0s' $(seq 1 64))" > "$RUFLO_SEED_EXPECTED_DIGEST_FILE"
     export FAKE_STATE_DIR FAKE_DOCKER_CALL_LOG HOME RUFLO_SEED_EXPECTED_DIGEST_FILE
+    # H-3(b): every EXISTING arm below is exercising volume/store logic, not
+    # the linked-worktree gate -- skip it unconditionally here so their
+    # pass/fail never depends on whether THIS test file itself happens to be
+    # running inside a real linked worktree. The two dedicated H-3(b) arms
+    # near the end unset this to exercise the gate itself, via the fake git
+    # stub above (never this test's own real git state).
+    export RUFLO_UP_SKIP_WORKTREE_GATE=1
+    unset FAKE_GIT_DIR FAKE_GIT_COMMON_DIR FAKE_GIT_NOT_A_REPO || true
+    unset FAKE_CONTAINER_PROJECT FAKE_CONTAINER_WORKDIR FAKE_THIS_PROJECT || true
     unset FAKE_VOLUME_CREATE_FAIL || true
     unset FAKE_INIT_STORE_ROW_MISMATCH || true
     unset FAKE_MEMORY_GENERATION || true
@@ -435,11 +499,88 @@ else
 fi
 unset FAKE_MEMORY_GENERATION FAKE_AGENTDB_GENERATION
 
+# ---- Arm 13 (H-3(b)): a LINKED-worktree-shaped checkout is refused before
+# any docker call, naming the exact remediation `cd` command. Driven
+# entirely by the fake git stub above -- never this test file's own real
+# git state (which may itself be a linked worktree). ----
+reset_fixture
+unset RUFLO_UP_SKIP_WORKTREE_GATE
+export FAKE_GIT_DIR="/fake/main-checkout/.git/worktrees/some-worktree"
+export FAKE_GIT_COMMON_DIR="/fake/main-checkout/.git"
+EXIT_CODE="$(run_script)"
+if [[ "$EXIT_CODE" -eq 0 ]]; then
+    fail_case "13-worktree-refused" "expected non-zero exit (refusal), got 0, log:\n$(cat "$SCRATCH_ROOT/out.log")"
+elif ! grep -qF "LINKED git worktree" "$SCRATCH_ROOT/out.log"; then
+    fail_case "13-worktree-refused" "expected the refusal to name the LINKED-worktree condition, log:\n$(cat "$SCRATCH_ROOT/out.log")"
+elif ! grep -qF '( cd "/fake/main-checkout" && ./scripts/ruflo-service-up.sh )' "$SCRATCH_ROOT/out.log"; then
+    fail_case "13-worktree-refused" "expected the exact remediation cd command naming the main checkout, log:\n$(cat "$SCRATCH_ROOT/out.log")"
+elif [[ -s "$FAKE_DOCKER_CALL_LOG" ]]; then
+    fail_case "13-worktree-refused" "expected ZERO docker calls before this refusal, log:\n$(cat "$FAKE_DOCKER_CALL_LOG")"
+else
+    echo "applied=worktree-gate-refuse PASS (13-worktree-refused): refused before any docker call, named the linked-worktree condition and the exact remediation cd command"
+fi
+unset FAKE_GIT_DIR FAKE_GIT_COMMON_DIR
+
+# ---- Arm 14 (H-3(b)): a NON-worktree checkout (git-dir == git-common-dir,
+# the plain-clone/main-checkout shape) passes the gate and proceeds through
+# the normal fresh-creation flow end to end. ----
+reset_fixture
+unset RUFLO_UP_SKIP_WORKTREE_GATE
+export FAKE_GIT_DIR="/fake/plain-checkout/.git"
+export FAKE_GIT_COMMON_DIR="/fake/plain-checkout/.git"
+EXIT_CODE="$(run_script)"
+if [[ "$EXIT_CODE" -ne 0 ]]; then
+    fail_case "14-non-worktree-passes" "expected exit 0 (gate must not refuse a non-worktree checkout), got $EXIT_CODE, log:\n$(cat "$SCRATCH_ROOT/out.log")"
+elif grep -qF "LINKED git worktree" "$SCRATCH_ROOT/out.log"; then
+    fail_case "14-non-worktree-passes" "expected NO linked-worktree refusal text, log:\n$(cat "$SCRATCH_ROOT/out.log")"
+elif [[ ! -f "$FAKE_STATE_DIR/up-ran" ]]; then
+    fail_case "14-non-worktree-passes" "expected the normal fresh-creation flow to complete (docker compose ... up -d ruflo), log:\n$(cat "$SCRATCH_ROOT/out.log")"
+else
+    echo "applied=worktree-gate-pass PASS (14-non-worktree-passes): git-dir == git-common-dir passed the gate, ordinary fresh-creation flow completed"
+fi
+unset FAKE_GIT_DIR FAKE_GIT_COMMON_DIR
+
+# ---- Arm 15 (H-3(c)): an existing skillsmith-ruflo-1 container that
+# belongs to a DIFFERENT Compose project is refused before any
+# volume/store bookkeeping runs, naming the foreign project, its
+# working_dir, and the exact remediation for both the
+# checkout-still-exists and checkout-gone sub-cases. ----
+reset_fixture
+export FAKE_THIS_PROJECT="this-checkout-project"
+export FAKE_CONTAINER_PROJECT="foreign-checkout-project"
+export FAKE_CONTAINER_WORKDIR="$FAKE_STATE_DIR"
+EXIT_CODE="$(run_script)"
+if [[ "$EXIT_CODE" -eq 0 ]]; then
+    fail_case "15a-foreign-project-exists" "expected non-zero exit (refusal), got 0, log:\n$(cat "$SCRATCH_ROOT/out.log")"
+elif ! grep -qF "foreign-checkout-project" "$SCRATCH_ROOT/out.log" || ! grep -qF "$FAKE_STATE_DIR" "$SCRATCH_ROOT/out.log"; then
+    fail_case "15a-foreign-project-exists" "expected the refusal to name the foreign project and its working_dir, log:\n$(cat "$SCRATCH_ROOT/out.log")"
+elif ! grep -qF "docker compose --profile ruflo down" "$SCRATCH_ROOT/out.log"; then
+    fail_case "15a-foreign-project-exists" "expected the checkout-still-exists remediation (docker compose --profile ruflo down from ITS OWN project), log:\n$(cat "$SCRATCH_ROOT/out.log")"
+elif grep -qF "volume create" "$FAKE_DOCKER_CALL_LOG"; then
+    fail_case "15a-foreign-project-exists" "expected NO volume/store bookkeeping before this refusal, log:\n$(cat "$FAKE_DOCKER_CALL_LOG")"
+else
+    echo "applied=foreign-project-refuse-exists PASS (15a-foreign-project-exists): refused naming the foreign project and its (still-existing) working_dir, with the docker compose down remediation"
+fi
+
+reset_fixture
+export FAKE_THIS_PROJECT="this-checkout-project"
+export FAKE_CONTAINER_PROJECT="foreign-checkout-project"
+export FAKE_CONTAINER_WORKDIR="/fake/long-gone-worktree"
+EXIT_CODE="$(run_script)"
+if [[ "$EXIT_CODE" -eq 0 ]]; then
+    fail_case "15b-foreign-project-gone" "expected non-zero exit (refusal), got 0, log:\n$(cat "$SCRATCH_ROOT/out.log")"
+elif ! grep -qF "docker stop skillsmith-ruflo-1 && docker rm skillsmith-ruflo-1" "$SCRATCH_ROOT/out.log"; then
+    fail_case "15b-foreign-project-gone" "expected the checkout-gone remediation (stop then rm, never rm -f a running container), log:\n$(cat "$SCRATCH_ROOT/out.log")"
+else
+    echo "applied=foreign-project-refuse-gone PASS (15b-foreign-project-gone): refused with the stop-then-rm remediation when the foreign checkout's working_dir no longer exists"
+fi
+unset FAKE_THIS_PROJECT FAKE_CONTAINER_PROJECT FAKE_CONTAINER_WORKDIR
+
 echo ""
 if [[ "$FAIL_COUNT" -eq 0 ]]; then
-    echo "SUMMARY: 12/12 arms passed"
+    echo "SUMMARY: 15/15 arms passed"
     exit 0
 else
-    echo "SUMMARY: $FAIL_COUNT/12 arms FAILED"
+    echo "SUMMARY: $FAIL_COUNT/15 arms FAILED"
     exit 1
 fi

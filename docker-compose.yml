@@ -175,6 +175,19 @@ services:
       context: .
       dockerfile: Dockerfile
       target: ruflo
+    # No `image:` here, on purpose (SMI-4653: an explicit image field turns
+    # remove-worktree.sh's `down --rmi local` into a no-op; audit:standards
+    # rejects one on any service). The image name is Compose's default
+    # `<project>-ruflo`, and its identity is kept stable by
+    # scripts/ruflo-service-up.sh instead: its linked-worktree gate (H-3(b),
+    # post-merge governance retro on PR #2931) refuses to create this
+    # MACHINE-GLOBAL, `restart: unless-stopped` service from any worktree,
+    # so the only image a live service ever runs is the main checkout's
+    # `skillsmith-ruflo`, which no worktree's teardown or orphan prune can
+    # name. Do NOT pin COMPOSE_PROJECT_NAME either:
+    # scripts/ruflo-federation-test.sh's precondition 0 requires two checkouts
+    # to resolve to DIFFERENT project names, so a second `up` is refused
+    # rather than silently reconciling into a takeover.
     container_name: skillsmith-ruflo-1
     restart: unless-stopped
     # H-2 (governance review): docker-init as PID 1 forwards SIGTERM to the

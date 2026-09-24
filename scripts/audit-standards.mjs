@@ -92,6 +92,7 @@ import {
   findFloatingSupabaseCliInstalls,
   findUnpinnedBareNpxCliInPackageJson,
   findUnpinnedRufloLauncherPin,
+  findRufloSeedPinDrift,
   findClaudeFlowReintroductions,
 } from './audit-cli-pin-drift-helpers.mjs'
 import { TEST_PATTERNS } from './ci/source-patterns.mjs'
@@ -5155,6 +5156,20 @@ console.log(`\n${BOLD}Check 59: CLI-tool pin invariants (SMI-5746)${RESET}`)
     report(
       `Check 59: ${rufloLauncherPath} — ${rufloFinding.reason}${shadowSuffix}`,
       `Add a plain, anchored "RUFLO_CLI_PIN=<exact-semver>" assignment near the top of ${rufloLauncherPath} (ADR-170 § 7).`
+    )
+  }
+
+  // SMI-6744 M-3 (post-merge governance retro, PR #2931): the launcher's own
+  // pin can be well-formed (the check above passes) while still having
+  // drifted apart from the OTHER committed copy that actually determines
+  // what ships in the ruflo image.
+  const rufloSeedPackageJsonPath = join('scripts', 'ruflo-seed', 'package.json')
+  const rufloSeedDrift = findRufloSeedPinDrift(rufloLauncherPath, rufloSeedPackageJsonPath)
+  if (rufloSeedDrift) {
+    check59Violations++
+    report(
+      `Check 59: ${rufloSeedDrift.reason}${shadowSuffix}`,
+      `Keep RUFLO_CLI_PIN in ${rufloLauncherPath} and dependencies["@claude-flow/cli"] in ${rufloSeedPackageJsonPath} identical (ADR-170 § 7) — bump both together and re-run scripts/ruflo-seed/regenerate-digest.sh.`
     )
   }
 

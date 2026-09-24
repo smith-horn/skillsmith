@@ -1,7 +1,7 @@
 /**
  * Helpers for audit-standards.mjs Check 59 (CLI-tool pin invariants, SMI-5746).
  *
- * Four static invariants that keep CLI-tool version pins from silently
+ * Five static invariants that keep CLI-tool version pins from silently
  * drifting back to an unmonitored state — see
  * docs/internal/implementation/cli-tool-version-drift-remediation.md for the
  * full incident history and design rationale. This file only detects; it
@@ -127,6 +127,81 @@ export function findUnpinnedRufloLauncherPin(launcherPath) {
       reason: `RUFLO_CLI_PIN '${pin}' in ${launcherPath} is not an exact semver`,
       launcherPath,
       pin,
+    }
+  }
+  return null
+}
+
+/**
+ * Sub-check 5 (SMI-6744 M-3, post-merge governance retro on PR #2931): the
+ * @claude-flow/cli pin lives in TWO committed places that must never drift
+ * apart -- scripts/mcp-ruflo-launcher.sh's RUFLO_CLI_PIN (what the launcher
+ * authenticates the SERVED container's version against, ADR-170 § 7) and
+ * scripts/ruflo-seed/package.json's dependencies["@claude-flow/cli"] (the
+ * exact version actually baked into the `ruflo` image stage's seed tree by
+ * `npm ci` against its committed lockfile). Sub-check 3 above validates only
+ * that the launcher's OWN pin is a well-formed exact semver; this is a
+ * DIFFERENT invariant -- that the two committed pins agree with each other
+ * -- and needs both files to exist and parse before it can say anything, so
+ * it is a separate function rather than folded into
+ * findUnpinnedRufloLauncherPin's existing single-file contract. Returns
+ * `null` only when both files exist, both pins parse, and the two values
+ * are identical.
+ */
+export function findRufloSeedPinDrift(launcherPath, seedPackageJsonPath) {
+  if (!existsSync(launcherPath)) {
+    return {
+      reason: `RUFLO_CLI_PIN launcher not found at ${launcherPath}`,
+      launcherPath,
+      seedPackageJsonPath,
+    }
+  }
+  const launcherSrc = readFileSync(launcherPath, 'utf8')
+  const launcherMatch = launcherSrc.match(/^RUFLO_CLI_PIN=(\S+)$/m)
+  if (!launcherMatch) {
+    return {
+      reason: `RUFLO_CLI_PIN not found in ${launcherPath}`,
+      launcherPath,
+      seedPackageJsonPath,
+    }
+  }
+  const launcherPin = launcherMatch[1]
+
+  if (!existsSync(seedPackageJsonPath)) {
+    return {
+      reason: `seed package.json not found at ${seedPackageJsonPath}`,
+      launcherPath,
+      seedPackageJsonPath,
+      launcherPin,
+    }
+  }
+  let seedPkg
+  try {
+    seedPkg = JSON.parse(readFileSync(seedPackageJsonPath, 'utf8'))
+  } catch (err) {
+    return {
+      reason: `${seedPackageJsonPath} is not valid JSON (${err.message})`,
+      launcherPath,
+      seedPackageJsonPath,
+      launcherPin,
+    }
+  }
+  const seedPin = seedPkg && seedPkg.dependencies && seedPkg.dependencies['@claude-flow/cli']
+  if (!seedPin) {
+    return {
+      reason: `${seedPackageJsonPath} has no dependencies["@claude-flow/cli"] entry`,
+      launcherPath,
+      seedPackageJsonPath,
+      launcherPin,
+    }
+  }
+  if (seedPin !== launcherPin) {
+    return {
+      reason: `RUFLO_CLI_PIN=${launcherPin} in ${launcherPath} does not match dependencies["@claude-flow/cli"]=${seedPin} in ${seedPackageJsonPath}`,
+      launcherPath,
+      seedPackageJsonPath,
+      launcherPin,
+      seedPin,
     }
   }
   return null

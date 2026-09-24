@@ -39,6 +39,20 @@
 # Writes: canary rows into the live dev store through the SERVED path (that is
 # the test), and scratch Docker volumes and derived images that it removes.
 # Never stops, restarts or recreates skillsmith-ruflo-1.
+#
+# Exit codes (this script's OWN process exit status -- distinct from the
+# per-probe codes named above at line 37, which describe one MCP reply, not
+# the harness run as a whole; derived by lib/common.sh's
+# acceptance_exit_code(), M-5, post-merge governance retro on PR #2931):
+#   2 -- usage error (no flag given, or an unrecognized one).
+#   1 -- the Compose service $SERVICE is not present; ADR-170 § 6 requires
+#        acceptance to run against the service itself.
+#   4 -- REFUSING: nothing ran at all (no arm evaluated a predicate AND no
+#        mutation was attempted) -- e.g. every selector flag happened to
+#        select zero sections. This is not a pass; printed to stderr.
+#   3 -- at least one predicate FAILED or at least one mutation SURVIVED.
+#   0 -- otherwise: something ran, every predicate that ran HELD, and every
+#        mutation that ran was KILLED.
 
 set -euo pipefail
 
@@ -51,7 +65,13 @@ STORE_VOLUME="${RUFLO_STORE_VOLUME:-skillsmith-ruflo-data}"
 # sibling agentdb-memory.db (memory-bridge.js getAgentDbPath()). The arm reads
 # the file the rows are actually in, and the report records the divergence.
 STORE_DB="${RUFLO_STORE_DB:-/srv/ruflo/.swarm/agentdb-memory.db}"
-IMAGE="${RUFLO_IMAGE:-$(docker inspect "$SERVICE" --format '{{.Config.Image}}' 2>/dev/null || echo smi-6744-lane-a-ruflo)}"
+# L-4 (post-merge governance retro, PR #2931): no fallback image name. The
+# image is whatever the RUNNING service reports (docker-compose.yml pins no
+# `image:`, SMI-4653, so the name is project-derived); when the service is
+# absent this resolves empty and the refusal below (":$SERVICE is not
+# present") fires before any arm uses it. A literal here would only encode
+# whichever checkout last built the image, which is what this fixed.
+IMAGE="${RUFLO_IMAGE:-$(docker inspect "$SERVICE" --format '{{.Config.Image}}' 2>/dev/null || true)}"
 SCRATCH="${RUFLO_ACCEPT_SCRATCH:-${TMPDIR:-/tmp}/ruflo-acceptance}"
 EVD="$SCRATCH/evidence"
 mkdir -p "$EVD"
@@ -155,5 +175,15 @@ cat <<'DOC'
   - byte-identical independent inference across platforms, which ADR-170
     records as unmeasured and which the host arm above only samples.
 DOC
-if [ "$ARMS_FAILED" -gt 0 ] || [ "$MUT_SURVIVED" -gt 0 ]; then exit 3; fi
-exit 0
+# M-5: derive the overall exit status through the one shared function
+# (lib/common.sh's acceptance_exit_code()) instead of this inline check,
+# which never gated on ARMS_TOTAL=0 -- a run that evaluated nothing at all
+# used to fall through to the bare `exit 0` below indistinguishably from a
+# real pass. `|| ACCEPTANCE_RC=$?` keeps this compatible with `set -e`: a
+# non-zero return from the function would otherwise abort the script here
+# with that same code anyway, but capturing it explicitly keeps the ACTUAL
+# `exit` call visible at the bottom of this file rather than relying on
+# errexit's own implicit propagation.
+ACCEPTANCE_RC=0
+acceptance_exit_code "$ARMS_TOTAL" "$ARMS_FAILED" "$MUT_KILLED" "$MUT_SURVIVED" || ACCEPTANCE_RC=$?
+exit "$ACCEPTANCE_RC"

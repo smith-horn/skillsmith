@@ -79,6 +79,16 @@ on:
       - 'scripts/lib/running-script-pids.sh'
       - 'scripts/regen-lockfile.sh'
       - 'scripts/tests/repair-worktrees-docker-guard.test.ts'
+      - 'scripts/mcp-ruflo-launcher.sh'
+      - 'scripts/ruflo-service-up.sh'
+      - 'scripts/ruflo-service-up.helpers.sh'
+      - 'scripts/ruflo-service-entrypoint.sh'
+      - 'scripts/ruflo-federation-test.sh'
+      - 'scripts/ruflo-seed/regenerate-digest.sh'
+      - 'scripts/ruflo-acceptance/**'
+      - 'scripts/tests/mcp-ruflo-launcher.test.sh'
+      - 'scripts/tests/ruflo-service-entrypoint.test.sh'
+      - 'scripts/tests/ruflo-service-up.test.sh'
       - '.github/workflows/validate-hooks.yml'
 
 permissions:
@@ -153,7 +163,32 @@ jobs:
             scripts/lib/check-node-modules-fresh.sh \
             scripts/lib/print-deps-refresh-advice.sh \
             scripts/lib/running-script-pids.sh \
-            scripts/regen-lockfile.sh
+            scripts/regen-lockfile.sh \
+            scripts/mcp-ruflo-launcher.sh \
+            scripts/ruflo-service-up.sh \
+            scripts/ruflo-service-up.helpers.sh \
+            scripts/ruflo-federation-test.sh \
+            scripts/ruflo-acceptance/run.sh \
+            scripts/ruflo-acceptance/lib/common.sh \
+            scripts/ruflo-acceptance/lib/egress.sh \
+            scripts/ruflo-acceptance/lib/seed.sh \
+            scripts/ruflo-acceptance/lib/mutations.sh \
+            scripts/ruflo-acceptance/lib/consolidation.sh \
+            scripts/ruflo-acceptance/lib/quad.sh \
+            scripts/ruflo-acceptance/lib/quad.restore.sh \
+            scripts/ruflo-seed/regenerate-digest.sh \
+            scripts/tests/mcp-ruflo-launcher.test.sh \
+            scripts/tests/ruflo-service-entrypoint.test.sh \
+            scripts/tests/ruflo-service-up.test.sh
+
+      # scripts/ruflo-service-entrypoint.sh is `#!/bin/sh`, not bash -- kept out
+      # of the bash-oriented invocation above (its own header already says it
+      # is lint-checked under `shellcheck -S warning -s sh`) and run here on
+      # its own, matching how this workflow treats every other sh-shebang
+      # script (see the bash -n step below, which runs `sh -n` for those).
+      - name: shellcheck (sh scripts)
+        run: |
+          shellcheck -S warning -s sh scripts/ruflo-service-entrypoint.sh
 
       - name: Syntax check (bash -n)
         run: |
@@ -214,6 +249,23 @@ jobs:
           sh -n .husky/pre-commit
           sh -n .husky/pre-push
           sh -n .husky/post-merge
+          bash -n scripts/mcp-ruflo-launcher.sh
+          bash -n scripts/ruflo-service-up.sh
+          bash -n scripts/ruflo-service-up.helpers.sh
+          bash -n scripts/ruflo-federation-test.sh
+          bash -n scripts/ruflo-acceptance/run.sh
+          bash -n scripts/ruflo-acceptance/lib/common.sh
+          bash -n scripts/ruflo-acceptance/lib/egress.sh
+          bash -n scripts/ruflo-acceptance/lib/seed.sh
+          bash -n scripts/ruflo-acceptance/lib/mutations.sh
+          bash -n scripts/ruflo-acceptance/lib/consolidation.sh
+          bash -n scripts/ruflo-acceptance/lib/quad.sh
+          bash -n scripts/ruflo-acceptance/lib/quad.restore.sh
+          bash -n scripts/ruflo-seed/regenerate-digest.sh
+          sh -n scripts/ruflo-service-entrypoint.sh
+          bash -n scripts/tests/mcp-ruflo-launcher.test.sh
+          bash -n scripts/tests/ruflo-service-entrypoint.test.sh
+          bash -n scripts/tests/ruflo-service-up.test.sh
 
       - name: Setup Node (for session-audit hook tsx invocations)
         uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v6
@@ -254,3 +306,17 @@ jobs:
           bash scripts/tests/session-start-mcp-command-guard.test.sh
           bash scripts/tests/claude-hooks-xargs-regression.test.sh
           bash scripts/tests/claude-hooks-log-wrapper.test.sh
+          # H-4 (post-merge governance retro, PR #2931): these three ADR-170
+          # suites were previously unreferenced anywhere in this workflow.
+          # External tools: node (already set up above), md5/md5sum (fake
+          # docker/git stubs; coreutils, always present on ubuntu-latest),
+          # and jq (scripts/tests/ruflo-service-up.test.sh's foreign-project
+          # arms) -- ubuntu-latest ships jq preinstalled, matching the same
+          # assumption scripts/ruflo-federation-test.sh and
+          # scripts/cli-pin-drift-check.sh already document for this repo's
+          # host/CI environments; no install step needed. None of the three
+          # touches a real Docker daemon -- each fakes `docker` (and, for
+          # ruflo-service-up.test.sh, `git`) on PATH.
+          bash scripts/tests/mcp-ruflo-launcher.test.sh
+          bash scripts/tests/ruflo-service-entrypoint.test.sh
+          bash scripts/tests/ruflo-service-up.test.sh

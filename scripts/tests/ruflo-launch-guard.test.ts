@@ -733,6 +733,61 @@ describe('ruflo-launch-guard.mjs (ADR-170 §§ 4, 7)', () => {
     30000
   )
 
+  // ---- L-5: USER_HZ verification (post-merge governance retro, PR #2931) --
+  it.skipIf(!canRun)(
+    `L-5: a measured CLK_TCK that disagrees with the assumed USER_HZ=100 refuses, fail closed (${skipReason})`,
+    async () => {
+      const cwd = scratchCwd()
+      const cliPath = makeCliPath(cwd)
+      const r = await runGuard(cwd, cliPath, { RUFLO_GUARD_TEST_CLK_TCK: '250' })
+      note(`L-5 (CLK_TCK=250): exit=${r.status} elapsed=${r.elapsed}ms`)
+      expect(r.status, `output: ${r.output}`).toBe(1)
+      expect(r.output).toContain('250')
+      expect(r.output).toContain('USER_HZ=100')
+    },
+    15000
+  )
+
+  it.skipIf(!canRun)(
+    `L-5: a measured CLK_TCK equal to the assumed USER_HZ=100 authorizes normally (${skipReason})`,
+    async () => {
+      const cwd = scratchCwd()
+      const cliPath = makeCliPath(cwd)
+      const r = await runGuard(cwd, cliPath, { RUFLO_GUARD_TEST_CLK_TCK: '100' })
+      note(`L-5 (CLK_TCK=100): exit=${r.status} elapsed=${r.elapsed}ms`)
+      expect(r.status, `output: ${r.output}`).toBe(0)
+    },
+    15000
+  )
+
+  // ---- L-6: a leaked same-pid probe file is retried, not misreported -----
+  it.skipIf(!canRun)(
+    `L-6: a leaked probe file at the guard's own pid is unlinked and retried, not misreported as unwritable (${skipReason})`,
+    async () => {
+      const cwd = scratchCwd()
+      const cliPath = makeCliPath(cwd)
+      const guard = launchGuard(cwd, cliPath)
+      const pid = guard.child.pid
+      expect(pid, 'guard child must have been assigned a pid').toBeTypeOf('number')
+      // Pre-create a stale probe at the EXACT path probeWritable() will
+      // O_EXCL-create for its own pid, in all three probed directories --
+      // written synchronously, before any `await`, so this lands well
+      // before the freshly-spawned node process finishes loading this
+      // ~800-line file and reaches main()'s writability-probe loop.
+      const leaked = [policyDirOf(cwd), join(cwd, '.swarm'), cwd].map((dir) =>
+        join(dir, `.ruflo-guard-probe-${pid}`)
+      )
+      for (const f of leaked) writeFileSync(f, 'stale leaked probe from a prior crashed run')
+      const result = await guard.done
+      note(`L-6: exit=${result.status} elapsed=${result.elapsed}ms`)
+      expect(result.status, `output: ${result.output}`).toBe(0)
+      for (const f of leaked) {
+        expect(existsSync(f), `output: ${result.output}`).toBe(false)
+      }
+    },
+    15000
+  )
+
   // ---- M-14: writability-probe failure arms (setpriv-gated) -----------
   // The dev/ruflo containers run as root, which bypasses every permission
   // check these arms depend on -- so they must drop to an unprivileged uid

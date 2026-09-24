@@ -201,6 +201,63 @@ describe('lib/jqlite.mjs (PR-16: absent-field guard)', () => {
   })
 })
 
+// M-5 (post-merge governance retro, PR #2931): run.sh:158 used to
+// `exit 0` whenever ARMS_FAILED=0 and MUT_SURVIVED=0, with no check that
+// anything actually ran -- ARMS_TOTAL was counted and printed but never
+// gated, so a run that evaluated NOTHING (e.g. every selector flag happened
+// to select zero sections) reported the identical bare exit 0 as a real
+// pass. acceptance_exit_code() (lib/common.sh) is the fix; this suite
+// drives it by spawning bash and sourcing common.sh directly, per this
+// finding's own instruction not to re-create the H-4 gap with a new
+// standalone .test.sh file for one function.
+describe('lib/common.sh acceptance_exit_code() (M-5, post-merge governance retro on PR #2931)', () => {
+  const COMMON_SH_PATH = join(REPO_ROOT, 'scripts', 'ruflo-acceptance', 'lib', 'common.sh')
+
+  function runAcceptanceExitCode(total: string, failed: string, killed: string, survived: string) {
+    return spawnSync(
+      'bash',
+      [
+        '-c',
+        'source "$1"; acceptance_exit_code "$2" "$3" "$4" "$5"; echo "exit=$?"',
+        '_',
+        COMMON_SH_PATH,
+        total,
+        failed,
+        killed,
+        survived,
+      ],
+      { encoding: 'utf8' }
+    )
+  }
+
+  it('REFUSES (prints to stderr, exit 4) when nothing ran at all', () => {
+    const r = runAcceptanceExitCode('0', '0', '0', '0')
+    expect(r.stdout, `stderr: ${r.stderr}`).toContain('exit=4')
+    expect(r.stderr).toContain('REFUSING: no predicate or mutation ran -- this is not a pass')
+  })
+
+  it('exits 3 when at least one predicate FAILED, even though arms_total > 0', () => {
+    const r = runAcceptanceExitCode('5', '1', '0', '0')
+    expect(r.stdout, `stderr: ${r.stderr}`).toContain('exit=3')
+    expect(r.stderr).not.toContain('REFUSING')
+  })
+
+  it('exits 3 when at least one mutation SURVIVED, even with zero predicate failures', () => {
+    const r = runAcceptanceExitCode('0', '0', '2', '1')
+    expect(r.stdout, `stderr: ${r.stderr}`).toContain('exit=3')
+  })
+
+  it('exits 0 when predicates ran and all HELD, with mutations KILLED', () => {
+    const r = runAcceptanceExitCode('4', '0', '2', '0')
+    expect(r.stdout, `stderr: ${r.stderr}`).toContain('exit=0')
+  })
+
+  it('exits 0 when only mutations ran (arms_total=0, a --mutations-only invocation) and all were KILLED', () => {
+    const r = runAcceptanceExitCode('0', '0', '3', '0')
+    expect(r.stdout, `stderr: ${r.stderr}`).toContain('exit=0')
+  })
+})
+
 describe(`store-reader.mjs (PR-16: backup-failure must not fall back to a live read) ${sqliteSkipReason}`, () => {
   const SCHEMA = `CREATE TABLE memory_entries (
     id TEXT PRIMARY KEY,

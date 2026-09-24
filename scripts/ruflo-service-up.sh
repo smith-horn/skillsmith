@@ -78,9 +78,15 @@ AGENTDB_DB_PATH="$SERVICE_CWD/.swarm/agentdb-memory.db"
 # lockfile, derived by acceptance from the accepted build, exported into the service's
 # environment here so the entrypoint can compare its candidate digest against it.
 EXPECTED_DIGEST_FILE="${RUFLO_SEED_EXPECTED_DIGEST_FILE:-$REPO_ROOT/scripts/ruflo-seed/SEED-MANIFEST.sha256}"
+CONTAINER_NAME="skillsmith-ruflo-1"
 
 log() { echo "[ruflo-up] $*"; }
 die() { echo "[ruflo-up] ERROR: $*" >&2; exit 1; }
+
+# H-3(b)/(c): linked-worktree and foreign-project guards, split into their
+# own sibling once this file crossed the 500-line pre-commit gate.
+# shellcheck source=ruflo-service-up.helpers.sh
+source "$REPO_ROOT/scripts/ruflo-service-up.helpers.sh"
 
 mint_token() {
     if command -v uuidgen >/dev/null 2>&1; then
@@ -192,8 +198,8 @@ bring_up_service() {
 
 print_facts() {
     log "reading back mount and label facts from the daemon:"
-    docker inspect skillsmith-ruflo-1 \
-        --format '  container skillsmith-ruflo-1 mount at /srv/ruflo: {{range .Mounts}}{{if eq .Destination "/srv/ruflo"}}Type={{.Type}} Name={{.Name}} Source={{.Source}}{{end}}{{end}}' \
+    docker inspect "$CONTAINER_NAME" \
+        --format "  container $CONTAINER_NAME mount at /srv/ruflo: {{range .Mounts}}{{if eq .Destination \"/srv/ruflo\"}}Type={{.Type}} Name={{.Name}} Source={{.Source}}{{end}}{{end}}" \
         || log "  (could not read back container mount facts)"
     docker volume inspect "$VOLUME_NAME" \
         --format '  volume {{.Name}}: Labels={{.Labels}} CreatedAt={{.CreatedAt}}' \
@@ -403,6 +409,8 @@ check_existing_volume() {
 }
 
 main() {
+    check_not_linked_worktree
+    check_foreign_project
     export_expected_digest
     if volume_exists; then
         log "volume $VOLUME_NAME already exists -- checking its label and store before bringing the service up"

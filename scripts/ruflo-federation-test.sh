@@ -4,14 +4,20 @@
 # "Required test, two checkouts, both cases, checking more than
 # containers."
 #
-# NOT run by this worker: every arm below needs a live Docker daemon, and
-# this task's rules forbid running Docker. It is exercised by the queen in
-# a dedicated build window once the `ruflo` image stage (a parallel, in-
-# progress A1.4 lane) exists -- see the handback report's "Not done / not
-# checked" list. This script IS lint-checked (`bash -n`, `shellcheck -S
-# warning`) as part of this deliverable.
+# Needs a live Docker daemon and STOPS the shared service (case B removes
+# skillsmith-ruflo-1 before restoring it): run it from a broadcast window,
+# never from a worker. Lint-checked in CI (validate-hooks.yml: bash -n and
+# a warning-level shellcheck pass).
 #
 # Usage: scripts/ruflo-federation-test.sh <checkout-1-path> <checkout-2-path>
+#
+# Checkout shape (H-3(b), post-merge governance retro on PR #2931):
+# ruflo-service-up.sh refuses a LINKED git worktree and an unversioned tree,
+# so checkout 1 must be the MAIN checkout and checkout 2 an independent
+# clone with its own .git -- `git clone --shared <main-checkout> <dir>`,
+# checked out at the commit under test -- never a worktree of the same repo
+# and never a bare export. Precondition 0b below refuses either shape up
+# front so the failure never surfaces as a confusing case-B refusal.
 #
 # Asserts, in order (ADR-170 SS8):
 #   0. the two checkouts resolve to DIFFERENT Compose project names -- "if
@@ -76,8 +82,19 @@ project_name() {
 # name) with no restoration -- registered as early as possible so ANY exit
 # path (a case A/B assertion failing under `set -e`, or normal completion)
 # leaves checkout 1's service running again rather than torn down.
+# Registered before the preconditions (L-19) but ARMED only by the body, right
+# before its first docker call that can change the service: on 2026-09-24
+# three precondition probes of this script, each exiting before any docker
+# call, still ran the unconditional `docker rm -f` below and recreated the
+# live shared service three times. A refusal that touched nothing restores
+# nothing.
+SERVICE_TOUCHED=0
 restore_checkout_1() {
     local rc=0
+    if [[ "$SERVICE_TOUCHED" -ne 1 ]]; then
+        log "EXIT trap: the service was never touched (a precondition refused first) -- nothing to restore"
+        return 0
+    fi
     log "EXIT trap: removing checkout 2's container (if present) and re-running $CHECKOUT_1/scripts/ruflo-service-up.sh to restore the shared service"
     docker rm -f "$CONTAINER_NAME" >/dev/null 2>&1 || true
     if "$CHECKOUT_1/scripts/ruflo-service-up.sh" >/tmp/ruflo-federation-restore.log 2>&1; then
@@ -103,6 +120,25 @@ container_running() {
     [[ "$(docker inspect "$CONTAINER_NAME" --format '{{.State.Running}}' 2>/dev/null || echo false)" == "true" ]]
 }
 
+# ---- 0b. both checkouts have the shape ruflo-service-up.sh accepts ----
+# Mirrors check_not_linked_worktree() in scripts/ruflo-service-up.helpers.sh:
+# git-dir == git-common-dir (a main checkout or an independent clone), and
+# both resolvable (a real git checkout, not an export).
+checkout_shape_ok() {
+    local dir="$1" gdir cdir
+    gdir="$(git -C "$dir" rev-parse --git-dir 2>/dev/null || true)"
+    cdir="$(git -C "$dir" rev-parse --git-common-dir 2>/dev/null || true)"
+    [[ -n "$gdir" && -n "$cdir" ]] || return 1
+    case "$gdir" in /*) : ;; *) gdir="$dir/$gdir" ;; esac
+    case "$cdir" in /*) : ;; *) cdir="$dir/$cdir" ;; esac
+    gdir="$(cd "$gdir" 2>/dev/null && pwd -P || printf '%s' "$gdir")"
+    cdir="$(cd "$cdir" 2>/dev/null && pwd -P || printf '%s' "$cdir")"
+    [[ "$gdir" == "$cdir" ]]
+}
+checkout_shape_ok "$CHECKOUT_1" || fail "checkout 1 ($CHECKOUT_1) is a linked worktree or not a git checkout -- ruflo-service-up.sh refuses both (H-3(b)); pass the MAIN checkout"
+checkout_shape_ok "$CHECKOUT_2" || fail "checkout 2 ($CHECKOUT_2) is a linked worktree or not a git checkout -- ruflo-service-up.sh refuses both (H-3(b)); use an independent clone: git clone --shared <main-checkout> <dir>"
+pass "both checkouts have the shape ruflo-service-up.sh accepts (git-dir == git-common-dir)"
+
 # ---- 0. distinct project names ----
 PROJECT_1="$(project_name "$CHECKOUT_1")"
 PROJECT_2="$(project_name "$CHECKOUT_2")"
@@ -118,6 +154,7 @@ pass "checkouts resolve to distinct Compose projects: '$PROJECT_1' != '$PROJECT_
 # ---- establish the baseline: bring checkout 1 up (also creates the volume
 # on a machine where it does not exist yet) ----
 log "bringing up checkout 1's service: $CHECKOUT_1/scripts/ruflo-service-up.sh"
+SERVICE_TOUCHED=1
 "$CHECKOUT_1/scripts/ruflo-service-up.sh"
 container_running || fail "checkout 1's container is not running after ruflo-service-up.sh"
 BASELINE_SNAPSHOT="$(volume_snapshot)"
