@@ -4,6 +4,18 @@ All notable changes to `@skillsmith/core` are documented here.
 
 ## [Unreleased]
 
+- **Docs**: SMI-6826 (PR #2930; found by the PR #2929 post-merge retro) -- `ApiCache`'s
+  documentation said it evicts least-recently-used entries. It does not, and never did: when full,
+  `evictLeastUsed()` takes the first EXPIRED entry its scan meets, and failing that the one with the
+  lowest `hitCount`. Recency is never read. The JSDoc directly above that method contradicted the
+  method's own inline comment three lines below it. Corrected at five sites -- the module header and
+  that JSDoc in `api/cache.ts`, and the `search()` / `getSkill()` / `getRecommendations()` JSDoc in
+  `api/client.ts`, which each called it an "LRU cache". No behaviour change; `ApiCache` is re-exported
+  from the package root, so this is documentation an external consumer can read. `cache/lru.ts`'s
+  `L1Cache` is deliberately untouched -- it is a genuine LRU backed by the `lru-cache` package and
+  says so correctly. Whether `evictLeastUsed` should simply be renamed, since the name is what keeps
+  inviting the wrong reading, is left open on SMI-6826.
+
 - **Fix**: SMI-6744 / SMI-6814 (PR #2923 post-merge retro G3/G4; PR #2924 governance F1 and retro
   C3/C4/C5/C8; PR #2925 retro F-A/F-B) -- `buildHighlights()` no longer wraps every character of
   a result in `<mark></mark>` when the query carries an empty term (a trailing space, a lone `*`,
