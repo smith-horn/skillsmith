@@ -10,11 +10,17 @@ All notable changes to `@skillsmith/core` are documented here.
   issuer. Stripe's alphabet was never measured; their documentation states the prefix and gives no
   alphabet guarantee. The same overclaim appeared in `.gitleaks.toml`, which said its Clerk rule
   "is correct for what it names" immediately after saying Clerk's alphabet had not been measured.
-  Both now say what is true: those rules are left unexamined, not vouched for, and if either
-  issuer's keys can carry a non-alphanumeric character then those patterns have the same defect
-  SMI-6840 fixed. No behaviour change -- comments only, every pattern byte-identical. Called out
-  because the claim is load-bearing: it is the stated reason three security patterns were left
-  narrow, and "unknown" reads very differently from "verified correct" to whoever revisits them.
+  A cross-family review of that correction then found the same class a third time, in a subtler
+  form: three sibling comments said Skillsmith's keys share the `sk_live_` prefix "but NOT its
+  alphabet". Asserting a *difference* requires knowing both alphabets, and one of them was the
+  thing being called unmeasured -- if Stripe's keys were also base64url, we would share the
+  alphabet and their rule would carry the same defect. Rather than reword the claim a fourth time,
+  the cross-vendor comparison is deleted: each comment now states only what our own generator
+  emits, what the neighbouring rule's own character class is, and that the neighbour was never
+  examined against a real key from its issuer. No behaviour change across any of it -- comments
+  only, every pattern byte-identical. Called out because the claim is load-bearing: it is the
+  stated reason three security patterns were left narrow, and "unknown" reads very differently
+  from "verified correct" to whoever revisits them.
 
 - **Security**: SMI-6840 (PR #2936; found while enumerating redaction sites for SMI-6636) --
   `redactSensitiveData` / `redactSensitiveObject` masked only part of a Skillsmith API key, or none

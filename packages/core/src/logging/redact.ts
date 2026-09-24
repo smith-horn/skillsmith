@@ -83,8 +83,10 @@ const SENSITIVE_PATTERNS: Array<{ pattern: RegExp; replacement: string }> = [
   // of those is recoverable. `redactSensitiveObject` returns a new object and never mutates its
   // input, so this is confined to the emitted copy.
   //
-  // Widening is monotonic: alphanumeric is a subset of this class, so Stripe's own live keys
-  // stay covered. Do not "simplify" this back to `[a-zA-Z0-9]` or re-add a trailing `\b`.
+  // Widening is monotonic: alphanumeric is a subset of this class, so every string the old
+  // pattern matched this one still matches. Nothing lost coverage here — which is a statement
+  // about the two patterns, not a claim that any issuer's keys were fully covered before.
+  // Do not "simplify" this back to `[a-zA-Z0-9]` or re-add a trailing `\b`.
   // `redact.test.ts` pins both mechanisms against keys from the real generator, and pins the
   // `{24,}` minimum at its two boundaries.
   { pattern: /\b(sk_live_[A-Za-z0-9_-]{24,})/g, replacement: 'sk_live_[REDACTED]' },

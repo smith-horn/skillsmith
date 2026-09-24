@@ -89,9 +89,10 @@ description = "Clerk Secret Key"
 regex = '''sk_live_[a-zA-Z0-9]{32,}'''
 tags = ["api", "clerk"]
 
-# SMI-6840: Skillsmith mints its OWN sk_live_ keys, and they are not Clerk-shaped.
-# generateLicenseKey() (supabase/functions/_shared/license.ts) emits base64url, so the
-# body can contain - and _, while the clerk-secret rule above is alphanumeric-only.
+# SMI-6840: Skillsmith mints its own sk_live_ keys, and gitleaks had no rule for them --
+# clerk-secret above matches the same prefix but is a different issuer's rule.
+# generateLicenseKey() (supabase/functions/_shared/license.ts) emits base64url, so our
+# body can contain - and _, while clerk-secret's character class is alphanumeric-only.
 # The miss rate is derivable, not just sampled: a base64url body draws from 64 symbols,
 # 62 of them alphanumeric, so clerk-secret's {32,} run survives with probability
 # (62/64)^32 and fails for 1 - (62/64)^32 = 63.79% of keys. A committed Skillsmith key
