@@ -135,7 +135,23 @@ describe('git-ancestor walk — RED-TEST CONTROL (SMI-6532 finding 3)', () => {
     // refuse the write as though it found a legitimate git ancestor, because
     // the precondition proved realpath containment while rule (d)'s own walk
     // bounds on a lexical path instead.
-    expect(result).toMatchObject({ ok: false, code: 'INSTALL_TARGET_GIT_WORKTREE' })
+    //
+    // The `error:` matcher is load-bearing and must not be dropped again.
+    // `code` ALONE does not discriminate: rule (d) emits
+    // `INSTALL_TARGET_GIT_WORKTREE` from two structurally different branches —
+    // the `found` branch (target-guard.ts:404-408, which IS this defect) and
+    // the fail-closed `error` branch (:386-394, which is not). Measured:
+    // mutating `walkForGitEntry` so it never returns `found` left all 18 tests
+    // in this file passing on `code` alone. Asserting the rooted-at path pins
+    // the `found` branch specifically, and `elsewhere` is the escape target,
+    // i.e. the very directory the walk should never have reached.
+    expect(result).toMatchObject({
+      ok: false,
+      code: 'INSTALL_TARGET_GIT_WORKTREE',
+      error: expect.stringContaining(
+        'lives inside a git working tree rooted at "' + elsewhere + '"'
+      ),
+    })
   })
 
   it('the new probe never does this: probeGitAncestor on the identical fixture reports `none`, not `found`', async () => {

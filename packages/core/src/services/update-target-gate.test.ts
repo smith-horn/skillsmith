@@ -693,7 +693,7 @@ describe('CLASSIFICATION_RULES — table invariants', () => {
     expect(last.match(ctx)).toEqual({ reason: 'eligible', mode: 'content-write' })
   })
 
-  it('every UpdateTargetReason the table can produce is one of the 23 closed-set members', () => {
+  it('every literal `reason:` tag declared on a rule is drawn from the 23-member closed set (NOT what match() returns at runtime -- see comment)', () => {
     // Exercise every rule directly with the clean context PLUS its own
     // triggering override isn't practical generically here without
     // duplicating the fixtures above; instead assert that every literal
@@ -718,7 +718,7 @@ describe('CLASSIFICATION_RULES — table invariants', () => {
   })
 })
 
-describe('classifyUpdateTarget — throws rather than defaulting if no rule matches', () => {
+describe('classifyUpdateTarget — the throw is unreachable through the real table; it is pinned in update-target-gate.empty-table.test.ts', () => {
   it('is unreachable through the public API (row 16 always matches) — the throw itself is pinned in update-target-gate.empty-table.test.ts', () => {
     // classifyUpdateTarget's own throw path is intentionally unreachable
     // through the REAL CLASSIFICATION_RULES table (row 16 is unconditional),

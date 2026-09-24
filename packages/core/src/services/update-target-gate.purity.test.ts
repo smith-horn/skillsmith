@@ -82,15 +82,35 @@ const recordedCalls: string[] = []
  * method explicitly (rather than proxying arbitrary property names) is what
  * makes Vitest's own ESM export-name check pass, which is the actual fix for
  * SMI-6841 finding 1. */
-const REACHABLE_FS_METHODS = ['readdir', 'readFile'] as const
-
-function recordingModule(moduleName: string): Record<string, ReturnType<typeof vi.fn>> {
-  const mod: Record<string, ReturnType<typeof vi.fn>> = {}
-  for (const method of REACHABLE_FS_METHODS) {
-    mod[method] = vi.fn((...args: unknown[]) => {
-      recordedCalls.push(`${moduleName}.${method}(${args.map(String).join(', ')})`)
+/**
+ * Wrap EVERY function export the real module has, rather than a hand-listed
+ * subset.
+ *
+ * An earlier version listed `['readdir', 'readFile']` — the two methods the
+ * classifier's import graph reaches today — and carried an obligation to
+ * revisit that list whenever the graph grew. Nothing enforced the obligation,
+ * and a call to an undeclared method left no trace and no error: it passed
+ * silently, which is the exact shape this whole file exists to detect.
+ * Deriving the surface from the module means a method that is added to the
+ * graph tomorrow is already covered, with no list to maintain and nothing to
+ * forget.
+ *
+ * Non-function exports (`constants`, and similar) are passed through
+ * unwrapped: reading one is not I/O, and replacing it would break importers
+ * that only read a value.
+ */
+async function recordingModule(moduleName: string): Promise<Record<string, unknown>> {
+  const actual = (await vi.importActual(moduleName)) as Record<string, unknown>
+  const mod: Record<string, unknown> = {}
+  for (const [name, value] of Object.entries(actual)) {
+    if (typeof value !== 'function') {
+      mod[name] = value
+      continue
+    }
+    mod[name] = vi.fn((...args: unknown[]) => {
+      recordedCalls.push(`${moduleName}.${name}(${args.map(String).join(', ')})`)
       throw new Error(
-        `classifyUpdateTarget must be pure — ${moduleName}.${method}() was called, which ` +
+        `classifyUpdateTarget must be pure — ${moduleName}.${name}() was called, which ` +
           'means this rule table (or something it imports) did I/O instead of reading ' +
           'already-resolved evidence/probe/plan data (T-G3)'
       )
@@ -99,10 +119,10 @@ function recordingModule(moduleName: string): Record<string, ReturnType<typeof v
   return mod
 }
 
-vi.mock('fs/promises', () => recordingModule('fs/promises'))
-vi.mock('fs', () => recordingModule('fs'))
-vi.mock('node:fs/promises', () => recordingModule('node:fs/promises'))
-vi.mock('node:fs', () => recordingModule('node:fs'))
+vi.mock('fs/promises', async () => recordingModule('fs/promises'))
+vi.mock('fs', async () => recordingModule('fs'))
+vi.mock('node:fs/promises', async () => recordingModule('node:fs/promises'))
+vi.mock('node:fs', async () => recordingModule('node:fs'))
 
 beforeEach(() => {
   recordedCalls.length = 0
