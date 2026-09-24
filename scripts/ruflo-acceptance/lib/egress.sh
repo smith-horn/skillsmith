@@ -24,14 +24,31 @@ egress_arms() {
   neg_up_nonlo="$(node "$HARNESS/lib/jqlite.mjs" "$EVD/e0-negative.json" upNonLoopback || echo ERR)"
   pos_dns="$(node "$HARNESS/lib/jqlite.mjs" "$EVD/e0-positive.json" dnsFailed || echo ERR)"
   neg_dns="$(node "$HARNESS/lib/jqlite.mjs" "$EVD/e0-negative.json" dnsFailed || echo ERR)"
-  if [ "$pos_up_nonlo" != "0" ] && [ "$neg_up_nonlo" = "0" ]; then ok=0; else ok=1; fi
+  pos_ip_code="$(node "$HARNESS/lib/jqlite.mjs" "$EVD/e0-positive.json" rawIpCode || echo ERR)"
+  # Positive equality on every half (M-4): a negated comparison like
+  # `!= "0"` accepts "undefined"/"ERR"/anything-but-zero as a pass, which is
+  # exactly the shape that let this instrument-control silently measure
+  # nothing. Both docker runs must have actually exited 0, and pos_up_nonlo
+  # must match a real positive integer, not merely fail to equal "0".
+  if [ "$ctl_pos_rc" -eq 0 ] && [ "$ctl_neg_rc" -eq 0 ] &&
+    printf '%s' "$pos_up_nonlo" | grep -qE '^[1-9][0-9]*$' &&
+    [ "$neg_up_nonlo" = "0" ]; then ok=0; else ok=1; fi
   predicate "E0a instrument separates the two states (interfaces)" "$ok" \
-    "bridged container reports >0 UP non-loopback interfaces; network-none reports 0" \
-    "bridged=$pos_up_nonlo none=$neg_up_nonlo (probe rc: bridged=$ctl_pos_rc none=$ctl_neg_rc)"
+    "both control containers exit 0; bridged container's upNonLoopback matches ^[1-9][0-9]*\$ (a real positive interface count); network-none's upNonLoopback == 0" \
+    "ctl_pos_rc=$ctl_pos_rc ctl_neg_rc=$ctl_neg_rc bridged=$pos_up_nonlo none=$neg_up_nonlo"
   if [ "$pos_dns" = "false" ] && [ "$neg_dns" = "true" ]; then ok=0; else ok=1; fi
   predicate "E0b instrument separates the two states (egress)" "$ok" \
     "bridged container resolves DNS (failed=false); network-none fails (failed=true)" \
     "bridged.dnsFailed=$pos_dns none.dnsFailed=$neg_dns"
+  # E0c (M-6): the bridged control's own raw-IP connect must NOT already read
+  # as the service's expected failure signature -- otherwise E4b's assertion
+  # of ENETUNREACH against the isolated service would be meaningless (an
+  # instrument that says ENETUNREACH for an attached, working network too is
+  # not distinguishing anything).
+  if [ "$pos_ip_code" != "ENETUNREACH" ] && [ "$pos_ip_code" != "ERR" ]; then ok=0; else ok=1; fi
+  predicate "E0c instrument's raw-IP connect succeeds on the bridged control" "$ok" \
+    "the bridged known-positive control's raw-IP connect code is neither ENETUNREACH nor ERR -- E4b asserts ENETUNREACH against the isolated service using the same instrument" \
+    "bridged.rawIpCode=$pos_ip_code"
 
   # ---- arm 1 ---------------------------------------------------------------
   # e1_eval <container> <evidence-basename> -- sets E1_VERDICT (0 unattached,

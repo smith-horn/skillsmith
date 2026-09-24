@@ -70,11 +70,14 @@ const ev = {
   errors: [],
 }
 
+// null, not -1: an absent -wal/-shm is a real state (checkpointed away), not
+// an error, and a sentinel like -1 is indistinguishable from a genuine size
+// once printed (L-17). Callers print 'absent' for null.
 function sizeOf(p) {
   try {
     return fs.statSync(p).size
   } catch {
-    return -1
+    return null
   }
 }
 
@@ -185,5 +188,5 @@ if (ev.snapshot.backupOk) {
 
 fs.writeFileSync(opt.out, `${JSON.stringify(ev, null, 2)}\n`)
 process.stdout.write(
-  `store-reader ok db=${opt.db} wal=${ev.walSizeBytes} keys=${opt.keys.length}\n`
+  `store-reader ok db=${opt.db} wal=${ev.walSizeBytes === null ? 'absent' : ev.walSizeBytes} keys=${opt.keys.length}\n`
 )

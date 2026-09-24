@@ -277,9 +277,41 @@ JS
 }
 
 # H-6: reconcile the two stores' markers against each other and against the
-# authority file's expected generation. Three legitimate outcomes plus one
-# refusal -- see the "Two stores, one marker" header comment for why this
-# needs to consider two files rather than one.
+# authority file's expected generation. See the "Two stores, one marker"
+# header comment for why this needs to consider two files rather than one.
+#
+# M-8/M-9 truth table. Each cell is (mem_gen, agentdb_gen) against the
+# authority file's expected generation E; ABSENT means no store_generation
+# marker, OTHER means a real value that is neither ABSENT nor E:
+#
+#   mem_gen \ agentdb_gen  | ABSENT              | E                   | OTHER
+#   -----------------------+---------------------+---------------------+----------------------------
+#   ABSENT                 | init both           | repair memory.db    | refuse: one side ABSENT,
+#                          |                     | (M-8, new)          | only same-generation shapes
+#                          |                     |                     | auto-repair (ADR-170 SS5 c)
+#   -----------------------+---------------------+---------------------+----------------------------
+#   E                      | repair agentdb.db   | no-op (steady       | refuse: DIFFERENT
+#                          |                     | state)              | generations (genuine
+#                          |                     |                     | disagreement)
+#   -----------------------+---------------------+---------------------+----------------------------
+#   OTHER                  | refuse: one side    | refuse: DIFFERENT   | refuse: DIFFERENT
+#                          | ABSENT              | generations         | generations if the two
+#                          |                     |                     | OTHER values differ from
+#                          |                     |                     | each other; if they are
+#                          |                     |                     | the SAME value, refuse
+#                          |                     |                     | naming the AUTHORITY FILE
+#                          |                     |                     | as the thing that moved
+#                          |                     |                     | (M-9, new) -- the two
+#                          |                     |                     | stores agree with each
+#                          |                     |                     | other, they just don't
+#                          |                     |                     | agree with E
+#
+# Only the two same-generation shapes (both ABSENT, or one ABSENT while the
+# other already equals E) are ever auto-repaired. Every other cell refuses,
+# and M-9 splits that refusal into the three distinct messages the table
+# above names, rather than one "DIFFERENT generations" text that was false
+# for the two ABSENT-paired-with-OTHER cells and for the both-OTHER-but-equal
+# cell.
 reconcile_store_pair() {
     local mem_gen="$1" agentdb_gen="$2" expected="$3"
 
@@ -301,13 +333,36 @@ reconcile_store_pair() {
         return
     fi
 
-    # Every remaining combination is a genuine disagreement: memory.db
-    # itself disagrees with the authority file, agentdb-memory.db carries
-    # its OWN marker that disagrees with memory.db/the authority file (a
-    # forked or copied agentdb-memory.db), or memory.db is absent while
-    # agentdb-memory.db already carries a marker (backwards from the normal
-    # creation order). Refuse -- this is a manual-intervention case, the
-    # same class ADR-170 SS5 (c) already refuses for a single store.
+    # M-8: the mirror of the repair above. agentdb-memory.db already carries
+    # the marker at the authority file's own generation while memory.db has
+    # none -- this is the shape a live volume can carry from BEFORE the
+    # two-store fix landed, since memory.db is the sql.js writer's own file
+    # and gets recreated by it; agentdb-memory.db (native better-sqlite3) is
+    # unaffected by that recreation. Same-generation repair, not a
+    # wrong-generation hazard -- the generation is proven by agentdb-
+    # memory.db and $AUTHORITY_FILE agreeing.
+    if [[ "$mem_gen" == "ABSENT" ]] && [[ "$agentdb_gen" == "$expected" ]]; then
+        log "agentdb-memory.db carries the store_generation marker at $AUTHORITY_FILE's generation (${expected:0:12}...) but memory.db has no marker table -- this is the mirror of the pre-A1.4 shape (memory.db recreated by the sql.js writer), NOT a wrong-generation hazard (the generation is proven by agentdb-memory.db and $AUTHORITY_FILE agreeing); repairing memory.db with a same-generation marker"
+        init_store "$expected" "memory.db"
+        return
+    fi
+
+    # M-9: every remaining combination is a genuine refusal, but not the same
+    # one -- branch the message by which cell of the table above applies
+    # rather than a single "DIFFERENT generations" text, which is literally
+    # false for the two cases handled first below.
+    if [[ "$mem_gen" == "ABSENT" ]] || [[ "$agentdb_gen" == "ABSENT" ]]; then
+        die "memory.db=${mem_gen:0:12}... agentdb-memory.db=${agentdb_gen:0:12}... on volume $VOLUME_NAME -- one store file has no store_generation marker at all while the other already carries one that is NOT $AUTHORITY_FILE's expected generation (${expected:0:12}...). Only the two same-generation shapes are auto-repaired (ADR-170 SS5 (c)): both files absent, or one absent while the other already agrees with $AUTHORITY_FILE. This combination is neither. This is not auto-repaired; confirm which generation is intended before proceeding."
+    fi
+
+    if [[ "$mem_gen" == "$agentdb_gen" ]]; then
+        die "memory.db and agentdb-memory.db on volume $VOLUME_NAME both carry generation ${mem_gen:0:12}..., but authority file $AUTHORITY_FILE expects ${expected:0:12}.... The two stores AGREE with each other -- it is the AUTHORITY FILE that has moved, not the store (ADR-170 SS5 (c)). This is not auto-repaired; confirm which generation is intended before proceeding."
+    fi
+
+    # Genuine disagreement: memory.db and agentdb-memory.db each carry a
+    # real, different generation -- a forked or copied agentdb-memory.db (or
+    # memory.db). Refuse -- this is a manual-intervention case, the same
+    # class ADR-170 SS5 (c) already refuses for a single store.
     die "memory.db and agentdb-memory.db on volume $VOLUME_NAME carry DIFFERENT generations (ADR-170 SS5 (c) -- a forked or restored store): memory.db=${mem_gen:0:12}... agentdb-memory.db=${agentdb_gen:0:12}... authority file $AUTHORITY_FILE expects ${expected:0:12}.... This is not auto-repaired; confirm which generation is intended before proceeding."
 }
 

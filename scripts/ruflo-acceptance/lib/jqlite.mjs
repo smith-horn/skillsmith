@@ -38,7 +38,20 @@ function parseLoose(text) {
 
 const d = parseLoose(raw)
 const ifaces = Array.isArray(d.interfaces) ? d.interfaces : []
+// A missing value must not print the string "undefined" with rc 0: every
+// caller in lib/*.sh guards with `|| echo ERR` (or `|| echo ''`) specifically
+// so a genuine extraction failure is distinguishable from a real value, and
+// that guard is unreachable if this function itself turns "absent" into a
+// truthy-looking string. A field that can be LEGITIMATELY absent (not an
+// error, just nothing there) must be handled by its own case below before it
+// ever reaches this function -- see dnsCode/dnsErrno/dnsSyscall/rawIpCode/
+// rawIpErrno (successful connect/lookup carries no error code) and walSize
+// (an absent -wal is a real state store-reader.mjs reports as null).
 const out = (v) => {
+  if (v === undefined || v === null) {
+    process.stderr.write(`jqlite: ${name} is absent in ${file}\n`)
+    process.exit(3)
+  }
   process.stdout.write(`${v}\n`)
   process.exit(0)
 }
@@ -72,20 +85,28 @@ switch (name) {
   case 'dnsFailed':
     out(String(Boolean(d.dns && d.dns.failed)))
     break
+  // net-probe.mjs only sets code/errno/syscall on the FAILURE shape
+  // ({failed:true, ...}); a successful lookup ({failed:false, address}) never
+  // has a .code at all, and that is a legitimate outcome, not a missing
+  // measurement -- so it is coalesced to 'none' here rather than left
+  // undefined for out() to reject.
   case 'dnsCode':
-    out(d.dns ? d.dns.code : 'none')
+    out(d.dns ? (d.dns.code ?? 'none') : 'none')
     break
   case 'dnsErrno':
-    out(d.dns ? d.dns.errno : 'none')
+    out(d.dns ? (d.dns.errno ?? 'none') : 'none')
     break
   case 'dnsSyscall':
-    out(d.dns ? d.dns.syscall : 'none')
+    out(d.dns ? (d.dns.syscall ?? 'none') : 'none')
     break
+  // Same shape as dns above: net-probe.mjs's successful-connect result is
+  // {failed:false, remote} with no .code -- a legitimate "it connected", not
+  // an absent measurement.
   case 'rawIpCode':
-    out(d.rawIp ? d.rawIp.code : 'none')
+    out(d.rawIp ? (d.rawIp.code ?? 'none') : 'none')
     break
   case 'rawIpErrno':
-    out(d.rawIp ? d.rawIp.errno : 'none')
+    out(d.rawIp ? (d.rawIp.errno ?? 'none') : 'none')
     break
   case 'netNames':
     out(
@@ -133,8 +154,12 @@ switch (name) {
     out(r && r.parsed ? JSON.stringify(r.parsed) : 'none')
     break
   }
+  // store-reader.mjs (L-17) reports an absent -wal as null, a real and
+  // expected state (the file was checkpointed away) rather than a missing
+  // measurement -- printed as 'absent' rather than routed through out()'s
+  // undefined/null rejection.
   case 'walSize':
-    out(d.walSizeBytes)
+    out(d.walSizeBytes === null ? 'absent' : d.walSizeBytes)
     break
   case 'rowCount':
     out(d.rows && d.rows[arg] ? d.rows[arg].rowCount : 'none')

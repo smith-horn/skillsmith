@@ -143,7 +143,11 @@ consolidation_arms() {
   _fd_seeded="$(node "$HARNESS/lib/jqlite.mjs" "$EVD/c-seeded-fdwatch.json" matchedTargetInode 2>/dev/null || echo ERR)"
   _fd_unseeded="$(node "$HARNESS/lib/jqlite.mjs" "$EVD/c-unseeded-fdwatch.json" matchedTargetInode 2>/dev/null || echo ERR)"
   observation "C3 observations" "seeded run: $(node "$HARNESS/lib/jqlite.mjs" "$EVD/c-seeded-fdwatch.json" fdObservations 2>/dev/null | cut -c1-300 || echo ERR)"
-  if [ "$_fd_seeded" != "0" ] && [ "$_fd_seeded" != "ERR" ] && [ "$_fd_unseeded" != "0" ] && [ "$_fd_unseeded" != "ERR" ]; then ok=0; else ok=1; fi
+  # Positive match only (M-5): `!= "0" && != "ERR"` accepts "undefined" or any
+  # other non-numeric jqlite output as a pass. Both counts must match a real
+  # positive integer -- nothing else counts as "observed holding it".
+  if printf '%s' "$_fd_seeded" | grep -qE '^[1-9][0-9]*$' &&
+    printf '%s' "$_fd_unseeded" | grep -qE '^[1-9][0-9]*$'; then ok=0; else ok=1; fi
   predicate "C3 external observation of the opened inode" "$ok" \
     "both runs are observed holding a descriptor whose device and inode equal the target database's" \
     "seeded matchedTargetInode=$_fd_seeded unseeded matchedTargetInode=$_fd_unseeded"
@@ -178,21 +182,21 @@ consolidation_arms() {
   applied "distill.mjs --stub on the SAME paired copies: it opens the database (so any inode check passes) and answers from /scratchvol/fixture.json, written before the tokens existed"
   consol_copy stubseeded
   consol_copy stubunseeded
-  run_capture _m6a "$EVD/m6-seed.log" \
+  run_capture _m7a "$EVD/m7-seed.log" \
     docker run --rm --network none -v "$CONSOL_VOL":/scratchvol -v "$HARNESS":/harness:ro --entrypoint node "$IMAGE" \
     /harness/distill.mjs --seed-row --db /scratchvol/stubseeded.db --ns a14-consol --key "c-$TOKEN" --value "$VALUE"
-  consol_run stubseeded "$TOKEN" m6-seeded --stub
-  consol_run stubunseeded "$TOKEN" m6-unseeded --stub
-  _m6_s="$(node "$HARNESS/lib/jqlite.mjs" "$EVD/m6-seeded-run.json" distillCounters 2>/dev/null || echo ERR)"
-  _m6_u="$(node "$HARNESS/lib/jqlite.mjs" "$EVD/m6-unseeded-run.json" distillCounters 2>/dev/null || echo ERR)"
-  _m6_sh="$(node "$HARNESS/lib/jqlite.mjs" "$EVD/m6-seeded-inspect.json" hits reasoning_patterns 2>/dev/null || echo ERR)"
-  _m6_uh="$(node "$HARNESS/lib/jqlite.mjs" "$EVD/m6-unseeded-inspect.json" hits reasoning_patterns 2>/dev/null || echo ERR)"
-  _m6_fd="$(node "$HARNESS/lib/jqlite.mjs" "$EVD/m6-seeded-fdwatch.json" matchedTargetInode 2>/dev/null || echo ERR)"
+  consol_run stubseeded "$TOKEN" m7-seeded --stub
+  consol_run stubunseeded "$TOKEN" m7-unseeded --stub
+  _m7_s="$(node "$HARNESS/lib/jqlite.mjs" "$EVD/m7-seeded-run.json" distillCounters 2>/dev/null || echo ERR)"
+  _m7_u="$(node "$HARNESS/lib/jqlite.mjs" "$EVD/m7-unseeded-run.json" distillCounters 2>/dev/null || echo ERR)"
+  _m7_sh="$(node "$HARNESS/lib/jqlite.mjs" "$EVD/m7-seeded-inspect.json" hits reasoning_patterns 2>/dev/null || echo ERR)"
+  _m7_uh="$(node "$HARNESS/lib/jqlite.mjs" "$EVD/m7-unseeded-inspect.json" hits reasoning_patterns 2>/dev/null || echo ERR)"
+  _m7_fd="$(node "$HARNESS/lib/jqlite.mjs" "$EVD/m7-seeded-fdwatch.json" matchedTargetInode 2>/dev/null || echo ERR)"
   # KILLED when the paired control separates them: identical counters AND no
   # token-bearing derived output on either side.
-  if [ "$_m6_s" = "$_m6_u" ] && [ "${_m6_sh:-0}" -eq 0 ]; then ok=0; else ok=1; fi
+  if [ "$_m7_s" = "$_m7_u" ] && [ "${_m7_sh:-0}" -eq 0 ]; then ok=0; else ok=1; fi
   mutation "M7 fixture-derived consolidation counters" "$ok" \
-    "seeded counters=$_m6_s unseeded counters=$_m6_u (identical => not derived from the input); token-bearing derived rows: seeded=$_m6_sh unseeded=$_m6_uh; external observations of the stub holding the target inode: $_m6_fd (the stub DOES open the correct database, so a passing inode check would not have caught it -- only the paired control does)"
+    "seeded counters=$_m7_s unseeded counters=$_m7_u (identical => not derived from the input); token-bearing derived rows: seeded=$_m7_sh unseeded=$_m7_uh; external observations of the stub holding the target inode: $_m7_fd (the stub DOES open the correct database, so a passing inode check would not have caught it -- only the paired control does)"
 
   docker volume rm "$CONSOL_VOL" >/dev/null 2>&1 || true
 }

@@ -353,11 +353,93 @@ else
 fi
 unset FAKE_MEMORY_GENERATION FAKE_AGENTDB_GENERATION
 
+# ---- Arm 10 (M-10): existing volume, label matches, BOTH stores already at
+# the authority file's own generation -- the genuine steady state (the
+# reconcile_store_pair (E,E) cell). Must be a pure no-op except for `up`: no
+# volume create, no init for either file, logged as "both at generation",
+# and the service brought up. ----
+reset_fixture
+setup_labelled_volume "matching-nonce-10" "gen-10-authority"
+export FAKE_MEMORY_GENERATION="gen-10-authority"
+export FAKE_AGENTDB_GENERATION="gen-10-authority"
+EXIT_CODE="$(run_script)"
+if [[ "$EXIT_CODE" -ne 0 ]]; then
+    fail_case "10-steady-state" "expected exit 0, got $EXIT_CODE"
+elif grep -q "volume create" "$FAKE_DOCKER_CALL_LOG"; then
+    fail_case "10-steady-state" "expected NO 'volume create' call, log:\n$(cat "$FAKE_DOCKER_CALL_LOG")"
+elif [[ -f "$FAKE_STATE_DIR/init-ran-memory.db" ]] || [[ -f "$FAKE_STATE_DIR/init-ran-agentdb-memory.db" ]]; then
+    fail_case "10-steady-state" "expected NO init of either store file (both already at the expected generation)"
+elif ! grep -qi "both at generation" "$SCRATCH_ROOT/out.log"; then
+    fail_case "10-steady-state" "expected the log to say both stores are at generation, log:\n$(cat "$SCRATCH_ROOT/out.log")"
+elif [[ ! -f "$FAKE_STATE_DIR/up-ran" ]]; then
+    fail_case "10-steady-state" "expected docker compose ... up -d ruflo to have executed"
+else
+    echo "applied=steady-state PASS (10-steady-state): both stores at the authority file's generation, no create, no init, up ran"
+fi
+unset FAKE_MEMORY_GENERATION FAKE_AGENTDB_GENERATION
+
+# ---- Arm 11 (M-8): existing volume, label matches, agentdb-memory.db
+# ALREADY carries the marker at the authority file's own generation, but
+# memory.db has none -- the mirror of Arm 8 (the pre-A1.4 shape where
+# memory.db was recreated by the sql.js writer). Must repair ONLY memory.db
+# (agentdb-memory.db already correct, no need to re-init it), log it as a
+# same-generation repair (not a wrong-generation refusal), then bring the
+# service up. ----
+reset_fixture
+setup_labelled_volume "matching-nonce-11" "gen-11-authority"
+export FAKE_AGENTDB_GENERATION="gen-11-authority"
+# FAKE_MEMORY_GENERATION deliberately unset -- probe answers ABSENT.
+EXIT_CODE="$(run_script)"
+if [[ "$EXIT_CODE" -ne 0 ]]; then
+    fail_case "11-memory-repair" "expected exit 0, got $EXIT_CODE"
+elif grep -q "volume create" "$FAKE_DOCKER_CALL_LOG"; then
+    fail_case "11-memory-repair" "expected NO 'volume create' call, log:\n$(cat "$FAKE_DOCKER_CALL_LOG")"
+elif [[ -f "$FAKE_STATE_DIR/init-ran-agentdb-memory.db" ]]; then
+    fail_case "11-memory-repair" "expected NO re-init of agentdb-memory.db (it already carries the correct marker)"
+elif [[ ! -f "$FAKE_STATE_DIR/init-ran-memory.db" ]]; then
+    fail_case "11-memory-repair" "expected init_store() to repair memory.db"
+elif ! grep -q "RUFLO_GENERATION_UUID=gen-11-authority" "$FAKE_DOCKER_CALL_LOG"; then
+    fail_case "11-memory-repair" "expected the repair to use agentdb-memory.db's own (== authority file's) generation, log:\n$(cat "$FAKE_DOCKER_CALL_LOG")"
+elif ! grep -qi "same-generation repair\|NOT a wrong-generation hazard\|mirror of the pre-A1.4 shape" "$SCRATCH_ROOT/out.log"; then
+    fail_case "11-memory-repair" "expected the log to distinguish this from a wrong-generation refusal, log:\n$(cat "$SCRATCH_ROOT/out.log")"
+elif [[ ! -f "$FAKE_STATE_DIR/up-ran" ]]; then
+    fail_case "11-memory-repair" "expected docker compose ... up -d ruflo to have executed after the repair"
+else
+    echo "applied=memory-db-repair PASS (11-memory-repair): agentdb-memory.db already correct, memory.db repaired with the same generation, logged as a repair (not a refusal), up ran"
+fi
+unset FAKE_AGENTDB_GENERATION
+
+# ---- Arm 12 (M-9): existing volume, label matches, BOTH stores carry the
+# SAME generation as each other, but that generation is NOT the authority
+# file's expected one -- the two stores agree with each other; it is the
+# authority file that has moved. Must refuse WITHOUT the "DIFFERENT
+# generations" text (the two stores do not disagree with each other), naming
+# the authority file as the thing that moved instead. ----
+reset_fixture
+setup_labelled_volume "matching-nonce-12" "gen-12-authority-expected"
+export FAKE_MEMORY_GENERATION="gen-12-stale-agreed"
+export FAKE_AGENTDB_GENERATION="gen-12-stale-agreed"
+EXIT_CODE="$(run_script)"
+if [[ "$EXIT_CODE" -eq 0 ]]; then
+    fail_case "12-both-stale-agree" "expected non-zero exit (refusal), got 0"
+elif grep -qi "DIFFERENT generations" "$SCRATCH_ROOT/out.log"; then
+    fail_case "12-both-stale-agree" "expected the refusal NOT to use the 'DIFFERENT generations' text -- the two stores agree with EACH OTHER, only the authority file disagrees, log:\n$(cat "$SCRATCH_ROOT/out.log")"
+elif ! grep -qi "authority file" "$SCRATCH_ROOT/out.log" || ! grep -qi "moved" "$SCRATCH_ROOT/out.log"; then
+    fail_case "12-both-stale-agree" "expected the refusal to name the authority file as the thing that moved, log:\n$(cat "$SCRATCH_ROOT/out.log")"
+elif [[ -f "$FAKE_STATE_DIR/init-ran" ]]; then
+    fail_case "12-both-stale-agree" "expected NO init run when both stores agree but disagree with the authority file"
+elif [[ -f "$FAKE_STATE_DIR/up-ran" ]]; then
+    fail_case "12-both-stale-agree" "expected docker compose ... up -d ruflo NOT to run on this refusal"
+else
+    echo "applied=refuse-both-stale-agree PASS (12-both-stale-agree): refused naming the authority file as having moved, no 'DIFFERENT generations' text, no init, no up"
+fi
+unset FAKE_MEMORY_GENERATION FAKE_AGENTDB_GENERATION
+
 echo ""
 if [[ "$FAIL_COUNT" -eq 0 ]]; then
-    echo "SUMMARY: 9/9 arms passed"
+    echo "SUMMARY: 12/12 arms passed"
     exit 0
 else
-    echo "SUMMARY: $FAIL_COUNT/9 arms FAILED"
+    echo "SUMMARY: $FAIL_COUNT/12 arms FAILED"
     exit 1
 fi

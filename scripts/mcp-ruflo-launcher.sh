@@ -359,7 +359,12 @@ read_store_generation() {
   local out
   out="$(docker exec "$cid" sh -c '
     if command -v sqlite3 >/dev/null 2>&1; then
-      n="$(sqlite3 "$1" "SELECT count(*) FROM $2;" 2>&1)"
+      # M-7: this branch is inert today (the ruflo image ships no sqlite3
+      # binary, so read_store_generation always takes the node/
+      # better-sqlite3 branch below) -- -cmd ".timeout 5000" gives this
+      # dormant fallback an explicit busy-wait, so it is not silently less
+      # robust than the node branch if sqlite3 is ever added to the image.
+      n="$(sqlite3 -cmd ".timeout 5000" "$1" "SELECT count(*) FROM $2;" 2>&1)"
       case "$n" in
         *"file is not a database"*) printf "RUFLO_NOTADB:%s" "$n"; exit 4 ;;
       esac
@@ -367,7 +372,7 @@ read_store_generation() {
         ""|*[!0-9]*) printf "RUFLO_ERR:%s" "$n"; exit 5 ;;
       esac
       [ "$n" = "1" ] || { printf "store_generation rows=%s (expected exactly 1)" "$n"; exit 3; }
-      sqlite3 "$1" "SELECT id FROM $2;" 2>/dev/null
+      sqlite3 -cmd ".timeout 5000" "$1" "SELECT id FROM $2;" 2>/dev/null
     else
       node -e "
         const Database = require(\"/opt/ruflo-seed/node_modules/better-sqlite3\");
@@ -406,13 +411,14 @@ check_store_generation() {
 "    file:  $db_path
     error: ${_value#RUFLO_NOTADB:}
     # if CLAUDE_FLOW_ENCRYPT_AT_REST is set, this file may be encrypted at rest and unreadable by a plain SQLite reader (see this launcher's header note on memory.db vs agentdb-memory.db)
-    docker exec $CONTAINER_NAME sh -c 'sqlite3 $db_path \"SELECT id FROM $STORE_GENERATION_TABLE;\"'"
+    # the ruflo image has no sqlite3 binary -- this is the node/better-sqlite3 branch read_store_generation() actually runs (M-7)
+    docker exec $CONTAINER_NAME node -e 'const D=require(\"/opt/ruflo-seed/node_modules/better-sqlite3\");console.log(JSON.stringify(new D(process.argv[1],{readonly:true}).prepare(\"SELECT id FROM $STORE_GENERATION_TABLE\").all()))' \"$db_path\""
       exit 1
       ;;
   esac
   if [ "$_status" -ne 0 ] || [ -z "$_value" ]; then
     emit_error "could not read store_generation from $db_path inside $CONTAINER_NAME (authority quad c)" \
-"    docker exec $CONTAINER_NAME sh -c 'sqlite3 $db_path \"SELECT id FROM $STORE_GENERATION_TABLE;\"'
+"    docker exec $CONTAINER_NAME node -e 'const D=require(\"/opt/ruflo-seed/node_modules/better-sqlite3\");console.log(JSON.stringify(new D(process.argv[1],{readonly:true}).prepare(\"SELECT id FROM $STORE_GENERATION_TABLE\").all()))' \"$db_path\"
     # if this is a freshly created store, run: $REMEDIATION_START_SERVICE"
     exit 1
   fi

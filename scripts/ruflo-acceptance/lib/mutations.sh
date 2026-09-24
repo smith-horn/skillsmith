@@ -88,7 +88,13 @@ mut_run() {
     --recompute "$EVD/mut-$_label-recompute.json" --fresh-probe "$EVD/mut-$_label-fresh-probe.json" \
     --fresh-reader "$EVD/mut-$_label-fresh-reader.json" --label "$_label" --expect "$_expect"
   docker volume rm "$_vol" >/dev/null 2>&1 || true
-  MUT_FAILED_LINES="$(grep -c 'FAILED' "$EVD/mut-$_label-compare.txt" 2>/dev/null || echo 0)"
+  # `grep -c` prints "0" on no match AND exits 1: with `|| echo 0` both the
+  # count grep already printed and the fallback's "0" land in the capture,
+  # yielding a literal two-line "0\n0" (L-13). `|| true` lets a genuine
+  # zero-match "0" stand alone; ${var:-0} covers the case grep produced no
+  # output at all (e.g. the file itself is unreadable).
+  MUT_FAILED_LINES="$(grep -c 'FAILED' "$EVD/mut-$_label-compare.txt" 2>/dev/null || true)"
+  MUT_FAILED_LINES="${MUT_FAILED_LINES:-0}"
   MUT_SUMMARY="compare.mjs rc=$MUT_CMP_RC, $MUT_FAILED_LINES failed predicate lines, probeRc=$_prc readerRc=$_rrc freshProbeRc=$_frc; full output at $EVD/mut-$_label-compare.txt"
 }
 

@@ -117,8 +117,20 @@ seed_necessity_image() {
     /opt/ruflo-seed/node_modules/@claude-flow/cli/bin/cli.js mcp start
   _backend="$(node "$HARNESS/lib/jqlite.mjs" "$EVD/necessity-$_tag-probe.json" bridgeBackend 2>/dev/null || echo ERR)"
   _outcome="$(node "$HARNESS/lib/jqlite.mjs" "$EVD/necessity-$_tag-probe.json" probeOutcome 2>/dev/null || echo ERR)"
+  # M-12: before scoring this KILLED (which is read as "the model was
+  # necessary"), require that the derived container answered
+  # memory_bridge_status AT ALL. bridgeStatusJson is 'none' both when the
+  # container never replied (crashed, never started speaking JSON-RPC) and
+  # when the reply itself was unparseable -- neither is evidence about the
+  # model mutation, so scoring either as KILLED would be a false positive
+  # attributed to the wrong cause.
+  _answered="$(node "$HARNESS/lib/jqlite.mjs" "$EVD/necessity-$_tag-probe.json" bridgeStatusJson 2>/dev/null || echo ERR)"
   docker volume rm "$_vol" >/dev/null 2>&1 || true
   docker rmi "ruflo-a14-$_tag" >/dev/null 2>&1 || true
+  if [ "$_answered" = "none" ] || [ "$_answered" = "ERR" ]; then
+    mutation "S2 $_label" 1 "the derived container never answered memory_bridge_status (bridgeStatusJson=$_answered embeddingBackend=$_backend probeOutcome=$_outcome probeRc=$_rc) -- not attributable to the model mutation; re-run before reading this as a kill"
+    return 0
+  fi
   # § 2 arm 2: "the same request must fail or return mock".
   if [ "$_backend" != "onnx" ] || [ "$_outcome" != "ok" ]; then ok=0; else ok=1; fi
   mutation "S2 $_label" "$ok" "embeddingBackend=$_backend probeOutcome=$_outcome probeRc=$_rc (onnx+ok would mean the manifested model was not necessary)"
@@ -283,6 +295,17 @@ seed_arm3() {
   cat "$EVD/s3-compare.txt"
   predicate "S3c all arm-3 predicates against the container recomputation" "$([ "$s3cmp_rc" -eq 0 ] && echo 0 || echo 1)" \
     "every predicate HELD (compare.mjs exit 0)" "compare.mjs rc=$s3cmp_rc; full output above and at $EVD/s3-compare.txt"
+
+  # L-19: compare.mjs prints this line when every canary's main-file-only copy
+  # already held the row -- none was WAL-resident at read time, so this run
+  # never exercised § 2's WAL-resident positive arm (the scratch control in
+  # seed_wal_control establishes the instrument's capability separately).
+  # Surfaced through limitation() so it reaches the SUMMARY block, not just
+  # this arm's own output.
+  _wallim="$(grep -F 'no canary was WAL-resident' "$EVD/s3-compare.txt" 2>/dev/null | head -1 || true)"
+  if [ -n "$_wallim" ]; then
+    limitation "${_wallim#*LIMITATION: }"
+  fi
 
   run_capture s3h_rc "$EVD/s3-compare-host.txt" node "$HARNESS/compare.mjs" \
     --probe "$EVD/s3-probe.json" --reader "$EVD/s3-reader.json" --recompute "$EVD/s3-recompute-host.json" \

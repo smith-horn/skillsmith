@@ -53,7 +53,7 @@ Disable the launcher entirely (no `npx` fallback): `SKILLSMITH_RUFLO_LAUNCHER_DI
 
 ## MCP Tools
 
-The live registry serves **353 tools** total (measured 2026-09-23 via `tools/list` against the running `skillsmith-ruflo-1` service, `@claude-flow/cli@3.42.4`) — most of it is not granted. `CLAUDE.md`'s § Ruflo MCP Server names the small subset this repo actually uses; the rest needs an explicit ask, and a large share of the memory-mutating surface (`memory_import`, `memory_import_claude`, `memory_migrate`, `memory_search`, `memory_search_unified`, `memory_store`, and more) sits in `.claude/settings.json`'s `permissions.deny` by design (SMI-6744 A0.6: no corpus content enters ruflo's index before Wave 4's structural guarantee). `hooks_route`/`hooks_model-route` are also denied (SMI-5659) — never call them.
+The live registry serves **353 tools** total (measured 2026-09-23 via `tools/list` against the running `skillsmith-ruflo-1` service, `@claude-flow/cli@3.42.4`) — most of it is not granted. `CLAUDE.md`'s § Ruflo MCP Server names the small subset this repo actually uses; the rest needs an explicit ask, and a large share of the memory-mutating surface (`memory_import`, `memory_import_claude`, `memory_migrate`, `memory_search`, `memory_search_unified`, `memory_store`, and more) sits in `.claude/settings.json`'s `permissions.deny` by design (SMI-6744 A0.6: no corpus content enters ruflo's index before Wave 4's structural guarantee). `hooks_model-route` is also denied (SMI-5659: it writes `.swarm/model-router-state.json` on every call and is not sandboxed by worktree cwd) — never call it. Its sibling `hooks_route` is classified Allowed (`docs/internal/architecture/ruflo-tool-classification.md` § `hooks_*`) and is **not** in `permissions.deny`.
 
 | Tool | Purpose | Required input | Notes |
 |------|---------|-----------------|-------|
@@ -133,7 +133,7 @@ See [.claude/hive-mind/README.md](../../.claude/hive-mind/README.md) for full do
 
 ## SPARC Development
 
-SPARC-mode CLI invocation (`npx ruflo sparc modes/tdd/run`) does **not** exist in the installed v3 CLI — `sparc` is not a recognized subcommand (`npx ruflo sparc --help` → `[ERROR] Unknown command: sparc / Did you mean: start, swarm, status`). For SPARC-style workflows use:
+SPARC-mode CLI invocation (`ruflo sparc modes/tdd/run`) does **not** exist in the installed v3 CLI — `sparc` is not a recognized subcommand (`docker exec skillsmith-ruflo-1 node /opt/ruflo-seed/node_modules/@claude-flow/cli/bin/cli.js sparc --help` → `[ERROR] Unknown command: sparc / Did you mean: start, swarm, status`). For SPARC-style workflows use:
 
 - This guide's [Hive Mind Orchestration](#hive-mind-orchestration) section above for `ruflo swarm` invocations
 - The repo's own `sparc-methodology` skill (`.claude/skills/sparc-methodology/SKILL.md`) for the SPARC development methodology itself

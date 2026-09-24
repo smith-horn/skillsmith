@@ -130,14 +130,39 @@ function returnedVectors(ev) {
 const returned = returnedVectors(probe)
 process.stdout.write(`\n== § 2 arm 3 predicates ${opt.label ? `(${opt.label})` : ''}\n`)
 process.stdout.write(
-  `  probe outcome=${probe.outcome} canaries=${probe.canaries.length} recompute.where=${recomp.where} recompute.transformers=${recomp.transformersVersion}\n`
+  `  probe outcome=${probe.outcome} canaries=${Array.isArray(probe.canaries) ? probe.canaries.length : 'n/a'} recompute.where=${recomp.where} recompute.transformers=${recomp.transformersVersion}\n`
 )
 
-for (const { c, f } of probe.canaries) {
+// P0: a comparison of nothing is not a pass. Both halves of what every
+// predicate below reads from must be real before any of them can mean
+// anything -- an empty canaries array or a malformed reader.rows would
+// otherwise make every per-canary loop below a no-op, exiting 0 with
+// "pass (0 failed predicates)" over a probe that measured nothing (H-1).
+predicate(
+  'P0a probe.canaries is a non-empty array',
+  Array.isArray(probe.canaries) && probe.canaries.length > 0,
+  'probe.canaries is a non-empty array',
+  `probe.outcome=${probe.outcome} responses=${Array.isArray(probe.responses) ? probe.responses.length : 'n/a'} canaries=${Array.isArray(probe.canaries) ? probe.canaries.length : typeof probe.canaries}`
+)
+predicate(
+  'P0b reader.rows is an object',
+  reader.rows !== null && typeof reader.rows === 'object' && !Array.isArray(reader.rows),
+  'reader.rows is an object (key -> row)',
+  `typeof reader.rows=${typeof reader.rows}${Array.isArray(reader.rows) ? ' (array)' : ''}`
+)
+
+for (const { c, f } of Array.isArray(probe.canaries) ? probe.canaries : []) {
   process.stdout.write(`\n  canary ${c} (freshness mutant ${f})\n`)
   const ret = returned[c]?.embedding ?? null
-  const rec = recomp.vectors[c] ?? null
-  const row = reader.rows[c] ?? null
+  // Optional-chained, not a direct bracket access: P0b already FAILS the
+  // predicate for a malformed reader.rows, but the loop below still runs for
+  // every canary, and a non-object reader.rows/recomp.vectors (e.g. the `{}`
+  // fallback callers write when the upstream step itself failed) must not
+  // crash the process before it can print P0b's own verdict -- that would
+  // turn "a comparison of nothing" into an uncaught exception (exit 1)
+  // instead of the clean exit 3 this predicate exists to produce.
+  const rec = recomp.vectors?.[c] ?? null
+  const row = reader.rows?.[c] ?? null
   const per = row?.embedding ?? null
 
   if (!ret)
@@ -184,9 +209,10 @@ for (const { c, f } of probe.canaries) {
 
   const mainOnly = reader.mainFileOnly?.[c]
   const walResident = mainOnly ? mainOnly.rowCount === 0 : null
+  const walSizeDisplay = reader.walSizeBytes === null ? 'absent' : `${reader.walSizeBytes} B`
   process.stdout.write(
     `  observation P5 WAL-residency: canary ${walResident === true ? 'WAS' : 'was NOT'} WAL-resident at read time` +
-      ` (source -wal = ${reader.walSizeBytes} B; main-file-only copy held ${mainOnly?.rowCount ?? 'n/a'} matching rows)\n`
+      ` (source -wal = ${walSizeDisplay}; main-file-only copy held ${mainOnly?.rowCount ?? 'n/a'} matching rows)\n`
   )
 
   predicate(
@@ -223,8 +249,25 @@ for (const { c, f } of probe.canaries) {
   }
 }
 
+// L-19: if every canary's main-file-only copy already held the row, none of
+// them were WAL-resident at read time -- the positive arm the online-backup
+// snapshot exists to exercise never actually fired on THIS run (the scratch
+// control in seed_wal_control establishes the instrument's capability
+// separately; this is a per-run observation, not a re-litigation of that).
+if (Array.isArray(probe.canaries) && probe.canaries.length > 0) {
+  const allMainOnlyPositive = probe.canaries.every((cf) => {
+    const mainOnly = reader.mainFileOnly?.[cf.c]
+    return Boolean(mainOnly) && mainOnly.rowCount > 0
+  })
+  if (allMainOnlyPositive) {
+    process.stdout.write(
+      "LIMITATION: no canary was WAL-resident at read time; § 2's WAL-resident positive arm was not exercised by this run (the scratch control in seed_wal_control establishes the capability)\n"
+    )
+  }
+}
+
 // ---- P8 freshness -----------------------------------------------------------
-for (const { c, f } of probe.canaries) {
+for (const { c, f } of Array.isArray(probe.canaries) ? probe.canaries : []) {
   const a = returned[c]?.embedding ?? null
   const b = returned[f]?.embedding ?? null
   if (!a || !b) {

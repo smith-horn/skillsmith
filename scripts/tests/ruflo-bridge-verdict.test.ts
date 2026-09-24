@@ -572,8 +572,30 @@ describe('ruflo-bridge-verdict (SMI-6744 Wave 0)', () => {
  * never verified. This test is that missing link.
  */
 describe('RUFLO_CLI_PIN pin coupling (SMI-6744 A1.5)', () => {
+  // L-15: RUFLO_LAUNCHER_PATH_OVERRIDE and RUFLO_VERDICT_MODULE_PATH_OVERRIDE
+  // (below) silently redirect a default run to a scratch file if either is
+  // left exported in the shell -- not just the one invocation that meant to
+  // set it. Every deliberate red-arm invocation below MUST also export
+  // RUFLO_A15_RED_ARM=1; the guard test right after this block fails, naming
+  // the leaked var, when an override is present without that marker.
+  it('no A15 override env leaked into this run without the RUFLO_A15_RED_ARM=1 marker', () => {
+    const leaked: string[] = []
+    if (process.env.RUFLO_LAUNCHER_PATH_OVERRIDE && process.env.RUFLO_A15_RED_ARM !== '1') {
+      leaked.push('RUFLO_LAUNCHER_PATH_OVERRIDE')
+    }
+    if (process.env.RUFLO_VERDICT_MODULE_PATH_OVERRIDE && process.env.RUFLO_A15_RED_ARM !== '1') {
+      leaked.push('RUFLO_VERDICT_MODULE_PATH_OVERRIDE')
+    }
+    expect(
+      leaked,
+      `override(s) leaked into a non-red-arm run (RUFLO_A15_RED_ARM not set to '1'): ${leaked.join(', ')}`
+    ).toEqual([])
+  })
+
   // SMI-6744 A1.5 RED ARM 1: test-only override so a scratch copy of the
-  // launcher can be exercised without touching the tracked script.
+  // launcher can be exercised without touching the tracked script. A red-arm
+  // invocation of this override MUST also set RUFLO_A15_RED_ARM=1 (L-15),
+  // e.g. `RUFLO_A15_RED_ARM=1 RUFLO_LAUNCHER_PATH_OVERRIDE=/tmp/scratch.sh …`.
   const LAUNCHER_PATH =
     process.env.RUFLO_LAUNCHER_PATH_OVERRIDE ?? path.join(here, '..', 'mcp-ruflo-launcher.sh')
 
@@ -600,7 +622,9 @@ describe('RUFLO_CLI_PIN pin coupling (SMI-6744 A1.5)', () => {
   // SMI-6744 A1.5 RED ARM 2: a module-path override so a scratch copy of
   // ruflo-bridge-verdict.mjs's DERIVED_FROM can be swapped in without
   // editing the tracked module -- the module-path analogue of
-  // LAUNCHER_PATH above, per the task's own "or a module-path override".
+  // LAUNCHER_PATH above, per the task's own "or a module-path override". A
+  // red-arm invocation of THIS override MUST also set RUFLO_A15_RED_ARM=1
+  // (L-15), same as LAUNCHER_PATH above.
   async function loadDerivedFromVersionSet(): Promise<{
     version: string
     alsoVerifiedAt: readonly string[]
@@ -633,9 +657,14 @@ describe('RUFLO_CLI_PIN pin coupling (SMI-6744 A1.5)', () => {
 
   it('servedBy names the launcher and the ruflo Compose service', () => {
     // A1.4 already set this; pinned here so a future edit that drops either
-    // half is caught alongside the pin-membership check above.
+    // half is caught alongside the pin-membership check above. L-14: the
+    // second assertion used to be toContain('ruflo'), which is already
+    // implied by the first assertion's own 'mcp-ruflo-launcher.sh' match --
+    // it could never catch the Compose-service half being dropped. Asserting
+    // the fuller phrase 'ruflo Compose service' instead pins that half
+    // independently.
     expect(DERIVED_FROM.servedBy).toContain('mcp-ruflo-launcher.sh')
-    expect(DERIVED_FROM.servedBy).toContain('ruflo')
+    expect(DERIVED_FROM.servedBy).toContain('ruflo Compose service')
     expect(DERIVED_FROM.servedBy).toContain('skillsmith-ruflo-1')
   })
 })
