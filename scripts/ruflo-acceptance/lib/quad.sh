@@ -193,12 +193,20 @@ quad_set_store_generation() {
   ' "$1" "$2"
 }
 
+# quad_sq <string> -- single-quote a value for a pasteable sh command line, so
+# a path or id carrying spaces, quotes or metacharacters stays one argument
+# (the gate's round-3 Low: the header's "exact command" claim was not safe
+# without this). Bash 3.2-safe.
+quad_sq() {
+  printf "'%s'" "$(printf '%s' "$1" | sed "s/'/'\\\\''/g")"
+}
+
 # quad_manual_restore_cmd <container-db-path> <original-id> -- the literal
 # docker one-liner a human can copy-paste to restore a store marker by hand,
 # printed only when both the inline and EXIT-trap restores fail verification.
 quad_manual_restore_cmd() {
   printf 'docker run --rm -v %s:/srv/ruflo --entrypoint node %s -e '\''const Database=require("/opt/ruflo-seed/node_modules/better-sqlite3");const db=new Database(process.argv[1]);db.prepare("UPDATE store_generation SET id=?").run(process.argv[2]);db.close()'\'' %s %s' \
-    "$STORE_VOLUME" "$IMAGE" "$1" "$2"
+    "$(quad_sq "$STORE_VOLUME")" "$(quad_sq "$IMAGE")" "$(quad_sq "$1")" "$(quad_sq "$2")"
 }
 
 # quad_test_should_noop_restore <resource> -- TEST-ONLY seam for the RED ARM
@@ -309,7 +317,7 @@ quad_emergency_restore() {
       printf 'quad: %s restored on exit\n' "$QUAD_AUTHORITY_FILE"
     else
       printf 'quad: RESTORE FAILED ON EXIT -- %s is still mutated; manual recovery: cp %s %s\n' \
-        "$QUAD_AUTHORITY_FILE" "$QUAD_AUTHORITY_BACKUP" "$QUAD_AUTHORITY_FILE"
+        "$QUAD_AUTHORITY_FILE" "$(quad_sq "$QUAD_AUTHORITY_BACKUP")" "$(quad_sq "$QUAD_AUTHORITY_FILE")"
     fi
   fi
   if [ "$QUAD_DIRTY_MEMORY_DB" -eq 1 ]; then
