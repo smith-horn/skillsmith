@@ -336,7 +336,7 @@ export class SkillsmithApiClient {
     throw lastError || new Error('Request failed after retries')
   }
 
-  // SMI-1258: validates via SearchResponseSchema. SMI-4120: LRU cache, opt-out via { cache: 'no-store' }
+  // SMI-1258: validates via SearchResponseSchema. SMI-4120: response cache, opt-out via { cache: 'no-store' }
   async search(
     options: SearchOptions,
     callOptions?: CallCacheOptions
@@ -371,7 +371,7 @@ export class SkillsmithApiClient {
     )
   }
 
-  // SMI-1258: SingleSkillResponseSchema. SMI-3672: includeContent. SMI-4120: LRU cache.
+  // SMI-1258: SingleSkillResponseSchema. SMI-3672: includeContent. SMI-4120: response cache.
   async getSkill(
     id: string,
     options?: { includeContent?: boolean } & CallCacheOptions
@@ -388,7 +388,7 @@ export class SkillsmithApiClient {
     )
   }
 
-  // SMI-1258: SearchResponseSchema. SMI-4120: LRU cache.
+  // SMI-1258: SearchResponseSchema. SMI-4120: response cache.
   async getRecommendations(
     request: RecommendationRequest,
     callOptions?: CallCacheOptions
