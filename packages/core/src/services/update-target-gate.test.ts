@@ -420,6 +420,115 @@ describe('classifyUpdateTarget — two-row overlaps (order enforcement)', () => 
   })
 })
 
+// ── Row 8 — malformed / stale `verifiedAt` (review round 5, SMI-6532) ───
+//
+// The Major this block pins: row 8's old `!entry?.verifiedAt` check was
+// TRUTHINESS ONLY, so a present-but-wrong `verifiedAt` (malformed, or
+// well-formed-but-stale) sailed through to `eligible` — a write — on
+// exactly the shape ADR-145 §4 says must stay E3, not E1. Every case below
+// was run against the fixed code FIRST to confirm it passes, per CLAUDE.md's
+// "a regression test you have not run against the unfixed code is
+// unverified" (SMI-6598) — the mutation-table block further down is that
+// verification, applied to a mutation of the FIX itself, not merely the
+// original bug.
+describe('classifyUpdateTarget — row 8: malformed/stale verifiedAt (review round 5)', () => {
+  // The case table from the task brief, run in the real runtime
+  // (`node -e`, captured in this module's own commit) before being written
+  // down here — see `update-target-gate.rules.ts`'s ROW 8 note
+  // comment for the exact `Date.parse` results that motivated the regex-first
+  // design (`Date.parse('0')` is FINITE, `2000-01-01T00:00:00Z`).
+  const MALFORMED_CASES: ReadonlyArray<
+    readonly [label: string, verifiedAt: string, expected: 'eligible' | 'unverified']
+  > = [
+    ['known-positive: well-formed ISO-8601 UTC', '2026-06-01T00:00:00Z', 'eligible'],
+    ["known-negative: '0' (Date.parse is finite, but not a real timestamp)", '0', 'unverified'],
+    ['known-negative: not a date at all', 'not-a-date', 'unverified'],
+    ['bare year — not the full shape the one writer produces', '2026', 'unverified'],
+    ['epoch-milliseconds as a string', '1780000000000', 'unverified'],
+    [
+      'far-future — well-formed; not this predicate’s job to judge "too far"',
+      '9999-12-31T00:00:00Z',
+      'eligible',
+    ],
+  ]
+
+  it.each(MALFORMED_CASES)('%s (%j) -> %s', (_label, verifiedAt, expected) => {
+    const plan = clean().plan
+    const probe = clean().probe
+    const evidence = mkEvidence({
+      provenance: 'registry',
+      source: 'github:owner/foo',
+      entry: verifiedEntry({ verifiedAt }),
+    })
+    expect(classifyUpdateTarget(evidence, probe, plan).reason).toBe(expected)
+  })
+
+  it('empty-string verifiedAt stays unverified (the pre-existing truthiness guard, still exercised through the same code path)', () => {
+    const plan = clean().plan
+    const probe = clean().probe
+    const evidence = mkEvidence({
+      provenance: 'registry',
+      source: 'github:owner/foo',
+      entry: verifiedEntry({ verifiedAt: '' }),
+    })
+    expect(classifyUpdateTarget(evidence, probe, plan).reason).toBe('unverified')
+  })
+
+  it('absent verifiedAt (undefined) is unverified — negative control for "well-formed" itself', () => {
+    const plan = clean().plan
+    const probe = clean().probe
+    const evidence = mkEvidence({
+      provenance: 'registry',
+      source: 'github:owner/foo',
+      entry: verifiedEntry({ verifiedAt: undefined }),
+    })
+    expect(classifyUpdateTarget(evidence, probe, plan).reason).toBe('unverified')
+  })
+
+  // Staleness — BOTH arms, per CLAUDE.md: "a single-direction test pins
+  // nothing." `plan.verificationStale` is read only by this row; everything
+  // else in these two fixtures is identical and would otherwise reach
+  // `eligible`.
+  it('plan.verificationStale=true demotes an otherwise-eligible, well-formed, present verifiedAt to unverified', () => {
+    const probe = clean().probe
+    const evidence = mkEvidence({
+      provenance: 'registry',
+      source: 'github:owner/foo',
+      entry: verifiedEntry(),
+    })
+    const plan = mkPlan({ verificationStale: true })
+    expect(classifyUpdateTarget(evidence, probe, plan)).toEqual({ reason: 'unverified' })
+  })
+
+  it('control: plan.verificationStale=false leaves the same well-formed, present verifiedAt eligible', () => {
+    const probe = clean().probe
+    const evidence = mkEvidence({
+      provenance: 'registry',
+      source: 'github:owner/foo',
+      entry: verifiedEntry(),
+    })
+    const plan = mkPlan({ verificationStale: false })
+    expect(classifyUpdateTarget(evidence, probe, plan)).toEqual({
+      reason: 'eligible',
+      mode: 'content-write',
+    })
+  })
+
+  it('plan.verificationStale omitted entirely behaves like the false control — the placeholder default is inert, not a lie', () => {
+    const probe = clean().probe
+    const evidence = mkEvidence({
+      provenance: 'registry',
+      source: 'github:owner/foo',
+      entry: verifiedEntry(),
+    })
+    const plan = mkPlan() // no `verificationStale` key at all
+    expect(classifyUpdateTarget(evidence, probe, plan)).toEqual({
+      reason: 'eligible',
+      mode: 'content-write',
+    })
+  })
+})
+
 // ── Rule-table invariants (THE CENTRAL HAZARD backstop) ─────────────────
 
 describe('CLASSIFICATION_RULES — table invariants', () => {

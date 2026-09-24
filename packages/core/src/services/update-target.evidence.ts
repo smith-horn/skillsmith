@@ -15,9 +15,14 @@
  *
  * Waiting for it would block the gate behind an unrelated schedule. Reaching
  * into it early would couple the gate to a shape still being designed. So A2
- * depends on the INPUT and OUTPUT shapes only, ships a temporary resolver
- * behind them, and `classifyUpdateTarget` takes the resolver as a parameter and
- * imports no implementation at all.
+ * depends on the INPUT and OUTPUT shapes only, and ships a temporary resolver
+ * behind them — `temporaryManifestEvidenceResolver` below. `classifyUpdateTarget`
+ * does NOT take that resolver as a parameter (a resolver returns a `Promise`,
+ * and `classifyUpdateTarget` must stay pure, T-G3): it takes the already-
+ * resolved `ManifestEvidence` this resolver produces. See
+ * `update-target-gate.ts`'s own fileoverview ("THIS SIGNATURE IS A
+ * CORRECTION, NOT THE ORIGINAL PLAN TEXT") for the full correction — this
+ * file only ships the resolver the gate consumes, not the gate itself.
  *
  * When SMI-6345 lands, one adapter maps its output to `ManifestEvidence` and
  * `temporaryManifestEvidenceResolver` is deleted. A shared fixture test runs
@@ -96,7 +101,11 @@ export interface ManifestEvidence {
   disqualifiedBy: EvidenceDisqualifier | null
 }
 
-/** The seam. `classifyUpdateTarget` takes one of these and imports no implementation. */
+/** The seam. Resolves `ManifestEvidenceInput` to `ManifestEvidence` — NOT a
+ * parameter of `classifyUpdateTarget` itself (see this module's fileoverview
+ * and `update-target-gate.ts`'s own correction note); whatever calls this
+ * resolver does so BEFORE calling `classifyUpdateTarget`, then hands the
+ * already-resolved `ManifestEvidence` to it. */
 export type ManifestEvidenceResolver = (input: ManifestEvidenceInput) => Promise<ManifestEvidence>
 
 /** The shape returned whenever evidence could not be produced. */

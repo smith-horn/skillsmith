@@ -48,6 +48,24 @@
  * with safe, inert defaults a step-5 caller can supply today without lying:
  * `false`/`null`/`'ok'`/`[]` all mean "nothing known to block this target,"
  * never "positively confirmed clean." See this module's field-level comments.
+ *
+ * A FOURTH placeholder field joined them 2026-09-23 (review round 5, row 8's
+ * fail-open finding): `verificationStale`. ADR-145 §3 says a stale
+ * `verifiedAt` "degrades an entry to the row above it rather than making it
+ * illegal" — i.e. row 8's `unverified`, not row 16's `eligible` — but
+ * deciding "stale" needs the current time, and `classifyUpdateTarget` must
+ * stay pure (T-G3: no `Date.now()`, no clock, no I/O in a rule). So the
+ * clock read happens exactly once, by whoever builds `plan` (same seam as
+ * the other three), and the rule only reads the boolean it computed.
+ * **Neither ADR-145 nor the §4.3 plan doc defines a numeric freshness
+ * window/TTL** — confirmed by reading both; see
+ * `update-target-gate.rules.ts`'s row-8 comment for the citation. This field
+ * carries no default TTL of its own for that reason: inventing one here
+ * would be exactly the kind of unmeasured claim CLAUDE.md's "measure, don't
+ * reason" rule exists to block. Default `false` — "nothing known to be
+ * stale," same fail-closed-toward-`false` direction as this module's other
+ * three placeholders (`false` here means "not flagged stale," not
+ * "confirmed fresh").
  */
 
 import type { ProbeError } from './update-target.probe.types.js'
@@ -113,6 +131,15 @@ export interface UpdateTargetPlan {
    * key (not merely an empty object) is "no baseline recorded" for that
    * file — row 13. */
   readonly fileHashes: Readonly<Record<string, string>>
+  /** Row 8 (review round 5): true when a `provenance: 'registry'` entry's
+   * `verifiedAt` was checked against a freshness window BY THE CALLER (this
+   * function never computes one itself — see this interface's fileoverview)
+   * and found stale. `undefined`/`false` = not flagged stale — row 8 then
+   * falls through to whatever the malformed/absent `verifiedAt` check
+   * decides on its own. Optional, not merely defaulted, so a caller that
+   * genuinely has no freshness policy yet (none is defined today — see the
+   * fileoverview) can omit it without writing a lying `false`. */
+  readonly verificationStale?: boolean
 }
 
 /**

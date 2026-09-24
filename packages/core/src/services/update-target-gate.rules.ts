@@ -72,6 +72,35 @@
  * to the same E3 ceiling) rather than inventing a 24th reason for one more
  * way of being unverified.
  *
+ * ROW 8 — "no `verifiedAt`" means three things, not one. An absent field, a
+ * present-but-MALFORMED one, and a present, well-formed, but STALE one all
+ * fail ADR-145's E1 contract, and the last two need different machinery:
+ *
+ * (a) MALFORMED is decidable here, purely — a string that is not a timestamp
+ *     was never evidence of verification. `isWellFormedVerifiedAt` is
+ *     regex-first (strict `YYYY-MM-DDTHH:mm:ss[.sss]Z`) and uses `Date.parse`
+ *     only as a backstop for an impossible calendar value (month 13).
+ *     **Do not "simplify" this to `Date.parse` alone.** Measured in this
+ *     container's own Node: `Date.parse('0')` returns a FINITE
+ *     `2000-01-01T00:00:00Z` via V8's lenient legacy fallback, and
+ *     `Date.parse('2026')` a finite `2026-01-01` — so a bare parse admits
+ *     `'0'` as a verification timestamp. Neither is a value this field's only
+ *     writer (`apply_manifest_reconcile`'s `verify`) can produce. The full
+ *     case table, with both controls, is in this module's test file.
+ * (b) STALE needs a clock, so it cannot live in a pure rule (T-G3). It
+ *     arrives as `plan.verificationStale` (`update-target-gate.types.ts`),
+ *     computed once by whoever builds `plan`; this row only consumes it,
+ *     treating `true` exactly like a missing `verifiedAt` — ADR-145 §3: a
+ *     stale value "degrades an entry to the row above it rather than making
+ *     it illegal".
+ *
+ *     What this row DEFERS, stated because it is a real gap and not an
+ *     oversight: **neither ADR-145 nor §4.3 defines what "too old" means.**
+ *     No freshness window or TTL exists in either document (checked, not
+ *     assumed). None is invented here or in `UpdateTargetPlan` — a caller
+ *     without a freshness policy simply never sets the field, and (a) still
+ *     applies on its own. Whoever sets it owns that policy.
+ *
  * ROW 5b (added to §4.3 2026-09-23; see that section's own text for the
  * three-state rationale). `escapes-root` maps to `identity-mismatch`
  * (row 10's reason), never to row 1 ("outside the resolved scope"), for a
@@ -175,6 +204,22 @@ function probedHashFor(ok: ProbeOk, rel: string): string | null {
  * fileoverview for why `null` is folded in with `'unknown'` here. */
 function isRegistryRef(source: string | null): boolean {
   return source !== null && source !== 'unknown'
+}
+
+/** Row 8's malformed-timestamp check — see this module's fileoverview ROW 8
+ * note (a) for why a bare `Date.parse` is not enough on its
+ * own (`Date.parse('0')` is finite). Pure: reads only the string it is
+ * given, never the system clock — no `Date.now()`, so `classifyUpdateTarget`
+ * stays I/O-free (T-G3). Requires the strict extended ISO-8601 UTC shape
+ * `apply_manifest_reconcile`'s `verify` action actually writes
+ * (`YYYY-MM-DDTHH:mm:ss[.sss]Z`), then uses `Date.parse` only as a backstop
+ * against a string that matches the shape but names an impossible calendar
+ * value (e.g. month `13`), which the regex alone can't rule out. */
+const ISO_UTC_TIMESTAMP = /^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}(\.\d+)?Z$/
+
+function isWellFormedVerifiedAt(verifiedAt: string | undefined): boolean {
+  if (verifiedAt === undefined || !ISO_UTC_TIMESTAMP.test(verifiedAt)) return false
+  return Number.isFinite(Date.parse(verifiedAt))
 }
 
 /**
@@ -300,9 +345,15 @@ export const CLASSIFICATION_RULES: readonly ClassificationRule[] = [
       if (provenance === null && isRegistryRef(source)) return { reason: 'unverified' }
       // Extended per fileoverview "ROW 8 EXTENDED PAST ITS LITERAL TEXT":
       // ADR-145's own E1 contract requires `verifiedAt`, which no other row
-      // checks.
-      if (provenance === 'registry' && isRegistryRef(source) && !entry?.verifiedAt) {
-        return { reason: 'unverified' }
+      // checks. Per the ROW 8 note above: ABSENT, MALFORMED, and STALE
+      // are three different ways to fail that requirement, checked here in
+      // that order — absent/malformed is decidable purely (a), staleness
+      // reads the caller-computed `plan.verificationStale` flag (b), never a
+      // clock of this rule's own.
+      if (provenance === 'registry' && isRegistryRef(source)) {
+        if (!isWellFormedVerifiedAt(entry?.verifiedAt) || ctx.plan.verificationStale === true) {
+          return { reason: 'unverified' }
+        }
       }
       return null
     },
