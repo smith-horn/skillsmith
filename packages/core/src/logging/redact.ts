@@ -44,10 +44,11 @@ const SENSITIVE_PATTERNS: Array<{ pattern: RegExp; replacement: string }> = [
   { pattern: /\b(ghr_[a-zA-Z0-9]{36})\b/g, replacement: 'ghr_[REDACTED]' },
   // Linear API keys
   { pattern: /\b(lin_api_[a-zA-Z0-9]{32,})\b/g, replacement: 'lin_api_[REDACTED]' },
-  // SMI-6840: `sk_live_` is shared by two issuers with DIFFERENT alphabets. Stripe's live
-  // secret keys are alphanumeric, but Skillsmith mints its own `sk_live_` keys as base64url
-  // (`_shared/license.ts` generateLicenseKey: btoa(...) with +/ -> -_ and = stripped), so the
-  // body can contain `-` and `_`.
+  // SMI-6840: `sk_live_` is a prefix TWO issuers use — Stripe's live secret key and Skillsmith's
+  // own API key. Skillsmith's is base64url (`_shared/license.ts` generateLicenseKey: btoa(...)
+  // with +/ -> -_ and = stripped), so its body can contain `-` and `_`. That is measured from the
+  // generator in this repo. Stripe's alphabet has NOT been measured here — their documentation
+  // states the prefix but gives no alphabet guarantee — so nothing below asserts what it is.
   //
   // The previous `\b(sk_live_[a-zA-Z0-9]{24,})\b` failed on both counts, for most keys. The rate
   // is derivable rather than merely sampled: a base64url body draws from 64 symbols, 62 of them
@@ -88,10 +89,12 @@ const SENSITIVE_PATTERNS: Array<{ pattern: RegExp; replacement: string }> = [
   // `{24,}` minimum at its two boundaries.
   { pattern: /\b(sk_live_[A-Za-z0-9_-]{24,})/g, replacement: 'sk_live_[REDACTED]' },
   // Stripe keys. These three are Stripe-only — nothing in this repo mints an `sk_test_`,
-  // `pk_live_` or `pk_test_` key (SMI-6840: every occurrence is Stripe's own STRIPE_SECRET_KEY
-  // or a test fixture), and Stripe's key bodies are alphanumeric. Left narrow deliberately:
-  // changing an issuer's pattern without a case table for THAT issuer is how the bug above
-  // survived. Widen only against measured evidence of a wider alphabet.
+  // `pk_live_` or `pk_test_` key (SMI-6840: measured with a control, every occurrence is Stripe's
+  // own STRIPE_SECRET_KEY or a test fixture). Left exactly as they were, deliberately: whether an
+  // alphanumeric body is RIGHT for Stripe is unknown here, and changing an issuer's pattern
+  // without a case table for THAT issuer is how the bug above survived. Unknown is not the same
+  // as correct — if a Stripe key can carry a non-alphanumeric character, these have the same
+  // defect. Establish that against a real Stripe key shape before widening or trusting them.
   { pattern: /\b(sk_test_[a-zA-Z0-9]{24,})\b/g, replacement: 'sk_test_[REDACTED]' },
   { pattern: /\b(pk_live_[a-zA-Z0-9]{24,})\b/g, replacement: 'pk_live_[REDACTED]' },
   { pattern: /\b(pk_test_[a-zA-Z0-9]{24,})\b/g, replacement: 'pk_test_[REDACTED]' },

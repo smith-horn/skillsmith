@@ -4,6 +4,18 @@ All notable changes to `@skillsmith/core` are documented here.
 
 ## [Unreleased]
 
+- **Docs**: SMI-6840 (found by the PR #2936 post-merge retro) -- the comment above the `sk_live_`
+  redaction rule asserted that Stripe's live secret keys are alphanumeric, and said so two lines
+  above its own rule that an issuer's alphabet must not be changed without a case table for that
+  issuer. Stripe's alphabet was never measured; their documentation states the prefix and gives no
+  alphabet guarantee. The same overclaim appeared in `.gitleaks.toml`, which said its Clerk rule
+  "is correct for what it names" immediately after saying Clerk's alphabet had not been measured.
+  Both now say what is true: those rules are left unexamined, not vouched for, and if either
+  issuer's keys can carry a non-alphanumeric character then those patterns have the same defect
+  SMI-6840 fixed. No behaviour change -- comments only, every pattern byte-identical. Called out
+  because the claim is load-bearing: it is the stated reason three security patterns were left
+  narrow, and "unknown" reads very differently from "verified correct" to whoever revisits them.
+
 - **Security**: SMI-6840 (PR #2936; found while enumerating redaction sites for SMI-6636) --
   `redactSensitiveData` / `redactSensitiveObject` masked only part of a Skillsmith API key, or none
   of it. The `sk_live_` pattern's body was `[a-zA-Z0-9]`, but `generateLicenseKey` emits base64url,

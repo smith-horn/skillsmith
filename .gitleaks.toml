@@ -101,8 +101,10 @@ tags = ["api", "clerk"]
 #
 # This is a SEPARATE rule rather than a widening of clerk-secret, deliberately. Clerk's
 # own alphabet has not been measured here, and changing an issuer's pattern without a
-# case table for that issuer is the mistake that produced this bug. Leave clerk-secret
-# alone; it is correct for what it names.
+# case table for that issuer is the mistake that produced this bug. So clerk-secret is
+# left exactly as it was -- unexamined, not vouched for. If a Clerk secret key can carry
+# a non-alphanumeric character, that rule has the same defect this one fixes; establish
+# it against a real Clerk key shape before widening or relying on it.
 [[rules]]
 id = "skillsmith-api-key"
 description = "Skillsmith personal API key (sk_live_, base64url body)"
