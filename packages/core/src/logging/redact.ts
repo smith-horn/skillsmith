@@ -44,8 +44,36 @@ const SENSITIVE_PATTERNS: Array<{ pattern: RegExp; replacement: string }> = [
   { pattern: /\b(ghr_[a-zA-Z0-9]{36})\b/g, replacement: 'ghr_[REDACTED]' },
   // Linear API keys
   { pattern: /\b(lin_api_[a-zA-Z0-9]{32,})\b/g, replacement: 'lin_api_[REDACTED]' },
-  // Stripe keys
-  { pattern: /\b(sk_live_[a-zA-Z0-9]{24,})\b/g, replacement: 'sk_live_[REDACTED]' },
+  // SMI-6840: `sk_live_` is shared by two issuers with DIFFERENT alphabets. Stripe's live
+  // secret keys are alphanumeric, but Skillsmith mints its own `sk_live_` keys as base64url
+  // (`_shared/license.ts` generateLicenseKey: btoa(...) with +/ -> -_ and = stripped), so the
+  // body can contain `-` and `_`.
+  //
+  // The previous `\b(sk_live_[a-zA-Z0-9]{24,})\b` failed on both counts. Measured over 10,000
+  // keys from the real generator: 6,353 were not redacted AT ALL and 1,024 were redacted only
+  // up to the first `-`, leaving the tail in the log beside a `[REDACTED]` marker that made the
+  // leak look handled. Two independent mechanisms, and the second is the subtle one:
+  //
+  //   1. A `-` or `_` inside the first 24 body characters ends the run below the {24,} minimum,
+  //      so the whole match fails.
+  //   2. `_` is itself a WORD character, so no `\b` can ever exist between an alphanumeric run
+  //      and a following `_`. Backtracking cannot rescue this — every shorter run is also
+  //      followed by a word character — so a `_` anywhere in the body killed the match.
+  //
+  // Hence: widen the class to the emitted alphabet, and drop the trailing `\b` entirely rather
+  // than swap it for another terminator. The greedy quantifier already consumes the whole body;
+  // any trailing assertion is what broke it. Over-matching into adjacent `[A-Za-z0-9_-]` text is
+  // the deliberate failure direction — over-redaction is safe, under-redaction leaks.
+  //
+  // Widening is monotonic: alphanumeric is a subset of this class, so Stripe's own live keys
+  // stay covered. Do not "simplify" this back to `[a-zA-Z0-9]` or re-add a trailing `\b`.
+  // `redact.test.ts` pins both mechanisms against keys from the real generator.
+  { pattern: /\b(sk_live_[A-Za-z0-9_-]{24,})/g, replacement: 'sk_live_[REDACTED]' },
+  // Stripe keys. These three are Stripe-only — nothing in this repo mints an `sk_test_`,
+  // `pk_live_` or `pk_test_` key (SMI-6840: every occurrence is Stripe's own STRIPE_SECRET_KEY
+  // or a test fixture), and Stripe's key bodies are alphanumeric. Left narrow deliberately:
+  // changing an issuer's pattern without a case table for THAT issuer is how the bug above
+  // survived. Widen only against measured evidence of a wider alphabet.
   { pattern: /\b(sk_test_[a-zA-Z0-9]{24,})\b/g, replacement: 'sk_test_[REDACTED]' },
   { pattern: /\b(pk_live_[a-zA-Z0-9]{24,})\b/g, replacement: 'pk_live_[REDACTED]' },
   { pattern: /\b(pk_test_[a-zA-Z0-9]{24,})\b/g, replacement: 'pk_test_[REDACTED]' },
