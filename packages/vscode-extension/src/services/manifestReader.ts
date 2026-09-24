@@ -33,6 +33,72 @@ interface ManifestFile {
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
+// Update-target reason/result mirror (SMI-6532 A2)
+// ─────────────────────────────────────────────────────────────────────────────
+// Mirrors @skillsmith/core's packages/core/src/services/update-target-reason.ts
+// UpdateTargetReason and UpdateResultCode member lists verbatim (see that
+// file's own doc comment for the full §4.3/§4.4 derivation and the member
+// count discrepancy noted there). Kept in sync manually, per this file's own
+// "Mirror-don't-import" header comment above — the same constraint that keeps
+// this file's other types independent of @skillsmith/core.
+//
+// packages/core/src/services/update-target-reason.test.ts reads this file's
+// source text at test time and diffs these two arrays against core's own
+// UPDATE_TARGET_REASONS / UPDATE_RESULT_CODES member lists, so a drift here
+// fails core's test suite rather than silently shipping two extensions that
+// disagree on what a reason or result code means.
+
+/** Mirrors `UPDATE_TARGET_REASONS` in @skillsmith/core/services/update-target-reason.ts. */
+export const UPDATE_TARGET_REASONS = [
+  'manifest-unreadable',
+  'recovery-record-unreadable',
+  'backup-dir',
+  'recovery-pending',
+  'untracked',
+  'manifest-key-conflict',
+  'git-managed',
+  'local',
+  'illegal-provenance',
+  'unverified',
+  'pinned',
+  'policy-never',
+  'policy-manual',
+  'identity-mismatch',
+  'fetch-failed',
+  'scan-rejected',
+  'unsupported-entry',
+  'no-baseline',
+  'local-edits',
+  'up-to-date',
+  'eligible',
+  'probe-failed',
+  'unreadable',
+] as const
+
+export type UpdateTargetReason = (typeof UPDATE_TARGET_REASONS)[number]
+
+/** Mirrors `UPDATE_RESULT_CODES` in @skillsmith/core/services/update-target-reason.ts. */
+export const UPDATE_RESULT_CODES = [
+  'updated',
+  'changed-since-plan',
+  'busy',
+  'target-changed',
+  'root-changed',
+  'staging-unsafe',
+  'staging-collision',
+  'backup-unsafe',
+  'recovery-pending',
+  'recovery-record-unreadable',
+  'recovery-conflict',
+  'recovery-identity-changed',
+  'recovery-ambiguous',
+  'recovery-moved',
+  'write-failed',
+] as const
+
+export type UpdateResultCode = (typeof UPDATE_RESULT_CODES)[number]
+
+// ─────────────────────────────────────────────────────────────────────────────
 // Manifest entry lookup
 // ─────────────────────────────────────────────────────────────────────────────
 

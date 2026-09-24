@@ -6,6 +6,13 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/), and this
 
 ## [Unreleased]
 
+- **Feature**: SMI-6532 -- the existing `manifestReader` service now carries the closed sets of
+  update skip reasons and result codes (23 and 15 members) that the update eligibility gate uses.
+  They are deliberately mirrored from `@skillsmith/core` rather than imported, because this
+  extension does not depend on that package; a test in core pins the two copies to the same
+  members in the same order, so they cannot drift apart silently. Nothing in the extension reads
+  these values yet, so there is no user-visible behaviour change in this release.
+
 ## v0.7.12
 
 - **Cadence**: Mechanical cadence alignment (no changes since v0.7.11).

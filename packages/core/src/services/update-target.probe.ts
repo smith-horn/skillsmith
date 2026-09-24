@@ -1,0 +1,432 @@
+/**
+ * @fileoverview I/O probe for the update eligibility gate (SMI-6532, A2 §4.2).
+ * @module @skillsmith/core/services/update-target.probe
+ * @see docs/internal/implementation/update-safety-and-source-resolution.md §4.2
+ *
+ * `probeUpdateTarget` does ALL the filesystem I/O for one candidate update
+ * target. The classifier that consumes its output (`classifyUpdateTarget`,
+ * a later step — not this file) is pure and never touches `fs` itself; every
+ * fact it needs about the directory on disk is a plain data field this probe
+ * already produced.
+ *
+ * THE CENTRAL PROPERTY: a probe error never becomes a permissive value.
+ * Today, `manage.update.identity.ts:66-78` turns every read error on
+ * SKILL.md into `localContent = null`, and
+ * `skill-identity-classification.ts:360-366` (`hasRecordedLocalEdit`) then
+ * reads a `null` local hash as "no edit evidence" — i.e. a read FAILURE
+ * silently classifies as "nothing changed here, safe to overwrite." This
+ * probe never does that: every failure mode below produces its own
+ * outcome (`probe-failed` or `unreadable`), never folds into `ok`.
+ *
+ * SANITIZED ERRORS. `{ path, errno }` on a failure outcome means:
+ *   - `errno` is ONLY the OS error code (`err.code`, e.g. `'ENOENT'`,
+ *     `'EACCES'`) — never `err.message` or `err.stack`, which can embed
+ *     unbounded, implementation-specific text (and, on some libuv builds,
+ *     extra syscall diagnostics).
+ *   - `path` is the path THIS PROBE asked for, never `err.path`/`err.dest`
+ *     read back off the exception. A symlink can make Node report a
+ *     completely different path in its own error object; using our own
+ *     intended path avoids ever surfacing where an attacker-planted symlink
+ *     actually pointed.
+ *   - No secrets are read onto this path in the first place: it is always
+ *     one of `dir`, `skillMdPath`, a `writeSet` member joined onto `dir`, or
+ *     (F3: an absolute write-set entry, refused before `path.join` so it is
+ *     never silently re-rooted under `dir`) the caller-supplied absolute path
+ *     itself — filesystem paths the caller already owns, never file content.
+ *
+ * METADATA vs READ/HASH ERRORS (§4.2's own boundary, disambiguated here —
+ * see this module's `## Ambiguity notes` in the fileoverview of the test
+ * file for the reasoning): an `lstat`/`readdir` failure on `dir` itself, an
+ * ancestor, or during the git walk is a METADATA error -> `probe-failed`.
+ * An `lstat`/`readFile` failure on SKILL.md or any individual write-set
+ * MEMBER is a READ error on that file -> `unreadable`. The directory-level
+ * checks decide whether there is anything to classify at all; the per-file
+ * checks decide whether what's there can be trusted for a content
+ * comparison.
+ *
+ * RETRY RULE (§4.2): a swap in another process can leave a tracked folder's
+ * path absent for up to ~15ms (E30). A tracked folder missing `ENOENT` on
+ * the directory or its SKILL.md is re-probed up to 3 times, 20ms apart,
+ * before it counts as missing. The delay is injectable so tests never sleep
+ * for real; the retry COUNT itself must not be faked (SMI-6598) — the tests
+ * in `update-target.probe.test.ts` pin exactly 3 attempts.
+ *
+ * `.skillsmith-staging/` RECORD CHECK: §4.2 says a missing tracked folder
+ * named by a `.skillsmith-staging/` record is `recovery-pending`, not
+ * plain-missing. The default implementation of that check
+ * (`defaultRecoveryPendingChecker`, a documented A1-placeholder — see its
+ * own module, `update-target.probe.recovery.ts`, for the full ambiguity
+ * writeup) lives in a sibling file, re-exported from here; this module only
+ * owns the injectable seam (`ProbeInput.checkRecoveryPending`) and the call
+ * site that invokes it.
+ *
+ * GIT-ANCESTOR DETECTION IS A DELIBERATE DEVIATION FROM THE PLAN.
+ * `update-safety-and-source-resolution.md` §4.2 says "Git detection reuses
+ * A0's walk (`hasGitAncestorBetween`, exported unchanged)." This probe does
+ * NOT do that: `gitAncestor` below is produced by this probe's OWN walk,
+ * `probeGitAncestor` (`update-target.probe.git-ancestor.ts`), after three
+ * consecutive review rounds found a defect in the reuse chain — see that
+ * module's fileoverview for the full history. `hasGitAncestorBetween` itself
+ * is unchanged and stays A0's own install-time gate
+ * (`skill-installation.target-guard.ts`); this probe simply never calls it.
+ */
+
+import { createHash } from 'crypto'
+import * as fs from 'fs/promises'
+import * as path from 'path'
+
+import { probeGitAncestor, type ProbeGitAncestor } from './update-target.probe.git-ancestor.js'
+import { defaultRecoveryPendingChecker } from './update-target.probe.recovery.js'
+import {
+  errnoOf,
+  sanitizeError,
+  type ProbeError,
+  type RecoveryPendingChecker,
+} from './update-target.probe.types.js'
+
+/** Re-exported so `update-target.probe.ts` remains the one public import
+ * point for this probe's whole surface — the implementation lives in
+ * `update-target.probe.recovery.ts` (a documented A1-placeholder; see that
+ * module's fileoverview). */
+export { defaultRecoveryPendingChecker }
+
+/** Re-exported for the same reason: `ProbeError` and `RecoveryPendingChecker`
+ * are defined in `update-target.probe.types.ts` (shared with
+ * `update-target.probe.recovery.ts` and `update-target.probe.git-ancestor.ts`
+ * — see that module's fileoverview for why), and `ProbeGitAncestor` is
+ * defined in `update-target.probe.git-ancestor.ts` — but this module stays
+ * the one public import point for all of it. */
+export type { ProbeError, RecoveryPendingChecker, ProbeGitAncestor }
+
+/** One probed write-set member (SKILL.md is always included, first). */
+export interface ProbedFile {
+  rel: string
+  /** sha256 hex of the file's raw bytes, or `null` when nothing currently exists at this path — not itself an error (e.g. a file the write set will ADD). Hashed as bytes, never decoded/re-encoded through a string, so a binary write-set member (an asset, a script) hashes correctly. */
+  sha256: string | null
+  /** Set only when something other than "regular file or absent" occupies this path. `classifyUpdateTarget` turns this into `unsupported-entry` (§4.3 row 12). */
+  entryType?: 'symlink' | 'directory' | 'other'
+  /** True when this REGULAR file (`entryType` unset) has additional hard
+   * links elsewhere on disk (`lstat`'s `nlink > 1`) — a write here rewrites
+   * every other path sharing that inode, not just this one. §4.3 row 12's
+   * own text ("a symlink, dir, hardlink or other type") names hardlink as a
+   * fourth unsupported shape, but `entryType` is set only for a NON-regular
+   * entry — a hardlinked file IS a regular file, so it was passing through
+   * unflagged until this field. Carried on its own axis rather than folded
+   * into `entryType`'s union: `entryType` answers "what KIND of entry is
+   * this," and a hardlink is still a regular file — a hardlinked regular
+   * file and a directory would otherwise carry the same signal for
+   * different reasons. `classifyUpdateTarget` (row 12,
+   * `update-target-gate.rules.ts`) treats `hardLinked === true` exactly
+   * like `entryType` being present.
+   *
+   * Computed only in the regular-file branch of `probeOneFile` below, never
+   * for a directory: `nlink` on a directory is inherently >1 on POSIX (its
+   * own `.` entry plus one `..` per child subdirectory), so checking it
+   * there would fire on every ordinary directory and carry no signal at
+   * all — and a directory already routes through `entryType` regardless.
+   *
+   * FAILURE DIRECTION (deliberate — same asymmetry `isBackupDir`,
+   * `local-skill-scan.ts`, resolves the same way): this errs toward
+   * flagging too much (false positive) rather than too little (false
+   * negative).
+   *   - False positive — a skills tree created via `cp -al`, or restored by
+   *     a backup tool that hardlinks unchanged files, has `nlink > 1` on
+   *     EVERY file, including ones nobody would call shared. Every such
+   *     skill becomes `unsupported-entry`: never auto-updated, but named in
+   *     the `needs-attention` group with a `move-aside` remediation
+   *     (`update-target-reason.ts`'s `REASON_GROUP`/`REASON_REMEDIATION`)
+   *     — a visible, recoverable skip, not a silent one.
+   *   - False negative — writing through an unflagged hardlink silently
+   *     rewrites content at every OTHER path sharing that inode, not only
+   *     the one the plan named — a write nobody asked for, at a location
+   *     the plan never showed, discovered (if ever) only after the fact.
+   * A visible skip a user can see and undo costs less than a write they
+   * never see happen, so this field always flags. */
+  hardLinked?: boolean
+}
+
+/** Everything the (pure) classifier needs about one on-disk target. */
+export interface ProbeOk {
+  kind: 'ok'
+  /** Never `null` — see {@link ProbeGitAncestor}'s own doc comment for the three states and why there is deliberately no permissive default for "the walk didn't run." */
+  gitAncestor: ProbeGitAncestor
+  /** sha256 of SKILL.md's current raw bytes — duplicated into `files` too, exposed directly since the retry rule is keyed on SKILL.md specifically. `null` when SKILL.md exists but is not a regular file (a symlink, a directory, or another non-regular type) — check `skillMdEntryType` (or, equivalently, `files[0].entryType`; SKILL.md is always first) to tell that case apart. A genuinely missing/unreadable SKILL.md never reaches `ok` at all; it is `probe-failed` or `unreadable` instead. */
+  skillMdHash: string | null
+  /** Set only when `skillMdHash` is `null` — the reason it's null, placed on THIS SAME object so a `null` hash can never be read bare, one level removed from its own explanation in `files[0]`. This module's fileoverview (THE CENTRAL PROPERTY) names exactly that shape — `hasRecordedLocalEdit` (`skill-identity-classification.ts`) reading a bare `null` local hash as "no edit evidence, safe to overwrite" — as the permissive-value-from-undetermined-state bug this probe exists to remove; a type change from `string` to `string | null` on `skillMdHash` alone would let `if (!probe.skillMdHash)` compile silently past that same shape one level down. */
+  skillMdEntryType?: 'symlink' | 'directory' | 'other'
+  /** One entry per write-set member, `SKILL.md` first. */
+  files: ProbedFile[]
+}
+
+export type ProbeOutcome =
+  | ProbeOk
+  | { kind: 'recovery-pending' }
+  | { kind: 'probe-failed'; error: ProbeError }
+  | { kind: 'unreadable'; error: ProbeError }
+
+export interface ProbeInput {
+  /** Absolute directory being probed (the update target's current location). */
+  dir: string
+  /** Absolute skills-root directory `dir` lives under — the git walk's upper bound. */
+  skillsDir: string
+  /** Basename of `dir` — used to build the `.skillsmith-staging/` lookup. */
+  dirName: string
+  /** Relative POSIX paths this update will touch. SKILL.md is probed regardless of whether it's listed here. */
+  writeSet: readonly string[]
+  /** Attempts before a missing tracked folder counts as missing. Spec: 3. */
+  retryAttempts?: number
+  /** Delay between attempts, ms. Spec: 20. */
+  retryDelayMs?: number
+  /** Injectable sleep so tests never sleep for real. */
+  sleep?: (ms: number) => Promise<void>
+  /** Injectable staging-record check — see this module's fileoverview. */
+  checkRecoveryPending?: RecoveryPendingChecker
+}
+
+const DEFAULT_RETRY_ATTEMPTS = 3
+const DEFAULT_RETRY_DELAY_MS = 20
+
+function defaultSleep(ms: number): Promise<void> {
+  return new Promise((resolve) => setTimeout(resolve, ms))
+}
+
+type PresenceResult =
+  | { status: 'present' }
+  | { status: 'missing' }
+  | { status: 'error'; error: ProbeError }
+
+/** Rule (missing check): `dir` must exist AND be a directory, and its SKILL.md must exist. A non-directory occupying `dir` is not "missing" (retrying won't fix it) — it is an immediate metadata error.
+ *
+ * `dir` is `stat`'d (follows symlinks), never `lstat`'d — a fan-out-symlinked
+ * skill directory (`fan-out.ts:226`'s `fsp.symlink(relTarget, staged, 'dir')`)
+ * is a shipped install shape, and `skill-installation.target-guard.ts`'s own
+ * `isUsableDirectory` rule (c) already treats "a symlink that resolves to a
+ * directory inside `skillsDir`" as usable — this probe must classify the
+ * same shape the same way, not fabricate an `ENOTDIR` no syscall produced
+ * (an `lstat` on a symlink-to-directory reports the symlink itself, never a
+ * directory). Following the link also makes the git walk below reachable
+ * through it: `probeGitAncestor` (`update-target.probe.git-ancestor.ts`)
+ * always resolves `dir` through realpath before walking, so a symlinked
+ * `dir` this check lets past is probed the same way as an ordinary
+ * non-symlink `dir` whose LEXICAL ANCESTOR happens to be a symlink — `fs.
+ * realpath` resolves every path component, not just the final one, and this
+ * check says nothing about that ancestor case one way or the other; both
+ * reach the same realpath-only walk regardless. A broken symlink correctly
+ * falls into the retry/missing path below (`stat`
+ * reports `ENOENT` for a symlink whose target is gone); a real non-directory
+ * file still fails `isDirectory()` with a genuine `ENOTDIR`.
+ */
+async function checkPresence(dir: string, skillMdPath: string): Promise<PresenceResult> {
+  try {
+    const dirStat = await fs.stat(dir)
+    if (!dirStat.isDirectory()) {
+      return { status: 'error', error: { path: dir, errno: 'ENOTDIR' } }
+    }
+  } catch (err) {
+    if (errnoOf(err) === 'ENOENT') return { status: 'missing' }
+    return { status: 'error', error: sanitizeError(dir, err) }
+  }
+  try {
+    await fs.lstat(skillMdPath)
+    return { status: 'present' }
+  } catch (err) {
+    if (errnoOf(err) === 'ENOENT') return { status: 'missing' }
+    return { status: 'error', error: sanitizeError(skillMdPath, err) }
+  }
+}
+
+/** Probe one write-set member: lstat, classify its entry type, hash if it's a regular file. Never throws — every failure comes back as `{ error }`. */
+async function probeOneFile(
+  abs: string,
+  rel: string
+): Promise<{ file: ProbedFile } | { error: ProbeError }> {
+  let st
+  try {
+    st = await fs.lstat(abs)
+  } catch (err) {
+    if (errnoOf(err) === 'ENOENT') return { file: { rel, sha256: null } }
+    return { error: sanitizeError(abs, err) }
+  }
+  if (st.isSymbolicLink()) return { file: { rel, sha256: null, entryType: 'symlink' } }
+  if (st.isDirectory()) return { file: { rel, sha256: null, entryType: 'directory' } }
+  if (!st.isFile()) return { file: { rel, sha256: null, entryType: 'other' } }
+  try {
+    const buf = await fs.readFile(abs)
+    const file: ProbedFile = { rel, sha256: createHash('sha256').update(buf).digest('hex') }
+    // `st` is the lstat above, already known regular at this point — `nlink`
+    // costs nothing extra to read off it. See `ProbedFile.hardLinked`'s own
+    // doc comment for why this is checked only here (never for a directory
+    // or symlink) and for the deliberate failure direction.
+    if (st.nlink > 1) file.hardLinked = true
+    return { file }
+  } catch (err) {
+    return { error: sanitizeError(abs, err) }
+  }
+}
+
+/** Dedupe `writeSet` against a leading `SKILL.md`, preserving first-seen order
+ * (determinism). Dedupes by NORMALIZED path, not the raw string —
+ * `'./SKILL.md'` and `'SKILL.md'` name the same file and must collapse to
+ * one probed entry with one hash, not two `files` rows where only the
+ * literal `'SKILL.md'` spelling ever populates `skillMdHash`. This does NOT
+ * collapse every equivalent spelling: `path.normalize` strips a leading
+ * `./` and redundant/internal separators, but a TRAILING separator survives
+ * (`path.normalize('SKILL.md/')` -> `'SKILL.md/'`, measured), so that spells
+ * a second, undeduped row. That's deliberately left as-is rather than
+ * stripped: a trailing separator asserts "this must be a directory" to
+ * `lstat` on some platforms, a genuinely different filesystem question than
+ * the bare name — collapsing it would hide a case where the two entries can
+ * legitimately behave differently. The extra row is fail-closed (an
+ * unnecessary probe, never a missed one), not a regression. */
+function orderedWriteSet(writeSet: readonly string[]): string[] {
+  const seen = new Set<string>()
+  const out: string[] = []
+  for (const raw of ['SKILL.md', ...writeSet]) {
+    const rel = path.normalize(raw)
+    if (seen.has(rel)) continue
+    seen.add(rel)
+    out.push(rel)
+  }
+  return out
+}
+
+/** A write-set member must resolve inside `dir` — refuses a `..`-escaping
+ * entry rather than reading whatever it points at. An ABSOLUTE entry is
+ * refused earlier, by the caller, before it ever reaches `path.join`:
+ * joining an absolute path onto `dir` silently DISCARDS `dir`
+ * (`path.join('/root/skill', '/etc/passwd')` -> `'/root/skill/etc/passwd'`),
+ * so this containment check alone would pass on a path it never actually
+ * contained, and the `rel` reported back would describe different bytes
+ * than the ones hashed. */
+function isContained(dir: string, abs: string): boolean {
+  return abs === dir || abs.startsWith(dir + path.sep)
+}
+
+/**
+ * Probe one candidate update target. All I/O; no classification decision —
+ * see this module's fileoverview.
+ */
+export async function probeUpdateTarget(input: ProbeInput): Promise<ProbeOutcome> {
+  const { dir, skillsDir, dirName, writeSet } = input
+  const attempts = input.retryAttempts ?? DEFAULT_RETRY_ATTEMPTS
+  const delayMs = input.retryDelayMs ?? DEFAULT_RETRY_DELAY_MS
+  const sleep = input.sleep ?? defaultSleep
+  const checkRecoveryPending = input.checkRecoveryPending ?? defaultRecoveryPendingChecker
+  const skillMdPath = path.join(dir, 'SKILL.md')
+
+  let missing = false
+  for (let attempt = 1; attempt <= attempts; attempt++) {
+    const presence = await checkPresence(dir, skillMdPath)
+    if (presence.status === 'present') {
+      missing = false
+      break
+    }
+    if (presence.status === 'error') {
+      return { kind: 'probe-failed', error: presence.error }
+    }
+    missing = true
+    if (attempt < attempts) await sleep(delayMs)
+  }
+
+  if (missing) {
+    // The default checker never throws (it fails safe to `false`
+    // internally), but an INJECTED `checkRecoveryPending` (`ProbeInput`) is
+    // caller-supplied and can reject — the only uncaught surface left in
+    // this probe. Contain it the same way every other failure mode here is
+    // contained: a seam crash fails CLOSED into `probe-failed`, never
+    // propagates past this function as an unhandled rejection.
+    let pending: boolean
+    try {
+      pending = await checkRecoveryPending({ skillsDir, dir, dirName })
+    } catch (err) {
+      return { kind: 'probe-failed', error: sanitizeError(dir, err) }
+    }
+    if (pending) return { kind: 'recovery-pending' }
+    // `path: dir` here names an entry that, for the dangling-symlink case
+    // (F1), DOES still exist on disk — `dir` is the symlink itself, which
+    // `readdir`/`ls` on its parent would still list. The ENOENT describes
+    // its TARGET (what `stat` tried to follow and couldn't), not `dir`'s own
+    // presence. Don't read this as a second, fabricated "no such entry" on
+    // top of a real one — it's the same single failure `checkPresence`
+    // already observed, reported through the one path this probe ever names.
+    return { kind: 'probe-failed', error: { path: dir, errno: 'ENOENT' } }
+  }
+
+  // SMI-6532 (round following A0.6, finding 3): git-ancestor detection is
+  // this probe's OWN bounded walk (`probeGitAncestor`,
+  // `update-target.probe.git-ancestor.ts`), never a reuse of A0's
+  // `hasGitAncestorBetween` — a DELIBERATE DEVIATION from
+  // `update-safety-and-source-resolution.md` §4.2, which specifies reuse.
+  // Three consecutive review rounds found a defect in that reuse chain (a
+  // fabricated `ENOTDIR`, an unbounded walk for an escaping symlink, and
+  // then a realpath-vs-lexical gap in the round-2 FIX for the unbounded
+  // walk); see `update-target.probe.git-ancestor.ts`'s fileoverview for the
+  // full history. `probeGitAncestor` asserts containment INTERNALLY — it is
+  // never a precondition this call site must prove, the exact arrangement
+  // that produced all three findings.
+  //
+  // A real `lstat` failure during the walk (`undetermined; reason:
+  // 'stat-error'`) is a METADATA error, same as every other directory-level
+  // `lstat` in this probe (see fileoverview, "METADATA vs READ/HASH
+  // ERRORS") — intercepted into `probe-failed` here, never placed on
+  // `ok.gitAncestor`. Every other outcome (`found`, `none`, or
+  // `undetermined` with reason `escapes-root`/`depth-cap`) IS
+  // `ProbeGitAncestor` already — see that type's own doc comment for why
+  // `undetermined` is reported rather than a permissive `none`/`null`.
+  const gitWalk = await probeGitAncestor(dir, skillsDir)
+  if (gitWalk.kind === 'undetermined' && gitWalk.reason === 'stat-error') {
+    return { kind: 'probe-failed', error: gitWalk.error }
+  }
+  const gitAncestor: ProbeGitAncestor = gitWalk
+
+  const files: ProbedFile[] = []
+  let skillMdFile: ProbedFile | undefined
+  for (const rel of orderedWriteSet(writeSet)) {
+    // Refuse an absolute entry BEFORE `path.join`, not after: joining one
+    // onto `dir` discards `dir` and produces a path that WOULD pass the
+    // containment check below, hashing bytes at a location the reported
+    // `rel` disagrees with (§4.2, F3).
+    if (path.isAbsolute(rel)) {
+      return { kind: 'unreadable', error: { path: rel, errno: 'EINVAL' } }
+    }
+    const abs = path.join(dir, rel)
+    if (!isContained(dir, abs)) {
+      return { kind: 'unreadable', error: { path: abs, errno: 'EINVAL' } }
+    }
+    const probed = await probeOneFile(abs, rel)
+    if ('error' in probed) return { kind: 'unreadable', error: probed.error }
+    files.push(probed.file)
+    if (rel === 'SKILL.md') skillMdFile = probed.file
+  }
+
+  // orderedWriteSet always puts a normalized 'SKILL.md' first, so the loop
+  // above always ran probeOneFile for it — this branch is defensive, not a
+  // real path through the code.
+  if (skillMdFile === undefined) {
+    return { kind: 'probe-failed', error: { path: skillMdPath, errno: 'ENOENT' } }
+  }
+
+  if (skillMdFile.sha256 === null && skillMdFile.entryType === undefined) {
+    // The presence check above just confirmed SKILL.md exists as SOME
+    // filesystem entry; a null hash with NO entryType means probeOneFile's
+    // own lstat hit ENOENT — it vanished in the gap between that check and
+    // this read, a fresh miss, not a crash. Report it the same way
+    // plain-missing is reported, never as a permissive `ok`.
+    //
+    // A null hash WITH an entryType (symlink/directory/other) is a
+    // DIFFERENT case: SKILL.md exists but isn't a regular file. That is
+    // data for the (pure) classifier to route into §4.3 row 12
+    // (`unsupported-entry`), not a probe failure — it falls through to `ok`
+    // below with `skillMdHash: null` and the type preserved on
+    // `skillMdEntryType` (and, equivalently, `files[0].entryType`).
+    return { kind: 'probe-failed', error: { path: skillMdPath, errno: 'ENOENT' } }
+  }
+
+  return {
+    kind: 'ok',
+    gitAncestor,
+    skillMdHash: skillMdFile.sha256,
+    skillMdEntryType: skillMdFile.entryType,
+    files,
+  }
+}

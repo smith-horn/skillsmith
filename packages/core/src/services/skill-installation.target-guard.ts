@@ -44,6 +44,12 @@ import * as fs from 'fs/promises'
 import type { Stats } from 'fs'
 import * as path from 'path'
 import type { InstallErrorCode, SkillManifestEntry } from './skill-installation.types.js'
+import {
+  resolveRealOrFallback,
+  isRealpathInside,
+} from './skill-installation.realpath-containment.js'
+
+export { resolveRealOrFallback }
 
 /** The refusal codes {@link checkInstallTarget} can return. */
 export type InstallTargetFailureCode = Extract<
@@ -70,16 +76,6 @@ export interface CheckInstallTargetParams {
 export type CheckInstallTargetResult =
   | { ok: true; preExisted: boolean }
   | { ok: false; code: InstallTargetFailureCode; error: string; tips?: string[] }
-
-/** `fs.realpath`, falling back to a lexical `path.resolve` when the path can't be resolved
- * (e.g. it doesn't exist, or a component was removed mid-check) — never throws. */
-export async function resolveRealOrFallback(target: string): Promise<string> {
-  try {
-    return await fs.realpath(target)
-  } catch {
-    return path.resolve(target)
-  }
-}
 
 /**
  * SMI-6529 #16 (round 4): distinguishes a REAL `.git` hit from a fail-closed
@@ -157,7 +153,7 @@ async function walkForGitEntry(startAbs: string, stopAtAbs: string): Promise<Git
  * proven a symlinked `installPath`'s realpath resolves inside (real)
  * `skillsDir` before this ever runs.
  */
-async function hasGitAncestorBetween(
+export async function hasGitAncestorBetween(
   installPath: string,
   skillsDir: string
 ): Promise<GitWalkResult | null> {
@@ -173,7 +169,12 @@ async function hasGitAncestorBetween(
 }
 
 /** Rule (c): `installPath` is a usable directory, either directly or via a symlink
- * that resolves to a directory inside `skillsDir`. */
+ * that resolves to a directory inside `skillsDir`. The containment half of
+ * this rule is `isRealpathInside` (`skill-installation.realpath-containment.ts`).
+ * `update-target.probe.ts` does NOT reuse this predicate as a precondition
+ * for `hasGitAncestorBetween` the way an earlier round had it do — see
+ * `update-target.probe.git-ancestor.ts`'s fileoverview for why the probe now
+ * runs its own, fully self-contained walk instead. */
 async function isUsableDirectory(
   installPath: string,
   skillsDir: string,
@@ -184,13 +185,7 @@ async function isUsableDirectory(
   try {
     const followed = await fs.stat(installPath)
     if (!followed.isDirectory()) return false
-    // SMI-4758: resolve BOTH sides through the identical helper (never a raw
-    // fs.realpath on one side and a fallback-guarded resolve on the other) —
-    // asymmetric methodology is exactly the bug class this comparison must
-    // avoid, not merely a lint-satisfying detail.
-    const real = await resolveRealOrFallback(installPath)
-    const resolvedSkillsDir = await resolveRealOrFallback(skillsDir)
-    return real === resolvedSkillsDir || real.startsWith(resolvedSkillsDir + path.sep)
+    return await isRealpathInside(installPath, skillsDir)
   } catch {
     return false // broken symlink or unreadable target
   }

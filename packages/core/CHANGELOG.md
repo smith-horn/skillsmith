@@ -16,6 +16,26 @@ All notable changes to `@skillsmith/core` are documented here.
   says so correctly. Whether `evictLeastUsed` should simply be renamed, since the name is what keeps
   inviting the wrong reading, is left open on SMI-6826.
 
+- **Feature**: SMI-6532 -- the first internal pieces of the update eligibility gate, which will
+  decide whether an update may write into a given skill directory. Nothing reads them from a
+  command yet, so there is no user-visible behaviour change in this release. Adds a manifest
+  evidence resolver behind a swappable seam (`update-target.evidence.ts`); a closed set of skip
+  reasons and result codes carrying machine-readable remediation data
+  (`update-target-reason.ts`), so an unhandled member fails typecheck instead of falling through
+  at runtime; and a probe (`update-target.probe.ts`) that performs the filesystem reads and fails
+  closed -- a permission or read error becomes an explicit `probe-failed`/`unreadable` outcome
+  rather than a value that reads as "nothing to do". New exports: `isBackupDir` (below) and
+  `hasGitAncestorBetween`.
+
+- **Fix**: SMI-6532 -- a backup directory could be mistaken for an ordinary skill, and so become a
+  candidate for overwriting. The backup-directory check matched only a `<name>.backup-YYYYMMDD-HHMMSS`
+  form that no code in the tree actually writes, and missed the `<name>.backup-<epoch-ms>` form
+  `ActivationManager` really creates. It is now a shared, exported `isBackupDir` matching `.backup-`
+  followed by a digit, which covers both forms and any trailing suffix. It deliberately errs toward
+  treating a directory as a backup: the cost of a false match is that a skill so named is not
+  auto-updated, weighed against the cost of overwriting the backup that exists to recover a failed
+  update.
+
 - **Fix**: SMI-6744 / SMI-6814 (PR #2923 post-merge retro G3/G4; PR #2924 governance F1 and retro
   C3/C4/C5/C8; PR #2925 retro F-A/F-B) -- `buildHighlights()` no longer wraps every character of
   a result in `<mark></mark>` when the query carries an empty term (a trailing space, a lone `*`,
