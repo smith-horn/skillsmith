@@ -135,7 +135,16 @@ check_foreign_project() {
     [[ -n "$this_project" ]] || die "could not resolve this checkout's Compose project name: docker compose -f $COMPOSE_FILE config --format json | jq -r .name"
     container_project="$(docker inspect "$CONTAINER_NAME" --format '{{index .Config.Labels "com.docker.compose.project"}}' 2>/dev/null || true)"
     container_workdir="$(docker inspect "$CONTAINER_NAME" --format '{{index .Config.Labels "com.docker.compose.project.working_dir"}}' 2>/dev/null || true)"
-    if [[ -n "$container_project" ]] && [[ "$container_project" != "$this_project" ]]; then
+    # Cross-family gate round 1 on PR #2934 (Medium): an EMPTY label read --
+    # the inspect failed, or the container carries no Compose project label
+    # at all (started by hand, or by a tool that is not Compose) -- used to
+    # fall through as "no foreign project" and let `up` reconcile it. That is
+    # the fail-open shape this check exists to close; "could not read" is not
+    # "ours". Refuse and say how to look.
+    if [[ -z "$container_project" ]]; then
+        die "container $CONTAINER_NAME already exists but its Compose project label could not be read (empty, or the inspect failed) -- refusing to assume it belongs to this checkout ($this_project). Inspect it: docker inspect $CONTAINER_NAME --format '{{index .Config.Labels \"com.docker.compose.project\"}}' -- if it is not Compose-managed, stop it first and remove it by hand: docker stop $CONTAINER_NAME && docker rm $CONTAINER_NAME"
+    fi
+    if [[ "$container_project" != "$this_project" ]]; then
         if [[ -d "$container_workdir" ]]; then
             die "container $CONTAINER_NAME already exists and belongs to a DIFFERENT Compose project ($container_project, working_dir=$container_workdir) than this checkout's project ($this_project) -- refusing to reconcile silently into a takeover. Remediation: ( cd \"$container_workdir\" && docker compose --profile ruflo down ruflo ) from THAT project first, then re-run this script."
         else

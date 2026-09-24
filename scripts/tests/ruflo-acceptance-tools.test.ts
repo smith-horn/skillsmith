@@ -32,7 +32,7 @@
  * vacuous one (CLAUDE.md's "a regression test you have not run against the
  * unfixed code is unverified").
  */
-import { describe, expect, it } from 'vitest'
+import { afterAll, beforeAll, describe, expect, it } from 'vitest'
 import { execFileSync, spawnSync } from 'node:child_process'
 import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
@@ -255,6 +255,65 @@ describe('lib/common.sh acceptance_exit_code() (M-5, post-merge governance retro
   it('exits 0 when only mutations ran (arms_total=0, a --mutations-only invocation) and all were KILLED', () => {
     const r = runAcceptanceExitCode('0', '0', '3', '0')
     expect(r.stdout, `stderr: ${r.stderr}`).toContain('exit=0')
+  })
+})
+
+// Cross-family gate round 1 on PR #2934 (class-1): run.sh's documentation-only
+// --mutation-egress mode used to exit 0 right after printing, BEFORE any other
+// selector's section ran, so `--quad --mutation-egress` reported success for
+// a run that never ran the quad arms -- a false-green path straight through
+// the M-5 never-ran fix above. The parse-time refusal (exit 2) is the fix;
+// this block drives run.sh's real argument parser with a docker stub on PATH
+// that always fails, so neither the live service nor any section can be
+// reached whatever the host has installed.
+describe('run.sh selector parsing: --mutation-egress cannot be combined (gate round 1, PR #2934)', () => {
+  const RUN_SH_PATH = join(REPO_ROOT, 'scripts', 'ruflo-acceptance', 'run.sh')
+  let stubDir: string
+  let scratch: string
+
+  beforeAll(() => {
+    stubDir = mkdtempSync(join(tmpdir(), 'ruflo-run-sh-stub-'))
+    scratch = mkdtempSync(join(tmpdir(), 'ruflo-run-sh-scratch-'))
+    // A docker that always fails: run.sh's IMAGE= probe tolerates it (|| true)
+    // and its service-presence refusal (exit 1) fires for any invocation that
+    // gets past the parser, so no arm ever reaches a live daemon here.
+    writeFileSync(join(stubDir, 'docker'), '#!/bin/sh\nexit 1\n', { mode: 0o755 })
+  })
+
+  afterAll(() => {
+    rmSync(stubDir, { recursive: true, force: true })
+    rmSync(scratch, { recursive: true, force: true })
+  })
+
+  function runSh(args: string[]) {
+    return spawnSync('bash', [RUN_SH_PATH, ...args], {
+      encoding: 'utf8',
+      env: {
+        ...process.env,
+        PATH: `${stubDir}:${process.env['PATH'] ?? '/usr/local/bin:/usr/bin:/bin'}`,
+        RUFLO_ACCEPT_SCRATCH: scratch,
+      },
+    })
+  }
+
+  it('refuses --quad --mutation-egress at parse time with exit 2, before any section or the service check', () => {
+    const r = runSh(['--quad', '--mutation-egress'])
+    expect(r.status, `stdout: ${r.stdout}\nstderr: ${r.stderr}`).toBe(2)
+    expect(r.stderr).toContain('cannot be combined with another selector')
+    expect(r.stdout).not.toContain('service')
+  })
+
+  it('refuses --all --mutation-egress the same way', () => {
+    const r = runSh(['--all', '--mutation-egress'])
+    expect(r.status, `stdout: ${r.stdout}\nstderr: ${r.stderr}`).toBe(2)
+    expect(r.stderr).toContain('cannot be combined with another selector')
+  })
+
+  it('control: --mutation-egress alone is NOT refused by the parser (it proceeds to the service check, which the stub fails with exit 1)', () => {
+    const r = runSh(['--mutation-egress'])
+    expect(r.status, `stdout: ${r.stdout}\nstderr: ${r.stderr}`).toBe(1)
+    expect(r.stderr).not.toContain('cannot be combined')
+    expect(r.stderr).toContain('is not present')
   })
 })
 

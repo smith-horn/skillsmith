@@ -133,7 +133,14 @@ elif [[ "$sub1" == "inspect" ]]; then
         printf '%s' "${FAKE_CONTAINER_WORKDIR:-}"
         exit 0
     elif [[ "$*" == *"com.docker.compose.project"* ]]; then
-        printf '%s' "${FAKE_CONTAINER_PROJECT:-}"
+        # Arm 15c: the container EXISTS (FAKE_CONTAINER_PROJECT set) but its
+        # project label reads back empty -- a hand-started or non-Compose
+        # container, or a failed inspect.
+        if [[ "${FAKE_CONTAINER_LABEL_EMPTY:-}" == "1" ]]; then
+            printf ''
+        else
+            printf '%s' "${FAKE_CONTAINER_PROJECT:-}"
+        fi
         exit 0
     else
         echo "  (fake mount fact)"
@@ -590,11 +597,31 @@ else
 fi
 unset FAKE_THIS_PROJECT FAKE_CONTAINER_PROJECT FAKE_CONTAINER_WORKDIR
 
+# ---- 15c: the container exists but its project label reads back EMPTY --
+# must be refused (fail closed), never treated as "no foreign project"
+# (cross-family gate round 1 on PR #2934, Medium: PR-16 named the mutation
+# "label read returns empty" and arms 15a/15b did not kill it).
+reset_fixture
+export FAKE_THIS_PROJECT="this-checkout-project"
+export FAKE_CONTAINER_PROJECT="exists-but-unlabelled"
+export FAKE_CONTAINER_LABEL_EMPTY=1
+EXIT_CODE="$(run_script)"
+if [[ "$EXIT_CODE" -eq 0 ]]; then
+    fail_case "15c-foreign-project-label-empty" "expected non-zero exit (refusal), got 0, log:\n$(cat "$SCRATCH_ROOT/out.log")"
+elif ! grep -qF "project label could not be read" "$SCRATCH_ROOT/out.log"; then
+    fail_case "15c-foreign-project-label-empty" "expected the refusal to say the label could not be read, log:\n$(cat "$SCRATCH_ROOT/out.log")"
+elif grep -qE "volume (create|inspect)" "$FAKE_DOCKER_CALL_LOG"; then
+    fail_case "15c-foreign-project-label-empty" "expected NO volume/store bookkeeping before this refusal, log:\n$(cat "$FAKE_DOCKER_CALL_LOG")"
+else
+    echo "applied=foreign-project-refuse-unlabelled PASS (15c-foreign-project-label-empty): refused when the existing container's project label read back empty, before any bookkeeping"
+fi
+unset FAKE_THIS_PROJECT FAKE_CONTAINER_PROJECT FAKE_CONTAINER_LABEL_EMPTY
+
 echo ""
 if [[ "$FAIL_COUNT" -eq 0 ]]; then
-    echo "SUMMARY: 15/15 arms passed"
+    echo "SUMMARY: 16/16 arms passed"
     exit 0
 else
-    echo "SUMMARY: $FAIL_COUNT/15 arms FAILED"
+    echo "SUMMARY: $FAIL_COUNT/16 arms FAILED"
     exit 1
 fi

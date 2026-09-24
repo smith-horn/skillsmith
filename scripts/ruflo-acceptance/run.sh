@@ -44,7 +44,8 @@
 # per-probe codes named above at line 37, which describe one MCP reply, not
 # the harness run as a whole; derived by lib/common.sh's
 # acceptance_exit_code(), M-5, post-merge governance retro on PR #2931):
-#   2 -- usage error (no flag given, or an unrecognized one).
+#   2 -- usage error (no flag given, an unrecognized one, or --mutation-egress
+#        combined with another selector -- see the parse-time check below).
 #   1 -- the Compose service $SERVICE is not present; ADR-170 § 6 requires
 #        acceptance to run against the service itself.
 #   4 -- REFUSING: nothing ran at all (no arm evaluated a predicate AND no
@@ -119,6 +120,17 @@ for a in "$@"; do
     *) printf 'unknown option: %s\n' "$a" >&2; exit 2 ;;
   esac
 done
+# Cross-family gate round 1 on PR #2934 (class-1): --mutation-egress used to
+# exit 0 right after printing its write-up, BEFORE any other selector's
+# section ran, so `--quad --mutation-egress` (or `--all --mutation-egress`)
+# reported success for a run that never ran the sections it was asked for --
+# a false-green path straight through the never-ran fix above. It is
+# documentation-only and cannot be combined with another selector; refusing
+# here, at parse time, keeps that carve-out honest.
+if [ "$DO_EGRESS_MUT" -eq 1 ] && [ $((DO_EGRESS + DO_SEED + DO_MUT + DO_CONSOL + DO_QUAD)) -gt 0 ]; then
+  printf 'usage: --mutation-egress is documentation-only and cannot be combined with another selector (it would exit 0 before the other sections ran)\n' >&2
+  exit 2
+fi
 
 # The cache the host-side cross-implementation recomputation reads. Copied out
 # of the RUNNING service by docker cp and verified by sha256 inside
@@ -145,7 +157,10 @@ printf 'container: %s (%s)\n' "$(docker inspect "$SERVICE" --format '{{.Id}}' | 
 
 if [ "$DO_EGRESS_MUT" -eq 1 ]; then
   # Documentation-only mode: deliberately bypasses acceptance_exit_code()
-  # (see the exit-code block above) -- there is no predicate to gate on.
+  # (see the exit-code block above) -- there is no predicate to gate on. It
+  # is reachable only alone: the parse-time check above refuses it alongside
+  # any other selector, so this exit 0 can never stand in for a section that
+  # was asked for and did not run.
   egress_mutation_doc
   exit 0
 fi
