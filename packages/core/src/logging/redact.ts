@@ -49,10 +49,17 @@ const SENSITIVE_PATTERNS: Array<{ pattern: RegExp; replacement: string }> = [
   // (`_shared/license.ts` generateLicenseKey: btoa(...) with +/ -> -_ and = stripped), so the
   // body can contain `-` and `_`.
   //
-  // The previous `\b(sk_live_[a-zA-Z0-9]{24,})\b` failed on both counts. Measured over 10,000
-  // keys from the real generator: 6,353 were not redacted AT ALL and 1,024 were redacted only
-  // up to the first `-`, leaving the tail in the log beside a `[REDACTED]` marker that made the
-  // leak look handled. Two independent mechanisms, and the second is the subtle one:
+  // The previous `\b(sk_live_[a-zA-Z0-9]{24,})\b` failed on both counts, for most keys. The rate
+  // is derivable rather than merely sampled: a base64url body draws from 64 symbols, 62 of them
+  // alphanumeric, so the chance that the first 24 body characters contain no `-` or `_` is
+  // (62/64)^24, and the pattern fails to match outright for the remaining 1 - (62/64)^24 =
+  // **53.3%**. The true leak rate is higher still, because a `_` later in the body defeats the
+  // trailing `\b` as well (mechanism 2 below). A 10,000-key sample agreed: 6,353 not redacted at
+  // all and 1,024 redacted only up to the first `-`, leaving the tail beside a `[REDACTED]`
+  // marker that made the leak look handled. Prefer the closed form when citing this; the sample
+  // was unseeded and is corroboration, not provenance.
+  //
+  // Two independent mechanisms, and the second is the subtle one:
   //
   //   1. A `-` or `_` inside the first 24 body characters ends the run below the {24,} minimum,
   //      so the whole match fails.
@@ -60,14 +67,25 @@ const SENSITIVE_PATTERNS: Array<{ pattern: RegExp; replacement: string }> = [
   //      and a following `_`. Backtracking cannot rescue this — every shorter run is also
   //      followed by a word character — so a `_` anywhere in the body killed the match.
   //
-  // Hence: widen the class to the emitted alphabet, and drop the trailing `\b` entirely rather
-  // than swap it for another terminator. The greedy quantifier already consumes the whole body;
-  // any trailing assertion is what broke it. Over-matching into adjacent `[A-Za-z0-9_-]` text is
-  // the deliberate failure direction — over-redaction is safe, under-redaction leaks.
+  // Hence: widen the class to the emitted alphabet, and drop the trailing `\b`. The greedy
+  // quantifier already consumes the whole body, so no terminator is needed here. Note the
+  // precise claim: it is `\b` SPECIFICALLY that is incompatible with a base64url body, because
+  // `_` is a word character. A base64url-aware assertion such as `(?![A-Za-z0-9_-])` would be
+  // correct — it is simply redundant after a greedy match. Do not read this as "trailing
+  // assertions are wrong"; re-adding `\b` is what must not happen.
+  //
+  // The cost, stated honestly: the match now runs on into any adjacent `[A-Za-z0-9_-]` text, so
+  // `sk_live_<key>_status_ok` redacts the trailing `_status_ok` too. That is the deliberate
+  // failure direction, but "safe" holds only on the CONFIDENTIALITY axis — no secret survives.
+  // On the DIAGNOSTIC axis it is a real cost: adjacent log content can be swallowed. Accepted
+  // because under-redaction leaks a credential while over-redaction loses context, and only one
+  // of those is recoverable. `redactSensitiveObject` returns a new object and never mutates its
+  // input, so this is confined to the emitted copy.
   //
   // Widening is monotonic: alphanumeric is a subset of this class, so Stripe's own live keys
   // stay covered. Do not "simplify" this back to `[a-zA-Z0-9]` or re-add a trailing `\b`.
-  // `redact.test.ts` pins both mechanisms against keys from the real generator.
+  // `redact.test.ts` pins both mechanisms against keys from the real generator, and pins the
+  // `{24,}` minimum at its two boundaries.
   { pattern: /\b(sk_live_[A-Za-z0-9_-]{24,})/g, replacement: 'sk_live_[REDACTED]' },
   // Stripe keys. These three are Stripe-only — nothing in this repo mints an `sk_test_`,
   // `pk_live_` or `pk_test_` key (SMI-6840: every occurrence is Stripe's own STRIPE_SECRET_KEY

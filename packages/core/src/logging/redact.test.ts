@@ -478,4 +478,28 @@ describe('SMI-6840: sk_live_ redaction covers the real key alphabet', () => {
     const notAKey = 'sk_live_tooshort'
     expect(redactSensitiveData(`key=${notAKey}`)).toBe('key=sk_live_tooshort')
   })
+
+  // The two cases below pin the {24,} minimum itself, which nothing else here constrains.
+  //
+  // Found by a cross-family reviewer (GPT-5.6-Sol, PR #2936 pre-merge gate), and it is exactly
+  // the class the author of a fix cannot find in their own work: replacing {24,} with {9,}
+  // passed every other test in this block. The negative control above has an eight-character
+  // body, so it cannot distinguish a 24-character threshold from any threshold below nine —
+  // it proves only that SOMETHING short is left alone, not that the boundary sits where the
+  // pattern claims. Verified before writing these: at a 23-character body the two patterns
+  // diverge, at an eight-character body they do not.
+  //
+  // A too-low threshold is a real defect, not a harmless over-match: it would redact ordinary
+  // short `sk_live_`-prefixed identifiers out of logs, destroying diagnostic content on the
+  // strength of a prefix alone.
+
+  it('does NOT redact a body one character below the minimum (lower boundary)', () => {
+    const below = `sk_live_${'a'.repeat(23)}`
+    expect(redactSensitiveData(`key=${below}`)).toBe(`key=${below}`)
+  })
+
+  it('DOES redact a body exactly at the minimum (upper boundary)', () => {
+    const atMin = `sk_live_${'a'.repeat(24)}`
+    expect(redactSensitiveData(`key=${atMin}`)).toBe('key=sk_live_[REDACTED]')
+  })
 })

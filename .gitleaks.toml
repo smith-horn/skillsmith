@@ -92,10 +92,12 @@ tags = ["api", "clerk"]
 # SMI-6840: Skillsmith mints its OWN sk_live_ keys, and they are not Clerk-shaped.
 # generateLicenseKey() (supabase/functions/_shared/license.ts) emits base64url, so the
 # body can contain - and _, while the clerk-secret rule above is alphanumeric-only.
-# Measured over 10,000 keys from a verbatim port of the real generator, with a
-# known-positive and a known-negative control both passing: the clerk-secret rule alone
-# failed to match 6,312 of them (63.1%) -- so a committed Skillsmith key had a better
-# than even chance of passing the commit-time secret scan.
+# The miss rate is derivable, not just sampled: a base64url body draws from 64 symbols,
+# 62 of them alphanumeric, so clerk-secret's {32,} run survives with probability
+# (62/64)^32 and fails for 1 - (62/64)^32 = 63.79% of keys. A committed Skillsmith key
+# therefore had a better than even chance of passing the commit-time secret scan. A
+# 10,000-key sample agreed (6,312 misses, 63.1%); the closed form is the citable figure,
+# since that sample was unseeded.
 #
 # This is a SEPARATE rule rather than a widening of clerk-secret, deliberately. Clerk's
 # own alphabet has not been measured here, and changing an issuer's pattern without a
