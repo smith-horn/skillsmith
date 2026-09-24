@@ -1,4 +1,8 @@
 #!/usr/bin/env bash
+# shellcheck disable=SC2016  # every single-quoted 'if [ "$ACTUAL_DIGEST" != ...'
+# string below (mutate_prefix_compare's exact-line match/replacement text and
+# its own sanity-check grep) is deliberately NOT expanded -- it matches and
+# emits shell SOURCE TEXT verbatim, not a value to interpolate.
 # scripts/tests/ruflo-service-entrypoint.test.sh -- fake-binary smoke tests
 # for scripts/ruflo-service-entrypoint.sh (ADR-170 SS4/SS6's container
 # entrypoint), following the fake-binary shape of scripts/tests/
@@ -97,6 +101,12 @@ chmod +x "$FAKE_BIN_DIR/sleep"
 # A real-shaped sha256 (64 lowercase hex): the entrypoint validates the expected
 # digest's shape before it validates the seed, so a short fixture never reaches the probes.
 DIGEST="deadbeefcafe0000deadbeefcafe0000deadbeefcafe0000deadbeefcafe0000"
+# PR-16 (cross-family gate on PR #2931): two digests that share DIGEST's
+# first 60 hex chars but differ in the last 4, and vice versa -- pinning that
+# the entrypoint's `[ "$ACTUAL_DIGEST" != "$EXPECTED_DIGEST" ]` compares the
+# FULL 64 chars, not a truncated prefix or suffix (Arms 8 and 9 below).
+SHARED_PREFIX_DIFF_SUFFIX="${DIGEST%????}beef"
+DIFF_PREFIX_SHARED_SUFFIX="beef${DIGEST#????}"
 
 reset_fixture() {
     FIX="$(mktemp -d)"
@@ -121,6 +131,17 @@ run_script() {
     set -e
 }
 
+# run_script_at <script-path> <out-log> -- like run_script(), but against an
+# arbitrary script (the red-arm mutant below) and an arbitrary output file,
+# so the mutant run never clobbers $SCRATCH_ROOT/out.log that fail_case()
+# reads for every other arm.
+run_script_at() {
+    set +e
+    PATH="$FAKE_BIN_DIR:$PATH" "$1" >"$2" 2>&1
+    echo $?
+    set -e
+}
+
 fail_case() {
     echo "FAIL ($1): $2" >&2
     cat "$SCRATCH_ROOT/out.log" >&2
@@ -128,6 +149,31 @@ fail_case() {
 }
 
 sleep_was_called() { [[ -s "$FAKE_SLEEP_CALL_LOG" ]]; }
+
+# mutate_prefix_compare <src> <dst> -- writes a scratch copy of the
+# entrypoint whose digest comparison examines only the first 60 hex chars of
+# each digest instead of the full 64 -- the mutant class PR-16 named. Exact
+# line match (not sed/awk regex escaping of `$`/`[`/`]`) so there is no
+# escaping to get wrong; the sanity check below confirms the substitution
+# actually fired rather than silently no-op'ing if the source line's exact
+# text ever drifts.
+mutate_prefix_compare() {
+    src="$1"
+    dst="$2"
+    : > "$dst"
+    while IFS= read -r line || [ -n "$line" ]; do
+        if [ "$line" = 'if [ "$ACTUAL_DIGEST" != "$EXPECTED_DIGEST" ]; then' ]; then
+            {
+                printf '%s\n' 'ACTUAL_DIGEST_PREFIX=$(printf '"'"'%s'"'"' "$ACTUAL_DIGEST" | cut -c1-60)'
+                printf '%s\n' 'EXPECTED_DIGEST_PREFIX=$(printf '"'"'%s'"'"' "$EXPECTED_DIGEST" | cut -c1-60)'
+                printf '%s\n' 'if [ "$ACTUAL_DIGEST_PREFIX" != "$EXPECTED_DIGEST_PREFIX" ]; then'
+            } >> "$dst"
+        else
+            printf '%s\n' "$line" >> "$dst"
+        fi
+    done < "$src"
+    chmod +x "$dst"
+}
 
 # ---- Arm 1: healthy ----
 reset_fixture
@@ -240,7 +286,65 @@ else
     echo "applied=digest-mismatch PASS (7-digest-mismatch): refused naming both digests, hold never called"
 fi
 
-# ---- Arm 8 (H-2): the hold responds to SIGTERM by exiting 0 within 2s.
+# ---- Arm 8 (PR-16): candidate shares the expected digest's first 60 hex
+# chars, differs only in the last 4 -- pins that the comparison is over the
+# FULL 64 chars, not a truncated prefix. RUFLO_SEED_EXPECTED_DIGEST stays
+# DIGEST (reset_fixture's default); only the fixture's generator output
+# (the CANDIDATE/actual digest, per the fake node's `cat "$1"` branch at the
+# top of this file) is overwritten to the shared-prefix/differing-suffix value.
+reset_fixture
+echo "$SHARED_PREFIX_DIFF_SUFFIX" > "$GENERATOR"
+EXIT_CODE="$(run_script)"
+if [[ "$EXIT_CODE" -eq 0 ]]; then
+    fail_case "8-digest-shared-prefix" "expected non-zero exit (refusal) for a candidate sharing the expected digest's first 60 hex chars but differing in the last 4, got 0"
+elif ! grep -q "digest mismatch" "$SCRATCH_ROOT/out.log"; then
+    fail_case "8-digest-shared-prefix" "expected the refusal to say digest mismatch"
+elif sleep_was_called; then
+    fail_case "8-digest-shared-prefix" "expected the hold command to NEVER be invoked on refusal"
+else
+    echo "applied=digest-shared-prefix PASS (8-digest-shared-prefix): refused a candidate differing only in the last 4 hex chars (actual=$SHARED_PREFIX_DIFF_SUFFIX expected=$DIGEST)"
+fi
+
+# ---- Arm 8-red (PR-16 red-arm confirmation): the SAME shared-prefix/
+# differing-suffix fixture from Arm 8, run against a MUTANT copy of the
+# entrypoint whose comparison examines only the first 60 hex chars. If Arm 8
+# is a real pin on a full 64-char comparison (not merely "some difference
+# somewhere"), this mutant must WRONGLY pass (exit 0) the exact case Arm 8
+# requires a refusal for -- CLAUDE.md's "a regression test you have not run
+# against the unfixed code is unverified", run here as a committed,
+# automated part of the suite rather than a one-off manual check so every
+# future run keeps proving Arm 8 actually distinguishes the two comparisons.
+MUTANT_SCRIPT="$SCRATCH_ROOT/entrypoint-prefix-mutant.sh"
+mutate_prefix_compare "$SCRIPT_UNDER_TEST" "$MUTANT_SCRIPT"
+if grep -qF 'if [ "$ACTUAL_DIGEST" != "$EXPECTED_DIGEST" ]; then' "$MUTANT_SCRIPT"; then
+    fail_case "8-red-prefix-mutant" "mutate_prefix_compare's exact-line match no longer matches $SCRIPT_UNDER_TEST -- the mutant is a byte-for-byte copy of the real script, so this red arm proves nothing until the match is updated"
+else
+    reset_fixture
+    echo "$SHARED_PREFIX_DIFF_SUFFIX" > "$GENERATOR"
+    RED_EXIT="$(run_script_at "$MUTANT_SCRIPT" "$SCRATCH_ROOT/out-red.log")"
+    if [[ "$RED_EXIT" -ne 0 ]]; then
+        fail_case "8-red-prefix-mutant" "expected the prefix-compare MUTANT to wrongly PASS (exit 0) the shared-prefix/differing-suffix case -- it refused instead (exit $RED_EXIT), which means this fixture no longer distinguishes a prefix-only comparison from a full-string one: $(cat "$SCRATCH_ROOT/out-red.log")"
+    else
+        echo "applied=red-arm-prefix-mutant PASS (8-red-prefix-mutant): the prefix-compare MUTANT wrongly accepted a digest differing only in the last 4 hex chars (exit 0) -- confirms Arm 8 pins a full 64-char comparison, not a prefix compare"
+    fi
+fi
+
+# ---- Arm 9 (PR-16): candidate differs from the expected digest only in the
+# FIRST 4 hex chars, shares the last 60 -- the symmetric case to Arm 8.
+reset_fixture
+echo "$DIFF_PREFIX_SHARED_SUFFIX" > "$GENERATOR"
+EXIT_CODE="$(run_script)"
+if [[ "$EXIT_CODE" -eq 0 ]]; then
+    fail_case "9-digest-diff-prefix" "expected non-zero exit (refusal) for a candidate differing from the expected digest only in the first 4 hex chars, got 0"
+elif ! grep -q "digest mismatch" "$SCRATCH_ROOT/out.log"; then
+    fail_case "9-digest-diff-prefix" "expected the refusal to say digest mismatch"
+elif sleep_was_called; then
+    fail_case "9-digest-diff-prefix" "expected the hold command to NEVER be invoked on refusal"
+else
+    echo "applied=digest-diff-prefix PASS (9-digest-diff-prefix): refused a candidate differing only in the first 4 hex chars (actual=$DIFF_PREFIX_SHARED_SUFFIX expected=$DIGEST)"
+fi
+
+# ---- Arm 10 (H-2): the hold responds to SIGTERM by exiting 0 within 2s.
 # FAKE_SLEEP_BLOCK makes the fake `sleep` genuinely block (real system
 # sleep, see above) so the entrypoint is actually parked in `wait $!` when
 # the signal arrives -- an instantly-exiting fake would prove nothing about
@@ -248,11 +352,11 @@ fi
 # until exit) so this arm can send SIGTERM while the entrypoint still holds.
 reset_fixture
 export FAKE_SLEEP_BLOCK=1
-PATH="$FAKE_BIN_DIR:$PATH" "$SCRIPT_UNDER_TEST" >"$SCRATCH_ROOT/out-8.log" 2>&1 &
+PATH="$FAKE_BIN_DIR:$PATH" "$SCRIPT_UNDER_TEST" >"$SCRATCH_ROOT/out-10.log" 2>&1 &
 ENTRYPOINT_PID=$!
 sleep 0.5
 if ! kill -0 "$ENTRYPOINT_PID" 2>/dev/null; then
-    fail_case "8-sigterm" "entrypoint exited before reaching the hold: $(cat "$SCRATCH_ROOT/out-8.log")"
+    fail_case "10-sigterm" "entrypoint exited before reaching the hold: $(cat "$SCRATCH_ROOT/out-10.log")"
 else
     # Watchdog: forces the test to fail fast (not hang) if the trap never
     # fires, by SIGKILLing past the 2s budget -- `wait` below then observes
@@ -270,20 +374,20 @@ else
     wait "$WATCHDOG_PID" 2>/dev/null || true
     ELAPSED=$((END_S - START_S))
     if [[ "$SIGTERM_EXIT" -ne 0 ]]; then
-        fail_case "8-sigterm" "expected exit 0 within 2s of SIGTERM, got exit $SIGTERM_EXIT after ${ELAPSED}s (0 usually means the watchdog SIGKILLed it): $(cat "$SCRATCH_ROOT/out-8.log")"
+        fail_case "10-sigterm" "expected exit 0 within 2s of SIGTERM, got exit $SIGTERM_EXIT after ${ELAPSED}s (0 usually means the watchdog SIGKILLed it): $(cat "$SCRATCH_ROOT/out-10.log")"
     elif [[ "$ELAPSED" -gt 1 ]]; then
-        fail_case "8-sigterm" "expected the trap to fire near-instantly (well under the 2s watchdog budget), took ${ELAPSED}s"
+        fail_case "10-sigterm" "expected the trap to fire near-instantly (well under the 2s watchdog budget), took ${ELAPSED}s"
     else
-        echo "applied=sigterm-exit0 PASS (8-sigterm): entrypoint exited 0 in ${ELAPSED}s of SIGTERM (budget 2s)"
+        echo "applied=sigterm-exit0 PASS (10-sigterm): entrypoint exited 0 in ${ELAPSED}s of SIGTERM (budget 2s)"
     fi
 fi
 unset FAKE_SLEEP_BLOCK
 
 echo ""
 if [[ "$FAIL_COUNT" -eq 0 ]]; then
-    echo "SUMMARY: 8/8 arms passed"
+    echo "SUMMARY: 11/11 arms passed"
     exit 0
 else
-    echo "SUMMARY: $FAIL_COUNT/8 arms FAILED"
+    echo "SUMMARY: $FAIL_COUNT/11 arms FAILED"
     exit 1
 fi

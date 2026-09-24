@@ -10,9 +10,9 @@
 #
 # This is a HOST macOS/Linux shell script: it has no /proc and cannot see
 # the container's process table or uid/gid. ADR-170 §§ 4 and 7 require the
-# per-spawn writability probes and the sibling-lock staleness protocol to
-# run INSIDE the container, under the server's own uid/gid, immediately
-# before the server is exec'd. Rather than ship that Node logic as image
+# per-spawn writability probes and the state.lock staleness decision to run
+# INSIDE the container, under the server's own uid/gid, immediately before
+# the server is exec'd. Rather than ship that Node logic as image
 # content (which would put it under scripts/ruflo-seed/, a file this launcher
 # does not own — SMI-6744 A1.4 splits ownership across parallel workers),
 # it is committed here as scripts/ruflo-launch-guard.mjs and piped into the
@@ -76,8 +76,10 @@
 #      by a plain SQLite client).
 #   5. Per-spawn guard (§ 4, § 7): scripts/ruflo-launch-guard.mjs, run inside
 #      the container immediately before exec, performs the writability
-#      probes and the sibling-lock staleness decision and refuses by name on
-#      any failure.
+#      probes and the state.lock staleness decision -- serialized against
+#      other launchers by a SQLite mutex the kernel releases on exit, not by
+#      the A1.4 sibling FILE (SMI-6744 A1.8) -- and refuses by name on any
+#      failure.
 #
 # Env moved here from .mcp.json (ADR-170 § 7): CLAUDE_FLOW_LOG_LEVEL,
 # CLAUDE_FLOW_MEMORY_BACKEND, passed via `docker exec -e`. No
@@ -436,9 +438,10 @@ check_store_generation "$AGENTDB_DB_PATH"
 
 # ---- Check 5: per-spawn guard (ADR-170 §§ 4, 7) ----------------------------
 # Runs INSIDE the container, immediately before exec, under the server's own
-# uid/gid — the per-spawn writability probes and the sibling-lock staleness
-# decision. Piped over docker exec's stdin (`node -`) so no file needs to
-# exist inside the image ahead of this launcher.
+# uid/gid — the per-spawn writability probes and the state.lock staleness
+# decision, serialized by the guard's own SQLite mutex. Piped over docker
+# exec's stdin (`node -`) so no file needs to exist inside the image ahead
+# of this launcher.
 if [ ! -f "$GUARD_SCRIPT" ]; then
   emit_error "scripts/ruflo-launch-guard.mjs is missing from this checkout" \
 "    git status scripts/ruflo-launch-guard.mjs

@@ -1,0 +1,304 @@
+#!/usr/bin/env bash
+# $IMAGE, $STORE_VOLUME, $SERVICE, $SCRATCH, $EVD, $LAUNCHER and $ok are set
+# by run.sh before this file is sourced, same convention as every sibling
+# lib/*.sh.
+#
+# ADR-170 § 5 authority-quad LIVE mutations (SMI-6744 A1.8, cross-family gate
+# finding PR-16 on PR #2931). Run against the RUNNING Compose service
+# ($SERVICE) through the REAL scripts/mcp-ruflo-launcher.sh -- not a stubbed
+# `docker` binary and not scripts/ruflo-launch-guard.mjs (a different check,
+# § 4/§ 7's per-spawn writability/lock guard, owned by the parallel A1.4
+# lane and exercised by scripts/tests/ruflo-launch-guard.test.ts). Each arm
+# sends one JSON-RPC `initialize` on stdin and reads the launcher's own
+# stdout/stderr TEXT -- never a bare exit code alone (this repo's own rule,
+# quoted verbatim in mcp-ruflo-launcher.sh's own header: "branch on probe
+# TEXT, never on a bare docker exec exit code").
+#
+# Covers ADR-170 § 5's "change the configured UUID only" (Q2, authority
+# file's generationUuid) and "change the database UUID only" mutations,
+# taken independently for EACH of the two SQLite store files (Q4 memory.db,
+# Q5 agentdb-memory.db -- the same two-file split
+# scripts/mcp-ruflo-launcher.sh's own Check 4(c)/(d) authenticates
+# separately, per its header note on memory.db vs agentdb-memory.db), plus
+# the authority file's instanceNonce (Q3). Q1 is the unmutated control --
+# without it, a refusal on Q2-Q5 would not be attributable to the mutation
+# specifically (the same "an instrument that never says pass is not a
+# measurement" principle egress.sh's E0 control and consolidation.sh's M0
+# honest control already apply elsewhere in this harness).
+#
+# NOT run here, on purpose (recorded, not silently skipped): the
+# volume-delete/recreate mutation (quad a) and a copied-database mount
+# (quad d's "empty/partial volume" leg) are destructive to the live named
+# volume this session shares with every other MCP client attached to
+# $SERVICE. Both are already exercised -- against a FAKED `docker` binary,
+# so safely -- by scripts/tests/mcp-ruflo-launcher.test.sh's quad-a, quad-d
+# and quad-d-agentdb-missing arms; this file adds what that stubbed suite
+# cannot: proof that the REAL launcher, against the REAL running service,
+# really refuses on quad (b) and (c).
+#
+# Every mutation this file makes is restored before quad_arms returns, in
+# the SAME arm (not deferred to a single cleanup at the end) -- immediately
+# followed by a fresh green probe, because a restore that was never watched
+# to succeed is itself a silent-success risk (CLAUDE.md's "a fix you have
+# not watched work is unverified", generalised from the regression-test
+# rule). A process-wide EXIT trap is ALSO armed for the duration of this
+# function as a defense-in-depth backstop against `set -e` aborting run.sh
+# between a mutation and its own inline restore below; it is cleared before
+# this function returns, so it never lingers over --consolidation or any
+# other mode run afterward under --all.
+
+QUAD_INIT_REQUEST='{"jsonrpc":"2.0","id":1,"method":"initialize","params":{"protocolVersion":"2024-11-05","capabilities":{},"clientInfo":{"name":"quad-probe","version":"1.0.0"}}}'
+QUAD_PROBE_TIMEOUT_S="${RUFLO_QUAD_PROBE_TIMEOUT_S:-8}"
+QUAD_AUTHORITY_FILE="${RUFLO_QUAD_AUTHORITY_FILE:-$HOME/.skillsmith/ruflo-store.json}"
+QUAD_MEMORY_DB="/srv/ruflo/.swarm/memory.db"
+QUAD_AGENTDB="/srv/ruflo/.swarm/agentdb-memory.db"
+
+QUAD_DIRTY_AUTHORITY=0
+QUAD_DIRTY_MEMORY_DB=0
+QUAD_DIRTY_AGENTDB=0
+
+# quad_md5 <file> -- macOS ships `md5 -q`; Linux hosts (and every container
+# in this repo) ship `md5sum` instead. run.sh itself runs on the HOST, which
+# is macOS in this dev environment but is not guaranteed to be everywhere
+# this harness runs.
+quad_md5() {
+  if command -v md5 >/dev/null 2>&1; then
+    md5 -q "$1"
+  else
+    md5sum "$1" | awk '{print $1}'
+  fi
+}
+
+# quad_probe <label> -- runs $LAUNCHER with a JSON-RPC initialize on stdin.
+# No GNU `timeout` on macOS (measured on this host, 2026-09-23 -- neither
+# `timeout` nor `gtimeout` is on PATH), so a background+poll+kill watchdog
+# bounds the wait instead. Measured live: a REFUSAL exits on its own in well
+# under a second (no docker exec of the server is ever attempted -- the
+# refusal happens during the launcher's own pre-flight checks); a
+# SUCCESSFUL serve answers `initialize` in ~1-2s and then exits on its own
+# once this function's stdin pipe closes at EOF (measured, 2026-09-23: no
+# orphaned server process observed in either case). Sets QUAD_PROBE_OUT/
+# QUAD_PROBE_ERR to file paths under $EVD; every verdict below reads their
+# CONTENT, never QUAD_PROBE_RC alone.
+quad_probe() {
+  QUAD_PROBE_OUT="$EVD/quad-$1.out"
+  QUAD_PROBE_ERR="$EVD/quad-$1.err"
+  : >"$QUAD_PROBE_OUT"
+  : >"$QUAD_PROBE_ERR"
+  printf '%s\n' "$QUAD_INIT_REQUEST" | "$LAUNCHER" >"$QUAD_PROBE_OUT" 2>"$QUAD_PROBE_ERR" &
+  _quad_pid=$!
+  _quad_elapsed=0
+  while kill -0 "$_quad_pid" 2>/dev/null && [ "$_quad_elapsed" -lt "$QUAD_PROBE_TIMEOUT_S" ]; do
+    sleep 1
+    _quad_elapsed=$((_quad_elapsed + 1))
+  done
+  if kill -0 "$_quad_pid" 2>/dev/null; then
+    kill -TERM "$_quad_pid" 2>/dev/null || true
+    sleep 1
+    kill -KILL "$_quad_pid" 2>/dev/null || true
+  fi
+  set +e
+  wait "$_quad_pid" 2>/dev/null
+  QUAD_PROBE_RC=$?
+  set -e
+}
+
+# quad_served -- 0 if the last quad_probe's stdout is a JSON-RPC reply
+# carrying this session's own request id and a result. grep, not a full JSON
+# parse: the rest of this harness's lib/*.sh reads jqlite.mjs's output
+# rather than parsing JSON in bash directly, and a plain grep suffices here
+# since the only thing under test is "did a server answer this request".
+quad_served() {
+  grep -q '"id":1' "$QUAD_PROBE_OUT" 2>/dev/null && grep -q '"result"' "$QUAD_PROBE_OUT" 2>/dev/null
+}
+
+# quad_refused_naming <substring> -- 0 if the last quad_probe produced NO
+# stdout at all (never reached the server) AND its stderr names <substring>.
+# Both halves together: a refusal must say why AND never serve.
+quad_refused_naming() {
+  [ ! -s "$QUAD_PROBE_OUT" ] && grep -qF "$1" "$QUAD_PROBE_ERR" 2>/dev/null
+}
+
+quad_random_uuid() { node -e "process.stdout.write(require('crypto').randomUUID())"; }
+
+# quad_write_authority_field <field> <value>
+quad_write_authority_field() {
+  node -e '
+    const fs = require("fs")
+    const p = process.argv[1]
+    const j = JSON.parse(fs.readFileSync(p, "utf8"))
+    j[process.argv[2]] = process.argv[3]
+    fs.writeFileSync(p, JSON.stringify(j, null, 2) + "\n")
+  ' "$QUAD_AUTHORITY_FILE" "$1" "$2"
+}
+
+# quad_read_store_generation <container-db-path> -- prints the current
+# store_generation.id, read through a throwaway --rm container from the
+# service's own image with the live volume mounted read-write (matching the
+# rest of this harness's own convention, e.g. lib/mutations.sh's mut_run and
+# lib/consolidation.sh's consol_* helpers -- a different container, a
+# different process, the same kernel, so it joins SQLite's normal file
+# locking rather than reading around it).
+quad_read_store_generation() {
+  docker run --rm -v "$STORE_VOLUME":/srv/ruflo --entrypoint node "$IMAGE" -e '
+    const Database = require("/opt/ruflo-seed/node_modules/better-sqlite3")
+    const db = new Database(process.argv[1], { readonly: true })
+    process.stdout.write(db.prepare("SELECT id FROM store_generation").get().id)
+    db.close()
+  ' "$1"
+}
+
+# quad_set_store_generation <container-db-path> <new-id>
+quad_set_store_generation() {
+  docker run --rm -v "$STORE_VOLUME":/srv/ruflo --entrypoint node "$IMAGE" -e '
+    const Database = require("/opt/ruflo-seed/node_modules/better-sqlite3")
+    const db = new Database(process.argv[1])
+    db.prepare("UPDATE store_generation SET id = ?").run(process.argv[2])
+    process.stdout.write(db.prepare("SELECT id FROM store_generation").get().id)
+    db.close()
+  ' "$1" "$2"
+}
+
+# Best-effort, idempotent restore of whatever this run actually mutated --
+# armed as an EXIT trap for the duration of quad_arms() (see header) and
+# also called inline, by name, immediately after each arm's own predicate.
+# Never lets a failure inside the trap itself abort an already-exiting shell.
+quad_emergency_restore() {
+  set +e
+  if [ "$QUAD_DIRTY_AUTHORITY" -eq 1 ] && [ -f "$QUAD_AUTHORITY_BACKUP" ]; then
+    cp "$QUAD_AUTHORITY_BACKUP" "$QUAD_AUTHORITY_FILE" 2>/dev/null
+    QUAD_DIRTY_AUTHORITY=0
+  fi
+  if [ "$QUAD_DIRTY_MEMORY_DB" -eq 1 ] && [ -n "${QUAD_MEMORY_DB_ORIG_ID:-}" ]; then
+    quad_set_store_generation "$QUAD_MEMORY_DB" "$QUAD_MEMORY_DB_ORIG_ID" >/dev/null 2>&1
+    QUAD_DIRTY_MEMORY_DB=0
+  fi
+  if [ "$QUAD_DIRTY_AGENTDB" -eq 1 ] && [ -n "${QUAD_AGENTDB_ORIG_ID:-}" ]; then
+    quad_set_store_generation "$QUAD_AGENTDB" "$QUAD_AGENTDB_ORIG_ID" >/dev/null 2>&1
+    QUAD_DIRTY_AGENTDB=0
+  fi
+  set -e
+}
+
+quad_arms() {
+  h1 "ADR-170 § 5 -- authority-quad LIVE mutations, against the running Compose service $SERVICE"
+  note "the volume-delete/recreate mutation and a copied-database mount are NOT run here (destructive to the live named volume $STORE_VOLUME) -- covered instead by the stubbed scripts/tests/mcp-ruflo-launcher.test.sh suite's quad-a/quad-d/quad-d-agentdb-missing arms, which fake the docker binary specifically so those two can be exercised safely."
+
+  if [ ! -f "$QUAD_AUTHORITY_FILE" ]; then
+    arm "Q0" "authority file must exist before these arms can mutate and restore it"
+    applied "test -f $QUAD_AUTHORITY_FILE"
+    predicate "Q0 authority file exists" 1 "a readable $QUAD_AUTHORITY_FILE" "absent -- refusing to run Q1-Q5 without a baseline to restore"
+    return
+  fi
+
+  QUAD_AUTHORITY_BACKUP="$EVD/quad-authority-backup.json"
+  cp "$QUAD_AUTHORITY_FILE" "$QUAD_AUTHORITY_BACKUP"
+  QUAD_AUTHORITY_BACKUP_MD5="$(quad_md5 "$QUAD_AUTHORITY_FILE")"
+
+  trap 'quad_emergency_restore' EXIT
+
+  arm "Q1" "baseline: the launcher serves initialize against the live, unmutated service"
+  applied "printf '<initialize>' | $LAUNCHER (JSON-RPC on stdin)"
+  quad_probe q1-baseline
+  if quad_served; then ok=0; else ok=1; fi
+  predicate "Q1 baseline initialize succeeds" "$ok" \
+    "a JSON-RPC result reply carrying id=1" \
+    "rc=$QUAD_PROBE_RC stdout=$(cat "$QUAD_PROBE_OUT") stderr=$(cat "$QUAD_PROBE_ERR")"
+  if [ "$ok" -ne 0 ]; then
+    limitation "Q1 baseline did not succeed against the unmutated service -- Q2-Q5 below are not differential and must be read as unattributed."
+  fi
+
+  # ---- Q2: authority file generationUuid rewritten --------------------------
+  arm "Q2" "authority file generationUuid rewritten to a random UUID -- the launcher must refuse naming quad (c) and the authority file"
+  QUAD_DIRTY_AUTHORITY=1
+  _q2_new="$(quad_random_uuid)"
+  quad_write_authority_field generationUuid "$_q2_new"
+  applied "rewrote generationUuid in $QUAD_AUTHORITY_FILE to $_q2_new (was a value both store files agreed with)"
+  quad_probe q2-mutated
+  if quad_refused_naming "authority quad c" && quad_refused_naming "$QUAD_AUTHORITY_FILE"; then ok=0; else ok=1; fi
+  predicate "Q2 generation mismatch refuses naming quad (c) and $QUAD_AUTHORITY_FILE" "$ok" \
+    "no stdout; stderr names 'authority quad c' and $QUAD_AUTHORITY_FILE" \
+    "rc=$QUAD_PROBE_RC stdout=$(cat "$QUAD_PROBE_OUT") stderr=$(cat "$QUAD_PROBE_ERR")"
+  quad_emergency_restore
+  if cmp -s "$QUAD_AUTHORITY_FILE" "$QUAD_AUTHORITY_BACKUP"; then ok=0; else ok=1; fi
+  predicate "Q2 restore: authority file is byte-identical to its pre-mutation backup" "$ok" \
+    "$QUAD_AUTHORITY_FILE cmp-equal to the backup taken before Q2" \
+    "cmp -s exit=$([ "$ok" -eq 0 ] && echo 0 || echo nonzero); backup md5=$QUAD_AUTHORITY_BACKUP_MD5 current md5=$(quad_md5 "$QUAD_AUTHORITY_FILE")"
+  quad_probe q2-restored
+  if quad_served; then ok=0; else ok=1; fi
+  predicate "Q2 restore: initialize succeeds again" "$ok" \
+    "a JSON-RPC result reply carrying id=1, after restoring $QUAD_AUTHORITY_FILE" \
+    "rc=$QUAD_PROBE_RC stdout=$(cat "$QUAD_PROBE_OUT") stderr=$(cat "$QUAD_PROBE_ERR")"
+
+  # ---- Q3: authority file instanceNonce rewritten ----------------------------
+  arm "Q3" "authority file instanceNonce rewritten to a random UUID -- the launcher must refuse naming quad (b) and the authority file"
+  QUAD_DIRTY_AUTHORITY=1
+  _q3_new="$(quad_random_uuid)"
+  quad_write_authority_field instanceNonce "$_q3_new"
+  applied "rewrote instanceNonce in $QUAD_AUTHORITY_FILE to $_q3_new (was the value $STORE_VOLUME's own label carries)"
+  quad_probe q3-mutated
+  if quad_refused_naming "authority quad b" && quad_refused_naming "$QUAD_AUTHORITY_FILE"; then ok=0; else ok=1; fi
+  predicate "Q3 nonce mismatch refuses naming quad (b) and $QUAD_AUTHORITY_FILE" "$ok" \
+    "no stdout; stderr names 'authority quad b' and $QUAD_AUTHORITY_FILE" \
+    "rc=$QUAD_PROBE_RC stdout=$(cat "$QUAD_PROBE_OUT") stderr=$(cat "$QUAD_PROBE_ERR")"
+  quad_emergency_restore
+  if cmp -s "$QUAD_AUTHORITY_FILE" "$QUAD_AUTHORITY_BACKUP"; then ok=0; else ok=1; fi
+  predicate "Q3 restore: authority file is byte-identical to its pre-mutation backup" "$ok" \
+    "$QUAD_AUTHORITY_FILE cmp-equal to the backup taken before Q2/Q3" \
+    "cmp -s exit=$([ "$ok" -eq 0 ] && echo 0 || echo nonzero); backup md5=$QUAD_AUTHORITY_BACKUP_MD5 current md5=$(quad_md5 "$QUAD_AUTHORITY_FILE")"
+  quad_probe q3-restored
+  if quad_served; then ok=0; else ok=1; fi
+  predicate "Q3 restore: initialize succeeds again" "$ok" \
+    "a JSON-RPC result reply carrying id=1, after restoring $QUAD_AUTHORITY_FILE" \
+    "rc=$QUAD_PROBE_RC stdout=$(cat "$QUAD_PROBE_OUT") stderr=$(cat "$QUAD_PROBE_ERR")"
+
+  # ---- Q4: memory.db's own marker row changed, ONLY that file ---------------
+  arm "Q4" "memory.db's store_generation row changed in place (agentdb-memory.db untouched) -- the launcher must refuse naming quad (c) and memory.db"
+  QUAD_MEMORY_DB_ORIG_ID="$(quad_read_store_generation "$QUAD_MEMORY_DB")"
+  _q4_new="$(quad_random_uuid)"
+  QUAD_DIRTY_MEMORY_DB=1
+  quad_set_store_generation "$QUAD_MEMORY_DB" "$_q4_new" >/dev/null
+  applied "docker run --rm -v $STORE_VOLUME:/srv/ruflo ... UPDATE store_generation SET id='$_q4_new' in $QUAD_MEMORY_DB only; original id recorded: $QUAD_MEMORY_DB_ORIG_ID"
+  quad_probe q4-mutated
+  if quad_refused_naming "authority quad c" && quad_refused_naming "$QUAD_MEMORY_DB"; then ok=0; else ok=1; fi
+  predicate "Q4 memory.db generation mismatch refuses naming quad (c) and $QUAD_MEMORY_DB" "$ok" \
+    "no stdout; stderr names 'authority quad c' and $QUAD_MEMORY_DB" \
+    "rc=$QUAD_PROBE_RC stdout=$(cat "$QUAD_PROBE_OUT") stderr=$(cat "$QUAD_PROBE_ERR")"
+  quad_emergency_restore
+  _q4_restored_id="$(quad_read_store_generation "$QUAD_MEMORY_DB")"
+  if [ "$_q4_restored_id" = "$QUAD_MEMORY_DB_ORIG_ID" ]; then ok=0; else ok=1; fi
+  predicate "Q4 restore: memory.db's store_generation.id is back to its original value" "$ok" \
+    "id == $QUAD_MEMORY_DB_ORIG_ID (the value recorded before Q4 mutated it)" \
+    "read back: $_q4_restored_id"
+  quad_probe q4-restored
+  if quad_served; then ok=0; else ok=1; fi
+  predicate "Q4 restore: initialize succeeds again" "$ok" \
+    "a JSON-RPC result reply carrying id=1, after restoring $QUAD_MEMORY_DB" \
+    "rc=$QUAD_PROBE_RC stdout=$(cat "$QUAD_PROBE_OUT") stderr=$(cat "$QUAD_PROBE_ERR")"
+
+  # ---- Q5: agentdb-memory.db's own marker row changed, ONLY that file -------
+  arm "Q5" "agentdb-memory.db's store_generation row changed in place (memory.db untouched) -- the launcher must refuse naming quad (c) and agentdb-memory.db"
+  QUAD_AGENTDB_ORIG_ID="$(quad_read_store_generation "$QUAD_AGENTDB")"
+  _q5_new="$(quad_random_uuid)"
+  QUAD_DIRTY_AGENTDB=1
+  quad_set_store_generation "$QUAD_AGENTDB" "$_q5_new" >/dev/null
+  applied "docker run --rm -v $STORE_VOLUME:/srv/ruflo ... UPDATE store_generation SET id='$_q5_new' in $QUAD_AGENTDB only; original id recorded: $QUAD_AGENTDB_ORIG_ID"
+  quad_probe q5-mutated
+  if quad_refused_naming "authority quad c" && quad_refused_naming "$QUAD_AGENTDB"; then ok=0; else ok=1; fi
+  predicate "Q5 agentdb-memory.db generation mismatch refuses naming quad (c) and $QUAD_AGENTDB" "$ok" \
+    "no stdout; stderr names 'authority quad c' and $QUAD_AGENTDB" \
+    "rc=$QUAD_PROBE_RC stdout=$(cat "$QUAD_PROBE_OUT") stderr=$(cat "$QUAD_PROBE_ERR")"
+  quad_emergency_restore
+  _q5_restored_id="$(quad_read_store_generation "$QUAD_AGENTDB")"
+  if [ "$_q5_restored_id" = "$QUAD_AGENTDB_ORIG_ID" ]; then ok=0; else ok=1; fi
+  predicate "Q5 restore: agentdb-memory.db's store_generation.id is back to its original value" "$ok" \
+    "id == $QUAD_AGENTDB_ORIG_ID (the value recorded before Q5 mutated it)" \
+    "read back: $_q5_restored_id"
+  quad_probe q5-restored
+  if quad_served; then ok=0; else ok=1; fi
+  predicate "Q5 restore: initialize succeeds again" "$ok" \
+    "a JSON-RPC result reply carrying id=1, after restoring $QUAD_AGENTDB" \
+    "rc=$QUAD_PROBE_RC stdout=$(cat "$QUAD_PROBE_OUT") stderr=$(cat "$QUAD_PROBE_ERR")"
+
+  trap - EXIT
+}

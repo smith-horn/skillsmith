@@ -5,26 +5,31 @@
 # Covers the arms the committed suites do not: § 6's egress arms 1, 2 and 4,
 # § 2's three seed-acceptance arms with the blinded read-back over an
 # online-backup snapshot and the fresh-server re-retrieval, § 2's five arm-3
-# failing mutations, and § 6's consolidation causal control with its own
-# required failing mutation.
+# failing mutations, § 5's authority-quad LIVE mutations (b) and (c) against
+# the real launcher and the real running service, and § 6's consolidation
+# causal control with its own required failing mutation.
 #
 # NOT covered here, on purpose, and each named in the report instead:
 #   - the nine tree-manifest red arms (scripts/ruflo-seed/manifest.mjs and the
 #     earlier acceptance script already ran them)
 #   - the per-spawn writability and state.lock arms
 #     (scripts/tests/ruflo-launch-guard.test.ts)
-#   - the service-command and launcher-argv arms
+#   - the service-command and launcher-argv arms, INCLUDING authority quad
+#     (a) and (d) against a FAKED docker binary
 #     (scripts/tests/mcp-ruflo-launcher.test.sh)
 #   - the external-digest mismatch refusal
 #     (scripts/tests/ruflo-service-entrypoint.test.sh)
 #   - § 8's federation test (scripts/ruflo-federation-test.sh)
 #   - § 5's writer census and freeze, which are A1.6's
+#   - § 5's authority-quad (a) volume-delete/recreate and quad (d) copied-
+#     database mutations, destructive to the live named volume -- see
+#     lib/quad.sh's own header for why those two stay stubbed-only
 #   - § 6's own "delete network_mode: none" mutation, which recreates the LIVE
 #     service: --mutation-egress prints the procedure and stops.
 #
 # Usage:
 #   ./scripts/ruflo-acceptance/run.sh --all
-#   ./scripts/ruflo-acceptance/run.sh --egress | --seed | --mutations | --consolidation
+#   ./scripts/ruflo-acceptance/run.sh --egress | --seed | --mutations | --consolidation | --quad
 #   ./scripts/ruflo-acceptance/run.sh --mutation-egress     # prints, runs nothing
 #
 # Every arm prints applied= and its own predicate with both values. No verdict
@@ -63,6 +68,8 @@ LIMITATIONS_FILE="$SCRATCH/limitations.txt"
 . "$HARNESS/lib/mutations.sh"
 # shellcheck source=lib/consolidation.sh
 . "$HARNESS/lib/consolidation.sh"
+# shellcheck source=lib/quad.sh
+. "$HARNESS/lib/quad.sh"
 
 # shellcheck disable=SC2034  # `ok` is the predicate scratch variable every sourced lib writes
 ok=1
@@ -71,17 +78,19 @@ DO_SEED=0
 DO_MUT=0
 DO_CONSOL=0
 DO_EGRESS_MUT=0
+DO_QUAD=0
 if [ $# -eq 0 ]; then
-  printf 'usage: %s [--all|--egress|--seed|--mutations|--consolidation|--mutation-egress]\n' "$0" >&2
+  printf 'usage: %s [--all|--egress|--seed|--mutations|--consolidation|--quad|--mutation-egress]\n' "$0" >&2
   exit 2
 fi
 for a in "$@"; do
   case "$a" in
-    --all) DO_EGRESS=1; DO_SEED=1; DO_MUT=1; DO_CONSOL=1 ;;
+    --all) DO_EGRESS=1; DO_SEED=1; DO_MUT=1; DO_CONSOL=1; DO_QUAD=1 ;;
     --egress) DO_EGRESS=1 ;;
     --seed) DO_SEED=1 ;;
     --mutations) DO_MUT=1 ;;
     --consolidation) DO_CONSOL=1 ;;
+    --quad) DO_QUAD=1 ;;
     --mutation-egress) DO_EGRESS_MUT=1 ;;
     *) printf 'unknown option: %s\n' "$a" >&2; exit 2 ;;
   esac
@@ -128,6 +137,7 @@ if [ "$DO_MUT" -eq 1 ]; then
   h1 "ADR-170 § 2 -- required failing mutations"
   mutations_arm3
 fi
+[ "$DO_QUAD" -eq 1 ] && quad_arms
 [ "$DO_CONSOL" -eq 1 ] && consolidation_arms
 
 summary
@@ -137,7 +147,9 @@ cat <<'DOC'
     not establish which runtime executed the inference, and nothing here claims
     it does. No arm above says "via onnxruntime", "native" or "WASM".
   - the § 6 mutation that deletes network_mode: none from the live service.
-  - § 5's writer census, freeze and authority-quad mutations (A1.6's).
+  - § 5's writer census and freeze (A1.6's). Authority-quad (b) and (c) ARE
+    measured live by --quad; quad (a) and (d) stay stubbed-only (lib/quad.sh
+    header) rather than destructively recreating the live volume.
   - the tree-manifest, launch-guard, launcher-argv, entrypoint-digest and
     federation arms, all already covered by committed suites.
   - byte-identical independent inference across platforms, which ADR-170

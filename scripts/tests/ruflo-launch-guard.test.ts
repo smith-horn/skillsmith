@@ -1,89 +1,125 @@
 /**
- * scripts/tests/ruflo-launch-guard.test.ts -- SMI-6744 A1.4, ADR-170 §§ 4, 7.
+ * scripts/tests/ruflo-launch-guard.test.ts -- SMI-6744 A1.8, ADR-170 §§ 4, 7.
  *
  * Exercises scripts/ruflo-launch-guard.mjs, the per-spawn guard
  * scripts/mcp-ruflo-launcher.sh pipes into `docker exec -i <svc> node -`
- * immediately before it execs the real ruflo server. The guard reads
- * /proc/<pid>/stat, which does not exist on macOS -- this suite is written
- * to run in the ruflo service container (Linux) or in CI, and SKIPS
- * cleanly, printing why, everywhere else (this host session's own
- * `npx vitest run` of this file is expected to report the skip reason, not
- * a pass, on macOS/Darwin -- that is the honest never-ran state, not a
- * green result).
+ * immediately before it execs the real ruflo server.
+ *
+ * The guard reads /proc/<pid>/stat and holds its mutex with a SQLite
+ * `BEGIN IMMEDIATE` (a kernel fcntl lock), so this suite needs Linux AND a
+ * loadable better-sqlite3. It SKIPS cleanly, printing why, everywhere else
+ * -- this host session's own `npx vitest run` of this file on macOS is
+ * expected to report the skip reason, not a pass. That is the honest
+ * never-ran state, not a green result.
+ *
+ * WHAT THESE ARMS PIN (A1.8 redesign). The cross-family pre-merge gate
+ * blocked the A1.4 sibling-FILE protocol on two paths that both end in a
+ * LIVE lock record being deleted. The replacement makes deletion
+ * structurally impossible rather than merely unlikely, so the arms are
+ * about two properties:
+ *   (1) the mutex is an OS-released lock -- contenders SERIALIZE inside
+ *       the busy timeout, REFUSE past it, and a SIGKILLed holder's lock is
+ *       released by the kernel with nothing left to clean up;
+ *   (2) the guard NEVER removes the runtime's state.lock, in any branch,
+ *       including when the lock is replaced underneath it between
+ *       classification and action.
  *
  * All arms use a real temp cwd with `.claude-flow/policy` and `.swarm`
  * pre-created (what scripts/ruflo-service-entrypoint.sh does at container
  * start) and a real file for RUFLO_GUARD_CLI_PATH so the entrypoint
- * realpath check passes. RUFLO_GUARD_TEST_HOLD_MS (guard-side test seam,
- * documented in the guard's own header) is used by the contention arms, to
- * widen the window deterministically instead of relying on timing luck.
+ * realpath check passes. Every arm prints its measured elapsed times, so a
+ * timing-shaped regression is visible in the run output and not only in a
+ * threshold that happened to still hold.
  *
  * RUFLO_GUARD_TEST_OVERRIDE_PATH points the whole suite at a different
  * guard file (a mutated scratch copy) without editing this file per
- * mutation -- used only for the governance-review red-test protocol
- * (CLAUDE.md's "a regression test you have not run against the unfixed
- * code is unverified"), never in normal runs.
+ * mutation -- used only for the red-test protocol (CLAUDE.md's "a
+ * regression test you have not run against the unfixed code is
+ * unverified"), never in normal runs.
  *
  * The M-14 (setpriv) arms additionally require the `setpriv` binary AND
  * real root (CAP_SETUID, to drop to an unprivileged uid) -- both true in
- * the dev/ruflo containers per the governance review's own measurement,
- * but not guaranteed of every CI runner, so those two arms carry their own
- * independent skip guard and print why when they skip.
+ * the dev/ruflo containers, but not guaranteed of every CI runner, so
+ * those two arms carry their own independent skip guard and print why.
  */
 import { describe, expect, it } from 'vitest'
-import { execFileSync, spawnSync } from 'node:child_process'
+import { spawn, spawnSync } from 'node:child_process'
 import {
   chmodSync,
+  existsSync,
   mkdtempSync,
   mkdirSync,
   readdirSync,
   readFileSync,
   rmSync,
+  utimesSync,
   writeFileSync,
 } from 'node:fs'
+import { createRequire } from 'node:module'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { fileURLToPath } from 'node:url'
 
+const require_ = createRequire(import.meta.url)
 const GUARD_PATH =
   process.env.RUFLO_GUARD_TEST_OVERRIDE_PATH ||
   fileURLToPath(new URL('../ruflo-launch-guard.mjs', import.meta.url))
 const isLinux = process.platform === 'linux'
-const skipReason = isLinux
-  ? ''
-  : `skipped: no /proc on ${process.platform} -- this suite requires Linux (the ruflo service container or CI)`
+
+/**
+ * The guard resolves better-sqlite3 by ABSOLUTE path (it is piped into a
+ * bare `node -` with no node_modules of its own), defaulting to the served
+ * ruflo image's copy. Inside the dev container that path does not exist, so
+ * the suite resolves the workspace copy and hands it to the guard through
+ * the RUFLO_GUARD_SQLITE_MODULE seam. A bare specifier would NOT work --
+ * the guard resolves relative to its own cwd, which is a temp dir here.
+ */
+function resolveSqliteModule(): string | null {
+  const servedImageCopy = '/opt/ruflo-seed/node_modules/better-sqlite3'
+  for (const candidate of [servedImageCopy, 'better-sqlite3']) {
+    try {
+      return require_.resolve(candidate)
+    } catch {
+      // try the next candidate
+    }
+  }
+  return null
+}
+
+const sqliteModule = isLinux ? resolveSqliteModule() : null
+const canRun = isLinux && sqliteModule !== null
+const skipReason = !isLinux
+  ? `skipped: no /proc on ${process.platform} -- this suite requires Linux (the ruflo service container or CI)`
+  : sqliteModule === null
+    ? 'skipped: better-sqlite3 is not resolvable here -- the guard mutex cannot be exercised'
+    : ''
 
 function commandExists(cmd: string): boolean {
-  const r = spawnSync('sh', ['-c', `command -v ${cmd}`], { encoding: 'utf8' })
-  return r.status === 0
+  return spawnSync('sh', ['-c', `command -v ${cmd}`], { encoding: 'utf8' }).status === 0
 }
 
 // M-14 arms need real root (to drop privilege with setpriv) and the
-// setpriv binary itself; neither is guaranteed off the dev/ruflo
-// containers this suite otherwise targets.
+// setpriv binary itself; neither is guaranteed off the dev/ruflo containers.
 const isRoot = isLinux && process.getuid?.() === 0
-const setprivAvailable = isLinux && commandExists('setpriv')
-const hasSetpriv = isRoot && setprivAvailable
+const hasSetpriv = canRun && isRoot && commandExists('setpriv')
 // '' when the arms actually run, matching the skipReason convention above,
-// so a passing/running title never carries a stale "(skipped: ...)" label.
+// so a running title never carries a stale "(skipped: ...)" label.
 const setprivSkipReason = hasSetpriv
   ? ''
-  : !isLinux
+  : !canRun
     ? skipReason
     : !isRoot
       ? 'skipped: M-14 arms require running as root (to setpriv down to an unprivileged uid)'
       : 'skipped: setpriv binary not found on PATH'
 
-/** field 22 (starttime) of /proc/<pid>/stat, mirroring the guard's own extraction. */
-function readStartTime(pid: number): string {
-  const raw = readFileSync(`/proc/${pid}/stat`, 'utf8')
-  const close = raw.lastIndexOf(')')
-  const rest = raw
-    .slice(close + 2)
-    .trim()
-    .split(/\s+/)
-  return rest[19]
-}
+/** A pid that cannot exist (above every Linux pid_max), so /proc says ENOENT. */
+const DEAD_PID = 2147483647
+/** The runtime's own LOCK_STALE_MS, measured live in policy-runtime.js. */
+const RUNTIME_LOCK_STALE_MS = 30000
+
+const delay = (ms: number) => new Promise((resolve) => setTimeout(resolve, ms))
+/** Measured timings go to stdout so every arm's numbers are in the run log. */
+const note = (line: string) => process.stdout.write(`    [measured] ${line}\n`)
 
 function makeCwd(): string {
   const dir = mkdtempSync(join(tmpdir(), 'ruflo-guard-test-'))
@@ -98,22 +134,130 @@ function makeCliPath(cwd: string): string {
   return p
 }
 
+const policyDirOf = (cwd: string) => join(cwd, '.claude-flow', 'policy')
+const mutexPathOf = (cwd: string) => join(policyDirOf(cwd), 'state.lock.launcher.db')
+const realLockPathOf = (cwd: string) => join(policyDirOf(cwd), 'state.lock')
+
+interface GuardRun {
+  status: number | null
+  signal: NodeJS.Signals | null
+  output: string
+  /** Absolute wall-clock bounds, so an arm can assert that one guard
+   * finished AFTER another rather than trusting an absolute duration -- a
+   * container-wide stall moves both, and only the relation survives it. */
+  startedAt: number
+  endedAt: number
+  elapsed: number
+}
+
 /**
- * Runs the guard against `cwd`; never throws -- returns {status, stdout, stderr}.
- * spawnSync, not execFileSync: the latter returns only stdout on exit 0 and
- * drops stderr, so an arm asserting a success-path message (the stale-lock
- * "removed" line) would read '' and fail on Linux while looking correct on
- * a macOS host where every arm skips.
+ * Starts the guard and returns the live child plus a promise of its result.
+ * `spawn`, not `spawnSync`: the contention arms must start a second guard
+ * while the first is still mid-hold, and the SIGKILL arm needs the holder's
+ * real pid. stdout and stderr are merged -- every guard message is on
+ * stderr, and an arm asserting a success-path message would read '' if
+ * stderr were dropped.
  */
-function runGuard(cwd: string, cliPath: string, extraEnv: Record<string, string> = {}) {
-  const r = spawnSync('node', [GUARD_PATH], {
+function launchGuard(cwd: string, cliPath: string, extraEnv: Record<string, string> = {}) {
+  const startedAt = Date.now()
+  const child = spawn('node', [GUARD_PATH], {
     cwd,
-    env: { ...process.env, RUFLO_GUARD_CLI_PATH: cliPath, ...extraEnv },
-    encoding: 'utf8',
+    env: {
+      ...process.env,
+      RUFLO_GUARD_CLI_PATH: cliPath,
+      ...(sqliteModule ? { RUFLO_GUARD_SQLITE_MODULE: sqliteModule } : {}),
+      ...extraEnv,
+    },
     stdio: ['ignore', 'pipe', 'pipe'],
   })
-  if (r.error) throw r.error
-  return { status: r.status, stdout: r.stdout, stderr: r.stderr }
+  let output = ''
+  child.stdout.on('data', (d) => {
+    output += String(d)
+  })
+  child.stderr.on('data', (d) => {
+    output += String(d)
+  })
+  const done = new Promise<GuardRun>((resolve, reject) => {
+    child.on('error', reject)
+    child.on('close', (status, signal) => {
+      const endedAt = Date.now()
+      resolve({ status, signal, output, startedAt, endedAt, elapsed: endedAt - startedAt })
+    })
+  })
+  // `seen` exposes the output accumulated SO FAR, so an arm can wait for
+  // the guard to announce a decision instead of guessing how long it takes
+  // to reach one.
+  return { child, done, seen: () => output }
+}
+
+/**
+ * Resolves once the still-running guard has printed `marker`. Rejects with
+ * everything it did print if it never does -- a silent timeout here would
+ * turn a real regression into a differently-shaped assertion failure two
+ * lines later.
+ */
+async function waitForOutput(
+  guard: { seen: () => string },
+  marker: string,
+  timeoutMs = 15000
+): Promise<number> {
+  const startedAt = Date.now()
+  while (Date.now() - startedAt < timeoutMs) {
+    if (guard.seen().includes(marker)) return Date.now() - startedAt
+    await delay(20)
+  }
+  throw new Error(`guard never printed ${JSON.stringify(marker)}; saw: ${guard.seen()}`)
+}
+
+function runGuard(cwd: string, cliPath: string, extraEnv: Record<string, string> = {}) {
+  return launchGuard(cwd, cliPath, extraEnv).done
+}
+
+/**
+ * Directly asks the kernel whether the launcher mutex is held right now, by
+ * attempting the same `BEGIN IMMEDIATE` with a zero busy timeout. Used as a
+ * KNOWN-POSITIVE before the SIGKILL arm kills its holder: without it, an
+ * arm that killed a holder which had not yet acquired anything would pass
+ * while proving nothing about kernel release.
+ */
+function mutexIsHeld(dbPath: string): boolean {
+  const Database = require_(sqliteModule as string)
+  const db = new Database(dbPath)
+  try {
+    db.pragma('busy_timeout = 0')
+    db.exec('BEGIN IMMEDIATE')
+    db.exec('COMMIT')
+    return false
+  } catch (err) {
+    return String((err as { code?: string }).code || '').startsWith('SQLITE_BUSY')
+  } finally {
+    try {
+      db.close()
+    } catch {
+      // best-effort
+    }
+  }
+}
+
+/** A real, currently-running pid (a detached sleeper), plus its killer. */
+function spawnSleeper(): { pid: number; kill: () => void } {
+  // stdio detached to /dev/null: otherwise the backgrounded `sleep`
+  // inherits this `sh`'s pipe and spawnSync blocks for the full sleep.
+  const r = spawnSync('sh', ['-c', 'sleep 120 </dev/null >/dev/null 2>&1 & echo $!'], {
+    encoding: 'utf8',
+  })
+  const pid = Number(r.stdout.trim())
+  expect(Number.isInteger(pid) && pid > 0, `sleeper spawn stderr: ${r.stderr}`).toBe(true)
+  return {
+    pid,
+    kill: () => {
+      try {
+        process.kill(pid, 'SIGKILL')
+      } catch {
+        // already gone -- fine
+      }
+    },
+  }
 }
 
 describe('ruflo-launch-guard.mjs (ADR-170 §§ 4, 7)', () => {
@@ -124,382 +268,359 @@ describe('ruflo-launch-guard.mjs (ADR-170 §§ 4, 7)', () => {
     return dir
   }
 
-  it.skipIf(!isLinux)(`sibling contention: two forked processes (${skipReason})`, () => {
-    const cwd = scratchCwd()
-    const cliPath = makeCliPath(cwd)
-    const aOut = join(cwd, 'a.out')
-    // Process A holds the sibling for 1500ms after acquiring it (the
-    // guard-side RUFLO_GUARD_TEST_HOLD_MS test seam), backgrounded via the
-    // shell so this test can start process B while A is still mid-hold;
-    // process B starts ~300ms later and must observe A as the live owner.
-    execFileSync(
-      'sh',
-      [
-        '-c',
-        'RUFLO_GUARD_CLI_PATH="$1" RUFLO_GUARD_TEST_HOLD_MS=1500 node "$2" >"$3" 2>&1 &',
-        '_',
-        cliPath,
-        GUARD_PATH,
-        aOut,
-      ],
-      { cwd, encoding: 'utf8' }
-    )
-    execFileSync('sleep', ['0.3'])
-    const b = runGuard(cwd, cliPath)
-    expect(b.status, `B's stderr: ${b.stderr}`).toBe(3)
-    expect(b.stderr).toContain('held by a live launcher')
-    // Let A finish (and clean up its own sibling record) before returning.
-    execFileSync('sleep', ['1.5'])
-  })
+  // ---- 1-4: the mutex is an OS-released lock --------------------------
 
-  it.skipIf(!isLinux)(`stale sibling record (dead pid) is recovered (${skipReason})`, () => {
-    const cwd = scratchCwd()
-    const cliPath = makeCliPath(cwd)
-    const siblingPath = join(cwd, '.claude-flow', 'policy', 'state.lock.launcher')
-    writeFileSync(
-      siblingPath,
-      JSON.stringify({
-        formatVersion: 1,
-        pid: 2147483647, // essentially certain not to exist
-        startTime: '1',
-        nonce: 'dead-owner',
-        createdAt: new Date().toISOString(),
-      })
-    )
-    const r = runGuard(cwd, cliPath)
-    expect(r.status, `stderr: ${r.stderr}`).toBe(0)
-  })
-
-  it.skipIf(!isLinux)(
-    `recycled pid, mismatched start time, sibling recovered (${skipReason})`,
-    () => {
+  it.skipIf(!canRun)(
+    `arm 1: a contender WAITS inside the busy timeout rather than refusing (${skipReason})`,
+    async () => {
       const cwd = scratchCwd()
       const cliPath = makeCliPath(cwd)
-      const siblingPath = join(cwd, '.claude-flow', 'policy', 'state.lock.launcher')
-      // This TEST process's own pid is alive throughout, but the recorded
-      // start time is fabricated and will not match the real one.
-      writeFileSync(
-        siblingPath,
-        JSON.stringify({
-          formatVersion: 1,
-          pid: process.pid,
-          startTime: '1',
-          nonce: 'recycled-owner',
-          createdAt: new Date().toISOString(),
-        })
+      const a = launchGuard(cwd, cliPath, { RUFLO_GUARD_TEST_HOLD_MS: '1500' })
+      await delay(200)
+      const b = launchGuard(cwd, cliPath)
+      const [ar, br] = await Promise.all([a.done, b.done])
+      note(
+        `arm 1: A exit=${ar.status} elapsed=${ar.elapsed}ms | B exit=${br.status} elapsed=${br.elapsed}ms | B ended ${br.endedAt - ar.endedAt}ms after A`
       )
-      const r = runGuard(cwd, cliPath)
-      expect(r.status, `stderr: ${r.stderr}`).toBe(0)
-    }
+      expect(ar.status, `A output: ${ar.output}`).toBe(0)
+      expect(br.status, `B output: ${br.output}`).toBe(0)
+      // The load-independent property: B cannot finish before A releases,
+      // because it is waiting on A. A container-wide stall moves both
+      // endpoints together, so only this RELATION is evidence -- an
+      // absolute duration is not. Deferred BEGIN (no lock taken at all) and
+      // a zero busy timeout both put B's end WELL before A's.
+      expect(br.endedAt - ar.endedAt, `B output: ${br.output}`).toBeGreaterThanOrEqual(-50)
+      // And it WAITED rather than refusing.
+      expect(br.elapsed, `B output: ${br.output}`).toBeGreaterThanOrEqual(1000)
+      expect(br.output).not.toContain('held by another launcher')
+    },
+    30000
   )
 
-  it.skipIf(!isLinux)(`malformed sibling record is refused, never deleted (${skipReason})`, () => {
-    const cwd = scratchCwd()
-    const cliPath = makeCliPath(cwd)
-    const siblingPath = join(cwd, '.claude-flow', 'policy', 'state.lock.launcher')
-    writeFileSync(siblingPath, 'not json at all')
-    const r = runGuard(cwd, cliPath)
-    expect(r.status).toBe(4)
-    expect(r.stderr).toContain('unresolved')
-    expect(readFileSync(siblingPath, 'utf8')).toBe('not json at all')
-  })
-
-  it.skipIf(!isLinux)(`a live state.lock is refused and not deleted (${skipReason})`, () => {
-    const cwd = scratchCwd()
-    const cliPath = makeCliPath(cwd)
-    const lockPath = join(cwd, '.claude-flow', 'policy', 'state.lock')
-    const record = {
-      formatVersion: 1,
-      pid: process.pid,
-      startTime: readStartTime(process.pid),
-      nonce: 'live-server',
-      createdAt: new Date().toISOString(),
-    }
-    writeFileSync(lockPath, JSON.stringify(record))
-    const r = runGuard(cwd, cliPath)
-    expect(r.status, `stderr: ${r.stderr}`).toBe(5)
-    expect(r.stderr).toContain('held by a live server')
-    expect(readFileSync(lockPath, 'utf8')).toBe(JSON.stringify(record))
-  })
-
-  it.skipIf(!isLinux)(`a stale state.lock is recovered and removed (${skipReason})`, () => {
-    const cwd = scratchCwd()
-    const cliPath = makeCliPath(cwd)
-    const lockPath = join(cwd, '.claude-flow', 'policy', 'state.lock')
-    writeFileSync(
-      lockPath,
-      JSON.stringify({
-        formatVersion: 1,
-        pid: 2147483647,
-        startTime: '1',
-        nonce: 'dead-server',
-        createdAt: new Date().toISOString(),
-      })
-    )
-    const r = runGuard(cwd, cliPath)
-    expect(r.status, `stderr: ${r.stderr}`).toBe(0)
-    expect(r.stderr).toContain('removed stale state.lock')
-    expect(() => readFileSync(lockPath, 'utf8')).toThrow()
-  })
-
-  // -- C-1: the REAL state.lock's actual on-disk shape ------------------
-  // policy-runtime.js writes {"pid":<int>,"acquiredAt":<Date.now() ms>},
-  // not this file's own {pid,startTime} sibling shape. These three arms
-  // use that LITERAL runtime shape against the real lock path.
-
-  it.skipIf(!isLinux)(
-    `a stale REAL state.lock in the runtime's own {pid,acquiredAt} shape is recovered and removed (${skipReason})`,
-    () => {
+  it.skipIf(!canRun)(
+    `arm 2: a contender REFUSES with exit 3, naming the holder, once the busy timeout elapses (${skipReason})`,
+    async () => {
       const cwd = scratchCwd()
       const cliPath = makeCliPath(cwd)
-      const lockPath = join(cwd, '.claude-flow', 'policy', 'state.lock')
-      writeFileSync(lockPath, JSON.stringify({ pid: 2147483647, acquiredAt: Date.now() - 60000 }))
-      const r = runGuard(cwd, cliPath)
-      expect(r.status, `stderr: ${r.stderr}`).toBe(0)
-      expect(r.stderr).toContain('removed stale state.lock')
-      expect(() => readFileSync(lockPath, 'utf8')).toThrow()
-    }
+      const a = launchGuard(cwd, cliPath, { RUFLO_GUARD_TEST_HOLD_MS: '5000' })
+      await delay(200)
+      const br = await runGuard(cwd, cliPath)
+      note(`arm 2: B exit=${br.status} elapsed=${br.elapsed}ms (holder pid ${a.child.pid})`)
+      // Exit 3 is itself the proof that it REFUSED rather than outlasting
+      // A's hold (acquiring late would have been exit 0), so no upper bound
+      // is needed -- and an upper bound would only add a stall-shaped
+      // flake. The floor is what matters: it must have waited out the full
+      // busy timeout, which a zero busy_timeout would cut to ~50ms.
+      expect(br.status, `B output: ${br.output}`).toBe(3)
+      expect(br.elapsed, `B output: ${br.output}`).toBeGreaterThanOrEqual(2800)
+      expect(br.output).toContain('held by another launcher')
+      expect(br.output).toContain(`pid ${a.child.pid}`)
+      // The refusal must not tell anyone to delete anything.
+      expect(br.output).toContain('nothing to delete')
+      const ar = await a.done
+      note(`arm 2: A exit=${ar.status} elapsed=${ar.elapsed}ms`)
+      expect(ar.status, `A output: ${ar.output}`).toBe(0)
+    },
+    30000
   )
 
-  it.skipIf(!isLinux)(
-    `a live REAL state.lock in the runtime's own {pid,acquiredAt} shape is refused and not deleted (${skipReason})`,
-    () => {
+  it.skipIf(!canRun)(
+    `arm 3: three contenders all proceed and leave only the mutex db behind (${skipReason})`,
+    async () => {
       const cwd = scratchCwd()
       const cliPath = makeCliPath(cwd)
-      const lockPath = join(cwd, '.claude-flow', 'policy', 'state.lock')
-      const record = { pid: process.pid, acquiredAt: Date.now() }
-      writeFileSync(lockPath, JSON.stringify(record))
-      const r = runGuard(cwd, cliPath)
-      expect(r.status, `stderr: ${r.stderr}`).toBe(5)
-      expect(r.stderr).toContain('held by a live server')
-      expect(readFileSync(lockPath, 'utf8')).toBe(JSON.stringify(record))
-    }
-  )
-
-  it.skipIf(!isLinux)(
-    `a recycled pid in a REAL state.lock ({pid,acquiredAt}) is recovered as stale (${skipReason})`,
-    () => {
-      const cwd = scratchCwd()
-      const cliPath = makeCliPath(cwd)
-      const lockPath = join(cwd, '.claude-flow', 'policy', 'state.lock')
-      // A real, currently-live pid, backgrounded so it survives this
-      // spawnSync call returning; acquiredAt is set 10 minutes in the past,
-      // so this pid's ACTUAL /proc start time (right now) unavoidably
-      // postdates it -- the recycled-pid case the runtime shape must
-      // recover from rather than treat as the live owner. stdio is
-      // detached to /dev/null: without that, the backgrounded `sleep`
-      // inherits this `sh`'s stdout/stderr pipe, and spawnSync then blocks
-      // for the full 30s waiting for that pipe to close (measured; the
-      // parent `sh` exiting is not enough while the child still holds it).
-      const spawned = spawnSync('sh', ['-c', 'sleep 30 </dev/null >/dev/null 2>&1 & echo $!'], {
-        encoding: 'utf8',
-      })
-      const childPid = Number(spawned.stdout.trim())
-      expect(Number.isInteger(childPid) && childPid > 0, `spawn stderr: ${spawned.stderr}`).toBe(
-        true
+      // 600ms, not 1500ms: all three must complete INSIDE the 3000ms busy
+      // timeout, and this container has been measured stalling for over 3s
+      // at a time, so the convoy needs most of that budget as headroom
+      // rather than spending it on the hold itself.
+      const a = launchGuard(cwd, cliPath, { RUFLO_GUARD_TEST_HOLD_MS: '600' })
+      await delay(50)
+      const b = launchGuard(cwd, cliPath)
+      await delay(50)
+      const c = launchGuard(cwd, cliPath)
+      const [ar, br, cr] = await Promise.all([a.done, b.done, c.done])
+      note(
+        `arm 3: A exit=${ar.status} elapsed=${ar.elapsed}ms | B exit=${br.status} elapsed=${br.elapsed}ms | C exit=${cr.status} elapsed=${cr.elapsed}ms`
       )
-      try {
-        writeFileSync(lockPath, JSON.stringify({ pid: childPid, acquiredAt: Date.now() - 600000 }))
-        const r = runGuard(cwd, cliPath)
-        expect(r.status, `stderr: ${r.stderr}`).toBe(0)
-        expect(r.stderr).toContain('recycled pid')
-        expect(() => readFileSync(lockPath, 'utf8')).toThrow()
-      } finally {
-        try {
-          process.kill(childPid, 'SIGKILL')
-        } catch {
-          // already gone -- fine
-        }
+      const diag = `A: ${ar.output}\nB: ${br.output}\nC: ${cr.output}`
+      expect([ar.status, br.status, cr.status], diag).toEqual([0, 0, 0])
+      // The whole point of replacing the sibling-file protocol: no debris
+      // to sweep, so nothing that a later sweep could delete out from under
+      // a successor. No `.stale.<pid>`, no `state.lock.launcher`, no
+      // leaked probe files, no `-wal`/`-shm`.
+      expect(readdirSync(policyDirOf(cwd)).sort(), diag).toEqual(['state.lock.launcher.db'])
+    },
+    30000
+  )
+
+  it.skipIf(!canRun)(
+    `arm 4: the kernel releases a SIGKILLed holder's mutex -- no staleness, nothing to recover (${skipReason})`,
+    async () => {
+      const cwd = scratchCwd()
+      const cliPath = makeCliPath(cwd)
+      const mutexPath = mutexPathOf(cwd)
+      const a = launchGuard(cwd, cliPath, { RUFLO_GUARD_TEST_HOLD_MS: '20000' })
+      // KNOWN-POSITIVE first: confirm the mutex really is held before the
+      // kill, so a pass cannot come from killing a holder that never held.
+      let held = false
+      const pollStartedAt = Date.now()
+      for (let i = 0; i < 200 && !held; i++) {
+        await delay(50)
+        held = existsSync(mutexPath) && mutexIsHeld(mutexPath)
       }
-    }
+      note(
+        `arm 4: holder observed holding after ${Date.now() - pollStartedAt}ms (pid ${a.child.pid})`
+      )
+      expect(held, 'the holder never acquired the mutex -- the kill would prove nothing').toBe(true)
+      process.kill(a.child.pid as number, 'SIGKILL')
+      const ar = await a.done
+      expect(ar.signal).toBe('SIGKILL')
+      const br = await runGuard(cwd, cliPath)
+      note(`arm 4: successor exit=${br.status} elapsed=${br.elapsed}ms`)
+      expect(br.status, `successor output: ${br.output}`).toBe(0)
+      // Exit 0 already proves release (a still-held lock ends in exit 3
+      // after the busy timeout). The bound adds "immediately": it stays
+      // under the 3000ms timeout with room for a container stall, rather
+      // than pinning the ~25ms this actually measures.
+      expect(br.elapsed, `successor output: ${br.output}`).toBeLessThan(2500)
+      expect(readdirSync(policyDirOf(cwd)).sort()).toEqual(['state.lock.launcher.db'])
+    },
+    40000
   )
 
-  it.skipIf(!isLinux)(
-    `a malformed REAL state.lock warns and proceeds -- never wedges the server, never deletes it (${skipReason})`,
-    () => {
-      const cwd = scratchCwd()
-      const cliPath = makeCliPath(cwd)
-      const lockPath = join(cwd, '.claude-flow', 'policy', 'state.lock')
-      const raw = JSON.stringify({ garbage: true })
-      writeFileSync(lockPath, raw)
-      const r = runGuard(cwd, cliPath)
-      expect(r.status, `stderr: ${r.stderr}`).toBe(0)
-      expect(r.stderr).toContain('unresolved')
-      expect(r.stderr).toContain('proceeding')
-      expect(readFileSync(lockPath, 'utf8')).toBe(raw)
-    }
-  )
+  // ---- 5-7: the guard never writes or removes the runtime's state.lock -
 
-  // -- H-4: stale-recovery race on the SIBLING file ----------------------
-  // Two guards race a pre-seeded STALE sibling record. Whichever writes
-  // last wins (its own read-back sees its own nonce); the other must
-  // observe the mismatch (or an EEXIST against the winner's live record)
-  // and refuse -- never both proceed. Exact interleaving is scheduler-
-  // dependent, so this asserts the invariant (exactly one winner, sibling
-  // ends up clean), not a specific code path.
-  it.skipIf(!isLinux)(
-    `H-4: two guards racing a stale sibling record -- exactly one wins, sibling ends up clean (${skipReason})`,
-    () => {
+  it.skipIf(!canRun)(
+    `arm 5: a state.lock REPLACED after classification survives untouched (${skipReason})`,
+    async () => {
       const cwd = scratchCwd()
       const cliPath = makeCliPath(cwd)
-      const siblingPath = join(cwd, '.claude-flow', 'policy', 'state.lock.launcher')
-      writeFileSync(
-        siblingPath,
-        JSON.stringify({
-          formatVersion: 1,
-          pid: 2147483646,
-          startTime: '1',
-          nonce: 'h4-dead-owner',
-          createdAt: new Date().toISOString(),
+      const lockPath = realLockPathOf(cwd)
+      // Pre-seed a lock the guard will classify STALE: dead pid, and an
+      // mtime already past the runtime's own staleness window so the guard
+      // proceeds without waiting.
+      writeFileSync(lockPath, JSON.stringify({ pid: DEAD_PID, acquiredAt: Date.now() - 600000 }))
+      const past = new Date(Date.now() - 60000)
+      utimesSync(lockPath, past, past)
+      const sleeper = spawnSleeper()
+      try {
+        // The replacement must land strictly BETWEEN the guard's
+        // classification and its action, and NO fixed delay can guarantee
+        // that: this container has been measured stalling for over 3s,
+        // which is long enough to put a 100ms (or an 800ms) write on the
+        // wrong side of the guard's own first read -- the guard would then
+        // classify the LIVE record and exit 5, a different arm entirely.
+        // So the arm waits for the guard to ANNOUNCE its classification and
+        // writes the replacement only then, inside the seam pause. That is
+        // an observed fact rather than a timing guess.
+        const g = launchGuard(cwd, cliPath, {
+          RUFLO_GUARD_TEST_PAUSE_AFTER_REALLOCK_CLASSIFY_MS: '6000',
         })
-      )
-      const aOut = join(cwd, 'a.out')
-      const bOut = join(cwd, 'b.out')
-      const aExitFile = join(cwd, 'a.exit')
-      const bExitFile = join(cwd, 'b.exit')
-      // Both guards launched from the SAME shell invocation, backgrounded
-      // back-to-back with no sleep between them, so their node process
-      // startups (tens of ms) overlap the microsecond-scale
-      // unlink-then-write recovery race this arm exists to exercise. Each
-      // backgrounded command is wrapped in its OWN subshell `( ... ) &` --
-      // without the parens, `cmd1; cmd2 &` backgrounds only cmd2 and runs
-      // cmd1 (the node invocation) in the FOREGROUND first, which fully
-      // serializes the two guards instead of racing them (measured: this
-      // exact bug made an earlier version of this arm show B starting
-      // >1s after A had already finished and cleaned up -- no race at
-      // all). RUFLO_GUARD_TEST_HOLD_MS on BOTH (not just the eventual
-      // winner): node's own startup jitter (single-digit-to-tens of ms) is
-      // comparable to a guard's whole uncontended run time, so without a
-      // hold on both sides a "loser" that starts a few ms late can find
-      // the winner has ALREADY finished and cleaned up its own sibling
-      // record -- a clean empty slot, not a race at all (measured: this
-      // exact false negative -- both exiting 0 with the second one having
-      // legitimately re-acquired a freshly-vacated sibling -- happened
-      // repeatedly with only the winner held). Holding both keeps
-      // whichever one wins observable as the live owner for long enough
-      // that the other reliably sees the contention.
-      const script = [
-        `( RUFLO_GUARD_CLI_PATH="$1" RUFLO_GUARD_TEST_HOLD_MS=500 node "$2" >"$3" 2>&1; echo $? > "$4" ) &`,
-        `( RUFLO_GUARD_CLI_PATH="$1" RUFLO_GUARD_TEST_HOLD_MS=500 node "$2" >"$5" 2>&1; echo $? > "$6" ) &`,
-        `wait`,
-      ].join('\n')
-      execFileSync(
-        'sh',
-        ['-c', script, '_', cliPath, GUARD_PATH, aOut, aExitFile, bOut, bExitFile],
-        {
-          cwd,
-          encoding: 'utf8',
-        }
-      )
-      const aExit = Number(readFileSync(aExitFile, 'utf8').trim())
-      const bExit = Number(readFileSync(bExitFile, 'utf8').trim())
-      const winners = [aExit, bExit].filter((c) => c === 0)
-      const losers = [aExit, bExit].filter((c) => c !== 0)
-      const diag = `a=${aExit} (${readFileSync(aOut, 'utf8')}) b=${bExit} (${readFileSync(bOut, 'utf8')})`
-      expect(winners.length, diag).toBe(1)
-      expect(losers.length, diag).toBe(1)
-      expect([3, 4], diag).toContain(losers[0])
-      expect(() => readFileSync(siblingPath, 'utf8')).toThrow()
-    }
+        const sawAt = await waitForOutput(g, `classified stale (pid ${DEAD_PID} is not running)`)
+        const liveRecord = JSON.stringify({ pid: sleeper.pid, acquiredAt: Date.now() })
+        writeFileSync(lockPath, liveRecord)
+        const r = await g.done
+        note(
+          `arm 5: classification seen at +${sawAt}ms, replacement written immediately after; guard exit=${r.status} elapsed=${r.elapsed}ms`
+        )
+        expect(r.status, `guard output: ${r.output}`).toBe(0)
+        // It classified the pre-seeded STALE record, not the replacement.
+        expect(r.output, `guard output: ${r.output}`).toContain(`pid ${DEAD_PID} is not running`)
+        // And it was still inside the seam pause when the replacement
+        // landed -- otherwise this arm proves nothing about that window.
+        expect(r.elapsed, `guard output: ${r.output}`).toBeGreaterThan(sawAt)
+        // And the LIVE successor record is still there, byte for byte.
+        expect(existsSync(lockPath), `guard output: ${r.output}`).toBe(true)
+        expect(readFileSync(lockPath, 'utf8')).toBe(liveRecord)
+      } finally {
+        sleeper.kill()
+      }
+    },
+    30000
   )
 
-  // -- H-4 (deterministic): rename arbitration under a controlled gap ----
-  // A pauses 500ms after classifying the pre-seeded stale record, before
-  // its arbitrating rename (RUFLO_GUARD_TEST_PAUSE_AFTER_CLASSIFY_MS); B
-  // (started ~50ms after A) pauses 850ms. Both classify the SAME stale
-  // record before either acts: B's own classify happens at B's process
-  // startup (~50ms + Node startup jitter after A's start), which needs a
-  // wide margin below A's 500ms pause -- measured, Node startup jitter
-  // under container load can occasionally exceed 150ms, and an earlier,
-  // tighter 200ms/600ms pairing let B's classify land AFTER A's write on
-  // one observed run (B then correctly refused via the OUTER live-check
-  // instead of the post-capture one this arm exists to pin -- still safe,
-  // but not what this arm is targeted at). A's rename+write completes at
-  // ~500ms after A's own start; A then holds (RUFLO_GUARD_TEST_HOLD_MS)
-  // long enough that its fresh record is still the live owner when B acts
-  // at ~900ms (50 + 850) after A's start -- comfortably inside A's
-  // 500-1500ms live window. B's rename SUCCEEDS at that point -- rename
-  // moves whatever is CURRENTLY at the path, not the specific object
-  // classified 850ms earlier, so it captures A's live record, not the
-  // original stale one -- but the guard's post-capture re-validation
-  // catches this: B re-reads what it just captured, finds it is A's LIVE
-  // record, restores it to the sibling path, and refuses. Measured
-  // directly (debug instrumentation) before that re-validation existed:
-  // this exact scenario made BOTH processes exit 0, a real double-spawn,
-  // not a hypothetical one -- so this arm pins that fix specifically, not
-  // just the rename-vs-unlink one the stochastic arm above covers.
-  it.skipIf(!isLinux)(
-    `H-4 (deterministic): A wins via pause=500ms, B loses via pause=850ms, captured-record re-validation (${skipReason})`,
-    () => {
-      const cwd = scratchCwd()
-      const cliPath = makeCliPath(cwd)
-      const policyDir = join(cwd, '.claude-flow', 'policy')
-      const siblingPath = join(policyDir, 'state.lock.launcher')
+  it.skipIf(!canRun)(
+    `arm 6: a stale state.lock is WAITED OUT, never deleted (${skipReason})`,
+    async () => {
+      // (a) young stale lock: the guard must wait out the remainder of the
+      //     runtime's 30s staleness window so the server it is about to
+      //     exec clears the lock itself on its first contended acquire.
+      const youngCwd = scratchCwd()
+      const youngCli = makeCliPath(youngCwd)
+      const youngLock = realLockPathOf(youngCwd)
+      writeFileSync(youngLock, JSON.stringify({ pid: DEAD_PID, acquiredAt: Date.now() - 600000 }))
+      const tenSecondsAgo = new Date(Date.now() - 10000)
+      utimesSync(youngLock, tenSecondsAgo, tenSecondsAgo)
+      const young = await runGuard(youngCwd, youngCli)
+      note(`arm 6a (mtime 10s old): exit=${young.status} elapsed=${young.elapsed}ms`)
+      expect(young.status, `output: ${young.output}`).toBe(0)
+      // Two assertions, because they can fail independently.
+      // (a) the ARITHMETIC: 10s of the 30s window had already elapsed, so
+      //     ~20s is owed -- NOT the full 30s, and not zero. Read from the
+      //     guard's own printed figure, which no container stall can move.
+      // The fraction is deliberately OPTIONAL in this pattern. The arm is
+      // asserting the guard's ARITHMETIC, not its number formatting, and a
+      // `\d+ms`-only pattern silently failed whenever statSync's float
+      // mtimeMs produced "19954.9990234375ms" -- an instrument that
+      // reported a defect in the subject when the defect was in the
+      // instrument.
+      const owed = young.output.match(/waiting (\d+(?:\.\d+)?)ms/)
+      expect(owed, `output: ${young.output}`).not.toBeNull()
+      const owedMs = Number((owed as RegExpMatchArray)[1])
+      note(`arm 6a: guard computed a ${owedMs}ms wait (expected ~${RUNTIME_LOCK_STALE_MS - 10000})`)
+      expect(owedMs, `output: ${young.output}`).toBeGreaterThan(RUNTIME_LOCK_STALE_MS - 11500)
+      expect(owedMs, `output: ${young.output}`).toBeLessThanOrEqual(RUNTIME_LOCK_STALE_MS - 9500)
+      // (b) it actually SLEPT that long rather than only printing it. A
+      //     container stall can only push this up, never down.
+      expect(young.elapsed, `output: ${young.output}`).toBeGreaterThanOrEqual(
+        RUNTIME_LOCK_STALE_MS - 10000 - 1000
+      )
+      expect(young.output).toContain('never deletes state.lock')
+      expect(existsSync(youngLock), `output: ${young.output}`).toBe(true)
+
+      // (b) old stale lock: already past the window, so no wait at all --
+      //     and still no deletion.
+      const oldCwd = scratchCwd()
+      const oldCli = makeCliPath(oldCwd)
+      const oldLock = realLockPathOf(oldCwd)
+      const oldRaw = JSON.stringify({ pid: DEAD_PID, acquiredAt: Date.now() - 600000 })
+      writeFileSync(oldLock, oldRaw)
+      const sixtySecondsAgo = new Date(Date.now() - 60000)
+      utimesSync(oldLock, sixtySecondsAgo, sixtySecondsAgo)
+      const old = await runGuard(oldCwd, oldCli)
+      note(`arm 6b (mtime 60s old): exit=${old.status} elapsed=${old.elapsed}ms`)
+      expect(old.status, `output: ${old.output}`).toBe(0)
+      // The discriminator is "did not sleep the window", not "was fast":
+      // the failure this excludes is a ~20-30s wait, so a 10s ceiling
+      // separates cleanly while tolerating a multi-second container stall.
+      expect(old.elapsed, `output: ${old.output}`).toBeLessThan(10000)
+      expect(old.output).toContain('past the runtime')
+      // The WAIT LINE must be absent -- matched by its shape, not by the
+      // bare word: the no-wait line itself reads "proceeding without
+      // waiting", so a `not.toContain('waiting')` assertion fails on a
+      // correct guard. (It did, on the first run of this arm.)
+      expect(old.output, `output: ${old.output}`).not.toMatch(/waiting \d+ms/)
+      expect(readFileSync(oldLock, 'utf8')).toBe(oldRaw)
+    },
+    60000
+  )
+
+  it.skipIf(!canRun)(
+    `arm 7: a live state.lock refuses (exit 5); a malformed one warns and proceeds -- neither is deleted (${skipReason})`,
+    async () => {
+      const liveCwd = scratchCwd()
+      const liveCli = makeCliPath(liveCwd)
+      const liveLock = realLockPathOf(liveCwd)
+      const sleeper = spawnSleeper()
+      try {
+        const liveRaw = JSON.stringify({ pid: sleeper.pid, acquiredAt: Date.now() })
+        writeFileSync(liveLock, liveRaw)
+        const live = await runGuard(liveCwd, liveCli)
+        note(`arm 7a (live lock): exit=${live.status} elapsed=${live.elapsed}ms`)
+        expect(live.status, `output: ${live.output}`).toBe(5)
+        expect(live.output).toContain('held by a live server')
+        expect(live.output).toContain('nothing to delete')
+        expect(readFileSync(liveLock, 'utf8')).toBe(liveRaw)
+      } finally {
+        sleeper.kill()
+      }
+
+      const badCwd = scratchCwd()
+      const badCli = makeCliPath(badCwd)
+      const badLock = realLockPathOf(badCwd)
+      const badRaw = JSON.stringify({ garbage: true })
+      writeFileSync(badLock, badRaw)
+      const bad = await runGuard(badCwd, badCli)
+      note(`arm 7b (malformed lock): exit=${bad.status} elapsed=${bad.elapsed}ms`)
+      expect(bad.status, `output: ${bad.output}`).toBe(0)
+      expect(bad.output).toContain('unresolved')
+      expect(bad.output).toContain('proceeding')
+      expect(readFileSync(badLock, 'utf8')).toBe(badRaw)
+    },
+    30000
+  )
+
+  // ---- 8: an unusable mutex database is a distinct, self-describing refusal
+
+  it.skipIf(!canRun)(
+    `arm 8: an unusable mutex database refuses with exit 4, naming the file (${skipReason})`,
+    async () => {
+      const dirCwd = scratchCwd()
+      const dirCli = makeCliPath(dirCwd)
+      const dirMutex = mutexPathOf(dirCwd)
+      mkdirSync(dirMutex)
+      const asDir = await runGuard(dirCwd, dirCli)
+      note(`arm 8a (directory at the mutex path): exit=${asDir.status} elapsed=${asDir.elapsed}ms`)
+      expect(asDir.status, `output: ${asDir.output}`).toBe(4)
+      expect(asDir.output).toContain(dirMutex)
+
+      const fileCwd = scratchCwd()
+      const fileCli = makeCliPath(fileCwd)
+      const fileMutex = mutexPathOf(fileCwd)
+      writeFileSync(fileMutex, 'this file is emphatically not a SQLite database\n')
+      const notDb = await runGuard(fileCwd, fileCli)
+      note(`arm 8b (non-database file): exit=${notDb.status} elapsed=${notDb.elapsed}ms`)
+      expect(notDb.status, `output: ${notDb.output}`).toBe(4)
+      expect(notDb.output).toContain(fileMutex)
+    },
+    30000
+  )
+
+  // ---- legacy sweep: the A1.4 sibling file is inert, not load-bearing --
+
+  it.skipIf(!canRun)(
+    `legacy: a dead-pid pre-A1.8 sibling file is swept; anything else is left in place (${skipReason})`,
+    async () => {
+      const deadCwd = scratchCwd()
+      const deadCli = makeCliPath(deadCwd)
+      const deadSibling = join(policyDirOf(deadCwd), 'state.lock.launcher')
       writeFileSync(
-        siblingPath,
-        JSON.stringify({
-          formatVersion: 1,
-          pid: 2147483645,
-          startTime: '1',
-          nonce: 'h4-det-dead-owner',
-          createdAt: new Date().toISOString(),
-        })
+        deadSibling,
+        JSON.stringify({ formatVersion: 1, pid: DEAD_PID, startTime: '1', nonce: 'x' })
       )
-      const aOut = join(cwd, 'a.out')
-      const bOut = join(cwd, 'b.out')
-      const aExitFile = join(cwd, 'a.exit')
-      const bExitFile = join(cwd, 'b.exit')
-      // A and B are each backgrounded in their OWN subshell (the earlier
-      // `cmd1; cmd2 &` sequencing-bug fix), with the `sleep 0.05` gap
-      // INSIDE this same script -- not a separate execFileSync/spawnSync
-      // call from the test process. Measured: an out-of-process sleep
-      // call's own overhead (spawning `sh` plus `sleep` from Node) can
-      // itself run over 1000ms under load, dwarfing the intended 50ms gap
-      // and letting A fully finish (and clean up) before B even starts --
-      // collapsing the intended race into two sequential, uncontested
-      // acquisitions. A single in-script `sleep` avoids that overhead.
-      const script = [
-        `( RUFLO_GUARD_CLI_PATH="$1" RUFLO_GUARD_TEST_PAUSE_AFTER_CLASSIFY_MS=500 RUFLO_GUARD_TEST_HOLD_MS=1000 node "$2" >"$3" 2>&1; echo $? > "$4" ) &`,
-        `sleep 0.05`,
-        `( RUFLO_GUARD_CLI_PATH="$1" RUFLO_GUARD_TEST_PAUSE_AFTER_CLASSIFY_MS=850 node "$2" >"$5" 2>&1; echo $? > "$6" ) &`,
-        `wait`,
-      ].join('\n')
-      execFileSync(
-        'sh',
-        ['-c', script, '_', cliPath, GUARD_PATH, aOut, aExitFile, bOut, bExitFile],
-        { cwd, encoding: 'utf8' }
-      )
-      const aExit = Number(readFileSync(aExitFile, 'utf8').trim())
-      const bExit = Number(readFileSync(bExitFile, 'utf8').trim())
-      const diag = `a=${aExit} (${readFileSync(aOut, 'utf8')}) b=${bExit} (${readFileSync(bOut, 'utf8')})`
-      expect(aExit, diag).toBe(0)
-      expect(bExit, diag).toBe(3)
-      expect(readFileSync(bOut, 'utf8'), diag).toContain('taken by another launcher')
-      expect(() => readFileSync(siblingPath, 'utf8')).toThrow()
-      const staleFiles = readdirSync(policyDir).filter((f) => f.includes('.stale.'))
-      expect(staleFiles, diag).toEqual([])
-    }
+      const swept = await runGuard(deadCwd, deadCli)
+      note(`legacy (dead pid): exit=${swept.status} elapsed=${swept.elapsed}ms`)
+      expect(swept.status, `output: ${swept.output}`).toBe(0)
+      expect(existsSync(deadSibling), `output: ${swept.output}`).toBe(false)
+
+      const keepCwd = scratchCwd()
+      const keepCli = makeCliPath(keepCwd)
+      const keepSibling = join(policyDirOf(keepCwd), 'state.lock.launcher')
+      writeFileSync(keepSibling, 'not json at all')
+      const kept = await runGuard(keepCwd, keepCli)
+      note(`legacy (unparseable): exit=${kept.status} elapsed=${kept.elapsed}ms`)
+      expect(kept.status, `output: ${kept.output}`).toBe(0)
+      expect(readFileSync(keepSibling, 'utf8')).toBe('not json at all')
+    },
+    30000
   )
 
-  // -- M-14: writability-probe failure arms (setpriv-gated) --------------
+  // ---- M-14: writability-probe failure arms (setpriv-gated) -----------
   // The dev/ruflo containers run as root, which bypasses every permission
   // check these arms depend on -- so they must drop to an unprivileged uid
   // via setpriv to actually observe a directory refusing a write. Measured
   // live: mkdirSync's default mode here is 0755 owned by root -- "others"
   // (uid 1000, outside the owning group) get only r-x on EVERY probed
   // directory by default, so cwd/.claude-flow/the non-target probe dir must
-  // be explicitly opened to 0777 (world-writable) wherever the test does
-  // NOT want that directory to be the one that fails -- otherwise the
-  // FIRST directory in main()'s probe order ([policyDir, swarmDir, cwd])
-  // fails regardless of which one the test means to target. Only the ONE
-  // directory each arm is actually testing is set to 0555 (read+execute,
-  // no write).
+  // be explicitly opened to 0777 wherever the test does NOT want that
+  // directory to be the one that fails -- otherwise the FIRST directory in
+  // main()'s probe order ([policyDir, swarmDir, cwd]) fails regardless of
+  // which one the test means to target. Only the ONE directory each arm is
+  // actually testing is set to 0555 (read+execute, no write).
 
   function runAsUid1000(cwd: string, cliPath: string) {
     const r = spawnSync(
       'setpriv',
       ['--reuid=1000', '--regid=1000', '--clear-groups', 'node', GUARD_PATH],
-      { cwd, env: { ...process.env, RUFLO_GUARD_CLI_PATH: cliPath }, encoding: 'utf8' }
+      {
+        cwd,
+        env: {
+          ...process.env,
+          RUFLO_GUARD_CLI_PATH: cliPath,
+          ...(sqliteModule ? { RUFLO_GUARD_SQLITE_MODULE: sqliteModule } : {}),
+        },
+        encoding: 'utf8',
+      }
     )
     if (r.error) throw r.error
     return r
@@ -510,7 +631,7 @@ describe('ruflo-launch-guard.mjs (ADR-170 §§ 4, 7)', () => {
     () => {
       const cwd = scratchCwd()
       const cliPath = makeCliPath(cwd)
-      const policyDir = join(cwd, '.claude-flow', 'policy')
+      const policyDir = policyDirOf(cwd)
       chmodSync(cwd, 0o777)
       chmodSync(join(cwd, '.claude-flow'), 0o777)
       chmodSync(join(cwd, '.swarm'), 0o777)
@@ -530,11 +651,10 @@ describe('ruflo-launch-guard.mjs (ADR-170 §§ 4, 7)', () => {
     () => {
       const cwd = scratchCwd()
       const cliPath = makeCliPath(cwd)
-      const policyDir = join(cwd, '.claude-flow', 'policy')
       const swarmDir = join(cwd, '.swarm')
       chmodSync(cwd, 0o777)
       chmodSync(join(cwd, '.claude-flow'), 0o777)
-      chmodSync(policyDir, 0o777)
+      chmodSync(policyDirOf(cwd), 0o777)
       chmodSync(swarmDir, 0o555)
       try {
         const r = runAsUid1000(cwd, cliPath)
@@ -546,18 +666,18 @@ describe('ruflo-launch-guard.mjs (ADR-170 §§ 4, 7)', () => {
     }
   )
 
-  if (!isLinux) {
+  if (!canRun) {
     it(`prints its skip reason (${skipReason})`, () => {
-      // A non-skipped canary so a `vitest run` of this file on a non-Linux
-      // host always reports at least one PASS naming why the rest skipped,
-      // rather than a suite of silent skips with no visible reason.
-      expect(skipReason).toContain('no /proc on')
+      // A non-skipped canary so a `vitest run` of this file where the suite
+      // cannot run always reports at least one PASS naming why the rest
+      // skipped, rather than a suite of silent skips with no visible reason.
+      expect(skipReason).not.toBe('')
     })
   }
 
   // Cleanup happens per-process-exit (mktemp dirs under the OS tmpdir), but
   // best-effort explicit cleanup keeps a long-lived CI runner tidy too.
-  it.skipIf(!isLinux)('cleanup', () => {
+  it.skipIf(!canRun)('cleanup', () => {
     for (const dir of dirs) rmSync(dir, { recursive: true, force: true })
   })
 })

@@ -32,7 +32,7 @@ Verify: `claude mcp list | grep ruflo`
 2. Service command authentication: the running container's Entrypoint, Cmd, and WorkingDir must equal the § 1 / § 4 literals exactly.
 3. `RUFLO_CLI_PIN` vs the served `@claude-flow/cli` version, read via a sentinel-tagged probe run inside the container.
 4. Authority quad (§ 5): the `/srv/ruflo` mount's volume identity, instance-nonce label, and `store_generation` row must all match the machine-local authority file at `~/.skillsmith/ruflo-store.json`; an empty volume is refused by name, distinct from a generation mismatch.
-5. Per-spawn guard (`scripts/ruflo-launch-guard.mjs`), piped into the container immediately before exec — writability probes plus the `state.lock`/`state.lock.launcher` staleness protocol.
+5. Per-spawn guard (`scripts/ruflo-launch-guard.mjs`), piped into the container immediately before exec — writability probes, then the runtime's `state.lock` decision taken under an OS-released mutex (SQLite `BEGIN IMMEDIATE` on `state.lock.launcher.db`, a kernel lock the holder's death releases) — the guard never deletes the runtime's lock; a stale one is waited out (the runtime clears it after 30 s), a live one refuses.
 
 **Guard exit codes** (each prints one `[ruflo] guard: ...` line naming the failing check — read the guard's own header for the current message text):
 
@@ -41,13 +41,13 @@ Verify: `claude mcp list | grep ruflo`
 | 0 | authorized | — |
 | 1 | a writability probe failed | fix cwd/volume permissions (ADR-170 § 4) |
 | 2 | entrypoint realpath mismatch | recreate the `ruflo` service |
-| 3 | `state.lock.launcher` held by a live launcher | wait for it to finish |
-| 4 | `state.lock.launcher` unresolved (malformed) | confirm no live server, then remove |
-| 5 | real `state.lock` held by a live server | wait for it to finish |
-| 6 | retired — an unresolved or malformed real `state.lock` now warns and proceeds, since the runtime applies its own 30 s staleness rule | — |
-| 7 | internal error (a bug in the guard itself) | file a Linear issue |
+| 3 | the launcher mutex is held by another launcher past the 3 s busy timeout | retry — nothing to delete (a live holder releases on exit; a dead one already did); the message names the last recorded holder pid |
+| 4 | the mutex database `state.lock.launcher.db` is unusable (not a database, a directory, unreadable) | remove ONLY that file — it holds no state — never `state.lock` or `state.json` |
+| 5 | the runtime's `state.lock` is held by a live server (another session mid-transaction) | retry — nothing to delete; a stale lock is waited out by the guard itself |
+| 6 | retired — a malformed real `state.lock` warns and proceeds; a stale one is waited out (the runtime clears a lock older than 30 s on its next acquire) | — |
+| 7 | internal error, including a missing `better-sqlite3` in the image (an image defect, not a lock problem) | file a Linear issue |
 
-For codes 3-6, first confirm no live server with `docker exec skillsmith-ruflo-1 ps -eo pid,etimes,args`, then remove only the named stale lock: `docker exec skillsmith-ruflo-1 rm -f /srv/ruflo/.claude-flow/policy/state.lock` for codes 5/6, or the sibling `docker exec skillsmith-ruflo-1 rm -f /srv/ruflo/.claude-flow/policy/state.lock.launcher` for codes 3/4.
+Nothing under `/srv/ruflo/.claude-flow/policy/` is deleted by hand for codes 3, 5 or 6. For code 4 only: `docker exec skillsmith-ruflo-1 rm -f /srv/ruflo/.claude-flow/policy/state.lock.launcher.db` (the mutex database carries no state and is recreated on the next spawn). To see who holds what: `docker exec skillsmith-ruflo-1 ps -eo pid,etimes,args` is not available (the image has no `ps`); use `docker exec skillsmith-ruflo-1 sh -c 'for p in /proc/[0-9]*; do tr "\0" " " < $p/cmdline; echo; done'`.
 
 Disable the launcher entirely (no `npx` fallback): `SKILLSMITH_RUFLO_LAUNCHER_DISABLE=1`.
 
