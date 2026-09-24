@@ -152,6 +152,12 @@
  *     guard still never deletes it. The classification line is printed
  *     BEFORE this pause on purpose, so such a test synchronises on an
  *     observed fact rather than on a guessed timing margin.
+ *   RUFLO_GUARD_TEST_STDERR_PAD_BYTES -- emit one additional diagnostic
+ *     line this many bytes long, via the same emitLine()/writeSync path as
+ *     every other line, immediately before the successful exit. Exists to
+ *     let a test push a single line past a pipe's buffer size and confirm
+ *     it still arrives intact -- see emitLine()'s own doc comment for the
+ *     hazard this guards against.
  */
 import {
   closeSync,
@@ -169,6 +175,13 @@ import { createRequire } from 'node:module'
 
 const TAG = '[ruflo] guard:'
 const RUFLO_CONTAINER = 'skillsmith-ruflo-1'
+// The served image has no `ps` -- measured live -- so every hint that wants
+// to list live processes scans /proc directly instead. Field order matches
+// `ps -eo pid,args`'s intent (pid, then the full argv) without depending on
+// a binary this image does not ship. Kept as one constant (not inlined per
+// hint) so the two exit-3/exit-5 hints can never drift from each other.
+const PROC_SCAN_CMD_HINT =
+  'sh -c \'for p in /proc/[0-9]*; do printf "%s " "${p#/proc/}"; tr "\\0" " " < "$p/cmdline"; echo; done\''
 const USER_HZ = 100
 // A runtime-shaped lock's owning pid started strictly before acquiredAt --
 // its start time can only ever be <= acquiredAt for a genuine owner. Slack
@@ -251,8 +264,7 @@ function mutexHeldHint() {
   return (
     `recover: nothing to delete -- this mutex is an OS lock, so a live holder ` +
     `releases it on exit and a dead one released it already; just retry. If it ` +
-    `never clears, list live launchers with docker exec ${RUFLO_CONTAINER} ` +
-    `ps -eo pid,etimes,args`
+    `never clears, list live launchers with docker exec ${RUFLO_CONTAINER} ${PROC_SCAN_CMD_HINT}`
   )
 }
 
@@ -271,7 +283,7 @@ function realLockLiveHint() {
   return (
     `recover: nothing to delete -- another server is mid policy transaction; ` +
     `retry, and the runtime clears its own lock after ${RUNTIME_LOCK_STALE_MS}ms. ` +
-    `Confirm with docker exec ${RUFLO_CONTAINER} ps -eo pid,etimes,args`
+    `Confirm with docker exec ${RUFLO_CONTAINER} ${PROC_SCAN_CMD_HINT}`
   )
 }
 
@@ -339,6 +351,16 @@ function testSeamHold() {
 
 function testSeamPauseAfterRealLockClassify() {
   sleepMs(Number(process.env.RUFLO_GUARD_TEST_PAUSE_AFTER_REALLOCK_CLASSIFY_MS || 0))
+}
+
+/** No-op unless RUFLO_GUARD_TEST_STDERR_PAD_BYTES is set. Emits one line of
+ * that many bytes through the SAME emitLine() path as every other guard
+ * message, so a test can prove a line that size survives the pipe intact --
+ * see emitLine()'s doc comment. */
+function testSeamStderrPad() {
+  const bytes = Number(process.env.RUFLO_GUARD_TEST_STDERR_PAD_BYTES || 0)
+  if (!(bytes > 0)) return
+  note(`test-seam padding line follows: ${'x'.repeat(bytes)}`)
 }
 
 /**
@@ -676,12 +698,22 @@ function checkRealLock(lockPath) {
   // here (not at print time) also keeps the figure printed and the figure
   // actually slept identical.
   const age = Math.round(Date.now() - mtimeMs)
-  const remaining = RUNTIME_LOCK_STALE_MS - age
+  // Clamped to [0, RUNTIME_LOCK_STALE_MS]: `age` can be NEGATIVE when the
+  // lock's mtime is in the future (clock skew, a manually-touched file, or a
+  // filesystem that rounds mtimes forward), and an unclamped
+  // `RUNTIME_LOCK_STALE_MS - age` then exceeds the runtime's own 30s window
+  // -- this guard would wait longer than the thing it is waiting FOR. The
+  // ceiling side is symmetric and free: a correct `age` never drives
+  // `remaining` above RUNTIME_LOCK_STALE_MS in the first place, so clamping
+  // it costs nothing on the normal path.
+  const mtimeInFuture = age < 0
+  const remaining = Math.min(RUNTIME_LOCK_STALE_MS, Math.max(0, RUNTIME_LOCK_STALE_MS - age))
   if (remaining > 0) {
     note(
-      `state.lock ${lockPath} is stale (${verdict.reason}) but only ${age}ms old; waiting ` +
-        `${remaining}ms for the runtime's own ${RUNTIME_LOCK_STALE_MS}ms staleness window ` +
-        `(this guard never deletes state.lock)`
+      `state.lock ${lockPath} is stale (${verdict.reason}) but only ${age}ms old` +
+        (mtimeInFuture ? ` (mtime is in the FUTURE by ${-age}ms)` : '') +
+        `; waiting ${remaining}ms for the runtime's own ${RUNTIME_LOCK_STALE_MS}ms staleness ` +
+        `window (this guard never deletes state.lock)`
     )
     sleepMs(remaining)
     return
@@ -720,6 +752,7 @@ function main() {
   const realLockPath = join(policyDir, 'state.lock')
   withLauncherMutex(mutexPath, () => checkRealLock(realLockPath))
 
+  testSeamStderrPad()
   process.exit(0)
 }
 

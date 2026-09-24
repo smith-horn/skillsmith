@@ -8,6 +8,8 @@
     "@metaharness/router": "0.4.0"
   },
   "overrides": {
-    "protobufjs": "7.6.6"
+    "protobufjs": "7.6.6",
+    "@opentelemetry/propagator-jaeger": "2.9.0",
+    "toml": "4.2.0"
   }
 }

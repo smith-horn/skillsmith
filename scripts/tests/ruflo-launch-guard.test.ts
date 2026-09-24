@@ -566,6 +566,144 @@ describe('ruflo-launch-guard.mjs (ADR-170 §§ 4, 7)', () => {
     30000
   )
 
+  // ---- 9: a future-dated stale lock's wait is CLAMPED, not open-ended ---
+
+  it.skipIf(!canRun)(
+    `arm 9: a stale state.lock with a FUTURE mtime waits at most the ${RUNTIME_LOCK_STALE_MS}ms window, never longer (${skipReason})`,
+    async () => {
+      const cwd = scratchCwd()
+      const cliPath = makeCliPath(cwd)
+      const lockPath = realLockPathOf(cwd)
+      // Unclamped, `RUNTIME_LOCK_STALE_MS - (now - mtimeMs)` goes negative
+      // minus negative here and balloons to ~330s (5 min of "age" plus the
+      // full 30s window) -- proving the clamp actually bites, not merely
+      // that a normal wait completed quickly.
+      writeFileSync(lockPath, JSON.stringify({ pid: DEAD_PID, acquiredAt: Date.now() - 600000 }))
+      const fiveMinFuture = new Date(Date.now() + 5 * 60 * 1000)
+      utimesSync(lockPath, fiveMinFuture, fiveMinFuture)
+      const guard = launchGuard(cwd, cliPath)
+      // A hard kill at 40s, independent of vitest's own per-test timeout, so
+      // a regression that removes the clamp fails this arm in ~40s instead
+      // of the ~5.5 minutes the unclamped arithmetic actually sleeps for
+      // (measured against a scratch mutant with the clamp reverted: it had
+      // to be SIGKILLed after 40s, having printed a computed wait of
+      // ~329000ms).
+      const killer = setTimeout(() => {
+        try {
+          guard.child.kill('SIGKILL')
+        } catch {
+          // already gone
+        }
+      }, 40000)
+      const r = await guard.done
+      clearTimeout(killer)
+      note(`arm 9: exit=${r.status} signal=${r.signal} elapsed=${r.elapsed}ms`)
+      expect(
+        r.signal,
+        `guard had to be killed after 40s -- clamp missing? output: ${r.output}`
+      ).toBe(null)
+      expect(r.status, `output: ${r.output}`).toBe(0)
+      // The clamp's ceiling, not the (here negative) raw arithmetic: at most
+      // the runtime's own window plus generous scheduling slack, never the
+      // ~330s the unclamped formula would actually produce.
+      expect(r.elapsed, `output: ${r.output}`).toBeLessThanOrEqual(31000)
+      expect(r.output, `output: ${r.output}`).toContain('mtime is in the FUTURE')
+      expect(readFileSync(lockPath, 'utf8')).toContain(String(DEAD_PID))
+    },
+    45000
+  )
+
+  // ---- 10: recovery hints name a command this image actually has --------
+
+  it.skipIf(!canRun)(
+    `arm 10: exit-3 and exit-5 recovery hints scan /proc, not ps -eo, which this image lacks (${skipReason})`,
+    async () => {
+      const cwd3 = scratchCwd()
+      const cli3 = makeCliPath(cwd3)
+      const a = launchGuard(cwd3, cli3, { RUFLO_GUARD_TEST_HOLD_MS: '5000' })
+      await delay(200)
+      const exit3 = await runGuard(cwd3, cli3)
+      note(`arm 10 (exit 3 hint): exit=${exit3.status}`)
+      expect(exit3.status, `output: ${exit3.output}`).toBe(3)
+      expect(exit3.output, `output: ${exit3.output}`).toContain('/proc/[0-9]*')
+      expect(exit3.output, `output: ${exit3.output}`).not.toContain('ps -eo')
+      await a.done
+
+      const cwd5 = scratchCwd()
+      const cli5 = makeCliPath(cwd5)
+      const lock5 = realLockPathOf(cwd5)
+      const sleeper = spawnSleeper()
+      try {
+        writeFileSync(lock5, JSON.stringify({ pid: sleeper.pid, acquiredAt: Date.now() }))
+        const exit5 = await runGuard(cwd5, cli5)
+        note(`arm 10 (exit 5 hint): exit=${exit5.status}`)
+        expect(exit5.status, `output: ${exit5.output}`).toBe(5)
+        expect(exit5.output, `output: ${exit5.output}`).toContain('/proc/[0-9]*')
+        expect(exit5.output, `output: ${exit5.output}`).not.toContain('ps -eo')
+      } finally {
+        sleeper.kill()
+      }
+    },
+    30000
+  )
+
+  // ---- 11: the mutex db is a rollback journal, not WAL (direct check) ---
+  // Cheap and direct rather than relying on the -wal/-shm sidecar-file
+  // absence arms 3/4 already assert incidentally: a WAL mutation is
+  // measured to already fail those arms (WAL leaves -wal/-shm files behind,
+  // which arm 3's/4's directory-listing assertion catches), so this is
+  // belt-and-braces for the header's own explicit "ROLLBACK JOURNAL, NOT
+  // WAL" claim, asserted against the property itself rather than a
+  // byproduct of it.
+
+  it.skipIf(!canRun)(
+    `arm 11: the launcher mutex db is opened in journal_mode=delete, per the header's own claim (${skipReason})`,
+    async () => {
+      const cwd = scratchCwd()
+      const cliPath = makeCliPath(cwd)
+      const r = await runGuard(cwd, cliPath)
+      expect(r.status, `output: ${r.output}`).toBe(0)
+      const Database = require_(sqliteModule as string)
+      const db = new Database(mutexPathOf(cwd))
+      try {
+        const mode = db.pragma('journal_mode', { simple: true })
+        note(`arm 11: journal_mode=${mode}`)
+        expect(mode).toBe('delete')
+      } finally {
+        db.close()
+      }
+    },
+    30000
+  )
+
+  // ---- 12: a large diagnostic line survives the pipe intact -------------
+
+  it.skipIf(!canRun)(
+    `arm 12: a line past the pipe buffer size arrives intact (writeSync loop, not process.stderr.write) (${skipReason})`,
+    async () => {
+      const cwd = scratchCwd()
+      const cliPath = makeCliPath(cwd)
+      const PAD_BYTES = 300000
+      const padding = 'x'.repeat(PAD_BYTES)
+      for (let i = 0; i < 5; i++) {
+        const r = await runGuard(cwd, cliPath, {
+          RUFLO_GUARD_TEST_STDERR_PAD_BYTES: String(PAD_BYTES),
+        })
+        note(`arm 12 run ${i + 1}: exit=${r.status} captured length=${r.output.length}`)
+        expect(r.status, `run ${i + 1} output length ${r.output.length}`).toBe(0)
+        // The whole padding line, byte for byte -- a truncation at the pipe
+        // buffer boundary (measured against a process.stderr.write mutant:
+        // 5/5 runs cut off mid-line at 65636 captured bytes) would fail
+        // this exact assertion, not merely shrink a length check.
+        expect(
+          r.output,
+          `run ${i + 1}: line truncated, captured length ${r.output.length}`
+        ).toContain(padding)
+      }
+    },
+    30000
+  )
+
   // ---- legacy sweep: the A1.4 sibling file is inert, not load-bearing --
 
   it.skipIf(!canRun)(
