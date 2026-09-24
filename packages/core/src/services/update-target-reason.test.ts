@@ -525,13 +525,27 @@ function extractArrayLiteral(source: string, exportName: string, fileName = 'sou
   // moved its members behind a namespace object has broken parity whether or
   // not the bytes remain reachable.
   //
-  // Two accepted forms, and only two: a `VariableStatement` carrying an
-  // `export` modifier, at the top level. A top-level `const X = [...]` paired
-  // with a separate `export { X }` is a genuine module export and is REFUSED
-  // -- loudly, via the throw below, never silently. If `manifestReader.ts`
-  // ever adopts that form, the error will read "mirror missing or renamed",
-  // which names the wrong cause; teach the parser the export-list form rather
-  // than believing the message. Pinned by the `namespace`-nesting pair below.
+  // The accepted set is a predicate, not a list, and it is wider than a
+  // reader would guess: a TOP-LEVEL `VariableStatement` carrying an `export`
+  // modifier, declaring `exportName`, whose initializer is an array literal
+  // -- optionally wrapped in exactly one `as`. Measured against the real
+  // predicate in the container runtime: `export const`, `export let` and
+  // `export var` all pass, with or without `as const` / `as readonly
+  // string[]`.
+  //
+  // Refused, and all four for the same structural reason -- no array literal
+  // reachable from an exported VariableStatement's initializer:
+  // `export { X }` (the binding carries no export modifier), `export default`
+  // (no declaration name), `export declare const` (no initializer at all),
+  // and `export const X = [...] satisfies readonly string[]` (a
+  // SatisfiesExpression, which this unwraps only `as` through).
+  //
+  // Every one of those is a genuine top-level module export, so refusing them
+  // is a deliberate limitation, not a bug -- but the throw below reports it as
+  // "mirror missing or renamed", which names the wrong cause. `satisfies` is
+  // the likeliest of the four for `manifestReader.ts` to adopt. If any lands,
+  // teach the parser that form rather than believing the message. Pinned by
+  // the cases below, so this is measured rather than described.
   let found: string[] | undefined
   for (const node of sourceFile.statements) {
     if (found !== undefined) break
@@ -670,6 +684,24 @@ describe('extractArrayLiteral — parser blind-spot controls (SMI-6841 finding 7
     // fails here deliberately instead of being read as a rename.
     const exportList = "const SAMPLE = [\n  'alpha',\n] as const\nexport { SAMPLE }\n"
     expect(() => extractArrayLiteral(exportList, 'SAMPLE')).toThrow(/mirror missing or renamed/)
+  })
+
+  it('`satisfies` is refused the same way, and is the likeliest form to hit this', () => {
+    // The initializer is a SatisfiesExpression, and the unwrap handles only
+    // `as`. Pinned separately from the export-list case because this is the
+    // one a future edit to manifestReader.ts plausibly reaches for -- it is a
+    // drop-in modernisation of `as const` that silently changes the AST shape.
+    const sat = "export const SAMPLE = [\n  'alpha',\n] satisfies readonly string[]\n"
+    expect(() => extractArrayLiteral(sat, 'SAMPLE')).toThrow(/mirror missing or renamed/)
+  })
+
+  it('acceptance side of the limitation pair: `export let` and a non-const `as` still parse', () => {
+    // Without this, every refusal case above is satisfiable by a parser that
+    // matches nothing. This pins that the predicate is genuinely wider than
+    // `export const … as const`, which is what the comment on the parser
+    // claims and what a reader would otherwise have to take on trust.
+    const asReadonly = "export let SAMPLE = [\n  'alpha',\n  'beta',\n] as readonly string[]\n"
+    expect(extractArrayLiteral(asReadonly, 'SAMPLE')).toEqual(['alpha', 'beta'])
   })
 
   it('top-level member alongside a namespace: the real top-level export is still found, so the refusal above is not simply "matches nothing"', () => {

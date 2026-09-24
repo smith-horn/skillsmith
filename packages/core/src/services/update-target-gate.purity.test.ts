@@ -313,30 +313,44 @@ describe('classifyUpdateTarget — T-G3 purity', () => {
 // absence had each caused a real defect. It was itself an instance of this
 // mechanism's recurring shape — a subject broader than the thing it names.
 // The arms covered `node:fs/promises` (named), its `default`, and
-// `node:fs.promises`, and so covered NONE of `node:fs`'s own 100 top-level
-// functions. `classifyUpdateTarget` is synchronous, so the realistic
-// accidental impurity is `existsSync`/`readFileSync` off `node:fs` — exactly
-// the surface the arms missed. Measured: a `wrapNamespace` passthrough
-// confined to `node:fs`, plus a real `existsSync` call in `isBackupDir`, left
-// all of those arms green while the classifier did unrecorded, unthrown I/O.
+// `node:fs.promises`, and so covered no part of `node:fs`'s own top-level
+// surface. `classifyUpdateTarget` is synchronous, so the realistic accidental
+// impurity is `existsSync`/`readFileSync` off `node:fs` — exactly what the
+// arms missed. Measured: a `wrapNamespace` passthrough confined to `node:fs`
+// left all three arms green while the classifier did unrecorded, unthrown I/O.
 //
-// An enumerated arm set can only ever cover the paths someone thought of, and
-// the defect class here is always "the path nobody thought of" — so the list
-// was deleted rather than extended a fourth time. The invariant below asserts
-// the PROPERTY instead: every function reachable in each mocked namespace is
-// a recording spy. That one assertion kills all four historical defects (the
-// Proxy wrapping nothing, the hand-list wrapping two, the unrecursed
-// `default`/`promises`, and the `node:fs` passthrough above) and any future
-// access path, without naming one of them.
+// WHY IT ASSERTS BEHAVIOUR AND NOT MEMBERSHIP. The version after that walked
+// the same surface but asserted only `vi.isMockFunction` — membership in "is
+// a mock", not in "is THIS factory's spy" — and carried the gap in prose: a
+// comment claiming one behavioural arm sufficed because every spy comes from
+// one `vi.fn(...)` factory. True of the code, asserted by nothing, and the
+// three defects before it were each "a subset treated differently". Measured:
+// a second factory giving every key except `existsSync` a record-only,
+// NON-THROWING spy passed all seven tests, while `fs.readFileSync(...)`
+// returned `undefined` instead of throwing. Detection survived, since
+// `recordedCalls` was still non-empty — but containment, which is the throw's
+// whole remaining job, was gone for every function but one.
 //
-// One behavioural arm survives, and only one is needed: the invariant proves
-// membership, but a spy that recorded WITHOUT throwing would satisfy it while
-// letting a rule's I/O complete. Every spy comes from the same `vi.fn(...)`
-// factory, so demonstrating the pair once demonstrates it for all of them.
+// So the walk below CALLS each function and asserts the pair directly. An
+// enumerated arm set can only cover the paths someone thought of, and a
+// membership check can only cover the property someone named; quantifying the
+// behaviour over the whole reachable surface needs neither list. This kills
+// every historical defect in this mechanism — the Proxy wrapping nothing, the
+// hand-list wrapping two, the unrecursed `default`/`promises`, the `node:fs`
+// passthrough, and the two-factory split — without naming any of them.
+//
+// Calling every function is safe precisely BECAUSE the mechanism holds: each
+// spy throws before reaching real I/O. If that stops being true this test is
+// how you find out, which is the point.
 describe('the fs recorder — known-positive control (T-G3)', () => {
   // Load each specifier through a static literal, never a variable: a fully
   // dynamic `import(spec)` is not statically analysable and is not guaranteed
   // to reach the mock registry.
+  //
+  // Four entries, two measurements: vitest serves the bare pair from the
+  // `node:` registrations (see the file header), so `fs` and `node:fs` hand
+  // back the same object. Kept so the day that stops being true, it shows up
+  // here rather than as a silently unmocked import.
   const MOCKED_MODULES = [
     ['node:fs', () => import('node:fs')],
     ['node:fs/promises', () => import('node:fs/promises')],
@@ -345,50 +359,86 @@ describe('the fs recorder — known-positive control (T-G3)', () => {
   ] as const
 
   it.each(MOCKED_MODULES)(
-    'every function reachable in the %s mock is a recording spy',
+    'every function reachable in the %s mock records AND throws when called',
     async (specifier, load) => {
-      const unwrapped: string[] = []
-      let functionsSeen = 0
+      const notMocked: string[] = []
+      const neverThrew: string[] = []
+      const neverRecorded: string[] = []
+      let rootFunctions = 0
+      let called = 0
       const visited = new WeakSet<object>()
 
-      const walk = (obj: Record<string, unknown>, path: string): void => {
+      const walk = (obj: Record<string, unknown>, path: string, depth: number): void => {
         for (const [key, value] of Object.entries(obj)) {
+          const label = `${path}.${key}`
           if (typeof value === 'function') {
-            functionsSeen += 1
-            if (!vi.isMockFunction(value)) unwrapped.push(`${path}.${key}`)
+            if (depth === 0) rootFunctions += 1
+            // Never CALL something that is not a spy — that would be real I/O
+            // against the real module. Record it and move on; the assertion
+            // below fails on it either way.
+            if (!vi.isMockFunction(value)) {
+              notMocked.push(label)
+              continue
+            }
+            called += 1
+            const recordedBefore = recordedCalls.length
+            let threw = false
+            try {
+              ;(value as unknown as () => unknown)()
+            } catch {
+              threw = true
+            }
+            if (!threw) neverThrew.push(label)
+            if (recordedCalls.length === recordedBefore) neverRecorded.push(label)
             continue
           }
-          // Recurse into nested namespaces only. Functions are not walked --
-          // a spy's own properties are vitest's, not the module's.
+          // Recurse into nested namespaces only. Functions are not walked:
+          // a spy's own properties are vitest's, not the module's. Note this
+          // is a statement about the MOCK, not about `node:fs` — the real
+          // module does hang functions off functions (`realpath.native`), and
+          // `wrapNamespace` drops them rather than passing them through.
           if (value !== null && typeof value === 'object') {
             if (visited.has(value)) continue
             visited.add(value)
-            walk(value as Record<string, unknown>, `${path}.${key}`)
+            walk(value as Record<string, unknown>, label, depth + 1)
           }
         }
       }
-      walk((await load()) as unknown as Record<string, unknown>, specifier)
+      walk((await load()) as unknown as Record<string, unknown>, specifier, 0)
 
-      expect(unwrapped).toEqual([])
-      // Denominator. Without it a walk that reached nothing would pass, which
-      // is the same vacuity one level up: `[]` is both "all wrapped" and
-      // "none examined". The smallest of these four namespaces carries 31
-      // functions at its top level alone.
-      expect(functionsSeen).toBeGreaterThan(25)
+      expect({ notMocked, neverThrew, neverRecorded }).toEqual({
+        notMocked: [],
+        neverThrew: [],
+        neverRecorded: [],
+      })
+      // Two denominators, because an empty finding list is otherwise both
+      // "everything passed" and "nothing was examined".
+      //
+      // They measure different things and a single total measures neither:
+      // a walk that skipped the entire top level and saw only the nested
+      // namespaces still sums to a large number. `rootFunctions` pins the top
+      // level specifically; `called > rootFunctions` pins that the nested
+      // namespaces were reached too. Floors, not exact counts — the real
+      // figures are Node-version-dependent, and this file runs in the
+      // container, not on the host.
+      expect(rootFunctions).toBeGreaterThan(25)
+      expect(called).toBeGreaterThan(rootFunctions)
     }
   )
 
-  it('a mocked function both records and throws, through a bare specifier', async () => {
-    // `existsSync` deliberately: synchronous, on `node:fs`, and the exact
-    // surface the deleted arm list left uncovered.
+  it('the recorded label names the registration that served a bare specifier', async () => {
+    // This is the ONLY exact-string assertion in the file, and it earns that
+    // because the string is the measurement: the label's prefix is the only
+    // observable telling you WHICH registration served a bare import. Vitest
+    // normalises a bare builtin specifier onto the `node:`-prefixed registry
+    // key, so `vi.mock('node:fs', ...)` overrides `vi.mock('fs', ...)` and a
+    // bare import records as `node:fs.…`.
     //
-    // Imported bare (`'fs'`, not `'node:fs'`) because that is how this
-    // package's own code imports it, and because the recorded label then
-    // shows WHICH registration served it. Vitest normalises a bare builtin
-    // specifier onto the `node:`-prefixed registry key, so the later
-    // `vi.mock('node:fs', ...)` overrides the earlier `vi.mock('fs', ...)`
-    // and a bare import records as `node:fs.…`. This assertion is what keeps
-    // that statement measured rather than assumed.
+    // Do not relax this to `toContain('existsSync')` — that passes under both
+    // states and measures neither. Record+throw for this and every other
+    // function is covered by the invariant above, so this test is not carrying
+    // that; if the label FORMAT changes, fix the expectation here rather than
+    // weakening the matcher.
     const fs = await import('fs')
     expect(() => fs.existsSync('/control-sync')).toThrow(/must be pure/)
     expect(recordedCalls).toEqual(['node:fs.existsSync(/control-sync)'])
