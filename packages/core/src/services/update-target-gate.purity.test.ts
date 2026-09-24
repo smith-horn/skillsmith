@@ -5,9 +5,19 @@
  * @see docs/internal/implementation/update-safety-and-source-resolution.md §4.3
  *
  * "Fails if `classifyUpdateTarget` makes any call on a recording fs mock."
- * `fs`, `fs/promises`, `node:fs` and `node:fs/promises` are each mocked with a
- * PLAIN OBJECT whose EVERY function export is a recording `vi.fn()`, derived
- * from the real module at mock time rather than hand-listed.
+ * Each is mocked with a PLAIN OBJECT whose EVERY function export is a
+ * recording `vi.fn()`, derived from the real module at mock time rather than
+ * hand-listed.
+ *
+ * Four `vi.mock` specifiers are registered below but only TWO are in force:
+ * vitest normalises a bare builtin specifier onto the `node:`-prefixed
+ * registry key, so `vi.mock('node:fs', …)` overrides `vi.mock('fs', …)` and a
+ * bare `import 'fs'` is served by — and records under — the `node:fs` mock.
+ * The bare pair is kept as belt-and-braces against that normalisation
+ * changing, not because it currently does anything. This is measured, not
+ * assumed: the behavioural control at the foot of this file imports bare and
+ * asserts the recorded label carries the `node:` prefix, so the day the
+ * normalisation changes, that test says so.
  *
  * An earlier version of this file listed exactly the two methods the
  * classifier's import graph reaches today (`readdir`, `readFile`, via
@@ -71,10 +81,15 @@
  * (`analysis/file-streamer.ts:11`), so this was a live hole rather than a
  * theoretical one. Both nested namespaces are now wrapped recursively.
  *
- * The shape to notice, since it has now recurred three times on this branch:
- * each of these was an assertion whose SUBJECT was broader than the thing it
- * named. The Proxy recorded nothing; the hand-list recorded only two methods;
- * the derived surface skipped two nested namespaces. Every version passed.
+ * The shape to notice: every defect in this mechanism has been an assertion
+ * whose SUBJECT was broader than the thing it named. The Proxy recorded
+ * nothing; the hand-list recorded only two methods; the derived surface
+ * skipped two nested namespaces; the first control set covered three access
+ * paths and so covered none of `node:fs`'s own. Every version passed its own
+ * suite. Treat a green run here as evidence only about what the control
+ * quantifies over — which is why the control below is an invariant over the
+ * whole reachable surface rather than a list. SMI-6841 holds the measured
+ * instances and the mutation that killed each.
  */
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 
@@ -288,39 +303,94 @@ describe('classifyUpdateTarget — T-G3 purity', () => {
 // ── Known-positive control for the recorder itself ──────────────────────
 //
 // Every test above asserts `recordedCalls` is EMPTY. That is a known-negative
-// only. An instrument that returns the same value for both states measures
-// nothing, and this one has now been wrong three times in three different ways
-// (see `recordingModule`'s comment) — each version passed every test in this
-// file while recording strictly less than it claimed to.
+// only, and an instrument returning the same value for both states measures
+// nothing. Measured: replacing `recordingModule`'s body with `return actual`
+// — disabling the recorder completely, so a real fs call does real I/O and
+// leaves no trace — left every one of those tests GREEN.
 //
-// Named mutation, measured: replacing `recordingModule`'s body with
-// `return actual` — disabling the recorder completely, so a real fs call does
-// real I/O and leaves no trace — left the two purity tests above GREEN
-// (`Tests 2 passed (2)`). It fails all three tests below.
+// WHY THIS IS AN INVARIANT AND NOT A LIST OF ARMS. The first version of this
+// control WAS a list: one arm per access path, for the three paths whose
+// absence had each caused a real defect. It was itself an instance of this
+// mechanism's recurring shape — a subject broader than the thing it names.
+// The arms covered `node:fs/promises` (named), its `default`, and
+// `node:fs.promises`, and so covered NONE of `node:fs`'s own 100 top-level
+// functions. `classifyUpdateTarget` is synchronous, so the realistic
+// accidental impurity is `existsSync`/`readFileSync` off `node:fs` — exactly
+// the surface the arms missed. Measured: a `wrapNamespace` passthrough
+// confined to `node:fs`, plus a real `existsSync` call in `isBackupDir`, left
+// all of those arms green while the classifier did unrecorded, unthrown I/O.
 //
-// One arm per access path, because the recorder reaches them by three
-// different code routes and a defect has historically lived in exactly one:
-// the named export, the `default` re-export (the `import fs from 'fs/promises'`
-// style, live in this package at `analysis/file-streamer.ts:11`), and the
-// nested `promises` object on `node:fs`. Each asserts BOTH halves of the
-// mechanism — that the call is recorded, and that it throws — because a
-// recorder that logs without throwing would let a rule's I/O complete.
+// An enumerated arm set can only ever cover the paths someone thought of, and
+// the defect class here is always "the path nobody thought of" — so the list
+// was deleted rather than extended a fourth time. The invariant below asserts
+// the PROPERTY instead: every function reachable in each mocked namespace is
+// a recording spy. That one assertion kills all four historical defects (the
+// Proxy wrapping nothing, the hand-list wrapping two, the unrecursed
+// `default`/`promises`, and the `node:fs` passthrough above) and any future
+// access path, without naming one of them.
+//
+// One behavioural arm survives, and only one is needed: the invariant proves
+// membership, but a spy that recorded WITHOUT throwing would satisfy it while
+// letting a rule's I/O complete. Every spy comes from the same `vi.fn(...)`
+// factory, so demonstrating the pair once demonstrates it for all of them.
 describe('the fs recorder — known-positive control (T-G3)', () => {
-  it('records and throws on a named-export call', async () => {
-    const fsp = await import('node:fs/promises')
-    expect(() => fsp.readdir('/control-named')).toThrow(/must be pure/)
-    expect(recordedCalls).toEqual(['node:fs/promises.readdir(/control-named)'])
-  })
+  // Load each specifier through a static literal, never a variable: a fully
+  // dynamic `import(spec)` is not statically analysable and is not guaranteed
+  // to reach the mock registry.
+  const MOCKED_MODULES = [
+    ['node:fs', () => import('node:fs')],
+    ['node:fs/promises', () => import('node:fs/promises')],
+    ['fs', () => import('fs')],
+    ['fs/promises', () => import('fs/promises')],
+  ] as const
 
-  it('records and throws on a call reached through `default`', async () => {
-    const fsp = await import('node:fs/promises')
-    expect(() => fsp.default.readdir('/control-default')).toThrow(/must be pure/)
-    expect(recordedCalls).toEqual(['node:fs/promises.default.readdir(/control-default)'])
-  })
+  it.each(MOCKED_MODULES)(
+    'every function reachable in the %s mock is a recording spy',
+    async (specifier, load) => {
+      const unwrapped: string[] = []
+      let functionsSeen = 0
+      const visited = new WeakSet<object>()
 
-  it('records and throws on a call reached through `promises`', async () => {
-    const fs = await import('node:fs')
-    expect(() => fs.promises.readdir('/control-promises')).toThrow(/must be pure/)
-    expect(recordedCalls).toEqual(['node:fs.promises.readdir(/control-promises)'])
+      const walk = (obj: Record<string, unknown>, path: string): void => {
+        for (const [key, value] of Object.entries(obj)) {
+          if (typeof value === 'function') {
+            functionsSeen += 1
+            if (!vi.isMockFunction(value)) unwrapped.push(`${path}.${key}`)
+            continue
+          }
+          // Recurse into nested namespaces only. Functions are not walked --
+          // a spy's own properties are vitest's, not the module's.
+          if (value !== null && typeof value === 'object') {
+            if (visited.has(value)) continue
+            visited.add(value)
+            walk(value as Record<string, unknown>, `${path}.${key}`)
+          }
+        }
+      }
+      walk((await load()) as unknown as Record<string, unknown>, specifier)
+
+      expect(unwrapped).toEqual([])
+      // Denominator. Without it a walk that reached nothing would pass, which
+      // is the same vacuity one level up: `[]` is both "all wrapped" and
+      // "none examined". The smallest of these four namespaces carries 31
+      // functions at its top level alone.
+      expect(functionsSeen).toBeGreaterThan(25)
+    }
+  )
+
+  it('a mocked function both records and throws, through a bare specifier', async () => {
+    // `existsSync` deliberately: synchronous, on `node:fs`, and the exact
+    // surface the deleted arm list left uncovered.
+    //
+    // Imported bare (`'fs'`, not `'node:fs'`) because that is how this
+    // package's own code imports it, and because the recorded label then
+    // shows WHICH registration served it. Vitest normalises a bare builtin
+    // specifier onto the `node:`-prefixed registry key, so the later
+    // `vi.mock('node:fs', ...)` overrides the earlier `vi.mock('fs', ...)`
+    // and a bare import records as `node:fs.…`. This assertion is what keeps
+    // that statement measured rather than assumed.
+    const fs = await import('fs')
+    expect(() => fs.existsSync('/control-sync')).toThrow(/must be pure/)
+    expect(recordedCalls).toEqual(['node:fs.existsSync(/control-sync)'])
   })
 })
