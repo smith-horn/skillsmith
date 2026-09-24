@@ -45,17 +45,22 @@
 # Exit code: 0 for every soft-fail condition (best-effort — matches the
 #            `|| true` calling convention already used for
 #            retrieval-liveness-check.sh; internal failures are logged,
-#            never propagated as a hard fail) -- EXCEPT one: a missing or
+#            never propagated as a hard fail) -- EXCEPT two: a missing or
 #            non-semver RUFLO_CLI_PIN in scripts/mcp-ruflo-launcher.sh
-#            (SMI-6744 ADR-170 § 7) exits 1. That pin lives in a committed
-#            file this script can always read; its absence is drift, not an
-#            environment condition to shrug off, and this is the one path
-#            through this script where "no pin found, skipping" is wrong.
-#            That exit 1 happens only at the very end, AFTER the
-#            supabase/wrangler checks below have run and AFTER the finding
-#            has been routed through page_tool like any other drift finding
-#            (SMI-6744 M-11 — see the comment at the actual check, below,
-#            for why an earlier version of this exited immediately instead).
+#            (SMI-6744 ADR-170 § 7), and (SMI-6744 M-3, post-merge governance
+#            retro on PR #2931) that same pin disagreeing with
+#            scripts/ruflo-seed/package.json's own
+#            dependencies["@claude-flow/cli"] -- the SECOND committed copy
+#            that actually determines what ships in the ruflo image stage.
+#            Both pins live in committed files this script can always read;
+#            their absence or disagreement is drift, not an environment
+#            condition to shrug off, and this is the one path through this
+#            script where "no pin found, skipping" is wrong. Both exit 1
+#            paths happen only at the very end, AFTER the supabase/wrangler
+#            checks below have run and AFTER the finding has been routed
+#            through page_tool like any other drift finding (SMI-6744 M-11 —
+#            see the comment at the actual check, below, for why an earlier
+#            version of this exited immediately instead).
 
 set -uo pipefail
 
@@ -402,6 +407,44 @@ if [ -z "$RUFLO_PIN" ]; then
   page_tool "ruflo" "(missing)" "N/A -- RUFLO_CLI_PIN not found or not valid semver in $RUFLO_LAUNCHER" 0
 fi
 
+# SMI-6744 M-3 (post-merge governance retro, PR #2931): the launcher's pin
+# can be well-formed (the check above passes) while still having drifted
+# apart from the OTHER committed copy that determines what actually ships in
+# the ruflo image -- scripts/ruflo-seed/package.json's own
+# dependencies["@claude-flow/cli"]. Mirrors
+# scripts/audit-cli-pin-drift-helpers.mjs's findRufloSeedPinDrift(). Only
+# checked when the launcher pin itself was found (RUFLO_PIN_MISSING=0);
+# otherwise there is nothing valid to compare the seed pin against.
+RUFLO_SEED_PACKAGE_JSON="$REPO_ROOT/scripts/ruflo-seed/package.json"
+RUFLO_SEED_PIN_MISMATCH=0
+if [ "$RUFLO_PIN_MISSING" -eq 0 ]; then
+  # L-E (SMI-6744 A1.8 retro): distinguish "the seed package.json itself is
+  # absent" from "it exists but has no dependencies[\"@claude-flow/cli\"]
+  # entry" -- the .mjs sibling (findRufloSeedPinDrift) already makes this
+  # distinction (existsSync check first); this shell mirror used to fold
+  # both into the same "no ... entry" message, which is misleading for a
+  # missing FILE (there is no file to have an entry in).
+  if [ ! -f "$RUFLO_SEED_PACKAGE_JSON" ]; then
+    RUFLO_SEED_PIN_MISMATCH=1
+    log "[cli-pin-drift] ruflo-seed: $RUFLO_SEED_PACKAGE_JSON not found"
+    echo "[cli-pin-drift] ruflo-seed: $RUFLO_SEED_PACKAGE_JSON not found" >&2
+    page_tool "ruflo-seed-drift" "$RUFLO_PIN" "N/A -- $RUFLO_SEED_PACKAGE_JSON not found" 0
+  else
+    RUFLO_SEED_PIN="$(read_json_field "$RUFLO_SEED_PACKAGE_JSON" "dependencies.@claude-flow/cli")"
+    if [ -z "$RUFLO_SEED_PIN" ]; then
+      RUFLO_SEED_PIN_MISMATCH=1
+      log "[cli-pin-drift] ruflo-seed: $RUFLO_SEED_PACKAGE_JSON has no dependencies[\"@claude-flow/cli\"] entry"
+      echo "[cli-pin-drift] ruflo-seed: $RUFLO_SEED_PACKAGE_JSON has no dependencies[\"@claude-flow/cli\"] entry" >&2
+      page_tool "ruflo-seed-drift" "$RUFLO_PIN" "N/A -- $RUFLO_SEED_PACKAGE_JSON has no dependencies[\"@claude-flow/cli\"] entry" 0
+    elif [ "$RUFLO_SEED_PIN" != "$RUFLO_PIN" ]; then
+      RUFLO_SEED_PIN_MISMATCH=1
+      log "[cli-pin-drift] ruflo-seed: RUFLO_CLI_PIN=$RUFLO_PIN in $RUFLO_LAUNCHER does not match dependencies[\"@claude-flow/cli\"]=$RUFLO_SEED_PIN in $RUFLO_SEED_PACKAGE_JSON"
+      echo "[cli-pin-drift] ruflo-seed: RUFLO_CLI_PIN=$RUFLO_PIN in $RUFLO_LAUNCHER does not match dependencies[\"@claude-flow/cli\"]=$RUFLO_SEED_PIN in $RUFLO_SEED_PACKAGE_JSON" >&2
+      page_tool "ruflo-seed-drift" "$RUFLO_PIN" "$RUFLO_SEED_PIN (from $RUFLO_SEED_PACKAGE_JSON)" 0
+    fi
+  fi
+fi
+
 SUPABASE_PIN="$(read_json_field "$REPO_ROOT/package.json" "devDependencies.supabase")"
 WRANGLER_PIN="$(read_json_field "$REPO_ROOT/packages/website/package.json" "devDependencies.wrangler")"
 
@@ -415,7 +458,7 @@ fi
 check_tool "supabase" "$SUPABASE_PIN"
 check_tool "wrangler" "$WRANGLER_PIN"
 
-if [ "$RUFLO_PIN_MISSING" -eq 1 ]; then
+if [ "$RUFLO_PIN_MISSING" -eq 1 ] || [ "$RUFLO_SEED_PIN_MISMATCH" -eq 1 ]; then
   exit 1
 fi
 

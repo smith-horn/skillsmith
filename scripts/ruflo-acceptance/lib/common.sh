@@ -78,3 +78,31 @@ run_capture() {
   set -e
   eval "$_rc_var=$_rc"
 }
+
+# acceptance_exit_code <arms_total> <arms_failed> <mut_killed> <mut_survived>
+# -- M-5 (post-merge governance retro, PR #2931). The single place run.sh's
+# own overall exit status is derived, so a bare `exit 0` at the tail of a
+# run that evaluated NOTHING (no --egress/--seed/--mutations/--quad flag
+# actually ran a predicate or a mutation -- e.g. every flag was 0, or the
+# harness was invoked in a way that skipped every section) can no longer be
+# silently indistinguishable from "every predicate held, no mutation
+# needed", which is what exit 0 is supposed to mean. Returns:
+#   4 -- REFUSING: arms_total=0 AND mut_killed=0 AND mut_survived=0, i.e.
+#        nothing ran at all. Printed to stderr, never silent -- this is not
+#        a pass. Unused by run.sh before this fix (confirmed: run.sh's own
+#        exit codes were 0, 1, 2, 3 only).
+#   3 -- at least one predicate FAILED or at least one mutation SURVIVED
+#        (the pre-existing meaning of run.sh's own bare `exit 3`).
+#   0 -- otherwise (something ran, and every predicate held / every
+#        mutation that ran was KILLED).
+acceptance_exit_code() {
+  _aec_total="$1" _aec_failed="$2" _aec_killed="$3" _aec_survived="$4"
+  if [ "$_aec_total" -eq 0 ] && [ "$_aec_killed" -eq 0 ] && [ "$_aec_survived" -eq 0 ]; then
+    printf 'REFUSING: no predicate or mutation ran -- this is not a pass\n' >&2
+    return 4
+  fi
+  if [ "$_aec_failed" -gt 0 ] || [ "$_aec_survived" -gt 0 ]; then
+    return 3
+  fi
+  return 0
+}

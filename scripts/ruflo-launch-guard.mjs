@@ -128,7 +128,16 @@
  * the failing check; every refusal -- 3, 4, 5 -- ends that line with a
  * one-line recovery command):
  *   0 authorized
- *   1 writability probe failed
+ *   1 writability probe failed, OR (SMI-6744 L-5, post-merge governance
+ *     retro on PR #2931) getconf CLK_TCK measured something other than the
+ *     assumed 100 (see USER_HZ below) -- fails CLOSED rather than trusting
+ *     an unverified constant classifyRecord()/pidStartTimeEpochMs() depend
+ *     on for the live/stale/recycled decision, because a wrong USER_HZ
+ *     inflates a live owner's computed start time past the lock's own
+ *     acquiredAt and misclassifies it as a recycled pid -- i.e. stale --
+ *     which would let this guard proceed PAST a live real-lock instead of
+ *     refusing on it (exit 5). The message names the value read and the
+ *     dependent function.
  *   2 entrypoint realpath mismatch
  *   3 launcher mutex held by another launcher (busy timeout elapsed)
  *   4 launcher mutex database unusable (cannot open / not a database)
@@ -158,6 +167,19 @@
  *     let a test push a single line past a pipe's buffer size and confirm
  *     it still arrives intact -- see emitLine()'s own doc comment for the
  *     hazard this guards against.
+ *   RUFLO_GUARD_TEST_CLK_TCK -- override the measured USER_HZ value
+ *     (SMI-6744 L-5) without actually calling getconf. Set to a non-100
+ *     value to exercise the fail-closed refusal deterministically; the
+ *     real container's own getconf CLK_TCK is confirmed 100 (measured
+ *     2026-09-23), so a test cannot otherwise reach that refusal without
+ *     this seam.
+ *   RUFLO_GUARD_TEST_PROBE_SUFFIX -- override probeWritable()'s pid-scoped
+ *     probe filename suffix (SMI-6744 L-F, post-merge governance retro on
+ *     PR #2931). Lets a test pre-create the "leaked probe file" fixture at
+ *     the EXACT path this process will open, before spawning it, instead
+ *     of racing the spawn to write the leaked file at a pid this process
+ *     had not been assigned yet. No-op (falls back to process.pid) unless
+ *     set.
  */
 import {
   closeSync,
@@ -172,6 +194,7 @@ import {
 import { join } from 'node:path'
 import { randomUUID } from 'node:crypto'
 import { createRequire } from 'node:module'
+import { spawnSync } from 'node:child_process'
 
 const TAG = '[ruflo] guard:'
 const RUFLO_CONTAINER = 'skillsmith-ruflo-1'
@@ -182,6 +205,24 @@ const RUFLO_CONTAINER = 'skillsmith-ruflo-1'
 // hint) so the two exit-3/exit-5 hints can never drift from each other.
 const PROC_SCAN_CMD_HINT =
   'sh -c \'for p in /proc/[0-9]*; do printf "%s " "${p#/proc/}"; tr "\\0" " " < "$p/cmdline"; echo; done\''
+// .claude/development/claude-flow-guide.md carries a literal copy of this
+// hint (L-1, post-merge governance retro on PR #2931) -- update the guide
+// together with this constant, never one without the other.
+// SMI-6744 L-5 (post-merge governance retro on PR #2931): this was an
+// UNVERIFIED assumption -- pidStartTimeEpochMs() below divides by it to
+// convert /proc/<pid>/stat's tick-based starttime into epoch ms, and
+// classifyRecord() uses that result to decide live vs. stale vs. recycled.
+// A wrong USER_HZ silently inflates or deflates every computed startedAtMs,
+// which can misclassify a LIVE owner as a recycled (i.e. stale) pid and let
+// this guard proceed PAST a real, live state.lock instead of refusing on it
+// (exit 5) -- the exact failure mode a fail-OPEN wrong constant produces.
+// verifyUserHz() (called once, at the top of main(), before any of that
+// logic runs) measures the container's actual getconf CLK_TCK and refuses
+// (fails CLOSED, exit 1) unless it equals this literal -- it never
+// substitutes the measured value in its place, on purpose: this guard has
+// no basis for trusting an unexpected tick rate's arithmetic either, so
+// "measured but different" and "could not measure" get the same fail-closed
+// treatment as "not measured at all".
 const USER_HZ = 100
 // A runtime-shaped lock's owning pid started strictly before acquiredAt --
 // its start time can only ever be <= acquiredAt for a genuine owner. Slack
@@ -373,14 +414,49 @@ function testSeamStderrPad() {
  * cosmetic. A failed unlink is warned to stderr, never swallowed: the probe
  * already proved writability by the time unlink is attempted, so this is
  * diagnostic, not a refusal.
+ *
+ * L-6 (post-merge governance retro on PR #2931): a probe file LEAKED at
+ * this exact pid-scoped path by an earlier crashed run (its own unlink
+ * above never ran) -- or, since pids get reused, a leaked probe from a
+ * DIFFERENT process that once held this same pid -- makes the O_EXCL
+ * create below fail with EEXIST even though `dir` genuinely IS writable.
+ * That was previously indistinguishable from a real permission failure and
+ * misreported as "cannot write to <dir>". On EEXIST specifically: unlink
+ * the stale file once and retry the create; if the retry ALSO fails,
+ * report that retry's own real error (never re-report the original EEXIST,
+ * which would be stale information once the unlink succeeded).
  */
 function probeWritable(dir) {
-  const p = join(dir, `.ruflo-guard-probe-${process.pid}`)
+  // L-F (SMI-6744 A1.8 retro): RUFLO_GUARD_TEST_PROBE_SUFFIX lets a test
+  // pre-create the leaked-probe fixture at this EXACT path BEFORE spawning
+  // this process, rather than racing a real crashed-earlier-run scenario
+  // against this process's own pid-scoped filename (which the test could
+  // not know in advance). No-op in production -- falls back to the real
+  // pid.
+  const p = join(
+    dir,
+    `.ruflo-guard-probe-${process.env.RUFLO_GUARD_TEST_PROBE_SUFFIX ?? process.pid}`
+  )
   let fd
   try {
     fd = openSync(p, FS.O_CREAT | FS.O_EXCL | FS.O_WRONLY)
   } catch (err) {
-    throw new Error(`cannot write to ${dir}: ${errMsg(err)}`)
+    if (!err || err.code !== 'EEXIST') {
+      throw new Error(`cannot write to ${dir}: ${errMsg(err)}`)
+    }
+    try {
+      unlinkSync(p)
+    } catch (unlinkErr) {
+      throw new Error(
+        `cannot write to ${dir}: a stale probe ${p} exists (from an earlier crashed run, or a ` +
+          `reused pid) and could not be removed: ${errMsg(unlinkErr)}`
+      )
+    }
+    try {
+      fd = openSync(p, FS.O_CREAT | FS.O_EXCL | FS.O_WRONLY)
+    } catch (retryErr) {
+      throw new Error(`cannot write to ${dir}: ${errMsg(retryErr)}`)
+    }
   }
   closeSync(fd)
   try {
@@ -725,7 +801,55 @@ function checkRealLock(lockPath) {
   )
 }
 
+/**
+ * SMI-6744 L-5 (post-merge governance retro on PR #2931): measure the
+ * container's actual clock-ticks-per-second once, at the very start of
+ * main(), and refuse (exit 1, fail CLOSED) unless it equals the USER_HZ
+ * literal pidStartTimeEpochMs() assumes. RUFLO_GUARD_TEST_CLK_TCK overrides
+ * the measured value without invoking getconf, for deterministic tests --
+ * see this file's header for why this seam exists (a real container's own
+ * getconf CLK_TCK is confirmed 100).
+ */
+function verifyUserHz() {
+  const override = process.env.RUFLO_GUARD_TEST_CLK_TCK
+  let raw
+  if (override !== undefined) {
+    raw = override
+  } else {
+    const result = spawnSync('getconf', ['CLK_TCK'], { encoding: 'utf8' })
+    if (result.error || result.status !== 0) {
+      const detail = result.error ? errMsg(result.error) : `exit ${result.status}: ${result.stderr}`
+      fail(
+        1,
+        `getconf CLK_TCK could not be measured (${detail}) -- refusing rather than trusting ` +
+          `the unverified USER_HZ=${USER_HZ} assumption pidStartTimeEpochMs() depends on for its ` +
+          `live/stale/recycled classification`
+      )
+    }
+    raw = result.stdout.trim()
+  }
+  const measured = Number(raw)
+  if (!Number.isFinite(measured) || !Number.isInteger(measured)) {
+    fail(
+      1,
+      `getconf CLK_TCK returned a non-numeric value '${raw}' -- refusing rather than trusting the ` +
+        `unverified USER_HZ=${USER_HZ} assumption pidStartTimeEpochMs() depends on for its ` +
+        `live/stale/recycled classification`
+    )
+  }
+  if (measured !== USER_HZ) {
+    fail(
+      1,
+      `getconf CLK_TCK measured ${measured}, not the assumed USER_HZ=${USER_HZ} this guard's ` +
+        `pidStartTimeEpochMs() (used by classifyRecord() to decide live vs. stale vs. recycled) ` +
+        `depends on -- refusing rather than risk misclassifying a LIVE state.lock owner as stale ` +
+        `and proceeding past it`
+    )
+  }
+}
+
 function main() {
+  verifyUserHz()
   const cliPath = process.env.RUFLO_GUARD_CLI_PATH
   if (!cliPath) fail(7, 'RUFLO_GUARD_CLI_PATH not set -- launcher must pass it via docker exec -e')
   let resolved

@@ -39,6 +39,25 @@
 # Writes: canary rows into the live dev store through the SERVED path (that is
 # the test), and scratch Docker volumes and derived images that it removes.
 # Never stops, restarts or recreates skillsmith-ruflo-1.
+#
+# Exit codes (this script's OWN process exit status -- distinct from the
+# per-probe codes named above at line 37, which describe one MCP reply, not
+# the harness run as a whole; derived by lib/common.sh's
+# acceptance_exit_code(), M-5, post-merge governance retro on PR #2931):
+#   2 -- usage error (no flag given, an unrecognized one, or --mutation-egress
+#        combined with another selector -- see the parse-time check below).
+#   1 -- the Compose service $SERVICE is not present; ADR-170 § 6 requires
+#        acceptance to run against the service itself.
+#   4 -- REFUSING: nothing ran at all (no arm evaluated a predicate AND no
+#        mutation was attempted) -- e.g. every selector flag happened to
+#        select zero sections. This is not a pass; printed to stderr.
+#   3 -- at least one predicate FAILED or at least one mutation SURVIVED.
+#   0 -- otherwise: something ran, every predicate that ran HELD, and every
+#        mutation that ran was KILLED. ONE carve-out (M-E, SMI-6744 A1.8
+#        retro): --mutation-egress is a documentation-only mode -- it prints
+#        the § 6 mutation write-up, measures nothing, and exits 0 without
+#        consulting acceptance_exit_code(). Every other mode goes through
+#        that function.
 
 set -euo pipefail
 
@@ -51,7 +70,13 @@ STORE_VOLUME="${RUFLO_STORE_VOLUME:-skillsmith-ruflo-data}"
 # sibling agentdb-memory.db (memory-bridge.js getAgentDbPath()). The arm reads
 # the file the rows are actually in, and the report records the divergence.
 STORE_DB="${RUFLO_STORE_DB:-/srv/ruflo/.swarm/agentdb-memory.db}"
-IMAGE="${RUFLO_IMAGE:-$(docker inspect "$SERVICE" --format '{{.Config.Image}}' 2>/dev/null || echo smi-6744-lane-a-ruflo)}"
+# L-4 (post-merge governance retro, PR #2931): no fallback image name. The
+# image is whatever the RUNNING service reports (docker-compose.yml pins no
+# `image:`, SMI-4653, so the name is project-derived); when the service is
+# absent this resolves empty and the refusal below (":$SERVICE is not
+# present") fires before any arm uses it. A literal here would only encode
+# whichever checkout last built the image, which is what this fixed.
+IMAGE="${RUFLO_IMAGE:-$(docker inspect "$SERVICE" --format '{{.Config.Image}}' 2>/dev/null || true)}"
 SCRATCH="${RUFLO_ACCEPT_SCRATCH:-${TMPDIR:-/tmp}/ruflo-acceptance}"
 EVD="$SCRATCH/evidence"
 mkdir -p "$EVD"
@@ -95,6 +120,17 @@ for a in "$@"; do
     *) printf 'unknown option: %s\n' "$a" >&2; exit 2 ;;
   esac
 done
+# Cross-family gate round 1 on PR #2934 (class-1): --mutation-egress used to
+# exit 0 right after printing its write-up, BEFORE any other selector's
+# section ran, so `--quad --mutation-egress` (or `--all --mutation-egress`)
+# reported success for a run that never ran the sections it was asked for --
+# a false-green path straight through the never-ran fix above. It is
+# documentation-only and cannot be combined with another selector; refusing
+# here, at parse time, keeps that carve-out honest.
+if [ "$DO_EGRESS_MUT" -eq 1 ] && [ $((DO_EGRESS + DO_SEED + DO_MUT + DO_CONSOL + DO_QUAD)) -gt 0 ]; then
+  printf 'usage: --mutation-egress is documentation-only and cannot be combined with another selector (it would exit 0 before the other sections ran)\n' >&2
+  exit 2
+fi
 
 # The cache the host-side cross-implementation recomputation reads. Copied out
 # of the RUNNING service by docker cp and verified by sha256 inside
@@ -120,6 +156,11 @@ fi
 printf 'container: %s (%s)\n' "$(docker inspect "$SERVICE" --format '{{.Id}}' | cut -c1-12)" "$(docker inspect "$SERVICE" --format '{{.State.Status}}')"
 
 if [ "$DO_EGRESS_MUT" -eq 1 ]; then
+  # Documentation-only mode: deliberately bypasses acceptance_exit_code()
+  # (see the exit-code block above) -- there is no predicate to gate on. It
+  # is reachable only alone: the parse-time check above refuses it alongside
+  # any other selector, so this exit 0 can never stand in for a section that
+  # was asked for and did not run.
   egress_mutation_doc
   exit 0
 fi
@@ -155,5 +196,15 @@ cat <<'DOC'
   - byte-identical independent inference across platforms, which ADR-170
     records as unmeasured and which the host arm above only samples.
 DOC
-if [ "$ARMS_FAILED" -gt 0 ] || [ "$MUT_SURVIVED" -gt 0 ]; then exit 3; fi
-exit 0
+# M-5: derive the overall exit status through the one shared function
+# (lib/common.sh's acceptance_exit_code()) instead of this inline check,
+# which never gated on ARMS_TOTAL=0 -- a run that evaluated nothing at all
+# used to fall through to the bare `exit 0` below indistinguishably from a
+# real pass. `|| ACCEPTANCE_RC=$?` keeps this compatible with `set -e`: a
+# non-zero return from the function would otherwise abort the script here
+# with that same code anyway, but capturing it explicitly keeps the ACTUAL
+# `exit` call visible at the bottom of this file rather than relying on
+# errexit's own implicit propagation.
+ACCEPTANCE_RC=0
+acceptance_exit_code "$ARMS_TOTAL" "$ARMS_FAILED" "$MUT_KILLED" "$MUT_SURVIVED" || ACCEPTANCE_RC=$?
+exit "$ACCEPTANCE_RC"

@@ -23,6 +23,8 @@ import {
   findFloatingSupabaseCliInstalls,
   findUnpinnedBareNpxCliInPackageJson,
   findUnpinnedRufloLauncherPin,
+  findRufloSeedPinDrift,
+  findProcScanCmdHintDrift,
   findClaudeFlowReintroductions,
 } from '../audit-cli-pin-drift-helpers.mjs'
 
@@ -222,6 +224,171 @@ describe('findUnpinnedRufloLauncherPin (SMI-5746 Check 59, sub-check 3; SMI-6744
     const realLauncherPath = join(process.cwd(), 'scripts', 'mcp-ruflo-launcher.sh')
 
     expect(findUnpinnedRufloLauncherPin(realLauncherPath)).toBeNull()
+  })
+})
+
+describe('findRufloSeedPinDrift (SMI-6744 M-3, post-merge governance retro on PR #2931)', () => {
+  function writeLauncher(dir: string, pin: string): string {
+    const p = join(dir, 'mcp-ruflo-launcher.sh')
+    writeFileSync(p, `#!/usr/bin/env bash\nRUFLO_CLI_PIN=${pin}\necho hi\n`)
+    return p
+  }
+  function writeSeedPackageJson(dir: string, pin: string | undefined): string {
+    mkdirSync(join(dir, 'ruflo-seed'), { recursive: true })
+    const p = join(dir, 'ruflo-seed', 'package.json')
+    const body = pin === undefined ? {} : { dependencies: { '@claude-flow/cli': pin } }
+    writeFileSync(p, JSON.stringify(body))
+    return p
+  }
+
+  it('does not flag matching pins', () => {
+    const dir = scratchDir()
+    const launcherPath = writeLauncher(dir, '3.42.4')
+    const seedPath = writeSeedPackageJson(dir, '3.42.4')
+
+    expect(findRufloSeedPinDrift(launcherPath, seedPath)).toBeNull()
+  })
+
+  it('flags a seed package.json pin that differs from the launcher pin, naming both values and both paths', () => {
+    const dir = scratchDir()
+    const launcherPath = writeLauncher(dir, '3.42.4')
+    const seedPath = writeSeedPackageJson(dir, '3.41.0')
+
+    expect(findRufloSeedPinDrift(launcherPath, seedPath)).toEqual({
+      reason: `RUFLO_CLI_PIN=3.42.4 in ${launcherPath} does not match dependencies["@claude-flow/cli"]=3.41.0 in ${seedPath}`,
+      launcherPath,
+      seedPackageJsonPath: seedPath,
+      launcherPin: '3.42.4',
+      seedPin: '3.41.0',
+    })
+  })
+
+  it('flags a missing dependencies["@claude-flow/cli"] entry in the seed package.json', () => {
+    const dir = scratchDir()
+    const launcherPath = writeLauncher(dir, '3.42.4')
+    const seedPath = writeSeedPackageJson(dir, undefined)
+
+    expect(findRufloSeedPinDrift(launcherPath, seedPath)).toEqual({
+      reason: `${seedPath} has no dependencies["@claude-flow/cli"] entry`,
+      launcherPath,
+      seedPackageJsonPath: seedPath,
+      launcherPin: '3.42.4',
+    })
+  })
+
+  it('flags a missing seed package.json file by name', () => {
+    const dir = scratchDir()
+    const launcherPath = writeLauncher(dir, '3.42.4')
+    const seedPath = join(dir, 'ruflo-seed', 'package.json')
+
+    expect(findRufloSeedPinDrift(launcherPath, seedPath)).toEqual({
+      reason: `seed package.json not found at ${seedPath}`,
+      launcherPath,
+      seedPackageJsonPath: seedPath,
+      launcherPin: '3.42.4',
+    })
+  })
+
+  it('does not flag the real, committed pair (scripts/mcp-ruflo-launcher.sh, scripts/ruflo-seed/package.json)', () => {
+    // End-to-end regression anchor, same convention as
+    // findUnpinnedRufloLauncherPin's own real-file test above.
+    const realLauncherPath = join(process.cwd(), 'scripts', 'mcp-ruflo-launcher.sh')
+    const realSeedPath = join(process.cwd(), 'scripts', 'ruflo-seed', 'package.json')
+
+    expect(findRufloSeedPinDrift(realLauncherPath, realSeedPath)).toBeNull()
+  })
+})
+
+describe('findProcScanCmdHintDrift (rec 2, SMI-6744 A1.8 retro)', () => {
+  // Deliberately escape-free: this string needs no \' or \\ handling, so
+  // these arms isolate the extract-and-compare LOGIC from the escape
+  // decoding, which gets its own dedicated arm below with hand-verified
+  // escape sequences.
+  const TEST_HINT = 'sh -c "scan procs for launchers"'
+  function writeGuard(dir: string, hintLiteralBody: string = TEST_HINT): string {
+    const p = join(dir, 'ruflo-launch-guard.mjs')
+    writeFileSync(
+      p,
+      `#!/usr/bin/env node\nconst PROC_SCAN_CMD_HINT =\n  '${hintLiteralBody}'\nconsole.log(PROC_SCAN_CMD_HINT)\n`
+    )
+    return p
+  }
+  function writeGuide(dir: string, body: string): string {
+    const p = join(dir, 'claude-flow-guide.md')
+    writeFileSync(p, body)
+    return p
+  }
+
+  it('does not flag a guide that carries the guard literal verbatim', () => {
+    const dir = scratchDir()
+    const guardPath = writeGuard(dir)
+    const guidePath = writeGuide(dir, `# guide\n\nrun \`docker exec c ${TEST_HINT}\`\n`)
+
+    expect(findProcScanCmdHintDrift(guardPath, guidePath)).toBeNull()
+  })
+
+  it('flags a guide whose prose has drifted from the guard literal', () => {
+    const dir = scratchDir()
+    const guardPath = writeGuard(dir)
+    const guidePath = writeGuide(dir, `# guide\n\nrun \`ps -eo pid,args\` to list live launchers\n`)
+
+    const result = findProcScanCmdHintDrift(guardPath, guidePath)
+    expect(result).not.toBeNull()
+    expect(result.reason).toContain('does not appear verbatim')
+    expect(result.hintLiteral).toBe(TEST_HINT)
+  })
+
+  it('flags a missing guard file by name', () => {
+    const dir = scratchDir()
+    const guardPath = join(dir, 'ruflo-launch-guard.mjs')
+    const guidePath = writeGuide(dir, '# guide\n')
+
+    expect(findProcScanCmdHintDrift(guardPath, guidePath)).toEqual({
+      reason: `guard not found at ${guardPath}`,
+      guardPath,
+      guideMdPath: guidePath,
+    })
+  })
+
+  it('flags a missing guide file by name once the guard parses cleanly', () => {
+    const dir = scratchDir()
+    const guardPath = writeGuard(dir)
+    const guidePath = join(dir, 'claude-flow-guide.md')
+
+    expect(findProcScanCmdHintDrift(guardPath, guidePath)).toEqual({
+      reason: `guide not found at ${guidePath}`,
+      guardPath,
+      guideMdPath: guidePath,
+      hintLiteral: TEST_HINT,
+    })
+  })
+
+  it('decodes escaped single-quotes and backslashes the same way the real constant uses them', () => {
+    const dir = scratchDir()
+    const guardPath = join(dir, 'ruflo-launch-guard.mjs')
+    // Written directly (not via this test file's own string-escaping of a
+    // shared constant) so the exact source bytes under test are visible
+    // here: the guard source literal is `'it\'s a \\test'`, which JS
+    // decodes to `it's a \test` (one backslash) -- the same two escape
+    // kinds (`\'`, `\\`) the real PROC_SCAN_CMD_HINT constant uses.
+    writeFileSync(
+      guardPath,
+      "const PROC_SCAN_CMD_HINT =\n  'it\\'s a \\\\test'\nconsole.log(PROC_SCAN_CMD_HINT)\n"
+    )
+    const guidePath = writeGuide(dir, "# guide\n\nliteral: it's a \\test\n")
+
+    expect(findProcScanCmdHintDrift(guardPath, guidePath)).toBeNull()
+  })
+
+  it('does not flag the real, committed pair (scripts/ruflo-launch-guard.mjs, .claude/development/claude-flow-guide.md)', () => {
+    // End-to-end regression anchor, same convention as
+    // findRufloSeedPinDrift's own real-file test above -- exercises the
+    // ACTUAL escaped literal (`\'` and `\\0`) this constant carries in
+    // production, not just the simplified fixtures above.
+    const realGuardPath = join(process.cwd(), 'scripts', 'ruflo-launch-guard.mjs')
+    const realGuidePath = join(process.cwd(), '.claude', 'development', 'claude-flow-guide.md')
+
+    expect(findProcScanCmdHintDrift(realGuardPath, realGuidePath)).toBeNull()
   })
 })
 

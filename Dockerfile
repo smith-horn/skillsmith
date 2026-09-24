@@ -276,6 +276,12 @@ RUN node scripts/lib/linux-optional-packages.mjs | sort > /tmp/tier-b-predicted.
 # directly, per Checkpoint 2 decision 2.9).
 FROM base AS ruflo
 
+# rec 3 (SMI-6744 A1.8 retro): scripts/ruflo-launch-guard.mjs's verifyUserHz()
+# assumes USER_HZ=100 to convert /proc/<pid>/stat's tick-based starttime into
+# epoch ms; fail the BUILD, not just an operator's exit-1 refusal at runtime,
+# if this base image's tick rate ever changes.
+RUN test "$(getconf CLK_TCK)" = 100
+
 WORKDIR /opt/ruflo-seed
 
 # The committed lockfile (generated in a node:22-slim container, never in this

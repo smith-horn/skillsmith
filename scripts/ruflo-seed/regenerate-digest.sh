@@ -57,6 +57,31 @@
 # the actual digest computation always happens INSIDE the container, never
 # on the host -- the host's own node may differ in version from the image's).
 #
+# scripts/ruflo-seed/package.json's four exact `overrides` (SMI-6744 M-4,
+# post-merge governance retro on PR #2931) -- covered by the seed digest
+# above, so this script (the one a bumper runs) is where the rationale and
+# bump procedure live instead:
+#   protobufjs      7.6.6  -- Dependency Guard (npm audit --audit-level=high)
+#                             finding, reached via @google/genai,
+#                             @grpc/proto-loader, onnx-proto and
+#                             onnxruntime-web (lockfile-confirmed parents).
+#   @opentelemetry/propagator-jaeger
+#                   2.9.0  -- Dependency Guard finding, reached via
+#                             @opentelemetry/sdk-node.
+#   toml            4.2.0  -- Dependency Guard finding, reached via
+#                             @claude-flow/cli itself.
+#   sharp           0.35.4 -- Dependency Guard finding, reached via
+#                             @huggingface/transformers and
+#                             @xenova/transformers.
+# Instruction: re-evaluate EVERY override above on every @claude-flow/cli
+# version bump. Remove an override the moment `npm ls <pkg>` inside
+# scripts/ruflo-seed/ no longer lists that package at all -- npm applies an
+# `overrides` entry unconditionally, tree-wide, and never warns when its
+# target has stopped being a real dependency, so a stale override silently
+# outlives the vulnerability it was pinned against and can mask a REAL
+# future advisory in whatever unrelated package npm would otherwise resolve
+# there instead.
+#
 # bash 3.2-safe (macOS ships bash 3.2 as /bin/bash) and
 # `shellcheck -S warning` clean -- no associative arrays, no `${var,,}`/
 # `${var^^}` case expansion, no `mapfile`/`readarray`.

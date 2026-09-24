@@ -45,7 +45,14 @@
 # function as a defense-in-depth backstop against `set -e` aborting run.sh
 # between a mutation and its own inline restore below; it is cleared before
 # this function returns, so it never lingers over --consolidation or any
-# other mode run afterward under --all.
+# other mode run afterward under --all. M-A (SMI-6744 A1.8 retro): this
+# invariant covers EVERY return out of quad_arms, including Q4/Q5's own
+# early refusals below (an unreadable store_generation.id before either
+# mutates anything) -- those two `return`s mirror the same
+# `quad_emergency_restore; trap - EXIT` teardown as the normal end-of-
+# function path, even though nothing is dirty yet at that point, so the
+# trap-disarm invariant this comment states is actually true on every code
+# path, not just the common one.
 #
 # SMI-6744 A1.8 round-2 fix (cross-family gate finding, BLOCKED on PR #2931):
 # a dirty flag (QUAD_DIRTY_AUTHORITY/_MEMORY_DB/_AGENTDB) now clears ONLY once
@@ -82,13 +89,20 @@ QUAD_DIRTY_AGENTDB=0
 QUAD_MEMORY_DB_CURRENT_ID=""
 QUAD_AGENTDB_CURRENT_ID=""
 
-# Test-seam bookkeeping (see quad_test_should_noop_restore below). Each
-# counter latches to 1 the first time its resource's restore is no-opped
-# under RUFLO_QUAD_TEST_FAIL_RESTORE, so only the FIRST attempt fails --
-# simulating a transient `cp`/UPDATE failure that a retry recovers from --
-# unless RUFLO_QUAD_TEST_FAIL_RESTORE_PERSIST is also set.
+# Test-seam bookkeeping (see quad_test_should_noop_restore in
+# lib/quad.restore.sh, sourced below). Each counter latches to 1 the first
+# time its resource's restore is no-opped under RUFLO_QUAD_TEST_FAIL_RESTORE,
+# so only the FIRST attempt fails -- simulating a transient `cp`/UPDATE
+# failure that a retry recovers from -- unless
+# RUFLO_QUAD_TEST_FAIL_RESTORE_PERSIST is also set. shellcheck (run without
+# -x, matching this workflow's own convention -- see validate-hooks.yml's
+# "SC1091 can't-follow-source is unavoidable" note) cannot see that
+# lib/quad.restore.sh is the actual consumer of these three.
+# shellcheck disable=SC2034
 QUAD_TEST_FAIL_RESTORE_USED_AUTHORITY=0
+# shellcheck disable=SC2034
 QUAD_TEST_FAIL_RESTORE_USED_MEMORY_DB=0
+# shellcheck disable=SC2034
 QUAD_TEST_FAIL_RESTORE_USED_AGENTDB=0
 
 # quad_md5 <file> -- macOS ships `md5 -q`; Linux hosts (and every container
@@ -193,151 +207,13 @@ quad_set_store_generation() {
   ' "$1" "$2"
 }
 
-# quad_sq <string> -- single-quote a value for a pasteable sh command line, so
-# a path or id carrying spaces, quotes or metacharacters stays one argument
-# (the gate's round-3 Low: the header's "exact command" claim was not safe
-# without this). Bash 3.2-safe.
-quad_sq() {
-  printf "'%s'" "$(printf '%s' "$1" | sed "s/'/'\\\\''/g")"
-}
-
-# quad_manual_restore_cmd <container-db-path> <original-id> -- the literal
-# docker one-liner a human can copy-paste to restore a store marker by hand,
-# printed only when both the inline and EXIT-trap restores fail verification.
-quad_manual_restore_cmd() {
-  printf 'docker run --rm -v %s:/srv/ruflo --entrypoint node %s -e '\''const Database=require("/opt/ruflo-seed/node_modules/better-sqlite3");const db=new Database(process.argv[1]);db.prepare("UPDATE store_generation SET id=?").run(process.argv[2]);db.close()'\'' %s %s' \
-    "$(quad_sq "$STORE_VOLUME")" "$(quad_sq "$IMAGE")" "$(quad_sq "$1")" "$(quad_sq "$2")"
-}
-
-# quad_test_should_noop_restore <resource> -- TEST-ONLY seam for the RED ARM
-# that proved the round-2 fix (see header). INERT (always returns 1, "don't
-# no-op") unless RUFLO_QUAD_TEST_FAIL_RESTORE is exported as exactly
-# "authority", "memory_db" or "agentdb" -- never set in a real run, so this
-# changes nothing outside that scratch-copy test. When set, it no-ops the
-# FIRST restore attempt for the matching resource only (simulating a
-# transient `cp`/UPDATE failure the EXIT-trap retry then recovers from);
-# RUFLO_QUAD_TEST_FAIL_RESTORE_PERSIST additionally makes EVERY attempt
-# (inline and the EXIT-trap retry) a no-op, simulating an unrecoverable one.
-quad_test_should_noop_restore() {
-  [ "${RUFLO_QUAD_TEST_FAIL_RESTORE:-}" = "$1" ] || return 1
-  [ -n "${RUFLO_QUAD_TEST_FAIL_RESTORE_PERSIST:-}" ] && return 0
-  case "$1" in
-    authority)
-      [ "$QUAD_TEST_FAIL_RESTORE_USED_AUTHORITY" -eq 1 ] && return 1
-      QUAD_TEST_FAIL_RESTORE_USED_AUTHORITY=1
-      ;;
-    memory_db)
-      [ "$QUAD_TEST_FAIL_RESTORE_USED_MEMORY_DB" -eq 1 ] && return 1
-      QUAD_TEST_FAIL_RESTORE_USED_MEMORY_DB=1
-      ;;
-    agentdb)
-      [ "$QUAD_TEST_FAIL_RESTORE_USED_AGENTDB" -eq 1 ] && return 1
-      QUAD_TEST_FAIL_RESTORE_USED_AGENTDB=1
-      ;;
-    *)
-      return 1
-      ;;
-  esac
-  return 0
-}
-
-# quad_verify_authority_restored -- 0 iff the authority file is currently
-# byte-identical to the pre-mutation backup taken before Q2.
-quad_verify_authority_restored() {
-  cmp -s "$QUAD_AUTHORITY_FILE" "$QUAD_AUTHORITY_BACKUP"
-}
-
-# quad_restore_authority -- attempts the cp restore, then independently
-# VERIFIES it via cmp before touching the dirty flag. Clears
-# QUAD_DIRTY_AUTHORITY and returns 0 ONLY when verified; otherwise leaves the
-# flag set and returns 1, so a caller (inline arm code, or the EXIT trap) can
-# tell a genuine restore from a no-op and never mistakes "we tried" for "it
-# worked". Never lets a failed `cp` abort the caller under `set -e`.
-quad_restore_authority() {
-  set +e
-  if ! quad_test_should_noop_restore authority; then
-    cp "$QUAD_AUTHORITY_BACKUP" "$QUAD_AUTHORITY_FILE" 2>/dev/null
-  fi
-  quad_verify_authority_restored
-  _quad_authority_verified=$?
-  set -e
-  if [ "$_quad_authority_verified" -eq 0 ]; then
-    QUAD_DIRTY_AUTHORITY=0
-    return 0
-  fi
-  return 1
-}
-
-# quad_restore_memory_db -- same contract as quad_restore_authority, for
-# memory.db's store_generation.id. Sets QUAD_MEMORY_DB_CURRENT_ID as a
-# side effect so callers can report the read-back value without a second
-# docker-run round trip.
-quad_restore_memory_db() {
-  set +e
-  if ! quad_test_should_noop_restore memory_db; then
-    quad_set_store_generation "$QUAD_MEMORY_DB" "$QUAD_MEMORY_DB_ORIG_ID" >/dev/null 2>&1
-  fi
-  QUAD_MEMORY_DB_CURRENT_ID="$(quad_read_store_generation "$QUAD_MEMORY_DB" 2>/dev/null)"
-  set -e
-  if [ "$QUAD_MEMORY_DB_CURRENT_ID" = "$QUAD_MEMORY_DB_ORIG_ID" ]; then
-    QUAD_DIRTY_MEMORY_DB=0
-    return 0
-  fi
-  return 1
-}
-
-# quad_restore_agentdb -- same contract as quad_restore_memory_db, for
-# agentdb-memory.db's store_generation.id.
-quad_restore_agentdb() {
-  set +e
-  if ! quad_test_should_noop_restore agentdb; then
-    quad_set_store_generation "$QUAD_AGENTDB" "$QUAD_AGENTDB_ORIG_ID" >/dev/null 2>&1
-  fi
-  QUAD_AGENTDB_CURRENT_ID="$(quad_read_store_generation "$QUAD_AGENTDB" 2>/dev/null)"
-  set -e
-  if [ "$QUAD_AGENTDB_CURRENT_ID" = "$QUAD_AGENTDB_ORIG_ID" ]; then
-    QUAD_DIRTY_AGENTDB=0
-    return 0
-  fi
-  return 1
-}
-
-# quad_emergency_restore -- the EXIT-trap handler (armed for the duration of
-# quad_arms, see header) AND the explicit final retry quad_arms makes right
-# before disarming that trap. Retries ONLY whatever is STILL flagged dirty --
-# an inline restore that already verified has cleared its own flag, so this
-# is a genuine second attempt, never a redundant no-op reported as one. Loud
-# either way: "restored on exit" once verified, or "RESTORE FAILED ON EXIT"
-# with the exact manual-recovery command when it still doesn't verify. Never
-# lets a failure inside itself abort an already-exiting shell.
-quad_emergency_restore() {
-  set +e
-  if [ "$QUAD_DIRTY_AUTHORITY" -eq 1 ]; then
-    if quad_restore_authority; then
-      printf 'quad: %s restored on exit\n' "$QUAD_AUTHORITY_FILE"
-    else
-      printf 'quad: RESTORE FAILED ON EXIT -- %s is still mutated; manual recovery: cp %s %s\n' \
-        "$QUAD_AUTHORITY_FILE" "$(quad_sq "$QUAD_AUTHORITY_BACKUP")" "$(quad_sq "$QUAD_AUTHORITY_FILE")"
-    fi
-  fi
-  if [ "$QUAD_DIRTY_MEMORY_DB" -eq 1 ]; then
-    if quad_restore_memory_db; then
-      printf 'quad: %s restored on exit (store_generation.id=%s)\n' "$QUAD_MEMORY_DB" "$QUAD_MEMORY_DB_ORIG_ID"
-    else
-      printf 'quad: RESTORE FAILED ON EXIT -- %s is still mutated; manual recovery: %s\n' \
-        "$QUAD_MEMORY_DB" "$(quad_manual_restore_cmd "$QUAD_MEMORY_DB" "$QUAD_MEMORY_DB_ORIG_ID")"
-    fi
-  fi
-  if [ "$QUAD_DIRTY_AGENTDB" -eq 1 ]; then
-    if quad_restore_agentdb; then
-      printf 'quad: %s restored on exit (store_generation.id=%s)\n' "$QUAD_AGENTDB" "$QUAD_AGENTDB_ORIG_ID"
-    else
-      printf 'quad: RESTORE FAILED ON EXIT -- %s is still mutated; manual recovery: %s\n' \
-        "$QUAD_AGENTDB" "$(quad_manual_restore_cmd "$QUAD_AGENTDB" "$QUAD_AGENTDB_ORIG_ID")"
-    fi
-  fi
-  set -e
-}
+# Restore-mechanics helpers (quad_sq, quad_manual_restore_cmd,
+# quad_test_should_noop_restore, quad_verify_authority_restored,
+# quad_restore_authority/_memory_db/_agentdb, quad_emergency_restore) --
+# split into their own sibling once this file crossed the repo's 500-line
+# pre-commit gate (L-7/L-8, post-merge governance retro on PR #2931).
+# shellcheck source=quad.restore.sh
+source "$HARNESS/lib/quad.restore.sh"
 
 quad_arms() {
   h1 "ADR-170 § 5 -- authority-quad LIVE mutations, against the running Compose service $SERVICE"
@@ -393,6 +269,7 @@ quad_arms() {
 
   # ---- Q3: authority file instanceNonce rewritten ----------------------------
   arm "Q3" "authority file instanceNonce rewritten to a random UUID -- the launcher must refuse naming quad (b) and the authority file"
+  # shellcheck disable=SC2034  # consumed by lib/quad.restore.sh (quad_emergency_restore), not visible to shellcheck without -x
   QUAD_DIRTY_AUTHORITY=1
   _q3_new="$(quad_random_uuid)"
   quad_write_authority_field instanceNonce "$_q3_new"
@@ -418,7 +295,29 @@ quad_arms() {
   # ---- Q4: memory.db's own marker row changed, ONLY that file ---------------
   arm "Q4" "memory.db's store_generation row changed in place (agentdb-memory.db untouched) -- the launcher must refuse naming quad (c) and memory.db"
   QUAD_MEMORY_DB_ORIG_ID="$(quad_read_store_generation "$QUAD_MEMORY_DB")"
+  # L-7 (post-merge governance retro, PR #2931): quad_restore_memory_db()
+  # clears QUAD_DIRTY_MEMORY_DB (and reports a verified restore) whenever the
+  # read-back current id equals QUAD_MEMORY_DB_ORIG_ID -- including when
+  # BOTH are empty, which a failed read here would produce. Assert the
+  # original id is actually readable BEFORE this arm mutates anything, so an
+  # unreadable store_generation row refuses loudly instead of "restoring" to
+  # an empty string that was never a real generation.
+  if [ -z "$QUAD_MEMORY_DB_ORIG_ID" ]; then
+    predicate "Q4 memory.db original store_generation.id readable before mutation" 1 \
+      "a non-empty store_generation.id read from $QUAD_MEMORY_DB before Q4 mutates it" \
+      "read back empty -- refusing to mutate without a known-good value to restore"
+    # M-A (SMI-6744 A1.8 retro): mirror the normal-path teardown below --
+    # nothing is dirty at this point (this refusal precedes
+    # QUAD_DIRTY_MEMORY_DB=1), but leaving the EXIT trap armed past this
+    # return would falsify quad_arms' own documented invariant ("cleared
+    # before this function returns, so it never lingers over
+    # --consolidation or any other mode run afterward under --all").
+    quad_emergency_restore
+    trap - EXIT
+    return
+  fi
   _q4_new="$(quad_random_uuid)"
+  # shellcheck disable=SC2034  # consumed by lib/quad.restore.sh (quad_emergency_restore), not visible to shellcheck without -x
   QUAD_DIRTY_MEMORY_DB=1
   quad_set_store_generation "$QUAD_MEMORY_DB" "$_q4_new" >/dev/null
   applied "docker run --rm -v $STORE_VOLUME:/srv/ruflo ... UPDATE store_generation SET id='$_q4_new' in $QUAD_MEMORY_DB only; original id recorded: $QUAD_MEMORY_DB_ORIG_ID"
@@ -443,7 +342,19 @@ quad_arms() {
   # ---- Q5: agentdb-memory.db's own marker row changed, ONLY that file -------
   arm "Q5" "agentdb-memory.db's store_generation row changed in place (memory.db untouched) -- the launcher must refuse naming quad (c) and agentdb-memory.db"
   QUAD_AGENTDB_ORIG_ID="$(quad_read_store_generation "$QUAD_AGENTDB")"
+  # L-7: same assertion as Q4 above, for agentdb-memory.db's own original id.
+  if [ -z "$QUAD_AGENTDB_ORIG_ID" ]; then
+    predicate "Q5 agentdb-memory.db original store_generation.id readable before mutation" 1 \
+      "a non-empty store_generation.id read from $QUAD_AGENTDB before Q5 mutates it" \
+      "read back empty -- refusing to mutate without a known-good value to restore"
+    # M-A (SMI-6744 A1.8 retro): same teardown mirror as Q4's early return
+    # above -- see that comment.
+    quad_emergency_restore
+    trap - EXIT
+    return
+  fi
   _q5_new="$(quad_random_uuid)"
+  # shellcheck disable=SC2034  # consumed by lib/quad.restore.sh (quad_emergency_restore), not visible to shellcheck without -x
   QUAD_DIRTY_AGENTDB=1
   quad_set_store_generation "$QUAD_AGENTDB" "$_q5_new" >/dev/null
   applied "docker run --rm -v $STORE_VOLUME:/srv/ruflo ... UPDATE store_generation SET id='$_q5_new' in $QUAD_AGENTDB only; original id recorded: $QUAD_AGENTDB_ORIG_ID"

@@ -4,17 +4,28 @@
 # "Required test, two checkouts, both cases, checking more than
 # containers."
 #
-# NOT run by this worker: every arm below needs a live Docker daemon, and
-# this task's rules forbid running Docker. It is exercised by the queen in
-# a dedicated build window once the `ruflo` image stage (a parallel, in-
-# progress A1.4 lane) exists -- see the handback report's "Not done / not
-# checked" list. This script IS lint-checked (`bash -n`, `shellcheck -S
-# warning`) as part of this deliverable.
+# Needs a live Docker daemon and STOPS the shared service (case B removes
+# skillsmith-ruflo-1 before restoring it): run it from a broadcast window,
+# never from a worker. Lint-checked in CI (validate-hooks.yml: bash -n and
+# a warning-level shellcheck pass).
 #
 # Usage: scripts/ruflo-federation-test.sh <checkout-1-path> <checkout-2-path>
 #
-# Asserts, in order (ADR-170 SS8):
-#   0. the two checkouts resolve to DIFFERENT Compose project names -- "if
+# Checkout shape (H-3(b), post-merge governance retro on PR #2931):
+# ruflo-service-up.sh refuses a LINKED git worktree and an unversioned tree,
+# so checkout 1 must be the MAIN checkout and checkout 2 an independent
+# clone with its own .git -- `git clone --shared <main-checkout> <dir>`,
+# checked out at the commit under test -- never a worktree of the same repo
+# and never a bare export. Precondition 0a below refuses either shape up
+# front so the failure never surfaces as a confusing case-B refusal.
+#
+# Asserts, in order (ADR-170 SS8; L-C, SMI-6744 A1.8 retro -- this list was
+# previously missing 0a even though it runs FIRST):
+#   0a. both checkouts have the shape ruflo-service-up.sh accepts (git-dir
+#      == git-common-dir) -- a linked worktree or an unversioned tree is
+#      refused up front, so the failure never surfaces as a confusing
+#      case-B refusal.
+#   0b. the two checkouts resolve to DIFFERENT Compose project names -- "if
 #      both resolve to one project, the second start reconciles the
 #      existing service instead of colliding, and the first case proves
 #      nothing" (SS8).
@@ -31,6 +42,17 @@
 #
 # bash 3.2-safe. Lint-clean under `shellcheck -S warning`.
 set -euo pipefail
+
+# L-B (SMI-6744 A1.8 retro): source the shared git_dir_equals_common_dir()
+# predicate this script's own checkout_shape_ok() used to duplicate. This
+# file only DEFINES functions and re-runs `set -euo pipefail` (already set
+# above; idempotent) -- it does not reference REPO_ROOT/COMPOSE_FILE/
+# CONTAINER_NAME/log()/die() at source time, so sourcing it here without
+# those (this script uses CHECKOUT_1/CHECKOUT_2, not a single REPO_ROOT) is
+# safe as long as only git_dir_equals_common_dir() is called from it.
+SELF_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+# shellcheck source=ruflo-service-up.helpers.sh
+source "$SELF_DIR/ruflo-service-up.helpers.sh"
 
 VOLUME_NAME="skillsmith-ruflo-data"
 CONTAINER_NAME="skillsmith-ruflo-1"
@@ -76,9 +98,35 @@ project_name() {
 # name) with no restoration -- registered as early as possible so ANY exit
 # path (a case A/B assertion failing under `set -e`, or normal completion)
 # leaves checkout 1's service running again rather than torn down.
+# Registered before the preconditions (L-19) but ARMED only by the body, right
+# before its first docker call that can change the service: on 2026-09-24
+# three precondition probes of this script, each exiting before any docker
+# call, still ran the unconditional `docker rm -f` below and recreated the
+# live shared service three times. A refusal that touched nothing restores
+# nothing.
+SERVICE_TOUCHED=0
 restore_checkout_1() {
     local rc=0
+    if [[ "$SERVICE_TOUCHED" -ne 1 ]]; then
+        log "EXIT trap: the service was never touched (a precondition refused first) -- nothing to restore"
+        return 0
+    fi
     log "EXIT trap: removing checkout 2's container (if present) and re-running $CHECKOUT_1/scripts/ruflo-service-up.sh to restore the shared service"
+    # M-D (SMI-6744 A1.8 retro): if line 158's call to checkout 1's
+    # ruflo-service-up.sh refused at its own NEW check_foreign_project()
+    # (a THIRD project's container already sits at $CONTAINER_NAME),
+    # SERVICE_TOUCHED is already latched -- an unconditional `rm -f` here
+    # would convert that deliberate refusal into exactly the silent
+    # takeover H-3(c) exists to prevent, using the one command its own
+    # refusal message says never to use. Scope the removal to a container
+    # this test itself owns (checkout 1 or checkout 2's project).
+    local owner
+    owner="$(docker inspect "$CONTAINER_NAME" \
+        --format '{{index .Config.Labels "com.docker.compose.project"}}' 2>/dev/null || true)"
+    if [[ -n "$owner" && "$owner" != "${PROJECT_1:-}" && "$owner" != "${PROJECT_2:-}" ]]; then
+        echo "[ruflo-federation] EXIT trap: $CONTAINER_NAME belongs to a THIRD project ($owner), not checkout 1 ($PROJECT_1) or checkout 2 ($PROJECT_2) -- refusing to rm -f it (ruflo-service-up.sh's own foreign-project refusal says stop it first, never rm -f). Resolve it manually, then re-run: $CHECKOUT_1/scripts/ruflo-service-up.sh" >&2
+        return 0
+    fi
     docker rm -f "$CONTAINER_NAME" >/dev/null 2>&1 || true
     if "$CHECKOUT_1/scripts/ruflo-service-up.sh" >/tmp/ruflo-federation-restore.log 2>&1; then
         log "restoration: checkout 1's service is back up"
@@ -103,7 +151,21 @@ container_running() {
     [[ "$(docker inspect "$CONTAINER_NAME" --format '{{.State.Running}}' 2>/dev/null || echo false)" == "true" ]]
 }
 
-# ---- 0. distinct project names ----
+# ---- 0a. both checkouts have the shape ruflo-service-up.sh accepts ----
+# L-B (SMI-6744 A1.8 retro): git_dir_equals_common_dir() (sourced from
+# scripts/ruflo-service-up.helpers.sh above) is the SAME predicate
+# check_not_linked_worktree() there uses -- git-dir == git-common-dir (a
+# main checkout or an independent clone), both resolvable (a real git
+# checkout, not an export). This wrapper name is kept only because the fail
+# messages below read naturally against it.
+checkout_shape_ok() {
+    git_dir_equals_common_dir "$1"
+}
+checkout_shape_ok "$CHECKOUT_1" || fail "checkout 1 ($CHECKOUT_1) is a linked worktree or not a git checkout -- ruflo-service-up.sh refuses both (H-3(b)); pass the MAIN checkout"
+checkout_shape_ok "$CHECKOUT_2" || fail "checkout 2 ($CHECKOUT_2) is a linked worktree or not a git checkout -- ruflo-service-up.sh refuses both (H-3(b)); use an independent clone: git clone --shared <main-checkout> <dir>"
+pass "both checkouts have the shape ruflo-service-up.sh accepts (git-dir == git-common-dir)"
+
+# ---- 0b. distinct project names ----
 PROJECT_1="$(project_name "$CHECKOUT_1")"
 PROJECT_2="$(project_name "$CHECKOUT_2")"
 log "checkout 1 ($CHECKOUT_1) Compose project: $PROJECT_1"
@@ -118,6 +180,7 @@ pass "checkouts resolve to distinct Compose projects: '$PROJECT_1' != '$PROJECT_
 # ---- establish the baseline: bring checkout 1 up (also creates the volume
 # on a machine where it does not exist yet) ----
 log "bringing up checkout 1's service: $CHECKOUT_1/scripts/ruflo-service-up.sh"
+SERVICE_TOUCHED=1
 "$CHECKOUT_1/scripts/ruflo-service-up.sh"
 container_running || fail "checkout 1's container is not running after ruflo-service-up.sh"
 BASELINE_SNAPSHOT="$(volume_snapshot)"
