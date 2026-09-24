@@ -51,18 +51,14 @@
  * for real; the retry COUNT itself must not be faked (SMI-6598) — the tests
  * in `update-target.probe.test.ts` pin exactly 3 attempts.
  *
- * `.skillsmith-staging/` RECORD CHECK — DOCUMENTED AMBIGUITY. §4.2 says a
- * missing tracked folder named by a `.skillsmith-staging/` record is
- * `recovery-pending`, not plain-missing. A1's staging writer
- * (`skill-write-lock.ts`, `skill-swap.ts`) and its `record.json` schema do
- * not exist in this tree yet (confirmed: no `skill-write-lock*`/
- * `skill-swap*` file exists under `packages/core/src/services/` as of this
- * writing). `defaultRecoveryPendingChecker` below is therefore the SAME
- * kind of placeholder as `temporaryManifestEvidenceResolver`
- * (`update-target.evidence.ts`) — injectable via `ProbeInput.
- * checkRecoveryPending`, with a best-effort default scan, swapped out once
- * A1's real record shape lands. This is flagged back to the requester as an
- * open ambiguity, not silently guessed at as settled fact.
+ * `.skillsmith-staging/` RECORD CHECK: §4.2 says a missing tracked folder
+ * named by a `.skillsmith-staging/` record is `recovery-pending`, not
+ * plain-missing. The default implementation of that check
+ * (`defaultRecoveryPendingChecker`, a documented A1-placeholder — see its
+ * own module, `update-target.probe.recovery.ts`, for the full ambiguity
+ * writeup) lives in a sibling file, re-exported from here; this module only
+ * owns the injectable seam (`ProbeInput.checkRecoveryPending`) and the call
+ * site that invokes it.
  */
 
 import { createHash } from 'crypto'
@@ -71,6 +67,13 @@ import * as path from 'path'
 
 import { hasGitAncestorBetween, type GitWalkResult } from './skill-installation.target-guard.js'
 import { isRealpathInside } from './skill-installation.realpath-containment.js'
+import { defaultRecoveryPendingChecker } from './update-target.probe.recovery.js'
+
+/** Re-exported so `update-target.probe.ts` remains the one public import
+ * point for this probe's whole surface — the implementation lives in
+ * `update-target.probe.recovery.ts` (a documented A1-placeholder; see that
+ * module's fileoverview). */
+export { defaultRecoveryPendingChecker }
 
 /** Sanitized `{ path, errno }` — see this module's fileoverview. */
 export interface ProbeError {
@@ -171,8 +174,6 @@ export interface ProbeInput {
 
 const DEFAULT_RETRY_ATTEMPTS = 3
 const DEFAULT_RETRY_DELAY_MS = 20
-const STAGING_DIRNAME = '.skillsmith-staging'
-const STAGING_RESERVED = new Set(['.kept', '.trash', '.quarantine'])
 
 function defaultSleep(ms: number): Promise<void> {
   return new Promise((resolve) => setTimeout(resolve, ms))
@@ -230,60 +231,6 @@ async function checkPresence(dir: string, skillMdPath: string): Promise<Presence
     if (errnoOf(err) === 'ENOENT') return { status: 'missing' }
     return { status: 'error', error: sanitizeError(skillMdPath, err) }
   }
-}
-
-/**
- * PLACEHOLDER — see this module's fileoverview `.skillsmith-staging/`
- * section. Best-effort scan: read every non-reserved entry directly under
- * `<skillsDir>/.skillsmith-staging/`, parse its `record.json`, and treat the
- * directory as named if any string VALUE anywhere in the parsed record
- * equals `dir` or `dirName`.
- *
- * Fails SAFE, not permissive: any error reading `.skillsmith-staging/`
- * itself, or one op dir's `record.json`, is treated as "not named" (false)
- * — the caller then reports plain `probe-failed` (still blocking) rather
- * than ever reaching a permissive `ok`.
- */
-export const defaultRecoveryPendingChecker: RecoveryPendingChecker = async ({
-  skillsDir,
-  dir,
-  dirName,
-}) => {
-  const stagingDir = path.join(skillsDir, STAGING_DIRNAME)
-  let entries: import('fs').Dirent[]
-  try {
-    entries = await fs.readdir(stagingDir, { withFileTypes: true })
-  } catch {
-    return false
-  }
-  for (const entry of entries) {
-    if (!entry.isDirectory()) continue
-    if (entry.name.startsWith('.') || STAGING_RESERVED.has(entry.name)) continue
-    const recordPath = path.join(stagingDir, entry.name, 'record.json')
-    let raw: string
-    try {
-      raw = await fs.readFile(recordPath, 'utf-8')
-    } catch {
-      continue
-    }
-    let parsed: unknown
-    try {
-      parsed = JSON.parse(raw)
-    } catch {
-      continue
-    }
-    if (recordNames(parsed, dir, dirName)) return true
-  }
-  return false
-}
-
-function recordNames(value: unknown, dir: string, dirName: string): boolean {
-  if (typeof value === 'string') return value === dir || value === dirName
-  if (Array.isArray(value)) return value.some((v) => recordNames(v, dir, dirName))
-  if (value !== null && typeof value === 'object') {
-    return Object.values(value).some((v) => recordNames(v, dir, dirName))
-  }
-  return false
 }
 
 /** Probe one write-set member: lstat, classify its entry type, hash if it's a regular file. Never throws — every failure comes back as `{ error }`. */

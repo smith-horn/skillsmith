@@ -295,6 +295,36 @@ describe('probeUpdateTarget — retry rule (§4.2)', () => {
     expect(outcome).toEqual({ kind: 'recovery-pending' })
   })
 
+  it('uses the DEFAULT checker when none is injected, against a real staging record', async () => {
+    // Every other test here injects `checkRecoveryPending`, so none of them
+    // exercises `probeUpdateTarget`'s own default-parameter wiring
+    // (`input.checkRecoveryPending ?? defaultRecoveryPendingChecker`).
+    // Breaking that `??` arm would leave the recovery check dead — a missing
+    // folder mid-swap would report `probe-failed` instead of
+    // `recovery-pending` — and every existing test would still pass, because
+    // each supplies its own checker. Found when the placeholder was split into
+    // its own module: the move was provably behaviour-preserving, but it
+    // surfaced that nothing pinned the wiring it moved across.
+    //
+    // So this one deliberately injects NOTHING and writes a real staging
+    // record on disk, exercising the default end to end.
+    const dir = path.join(root, 'mid-swap-default')
+    const opDir = path.join(root, '.skillsmith-staging', 'op-1')
+    fs.mkdirSync(opDir, { recursive: true })
+    fs.writeFileSync(path.join(opDir, 'record.json'), JSON.stringify({ target: dir }))
+
+    const outcome = await probeUpdateTarget({
+      dir,
+      skillsDir: root,
+      dirName: 'mid-swap-default',
+      writeSet: [],
+      sleep: async () => {},
+      // checkRecoveryPending deliberately omitted — that is the point.
+    })
+
+    expect(outcome).toEqual({ kind: 'recovery-pending' })
+  })
+
   it('a non-directory occupying dir is an immediate probe-failed (ENOTDIR), never retried', async () => {
     const dir = path.join(root, 'a-plain-file')
     fs.writeFileSync(dir, 'not a dir')
