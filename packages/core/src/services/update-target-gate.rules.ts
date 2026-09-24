@@ -396,14 +396,20 @@ export const CLASSIFICATION_RULES: readonly ClassificationRule[] = [
       ctx.plan.fetchOutcome === 'scan-rejected' ? { reason: 'scan-rejected' } : null,
   },
   {
+    // §4.3's own row-12 text names FOUR unsupported shapes ("a symlink, dir,
+    // hardlink or other type"), but `entryType` alone only ever covers three
+    // — it is set only for a NON-regular entry, and a hardlinked file IS a
+    // regular file (`ProbeOk.files[].hardLinked`, `update-target.probe.ts`,
+    // carries that fourth signal on its own axis; see that field's own doc
+    // comment for why it isn't folded into `entryType` and for the
+    // deliberate false-positive-over-false-negative failure direction).
     row: '12',
     reason: 'unsupported-entry',
     match: (ctx) => {
       const ok = asProbeOk(ctx.probe)
       if (!ok) return null
-      return ok.files.some((f) => f.entryType !== undefined)
-        ? { reason: 'unsupported-entry' }
-        : null
+      const unsupported = ok.files.some((f) => f.entryType !== undefined || f.hardLinked === true)
+      return unsupported ? { reason: 'unsupported-entry' } : null
     },
   },
   {

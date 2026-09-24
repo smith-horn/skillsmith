@@ -105,6 +105,44 @@ export interface ProbedFile {
   sha256: string | null
   /** Set only when something other than "regular file or absent" occupies this path. `classifyUpdateTarget` turns this into `unsupported-entry` (§4.3 row 12). */
   entryType?: 'symlink' | 'directory' | 'other'
+  /** True when this REGULAR file (`entryType` unset) has additional hard
+   * links elsewhere on disk (`lstat`'s `nlink > 1`) — a write here rewrites
+   * every other path sharing that inode, not just this one. §4.3 row 12's
+   * own text ("a symlink, dir, hardlink or other type") names hardlink as a
+   * fourth unsupported shape, but `entryType` is set only for a NON-regular
+   * entry — a hardlinked file IS a regular file, so it was passing through
+   * unflagged until this field. Carried on its own axis rather than folded
+   * into `entryType`'s union: `entryType` answers "what KIND of entry is
+   * this," and a hardlink is still a regular file — a hardlinked regular
+   * file and a directory would otherwise carry the same signal for
+   * different reasons. `classifyUpdateTarget` (row 12,
+   * `update-target-gate.rules.ts`) treats `hardLinked === true` exactly
+   * like `entryType` being present.
+   *
+   * Computed only in the regular-file branch of `probeOneFile` below, never
+   * for a directory: `nlink` on a directory is inherently >1 on POSIX (its
+   * own `.` entry plus one `..` per child subdirectory), so checking it
+   * there would fire on every ordinary directory and carry no signal at
+   * all — and a directory already routes through `entryType` regardless.
+   *
+   * FAILURE DIRECTION (deliberate — same asymmetry `isBackupDir`,
+   * `local-skill-scan.ts`, resolves the same way): this errs toward
+   * flagging too much (false positive) rather than too little (false
+   * negative).
+   *   - False positive — a skills tree created via `cp -al`, or restored by
+   *     a backup tool that hardlinks unchanged files, has `nlink > 1` on
+   *     EVERY file, including ones nobody would call shared. Every such
+   *     skill becomes `unsupported-entry`: never auto-updated, but named in
+   *     the `needs-attention` group with a `move-aside` remediation
+   *     (`update-target-reason.ts`'s `REASON_GROUP`/`REASON_REMEDIATION`)
+   *     — a visible, recoverable skip, not a silent one.
+   *   - False negative — writing through an unflagged hardlink silently
+   *     rewrites content at every OTHER path sharing that inode, not only
+   *     the one the plan named — a write nobody asked for, at a location
+   *     the plan never showed, discovered (if ever) only after the fact.
+   * A visible skip a user can see and undo costs less than a write they
+   * never see happen, so this field always flags. */
+  hardLinked?: boolean
 }
 
 /** Everything the (pure) classifier needs about one on-disk target. */
@@ -214,7 +252,13 @@ async function probeOneFile(
   if (!st.isFile()) return { file: { rel, sha256: null, entryType: 'other' } }
   try {
     const buf = await fs.readFile(abs)
-    return { file: { rel, sha256: createHash('sha256').update(buf).digest('hex') } }
+    const file: ProbedFile = { rel, sha256: createHash('sha256').update(buf).digest('hex') }
+    // `st` is the lstat above, already known regular at this point — `nlink`
+    // costs nothing extra to read off it. See `ProbedFile.hardLinked`'s own
+    // doc comment for why this is checked only here (never for a directory
+    // or symlink) and for the deliberate failure direction.
+    if (st.nlink > 1) file.hardLinked = true
+    return { file }
   } catch (err) {
     return { error: sanitizeError(abs, err) }
   }

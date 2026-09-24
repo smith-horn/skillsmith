@@ -272,6 +272,31 @@ describe('classifyUpdateTarget — one fixture per reason', () => {
     expect(classifyUpdateTarget(c.evidence, probe, c.plan)).toEqual({ reason: 'unsupported-entry' })
   })
 
+  it('row 12: unsupported-entry (hardlinked regular file, no entryType — the disclosed gap closed)', () => {
+    const c = clean()
+    const probe = mkProbeOk({
+      files: [
+        { rel: 'SKILL.md', sha256: 'skillhash1' },
+        { rel: 'notes.md', sha256: 'byte1', hardLinked: true },
+      ],
+    })
+    expect(classifyUpdateTarget(c.evidence, probe, c.plan)).toEqual({ reason: 'unsupported-entry' })
+  })
+
+  it('row 12 control: `hardLinked: false` on an otherwise-clean file does NOT fire — the signal discriminates', () => {
+    const c = clean()
+    const probe = mkProbeOk({
+      files: [
+        { rel: 'SKILL.md', sha256: 'skillhash1' },
+        { rel: 'notes.md', sha256: 'byte1', hardLinked: false },
+      ],
+    })
+    expect(classifyUpdateTarget(c.evidence, probe, c.plan)).toEqual({
+      reason: 'eligible',
+      mode: 'content-write',
+    })
+  })
+
   it('row 13: no-baseline', () => {
     const c = clean()
     const plan = mkPlan({ fileHashes: {} }) // notes.md's baseline missing
@@ -391,6 +416,17 @@ describe('classifyUpdateTarget — two-row overlaps (order enforcement)', () => 
       files: [
         { rel: 'SKILL.md', sha256: 'skillhash1' },
         { rel: 'notes.md', sha256: 'byte1', entryType: 'directory' },
+      ],
+    })
+    expect(classifyUpdateTarget(c.evidence, probe, c.plan)).toEqual({ reason: 'unsupported-entry' })
+  })
+
+  it('row 12 beats row 16 via the hardlink signal alone: a regular file (no entryType) with hardLinked:true still wins over an otherwise-eligible target', () => {
+    const c = clean()
+    const probe = mkProbeOk({
+      files: [
+        { rel: 'SKILL.md', sha256: 'skillhash1' },
+        { rel: 'notes.md', sha256: 'byte1', hardLinked: true },
       ],
     })
     expect(classifyUpdateTarget(c.evidence, probe, c.plan)).toEqual({ reason: 'unsupported-entry' })

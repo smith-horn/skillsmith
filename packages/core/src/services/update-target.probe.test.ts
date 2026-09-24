@@ -692,6 +692,93 @@ describe('probeUpdateTarget — ok outcome contents', () => {
     })
   })
 
+  it("flags a hardlinked write-set member with hardLinked:true (§4.3 row 12's fourth unsupported shape, closed here): nlink>1 on a REGULAR file, no entryType", async () => {
+    const dir = mkSkill('hardlinked')
+    const original = path.join(dir, 'shared.txt')
+    fs.writeFileSync(original, 'shared bytes')
+    // A second name for the SAME inode, outside the skill dir entirely —
+    // the write-set member itself is what's probed; the second name only
+    // has to exist for `nlink` to read >1 via the write-set member's OWN
+    // lstat.
+    const secondName = path.join(root, 'outside-hardlink-target.txt')
+    fs.linkSync(original, secondName)
+
+    const outcome = await probeUpdateTarget({
+      dir,
+      skillsDir: root,
+      dirName: 'hardlinked',
+      writeSet: ['shared.txt'],
+    })
+
+    expect(outcome.kind).toBe('ok')
+    if (outcome.kind !== 'ok') throw new Error('unreachable')
+    const shared = outcome.files.find((f) => f.rel === 'shared.txt')
+    expect(shared).toEqual({
+      rel: 'shared.txt',
+      sha256: createHash('sha256').update(Buffer.from('shared bytes')).digest('hex'),
+      hardLinked: true,
+    })
+  })
+
+  it('regular-file control: an ordinary single-link file has no hardLinked key at all — the signal discriminates rather than firing on every regular file', async () => {
+    const dir = mkSkill('single-link')
+    const filePath = path.join(dir, 'solo.txt')
+    fs.writeFileSync(filePath, 'solo bytes')
+
+    const outcome = await probeUpdateTarget({
+      dir,
+      skillsDir: root,
+      dirName: 'single-link',
+      writeSet: ['solo.txt'],
+    })
+
+    expect(outcome.kind).toBe('ok')
+    if (outcome.kind !== 'ok') throw new Error('unreachable')
+    const solo = outcome.files.find((f) => f.rel === 'solo.txt')
+    expect(solo).toEqual({
+      rel: 'solo.txt',
+      sha256: createHash('sha256').update(Buffer.from('solo bytes')).digest('hex'),
+    })
+    expect(solo && 'hardLinked' in solo).toBe(false)
+  })
+
+  it('directory control: a write-set member that is a directory (POSIX-inherent nlink>1) is flagged via entryType alone, never hardLinked', async () => {
+    const dir = mkSkill('dir-not-hardlink')
+    fs.mkdirSync(path.join(dir, 'subdir'))
+
+    const outcome = await probeUpdateTarget({
+      dir,
+      skillsDir: root,
+      dirName: 'dir-not-hardlink',
+      writeSet: ['subdir'],
+    })
+
+    expect(outcome.kind).toBe('ok')
+    if (outcome.kind !== 'ok') throw new Error('unreachable')
+    const subdir = outcome.files.find((f) => f.rel === 'subdir')
+    expect(subdir).toEqual({ rel: 'subdir', sha256: null, entryType: 'directory' })
+    expect(subdir && 'hardLinked' in subdir).toBe(false)
+  })
+
+  it('symlink control: a write-set member that is a symlink is flagged via entryType alone, never hardLinked', async () => {
+    const dir = mkSkill('symlink-not-hardlink')
+    const linkPath = path.join(dir, 'link.txt')
+    fs.symlinkSync(path.join(dir, 'SKILL.md'), linkPath)
+
+    const outcome = await probeUpdateTarget({
+      dir,
+      skillsDir: root,
+      dirName: 'symlink-not-hardlink',
+      writeSet: ['link.txt'],
+    })
+
+    expect(outcome.kind).toBe('ok')
+    if (outcome.kind !== 'ok') throw new Error('unreachable')
+    const link = outcome.files.find((f) => f.rel === 'link.txt')
+    expect(link).toEqual({ rel: 'link.txt', sha256: null, entryType: 'symlink' })
+    expect(link && 'hardLinked' in link).toBe(false)
+  })
+
   it('an absent write-set member (not yet on disk) is sha256 null with no entryType, not an error', async () => {
     const dir = mkSkill('add-only')
     const outcome = await probeUpdateTarget({
