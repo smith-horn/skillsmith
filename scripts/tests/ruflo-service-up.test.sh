@@ -23,6 +23,17 @@ SCRATCH_ROOT="$(mktemp -d)"
 FAKE_BIN_DIR="$SCRATCH_ROOT/bin"
 mkdir -p "$FAKE_BIN_DIR"
 
+# S-2 (SMI-6744 A1.8 retro): resolve the REAL git binary now, before the fake
+# git stub below ever exists on disk. In THIS file, PATH is never globally
+# prefixed with FAKE_BIN_DIR -- run_script() below only prepends it to the
+# environment of the ONE command it invokes (`PATH="$FAKE_BIN_DIR:$PATH"
+# "$SCRIPT_UNDER_TEST"`), which does not leak into this shell's own PATH --
+# so a bare `git` anywhere else in this file, including Arm 17's real-git
+# gate test, already resolves to the real binary regardless. REAL_GIT is
+# still captured explicitly here (rather than relying on that fact staying
+# true) so Arm 17 keeps working even if this file's PATH handling changes.
+REAL_GIT="$(command -v git)"
+
 trap 'rm -rf "$SCRATCH_ROOT"' EXIT
 
 # ---- fake docker: records every call, answers volume inspect/create and
@@ -617,11 +628,102 @@ else
 fi
 unset FAKE_THIS_PROJECT FAKE_CONTAINER_PROJECT FAKE_CONTAINER_LABEL_EMPTY
 
+# ---- Arm 16 (S-1, SMI-6744 A1.8 retro): federation_restore_disposition()
+# (scripts/ruflo-service-up.helpers.sh) is a PURE function -- source the
+# helpers directly into THIS shell and call it, no docker/git and no
+# run_script() subprocess involved. Covers all four dispositions: absent,
+# refuse-unattributable (the S-1 defect: an EMPTY owner used to fall through
+# to `docker rm -f` in scripts/ruflo-federation-test.sh's old inline check),
+# refuse-third, and proceed (checked against BOTH p1 and p2, since the
+# disposition is "owner == p1 OR owner == p2").
+# shellcheck source=../ruflo-service-up.helpers.sh
+source "$REPO_ROOT/scripts/ruflo-service-up.helpers.sh"
+
+DISPOSITION="$(federation_restore_disposition 0 "" "p1-project" "p2-project")"
+if [[ "$DISPOSITION" != "absent" ]]; then
+    fail_case "16a-disposition-absent" "expected 'absent' when exists=0 (owner/p1/p2 irrelevant), got '$DISPOSITION'"
+else
+    echo "applied=disposition-absent PASS (16a-disposition-absent): exists=0 -> absent"
+fi
+
+DISPOSITION="$(federation_restore_disposition 1 "" "p1-project" "p2-project")"
+if [[ "$DISPOSITION" != "refuse-unattributable" ]]; then
+    fail_case "16b-disposition-unattributable" "expected 'refuse-unattributable' when exists=1 and owner is EMPTY (the S-1 fall-through defect), got '$DISPOSITION'"
+else
+    echo "applied=disposition-unattributable PASS (16b-disposition-unattributable): exists=1, owner='' -> refuse-unattributable"
+fi
+
+DISPOSITION="$(federation_restore_disposition 1 "third-project" "p1-project" "p2-project")"
+if [[ "$DISPOSITION" != "refuse-third" ]]; then
+    fail_case "16c-disposition-third" "expected 'refuse-third' when owner is neither p1 nor p2, got '$DISPOSITION'"
+else
+    echo "applied=disposition-third PASS (16c-disposition-third): exists=1, owner=third-project -> refuse-third"
+fi
+
+DISPOSITION="$(federation_restore_disposition 1 "p1-project" "p1-project" "p2-project")"
+if [[ "$DISPOSITION" != "proceed" ]]; then
+    fail_case "16d-disposition-proceed-p1" "expected 'proceed' when owner == p1, got '$DISPOSITION'"
+else
+    echo "applied=disposition-proceed-p1 PASS (16d-disposition-proceed-p1): exists=1, owner==p1 -> proceed"
+fi
+
+DISPOSITION="$(federation_restore_disposition 1 "p2-project" "p1-project" "p2-project")"
+if [[ "$DISPOSITION" != "proceed" ]]; then
+    fail_case "16e-disposition-proceed-p2" "expected 'proceed' when owner == p2, got '$DISPOSITION'"
+else
+    echo "applied=disposition-proceed-p2 PASS (16e-disposition-proceed-p2): exists=1, owner==p2 -> proceed"
+fi
+
+# ---- Arm 17 (S-2, SMI-6744 A1.8 retro): git_dir_equals_common_dir()
+# (sourced above alongside federation_restore_disposition()) exercised
+# against the REAL git binary ($REAL_GIT, resolved at the top of this file)
+# -- not this file's own fake git stub, which cannot reproduce real git's
+# environment-variable resolution behavior. An inherited GIT_DIR in the
+# environment previously made `git -C <dir> rev-parse --git-dir` answer for
+# the EXPORTED dir instead of resolving from <dir> itself, so the gate
+# WRONGLY PASSED (returned 0, "not a linked worktree") on a genuinely linked
+# worktree whenever GIT_DIR happened to be set (measured with git 2.50.0).
+# Three assertions: the control with no GIT_DIR exported (main -> 0,
+# worktree -> 1), then the same worktree check WITH an inherited GIT_DIR
+# pointing at the main repo's .git (must still be 1 -- the env -u prefix
+# must neutralize it).
+REAL_GIT_WORKTREE_ROOT="$(mktemp -d)"
+(
+    cd "$REAL_GIT_WORKTREE_ROOT" &&
+        "$REAL_GIT" init -q main &&
+        cd main &&
+        "$REAL_GIT" -c user.email=test@example.com -c user.name=test commit -q --allow-empty -m init &&
+        "$REAL_GIT" worktree add -q "../linked" -b arm17-linked
+) >/dev/null 2>&1
+MAIN_REPO="$REAL_GIT_WORKTREE_ROOT/main"
+LINKED_WORKTREE="$REAL_GIT_WORKTREE_ROOT/linked"
+
+unset GIT_DIR
+git_dir_equals_common_dir "$MAIN_REPO" && ARM17_CONTROL_MAIN=0 || ARM17_CONTROL_MAIN=1
+git_dir_equals_common_dir "$LINKED_WORKTREE" && ARM17_CONTROL_WORKTREE=0 || ARM17_CONTROL_WORKTREE=1
+export GIT_DIR="$MAIN_REPO/.git"
+git_dir_equals_common_dir "$LINKED_WORKTREE" && ARM17_INHERITED_GITDIR=0 || ARM17_INHERITED_GITDIR=1
+unset GIT_DIR
+rm -rf "$REAL_GIT_WORKTREE_ROOT"
+
+if [[ "$ARM17_CONTROL_MAIN" -ne 0 ]]; then
+    echo "FAIL (17-control-main): expected git_dir_equals_common_dir(main) == 0 (pass) with no GIT_DIR exported, got $ARM17_CONTROL_MAIN" >&2
+    FAIL_COUNT=$((FAIL_COUNT + 1))
+elif [[ "$ARM17_CONTROL_WORKTREE" -ne 1 ]]; then
+    echo "FAIL (17-control-worktree): expected git_dir_equals_common_dir(linked worktree) == 1 (refuse) with no GIT_DIR exported, got $ARM17_CONTROL_WORKTREE" >&2
+    FAIL_COUNT=$((FAIL_COUNT + 1))
+elif [[ "$ARM17_INHERITED_GITDIR" -ne 1 ]]; then
+    echo "FAIL (17-inherited-gitdir): expected git_dir_equals_common_dir(linked worktree) == 1 (refuse) even with an inherited GIT_DIR=<main>/.git -- the env -u prefix must neutralize it, got $ARM17_INHERITED_GITDIR" >&2
+    FAIL_COUNT=$((FAIL_COUNT + 1))
+else
+    echo "applied=env-u-neutralizes-inherited-gitdir PASS (17-real-git-gitdir-isolation): real git (not the fake stub) -- control: main=0/worktree=1; with an inherited GIT_DIR pointing at main's .git, the linked worktree is still correctly refused (1)"
+fi
+
 echo ""
 if [[ "$FAIL_COUNT" -eq 0 ]]; then
-    echo "SUMMARY: 16/16 arms passed"
+    echo "SUMMARY: 23/23 arms passed"
     exit 0
 else
-    echo "SUMMARY: $FAIL_COUNT/16 arms FAILED"
+    echo "SUMMARY: $FAIL_COUNT/23 arms FAILED"
     exit 1
 fi

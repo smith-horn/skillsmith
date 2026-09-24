@@ -5,12 +5,29 @@
 # the repo's own 500-line pre-commit gate (scripts/check-file-length.mjs).
 #
 # Sourced by scripts/ruflo-service-up.sh; not meant to be run standalone.
-# Depends on the caller having already defined REPO_ROOT, COMPOSE_FILE,
-# CONTAINER_NAME, log() and die().
+# Depends on the caller having already defined REPO_ROOT, COMPOSE_FILE and
+# CONTAINER_NAME. log() and die() are NOT a bare convention the caller must
+# happen to honor -- the two fallbacks right below this header define them
+# when a sourcing caller (e.g. scripts/ruflo-federation-test.sh) has not,
+# so sourcing this file is safe by MECHANISM (S-4, SMI-6744 A1.8 retro), not
+# by every caller remembering to predefine both functions first.
 #
 # bash 3.2-safe (macOS default bash), shellcheck -S warning clean, same
 # conventions as the caller.
 set -euo pipefail
+
+# S-4 (SMI-6744 A1.8 retro): `command -v <name>` returns 0 when <name> is a
+# defined SHELL FUNCTION (not only an external binary on PATH) and 1 when it
+# is undefined -- confirmed live: `foo() { :; }; command -v foo` exits 0,
+# `command -v not_a_real_fn` exits 1. So these two lines define log()/die()
+# ONLY when the sourcing caller has not already defined its own -- a caller
+# with its own log()/die() (scripts/ruflo-service-up.sh) is unaffected; a
+# caller without one (scripts/ruflo-federation-test.sh, which sources only
+# git_dir_equals_common_dir()/federation_restore_disposition() and defines
+# neither) gets a working fallback instead of an unbound-function error the
+# first time this file's own die() calls fire.
+command -v log >/dev/null 2>&1 || log() { echo "[ruflo-up] $*"; }
+command -v die >/dev/null 2>&1 || die() { echo "[ruflo-up] ERROR: $*" >&2; exit 1; }
 
 # H-3(b) (post-merge governance retro, PR #2931): refuse when run from a
 # LINKED git worktree. This script's own header has always said "run from
@@ -58,10 +75,20 @@ set -euo pipefail
 # below for the fail-closed "cannot determine" handling a caller may want).
 # Returns 1 for a linked worktree, OR when either rev-parse is empty
 # (fails closed: "cannot determine" is treated as "not equal").
+#
+# S-2 (SMI-6744 A1.8 retro): both `git -C <dir> rev-parse` calls below are
+# prefixed with `env -u GIT_DIR -u GIT_WORK_TREE -u GIT_COMMON_DIR` --
+# measured live with git 2.50.0: an INHERITED GIT_DIR in the calling
+# environment makes `git -C <dir> rev-parse --git-dir` answer for the
+# EXPORTED dir instead of resolving from <dir> itself, so without this
+# prefix the gate WRONGLY PASSES (returns 0, "not a linked worktree") on a
+# genuinely linked worktree whenever GIT_DIR happens to be set. `env -u`
+# unsets the var for the duration of that one command only -- it does not
+# touch this shell's own environment.
 git_dir_equals_common_dir() {
     local dir="$1" gdir cdir
-    gdir="$(git -C "$dir" rev-parse --git-dir 2>/dev/null || true)"
-    cdir="$(git -C "$dir" rev-parse --git-common-dir 2>/dev/null || true)"
+    gdir="$(env -u GIT_DIR -u GIT_WORK_TREE -u GIT_COMMON_DIR git -C "$dir" rev-parse --git-dir 2>/dev/null || true)"
+    cdir="$(env -u GIT_DIR -u GIT_WORK_TREE -u GIT_COMMON_DIR git -C "$dir" rev-parse --git-common-dir 2>/dev/null || true)"
     [[ -n "$gdir" && -n "$cdir" ]] || return 1
     # Normalize to absolute, symlink-resolved paths before comparing: git
     # can print either an absolute path or one relative to <dir> depending
@@ -86,11 +113,17 @@ check_not_linked_worktree() {
         return 0
     fi
     local git_dir git_common_dir main_checkout
-    git_dir="$(git -C "$REPO_ROOT" rev-parse --git-dir 2>/dev/null || true)"
+    # S-2 (SMI-6744 A1.8 retro): same env -u prefix as
+    # git_dir_equals_common_dir() above -- these two reads exist only to
+    # NAME the resolved paths in the die() message below; the pass/fail
+    # DECISION itself comes from git_dir_equals_common_dir(), which already
+    # carries the fix. Without the prefix here too, an inherited GIT_DIR
+    # would make the die() message itself report the wrong (exported) path.
+    git_dir="$(env -u GIT_DIR -u GIT_WORK_TREE -u GIT_COMMON_DIR git -C "$REPO_ROOT" rev-parse --git-dir 2>/dev/null || true)"
     if [[ -z "$git_dir" ]]; then
         die "$REPO_ROOT is not inside a git repository (git rev-parse --git-dir failed) -- refusing to run outside a real checkout (fail closed; SS3: run from the main checkout, never per worktree)"
     fi
-    git_common_dir="$(git -C "$REPO_ROOT" rev-parse --git-common-dir 2>/dev/null || true)"
+    git_common_dir="$(env -u GIT_DIR -u GIT_WORK_TREE -u GIT_COMMON_DIR git -C "$REPO_ROOT" rev-parse --git-common-dir 2>/dev/null || true)"
     if [[ -z "$git_common_dir" ]]; then
         die "$REPO_ROOT: git rev-parse --git-common-dir failed -- cannot determine whether this is a linked worktree; refusing (fail closed)"
     fi
@@ -151,4 +184,54 @@ check_foreign_project() {
             die "container $CONTAINER_NAME already exists and belongs to a DIFFERENT Compose project ($container_project, working_dir=$container_workdir) than this checkout's project ($this_project) -- refusing to reconcile silently into a takeover. Its own working_dir no longer exists on this machine, so its project can't stop it gracefully -- stop it first (never rm -f a running container), then remove it: docker stop $CONTAINER_NAME && docker rm $CONTAINER_NAME"
         fi
     fi
+}
+
+# federation_restore_disposition <exists:0|1> <owner> <p1> <p2> -- S-1
+# (SMI-6744 A1.8 retro): a PURE, arg-taking decision function extracted from
+# scripts/ruflo-federation-test.sh's restore_checkout_1() EXIT trap. Prints
+# exactly one of four dispositions on stdout and always returns 0 (the
+# CALLER acts on the printed word, never on this function's own exit code):
+#
+#   absent               -- $CONTAINER_NAME does not exist (exists=0):
+#                            nothing to remove, proceed straight to the re-up.
+#   refuse-unattributable -- the container EXISTS but <owner> is EMPTY (the
+#                            Compose project label could not be read: a
+#                            hand-started container, a non-Compose tool, or a
+#                            failed inspect). An empty owner previously fell
+#                            through the old inline check's
+#                            `[[ -n "$owner" && "$owner" != P1 && "$owner" !=
+#                            P2 ]]` condition (empty owner makes `-n "$owner"`
+#                            false, short-circuiting the whole AND to false,
+#                            i.e. "not foreign" -- exactly backwards) straight
+#                            into `docker rm -f`, the ONE command
+#                            check_foreign_project()'s own refusal says never
+#                            to use. Docker itself prints an empty string
+#                            with exit 0 for a missing label key (measured) --
+#                            "could not attribute" is not "safe to remove".
+#   refuse-third          -- the container exists and <owner> is neither <p1>
+#                            nor <p2>: a genuine third project's container.
+#   proceed               -- the container exists and <owner> is <p1> or
+#                            <p2>: this test's own container from an earlier
+#                            run; safe to rm -f and recreate.
+#
+# No docker/git call inside this function -- callers own probing <exists>
+# and <owner> themselves (via `docker inspect`), which is what makes this
+# testable by direct invocation with no Docker daemon (scripts/tests/
+# ruflo-service-up.test.sh's Arm 16).
+federation_restore_disposition() {
+    local exists="$1" owner="$2" p1="$3" p2="$4"
+    if [[ "$exists" -ne 1 ]]; then
+        echo "absent"
+        return 0
+    fi
+    if [[ -z "$owner" ]]; then
+        echo "refuse-unattributable"
+        return 0
+    fi
+    if [[ "$owner" != "$p1" && "$owner" != "$p2" ]]; then
+        echo "refuse-third"
+        return 0
+    fi
+    echo "proceed"
+    return 0
 }

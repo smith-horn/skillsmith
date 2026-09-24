@@ -112,28 +112,53 @@ restore_checkout_1() {
         return 0
     fi
     log "EXIT trap: removing checkout 2's container (if present) and re-running $CHECKOUT_1/scripts/ruflo-service-up.sh to restore the shared service"
-    # M-D (SMI-6744 A1.8 retro): if line 158's call to checkout 1's
-    # ruflo-service-up.sh refused at its own NEW check_foreign_project()
+    # S-1 (SMI-6744 A1.8 retro): the decision of what to do with an existing
+    # $CONTAINER_NAME is delegated entirely to federation_restore_disposition()
+    # (scripts/ruflo-service-up.helpers.sh, sourced at the top of this file) --
+    # a pure function taking (exists, owner, p1, p2) and printing one of
+    # absent/refuse-unattributable/refuse-third/proceed. This replaced an
+    # inline `[[ -n "$owner" && "$owner" != P1 && "$owner" != P2 ]]` check
+    # that let an EMPTY $owner (a hand-started container, a non-Compose tool,
+    # or a failed inspect -- Docker prints an empty string with exit 0 for a
+    # missing label key, measured) fall through to `docker rm -f`, the exact
+    # command check_foreign_project()'s own refusal says never to use: `-n
+    # "$owner"` is false when $owner is empty, which short-circuits the whole
+    # AND to false ("not foreign"), exactly backwards. If line 158's call to
+    # checkout 1's ruflo-service-up.sh refused at its own check_foreign_project()
     # (a THIRD project's container already sits at $CONTAINER_NAME),
-    # SERVICE_TOUCHED is already latched -- an unconditional `rm -f` here
-    # would convert that deliberate refusal into exactly the silent
-    # takeover H-3(c) exists to prevent, using the one command its own
-    # refusal message says never to use. Scope the removal to a container
-    # this test itself owns (checkout 1 or checkout 2's project).
+    # SERVICE_TOUCHED is already latched by the time this trap runs -- an
+    # unconditional `rm -f` would convert that deliberate refusal into
+    # exactly the silent takeover H-3(c) exists to prevent.
+    local exists=1
+    docker inspect "$CONTAINER_NAME" >/dev/null 2>&1 || exists=0
     local owner
     owner="$(docker inspect "$CONTAINER_NAME" \
         --format '{{index .Config.Labels "com.docker.compose.project"}}' 2>/dev/null || true)"
-    if [[ -n "$owner" && "$owner" != "${PROJECT_1:-}" && "$owner" != "${PROJECT_2:-}" ]]; then
-        echo "[ruflo-federation] EXIT trap: $CONTAINER_NAME belongs to a THIRD project ($owner), not checkout 1 ($PROJECT_1) or checkout 2 ($PROJECT_2) -- refusing to rm -f it (ruflo-service-up.sh's own foreign-project refusal says stop it first, never rm -f). Resolve it manually, then re-run: $CHECKOUT_1/scripts/ruflo-service-up.sh" >&2
-        return 0
-    fi
-    docker rm -f "$CONTAINER_NAME" >/dev/null 2>&1 || true
-    if "$CHECKOUT_1/scripts/ruflo-service-up.sh" >/tmp/ruflo-federation-restore.log 2>&1; then
-        log "restoration: checkout 1's service is back up"
-    else
-        rc=$?
-        echo "[ruflo-federation] RESTORATION FAILED (exit $rc) -- the shared skillsmith-ruflo-1 service may be left down. See /tmp/ruflo-federation-restore.log and re-run: $CHECKOUT_1/scripts/ruflo-service-up.sh" >&2
-    fi
+    local disposition
+    disposition="$(federation_restore_disposition "$exists" "$owner" "${PROJECT_1:-}" "${PROJECT_2:-}")"
+    case "$disposition" in
+        refuse-unattributable)
+            echo "[ruflo-federation] EXIT trap: $CONTAINER_NAME exists but its Compose project label could not be read (empty, or the inspect failed) -- refusing to rm -f it (ruflo-service-up.sh's own foreign-project refusal says an unreadable label is never assumed to be ours). Inspect it: docker inspect $CONTAINER_NAME --format '{{index .Config.Labels \"com.docker.compose.project\"}}' -- then re-run checkout 1's up script once resolved: $CHECKOUT_1/scripts/ruflo-service-up.sh" >&2
+            return 0
+            ;;
+        refuse-third)
+            echo "[ruflo-federation] EXIT trap: $CONTAINER_NAME belongs to a THIRD project ($owner), not checkout 1 ($PROJECT_1) or checkout 2 ($PROJECT_2) -- refusing to rm -f it (ruflo-service-up.sh's own foreign-project refusal says stop it first, never rm -f). Resolve it manually, then re-run: $CHECKOUT_1/scripts/ruflo-service-up.sh" >&2
+            return 0
+            ;;
+        absent | proceed)
+            docker rm -f "$CONTAINER_NAME" >/dev/null 2>&1 || true
+            if "$CHECKOUT_1/scripts/ruflo-service-up.sh" >/tmp/ruflo-federation-restore.log 2>&1; then
+                log "restoration: checkout 1's service is back up"
+            else
+                rc=$?
+                echo "[ruflo-federation] RESTORATION FAILED (exit $rc) -- the shared skillsmith-ruflo-1 service may be left down. See /tmp/ruflo-federation-restore.log and re-run: $CHECKOUT_1/scripts/ruflo-service-up.sh" >&2
+            fi
+            ;;
+        *)
+            echo "[ruflo-federation] EXIT trap: federation_restore_disposition() returned an unrecognized disposition '$disposition' -- refusing to guess; resolve manually and re-run: $CHECKOUT_1/scripts/ruflo-service-up.sh" >&2
+            return 0
+            ;;
+    esac
 }
 trap restore_checkout_1 EXIT
 
