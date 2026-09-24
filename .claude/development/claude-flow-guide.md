@@ -39,7 +39,7 @@ Verify: `claude mcp list | grep ruflo`
 | Code | Meaning | Recovery |
 |------|---------|----------|
 | 0 | authorized | — |
-| 1 | a writability probe failed | fix cwd/volume permissions (ADR-170 § 4) |
+| 1 | a writability probe failed, OR `getconf CLK_TCK` did not measure the assumed USER_HZ=100 (the message says which) | for a probe failure, fix cwd/volume permissions (ADR-170 § 4); for a CLK_TCK mismatch, the image's tick rate changed — do not edit `USER_HZ` to match, file a Linear issue (`classifyRecord()`'s live/stale/recycled arithmetic depends on it) |
 | 2 | entrypoint realpath mismatch | recreate the `ruflo` service |
 | 3 | the launcher mutex is held by another launcher past the 3 s busy timeout | retry — nothing to delete (a live holder releases on exit; a dead one already did); the message names the last recorded holder pid |
 | 4 | the mutex database `state.lock.launcher.db` is unusable (not a database, a directory, unreadable) | remove ONLY that file — it holds no state — never `state.lock` or `state.json` |

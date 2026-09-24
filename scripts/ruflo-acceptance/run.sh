@@ -52,7 +52,11 @@
 #        select zero sections. This is not a pass; printed to stderr.
 #   3 -- at least one predicate FAILED or at least one mutation SURVIVED.
 #   0 -- otherwise: something ran, every predicate that ran HELD, and every
-#        mutation that ran was KILLED.
+#        mutation that ran was KILLED. ONE carve-out (M-E, SMI-6744 A1.8
+#        retro): --mutation-egress is a documentation-only mode -- it prints
+#        the § 6 mutation write-up, measures nothing, and exits 0 without
+#        consulting acceptance_exit_code(). Every other mode goes through
+#        that function.
 
 set -euo pipefail
 
@@ -140,6 +144,8 @@ fi
 printf 'container: %s (%s)\n' "$(docker inspect "$SERVICE" --format '{{.Id}}' | cut -c1-12)" "$(docker inspect "$SERVICE" --format '{{.State.Status}}')"
 
 if [ "$DO_EGRESS_MUT" -eq 1 ]; then
+  # Documentation-only mode: deliberately bypasses acceptance_exit_code()
+  # (see the exit-code block above) -- there is no predicate to gate on.
   egress_mutation_doc
   exit 0
 fi

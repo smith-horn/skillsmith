@@ -45,7 +45,14 @@
 # function as a defense-in-depth backstop against `set -e` aborting run.sh
 # between a mutation and its own inline restore below; it is cleared before
 # this function returns, so it never lingers over --consolidation or any
-# other mode run afterward under --all.
+# other mode run afterward under --all. M-A (SMI-6744 A1.8 retro): this
+# invariant covers EVERY return out of quad_arms, including Q4/Q5's own
+# early refusals below (an unreadable store_generation.id before either
+# mutates anything) -- those two `return`s mirror the same
+# `quad_emergency_restore; trap - EXIT` teardown as the normal end-of-
+# function path, even though nothing is dirty yet at that point, so the
+# trap-disarm invariant this comment states is actually true on every code
+# path, not just the common one.
 #
 # SMI-6744 A1.8 round-2 fix (cross-family gate finding, BLOCKED on PR #2931):
 # a dirty flag (QUAD_DIRTY_AUTHORITY/_MEMORY_DB/_AGENTDB) now clears ONLY once
@@ -299,6 +306,14 @@ quad_arms() {
     predicate "Q4 memory.db original store_generation.id readable before mutation" 1 \
       "a non-empty store_generation.id read from $QUAD_MEMORY_DB before Q4 mutates it" \
       "read back empty -- refusing to mutate without a known-good value to restore"
+    # M-A (SMI-6744 A1.8 retro): mirror the normal-path teardown below --
+    # nothing is dirty at this point (this refusal precedes
+    # QUAD_DIRTY_MEMORY_DB=1), but leaving the EXIT trap armed past this
+    # return would falsify quad_arms' own documented invariant ("cleared
+    # before this function returns, so it never lingers over
+    # --consolidation or any other mode run afterward under --all").
+    quad_emergency_restore
+    trap - EXIT
     return
   fi
   _q4_new="$(quad_random_uuid)"
@@ -332,6 +347,10 @@ quad_arms() {
     predicate "Q5 agentdb-memory.db original store_generation.id readable before mutation" 1 \
       "a non-empty store_generation.id read from $QUAD_AGENTDB before Q5 mutates it" \
       "read back empty -- refusing to mutate without a known-good value to restore"
+    # M-A (SMI-6744 A1.8 retro): same teardown mirror as Q4's early return
+    # above -- see that comment.
+    quad_emergency_restore
+    trap - EXIT
     return
   fi
   _q5_new="$(quad_random_uuid)"

@@ -42,6 +42,45 @@ set -euo pipefail
 # genuinely IS a linked worktree; those arms are not exercising THIS gate
 # and set the seam so their pass/fail reflects volume/store logic only.
 # Never set this outside a test.
+#
+# L-B (SMI-6744 A1.8 retro): the git-dir == git-common-dir normalization
+# below is the ONE tested, correctness-bearing predicate for "is <dir> a
+# linked worktree" -- it used to be duplicated (equivalent, but with no
+# shared source and no declared sweep) in
+# scripts/ruflo-federation-test.sh's own checkout_shape_ok(), which now
+# calls git_dir_equals_common_dir() below instead. If you add a THIRD
+# caller, call the shared function too rather than re-deriving this.
+#
+# git_dir_equals_common_dir <dir>: prints nothing, never dies. Returns 0 if
+# <dir>'s git-dir and git-common-dir resolve to the SAME normalized,
+# symlink-resolved path (a main checkout, a plain clone, or an
+# unversioned tree is NOT distinguished here -- see check_not_linked_worktree()
+# below for the fail-closed "cannot determine" handling a caller may want).
+# Returns 1 for a linked worktree, OR when either rev-parse is empty
+# (fails closed: "cannot determine" is treated as "not equal").
+git_dir_equals_common_dir() {
+    local dir="$1" gdir cdir
+    gdir="$(git -C "$dir" rev-parse --git-dir 2>/dev/null || true)"
+    cdir="$(git -C "$dir" rev-parse --git-common-dir 2>/dev/null || true)"
+    [[ -n "$gdir" && -n "$cdir" ]] || return 1
+    # Normalize to absolute, symlink-resolved paths before comparing: git
+    # can print either an absolute path or one relative to <dir> depending
+    # on git version, and a bare string compare of a relative ".git"
+    # against an absolute linked-worktree path would falsely differ even
+    # for the main checkout.
+    case "$gdir" in
+        /*) : ;;
+        *) gdir="$dir/$gdir" ;;
+    esac
+    case "$cdir" in
+        /*) : ;;
+        *) cdir="$dir/$cdir" ;;
+    esac
+    gdir="$(cd "$gdir" 2>/dev/null && pwd -P || printf '%s' "$gdir")"
+    cdir="$(cd "$cdir" 2>/dev/null && pwd -P || printf '%s' "$cdir")"
+    [[ "$gdir" == "$cdir" ]]
+}
+
 check_not_linked_worktree() {
     if [[ "${RUFLO_UP_SKIP_WORKTREE_GATE:-}" == "1" ]]; then
         return 0
@@ -55,22 +94,22 @@ check_not_linked_worktree() {
     if [[ -z "$git_common_dir" ]]; then
         die "$REPO_ROOT: git rev-parse --git-common-dir failed -- cannot determine whether this is a linked worktree; refusing (fail closed)"
     fi
-    # Normalize to absolute, symlink-resolved paths before comparing: git
-    # can print either an absolute path or one relative to $REPO_ROOT
-    # depending on git version, and a bare string compare of a relative
-    # ".git" against an absolute linked-worktree path would falsely differ
-    # even for the main checkout.
-    case "$git_dir" in
-        /*) : ;;
-        *) git_dir="$REPO_ROOT/$git_dir" ;;
-    esac
-    case "$git_common_dir" in
-        /*) : ;;
-        *) git_common_dir="$REPO_ROOT/$git_common_dir" ;;
-    esac
-    git_dir="$(cd "$git_dir" 2>/dev/null && pwd -P || printf '%s' "$git_dir")"
-    git_common_dir="$(cd "$git_common_dir" 2>/dev/null && pwd -P || printf '%s' "$git_common_dir")"
-    if [[ "$git_dir" != "$git_common_dir" ]]; then
+    if ! git_dir_equals_common_dir "$REPO_ROOT"; then
+        # The pass/fail DECISION above already came from the shared,
+        # singly-sourced predicate. Re-normalize here ONLY to name the two
+        # resolved paths and compute main_checkout for the die() message --
+        # this is message formatting, not a second copy of the comparison
+        # logic itself.
+        case "$git_dir" in
+            /*) : ;;
+            *) git_dir="$REPO_ROOT/$git_dir" ;;
+        esac
+        case "$git_common_dir" in
+            /*) : ;;
+            *) git_common_dir="$REPO_ROOT/$git_common_dir" ;;
+        esac
+        git_dir="$(cd "$git_dir" 2>/dev/null && pwd -P || printf '%s' "$git_dir")"
+        git_common_dir="$(cd "$git_common_dir" 2>/dev/null && pwd -P || printf '%s' "$git_common_dir")"
         main_checkout="$(dirname "$git_common_dir")"
         die "$REPO_ROOT is a LINKED git worktree (git-dir $git_dir != git-common-dir $git_common_dir) -- this script's own header requires running it from the main checkout, never per worktree (SS3). Run instead: ( cd \"$main_checkout\" && ./scripts/ruflo-service-up.sh )"
     fi
@@ -98,7 +137,7 @@ check_foreign_project() {
     container_workdir="$(docker inspect "$CONTAINER_NAME" --format '{{index .Config.Labels "com.docker.compose.project.working_dir"}}' 2>/dev/null || true)"
     if [[ -n "$container_project" ]] && [[ "$container_project" != "$this_project" ]]; then
         if [[ -d "$container_workdir" ]]; then
-            die "container $CONTAINER_NAME already exists and belongs to a DIFFERENT Compose project ($container_project, working_dir=$container_workdir) than this checkout's project ($this_project) -- refusing to reconcile silently into a takeover. Remediation: ( cd \"$container_workdir\" && docker compose --profile ruflo down ) from THAT project first, then re-run this script."
+            die "container $CONTAINER_NAME already exists and belongs to a DIFFERENT Compose project ($container_project, working_dir=$container_workdir) than this checkout's project ($this_project) -- refusing to reconcile silently into a takeover. Remediation: ( cd \"$container_workdir\" && docker compose --profile ruflo down ruflo ) from THAT project first, then re-run this script."
         else
             die "container $CONTAINER_NAME already exists and belongs to a DIFFERENT Compose project ($container_project, working_dir=$container_workdir) than this checkout's project ($this_project) -- refusing to reconcile silently into a takeover. Its own working_dir no longer exists on this machine, so its project can't stop it gracefully -- stop it first (never rm -f a running container), then remove it: docker stop $CONTAINER_NAME && docker rm $CONTAINER_NAME"
         fi

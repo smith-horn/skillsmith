@@ -261,6 +261,29 @@ describe('cli-pin-drift-check.sh (SMI-5746)', () => {
     expect(log).toContain('has no dependencies["@claude-flow/cli"] entry')
   })
 
+  // L-E (SMI-6744 A1.8 retro): the fixture already distinguished "seed
+  // package.json file absent" (rufloSeedPin: null) from "file exists but
+  // has no @claude-flow/cli entry" (rufloSeedPin: 'absent-dep', tested
+  // above), but no arm exercised the null branch until now -- the exact
+  // gap that let the shell mirror misreport a missing FILE as "has no ...
+  // entry" (a message that presumes the file exists) instead of naming the
+  // file as not found, the way the .mjs sibling's existsSync check does.
+  it('L-E: exits 1 and says "not found" (not "has no ... entry") when scripts/ruflo-seed/package.json itself is absent', () => {
+    const repo = makeFixtureRepo({ rufloPin: '3.42.4', rufloSeedPin: null })
+    const npm = makeFakeNpm({ ruflo: { latest: '3.42.4', versions: ['3.42.4'] } })
+    const { scriptPath: gh } = makeFakeGh()
+
+    const { status, log } = run({
+      SKILLSMITH_CLI_PIN_DRIFT_REPO_ROOT: repo,
+      SKILLSMITH_CLI_PIN_DRIFT_NPM_CMD: npm,
+      SKILLSMITH_CLI_PIN_DRIFT_GH_CMD: gh,
+    })
+
+    expect(status).toBe(1)
+    expect(log).toContain(`${join('scripts', 'ruflo-seed', 'package.json')} not found`)
+    expect(log).not.toContain('has no dependencies["@claude-flow/cli"] entry')
+  })
+
   it('M-3: exits 0 when the seed package.json pin matches the launcher pin', () => {
     const repo = makeFixtureRepo({ rufloPin: '3.42.4', rufloSeedPin: '3.42.4' })
     const npm = makeFakeNpm({ ruflo: { latest: '3.42.4', versions: ['3.42.4'] } })

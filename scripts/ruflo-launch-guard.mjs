@@ -173,6 +173,13 @@
  *     real container's own getconf CLK_TCK is confirmed 100 (measured
  *     2026-09-23), so a test cannot otherwise reach that refusal without
  *     this seam.
+ *   RUFLO_GUARD_TEST_PROBE_SUFFIX -- override probeWritable()'s pid-scoped
+ *     probe filename suffix (SMI-6744 L-F, post-merge governance retro on
+ *     PR #2931). Lets a test pre-create the "leaked probe file" fixture at
+ *     the EXACT path this process will open, before spawning it, instead
+ *     of racing the spawn to write the leaked file at a pid this process
+ *     had not been assigned yet. No-op (falls back to process.pid) unless
+ *     set.
  */
 import {
   closeSync,
@@ -420,7 +427,16 @@ function testSeamStderrPad() {
  * which would be stale information once the unlink succeeded).
  */
 function probeWritable(dir) {
-  const p = join(dir, `.ruflo-guard-probe-${process.pid}`)
+  // L-F (SMI-6744 A1.8 retro): RUFLO_GUARD_TEST_PROBE_SUFFIX lets a test
+  // pre-create the leaked-probe fixture at this EXACT path BEFORE spawning
+  // this process, rather than racing a real crashed-earlier-run scenario
+  // against this process's own pid-scoped filename (which the test could
+  // not know in advance). No-op in production -- falls back to the real
+  // pid.
+  const p = join(
+    dir,
+    `.ruflo-guard-probe-${process.env.RUFLO_GUARD_TEST_PROBE_SUFFIX ?? process.pid}`
+  )
   let fd
   try {
     fd = openSync(p, FS.O_CREAT | FS.O_EXCL | FS.O_WRONLY)

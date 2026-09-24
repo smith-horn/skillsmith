@@ -146,7 +146,14 @@ quad_restore_agentdb() {
 # either way: "restored on exit" once verified, or "RESTORE FAILED ON EXIT"
 # with the exact manual-recovery command when it still doesn't verify. Never
 # lets a failure inside itself abort an already-exiting shell.
+#
+# L-D (SMI-6744 A1.8 retro): applies the SAME L-8 errexit-preservation fix
+# to this function's OWN `set -e` at the end -- L-8 above fixed the three
+# quad_restore_* callees but left this one, the file's own trap handler,
+# calling those callees FROM an unconditional `set -e` context. Same shape
+# one function over.
 quad_emergency_restore() {
+  case "$-" in *e*) _quad_emerg_had_errexit=1 ;; *) _quad_emerg_had_errexit=0 ;; esac
   set +e
   if [ "$QUAD_DIRTY_AUTHORITY" -eq 1 ]; then
     if quad_restore_authority; then
@@ -172,6 +179,7 @@ quad_emergency_restore() {
         "$QUAD_AGENTDB" "$(quad_manual_restore_cmd "$QUAD_AGENTDB" "$QUAD_AGENTDB_ORIG_ID")"
     fi
   fi
-  set -e
+  [ "$_quad_emerg_had_errexit" -eq 1 ] && set -e
+  return 0
 }
 

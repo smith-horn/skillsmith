@@ -766,19 +766,21 @@ describe('ruflo-launch-guard.mjs (ADR-170 §§ 4, 7)', () => {
     async () => {
       const cwd = scratchCwd()
       const cliPath = makeCliPath(cwd)
-      const guard = launchGuard(cwd, cliPath)
-      const pid = guard.child.pid
-      expect(pid, 'guard child must have been assigned a pid').toBeTypeOf('number')
-      // Pre-create a stale probe at the EXACT path probeWritable() will
-      // O_EXCL-create for its own pid, in all three probed directories --
-      // written synchronously, before any `await`, so this lands well
-      // before the freshly-spawned node process finishes loading this
-      // ~800-line file and reaches main()'s writability-probe loop.
+      // L-F (SMI-6744 A1.8 retro): the previous version of this arm read
+      // the spawned child's real pid and raced it to write the leaked
+      // files before main()'s writability-probe loop ran -- node startup
+      // (~30ms) vs three synchronous writes gave a large margin, but a
+      // lost race would fail LOUD (existsSync would stay true), not
+      // silently pass, so it was a flake risk rather than a decorative
+      // test. RUFLO_GUARD_TEST_PROBE_SUFFIX removes the race entirely: the
+      // leaked files exist at the guard's exact probe path BEFORE it is
+      // even spawned.
+      const suffix = `l6-${process.pid}-${Date.now()}`
       const leaked = [policyDirOf(cwd), join(cwd, '.swarm'), cwd].map((dir) =>
-        join(dir, `.ruflo-guard-probe-${pid}`)
+        join(dir, `.ruflo-guard-probe-${suffix}`)
       )
       for (const f of leaked) writeFileSync(f, 'stale leaked probe from a prior crashed run')
-      const result = await guard.done
+      const result = await runGuard(cwd, cliPath, { RUFLO_GUARD_TEST_PROBE_SUFFIX: suffix })
       note(`L-6: exit=${result.status} elapsed=${result.elapsed}ms`)
       expect(result.status, `output: ${result.output}`).toBe(0)
       for (const f of leaked) {

@@ -100,6 +100,25 @@ export function findUnpinnedBareNpxCliInPackageJson(repoRoot) {
 }
 
 /**
+ * The single place the launcher's RUFLO_CLI_PIN literal is read (M-F,
+ * SMI-6744 A1.8 retro). Sub-checks 3 and 5 below both consume it, so
+ * tightening or changing the pattern happens once. `scripts/cli-pin-drift-
+ * check.sh` carries the ONLY other independent reader of this literal (a
+ * shell grep against the same one-line assignment) — its own pattern must
+ * be changed together with this one, since sub-check 3's own drift-
+ * detection purpose extends to "the shell mirror still agrees with the JS
+ * reader" as much as it does to "the pin itself is well-formed".
+ */
+function readRufloLauncherPin(launcherPath) {
+  if (!existsSync(launcherPath)) {
+    return { reason: `RUFLO_CLI_PIN launcher not found at ${launcherPath}` }
+  }
+  const m = readFileSync(launcherPath, 'utf8').match(/^RUFLO_CLI_PIN=(\S+)$/m)
+  if (!m) return { reason: `RUFLO_CLI_PIN not found in ${launcherPath}` }
+  return { pin: m[1] }
+}
+
+/**
  * Sub-check 3: `scripts/mcp-ruflo-launcher.sh` must define `RUFLO_CLI_PIN`
  * as a plain, anchored, exact-semver assignment (SMI-6744 ADR-170 § 7).
  *
@@ -107,21 +126,16 @@ export function findUnpinnedBareNpxCliInPackageJson(repoRoot) {
  * original scope) once ADR-170 replaced that entry with a launcher script
  * that `docker exec`s into a lockfile-pinned, image-baked `@claude-flow/cli`
  * tree — there is no `npx` entry left to read a version out of. This check
- * and `scripts/cli-pin-drift-check.sh` both read the SAME one-line literal
- * from the launcher, rather than skipping when a pin can't be found: an
- * absent or malformed pin is exactly the drift this check exists to catch,
- * not a "nothing to check" case.
+ * reads the launcher's pin via the shared readRufloLauncherPin() above,
+ * rather than skipping when a pin can't be found: an absent or malformed
+ * pin is exactly the drift this check exists to catch, not a "nothing to
+ * check" case.
  */
 export function findUnpinnedRufloLauncherPin(launcherPath) {
-  if (!existsSync(launcherPath)) {
-    return { reason: `RUFLO_CLI_PIN launcher not found at ${launcherPath}`, launcherPath }
+  const { pin, reason } = readRufloLauncherPin(launcherPath)
+  if (reason) {
+    return { reason, launcherPath }
   }
-  const src = readFileSync(launcherPath, 'utf8')
-  const m = src.match(/^RUFLO_CLI_PIN=(\S+)$/m)
-  if (!m) {
-    return { reason: `RUFLO_CLI_PIN not found in ${launcherPath}`, launcherPath }
-  }
-  const pin = m[1]
   if (!/^\d+\.\d+\.\d+$/.test(pin)) {
     return {
       reason: `RUFLO_CLI_PIN '${pin}' in ${launcherPath} is not an exact semver`,
@@ -149,23 +163,10 @@ export function findUnpinnedRufloLauncherPin(launcherPath) {
  * are identical.
  */
 export function findRufloSeedPinDrift(launcherPath, seedPackageJsonPath) {
-  if (!existsSync(launcherPath)) {
-    return {
-      reason: `RUFLO_CLI_PIN launcher not found at ${launcherPath}`,
-      launcherPath,
-      seedPackageJsonPath,
-    }
+  const { pin: launcherPin, reason } = readRufloLauncherPin(launcherPath)
+  if (reason) {
+    return { reason, launcherPath, seedPackageJsonPath }
   }
-  const launcherSrc = readFileSync(launcherPath, 'utf8')
-  const launcherMatch = launcherSrc.match(/^RUFLO_CLI_PIN=(\S+)$/m)
-  if (!launcherMatch) {
-    return {
-      reason: `RUFLO_CLI_PIN not found in ${launcherPath}`,
-      launcherPath,
-      seedPackageJsonPath,
-    }
-  }
-  const launcherPin = launcherMatch[1]
 
   if (!existsSync(seedPackageJsonPath)) {
     return {
@@ -202,6 +203,73 @@ export function findRufloSeedPinDrift(launcherPath, seedPackageJsonPath) {
       seedPackageJsonPath,
       launcherPin,
       seedPin,
+    }
+  }
+  return null
+}
+
+/**
+ * Decodes a single-quoted JS string literal BODY (the text between, but not
+ * including, the surrounding quotes) without eval/Function -- this file
+ * only ever needs to resolve simple backslash escapes (\\, \', \n, ...)
+ * out of a literal this repo itself wrote, so a full JS string grammar is
+ * unnecessary. `\X` for any X not in the switch below decodes to X itself
+ * (matches JS's own "unrecognized escape passes the character through"
+ * behavior for the handful of escapes this constant actually uses, `\'`
+ * and `\\`).
+ */
+function decodeSingleQuotedJsStringBody(raw) {
+  return raw.replace(/\\(.)/g, (_, ch) => {
+    switch (ch) {
+      case 'n':
+        return '\n'
+      case 't':
+        return '\t'
+      case 'r':
+        return '\r'
+      default:
+        return ch
+    }
+  })
+}
+
+/**
+ * Sub-check 6 (rec 2, SMI-6744 A1.8 retro): scripts/ruflo-launch-guard.mjs's
+ * PROC_SCAN_CMD_HINT constant is duplicated verbatim as prose in
+ * .claude/development/claude-flow-guide.md (L-1, post-merge governance
+ * retro on PR #2931) -- a comment-only convention that this check turns
+ * into a gate, the same shape M-3/sub-check 5 above already applies to the
+ * RUFLO_CLI_PIN pair. Extracts the guard's own single-quoted string literal
+ * (handling its escapes with decodeSingleQuotedJsStringBody, never
+ * eval/Function against file content) and asserts it appears verbatim
+ * inside the guide's prose. Returns `null` only when both files exist, the
+ * constant parses, and the exact literal is found in the guide.
+ */
+export function findProcScanCmdHintDrift(guardPath, guideMdPath) {
+  if (!existsSync(guardPath)) {
+    return { reason: `guard not found at ${guardPath}`, guardPath, guideMdPath }
+  }
+  const guardSrc = readFileSync(guardPath, 'utf8')
+  const m = guardSrc.match(/const PROC_SCAN_CMD_HINT\s*=\s*\n?\s*'((?:\\.|[^'\\])*)'/)
+  if (!m) {
+    return {
+      reason: `PROC_SCAN_CMD_HINT constant not found (or not a plain single-quoted string) in ${guardPath}`,
+      guardPath,
+      guideMdPath,
+    }
+  }
+  const hintLiteral = decodeSingleQuotedJsStringBody(m[1])
+
+  if (!existsSync(guideMdPath)) {
+    return { reason: `guide not found at ${guideMdPath}`, guardPath, guideMdPath, hintLiteral }
+  }
+  const guideSrc = readFileSync(guideMdPath, 'utf8')
+  if (!guideSrc.includes(hintLiteral)) {
+    return {
+      reason: `PROC_SCAN_CMD_HINT literal from ${guardPath} does not appear verbatim in ${guideMdPath} -- the two have drifted`,
+      guardPath,
+      guideMdPath,
+      hintLiteral,
     }
   }
   return null

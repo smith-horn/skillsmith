@@ -79,16 +79,19 @@ on:
       - 'scripts/lib/running-script-pids.sh'
       - 'scripts/regen-lockfile.sh'
       - 'scripts/tests/repair-worktrees-docker-guard.test.ts'
+      # L-G (SMI-6744 A1.8 retro): scripts/mcp-ruflo-launcher.sh and its test
+      # are kept as dedicated literal entries because their basenames do NOT
+      # start with "ruflo-" (the "ruflo-*" glob below is a single-path-
+      # segment match and does not cross "/", per GitHub's path-filter glob
+      # semantics -- https://docs.github.com/en/actions/writing-workflows/choosing-when-your-workflows-run/patterns-to-match-file-paths).
+      # Everything else in the ruflo family is covered by the two globs so a
+      # future scripts/ruflo-foo.sh (or scripts/ruflo-foo/bar.sh) does not
+      # silently escape this trigger, the fragility H-4 was filed against.
       - 'scripts/mcp-ruflo-launcher.sh'
-      - 'scripts/ruflo-service-up.sh'
-      - 'scripts/ruflo-service-up.helpers.sh'
-      - 'scripts/ruflo-service-entrypoint.sh'
-      - 'scripts/ruflo-federation-test.sh'
-      - 'scripts/ruflo-seed/regenerate-digest.sh'
-      - 'scripts/ruflo-acceptance/**'
+      - 'scripts/ruflo-*'
+      - 'scripts/ruflo-*/**'
       - 'scripts/tests/mcp-ruflo-launcher.test.sh'
-      - 'scripts/tests/ruflo-service-entrypoint.test.sh'
-      - 'scripts/tests/ruflo-service-up.test.sh'
+      - 'scripts/tests/ruflo-*'
       - '.github/workflows/validate-hooks.yml'
 
 permissions:
@@ -308,14 +311,24 @@ jobs:
           bash scripts/tests/claude-hooks-log-wrapper.test.sh
           # H-4 (post-merge governance retro, PR #2931): these three ADR-170
           # suites were previously unreferenced anywhere in this workflow.
+          # M-G (SMI-6744 A1.8 retro): this job is advisory -- `Hooks Test`
+          # is not among main's required status contexts (see this file's
+          # own header), so a red run does not block a merge. Treat it as a
+          # real signal to act on, not a gate -- the same standing this repo
+          # records for .github/workflows/ruflo-seed-digest.yml (M-1).
           # External tools: node (already set up above), md5/md5sum (fake
           # docker/git stubs; coreutils, always present on ubuntu-latest),
-          # and jq (scripts/tests/ruflo-service-up.test.sh's foreign-project
+          # jq (scripts/tests/ruflo-service-up.test.sh's foreign-project
           # arms) -- ubuntu-latest ships jq preinstalled, matching the same
           # assumption scripts/ruflo-federation-test.sh and
           # scripts/cli-pin-drift-check.sh already document for this repo's
-          # host/CI environments; no install step needed. None of the three
-          # touches a real Docker daemon -- each fakes `docker` (and, for
+          # host/CI environments; no install step needed -- and stat, which
+          # these three suites run on Linux in CI and on macOS locally: any
+          # coreutils-flag divergence (e.g. BSD `stat -f` vs GNU `stat -c`)
+          # must be handled with a runtime probe (see stat_mode() in
+          # ruflo-service-up.test.sh), never a `||` fallback (SMI-5596;
+          # H-A, SMI-6744 A1.8 retro). None of the three touches a real
+          # Docker daemon -- each fakes `docker` (and, for
           # ruflo-service-up.test.sh, `git`) on PATH.
           bash scripts/tests/mcp-ruflo-launcher.test.sh
           bash scripts/tests/ruflo-service-entrypoint.test.sh

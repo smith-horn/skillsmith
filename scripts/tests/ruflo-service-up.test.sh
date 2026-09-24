@@ -218,6 +218,20 @@ run_script() {
     set -e
 }
 
+# SMI-5596 / SMI-6744: BSD stat (macOS) uses `-f FORMAT`; GNU stat (Linux, CI)
+# uses `-c FORMAT` and `-f` means FILESYSTEM status. A naive
+# `stat -f … || stat -c …` chain does not fall through cleanly on Linux --
+# GNU prints the fs-status block to stdout and the `||` output is appended to
+# it. Probe for GNU explicitly instead. Same shape as
+# scripts/tests/create-worktree-hooks.test.sh's get_inode().
+stat_mode() {
+    if stat --version >/dev/null 2>&1; then
+        stat -c '%a' "$1"
+    else
+        stat -f '%Lp' "$1"
+    fi
+}
+
 fail_case() {
     echo "FAIL ($1): $2" >&2
     cat "$SCRATCH_ROOT/out.log" >&2
@@ -240,7 +254,7 @@ elif [[ ! -f "$FAKE_STATE_DIR/up-ran" ]]; then
 elif [[ ! -f "$HOME/.skillsmith/ruflo-store.json" ]]; then
     fail_case "1-fresh" "expected authority file to exist at \$HOME/.skillsmith/ruflo-store.json"
 else
-    MODE="$(stat -f '%Lp' "$HOME/.skillsmith/ruflo-store.json" 2>/dev/null || stat -c '%a' "$HOME/.skillsmith/ruflo-store.json")"
+    MODE="$(stat_mode "$HOME/.skillsmith/ruflo-store.json")"
     if [[ "$MODE" != "600" ]]; then
         fail_case "1-fresh" "expected authority file mode 600, got $MODE"
     elif ! grep -q '"instanceNonce"' "$HOME/.skillsmith/ruflo-store.json" || \
@@ -554,8 +568,8 @@ if [[ "$EXIT_CODE" -eq 0 ]]; then
     fail_case "15a-foreign-project-exists" "expected non-zero exit (refusal), got 0, log:\n$(cat "$SCRATCH_ROOT/out.log")"
 elif ! grep -qF "foreign-checkout-project" "$SCRATCH_ROOT/out.log" || ! grep -qF "$FAKE_STATE_DIR" "$SCRATCH_ROOT/out.log"; then
     fail_case "15a-foreign-project-exists" "expected the refusal to name the foreign project and its working_dir, log:\n$(cat "$SCRATCH_ROOT/out.log")"
-elif ! grep -qF "docker compose --profile ruflo down" "$SCRATCH_ROOT/out.log"; then
-    fail_case "15a-foreign-project-exists" "expected the checkout-still-exists remediation (docker compose --profile ruflo down from ITS OWN project), log:\n$(cat "$SCRATCH_ROOT/out.log")"
+elif ! grep -qF "docker compose --profile ruflo down ruflo" "$SCRATCH_ROOT/out.log"; then
+    fail_case "15a-foreign-project-exists" "expected the checkout-still-exists remediation (docker compose --profile ruflo down ruflo, scoped to the ruflo service, from ITS OWN project -- L-A), log:\n$(cat "$SCRATCH_ROOT/out.log")"
 elif grep -qF "volume create" "$FAKE_DOCKER_CALL_LOG"; then
     fail_case "15a-foreign-project-exists" "expected NO volume/store bookkeeping before this refusal, log:\n$(cat "$FAKE_DOCKER_CALL_LOG")"
 else

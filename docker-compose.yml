@@ -181,10 +181,20 @@ services:
     # `<project>-ruflo`, and its identity is kept stable by
     # scripts/ruflo-service-up.sh instead: its linked-worktree gate (H-3(b),
     # post-merge governance retro on PR #2931) refuses to create this
-    # MACHINE-GLOBAL, `restart: unless-stopped` service from any worktree,
-    # so the only image a live service ever runs is the main checkout's
-    # `skillsmith-ruflo`, which no worktree's teardown or orphan prune can
-    # name. Do NOT pin COMPOSE_PROJECT_NAME either:
+    # MACHINE-GLOBAL, `restart: unless-stopped` service from any worktree.
+    # M-B (SMI-6744 A1.8 retro): that gate is enforced by
+    # ./scripts/ruflo-service-up.sh, NOT by Compose itself, so it constrains
+    # exactly that one entry point. A bare
+    # `docker compose --profile ruflo up -d ruflo` from a worktree still
+    # bypasses it and would build a worktree-derived image -- that path is
+    # refused only by Docker's own container-name uniqueness, i.e. only when
+    # a `skillsmith-ruflo-1` already exists, never on a machine where the
+    # service is down. scripts/ruflo-federation-test.sh relies on exactly
+    # that bare form for its case A (checkout 2 issues it while checkout 1's
+    # service runs, to prove the name collision); its case B then brings
+    # checkout 2's service up through ruflo-service-up.sh once checkout 1's
+    # container is removed.
+    # Do NOT pin COMPOSE_PROJECT_NAME either:
     # scripts/ruflo-federation-test.sh's precondition 0 requires two checkouts
     # to resolve to DIFFERENT project names, so a second `up` is refused
     # rather than silently reconciling into a takeover.
