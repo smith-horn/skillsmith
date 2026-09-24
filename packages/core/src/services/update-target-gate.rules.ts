@@ -77,16 +77,27 @@
  * fail ADR-145's E1 contract, and the last two need different machinery:
  *
  * (a) MALFORMED is decidable here, purely — a string that is not a timestamp
- *     was never evidence of verification. `isWellFormedVerifiedAt` is
- *     regex-first (strict `YYYY-MM-DDTHH:mm:ss[.sss]Z`) and uses `Date.parse`
- *     only as a backstop for an impossible calendar value (month 13).
- *     **Do not "simplify" this to `Date.parse` alone.** Measured in this
- *     container's own Node: `Date.parse('0')` returns a FINITE
- *     `2000-01-01T00:00:00Z` via V8's lenient legacy fallback, and
- *     `Date.parse('2026')` a finite `2026-01-01` — so a bare parse admits
- *     `'0'` as a verification timestamp. Neither is a value this field's only
- *     writer (`apply_manifest_reconcile`'s `verify`) can produce. The full
- *     case table, with both controls, is in this module's test file.
+ *     was never evidence of verification. **A regex-plus-`Date.parse` check
+ *     is not enough on its own** (found one round later than the rest of
+ *     this file, same SMI): ECMAScript NORMALISES an impossible calendar
+ *     value instead of rejecting it — `Date.parse('2026-02-30T00:00:00Z')`
+ *     is FINITE, silently normalising to `2026-03-02` — so a regex checking
+ *     only SHAPE, backed by a `Date.parse` checking only "parses at all,"
+ *     together certify a date that was never real. `isWellFormedVerifiedAt`
+ *     instead round-trips through `new Date(Date.parse(x)).toISOString()`
+ *     and requires EXACT equality with the input: a normalised calendar
+ *     value never round-trips to its own spelling, and neither does any
+ *     shape other than this field's one writer's own canonical output
+ *     (`new Date().toISOString()`, always `YYYY-MM-DDTHH:mm:ss.sssZ` with
+ *     3-digit ms) — one predicate for both the calendar check and the format
+ *     check. `Date.parse('0')` is still FINITE (`2000-01-01T00:00:00Z`, V8's
+ *     lenient legacy fallback) but fails to round-trip to `'0'`, so it fails
+ *     here too. A well-formed value WITHOUT the writer's exact millisecond
+ *     shape (no `.sss`, or a non-3-digit count) also fails round-trip and is
+ *     correctly `unverified`, not merely "not this predicate's problem" —
+ *     nothing in-tree ever writes that shape, so the failure is a visible
+ *     skip whose `reconcile verify` remediation regenerates a canonical
+ *     timestamp. Full case table, both controls: this module's test file.
  * (b) STALE needs a clock, so it cannot live in a pure rule (T-G3). It
  *     arrives as `plan.verificationStale` (`update-target-gate.types.ts`),
  *     computed once by whoever builds `plan`; this row only consumes it,
@@ -207,19 +218,21 @@ function isRegistryRef(source: string | null): boolean {
 }
 
 /** Row 8's malformed-timestamp check — see this module's fileoverview ROW 8
- * note (a) for why a bare `Date.parse` is not enough on its
- * own (`Date.parse('0')` is finite). Pure: reads only the string it is
- * given, never the system clock — no `Date.now()`, so `classifyUpdateTarget`
- * stays I/O-free (T-G3). Requires the strict extended ISO-8601 UTC shape
- * `apply_manifest_reconcile`'s `verify` action actually writes
- * (`YYYY-MM-DDTHH:mm:ss[.sss]Z`), then uses `Date.parse` only as a backstop
- * against a string that matches the shape but names an impossible calendar
- * value (e.g. month `13`), which the regex alone can't rule out. */
-const ISO_UTC_TIMESTAMP = /^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}(\.\d+)?Z$/
-
+ * note (a) for why round-trip equality, not a regex-plus-`Date.parse` pair,
+ * is required (a regex/parse pair lets `Date.parse`'s calendar NORMALISATION
+ * — e.g. `2026-02-30` silently becoming `2026-03-02` — pass as verified).
+ * Pure: reads only the string it is given, never the system clock — no
+ * `Date.now()`, so `classifyUpdateTarget` stays I/O-free (T-G3).
+ * `new Date(NaN).toISOString()` THROWS (`RangeError: Invalid time value`),
+ * not merely mismatches — caught here and folded into "not well-formed,"
+ * the same outcome as every other round-trip failure. */
 function isWellFormedVerifiedAt(verifiedAt: string | undefined): boolean {
-  if (verifiedAt === undefined || !ISO_UTC_TIMESTAMP.test(verifiedAt)) return false
-  return Number.isFinite(Date.parse(verifiedAt))
+  if (verifiedAt === undefined) return false
+  try {
+    return new Date(Date.parse(verifiedAt)).toISOString() === verifiedAt
+  } catch {
+    return false
+  }
 }
 
 /**

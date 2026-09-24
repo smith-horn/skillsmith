@@ -49,7 +49,18 @@ function mkEvidence(over: Partial<ManifestEvidence> = {}): ManifestEvidence {
 }
 
 /** A verified, non-illegal, non-pinned, no-conflict entry — clears every
- * evidence-based row (4, 6-9) so a fixture can focus on a later row. */
+ * evidence-based row (4, 6-9) so a fixture can focus on a later row.
+ *
+ * `verifiedAt` MUST be the exact canonical shape this field's only writer
+ * (`apply_manifest_reconcile`'s `verify`, via `new Date().toISOString()`)
+ * produces — 3-digit milliseconds, always present — not merely "a valid
+ * ISO-8601 UTC timestamp." Since the row-8 MAJOR fix (round following A2
+ * step 4, SMI-6532), `isWellFormedVerifiedAt` requires round-trip equality
+ * against that exact shape, so a fixture using the previously-accepted but
+ * non-canonical `'2026-06-01T00:00:00Z'` (no ms) would now fail row 8 and
+ * regress EVERY test below that relies on `clean()` reaching row 16 —
+ * this default is deliberately the same value this module's own row-8
+ * "known-positive" test case pins. */
 function verifiedEntry(over: Partial<SkillManifestEntry> = {}): SkillManifestEntry {
   return {
     id: 'owner/foo',
@@ -59,7 +70,7 @@ function verifiedEntry(over: Partial<SkillManifestEntry> = {}): SkillManifestEnt
     installPath: '/skills/foo',
     installedAt: '2026-01-01T00:00:00Z',
     lastUpdated: '2026-01-01T00:00:00Z',
-    verifiedAt: '2026-06-01T00:00:00Z',
+    verifiedAt: '2026-06-01T00:00:00.123Z',
     ...over,
   }
 }
@@ -401,6 +412,29 @@ describe('classifyUpdateTarget — two-row overlaps (order enforcement)', () => 
     expect(classifyUpdateTarget(evidence, probe, plan)).toEqual({ reason: 'pinned' })
   })
 
+  // Intra-row-9 ORDER pin (cross-family pre-merge gate, mutation 2). §4.3's
+  // row 9 is really THREE rules in `CLASSIFICATION_RULES` (`pinned`,
+  // `policy-never`, `policy-manual`), all tagged row `'9'` — a fact neither
+  // the row-SET invariant test below (`[...present].sort()` — proves every
+  // TAG is present, not how many entries share one, nor their relative
+  // order) nor the exact-length-literal test (proves the COUNT, not the
+  // order) can see. Measured: relocating `policy-never` to immediately
+  // before `pinned` in the array (still tag `'9'`, so both of those
+  // invariant tests keep passing unchanged) makes THIS test fail — reverted
+  // after confirming the failure, per CLAUDE.md's "a regression test you
+  // have not run against the unfixed code is unverified" (SMI-6598). For an
+  // entry that is BOTH pinned AND `updatePolicy: 'never'`, today's actual
+  // array order means `pinned` wins — a caller told "this skill is pinned"
+  // would follow different remediation (unpin it) than one told "policy
+  // blocks updates," so which rule wins for this real, reachable overlap is
+  // itself part of the contract, not an implementation detail free to drift.
+  it('row 9 order pin: pinned wins over policy-never when an entry is BOTH (relocating policy-never before pinned is invisible to the row-SET/length invariants alone)', () => {
+    const probe = clean().probe
+    const plan = clean().plan
+    const evidence = mkEvidence({ pinnedVersion: '1.0.0', updatePolicy: 'never' })
+    expect(classifyUpdateTarget(evidence, probe, plan)).toEqual({ reason: 'pinned' })
+  })
+
   it('row 10 beats row 16: identity-mismatch wins over an otherwise-eligible target', () => {
     const c = clean()
     const plan = mkPlan({ identityMismatch: { ownerManifestKey: 'foo::claude-code' } })
@@ -473,17 +507,65 @@ describe('classifyUpdateTarget — row 8: malformed/stale verifiedAt (review rou
   // down here — see `update-target-gate.rules.ts`'s ROW 8 note
   // comment for the exact `Date.parse` results that motivated the regex-first
   // design (`Date.parse('0')` is FINITE, `2000-01-01T00:00:00Z`).
+  //
+  // ROUND-TRIP FIX (cross-family pre-merge gate MAJOR, round following the
+  // above). A regex-plus-`Date.parse` pair still ACCEPTS an impossible
+  // calendar date, because `Date.parse` NORMALISES rather than rejects one —
+  // measured live in this container's Node before writing any of these
+  // rows down (CLAUDE.md "measure, don't reason"):
+  //   2026-02-30T00:00:00Z          normalises to 2026-03-02 (was ACCEPTED)
+  //   2026-06-31T00:00:00Z          normalises to 2026-07-01 (was ACCEPTED)
+  //   2026-06-01T00:00:00.123456Z   truncates to .123        (was ACCEPTED)
+  // `isWellFormedVerifiedAt` now requires round-trip equality against
+  // `new Date(Date.parse(x)).toISOString()`, which is simultaneously the
+  // calendar check (a normalised value never round-trips to its own
+  // spelling) AND the format check — including against the ONE writer's own
+  // canonical shape (`YYYY-MM-DDTHH:mm:ss.sssZ`, 3-digit ms). The trap this
+  // fix has to avoid: `toISOString()` ALWAYS emits 3-digit ms, so even the
+  // previously-accepted `'2026-06-01T00:00:00Z'` (no ms) does NOT round-trip
+  // — correctly `unverified` now, since nothing in-tree ever writes that
+  // shape (both writers use `new Date().toISOString()` verbatim:
+  // `apply-manifest-reconcile.helpers.ts:311`, `sso-tools.stub.ts:101`).
   const MALFORMED_CASES: ReadonlyArray<
     readonly [label: string, verifiedAt: string, expected: 'eligible' | 'unverified']
   > = [
-    ['known-positive: well-formed ISO-8601 UTC', '2026-06-01T00:00:00Z', 'eligible'],
+    [
+      'positive control: the ONE writer’s exact canonical shape (3-digit ms) round-trips',
+      '2026-06-01T00:00:00.123Z',
+      'eligible',
+    ],
+    [
+      'shape without milliseconds — looked "well-formed" under the old regex, but no writer produces it and it does not round-trip',
+      '2026-06-01T00:00:00Z',
+      'unverified',
+    ],
+    [
+      'impossible calendar date (Feb 30) — Date.parse NORMALISES to Mar 2 instead of rejecting; the MAJOR this round fixes',
+      '2026-02-30T00:00:00Z',
+      'unverified',
+    ],
+    [
+      'impossible calendar date (Jun 31) — same normalisation hazard, a different month boundary',
+      '2026-06-31T00:00:00Z',
+      'unverified',
+    ],
+    [
+      'sub-millisecond precision beyond the writer’s 3-digit shape — Date.parse truncates to .123 instead of rejecting',
+      '2026-06-01T00:00:00.1Z',
+      'unverified',
+    ],
+    [
+      'six fractional digits — Date.parse truncates to .123 instead of rejecting',
+      '2026-06-01T00:00:00.123456Z',
+      'unverified',
+    ],
     ["known-negative: '0' (Date.parse is finite, but not a real timestamp)", '0', 'unverified'],
     ['known-negative: not a date at all', 'not-a-date', 'unverified'],
     ['bare year — not the full shape the one writer produces', '2026', 'unverified'],
     ['epoch-milliseconds as a string', '1780000000000', 'unverified'],
     [
-      'far-future — well-formed; not this predicate’s job to judge "too far"',
-      '9999-12-31T00:00:00Z',
+      'far-future, canonical shape (3-digit ms) — well-formed; not this predicate’s job to judge "too far"',
+      '9999-12-31T00:00:00.000Z',
       'eligible',
     ],
   ]

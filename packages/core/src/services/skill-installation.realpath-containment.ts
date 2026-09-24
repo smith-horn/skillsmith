@@ -64,9 +64,24 @@ export async function resolveRealOrFallback(target: string): Promise<string> {
  * Takes resolved paths on trust, which is why it is NOT exported as the
  * general answer — {@link isRealpathInside} is. Pure and synchronous: no I/O,
  * so it cannot fail and has nothing to fail closed about.
+ *
+ * `realRoot` is normalized to end with exactly one trailing separator before
+ * the prefix comparison, rather than unconditionally appending one — at a
+ * filesystem root (`realRoot === '/'` on POSIX, `'C:\\'` on Windows,
+ * `path.sep` already trailing), unconditionally appending a SECOND separator
+ * produced `'//'`/`'C:\\\\'`, which no real descendant path starts with, so
+ * `isResolvedPathInside('/child', '/')` returned `false` — a directory
+ * genuinely inside the root judged NOT contained. Conservative (refuses
+ * rather than permits) but wrong, and both of this predicate's callers
+ * (`isUsableDirectory` rule (c) and `probeGitAncestor`) depend on it. See
+ * this module's test file for the root-positive control this fixes and the
+ * sibling-prefix negative control it must not regress
+ * (`skill-installation.target-guard.test.ts`'s `skills` vs `skills-evil`).
  */
 export function isResolvedPathInside(realTarget: string, realRoot: string): boolean {
-  return realTarget === realRoot || realTarget.startsWith(realRoot + path.sep)
+  if (realTarget === realRoot) return true
+  const rootWithTrailingSep = realRoot.endsWith(path.sep) ? realRoot : realRoot + path.sep
+  return realTarget.startsWith(rootWithTrailingSep)
 }
 
 /**
