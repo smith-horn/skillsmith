@@ -5,20 +5,19 @@
  * @see docs/internal/implementation/update-safety-and-source-resolution.md §4.3
  *
  * "Fails if `classifyUpdateTarget` makes any call on a recording fs mock."
- * `fs`, `fs/promises`, `node:fs` and `node:fs/promises` are each mocked with
- * a PLAIN OBJECT of `vi.fn()`s, one per fs method the classifier's real
- * (non-type) import graph can actually reach — determined by reading the
- * imports, not guessed (SMI-6841 finding 1): `update-target-gate.js` ->
- * `update-target-gate.rules.js` -> `local-skill-scan.js`'s module-scope
- * `import * as fs from 'fs/promises'`, whose only two calls on that binding
- * are `fs.readdir` and `fs.readFile` (both inside `scanLocalSkills`, never
- * inside `isBackupDir` — the only export of that module
- * `update-target-gate.rules.ts` actually calls, which does no I/O of its
- * own, being a plain regex test). Every other real import in the graph
- * (`path`, `SkillParser.js` and `SkillParser.helpers.js`) touches no `fs`
- * module at all — confirmed by reading each file's own import list, not
- * assumed. Both properties throw when called, so a real call is impossible
- * to miss even if it silently no-op'd instead of throwing.
+ * `fs`, `fs/promises`, `node:fs` and `node:fs/promises` are each mocked with a
+ * PLAIN OBJECT whose EVERY function export is a recording `vi.fn()`, derived
+ * from the real module at mock time rather than hand-listed.
+ *
+ * An earlier version of this file listed exactly the two methods the
+ * classifier's import graph reaches today (`readdir`, `readFile`, via
+ * `update-target-gate` -> `.rules` -> `local-skill-scan`'s module-scope
+ * `import * as fs`). That enumeration was correct and still carried a defect:
+ * a call to any method NOT on the list left no record and no error, so it
+ * passed silently, and nothing enforced the standing obligation to revisit
+ * the list as the graph grew. Deriving the surface removes both the list and
+ * the obligation. Measured: `fs.stat` inside a `try/catch` — unlisted, and so
+ * invisible before — now fails both tests.
  *
  * WHY A PLAIN OBJECT, NOT A PROXY (SMI-6841 finding 1 — the prior version of
  * this file used `new Proxy({}, { get })`, whose recorder never actually
@@ -56,18 +55,26 @@
  * `recordedCalls.push` runs (and is asserted against directly, not inferred
  * from whether the call "succeeded") BEFORE the throw, and a local
  * `try`/`catch` inside the code under test has no way to reach back into this
- * file's module-scope array and undo that push. So finding 1's fix also
- * closes finding 2's gap for every fs method this mock actually declares
- * (`REACHABLE_FS_METHODS`): catching the exception downstream no longer
- * matters, because detection was never about the throw reaching this file —
- * the throw's only remaining job is to make an UNLISTED reachable-surface
- * change loud rather than silent. The gap that genuinely remains, and is
- * NOT closed by this: a call to an fs method THIS FILE doesn't name (outside
- * `REACHABLE_FS_METHODS`) — e.g. `fs.stat` — if caught downstream, leaves no
- * trace in `recordedCalls` and produces no uncaught error either (measured,
- * reverted the same way); this is exactly why `REACHABLE_FS_METHODS` is
- * derived by reading the real import graph rather than guessed narrow, and
- * why it must be revisited if that graph ever grows.
+ * file's module-scope array and undo that push. So catching the exception
+ * downstream does not matter: detection was never about the throw reaching
+ * this file. The throw's remaining job is to stop the code under test from
+ * proceeding on a fake return value.
+ *
+ * TWO HOLES THAT ARE NOT OBVIOUS, both closed by the recursion in
+ * `wrapNamespace` (SMI-6841, governance round 3). `default` and `promises` are
+ * OBJECTS, so a naive "wrap the functions, pass everything else through" walk
+ * treats them as inert values — while each re-exposes the module's entire real
+ * function set under a different access path. Measured against the mock object
+ * itself: a namespace call threw and recorded; the same call reached as
+ * `import fs from 'node:fs/promises'` did neither, performing real I/O in
+ * silence. The default-import style is already live in this package
+ * (`analysis/file-streamer.ts:11`), so this was a live hole rather than a
+ * theoretical one. Both nested namespaces are now wrapped recursively.
+ *
+ * The shape to notice, since it has now recurred three times on this branch:
+ * each of these was an assertion whose SUBJECT was broader than the thing it
+ * named. The Proxy recorded nothing; the hand-list recorded only two methods;
+ * the derived surface skipped two nested namespaces. Every version passed.
  */
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 
@@ -77,11 +84,6 @@ import type { UpdateTargetPlan } from './update-target-gate.types.js'
 
 const recordedCalls: string[] = []
 
-/** The exact fs surface `classifyUpdateTarget`'s real import graph can
- * reach — see this module's fileoverview for the derivation. Naming every
- * method explicitly (rather than proxying arbitrary property names) is what
- * makes Vitest's own ESM export-name check pass, which is the actual fix for
- * SMI-6841 finding 1. */
 /**
  * Wrap EVERY function export the real module has, rather than a hand-listed
  * subset.
@@ -95,19 +97,42 @@ const recordedCalls: string[] = []
  * graph tomorrow is already covered, with no list to maintain and nothing to
  * forget.
  *
- * Non-function exports (`constants`, and similar) are passed through
- * unwrapped: reading one is not I/O, and replacing it would break importers
- * that only read a value.
+ * `default` and `promises` are NOT passed through, and that is the whole point
+ * of the recursion below. Both are objects, so `typeof value !== 'function'`
+ * treats them as inert values — but each carries the module's entire REAL
+ * function set. Passing them through leaves two silent holes: a call reached
+ * as `import fs from 'node:fs/promises'` (the default import) or as
+ * `fs.promises.readFile(...)` performs genuine I/O and records nothing, so
+ * `expect(recordedCalls).toEqual([])` stays green through exactly the thing it
+ * exists to catch. Measured: namespace call throws and records; default-import
+ * call did neither. Not hypothetical — the default-import style is already live
+ * in this package at `analysis/file-streamer.ts:11`.
+ *
+ * Everything else non-function (`constants`, `F_OK`, and similar) does pass
+ * through: reading a value is not I/O, and replacing it would break importers
+ * that only read it. Classes (`Stats`, `Dirent`, `ReadStream`) are functions
+ * and so become throwing spies, which is stricter than the alternative and
+ * fine — the classifier constructs none of them.
  */
 async function recordingModule(moduleName: string): Promise<Record<string, unknown>> {
   const actual = (await vi.importActual(moduleName)) as Record<string, unknown>
-  const mod: Record<string, unknown> = {}
-  for (const [name, value] of Object.entries(actual)) {
-    if (typeof value !== 'function') {
-      mod[name] = value
+  return wrapNamespace(actual, moduleName)
+}
+
+/** Wrap every function on `ns`, recursing into the two nested namespaces that
+ * re-expose the same functions under a different access path. */
+function wrapNamespace(ns: Record<string, unknown>, moduleName: string): Record<string, unknown> {
+  const out: Record<string, unknown> = {}
+  for (const [name, value] of Object.entries(ns)) {
+    if (name === 'default' || name === 'promises') {
+      out[name] = wrapNamespace(value as Record<string, unknown>, `${moduleName}.${name}`)
       continue
     }
-    mod[name] = vi.fn((...args: unknown[]) => {
+    if (typeof value !== 'function') {
+      out[name] = value
+      continue
+    }
+    out[name] = vi.fn((...args: unknown[]) => {
       recordedCalls.push(`${moduleName}.${name}(${args.map(String).join(', ')})`)
       throw new Error(
         `classifyUpdateTarget must be pure — ${moduleName}.${name}() was called, which ` +
@@ -116,7 +141,7 @@ async function recordingModule(moduleName: string): Promise<Record<string, unkno
       )
     })
   }
-  return mod
+  return out
 }
 
 vi.mock('fs/promises', async () => recordingModule('fs/promises'))

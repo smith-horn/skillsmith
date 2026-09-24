@@ -140,9 +140,14 @@ describe('git-ancestor walk — RED-TEST CONTROL (SMI-6532 finding 3)', () => {
     // `code` ALONE does not discriminate: rule (d) emits
     // `INSTALL_TARGET_GIT_WORKTREE` from two structurally different branches —
     // the `found` branch (target-guard.ts:404-408, which IS this defect) and
-    // the fail-closed `error` branch (:386-394, which is not). Measured:
-    // mutating `walkForGitEntry` so it never returns `found` left all 18 tests
-    // in this file passing on `code` alone. Asserting the rooted-at path pins
+    // the fail-closed `error` branch (:386-394, which is not). The mutation
+    // that shows this is SPECIFICALLY replacing `{ kind: 'found' }` with
+    // `{ kind: 'error', ... }` in `walkForGitEntry` — which keeps the code and
+    // left all 18 tests in this file passing on `code` alone. Do NOT reproduce
+    // it as `return null`: that emits INSTALL_TARGET_UNTRACKED instead, which
+    // the code-only assertion DID catch, so the obvious reading of "never
+    // returns found" makes this note look false and invites deleting the
+    // matcher. Asserting the rooted-at path pins
     // the `found` branch specifically, and `elsewhere` is the escape target,
     // i.e. the very directory the walk should never have reached.
     expect(result).toMatchObject({
