@@ -41,7 +41,13 @@ concurrency:
 jobs:
   verify-digest:
     name: Verify SEED-MANIFEST.sha256
-    runs-on: ubuntu-latest
+    # linux/arm64, not ubuntu-latest (amd64): the served tree's lockfile carries 122
+    # platform-scoped optional packages (47 arm64, 58 x64), so the canonical tree
+    # digest is a property of the build platform. The committed digest is derived
+    # on linux/arm64 (the dev fleet's Docker Desktop on Apple Silicon); an amd64
+    # runner installs a different tree and the check would fail on a correct
+    # seed. Public repos get GitHub-hosted arm64 runners at no cost (SMI-6744 A1.8).
+    runs-on: ubuntu-24.04-arm
     timeout-minutes: 40
     steps:
       - name: Checkout
