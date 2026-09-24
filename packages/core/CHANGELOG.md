@@ -4,6 +4,26 @@ All notable changes to `@skillsmith/core` are documented here.
 
 ## [Unreleased]
 
+- **Security**: SMI-6840 (PR #2936; found while enumerating redaction sites for SMI-6636) --
+  `redactSensitiveData` / `redactSensitiveObject` masked only part of a Skillsmith API key, or none
+  of it. The `sk_live_` pattern's body was `[a-zA-Z0-9]`, but `generateLicenseKey` emits base64url,
+  so a real key can contain `-` and `_`. Measured over 10,000 keys from a verbatim port of that
+  generator, with a matching-positive and a non-matching-negative control both passing: 6,353 were
+  not redacted at all, 1,024 were redacted only as far as the first hyphen, and 7,377 of 10,000
+  leaked in whole or in part. Two mechanisms: a `-` or `_` inside the first 24 body characters ends
+  the run below the `{24,}` minimum so the match fails outright, and `_` is itself a word character,
+  so no trailing `\b` can ever match after an alphanumeric run followed by one -- backtracking
+  cannot rescue that, since every shorter run is also followed by a word character. The
+  partial-match case was the worst of the three, because the line carried a `[REDACTED]` marker with
+  the tail of the key beside it. Fixed by widening the class to the emitted alphabet and removing
+  the trailing `\b` rather than replacing it: the greedy quantifier already consumes the whole body,
+  and the trailing assertion was the defect. Over-matching into adjacent `[A-Za-z0-9_-]` text is the
+  deliberate failure direction, since over-redaction is safe and under-redaction leaks. Widening is
+  monotonic, so Stripe's own `sk_live_` keys stay covered. The `sk_test_`, `pk_live_` and `pk_test_`
+  rules are deliberately left alphanumeric -- nothing in this repo mints those, and changing an
+  issuer's pattern without a case table for that issuer is what produced this defect. Consumers of
+  `@skillsmith/core`'s logging and telemetry modules get the fix with no API change.
+
 - **Docs**: SMI-6826 (PR #2930; found by the PR #2929 post-merge retro) -- `ApiCache`'s
   documentation said it evicts least-recently-used entries. It does not, and never did: when full,
   `evictLeastUsed()` takes the first EXPIRED entry its scan meets, and failing that the one with the
