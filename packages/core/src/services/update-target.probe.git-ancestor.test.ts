@@ -20,10 +20,13 @@
  * REALPATH is contained but whose LEXICAL path is not — a symlinked
  * ANCESTOR component, not the target itself — passes the precondition and
  * then runs an effectively unbounded lexical walk. The RED-TEST CONTROL
- * block below reproduces this directly, using the still-exported,
- * unmodified `hasGitAncestorBetween`/`isRealpathInside`, against the exact
- * fixture the rest of this file uses — proving the fixture reproduces the
- * real finding, not a synthetic stand-in for it.
+ * block below reproduces this directly, through `checkInstallTarget`'s own
+ * rule (d) (`hasGitAncestorBetween` is private, called only from within its
+ * own module since SMI-6841 finding 5 — it was exported solely so this file
+ * could call it directly, and the only production call site is that same
+ * rule (d), in `skill-installation.target-guard.ts` itself), against the
+ * exact fixture the rest of this file uses — proving the fixture reproduces
+ * the real finding, not a synthetic stand-in for it.
  */
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import * as fs from 'fs'
@@ -31,7 +34,7 @@ import * as os from 'os'
 import * as path from 'path'
 
 import { probeGitAncestor } from './update-target.probe.git-ancestor.js'
-import { hasGitAncestorBetween } from './skill-installation.target-guard.js'
+import { checkInstallTarget } from './skill-installation.target-guard.js'
 import { isRealpathInside } from './skill-installation.realpath-containment.js'
 
 /** Hoisted so the `vi.mock` factory (lifted above every import) can close
@@ -106,24 +109,33 @@ function makeEscapingAncestorFixture(): { dir: string; skillsDir: string; elsewh
 }
 
 describe('git-ancestor walk — RED-TEST CONTROL (SMI-6532 finding 3)', () => {
-  it('reproduces the reuse-chain bug this walk replaces: the OLD isRealpathInside+hasGitAncestorBetween combo reports a `.git` planted OUTSIDE skillsDir as found', async () => {
+  it('reproduces the reuse-chain bug this walk replaces: checkInstallTarget rule (d), still running the OLD isRealpathInside+hasGitAncestorBetween combo, refuses over a `.git` planted OUTSIDE skillsDir', async () => {
     // Verbatim shape of the round-2 fix this branch shipped and then
-    // replaced: check containment once via isRealpathInside, then hand off
-    // to hasGitAncestorBetween unconditionally. Both functions are
-    // untouched by this change (see this module's fileoverview) — this test
-    // exercises them exactly as `checkInstallTarget` still does today.
+    // replaced: check containment once via isRealpathInside (rule (c)), then
+    // hand off to hasGitAncestorBetween unconditionally (rule (d)). Neither
+    // function's own logic is touched by this change (see this module's
+    // fileoverview) — this test exercises them exactly as
+    // `checkInstallTarget` still does today, through its own public API
+    // rather than by calling the now-private `hasGitAncestorBetween`
+    // directly (SMI-6841 finding 5).
     const { dir, skillsDir, elsewhere } = makeEscapingAncestorFixture()
     fs.mkdirSync(path.join(elsewhere, '.git'))
 
     const contained = await isRealpathInside(dir, skillsDir)
     expect(contained).toBe(true) // the precondition PASSES — realpath IS contained
 
-    const walk = await hasGitAncestorBetween(dir, skillsDir)
+    const result = await checkInstallTarget({
+      installPath: dir,
+      skillsDir,
+      manifestEntry: undefined,
+      force: true,
+    })
 
-    // The bug: a `.git` genuinely outside skillsDir is reported as a
-    // legitimate ancestor, because the precondition proved realpath
-    // containment while the walk itself bounds on a lexical path.
-    expect(walk).toEqual({ kind: 'found', path: elsewhere })
+    // The bug: a `.git` genuinely outside skillsDir makes checkInstallTarget
+    // refuse the write as though it found a legitimate git ancestor, because
+    // the precondition proved realpath containment while rule (d)'s own walk
+    // bounds on a lexical path instead.
+    expect(result).toMatchObject({ ok: false, code: 'INSTALL_TARGET_GIT_WORKTREE' })
   })
 
   it('the new probe never does this: probeGitAncestor on the identical fixture reports `none`, not `found`', async () => {

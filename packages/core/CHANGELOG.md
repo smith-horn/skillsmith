@@ -61,17 +61,25 @@ All notable changes to `@skillsmith/core` are documented here.
   (`update-target-reason.ts`), so an unhandled member fails typecheck instead of falling through
   at runtime; and a probe (`update-target.probe.ts`) that performs the filesystem reads and fails
   closed -- a permission or read error becomes an explicit `probe-failed`/`unreadable` outcome
-  rather than a value that reads as "nothing to do". New exports: `isBackupDir` (below) and
-  `hasGitAncestorBetween`.
+  rather than a value that reads as "nothing to do". New export: `isBackupDir` (below).
+  `hasGitAncestorBetween` is unrelated to this seam -- it is A0's own pre-write install-target
+  guard, already shipped, and was never exported outside its own module.
 
-- **Fix**: SMI-6532 -- a backup directory could be mistaken for an ordinary skill, and so become a
-  candidate for overwriting. The backup-directory check matched only a `<name>.backup-YYYYMMDD-HHMMSS`
+- **Fix**: SMI-6532 -- the backup-directory check matched only a `<name>.backup-YYYYMMDD-HHMMSS`
   form that no code in the tree actually writes, and missed the `<name>.backup-<epoch-ms>` form
-  `ActivationManager` really creates. It is now a shared, exported `isBackupDir` matching `.backup-`
-  followed by a digit, which covers both forms and any trailing suffix. It deliberately errs toward
-  treating a directory as a backup: the cost of a false match is that a skill so named is not
-  auto-updated, weighed against the cost of overwriting the backup that exists to recover a failed
-  update.
+  `ActivationManager` really creates -- e.g. `linear.backup-1758600000000` or
+  `notes.backup-20260419` previously read as an ordinary skill, not a backup. It is now a shared,
+  exported `isBackupDir` matching `.backup-` followed by a digit, which covers both forms and any
+  trailing suffix, so both examples above now flip from `false` to `true`. That flip changes what
+  `SourceRecoveryService.recoverSources()` reports today (its only live consumer, via
+  `scanLocalSkills`): a directory like those two used to be scanned and offered for source
+  recovery as though it were a real skill; it is now correctly reported as a backup and skipped.
+  It does NOT yet change what anything writes -- the update-eligibility gate that would use this
+  same flag to decide whether a write may overwrite a directory (`update-target-gate.rules.ts` row
+  2, described above) is not wired into any command yet. It deliberately errs toward treating a
+  directory as a backup: the cost of a false match is a skill that is not offered for source
+  recovery today (and, once the gate ships, not auto-updated), weighed against the cost of a real
+  backup directory being treated as an ordinary skill.
 
 - **Fix**: SMI-6744 / SMI-6814 (PR #2923 post-merge retro G3/G4; PR #2924 governance F1 and retro
   C3/C4/C5/C8; PR #2925 retro F-A/F-B) -- `buildHighlights()` no longer wraps every character of

@@ -49,6 +49,7 @@ import path from 'node:path'
 import { fileURLToPath } from 'node:url'
 
 import { describe, expect, it } from 'vitest'
+import * as ts from 'typescript'
 
 import {
   BACKUP_DIR_GROUP,
@@ -475,6 +476,82 @@ describe('remediationFor — reason/result string overlap (recovery-pending, rec
 // member lists.")
 // ─────────────────────────────────────────────────────────────────────────────
 
+/**
+ * Extract `export const <exportName> = [...] as const`'s string-literal
+ * elements, via the TypeScript AST rather than a quoted-string regex
+ * (SMI-6841 finding 7). A regex over the raw text between the array's `[`
+ * and its first `]` (the prior implementation) reads a commented-out
+ * member's quoted string the same as a live one, because both are just
+ * matching bytes to a regex that has no notion of "this is a comment" —
+ * measured: `// 'beta',` inside the array body was silently INCLUDED in
+ * the mirrored member list. `ts.createSourceFile` tokenizes comments as
+ * trivia, never as part of the AST it hands back, so an
+ * `ArrayLiteralExpression`'s `.elements` can only ever contain nodes that
+ * are actually live code — a commented-out entry was never in that array
+ * to begin with, structurally, not merely filtered out after the fact.
+ * See the "parser — blind-spot controls" describe block below for the four
+ * permanent cases (an unmutated positive control, plus deletion, reordering
+ * and comment-out) that pin this against regressing back to a
+ * text-matching approach. Module scope, not inside a `describe`, so both
+ * this file's real-file parity tests AND that synthetic-fixture describe
+ * block can call it directly.
+ */
+function extractArrayLiteral(source: string, exportName: string, fileName = 'source.ts'): string[] {
+  const sourceFile = ts.createSourceFile(
+    fileName,
+    source,
+    ts.ScriptTarget.Latest,
+    /* setParentNodes */ false,
+    ts.ScriptKind.TS
+  )
+
+  let found: string[] | undefined
+  const visit = (node: ts.Node): void => {
+    if (found !== undefined) return
+    if (
+      ts.isVariableStatement(node) &&
+      node.modifiers?.some((m) => m.kind === ts.SyntaxKind.ExportKeyword)
+    ) {
+      for (const decl of node.declarationList.declarations) {
+        if (!ts.isIdentifier(decl.name) || decl.name.text !== exportName || !decl.initializer) {
+          continue
+        }
+        // `export const X = [...] as const` wraps the array literal in an
+        // AsExpression -- unwrap it before checking for the array itself,
+        // rather than requiring callers' source to omit `as const`.
+        const init = ts.isAsExpression(decl.initializer)
+          ? decl.initializer.expression
+          : decl.initializer
+        if (!ts.isArrayLiteralExpression(init)) continue
+        found = init.elements.map((el, i) => {
+          if (!ts.isStringLiteral(el)) {
+            throw new Error(
+              `manifestReader.ts "${exportName}" element ${i} is not a plain string literal -- ` +
+                'mirror parser only understands a flat array of quoted strings'
+            )
+          }
+          return el.text
+        })
+      }
+    }
+    if (found === undefined) ts.forEachChild(node, visit)
+  }
+  visit(sourceFile)
+
+  if (found === undefined) {
+    throw new Error(
+      `manifestReader.ts has no "export const ${exportName} = [...]" array -- mirror missing or renamed`
+    )
+  }
+  return found
+}
+
+function readMirroredArray(exportName: string): string[] {
+  const filePath = path.join(__dirname, '../../../vscode-extension/src/services/manifestReader.ts')
+  const source = readFileSync(filePath, 'utf-8')
+  return extractArrayLiteral(source, exportName, filePath)
+}
+
 describe('VS Code manifestReader.ts mirror parity (T-R4, member-list scope)', () => {
   // Confirms independently (not "took the spec's word for it") that VS Code
   // really does not import @skillsmith/core: if it did, a real cross-package
@@ -490,24 +567,6 @@ describe('VS Code manifestReader.ts mirror parity (T-R4, member-list scope)', ()
     expect(pkg.devDependencies?.['@skillsmith/core']).toBeUndefined()
   })
 
-  function readMirroredArray(exportName: string): string[] {
-    const filePath = path.join(
-      __dirname,
-      '../../../vscode-extension/src/services/manifestReader.ts'
-    )
-    const source = readFileSync(filePath, 'utf-8')
-    const marker = `export const ${exportName} = [`
-    const start = source.indexOf(marker)
-    if (start === -1) {
-      throw new Error(`manifestReader.ts has no "${marker}" export -- mirror missing or renamed`)
-    }
-    const bodyStart = start + marker.length
-    const bodyEnd = source.indexOf(']', bodyStart)
-    const body = source.slice(bodyStart, bodyEnd)
-    const matches = [...body.matchAll(/'([^']+)'/g)]
-    return matches.map((m) => m[1])
-  }
-
   it('UPDATE_TARGET_REASONS: VS Code mirror has the exact same member list as core, in the same order', () => {
     const mirrored = readMirroredArray('UPDATE_TARGET_REASONS')
     expect(mirrored).toEqual([...UPDATE_TARGET_REASONS])
@@ -516,5 +575,41 @@ describe('VS Code manifestReader.ts mirror parity (T-R4, member-list scope)', ()
   it('UPDATE_RESULT_CODES: VS Code mirror has the exact same member list as core, in the same order', () => {
     const mirrored = readMirroredArray('UPDATE_RESULT_CODES')
     expect(mirrored).toEqual([...UPDATE_RESULT_CODES])
+  })
+})
+
+// ─────────────────────────────────────────────────────────────────────────────
+// extractArrayLiteral — parser blind-spot controls (SMI-6841 finding 7)
+// ─────────────────────────────────────────────────────────────────────────────
+//
+// Four permanent cases against small, synthetic source snippets (never the
+// real manifestReader.ts, so these never depend on that file's own current
+// contents) pinning the AST-based parser against the exact blind spot the
+// prior regex-based one had, plus a positive control proving the parser
+// isn't simply incapable of matching anything. All four were run for real
+// (not merely reasoned about) before being written down here.
+describe('extractArrayLiteral — parser blind-spot controls (SMI-6841 finding 7)', () => {
+  const baseline = "export const SAMPLE = [\n  'alpha',\n  'beta',\n  'gamma',\n] as const\n"
+
+  it('positive control: an ordinary, unmutated array parses to its exact members, in order', () => {
+    expect(extractArrayLiteral(baseline, 'SAMPLE')).toEqual(['alpha', 'beta', 'gamma'])
+  })
+
+  it('deleted member: a removed entry is reflected as a shorter array, not silently padded back to three', () => {
+    const deleted = "export const SAMPLE = [\n  'alpha',\n  'gamma',\n] as const\n"
+    expect(extractArrayLiteral(deleted, 'SAMPLE')).toEqual(['alpha', 'gamma'])
+    expect(extractArrayLiteral(deleted, 'SAMPLE')).not.toEqual(['alpha', 'beta', 'gamma'])
+  })
+
+  it('swapped members: a reordered pair is reflected in the returned order, not silently re-sorted back', () => {
+    const swapped = "export const SAMPLE = [\n  'beta',\n  'alpha',\n  'gamma',\n] as const\n"
+    expect(extractArrayLiteral(swapped, 'SAMPLE')).toEqual(['beta', 'alpha', 'gamma'])
+    expect(extractArrayLiteral(swapped, 'SAMPLE')).not.toEqual(['alpha', 'beta', 'gamma'])
+  })
+
+  it("commented-out member: a member wrapped in a line comment is NOT returned -- the exact defect the prior quoted-string regex had (it matched the comment's own quotes)", () => {
+    const commented = "export const SAMPLE = [\n  'alpha',\n  // 'beta',\n  'gamma',\n] as const\n"
+    expect(extractArrayLiteral(commented, 'SAMPLE')).toEqual(['alpha', 'gamma'])
+    expect(extractArrayLiteral(commented, 'SAMPLE')).not.toContain('beta')
   })
 })

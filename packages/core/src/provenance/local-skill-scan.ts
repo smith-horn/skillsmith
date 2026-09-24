@@ -25,7 +25,13 @@ import { SkillParser } from '../indexer/SkillParser.js'
  * `ActivationManager.ts:329` (`${installPath}.backup-${Date.now()}` — a
  * bare epoch-ms suffix, no internal hyphen); confirmed via an exhaustive
  * `git grep -nF '.backup-'` over tracked, non-`node_modules`, non-`.md`
- * files (38 hits, SMI-6532/SMI-6358). The `<base>.backup-YYYYMMDD-HHMMSS`
+ * files — see SMI-6532/SMI-6358 for the grep and its hit count, which is a
+ * fact about a moving tree, not this comment's to restate (CLAUDE.md's
+ * "durable rules instruct; they don't describe" — a prior version of this
+ * comment cited "38 hits," which had already rotted to 23 at the parent
+ * commit and 54 at the merge commit; the NEGATIVE this comment supports —
+ * no OTHER in-tree writer of this sibling shape — held throughout, only the
+ * count did not). The `<base>.backup-YYYYMMDD-HHMMSS`
  * shape this module used as its own example is DOCUMENTED, not live: this
  * module's original regex (`/\.backup-\d{8}-/`) was built around it, but no
  * in-tree product code writes it — it appears only in three test fixtures

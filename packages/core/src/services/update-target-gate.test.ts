@@ -23,6 +23,7 @@ import { describe, it, expect } from 'vitest'
 
 import { classifyUpdateTarget } from './update-target-gate.js'
 import { CLASSIFICATION_RULES, ROW_ORDER } from './update-target-gate.rules.js'
+import { UPDATE_TARGET_REASONS } from './update-target-reason.js'
 import type { ManifestEvidence } from './update-target.evidence.js'
 import type { ProbeOk, ProbeOutcome } from './update-target.probe.js'
 import type { PlannedWrite, UpdateTargetPlan } from './update-target-gate.types.js'
@@ -278,6 +279,17 @@ describe('classifyUpdateTarget — one fixture per reason', () => {
       files: [
         { rel: 'SKILL.md', sha256: 'skillhash1' },
         { rel: 'notes.md', sha256: null, entryType: 'symlink' },
+      ],
+    })
+    expect(classifyUpdateTarget(c.evidence, probe, c.plan)).toEqual({ reason: 'unsupported-entry' })
+  })
+
+  it("row 12: unsupported-entry (entryType 'other' — a FIFO/socket/device; §4.3's own text names a fourth shape neither symlink nor directory nor hardlink covers, SMI-6841 finding 6)", () => {
+    const c = clean()
+    const probe = mkProbeOk({
+      files: [
+        { rel: 'SKILL.md', sha256: 'skillhash1' },
+        { rel: 'notes.md', sha256: null, entryType: 'other' },
       ],
     })
     expect(classifyUpdateTarget(c.evidence, probe, c.plan)).toEqual({ reason: 'unsupported-entry' })
@@ -682,33 +694,42 @@ describe('CLASSIFICATION_RULES — table invariants', () => {
   })
 
   it('every UpdateTargetReason the table can produce is one of the 23 closed-set members', () => {
-    const seen = new Set<string>()
     // Exercise every rule directly with the clean context PLUS its own
     // triggering override isn't practical generically here without
-    // duplicating the fixtures above; instead assert statically that every
-    // literal `reason:` tag on a rule is drawn from the closed set by
-    // checking it's a member of `CLASSIFICATION_RULES`' own declared
-    // `reason` field, which TypeScript already constrains to
-    // `UpdateTargetReason` — this test exists so a `.reason` value cannot
-    // silently be a typo'd string outside that union at the JS level, which
-    // TS would catch at compile time but a `--transpile-only`/`ts-node`-less
-    // runtime path would not.
+    // duplicating the fixtures above; instead assert that every literal
+    // `reason:` tag on a rule is drawn from the closed set, by checking each
+    // one against UPDATE_TARGET_REASONS itself (SMI-6841 finding 4 — the
+    // prior version of this test only checked `seen.size > 0`, which a rule
+    // tagged `reason: 'bogus'` would also satisfy). TypeScript already
+    // constrains `ClassificationRule.reason` to `UpdateTargetReason` at
+    // compile time, which is exactly why this needs its own runtime check:
+    // a `.reason` value cannot silently be a typo'd string outside that
+    // union at the JS level, which a `--transpile-only`/`ts-node`-less
+    // runtime path (or an `as any` cast) would not catch on its own.
+    const closedSet = new Set<string>(UPDATE_TARGET_REASONS)
+    const seen = new Set<string>()
     for (const rule of CLASSIFICATION_RULES) seen.add(rule.reason)
     expect(seen.size).toBeGreaterThan(0)
+    for (const reason of seen) {
+      expect(closedSet.has(reason), `rule reason '${reason}' is not in UPDATE_TARGET_REASONS`).toBe(
+        true
+      )
+    }
   })
 })
 
 describe('classifyUpdateTarget — throws rather than defaulting if no rule matches', () => {
-  it('is unreachable through the public API (row 16 always matches), asserted via a corrupted context that still satisfies row 16', () => {
+  it('is unreachable through the public API (row 16 always matches) — the throw itself is pinned in update-target-gate.empty-table.test.ts', () => {
     // classifyUpdateTarget's own throw path is intentionally unreachable
-    // through the real CLASSIFICATION_RULES table (row 16 is unconditional),
-    // so there is nothing to construct a fixture for here that would not
-    // require monkey-patching the exported const array. That the throw
-    // exists and reads correctly is instead verified by the manual
-    // mutation pass in the implementation report (deleting row 16 and
-    // confirming a thrown error, then reverting) — see this module's
-    // fileoverview comment on why `eligible` is the only outcome requiring
-    // full table exhaustion.
+    // through the REAL CLASSIFICATION_RULES table (row 16 is unconditional),
+    // so there is nothing to construct a fixture for here that would prove
+    // the throw fires without emptying the table — which `vi.mock` can do,
+    // but only file-scoped (SMI-6841 finding 3: mocking the rules module
+    // empty here would break every other test below, all of which need the
+    // real table). That mutation, and the assertion it makes possible, live
+    // in the dedicated `update-target-gate.empty-table.test.ts` instead —
+    // see this module's fileoverview comment on why `eligible` is the only
+    // outcome requiring full table exhaustion.
     expect(classifyUpdateTarget(CLEAN_EVIDENCE, mkProbeOk(), CLEAN_PLAN).reason).toBe('eligible')
   })
 })

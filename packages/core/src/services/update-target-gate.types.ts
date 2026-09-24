@@ -17,12 +17,12 @@
  * says is worth removing even when erasure makes it harmless today. Both
  * siblings depend on this one, dependency-free module instead.
  *
- * `plan` IS THE THIRD SEAM (task brief). `evidence` (`ManifestEvidence`,
+ * `plan` IS THE THIRD SEAM (SMI-6532 §4.3). `evidence` (`ManifestEvidence`,
  * `update-target.evidence.ts`) and `probe` (`ProbeOutcome`,
  * `update-target.probe.ts`) are both already shipped, locked shapes this
  * step only CONSUMES. Several §4.3 rows need a fact neither shape carries —
  * not just rows 11-15 (fetch/scan outcome, the write set, baselines), which
- * is as far as the task brief's own one-line summary goes, but three more
+ * is as far as §4.3's own one-line summary goes, but three more
  * this step's own row-by-row derivation surfaced (see
  * `update-target-gate.rules.ts`'s fileoverview for the reasoning on each):
  *
@@ -49,7 +49,7 @@
  * `false`/`null`/`'ok'`/`[]` all mean "nothing known to block this target,"
  * never "positively confirmed clean." See this module's field-level comments.
  *
- * A FOURTH placeholder field joined them 2026-09-23 (review round 5, row 8's
+ * A FOURTH placeholder field joined them 2026-09-23 (SMI-6532, row 8's
  * fail-open finding): `verificationStale`. ADR-145 §3 says a stale
  * `verifiedAt` "degrades an entry to the row above it rather than making it
  * illegal" — i.e. row 8's `unverified`, not row 16's `eligible` — but
@@ -131,7 +131,7 @@ export interface UpdateTargetPlan {
    * key (not merely an empty object) is "no baseline recorded" for that
    * file — row 13. */
   readonly fileHashes: Readonly<Record<string, string>>
-  /** Row 8 (review round 5): true when a `provenance: 'registry'` entry's
+  /** Row 8 (SMI-6532 §4.3): true when a `provenance: 'registry'` entry's
    * `verifiedAt` was checked against a freshness window BY THE CALLER (this
    * function never computes one itself — see this interface's fileoverview)
    * and found stale. `undefined`/`false` = not flagged stale — row 8 then

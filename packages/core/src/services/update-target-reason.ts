@@ -36,7 +36,7 @@
  *
  * MEMBER COUNT: 23. See the "Member count reconciliation" note in this
  * module's test file for the full derivation and a discrepancy this file's
- * author flagged against the task brief's own pre-computed count of 22.
+ * author flagged against SMI-6532's own pre-computed count of 22.
  *
  * Defined as a runtime `const` tuple, with the type derived from it (rather
  * than a hand-written string-literal union), so the type and a real,
@@ -152,7 +152,8 @@ export type UpdateTargetGroup =
  * guarantee this module promises, and `backup-dir` IS an `UpdateTargetReason`
  * member (§4.3 row 2) — so it needs *some* value there.
  *
- * DECISION (documented per the task brief's explicit request): rather than
+ * DECISION (documented per SMI-6532's own requirement to flag a deviation
+ * rather than silently apply it): rather than
  * silently reusing one of the seven real groups (which would make a renderer
  * that naively iterates a group's reason list print backup dirs as though
  * they were orphaned/blocked/etc. targets — a wrong answer, not just an

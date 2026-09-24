@@ -5,14 +5,69 @@
  * @see docs/internal/implementation/update-safety-and-source-resolution.md §4.3
  *
  * "Fails if `classifyUpdateTarget` makes any call on a recording fs mock."
- * Both `fs` and `fs/promises` are mocked with a Proxy that records every
- * property access that turns out to be a function CALL (not merely an
- * access — `update-target-gate.rules.ts` imports `isBackupDir` from
- * `local-skill-scan.ts`, which itself imports `fs/promises` at module scope;
- * loading that binding is not calling it) and every mocked method throws, so
- * a test that merely checked "the array of recorded calls is empty" could
- * pass by accident if a call silently no-op'd rather than actually not
- * happening — throwing makes a real call impossible to miss.
+ * `fs`, `fs/promises`, `node:fs` and `node:fs/promises` are each mocked with
+ * a PLAIN OBJECT of `vi.fn()`s, one per fs method the classifier's real
+ * (non-type) import graph can actually reach — determined by reading the
+ * imports, not guessed (SMI-6841 finding 1): `update-target-gate.js` ->
+ * `update-target-gate.rules.js` -> `local-skill-scan.js`'s module-scope
+ * `import * as fs from 'fs/promises'`, whose only two calls on that binding
+ * are `fs.readdir` and `fs.readFile` (both inside `scanLocalSkills`, never
+ * inside `isBackupDir` — the only export of that module
+ * `update-target-gate.rules.ts` actually calls, which does no I/O of its
+ * own, being a plain regex test). Every other real import in the graph
+ * (`path`, `SkillParser.js` and `SkillParser.helpers.js`) touches no `fs`
+ * module at all — confirmed by reading each file's own import list, not
+ * assumed. Both properties throw when called, so a real call is impossible
+ * to miss even if it silently no-op'd instead of throwing.
+ *
+ * WHY A PLAIN OBJECT, NOT A PROXY (SMI-6841 finding 1 — the prior version of
+ * this file used `new Proxy({}, { get })`, whose recorder never actually
+ * fired). `new Proxy({}, { get })` has no OWN keys — `Object.keys()` on it
+ * returns `[]`, since the Proxy has no `ownKeys` trap of its own and falls
+ * back to the empty target — so it declares zero exports to Vitest's ESM
+ * mock interop, which refused every named-export access with its own `No
+ * "readdir" export is defined on the "fs/promises" mock` before the Proxy's
+ * `get` trap ever ran. Measured with controls: a direct call to the mocked
+ * `fs/promises` threw exactly that Vitest-native error, never this file's own
+ * diagnostic; a real `fs.readdir` call injected into `local-skill-scan.ts`
+ * left `recordedCalls` empty under the OLD Proxy mock; the same call with the
+ * mock removed entirely returned a real directory entry — so the mock WAS in
+ * force, the recorder simply never ran, and `expect(recordedCalls).toEqual([])`
+ * could never fail no matter what the code under test did. A plain object
+ * literal has real, enumerable own keys, so Vitest's export check passes and
+ * a genuine call reaches the `vi.fn()` below, which both records AND throws.
+ * This also removes the old Proxy's `then`-special-casing entirely: a plain
+ * object with no `then` property of its own is never mistaken by `await` for
+ * a thenable, unlike the Proxy this file used to return.
+ *
+ * T-G3's GUARANTEE, MEASURED RATHER THAN ASSUMED (SMI-6841 finding 2). Finding
+ * 2 hypothesized this mechanism — record, then throw — only fails the test
+ * when the throw goes UNCAUGHT out of
+ * `classifyUpdateTarget`, since `scanLocalSkills` (same module as
+ * `isBackupDir`, though not itself in this classifier's reachable graph) is
+ * ITSELF a catch-and-continue shape around both `fs.readdir` and
+ * `fs.readFile` — a realistic future shape for this gap, not a purely
+ * theoretical one, if a rule ever called into it instead of the pure
+ * `isBackupDir`. Verified directly (both halves reverted after confirming),
+ * once finding 1's Proxy -> plain-object fix was in place: an uncaught
+ * `fs.readdir(...)` call added to `isBackupDir` makes this file's first `it`
+ * FAIL, as expected; the identical call wrapped in its own `try {} catch {}`
+ * ALSO makes it FAIL — not pass, contrary to the hypothesis — because
+ * `recordedCalls.push` runs (and is asserted against directly, not inferred
+ * from whether the call "succeeded") BEFORE the throw, and a local
+ * `try`/`catch` inside the code under test has no way to reach back into this
+ * file's module-scope array and undo that push. So finding 1's fix also
+ * closes finding 2's gap for every fs method this mock actually declares
+ * (`REACHABLE_FS_METHODS`): catching the exception downstream no longer
+ * matters, because detection was never about the throw reaching this file —
+ * the throw's only remaining job is to make an UNLISTED reachable-surface
+ * change loud rather than silent. The gap that genuinely remains, and is
+ * NOT closed by this: a call to an fs method THIS FILE doesn't name (outside
+ * `REACHABLE_FS_METHODS`) — e.g. `fs.stat` — if caught downstream, leaves no
+ * trace in `recordedCalls` and produces no uncaught error either (measured,
+ * reverted the same way); this is exactly why `REACHABLE_FS_METHODS` is
+ * derived by reading the real import graph rather than guessed narrow, and
+ * why it must be revisited if that graph ever grows.
  */
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 
@@ -22,37 +77,26 @@ import type { UpdateTargetPlan } from './update-target-gate.types.js'
 
 const recordedCalls: string[] = []
 
-function recordingModule(moduleName: string) {
-  return new Proxy(
-    {},
-    {
-      get(_target, prop) {
-        if (typeof prop !== 'string') return undefined
-        // `then` is special: Vite's SSR module loader (and the native
-        // dynamic-`import()` machinery this file's `await import(...)`
-        // calls go through) `await`s a freshly-loaded module namespace
-        // object as part of resolving it — and per the Promise-resolution
-        // spec, `await x` treats ANY object with a callable `.then` as a
-        // thenable and CALLS that `.then`, regardless of whether the
-        // importing code ever does. A bare `import * as fs from
-        // 'fs/promises'` (never calling anything on it, which is all
-        // `local-skill-scan.ts` does at module scope) would otherwise
-        // register as a false-positive "call" here. Returning `undefined`
-        // makes this Proxy correctly look like a non-thenable plain object
-        // to `await`, so only a REAL call to a real fs method — the thing
-        // T-G3 actually cares about — is ever recorded.
-        if (prop === 'then') return undefined
-        return (...args: unknown[]) => {
-          recordedCalls.push(`${moduleName}.${prop}(${args.map(String).join(', ')})`)
-          throw new Error(
-            `classifyUpdateTarget must be pure — ${moduleName}.${prop}() was called, which ` +
-              'means this rule table (or something it imports) did I/O instead of reading ' +
-              'already-resolved evidence/probe/plan data (T-G3)'
-          )
-        }
-      },
-    }
-  )
+/** The exact fs surface `classifyUpdateTarget`'s real import graph can
+ * reach — see this module's fileoverview for the derivation. Naming every
+ * method explicitly (rather than proxying arbitrary property names) is what
+ * makes Vitest's own ESM export-name check pass, which is the actual fix for
+ * SMI-6841 finding 1. */
+const REACHABLE_FS_METHODS = ['readdir', 'readFile'] as const
+
+function recordingModule(moduleName: string): Record<string, ReturnType<typeof vi.fn>> {
+  const mod: Record<string, ReturnType<typeof vi.fn>> = {}
+  for (const method of REACHABLE_FS_METHODS) {
+    mod[method] = vi.fn((...args: unknown[]) => {
+      recordedCalls.push(`${moduleName}.${method}(${args.map(String).join(', ')})`)
+      throw new Error(
+        `classifyUpdateTarget must be pure — ${moduleName}.${method}() was called, which ` +
+          'means this rule table (or something it imports) did I/O instead of reading ' +
+          'already-resolved evidence/probe/plan data (T-G3)'
+      )
+    })
+  }
+  return mod
 }
 
 vi.mock('fs/promises', () => recordingModule('fs/promises'))
