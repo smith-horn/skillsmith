@@ -60,7 +60,19 @@ async function makeFsMock(importOriginal: () => Promise<typeof import('fs/promis
 let root = ''
 
 beforeEach(() => {
-  root = fs.mkdtempSync(path.join(os.tmpdir(), 'git-ancestor-'))
+  // SMI-6532 review round 4, MINOR 3: canonicalize the temp root ONCE, here,
+  // rather than leaving it as `os.tmpdir()`'s raw string. On macOS,
+  // `os.tmpdir()` returns a path under `/var/...`, itself a symlink to
+  // `/private/var/...` — so an un-canonicalized `root` and a `realpath`'d
+  // value derived from a path under it are different strings for the SAME
+  // directory. This module is specifically about realpath comparisons, so a
+  // fixture that ignores realpath is especially the wrong kind of wrong:
+  // several assertions below compare a raw `root`-derived path against
+  // `probeGitAncestor`'s own `path` result, which is always realpath'd, and
+  // those two fail to match on a macOS HOST (never inside the Linux dev
+  // container, where `/tmp` carries no such symlink) — 6 of the 14
+  // pre-existing tests, measured.
+  root = fs.realpathSync(fs.mkdtempSync(path.join(os.tmpdir(), 'git-ancestor-')))
 })
 
 afterEach(() => {
@@ -232,6 +244,66 @@ describe('probeGitAncestor — every exit, with a control per state', () => {
       reason: 'stat-error',
       error: { path: ancestorA, errno: 'EACCES' },
     })
+  })
+})
+
+// SMI-6532 review round 4, MAJOR 1: `hasGitEntryAt` uses `lstat`, not `stat`,
+// specifically so a `.git` FILE (a worktree pointer, e.g.
+// `gitdir: ../.git/worktrees/<name>`) and a `.git` DIRECTORY both count as
+// present, and a `.git` SYMLINK is never silently resolved away — that intent
+// is stated in `hasGitEntryAt`'s own doc comment (this module,
+// update-target.probe.git-ancestor.ts:125-129) but neither half was pinned by
+// a test: all 14 pre-existing tests in this file build `.git` with
+// `fs.mkdirSync` only, so `lstat`'s own type-agnostic behavior was asserted
+// nowhere. Measured: both of the mutations below survived the pre-existing
+// 53/53 tests in this file's own suite.
+//
+// DECISION — what the SYMLINK case does: `hasGitEntryAt` calls plain `lstat`
+// and treats ANY successful `lstat` on `<dir>/.git` as `'found'`, regardless
+// of the entry's type. `lstat` never follows the final symlink component, so
+// it succeeds for a `.git` symlink whether the symlink's TARGET exists or is
+// dangling — the walk reports `found` in both cases, exactly as it does for a
+// `.git` directory or a `.git` worktree-pointer file. "Never silently
+// resolved away" means this: the walk does not read through the symlink to
+// decide presence (an `fs.stat` would throw ENOENT on a dangling `.git`
+// symlink and the walk would then read the entry as `'absent'` — a real git
+// working tree misreported as none); it treats the symlink's own existence,
+// at that path, as sufficient, the same as every other `.git` entry shape.
+describe('hasGitEntryAt — non-directory `.git` entries (MAJOR 1, review round 4)', () => {
+  it("found: a `.git` FILE (worktree pointer) at the target — the same shape A0's own target-guard suite fixtures", async () => {
+    const dir = path.join(root, 'worktree-pointer-skill')
+    fs.mkdirSync(dir, { recursive: true })
+    fs.writeFileSync(path.join(dir, '.git'), 'gitdir: ../.git/worktrees/my-skill\n')
+
+    expect(await probeGitAncestor(dir, root)).toEqual({ kind: 'found', path: dir })
+  })
+
+  it('found: a `.git` FILE (worktree pointer) at an ancestor, not the target itself', async () => {
+    const clone = path.join(root, 'worktree-pointer-clone')
+    fs.mkdirSync(clone, { recursive: true })
+    fs.writeFileSync(path.join(clone, '.git'), 'gitdir: ../.git/worktrees/my-skill\n')
+    const dir = path.join(clone, 'docs', 'pkg')
+    fs.mkdirSync(dir, { recursive: true })
+
+    expect(await probeGitAncestor(dir, root)).toEqual({ kind: 'found', path: clone })
+  })
+
+  it('found: a `.git` SYMLINK (valid target) at the target — never resolved through to decide presence', async () => {
+    const dir = path.join(root, 'git-symlink-skill')
+    const realGitDir = path.join(root, 'real-dot-git-elsewhere')
+    fs.mkdirSync(dir, { recursive: true })
+    fs.mkdirSync(realGitDir, { recursive: true })
+    fs.symlinkSync(realGitDir, path.join(dir, '.git'), 'dir')
+
+    expect(await probeGitAncestor(dir, root)).toEqual({ kind: 'found', path: dir })
+  })
+
+  it('found: a `.git` SYMLINK whose target is DANGLING is still found — proves presence is decided by lstat on the entry itself, not by reading through it', async () => {
+    const dir = path.join(root, 'git-dangling-symlink-skill')
+    fs.mkdirSync(dir, { recursive: true })
+    fs.symlinkSync(path.join(root, 'does-not-exist-anywhere'), path.join(dir, '.git'), 'dir')
+
+    expect(await probeGitAncestor(dir, root)).toEqual({ kind: 'found', path: dir })
   })
 })
 

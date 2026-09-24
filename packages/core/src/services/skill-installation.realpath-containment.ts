@@ -1,8 +1,18 @@
 /**
  * @fileoverview Shared realpath-containment predicate.
  * @module @skillsmith/core/services/skill-installation.realpath-containment
- * @see SMI-6532 (round following A0.6) — extracted so this comparison is
- *   written and tested exactly once.
+ * @see SMI-6532 (round following A0.6) — extracted so the realpath-
+ *   containment-for-`isUsableDirectory` rule specifically is written and
+ *   tested once, here, rather than hand-copied at its one call site. NARROWER
+ *   THAN IT SOUNDS: the underlying `x === r || x.startsWith(r + path.sep)`
+ *   comparison SHAPE is a repo-wide idiom, not unique to this module or this
+ *   rule — it appears independently, for different subjects, in at least a
+ *   dozen other spots across `packages/core/src` (e.g. the lexical AND
+ *   realpath containment checks `skill-installation.target-guard.ts`'s own
+ *   rule N5 hand-computes inline, and the write-set containment check in
+ *   `update-target.probe.ts`). This module consolidates only the ONE rule
+ *   named above; it does not claim — and was never meant to claim — that the
+ *   general shape has exactly one occurrence in the codebase.
  *
  * `skill-installation.target-guard.ts`'s rule (c) (`isUsableDirectory`) is a
  * CONJUNCTION: a symlinked install target is usable only when it follows to a

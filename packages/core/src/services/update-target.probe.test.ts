@@ -100,7 +100,18 @@ function mkSkill(rel: string, skillMd = 'body'): string {
 }
 
 beforeEach(() => {
-  root = fs.mkdtempSync(path.join(os.tmpdir(), 'probe-'))
+  // SMI-6532 review round 4, MINOR 3: canonicalize the temp root ONCE, here,
+  // rather than leaving it as `os.tmpdir()`'s raw string. On macOS,
+  // `os.tmpdir()` returns a path under `/var/...`, itself a symlink to
+  // `/private/var/...` — so an un-canonicalized `root` and a `realpath`'d
+  // value derived from a path under it are different strings for the SAME
+  // directory. This module is specifically about realpath comparisons, so a
+  // fixture that ignores realpath is especially the wrong kind of wrong:
+  // several assertions below compare a raw `root`-derived path against a
+  // `gitAncestor.path` this module resolved via `realpath`, and those two
+  // fail to match on a macOS HOST (never inside the Linux dev container,
+  // where `/tmp` carries no such symlink) — 3 tests, measured.
+  root = fs.realpathSync(fs.mkdtempSync(path.join(os.tmpdir(), 'probe-')))
 })
 
 afterEach(() => {

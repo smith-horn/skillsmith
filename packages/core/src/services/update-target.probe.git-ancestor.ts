@@ -110,14 +110,16 @@ export type ProbeGitAncestor =
   | { kind: 'undetermined'; reason: 'escapes-root' }
   | { kind: 'undetermined'; reason: 'depth-cap' }
 
-/** Superset of {@link ProbeGitAncestor}, returned only by this module's own
- * internals — adds the ONE exit `probeUpdateTarget` (`update-target.probe.ts`)
- * intercepts and converts into the probe's own `probe-failed` outcome rather
- * than ever placing on `ok.gitAncestor`: a real `lstat` failure during the
- * walk is a METADATA error (`update-target.probe.ts`'s own fileoverview,
- * "METADATA vs READ/HASH ERRORS"), the same bucket every other directory-
- * level `lstat` in this probe already falls into — not a new, different kind
- * of "undetermined." */
+/** Superset of {@link ProbeGitAncestor} — this is the return type of the
+ * EXPORTED {@link probeGitAncestor} itself, not just of this module's private
+ * `walkGitAncestor` helper; `probeUpdateTarget` (`update-target.probe.ts`)
+ * calls `probeGitAncestor` and intercepts the ONE extra exit this superset
+ * adds (`stat-error`), converting it to the probe's own `probe-failed`
+ * outcome rather than ever placing it on `ok.gitAncestor`: a real `lstat`
+ * failure during the walk is a METADATA error (`update-target.probe.ts`'s own
+ * fileoverview, "METADATA vs READ/HASH ERRORS"), the same bucket every other
+ * directory-level `lstat` in this probe already falls into — not a new,
+ * different kind of "undetermined." */
 export type GitAncestorWalkOutcome =
   | ProbeGitAncestor
   | { kind: 'undetermined'; reason: 'stat-error'; error: ProbeError }
@@ -140,19 +142,49 @@ async function hasGitEntryAt(dir: string): Promise<'found' | 'absent' | { error:
 
 /**
  * Walk `realDir` up to `realRoot` (inclusive) — both already realpath-
- * resolved by {@link probeGitAncestor}. This function does no resolution of
- * its own and follows no symlinks: a canonical (realpath'd) string's own
- * ancestors, taken by plain `path.dirname`, are themselves canonical, so a
- * lexical climb over an already-real path IS the real-path climb — there is
- * no second, separate "realpath pass" the way `hasGitAncestorBetween` has
- * one, because there is no first, lexical pass for it to differ from.
+ * resolved by {@link probeGitAncestor}, ONCE, before this function is ever
+ * called. This function does no resolution of its own: a canonical
+ * (realpath'd) STRING's own ancestors, taken by plain `path.dirname`, are
+ * themselves canonical strings, so a lexical climb over an already-real
+ * string IS the real-path climb over those strings — there is no second,
+ * separate "realpath pass" the way `hasGitAncestorBetween` has one, because
+ * there is no first, lexical pass for it to differ from.
+ *
+ * THAT GUARANTEE IS ABOUT THE STRING, AT THE INSTANT IT WAS RESOLVED — NOT AN
+ * ONGOING GUARANTEE ABOUT THE LIVE FILESYSTEM. This is a TOCTOU window,
+ * accepted rather than fixed. `realDir`/`realRoot` are canonical only as of
+ * the moment {@link probeGitAncestor} resolved them; every iteration below
+ * still issues a fresh `lstat(path.join(current, '.git'))` (inside
+ * {@link hasGitEntryAt}), and the kernel resolves `current`'s own
+ * intermediate path COMPONENTS against the filesystem as it exists at THAT
+ * later moment — `lstat` only special-cases the FINAL path component
+ * (`.git` itself), never the ones above it. So if an ancestor that was a real
+ * directory when `probeGitAncestor` resolved `realDir` is replaced by a
+ * symlink before the walk reaches it, the entry a later iteration actually
+ * inspects can sit somewhere other than what the canonical string named at
+ * resolution time (measured: resolve `skills/a/b`, replace `skills/a` with a
+ * symlink to `outside/`, then `lstat(dirname(canonical) + '/.git')` finds a
+ * `.git` whose real location is `outside/.git` — reported at an in-bounds-
+ * looking `current`).
+ *
+ * NOT A REGRESSION (`hasGitAncestorBetween` has the identical window) and NOT
+ * "FIXED" HERE ON PURPOSE: a TOCTOU race against a live filesystem cannot be
+ * closed by another read — any additional check just relocates the same race
+ * one syscall later. It is accepted because of its DIRECTION: this window can
+ * only produce a SPURIOUS `found` for a `.git` that isn't really where it
+ * appears to be, which makes the caller refuse (fail closed, conservative) —
+ * never the reverse, an in-root `.git` escaping detection or an out-of-root
+ * target being silently accepted. {@link probeGitAncestor}'s own
+ * `escapes-root` containment check is a snapshot assertion for the identical
+ * reason and carries the identical scoping.
  *
  * Bounded by `realRoot`: {@link probeGitAncestor} has already proven
- * `realDir` is `realRoot` or a descendant of it before this ever runs, so
- * `current === realRoot` is always reached before the filesystem root — the
- * `parent === current` branch below is therefore unreachable given that
- * precondition, and exists only as a defensive terminator so a future caller
- * that reaches this function some other way can never loop forever.
+ * `realDir` is `realRoot` or a descendant of it, AS OF THAT SNAPSHOT, before
+ * this ever runs, so `current === realRoot` is always reached before the
+ * filesystem root — the `parent === current` branch below is therefore
+ * unreachable given that precondition, and exists only as a defensive
+ * terminator so a future caller that reaches this function some other way can
+ * never loop forever.
  */
 async function walkGitAncestor(realDir: string, realRoot: string): Promise<GitAncestorWalkOutcome> {
   let current = realDir
