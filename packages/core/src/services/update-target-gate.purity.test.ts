@@ -148,7 +148,18 @@ function wrapNamespace(ns: Record<string, unknown>, moduleName: string): Record<
       continue
     }
     out[name] = vi.fn((...args: unknown[]) => {
-      recordedCalls.push(`${moduleName}.${name}(${args.map(String).join(', ')})`)
+      // Render defensively: `String(Object.create(null))` THROWS (measured
+      // in-container), and the template literal is evaluated before `push`
+      // completes — so an argument that cannot be stringified would make this
+      // spy throw WITHOUT recording, losing detection for that call. The
+      // diagnostic degrades to an arity instead of taking the recorder down.
+      let rendered: string
+      try {
+        rendered = args.map(String).join(', ')
+      } catch {
+        rendered = `<${args.length} unrenderable argument(s)>`
+      }
+      recordedCalls.push(`${moduleName}.${name}(${rendered})`)
       throw new Error(
         `classifyUpdateTarget must be pure — ${moduleName}.${name}() was called, which ` +
           'means this rule table (or something it imports) did I/O instead of reading ' +
@@ -351,45 +362,87 @@ describe('the fs recorder — known-positive control (T-G3)', () => {
   // `node:` registrations (see the file header), so `fs` and `node:fs` hand
   // back the same object. Kept so the day that stops being true, it shows up
   // here rather than as a silently unmocked import.
+  // The walk starts from the CANONICAL (`node:`-prefixed) name, not from the
+  // specifier, so its labels line up with the ones the mock records — the mock
+  // was built under the canonical name whichever specifier reached it.
+  const canonicalNameOf = (specifier: string): string =>
+    specifier.startsWith('node:') ? specifier : `node:${specifier}`
+
+  const FS_NAMESPACES = ['', '.default', '.default.promises', '.promises']
+  const PROMISES_NAMESPACES = ['', '.default']
+
   const MOCKED_MODULES = [
-    ['node:fs', () => import('node:fs')],
-    ['node:fs/promises', () => import('node:fs/promises')],
-    ['fs', () => import('fs')],
-    ['fs/promises', () => import('fs/promises')],
+    ['node:fs', () => import('node:fs'), FS_NAMESPACES],
+    ['node:fs/promises', () => import('node:fs/promises'), PROMISES_NAMESPACES],
+    ['fs', () => import('fs'), FS_NAMESPACES],
+    ['fs/promises', () => import('fs/promises'), PROMISES_NAMESPACES],
   ] as const
 
+  // Every real call the code under test can make carries arguments; the walk
+  // used to make none. A spy guarded on `args.length > 0` therefore passed
+  // every assertion while returning `undefined` for every genuine fs call —
+  // measured, 7 passed. So each spy is exercised across ARITY CLASSES, not
+  // just once.
+  //
+  // Named residual, because this cannot be exhaustive: a defect keyed on
+  // argument CONTENT rather than arity (say, a guard on a specific path
+  // string) would still survive. That is not covered here and is not claimed
+  // to be. The null-prototype case is included because `String()` throws on
+  // it, which previously took the recorder down before it could record.
+  const ARGUMENT_SHAPES: readonly (readonly unknown[])[] = [
+    [],
+    ['/probe-path'],
+    ['/probe-path', 2, { nested: true }],
+    [Object.create(null) as unknown],
+  ]
+
   it.each(MOCKED_MODULES)(
-    'every function reachable in the %s mock records AND throws when called',
-    async (specifier, load) => {
-      const notMocked: string[] = []
-      const neverThrew: string[] = []
-      const neverRecorded: string[] = []
+    'every function reachable in the %s mock records AND throws, at every arity',
+    async (specifier, load, expectedSuffixes) => {
+      const canonical = canonicalNameOf(specifier)
+      const failures: string[] = []
+      const visitedPaths: string[] = []
       let rootFunctions = 0
-      let called = 0
+      let calls = 0
       const visited = new WeakSet<object>()
 
       const walk = (obj: Record<string, unknown>, path: string, depth: number): void => {
+        // Record only namespaces that actually carry functions. `constants` is
+        // walked too but holds none, so including it would make the expected
+        // set track Node's data exports rather than the mock's shape.
+        if (Object.values(obj).some((v) => typeof v === 'function')) visitedPaths.push(path)
         for (const [key, value] of Object.entries(obj)) {
           const label = `${path}.${key}`
           if (typeof value === 'function') {
             if (depth === 0) rootFunctions += 1
             // Never CALL something that is not a spy — that would be real I/O
-            // against the real module. Record it and move on; the assertion
-            // below fails on it either way.
+            // against the real module.
             if (!vi.isMockFunction(value)) {
-              notMocked.push(label)
+              failures.push(`${label}: not a mock`)
               continue
             }
-            called += 1
-            const recordedBefore = recordedCalls.length
-            let threw = false
-            try {
-              ;(value as unknown as () => unknown)()
-            } catch {
-              threw = true
+            for (const args of ARGUMENT_SHAPES) {
+              calls += 1
+              const before = recordedCalls.length
+              let threw = false
+              try {
+                ;(value as unknown as (...a: readonly unknown[]) => unknown)(...args)
+              } catch {
+                threw = true
+              }
+              const added = recordedCalls.slice(before)
+              if (!threw) failures.push(`${label}[${args.length} args]: did not throw`)
+              if (added.length !== 1) {
+                failures.push(`${label}[${args.length} args]: recorded ${added.length} entries`)
+                continue
+              }
+              // Check WHAT was recorded, not merely that the count moved. A
+              // spy recording under someone else's label still grows the
+              // array, and a length check alone reads that as success.
+              if (!added[0].startsWith(`${label}(`)) {
+                failures.push(`${label}[${args.length} args]: recorded as ${added[0]}`)
+              }
             }
-            if (!threw) neverThrew.push(label)
-            if (recordedCalls.length === recordedBefore) neverRecorded.push(label)
             continue
           }
           // Recurse into nested namespaces only. Functions are not walked:
@@ -404,25 +457,26 @@ describe('the fs recorder — known-positive control (T-G3)', () => {
           }
         }
       }
-      walk((await load()) as unknown as Record<string, unknown>, specifier, 0)
+      walk((await load()) as unknown as Record<string, unknown>, canonical, 0)
 
-      expect({ notMocked, neverThrew, neverRecorded }).toEqual({
-        notMocked: [],
-        neverThrew: [],
-        neverRecorded: [],
-      })
-      // Two denominators, because an empty finding list is otherwise both
-      // "everything passed" and "nothing was examined".
+      expect(failures).toEqual([])
+
+      // Denominators, because an empty failure list is otherwise both
+      // "everything passed" and "nothing was examined". Three dimensions,
+      // because this control has now been caught short on two of them:
       //
-      // They measure different things and a single total measures neither:
-      // a walk that skipped the entire top level and saw only the nested
-      // namespaces still sums to a large number. `rootFunctions` pins the top
-      // level specifically; `called > rootFunctions` pins that the nested
-      // namespaces were reached too. Floors, not exact counts — the real
-      // figures are Node-version-dependent, and this file runs in the
-      // container, not on the host.
+      // 1. WHICH NAMESPACES. An exact set, not a count. A single `continue`
+      //    in the walk silently dropped the whole `promises` namespace with
+      //    every other assertion green (measured) — a count could not see it,
+      //    because `default` alone kept the totals large.
+      // 2. HOW MANY at the top level, which a nested-only walk would miss.
+      // 3. HOW MANY calls, pinning that each function was exercised at every
+      //    arity rather than once.
+      expect([...visitedPaths].sort()).toEqual(
+        expectedSuffixes.map((s) => `${canonical}${s}`).sort()
+      )
       expect(rootFunctions).toBeGreaterThan(25)
-      expect(called).toBeGreaterThan(rootFunctions)
+      expect(calls).toBeGreaterThan(rootFunctions * ARGUMENT_SHAPES.length)
     }
   )
 
