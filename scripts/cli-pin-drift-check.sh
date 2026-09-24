@@ -42,9 +42,20 @@
 # Usage:
 #   ./scripts/cli-pin-drift-check.sh
 #
-# Exit code: always 0 (best-effort — matches the `|| true` calling convention
-#            already used for retrieval-liveness-check.sh; internal failures
-#            are logged, never propagated as a hard fail).
+# Exit code: 0 for every soft-fail condition (best-effort — matches the
+#            `|| true` calling convention already used for
+#            retrieval-liveness-check.sh; internal failures are logged,
+#            never propagated as a hard fail) -- EXCEPT one: a missing or
+#            non-semver RUFLO_CLI_PIN in scripts/mcp-ruflo-launcher.sh
+#            (SMI-6744 ADR-170 § 7) exits 1. That pin lives in a committed
+#            file this script can always read; its absence is drift, not an
+#            environment condition to shrug off, and this is the one path
+#            through this script where "no pin found, skipping" is wrong.
+#            That exit 1 happens only at the very end, AFTER the
+#            supabase/wrangler checks below have run and AFTER the finding
+#            has been routed through page_tool like any other drift finding
+#            (SMI-6744 M-11 — see the comment at the actual check, below,
+#            for why an earlier version of this exited immediately instead).
 
 set -uo pipefail
 
@@ -354,14 +365,58 @@ read_json_field() {
   ' "$1" "$2" 2>/dev/null || true
 }
 
-RUFLO_PIN_ARG="$(read_json_field "$REPO_ROOT/.mcp.json" "mcpServers.ruflo.args.0")"
-RUFLO_PIN="${RUFLO_PIN_ARG#ruflo@}"
-[ "$RUFLO_PIN" = "$RUFLO_PIN_ARG" ] && RUFLO_PIN="" # no "ruflo@" prefix present — not a version pin
+# SMI-6744 ADR-170 § 7: the ruflo pin moved out of .mcp.json's npx entry
+# (retired — ruflo is now scripts/mcp-ruflo-launcher.sh, which docker execs
+# into an image-baked tree) into one RUFLO_CLI_PIN=<semver> assignment in
+# that launcher script. Read with an anchored, semver-validating regex —
+# the same shape scripts/audit-cli-pin-drift-helpers.mjs Check 59 reads.
+#
+# This one pin is NOT "no pin found, skipping" when absent or malformed —
+# unlike every other soft-fail path in this script (see the header's
+# "Exit code: always 0" note), an absent or non-semver RUFLO_CLI_PIN in a
+# COMMITTED file is itself the drift this script exists to catch, not an
+# environment/network condition to shrug off. Supabase/wrangler below keep
+# the original soft-fail behavior unchanged.
+#
+# SMI-6744 M-11 (governance review, 2026-09-23): this branch used to `exit 1`
+# immediately, BEFORE SUPABASE_PIN/WRANGLER_PIN were even read and before any
+# check_tool/notify call ran — one missing/malformed ruflo pin silently
+# disabled the supabase and wrangler drift checks too, and the script's only
+# caller (scripts/eval-baseline-cron.sh) wraps the call in `|| true`, so that
+# exit 1 was swallowed by the caller with no other effect. Fixed: set a flag,
+# let every other check run, route this finding through the SAME page_tool
+# notify path every other drift finding uses (so it reaches the deduped
+# `cli-pin-drift` GitHub issue — that is the surface something downstream
+# actually consumes, not this script's own log file), and exit 1 only at the
+# very end, once nothing else has been skipped because of it.
+RUFLO_PIN_MISSING=0
+RUFLO_LAUNCHER="$REPO_ROOT/scripts/mcp-ruflo-launcher.sh"
+RUFLO_PIN=""
+if [ -f "$RUFLO_LAUNCHER" ]; then
+  RUFLO_PIN="$(grep -E '^RUFLO_CLI_PIN=[0-9]+\.[0-9]+\.[0-9]+$' "$RUFLO_LAUNCHER" 2>/dev/null | head -1 | sed 's/^RUFLO_CLI_PIN=//')"
+fi
+if [ -z "$RUFLO_PIN" ]; then
+  RUFLO_PIN_MISSING=1
+  log "[cli-pin-drift] ruflo: RUFLO_CLI_PIN not found or not valid semver in $RUFLO_LAUNCHER"
+  echo "[cli-pin-drift] ruflo: RUFLO_CLI_PIN not found or not valid semver in $RUFLO_LAUNCHER" >&2
+  page_tool "ruflo" "(missing)" "N/A -- RUFLO_CLI_PIN not found or not valid semver in $RUFLO_LAUNCHER" 0
+fi
+
 SUPABASE_PIN="$(read_json_field "$REPO_ROOT/package.json" "devDependencies.supabase")"
 WRANGLER_PIN="$(read_json_field "$REPO_ROOT/packages/website/package.json" "devDependencies.wrangler")"
 
-check_tool "ruflo" "$RUFLO_PIN"
+# Only run the ruflo version-drift check when a valid pin was actually read —
+# check_tool would otherwise just log its own generic "no pin found,
+# skipping" for the same tool page_tool just paged above, which is harmless
+# but redundant. supabase/wrangler always run regardless (that is the fix).
+if [ "$RUFLO_PIN_MISSING" -eq 0 ]; then
+  check_tool "ruflo" "$RUFLO_PIN"
+fi
 check_tool "supabase" "$SUPABASE_PIN"
 check_tool "wrangler" "$WRANGLER_PIN"
+
+if [ "$RUFLO_PIN_MISSING" -eq 1 ]; then
+  exit 1
+fi
 
 exit 0

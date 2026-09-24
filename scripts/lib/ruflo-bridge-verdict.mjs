@@ -53,17 +53,29 @@ import { isMainModule } from './is-main-module.mjs'
 
 export const DERIVED_FROM = Object.freeze({
   package: '@claude-flow/cli',
-  version: '3.14.2',
-  // `version` is @claude-flow/cli's, not the wrapper's. `.mcp.json` pins the
-  // wrapper (`ruflo@3.14.2`) and the wrapper's dependency range is open
-  // (`>=3.0.0-alpha.1`), so the two numbers coincide today by accident: the
-  // repo's own ruflo@3.5.42 resolves cli 3.5.80, and a fresh install of
-  // ruflo@3.14.2 resolved cli 3.42.4 on 2026-09-18. Bumping the wrapper pin
-  // does not re-derive this predicate; only re-reading the cli source does.
-  servedBy: 'npx ruflo@3.14.2 (.mcp.json)',
-  // The same six source literals were re-read, unchanged, at this later
-  // version (the one `npm install ruflo@3.14.2` resolves to on 2026-09-18).
-  alsoVerifiedAt: Object.freeze(['3.42.4']),
+  // SMI-6744 A1.4: the launcher-pinned tree actually served in prod
+  // (RUFLO_CLI_PIN in scripts/mcp-ruflo-launcher.sh) is the primary version
+  // here -- the earlier primary (3.14.2, Wave 0's install-time resolution)
+  // moved to alsoVerifiedAt below, since it was independently re-read there
+  // and never re-promoted after the ADR-170 launcher cutover.
+  version: '3.42.4',
+  // `version` is @claude-flow/cli's, not the wrapper's. Historically this
+  // coincided with the `.mcp.json` npx wrapper pin (`ruflo@3.14.2`) by
+  // accident, since the wrapper's dependency range was open
+  // (`>=3.0.0-alpha.1`): the repo's own ruflo@3.5.42 resolved cli 3.5.80,
+  // and a fresh install of ruflo@3.14.2 resolved cli 3.42.4 on 2026-09-18.
+  // SMI-6744 ADR-170 retires that npx entry: ruflo is now served by
+  // scripts/mcp-ruflo-launcher.sh, which docker execs into the `ruflo`
+  // Compose service (skillsmith-ruflo-1), itself running a lockfile-pinned
+  // @claude-flow/cli@3.42.4 baked into the image at /opt/ruflo-seed
+  // (ADR-170 § 1, § 7 — RUFLO_CLI_PIN is the one pin literal). Bumping
+  // that pin does not re-derive this predicate; only re-reading the cli
+  // source does.
+  servedBy: 'scripts/mcp-ruflo-launcher.sh via the ruflo Compose service (skillsmith-ruflo-1)',
+  // The same six source literals were re-read, unchanged, at this earlier
+  // version (the one `npm install ruflo@3.14.2` resolved to on
+  // 2026-09-18, before the ADR-170 launcher cutover made 3.42.4 primary).
+  alsoVerifiedAt: Object.freeze(['3.14.2']),
   files: Object.freeze([
     'dist/src/mcp-tools/memory-tools.js',
     'dist/src/memory/memory-initializer.js',

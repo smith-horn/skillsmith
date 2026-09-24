@@ -260,6 +260,99 @@ RUN node scripts/lib/linux-optional-packages.mjs | sort > /tmp/tier-b-predicted.
     && rm -f /tmp/tier-b-predicted.txt /tmp/tier-b-actual.txt /tmp/tier-b-unpredicted.txt
 
 # -----------------------------------------------------------------------------
+# Stage 2b: Ruflo seed - SMI-6744 / ADR-170, a harness-owned, lockfile-pinned
+# @claude-flow/cli tree, isolated from the root install
+# -----------------------------------------------------------------------------
+# Deliberately `FROM base`, NOT `FROM deps`: this is not the repo's own
+# dependency tree (root `package.json` pins the frozen, unrelated
+# `"ruflo": "3.5.42"` devDependency, SMI-5399) and must not inherit or share
+# a layer with it, since Wave 4 (A4.4) removes `ruflo` from the host tree
+# entirely while this seed keeps serving (ADR-170 Decision, "C1 is rejected").
+# The seed is its own tiny private package at scripts/ruflo-seed/, whose only
+# dependency is the exact pin "@claude-flow/cli": "3.42.4" (ADR-170 § 1's
+# offline-load table — the only chain measured to load onnx offline). No
+# `ruflo` wrapper package ships (§ 1 rejects it: it only adds a resolution
+# walk over `cli.js`, for no gain; this stage's entrypoint is `cli.js`
+# directly, per Checkpoint 2 decision 2.9).
+FROM base AS ruflo
+
+WORKDIR /opt/ruflo-seed
+
+# The committed lockfile (generated in a node:22-slim container, never in this
+# repo) is what makes two builds resolve one tree; package.json's header says why.
+COPY scripts/ruflo-seed/package.json scripts/ruflo-seed/package-lock.json ./
+
+# Natives (better-sqlite3, onnxruntime-node) build ONCE here with network; the
+# root .npmrc's ignore-scripts=true does not reach this tree, stated explicitly.
+# ADR-170 § 1: read-only image content, nothing rebuilds it at run time.
+RUN npm ci --ignore-scripts=false
+
+# ADR-170 § 1's build assertion, narrowed on measurement (2026-09-23, build step 4/7):
+# the A0.8 H1 defect class is files left zero-byte AND mode 0200 (owner-unreadable) by an
+# install onto a bind mount. A clean npm ci legitimately holds 29 zero-byte files (hono
+# type stubs, tar-fs test fixtures, .gitkeep, @claude-flow tmp.json), so the hard
+# assertion is "no owner-unreadable file"; the zero-byte count is printed as a
+# denominator, not asserted. Recorded for ADR-170 v5.4.
+RUN unreadable="$(find /opt/ruflo-seed -type f ! -perm -u+r | wc -l)" \
+    && zero="$(find /opt/ruflo-seed -type f -size 0 | wc -l)" \
+    && if [ "$unreadable" -ne 0 ]; then \
+         echo "FATAL: ${unreadable} owner-unreadable file(s) under /opt/ruflo-seed (ADR-170 § 1 build assertion)"; \
+         find /opt/ruflo-seed -type f ! -perm -u+r ; \
+         exit 1; \
+       fi \
+    && echo "[ruflo-seed] build assertion passed: 0 owner-unreadable files; ${zero} zero-byte files (informational)"
+
+# ADR-170 § 2: the one package-relative cache the served chain reads,
+# node_modules/@huggingface/transformers/.cache/Xenova/all-MiniLM-L6-v2/, warmed by one
+# embedding with network available (measured 2026-09-23: wrote the four files § 2 names at
+# its recorded sizes and sha256 digests). No manifest is written; the expected digest lives outside the image (§ 7).
+# M-7 (governance review): pinning THIS call's `revision` (finding's literal ask) is REJECTED
+# as measured -- transformers@4.3.0's buildResourcePaths() keys the on-disk FileCache by
+# `<repo>/<file>` only for revision "main"; every served caller (agentdb EmbeddingService.js:107
+# +2 copies, @claude-flow/cli's task-embedder.js:50) calls pipeline() with NO revision, i.e.
+# always "main". Pinning here alone warms a key runtime never reads -- a `network_mode: none`
+# (§ 6) miss then becomes an unreachable fetch, silently downgrading `embeddingBackend` to the hash
+# fallback. The digest check below catches a `main`-ref republish without moving the key (upstream commit, provenance only: Xenova/all-MiniLM-L6-v2 751bff37182d3f1213fa05d7196b954e230abad9).
+RUN node --input-type=module -e "\
+import { pipeline } from '@huggingface/transformers'; \
+const extractor = await pipeline('feature-extraction', 'Xenova/all-MiniLM-L6-v2'); \
+await extractor('SMI-6744 ADR-170 section 2 build-time cache warm', { pooling: 'mean', normalize: true }); \
+console.log('[ruflo-seed] model cache warmed: Xenova/all-MiniLM-L6-v2');\
+"
+# M-7: verify the warm against ADR-170 § 2's sha256 digests (reconfirmed live against the
+# serving container, 2026-09-23); a mismatch is the tampering/republish class this finding names.
+RUN cache_root=/opt/ruflo-seed/node_modules/@huggingface/transformers/.cache/Xenova/all-MiniLM-L6-v2 \
+    && fail=0 \
+    && verify() { f="$cache_root/$1"; [ -f "$f" ] || { echo "FATAL: missing $f (M-7)"; fail=1; return; }; a="$(sha256sum "$f" | cut -d' ' -f1)"; [ "$a" = "$2" ] || { echo "FATAL: mismatch $f want=$2 got=$a (M-7)"; fail=1; }; } \
+    && verify "onnx/model.onnx" 759c3cd2b7fe7e93933ad23c4c9181b7396442a2ed746ec7c1d46192c469c46e \
+    && verify "config.json" 7135149f7cffa1a573466c6e4d8423ed73b62fd2332c575bf738a0d033f70df7 \
+    && verify "tokenizer.json" da0e79933b9ed51798a3ae27893d3c5fa4a201126cef75586296df9b4d2c62a0 \
+    && verify "tokenizer_config.json" 9261e7d79b44c8195c1cada2b453e55b00aeb81e907a6664974b4d7776172ab3 \
+    && [ "$fail" -eq 0 ] \
+    && echo "[ruflo-seed] model cache digest verification passed: all 4 files match ADR-170 section 2"
+
+# The service entrypoint (ADR-170 § 6: it does not reuse docker-entrypoint.sh) and the
+# tree-manifest generator ride in the image so the entrypoint can compute the CANDIDATE
+# digest at container start. The EXPECTED digest is never in the image (§ 7, round-4
+# finding 2): the up script passes it in as RUFLO_SEED_EXPECTED_DIGEST from the checkout's
+# committed scripts/ruflo-seed/SEED-MANIFEST.sha256, and acceptance re-derives it with the
+# repo's own copy of the generator via docker cp. Placed last so the npm ci and cache-warm
+# layers above stay cached when either script changes.
+COPY scripts/ruflo-service-entrypoint.sh /opt/ruflo-service-entrypoint.sh
+COPY scripts/ruflo-seed/manifest.mjs /opt/ruflo-manifest/generate-manifest.mjs
+
+# Sets nothing else: no CMD, ENTRYPOINT, user, network or volume config.
+# Wiring this tree into the served `ruflo` Compose service
+# (`network_mode: none`, the external `skillsmith-ruflo-data` volume,
+# `scripts/ruflo-service-entrypoint.sh`) is ADR-170 §§ 3-6, 8 — a later part
+# of this same Wave 1 task.
+#
+# Acceptance (ADR-170 § 7; plan A1.4 arms 2/5/6/11): CI starts a throwaway container from
+# this stage, docker-cps the repo's scripts/ruflo-seed/manifest.mjs in, runs it against
+# /opt/ruflo-seed for the CANDIDATE digest, and compares with the EXPECTED digest it
+# derived at the accepted build and committed outside the image.
+
+# -----------------------------------------------------------------------------
 # Stage 3: Builder - Compile TypeScript and build all packages
 # -----------------------------------------------------------------------------
 FROM deps AS builder
