@@ -16,18 +16,24 @@
 # conventions as the caller.
 set -euo pipefail
 
-# S-4 (SMI-6744 A1.8 retro): `command -v <name>` returns 0 when <name> is a
-# defined SHELL FUNCTION (not only an external binary on PATH) and 1 when it
-# is undefined -- confirmed live: `foo() { :; }; command -v foo` exits 0,
-# `command -v not_a_real_fn` exits 1. So these two lines define log()/die()
-# ONLY when the sourcing caller has not already defined its own -- a caller
-# with its own log()/die() (scripts/ruflo-service-up.sh) is unaffected; a
-# caller without one (scripts/ruflo-federation-test.sh, which sources only
-# git_dir_equals_common_dir()/federation_restore_disposition() and defines
-# neither) gets a working fallback instead of an unbound-function error the
-# first time this file's own die() calls fire.
-command -v log >/dev/null 2>&1 || log() { echo "[ruflo-up] $*"; }
-command -v die >/dev/null 2>&1 || die() { echo "[ruflo-up] ERROR: $*" >&2; exit 1; }
+# S-4 (SMI-6744 A1.8 retro): `declare -F <name>` returns 0 when <name> is a
+# defined SHELL FUNCTION and nonzero otherwise -- confirmed live:
+# `foo() { :; }; declare -F foo` exits 0, `declare -F not_a_real_fn` exits 1.
+# `command -v <name>` is the WRONG predicate here (F-2, round 2 fix): it also
+# returns 0 for an EXTERNAL BINARY on PATH with that name -- macOS ships
+# /usr/bin/log (the unified-logging CLI), confirmed live on this file's own
+# target platform, so the original `command -v log` check found /usr/bin/log
+# and short-circuited the `||`, meaning the log() fallback silently never
+# installed on macOS at all. So these two lines define log()/die() ONLY when
+# the sourcing caller has not already defined its own as a SHELL FUNCTION --
+# a caller with its own log()/die() (scripts/ruflo-service-up.sh) is
+# unaffected; a caller without die() (scripts/ruflo-federation-test.sh,
+# which sources only git_dir_equals_common_dir()/federation_restore_disposition()
+# and defines its own log() but not die()) gets a working fallback for die()
+# instead of an unbound-function error the first time this file's own die()
+# calls fire.
+declare -F log >/dev/null 2>&1 || log() { echo "[ruflo-up] $*"; }
+declare -F die >/dev/null 2>&1 || die() { echo "[ruflo-up] ERROR: $*" >&2; exit 1; }
 
 # H-3(b) (post-merge governance retro, PR #2931): refuse when run from a
 # LINKED git worktree. This script's own header has always said "run from
@@ -174,8 +180,13 @@ check_foreign_project() {
     # fall through as "no foreign project" and let `up` reconcile it. That is
     # the fail-open shape this check exists to close; "could not read" is not
     # "ours". Refuse and say how to look.
-    if [[ -z "$container_project" ]]; then
-        die "container $CONTAINER_NAME already exists but its Compose project label could not be read (empty, or the inspect failed) -- refusing to assume it belongs to this checkout ($this_project). Inspect it: docker inspect $CONTAINER_NAME --format '{{index .Config.Labels \"com.docker.compose.project\"}}' -- if it is not Compose-managed, stop it first and remove it by hand: docker stop $CONTAINER_NAME && docker rm $CONTAINER_NAME"
+    # F-7 (SMI-6744 A1.8 retro round 2): Docker's own --format template
+    # engine prints the literal string "<no value>" (not an empty string)
+    # for a missing map key -- measured live -- so a bare `-z` check alone
+    # let that shape slip through as "readable" when it is really the SAME
+    # "could not attribute" case the empty-string branch already refuses.
+    if [[ -z "$container_project" || "$container_project" == "<no value>" ]]; then
+        die "container $CONTAINER_NAME already exists but its Compose project label could not be read (empty, the literal '<no value>', or the inspect failed) -- refusing to assume it belongs to this checkout ($this_project). Inspect it: docker inspect $CONTAINER_NAME --format '{{index .Config.Labels \"com.docker.compose.project\"}}' -- if it is not Compose-managed, stop it first and remove it by hand: docker stop $CONTAINER_NAME && docker rm $CONTAINER_NAME"
     fi
     if [[ "$container_project" != "$this_project" ]]; then
         if [[ -d "$container_workdir" ]]; then
@@ -192,27 +203,43 @@ check_foreign_project() {
 # exactly one of four dispositions on stdout and always returns 0 (the
 # CALLER acts on the printed word, never on this function's own exit code):
 #
-#   absent               -- $CONTAINER_NAME does not exist (exists=0):
-#                            nothing to remove, proceed straight to the re-up.
-#   refuse-unattributable -- the container EXISTS but <owner> is EMPTY (the
-#                            Compose project label could not be read: a
-#                            hand-started container, a non-Compose tool, or a
-#                            failed inspect). An empty owner previously fell
-#                            through the old inline check's
-#                            `[[ -n "$owner" && "$owner" != P1 && "$owner" !=
-#                            P2 ]]` condition (empty owner makes `-n "$owner"`
-#                            false, short-circuiting the whole AND to false,
-#                            i.e. "not foreign" -- exactly backwards) straight
-#                            into `docker rm -f`, the ONE command
-#                            check_foreign_project()'s own refusal says never
-#                            to use. Docker itself prints an empty string
-#                            with exit 0 for a missing label key (measured) --
-#                            "could not attribute" is not "safe to remove".
-#   refuse-third          -- the container exists and <owner> is neither <p1>
-#                            nor <p2>: a genuine third project's container.
-#   proceed               -- the container exists and <owner> is <p1> or
-#                            <p2>: this test's own container from an earlier
-#                            run; safe to rm -f and recreate.
+#   absent               -- <exists> is the literal "0": $CONTAINER_NAME does
+#                            not exist, nothing to remove, proceed straight
+#                            to the re-up.
+#   refuse-unattributable -- EITHER <exists> is anything other than "0" or
+#                            "1" (F-6, SMI-6744 A1.8 retro round 2: the
+#                            original `[[ "$exists" -ne 1 ]]` arithmetic
+#                            compare treated an unrecognized/malformed
+#                            <exists> -- "", "abc", "2" -- as "not 1", which
+#                            fell through to "absent", the PERMISSIVE branch;
+#                            measured live in bash -- confirmed non-numeric
+#                            and empty strings do not error `-ne`, they just
+#                            compare false-ish and land on "absent". This is
+#                            now fail-CLOSED instead: only the literal "0"
+#                            means absent, everything else that isn't "1"
+#                            refuses), OR the container EXISTS (exists=1) but
+#                            <owner> is EMPTY or the literal string
+#                            "<no value>" (F-7, SMI-6744 A1.8 retro round 2:
+#                            Docker's own --format template engine prints
+#                            this literal, not an empty string, for a
+#                            missing map key -- measured live). An
+#                            empty/no-value owner previously fell through the
+#                            old inline check's `[[ -n "$owner" && "$owner"
+#                            != P1 && "$owner" != P2 ]]` condition (empty
+#                            owner makes `-n "$owner"` false, short-circuiting
+#                            the whole AND to false, i.e. "not foreign" --
+#                            exactly backwards) straight into `docker rm -f`,
+#                            the ONE command check_foreign_project()'s own
+#                            refusal says never to use. Docker itself prints
+#                            an empty string (or "<no value>") with exit 0
+#                            for a missing label key (measured) -- "could not
+#                            attribute" is not "safe to remove".
+#   refuse-third          -- the container exists (exists=1) and <owner> is
+#                            neither <p1> nor <p2>: a genuine third project's
+#                            container.
+#   proceed               -- the container exists (exists=1) and <owner> is
+#                            <p1> or <p2>: this test's own container from an
+#                            earlier run; safe to rm -f and recreate.
 #
 # No docker/git call inside this function -- callers own probing <exists>
 # and <owner> themselves (via `docker inspect`), which is what makes this
@@ -220,11 +247,11 @@ check_foreign_project() {
 # ruflo-service-up.test.sh's Arm 16).
 federation_restore_disposition() {
     local exists="$1" owner="$2" p1="$3" p2="$4"
-    if [[ "$exists" -ne 1 ]]; then
+    if [[ "$exists" == "0" ]]; then
         echo "absent"
         return 0
     fi
-    if [[ -z "$owner" ]]; then
+    if [[ "$exists" != "1" || -z "$owner" || "$owner" == "<no value>" ]]; then
         echo "refuse-unattributable"
         return 0
     fi

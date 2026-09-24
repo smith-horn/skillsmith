@@ -343,7 +343,12 @@ jobs:
           # ruflo-service-up.test.sh), never a `||` fallback (SMI-5596;
           # H-A, SMI-6744 A1.8 retro). None of the three touches a real
           # Docker daemon -- each fakes `docker` (and, for
-          # ruflo-service-up.test.sh, `git`) on PATH.
+          # ruflo-service-up.test.sh's arms 13/14, `git`) on PATH. Arm 17 is
+          # the exception (F-10, SMI-6744 A1.8 retro round 2): it exercises
+          # git_dir_equals_common_dir() against the REAL git binary (with
+          # `git worktree add`, present on ubuntu-latest), not the fake
+          # stub, so this job also depends on a real git checkout/worktree
+          # being creatable under $SCRATCH_ROOT for that one arm.
           bash scripts/tests/mcp-ruflo-launcher.test.sh
           bash scripts/tests/ruflo-service-entrypoint.test.sh
           bash scripts/tests/ruflo-service-up.test.sh

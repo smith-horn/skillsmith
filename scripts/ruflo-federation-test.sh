@@ -44,12 +44,22 @@
 set -euo pipefail
 
 # L-B (SMI-6744 A1.8 retro): source the shared git_dir_equals_common_dir()
-# predicate this script's own checkout_shape_ok() used to duplicate. This
-# file only DEFINES functions and re-runs `set -euo pipefail` (already set
-# above; idempotent) -- it does not reference REPO_ROOT/COMPOSE_FILE/
-# CONTAINER_NAME/log()/die() at source time, so sourcing it here without
-# those (this script uses CHECKOUT_1/CHECKOUT_2, not a single REPO_ROOT) is
-# safe as long as only git_dir_equals_common_dir() is called from it.
+# predicate this script's own checkout_shape_ok() used to duplicate, plus
+# federation_restore_disposition() (S-1) -- this file calls both (F-8,
+# SMI-6744 A1.8 retro round 2: the previous version of this comment named
+# only git_dir_equals_common_dir(), which went stale once
+# restore_checkout_1() below started calling federation_restore_disposition()
+# too). This file only DEFINES functions and re-runs `set -euo pipefail`
+# (already set above; idempotent) at source time, alongside helpers.sh's own
+# log()/die() fallback definitions (S-4, F-2: `declare -F log`/`declare -F
+# die`, which install ONLY when this shell hasn't already defined those
+# names as shell functions) -- it does not reference REPO_ROOT/COMPOSE_FILE/
+# CONTAINER_NAME at source time (this script uses CHECKOUT_1/CHECKOUT_2, not
+# a single REPO_ROOT), so sourcing it here is safe. This file's own log()
+# (below, ~line 61) is defined AFTER this source line and so overrides
+# whichever fallback the source installed; this file never defines its own
+# die(), so helpers.sh's die() fallback is the one that actually serves any
+# die() call reached through the sourced functions.
 SELF_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 # shellcheck source=ruflo-service-up.helpers.sh
 source "$SELF_DIR/ruflo-service-up.helpers.sh"
@@ -129,11 +139,24 @@ restore_checkout_1() {
     # SERVICE_TOUCHED is already latched by the time this trap runs -- an
     # unconditional `rm -f` would convert that deliberate refusal into
     # exactly the silent takeover H-3(c) exists to prevent.
-    local exists=1
-    docker inspect "$CONTAINER_NAME" >/dev/null 2>&1 || exists=0
-    local owner
-    owner="$(docker inspect "$CONTAINER_NAME" \
-        --format '{{index .Config.Labels "com.docker.compose.project"}}' 2>/dev/null || true)"
+    # F-4 (SMI-6744 A1.8 retro round 2): ONE `docker inspect` call, not two --
+    # the original two-call shape (a plain existence probe, then a second
+    # --format call) reads two DIFFERENT snapshots of the container's state:
+    # if it is removed by something else between the two calls, the first
+    # call sees it exist (exists=1) but the second inspect then fails,
+    # leaving owner="" -- which federation_restore_disposition() reads as
+    # refuse-unattributable, not the exists=0 "absent" this really is. A
+    # single --format call answers both facts from ONE snapshot: it exits 0
+    # (with the label value, however empty) when the container exists, and
+    # nonzero when it does not.
+    local exists owner
+    if owner="$(docker inspect --type container "$CONTAINER_NAME" \
+        --format '{{index .Config.Labels "com.docker.compose.project"}}' 2>/dev/null)"; then
+        exists=1
+    else
+        exists=0
+        owner=""
+    fi
     local disposition
     disposition="$(federation_restore_disposition "$exists" "$owner" "${PROJECT_1:-}" "${PROJECT_2:-}")"
     case "$disposition" in

@@ -23,18 +23,24 @@ SCRATCH_ROOT="$(mktemp -d)"
 FAKE_BIN_DIR="$SCRATCH_ROOT/bin"
 mkdir -p "$FAKE_BIN_DIR"
 
-# S-2 (SMI-6744 A1.8 retro): resolve the REAL git binary now, before the fake
-# git stub below ever exists on disk. In THIS file, PATH is never globally
-# prefixed with FAKE_BIN_DIR -- run_script() below only prepends it to the
-# environment of the ONE command it invokes (`PATH="$FAKE_BIN_DIR:$PATH"
+trap 'rm -rf "$SCRATCH_ROOT"' EXIT
+
+# S-2 (SMI-6744 A1.8 retro): resolve the REAL git binary here, AFTER the
+# cleanup trap above is already registered (F-3, SMI-6744 A1.8 retro round
+# 2: the original capture ran BEFORE the trap existed -- an early,
+# unexpected `command -v git` failure under `set -e` would then abort with
+# nothing armed to clean up $SCRATCH_ROOT). `|| true` so a missing git
+# surfaces as the 17-setup FAIL below (REAL_GIT empty -> `git init` fails
+# with a clear "No such file or directory") rather than aborting this whole
+# suite silently here. In THIS file, PATH is never globally prefixed with
+# FAKE_BIN_DIR -- run_script() below only prepends it to the environment of
+# the ONE command it invokes (`PATH="$FAKE_BIN_DIR:$PATH"
 # "$SCRIPT_UNDER_TEST"`), which does not leak into this shell's own PATH --
 # so a bare `git` anywhere else in this file, including Arm 17's real-git
 # gate test, already resolves to the real binary regardless. REAL_GIT is
 # still captured explicitly here (rather than relying on that fact staying
 # true) so Arm 17 keeps working even if this file's PATH handling changes.
-REAL_GIT="$(command -v git)"
-
-trap 'rm -rf "$SCRATCH_ROOT"' EXIT
+REAL_GIT="$(command -v git || true)"
 
 # ---- fake docker: records every call, answers volume inspect/create and
 # `compose ... run|up` deterministically from FAKE_STATE_DIR + env
@@ -149,6 +155,13 @@ elif [[ "$sub1" == "inspect" ]]; then
         # container, or a failed inspect.
         if [[ "${FAKE_CONTAINER_LABEL_EMPTY:-}" == "1" ]]; then
             printf ''
+        elif [[ "${FAKE_CONTAINER_LABEL_NOVALUE:-}" == "1" ]]; then
+            # Arm 15d (F-7, SMI-6744 A1.8 retro round 2): Docker's own
+            # template engine prints the literal string "<no value>" (not an
+            # empty string) when a --format references a map key that does
+            # not exist -- measured live. check_foreign_project()'s empty
+            # check must treat this the same as a genuinely empty read.
+            printf '<no value>'
         else
             printf '%s' "${FAKE_CONTAINER_PROJECT:-}"
         fi
@@ -628,6 +641,28 @@ else
 fi
 unset FAKE_THIS_PROJECT FAKE_CONTAINER_PROJECT FAKE_CONTAINER_LABEL_EMPTY
 
+# ---- 15d (F-7, SMI-6744 A1.8 retro round 2): the container exists but its
+# project label reads back the literal Docker template string "<no value>"
+# (not an empty string) -- must be refused the SAME way as an empty read
+# (15c above), never treated as "no foreign project". Docker's own --format
+# engine prints this literal for a missing map key (measured live); a bare
+# `[[ -z "$container_project" ]]` check does not catch it.
+reset_fixture
+export FAKE_THIS_PROJECT="this-checkout-project"
+export FAKE_CONTAINER_PROJECT="exists-but-novalue"
+export FAKE_CONTAINER_LABEL_NOVALUE=1
+EXIT_CODE="$(run_script)"
+if [[ "$EXIT_CODE" -eq 0 ]]; then
+    fail_case "15d-foreign-project-label-novalue" "expected non-zero exit (refusal), got 0, log:\n$(cat "$SCRATCH_ROOT/out.log")"
+elif ! grep -qF "project label could not be read" "$SCRATCH_ROOT/out.log"; then
+    fail_case "15d-foreign-project-label-novalue" "expected the refusal to say the label could not be read, log:\n$(cat "$SCRATCH_ROOT/out.log")"
+elif grep -qE "volume (create|inspect)" "$FAKE_DOCKER_CALL_LOG"; then
+    fail_case "15d-foreign-project-label-novalue" "expected NO volume/store bookkeeping before this refusal, log:\n$(cat "$FAKE_DOCKER_CALL_LOG")"
+else
+    echo "applied=foreign-project-refuse-novalue PASS (15d-foreign-project-label-novalue): refused when the existing container's project label read back the literal '<no value>', before any bookkeeping"
+fi
+unset FAKE_THIS_PROJECT FAKE_CONTAINER_PROJECT FAKE_CONTAINER_LABEL_NOVALUE
+
 # ---- Arm 16 (S-1, SMI-6744 A1.8 retro): federation_restore_disposition()
 # (scripts/ruflo-service-up.helpers.sh) is a PURE function -- source the
 # helpers directly into THIS shell and call it, no docker/git and no
@@ -674,6 +709,59 @@ else
     echo "applied=disposition-proceed-p2 PASS (16e-disposition-proceed-p2): exists=1, owner==p2 -> proceed"
 fi
 
+# ---- 16f (F-6, SMI-6744 A1.8 retro round 2): an unrecognized/malformed
+# <exists> value (neither the literal "0" nor "1") must fail CLOSED to
+# refuse-unattributable, not fall through to the PERMISSIVE "absent" branch
+# the original `[[ "$exists" -ne 1 ]]` arithmetic compare produced for "",
+# "abc", or "2" (measured live in bash: none of those error the compare,
+# they just read as "not 1" and land on "absent").
+DISPOSITION="$(federation_restore_disposition "" "some-owner" "p1-project" "p2-project")"
+if [[ "$DISPOSITION" != "refuse-unattributable" ]]; then
+    fail_case "16f-disposition-unknown-exists" "expected 'refuse-unattributable' when exists is an unrecognized/malformed value (neither '0' nor '1'), got '$DISPOSITION'"
+else
+    echo "applied=disposition-unknown-exists PASS (16f-disposition-unknown-exists): exists='' (neither 0 nor 1) -> refuse-unattributable, not absent"
+fi
+
+# ---- 16g (F-7, SMI-6744 A1.8 retro round 2): owner==\"<no value>\" (Docker's
+# own --format template-engine string for a missing map key, distinct from a
+# genuinely empty string) must be treated the same as an empty owner.
+DISPOSITION="$(federation_restore_disposition 1 "<no value>" "p1-project" "p2-project")"
+if [[ "$DISPOSITION" != "refuse-unattributable" ]]; then
+    fail_case "16g-disposition-owner-novalue" "expected 'refuse-unattributable' when owner is the literal '<no value>', got '$DISPOSITION'"
+else
+    echo "applied=disposition-owner-novalue PASS (16g-disposition-owner-novalue): exists=1, owner='<no value>' -> refuse-unattributable"
+fi
+
+# ---- Arm 18 (F-2, SMI-6744 A1.8 retro round 2): a decoy executable named
+# `log` on PATH must not defeat the log()/die() fallback in
+# scripts/ruflo-service-up.helpers.sh. `command -v log` returns 0 for ANY
+# `log` on PATH, whether it is a shell function or an external binary
+# (macOS ships /usr/bin/log, the unified-logging CLI, confirmed present on
+# this host) -- the ORIGINAL predicate silently skipped defining log()
+# whenever such a binary existed. The fixed predicate uses `declare -F`,
+# which tests only for a shell FUNCTION. Exercised in an ISOLATED bash
+# subprocess (never this test file's own already-sourced helpers, which
+# were sourced before this arm ever runs) with a decoy `log` executable
+# prepended to PATH.
+DECOY_LOG_DIR="$SCRATCH_ROOT/decoy-log-bin"
+mkdir -p "$DECOY_LOG_DIR"
+cat > "$DECOY_LOG_DIR/log" << 'DECOY_LOG'
+#!/usr/bin/env bash
+exit 64
+DECOY_LOG
+chmod +x "$DECOY_LOG_DIR/log"
+ARM18_OUT="$(PATH="$DECOY_LOG_DIR:$PATH" bash -c '
+    set -euo pipefail
+    source "'"$REPO_ROOT"'/scripts/ruflo-service-up.helpers.sh"
+    declare -F log >/dev/null 2>&1 && echo "log_is_function=yes" || echo "log_is_function=no"
+    declare -F die >/dev/null 2>&1 && echo "die_is_function=yes" || echo "die_is_function=no"
+')"
+if ! grep -q "log_is_function=yes" <<<"$ARM18_OUT" || ! grep -q "die_is_function=yes" <<<"$ARM18_OUT"; then
+    fail_case "18-log-fallback-decoy-on-path" "expected BOTH log() and die() to be installed as shell functions even with a decoy 'log' executable on PATH, got:\n$ARM18_OUT"
+else
+    echo "applied=log-fallback-survives-decoy PASS (18-log-fallback-decoy-on-path): log() and die() both installed as shell functions despite a decoy 'log' executable earlier on PATH"
+fi
+
 # ---- Arm 17 (S-2, SMI-6744 A1.8 retro): git_dir_equals_common_dir()
 # (sourced above alongside federation_restore_disposition()) exercised
 # against the REAL git binary ($REAL_GIT, resolved at the top of this file)
@@ -687,43 +775,82 @@ fi
 # worktree -> 1), then the same worktree check WITH an inherited GIT_DIR
 # pointing at the main repo's .git (must still be 1 -- the env -u prefix
 # must neutralize it).
-REAL_GIT_WORKTREE_ROOT="$(mktemp -d)"
-(
-    cd "$REAL_GIT_WORKTREE_ROOT" &&
+#
+# F-3 (SMI-6744 A1.8 retro round 2): the fixture below is built under
+# $SCRATCH_ROOT/arm17 (cleaned up by this file's own EXIT trap, unlike the
+# ORIGINAL shape's dedicated `mktemp -d` that only a manual `rm -rf` at the
+# end cleaned -- a leak if anything between creation and that line aborted
+# under `set -e`), and its setup is now guarded behind `if !` with combined
+# output captured to a log file instead of a bare compound command with both
+# streams discarded to /dev/null: the ORIGINAL shape, if `git init`/`commit`/
+# `worktree add` ever failed, aborted this ENTIRE test file under `set -e`
+# with NO verdict printed for Arm 17 or anything after it, and no diagnostic
+# (both streams were discarded). This FAILs loudly instead, naming the setup
+# log, and skips 17a/17b/17c (their inputs would be meaningless without a
+# working fixture) rather than aborting the suite.
+ARM17_ROOT="$SCRATCH_ROOT/arm17"
+mkdir -p "$ARM17_ROOT"
+MAIN_REPO="$ARM17_ROOT/main"
+LINKED_WORKTREE="$ARM17_ROOT/linked"
+
+if ! (
+    cd "$ARM17_ROOT" &&
         "$REAL_GIT" init -q main &&
         cd main &&
         "$REAL_GIT" -c user.email=test@example.com -c user.name=test commit -q --allow-empty -m init &&
         "$REAL_GIT" worktree add -q "../linked" -b arm17-linked
-) >/dev/null 2>&1
-MAIN_REPO="$REAL_GIT_WORKTREE_ROOT/main"
-LINKED_WORKTREE="$REAL_GIT_WORKTREE_ROOT/linked"
-
-unset GIT_DIR
-git_dir_equals_common_dir "$MAIN_REPO" && ARM17_CONTROL_MAIN=0 || ARM17_CONTROL_MAIN=1
-git_dir_equals_common_dir "$LINKED_WORKTREE" && ARM17_CONTROL_WORKTREE=0 || ARM17_CONTROL_WORKTREE=1
-export GIT_DIR="$MAIN_REPO/.git"
-git_dir_equals_common_dir "$LINKED_WORKTREE" && ARM17_INHERITED_GITDIR=0 || ARM17_INHERITED_GITDIR=1
-unset GIT_DIR
-rm -rf "$REAL_GIT_WORKTREE_ROOT"
-
-if [[ "$ARM17_CONTROL_MAIN" -ne 0 ]]; then
-    echo "FAIL (17-control-main): expected git_dir_equals_common_dir(main) == 0 (pass) with no GIT_DIR exported, got $ARM17_CONTROL_MAIN" >&2
-    FAIL_COUNT=$((FAIL_COUNT + 1))
-elif [[ "$ARM17_CONTROL_WORKTREE" -ne 1 ]]; then
-    echo "FAIL (17-control-worktree): expected git_dir_equals_common_dir(linked worktree) == 1 (refuse) with no GIT_DIR exported, got $ARM17_CONTROL_WORKTREE" >&2
-    FAIL_COUNT=$((FAIL_COUNT + 1))
-elif [[ "$ARM17_INHERITED_GITDIR" -ne 1 ]]; then
-    echo "FAIL (17-inherited-gitdir): expected git_dir_equals_common_dir(linked worktree) == 1 (refuse) even with an inherited GIT_DIR=<main>/.git -- the env -u prefix must neutralize it, got $ARM17_INHERITED_GITDIR" >&2
-    FAIL_COUNT=$((FAIL_COUNT + 1))
+) >"$SCRATCH_ROOT/arm17-setup.log" 2>&1; then
+    fail_case "17-setup" "failed to build the real-git worktree fixture under $ARM17_ROOT (REAL_GIT='$REAL_GIT') -- 17a/17b/17c skipped, log:\n$(cat "$SCRATCH_ROOT/arm17-setup.log")"
 else
-    echo "applied=env-u-neutralizes-inherited-gitdir PASS (17-real-git-gitdir-isolation): real git (not the fake stub) -- control: main=0/worktree=1; with an inherited GIT_DIR pointing at main's .git, the linked worktree is still correctly refused (1)"
+    echo "applied=arm17-fixture-built PASS (17-setup): real-git worktree fixture built under $ARM17_ROOT"
+    unset GIT_DIR
+    git_dir_equals_common_dir "$MAIN_REPO" && ARM17_CONTROL_MAIN=0 || ARM17_CONTROL_MAIN=1
+    git_dir_equals_common_dir "$LINKED_WORKTREE" && ARM17_CONTROL_WORKTREE=0 || ARM17_CONTROL_WORKTREE=1
+    export GIT_DIR="$MAIN_REPO/.git"
+    git_dir_equals_common_dir "$LINKED_WORKTREE" && ARM17_INHERITED_GITDIR=0 || ARM17_INHERITED_GITDIR=1
+    unset GIT_DIR
+
+    # F-11 (SMI-6744 A1.8 retro round 2): three INDEPENDENT `if` blocks, not
+    # an `elif` chain -- the ORIGINAL elif chain masked the S-2 regression
+    # assertion (17c-inherited-gitdir, the actual GIT_DIR-leak fix this arm
+    # exists to pin) whenever an EARLIER branch (17a/17b) also failed: only
+    # the FIRST failing branch in an elif chain ever prints, so a control
+    # regression could silently hide the S-2 regression sitting right behind
+    # it. Each of the three now reports its own PASS/FAIL independently.
+    if [[ "$ARM17_CONTROL_MAIN" -ne 0 ]]; then
+        echo "FAIL (17a-control-main): expected git_dir_equals_common_dir(main) == 0 (pass) with no GIT_DIR exported, got $ARM17_CONTROL_MAIN" >&2
+        FAIL_COUNT=$((FAIL_COUNT + 1))
+    else
+        echo "applied=control-main PASS (17a-control-main): git_dir_equals_common_dir(main) == 0 with no GIT_DIR exported"
+    fi
+
+    if [[ "$ARM17_CONTROL_WORKTREE" -ne 1 ]]; then
+        echo "FAIL (17b-control-worktree): expected git_dir_equals_common_dir(linked worktree) == 1 (refuse) with no GIT_DIR exported, got $ARM17_CONTROL_WORKTREE" >&2
+        FAIL_COUNT=$((FAIL_COUNT + 1))
+    else
+        echo "applied=control-worktree PASS (17b-control-worktree): git_dir_equals_common_dir(linked worktree) == 1 with no GIT_DIR exported"
+    fi
+
+    if [[ "$ARM17_INHERITED_GITDIR" -ne 1 ]]; then
+        echo "FAIL (17c-inherited-gitdir): expected git_dir_equals_common_dir(linked worktree) == 1 (refuse) even with an inherited GIT_DIR=<main>/.git -- the env -u prefix must neutralize it, got $ARM17_INHERITED_GITDIR" >&2
+        FAIL_COUNT=$((FAIL_COUNT + 1))
+    else
+        echo "applied=env-u-neutralizes-inherited-gitdir PASS (17c-inherited-gitdir): real git (not the fake stub) -- with an inherited GIT_DIR pointing at main's .git, the linked worktree is still correctly refused (1)"
+    fi
 fi
 
+# SMI-6744 A1.8 retro round 2 tally: 14 (arms 1-14) + 4 (15a-15d, F-7 adds
+# 15d) + 7 (16a-16g, F-6 adds 16f, F-7 adds 16g) + 1 (17-setup, F-3) + 1
+# (Arm 18, F-2's decoy-log-on-PATH arm) + 3 (17a/17b/17c, F-11 splits the
+# former single combined "17" check into three independently-reported
+# assertions) = 30. Enumerated in the evidence file this round's fix
+# produced (gov-r2-fix/summary-tally.txt) to prove the count against the
+# actual fail_case/FAIL labels in this file, not just this comment's arithmetic.
 echo ""
 if [[ "$FAIL_COUNT" -eq 0 ]]; then
-    echo "SUMMARY: 23/23 arms passed"
+    echo "SUMMARY: 30/30 arms passed"
     exit 0
 else
-    echo "SUMMARY: $FAIL_COUNT/23 arms FAILED"
+    echo "SUMMARY: $FAIL_COUNT/30 arms FAILED"
     exit 1
 fi
