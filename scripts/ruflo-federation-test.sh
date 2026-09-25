@@ -45,11 +45,15 @@ set -euo pipefail
 
 # L-B (SMI-6744 A1.8 retro): source the shared git_dir_equals_common_dir()
 # predicate this script's own checkout_shape_ok() used to duplicate, plus
-# federation_restore_disposition() (S-1) -- this file calls both (F-8,
-# SMI-6744 A1.8 retro round 2: the previous version of this comment named
-# only git_dir_equals_common_dir(), which went stale once
-# restore_checkout_1() below started calling federation_restore_disposition()
-# too). This file only DEFINES functions and re-runs `set -euo pipefail`
+# federation_restore_checkout_1() (S-1, and its cross-family gate round-1
+# fix on PR #2937 class 1) -- this file calls both directly (F-8, SMI-6744
+# A1.8 retro round 2: the previous version of this comment named only
+# git_dir_equals_common_dir(), which went stale once restore_checkout_1()
+# below started calling into helpers.sh too; updated again when
+# restore_checkout_1() itself became a one-line delegation to
+# federation_restore_checkout_1(), which now owns the
+# federation_restore_disposition()/probe_container_owner() calls
+# internally). This file only DEFINES functions and re-runs `set -euo pipefail`
 # (already set above; idempotent) at source time, alongside helpers.sh's own
 # log()/die() fallback definitions (S-4, F-2: `declare -F log`/`declare -F
 # die`, which install ONLY when this shell hasn't already defined those
@@ -115,74 +119,17 @@ project_name() {
 # live shared service three times. A refusal that touched nothing restores
 # nothing.
 SERVICE_TOUCHED=0
-restore_checkout_1() {
-    local rc=0
-    if [[ "$SERVICE_TOUCHED" -ne 1 ]]; then
-        log "EXIT trap: the service was never touched (a precondition refused first) -- nothing to restore"
-        return 0
-    fi
-    log "EXIT trap: removing checkout 2's container (if present) and re-running $CHECKOUT_1/scripts/ruflo-service-up.sh to restore the shared service"
-    # S-1 (SMI-6744 A1.8 retro): the decision of what to do with an existing
-    # $CONTAINER_NAME is delegated entirely to federation_restore_disposition()
-    # (scripts/ruflo-service-up.helpers.sh, sourced at the top of this file) --
-    # a pure function taking (exists, owner, p1, p2) and printing one of
-    # absent/refuse-unattributable/refuse-third/proceed. This replaced an
-    # inline `[[ -n "$owner" && "$owner" != P1 && "$owner" != P2 ]]` check
-    # that let an EMPTY $owner (a hand-started container, a non-Compose tool,
-    # or a failed inspect -- Docker prints an empty string with exit 0 for a
-    # missing label key, measured) fall through to `docker rm -f`, the exact
-    # command check_foreign_project()'s own refusal says never to use: `-n
-    # "$owner"` is false when $owner is empty, which short-circuits the whole
-    # AND to false ("not foreign"), exactly backwards. If line 158's call to
-    # checkout 1's ruflo-service-up.sh refused at its own check_foreign_project()
-    # (a THIRD project's container already sits at $CONTAINER_NAME),
-    # SERVICE_TOUCHED is already latched by the time this trap runs -- an
-    # unconditional `rm -f` would convert that deliberate refusal into
-    # exactly the silent takeover H-3(c) exists to prevent.
-    # F-4 (SMI-6744 A1.8 retro round 2): ONE `docker inspect` call, not two --
-    # the original two-call shape (a plain existence probe, then a second
-    # --format call) reads two DIFFERENT snapshots of the container's state:
-    # if it is removed by something else between the two calls, the first
-    # call sees it exist (exists=1) but the second inspect then fails,
-    # leaving owner="" -- which federation_restore_disposition() reads as
-    # refuse-unattributable, not the exists=0 "absent" this really is. A
-    # single --format call answers both facts from ONE snapshot: it exits 0
-    # (with the label value, however empty) when the container exists, and
-    # nonzero when it does not.
-    local exists owner
-    if owner="$(docker inspect --type container "$CONTAINER_NAME" \
-        --format '{{index .Config.Labels "com.docker.compose.project"}}' 2>/dev/null)"; then
-        exists=1
-    else
-        exists=0
-        owner=""
-    fi
-    local disposition
-    disposition="$(federation_restore_disposition "$exists" "$owner" "${PROJECT_1:-}" "${PROJECT_2:-}")"
-    case "$disposition" in
-        refuse-unattributable)
-            echo "[ruflo-federation] EXIT trap: $CONTAINER_NAME exists but its Compose project label could not be read (empty, or the inspect failed) -- refusing to rm -f it (ruflo-service-up.sh's own foreign-project refusal says an unreadable label is never assumed to be ours). Inspect it: docker inspect $CONTAINER_NAME --format '{{index .Config.Labels \"com.docker.compose.project\"}}' -- then re-run checkout 1's up script once resolved: $CHECKOUT_1/scripts/ruflo-service-up.sh" >&2
-            return 0
-            ;;
-        refuse-third)
-            echo "[ruflo-federation] EXIT trap: $CONTAINER_NAME belongs to a THIRD project ($owner), not checkout 1 ($PROJECT_1) or checkout 2 ($PROJECT_2) -- refusing to rm -f it (ruflo-service-up.sh's own foreign-project refusal says stop it first, never rm -f). Resolve it manually, then re-run: $CHECKOUT_1/scripts/ruflo-service-up.sh" >&2
-            return 0
-            ;;
-        absent | proceed)
-            docker rm -f "$CONTAINER_NAME" >/dev/null 2>&1 || true
-            if "$CHECKOUT_1/scripts/ruflo-service-up.sh" >/tmp/ruflo-federation-restore.log 2>&1; then
-                log "restoration: checkout 1's service is back up"
-            else
-                rc=$?
-                echo "[ruflo-federation] RESTORATION FAILED (exit $rc) -- the shared skillsmith-ruflo-1 service may be left down. See /tmp/ruflo-federation-restore.log and re-run: $CHECKOUT_1/scripts/ruflo-service-up.sh" >&2
-            fi
-            ;;
-        *)
-            echo "[ruflo-federation] EXIT trap: federation_restore_disposition() returned an unrecognized disposition '$disposition' -- refusing to guess; resolve manually and re-run: $CHECKOUT_1/scripts/ruflo-service-up.sh" >&2
-            return 0
-            ;;
-    esac
-}
+# S-1 (SMI-6744 A1.8 retro) / cross-family gate round 1 on PR #2937 (High,
+# class 1): the body of this trap now lives in
+# federation_restore_checkout_1() (scripts/ruflo-service-up.helpers.sh,
+# sourced at the top of this file), taking explicit arguments instead of
+# reading these globals directly -- that is what lets
+# scripts/tests/ruflo-service-up.test.sh drive the whole restore path (probe,
+# disposition, and the rm/up decision) end to end. This file's own log()
+# (defined above, before the source line) overrides helpers.sh's log()
+# fallback for any call made through the sourced function, same as it always
+# has for federation_restore_disposition().
+restore_checkout_1() { federation_restore_checkout_1 "$CONTAINER_NAME" "${PROJECT_1:-}" "${PROJECT_2:-}" "$CHECKOUT_1" "$SERVICE_TOUCHED"; }
 trap restore_checkout_1 EXIT
 
 volume_snapshot() {
