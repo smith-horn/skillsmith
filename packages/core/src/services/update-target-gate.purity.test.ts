@@ -93,12 +93,17 @@
  *
  * What it quantifies over, stated exactly rather than as "everything": every
  * function exported by each mocked module, every function on the `default` and
- * `promises` namespaces those modules re-expose, and every function owned by
- * one of those functions (`fs.realpath.native`) — each exercised at four
- * arities and as a constructor, each asserted to record under its own label
- * and to throw. The declared residual is a defect keyed on argument CONTENT
- * rather than arity. SMI-6841 holds the measured instances and the mutation
- * that killed each.
+ * `promises` namespaces those modules re-expose, and every ENUMERABLE,
+ * string-keyed function owned by one of those functions (`fs.realpath.native`)
+ * — each exercised at four arities and as a constructor, each asserted to
+ * record under its own label and to throw.
+ *
+ * Two declared residuals, neither covered and neither implied to be: a defect
+ * keyed on argument CONTENT rather than arity, and a callable owned by a
+ * callable under a non-enumerable or Symbol key, which `Object.entries` does
+ * not report. Both measured surfaces of `node:fs` are enumerable and
+ * string-keyed today, so the second is a boundary rather than a live hole.
+ * SMI-6841 holds the measured instances and the mutation that killed each.
  */
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 
