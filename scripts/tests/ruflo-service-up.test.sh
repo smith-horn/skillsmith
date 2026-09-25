@@ -137,6 +137,21 @@ elif [[ "$sub1" == "compose" ]]; then
     fi
     exit 0
 elif [[ "$sub1" == "inspect" ]]; then
+    # F-5 (SMI-6846 governance retro, Low): a VOLUME named skillsmith-ruflo-1
+    # exists but no CONTAINER does -- a bare `docker inspect NAME` succeeds
+    # on it (Docker inspects across object types by default), but
+    # `--type container` does not. probe_container_owner()'s own inspect
+    # call pins `--type container` (measured live, comment further down in
+    # this file), so this checked BEFORE FAKE_INSPECT_FAIL: an arm can force
+    # this same-name-volume shape regardless of the other fixture state.
+    if [[ "${FAKE_SAMENAME_VOLUME:-0}" == "1" ]]; then
+        if [[ "$*" == *"--type container"* ]]; then
+            echo "Error response from daemon: No such container: skillsmith-ruflo-1" >&2
+            exit 1
+        fi
+        printf '{"Name":"skillsmith-ruflo-1","Driver":"local"}\n'
+        exit 0
+    fi
     # SMI-6744 A1.8 gate round-1 fix (PR #2937, class 1): FAKE_INSPECT_FAIL
     # simulates the real docker-inspect failure modes measured on this host
     # (Docker client 29.7.2) for probe_container_owner() -- checked BEFORE
@@ -158,6 +173,17 @@ elif [[ "$sub1" == "inspect" ]]; then
         flag)
             echo "unknown flag: --type" >&2
             exit 125
+            ;;
+        workdir)
+            # F-1 (SMI-6846 governance): fails ONLY the working_dir call so
+            # an arm can force the project probe to succeed (exists=1,
+            # owner readable) while the SEPARATE working_dir read fails --
+            # falls through otherwise so the normal FAKE_CONTAINER_PROJECT
+            # branches below still answer the project-label call.
+            if [[ "$*" == *"project.working_dir"* ]]; then
+                echo "failed to connect to the docker API at unix:///var/run/docker.sock" >&2
+                exit 1
+            fi
             ;;
     esac
     # H-3(c): default is NO container (the pre-H-3(c) behavior every
@@ -248,6 +274,7 @@ reset_fixture() {
     unset FAKE_GIT_DIR FAKE_GIT_COMMON_DIR FAKE_GIT_NOT_A_REPO || true
     unset FAKE_CONTAINER_PROJECT FAKE_CONTAINER_WORKDIR FAKE_THIS_PROJECT || true
     unset FAKE_INSPECT_FAIL || true
+    unset FAKE_SAMENAME_VOLUME || true
     unset FAKE_VOLUME_CREATE_FAIL || true
     unset FAKE_INIT_STORE_ROW_MISMATCH || true
     unset FAKE_MEMORY_GENERATION || true
@@ -717,6 +744,70 @@ else
 fi
 unset FAKE_INSPECT_FAIL
 
+# ---- 15f (F-1, SMI-6846 governance retro, Medium): the container exists,
+# belongs to a DIFFERENT project, but the SEPARATE working_dir read itself
+# fails (daemon blip, permission error, or the container replaced between
+# the two probe calls) -- the same definite-state-from-an-undetermined-probe
+# shape check_foreign_project()'s EXISTENCE probe was fixed for (SMI-6846).
+# A failed read must be refused as "could not be read", never silently
+# treated as "the working_dir no longer exists" (15b's own genuine-gone
+# case). Ordered so the "no bookkeeping" check comes before either text
+# check -- it holds under BOTH the old and new code, so it cannot be what
+# distinguishes them; the RED run before F-1's code fix landed failed at the
+# "must NOT assert gone" check (position 3), never reaching "could NOT be
+# read" (position 4), because the pre-fix code's `-d ""` branch dies with
+# "no longer exists on this machine" first.
+reset_fixture
+export FAKE_THIS_PROJECT="this-checkout-project" FAKE_CONTAINER_PROJECT="foreign-checkout-project" FAKE_INSPECT_FAIL="workdir"
+EXIT_CODE="$(run_script)"
+if [[ "$EXIT_CODE" -eq 0 ]]; then
+    fail_case "15f-workdir-unreadable" "expected non-zero exit (refusal), got 0, log:\n$(cat "$SCRATCH_ROOT/out.log")"
+elif grep -qE "volume (create|inspect)" "$FAKE_DOCKER_CALL_LOG"; then
+    fail_case "15f-workdir-unreadable" "expected NO volume/store bookkeeping before this refusal, log:\n$(cat "$FAKE_DOCKER_CALL_LOG")"
+elif grep -qF "no longer exists on this machine" "$SCRATCH_ROOT/out.log"; then
+    fail_case "15f-workdir-unreadable" "must NOT assert the working_dir is gone when the read itself failed, log:\n$(cat "$SCRATCH_ROOT/out.log")"
+elif ! grep -qF "working_dir could NOT be read" "$SCRATCH_ROOT/out.log"; then
+    fail_case "15f-workdir-unreadable" "expected the refusal to say the working_dir could NOT be read, log:\n$(cat "$SCRATCH_ROOT/out.log")"
+else
+    echo "applied=foreign-project-refuse-workdir-unreadable PASS (15f-workdir-unreadable): refused naming that the working_dir could not be read, without asserting it is gone, and before any bookkeeping"
+fi
+unset FAKE_THIS_PROJECT FAKE_CONTAINER_PROJECT FAKE_INSPECT_FAIL
+
+# ---- 15g (F-6, SMI-6846 governance retro, Low): the guard's own POSITIVE
+# path -- an existing skillsmith-ruflo-1 container that belongs to THIS
+# SAME checkout's project must proceed straight through to the normal
+# fresh-creation flow, never refused. Every other 15* arm exercises a
+# refusal; this is the only one exercising the non-refusing branch of the
+# `container_project != this_project` guard.
+reset_fixture
+export FAKE_THIS_PROJECT="same-project" FAKE_CONTAINER_PROJECT="same-project" FAKE_CONTAINER_WORKDIR="$FAKE_STATE_DIR"
+EXIT_CODE="$(run_script)"
+if [[ "$EXIT_CODE" -ne 0 ]]; then
+    fail_case "15g-own-container-proceeds" "expected exit 0 (same project, no foreign-project refusal), got $EXIT_CODE, log:\n$(cat "$SCRATCH_ROOT/out.log")"
+elif [[ ! -f "$FAKE_STATE_DIR/up-ran" ]]; then
+    fail_case "15g-own-container-proceeds" "expected the normal fresh-creation flow to complete (docker compose ... up -d ruflo), log:\n$(cat "$SCRATCH_ROOT/out.log")"
+else
+    echo "applied=own-project-proceeds PASS (15g-own-container-proceeds): a same-project existing container is not refused, ordinary flow completed"
+fi
+unset FAKE_THIS_PROJECT FAKE_CONTAINER_PROJECT FAKE_CONTAINER_WORKDIR
+
+# ---- 15h (F-5, SMI-6846 governance retro, Low): a VOLUME named
+# skillsmith-ruflo-1 exists but no CONTAINER does -- probe_container_owner()
+# pins `--type container` at the probe, so this must read as ABSENT (proceed
+# with the normal fresh-creation flow), never as an existing container to
+# attribute or refuse.
+reset_fixture
+export FAKE_SAMENAME_VOLUME=1
+EXIT_CODE="$(run_script)"
+if [[ "$EXIT_CODE" -ne 0 ]]; then
+    fail_case "15h-samename-volume-not-container" "expected exit 0 (a same-named volume is not a container collision), got $EXIT_CODE, log:\n$(cat "$SCRATCH_ROOT/out.log")"
+elif [[ ! -f "$FAKE_STATE_DIR/up-ran" ]]; then
+    fail_case "15h-samename-volume-not-container" "expected the normal fresh-creation flow to complete (docker compose ... up -d ruflo), log:\n$(cat "$SCRATCH_ROOT/out.log")"
+else
+    echo "applied=samename-volume-proceeds PASS (15h-samename-volume-not-container): a same-named volume (not a container) does not trip the foreign-project guard, ordinary flow completed"
+fi
+unset FAKE_SAMENAME_VOLUME
+
 # ---- Arm 16 (S-1, SMI-6744 A1.8 retro): federation_restore_disposition()
 # (scripts/ruflo-service-up.helpers.sh) is a PURE function -- source the
 # helpers directly into THIS shell and call it, no docker/git and no
@@ -1035,21 +1126,32 @@ else
     echo "applied=restore-never-touched PASS (20c-restore-never-touched): the never-touched gate returns before any probing, rm, or re-up"
 fi
 
-# SMI-6744 A1.8 retro round 2 tally: 14 (arms 1-14) + 5 (15a-15e, SMI-6846
-# adds 15e) + 7 (16a-16g, F-6 adds 16f, F-7 adds 16g) + 1 (17-setup, F-3) + 1
-# (Arm 18, F-2's decoy-log-on-PATH arm) + 3 (17a/17b/17c, F-11 splits the
+# SMI-6744 A1.8 retro round 2 tally: 14 (arms 1-14) + 8 (15a-15h, SMI-6846
+# adds 15e; the SMI-6846 governance retro's F-1/F-6/F-5 fixes add
+# 15f/15g/15h) + 7 (16a-16g, F-6 adds 16f, F-7 adds 16g) + 1 (17-setup, F-3)
+# + 1 (Arm 18, F-2's decoy-log-on-PATH arm) + 3 (17a/17b/17c, F-11 splits the
 # former single combined "17" check into three independently-reported
 # assertions) + 5 (19a-19e, probe_container_owner() classification arms,
 # SMI-6744 A1.8 cross-family gate round-1 fix on PR #2937 class 1) + 3
-# (20a-20c, federation_restore_checkout_1() end-to-end arms, same fix) = 39.
-# Enumerated in the evidence file this round's fix produced
-# (gate-r1-fix/summary-tally.txt) to prove the count against the actual
-# fail_case/FAIL labels in this file, not just this comment's arithmetic.
+# (20a-20c, federation_restore_checkout_1() end-to-end arms, same fix) = 42.
+# SMI-6846 governance retro F-3 (Medium): verify this arithmetic against the
+# actual fail_case/FAIL labels in this file (not just this comment) with a
+# reproducible command instead of citing an uncommitted scratchpad artifact
+# (a prior version of this comment cited gate-r1-fix/summary-tally.txt,
+# which proved 38 for an earlier arm count and cannot be re-run by a later
+# reader). The `grep -v '^[[:space:]]*#'` strips comment lines FIRST --
+# without it, this very documentation line's own literal text (a quoted
+# 'fail_case "[^"]+"' example) self-matches the pattern it is illustrating,
+# overcounting by one (measured live: 40 instead of 39):
+#   expr $(grep -v '^[[:space:]]*#' "$0" | grep -oE 'fail_case "[^"]+"' | sort -u | wc -l) + \
+#        $(grep -v '^[[:space:]]*#' "$0" | grep -oE 'FAIL \([^)$][^)]*\)' | sort -u | wc -l)
+# 39 fail_case labels (36 before the SMI-6846 governance round added 15f/15g/15h) + 3
+# (17a/17b/17c, which report via a direct FAIL, not fail_case) = 42.
 echo ""
 if [[ "$FAIL_COUNT" -eq 0 ]]; then
-    echo "SUMMARY: 39/39 arms passed"
+    echo "SUMMARY: 42/42 arms passed"
     exit 0
 else
-    echo "SUMMARY: $FAIL_COUNT/39 arms FAILED"
+    echo "SUMMARY: $FAIL_COUNT/42 arms FAILED"
     exit 1
 fi

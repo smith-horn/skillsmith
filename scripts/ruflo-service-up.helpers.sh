@@ -171,21 +171,21 @@ check_not_linked_worktree() {
 # This check fails fast, before any of that work starts.
 #
 # SMI-6846 (PR #2937 post-merge retro, High): the existence probe below
-# routes through probe_container_owner() (further down in this file)
-# instead of a bare `docker inspect $CONTAINER_NAME >/dev/null 2>&1` --
-# that bare shape maps EVERY nonzero `docker inspect` (daemon unreachable,
-# a permission error, an older CLI, a context switch) to "return 0" (no
-# foreign-project collision), the identical fail-open shape the
-# cross-family gate round 1 on PR #2937 already blocked and fixed in
-# probe_container_owner() itself, further down in this same file.
-# probe_container_owner() classifies a nonzero `docker inspect` by its
-# STDERR TEXT: only a confirmed "No such (container|object)" message means
-# absent (fp_exists=0); anything else (daemon down, a permission error, an
-# unrecognized flag, or an unclassified failure) means UNKNOWN
-# (fp_exists=""), and this function refuses in that case rather than
-# assuming "no foreign-project collision" -- "could not determine" is not
-# "verified absent". Bash resolves functions at call time, so it does not
-# matter that probe_container_owner() is defined lower in this file.
+# routes through probe_container_owner() instead of a bare
+# `docker inspect $CONTAINER_NAME >/dev/null 2>&1`, which mapped EVERY
+# nonzero result to "no foreign-project collision" -- the same fail-open
+# shape the cross-family gate round 1 on PR #2937 closed in
+# probe_container_owner(). That function classifies a nonzero inspect by
+# its STDERR TEXT: a confirmed "No such (container|object)" means absent
+# (fp_exists=0); anything else means UNKNOWN (fp_exists=""), and
+# "could not determine" is refused here, never assumed absent. The
+# exists="" die is defence in depth -- the probe always pairs exists=""
+# with an empty owner, which the empty/<no value> branch below already
+# refuses -- and exists to name the failed inspect rather than mis-state
+# an unreadable label. Bash resolves functions at call time, so
+# probe_container_owner() being defined lower in this file is fine.
+# Side effect of the probe's `--type container`: a same-named VOLUME now
+# reads as absent (correct) instead of reaching the unreadable-label die.
 check_foreign_project() {
     local fp_exists fp_owner
     probe_container_owner "$CONTAINER_NAME" fp_exists fp_owner
@@ -193,14 +193,21 @@ check_foreign_project() {
         return 0
     fi
     if [[ "$fp_exists" != "1" ]]; then
-        die "container $CONTAINER_NAME: docker inspect failed for a reason other than a confirmed 'No such container' (see the probe diagnostic above) -- refusing to assume there is no foreign-project collision. Inspect it: docker inspect --type container $CONTAINER_NAME"
+        die "container $CONTAINER_NAME: docker inspect failed for a reason other than a confirmed 'No such container' (see the probe diagnostic above) -- refusing to assume there is no foreign-project collision (an unattributable inspect is never read as absence). Inspect it: docker inspect --type container $CONTAINER_NAME"
     fi
     command -v jq >/dev/null 2>&1 || die "jq is required to check for a foreign-project container collision (docker compose config --format json | jq -r .name) but was not found on PATH"
-    local this_project container_project container_workdir
+    local this_project container_project container_workdir workdir_read_ok=1
     this_project="$(docker compose -f "$COMPOSE_FILE" config --format json 2>/dev/null | jq -r '.name // empty')"
     [[ -n "$this_project" ]] || die "could not resolve this checkout's Compose project name: docker compose -f $COMPOSE_FILE config --format json | jq -r .name"
     container_project="$fp_owner"
-    container_workdir="$(docker inspect --type container "$CONTAINER_NAME" --format '{{index .Config.Labels "com.docker.compose.project.working_dir"}}' 2>/dev/null || true)"
+    # F-1 (SMI-6846 governance, Medium): a FAILED working_dir read (daemon
+    # blip, permission error, or the container replaced between this call
+    # and the probe's, which are two separate snapshots) must not be
+    # reported as "the working_dir no longer exists": the same
+    # definite-state-from-an-undetermined-probe shape this function's
+    # existence probe was already fixed for (SMI-6846). `workdir_read_ok`
+    # tracks that separately from an empty-but-successfully-read value.
+    container_workdir="$(docker inspect --type container "$CONTAINER_NAME" --format '{{index .Config.Labels "com.docker.compose.project.working_dir"}}' 2>/dev/null)" || workdir_read_ok=0
     # Cross-family gate round 1 on PR #2934 (Medium): an EMPTY label read --
     # the inspect failed, or the container carries no Compose project label
     # at all (started by hand, or by a tool that is not Compose) -- used to
@@ -213,10 +220,12 @@ check_foreign_project() {
     # let that shape slip through as "readable" when it is really the SAME
     # "could not attribute" case the empty-string branch already refuses.
     if [[ -z "$container_project" || "$container_project" == "<no value>" ]]; then
-        die "container $CONTAINER_NAME already exists but its Compose project label could not be read (empty, the literal '<no value>', or the inspect failed) -- refusing to assume it belongs to this checkout ($this_project). Inspect it: docker inspect $CONTAINER_NAME --format '{{index .Config.Labels \"com.docker.compose.project\"}}' -- if it is not Compose-managed, stop it first and remove it by hand: docker stop $CONTAINER_NAME && docker rm $CONTAINER_NAME"
+        die "container $CONTAINER_NAME already exists but its Compose project label could not be read (empty, the literal '<no value>', or the inspect failed) -- refusing to assume it belongs to this checkout ($this_project). Inspect it: docker inspect --type container $CONTAINER_NAME --format '{{index .Config.Labels \"com.docker.compose.project\"}}' -- if it is not Compose-managed, stop it first and remove it by hand: docker stop $CONTAINER_NAME && docker rm $CONTAINER_NAME"
     fi
     if [[ "$container_project" != "$this_project" ]]; then
-        if [[ -d "$container_workdir" ]]; then
+        if [[ "$workdir_read_ok" != "1" || -z "$container_workdir" || "$container_workdir" == "<no value>" ]]; then
+            die "container $CONTAINER_NAME already exists and belongs to a DIFFERENT Compose project ($container_project) than this checkout's project ($this_project) -- refusing to reconcile silently into a takeover. Its working_dir could NOT be read (the inspect failed, or the container carries no working_dir label), so this refusal cannot tell you whether that checkout still exists -- do not assume it is gone. Read it first: docker inspect --type container $CONTAINER_NAME --format '{{index .Config.Labels \"com.docker.compose.project.working_dir\"}}' -- then stop the service from THAT checkout: ( cd <its working_dir> && docker compose --profile ruflo down ruflo ). Only if the checkout is genuinely gone, stop and remove by hand (never rm -f a running container): docker stop $CONTAINER_NAME && docker rm $CONTAINER_NAME"
+        elif [[ -d "$container_workdir" ]]; then
             die "container $CONTAINER_NAME already exists and belongs to a DIFFERENT Compose project ($container_project, working_dir=$container_workdir) than this checkout's project ($this_project) -- refusing to reconcile silently into a takeover. Remediation: ( cd \"$container_workdir\" && docker compose --profile ruflo down ruflo ) from THAT project first, then re-run this script."
         else
             die "container $CONTAINER_NAME already exists and belongs to a DIFFERENT Compose project ($container_project, working_dir=$container_workdir) than this checkout's project ($this_project) -- refusing to reconcile silently into a takeover. Its own working_dir no longer exists on this machine, so its project can't stop it gracefully -- stop it first (never rm -f a running container), then remove it: docker stop $CONTAINER_NAME && docker rm $CONTAINER_NAME"
@@ -443,7 +452,7 @@ federation_restore_checkout_1() {
     disposition="$(federation_restore_disposition "$exists" "$owner" "$p1" "$p2")"
     case "$disposition" in
         refuse-unattributable)
-            echo "[ruflo-federation] EXIT trap: $container_name exists but its Compose project label could not be read (empty label, the literal '<no value>', or an inspect that failed for a reason other than a confirmed 'No such container') -- refusing to rm -f it (ruflo-service-up.sh's own foreign-project refusal says an unreadable label is never assumed to be ours). Inspect it: docker inspect $container_name --format '{{index .Config.Labels \"com.docker.compose.project\"}}' -- then re-run checkout 1's up script once resolved: $checkout_1/scripts/ruflo-service-up.sh" >&2
+            echo "[ruflo-federation] EXIT trap: $container_name exists but its Compose project label could not be read (empty label, the literal '<no value>', or an inspect that failed for a reason other than a confirmed 'No such container') -- refusing to rm -f it (ruflo-service-up.sh's own foreign-project refusal says an unreadable label is never assumed to be ours). Inspect it: docker inspect --type container $container_name --format '{{index .Config.Labels \"com.docker.compose.project\"}}' -- then re-run checkout 1's up script once resolved: $checkout_1/scripts/ruflo-service-up.sh" >&2
             return 0
             ;;
         refuse-third)
