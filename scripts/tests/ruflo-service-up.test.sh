@@ -687,6 +687,36 @@ else
 fi
 unset FAKE_THIS_PROJECT FAKE_CONTAINER_PROJECT FAKE_CONTAINER_LABEL_NOVALUE
 
+# ---- 15e (SMI-6846, High, PR #2937 post-merge retro): `docker inspect`
+# fails for a reason OTHER than a confirmed "No such container" (daemon
+# unreachable, a permission error, an older CLI, a context switch) -- must
+# be refused (fail closed), never treated as "container absent, no foreign
+# project" (the identical fail-open shape the cross-family gate round 1 on
+# PR #2937 already closed in probe_container_owner() itself, further down
+# in scripts/ruflo-service-up.helpers.sh). Before the SMI-6846 fix,
+# check_foreign_project()'s own bare `docker inspect ... || return 0`
+# mapped this SAME daemon-unreachable failure to "return 0" and let `up`
+# proceed straight into its volume/authority-file bookkeeping.
+reset_fixture
+export FAKE_INSPECT_FAIL="daemon"
+EXIT_CODE="$(run_script)"
+if [[ "$EXIT_CODE" -eq 0 ]]; then
+    fail_case "15e-inspect-fails-unattributable" "expected non-zero exit (refusal), got 0, log:\n$(cat "$SCRATCH_ROOT/out.log")"
+elif ! grep -qF "refusing to assume there is no foreign-project collision" "$SCRATCH_ROOT/out.log"; then
+    fail_case "15e-inspect-fails-unattributable" "expected the SMI-6846 refusal text, log:\n$(cat "$SCRATCH_ROOT/out.log")"
+elif ! grep -qF "probe_container_owner: docker inspect of skillsmith-ruflo-1 failed" "$SCRATCH_ROOT/out.log"; then
+    fail_case "15e-inspect-fails-unattributable" "expected the probe's own diagnostic line, log:\n$(cat "$SCRATCH_ROOT/out.log")"
+elif grep -qE "volume (create|inspect)" "$FAKE_DOCKER_CALL_LOG"; then
+    fail_case "15e-inspect-fails-unattributable" "expected NO volume/store bookkeeping before this refusal, log:\n$(cat "$FAKE_DOCKER_CALL_LOG")"
+elif [[ -f "$FAKE_STATE_DIR/up-ran" ]]; then
+    fail_case "15e-inspect-fails-unattributable" "expected NO 'docker compose ... up' before this refusal (up-ran marker should not exist)"
+elif [[ -f "$HOME/.skillsmith/ruflo-store.json" ]]; then
+    fail_case "15e-inspect-fails-unattributable" "expected NO authority file to be written before this refusal"
+else
+    echo "applied=foreign-project-refuse-inspect-unattributable PASS (15e-inspect-fails-unattributable): refused when docker inspect failed for a reason other than a confirmed 'No such container', before any bookkeeping"
+fi
+unset FAKE_INSPECT_FAIL
+
 # ---- Arm 16 (S-1, SMI-6744 A1.8 retro): federation_restore_disposition()
 # (scripts/ruflo-service-up.helpers.sh) is a PURE function -- source the
 # helpers directly into THIS shell and call it, no docker/git and no
@@ -1005,21 +1035,21 @@ else
     echo "applied=restore-never-touched PASS (20c-restore-never-touched): the never-touched gate returns before any probing, rm, or re-up"
 fi
 
-# SMI-6744 A1.8 retro round 2 tally: 14 (arms 1-14) + 4 (15a-15d, F-7 adds
-# 15d) + 7 (16a-16g, F-6 adds 16f, F-7 adds 16g) + 1 (17-setup, F-3) + 1
+# SMI-6744 A1.8 retro round 2 tally: 14 (arms 1-14) + 5 (15a-15e, SMI-6846
+# adds 15e) + 7 (16a-16g, F-6 adds 16f, F-7 adds 16g) + 1 (17-setup, F-3) + 1
 # (Arm 18, F-2's decoy-log-on-PATH arm) + 3 (17a/17b/17c, F-11 splits the
 # former single combined "17" check into three independently-reported
 # assertions) + 5 (19a-19e, probe_container_owner() classification arms,
 # SMI-6744 A1.8 cross-family gate round-1 fix on PR #2937 class 1) + 3
-# (20a-20c, federation_restore_checkout_1() end-to-end arms, same fix) = 38.
+# (20a-20c, federation_restore_checkout_1() end-to-end arms, same fix) = 39.
 # Enumerated in the evidence file this round's fix produced
 # (gate-r1-fix/summary-tally.txt) to prove the count against the actual
 # fail_case/FAIL labels in this file, not just this comment's arithmetic.
 echo ""
 if [[ "$FAIL_COUNT" -eq 0 ]]; then
-    echo "SUMMARY: 38/38 arms passed"
+    echo "SUMMARY: 39/39 arms passed"
     exit 0
 else
-    echo "SUMMARY: $FAIL_COUNT/38 arms FAILED"
+    echo "SUMMARY: $FAIL_COUNT/39 arms FAILED"
     exit 1
 fi

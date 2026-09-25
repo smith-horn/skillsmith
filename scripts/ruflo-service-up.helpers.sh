@@ -169,16 +169,38 @@ check_not_linked_worktree() {
 # volume/authority-file bookkeeping has already run -- with a bare Docker
 # message that names neither the foreign project nor how to resolve it.
 # This check fails fast, before any of that work starts.
+#
+# SMI-6846 (PR #2937 post-merge retro, High): the existence probe below
+# routes through probe_container_owner() (further down in this file)
+# instead of a bare `docker inspect $CONTAINER_NAME >/dev/null 2>&1` --
+# that bare shape maps EVERY nonzero `docker inspect` (daemon unreachable,
+# a permission error, an older CLI, a context switch) to "return 0" (no
+# foreign-project collision), the identical fail-open shape the
+# cross-family gate round 1 on PR #2937 already blocked and fixed in
+# probe_container_owner() itself, further down in this same file.
+# probe_container_owner() classifies a nonzero `docker inspect` by its
+# STDERR TEXT: only a confirmed "No such (container|object)" message means
+# absent (fp_exists=0); anything else (daemon down, a permission error, an
+# unrecognized flag, or an unclassified failure) means UNKNOWN
+# (fp_exists=""), and this function refuses in that case rather than
+# assuming "no foreign-project collision" -- "could not determine" is not
+# "verified absent". Bash resolves functions at call time, so it does not
+# matter that probe_container_owner() is defined lower in this file.
 check_foreign_project() {
-    if ! docker inspect "$CONTAINER_NAME" >/dev/null 2>&1; then
+    local fp_exists fp_owner
+    probe_container_owner "$CONTAINER_NAME" fp_exists fp_owner
+    if [[ "$fp_exists" == "0" ]]; then
         return 0
+    fi
+    if [[ "$fp_exists" != "1" ]]; then
+        die "container $CONTAINER_NAME: docker inspect failed for a reason other than a confirmed 'No such container' (see the probe diagnostic above) -- refusing to assume there is no foreign-project collision. Inspect it: docker inspect --type container $CONTAINER_NAME"
     fi
     command -v jq >/dev/null 2>&1 || die "jq is required to check for a foreign-project container collision (docker compose config --format json | jq -r .name) but was not found on PATH"
     local this_project container_project container_workdir
     this_project="$(docker compose -f "$COMPOSE_FILE" config --format json 2>/dev/null | jq -r '.name // empty')"
     [[ -n "$this_project" ]] || die "could not resolve this checkout's Compose project name: docker compose -f $COMPOSE_FILE config --format json | jq -r .name"
-    container_project="$(docker inspect "$CONTAINER_NAME" --format '{{index .Config.Labels "com.docker.compose.project"}}' 2>/dev/null || true)"
-    container_workdir="$(docker inspect "$CONTAINER_NAME" --format '{{index .Config.Labels "com.docker.compose.project.working_dir"}}' 2>/dev/null || true)"
+    container_project="$fp_owner"
+    container_workdir="$(docker inspect --type container "$CONTAINER_NAME" --format '{{index .Config.Labels "com.docker.compose.project.working_dir"}}' 2>/dev/null || true)"
     # Cross-family gate round 1 on PR #2934 (Medium): an EMPTY label read --
     # the inspect failed, or the container carries no Compose project label
     # at all (started by hand, or by a tool that is not Compose) -- used to
