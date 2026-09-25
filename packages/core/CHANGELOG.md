@@ -4,6 +4,16 @@ All notable changes to `@skillsmith/core` are documented here.
 
 ## [Unreleased]
 
+- **Docs**: SMI-6840 -- the comments around the `sk_live_` redaction rule and the gitleaks rules
+  made claims the repository does not establish: that Stripe's and Clerk's keys are alphanumeric,
+  that our alphabet differs from theirs, and that SMI-6840 was caused by someone changing an
+  issuer's pattern. None of that was measured, and the last is not what happened -- the defect was
+  an alphanumeric pattern written against base64url keys. Four review rounds each found a fresh
+  error in the explanation, so under a stopping rule fixed in advance the explanation is now
+  deleted rather than reworded again: each site states the instruction (what the class must include,
+  what must not be re-added, which neighbouring rules are unexamined) and points at this issue for
+  the evidence. No behaviour change -- every pattern byte-identical.
+
 - **Security**: SMI-6840 (PR #2936; found while enumerating redaction sites for SMI-6636) --
   `redactSensitiveData` / `redactSensitiveObject` masked only part of a Skillsmith API key, or none
   of it. The `sk_live_` pattern's body was `[a-zA-Z0-9]`, but `generateLicenseKey` emits base64url,
@@ -27,8 +37,8 @@ All notable changes to `@skillsmith/core` are documented here.
   accepted because a leaked credential is not recoverable and lost context is. `redactSensitiveObject`
   returns a new object and never mutates its input, so this is confined to the emitted copy. Widening
   is monotonic, so Stripe's own `sk_live_` keys stay covered. The `sk_test_`, `pk_live_` and `pk_test_`
-  rules are deliberately left alphanumeric -- nothing in this repo mints those, and changing an
-  issuer's pattern without a case table for that issuer is what produced this defect. Consumers of
+  rules are deliberately left untouched -- nothing in this repo mints those, and their issuer's real
+  key alphabet was never measured here, so widening them would have no evidence behind it either. Consumers of
   `@skillsmith/core`'s logging and telemetry modules get the fix with no API change.
 
 - **Docs**: SMI-6826 (PR #2930; found by the PR #2929 post-merge retro) -- `ApiCache`'s
