@@ -603,10 +603,26 @@ function extractArrayLiteral(source: string, exportName: string, fileName = 'sou
   // produce. Requiring `const` above does not reach it.
   //
   // So refuse any in-file reference to the binding beyond its own declaration
-  // and `typeof` type positions. This is COMPLETE for references inside this
-  // file and says nothing about another module importing the array and
-  // mutating it -- that residual is real, unreachable by any single-file
-  // static check, and is named here rather than left implied.
+  // and `typeof` type positions. Scope, stated exactly: every reference that
+  // appears as an Identifier node in this file's AST. That covers assignment,
+  // aliasing, destructuring, property access, closures and calls without
+  // enumerating any of them, because each necessarily parses to an identifier.
+  //
+  // TWO RESIDUALS, neither covered and neither implied to be. Another module
+  // may import the array and mutate it. And dynamic evaluation defeats this
+  // entirely -- `eval("SAMPLE.splice(0, 1, 'beta')")` puts the name inside a
+  // string literal, where no Identifier node exists.
+  //
+  // An earlier version of this comment claimed the guard was "COMPLETE for
+  // references inside this file". It is not, and the cross-family gate was
+  // right to call that an overstatement. The tempting repair -- refuse
+  // `eval(...)` while scanning -- was declined deliberately: it closes one
+  // spelling while `new Function`, indirect `(0, eval)`, `globalThis.eval` and
+  // an eval inside another declaration's initializer all remain, so the claim
+  // would stay false while LOOKING defended. That is the exact shape this file
+  // has spent ten review rounds removing, and a guard that enumerates is worse
+  // than a residual that is written down. No static single-file check can
+  // reach dynamic evaluation; saying so is the honest guarantee.
   const offending: string[] = []
   const scanReferences = (node: ts.Node): void => {
     if (ts.isIdentifier(node) && node.text === exportName) {
@@ -760,6 +776,22 @@ describe('extractArrayLiteral — parser blind-spot controls (SMI-6841 finding 7
       "export const SAMPLE = ['alpha'] as const\n" +
       ";(SAMPLE as unknown as string[]).splice(0, 1, 'beta')\n"
     expect(() => extractArrayLiteral(mutated, 'SAMPLE')).toThrow(/references "SAMPLE" outside/)
+  })
+
+  it('DOCUMENTS A RESIDUAL: dynamic evaluation defeats the guard, and is not claimed to be covered', () => {
+    // Not a guard -- a record. `eval` puts the binding name inside a string
+    // literal, where there is no Identifier node to find, so the parser
+    // returns the initializer while the live value differs. Asserting the
+    // CURRENT behaviour rather than a desired one, because no single-file
+    // static check can reach this and pretending otherwise is the failure
+    // this file exists to prevent.
+    //
+    // If someone later adds a guard that catches this, THIS TEST FAILS, and
+    // that is the point: it forces the residual list to be updated
+    // deliberately instead of drifting out of date in a comment.
+    const viaEval =
+      "export const SAMPLE = ['alpha'] as const\n" + 'eval("SAMPLE.splice(0, 1, \'beta\')")\n'
+    expect(extractArrayLiteral(viaEval, 'SAMPLE')).toEqual(['alpha'])
   })
 
   it('a `typeof` reference is NOT treated as a mutation -- the real mirror has one', () => {
