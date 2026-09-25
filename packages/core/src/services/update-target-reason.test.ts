@@ -502,7 +502,7 @@ function extractArrayLiteral(source: string, exportName: string, fileName = 'sou
     fileName,
     source,
     ts.ScriptTarget.Latest,
-    /* setParentNodes */ false,
+    /* setParentNodes */ true, // needed to classify identifier positions below
     ts.ScriptKind.TS
   )
 
@@ -595,6 +595,40 @@ function extractArrayLiteral(source: string, exportName: string, fileName = 'sou
       `manifestReader.ts has no "export const ${exportName} = [...]" array -- mirror missing or renamed`
     )
   }
+  // A STATIC READ OF AN INITIALIZER IS NOT A READ OF THE VALUE. `const` fixes
+  // the binding, not the array's contents: `export const X = ['a'] as const`
+  // followed by `(X as unknown as string[]).splice(0, 1, 'b')` leaves this
+  // parser returning ['a'] while the live export holds ['b'] -- a confidently
+  // WRONG member list, which is the one outcome a parity check must never
+  // produce. Requiring `const` above does not reach it.
+  //
+  // So refuse any in-file reference to the binding beyond its own declaration
+  // and `typeof` type positions. This is COMPLETE for references inside this
+  // file and says nothing about another module importing the array and
+  // mutating it -- that residual is real, unreachable by any single-file
+  // static check, and is named here rather than left implied.
+  const offending: string[] = []
+  const scanReferences = (node: ts.Node): void => {
+    if (ts.isIdentifier(node) && node.text === exportName) {
+      const parent = node.parent as ts.Node | undefined
+      const isOwnDeclarationName =
+        parent !== undefined && ts.isVariableDeclaration(parent) && parent.name === node
+      const isTypePosition = parent !== undefined && ts.isTypeQueryNode(parent)
+      if (!isOwnDeclarationName && !isTypePosition) {
+        const line = sourceFile.getLineAndCharacterOfPosition(node.getStart(sourceFile)).line + 1
+        offending.push(`line ${line}`)
+      }
+    }
+    ts.forEachChild(node, scanReferences)
+  }
+  scanReferences(sourceFile)
+  if (offending.length > 0) {
+    throw new Error(
+      `manifestReader.ts references "${exportName}" outside its declaration (${offending.join(', ')}) -- ` +
+        'the initializer may not be the exported value, so this parity check refuses to guess'
+    )
+  }
+
   return found
 }
 
@@ -714,6 +748,28 @@ describe('extractArrayLiteral — parser blind-spot controls (SMI-6841 finding 7
     // `export const … as const` specifically -- the `as` may be any type.
     const asReadonly = "export const SAMPLE = [\n  'alpha',\n  'beta',\n] as readonly string[]\n"
     expect(extractArrayLiteral(asReadonly, 'SAMPLE')).toEqual(['alpha', 'beta'])
+  })
+
+  it('a const export whose array is MUTATED later is REFUSED -- `const` fixes the binding, not the contents', () => {
+    // The cross-family gate's own case (PR #2939, second pass). `const`
+    // prevents reassignment and nothing else, so this parser would otherwise
+    // return ['alpha'] while the live export holds ['beta'] -- a confidently
+    // wrong member list, the one outcome a parity check must never produce.
+    // Refused by the in-file reference guard, not by the `const` check.
+    const mutated =
+      "export const SAMPLE = ['alpha'] as const\n" +
+      ";(SAMPLE as unknown as string[]).splice(0, 1, 'beta')\n"
+    expect(() => extractArrayLiteral(mutated, 'SAMPLE')).toThrow(/references "SAMPLE" outside/)
+  })
+
+  it('a `typeof` reference is NOT treated as a mutation -- the real mirror has one', () => {
+    // Acceptance half of the pair. Without it the refusal above is satisfiable
+    // by a guard that rejects every reference, which would fail against the
+    // real manifestReader.ts and be discovered only there.
+    const withTypeAlias =
+      "export const SAMPLE = ['alpha'] as const\n" +
+      'export type Sample = (typeof SAMPLE)[number]\n'
+    expect(extractArrayLiteral(withTypeAlias, 'SAMPLE')).toEqual(['alpha'])
   })
 
   it('a mutable export is REFUSED, because its initializer is not its value', () => {
