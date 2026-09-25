@@ -99,20 +99,33 @@
  * record under its own label and to throw.
  *
  * That qualifier governs ALL THREE levels, not just the third. `Object.entries`
- * is what walks every one of them — in `wrapNamespace`, in the control's walk,
- * and in the oracle — so the same boundary applies identically at each. An
- * earlier version of this paragraph attached "enumerable, string-keyed" to the
- * third clause alone, which claimed more than the mechanism delivers for the
- * first two: the same subject-broader-than-the-thing-it-names shape this file
- * spent eleven rounds removing, relocated into its own summary.
+ * walks every one of them — `wrapNamespace` at all three, the control's walk at
+ * the first two, and the oracle at the third — so the same boundary applies
+ * identically at each. An earlier version of this paragraph attached
+ * "enumerable, string-keyed" to the third clause alone, which claimed more than
+ * the mechanism delivers for the first two: the same
+ * subject-broader-than-the-thing-it-names shape this file spent eleven rounds
+ * removing, relocated into its own summary.
  *
- * Two declared residuals, neither covered and neither implied to be: a defect
- * keyed on argument CONTENT rather than arity, and a function reachable only
- * under a non-enumerable or Symbol key AT ANY LEVEL, which `Object.entries`
- * does not report. Measured in-container: `node:fs` and `node:fs/promises`
- * each expose zero non-enumerable and zero Symbol-keyed function exports, so
- * the second is a boundary rather than a live hole. SMI-6841 holds the
- * measured instances and the mutation that killed each.
+ * Two declared residuals, neither covered and neither implied to be. The first
+ * is a defect keyed on argument CONTENT rather than arity.
+ *
+ * The second is a function reachable only under a non-enumerable or Symbol key
+ * AT ANY LEVEL, and it is NOT empty — a previous version of this paragraph said
+ * it was, which was measured at the first two levels and asserted at all three.
+ * At levels one and two it is empty. At the THIRD it is populated: every walked
+ * namespace owns exactly one Symbol-keyed callable
+ * (`fs.exists[util.promisify.custom]`, `fs.promises.opendir[…]`), absent from
+ * the mock for the same reason `realpath.native` once was.
+ *
+ * Containment survives the realistic path, which is why this is a live
+ * boundary rather than a live hole: `util.promisify(mockFs.exists)` finds no
+ * custom symbol on the spy, falls back to wrapping the spy, and still records
+ * and throws. What stays open is a DIRECT index of the symbol. Both counts are
+ * now asserted rather than described — see the denominator block below — so a
+ * future Node that changes either one fails loudly instead of rotting this
+ * paragraph. SMI-6841 holds the measured instances and the mutation that
+ * killed each.
  */
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 
@@ -673,6 +686,49 @@ describe('the fs recorder — known-positive control (T-G3)', () => {
       // `realpath.native` and `realpathSync.native`, at the top level and
       // again under `default`; the promises modules own none.
       expect(expectedMemberPaths.length).toBe(expectedMemberCount)
+
+      // PIN THE RESIDUAL INSTEAD OF DESCRIBING IT. `Object.entries` — which
+      // both `wrapNamespace` and the oracle above use — reports only
+      // ENUMERABLE, STRING-KEYED properties. That boundary was stated in prose
+      // and measured once by hand, which is the shape this very PR deleted
+      // elsewhere ("38 hits", a fact about a moving tree restated in a
+      // comment). A hand measurement of someone else's stdlib rots silently,
+      // and worse: if a future Node adds such an export the prose goes stale
+      // AND the mock gains a hole, with every assertion still green, because
+      // subject and oracle enumerate the same blind way.
+      //
+      // So assert it. Measured in-container on Node 22: no namespace of
+      // `node:fs` or `node:fs/promises` has a non-enumerable function export,
+      // and each owns exactly one Symbol-keyed callable —
+      // `fs.exists[util.promisify.custom]`, `fs.promises.opendir[…]`. The
+      // second is genuinely outside the mock, for the same reason
+      // `realpath.native` once was. Containment survives the realistic path:
+      // `util.promisify(mockFs.exists)` finds no custom symbol on the spy,
+      // falls back to wrapping the spy, and still records and throws. What
+      // stays open is a DIRECT index of the symbol, which nothing here does.
+      //
+      // When Node changes either count, this fails and names the path.
+      let nonEnumerableFns = 0
+      const symbolKeyedCallables: string[] = []
+      for (const suffix of expectedSuffixes) {
+        const nsActual = resolve(suffix)
+        for (const key of Object.getOwnPropertyNames(nsActual)) {
+          const d = Object.getOwnPropertyDescriptor(nsActual, key)
+          if (d && !d.enumerable && typeof d.value === 'function') nonEnumerableFns += 1
+        }
+        for (const [fnName, fnValue] of Object.entries(nsActual)) {
+          if (typeof fnValue !== 'function') continue
+          for (const sym of Object.getOwnPropertySymbols(fnValue)) {
+            if (typeof (fnValue as unknown as Record<symbol, unknown>)[sym] === 'function') {
+              symbolKeyedCallables.push(`${canonical}${suffix}.${fnName}[${String(sym)}]`)
+            }
+          }
+        }
+      }
+      expect({ nonEnumerableFns, symbolKeyed: symbolKeyedCallables.length }).toEqual({
+        nonEnumerableFns: 0,
+        symbolKeyed: expectedSuffixes.length,
+      })
 
       // Guards the guard: if `vi.importActual` ever handed back an empty or
       // stub module, every set comparison above would pass vacuously by

@@ -4,6 +4,18 @@ All notable changes to `@skillsmith/core` are documented here.
 
 ## [Unreleased]
 
+- **Docs**: SMI-6841 -- three comment corrections in the update-eligibility gate's own files, with
+  no behaviour change: every changed line in `update-target-reason.ts` and `update-target.probe.ts`
+  is inside a comment. PR #2939 replaced seven unresolvable "task brief" referents on the stated
+  ground that a referent no later reader can resolve is not durable, and left eight more -- one of
+  them four lines above a referent it did fix, and five in the file its own docstring sends the
+  reader to, so the source said `SMI-6532` while routing you to a file that still said "the
+  brief's". The sweep is now mechanism-wide and must be run multiline-aware: the phrase wraps
+  across JSDoc line breaks, and a line-based `grep` undercounts it by six. Separately, the note on
+  `hasGitAncestorBetween`'s export status was corrected at the fourth of four sites, and the plan
+  doc's own `§4` bullet alongside it, so the two surfaces agree rather than one lending the other
+  false authority.
+
 - **Docs**: SMI-6840 -- the comments around the `sk_live_` redaction rule and the gitleaks rules
   made claims the repository does not establish: that Stripe's and Clerk's keys are alphanumeric,
   that our alphabet differs from theirs, and that SMI-6840 was caused by someone changing an
