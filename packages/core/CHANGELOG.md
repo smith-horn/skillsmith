@@ -36,7 +36,8 @@ All notable changes to `@skillsmith/core` are documented here.
   confidentiality axis -- adjacent log content can be swallowed, which is a real diagnostic cost,
   accepted because a leaked credential is not recoverable and lost context is. `redactSensitiveObject`
   returns a new object and never mutates its input, so this is confined to the emitted copy. Widening
-  is monotonic, so Stripe's own `sk_live_` keys stay covered. The `sk_test_`, `pk_live_` and `pk_test_`
+  is monotonic, so every string the old pattern matched this one still matches -- a statement about
+  the two patterns, not a claim that any issuer's keys were fully covered before. The `sk_test_`, `pk_live_` and `pk_test_`
   rules are deliberately left untouched -- nothing in this repo mints those, and their issuer's real
   key alphabet was never measured here, so widening them would have no evidence behind it either. Consumers of
   `@skillsmith/core`'s logging and telemetry modules get the fix with no API change.
