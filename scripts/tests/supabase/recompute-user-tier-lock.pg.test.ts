@@ -88,10 +88,37 @@ describe.skipIf(noLiveTestPg)('SMI-6656 -- recompute_user_tier lock, two live se
     // then its UPDATE blocks on B's held lock. Post-fix: its very first statement (the new
     // FOR UPDATE) blocks immediately, before it has read anything at all.
     const recomputeA = a.fire(`SELECT recompute_user_tier('${TEST_USER}');`)
-    await sleep(500)
 
-    // Sanity: A's recompute has not landed anything yet -- the row is still whatever B's
-    // harmless touch left it as (unchanged tier).
+    // Assert A is REALLY blocked on the row lock before B proceeds. A bare sleep-then-check
+    // cannot tell "A blocked" from "A never connected": if A reached the server only after
+    // B committed, the whole call would run post-commit, return 'enterprise', and this test
+    // would pass having constructed no race at all -- the same silence-as-success shape the
+    // fix exists to remove. So observe the wait itself from a THIRD session, and fail if it
+    // never appears. `pid <> pg_backend_pid()` keeps ctl's own query text (which contains
+    // the function name, and so matches the LIKE) from counting itself.
+    const blockedWaiterCount = async (): Promise<number> => {
+      const r = await ctl.send(
+        `SELECT count(*) FROM pg_stat_activity
+          WHERE pid <> pg_backend_pid()
+            AND state = 'active'
+            AND wait_event_type = 'Lock'
+            AND query LIKE '%recompute_user_tier%';`
+      )
+      return Number.parseInt(r.stdout.trim(), 10)
+    }
+    let sawBlocked = false
+    for (let i = 0; i < 40 && !sawBlocked; i++) {
+      if ((await blockedWaiterCount()) >= 1) sawBlocked = true
+      else await sleep(250)
+    }
+    expect(
+      sawBlocked,
+      'A was never observed waiting on a lock, so no race was constructed and the assertion ' +
+        'below would pass vacuously. Either A never reached the server or the lock is absent.'
+    ).toBe(true)
+
+    // And it has not landed anything yet -- the row is still whatever B's harmless touch
+    // left it as (unchanged tier).
     expect(await tierOf(TEST_USER)).toBe('community')
 
     // B now changes the SOURCE (upgrades the subscription), recomputes for real, and
@@ -153,7 +180,9 @@ describe.skipIf(noLiveTestPg)('SMI-6656 -- recompute_user_tier lock, two live se
     expect(result.stdout).toBe('enterprise')
     expect(await tierOf(CONTROL_USER)).toBe('enterprise')
 
-    // And recompute_team_members_tier's own single-session control path.
+    // And the downgrade direction: cancelling the only source drops the tier back. Still
+    // recompute_user_tier, single-session -- recompute_team_members_tier has no control
+    // path in this suite.
     await ctl.send(
       `UPDATE subscriptions SET status = 'canceled' WHERE id = '${SUB_CONTROL}' AND TRUE;`
     )
