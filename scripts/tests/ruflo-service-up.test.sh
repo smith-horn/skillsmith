@@ -25,6 +25,23 @@ mkdir -p "$FAKE_BIN_DIR"
 
 trap 'rm -rf "$SCRATCH_ROOT"' EXIT
 
+# S-2 (SMI-6744 A1.8 retro): resolve the REAL git binary here, AFTER the
+# cleanup trap above is already registered (F-3, SMI-6744 A1.8 retro round
+# 2: the original capture ran BEFORE the trap existed -- an early,
+# unexpected `command -v git` failure under `set -e` would then abort with
+# nothing armed to clean up $SCRATCH_ROOT). `|| true` so a missing git
+# surfaces as the 17-setup FAIL below (REAL_GIT empty -> `git init` fails
+# with a clear "No such file or directory") rather than aborting this whole
+# suite silently here. In THIS file, PATH is never globally prefixed with
+# FAKE_BIN_DIR -- run_script() below only prepends it to the environment of
+# the ONE command it invokes (`PATH="$FAKE_BIN_DIR:$PATH"
+# "$SCRIPT_UNDER_TEST"`), which does not leak into this shell's own PATH --
+# so a bare `git` anywhere else in this file, including Arm 17's real-git
+# gate test, already resolves to the real binary regardless. REAL_GIT is
+# still captured explicitly here (rather than relying on that fact staying
+# true) so Arm 17 keeps working even if this file's PATH handling changes.
+REAL_GIT="$(command -v git || true)"
+
 # ---- fake docker: records every call, answers volume inspect/create and
 # `compose ... run|up` deterministically from FAKE_STATE_DIR + env
 # switches. ----
@@ -120,6 +137,29 @@ elif [[ "$sub1" == "compose" ]]; then
     fi
     exit 0
 elif [[ "$sub1" == "inspect" ]]; then
+    # SMI-6744 A1.8 gate round-1 fix (PR #2937, class 1): FAKE_INSPECT_FAIL
+    # simulates the real docker-inspect failure modes measured on this host
+    # (Docker client 29.7.2) for probe_container_owner() -- checked BEFORE
+    # the existing FAKE_CONTAINER_PROJECT branch below so an arm can force
+    # any of these regardless of the fixture's "container present" state.
+    case "${FAKE_INSPECT_FAIL:-}" in
+        nosuch)
+            echo "Error response from daemon: No such container: skillsmith-ruflo-1" >&2
+            exit 1
+            ;;
+        nosuch-object)
+            echo "Error: No such object: skillsmith-ruflo-1" >&2
+            exit 1
+            ;;
+        daemon)
+            echo "failed to connect to the docker API at unix:///var/run/docker.sock; check if the path is correct and if the daemon is running: dial unix /var/run/docker.sock: connect: no such file or directory" >&2
+            exit 1
+            ;;
+        flag)
+            echo "unknown flag: --type" >&2
+            exit 125
+            ;;
+    esac
     # H-3(c): default is NO container (the pre-H-3(c) behavior every
     # existing arm below already assumes) -- only "exists" when a dedicated
     # arm sets FAKE_CONTAINER_PROJECT. Answer the MORE SPECIFIC
@@ -138,6 +178,13 @@ elif [[ "$sub1" == "inspect" ]]; then
         # container, or a failed inspect.
         if [[ "${FAKE_CONTAINER_LABEL_EMPTY:-}" == "1" ]]; then
             printf ''
+        elif [[ "${FAKE_CONTAINER_LABEL_NOVALUE:-}" == "1" ]]; then
+            # Arm 15d (F-7, SMI-6744 A1.8 retro round 2): Docker's own
+            # template engine prints the literal string "<no value>" (not an
+            # empty string) when a --format references a map key that does
+            # not exist -- measured live. check_foreign_project()'s empty
+            # check must treat this the same as a genuinely empty read.
+            printf '<no value>'
         else
             printf '%s' "${FAKE_CONTAINER_PROJECT:-}"
         fi
@@ -200,6 +247,7 @@ reset_fixture() {
     export RUFLO_UP_SKIP_WORKTREE_GATE=1
     unset FAKE_GIT_DIR FAKE_GIT_COMMON_DIR FAKE_GIT_NOT_A_REPO || true
     unset FAKE_CONTAINER_PROJECT FAKE_CONTAINER_WORKDIR FAKE_THIS_PROJECT || true
+    unset FAKE_INSPECT_FAIL || true
     unset FAKE_VOLUME_CREATE_FAIL || true
     unset FAKE_INIT_STORE_ROW_MISMATCH || true
     unset FAKE_MEMORY_GENERATION || true
@@ -617,11 +665,361 @@ else
 fi
 unset FAKE_THIS_PROJECT FAKE_CONTAINER_PROJECT FAKE_CONTAINER_LABEL_EMPTY
 
+# ---- 15d (F-7, SMI-6744 A1.8 retro round 2): the container exists but its
+# project label reads back the literal Docker template string "<no value>"
+# (not an empty string) -- must be refused the SAME way as an empty read
+# (15c above), never treated as "no foreign project". Docker's own --format
+# engine prints this literal for a missing map key (measured live); a bare
+# `[[ -z "$container_project" ]]` check does not catch it.
+reset_fixture
+export FAKE_THIS_PROJECT="this-checkout-project"
+export FAKE_CONTAINER_PROJECT="exists-but-novalue"
+export FAKE_CONTAINER_LABEL_NOVALUE=1
+EXIT_CODE="$(run_script)"
+if [[ "$EXIT_CODE" -eq 0 ]]; then
+    fail_case "15d-foreign-project-label-novalue" "expected non-zero exit (refusal), got 0, log:\n$(cat "$SCRATCH_ROOT/out.log")"
+elif ! grep -qF "project label could not be read" "$SCRATCH_ROOT/out.log"; then
+    fail_case "15d-foreign-project-label-novalue" "expected the refusal to say the label could not be read, log:\n$(cat "$SCRATCH_ROOT/out.log")"
+elif grep -qE "volume (create|inspect)" "$FAKE_DOCKER_CALL_LOG"; then
+    fail_case "15d-foreign-project-label-novalue" "expected NO volume/store bookkeeping before this refusal, log:\n$(cat "$FAKE_DOCKER_CALL_LOG")"
+else
+    echo "applied=foreign-project-refuse-novalue PASS (15d-foreign-project-label-novalue): refused when the existing container's project label read back the literal '<no value>', before any bookkeeping"
+fi
+unset FAKE_THIS_PROJECT FAKE_CONTAINER_PROJECT FAKE_CONTAINER_LABEL_NOVALUE
+
+# ---- Arm 16 (S-1, SMI-6744 A1.8 retro): federation_restore_disposition()
+# (scripts/ruflo-service-up.helpers.sh) is a PURE function -- source the
+# helpers directly into THIS shell and call it, no docker/git and no
+# run_script() subprocess involved. Covers all four dispositions: absent,
+# refuse-unattributable (the S-1 defect: an EMPTY owner used to fall through
+# to `docker rm -f` in scripts/ruflo-federation-test.sh's old inline check),
+# refuse-third, and proceed (checked against BOTH p1 and p2, since the
+# disposition is "owner == p1 OR owner == p2").
+# shellcheck source=../ruflo-service-up.helpers.sh
+source "$REPO_ROOT/scripts/ruflo-service-up.helpers.sh"
+
+DISPOSITION="$(federation_restore_disposition 0 "" "p1-project" "p2-project")"
+if [[ "$DISPOSITION" != "absent" ]]; then
+    fail_case "16a-disposition-absent" "expected 'absent' when exists=0 (owner/p1/p2 irrelevant), got '$DISPOSITION'"
+else
+    echo "applied=disposition-absent PASS (16a-disposition-absent): exists=0 -> absent"
+fi
+
+DISPOSITION="$(federation_restore_disposition 1 "" "p1-project" "p2-project")"
+if [[ "$DISPOSITION" != "refuse-unattributable" ]]; then
+    fail_case "16b-disposition-unattributable" "expected 'refuse-unattributable' when exists=1 and owner is EMPTY (the S-1 fall-through defect), got '$DISPOSITION'"
+else
+    echo "applied=disposition-unattributable PASS (16b-disposition-unattributable): exists=1, owner='' -> refuse-unattributable"
+fi
+
+DISPOSITION="$(federation_restore_disposition 1 "third-project" "p1-project" "p2-project")"
+if [[ "$DISPOSITION" != "refuse-third" ]]; then
+    fail_case "16c-disposition-third" "expected 'refuse-third' when owner is neither p1 nor p2, got '$DISPOSITION'"
+else
+    echo "applied=disposition-third PASS (16c-disposition-third): exists=1, owner=third-project -> refuse-third"
+fi
+
+DISPOSITION="$(federation_restore_disposition 1 "p1-project" "p1-project" "p2-project")"
+if [[ "$DISPOSITION" != "proceed" ]]; then
+    fail_case "16d-disposition-proceed-p1" "expected 'proceed' when owner == p1, got '$DISPOSITION'"
+else
+    echo "applied=disposition-proceed-p1 PASS (16d-disposition-proceed-p1): exists=1, owner==p1 -> proceed"
+fi
+
+DISPOSITION="$(federation_restore_disposition 1 "p2-project" "p1-project" "p2-project")"
+if [[ "$DISPOSITION" != "proceed" ]]; then
+    fail_case "16e-disposition-proceed-p2" "expected 'proceed' when owner == p2, got '$DISPOSITION'"
+else
+    echo "applied=disposition-proceed-p2 PASS (16e-disposition-proceed-p2): exists=1, owner==p2 -> proceed"
+fi
+
+# ---- 16f (F-6, SMI-6744 A1.8 retro round 2): an unrecognized/malformed
+# <exists> value (neither the literal "0" nor "1") must fail CLOSED to
+# refuse-unattributable, not fall through to the PERMISSIVE "absent" branch
+# the original `[[ "$exists" -ne 1 ]]` arithmetic compare produced for "",
+# "abc", or "2" (measured live in bash: none of those error the compare,
+# they just read as "not 1" and land on "absent").
+DISPOSITION="$(federation_restore_disposition "" "some-owner" "p1-project" "p2-project")"
+if [[ "$DISPOSITION" != "refuse-unattributable" ]]; then
+    fail_case "16f-disposition-unknown-exists" "expected 'refuse-unattributable' when exists is an unrecognized/malformed value (neither '0' nor '1'), got '$DISPOSITION'"
+else
+    echo "applied=disposition-unknown-exists PASS (16f-disposition-unknown-exists): exists='' (neither 0 nor 1) -> refuse-unattributable, not absent"
+fi
+
+# ---- 16g (F-7, SMI-6744 A1.8 retro round 2): owner==\"<no value>\" (Docker's
+# own --format template-engine string for a missing map key, distinct from a
+# genuinely empty string) must be treated the same as an empty owner.
+DISPOSITION="$(federation_restore_disposition 1 "<no value>" "p1-project" "p2-project")"
+if [[ "$DISPOSITION" != "refuse-unattributable" ]]; then
+    fail_case "16g-disposition-owner-novalue" "expected 'refuse-unattributable' when owner is the literal '<no value>', got '$DISPOSITION'"
+else
+    echo "applied=disposition-owner-novalue PASS (16g-disposition-owner-novalue): exists=1, owner='<no value>' -> refuse-unattributable"
+fi
+
+# ---- Arm 18 (F-2, SMI-6744 A1.8 retro round 2): a decoy executable named
+# `log` on PATH must not defeat the log()/die() fallback in
+# scripts/ruflo-service-up.helpers.sh. `command -v log` returns 0 for ANY
+# `log` on PATH, whether it is a shell function or an external binary
+# (macOS ships /usr/bin/log, the unified-logging CLI, confirmed present on
+# this host) -- the ORIGINAL predicate silently skipped defining log()
+# whenever such a binary existed. The fixed predicate uses `declare -F`,
+# which tests only for a shell FUNCTION. Exercised in an ISOLATED bash
+# subprocess (never this test file's own already-sourced helpers, which
+# were sourced before this arm ever runs) with a decoy `log` executable
+# prepended to PATH.
+DECOY_LOG_DIR="$SCRATCH_ROOT/decoy-log-bin"
+mkdir -p "$DECOY_LOG_DIR"
+cat > "$DECOY_LOG_DIR/log" << 'DECOY_LOG'
+#!/usr/bin/env bash
+exit 64
+DECOY_LOG
+chmod +x "$DECOY_LOG_DIR/log"
+ARM18_OUT="$(PATH="$DECOY_LOG_DIR:$PATH" bash -c '
+    set -euo pipefail
+    source "'"$REPO_ROOT"'/scripts/ruflo-service-up.helpers.sh"
+    declare -F log >/dev/null 2>&1 && echo "log_is_function=yes" || echo "log_is_function=no"
+    declare -F die >/dev/null 2>&1 && echo "die_is_function=yes" || echo "die_is_function=no"
+')"
+if ! grep -q "log_is_function=yes" <<<"$ARM18_OUT" || ! grep -q "die_is_function=yes" <<<"$ARM18_OUT"; then
+    fail_case "18-log-fallback-decoy-on-path" "expected BOTH log() and die() to be installed as shell functions even with a decoy 'log' executable on PATH, got:\n$ARM18_OUT"
+else
+    echo "applied=log-fallback-survives-decoy PASS (18-log-fallback-decoy-on-path): log() and die() both installed as shell functions despite a decoy 'log' executable earlier on PATH"
+fi
+
+# ---- Arm 17 (S-2, SMI-6744 A1.8 retro): git_dir_equals_common_dir()
+# (sourced above alongside federation_restore_disposition()) exercised
+# against the REAL git binary ($REAL_GIT, resolved at the top of this file)
+# -- not this file's own fake git stub, which cannot reproduce real git's
+# environment-variable resolution behavior. An inherited GIT_DIR in the
+# environment previously made `git -C <dir> rev-parse --git-dir` answer for
+# the EXPORTED dir instead of resolving from <dir> itself, so the gate
+# WRONGLY PASSED (returned 0, "not a linked worktree") on a genuinely linked
+# worktree whenever GIT_DIR happened to be set (measured with git 2.50.0).
+# Three assertions: the control with no GIT_DIR exported (main -> 0,
+# worktree -> 1), then the same worktree check WITH an inherited GIT_DIR
+# pointing at the main repo's .git (must still be 1 -- the env -u prefix
+# must neutralize it).
+#
+# F-3 (SMI-6744 A1.8 retro round 2): the fixture below is built under
+# $SCRATCH_ROOT/arm17 (cleaned up by this file's own EXIT trap, unlike the
+# ORIGINAL shape's dedicated `mktemp -d` that only a manual `rm -rf` at the
+# end cleaned -- a leak if anything between creation and that line aborted
+# under `set -e`), and its setup is now guarded behind `if !` with combined
+# output captured to a log file instead of a bare compound command with both
+# streams discarded to /dev/null: the ORIGINAL shape, if `git init`/`commit`/
+# `worktree add` ever failed, aborted this ENTIRE test file under `set -e`
+# with NO verdict printed for Arm 17 or anything after it, and no diagnostic
+# (both streams were discarded). This FAILs loudly instead, naming the setup
+# log, and skips 17a/17b/17c (their inputs would be meaningless without a
+# working fixture) rather than aborting the suite.
+ARM17_ROOT="$SCRATCH_ROOT/arm17"
+mkdir -p "$ARM17_ROOT"
+MAIN_REPO="$ARM17_ROOT/main"
+LINKED_WORKTREE="$ARM17_ROOT/linked"
+
+if ! (
+    cd "$ARM17_ROOT" &&
+        "$REAL_GIT" init -q main &&
+        cd main &&
+        "$REAL_GIT" -c user.email=test@example.com -c user.name=test commit -q --allow-empty -m init &&
+        "$REAL_GIT" worktree add -q "../linked" -b arm17-linked
+) >"$SCRATCH_ROOT/arm17-setup.log" 2>&1; then
+    fail_case "17-setup" "failed to build the real-git worktree fixture under $ARM17_ROOT (REAL_GIT='$REAL_GIT') -- 17a/17b/17c skipped, log:\n$(cat "$SCRATCH_ROOT/arm17-setup.log")"
+else
+    echo "applied=arm17-fixture-built PASS (17-setup): real-git worktree fixture built under $ARM17_ROOT"
+    unset GIT_DIR
+    git_dir_equals_common_dir "$MAIN_REPO" && ARM17_CONTROL_MAIN=0 || ARM17_CONTROL_MAIN=1
+    git_dir_equals_common_dir "$LINKED_WORKTREE" && ARM17_CONTROL_WORKTREE=0 || ARM17_CONTROL_WORKTREE=1
+    export GIT_DIR="$MAIN_REPO/.git"
+    git_dir_equals_common_dir "$LINKED_WORKTREE" && ARM17_INHERITED_GITDIR=0 || ARM17_INHERITED_GITDIR=1
+    unset GIT_DIR
+
+    # F-11 (SMI-6744 A1.8 retro round 2): three INDEPENDENT `if` blocks, not
+    # an `elif` chain -- the ORIGINAL elif chain masked the S-2 regression
+    # assertion (17c-inherited-gitdir, the actual GIT_DIR-leak fix this arm
+    # exists to pin) whenever an EARLIER branch (17a/17b) also failed: only
+    # the FIRST failing branch in an elif chain ever prints, so a control
+    # regression could silently hide the S-2 regression sitting right behind
+    # it. Each of the three now reports its own PASS/FAIL independently.
+    if [[ "$ARM17_CONTROL_MAIN" -ne 0 ]]; then
+        echo "FAIL (17a-control-main): expected git_dir_equals_common_dir(main) == 0 (pass) with no GIT_DIR exported, got $ARM17_CONTROL_MAIN" >&2
+        FAIL_COUNT=$((FAIL_COUNT + 1))
+    else
+        echo "applied=control-main PASS (17a-control-main): git_dir_equals_common_dir(main) == 0 with no GIT_DIR exported"
+    fi
+
+    if [[ "$ARM17_CONTROL_WORKTREE" -ne 1 ]]; then
+        echo "FAIL (17b-control-worktree): expected git_dir_equals_common_dir(linked worktree) == 1 (refuse) with no GIT_DIR exported, got $ARM17_CONTROL_WORKTREE" >&2
+        FAIL_COUNT=$((FAIL_COUNT + 1))
+    else
+        echo "applied=control-worktree PASS (17b-control-worktree): git_dir_equals_common_dir(linked worktree) == 1 with no GIT_DIR exported"
+    fi
+
+    if [[ "$ARM17_INHERITED_GITDIR" -ne 1 ]]; then
+        echo "FAIL (17c-inherited-gitdir): expected git_dir_equals_common_dir(linked worktree) == 1 (refuse) even with an inherited GIT_DIR=<main>/.git -- the env -u prefix must neutralize it, got $ARM17_INHERITED_GITDIR" >&2
+        FAIL_COUNT=$((FAIL_COUNT + 1))
+    else
+        echo "applied=env-u-neutralizes-inherited-gitdir PASS (17c-inherited-gitdir): real git (not the fake stub) -- with an inherited GIT_DIR pointing at main's .git, the linked worktree is still correctly refused (1)"
+    fi
+fi
+
+# ---- Arms 19a-19e (probe_container_owner(), SMI-6744 A1.8 cross-family gate
+# round-1 fix on PR #2937, High, class 1): classify the SAME one-call
+# docker-inspect shape federation_restore_checkout_1() drives. Each arm runs
+# in its OWN subshell with PATH="$FAKE_BIN_DIR:$PATH" and a fresh
+# FAKE_DOCKER_CALL_LOG exported only inside that subshell -- consistent with
+# this file's own stated convention (Arm 17's setup comment) that PATH is
+# never globally prefixed with FAKE_BIN_DIR here -- so nothing this helper
+# exports can leak into a later arm.
+run_probe_arm() {
+    local inspect_fail="$1" container_project="$2"
+    (
+        PATH="$FAKE_BIN_DIR:$PATH"
+        FAKE_DOCKER_CALL_LOG="$(mktemp "$SCRATCH_ROOT/probe-call-log.XXXXXX")"
+        FAKE_INSPECT_FAIL="$inspect_fail"
+        FAKE_CONTAINER_PROJECT="$container_project"
+        export PATH FAKE_DOCKER_CALL_LOG FAKE_INSPECT_FAIL FAKE_CONTAINER_PROJECT
+        # shellcheck source=../ruflo-service-up.helpers.sh
+        source "$REPO_ROOT/scripts/ruflo-service-up.helpers.sh"
+        EX=""
+        OW=""
+        probe_container_owner skillsmith-ruflo-1 EX OW
+        echo "exists=$EX owner=$OW"
+    )
+}
+
+PROBE_19A_OUT="$(run_probe_arm nosuch "" 2>"$SCRATCH_ROOT/probe-19a.err")"
+if [[ "$PROBE_19A_OUT" != "exists=0 owner=" ]]; then
+    fail_case "19a-probe-nosuch" "expected 'exists=0 owner=', got '$PROBE_19A_OUT', stderr:\n$(cat "$SCRATCH_ROOT/probe-19a.err")"
+else
+    echo "applied=probe-nosuch PASS (19a-probe-nosuch): docker inspect 'No such container' (exit 1) -> exists=0 owner='' (positively established absence)"
+fi
+
+PROBE_19B_OUT="$(run_probe_arm nosuch-object "" 2>"$SCRATCH_ROOT/probe-19b.err")"
+if [[ "$PROBE_19B_OUT" != "exists=0 owner=" ]]; then
+    fail_case "19b-probe-nosuch-object" "expected 'exists=0 owner=', got '$PROBE_19B_OUT', stderr:\n$(cat "$SCRATCH_ROOT/probe-19b.err")"
+else
+    echo "applied=probe-nosuch-object PASS (19b-probe-nosuch-object): older-CLI 'No such object' wording (exit 1) -> exists=0 owner='' too (case-insensitive, either noun)"
+fi
+
+PROBE_19C_OUT="$(run_probe_arm daemon "" 2>"$SCRATCH_ROOT/probe-19c.err")"
+PROBE_19C_ERR="$(cat "$SCRATCH_ROOT/probe-19c.err")"
+if [[ "$PROBE_19C_OUT" != "exists= owner=" ]]; then
+    fail_case "19c-probe-daemon-down" "expected 'exists= owner=' (unknown, not absence), got '$PROBE_19C_OUT', stderr:\n$PROBE_19C_ERR"
+elif ! grep -qF "probe_container_owner: docker inspect of skillsmith-ruflo-1 failed" <<<"$PROBE_19C_ERR"; then
+    fail_case "19c-probe-daemon-down" "expected a diagnostic line on stderr naming the failed inspect, got:\n$PROBE_19C_ERR"
+else
+    DISPOSITION_19C="$(federation_restore_disposition "" "" "p1-project" "p2-project")"
+    if [[ "$DISPOSITION_19C" != "refuse-unattributable" ]]; then
+        fail_case "19c-probe-daemon-down" "expected the composed disposition for exists='' owner='' to be refuse-unattributable, got '$DISPOSITION_19C'"
+    else
+        echo "applied=probe-daemon-down PASS (19c-probe-daemon-down): daemon-unreachable (exit 1, the SAME exit code as absent) -> exists='' (unknown, NOT absence), a diagnostic on stderr, and the composed disposition is refuse-unattributable -- this is the exact gate finding"
+    fi
+fi
+
+PROBE_19D_OUT="$(run_probe_arm flag "" 2>"$SCRATCH_ROOT/probe-19d.err")"
+if [[ "$PROBE_19D_OUT" != "exists= owner=" ]]; then
+    fail_case "19d-probe-unknown-flag" "expected 'exists= owner=' (unknown, not absence), got '$PROBE_19D_OUT', stderr:\n$(cat "$SCRATCH_ROOT/probe-19d.err")"
+else
+    echo "applied=probe-unknown-flag PASS (19d-probe-unknown-flag): an older CLI rejecting --type (exit 125, 'unknown flag: --type') -> exists='' (unknown, not absence)"
+fi
+
+PROBE_19E_OUT="$(run_probe_arm "" "owner-x" 2>"$SCRATCH_ROOT/probe-19e.err")"
+if [[ "$PROBE_19E_OUT" != "exists=1 owner=owner-x" ]]; then
+    fail_case "19e-probe-control-present" "expected 'exists=1 owner=owner-x' (control), got '$PROBE_19E_OUT', stderr:\n$(cat "$SCRATCH_ROOT/probe-19e.err")"
+else
+    echo "applied=probe-control-present PASS (19e-probe-control-present): container present with a readable label -> exists=1 owner=owner-x, unaffected by the new classifier"
+fi
+
+# ---- Arms 20a-20c (federation_restore_checkout_1(), end to end): drive the
+# WHOLE restore path -- probe, disposition, and the rm/up decision -- with a
+# fake checkout-1 ruflo-service-up.sh stub standing in for the real one.
+ARM20_ROOT="$SCRATCH_ROOT/arm20"
+ARM20_CHECKOUT1="$ARM20_ROOT/checkout1"
+mkdir -p "$ARM20_CHECKOUT1/scripts"
+cat > "$ARM20_CHECKOUT1/scripts/ruflo-service-up.sh" << ARM20_STUB
+#!/usr/bin/env bash
+touch "$ARM20_ROOT/up-ran"
+exit 0
+ARM20_STUB
+chmod +x "$ARM20_CHECKOUT1/scripts/ruflo-service-up.sh"
+
+run_restore_arm() {
+    local inspect_fail="$1" service_touched="$2" call_log="$3"
+    (
+        PATH="$FAKE_BIN_DIR:$PATH"
+        FAKE_DOCKER_CALL_LOG="$call_log"
+        FAKE_INSPECT_FAIL="$inspect_fail"
+        export PATH FAKE_DOCKER_CALL_LOG FAKE_INSPECT_FAIL
+        # shellcheck source=../ruflo-service-up.helpers.sh
+        source "$REPO_ROOT/scripts/ruflo-service-up.helpers.sh"
+        federation_restore_checkout_1 skillsmith-ruflo-1 p1-project p2-project "$ARM20_CHECKOUT1" "$service_touched"
+        echo "rc=$?"
+    )
+}
+
+# 20a (the gate's own requested arm): inspect fails because the DAEMON is
+# unreachable -- must NOT be read as absence. No rm, no re-up, refused on
+# stderr.
+rm -f "$ARM20_ROOT/up-ran"
+ARM20A_LOG="$(mktemp "$SCRATCH_ROOT/arm20a-call-log.XXXXXX")"
+ARM20A_OUT="$(run_restore_arm daemon 1 "$ARM20A_LOG" 2>"$SCRATCH_ROOT/arm20a.err")"
+if grep -qF "docker rm" "$ARM20A_LOG"; then
+    fail_case "20a-restore-daemon-down-no-rm" "expected NO 'docker rm' call when the inspect could not be classified, log:\n$(cat "$ARM20A_LOG")"
+elif [[ -e "$ARM20_ROOT/up-ran" ]]; then
+    fail_case "20a-restore-daemon-down-no-rm" "expected NO re-up when the disposition refused, but the up-ran marker exists"
+elif ! grep -qF "refusing to rm -f" "$SCRATCH_ROOT/arm20a.err"; then
+    fail_case "20a-restore-daemon-down-no-rm" "expected 'refusing to rm -f' on stderr, got:\n$(cat "$SCRATCH_ROOT/arm20a.err")"
+elif ! grep -q "^rc=0$" <<<"$ARM20A_OUT"; then
+    fail_case "20a-restore-daemon-down-no-rm" "expected federation_restore_checkout_1 to return 0, got:\n$ARM20A_OUT"
+else
+    echo "applied=restore-daemon-down-no-rm PASS (20a-restore-daemon-down-no-rm): a daemon-unreachable inspect (exit 1, the SAME code as absent) is classified as unknown, not absence -- no rm -f, no re-up, refused on stderr (the exact gate finding, PR #2937 round 1 class 1)"
+fi
+
+# 20b: known-positive control for the SAME instrument -- a confirmed 'No
+# such container' inspect DOES rm -f and re-up, so 20a's own absence
+# assertions are not vacuously true.
+rm -f "$ARM20_ROOT/up-ran"
+ARM20B_LOG="$(mktemp "$SCRATCH_ROOT/arm20b-call-log.XXXXXX")"
+ARM20B_OUT="$(run_restore_arm nosuch 1 "$ARM20B_LOG" 2>"$SCRATCH_ROOT/arm20b.err")"
+if ! grep -qF "docker rm -f skillsmith-ruflo-1" "$ARM20B_LOG"; then
+    fail_case "20b-restore-nosuch-control" "expected a 'docker rm -f skillsmith-ruflo-1' call for a confirmed-absent container, log:\n$(cat "$ARM20B_LOG")"
+elif [[ ! -e "$ARM20_ROOT/up-ran" ]]; then
+    fail_case "20b-restore-nosuch-control" "expected the re-up stub to run (up-ran marker), but it did not; stderr:\n$(cat "$SCRATCH_ROOT/arm20b.err")"
+elif ! grep -q "^rc=0$" <<<"$ARM20B_OUT"; then
+    fail_case "20b-restore-nosuch-control" "expected federation_restore_checkout_1 to return 0, got:\n$ARM20B_OUT"
+else
+    echo "applied=restore-nosuch-control PASS (20b-restore-nosuch-control): known-positive control -- a confirmed 'No such container' inspect (exists=0, absent) DOES rm -f and re-up, proving 20a's absence assertions can see a removal when one actually happens"
+fi
+
+# 20c: the never-touched gate returns before ANY probing -- no inspect call,
+# no rm, no up, regardless of what the inspect would have returned.
+rm -f "$ARM20_ROOT/up-ran"
+ARM20C_LOG="$(mktemp "$SCRATCH_ROOT/arm20c-call-log.XXXXXX")"
+run_restore_arm daemon 0 "$ARM20C_LOG" >/dev/null 2>"$SCRATCH_ROOT/arm20c.err"
+if [[ -s "$ARM20C_LOG" ]]; then
+    fail_case "20c-restore-never-touched" "expected ZERO docker calls (inspect/rm/up) when service_touched=0, log:\n$(cat "$ARM20C_LOG")"
+elif [[ -e "$ARM20_ROOT/up-ran" ]]; then
+    fail_case "20c-restore-never-touched" "expected NO re-up when service_touched=0, but the up-ran marker exists"
+else
+    echo "applied=restore-never-touched PASS (20c-restore-never-touched): the never-touched gate returns before any probing, rm, or re-up"
+fi
+
+# SMI-6744 A1.8 retro round 2 tally: 14 (arms 1-14) + 4 (15a-15d, F-7 adds
+# 15d) + 7 (16a-16g, F-6 adds 16f, F-7 adds 16g) + 1 (17-setup, F-3) + 1
+# (Arm 18, F-2's decoy-log-on-PATH arm) + 3 (17a/17b/17c, F-11 splits the
+# former single combined "17" check into three independently-reported
+# assertions) + 5 (19a-19e, probe_container_owner() classification arms,
+# SMI-6744 A1.8 cross-family gate round-1 fix on PR #2937 class 1) + 3
+# (20a-20c, federation_restore_checkout_1() end-to-end arms, same fix) = 38.
+# Enumerated in the evidence file this round's fix produced
+# (gate-r1-fix/summary-tally.txt) to prove the count against the actual
+# fail_case/FAIL labels in this file, not just this comment's arithmetic.
 echo ""
 if [[ "$FAIL_COUNT" -eq 0 ]]; then
-    echo "SUMMARY: 16/16 arms passed"
+    echo "SUMMARY: 38/38 arms passed"
     exit 0
 else
-    echo "SUMMARY: $FAIL_COUNT/16 arms FAILED"
+    echo "SUMMARY: $FAIL_COUNT/38 arms FAILED"
     exit 1
 fi

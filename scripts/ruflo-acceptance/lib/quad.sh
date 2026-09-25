@@ -77,6 +77,17 @@
 # RUFLO_QUAD_TEST_FAIL_RESTORE is exported, so it never changes behavior in a
 # real run. See its own header comment below for the two env vars.
 
+# S-4/F-12 (SMI-6744 A1.8 retro round 2): fall back to a no-op-safe note()
+# when this file is sourced before lib/common.sh has defined it. run.sh
+# always sources lib/common.sh (which defines note()) before this file, so
+# this never fires in the real harness today -- it makes that ordering safe
+# by MECHANISM, matching the same `declare -F` convention
+# scripts/ruflo-service-up.helpers.sh's log()/die() fallbacks use (S-4),
+# rather than relying on every future caller preserving today's source
+# order. Sourced-only: this adds no top-level side effect beyond this one
+# guarded fallback definition.
+declare -F note >/dev/null 2>&1 || note() { printf '  note: %s\n' "$1"; }
+
 QUAD_INIT_REQUEST='{"jsonrpc":"2.0","id":1,"method":"initialize","params":{"protocolVersion":"2024-11-05","capabilities":{},"clientInfo":{"name":"quad-probe","version":"1.0.0"}}}'
 QUAD_PROBE_TIMEOUT_S="${RUFLO_QUAD_PROBE_TIMEOUT_S:-8}"
 QUAD_AUTHORITY_FILE="${RUFLO_QUAD_AUTHORITY_FILE:-$HOME/.skillsmith/ruflo-store.json}"

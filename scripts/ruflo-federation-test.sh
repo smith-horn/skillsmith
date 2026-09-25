@@ -44,12 +44,26 @@
 set -euo pipefail
 
 # L-B (SMI-6744 A1.8 retro): source the shared git_dir_equals_common_dir()
-# predicate this script's own checkout_shape_ok() used to duplicate. This
-# file only DEFINES functions and re-runs `set -euo pipefail` (already set
-# above; idempotent) -- it does not reference REPO_ROOT/COMPOSE_FILE/
-# CONTAINER_NAME/log()/die() at source time, so sourcing it here without
-# those (this script uses CHECKOUT_1/CHECKOUT_2, not a single REPO_ROOT) is
-# safe as long as only git_dir_equals_common_dir() is called from it.
+# predicate this script's own checkout_shape_ok() used to duplicate, plus
+# federation_restore_checkout_1() (S-1, and its cross-family gate round-1
+# fix on PR #2937 class 1) -- this file calls both directly (F-8, SMI-6744
+# A1.8 retro round 2: the previous version of this comment named only
+# git_dir_equals_common_dir(), which went stale once restore_checkout_1()
+# below started calling into helpers.sh too; updated again when
+# restore_checkout_1() itself became a one-line delegation to
+# federation_restore_checkout_1(), which now owns the
+# federation_restore_disposition()/probe_container_owner() calls
+# internally). This file only DEFINES functions and re-runs `set -euo pipefail`
+# (already set above; idempotent) at source time, alongside helpers.sh's own
+# log()/die() fallback definitions (S-4, F-2: `declare -F log`/`declare -F
+# die`, which install ONLY when this shell hasn't already defined those
+# names as shell functions) -- it does not reference REPO_ROOT/COMPOSE_FILE/
+# CONTAINER_NAME at source time (this script uses CHECKOUT_1/CHECKOUT_2, not
+# a single REPO_ROOT), so sourcing it here is safe. This file's own log()
+# (below, ~line 61) is defined AFTER this source line and so overrides
+# whichever fallback the source installed; this file never defines its own
+# die(), so helpers.sh's die() fallback is the one that actually serves any
+# die() call reached through the sourced functions.
 SELF_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 # shellcheck source=ruflo-service-up.helpers.sh
 source "$SELF_DIR/ruflo-service-up.helpers.sh"
@@ -105,36 +119,17 @@ project_name() {
 # live shared service three times. A refusal that touched nothing restores
 # nothing.
 SERVICE_TOUCHED=0
-restore_checkout_1() {
-    local rc=0
-    if [[ "$SERVICE_TOUCHED" -ne 1 ]]; then
-        log "EXIT trap: the service was never touched (a precondition refused first) -- nothing to restore"
-        return 0
-    fi
-    log "EXIT trap: removing checkout 2's container (if present) and re-running $CHECKOUT_1/scripts/ruflo-service-up.sh to restore the shared service"
-    # M-D (SMI-6744 A1.8 retro): if line 158's call to checkout 1's
-    # ruflo-service-up.sh refused at its own NEW check_foreign_project()
-    # (a THIRD project's container already sits at $CONTAINER_NAME),
-    # SERVICE_TOUCHED is already latched -- an unconditional `rm -f` here
-    # would convert that deliberate refusal into exactly the silent
-    # takeover H-3(c) exists to prevent, using the one command its own
-    # refusal message says never to use. Scope the removal to a container
-    # this test itself owns (checkout 1 or checkout 2's project).
-    local owner
-    owner="$(docker inspect "$CONTAINER_NAME" \
-        --format '{{index .Config.Labels "com.docker.compose.project"}}' 2>/dev/null || true)"
-    if [[ -n "$owner" && "$owner" != "${PROJECT_1:-}" && "$owner" != "${PROJECT_2:-}" ]]; then
-        echo "[ruflo-federation] EXIT trap: $CONTAINER_NAME belongs to a THIRD project ($owner), not checkout 1 ($PROJECT_1) or checkout 2 ($PROJECT_2) -- refusing to rm -f it (ruflo-service-up.sh's own foreign-project refusal says stop it first, never rm -f). Resolve it manually, then re-run: $CHECKOUT_1/scripts/ruflo-service-up.sh" >&2
-        return 0
-    fi
-    docker rm -f "$CONTAINER_NAME" >/dev/null 2>&1 || true
-    if "$CHECKOUT_1/scripts/ruflo-service-up.sh" >/tmp/ruflo-federation-restore.log 2>&1; then
-        log "restoration: checkout 1's service is back up"
-    else
-        rc=$?
-        echo "[ruflo-federation] RESTORATION FAILED (exit $rc) -- the shared skillsmith-ruflo-1 service may be left down. See /tmp/ruflo-federation-restore.log and re-run: $CHECKOUT_1/scripts/ruflo-service-up.sh" >&2
-    fi
-}
+# S-1 (SMI-6744 A1.8 retro) / cross-family gate round 1 on PR #2937 (High,
+# class 1): the body of this trap now lives in
+# federation_restore_checkout_1() (scripts/ruflo-service-up.helpers.sh,
+# sourced at the top of this file), taking explicit arguments instead of
+# reading these globals directly -- that is what lets
+# scripts/tests/ruflo-service-up.test.sh drive the whole restore path (probe,
+# disposition, and the rm/up decision) end to end. This file's own log()
+# (defined above, before the source line) overrides helpers.sh's log()
+# fallback for any call made through the sourced function, same as it always
+# has for federation_restore_disposition().
+restore_checkout_1() { federation_restore_checkout_1 "$CONTAINER_NAME" "${PROJECT_1:-}" "${PROJECT_2:-}" "$CHECKOUT_1" "$SERVICE_TOUCHED"; }
 trap restore_checkout_1 EXIT
 
 volume_snapshot() {

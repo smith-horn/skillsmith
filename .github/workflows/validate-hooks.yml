@@ -92,6 +92,18 @@ on:
       - 'scripts/ruflo-*/**'
       - 'scripts/tests/mcp-ruflo-launcher.test.sh'
       - 'scripts/tests/ruflo-*'
+      # S-3 (SMI-6744 A1.8 retro): 'scripts/tests/ruflo-*' above is a
+      # single-path-segment glob (per GitHub's path-filter glob semantics --
+      # https://docs.github.com/en/actions/writing-workflows/choosing-when-your-workflows-run/patterns-to-match-file-paths
+      # -- same citation as the L-G note above) and does NOT match a file
+      # nested under a ruflo-* subdirectory, e.g.
+      # scripts/tests/ruflo-foo/bar.sh -- add the '/**' variant so this
+      # trigger doesn't have the same single-segment gap the 'scripts/ruflo-*'
+      # / 'scripts/ruflo-*/**' pair above already closed for the top-level
+      # ruflo family.
+      - 'scripts/tests/ruflo-*/**'
+      - 'scripts/cli-pin-drift-check.sh'
+      - 'scripts/tests/cli-pin-drift-check.test.ts'
       - '.github/workflows/validate-hooks.yml'
 
 permissions:
@@ -180,6 +192,7 @@ jobs:
             scripts/ruflo-acceptance/lib/quad.sh \
             scripts/ruflo-acceptance/lib/quad.restore.sh \
             scripts/ruflo-seed/regenerate-digest.sh \
+            scripts/cli-pin-drift-check.sh \
             scripts/tests/mcp-ruflo-launcher.test.sh \
             scripts/tests/ruflo-service-entrypoint.test.sh \
             scripts/tests/ruflo-service-up.test.sh
@@ -265,6 +278,7 @@ jobs:
           bash -n scripts/ruflo-acceptance/lib/quad.sh
           bash -n scripts/ruflo-acceptance/lib/quad.restore.sh
           bash -n scripts/ruflo-seed/regenerate-digest.sh
+          bash -n scripts/cli-pin-drift-check.sh
           sh -n scripts/ruflo-service-entrypoint.sh
           bash -n scripts/tests/mcp-ruflo-launcher.test.sh
           bash -n scripts/tests/ruflo-service-entrypoint.test.sh
@@ -329,7 +343,12 @@ jobs:
           # ruflo-service-up.test.sh), never a `||` fallback (SMI-5596;
           # H-A, SMI-6744 A1.8 retro). None of the three touches a real
           # Docker daemon -- each fakes `docker` (and, for
-          # ruflo-service-up.test.sh, `git`) on PATH.
+          # ruflo-service-up.test.sh's arms 13/14, `git`) on PATH. Arm 17 is
+          # the exception (F-10, SMI-6744 A1.8 retro round 2): it exercises
+          # git_dir_equals_common_dir() against the REAL git binary (with
+          # `git worktree add`, present on ubuntu-latest), not the fake
+          # stub, so this job also depends on a real git checkout/worktree
+          # being creatable under $SCRATCH_ROOT for that one arm.
           bash scripts/tests/mcp-ruflo-launcher.test.sh
           bash scripts/tests/ruflo-service-entrypoint.test.sh
           bash scripts/tests/ruflo-service-up.test.sh

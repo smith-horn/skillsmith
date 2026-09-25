@@ -10,6 +10,12 @@
 # run first, so a failure to distinguish the two states is reported before any
 # verdict about the service is printed.
 
+# S-4/F-12 (SMI-6744 A1.8 retro round 2): fall back to a no-op-safe note()
+# when this file is sourced before lib/common.sh has defined it -- see
+# lib/quad.sh's identical fallback (immediately above the same guard there)
+# for the full rationale; same `declare -F` mechanism (S-4). Sourced-only.
+declare -F note >/dev/null 2>&1 || note() { printf '  note: %s\n' "$1"; }
+
 egress_arms() {
   h1 "ADR-170 § 6 -- egress, against the running Compose service $SERVICE"
 
