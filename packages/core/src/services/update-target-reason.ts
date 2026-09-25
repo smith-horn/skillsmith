@@ -31,8 +31,8 @@
  * Row 1 of §4.3 ("Outside the resolved scope or client" -> "not listed") is
  * deliberately NOT a member: a target that isn't in the resolved scope never
  * becomes an `UpdateTarget` in the first place, so it has no reason to
- * classify — there is nothing for a renderer to render. This matches the task
- * brief's explicit instruction.
+ * classify — there is nothing for a renderer to render. This matches
+ * SMI-6532's explicit instruction.
  *
  * MEMBER COUNT: 23. See the "Member count reconciliation" note in this
  * module's test file for the full derivation and a discrepancy this file's
