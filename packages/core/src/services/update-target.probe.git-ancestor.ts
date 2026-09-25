@@ -45,11 +45,16 @@
  * lexical pass here at all, so there is no lexical-vs-real gap for a
  * symlinked ancestor to open.
  *
- * `hasGitAncestorBetween` is UNCHANGED and stays exported from
- * `skill-installation.target-guard.ts` — it remains A0's own install-time
- * pre-write gate, and `checkInstallTarget` rule (d) still calls it with
- * exactly the precondition it has always required (rule (c) proves
- * containment first, in that same function, for that same call). This module
+ * `hasGitAncestorBetween`'s own LOGIC is UNCHANGED — it remains A0's own
+ * install-time pre-write gate, and `checkInstallTarget` rule (d) still calls
+ * it with exactly the precondition it has always required (rule (c) proves
+ * containment first, in that same function, for that same call). Its EXPORT
+ * status changed after this module shipped: it was briefly exported from
+ * `skill-installation.target-guard.ts` solely so a test could call it
+ * directly, then reverted to private (SMI-6841 finding 5) once that test was
+ * rewritten to reach the same behavior through `checkInstallTarget` instead
+ * — the only production call site was always rule (d), in that same file.
+ * This module
  * does NOT share a walk with it, on purpose: sharing a walk whose safety
  * depends on a caller-proved precondition is the arrangement that produced
  * all three findings above. Two explicit walks, each asserting its own
@@ -97,8 +102,9 @@ const GIT_WALK_MAX_DEPTH = 64
  * this whole probe exists to remove.
  *
  * `escapes-root`: the target's realpath does not resolve inside the skills
- * root's realpath. The walk never starts — this is what replaced round 2's
- * `isRealpathInside` PRECONDITION check; it is asserted HERE, internally,
+ * root's realpath. The walk never starts — this is what replaced finding 2's
+ * (SMI-6532, this module's fileoverview above) `isRealpathInside`
+ * PRECONDITION check; it is asserted HERE, internally,
  * before any walk, rather than trusted of whoever calls {@link probeGitAncestor}.
  * `depth-cap`: the walk reached {@link GIT_WALK_MAX_DEPTH} ancestors without
  * reaching the (already-confirmed-contained) real skills root — reported as
