@@ -44,59 +44,12 @@ const SENSITIVE_PATTERNS: Array<{ pattern: RegExp; replacement: string }> = [
   { pattern: /\b(ghr_[a-zA-Z0-9]{36})\b/g, replacement: 'ghr_[REDACTED]' },
   // Linear API keys
   { pattern: /\b(lin_api_[a-zA-Z0-9]{32,})\b/g, replacement: 'lin_api_[REDACTED]' },
-  // SMI-6840: `sk_live_` is a prefix TWO issuers use — Stripe's live secret key and Skillsmith's
-  // own API key. Skillsmith's is base64url (`_shared/license.ts` generateLicenseKey: btoa(...)
-  // with +/ -> -_ and = stripped), so its body can contain `-` and `_`. That is measured from the
-  // generator in this repo. Stripe's alphabet has NOT been measured here — their documentation
-  // states the prefix but gives no alphabet guarantee — so nothing below asserts what it is.
-  //
-  // The previous `\b(sk_live_[a-zA-Z0-9]{24,})\b` failed on both counts, for most keys. The rate
-  // is derivable rather than merely sampled: a base64url body draws from 64 symbols, 62 of them
-  // alphanumeric, so the chance that the first 24 body characters contain no `-` or `_` is
-  // (62/64)^24, and the pattern fails to match outright for the remaining 1 - (62/64)^24 =
-  // **53.3%**. The true leak rate is higher still, because a `_` later in the body defeats the
-  // trailing `\b` as well (mechanism 2 below). A 10,000-key sample agreed: 6,353 not redacted at
-  // all and 1,024 redacted only up to the first `-`, leaving the tail beside a `[REDACTED]`
-  // marker that made the leak look handled. Prefer the closed form when citing this; the sample
-  // was unseeded and is corroboration, not provenance.
-  //
-  // Two independent mechanisms, and the second is the subtle one:
-  //
-  //   1. A `-` or `_` inside the first 24 body characters ends the run below the {24,} minimum,
-  //      so the whole match fails.
-  //   2. `_` is itself a WORD character, so no `\b` can ever exist between an alphanumeric run
-  //      and a following `_`. Backtracking cannot rescue this — every shorter run is also
-  //      followed by a word character — so a `_` anywhere in the body killed the match.
-  //
-  // Hence: widen the class to the emitted alphabet, and drop the trailing `\b`. The greedy
-  // quantifier already consumes the whole body, so no terminator is needed here. Note the
-  // precise claim: it is `\b` SPECIFICALLY that is incompatible with a base64url body, because
-  // `_` is a word character. A base64url-aware assertion such as `(?![A-Za-z0-9_-])` would be
-  // correct — it is simply redundant after a greedy match. Do not read this as "trailing
-  // assertions are wrong"; re-adding `\b` is what must not happen.
-  //
-  // The cost, stated honestly: the match now runs on into any adjacent `[A-Za-z0-9_-]` text, so
-  // `sk_live_<key>_status_ok` redacts the trailing `_status_ok` too. That is the deliberate
-  // failure direction, but "safe" holds only on the CONFIDENTIALITY axis — no secret survives.
-  // On the DIAGNOSTIC axis it is a real cost: adjacent log content can be swallowed. Accepted
-  // because under-redaction leaks a credential while over-redaction loses context, and only one
-  // of those is recoverable. `redactSensitiveObject` returns a new object and never mutates its
-  // input, so this is confined to the emitted copy.
-  //
-  // Widening is monotonic: alphanumeric is a subset of this class, so every string the old
-  // pattern matched this one still matches. Nothing lost coverage here — which is a statement
-  // about the two patterns, not a claim that any issuer's keys were fully covered before.
-  // Do not "simplify" this back to `[a-zA-Z0-9]` or re-add a trailing `\b`.
-  // `redact.test.ts` pins both mechanisms against keys from the real generator, and pins the
-  // `{24,}` minimum at its two boundaries.
+  // Skillsmith's own `sk_live_` keys are base64url, so this class must include `-` and `_` and
+  // must NOT end in `\b`. Do not narrow it back to `[a-zA-Z0-9]` and do not re-add a trailing
+  // boundary; `redact.test.ts` pins both, and the `{24,}` minimum at each side. Why: SMI-6840.
   { pattern: /\b(sk_live_[A-Za-z0-9_-]{24,})/g, replacement: 'sk_live_[REDACTED]' },
-  // Stripe keys. These three are Stripe-only — nothing in this repo mints an `sk_test_`,
-  // `pk_live_` or `pk_test_` key (SMI-6840: measured with a control, every occurrence is Stripe's
-  // own STRIPE_SECRET_KEY or a test fixture). Left exactly as they were, deliberately: whether an
-  // alphanumeric body is RIGHT for Stripe is unknown here, and changing an issuer's pattern
-  // without a case table for THAT issuer is how the bug above survived. Unknown is not the same
-  // as correct — if a Stripe key can carry a non-alphanumeric character, these have the same
-  // defect. Establish that against a real Stripe key shape before widening or trusting them.
+  // Stripe's own prefixes. Left untouched and unexamined -- their real key alphabet is not known
+  // here, so these are neither vouched for nor safe to widen without checking. See SMI-6840.
   { pattern: /\b(sk_test_[a-zA-Z0-9]{24,})\b/g, replacement: 'sk_test_[REDACTED]' },
   { pattern: /\b(pk_live_[a-zA-Z0-9]{24,})\b/g, replacement: 'pk_live_[REDACTED]' },
   { pattern: /\b(pk_test_[a-zA-Z0-9]{24,})\b/g, replacement: 'pk_test_[REDACTED]' },

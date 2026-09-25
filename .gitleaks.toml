@@ -89,23 +89,9 @@ description = "Clerk Secret Key"
 regex = '''sk_live_[a-zA-Z0-9]{32,}'''
 tags = ["api", "clerk"]
 
-# SMI-6840: Skillsmith mints its own sk_live_ keys, and gitleaks had no rule for them --
-# clerk-secret above matches the same prefix but is a different issuer's rule.
-# generateLicenseKey() (supabase/functions/_shared/license.ts) emits base64url, so our
-# body can contain - and _, while clerk-secret's character class is alphanumeric-only.
-# The miss rate is derivable, not just sampled: a base64url body draws from 64 symbols,
-# 62 of them alphanumeric, so clerk-secret's {32,} run survives with probability
-# (62/64)^32 and fails for 1 - (62/64)^32 = 63.79% of keys. A committed Skillsmith key
-# therefore had a better than even chance of passing the commit-time secret scan. A
-# 10,000-key sample agreed (6,312 misses, 63.1%); the closed form is the citable figure,
-# since that sample was unseeded.
-#
-# This is a SEPARATE rule rather than a widening of clerk-secret, deliberately. Clerk's
-# own alphabet has not been measured here, and changing an issuer's pattern without a
-# case table for that issuer is the mistake that produced this bug. So clerk-secret is
-# left exactly as it was -- unexamined, not vouched for. If a Clerk secret key can carry
-# a non-alphanumeric character, that rule has the same defect this one fixes; establish
-# it against a real Clerk key shape before widening or relying on it.
+# Skillsmith's own sk_live_ keys are base64url, so this rule's class includes - and _.
+# clerk-secret above matches the same prefix but is a different issuer's rule, left
+# untouched and unexamined. Why both: SMI-6840.
 [[rules]]
 id = "skillsmith-api-key"
 description = "Skillsmith personal API key (sk_live_, base64url body)"
@@ -153,11 +139,8 @@ regexes = [
   '''sk_live_test_[a-zA-Z0-9]{32}''',
   '''sk_test_[a-zA-Z0-9]{32}''',
 
-  # SMI-6840: the only pre-existing repo string the new skillsmith-api-key rule matches.
-  # A dummy all-zero placeholder in the inventory smoke script, not a key. Found by
-  # scanning every tracked file against the new rule before adding it, rather than
-  # discovering it when the rule started blocking commits.
-  # scripts/smoke-prod/inventory.sh: "license_key":"sk_live_smoke_test_000...0"
+  # A dummy all-zero placeholder in scripts/smoke-prod/inventory.sh, not a key. The only
+  # tracked string skillsmith-api-key matches. See SMI-6840.
   '''sk_live_smoke_test_0+''',
 
   # False positive: handleCorsPreflightRequest function name contains 24+ alphanumeric
