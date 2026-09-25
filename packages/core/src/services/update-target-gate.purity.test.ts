@@ -87,9 +87,18 @@
  * skipped two nested namespaces; the first control set covered three access
  * paths and so covered none of `node:fs`'s own. Every version passed its own
  * suite. Treat a green run here as evidence only about what the control
- * quantifies over — which is why the control below is an invariant over the
- * whole reachable surface rather than a list. SMI-6841 holds the measured
- * instances and the mutation that killed each.
+ * quantifies over — which is why the control below is an invariant rather than
+ * a list, and why its expected set is derived from the real module rather than
+ * from the mock.
+ *
+ * What it quantifies over, stated exactly rather than as "everything": every
+ * function exported by each mocked module, every function on the `default` and
+ * `promises` namespaces those modules re-expose, and every function owned by
+ * one of those functions (`fs.realpath.native`) — each exercised at four
+ * arities and as a constructor, each asserted to record under its own label
+ * and to throw. The declared residual is a defect keyed on argument CONTENT
+ * rather than arity. SMI-6841 holds the measured instances and the mutation
+ * that killed each.
  */
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 
@@ -143,8 +152,42 @@ async function recordingModule(moduleName: string): Promise<Record<string, unkno
   return wrapNamespace(actual, moduleName)
 }
 
+/**
+ * One recording spy, labelled by the full access path it sits at.
+ *
+ * A `function` expression, deliberately NOT an arrow: an arrow is not a
+ * constructor, so `new fs.Stats()` threw V8's own `is not a constructor`
+ * TypeError and recorded NOTHING (measured). Containment survived, since the
+ * TypeError still stops the caller, but detection did not — behind a
+ * catch-and-continue the purity verdict stayed green through a live
+ * construction attempt. A `function` expression records and throws this file's
+ * own diagnostic whether called or constructed.
+ */
+function makeRecordingSpy(label: string): (...args: unknown[]) => unknown {
+  return vi.fn(function (...args: unknown[]) {
+    // Render defensively: `String(Object.create(null))` THROWS (measured
+    // in-container), and the template literal is evaluated before `push`
+    // completes — so an argument that cannot be stringified would make this
+    // spy throw WITHOUT recording, losing detection for that call. The
+    // diagnostic degrades to an arity instead of taking the recorder down.
+    let rendered: string
+    try {
+      rendered = args.map(String).join(', ')
+    } catch {
+      rendered = `<${args.length} unrenderable argument(s)>`
+    }
+    recordedCalls.push(`${label}(${rendered})`)
+    throw new Error(
+      `classifyUpdateTarget must be pure — ${label}() was called, which ` +
+        'means this rule table (or something it imports) did I/O instead of reading ' +
+        'already-resolved evidence/probe/plan data (T-G3)'
+    )
+  })
+}
+
 /** Wrap every function on `ns`, recursing into the two nested namespaces that
- * re-expose the same functions under a different access path. */
+ * re-expose the same functions under a different access path, and re-attaching
+ * any callable a callable owns. */
 function wrapNamespace(ns: Record<string, unknown>, moduleName: string): Record<string, unknown> {
   const out: Record<string, unknown> = {}
   for (const [name, value] of Object.entries(ns)) {
@@ -156,32 +199,28 @@ function wrapNamespace(ns: Record<string, unknown>, moduleName: string): Record<
       out[name] = value
       continue
     }
-    // A `function` expression, deliberately NOT an arrow: an arrow is not a
-    // constructor, so `new fs.Stats()` threw V8's own `is not a constructor`
-    // TypeError and recorded NOTHING (measured). Containment survived, since
-    // the TypeError still stops the caller, but detection did not — behind a
-    // catch-and-continue the purity verdict stayed green through a live
-    // construction attempt. A `function` expression records and throws this
-    // file's own diagnostic whether called or constructed.
-    out[name] = vi.fn(function (...args: unknown[]) {
-      // Render defensively: `String(Object.create(null))` THROWS (measured
-      // in-container), and the template literal is evaluated before `push`
-      // completes — so an argument that cannot be stringified would make this
-      // spy throw WITHOUT recording, losing detection for that call. The
-      // diagnostic degrades to an arity instead of taking the recorder down.
-      let rendered: string
-      try {
-        rendered = args.map(String).join(', ')
-      } catch {
-        rendered = `<${args.length} unrenderable argument(s)>`
-      }
-      recordedCalls.push(`${moduleName}.${name}(${rendered})`)
-      throw new Error(
-        `classifyUpdateTarget must be pure — ${moduleName}.${name}() was called, which ` +
-          'means this rule table (or something it imports) did I/O instead of reading ' +
-          'already-resolved evidence/probe/plan data (T-G3)'
+    const spy = makeRecordingSpy(`${moduleName}.${name}`)
+
+    // A CALLABLE CAN OWN A CALLABLE, and `vi.fn()` does not carry it across.
+    // `node:fs` exposes exactly two (measured in-container): `realpath.native`
+    // and `realpathSync.native`. Without this loop the mock has `realpath` as
+    // a spy and no `.native` at all, so a real `fs.realpath.native(...)` call
+    // throws a bare TypeError that any catch-and-continue swallows, recording
+    // nothing — measured: a live `realpath.native` call added to
+    // `classifyUpdateTarget` left all seven tests GREEN.
+    //
+    // An earlier version of this file NAMED this hole in a comment and left it
+    // open, which is worse than not noticing: the note read as diligence while
+    // the guarantee one screen above it stayed false. `Object.entries` sees
+    // `native` because it is enumerable (measured), so the same traversal the
+    // oracle uses covers it.
+    for (const [member, memberValue] of Object.entries(value)) {
+      if (typeof memberValue !== 'function') continue
+      ;(spy as unknown as Record<string, unknown>)[member] = makeRecordingSpy(
+        `${moduleName}.${name}.${member}`
       )
-    })
+    }
+    out[name] = spy
   }
   return out
 }
@@ -387,11 +426,16 @@ describe('the fs recorder — known-positive control (T-G3)', () => {
   const FS_NAMESPACES = ['', '.default', '.default.promises', '.promises']
   const PROMISES_NAMESPACES = ['', '.default']
 
+  // Third element: how many callable-owned callables the module should expose
+  // in total, across its namespaces. `node:fs` has `realpath.native` and
+  // `realpathSync.native`, present both at the top level and under `default`,
+  // so four; the promises modules have none. Pinned so the oracle below cannot
+  // quietly become an empty set and agree with an empty subject.
   const MOCKED_MODULES = [
-    ['node:fs', () => import('node:fs'), FS_NAMESPACES],
-    ['node:fs/promises', () => import('node:fs/promises'), PROMISES_NAMESPACES],
-    ['fs', () => import('fs'), FS_NAMESPACES],
-    ['fs/promises', () => import('fs/promises'), PROMISES_NAMESPACES],
+    ['node:fs', () => import('node:fs'), FS_NAMESPACES, 4],
+    ['node:fs/promises', () => import('node:fs/promises'), PROMISES_NAMESPACES, 0],
+    ['fs', () => import('fs'), FS_NAMESPACES, 4],
+    ['fs/promises', () => import('fs/promises'), PROMISES_NAMESPACES, 0],
   ] as const
 
   // Every real call the code under test can make carries arguments; the walk
@@ -413,8 +457,8 @@ describe('the fs recorder — known-positive control (T-G3)', () => {
   ]
 
   it.each(MOCKED_MODULES)(
-    'every function reachable in the %s mock records AND throws, at every arity',
-    async (specifier, load, expectedSuffixes) => {
+    'every function reachable in the %s mock -- including those a function owns -- records AND throws, at every arity and when constructed',
+    async (specifier, load, expectedSuffixes, expectedMemberCount) => {
       const canonical = canonicalNameOf(specifier)
       const failures: string[] = []
       const visitedPaths: string[] = []
@@ -426,6 +470,61 @@ describe('the fs recorder — known-positive control (T-G3)', () => {
       let constructions = 0
       const visited = new WeakSet<object>()
 
+      // Exercise ONE spy fully: every arity, plus construction, checking that
+      // each call both throws and records under its own label. Extracted so a
+      // callable-owned callable gets exactly the same treatment as a
+      // namespace-level one rather than a reduced version of it.
+      const exercise = (fn: unknown, label: string): void => {
+        // Never CALL something that is not a spy — that would be real I/O
+        // against the real module.
+        if (!vi.isMockFunction(fn)) {
+          failures.push(`${label}: not a mock`)
+          return
+        }
+        for (const args of ARGUMENT_SHAPES) {
+          calls += 1
+          const before = recordedCalls.length
+          let threw = false
+          try {
+            ;(fn as unknown as (...a: readonly unknown[]) => unknown)(...args)
+          } catch {
+            threw = true
+          }
+          const added = recordedCalls.slice(before)
+          if (!threw) failures.push(`${label}[${args.length} args]: did not throw`)
+          if (added.length !== 1) {
+            failures.push(`${label}[${args.length} args]: recorded ${added.length} entries`)
+            continue
+          }
+          // Check WHAT was recorded, not merely that the count moved. A spy
+          // recording under someone else's label still grows the array, and a
+          // length check alone reads that as success.
+          if (!added[0].startsWith(`${label}(`)) {
+            failures.push(`${label}[${args.length} args]: recorded as ${added[0]}`)
+          }
+        }
+
+        // Construction is a SEPARATE call path, not another arity. With an
+        // arrow implementation `new` threw V8's `is not a constructor` before
+        // the body ran, recording nothing — detection lost behind any
+        // catch-and-continue, even though containment held.
+        constructions += 1
+        const beforeNew = recordedCalls.length
+        let threwOnNew = false
+        try {
+          new (fn as unknown as new (...a: unknown[]) => unknown)('/probe-path')
+        } catch {
+          threwOnNew = true
+        }
+        const addedByNew = recordedCalls.slice(beforeNew)
+        if (!threwOnNew) failures.push(`${label}[new]: did not throw`)
+        if (addedByNew.length !== 1) {
+          failures.push(`${label}[new]: recorded ${addedByNew.length} entries`)
+        } else if (!addedByNew[0].startsWith(`${label}(`)) {
+          failures.push(`${label}[new]: recorded as ${addedByNew[0]}`)
+        }
+      }
+
       const walk = (obj: Record<string, unknown>, path: string, depth: number): void => {
         // Record only namespaces that actually carry functions. `constants` is
         // walked too but holds none, so including it would make the expected
@@ -435,61 +534,18 @@ describe('the fs recorder — known-positive control (T-G3)', () => {
           const label = `${path}.${key}`
           if (typeof value === 'function') {
             examined.set(path, [...(examined.get(path) ?? []), key])
-            // Never CALL something that is not a spy — that would be real I/O
-            // against the real module.
-            if (!vi.isMockFunction(value)) {
-              failures.push(`${label}: not a mock`)
-              continue
-            }
-            for (const args of ARGUMENT_SHAPES) {
-              calls += 1
-              const before = recordedCalls.length
-              let threw = false
-              try {
-                ;(value as unknown as (...a: readonly unknown[]) => unknown)(...args)
-              } catch {
-                threw = true
-              }
-              const added = recordedCalls.slice(before)
-              if (!threw) failures.push(`${label}[${args.length} args]: did not throw`)
-              if (added.length !== 1) {
-                failures.push(`${label}[${args.length} args]: recorded ${added.length} entries`)
-                continue
-              }
-              // Check WHAT was recorded, not merely that the count moved. A
-              // spy recording under someone else's label still grows the
-              // array, and a length check alone reads that as success.
-              if (!added[0].startsWith(`${label}(`)) {
-                failures.push(`${label}[${args.length} args]: recorded as ${added[0]}`)
-              }
-            }
-
-            // Construction is a SEPARATE call path, not another arity. With an
-            // arrow implementation `new` threw V8's `is not a constructor`
-            // before the body ran, recording nothing — detection lost behind
-            // any catch-and-continue, even though containment held.
-            constructions += 1
-            const beforeNew = recordedCalls.length
-            let threwOnNew = false
-            try {
-              new (value as unknown as new (...a: unknown[]) => unknown)('/probe-path')
-            } catch {
-              threwOnNew = true
-            }
-            const addedByNew = recordedCalls.slice(beforeNew)
-            if (!threwOnNew) failures.push(`${label}[new]: did not throw`)
-            if (addedByNew.length !== 1) {
-              failures.push(`${label}[new]: recorded ${addedByNew.length} entries`)
-            } else if (!addedByNew[0].startsWith(`${label}(`)) {
-              failures.push(`${label}[new]: recorded as ${addedByNew[0]}`)
-            }
+            exercise(value, label)
+            // Callable-owned callables (`fs.realpath.native`) are handled
+            // AFTER the walk, driven by the real module. They cannot be
+            // enumerated from the spy here: `Object.entries` on a `vi.fn()`
+            // returns vitest's own API (`mockClear`, `mockReset`, …), which
+            // are functions but not part of the module surface. Measured —
+            // doing it that way produced 4,644 spurious failures.
             continue
           }
-          // Recurse into nested namespaces only. Functions are not walked:
-          // a spy's own properties are vitest's, not the module's. Note this
-          // is a statement about the MOCK, not about `node:fs` — the real
-          // module does hang functions off functions (`realpath.native`), and
-          // `wrapNamespace` drops them rather than passing them through.
+          // Recurse into nested namespaces. Function-owned properties are
+          // handled above rather than here, so this branch only ever sees
+          // ordinary namespace objects.
           if (value !== null && typeof value === 'object') {
             if (visited.has(value)) continue
             visited.add(value)
@@ -497,21 +553,28 @@ describe('the fs recorder — known-positive control (T-G3)', () => {
           }
         }
       }
-      walk((await load()) as unknown as Record<string, unknown>, canonical, 0)
+      const mockRoot = (await load()) as unknown as Record<string, unknown>
+      walk(mockRoot, canonical, 0)
 
       expect(failures).toEqual([])
 
       // Denominators, because an empty failure list is otherwise both
-      // "everything passed" and "nothing was examined". Three dimensions,
-      // because this control has now been caught short on two of them:
+      // "everything passed" and "nothing was examined". FIVE dimensions --
+      // this control has been caught short on three of them, so the count is
+      // listed rather than summarised:
       //
       // 1. WHICH NAMESPACES. An exact set, not a count. A single `continue`
       //    in the walk silently dropped the whole `promises` namespace with
       //    every other assertion green (measured) — a count could not see it,
       //    because `default` alone kept the totals large.
-      // 2. HOW MANY at the top level, which a nested-only walk would miss.
-      // 3. HOW MANY calls, pinning that each function was exercised at every
-      //    arity rather than once.
+      // 2. WHICH FUNCTIONS, per namespace — an exact set from the real
+      //    module, since a floor counted off the mock shrank whenever the mock
+      //    did (measured: one function removed from the mock, all green).
+      // 3. WHICH CALLABLE-OWNED CALLABLES, likewise from the real module:
+      //    `vi.fn()` does not carry `realpath.native` across, and both the
+      //    walk and a one-level oracle omitted the same edge.
+      // 4. HOW MANY calls, pinning each function was exercised at every arity.
+      // 5. HOW MANY constructions, pinning `new` was exercised once each.
       expect([...visitedPaths].sort()).toEqual(
         expectedSuffixes.map((s) => `${canonical}${s}`).sort()
       )
@@ -540,6 +603,11 @@ describe('the fs recorder — known-positive control (T-G3)', () => {
           .split('.')
           .filter(Boolean)
           .reduce((o, k) => o[k] as Record<string, unknown>, actual)
+      const resolveMock = (suffix: string): Record<string, unknown> =>
+        suffix
+          .split('.')
+          .filter(Boolean)
+          .reduce((o, k) => o[k] as Record<string, unknown>, mockRoot)
 
       let expectedTotal = 0
       for (const suffix of expectedSuffixes) {
@@ -555,12 +623,49 @@ describe('the fs recorder — known-positive control (T-G3)', () => {
         })
       }
 
+      // THE SAME ORACLE, ONE LEVEL DEEPER. `vi.fn()` does not carry across a
+      // property that a function owns, so the mock can lose `realpath.native`
+      // while every namespace-level set still matches. Derived from the real
+      // module, never from the mock, for the reason round 8 established: an
+      // expectation computed from the subject shrinks with it.
+      const expectedMemberPaths: string[] = []
+      const memberFailures: string[] = []
+      for (const suffix of expectedSuffixes) {
+        const nsActual = resolve(suffix)
+        const nsMock = resolveMock(suffix)
+        for (const [fnName, fnValue] of Object.entries(nsActual)) {
+          if (typeof fnValue !== 'function') continue
+          for (const [member, memberValue] of Object.entries(fnValue)) {
+            if (typeof memberValue !== 'function') continue
+            const label = `${canonical}${suffix}.${fnName}.${member}`
+            expectedMemberPaths.push(label)
+            // Look the member up ON THE MOCK. Absent means `vi.fn()` dropped
+            // it and a real call would hit a bare TypeError that any
+            // catch-and-continue swallows, recording nothing.
+            const mockOwner = nsMock[fnName] as Record<string, unknown> | undefined
+            const mockMember = mockOwner?.[member]
+            if (mockMember === undefined) {
+              memberFailures.push(`${label}: missing from the mock`)
+              continue
+            }
+            exercise(mockMember, label)
+          }
+        }
+      }
+      expect(memberFailures).toEqual([])
+      expect(failures).toEqual([])
+      // Pins the oracle itself: an empty expected set would otherwise agree
+      // with an empty subject. Measured in-container -- `node:fs` owns
+      // `realpath.native` and `realpathSync.native`, at the top level and
+      // again under `default`; the promises modules own none.
+      expect(expectedMemberPaths.length).toBe(expectedMemberCount)
+
       // Guards the guard: if `vi.importActual` ever handed back an empty or
       // stub module, every set comparison above would pass vacuously by
       // matching [] against [].
       expect(expectedTotal).toBeGreaterThan(25)
-      expect(calls).toBe(expectedTotal * ARGUMENT_SHAPES.length)
-      expect(constructions).toBe(expectedTotal)
+      expect(calls).toBe((expectedTotal + expectedMemberCount) * ARGUMENT_SHAPES.length)
+      expect(constructions).toBe(expectedTotal + expectedMemberCount)
     }
   )
 

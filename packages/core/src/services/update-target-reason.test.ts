@@ -525,33 +525,46 @@ function extractArrayLiteral(source: string, exportName: string, fileName = 'sou
   // moved its members behind a namespace object has broken parity whether or
   // not the bytes remain reachable.
   //
-  // The accepted set is a predicate, not a list, and it is wider than a
-  // reader would guess: a TOP-LEVEL `VariableStatement` carrying an `export`
-  // modifier, declaring `exportName`, whose initializer is an array literal
-  // -- optionally wrapped in exactly one `as`. Measured against the real
-  // predicate in the container runtime: `export const`, `export let` and
-  // `export var` all pass, with or without `as const` / `as readonly
-  // string[]`.
+  // The accepted set is a predicate, not a list: a TOP-LEVEL
+  // `VariableStatement` carrying an `export` modifier AND the `const` flag,
+  // declaring `exportName`, whose initializer is an array literal -- optionally
+  // wrapped in exactly one `as`.
   //
-  // Refused, and all four for the same structural reason -- no array literal
-  // reachable from an exported VariableStatement's initializer:
-  // `export { X }` (the binding carries no export modifier), `export default`
-  // (no declaration name), `export declare const` (no initializer at all),
-  // and `export const X = [...] satisfies readonly string[]` (a
-  // SatisfiesExpression, which this unwraps only `as` through).
+  // `const` is load-bearing, not incidental. An earlier version accepted
+  // `export let` and `export var` too, and pinned that acceptance with a test.
+  // For a mutable binding the initializer is not the value: measured, `export
+  // let SAMPLE = ['alpha'] as const` followed by `SAMPLE = ['beta']` made this
+  // parser return ['alpha'] while the live export held ['beta']. A parity
+  // check that reports the wrong list has failed in the one way it must not,
+  // since a loud refusal is recoverable and a confident wrong answer is not.
   //
-  // Every one of those is a genuine top-level module export, so refusing them
-  // is a deliberate limitation, not a bug -- but the throw below reports it as
+  // Refused, each for a structural reason -- no array literal reachable from
+  // an exported const VariableStatement's initializer: `export { X }` (the
+  // binding carries no export modifier), `export default` (no declaration
+  // name), `export declare const` (no initializer at all), `export let`/`var`
+  // (not const, per above), and `export const X = [...] satisfies readonly
+  // string[]` (a SatisfiesExpression, which this unwraps only `as` through).
+  //
+  // Each is a genuine top-level module export, so refusing them is a
+  // deliberate limitation, not a bug -- but the throw below reports it as
   // "mirror missing or renamed", which names the wrong cause. `satisfies` is
-  // the likeliest of the four for `manifestReader.ts` to adopt. If any lands,
-  // teach the parser that form rather than believing the message. Pinned by
-  // the cases below, so this is measured rather than described.
+  // the likeliest for `manifestReader.ts` to adopt. If any lands, teach the
+  // parser that form rather than believing the message. Pinned by the cases
+  // below, so this is measured rather than described.
   let found: string[] | undefined
   for (const node of sourceFile.statements) {
     if (found !== undefined) break
     if (
       ts.isVariableStatement(node) &&
-      node.modifiers?.some((m) => m.kind === ts.SyntaxKind.ExportKeyword)
+      node.modifiers?.some((m) => m.kind === ts.SyntaxKind.ExportKeyword) &&
+      // CONST ONLY. A mutable binding's initializer is not its value: for
+      // `export let SAMPLE = ['alpha'] as const` followed by `SAMPLE =
+      // ['beta']`, this parser read the initializer and returned ['alpha']
+      // while the live export held ['beta'] (measured). That is the one
+      // outcome this parity check must never produce -- a WRONG member list
+      // rather than a loud refusal, since the whole point is to detect drift
+      // between the mirror and the source.
+      (node.declarationList.flags & ts.NodeFlags.Const) !== 0
     ) {
       for (const decl of node.declarationList.declarations) {
         if (!ts.isIdentifier(decl.name) || decl.name.text !== exportName || !decl.initializer) {
@@ -695,13 +708,21 @@ describe('extractArrayLiteral — parser blind-spot controls (SMI-6841 finding 7
     expect(() => extractArrayLiteral(sat, 'SAMPLE')).toThrow(/mirror missing or renamed/)
   })
 
-  it('acceptance side of the limitation pair: `export let` and a non-const `as` still parse', () => {
+  it('acceptance side of the limitation pair: a non-const `as` on an exported const still parses', () => {
     // Without this, every refusal case above is satisfiable by a parser that
-    // matches nothing. This pins that the predicate is genuinely wider than
-    // `export const … as const`, which is what the comment on the parser
-    // claims and what a reader would otherwise have to take on trust.
-    const asReadonly = "export let SAMPLE = [\n  'alpha',\n  'beta',\n] as readonly string[]\n"
+    // matches nothing. This pins that the predicate is wider than
+    // `export const … as const` specifically -- the `as` may be any type.
+    const asReadonly = "export const SAMPLE = [\n  'alpha',\n  'beta',\n] as readonly string[]\n"
     expect(extractArrayLiteral(asReadonly, 'SAMPLE')).toEqual(['alpha', 'beta'])
+  })
+
+  it('a mutable export is REFUSED, because its initializer is not its value', () => {
+    // The defect this prevents is the only one that matters for a parity
+    // check: returning a WRONG member list rather than refusing. Measured
+    // before the `const` restriction -- this returned ['alpha'] while the live
+    // binding held ['beta'].
+    const mutable = "export let SAMPLE = [\n  'alpha',\n] as const\nSAMPLE = ['beta']\n"
+    expect(() => extractArrayLiteral(mutable, 'SAMPLE')).toThrow(/mirror missing or renamed/)
   })
 
   it('top-level member alongside a namespace: the real top-level export is still found, so the refusal above is not simply "matches nothing"', () => {
