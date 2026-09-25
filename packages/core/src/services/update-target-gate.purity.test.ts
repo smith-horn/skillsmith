@@ -92,18 +92,27 @@
  * from the mock.
  *
  * What it quantifies over, stated exactly rather than as "everything": every
- * function exported by each mocked module, every function on the `default` and
- * `promises` namespaces those modules re-expose, and every ENUMERABLE,
- * string-keyed function owned by one of those functions (`fs.realpath.native`)
- * — each exercised at four arities and as a constructor, each asserted to
+ * ENUMERABLE, STRING-KEYED function at each of three levels — exported by a
+ * mocked module, on the `default` and `promises` namespaces those modules
+ * re-expose, and owned by one of those functions (`fs.realpath.native`) —
+ * each exercised at four arities and as a constructor, each asserted to
  * record under its own label and to throw.
  *
+ * That qualifier governs ALL THREE levels, not just the third. `Object.entries`
+ * is what walks every one of them — in `wrapNamespace`, in the control's walk,
+ * and in the oracle — so the same boundary applies identically at each. An
+ * earlier version of this paragraph attached "enumerable, string-keyed" to the
+ * third clause alone, which claimed more than the mechanism delivers for the
+ * first two: the same subject-broader-than-the-thing-it-names shape this file
+ * spent eleven rounds removing, relocated into its own summary.
+ *
  * Two declared residuals, neither covered and neither implied to be: a defect
- * keyed on argument CONTENT rather than arity, and a callable owned by a
- * callable under a non-enumerable or Symbol key, which `Object.entries` does
- * not report. Both measured surfaces of `node:fs` are enumerable and
- * string-keyed today, so the second is a boundary rather than a live hole.
- * SMI-6841 holds the measured instances and the mutation that killed each.
+ * keyed on argument CONTENT rather than arity, and a function reachable only
+ * under a non-enumerable or Symbol key AT ANY LEVEL, which `Object.entries`
+ * does not report. Measured in-container: `node:fs` and `node:fs/promises`
+ * each expose zero non-enumerable and zero Symbol-keyed function exports, so
+ * the second is a boundary rather than a live hole. SMI-6841 holds the
+ * measured instances and the mutation that killed each.
  */
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 

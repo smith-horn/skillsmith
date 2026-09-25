@@ -67,8 +67,15 @@
  * `probeGitAncestor` (`update-target.probe.git-ancestor.ts`), after three
  * consecutive review rounds found a defect in the reuse chain — see that
  * module's fileoverview for the full history. `hasGitAncestorBetween` itself
- * is unchanged and stays A0's own install-time gate
+ * is unchanged in LOGIC and stays A0's own install-time gate
  * (`skill-installation.target-guard.ts`); this probe simply never calls it.
+ * Its EXPORT status did change: PR #2933 added an `export` keyword so a test
+ * could import it directly, and SMI-6841 removed that again — it is
+ * module-private now. The §4.2 quote four lines above says "exported
+ * unchanged", which was true of the spec when written and is not true of the
+ * code today; the sibling note in `update-target.probe.git-ancestor.ts` draws
+ * the same LOGIC-versus-EXPORT distinction and this one was left stale by the
+ * PR that changed it.
  */
 
 import { createHash } from 'crypto'
