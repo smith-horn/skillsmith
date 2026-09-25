@@ -196,6 +196,18 @@ elif [[ "$sub1" == "inspect" ]]; then
         exit 1
     fi
     if [[ "$*" == *"com.docker.compose.project.working_dir"* ]]; then
+        # Arm 15i (gate round 1 on PR #2942, Low): FAKE_WORKDIR_REQUIRES_TYPE
+        # simulates the real shape a bare `docker inspect NAME` (no `--type
+        # container`) answers with when NAME resolves to a same-named
+        # non-container object -- no such Compose label, i.e. an EMPTY read,
+        # not a failure. check_foreign_project()'s own working_dir read pins
+        # `--type container` for exactly this reason; this switch lets an
+        # arm prove that flag is load-bearing on THIS read too (separately
+        # from 15h, which already covers probe_container_owner()'s inspect).
+        if [[ "${FAKE_WORKDIR_REQUIRES_TYPE:-0}" == "1" && "$*" != *"--type container"* ]]; then
+            printf ''
+            exit 0
+        fi
         printf '%s' "${FAKE_CONTAINER_WORKDIR:-}"
         exit 0
     elif [[ "$*" == *"com.docker.compose.project"* ]]; then
@@ -275,6 +287,7 @@ reset_fixture() {
     unset FAKE_CONTAINER_PROJECT FAKE_CONTAINER_WORKDIR FAKE_THIS_PROJECT || true
     unset FAKE_INSPECT_FAIL || true
     unset FAKE_SAMENAME_VOLUME || true
+    unset FAKE_WORKDIR_REQUIRES_TYPE || true
     unset FAKE_VOLUME_CREATE_FAIL || true
     unset FAKE_INIT_STORE_ROW_MISMATCH || true
     unset FAKE_MEMORY_GENERATION || true
@@ -808,6 +821,34 @@ else
 fi
 unset FAKE_SAMENAME_VOLUME
 
+# ---- 15i (gate round 1 on PR #2942, Low): the SEPARATE working_dir read
+# inside check_foreign_project() also pins `--type container` -- 15h only
+# covers probe_container_owner()'s OWN inspect call, so dropping the flag
+# from this second, independent read was an unkilled mutant. With
+# FAKE_WORKDIR_REQUIRES_TYPE=1 the fake answers the container's real
+# working_dir when the read carries `--type container`, and an EMPTY string
+# (the real shape a bare `docker inspect NAME` answers with on a same-named
+# non-container object) when it does not -- landing on the "could NOT be
+# read" branch instead of the "still exists, working_dir=..." branch. This
+# arm fails (green) under the fixed code and would fail (red) if `--type
+# container` were dropped from that read, since the fake would then see no
+# such flag and answer empty.
+reset_fixture
+export FAKE_THIS_PROJECT="this-checkout-project" FAKE_CONTAINER_PROJECT="foreign-checkout-project" FAKE_CONTAINER_WORKDIR="$FAKE_STATE_DIR" FAKE_WORKDIR_REQUIRES_TYPE=1
+EXIT_CODE="$(run_script)"
+if [[ "$EXIT_CODE" -eq 0 ]]; then
+    fail_case "15i-workdir-read-requires-type" "expected non-zero exit (refusal), got 0, log:\n$(cat "$SCRATCH_ROOT/out.log")"
+elif ! grep -qF "then re-run this script" "$SCRATCH_ROOT/out.log"; then
+    fail_case "15i-workdir-read-requires-type" "expected the 'still exists, working_dir=...' foreign-project refusal (working_dir readable, directory exists), log:\n$(cat "$SCRATCH_ROOT/out.log")"
+elif grep -qF "working_dir could NOT be read" "$SCRATCH_ROOT/out.log"; then
+    fail_case "15i-workdir-read-requires-type" "must NOT read as 'could not be read' when --type container is present on the working_dir read, log:\n$(cat "$SCRATCH_ROOT/out.log")"
+elif grep -qF "no longer exists on this machine" "$SCRATCH_ROOT/out.log"; then
+    fail_case "15i-workdir-read-requires-type" "must NOT read as 'no longer exists' when the working_dir directory genuinely exists, log:\n$(cat "$SCRATCH_ROOT/out.log")"
+else
+    echo "applied=workdir-read-requires-type PASS (15i-workdir-read-requires-type): the working_dir read's own --type container flag is load-bearing -- without it the fake would answer empty and misroute to the 'could NOT be read' branch"
+fi
+unset FAKE_THIS_PROJECT FAKE_CONTAINER_PROJECT FAKE_CONTAINER_WORKDIR FAKE_WORKDIR_REQUIRES_TYPE
+
 # ---- Arm 16 (S-1, SMI-6744 A1.8 retro): federation_restore_disposition()
 # (scripts/ruflo-service-up.helpers.sh) is a PURE function -- source the
 # helpers directly into THIS shell and call it, no docker/git and no
@@ -1126,14 +1167,15 @@ else
     echo "applied=restore-never-touched PASS (20c-restore-never-touched): the never-touched gate returns before any probing, rm, or re-up"
 fi
 
-# SMI-6744 A1.8 retro round 2 tally: 14 (arms 1-14) + 8 (15a-15h, SMI-6846
+# SMI-6744 A1.8 retro round 2 tally: 14 (arms 1-14) + 9 (15a-15i, SMI-6846
 # adds 15e; the SMI-6846 governance retro's F-1/F-6/F-5 fixes add
-# 15f/15g/15h) + 7 (16a-16g, F-6 adds 16f, F-7 adds 16g) + 1 (17-setup, F-3)
-# + 1 (Arm 18, F-2's decoy-log-on-PATH arm) + 3 (17a/17b/17c, F-11 splits the
-# former single combined "17" check into three independently-reported
-# assertions) + 5 (19a-19e, probe_container_owner() classification arms,
-# SMI-6744 A1.8 cross-family gate round-1 fix on PR #2937 class 1) + 3
-# (20a-20c, federation_restore_checkout_1() end-to-end arms, same fix) = 42.
+# 15f/15g/15h; cross-family gate round 1 on PR #2942 adds 15i) + 7 (16a-16g,
+# F-6 adds 16f, F-7 adds 16g) + 1 (17-setup, F-3) + 1 (Arm 18, F-2's
+# decoy-log-on-PATH arm) + 3 (17a/17b/17c, F-11 splits the former single
+# combined "17" check into three independently-reported assertions) + 5
+# (19a-19e, probe_container_owner() classification arms, SMI-6744 A1.8
+# cross-family gate round-1 fix on PR #2937 class 1) + 3 (20a-20c,
+# federation_restore_checkout_1() end-to-end arms, same fix) = 43.
 # SMI-6846 governance retro F-3 (Medium): verify this arithmetic against the
 # actual fail_case/FAIL labels in this file (not just this comment) with a
 # reproducible command instead of citing an uncommitted scratchpad artifact
@@ -1145,13 +1187,14 @@ fi
 # overcounting by one (measured live: 40 instead of 39):
 #   expr $(grep -v '^[[:space:]]*#' "$0" | grep -oE 'fail_case "[^"]+"' | sort -u | wc -l) + \
 #        $(grep -v '^[[:space:]]*#' "$0" | grep -oE 'FAIL \([^)$][^)]*\)' | sort -u | wc -l)
-# 39 fail_case labels (36 before the SMI-6846 governance round added 15f/15g/15h) + 3
-# (17a/17b/17c, which report via a direct FAIL, not fail_case) = 42.
+# 40 fail_case labels (36 before the SMI-6846 governance round added
+# 15f/15g/15h, 39 before the gate round-1 fix on PR #2942 added 15i) + 3
+# (17a/17b/17c, which report via a direct FAIL, not fail_case) = 43.
 echo ""
 if [[ "$FAIL_COUNT" -eq 0 ]]; then
-    echo "SUMMARY: 42/42 arms passed"
+    echo "SUMMARY: 43/43 arms passed"
     exit 0
 else
-    echo "SUMMARY: $FAIL_COUNT/42 arms FAILED"
+    echo "SUMMARY: $FAIL_COUNT/43 arms FAILED"
     exit 1
 fi
