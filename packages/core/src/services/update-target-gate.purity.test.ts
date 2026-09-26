@@ -422,10 +422,17 @@ function wrapNamespace(ns: Record<string, unknown>, moduleName: string): Record<
       }
       // Inherited on the real function: keep it inherited here too. Left
       // writable and configurable deliberately, NOT mirrored from the defining
-      // prototype: deleting an inherited key from a real receiver succeeds
-      // without removing anything, so a non-configurable promoted copy would
-      // refuse a delete that production allows. That asymmetry with the own
-      // branch is intentional.
+      // prototype. The reason first given for that was WRONG, and measured to be
+      // wrong rather than argued: `delete spy.from` returns true whether the
+      // shadow's property is configurable or not, because deletion targets the
+      // receiver's own property and there is none — verified in-container, with a
+      // control confirming that deleting an OWN non-configurable property does
+      // throw, so the probe could have seen a difference. Configurability here
+      // only matters to code reflecting on or mutating the shadow object itself,
+      // which nothing does. Left permissive so this synthetic object never
+      // refuses an operation the real prototype chain would allow; the asymmetry
+      // with the own branch, which mirrors its descriptor exactly, is
+      // intentional.
       Object.defineProperty(shadow, member, {
         value: wrapped,
         writable: true,
