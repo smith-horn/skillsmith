@@ -126,14 +126,25 @@
  * record-and-throw proven by the `exercise` loop over the REACHABLE surface
  * only, not re-proven here; GAP means the mock resolved nothing; UNSAFE means
  * the lookup threw, kept separate from GAP because "unresolvable" is not
- * "absent"; ACCESSOR means a getter, counted and deliberately not invoked.
+ * "absent"; ACCESSOR means a getter or a setter-only property, counted and
+ * deliberately not invoked.
  *
- * Gaps are asserted by IDENTITY — owner and member sets — not by count, so a
- * reachable gap cannot vanish while an unreachable one appears. The owner set
- * is the evidence for the reachability argument rather than a restatement of
- * it: every gap belongs to one of the four stream constructors or to `exists` /
- * `opendir`, and the classifier constructs no stream class and indexes no
- * symbol. The cross-family gate checked that against the rule table.
+ * UNSAFE is asserted zero on every real path, and a branch that cannot fire
+ * yields the same zero, so a known-positive drives that branch through the same
+ * classifier a throwing lookup would reach.
+ *
+ * Gaps are asserted by IDENTITY, keyed by OWNER AND MEMBER, with no exception,
+ * so a reachable gap cannot vanish while an unreachable one appears — neither
+ * across owners nor within one. Two weakenings of that were removed rather than
+ * disclosed: a flat member set collapsed one name occurring on several owners
+ * (live, not hypothetical — `from` is a static of all four stream
+ * constructors), and `node:fs` compared owners and a count while discarding its
+ * members, which made this very sentence false for the path holding all but two
+ * of the gaps. The owner set is the evidence for the reachability argument
+ * rather than a restatement of it: every gap belongs to one of the four stream
+ * constructors or to `exists` / `opendir`, and the classifier constructs no
+ * stream class and indexes no symbol. The cross-family gate checked that
+ * against the rule table.
  *
  * One asymmetry worth knowing, found by measuring rather than predicted: on the
  * ESM namespace the stream classes are DATA properties, so the walk reaches
@@ -758,20 +769,31 @@ describe('the fs recorder — known-positive control (T-G3)', () => {
       //            does not re-establish it for hidden or inherited members and
       //            does not claim to.
       //   GAP      the mock resolves nothing. Outside the mock.
-      //   UNSAFE   the mock lookup threw.
-      //   ACCESSOR the real side is a getter. NOT invoked — invoking an unknown
-      //            getter is a side effect — so counted and left unresolved.
+      //   UNSAFE   the mock lookup threw. Proven reachable by a known-positive
+      //            control below, because a branch asserted `=== 0` everywhere
+      //            is indistinguishable from a branch that cannot fire.
+      //   ACCESSOR the real side is a getter OR a setter-only property. NOT
+      //            invoked — invoking an unknown accessor is a side effect — so
+      //            counted and left unresolved.
       //
-      // GAPS ARE ASSERTED BY IDENTITY, not by count. A count lets a reachable
-      // gap disappear while an unreachable one appears, cancelling inside one
-      // namespace; owner and member sets do not. The owner set is also the
-      // evidence for the reachability argument rather than a restatement of it:
-      // every gap belongs to one of the four stream constructors or to
-      // `exists`, and the classifier constructs no stream class and indexes no
-      // symbol. The cross-family gate verified that against the rule table.
+      // GAPS ARE ASSERTED BY IDENTITY, with no exception. Every gap is keyed by
+      // OWNER AND MEMBER, so a reachable gap cannot disappear while an
+      // unreachable one appears — not across owners, and not within one owner.
+      // Two earlier weakenings of that, both removed here rather than disclosed:
+      // the member set was flat, so one name occurring on several owners
+      // collapsed to a single entry (live, not hypothetical — `from` is a static
+      // of all four stream constructors); and `node:fs` compared its owner set
+      // and count while discarding its members entirely, which made the claim
+      // above false for the path holding all but two of the gaps.
+      //
+      // The owner set is also the evidence for the reachability argument rather
+      // than a restatement of it: every gap belongs to one of the four stream
+      // constructors or to `exists`, and the classifier constructs no stream
+      // class and indexes no symbol. The cross-family gate verified that against
+      // the rule table.
       type Surface = {
-        gapOwners: string[]
-        gapMembers: string[]
+        /** Owner -> its own gap member names, sorted. Keyed identity, not a count. */
+        gapsByOwner: Record<string, string[]>
         gaps: number
         unsafe: number
         accessors: number
@@ -780,8 +802,7 @@ describe('the fs recorder — known-positive control (T-G3)', () => {
       for (const suffix of expectedSuffixes) {
         const realNs = resolve(suffix)
         const mockNs = resolveMock(suffix)
-        const gapOwners = new Set<string>()
-        const gapMembers = new Set<string>()
+        const gapsByOwner = new Map<string, Set<string>>()
         let gaps = 0
         let unsafe = 0
         let accessors = 0
@@ -812,7 +833,10 @@ describe('the fs recorder — known-positive control (T-G3)', () => {
               seen.add(key)
               const desc = Object.getOwnPropertyDescriptor(cur, key)
               if (!desc) continue
-              if (desc.get !== undefined) {
+              // Setter-only counts too: `desc.get === undefined` with a setter
+              // present is still an accessor, and testing only `get` dropped it
+              // out of all five outcomes instead of into one.
+              if (desc.get !== undefined || desc.set !== undefined) {
                 accessors += 1
                 continue
               }
@@ -836,25 +860,26 @@ describe('the fs recorder — known-positive control (T-G3)', () => {
           if (read.value === realValue) return // SHARED
           if (typeof read.value === 'function') return // WRAPPED
           gaps += 1
-          gapOwners.add(owner)
-          gapMembers.add(String(key))
+          let members = gapsByOwner.get(owner)
+          if (members === undefined) {
+            members = new Set<string>()
+            gapsByOwner.set(owner, members)
+          }
+          members.add(String(key))
         }
 
         for (const [nsKey, realFn] of namespaceCallables) {
           classify(realFn, mockNs, nsKey, '<namespace>')
           const mockFn = readMock(mockNs, nsKey).value
           let cur: object | null = realFn as object
-          let depth = 0
           const seen = new Set<string | symbol>()
           while (cur !== null) {
             for (const key of Reflect.ownKeys(cur)) {
               if (seen.has(key)) continue
               seen.add(key)
-              if (depth === 0 && (key === 'length' || key === 'name' || key === 'prototype'))
-                continue
               const desc = Object.getOwnPropertyDescriptor(cur, key)
               if (!desc) continue
-              if (desc.get !== undefined) {
+              if (desc.get !== undefined || desc.set !== undefined) {
                 accessors += 1
                 continue
               }
@@ -862,17 +887,41 @@ describe('the fs recorder — known-positive control (T-G3)', () => {
               classify(desc.value, mockFn, key, String(nsKey))
             }
             cur = Object.getPrototypeOf(cur)
-            depth += 1
           }
         }
 
         surfaceByPath[`${canonical}${suffix}`] = {
-          gapOwners: [...gapOwners].sort(),
-          gapMembers: [...gapMembers].sort(),
+          gapsByOwner: Object.fromEntries(
+            [...gapsByOwner.entries()]
+              .sort(([a], [b]) => a.localeCompare(b))
+              .map(([owner, members]) => [owner, [...members].sort()])
+          ),
           gaps,
           unsafe,
           accessors,
         }
+
+        // KNOWN-POSITIVE for UNSAFE, run after the snapshot so it cannot move
+        // the recorded numbers. Every real path asserts `unsafe: 0`, and a
+        // branch that can never fire produces that same zero — so the zero is
+        // only evidence once the branch is shown reachable. This drives the
+        // SAME `classify` closure the walk used, not a copy of its logic: a
+        // holder whose lookup throws must land in UNSAFE, and must not be
+        // miscounted as a gap.
+        const throwingHolder = {} as Record<string, unknown>
+        Object.defineProperty(throwingHolder, 'poisoned', {
+          get() {
+            throw new Error('control: this lookup must classify as UNSAFE, not as a gap')
+          },
+        })
+        const unsafeBefore = unsafe
+        const gapsBefore = gaps
+        classify(() => undefined, throwingHolder, 'poisoned', '<control>')
+        expect(unsafe, `${suffix}: the UNSAFE branch never fired for a throwing lookup`).toBe(
+          unsafeBefore + 1
+        )
+        expect(gaps, `${suffix}: a throwing lookup was miscounted as a gap`).toBe(gapsBefore)
+        expect(gapsByOwner.has('<control>')).toBe(false)
       }
       // Expected per path, measured in-container on Node 22 and keyed by the
       // suffix rather than by a predicate, because there are now four distinct
@@ -888,53 +937,139 @@ describe('the fs recorder — known-positive control (T-G3)', () => {
       // because the two views define them differently. Nothing is hidden by
       // that: a getter is counted and declared unresolved, which is the honest
       // answer for a value you must not evaluate to inspect.
+      //
+      // `node:fs`'s gaps are enumerated per owner, all of them. The two
+      // read-side constructors expose one inherited static set and the two
+      // write-side constructors another, so the literals are shared by
+      // reference — a hand-measured constant, never derived from the mock, so it
+      // cannot shrink with what it constrains. That sharing is itself a claim: a
+      // Node change that gives `ReadStream` and `FileReadStream` different
+      // statics fails here and names which path drifted.
+      // The read and write sides differ by five members, measured not assumed:
+      // read adds ReadableState, _fromList, from, wrap; write adds
+      // WritableState. So neither list is derivable from the other and both are
+      // written out. 37 + 34 + 37 + 34 + 1 = 143, which the sum check below
+      // re-derives from these literals rather than restating the total.
+      const READ_STREAM_STATICS = [
+        'Duplex',
+        'EventEmitter',
+        'PassThrough',
+        'Readable',
+        'ReadableState',
+        'Stream',
+        'Transform',
+        'Writable',
+        '_fromList',
+        '_isArrayBufferView',
+        '_isUint8Array',
+        '_uint8ArrayToBuffer',
+        'addAbortListener',
+        'addAbortSignal',
+        'compose',
+        'destroy',
+        'duplexPair',
+        'finished',
+        'from',
+        'fromWeb',
+        'getDefaultHighWaterMark',
+        'getEventListeners',
+        'getMaxListeners',
+        'init',
+        'isDestroyed',
+        'isDisturbed',
+        'isErrored',
+        'isReadable',
+        'isWritable',
+        'listenerCount',
+        'on',
+        'once',
+        'pipeline',
+        'setDefaultHighWaterMark',
+        'setMaxListeners',
+        'toWeb',
+        'wrap',
+      ]
+      const WRITE_STREAM_STATICS = [
+        'Duplex',
+        'EventEmitter',
+        'PassThrough',
+        'Readable',
+        'Stream',
+        'Transform',
+        'Writable',
+        'WritableState',
+        '_isArrayBufferView',
+        '_isUint8Array',
+        '_uint8ArrayToBuffer',
+        'addAbortListener',
+        'addAbortSignal',
+        'compose',
+        'destroy',
+        'duplexPair',
+        'finished',
+        'fromWeb',
+        'getDefaultHighWaterMark',
+        'getEventListeners',
+        'getMaxListeners',
+        'init',
+        'isDestroyed',
+        'isDisturbed',
+        'isErrored',
+        'isReadable',
+        'isWritable',
+        'listenerCount',
+        'on',
+        'once',
+        'pipeline',
+        'setDefaultHighWaterMark',
+        'setMaxListeners',
+        'toWeb',
+      ]
+      const PROMISIFY_CUSTOM = ['Symbol(nodejs.util.promisify.custom)']
       const SURFACE_BY_SUFFIX: Record<string, Surface> = {
         'node:fs': {
           gaps: 143,
           unsafe: 0,
           accessors: 310,
-          gapOwners: ['FileReadStream', 'FileWriteStream', 'ReadStream', 'WriteStream', 'exists'],
-          gapMembers: [],
+          gapsByOwner: {
+            FileReadStream: READ_STREAM_STATICS,
+            FileWriteStream: WRITE_STREAM_STATICS,
+            ReadStream: READ_STREAM_STATICS,
+            WriteStream: WRITE_STREAM_STATICS,
+            exists: PROMISIFY_CUSTOM,
+          },
         },
         'node:fs.default': {
           gaps: 1,
           unsafe: 0,
           accessors: 321,
-          gapOwners: ['exists'],
-          gapMembers: ['Symbol(nodejs.util.promisify.custom)'],
+          gapsByOwner: { exists: PROMISIFY_CUSTOM },
         },
         'node:fs.promises': {
           gaps: 1,
           unsafe: 0,
           accessors: 127,
-          gapOwners: ['opendir'],
-          gapMembers: ['Symbol(nodejs.util.promisify.custom)'],
+          gapsByOwner: { opendir: PROMISIFY_CUSTOM },
         },
         'node:fs.default.promises': {
           gaps: 1,
           unsafe: 0,
           accessors: 127,
-          gapOwners: ['opendir'],
-          gapMembers: ['Symbol(nodejs.util.promisify.custom)'],
+          gapsByOwner: { opendir: PROMISIFY_CUSTOM },
         },
         'node:fs/promises': {
           gaps: 1,
           unsafe: 0,
           accessors: 93,
-          gapOwners: ['opendir'],
-          gapMembers: ['Symbol(nodejs.util.promisify.custom)'],
+          gapsByOwner: { opendir: PROMISIFY_CUSTOM },
         },
         'node:fs/promises.default': {
           gaps: 1,
           unsafe: 0,
           accessors: 127,
-          gapOwners: ['opendir'],
-          gapMembers: ['Symbol(nodejs.util.promisify.custom)'],
+          gapsByOwner: { opendir: PROMISIFY_CUSTOM },
         },
       }
-      // `node:fs`'s 39 gap members are the stream statics and are not listed
-      // one by one; its owner set plus the count is what the reachability
-      // argument rests on. Every other path has a single gap, named exactly.
       const expectedSurface: Record<string, Surface> = {}
       for (const suffix of expectedSuffixes) {
         const path = `${canonical}${suffix}`
@@ -942,16 +1077,25 @@ describe('the fs recorder — known-positive control (T-G3)', () => {
         expect(expected, `no expected surface recorded for ${path}`).toBeDefined()
         expectedSurface[path] = expected
       }
-      const observed: Record<string, Surface> = {}
-      for (const [path, surface] of Object.entries(surfaceByPath)) {
-        observed[path] = {
-          ...surface,
-          // node:fs's 39 members are deliberately not enumerated; compare its
-          // COUNT via `gaps` and its owners, not the member list.
-          gapMembers: path === 'node:fs' ? [] : surface.gapMembers,
+      // Every path compared whole. No path trades member identity for a count.
+      expect(surfaceByPath).toEqual(expectedSurface)
+
+      // A DIAGNOSTIC, not an independent check, and labelled as one because I
+      // red-tested it and watched it add no detection power. `toEqual` above
+      // already pins both `gaps` and `gapsByOwner` to the same literals, so any
+      // table whose total disagrees with the members beside it fails there
+      // first — measured: writing `gaps: 145` against 143 members fails the
+      // `toEqual`, never reaching this loop. What it earns its place for is the
+      // message. That `toEqual` reports `expected { 'node:fs': { …(4) }, …(3) }
+      // to deeply equal { Object (node:fs, ...) }`, which does not say what
+      // drifted; this names the path and the disagreement. Keeping it as a
+      // "check" would have been the same overclaim this file keeps producing.
+      for (const side of [expectedSurface, surfaceByPath]) {
+        for (const [path, surface] of Object.entries(side)) {
+          const summed = Object.values(surface.gapsByOwner).reduce((n, m) => n + m.length, 0)
+          expect(summed, `${path}: gaps disagrees with the per-owner sets`).toBe(surface.gaps)
         }
       }
-      expect(observed).toEqual(expectedSurface)
 
       // Guards the guard: if `vi.importActual` ever handed back an empty or
       // stub module, every set comparison above would pass vacuously by
