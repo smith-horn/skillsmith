@@ -225,10 +225,19 @@ describe.skipIf(noLiveTestPg)('SMI-6321 — departure-purge TOCTOU, two live ses
   }, 60_000)
 
   it('reads the tier under a lock that recompute_user_tier() genuinely contends for', async () => {
-    // The premise the whole fix rests on, asserted directly: recompute_user_tier()'s
-    // UPDATE takes a conflicting row lock, so the sweep's locking read really is
-    // serialized against it — while the UNLOCKED read the shipped bug performed
-    // cheerfully returns the pre-restore value at the same instant.
+    // The premise the whole fix rests on, asserted directly: recompute_user_tier()
+    // holds a conflicting row lock, so the sweep's locking read really is serialized
+    // against it — while the UNLOCKED read the shipped bug performed cheerfully
+    // returns the pre-restore value at the same instant.
+    //
+    // Attribution note (SMI-6656): this used to say "recompute_user_tier()'s UPDATE"
+    // takes that lock, and that was accurate when written. Since SMI-6656 the function
+    // takes an EXPLICIT `FOR NO KEY UPDATE` as its first statement, so the refusal
+    // below now comes from that lock, not from the UPDATE. The consequence is that
+    // this test no longer fails if the function's UPDATE is removed — it constrains
+    // less than its name suggests. It still pins the thing it is here for (the sweep
+    // is serialized against the function), and SMI-6656's own suite covers the
+    // UPDATE's lost-update behaviour, so this is recorded rather than re-scoped.
     await ctl.send(
       `INSERT INTO team_members (id, team_id, user_id, role)
        VALUES ('smi6321-lock', '${TEST_TEAM}', '${TEST_USER}', 'member') ON CONFLICT DO NOTHING;`
@@ -251,8 +260,10 @@ describe.skipIf(noLiveTestPg)('SMI-6321 — departure-purge TOCTOU, two live ses
 
   it('is NOT blocked by ordinary foreign-key traffic on profiles(id) — the reason for NO KEY UPDATE', async () => {
     // `FOR UPDATE` is key-strength and conflicts with the `FOR KEY SHARE` every FK
-    // child insert takes on its parent row. Eleven columns in the real schema reference
-    // profiles(id), so a key-strength lock here would make the sweep skip members
+    // child insert takes on its parent row. Twelve columns in the real schema reference
+    // profiles(id) (was "eleven" here; recounted from the migrations for SMI-6656 —
+    // `grep -rniE 'REFERENCES (public\.)?profiles ?\(id\)' supabase/migrations/*.sql`),
+    // so a key-strength lock here would make the sweep skip members
     // because someone created an API key or an invitation — nothing to do with
     // entitlement. This test pins the distinction so a future "tighten the lock" edit
     // fails loudly.
