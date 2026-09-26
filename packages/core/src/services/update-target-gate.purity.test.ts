@@ -798,6 +798,47 @@ describe('the fs recorder — known-positive control (T-G3)', () => {
         unsafe: number
         accessors: number
       }
+      // PROPERTY-KEY IDENTITY, NOT `String(key)`. `String` is not injective over
+      // property keys: `Symbol('x')` and the string key `'Symbol(x)'` both render
+      // as `Symbol(x)`, and so do two distinct symbols sharing a description. A
+      // set keyed that way lets one gap vanish while another appears under the
+      // same rendered name, leaving `gapsByOwner` unchanged — so "asserted by
+      // identity" would be false again, one level below where it was last false.
+      //
+      // Symbols are encoded by what actually identifies them: a registered
+      // symbol by its registry key, a well-known symbol by its `Symbol` property
+      // name, and anything else by description — which is NOT unique, so rather
+      // than assume it is, every encoding is recorded and any two distinct keys
+      // reaching the same encoding are collected and asserted absent. That makes
+      // the injectivity a measurement rather than a claim, and it fails naming
+      // both colliding keys instead of silently deduplicating them.
+      const keyLedger = new Map<string, string | symbol>()
+      const keyCollisions: string[] = []
+      const WELL_KNOWN_SYMBOLS = new Map<symbol, string>(
+        Object.getOwnPropertyNames(Symbol)
+          .map((name) => [(Symbol as unknown as Record<string, unknown>)[name], name] as const)
+          .filter((pair): pair is readonly [symbol, string] => typeof pair[0] === 'symbol')
+          .map(([sym, name]) => [sym, name])
+      )
+      const encodeKey = (key: string | symbol): string => {
+        let encoded: string
+        if (typeof key === 'string') {
+          encoded = `str:${key}`
+        } else {
+          const registered = Symbol.keyFor(key)
+          const wellKnown = WELL_KNOWN_SYMBOLS.get(key)
+          if (registered !== undefined) encoded = `sym.for:${registered}`
+          else if (wellKnown !== undefined) encoded = `sym.wellKnown:${wellKnown}`
+          else encoded = `sym.local:${key.description ?? ''}`
+        }
+        const seenAs = keyLedger.get(encoded)
+        if (seenAs === undefined) keyLedger.set(encoded, key)
+        else if (seenAs !== key) {
+          keyCollisions.push(`${encoded} <- ${String(seenAs)} AND ${String(key)}`)
+        }
+        return encoded
+      }
+
       const surfaceByPath: Record<string, Surface> = {}
       for (const suffix of expectedSuffixes) {
         const realNs = resolve(suffix)
@@ -865,7 +906,7 @@ describe('the fs recorder — known-positive control (T-G3)', () => {
             members = new Set<string>()
             gapsByOwner.set(owner, members)
           }
-          members.add(String(key))
+          members.add(encodeKey(key))
         }
 
         for (const [nsKey, realFn] of namespaceCallables) {
@@ -884,7 +925,10 @@ describe('the fs recorder — known-positive control (T-G3)', () => {
                 continue
               }
               if (typeof desc.value !== 'function') continue
-              classify(desc.value, mockFn, key, String(nsKey))
+              // The OWNER is encoded too: a namespace's own key can be a symbol,
+              // so `String(nsKey)` would collide two distinct owners exactly as
+              // it collided two distinct members.
+              classify(desc.value, mockFn, key, encodeKey(nsKey))
             }
             cur = Object.getPrototypeOf(cur)
           }
@@ -951,123 +995,123 @@ describe('the fs recorder — known-positive control (T-G3)', () => {
       // written out. 37 + 34 + 37 + 34 + 1 = 143, which the sum check below
       // re-derives from these literals rather than restating the total.
       const READ_STREAM_STATICS = [
-        'Duplex',
-        'EventEmitter',
-        'PassThrough',
-        'Readable',
-        'ReadableState',
-        'Stream',
-        'Transform',
-        'Writable',
-        '_fromList',
-        '_isArrayBufferView',
-        '_isUint8Array',
-        '_uint8ArrayToBuffer',
-        'addAbortListener',
-        'addAbortSignal',
-        'compose',
-        'destroy',
-        'duplexPair',
-        'finished',
-        'from',
-        'fromWeb',
-        'getDefaultHighWaterMark',
-        'getEventListeners',
-        'getMaxListeners',
-        'init',
-        'isDestroyed',
-        'isDisturbed',
-        'isErrored',
-        'isReadable',
-        'isWritable',
-        'listenerCount',
-        'on',
-        'once',
-        'pipeline',
-        'setDefaultHighWaterMark',
-        'setMaxListeners',
-        'toWeb',
-        'wrap',
+        'str:Duplex',
+        'str:EventEmitter',
+        'str:PassThrough',
+        'str:Readable',
+        'str:ReadableState',
+        'str:Stream',
+        'str:Transform',
+        'str:Writable',
+        'str:_fromList',
+        'str:_isArrayBufferView',
+        'str:_isUint8Array',
+        'str:_uint8ArrayToBuffer',
+        'str:addAbortListener',
+        'str:addAbortSignal',
+        'str:compose',
+        'str:destroy',
+        'str:duplexPair',
+        'str:finished',
+        'str:from',
+        'str:fromWeb',
+        'str:getDefaultHighWaterMark',
+        'str:getEventListeners',
+        'str:getMaxListeners',
+        'str:init',
+        'str:isDestroyed',
+        'str:isDisturbed',
+        'str:isErrored',
+        'str:isReadable',
+        'str:isWritable',
+        'str:listenerCount',
+        'str:on',
+        'str:once',
+        'str:pipeline',
+        'str:setDefaultHighWaterMark',
+        'str:setMaxListeners',
+        'str:toWeb',
+        'str:wrap',
       ]
       const WRITE_STREAM_STATICS = [
-        'Duplex',
-        'EventEmitter',
-        'PassThrough',
-        'Readable',
-        'Stream',
-        'Transform',
-        'Writable',
-        'WritableState',
-        '_isArrayBufferView',
-        '_isUint8Array',
-        '_uint8ArrayToBuffer',
-        'addAbortListener',
-        'addAbortSignal',
-        'compose',
-        'destroy',
-        'duplexPair',
-        'finished',
-        'fromWeb',
-        'getDefaultHighWaterMark',
-        'getEventListeners',
-        'getMaxListeners',
-        'init',
-        'isDestroyed',
-        'isDisturbed',
-        'isErrored',
-        'isReadable',
-        'isWritable',
-        'listenerCount',
-        'on',
-        'once',
-        'pipeline',
-        'setDefaultHighWaterMark',
-        'setMaxListeners',
-        'toWeb',
+        'str:Duplex',
+        'str:EventEmitter',
+        'str:PassThrough',
+        'str:Readable',
+        'str:Stream',
+        'str:Transform',
+        'str:Writable',
+        'str:WritableState',
+        'str:_isArrayBufferView',
+        'str:_isUint8Array',
+        'str:_uint8ArrayToBuffer',
+        'str:addAbortListener',
+        'str:addAbortSignal',
+        'str:compose',
+        'str:destroy',
+        'str:duplexPair',
+        'str:finished',
+        'str:fromWeb',
+        'str:getDefaultHighWaterMark',
+        'str:getEventListeners',
+        'str:getMaxListeners',
+        'str:init',
+        'str:isDestroyed',
+        'str:isDisturbed',
+        'str:isErrored',
+        'str:isReadable',
+        'str:isWritable',
+        'str:listenerCount',
+        'str:on',
+        'str:once',
+        'str:pipeline',
+        'str:setDefaultHighWaterMark',
+        'str:setMaxListeners',
+        'str:toWeb',
       ]
-      const PROMISIFY_CUSTOM = ['Symbol(nodejs.util.promisify.custom)']
+      const PROMISIFY_CUSTOM = ['sym.for:nodejs.util.promisify.custom']
       const SURFACE_BY_SUFFIX: Record<string, Surface> = {
         'node:fs': {
           gaps: 143,
           unsafe: 0,
           accessors: 310,
           gapsByOwner: {
-            FileReadStream: READ_STREAM_STATICS,
-            FileWriteStream: WRITE_STREAM_STATICS,
-            ReadStream: READ_STREAM_STATICS,
-            WriteStream: WRITE_STREAM_STATICS,
-            exists: PROMISIFY_CUSTOM,
+            'str:FileReadStream': READ_STREAM_STATICS,
+            'str:FileWriteStream': WRITE_STREAM_STATICS,
+            'str:ReadStream': READ_STREAM_STATICS,
+            'str:WriteStream': WRITE_STREAM_STATICS,
+            'str:exists': PROMISIFY_CUSTOM,
           },
         },
         'node:fs.default': {
           gaps: 1,
           unsafe: 0,
           accessors: 321,
-          gapsByOwner: { exists: PROMISIFY_CUSTOM },
+          gapsByOwner: { 'str:exists': PROMISIFY_CUSTOM },
         },
         'node:fs.promises': {
           gaps: 1,
           unsafe: 0,
           accessors: 127,
-          gapsByOwner: { opendir: PROMISIFY_CUSTOM },
+          gapsByOwner: { 'str:opendir': PROMISIFY_CUSTOM },
         },
         'node:fs.default.promises': {
           gaps: 1,
           unsafe: 0,
           accessors: 127,
-          gapsByOwner: { opendir: PROMISIFY_CUSTOM },
+          gapsByOwner: { 'str:opendir': PROMISIFY_CUSTOM },
         },
         'node:fs/promises': {
           gaps: 1,
           unsafe: 0,
           accessors: 93,
-          gapsByOwner: { opendir: PROMISIFY_CUSTOM },
+          gapsByOwner: { 'str:opendir': PROMISIFY_CUSTOM },
         },
         'node:fs/promises.default': {
           gaps: 1,
           unsafe: 0,
           accessors: 127,
-          gapsByOwner: { opendir: PROMISIFY_CUSTOM },
+          gapsByOwner: { 'str:opendir': PROMISIFY_CUSTOM },
         },
       }
       const expectedSurface: Record<string, Surface> = {}
@@ -1077,19 +1121,49 @@ describe('the fs recorder — known-positive control (T-G3)', () => {
         expect(expected, `no expected surface recorded for ${path}`).toBeDefined()
         expectedSurface[path] = expected
       }
+      // The encoding is asserted INJECTIVE over the surface actually walked, not
+      // assumed to be. Without this, `gapsByOwner` is keyed by a rendering and
+      // "asserted by identity" is false one level below where it was last false.
+      expect(keyCollisions, 'two distinct property keys encoded identically').toEqual([])
+      // And a KNOWN-POSITIVE, because an empty collision list is also what a
+      // ledger that never records anything produces. These are the exact pairs
+      // `String(key)` conflates; the encoder must keep them apart, and the ledger
+      // must be able to report a collision when one is real.
+      {
+        const localA = Symbol('duplicated-description')
+        const localB = Symbol('duplicated-description')
+        expect(String(localA)).toBe(String(localB)) // the defect being fixed
+        expect(encodeKey(localA)).toBe(encodeKey(localB)) // same rendering...
+        expect(keyCollisions.length, 'the ledger did not report a real collision').toBeGreaterThan(
+          0
+        )
+        const collisionsAfterLocals = keyCollisions.length
+        // ...whereas a symbol and the string that renders like it stay distinct,
+        // which is the half `String` gets wrong and this encoder gets right.
+        const registered = Symbol.for('injectivity-probe')
+        expect(String(registered)).toBe('Symbol(injectivity-probe)')
+        expect(encodeKey(registered)).not.toBe(encodeKey('Symbol(injectivity-probe)'))
+        expect(encodeKey(Symbol.iterator)).not.toBe(encodeKey('Symbol(Symbol.iterator)'))
+        expect(keyCollisions.length, 'the distinct-key probes were miscounted').toBe(
+          collisionsAfterLocals
+        )
+        keyCollisions.length = 0 // control residue must not fail the assertion above
+      }
+
       // Every path compared whole. No path trades member identity for a count.
       expect(surfaceByPath).toEqual(expectedSurface)
 
-      // A DIAGNOSTIC, not an independent check, and labelled as one because I
-      // red-tested it and watched it add no detection power. `toEqual` above
-      // already pins both `gaps` and `gapsByOwner` to the same literals, so any
-      // table whose total disagrees with the members beside it fails there
-      // first — measured: writing `gaps: 145` against 143 members fails the
-      // `toEqual`, never reaching this loop. What it earns its place for is the
-      // message. That `toEqual` reports `expected { 'node:fs': { …(4) }, …(3) }
-      // to deeply equal { Object (node:fs, ...) }`, which does not say what
-      // drifted; this names the path and the disagreement. Keeping it as a
-      // "check" would have been the same overclaim this file keeps producing.
+      // AN INDEPENDENT CHECK. The previous round's comment calling this "a
+      // diagnostic, not a check" was an UNDERCLAIM — the opposite direction to
+      // this file's usual defect and wrong for the same reason: I measured ONE
+      // mutation (`gaps: 145` against 143 members, which fails the `toEqual`
+      // first) and concluded redundancy for every state. It is not redundant
+      // wherever `gaps` and `gapsByOwner` can disagree, and they can: `gaps`
+      // increments per missing property while the member set DEDUPLICATES, so any
+      // two keys collapsing to one entry leaves `summed < gaps` while both
+      // structures still compare equal. The injectivity assertion above stops
+      // that at its source; this catches the consequence if it ever happens
+      // anyway. Two detectors of one fault, deliberately.
       for (const side of [expectedSurface, surfaceByPath]) {
         for (const [path, surface] of Object.entries(side)) {
           const summed = Object.values(surface.gapsByOwner).reduce((n, m) => n + m.length, 0)
