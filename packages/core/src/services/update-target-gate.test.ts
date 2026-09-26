@@ -514,7 +514,7 @@ describe('classifyUpdateTarget — two-row overlaps (order enforcement)', () => 
 // verification, applied to a mutation of the FIX itself, not merely the
 // original bug.
 describe('classifyUpdateTarget — row 8: malformed/stale verifiedAt (review round 5)', () => {
-  // The case table from the task brief, run in the real runtime
+  // The case table from SMI-6532 §4.3, run in the real runtime
   // (`node -e`, captured in this module's own commit) before being written
   // down here — see `update-target-gate.rules.ts`'s ROW 8 note
   // comment for the exact `Date.parse` results that motivated the regex-first

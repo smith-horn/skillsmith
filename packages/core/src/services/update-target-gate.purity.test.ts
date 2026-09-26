@@ -92,18 +92,82 @@
  * from the mock.
  *
  * What it quantifies over, stated exactly rather than as "everything": every
- * function exported by each mocked module, every function on the `default` and
- * `promises` namespaces those modules re-expose, and every ENUMERABLE,
- * string-keyed function owned by one of those functions (`fs.realpath.native`)
- * — each exercised at four arities and as a constructor, each asserted to
- * record under its own label and to throw.
+ * function the real module exposes at ANY key kind, ANY enumerability, own or
+ * inherited, at each of three levels — exported by a mocked module, on the
+ * `default` and `promises` namespaces those modules re-expose, and owned by one
+ * of those functions — with the exception of any key for which the mock already
+ * resolves the IDENTICAL function object (`bind`, `apply`, `hasOwnProperty` and
+ * the rest of `Function.prototype` / `Object.prototype`), which must be left
+ * alone rather than replaced by a throwing spy.
  *
- * Two declared residuals, neither covered and neither implied to be: a defect
- * keyed on argument CONTENT rather than arity, and a callable owned by a
- * callable under a non-enumerable or Symbol key, which `Object.entries` does
- * not report. Both measured surfaces of `node:fs` are enumerable and
- * string-keyed today, so the second is a boundary rather than a live hole.
- * SMI-6841 holds the measured instances and the mutation that killed each.
+ * ONE DECLARED RESIDUAL: a defect keyed on argument CONTENT rather than arity.
+ *
+ * There used to be a second, and its history is the most useful thing in this
+ * file. The mock re-attached only own, enumerable, string-keyed members, so the
+ * four stream constructors' 142 inherited statics were absent from it — meaning
+ * a real `fs.ReadStream.from(...)` call in the classifier would have performed
+ * I/O in silence, recording nothing and failing nothing.
+ *
+ * Four consecutive review rounds improved the DESCRIPTION of that hole: a count,
+ * then an owner set, then per-owner members, then an injectively-encoded property
+ * key with a collision ledger. Each round found the previous round's description
+ * too loose and each fix was correct. None of them closed the hole, and the
+ * claim "asserted by identity" was false at a new depth after every one.
+ *
+ * It closed in one predicate: `wrapNamespace` walks the real module reflectively,
+ * as the differential does, and wraps everything the mock does not already share.
+ * "The same surface" would overstate it in two measured ways: the wrapper READS
+ * namespace-level accessors (which is where `default`'s lazily-defined stream
+ * constructors come from) while the differential counts and skips them, and the
+ * wrapper stays string-keyed at the namespace level for vitest's ESM interop
+ * while walking symbols at the member level. The domains overlap on exactly what
+ * matters — data-property callables — which is why gaps reach zero.
+ * Gaps went 143 -> 0, and with them went the 71-line static table, the key
+ * encoder, the collision ledger, its known-positive, and a per-owner sum check —
+ * about 130 lines whose entire job was describing functions the mock should have
+ * carried. The differential remains, asserting ZERO per path, which is a
+ * stronger statement than any characterisation of a non-empty gap set.
+ *
+ * The lesson is not "the reviews were wrong" — every finding was real. It is that
+ * four rounds of increasingly precise description never asked whether the thing
+ * being described should exist. Accuracy about a hole is not a guard.
+ *
+ * Five outcomes, each saying only what it measures — SHARED means the same
+ * function object resolved on both sides, not shared provenance; WRAPPED means
+ * the mock resolved SOME function, with record-and-throw proven by the `exercise`
+ * loop over the REACHABLE surface only, not re-proven here; GAP means the mock
+ * resolved nothing, asserted absent; UNSAFE means the lookup threw, kept separate
+ * because "unresolvable" is not "absent"; ACCESSOR means a getter or setter-only
+ * property, counted and deliberately not invoked by the differential.
+ *
+ * UNSAFE is asserted zero on every path, and a branch that cannot fire yields
+ * that same zero, so a known-positive drives it through the same classifier a
+ * throwing lookup would reach.
+ *
+ * `gaps: 0` is not vacuous, but NOT for the reason an earlier draft of this
+ * paragraph gave. It cited the large accessor counts, which prove nothing about
+ * the gap domain — accessors are a DIFFERENT population, counted and skipped, so
+ * a big accessor surface is compatible with an empty callable one. What actually
+ * establishes it is the pair of assertions at the foot of the control:
+ * `expectedTotal > 25`, and the exact call and construction totals, which
+ * together require a substantial data-property callable domain to have been
+ * walked and exercised. A zero over an empty domain would fail those.
+ *
+ * One asymmetry worth knowing, found by measuring rather than predicted: on the
+ * ESM namespace the stream classes are DATA properties, so the walk reaches them
+ * directly; on `default` — the CJS `module.exports` — the same classes are lazy
+ * GETTERS, so the differential counts them as accessors and declines to invoke
+ * them. Same function objects, opposite classification, because the two views
+ * define them differently. Their inherited statics USED to count as gaps on the
+ * ESM side, which is what the deleted 71-line table enumerated; they are wrapped
+ * now, so they are gaps nowhere. The asymmetry survives only in the accessor
+ * counts.
+ *
+ * The literal counts are a Node-shape canary, not a portable invariant: this
+ * package supports `>=22.22.0` while CI tracks the moving Node 22 line, so a
+ * legitimate Node update can change them and require this fixture updated.
+ * That is the intended failure mode. SMI-6841 holds the measured instances and
+ * the mutation that killed each.
  */
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 
@@ -190,12 +254,96 @@ function makeRecordingSpy(label: string): (...args: unknown[]) => unknown {
   })
 }
 
+/**
+ * Every key the real object exposes — own or inherited, enumerable or not,
+ * string or symbol — paired with its value, EXCEPT any key for which `target`
+ * already resolves the identical function.
+ *
+ * That exclusion is the load-bearing part. `Function.prototype` supplies
+ * `bind`, `call`, `apply`, `toString`; `Object.prototype` supplies
+ * `hasOwnProperty` and friends. The spy and the mock namespace inherit those
+ * same function objects, so wrapping them would REPLACE working machinery with
+ * throwing spies and break vitest itself rather than guard anything. Excluding
+ * "the target already has this exact function" is also precisely the condition
+ * under which the differential below reports a GAP — so the mock now closes
+ * exactly what that differential would otherwise merely characterise.
+ *
+ * Accessors are READ, not skipped, because `Object.entries` already invoked
+ * every enumerable getter here and that is where `default`'s lazily-defined
+ * stream constructors come from; dropping them would narrow the mock. A getter
+ * that throws is skipped rather than allowed to fail mock construction.
+ */
+function reflectiveEntries(
+  source: Record<string | symbol, unknown>,
+  target: object,
+  stringKeysOnly: boolean
+): Array<[string | symbol, unknown, PropertyDescriptor | undefined]> {
+  // The third element is the REAL OWN DESCRIPTOR when the key is own on `source`,
+  // and `undefined` when the key was found further up the prototype chain. Both
+  // halves matter: the descriptor carries `enumerable`/`writable`, and the
+  // own-versus-inherited distinction decides whether the wrapper may install the
+  // member on the mock itself or must put it behind a prototype, because
+  // promoting an inherited member to an own one is observable to `Object.hasOwn`,
+  // `getOwnPropertyNames` and `Reflect.ownKeys`.
+  const entries: Array<[string | symbol, unknown, PropertyDescriptor | undefined]> = []
+  const seen = new Set<string | symbol>()
+  let depth = 0
+  let cur: object | null = source
+  while (cur !== null) {
+    for (const key of Reflect.ownKeys(cur)) {
+      if (seen.has(key)) continue
+      seen.add(key)
+      // MEASURED EQUIVALENCE AT THE NAMESPACE LEVEL, stated because reverting
+      // this walk to `Object.entries` leaves all seven tests green. That is an
+      // EQUIVALENT MUTANT, not an uncovered gap: for FUNCTIONS the two walks
+      // agree exactly on today's surface (107/107 on `node:fs`, 33/33 on
+      // `node:fs/promises`, and the same at every `default`/`promises` view),
+      // with `__proto__` the only key reflection adds and it is not callable.
+      // Kept anyway, for symmetry with the member walk and because a future
+      // non-enumerable function export would then be wrapped automatically
+      // rather than surfacing as a differential failure. The member walk is the
+      // half that is load-bearing today: reverting THAT one takes gaps 0 -> 143.
+      //
+      // Vitest's ESM interop reads the mock namespace's own STRING keys to
+      // decide which named exports exist, so the namespace level stays
+      // string-keyed. A function has no such constraint, and `exists`'s
+      // `Symbol(nodejs.util.promisify.custom)` is exactly the callable that
+      // needs wrapping — it was the last surviving gap once the others closed.
+      if (stringKeysOnly && typeof key !== 'string') continue
+      // `__proto__` is an Object.prototype ACCESSOR, so walking to the prototype
+      // reaches it where `Object.entries` did not. Reading it yields the
+      // prototype object and assigning it would invoke the setter and rewire the
+      // mock's prototype chain — measured as the ONLY key the reflective walk
+      // adds at the namespace level. It is never a callable, so skipping it
+      // costs no coverage and avoids mutating the object being built.
+      if (key === '__proto__') continue
+      let value: unknown
+      try {
+        value = source[key]
+      } catch {
+        continue
+      }
+      if (
+        typeof value === 'function' &&
+        (target as Record<string | symbol, unknown>)[key] === value
+      )
+        continue
+      const desc = Object.getOwnPropertyDescriptor(cur, key)
+      entries.push([key, value, depth === 0 ? desc : undefined])
+    }
+    cur = Object.getPrototypeOf(cur)
+    depth += 1
+  }
+  return entries
+}
+
 /** Wrap every function on `ns`, recursing into the two nested namespaces that
  * re-expose the same functions under a different access path, and re-attaching
- * any callable a callable owns. */
+ * every callable a callable exposes at any key kind and any depth. */
 function wrapNamespace(ns: Record<string, unknown>, moduleName: string): Record<string, unknown> {
   const out: Record<string, unknown> = {}
-  for (const [name, value] of Object.entries(ns)) {
+  for (const [key, value] of reflectiveEntries(ns, out, true)) {
+    const name = key as string
     if (name === 'default' || name === 'promises') {
       out[name] = wrapNamespace(value as Record<string, unknown>, `${moduleName}.${name}`)
       continue
@@ -216,15 +364,84 @@ function wrapNamespace(ns: Record<string, unknown>, moduleName: string): Record<
     //
     // An earlier version of this file NAMED this hole in a comment and left it
     // open, which is worse than not noticing: the note read as diligence while
-    // the guarantee one screen above it stayed false. `Object.entries` sees
-    // `native` because it is enumerable (measured), so the same traversal the
-    // oracle uses covers it.
-    for (const [member, memberValue] of Object.entries(value)) {
+    // the guarantee one screen above it stayed false.
+    //
+    // This walk used to be `Object.entries(value)` — own, enumerable, string —
+    // which left the four stream constructors' 142 inherited statics unwrapped.
+    // Four review rounds then went into characterising that hole with rising
+    // precision: a count, then an owner set, then per-owner members, then an
+    // injectively-encoded key. All four described the hole; none closed it, and
+    // a real `fs.ReadStream.from(...)` call would have done silent I/O
+    // throughout. Closing it deletes the characterisation and turns a documented
+    // gap into an actual guard, which is what the differential was only ever
+    // standing in for.
+    // OWN MEMBERS GO ON THE SPY; INHERITED MEMBERS GO BEHIND IT. Two rounds were
+    // spent getting this right and each fix was narrower than the problem.
+    //
+    // Round 8: forcing `enumerable: true` promoted hidden members into
+    // `Object.keys`, spread and `Object.assign`. Mirroring enumerability fixed
+    // that. Round 9: mirroring enumerability does NOT preserve OWN-ness, and an
+    // inherited static installed as a non-enumerable OWN property is still
+    // visible to `Object.hasOwn`, `getOwnPropertyNames` and `Reflect.ownKeys`
+    // where production has nothing. Code that discovers constructor statics that
+    // way and then calls them would make a call under the mock that production
+    // never makes — a FALSE purity failure, the mock becoming the defect.
+    //
+    // So inherited wrapped members are installed on a shadow prototype spliced
+    // between the spy and `Function.prototype`. Own-ness is then preserved
+    // exactly; lookup DEPTH is not (everything inherited sits at depth 1 rather
+    // than at its original depth), which is a deliberate and stated residual —
+    // no reachable check in this codebase reads prototype depth, whereas
+    // `hasOwnProperty` is ordinary code.
+    //
+    // `defineProperty` rather than assignment throughout, because
+    // `Function.prototype[Symbol.hasInstance]` is non-writable and a plain
+    // `spy[key] = …` THROWS for any real function defining its own — measured: it
+    // broke mock construction outright, surfacing as vitest's generic "error when
+    // mocking a module".
+    const shadow: Record<string | symbol, unknown> = Object.create(Function.prototype)
+    let shadowUsed = false
+    for (const [member, memberValue, ownDesc] of reflectiveEntries(
+      value as unknown as Record<string | symbol, unknown>,
+      spy,
+      false
+    )) {
       if (typeof memberValue !== 'function') continue
-      ;(spy as unknown as Record<string, unknown>)[member] = makeRecordingSpy(
-        `${moduleName}.${name}.${member}`
-      )
+      const wrapped = makeRecordingSpy(`${moduleName}.${name}.${String(member)}`)
+      if (ownDesc !== undefined) {
+        // Own on the real function: mirror its descriptor. `writable` is mirrored
+        // rather than hardcoded so a non-writable real static does not become
+        // assignable on the mock.
+        Object.defineProperty(spy, member, {
+          value: wrapped,
+          writable: ownDesc.writable === true,
+          enumerable: ownDesc.enumerable === true,
+          configurable: ownDesc.configurable === true,
+        })
+        continue
+      }
+      // Inherited on the real function: keep it inherited here too. Left
+      // writable and configurable deliberately, NOT mirrored from the defining
+      // prototype. The reason first given for that was WRONG, and measured to be
+      // wrong rather than argued: `delete spy.from` returns true whether the
+      // shadow's property is configurable or not, because deletion targets the
+      // receiver's own property and there is none — verified in-container, with a
+      // control confirming that deleting an OWN non-configurable property does
+      // throw, so the probe could have seen a difference. Configurability here
+      // only matters to code reflecting on or mutating the shadow object itself,
+      // which nothing does. Left permissive so this synthetic object never
+      // refuses an operation the real prototype chain would allow; the asymmetry
+      // with the own branch, which mirrors its descriptor exactly, is
+      // intentional.
+      Object.defineProperty(shadow, member, {
+        value: wrapped,
+        writable: true,
+        enumerable: false,
+        configurable: true,
+      })
+      shadowUsed = true
     }
+    if (shadowUsed) Object.setPrototypeOf(spy, shadow)
     out[name] = spy
   }
   return out
@@ -664,6 +881,298 @@ describe('the fs recorder — known-positive control (T-G3)', () => {
       // `realpath.native` and `realpathSync.native`, at the top level and
       // again under `default`; the promises modules own none.
       expect(expectedMemberPaths.length).toBe(expectedMemberCount)
+
+      // The hand-measured non-enumerable / Symbol-keyed counts that stood here
+      // are gone, and so is the prose around them, which had gone FALSE rather
+      // than merely stale: it said `fs.promises.opendir`'s promisify symbol was
+      // "genuinely outside the mock" and that containment survived only because
+      // `util.promisify` falls back to wrapping the spy. Both stopped being true
+      // when `wrapNamespace` started wrapping symbol-keyed members — the symbol
+      // IS on the spy now, so `util.promisify` finds it and gets a recording spy,
+      // which records and throws directly instead of by fallback. The zero-gap
+      // differential below subsumes what those counts were pinning, and asserts
+      // it over the whole reflective surface rather than two hand-picked
+      // categories.
+      // A DIFFERENTIAL THAT NOW ASSERTS ZERO, BECAUSE THE HOLE IS CLOSED RATHER
+      // THAN CHARACTERISED. Twelve rounds enumerated what `Object.entries`
+      // misses — non-enumerable, then Symbol, then inherited, then accessors —
+      // and every list was incomplete. Round 5 replaced the list with a
+      // differential, which was directionally right and wrong the same way: it
+      // SELECTED what to compare using `Object.entries(realNs)`. Rounds 6 and 7
+      // then made the gap set ever more precise — a count, an owner set,
+      // per-owner members, an injectively-encoded key — four consecutive repairs
+      // to one claim.
+      //
+      // All four described the 143 unwrapped stream statics. None closed them,
+      // and a real `fs.ReadStream.from(...)` call would have done silent I/O
+      // throughout, because the mock did not carry it. `wrapNamespace` now wraps
+      // the real module reflectively as this differential does — not the
+      // IDENTICAL surface: the wrapper reads namespace accessors the differential
+      // skips, and stays string-keyed at the namespace level while walking
+      // symbols at the member level. They agree on data-property callables, which
+      // is what drives the gap count to ZERO, and the precision question
+      // disappears with the gaps: there is no set left whose identity could be
+      // asserted too loosely.
+      //
+      // That is also why `String(key)` is safe as the diagnostic label below. A
+      // rendering collision could only merge two entries in a set asserted
+      // EMPTY, and a non-empty set fails whatever its entries are named. The
+      // injective-encoding machinery this replaced existed solely to key a set
+      // that should not exist.
+      //
+      //   SHARED   the same function object resolves on both sides. That is all
+      //            it proves — not shared provenance. It is how ~1,500 entries
+      //            per namespace (`apply`, `bind`, `hasOwnProperty`) drop out
+      //            without being carved out by hand, and `wrapNamespace` skips
+      //            exactly these, so it never replaces working machinery like
+      //            `bind` with a throwing spy.
+      //   WRAPPED  the mock resolves SOME function. Measured, not proven: that
+      //            a spy records AND throws is established by the `exercise`
+      //            loop above, over the reachable surface only. This branch
+      //            does not re-establish it for hidden or inherited members and
+      //            does not claim to.
+      //   GAP      the mock resolves nothing. Asserted absent, per path.
+      //   UNSAFE   the mock lookup threw — "present but unresolvable", not
+      //            "absent". Kept separate, and proven reachable by a
+      //            known-positive control, because a branch asserted `=== 0`
+      //            everywhere is indistinguishable from one that cannot fire.
+      //   ACCESSOR the real side is a getter OR a setter-only property. NOT
+      //            invoked by this walk — invoking an unknown accessor is a side
+      //            effect — so counted and left unresolved. `wrapNamespace` DOES
+      //            read them at the namespace level, which is where `default`'s
+      //            lazily-defined stream constructors come from.
+      type Surface = {
+        /** Owner -> missing member names. A diagnostic; asserted empty. */
+        gapsByOwner: Record<string, string[]>
+        gaps: number
+        unsafe: number
+        accessors: number
+      }
+      // Round 8's finding, turned into a guard rather than only a fix. Wrapping
+      // more of the real surface risks a mock that BEHAVES right and LOOKS wrong:
+      // a hidden or inherited member copied on as an own enumerable property is
+      // visible to `Object.keys`, spread, `Object.assign` and
+      // `propertyIsEnumerable`, so code inspecting a constructor for reasons
+      // unrelated to I/O could branch differently under the mock. Scoped to keys
+      // derived from the real function, so vitest's own `vi.fn()` properties are
+      // not dragged into the comparison.
+      const shapeMismatches: string[] = []
+      const surfaceByPath: Record<string, Surface> = {}
+      for (const suffix of expectedSuffixes) {
+        const realNs = resolve(suffix)
+        const mockNs = resolveMock(suffix)
+        const gapsByOwner = new Map<string, Set<string>>()
+        let gaps = 0
+        let unsafe = 0
+        let accessors = 0
+
+        const readMock = (
+          holder: unknown,
+          key: string | symbol
+        ): { ok: boolean; value: unknown } => {
+          try {
+            return {
+              ok: true,
+              value: holder == null ? undefined : (holder as Record<string | symbol, unknown>)[key],
+            }
+          } catch {
+            return { ok: false, value: undefined }
+          }
+        }
+
+        // Reflective seed: every callable the real namespace exposes by any key
+        // kind, at any enumerability, own or inherited — not `Object.entries`.
+        const namespaceCallables: Array<[string | symbol, unknown]> = []
+        {
+          let cur: object | null = realNs as object
+          const seen = new Set<string | symbol>()
+          while (cur !== null) {
+            for (const key of Reflect.ownKeys(cur)) {
+              if (seen.has(key)) continue
+              seen.add(key)
+              const desc = Object.getOwnPropertyDescriptor(cur, key)
+              if (!desc) continue
+              // Setter-only counts too: `desc.get === undefined` with a setter
+              // present is still an accessor, and testing only `get` dropped it
+              // out of all five outcomes instead of into one.
+              if (desc.get !== undefined || desc.set !== undefined) {
+                accessors += 1
+                continue
+              }
+              if (typeof desc.value === 'function') namespaceCallables.push([key, desc.value])
+            }
+            cur = Object.getPrototypeOf(cur)
+          }
+        }
+
+        const classify = (
+          realValue: unknown,
+          holder: unknown,
+          key: string | symbol,
+          owner: string
+        ): void => {
+          const read = readMock(holder, key)
+          if (!read.ok) {
+            unsafe += 1
+            return
+          }
+          if (read.value === realValue) return // SHARED
+          if (typeof read.value === 'function') return // WRAPPED
+          gaps += 1
+          let members = gapsByOwner.get(owner)
+          if (members === undefined) {
+            members = new Set<string>()
+            gapsByOwner.set(owner, members)
+          }
+          members.add(String(key))
+        }
+
+        for (const [nsKey, realFn] of namespaceCallables) {
+          classify(realFn, mockNs, nsKey, '<namespace>')
+          const mockFn = readMock(mockNs, nsKey).value
+          let cur: object | null = realFn as object
+          const seen = new Set<string | symbol>()
+          while (cur !== null) {
+            for (const key of Reflect.ownKeys(cur)) {
+              if (seen.has(key)) continue
+              seen.add(key)
+              const desc = Object.getOwnPropertyDescriptor(cur, key)
+              if (!desc) continue
+              if (desc.get !== undefined || desc.set !== undefined) {
+                accessors += 1
+                continue
+              }
+              if (typeof desc.value !== 'function') continue
+              // The OWNER is encoded too: a namespace's own key can be a symbol,
+              // so `String(nsKey)` would collide two distinct owners exactly as
+              // it collided two distinct members.
+              classify(desc.value, mockFn, key, String(nsKey))
+              // SHAPE, NOT BEHAVIOUR, and two properties of it rather than one.
+              // Round 8 pinned enumerability; round 9 found that insufficient,
+              // because an inherited member installed as a non-enumerable OWN
+              // property is still visible to `Object.hasOwn` where production has
+              // nothing. OWN-NESS is compared first — it decides whether
+              // static-discovery code sees a member at all — then `enumerable`
+              // and `writable` for the own ones.
+              const where = `${canonical}${suffix}.${String(nsKey)}.${String(key)}`
+              const realOwnDesc = Object.getOwnPropertyDescriptor(realFn as object, key)
+              const mockDesc =
+                mockFn == null ? undefined : Object.getOwnPropertyDescriptor(mockFn as object, key)
+              if ((realOwnDesc !== undefined) !== (mockDesc !== undefined)) {
+                shapeMismatches.push(
+                  `${where}: own on mock=${mockDesc !== undefined}, own on real=${realOwnDesc !== undefined}`
+                )
+              } else if (mockDesc !== undefined && realOwnDesc !== undefined) {
+                if (mockDesc.enumerable !== realOwnDesc.enumerable) {
+                  shapeMismatches.push(
+                    `${where}: mock enumerable=${mockDesc.enumerable}, real enumerable=${realOwnDesc.enumerable}`
+                  )
+                }
+                if (mockDesc.writable !== realOwnDesc.writable) {
+                  shapeMismatches.push(
+                    `${where}: mock writable=${mockDesc.writable}, real writable=${realOwnDesc.writable}`
+                  )
+                }
+              }
+            }
+            cur = Object.getPrototypeOf(cur)
+          }
+        }
+
+        surfaceByPath[`${canonical}${suffix}`] = {
+          gapsByOwner: Object.fromEntries(
+            [...gapsByOwner.entries()]
+              .sort(([a], [b]) => a.localeCompare(b))
+              .map(([owner, members]) => [owner, [...members].sort()])
+          ),
+          gaps,
+          unsafe,
+          accessors,
+        }
+
+        // KNOWN-POSITIVE for UNSAFE, run after the snapshot so it cannot move
+        // the recorded numbers. Every real path asserts `unsafe: 0`, and a
+        // branch that can never fire produces that same zero — so the zero is
+        // only evidence once the branch is shown reachable. This drives the
+        // SAME `classify` closure the walk used, not a copy of its logic: a
+        // holder whose lookup throws must land in UNSAFE, and must not be
+        // miscounted as a gap.
+        const throwingHolder = {} as Record<string, unknown>
+        Object.defineProperty(throwingHolder, 'poisoned', {
+          get() {
+            throw new Error('control: this lookup must classify as UNSAFE, not as a gap')
+          },
+        })
+        const unsafeBefore = unsafe
+        const gapsBefore = gaps
+        classify(() => undefined, throwingHolder, 'poisoned', '<control>')
+        expect(unsafe, `${suffix}: the UNSAFE branch never fired for a throwing lookup`).toBe(
+          unsafeBefore + 1
+        )
+        expect(gaps, `${suffix}: a throwing lookup was miscounted as a gap`).toBe(gapsBefore)
+        expect(gapsByOwner.has('<control>')).toBe(false)
+      }
+      // Expected per path, measured in-container on Node 22. Gaps are ZERO on
+      // every path: `wrapNamespace` wraps reflectively as this differential
+      // walks, so the two agree on data-property callables by construction rather
+      // than by a hand-maintained list of what the mock happens to miss.
+      //
+      // Deleted along with the gaps: a 71-line literal of the four stream
+      // constructors' inherited statics, an injective key encoder with its
+      // collision ledger and known-positive, and a per-owner sum check. All of it
+      // existed to describe 143 functions the mock did not carry. One predicate
+      // in `wrapNamespace` — wrap unless the target already resolves the
+      // identical function — removed the need for every line of it.
+      //
+      // The accessor counts stay, but NOT as the reason `gaps: 0` is non-vacuous —
+      // that argument was wrong and the docblock's correction had been applied
+      // while this copy of it survived, which is two surfaces disagreeing with the
+      // wrong one read first. Accessors are a DIFFERENT population, counted and
+      // skipped, so a large accessor surface is compatible with an empty callable
+      // one. `expectedTotal > 25` and the exact call and construction totals are
+      // what require a substantial callable domain to have been walked.
+      //
+      // What the counts are FOR is a Node-shape canary: this package supports
+      // `>=22.22.0` while CI tracks the moving Node 22 line, so a legitimate
+      // update can change them, and that failure is the intended signal.
+      const NO_GAPS = { gaps: 0, unsafe: 0, gapsByOwner: {} } as const
+      const SURFACE_BY_SUFFIX: Record<string, Surface> = {
+        'node:fs': { ...NO_GAPS, accessors: 310 },
+        'node:fs.default': { ...NO_GAPS, accessors: 321 },
+        'node:fs.promises': { ...NO_GAPS, accessors: 127 },
+        'node:fs.default.promises': { ...NO_GAPS, accessors: 127 },
+        'node:fs/promises': { ...NO_GAPS, accessors: 93 },
+        'node:fs/promises.default': { ...NO_GAPS, accessors: 127 },
+      }
+      const expectedSurface: Record<string, Surface> = {}
+      for (const suffix of expectedSuffixes) {
+        const path = `${canonical}${suffix}`
+        const expected = SURFACE_BY_SUFFIX[path]
+        expect(expected, `no expected surface recorded for ${path}`).toBeDefined()
+        expectedSurface[path] = expected
+      }
+      // Every path compared whole. No path trades member identity for a count.
+      expect(surfaceByPath).toEqual(expectedSurface)
+
+      // Scoped exactly: for every key the REAL function exposes, the mock must
+      // agree on own-ness, and for own keys also on `enumerable` and `writable`.
+      // What it does NOT check, stated because the previous comment claimed the
+      // whole shape: a key the mock installs that the real function does not
+      // expose at all is never visited by this walk. The wrapper cannot currently
+      // invent one — every installation is driven by the real walk — but that is a
+      // property of the wrapper, not something this assertion establishes.
+      expect(
+        shapeMismatches,
+        'the mock is observably shaped differently from the real function'
+      ).toEqual([])
+
+      // The sum check that stood here is gone. It compared `gaps` against the
+      // per-owner sets to catch a dedup collision — a fault that required gaps to
+      // exist. With every path asserted at zero gaps it can only ever compare 0
+      // to 0, which makes it dead by exactly the standard used to delete the
+      // depth-0 property skip. Round 7's reviewer was right that it was an
+      // independent check while there were gaps to count; closing the gaps is
+      // what retired it, not a reversal of that.
 
       // Guards the guard: if `vi.importActual` ever handed back an empty or
       // stub module, every set comparison above would pass vacuously by
