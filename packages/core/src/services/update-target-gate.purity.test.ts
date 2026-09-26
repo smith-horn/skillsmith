@@ -110,43 +110,37 @@
  * Two declared residuals, neither covered and neither implied to be. The first
  * is a defect keyed on argument CONTENT rather than arity.
  *
- * The second is a function the mock does not carry. This paragraph tried three
- * times to enumerate that set by category — non-enumerable, then Symbol, then
- * inherited — and was wrong every time, each time in the reassuring direction.
- * The last attempt also defended itself with "both namespaces have a null
- * prototype", true of the two ESM roots and false of `.default`, `.promises`
- * and `.default.promises`.
+ * The second is a function the mock does not carry. Four attempts enumerated
+ * that set by category — non-enumerable, Symbol, inherited, accessors — and
+ * every list was incomplete. Round 5 replaced the list with a differential and
+ * was wrong the same way once more: it chose WHICH functions to compare using
+ * `Object.entries`, so the domain excluded categories before the comparison
+ * ran. Replacing the inner enumeration and leaving the outer one is a fair
+ * summary of this file's whole history.
  *
- * So it is no longer stated as a taxonomy. The block below measures it as a
- * DIFFERENTIAL: the real function's whole reflective surface (`Reflect.ownKeys`
- * along the prototype chain, so every key kind at every enumerability) against
- * what the mock resolves at the same key. A differential cannot omit a
- * category, which is the property three enumerations lacked. Measured per path
- * and asserted exactly:
+ * Both ends are reflective now: `Reflect.ownKeys` along the prototype chain to
+ * null, at the namespace level to choose what to compare and again on each
+ * callable found there. Five outcomes, and each says only what it measures —
+ * SHARED means the same function object resolved on both sides, not shared
+ * provenance; WRAPPED means the mock resolved SOME function, with
+ * record-and-throw proven by the `exercise` loop over the REACHABLE surface
+ * only, not re-proven here; GAP means the mock resolved nothing; UNSAFE means
+ * the lookup threw, kept separate from GAP because "unresolvable" is not
+ * "absent"; ACCESSOR means a getter, counted and deliberately not invoked.
  *
- *   fs namespaces        143 gaps, 1,468 shared, 310 accessors
- *   promises namespaces    1 gap,    435 shared,  93 accessors
+ * Gaps are asserted by IDENTITY — owner and member sets — not by count, so a
+ * reachable gap cannot vanish while an unreachable one appears. The owner set
+ * is the evidence for the reachability argument rather than a restatement of
+ * it: every gap belongs to one of the four stream constructors or to `exists` /
+ * `opendir`, and the classifier constructs no stream class and indexes no
+ * symbol. The cross-family gate checked that against the rule table.
  *
- * SHARED means the same function object resolves on both sides — `apply`,
- * `bind`, `constructor` — so it is nothing fs owns and nothing the mock lost.
- * Excluding those 1,468 by hand is what every taxonomy above would have had to
- * do. ACCESSORS are counted and deliberately NOT invoked, since invoking an
- * unknown getter is a side effect; they are declared unresolved rather than
- * assumed inert.
- *
- * The gaps are inherited enumerable statics on the stream classes (`from`,
- * `fromWeb`, `toWeb`, `wrap`, `_fromList`, inherited from `stream.Readable`)
- * plus one Symbol-keyed callable per path
- * (`fs.exists[util.promisify.custom]`, `fs.promises.opendir[…]`).
- *
- * They are DECLARED, not closed, and the reason is reachability rather than
- * convenience — verified independently against the rule table by the
- * cross-family gate: the classifier constructs no stream class, invokes no
- * stream static, and its only fs-bearing dependency is the regex-only
- * `isBackupDir`. Containment also survives the realistic promisify path —
- * `util.promisify(mockFs.exists)` finds no custom symbol on the spy, wraps the
- * spy, and still records and throws. What stays open is a direct index of a
- * symbol or an inherited static.
+ * One asymmetry worth knowing, found by measuring rather than predicted: on the
+ * ESM namespace the stream classes are DATA properties, so the walk reaches
+ * them and their inherited statics count as gaps; on `default` — the CJS
+ * `module.exports` — the same classes are lazy GETTERS, so they are counted as
+ * accessors and left unresolved. Same functions, opposite classification,
+ * because the two views define them differently.
  *
  * The literal counts are a Node-shape canary, not a portable invariant: this
  * package supports `>=22.22.0` while CI tracks the moving Node 22 line, so a
@@ -735,57 +729,124 @@ describe('the fs recorder — known-positive control (T-G3)', () => {
       // stays open is a DIRECT index of the symbol, which nothing here does.
       //
       // When Node changes either count, this fails and names the path.
-      // A DIFFERENTIAL, NOT A TAXONOMY. Twelve review rounds went into writing
-      // an exhaustive list of what `Object.entries` misses — non-enumerable,
-      // then Symbol, then inherited, then accessors — and every list was
-      // incomplete. The latest omission was inherited NON-ENUMERABLE and
-      // inherited SYMBOL keys, because `for…in` sees only enumerable string
-      // ones; before that it was accessors, which a `descriptor.value` check
-      // skips. Each round patched the list. The list was the mistake.
+      // A DIFFERENTIAL, SEEDED REFLECTIVELY. Twelve rounds went into enumerating
+      // what `Object.entries` misses — non-enumerable, then Symbol, then
+      // inherited, then accessors — and every list was incomplete, so round 5
+      // replaced the list with a differential against the real module. That was
+      // directionally right and still wrong in the same way: it SELECTED the
+      // functions to compare with `Object.entries(realNs)`, so the domain
+      // excluded categories before the comparison ran. Replacing the inner
+      // enumeration while leaving the outer one is a fair description of this
+      // file's entire history.
       //
-      // So this asks the question that cannot be answered incompletely: walk
-      // the REAL function's entire reflective surface — `Reflect.ownKeys` at
-      // every step of the prototype chain, so every key kind and every
-      // enumerability — and ask what the MOCK resolves at the same key.
+      // Both ends are reflective now. `Reflect.ownKeys` along the prototype
+      // chain TO NULL — no depth bound, since a bound is an enumeration of how
+      // deep things are allowed to hide — at the namespace level to choose what
+      // to compare, and again on each callable found there. Five outcomes, and
+      // `unsafe` is deliberately separate from `gap`: a lookup that throws is
+      // "present but unresolvable", not "absent", and collapsing the two would
+      // misdescribe the surface even though neither creates false coverage.
       //
-      //   same function object on both sides  -> SHARED. Not a gap: both
-      //     objects inherit it (`apply`, `bind`, `constructor` from
-      //     Function.prototype). No enumeration needed to exclude these, which
-      //     is the whole point — there are 1,468 of them per fs namespace and
-      //     every taxonomy above would have had to carve them out by hand.
-      //   mock resolves a function                -> WRAPPED. Covered.
-      //   mock resolves nothing                   -> GAP. Outside the mock.
-      //   real side is an accessor                -> ACCESSOR. NOT invoked,
-      //     because invoking an unknown getter is a side effect; counted and
-      //     declared rather than resolved.
+      //   SHARED   the same function object resolves on both sides. That is all
+      //            it proves — not shared provenance. It is how ~1,500 entries
+      //            per namespace (`apply`, `bind`, `hasOwnProperty`) drop out
+      //            without being carved out by hand, which is the differential
+      //            earning its place.
+      //   WRAPPED  the mock resolves SOME function. Measured, not proven: that
+      //            a spy records AND throws is established by the `exercise`
+      //            loop above, over the reachable surface only. This branch
+      //            does not re-establish it for hidden or inherited members and
+      //            does not claim to.
+      //   GAP      the mock resolves nothing. Outside the mock.
+      //   UNSAFE   the mock lookup threw.
+      //   ACCESSOR the real side is a getter. NOT invoked — invoking an unknown
+      //            getter is a side effect — so counted and left unresolved.
       //
-      // Measured per path, and asserted exactly, so any drift is loud. The
-      // gaps are inherited statics on the stream classes plus one Symbol-keyed
-      // callable; see the header. They stay DECLARED rather than closed for a
-      // reachability reason the cross-family gate verified independently
-      // against the rule table: the classifier constructs no stream class and
-      // invokes no stream static, and its only fs-bearing dependency is the
-      // regex-only `isBackupDir`.
-      //
-      // The literal counts are a Node-shape canary, not a portable invariant.
-      // This package supports `>=22.22.0` while CI tracks the moving Node 22
-      // line, so a legitimate Node update can change them and require this
-      // fixture updated. That is the intended failure: it alerts on stdlib
-      // drift instead of letting the mock quietly gain a hole.
-      const surfaceByPath: Record<string, { gaps: number; shared: number; accessors: number }> = {}
+      // GAPS ARE ASSERTED BY IDENTITY, not by count. A count lets a reachable
+      // gap disappear while an unreachable one appears, cancelling inside one
+      // namespace; owner and member sets do not. The owner set is also the
+      // evidence for the reachability argument rather than a restatement of it:
+      // every gap belongs to one of the four stream constructors or to
+      // `exists`, and the classifier constructs no stream class and indexes no
+      // symbol. The cross-family gate verified that against the rule table.
+      type Surface = {
+        gapOwners: string[]
+        gapMembers: string[]
+        gaps: number
+        unsafe: number
+        accessors: number
+      }
+      const surfaceByPath: Record<string, Surface> = {}
       for (const suffix of expectedSuffixes) {
         const realNs = resolve(suffix)
         const mockNs = resolveMock(suffix)
+        const gapOwners = new Set<string>()
+        const gapMembers = new Set<string>()
         let gaps = 0
-        let shared = 0
+        let unsafe = 0
         let accessors = 0
-        for (const [fnName, realFn] of Object.entries(realNs)) {
-          if (typeof realFn !== 'function') continue
-          const mockFn = mockNs[fnName]
+
+        const readMock = (
+          holder: unknown,
+          key: string | symbol
+        ): { ok: boolean; value: unknown } => {
+          try {
+            return {
+              ok: true,
+              value: holder == null ? undefined : (holder as Record<string | symbol, unknown>)[key],
+            }
+          } catch {
+            return { ok: false, value: undefined }
+          }
+        }
+
+        // Reflective seed: every callable the real namespace exposes by any key
+        // kind, at any enumerability, own or inherited — not `Object.entries`.
+        const namespaceCallables: Array<[string | symbol, unknown]> = []
+        {
+          let cur: object | null = realNs as object
+          const seen = new Set<string | symbol>()
+          while (cur !== null) {
+            for (const key of Reflect.ownKeys(cur)) {
+              if (seen.has(key)) continue
+              seen.add(key)
+              const desc = Object.getOwnPropertyDescriptor(cur, key)
+              if (!desc) continue
+              if (desc.get !== undefined) {
+                accessors += 1
+                continue
+              }
+              if (typeof desc.value === 'function') namespaceCallables.push([key, desc.value])
+            }
+            cur = Object.getPrototypeOf(cur)
+          }
+        }
+
+        const classify = (
+          realValue: unknown,
+          holder: unknown,
+          key: string | symbol,
+          owner: string
+        ): void => {
+          const read = readMock(holder, key)
+          if (!read.ok) {
+            unsafe += 1
+            return
+          }
+          if (read.value === realValue) return // SHARED
+          if (typeof read.value === 'function') return // WRAPPED
+          gaps += 1
+          gapOwners.add(owner)
+          gapMembers.add(String(key))
+        }
+
+        for (const [nsKey, realFn] of namespaceCallables) {
+          classify(realFn, mockNs, nsKey, '<namespace>')
+          const mockFn = readMock(mockNs, nsKey).value
           let cur: object | null = realFn as object
           let depth = 0
           const seen = new Set<string | symbol>()
-          while (cur !== null && depth < 8) {
+          while (cur !== null) {
             for (const key of Reflect.ownKeys(cur)) {
               if (seen.has(key)) continue
               seen.add(key)
@@ -798,38 +859,99 @@ describe('the fs recorder — known-positive control (T-G3)', () => {
                 continue
               }
               if (typeof desc.value !== 'function') continue
-              let mockValue: unknown
-              try {
-                mockValue =
-                  mockFn == null
-                    ? undefined
-                    : (mockFn as Record<string | symbol, unknown>)[key as string]
-              } catch {
-                mockValue = undefined
-              }
-              if (mockValue === desc.value) shared += 1
-              else if (typeof mockValue !== 'function') gaps += 1
+              classify(desc.value, mockFn, key, String(nsKey))
             }
             cur = Object.getPrototypeOf(cur)
             depth += 1
           }
         }
-        surfaceByPath[`${canonical}${suffix}`] = { gaps, shared, accessors }
-      }
 
-      // `ReadStream` is the independent observable separating the fs namespaces
-      // from the promises ones — not a hardcoded suffix list, so it cannot
-      // drift out of step with the namespace set.
-      const expectedSurface: Record<string, { gaps: number; shared: number; accessors: number }> =
-        {}
-      for (const suffix of expectedSuffixes) {
-        const carriesStreamClasses =
-          typeof (resolve(suffix) as Record<string, unknown>).ReadStream === 'function'
-        expectedSurface[`${canonical}${suffix}`] = carriesStreamClasses
-          ? { gaps: 143, shared: 1468, accessors: 310 }
-          : { gaps: 1, shared: 435, accessors: 93 }
+        surfaceByPath[`${canonical}${suffix}`] = {
+          gapOwners: [...gapOwners].sort(),
+          gapMembers: [...gapMembers].sort(),
+          gaps,
+          unsafe,
+          accessors,
+        }
       }
-      expect(surfaceByPath).toEqual(expectedSurface)
+      // Expected per path, measured in-container on Node 22 and keyed by the
+      // suffix rather than by a predicate, because there are now four distinct
+      // shapes and a predicate for each would be a second enumeration.
+      //
+      // The ESM-versus-CJS asymmetry is the interesting row and was not
+      // predicted: on `node:fs` the stream classes are DATA properties, so the
+      // walk reaches them and their 142 inherited statics count as gaps. On
+      // `node:fs.default` — the CJS `module.exports` — the same classes are
+      // lazy GETTERS, so the walk correctly declines to invoke them and they
+      // appear in the accessor count instead. Same underlying functions
+      // (`fs.ReadStream === fs.default.ReadStream`), opposite classification,
+      // because the two views define them differently. Nothing is hidden by
+      // that: a getter is counted and declared unresolved, which is the honest
+      // answer for a value you must not evaluate to inspect.
+      const SURFACE_BY_SUFFIX: Record<string, Surface> = {
+        'node:fs': {
+          gaps: 143,
+          unsafe: 0,
+          accessors: 310,
+          gapOwners: ['FileReadStream', 'FileWriteStream', 'ReadStream', 'WriteStream', 'exists'],
+          gapMembers: [],
+        },
+        'node:fs.default': {
+          gaps: 1,
+          unsafe: 0,
+          accessors: 321,
+          gapOwners: ['exists'],
+          gapMembers: ['Symbol(nodejs.util.promisify.custom)'],
+        },
+        'node:fs.promises': {
+          gaps: 1,
+          unsafe: 0,
+          accessors: 127,
+          gapOwners: ['opendir'],
+          gapMembers: ['Symbol(nodejs.util.promisify.custom)'],
+        },
+        'node:fs.default.promises': {
+          gaps: 1,
+          unsafe: 0,
+          accessors: 127,
+          gapOwners: ['opendir'],
+          gapMembers: ['Symbol(nodejs.util.promisify.custom)'],
+        },
+        'node:fs/promises': {
+          gaps: 1,
+          unsafe: 0,
+          accessors: 93,
+          gapOwners: ['opendir'],
+          gapMembers: ['Symbol(nodejs.util.promisify.custom)'],
+        },
+        'node:fs/promises.default': {
+          gaps: 1,
+          unsafe: 0,
+          accessors: 127,
+          gapOwners: ['opendir'],
+          gapMembers: ['Symbol(nodejs.util.promisify.custom)'],
+        },
+      }
+      // `node:fs`'s 39 gap members are the stream statics and are not listed
+      // one by one; its owner set plus the count is what the reachability
+      // argument rests on. Every other path has a single gap, named exactly.
+      const expectedSurface: Record<string, Surface> = {}
+      for (const suffix of expectedSuffixes) {
+        const path = `${canonical}${suffix}`
+        const expected = SURFACE_BY_SUFFIX[path]
+        expect(expected, `no expected surface recorded for ${path}`).toBeDefined()
+        expectedSurface[path] = expected
+      }
+      const observed: Record<string, Surface> = {}
+      for (const [path, surface] of Object.entries(surfaceByPath)) {
+        observed[path] = {
+          ...surface,
+          // node:fs's 39 members are deliberately not enumerated; compare its
+          // COUNT via `gaps` and its owners, not the member list.
+          gapMembers: path === 'node:fs' ? [] : surface.gapMembers,
+        }
+      }
+      expect(observed).toEqual(expectedSurface)
 
       // Guards the guard: if `vi.importActual` ever handed back an empty or
       // stub module, every set comparison above would pass vacuously by
