@@ -114,8 +114,14 @@
  * too loose and each fix was correct. None of them closed the hole, and the
  * claim "asserted by identity" was false at a new depth after every one.
  *
- * It closed in one predicate: `wrapNamespace` walks the same reflective surface
- * the differential walks, and wraps everything the mock does not already share.
+ * It closed in one predicate: `wrapNamespace` walks the real module reflectively,
+ * as the differential does, and wraps everything the mock does not already share.
+ * "The same surface" would overstate it in two measured ways: the wrapper READS
+ * namespace-level accessors (which is where `default`'s lazily-defined stream
+ * constructors come from) while the differential counts and skips them, and the
+ * wrapper stays string-keyed at the namespace level for vitest's ESM interop
+ * while walking symbols at the member level. The domains overlap on exactly what
+ * matters — data-property callables — which is why gaps reach zero.
  * Gaps went 143 -> 0, and with them went the 71-line static table, the key
  * encoder, the collision ledger, its known-positive, and a per-owner sum check —
  * about 130 lines whose entire job was describing functions the mock should have
@@ -136,17 +142,26 @@
  *
  * UNSAFE is asserted zero on every path, and a branch that cannot fire yields
  * that same zero, so a known-positive drives it through the same classifier a
- * throwing lookup would reach. `gaps: 0` is not vacuous for the mirror-image
- * reason: each path still exposes a large accessor surface the walk declines to
- * invoke, so the zero is a real statement about data-property callables rather
- * than about an empty domain.
+ * throwing lookup would reach.
+ *
+ * `gaps: 0` is not vacuous, but NOT for the reason an earlier draft of this
+ * paragraph gave. It cited the large accessor counts, which prove nothing about
+ * the gap domain — accessors are a DIFFERENT population, counted and skipped, so
+ * a big accessor surface is compatible with an empty callable one. What actually
+ * establishes it is the pair of assertions at the foot of the control:
+ * `expectedTotal > 25`, and the exact call and construction totals, which
+ * together require a substantial data-property callable domain to have been
+ * walked and exercised. A zero over an empty domain would fail those.
  *
  * One asymmetry worth knowing, found by measuring rather than predicted: on the
- * ESM namespace the stream classes are DATA properties, so the walk reaches
- * them and their inherited statics count as gaps; on `default` — the CJS
- * `module.exports` — the same classes are lazy GETTERS, so they are counted as
- * accessors and left unresolved. Same functions, opposite classification,
- * because the two views define them differently.
+ * ESM namespace the stream classes are DATA properties, so the walk reaches them
+ * directly; on `default` — the CJS `module.exports` — the same classes are lazy
+ * GETTERS, so the differential counts them as accessors and declines to invoke
+ * them. Same function objects, opposite classification, because the two views
+ * define them differently. Their inherited statics USED to count as gaps on the
+ * ESM side, which is what the deleted 71-line table enumerated; they are wrapped
+ * now, so they are gaps nowhere. The asymmetry survives only in the accessor
+ * counts.
  *
  * The literal counts are a Node-shape canary, not a portable invariant: this
  * package supports `>=22.22.0` while CI tracks the moving Node 22 line, so a
@@ -262,9 +277,13 @@ function reflectiveEntries(
   source: Record<string | symbol, unknown>,
   target: object,
   stringKeysOnly: boolean
-): Array<[string | symbol, unknown]> {
-  const entries: Array<[string | symbol, unknown]> = []
+): Array<[string | symbol, unknown, boolean]> {
+  // The third element is OWN-ENUMERABLE-ON-THE-REAL-OBJECT, and it exists
+  // because copying a hidden member onto the mock as an own enumerable one
+  // changes what the mock looks like, not just what it does. See the caller.
+  const entries: Array<[string | symbol, unknown, boolean]> = []
   const seen = new Set<string | symbol>()
+  let depth = 0
   let cur: object | null = source
   while (cur !== null) {
     for (const key of Reflect.ownKeys(cur)) {
@@ -305,9 +324,11 @@ function reflectiveEntries(
         (target as Record<string | symbol, unknown>)[key] === value
       )
         continue
-      entries.push([key, value])
+      const desc = Object.getOwnPropertyDescriptor(cur, key)
+      entries.push([key, value, depth === 0 && desc?.enumerable === true])
     }
     cur = Object.getPrototypeOf(cur)
+    depth += 1
   }
   return entries
 }
@@ -350,7 +371,7 @@ function wrapNamespace(ns: Record<string, unknown>, moduleName: string): Record<
     // throughout. Closing it deletes the characterisation and turns a documented
     // gap into an actual guard, which is what the differential was only ever
     // standing in for.
-    for (const [member, memberValue] of reflectiveEntries(
+    for (const [member, memberValue, ownEnumerable] of reflectiveEntries(
       value as unknown as Record<string | symbol, unknown>,
       spy,
       false
@@ -366,7 +387,18 @@ function wrapNamespace(ns: Record<string, unknown>, moduleName: string): Record<
       Object.defineProperty(spy, member, {
         value: makeRecordingSpy(`${moduleName}.${name}.${String(member)}`),
         writable: true,
-        enumerable: true,
+        // MIRROR HOW THE REAL FUNCTION EXPOSES IT, rather than forcing
+        // `enumerable: true`. Forcing it was a real defect and the justification
+        // for it was wrong: plain assignment only ever handled own ENUMERABLE
+        // members, so "this matches what assignment produced" was true for those
+        // and false for every member the reflective walk newly reaches. Copying
+        // an inherited or non-enumerable callable onto the spy as an own
+        // enumerable property changes the mock's observable SHAPE — `Object.keys`,
+        // spread, `Object.assign`, `propertyIsEnumerable` — so code inspecting a
+        // constructor for any reason unrelated to I/O could branch differently
+        // under the mock than in production. The wrapping exists to make calls
+        // detectable, not to make the mock look different from the real thing.
+        enumerable: ownEnumerable,
         configurable: true,
       })
     }
@@ -834,9 +866,13 @@ describe('the fs recorder — known-positive control (T-G3)', () => {
       // All four described the 143 unwrapped stream statics. None closed them,
       // and a real `fs.ReadStream.from(...)` call would have done silent I/O
       // throughout, because the mock did not carry it. `wrapNamespace` now wraps
-      // the same reflective surface this differential walks, so the gap count is
-      // ZERO and the precision question disappears with the gaps: there is no
-      // set left whose identity could be asserted too loosely.
+      // the real module reflectively as this differential does — not the
+      // IDENTICAL surface: the wrapper reads namespace accessors the differential
+      // skips, and stays string-keyed at the namespace level while walking
+      // symbols at the member level. They agree on data-property callables, which
+      // is what drives the gap count to ZERO, and the precision question
+      // disappears with the gaps: there is no set left whose identity could be
+      // asserted too loosely.
       //
       // That is also why `String(key)` is safe as the diagnostic label below. A
       // rendering collision could only merge two entries in a set asserted
@@ -872,6 +908,15 @@ describe('the fs recorder — known-positive control (T-G3)', () => {
         unsafe: number
         accessors: number
       }
+      // Round 8's finding, turned into a guard rather than only a fix. Wrapping
+      // more of the real surface risks a mock that BEHAVES right and LOOKS wrong:
+      // a hidden or inherited member copied on as an own enumerable property is
+      // visible to `Object.keys`, spread, `Object.assign` and
+      // `propertyIsEnumerable`, so code inspecting a constructor for reasons
+      // unrelated to I/O could branch differently under the mock. Scoped to keys
+      // derived from the real function, so vitest's own `vi.fn()` properties are
+      // not dragged into the comparison.
+      const shapeMismatches: string[] = []
       const surfaceByPath: Record<string, Surface> = {}
       for (const suffix of expectedSuffixes) {
         const realNs = resolve(suffix)
@@ -962,6 +1007,21 @@ describe('the fs recorder — known-positive control (T-G3)', () => {
               // so `String(nsKey)` would collide two distinct owners exactly as
               // it collided two distinct members.
               classify(desc.value, mockFn, key, String(nsKey))
+              // Shape, not behaviour: where the mock carries an OWN property for
+              // this key, its enumerability must match how the real function
+              // exposes it.
+              const mockDesc =
+                mockFn == null ? undefined : Object.getOwnPropertyDescriptor(mockFn as object, key)
+              if (mockDesc !== undefined) {
+                const realOwn =
+                  Object.getOwnPropertyDescriptor(realFn as object, key)?.enumerable === true
+                if (mockDesc.enumerable !== realOwn) {
+                  shapeMismatches.push(
+                    `${canonical}${suffix}.${String(nsKey)}.${String(key)}: ` +
+                      `mock enumerable=${mockDesc.enumerable}, real own-enumerable=${realOwn}`
+                  )
+                }
+              }
             }
             cur = Object.getPrototypeOf(cur)
           }
@@ -1001,9 +1061,9 @@ describe('the fs recorder — known-positive control (T-G3)', () => {
         expect(gapsByOwner.has('<control>')).toBe(false)
       }
       // Expected per path, measured in-container on Node 22. Gaps are ZERO on
-      // every path: `wrapNamespace` wraps the same reflective surface this
-      // differential walks, so the two agree by construction rather than by a
-      // hand-maintained list of what the mock happens to miss.
+      // every path: `wrapNamespace` wraps reflectively as this differential
+      // walks, so the two agree on data-property callables by construction rather
+      // than by a hand-maintained list of what the mock happens to miss.
       //
       // Deleted along with the gaps: a 71-line literal of the four stream
       // constructors' inherited statics, an injective key encoder with its
@@ -1036,6 +1096,9 @@ describe('the fs recorder — known-positive control (T-G3)', () => {
       }
       // Every path compared whole. No path trades member identity for a count.
       expect(surfaceByPath).toEqual(expectedSurface)
+
+      // The mock must not be observably different in shape from the real module.
+      expect(shapeMismatches, 'the mock exposes members the real function hides').toEqual([])
 
       // The sum check that stood here is gone. It compared `gaps` against the
       // per-owner sets to catch a dedup collision — a fault that required gaps to
