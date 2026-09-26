@@ -30,10 +30,16 @@
  * which has no docker CLI, so the sibling Postgres is provisioned from the host and reached
  * through the Docker Desktop gateway.
  *
- * NO CI COVERAGE YET, STATED PLAINLY. CI provisions no Postgres service and sets none of
- * these vars, so this suite skips there -- loudly, never silently (see {@link noLiveTestPg}).
- * Same known, tracked gap SMI-5946 already covers for the smi5879/SMI-6321/SMI-6345 suites;
- * this is a fourth consumer of that gap, not a new one.
+ * NO CI COVERAGE YET, STATED PRECISELY. No CI check runs this suite: nothing sets these vars,
+ * so it skips there -- loudly, never silently (see {@link noLiveTestPg}). Same known, tracked
+ * gap SMI-5946 covers for the smi5879/SMI-6321/SMI-6345 suites; this is a fifth consumer of
+ * that gap (and a fifth env namespace), not a new one.
+ *
+ * Do NOT restate this as "CI provisions no Postgres" -- that is the looser claim, and it is
+ * wrong. `Test (root)` provisions none, but .github/workflows/grant-reactivate-concurrency.yml
+ * DOES: it runs `supabase start` with git-crypt unlocked and triggers on supabase/migrations/**,
+ * so it fires on any PR touching a migration -- it just runs one unrelated test file. The
+ * machinery exists; this suite is not wired into it. Datapoint filed on SMI-5946.
  *
  * POSTGRES VERSION SENSITIVITY -- MEASURED, not assumed (SMI-6505 rule). Prod runs
  * postgres:17.6 (Debian/glibc, via supabase/postgres); the docker one-liner above uses
