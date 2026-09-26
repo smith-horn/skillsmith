@@ -92,59 +92,54 @@
  * from the mock.
  *
  * What it quantifies over, stated exactly rather than as "everything": every
- * ENUMERABLE, STRING-KEYED function at each of three levels — exported by a
- * mocked module, on the `default` and `promises` namespaces those modules
- * re-expose, and owned by one of those functions (`fs.realpath.native`) —
- * each exercised at four arities and as a constructor, each asserted to
- * record under its own label and to throw.
+ * function the real module exposes at ANY key kind, ANY enumerability, own or
+ * inherited, at each of three levels — exported by a mocked module, on the
+ * `default` and `promises` namespaces those modules re-expose, and owned by one
+ * of those functions — with the exception of any key for which the mock already
+ * resolves the IDENTICAL function object (`bind`, `apply`, `hasOwnProperty` and
+ * the rest of `Function.prototype` / `Object.prototype`), which must be left
+ * alone rather than replaced by a throwing spy.
  *
- * That qualifier governs ALL THREE levels, not just the third. `Object.entries`
- * walks every one of them — `wrapNamespace` at all three, the control's walk at
- * the first two, and the oracle at the third — so the same boundary applies
- * identically at each. An earlier version of this paragraph attached
- * "enumerable, string-keyed" to the third clause alone, which claimed more than
- * the mechanism delivers for the first two: the same
- * subject-broader-than-the-thing-it-names shape this file spent eleven rounds
- * removing, relocated into its own summary.
+ * ONE DECLARED RESIDUAL: a defect keyed on argument CONTENT rather than arity.
  *
- * Two declared residuals, neither covered and neither implied to be. The first
- * is a defect keyed on argument CONTENT rather than arity.
+ * There used to be a second, and its history is the most useful thing in this
+ * file. The mock re-attached only own, enumerable, string-keyed members, so the
+ * four stream constructors' 142 inherited statics were absent from it — meaning
+ * a real `fs.ReadStream.from(...)` call in the classifier would have performed
+ * I/O in silence, recording nothing and failing nothing.
  *
- * The second is a function the mock does not carry. Four attempts enumerated
- * that set by category — non-enumerable, Symbol, inherited, accessors — and
- * every list was incomplete. Round 5 replaced the list with a differential and
- * was wrong the same way once more: it chose WHICH functions to compare using
- * `Object.entries`, so the domain excluded categories before the comparison
- * ran. Replacing the inner enumeration and leaving the outer one is a fair
- * summary of this file's whole history.
+ * Four consecutive review rounds improved the DESCRIPTION of that hole: a count,
+ * then an owner set, then per-owner members, then an injectively-encoded property
+ * key with a collision ledger. Each round found the previous round's description
+ * too loose and each fix was correct. None of them closed the hole, and the
+ * claim "asserted by identity" was false at a new depth after every one.
  *
- * Both ends are reflective now: `Reflect.ownKeys` along the prototype chain to
- * null, at the namespace level to choose what to compare and again on each
- * callable found there. Five outcomes, and each says only what it measures —
- * SHARED means the same function object resolved on both sides, not shared
- * provenance; WRAPPED means the mock resolved SOME function, with
- * record-and-throw proven by the `exercise` loop over the REACHABLE surface
- * only, not re-proven here; GAP means the mock resolved nothing; UNSAFE means
- * the lookup threw, kept separate from GAP because "unresolvable" is not
- * "absent"; ACCESSOR means a getter or a setter-only property, counted and
- * deliberately not invoked.
+ * It closed in one predicate: `wrapNamespace` walks the same reflective surface
+ * the differential walks, and wraps everything the mock does not already share.
+ * Gaps went 143 -> 0, and with them went the 71-line static table, the key
+ * encoder, the collision ledger, its known-positive, and a per-owner sum check —
+ * about 130 lines whose entire job was describing functions the mock should have
+ * carried. The differential remains, asserting ZERO per path, which is a
+ * stronger statement than any characterisation of a non-empty gap set.
  *
- * UNSAFE is asserted zero on every real path, and a branch that cannot fire
- * yields the same zero, so a known-positive drives that branch through the same
- * classifier a throwing lookup would reach.
+ * The lesson is not "the reviews were wrong" — every finding was real. It is that
+ * four rounds of increasingly precise description never asked whether the thing
+ * being described should exist. Accuracy about a hole is not a guard.
  *
- * Gaps are asserted by IDENTITY, keyed by OWNER AND MEMBER, with no exception,
- * so a reachable gap cannot vanish while an unreachable one appears — neither
- * across owners nor within one. Two weakenings of that were removed rather than
- * disclosed: a flat member set collapsed one name occurring on several owners
- * (live, not hypothetical — `from` is a static of all four stream
- * constructors), and `node:fs` compared owners and a count while discarding its
- * members, which made this very sentence false for the path holding all but two
- * of the gaps. The owner set is the evidence for the reachability argument
- * rather than a restatement of it: every gap belongs to one of the four stream
- * constructors or to `exists` / `opendir`, and the classifier constructs no
- * stream class and indexes no symbol. The cross-family gate checked that
- * against the rule table.
+ * Five outcomes, each saying only what it measures — SHARED means the same
+ * function object resolved on both sides, not shared provenance; WRAPPED means
+ * the mock resolved SOME function, with record-and-throw proven by the `exercise`
+ * loop over the REACHABLE surface only, not re-proven here; GAP means the mock
+ * resolved nothing, asserted absent; UNSAFE means the lookup threw, kept separate
+ * because "unresolvable" is not "absent"; ACCESSOR means a getter or setter-only
+ * property, counted and deliberately not invoked by the differential.
+ *
+ * UNSAFE is asserted zero on every path, and a branch that cannot fire yields
+ * that same zero, so a known-positive drives it through the same classifier a
+ * throwing lookup would reach. `gaps: 0` is not vacuous for the mirror-image
+ * reason: each path still exposes a large accessor surface the walk declines to
+ * invoke, so the zero is a real statement about data-property callables rather
+ * than about an empty domain.
  *
  * One asymmetry worth knowing, found by measuring rather than predicted: on the
  * ESM namespace the stream classes are DATA properties, so the walk reaches
@@ -244,12 +239,86 @@ function makeRecordingSpy(label: string): (...args: unknown[]) => unknown {
   })
 }
 
+/**
+ * Every key the real object exposes — own or inherited, enumerable or not,
+ * string or symbol — paired with its value, EXCEPT any key for which `target`
+ * already resolves the identical function.
+ *
+ * That exclusion is the load-bearing part. `Function.prototype` supplies
+ * `bind`, `call`, `apply`, `toString`; `Object.prototype` supplies
+ * `hasOwnProperty` and friends. The spy and the mock namespace inherit those
+ * same function objects, so wrapping them would REPLACE working machinery with
+ * throwing spies and break vitest itself rather than guard anything. Excluding
+ * "the target already has this exact function" is also precisely the condition
+ * under which the differential below reports a GAP — so the mock now closes
+ * exactly what that differential would otherwise merely characterise.
+ *
+ * Accessors are READ, not skipped, because `Object.entries` already invoked
+ * every enumerable getter here and that is where `default`'s lazily-defined
+ * stream constructors come from; dropping them would narrow the mock. A getter
+ * that throws is skipped rather than allowed to fail mock construction.
+ */
+function reflectiveEntries(
+  source: Record<string | symbol, unknown>,
+  target: object,
+  stringKeysOnly: boolean
+): Array<[string | symbol, unknown]> {
+  const entries: Array<[string | symbol, unknown]> = []
+  const seen = new Set<string | symbol>()
+  let cur: object | null = source
+  while (cur !== null) {
+    for (const key of Reflect.ownKeys(cur)) {
+      if (seen.has(key)) continue
+      seen.add(key)
+      // MEASURED EQUIVALENCE AT THE NAMESPACE LEVEL, stated because reverting
+      // this walk to `Object.entries` leaves all seven tests green. That is an
+      // EQUIVALENT MUTANT, not an uncovered gap: for FUNCTIONS the two walks
+      // agree exactly on today's surface (107/107 on `node:fs`, 33/33 on
+      // `node:fs/promises`, and the same at every `default`/`promises` view),
+      // with `__proto__` the only key reflection adds and it is not callable.
+      // Kept anyway, for symmetry with the member walk and because a future
+      // non-enumerable function export would then be wrapped automatically
+      // rather than surfacing as a differential failure. The member walk is the
+      // half that is load-bearing today: reverting THAT one takes gaps 0 -> 143.
+      //
+      // Vitest's ESM interop reads the mock namespace's own STRING keys to
+      // decide which named exports exist, so the namespace level stays
+      // string-keyed. A function has no such constraint, and `exists`'s
+      // `Symbol(nodejs.util.promisify.custom)` is exactly the callable that
+      // needs wrapping — it was the last surviving gap once the others closed.
+      if (stringKeysOnly && typeof key !== 'string') continue
+      // `__proto__` is an Object.prototype ACCESSOR, so walking to the prototype
+      // reaches it where `Object.entries` did not. Reading it yields the
+      // prototype object and assigning it would invoke the setter and rewire the
+      // mock's prototype chain — measured as the ONLY key the reflective walk
+      // adds at the namespace level. It is never a callable, so skipping it
+      // costs no coverage and avoids mutating the object being built.
+      if (key === '__proto__') continue
+      let value: unknown
+      try {
+        value = source[key]
+      } catch {
+        continue
+      }
+      if (
+        typeof value === 'function' &&
+        (target as Record<string | symbol, unknown>)[key] === value
+      )
+        continue
+      entries.push([key, value])
+    }
+    cur = Object.getPrototypeOf(cur)
+  }
+  return entries
+}
+
 /** Wrap every function on `ns`, recursing into the two nested namespaces that
  * re-expose the same functions under a different access path, and re-attaching
- * any callable a callable owns. */
+ * every callable a callable exposes at any key kind and any depth. */
 function wrapNamespace(ns: Record<string, unknown>, moduleName: string): Record<string, unknown> {
   const out: Record<string, unknown> = {}
-  for (const [name, value] of Object.entries(ns)) {
+  for (const [key, value] of reflectiveEntries(ns, out, true)) {
+    const name = key as string
     if (name === 'default' || name === 'promises') {
       out[name] = wrapNamespace(value as Record<string, unknown>, `${moduleName}.${name}`)
       continue
@@ -270,14 +339,36 @@ function wrapNamespace(ns: Record<string, unknown>, moduleName: string): Record<
     //
     // An earlier version of this file NAMED this hole in a comment and left it
     // open, which is worse than not noticing: the note read as diligence while
-    // the guarantee one screen above it stayed false. `Object.entries` sees
-    // `native` because it is enumerable (measured), so the same traversal the
-    // oracle uses covers it.
-    for (const [member, memberValue] of Object.entries(value)) {
+    // the guarantee one screen above it stayed false.
+    //
+    // This walk used to be `Object.entries(value)` — own, enumerable, string —
+    // which left the four stream constructors' 142 inherited statics unwrapped.
+    // Four review rounds then went into characterising that hole with rising
+    // precision: a count, then an owner set, then per-owner members, then an
+    // injectively-encoded key. All four described the hole; none closed it, and
+    // a real `fs.ReadStream.from(...)` call would have done silent I/O
+    // throughout. Closing it deletes the characterisation and turns a documented
+    // gap into an actual guard, which is what the differential was only ever
+    // standing in for.
+    for (const [member, memberValue] of reflectiveEntries(
+      value as unknown as Record<string | symbol, unknown>,
+      spy,
+      false
+    )) {
       if (typeof memberValue !== 'function') continue
-      ;(spy as unknown as Record<string, unknown>)[member] = makeRecordingSpy(
-        `${moduleName}.${name}.${member}`
-      )
+      // `defineProperty`, not assignment. `Function.prototype[Symbol.hasInstance]`
+      // is non-writable, so a plain `spy[key] = …` THROWS for any real function
+      // that defines its own — measured: it broke mock construction outright,
+      // surfacing as vitest's generic "error when mocking a module". Defining an
+      // OWN property shadows the non-writable inherited one instead. Enumerable
+      // to match what assignment produced, so nothing downstream sees a
+      // different shape.
+      Object.defineProperty(spy, member, {
+        value: makeRecordingSpy(`${moduleName}.${name}.${String(member)}`),
+        writable: true,
+        enumerable: true,
+        configurable: true,
+      })
     }
     out[name] = spy
   }
@@ -719,126 +810,68 @@ describe('the fs recorder — known-positive control (T-G3)', () => {
       // again under `default`; the promises modules own none.
       expect(expectedMemberPaths.length).toBe(expectedMemberCount)
 
-      // PIN THE RESIDUAL INSTEAD OF DESCRIBING IT. `Object.entries` — which
-      // both `wrapNamespace` and the oracle above use — reports only
-      // ENUMERABLE, STRING-KEYED properties. That boundary was stated in prose
-      // and measured once by hand, which is the shape this very PR deleted
-      // elsewhere ("38 hits", a fact about a moving tree restated in a
-      // comment). A hand measurement of someone else's stdlib rots silently,
-      // and worse: if a future Node adds such an export the prose goes stale
-      // AND the mock gains a hole, with every assertion still green, because
-      // subject and oracle enumerate the same blind way.
+      // The hand-measured non-enumerable / Symbol-keyed counts that stood here
+      // are gone, and so is the prose around them, which had gone FALSE rather
+      // than merely stale: it said `fs.promises.opendir`'s promisify symbol was
+      // "genuinely outside the mock" and that containment survived only because
+      // `util.promisify` falls back to wrapping the spy. Both stopped being true
+      // when `wrapNamespace` started wrapping symbol-keyed members — the symbol
+      // IS on the spy now, so `util.promisify` finds it and gets a recording spy,
+      // which records and throws directly instead of by fallback. The zero-gap
+      // differential below subsumes what those counts were pinning, and asserts
+      // it over the whole reflective surface rather than two hand-picked
+      // categories.
+      // A DIFFERENTIAL THAT NOW ASSERTS ZERO, BECAUSE THE HOLE IS CLOSED RATHER
+      // THAN CHARACTERISED. Twelve rounds enumerated what `Object.entries`
+      // misses — non-enumerable, then Symbol, then inherited, then accessors —
+      // and every list was incomplete. Round 5 replaced the list with a
+      // differential, which was directionally right and wrong the same way: it
+      // SELECTED what to compare using `Object.entries(realNs)`. Rounds 6 and 7
+      // then made the gap set ever more precise — a count, an owner set,
+      // per-owner members, an injectively-encoded key — four consecutive repairs
+      // to one claim.
       //
-      // So assert it. Measured in-container on Node 22: no namespace of
-      // `node:fs` or `node:fs/promises` has a non-enumerable function export,
-      // and each owns exactly one Symbol-keyed callable —
-      // `fs.exists[util.promisify.custom]`, `fs.promises.opendir[…]`. The
-      // second is genuinely outside the mock, for the same reason
-      // `realpath.native` once was. Containment survives the realistic path:
-      // `util.promisify(mockFs.exists)` finds no custom symbol on the spy,
-      // falls back to wrapping the spy, and still records and throws. What
-      // stays open is a DIRECT index of the symbol, which nothing here does.
+      // All four described the 143 unwrapped stream statics. None closed them,
+      // and a real `fs.ReadStream.from(...)` call would have done silent I/O
+      // throughout, because the mock did not carry it. `wrapNamespace` now wraps
+      // the same reflective surface this differential walks, so the gap count is
+      // ZERO and the precision question disappears with the gaps: there is no
+      // set left whose identity could be asserted too loosely.
       //
-      // When Node changes either count, this fails and names the path.
-      // A DIFFERENTIAL, SEEDED REFLECTIVELY. Twelve rounds went into enumerating
-      // what `Object.entries` misses — non-enumerable, then Symbol, then
-      // inherited, then accessors — and every list was incomplete, so round 5
-      // replaced the list with a differential against the real module. That was
-      // directionally right and still wrong in the same way: it SELECTED the
-      // functions to compare with `Object.entries(realNs)`, so the domain
-      // excluded categories before the comparison ran. Replacing the inner
-      // enumeration while leaving the outer one is a fair description of this
-      // file's entire history.
-      //
-      // Both ends are reflective now. `Reflect.ownKeys` along the prototype
-      // chain TO NULL — no depth bound, since a bound is an enumeration of how
-      // deep things are allowed to hide — at the namespace level to choose what
-      // to compare, and again on each callable found there. Five outcomes, and
-      // `unsafe` is deliberately separate from `gap`: a lookup that throws is
-      // "present but unresolvable", not "absent", and collapsing the two would
-      // misdescribe the surface even though neither creates false coverage.
+      // That is also why `String(key)` is safe as the diagnostic label below. A
+      // rendering collision could only merge two entries in a set asserted
+      // EMPTY, and a non-empty set fails whatever its entries are named. The
+      // injective-encoding machinery this replaced existed solely to key a set
+      // that should not exist.
       //
       //   SHARED   the same function object resolves on both sides. That is all
       //            it proves — not shared provenance. It is how ~1,500 entries
       //            per namespace (`apply`, `bind`, `hasOwnProperty`) drop out
-      //            without being carved out by hand, which is the differential
-      //            earning its place.
+      //            without being carved out by hand, and `wrapNamespace` skips
+      //            exactly these, so it never replaces working machinery like
+      //            `bind` with a throwing spy.
       //   WRAPPED  the mock resolves SOME function. Measured, not proven: that
       //            a spy records AND throws is established by the `exercise`
       //            loop above, over the reachable surface only. This branch
       //            does not re-establish it for hidden or inherited members and
       //            does not claim to.
-      //   GAP      the mock resolves nothing. Outside the mock.
-      //   UNSAFE   the mock lookup threw. Proven reachable by a known-positive
-      //            control below, because a branch asserted `=== 0` everywhere
-      //            is indistinguishable from a branch that cannot fire.
+      //   GAP      the mock resolves nothing. Asserted absent, per path.
+      //   UNSAFE   the mock lookup threw — "present but unresolvable", not
+      //            "absent". Kept separate, and proven reachable by a
+      //            known-positive control, because a branch asserted `=== 0`
+      //            everywhere is indistinguishable from one that cannot fire.
       //   ACCESSOR the real side is a getter OR a setter-only property. NOT
-      //            invoked — invoking an unknown accessor is a side effect — so
-      //            counted and left unresolved.
-      //
-      // GAPS ARE ASSERTED BY IDENTITY, with no exception. Every gap is keyed by
-      // OWNER AND MEMBER, so a reachable gap cannot disappear while an
-      // unreachable one appears — not across owners, and not within one owner.
-      // Two earlier weakenings of that, both removed here rather than disclosed:
-      // the member set was flat, so one name occurring on several owners
-      // collapsed to a single entry (live, not hypothetical — `from` is a static
-      // of all four stream constructors); and `node:fs` compared its owner set
-      // and count while discarding its members entirely, which made the claim
-      // above false for the path holding all but two of the gaps.
-      //
-      // The owner set is also the evidence for the reachability argument rather
-      // than a restatement of it: every gap belongs to one of the four stream
-      // constructors or to `exists`, and the classifier constructs no stream
-      // class and indexes no symbol. The cross-family gate verified that against
-      // the rule table.
+      //            invoked by this walk — invoking an unknown accessor is a side
+      //            effect — so counted and left unresolved. `wrapNamespace` DOES
+      //            read them at the namespace level, which is where `default`'s
+      //            lazily-defined stream constructors come from.
       type Surface = {
-        /** Owner -> its own gap member names, sorted. Keyed identity, not a count. */
+        /** Owner -> missing member names. A diagnostic; asserted empty. */
         gapsByOwner: Record<string, string[]>
         gaps: number
         unsafe: number
         accessors: number
       }
-      // PROPERTY-KEY IDENTITY, NOT `String(key)`. `String` is not injective over
-      // property keys: `Symbol('x')` and the string key `'Symbol(x)'` both render
-      // as `Symbol(x)`, and so do two distinct symbols sharing a description. A
-      // set keyed that way lets one gap vanish while another appears under the
-      // same rendered name, leaving `gapsByOwner` unchanged — so "asserted by
-      // identity" would be false again, one level below where it was last false.
-      //
-      // Symbols are encoded by what actually identifies them: a registered
-      // symbol by its registry key, a well-known symbol by its `Symbol` property
-      // name, and anything else by description — which is NOT unique, so rather
-      // than assume it is, every encoding is recorded and any two distinct keys
-      // reaching the same encoding are collected and asserted absent. That makes
-      // the injectivity a measurement rather than a claim, and it fails naming
-      // both colliding keys instead of silently deduplicating them.
-      const keyLedger = new Map<string, string | symbol>()
-      const keyCollisions: string[] = []
-      const WELL_KNOWN_SYMBOLS = new Map<symbol, string>(
-        Object.getOwnPropertyNames(Symbol)
-          .map((name) => [(Symbol as unknown as Record<string, unknown>)[name], name] as const)
-          .filter((pair): pair is readonly [symbol, string] => typeof pair[0] === 'symbol')
-          .map(([sym, name]) => [sym, name])
-      )
-      const encodeKey = (key: string | symbol): string => {
-        let encoded: string
-        if (typeof key === 'string') {
-          encoded = `str:${key}`
-        } else {
-          const registered = Symbol.keyFor(key)
-          const wellKnown = WELL_KNOWN_SYMBOLS.get(key)
-          if (registered !== undefined) encoded = `sym.for:${registered}`
-          else if (wellKnown !== undefined) encoded = `sym.wellKnown:${wellKnown}`
-          else encoded = `sym.local:${key.description ?? ''}`
-        }
-        const seenAs = keyLedger.get(encoded)
-        if (seenAs === undefined) keyLedger.set(encoded, key)
-        else if (seenAs !== key) {
-          keyCollisions.push(`${encoded} <- ${String(seenAs)} AND ${String(key)}`)
-        }
-        return encoded
-      }
-
       const surfaceByPath: Record<string, Surface> = {}
       for (const suffix of expectedSuffixes) {
         const realNs = resolve(suffix)
@@ -906,7 +939,7 @@ describe('the fs recorder — known-positive control (T-G3)', () => {
             members = new Set<string>()
             gapsByOwner.set(owner, members)
           }
-          members.add(encodeKey(key))
+          members.add(String(key))
         }
 
         for (const [nsKey, realFn] of namespaceCallables) {
@@ -928,7 +961,7 @@ describe('the fs recorder — known-positive control (T-G3)', () => {
               // The OWNER is encoded too: a namespace's own key can be a symbol,
               // so `String(nsKey)` would collide two distinct owners exactly as
               // it collided two distinct members.
-              classify(desc.value, mockFn, key, encodeKey(nsKey))
+              classify(desc.value, mockFn, key, String(nsKey))
             }
             cur = Object.getPrototypeOf(cur)
           }
@@ -967,152 +1000,32 @@ describe('the fs recorder — known-positive control (T-G3)', () => {
         expect(gaps, `${suffix}: a throwing lookup was miscounted as a gap`).toBe(gapsBefore)
         expect(gapsByOwner.has('<control>')).toBe(false)
       }
-      // Expected per path, measured in-container on Node 22 and keyed by the
-      // suffix rather than by a predicate, because there are now four distinct
-      // shapes and a predicate for each would be a second enumeration.
+      // Expected per path, measured in-container on Node 22. Gaps are ZERO on
+      // every path: `wrapNamespace` wraps the same reflective surface this
+      // differential walks, so the two agree by construction rather than by a
+      // hand-maintained list of what the mock happens to miss.
       //
-      // The ESM-versus-CJS asymmetry is the interesting row and was not
-      // predicted: on `node:fs` the stream classes are DATA properties, so the
-      // walk reaches them and their 142 inherited statics count as gaps. On
-      // `node:fs.default` — the CJS `module.exports` — the same classes are
-      // lazy GETTERS, so the walk correctly declines to invoke them and they
-      // appear in the accessor count instead. Same underlying functions
-      // (`fs.ReadStream === fs.default.ReadStream`), opposite classification,
-      // because the two views define them differently. Nothing is hidden by
-      // that: a getter is counted and declared unresolved, which is the honest
-      // answer for a value you must not evaluate to inspect.
+      // Deleted along with the gaps: a 71-line literal of the four stream
+      // constructors' inherited statics, an injective key encoder with its
+      // collision ledger and known-positive, and a per-owner sum check. All of it
+      // existed to describe 143 functions the mock did not carry. One predicate
+      // in `wrapNamespace` — wrap unless the target already resolves the
+      // identical function — removed the need for every line of it.
       //
-      // `node:fs`'s gaps are enumerated per owner, all of them. The two
-      // read-side constructors expose one inherited static set and the two
-      // write-side constructors another, so the literals are shared by
-      // reference — a hand-measured constant, never derived from the mock, so it
-      // cannot shrink with what it constrains. That sharing is itself a claim: a
-      // Node change that gives `ReadStream` and `FileReadStream` different
-      // statics fails here and names which path drifted.
-      // The read and write sides differ by five members, measured not assumed:
-      // read adds ReadableState, _fromList, from, wrap; write adds
-      // WritableState. So neither list is derivable from the other and both are
-      // written out. 37 + 34 + 37 + 34 + 1 = 143, which the sum check below
-      // re-derives from these literals rather than restating the total.
-      const READ_STREAM_STATICS = [
-        'str:Duplex',
-        'str:EventEmitter',
-        'str:PassThrough',
-        'str:Readable',
-        'str:ReadableState',
-        'str:Stream',
-        'str:Transform',
-        'str:Writable',
-        'str:_fromList',
-        'str:_isArrayBufferView',
-        'str:_isUint8Array',
-        'str:_uint8ArrayToBuffer',
-        'str:addAbortListener',
-        'str:addAbortSignal',
-        'str:compose',
-        'str:destroy',
-        'str:duplexPair',
-        'str:finished',
-        'str:from',
-        'str:fromWeb',
-        'str:getDefaultHighWaterMark',
-        'str:getEventListeners',
-        'str:getMaxListeners',
-        'str:init',
-        'str:isDestroyed',
-        'str:isDisturbed',
-        'str:isErrored',
-        'str:isReadable',
-        'str:isWritable',
-        'str:listenerCount',
-        'str:on',
-        'str:once',
-        'str:pipeline',
-        'str:setDefaultHighWaterMark',
-        'str:setMaxListeners',
-        'str:toWeb',
-        'str:wrap',
-      ]
-      const WRITE_STREAM_STATICS = [
-        'str:Duplex',
-        'str:EventEmitter',
-        'str:PassThrough',
-        'str:Readable',
-        'str:Stream',
-        'str:Transform',
-        'str:Writable',
-        'str:WritableState',
-        'str:_isArrayBufferView',
-        'str:_isUint8Array',
-        'str:_uint8ArrayToBuffer',
-        'str:addAbortListener',
-        'str:addAbortSignal',
-        'str:compose',
-        'str:destroy',
-        'str:duplexPair',
-        'str:finished',
-        'str:fromWeb',
-        'str:getDefaultHighWaterMark',
-        'str:getEventListeners',
-        'str:getMaxListeners',
-        'str:init',
-        'str:isDestroyed',
-        'str:isDisturbed',
-        'str:isErrored',
-        'str:isReadable',
-        'str:isWritable',
-        'str:listenerCount',
-        'str:on',
-        'str:once',
-        'str:pipeline',
-        'str:setDefaultHighWaterMark',
-        'str:setMaxListeners',
-        'str:toWeb',
-      ]
-      const PROMISIFY_CUSTOM = ['sym.for:nodejs.util.promisify.custom']
+      // The accessor counts stay, and they are the reason `gaps: 0` is not
+      // vacuous: each path still exposes a large accessor surface this walk
+      // deliberately declines to invoke, so a zero here is a real statement about
+      // the data-property callables rather than an empty domain. They are a
+      // Node-shape canary: this package supports `>=22.22.0` while CI tracks the
+      // moving Node 22 line, so a legitimate update can change them.
+      const NO_GAPS = { gaps: 0, unsafe: 0, gapsByOwner: {} } as const
       const SURFACE_BY_SUFFIX: Record<string, Surface> = {
-        'node:fs': {
-          gaps: 143,
-          unsafe: 0,
-          accessors: 310,
-          gapsByOwner: {
-            'str:FileReadStream': READ_STREAM_STATICS,
-            'str:FileWriteStream': WRITE_STREAM_STATICS,
-            'str:ReadStream': READ_STREAM_STATICS,
-            'str:WriteStream': WRITE_STREAM_STATICS,
-            'str:exists': PROMISIFY_CUSTOM,
-          },
-        },
-        'node:fs.default': {
-          gaps: 1,
-          unsafe: 0,
-          accessors: 321,
-          gapsByOwner: { 'str:exists': PROMISIFY_CUSTOM },
-        },
-        'node:fs.promises': {
-          gaps: 1,
-          unsafe: 0,
-          accessors: 127,
-          gapsByOwner: { 'str:opendir': PROMISIFY_CUSTOM },
-        },
-        'node:fs.default.promises': {
-          gaps: 1,
-          unsafe: 0,
-          accessors: 127,
-          gapsByOwner: { 'str:opendir': PROMISIFY_CUSTOM },
-        },
-        'node:fs/promises': {
-          gaps: 1,
-          unsafe: 0,
-          accessors: 93,
-          gapsByOwner: { 'str:opendir': PROMISIFY_CUSTOM },
-        },
-        'node:fs/promises.default': {
-          gaps: 1,
-          unsafe: 0,
-          accessors: 127,
-          gapsByOwner: { 'str:opendir': PROMISIFY_CUSTOM },
-        },
+        'node:fs': { ...NO_GAPS, accessors: 310 },
+        'node:fs.default': { ...NO_GAPS, accessors: 321 },
+        'node:fs.promises': { ...NO_GAPS, accessors: 127 },
+        'node:fs.default.promises': { ...NO_GAPS, accessors: 127 },
+        'node:fs/promises': { ...NO_GAPS, accessors: 93 },
+        'node:fs/promises.default': { ...NO_GAPS, accessors: 127 },
       }
       const expectedSurface: Record<string, Surface> = {}
       for (const suffix of expectedSuffixes) {
@@ -1121,55 +1034,16 @@ describe('the fs recorder — known-positive control (T-G3)', () => {
         expect(expected, `no expected surface recorded for ${path}`).toBeDefined()
         expectedSurface[path] = expected
       }
-      // The encoding is asserted INJECTIVE over the surface actually walked, not
-      // assumed to be. Without this, `gapsByOwner` is keyed by a rendering and
-      // "asserted by identity" is false one level below where it was last false.
-      expect(keyCollisions, 'two distinct property keys encoded identically').toEqual([])
-      // And a KNOWN-POSITIVE, because an empty collision list is also what a
-      // ledger that never records anything produces. These are the exact pairs
-      // `String(key)` conflates; the encoder must keep them apart, and the ledger
-      // must be able to report a collision when one is real.
-      {
-        const localA = Symbol('duplicated-description')
-        const localB = Symbol('duplicated-description')
-        expect(String(localA)).toBe(String(localB)) // the defect being fixed
-        expect(encodeKey(localA)).toBe(encodeKey(localB)) // same rendering...
-        expect(keyCollisions.length, 'the ledger did not report a real collision').toBeGreaterThan(
-          0
-        )
-        const collisionsAfterLocals = keyCollisions.length
-        // ...whereas a symbol and the string that renders like it stay distinct,
-        // which is the half `String` gets wrong and this encoder gets right.
-        const registered = Symbol.for('injectivity-probe')
-        expect(String(registered)).toBe('Symbol(injectivity-probe)')
-        expect(encodeKey(registered)).not.toBe(encodeKey('Symbol(injectivity-probe)'))
-        expect(encodeKey(Symbol.iterator)).not.toBe(encodeKey('Symbol(Symbol.iterator)'))
-        expect(keyCollisions.length, 'the distinct-key probes were miscounted').toBe(
-          collisionsAfterLocals
-        )
-        keyCollisions.length = 0 // control residue must not fail the assertion above
-      }
-
       // Every path compared whole. No path trades member identity for a count.
       expect(surfaceByPath).toEqual(expectedSurface)
 
-      // AN INDEPENDENT CHECK. The previous round's comment calling this "a
-      // diagnostic, not a check" was an UNDERCLAIM — the opposite direction to
-      // this file's usual defect and wrong for the same reason: I measured ONE
-      // mutation (`gaps: 145` against 143 members, which fails the `toEqual`
-      // first) and concluded redundancy for every state. It is not redundant
-      // wherever `gaps` and `gapsByOwner` can disagree, and they can: `gaps`
-      // increments per missing property while the member set DEDUPLICATES, so any
-      // two keys collapsing to one entry leaves `summed < gaps` while both
-      // structures still compare equal. The injectivity assertion above stops
-      // that at its source; this catches the consequence if it ever happens
-      // anyway. Two detectors of one fault, deliberately.
-      for (const side of [expectedSurface, surfaceByPath]) {
-        for (const [path, surface] of Object.entries(side)) {
-          const summed = Object.values(surface.gapsByOwner).reduce((n, m) => n + m.length, 0)
-          expect(summed, `${path}: gaps disagrees with the per-owner sets`).toBe(surface.gaps)
-        }
-      }
+      // The sum check that stood here is gone. It compared `gaps` against the
+      // per-owner sets to catch a dedup collision — a fault that required gaps to
+      // exist. With every path asserted at zero gaps it can only ever compare 0
+      // to 0, which makes it dead by exactly the standard used to delete the
+      // depth-0 property skip. Round 7's reviewer was right that it was an
+      // independent check while there were gaps to count; closing the gaps is
+      // what retired it, not a reversal of that.
 
       // Guards the guard: if `vi.importActual` ever handed back an empty or
       // stub module, every set comparison above would pass vacuously by
