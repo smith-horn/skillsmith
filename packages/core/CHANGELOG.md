@@ -4,6 +4,22 @@ All notable changes to `@skillsmith/core` are documented here.
 
 ## [Unreleased]
 
+- **Tests**: SMI-6841 -- the update-eligibility gate's fs-purity guard could not detect a whole
+  class of filesystem call, and now can. The guard replaces `node:fs` and `node:fs/promises` with
+  recording spies that throw; it re-attached only own, enumerable, string-keyed members, so the
+  four stream constructors' 142 inherited statics and `opendir`'s promisify symbol were absent from
+  the mock -- a real `fs.opendir[util.promisify.custom](...)` call would have performed I/O in
+  silence with every assertion green. Demonstrated rather than argued: the same injection fails both
+  purity tests under the new mock and passes both under the old one. `wrapNamespace` now wraps the
+  same reflective surface the differential walks, excluding only keys where the target already
+  resolves the identical function, so gaps went 143 -> 0 and roughly 130 lines that existed purely
+  to DESCRIBE the gap were deleted. Own members mirror their real descriptor; inherited members sit
+  on a shadow prototype so `Object.hasOwn` still answers as production does; and well-known symbols
+  consulted by language operations are handed through real, because wrapping `Writable`'s custom
+  `Symbol.hasInstance` made `x instanceof fs.WriteStream` -- a pure type check -- report a purity
+  violation. Eleven review rounds; the last three each found a defect introduced by the fix before
+  it, every one now pinned by an assertion that fails when reverted.
+
 - **Docs**: SMI-6841 -- three comment corrections in the update-eligibility gate's own files, with
   no behaviour change: every changed line in `update-target-reason.ts` and `update-target.probe.ts`
   is inside a comment. PR #2939 replaced seven unresolvable "task brief" referents on the stated

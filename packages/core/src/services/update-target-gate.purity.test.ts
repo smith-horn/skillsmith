@@ -108,6 +108,14 @@
  * a real `fs.ReadStream.from(...)` call in the classifier would have performed
  * I/O in silence, recording nothing and failing nothing.
  *
+ * TWO NUMBERS APPEAR BELOW AND BOTH ARE CORRECT, which is why ten review rounds
+ * and one governance pass all read past the apparent contradiction: 142 is the
+ * stream-constructor inherited statics (37 + 37 on the read side, 34 + 34 on the
+ * write side), and 143 is the total gap count on `node:fs` — those 142 plus
+ * `exists`'s one symbol-keyed member. A retro flagged the pair as an unreconciled
+ * inconsistency; the arithmetic reconciles it, and the reconciliation belongs here
+ * rather than in a reader's head.
+ *
  * Four consecutive review rounds improved the DESCRIPTION of that hole: a count,
  * then an owner set, then per-owner members, then an injectively-encoded property
  * key with a collision ledger. Each round found the previous round's description
@@ -337,6 +345,26 @@ function reflectiveEntries(
   return entries
 }
 
+/**
+ * Well-known symbols, by identity. These are consulted by LANGUAGE OPERATIONS
+ * rather than called as I/O: `Symbol.hasInstance` by `instanceof`,
+ * `Symbol.iterator` by `for...of`, `Symbol.toPrimitive` by coercion. Replacing
+ * one with a throwing spy converts a pure type check into a purity FAILURE — a
+ * false positive, the mock reporting a violation production could never commit.
+ */
+const WELL_KNOWN_SYMBOLS: ReadonlySet<symbol> = new Set(
+  Object.getOwnPropertyNames(Symbol)
+    .map((name) => (Symbol as unknown as Record<string, unknown>)[name])
+    .filter((value): value is symbol => typeof value === 'symbol')
+)
+
+/**
+ * Every language hook left UNWRAPPED, as `<owner>.<symbol>`. Asserted against an
+ * exact expected set by the control, so a future Node adding one forces a
+ * decision instead of silently widening what the mock hands through real.
+ */
+const languageHooksLeftReal: string[] = []
+
 /** Wrap every function on `ns`, recursing into the two nested namespaces that
  * re-expose the same functions under a different access path, and re-attaching
  * every callable a callable exposes at any key kind and any depth. */
@@ -367,7 +395,9 @@ function wrapNamespace(ns: Record<string, unknown>, moduleName: string): Record<
     // the guarantee one screen above it stayed false.
     //
     // This walk used to be `Object.entries(value)` — own, enumerable, string —
-    // which left the four stream constructors' 142 inherited statics unwrapped.
+    // which left the four stream constructors' 142 inherited statics unwrapped
+    // (142 here, 143 where the gap TOTAL is quoted: that adds `exists`'s one
+    // symbol-keyed member; see the docblock's reconciliation).
     // Four review rounds then went into characterising that hole with rising
     // precision: a count, then an owner set, then per-owner members, then an
     // injectively-encoded key. All four described the hole; none closed it, and
@@ -407,6 +437,42 @@ function wrapNamespace(ns: Record<string, unknown>, moduleName: string): Record<
       false
     )) {
       if (typeof memberValue !== 'function') continue
+
+      // A LANGUAGE HOOK IS NOT AN I/O ENTRY POINT. Round 11 (the post-merge
+      // retro) found that `Writable` defines a custom `Symbol.hasInstance`, which
+      // `WriteStream` and `FileWriteStream` inherit — so the reflective walk that
+      // closed the 142-function gap was also wrapping it, and
+      // `x instanceof fs.WriteStream` would throw "must be pure". A pure type
+      // check reported as a filesystem violation: the mock becoming the defect,
+      // invisible to `gaps: 0` because SOME function still resolved.
+      //
+      // The real function is installed instead of a spy, so `instanceof` answers
+      // exactly as in production and the differential classifies it SHARED, which
+      // is accurate. Merely SKIPPING it would leave the spy inheriting
+      // `Function.prototype`'s default, which the differential would then count as
+      // WRAPPED — a wrong answer that happens to be green.
+      //
+      // The residual, stated rather than buried: that real function is reachable
+      // through the mock, so I/O inside it would go undetected. Measured — it is a
+      // duck-type property check, and `hasInstance` is the ONLY well-known symbol
+      // resolving a non-default callable anywhere on these namespaces, on exactly
+      // four owners. The control asserts that set, so a fifth fails loudly.
+      if (typeof member === 'symbol' && WELL_KNOWN_SYMBOLS.has(member)) {
+        const plainDefault = function () {} as unknown as Record<symbol, unknown>
+        if (plainDefault[member] !== memberValue) {
+          languageHooksLeftReal.push(`${moduleName}.${name}.${String(member)}`)
+          const holder = ownDesc !== undefined ? spy : shadow
+          Object.defineProperty(holder, member, {
+            value: memberValue,
+            writable: ownDesc?.writable ?? true,
+            enumerable: ownDesc?.enumerable ?? false,
+            configurable: ownDesc?.configurable ?? true,
+          })
+          if (ownDesc === undefined) shadowUsed = true
+          continue
+        }
+      }
+
       const wrapped = makeRecordingSpy(`${moduleName}.${name}.${String(member)}`)
       if (ownDesc !== undefined) {
         // Own on the real function: mirror its descriptor. `writable` is mirrored
@@ -653,11 +719,22 @@ describe('the fs recorder — known-positive control (T-G3)', () => {
   // `realpathSync.native`, present both at the top level and under `default`,
   // so four; the promises modules have none. Pinned so the oracle below cannot
   // quietly become an empty set and agree with an empty subject.
+  // `hasInstance` on the two write-side stream constructors, in both the ESM and
+  // CJS views: `Writable` defines a custom one and they inherit it. The promises
+  // modules expose no stream constructors, so they have none. Keyed by CANONICAL
+  // name, which is why both `fs` rows carry the `node:`-prefixed labels — the
+  // bare specifier is served by the `node:` registration.
+  const FS_LANGUAGE_HOOKS = [
+    'node:fs.FileWriteStream.Symbol(Symbol.hasInstance)',
+    'node:fs.WriteStream.Symbol(Symbol.hasInstance)',
+    'node:fs.default.FileWriteStream.Symbol(Symbol.hasInstance)',
+    'node:fs.default.WriteStream.Symbol(Symbol.hasInstance)',
+  ]
   const MOCKED_MODULES = [
-    ['node:fs', () => import('node:fs'), FS_NAMESPACES, 4],
-    ['node:fs/promises', () => import('node:fs/promises'), PROMISES_NAMESPACES, 0],
-    ['fs', () => import('fs'), FS_NAMESPACES, 4],
-    ['fs/promises', () => import('fs/promises'), PROMISES_NAMESPACES, 0],
+    ['node:fs', () => import('node:fs'), FS_NAMESPACES, 4, FS_LANGUAGE_HOOKS],
+    ['node:fs/promises', () => import('node:fs/promises'), PROMISES_NAMESPACES, 0, []],
+    ['fs', () => import('fs'), FS_NAMESPACES, 4, FS_LANGUAGE_HOOKS],
+    ['fs/promises', () => import('fs/promises'), PROMISES_NAMESPACES, 0, []],
   ] as const
 
   // Every real call the code under test can make carries arguments; the walk
@@ -680,7 +757,7 @@ describe('the fs recorder — known-positive control (T-G3)', () => {
 
   it.each(MOCKED_MODULES)(
     'every function reachable in the %s mock -- including those a function owns -- records AND throws, at every arity and when constructed',
-    async (specifier, load, expectedSuffixes, expectedMemberCount) => {
+    async (specifier, load, expectedSuffixes, expectedMemberCount, expectedLanguageHooks) => {
       const canonical = canonicalNameOf(specifier)
       const failures: string[] = []
       const visitedPaths: string[] = []
@@ -1166,13 +1243,40 @@ describe('the fs recorder — known-positive control (T-G3)', () => {
         'the mock is observably shaped differently from the real function'
       ).toEqual([])
 
-      // The sum check that stood here is gone. It compared `gaps` against the
-      // per-owner sets to catch a dedup collision — a fault that required gaps to
-      // exist. With every path asserted at zero gaps it can only ever compare 0
-      // to 0, which makes it dead by exactly the standard used to delete the
-      // depth-0 property skip. Round 7's reviewer was right that it was an
-      // independent check while there were gaps to count; closing the gaps is
-      // what retired it, not a reversal of that.
+      // And the behaviour that motivated it: `instanceof` against a mocked
+      // constructor must ANSWER, not throw. This is the known-positive for the
+      // whole language-hook branch — with the hook wrapped instead of handed
+      // through real, this line throws "must be pure" and the branch's value is
+      // demonstrated rather than argued.
+      //
+      // Gated on the module HAVING such a constructor, taken from the hooks table
+      // rather than probed: vitest's ESM interop THROWS on an undefined named
+      // export rather than returning undefined, so an unguarded read of
+      // `WriteStream` on `node:fs/promises` fails before any `typeof` check can
+      // run. Measured — that is exactly how the first version of this probe broke.
+      if (expectedLanguageHooks.length > 0) {
+        const writeStreamOnMock = (resolveMock('') as Record<string, unknown>).WriteStream
+        expect(typeof writeStreamOnMock, 'the mock lost its WriteStream export').toBe('function')
+        const ctor = writeStreamOnMock as new () => unknown
+        expect(() => ({}) instanceof ctor).not.toThrow()
+        expect({} instanceof ctor).toBe(false)
+      }
+
+      // THE LANGUAGE HOOKS LEFT REAL, pinned by identity and scoped to THIS
+      // module. The ledger is module-level, because `wrapNamespace` is, so it
+      // accumulates across every mock the run has constructed — asserting it
+      // unfiltered made the `fs/promises` tests fail against `node:fs`'s entries.
+      // Each of these is a callable the mock hands through UNWRAPPED, so a call
+      // inside one would not be recorded: the only such surface in the file, and
+      // therefore the one that most needs an exact expectation rather than a
+      // count. `hasInstance` on the two write-side stream constructors, in both
+      // the ESM and CJS views, measured in-container — `Writable` defines it and
+      // they inherit it. `node:fs/promises` has no stream constructors and so has
+      // none. If Node adds one, or moves this one, this fails and names the path.
+      const hooksForThisModule = [
+        ...new Set(languageHooksLeftReal.filter((h) => h.startsWith(`${canonical}.`))),
+      ].sort()
+      expect(hooksForThisModule).toEqual(expectedLanguageHooks)
 
       // Guards the guard: if `vi.importActual` ever handed back an empty or
       // stub module, every set comparison above would pass vacuously by
