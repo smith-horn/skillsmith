@@ -92,18 +92,53 @@
  * from the mock.
  *
  * What it quantifies over, stated exactly rather than as "everything": every
- * function exported by each mocked module, every function on the `default` and
- * `promises` namespaces those modules re-expose, and every ENUMERABLE,
- * string-keyed function owned by one of those functions (`fs.realpath.native`)
- * — each exercised at four arities and as a constructor, each asserted to
+ * ENUMERABLE, STRING-KEYED function at each of three levels — exported by a
+ * mocked module, on the `default` and `promises` namespaces those modules
+ * re-expose, and owned by one of those functions (`fs.realpath.native`) —
+ * each exercised at four arities and as a constructor, each asserted to
  * record under its own label and to throw.
  *
- * Two declared residuals, neither covered and neither implied to be: a defect
- * keyed on argument CONTENT rather than arity, and a callable owned by a
- * callable under a non-enumerable or Symbol key, which `Object.entries` does
- * not report. Both measured surfaces of `node:fs` are enumerable and
- * string-keyed today, so the second is a boundary rather than a live hole.
- * SMI-6841 holds the measured instances and the mutation that killed each.
+ * That qualifier governs ALL THREE levels, not just the third. `Object.entries`
+ * walks every one of them — `wrapNamespace` at all three, the control's walk at
+ * the first two, and the oracle at the third — so the same boundary applies
+ * identically at each. An earlier version of this paragraph attached
+ * "enumerable, string-keyed" to the third clause alone, which claimed more than
+ * the mechanism delivers for the first two: the same
+ * subject-broader-than-the-thing-it-names shape this file spent eleven rounds
+ * removing, relocated into its own summary.
+ *
+ * Two declared residuals, neither covered and neither implied to be. The first
+ * is a defect keyed on argument CONTENT rather than arity.
+ *
+ * The second is a function `Object.entries` cannot see — it reports OWN,
+ * ENUMERABLE, STRING-KEYED properties only, so a function is invisible to it
+ * when non-enumerable, Symbol-keyed, or INHERITED, each of which can occur on
+ * a namespace or on a function: six cells, all six scanned and asserted PER
+ * PATH rather than as a total, so a loss on one namespace and a gain on
+ * another cannot cancel out.
+ *
+ * This paragraph has been wrong twice, in the same direction both times, so
+ * the current state is stated as measurement rather than argument. It claimed
+ * the residual was empty (measured at two levels, asserted at three). Then it
+ * claimed four cells were exhaustive, omitting the inherited pair — and
+ * defended that with "both namespaces have a null prototype", which is true of
+ * the two ESM roots and false of `.default`, `.promises` and
+ * `.default.promises`, all of which inherit from `Object.prototype`.
+ *
+ * Measured, per path: one Symbol-keyed callable everywhere
+ * (`fs.exists[util.promisify.custom]`, `fs.promises.opendir[…]`), and on the
+ * two fs namespaces 146 inherited enumerable statics, because the stream
+ * classes inherit them from `stream.Readable`. The other four cells are empty.
+ * All of it is absent from the mock for the same reason `realpath.native` once
+ * was, and all of it is now pinned by an exact per-path cell map.
+ *
+ * Containment survives the realistic path, which is why this is a live
+ * boundary rather than a live hole: `util.promisify(mockFs.exists)` finds no
+ * custom symbol on the spy, falls back to wrapping the spy, and still records
+ * and throws; and the classifier constructs no stream class, so it reaches no
+ * inherited static. What stays open is a DIRECT index of a symbol or an
+ * inherited static. SMI-6841 holds the measured instances and the mutation
+ * that killed each.
  */
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 
@@ -664,6 +699,147 @@ describe('the fs recorder — known-positive control (T-G3)', () => {
       // `realpath.native` and `realpathSync.native`, at the top level and
       // again under `default`; the promises modules own none.
       expect(expectedMemberPaths.length).toBe(expectedMemberCount)
+
+      // PIN THE RESIDUAL INSTEAD OF DESCRIBING IT. `Object.entries` — which
+      // both `wrapNamespace` and the oracle above use — reports only
+      // ENUMERABLE, STRING-KEYED properties. That boundary was stated in prose
+      // and measured once by hand, which is the shape this very PR deleted
+      // elsewhere ("38 hits", a fact about a moving tree restated in a
+      // comment). A hand measurement of someone else's stdlib rots silently,
+      // and worse: if a future Node adds such an export the prose goes stale
+      // AND the mock gains a hole, with every assertion still green, because
+      // subject and oracle enumerate the same blind way.
+      //
+      // So assert it. Measured in-container on Node 22: no namespace of
+      // `node:fs` or `node:fs/promises` has a non-enumerable function export,
+      // and each owns exactly one Symbol-keyed callable —
+      // `fs.exists[util.promisify.custom]`, `fs.promises.opendir[…]`. The
+      // second is genuinely outside the mock, for the same reason
+      // `realpath.native` once was. Containment survives the realistic path:
+      // `util.promisify(mockFs.exists)` finds no custom symbol on the spy,
+      // falls back to wrapping the spy, and still records and throws. What
+      // stays open is a DIRECT index of the symbol, which nothing here does.
+      //
+      // When Node changes either count, this fails and names the path.
+      // SIX CELLS, NOT TWO, AND PER PATH, NOT IN TOTAL. `Object.entries` —
+      // which `wrapNamespace`, the walk and the oracle all use — reports own,
+      // enumerable, string-keyed properties only. So it misses a function under
+      // any of three conditions — non-enumerable, Symbol-keyed, or INHERITED —
+      // each of which can occur on a NAMESPACE or on a FUNCTION: six cells.
+      // A previous version of this comment said four and called that
+      // exhaustive, omitting the inherited pair. The previous version of this block checked
+      // the first and the fourth, while the prose above claimed "at any
+      // level" — an assertion narrower than its own claim, which is this
+      // file's signature defect appearing in the guard against it.
+      //
+      // It also summed across paths, so a loss on one namespace and a gain on
+      // another cancelled out silently and the failure named a total rather
+      // than a path. Both are fixed here: all four cells are collected, and
+      // the expectation is a per-path map.
+      const hiddenByPath: Record<string, string[]> = {}
+      const BUILTIN_FN_PROPS = new Set(['length', 'name', 'prototype'])
+      for (const suffix of expectedSuffixes) {
+        const path = `${canonical}${suffix}`
+        const nsActual = resolve(suffix)
+        const found: string[] = []
+        for (const key of Object.getOwnPropertyNames(nsActual)) {
+          const d = Object.getOwnPropertyDescriptor(nsActual, key)
+          if (d && !d.enumerable && typeof d.value === 'function') found.push(`ns-nonenum:${key}`)
+        }
+        for (const sym of Object.getOwnPropertySymbols(nsActual)) {
+          if (typeof (nsActual as Record<symbol, unknown>)[sym] === 'function') {
+            found.push(`ns-symbol:${String(sym)}`)
+          }
+        }
+        // INHERITED, the fifth cell. `Object.entries` is own-properties-only,
+        // so an enumerable string-keyed function reached through the prototype
+        // chain is invisible to it as well. Not hypothetical bookkeeping: the
+        // two ESM namespace ROOTS have null prototypes, but `.default`,
+        // `.promises` and `.default.promises` inherit from `Object.prototype`,
+        // so an earlier "both namespaces have a null prototype" argument was
+        // true of the roots and false of the four nested objects — the same
+        // measured-at-one-level, claimed-at-all error this block exists to stop.
+        const ownNsKeys = new Set(Object.getOwnPropertyNames(nsActual))
+        for (const key in nsActual) {
+          if (ownNsKeys.has(key)) continue
+          if (typeof (nsActual as Record<string, unknown>)[key] === 'function') {
+            found.push(`ns-inherited:${key}`)
+          }
+        }
+        for (const [fnName, fnValue] of Object.entries(nsActual)) {
+          if (typeof fnValue !== 'function') continue
+          for (const key of Object.getOwnPropertyNames(fnValue)) {
+            if (BUILTIN_FN_PROPS.has(key)) continue
+            const d = Object.getOwnPropertyDescriptor(fnValue, key)
+            if (d && !d.enumerable && typeof d.value === 'function') {
+              found.push(`fn-nonenum:${fnName}.${key}`)
+            }
+          }
+          for (const sym of Object.getOwnPropertySymbols(fnValue)) {
+            if (typeof (fnValue as unknown as Record<symbol, unknown>)[sym] === 'function') {
+              found.push(`fn-symbol:${fnName}[${String(sym)}]`)
+            }
+          }
+          const ownFnKeys = new Set(Object.getOwnPropertyNames(fnValue))
+          for (const key in fnValue) {
+            if (ownFnKeys.has(key)) continue
+            if (typeof (fnValue as unknown as Record<string, unknown>)[key] === 'function') {
+              found.push(`fn-inherited:${fnName}.${key}`)
+            }
+          }
+        }
+        hiddenByPath[path] = found.sort()
+      }
+
+      // EXACT PER-PATH CELL MAP. Measured in-container on Node 22 rather than
+      // reasoned about — and the measuring is what found the fifth cell. An
+      // earlier version of this block asserted one Symbol-keyed callable per
+      // path and nothing else, on the belief that inherited callables did not
+      // exist here. They do, and there are 146 per fs namespace: `node:fs`'s
+      // stream classes (`ReadStream`, `FileReadStream`, …) inherit ENUMERABLE
+      // STATIC methods from `stream.Readable` (`from`, `fromWeb`, `toWeb`,
+      // `wrap`, `_fromList`). `Object.entries` does not report an inherited
+      // property, so `vi.fn()` carries none of them and the mock lacks all 146
+      // — the `realpath.native` shape again, at scale.
+      //
+      // DECLARED, NOT CLOSED, for a specific reason rather than a convenient
+      // one: these are statics on stream CONSTRUCTORS. The classifier
+      // constructs none of those classes and calls no static on one, so
+      // wrapping 146 inherited members would add risk against no reachable
+      // path. What is not acceptable is leaving the number unpinned, so it is
+      // asserted — if Node adds, removes or moves one, this fails and names
+      // the path.
+      //
+      // The fs-versus-promises split is derived from an independent observable
+      // (does the namespace expose `ReadStream`?) rather than a hardcoded list
+      // of suffixes, so it cannot drift out of step with the namespace set.
+      //
+      // On the empty cells, since a mutation test misleads here: deleting the
+      // scan for one is an EQUIVALENT mutant — measured, dropping the
+      // namespace-Symbol scan leaves all 7 tests green, because you cannot
+      // detect the removal of a check for something absent. Not a gap; that is
+      // what empty means. The scans still earn their place for a surface that
+      // does not exist yet, and that is measured too: against a synthetic
+      // namespace carrying one of each cell, this same logic reports every one
+      // while `Object.entries` reports only the plain export.
+      const expectedCells: Record<string, Record<string, number>> = {}
+      for (const suffix of expectedSuffixes) {
+        const carriesStreamClasses =
+          typeof (resolve(suffix) as Record<string, unknown>).ReadStream === 'function'
+        expectedCells[`${canonical}${suffix}`] = carriesStreamClasses
+          ? { 'fn-symbol': 1, 'fn-inherited': 146 }
+          : { 'fn-symbol': 1 }
+      }
+      const actualCells: Record<string, Record<string, number>> = {}
+      for (const [path, labels] of Object.entries(hiddenByPath)) {
+        const counts: Record<string, number> = {}
+        for (const label of labels) {
+          const cell = label.split(':')[0]
+          counts[cell] = (counts[cell] ?? 0) + 1
+        }
+        actualCells[path] = counts
+      }
+      expect(actualCells).toEqual(expectedCells)
 
       // Guards the guard: if `vi.importActual` ever handed back an empty or
       // stub module, every set comparison above would pass vacuously by
