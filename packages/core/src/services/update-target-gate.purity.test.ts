@@ -121,10 +121,12 @@
  * Containment survives the realistic path, which is why this is a live
  * boundary rather than a live hole: `util.promisify(mockFs.exists)` finds no
  * custom symbol on the spy, falls back to wrapping the spy, and still records
- * and throws. What stays open is a DIRECT index of the symbol. Both counts are
- * now asserted rather than described — see the denominator block below — so a
- * future Node that changes either one fails loudly instead of rotting this
- * paragraph. SMI-6841 holds the measured instances and the mutation that
+ * and throws. What stays open is a DIRECT index of the symbol. All four
+ * combinations `Object.entries` can miss — non-enumerable or Symbol, on a
+ * namespace or on a function — are now scanned and asserted PER PATH rather
+ * than as a total, so a loss on one namespace and a gain on another cannot
+ * cancel out. Three of the four cells are empty today; the block below records
+ * what that does and does not buy. SMI-6841 holds the measured instances and the mutation that
  * killed each.
  */
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
@@ -708,27 +710,81 @@ describe('the fs recorder — known-positive control (T-G3)', () => {
       // stays open is a DIRECT index of the symbol, which nothing here does.
       //
       // When Node changes either count, this fails and names the path.
-      let nonEnumerableFns = 0
-      const symbolKeyedCallables: string[] = []
+      // FOUR CELLS, NOT TWO, AND PER PATH, NOT IN TOTAL. `Object.entries` —
+      // which `wrapNamespace`, the walk and the oracle all use — misses a
+      // function under any of four combinations: on a NAMESPACE under a
+      // non-enumerable string key or a Symbol key, and on a FUNCTION under
+      // either of the same two. The previous version of this block checked
+      // the first and the fourth, while the prose above claimed "at any
+      // level" — an assertion narrower than its own claim, which is this
+      // file's signature defect appearing in the guard against it.
+      //
+      // It also summed across paths, so a loss on one namespace and a gain on
+      // another cancelled out silently and the failure named a total rather
+      // than a path. Both are fixed here: all four cells are collected, and
+      // the expectation is a per-path map.
+      const hiddenByPath: Record<string, string[]> = {}
+      const BUILTIN_FN_PROPS = new Set(['length', 'name', 'prototype'])
       for (const suffix of expectedSuffixes) {
+        const path = `${canonical}${suffix}`
         const nsActual = resolve(suffix)
+        const found: string[] = []
         for (const key of Object.getOwnPropertyNames(nsActual)) {
           const d = Object.getOwnPropertyDescriptor(nsActual, key)
-          if (d && !d.enumerable && typeof d.value === 'function') nonEnumerableFns += 1
+          if (d && !d.enumerable && typeof d.value === 'function') found.push(`ns-nonenum:${key}`)
+        }
+        for (const sym of Object.getOwnPropertySymbols(nsActual)) {
+          if (typeof (nsActual as Record<symbol, unknown>)[sym] === 'function') {
+            found.push(`ns-symbol:${String(sym)}`)
+          }
         }
         for (const [fnName, fnValue] of Object.entries(nsActual)) {
           if (typeof fnValue !== 'function') continue
+          for (const key of Object.getOwnPropertyNames(fnValue)) {
+            if (BUILTIN_FN_PROPS.has(key)) continue
+            const d = Object.getOwnPropertyDescriptor(fnValue, key)
+            if (d && !d.enumerable && typeof d.value === 'function') {
+              found.push(`fn-nonenum:${fnName}.${key}`)
+            }
+          }
           for (const sym of Object.getOwnPropertySymbols(fnValue)) {
             if (typeof (fnValue as unknown as Record<symbol, unknown>)[sym] === 'function') {
-              symbolKeyedCallables.push(`${canonical}${suffix}.${fnName}[${String(sym)}]`)
+              found.push(`fn-symbol:${fnName}[${String(sym)}]`)
             }
           }
         }
+        hiddenByPath[path] = found.sort()
       }
-      expect({ nonEnumerableFns, symbolKeyed: symbolKeyedCallables.length }).toEqual({
-        nonEnumerableFns: 0,
-        symbolKeyed: expectedSuffixes.length,
-      })
+
+      // Measured in-container on Node 22, every walked path: exactly one, and
+      // always the same cell — a callable-owned Symbol
+      // (`fs.exists[util.promisify.custom]`, `fs.promises.opendir[…]`). The
+      // other three cells are empty everywhere. Per-path, so a simultaneous
+      // loss and gain cannot rebalance; and the failure names the path.
+      //
+      // Know what the three empty cells are worth, because a mutation test
+      // will mislead you here. Deleting the scan for an empty cell is an
+      // EQUIVALENT mutant — the suite stays green, since you cannot detect the
+      // removal of a check for something that is not there. Measured: dropping
+      // the namespace-Symbol scan leaves all 7 tests passing. That is not a
+      // gap in the control; it is what an empty cell means.
+      //
+      // The scan is still load-bearing, for a surface that does not exist yet
+      // rather than for this one, and that is measured rather than assumed:
+      // run against a synthetic namespace carrying one of each cell, the same
+      // logic reports all four while `Object.entries` reports only the plain
+      // export. So if a future Node grows any of them, the category assertion
+      // below fails instead of the mock quietly gaining a hole.
+      expect(
+        Object.fromEntries(Object.entries(hiddenByPath).map(([k, v]) => [k, v.length]))
+      ).toEqual(Object.fromEntries(expectedSuffixes.map((s) => [`${canonical}${s}`, 1])))
+      expect([
+        ...new Set(
+          Object.values(hiddenByPath)
+            .flat()
+            .map((l) => l.split(':')[0])
+        ),
+      ]).toEqual(['fn-symbol'])
 
       // Guards the guard: if `vi.importActual` ever handed back an empty or
       // stub module, every set comparison above would pass vacuously by
