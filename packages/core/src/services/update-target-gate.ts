@@ -62,7 +62,7 @@ export {
  * Classify one update target against §4.3's rule table. First match wins.
  *
  * `eligible` is reachable ONLY by exhausting {@link CLASSIFICATION_RULES} and
- * landing on its unconditional row-16 entry (task brief requirement #3) —
+ * landing on its unconditional row-16 entry (SMI-6532 §4.3 requirement #3) —
  * this function contributes no default argument, no early return, and no
  * `??` fallback of its own that could produce it. If the loop below somehow
  * finishes without a match — which {@link CLASSIFICATION_RULES}'s own

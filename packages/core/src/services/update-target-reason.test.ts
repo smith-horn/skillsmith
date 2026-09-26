@@ -49,6 +49,7 @@ import path from 'node:path'
 import { fileURLToPath } from 'node:url'
 
 import { describe, expect, it } from 'vitest'
+import * as ts from 'typescript'
 
 import {
   BACKUP_DIR_GROUP,
@@ -475,6 +476,184 @@ describe('remediationFor — reason/result string overlap (recovery-pending, rec
 // member lists.")
 // ─────────────────────────────────────────────────────────────────────────────
 
+/**
+ * Extract `export const <exportName> = [...] as const`'s string-literal
+ * elements, via the TypeScript AST rather than a quoted-string regex
+ * (SMI-6841 finding 7). A regex over the raw text between the array's `[`
+ * and its first `]` (the prior implementation) reads a commented-out
+ * member's quoted string the same as a live one, because both are just
+ * matching bytes to a regex that has no notion of "this is a comment" —
+ * measured: `// 'beta',` inside the array body was silently INCLUDED in
+ * the mirrored member list. `ts.createSourceFile` tokenizes comments as
+ * trivia, never as part of the AST it hands back, so an
+ * `ArrayLiteralExpression`'s `.elements` can only ever contain nodes that
+ * are actually live code — a commented-out entry was never in that array
+ * to begin with, structurally, not merely filtered out after the fact.
+ * See the "parser — blind-spot controls" describe block below for the
+ * permanent cases pinning this against regressing back to a text-matching or
+ * whole-tree-walking approach. Add a case there for any new blind spot rather
+ * than only fixing the parser; SMI-6841 holds what each one measured.
+ * Module scope, not inside a `describe`, so both
+ * this file's real-file parity tests AND that synthetic-fixture describe
+ * block can call it directly.
+ */
+function extractArrayLiteral(source: string, exportName: string, fileName = 'source.ts'): string[] {
+  const sourceFile = ts.createSourceFile(
+    fileName,
+    source,
+    ts.ScriptTarget.Latest,
+    /* setParentNodes */ true, // needed to classify identifier positions below
+    ts.ScriptKind.TS
+  )
+
+  // TOP-LEVEL STATEMENTS ONLY -- deliberately not `ts.forEachChild` (SMI-6841
+  // round 4). A recursive walk found an `export const` nested inside
+  // `namespace Hidden { ... }` and reported it identically to a real top-level
+  // export, so the parity check verified the members were WRITTEN somewhere in
+  // the mirror file while proving nothing about whether the mirror exported
+  // them -- a subject broader than the thing it names, the same shape as every
+  // other finding on this branch.
+  //
+  // Refusing a nested declaration is a fail-safe POLICY, not a claim that
+  // nothing nested is ever reachable, and the distinction is worth keeping
+  // straight because an earlier version of this comment got it wrong.
+  // Measured via `ts.transpileModule`: plain `namespace Hidden { export const
+  // X }` emits no export at all, so an importer genuinely cannot reach X; but
+  // `export namespace Hidden { ... }` DOES emit `export var Hidden`, and an
+  // importer can reach `Hidden.X`. This parser refuses both, because the
+  // mirror's contract is a flat top-level `export const`, and a mirror that
+  // moved its members behind a namespace object has broken parity whether or
+  // not the bytes remain reachable.
+  //
+  // The accepted set is a predicate, not a list: a TOP-LEVEL
+  // `VariableStatement` carrying an `export` modifier AND the `const` flag,
+  // declaring `exportName`, whose initializer is an array literal -- optionally
+  // wrapped in exactly one `as`.
+  //
+  // `const` is load-bearing, not incidental. An earlier version accepted
+  // `export let` and `export var` too, and pinned that acceptance with a test.
+  // For a mutable binding the initializer is not the value: measured, `export
+  // let SAMPLE = ['alpha'] as const` followed by `SAMPLE = ['beta']` made this
+  // parser return ['alpha'] while the live export held ['beta']. A parity
+  // check that reports the wrong list has failed in the one way it must not,
+  // since a loud refusal is recoverable and a confident wrong answer is not.
+  //
+  // Refused, each for a structural reason -- no array literal reachable from
+  // an exported const VariableStatement's initializer: `export { X }` (the
+  // binding carries no export modifier), `export default` (no declaration
+  // name), `export declare const` (no initializer at all), `export let`/`var`
+  // (not const, per above), and `export const X = [...] satisfies readonly
+  // string[]` (a SatisfiesExpression, which this unwraps only `as` through).
+  //
+  // Each is a genuine top-level module export, so refusing them is a
+  // deliberate limitation, not a bug -- but the throw below reports it as
+  // "mirror missing or renamed", which names the wrong cause. `satisfies` is
+  // the likeliest for `manifestReader.ts` to adopt. If any lands, teach the
+  // parser that form rather than believing the message. Pinned by the cases
+  // below, so this is measured rather than described.
+  let found: string[] | undefined
+  for (const node of sourceFile.statements) {
+    if (found !== undefined) break
+    if (
+      ts.isVariableStatement(node) &&
+      node.modifiers?.some((m) => m.kind === ts.SyntaxKind.ExportKeyword) &&
+      // CONST ONLY. A mutable binding's initializer is not its value: for
+      // `export let SAMPLE = ['alpha'] as const` followed by `SAMPLE =
+      // ['beta']`, this parser read the initializer and returned ['alpha']
+      // while the live export held ['beta'] (measured). That is the one
+      // outcome this parity check must never produce -- a WRONG member list
+      // rather than a loud refusal, since the whole point is to detect drift
+      // between the mirror and the source.
+      (node.declarationList.flags & ts.NodeFlags.Const) !== 0
+    ) {
+      for (const decl of node.declarationList.declarations) {
+        if (!ts.isIdentifier(decl.name) || decl.name.text !== exportName || !decl.initializer) {
+          continue
+        }
+        // `export const X = [...] as const` wraps the array literal in an
+        // AsExpression -- unwrap it before checking for the array itself,
+        // rather than requiring callers' source to omit `as const`.
+        const init = ts.isAsExpression(decl.initializer)
+          ? decl.initializer.expression
+          : decl.initializer
+        if (!ts.isArrayLiteralExpression(init)) continue
+        found = init.elements.map((el, i) => {
+          if (!ts.isStringLiteral(el)) {
+            throw new Error(
+              `manifestReader.ts "${exportName}" element ${i} is not a plain string literal -- ` +
+                'mirror parser only understands a flat array of quoted strings'
+            )
+          }
+          return el.text
+        })
+      }
+    }
+  }
+
+  if (found === undefined) {
+    throw new Error(
+      `manifestReader.ts has no "export const ${exportName} = [...]" array -- mirror missing or renamed`
+    )
+  }
+  // A STATIC READ OF AN INITIALIZER IS NOT A READ OF THE VALUE. `const` fixes
+  // the binding, not the array's contents: `export const X = ['a'] as const`
+  // followed by `(X as unknown as string[]).splice(0, 1, 'b')` leaves this
+  // parser returning ['a'] while the live export holds ['b'] -- a confidently
+  // WRONG member list, which is the one outcome a parity check must never
+  // produce. Requiring `const` above does not reach it.
+  //
+  // So refuse any in-file reference to the binding beyond its own declaration
+  // and `typeof` type positions. Scope, stated exactly: every reference that
+  // appears as an Identifier node in this file's AST. That covers assignment,
+  // aliasing, destructuring, property access, closures and calls without
+  // enumerating any of them, because each necessarily parses to an identifier.
+  //
+  // TWO RESIDUALS, neither covered and neither implied to be. Another module
+  // may import the array and mutate it. And dynamic evaluation defeats this
+  // entirely -- `eval("SAMPLE.splice(0, 1, 'beta')")` puts the name inside a
+  // string literal, where no Identifier node exists.
+  //
+  // An earlier version of this comment claimed the guard was "COMPLETE for
+  // references inside this file". It is not, and the cross-family gate was
+  // right to call that an overstatement. The tempting repair -- refuse
+  // `eval(...)` while scanning -- was declined deliberately: it closes one
+  // spelling while `new Function`, indirect `(0, eval)`, `globalThis.eval` and
+  // an eval inside another declaration's initializer all remain, so the claim
+  // would stay false while LOOKING defended. That is the exact shape this file
+  // has spent ten review rounds removing, and a guard that enumerates is worse
+  // than a residual that is written down. No static single-file check can
+  // reach dynamic evaluation; saying so is the honest guarantee.
+  const offending: string[] = []
+  const scanReferences = (node: ts.Node): void => {
+    if (ts.isIdentifier(node) && node.text === exportName) {
+      const parent = node.parent as ts.Node | undefined
+      const isOwnDeclarationName =
+        parent !== undefined && ts.isVariableDeclaration(parent) && parent.name === node
+      const isTypePosition = parent !== undefined && ts.isTypeQueryNode(parent)
+      if (!isOwnDeclarationName && !isTypePosition) {
+        const line = sourceFile.getLineAndCharacterOfPosition(node.getStart(sourceFile)).line + 1
+        offending.push(`line ${line}`)
+      }
+    }
+    ts.forEachChild(node, scanReferences)
+  }
+  scanReferences(sourceFile)
+  if (offending.length > 0) {
+    throw new Error(
+      `manifestReader.ts references "${exportName}" outside its declaration (${offending.join(', ')}) -- ` +
+        'the initializer may not be the exported value, so this parity check refuses to guess'
+    )
+  }
+
+  return found
+}
+
+function readMirroredArray(exportName: string): string[] {
+  const filePath = path.join(__dirname, '../../../vscode-extension/src/services/manifestReader.ts')
+  const source = readFileSync(filePath, 'utf-8')
+  return extractArrayLiteral(source, exportName, filePath)
+}
+
 describe('VS Code manifestReader.ts mirror parity (T-R4, member-list scope)', () => {
   // Confirms independently (not "took the spec's word for it") that VS Code
   // really does not import @skillsmith/core: if it did, a real cross-package
@@ -490,24 +669,6 @@ describe('VS Code manifestReader.ts mirror parity (T-R4, member-list scope)', ()
     expect(pkg.devDependencies?.['@skillsmith/core']).toBeUndefined()
   })
 
-  function readMirroredArray(exportName: string): string[] {
-    const filePath = path.join(
-      __dirname,
-      '../../../vscode-extension/src/services/manifestReader.ts'
-    )
-    const source = readFileSync(filePath, 'utf-8')
-    const marker = `export const ${exportName} = [`
-    const start = source.indexOf(marker)
-    if (start === -1) {
-      throw new Error(`manifestReader.ts has no "${marker}" export -- mirror missing or renamed`)
-    }
-    const bodyStart = start + marker.length
-    const bodyEnd = source.indexOf(']', bodyStart)
-    const body = source.slice(bodyStart, bodyEnd)
-    const matches = [...body.matchAll(/'([^']+)'/g)]
-    return matches.map((m) => m[1])
-  }
-
   it('UPDATE_TARGET_REASONS: VS Code mirror has the exact same member list as core, in the same order', () => {
     const mirrored = readMirroredArray('UPDATE_TARGET_REASONS')
     expect(mirrored).toEqual([...UPDATE_TARGET_REASONS])
@@ -516,5 +677,144 @@ describe('VS Code manifestReader.ts mirror parity (T-R4, member-list scope)', ()
   it('UPDATE_RESULT_CODES: VS Code mirror has the exact same member list as core, in the same order', () => {
     const mirrored = readMirroredArray('UPDATE_RESULT_CODES')
     expect(mirrored).toEqual([...UPDATE_RESULT_CODES])
+  })
+})
+
+// ─────────────────────────────────────────────────────────────────────────────
+// extractArrayLiteral — parser blind-spot controls (SMI-6841 finding 7)
+// ─────────────────────────────────────────────────────────────────────────────
+//
+// Permanent cases against small, synthetic source snippets (never the real
+// manifestReader.ts, so these never depend on that file's own current
+// contents), pinning the AST-based parser against each blind spot a prior
+// implementation actually had, plus a positive control proving the parser
+// isn't simply incapable of matching anything. Every case here was run for
+// real against the broken parser it describes, not reasoned about.
+//
+// Note the refusal cases come in a PAIR with an acceptance case, and need to.
+// A refusal alone is satisfiable by a parser that matches nothing, and an
+// acceptance alone is satisfiable by the whole-tree walk this replaced. Only
+// together do they discriminate. Keep that shape when adding a case: a new
+// refusal without its acceptance is a control that cannot fail for the right
+// reason.
+describe('extractArrayLiteral — parser blind-spot controls (SMI-6841 finding 7)', () => {
+  const baseline = "export const SAMPLE = [\n  'alpha',\n  'beta',\n  'gamma',\n] as const\n"
+
+  it('positive control: an ordinary, unmutated array parses to its exact members, in order', () => {
+    expect(extractArrayLiteral(baseline, 'SAMPLE')).toEqual(['alpha', 'beta', 'gamma'])
+  })
+
+  it('deleted member: a removed entry is reflected as a shorter array, not silently padded back to three', () => {
+    const deleted = "export const SAMPLE = [\n  'alpha',\n  'gamma',\n] as const\n"
+    expect(extractArrayLiteral(deleted, 'SAMPLE')).toEqual(['alpha', 'gamma'])
+    expect(extractArrayLiteral(deleted, 'SAMPLE')).not.toEqual(['alpha', 'beta', 'gamma'])
+  })
+
+  it('swapped members: a reordered pair is reflected in the returned order, not silently re-sorted back', () => {
+    const swapped = "export const SAMPLE = [\n  'beta',\n  'alpha',\n  'gamma',\n] as const\n"
+    expect(extractArrayLiteral(swapped, 'SAMPLE')).toEqual(['beta', 'alpha', 'gamma'])
+    expect(extractArrayLiteral(swapped, 'SAMPLE')).not.toEqual(['alpha', 'beta', 'gamma'])
+  })
+
+  it("commented-out member: a member wrapped in a line comment is NOT returned -- the exact defect the prior quoted-string regex had (it matched the comment's own quotes)", () => {
+    const commented = "export const SAMPLE = [\n  'alpha',\n  // 'beta',\n  'gamma',\n] as const\n"
+    expect(extractArrayLiteral(commented, 'SAMPLE')).toEqual(['alpha', 'gamma'])
+    expect(extractArrayLiteral(commented, 'SAMPLE')).not.toContain('beta')
+  })
+
+  it('namespace-nested member: an `export` inside `namespace` is REFUSED, because the mirror contract is a flat top-level export', () => {
+    // The recursive `ts.forEachChild` walk this replaced accepted this and
+    // returned ['alpha', 'beta', 'gamma'], so the parity check would have
+    // passed on a mirror file that exported nothing at all.
+    const nested = `namespace Hidden {\n  export const SAMPLE = [\n    'alpha',\n    'beta',\n    'gamma',\n  ] as const\n}\n`
+    expect(() => extractArrayLiteral(nested, 'SAMPLE')).toThrow(/mirror missing or renamed/)
+  })
+
+  it('an `export namespace` is refused too, though its members ARE importer-reachable', () => {
+    // Kept separate from the case above because the two differ on a fact the
+    // parser does not care about but a reader will: plain `namespace` emits no
+    // export, `export namespace` emits `export var Hidden` and an importer can
+    // reach `Hidden.SAMPLE`. Both are refused, for the same contract reason.
+    const exported = `export namespace Hidden {\n  export const SAMPLE = [\n    'alpha',\n  ] as const\n}\n`
+    expect(() => extractArrayLiteral(exported, 'SAMPLE')).toThrow(/mirror missing or renamed/)
+  })
+
+  it('export-list form is a known, deliberate limitation -- refused loudly, not parsed', () => {
+    // `const X = [...]` + `export { X }` is a real top-level module export that
+    // this parser does not accept, because neither statement carries an export
+    // modifier on a VariableStatement. Pinned so the boundary is measured
+    // rather than described, and so adopting that form in manifestReader.ts
+    // fails here deliberately instead of being read as a rename.
+    const exportList = "const SAMPLE = [\n  'alpha',\n] as const\nexport { SAMPLE }\n"
+    expect(() => extractArrayLiteral(exportList, 'SAMPLE')).toThrow(/mirror missing or renamed/)
+  })
+
+  it('`satisfies` is refused the same way, and is the likeliest form to hit this', () => {
+    // The initializer is a SatisfiesExpression, and the unwrap handles only
+    // `as`. Pinned separately from the export-list case because this is the
+    // one a future edit to manifestReader.ts plausibly reaches for -- it is a
+    // drop-in modernisation of `as const` that silently changes the AST shape.
+    const sat = "export const SAMPLE = [\n  'alpha',\n] satisfies readonly string[]\n"
+    expect(() => extractArrayLiteral(sat, 'SAMPLE')).toThrow(/mirror missing or renamed/)
+  })
+
+  it('acceptance side of the limitation pair: a non-const `as` on an exported const still parses', () => {
+    // Without this, every refusal case above is satisfiable by a parser that
+    // matches nothing. This pins that the predicate is wider than
+    // `export const … as const` specifically -- the `as` may be any type.
+    const asReadonly = "export const SAMPLE = [\n  'alpha',\n  'beta',\n] as readonly string[]\n"
+    expect(extractArrayLiteral(asReadonly, 'SAMPLE')).toEqual(['alpha', 'beta'])
+  })
+
+  it('a const export whose array is MUTATED later is REFUSED -- `const` fixes the binding, not the contents', () => {
+    // The cross-family gate's own case (PR #2939, second pass). `const`
+    // prevents reassignment and nothing else, so this parser would otherwise
+    // return ['alpha'] while the live export holds ['beta'] -- a confidently
+    // wrong member list, the one outcome a parity check must never produce.
+    // Refused by the in-file reference guard, not by the `const` check.
+    const mutated =
+      "export const SAMPLE = ['alpha'] as const\n" +
+      ";(SAMPLE as unknown as string[]).splice(0, 1, 'beta')\n"
+    expect(() => extractArrayLiteral(mutated, 'SAMPLE')).toThrow(/references "SAMPLE" outside/)
+  })
+
+  it('DOCUMENTS A RESIDUAL: dynamic evaluation defeats the guard, and is not claimed to be covered', () => {
+    // Not a guard -- a record. `eval` puts the binding name inside a string
+    // literal, where there is no Identifier node to find, so the parser
+    // returns the initializer while the live value differs. Asserting the
+    // CURRENT behaviour rather than a desired one, because no single-file
+    // static check can reach this and pretending otherwise is the failure
+    // this file exists to prevent.
+    //
+    // If someone later adds a guard that catches this, THIS TEST FAILS, and
+    // that is the point: it forces the residual list to be updated
+    // deliberately instead of drifting out of date in a comment.
+    const viaEval =
+      "export const SAMPLE = ['alpha'] as const\n" + 'eval("SAMPLE.splice(0, 1, \'beta\')")\n'
+    expect(extractArrayLiteral(viaEval, 'SAMPLE')).toEqual(['alpha'])
+  })
+
+  it('a `typeof` reference is NOT treated as a mutation -- the real mirror has one', () => {
+    // Acceptance half of the pair. Without it the refusal above is satisfiable
+    // by a guard that rejects every reference, which would fail against the
+    // real manifestReader.ts and be discovered only there.
+    const withTypeAlias =
+      "export const SAMPLE = ['alpha'] as const\n" +
+      'export type Sample = (typeof SAMPLE)[number]\n'
+    expect(extractArrayLiteral(withTypeAlias, 'SAMPLE')).toEqual(['alpha'])
+  })
+
+  it('a mutable export is REFUSED, because its initializer is not its value', () => {
+    // The defect this prevents is the only one that matters for a parity
+    // check: returning a WRONG member list rather than refusing. Measured
+    // before the `const` restriction -- this returned ['alpha'] while the live
+    // binding held ['beta'].
+    const mutable = "export let SAMPLE = [\n  'alpha',\n] as const\nSAMPLE = ['beta']\n"
+    expect(() => extractArrayLiteral(mutable, 'SAMPLE')).toThrow(/mirror missing or renamed/)
+  })
+
+  it('top-level member alongside a namespace: the real top-level export is still found, so the refusal above is not simply "matches nothing"', () => {
+    const mixed = `namespace Hidden {\n  export const SAMPLE = [\n    'wrong',\n  ] as const\n}\n\n${baseline}`
+    expect(extractArrayLiteral(mixed, 'SAMPLE')).toEqual(['alpha', 'beta', 'gamma'])
   })
 })

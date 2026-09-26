@@ -29,6 +29,7 @@ import * as fs from 'fs'
 import * as os from 'os'
 import * as path from 'path'
 import { createHash } from 'crypto'
+import { execFileSync } from 'child_process'
 
 import { probeUpdateTarget, defaultRecoveryPendingChecker } from './update-target.probe.js'
 import { hasRecordedLocalEdit } from './skill-identity-classification.js'
@@ -43,8 +44,8 @@ import { hashContent } from './skill-installation.helpers.js'
 // called" is no longer a meaningful assertion here; the dedicated
 // `update-target.probe.git-ancestor.test.ts` tests that module's own walk
 // directly, mechanism included (its own RED-TEST CONTROL block reproduces
-// the bug this change fixes using the still-exported, unmodified
-// `hasGitAncestorBetween`/`isRealpathInside`).
+// the bug this change fixes, through `checkInstallTarget`'s own public API —
+// `hasGitAncestorBetween` itself is private again, SMI-6841 finding 5).
 
 // Hoisted, mutable EACCES-injection registry read by the mocked fs/promises
 // below -- both this file and everything it imports (including
@@ -454,9 +455,10 @@ describe('probeUpdateTarget — CRITICAL fix: a symlink whose realpath escapes s
     // ancestor.ts`) asserts containment BEFORE any walk starts, so this
     // never gets that far — the dedicated
     // `update-target.probe.git-ancestor.test.ts` covers the mechanism
-    // directly (including a RED-TEST CONTROL reproducing the old bug via
-    // the still-unmodified `hasGitAncestorBetween`); this integration test
-    // pins the value `probeUpdateTarget`'s own `ok` outcome surfaces.
+    // directly (including a RED-TEST CONTROL reproducing the old bug through
+    // `checkInstallTarget`, whose own rule (d) still runs `hasGitAncestor-
+    // Between`'s logic unmodified); this integration test pins the value
+    // `probeUpdateTarget`'s own `ok` outcome surfaces.
     const home = path.join(root, 'gov-home')
     const cursorSkills = path.join(home, '.cursor', 'skills')
     const claudeSkills = path.join(home, '.claude', 'skills')
@@ -689,6 +691,27 @@ describe('probeUpdateTarget — ok outcome contents', () => {
       rel: 'subdir',
       sha256: null,
       entryType: 'directory',
+    })
+  })
+
+  it("flags a FIFO write-set member with entryType 'other' (SMI-6841 finding 6) — the row-12 shape §4.3's own text names ('a symlink, dir, hardlink or other type') that had no test anywhere: neither isFile() nor isSymbolicLink() nor isDirectory()", async () => {
+    const dir = mkSkill('fifo-member')
+    const fifoPath = path.join(dir, 'pipe')
+    execFileSync('mkfifo', [fifoPath])
+
+    const outcome = await probeUpdateTarget({
+      dir,
+      skillsDir: root,
+      dirName: 'fifo-member',
+      writeSet: ['pipe'],
+    })
+
+    expect(outcome.kind).toBe('ok')
+    if (outcome.kind !== 'ok') throw new Error('unreachable')
+    expect(outcome.files.find((f) => f.rel === 'pipe')).toEqual({
+      rel: 'pipe',
+      sha256: null,
+      entryType: 'other',
     })
   })
 

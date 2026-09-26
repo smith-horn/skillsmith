@@ -4,7 +4,7 @@
  * @see docs/internal/implementation/update-safety-and-source-resolution.md §4.3
  * @see update-target-gate.ts — the driver that walks this table
  *
- * THE CENTRAL HAZARD (task brief). Row 16 is "otherwise -> `eligible`" — the
+ * THE CENTRAL HAZARD (SMI-6532 §4.3). Row 16 is "otherwise -> `eligible`" — the
  * one outcome that WRITES the user's files. A first-match-wins table's
  * natural fallthrough is a write, so a rule dropped, reordered past its
  * match, or never reached fails SILENTLY into that write, not loudly. Three
@@ -40,7 +40,8 @@
  * "local"-bucket cells (`absent`+`'unknown'`, `'local'`+`'unknown'`), and row
  * 7 fires on the two illegal cells, so both rows are reachable and every one
  * of ADR-145's six matrix cells lands on exactly one of them. Flagged back
- * per the task brief's own request, not silently "fixed."
+ * per SMI-6532's own requirement to document a spec deviation, not silently
+ * "fixed."
  *
  * `evidence.source: string | null` — ADR-145's matrix only ever discusses two
  * source states (`'unknown'` and a registry ref); the null case isn't in the
@@ -460,7 +461,7 @@ export const CLASSIFICATION_RULES: readonly ClassificationRule[] = [
     match: (ctx) => (ctx.plan.writeSet.length === 0 ? { reason: 'up-to-date' } : null),
   },
   {
-    // Requirement #3 (task brief): eligible is reachable ONLY by exhausting
+    // Requirement #3 (SMI-6532 §4.3): eligible is reachable ONLY by exhausting
     // this table. This is that exhaustion point — unconditional, and the
     // LAST entry. See `update-target-gate.ts` for why the driver itself adds
     // no further fallback of its own.
