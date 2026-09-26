@@ -216,12 +216,20 @@ describe.skipIf(noLiveTestPg)('SMI-6656 -- recompute_user_tier lock, two live se
   // chosen so that nothing else in the function can set it: tier is already
   // 'community' and the user has no subscriptions and no team memberships, so
   // recompute returns 'community' and the function's own
-  // `UPDATE ... WHERE tier IS DISTINCT FROM v_new_tier` matches no row. The
-  // test asserts that too, so a future fixture change that lets the UPDATE
-  // fire fails loudly instead of quietly making this test pass for the wrong
-  // reason. The pre-call baseline is the known-negative: without it, a tuple
-  // carrying a stale xmax from an earlier rolled-back transaction would read
-  // as locked (also measured).
+  // `UPDATE ... WHERE tier IS DISTINCT FROM v_new_tier` matches no row.
+  //
+  // The tier assertion below narrows that but does not prove it. If the probe
+  // row somehow pre-existed at a NON-community tier, the function would update
+  // it TO community and both the tier and xmax assertions would still pass --
+  // so xmax would be attributable to the UPDATE, not the lock. What rules that
+  // out is the pre-call baseline (`xmax = 0`), which also fails in that case,
+  // plus beforeEach deleting all profiles and users before reinserting. Stated
+  // as a bounded argument rather than a guarantee, because it is one.
+  //
+  // The pre-call baseline is also the known-negative for the instrument
+  // itself: without it, a tuple carrying a stale xmax from an earlier
+  // rolled-back transaction reads as locked (measured -- it is how a first
+  // draft of this test passed the IF FALSE mutation it exists to catch).
   // ==========================================================================
   it('actually acquires the row lock, not just the text of one', async () => {
     const PROBE = '66560000-0000-0000-0000-0000000000ff'
