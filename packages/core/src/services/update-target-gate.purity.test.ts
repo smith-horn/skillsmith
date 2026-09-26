@@ -277,11 +277,15 @@ function reflectiveEntries(
   source: Record<string | symbol, unknown>,
   target: object,
   stringKeysOnly: boolean
-): Array<[string | symbol, unknown, boolean]> {
-  // The third element is OWN-ENUMERABLE-ON-THE-REAL-OBJECT, and it exists
-  // because copying a hidden member onto the mock as an own enumerable one
-  // changes what the mock looks like, not just what it does. See the caller.
-  const entries: Array<[string | symbol, unknown, boolean]> = []
+): Array<[string | symbol, unknown, PropertyDescriptor | undefined]> {
+  // The third element is the REAL OWN DESCRIPTOR when the key is own on `source`,
+  // and `undefined` when the key was found further up the prototype chain. Both
+  // halves matter: the descriptor carries `enumerable`/`writable`, and the
+  // own-versus-inherited distinction decides whether the wrapper may install the
+  // member on the mock itself or must put it behind a prototype, because
+  // promoting an inherited member to an own one is observable to `Object.hasOwn`,
+  // `getOwnPropertyNames` and `Reflect.ownKeys`.
+  const entries: Array<[string | symbol, unknown, PropertyDescriptor | undefined]> = []
   const seen = new Set<string | symbol>()
   let depth = 0
   let cur: object | null = source
@@ -325,7 +329,7 @@ function reflectiveEntries(
       )
         continue
       const desc = Object.getOwnPropertyDescriptor(cur, key)
-      entries.push([key, value, depth === 0 && desc?.enumerable === true])
+      entries.push([key, value, depth === 0 ? desc : undefined])
     }
     cur = Object.getPrototypeOf(cur)
     depth += 1
@@ -371,37 +375,66 @@ function wrapNamespace(ns: Record<string, unknown>, moduleName: string): Record<
     // throughout. Closing it deletes the characterisation and turns a documented
     // gap into an actual guard, which is what the differential was only ever
     // standing in for.
-    for (const [member, memberValue, ownEnumerable] of reflectiveEntries(
+    // OWN MEMBERS GO ON THE SPY; INHERITED MEMBERS GO BEHIND IT. Two rounds were
+    // spent getting this right and each fix was narrower than the problem.
+    //
+    // Round 8: forcing `enumerable: true` promoted hidden members into
+    // `Object.keys`, spread and `Object.assign`. Mirroring enumerability fixed
+    // that. Round 9: mirroring enumerability does NOT preserve OWN-ness, and an
+    // inherited static installed as a non-enumerable OWN property is still
+    // visible to `Object.hasOwn`, `getOwnPropertyNames` and `Reflect.ownKeys`
+    // where production has nothing. Code that discovers constructor statics that
+    // way and then calls them would make a call under the mock that production
+    // never makes — a FALSE purity failure, the mock becoming the defect.
+    //
+    // So inherited wrapped members are installed on a shadow prototype spliced
+    // between the spy and `Function.prototype`. Own-ness is then preserved
+    // exactly; lookup DEPTH is not (everything inherited sits at depth 1 rather
+    // than at its original depth), which is a deliberate and stated residual —
+    // no reachable check in this codebase reads prototype depth, whereas
+    // `hasOwnProperty` is ordinary code.
+    //
+    // `defineProperty` rather than assignment throughout, because
+    // `Function.prototype[Symbol.hasInstance]` is non-writable and a plain
+    // `spy[key] = …` THROWS for any real function defining its own — measured: it
+    // broke mock construction outright, surfacing as vitest's generic "error when
+    // mocking a module".
+    const shadow: Record<string | symbol, unknown> = Object.create(Function.prototype)
+    let shadowUsed = false
+    for (const [member, memberValue, ownDesc] of reflectiveEntries(
       value as unknown as Record<string | symbol, unknown>,
       spy,
       false
     )) {
       if (typeof memberValue !== 'function') continue
-      // `defineProperty`, not assignment. `Function.prototype[Symbol.hasInstance]`
-      // is non-writable, so a plain `spy[key] = …` THROWS for any real function
-      // that defines its own — measured: it broke mock construction outright,
-      // surfacing as vitest's generic "error when mocking a module". Defining an
-      // OWN property shadows the non-writable inherited one instead. Enumerable
-      // to match what assignment produced, so nothing downstream sees a
-      // different shape.
-      Object.defineProperty(spy, member, {
-        value: makeRecordingSpy(`${moduleName}.${name}.${String(member)}`),
+      const wrapped = makeRecordingSpy(`${moduleName}.${name}.${String(member)}`)
+      if (ownDesc !== undefined) {
+        // Own on the real function: mirror its descriptor. `writable` is mirrored
+        // rather than hardcoded so a non-writable real static does not become
+        // assignable on the mock.
+        Object.defineProperty(spy, member, {
+          value: wrapped,
+          writable: ownDesc.writable === true,
+          enumerable: ownDesc.enumerable === true,
+          configurable: ownDesc.configurable === true,
+        })
+        continue
+      }
+      // Inherited on the real function: keep it inherited here too. Left
+      // writable and configurable deliberately, NOT mirrored from the defining
+      // prototype: deleting an inherited key from a real receiver succeeds
+      // without removing anything, so a non-configurable promoted copy would
+      // refuse a delete that production allows. That asymmetry with the own
+      // branch is intentional.
+      Object.defineProperty(shadow, member, {
+        value: wrapped,
         writable: true,
-        // MIRROR HOW THE REAL FUNCTION EXPOSES IT, rather than forcing
-        // `enumerable: true`. Forcing it was a real defect and the justification
-        // for it was wrong: plain assignment only ever handled own ENUMERABLE
-        // members, so "this matches what assignment produced" was true for those
-        // and false for every member the reflective walk newly reaches. Copying
-        // an inherited or non-enumerable callable onto the spy as an own
-        // enumerable property changes the mock's observable SHAPE — `Object.keys`,
-        // spread, `Object.assign`, `propertyIsEnumerable` — so code inspecting a
-        // constructor for any reason unrelated to I/O could branch differently
-        // under the mock than in production. The wrapping exists to make calls
-        // detectable, not to make the mock look different from the real thing.
-        enumerable: ownEnumerable,
+        enumerable: false,
         configurable: true,
       })
+      shadowUsed = true
     }
+    if (shadowUsed) Object.setPrototypeOf(spy, shadow)
     out[name] = spy
   }
   return out
@@ -1007,18 +1040,30 @@ describe('the fs recorder — known-positive control (T-G3)', () => {
               // so `String(nsKey)` would collide two distinct owners exactly as
               // it collided two distinct members.
               classify(desc.value, mockFn, key, String(nsKey))
-              // Shape, not behaviour: where the mock carries an OWN property for
-              // this key, its enumerability must match how the real function
-              // exposes it.
+              // SHAPE, NOT BEHAVIOUR, and two properties of it rather than one.
+              // Round 8 pinned enumerability; round 9 found that insufficient,
+              // because an inherited member installed as a non-enumerable OWN
+              // property is still visible to `Object.hasOwn` where production has
+              // nothing. OWN-NESS is compared first — it decides whether
+              // static-discovery code sees a member at all — then `enumerable`
+              // and `writable` for the own ones.
+              const where = `${canonical}${suffix}.${String(nsKey)}.${String(key)}`
+              const realOwnDesc = Object.getOwnPropertyDescriptor(realFn as object, key)
               const mockDesc =
                 mockFn == null ? undefined : Object.getOwnPropertyDescriptor(mockFn as object, key)
-              if (mockDesc !== undefined) {
-                const realOwn =
-                  Object.getOwnPropertyDescriptor(realFn as object, key)?.enumerable === true
-                if (mockDesc.enumerable !== realOwn) {
+              if ((realOwnDesc !== undefined) !== (mockDesc !== undefined)) {
+                shapeMismatches.push(
+                  `${where}: own on mock=${mockDesc !== undefined}, own on real=${realOwnDesc !== undefined}`
+                )
+              } else if (mockDesc !== undefined && realOwnDesc !== undefined) {
+                if (mockDesc.enumerable !== realOwnDesc.enumerable) {
                   shapeMismatches.push(
-                    `${canonical}${suffix}.${String(nsKey)}.${String(key)}: ` +
-                      `mock enumerable=${mockDesc.enumerable}, real own-enumerable=${realOwn}`
+                    `${where}: mock enumerable=${mockDesc.enumerable}, real enumerable=${realOwnDesc.enumerable}`
+                  )
+                }
+                if (mockDesc.writable !== realOwnDesc.writable) {
+                  shapeMismatches.push(
+                    `${where}: mock writable=${mockDesc.writable}, real writable=${realOwnDesc.writable}`
                   )
                 }
               }
@@ -1072,12 +1117,17 @@ describe('the fs recorder — known-positive control (T-G3)', () => {
       // in `wrapNamespace` — wrap unless the target already resolves the
       // identical function — removed the need for every line of it.
       //
-      // The accessor counts stay, and they are the reason `gaps: 0` is not
-      // vacuous: each path still exposes a large accessor surface this walk
-      // deliberately declines to invoke, so a zero here is a real statement about
-      // the data-property callables rather than an empty domain. They are a
-      // Node-shape canary: this package supports `>=22.22.0` while CI tracks the
-      // moving Node 22 line, so a legitimate update can change them.
+      // The accessor counts stay, but NOT as the reason `gaps: 0` is non-vacuous —
+      // that argument was wrong and the docblock's correction had been applied
+      // while this copy of it survived, which is two surfaces disagreeing with the
+      // wrong one read first. Accessors are a DIFFERENT population, counted and
+      // skipped, so a large accessor surface is compatible with an empty callable
+      // one. `expectedTotal > 25` and the exact call and construction totals are
+      // what require a substantial callable domain to have been walked.
+      //
+      // What the counts are FOR is a Node-shape canary: this package supports
+      // `>=22.22.0` while CI tracks the moving Node 22 line, so a legitimate
+      // update can change them, and that failure is the intended signal.
       const NO_GAPS = { gaps: 0, unsafe: 0, gapsByOwner: {} } as const
       const SURFACE_BY_SUFFIX: Record<string, Surface> = {
         'node:fs': { ...NO_GAPS, accessors: 310 },
@@ -1097,8 +1147,17 @@ describe('the fs recorder — known-positive control (T-G3)', () => {
       // Every path compared whole. No path trades member identity for a count.
       expect(surfaceByPath).toEqual(expectedSurface)
 
-      // The mock must not be observably different in shape from the real module.
-      expect(shapeMismatches, 'the mock exposes members the real function hides').toEqual([])
+      // Scoped exactly: for every key the REAL function exposes, the mock must
+      // agree on own-ness, and for own keys also on `enumerable` and `writable`.
+      // What it does NOT check, stated because the previous comment claimed the
+      // whole shape: a key the mock installs that the real function does not
+      // expose at all is never visited by this walk. The wrapper cannot currently
+      // invent one — every installation is driven by the real walk — but that is a
+      // property of the wrapper, not something this assertion establishes.
+      expect(
+        shapeMismatches,
+        'the mock is observably shaped differently from the real function'
+      ).toEqual([])
 
       // The sum check that stood here is gone. It compared `gaps` against the
       // per-owner sets to catch a dedup collision — a fault that required gaps to
