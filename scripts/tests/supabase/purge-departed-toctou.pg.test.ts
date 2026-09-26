@@ -260,8 +260,10 @@ describe.skipIf(noLiveTestPg)('SMI-6321 — departure-purge TOCTOU, two live ses
 
   it('is NOT blocked by ordinary foreign-key traffic on profiles(id) — the reason for NO KEY UPDATE', async () => {
     // `FOR UPDATE` is key-strength and conflicts with the `FOR KEY SHARE` every FK
-    // child insert takes on its parent row. Eleven columns in the real schema reference
-    // profiles(id), so a key-strength lock here would make the sweep skip members
+    // child insert takes on its parent row. Twelve columns in the real schema reference
+    // profiles(id) (was "eleven" here; recounted from the migrations for SMI-6656 —
+    // `grep -rniE 'REFERENCES (public\.)?profiles ?\(id\)' supabase/migrations/*.sql`),
+    // so a key-strength lock here would make the sweep skip members
     // because someone created an API key or an invitation — nothing to do with
     // entitlement. This test pins the distinction so a future "tighten the lock" edit
     // fails loudly.

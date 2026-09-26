@@ -87,6 +87,13 @@ describe.skipIf(noLiveTestPg)('SMI-6656 -- recompute_user_tier lock, two live se
     // needed) runs immediately against the CURRENT committed subscriptions ('individual'),
     // then its UPDATE blocks on B's held lock. Post-fix: its very first statement (the new
     // FOR UPDATE) blocks immediately, before it has read anything at all.
+    // Capture A's own backend PID BEFORE firing, so the wait below is attributed to A and
+    // not to any other backend that happens to be waiting on a lock while running this
+    // function. Counting "some active backend whose query text matches" would go green on a
+    // shared or concurrently-used test database when A itself had not yet connected.
+    const aPid = (await a.send('SELECT pg_backend_pid();')).stdout.trim()
+    expect(aPid).toMatch(/^\d+$/)
+
     const recomputeA = a.fire(`SELECT recompute_user_tier('${TEST_USER}');`)
 
     // Assert A is REALLY blocked on the row lock before B proceeds. A bare sleep-then-check
@@ -94,15 +101,15 @@ describe.skipIf(noLiveTestPg)('SMI-6656 -- recompute_user_tier lock, two live se
     // B committed, the whole call would run post-commit, return 'enterprise', and this test
     // would pass having constructed no race at all -- the same silence-as-success shape the
     // fix exists to remove. So observe the wait itself from a THIRD session, and fail if it
-    // never appears. `pid <> pg_backend_pid()` keeps ctl's own query text (which contains
-    // the function name, and so matches the LIKE) from counting itself.
+    // never appears. Scoped to A's own PID: a match on "any active backend running this
+    // function and waiting on a lock" is satisfiable by an unrelated session on a shared test
+    // database, which would make this guard green while A had not yet connected at all.
     const blockedWaiterCount = async (): Promise<number> => {
       const r = await ctl.send(
         `SELECT count(*) FROM pg_stat_activity
-          WHERE pid <> pg_backend_pid()
+          WHERE pid = ${aPid}
             AND state = 'active'
-            AND wait_event_type = 'Lock'
-            AND query LIKE '%recompute_user_tier%';`
+            AND wait_event_type = 'Lock';`
       )
       return Number.parseInt(r.stdout.trim(), 10)
     }
@@ -189,5 +196,77 @@ describe.skipIf(noLiveTestPg)('SMI-6656 -- recompute_user_tier lock, two live se
     const again = await ctl.send(`SELECT recompute_user_tier('${CONTROL_USER}');`)
     expect(again.stdout).toBe('community')
     expect(await tierOf(CONTROL_USER)).toBe('community')
+  }, 60_000)
+
+  // ==========================================================================
+  // REQUIREMENT 4 -- the lock is actually ACQUIRED, not merely present in the
+  // source text.
+  //
+  // Why this test exists, and why it is here rather than in the migration's
+  // own smoke block. The migration asserts the locking statement's SHAPE by
+  // reading pg_proc.prosrc. Text presence is not evidence of reachability, and
+  // no pattern can make it so: `IF FALSE THEN <the exact statement> END IF;`
+  // satisfies any textual assertion and acquires nothing. Measured -- it
+  // passed a stricter earlier version of that block, as did a /* */-commented
+  // copy and a lowercase copy moved after the read. A cross-family reviewer
+  // named all three; the migration's smoke now says plainly that it proves
+  // shape only, and this is the test that proves the behaviour.
+  //
+  // ATTRIBUTION. `xmax` is set by ANY row lock or update, so the probe row is
+  // chosen so that nothing else in the function can set it: tier is already
+  // 'community' and the user has no subscriptions and no team memberships, so
+  // recompute returns 'community' and the function's own
+  // `UPDATE ... WHERE tier IS DISTINCT FROM v_new_tier` matches no row. The
+  // test asserts that too, so a future fixture change that lets the UPDATE
+  // fire fails loudly instead of quietly making this test pass for the wrong
+  // reason. The pre-call baseline is the known-negative: without it, a tuple
+  // carrying a stale xmax from an earlier rolled-back transaction would read
+  // as locked (also measured).
+  // ==========================================================================
+  it('actually acquires the row lock, not just the text of one', async () => {
+    const PROBE = '66560000-0000-0000-0000-0000000000ff'
+    await ctl.send(
+      `INSERT INTO auth.users (id, email) VALUES ('${PROBE}', 'smi6656-probe@example.test')
+         ON CONFLICT DO NOTHING;
+       INSERT INTO profiles (id, email, tier, role)
+         VALUES ('${PROBE}', 'smi6656-probe@example.test', 'community', 'user')
+         ON CONFLICT DO NOTHING;`
+    )
+
+    const lockedFlag = async (s: PsqlSession): Promise<string> =>
+      (
+        await s.send(`SELECT (xmax <> '0')::text FROM profiles WHERE id = '${PROBE}';`)
+      ).stdout.trim()
+
+    await a.send('BEGIN;')
+
+    // Known-negative, in-band: the tuple carries no xmax before the call.
+    expect(await lockedFlag(a)).toBe('false')
+
+    const call = await a.send(`SELECT recompute_user_tier('${PROBE}');`)
+    expect(call.stderr).not.toMatch(/ERROR/)
+    expect(call.stdout).toBe('community')
+
+    // Attribution: the function's own UPDATE must NOT have fired, so the only
+    // statement that can have set xmax is the lock.
+    const tierInTxn = (
+      await a.send(`SELECT tier FROM profiles WHERE id = '${PROBE}';`)
+    ).stdout.trim()
+    expect(
+      tierInTxn,
+      "the probe user's tier changed, so the function's UPDATE fired and xmax is no longer " +
+        'attributable to the lock alone — re-pick the probe row'
+    ).toBe('community')
+
+    // THE ASSERTION. false here means the statement is in the source but never
+    // ran: an IF FALSE guard, a commented-out copy, or a deleted one.
+    expect(
+      await lockedFlag(a),
+      'recompute_user_tier() did not acquire a row lock on the profiles row. The statement may ' +
+        "be present in the source but unreachable — which the migration's textual smoke cannot " +
+        'detect. This is the behavioural guarantee for SMI-6656.'
+    ).toBe('true')
+
+    await a.send('ROLLBACK;')
   }, 60_000)
 })
