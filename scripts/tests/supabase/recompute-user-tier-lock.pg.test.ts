@@ -86,7 +86,7 @@ describe.skipIf(noLiveTestPg)('SMI-6656 -- recompute_user_tier lock, two live se
     // A fires its recompute concurrently, without awaiting. Pre-fix: its SELECT (no lock
     // needed) runs immediately against the CURRENT committed subscriptions ('individual'),
     // then its UPDATE blocks on B's held lock. Post-fix: its very first statement (the new
-    // FOR UPDATE) blocks immediately, before it has read anything at all.
+    // FOR NO KEY UPDATE) blocks immediately, before it has read anything at all.
     // Capture A's own backend PID BEFORE firing, so the wait below is attributed to A and
     // not to any other backend that happens to be waiting on a lock while running this
     // function. Counting "some active backend whose query text matches" would go green on a

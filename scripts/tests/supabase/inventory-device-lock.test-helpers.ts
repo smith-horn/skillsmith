@@ -30,7 +30,9 @@
  * which has no docker CLI, so the sibling Postgres is provisioned from the host and
  * reached through the Docker Desktop gateway.
  *
- * NO CI COVERAGE YET, STATED PLAINLY. CI provisions no Postgres service and sets none of
+ * NO CI COVERAGE YET. No CI check runs this suite: nothing sets its env vars. Not "CI
+ * provisions no Postgres" -- that is wrong (SMI-5946); grant-reactivate-concurrency.yml does,
+ * on supabase/migrations/** triggers. This suite is not wired into it. Nothing sets none of
  * these vars, so this suite skips there — loudly, never silently (see
  * {@link noLiveTestPg}). Same known, tracked gap SMI-5946 already covers for the smi5879
  * and SMI-6321 suites; this is a third consumer of that gap, not a new one.
