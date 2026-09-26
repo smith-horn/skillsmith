@@ -54,7 +54,9 @@
  * 100% reliable on BOTH (every red-test run, both engines); the deadlock reproduction (at the
  * shipped MEMBER_COUNT) was 5/5 on 17.6 and 4/5 on 17.11-alpine -- comparable, not identical,
  * but the same qualitative result on both, and the GREEN (fixed-code) assertions held 100% on
- * both across every run and every roster size tried. Row-level lock strength (FOR UPDATE),
+ * both across every run and every roster size tried. Row-level lock strength
+ * (FOR NO KEY UPDATE -- NOT FOR UPDATE, which conflicts with the FOR KEY SHARE every FK-child
+ * insert takes on profiles(id); 12 columns reference it),
  * READ COMMITTED snapshot/MVCC semantics, and the deadlock detector are core lock-manager /
  * storage-engine behavior -- unrelated to musl-vs-glibc OS packaging, and Postgres's own
  * versioning policy restricts 17.x minor/patch releases to bug fixes, not behavior changes to
