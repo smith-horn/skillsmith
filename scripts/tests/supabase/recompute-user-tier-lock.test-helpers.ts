@@ -41,6 +41,12 @@
  * so it fires on any PR touching a migration -- it just runs one unrelated test file. The
  * machinery exists; this suite is not wired into it. Datapoint filed on SMI-5946.
  *
+ * What that workflow DOES enforce, measured on PR #2945 (run 36217320852): `supabase start`
+ * applies 20260925000000, so the migration's own smoke blocks execute and pass there. So the
+ * lock's SHAPE is CI-enforced; only the behavioural guarantee in this suite is not. Keep the
+ * two separate when describing coverage -- conflating them is what made both earlier drafts of
+ * this note wrong.
+ *
  * POSTGRES VERSION SENSITIVITY -- MEASURED, not assumed (SMI-6505 rule). Prod runs
  * postgres:17.6 (Debian/glibc, via supabase/postgres); the docker one-liner above uses
  * postgres:17-alpine, which at the time this was written resolved to 17.11 (musl). Both were
