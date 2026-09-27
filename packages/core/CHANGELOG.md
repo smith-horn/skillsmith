@@ -4,6 +4,30 @@ All notable changes to `@skillsmith/core` are documented here.
 
 ## [Unreleased]
 
+- **Tests**: SMI-6841 -- the update-eligibility gate's fs-purity guard could not detect a whole
+  class of filesystem call, and now can. The guard replaces `node:fs` and `node:fs/promises` with
+  recording spies that throw; it re-attached only own, enumerable, string-keyed members, so the
+  four stream constructors' 142 inherited statics and `opendir`'s promisify symbol were absent from
+  the mock -- a real `fs.opendir[util.promisify.custom](...)` call would have performed I/O in
+  silence with every assertion green. Demonstrated rather than argued: the same injection fails both
+  purity tests under the new mock and passes both under the old one. `wrapNamespace` now wraps the
+  same reflective surface the differential walks, excluding only keys where the target already
+  resolves the identical function, so gaps went 143 -> 0 and roughly 130 lines that existed purely
+  to DESCRIBE the gap were deleted. Own members mirror their real descriptor; inherited members sit
+  on a shadow prototype so `Object.hasOwn` still answers as production does; and exactly one symbol,
+  `Symbol.hasInstance`, is handed through real, because wrapping `Writable`'s custom implementation
+  made `x instanceof fs.WriteStream` -- a pure type check -- report a purity violation. That
+  exception is keyed on the one implementation that was READ (Node 22's runs the default
+  `Function.prototype` test, then compares identities and `_writableState instanceof
+  WritableState`), not on well-known-symbol status: `Symbol.iterator`, `asyncIterator` and the
+  disposal hooks are extension points that may perform I/O, so they get a throwing spy. Wrapping
+  something pure fails visibly; handing something impure through fails silently. Twelve review rounds; the last four each found a defect introduced by the fix before it. Every
+  behavioural defect is pinned by an assertion that fails when reverted; the one exception is the
+  policy narrowing that restricts the symbol passthrough to `hasInstance`, which no realistic `fs`
+  surface can exercise today and which is justified by reading the implementation and by the
+  failure-direction asymmetry rather than by a red test -- a direct assertion on the policy set now
+  makes an accidental widening fail even so.
+
 - **Docs**: SMI-6841 -- three comment corrections in the update-eligibility gate's own files, with
   no behaviour change: every changed line in `update-target-reason.ts` and `update-target.probe.ts`
   is inside a comment. PR #2939 replaced seven unresolvable "task brief" referents on the stated
