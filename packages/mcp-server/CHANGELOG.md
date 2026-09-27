@@ -4,6 +4,9 @@ All notable changes to `@skillsmith/mcp-server` are documented here.
 
 ## [Unreleased]
 
+## v0.7.17
+
+- **Fix**: SMI-6840 -- sk_live_ redaction and detection missed most real API keys (#2936)
 - **Refactor**: SMI-6532 step 6 -- `outdated.ts` split at the action seam (`outdated.action.ts`,
   `outdated.helpers.ts` unchanged in behaviour) so a renderer table could land beside it without
   pushing either file over the 500-line gate. New `update-target-render.ts` exports

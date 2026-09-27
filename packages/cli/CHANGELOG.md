@@ -4,6 +4,9 @@ All notable changes to `@skillsmith/cli` are documented here.
 
 ## [Unreleased]
 
+## v0.8.13
+
+- **Fix**: SMI-6840 -- sk_live_ redaction and detection missed most real API keys (#2936)
 - **Test**: SMI-6358 post-merge retro -- the `audit sources` already-tracked overlay's own client
   keying is now pinned. Reverting it to a bare-name lookup previously left all five audit-sources
   test files green; what pins it is the THREE-test set, not the two added here. Both new tests use
