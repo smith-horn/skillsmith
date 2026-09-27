@@ -4,6 +4,23 @@ All notable changes to `@skillsmith/core` are documented here.
 
 ## [Unreleased]
 
+- **Feature (internal)**: SMI-6532 step 6 -- the root barrel now exports the two closed-set
+  `UpdateTargetReason`/`UpdateResultCode` types from `update-target-reason.ts` (previously internal
+  to this package). `@skillsmith/mcp-server`'s `update-target-render.ts` needs them for its
+  `Record<UpdateTargetReason | UpdateResultCode, string>` renderer signature; only the types are
+  exported, not the arrays or `remediationFor`, since no production consumer outside this package
+  needs the values -- the one caller that did (this package's own new
+  `update-target-render-parity.test.ts`) reaches them via a plain relative import, the same as its
+  sibling `update-target-reason.test.ts` already does.
+
+- **Test**: SMI-6532 step 6 -- `update-target-render-parity.test.ts` checks, for all 38
+  reason/result members, that `@skillsmith/mcp-server`'s renderer and the VS Code extension's
+  mirrored text are both non-empty, and that the VS Code extension's mirrored remediation kind
+  agrees with this package's own `remediationFor()`. Reads both external files via the TypeScript
+  AST (the same technique the sibling `update-target-reason.test.ts` already uses for its VS Code
+  array-mirror check) rather than importing them, so no new dependency is needed in either
+  direction.
+
 - **Tests**: SMI-6841 -- the update-eligibility gate's fs-purity guard could not detect a whole
   class of filesystem call, and now can. The guard replaces `node:fs` and `node:fs/promises` with
   recording spies that throw; it re-attached only own, enumerable, string-keyed members, so the

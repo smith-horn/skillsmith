@@ -6,6 +6,14 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/), and this
 
 ## [Unreleased]
 
+- **Feature**: SMI-6532 step 6 -- `manifestReader` now also carries this surface's own renderer: a
+  total `Record` from every update skip reason and result code to the text this extension shows, plus
+  a mirror of which remediation kind each member maps to. Both are exhaustive, so a new member added
+  upstream fails typecheck here rather than rendering blank. The remediation mirror is the reason the
+  parity test is not vacuous: the MCP surface derives its kinds by calling core's `remediationFor`,
+  so comparing that against core would compare core to itself, whereas this copy can genuinely drift
+  and is therefore the one worth checking.
+
 - **Feature**: SMI-6532 -- the existing `manifestReader` service now carries the closed sets of
   update skip reasons and result codes (23 and 15 members) that the update eligibility gate uses.
   They are deliberately mirrored from `@skillsmith/core` rather than imported, because this

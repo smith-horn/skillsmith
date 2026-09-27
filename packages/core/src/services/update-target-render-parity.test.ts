@@ -1,0 +1,243 @@
+/**
+ * @fileoverview Reason/result renderer parity test for SMI-6532 step 6, §4.4
+ *   of docs/internal/implementation/update-safety-and-source-resolution.md:
+ *   "A parity test checks that, for every member, all three renderers
+ *   return non-empty text and the same remediation kind."
+ *
+ *   Lives in `packages/core` — a revision of the original decision to place
+ *   it in `packages/mcp-server`. That placement was reasoned from the true
+ *   premise "core cannot import mcp-server" to the false conclusion "so the
+ *   test must live wherever it CAN import the MCP renderer" — but the test
+ *   doesn't need to import the MCP renderer any more than it needs to
+ *   import the VS Code mirror (core doesn't depend on VS Code either, and
+ *   the sibling `update-target-reason.test.ts` already reads that file via
+ *   the TypeScript AST, not an import). AST-reading both external files
+ *   symmetrically, from core, means: core already has `typescript` as a
+ *   dependency (`package.json`) and `update-target-reason.test.ts` already
+ *   imports it, so no new devDependency is needed anywhere; and core's own
+ *   `UPDATE_TARGET_REASONS`/`UPDATE_RESULT_CODES`/`remediationFor` are
+ *   reached by the plain relative import `./update-target-reason.js` this
+ *   file already uses for its sibling tests — no public export of those
+ *   values was needed at all. The original mcp-server placement had
+ *   required both: a `typescript` devDependency for mcp-server (a lockfile
+ *   hazard — `npm ci` can fail with `Missing: typescript@X from lock file`
+ *   for a package.json dependency the lockfile doesn't yet know about,
+ *   the same shape as the SMI-5272 `jose` anchor) and a public core export
+ *   of values that exist solely to serve this test (the exact
+ *   wrong-direction widening SMI-6841 finding 5 flagged for
+ *   `hasGitAncestorBetween` in this same issue family).
+ *
+ *   `packages/mcp-server/src/tools/update-target-render.ts`'s
+ *   `UPDATE_TARGET_TEXT` and `packages/vscode-extension/src/services/manifestReader.ts`'s
+ *   `UPDATE_TARGET_TEXT`/`UPDATE_REMEDIATION_KIND` are read via the AST —
+ *   the same `extractObjectLiteral` technique as this file's sibling
+ *   `extractArrayLiteral` (see that function's doc comment in
+ *   `update-target-reason.test.ts` for the "confidently wrong is worse than
+ *   a loud refusal" rationale this one shares), generalised from an array
+ *   literal to an object literal since these two mirrors are `Record`s, not
+ *   arrays. A regex over quoted strings would read a commented-out entry as
+ *   live (measured against that exact failure mode in SMI-6841) —
+ *   `ts.createSourceFile` tokenizes comments as trivia, so an
+ *   `ObjectLiteralExpression`'s `.properties` can only ever contain nodes
+ *   that are actually live code.
+ *
+ *   CLI's `manage.update.render.ts` is step 5's output (blocked on
+ *   SMI-6531, not yet built) — so this is a two-surface parity test (MCP,
+ *   VS Code) against core's own ground truth, not the three-surface test
+ *   §4.4 ultimately wants. When step 5 lands, extend this file rather than
+ *   re-deriving the AST-read approach.
+ *
+ * @module @skillsmith/core/services/update-target-render-parity.test
+ */
+import { readFileSync } from 'node:fs'
+import path from 'node:path'
+import { fileURLToPath } from 'node:url'
+
+import { describe, expect, it } from 'vitest'
+import * as ts from 'typescript'
+
+import {
+  UPDATE_TARGET_REASONS,
+  UPDATE_RESULT_CODES,
+  remediationFor,
+  type UpdateTargetReason,
+  type UpdateResultCode,
+} from './update-target-reason.js'
+
+const __dirname = path.dirname(fileURLToPath(import.meta.url))
+
+// ─────────────────────────────────────────────────────────────────────────────
+// AST extraction — `export const <name> = { 'key': 'value', ... } as const`
+// ─────────────────────────────────────────────────────────────────────────────
+
+/**
+ * Extract `export const <exportName> = { ... }`'s string-keyed,
+ * string-valued properties via the TypeScript AST. Refuses (throws) rather
+ * than guessing on anything that isn't a plain top-level `const` object
+ * literal of string-to-string properties: a non-`const` binding's
+ * initializer is not necessarily its current value, a nested declaration
+ * (e.g. inside a namespace) is not reachable the way a flat top-level export
+ * is, and a non-string-literal property value (spread, computed key,
+ * shorthand, method, getter/setter) has no single static string this parser
+ * can extract without guessing. Sibling of `extractArrayLiteral` in
+ * `update-target-reason.test.ts` — same principle, generalised from array
+ * elements to object properties.
+ */
+function extractObjectLiteral(
+  source: string,
+  exportName: string,
+  fileName: string
+): Record<string, string> {
+  const sourceFile = ts.createSourceFile(
+    fileName,
+    source,
+    ts.ScriptTarget.Latest,
+    /* setParentNodes */ true,
+    ts.ScriptKind.TS
+  )
+
+  // Top-level statements only — a `const` nested inside a namespace or
+  // function is not what a flat mirror file is supposed to export.
+  let found: Record<string, string> | undefined
+  for (const node of sourceFile.statements) {
+    if (found !== undefined) break
+    if (
+      !ts.isVariableStatement(node) ||
+      !node.modifiers?.some((m) => m.kind === ts.SyntaxKind.ExportKeyword) ||
+      (node.declarationList.flags & ts.NodeFlags.Const) === 0
+    ) {
+      continue
+    }
+    for (const decl of node.declarationList.declarations) {
+      if (!ts.isIdentifier(decl.name) || decl.name.text !== exportName || !decl.initializer) {
+        continue
+      }
+      const init = ts.isAsExpression(decl.initializer)
+        ? decl.initializer.expression
+        : decl.initializer
+      if (!ts.isObjectLiteralExpression(init)) continue
+
+      const entries: Record<string, string> = {}
+      for (const prop of init.properties) {
+        if (!ts.isPropertyAssignment(prop)) {
+          throw new Error(
+            `${fileName} "${exportName}" has a non-plain-assignment member (spread, shorthand, ` +
+              'method, or accessor) -- mirror parser only understands plain key: "value" entries'
+          )
+        }
+        const keyNode = prop.name
+        const key = ts.isIdentifier(keyNode)
+          ? keyNode.text
+          : ts.isStringLiteral(keyNode)
+            ? keyNode.text
+            : undefined
+        if (key === undefined) {
+          throw new Error(
+            `${fileName} "${exportName}" has a computed or non-string property key -- ` +
+              'mirror parser only understands identifier or plain string keys'
+          )
+        }
+        if (!ts.isStringLiteral(prop.initializer)) {
+          throw new Error(
+            `${fileName} "${exportName}" property "${key}" is not a plain string literal -- ` +
+              'mirror parser only understands string values'
+          )
+        }
+        entries[key] = prop.initializer.text
+      }
+      found = entries
+    }
+  }
+
+  if (found === undefined) {
+    throw new Error(
+      `${fileName} has no "export const ${exportName} = {...}" object -- mirror missing or renamed`
+    )
+  }
+
+  // Same "the binding may be mutated after declaration" concern as
+  // `extractArrayLiteral`: refuse any in-file reference to the exported name
+  // beyond its own declaration, since a static read of the initializer is
+  // not a read of the live value if something downstream mutates it.
+  const offending: string[] = []
+  const scanReferences = (node: ts.Node): void => {
+    if (ts.isIdentifier(node) && node.text === exportName) {
+      const parent = node.parent as ts.Node | undefined
+      const isOwnDeclarationName =
+        parent !== undefined && ts.isVariableDeclaration(parent) && parent.name === node
+      const isTypePosition = parent !== undefined && ts.isTypeQueryNode(parent)
+      if (!isOwnDeclarationName && !isTypePosition) {
+        const line = sourceFile.getLineAndCharacterOfPosition(node.getStart(sourceFile)).line + 1
+        offending.push(`line ${line}`)
+      }
+    }
+    ts.forEachChild(node, scanReferences)
+  }
+  scanReferences(sourceFile)
+  if (offending.length > 0) {
+    throw new Error(
+      `${fileName} references "${exportName}" outside its declaration (${offending.join(', ')}) -- ` +
+        'the initializer may not be the exported value, so this parity check refuses to guess'
+    )
+  }
+
+  return found
+}
+
+function readMirroredObject(relPath: string, exportName: string): Record<string, string> {
+  const filePath = path.join(__dirname, relPath)
+  const source = readFileSync(filePath, 'utf-8')
+  return extractObjectLiteral(source, exportName, filePath)
+}
+
+const MCP_RENDERER_PATH = '../../../mcp-server/src/tools/update-target-render.ts'
+const VSCODE_MANIFEST_READER_PATH = '../../../vscode-extension/src/services/manifestReader.ts'
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Every member, tagged as a reason or a result (§4.4's `UpdateCode`)
+// ─────────────────────────────────────────────────────────────────────────────
+
+type TaggedMember =
+  | { readonly kind: 'reason'; readonly value: UpdateTargetReason }
+  | { readonly kind: 'result'; readonly value: UpdateResultCode }
+
+const ALL_MEMBERS: TaggedMember[] = [
+  ...UPDATE_TARGET_REASONS.map((value): TaggedMember => ({ kind: 'reason', value })),
+  ...UPDATE_RESULT_CODES.map((value): TaggedMember => ({ kind: 'result', value })),
+]
+
+describe('SMI-6532 step 6: reason/result renderer parity (MCP + VS Code)', () => {
+  it('sanity: 23 reasons + 15 results = 38 tagged members', () => {
+    expect(UPDATE_TARGET_REASONS.length).toBe(23)
+    expect(UPDATE_RESULT_CODES.length).toBe(15)
+    expect(ALL_MEMBERS.length).toBe(38)
+  })
+
+  const mcpText = readMirroredObject(MCP_RENDERER_PATH, 'UPDATE_TARGET_TEXT')
+  const vsCodeText = readMirroredObject(VSCODE_MANIFEST_READER_PATH, 'UPDATE_TARGET_TEXT')
+  const vsCodeKind = readMirroredObject(VSCODE_MANIFEST_READER_PATH, 'UPDATE_REMEDIATION_KIND')
+
+  it.each(ALL_MEMBERS)('$kind "$value": MCP renders non-empty text', ({ value }) => {
+    expect(mcpText[value], `MCP has no text for "${value}"`).toBeTruthy()
+    expect(mcpText[value]?.length, `MCP text for "${value}" is empty`).toBeGreaterThan(0)
+  })
+
+  it.each(ALL_MEMBERS)('$kind "$value": VS Code renders non-empty text', ({ value }) => {
+    expect(vsCodeText[value], `VS Code has no text for "${value}"`).toBeTruthy()
+    expect(vsCodeText[value]?.length, `VS Code text for "${value}" is empty`).toBeGreaterThan(0)
+  })
+
+  it.each(ALL_MEMBERS)(
+    '$kind "$value": VS Code remediation kind matches core\'s remediationFor()',
+    (member) => {
+      const expectedKind =
+        member.kind === 'reason'
+          ? remediationFor({ kind: 'reason', reason: member.value }).kind
+          : remediationFor({ kind: 'result', result: member.value }).kind
+      expect(
+        vsCodeKind[member.value],
+        `VS Code remediation kind for "${member.value}" (${member.kind}) should be "${expectedKind}"`
+      ).toBe(expectedKind)
+    }
+  )
+})
