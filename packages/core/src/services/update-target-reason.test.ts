@@ -2,13 +2,13 @@
  * @fileoverview Tests for update-target-reason.ts (SMI-6532 A2, §4.4 of
  *   docs/internal/implementation/update-safety-and-source-resolution.md).
  *
- *   Member-count reconciliation (task brief cross-check): the brief's own
+ *   Member-count reconciliation (SMI-6532 cross-check): SMI-6532's own
  *   pre-computed figure was "§4.3's table yields 22 reasons; §4.5's group
  *   table lists 22 of them across seven groups, with `backup-dir` appearing
  *   only as a count." Independently deriving this from the spec text:
  *
  *   - §4.3's table rows (0a-16), excluding row 1 ("not listed", explicitly
- *     not a member per the task brief), yield 21 distinct reason strings —
+ *     not a member per SMI-6532), yield 21 distinct reason strings —
  *     `manifest-unreadable`, `recovery-record-unreadable`, `backup-dir`,
  *     `recovery-pending`, `untracked`, `manifest-key-conflict`,
  *     `git-managed`, `local`, `illegal-provenance`, `unverified`, `pinned`,
@@ -31,14 +31,14 @@
  *     its own Reason-column value).
  *
  *   So both tables agree the FULL set is 23 members (22 grouped + 1
- *   count-only). The brief's "22 reasons" for §4.3 only reconciles with this
+ *   count-only). SMI-6532's "22 reasons" for §4.3 only reconciles with this
  *   file's 23 if "the table" is read as excluding `backup-dir` from its own
  *   row count — which contradicts `backup-dir` being an explicit Reason-column
- *   value at row 2 of that same table. That inconsistency in the brief's own
+ *   value at row 2 of that same table. That inconsistency in SMI-6532's own
  *   phrasing is the flagged finding: this file ships with 23 members (the
  *   reading that keeps `backup-dir` counted once as a real reason, matching
  *   its own explicit table row), not 22, and `UPDATE_TARGET_REASONS.length`
- *   below is asserted against the literal `23`, not against the brief's
+ *   below is asserted against the literal `23`, not against SMI-6532's
  *   number, so a future edit that silently drops back to 22 (e.g. by
  *   mis-reading `backup-dir` as ungrouped-therefore-absent) fails loudly here.
  *
