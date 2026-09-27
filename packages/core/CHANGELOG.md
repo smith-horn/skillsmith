@@ -21,8 +21,12 @@ All notable changes to `@skillsmith/core` are documented here.
   `Function.prototype` test, then compares identities and `_writableState instanceof
   WritableState`), not on well-known-symbol status: `Symbol.iterator`, `asyncIterator` and the
   disposal hooks are extension points that may perform I/O, so they get a throwing spy. Wrapping
-  something pure fails visibly; handing something impure through fails silently. Eleven review rounds; the last three each found a defect introduced by the fix before
-  it, every one now pinned by an assertion that fails when reverted.
+  something pure fails visibly; handing something impure through fails silently. Twelve review rounds; the last four each found a defect introduced by the fix before it. Every
+  behavioural defect is pinned by an assertion that fails when reverted; the one exception is the
+  policy narrowing that restricts the symbol passthrough to `hasInstance`, which no realistic `fs`
+  surface can exercise today and which is justified by reading the implementation and by the
+  failure-direction asymmetry rather than by a red test -- a direct assertion on the policy set now
+  makes an accidental widening fail even so.
 
 - **Docs**: SMI-6841 -- three comment corrections in the update-eligibility gate's own files, with
   no behaviour change: every changed line in `update-target-reason.ts` and `update-target.probe.ts`

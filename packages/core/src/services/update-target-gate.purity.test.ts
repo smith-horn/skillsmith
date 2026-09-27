@@ -1281,6 +1281,20 @@ describe('the fs recorder — known-positive control (T-G3)', () => {
         expect({} instanceof ctor).toBe(false)
       }
 
+      // THE POLICY ITSELF, asserted. Round 12 reported that narrowing the
+      // passthrough from the whole well-known set to `Symbol.hasInstance` was an
+      // EQUIVALENT MUTANT: widening it back changed no test outcome, because no
+      // `fs` namespace function carries another non-default symbol hook today. So
+      // the narrowing was a safety improvement no test could observe, which is a
+      // fair description of a rule nothing enforces.
+      //
+      // This is deliberately an implementation-policy assertion rather than a
+      // behavioural one, and it earns that: it makes an accidental widening fail
+      // without inventing a synthetic `fs` surface that does not exist. Measured
+      // after adding it — adding `Symbol.asyncIterator` back now FAILS, so the
+      // mutant is no longer equivalent.
+      expect([...PASSTHROUGH_SYMBOLS]).toEqual([Symbol.hasInstance])
+
       // THE LANGUAGE HOOKS LEFT REAL, pinned by identity and scoped to THIS
       // module. The ledger is module-level, because `wrapNamespace` is, so it
       // accumulates across every mock the run has constructed — asserting it
