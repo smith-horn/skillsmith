@@ -42,10 +42,12 @@
  * machinery exists; this suite is not wired into it. Datapoint filed on SMI-5946.
  *
  * What that workflow DOES enforce, measured on PR #2945 (run 36217320852): `supabase start`
- * applies 20260925000000, so the migration's own smoke blocks execute and pass there. So the
- * lock's SHAPE is CI-enforced; only the behavioural guarantee in this suite is not. Keep the
- * two separate when describing coverage -- conflating them is what made both earlier drafts of
- * this note wrong.
+ * applies 20260925000000, so the migration's smoke blocks execute there. **As of PR #2947 that
+ * is SMOKE 2 only** -- the shape check (SMOKE 1) is deleted, because five rounds proved the
+ * textual defect class unbounded. So CI now enforces the GRANT boundaries and nothing about the
+ * lock: not its shape, not its behaviour. An earlier draft of this note said "the lock's SHAPE
+ * is CI-enforced"; that was true when written and is now false. This suite is the only thing
+ * that checks the lock at all, and it runs only when a human configures it.
  *
  * POSTGRES VERSION SENSITIVITY -- MEASURED, not assumed (SMI-6505 rule). Prod runs
  * postgres:17.6 (Debian/glibc, via supabase/postgres); the docker one-liner above uses
