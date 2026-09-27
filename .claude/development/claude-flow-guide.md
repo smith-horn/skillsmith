@@ -113,7 +113,7 @@ Configs in `.claude/hive-mind/`:
 
 ```bash
 ./start-hive-mind.sh                                                          # Run config
-node node_modules/ruflo/bin/ruflo.js swarm --config .claude/hive-mind/your-config.yaml   # Direct
+docker exec skillsmith-ruflo-1 node /opt/ruflo-seed/node_modules/@claude-flow/cli/bin/cli.js swarm --config .claude/hive-mind/your-config.yaml   # Direct (SMI-6744 Wave 4 removed ruflo from the host tree)
 ```
 
 ### Resource Profiles

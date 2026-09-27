@@ -293,13 +293,34 @@ export function findClaudeFlowReintroductions(repoRoot) {
   // to catch (found while writing this check's own test coverage).
   const pattern = /npx['",\s]+claude-flow/
 
-  const scanFile = (relPath) => {
+  const scanFile = (relPath, denyLiterals) => {
     const fullPath = join(repoRoot, relPath)
     if (!existsSync(fullPath)) return
     const lines = readFileSync(fullPath, 'utf8').split('\n')
     lines.forEach((line, idx) => {
       if (!pattern.test(line)) return
       if (/@see\s+SMI-\d+/.test(line)) return
+      // SMI-6744 Wave 4: a `.claude/settings.json` `permissions.deny` entry
+      // must literally spell the banned command it blocks (e.g.
+      // "Bash(npx claude-flow)") -- that is the opposite of "reintroduces
+      // npx claude-flow", so it must not be flagged. Scoped precisely to a
+      // line whose ENTIRE trimmed value parses as a JSON string that is a
+      // verbatim member of the parsed `permissions.deny` array -- an
+      // `allow` entry with the identical literal (the pre-existing,
+      // still-covered case this check exists for) is a JS object once its
+      // surrounding braces are included, or a differently-shaped string,
+      // so it is never accidentally exempted by this.
+      if (denyLiterals && denyLiterals.size > 0) {
+        const trimmed = line.trim().replace(/,$/, '')
+        let asString = null
+        try {
+          const parsedLine = JSON.parse(trimmed)
+          if (typeof parsedLine === 'string') asString = parsedLine
+        } catch {
+          // Not a bare JSON string on its own line -- fall through to flagging.
+        }
+        if (asString !== null && denyLiterals.has(asString)) return
+      }
       findings.push({ file: relPath, line: idx + 1 })
     })
   }
@@ -320,7 +341,21 @@ export function findClaudeFlowReintroductions(repoRoot) {
   walkShellScripts(join(repoRoot, 'scripts'), (p) => p.includes(`${join('scripts', 'prompts')}`))
   walkShellScripts(join(repoRoot, '.claude', 'helpers'), null)
 
-  scanFile('.claude/settings.json')
+  const settingsJsonPath = join(repoRoot, '.claude', 'settings.json')
+  let denyLiterals = new Set()
+  if (existsSync(settingsJsonPath)) {
+    try {
+      const parsedSettings = JSON.parse(readFileSync(settingsJsonPath, 'utf8'))
+      const denyArr =
+        parsedSettings && parsedSettings.permissions && parsedSettings.permissions.deny
+      if (Array.isArray(denyArr)) denyLiterals = new Set(denyArr)
+    } catch {
+      // Malformed settings.json: fall through with an empty exemption set,
+      // matching this check's pre-existing behavior of flagging every match
+      // when the file cannot be parsed as JSON.
+    }
+  }
+  scanFile('.claude/settings.json', denyLiterals)
   scanFile('docker-compose.yml')
 
   const packagesDir = join(repoRoot, 'packages')

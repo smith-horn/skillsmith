@@ -473,4 +473,78 @@ describe('findClaudeFlowReintroductions (SMI-5746 Check 59, sub-check 4)', () =>
     )
     expect(findings).toHaveLength(2)
   })
+
+  // SMI-6744 Wave 4: a permissions.deny entry must literally spell the
+  // banned command it blocks (e.g. "Bash(npx claude-flow)") -- that is a
+  // BLOCK, the opposite of "reintroduces npx claude-flow", and must not be
+  // flagged. Verified against the unfixed helper before this fix landed:
+  // reverting the denyLiterals exemption reproduced this exact false
+  // positive on the real .claude/settings.json (three findings at the
+  // Bash(npx claude-flow...) deny lines) -- confirmed via a manual revert
+  // + audit-standards.mjs run, not just by this test.
+  it('does not flag a pretty-printed permissions.deny entry that literally blocks npx claude-flow', () => {
+    const dir = scratchDir()
+    mkdirSync(join(dir, '.claude'), { recursive: true })
+    writeFileSync(
+      join(dir, '.claude', 'settings.json'),
+      JSON.stringify(
+        {
+          permissions: {
+            allow: [],
+            deny: ['Bash(npx claude-flow)', 'Bash(npx claude-flow *)', 'Bash(npx claude-flow@*)'],
+          },
+        },
+        null,
+        2
+      ) + '\n'
+    )
+
+    expect(findClaudeFlowReintroductions(dir)).toEqual([])
+  })
+
+  it('still flags an identical literal when it is in permissions.allow, not permissions.deny', () => {
+    const dir = scratchDir()
+    mkdirSync(join(dir, '.claude'), { recursive: true })
+    writeFileSync(
+      join(dir, '.claude', 'settings.json'),
+      JSON.stringify({ permissions: { allow: ['Bash(npx claude-flow)'], deny: [] } }, null, 2) +
+        '\n'
+    )
+
+    const findings = findClaudeFlowReintroductions(dir)
+    expect(findings).toHaveLength(1)
+    expect(findings[0].file).toBe('.claude/settings.json')
+  })
+
+  it('flags an allow entry even while an unrelated deny entry is present (discriminates by array, not by file)', () => {
+    const dir = scratchDir()
+    mkdirSync(join(dir, '.claude'), { recursive: true })
+    writeFileSync(
+      join(dir, '.claude', 'settings.json'),
+      JSON.stringify(
+        {
+          permissions: {
+            allow: ['Bash(npx claude-flow)'],
+            deny: ['Bash(npx claude-flow *)'],
+          },
+        },
+        null,
+        2
+      ) + '\n'
+    )
+
+    const findings = findClaudeFlowReintroductions(dir)
+    // Exactly the allow-array line should be flagged; the deny-array line
+    // (a different literal) must not be.
+    expect(findings).toHaveLength(1)
+  })
+
+  it('falls back to flagging every match when settings.json is not valid JSON', () => {
+    const dir = scratchDir()
+    mkdirSync(join(dir, '.claude'), { recursive: true })
+    writeFileSync(join(dir, '.claude', 'settings.json'), '{ this is not valid json npx claude-flow')
+
+    const findings = findClaudeFlowReintroductions(dir)
+    expect(findings).toEqual([{ file: '.claude/settings.json', line: 1 }])
+  })
 })
