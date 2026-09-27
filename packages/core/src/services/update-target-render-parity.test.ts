@@ -273,9 +273,13 @@ describe('SMI-6532 step 6: reason/result TABLE parity (MCP + VS Code)', () => {
     })
 
     it('reads parseDiagnostics off a real SourceFile — the field the guard depends on', () => {
-      // If TypeScript ever stops setting this internal field, the guard above throws
-      // its own "cannot read parseDiagnostics" error instead of silently passing. This
-      // asserts the field is present TODAY, so that day is visible here first.
+      // If TypeScript ever stops setting this internal field, the guard in
+      // `extractObjectLiteral` throws rather than silently passing — and that is what
+      // actually surfaces the change, not this test. The mirrored reads below run in
+      // the `describe` body, so vitest executes them at COLLECTION time: they would
+      // throw first and abort the whole file, and no `it()` here would run at all
+      // (measured: `Tests  no tests`). This assertion is a second, narrower signal
+      // that names the field directly for whoever reads the wreckage.
       const probe = ts.createSourceFile('probe.ts', 'export const T = {}', ts.ScriptTarget.Latest)
       const diagnostics = (probe as unknown as { parseDiagnostics?: readonly ts.Diagnostic[] })
         .parseDiagnostics

@@ -9,7 +9,9 @@ All notable changes to `@skillsmith/core` are documented here.
   through a cast, so a rename upstream would have read `undefined`, skipped the check, and restored
   the exact hole the guard exists to close -- quietly. Its absence is now fatal, and a canary test
   asserts the field is present on a real `SourceFile`, so the day TypeScript stops setting it fails
-  here first. Three refusal paths gained tests (unparseable source, missing field, absent export);
+  here first. Two refusal paths gained tests (unparseable source, absent export), plus a canary naming the
+  internal field; the missing-field throw itself stays untested because nothing can make TypeScript
+  drop the field on demand, and the mirrored reads would abort collection before any test ran anyway;
   red-tested by disabling the guard and by feeding the canary an object without the field. Found by
   the post-merge retro on PR #2952 -- I had verified the guard once by hand when adding it, which
   protected nothing afterwards.
