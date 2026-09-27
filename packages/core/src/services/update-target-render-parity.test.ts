@@ -1,5 +1,6 @@
 /**
- * @fileoverview Reason/result renderer parity test for SMI-6532 step 6, §4.4
+ * @fileoverview Reason/result TABLE parity test for SMI-6532 step 6 (preparatory),
+ *   §4.4
  *   of docs/internal/implementation/update-safety-and-source-resolution.md:
  *   "A parity test checks that, for every member, all three renderers
  *   return non-empty text and the same remediation kind."
@@ -95,6 +96,24 @@ function extractObjectLiteral(
     /* setParentNodes */ true,
     ts.ScriptKind.TS
   )
+
+  // PARSE ERRORS ARE FATAL HERE, checked rather than assumed.
+  // `createSourceFile` RECOVERS an AST from malformed syntax rather than
+  // throwing, so without this a syntactically broken mirror could still yield a
+  // plausible-looking table — and the prose above used to claim a malformed
+  // declaration "fails loudly", which the gate correctly called too broad. The
+  // cheap fix is to make the claim true instead of narrowing it: a mirror that
+  // does not parse cleanly is not a mirror this test can speak about.
+  const parseErrors = (sourceFile as unknown as { parseDiagnostics?: readonly ts.Diagnostic[] })
+    .parseDiagnostics
+  if (parseErrors !== undefined && parseErrors.length > 0) {
+    const first = ts.flattenDiagnosticMessageText(parseErrors[0]?.messageText ?? '', ' ')
+    throw new Error(
+      `${fileName} does not parse cleanly (${parseErrors.length} diagnostic(s)); ` +
+        `first: ${first}. Refusing to extract "${exportName}" from a file the parser ` +
+        `had to recover.`
+    )
+  }
 
   // Top-level statements only — a `const` nested inside a namespace or
   // function is not what a flat mirror file is supposed to export.
@@ -210,9 +229,14 @@ const ALL_MEMBERS: TaggedMember[] = [
 // cross-family rounds on PR #2952 each found this note claiming more than the
 // assertions below deliver.
 //
-// It establishes exactly two things. Each table COVERS core's closed sets with
-// non-empty text -- checked per table, independently. And the VS Code remediation-kind
-// table AGREES WITH CORE, member by member.
+// It establishes three things, not the "exactly two" an earlier version of this note
+// claimed -- that was an UNDERCLAIM, and the direction I had just been corrected for
+// overshooting. First, the member arithmetic itself: 23 reasons + 15 results = 38
+// tagged members, asserted directly, so a change to either closed set fails here
+// before any table is read. Second, each table COVERS those sets with non-empty text
+// -- checked per table, independently. Third, the VS Code remediation-kind table
+// AGREES WITH CORE, member by member. The extractor additionally refuses a mirror it
+// cannot read cleanly, which is a precondition rather than a parity property.
 //
 // It does NOT compare the MCP text with the VS Code text. The two could hold
 // completely different sentences and still pass, which is deliberate: §4.4 has each

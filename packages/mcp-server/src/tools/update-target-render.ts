@@ -1,5 +1,7 @@
 /**
- * @fileoverview Shared reason/result text renderer for the MCP surface
+ * @fileoverview Shared reason/result text TABLE for the MCP surface -- the data a
+ *   renderer will use, not a renderer: nothing consumes it yet, so calling it one
+ *   would restate the claim the cross-family gate rejected
  *   (SMI-6532 step 6, §4.4 of
  *   docs/internal/implementation/update-safety-and-source-resolution.md).
  *
