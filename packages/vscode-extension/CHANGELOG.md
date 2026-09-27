@@ -6,6 +6,21 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/), and this
 
 ## [Unreleased]
 
+- **Feature**: SMI-6532 step 6 (preparatory -- see the scope note below) -- `manifestReader` now also carries two tables: a total `Record` from
+  every update skip reason and result code to the text this extension will show, and a mirror of which
+  remediation kind each member maps to. **Nothing consumes either yet**: the call site arrives with
+  the CLI/gate work tracked on SMI-6531, so this is preparatory data, not user-visible behaviour.
+
+  Two guards, and they cover different things -- an earlier version of this entry merged them and was
+  wrong as a result. TypeScript enforces that the text table is exhaustive over **this package's own
+  copy** of the two unions, so deleting an entry fails `tsc` here (measured: TS2741). It cannot see
+  core adding a member, because the copy is what the table is typed against; a parity test in core
+  AST-reads this file and is what catches the copy drifting from core's closed sets.
+
+  The remediation mirror is what keeps that parity test non-vacuous. The MCP surface will obtain its
+  kinds from core's own `remediationFor`, so comparing MCP against core would compare core with
+  itself; this copy can genuinely drift, so it is the one worth checking.
+
 - **Feature**: SMI-6532 -- the existing `manifestReader` service now carries the closed sets of
   update skip reasons and result codes (23 and 15 members) that the update eligibility gate uses.
   They are deliberately mirrored from `@skillsmith/core` rather than imported, because this
