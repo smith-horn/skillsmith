@@ -42,10 +42,12 @@
  * machinery exists; this suite is not wired into it. Datapoint filed on SMI-5946.
  *
  * What that workflow DOES enforce, measured on PR #2945 (run 36217320852): `supabase start`
- * applies 20260925000000, so the migration's own smoke blocks execute and pass there. So the
- * lock's SHAPE is CI-enforced; only the behavioural guarantee in this suite is not. Keep the
- * two separate when describing coverage -- conflating them is what made both earlier drafts of
- * this note wrong.
+ * applies 20260925000000, so the migration's smoke blocks execute there. **As of PR #2947 that
+ * is SMOKE 2 only** -- the shape check (SMOKE 1) is deleted, because five rounds proved the
+ * textual defect class unbounded. So CI now enforces the GRANT boundaries and nothing about the
+ * lock: not its shape, not its behaviour. An earlier draft of this note said "the lock's SHAPE
+ * is CI-enforced"; that was true when written and is now false. This suite is the only thing
+ * that checks the lock at all, and it runs only when a human configures it.
  *
  * POSTGRES VERSION SENSITIVITY -- MEASURED, not assumed (SMI-6505 rule). Prod runs
  * postgres:17.6 (Debian/glibc, via supabase/postgres); the docker one-liner above uses
@@ -54,7 +56,9 @@
  * 100% reliable on BOTH (every red-test run, both engines); the deadlock reproduction (at the
  * shipped MEMBER_COUNT) was 5/5 on 17.6 and 4/5 on 17.11-alpine -- comparable, not identical,
  * but the same qualitative result on both, and the GREEN (fixed-code) assertions held 100% on
- * both across every run and every roster size tried. Row-level lock strength (FOR UPDATE),
+ * both across every run and every roster size tried. Row-level lock strength
+ * (FOR NO KEY UPDATE -- NOT FOR UPDATE, which conflicts with the FOR KEY SHARE every FK-child
+ * insert takes on profiles(id); 12 columns reference it),
  * READ COMMITTED snapshot/MVCC semantics, and the deadlock detector are core lock-manager /
  * storage-engine behavior -- unrelated to musl-vs-glibc OS packaging, and Postgres's own
  * versioning policy restricts 17.x minor/patch releases to bug fixes, not behavior changes to

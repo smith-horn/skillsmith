@@ -86,7 +86,7 @@ describe.skipIf(noLiveTestPg)('SMI-6656 -- recompute_user_tier lock, two live se
     // A fires its recompute concurrently, without awaiting. Pre-fix: its SELECT (no lock
     // needed) runs immediately against the CURRENT committed subscriptions ('individual'),
     // then its UPDATE blocks on B's held lock. Post-fix: its very first statement (the new
-    // FOR UPDATE) blocks immediately, before it has read anything at all.
+    // FOR NO KEY UPDATE) blocks immediately, before it has read anything at all.
     // Capture A's own backend PID BEFORE firing, so the wait below is attributed to A and
     // not to any other backend that happens to be waiting on a lock while running this
     // function. Counting "some active backend whose query text matches" would go green on a
@@ -202,15 +202,18 @@ describe.skipIf(noLiveTestPg)('SMI-6656 -- recompute_user_tier lock, two live se
   // REQUIREMENT 4 -- the lock is actually ACQUIRED, not merely present in the
   // source text.
   //
-  // Why this test exists, and why it is here rather than in the migration's
-  // own smoke block. The migration asserts the locking statement's SHAPE by
-  // reading pg_proc.prosrc. Text presence is not evidence of reachability, and
-  // no pattern can make it so: `IF FALSE THEN <the exact statement> END IF;`
-  // satisfies any textual assertion and acquires nothing. Measured -- it
-  // passed a stricter earlier version of that block, as did a /* */-commented
-  // copy and a lowercase copy moved after the read. A cross-family reviewer
-  // named all three; the migration's smoke now says plainly that it proves
-  // shape only, and this is the test that proves the behaviour.
+  // Why this test exists, and why it is now the ONLY thing asserting the lock.
+  // The migration used to assert the statement's SHAPE by reading
+  // pg_proc.prosrc. That block is DELETED -- do not read this comment as
+  // describing a secondary guard that still exists. Five review rounds each
+  // found a new way to satisfy a textual check while acquiring no lock:
+  // `IF FALSE THEN <the statement> END IF;`, a /* */-commented copy, a
+  // lowercase copy after the read, two whitespace spellings, the text inside a
+  // string literal, and a nested block comment. The class is unbounded, so the
+  // check was removed rather than patched a sixth time. What that cost is
+  // recorded in the migration header: input-DEPENDENT predicate narrowing now
+  // ships even when this suite runs, because this suite tests fixed fixture
+  // ids. What survives here is the behavioural assertion.
   //
   // ATTRIBUTION. `xmax` is set by ANY row lock or update, so the probe row is
   // chosen so that nothing else in the function can set it: tier is already
