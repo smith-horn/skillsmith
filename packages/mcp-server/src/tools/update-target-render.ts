@@ -23,10 +23,15 @@
  *   `UpdateResultCode` to render. That call site arrives with SMI-6532 step
  *   5 / A1's update-target classification pipeline (`update-target-gate.ts`,
  *   `update-target.probe.ts`) landing behind an MCP entry point. Exporting
- *   this table now, unwired, keeps this package's half of the §4.4
- *   three-surface parity property checkable today (via the parity test in
- *   this file's sibling `.test.ts`) without inventing a call site that would
- *   change either tool's current output shape.
+ *   this table now, unwired, makes this package's half of §4.4's member set
+ *   checkable today without inventing a call site that would change either
+ *   tool's current output shape. The check lives in the CORE package, not in a
+ *   sibling `.test.ts` here -- it AST-reads this file because core cannot
+ *   import mcp-server. And it checks the TABLE, not rendering: there is no
+ *   call site, so nothing asserts that a user ever sees any of this text. That
+ *   distinction was drawn by the cross-family gate on PR #2952; the earlier
+ *   wording here claimed renderer parity was checkable today, which overstated
+ *   a dormant table's completeness as behaviour.
  *
  *   Total `Record<UpdateTargetReason | UpdateResultCode, string>` (§4.4:
  *   "Every renderer is a `Record<UpdateTargetReason | UpdateResultCode,

@@ -206,7 +206,19 @@ const ALL_MEMBERS: TaggedMember[] = [
   ...UPDATE_RESULT_CODES.map((value): TaggedMember => ({ kind: 'result', value })),
 ]
 
-describe('SMI-6532 step 6: reason/result renderer parity (MCP + VS Code)', () => {
+// WHAT THIS TEST MEASURES, AND WHAT IT DOES NOT. §4.4 defines a renderer AS a
+// `Record<UpdateTargetReason | UpdateResultCode, ...>`, so comparing the tables is
+// comparing the renderers as specified. But neither table has a consumer yet: the
+// MCP tools still emit their own older diagnosis shapes and the VS Code reader only
+// declares its copy. So passing here establishes that the two DATA SETS agree with
+// core's closed sets and with each other -- not that any text a user sees comes
+// from them. The cross-family gate on PR #2952 named this precisely, and the honest
+// fix was to say so rather than to invent call sites step 5 will bring.
+//
+// Concretely: these arms cannot fail because a surface renders the wrong thing at
+// runtime. They fail when a table omits a member, leaves one blank, or disagrees
+// with core about a member's remediation kind.
+describe('SMI-6532 step 6: reason/result TABLE parity (MCP + VS Code)', () => {
   it('sanity: 23 reasons + 15 results = 38 tagged members', () => {
     expect(UPDATE_TARGET_REASONS.length).toBe(23)
     expect(UPDATE_RESULT_CODES.length).toBe(15)
@@ -217,12 +229,12 @@ describe('SMI-6532 step 6: reason/result renderer parity (MCP + VS Code)', () =>
   const vsCodeText = readMirroredObject(VSCODE_MANIFEST_READER_PATH, 'UPDATE_TARGET_TEXT')
   const vsCodeKind = readMirroredObject(VSCODE_MANIFEST_READER_PATH, 'UPDATE_REMEDIATION_KIND')
 
-  it.each(ALL_MEMBERS)('$kind "$value": MCP renders non-empty text', ({ value }) => {
+  it.each(ALL_MEMBERS)('$kind "$value": the MCP table carries non-empty text', ({ value }) => {
     expect(mcpText[value], `MCP has no text for "${value}"`).toBeTruthy()
     expect(mcpText[value]?.length, `MCP text for "${value}" is empty`).toBeGreaterThan(0)
   })
 
-  it.each(ALL_MEMBERS)('$kind "$value": VS Code renders non-empty text', ({ value }) => {
+  it.each(ALL_MEMBERS)('$kind "$value": the VS Code table carries non-empty text', ({ value }) => {
     expect(vsCodeText[value], `VS Code has no text for "${value}"`).toBeTruthy()
     expect(vsCodeText[value]?.length, `VS Code text for "${value}" is empty`).toBeGreaterThan(0)
   })
