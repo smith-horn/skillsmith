@@ -169,6 +169,11 @@
             "type": "command",
             "timeout": 5,
             "command": "node \"$CLAUDE_PROJECT_DIR/scripts/env-read-guard.mjs\""
+          },
+          {
+            "type": "command",
+            "timeout": 5,
+            "command": "node \"$CLAUDE_PROJECT_DIR/scripts/ruflo-host-guard.mjs\""
           }
         ]
       },
@@ -198,6 +203,16 @@
             "type": "command",
             "timeout": 5,
             "command": "node \"$CLAUDE_PROJECT_DIR/scripts/linear-issue-creation-guard.mjs\""
+          }
+        ]
+      },
+      {
+        "matcher": "^mcp__ruflo__hooks_session-start$",
+        "hooks": [
+          {
+            "type": "command",
+            "timeout": 5,
+            "command": "node \"$CLAUDE_PROJECT_DIR/scripts/ruflo-host-guard.mjs\""
           }
         ]
       }

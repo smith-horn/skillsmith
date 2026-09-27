@@ -86,6 +86,8 @@ import { evaluateSettingsEnv, settingsEnvReportLines } from './audit-settings-en
 import {
   evaluateRufloHostPaths,
   rufloHostPathsReportLines,
+  evaluateRufloHostGuardHooks,
+  rufloHostGuardHooksReportLines,
   evaluateRufloMcpDenies,
   rufloMcpDeniesReportLines,
 } from './audit-ruflo-host-paths-helpers.mjs'
@@ -6325,6 +6327,14 @@ console.log(`\n${BOLD}Check 74: SMI-6744 Wave 4 Bash deny set + host-tree remova
   const reporters = { pass, warn, fail }
   for (const line of rufloHostPathsReportLines(
     evaluateRufloHostPaths({ settingsPath: join('.claude', 'settings.json'), root: '.' })
+  )) {
+    reporters[line.severity](line.message, line.fix)
+  }
+  // A4.6 addition: the ruflo-host-guard.mjs hook-entry tripwire (detection,
+  // not prevention -- design doc § 8 item 13). Purely additive report
+  // lines under the same Check 74 number, same helper file.
+  for (const line of rufloHostGuardHooksReportLines(
+    evaluateRufloHostGuardHooks({ settingsPath: join('.claude', 'settings.json') })
   )) {
     reporters[line.severity](line.message, line.fix)
   }

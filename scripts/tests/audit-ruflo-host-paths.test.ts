@@ -25,6 +25,8 @@ import {
   RUFLO_MCP_DENY_ENTRIES,
   evaluateRufloHostPaths,
   rufloHostPathsReportLines,
+  evaluateRufloHostGuardHooks,
+  rufloHostGuardHooksReportLines,
   evaluateRufloMcpDenies,
   rufloMcpDeniesReportLines,
 } from '../audit-ruflo-host-paths-helpers.mjs'
@@ -119,6 +121,21 @@ const ALL_37_MCP_ENTRIES = [
 
 function settingsWithDeny(denyEntries: string[]): string {
   return JSON.stringify({ permissions: { deny: denyEntries } })
+}
+
+function settingsWithHooks(preToolUse: unknown[]): string {
+  return JSON.stringify({ hooks: { PreToolUse: preToolUse } })
+}
+
+const RUFLO_GUARD_COMMAND = 'node "$CLAUDE_PROJECT_DIR/scripts/ruflo-host-guard.mjs"'
+
+const BASH_HOOK_ENTRY = {
+  matcher: 'Bash',
+  hooks: [{ type: 'command', timeout: 5, command: RUFLO_GUARD_COMMAND }],
+}
+const SESSION_START_HOOK_ENTRY = {
+  matcher: '^mcp__ruflo__hooks_session-start$',
+  hooks: [{ type: 'command', timeout: 5, command: RUFLO_GUARD_COMMAND }],
 }
 
 const __dirname = dirname(fileURLToPath(import.meta.url))
@@ -328,6 +345,106 @@ describe('not_evaluated: neither check reports an unread settings file as a pass
   })
 })
 
+describe('Check 74 hook-entry tripwire (SMI-6744 A4.6): scripts/ruflo-host-guard.mjs registration', () => {
+  it('both entries present -> evaluated true/true, one pass line', () => {
+    const verdict = evaluateRufloHostGuardHooks({
+      settingsPath: '.claude/settings.json',
+      readFile: () => settingsWithHooks([BASH_HOOK_ENTRY, SESSION_START_HOOK_ENTRY]),
+    })
+    expect(verdict.status).toBe('evaluated')
+    expect(verdict.hasBashEntry).toBe(true)
+    expect(verdict.hasSessionStartEntry).toBe(true)
+    const lines = rufloHostGuardHooksReportLines(verdict)
+    expect(lines).toHaveLength(1)
+    expect(lines[0].severity).toBe('pass')
+  })
+
+  it('RED: the Bash matcher entry removed -> fails naming "Bash"', () => {
+    const verdict = evaluateRufloHostGuardHooks({
+      settingsPath: '.claude/settings.json',
+      readFile: () => settingsWithHooks([SESSION_START_HOOK_ENTRY]),
+    })
+    expect(verdict.hasBashEntry).toBe(false)
+    expect(verdict.hasSessionStartEntry).toBe(true)
+    const lines = rufloHostGuardHooksReportLines(verdict)
+    expect(lines).toHaveLength(1)
+    expect(lines[0].severity).toBe('fail')
+    expect(lines[0].message).toContain('"Bash"')
+  })
+
+  it('RED: the session-start matcher entry removed -> fails naming it', () => {
+    const verdict = evaluateRufloHostGuardHooks({
+      settingsPath: '.claude/settings.json',
+      readFile: () => settingsWithHooks([BASH_HOOK_ENTRY]),
+    })
+    expect(verdict.hasBashEntry).toBe(true)
+    expect(verdict.hasSessionStartEntry).toBe(false)
+    const lines = rufloHostGuardHooksReportLines(verdict)
+    expect(lines).toHaveLength(1)
+    expect(lines[0].severity).toBe('fail')
+    expect(lines[0].message).toContain('^mcp__ruflo__hooks_session-start$')
+  })
+
+  it('RED: both entries removed -> two fail lines', () => {
+    const verdict = evaluateRufloHostGuardHooks({
+      settingsPath: '.claude/settings.json',
+      readFile: () => settingsWithHooks([]),
+    })
+    expect(verdict.hasBashEntry).toBe(false)
+    expect(verdict.hasSessionStartEntry).toBe(false)
+    expect(rufloHostGuardHooksReportLines(verdict)).toHaveLength(2)
+  })
+
+  it('RED: a functionally inert hook (wrong type) carrying the right text does NOT count', () => {
+    // Type + exact invocation-shape check, not a bare substring match on
+    // the whole file — a hook object whose `type` isn't 'command' (e.g.
+    // silently swapped to something inert) must still fail, even though
+    // its `command`-shaped field contains both required substrings.
+    const verdict = evaluateRufloHostGuardHooks({
+      settingsPath: '.claude/settings.json',
+      readFile: () =>
+        settingsWithHooks([
+          {
+            matcher: 'Bash',
+            hooks: [{ type: 'not-a-command', command: RUFLO_GUARD_COMMAND }],
+          },
+          SESSION_START_HOOK_ENTRY,
+        ]),
+    })
+    expect(verdict.hasBashEntry).toBe(false)
+  })
+
+  it('RED: the right matcher/type but a command missing scripts/ruflo-host-guard.mjs does NOT count', () => {
+    const verdict = evaluateRufloHostGuardHooks({
+      settingsPath: '.claude/settings.json',
+      readFile: () =>
+        settingsWithHooks([
+          {
+            matcher: 'Bash',
+            hooks: [
+              { type: 'command', command: 'node "$CLAUDE_PROJECT_DIR/scripts/env-read-guard.mjs"' },
+            ],
+          },
+          SESSION_START_HOOK_ENTRY,
+        ]),
+    })
+    expect(verdict.hasBashEntry).toBe(false)
+  })
+
+  it('not_evaluated: unreadable settings file fails rather than passing', () => {
+    const verdict = evaluateRufloHostGuardHooks({
+      settingsPath: '.claude/settings.json',
+      readFile: () => {
+        throw new Error("ENOENT: no such file or directory, open '.claude/settings.json'")
+      },
+    })
+    expect(verdict.status).toBe('not_evaluated')
+    const lines = rufloHostGuardHooksReportLines(verdict)
+    expect(lines).toHaveLength(1)
+    expect(lines[0].severity).toBe('fail')
+  })
+})
+
 describe('SMI-6744: the real .claude/settings.json in this repo', () => {
   it('Check 74 arm (a): every Bash deny entry is present', () => {
     const verdict = evaluateRufloHostPaths({
@@ -336,6 +453,15 @@ describe('SMI-6744: the real .claude/settings.json in this repo', () => {
     })
     expect(verdict.status).toBe('evaluated')
     expect(verdict.missingBashEntries).toEqual([])
+  })
+
+  it('Check 74 hook-entry tripwire: both scripts/ruflo-host-guard.mjs entries are registered', () => {
+    const verdict = evaluateRufloHostGuardHooks({
+      settingsPath: join(REPO_ROOT, '.claude', 'settings.json'),
+    })
+    expect(verdict.status).toBe('evaluated')
+    expect(verdict.hasBashEntry).toBe(true)
+    expect(verdict.hasSessionStartEntry).toBe(true)
   })
 
   it('Check 75: every MCP deny entry is present', () => {
