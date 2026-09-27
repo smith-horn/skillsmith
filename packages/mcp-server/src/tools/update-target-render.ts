@@ -1,7 +1,6 @@
 /**
- * @fileoverview Shared reason/result text TABLE for the MCP surface -- the data a
- *   renderer will use, not a renderer: nothing consumes it yet, so calling it one
- *   would restate the claim the cross-family gate rejected
+ * @fileoverview Shared reason/result text TABLE for the MCP surface — the data a
+ *   renderer will use. Not itself a renderer: nothing consumes it yet
  *   (SMI-6532 step 6, §4.4 of
  *   docs/internal/implementation/update-safety-and-source-resolution.md).
  *
@@ -28,17 +27,15 @@
  *   this table now, unwired, makes this package's half of §4.4's member set
  *   checkable today without inventing a call site that would change either
  *   tool's current output shape. That is PREPARATORY, not step 6 complete:
- *   §4.4 says each surface RENDERS, and T-R4 fails if a member renders empty
- *   on a surface, so a table nothing consumes satisfies the data-shape half of
- *   the requirement and none of the behavioural half. Completion is wiring
- *   these tables into surface output and testing that boundary, which needs
- *   step 5's call sites. The check lives in the CORE package, not in a
- *   sibling `.test.ts` here -- it AST-reads this file because core cannot
- *   import mcp-server. And it checks the TABLE, not rendering: there is no
- *   call site, so nothing asserts that a user ever sees any of this text. That
- *   distinction was drawn by the cross-family gate on PR #2952; the earlier
- *   wording here claimed renderer parity was checkable today, which overstated
- *   a dormant table's completeness as behaviour.
+ *   §4.4 says each surface RENDERS and T-R4 fails on a member that renders
+ *   empty, so a table nothing consumes meets the data-shape half of the
+ *   requirement and none of the behavioural half. Completion is wiring these
+ *   tables into surface output, which needs step 5's call sites.
+ *
+ *   The check lives in the CORE package, not in a sibling `.test.ts` here: it
+ *   AST-reads this file, because core cannot import mcp-server. It checks the
+ *   TABLE, not rendering — nothing asserts that a user ever sees any of this
+ *   text.
  *
  *   Total `Record<UpdateTargetReason | UpdateResultCode, string>` (§4.4:
  *   "Every renderer is a `Record<UpdateTargetReason | UpdateResultCode,

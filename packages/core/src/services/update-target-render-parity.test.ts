@@ -97,13 +97,10 @@ function extractObjectLiteral(
     ts.ScriptKind.TS
   )
 
-  // PARSE ERRORS ARE FATAL HERE, checked rather than assumed.
-  // `createSourceFile` RECOVERS an AST from malformed syntax rather than
-  // throwing, so without this a syntactically broken mirror could still yield a
-  // plausible-looking table — and the prose above used to claim a malformed
-  // declaration "fails loudly", which the gate correctly called too broad. The
-  // cheap fix is to make the claim true instead of narrowing it: a mirror that
-  // does not parse cleanly is not a mirror this test can speak about.
+  // PARSE ERRORS ARE FATAL HERE. `createSourceFile` RECOVERS an AST from malformed
+  // syntax rather than throwing, so without this check a syntactically broken mirror
+  // still yields a plausible-looking table. A mirror that does not parse cleanly is
+  // not one this test can speak about.
   const parseErrors = (sourceFile as unknown as { parseDiagnostics?: readonly ts.Diagnostic[] })
     .parseDiagnostics
   if (parseErrors !== undefined && parseErrors.length > 0) {
@@ -225,38 +222,31 @@ const ALL_MEMBERS: TaggedMember[] = [
   ...UPDATE_RESULT_CODES.map((value): TaggedMember => ({ kind: 'result', value })),
 ]
 
-// WHAT THIS TEST MEASURES, AND WHAT IT DOES NOT. Stated precisely because two
-// cross-family rounds on PR #2952 each found this note claiming more than the
-// assertions below deliver.
+// SCOPE. This compares TABLES, not rendering.
 //
-// It establishes three things, not the "exactly two" an earlier version of this note
-// claimed -- that was an UNDERCLAIM, and the direction I had just been corrected for
-// overshooting. First, the member arithmetic itself: 23 reasons + 15 results = 38
-// tagged members, asserted directly, so a change to either closed set fails here
-// before any table is read. Second, each table COVERS those sets with non-empty text
-// -- checked per table, independently. Third, the VS Code remediation-kind table
-// AGREES WITH CORE, member by member. The extractor additionally refuses a mirror it
-// cannot read cleanly, which is a precondition rather than a parity property.
+// Established:
+//   1. 23 reasons + 15 results = 38 tagged members, asserted directly, so a change
+//      to either closed set fails before any table is read.
+//   2. Each table covers those sets with non-empty text — per table, independently.
+//   3. The VS Code remediation-kind table agrees with core, member by member.
 //
-// It does NOT compare the MCP text with the VS Code text. The two could hold
-// completely different sentences and still pass, which is deliberate: §4.4 has each
-// surface write its own wording, so identical text is not the property worth pinning.
-// An earlier version of this note said the tables "agree with each other", which was
-// simply false.
+// Not established:
+//   - That MCP text and VS Code text say the same thing. They need not: §4.4 has each
+//     surface write its own wording, so identical text is not a property worth pinning.
+//   - That anything renders. §4.4's "Every renderer is a `Record<…>`" constrains a
+//     renderer's representation; it does not make an unconsumed Record a renderer.
+//     Neither table has a consumer yet, so no arm can fail because a surface rendered
+//     the wrong thing at runtime. Step 6 is PREPARATORY on that account; completion
+//     is wiring these tables into surface output, which needs step 5's call sites.
 //
-// It also does not establish rendering. §4.4's "Every renderer is a `Record<...>`"
-// constrains a renderer's REPRESENTATION; it does not make a conforming Record a
-// renderer. Neither table has a consumer -- the MCP tools still emit their own older
-// diagnosis shapes and the VS Code reader only declares its copy -- so no arm here can
-// fail because a surface rendered the wrong thing at runtime. Step 6 is therefore
-// PREPARATORY and not complete against §4.4 / T-R4; completion is wiring the tables
-// into surface output and testing that boundary, which needs step 5's call sites.
+// An arm fails when a table omits a member, leaves one blank, or disagrees with core
+// on a remediation kind. Extraction failures — a file that does not parse, a missing
+// or non-object export, a value reference where a literal belongs — throw instead,
+// which is a precondition rather than a parity result.
 //
-// Arms fail when a table omits a member, leaves one blank, or disagrees with core
-// about a remediation kind -- and also, not exhaustively, when the AST extraction
-// rejects the mirror outright: a malformed declaration, unsupported object syntax, a
-// rename, or an in-file value reference all fail loudly rather than yielding an empty
-// table.
+// SMI-6532 and PR #2952 hold the review history that produced these boundaries. It is
+// deliberately not repeated here: four consecutive rounds found a defect in this note
+// while it recounted the previous round, which is the pattern `pr-reviewer` names.
 describe('SMI-6532 step 6: reason/result TABLE parity (MCP + VS Code)', () => {
   it('sanity: 23 reasons + 15 results = 38 tagged members', () => {
     expect(UPDATE_TARGET_REASONS.length).toBe(23)
