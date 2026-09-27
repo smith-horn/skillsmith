@@ -14,10 +14,14 @@ All notable changes to `@skillsmith/core` are documented here.
   same reflective surface the differential walks, excluding only keys where the target already
   resolves the identical function, so gaps went 143 -> 0 and roughly 130 lines that existed purely
   to DESCRIBE the gap were deleted. Own members mirror their real descriptor; inherited members sit
-  on a shadow prototype so `Object.hasOwn` still answers as production does; and well-known symbols
-  consulted by language operations are handed through real, because wrapping `Writable`'s custom
-  `Symbol.hasInstance` made `x instanceof fs.WriteStream` -- a pure type check -- report a purity
-  violation. Eleven review rounds; the last three each found a defect introduced by the fix before
+  on a shadow prototype so `Object.hasOwn` still answers as production does; and exactly one symbol,
+  `Symbol.hasInstance`, is handed through real, because wrapping `Writable`'s custom implementation
+  made `x instanceof fs.WriteStream` -- a pure type check -- report a purity violation. That
+  exception is keyed on the one implementation that was READ (Node 22's runs the default
+  `Function.prototype` test, then compares identities and `_writableState instanceof
+  WritableState`), not on well-known-symbol status: `Symbol.iterator`, `asyncIterator` and the
+  disposal hooks are extension points that may perform I/O, so they get a throwing spy. Wrapping
+  something pure fails visibly; handing something impure through fails silently. Eleven review rounds; the last three each found a defect introduced by the fix before
   it, every one now pinned by an assertion that fails when reverted.
 
 - **Docs**: SMI-6841 -- three comment corrections in the update-eligibility gate's own files, with

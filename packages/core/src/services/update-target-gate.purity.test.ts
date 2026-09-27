@@ -346,17 +346,27 @@ function reflectiveEntries(
 }
 
 /**
- * Well-known symbols, by identity. These are consulted by LANGUAGE OPERATIONS
- * rather than called as I/O: `Symbol.hasInstance` by `instanceof`,
- * `Symbol.iterator` by `for...of`, `Symbol.toPrimitive` by coercion. Replacing
- * one with a throwing spy converts a pure type check into a purity FAILURE — a
- * false positive, the mock reporting a violation production could never commit.
+ * The ONE symbol whose non-default implementation is handed through the mock
+ * unwrapped, rather than every well-known symbol.
+ *
+ * An earlier version of this used the whole well-known set, justified as "these
+ * are consulted by language operations rather than called as I/O". The
+ * cross-family gate refuted the generalisation and it was wrong: `Symbol.iterator`,
+ * `Symbol.asyncIterator`, `Symbol.dispose` and `Symbol.asyncDispose` are
+ * EXTENSION POINTS whose implementations may read, write or close. A namespace
+ * function acquiring an async iterator would have become an unrecorded I/O path
+ * under that rule, and the exact-set assertion below would have failed loudly on
+ * it — but failing loudly is not the same as classifying it correctly.
+ *
+ * `Symbol.hasInstance` is here because its one live implementation was CHECKED,
+ * not because of the category it belongs to: Node 22's
+ * `Writable[Symbol.hasInstance]` runs the ordinary `Function.prototype` test and
+ * then compares identities and `_writableState instanceof WritableState`. No I/O.
+ * Anything else — including another well-known symbol — gets a throwing spy,
+ * which is the safe default: wrapping something pure produces a visible false
+ * failure, while handing something impure through produces silence.
  */
-const WELL_KNOWN_SYMBOLS: ReadonlySet<symbol> = new Set(
-  Object.getOwnPropertyNames(Symbol)
-    .map((name) => (Symbol as unknown as Record<string, unknown>)[name])
-    .filter((value): value is symbol => typeof value === 'symbol')
-)
+const PASSTHROUGH_SYMBOLS: ReadonlySet<symbol> = new Set([Symbol.hasInstance])
 
 /**
  * Every language hook left UNWRAPPED, as `<owner>.<symbol>`. Asserted against an
@@ -438,7 +448,7 @@ function wrapNamespace(ns: Record<string, unknown>, moduleName: string): Record<
     )) {
       if (typeof memberValue !== 'function') continue
 
-      // A LANGUAGE HOOK IS NOT AN I/O ENTRY POINT. Round 11 (the post-merge
+      // ONE MEASURED EXCEPTION, NOT A CATEGORY. Round 11 (the post-merge
       // retro) found that `Writable` defines a custom `Symbol.hasInstance`, which
       // `WriteStream` and `FileWriteStream` inherit — so the reflective walk that
       // closed the 142-function gap was also wrapping it, and
@@ -453,11 +463,15 @@ function wrapNamespace(ns: Record<string, unknown>, moduleName: string): Record<
       // WRAPPED — a wrong answer that happens to be green.
       //
       // The residual, stated rather than buried: that real function is reachable
-      // through the mock, so I/O inside it would go undetected. Measured — it is a
-      // duck-type property check, and `hasInstance` is the ONLY well-known symbol
-      // resolving a non-default callable anywhere on these namespaces, on exactly
-      // four owners. The control asserts that set, so a fifth fails loudly.
-      if (typeof member === 'symbol' && WELL_KNOWN_SYMBOLS.has(member)) {
+      // through the mock, so I/O inside it would go undetected. Two things make
+      // that acceptable and NEITHER is "it is a language hook" — round 12 refuted
+      // that generalisation. First, this implementation was read: it runs the
+      // default `Function.prototype` test, then compares identities and
+      // `_writableState instanceof WritableState`. Second, the passthrough is keyed
+      // on `Symbol.hasInstance` alone, so an `asyncIterator` that could genuinely
+      // do I/O gets a throwing spy instead. The exact four-path ledger is asserted
+      // on top of that, so a new OWNER also fails loudly.
+      if (typeof member === 'symbol' && PASSTHROUGH_SYMBOLS.has(member)) {
         const plainDefault = function () {} as unknown as Record<symbol, unknown>
         if (plainDefault[member] !== memberValue) {
           languageHooksLeftReal.push(`${moduleName}.${name}.${String(member)}`)
@@ -1245,16 +1259,21 @@ describe('the fs recorder — known-positive control (T-G3)', () => {
 
       // And the behaviour that motivated it: `instanceof` against a mocked
       // constructor must ANSWER, not throw. This is the known-positive for the
-      // whole language-hook branch — with the hook wrapped instead of handed
-      // through real, this line throws "must be pure" and the branch's value is
-      // demonstrated rather than argued.
+      // whole passthrough branch — with the hook wrapped, this line throws
+      // "must be pure", so the branch's value is demonstrated rather than argued.
       //
-      // Gated on the module HAVING such a constructor, taken from the hooks table
-      // rather than probed: vitest's ESM interop THROWS on an undefined named
-      // export rather than returning undefined, so an unguarded read of
-      // `WriteStream` on `node:fs/promises` fails before any `typeof` check can
-      // run. Measured — that is exactly how the first version of this probe broke.
-      if (expectedLanguageHooks.length > 0) {
+      // SELECTED INDEPENDENTLY of the hooks table, which is the correction round 12
+      // forced. The first version gated on `expectedLanguageHooks.length > 0`, so a
+      // regression that BOTH re-wrapped the hook and emptied the table would have
+      // left the ledger empty, the equality passing, and this check skipped — the
+      // behavioural failure silent, the symbol still invisible to the
+      // `Object.entries` exercise. A known-positive gated by its own expected
+      // answer tests nothing in the case that matters. It now keys on the module
+      // under test instead: `node:fs` has stream constructors, the promises modules
+      // do not, and reading a missing named export off a mock THROWS in vitest's
+      // ESM interop rather than returning undefined — so the gate has to be on
+      // module identity, not on probing for the export.
+      if (canonical === 'node:fs') {
         const writeStreamOnMock = (resolveMock('') as Record<string, unknown>).WriteStream
         expect(typeof writeStreamOnMock, 'the mock lost its WriteStream export').toBe('function')
         const ctor = writeStreamOnMock as new () => unknown
