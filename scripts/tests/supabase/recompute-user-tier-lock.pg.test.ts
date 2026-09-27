@@ -213,8 +213,7 @@ describe.skipIf(noLiveTestPg)('SMI-6656 -- recompute_user_tier lock, two live se
   // check was removed rather than patched a sixth time. What that cost is
   // recorded in the migration header: input-DEPENDENT predicate narrowing now
   // ships even when this suite runs, because this suite tests fixed fixture
-  // ids. What survives here is the behavioural assertion, which proves
-  // shape only, and this is the test that proves the behaviour.
+  // ids. What survives here is the behavioural assertion.
   //
   // ATTRIBUTION. `xmax` is set by ANY row lock or update, so the probe row is
   // chosen so that nothing else in the function can set it: tier is already
