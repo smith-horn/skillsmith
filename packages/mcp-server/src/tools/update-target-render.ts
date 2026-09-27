@@ -25,7 +25,12 @@
  *   `update-target.probe.ts`) landing behind an MCP entry point. Exporting
  *   this table now, unwired, makes this package's half of §4.4's member set
  *   checkable today without inventing a call site that would change either
- *   tool's current output shape. The check lives in the CORE package, not in a
+ *   tool's current output shape. That is PREPARATORY, not step 6 complete:
+ *   §4.4 says each surface RENDERS, and T-R4 fails if a member renders empty
+ *   on a surface, so a table nothing consumes satisfies the data-shape half of
+ *   the requirement and none of the behavioural half. Completion is wiring
+ *   these tables into surface output and testing that boundary, which needs
+ *   step 5's call sites. The check lives in the CORE package, not in a
  *   sibling `.test.ts` here -- it AST-reads this file because core cannot
  *   import mcp-server. And it checks the TABLE, not rendering: there is no
  *   call site, so nothing asserts that a user ever sees any of this text. That

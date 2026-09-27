@@ -206,18 +206,33 @@ const ALL_MEMBERS: TaggedMember[] = [
   ...UPDATE_RESULT_CODES.map((value): TaggedMember => ({ kind: 'result', value })),
 ]
 
-// WHAT THIS TEST MEASURES, AND WHAT IT DOES NOT. §4.4 defines a renderer AS a
-// `Record<UpdateTargetReason | UpdateResultCode, ...>`, so comparing the tables is
-// comparing the renderers as specified. But neither table has a consumer yet: the
-// MCP tools still emit their own older diagnosis shapes and the VS Code reader only
-// declares its copy. So passing here establishes that the two DATA SETS agree with
-// core's closed sets and with each other -- not that any text a user sees comes
-// from them. The cross-family gate on PR #2952 named this precisely, and the honest
-// fix was to say so rather than to invent call sites step 5 will bring.
+// WHAT THIS TEST MEASURES, AND WHAT IT DOES NOT. Stated precisely because two
+// cross-family rounds on PR #2952 each found this note claiming more than the
+// assertions below deliver.
 //
-// Concretely: these arms cannot fail because a surface renders the wrong thing at
-// runtime. They fail when a table omits a member, leaves one blank, or disagrees
-// with core about a member's remediation kind.
+// It establishes exactly two things. Each table COVERS core's closed sets with
+// non-empty text -- checked per table, independently. And the VS Code remediation-kind
+// table AGREES WITH CORE, member by member.
+//
+// It does NOT compare the MCP text with the VS Code text. The two could hold
+// completely different sentences and still pass, which is deliberate: §4.4 has each
+// surface write its own wording, so identical text is not the property worth pinning.
+// An earlier version of this note said the tables "agree with each other", which was
+// simply false.
+//
+// It also does not establish rendering. §4.4's "Every renderer is a `Record<...>`"
+// constrains a renderer's REPRESENTATION; it does not make a conforming Record a
+// renderer. Neither table has a consumer -- the MCP tools still emit their own older
+// diagnosis shapes and the VS Code reader only declares its copy -- so no arm here can
+// fail because a surface rendered the wrong thing at runtime. Step 6 is therefore
+// PREPARATORY and not complete against §4.4 / T-R4; completion is wiring the tables
+// into surface output and testing that boundary, which needs step 5's call sites.
+//
+// Arms fail when a table omits a member, leaves one blank, or disagrees with core
+// about a remediation kind -- and also, not exhaustively, when the AST extraction
+// rejects the mirror outright: a malformed declaration, unsupported object syntax, a
+// rename, or an in-file value reference all fail loudly rather than yielding an empty
+// table.
 describe('SMI-6532 step 6: reason/result TABLE parity (MCP + VS Code)', () => {
   it('sanity: 23 reasons + 15 results = 38 tagged members', () => {
     expect(UPDATE_TARGET_REASONS.length).toBe(23)
