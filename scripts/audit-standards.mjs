@@ -5204,7 +5204,7 @@ console.log(`\n${BOLD}Check 59: CLI-tool pin invariants (SMI-5746)${RESET}`)
     check59Violations++
     report(
       `Check 59: ${f.file}:${f.line} — reintroduces "npx claude-flow" (pre-rename name)${shadowSuffix}`,
-      `Replace with the sanctioned service form: docker exec skillsmith-ruflo-1 node /opt/ruflo-seed/node_modules/@claude-flow/cli/bin/cli.js ... (SMI-6744 Wave 4 removed ruflo from the host tree)`
+      `Replace with the sanctioned service form: docker exec skillsmith-ruflo-1 node /opt/ruflo-seed/node_modules/@claude-flow/cli/bin/cli.js ... (SMI-6744 Wave 4 removes the root ruflo devDependency, Checkpoint 4 row 5, so the fastmcp edge is gone from the lockfile; the host tree follows at the post-merge refresh)`
     )
   }
 
@@ -6326,7 +6326,10 @@ console.log(`\n${BOLD}Check 74: SMI-6744 Wave 4 Bash deny set + host-tree remova
 {
   const reporters = { pass, warn, fail }
   for (const line of rufloHostPathsReportLines(
-    evaluateRufloHostPaths({ settingsPath: join('.claude', 'settings.json'), root: '.' })
+    evaluateRufloHostPaths({
+      settingsPath: join('.claude', 'settings.json'),
+      root: process.cwd(),
+    })
   )) {
     reporters[line.severity](line.message, line.fix)
   }

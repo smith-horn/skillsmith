@@ -516,7 +516,16 @@ describe('findClaudeFlowReintroductions (SMI-5746 Check 59, sub-check 4)', () =>
     expect(findings[0].file).toBe('.claude/settings.json')
   })
 
-  it('flags an allow entry even while an unrelated deny entry is present (discriminates by array, not by file)', () => {
+  // SMI-6744 Wave 4 H-1 governance finding: the prior version of this test
+  // used a DIFFERENT literal in allow vs. deny ("Bash(npx claude-flow)" vs.
+  // "Bash(npx claude-flow *)"), which cannot distinguish a positional
+  // exemption from a value-keyed one -- a value-keyed exemption also passes
+  // it, because the allow line's value is simply never a member of the deny
+  // set. The SAME literal in both arrays is the actual discriminating case:
+  // watched failing against the unfixed helper (value-keyed exemption)
+  // before this fix landed, reproducing findings: [] -- the allow entry was
+  // wrongly exempted because its value happened to also sit in `deny`.
+  it('discriminates by array position, not by value: the SAME literal in both allow and deny still flags the allow line', () => {
     const dir = scratchDir()
     mkdirSync(join(dir, '.claude'), { recursive: true })
     writeFileSync(
@@ -525,7 +534,7 @@ describe('findClaudeFlowReintroductions (SMI-5746 Check 59, sub-check 4)', () =>
         {
           permissions: {
             allow: ['Bash(npx claude-flow)'],
-            deny: ['Bash(npx claude-flow *)'],
+            deny: ['Bash(npx claude-flow)'],
           },
         },
         null,
@@ -534,9 +543,10 @@ describe('findClaudeFlowReintroductions (SMI-5746 Check 59, sub-check 4)', () =>
     )
 
     const findings = findClaudeFlowReintroductions(dir)
-    // Exactly the allow-array line should be flagged; the deny-array line
-    // (a different literal) must not be.
-    expect(findings).toHaveLength(1)
+    // Exactly the allow-array line (line 4 of the pretty-printed fixture)
+    // should be flagged; the deny-array line (line 7, identical value) must
+    // not be, because it sits inside the deny array's own bracket span.
+    expect(findings).toEqual([{ file: '.claude/settings.json', line: 4 }])
   })
 
   it('falls back to flagging every match when settings.json is not valid JSON', () => {

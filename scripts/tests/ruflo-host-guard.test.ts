@@ -332,21 +332,26 @@ describe("decide() — laundering inputs (Queen's pre-review corrections item 1)
   // would have exempted these whole segments; with no reader carve-out
   // they must all deny on the element that names the path.
   //
-  // KNOWN RESIDUAL GAP (found during implementation, not fixed): the
-  // LITERAL plan example `sed 's/^/node node_modules\/ruflo\/bin\/ruflo.js/e'`
-  // (escaped `/` as sed's own delimiter) still ALLOWS — the backslash
-  // characters sed's own syntax requires break the contiguous
-  // `node_modules/ruflo` substring H1 tests for (the tokenizer correctly
-  // preserves literal backslashes inside single quotes; there is no shell
-  // escaping to unwind here, this is sed's OWN delimiter-escaping
-  // convention). The row below uses `#` as sed's delimiter instead (an
-  // equally realistic, arguably more likely real-world spelling since it
-  // needs no escaping at all) to test the same "sed with an `e` flag"
-  // attack class without that specific unresolved gap. Flagged in the
-  // implementation hand-back, not silently absorbed.
+  // RESIDUAL GAP CLOSED (SMI-6744 Wave 4 governance round, post-
+  // implementation): the LITERAL plan example
+  // `sed 's/^/node node_modules\/ruflo\/bin\/ruflo.js/e'` (escaped `/` as
+  // sed's own delimiter -- not shell escaping; the tokenizer correctly
+  // preserves the literal backslash characters inside the single-quoted sed
+  // script) used to ALLOW, because the backslashes sed's own delimiter-
+  // escaping convention requires broke the contiguous `node_modules/ruflo`
+  // substring H1/H2/H7 test for. Fixed by testing each scanned element
+  // against BOTH its raw form and a backslash-de-escaped view
+  // (`deEscape()` in ruflo-host-guard-predicates.mjs) -- watched failing
+  // against the pre-fix predicates (see implementation hand-back) before
+  // the fix landed. The `#`-delimiter row below is KEPT as its own arm
+  // (not redundant with the `/`-delimiter row above it): it is the "needs
+  // no escaping at all" spelling of the same "sed with an `e` flag" attack
+  // class, so it must keep denying via the plain (non-de-escaped) path
+  // regardless of what the de-escape view finds.
   const rows = [
     "find node_modules/ruflo/bin -name 'ruflo.js' -exec node {} memory store --key k \\;",
     'awk \'BEGIN{system("node node_modules/ruflo/bin/ruflo.js memory store")}\'',
+    "sed 's/^/node node_modules\\/ruflo\\/bin\\/ruflo.js/e'",
     "sed 's#^#node node_modules/ruflo/bin/ruflo.js#e'",
     "rg --pre 'node node_modules/ruflo/bin/ruflo.js' .",
     'cat node_modules/ruflo/bin/ruflo.js | node',

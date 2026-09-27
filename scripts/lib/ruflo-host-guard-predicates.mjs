@@ -74,6 +74,25 @@ function stripDotSlash(s) {
   return s.startsWith('./') ? s.slice(2) : s
 }
 
+/**
+ * Removes every backslash-escape in `s` (SMI-6744 Wave 4 residual finding
+ * from the hook implementation): a token can carry LITERAL backslash
+ * characters before its slashes without ever reaching a shell's own escape
+ * processing -- e.g. `sed 's/^/node node_modules\/ruflo\/bin\/ruflo.js/e'`
+ * (the `e` flag executes the substituted line as a shell command) is
+ * captured by this guard's tokenizer as the literal string
+ * `node_modules\/ruflo\/bin\/ruflo.js`, with real `\` characters between
+ * `node_modules` and `/ruflo` and between `ruflo` and `/bin` -- sed's own
+ * `\/`-escaping of its delimiter, not shell quoting. H1_RE1's contiguous
+ * `node_modules/ruflo` substring never matches THAT string as written, so
+ * H1–H2/H7 test both the raw element and this de-escaped view. `\X` decodes
+ * to `X` for any `X` (matching this file's own convention elsewhere for
+ * "unrecognized escape passes the character through").
+ */
+function deEscape(s) {
+  return s.replace(/\\(.)/g, '$1')
+}
+
 function dirnameOf(p) {
   const idx = p.lastIndexOf('/')
   return idx === -1 ? '' : p.slice(0, idx)
@@ -237,12 +256,24 @@ export function isSanctionedNpmForm(argvLower) {
 export function checkH1toH7(scanArgvLower, argvLower) {
   for (const el of scanArgvLower) {
     const stripped = stripDotSlash(el)
-    if (H1_RE1.test(stripped) || H1_RE2.test(stripped)) return denyWith('H1', el)
+    const deescaped = stripDotSlash(deEscape(el))
+    if (
+      H1_RE1.test(stripped) ||
+      H1_RE2.test(stripped) ||
+      H1_RE1.test(deescaped) ||
+      H1_RE2.test(deescaped)
+    ) {
+      return denyWith('H1', el)
+    }
   }
 
   for (const el of scanArgvLower) {
-    if (H2_RE1.test(el)) return denyWith('H2', el)
-    if (H2_RE2.test(el) && scanArgvLower.some((a) => a.includes('@claude-flow'))) {
+    const deescaped = deEscape(el)
+    if (H2_RE1.test(el) || H2_RE1.test(deescaped)) return denyWith('H2', el)
+    if (
+      (H2_RE2.test(el) || H2_RE2.test(deescaped)) &&
+      scanArgvLower.some((a) => a.includes('@claude-flow') || deEscape(a).includes('@claude-flow'))
+    ) {
       return denyWith('H2', el)
     }
   }
@@ -279,7 +310,10 @@ export function checkH1toH7(scanArgvLower, argvLower) {
   }
 
   for (const el of scanArgvLower) {
-    if (H7_RE1.test(el) || H7_RE2.test(el)) return denyWith('H7', el)
+    const deescaped = deEscape(el)
+    if (H7_RE1.test(el) || H7_RE2.test(el) || H7_RE1.test(deescaped) || H7_RE2.test(deescaped)) {
+      return denyWith('H7', el)
+    }
   }
 
   return null

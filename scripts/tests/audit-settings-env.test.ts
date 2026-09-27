@@ -56,6 +56,26 @@ const RED_NO_ENV_KEY = `{
   "permissions": { "allow": [], "deny": [] }
 }`
 
+// SMI-6744 Wave 4 M-7 governance finding: `env` present but not a plain
+// object -- reproduced by the queen against the unfixed helper (all four
+// silently coerced to `{}` and reported "exactly the pinned set").
+const RED_ENV_NULL = `{
+  "env": null,
+  "permissions": { "allow": [], "deny": [] }
+}`
+const RED_ENV_STRING = `{
+  "env": "X=1",
+  "permissions": { "allow": [], "deny": [] }
+}`
+const RED_ENV_NUMBER = `{
+  "env": 42,
+  "permissions": { "allow": [], "deny": [] }
+}`
+const RED_ENV_BOOLEAN = `{
+  "env": true,
+  "permissions": { "allow": [], "deny": [] }
+}`
+
 describe('EXPECTED_SETTINGS_ENV (SMI-6744 Checkpoint 4 row 4)', () => {
   it('is pinned empty today', () => {
     expect(EXPECTED_SETTINGS_ENV).toEqual({})
@@ -155,6 +175,10 @@ describe('evaluateSettingsEnv', () => {
       RED_HOST_GUARD_DISABLE,
       RED_REMOVED_KEY,
       RED_NO_ENV_KEY,
+      RED_ENV_NULL,
+      RED_ENV_STRING,
+      RED_ENV_NUMBER,
+      RED_ENV_BOOLEAN,
     ]) {
       const lines = settingsEnvReportLines(
         evaluateSettingsEnv({ settingsPath: '.claude/settings.json', readFile: () => src })
@@ -165,6 +189,90 @@ describe('evaluateSettingsEnv', () => {
         expect(typeof l.message).toBe('string')
       }
     }
+  })
+})
+
+// SMI-6744 Wave 4 M-7 governance finding: `env` present, key exists, but the
+// VALUE is not a plain object at all. Watched failing against the unfixed
+// helper before this fix landed: all four fixtures below produced
+// `envPresent: true, missingKeys: [], unexpectedKeys: []` and a PASS line
+// reading "exactly the pinned set {}" -- the non-object value was silently
+// coerced to `{}` by `parsed.env && typeof parsed.env === 'object' ? ... : {}`
+// (a bare object typeof check that a primitive/null fails, but which is
+// never even reached for null since `null && ...` short-circuits false).
+describe('Check 73 M-7: malformed env (not a plain object)', () => {
+  const cases: Array<[string, string, string]> = [
+    ['null', RED_ENV_NULL, 'null'],
+    ['a string', RED_ENV_STRING, 'string'],
+    ['a number', RED_ENV_NUMBER, 'number'],
+    ['a boolean', RED_ENV_BOOLEAN, 'boolean'],
+  ]
+
+  it.each(cases)(
+    'env: %s -> distinct envMalformed outcome naming the observed type',
+    (_label, src, observedType) => {
+      const verdict = evaluateSettingsEnv({
+        settingsPath: '.claude/settings.json',
+        readFile: () => src,
+      })
+      expect(verdict.status).toBe('evaluated')
+      expect(verdict.envMalformed).toBe(true)
+      expect(verdict.observedType).toBe(observedType)
+      const lines = settingsEnvReportLines(verdict)
+      expect(lines).toHaveLength(1)
+      expect(lines[0].severity).toBe('fail')
+      expect(lines[0].message).toContain(observedType)
+      // The old behaviour this fix replaces: a pass line claiming compliance.
+      expect(lines[0].message).not.toContain('is exactly the pinned set')
+    }
+  )
+})
+
+// SMI-6744 Wave 4 M-8 governance finding: a key present with the WRONG value
+// passed this check before -- only key presence was ever compared. Watched
+// failing against the unfixed helper: `missingKeys`/`unexpectedKeys` were
+// both empty for a key present with a wrong value, so the check reported a
+// pass despite the pinned value being smuggled to something else.
+describe('Check 73 M-8: value mismatches', () => {
+  it('fails naming the key, its wrong value, and the pinned value it should have', () => {
+    const CUSTOM_EXPECTED = { CLAUDE_FLOW_HOOKS_ENABLED: 'false' }
+    const src = `{
+      "env": { "CLAUDE_FLOW_HOOKS_ENABLED": "true" },
+      "permissions": { "allow": [], "deny": [] }
+    }`
+    const verdict = evaluateSettingsEnv({
+      settingsPath: '.claude/settings.json',
+      readFile: () => src,
+      expected: CUSTOM_EXPECTED,
+    })
+    expect(verdict.missingKeys).toEqual([])
+    expect(verdict.unexpectedKeys).toEqual([])
+    expect(verdict.mismatchedValues).toEqual([
+      { key: 'CLAUDE_FLOW_HOOKS_ENABLED', expected: 'false', actual: 'true' },
+    ])
+    const lines = settingsEnvReportLines(verdict)
+    const failLine = lines.find((l: { severity: string; message: string }) => l.severity === 'fail')
+    expect(failLine).toBeTruthy()
+    expect(failLine?.message).toContain('CLAUDE_FLOW_HOOKS_ENABLED')
+    expect(failLine?.message).toContain('"true"')
+    expect(failLine?.message).toContain('"false"')
+  })
+
+  it('passes when the key is present with the exact pinned value', () => {
+    const CUSTOM_EXPECTED = { CLAUDE_FLOW_HOOKS_ENABLED: 'false' }
+    const src = `{
+      "env": { "CLAUDE_FLOW_HOOKS_ENABLED": "false" },
+      "permissions": { "allow": [], "deny": [] }
+    }`
+    const verdict = evaluateSettingsEnv({
+      settingsPath: '.claude/settings.json',
+      readFile: () => src,
+      expected: CUSTOM_EXPECTED,
+    })
+    expect(verdict.mismatchedValues).toEqual([])
+    const lines = settingsEnvReportLines(verdict)
+    expect(lines).toHaveLength(1)
+    expect(lines[0].severity).toBe('pass')
   })
 })
 

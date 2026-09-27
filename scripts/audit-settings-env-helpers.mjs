@@ -48,9 +48,32 @@ const FIX_MISSING_ENV_BLOCK =
   'settings.json is missing its top-level `env` key entirely. Absence is not pinned -- add ' +
   '`"env": {}` (or the pinned set) explicitly.'
 
+const FIX_MALFORMED_ENV =
+  '`env` must be a plain JSON object (not null, an array, or a primitive). Replace it with ' +
+  '`{}` (or the pinned set) -- SMI-6744 Wave 4 M-7 governance finding: a non-object `env` was ' +
+  'silently coerced to `{}` and reported as compliant, which is the exact smuggled-value shape ' +
+  'this check exists to catch.'
+
+const FIX_MISMATCHED_ENV_VALUE =
+  "settings.json's `env` block must match the pinned VALUE for each key, not just carry the " +
+  'right key name (SMI-6744 Wave 4 M-8 governance finding). Set the key to its pinned value, ' +
+  'or update EXPECTED_SETTINGS_ENV if the pinned value itself changed by explicit decision.'
+
 const fixNotEvaluated = (path) =>
   `Could not read or parse ${path} as JSON, so its \`env\` block could not be checked. ` +
   'Confirm the file exists and is valid JSON.'
+
+/** A plain JSON object -- not null, not an array, not a primitive. */
+function isPlainObject(value) {
+  return typeof value === 'object' && value !== null && !Array.isArray(value)
+}
+
+/** Human-readable name for a JSON value's shape, for the malformed-env fail message. */
+function describeObservedType(value) {
+  if (value === null) return 'null'
+  if (Array.isArray(value)) return 'array'
+  return typeof value
+}
 
 /**
  * Evaluate settingsPath's `env` block against `expected` (default
@@ -68,8 +91,11 @@ const fixNotEvaluated = (path) =>
  *   status: 'evaluated',
  *   settingsPath: string,
  *   envPresent: boolean,
+ *   envMalformed: boolean,
+ *   observedType?: string,
  *   missingKeys: string[],
  *   unexpectedKeys: string[],
+ *   mismatchedValues: Array<{key: string, expected: unknown, actual: unknown}>,
  *   expectedKeys: string[],
  *   actualKeys?: string[],
  * } | {
@@ -111,23 +137,52 @@ export function evaluateSettingsEnv(options) {
       status: 'evaluated',
       settingsPath,
       envPresent: false,
+      envMalformed: false,
       missingKeys: expectedKeys.slice(),
       unexpectedKeys: [],
+      mismatchedValues: [],
       expectedKeys,
     }
   }
 
-  const env = parsed.env && typeof parsed.env === 'object' ? parsed.env : {}
+  // SMI-6744 Wave 4 M-7 governance finding: the key can exist while its
+  // VALUE is not a plain object at all (null, an array, or a primitive) --
+  // that must be its own distinct fail outcome, never silently coerced to
+  // `{}` and reported as "exactly the pinned set".
+  if (!isPlainObject(parsed.env)) {
+    return {
+      status: 'evaluated',
+      settingsPath,
+      envPresent: true,
+      envMalformed: true,
+      observedType: describeObservedType(parsed.env),
+      missingKeys: [],
+      unexpectedKeys: [],
+      mismatchedValues: [],
+      expectedKeys,
+    }
+  }
+
+  const env = parsed.env
   const actualKeys = Object.keys(env)
   const missingKeys = expectedKeys.filter((k) => !(k in env))
   const unexpectedKeys = actualKeys.filter((k) => !(k in expected))
+  // SMI-6744 Wave 4 M-8 governance finding: a key present with the WRONG
+  // value passed this check before -- only key presence was ever compared,
+  // never the pinned value itself, which the JSDoc and FIX_MISMATCHED_ENV_VALUE
+  // text already promised.
+  const mismatchedValues = expectedKeys
+    .filter((k) => k in env && env[k] !== expected[k])
+    .map((k) => ({ key: k, expected: expected[k], actual: env[k] }))
 
   return {
     status: 'evaluated',
     settingsPath,
     envPresent: true,
+    envMalformed: false,
     missingKeys,
     unexpectedKeys,
+    mismatchedValues,
     expectedKeys,
     actualKeys,
   }
@@ -167,6 +222,18 @@ export function settingsEnvReportLines(verdict) {
     ]
   }
 
+  if (verdict.envMalformed) {
+    return [
+      {
+        severity: 'fail',
+        message:
+          `Check 73: ${verdict.settingsPath} \`env\` is malformed — expected a plain JSON ` +
+          `object, found ${verdict.observedType}; expected exactly ${pinnedDescr}`,
+        fix: FIX_MALFORMED_ENV,
+      },
+    ]
+  }
+
   const lines = []
   for (const key of verdict.missingKeys) {
     lines.push({
@@ -182,6 +249,15 @@ export function settingsEnvReportLines(verdict) {
         `Check 73: ${verdict.settingsPath} \`env\` has unexpected key "${key}" ` +
         `(not in the pinned set ${pinnedDescr})`,
       fix: FIX_UNEXPECTED_ENV_KEY,
+    })
+  }
+  for (const { key, expected, actual } of verdict.mismatchedValues || []) {
+    lines.push({
+      severity: 'fail',
+      message:
+        `Check 73: ${verdict.settingsPath} \`env\` key "${key}" has value ` +
+        `${JSON.stringify(actual)}, expected pinned value ${JSON.stringify(expected)}`,
+      fix: FIX_MISMATCHED_ENV_VALUE,
     })
   }
 

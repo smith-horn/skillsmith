@@ -3,16 +3,17 @@
  * and 75.
  *
  * Design: docs/internal/uat/smi-6744/a44-structural-design-2026-09-27.md
- * § 1(b) Layer R (the 43-entry Bash deny set), § 6 rows 9, 13, 14.
+ * § 1(b) Layer R (the 50-entry Bash deny set), § 6 rows 9, 13, 14.
  *
  * The two entry arrays below are harness-owned literals, hand-copied from
- * the design doc independently of the helper's own RUFLO_BASH_DENY_ENTRIES /
- * RUFLO_MCP_DENY_ENTRIES exports -- a typo or a dropped entry in the
- * helper's array must not also vanish from the fixture meant to catch it.
- * The first test in each describe block below cross-checks the two lists
- * for exact equality, so a drift between "what the design specifies" and
- * "what the helper ships" fails loudly instead of two wrong lists agreeing
- * with each other.
+ * the design doc. The first test in each describe block below cross-checks
+ * the two lists for exact equality against the helper's own
+ * RUFLO_BASH_DENY_ENTRIES / RUFLO_MCP_DENY_ENTRIES exports. That equality
+ * check is not evidence the two copies are independently correct against
+ * the design doc or the census it derives from -- both are hand-maintained
+ * and can drift the same way together -- it only catches the two copies
+ * disagreeing with EACH OTHER (SMI-6744 Wave 4 L-10 governance finding: an
+ * earlier version of this comment overstated what `toEqual()` proves here).
  */
 import { existsSync, mkdirSync, mkdtempSync, rmSync } from 'node:fs'
 import { tmpdir } from 'node:os'
@@ -31,8 +32,10 @@ import {
   rufloMcpDeniesReportLines,
 } from '../audit-ruflo-host-paths-helpers.mjs'
 
-// Harness-owned copy of the design doc's 43-entry Layer R set.
-const ALL_43_BASH_ENTRIES = [
+// Harness-owned copy of the design doc's Layer R Bash deny set (50 entries
+// as of the M-4 governance round; count-free name so the fixture's own name
+// never states a total the array can silently drift out of sync with).
+const ALL_RUFLO_BASH_ENTRIES = [
   'Bash(npx ruflo)',
   'Bash(npx ruflo *)',
   'Bash(npx ruflo@*)',
@@ -50,18 +53,25 @@ const ALL_43_BASH_ENTRIES = [
   'Bash(npx @claude-flow/cli@*)',
   'Bash(npm exec ruflo)',
   'Bash(npm exec ruflo *)',
+  'Bash(npm exec ruflo@*)',
   'Bash(npm exec -- ruflo)',
   'Bash(npm exec -- ruflo *)',
+  'Bash(npm exec -- ruflo@*)',
   'Bash(npm x ruflo)',
   'Bash(npm x ruflo *)',
+  'Bash(npm x ruflo@*)',
   'Bash(npm x -- ruflo)',
   'Bash(npm x -- ruflo *)',
+  'Bash(npm x -- ruflo@*)',
   'Bash(pnpm dlx ruflo)',
   'Bash(pnpm dlx ruflo *)',
+  'Bash(pnpm dlx ruflo@*)',
   'Bash(yarn dlx ruflo)',
   'Bash(yarn dlx ruflo *)',
+  'Bash(yarn dlx ruflo@*)',
   'Bash(bunx ruflo)',
   'Bash(bunx ruflo *)',
+  'Bash(bunx ruflo@*)',
   'Bash(node node_modules/ruflo/*)',
   'Bash(node ./node_modules/ruflo/*)',
   'Bash(node node_modules/@claude-flow/cli/*)',
@@ -142,9 +152,8 @@ const __dirname = dirname(fileURLToPath(import.meta.url))
 const REPO_ROOT = join(__dirname, '..', '..')
 
 describe('harness-owned entry lists match the helper (drift guard)', () => {
-  it('43 Bash entries, identical set and order to RUFLO_BASH_DENY_ENTRIES', () => {
-    expect(ALL_43_BASH_ENTRIES).toHaveLength(43)
-    expect(ALL_43_BASH_ENTRIES).toEqual(RUFLO_BASH_DENY_ENTRIES)
+  it('Bash entries, identical set and order to RUFLO_BASH_DENY_ENTRIES', () => {
+    expect(ALL_RUFLO_BASH_ENTRIES).toEqual(RUFLO_BASH_DENY_ENTRIES)
   })
 
   it('37 MCP entries, identical set and order to RUFLO_MCP_DENY_ENTRIES', () => {
@@ -154,11 +163,11 @@ describe('harness-owned entry lists match the helper (drift guard)', () => {
 })
 
 describe('Check 74 arm (a): Bash deny entries', () => {
-  it('passes when all 43 entries are present (tree absent)', () => {
+  it('passes when all entries are present (tree absent)', () => {
     const verdict = evaluateRufloHostPaths({
       settingsPath: '.claude/settings.json',
       root: '/nonexistent-root-for-this-test',
-      readFile: () => settingsWithDeny(ALL_43_BASH_ENTRIES),
+      readFile: () => settingsWithDeny(ALL_RUFLO_BASH_ENTRIES),
       existsSync: () => false,
     })
     expect(verdict.status).toBe('evaluated')
@@ -166,7 +175,9 @@ describe('Check 74 arm (a): Bash deny entries', () => {
     const lines = rufloHostPathsReportLines(verdict)
     const passLine = lines.find((l: { message: string }) => l.message.startsWith('Check 74: all'))
     expect(passLine?.severity).toBe('pass')
-    expect(passLine?.message).toContain('43')
+    // Denominator must derive from the array's own length, never a literal
+    // (SMI-6744 Wave 4 M-4 governance finding).
+    expect(passLine?.message).toContain(String(RUFLO_BASH_DENY_ENTRIES.length))
   })
 
   const perFamilyRemoval: Array<[string, string]> = [
@@ -176,12 +187,17 @@ describe('Check 74 arm (a): Bash deny entries', () => {
     ['node <repo-relative path>', 'Bash(node node_modules/ruflo/*)'],
     ['direct .bin', 'Bash(node_modules/.bin/ruflo)'],
     ['bare ruflo', 'Bash(ruflo)'],
+    // SMI-6744 Wave 4 M-4 red arm: one of the seven `@*` twins the
+    // governance round added. Watched failing before the twin existed in
+    // either RUFLO_BASH_DENY_ENTRIES or .claude/settings.json (the entry was
+    // simply absent from both, so `missingBashEntries` never named it).
+    ['pnpm dlx @* twin', 'Bash(pnpm dlx ruflo@*)'],
   ]
 
   it.each(perFamilyRemoval)(
     'fails naming the removed entry when the %s family loses one entry',
     (_family, removed) => {
-      const deny = ALL_43_BASH_ENTRIES.filter((e) => e !== removed)
+      const deny = ALL_RUFLO_BASH_ENTRIES.filter((e) => e !== removed)
       const verdict = evaluateRufloHostPaths({
         settingsPath: '.claude/settings.json',
         root: '/nonexistent-root-for-this-test',
@@ -195,9 +211,10 @@ describe('Check 74 arm (a): Bash deny entries', () => {
           l.severity === 'fail' && l.message.includes(removed)
       )
       expect(failLine).toBeTruthy()
-      // Denominator printed on the fail line.
-      expect(failLine?.message).toContain('43 required')
-      expect(failLine?.message).toContain('42 present')
+      // Denominator printed on the fail line, derived from the array's own
+      // length, never a literal.
+      expect(failLine?.message).toContain(`${RUFLO_BASH_DENY_ENTRIES.length} required`)
+      expect(failLine?.message).toContain(`${RUFLO_BASH_DENY_ENTRIES.length - 1} present`)
     }
   )
 })
@@ -228,12 +245,12 @@ describe('Check 74 arm (b): host-tree removal', () => {
     const presentVerdict = evaluateRufloHostPaths({
       settingsPath: '.claude/settings.json',
       root: withRuflo,
-      readFile: () => settingsWithDeny(ALL_43_BASH_ENTRIES),
+      readFile: () => settingsWithDeny(ALL_RUFLO_BASH_ENTRIES),
     })
     const absentVerdict = evaluateRufloHostPaths({
       settingsPath: '.claude/settings.json',
       root: withoutRuflo,
-      readFile: () => settingsWithDeny(ALL_43_BASH_ENTRIES),
+      readFile: () => settingsWithDeny(ALL_RUFLO_BASH_ENTRIES),
     })
 
     expect(presentVerdict.treePresent).toBe(true)
@@ -254,7 +271,7 @@ describe('Check 74 arm (b): host-tree removal', () => {
       evaluateRufloHostPaths({
         settingsPath: '.claude/settings.json',
         root: dir,
-        readFile: () => settingsWithDeny(ALL_43_BASH_ENTRIES),
+        readFile: () => settingsWithDeny(ALL_RUFLO_BASH_ENTRIES),
       })
     )
     for (const l of absentLines) {
@@ -266,7 +283,7 @@ describe('Check 74 arm (b): host-tree removal', () => {
       evaluateRufloHostPaths({
         settingsPath: '.claude/settings.json',
         root: dir,
-        readFile: () => settingsWithDeny(ALL_43_BASH_ENTRIES),
+        readFile: () => settingsWithDeny(ALL_RUFLO_BASH_ENTRIES),
       })
     )
     for (const l of presentLines) {

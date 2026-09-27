@@ -113,7 +113,13 @@ Configs in `.claude/hive-mind/`:
 
 ```bash
 ./start-hive-mind.sh                                                          # Run config
-docker exec skillsmith-ruflo-1 node /opt/ruflo-seed/node_modules/@claude-flow/cli/bin/cli.js swarm --config .claude/hive-mind/your-config.yaml   # Direct (SMI-6744 Wave 4 removed ruflo from the host tree)
+# Direct form: the config lives on the host, but the served @claude-flow/cli only sees
+# skillsmith-ruflo-1's own mount (/srv/ruflo, ADR-170 § 1) -- copy the config in first, then
+# reference it by its in-container path (SMI-6744 Wave 4 removes the root ruflo devDependency,
+# Checkpoint 4 row 5, so the fastmcp edge is gone from the lockfile; the host tree follows at
+# the post-merge refresh).
+docker cp .claude/hive-mind/your-config.yaml skillsmith-ruflo-1:/srv/ruflo/
+docker exec skillsmith-ruflo-1 node /opt/ruflo-seed/node_modules/@claude-flow/cli/bin/cli.js swarm --config /srv/ruflo/your-config.yaml
 ```
 
 ### Resource Profiles

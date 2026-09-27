@@ -276,6 +276,60 @@ export function findProcScanCmdHintDrift(guardPath, guideMdPath) {
 }
 
 /**
+ * Finds the 0-based [startLine, endLine] span (inclusive) of a top-level
+ * JSON array whose opening `"<key>": [` line matches keyPattern, by
+ * tracking bracket depth char-by-char while skipping the contents of JSON
+ * string literals -- so a deny entry like "Bash(rg '[a-z]')" containing its
+ * own literal brackets can never perturb the count. Returns null if the key
+ * is never found or the array never closes. Used by the exemption below to
+ * confirm a matched line sits POSITIONALLY inside the `deny` array, not
+ * merely that its value happens to also be a deny member (SMI-6744 Wave 4
+ * H-1 governance finding: the prior value-only check exempted the identical
+ * literal sitting in `allow` too).
+ */
+function findJsonArrayLineSpan(lines, keyPattern) {
+  let startIdx = null
+  for (let i = 0; i < lines.length; i++) {
+    if (keyPattern.test(lines[i])) {
+      startIdx = i
+      break
+    }
+  }
+  if (startIdx === null) return null
+
+  let depth = 0
+  let opened = false
+  for (let i = startIdx; i < lines.length; i++) {
+    let inString = false
+    let escaped = false
+    for (const ch of lines[i]) {
+      if (inString) {
+        if (escaped) {
+          escaped = false
+        } else if (ch === '\\') {
+          escaped = true
+        } else if (ch === '"') {
+          inString = false
+        }
+        continue
+      }
+      if (ch === '"') {
+        inString = true
+      } else if (ch === '[') {
+        depth++
+        opened = true
+      } else if (ch === ']') {
+        depth--
+      }
+    }
+    if (opened && depth === 0) {
+      return { startLine: startIdx, endLine: i }
+    }
+  }
+  return null
+}
+
+/**
  * Sub-check 4: no tracked file within the defined live-executable/config
  * surface reintroduces the pre-rename `npx claude-flow` invocation.
  * Explicitly excludes the vendored Ruflo reference-template library
@@ -297,20 +351,28 @@ export function findClaudeFlowReintroductions(repoRoot) {
     const fullPath = join(repoRoot, relPath)
     if (!existsSync(fullPath)) return
     const lines = readFileSync(fullPath, 'utf8').split('\n')
+    // SMI-6744 Wave 4 H-1: the exemption below must be POSITIONAL as well as
+    // value-keyed -- computed once per file, from the raw text, never from
+    // the already-parsed `permissions.deny` array alone (see
+    // findJsonArrayLineSpan's own doc comment for why a value-only check was
+    // wrong).
+    const denySpan =
+      denyLiterals && denyLiterals.size > 0 ? findJsonArrayLineSpan(lines, /"deny"\s*:\s*\[/) : null
     lines.forEach((line, idx) => {
       if (!pattern.test(line)) return
       if (/@see\s+SMI-\d+/.test(line)) return
       // SMI-6744 Wave 4: a `.claude/settings.json` `permissions.deny` entry
       // must literally spell the banned command it blocks (e.g.
       // "Bash(npx claude-flow)") -- that is the opposite of "reintroduces
-      // npx claude-flow", so it must not be flagged. Scoped precisely to a
-      // line whose ENTIRE trimmed value parses as a JSON string that is a
-      // verbatim member of the parsed `permissions.deny` array -- an
-      // `allow` entry with the identical literal (the pre-existing,
-      // still-covered case this check exists for) is a JS object once its
-      // surrounding braces are included, or a differently-shaped string,
-      // so it is never accidentally exempted by this.
-      if (denyLiterals && denyLiterals.size > 0) {
+      // npx claude-flow", so it must not be flagged. Scoped to a line that
+      // is BOTH (a) positioned strictly between the `"deny": [` line and its
+      // matching `]` (denySpan, exclusive of both boundary lines) and (b)
+      // parses on its own as a JSON string that is a verbatim member of the
+      // parsed `permissions.deny` array. Condition (a) alone is what makes
+      // this an exemption for `deny` specifically -- the identical literal
+      // sitting in `allow` (or `ask`) is a different line index outside
+      // denySpan and is never exempted by this, regardless of its value.
+      if (denySpan && idx > denySpan.startLine && idx < denySpan.endLine) {
         const trimmed = line.trim().replace(/,$/, '')
         let asString = null
         try {
