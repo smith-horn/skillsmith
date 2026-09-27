@@ -4,6 +4,8 @@ All notable changes to `@skillsmith/core` are documented here.
 
 ## [Unreleased]
 
+## v0.12.6
+
 - **Feature (internal)**: SMI-6532 step 6 -- the root barrel now exports the two closed-set
   `UpdateTargetReason`/`UpdateResultCode` types from `update-target-reason.ts` (previously internal
   to this package). `@skillsmith/mcp-server`'s `update-target-render.ts` needs them for its

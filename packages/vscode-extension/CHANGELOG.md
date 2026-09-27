@@ -6,6 +6,8 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/), and this
 
 ## [Unreleased]
 
+## v0.7.13
+
 - **Feature**: SMI-6532 step 6 (preparatory -- see the scope note below) -- `manifestReader` now also carries two tables: a total `Record` from
   every update skip reason and result code to the text this extension will show, and a mirror of which
   remediation kind each member maps to. **Nothing consumes either yet**: the call site arrives with
