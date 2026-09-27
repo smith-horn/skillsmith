@@ -502,7 +502,14 @@ function wrapNamespace(ns: Record<string, unknown>, moduleName: string): Record<
       }
       // Inherited on the real function: keep it inherited here too. Left
       // writable and configurable deliberately, NOT mirrored from the defining
-      // prototype. The reason first given for that was WRONG, and measured to be
+      // prototype. ROUND 10's one finding, named here because a retro pointed out
+      // that rounds 8, 9, 11 and 12 each carry a `Round N` note and this one did
+      // not — so the CHANGELOG's "the last four each found a defect introduced by
+      // the fix before it" was true but not reconstructable from the file. It is
+      // the defect below: round 9 installed `configurable: true` here and
+      // justified it with a mechanism that does not exist.
+      //
+      // The reason first given for that was WRONG, and measured to be
       // wrong rather than argued: `delete spy.from` returns true whether the
       // shadow's property is configurable or not, because deletion targets the
       // receiver's own property and there is none — verified in-container, with a
