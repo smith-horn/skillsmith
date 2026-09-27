@@ -280,4 +280,254 @@ describe.skipIf(noLiveTestPg)('SMI-6656 -- recompute_user_tier lock, two live se
 
     await a.send('ROLLBACK;')
   }, 60_000)
+
+  // ==========================================================================
+  // REQUIREMENT 5 -- the lock is not STRONGER than NO KEY UPDATE.
+  //
+  // Scope, stated so this is not read as more than it is: this arm detects only
+  // a WIDENING. It would pass if the lock were absent entirely, because absent
+  // and NO KEY are indistinguishable to FK-child traffic -- neither blocks it.
+  // Every weakening, SKIP LOCKED included, is test 6's side of the bracket.
+  //
+  // The deleted textual smoke asserted THREE things about this lock, not one.
+  // Two of them survive in test 1: SKIP LOCKED leaves the body running
+  // unlocked, so the lost update reproduces, and NOWAIT surfaces 55P03 on
+  // session A's stderr. The third -- that the lock is not WIDENED to
+  // FOR UPDATE -- was covered by nothing, because every other test here passes
+  // under a widening: FOR UPDATE blocks identically in test 1, sets xmax
+  // identically in test 4, and preserves ascending order in test 2.
+  //
+  // FOR UPDATE is KEY strength, so it conflicts with the FOR KEY SHARE that
+  // Postgres takes on a parent row for every FK-child INSERT. Twelve columns
+  // reference profiles(id), so a widening would block device-login approval
+  // and licence issuance for the length of a roster recompute -- traffic that
+  // never blocked before SMI-6656. The fix was downgraded from FOR UPDATE
+  // mid-review for exactly that reason; this arm is what pins the downgrade.
+  //
+  // Both sibling functions that lock profiles rows already have this arm
+  // (purge-departed-toctou.pg.test.ts, inventory-device-lock.pg.test.ts), and
+  // neither substitutes for it: MEASURED, purge-departed-toctou.pg.test.ts is
+  // 11/11 green both pristine and with THIS function's lock widened. SMI-6857.
+  // ==========================================================================
+  it('is not widened to KEY strength: ordinary FK traffic on profiles(id) does not block it', async () => {
+    // ON DELETE CASCADE so that a failure mid-test cannot outlive it: without
+    // it, a surviving child row makes the next test's `DELETE FROM profiles`
+    // fixture reset fail, and the real failure is then buried under unrelated ones.
+    await ctl.send(
+      `DROP TABLE IF EXISTS smi6857_fk_child;
+       CREATE TABLE smi6857_fk_child (
+         id    SERIAL PRIMARY KEY,
+         owner UUID REFERENCES profiles(id) ON DELETE CASCADE
+       );`
+    )
+
+    // B holds an open FK-child INSERT: FOR KEY SHARE on TEST_USER's profiles row.
+    await b.send('BEGIN;')
+    const ins = await b.send(`INSERT INTO smi6857_fk_child (owner) VALUES ('${TEST_USER}');`)
+    // No stderr interpolated into any message in this arm or test 6: vitest's
+    // retry condition (vitest.preset.ts) matches /timeout/i against the whole
+    // assertion message, so embedding Postgres's own error text can annotate a
+    // deterministic logic regression as infra flake. vitest prints the received
+    // value anyway.
+    expect(ins.stderr, 'the FK-child INSERT itself failed').not.toMatch(/ERROR/)
+
+    // KNOWN-POSITIVE for the instrument: prove that FK traffic really is holding
+    // a lock which KEY strength conflicts with. Without this, a test that
+    // contended nothing would pass whatever strength the function uses.
+    const keyStrength = await a.send(
+      `SELECT tier FROM profiles WHERE id = '${TEST_USER}' FOR UPDATE NOWAIT;`
+    )
+    expect(
+      keyStrength.stderr,
+      'FOR UPDATE NOWAIT was not refused, so session B is not holding the FOR KEY SHARE this ' +
+        'test depends on -- the assertion below would then pass for the wrong reason'
+    ).toMatch(/could not obtain lock on row/i)
+
+    // KNOWN-NEGATIVE: NO KEY strength is admitted through that same traffic.
+    // Asserted with a message and a POSITIVE stdout check, because a bare
+    // `not.toMatch` passes on any unrelated failure that leaves stderr without
+    // that phrase -- including one that returned no row at all.
+    const noKey = await a.send(
+      `SELECT tier FROM profiles WHERE id = '${TEST_USER}' FOR NO KEY UPDATE NOWAIT;`
+    )
+    expect(
+      noKey.stderr,
+      'FOR NO KEY UPDATE NOWAIT was refused through FK-child traffic, contradicting the measured ' +
+        'conflict matrix -- the engine or the harness is not behaving as this arm assumes'
+    ).not.toMatch(/could not obtain lock/i)
+    expect(noKey.stdout, 'the known-negative probe returned no row, so it proved nothing').toBe(
+      'community'
+    )
+
+    // THE ASSERTION. Bounded, so a widened lock fails in seconds with a named
+    // error rather than hanging to the test timeout -- a hang is
+    // indistinguishable from an unrelated stall, which is the failure mode this
+    // suite exists to avoid.
+    await a.send("SET lock_timeout = '3s';")
+    const call = await a.send(`SELECT recompute_user_tier('${TEST_USER}');`)
+    // Reduced to a boolean BEFORE asserting. Matching on `call.stderr` directly
+    // puts Postgres's own "canceling statement due to lock timeout" text into the
+    // assertion error, which matches vitest.preset.ts's retry condition (/timeout/i)
+    // and gets a deterministic logic regression annotated as infra flake and run
+    // twice. That preset's comment claims assertion failures never match it; an
+    // assertion that quotes a timeout error is how that stops being true.
+    const blockedOnLock = /lock timeout/i.test(call.stderr)
+    expect(
+      blockedOnLock,
+      'recompute_user_tier() blocked on ordinary FK-child traffic, so its row lock was widened ' +
+        'to FOR UPDATE. Twelve columns reference profiles(id): this stalls device-login approval ' +
+        'and licence issuance for the length of a recompute, traffic that never blocked before ' +
+        'SMI-6656. (FOR SHARE is NOT this failure -- it does not conflict with FOR KEY SHARE, ' +
+        'so it passes this arm; test 6 is what catches it.)'
+    ).toBe(false)
+    expect(call.stderr).not.toMatch(/ERROR/)
+    expect(call.stdout).toBe('individual')
+
+    await a.send('RESET lock_timeout;')
+    await b.send('ROLLBACK;')
+    await ctl.send('DROP TABLE IF EXISTS smi6857_fk_child;')
+  }, 60_000)
+
+  // ==========================================================================
+  // REQUIREMENT 6 -- the lock is not WEAKER than NO KEY UPDATE.
+  //
+  // Tests 5 and 6 are a BRACKETING PAIR, and that is the point of having both:
+  // 5 says the lock is at MOST NO KEY UPDATE strength, 6 says at LEAST. Together
+  // they constrain it from both directions FOR THE ROWS THEY EXERCISE, which is
+  // what the deleted textual smoke was doing and what kept rotting in prose.
+  // Neither is redundant: a FOR UPDATE widening PASSES test 6 (it still waits),
+  // and every weakening PASSES test 5 (nothing weaker blocks on FK traffic).
+  // Delete either one and a whole side of the bracket goes with it.
+  //
+  // Why FOR SHARE needs its own coverage: it is not KEY strength, so it does not
+  // conflict with FK-child FOR KEY SHARE and test 5 structurally cannot see it --
+  // yet it is genuinely broken. Two sessions can BOTH hold FOR SHARE on one row,
+  // so it provides zero mutual exclusion between two recomputes, which is the
+  // entire SMI-6656 fix; they then deadlock upgrading. Before SMI-6857 only
+  // test 2 caught it, and only in roughly 10 runs out of 12, because that arm is
+  // timing-dependent by its own design. Roughly one run in six shipped green.
+  //
+  // MEASURED conflict matrix (postgres:17.6, with a no-holder known-negative
+  // where everything proceeds and a held-FOR UPDATE known-positive where
+  // everything conflicts, so the probe discriminates in both directions):
+  //   held FOR SHARE vs FOR NO KEY UPDATE -> CONFLICT  (a correct body WAITS)
+  //   held FOR SHARE vs FOR SHARE         -> proceeds  (mutation detected here)
+  //   held FOR SHARE vs FOR KEY SHARE     -> proceeds  (mutation detected here)
+  //
+  // So this arm catches the whole too-weak family in one assertion: absent,
+  // FOR KEY SHARE, FOR SHARE, SKIP LOCKED (skips the row, never waits) and
+  // NOWAIT (fails instantly with 55P03, not a lock timeout).
+  //
+  // WHAT NEITHER ARM CATCHES, recorded rather than left for the next reader to
+  // discover: a lock taken inside a subtransaction that is then rolled back. All
+  // arms pass, because the caller still waits to acquire it, and `xmax` still
+  // reads set to the calling session even though the lock has been released.
+  // ==========================================================================
+  it('is not weakened below NO KEY strength: a held FOR SHARE must block it', async () => {
+    // ATTRIBUTION, and this arm is USELESS without it. A first version of this
+    // test used TEST_USER and passed under every weakening. Measured cause: the
+    // function does not stop at its lock. The trailing
+    // `UPDATE profiles SET tier ... WHERE tier IS DISTINCT FROM v_new_tier`
+    // takes NO KEY UPDATE strength itself, which conflicts with a held FOR SHARE
+    // on its own -- so the call timed out whatever the lock statement said, and
+    // the assertion could not tell the two apart. Only NOWAIT failed, because it
+    // errors instantly before reaching the UPDATE.
+    //
+    // The fix is test 4's attribution trick: use a row whose tier is ALREADY the
+    // value recompute computes, so the UPDATE's predicate excludes it, no row is
+    // a candidate, and no lock is taken there (MEASURED: that UPDATE returns in
+    // ~23ms against a held FOR SHARE and leaves xmax = 0). The lock statement is
+    // then the only thing in the function that can block, and the assertion at the
+    // END of this arm is what keeps that true rather than assumed.
+    const PROBE = '66560000-0000-0000-0000-0000000000fe'
+    await ctl.send(
+      `INSERT INTO auth.users (id, email) VALUES ('${PROBE}', 'smi6857-probe@example.test')
+         ON CONFLICT DO NOTHING;
+       INSERT INTO profiles (id, email, tier, role)
+         VALUES ('${PROBE}', 'smi6857-probe@example.test', 'community', 'user')
+         ON CONFLICT DO NOTHING;`
+    )
+
+    await b.send('BEGIN;')
+    const held = await b.send(`SELECT tier FROM profiles WHERE id = '${PROBE}' FOR SHARE;`)
+    expect(held.stderr, 'session B could not take FOR SHARE').not.toMatch(/ERROR/)
+    expect(held.stdout, 'session B took no row, so it is holding nothing').toBe('community')
+
+    // KNOWN-POSITIVE: the FOR SHARE is really held AND really does conflict with
+    // the strength the fix requires. If this probe proceeds, the assertion below
+    // cannot distinguish a correct lock from a weakened one.
+    const conflicts = await ctl.send(
+      `SELECT tier FROM profiles WHERE id = '${PROBE}' FOR NO KEY UPDATE NOWAIT;`
+    )
+    expect(
+      conflicts.stderr,
+      'a held FOR SHARE did not refuse FOR NO KEY UPDATE NOWAIT, so this arm proves nothing'
+    ).toMatch(/could not obtain lock on row/i)
+
+    // OBSERVE the wait on A's own backend instead of letting a lock_timeout fire.
+    // Same shape as test 1, and better here for three measured reasons: no error
+    // is produced at all, so no assertion message can carry Postgres's timeout
+    // text into vitest's retry condition; it is positive evidence that A waited
+    // on a *Lock*, not an inference from an error string; and it costs ~200ms
+    // rather than waiting out a timeout on every run, forever. Scoped to A's own
+    // PID so an unrelated waiter on a shared test database cannot satisfy it.
+    const aPid = (await a.send('SELECT pg_backend_pid();')).stdout.trim()
+    expect(aPid).toMatch(/^\d+$/)
+
+    const callA = a.fire(`SELECT recompute_user_tier('${PROBE}');`)
+
+    const aIsLockWaiting = async (): Promise<number> => {
+      const r = await ctl.send(
+        `SELECT count(*) FROM pg_stat_activity
+          WHERE pid = ${aPid} AND state = 'active' AND wait_event_type = 'Lock';`
+      )
+      return Number.parseInt(r.stdout.trim(), 10)
+    }
+    // 40 iterations, matching test 1's convention rather than a shorter window of
+    // its own: the bound is not a deterministic guarantee, so the only thing a
+    // tighter window buys is a false failure on a slow machine.
+    //
+    // What this poll does NOT distinguish: it matches on `wait_event_type` alone,
+    // not on the blocked relation, tuple or blocker PID. It is sound for the body
+    // shipped today, where the lock statement is the only thing that can wait on
+    // this row. A future body that waits on some OTHER lock would satisfy it.
+    let sawBlocked = false
+    for (let i = 0; i < 40 && !sawBlocked; i++) {
+      if ((await aIsLockWaiting()) >= 1) sawBlocked = true
+      else await sleep(250)
+    }
+
+    // THE ASSERTION.
+    expect(
+      sawBlocked,
+      'recompute_user_tier() never waited on a held FOR SHARE, so its row lock is weaker than ' +
+        'FOR NO KEY UPDATE -- FOR SHARE, FOR KEY SHARE, SKIP LOCKED, NOWAIT, or absent. Two ' +
+        'sessions can then both hold this row and neither excludes the other, which is the ' +
+        'entire SMI-6656 fix.'
+    ).toBe(true)
+
+    await b.send('ROLLBACK;')
+    const after = await callA
+    expect(
+      after.stderr,
+      "the call failed once B released, so the wait above was not B's lock"
+    ).not.toMatch(/ERROR/)
+
+    // ATTRIBUTION, and THIS is the assertion that carries it -- not a tier re-read.
+    // A first version re-read the tier here and called that the attribution check.
+    // It could not fail: a lock_timeout aborts the whole statement, so a fired
+    // UPDATE is rolled back and the tier always reads unchanged. MEASURED, with the
+    // lock deleted on a TEST_USER-shaped row: that re-read PASSED while this
+    // assertion FAILED with 'individual'. The credit was on the inert assertion.
+    //
+    // What this proves: the tier A computed equals the tier the row already had, so
+    // the function's own `UPDATE ... WHERE tier IS DISTINCT FROM v_new_tier`
+    // predicate was FALSE, no row was a candidate, and that UPDATE took no lock.
+    // So the wait observed above cannot have been the UPDATE.
+    expect(
+      after.stdout,
+      'the probe user computed a different tier, so the UPDATE predicate was TRUE and the wait ' +
+        'above is not attributable to the lock alone -- re-pick the probe row'
+    ).toBe('community')
+  }, 60_000)
 })
