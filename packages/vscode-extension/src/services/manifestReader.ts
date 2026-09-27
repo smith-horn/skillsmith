@@ -126,6 +126,17 @@ export type UpdateRemediationKind =
  * `Record` has 36 keys, not 38 — see `update-target-render.ts`'s doc comment
  * for why one shared entry per string is correct.
  */
+/**
+ * PREPARATORY (SMI-6532 step 6, 2026-09-27). NOTHING IN THIS EXTENSION READS EITHER
+ * TABLE BELOW YET.
+ *
+ * They are kept exhaustive and in step with `@skillsmith/core`'s closed sets so that
+ * the consumer arriving with SMI-6531 finds them correct. Until then no user sees any
+ * of this text, and no code path here depends on it. Stated in this file because its
+ * two sibling tables — the MCP one and the parity test in core — say so in their own
+ * headers, and a reader opening only this file would otherwise reasonably read the
+ * care taken over these entries as evidence that something consumes them.
+ */
 export const UPDATE_TARGET_TEXT: Record<UpdateTargetReason | UpdateResultCode, string> = {
   'manifest-unreadable': 'The manifest file could not be read',
   'recovery-record-unreadable': 'A recovery record for this skills root could not be read',

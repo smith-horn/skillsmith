@@ -101,9 +101,22 @@ function extractObjectLiteral(
   // syntax rather than throwing, so without this check a syntactically broken mirror
   // still yields a plausible-looking table. A mirror that does not parse cleanly is
   // not one this test can speak about.
+  // `parseDiagnostics` is INTERNAL to TypeScript, so reaching it needs a cast — and a
+  // cast means a rename upstream would read `undefined` and turn this guard off
+  // silently, leaving the exact hole it exists to close. So its ABSENCE is fatal too:
+  // if TypeScript stops setting it, this throws and someone has to look, rather than
+  // the check quietly becoming a no-op.
   const parseErrors = (sourceFile as unknown as { parseDiagnostics?: readonly ts.Diagnostic[] })
     .parseDiagnostics
-  if (parseErrors !== undefined && parseErrors.length > 0) {
+  if (parseErrors === undefined) {
+    throw new Error(
+      `Cannot read parseDiagnostics from a TypeScript SourceFile (ts ${ts.version}). ` +
+        `That field is internal; if it has been renamed or removed, this guard is off ` +
+        `and a malformed mirror would extract as if it were valid. Find the new way to ` +
+        `detect parse errors before re-enabling extraction.`
+    )
+  }
+  if (parseErrors.length > 0) {
     const first = ts.flattenDiagnosticMessageText(parseErrors[0]?.messageText ?? '', ' ')
     throw new Error(
       `${fileName} does not parse cleanly (${parseErrors.length} diagnostic(s)); ` +
@@ -248,6 +261,35 @@ const ALL_MEMBERS: TaggedMember[] = [
 // deliberately not repeated here: four consecutive rounds found a defect in this note
 // while it recounted the previous round, which is the pattern `pr-reviewer` names.
 describe('SMI-6532 step 6: reason/result TABLE parity (MCP + VS Code)', () => {
+  // THE EXTRACTOR'S OWN REFUSALS, tested rather than hand-checked once. The parse
+  // guard was added in response to a review finding and verified by mutating a real
+  // mirror; that proved it worked that afternoon and protects nothing afterwards.
+  // These pin both of its branches.
+  describe('extractObjectLiteral refusals', () => {
+    it('throws on a source file the parser had to recover, naming the diagnostic', () => {
+      expect(() => extractObjectLiteral('export const ((( T = { a: 1 }', 'T', 'broken.ts')).toThrow(
+        /does not parse cleanly/
+      )
+    })
+
+    it('reads parseDiagnostics off a real SourceFile — the field the guard depends on', () => {
+      // If TypeScript ever stops setting this internal field, the guard above throws
+      // its own "cannot read parseDiagnostics" error instead of silently passing. This
+      // asserts the field is present TODAY, so that day is visible here first.
+      const probe = ts.createSourceFile('probe.ts', 'export const T = {}', ts.ScriptTarget.Latest)
+      const diagnostics = (probe as unknown as { parseDiagnostics?: readonly ts.Diagnostic[] })
+        .parseDiagnostics
+      expect(diagnostics, `ts ${ts.version} no longer exposes parseDiagnostics`).toBeDefined()
+      expect(Array.isArray(diagnostics)).toBe(true)
+    })
+
+    it('throws when the named export is absent rather than returning an empty table', () => {
+      expect(() => extractObjectLiteral('export const OTHER = { a: 1 }', 'T', 'absent.ts')).toThrow(
+        /has no "export const T = \{\.\.\.\}"/
+      )
+    })
+  })
+
   it('sanity: 23 reasons + 15 results = 38 tagged members', () => {
     expect(UPDATE_TARGET_REASONS.length).toBe(23)
     expect(UPDATE_RESULT_CODES.length).toBe(15)

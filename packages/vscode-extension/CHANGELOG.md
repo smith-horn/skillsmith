@@ -6,6 +6,11 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/), and this
 
 ## [Unreleased]
 
+- **Docs**: SMI-6532 -- `manifestReader.ts` now states in the file itself that nothing consumes its
+  two update-reason tables yet. Its two sibling tables (the MCP one and the parity test in core) each
+  said so in their own headers; this one did not, so a reader opening only this file saw carefully
+  maintained data and no signal that it is preparatory. Found by the post-merge retro on PR #2952.
+
 - **Feature**: SMI-6532 step 6 (preparatory -- see the scope note below) -- `manifestReader` now also carries two tables: a total `Record` from
   every update skip reason and result code to the text this extension will show, and a mirror of which
   remediation kind each member maps to. **Nothing consumes either yet**: the call site arrives with
