@@ -5,9 +5,14 @@
  *
  * Split out of `skill-installation.helpers.ts` to stay under the 500-line
  * standard, per the `skill-installation.io.ts` sibling-split convention; round
- * 25 split `.uninstall.helpers.ts` out again for the same reason, and round 7
- * split `.removal-identity.ts` off the guard module. One internal consumer
- * (`skill-installation.service.ts`); not part of the public export surface.
+ * 25 split `.uninstall.helpers.ts` out again for the same reason, round 7
+ * split `.removal-identity.ts` off the guard module, and the ADR-171 § 5
+ * retraction resolution moved `buildAdoptedManifestEntry`/
+ * `adoptUntrackedSkillEntry`/`updateManifestTolerantly` into
+ * `.uninstall.helpers.ts` for the same reason again — re-exported below so
+ * `@skillsmith/core`'s public export surface (`exports/services.install.ts`)
+ * is unaffected. One internal consumer (`skill-installation.service.ts`); not
+ * part of the public export surface itself.
  */
 
 import * as fs from 'fs/promises'
@@ -28,150 +33,24 @@ import {
   identityChanged,
   type DirIdentity,
 } from './skill-installation.removal-identity.js'
-import { hashContent, manifestKeyFor } from './skill-installation.helpers.js'
+import { manifestKeyFor } from './skill-installation.helpers.js'
 import type { ManifestManager } from './skill-manifest.js'
+import { loadManifestLenient, ManifestUnwritableError } from './skill-manifest.read-state.js'
+import type { SkillManifest } from './skill-installation.types.js'
 import { CANONICAL_CLIENT, type ClientId } from '../install/paths.js'
-import type { SkillManifestEntry } from './skill-installation.types.js'
 import {
+  adoptUntrackedSkillEntry,
+  buildAdoptedManifestEntry,
   inspectForRemoval,
   notify,
   parkedWarnings,
   sameRecord,
 } from './skill-installation.uninstall.helpers.js'
 
-/**
- * ADR-139 (SMI-6274 Wave 4): build a manifest entry for a skill found on
- * disk with no manifest record — "adoption." Every field is reconstructed
- * from what is directly observable on disk; fields that genuinely cannot
- * be recovered this way (the originating registry version/source) are
- * recorded as `'unknown'` rather than guessed, so a later `update` sees
- * `'unknown'` and falls through to confidence-gated source recovery
- * instead of silently trusting a wrong version (ADR-139 point 1).
- *
- * Exported (not just used by {@link performUninstall}) so `update`'s own
- * adoption path (`packages/cli/src/commands/manage.update.ts`) reuses the
- * IDENTICAL reconstruction logic rather than a second, driftable copy —
- * GPT-5.6-Sol PR review, ADR-139 follow-up: `update` previously never
- * adopted an untracked skill at all, only `remove` did.
- */
-export async function buildAdoptedManifestEntry(
-  skillName: string,
-  installPath: string
-): Promise<SkillManifestEntry> {
-  const dirStat = await fs.stat(installPath)
-  // installedAt is set to the NEWEST top-level file mtime (falling back to
-  // the directory's own mtime when it has no files), mirroring exactly the
-  // scan `checkForModifications` (skill-installation.io.ts) performs — a
-  // directory's own mtime can legitimately be OLDER than a file inside it
-  // last touched, which would otherwise make an adopted skill look
-  // "modified" (and thus require force=true) on the very next removal
-  // attempt, immediately after adoption.
-  let newestMtimeMs = dirStat.mtime.getTime()
-  try {
-    const entries = await fs.readdir(installPath, { withFileTypes: true })
-    for (const entry of entries) {
-      if (!entry.isFile()) continue
-      const fileStat = await fs.stat(path.join(installPath, entry.name))
-      if (fileStat.mtime.getTime() > newestMtimeMs) newestMtimeMs = fileStat.mtime.getTime()
-    }
-  } catch {
-    // Fall back to the directory's own mtime — best-effort.
-  }
-  const nowIso = new Date(newestMtimeMs).toISOString()
-  let contentHash: string | undefined
-  try {
-    const skillMd = await fs.readFile(path.join(installPath, 'SKILL.md'), 'utf-8')
-    contentHash = hashContent(skillMd)
-  } catch {
-    contentHash = undefined
-  }
-  return {
-    id: skillName,
-    name: skillName,
-    version: 'unknown',
-    source: 'unknown',
-    installPath,
-    installedAt: nowIso,
-    lastUpdated: nowIso,
-    ...(contentHash !== undefined && { contentHash }),
-  }
-}
-
-/**
- * ADR-139 (SMI-6274 Wave 4) / GPT-5.6-Sol PR review round 4: adopt an
- * untracked skill (present on disk, no manifest entry) by writing a
- * reconstructed manifest entry — race-safe against a concurrent writer
- * (e.g. a real `install()`, or another concurrent `update()`) tracking the
- * SAME skill between the caller's own (unlocked) manifest read and this
- * call's lock-acquired write.
- *
- * Single shared implementation for BOTH adoption call sites —
- * {@link performUninstall} (this file, calls it directly) and
- * `getSkillDiff` (`packages/cli/src/commands/manage.update.ts`, via this
- * function's re-export at the `@skillsmith/core` package root). Round 3's
- * confirmation review found a CLI-package-local copy of this exact
- * race-safety logic (`manage.update.helpers.ts`'s now-removed
- * `adoptUntrackedSkill`) had drifted from `performUninstall`'s own
- * still-non-race-safe inline version — importing a CLI file into `core`
- * would be a layering violation, so the fix moves the ONE race-safe
- * implementation here, alongside {@link buildAdoptedManifestEntry}, instead
- * of maintaining two copies of the same logic.
- *
- * The `updateSafely()` callback checks `current.installedSkills[manifestKey]`
- * INSIDE the callback, against the FRESH, lock-acquired state it's handed —
- * never a caller's own stale, unlocked read: if a real entry is already
- * there by the time the lock is held, that entry wins and the guessed one
- * is discarded entirely (never written) — a concurrent legitimate
- * `install()` must never be clobbered by a same-tick adoption's guess.
- *
- * Returns the entry now in the manifest (freshly adopted, or a real one a
- * concurrent writer got there first with) plus whether OUR write happened,
- * or `{ adoptionError }` if the write itself failed — naming the skill,
- * path, and manifest (via `manifest.path`), per ADR-139 point 1's stated
- * failure contract.
- */
-export async function adoptUntrackedSkillEntry(
-  skillName: string,
-  skillDirName: string,
-  installPath: string,
-  manifestKey: string,
-  manifest: ManifestManager
-): Promise<{ entry: SkillManifestEntry; adopted: boolean } | { adoptionError: string }> {
-  const adoptedEntry = await buildAdoptedManifestEntry(skillDirName, installPath)
-  let resolvedEntry = adoptedEntry
-  let adopted = true
-
-  try {
-    await manifest.updateSafely((current) => {
-      const existing = current.installedSkills?.[manifestKey]
-      if (existing) {
-        resolvedEntry = existing
-        adopted = false
-        return current
-      }
-      resolvedEntry = adoptedEntry
-      adopted = true
-      return {
-        ...current,
-        installedSkills: { ...current.installedSkills, [manifestKey]: adoptedEntry },
-      }
-    })
-  } catch (adoptError) {
-    return {
-      adoptionError:
-        'Failed to adopt untracked skill "' +
-        skillName +
-        '" at ' +
-        installPath +
-        ' into manifest ' +
-        manifest.path +
-        ': ' +
-        (adoptError instanceof Error ? adoptError.message : String(adoptError)),
-    }
-  }
-
-  return { entry: resolvedEntry, adopted }
-}
+// ADR-171 § 5 retraction resolution: re-exported so nothing outside this pair
+// of files (`exports/services.install.ts`'s barrel re-export in particular)
+// has to know these moved to `.uninstall.helpers.ts`.
+export { adoptUntrackedSkillEntry, buildAdoptedManifestEntry }
 
 /** Perform skill uninstall with manifest awareness and orphan fallback. */
 export async function performUninstall(params: {
@@ -224,7 +103,39 @@ export async function performUninstall(params: {
     }
 
     notify(onProgress, listenerProblems, 'manifest', 'Loading manifest')
-    const manifestData = await manifest.load()
+    // ADR-171 § 5 retraction resolution, Part A: this read must never throw
+    // here. Every identity/containment check below -- name, exact-entry,
+    // not-tracked-elsewhere, path containment, and the post-adoption swap
+    // check -- has to get a chance to run and produce its OWN, more specific
+    // refusal before a degraded manifest read is allowed to turn into one:
+    // "this directory was swapped out from under you" is more actionable
+    // than "your manifest is corrupt", and when both are true the former is
+    // what the caller needs to hear.
+    //
+    // Still routed through `manifest.load()` FIRST (not straight to
+    // `loadManifestLenient`) -- round 5/F1's getter tests spy on
+    // `ManifestManager.prototype.load` to hand `performUninstall` a
+    // once-readable entry, and a direct `loadManifestLenient(manifest.path)`
+    // call would bypass that spy entirely, reading the real (unrelated) file
+    // on disk instead. Only when `manifest.load()` itself throws ADR-171's
+    // `ManifestUnwritableError` do we fall back to the lenient wrapper, which
+    // never throws; `manifestDegradedWarning` is then non-null (the three
+    // states `loadManifestForWrite` refuses on: corrupt / unreadable /
+    // version_unsupported). Part B, below -- after every identity check above
+    // has run -- is where a non-null warning actually becomes a refusal,
+    // gated on `force`. Any OTHER thrown error is a genuine bug, not a
+    // classified read state, and still propagates to the outer catch exactly
+    // as it always has.
+    let manifestData: SkillManifest
+    let manifestDegradedWarning: string | null = null
+    try {
+      manifestData = await manifest.load()
+    } catch (err) {
+      if (!(err instanceof ManifestUnwritableError)) throw err
+      const lenient = await loadManifestLenient(manifest.path)
+      manifestData = lenient.manifest
+      manifestDegradedWarning = lenient.warning
+    }
     let skillEntry = manifestData.installedSkills[manifestKey]
     let adopted = false
     let adoptedIdentity: DirIdentity | null = null
@@ -357,6 +268,24 @@ export async function performUninstall(params: {
     }
 
     if (!force) {
+      // ADR-171 § 5 retraction resolution, Part B: every identity/containment
+      // check above has already had its chance to produce a MORE SPECIFIC
+      // refusal (Part A) -- none did, or we would already have returned.
+      // Without `force`, a manifest read this client could not verify still
+      // refuses here, per ADR-171: proceeding to remove anything on the
+      // strength of a degraded read is exactly what `force` exists to
+      // authorize explicitly. This never fires when the read was `ok` or
+      // `missing` (`manifestDegradedWarning` is `null` on both).
+      if (manifestDegradedWarning !== null) {
+        return {
+          success: false,
+          skillName,
+          message:
+            `Skill "${skillName}" was not removed: ${manifestDegradedWarning} Use force=true to ` +
+            `remove anyway.`,
+          ...listenerWarning(),
+        }
+      }
       notify(onProgress, listenerProblems, 'check', 'Checking for modifications')
       const modified = await checkForModifications(installPath, skillEntry.installedAt)
       if (modified) {

@@ -51,6 +51,22 @@ export {
 
 export { ManifestManager, assertNotRealUserHome } from '../services/skill-manifest.js'
 
+// ADR-171 (SMI-6733 Phase 1): the two named read-state policy wrappers, for
+// mcp-server/cli consumers migrating off ad-hoc `catch {}` manifest reads
+// (Phase 2). Deliberately NOT exporting `readManifestState` (the raw
+// classifier) here — ADR-171 § 4's Open Risk 3 finding: a barrel re-export
+// under a name that gives no hint it resolves to the classifier is exactly
+// how `outdated.action.ts` reached the OLD fail-open `loadManifest` without
+// ever writing that name in its own file. Only the two wrappers and the
+// error type they throw belong on this package's public surface.
+export {
+  loadManifestForWrite,
+  loadManifestLenient,
+  ManifestUnwritableError,
+  type ManifestReadState,
+  type ManifestLenientRead,
+} from '../services/skill-manifest.read-state.js'
+
 // SMI-6529 L20 (round 2): exported so mcp-server's `install.ts` conflict
 // pre-flight can run the SAME pre-write target guard `install()` itself runs
 // internally, BEFORE any backup/GC side effect — see that call site's own

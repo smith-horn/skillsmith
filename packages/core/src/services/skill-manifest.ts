@@ -10,6 +10,7 @@ import * as path from 'path'
 import { randomUUID } from 'node:crypto'
 
 import { withFileLock } from '../config/file-lock.js'
+import { loadManifestForWrite } from './skill-manifest.read-state.js'
 import type { SkillManifest } from './skill-installation.types.js'
 
 /**
@@ -110,28 +111,18 @@ export class ManifestManager {
    * that empty snapshot back out would erase every previously-recorded
    * install. Now it throws loudly instead, so a corrupt manifest surfaces as
    * an error rather than silently wiping state on the next write.
+   *
+   * ADR-171 (SMI-6733): re-implemented on top of the five-state classifier
+   * in `skill-manifest.read-state.ts` — external behaviour is unchanged
+   * (`ENOENT` -> empty manifest, everything else throws), but the thrown
+   * message is now ADR-171 § 8's, and a manifest that PARSES but fails § 5's
+   * shape check (e.g. `installedSkills: []`) now throws here too, where it
+   * previously flowed through untouched. `ManifestManager.load()` is
+   * literally `loadManifestForWrite()` — this class IS the canonical writer,
+   * so there is no separate "read-only" behaviour to preserve.
    */
   async load(): Promise<SkillManifest> {
-    let content: string
-    try {
-      content = await fs.readFile(this.manifestPath, 'utf-8')
-    } catch (error) {
-      if ((error as NodeJS.ErrnoException).code === 'ENOENT') {
-        return { version: '1.0.0', installedSkills: {} }
-      }
-      throw error
-    }
-
-    try {
-      return JSON.parse(content)
-    } catch (error) {
-      throw new Error(
-        'Manifest file at ' +
-          this.manifestPath +
-          ' exists but is corrupt/unparseable: ' +
-          (error instanceof Error ? error.message : String(error))
-      )
-    }
+    return loadManifestForWrite(this.manifestPath)
   }
 
   /**
