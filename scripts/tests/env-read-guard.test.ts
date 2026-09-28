@@ -205,6 +205,18 @@ describe('decide() — additional cases from the guard’s own documented behavi
     expect(result.action).toBe('deny')
   })
 
+  // L-2 fix (SMI-6744 Wave 4 delta governance round, ruflo-host-guard.mjs's
+  // own review): confirms `stripVarlockRun`'s H-E fix (SMI-6744 Wave 4
+  // governance round) — a trailing `--` that belongs to the WRAPPED
+  // command's own argv, not varlock's own separator — also holds for THIS
+  // guard, not just ruflo-host-guard.mjs, since both guards share the same
+  // `normalizeWrappers`/`stripVarlockRun` implementation. The ONE append to
+  // this file for that fix.
+  it("varlock run cat .env -- x -> deny (a trailing -- is the wrapped command's own, not varlock's separator)", () => {
+    const result = decide(bashCall('varlock run cat .env -- x'), {})
+    expect(result.action).toBe('deny')
+  })
+
   it('docker compose exec dev cat /app/.env -> deny (compose exec wrapper stripped)', () => {
     const result = decide(bashCall('docker compose exec dev cat /app/.env'), {})
     expect(result.action).toBe('deny')

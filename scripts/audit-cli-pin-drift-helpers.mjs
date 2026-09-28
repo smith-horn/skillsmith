@@ -276,6 +276,80 @@ export function findProcScanCmdHintDrift(guardPath, guideMdPath) {
 }
 
 /**
+ * Finds the `permissions.deny` array's exact CHARACTER-OFFSET span
+ * (inclusive of both the opening `[` and its matching `]`) within the
+ * FULL raw file text `fileText` -- not a per-line scan (M-3 fix, SMI-6744
+ * Wave 4 governance round, superseding the prior line-based
+ * `findJsonArrayLineSpan`). Two defects the line-based version could not
+ * fix without this rewrite:
+ *
+ *   1. A single-line array (`"deny": ["Bash(npx claude-flow)"]`) collapses
+ *      `startLine === endLine` under line-number tracking, so the
+ *      exemption below's `idx > startLine && idx < endLine` check can
+ *      never be true for anything on that one line -- a legitimate deny
+ *      entry written single-line was a FALSE POSITIVE. Character offsets
+ *      have a real, comparable interior even within one line.
+ *   2. Depth was only ever checked AFTER a full line finished scanning, so
+ *      a same-line `], "allow": [` (deny's own close immediately followed
+ *      by allow's own open) let allow's `[` re-increment depth back past
+ *      zero before the end-of-line check ran, corrupting `endLine` into a
+ *      FALSE NEGATIVE that swallowed allow's own content into deny's
+ *      span. Depth is now checked immediately after every `]`,
+ *      character-by-character, so the span always ends at the FIRST point
+ *      depth returns to zero.
+ *
+ * The search for `"deny"` starts from the `"permissions"` key's own
+ * offset (not the first bare `"deny":` text anywhere in the file) so an
+ * UNRELATED earlier `"deny":` occurrence elsewhere in the file — a
+ * different nested structure entirely — cannot be mistaken for
+ * `permissions.deny`. String-literal contents are skipped while tracking
+ * bracket depth, so a deny entry like "Bash(rg '[a-z]')" containing its
+ * own literal brackets can never perturb the count. Returns null if
+ * `"permissions"`/`"deny"` is never found, or the array never closes.
+ * @param {string} fileText the FULL raw file text (not split into lines)
+ * @returns {{startOffset: number, endOffset: number} | null} the `[` and
+ *   matching `]` character offsets (inclusive)
+ */
+function findPermissionsDenySpan(fileText) {
+  const permIdx = fileText.search(/"permissions"\s*:/)
+  if (permIdx === -1) return null
+
+  const denyKeyRe = /"deny"\s*:\s*\[/g
+  denyKeyRe.lastIndex = permIdx
+  const denyMatch = denyKeyRe.exec(fileText)
+  if (!denyMatch) return null
+
+  const openIdx = fileText.indexOf('[', denyMatch.index)
+  if (openIdx === -1) return null
+
+  let depth = 0
+  let inString = false
+  let escaped = false
+  for (let i = openIdx; i < fileText.length; i++) {
+    const ch = fileText[i]
+    if (inString) {
+      if (escaped) {
+        escaped = false
+      } else if (ch === '\\') {
+        escaped = true
+      } else if (ch === '"') {
+        inString = false
+      }
+      continue
+    }
+    if (ch === '"') {
+      inString = true
+    } else if (ch === '[') {
+      depth++
+    } else if (ch === ']') {
+      depth--
+      if (depth === 0) return { startOffset: openIdx, endOffset: i }
+    }
+  }
+  return null
+}
+
+/**
  * Sub-check 4: no tracked file within the defined live-executable/config
  * surface reintroduces the pre-rename `npx claude-flow` invocation.
  * Explicitly excludes the vendored Ruflo reference-template library
@@ -293,14 +367,50 @@ export function findClaudeFlowReintroductions(repoRoot) {
   // to catch (found while writing this check's own test coverage).
   const pattern = /npx['",\s]+claude-flow/
 
-  const scanFile = (relPath) => {
+  const scanFile = (relPath, denyLiterals) => {
     const fullPath = join(repoRoot, relPath)
     if (!existsSync(fullPath)) return
-    const lines = readFileSync(fullPath, 'utf8').split('\n')
+    const fileText = readFileSync(fullPath, 'utf8')
+    const lines = fileText.split('\n')
+    // M-3 fix (SMI-6744 Wave 4 governance round): the exemption below must
+    // be POSITIONAL, computed once per file from the raw text via
+    // CHARACTER OFFSETS (not line numbers -- see findPermissionsDenySpan's
+    // own doc comment for why a line-based span was wrong for both a
+    // single-line array and a same-line `], "allow": [`), never from the
+    // already-parsed `permissions.deny` array's VALUES alone (SMI-6744
+    // Wave 4 H-1: a value-only check wrongly exempted the identical
+    // literal sitting in `allow` too).
+    const denySpan =
+      denyLiterals && denyLiterals.size > 0 ? findPermissionsDenySpan(fileText) : null
+
+    let lineStartOffset = 0
     lines.forEach((line, idx) => {
-      if (!pattern.test(line)) return
-      if (/@see\s+SMI-\d+/.test(line)) return
-      findings.push({ file: relPath, line: idx + 1 })
+      const matchIdx = line.search(pattern)
+      if (matchIdx === -1 || /@see\s+SMI-\d+/.test(line)) {
+        lineStartOffset += line.length + 1
+        return
+      }
+      // A `.claude/settings.json` `permissions.deny` entry must literally
+      // spell the banned command it blocks (e.g. "Bash(npx claude-flow)")
+      // -- that is the opposite of "reintroduces npx claude-flow", so it
+      // must not be flagged. Once `denySpan` is a real character-offset
+      // range, ANYTHING positioned strictly between the array's own `[`
+      // and `]` is necessarily part of one of its own JSON string
+      // elements (nothing else can legally occupy that span), so the
+      // offset check alone is sufficient -- no separate per-line
+      // JSON.parse-and-compare-to-denyLiterals step is needed (that step
+      // could never exempt a single-line array's own entry anyway, since
+      // the whole `"deny": [...]` text on one line never parses as a bare
+      // JSON string on its own).
+      const absoluteMatchOffset = lineStartOffset + matchIdx
+      const insideDeny =
+        denySpan &&
+        absoluteMatchOffset > denySpan.startOffset &&
+        absoluteMatchOffset < denySpan.endOffset
+      if (!insideDeny) {
+        findings.push({ file: relPath, line: idx + 1 })
+      }
+      lineStartOffset += line.length + 1
     })
   }
 
@@ -320,7 +430,21 @@ export function findClaudeFlowReintroductions(repoRoot) {
   walkShellScripts(join(repoRoot, 'scripts'), (p) => p.includes(`${join('scripts', 'prompts')}`))
   walkShellScripts(join(repoRoot, '.claude', 'helpers'), null)
 
-  scanFile('.claude/settings.json')
+  const settingsJsonPath = join(repoRoot, '.claude', 'settings.json')
+  let denyLiterals = new Set()
+  if (existsSync(settingsJsonPath)) {
+    try {
+      const parsedSettings = JSON.parse(readFileSync(settingsJsonPath, 'utf8'))
+      const denyArr =
+        parsedSettings && parsedSettings.permissions && parsedSettings.permissions.deny
+      if (Array.isArray(denyArr)) denyLiterals = new Set(denyArr)
+    } catch {
+      // Malformed settings.json: fall through with an empty exemption set,
+      // matching this check's pre-existing behavior of flagging every match
+      // when the file cannot be parsed as JSON.
+    }
+  }
+  scanFile('.claude/settings.json', denyLiterals)
   scanFile('docker-compose.yml')
 
   const packagesDir = join(repoRoot, 'packages')
