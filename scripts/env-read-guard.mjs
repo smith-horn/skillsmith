@@ -42,7 +42,28 @@
  *     else, as an explicit invariant.
  *
  * @see docs/internal/implementation/varlock-secret-exposure-defense-in-depth.md
+ *
+ * SMI-6744 A4.6: the tokenizer and wrapper-normalization primitives below
+ * (`tokenize`, `stripFlags`, `stripEnvPrefix`, `stripDockerExec`,
+ * `stripDockerCompose`, `stripVarlockRun`, `extractShellDashC`,
+ * `normalizeWrappers`, `hasInlineScriptFlag`, `scanPositionalScriptText`,
+ * `basenameOf`, plus `SHELL_COMMANDS`/`WRAPPER_VALUE_FLAGS`/`MAX_DEPTH`/
+ * `INLINE_SCRIPT_LONG_FLAGS`/`POSITIONAL_SCRIPT_COMMANDS`) moved to
+ * `scripts/lib/shell-command-normalize.mjs` so `scripts/ruflo-host-guard.mjs`
+ * can reuse them instead of re-implementing its own copy. This file's own
+ * `INLINE_SCRIPT_SHORT_FLAG_CHARS` and `scanTextForProtected` stay here —
+ * they are `.env`-specific — and are passed into the two moved functions
+ * whose env-specific piece became a parameter in the move.
  */
+
+import {
+  basenameOf,
+  hasInlineScriptFlag,
+  MAX_DEPTH,
+  normalizeWrappers,
+  scanPositionalScriptText,
+  tokenize,
+} from './lib/shell-command-normalize.mjs'
 
 /** Env files that are always safe to read — placeholders / schema only. */
 const SAFE_ENV_BASENAMES = new Set(['.env.example', '.env.schema'])
@@ -80,26 +101,6 @@ const READER_COMMANDS = new Set([
   'base32',
   'source',
   '.',
-])
-
-/**
- * Long flags that introduce inline script text on an interpreter. Checked
- * against every interpreter uniformly (never per-interpreter) — unlike the
- * short-flag map below, over-recognizing a long flag no interpreter
- * actually has is safe (it just triggers one extra, harmless text scan).
- * Includes php's four long-form process-hook aliases (--run/--process-begin/
- * --process-code/--process-end), confirmed against php.net's CLI options
- * page — SMI-6361 adversarial confirmation-pass finding F3.
- */
-const INLINE_SCRIPT_LONG_FLAGS = new Set([
-  '--eval',
-  '--print',
-  '--execute',
-  '--command',
-  '--run',
-  '--process-begin',
-  '--process-code',
-  '--process-end',
 ])
 
 /**
@@ -170,34 +171,9 @@ const GREP_OUTPUT_LONG = new Set([
   '--context',
 ])
 
-const SHELL_COMMANDS = new Set(['bash', 'sh', 'zsh', 'dash', 'ksh'])
-
-/**
- * Wrapper options that consume a following value, so flag-skipping does
- * not mistake that value for the wrapped command. One shared set across
- * `sudo`, `docker exec`, `docker compose`, and `varlock run` — these
- * only ever appear in wrapper-flag position, so a flag belonging to one
- * wrapper being recognized by another is harmless.
- */
-const WRAPPER_VALUE_FLAGS = new Set(
-  (
-    '-u --user -g --group -p --prompt -h --host -e --env -w --workdir --env-file --detach-keys ' +
-    '--index -f --file --project-name --project-directory --profile --progress --ansi ' +
-    '--parallel --context'
-  ).split(' ')
-)
-
-/** Recursion cap for nested `bash -c` / `$(...)` unwrapping. */
-const MAX_DEPTH = 6
-
 const ALLOW = { action: 'allow', json: null, stderr: null }
 
 // --- File classification ---
-
-/** @param {string} p */
-function basenameOf(p) {
-  return p.split('/').pop()
-}
 
 /**
  * Classify a bare basename. Any `.env.<anything>` is protected except
@@ -256,284 +232,6 @@ function scanTextForProtected(text) {
   return null
 }
 
-// --- Tokenizer (quote-aware, records command substitutions) ---
-
-/** Index just past the closing `"` starting at s[i] === '"'. */
-function skipDouble(s, i) {
-  let j = i + 1
-  while (j < s.length) {
-    if (s[j] === '\\') {
-      j += 2
-      continue
-    }
-    if (s[j] === '"') return j + 1
-    j++
-  }
-  return s.length
-}
-
-/** Balanced-paren read; s[start] === '('. */
-function readParen(s, start) {
-  let depth = 0
-  let i = start
-  while (i < s.length) {
-    const c = s[i]
-    if (c === '\\') {
-      i += 2
-      continue
-    }
-    if (c === "'") {
-      const e = s.indexOf("'", i + 1)
-      i = e === -1 ? s.length : e + 1
-      continue
-    }
-    if (c === '"') {
-      i = skipDouble(s, i)
-      continue
-    }
-    if (c === '(') {
-      depth++
-      i++
-      continue
-    }
-    if (c === ')') {
-      depth--
-      i++
-      if (depth === 0) return { inner: s.slice(start + 1, i - 1), next: i }
-      continue
-    }
-    i++
-  }
-  return { inner: s.slice(start + 1), next: s.length }
-}
-
-/**
- * Split a command string into word/operator tokens. Word tokens carry
- * their unquoted `value` plus any `$(...)` / backtick bodies in `subs`.
- * @param {string} command
- */
-function tokenize(command) {
-  const tokens = []
-  let cur = null
-  const flush = () => {
-    if (cur !== null) tokens.push(cur)
-    cur = null
-  }
-  const word = () => {
-    if (cur === null) cur = { type: 'word', value: '', subs: [] }
-    return cur
-  }
-  const pushOp = (value, width, i) => {
-    flush()
-    tokens.push({ type: 'op', value })
-    return i + width
-  }
-
-  let i = 0
-  while (i < command.length) {
-    const c = command[i]
-    if (c === '\\') {
-      if (i + 1 < command.length) word().value += command[i + 1]
-      i += 2
-      continue
-    }
-    if (c === "'") {
-      const e = command.indexOf("'", i + 1)
-      word().value += e === -1 ? command.slice(i + 1) : command.slice(i + 1, e)
-      i = e === -1 ? command.length : e + 1
-      continue
-    }
-    if (c === '"') {
-      const w = word()
-      let j = i + 1
-      while (j < command.length && command[j] !== '"') {
-        if (command[j] === '\\') {
-          if (j + 1 < command.length) w.value += command[j + 1]
-          j += 2
-        } else if (command[j] === '$' && command[j + 1] === '(') {
-          const r = readParen(command, j + 1)
-          w.subs.push(r.inner)
-          w.value += command.slice(j, r.next)
-          j = r.next
-        } else if (command[j] === '`') {
-          const e = command.indexOf('`', j + 1)
-          const inner = e === -1 ? command.slice(j + 1) : command.slice(j + 1, e)
-          w.subs.push(inner)
-          w.value += inner
-          j = e === -1 ? command.length : e + 1
-        } else {
-          w.value += command[j]
-          j++
-        }
-      }
-      i = j < command.length ? j + 1 : command.length
-      continue
-    }
-    if (c === '`') {
-      const w = word()
-      const e = command.indexOf('`', i + 1)
-      const inner = e === -1 ? command.slice(i + 1) : command.slice(i + 1, e)
-      w.subs.push(inner)
-      w.value += inner
-      i = e === -1 ? command.length : e + 1
-      continue
-    }
-    if ((c === '$' || c === '<' || c === '>') && command[i + 1] === '(') {
-      const w = word()
-      const r = readParen(command, i + 1)
-      w.subs.push(r.inner)
-      w.value += command.slice(i, r.next)
-      i = r.next
-      continue
-    }
-    if (c === '\n') {
-      i = pushOp('\n', 1, i)
-      continue
-    }
-    if (/\s/.test(c)) {
-      flush()
-      i++
-      continue
-    }
-    const two = command.slice(i, i + 2)
-    if (two === '&&' || two === '||') {
-      i = pushOp(two, 2, i)
-      continue
-    }
-    if (c === ';' || c === '|' || c === '&' || c === '(' || c === ')' || c === '{' || c === '}') {
-      i = pushOp(c, 1, i)
-      continue
-    }
-    word().value += c
-    i++
-  }
-  flush()
-  return tokens
-}
-
-// --- Wrapper normalization ---
-
-/**
- * Drop leading option tokens, consuming a value for known value-taking
- * flags. Stops at `--`, at the first non-flag, or at end.
- */
-function stripFlags(argv) {
-  let i = 0
-  while (i < argv.length) {
-    const a = argv[i]
-    if (a === '--') {
-      i++
-      break
-    }
-    if (!a.startsWith('-') || a === '-') break
-    if (a.includes('=')) {
-      i++
-      continue
-    }
-    i += WRAPPER_VALUE_FLAGS.has(a) ? 2 : 1
-  }
-  return argv.slice(i)
-}
-
-/** Strip `env`'s own flags and `VAR=val` assignments. */
-function stripEnvPrefix(argv) {
-  let i = 0
-  while (i < argv.length) {
-    const a = argv[i]
-    if (a === '--' || /^[A-Za-z_][A-Za-z0-9_]*=/.test(a)) {
-      i++
-      continue
-    }
-    if (a === '-u' || a === '--unset' || a === '-C' || a === '--chdir') {
-      i += 2
-      continue
-    }
-    if (a.startsWith('-')) {
-      i++
-      continue
-    }
-    break
-  }
-  return argv.slice(i)
-}
-
-/** `docker exec [flags] <container> <inner...>` → `<inner...>`. */
-function stripDockerExec(rest) {
-  return stripFlags(rest).slice(1)
-}
-
-/** `docker compose [flags] exec [flags] <service> <inner...>` → `<inner...>`. */
-function stripDockerCompose(argv, head) {
-  const rest = stripFlags(head === 'docker-compose' ? argv.slice(1) : argv.slice(2))
-  if (rest[0] !== 'exec') return null
-  return stripDockerExec(rest.slice(1))
-}
-
-/** `varlock run [flags] -- <inner...>` → `<inner...>`. */
-function stripVarlockRun(argv) {
-  const sep = argv.indexOf('--', 2)
-  if (sep !== -1) return argv.slice(sep + 1)
-  return stripFlags(argv.slice(2))
-}
-
-/** `bash -c '<inner>'` → the inner string, or null if not that shape. */
-function extractShellDashC(argv) {
-  for (let i = 1; i < argv.length; i++) {
-    const a = argv[i]
-    if (!a.startsWith('-')) return null
-    if (/^-[A-Za-z]*c[A-Za-z]*$/.test(a)) return i + 1 < argv.length ? argv[i + 1] : null
-  }
-  return null
-}
-
-/**
- * Peel wrapper shells off argv until a real command is exposed. A
- * command can be wrapped more than once, so this iterates.
- * @returns {{ argv: string[], nested: string | null }}
- */
-function normalizeWrappers(argvIn) {
-  let argv = argvIn.slice()
-  for (let pass = 0; pass < 8; pass++) {
-    if (argv.length === 0) break
-    let lead = 0
-    while (lead < argv.length && /^[A-Za-z_][A-Za-z0-9_]*=/.test(argv[lead])) lead++
-    if (lead > 0) {
-      argv = argv.slice(lead)
-      continue
-    }
-    const head = basenameOf(argv[0])
-    if (head === 'sudo') {
-      argv = stripFlags(argv.slice(1))
-      continue
-    }
-    if (head === 'env') {
-      argv = stripEnvPrefix(argv.slice(1))
-      continue
-    }
-    if (head === 'varlock' && argv[1] === 'run') {
-      argv = stripVarlockRun(argv)
-      continue
-    }
-    if (head === 'docker' && argv[1] === 'exec') {
-      argv = stripDockerExec(argv.slice(2))
-      continue
-    }
-    if ((head === 'docker' && argv[1] === 'compose') || head === 'docker-compose') {
-      const inner = stripDockerCompose(argv, head)
-      if (inner) {
-        argv = inner
-        continue
-      }
-    }
-    if (SHELL_COMMANDS.has(head)) {
-      const nested = extractShellDashC(argv)
-      if (nested !== null) return { argv, nested }
-    }
-    break
-  }
-  return { argv, nested: null }
-}
-
 // --- Rules ---
 
 /**
@@ -558,100 +256,6 @@ function isOutputFreeGrep(args) {
     }
   }
   return quiet && !output
-}
-
-/**
- * True when an interpreter invocation carries inline script text. Short
- * flags are checked per-interpreter (see INLINE_SCRIPT_SHORT_FLAG_CHARS);
- * long flags (--eval/--print/--execute/--command) are checked against every
- * interpreter uniformly — over-recognizing a long flag no interpreter
- * actually has is safe (it just triggers an extra, harmless text scan),
- * unlike under-recognizing a real short flag.
- * @param {string} cmd
- * @param {string[]} args
- */
-function hasInlineScriptFlag(cmd, args) {
-  const shortChars = INLINE_SCRIPT_SHORT_FLAG_CHARS[cmd] ?? ''
-  for (const a of args) {
-    if (a === '--') break
-    if (INLINE_SCRIPT_LONG_FLAGS.has(a.split('=')[0])) return true
-    if (a.startsWith('--') || a === '-' || !a.startsWith('-')) continue
-    for (const ch of a.slice(1)) {
-      if (shortChars.includes(ch)) return true
-    }
-  }
-  return false
-}
-
-/**
- * Commands whose FIRST positional (non-flag) argument is inline script
- * text BY DEFAULT — unlike INLINE_INTERPRETERS, whose inline-code argument
- * is always introduced by an explicit flag (-e/-c/-p/-r/...), awk puts
- * script text in bare position: `awk '<program>' [file...]`. Unless a
- * `-f <file>` flag names an external script file instead, in which case
- * there is no inline text to scan. Found by a second-round adversarial
- * confirmation pass (SMI-6361, finding F6): awk/gawk/mawk are already on
- * READER_COMMANDS (the guard's own declared surface), but before this fix
- * only their bare argv tokens were checked for a literal protected-file
- * match — never their embedded program text — so
- * `awk 'BEGIN{while((getline l < ".env")>0) print l}'` returned `allow`.
- */
-const POSITIONAL_SCRIPT_COMMANDS = new Set(['awk', 'gawk', 'mawk', 'sed'])
-
-/**
- * awk/sed/gawk/mawk mix flags and inline SCRIPT TEXT unpredictably, across
- * both separated (`-v n=1`) and attached (`-vn=1`, `-e'r .env'`) short-
- * option forms, plus gawk's long forms (`--source=`, `--assign=`) and
- * platform-specific arity quirks (GNU sed's `-i` takes an attached-only
- * optional suffix; BSD/macOS sed's `-i` requires one, as a SEPARATE
- * argument). A first attempt at this modeled each flag's arity explicitly
- * (skip `-f`'s value, treat `-e`'s value as script text, etc.) and a
- * follow-up adversarial review round found THREE live, reproduced bypasses
- * against it in one pass — `awk -v n=1 'BEGIN{...".env"...}'`,
- * `sed -l 70 'r .env' file`, and the attached form `sed -e'r .env' file`
- * all returned `allow`, because the model didn't (and structurally could
- * not, without also modeling every other value-taking flag) know those
- * value tokens weren't the script (SMI-6361, third adversarial round).
- *
- * This scans EVERY argument uniformly instead of trying to identify which
- * one is "the script" — closing all three at once and removing an entire
- * class of arity-modeling bugs, at the cost of also scanning a flag's
- * non-script value (a field separator, a `-v` assignment). That's the same
- * over-inclusive-is-safe tradeoff already accepted for inline-interpreter
- * script text (`node -e "console.log('.env')"` already denies on the
- * mention alone, not just a real read) and for a bare `.env` grep pattern
- * (`grep '.env' .gitignore` already denies via the plain reader-path
- * check) — `scanTextForProtected`'s boundary-anchored regex only matches a
- * genuine standalone `.env`-shaped substring, so this doesn't invent a new
- * false-positive class, only extends an already-accepted one.
- * @param {string} cmd
- * @param {string[]} args
- * @returns {string | null} the first protected-file reference found in
- *   positional/flag-attached script text, or null.
- */
-function scanPositionalScriptText(cmd, args) {
-  if (!POSITIONAL_SCRIPT_COMMANDS.has(cmd)) return null
-  // Deliberately no `if (a === '--') break` here, unlike the flag-scanning
-  // loops elsewhere in this file (isOutputFreeGrep, hasInlineScriptFlag).
-  // Those loops scan OPTIONS, where `--` correctly means "stop, everything
-  // after this is not a flag." Here we scan SCRIPT TEXT, where `--` means
-  // the opposite: "everything after this IS the script, even though it
-  // might start with a dash" -- `awk -- 'BEGIN{...}'` and
-  // `sed -- 'r .env' file` both put the real program immediately after
-  // `--`. A fourth adversarial round (SMI-6361) found this exact `break`
-  // was a regression this uniform-scan rewrite introduced: the two
-  // functions it replaced both deliberately looked PAST `--` (one via an
-  // explicit `a !== '--'` predicate, the other because its `find()` ran
-  // outside any loop with a `break` in it), so `awk -- '<code touching
-  // .env>'` denied on the parent commit and silently started allowing on
-  // this one -- a real secret-file read, not the redesign's accepted
-  // over-scanning tradeoff. `scanTextForProtected('--')` itself returns
-  // null harmlessly, so no special-casing is needed at all.
-  for (const a of args) {
-    const embedded = scanTextForProtected(a)
-    if (embedded) return embedded
-  }
-  return null
 }
 
 /** `varlock load --format <value>` → value, or null when absent. */
@@ -694,10 +298,10 @@ function checkArgv(argv) {
     }
   }
 
-  const positionalEmbedded = scanPositionalScriptText(cmd, args)
+  const positionalEmbedded = scanPositionalScriptText(cmd, args, scanTextForProtected)
   if (positionalEmbedded) return { kind: 'read', file: positionalEmbedded }
 
-  if (isInterpreter && hasInlineScriptFlag(cmd, args)) {
+  if (isInterpreter && hasInlineScriptFlag(cmd, args, INLINE_SCRIPT_SHORT_FLAG_CHARS)) {
     for (const a of args) {
       const embedded = scanTextForProtected(a)
       if (embedded) return { kind: 'read', file: embedded }

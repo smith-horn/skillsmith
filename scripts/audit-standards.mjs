@@ -82,6 +82,15 @@ import {
   evaluateContainerNpmGate,
   containerNpmGateReportLines,
 } from './audit-container-npm-gate-helpers.mjs'
+import { evaluateSettingsEnv, settingsEnvReportLines } from './audit-settings-env-helpers.mjs'
+import {
+  evaluateRufloHostPaths,
+  rufloHostPathsReportLines,
+  evaluateRufloHostGuardHooks,
+  rufloHostGuardHooksReportLines,
+  evaluateRufloMcpDenies,
+  rufloMcpDeniesReportLines,
+} from './audit-ruflo-host-paths-helpers.mjs'
 import { findMissingHuskyStubs } from './audit-husky-stub-coverage-helpers.mjs'
 import {
   listManifestHygieneTestFiles,
@@ -5195,7 +5204,7 @@ console.log(`\n${BOLD}Check 59: CLI-tool pin invariants (SMI-5746)${RESET}`)
     check59Violations++
     report(
       `Check 59: ${f.file}:${f.line} — reintroduces "npx claude-flow" (pre-rename name)${shadowSuffix}`,
-      `Replace with the local-bin form: node node_modules/ruflo/bin/ruflo.js ...`
+      `Replace with the sanctioned service form: docker exec skillsmith-ruflo-1 node /opt/ruflo-seed/node_modules/@claude-flow/cli/bin/cli.js ... (SMI-6744 Wave 4 removes the root ruflo devDependency, Checkpoint 4 row 5, so the fastmcp edge is gone from the lockfile; the host tree follows at the post-merge refresh)`
     )
   }
 
@@ -6258,6 +6267,105 @@ console.log(
   const reporters = { pass, warn, fail }
   for (const line of containerNpmGateReportLines(
     evaluateContainerNpmGate('.', { isCI: Boolean(process.env.CI), now: new Date() })
+  )) {
+    reporters[line.severity](line.message, line.fix)
+  }
+}
+
+// Check 73: .claude/settings.json's `env` block is exactly the pinned set
+// (SMI-6744 Wave 4 / A4.3, Checkpoint 4 row 4)
+//
+// A4.1 measured that no censused Ruflo build's `init` writes
+// CLAUDE_FLOW_AUTO_COMMIT / CLAUDE_FLOW_AUTO_PUSH / CLAUDE_FLOW_REMOTE_EXECUTION
+// -- so a three-named-absence check (the plan's original spec) would be green
+// on the very re-add it exists to catch, because the live re-add writers
+// write a different set of keys entirely. Checkpoint 4 chose to pin the
+// exact expected `env` block instead (empty today), which is also what
+// closes the smuggled-hook-disable-variable route the design's Layer H
+// section names (a leading shell assignment never reaches the PreToolUse
+// hook process, so the `env` block is the one route that would work).
+//
+// Every outcome is decided in the helper, so this stays a flat dispatch
+// (the SMI-6575 lesson from Checks 69 and 70).
+//
+// scripts/tests/audit-settings-env.test.ts is the executable twin of this
+// check -- same helper, same invariant.
+console.log(
+  `\n${BOLD}Check 73: settings.json env block is exactly the pinned set (SMI-6744)${RESET}`
+)
+{
+  const reporters = { pass, warn, fail }
+  for (const line of settingsEnvReportLines(
+    evaluateSettingsEnv({ settingsPath: join('.claude', 'settings.json') })
+  )) {
+    reporters[line.severity](line.message, line.fix)
+  }
+}
+
+// Check 74: the SMI-6744 Wave 4 Bash deny set is present and the host tree
+// no longer carries `ruflo` (SMI-6744 Wave 4 / A4.6, design doc § 1(b)
+// Layer R and Layer X, Checkpoint 4 rows 9 and 14)
+//
+// Two independent assertions: (a) every one of the 43 Bash deny entries the
+// adversarial command census requires is present in `permissions.deny`
+// (exact and ` *` forms only -- no `:*` duplicates, since fact 1 of the
+// permission-rule semantics record documents `:*` as equivalent to ` *`);
+// (b) `node_modules/ruflo` is absent from the host tree (Checkpoint 4 row
+// 5's devDependency removal, a tree predicate distinct from the design's
+// lockfile-graph reachability computation).
+//
+// This check cannot see host-global (`~/.nvm`) or user-scope
+// (`~/.claude/settings.json`) state -- CI and the dev container have
+// neither, so asserting either here would be a wrong-subject check,
+// vacuously green in the very environments that run it. Both the pass and
+// fail lines say so; that gap is A4.7's owner-transcript job.
+//
+// scripts/tests/audit-ruflo-host-paths.test.ts is the executable twin of
+// this check -- same helper, same invariant.
+console.log(`\n${BOLD}Check 74: SMI-6744 Wave 4 Bash deny set + host-tree removal${RESET}`)
+{
+  const reporters = { pass, warn, fail }
+  for (const line of rufloHostPathsReportLines(
+    evaluateRufloHostPaths({
+      settingsPath: join('.claude', 'settings.json'),
+      root: process.cwd(),
+    })
+  )) {
+    reporters[line.severity](line.message, line.fix)
+  }
+  // A4.6 addition: the ruflo-host-guard.mjs hook-entry tripwire (detection,
+  // not prevention -- design doc § 8 item 13). Purely additive report
+  // lines under the same Check 74 number, same helper file.
+  for (const line of rufloHostGuardHooksReportLines(
+    evaluateRufloHostGuardHooks({ settingsPath: join('.claude', 'settings.json') })
+  )) {
+    reporters[line.severity](line.message, line.fix)
+  }
+}
+
+// Check 75: the SMI-6744 Wave 4 MCP deny set is present (SMI-6744 Wave 4 /
+// A4.6, design doc § 6 row 13 and decision 2.5)
+//
+// `mcp__ruflo__terminal_execute` / `agent_execute` / `wasm_agent_tool` grant
+// an arbitrary shell/agent/wasm surface inside the restricted service
+// container -- egress-bounded by the network namespace but not
+// store-bounded or ptrace-bounded, so leaving them reachable while denying
+// `memory_store` would make the memory denies decorative. Decision 2.5
+// additionally denies the `github_*` and `browser_*` families
+// (`network_mode: none` breaks both regardless, but a stray
+// `permissions.allow` entry would otherwise reach them). No parameter-level
+// MCP deny exists (permission-rule semantics record, gap 3), so the exact
+// tool name is the only enforceable form.
+//
+// scripts/tests/audit-ruflo-host-paths.test.ts is the executable twin of
+// this check too -- same helper file, same invariant class.
+console.log(
+  `\n${BOLD}Check 75: SMI-6744 Wave 4 MCP deny set (terminal/agent/wasm/github/browser)${RESET}`
+)
+{
+  const reporters = { pass, warn, fail }
+  for (const line of rufloMcpDeniesReportLines(
+    evaluateRufloMcpDenies({ settingsPath: join('.claude', 'settings.json') })
   )) {
     reporters[line.severity](line.message, line.fix)
   }
