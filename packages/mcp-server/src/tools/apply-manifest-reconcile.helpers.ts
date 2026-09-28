@@ -15,6 +15,7 @@ import type { Stats } from 'node:fs'
 
 import {
   compareSkillContentHashes,
+  installedSkillsOf,
   manifestKeyFor,
   type SkillManifest,
   type SkillManifestEntry,
@@ -104,7 +105,11 @@ export function resolveReconcileEntry(
   client: ClientId
 ): { key: string; entry: SkillManifestEntry } {
   const key = manifestKeyFor(name, client)
-  const entry = manifest.installedSkills[key] as SkillManifestEntry | undefined
+  // SMI-6733 MAJOR 3: ADR-171 § 5 classifies a manifest whose
+  // `installedSkills` is `null` (or absent) as `ok`, so this reaches a
+  // nullish value while the declared type says otherwise.
+  const entries = installedSkillsOf(manifest)
+  const entry = entries[key] as SkillManifestEntry | undefined
   if (entry) {
     // Adversarial-review finding (Wave 4): for the CANONICAL client,
     // `manifestKeyFor` returns the bare `name` itself — the same bare key
@@ -129,7 +134,7 @@ export function resolveReconcileEntry(
   // check whether a bare-name key exists carrying a DIFFERENT client —
   // that is the key-shape-ambiguous case, not a genuine absence.
   if (client !== CANONICAL_CLIENT) {
-    const bareEntry = manifest.installedSkills[name] as SkillManifestEntry | undefined
+    const bareEntry = entries[name] as SkillManifestEntry | undefined
     if (bareEntry && bareEntry.client && bareEntry.client !== client) {
       throw new ReconcileGuardError('manifest.reconcile.key_shape_ambiguous', {
         name,

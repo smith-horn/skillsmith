@@ -22,6 +22,8 @@
 export {
   buildAdoptedManifestEntry,
   adoptUntrackedSkillEntry,
+  type AdoptUntrackedSkillOptions,
+  type AdoptUntrackedSkillResult,
 } from '../services/skill-installation.uninstall.js'
 
 // ============================================================================
@@ -49,7 +51,18 @@ export {
   type SkillInstallationServiceParams,
 } from '../services/skill-installation.service.js'
 
-export { ManifestManager, assertNotRealUserHome } from '../services/skill-manifest.js'
+// SMI-6733 MAJOR 3: `installedSkillsOf` is exported because the crash it
+// prevents is not confined to `@skillsmith/core` — `apply_manifest_reconcile`
+// dereferences `manifest.installedSkills` from mcp-server on a document it
+// got from `ManifestManager.load()`, which now classifies a nullish
+// `installedSkills` as `ok`. One accessor rather than an `?? {}` per call
+// site, for the same reason `assertNotRealUserHome` is shared: four copies of
+// a guard is four things to regress.
+export {
+  ManifestManager,
+  assertNotRealUserHome,
+  installedSkillsOf,
+} from '../services/skill-manifest.js'
 
 // ADR-171 (SMI-6733 Phase 1): the two named read-state policy wrappers, for
 // mcp-server/cli consumers migrating off ad-hoc `catch {}` manifest reads
@@ -64,6 +77,7 @@ export {
   loadManifestLenient,
   ManifestUnwritableError,
   type ManifestReadState,
+  type ManifestCorruptKind,
   type ManifestLenientRead,
 } from '../services/skill-manifest.read-state.js'
 

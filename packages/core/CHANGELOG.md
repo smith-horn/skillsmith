@@ -4,6 +4,37 @@ All notable changes to `@skillsmith/core` are documented here.
 
 ## [Unreleased]
 
+- **Fix (data integrity)**: SMI-6733 -- untracked-skill adoption no longer overwrites a manifest it
+  could not read. `adoptUntrackedSkillEntry` took a tolerant load unconditionally, which substitutes
+  an empty document for a corrupt/unreadable/version-unsupported manifest and then saves over the
+  original bytes. Measured: against a manifest whose readable prefix recorded a real skill followed
+  by trailing garbage, one adoption left a valid 410-byte file holding only the adopted entry, and
+  the recorded skill was gone. Tolerance is now an explicit `tolerateDegradedRead` argument
+  defaulting to refuse; `performUninstall` passes its own `force`, and the CLI `update` path (which
+  has no `force`) passes nothing. A refused adoption returns a distinct `adoptionRefusal` outcome
+  rather than a hard error, so `performUninstall`'s more specific identity checks still run first.
+
+- **Fix**: SMI-6733 -- a manifest whose `installedSkills` is `null` or absent classifies `ok` (both
+  mean "nothing installed"), but `SkillManifest` declares the field non-optional, so consumers
+  subscripting it type-checked and then threw `Cannot read properties of null`. Added
+  `installedSkillsOf()` and routed every consumer of `ManifestManager.load()` through it. The
+  classifier is unchanged -- ADR-171 § 3 forbids it transforming the parsed value, so the fix is on
+  the consumer side.
+
+- **Fix (diagnostics)**: SMI-6733 -- a manifest that is well-formed JSON but the wrong shape no
+  longer reports "is not valid JSON" and no longer advises running a JSON validator, which would
+  find nothing; it names the offending field in the user's own vocabulary instead of citing an
+  internal ADR section. The `corrupt` state carries a new `kind`
+  (`unparseable`/`shape`/`version_malformed`) to distinguish them. Unparseable-JSON refusals also
+  stop restating the byte position twice in one sentence.
+
+- **Tests**: SMI-6733 -- every refusal test now asserts the file's BYTES (length + SHA-256), not
+  only the message, per ADR-171's own test plan. That assertion is the one that catches a silent
+  clobber: the existing test covering this exact scenario asserted a refusal message, never looked
+  at the file, and passed throughout the window in which a refused uninstall was rewriting it. The
+  `raw`/`manifest` non-transform guarantee gained a reference-identity assertion, since `toEqual`
+  alone passes against the single spread the rule exists to forbid.
+
 - **Tests**: SMI-6532 -- the render-parity test's parse guard is now itself tested, and its failure
   mode is loud rather than silent. The guard reads TypeScript's INTERNAL `parseDiagnostics` field
   through a cast, so a rename upstream would have read `undefined`, skipped the check, and restored

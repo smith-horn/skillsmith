@@ -69,6 +69,11 @@ interface MockRecoveryResult {
 
 // Hoisted mock state
 const mocks = vi.hoisted(() => ({
+  // SMI-6733 CRITICAL 1: records `adoptUntrackedSkillEntry`'s SIXTH argument
+  // so a test can assert what this call site passes for it. Recording only —
+  // the mock's own behaviour below is unchanged, so every pre-existing
+  // assertion in this file exercises exactly what it did before.
+  adoptOptionsFn: vi.fn(),
   installFn: vi.fn(),
   dbClose: vi.fn(),
   createDatabaseAsync: vi.fn(),
@@ -170,8 +175,11 @@ vi.mock('@skillsmith/core', () => ({
           installedSkills: Record<string, unknown>
         }
       ) => Promise<void>
-    }
+    },
+    // SMI-6733 CRITICAL 1: recorded, never acted on — see `adoptOptionsFn`.
+    options?: { tolerateDegradedRead?: boolean }
   ): Promise<{ entry: Record<string, unknown>; adopted: boolean } | { adoptionError: string }> => {
+    mocks.adoptOptionsFn(options)
     const adoptedEntry = await mocks.buildAdoptedEntryFn(skillDirName, installPath)
     let resolvedEntry: Record<string, unknown> = adoptedEntry
     let adopted = true
@@ -330,6 +338,35 @@ describe('ADR-139 (SMI-6274 Wave 4): getSkillDiff untracked-skill adoption + ado
       expect(result.adoptionError).toContain('disk-full-skill')
       expect(result.adoptionError).toContain('ENOSPC')
     }
+  })
+
+  // SMI-6733 CRITICAL 1. `sklx update` has no `force`, so this call site has
+  // nothing to spend on authorizing a write over a manifest it could not
+  // read — and passing tolerance anyway is what silently destroyed a real
+  // recorded skill (measured: a manifest whose readable prefix recorded
+  // `beta` came back holding only the freshly-adopted entry). The mechanism
+  // itself is pinned in core, on real bytes
+  // (`skill-installation.adoption-degraded-manifest.test.ts`); what is
+  // pinned HERE is the one thing that test cannot see, because this file
+  // mocks `adoptUntrackedSkillEntry` wholesale: what THIS CALL SITE passes.
+  it('never authorizes a tolerant write — getSkillDiff passes no degraded-read tolerance', async () => {
+    await mockInstalledSkill('untolerated-skill')
+
+    const { getSkillDiff } = await import('../src/commands/manage.js')
+    await getSkillDiff('untolerated-skill', '/fake/db.sqlite')
+
+    // Asserted as "adoption happened AND it was not authorized", not merely
+    // "was not authorized" — without the first clause this passes just as
+    // well when adoption never runs at all, which is the state a future
+    // refactor is most likely to leave behind.
+    expect(mocks.adoptOptionsFn).toHaveBeenCalledTimes(1)
+    const passed = mocks.adoptOptionsFn.mock.calls[0]?.[0] as
+      | { tolerateDegradedRead?: boolean }
+      | undefined
+    // Covers both spellings of "no": the argument omitted entirely, and the
+    // argument present with the flag off. Either is correct; `=== true` in
+    // the implementation is what makes them equivalent.
+    expect(passed?.tolerateDegradedRead === true).toBe(false)
   })
 
   // GPT-5.6-Sol PR review finding: a manifest entry whose `id` is a GUESSED

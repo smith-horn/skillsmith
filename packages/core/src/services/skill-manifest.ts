@@ -11,7 +11,7 @@ import { randomUUID } from 'node:crypto'
 
 import { withFileLock } from '../config/file-lock.js'
 import { loadManifestForWrite, loadManifestLenient } from './skill-manifest.read-state.js'
-import type { SkillManifest } from './skill-installation.types.js'
+import type { SkillManifest, SkillManifestEntry } from './skill-installation.types.js'
 
 /**
  * SMI-6733 Phase 1 fix: {@link ManifestManager.updateSafely}'s optional
@@ -22,9 +22,51 @@ import type { SkillManifest } from './skill-installation.types.js'
  * an empty document instead of throwing). Everything else about the call —
  * locking, the update callback, the save — is identical; this is a load-mode
  * switch, not a second code path.
+ *
+ * **It is also the one way to overwrite a manifest this process could not
+ * read, so it is not a convenience.** The lenient load substitutes an EMPTY
+ * document, and the save that follows writes the callback's result over the
+ * original bytes — so on a `corrupt`/`unreadable`/`version_unsupported`
+ * manifest, `{ tolerant: true }` is a destructive operation dressed as a
+ * load-mode switch. Measured (SMI-6733): against a manifest whose readable
+ * prefix recorded a real skill followed by trailing garbage, one tolerant
+ * adoption write left a valid 410-byte manifest holding only the adopted
+ * entry, and the recorded skill was gone — with nothing on the return path
+ * signalling that anything had been discarded. The single caller that passes
+ * it (`adoptUntrackedSkillEntry`) now gates it behind an explicit
+ * `tolerateDegradedRead` argument that no call site may default into; see
+ * that function's doc comment for the gate and its two call sites.
  */
 export interface UpdateSafelyOptions {
   tolerant?: boolean
+}
+
+/**
+ * The `installedSkills` map a consumer can safely dereference.
+ *
+ * ADR-171 § 5's container check deliberately admits a manifest whose
+ * `installedSkills` is absent or `null` (SMI-6733 Phase 1) — both mean "this
+ * machine has installed nothing" and neither is evidence of corruption, so
+ * both classify `ok`. But {@link SkillManifest} declares the field
+ * NON-optional, so a consumer writing `manifest.installedSkills[key]`
+ * type-checks and then throws `Cannot read properties of null` at runtime
+ * (SMI-6733 MAJOR 3, measured for both `null` and absent).
+ *
+ * The gap is closed HERE, on the consumer side, and not in the classifier,
+ * because ADR-171 § 3 forbids the classifier transforming the parsed value:
+ * the object handed onward must stay the raw `JSON.parse` result for the
+ * CAS's canonical-form comparison. Normalising for a READER is not the same
+ * as rewriting for a WRITER — the `{}` returned when the field is nullish is
+ * a fresh object, so a caller must not mutate it expecting the change to
+ * reach the manifest. Writers mutate inside {@link ManifestManager.updateSafely}'s
+ * callback, which builds its own object either way.
+ */
+export function installedSkillsOf(manifest: SkillManifest): Record<string, SkillManifestEntry> {
+  // The widening is the point: the declared type says non-optional, the
+  // validated runtime shape says otherwise, and the declared type is the one
+  // that is wrong. See the doc comment above.
+  const value = manifest.installedSkills as Record<string, SkillManifestEntry> | null | undefined
+  return value ?? {}
 }
 
 /**
@@ -140,6 +182,29 @@ export class ManifestManager {
   }
 
   /**
+   * The lenient twin of {@link load}, and the ONLY thing `updateSafely`'s
+   * `{ tolerant: true }` substitutes for it.
+   *
+   * SMI-6733: it is a METHOD rather than a direct `loadManifestLenient(this
+   * .manifestPath)` call inside `updateSafely` purely for symmetry — the
+   * strict branch goes through `this.load()`, so a subclass or test double
+   * that overrides one load path but not the other would otherwise be
+   * consulted on the strict branch and silently bypassed on the tolerant
+   * one. That asymmetry is invisible at the call site and exactly the shape
+   * of bypass SMI-6733 Phase 1 removed one level up (a helper that called
+   * `manifest.save()` around an injected `ManifestManager`), so it is closed
+   * here rather than left as a smaller instance of the same thing.
+   *
+   * The warning `loadManifestLenient` returns is deliberately dropped: the
+   * decision to proceed on a degraded read has already been taken by the
+   * caller that passed `{ tolerant: true }`, and that caller — not this
+   * method — owns reporting it.
+   */
+  async loadTolerant(): Promise<SkillManifest> {
+    return (await loadManifestLenient(this.manifestPath)).manifest
+  }
+
+  /**
    * SMI-6007: the temp filename now includes a `randomUUID()` suffix (not
    * just `process.pid`) — two concurrent `save()` calls in the same process
    * previously collided on an identical `.tmp.<pid>` path, letting one
@@ -202,9 +267,7 @@ export class ManifestManager {
     assertNotRealUserHome(this.manifestPath, 'lock')
     await fs.mkdir(path.dirname(this.manifestPath), { recursive: true })
     await withFileLock(this.manifestPath, 'manifest update', async () => {
-      const manifest = options?.tolerant
-        ? (await loadManifestLenient(this.manifestPath)).manifest
-        : await this.load()
+      const manifest = options?.tolerant ? await this.loadTolerant() : await this.load()
       const updated = updateFn(manifest)
       await this.save(updated)
     })

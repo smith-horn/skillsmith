@@ -37,13 +37,15 @@ import {
   type DirIdentity,
 } from './skill-installation.removal-identity.js'
 import { manifestKeyFor } from './skill-installation.helpers.js'
-import type { ManifestManager } from './skill-manifest.js'
+import { installedSkillsOf, type ManifestManager } from './skill-manifest.js'
 import { loadManifestLenient, ManifestUnwritableError } from './skill-manifest.read-state.js'
 import type { SkillManifest } from './skill-installation.types.js'
 import { CANONICAL_CLIENT, type ClientId } from '../install/paths.js'
 import {
   adoptUntrackedSkillEntry,
   buildAdoptedManifestEntry,
+  type AdoptUntrackedSkillOptions,
+  type AdoptUntrackedSkillResult,
   inspectForRemoval,
   notify,
   parkedWarnings,
@@ -53,7 +55,12 @@ import {
 // ADR-171 § 5 retraction resolution: re-exported so nothing outside this pair
 // of files (`exports/services.install.ts`'s barrel re-export in particular)
 // has to know these moved to `.uninstall.helpers.ts`.
-export { adoptUntrackedSkillEntry, buildAdoptedManifestEntry }
+export {
+  adoptUntrackedSkillEntry,
+  buildAdoptedManifestEntry,
+  type AdoptUntrackedSkillOptions,
+  type AdoptUntrackedSkillResult,
+}
 
 /** Perform skill uninstall with manifest awareness and orphan fallback. */
 export async function performUninstall(params: {
@@ -139,7 +146,17 @@ export async function performUninstall(params: {
       manifestData = lenient.manifest
       manifestDegradedWarning = lenient.warning
     }
-    let skillEntry = manifestData.installedSkills[manifestKey]
+    // SMI-6733 MAJOR 3: read through `installedSkillsOf`, never by bare
+    // subscript. ADR-171 § 5's container check classifies a manifest whose
+    // `installedSkills` is `null` — or absent entirely — as `ok`, because
+    // for a machine that has installed nothing both are true statements. But
+    // `SkillManifest` declares the field non-optional, so
+    // `manifestData.installedSkills[manifestKey]` type-checks and then
+    // throws `Cannot read properties of null (reading '<key>')`, which the
+    // outer catch turns into an uninstall failure carrying no diagnosis at
+    // all. Measured for both shapes.
+    const installedSkills = installedSkillsOf(manifestData)
+    let skillEntry = installedSkills[manifestKey]
     let adopted = false
     let adoptedIdentity: DirIdentity | null = null
 
@@ -183,11 +200,7 @@ export async function performUninstall(params: {
       if (!exact.ok) {
         return { success: false, skillName, message: exact.message, ...listenerWarning() }
       }
-      const elsewhere = await checkNotTrackedElsewhere(
-        potentialPath,
-        skillName,
-        manifestData.installedSkills
-      )
+      const elsewhere = await checkNotTrackedElsewhere(potentialPath, skillName, installedSkills)
       if (!elsewhere.ok) {
         return { success: false, skillName, message: elsewhere.message, ...listenerWarning() }
       }
@@ -208,12 +221,21 @@ export async function performUninstall(params: {
         'adopt',
         'Adopting untracked skill (no manifest entry found)'
       )
+      // SMI-6733 CRITICAL 2: `tolerateDegradedRead` is this call's `force`,
+      // and nothing else. Without it, adoption's own write refuses on a
+      // manifest this client could not read, and the file is left
+      // byte-identical — so a REFUSED uninstall no longer rewrites the
+      // manifest while its refusal text tells the user to restore a backup.
+      // With `force`, the caller has explicitly authorized acting on an
+      // unverifiable manifest, which is the same authorization Part B below
+      // spends when it says "Use force=true to remove anyway".
       const adoptResult = await adoptUntrackedSkillEntry(
         skillName,
         skillName,
         potentialPath,
         manifestKey,
-        manifest
+        manifest,
+        { tolerateDegradedRead: force }
       )
       if ('adoptionError' in adoptResult) {
         // Only if adoption itself fails does the command error — naming the
@@ -228,6 +250,24 @@ export async function performUninstall(params: {
       }
       skillEntry = adoptResult.entry
       adopted = adoptResult.adopted
+      if ('adoptionRefusal' in adoptResult) {
+        // ADR-171 § 5 retraction resolution, Part A, applied to adoption's
+        // own write. A REFUSAL (the manifest could not be classified, and
+        // this call was not authorized to overwrite it) is a degraded READ,
+        // not a failure — so it obeys the same ordering rule as the outer
+        // read above: it must not become the reported refusal until every
+        // more specific identity/containment check below has had its chance
+        // to produce one. "This directory was swapped out from under you" is
+        // more actionable than "your manifest is corrupt" when both are
+        // true. Nothing was written and the file is byte-identical, so
+        // continuing costs nothing; `skillEntry` is the reconstructed record
+        // that was NOT persisted, used only by the checks below.
+        //
+        // Normally the outer read already set this, but adoption re-reads
+        // under the lock — a manifest that degraded in between is classified
+        // here and nowhere else, so this is not redundant.
+        manifestDegradedWarning ??= adoptResult.adoptionRefusal
+      }
     }
 
     // SMI-6732: the manifest is not a trusted input. Until this check the
@@ -360,7 +400,11 @@ export async function performUninstall(params: {
     let claimedByAnotherInstall = false
     try {
       await manifest.updateSafely((current) => {
-        const entry = current.installedSkills[manifestKey]
+        // SMI-6733 MAJOR 3: `updateSafely` re-reads under the lock, so this
+        // is a SECOND classification of a file that may have changed since
+        // the read above — a nullish `installedSkills` reaches here even
+        // though the earlier read found an object.
+        const entry = installedSkillsOf(current)[manifestKey]
         // Round 17 (cross-model review): a reinstall can land at the SAME
         // path, so the path alone does not identify the generation just
         // removed — and comparing paths alone also keeps a stale record
@@ -371,7 +415,10 @@ export async function performUninstall(params: {
           claimedByAnotherInstall = true
           return current
         }
-        const next: typeof current = { ...current, installedSkills: { ...current.installedSkills } }
+        const next: typeof current = {
+          ...current,
+          installedSkills: { ...installedSkillsOf(current) },
+        }
         delete next.installedSkills[manifestKey]
         return next
       })

@@ -25,8 +25,9 @@
  * at every depth, on the top-level object and on every entry alike.
  *
  * ADR-171 § 4: kept module-private where the package boundary allows it —
- * `readManifestState` is exported from this module for {@link ManifestManager}
- * (same package) and this module's own tests, but is deliberately NOT
+ * `readManifestState` is exported from this module for its own tests only
+ * (`ManifestManager` imports the two WRAPPERS, not the classifier —
+ * `skill-manifest.ts`'s import list is the check), and is deliberately NOT
  * re-exported through `@skillsmith/core`'s barrel (`exports/services.install.ts`)
  * the way the two wrappers are. An import allow-list test was considered and
  * rejected (too many known bypasses to be worth the maintenance cost); this
@@ -76,9 +77,29 @@ export interface UnvalidatedSkillManifest {
 export type ManifestReadState =
   | { state: 'ok'; manifest: UnvalidatedSkillManifest; raw: unknown }
   | { state: 'missing'; manifest: UnvalidatedSkillManifest; raw: null }
-  | { state: 'corrupt'; reason: string; position: number | null }
+  | { state: 'corrupt'; kind: ManifestCorruptKind; reason: string; position: number | null }
   | { state: 'unreadable'; reason: string; code: string | null }
   | { state: 'version_unsupported'; found: string; expected: string }
+
+/**
+ * Why a `corrupt` manifest is corrupt. One POLICY outcome (refuse the write,
+ * § 2) but three genuinely different next actions, so the message has to
+ * distinguish them — the same argument § 6 makes for `version_unsupported`
+ * being its own state rather than folded into `unreadable`.
+ *
+ * `unparseable` — `JSON.parse` itself rejected the bytes. A JSON validator
+ * will find the break, so "fix it by hand" is real advice.
+ *
+ * `shape` — the file IS well-formed JSON; it is the document's own shape that
+ * is wrong (`installedSkills: "hello"`, `installedSkills: []`, a non-string
+ * `version`). Telling this user to run a JSON validator sends them to a tool
+ * that reports no problem, which is worse than saying nothing.
+ *
+ * `version_malformed` — `version` is a string but not `major.minor.patch`
+ * (§ 6's first rider: never `version_unsupported`, which would assert a newer
+ * writer exists). Also well-formed JSON; the fix is one field.
+ */
+export type ManifestCorruptKind = 'unparseable' | 'shape' | 'version_malformed'
 
 /** The three states {@link loadManifestForWrite} refuses on. */
 type ManifestRefusalState = Extract<
@@ -141,7 +162,17 @@ function isPlainObject(value: unknown): value is Record<string, unknown> {
  * index-keyed, both of which corrupt `installedSkills` on the next write.
  * Strings, numbers, and both array forms (empty and populated) still
  * classify `corrupt`; the array rejection in particular is load-bearing
- * (see the "array trap" test above).
+ * (see the "array trap" test in `skill-manifest.read-state.test.ts`).
+ *
+ * CONTAINER-LEVEL ABSENCE IS NOT ENTRY-LEVEL TOLERANCE, and conflating the
+ * two is how SMI-6733's MAJOR 3 got through. The justification above
+ * measured `{...null}` (spreading) and the repo's ad-hoc
+ * `manifest.installedSkills && typeof …` guards (a truthiness test); both
+ * are null-safe, and both are the wrong operation. Consumers DEREFERENCE —
+ * `manifest.installedSkills[key]` — which throws on `null` exactly as it
+ * throws on `undefined`. Same value, different operation, opposite answer.
+ * The classifier still does not transform (§ 3 forbids it); the fix is on
+ * the consumer side, via {@link installedSkillsOf}.
  */
 function isValidManifestShape(value: unknown): value is UnvalidatedSkillManifest {
   if (!isPlainObject(value)) return false
@@ -150,6 +181,33 @@ function isValidManifestShape(value: unknown): value is UnvalidatedSkillManifest
   const installedSkills = value.installedSkills
   if (installedSkills === undefined || installedSkills === null) return true
   return isPlainObject(installedSkills)
+}
+
+/** What a JSON value actually is, for a message a user can act on. */
+function describeJsonType(value: unknown): string {
+  if (value === null) return 'null'
+  if (Array.isArray(value)) return 'a list'
+  return typeof value
+}
+
+/**
+ * Names the FIRST container rule {@link isValidManifestShape} rejected on, in
+ * that function's own order. Called only after it returned `false`, so the
+ * fallback is unreachable in practice and exists so a future rule added there
+ * without a matching clause here degrades to a vague message rather than a
+ * wrong one.
+ */
+function describeShapeProblem(value: unknown): string {
+  if (!isPlainObject(value)) {
+    return `its top level is ${describeJsonType(value)}, not a JSON object`
+  }
+  if (typeof value.version !== 'string') {
+    return `its "version" field is ${describeJsonType(value.version)}, not a string`
+  }
+  return (
+    `its "installedSkills" field is ${describeJsonType(value.installedSkills)}, not a JSON ` +
+    'object mapping each installed skill to its record'
+  )
 }
 
 /**
@@ -185,6 +243,7 @@ export async function readManifestState(manifestPath: string): Promise<ManifestR
   } catch (error) {
     return {
       state: 'corrupt',
+      kind: 'unparseable',
       reason: error instanceof Error ? error.message : String(error),
       position: extractJsonErrorPosition(error),
     }
@@ -201,7 +260,8 @@ export async function readManifestState(manifestPath: string): Promise<ManifestR
     if (major === null) {
       return {
         state: 'corrupt',
-        reason: `manifest version "${versionValue}" is not a valid major.minor.patch string`,
+        kind: 'version_malformed',
+        reason: `its "version" field is "${versionValue}", which is not a major.minor.patch string`,
         position: null,
       }
     }
@@ -217,7 +277,8 @@ export async function readManifestState(manifestPath: string): Promise<ManifestR
   if (!isValidManifestShape(parsed)) {
     return {
       state: 'corrupt',
-      reason: 'manifest does not match the expected shape (see ADR-171 § 5)',
+      kind: 'shape',
+      reason: describeShapeProblem(parsed),
       position: null,
     }
   }
@@ -232,14 +293,34 @@ function describeManifestProblem(
 ): { detail: string; remedy: string } {
   switch (result.state) {
     case 'corrupt': {
-      const position = result.position !== null ? `, at position ${result.position}` : ''
+      // `position` is EXTRACTED from `reason`, so appending it restated the
+      // same byte offset twice in one sentence ("… at position 1 (line 1
+      // column 2), at position 1"). It stays on the state as structured data
+      // for callers that want the number without parsing prose; the message
+      // takes it from `reason`, which is where a user reads it.
+      if (result.kind === 'unparseable') {
+        return {
+          detail: `the file exists but is not valid JSON (${result.reason})`,
+          remedy:
+            'Fix it by hand (a JSON validator will find the break) or restore a copy your ' +
+            'editor or backup tool kept, then retry. Repairing a corrupt manifest file is not ' +
+            `implemented yet — ${REPAIR_FOLLOW_UP_ISSUE} tracks it; apply_manifest_reconcile ` +
+            'repairs a corrupt entry inside a readable file, not a file that cannot be parsed.',
+        }
+      }
+      // Well-formed JSON, wrong document. A JSON validator finds nothing
+      // here, so it must not be the advice — and the rule that was broken is
+      // named in the user's own vocabulary rather than as an ADR section
+      // number they cannot open.
       return {
-        detail: `the file exists but is not valid JSON (${result.reason}${position})`,
+        detail: `the file is valid JSON but is not a Skillsmith manifest (${result.reason})`,
         remedy:
-          'Fix it by hand (a JSON validator will find the break) or restore a copy your editor ' +
-          'or backup tool kept, then retry. Repairing a corrupt manifest file is not implemented ' +
-          `yet — ${REPAIR_FOLLOW_UP_ISSUE} tracks it; apply_manifest_reconcile repairs a corrupt ` +
-          'entry inside a readable file, not a file that cannot be parsed.',
+          'Open the file and correct that field — "version" is a string like "1.0.0", and ' +
+          '"installedSkills" is a JSON object whose keys are skill names (an empty object, ' +
+          '{}, if nothing is installed) — or restore a copy your editor or backup tool kept, ' +
+          `then retry. Repairing a corrupt manifest file is not implemented yet — ` +
+          `${REPAIR_FOLLOW_UP_ISSUE} tracks it; apply_manifest_reconcile repairs a corrupt ` +
+          'entry inside a well-formed manifest, not a file whose own shape is wrong.',
       }
     }
     case 'unreadable': {
@@ -287,19 +368,32 @@ function buildLenientWarning(manifestPath: string, result: ManifestRefusalState)
 }
 
 /**
- * ADR-171 § 4b, write-side wrapper. Every writer calls this. Returns the
- * document on `ok` / `missing`; throws a typed {@link ManifestUnwritableError}
- * on every other state, carrying `state`, `path`, and the § 8 message.
+ * ADR-171 § 4b, write-side wrapper. Every writer that must not proceed on an
+ * unverified read calls this — with one deliberate, documented exception:
+ * {@link ManifestManager.updateSafely}'s `{ tolerant: true }` option routes
+ * to {@link loadManifestLenient} instead, for untracked-skill adoption. See
+ * that option's own doc comment, and `adoptUntrackedSkillEntry`'s, for the
+ * `force` gate that bounds it. Returns the document on `ok` / `missing`;
+ * throws a typed {@link ManifestUnwritableError} on every other state,
+ * carrying `state`, `path`, and the § 8 message.
  *
  * The return type stays `SkillManifest` (not {@link UnvalidatedSkillManifest})
  * so `ManifestManager.load()` — the only caller — keeps its own
  * long-standing, source-compatible public signature; the cast below is the
- * documented trust boundary, not an oversight. It is safe for the same
- * reason it was always safe before per-entry validation briefly existed:
- * `uninstall()` and every other consumer downstream of `ManifestManager.load()`
- * is already required to treat entries defensively (SMI-6732), so re-widening
- * to `SkillManifest` here asserts a shape this function does not itself
- * check, rather than lying about having checked it.
+ * documented trust boundary, not an oversight. **What it is and is not safe
+ * for, on two independent axes** (SMI-6733 MAJOR 3 — an earlier version of
+ * this comment grounded the whole cast in the ENTRY-level axis and was silent
+ * on the CONTAINER-level one, which is the axis that actually crashes):
+ *
+ * - ENTRY level — `installedSkills`' VALUES are unchecked, and that is safe
+ *   because `uninstall()` and every other consumer downstream of
+ *   `ManifestManager.load()` is already required to treat entries
+ *   defensively (SMI-6732).
+ * - CONTAINER level — `installedSkills` itself may be absent or `null` and
+ *   still classify `ok` (§ 5's nullish carve-out), while `SkillManifest`
+ *   declares it non-optional. Consumers are NOT already defensive about
+ *   that: a bare `manifest.installedSkills[key]` type-checks and throws.
+ *   Read it through {@link installedSkillsOf}, which exists for exactly this.
  */
 export async function loadManifestForWrite(manifestPath: string): Promise<SkillManifest> {
   const result = await readManifestState(manifestPath)

@@ -34,8 +34,49 @@ import * as path from 'path'
 import { checkGitAtRoot } from '../install/fan-out.overwrite.js'
 import { listParkedLeftovers, parkedLeftoverWarning } from '../install/remove-if-same.js'
 import { hashContent } from './skill-installation.helpers.js'
-import type { ManifestManager } from './skill-manifest.js'
+import { installedSkillsOf, type ManifestManager } from './skill-manifest.js'
+import { ManifestUnwritableError } from './skill-manifest.read-state.js'
 import type { ProgressCallback, SkillManifestEntry } from './skill-installation.types.js'
+
+/**
+ * {@link adoptUntrackedSkillEntry}'s optional sixth argument.
+ *
+ * `tolerateDegradedRead` (default `false`) authorizes adoption's manifest
+ * WRITE to proceed over a manifest that failed ADR-171's read classification
+ * — `corrupt`, `unreadable` or `version_unsupported` — substituting an empty
+ * document for whatever that file still recorded. See
+ * {@link adoptUntrackedSkillEntry}'s doc comment for why the default refuses
+ * and which call site passes what.
+ */
+export interface AdoptUntrackedSkillOptions {
+  tolerateDegradedRead?: boolean
+}
+
+/**
+ * {@link adoptUntrackedSkillEntry}'s three outcomes. The middle one is new in
+ * SMI-6733 and is the reason this is a named type rather than an inline
+ * union: "the write was REFUSED because the manifest could not be read, and
+ * nothing was written" is neither a success nor the same thing as "the write
+ * was ATTEMPTED and failed", and collapsing it into either loses information
+ * the caller needs.
+ *
+ * - `{ entry, adopted }` — the entry is now in the manifest, either because
+ *   this call wrote it (`adopted: true`) or because a concurrent writer got
+ *   a real one there first (`adopted: false`).
+ * - `{ entry, adopted: false, adoptionRefusal }` — the manifest failed
+ *   ADR-171's read classification and `tolerateDegradedRead` was not set, so
+ *   nothing was written and the file is byte-identical. `entry` is the
+ *   reconstructed record that WOULD have been adopted, returned so a caller
+ *   whose more specific checks still need an entry can run them before
+ *   deciding what to report; it is NOT persisted, and a caller that treats
+ *   this as success will report a skill as tracked when it is not.
+ * - `{ adoptionError }` — the write was attempted and failed (a lock
+ *   timeout, an I/O error). ADR-139 point 1's failure contract.
+ */
+export type AdoptUntrackedSkillResult =
+  | { entry: SkillManifestEntry; adopted: boolean }
+  | { entry: SkillManifestEntry; adopted: false; adoptionRefusal: string }
+  | { adoptionError: string }
 
 /**
  * SMI-6529 round 15 (cross-model review, Critical): what uninstall found at
@@ -250,30 +291,47 @@ export async function buildAdoptedManifestEntry(
  * implementation here, alongside `buildAdoptedManifestEntry`, instead
  * of maintaining two copies of the same logic.
  *
- * ADR-171 § 5 retraction: the write now goes through
- * `manifest.updateSafely(updateFn, { tolerant: true })` — SMI-6733 Phase 1
- * moved tolerance from a standalone helper that wrote "around" the injected
+ * ADR-171 § 5 retraction: the write goes through
+ * `manifest.updateSafely(updateFn, { tolerant })` — SMI-6733 Phase 1 moved
+ * tolerance from a standalone helper that wrote "around" the injected
  * `ManifestManager` (calling `manifest.save()` directly, never
  * `manifest.updateSafely()`) to an OPTION on `updateSafely()` itself, so a
  * caller-injected double that intercepts `updateSafely` — to assert on what
- * it receives, or to throw — is never bypassed. See
- * {@link ManifestManager.updateSafely}'s own doc comment for the tolerant
- * load this enables (`loadManifestLenient()` in place of the strict
- * `ManifestManager.load()`) and why: ADR-171 § 5's retraction records the
- * conflict — SMI-6732 added six `uninstall()` tests that deliberately
- * tolerate a malformed `installedSkills` (including a bare STRING, which
- * fails ADR-171's CONTAINER-level shape check and so classifies `corrupt`),
- * and two of them need untracked-skill adoption's own manifest WRITE to
- * succeed even though the manifest, at that exact moment, is still corrupt.
- * The strict load would throw before ever reaching `save()`. Adoption is
- * unconditional regardless of `force` already (ADR-139) — this makes it
- * unconditional regardless of a degraded manifest READ too, which is the
- * same relationship extended one step further, not a new one.
- * `performUninstall`'s own later, force-gated check (ADR-171 § 5 retraction
- * resolution, Part B) is what still refuses the OVERALL uninstall on a
- * degraded read without `force` — tolerance here only keeps the adoption
- * WRITE itself from throwing before that later check, and every more
- * specific identity/containment check, gets a chance to run.
+ * it receives, or to throw — is never bypassed.
+ *
+ * **`tolerateDegradedRead` gates that option, and its default is `false`
+ * (SMI-6733 CRITICAL 1 / CRITICAL 2).** A tolerant load substitutes an EMPTY
+ * document for a manifest this process could not read, and the save that
+ * follows writes that substitution over the original bytes — so an
+ * unconditional `{ tolerant: true }` here silently destroyed whatever the
+ * unreadable file still recorded. Measured, against a manifest whose
+ * readable prefix recorded a real skill `beta` followed by trailing garbage:
+ * the `beta` record was gone, the file grew from 344 to 410 bytes, and the
+ * return value signalled nothing. An earlier revision of this comment called
+ * that tolerance "unconditional regardless of `force`, the same relationship
+ * ADR-139 already establishes, extended one step further" — that reasoning
+ * does not hold, because ADR-139's decision is about not requiring `force`
+ * to REMOVE an untracked skill, and says nothing about overwriting records
+ * belonging to OTHER skills that this process never read.
+ *
+ * So the argument is explicit, and the two call sites answer it differently:
+ *
+ * - `performUninstall` (`skill-installation.uninstall.ts`) passes its own
+ *   `force`. With `force`, the caller has explicitly authorized acting on a
+ *   manifest this client could not verify — which is precisely what
+ *   ADR-171 § 2's write/refuse policy reserves `force` for, and what
+ *   `performUninstall`'s own Part B refusal already says in words ("Use
+ *   force=true to remove anyway"). Without it, adoption refuses and the
+ *   file is left byte-identical.
+ * - `getSkillDiff` (`packages/cli/src/commands/manage.update.helpers.ts`)
+ *   passes nothing, so it gets the default. `sklx update` has no `force`
+ *   concept at all, so there is no point at which a user of that command
+ *   authorizes overwriting an unreadable manifest — and it was the path on
+ *   which the measurement above was taken.
+ *
+ * Note what is NOT gated: adoption still runs on a `missing` or `ok`
+ * manifest without `force`, exactly as ADR-139 requires. Only the overwrite
+ * of a manifest that failed to classify is gated.
  *
  * The `current.installedSkills[manifestKey]` check inside the callback is
  * still checked against the FRESH, lock-acquired state it's handed — never a
@@ -293,8 +351,9 @@ export async function adoptUntrackedSkillEntry(
   skillDirName: string,
   installPath: string,
   manifestKey: string,
-  manifest: ManifestManager
-): Promise<{ entry: SkillManifestEntry; adopted: boolean } | { adoptionError: string }> {
+  manifest: ManifestManager,
+  options?: AdoptUntrackedSkillOptions
+): Promise<AdoptUntrackedSkillResult> {
   const adoptedEntry = await buildAdoptedManifestEntry(skillDirName, installPath)
   let resolvedEntry = adoptedEntry
   let adopted = true
@@ -302,7 +361,7 @@ export async function adoptUntrackedSkillEntry(
   try {
     await manifest.updateSafely(
       (current) => {
-        const existing = current.installedSkills?.[manifestKey]
+        const existing = installedSkillsOf(current)[manifestKey]
         if (existing) {
           resolvedEntry = existing
           adopted = false
@@ -312,23 +371,33 @@ export async function adoptUntrackedSkillEntry(
         adopted = true
         return {
           ...current,
-          installedSkills: { ...current.installedSkills, [manifestKey]: adoptedEntry },
+          installedSkills: { ...installedSkillsOf(current), [manifestKey]: adoptedEntry },
         }
       },
-      { tolerant: true }
+      // `=== true` rather than a truthiness test: the default must be the
+      // refusing one, and an `undefined` from a call site that has not been
+      // updated must land there rather than anywhere else.
+      { tolerant: options?.tolerateDegradedRead === true }
     )
   } catch (adoptError) {
-    return {
-      adoptionError:
-        'Failed to adopt untracked skill "' +
-        skillName +
-        '" at ' +
-        installPath +
-        ' into manifest ' +
-        manifest.path +
-        ': ' +
-        (adoptError instanceof Error ? adoptError.message : String(adoptError)),
+    const detail =
+      'Failed to adopt untracked skill "' +
+      skillName +
+      '" at ' +
+      installPath +
+      ' into manifest ' +
+      manifest.path +
+      ': ' +
+      (adoptError instanceof Error ? adoptError.message : String(adoptError))
+    // SMI-6733: a refusal is not an error. `ManifestUnwritableError` means the
+    // strict load classified the manifest and declined to write — the file is
+    // byte-identical and the reconstructed entry is still usable for the
+    // caller's own more specific checks. Anything else really did fail
+    // mid-write, so it keeps ADR-139 point 1's hard failure contract.
+    if (adoptError instanceof ManifestUnwritableError) {
+      return { entry: adoptedEntry, adopted: false, adoptionRefusal: detail }
     }
+    return { adoptionError: detail }
   }
 
   return { entry: resolvedEntry, adopted }

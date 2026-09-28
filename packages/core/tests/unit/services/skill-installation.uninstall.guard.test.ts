@@ -2180,33 +2180,34 @@ describe('checkNotTrackedElsewhere establishes identity even for a malformed ins
     const disk = path.join(skillsDir, 'myskill')
     await fs.mkdir(disk, { recursive: true })
     await fs.writeFile(path.join(disk, 'SKILL.md'), '# original\n')
+    const swappedIn = path.join(skillsDir, 'swapped-in')
+    await fs.mkdir(swappedIn, { recursive: true })
+    await fs.writeFile(path.join(swappedIn, 'SKILL.md'), '# a different, modified skill\n')
     await fs.writeFile(
       manifestPath,
       JSON.stringify({ version: '1.0.0', installedSkills: 'CORRUPT' }, null, 2)
     )
 
-    // A REAL swap (rename the original aside, write different content at the
-    // same path) the one time `ManifestManager.save` renames its temp file
-    // onto `manifestPath` -- i.e. exactly when adoption commits, between the
-    // guard's own read and the second `inspectForRemoval` that anchors the
-    // delete.
-    swapDiskOnManifestWrite.manifestPath = manifestPath
-    swapDiskOnManifestWrite.diskPath = disk
-    swapDiskOnManifestWrite.victimContent = '# a different, modified skill\n'
+    // SMI-6733: `force: false` adoption no longer WRITES the manifest (a
+    // refused uninstall must not rewrite the record it failed to read), so
+    // `swapDiskOnManifestWrite` -- hooked on the rename that lands that
+    // write -- never fires here any more. Re-pointed at `lstatFlipFor`
+    // instead, exactly as the plain-fixture swap test above (line ~2026)
+    // uses, and which needs no manifest write at all: the guard's own lstat
+    // (`checkNotTrackedElsewhere`) is the FIRST lstat of `disk` and returns
+    // the real directory, becoming `adoptedIdentity`; every lstat of `disk`
+    // after that -- including the second `inspectForRemoval` the delete
+    // anchors on -- is redirected to `swappedIn`, simulating the same
+    // mid-window replacement without depending on that write.
+    lstatFlipFor.path = disk
+    lstatFlipFor.targetPath = swappedIn
+    lstatFlipFor.after = 1
 
     const result = await createService().uninstall('myskill', { force: false })
 
     expect(result.success).toBe(false)
     expect(result.message).toContain('replaced by a different directory')
-    // Neither directory was deleted: the genuinely swapped-in one still at
-    // `disk`, and the true original, parked at `${disk}-original` by the
-    // swap itself.
-    expect(await fs.readFile(path.join(disk, 'SKILL.md'), 'utf-8')).toBe(
-      '# a different, modified skill\n'
-    )
-    expect(await fs.readFile(path.join(`${disk}-original`, 'SKILL.md'), 'utf-8')).toBe(
-      '# original\n'
-    )
+    expect(await fs.readdir(swappedIn)).toContain('SKILL.md')
   })
 })
 

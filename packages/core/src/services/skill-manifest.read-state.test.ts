@@ -231,6 +231,17 @@ describe('ADR-171 manifest read-state classifier (SMI-6733)', () => {
         const expected = JSON.parse(rawText) as unknown
         expect(result.raw).toEqual(expected)
         expect(result.manifest).toEqual(expected)
+        // SMI-6733 MAJOR 4: `toEqual` alone does not pin the guarantee this
+        // test exists for. ADR-171 § 3 forbids the classifier constructing a
+        // new object — the CAS compares canonical form taken from the raw
+        // `JSON.parse` value, and a copy is a different object with the same
+        // contents, which is exactly what a spread produces. Instrument
+        // validated with controls: a spread copy deep-equals its original and
+        // a modified copy does not, so `toEqual` distinguishes CONTENT; only
+        // reference identity distinguishes the COPY. So `manifest: {...parsed}`
+        // — the single mutation the rule exists to forbid — passes the two
+        // assertions above unchanged and fails this one.
+        expect(result.raw).toBe(result.manifest)
       })
     })
   })
