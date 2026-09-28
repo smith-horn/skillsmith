@@ -4,6 +4,22 @@ All notable changes to `@skillsmith/mcp-server` are documented here.
 
 ## [Unreleased]
 
+- **Refactor**: SMI-6532 step 6 -- `outdated.ts` split at the action seam (`outdated.action.ts`,
+  `outdated.helpers.ts` unchanged in behaviour) so a renderer table could land beside it without
+  pushing either file over the 500-line gate. New `update-target-render.ts` exports
+  `UPDATE_TARGET_TEXT`, a total `Record<UpdateTargetReason | UpdateResultCode, string>` mirroring
+  `@skillsmith/core`'s closed update-classification sets (§4.4 of
+  `update-safety-and-source-resolution.md`) -- exported but not yet wired into `outdated.ts` or
+  `skill-updates.ts`, since neither tool classifies a target against those sets today; the call
+  site arrives with step 5/A1's update-target pipeline. `@skillsmith/core`'s root barrel now also
+  exports the two closed-set types (`UpdateTargetReason`, `UpdateResultCode`) this file's `Record`
+  signature needs -- previously internal to that package, with no path for another workspace
+  package to reach them. The three-surface (well, two-surface until CLI's step 5 lands)
+  reason/result renderer parity test lives in `@skillsmith/core`
+  (`update-target-render-parity.test.ts`), not here -- it AST-reads this file and the VS Code
+  extension's `manifestReader.ts` rather than importing either, so it needs no new devDependency
+  and no wider export than the two types above.
+
 - **Test**: SMI-6358 post-merge retro -- `install.conflict.ts`'s client keying is now pinned at
   BOTH of its `manifestKeyFor` call sites, `checkForConflicts` and `handleMergeAction`, by
   `install.conflict.test.ts`. `install.test.ts` mocks the whole module, so it asserts what is
