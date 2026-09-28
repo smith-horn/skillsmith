@@ -148,7 +148,10 @@ const DENY_ENTRIES_OUT_OF_REACH_NOTE =
 const TREE_OUT_OF_REACH_NOTE =
   'A tree assertion at this path cannot see the five `~/.npm/_npx` cache trees (Layer P) or ' +
   "the nvm global prefix (Layer G) -- those are host-global state out of this check's reach " +
-  "(they belong to A4.7's owner transcript, not audit:standards)."
+  "(they belong to A4.7's owner transcript, not audit:standards). These three local-tree " +
+  'arms (the two tree-presence checks above and the bin-symlink scan below) are also green ' +
+  'by construction under `npm ci` (CI) and can only fail on a host whose `node_modules` ' +
+  'predates the lockfile -- so a green CI line here is not evidence about any developer host.'
 
 function readDenyArray(settingsPath, readFile) {
   const parsed = JSON.parse(readFile(settingsPath))

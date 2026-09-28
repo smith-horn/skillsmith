@@ -2,12 +2,24 @@
  * Pure predicate logic for `scripts/ruflo-host-guard.mjs` (SMI-6744 Wave 4
  * A4.6). Split out of the guard's own orchestration file purely to stay
  * under the 500-line file-length gate (`scripts/check-file-length.mjs`) —
- * every export here is a pure function or constant, no I/O, no state. H1–H7
- * and the verdict-shape constructors live in their own sibling files
+ * every export here is a pure function or constant, no I/O, no state.
+ * `checkH1toH7` and the verdict-shape constructors this file's own
+ * predicates call (`ALLOW`, `denyInternalError`, `denyMalformedInput`,
+ * `denyStartDaemon`, `denyWith`) live in their own sibling files
  * (`ruflo-host-guard-h1to7.mjs`, `ruflo-host-guard-verdicts.mjs` —
  * governance-round split, same 500-line pressure) and are re-exported here
  * so `scripts/ruflo-host-guard.mjs`'s own import statement needed no
- * change across either split.
+ * change across either split. `RUNNER_BASENAMES`/`RUNNER_TOKEN_RE`
+ * (`ruflo-host-guard-h1to7.mjs`) are also imported here, for this file's
+ * OWN internal use (`checkRunnerVariableArgument`/`checkBraceSegment` and
+ * `checkAssignmentValuePredicate` respectively) — but, unlike
+ * `checkH1toH7` above, deliberately NOT re-exported: no consumer outside
+ * this file's own import statement ever referenced either one through it
+ * (SMI-6744 C1 delta round, L1 cleanup: confirmed via `grep -rn` across
+ * `scripts/` before removal). `SANCTIONED_ALTERNATIVE`
+ * (`ruflo-host-guard-verdicts.mjs`) was in the same position — re-exported
+ * with no external consumer — but had no internal use here either, so its
+ * import was dropped entirely rather than kept-but-unexported.
  *
  * Design: docs/internal/implementation/smi-6744-ruflo-host-guard.md
  * § Predicate Specification (Stage 1 allowlist, H1–H8), built from
@@ -27,24 +39,13 @@ import { basenameOf, stripFlags } from './shell-command-normalize.mjs'
 import { RUNNER_BASENAMES, RUNNER_TOKEN_RE, checkH1toH7 } from './ruflo-host-guard-h1to7.mjs'
 import {
   ALLOW,
-  SANCTIONED_ALTERNATIVE,
   denyInternalError,
   denyMalformedInput,
   denyStartDaemon,
   denyWith,
 } from './ruflo-host-guard-verdicts.mjs'
 
-export {
-  RUNNER_BASENAMES,
-  RUNNER_TOKEN_RE,
-  checkH1toH7,
-  ALLOW,
-  SANCTIONED_ALTERNATIVE,
-  denyInternalError,
-  denyMalformedInput,
-  denyStartDaemon,
-  denyWith,
-}
+export { checkH1toH7, ALLOW, denyInternalError, denyMalformedInput, denyStartDaemon, denyWith }
 
 /** The exact npm inspection/remediation forms Stage 1 allows (design § 1(b) row 3). */
 const NPM_ALLOW_FORMS = [
