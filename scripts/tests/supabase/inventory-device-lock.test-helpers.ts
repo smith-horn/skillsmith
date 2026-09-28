@@ -32,8 +32,8 @@
  *
  * NO CI COVERAGE YET. No CI check runs this suite: nothing sets its env vars. Not "CI
  * provisions no Postgres" -- that is wrong (SMI-5946); grant-reactivate-concurrency.yml does,
- * on supabase/migrations/** triggers. This suite is not wired into it. Nothing sets none of
- * these vars, so this suite skips there — loudly, never silently (see
+ * on supabase/migrations/** triggers. This suite is not wired into it, and nothing sets these
+ * vars, so this suite skips there — loudly, never silently (see
  * {@link noLiveTestPg}). Same known, tracked gap SMI-5946 already covers for the smi5879
  * and SMI-6321 suites; this is a third consumer of that gap, not a new one.
  *
