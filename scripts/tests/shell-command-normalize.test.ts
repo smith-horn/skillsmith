@@ -144,6 +144,50 @@ describe('tokenize()', () => {
       expect(wordValues(tokens)).toEqual(['echo', 'npx'])
     })
 
+    // C1 fix (SMI-6744 delta governance round): the ORIGINAL H-6 fix above
+    // only decoded `\n`, `\t`, `\\`, `\'`, and `\xHH` -- `\NNN` (octal),
+    // `\uHHHH`, and `\UHHHHHHHH` fell through UNCHANGED, so
+    // `$'\162uflo' memory store` (octal 162 = 'r') reached the ruflo host
+    // guard as the literal text `\162uflo`, never equalling the decoded
+    // `ruflo` its H-predicates test for -- a live bypass (measured:
+    // `zsh -c "printf '\162uflo\n'"` prints `ruflo`), not a cosmetic gap.
+    describe('C1 fix -- octal/unicode/control escapes', () => {
+      it('decodes \\NNN octal escapes', () => {
+        const tokens = tokenize("$'\\162uflo'")
+        expect(wordValues(tokens)).toEqual(['ruflo'])
+      })
+
+      // Control, not a red arm: a `$'...'` word with NO escape sequence at
+      // all was never part of this bug (it already decoded correctly
+      // before this fix, since no escape branch is ever entered) — kept
+      // here as a regression pin, not claimed to fail against the
+      // pre-fix tokenizer.
+      it("control: a $'...' word with no escapes at all decodes to its literal text", () => {
+        const tokens = tokenize("$'ruflo'")
+        expect(wordValues(tokens)).toEqual(['ruflo'])
+      })
+
+      it('decodes \\UHHHHHHHH (8-hex Unicode) escapes', () => {
+        const tokens = tokenize("$'\\U00000072uflo'")
+        expect(wordValues(tokens)).toEqual(['ruflo'])
+      })
+
+      it('decodes \\cX control-character escapes', () => {
+        const tokens = tokenize("$'\\cA'")
+        expect(wordValues(tokens)).toEqual(['\x01'])
+      })
+
+      it('decodes \\e / \\E as ESC (0x1b)', () => {
+        expect(wordValues(tokenize("$'\\e'"))).toEqual(['\x1b'])
+        expect(wordValues(tokenize("$'\\E'"))).toEqual(['\x1b'])
+      })
+
+      it('decodes \\0 and \\000 as a NUL byte', () => {
+        expect(wordValues(tokenize("$'\\0'"))).toEqual(['\0'])
+        expect(wordValues(tokenize("$'\\000'"))).toEqual(['\0'])
+      })
+    })
+
     it('passes an unrecognized escape character through unchanged', () => {
       const tokens = tokenize("echo $'a\\zb'")
       expect(wordValues(tokens)).toEqual(['echo', 'azb'])

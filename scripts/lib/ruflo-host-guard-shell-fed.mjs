@@ -20,14 +20,15 @@ import {
   basenameOf,
   hasInlineScriptFlag,
   INLINE_SCRIPT_LONG_FLAGS,
+  SHELL_COMMANDS,
   tokenize,
 } from './shell-command-normalize.mjs'
-
-/** Recognized shell wrappers — mirrors `shell-command-normalize.mjs`'s own `SHELL_COMMANDS`. */
-const SHELL_COMMANDS = new Set(['bash', 'sh', 'zsh', 'dash', 'ksh'])
+import { decodeShellEscapes } from './shell-escape-decode.mjs'
 
 /**
- * M-2 fix (SMI-6744 Wave 4 governance round): decodes printf(1)'s own
+ * M-2 fix (SMI-6744 Wave 4 governance round), broadened by the C1 delta-
+ * round fix to call the SHARED `decodeShellEscapes` (`shell-escape-
+ * decode.mjs`) instead of its own bespoke regex: decodes printf(1)'s own
  * `\xHH` (hex byte), `\NNN` (1-3 digit octal), and the GNU printf
  * `\uHHHH`/`\UHHHHHHHH` (Unicode) escapes, so text piped through
  * `printf '<encoded>' | bash` surfaces as the command printf will
@@ -35,21 +36,18 @@ const SHELL_COMMANDS = new Set(['bash', 'sh', 'zsh', 'dash', 'ksh'])
  * this guard's tokenizer captures verbatim from printf's own single-
  * quoted argument (single quotes never process escapes, so `\x6e\x70\x78`
  * reaches this guard as those 12 literal characters, not the 3 bytes
- * `npx`). Deliberately minimal: `\n`/`\t`/etc are left alone since they
- * cannot themselves spell out a runner/path token.
+ * `npx`). The ORIGINAL fix here was deliberately minimal (`\n`/`\t`/etc
+ * left alone, since they cannot themselves spell out a runner/path token)
+ * but had its own bespoke regex that could silently diverge from the
+ * ANSI-C `$'...'` tokenizer branch's table — now both call the same
+ * function, so bash's `printf` builtin's own `\n`/`\t`/`\a`/`\cX`/etc
+ * escapes decode too (a strictly more conservative superset: it can only
+ * make this guard MORE willing to recognize a disguised invocation, never
+ * less).
  * @param {string} s
  */
 function decodePrintfEscapes(s) {
-  return s.replace(
-    /\\x([0-9a-fA-F]{1,2})|\\u([0-9a-fA-F]{4})|\\U([0-9a-fA-F]{8})|\\([0-7]{1,3})/g,
-    (whole, hex, u4, u8, oct) => {
-      if (hex !== undefined) return String.fromCharCode(parseInt(hex, 16))
-      if (u4 !== undefined) return String.fromCodePoint(parseInt(u4, 16))
-      if (u8 !== undefined) return String.fromCodePoint(parseInt(u8, 16))
-      if (oct !== undefined) return String.fromCharCode(parseInt(oct, 8))
-      return whole
-    }
-  )
+  return decodeShellEscapes(s)
 }
 
 /**

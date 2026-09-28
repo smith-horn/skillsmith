@@ -517,6 +517,28 @@ describe('decide() — fourth-round adversarial confirmation finding (SMI-6361)'
   })
 })
 
+describe("decide() — C1: ANSI-C $'...' octal escapes evade the guard (SMI-6744 delta round)", () => {
+  // This guard shares its tokenizer with scripts/ruflo-host-guard.mjs
+  // (scripts/lib/shell-command-normalize.mjs -> shell-command-tokenize.mjs),
+  // so the SAME `$'...'` decode gap applied here: `cat $'\056env'` (octal
+  // 056 = '.') reached this guard as the literal text `\056env`, never
+  // equalling the decoded `.env` its classifyPath/EMBEDDED_ENV_RE test
+  // for — MEASURED to allow before the C1 fix.
+  it("cat $'\\056env' -> deny (octal 056 decodes to '.', spelling .env)", () => {
+    const result = decide(bashCall(String.raw`cat $'\056env'`), {})
+    expect(result.action).toBe('deny')
+  })
+
+  // Regression pin, not a red arm: the \xHH hex arm was already fixed by
+  // the ORIGINAL H-6 fix and MEASURED to already deny before this C1 fix —
+  // kept here so a future regression in the shared decoder's hex arm is
+  // caught alongside the octal arm above.
+  it("cat $'\\x2e'env -> deny (hex 0x2e decodes to '.', spelling .env; already correct pre-C1)", () => {
+    const result = decide(bashCall(String.raw`cat $'\x2e'env`), {})
+    expect(result.action).toBe('deny')
+  })
+})
+
 describe('decide() — SKILLSMITH_ENV_READ_GUARD_DISABLE hard-disable', () => {
   it('a command that would normally deny is allowed when the disable var is set', () => {
     const result = decide(bashCall('grep PAT .env'), { SKILLSMITH_ENV_READ_GUARD_DISABLE: '1' })

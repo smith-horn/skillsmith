@@ -796,6 +796,48 @@ describe('decide() — M-2: printf hex-escape decode before recursing (delta rou
   })
 })
 
+describe("decide() — C1: ANSI-C $'...' octal/unicode escapes evade the guard (delta round)", () => {
+  // MEASURED against decide() before the C1 fix (SMI-6744 delta governance
+  // round): each of these five rows ALLOWED (predicateLabel(...) was
+  // `null`), while the plain-text equivalent it decodes to already
+  // correctly denied. Asserting EQUALITY between the two verdicts' labels
+  // — not a hardcoded predicate string — pins "escaped resolves to the
+  // SAME verdict as plain", not a particular predicate's own spelling
+  // (which could legitimately change without this being a regression).
+  const rows: Array<[string, string]> = [
+    ['ruflo memory store', String.raw`$'\162uflo' memory store`],
+    ['npx ruflo', String.raw`npx $'\162uflo'`],
+    ["echo 'ruflo memory store' | bash", String.raw`echo $'\162uflo memory store' | bash`],
+    ["eval 'ruflo memory store'", String.raw`eval $'\162uflo memory store'`],
+    ["env -S 'ruflo memory store'", String.raw`env -S $'\162uflo memory store'`],
+  ]
+
+  function predicateLabel(result: ReturnType<typeof decide>): string | null {
+    const m = /\[ruflo-host-guard\]\s*([\w-]+):/.exec(reasonOf(result))
+    return m ? m[1] : null
+  }
+
+  it.each(rows)('%s vs %s -> escaped gets the same deny label as plain', (plain, escaped) => {
+    const plainResult = decide(bashCall(plain), {})
+    const escapedResult = decide(bashCall(escaped), {})
+    expect(plainResult.action).toBe('deny')
+    expect(escapedResult.action).toBe('deny')
+    expect(predicateLabel(escapedResult)).toBe(predicateLabel(plainResult))
+  })
+
+  // Control, NOT a red arm: `$'ruflo' memory store` carries no escape
+  // sequence at all, so it was never part of this bug — MEASURED to
+  // already deny (H4) before the C1 fix. Kept here (rather than folded
+  // into the it.each above) so a future regression in the no-escapes fast
+  // path is still caught alongside the five genuine C1 arms, without
+  // misrepresenting it as one of them.
+  it("control: $'ruflo' memory store -> deny (H4; no escape sequence, never part of this bug)", () => {
+    const result = decide(bashCall(String.raw`$'ruflo' memory store`), {})
+    expect(result.action).toBe('deny')
+    expect(reasonOf(result)).toContain('H4')
+  })
+})
+
 describe('decide() — A: fail-closed fall-through when argv[0] cannot be resolved (delta round)', () => {
   it('NPX=npx; $NPX ruflo memory store --key k --value v -> deny (unresolved-command, the H-7 motivating case)', () => {
     const result = decide(bashCall('NPX=npx; $NPX ruflo memory store --key k --value v'), {})

@@ -11,6 +11,8 @@
  * here and RE-EXPORTS them, so no consumer's own import path changes.
  */
 
+import { decodeEscapeAt } from './shell-escape-decode.mjs'
+
 /** @param {string} p */
 export function basenameOf(p) {
   return p.split('/').pop()
@@ -139,47 +141,31 @@ export function tokenize(command) {
       continue
     }
     if (c === '$' && command[i + 1] === "'") {
-      // ANSI-C quoting (H-6 fix, SMI-6744 Wave 4 governance round):
-      // `$'...'` is a distinct Bash quoting form from a plain `'...'` —
-      // unlike single quotes, its body's own backslash escapes ARE
-      // processed, so `bash -c $'npx ruflo memory store'` reached
-      // `extractShellDashC` with the LITERAL text `$'npx ruflo memory
-      // store'` still attached to the `$`, which never equalled the
-      // decoded command text `H1`/`H4`/`H5` test for. Decodes minimally —
-      // `\n`, `\t`, `\\`, `\'`, and `\xHH` — matching this file's own
-      // "unrecognized escape passes the character through" convention
-      // elsewhere for anything else. Dropping the `$` and reusing the
-      // current word (`word()`, not a fresh one) lets `$'text'` glued
-      // directly onto other characters compose the same way a plain
-      // quoted segment already does.
+      // ANSI-C quoting (H-6 fix, SMI-6744 Wave 4 governance round, broadened
+      // by the C1 delta-round fix): `$'...'` is a distinct Bash quoting form
+      // from a plain `'...'` — unlike single quotes, its body's own
+      // backslash escapes ARE processed, so `bash -c $'npx ruflo memory
+      // store'` reached `extractShellDashC` with the LITERAL text `$'npx
+      // ruflo memory store'` still attached to the `$`, which never equalled
+      // the decoded command text `H1`/`H4`/`H5` test for. The escape table
+      // itself now lives in the shared `decodeEscapeAt` (SMI-6744 C1 fix) —
+      // the ORIGINAL fix here only covered `\n`, `\t`, `\\`, `\'`, and
+      // `\xHH`, which left `\NNN` (octal), `\uHHHH`, and `\UHHHHHHHH` still
+      // decoding to their own literal text, a live bypass
+      // (`$'\162uflo' memory store` reached `decide()` as `\162uflo`, never
+      // equalling `ruflo`) — see that module's own docblock for the full
+      // table and the bash/zsh divergence its "unrecognized escape" arm
+      // preserves. Dropping the `$` and reusing the current word (`word()`,
+      // not a fresh one) lets `$'text'` glued directly onto other
+      // characters compose the same way a plain quoted segment already
+      // does.
       const w = word()
       let j = i + 2
       while (j < command.length && command[j] !== "'") {
         if (command[j] === '\\') {
-          const esc = command[j + 1]
-          if (esc === 'n') {
-            w.value += '\n'
-            j += 2
-          } else if (esc === 't') {
-            w.value += '\t'
-            j += 2
-          } else if (esc === '\\' || esc === "'") {
-            w.value += esc
-            j += 2
-          } else if (esc === 'x') {
-            const hex = command.slice(j + 2, j + 4)
-            const m = /^[0-9a-fA-F]{1,2}/.exec(hex)
-            if (m) {
-              w.value += String.fromCharCode(parseInt(m[0], 16))
-              j += 2 + m[0].length
-            } else {
-              w.value += 'x'
-              j += 2
-            }
-          } else {
-            w.value += esc ?? ''
-            j += 2
-          }
+          const r = decodeEscapeAt(command, j)
+          w.value += r.value
+          j = r.next
           continue
         }
         w.value += command[j]
