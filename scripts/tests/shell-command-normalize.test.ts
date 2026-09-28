@@ -208,6 +208,42 @@ describe('stripVarlockRun()', () => {
   it('falls back to flag-stripping when there is no --', () => {
     expect(stripVarlockRun(['varlock', 'run', '-q', 'echo'])).toEqual(['echo'])
   })
+
+  // H-E fix (SMI-6744 Wave 4 governance round): a `--` belonging to the
+  // WRAPPED command's own argv (e.g. npx/npm's own `--` separator) must
+  // not be mistaken for varlock run's own separator just because it is
+  // the first `--` anywhere in argv.
+  it('falls back to flag-stripping when the first -- belongs to the wrapped command, not varlock', () => {
+    expect(
+      stripVarlockRun([
+        'varlock',
+        'run',
+        'npx',
+        'ruflo',
+        'memory',
+        'store',
+        '--key',
+        'k',
+        '--',
+        'x',
+      ])
+    ).toEqual(['npx', 'ruflo', 'memory', 'store', '--key', 'k', '--', 'x'])
+  })
+
+  it('falls back to flag-stripping when the wrapped command has no flags at all before its own --', () => {
+    expect(
+      stripVarlockRun(['varlock', 'run', 'ruflo', 'memory', 'store', '--key', 'k', '--', 'x'])
+    ).toEqual(['ruflo', 'memory', 'store', '--key', 'k', '--', 'x'])
+  })
+
+  it("still trusts a -- immediately after a run of value-taking flags as varlock's own separator", () => {
+    // -e/--env is in WRAPPER_VALUE_FLAGS, so "run -e FOO --" is a
+    // flag-only span and this -- is legitimately varlock's own boundary.
+    expect(stripVarlockRun(['varlock', 'run', '-e', 'FOO', '--', 'echo', 'hi'])).toEqual([
+      'echo',
+      'hi',
+    ])
+  })
 })
 
 describe('extractShellDashC()', () => {

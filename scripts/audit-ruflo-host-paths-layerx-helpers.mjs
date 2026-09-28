@@ -49,6 +49,15 @@ function targetIsRufloRelated(target) {
 /**
  * Evaluates one `node_modules/.bin/<name>` entry.
  *
+ * A RESOLVABLE symlink is judged by its TARGET — `finding` is true only
+ * when the target names `ruflo`/`@claude-flow` (see `targetIsRufloRelated`
+ * below). A DANGLING symlink is judged by its NAME alone, deliberately
+ * (L-G fix, SMI-6744 Wave 4 governance round) — `finding` is true
+ * regardless of what the broken target text says, because a dangling link
+ * at one of these four reserved bin names is itself evidence of a broken
+ * reinstall this arm exists to catch, and a dangling target's text cannot
+ * be trusted to describe what used to be there.
+ *
  * @returns {{
  *   binPath: string,
  *   present: boolean,

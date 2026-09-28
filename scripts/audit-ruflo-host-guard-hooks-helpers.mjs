@@ -32,14 +32,33 @@ const FIX_NOT_EVALUATED = (path) =>
   `Could not read/parse ${path} as JSON, so Check 74 could not evaluate. Confirm the file exists and is valid JSON.`
 
 /**
- * Does one hooks.PreToolUse entry match the given matcher and carry a
- * command-type hook whose `command` string contains both substrings? Type
- * + exact invocation-shape check, not a bare whole-file substring match --
- * same structural pattern as `env-read-guard.test.ts`'s own registration
- * pin -- so a hook silently replaced by a functionally inert command that
- * merely retains the text (e.g. in a comment) still fails this.
+ * The exact registered hook command string (M-E fix) -- the single source
+ * of truth both `evaluateRufloHostGuardHooks` below and its test's own
+ * `RUFLO_GUARD_COMMAND` literal must agree with, matching the real entries
+ * in `.claude/settings.json`.
  */
-function hasHookEntry(preToolUse, matcher, mustIncludeAll) {
+export const EXPECTED_GUARD_COMMAND = 'node "$CLAUDE_PROJECT_DIR/scripts/ruflo-host-guard.mjs"'
+
+/**
+ * Does one hooks.PreToolUse entry match the given matcher and carry a
+ * command-type hook whose `command` string, after trimming surrounding
+ * whitespace, EQUALS `expectedCommand` exactly? Type + exact
+ * invocation-shape check -- so a hook silently replaced by a functionally
+ * inert command that merely retains the registered text (e.g. commented
+ * out, echoed, or made unreachable after a `||`/short-circuit no-op)
+ * fails this.
+ *
+ * This is EXACT equality, not substring containment (M-E fix, SMI-6744
+ * Wave 4 governance round) -- the prior version checked
+ * `hook.command.includes(s)` for each of two required substrings
+ * (`'node'` and `'scripts/ruflo-host-guard.mjs'`), which a comment or an
+ * `echo`/`true ||` wrapper carrying that same text still satisfies:
+ * `# node "$CLAUDE_PROJECT_DIR/scripts/ruflo-host-guard.mjs"` contains
+ * both substrings while invoking nothing. The header above previously
+ * claimed this already did exact-shape matching -- it did not; this fix
+ * makes the claim true.
+ */
+function hasHookEntry(preToolUse, matcher, expectedCommand) {
   return preToolUse.some(
     (entry) =>
       entry?.matcher === matcher &&
@@ -48,7 +67,7 @@ function hasHookEntry(preToolUse, matcher, mustIncludeAll) {
         (hook) =>
           hook?.type === 'command' &&
           typeof hook.command === 'string' &&
-          mustIncludeAll.every((s) => hook.command.includes(s))
+          hook.command.trim() === expectedCommand
       )
   )
 }
@@ -78,16 +97,15 @@ export function evaluateRufloHostGuardHooks(options) {
   }
 
   const preToolUse = Array.isArray(parsed?.hooks?.PreToolUse) ? parsed.hooks.PreToolUse : []
-  const mustInclude = ['node', 'scripts/ruflo-host-guard.mjs']
 
   return {
     status: 'evaluated',
     settingsPath,
-    hasBashEntry: hasHookEntry(preToolUse, 'Bash', mustInclude),
+    hasBashEntry: hasHookEntry(preToolUse, 'Bash', EXPECTED_GUARD_COMMAND),
     hasSessionStartEntry: hasHookEntry(
       preToolUse,
       '^mcp__ruflo__hooks_session-start$',
-      mustInclude
+      EXPECTED_GUARD_COMMAND
     ),
   }
 }

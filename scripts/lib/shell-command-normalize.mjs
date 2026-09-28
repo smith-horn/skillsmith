@@ -14,12 +14,18 @@
  * `hasInlineScriptFlag` and `scanPositionalScriptText` used to close over
  * env-read-guard.mjs's own module-level `INLINE_SCRIPT_SHORT_FLAG_CHARS`
  * and `scanTextForProtected` — env-specific pieces tied to hunting `.env`
- * references. They now take the equivalent piece as a parameter, so a
- * consumer scanning for something else (e.g. a `ruflo`/`node_modules`
- * path segment) can supply its own without this module knowing anything
- * about either domain. `env-read-guard.mjs` passes its own
- * `INLINE_SCRIPT_SHORT_FLAG_CHARS` / `scanTextForProtected` at each call
- * site — its own verdicts are unchanged by this move.
+ * references. They now take the equivalent piece as a parameter instead,
+ * so a domain-specific consumer supplies its own without this module
+ * knowing anything about either domain. `env-read-guard.mjs` passes its
+ * own `INLINE_SCRIPT_SHORT_FLAG_CHARS` / `scanTextForProtected` at each
+ * call site — its own verdicts are unchanged by this move. **This
+ * parameterisation is provisioned for a future consumer, not an existing
+ * one** (SMI-6744 Wave 4 L-5 governance finding): `scripts/ruflo-host-
+ * guard.mjs` does not call either function at all — its H1–H9 predicates
+ * detect ruflo/`@claude-flow/cli` paths and runner tokens by regex and
+ * exact-match, not by scanning inline-interpreter script text — so as of
+ * this module's two current consumers, only `env-read-guard.mjs` actually
+ * exercises the parameterised shape.
  *
  * Parity claim: "behaviourally equivalent for the characterised input
  * matrix" pinned by `scripts/tests/shell-command-normalize.test.ts` (run
@@ -309,10 +315,41 @@ export function stripDockerCompose(argv, head) {
   return stripDockerExec(rest.slice(1))
 }
 
-/** `varlock run [flags] -- <inner...>` → `<inner...>`. */
+/**
+ * True when every token in `argv[start, end)` is either a flag or the
+ * consumed value of a preceding value-taking flag — i.e. the span cannot
+ * hide the start of a wrapped command's own argv. Used by `stripVarlockRun`
+ * (H-E fix, SMI-6744 Wave 4 governance round) to confirm a `--` really is
+ * `varlock run`'s own separator before trusting `indexOf('--', 2)` to find
+ * it, rather than a `--` belonging to the WRAPPED command's own argv (e.g.
+ * `varlock run npx ruflo … -- x`, where `--` is npx/npm's own separator,
+ * not varlock's).
+ */
+function isFlagOnlySpan(argv, start, end) {
+  let i = start
+  while (i < end) {
+    const a = argv[i]
+    if (!a.startsWith('-') || a === '-') return false
+    i += WRAPPER_VALUE_FLAGS.has(a) ? 2 : 1
+  }
+  return i === end
+}
+
+/**
+ * `varlock run [flags] -- <inner...>` → `<inner...>`. The naive
+ * `indexOf('--', 2)` used to accept the FIRST `--` anywhere in argv as the
+ * separator, even when everything between `run` and it was already the
+ * wrapped command's own argv (H-E fix, SMI-6744 Wave 4 governance round:
+ * `varlock run npx ruflo memory store --key k -- x` silently exposed
+ * `['npx','ruflo',…]` unstripped as the "flags" span, but `isFlagOnlySpan`
+ * correctly rejects it since `npx` is not a flag, so this falls back to
+ * `stripFlags` instead of trusting that `--` as varlock's own boundary).
+ * This also closes the identical hole in `env-read-guard.mjs`'s own
+ * varlock-unwrap, which shares this function via `normalizeWrappers`.
+ */
 export function stripVarlockRun(argv) {
   const sep = argv.indexOf('--', 2)
-  if (sep !== -1) return argv.slice(sep + 1)
+  if (sep !== -1 && isFlagOnlySpan(argv, 2, sep)) return argv.slice(sep + 1)
   return stripFlags(argv.slice(2))
 }
 
@@ -417,7 +454,15 @@ export function hasInlineScriptFlag(cmd, args, shortFlagChars) {
  * "everything after this IS the script, even though it might start with a
  * dash" — `awk -- 'BEGIN{...}'` puts the real program immediately after
  * `--`. `scanFn('--')` returning null/falsy harmlessly is relied on
- * instead of a special case.
+ * instead of a special case. **This is not a stylistic choice — a fourth
+ * adversarial round (SMI-6361) found this exact `break` was a regression
+ * an earlier uniform-scan rewrite introduced**: the two functions it
+ * replaced both deliberately looked PAST `--`, so `awk -- '<code touching
+ * the protected reference>'` denied on the parent commit and silently
+ * started ALLOWING on the regression — a real bypass, not this design's
+ * accepted over-scanning tradeoff (L-F fix, SMI-6744 Wave 4 governance
+ * round — this clause was dropped when the function moved out of
+ * `env-read-guard.mjs` into this shared module).
  * @param {string} cmd
  * @param {string[]} args
  * @param {(text: string) => string | null} scanFn scans one argument's text

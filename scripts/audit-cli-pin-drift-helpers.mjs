@@ -286,12 +286,25 @@ export function findProcScanCmdHintDrift(guardPath, guideMdPath) {
  * merely that its value happens to also be a deny member (SMI-6744 Wave 4
  * H-1 governance finding: the prior value-only check exempted the identical
  * literal sitting in `allow` too).
+ *
+ * The bracket scan on the STARTING line begins at the matched key's own
+ * character index, not the line start (L-H fix, SMI-6744 Wave 4 governance
+ * round): a "packed" settings.json where a PRECEDING array's own closing
+ * `]` shares the same line as this key (e.g. `    ], "deny": [`) would
+ * otherwise have that stray `]` counted first, decrementing `depth` below
+ * zero before the real `[` for THIS array is even reached -- depth can
+ * then cross back to exactly zero the moment `[` opens, ending the span on
+ * the very line it started (a wrong `endLine`), because the two brackets
+ * belong to different arrays scanning from line-start conflates them.
  */
 function findJsonArrayLineSpan(lines, keyPattern) {
   let startIdx = null
+  let startCharIdx = 0
   for (let i = 0; i < lines.length; i++) {
-    if (keyPattern.test(lines[i])) {
+    const m = keyPattern.exec(lines[i])
+    if (m) {
       startIdx = i
+      startCharIdx = m.index
       break
     }
   }
@@ -300,9 +313,10 @@ function findJsonArrayLineSpan(lines, keyPattern) {
   let depth = 0
   let opened = false
   for (let i = startIdx; i < lines.length; i++) {
+    const lineText = i === startIdx ? lines[i].slice(startCharIdx) : lines[i]
     let inString = false
     let escaped = false
-    for (const ch of lines[i]) {
+    for (const ch of lineText) {
       if (inString) {
         if (escaped) {
           escaped = false

@@ -107,6 +107,12 @@ const CENSUS_ROWS: Array<[string, string, 'allow' | 'deny', string | null]> = [
   ['A15', 'npx --cache=/tmp ruflo memory store --key k --value v', 'deny', 'H5'],
   ['A16', 'NPM_CONFIG_CACHE=/tmp npx ruflo memory store --key k --value v', 'deny', 'H5'],
   ['A17', 'npx @claude-flow/cli mcp start', 'deny', 'H5'],
+  // A18 is the SAME string as A1, deliberately (SMI-6744 Wave 4 L-9
+  // governance finding, not a copy-paste duplicate): the census
+  // distinguishes A1/A18 by HOST STATE (an npx local-cache miss vs. hit),
+  // which this guard's decide() cannot observe -- it only ever sees the
+  // command STRING -- so the two rows are expected to collapse to
+  // identical input/output here.
   ['A18', 'npx ruflo memory store --key k --value v', 'deny', 'H5'],
   ['B1', 'node node_modules/ruflo/bin/ruflo.js memory store --key k --value v', 'deny', 'H1'],
   ['B2', 'node ./node_modules/ruflo/bin/ruflo.js memory store --key k --value v', 'deny', 'H1'],
@@ -374,6 +380,269 @@ describe('decide() — compound command: a sanctioned segment does not launder a
   })
 })
 
+// --- SMI-6744 Wave 4 governance-round fixes (H-A through M-D) ---
+
+describe('decide() — H-A: launcher prefixes defeat H4/H5 (governance round)', () => {
+  const redArms: Array<[string, string]> = [
+    ['timeout 5 ruflo memory store --key k --value v', 'H4'],
+    ['nohup ruflo memory store --key k --value v', 'H4'],
+    ['nice -n 10 ruflo memory store --key k --value v', 'H4'],
+    ['setsid ruflo memory store --key k --value v', 'H4'],
+    ['stdbuf -o0 ruflo memory store --key k --value v', 'H4'],
+    ['script -q /dev/null ruflo memory store --key k --value v', 'H4'],
+    ['xargs ruflo memory store --key k --value v', 'H4'],
+    ['time ruflo memory store --key k --value v', 'H4'],
+    ["builtin eval 'npx ruflo memory store --key k --value v'", 'H5'],
+  ]
+  it.each(redArms)('%s -> deny (%s)', (command, predicate) => {
+    const result = decide(bashCall(command), {})
+    expect(result.action).toBe('deny')
+    expect(reasonOf(result)).toContain(predicate)
+  })
+
+  it('control: timeout 5 npx ruflo … still denies via H5 (not widened to any position)', () => {
+    const result = decide(bashCall('timeout 5 npx ruflo memory store --key k --value v'), {})
+    expect(result.action).toBe('deny')
+    expect(reasonOf(result)).toContain('H5')
+  })
+
+  it('control: nohup node node_modules/ruflo/bin/ruflo.js … still denies via H1', () => {
+    const result = decide(
+      bashCall('nohup node node_modules/ruflo/bin/ruflo.js memory store --key k --value v'),
+      {}
+    )
+    expect(result.action).toBe('deny')
+    expect(reasonOf(result)).toContain('H1')
+  })
+
+  it('control: git log --grep ruflo still allows (launcher table does not over-match)', () => {
+    expect(decide(bashCall('git log --grep ruflo'), {}).action).toBe('allow')
+  })
+})
+
+describe('decide() — H-B: `env -S`/`--split-string` collapses the command (governance round)', () => {
+  const redArms = [
+    "env -S 'ruflo memory store --key k --value v'",
+    "env --split-string='ruflo memory store'",
+    "env -S 'npx ruflo memory store'",
+  ]
+  it.each(redArms)('%s -> deny', (command) => {
+    expect(decide(bashCall(command), {}).action).toBe('deny')
+  })
+
+  it("env -S 'printf harmless' -> allow (green control)", () => {
+    expect(decide(bashCall("env -S 'printf harmless'"), {}).action).toBe('allow')
+  })
+})
+
+describe('decide() — H-C: `command eval`/`builtin eval`/`noglob eval` evade H9 (governance round)', () => {
+  const redArms = [
+    "command eval 'npx ruflo memory store --key k --value v'",
+    "builtin eval 'npx ruflo memory store'",
+    "noglob eval 'npx ruflo memory store'",
+  ]
+  it.each(redArms)('%s -> deny (H5, via the recursed literal text)', (command) => {
+    const result = decide(bashCall(command), {})
+    expect(result.action).toBe('deny')
+    expect(reasonOf(result)).toContain('H5')
+  })
+})
+
+describe('decide() — H-D: no path normalisation lets `//` and `/./` through (governance round)', () => {
+  const redArms: Array<[string, string]> = [
+    ['node node_modules/@claude-flow/cli//bin/cli.js mcp start', 'H2'],
+    ['node node_modules/@claude-flow/cli/./bin/cli.js mcp start', 'H2'],
+    ['node node_modules/@claude-flow//cli/bin/cli.js mcp start', 'H2'],
+    ['./node_modules//.bin/ruflo memory store', 'H3'],
+    ['node_modules/./.bin/ruflo memory store', 'H3'],
+  ]
+  it.each(redArms)('%s -> deny (%s)', (command, predicate) => {
+    const result = decide(bashCall(command), {})
+    expect(result.action).toBe('deny')
+    expect(reasonOf(result)).toContain(predicate)
+  })
+
+  it('existing negative controls stay green: git log --grep ruflo', () => {
+    expect(decide(bashCall('git log --grep ruflo'), {}).action).toBe('allow')
+  })
+
+  it('existing negative controls stay green: ls node_modules | grep ruflo', () => {
+    expect(decide(bashCall('ls node_modules | grep ruflo'), {}).action).toBe('allow')
+  })
+})
+
+describe('decide() — H-E: `varlock run <payload> -- x` drops the command (governance round)', () => {
+  it('varlock run npx ruflo memory store --key k -- x -> deny', () => {
+    expect(decide(bashCall('varlock run npx ruflo memory store --key k -- x'), {}).action).toBe(
+      'deny'
+    )
+  })
+
+  it('varlock run ruflo memory store --key k -- x -> deny', () => {
+    expect(decide(bashCall('varlock run ruflo memory store --key k -- x'), {}).action).toBe('deny')
+  })
+
+  it('control: varlock run -- npx ruflo … still denies via H5', () => {
+    const result = decide(bashCall('varlock run -- npx ruflo memory store --key k --value v'), {})
+    expect(result.action).toBe('deny')
+    expect(reasonOf(result)).toContain('H5')
+  })
+
+  it('control: varlock run ruflo … (no trailing --) still denies via H4', () => {
+    const result = decide(bashCall('varlock run ruflo memory store --key k --value v'), {})
+    expect(result.action).toBe('deny')
+    expect(reasonOf(result)).toContain('H4')
+  })
+})
+
+describe('decide() — H-F: literal text piped/fed into a shell (governance round)', () => {
+  const redArms = [
+    "echo 'npx ruflo memory store --key k --value v' | bash",
+    "printf 'npx ruflo memory store' | sh",
+    "bash <<< 'npx ruflo memory store'",
+    "bash <(echo 'npx ruflo memory store')",
+  ]
+  it.each(redArms)('%s -> deny', (command) => {
+    expect(decide(bashCall(command), {}).action).toBe('deny')
+  })
+
+  it("echo 'hello' | bash -> allow (green control)", () => {
+    expect(decide(bashCall("echo 'hello' | bash"), {}).action).toBe('allow')
+  })
+
+  it("bash <<< 'printf harmless' -> allow (green control)", () => {
+    expect(decide(bashCall("bash <<< 'printf harmless'"), {}).action).toBe('allow')
+  })
+})
+
+describe('decide() — M-A: narrowed H8(ii) stops denying ordinary repo commands (governance round)', () => {
+  const greenArms = [
+    'npx vitest run "$F"',
+    'docker exec skillsmith-dev-1 npx vitest run "$F"',
+    'npx prettier --write "$f"',
+    'npx eslint $(git diff --name-only)',
+    'npm run lint -- $ARGS',
+    'npx tsx scripts/x.ts "$ARG"',
+    'npm ci --prefix "$(pwd)"',
+    'bash -c \'npx vitest run "$F"\'',
+    'npm run build --workspace=$W',
+  ]
+  it.each(greenArms)('%s -> allow', (command) => {
+    expect(decide(bashCall(command), {}).action).toBe('allow')
+  })
+
+  it('control: V=ru; npx "${V}flo" … still denies via H8 (slot 1), not H5', () => {
+    const result = decide(bashCall('V=ru; npx "${V}flo" memory store --key k --value v'), {})
+    expect(result.action).toBe('deny')
+    expect(reasonOf(result)).toContain('H8')
+    expect(reasonOf(result)).not.toContain('H5')
+  })
+
+  it('control: npx `echo ruflo` memory store … still denies via H8 (slot 1, .subs)', () => {
+    const result = decide(bashCall('npx `echo ruflo` memory store --key k --value v'), {})
+    expect(result.action).toBe('deny')
+    expect(reasonOf(result)).toContain('H8')
+  })
+})
+
+describe('decide() — M-B: brace check fires before the runner (governance round)', () => {
+  it('{ npm run lint; } -> allow (shell grouping syntax, not a brace expansion)', () => {
+    expect(decide(bashCall('{ npm run lint; }'), {}).action).toBe('allow')
+  })
+
+  it("npx prettier --write scripts/{a,b}.ts -> deny (brace AFTER the runner, design's chosen posture)", () => {
+    const result = decide(bashCall('npx prettier --write scripts/{a,b}.ts'), {})
+    expect(result.action).toBe('deny')
+    expect(reasonOf(result)).toContain('brace-syntax')
+  })
+
+  it('control: npx ru{f,}lo memory store --key k still denies (brace-syntax)', () => {
+    const result = decide(bashCall('npx ru{f,}lo memory store --key k'), {})
+    expect(result.action).toBe('deny')
+    expect(reasonOf(result)).toContain('brace-syntax')
+  })
+
+  it('control: npx {ruflo,eslint} memory store --key k still denies (brace-syntax)', () => {
+    const result = decide(bashCall('npx {ruflo,eslint} memory store --key k'), {})
+    expect(result.action).toBe('deny')
+    expect(reasonOf(result)).toContain('brace-syntax')
+  })
+
+  it('control: env X=1 npx ru{f,}lo memory store --key k still denies (brace-syntax)', () => {
+    const result = decide(bashCall('env X=1 npx ru{f,}lo memory store --key k'), {})
+    expect(result.action).toBe('deny')
+    expect(reasonOf(result)).toContain('brace-syntax')
+  })
+})
+
+describe('decide() — M-C: Stage-1 sanctioned docker exec checked before H8(i) (governance round)', () => {
+  it('docker exec skillsmith-ruflo-1 env V=ruflo node … -> allow', () => {
+    const result = decide(
+      bashCall(
+        'docker exec skillsmith-ruflo-1 env V=ruflo node /opt/ruflo-seed/node_modules/@claude-flow/cli/bin/cli.js x'
+      ),
+      {}
+    )
+    expect(result.action).toBe('allow')
+  })
+})
+
+describe('decide() — L-A: `docker container exec` long-form alias (governance round)', () => {
+  it('docker container exec skillsmith-ruflo-1 … -> allow', () => {
+    const result = decide(
+      bashCall(
+        'docker container exec skillsmith-ruflo-1 node /opt/ruflo-seed/node_modules/@claude-flow/cli/bin/cli.js mcp start'
+      ),
+      {}
+    )
+    expect(result.action).toBe('allow')
+  })
+
+  it('docker container exec skillsmith-dev-1 node node_modules/ruflo/bin/ruflo.js … -> deny (H1)', () => {
+    const result = decide(
+      bashCall(
+        'docker container exec skillsmith-dev-1 node node_modules/ruflo/bin/ruflo.js memory store --key k --value v'
+      ),
+      {}
+    )
+    expect(result.action).toBe('deny')
+    expect(reasonOf(result)).toContain('H1')
+  })
+})
+
+describe('decide() — L-B: `npm uninstall -g ruflo --dry-run` (governance round)', () => {
+  it('allows the dry-run form (strictly safer than the already-sanctioned bare uninstall)', () => {
+    expect(decide(bashCall('npm uninstall -g ruflo --dry-run'), {}).action).toBe('allow')
+  })
+})
+
+describe('decide() — L-D: H1_RE2/H2 trailing boundary + bare --require specifier (governance round)', () => {
+  const redArms: Array<[string, string]> = [
+    ['node -e \'import("ruflo/bin/ruflo.js")\'', 'H1'],
+    ["node --require ruflo -e ''", 'H1'],
+    ['node -e \'import("@claude-flow/cli/bin/cli.js")\'', 'H2'],
+  ]
+  it.each(redArms)('%s -> deny (%s)', (command, predicate) => {
+    const result = decide(bashCall(command), {})
+    expect(result.action).toBe('deny')
+    expect(reasonOf(result)).toContain(predicate)
+  })
+})
+
+describe('decide() — M-D: standing arm for the fail-closed depth-cap boundary (governance round)', () => {
+  function nestedSubshells(n: number, inner: string): string {
+    let cmd = inner
+    for (let i = 0; i < n; i++) cmd = `echo $(${cmd})`
+    return cmd
+  }
+
+  it('eight nested $(...) denies with reason containing "internal error", not the fail-open the cap prevents', () => {
+    const result = decide(bashCall(nestedSubshells(8, 'npx ruflo memory store')), {})
+    expect(result.action).toBe('deny')
+    expect(reasonOf(result)).toContain('internal error')
+  })
+})
+
 // --- SMI-6854 startDaemon shapes ---
 
 describe('decide() — mcp__ruflo__hooks_session-start startDaemon gate (SMI-6854)', () => {
@@ -482,5 +751,15 @@ describe('runtime wrapper (child process) — malformed input shapes deny', () =
     )
     expect(result.status).toBe(0)
     expect(result.stdout.trim()).toBe('')
+  })
+
+  it('M-D: a real ruflo invocation -> deny JSON with an H-labelled reason, not just malformed-input denials', () => {
+    const result = runGuardChildProcess(
+      JSON.stringify(bashCall('npx ruflo memory store --key k --value v'))
+    )
+    expect(result.status).toBe(0)
+    const parsed = JSON.parse(result.stdout)
+    expect(parsed.hookSpecificOutput.permissionDecision).toBe('deny')
+    expect(parsed.hookSpecificOutput.permissionDecisionReason).toMatch(/\[ruflo-host-guard\] H\d/)
   })
 })

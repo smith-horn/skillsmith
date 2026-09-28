@@ -9,14 +9,18 @@
  * `hooks_session-start` call that would enable `startDaemon`.
  *
  * Design: docs/internal/implementation/smi-6744-ruflo-host-guard.md (this
- * is its Wave 1 implementation), built from
+ * is its Wave 1 implementation, extended by a governance round's H-A
+ * through M-D fixes — see that doc's own "Governance round on the
+ * implementation" section), built from
  * docs/internal/uat/smi-6744/a44-structural-design-2026-09-27.md § 1(b)
  * Layer H and its 62-row adversarial census (§ 5). Reuses
  * `scripts/lib/shell-command-normalize.mjs` (extracted from
  * `scripts/env-read-guard.mjs`, the precedent this guard's structure
- * copies) for tokenizing and wrapper-normalizing a Bash command; H1–H8 and
- * the brace-syntax check live in `scripts/lib/ruflo-host-guard-predicates.mjs`
- * (split out purely to stay under the 500-line file-length gate).
+ * copies) for tokenizing and wrapper-normalizing a Bash command. H1–H8 and
+ * the brace-syntax check live in `scripts/lib/ruflo-host-guard-predicates.mjs`;
+ * launcher/wrapper/shell-fed-text detection lives in
+ * `scripts/lib/ruflo-host-guard-wrappers.mjs` (both split out purely to
+ * stay under the 500-line file-length gate).
  *
  * **Failure posture: fail CLOSED**, deliberately the opposite of
  * `env-read-guard.mjs`'s fail-open. A silent re-opening of this closure
@@ -36,13 +40,13 @@
  * docs/internal/process/guards-and-opt-outs.md.
  */
 
+import { MAX_DEPTH, basenameOf, tokenize } from './lib/shell-command-normalize.mjs'
 import {
-  basenameOf,
-  MAX_DEPTH,
-  normalizeWrappers,
-  stripFlags,
-  tokenize,
-} from './lib/shell-command-normalize.mjs'
+  detectEnvSplitString,
+  findShellFedLiteralText,
+  normalizeWrappersWithExec,
+  tokensForArgv,
+} from './lib/ruflo-host-guard-wrappers.mjs'
 import {
   ALLOW,
   checkAssignmentValuePredicate,
@@ -66,121 +70,98 @@ import {
  */
 const SPLIT_OPS = new Set([';', '&&', '||', '|', '&', '\n', '(', ')'])
 
+/**
+ * Splits `tokens` into segments, each carrying the operator that PRECEDED
+ * it (`null` for the first segment) — H-F fix (SMI-6744 Wave 4 governance
+ * round) needs to know whether a segment was joined to its predecessor by
+ * a pipe specifically (`echo '...' | bash`), not just that a split
+ * happened, so `evaluateGuardCommand` can hand a bare-shell segment its
+ * PRECEDING pipeline segment's tokens only when that relationship is a
+ * real pipe.
+ */
 function splitSegments(tokens) {
   const segments = []
   let current = []
+  let precedingOp = null
   for (const tok of tokens) {
     if (tok.type === 'op' && SPLIT_OPS.has(tok.value)) {
-      if (current.length > 0) segments.push(current)
+      if (current.length > 0) segments.push({ tokens: current, precedingOp })
+      precedingOp = tok.value
       current = []
     } else {
       current.push(tok)
     }
   }
-  if (current.length > 0) segments.push(current)
+  if (current.length > 0) segments.push({ tokens: current, precedingOp })
   return segments
 }
 
 /**
- * Guard-local transparent wrappers the shared `normalizeWrappers` does not
- * know about: `exec` (round 1 finding 2 — `exec ruflo …` reached H4 with
- * `argv[0] === "exec"`), and `command`/`noglob` (docs fact 3 — Claude
- * Code's own deny-rule engine already strips these before prefix-matching;
- * D12's census closure names H5 too, which requires this guard to see
- * through them the same way for its own argv[0]-relative predicates).
- */
-const TRANSPARENT_WRAPPERS = new Set(['exec', 'command', 'noglob'])
-
-/**
- * `exec`/`command`/`noglob`-aware wrapper normalization (round 1 finding
- * 2; docs fact 3). The shared `normalizeWrappers` strips `sudo`/`env`/
- * `varlock run`/`docker exec`/`docker compose` but not these three — this
- * is guard-local (not added to the shared module) because it is specific
- * to this guard's own H4/H5/H8(ii) exposure, not a general normalization
- * every consumer needs. Alternates peeling a leading transparent wrapper
- * and calling the shared unwrap until neither changes anything or a
- * nested shell body is found.
- * @param {string[]} argvIn
- * @returns {{argv: string[], nested: string|null}}
- */
-function normalizeWrappersWithExec(argvIn) {
-  let current = argvIn
-  for (let pass = 0; pass < 8; pass++) {
-    let changed = false
-    while (current.length > 0 && TRANSPARENT_WRAPPERS.has(basenameOf(current[0]))) {
-      current = stripFlags(current.slice(1))
-      changed = true
-    }
-    const { argv: after, nested } = normalizeWrappers(current)
-    if (nested !== null) return { argv: after, nested }
-    if (!changed && after.length === current.length) {
-      return { argv: after, nested: null }
-    }
-    current = after
-  }
-  return { argv: current, nested: null }
-}
-
-/**
- * Recover the ORIGINAL token objects (with `.subs`) aligned to a
- * normalized argv string array. Every wrapper-stripping step in
- * `shell-command-normalize.mjs` (and this file's own exec-peel) only ever
- * drops elements from the FRONT of the array it is given — never reorders,
- * filters from the middle, or appends — so the final normalized argv is
- * always a contiguous SUFFIX of the segment's original word-token list.
- * That lets H8(ii) read `.subs` on the surviving tokens without the
- * shared/guard-local normalizers needing to carry token objects through
- * (which would change their string-array contract for every caller,
- * including env-read-guard.mjs).
- * @param {Array<{value: string}>} originalTokens
- * @param {string[]} normalizedArgv
- */
-function tokensForArgv(originalTokens, normalizedArgv) {
-  const start = Math.max(0, originalTokens.length - normalizedArgv.length)
-  return originalTokens.slice(start)
-}
-
-/**
- * H9 — dynamic shell evaluators (round 1 finding 1). Runs BEFORE wrapper
- * normalization, on the segment's raw pre-strip word tokens. If the
- * segment's command basename is `eval`: deny when any later token expands
- * (`$` in `.value` or non-empty `.subs`); otherwise join the literal
- * values and recursively evaluate the joined text through the same
- * pipeline (existing MAX_DEPTH cap — but see the depth-cap note in
- * `evaluateGuardCommand`: unlike the precedent, exceeding it here DENIES,
- * not allows, matching this guard's fail-closed posture).
+ * H9 — dynamic shell evaluators (round 1 finding 1). Runs BEFORE the main
+ * flow's own wrapper normalization, on the segment's raw pre-strip word
+ * tokens, peeling wrappers via the SAME `normalizeWrappersWithExec` the
+ * main flow uses (H-C fix, SMI-6744 Wave 4 governance round: `command
+ * eval '...'`/`builtin eval '...'`/`noglob eval '...'` all evaded H9
+ * before this, because the original check only ever looked at
+ * `wordTokens[0]` — reusing one normalizer instead of a bespoke second
+ * peel keeps this in sync with H-A/H-B/L-A's own wrapper coverage for
+ * free). If the peeled argv[0]'s basename is `eval`: deny when any later
+ * token expands (`$` in `.value` or non-empty `.subs`); otherwise join the
+ * literal values and recursively evaluate the joined text through the
+ * same pipeline (existing MAX_DEPTH cap — exceeding it DENIES, not
+ * allows, matching this guard's fail-closed posture). A nested `-c` body
+ * found while peeling is left for the main flow to handle (`undefined`,
+ * "not an eval segment").
  * @param {Array<{value: string, subs?: string[]}>} wordTokens
  * @param {number} depth
  * @returns {object | undefined} undefined = "not an eval segment, keep going"
  */
 function checkEvalPredicate(wordTokens, depth) {
-  const first = wordTokens[0]
-  if (!first || basenameOf(first.value) !== 'eval') return undefined
-  const rest = wordTokens.slice(1)
+  if (wordTokens.length === 0) return undefined
+  const rawValues = wordTokens.map((t) => t.value)
+  const { argv: normalizedArgv, nested } = normalizeWrappersWithExec(rawValues)
+  if (nested !== null) return undefined
+  if (normalizedArgv.length === 0) return undefined
+  if (basenameOf(normalizedArgv[0]) !== 'eval') return undefined
+
+  const alignedTokens = tokensForArgv(wordTokens, normalizedArgv)
+  const rest = alignedTokens.slice(1)
   if (rest.length === 0) return null
   const hasExpansion = rest.some((t) => t.value.includes('$') || (t.subs && t.subs.length > 0))
-  if (hasExpansion) return denyWith('H9', first.value + ' ' + rest.map((t) => t.value).join(' '))
+  if (hasExpansion) {
+    return denyWith('H9', alignedTokens[0].value + ' ' + rest.map((t) => t.value).join(' '))
+  }
   const joined = rest.map((t) => t.value).join(' ')
   return evaluateGuardCommand(joined, depth + 1)
 }
 
 /**
  * Evaluate one segment (a raw, un-split-on-brace token list: word tokens
- * interleaved with any surviving `{`/`}` op tokens). Order matters —
- * see the plan's Stage 0/1/2 structure:
+ * interleaved with any surviving `{`/`}` op tokens). Order matters — see
+ * the plan's Stage 0/1/2 structure, reordered by the M-C governance-round
+ * fix (SMI-6744 Wave 4):
  *   0. recurse into `.subs` (command substitutions) first
- *   0b. brace-syntax fail-closed check (needs the RAW token list)
- *   1. H9 (eval) — before wrapper normalization
- *   2. H8(i) — pre-strip assignment-value check
- *   3. Stage 1(a) — sanctioned `docker exec skillsmith-ruflo-1` (pre-strip)
- *   4. wrapper normalization (exec-aware) / recurse into a nested shell body
- *   5. Stage 1(b) — the three exact npm forms (post-normalize)
- *   6. H1–H7
- *   7. H8(ii)
+ *   1. Stage 1(a) — sanctioned `docker exec skillsmith-ruflo-1` (pre-strip)
+ *      — moved ABOVE the brace/H9/H8(i) checks (M-C fix): a sanctioned
+ *      wrapper's own INNER shape (e.g. `env V=ruflo`) must not be denied
+ *      by a predicate scoped to the whole segment before Stage 1 gets a
+ *      chance to recognize the wrapper.
+ *   1b. brace-syntax fail-closed check (needs the RAW token list)
+ *   2. H9 (eval) — before wrapper normalization
+ *   3. H8(i) — pre-strip assignment-value check
+ *   4. H-B — `env -S`/`--split-string` (before wrapper normalization
+ *      mishandles it as an ordinary flag value)
+ *   5. wrapper normalization (exec/launcher/docker-container-exec-aware) /
+ *      recurse into a nested shell body
+ *   6. Stage 1(b) — the three exact npm forms (post-normalize)
+ *   7. H-F — literal text fed to a bare shell (pipe/here-string/process-sub)
+ *   8. H1–H7
+ *   9. H8(ii)
  * @param {Array<{type: string, value?: string, subs?: string[]}>} segmentTokens
  * @param {number} depth
+ * @param {Array<{type: string, value?: string, subs?: string[]}> | null} precedingSegmentTokens
  */
-function evaluateGuardSegment(segmentTokens, depth) {
+function evaluateGuardSegment(segmentTokens, depth, precedingSegmentTokens) {
   for (const tok of segmentTokens) {
     if (tok.type !== 'word') continue
     for (const sub of tok.subs ?? []) {
@@ -189,11 +170,14 @@ function evaluateGuardSegment(segmentTokens, depth) {
     }
   }
 
-  const braceVerdict = checkBraceSegment(segmentTokens)
-  if (braceVerdict) return braceVerdict
-
   const wordTokens = segmentTokens.filter((t) => t.type === 'word')
   if (wordTokens.length === 0) return null
+  const rawValues = wordTokens.map((t) => t.value)
+
+  if (isSanctionedDockerExec(rawValues)) return null
+
+  const braceVerdict = checkBraceSegment(segmentTokens)
+  if (braceVerdict) return braceVerdict
 
   const evalVerdict = checkEvalPredicate(wordTokens, depth)
   if (evalVerdict !== undefined) return evalVerdict
@@ -201,8 +185,8 @@ function evaluateGuardSegment(segmentTokens, depth) {
   const h8iVerdict = checkAssignmentValuePredicate(wordTokens)
   if (h8iVerdict) return h8iVerdict
 
-  const rawValues = wordTokens.map((t) => t.value)
-  if (isSanctionedDockerExec(rawValues)) return null
+  const envSplitNested = detectEnvSplitString(rawValues)
+  if (envSplitNested !== null) return evaluateGuardCommand(envSplitNested, depth + 1)
 
   const { argv: normalizedArgv, nested } = normalizeWrappersWithExec(rawValues)
   if (nested !== null) return evaluateGuardCommand(nested, depth + 1)
@@ -210,6 +194,9 @@ function evaluateGuardSegment(segmentTokens, depth) {
 
   const argvLower = normalizedArgv.map((s) => s.toLowerCase())
   if (isSanctionedNpmForm(argvLower)) return null
+
+  const shellFedText = findShellFedLiteralText(argvLower, segmentTokens, precedingSegmentTokens)
+  if (shellFedText !== null) return evaluateGuardCommand(shellFedText, depth + 1)
 
   const scanArgvLower = rawValues.map((s) => s.toLowerCase())
   const h1to7Verdict = checkH1toH7(scanArgvLower, argvLower)
@@ -240,8 +227,10 @@ function evaluateGuardCommand(commandText, depth) {
   if (typeof commandText !== 'string' || commandText.trim() === '') return null
   const tokens = tokenize(commandText)
   const segments = splitSegments(tokens)
-  for (const segment of segments) {
-    const verdict = evaluateGuardSegment(segment, depth)
+  for (let i = 0; i < segments.length; i++) {
+    const { tokens: segmentTokens, precedingOp } = segments[i]
+    const precedingSegmentTokens = precedingOp === '|' && i > 0 ? segments[i - 1].tokens : null
+    const verdict = evaluateGuardSegment(segmentTokens, depth, precedingSegmentTokens)
     if (verdict) return verdict
   }
   return null

@@ -557,4 +557,42 @@ describe('findClaudeFlowReintroductions (SMI-5746 Check 59, sub-check 4)', () =>
     const findings = findClaudeFlowReintroductions(dir)
     expect(findings).toEqual([{ file: '.claude/settings.json', line: 1 }])
   })
+
+  // L-H fix (SMI-6744 Wave 4 governance round): findJsonArrayLineSpan used
+  // to scan the STARTING line's brackets from column 0, not from the
+  // matched key's own character index. A "packed" settings.json where the
+  // PRECEDING array's own closing `]` shares the line with `"deny": [`
+  // (e.g. `    ], "deny": [`) fed that stray `]` into the depth count
+  // FIRST, decrementing depth below zero before the real `[` for the deny
+  // array is even reached -- depth then crosses back to exactly zero the
+  // moment `[` opens, ending the span on the very line it started (a wrong
+  // endLine, one line too early), because the two arrays' brackets get
+  // conflated when scanned from line-start. That wrong span makes the
+  // deny-array-position exemption below never apply to the deny array's
+  // OWN entries, since a same-line start/end span has no strictly-interior
+  // line -- so a legitimate "Bash(npx claude-flow)" deny entry gets
+  // wrongly flagged as a reintroduction. Watched failing (a spurious
+  // finding at the deny-array line) against the unfixed line-start scan
+  // before this fix landed.
+  it("a packed deny-array opening line (the allow array's own closing bracket sharing it) does not corrupt the deny span", () => {
+    const dir = scratchDir()
+    mkdirSync(join(dir, '.claude'), { recursive: true })
+    writeFileSync(
+      join(dir, '.claude', 'settings.json'),
+      [
+        '{',
+        '  "permissions": {',
+        '    "allow": [',
+        '      "Bash(rg \'[a-z]\')"',
+        '    ], "deny": [',
+        '      "Bash(npx claude-flow)"',
+        '    ]',
+        '  }',
+        '}',
+        '',
+      ].join('\n')
+    )
+
+    expect(findClaudeFlowReintroductions(dir)).toEqual([])
+  })
 })

@@ -413,10 +413,11 @@ describe('Check 74 hook-entry tripwire (SMI-6744 A4.6): scripts/ruflo-host-guard
   })
 
   it('RED: a functionally inert hook (wrong type) carrying the right text does NOT count', () => {
-    // Type + exact invocation-shape check, not a bare substring match on
-    // the whole file — a hook object whose `type` isn't 'command' (e.g.
-    // silently swapped to something inert) must still fail, even though
-    // its `command`-shaped field contains both required substrings.
+    // Type + EXACT command equality (M-E fix, SMI-6744 Wave 4 governance
+    // round), not a bare substring match on the whole file — a hook
+    // object whose `type` isn't 'command' (e.g. silently swapped to
+    // something inert) must still fail, even though its `command`-shaped
+    // field equals the registered string exactly.
     const verdict = evaluateRufloHostGuardHooks({
       settingsPath: '.claude/settings.json',
       readFile: () =>
@@ -430,6 +431,35 @@ describe('Check 74 hook-entry tripwire (SMI-6744 A4.6): scripts/ruflo-host-guard
     })
     expect(verdict.hasBashEntry).toBe(false)
   })
+
+  // M-E fix (SMI-6744 Wave 4 governance round): the prior `hasHookEntry`
+  // checked `hook.command.includes(s)` for each of two required
+  // substrings ('node' and 'scripts/ruflo-host-guard.mjs'), which a
+  // comment, an echo, or a short-circuited no-op carrying that same text
+  // still satisfied -- a real false PASS, not merely an inert-command
+  // false pass caught by the type check above. Each row below is watched
+  // failing (hasBashEntry: true) against the unfixed substring-containment
+  // check before this fix landed.
+  const inertCommandsCarryingTheRegisteredText: Array<[string, string]> = [
+    ['commented out', `# ${RUFLO_GUARD_COMMAND}`],
+    ['echoed, never executed', `echo node scripts/ruflo-host-guard.mjs`],
+    ['short-circuited after true ||', `true || ${RUFLO_GUARD_COMMAND}`],
+    ['trailing comment on an unrelated no-op', `true  # node scripts/ruflo-host-guard.mjs`],
+  ]
+  it.each(inertCommandsCarryingTheRegisteredText)(
+    'RED: %s -> hasBashEntry is false, not falsely true from substring containment',
+    (_label, command) => {
+      const verdict = evaluateRufloHostGuardHooks({
+        settingsPath: '.claude/settings.json',
+        readFile: () =>
+          settingsWithHooks([
+            { matcher: 'Bash', hooks: [{ type: 'command', command }] },
+            SESSION_START_HOOK_ENTRY,
+          ]),
+      })
+      expect(verdict.hasBashEntry).toBe(false)
+    }
+  )
 
   it('RED: the right matcher/type but a command missing scripts/ruflo-host-guard.mjs does NOT count', () => {
     const verdict = evaluateRufloHostGuardHooks({

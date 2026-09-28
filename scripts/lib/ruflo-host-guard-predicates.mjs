@@ -2,7 +2,12 @@
  * Pure predicate logic for `scripts/ruflo-host-guard.mjs` (SMI-6744 Wave 4
  * A4.6). Split out of the guard's own orchestration file purely to stay
  * under the 500-line file-length gate (`scripts/check-file-length.mjs`) —
- * every export here is a pure function or constant, no I/O, no state.
+ * every export here is a pure function or constant, no I/O, no state. H1–H7
+ * and the verdict-shape constructors live in their own sibling files
+ * (`ruflo-host-guard-h1to7.mjs`, `ruflo-host-guard-verdicts.mjs` —
+ * governance-round split, same 500-line pressure) and are re-exported here
+ * so `scripts/ruflo-host-guard.mjs`'s own import statement needed no
+ * change across either split.
  *
  * Design: docs/internal/implementation/smi-6744-ruflo-host-guard.md
  * § Predicate Specification (Stage 1 allowlist, H1–H8), built from
@@ -19,49 +24,27 @@
  */
 
 import { basenameOf, stripFlags } from './shell-command-normalize.mjs'
+import { RUNNER_BASENAMES, RUNNER_TOKEN_RE, checkH1toH7 } from './ruflo-host-guard-h1to7.mjs'
+import {
+  ALLOW,
+  SANCTIONED_ALTERNATIVE,
+  denyInternalError,
+  denyMalformedInput,
+  denyStartDaemon,
+  denyWith,
+} from './ruflo-host-guard-verdicts.mjs'
 
-/** Package runners H5/H8(ii)/the brace check treat as "a runner". */
-export const RUNNER_BASENAMES = new Set([
-  'npx',
-  'npm',
-  'pnpm',
-  'yarn',
-  'bunx',
-  'bun',
-  'corepack',
-  'deno',
-])
-
-/** H3's basename set (post `.bin/` resolution). */
-const H3_NAMES = new Set(['ruflo', 'claude-flow', 'claude-flow-mcp', 'cli'])
-
-/** H4's exact-string set — argv[0] itself, NOT its basename (see H4 vs H3). */
-const H4_NAMES = new Set(['ruflo', 'claude-flow', 'claude-flow-mcp'])
-
-// H1/H2/H7's first clause deliberately has NO leading `(?:^|\/)` boundary
-// requirement (round 1 smoke-test finding, not in the original design
-// draft's literal regex): `git config alias.x '!node
-// node_modules/ruflo/bin/ruflo.js memory store' && git x`, `rg --pre
-// 'node node_modules/ruflo/bin/ruflo.js' .` and the `cat … | node` pipe
-// form all embed the path INSIDE a larger single argv token (one shell
-// word holding an alias body, a `--pre` command, etc.), preceded by a
-// SPACE or `!`, never a `/` or the start of the whole token -- a leading
-// anchor silently allowed exactly the laundering inputs the queen's own
-// pre-review correction names as must-deny. The trailing boundary
-// (`(?:\/|$)`) is kept: it is what makes the C9/`ruflo-eslint-plugin`
-// negative case ("ruflo followed by `-`, not `/` or end, does not match")
-// still correct — only the leading requirement was dropped.
-const H1_RE1 = /node_modules\/ruflo(?:\/|$)/
-const H1_RE2 = /(?:^|\/)bin\/ruflo\.js$/
-const H2_RE1 = /node_modules\/@claude-flow\/cli\/bin\//
-const H2_RE2 = /\/bin\/mcp-server\.js$/
-/** H5's runner-token forms; also reused (bare form only) by H8(i). */
-export const RUNNER_TOKEN_RE = /^(@claude-flow\/cli|ruflo|claude-flow)(@.*)?$/
-const H5_NPM_COLON_RE = /^npm:(ruflo|@claude-flow\/cli)/
-const H5_PACKAGE_FLAG_RE = /^--package=(ruflo|@claude-flow\/cli)$/
-const H6_NPX_DIR_RE = /_npx\/[0-9a-f]{16}\//
-const H7_RE1 = /lib\/node_modules\/ruflo(?:\/|$)/
-const H7_RE2 = /(?:^|\/)versions\/node\/v[0-9.]+\/bin\/(ruflo|claude-flow|claude-flow-mcp|cli)$/
+export {
+  RUNNER_BASENAMES,
+  RUNNER_TOKEN_RE,
+  checkH1toH7,
+  ALLOW,
+  SANCTIONED_ALTERNATIVE,
+  denyInternalError,
+  denyMalformedInput,
+  denyStartDaemon,
+  denyWith,
+}
 
 /** The exact npm inspection/remediation forms Stage 1 allows (design § 1(b) row 3). */
 const NPM_ALLOW_FORMS = [
@@ -69,130 +52,6 @@ const NPM_ALLOW_FORMS = [
   ['view', 'ruflo'],
   ['uninstall', '-g', 'ruflo'],
 ]
-
-function stripDotSlash(s) {
-  return s.startsWith('./') ? s.slice(2) : s
-}
-
-/**
- * Removes every backslash-escape in `s` (SMI-6744 Wave 4 residual finding
- * from the hook implementation): a token can carry LITERAL backslash
- * characters before its slashes without ever reaching a shell's own escape
- * processing -- e.g. `sed 's/^/node node_modules\/ruflo\/bin\/ruflo.js/e'`
- * (the `e` flag executes the substituted line as a shell command) is
- * captured by this guard's tokenizer as the literal string
- * `node_modules\/ruflo\/bin\/ruflo.js`, with real `\` characters between
- * `node_modules` and `/ruflo` and between `ruflo` and `/bin` -- sed's own
- * `\/`-escaping of its delimiter, not shell quoting. H1_RE1's contiguous
- * `node_modules/ruflo` substring never matches THAT string as written, so
- * H1–H2/H7 test both the raw element and this de-escaped view. `\X` decodes
- * to `X` for any `X` (matching this file's own convention elsewhere for
- * "unrecognized escape passes the character through").
- */
-function deEscape(s) {
-  return s.replace(/\\(.)/g, '$1')
-}
-
-function dirnameOf(p) {
-  const idx = p.lastIndexOf('/')
-  return idx === -1 ? '' : p.slice(0, idx)
-}
-
-/** The literal alternative every denial reason names (design § 1(b)). */
-export const SANCTIONED_ALTERNATIVE =
-  'docker exec skillsmith-ruflo-1 node /opt/ruflo-seed/node_modules/@claude-flow/cli/bin/cli.js …'
-
-/**
- * Build a deny verdict for a matched H-predicate (or the brace-syntax
- * check). Shape copied from `env-read-guard.mjs`'s `decide()` byte-for-byte
- * (plan § Predicate Specification "Denial shape").
- * @param {string} predicate e.g. 'H5', 'brace-syntax'
- * @param {string} token the offending argv element/token, named literally
- */
-export function denyWith(predicate, token) {
-  return {
-    action: 'deny',
-    json: {
-      hookSpecificOutput: {
-        hookEventName: 'PreToolUse',
-        permissionDecision: 'deny',
-        permissionDecisionReason:
-          `[ruflo-host-guard] ${predicate}: this command invokes ruflo/@claude-flow/cli outside ` +
-          `the sanctioned container (matched on \`${token}\`). Host-side ruflo/claude-flow ` +
-          `execution is not permitted here — use \`${SANCTIONED_ALTERNATIVE}\` instead.`,
-      },
-    },
-    stderr: null,
-  }
-}
-
-/**
- * Deny for a runtime/evaluator failure — this guard's failure posture is
- * fail-CLOSED (deliberately the opposite of env-read-guard.mjs's fail-open;
- * plan § "Failure posture — where this guard must differ from its
- * precedent, and why").
- * @param {string} message
- */
-export function denyInternalError(message) {
-  return {
-    action: 'deny',
-    json: {
-      hookSpecificOutput: {
-        hookEventName: 'PreToolUse',
-        permissionDecision: 'deny',
-        permissionDecisionReason:
-          `[ruflo-host-guard] internal error: ${message}. Denying by design (fail-closed, no ` +
-          `disable variable) — use \`${SANCTIONED_ALTERNATIVE}\` for ruflo access.`,
-      },
-    },
-    stderr: null,
-  }
-}
-
-/**
- * Deny for a malformed/unparseable PreToolUse payload (round 1 finding 4 —
- * this guard denies on input failure instead of copying the precedent's
- * fail-open wrapper).
- * @param {string} reason
- */
-export function denyMalformedInput(reason) {
-  return {
-    action: 'deny',
-    json: {
-      hookSpecificOutput: {
-        hookEventName: 'PreToolUse',
-        permissionDecision: 'deny',
-        permissionDecisionReason:
-          `[ruflo-host-guard] malformed PreToolUse input: ${reason}. Denying by design ` +
-          `(fail-closed on unparseable/malformed hook input, round 1 finding 4).`,
-      },
-    },
-    stderr: null,
-  }
-}
-
-/**
- * Deny for the `mcp__ruflo__hooks_session-start` `startDaemon` gate
- * (design § "SMI-6854").
- * @param {unknown} value the offending startDaemon value
- */
-export function denyStartDaemon(value) {
-  return {
-    action: 'deny',
-    json: {
-      hookSpecificOutput: {
-        hookEventName: 'PreToolUse',
-        permissionDecision: 'deny',
-        permissionDecisionReason:
-          `[ruflo-host-guard] mcp__ruflo__hooks_session-start: startDaemon=${JSON.stringify(value)} ` +
-          'is not permitted — only an absent field or startDaemon===false is allowed (SMI-6854).',
-      },
-    },
-    stderr: null,
-  }
-}
-
-export const ALLOW = { action: 'allow', json: null, stderr: null }
 
 /**
  * Stage 1 row 1 — `docker exec skillsmith-ruflo-1 …` (design § 1(b), plan
@@ -202,121 +61,60 @@ export const ALLOW = { action: 'allow', json: null, stderr: null }
  * names). The container name is matched EXACTLY (case-sensitive) — the
  * one field in this whole predicate set that deliberately does not
  * lowercase, per the plan's explicit "equals `skillsmith-ruflo-1` exactly".
+ *
+ * Also accepts the `docker container exec …` long-form alias (L-A fix,
+ * SMI-6744 Wave 4 governance round) — `docker container exec` is a real
+ * Docker CLI alias for `docker exec`, and this guard's own goal (letting
+ * the ONE sanctioned invocation shape through) is undermined by
+ * recognizing only the short form.
  * @param {string[]} rawValues
  */
 export function isSanctionedDockerExec(rawValues) {
   if (rawValues.length < 2) return false
   if (basenameOf(rawValues[0]).toLowerCase() !== 'docker') return false
-  if (rawValues[1].toLowerCase() !== 'exec') return false
-  const rest = stripFlags(rawValues.slice(2))
+  let rest
+  if (rawValues[1].toLowerCase() === 'exec') {
+    rest = rawValues.slice(2)
+  } else if (rawValues[1].toLowerCase() === 'container' && rawValues[2]?.toLowerCase() === 'exec') {
+    rest = rawValues.slice(3)
+  } else {
+    return false
+  }
+  rest = stripFlags(rest)
   return rest[0] === 'skillsmith-ruflo-1'
 }
+
+/** The uninstall form, named separately so the L-B `--dry-run` allowance below can reference it. */
+const NPM_UNINSTALL_FORM = ['uninstall', '-g', 'ruflo']
 
 /**
  * Stage 1 row 3 — the three exact npm inspection/remediation forms,
  * evaluated AFTER normal wrapper normalization (same stage as H1–H8).
+ *
+ * `npm uninstall -g ruflo --dry-run` is also sanctioned (L-B fix, SMI-6744
+ * Wave 4 governance round) — named as its own exact suffix, not a generic
+ * "any extra flag is fine" widening: `--dry-run` makes this form STRICTLY
+ * SAFER than the already-sanctioned bare uninstall (no actual removal
+ * happens), so accepting it narrows nothing this Stage 1 allowlist
+ * otherwise protects.
  * @param {string[]} argvLower the post-normalize, lowercased argv
  */
 export function isSanctionedNpmForm(argvLower) {
   if (argvLower.length === 0) return false
   if (basenameOf(argvLower[0]) !== 'npm') return false
   const rest = argvLower.slice(1)
-  return NPM_ALLOW_FORMS.some(
-    (form) => rest.length === form.length && form.every((tok, i) => rest[i] === tok)
+  if (
+    NPM_ALLOW_FORMS.some(
+      (form) => rest.length === form.length && form.every((tok, i) => rest[i] === tok)
+    )
+  ) {
+    return true
+  }
+  return (
+    rest.length === NPM_UNINSTALL_FORM.length + 1 &&
+    NPM_UNINSTALL_FORM.every((tok, i) => rest[i] === tok) &&
+    rest[NPM_UNINSTALL_FORM.length] === '--dry-run'
   )
-}
-
-/**
- * H1–H7. Two argv views are needed, not one (queen correction found by the
- * D13 smoke input `NODE_OPTIONS="--require ./node_modules/ruflo/bin/ruflo.js"
- * node -e ''`): the shared `normalizeWrappers` strips ANY leading
- * `VAR=val`-shaped token as part of unwrapping, so a path hidden inside an
- * unrelated env-assignment's VALUE (not a recognized wrapper like `env`)
- * would vanish before an argv[0]-relative check ever ran. H1/H2/H3/H6/H7
- * are pure "does any element contain X" checks with no notion of
- * position, so they run over `scanArgvLower` — the PRE-strip, this-segment
- * lowercased word values, which is always a superset of the post-strip
- * result (wrapper-stripping only ever drops a prefix, never the middle or
- * end). H4/H5 are positional (argv[0]-relative after resolving the real
- * command past its wrappers) and run over `argvLower`, the POST-normalize
- * lowercased argv.
- *
- * H5 is additionally broadened beyond a literal "argv[0] only" reading
- * (design § 1(b)'s own census cites H5 as E4's sole closure —
- * `docker run --rm node:22-slim npx -y ruflo memory store …` — where the
- * runner `npx` sits at position 4, not 0, since `docker run` is not one of
- * `normalizeWrappers`' recognized unwrap shapes, unlike `docker exec`):
- * H5 scans every position for a runner basename, then scans FORWARD from
- * that position (order-preserving — the token must still follow the
- * runner) for a matching token.
- * @param {string[]} scanArgvLower pre-strip, lowercased word values for H1/H2/H3/H6/H7
- * @param {string[]} argvLower post-normalize, lowercased argv for H4/H5
- * @returns {{action:string, json:object|null, stderr:string|null} | null}
- */
-export function checkH1toH7(scanArgvLower, argvLower) {
-  for (const el of scanArgvLower) {
-    const stripped = stripDotSlash(el)
-    const deescaped = stripDotSlash(deEscape(el))
-    if (
-      H1_RE1.test(stripped) ||
-      H1_RE2.test(stripped) ||
-      H1_RE1.test(deescaped) ||
-      H1_RE2.test(deescaped)
-    ) {
-      return denyWith('H1', el)
-    }
-  }
-
-  for (const el of scanArgvLower) {
-    const deescaped = deEscape(el)
-    if (H2_RE1.test(el) || H2_RE1.test(deescaped)) return denyWith('H2', el)
-    if (
-      (H2_RE2.test(el) || H2_RE2.test(deescaped)) &&
-      scanArgvLower.some((a) => a.includes('@claude-flow') || deEscape(a).includes('@claude-flow'))
-    ) {
-      return denyWith('H2', el)
-    }
-  }
-
-  for (const el of scanArgvLower) {
-    const base = basenameOf(el)
-    const dir = dirnameOf(el)
-    if (
-      H3_NAMES.has(base) &&
-      (dir.endsWith('node_modules/.bin') || dir.endsWith('lib/node_modules/ruflo/bin'))
-    ) {
-      return denyWith('H3', el)
-    }
-  }
-
-  if (H4_NAMES.has(argvLower[0])) return denyWith('H4', argvLower[0])
-
-  for (let i = 0; i < argvLower.length; i++) {
-    if (!RUNNER_BASENAMES.has(basenameOf(argvLower[i]))) continue
-    for (const el of argvLower.slice(i + 1)) {
-      if (RUNNER_TOKEN_RE.test(el) || H5_NPM_COLON_RE.test(el) || H5_PACKAGE_FLAG_RE.test(el)) {
-        return denyWith('H5', el)
-      }
-    }
-  }
-
-  for (const el of scanArgvLower) {
-    if (
-      H6_NPX_DIR_RE.test(el) &&
-      scanArgvLower.some((a) => a.includes('ruflo') || a.includes('@claude-flow'))
-    ) {
-      return denyWith('H6', el)
-    }
-  }
-
-  for (const el of scanArgvLower) {
-    const deescaped = deEscape(el)
-    if (H7_RE1.test(el) || H7_RE2.test(el) || H7_RE1.test(deescaped) || H7_RE2.test(deescaped)) {
-      return denyWith('H7', el)
-    }
-  }
-
-  return null
 }
 
 /**
@@ -345,10 +143,20 @@ export function checkAssignmentValuePredicate(wordTokens) {
 /**
  * H8(ii) — "deny the runner-with-a-variable-argument shape" (a44 § 5 D11
  * candidate closure (ii), the owner's chosen primary closure). Runs on the
- * POST-normalize argv/tokens: argv[0]'s basename must be a runner, and any
- * later token must have EITHER a `$` in its raw `.value` OR a non-empty
- * `.subs` (round 1 finding 2 correction — a backtick substitution drops
- * its backticks in `tokenize()`, so `.value` alone misses it).
+ * POST-normalize argv/tokens: argv[0]'s basename must be a runner, and the
+ * runner's own PACKAGE-NAME SLOT must have EITHER a `$` in its raw
+ * `.value` OR a non-empty `.subs` (round 1 finding 2 correction — a
+ * backtick substitution drops its backticks in `tokenize()`, so `.value`
+ * alone misses it).
+ *
+ * Narrowed from "any later token" to "the package-name slot only" (M-A
+ * fix, SMI-6744 Wave 4 governance round): the original scanned every
+ * position after the runner, denying ordinary repo commands whose TARGET
+ * argument (not the package name) carries a shell variable — `npx vitest
+ * run "$F"`, `npx prettier --write "$f"`, `npm run build --workspace=$W`.
+ * The slot is: the first non-flag argument after the runner (skipping the
+ * runner's own leading flags and, for `npm`, an `exec`/`x` subcommand and
+ * its own `--`), plus the value of `-p`/`--package`/`--package=`.
  * @param {string[]} argvLower
  * @param {Array<{value: string, subs?: string[]}>} alignedTokens the
  *   ORIGINAL (non-lowercased) tokens aligned 1:1 with argvLower — see
@@ -357,8 +165,38 @@ export function checkAssignmentValuePredicate(wordTokens) {
 export function checkRunnerVariableArgument(argvLower, alignedTokens) {
   if (argvLower.length === 0) return null
   if (!RUNNER_BASENAMES.has(basenameOf(argvLower[0]))) return null
-  for (let i = 1; i < alignedTokens.length; i++) {
-    const tok = alignedTokens[i]
+
+  const slots = new Set()
+  let i = 1
+
+  if (basenameOf(argvLower[0]) === 'npm' && (argvLower[i] === 'exec' || argvLower[i] === 'x')) {
+    i++
+    if (argvLower[i] === '--') i++
+  }
+
+  while (i < argvLower.length) {
+    const tok = argvLower[i]
+    if (tok === '-p' || tok === '--package') {
+      if (i + 1 < argvLower.length) slots.add(i + 1)
+      i += 2
+      continue
+    }
+    if (tok.startsWith('--package=')) {
+      slots.add(i)
+      i += 1
+      continue
+    }
+    if (tok.startsWith('-') && tok !== '-') {
+      i += 1
+      continue
+    }
+    slots.add(i)
+    break
+  }
+
+  for (const idx of slots) {
+    const tok = alignedTokens[idx]
+    if (!tok) continue
     if (tok.value.includes('$') || (tok.subs && tok.subs.length > 0)) {
       return denyWith('H8', tok.value)
     }
@@ -380,10 +218,10 @@ export function checkRunnerVariableArgument(argvLower, alignedTokens) {
  *   caller strips down to word-only tokens.
  */
 export function checkBraceSegment(segmentTokens) {
-  const hasBrace = segmentTokens.some(
+  const braceIdx = segmentTokens.findIndex(
     (t) => t.type === 'op' && (t.value === '{' || t.value === '}')
   )
-  if (!hasBrace) return null
+  if (braceIdx === -1) return null
 
   const words = segmentTokens.filter((t) => t.type === 'word')
   let i = 0
@@ -401,6 +239,16 @@ export function checkBraceSegment(segmentTokens) {
   }
 
   if (!RUNNER_BASENAMES.has(base)) return null
+
+  // M-B fix (SMI-6744 Wave 4 governance round): a `{`/`}` that appears AT
+  // OR BEFORE the effective first command word is shell GROUPING syntax
+  // (`{ npm run lint; }`), not a brace expression inside the runner's own
+  // arguments -- only deny when the brace strictly FOLLOWS that word.
+  // `words[i]` is the same object reference filtered out of
+  // `segmentTokens`, so `indexOf` finds its true position by identity.
+  const effectiveWordIdx = segmentTokens.indexOf(words[i])
+  if (braceIdx <= effectiveWordIdx) return null
+
   return denyWith(
     'brace-syntax',
     'a `{`/`}` brace expression in a package-runner command — fails closed rather than ' +
