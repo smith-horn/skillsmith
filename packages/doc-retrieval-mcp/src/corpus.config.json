@@ -30,5 +30,5 @@
     }
   ],
   "requireSubmodule": "docs/internal",
-  "_storagePathRationale": "@ruvector/core (the version packages/doc-retrieval-mcp/package.json declares; the 0.1.30 literal this field carried was the hoisted copy SMI-6744 Wave 4 removed) creates a SINGLE FILE at the exact storagePath given (not a directory tree as the initial plan assumed). SMI-4426 renamed `rvfPath` to `storagePath`. The indexer creates this as a DIRECTORY and passes join(storageAbs,'vectors') to VectorDb, so the lock (.indexer.lock) and the db file (vectors) coexist inside this directory. Legacy *.rvf gitignore entry kept harmless."
+  "_storagePathRationale": "@ruvector/core@0.1.30 creates a SINGLE FILE at the exact storagePath given (not a directory tree as the initial plan assumed). SMI-4426 renamed `rvfPath` to `storagePath`. The indexer creates this as a DIRECTORY and passes join(storageAbs,'vectors') to VectorDb, so the lock (.indexer.lock) and the db file (vectors) coexist inside this directory. Legacy *.rvf gitignore entry kept harmless."
 }
