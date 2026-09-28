@@ -26,6 +26,7 @@ import {
   RUFLO_MCP_DENY_ENTRIES,
   evaluateRufloHostPaths,
   rufloHostPathsReportLines,
+  EXPECTED_GUARD_COMMAND,
   evaluateRufloHostGuardHooks,
   rufloHostGuardHooksReportLines,
   evaluateRufloMcpDenies,
@@ -137,7 +138,11 @@ function settingsWithHooks(preToolUse: unknown[]): string {
   return JSON.stringify({ hooks: { PreToolUse: preToolUse } })
 }
 
-const RUFLO_GUARD_COMMAND = 'node "$CLAUDE_PROJECT_DIR/scripts/ruflo-host-guard.mjs"'
+// L-6 fix (SMI-6744 Wave 4 governance round): imports the guard's own
+// EXPECTED_GUARD_COMMAND constant instead of a hand-typed copy of the same
+// literal, so the fixture and the helper it tests cannot silently drift
+// apart the way two independently-maintained copies of the same string can.
+const RUFLO_GUARD_COMMAND = EXPECTED_GUARD_COMMAND
 
 const BASH_HOOK_ENTRY = {
   matcher: 'Bash',
@@ -476,6 +481,53 @@ describe('Check 74 hook-entry tripwire (SMI-6744 A4.6): scripts/ruflo-host-guard
         ]),
     })
     expect(verdict.hasBashEntry).toBe(false)
+  })
+
+  // M-4 fix (SMI-6744 Wave 4 delta governance round): "no entry for this
+  // matcher" and "an entry exists whose command is not the expected
+  // literal" are now DISTINCT report shapes, not just two ways to make
+  // hasBashEntry false. Watched failing (both cases produced the SAME
+  // "is missing the ... matcher entry" message, wrongly telling a reader
+  // to ADD a hook that already exists) against the unfixed single-message
+  // report before this fix landed.
+  it('M-4: an entry that EXISTS with the WRONG command reports "found: X", not "missing"', () => {
+    const verdict = evaluateRufloHostGuardHooks({
+      settingsPath: '.claude/settings.json',
+      readFile: () =>
+        settingsWithHooks([
+          {
+            matcher: 'Bash',
+            hooks: [
+              { type: 'command', command: 'node "$CLAUDE_PROJECT_DIR/scripts/env-read-guard.mjs"' },
+            ],
+          },
+          SESSION_START_HOOK_ENTRY,
+        ]),
+    })
+    expect(verdict.hasBashEntry).toBe(false)
+    expect(verdict.bash.present).toBe(true)
+    expect(verdict.bash.foundCommand).toBe('node "$CLAUDE_PROJECT_DIR/scripts/env-read-guard.mjs"')
+    const lines = rufloHostGuardHooksReportLines(verdict)
+    expect(lines).toHaveLength(1)
+    expect(lines[0].message).not.toContain('is missing')
+    expect(lines[0].message).toContain('does not equal the expected literal')
+    expect(lines[0].message).toContain('found:')
+    expect(lines[0].message).toContain('env-read-guard.mjs')
+    expect(lines[0].fix).toContain('Update')
+    expect(lines[0].fix).not.toContain('Add a')
+  })
+
+  it('M-4: a genuinely MISSING matcher entry still reports "is missing", not "found: X"', () => {
+    const verdict = evaluateRufloHostGuardHooks({
+      settingsPath: '.claude/settings.json',
+      readFile: () => settingsWithHooks([SESSION_START_HOOK_ENTRY]),
+    })
+    expect(verdict.bash.present).toBe(false)
+    expect(verdict.bash.foundCommand).toBeNull()
+    const lines = rufloHostGuardHooksReportLines(verdict)
+    expect(lines[0].message).toContain('is missing')
+    expect(lines[0].message).not.toContain('found:')
+    expect(lines[0].fix).toContain('Add a')
   })
 
   it('not_evaluated: unreadable settings file fails rather than passing', () => {

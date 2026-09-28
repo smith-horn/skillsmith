@@ -10,7 +10,7 @@
  */
 
 import { basenameOf } from './shell-command-normalize.mjs'
-import { denyWith } from './ruflo-host-guard-verdicts.mjs'
+import { denyWith, denyWithReadOnlyHint } from './ruflo-host-guard-verdicts.mjs'
 
 /** Package runners H5/H8/the brace check treat as "a runner". */
 export const RUNNER_BASENAMES = new Set([
@@ -165,7 +165,7 @@ export function checkH1toH7(scanArgvLower, argvLower) {
   for (const el of scanArgvLower) {
     for (const view of tokenViews(el)) {
       const stripped = stripDotSlash(view)
-      if (H1_RE1.test(stripped) || H1_RE2.test(stripped)) return denyWith('H1', el)
+      if (H1_RE1.test(stripped) || H1_RE2.test(stripped)) return denyWithReadOnlyHint('H1', el)
     }
   }
 
@@ -173,29 +173,44 @@ export function checkH1toH7(scanArgvLower, argvLower) {
   // runner specifier passed as node's `-r`/`--require` VALUE has no
   // "bin/ruflo.js" path text for H1_RE1/H1_RE2 to match at all — Node
   // resolves a bare specifier via its own module resolution, so the argv
-  // literally only ever contains e.g. "ruflo". Scoped to immediately
-  // following a require flag so `grep ruflo` etc. are unaffected.
-  for (let idx = 0; idx < scanArgvLower.length; idx++) {
-    const el = scanArgvLower[idx]
-    const eqMatch = REQUIRE_FLAG_EQ_RE.exec(el)
-    if (eqMatch && RUNNER_TOKEN_RE.test(eqMatch[1])) return denyWith('H1', el)
-    if (
-      REQUIRE_FLAG_RE.test(el) &&
-      idx + 1 < scanArgvLower.length &&
-      RUNNER_TOKEN_RE.test(scanArgvLower[idx + 1])
-    ) {
-      return denyWith('H1', scanArgvLower[idx + 1])
+  // literally only ever contains e.g. "ruflo".
+  //
+  // Scoped to `argvLower[0]` (post-normalize) resolving to `node`
+  // specifically (M-6 residual finding, SMI-6744 Wave 4 delta governance
+  // round) — the L-D fix's own comment claimed scoping to "immediately
+  // following a require flag" was enough to leave `grep ruflo` etc.
+  // unaffected, but that claim was never executed against `-r` as a
+  // SEPARATE (not combined) flag: `-r` is also grep's own "recursive"
+  // flag, sort's/cut's own "reverse" flag, and tar's own "append" flag,
+  // so `grep -r ruflo scripts/`, `sort -r ruflo`, `cut -r ruflo`, `tar -r
+  // ruflo` (none of them node, none of them wrapping a real command) all
+  // measurably denied via H1 before this fix — confirmed live, not
+  // assumed, and closed as part of building the M-6 legitimate-command
+  // case table, which could not otherwise honestly include `grep -r ruflo
+  // scripts/`.
+  if (basenameOf(argvLower[0] ?? '') === 'node') {
+    for (let idx = 0; idx < scanArgvLower.length; idx++) {
+      const el = scanArgvLower[idx]
+      const eqMatch = REQUIRE_FLAG_EQ_RE.exec(el)
+      if (eqMatch && RUNNER_TOKEN_RE.test(eqMatch[1])) return denyWithReadOnlyHint('H1', el)
+      if (
+        REQUIRE_FLAG_RE.test(el) &&
+        idx + 1 < scanArgvLower.length &&
+        RUNNER_TOKEN_RE.test(scanArgvLower[idx + 1])
+      ) {
+        return denyWithReadOnlyHint('H1', scanArgvLower[idx + 1])
+      }
     }
   }
 
   for (const el of scanArgvLower) {
     for (const view of tokenViews(el)) {
-      if (H2_RE1.test(view) || H2_RE3.test(view)) return denyWith('H2', el)
+      if (H2_RE1.test(view) || H2_RE3.test(view)) return denyWithReadOnlyHint('H2', el)
       if (
         H2_RE2.test(view) &&
         scanArgvLower.some((a) => tokenViews(a).some((v) => v.includes('@claude-flow')))
       ) {
-        return denyWith('H2', el)
+        return denyWithReadOnlyHint('H2', el)
       }
     }
   }
@@ -239,7 +254,7 @@ export function checkH1toH7(scanArgvLower, argvLower) {
 
   for (const el of scanArgvLower) {
     for (const view of tokenViews(el)) {
-      if (H7_RE1.test(view) || H7_RE2.test(view)) return denyWith('H7', el)
+      if (H7_RE1.test(view) || H7_RE2.test(view)) return denyWithReadOnlyHint('H7', el)
     }
   }
 

@@ -595,4 +595,88 @@ describe('findClaudeFlowReintroductions (SMI-5746 Check 59, sub-check 4)', () =>
 
     expect(findClaudeFlowReintroductions(dir)).toEqual([])
   })
+
+  // M-3 fix (SMI-6744 Wave 4 delta governance round): findJsonArrayLineSpan
+  // (LINE-based) replaced by findPermissionsDenySpan (CHARACTER-OFFSET-
+  // based, scoped from the "permissions" key). Three red arms, each
+  // watched failing against the unfixed line-based scanner before this fix
+  // landed.
+  it('RED (false negative): a same-line "], \\"allow\\": [" no longer swallows allow\'s own content into deny\'s span', () => {
+    const dir = scratchDir()
+    mkdirSync(join(dir, '.claude'), { recursive: true })
+    // The SAME literal in both arrays (matching the existing "discriminates
+    // by array position, not by value" test's own pattern) is deliberate,
+    // not incidental: the unfixed scanner's line-based positional bug alone
+    // is not observable through this test unless the value-only fallback
+    // check it ALSO ran would otherwise have saved it -- a differing value
+    // in allow vs deny (e.g. "Bash(rm -rf /)" vs "Bash(npx claude-flow)")
+    // is correctly rejected by that value check regardless of the
+    // positional bug, so it never reproduces the false negative. Watched
+    // failing (produced `[]`, not the line-6 finding below) against the
+    // unfixed findJsonArrayLineSpan before this fix landed.
+    writeFileSync(
+      join(dir, '.claude', 'settings.json'),
+      [
+        '{',
+        '  "permissions": {',
+        '    "deny": [',
+        '      "Bash(npx claude-flow)"',
+        '    ], "allow": [',
+        '      "Bash(npx claude-flow)"',
+        '    ]',
+        '  }',
+        '}',
+        '',
+      ].join('\n')
+    )
+
+    // Under the unfixed line-based scanner, allow's own `[` (sharing the
+    // same line as deny's closing `]`) re-incremented depth back past
+    // zero before the end-of-line check ran, so deny's span wrongly
+    // extended to swallow allow's own content -- the genuine reintroduction
+    // sitting in `allow` was never flagged (a false NEGATIVE).
+    expect(findClaudeFlowReintroductions(dir)).toEqual([{ file: '.claude/settings.json', line: 6 }])
+  })
+
+  it('RED (false positive): a single-line "deny": ["Bash(npx claude-flow)"] is not flagged', () => {
+    const dir = scratchDir()
+    mkdirSync(join(dir, '.claude'), { recursive: true })
+    writeFileSync(
+      join(dir, '.claude', 'settings.json'),
+      '{"permissions":{"deny":["Bash(npx claude-flow)"]}}'
+    )
+
+    // Under the unfixed line-based scanner, a single-line array collapses
+    // startLine === endLine, so the exemption's `idx > startLine && idx <
+    // endLine` check can never be true for anything on that one line --
+    // this legitimate deny entry was a false POSITIVE.
+    expect(findClaudeFlowReintroductions(dir)).toEqual([])
+  })
+
+  it('RED (wrong subject): an unrelated earlier "deny": [ elsewhere in the file is not mistaken for permissions.deny', () => {
+    const dir = scratchDir()
+    mkdirSync(join(dir, '.claude'), { recursive: true })
+    writeFileSync(
+      join(dir, '.claude', 'settings.json'),
+      [
+        '{',
+        '  "somethingElse": { "deny": [] },',
+        '  "permissions": {',
+        '    "deny": [',
+        '      "Bash(npx claude-flow)"',
+        '    ]',
+        '  }',
+        '}',
+        '',
+      ].join('\n')
+    )
+
+    // Under the unfixed scanner (which located the first bare `"deny":`
+    // text anywhere in the file, not scoped from "permissions"), the
+    // EARLIER, unrelated "somethingElse".deny -- an empty array that opens
+    // and closes immediately -- was mistaken for permissions.deny, so its
+    // own (tiny, already-closed) span never covered the REAL deny entry
+    // several lines later, which was wrongly flagged as a reintroduction.
+    expect(findClaudeFlowReintroductions(dir)).toEqual([])
+  })
 })

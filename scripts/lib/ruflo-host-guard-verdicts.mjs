@@ -107,4 +107,34 @@ export function denyStartDaemon(value) {
   }
 }
 
+/**
+ * L-4 fix (SMI-6744 Wave 4 governance round): H1/H2/H7 fire on a PATH
+ * SUBSTRING match, which a legitimate reader/searcher can trip just as
+ * easily as an actual invocation attempt — grep-ing for a `ruflo`/
+ * `@claude-flow/cli` path reference in this guard's own test fixtures,
+ * docs, or source tree contains the exact substrings those three
+ * predicates test for. Appends a second sentence naming a READ-ONLY
+ * alternative on top of `denyWith`'s own reason, so a developer who only
+ * wanted to SEARCH or READ the matched text — not execute anything — has
+ * an immediate way out instead of having to reverse-engineer one from the
+ * guard's own denial.
+ * @param {string} predicate 'H1', 'H2', or 'H7'
+ * @param {string} token the offending argv element/token, named literally
+ */
+export function denyWithReadOnlyHint(predicate, token) {
+  const base = denyWith(predicate, token)
+  return {
+    ...base,
+    json: {
+      hookSpecificOutput: {
+        ...base.json.hookSpecificOutput,
+        permissionDecisionReason:
+          base.json.hookSpecificOutput.permissionDecisionReason +
+          ' If you only meant to search or read this reference (not execute it), use ' +
+          '`docker exec skillsmith-ruflo-1 grep …` or `git grep` instead.',
+      },
+    },
+  }
+}
+
 export const ALLOW = { action: 'allow', json: null, stderr: null }

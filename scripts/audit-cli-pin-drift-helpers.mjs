@@ -276,68 +276,74 @@ export function findProcScanCmdHintDrift(guardPath, guideMdPath) {
 }
 
 /**
- * Finds the 0-based [startLine, endLine] span (inclusive) of a top-level
- * JSON array whose opening `"<key>": [` line matches keyPattern, by
- * tracking bracket depth char-by-char while skipping the contents of JSON
- * string literals -- so a deny entry like "Bash(rg '[a-z]')" containing its
- * own literal brackets can never perturb the count. Returns null if the key
- * is never found or the array never closes. Used by the exemption below to
- * confirm a matched line sits POSITIONALLY inside the `deny` array, not
- * merely that its value happens to also be a deny member (SMI-6744 Wave 4
- * H-1 governance finding: the prior value-only check exempted the identical
- * literal sitting in `allow` too).
+ * Finds the `permissions.deny` array's exact CHARACTER-OFFSET span
+ * (inclusive of both the opening `[` and its matching `]`) within the
+ * FULL raw file text `fileText` -- not a per-line scan (M-3 fix, SMI-6744
+ * Wave 4 governance round, superseding the prior line-based
+ * `findJsonArrayLineSpan`). Two defects the line-based version could not
+ * fix without this rewrite:
  *
- * The bracket scan on the STARTING line begins at the matched key's own
- * character index, not the line start (L-H fix, SMI-6744 Wave 4 governance
- * round): a "packed" settings.json where a PRECEDING array's own closing
- * `]` shares the same line as this key (e.g. `    ], "deny": [`) would
- * otherwise have that stray `]` counted first, decrementing `depth` below
- * zero before the real `[` for THIS array is even reached -- depth can
- * then cross back to exactly zero the moment `[` opens, ending the span on
- * the very line it started (a wrong `endLine`), because the two brackets
- * belong to different arrays scanning from line-start conflates them.
+ *   1. A single-line array (`"deny": ["Bash(npx claude-flow)"]`) collapses
+ *      `startLine === endLine` under line-number tracking, so the
+ *      exemption below's `idx > startLine && idx < endLine` check can
+ *      never be true for anything on that one line -- a legitimate deny
+ *      entry written single-line was a FALSE POSITIVE. Character offsets
+ *      have a real, comparable interior even within one line.
+ *   2. Depth was only ever checked AFTER a full line finished scanning, so
+ *      a same-line `], "allow": [` (deny's own close immediately followed
+ *      by allow's own open) let allow's `[` re-increment depth back past
+ *      zero before the end-of-line check ran, corrupting `endLine` into a
+ *      FALSE NEGATIVE that swallowed allow's own content into deny's
+ *      span. Depth is now checked immediately after every `]`,
+ *      character-by-character, so the span always ends at the FIRST point
+ *      depth returns to zero.
+ *
+ * The search for `"deny"` starts from the `"permissions"` key's own
+ * offset (not the first bare `"deny":` text anywhere in the file) so an
+ * UNRELATED earlier `"deny":` occurrence elsewhere in the file — a
+ * different nested structure entirely — cannot be mistaken for
+ * `permissions.deny`. String-literal contents are skipped while tracking
+ * bracket depth, so a deny entry like "Bash(rg '[a-z]')" containing its
+ * own literal brackets can never perturb the count. Returns null if
+ * `"permissions"`/`"deny"` is never found, or the array never closes.
+ * @param {string} fileText the FULL raw file text (not split into lines)
+ * @returns {{startOffset: number, endOffset: number} | null} the `[` and
+ *   matching `]` character offsets (inclusive)
  */
-function findJsonArrayLineSpan(lines, keyPattern) {
-  let startIdx = null
-  let startCharIdx = 0
-  for (let i = 0; i < lines.length; i++) {
-    const m = keyPattern.exec(lines[i])
-    if (m) {
-      startIdx = i
-      startCharIdx = m.index
-      break
-    }
-  }
-  if (startIdx === null) return null
+function findPermissionsDenySpan(fileText) {
+  const permIdx = fileText.search(/"permissions"\s*:/)
+  if (permIdx === -1) return null
+
+  const denyKeyRe = /"deny"\s*:\s*\[/g
+  denyKeyRe.lastIndex = permIdx
+  const denyMatch = denyKeyRe.exec(fileText)
+  if (!denyMatch) return null
+
+  const openIdx = fileText.indexOf('[', denyMatch.index)
+  if (openIdx === -1) return null
 
   let depth = 0
-  let opened = false
-  for (let i = startIdx; i < lines.length; i++) {
-    const lineText = i === startIdx ? lines[i].slice(startCharIdx) : lines[i]
-    let inString = false
-    let escaped = false
-    for (const ch of lineText) {
-      if (inString) {
-        if (escaped) {
-          escaped = false
-        } else if (ch === '\\') {
-          escaped = true
-        } else if (ch === '"') {
-          inString = false
-        }
-        continue
+  let inString = false
+  let escaped = false
+  for (let i = openIdx; i < fileText.length; i++) {
+    const ch = fileText[i]
+    if (inString) {
+      if (escaped) {
+        escaped = false
+      } else if (ch === '\\') {
+        escaped = true
+      } else if (ch === '"') {
+        inString = false
       }
-      if (ch === '"') {
-        inString = true
-      } else if (ch === '[') {
-        depth++
-        opened = true
-      } else if (ch === ']') {
-        depth--
-      }
+      continue
     }
-    if (opened && depth === 0) {
-      return { startLine: startIdx, endLine: i }
+    if (ch === '"') {
+      inString = true
+    } else if (ch === '[') {
+      depth++
+    } else if (ch === ']') {
+      depth--
+      if (depth === 0) return { startOffset: openIdx, endOffset: i }
     }
   }
   return null
@@ -364,40 +370,47 @@ export function findClaudeFlowReintroductions(repoRoot) {
   const scanFile = (relPath, denyLiterals) => {
     const fullPath = join(repoRoot, relPath)
     if (!existsSync(fullPath)) return
-    const lines = readFileSync(fullPath, 'utf8').split('\n')
-    // SMI-6744 Wave 4 H-1: the exemption below must be POSITIONAL as well as
-    // value-keyed -- computed once per file, from the raw text, never from
-    // the already-parsed `permissions.deny` array alone (see
-    // findJsonArrayLineSpan's own doc comment for why a value-only check was
-    // wrong).
+    const fileText = readFileSync(fullPath, 'utf8')
+    const lines = fileText.split('\n')
+    // M-3 fix (SMI-6744 Wave 4 governance round): the exemption below must
+    // be POSITIONAL, computed once per file from the raw text via
+    // CHARACTER OFFSETS (not line numbers -- see findPermissionsDenySpan's
+    // own doc comment for why a line-based span was wrong for both a
+    // single-line array and a same-line `], "allow": [`), never from the
+    // already-parsed `permissions.deny` array's VALUES alone (SMI-6744
+    // Wave 4 H-1: a value-only check wrongly exempted the identical
+    // literal sitting in `allow` too).
     const denySpan =
-      denyLiterals && denyLiterals.size > 0 ? findJsonArrayLineSpan(lines, /"deny"\s*:\s*\[/) : null
+      denyLiterals && denyLiterals.size > 0 ? findPermissionsDenySpan(fileText) : null
+
+    let lineStartOffset = 0
     lines.forEach((line, idx) => {
-      if (!pattern.test(line)) return
-      if (/@see\s+SMI-\d+/.test(line)) return
-      // SMI-6744 Wave 4: a `.claude/settings.json` `permissions.deny` entry
-      // must literally spell the banned command it blocks (e.g.
-      // "Bash(npx claude-flow)") -- that is the opposite of "reintroduces
-      // npx claude-flow", so it must not be flagged. Scoped to a line that
-      // is BOTH (a) positioned strictly between the `"deny": [` line and its
-      // matching `]` (denySpan, exclusive of both boundary lines) and (b)
-      // parses on its own as a JSON string that is a verbatim member of the
-      // parsed `permissions.deny` array. Condition (a) alone is what makes
-      // this an exemption for `deny` specifically -- the identical literal
-      // sitting in `allow` (or `ask`) is a different line index outside
-      // denySpan and is never exempted by this, regardless of its value.
-      if (denySpan && idx > denySpan.startLine && idx < denySpan.endLine) {
-        const trimmed = line.trim().replace(/,$/, '')
-        let asString = null
-        try {
-          const parsedLine = JSON.parse(trimmed)
-          if (typeof parsedLine === 'string') asString = parsedLine
-        } catch {
-          // Not a bare JSON string on its own line -- fall through to flagging.
-        }
-        if (asString !== null && denyLiterals.has(asString)) return
+      const matchIdx = line.search(pattern)
+      if (matchIdx === -1 || /@see\s+SMI-\d+/.test(line)) {
+        lineStartOffset += line.length + 1
+        return
       }
-      findings.push({ file: relPath, line: idx + 1 })
+      // A `.claude/settings.json` `permissions.deny` entry must literally
+      // spell the banned command it blocks (e.g. "Bash(npx claude-flow)")
+      // -- that is the opposite of "reintroduces npx claude-flow", so it
+      // must not be flagged. Once `denySpan` is a real character-offset
+      // range, ANYTHING positioned strictly between the array's own `[`
+      // and `]` is necessarily part of one of its own JSON string
+      // elements (nothing else can legally occupy that span), so the
+      // offset check alone is sufficient -- no separate per-line
+      // JSON.parse-and-compare-to-denyLiterals step is needed (that step
+      // could never exempt a single-line array's own entry anyway, since
+      // the whole `"deny": [...]` text on one line never parses as a bare
+      // JSON string on its own).
+      const absoluteMatchOffset = lineStartOffset + matchIdx
+      const insideDeny =
+        denySpan &&
+        absoluteMatchOffset > denySpan.startOffset &&
+        absoluteMatchOffset < denySpan.endOffset
+      if (!insideDeny) {
+        findings.push({ file: relPath, line: idx + 1 })
+      }
+      lineStartOffset += line.length + 1
     })
   }
 

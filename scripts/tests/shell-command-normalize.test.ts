@@ -119,6 +119,41 @@ describe('tokenize()', () => {
     const tokens = tokenize('echo "abc')
     expect(wordValues(tokens)).toEqual(['echo', 'abc'])
   })
+
+  // H-6 fix (SMI-6744 Wave 4 delta governance round): `$'...'` (ANSI-C
+  // quoting) is a distinct Bash quoting form from a plain `'...'` — its
+  // body's own backslash escapes ARE processed, unlike single quotes.
+  describe("$'...' ANSI-C quoting (H-6 fix)", () => {
+    it('is treated as a plain quoted word when it carries no escapes', () => {
+      const tokens = tokenize("bash -c $'npx ruflo memory store --key k --value v'")
+      expect(wordValues(tokens)).toEqual(['bash', '-c', 'npx ruflo memory store --key k --value v'])
+    })
+
+    it('decodes \\n and \\t', () => {
+      const tokens = tokenize("echo $'a\\tb\\nc'")
+      expect(wordValues(tokens)).toEqual(['echo', 'a\tb\nc'])
+    })
+
+    it("decodes \\\\ and \\' literally", () => {
+      const tokens = tokenize("echo $'a\\\\b\\'c'")
+      expect(wordValues(tokens)).toEqual(['echo', "a\\b'c"])
+    })
+
+    it('decodes \\xHH hex escapes', () => {
+      const tokens = tokenize("echo $'\\x6e\\x70\\x78'")
+      expect(wordValues(tokens)).toEqual(['echo', 'npx'])
+    })
+
+    it('passes an unrecognized escape character through unchanged', () => {
+      const tokens = tokenize("echo $'a\\zb'")
+      expect(wordValues(tokens)).toEqual(['echo', 'azb'])
+    })
+
+    it("an unmatched $'... consumes the rest of the string", () => {
+      const tokens = tokenize("echo $'abc")
+      expect(wordValues(tokens)).toEqual(['echo', 'abc'])
+    })
+  })
 })
 
 describe('stripFlags()', () => {

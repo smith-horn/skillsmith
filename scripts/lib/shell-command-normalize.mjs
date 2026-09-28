@@ -18,14 +18,16 @@
  * so a domain-specific consumer supplies its own without this module
  * knowing anything about either domain. `env-read-guard.mjs` passes its
  * own `INLINE_SCRIPT_SHORT_FLAG_CHARS` / `scanTextForProtected` at each
- * call site — its own verdicts are unchanged by this move. **This
- * parameterisation is provisioned for a future consumer, not an existing
- * one** (SMI-6744 Wave 4 L-5 governance finding): `scripts/ruflo-host-
- * guard.mjs` does not call either function at all — its H1–H9 predicates
- * detect ruflo/`@claude-flow/cli` paths and runner tokens by regex and
- * exact-match, not by scanning inline-interpreter script text — so as of
- * this module's two current consumers, only `env-read-guard.mjs` actually
- * exercises the parameterised shape.
+ * call site — its own verdicts are unchanged by this move. **The second
+ * consumer this parameterisation was provisioned for now exists (H-8 fix,
+ * SMI-6744 Wave 4 governance round, superseding the L-5 finding's "not an
+ * existing one" note)**: `scripts/lib/ruflo-host-guard-wrappers.mjs`'s
+ * `extractInlineScriptText` calls `hasInlineScriptFlag` (with its OWN
+ * per-interpreter short-flag map) as a first-pass "does this argv even
+ * carry an inline-script flag" check before extracting the script-text
+ * argument's value and scanning it for a bare `ruflo`/`claude-flow`/
+ * `claude-flow-mcp` reference — `node -e 'require("child_process").
+ * execSync("ruflo")'` is exactly the shape this closes.
  *
  * Parity claim: "behaviourally equivalent for the characterised input
  * matrix" pinned by `scripts/tests/shell-command-normalize.test.ts` (run
@@ -41,7 +43,16 @@
  * reusable normalization primitives. `scripts/ruflo-host-guard.mjs`'s own
  * `exec`-wrapper handling, brace-syntax fail-closed check, and H9 (`eval`)
  * predicate are guard-local for the same reason and are NOT in this file.
+ *
+ * `tokenize`/`basenameOf` moved to the sibling `shell-command-tokenize.mjs`
+ * (SMI-6744 Wave 4 delta governance round, same 500-line file-length
+ * pressure) and are re-exported below, so every existing import of THIS
+ * file keeps working unchanged.
  */
+
+import { basenameOf, tokenize } from './shell-command-tokenize.mjs'
+
+export { basenameOf, tokenize }
 
 /** Recognized shell wrappers whose `-c '<body>'` form carries a nested command. */
 export const SHELL_COMMANDS = new Set(['bash', 'sh', 'zsh', 'dash', 'ksh'])
@@ -49,9 +60,23 @@ export const SHELL_COMMANDS = new Set(['bash', 'sh', 'zsh', 'dash', 'ksh'])
 /**
  * Wrapper options that consume a following value, so flag-skipping does
  * not mistake that value for the wrapped command. One shared set across
- * `sudo`, `docker exec`, `docker compose`, and `varlock run` — these
- * only ever appear in wrapper-flag position, so a flag belonging to one
- * wrapper being recognized by another is harmless.
+ * `sudo`, `docker exec`, `docker compose`, and `varlock run` — these four
+ * wrappers' own flag vocabularies don't collide with each other, so a flag
+ * belonging to one being recognized by another among THESE FOUR is
+ * harmless.
+ *
+ * **That claim does not generalize to every wrapper (H-2 correction,
+ * SMI-6744 Wave 4 governance round).** `scripts/ruflo-host-guard.mjs`
+ * originally routed `exec`/`command`/`noglob`/`builtin` through this same
+ * shared set via the generic `stripFlags`, and it was NOT harmless there:
+ * this set's `-p`/`--prompt` (sudo's password-prompt flag) collided with
+ * `command -p`'s own POSIX "use the default PATH" flag, which takes NO
+ * value — `command -p ruflo memory store` was wrongly parsed as `-p`
+ * consuming `ruflo` as ITS value, leaving a residual (`memory store`) with
+ * no recognizable ruflo signal left in it. That guard now gives
+ * `exec`/`command`/`noglob`/`builtin` their OWN per-wrapper value-flag
+ * sets instead of reusing this one — see `ruflo-host-guard-wrappers.mjs`'s
+ * `LAUNCHER_TABLE`.
  */
 export const WRAPPER_VALUE_FLAGS = new Set(
   (
@@ -96,166 +121,6 @@ export const INLINE_SCRIPT_LONG_FLAGS = new Set([
  * SMI-6361 finding F6).
  */
 export const POSITIONAL_SCRIPT_COMMANDS = new Set(['awk', 'gawk', 'mawk', 'sed'])
-
-/** @param {string} p */
-export function basenameOf(p) {
-  return p.split('/').pop()
-}
-
-// --- Tokenizer (quote-aware, records command substitutions) ---
-
-/** Index just past the closing `"` starting at s[i] === '"'. */
-function skipDouble(s, i) {
-  let j = i + 1
-  while (j < s.length) {
-    if (s[j] === '\\') {
-      j += 2
-      continue
-    }
-    if (s[j] === '"') return j + 1
-    j++
-  }
-  return s.length
-}
-
-/** Balanced-paren read; s[start] === '('. */
-function readParen(s, start) {
-  let depth = 0
-  let i = start
-  while (i < s.length) {
-    const c = s[i]
-    if (c === '\\') {
-      i += 2
-      continue
-    }
-    if (c === "'") {
-      const e = s.indexOf("'", i + 1)
-      i = e === -1 ? s.length : e + 1
-      continue
-    }
-    if (c === '"') {
-      i = skipDouble(s, i)
-      continue
-    }
-    if (c === '(') {
-      depth++
-      i++
-      continue
-    }
-    if (c === ')') {
-      depth--
-      i++
-      if (depth === 0) return { inner: s.slice(start + 1, i - 1), next: i }
-      continue
-    }
-    i++
-  }
-  return { inner: s.slice(start + 1), next: s.length }
-}
-
-/**
- * Split a command string into word/operator tokens. Word tokens carry
- * their unquoted `value` plus any `$(...)` / backtick bodies in `subs`.
- * @param {string} command
- */
-export function tokenize(command) {
-  const tokens = []
-  let cur = null
-  const flush = () => {
-    if (cur !== null) tokens.push(cur)
-    cur = null
-  }
-  const word = () => {
-    if (cur === null) cur = { type: 'word', value: '', subs: [] }
-    return cur
-  }
-  const pushOp = (value, width, i) => {
-    flush()
-    tokens.push({ type: 'op', value })
-    return i + width
-  }
-
-  let i = 0
-  while (i < command.length) {
-    const c = command[i]
-    if (c === '\\') {
-      if (i + 1 < command.length) word().value += command[i + 1]
-      i += 2
-      continue
-    }
-    if (c === "'") {
-      const e = command.indexOf("'", i + 1)
-      word().value += e === -1 ? command.slice(i + 1) : command.slice(i + 1, e)
-      i = e === -1 ? command.length : e + 1
-      continue
-    }
-    if (c === '"') {
-      const w = word()
-      let j = i + 1
-      while (j < command.length && command[j] !== '"') {
-        if (command[j] === '\\') {
-          if (j + 1 < command.length) w.value += command[j + 1]
-          j += 2
-        } else if (command[j] === '$' && command[j + 1] === '(') {
-          const r = readParen(command, j + 1)
-          w.subs.push(r.inner)
-          w.value += command.slice(j, r.next)
-          j = r.next
-        } else if (command[j] === '`') {
-          const e = command.indexOf('`', j + 1)
-          const inner = e === -1 ? command.slice(j + 1) : command.slice(j + 1, e)
-          w.subs.push(inner)
-          w.value += inner
-          j = e === -1 ? command.length : e + 1
-        } else {
-          w.value += command[j]
-          j++
-        }
-      }
-      i = j < command.length ? j + 1 : command.length
-      continue
-    }
-    if (c === '`') {
-      const w = word()
-      const e = command.indexOf('`', i + 1)
-      const inner = e === -1 ? command.slice(i + 1) : command.slice(i + 1, e)
-      w.subs.push(inner)
-      w.value += inner
-      i = e === -1 ? command.length : e + 1
-      continue
-    }
-    if ((c === '$' || c === '<' || c === '>') && command[i + 1] === '(') {
-      const w = word()
-      const r = readParen(command, i + 1)
-      w.subs.push(r.inner)
-      w.value += command.slice(i, r.next)
-      i = r.next
-      continue
-    }
-    if (c === '\n') {
-      i = pushOp('\n', 1, i)
-      continue
-    }
-    if (/\s/.test(c)) {
-      flush()
-      i++
-      continue
-    }
-    const two = command.slice(i, i + 2)
-    if (two === '&&' || two === '||') {
-      i = pushOp(two, 2, i)
-      continue
-    }
-    if (c === ';' || c === '|' || c === '&' || c === '(' || c === ')' || c === '{' || c === '}') {
-      i = pushOp(c, 1, i)
-      continue
-    }
-    word().value += c
-    i++
-  }
-  flush()
-  return tokens
-}
 
 // --- Wrapper normalization ---
 

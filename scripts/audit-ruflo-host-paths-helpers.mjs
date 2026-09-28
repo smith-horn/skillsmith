@@ -59,6 +59,7 @@ export {
   rufloMcpDeniesReportLines,
 } from './audit-ruflo-mcp-denies-helpers.mjs'
 export {
+  EXPECTED_GUARD_COMMAND,
   evaluateRufloHostGuardHooks,
   rufloHostGuardHooksReportLines,
 } from './audit-ruflo-host-guard-hooks-helpers.mjs'
