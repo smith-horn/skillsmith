@@ -7,14 +7,24 @@
  *
  * Split out of `skill-installation.uninstall.ts` in SMI-6529 round 25, when
  * that file reached 504 lines against the 500-line standard — the same
- * sibling-split convention as `skill-installation.io.ts`. `buildAdoptedManifestEntry`,
- * `adoptUntrackedSkillEntry` and `updateManifestTolerantly` joined this file for
- * the same reason (ADR-171 § 5 retraction resolution): adding the ordering fix
- * and the tolerant-write primitive to `skill-installation.uninstall.ts` in
- * place would have pushed it back over the limit. `adoptUntrackedSkillEntry`
- * and `buildAdoptedManifestEntry` are re-exported from `skill-installation.uninstall.ts`
- * (and from there, `@skillsmith/core`'s public export surface) so their move
+ * sibling-split convention as `skill-installation.io.ts`. `buildAdoptedManifestEntry`
+ * and `adoptUntrackedSkillEntry` joined this file for the same reason (ADR-171
+ * § 5 retraction resolution): adding the ordering fix to
+ * `skill-installation.uninstall.ts` in place would have pushed it back over
+ * the limit. Both are re-exported from `skill-installation.uninstall.ts` (and
+ * from there, `@skillsmith/core`'s public export surface) so their move
  * changes no import path outside this pair of files.
+ *
+ * SMI-6733 Phase 1: the tolerant-write primitive that used to live here as a
+ * standalone `updateManifestTolerantly()` helper is now
+ * {@link ManifestManager.updateSafely}'s own `{ tolerant: true }` option
+ * (`skill-manifest.ts`) — a dependency-injection fix. The standalone helper
+ * took `manifest.path` and called `manifest.save()` directly, so it wrote
+ * "around" whatever `ManifestManager`-shaped object a caller injected;
+ * `adoptUntrackedSkillEntry`'s own write never went through an injected
+ * double's `updateSafely()`, which meant a test double built to intercept
+ * that call — to assert on what it receives, or to throw — was silently
+ * routed around it.
  */
 
 import type { BigIntStats } from 'fs'
@@ -23,15 +33,9 @@ import * as path from 'path'
 
 import { checkGitAtRoot } from '../install/fan-out.overwrite.js'
 import { listParkedLeftovers, parkedLeftoverWarning } from '../install/remove-if-same.js'
-import { withFileLock } from '../config/file-lock.js'
 import { hashContent } from './skill-installation.helpers.js'
-import { loadManifestLenient } from './skill-manifest.read-state.js'
 import type { ManifestManager } from './skill-manifest.js'
-import type {
-  ProgressCallback,
-  SkillManifest,
-  SkillManifestEntry,
-} from './skill-installation.types.js'
+import type { ProgressCallback, SkillManifestEntry } from './skill-installation.types.js'
 
 /**
  * SMI-6529 round 15 (cross-model review, Critical): what uninstall found at
@@ -169,59 +173,6 @@ export async function parkedWarnings(installPath: string): Promise<string[]> {
 }
 
 /**
- * ADR-171 § 4b names two wrappers "and no third" for the READ side — this is
- * a WRITE-side primitive, a different concern, and deliberately kept local to
- * this pair of files rather than added to `skill-manifest.read-state.ts`'s
- * public surface. It mirrors `ManifestManager.updateSafely()`'s own
- * lock+load+updateFn+save sequence exactly (same lock target, same label, so
- * the two stay mutually exclusive against each other and against every other
- * `updateSafely()` caller) but swaps the STRICT internal load
- * (`ManifestManager.load()` -> `loadManifestForWrite()`, which throws
- * `ManifestUnwritableError` on a corrupt/unreadable/version-unsupported
- * manifest) for the LENIENT one (`loadManifestLenient()`, which degrades to
- * an empty document instead).
- *
- * ADR-171 § 5's retraction records the conflict this resolves: SMI-6732 added
- * six `uninstall()` tests that deliberately tolerate a malformed
- * `installedSkills` (including a bare STRING, which fails ADR-171's
- * CONTAINER-level shape check and so classifies `corrupt`), and two of them
- * — `does not throw end to end when installedSkills is a string` and the
- * round-8/C2 end-to-end swap-refusal test — need untracked-skill adoption's
- * own manifest WRITE to succeed even though the manifest, at that exact
- * moment, is still corrupt. `ManifestManager.updateSafely()`'s STRICT
- * internal load would throw before ever reaching `save()`, which is exactly
- * what the round-8/C2 test's swap detection depends on NOT happening (the
- * swap is triggered by the `save()` rename itself). Adoption is unconditional
- * regardless of `force` already (ADR-139) — this makes it unconditional
- * regardless of a degraded manifest READ too, which is the same relationship
- * extended one step further, not a new one. `performUninstall`'s own
- * later, force-gated check (ADR-171 § 5 retraction resolution, Part B) is
- * what still refuses the OVERALL uninstall on a degraded read without
- * `force` — this function only keeps the adoption WRITE itself from throwing
- * before that later check, and every more specific identity/containment
- * check, gets a chance to run.
- *
- * `updateFn` receives whatever `loadManifestLenient` returns: the real
- * document on `ok`/`missing`, or a clean empty one (`{version, installedSkills:
- * {}}`) on every degraded state — NEVER the raw corrupt value. This is why
- * adoption's own `{...current.installedSkills, [key]: entry}` spread cannot
- * reproduce the `{"0":"h","1":"e",…}` string-spread hazard ADR-171 § Context
- * describes: there is no corrupt raw value left by the time `updateFn` runs
- * for it to spread. (Verified end to end for this exact fixture — see this
- * function's own tests.)
- */
-export async function updateManifestTolerantly(
-  manifest: ManifestManager,
-  updateFn: (current: SkillManifest) => SkillManifest
-): Promise<void> {
-  await withFileLock(manifest.path, 'manifest update', async () => {
-    const { manifest: current } = await loadManifestLenient(manifest.path)
-    const updated = updateFn(current)
-    await manifest.save(updated)
-  })
-}
-
-/**
  * ADR-139 (SMI-6274 Wave 4): build a manifest entry for a skill found on
  * disk with no manifest record — "adoption." Every field is reconstructed
  * from what is directly observable on disk; fields that genuinely cannot
@@ -300,14 +251,36 @@ export async function buildAdoptedManifestEntry(
  * of maintaining two copies of the same logic.
  *
  * ADR-171 § 5 retraction: the write now goes through
- * {@link updateManifestTolerantly} rather than `manifest.updateSafely()` —
- * see that function's own doc comment for why. The `current.installedSkills[
- * manifestKey]` check inside the callback is still checked against the
- * FRESH, lock-acquired state it's handed — never a caller's own stale,
- * unlocked read: if a real entry is already there by the time the lock is
- * held, that entry wins and the guessed one is discarded entirely (never
- * written) — a concurrent legitimate `install()` must never be clobbered by
- * a same-tick adoption's guess.
+ * `manifest.updateSafely(updateFn, { tolerant: true })` — SMI-6733 Phase 1
+ * moved tolerance from a standalone helper that wrote "around" the injected
+ * `ManifestManager` (calling `manifest.save()` directly, never
+ * `manifest.updateSafely()`) to an OPTION on `updateSafely()` itself, so a
+ * caller-injected double that intercepts `updateSafely` — to assert on what
+ * it receives, or to throw — is never bypassed. See
+ * {@link ManifestManager.updateSafely}'s own doc comment for the tolerant
+ * load this enables (`loadManifestLenient()` in place of the strict
+ * `ManifestManager.load()`) and why: ADR-171 § 5's retraction records the
+ * conflict — SMI-6732 added six `uninstall()` tests that deliberately
+ * tolerate a malformed `installedSkills` (including a bare STRING, which
+ * fails ADR-171's CONTAINER-level shape check and so classifies `corrupt`),
+ * and two of them need untracked-skill adoption's own manifest WRITE to
+ * succeed even though the manifest, at that exact moment, is still corrupt.
+ * The strict load would throw before ever reaching `save()`. Adoption is
+ * unconditional regardless of `force` already (ADR-139) — this makes it
+ * unconditional regardless of a degraded manifest READ too, which is the
+ * same relationship extended one step further, not a new one.
+ * `performUninstall`'s own later, force-gated check (ADR-171 § 5 retraction
+ * resolution, Part B) is what still refuses the OVERALL uninstall on a
+ * degraded read without `force` — tolerance here only keeps the adoption
+ * WRITE itself from throwing before that later check, and every more
+ * specific identity/containment check, gets a chance to run.
+ *
+ * The `current.installedSkills[manifestKey]` check inside the callback is
+ * still checked against the FRESH, lock-acquired state it's handed — never a
+ * caller's own stale, unlocked read: if a real entry is already there by the
+ * time the lock is held, that entry wins and the guessed one is discarded
+ * entirely (never written) — a concurrent legitimate `install()` must never
+ * be clobbered by a same-tick adoption's guess.
  *
  * Returns the entry now in the manifest (freshly adopted, or a real one a
  * concurrent writer got there first with) plus whether OUR write happened,
@@ -327,20 +300,23 @@ export async function adoptUntrackedSkillEntry(
   let adopted = true
 
   try {
-    await updateManifestTolerantly(manifest, (current) => {
-      const existing = current.installedSkills?.[manifestKey]
-      if (existing) {
-        resolvedEntry = existing
-        adopted = false
-        return current
-      }
-      resolvedEntry = adoptedEntry
-      adopted = true
-      return {
-        ...current,
-        installedSkills: { ...current.installedSkills, [manifestKey]: adoptedEntry },
-      }
-    })
+    await manifest.updateSafely(
+      (current) => {
+        const existing = current.installedSkills?.[manifestKey]
+        if (existing) {
+          resolvedEntry = existing
+          adopted = false
+          return current
+        }
+        resolvedEntry = adoptedEntry
+        adopted = true
+        return {
+          ...current,
+          installedSkills: { ...current.installedSkills, [manifestKey]: adoptedEntry },
+        }
+      },
+      { tolerant: true }
+    )
   } catch (adoptError) {
     return {
       adoptionError:

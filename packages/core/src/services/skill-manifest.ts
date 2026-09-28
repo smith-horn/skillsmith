@@ -10,8 +10,22 @@ import * as path from 'path'
 import { randomUUID } from 'node:crypto'
 
 import { withFileLock } from '../config/file-lock.js'
-import { loadManifestForWrite } from './skill-manifest.read-state.js'
+import { loadManifestForWrite, loadManifestLenient } from './skill-manifest.read-state.js'
 import type { SkillManifest } from './skill-installation.types.js'
+
+/**
+ * SMI-6733 Phase 1 fix: {@link ManifestManager.updateSafely}'s optional
+ * second parameter. `tolerant: true` swaps the STRICT internal load
+ * (`this.load()` -> `loadManifestForWrite()`, which throws
+ * `ManifestUnwritableError` on a corrupt/unreadable/version-unsupported
+ * manifest) for the LENIENT one (`loadManifestLenient()`, which degrades to
+ * an empty document instead of throwing). Everything else about the call —
+ * locking, the update callback, the save — is identical; this is a load-mode
+ * switch, not a second code path.
+ */
+export interface UpdateSafelyOptions {
+  tolerant?: boolean
+}
 
 /**
  * SMI-6343 Wave 1 — runtime backstop for the test-fixture manifest leak.
@@ -166,12 +180,31 @@ export class ManifestManager {
    * lock file — this ordering is load-bearing, exactly as it was for the
    * former `acquireLock()`: without it, a real-home-derived path would have
    * a lock file created in the real home before the guard ever ran.
+   *
+   * SMI-6733 Phase 1: `options.tolerant` (default `false`) routes the
+   * internal load through `loadManifestLenient()` instead of `this.load()`.
+   * This is the dependency-injection fix for a bypass a previous
+   * implementation introduced — untracked-skill adoption used to write
+   * "around" a caller-supplied `ManifestManager` via a module-local
+   * `updateManifestTolerantly()` helper that took `manifest.path` and called
+   * `manifest.save()` directly, never `manifest.updateSafely()` itself. A
+   * caller injecting a test double (or any other `ManifestManager`-shaped
+   * object) never saw its own `updateSafely` invoked, so a double that
+   * intercepts `updateSafely` — to assert on what it receives, or to throw
+   * — was silently routed around. Tolerance is now a PARAMETER of this
+   * method instead of a path outside it, so a double that ignores the extra
+   * argument still intercepts the call.
    */
-  async updateSafely(updateFn: (manifest: SkillManifest) => SkillManifest): Promise<void> {
+  async updateSafely(
+    updateFn: (manifest: SkillManifest) => SkillManifest,
+    options?: UpdateSafelyOptions
+  ): Promise<void> {
     assertNotRealUserHome(this.manifestPath, 'lock')
     await fs.mkdir(path.dirname(this.manifestPath), { recursive: true })
     await withFileLock(this.manifestPath, 'manifest update', async () => {
-      const manifest = await this.load()
+      const manifest = options?.tolerant
+        ? (await loadManifestLenient(this.manifestPath)).manifest
+        : await this.load()
       const updated = updateFn(manifest)
       await this.save(updated)
     })

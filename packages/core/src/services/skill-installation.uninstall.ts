@@ -8,11 +8,14 @@
  * 25 split `.uninstall.helpers.ts` out again for the same reason, round 7
  * split `.removal-identity.ts` off the guard module, and the ADR-171 § 5
  * retraction resolution moved `buildAdoptedManifestEntry`/
- * `adoptUntrackedSkillEntry`/`updateManifestTolerantly` into
- * `.uninstall.helpers.ts` for the same reason again — re-exported below so
- * `@skillsmith/core`'s public export surface (`exports/services.install.ts`)
- * is unaffected. One internal consumer (`skill-installation.service.ts`); not
- * part of the public export surface itself.
+ * `adoptUntrackedSkillEntry` into `.uninstall.helpers.ts` for the same reason
+ * again — re-exported below so `@skillsmith/core`'s public export surface
+ * (`exports/services.install.ts`) is unaffected. One internal consumer
+ * (`skill-installation.service.ts`); not part of the public export surface
+ * itself. SMI-6733 Phase 1: `updateManifestTolerantly` (also introduced by
+ * the ADR-171 § 5 retraction) is gone — it wrote around a caller-injected
+ * `ManifestManager` rather than through it; tolerance is now
+ * `ManifestManager.updateSafely()`'s own `{ tolerant: true }` option.
  */
 
 import * as fs from 'fs/promises'

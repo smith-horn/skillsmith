@@ -124,6 +124,46 @@ describe('ADR-171 manifest read-state classifier (SMI-6733)', () => {
       expect(result.state).toBe('corrupt')
     })
 
+    // SMI-6733 Phase 1 fix: `installedSkills: null` is byte-identical to an
+    // absent key for every consumer — `{...null}` spreads to `{}` and
+    // `Object.entries(null ?? {})`-style guards already treat it as empty,
+    // exactly like every ad-hoc tolerance guard elsewhere in this repo
+    // (`manifest.installedSkills && typeof …` short-circuits on null). The
+    // hazard set SMI-6752 actually measured harm from is non-empty strings
+    // and non-empty arrays, not nullish values, so null/undefined classify
+    // `ok` while string/number/array — including the array shapes above —
+    // stay `corrupt`. Case table lifted verbatim from the SMI-6733 Phase 1
+    // task brief.
+    describe('nullish vs hazardous installedSkills (case table)', () => {
+      it.each([
+        ['an absent key (undefined)', undefined],
+        ['explicit null', null],
+      ])(
+        'installedSkills: %s classifies `ok`, degrading to an empty skill set',
+        async (_label, value) => {
+          const doc: Record<string, unknown> = { version: '1.0.0' }
+          if (value !== undefined) doc.installedSkills = value
+          await writeManifestFile(JSON.stringify(doc))
+          const result = await readManifestState(manifestPath)
+          expect(result.state).toBe('ok')
+        }
+      )
+
+      it.each([
+        ['a plain string', 'hello'],
+        ['a number', 0],
+        ['an empty array', []],
+        ['an array of entries', [{ installPath: '/tmp/x' }]],
+      ])(
+        'installedSkills: %s still classifies `corrupt` — the hazard set, not the nullish set',
+        async (_label, value) => {
+          await writeManifestFile(JSON.stringify({ version: '1.0.0', installedSkills: value }))
+          const result = await readManifestState(manifestPath)
+          expect(result.state).toBe('corrupt')
+        }
+      )
+    })
+
     it('classifies `ok` (NOT `corrupt`) when the container is valid but an entry is malformed — SMI-6732: uninstall() has its own deliberate, tested tolerance for a malformed installedSkills entry (skill-installation.uninstall.guard.test.ts), and per-entry validation here would override it before that tolerance ever runs', async () => {
       const doc = {
         version: '1.0.0',

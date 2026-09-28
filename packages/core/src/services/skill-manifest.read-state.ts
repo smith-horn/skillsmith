@@ -118,23 +118,37 @@ function isPlainObject(value: unknown): value is Record<string, unknown> {
 }
 
 /**
- * ADR-171 § 5 (revised same day, SMI-6732): the container-level shape
- * predicate ONLY. Top level must be a non-null, non-array object; `version`
- * must be a string; `installedSkills`, if present, must be a non-null,
- * non-array object. It does NOT validate what is inside each entry — see
- * {@link UnvalidatedSkillManifest}'s doc comment for why per-entry field
- * validation was removed (it overrode `uninstall()`'s own deliberate
- * tolerance of a malformed `installedSkills`, SMI-6732). Unknown keys are
- * permitted at every depth, on the top-level object and on every entry
- * alike — this function never strips, defaults, or coerces anything, so the
- * object that flows onward is always the original `JSON.parse` value.
+ * ADR-171 § 5 (revised same day, SMI-6732; nullish carve-out SMI-6733 Phase
+ * 1): the container-level shape predicate ONLY. Top level must be a
+ * non-null, non-array object; `version` must be a string; `installedSkills`,
+ * if present and non-nullish, must be a non-null, non-array object. It does
+ * NOT validate what is inside each entry — see {@link UnvalidatedSkillManifest}'s
+ * doc comment for why per-entry field validation was removed (it overrode
+ * `uninstall()`'s own deliberate tolerance of a malformed `installedSkills`,
+ * SMI-6732). Unknown keys are permitted at every depth, on the top-level
+ * object and on every entry alike — this function never strips, defaults, or
+ * coerces anything, so the object that flows onward is always the original
+ * `JSON.parse` value.
+ *
+ * `installedSkills: null` classifies `ok`, not `corrupt`, exactly like an
+ * absent key (SMI-6733 Phase 1 — re-measured from a wrong "any non-object
+ * installedSkills is corrupt" premise). `null` is byte-identical to absent
+ * for every consumer: `{...null}` spreads to `{}` and every ad-hoc tolerance
+ * guard elsewhere in this repo already treats it that way (`manifest
+ * .installedSkills && typeof …` short-circuits on null). The hazard set
+ * measured to cause real harm (SMI-6752) is non-empty strings and non-empty
+ * arrays — a string spreads char-indexed and an array of entries spreads
+ * index-keyed, both of which corrupt `installedSkills` on the next write.
+ * Strings, numbers, and both array forms (empty and populated) still
+ * classify `corrupt`; the array rejection in particular is load-bearing
+ * (see the "array trap" test above).
  */
 function isValidManifestShape(value: unknown): value is UnvalidatedSkillManifest {
   if (!isPlainObject(value)) return false
   if (typeof value.version !== 'string') return false
 
   const installedSkills = value.installedSkills
-  if (installedSkills === undefined) return true
+  if (installedSkills === undefined || installedSkills === null) return true
   return isPlainObject(installedSkills)
 }
 
