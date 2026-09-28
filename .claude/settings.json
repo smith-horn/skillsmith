@@ -1,12 +1,7 @@
 {
-  "env": {
-    "CLAUDE_FLOW_AUTO_COMMIT": "false",
-    "CLAUDE_FLOW_AUTO_PUSH": "false",
-    "CLAUDE_FLOW_REMOTE_EXECUTION": "true"
-  },
+  "env": {},
   "permissions": {
     "allow": [
-      "Bash(npx ruflo:*)",
       "Bash(npm run lint)",
       "Bash(npm run test:*)",
       "Bash(npm test:*)",
@@ -77,7 +72,94 @@
       "Read(//Users/williamsmith/Documents/GitHub/Smith-Horn/skillsmith/.env)",
       "Read(//Users/williamsmith/Documents/GitHub/Smith-Horn/skillsmith/.worktrees/**/.env)",
       "Bash(cat .env)",
-      "Bash(cat .env:*)"
+      "Bash(cat .env:*)",
+      "Bash(npx ruflo)",
+      "Bash(npx ruflo *)",
+      "Bash(npx ruflo@*)",
+      "Bash(npx -y ruflo)",
+      "Bash(npx -y ruflo *)",
+      "Bash(npx -y ruflo@*)",
+      "Bash(npx --yes ruflo)",
+      "Bash(npx --yes ruflo *)",
+      "Bash(npx --yes ruflo@*)",
+      "Bash(npx claude-flow)",
+      "Bash(npx claude-flow *)",
+      "Bash(npx claude-flow@*)",
+      "Bash(npx @claude-flow/cli)",
+      "Bash(npx @claude-flow/cli *)",
+      "Bash(npx @claude-flow/cli@*)",
+      "Bash(npm exec ruflo)",
+      "Bash(npm exec ruflo *)",
+      "Bash(npm exec ruflo@*)",
+      "Bash(npm exec -- ruflo)",
+      "Bash(npm exec -- ruflo *)",
+      "Bash(npm exec -- ruflo@*)",
+      "Bash(npm x ruflo)",
+      "Bash(npm x ruflo *)",
+      "Bash(npm x ruflo@*)",
+      "Bash(npm x -- ruflo)",
+      "Bash(npm x -- ruflo *)",
+      "Bash(npm x -- ruflo@*)",
+      "Bash(pnpm dlx ruflo)",
+      "Bash(pnpm dlx ruflo *)",
+      "Bash(pnpm dlx ruflo@*)",
+      "Bash(yarn dlx ruflo)",
+      "Bash(yarn dlx ruflo *)",
+      "Bash(yarn dlx ruflo@*)",
+      "Bash(bunx ruflo)",
+      "Bash(bunx ruflo *)",
+      "Bash(bunx ruflo@*)",
+      "Bash(node node_modules/ruflo/*)",
+      "Bash(node ./node_modules/ruflo/*)",
+      "Bash(node node_modules/@claude-flow/cli/*)",
+      "Bash(node ./node_modules/@claude-flow/cli/*)",
+      "Bash(node node_modules/.bin/ruflo)",
+      "Bash(node node_modules/.bin/ruflo *)",
+      "Bash(node node_modules/.bin/claude-flow)",
+      "Bash(node node_modules/.bin/claude-flow *)",
+      "Bash(node_modules/.bin/ruflo)",
+      "Bash(node_modules/.bin/ruflo *)",
+      "Bash(./node_modules/.bin/ruflo)",
+      "Bash(./node_modules/.bin/ruflo *)",
+      "Bash(ruflo)",
+      "Bash(ruflo *)",
+      "mcp__ruflo__terminal_execute",
+      "mcp__ruflo__agent_execute",
+      "mcp__ruflo__wasm_agent_tool",
+      "mcp__ruflo__github_issue_track",
+      "mcp__ruflo__github_metrics",
+      "mcp__ruflo__github_pr_manage",
+      "mcp__ruflo__github_repo_analyze",
+      "mcp__ruflo__github_workflow",
+      "mcp__ruflo__browser_act",
+      "mcp__ruflo__browser_back",
+      "mcp__ruflo__browser_check",
+      "mcp__ruflo__browser_click",
+      "mcp__ruflo__browser_close",
+      "mcp__ruflo__browser_cookie_use",
+      "mcp__ruflo__browser_eval",
+      "mcp__ruflo__browser_fill",
+      "mcp__ruflo__browser_forward",
+      "mcp__ruflo__browser_get-text",
+      "mcp__ruflo__browser_get-title",
+      "mcp__ruflo__browser_get-url",
+      "mcp__ruflo__browser_get-value",
+      "mcp__ruflo__browser_hover",
+      "mcp__ruflo__browser_open",
+      "mcp__ruflo__browser_press",
+      "mcp__ruflo__browser_reload",
+      "mcp__ruflo__browser_screenshot",
+      "mcp__ruflo__browser_scroll",
+      "mcp__ruflo__browser_select",
+      "mcp__ruflo__browser_session-list",
+      "mcp__ruflo__browser_session_end",
+      "mcp__ruflo__browser_session_record",
+      "mcp__ruflo__browser_session_replay",
+      "mcp__ruflo__browser_snapshot",
+      "mcp__ruflo__browser_template_apply",
+      "mcp__ruflo__browser_type",
+      "mcp__ruflo__browser_uncheck",
+      "mcp__ruflo__browser_wait"
     ]
   },
   "hooks": {
@@ -94,6 +176,11 @@
             "type": "command",
             "timeout": 5,
             "command": "node \"$CLAUDE_PROJECT_DIR/scripts/env-read-guard.mjs\""
+          },
+          {
+            "type": "command",
+            "timeout": 5,
+            "command": "node \"$CLAUDE_PROJECT_DIR/scripts/ruflo-host-guard.mjs\""
           }
         ]
       },
@@ -123,6 +210,16 @@
             "type": "command",
             "timeout": 5,
             "command": "node \"$CLAUDE_PROJECT_DIR/scripts/linear-issue-creation-guard.mjs\""
+          }
+        ]
+      },
+      {
+        "matcher": "^mcp__ruflo__hooks_session-start$",
+        "hooks": [
+          {
+            "type": "command",
+            "timeout": 5,
+            "command": "node \"$CLAUDE_PROJECT_DIR/scripts/ruflo-host-guard.mjs\""
           }
         ]
       }
