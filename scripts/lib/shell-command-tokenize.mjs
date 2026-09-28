@@ -12,6 +12,7 @@
  */
 
 import { decodeEscapeAt } from './shell-escape-decode.mjs'
+import { consumeHeredocBodies, parseHeredocDelimiter } from './shell-command-heredoc.mjs'
 
 /** @param {string} p */
 export function basenameOf(p) {
@@ -34,8 +35,12 @@ function skipDouble(s, i) {
   return s.length
 }
 
-/** Balanced-paren read; s[start] === '('. */
-function readParen(s, start) {
+/**
+ * Balanced-paren read; s[start] === '('. Exported (SMI-6869 Fix B) so
+ * `shell-command-heredoc.mjs` can reuse it to scan an unquoted heredoc
+ * body for `$(...)` substitutions the same way ordinary quoted text does.
+ */
+export function readParen(s, start) {
   let depth = 0
   let i = start
   while (i < s.length) {
@@ -70,12 +75,53 @@ function readParen(s, start) {
 }
 
 /**
+ * Parses one redirect operator's characters starting at `command[i]` — `c`
+ * (`command[i]`) must be `<`, `>`, or `&` (the last only when
+ * `command[i+1] === '>'`, i.e. `&>`/`&>>`). Recognizes every POSIX/Bash
+ * redirect operator: `<`, `<<`, `<<-`, `<<<`, `<>`, `<&`, `>`, `>>`, `>|`,
+ * `>&`, `&>`, `&>>` (SMI-6869 Fix A).
+ * @param {string} command
+ * @param {number} i
+ * @returns {{ op: string, next: number }}
+ */
+function readRedirectOperator(command, i) {
+  const c = command[i]
+  if (c === '&') {
+    if (command[i + 2] === '>') return { op: '&>>', next: i + 3 }
+    return { op: '&>', next: i + 2 }
+  }
+  if (c === '<') {
+    if (command[i + 1] === '<') {
+      if (command[i + 2] === '<') return { op: '<<<', next: i + 3 }
+      if (command[i + 2] === '-') return { op: '<<-', next: i + 3 }
+      return { op: '<<', next: i + 2 }
+    }
+    if (command[i + 1] === '>') return { op: '<>', next: i + 2 }
+    if (command[i + 1] === '&') return { op: '<&', next: i + 2 }
+    return { op: '<', next: i + 1 }
+  }
+  // c === '>'
+  if (command[i + 1] === '>') return { op: '>>', next: i + 2 }
+  if (command[i + 1] === '|') return { op: '>|', next: i + 2 }
+  if (command[i + 1] === '&') return { op: '>&', next: i + 2 }
+  return { op: '>', next: i + 1 }
+}
+
+/**
  * Split a command string into word/operator tokens. Word tokens carry
- * their unquoted `value` plus any `$(...)` / backtick bodies in `subs`.
+ * their unquoted `value` plus any `$(...)` / backtick bodies in `subs`. A
+ * redirect operator (and any target GLUED directly onto it, no space) is
+ * ONE word token marked `redirect: true` (SMI-6869 Fix A) — consumers that
+ * build argv from word tokens must exclude these; `findShellFedLiteralText`
+ * deliberately does NOT, since it still needs to see a glued `<<<text`
+ * shape. A heredoc (`<<`/`<<-`) produces its own `{type: 'heredoc', ...}`
+ * token instead, filled in once the introducing line's newline is reached
+ * (SMI-6869 Fix B) — see `shell-command-heredoc.mjs`.
  * @param {string} command
  */
 export function tokenize(command) {
   const tokens = []
+  const pendingHeredocs = []
   let cur = null
   const flush = () => {
     if (cur !== null) tokens.push(cur)
@@ -182,8 +228,56 @@ export function tokenize(command) {
       i = r.next
       continue
     }
+    // SMI-6869 Fix A: `&>`/`&>>` (redirect both stdout+stderr) — checked
+    // before the plain `&` operator dispatch below, and before the `<`/`>`
+    // branch (which handles every OTHER redirect form) since this one
+    // starts with `&`, not `<`/`>`. No fd-prefix support here (real Bash
+    // does not allow a leading digit on `&>`/`&>>` either) — always flush
+    // whatever word was in progress.
+    if (c === '&' && command[i + 1] === '>') {
+      flush()
+      const { op, next } = readRedirectOperator(command, i)
+      cur = { type: 'word', value: op, subs: [], redirect: true }
+      i = next
+      continue
+    }
+    // SMI-6869 Fix A/B: every other redirect operator (`<`, `<<`, `<<-`,
+    // `<<<`, `<>`, `<&`, `>`, `>>`, `>|`, `>&`) and the heredoc forms
+    // (`<<`/`<<-`) they include. An unquoted `<`/`>` ends the current word
+    // UNLESS that word is a bare digit sequence (a file-descriptor
+    // redesignator, e.g. `2>`), in which case the digits stay attached to
+    // the operator instead of becoming their own word token.
+    if (c === '<' || c === '>') {
+      let fdPrefix = ''
+      if (cur !== null && cur.subs.length === 0 && /^[0-9]+$/.test(cur.value)) {
+        fdPrefix = cur.value
+        cur = null
+      } else {
+        flush()
+      }
+      const { op, next } = readRedirectOperator(command, i)
+      if (op === '<<' || op === '<<-') {
+        const dash = op === '<<-'
+        const { delim, quoted, next: afterDelim } = parseHeredocDelimiter(command, next)
+        const heredocToken = { type: 'heredoc', value: null, quoted, subs: [], delim, dash }
+        tokens.push(heredocToken)
+        pendingHeredocs.push(heredocToken)
+        i = afterDelim
+        continue
+      }
+      cur = { type: 'word', value: fdPrefix + op, subs: [], redirect: true }
+      i = next
+      continue
+    }
     if (c === '\n') {
       i = pushOp('\n', 1, i)
+      // SMI-6869 Fix B: this newline ends the line that opened every
+      // still-pending heredoc — consume their bodies now, before
+      // tokenizing continues, so the body lines never get tokenized as
+      // ordinary command text (the bug this fix exists to close).
+      if (pendingHeredocs.length > 0) {
+        i = consumeHeredocBodies(command, i, pendingHeredocs)
+      }
       continue
     }
     if (/\s/.test(c)) {
@@ -196,6 +290,13 @@ export function tokenize(command) {
       i = pushOp(two, 2, i)
       continue
     }
+    // `|&` is shorthand for a pipe that also redirects stderr — treated
+    // here as plain `|` (SMI-6869 Fix A): this guard's own segmentation
+    // only needs to know a pipe boundary occurred, not the stderr detail.
+    if (two === '|&') {
+      i = pushOp('|', 2, i)
+      continue
+    }
     if (c === ';' || c === '|' || c === '&' || c === '(' || c === ')' || c === '{' || c === '}') {
       i = pushOp(c, 1, i)
       continue
@@ -204,5 +305,16 @@ export function tokenize(command) {
     i++
   }
   flush()
+  // SMI-6869 Fix B safety net: a heredoc whose introducing line has no
+  // trailing newline at all (the delimiter word is the literal end of the
+  // whole command string) never reaches the newline-triggered consumption
+  // above — treat its body as empty rather than leaving `value: null`.
+  if (pendingHeredocs.length > 0) {
+    for (const token of pendingHeredocs) {
+      token.value = ''
+      token.subs = []
+    }
+    pendingHeredocs.length = 0
+  }
   return tokens
 }

@@ -973,6 +973,298 @@ describe('decide() — M-6: bare-name inversion closes unmodelled launchers (del
   })
 })
 
+// SMI-6869 Fix A: `<`/`>`/`&>` were plain word characters, and `&` was
+// always a job-control operator, before this fix — so a redirect glued
+// directly onto `ruflo`/a runner hid the name inside one opaque token no
+// H-predicate ever split apart (bypass), while a digit-prefixed redirect
+// like `2>&1` split into a leftover `2>` word plus a stray `1` word that
+// `checkUnresolvedCommand`'s all-digit arm then denied on (false
+// positive). See scripts/lib/shell-command-tokenize.mjs's own
+// `readRedirectOperator` for the tokenizer-level fix these verdicts rest
+// on, and shell-command-normalize.test.ts's own SMI-6869 Fix A block for
+// the token-shape-level tests.
+describe('decide() — SMI-6869 Fix A: redirect operators are not word boundaries', () => {
+  const bypassArms: Array<[string, string]> = [
+    ['ruflo>/dev/null memory store', 'H4'],
+    ['ruflo>>/tmp/o memory store', 'H4'],
+    ['ruflo</dev/null memory store', 'H4'],
+    ['npx ruflo>/dev/null', 'H5'],
+    ['bash<<<"ruflo memory store"', 'H4'],
+  ]
+  it.each(bypassArms)(
+    '%s -> deny (%s) (bypass under the pre-fix tokenizer: the glued redirect hid the name)',
+    (command, predicate) => {
+      const result = decide(bashCall(command), {})
+      expect(result.action).toBe('deny')
+      expect(reasonOf(result)).toContain(predicate)
+    }
+  )
+
+  // The bypass rows above must get the SAME predicate label as their
+  // plain, unredirected spelling — not a hard-coded string repeated at
+  // each call site, so a future change to which predicate closes a given
+  // shape cannot silently drift the two apart.
+  const labelParityPairs: Array<[string, string]> = [
+    ['ruflo>/dev/null memory store', 'ruflo memory store'],
+    ['ruflo>>/tmp/o memory store', 'ruflo memory store'],
+    ['ruflo</dev/null memory store', 'ruflo memory store'],
+    ['npx ruflo>/dev/null', 'npx ruflo'],
+    ['bash<<<"ruflo memory store"', 'bash <<< "ruflo memory store"'],
+  ]
+  it.each(labelParityPairs)(
+    '%s gets the same predicate label as its plain/spaced spelling %s',
+    (glued, plain) => {
+      const gluedResult = decide(bashCall(glued), {})
+      const plainResult = decide(bashCall(plain), {})
+      expect(gluedResult.action).toBe('deny')
+      expect(plainResult.action).toBe('deny')
+      const gluedLabel = /\[ruflo-host-guard\] (\S+):/.exec(reasonOf(gluedResult))?.[1]
+      const plainLabel = /\[ruflo-host-guard\] (\S+):/.exec(reasonOf(plainResult))?.[1]
+      expect(gluedLabel).toBeDefined()
+      expect(gluedLabel).toBe(plainLabel)
+    }
+  )
+
+  const falsePositiveArms = [
+    'gh pr checks 2957 2>&1 | sort',
+    'docker stop x 2>&1',
+    'git push -u origin fix/x > /tmp/o 2>&1; rc=$?',
+    'echo warn >&2',
+  ]
+  it.each(falsePositiveArms)(
+    '%s -> allow (false positive under the pre-fix tokenizer: 2>&1/> ... 2>&1 was misparsed into a stray argv element)',
+    (command) => {
+      expect(decide(bashCall(command), {}).action).toBe('allow')
+    }
+  )
+
+  it('control: ruflo 2>/dev/null memory store -> deny (H4, already correct pre-fix, unaffected)', () => {
+    const result = decide(bashCall('ruflo 2>/dev/null memory store'), {})
+    expect(result.action).toBe('deny')
+    expect(reasonOf(result)).toContain('H4')
+  })
+
+  const controlsAllow = ['ls &> /tmp/o', 'ls 2>/dev/null', 'sleep 5 & wait', 'ls |& cat']
+  it.each(controlsAllow)(
+    'control: %s -> allow (already correct pre-fix, unaffected)',
+    (command) => {
+      expect(decide(bashCall(command), {}).action).toBe('allow')
+    }
+  )
+})
+
+// SMI-6869 Fix B: the tokenizer had no heredoc state — a `<<`/`<<-` body's
+// own lines tokenized as separate, ordinary command-line segments. This
+// let a line-initial backtick inside the body reach the guard as a
+// command substitution to evaluate (a false-positive denial on a QUOTED
+// heredog, whose body a real shell never substitutes at all), and
+// separately meant a heredoc directly or indirectly feeding a bare shell
+// (`bash <<'EOF' ... EOF`, `cat <<'EOF' | bash`) was never recognized as
+// shell-fed text at all (a bypass).
+describe('decide() — SMI-6869 Fix B: heredoc bodies are not tokenised as command lines', () => {
+  it('a QUOTED heredoc redirected to /dev/null, whose body text happens to start a line with a backtick, is data -> allow (the shell substitutes nothing in a quoted heredoc)', () => {
+    const command =
+      "cat <<'EOF' > /dev/null\n" +
+      '`readManifestState` classifies into ok / missing / corrupt / unreadable /\n' +
+      'version_unsupported. The union carries a manifest ONLY on ok and missing.\n' +
+      'EOF\necho done'
+    expect(decide(bashCall(command), {}).action).toBe('allow')
+  })
+
+  // MEASURED (SMI-6598 discipline): this one does NOT fail against the
+  // unfixed guard — under the pre-fix tokenizer, the heredoc body's own
+  // "ruflo memory store" line surfaces as its OWN independent top-level
+  // segment (the very bug Fix B closes) and denies via H4 for that
+  // unrelated, accidental reason. Kept as a control pinning the CORRECT
+  // mechanism/label post-fix (genuine shell-fed recognition via the
+  // heredoc directly redirected onto bash's own stdin), not a bypass this
+  // test proves closed.
+  it("control: bash <<'EOF' ... EOF (a heredoc redirected directly onto a bare shell's own stdin) -> deny via the shell-fed path (H4), not unresolved-command", () => {
+    const command = "bash <<'EOF'\nruflo memory store\nEOF"
+    const result = decide(bashCall(command), {})
+    expect(result.action).toBe('deny')
+    expect(reasonOf(result)).toContain('H4')
+    expect(reasonOf(result)).not.toContain('unresolved-command')
+  })
+
+  // MEASURED: also does not fail against the unfixed guard, same reason as
+  // the control directly above (the body line independently denies as its
+  // own accidental top-level segment pre-fix). Control, not a red arm.
+  it("control: cat <<'EOF' | bash with a ruflo body -> deny (the heredoc is relayed through cat's stdout into the pipe)", () => {
+    const command = "cat <<'EOF' | bash\nruflo memory store\nEOF"
+    expect(decide(bashCall(command), {}).action).toBe('deny')
+  })
+
+  // MEASURED: also does not fail against the unfixed guard — the
+  // tokenizer's own `$(...)`/backtick substitution recognition is
+  // unconditional (pre-dates this fix entirely), so the embedded `$(ruflo
+  // memory store)` was already recursed into as a real command regardless
+  // of heredoc-awareness. Control, not a red arm.
+  it('control: cat <<EOF with an UNQUOTED $(ruflo memory store) body -> deny (the invoking shell expands $(...) while assembling the heredoc, regardless of which command consumes it)', () => {
+    const command = 'cat <<EOF\n$(ruflo memory store)\nEOF'
+    expect(decide(bashCall(command), {}).action).toBe('deny')
+  })
+
+  it("cat <<'EOF' with the SAME body but a QUOTED delimiter -> allow (quoted heredocs disable substitution entirely, so nothing executes)", () => {
+    const command = "cat <<'EOF'\n$(ruflo memory store)\nEOF"
+    expect(decide(bashCall(command), {}).action).toBe('allow')
+  })
+
+  it('cat <<EOF with a bare, unquoted "ruflo memory store" body and no pipe -> allow: it is DATA handed to cat, never executed by anything', () => {
+    const command = 'cat <<EOF\nruflo memory store\nEOF'
+    expect(decide(bashCall(command), {}).action).toBe('allow')
+  })
+
+  it('git commit -F - <<\'EOF\' with "npx ruflo" inside the commit message body -> allow (git never executes its own commit message text, and the heredoc is quoted — nothing about this shape is code)', () => {
+    const command =
+      "git commit -F - <<'EOF'\nMentions the npx ruflo workaround discussed in review\nEOF"
+    expect(decide(bashCall(command), {}).action).toBe('allow')
+  })
+})
+
+// SMI-6869 Fix C: `evaluateGuardCommand`'s H-8 recursion re-tokenizes
+// inline interpreter SCRIPT TEXT (not a shell command line) through this
+// guard's own shell-shaped pipeline. Program syntax this guard's tokenizer
+// happens to treat as command-splitting punctuation (here, `(`/`)`
+// isolating a lone numeric argument, e.g. `padEnd(15)`) could trip arms
+// that presume the text IS a shell command line — "embedded" mode turns
+// those three arms off for exactly this one recursion site.
+describe('decide() — SMI-6869 Fix C: embedded inline-script evaluation skips shell-command-line-only arms', () => {
+  it('a multi-line node -e script whose own JS syntax (padEnd(15)) would trip the all-digit unresolved-command arm under naive re-evaluation -> allow', () => {
+    const command =
+      "node -e 'const cases = { a: 1 };\n" +
+      'for (const [name, v] of Object.entries(cases)) {\n' +
+      '  console.log(name.padEnd(15), JSON.stringify({ ...v }));\n' +
+      "}'"
+    expect(decide(bashCall(command), {}).action).toBe('allow')
+  })
+
+  // MEASURED: does not fail against the unfixed guard — H8-script's own
+  // `INLINE_SCRIPT_BARE_NAME_RE` scan denies this BEFORE the embedded-mode
+  // recursion is ever reached (the quoted "npx ruflo memory store" string
+  // matches its quote-delimited-run alternative directly), so embedded
+  // mode's own arm-gating is not what closes this one. Control, not a red
+  // arm for Fix C specifically — kept because the task's own case table
+  // names it and because it is a genuine regression pin either way.
+  it('control: node -e with a nested require("child_process").exec("npx ruflo memory store") -> deny (H8-script, before embedded-mode recursion is reached)', () => {
+    const command = 'node -e \'require("child_process").exec("npx ruflo memory store")\''
+    expect(decide(bashCall(command), {}).action).toBe('deny')
+  })
+
+  // MEASURED: same reason as directly above (H8-script fires first).
+  it('control: python3 -c with os.system("ruflo memory store") -> deny (H8-script, before embedded-mode recursion is reached)', () => {
+    const command = `python3 -c 'import os; os.system("ruflo memory store")'`
+    expect(decide(bashCall(command), {}).action).toBe('deny')
+  })
+
+  // Correction round: the ORIGINAL Fix C left the `$`-in-head arm of
+  // checkUnresolvedCommand active even when embedded — a bare `$` inside a
+  // JS string literal is not a shell expansion, so re-tokenizing this
+  // script's own text split `$SP/probe-final.out,utf8` off as a fake
+  // "unresolved command" head and denied a script that never mentions
+  // ruflo at all. MEASURED to deny (unresolved-command, matched on
+  // `$SP/probe-final.out,utf8`) before this correction.
+  it('a node -e script whose text contains a literal $ inside a string (readFileSync path) -> allow (not a shell expansion)', () => {
+    const command =
+      "node -e \"const L=require('fs').readFileSync('$SP/probe-final.out','utf8').split('\\n');console.log(L.length)\""
+    expect(decide(bashCall(command), {}).action).toBe('allow')
+  })
+
+  // Control: the SAME $-in-head arm must stay active on a REAL shell
+  // command line (not embedded) — MEASURED first: denies via
+  // unresolved-command, matched on `$X` (the assigned value "echo" is not
+  // ruflo-shaped, so H8(i) never fires on the `X=echo` segment, isolating
+  // this arm specifically).
+  it('control: X=echo; $X memory store -> still denies via unresolved-command (matched on $X) on a real shell line', () => {
+    const command = 'X=echo; $X memory store'
+    const result = decide(bashCall(command), {})
+    expect(result.action).toBe('deny')
+    expect(reasonOf(result)).toContain('unresolved-command')
+  })
+})
+
+// SMI-6869: measured against a peer's report that these three deny under
+// the CURRENT (pre-fix) guard. MEASURED RESULT (SMI-6598 discipline): all
+// three already ALLOW under the unfixed guard too — none of them is a red
+// arm, and the peer's report does not reproduce. Recorded here as the
+// correct, verified behavior (and in the task's own report) rather than
+// silently dropped.
+describe('decide() — SMI-6869: read-only gh/pooler-psql.sh commands stay allowed', () => {
+  const commands = [
+    'gh workflow run indexer-backfill.yml --help',
+    'gh run view 36462245848 --json status,conclusion,updatedAt',
+    './scripts/pooler-psql.sh --help',
+  ]
+  it.each(commands)('%s -> allow', (command) => {
+    expect(decide(bashCall(command), {}).action).toBe('allow')
+  })
+})
+
+// SMI-6869 Fix D: the H5 arm (checkH1toH7) denies ANY RUNNER_TOKEN_RE-
+// shaped token appearing anywhere after a runner basename, with no notion
+// that npm's own SUBCOMMAND determines whether that token is ever
+// executed — `npm ls ruflo`/`npm view ruflo`/etc. only ever query
+// metadata, never spawn the named package as a process, unlike `npm
+// exec`/`npm x`/a bare `npx`. MEASURED (SMI-6598 discipline) against the
+// pre-Fix-D guard before writing `isReadOnlyNpmForm`: every read-only-arm
+// row below denied via H5; every executing-form control below already
+// denied via H5 too (same label, unaffected by this fix); `npm ls -g
+// ruflo` and `npm uninstall -g ruflo --dry-run` already allowed (pre-
+// existing Stage 1 `isSanctionedNpmForm` exact forms, unaffected).
+describe('decide() — SMI-6869 Fix D: read-only npm subcommands with a package-name argument allow', () => {
+  const redArms = [
+    'npm ls ruflo',
+    'npm view ruflo version',
+    'npm explain ruflo',
+    'npm ls --depth=0 ruflo',
+    'npm list ruflo',
+    'npm ll ruflo',
+    'npm la ruflo',
+    'npm info ruflo',
+    'npm show ruflo',
+    'npm why ruflo',
+    'npm outdated ruflo',
+    'npm search ruflo',
+    'npm config get ruflo',
+  ]
+  it.each(redArms)('%s -> allow (H5 denied this before Fix D)', (command) => {
+    expect(decide(bashCall(command), {}).action).toBe('allow')
+  })
+
+  // Control: already allowed pre-fix via Stage 1's own exact-form
+  // allowlist (isSanctionedNpmForm), not via this fix — kept alongside the
+  // red arms above since it is the same read-only-subcommand family.
+  it('control: npm ls -g ruflo -> allow (pre-existing Stage 1 sanctioned form, unaffected)', () => {
+    expect(decide(bashCall('npm ls -g ruflo'), {}).action).toBe('allow')
+  })
+
+  // Executing forms must keep denying, with the SAME label measured
+  // against the pre-Fix-D guard (H5) — not a hard-coded string repeated
+  // at each call site, so a future change to which predicate closes a
+  // given shape cannot silently drift the assertion apart from reality.
+  const executingForms = [
+    'npm exec ruflo',
+    'npm x ruflo',
+    'npm exec -- ruflo',
+    'npx ruflo',
+    'npm run ruflo',
+  ]
+  it.each(executingForms)(
+    'control: %s -> still denies, label unchanged from pre-Fix-D (H5)',
+    (command) => {
+      const result = decide(bashCall(command), {})
+      expect(result.action).toBe('deny')
+      expect(reasonOf(result)).toContain('H5')
+    }
+  )
+
+  // Control: already allowed pre-fix, unrelated to this fix (Stage 1's
+  // own `--dry-run` allowance on the uninstall form).
+  it('control: npm uninstall -g ruflo --dry-run -> allow (pre-existing Stage 1 sanctioned form, unaffected)', () => {
+    expect(decide(bashCall('npm uninstall -g ruflo --dry-run'), {}).action).toBe('allow')
+  })
+})
+
 // --- SMI-6854 startDaemon shapes ---
 
 describe('decide() — mcp__ruflo__hooks_session-start startDaemon gate (SMI-6854)', () => {

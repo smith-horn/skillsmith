@@ -5,11 +5,13 @@
  * every export here is a pure function or constant, no I/O, no state.
  * `checkH1toH7` and the verdict-shape constructors this file's own
  * predicates call (`ALLOW`, `denyInternalError`, `denyMalformedInput`,
- * `denyStartDaemon`, `denyWith`) live in their own sibling files
- * (`ruflo-host-guard-h1to7.mjs`, `ruflo-host-guard-verdicts.mjs` —
- * governance-round split, same 500-line pressure) and are re-exported here
- * so `scripts/ruflo-host-guard.mjs`'s own import statement needed no
- * change across either split. `RUNNER_BASENAMES`/`RUNNER_TOKEN_RE`
+ * `denyStartDaemon`, `denyWith`), plus the two npm-form predicates
+ * (`isSanctionedNpmForm`, `isReadOnlyNpmForm`), live in their own sibling
+ * files (`ruflo-host-guard-h1to7.mjs`, `ruflo-host-guard-verdicts.mjs`,
+ * `ruflo-host-guard-npm.mjs` — the last one SMI-6869 Fix D's own split,
+ * same 500-line pressure as the other two) and are re-exported here so
+ * `scripts/ruflo-host-guard.mjs`'s own import statement needed no change
+ * across any of the three splits. `RUNNER_BASENAMES`/`RUNNER_TOKEN_RE`
  * (`ruflo-host-guard-h1to7.mjs`) are also imported here, for this file's
  * OWN internal use (`checkRunnerVariableArgument`/`checkBraceSegment` and
  * `checkAssignmentValuePredicate` respectively) — but, unlike
@@ -37,6 +39,7 @@
 
 import { basenameOf, stripFlags } from './shell-command-normalize.mjs'
 import { RUNNER_BASENAMES, RUNNER_TOKEN_RE, checkH1toH7 } from './ruflo-host-guard-h1to7.mjs'
+import { isReadOnlyNpmForm, isSanctionedNpmForm } from './ruflo-host-guard-npm.mjs'
 import {
   ALLOW,
   denyInternalError,
@@ -45,14 +48,16 @@ import {
   denyWith,
 } from './ruflo-host-guard-verdicts.mjs'
 
-export { checkH1toH7, ALLOW, denyInternalError, denyMalformedInput, denyStartDaemon, denyWith }
-
-/** The exact npm inspection/remediation forms Stage 1 allows (design § 1(b) row 3). */
-const NPM_ALLOW_FORMS = [
-  ['ls', '-g', 'ruflo'],
-  ['view', 'ruflo'],
-  ['uninstall', '-g', 'ruflo'],
-]
+export {
+  checkH1toH7,
+  ALLOW,
+  denyInternalError,
+  denyMalformedInput,
+  denyStartDaemon,
+  denyWith,
+  isReadOnlyNpmForm,
+  isSanctionedNpmForm,
+}
 
 /**
  * Stage 1 row 1 — `docker exec skillsmith-ruflo-1 …` (design § 1(b), plan
@@ -83,39 +88,6 @@ export function isSanctionedDockerExec(rawValues) {
   }
   rest = stripFlags(rest)
   return rest[0] === 'skillsmith-ruflo-1'
-}
-
-/** The uninstall form, named separately so the L-B `--dry-run` allowance below can reference it. */
-const NPM_UNINSTALL_FORM = ['uninstall', '-g', 'ruflo']
-
-/**
- * Stage 1 row 3 — the three exact npm inspection/remediation forms,
- * evaluated AFTER normal wrapper normalization (same stage as H1–H8).
- *
- * `npm uninstall -g ruflo --dry-run` is also sanctioned (L-B fix, SMI-6744
- * Wave 4 governance round) — named as its own exact suffix, not a generic
- * "any extra flag is fine" widening: `--dry-run` makes this form STRICTLY
- * SAFER than the already-sanctioned bare uninstall (no actual removal
- * happens), so accepting it narrows nothing this Stage 1 allowlist
- * otherwise protects.
- * @param {string[]} argvLower the post-normalize, lowercased argv
- */
-export function isSanctionedNpmForm(argvLower) {
-  if (argvLower.length === 0) return false
-  if (basenameOf(argvLower[0]) !== 'npm') return false
-  const rest = argvLower.slice(1)
-  if (
-    NPM_ALLOW_FORMS.some(
-      (form) => rest.length === form.length && form.every((tok, i) => rest[i] === tok)
-    )
-  ) {
-    return true
-  }
-  return (
-    rest.length === NPM_UNINSTALL_FORM.length + 1 &&
-    NPM_UNINSTALL_FORM.every((tok, i) => rest[i] === tok) &&
-    rest[NPM_UNINSTALL_FORM.length] === '--dry-run'
-  )
 }
 
 /**
@@ -299,7 +271,10 @@ export function checkBraceSegment(segmentTokens) {
   )
   if (braceIdx === -1) return null
 
-  const words = segmentTokens.filter((t) => t.type === 'word')
+  // SMI-6869 Fix A: a redirect-marked word token (`2>&1`, `>/dev/null`)
+  // is never part of the runner's own argv — excluding it here keeps this
+  // check's "effective first command word" walk from ever landing on one.
+  const words = segmentTokens.filter((t) => t.type === 'word' && !t.redirect)
   let i = 0
   while (i < words.length && /^[A-Za-z_][A-Za-z0-9_]*=/.test(words[i].value)) i++
   if (i >= words.length) return null

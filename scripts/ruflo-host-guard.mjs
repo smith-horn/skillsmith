@@ -65,6 +65,7 @@ import {
   denyMalformedInput,
   denyStartDaemon,
   denyWith,
+  isReadOnlyNpmForm,
   isSanctionedDockerExec,
   isSanctionedNpmForm,
 } from './lib/ruflo-host-guard-predicates.mjs'
@@ -170,13 +171,23 @@ function checkEvalPredicate(wordTokens, depth) {
  *     — an UNRESOLVABLE command name this guard cannot statically
  *     resolve (the motivating case: `NPX=npx; $NPX ruflo …`).
  * A mis-modelled arity must never fall through to an ALLOW.
+ *
+ * `embedded` (SMI-6869 Fix C, corrected) skips the empty-residual,
+ * all-digit, `/dev/*`, and `$`-in-head arms — all four presume real shell
+ * text, false once re-scanning INLINE SCRIPT TEXT (`node -e '...'`):
+ * `padEnd(15)`-shaped punctuation trips the first three; a bare `$` in a
+ * JS/Python string (`readFileSync('$SP/x','utf8')`) is not a shell
+ * expansion, so the fourth must gate too (the original Fix C left it on,
+ * denying a real script that never invoked ruflo). Only `--` stays active.
  * @param {string[]} rawValues pre-strip word values for this segment
  * @param {string[]} normalizedArgv post wrapper/launcher-peel argv
  * @param {Array<{value: string, subs?: string[]}>} alignedTokens original
  *   tokens aligned to `normalizedArgv` (see `tokensForArgv`)
+ * @param {boolean} embedded
  */
-function checkUnresolvedCommand(rawValues, normalizedArgv, alignedTokens) {
+function checkUnresolvedCommand(rawValues, normalizedArgv, alignedTokens, embedded) {
   if (normalizedArgv.length === 0) {
+    if (embedded) return null
     const allAssignments =
       rawValues.length > 0 && rawValues.every((v) => /^[A-Za-z_][A-Za-z0-9_]*=/.test(v))
     if (allAssignments) return null
@@ -185,9 +196,12 @@ function checkUnresolvedCommand(rawValues, normalizedArgv, alignedTokens) {
   const head = normalizedArgv[0]
   const headToken = alignedTokens[0]
   if (head === '--') return denyWith('unresolved-command', head)
-  if (/^[0-9]+$/.test(head)) return denyWith('unresolved-command', head)
-  if (head.startsWith('/dev/')) return denyWith('unresolved-command', head)
+  if (!embedded && /^[0-9]+$/.test(head)) return denyWith('unresolved-command', head)
+  if (!embedded && head.startsWith('/dev/')) return denyWith('unresolved-command', head)
+  // SMI-6869 Fix C correction: a `$` in JS/Python string text isn't a
+  // shell expansion — gate this arm too when embedded (see docblock).
   if (
+    !embedded &&
     headToken &&
     (headToken.value.includes('$') || (headToken.subs && headToken.subs.length > 0))
   ) {
@@ -230,26 +244,41 @@ function checkUnresolvedCommand(rawValues, normalizedArgv, alignedTokens) {
  *      closing a bare `ruflo` past argv[0] in front of an unmodelled
  *      launcher (`ssh`/`watch`/`flock`/`strace`/…) that nothing above
  *      already denies
+ *
+ * SMI-6869 Fix A/B/C additions: a redirect-marked word token (`2>&1`,
+ * `>/dev/null`) is excluded from `wordTokens`/argv wherever this file
+ * builds it — it is never real command argv (Fix A). A `heredoc`-type
+ * token's own `.subs` are recursed into unconditionally alongside `.word`
+ * subs (step 0) — an UNQUOTED heredoc's `$(...)`/backtick spans are
+ * expanded by the CURRENT shell regardless of which command consumes the
+ * heredoc body, so they execute even when that body is otherwise inert
+ * data (Fix B). `embedded` (default false, Fix C) gates three of this
+ * function's own arms — `checkUnresolvedCommand`'s empty-residual/
+ * all-digit//dev/* arms, the `unreadable-shell-input` shell-fed-deny arm,
+ * and the bare-name-inversion check — off when evaluating INLINE
+ * INTERPRETER SCRIPT TEXT (set true only at the H-8 recursion site below),
+ * since those three arms presume the text is a real shell command line.
  * @param {Array<{type: string, value?: string, subs?: string[]}>} segmentTokens
  * @param {number} depth
  * @param {Array<{tokens: Array<object>, precedingOp: string|null}>} segments
  *   every segment of the FULL command, in order
  * @param {number} segmentIndex this segment's own index into `segments`
+ * @param {boolean} [embedded]
  */
-function evaluateGuardSegment(segmentTokens, depth, segments, segmentIndex) {
+function evaluateGuardSegment(segmentTokens, depth, segments, segmentIndex, embedded = false) {
   for (const tok of segmentTokens) {
-    if (tok.type !== 'word') continue
+    if (tok.type !== 'word' && tok.type !== 'heredoc') continue
     for (const sub of tok.subs ?? []) {
       const nestedVerdict = evaluateGuardCommand(sub, depth + 1)
       if (nestedVerdict) return nestedVerdict
     }
   }
 
-  const firstWord = segmentTokens.find((t) => t.type === 'word')
+  const firstWord = segmentTokens.find((t) => t.type === 'word' && !t.redirect)
   const wordTokens =
     firstWord && basenameOf(firstWord.value) === 'xargs'
       ? restoreXargsReplacementWordTokens(segmentTokens)
-      : segmentTokens.filter((t) => t.type === 'word')
+      : segmentTokens.filter((t) => t.type === 'word' && !t.redirect)
   if (wordTokens.length === 0) return null
   const rawValues = wordTokens.map((t) => t.value)
 
@@ -272,16 +301,31 @@ function evaluateGuardSegment(segmentTokens, depth, segments, segmentIndex) {
 
   const argvLower = normalizedArgv.map((s) => s.toLowerCase())
   if (isSanctionedNpmForm(argvLower)) return null
+  // SMI-6869 Fix D: read-only npm subcommands (ls/view/explain/…), checked
+  // here (before H1–H7) so H5's blunt runner-token scan never reaches
+  // them; npm's own executing forms (exec/x/run) are untouched by this.
+  if (isReadOnlyNpmForm(argvLower)) return null
 
   const alignedTokens = tokensForArgv(wordTokens, normalizedArgv)
 
-  const unresolvedVerdict = checkUnresolvedCommand(rawValues, normalizedArgv, alignedTokens)
+  const unresolvedVerdict = checkUnresolvedCommand(
+    rawValues,
+    normalizedArgv,
+    alignedTokens,
+    embedded
+  )
   if (unresolvedVerdict) return unresolvedVerdict
 
   const shellFedResult = findShellFedLiteralText(argvLower, segmentTokens, segments, segmentIndex)
   if (shellFedResult) {
-    if (shellFedResult.deny) return denyWith('unreadable-shell-input', shellFedResult.token)
-    return evaluateGuardCommand(shellFedResult.text, depth + 1)
+    if (shellFedResult.deny) {
+      if (!embedded) return denyWith('unreadable-shell-input', shellFedResult.token)
+      // embedded: an "unreadable pipeline producer" heuristic doesn't
+      // mean anything against inline script text — skip this arm only,
+      // fall through to the remaining checks below.
+    } else {
+      return evaluateGuardCommand(shellFedResult.text, depth + 1)
+    }
   }
 
   const scanArgvLower = rawValues.map((s) => s.toLowerCase())
@@ -306,7 +350,11 @@ function evaluateGuardSegment(segmentTokens, depth, segments, segmentIndex) {
     if (INLINE_SCRIPT_BARE_NAME_RE.test(inlineScriptText)) {
       return denyWith('H8-script', inlineScriptText)
     }
-    const nestedScriptVerdict = evaluateGuardCommand(inlineScriptText, depth + 1)
+    // SMI-6869 Fix C: this text is program source (JS/Python/…), not a
+    // shell command line — evaluate it in embedded mode. This is the
+    // ONLY site that ever sets embedded true; every other recursive call
+    // in this file evaluates real shell text and stays non-embedded.
+    const nestedScriptVerdict = evaluateGuardCommand(inlineScriptText, depth + 1, true)
     if (nestedScriptVerdict) return nestedScriptVerdict
   }
 
@@ -317,9 +365,13 @@ function evaluateGuardSegment(segmentTokens, depth, segments, segmentIndex) {
   // predicate label (measured: several A-row/H-5/L-D census rows
   // regressed to `H4b` when this ran earlier). This closes what NONE of
   // them do: a bare `ruflo` in front of an unmodelled launcher
-  // (`ssh`/`watch`/`flock`/`strace`/…).
-  const bareNameVerdict = checkBareNameInversion(argvLower)
-  if (bareNameVerdict) return bareNameVerdict
+  // (`ssh`/`watch`/`flock`/`strace`/…). Skipped when embedded (SMI-6869
+  // Fix C) — program source text is not shaped like "a launcher followed
+  // by a bare command name".
+  if (!embedded) {
+    const bareNameVerdict = checkBareNameInversion(argvLower)
+    if (bareNameVerdict) return bareNameVerdict
+  }
 
   return null
 }
@@ -334,8 +386,16 @@ function evaluateGuardSegment(segmentTokens, depth, segments, segmentIndex) {
  * Specification "Failure posture").
  * @param {string} commandText
  * @param {number} depth
+ * @param {boolean} [embedded] SMI-6869 Fix C — true only when `commandText`
+ *   is inline interpreter script text, not a real shell command line; see
+ *   `evaluateGuardSegment`'s own doc. Applies uniformly to every segment
+ *   of `commandText` (all of it is the same embedded program source), but
+ *   is NOT inherited by any recursive `evaluateGuardCommand` call this
+ *   function's segments make for genuinely nested shell text (subs,
+ *   heredoc subs, eval, `env -S`, a nested shell body, shell-fed text) —
+ *   embedded mode is entered only from the one H-8 recursion site.
  */
-function evaluateGuardCommand(commandText, depth) {
+function evaluateGuardCommand(commandText, depth, embedded = false) {
   if (depth > MAX_DEPTH) {
     return denyInternalError('recursion depth cap exceeded while unwrapping nested shell text')
   }
@@ -343,7 +403,7 @@ function evaluateGuardCommand(commandText, depth) {
   const tokens = tokenize(commandText)
   const segments = splitSegments(tokens)
   for (let i = 0; i < segments.length; i++) {
-    const verdict = evaluateGuardSegment(segments[i].tokens, depth, segments, i)
+    const verdict = evaluateGuardSegment(segments[i].tokens, depth, segments, i, embedded)
     if (verdict) return verdict
   }
   return null

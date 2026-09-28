@@ -96,7 +96,11 @@ const PASS_THROUGH_HEADS = new Set(['tee', 'cat'])
  */
 function resolveShellFedProducer(segments, index) {
   if (index < 0) return { text: null }
-  let words = segments[index].tokens.filter((t) => t.type === 'word')
+  const segTokens = segments[index].tokens
+  // SMI-6869 Fix A: a redirect-marked word token is never part of this
+  // producer's own argv (a trailing `cat file 2>/dev/null` must still
+  // resolve `cat`'s real args, not the redirect's own target).
+  let words = segTokens.filter((t) => t.type === 'word' && !t.redirect)
   if (words.length === 0) return { text: null }
 
   if (basenameOf(words[0].value) === 'stdbuf') {
@@ -107,6 +111,18 @@ function resolveShellFedProducer(segments, index) {
   }
 
   const head = basenameOf(words[0].value)
+
+  // SMI-6869 Fix B: a `cat`/`echo`/`printf` producer whose OWN segment
+  // carries a heredoc (`cat <<'EOF' | bash`) relays that heredoc's body
+  // verbatim to its stdout — the literal text a downstream bare shell
+  // actually receives, taking priority over any of the command's own
+  // positional arguments (a heredoc redirect on one of these three would
+  // never realistically appear alongside them, but if it did, the
+  // heredoc is what actually reaches the pipe).
+  const heredocTok = segTokens.find((t) => t.type === 'heredoc')
+  if (heredocTok && (head === 'cat' || head === 'echo' || head === 'printf')) {
+    return { text: heredocTok.value }
+  }
 
   if (head === 'echo' || head === 'printf') {
     const text = literalTextFromProducerWords(head, words)
@@ -168,6 +184,14 @@ function resolveShellFedProducer(segments, index) {
  */
 export function findShellFedLiteralText(argvLower, segmentTokens, segments, segmentIndex) {
   if (!SHELL_COMMANDS.has(basenameOf(argvLower[0] ?? ''))) return null
+
+  // SMI-6869 Fix B: a heredoc redirected directly onto THIS shell
+  // segment's own stdin (`bash <<'EOF' ... EOF`) is what the shell
+  // actually executes — checked before the pipe walk-back below, since a
+  // heredoc redirect on the same command line is the LAST-specified
+  // redirection in real Bash and overrides an upstream pipe's own stdin.
+  const ownHeredoc = segmentTokens.find((t) => t.type === 'heredoc')
+  if (ownHeredoc) return { text: ownHeredoc.value }
 
   if (segments[segmentIndex]?.precedingOp === '|' && segmentIndex > 0) {
     const resolved = resolveShellFedProducer(segments, segmentIndex - 1)
@@ -232,7 +256,8 @@ export function restoreXargsReplacementWordTokens(segmentTokens) {
   const result = []
   for (let i = 0; i < segmentTokens.length; i++) {
     const tok = segmentTokens[i]
-    if (tok.type !== 'word') continue
+    // SMI-6869 Fix A: a redirect-marked word token is never real argv.
+    if (tok.type !== 'word' || tok.redirect) continue
     result.push(tok)
     if (tok.value !== '-I' && tok.value !== '-i') continue
     const next = segmentTokens[i + 1]

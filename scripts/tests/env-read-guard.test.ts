@@ -539,6 +539,25 @@ describe("decide() — C1: ANSI-C $'...' octal escapes evade the guard (SMI-6744
   })
 })
 
+// SMI-6869 Fix A: this guard shares the tokenizer with
+// scripts/ruflo-host-guard.mjs, so the same redirect-operator fix applies
+// here too — before the fix, `2>&1` glued onto a preceding bare digit
+// swallowed the digit into a leftover word, splitting the trailing `1`
+// into what LOOKED like a second, unrelated argv element; this guard's own
+// argv-building must now exclude the redirect token entirely rather than
+// treat any part of it as a command argument.
+describe('decide() — SMI-6869 Fix A: a trailing redirect does not change the verdict', () => {
+  it("cat $'\\056env' 2>&1 -> deny (still reads .env; 2>&1 is excluded from argv, not misparsed into it)", () => {
+    const result = decide(bashCall(String.raw`cat $'\056env' 2>&1`), {})
+    expect(result.action).toBe('deny')
+  })
+
+  it('control: cat notes.txt 2>&1 -> allow (an ordinary redirect on an unrelated read stays harmless)', () => {
+    const result = decide(bashCall('cat notes.txt 2>&1'), {})
+    expect(result.action).toBe('allow')
+  })
+})
+
 describe('decide() — SKILLSMITH_ENV_READ_GUARD_DISABLE hard-disable', () => {
   it('a command that would normally deny is allowed when the disable var is set', () => {
     const result = decide(bashCall('grep PAT .env'), { SKILLSMITH_ENV_READ_GUARD_DISABLE: '1' })

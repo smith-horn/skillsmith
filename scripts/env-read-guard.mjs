@@ -338,7 +338,14 @@ function evaluateCommand(command, depth) {
         if (nestedViolation) return nestedViolation
       }
     }
-    const { argv, nested } = normalizeWrappers(segment.map((w) => w.value))
+    // SMI-6869 Fix A/B: a redirect-marked word token (`2>&1`,
+    // `>/dev/null`) and a heredoc token are never real command argv — a
+    // trailing `2>&1` must not perturb this guard's verdict, and a
+    // heredoc's own body text is not a shell word (its `.subs`, scanned
+    // just above via the same loop, is the only part of it that ever
+    // executes).
+    const argvWords = segment.filter((w) => w.type === 'word' && !w.redirect)
+    const { argv, nested } = normalizeWrappers(argvWords.map((w) => w.value))
     const violation = nested !== null ? evaluateCommand(nested, depth + 1) : checkArgv(argv)
     if (violation) return violation
   }
