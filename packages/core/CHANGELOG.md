@@ -35,6 +35,16 @@ All notable changes to `@skillsmith/core` are documented here.
   `raw`/`manifest` non-transform guarantee gained a reference-identity assertion, since `toEqual`
   alone passes against the single spread the rule exists to forbid.
 
+## v0.12.6
+
+- **Fix (critical, release-mechanical)**: this version exists because the published
+  `@skillsmith/core@0.12.5` and this repo's `0.12.5` had the **same version number and different
+  contents**. Exports added to core's source after `0.12.5` was published — `withFileLock` among
+  them — were never released, because the version was not bumped when they landed. That is invisible
+  inside the monorepo, where every workspace resolves to the local tree, and only surfaces once a
+  published consumer resolves `core` from npm: `@skillsmith/mcp-server@0.7.17` did, and could not be
+  imported at all. Publishing `0.12.6` makes the registry's `core` match this tree again.
+  No behavioural change to core itself is intended by the bump.
 - **Tests**: SMI-6532 -- the render-parity test's parse guard is now itself tested, and its failure
   mode is loud rather than silent. The guard reads TypeScript's INTERNAL `parseDiagnostics` field
   through a cast, so a rename upstream would have read `undefined`, skipped the check, and restored
