@@ -362,27 +362,33 @@ Use this skill to do things.
       expect(existsSync(MANIFEST_PATH + '.lock')).toBe(false)
     })
 
-    it('releases lock after loadManifest recovers a read failure into an empty manifest (does NOT exercise the release-on-throw path)', async () => {
-      // Mock load - throw error
+    it('refuses the write on a read failure, calls no updateFn, and still releases the lock', async () => {
+      // SMI-6733 / ADR-171 § 1. This test previously asserted the OPPOSITE:
+      // that a read failure recovered into an empty manifest, `updateFn` ran
+      // anyway and save() overwrote the file. That was the defect — "no
+      // writer saves after a failed load" is the contract — and the write
+      // side now takes `loadManifestForWrite`, which throws.
+      //
+      // Its own prior comment recorded that it could not reach withFileLock's
+      // release-on-throw path, because nothing inside the locked callback ever
+      // threw; it had been titled "releases lock even on error" and did not
+      // cover that. Making the read strict is what makes that path reachable,
+      // so this test now covers it here rather than only in core's
+      // file-lock.test.ts (SMI-6735 finding 2b).
+      //
+      // Three assertions, and the middle one is the load-bearing one: a
+      // released lock after a refusal proves cleanup, but only an UNCALLED
+      // updateFn proves nothing was written from a document we could not read.
       mockReadFile.mockRejectedValueOnce(new Error('Read error'))
-      // loadManifest's own catch-all (install.helpers.manifest.ts) turns
-      // ANY readFile rejection into an empty manifest rather than
-      // propagating it, so `updateFn` below is called normally and save()
-      // still runs — this test never reaches withFileLock's `finally`
-      // release with an in-flight exception. That contract (release on an
-      // actual throw from inside the locked callback) has its own dedicated
-      // coverage: packages/core/src/config/file-lock.test.ts (SMI-6735
-      // adversarial-review finding 2b) — this test was previously titled
-      // "releases lock even on error" and read as if it covered that case;
-      // it does not.
       mockMkdir.mockResolvedValueOnce(undefined)
       mockWriteFile.mockResolvedValueOnce(undefined)
       mockRename.mockResolvedValueOnce(undefined)
 
       const updateFn = vi.fn((m) => m)
 
-      await expect(updateManifestSafely(updateFn)).resolves.toBeUndefined()
-      expect(updateFn).toHaveBeenCalled()
+      await expect(updateManifestSafely(updateFn)).rejects.toThrow()
+      expect(updateFn).not.toHaveBeenCalled()
+      expect(mockWriteFile).not.toHaveBeenCalled()
       expect(existsSync(MANIFEST_PATH + '.lock')).toBe(false)
     })
   })
