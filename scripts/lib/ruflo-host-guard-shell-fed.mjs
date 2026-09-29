@@ -67,6 +67,30 @@ function literalTextFromProducerWords(head, words) {
 }
 
 /**
+ * SMI-6869 consumer-string round, group 10 — commands whose stdin (fed via
+ * a heredoc redirect on this same line) is itself a script/config body a
+ * LATER process will run as real shell text: `make -f -` reads a Makefile
+ * from stdin (a tab-indented recipe line runs via `/bin/sh -c`), `crontab -`
+ * installs a crontab from stdin (each line's trailing command field runs
+ * via shell), and `at`/`batch` read a job script from stdin (run via shell
+ * when the job fires). The body text is handed to `evaluateGuardCommand`
+ * NON-embedded, same as a bash heredoc — it is real shell text, not program
+ * source — and the guard's own `\n`-as-statement-separator segmentation
+ * naturally isolates a Makefile recipe line or an `at` job line as its own
+ * segment; a crontab line's 5 leading schedule fields land in front of the
+ * command, closed there by M-6's bare-name inversion rather than H4.
+ * (SMI-6869 round 2) ALSO extended to a pipe-fed producer (`printf '* * *
+ * * * ruflo memory store\n' | crontab -`) — but unlike the shell/
+ * interpreter branches below, an UNREADABLE producer here is NOT a deny
+ * signal, only a "nothing extracted" one: `resolveShellFedProducer` only
+ * ever yields text from a LITERAL producer (`echo`/`printf`, or a `cat`
+ * relaying a heredoc), so a non-literal producer (`crontab -l | crontab -`
+ * round-tripping) correctly yields nothing and stays allow, never a false
+ * deny on ordinary crontab/make pipeline usage.
+ */
+const HEREDOC_CONSUMER_BASENAMES = new Set(['make', 'gmake', 'crontab', 'at', 'batch'])
+
+/**
  * M-1 pass-through commands whose own stdin is what actually reaches the
  * shell unchanged -- walking through these does not fabricate new
  * content, it just continues the search for the real producer one hop
@@ -186,7 +210,8 @@ export function findShellFedLiteralText(argvLower, segmentTokens, segments, segm
   const head0 = basenameOf(argvLower[0] ?? '')
   const isShell = SHELL_COMMANDS.has(head0)
   const isInterp = isInlineInterpreterBasename(head0)
-  if (!isShell && !isInterp) return null
+  const isHeredocConsumer = HEREDOC_CONSUMER_BASENAMES.has(head0)
+  if (!isShell && !isInterp && !isHeredocConsumer) return null
 
   // SMI-6869 Fix B: a heredoc redirected directly onto THIS segment's own
   // stdin is what the consumer actually executes. ALL heredocs on the line
@@ -195,6 +220,22 @@ export function findShellFedLiteralText(argvLower, segmentTokens, segments, segm
   const ownHeredocs = segmentTokens.filter((t) => t.type === 'heredoc')
   if (ownHeredocs.length > 0) {
     return { text: ownHeredocs.map((t) => t.value ?? '').join('\n'), embedded: isInterp }
+  }
+  if (isHeredocConsumer) {
+    // SMI-6869 round 2: a pipe-fed literal producer (echo/printf/a cat
+    // relaying its own heredoc) supplies text the same way it does for a
+    // bare shell below -- but an unreadable/non-literal producer means
+    // "nothing extracted", not "deny" (see this function's own docblock).
+    if (segments[segmentIndex]?.precedingOp === '|' && segmentIndex > 0) {
+      const resolved = resolveShellFedProducer(segments, segmentIndex - 1)
+      if (resolved !== null && resolved.text !== null) {
+        return { text: resolved.text }
+      }
+    }
+    // No heredoc and no literal pipe producer: make/crontab/at/batch read
+    // their real Makefile/crontab/job file from disk, out of reach by
+    // design (same posture as a shell's own `source f`/`sh <file>`).
+    return null
   }
   if (isInterp) {
     // an interpreter fed by a pipe reads its PROGRAM from stdin

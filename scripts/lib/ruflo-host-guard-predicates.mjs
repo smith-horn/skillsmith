@@ -40,6 +40,7 @@
 import { basenameOf, stripFlags } from './shell-command-normalize.mjs'
 import { RUNNER_BASENAMES, RUNNER_TOKEN_RE, checkH1toH7 } from './ruflo-host-guard-h1to7.mjs'
 import { isReadOnlyNpmForm, isSanctionedNpmForm } from './ruflo-host-guard-npm.mjs'
+import { EXEC_ENV_VARS } from './ruflo-host-guard-consumers.mjs'
 import {
   ALLOW,
   denyInternalError,
@@ -100,14 +101,35 @@ export function isSanctionedDockerExec(rawValues) {
  * catches a bare-assignment-only segment (`V=ruflo` on its own, ahead of a
  * later `;`-joined use) as well as an assignment prefixing more argv in
  * the same segment.
+ * SMI-6869 consumer-string round: also denies when the assignment KEY is a
+ * process-launching env var (`EXEC_ENV_VARS` —
+ * `ruflo-host-guard-consumers.mjs`, e.g. `PAGER`/`GIT_PAGER`/`EDITOR`/
+ * `GIT_SSH_COMMAND`) and the assigned value's FIRST whitespace-separated
+ * word exactly names `ruflo`/`claude-flow`/`claude-flow-mcp` — the value is
+ * later exec'd by whatever program honors that var (git's `$GIT_PAGER`,
+ * any pager/editor-invoking tool's `$PAGER`/`$EDITOR`), so its first word
+ * IS the command name that will run, the same exact-name signal M-6's own
+ * bare-name inversion (`checkBareNameInversion`, `H4B_NAMES` below) uses.
+ * This scan runs regardless of whether the assignment sits in BARE prefix
+ * position (`PAGER='ruflo …' git log`) or as an argument to `env`
+ * (`env GIT_PAGER='ruflo …' git log`) — this function already scans EVERY
+ * token in the segment, not just position 0, so both shapes reach it
+ * identically without any `env`-specific handling.
  * @param {Array<{value: string}>} wordTokens pre-strip word tokens (this segment)
  */
 export function checkAssignmentValuePredicate(wordTokens) {
   for (const tok of wordTokens) {
-    const m = /^[A-Za-z_][A-Za-z0-9_]*=(.*)$/.exec(tok.value)
+    const m = /^([A-Za-z_][A-Za-z0-9_]*)=(.*)$/.exec(tok.value)
     if (!m) continue
-    if (RUNNER_TOKEN_RE.test(m[1].toLowerCase())) {
+    const [, key, rawValue] = m
+    if (RUNNER_TOKEN_RE.test(rawValue.toLowerCase())) {
       return denyWith('H8', tok.value)
+    }
+    if (EXEC_ENV_VARS.has(key)) {
+      const firstWord = rawValue.trim().split(/\s+/)[0]?.toLowerCase()
+      if (firstWord && H4B_NAMES.has(firstWord)) {
+        return denyWith('H8', tok.value)
+      }
     }
   }
   return null

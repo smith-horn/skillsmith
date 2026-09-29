@@ -871,9 +871,20 @@ describe('decide() — M-6: bare-name inversion closes unmodelled launchers (del
   // remainder close via the NEW H4b bare-name-inversion predicate (or, for
   // exec/command/timeout/chrt/xargs, via the SAME H-1/H-2 launcher-table
   // fixes already covered above -- included here again because they are
-  // also literally part of this fix's own required red-arm list).
+  // also literally part of this fix's own required red-arm list). SMI-6869
+  // round 2: `ssh localhost ruflo memory store` now denies via H4, not
+  // H4b — the ssh consumer-string extraction (round 2) now joins EVERY
+  // non-flag argument after the destination and recurses it, so this shape
+  // hits H4 on the recursed text before M-6's own bare-name scan ever
+  // runs (measured; label changed here to match, per the SMI-6869 round 2
+  // task's explicit sign-off on this exact reclassification).
   const redArms: Array<[string, string]> = [
-    ['ssh localhost ruflo memory store', 'H4b'],
+    // 'H4:' (not bare 'H4') is deliberate here, unlike the other rows below:
+    // a bare 'H4' substring-matches BOTH 'H4:' and 'H4b:' reasons, so it
+    // would not have discriminated this row's round-1-to-round-2 label
+    // change (H4b -> H4) at all -- caught while proving this test against
+    // the round-1 (pre-round-2) tree, SMI-6598 discipline.
+    ['ssh localhost ruflo memory store', 'H4:'],
     ["su -c 'ruflo memory store --key k'", 'H4'],
     ['watch ruflo memory store --key k', 'H4b'],
     ['flock /tmp/l ruflo memory store --key k', 'H4b'],
@@ -1430,6 +1441,368 @@ describe('decide() — mcp__ruflo__hooks_session-start startDaemon gate (SMI-685
   it('missing tool_input entirely -> deny (fail-closed rule, round 1 finding 5)', () => {
     const result = decide({ tool_name: 'mcp__ruflo__hooks_session-start' }, {})
     expect(result.action).toBe('deny')
+  })
+})
+
+// --- SMI-6869 consumer-string family (awk/sed/ssh/git/vim/tmux/screen/
+// expect/env-vars/heredoc-consumers) ---
+//
+// Every label below was MEASURED against this guard's own decide() (via an
+// ad-hoc probe script, per CLAUDE.md's "measure, don't reason") before
+// being hardcoded here. Most red arms resolve through RECURSION into a
+// pre-existing predicate rather than a brand-new label: the new
+// `extractConsumerTexts` step (scripts/lib/ruflo-host-guard-consumers.mjs)
+// only ever extracts a candidate {text, kind} pair and hands it back to
+// `evaluateGuardCommand` — the deny itself almost always comes from H4
+// (a bare `ruflo` at argv[0] of the recursed text) or H8-script (the
+// shared `INLINE_SCRIPT_BARE_NAME_RE` quoted-text regex, the same one H-8
+// already uses for node/python/perl/ruby/php source text).
+
+const R = 'ruflo memory store'
+
+describe('decide() — SMI-6869 consumer-string: awk/gawk system()/pipe-to-sh', () => {
+  it('awk system() denies via H8-script (the program text is source, matched by the shared quoted-text regex)', () => {
+    const result = decide(bashCall(`awk 'BEGIN{system("${R}")}'`), {})
+    expect(result.action).toBe('deny')
+    expect(reasonOf(result)).toContain('H8-script')
+  })
+
+  it('gawk system() denies via H8-script', () => {
+    const result = decide(bashCall(`gawk 'BEGIN{system("${R}")}'`), {})
+    expect(result.action).toBe('deny')
+    expect(reasonOf(result)).toContain('H8-script')
+  })
+
+  it('awk pipe to "sh" denies via H8-script', () => {
+    const result = decide(bashCall(`awk 'BEGIN{print "${R}" | "sh"}'`), {})
+    expect(result.action).toBe('deny')
+    expect(reasonOf(result)).toContain('H8-script')
+  })
+
+  it('control: awk -f <file> allows — the program is unreadable (comes from a file), same posture as `source f`', () => {
+    expect(decide(bashCall('awk -f prog.awk data.txt'), {}).action).toBe('allow')
+  })
+
+  it('control: plain awk with no ruflo reference allows', () => {
+    expect(decide(bashCall("awk -F: '{print $2}' /etc/passwd"), {}).action).toBe('allow')
+  })
+})
+
+describe('decide() — SMI-6869 consumer-string: sed/gsed e-flag and e-command shell extraction', () => {
+  it('sed s///e flag denies via H4 — the replacement text is extracted as real shell text and recursed', () => {
+    const result = decide(bashCall(`printf x | sed 's/x/${R}/e'`), {})
+    expect(result.action).toBe('deny')
+    expect(reasonOf(result)).toContain('H4:')
+  })
+
+  it('sed Ne command form denies via H4', () => {
+    const result = decide(bashCall(`sed '1e ${R}' file`), {})
+    expect(result.action).toBe('deny')
+    expect(reasonOf(result)).toContain('H4:')
+  })
+
+  it('sed -e "...e" flag denies via H4', () => {
+    const result = decide(bashCall(`sed -e 's/x/${R}/e' file`), {})
+    expect(result.action).toBe('deny')
+    expect(reasonOf(result)).toContain('H4:')
+  })
+
+  it('control: sed -n "1,5p" (no e-flag/e-command shape) allows', () => {
+    expect(decide(bashCall("sed -n '1,5p' f"), {}).action).toBe('allow')
+  })
+
+  it('control: plain sed substitution with no e flag allows', () => {
+    expect(decide(bashCall("sed 's/a/b/' file.txt"), {}).action).toBe('allow')
+  })
+})
+
+describe('decide() — SMI-6869 consumer-string: ssh single-token quoted remote command', () => {
+  it('ssh with a single quoted remote command denies via H4', () => {
+    const result = decide(bashCall(`ssh localhost '${R}'`), {})
+    expect(result.action).toBe('deny')
+    expect(reasonOf(result)).toContain('H4:')
+  })
+
+  it('ssh with leading flags then a single quoted remote command denies via H4', () => {
+    const result = decide(bashCall(`ssh -p 2222 -i key user@host '${R}'`), {})
+    expect(result.action).toBe('deny')
+    expect(reasonOf(result)).toContain('H4:')
+  })
+
+  it('an UNQUOTED multi-word remote command denies via H4 — round 2 joins EVERY non-flag argument after the destination, not just a single trailing token', () => {
+    const result = decide(bashCall(`ssh localhost ${R}`), {})
+    expect(result.action).toBe('deny')
+    expect(reasonOf(result)).toContain('H4:')
+  })
+
+  it('a stray flag-shaped token AFTER the remote command text does not break the join — still denies via H4', () => {
+    const result = decide(bashCall(`ssh host '${R}' -v`), {})
+    expect(result.action).toBe('deny')
+    expect(reasonOf(result)).toContain('H4:')
+  })
+
+  it("ssh -o ProxyCommand='...' denies via H4 — ssh execs the option's value as a shell command directly", () => {
+    const result = decide(bashCall(`ssh -o ProxyCommand='${R}' host`), {})
+    expect(result.action).toBe('deny')
+    expect(reasonOf(result)).toContain('H4:')
+  })
+
+  it('control: ssh host uptime (no ruflo reference) allows', () => {
+    expect(decide(bashCall('ssh host uptime'), {}).action).toBe('allow')
+  })
+})
+
+describe('decide() — SMI-6869 consumer-string: git exec-relevant config keys', () => {
+  const execKeyRows: Array<[string, string]> = [
+    ['git -c core.pager', `git -c core.pager='${R}' log`],
+    ['git -c core.editor', `git -c core.editor='${R}' commit`],
+    ['git -c core.sshCommand', `git -c core.sshCommand='${R}' fetch`],
+    ['git -c credential.helper (bang-prefixed)', `git -c credential.helper='!${R}' fetch`],
+    ['git -c alias.x (GIT_EXEC_KEY_PATTERNS, bang-prefixed)', `git -c alias.x='!${R}' x`],
+    ['git config core.pager (SET form)', `git config core.pager '${R}'`],
+    ['git config --global core.editor (SET form)', `git config --global core.editor '${R}'`],
+    // round 2 (probe-consumers-2.mjs) expansion of GIT_EXEC_KEYS/PATTERNS
+    ['git -c core.askpass', `git -c core.askpass='${R}' fetch`],
+    ['git -c diff.external', `git -c diff.external='${R}' diff`],
+    ['git -c gpg.program', `git -c gpg.program='${R}' commit -S`],
+    ['git -c sequence.editor', `git -c sequence.editor='${R}' rebase -i HEAD~2`],
+    [
+      'git -c credential.<url>.helper (pattern, slashes/colons in the middle segment)',
+      `git -c credential.https://x.helper='!${R}' fetch`,
+    ],
+    ['git -c filter.x.clean', `git -c filter.x.clean='${R}' add .`],
+    ['git -c difftool.x.cmd', `git -c difftool.x.cmd='${R}' difftool`],
+    ['git -c pager.log', `git -c pager.log='${R}' log`],
+    ['git -c core.fsmonitor', `git -c core.fsmonitor='${R}' status`],
+    [
+      'git config --global alias.x (bang-prefixed, SET form)',
+      `git config --global alias.x '!${R}'`,
+    ],
+  ]
+  it.each(execKeyRows)('%s denies via H4', (_label, cmd) => {
+    const result = decide(bashCall(cmd), {})
+    expect(result.action).toBe('deny')
+    expect(reasonOf(result)).toContain('H4:')
+  })
+
+  it('git -c core.pager with an npx form value denies via H5 — the recursion decides, not the key', () => {
+    const result = decide(bashCall(`git -c core.pager='npx ${R}' log`), {})
+    expect(result.action).toBe('deny')
+    expect(reasonOf(result)).toContain('H5')
+  })
+
+  it('control: git -c core.pager=less (value has no ruflo reference) allows', () => {
+    expect(decide(bashCall('git -c core.pager=less log'), {}).action).toBe('allow')
+  })
+
+  it('control: git -c core.pager=delta allows — the recursion decides, not the key', () => {
+    expect(decide(bashCall('git -c core.pager=delta log'), {}).action).toBe('allow')
+  })
+
+  it('control: git -c gpg.program=gpg2 commit -S allows', () => {
+    expect(decide(bashCall('git -c gpg.program=gpg2 commit -S'), {}).action).toBe('allow')
+  })
+
+  it('control: git -c core.hooksPath=/tmp/hooks status allows — a PATH git reads hook scripts from, not exec text, deliberately left out of GIT_EXEC_KEYS/PATTERNS', () => {
+    expect(decide(bashCall('git -c core.hooksPath=/tmp/hooks status'), {}).action).toBe('allow')
+  })
+
+  it('control: git -c user.name — NOT an exec-relevant key, so its value is never extracted even though it spells the target text', () => {
+    expect(decide(bashCall(`git -c user.name='${R}' log`), {}).action).toBe('allow')
+  })
+
+  it('control: plain git log allows', () => {
+    expect(decide(bashCall('git log --oneline -5'), {}).action).toBe('allow')
+  })
+})
+
+describe('decide() — SMI-6869 consumer-string: vim/nvim ex-commands', () => {
+  it('vim -c with a bang (":!cmd") ex-command denies via H4', () => {
+    const result = decide(bashCall(`vim -Nu NONE -c ':!${R}' -c q`), {})
+    expect(result.action).toBe('deny')
+    expect(reasonOf(result)).toContain('H4:')
+  })
+
+  it('vim leading-+ positional bang ex-command denies via H4', () => {
+    const result = decide(bashCall(`vim '+!${R}' file`), {})
+    expect(result.action).toBe('deny')
+    expect(reasonOf(result)).toContain('H4:')
+  })
+
+  it('nvim --cmd bang denies via H4', () => {
+    const result = decide(bashCall(`nvim --cmd '!${R}'`), {})
+    expect(result.action).toBe('deny')
+    expect(reasonOf(result)).toContain('H4:')
+  })
+
+  it('vim -c "call system(...)" denies via H8-script — Vimscript SOURCE, caught by the shared quoted-text regex, no Vimscript-specific parsing', () => {
+    const result = decide(bashCall(`vim -c 'call system("${R}")'`), {})
+    expect(result.action).toBe('deny')
+    expect(reasonOf(result)).toContain('H8-script')
+  })
+
+  it('vim -c "terminal cmd" denies via H4', () => {
+    const result = decide(bashCall(`vim -c 'terminal ${R}'`), {})
+    expect(result.action).toBe('deny')
+    expect(reasonOf(result)).toContain('H4:')
+  })
+
+  it('control: vim -c "set number" (ordinary Vimscript, no shell/system/terminal shape) allows', () => {
+    expect(decide(bashCall("vim -c 'set number' file.txt"), {}).action).toBe('allow')
+  })
+})
+
+describe('decide() — SMI-6869 consumer-string: tmux send-keys/new-window', () => {
+  it('tmux send-keys with a trailing Enter denies via H4', () => {
+    const result = decide(bashCall(`tmux send-keys '${R}' Enter`), {})
+    expect(result.action).toBe('deny')
+    expect(reasonOf(result)).toContain('H4:')
+  })
+
+  it('tmux new-window denies via H4', () => {
+    const result = decide(bashCall(`tmux new-window '${R}'`), {})
+    expect(result.action).toBe('deny')
+    expect(reasonOf(result)).toContain('H4:')
+  })
+
+  it('tmux run-shell denies via H4', () => {
+    const result = decide(bashCall(`tmux run-shell '${R}'`), {})
+    expect(result.action).toBe('deny')
+    expect(reasonOf(result)).toContain('H4:')
+  })
+
+  it('control: tmux ls allows', () => {
+    expect(decide(bashCall('tmux ls'), {}).action).toBe('allow')
+  })
+})
+
+describe('decide() — SMI-6869 consumer-string: screen -X stuff', () => {
+  it('screen -X stuff denies via H4', () => {
+    const result = decide(bashCall(`screen -X stuff '${R}\\n'`), {})
+    expect(result.action).toBe('deny')
+    expect(reasonOf(result)).toContain('H4:')
+  })
+
+  it('control: screen followed by a bare positional command already denies via the PRE-EXISTING H4b bare-name inversion — measured, no new logic needed for this shape', () => {
+    const result = decide(bashCall(`screen ${R}`), {})
+    expect(result.action).toBe('deny')
+    expect(reasonOf(result)).toContain('H4b')
+  })
+
+  it('control: screen -ls allows', () => {
+    expect(decide(bashCall('screen -ls'), {}).action).toBe('allow')
+  })
+})
+
+describe('decide() — SMI-6869 consumer-string: expect -c spawn/exec', () => {
+  it("expect -c 'spawn ...' denies via H4 — the spawned command is extracted as real shell text and recursed", () => {
+    const result = decide(bashCall(`expect -c 'spawn ${R}'`), {})
+    expect(result.action).toBe('deny')
+    expect(reasonOf(result)).toContain('H4:')
+  })
+
+  it('control: expect -c with no spawn/exec builtin allows', () => {
+    expect(decide(bashCall('expect -c \'send "hello"\''), {}).action).toBe('allow')
+  })
+})
+
+describe('decide() — SMI-6869 consumer-string: process-launching env vars (EXEC_ENV_VARS, H8(i) extension)', () => {
+  const envVarRows: Array<[string, string]> = [
+    ['bare PAGER prefix', `PAGER='${R}' git log`],
+    ['env GIT_PAGER (argument to env, not bare prefix)', `env GIT_PAGER='${R}' git log`],
+    ['bare EDITOR prefix', `EDITOR='${R}' git commit`],
+    ['bare GIT_SSH_COMMAND prefix', `GIT_SSH_COMMAND='${R}' git fetch`],
+    ['bare VISUAL prefix (sibling var)', `VISUAL='${R}' git commit`],
+    ['bare GIT_EDITOR prefix (sibling var)', `GIT_EDITOR='${R}' git commit`],
+    // round 2 (probe-consumers-2.mjs) siblings
+    ['GIT_ASKPASS', `GIT_ASKPASS='${R}' git fetch`],
+    ['SSH_ASKPASS', `SSH_ASKPASS='${R}' ssh host`],
+    ['GIT_EXTERNAL_DIFF', `GIT_EXTERNAL_DIFF='${R}' git diff`],
+    ['GIT_SEQUENCE_EDITOR', `GIT_SEQUENCE_EDITOR='${R}' git rebase -i HEAD~2`],
+    ['MANPAGER', `MANPAGER='${R}' man ls`],
+    ['BROWSER', `BROWSER='${R}' gh repo view -w`],
+    ['env -i PAGER (env-argument form survives env its own flags)', `env -i PAGER='${R}' git log`],
+  ]
+  it.each(envVarRows)('%s denies via H8', (_label, cmd) => {
+    const result = decide(bashCall(cmd), {})
+    expect(result.action).toBe('deny')
+    expect(reasonOf(result)).toContain('H8:')
+  })
+
+  it('PAGER assigned an npx form value denies via H5 — round 2 recurses the VALUE through the full pipeline, not just a first-word exact match', () => {
+    const result = decide(bashCall(`PAGER='npx ${R}' git log`), {})
+    expect(result.action).toBe('deny')
+    expect(reasonOf(result)).toContain('H5')
+  })
+
+  it('PAGER assigned a sh -c form value denies via H4', () => {
+    const result = decide(bashCall(`PAGER='sh -c "${R}"' git log`), {})
+    expect(result.action).toBe('deny')
+    expect(reasonOf(result)).toContain('H4:')
+  })
+
+  it('PAGER assigned a ruflo PATH form value denies via H3 (unaffected pre-existing path predicate, now also reachable via the recursion)', () => {
+    const result = decide(bashCall(`PAGER='/opt/x/node_modules/.bin/ruflo' git log`), {})
+    expect(result.action).toBe('deny')
+    expect(reasonOf(result)).toContain('H3')
+  })
+
+  it('GIT_SSH_COMMAND assigned a sh -c form value denies via H4', () => {
+    const result = decide(bashCall(`GIT_SSH_COMMAND='sh -c "${R}"' git fetch`), {})
+    expect(result.action).toBe('deny')
+    expect(reasonOf(result)).toContain('H4:')
+  })
+
+  it('control: PAGER assigned an ordinary pager name allows', () => {
+    expect(decide(bashCall('PAGER=less git log'), {}).action).toBe('allow')
+  })
+
+  it('control: GIT_SSH_COMMAND assigned an ordinary ssh invocation with flags allows', () => {
+    expect(decide(bashCall(`GIT_SSH_COMMAND='ssh -i ~/.ssh/k' git fetch`), {}).action).toBe('allow')
+  })
+})
+
+describe('decide() — SMI-6869 consumer-string: heredoc consumers (make/crontab/at/batch)', () => {
+  it("make -f - fed a heredoc Makefile recipe denies via H4 — the tab-indented recipe line is its own segment after the guard's \\n-splitting", () => {
+    const result = decide(bashCall("make -f - <<'EOF'\nall:\n\t" + R + '\nEOF'), {})
+    expect(result.action).toBe('deny')
+    expect(reasonOf(result)).toContain('H4:')
+  })
+
+  it('crontab - fed a heredoc line denies via H4b — the 5 leading schedule fields sit before the command, closed by the bare-name inversion rather than H4', () => {
+    const result = decide(bashCall("crontab - <<'EOF'\n* * * * * " + R + '\nEOF'), {})
+    expect(result.action).toBe('deny')
+    expect(reasonOf(result)).toContain('H4b')
+  })
+
+  it('at now fed a heredoc job body denies via H4', () => {
+    const result = decide(bashCall("at now <<'EOF'\n" + R + '\nEOF'), {})
+    expect(result.action).toBe('deny')
+    expect(reasonOf(result)).toContain('H4:')
+  })
+
+  it('batch fed a heredoc job body denies via H4 (same treatment as at)', () => {
+    const result = decide(bashCall("batch <<'EOF'\n" + R + '\nEOF'), {})
+    expect(result.action).toBe('deny')
+    expect(reasonOf(result)).toContain('H4:')
+  })
+
+  it("printf piped into crontab - denies via H4b — round 2's pipe-producer walk-back resolves the LITERAL printf text, then the 5 leading schedule fields put ruflo past position 0", () => {
+    const result = decide(bashCall(`printf '* * * * * ${R}\\n' | crontab -`), {})
+    expect(result.action).toBe('deny')
+    expect(reasonOf(result)).toContain('H4b')
+  })
+
+  it('control: make with no heredoc reads its real Makefile from disk — out of reach by design, allows', () => {
+    expect(decide(bashCall('make build'), {}).action).toBe('allow')
+  })
+
+  it('control: crontab -l (no heredoc) allows', () => {
+    expect(decide(bashCall('crontab -l'), {}).action).toBe('allow')
+  })
+
+  it('control: crontab -l | crontab - allows — a non-literal producer (crontab itself) yields nothing extracted, never a deny, so ordinary round-tripping usage is unaffected', () => {
+    expect(decide(bashCall('crontab -l | crontab -'), {}).action).toBe('allow')
   })
 })
 

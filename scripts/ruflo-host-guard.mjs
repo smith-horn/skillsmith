@@ -70,6 +70,7 @@ import {
   isSanctionedNpmForm,
 } from './lib/ruflo-host-guard-predicates.mjs'
 import { checkUnresolvedCommand } from './lib/ruflo-host-guard-unresolved.mjs'
+import { extractConsumerTexts, extractExecEnvVarTexts } from './lib/ruflo-host-guard-consumers.mjs'
 
 /**
  * Real statement separators for THIS guard's own segmentation — unlike
@@ -175,6 +176,12 @@ function checkEvalPredicate(wordTokens, depth) {
  *      deliberately AFTER H1–H7/H8(ii): those already close an inline
  *      `-e`/`-c` argument that spells a path-shaped substring, so this
  *      only needs to catch what they don't (a bare quoted name, no path)
+ *   11a. (SMI-6869) consumer-string family — awk/sed/ssh/git/vim/tmux/
+ *      screen/expect, whose OWN arguments (or a config value they write)
+ *      embed a string that PROGRAM will itself hand to a shell or spawn as
+ *      a new process. Checked AFTER H-8, same rationale: a narrower
+ *      predicate above may already have closed the same argv. See
+ *      `scripts/lib/ruflo-host-guard-consumers.mjs`'s own docblock.
  *   12. (M-6) bare-name inversion — LAST, the most general fallback,
  *      closing a bare `ruflo` past argv[0] in front of an unmodelled
  *      launcher (`ssh`/`watch`/`flock`/`strace`/…) that nothing above
@@ -232,6 +239,17 @@ function evaluateGuardSegment(segmentTokens, depth, segments, segmentIndex, embe
 
   const h8iVerdict = checkAssignmentValuePredicate(wordTokens)
   if (h8iVerdict) return h8iVerdict
+
+  // SMI-6869 round 2: an EXEC_ENV_VARS assignment's VALUE is real shell
+  // text a downstream program execs — recurse it non-embedded, same as an
+  // `env -S` body. Runs on the SAME pre-strip wordTokens as H8(i) above.
+  const execEnvTexts = extractExecEnvVarTexts(wordTokens)
+  if (execEnvTexts) {
+    for (const { text } of execEnvTexts) {
+      const nestedEnvVerdict = evaluateGuardCommand(text, depth + 1)
+      if (nestedEnvVerdict) return nestedEnvVerdict
+    }
+  }
 
   const envSplitNested = detectEnvSplitString(rawValues)
   if (envSplitNested !== null) return evaluateGuardCommand(envSplitNested, depth + 1)
@@ -305,6 +323,33 @@ function evaluateGuardSegment(segmentTokens, depth, segments, segmentIndex, embe
     // non-embedded.
     const nestedScriptVerdict = evaluateGuardCommand(inlineScriptText, depth + 1, true)
     if (nestedScriptVerdict) return nestedScriptVerdict
+  }
+
+  // SMI-6869 consumer-string family — awk/sed/ssh/git/vim/tmux/screen/
+  // expect (see ruflo-host-guard-consumers.mjs). Each extracted text is
+  // either 'shell' (recursed non-embedded, the same treatment a nested
+  // `-c` body gets) or 'source' (tested against INLINE_SCRIPT_BARE_NAME_RE,
+  // then recursed embedded — exactly the H-8 pattern immediately above).
+  const consumerTexts = extractConsumerTexts(
+    normalizedArgv,
+    alignedTokens,
+    segmentTokens,
+    segments,
+    segmentIndex
+  )
+  if (consumerTexts) {
+    for (const { text, kind } of consumerTexts) {
+      if (kind === 'source') {
+        if (INLINE_SCRIPT_BARE_NAME_RE.test(text)) {
+          return denyWith('H8-script', text)
+        }
+        const nestedSourceVerdict = evaluateGuardCommand(text, depth + 1, true)
+        if (nestedSourceVerdict) return nestedSourceVerdict
+      } else {
+        const nestedShellVerdict = evaluateGuardCommand(text, depth + 1)
+        if (nestedShellVerdict) return nestedShellVerdict
+      }
+    }
   }
 
   // (M-6) bare-name inversion — checked LAST, as the most general
