@@ -338,7 +338,25 @@ function evaluateCommand(command, depth) {
         if (nestedViolation) return nestedViolation
       }
     }
-    const { argv, nested } = normalizeWrappers(segment.map((w) => w.value))
+    // A heredoc BODY is text the consuming command receives on stdin; when
+    // that consumer is a shell (`bash <<EOF`) or a shell reached through a
+    // pipe (`cat <<EOF | sh`) it is executed verbatim. Before heredocs were
+    // tokenized at all, those body lines were tokenized inline and reached
+    // the checks below by accident; recursing here restores that reach
+    // without depending on the accident.
+    for (const t of segment) {
+      if (t.type !== 'heredoc') continue
+      const nestedViolation = evaluateCommand(t.value ?? '', depth + 1)
+      if (nestedViolation) return nestedViolation
+    }
+    // SMI-6869 Fix A/B: a redirect-marked word token (`2>&1`,
+    // `>/dev/null`) and a heredoc token are never real command argv — a
+    // trailing `2>&1` must not perturb this guard's verdict, and a
+    // heredoc's own body text is not a shell word (its `.subs`, scanned
+    // just above via the same loop, is the only part of it that ever
+    // executes).
+    const argvWords = segment.filter((w) => w.type === 'word' && !w.redirect)
+    const { argv, nested } = normalizeWrappers(argvWords.map((w) => w.value))
     const violation = nested !== null ? evaluateCommand(nested, depth + 1) : checkArgv(argv)
     if (violation) return violation
   }
