@@ -649,6 +649,92 @@ describe('decide() — SMI-6869 governance round 11 F1: a command substitution i
   })
 })
 
+// SMI-6869 governance round 12 (cross-family gate, class 1, finding 1): the
+// round-11 flatten tokenizes a substitution BODY once and takes its words,
+// so a NESTED `$(...)` inside that body stays one unopened word -- its own
+// `.subs` is never read. `flattenSubWords` (shell-command-normalize.mjs)
+// now recurses into every resulting word's own `.subs` in turn, at any
+// depth up to MAX_DEPTH, failing closed (denies) rather than silently
+// under-reading past the bound.
+describe('decide() — SMI-6869 governance round 12 F1: a nested command substitution is opened at every depth, not just the first level', () => {
+  it.each([
+    'cat $(echo $(echo .env))',
+    'cat $(echo "$(echo /app/.env)")',
+    'docker exec skillsmith-dev-1 cat $(echo $(echo /app/.env))',
+  ])('%s -> deny', (command) => {
+    expect(decide(bashCall(command), {}).action).toBe('deny')
+  })
+
+  it.each(['cat $(echo $(echo README.md))', 'ls $(dirname $(git rev-parse --show-toplevel))'])(
+    'control: %s -> allow',
+    (command) => {
+      expect(decide(bashCall(command), {}).action).toBe('allow')
+    }
+  )
+})
+
+// SMI-6869 governance round 12 (cross-family gate, class 1, finding 2): when
+// argv[0] IS a substitution, the pre-existing "does the body print its own
+// name" re-check substitutes the body's HEAD word (`echo` in
+// `$(echo cat) .env`) for argv[0] -- never what the body actually PRINTS
+// (`cat`). A protected file in a REMAINING argument is still that unnamed
+// command's argument regardless of what it turns out to be, so
+// `checkUnresolvedHeadTail` now checks the remaining arguments FIRST,
+// independent of resolving the head.
+describe('decide() — SMI-6869 governance round 12 F2: a computed reader with a protected argument denies, whatever the substitution body says', () => {
+  it.each(['$(echo cat) .env', '$(which cat) /app/.env', '`echo cat` .worktrees/x/.env'])(
+    '%s -> deny',
+    (command) => {
+      expect(decide(bashCall(command), {}).action).toBe('deny')
+    }
+  )
+
+  it.each(['$(echo ls) .env.example', '$(echo cat) README.md'])(
+    'control: %s -> allow',
+    (command) => {
+      expect(decide(bashCall(command), {}).action).toBe('allow')
+    }
+  )
+
+  it('control: $(cat) .env still denies (the body prints its own name, the pre-existing shape)', () => {
+    expect(decide(bashCall('$(cat) .env'), {}).action).toBe('deny')
+  })
+})
+
+// SMI-6869 governance round 12 (ruling, not a fix): `cat $(echo /app/.en)v`
+// allows and stays allowed. The guard's contract is literal text -- a
+// protected name spelled anywhere, substitution bodies included, is a read
+// target; a name the shell only ASSEMBLES at runtime (a variable, a
+// non-literal emitter, or a literal split across a substitution boundary)
+// is out of reach, the same limit a plain shell variable already has.
+// Making that fail closed would deny every computed-reader path
+// (`cat "$LOG"` included) -- a design change outside this PR.
+describe('decide() — documented limit: a protected name assembled across a substitution boundary is not spelled anywhere and stays out of reach, like a variable-built path', () => {
+  it('cat $(echo /app/.en)v -> allow', () => {
+    expect(decide(bashCall('cat $(echo /app/.en)v'), {}).action).toBe('allow')
+  })
+
+  it('f=.en; cat ${f}v -> allow', () => {
+    expect(decide(bashCall('f=.en; cat ${f}v'), {}).action).toBe('allow')
+  })
+})
+
+// SMI-6869 governance round 12 F4 (tokenizer comment rule) — these two are
+// CONTROLS for this guard, not red arms: both already deny/allow correctly
+// on the merged tree too, since the protected name here sits BEFORE any
+// `#`, or the whole line is nothing but a comment (nothing executes either
+// way). Kept here to confirm the tokenizer's new comment rule doesn't
+// regress either shape.
+describe('decide() — SMI-6869 governance round 12 F4 controls: a comment does not change a verdict decided before it, or a whole-line comment', () => {
+  it('cat .env # x -> deny (the read happens before the comment)', () => {
+    expect(decide(bashCall('cat .env # x'), {}).action).toBe('deny')
+  })
+
+  it('# cat .env -> allow (the whole line is a comment; nothing runs)', () => {
+    expect(decide(bashCall('# cat .env'), {}).action).toBe('allow')
+  })
+})
+
 describe('decide() — SKILLSMITH_ENV_READ_GUARD_DISABLE hard-disable', () => {
   it('a command that would normally deny is allowed when the disable var is set', () => {
     const result = decide(bashCall('grep PAT .env'), { SKILLSMITH_ENV_READ_GUARD_DISABLE: '1' })

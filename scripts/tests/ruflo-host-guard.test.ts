@@ -2333,6 +2333,35 @@ describe('decide() — SMI-6869 governance round 11 F3: the skip cannot hide a r
   })
 })
 
+// SMI-6869 governance round 12 (cross-family gate, class 2): the tokenizer
+// had no comment rule at all, so `git -c core.pager="$X # ruflo" log`
+// denied unresolved-command -- round 11's every-word name test read
+// "ruflo" sitting right there after the `#`, even though a real shell
+// never executes commented-out text. Fixed in the tokenizer itself: an
+// unquoted `#` starting a NEW word discards through the next newline.
+describe('decide() — SMI-6869 governance round 12 F4: an unquoted # at a word boundary starts a comment, so a name after it is never read', () => {
+  it.each([
+    'git -c core.pager="$X # ruflo" log',
+    'git -c core.pager="$X #ruflo" log',
+    'echo hi # ruflo memory store',
+  ])('%s -> allow', (command) => {
+    expect(decide(bashCall(command), {}).action).toBe('allow')
+  })
+
+  it('control: ruflo memory store # hi -> deny H4 (the name comes before the comment)', () => {
+    const result = decide(bashCall('ruflo memory store # hi'), {})
+    expect(result.action).toBe('deny')
+    expect(reasonOf(result)).toContain('H4:')
+  })
+
+  it.each(["echo 'a # ruflo'", 'echo a#ruflo'])(
+    'control: %s -> allow (quoted, or no word boundary before #)',
+    (command) => {
+      expect(decide(bashCall(command), {}).action).toBe('allow')
+    }
+  )
+})
+
 describe('decide() — SMI-6869: a backtick substitution is read like a $(...) substitution: one construct, one representation', () => {
   it('double-quoted git config value denies — measured red/green against the reverted tokenizer: this is the row the fix actually changes', () => {
     const result = decide(bashCall('git -c core.pager="`which ruflo`" log'), {})

@@ -242,6 +242,58 @@ describe('tokenize()', () => {
   })
 })
 
+// SMI-6869 governance round 12 (cross-family gate, class 2): an unquoted
+// `#` had no special meaning at all before this fix — it tokenized as a
+// plain word character, so `# ruflo` inside a config value read as two
+// ordinary words instead of a discarded comment.
+describe('SMI-6869 governance round 12 F4: an unquoted # at a word boundary starts a comment', () => {
+  it('tokenize("echo a # b c") yields words echo, a only -- # and everything after it is discarded', () => {
+    expect(wordValues(tokenize('echo a # b c'))).toEqual(['echo', 'a'])
+  })
+
+  it('tokenize(\'echo "a # b"\') keeps the quoted "a # b" literally', () => {
+    expect(wordValues(tokenize('echo "a # b"'))).toEqual(['echo', 'a # b'])
+  })
+
+  it('tokenize("echo a#b") keeps a#b literally -- # is not at a word boundary', () => {
+    expect(wordValues(tokenize('echo a#b'))).toEqual(['echo', 'a#b'])
+  })
+
+  it('tokenize("a # b\\nc") yields a, an op newline, then c', () => {
+    const tokens = tokenize('a # b\nc')
+    expect(tokens.map((t) => (t.type === 'op' ? t : t.value))).toEqual([
+      'a',
+      { type: 'op', value: '\n' },
+      'c',
+    ])
+  })
+
+  // Self-found regression (corpus replay against the real repo corpus, not
+  // a queen-assigned finding): `${#var}`/`${#name[@]}` (bash's
+  // parameter-length operator) puts `#` immediately after the `{` this
+  // tokenizer already emits as its own op token when it flushes `$` as a
+  // separate word -- a word boundary by the naive rule above, but never a
+  // comment in any shell. An early version of the F4 fix truncated
+  // `${#before[@]}` (a real line in .github/workflows scripts) to `$`, `{`
+  // and nothing else. Checked against the raw characters immediately
+  // preceding, not the token stream, since `$` and `{` are already two
+  // separate tokens by the time `#` is reached.
+  it('tokenize("echo ${#var}") is unaffected -- # right after a literal ${ is the parameter-length operator, not a comment', () => {
+    expect(wordValues(tokenize('echo ${#var}'))).toEqual(['echo', '$', '#var'])
+  })
+
+  it('tokenize on the real corpus line ${#before[@]} keeps every word, unaffected by the comment rule', () => {
+    expect(wordValues(tokenize('[ ${#before[@]} -lt "$N" ]'))).toEqual([
+      '[',
+      '$',
+      '#before[@]',
+      '-lt',
+      '$N',
+      ']',
+    ])
+  })
+})
+
 // SMI-6869 Fix A: `<`/`>`/`&>` were plain word characters before this fix —
 // `2>&1` tokenized as a leftover `2>` word plus a job-control `&` op plus a
 // stray `1` word, which is what let a trailing redirect masquerade as an

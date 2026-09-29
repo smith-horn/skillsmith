@@ -348,3 +348,71 @@ export function scanPositionalScriptText(cmd, args, scanFn) {
   }
   return null
 }
+
+/**
+ * Every word of every substitution BODY under `words`, at any nesting
+ * depth: a body is tokenized, its words collected, and each of those
+ * words' own `.subs` opened in turn, so `$(echo $(echo .env))` reads like
+ * one flat argument list (a single pass leaves the nested `$(...)` as one
+ * unopened word).
+ *
+ * Fails closed at `MAX_DEPTH`: this function feeds a read check its
+ * argument list, so stopping early would understate what that argv
+ * receives; a truncated result is reported as such and the caller treats
+ * it as unresolvable (the posture `ruflo-host-guard.mjs`'s
+ * `evaluateGuardCommand` takes at its own cap).
+ * @param {Array<{value: string, subs?: string[]}>} words
+ * @param {number} [depth]
+ * @returns {{ words: string[], truncated: boolean }}
+ */
+export function flattenSubWords(words, depth = 0) {
+  if (depth > MAX_DEPTH) return { words: [], truncated: true }
+  const out = []
+  for (const w of words) {
+    for (const sub of w.subs ?? []) {
+      const subTokens = tokenize(sub).filter((t) => t.type === 'word' && !t.redirect)
+      out.push(...subTokens.map((t) => t.value))
+      const nested = flattenSubWords(subTokens, depth + 1)
+      if (nested.truncated) return { words: out, truncated: true }
+      out.push(...nested.words)
+    }
+  }
+  return { words: out, truncated: false }
+}
+
+/**
+ * When a segment's own argv[0] IS a substitution, the command that will
+ * run is unresolved for this segment -- `` `cat` .env `` runs whatever its
+ * body prints, with `.env` as ITS OWN argument, so no reader check can
+ * fire against a named command at all. Two independent checks the caller
+ * cannot make on its own:
+ *
+ * 1. Whatever the body prints, a value in a REMAINING argument the
+ *    caller's own `checkFlaggedArg` flags is still that unnamed command's
+ *    argument -- checked first, regardless of what the body resolves to
+ *    (`$(echo cat) .env`: the body's head is `echo`, not `cat`, so a
+ *    head-only re-check misses this entirely).
+ * 2. The shape this guard has always caught: the body prints its OWN
+ *    name, found by re-running the caller's own `checkArgv` with the
+ *    body's HEAD word swapped in for the unresolved argv[0].
+ * @param {Array<{value: string, subs?: string[]}>} argvWords
+ * @param {(arg: string) => T | null} checkFlaggedArg returns the caller's
+ *   own violation shape for a flagged tail argument, or null
+ * @param {(argv: string[]) => T | null} checkArgv the caller's own per-argv check
+ * @returns {T | null}
+ */
+export function checkUnresolvedHeadTail(argvWords, checkFlaggedArg, checkArgv) {
+  if (argvWords.length === 0 || (argvWords[0].subs?.length ?? 0) === 0) return null
+  const tailArgs = argvWords.slice(1).map((w) => w.value)
+  for (const a of tailArgs) {
+    const flagged = checkFlaggedArg(a)
+    if (flagged) return flagged
+  }
+  for (const s of argvWords[0].subs) {
+    const head = tokenize(s).find((t) => t.type === 'word' && !t.redirect)
+    if (!head) continue
+    const violation = checkArgv([head.value, ...tailArgs])
+    if (violation) return violation
+  }
+  return null
+}
