@@ -277,25 +277,22 @@ function evaluateGuardSegment(segmentTokens, depth, segments, segmentIndex, embe
       }
       const nested = evaluateGuardCommand(shellFedResult.text, depth + 1, true)
       if (nested) return nested
-    } else if (shellFedResult.continueOnAllow) {
-      // a heredoc CONSUMER's body is an EXTRA place to look, not a replacement
-      // for its own argv — see `ruflo-host-guard-heredoc-consumers.mjs`.
-      const nestedFed = evaluateGuardCommand(shellFedResult.text, depth + 1)
-      if (nestedFed) return nestedFed
     } else {
-      // Governance-round C1 fix (post-PR-#2959 retro, regression): this
-      // arm covers a BARE shell fed real shell text (a heredoc, here-string,
-      // process substitution, or pipe into `bash`/`sh`/`zsh`/`dash`/`ksh`
-      // with NO `-c`) — the fed BODY is an EXTRA place to look, exactly
-      // like the `continueOnAllow` arm immediately above, not a REPLACEMENT
-      // for this segment's own argv checks. An unconditional `return
-      // evaluateGuardCommand(...)` here returned `null` (allow) whenever the
-      // fed body was itself benign, short-circuiting every check below —
-      // including the ones that already deny `bash ruflo <<'EOF'` (H4b) and
-      // `bash node_modules/.bin/ruflo <<'EOF'` (H3) with NO fed text at all.
-      // Matching the sibling arm's own shape closes this: only a POSITIVE
-      // verdict from the fed body returns early; a clean body falls through
-      // to every remaining check, the same as `continueOnAllow`.
+      // Governance-round Minor 3 fix (confirmed by mutation: deleting the
+      // sibling `continueOnAllow` arm this replaced changed 0 of 1,263
+      // verdicts while its own motivating cases still reached it, since a
+      // heredoc CONSUMER's body and a BARE shell's fed text — heredoc,
+      // here-string, process substitution, or pipe into
+      // `bash`/`sh`/`zsh`/`dash`/`ksh`/`make`/`crontab`/`at`/`batch` — are
+      // both an EXTRA place to look, not a REPLACEMENT for this segment's
+      // own argv checks (governance-round C1 fix, post-PR-#2959 retro,
+      // regression: an unconditional `return evaluateGuardCommand(...)`
+      // here used to return `null` whenever the fed body was itself
+      // benign, short-circuiting every check below — including the ones
+      // that already deny `bash ruflo <<'EOF'` (H4b) and `bash
+      // node_modules/.bin/ruflo <<'EOF'` (H3) with NO fed text at all).
+      // Only a POSITIVE verdict from the fed body returns early; a clean
+      // body falls through to every remaining check.
       const nestedFed = evaluateGuardCommand(shellFedResult.text, depth + 1)
       if (nestedFed) return nestedFed
     }

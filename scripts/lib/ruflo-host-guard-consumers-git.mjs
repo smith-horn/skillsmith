@@ -114,9 +114,36 @@ function isGitExecKey(key, value) {
  * reached DENY before this fix because the extracted value recursed into
  * `checkUnresolvedCommand`'s own `$`-in-head arm one level down).
  */
+/**
+ * A ruflo/claude-flow name spelled as the whole head word or as the final
+ * path element of one. Checked even when the head also carries a `$`:
+ * `$HOME/bin/ruflo` is unresolvable AS A PATH but still spells the name, so
+ * the "cannot spell the name" premise of the skip below does not hold for it.
+ */
+const RUFLO_NAME_IN_VALUE_HEAD_RE =
+  /(?:^|[/\\])(?:ruflo|claude-flow-mcp|claude-flow)(?![a-z0-9._-])/i
+
+/**
+ * True when the config value's own COMMAND HEAD -- the first shell word of
+ * the text git would exec (after the `!` alias marker) -- can neither be
+ * resolved statically NOR be read as spelling the name. Only the HEAD
+ * matters: a `$` in a LATER word leaves the head a readable literal that
+ * still spells the name (`ruflo $X`), so testing the whole token would skip
+ * a value this guard can in fact read.
+ * @param {string} value the config value (already split from its key)
+ * @param {{value: string, subs?: string[]}} [token] the aligned token
+ */
+function hasUnresolvableValueHead(value, token) {
+  const body = value.startsWith('!') ? value.slice(1) : value
+  const head = body.trim().split(/\s+/)[0] ?? ''
+  if (RUFLO_NAME_IN_VALUE_HEAD_RE.test(head)) return false
+  if (head.includes('$') || head.includes('`')) return true
+  return head === '' && (token?.subs?.length ?? 0) > 0
+}
+
 function pushGitConfigValue(results, key, value, token) {
   if (!isGitExecKey(key, value)) return
-  if (token && (token.value.includes('$') || (token.subs?.length ?? 0) > 0)) return
+  if (hasUnresolvableValueHead(value, token)) return
   results.push({ text: value.startsWith('!') ? value.slice(1) : value, kind: 'shell' })
 }
 

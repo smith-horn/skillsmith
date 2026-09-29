@@ -6,11 +6,10 @@
  * (M3 correction: not enforced by tooling here — `scripts/check-file-
  * length.mjs` only runs via `lint-staged` for `*.ts`/`*.sh`; SMI-5994)
  * once Fix D's read-only-subcommand predicate pushed that file over the
- * limit — both
- * exports here are pure functions/constants, no I/O, no state, grouped
- * together because they are the two halves of "which npm invocations this
- * guard already knows are safe regardless of what H1–H8 would otherwise
- * say about them."
+ * limit — both exports here are pure functions/constants, no I/O, no
+ * state, grouped together because they are the two halves of "which npm
+ * invocations this guard already knows are safe regardless of what H1–H8
+ * would otherwise say about them."
  */
 
 import { basenameOf } from './shell-command-normalize.mjs'

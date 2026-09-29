@@ -1141,8 +1141,11 @@ describe('decide() — SMI-6869 Fix B: heredoc bodies are not tokenised as comma
 // `null` propagated straight out of `evaluateGuardSegment`, skipping every
 // check below it -- including the ones that already deny the segment's OWN
 // argv (`bash ruflo` -> H4b, `bash node_modules/.bin/ruflo` -> H3) with NO
-// fed text at all. Matches the sibling `continueOnAllow` arm's own shape
-// now: only a POSITIVE verdict from the fed body returns early.
+// fed text at all. Governance round 8 Minor 3 confirmed by mutation that
+// this arm's body had become byte-identical to the heredoc-consumer arm's
+// own (0 of 1,263 verdicts changed when the flag distinguishing them was
+// deleted) and collapsed both into ONE `else`: only a POSITIVE verdict from
+// the fed body returns early, uniformly.
 describe('decide() — SMI-6869 governance round C1: benign shell-fed body no longer launders a dangerous operand (regression)', () => {
   const shellVariants: Array<[string, string]> = [
     ['bash', "bash node_modules/.bin/ruflo <<'EOF'\ntrue\nEOF"],
@@ -1844,6 +1847,54 @@ describe('decide() — SMI-6869 governance round M1: an unresolvable git config 
   })
 })
 
+// Governance round 8 C1 fix: the skip above tested `token.value` for a `$`
+// ANYWHERE, but for `-c` that value is the whole `key=value`, so a value
+// whose HEAD spells the name and whose TAIL merely carries a `$` (`ruflo
+// $X`) was wrongly read as "unresolvable" and skipped — eleven real rows
+// flip from the correct DENY to an incorrect ALLOW under that logic. The
+// fix (`hasUnresolvableValueHead`) checks only the value's own command
+// HEAD (the first shell word, after an optional `!` alias marker): a `$`
+// in a LATER word leaves the head a readable literal that still spells the
+// name, and a head that spells the name via a path separator
+// (`$HOME/ruflo`) is readable as spelling the name even though it is not
+// itself a resolvable filesystem path.
+describe('decide() — SMI-6869 governance round 8 C1: a $-in-the-TAIL config value is not skipped when its HEAD still spells the name (regression)', () => {
+  const redArms: Array<[string, string, string]> = [
+    ['core.pager, head=ruflo tail=$X', 'git -c core.pager="ruflo $X" log', 'H4:'],
+    [
+      'filter.git-crypt.smudge, head=ruflo tail=$F',
+      'git config --local filter.git-crypt.smudge "ruflo smudge $F"',
+      'H4:',
+    ],
+    [
+      'core.pager, head=node_modules/.bin/ruflo tail=$X',
+      'git -c core.pager="node_modules/.bin/ruflo $X" log',
+      'H3:',
+    ],
+    ['alias bang, head=!ruflo tail=$K', "git -c 'alias.x=!ruflo $K' x", 'H4:'],
+    [
+      'core.pager, head=$HOME/ruflo (unresolvable AS A PATH, still spells the name)',
+      "git -c core.pager='$HOME/ruflo' log",
+      'unresolved-command:',
+    ],
+  ]
+  it.each(redArms)('%s denies', (_label, cmd, expectedCode) => {
+    const result = decide(bashCall(cmd), {})
+    expect(result.action).toBe('deny')
+    expect(reasonOf(result)).toContain(expectedCode)
+  })
+
+  it('core.pager, head=$SMUDGE_CMD tail=ruflo allows — the HEAD (not the value as a whole) is what must be unresolvable to skip', () => {
+    expect(
+      decide(bashCall('git config --local filter.f.smudge "$SMUDGE_CMD ruflo"'), {}).action
+    ).toBe('allow')
+  })
+
+  it('core.pager, head=$X tail=ruflo allows — same shape via -c instead of config --local', () => {
+    expect(decide(bashCall('git -c core.pager="$X ruflo" log'), {}).action).toBe('allow')
+  })
+})
+
 describe('decide() — SMI-6869 consumer-string: vim/nvim ex-commands', () => {
   it('vim -c with a bang (":!cmd") ex-command denies via H4', () => {
     const result = decide(bashCall(`vim -Nu NONE -c ':!${R}' -c q`), {})
@@ -2276,6 +2327,103 @@ describe('decide() — SMI-6869 consumer-string: heredoc consumers (make/crontab
     const result = decide(bashCall("make -f - <<'EOF'\nall:\n    " + R + '\nEOF'), {})
     expect(result.action).toBe('deny')
     expect(reasonOf(result)).toContain('H4:')
+  })
+})
+
+// Governance round 8 Major fix (pre-existing, closed here since the patch is
+// verified): H7's own two path patterns (`H7_RE1`/`H7_RE2`) bracket only a
+// GLOBAL npm install's `lib/node_modules/ruflo` layout and nvm's own
+// `versions/node/vX/bin/...` layout -- neither one matches the generic
+// `<any-prefix>/bin/<name>` symlink shape a global npm install ALSO creates
+// through every other common prefix (`/usr/local/bin`, `/opt/homebrew/bin`,
+// `~/bin`, ...), so those all allowed on both trees before this fix. This
+// is its own dedicated describe block, not folded into the C1 block above,
+// because it is a genuinely NEW security predicate arm (`H7_RE3`) rather
+// than a bugfix to existing coverage.
+describe('decide() — SMI-6869 governance round 8 H7: bin/ruflo path tail through a non-nvm global-install prefix (new coverage)', () => {
+  const redArms: Array<[string, string]> = [
+    ['/usr/local/bin/ruflo status', '/usr/local/bin/ruflo status'],
+    ['/opt/homebrew/bin/ruflo memory store', '/opt/homebrew/bin/ruflo memory store'],
+    ['~/bin/ruflo status', '~/bin/ruflo status'],
+    ['/usr/local/bin/claude-flow status', '/usr/local/bin/claude-flow status'],
+    ['bash /usr/local/bin/ruflo', 'bash /usr/local/bin/ruflo'],
+  ]
+  it.each(redArms)('%s denies via H7', (_label, cmd) => {
+    const result = decide(bashCall(cmd), {})
+    expect(result.action).toBe('deny')
+    expect(reasonOf(result)).toContain('H7:')
+  })
+
+  it('control: /usr/local/bin/rufloctl x allows — H7_RE3 is anchored at end-of-token so a bin/ruflo-something basename is untouched', () => {
+    expect(decide(bashCall('/usr/local/bin/rufloctl x'), {}).action).toBe('allow')
+  })
+
+  it('control: /Users/x/.nvm/versions/node/v22.22.2/bin/ruflo memory store --key k --value v still denies via H7 — the pre-existing H7_RE2 nvm-path arm is unaffected by adding H7_RE3', () => {
+    const result = decide(
+      bashCall('/Users/x/.nvm/versions/node/v22.22.2/bin/ruflo memory store --key k --value v'),
+      {}
+    )
+    expect(result.action).toBe('deny')
+    expect(reasonOf(result)).toContain('H7:')
+  })
+})
+
+// Governance round 8 follow-up (same dispatch as the H7_RE3 block above,
+// applied after that block's own `./ruflo` gap test was measured and
+// reported): this coordinator-measured, real, PRE-EXISTING bypass — on
+// `main` at `50d38872d`, `./ruflo memory store`, `../ruflo memory store` and
+// `bash ./ruflo` all allow — is the same path-spelling family as H7_RE1-3,
+// so it closes here as H7_RE4 rather than waiting for a separate commit.
+// Deliberately narrow: anchored on a LEADING `./`/`../` (not a blunt
+// basename match) because the reviewer measured that a broader draft
+// regresses the H7_RE2 nvm-path label and false-positives a slash-bearing
+// non-path token. Its own describe block, matching the H7_RE3 block's own
+// "genuinely new security predicate arm" rationale above.
+describe('decide() — SMI-6869 governance round 8 H7_RE4: explicit relative execution path (./ruflo, ../ruflo) (new coverage)', () => {
+  const redArms: Array<[string, string]> = [
+    ['./ruflo memory store', './ruflo memory store'],
+    ['../ruflo memory store', '../ruflo memory store'],
+    ['./tools/ruflo status', './tools/ruflo status'],
+    ['bash ./ruflo', 'bash ./ruflo'],
+    ['./claude-flow status', './claude-flow status'],
+  ]
+  it.each(redArms)('%s denies via H7', (_label, cmd) => {
+    const result = decide(bashCall(cmd), {})
+    expect(result.action).toBe('deny')
+    expect(reasonOf(result)).toContain('H7:')
+  })
+
+  it('control: ./rufloctl x allows — anchored at end-of-token, same as H7_RE3, so a bin/ruflo-something-shaped relative path is untouched', () => {
+    expect(decide(bashCall('./rufloctl x'), {}).action).toBe('allow')
+  })
+
+  it('control: ./scripts/ruflo-service-up.sh allows — the basename is not the name', () => {
+    expect(decide(bashCall('./scripts/ruflo-service-up.sh'), {}).action).toBe('allow')
+  })
+
+  it('control: cat ./ruflo.txt allows — a trailing extension is not the exact name', () => {
+    expect(decide(bashCall('cat ./ruflo.txt'), {}).action).toBe('allow')
+  })
+
+  it('control: ./node_modules/.bin/ruflo still denies via H3, label unchanged — H3 is checked before H7 in checkH1toH7, so this shape reaches H3 first regardless of H7_RE4', () => {
+    const result = decide(bashCall('./node_modules/.bin/ruflo'), {})
+    expect(result.action).toBe('deny')
+    expect(reasonOf(result)).toContain('H3:')
+  })
+
+  it('control: the nvm-path row still denies via H7 — H7_RE4 is additive, not a replacement for H7_RE2', () => {
+    const result = decide(
+      bashCall('/Users/x/.nvm/versions/node/v22.22.2/bin/ruflo memory store --key k --value v'),
+      {}
+    )
+    expect(result.action).toBe('deny')
+    expect(reasonOf(result)).toContain('H7:')
+  })
+
+  it('control: /usr/local/bin/ruflo still denies via H7 — H7_RE4 is additive, not a replacement for H7_RE3', () => {
+    const result = decide(bashCall('/usr/local/bin/ruflo'), {})
+    expect(result.action).toBe('deny')
+    expect(reasonOf(result)).toContain('H7:')
   })
 })
 

@@ -6,10 +6,11 @@
  * files under scripts/ (not enforced by tooling here —
  * `scripts/check-file-length.mjs` only runs via `lint-staged` for
  * `*.ts`/`*.sh`; SMI-5994) once that file's own M3/L1/L3/L5 governance-
- * round docblock corrections pushed it to 514 lines. `extractInlineScriptText`
- * and `INLINE_SCRIPT_BARE_NAME_RE` have no dependency on anything defined
- * only in `ruflo-host-guard-shell-fed.mjs` other than `isPythonBasename`
- * (exported from there for this one cross-file use), so they move cleanly.
+ * round docblock corrections moved it out to stay under the convention.
+ * `extractInlineScriptText` and `INLINE_SCRIPT_BARE_NAME_RE` have no
+ * dependency on anything defined only in `ruflo-host-guard-shell-fed.mjs`:
+ * `isPythonBasename` moved HERE with them (shell-fed imports it from this
+ * file) so the two modules form no import cycle, so they move cleanly.
  * Re-exported from `ruflo-host-guard-shell-fed.mjs` so
  * `scripts/ruflo-host-guard.mjs`'s own import statement needed no change,
  * the same pattern `ruflo-host-guard-predicates.mjs` already documents for
@@ -21,7 +22,17 @@ import {
   hasInlineScriptFlag,
   INLINE_SCRIPT_LONG_FLAGS,
 } from './shell-command-normalize.mjs'
-import { isPythonBasename } from './ruflo-host-guard-shell-fed.mjs'
+/**
+ * Any `python`, `python3`, `python3.12`, … basename. Defined HERE rather
+ * than in `ruflo-host-guard-shell-fed.mjs` (its only other user, which
+ * imports it from this file) so the two modules form no import cycle --
+ * shell-fed already re-exports this file, so an arc back would close one,
+ * and this file exports a `const` (`INLINE_SCRIPT_BARE_NAME_RE`), which a
+ * cycle can expose in its temporal dead zone.
+ */
+export function isPythonBasename(base) {
+  return /^python[0-9]*(\.[0-9]+)?$/.test(base)
+}
 
 /**
  * H-8 fix (SMI-6744 Wave 4 governance round): per-interpreter short-flag

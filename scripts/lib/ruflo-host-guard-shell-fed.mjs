@@ -12,15 +12,18 @@
  * 500-line-per-file convention this repo keeps by hand for .mjs files
  * under scripts/ (M3 correction: not enforced by tooling here --
  * scripts/check-file-length.mjs only runs via lint-staged for *.ts/*.sh;
- * SMI-5994) once the delta round's fixes grew that file past the
- * limit -- these are guard-
- * SPECIFIC helpers, not general-purpose primitives every consumer of
- * shell-command-normalize.mjs would want, so they stay out of that shared
- * module (env-read-guard.mjs needs none of this).
+ * SMI-5994) once the delta round's fixes grew that file past the limit --
+ * these are guard-SPECIFIC helpers, not general-purpose primitives every
+ * consumer of shell-command-normalize.mjs would want, so they stay out of
+ * that shared module (env-read-guard.mjs needs none of this).
  */
 
 import { basenameOf, SHELL_COMMANDS, tokenize } from './shell-command-normalize.mjs'
 import { decodeShellEscapes } from './shell-escape-decode.mjs'
+// `isPythonBasename` lives in the inline-script module, the only other
+// user, so the edge between these two files runs ONE way (this file ->
+// inline-script, for the re-export at the bottom too) and no cycle forms.
+import { isPythonBasename } from './ruflo-host-guard-inline-script.mjs'
 import {
   HEREDOC_CONSUMER_BASENAMES,
   normalizeHeredocConsumerBody,
@@ -238,16 +241,18 @@ function resolveShellFedProducer(segments, index) {
  * @param {Array<{tokens: Array<object>, precedingOp: string|null}>} segments
  *   every segment of the FULL command, in order
  * @param {number} segmentIndex this segment's own index into `segments`
- * @returns {{text: string, embedded?: boolean, continueOnAllow?: boolean} |
- *   {deny: true, token: string} | null} a literal-text result to recurse
- *   into (L3 correction: `embedded: true` when the fed text is INTERPRETER
- *   PROGRAM SOURCE, not a shell command line, so the caller evaluates it
- *   with the shell-command-line-only arms turned off; `continueOnAllow:
- *   true` when the fed text is a heredoc CONSUMER's body — an EXTRA place
- *   to look, not a replacement for the segment's own argv checks, so the
- *   caller falls through on a clean recursion instead of returning), a
- *   deny signal (M-1's unreadable-producer case) for the caller to turn
- *   into a verdict, or null (nothing found)
+ * @returns {{text: string, embedded?: boolean} | {deny: true, token: string} |
+ *   null} a literal-text result to recurse into (L3 correction: `embedded:
+ *   true` when the fed text is INTERPRETER PROGRAM SOURCE, not a shell
+ *   command line, so the caller evaluates it with the shell-command-line-
+ *   only arms turned off; governance round 8 Minor 3: every non-`embedded`
+ *   result — a heredoc CONSUMER's body or a bare shell/interpreter's fed
+ *   text alike — is likewise an EXTRA place to look, not a replacement for
+ *   the segment's own argv checks, so the caller always falls through on a
+ *   clean recursion instead of returning; see `scripts/ruflo-host-guard.mjs`
+ *   for the one merged arm this collapsed into), a deny signal (M-1's
+ *   unreadable-producer case) for the caller to turn into a verdict, or
+ *   null (nothing found)
  */
 export function findShellFedLiteralText(argvLower, segmentTokens, segments, segmentIndex) {
   const head0 = basenameOf(argvLower[0] ?? '')
@@ -263,19 +268,21 @@ export function findShellFedLiteralText(argvLower, segmentTokens, segments, segm
   const ownHeredocs = segmentTokens.filter((t) => t.type === 'heredoc')
   if (ownHeredocs.length > 0) {
     const raw = ownHeredocs.map((t) => t.value ?? '').join('\n')
-    // Round-3 governance fix: `continueOnAllow` — for a heredoc CONSUMER the
-    // body is an ADDITIONAL place to look, not a replacement for this
-    // segment's own argv. Without the flag the caller `return`ed the body's
-    // verdict outright, so a benign body short-circuited H1–H7, the
-    // consumer step and the bare-name inversion for the segment itself:
-    // `make -f - ruflo <<'EOF'…EOF` and `crontab - ruflo <<'EOF'…EOF` both
-    // denied (H4b) BEFORE this commit and reached ALLOW after it — the two
-    // regressions this flag removes. Shells and interpreters keep the
-    // original replace-outright semantics (the body IS what they run).
+    // Round-3 governance fix (Minor 3 follow-up, governance round 8: the
+    // caller no longer branches on a flag here — see
+    // `scripts/ruflo-host-guard.mjs`'s own merged comment): for a heredoc
+    // CONSUMER the body is an ADDITIONAL place to look, not a replacement
+    // for this segment's own argv. An unconditional `return`-the-body's-
+    // verdict-outright caller would let a benign body short-circuit
+    // H1–H7, the consumer step and the bare-name inversion for the
+    // segment itself: `make -f - ruflo <<'EOF'…EOF` and `crontab - ruflo
+    // <<'EOF'…EOF` both need to keep denying (H4b) via that fall-through.
+    // A shell or interpreter's own fed body is the SAME kind of extra
+    // place to look, not a replacement for its own argv either — the
+    // caller's fall-through applies uniformly to every arm reached here.
     return {
       text: isHeredocConsumer ? normalizeHeredocConsumerBody(head0, raw) : raw,
       embedded: isInterp,
-      continueOnAllow: isHeredocConsumer,
     }
   }
   if (isHeredocConsumer) {
@@ -288,7 +295,6 @@ export function findShellFedLiteralText(argvLower, segmentTokens, segments, segm
       if (resolved !== null && resolved.text !== null) {
         return {
           text: normalizeHeredocConsumerBody(head0, resolved.text),
-          continueOnAllow: true,
         }
       }
     }
@@ -394,15 +400,6 @@ export function restoreXargsReplacementWordTokens(segmentTokens) {
     }
   }
   return result
-}
-
-/**
- * M3 follow-up: exported (used only locally before) because
- * `ruflo-host-guard-inline-script.mjs`'s own `extractInlineScriptText`
- * needs it too, after that function moved out of this file.
- */
-export function isPythonBasename(base) {
-  return /^python[0-9]*(\.[0-9]+)?$/.test(base)
 }
 
 /**

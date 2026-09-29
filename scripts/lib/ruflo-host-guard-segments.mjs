@@ -5,17 +5,18 @@
  * under scripts/ (not enforced by tooling here —
  * `scripts/check-file-length.mjs` only runs via `lint-staged` for
  * `*.ts`/`*.sh`; SMI-5994) once that file's own M3/L2/L4 governance-round
- * docblock corrections pushed it to 535 lines — this is a pure function
- * with no dependency on anything else in the orchestration file, so it
- * moves cleanly.
+ * docblock corrections moved it out to stay under the convention — this is
+ * a pure function with no dependency on anything else in the orchestration
+ * file, so it moves cleanly.
  */
 
 /**
  * Real statement separators for THIS guard's own segmentation — unlike
  * `env-read-guard.mjs`'s `evaluateCommand`, which treats every op token
  * (including `{`/`}`) as a splitter, this guard deliberately does NOT
- * split on `{`/`}` so the brace-syntax check (below) can see them still
- * grouped with the command they belong to (round 1 finding 3).
+ * split on `{`/`}` so the brace-syntax check (`checkBraceSegment` in
+ * `ruflo-host-guard-predicates.mjs`) can see them still grouped with the
+ * command they belong to (round 1 finding 3).
  */
 const SPLIT_OPS = new Set([';', '&&', '||', '|', '&', '\n', '(', ')'])
 

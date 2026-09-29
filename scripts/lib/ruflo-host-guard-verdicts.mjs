@@ -6,8 +6,7 @@
  * by tooling here — `scripts/check-file-length.mjs` only runs via
  * `lint-staged` for `*.ts`/`*.sh`; SMI-5994) once that file grew H-D/L-D's
  * extra path-normalization views and H1's `--require` clause — every
- * export here
- * is a pure function or constant, no I/O, no state, and both
+ * export here is a pure function or constant, no I/O, no state, and both
  * `ruflo-host-guard-predicates.mjs` and `ruflo-host-guard-h1to7.mjs` import
  * from this file (never the reverse), so there is no import cycle between
  * the three.

@@ -5,7 +5,7 @@
  * under scripts/ (not enforced by tooling here —
  * `scripts/check-file-length.mjs` only runs via `lint-staged` for
  * `*.ts`/`*.sh`; SMI-5994) once that file's own M3/L2/L4 governance-round
- * docblock corrections pushed it to 535 lines.
+ * docblock corrections moved it out to stay under the convention.
  *
  * Only the PARSING half moves here — the final recursive
  * `evaluateGuardCommand(joined, depth + 1)` call stays in the orchestration
