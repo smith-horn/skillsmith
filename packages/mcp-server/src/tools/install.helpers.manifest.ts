@@ -26,9 +26,17 @@ import { MANIFEST_PATH, SKILLSMITH_DIR, type SkillManifest } from './install.typ
  * workspace-scoped reinstall instead of either always reading global (wrong
  * manifest) or being skipped entirely for workspace scope (silently
  * dropping `conflictAction`'s only effect — `SkillInstallationService.install()`
- * itself never consumes that option). Every other caller
- * (`outdated.ts`, `skill-updates.ts`, this file's own `updateManifestSafely`)
- * keeps calling this with zero args, unaffected.
+ * itself never consumes that option). The other callers
+ * (`outdated.action.ts` and `skill-updates.ts`) keep calling this with zero
+ * args, unaffected.
+ *
+ * SMI-6733: this reader stays LENIENT deliberately, and those two are the only
+ * remaining callers. `updateManifestSafely` used to be a third — it is not any
+ * more, because a write must not proceed from a failed read (ADR-171 § 1), so
+ * it takes `loadManifestForWrite` instead. Making this reader strict would turn
+ * two read-only reports into thrown errors, which is why ADR-171 specifies two
+ * wrappers rather than one strict reader. Giving these two the lenient wrapper
+ * and surfacing its warning is Phase 2.
  */
 export async function loadManifest(manifestPath: string = MANIFEST_PATH): Promise<SkillManifest> {
   try {
