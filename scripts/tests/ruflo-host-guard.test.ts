@@ -1265,6 +1265,144 @@ describe('decide() — SMI-6869 Fix D: read-only npm subcommands with a package-
   })
 })
 
+// SMI-6869 governance round C1 (bypass, regression): a space-separated
+// redirect target (`> ls`, `2> cat`, …) was left an ordinary, untagged
+// word by the ORIGINAL Fix A, so it became argv[0] of the "residual"
+// command once the redirect token itself was excluded — `ls`/`cat`/etc.
+// sit on `NON_EXECUTING_VERBS`, so `checkBareNameInversion` exempted the
+// whole segment. MEASURED: every row below denies with the SAME label
+// (H4) as the plain, unredirected spelling `ruflo memory store`.
+describe('decide() — SMI-6869 governance round C1: space-separated redirect target was an untagged bypass (regression)', () => {
+  const redArms = [
+    '> ls ruflo memory store',
+    '2> cat ruflo memory store',
+    '> grep ruflo memory store',
+    '> rm ruflo memory store',
+    '> echo ruflo memory store',
+    '>> mv ruflo memory store',
+    '< test ruflo memory store',
+    '&> which ruflo memory store',
+  ]
+  it.each(redArms)('%s -> deny (H4, same label as the plain spelling)', (command) => {
+    const result = decide(bashCall(command), {})
+    expect(result.action).toBe('deny')
+    expect(reasonOf(result)).toContain('H4')
+    const plain = decide(bashCall('ruflo memory store'), {})
+    const label = /\[ruflo-host-guard\] (\S+):/.exec(reasonOf(result))?.[1]
+    const plainLabel = /\[ruflo-host-guard\] (\S+):/.exec(reasonOf(plain))?.[1]
+    expect(label).toBe(plainLabel)
+  })
+})
+
+// SMI-6869 governance round C2 (bypass, regression): an interpreter
+// reading its own PROGRAM from stdin (a heredoc directly on the
+// interpreter, or piped into it) was never recognized as shell-fed text
+// at all before this round — `findShellFedLiteralText` only ever checked
+// `SHELL_COMMANDS` (bash/sh/zsh/…), never `isInlineInterpreterBasename`
+// (python/node/perl/ruby/php/bun). MEASURED: all nine deny rows below
+// close via H8-script (the quoted `"ruflo"` text matches
+// `INLINE_SCRIPT_BARE_NAME_RE` directly, before the embedded recursion is
+// even needed); all four controls stay allow (harmless program text with
+// no ruflo reference, read from a heredoc or a pipe).
+describe('decide() — SMI-6869 governance round C2: interpreter reading its program from stdin (bypass, regression)', () => {
+  const redArms = [
+    'python3 <<EOF\nimport os\nos.system("ruflo")\nEOF',
+    'node <<EOF\nrequire("child_process").execSync("ruflo")\nEOF',
+    'perl <<EOF\nsystem("ruflo")\nEOF',
+    'ruby <<EOF\nsystem("ruflo")\nEOF',
+    'php <<EOF\nexec("ruflo");\nEOF',
+    'echo \'os.system("ruflo")\' | python3',
+    'cat <<EOF | python3\nos.system("ruflo")\nEOF',
+    'python3 - <<EOF\nos.system("ruflo")\nEOF',
+    'python3 <<EOF\nos.system("ruflo")\nEOF',
+  ]
+  it.each(redArms)('%s -> deny (H8-script)', (command) => {
+    const result = decide(bashCall(command), {})
+    expect(result.action).toBe('deny')
+    expect(reasonOf(result)).toContain('H8-script')
+  })
+
+  const controls = [
+    'python3 <<EOF\nprint(1)\nEOF',
+    'node <<EOF\nconsole.log("a".padEnd(15))\nEOF',
+    'echo hello | python3',
+    'cat data.json | node process.js',
+  ]
+  it.each(controls)('control: %s -> allow (harmless interpreter stdin, unaffected)', (command) => {
+    expect(decide(bashCall(command), {}).action).toBe('allow')
+  })
+})
+
+// SMI-6869 governance round C3 (bypass, regression): with TWO heredocs on
+// one line (`bash <<A <<B`), the OLD `.find()` in both
+// `findShellFedLiteralText` and `resolveShellFedProducer` returned the
+// FIRST heredoc token — but bash itself reads stdin from the LAST one.
+// `ruflo` planted in the second heredoc (B) was never seen. Fixed by
+// filtering ALL heredoc tokens and joining their bodies. The control
+// (ruflo in A, harmless in B) was ALREADY correctly denied before this
+// round too — `.find()` picking the first heredoc happens to be the RIGHT
+// one there, so it is a control, not a red arm for C3 specifically.
+describe('decide() — SMI-6869 governance round C3: two heredocs on one line, bash reads the last one (bypass, regression)', () => {
+  it('bash <<A <<B, ruflo in B -> deny (H4, the fix now sees the second heredoc)', () => {
+    const command = 'bash <<A <<B\nharmless\nA\nruflo memory store\nB'
+    const result = decide(bashCall(command), {})
+    expect(result.action).toBe('deny')
+    expect(reasonOf(result)).toContain('H4')
+  })
+
+  it('cat <<A <<B | sh, ruflo in B -> deny (H4, relayed through cat into the pipe, both heredocs joined)', () => {
+    const command = 'cat <<A <<B | sh\nharmless\nA\nruflo memory store\nB'
+    const result = decide(bashCall(command), {})
+    expect(result.action).toBe('deny')
+    expect(reasonOf(result)).toContain('H4')
+  })
+
+  it('control: bash <<A <<B, ruflo in A (harmless in B) -> deny (already correct pre-C3: .find() picked the right heredoc here)', () => {
+    const command = 'bash <<A <<B\nruflo memory store\nA\nharmless\nB'
+    const result = decide(bashCall(command), {})
+    expect(result.action).toBe('deny')
+    expect(reasonOf(result)).toContain('H4')
+  })
+})
+
+// SMI-6869 governance round C4 (bypass, PRE-EXISTING on both trees — not a
+// regression from any earlier SMI-6869 round): `checkBraceSegment` only
+// ever fired when the EFFECTIVE FIRST WORD was already a known runner —
+// it never considered that a brace ALTERNATION could itself SPELL the
+// runner/ruflo name (`{ruflo,} memory store` expands to plain `ruflo`).
+// Fixed by scanning every word for a literal comma and checking each
+// comma-separated part's basename against H4B_NAMES/RUNNER_BASENAMES,
+// BEFORE the runner gate. Controls confirm shell GROUPING (`{ cmd; }`,
+// no comma in any word) and ordinary brace expansion with no
+// runner/ruflo-shaped part stay allowed.
+describe('decide() — SMI-6869 governance round C4: brace alternation spelling the command name (bypass, pre-existing)', () => {
+  const redArms = ['{ruflo,} memory store', '{ruflo,x} memory store']
+  it.each(redArms)('%s -> deny (brace-syntax)', (command) => {
+    const result = decide(bashCall(command), {})
+    expect(result.action).toBe('deny')
+    expect(reasonOf(result)).toContain('brace-syntax')
+  })
+
+  const controls = [
+    '{ npm run lint; }',
+    '{ npm test; npm run lint; }',
+    'cp file{,.bak}',
+    'mkdir -p dir/{a,b,c}',
+  ]
+  it.each(controls)(
+    'control: %s -> allow (shell grouping or a comma part with no runner/ruflo name)',
+    (command) => {
+      expect(decide(bashCall(command), {}).action).toBe('allow')
+    }
+  )
+
+  it('control: npx {ruflo,eslint} memory store -> still denies with brace-syntax in the reason (unaffected by C4)', () => {
+    const result = decide(bashCall('npx {ruflo,eslint} memory store'), {})
+    expect(result.action).toBe('deny')
+    expect(reasonOf(result)).toContain('brace-syntax')
+  })
+})
+
 // --- SMI-6854 startDaemon shapes ---
 
 describe('decide() — mcp__ruflo__hooks_session-start startDaemon gate (SMI-6854)', () => {

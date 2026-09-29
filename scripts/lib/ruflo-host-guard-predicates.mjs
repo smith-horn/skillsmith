@@ -289,6 +289,27 @@ export function checkBraceSegment(segmentTokens) {
     }
   }
 
+  // A brace expression can also SPELL the command name itself
+  // (`{ruflo,} memory store` expands to `ruflo`), in which case the
+  // effective first word is `ruflo,` and no runner is involved at all.
+  const commaSplit = (v) => v.split(',').filter((p) => p.length > 0)
+  for (const w of words) {
+    // only a word that is itself part of a brace ALTERNATION (it carries a
+    // comma) can expand to a different name; `{ npm run lint; }`'s own
+    // words carry none, so shell GROUPING stays allowed (M-B fix intact).
+    if (!w.value.includes(',')) continue
+    for (const part of commaSplit(w.value)) {
+      const b = basenameOf(part).toLowerCase()
+      if (H4B_NAMES.has(b) || RUNNER_BASENAMES.has(b)) {
+        return denyWith(
+          'brace-syntax',
+          'a `{`/`}` brace expression that can expand to a package-runner or ruflo name — ' +
+            'fails closed rather than implementing partial brace-expansion'
+        )
+      }
+    }
+  }
+
   if (!RUNNER_BASENAMES.has(base)) return null
 
   // M-B fix (SMI-6744 Wave 4 governance round): a `{`/`}` that appears AT

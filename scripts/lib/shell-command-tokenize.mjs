@@ -114,8 +114,16 @@ function readRedirectOperator(command, i) {
  * ONE word token marked `redirect: true` (SMI-6869 Fix A) — consumers that
  * build argv from word tokens must exclude these; `findShellFedLiteralText`
  * deliberately does NOT, since it still needs to see a glued `<<<text`
- * shape. A heredoc (`<<`/`<<-`) produces its own `{type: 'heredoc', ...}`
- * token instead, filled in once the introducing line's newline is reached
+ * shape. A SEPARATE (space-separated) target word is ALSO marked
+ * `redirect: true` (SMI-6869 C1 correction): when a redirect token is
+ * flushed with nothing glued onto it, the very next word token — and only
+ * that one — is tagged as the pending target and cleared on any operator
+ * or newline; the original Fix A left this word untagged, so it became a
+ * bare argv[0] (`> ls ruflo memory store` reached `checkBareNameInversion`
+ * as `ls ruflo memory store`, and `ls` sits on `NON_EXECUTING_VERBS`,
+ * exempting the whole segment — a real bypass, not a cosmetic gap). A
+ * heredoc (`<<`/`<<-`) produces its own `{type: 'heredoc', ...}` token
+ * instead, filled in once the introducing line's newline is reached
  * (SMI-6869 Fix B) — see `shell-command-heredoc.mjs`.
  * @param {string} command
  */
@@ -123,16 +131,35 @@ export function tokenize(command) {
   const tokens = []
   const pendingHeredocs = []
   let cur = null
+  let pendingRedirectToken = null
+  let pendingRedirectOpText = ''
   const flush = () => {
-    if (cur !== null) tokens.push(cur)
+    if (cur !== null) {
+      tokens.push(cur)
+      // A redirect operator token flushed with NOTHING glued onto it means
+      // its target is the NEXT word (`> out cmd`), which is likewise not
+      // part of the command's own argv.
+      if (cur === pendingRedirectToken && cur.value === pendingRedirectOpText) {
+        awaitingRedirectTarget = true
+      }
+    }
     cur = null
+    pendingRedirectToken = null
   }
+  let awaitingRedirectTarget = false
   const word = () => {
-    if (cur === null) cur = { type: 'word', value: '', subs: [] }
+    if (cur === null) {
+      cur = { type: 'word', value: '', subs: [] }
+      if (awaitingRedirectTarget) {
+        cur.redirect = true
+        awaitingRedirectTarget = false
+      }
+    }
     return cur
   }
   const pushOp = (value, width, i) => {
     flush()
+    awaitingRedirectTarget = false
     tokens.push({ type: 'op', value })
     return i + width
   }
@@ -238,6 +265,8 @@ export function tokenize(command) {
       flush()
       const { op, next } = readRedirectOperator(command, i)
       cur = { type: 'word', value: op, subs: [], redirect: true }
+      pendingRedirectToken = cur
+      pendingRedirectOpText = op
       i = next
       continue
     }
@@ -266,6 +295,8 @@ export function tokenize(command) {
         continue
       }
       cur = { type: 'word', value: fdPrefix + op, subs: [], redirect: true }
+      pendingRedirectToken = cur
+      pendingRedirectOpText = fdPrefix + op
       i = next
       continue
     }

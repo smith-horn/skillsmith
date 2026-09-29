@@ -223,15 +223,37 @@ describe('SMI-6869 Fix A: redirect operators are word boundaries', () => {
     expect(tokens[tokens.length - 1]).toMatchObject({ value: '2>&1', redirect: true })
   })
 
-  it('a redirect operator followed by a SEPARATE (space-separated) target keeps the target as an ordinary, non-redirect word', () => {
+  // SMI-6869 C1 correction: this assertion originally pinned `/tmp/o` as
+  // `redirect: false` — a BYPASS, not a neutral observation. A redirect
+  // token flushed with nothing glued onto it (`>` alone, followed by a
+  // space) still has a target: the very NEXT word. Leaving that word
+  // untagged let it become argv[0] of the "residual" command, and since a
+  // word like `ls`/`cat`/`grep` sits on `NON_EXECUTING_VERBS`,
+  // `checkBareNameInversion` exempted the whole segment — `> ls ruflo
+  // memory store` and seven siblings ALLOWED. Fixed: the pending-redirect
+  // flag now survives across the flush and tags the next word token too,
+  // clearing on any operator or newline.
+  it('a redirect operator followed by a SEPARATE (space-separated) target is ALSO marked redirect (C1 fix: it is still the target, just not glued)', () => {
     const tokens = tokenize('git push > /tmp/o 2>&1')
     expect(tokens.map((t) => [t.type, t.value, t.redirect ?? false])).toEqual([
       ['word', 'git', false],
       ['word', 'push', false],
       ['word', '>', true],
-      ['word', '/tmp/o', false],
+      ['word', '/tmp/o', true],
       ['word', '2>&1', true],
     ])
+  })
+
+  it('C1: the pending-redirect-target flag clears on an operator, so a word AFTER a stray trailing redirect is not wrongly tagged', () => {
+    const tokens = tokenize('cmd > ; echo hi')
+    const echoIdx = tokens.findIndex((t) => t.type === 'word' && t.value === 'echo')
+    expect(tokens[echoIdx].redirect ?? false).toBe(false)
+  })
+
+  it('C1: the pending-redirect-target flag clears on a newline too', () => {
+    const tokens = tokenize('cmd >\necho hi')
+    const echoIdx = tokens.findIndex((t) => t.type === 'word' && t.value === 'echo')
+    expect(tokens[echoIdx].redirect ?? false).toBe(false)
   })
 
   it('a digit that is NOT immediately followed by a redirect stays an ordinary word (no fd-prefix false match)', () => {

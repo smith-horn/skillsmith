@@ -338,6 +338,17 @@ function evaluateCommand(command, depth) {
         if (nestedViolation) return nestedViolation
       }
     }
+    // A heredoc BODY is text the consuming command receives on stdin; when
+    // that consumer is a shell (`bash <<EOF`) or a shell reached through a
+    // pipe (`cat <<EOF | sh`) it is executed verbatim. Before heredocs were
+    // tokenized at all, those body lines were tokenized inline and reached
+    // the checks below by accident; recursing here restores that reach
+    // without depending on the accident.
+    for (const t of segment) {
+      if (t.type !== 'heredoc') continue
+      const nestedViolation = evaluateCommand(t.value ?? '', depth + 1)
+      if (nestedViolation) return nestedViolation
+    }
     // SMI-6869 Fix A/B: a redirect-marked word token (`2>&1`,
     // `>/dev/null`) and a heredoc token are never real command argv — a
     // trailing `2>&1` must not perturb this guard's verdict, and a

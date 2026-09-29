@@ -558,6 +558,40 @@ describe('decide() — SMI-6869 Fix A: a trailing redirect does not change the v
   })
 })
 
+// SMI-6869 governance round High (regression): this guard's own
+// `evaluateCommand` recursed into a word token's `.subs` but silently
+// DROPPED every `heredoc`-type token — a heredoc body fed to a shell
+// (`bash <<EOF`) or reached through a pipe (`cat <<EOF | sh`) is executed
+// verbatim by that shell, exactly like the `.env`-reading command it
+// contains, but the guard never looked at it at all. Fixed with a second
+// loop (after the existing `.subs` recursion) that recurses
+// `evaluateCommand` over every heredoc token's own `.value`, regardless of
+// quoting (unlike the ruflo-host-guard's `subs`-only distinction, quoting
+// a heredoc delimiter only disables `$()`/backtick SUBSTITUTION — it does
+// not stop the CONSUMING shell from executing the body text it receives).
+describe('decide() — SMI-6869 governance round High: heredoc body dropped from evaluation (regression)', () => {
+  const redArms = [
+    "bash <<'EOF'\ncat .env\nEOF",
+    'bash <<EOF\ncat .env\nEOF',
+    'cat <<EOF | sh\ncat .env\nEOF',
+    'sh <<A <<B\nx\nA\ncat .env\nB',
+  ]
+  it.each(redArms)('%s -> deny (the heredoc body is now recursed into)', (command) => {
+    expect(decide(bashCall(command), {}).action).toBe('deny')
+  })
+
+  const controls = [
+    'cat <<EOF\nthis mentions .env harmlessly\nEOF',
+    "cat <<'EOF' > /tmp/doc.md\n# how to run\nnpm test\nEOF",
+  ]
+  it.each(controls)(
+    'control: %s -> allow (a docs heredoc with no reader-command-shaped text)',
+    (command) => {
+      expect(decide(bashCall(command), {}).action).toBe('allow')
+    }
+  )
+})
+
 describe('decide() — SKILLSMITH_ENV_READ_GUARD_DISABLE hard-disable', () => {
   it('a command that would normally deny is allowed when the disable var is set', () => {
     const result = decide(bashCall('grep PAT .env'), { SKILLSMITH_ENV_READ_GUARD_DISABLE: '1' })

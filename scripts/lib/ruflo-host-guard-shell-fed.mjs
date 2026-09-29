@@ -119,9 +119,9 @@ function resolveShellFedProducer(segments, index) {
   // positional arguments (a heredoc redirect on one of these three would
   // never realistically appear alongside them, but if it did, the
   // heredoc is what actually reaches the pipe).
-  const heredocTok = segTokens.find((t) => t.type === 'heredoc')
-  if (heredocTok && (head === 'cat' || head === 'echo' || head === 'printf')) {
-    return { text: heredocTok.value }
+  const heredocToks = segTokens.filter((t) => t.type === 'heredoc')
+  if (heredocToks.length > 0 && (head === 'cat' || head === 'echo' || head === 'printf')) {
+    return { text: heredocToks.map((t) => t.value ?? '').join('\n') }
   }
 
   if (head === 'echo' || head === 'printf') {
@@ -183,15 +183,29 @@ function resolveShellFedProducer(segments, index) {
  *   case) for the caller to turn into a verdict, or null (nothing found)
  */
 export function findShellFedLiteralText(argvLower, segmentTokens, segments, segmentIndex) {
-  if (!SHELL_COMMANDS.has(basenameOf(argvLower[0] ?? ''))) return null
+  const head0 = basenameOf(argvLower[0] ?? '')
+  const isShell = SHELL_COMMANDS.has(head0)
+  const isInterp = isInlineInterpreterBasename(head0)
+  if (!isShell && !isInterp) return null
 
-  // SMI-6869 Fix B: a heredoc redirected directly onto THIS shell
-  // segment's own stdin (`bash <<'EOF' ... EOF`) is what the shell
-  // actually executes — checked before the pipe walk-back below, since a
-  // heredoc redirect on the same command line is the LAST-specified
-  // redirection in real Bash and overrides an upstream pipe's own stdin.
-  const ownHeredoc = segmentTokens.find((t) => t.type === 'heredoc')
-  if (ownHeredoc) return { text: ownHeredoc.value }
+  // SMI-6869 Fix B: a heredoc redirected directly onto THIS segment's own
+  // stdin is what the consumer actually executes. ALL heredocs on the line
+  // are evaluated, not just the first: real Bash's LAST stdin redirection
+  // wins, so picking the first silently skipped the live one.
+  const ownHeredocs = segmentTokens.filter((t) => t.type === 'heredoc')
+  if (ownHeredocs.length > 0) {
+    return { text: ownHeredocs.map((t) => t.value ?? '').join('\n'), embedded: isInterp }
+  }
+  if (isInterp) {
+    // an interpreter fed by a pipe reads its PROGRAM from stdin
+    if (segments[segmentIndex]?.precedingOp === '|' && segmentIndex > 0) {
+      const resolved = resolveShellFedProducer(segments, segmentIndex - 1)
+      if (resolved !== null && resolved.text !== null) {
+        return { text: resolved.text, embedded: true }
+      }
+    }
+    return null
+  }
 
   if (segments[segmentIndex]?.precedingOp === '|' && segmentIndex > 0) {
     const resolved = resolveShellFedProducer(segments, segmentIndex - 1)
@@ -292,6 +306,19 @@ const INLINE_SCRIPT_SHORT_FLAG_CHARS = {
 
 function isPythonBasename(base) {
   return /^python[0-9]*(\.[0-9]+)?$/.test(base)
+}
+
+/** Interpreters that execute a program read from their own stdin. */
+export function isInlineInterpreterBasename(base) {
+  return (
+    isPythonBasename(base) ||
+    base === 'node' ||
+    base === 'nodejs' ||
+    base === 'perl' ||
+    base === 'ruby' ||
+    base === 'php' ||
+    base === 'bun'
+  )
 }
 
 /**
