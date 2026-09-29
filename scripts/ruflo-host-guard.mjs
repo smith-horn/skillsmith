@@ -16,13 +16,42 @@
  * Layer H and its 62-row adversarial census (§ 5). Reuses
  * `scripts/lib/shell-command-normalize.mjs` (extracted from
  * `scripts/env-read-guard.mjs`, the precedent this guard's structure
- * copies) for tokenizing and wrapper-normalizing a Bash command. H1–H8 and
- * the brace-syntax check live in `scripts/lib/ruflo-host-guard-predicates.mjs`;
- * launcher/wrapper normalization lives in
- * `scripts/lib/ruflo-host-guard-wrappers.mjs`; shell-fed-text and inline-
- * interpreter-script detection live in
- * `scripts/lib/ruflo-host-guard-shell-fed.mjs` (all split out purely to
- * stay under the 500-line file-length gate).
+ * copies) for tokenizing and wrapper-normalizing a Bash command. This
+ * file's own logic is split across 17 sibling modules in `scripts/lib/`
+ * (L2 correction — the list below used to name only 3; M3 follow-up added
+ * `ruflo-host-guard-segments.mjs`/`ruflo-host-guard-eval.mjs`, split out of
+ * THIS file, when its own docblock corrections pushed it over 500 lines).
+ * Seven are imported directly: `ruflo-host-guard-wrappers.mjs`
+ * (`detectEnvSplitString`/`normalizeWrappersWithExec`/`tokensForArgv`),
+ * `ruflo-host-guard-shell-fed.mjs` (`findShellFedLiteralText`/
+ * `restoreXargsReplacementWordTokens`, plus `extractInlineScriptText`/
+ * `INLINE_SCRIPT_BARE_NAME_RE` re-exported from ITS OWN sibling
+ * `ruflo-host-guard-inline-script.mjs`), `ruflo-host-guard-predicates.mjs`
+ * (`ALLOW`/`checkAssignmentValuePredicate`/`checkBareNameInversion`/
+ * `checkBraceSegment`/`denyInternalError`/`denyMalformedInput`/`denyWith`/
+ * `isSanctionedDockerExec`, plus `checkH1toH7`,
+ * `isSanctionedNpmForm`/`isReadOnlyNpmForm`, and
+ * `checkRunnerVariableArgument` re-exported from its own three siblings
+ * `ruflo-host-guard-h1to7.mjs`, `ruflo-host-guard-npm.mjs`, and
+ * `ruflo-host-guard-runner-arg.mjs` so this file's own import statement
+ * needed no change across any of the three splits),
+ * `ruflo-host-guard-verdicts.mjs` (`decideHooksSessionStart` — its other
+ * verdict constructors reach this file via the `predicates.mjs` re-export
+ * above, not a direct import), `ruflo-host-guard-unresolved.mjs`
+ * (`checkUnresolvedCommand`), `ruflo-host-guard-consumers.mjs`
+ * (`extractConsumerTexts`/`extractExecEnvVarTexts`, itself dispatching to
+ * four further per-family sibling extractors — awk/sed, git config keys,
+ * tmux, and sqlite3/psql/osascript — plus
+ * `ruflo-host-guard-heredoc-consumers.mjs` for make/crontab/at/batch, none
+ * of which this file imports directly), `ruflo-host-guard-segments.mjs`
+ * (`splitSegments`), and `ruflo-host-guard-eval.mjs` (`parseEvalSegment` —
+ * only the PARSING half of H9's eval predicate; the final recursive
+ * `evaluateGuardCommand` call stays in THIS file's own `checkEvalPredicate`
+ * wrapper, since `evaluateGuardCommand` is local/non-exported here). All
+ * split out purely to stay under the 500-line-per-file convention this
+ * repo keeps by hand for .mjs files under scripts/ (M3 correction: not
+ * enforced by tooling here — `scripts/check-file-length.mjs` only runs via
+ * `lint-staged` for `*.ts`/`*.sh`; SMI-5994).
  *
  * **Failure posture: fail CLOSED**, deliberately the opposite of
  * `env-read-guard.mjs`'s fail-open. A silent re-opening of this closure
@@ -71,79 +100,29 @@ import {
 import { decideHooksSessionStart } from './lib/ruflo-host-guard-verdicts.mjs'
 import { checkUnresolvedCommand } from './lib/ruflo-host-guard-unresolved.mjs'
 import { extractConsumerTexts, extractExecEnvVarTexts } from './lib/ruflo-host-guard-consumers.mjs'
+import { splitSegments } from './lib/ruflo-host-guard-segments.mjs'
+import { parseEvalSegment } from './lib/ruflo-host-guard-eval.mjs'
+
+// M3 follow-up: `splitSegments` moved to `ruflo-host-guard-segments.mjs`
+// (pure, no dependency on anything else in this file, so it moves
+// cleanly) — see that file's own docblock.
 
 /**
- * Real statement separators for THIS guard's own segmentation — unlike
- * `env-read-guard.mjs`'s `evaluateCommand`, which treats every op token
- * (including `{`/`}`) as a splitter, this guard deliberately does NOT
- * split on `{`/`}` so the brace-syntax check (below) can see them still
- * grouped with the command they belong to (round 1 finding 3).
- */
-const SPLIT_OPS = new Set([';', '&&', '||', '|', '&', '\n', '(', ')'])
-
-/**
- * Splits `tokens` into segments, each carrying the operator that PRECEDED
- * it (`null` for the first segment) — H-F fix (SMI-6744 Wave 4 governance
- * round) needs to know whether a segment was joined to its predecessor by
- * a pipe specifically (`echo '...' | bash`), not just that a split
- * happened, so `evaluateGuardCommand` can hand a bare-shell segment its
- * PRECEDING pipeline segment's tokens only when that relationship is a
- * real pipe.
- */
-function splitSegments(tokens) {
-  const segments = []
-  let current = []
-  let precedingOp = null
-  for (const tok of tokens) {
-    if (tok.type === 'op' && SPLIT_OPS.has(tok.value)) {
-      if (current.length > 0) segments.push({ tokens: current, precedingOp })
-      precedingOp = tok.value
-      current = []
-    } else {
-      current.push(tok)
-    }
-  }
-  if (current.length > 0) segments.push({ tokens: current, precedingOp })
-  return segments
-}
-
-/**
- * H9 — dynamic shell evaluators (round 1 finding 1). Runs BEFORE the main
- * flow's own wrapper normalization, on the segment's raw pre-strip word
- * tokens, peeling wrappers via the SAME `normalizeWrappersWithExec` the
- * main flow uses (H-C fix, SMI-6744 Wave 4 governance round: `command
- * eval '...'`/`builtin eval '...'`/`noglob eval '...'` all evaded H9
- * before this, because the original check only ever looked at
- * `wordTokens[0]` — reusing one normalizer instead of a bespoke second
- * peel keeps this in sync with H-A/H-B/L-A's own wrapper coverage for
- * free). If the peeled argv[0]'s basename is `eval`: deny when any later
- * token expands (`$` in `.value` or non-empty `.subs`); otherwise join the
- * literal values and recursively evaluate the joined text through the
- * same pipeline (existing MAX_DEPTH cap — exceeding it DENIES, not
- * allows, matching this guard's fail-closed posture). A nested `-c` body
- * found while peeling is left for the main flow to handle (`undefined`,
- * "not an eval segment").
+ * H9 — dynamic shell evaluators (round 1 finding 1). Thin wrapper: the
+ * PARSING logic (peeling wrappers, locating the eval body, the expansion
+ * check) moved to `ruflo-host-guard-eval.mjs`'s `parseEvalSegment` (M3
+ * follow-up) — only the final recursive `evaluateGuardCommand` call, which
+ * needs THIS file's own local (non-exported) `evaluateGuardCommand`, stays
+ * here. See that file's own docblock for the full H9 rationale.
  * @param {Array<{value: string, subs?: string[]}>} wordTokens
  * @param {number} depth
  * @returns {object | undefined} undefined = "not an eval segment, keep going"
  */
 function checkEvalPredicate(wordTokens, depth) {
-  if (wordTokens.length === 0) return undefined
-  const rawValues = wordTokens.map((t) => t.value)
-  const { argv: normalizedArgv, nested } = normalizeWrappersWithExec(rawValues)
-  if (nested !== null) return undefined
-  if (normalizedArgv.length === 0) return undefined
-  if (basenameOf(normalizedArgv[0]) !== 'eval') return undefined
-
-  const alignedTokens = tokensForArgv(wordTokens, normalizedArgv)
-  const rest = alignedTokens.slice(1)
-  if (rest.length === 0) return null
-  const hasExpansion = rest.some((t) => t.value.includes('$') || (t.subs && t.subs.length > 0))
-  if (hasExpansion) {
-    return denyWith('H9', alignedTokens[0].value + ' ' + rest.map((t) => t.value).join(' '))
-  }
-  const joined = rest.map((t) => t.value).join(' ')
-  return evaluateGuardCommand(joined, depth + 1)
+  const parsed = parseEvalSegment(wordTokens)
+  if (parsed === undefined || parsed === null) return parsed
+  if (typeof parsed.joined === 'string') return evaluateGuardCommand(parsed.joined, depth + 1)
+  return parsed // a deny-verdict object from the H9 expansion check
 }
 
 /**
@@ -169,7 +148,11 @@ function checkEvalPredicate(wordTokens, depth) {
  *      mishandles it as an ordinary flag value)
  *   5. wrapper normalization (exec/launcher/docker-container-exec-aware/
  *      script-su-dtrace `-c`-aware) / recurse into a nested shell body
- *   6. Stage 1(b) — the three exact npm forms (post-normalize)
+ *   6. Stage 1(b) `isSanctionedNpmForm` — the three exact npm forms
+ *      (post-normalize) — followed by Fix D's `isReadOnlyNpmForm` (L4
+ *      correction: this step runs BOTH checks, not just the first; the
+ *      second closes npm's own read-only subcommands — ls/view/explain/… —
+ *      before H5's blunt runner-token scan ever reaches them)
  *   7. (A) fail-closed fall-through — argv[0] must resolve to a real name
  *   8. H-F/H-4/M-1/M-2 — literal text fed to a bare shell
  *      (pipe/here-string/process-sub), or an unreadable pipeline producer
@@ -294,13 +277,24 @@ function evaluateGuardSegment(segmentTokens, depth, segments, segmentIndex, embe
       }
       const nested = evaluateGuardCommand(shellFedResult.text, depth + 1, true)
       if (nested) return nested
-    } else if (shellFedResult.continueOnAllow) {
-      // a heredoc CONSUMER's body is an EXTRA place to look, not a replacement
-      // for its own argv — see `ruflo-host-guard-heredoc-consumers.mjs`.
+    } else {
+      // Governance-round Minor 3 fix (confirmed by mutation: deleting the
+      // sibling `continueOnAllow` arm this replaced changed 0 of 1,263
+      // verdicts while its own motivating cases still reached it, since a
+      // heredoc CONSUMER's body and a BARE shell's fed text — heredoc,
+      // here-string, process substitution, or pipe into
+      // `bash`/`sh`/`zsh`/`dash`/`ksh`/`make`/`crontab`/`at`/`batch` — are
+      // both an EXTRA place to look, not a REPLACEMENT for this segment's
+      // own argv checks (governance-round C1 fix, post-PR-#2959 retro,
+      // regression: an unconditional `return evaluateGuardCommand(...)`
+      // here used to return `null` whenever the fed body was itself
+      // benign, short-circuiting every check below — including the ones
+      // that already deny `bash ruflo <<'EOF'` (H4b) and `bash
+      // node_modules/.bin/ruflo <<'EOF'` (H3) with NO fed text at all).
+      // Only a POSITIVE verdict from the fed body returns early; a clean
+      // body falls through to every remaining check.
       const nestedFed = evaluateGuardCommand(shellFedResult.text, depth + 1)
       if (nestedFed) return nestedFed
-    } else {
-      return evaluateGuardCommand(shellFedResult.text, depth + 1)
     }
   }
 

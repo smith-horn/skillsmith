@@ -1,12 +1,15 @@
 /**
  * `checkUnresolvedCommand` for `scripts/ruflo-host-guard.mjs`. Split into
  * its own file (SMI-6869 governance-round patch) purely to stay under the
- * 500-line file-length gate (`scripts/check-file-length.mjs`) once that
- * file's own C1/C2 patch additions pushed it over — this predicate has no
- * dependency on anything defined only in the orchestration file, so it
- * moves cleanly; `ruflo-host-guard-predicates.mjs` was the next-closest
- * home (same "predicate logic" theme) but was itself too close to the
- * limit to absorb it without repeating the same problem one file over.
+ * 500-line-per-file convention this repo keeps by hand for .mjs files
+ * under scripts/ (M3 correction: not enforced by tooling here —
+ * `scripts/check-file-length.mjs` only runs via `lint-staged` for
+ * `*.ts`/`*.sh`; SMI-5994) once that file's own C1/C2 patch additions
+ * pushed it over — this predicate has no dependency on anything defined
+ * only in the orchestration file, so it moves cleanly;
+ * `ruflo-host-guard-predicates.mjs` was the next-closest home (same
+ * "predicate logic" theme) but was itself too close to the limit to
+ * absorb it without repeating the same problem one file over.
  */
 
 import { denyWith } from './ruflo-host-guard-verdicts.mjs'

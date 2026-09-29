@@ -4,14 +4,21 @@
  * via `scripts/lib/shell-command-normalize.mjs`.
  *
  * Split out of `shell-command-normalize.mjs` itself (SMI-6744 Wave 4 delta
- * governance round) purely to stay under the 500-line file-length gate
- * (`scripts/check-file-length.mjs`) once the H-6 ANSI-C-quoting fix and its
- * own docblock corrections pushed that file past the limit —
+ * governance round) purely to stay under the 500-line-per-file convention
+ * this repo keeps by hand for .mjs files under scripts/ (M3 correction:
+ * not enforced by tooling here — `scripts/check-file-length.mjs` only runs
+ * via `lint-staged` for `*.ts`/`*.sh`; SMI-5994) once the H-6 ANSI-C-quoting
+ * fix and its own docblock corrections pushed that file past the limit —
  * `shell-command-normalize.mjs` imports `tokenize`/`basenameOf` back from
  * here and RE-EXPORTS them, so no consumer's own import path changes.
  */
 
 import { decodeEscapeAt } from './shell-escape-decode.mjs'
+// L7 correction: `shell-command-heredoc.mjs` imports `readParen` back from
+// THIS file — a real circular import. It is safe only because both sides
+// are hoisted function declarations (`function foo() {}`, not `const foo =
+// () => {}`) consumed at CALL time, after both modules have finished
+// loading, never at each other's own module-evaluation time.
 import { consumeHeredocBodies, parseHeredocDelimiter } from './shell-command-heredoc.mjs'
 
 /** @param {string} p */
