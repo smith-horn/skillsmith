@@ -12,8 +12,10 @@ All notable changes to `@skillsmith/core` are documented here.
   a missing field, and parse errors present -- can be pinned by a direct test instead of only the
   parse-error branch; the missing-field branch is exercised with a fabricated `SourceFile`, since
   nothing can make TypeScript itself stop setting the field. A separate canary confirms today's real
-  `SourceFile` still exposes the field as an array (the guard itself only rejects `undefined`, so a
-  future non-array replacement would pass the guard silently and only the canary would catch it), and
+  `SourceFile` still exposes the field as an array (the guard itself only rejects `undefined`, so
+  some future non-array replacements -- a `Set`, say -- would pass it silently and only the canary
+  would catch them; not all, since `null` throws on the length read and a non-empty string trips the
+  parse-error branch), and
   a third direct test pins the unrelated absent-export refusal. Red-tested by disabling each guard
   branch and by feeding the canary an object without the field. Found by the post-merge retro on PR
   #2952 -- I had verified the guard once by hand when adding it, which protected nothing afterwards.

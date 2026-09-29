@@ -308,8 +308,10 @@ describe('SMI-6532 step 6: reason/result TABLE parity (MCP + VS Code)', () => {
       // run (measured: `Tests  no tests`). This assertion is a separate, more explicit
       // signal for whoever reads the wreckage: it also verifies the field is still an
       // array, which `assertParsesCleanly` itself does not check (it only rejects
-      // `undefined`), so a future non-array replacement would pass the guard silently
-      // and only this assertion would catch it.
+      // `undefined`), so SOME future non-array replacements — a `Set`, or a plain
+      // object — would pass the guard silently and only this assertion would catch
+      // them. Not all: `null` throws on the `.length` read, and a non-empty string
+      // has positive length and so trips the parse-error branch instead.
       const probe = ts.createSourceFile('probe.ts', 'export const T = {}', ts.ScriptTarget.Latest)
       const diagnostics = (probe as unknown as { parseDiagnostics?: readonly ts.Diagnostic[] })
         .parseDiagnostics
