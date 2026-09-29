@@ -32,6 +32,8 @@
 
 import { basenameOf } from './shell-command-normalize.mjs'
 import { extractGitTexts } from './ruflo-host-guard-consumers-git.mjs'
+import { extractTmuxTexts } from './ruflo-host-guard-consumers-tmux.mjs'
+import { extractAwkTexts, extractSedTexts } from './ruflo-host-guard-consumers-awksed.mjs'
 
 /**
  * Env vars whose VALUE a downstream program execs as a shell command line —
@@ -88,122 +90,6 @@ export function extractExecEnvVarTexts(wordTokens) {
     const [, key, value] = m
     if (EXEC_ENV_VARS.has(key)) results.push({ text: value, kind: 'shell' })
   }
-  return results.length > 0 ? results : null
-}
-
-const AWK_BASENAMES = new Set(['awk', 'gawk', 'mawk', 'nawk'])
-
-/** awk/gawk/mawk/nawk: `system("...")`/pipe-to-command live inside the PROGRAM text. */
-function extractAwkTexts(base, argv, alignedTokens) {
-  if (!AWK_BASENAMES.has(base)) return null
-  let i = 1
-  let sawDashF = false
-  while (i < argv.length) {
-    const a = argv[i]
-    if (a === '--') {
-      i++
-      break
-    }
-    if (a === '-f' || a === '--file') {
-      sawDashF = true
-      i += 2
-      continue
-    }
-    if (a === '-v' || a === '-F' || a === '--assign') {
-      i += 2
-      continue
-    }
-    if (a.startsWith('--file=')) {
-      sawDashF = true
-      i++
-      continue
-    }
-    if (a.startsWith('-f') && a !== '-f') {
-      sawDashF = true
-      i++
-      continue
-    }
-    if (a.startsWith('-') && a !== '-') {
-      i++
-      continue
-    }
-    break
-  }
-  // `-f progfile` reads the program from a FILE -- unreadable, out of reach
-  // by design (same posture as a shell's own `source f`/`sh <file>`).
-  if (sawDashF || i >= argv.length || !alignedTokens[i]) return null
-  return [{ text: alignedTokens[i].value, kind: 'source' }]
-}
-
-const SED_BASENAMES = new Set(['sed', 'gsed'])
-// `s<delim>pattern<delim>replacement<delim>flags` -- delimiter-agnostic via
-// a backreference to whatever character follows `s`, the same technique
-// `INLINE_SCRIPT_BARE_NAME_RE` uses for quote-agnostic matching.
-const SED_S_COMMAND_RE = /s(.)((?:\\.|(?!\1)[\s\S])*)\1((?:\\.|(?!\1)[\s\S])*)\1([a-zA-Z0-9]*)/g
-// sed's `[addr]e command` -- executes `command` and inserts its output;
-// distinct from the `s///e` FLAG above (a single trailing character on an
-// s-command) -- this `e` is its own command letter, optionally preceded by
-// a numeric or `$` address.
-const SED_E_COMMAND_RE = /(?:^|;)\s*(?:[0-9]+|\$)?\s*e\s+([^\n;]+)/
-
-function extractSedScriptTexts(script) {
-  const results = []
-  for (const m of script.matchAll(SED_S_COMMAND_RE)) {
-    if (/e/.test(m[4])) results.push({ text: m[3], kind: 'shell' })
-  }
-  const eCmd = SED_E_COMMAND_RE.exec(script)
-  if (eCmd) results.push({ text: eCmd[1], kind: 'shell' })
-  return results
-}
-
-/** sed/gsed: the `s///e` flag and the `Ne command` form both hand a shell command to /bin/sh. */
-function extractSedTexts(base, argv, alignedTokens) {
-  if (!SED_BASENAMES.has(base)) return null
-  const scripts = []
-  let sawDashF = false
-  let i = 1
-  while (i < argv.length) {
-    const a = argv[i]
-    if (a === '--') {
-      i++
-      break
-    }
-    if (a === '-e' || a === '--expression') {
-      if (alignedTokens[i + 1]) scripts.push(alignedTokens[i + 1].value)
-      i += 2
-      continue
-    }
-    if (a.startsWith('--expression=')) {
-      scripts.push(a.slice('--expression='.length))
-      i++
-      continue
-    }
-    if (a.startsWith('-e') && a !== '-e') {
-      scripts.push(a.slice(2))
-      i++
-      continue
-    }
-    if (a === '-f' || a === '--file') {
-      sawDashF = true
-      i += 2
-      continue
-    }
-    if (a.startsWith('-f') && a !== '-f') {
-      sawDashF = true
-      i++
-      continue
-    }
-    if (a.startsWith('-') && a !== '-') {
-      i++
-      continue
-    }
-    break
-  }
-  if (scripts.length === 0 && !sawDashF && alignedTokens[i]) {
-    scripts.push(alignedTokens[i].value)
-  }
-  if (scripts.length === 0) return null
-  const results = scripts.flatMap(extractSedScriptTexts)
   return results.length > 0 ? results : null
 }
 
@@ -294,7 +180,34 @@ function extractSshTexts(base, argv, alignedTokens) {
   return results.length > 0 ? results : null
 }
 
-const VIM_BASENAMES = new Set(['vim', 'nvim', 'gvim', 'mvim', 'vi'])
+/**
+ * Round-3 governance fix: `view`, `vimdiff`, `vimdiff`'s `-d` twin and `ex`
+ * are the SAME binary under a different argv[0] (vim's own personality
+ * switch) and honor `-c`/`+`/`--cmd` identically — the commit body already
+ * claimed them, the set did not contain them (measured: `vimdiff -c
+ * '!ruflo …'` reached ALLOW). `rvim`/`rview`/`rgvim`/`rgview` are the
+ * restricted personalities: they REFUSE `:!`, but they still run `-c`
+ * Vimscript, so the source arm still needs to see them. `evim`/`eview` are
+ * the easy personalities and have no such restriction at all.
+ */
+const VIM_BASENAMES = new Set([
+  'vim',
+  'nvim',
+  'gvim',
+  'mvim',
+  'vi',
+  'view',
+  'vimdiff',
+  'gvimdiff',
+  'nvimdiff',
+  'ex',
+  'evim',
+  'eview',
+  'rvim',
+  'rview',
+  'rgvim',
+  'rgview',
+])
 
 function classifyVimExCommand(raw) {
   const cmd = raw.startsWith(':') ? raw.slice(1) : raw
@@ -345,45 +258,26 @@ function extractVimTexts(base, argv, alignedTokens) {
   return raws.map(classifyVimExCommand)
 }
 
-const TMUX_TEXT_SUBCOMMANDS = new Set(['send-keys', 'send'])
-const TMUX_SHELL_SUBCOMMANDS = new Set([
-  'new-window',
-  'neww',
-  'split-window',
-  'splitw',
-  'run-shell',
-  'run',
-])
-const TMUX_KEY_NAMES = new Set(['enter', 'escape', 'tab', 'space', 'c-m', 'c-c', 'c-j'])
-
 /**
- * tmux `send-keys`/`send` types literal text into a pane (a trailing
- * `Enter`/`C-m` submits it to whatever shell is running there); `new-window`/
- * `split-window`/`run-shell`/`run` (and their short aliases) start a NEW
- * pane/window running the given shell command directly.
+ * screen `-X stuff '<text>'` types literal text into a session, same as tmux
+ * send-keys.
+ *
+ * Round-3 governance fix: real screen accepts its OWN options in any order,
+ * including BETWEEN `-X` and the command word — `screen -X -S sess stuff
+ * '<text>'` is the documented form for targeting a named session, and the
+ * previous cut required `stuff` to sit at exactly `-X`+1, so that form
+ * reached ALLOW (measured). Locate `stuff` anywhere after `-X` instead, and
+ * take the first following token that is not itself a flag.
  */
-function extractTmuxTexts(base, argv, alignedTokens) {
-  if (base !== 'tmux' || argv.length < 2) return null
-  const sub = argv[1]
-  const rest = alignedTokens.slice(2).filter((t) => !t.value.startsWith('-'))
-  if (TMUX_TEXT_SUBCOMMANDS.has(sub)) {
-    const parts = rest.filter((t) => !TMUX_KEY_NAMES.has(t.value.toLowerCase()))
-    if (parts.length === 0) return null
-    return [{ text: parts.map((t) => t.value).join(' '), kind: 'shell' }]
-  }
-  if (TMUX_SHELL_SUBCOMMANDS.has(sub)) {
-    if (rest.length === 0) return null
-    return [{ text: rest.map((t) => t.value).join(' '), kind: 'shell' }]
-  }
-  return null
-}
-
-/** screen `-X stuff '<text>'` types literal text into a session, same as tmux send-keys. */
 function extractScreenTexts(base, argv, alignedTokens) {
   if (base !== 'screen') return null
   const xIdx = argv.indexOf('-X')
-  if (xIdx === -1 || argv[xIdx + 1] !== 'stuff') return null
-  const tok = alignedTokens[xIdx + 2]
+  if (xIdx === -1) return null
+  const stuffIdx = argv.indexOf('stuff', xIdx + 1)
+  if (stuffIdx === -1) return null
+  let i = stuffIdx + 1
+  while (i < argv.length && argv[i].startsWith('-') && argv[i] !== '-') i++
+  const tok = alignedTokens[i]
   if (!tok) return null
   const text = tok.value.endsWith('\\n') ? tok.value.slice(0, -2) : tok.value
   return [{ text, kind: 'shell' }]
@@ -416,6 +310,13 @@ function extractExpectTexts(base, argv, alignedTokens) {
   for (const s of scripts) {
     const m = /\b(?:spawn|exec)\s+(.+)/.exec(s)
     if (m) results.push({ text: m[1], kind: 'shell' })
+    // Round-3 governance fix: the whole `-c` body is ALSO Tcl SOURCE, and gets
+    // the same `INLINE_SCRIPT_BARE_NAME_RE`-then-embedded-recursion treatment
+    // H-8 gives node/python source (which is what the commit body already
+    // claimed: "Tcl as source"). Without it, every Tcl process-launching form
+    // that is not a bare leading `spawn`/`exec` reached ALLOW -- measured:
+    // `expect -c 'open "|ruflo memory store" r'`, Tcl's own pipe-open.
+    results.push({ text: s, kind: 'source' })
   }
   return results.length > 0 ? results : null
 }
@@ -436,16 +337,18 @@ const EXTRACTORS = [
  * in turn (argv[0]'s basename decides which, if any, applies) and returns
  * the first one that finds something — `null` when this segment isn't any
  * of the eight recognized consumer shapes, or found nothing extractable
- * (e.g. an awk `-f file` program, or an ssh call with zero or more than one
- * trailing remote-command token). `segmentTokens`/`segments`/`segmentIndex`
- * are accepted for interface parity with `findShellFedLiteralText` (a
- * future family may need pipe/heredoc context the way heredoc-consumers
- * do) but none of the eight current extractors uses them — every red arm
- * this round closes is a single-segment argv shape.
+ * (e.g. an awk `-f file` program naming a real file, or an ssh call with
+ * zero trailing remote-command tokens). `segmentTokens` is forwarded to
+ * every extractor (M5 follow-up, post round-3 governance) so awk/sed can
+ * see a heredoc feeding a readable-stdin `-f`/`--file` value; every other
+ * extractor ignores the extra argument. `segments`/`segmentIndex` remain
+ * unused — accepted only for interface parity with `findShellFedLiteralText`,
+ * should a future family need cross-segment pipe context.
  * @param {string[]} normalizedArgv post wrapper/launcher-peel argv (original case)
  * @param {Array<{value: string, subs?: string[]}>} alignedTokens original
  *   tokens aligned to `normalizedArgv` (see `tokensForArgv`)
- * @param {Array<object>} _segmentTokens unused (interface parity, see above)
+ * @param {Array<object>} segmentTokens the RAW segment (word/op/heredoc
+ *   tokens interleaved) — used by the awk/sed extractors' M5 heredoc lookup
  * @param {Array<object>} _segments unused (interface parity, see above)
  * @param {number} _segmentIndex unused (interface parity, see above)
  * @returns {Array<{text: string, kind: 'shell'|'source'}> | null}
@@ -453,14 +356,14 @@ const EXTRACTORS = [
 export function extractConsumerTexts(
   normalizedArgv,
   alignedTokens,
-  _segmentTokens,
+  segmentTokens,
   _segments,
   _segmentIndex
 ) {
   if (normalizedArgv.length === 0) return null
   const base = basenameOf(normalizedArgv[0]).toLowerCase()
   for (const extractor of EXTRACTORS) {
-    const result = extractor(base, normalizedArgv, alignedTokens)
+    const result = extractor(base, normalizedArgv, alignedTokens, segmentTokens)
     if (result) return result
   }
   return null

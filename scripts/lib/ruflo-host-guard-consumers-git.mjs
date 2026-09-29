@@ -34,6 +34,14 @@ const GIT_EXEC_KEYS = new Set([
   'gpg.program',
   'sequence.editor',
   'ssh.program',
+  // Round-3 governance fix: documented git config keys whose value git runs
+  // as a shell command line, missing from the first cut -- each measured
+  // reaching ALLOW through `decide()` before this addition.
+  'core.alternaterefscommand',
+  'interactive.difffilter',
+  'web.browser',
+  'instaweb.httpd',
+  'sendemail.smtpserver',
 ])
 /**
  * Keys whose SUBSECTION varies per-remote/per-driver/per-tool — matched by
@@ -54,14 +62,32 @@ const GIT_EXEC_KEY_PATTERNS = [
   /^gpg\..*\.program$/,
   /^uploadpack\./,
   /^receive\./,
+  // Round-3 governance fix: same class, same measurement (each reached
+  // ALLOW before this addition). `trailer.<token>.command` is git's own
+  // deprecated spelling of `trailer.<token>.cmd`; both exec.
+  /^trailer\..*\.command$/,
+  /^trailer\..*\.cmd$/,
+  /^diff\..*\.textconv$/,
+  /^browser\..*\.cmd$/,
+  /^man\..*\.cmd$/,
+  /^remote\..*\.uploadpack$/,
+  /^remote\..*\.receivepack$/,
 ]
 /** `alias.*` only execs its value when that value is itself `!`-prefixed — a bare value is just a git subcommand name. */
 const GIT_ALIAS_KEY_RE = /^alias\./
+/**
+ * Round-3 governance fix: `submodule.<name>.update` has the SAME `!`-prefixed
+ * shell-escape shape `alias.*` does (`!command`), and nothing else — a bare
+ * value is one of git's own `checkout`/`rebase`/`merge`/`none` keywords.
+ */
+const GIT_BANG_ONLY_KEY_RE = /^submodule\..*\.update$/
 
 function isGitExecKey(key, value) {
   const lower = key.toLowerCase()
   if (GIT_EXEC_KEYS.has(lower)) return true
-  if (GIT_ALIAS_KEY_RE.test(lower)) return value.startsWith('!')
+  if (GIT_ALIAS_KEY_RE.test(lower) || GIT_BANG_ONLY_KEY_RE.test(lower)) {
+    return value.startsWith('!')
+  }
   return GIT_EXEC_KEY_PATTERNS.some((re) => re.test(lower))
 }
 

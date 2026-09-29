@@ -5,9 +5,9 @@
  * every export here is a pure function or constant, no I/O, no state.
  * `checkH1toH7` and the verdict-shape constructors this file's own
  * predicates call (`ALLOW`, `denyInternalError`, `denyMalformedInput`,
- * `denyStartDaemon`, `denyWith`), plus the two npm-form predicates
- * (`isSanctionedNpmForm`, `isReadOnlyNpmForm`), live in their own sibling
- * files (`ruflo-host-guard-h1to7.mjs`, `ruflo-host-guard-verdicts.mjs`,
+ * `denyWith`), plus the two npm-form predicates (`isSanctionedNpmForm`,
+ * `isReadOnlyNpmForm`), live in their own sibling files
+ * (`ruflo-host-guard-h1to7.mjs`, `ruflo-host-guard-verdicts.mjs`,
  * `ruflo-host-guard-npm.mjs` — the last one SMI-6869 Fix D's own split,
  * same 500-line pressure as the other two) and are re-exported here so
  * `scripts/ruflo-host-guard.mjs`'s own import statement needed no change
@@ -22,6 +22,11 @@
  * (`ruflo-host-guard-verdicts.mjs`) was in the same position — re-exported
  * with no external consumer — but had no internal use here either, so its
  * import was dropped entirely rather than kept-but-unexported.
+ * `denyStartDaemon` was in this same re-export list until the round-3
+ * governance file-length fix moved `decideHooksSessionStart` (its only
+ * caller) into `ruflo-host-guard-verdicts.mjs` itself, alongside it — the
+ * orchestration file now imports `decideHooksSessionStart` from there
+ * directly, so this file needs neither the import nor the re-export.
  *
  * Design: docs/internal/implementation/smi-6744-ruflo-host-guard.md
  * § Predicate Specification (Stage 1 allowlist, H1–H8), built from
@@ -45,7 +50,6 @@ import {
   ALLOW,
   denyInternalError,
   denyMalformedInput,
-  denyStartDaemon,
   denyWith,
 } from './ruflo-host-guard-verdicts.mjs'
 
@@ -54,7 +58,6 @@ export {
   ALLOW,
   denyInternalError,
   denyMalformedInput,
-  denyStartDaemon,
   denyWith,
   isReadOnlyNpmForm,
   isSanctionedNpmForm,
@@ -115,6 +118,16 @@ export function isSanctionedDockerExec(rawValues) {
  * (`env GIT_PAGER='ruflo …' git log`) — this function already scans EVERY
  * token in the segment, not just position 0, so both shapes reach it
  * identically without any `env`-specific handling.
+ *
+ * Round-3 governance note: this `EXEC_ENV_VARS` arm is **verdict-redundant**
+ * with round 2's own full-pipeline recursion of the same value
+ * (`extractExecEnvVarTexts`, step 3b of `evaluateGuardSegment`) — measured by
+ * deleting this arm: every row it closes is still closed, only the reported
+ * label moves from `H8` to `H4`. It is KEPT deliberately: a fail-closed guard
+ * wants a cheap early deny that does not depend on the recursion machinery
+ * staying correct, and it pins the `H8` label for the bare-name shape. It is
+ * NOT independent coverage, and nothing should be added here on the
+ * assumption that it is.
  * @param {Array<{value: string}>} wordTokens pre-strip word tokens (this segment)
  */
 export function checkAssignmentValuePredicate(wordTokens) {

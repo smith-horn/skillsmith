@@ -24,6 +24,10 @@ import {
   tokenize,
 } from './shell-command-normalize.mjs'
 import { decodeShellEscapes } from './shell-escape-decode.mjs'
+import {
+  HEREDOC_CONSUMER_BASENAMES,
+  normalizeHeredocConsumerBody,
+} from './ruflo-host-guard-heredoc-consumers.mjs'
 
 /**
  * M-2 fix (SMI-6744 Wave 4 governance round), broadened by the C1 delta-
@@ -67,28 +71,54 @@ function literalTextFromProducerWords(head, words) {
 }
 
 /**
- * SMI-6869 consumer-string round, group 10 — commands whose stdin (fed via
- * a heredoc redirect on this same line) is itself a script/config body a
- * LATER process will run as real shell text: `make -f -` reads a Makefile
- * from stdin (a tab-indented recipe line runs via `/bin/sh -c`), `crontab -`
- * installs a crontab from stdin (each line's trailing command field runs
- * via shell), and `at`/`batch` read a job script from stdin (run via shell
- * when the job fires). The body text is handed to `evaluateGuardCommand`
- * NON-embedded, same as a bash heredoc — it is real shell text, not program
- * source — and the guard's own `\n`-as-statement-separator segmentation
- * naturally isolates a Makefile recipe line or an `at` job line as its own
- * segment; a crontab line's 5 leading schedule fields land in front of the
- * command, closed there by M-6's bare-name inversion rather than H4.
- * (SMI-6869 round 2) ALSO extended to a pipe-fed producer (`printf '* * *
- * * * ruflo memory store\n' | crontab -`) — but unlike the shell/
- * interpreter branches below, an UNREADABLE producer here is NOT a deny
- * signal, only a "nothing extracted" one: `resolveShellFedProducer` only
- * ever yields text from a LITERAL producer (`echo`/`printf`, or a `cat`
- * relaying a heredoc), so a non-literal producer (`crontab -l | crontab -`
- * round-tripping) correctly yields nothing and stays allow, never a false
- * deny on ordinary crontab/make pipeline usage.
+ * Round-3 governance follow-up (M5, process-substitution form): the LITERAL
+ * producer shapes this guard can read statically without executing
+ * anything -- `echo`/`printf`'s own positional arguments, or a `cat`/`echo`/
+ * `printf` producer's OWN attached heredoc (which it relays verbatim).
+ * Factored out of `resolveShellFedProducer`'s own inline checks so a
+ * `<(...)` process substitution's inner command (which is never part of a
+ * `segments` pipeline the way a producer segment is) can share the exact
+ * same "is this literal" definition via `resolveProcessSubstitutionText`
+ * below, rather than drifting into a second, subtly different one.
+ * @param {string} head basename of the producer's own argv[0]
+ * @param {Array<{value: string}>} words the producer's own word tokens
+ * @param {Array<{value: string|null}>} heredocToks any heredoc tokens
+ *   attached to the SAME segment/token list as `words`
+ * @returns {string | null} null means "not a literal producer", not "empty"
  */
-const HEREDOC_CONSUMER_BASENAMES = new Set(['make', 'gmake', 'crontab', 'at', 'batch'])
+function literalProducerText(head, words, heredocToks) {
+  if (heredocToks.length > 0 && (head === 'cat' || head === 'echo' || head === 'printf')) {
+    return heredocToks.map((t) => t.value ?? '').join('\n')
+  }
+  if (head === 'echo' || head === 'printf') {
+    return literalTextFromProducerWords(head, words)
+  }
+  return null
+}
+
+/**
+ * Round-3 governance follow-up (M5, process-substitution form): resolves
+ * the literal text (if any) a `<(...)` process substitution's OWN inner
+ * command would write to its read end -- the exact same three literal-
+ * producer shapes `resolveShellFedProducer` recognizes for a pipe producer,
+ * reused here so `bash <(echo '...')` (already handled below) and the
+ * awk/sed extractors' own `-f <(...)`/`--file=<(...)` handling
+ * (`ruflo-host-guard-consumers-awksed.mjs`) share one definition of
+ * "literal producer" instead of two that could silently diverge.
+ * @param {string} subText the substitution's own inner text — a WORD
+ *   token's `.subs` entry, already stripped of the `<(`/`)` wrapper by the
+ *   tokenizer (SMI-6744: `$(...)`/`<(...)`/`>(...)` all record their inner
+ *   text into `.subs` identically).
+ * @returns {string | null}
+ */
+export function resolveProcessSubstitutionText(subText) {
+  const innerTokens = tokenize(subText)
+  const innerWords = innerTokens.filter((t) => t.type === 'word' && !t.redirect)
+  if (innerWords.length === 0) return null
+  const innerHeredocs = innerTokens.filter((t) => t.type === 'heredoc')
+  const innerHead = basenameOf(innerWords[0].value)
+  return literalProducerText(innerHead, innerWords, innerHeredocs)
+}
 
 /**
  * M-1 pass-through commands whose own stdin is what actually reaches the
@@ -148,6 +178,15 @@ function resolveShellFedProducer(segments, index) {
     return { text: heredocToks.map((t) => t.value ?? '').join('\n') }
   }
 
+  // NOTE: deliberately NOT routed through the shared `literalProducerText`
+  // (round-3 governance M5 follow-up) — this arm's contract is "always
+  // return `{text}`, even when `text` is null" (a recognized-but-empty
+  // echo/printf producer is NOT the same as an unrecognized one three lines
+  // below, which must return the bare `null` that signals "unreadable,
+  // deny"). `literalProducerText` returns a bare `null` for BOTH cases,
+  // which is the right contract for `resolveProcessSubstitutionText` (a
+  // `<(...)`'s own inner command is either literal or it silently
+  // contributes nothing) but would collapse this distinction here.
   if (head === 'echo' || head === 'printf') {
     const text = literalTextFromProducerWords(head, words)
     return { text }
@@ -219,7 +258,21 @@ export function findShellFedLiteralText(argvLower, segmentTokens, segments, segm
   // wins, so picking the first silently skipped the live one.
   const ownHeredocs = segmentTokens.filter((t) => t.type === 'heredoc')
   if (ownHeredocs.length > 0) {
-    return { text: ownHeredocs.map((t) => t.value ?? '').join('\n'), embedded: isInterp }
+    const raw = ownHeredocs.map((t) => t.value ?? '').join('\n')
+    // Round-3 governance fix: `continueOnAllow` — for a heredoc CONSUMER the
+    // body is an ADDITIONAL place to look, not a replacement for this
+    // segment's own argv. Without the flag the caller `return`ed the body's
+    // verdict outright, so a benign body short-circuited H1–H7, the
+    // consumer step and the bare-name inversion for the segment itself:
+    // `make -f - ruflo <<'EOF'…EOF` and `crontab - ruflo <<'EOF'…EOF` both
+    // denied (H4b) BEFORE this commit and reached ALLOW after it — the two
+    // regressions this flag removes. Shells and interpreters keep the
+    // original replace-outright semantics (the body IS what they run).
+    return {
+      text: isHeredocConsumer ? normalizeHeredocConsumerBody(head0, raw) : raw,
+      embedded: isInterp,
+      continueOnAllow: isHeredocConsumer,
+    }
   }
   if (isHeredocConsumer) {
     // SMI-6869 round 2: a pipe-fed literal producer (echo/printf/a cat
@@ -229,7 +282,10 @@ export function findShellFedLiteralText(argvLower, segmentTokens, segments, segm
     if (segments[segmentIndex]?.precedingOp === '|' && segmentIndex > 0) {
       const resolved = resolveShellFedProducer(segments, segmentIndex - 1)
       if (resolved !== null && resolved.text !== null) {
-        return { text: resolved.text }
+        return {
+          text: normalizeHeredocConsumerBody(head0, resolved.text),
+          continueOnAllow: true,
+        }
       }
     }
     // No heredoc and no literal pipe producer: make/crontab/at/batch read
@@ -267,15 +323,16 @@ export function findShellFedLiteralText(argvLower, segmentTokens, segments, segm
     if (val.startsWith('<<<') && val.length > 3) return { text: val.slice(3) }
   }
 
+  // Round-3 governance follow-up (M5, process-substitution form): shares
+  // `resolveProcessSubstitutionText`'s definition of "literal producer"
+  // with the awk/sed extractors' own `-f <(...)` handling — a strict
+  // superset of the original echo/printf-only check (now also resolves a
+  // `cat`-with-its-own-heredoc producer, e.g. `bash <(cat <<'EOF' …
+  // EOF)`), so nothing this already caught stops being caught.
   for (const t of words) {
     for (const sub of t.subs ?? []) {
-      const innerWords = tokenize(sub).filter((tk) => tk.type === 'word')
-      if (innerWords.length === 0) continue
-      const innerHead = basenameOf(innerWords[0].value)
-      if (innerHead === 'echo' || innerHead === 'printf') {
-        const text = literalTextFromProducerWords(innerHead, innerWords)
-        if (text !== null) return { text }
-      }
+      const text = resolveProcessSubstitutionText(sub)
+      if (text !== null) return { text }
     }
   }
 

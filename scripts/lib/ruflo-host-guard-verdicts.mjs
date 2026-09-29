@@ -138,3 +138,26 @@ export function denyWithReadOnlyHint(predicate, token) {
 }
 
 export const ALLOW = { action: 'allow', json: null, stderr: null }
+
+/**
+ * `mcp__ruflo__hooks_session-start`'s `startDaemon` gate (SMI-6854, design
+ * § "SMI-6854"). Allow only when `tool_input` is a plain object and
+ * `startDaemon` is absent or strictly `false`; deny every other present
+ * value. A missing/malformed `tool_input` follows the runtime fail-closed
+ * rule (round 1 finding 5).
+ *
+ * Round-3 governance follow-up: moved here from the guard's own
+ * orchestration file purely to stay under the 500-line file-length gate
+ * once the patch's own docblock additions pushed that file to 501 lines —
+ * every dependency this predicate needs (`ALLOW`, `denyMalformedInput`,
+ * `denyStartDaemon`) is already defined in this same file, so the move
+ * needed no new import anywhere.
+ * @param {unknown} toolInput
+ */
+export function decideHooksSessionStart(toolInput) {
+  if (toolInput === null || typeof toolInput !== 'object' || Array.isArray(toolInput)) {
+    return denyMalformedInput('mcp__ruflo__hooks_session-start requires an object tool_input')
+  }
+  if (!('startDaemon' in toolInput) || toolInput.startDaemon === false) return ALLOW
+  return denyStartDaemon(toolInput.startDaemon)
+}

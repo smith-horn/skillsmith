@@ -63,12 +63,12 @@ import {
   checkRunnerVariableArgument,
   denyInternalError,
   denyMalformedInput,
-  denyStartDaemon,
   denyWith,
   isReadOnlyNpmForm,
   isSanctionedDockerExec,
   isSanctionedNpmForm,
 } from './lib/ruflo-host-guard-predicates.mjs'
+import { decideHooksSessionStart } from './lib/ruflo-host-guard-verdicts.mjs'
 import { checkUnresolvedCommand } from './lib/ruflo-host-guard-unresolved.mjs'
 import { extractConsumerTexts, extractExecEnvVarTexts } from './lib/ruflo-host-guard-consumers.mjs'
 
@@ -162,6 +162,9 @@ function checkEvalPredicate(wordTokens, depth) {
  *   1b. brace-syntax fail-closed check (needs the RAW token list)
  *   2. H9 (eval) — before wrapper normalization
  *   3. H8(i) — pre-strip assignment-value check
+ *   3b. (SMI-6869) `extractExecEnvVarTexts` — an `EXEC_ENV_VARS` assignment's
+ *      VALUE recursed as real shell text; H8(i) above is a verdict-redundant
+ *      cheap early deny for the same shapes (see its own docblock)
  *   4. H-B/H-3 — `env -S`/`--split-string` (before wrapper normalization
  *      mishandles it as an ordinary flag value)
  *   5. wrapper normalization (exec/launcher/docker-container-exec-aware/
@@ -176,7 +179,7 @@ function checkEvalPredicate(wordTokens, depth) {
  *      deliberately AFTER H1–H7/H8(ii): those already close an inline
  *      `-e`/`-c` argument that spells a path-shaped substring, so this
  *      only needs to catch what they don't (a bare quoted name, no path)
- *   11a. (SMI-6869) consumer-string family — awk/sed/ssh/git/vim/tmux/
+ *   11a. (SMI-6869) `extractConsumerTexts` — awk/sed/ssh/git/vim/tmux/
  *      screen/expect, whose OWN arguments (or a config value they write)
  *      embed a string that PROGRAM will itself hand to a shell or spawn as
  *      a new process. Checked AFTER H-8, same rationale: a narrower
@@ -288,6 +291,11 @@ function evaluateGuardSegment(segmentTokens, depth, segments, segmentIndex, embe
       }
       const nested = evaluateGuardCommand(shellFedResult.text, depth + 1, true)
       if (nested) return nested
+    } else if (shellFedResult.continueOnAllow) {
+      // a heredoc CONSUMER's body is an EXTRA place to look, not a replacement
+      // for its own argv — see `ruflo-host-guard-heredoc-consumers.mjs`.
+      const nestedFed = evaluateGuardCommand(shellFedResult.text, depth + 1)
+      if (nestedFed) return nestedFed
     } else {
       return evaluateGuardCommand(shellFedResult.text, depth + 1)
     }
@@ -401,22 +409,6 @@ function evaluateGuardCommand(commandText, depth, embedded = false) {
     if (verdict) return verdict
   }
   return null
-}
-
-/**
- * `mcp__ruflo__hooks_session-start`'s `startDaemon` gate (SMI-6854, design
- * § "SMI-6854"). Allow only when `tool_input` is a plain object and
- * `startDaemon` is absent or strictly `false`; deny every other present
- * value. A missing/malformed `tool_input` follows the runtime fail-closed
- * rule (round 1 finding 5).
- * @param {unknown} toolInput
- */
-function decideHooksSessionStart(toolInput) {
-  if (toolInput === null || typeof toolInput !== 'object' || Array.isArray(toolInput)) {
-    return denyMalformedInput('mcp__ruflo__hooks_session-start requires an object tool_input')
-  }
-  if (!('startDaemon' in toolInput) || toolInput.startDaemon === false) return ALLOW
-  return denyStartDaemon(toolInput.startDaemon)
 }
 
 /**

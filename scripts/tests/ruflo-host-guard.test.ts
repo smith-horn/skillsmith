@@ -1486,6 +1486,48 @@ describe('decide() — SMI-6869 consumer-string: awk/gawk system()/pipe-to-sh', 
   it('control: plain awk with no ruflo reference allows', () => {
     expect(decide(bashCall("awk -F: '{print $2}' /etc/passwd"), {}).action).toBe('allow')
   })
+
+  it('M5: awk -f /dev/stdin fed a heredoc denies via H8-script — the readable-stdin alias is not a real file when a heredoc feeds it', () => {
+    const result = decide(bashCall(`awk -f /dev/stdin <<'EOF'\nBEGIN{system("${R}")}\nEOF`), {})
+    expect(result.action).toBe('deny')
+    expect(reasonOf(result)).toContain('H8-script')
+  })
+
+  it('M5: awk --file=/dev/stdin fed a heredoc denies via H8-script', () => {
+    const result = decide(bashCall(`awk --file=/dev/stdin <<'EOF'\nBEGIN{system("${R}")}\nEOF`), {})
+    expect(result.action).toBe('deny')
+    expect(reasonOf(result)).toContain('H8-script')
+  })
+
+  it("M5 (process-substitution form): awk -f <(echo ...) denies via H8-script — the substitution's own inner echo producer is resolved the same way `bash <(echo ...)` already resolves one, and its text is closed by the shared quoted-text regex", () => {
+    const result = decide(bashCall(`awk -f <(echo 'BEGIN{system("${R}")}') data.txt`), {})
+    expect(result.action).toBe('deny')
+    expect(reasonOf(result)).toContain('H8-script')
+  })
+
+  it('M5 (process-substitution form): awk --file=<(printf ...) denies via H8-script', () => {
+    const result = decide(bashCall(`awk --file=<(printf '%s' 'BEGIN{system("${R}")}')`), {})
+    expect(result.action).toBe('deny')
+    expect(reasonOf(result)).toContain('H8-script')
+  })
+
+  it('control: awk -f <(echo ...) with an ordinary awk program allows — the resolved producer text is real, but it names no ruflo reference', () => {
+    expect(decide(bashCall("awk -f <(echo '{print $1}') data.txt"), {}).action).toBe('allow')
+  })
+
+  it('control: awk -f <(a non-literal generator) allows — only echo/printf (or cat-with-a-heredoc) are literal producers this guard can read statically; anything else extracts nothing', () => {
+    expect(decide(bashCall('awk -f <(some-generator) data.txt'), {}).action).toBe('allow')
+  })
+
+  it('control: bash <(echo ...) still denies via H4 — pre-existing shell-fed process-substitution handling, unaffected by sharing its literal-producer definition with the awk/sed extractors', () => {
+    const result = decide(bashCall(`bash <(echo '${R}')`), {})
+    expect(result.action).toBe('deny')
+    expect(reasonOf(result)).toContain('H4:')
+  })
+
+  it('m6 (stated limit): a glued -vx=ruflo assignment allows — the awk variable value is opaque to this guard, so system(x) never spells a literal "ruflo" the shared regex can see', () => {
+    expect(decide(bashCall(`awk -vx=ruflo 'BEGIN{system(x)}'`), {}).action).toBe('allow')
+  })
 })
 
 describe('decide() — SMI-6869 consumer-string: sed/gsed e-flag and e-command shell extraction', () => {
@@ -1513,6 +1555,24 @@ describe('decide() — SMI-6869 consumer-string: sed/gsed e-flag and e-command s
 
   it('control: plain sed substitution with no e flag allows', () => {
     expect(decide(bashCall("sed 's/a/b/' file.txt"), {}).action).toBe('allow')
+  })
+
+  it('C4: a SECOND e-command in a multi-command script denies via H4 — the extraction regex is now global, not just the first `.exec`', () => {
+    const result = decide(bashCall(`sed '1e date;2e ${R}' f`), {})
+    expect(result.action).toBe('deny')
+    expect(reasonOf(result)).toContain('H4:')
+  })
+
+  it('M5: sed -f /dev/stdin fed a heredoc script denies via H4 — the body is a sed SCRIPT (same syntax as -e), not a whole program', () => {
+    const result = decide(bashCall(`sed -f /dev/stdin f <<'EOF'\ns/x/${R}/e\nEOF`), {})
+    expect(result.action).toBe('deny')
+    expect(reasonOf(result)).toContain('H4:')
+  })
+
+  it("M5 (process-substitution form): sed -f <(echo 's///e') denies via H4 — the substitution's own inner echo producer resolves to a sed script, fed through the SAME s///e extraction as -e", () => {
+    const result = decide(bashCall(`sed -f <(echo 's/x/${R}/e') f`), {})
+    expect(result.action).toBe('deny')
+    expect(reasonOf(result)).toContain('H4:')
   })
 })
 
@@ -1578,11 +1638,34 @@ describe('decide() — SMI-6869 consumer-string: git exec-relevant config keys',
       'git config --global alias.x (bang-prefixed, SET form)',
       `git config --global alias.x '!${R}'`,
     ],
+    // round-3 governance (M4) expansion of GIT_EXEC_KEYS/PATTERNS
+    ['git -c trailer.x.command (deprecated spelling)', `git -c trailer.sign.command='${R}' commit`],
+    ['git -c trailer.x.cmd', `git -c trailer.sign.cmd='${R}' commit`],
+    ['git -c core.alternateRefsCommand', `git -c core.alternateRefsCommand='${R}' fetch`],
+    [
+      'git -c submodule.x.update (bang-prefixed only)',
+      `git -c submodule.x.update='!${R}' submodule update`,
+    ],
+    ['git -c diff.x.textconv', `git -c diff.x.textconv='${R}' diff`],
+    ['git -c interactive.diffFilter', `git -c interactive.diffFilter='${R}' add -p`],
+    ['git -c browser.x.cmd', `git -c browser.x.cmd='${R}' web--browse .`],
+    ['git -c web.browser', `git -c web.browser='${R}' help -w`],
+    ['git -c man.x.cmd', `git -c man.x.cmd='${R}' help -m add`],
+    ['git -c remote.origin.uploadpack', `git -c remote.origin.uploadpack='${R}' fetch`],
+    ['git -c remote.origin.receivepack', `git -c remote.origin.receivepack='${R}' push`],
+    ['git -c instaweb.httpd', `git -c instaweb.httpd='${R}' instaweb`],
+    ['git -c sendemail.smtpServer', `git -c sendemail.smtpServer='${R}' send-email`],
   ]
   it.each(execKeyRows)('%s denies via H4', (_label, cmd) => {
     const result = decide(bashCall(cmd), {})
     expect(result.action).toBe('deny')
     expect(reasonOf(result)).toContain('H4:')
+  })
+
+  it('control: git -c submodule.x.update WITHOUT a bang (a real git keyword like "checkout") allows', () => {
+    expect(decide(bashCall('git -c submodule.x.update=checkout submodule update'), {}).action).toBe(
+      'allow'
+    )
   })
 
   it('git -c core.pager with an npx form value denies via H5 — the recursion decides, not the key', () => {
@@ -1650,6 +1733,12 @@ describe('decide() — SMI-6869 consumer-string: vim/nvim ex-commands', () => {
   it('control: vim -c "set number" (ordinary Vimscript, no shell/system/terminal shape) allows', () => {
     expect(decide(bashCall("vim -c 'set number' file.txt"), {}).action).toBe('allow')
   })
+
+  it('C1: vimdiff -c bang denies via H4 — vimdiff (and view/ex/gvimdiff/nvimdiff/evim/eview/rvim/rview/rgvim/rgview) is the SAME binary under a personality argv[0], missing from the original VIM_BASENAMES set', () => {
+    const result = decide(bashCall(`vimdiff -c '!${R}' a b`), {})
+    expect(result.action).toBe('deny')
+    expect(reasonOf(result)).toContain('H4:')
+  })
 })
 
 describe('decide() — SMI-6869 consumer-string: tmux send-keys/new-window', () => {
@@ -1674,6 +1763,26 @@ describe('decide() — SMI-6869 consumer-string: tmux send-keys/new-window', () 
   it('control: tmux ls allows', () => {
     expect(decide(bashCall('tmux ls'), {}).action).toBe('allow')
   })
+
+  it('C2: tmux new-session -d denies via H4 — new-session/new, respawn-pane, if-shell, pipe-pane and display-popup were all missing from the shell-subcommand set', () => {
+    const result = decide(bashCall(`tmux new-session -d '${R}'`), {})
+    expect(result.action).toBe('deny')
+    expect(reasonOf(result)).toContain('H4:')
+  })
+
+  it('M1: tmux send-keys -t 0 (a numeric pane target) with an ordinary command allows — the flag VALUE is no longer kept as command text, so it never trips the all-digit arm', () => {
+    expect(decide(bashCall("tmux send-keys -t 0 'ls -la' Enter"), {}).action).toBe('allow')
+  })
+
+  it('M1: tmux new-window -t 0 (numeric) with an ordinary command allows', () => {
+    expect(decide(bashCall("tmux new-window -t 0 'htop'"), {}).action).toBe('allow')
+  })
+
+  it('control: tmux new-window -t 9 with a ruflo command still denies via H4 — the value-flag fix only drops the FLAG value, not the real positional', () => {
+    const result = decide(bashCall(`tmux new-window -t 9 '${R}'`), {})
+    expect(result.action).toBe('deny')
+    expect(reasonOf(result)).toContain('H4:')
+  })
 })
 
 describe('decide() — SMI-6869 consumer-string: screen -X stuff', () => {
@@ -1692,6 +1801,12 @@ describe('decide() — SMI-6869 consumer-string: screen -X stuff', () => {
   it('control: screen -ls allows', () => {
     expect(decide(bashCall('screen -ls'), {}).action).toBe('allow')
   })
+
+  it('C3: screen -X -S sess stuff denies via H4 — real screen accepts its own options BETWEEN -X and the command word, and the original cut required stuff immediately after -X', () => {
+    const result = decide(bashCall(`screen -X -S sess stuff '${R}\\n'`), {})
+    expect(result.action).toBe('deny')
+    expect(reasonOf(result)).toContain('H4:')
+  })
 })
 
 describe('decide() — SMI-6869 consumer-string: expect -c spawn/exec', () => {
@@ -1703,6 +1818,12 @@ describe('decide() — SMI-6869 consumer-string: expect -c spawn/exec', () => {
 
   it('control: expect -c with no spawn/exec builtin allows', () => {
     expect(decide(bashCall('expect -c \'send "hello"\''), {}).action).toBe('allow')
+  })
+
+  it('C5: expect -c \'open "|cmd" r\' denies via H8-script — the whole -c body is ALSO Tcl SOURCE, given the same quoted-text-regex treatment as node/python source, not just a bare spawn/exec prefix', () => {
+    const result = decide(bashCall(`expect -c 'open "|${R}" r'`), {})
+    expect(result.action).toBe('deny')
+    expect(reasonOf(result)).toContain('H8-script')
   })
 })
 
@@ -1769,10 +1890,10 @@ describe('decide() — SMI-6869 consumer-string: heredoc consumers (make/crontab
     expect(reasonOf(result)).toContain('H4:')
   })
 
-  it('crontab - fed a heredoc line denies via H4b — the 5 leading schedule fields sit before the command, closed by the bare-name inversion rather than H4', () => {
+  it('crontab - fed a heredoc line denies via H4 — round-3 governance strips the 5 leading schedule fields (M2), so argv[0] genuinely is ruflo once they are gone, not just a bare-name match past position 0', () => {
     const result = decide(bashCall("crontab - <<'EOF'\n* * * * * " + R + '\nEOF'), {})
     expect(result.action).toBe('deny')
-    expect(reasonOf(result)).toContain('H4b')
+    expect(reasonOf(result)).toContain('H4:')
   })
 
   it('at now fed a heredoc job body denies via H4', () => {
@@ -1787,10 +1908,10 @@ describe('decide() — SMI-6869 consumer-string: heredoc consumers (make/crontab
     expect(reasonOf(result)).toContain('H4:')
   })
 
-  it("printf piped into crontab - denies via H4b — round 2's pipe-producer walk-back resolves the LITERAL printf text, then the 5 leading schedule fields put ruflo past position 0", () => {
+  it("printf piped into crontab - denies via H4 — round 2's pipe-producer walk-back resolves the LITERAL printf text, then round-3's schedule-field strip (M2) leaves argv[0] genuinely as ruflo", () => {
     const result = decide(bashCall(`printf '* * * * * ${R}\\n' | crontab -`), {})
     expect(result.action).toBe('deny')
-    expect(reasonOf(result)).toContain('H4b')
+    expect(reasonOf(result)).toContain('H4:')
   })
 
   it('control: make with no heredoc reads its real Makefile from disk — out of reach by design, allows', () => {
@@ -1803,6 +1924,63 @@ describe('decide() — SMI-6869 consumer-string: heredoc consumers (make/crontab
 
   it('control: crontab -l | crontab - allows — a non-literal producer (crontab itself) yields nothing extracted, never a deny, so ordinary round-tripping usage is unaffected', () => {
     expect(decide(bashCall('crontab -l | crontab -'), {}).action).toBe('allow')
+  })
+
+  it('C6: a make recipe line prefixed with @ (silence) still denies via H4 — make itself strips @/-/+ before the shell ever sees the line, so this guard must strip them too', () => {
+    const result = decide(bashCall("make -f - <<'EOF'\nall:\n\t@" + R + '\nEOF'), {})
+    expect(result.action).toBe('deny')
+    expect(reasonOf(result)).toContain('H4:')
+  })
+
+  it("C7 (regression): make -f - ruflo with a BENIGN heredoc body still denies via H4b — the heredoc body is an ADDITIONAL place to look, not a replacement for the segment's own argv", () => {
+    const result = decide(
+      bashCall(`make -f - ${R.split(' ')[0]} <<'EOF'\nall:\n\techo hi\nEOF`),
+      {}
+    )
+    expect(result.action).toBe('deny')
+    expect(reasonOf(result)).toContain('H4b')
+  })
+
+  it('C7 (regression): crontab - ruflo with a BENIGN heredoc body still denies via H4b', () => {
+    const result = decide(bashCall(`crontab - ${R.split(' ')[0]} <<'EOF'\n* * * * * date\nEOF`), {})
+    expect(result.action).toBe('deny')
+    expect(reasonOf(result)).toContain('H4b')
+  })
+
+  it('C7 (regression): make -f - -I node_modules/ruflo/bin with a benign heredoc body still denies via H1 — the path-shaped flag value in argv is its own H1 match, independent of the heredoc', () => {
+    const result = decide(
+      bashCall("make -f - -I node_modules/ruflo/bin <<'EOF'\nall:\n\techo hi\nEOF"),
+      {}
+    )
+    expect(result.action).toBe('deny')
+    expect(reasonOf(result)).toContain('H1')
+  })
+
+  it('C7 (regression): crontab - node_modules/.bin/ruflo with a benign heredoc body still denies via H3', () => {
+    const result = decide(
+      bashCall("crontab - node_modules/.bin/ruflo <<'EOF'\n* * * * * date\nEOF"),
+      {}
+    )
+    expect(result.action).toBe('deny')
+    expect(reasonOf(result)).toContain('H3')
+  })
+
+  it('M2: an ordinary crontab install (5 schedule fields + a real command, no ruflo) allows — the schedule fields no longer reach the all-digit arm', () => {
+    expect(
+      decide(bashCall("crontab - <<'EOF'\n0 3 * * * /usr/local/bin/backup.sh\nEOF"), {}).action
+    ).toBe('allow')
+  })
+
+  it('M3: an ordinary make -f - recipe using $(CC)/$@/$< allows — a make-level variable reference at the head is skipped, not denied, since make (not the shell) resolves it to a name this guard cannot see either way', () => {
+    expect(
+      decide(bashCall("make -f - <<'EOF'\napp: main.o\n\t$(CC) -o $@ $<\nEOF"), {}).action
+    ).toBe('allow')
+  })
+
+  it('m5 (control): a SPACE-indented (not tab) Makefile recipe line still denies — this guard strips the prefix on every line rather than only tab-indented ones (GNU make lets .RECIPEPREFIX change the character), so over-scanning here costs at worst an over-deny on a Makefile make itself would reject as "missing separator"', () => {
+    const result = decide(bashCall("make -f - <<'EOF'\nall:\n    " + R + '\nEOF'), {})
+    expect(result.action).toBe('deny')
+    expect(reasonOf(result)).toContain('H4:')
   })
 })
 
