@@ -1238,7 +1238,11 @@ node_modules/.bin."
 # SMI-5689: closes a gap where a stale empty directory (e.g. left behind by
 # an incomplete container teardown) permanently blocked the symlink from
 # ever being (re)created, breaking the host-side dependency-freshness
-# sentinel, tsc --build alias resolution, and the ruflo CLI statusline.
+# sentinel and tsc --build alias resolution. (SMI-6744 Wave 4 F4: the "ruflo
+# CLI statusline" this comment used to also name no longer exists on the
+# host -- ruflo is served exclusively from the skillsmith-ruflo-1 container,
+# ADR-170 -- so that clause is removed rather than left to describe a
+# binary that isn't there.)
 #
 # Uses rmdir (never rm -rf) so a directory that is empty right now but held
 # by an active mount reference fails safely instead of silently removing
