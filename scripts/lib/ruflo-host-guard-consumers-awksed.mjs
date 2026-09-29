@@ -29,9 +29,11 @@ const AWK_BASENAMES = new Set(['awk', 'gawk', 'mawk', 'nawk'])
  * follow-up, second pass: `awk -f <(echo '...')` was measured allowing
  * before this, since the guard's own top-level `.subs` recursion evaluates
  * the substituted command as an ordinary top-level shell line, which is not
- * itself a ruflo invocation).
+ * itself a ruflo invocation). Exported (round-4 db/shell-consumer follow-up)
+ * so `ruflo-host-guard-consumers-dbshell.mjs`'s psql `-f -` check shares the
+ * exact same "readable stdin alias" definition rather than a second copy.
  */
-const READABLE_STDIN_RE = /^(?:-|\/dev\/stdin|\/dev\/fd\/[0-9]+)$/
+export const READABLE_STDIN_RE = /^(?:-|\/dev\/stdin|\/dev\/fd\/[0-9]+)$/
 
 /** awk/gawk/mawk/nawk: `system("...")`/pipe-to-command live inside the PROGRAM text. */
 export function extractAwkTexts(base, argv, alignedTokens, segmentTokens) {

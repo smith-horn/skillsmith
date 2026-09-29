@@ -1827,6 +1827,115 @@ describe('decide() — SMI-6869 consumer-string: expect -c spawn/exec', () => {
   })
 })
 
+describe('decide() — SMI-6869 consumer-string: sqlite3 dot-commands (round-4 cross-family gate)', () => {
+  it("sqlite3 /tmp/x.db '.shell ...' denies via H4 — the remainder after .shell is extracted as real shell text and recursed", () => {
+    const result = decide(bashCall(`sqlite3 /tmp/x.db '.shell ${R}'`), {})
+    expect(result.action).toBe('deny')
+    expect(reasonOf(result)).toContain('H4:')
+  })
+
+  it("sqlite3 /tmp/x.db '.system ...' denies via H4 — .system is the same shell-out dot-command as .shell", () => {
+    const result = decide(bashCall(`sqlite3 /tmp/x.db '.system ${R}'`), {})
+    expect(result.action).toBe('deny')
+    expect(reasonOf(result)).toContain('H4:')
+  })
+
+  it("sqlite3 -cmd '.system ...' x.db denies via H4 — -cmd's value is sqlite3 command text, same as a trailing positional", () => {
+    const result = decide(bashCall(`sqlite3 -cmd '.system ${R}' x.db`), {})
+    expect(result.action).toBe('deny')
+    expect(reasonOf(result)).toContain('H4:')
+  })
+
+  it("sqlite3 x.db '.once |...' denies via H4 — .once's leading pipe hands the remainder to a shell, same as .output's", () => {
+    const result = decide(bashCall(`sqlite3 x.db '.once |${R}'`), {})
+    expect(result.action).toBe('deny')
+    expect(reasonOf(result)).toContain('H4:')
+  })
+
+  it("sqlite3 x.db '.output |...' denies via H4", () => {
+    const result = decide(bashCall(`sqlite3 x.db '.output |${R}'`), {})
+    expect(result.action).toBe('deny')
+    expect(reasonOf(result)).toContain('H4:')
+  })
+
+  it("control: sqlite3 /tmp/x.db 'select 1;' allows — ordinary SQL is not extracted", () => {
+    expect(decide(bashCall(`sqlite3 /tmp/x.db 'select 1;'`), {}).action).toBe('allow')
+  })
+
+  it("control: sqlite3 x.db '.tables' allows — an ordinary dot-command with no shell-out is not extracted", () => {
+    expect(decide(bashCall(`sqlite3 x.db '.tables'`), {}).action).toBe('allow')
+  })
+})
+
+describe('decide() — SMI-6869 consumer-string: psql \\! and COPY/\\copy PROGRAM clauses (round-4 cross-family gate)', () => {
+  it("psql -c '\\! ...' denies via H4 — the text after \\! is extracted as real shell text and recursed", () => {
+    const result = decide(bashCall(`psql -c '\\! ${R}'`), {})
+    expect(result.action).toBe('deny')
+    expect(reasonOf(result)).toContain('H4:')
+  })
+
+  it('psql -c "copy t to program \'...\'" denies via H4 — the quoted PROGRAM value survives bash double-quote decoding intact', () => {
+    const result = decide(bashCall(`psql -c "copy t to program '${R}'"`), {})
+    expect(result.action).toBe('deny')
+    expect(reasonOf(result)).toContain('H4:')
+  })
+
+  it("psql -c '\\copy t to program ''...''' denies via H4 — measured: bash's own doubled-single-quote decoding strips every quote character around the program name before this guard ever sees the argument, so the extractor's unquoted fallback (not the quoted-string branch) is what fires here", () => {
+    const result = decide(bashCall(`psql -c '\\copy t to program ''${R}'''`), {})
+    expect(result.action).toBe('deny')
+    expect(reasonOf(result)).toContain('H4:')
+  })
+
+  it("psql -f - fed a heredoc with a \\! line denies via H4 — the same READABLE_STDIN_RE + segment-heredoc lookup awk/sed's own -f already uses", () => {
+    const command = `psql -f - <<'EOF'\n\\! ${R}\nEOF`
+    const result = decide(bashCall(command), {})
+    expect(result.action).toBe('deny')
+    expect(reasonOf(result)).toContain('H4:')
+  })
+
+  it("control: psql -c 'select 1' allows — ordinary SQL is not extracted", () => {
+    expect(decide(bashCall(`psql -c 'select 1'`), {}).action).toBe('allow')
+  })
+
+  it("control: psql -c '\\dt' allows — a meta-command that is not \\! and has no PROGRAM clause is not extracted", () => {
+    expect(decide(bashCall(`psql -c '\\dt'`), {}).action).toBe('allow')
+  })
+
+  it('control: psql -f schema.sql allows — a REAL file path does not match READABLE_STDIN_RE, so the file content is out of reach by design', () => {
+    expect(decide(bashCall('psql -f schema.sql'), {}).action).toBe('allow')
+  })
+
+  it('control: psql -f - fed a heredoc of ordinary SQL allows — the heredoc body is scanned, but ordinary SQL is not extracted', () => {
+    const command = "psql -f - <<'EOF'\nselect 1;\nEOF"
+    expect(decide(bashCall(command), {}).action).toBe('allow')
+  })
+})
+
+describe('decide() — SMI-6869 consumer-string: osascript -e AppleScript source (round-4 cross-family gate)', () => {
+  it('osascript -e \'do shell script "..."\' denies via H8-script — measured: the EXISTING quoted-bare-name alternative of INLINE_SCRIPT_BARE_NAME_RE already catches a quoted ruflo mention inside AppleScript source, with no do-shell-script-specific extraction needed', () => {
+    const result = decide(bashCall(`osascript -e 'do shell script "${R}"'`), {})
+    expect(result.action).toBe('deny')
+    expect(reasonOf(result)).toContain('H8-script')
+  })
+
+  it('osascript -e \'do shell script "..." with administrator privileges\' denies via H8-script — the trailing clause does not change which mechanism fires', () => {
+    const result = decide(
+      bashCall(`osascript -e 'do shell script "${R}" with administrator privileges'`),
+      {}
+    )
+    expect(result.action).toBe('deny')
+    expect(reasonOf(result)).toContain('H8-script')
+  })
+
+  it("control: osascript -e 'return 1' allows", () => {
+    expect(decide(bashCall(`osascript -e 'return 1'`), {}).action).toBe('allow')
+  })
+
+  it('control: osascript -e \'display dialog "hi"\' allows — ordinary AppleScript source with no ruflo/claude-flow mention recurses embedded and finds nothing, same as an ordinary awk program', () => {
+    expect(decide(bashCall(`osascript -e 'display dialog "hi"'`), {}).action).toBe('allow')
+  })
+})
+
 describe('decide() — SMI-6869 consumer-string: process-launching env vars (EXEC_ENV_VARS, H8(i) extension)', () => {
   const envVarRows: Array<[string, string]> = [
     ['bare PAGER prefix', `PAGER='${R}' git log`],

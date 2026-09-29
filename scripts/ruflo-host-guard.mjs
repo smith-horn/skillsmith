@@ -180,11 +180,12 @@ function checkEvalPredicate(wordTokens, depth) {
  *      `-e`/`-c` argument that spells a path-shaped substring, so this
  *      only needs to catch what they don't (a bare quoted name, no path)
  *   11a. (SMI-6869) `extractConsumerTexts` — awk/sed/ssh/git/vim/tmux/
- *      screen/expect, whose OWN arguments (or a config value they write)
- *      embed a string that PROGRAM will itself hand to a shell or spawn as
- *      a new process. Checked AFTER H-8, same rationale: a narrower
- *      predicate above may already have closed the same argv. See
- *      `scripts/lib/ruflo-host-guard-consumers.mjs`'s own docblock.
+ *      screen/expect/sqlite3/psql/osascript, whose OWN arguments (or a
+ *      config value they write) embed a string that PROGRAM will itself
+ *      hand to a shell or spawn as a new process. Checked AFTER H-8, same
+ *      rationale: a narrower predicate above may already have closed the
+ *      same argv. See `scripts/lib/ruflo-host-guard-consumers.mjs`'s own
+ *      docblock.
  *   12. (M-6) bare-name inversion — LAST, the most general fallback,
  *      closing a bare `ruflo` past argv[0] in front of an unmodelled
  *      launcher (`ssh`/`watch`/`flock`/`strace`/…) that nothing above
@@ -202,12 +203,14 @@ function checkEvalPredicate(wordTokens, depth) {
  * all-digit, `/dev/` path and `$`-in-head arms, the `unreadable-shell-input`
  * shell-fed-deny arm, and the bare-name-inversion check — off when
  * evaluating INTERPRETER PROGRAM SOURCE, since those arms presume the
- * text is a real shell command line. It is set true at exactly two sites,
- * both program-source entrances: the interpreter-stdin branch of the
- * shell-fed step (an interpreter's own heredoc, or a pipe into one) and
- * the H-8 inline-flag recursion below. Every route that extracts genuine
- * shell text (`$()`, backticks, `eval`, `env -S`, a shell's `-c`, text
- * fed to a shell) recurses non-embedded.
+ * text is a real shell command line. It is set true at exactly THREE sites
+ * (round-4 correction — an earlier version of this doc said "two"), all
+ * program-source entrances: the interpreter-stdin branch of the shell-fed
+ * step (an interpreter's own heredoc, or a pipe into one), the H-8
+ * inline-flag recursion below, and the consumer-string step's own
+ * `kind === 'source'` recursion further below. Every route that extracts
+ * genuine shell text (`$()`, backticks, `eval`, `env -S`, a shell's `-c`,
+ * text fed to a shell) recurses non-embedded.
  * @param {Array<{type: string, value?: string, subs?: string[]}>} segmentTokens
  * @param {number} depth
  * @param {Array<{tokens: Array<object>, precedingOp: string|null}>} segments
@@ -325,10 +328,15 @@ function evaluateGuardSegment(segmentTokens, depth, segments, segmentIndex, embe
     }
     // SMI-6869 Fix C: this text is program source (JS/Python/…), not a
     // shell command line — evaluate it in embedded mode. This is one of
-    // the TWO sites that set embedded true (the other is the interpreter-
-    // stdin branch of the shell-fed step above, round 1); every other
-    // recursive call in this file evaluates real shell text and stays
-    // non-embedded.
+    // THREE program-source entrances that set embedded true (round-4
+    // correction — an earlier version of this comment said "two", but the
+    // consumer-string step's OWN `kind === 'source'` recursion below has
+    // been a third since that family's awk/vim/expect source-kind entries
+    // were introduced): the interpreter-stdin branch of the shell-fed step
+    // above (round 1), this H-8 inline-script recursion, and the
+    // consumer-string `kind === 'source'` recursion a few lines down; every
+    // other recursive call in this file evaluates real shell text and
+    // stays non-embedded.
     const nestedScriptVerdict = evaluateGuardCommand(inlineScriptText, depth + 1, true)
     if (nestedScriptVerdict) return nestedScriptVerdict
   }
@@ -389,13 +397,17 @@ function evaluateGuardSegment(segmentTokens, depth, segments, segmentIndex, embe
  * @param {string} commandText
  * @param {number} depth
  * @param {boolean} [embedded] SMI-6869 Fix C — true only when `commandText`
- *   is inline interpreter script text, not a real shell command line; see
- *   `evaluateGuardSegment`'s own doc. Applies uniformly to every segment
- *   of `commandText` (all of it is the same embedded program source), but
- *   is NOT inherited by any recursive `evaluateGuardCommand` call this
- *   function's segments make for genuinely nested shell text (subs,
- *   heredoc subs, eval, `env -S`, a nested shell body, shell-fed text) —
- *   embedded mode is entered only from the one H-8 recursion site.
+ *   is inline interpreter/consumer-string program source, not a real shell
+ *   command line; see `evaluateGuardSegment`'s own doc. Applies uniformly to
+ *   every segment of `commandText` (all of it is the same embedded program
+ *   source), but is NOT inherited by any recursive `evaluateGuardCommand`
+ *   call this function's segments make for genuinely nested shell text
+ *   (subs, heredoc subs, eval, `env -S`, a nested shell body, shell-fed
+ *   text) — embedded mode is entered only from THREE recursion sites
+ *   (round-4 correction — an earlier version of this doc said "the one H-8
+ *   recursion site"): the shell-fed step's interpreter-stdin branch, the
+ *   H-8 inline-script recursion, and the consumer-string step's own
+ *   `kind === 'source'` recursion.
  */
 function evaluateGuardCommand(commandText, depth, embedded = false) {
   if (depth > MAX_DEPTH) {

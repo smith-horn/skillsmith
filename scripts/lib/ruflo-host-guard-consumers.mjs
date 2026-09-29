@@ -9,8 +9,11 @@
  * `system()`/pipe-to-command, sed's `s///e` flag and `Ne` command, ssh's
  * single-argument remote command, git's exec-relevant config keys (`-c
  * key=value` / `git config key value`), vim/nvim's `-c`/`+`/`--cmd`
- * ex-commands, tmux's `send-keys`/`new-window`, screen's `-X stuff`, and
- * expect's `-c '...spawn ...'`.
+ * ex-commands, tmux's `send-keys`/`new-window`, screen's `-X stuff`,
+ * expect's `-c '...spawn ...'`, sqlite3's `.shell`/`.system`/piped-
+ * `.once`/`.output` dot-commands, psql's `\!` and `COPY`/`\copy ... PROGRAM`
+ * clauses, and osascript's `-e` AppleScript source (round-4 cross-family
+ * gate follow-up).
  *
  * Each family's extractor returns `{text, kind}` pairs: `kind: 'shell'` for
  * text the family hands directly to a real shell/exec (recursed
@@ -34,6 +37,11 @@ import { basenameOf } from './shell-command-normalize.mjs'
 import { extractGitTexts } from './ruflo-host-guard-consumers-git.mjs'
 import { extractTmuxTexts } from './ruflo-host-guard-consumers-tmux.mjs'
 import { extractAwkTexts, extractSedTexts } from './ruflo-host-guard-consumers-awksed.mjs'
+import {
+  extractSqliteTexts,
+  extractPsqlTexts,
+  extractOsascriptTexts,
+} from './ruflo-host-guard-consumers-dbshell.mjs'
 
 /**
  * Env vars whose VALUE a downstream program execs as a shell command line —
@@ -330,13 +338,16 @@ const EXTRACTORS = [
   extractTmuxTexts,
   extractScreenTexts,
   extractExpectTexts,
+  extractSqliteTexts,
+  extractPsqlTexts,
+  extractOsascriptTexts,
 ]
 
 /**
  * SMI-6869 consumer-string family dispatcher. Tries every family extractor
  * in turn (argv[0]'s basename decides which, if any, applies) and returns
  * the first one that finds something — `null` when this segment isn't any
- * of the eight recognized consumer shapes, or found nothing extractable
+ * of the eleven recognized consumer shapes, or found nothing extractable
  * (e.g. an awk `-f file` program naming a real file, or an ssh call with
  * zero trailing remote-command tokens). `segmentTokens` is forwarded to
  * every extractor (M5 follow-up, post round-3 governance) so awk/sed can
