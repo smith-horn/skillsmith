@@ -104,6 +104,27 @@ describe('tokenize()', () => {
     expect(tokens[0].subs).toEqual(['x'])
   })
 
+  it('the backtick and $(...) spellings of one substitution produce the SAME .value: one construct, one representation', () => {
+    for (const inner of ['x', 'which ruflo', 'echo hi']) {
+      expect(tokenize('`' + inner + '`')[0].value).toBe(tokenize('$(' + inner + ')')[0].value)
+      expect(tokenize('"a `' + inner + '` b"')[0].value).toBe(
+        tokenize('"a $(' + inner + ') b"')[0].value
+      )
+    }
+  })
+
+  it('a backtick inside single quotes is literal text, not a substitution: .value keeps the backticks and .subs stays empty', () => {
+    const tokens = tokenize("echo 'a `x` b'")
+    expect(tokens[1].value).toBe('a `x` b')
+    expect(tokens[1].subs).toEqual([])
+  })
+
+  it('a backslash-escaped backtick outside quotes is literal text, not a substitution: .value keeps the backticks and .subs stays empty', () => {
+    const tokens = tokenize('echo \\`x\\`')
+    expect(tokens[1].value).toBe('`x`')
+    expect(tokens[1].subs).toEqual([])
+  })
+
   it('records a <(...) process substitution with its delimiters kept in .value', () => {
     const tokens = tokenize('diff <(cmd1) <(cmd2)')
     expect(tokens[1].value).toBe('<(cmd1)')

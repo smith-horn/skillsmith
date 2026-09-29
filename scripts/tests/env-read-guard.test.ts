@@ -592,6 +592,63 @@ describe('decide() — SMI-6869 governance round High: heredoc body dropped from
   )
 })
 
+// SMI-6869 governance round 11, F1 (Critical): a command substitution in an
+// ARGUMENT slot supplies its own OUTPUT as that argument, so a protected
+// path written inside the substitution's body is a read target of the
+// ENCLOSING command, not only of the body's own command --
+// `cat $(echo /app/.env)` reads the file even though `echo /app/.env` does
+// not. Before this fix the read check saw only a word's own `.value`: the
+// old tokenizer inlined a backtick body into that value, so the backtick
+// spelling denied by accident while the `$(...)` spelling never did.
+// Normalizing the backtick spelling removed the accident; the read check
+// now reads a substitution body's words as the enclosing command's
+// arguments, so both spellings deny.
+describe('decide() — SMI-6869 governance round 11 F1: a command substitution in an argument slot supplies its output as that argument: a protected path inside the body is a read target of the enclosing command', () => {
+  it.each([
+    ['cat `echo /app/.env`', 'cat $(echo /app/.env)'],
+    ['cat "`echo /app/.env`"', 'cat "$(echo /app/.env)"'],
+    [
+      'docker exec skillsmith-dev-1 cat `echo /app/.env`',
+      'docker exec skillsmith-dev-1 cat $(echo /app/.env)',
+    ],
+    ['cat `echo ./.env`', 'cat $(echo ./.env)'],
+    ['cat `echo .worktrees/x/.env`', 'cat $(echo .worktrees/x/.env)'],
+    ['sudo cat `echo /app/.env`', 'sudo cat $(echo /app/.env)'],
+    ['varlock run -- cat `echo /app/.env`', 'varlock run -- cat $(echo /app/.env)'],
+    ['`cat` .env', '$(cat) .env'],
+    ['`cat` /app/.env', '$(cat) /app/.env'],
+  ])('%s and its $(...) twin %s -> deny', (backtickCmd, dollarCmd) => {
+    expect(decide(bashCall(backtickCmd), {}).action).toBe('deny')
+    expect(decide(bashCall(dollarCmd), {}).action).toBe('deny')
+  })
+
+  it.each([
+    'cat `echo .env`',
+    'cat $(echo .env)',
+    'cat "$(echo .env)"',
+    'cat `echo .env.registry`',
+    'cat $(echo .env.registry)',
+  ])('%s -> deny', (command) => {
+    expect(decide(bashCall(command), {}).action).toBe('deny')
+  })
+
+  it.each([
+    'cat $(echo .env.example)',
+    'cat $(echo .env.schema)',
+    'ls $(git rev-parse --show-toplevel)',
+    "grep -qE '^KEY=' .env",
+    'echo $(date)',
+    'echo `date`',
+    'cat `echo README.md`',
+  ])('control: %s -> allow', (command) => {
+    expect(decide(bashCall(command), {}).action).toBe('allow')
+  })
+
+  it('known-positive control: cat .env -> deny', () => {
+    expect(decide(bashCall('cat .env'), {}).action).toBe('deny')
+  })
+})
+
 describe('decide() — SKILLSMITH_ENV_READ_GUARD_DISABLE hard-disable', () => {
   it('a command that would normally deny is allowed when the disable var is set', () => {
     const result = decide(bashCall('grep PAT .env'), { SKILLSMITH_ENV_READ_GUARD_DISABLE: '1' })

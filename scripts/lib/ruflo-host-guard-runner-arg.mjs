@@ -64,9 +64,8 @@ const RUNNER_SUBCOMMANDS = new Map([
  * candidate closure (ii), the owner's chosen primary closure). Runs on the
  * POST-normalize argv/tokens: argv[0]'s basename must be a runner, and the
  * runner's own PACKAGE-NAME SLOT must have EITHER a `$` in its raw
- * `.value` OR a non-empty `.subs` (round 1 finding 2 correction — a
- * backtick substitution drops its backticks in `tokenize()`, so `.value`
- * alone misses it).
+ * `.value` OR a non-empty `.subs` (the `.subs` half covers `<(...)`/`>(...)`
+ * process substitutions, whose `.value` keeps `<(`/`>(` and holds no `$`).
  *
  * Narrowed from "any later token" to "the package-name slot only" (M-A
  * fix, SMI-6744 Wave 4 governance round): the original scanned every

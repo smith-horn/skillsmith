@@ -1,11 +1,12 @@
 /**
  * Shell-command tokenizer (quote-aware, records command substitutions),
  * shared by `scripts/env-read-guard.mjs` and `scripts/ruflo-host-guard.mjs`
- * via `scripts/lib/shell-command-normalize.mjs`. A backtick substitution is
- * normalized to the `$(...)` spelling in `.value` (its body is unchanged in
- * `.subs`): the two constructs run the same command, so both must reach
- * every downstream `$`-based unresolvable-head test identically, and a
- * body inlined as plain text reads as an ordinary resolvable command.
+ * via `scripts/lib/shell-command-normalize.mjs`. A backtick the tokenizer
+ * interprets as a substitution (unquoted, or inside double quotes) is
+ * spelled $(...) in .value, its body unchanged in .subs, so both spellings
+ * reach every downstream $-based unresolvable-head test identically; a
+ * backtick inside single quotes, behind a backslash, or in a heredoc body
+ * is literal text and stays as written.
  *
  * Split out of `shell-command-normalize.mjs` itself (SMI-6744 Wave 4 delta
  * governance round) purely to stay under the 500-line-per-file convention

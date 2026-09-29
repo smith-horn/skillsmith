@@ -47,10 +47,12 @@
  * (`tokenize`, `stripFlags`, `stripEnvPrefix`, `stripDockerExec`,
  * `stripDockerCompose`, `stripVarlockRun`, `extractShellDashC`,
  * `normalizeWrappers`, `hasInlineScriptFlag`, `scanPositionalScriptText`,
- * `basenameOf`, plus `SHELL_COMMANDS`/`WRAPPER_VALUE_FLAGS`/`MAX_DEPTH`/
- * `INLINE_SCRIPT_LONG_FLAGS`/`POSITIONAL_SCRIPT_COMMANDS`) moved to
- * `scripts/lib/shell-command-normalize.mjs` so `scripts/ruflo-host-guard.mjs`
- * can reuse them instead of re-implementing its own copy. This file's own
+ * `basenameOf`, plus `SHELL_COMMANDS`/`MAX_DEPTH`/`INLINE_SCRIPT_LONG_FLAGS`)
+ * moved to `scripts/lib/shell-command-normalize.mjs` so
+ * `scripts/ruflo-host-guard.mjs` can reuse them instead of re-implementing its
+ * own copy. `WRAPPER_VALUE_FLAGS` and `POSITIONAL_SCRIPT_COMMANDS` moved there
+ * too, but live private to that module -- used only by the moved functions'
+ * own bodies, not re-exported for another file to import. This file's own
  * `INLINE_SCRIPT_SHORT_FLAG_CHARS` and `scanTextForProtected` stay here —
  * they are `.env`-specific — and are passed into the two moved functions
  * whose env-specific piece became a parameter in the move.
@@ -356,9 +358,41 @@ function evaluateCommand(command, depth) {
     // just above via the same loop, is the only part of it that ever
     // executes).
     const argvWords = segment.filter((w) => w.type === 'word' && !w.redirect)
+    // A command substitution in an ARGUMENT slot supplies its own OUTPUT as
+    // that argument, so a protected path written inside the body is a read
+    // target of the ENCLOSING command, not only of the body's own command:
+    // `cat $(echo /app/.env)` reads the file even though `echo /app/.env`
+    // does not. The `.subs` recursion above evaluates the body as a COMMAND
+    // and therefore never sees this. Append the body's own words as extra
+    // argv entries so the enclosing command's own read check covers them.
+    const subWords = argvWords
+      .flatMap((w) => w.subs ?? [])
+      .flatMap((s) =>
+        tokenize(s)
+          .filter((t) => t.type === 'word' && !t.redirect)
+          .map((t) => t.value)
+      )
     const { argv, nested } = normalizeWrappers(argvWords.map((w) => w.value))
-    const violation = nested !== null ? evaluateCommand(nested, depth + 1) : checkArgv(argv)
+    const violation =
+      nested !== null
+        ? evaluateCommand(nested, depth + 1)
+        : checkArgv(subWords.length > 0 ? argv.concat(subWords) : argv)
     if (violation) return violation
+    // An argv[0] that is itself a substitution leaves the command name
+    // unresolved, so no reader check can fire for this segment at all --
+    // `\`cat\` .env` runs whatever the body prints, with `.env` as its
+    // argument. Re-check the segment's remaining words under each
+    // substitution body's own head, which is the command that will run if
+    // the body prints its own name (the shape this guard has always denied).
+    if (argvWords.length > 0 && (argvWords[0].subs?.length ?? 0) > 0) {
+      const tailArgs = argvWords.slice(1).map((w) => w.value)
+      for (const s of argvWords[0].subs) {
+        const head = tokenize(s).find((t) => t.type === 'word' && !t.redirect)
+        if (!head) continue
+        const unresolvedViolation = checkArgv([head.value, ...tailArgs])
+        if (unresolvedViolation) return unresolvedViolation
+      }
+    }
   }
   return null
 }
