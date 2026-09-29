@@ -4,6 +4,15 @@ All notable changes to `@skillsmith/mcp-server` are documented here.
 
 ## [Unreleased]
 
+- **Fix**: SMI-6733 -- the three `apply_manifest_reconcile` entry points now read `installedSkills`
+  through `@skillsmith/core`'s `installedSkillsOf()` rather than subscripting the field directly.
+  A manifest whose `installedSkills` is `null` or absent classifies `ok` (both mean "nothing
+  installed") while `SkillManifest` declares the field non-optional, so a direct subscript
+  type-checked and then threw `Cannot read properties of null` at runtime, which the outer catch
+  turned into a message carrying no diagnosis. Measured on both shapes before the fix. Applies to
+  `apply-manifest-reconcile.{actions,helpers,verify}.ts`; no behaviour change on a well-formed
+  manifest.
+
 - **Refactor**: SMI-6532 step 6 -- `outdated.ts` split at the action seam (`outdated.action.ts`,
   `outdated.helpers.ts` unchanged in behaviour) so a renderer table could land beside it without
   pushing either file over the 500-line gate. New `update-target-render.ts` exports
