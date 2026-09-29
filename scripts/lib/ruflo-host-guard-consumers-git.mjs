@@ -2,9 +2,12 @@
 /**
  * git exec-relevant config key extraction — split out of
  * `ruflo-host-guard-consumers.mjs` (SMI-6869 consumer-string round 2)
- * purely to stay under the 500-line file-length gate
- * (`scripts/check-file-length.mjs`) once round 2's expanded key/pattern
- * tables and the ssh/env-var extensions grew that file past the limit.
+ * purely to stay under the 500-line-per-file convention this repo keeps by
+ * hand for .mjs files under scripts/ (M3 correction: `scripts/check-file-
+ * length.mjs`, the machine-enforced pre-commit gate, does NOT observe this
+ * path — it's wired through `lint-staged.config.js` for `*.ts`/`*.sh` only;
+ * SMI-5994) once round 2's expanded key/pattern tables and the ssh/env-var
+ * extensions grew that file past the limit.
  * `git -c key=value` (anywhere before the subcommand) and `git config
  * [--global|...] key value` both write (or, for `-c`, transiently set) a
  * git config key that a later git operation execs as a shell command, or,
@@ -91,8 +94,29 @@ function isGitExecKey(key, value) {
   return GIT_EXEC_KEY_PATTERNS.some((re) => re.test(lower))
 }
 
-function pushGitConfigValue(results, key, value) {
+/**
+ * Governance-round M1 fix (post-PR-#2959 retro): a config VALUE this guard
+ * cannot statically resolve -- a literal `$` anywhere in the aligned
+ * token's own text (a bare `$VAR`/`${VAR}` reference, or a `$(...)`
+ * substitution, which also always contains a literal `$`) or a non-empty
+ * `.subs` (catches a backtick substitution too, which contains NO literal
+ * `$` at all) -- cannot be proven to spell a ruflo/claude-flow invocation
+ * OR proven not to. Skip it (don't extract anything for this config-key
+ * write) rather than deny: this is the SAME "out of reach by design"
+ * posture the awk/sed `-f realfile` and psql `-f realfile.sql` limits
+ * already carry, not the different "unresolved COMMAND head" posture
+ * `checkUnresolvedCommand`'s `$`-in-head arm uses (that arm denies because
+ * an unresolved *command name* is inherently suspicious in a way a
+ * git-crypt filter registration writing an unresolved *config value* for
+ * LATER indirect use is not — measured: `git config --local
+ * filter.git-crypt.smudge "$SMUDGE_CMD"`, the exact shape
+ * `ensure_git_crypt_filter_registered()` and `.husky/pre-commit` both run,
+ * reached DENY before this fix because the extracted value recursed into
+ * `checkUnresolvedCommand`'s own `$`-in-head arm one level down).
+ */
+function pushGitConfigValue(results, key, value, token) {
   if (!isGitExecKey(key, value)) return
+  if (token && (token.value.includes('$') || (token.subs?.length ?? 0) > 0)) return
   results.push({ text: value.startsWith('!') ? value.slice(1) : value, kind: 'shell' })
 }
 
@@ -109,17 +133,19 @@ export function extractGitTexts(base, argv, alignedTokens) {
     const a = argv[i]
     if (a === '-c') {
       if (alignedTokens[i + 1]) {
-        const raw = alignedTokens[i + 1].value
+        const tok = alignedTokens[i + 1]
+        const raw = tok.value
         const eq = raw.indexOf('=')
-        if (eq !== -1) pushGitConfigValue(results, raw.slice(0, eq), raw.slice(eq + 1))
+        if (eq !== -1) pushGitConfigValue(results, raw.slice(0, eq), raw.slice(eq + 1), tok)
       }
       i += 2
       continue
     }
     if (a.startsWith('-c') && a !== '-c') {
+      const tok = alignedTokens[i]
       const raw = a.slice(2)
       const eq = raw.indexOf('=')
-      if (eq !== -1) pushGitConfigValue(results, raw.slice(0, eq), raw.slice(eq + 1))
+      if (eq !== -1) pushGitConfigValue(results, raw.slice(0, eq), raw.slice(eq + 1), tok)
       i++
       continue
     }
@@ -153,7 +179,7 @@ export function extractGitTexts(base, argv, alignedTokens) {
     }
     const key = argv[j]
     const valueTok = alignedTokens[j + 1]
-    if (key && valueTok) pushGitConfigValue(results, key, valueTok.value)
+    if (key && valueTok) pushGitConfigValue(results, key, valueTok.value, valueTok)
   }
   return results.length > 0 ? results : null
 }

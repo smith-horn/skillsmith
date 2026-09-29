@@ -294,14 +294,14 @@ describe('decide() — H8 (D11 registry-fetch closure)', () => {
   it('V=ru; npx "${V}flo" … denies via H8(ii) only (not H5)', () => {
     const result = decide(bashCall('V=ru; npx "${V}flo" memory store --key k --value v'), {})
     expect(result.action).toBe('deny')
-    expect(reasonOf(result)).toContain('H8')
+    expect(reasonOf(result)).toContain('H8:')
     expect(reasonOf(result)).not.toContain('H5')
   })
 
   it('V=ruflo; npx "$V" … denies (H8(i) fires on the bare assignment segment)', () => {
     const result = decide(bashCall('V=ruflo; npx "$V" memory store --key k --value v'), {})
     expect(result.action).toBe('deny')
-    expect(reasonOf(result)).toContain('H8')
+    expect(reasonOf(result)).toContain('H8:')
   })
 })
 
@@ -491,7 +491,7 @@ describe('decide() — H-E: `varlock run <payload> -- x` drops the command (gove
   it('control: varlock run ruflo … (no trailing --) still denies via H4', () => {
     const result = decide(bashCall('varlock run ruflo memory store --key k --value v'), {})
     expect(result.action).toBe('deny')
-    expect(reasonOf(result)).toContain('H4')
+    expect(reasonOf(result)).toContain('H4:')
   })
 })
 
@@ -534,14 +534,14 @@ describe('decide() — M-A: narrowed H8(ii) stops denying ordinary repo commands
   it('control: V=ru; npx "${V}flo" … still denies via H8 (slot 1), not H5', () => {
     const result = decide(bashCall('V=ru; npx "${V}flo" memory store --key k --value v'), {})
     expect(result.action).toBe('deny')
-    expect(reasonOf(result)).toContain('H8')
+    expect(reasonOf(result)).toContain('H8:')
     expect(reasonOf(result)).not.toContain('H5')
   })
 
   it('control: npx `echo ruflo` memory store … still denies via H8 (slot 1, .subs)', () => {
     const result = decide(bashCall('npx `echo ruflo` memory store --key k --value v'), {})
     expect(result.action).toBe('deny')
-    expect(reasonOf(result)).toContain('H8')
+    expect(reasonOf(result)).toContain('H8:')
   })
 })
 
@@ -669,7 +669,7 @@ describe('decide() — H-1: launcher-table arity fixes (timeout -k/-s, chrt posi
   it('control: xargs ruflo memory store (no -I at all) still denies via H4', () => {
     const result = decide(bashCall('xargs ruflo memory store --key k --value v'), {})
     expect(result.action).toBe('deny')
-    expect(reasonOf(result)).toContain('H4')
+    expect(reasonOf(result)).toContain('H4:')
   })
 
   it('control: find . -print0 | xargs -0 rm (a real, harmless xargs use) still allows', () => {
@@ -725,7 +725,7 @@ describe('decide() — H-5: runner value-flags, subcommand table, -p= (delta rou
   it.each(redArms)('%s -> deny (H8)', (command) => {
     const result = decide(bashCall(command), {})
     expect(result.action).toBe('deny')
-    expect(reasonOf(result)).toContain('H8')
+    expect(reasonOf(result)).toContain('H8:')
   })
 
   const greenArms = [
@@ -834,7 +834,7 @@ describe("decide() — C1: ANSI-C $'...' octal/unicode escapes evade the guard (
   it("control: $'ruflo' memory store -> deny (H4; no escape sequence, never part of this bug)", () => {
     const result = decide(bashCall(String.raw`$'ruflo' memory store`), {})
     expect(result.action).toBe('deny')
-    expect(reasonOf(result)).toContain('H4')
+    expect(reasonOf(result)).toContain('H4:')
   })
 })
 
@@ -848,7 +848,7 @@ describe('decide() — A: fail-closed fall-through when argv[0] cannot be resolv
   it('control: V=ru; npx "${V}flo" … still allows the bare-assignment first segment (H8(ii) fires on the second)', () => {
     const result = decide(bashCall('V=ru; npx "${V}flo" memory store --key k --value v'), {})
     expect(result.action).toBe('deny')
-    expect(reasonOf(result)).toContain('H8')
+    expect(reasonOf(result)).toContain('H8:')
     expect(reasonOf(result)).not.toContain('unresolved-command')
   })
 
@@ -1052,7 +1052,7 @@ describe('decide() — SMI-6869 Fix A: redirect operators are not word boundarie
   it('control: ruflo 2>/dev/null memory store -> deny (H4, already correct pre-fix, unaffected)', () => {
     const result = decide(bashCall('ruflo 2>/dev/null memory store'), {})
     expect(result.action).toBe('deny')
-    expect(reasonOf(result)).toContain('H4')
+    expect(reasonOf(result)).toContain('H4:')
   })
 
   const controlsAllow = ['ls &> /tmp/o', 'ls 2>/dev/null', 'sleep 5 & wait', 'ls |& cat']
@@ -1094,7 +1094,7 @@ describe('decide() — SMI-6869 Fix B: heredoc bodies are not tokenised as comma
     const command = "bash <<'EOF'\nruflo memory store\nEOF"
     const result = decide(bashCall(command), {})
     expect(result.action).toBe('deny')
-    expect(reasonOf(result)).toContain('H4')
+    expect(reasonOf(result)).toContain('H4:')
     expect(reasonOf(result)).not.toContain('unresolved-command')
   })
 
@@ -1130,6 +1130,102 @@ describe('decide() — SMI-6869 Fix B: heredoc bodies are not tokenised as comma
     const command =
       "git commit -F - <<'EOF'\nMentions the npx ruflo workaround discussed in review\nEOF"
     expect(decide(bashCall(command), {}).action).toBe('allow')
+  })
+})
+
+// Governance-round C1 fix (post-PR-#2959 retro, regression): the shell-fed
+// arm's final `else` (a BARE shell fed real shell text via a heredoc,
+// here-string, process substitution, or pipe, with NO `-c`) used to
+// unconditionally `return evaluateGuardCommand(shellFedResult.text, ...)`,
+// so a BENIGN fed body (`echo hi`/`true`) returned `null` (allow) and that
+// `null` propagated straight out of `evaluateGuardSegment`, skipping every
+// check below it -- including the ones that already deny the segment's OWN
+// argv (`bash ruflo` -> H4b, `bash node_modules/.bin/ruflo` -> H3) with NO
+// fed text at all. Matches the sibling `continueOnAllow` arm's own shape
+// now: only a POSITIVE verdict from the fed body returns early.
+describe('decide() — SMI-6869 governance round C1: benign shell-fed body no longer launders a dangerous operand (regression)', () => {
+  const shellVariants: Array<[string, string]> = [
+    ['bash', "bash node_modules/.bin/ruflo <<'EOF'\ntrue\nEOF"],
+    ['sh', "sh node_modules/.bin/ruflo <<'EOF'\ntrue\nEOF"],
+    ['zsh', "zsh node_modules/.bin/ruflo <<'EOF'\ntrue\nEOF"],
+    ['dash', "dash node_modules/.bin/ruflo <<'EOF'\ntrue\nEOF"],
+    ['ksh', "ksh node_modules/.bin/ruflo <<'EOF'\ntrue\nEOF"],
+  ]
+  for (const [shell, command] of shellVariants) {
+    it(`${shell} node_modules/.bin/ruflo <<'EOF' with a benign body denies via H3 — the operand still spells a ruflo path even though the fed body is clean`, () => {
+      const result = decide(bashCall(command), {})
+      expect(result.action).toBe('deny')
+      expect(reasonOf(result)).toContain('H3:')
+    })
+  }
+
+  it("bash ruflo <<'EOF' with a benign body denies via H4b — the bare-name operand, not the heredoc body, is what H4b closes", () => {
+    const result = decide(bashCall("bash ruflo <<'EOF'\necho hi\nEOF"), {})
+    expect(result.action).toBe('deny')
+    expect(reasonOf(result)).toContain('H4b:')
+  })
+
+  it("bash -s ruflo <<'EOF' with a benign body denies via H4b", () => {
+    const result = decide(bashCall("bash -s ruflo <<'EOF'\ntrue\nEOF"), {})
+    expect(result.action).toBe('deny')
+    expect(reasonOf(result)).toContain('H4b:')
+  })
+
+  it('echo true | bash node_modules/.bin/ruflo (pipe, benign producer) denies via H3', () => {
+    const result = decide(bashCall('echo true | bash node_modules/.bin/ruflo'), {})
+    expect(result.action).toBe('deny')
+    expect(reasonOf(result)).toContain('H3:')
+  })
+
+  it("printf 'true' | bash node_modules/.bin/ruflo (printf pipe) denies via H3", () => {
+    const result = decide(bashCall("printf 'true' | bash node_modules/.bin/ruflo"), {})
+    expect(result.action).toBe('deny')
+    expect(reasonOf(result)).toContain('H3:')
+  })
+
+  it("cat <<'EOF' | bash node_modules/.bin/ruflo (cat-heredoc pipe) denies via H3", () => {
+    const command = "cat <<'EOF' | bash node_modules/.bin/ruflo\ntrue\nEOF"
+    const result = decide(bashCall(command), {})
+    expect(result.action).toBe('deny')
+    expect(reasonOf(result)).toContain('H3:')
+  })
+
+  it("bash node_modules/.bin/ruflo <<< 'true' (spaced here-string) denies via H3", () => {
+    const result = decide(bashCall("bash node_modules/.bin/ruflo <<< 'true'"), {})
+    expect(result.action).toBe('deny')
+    expect(reasonOf(result)).toContain('H3:')
+  })
+
+  it("bash node_modules/.bin/ruflo <<<'true' (glued here-string) denies via H3", () => {
+    const result = decide(bashCall("bash node_modules/.bin/ruflo <<<'true'"), {})
+    expect(result.action).toBe('deny')
+    expect(reasonOf(result)).toContain('H3:')
+  })
+
+  it('bash node_modules/.bin/ruflo <(echo true) (process substitution) denies via H3', () => {
+    const result = decide(bashCall('bash node_modules/.bin/ruflo <(echo true)'), {})
+    expect(result.action).toBe('deny')
+    expect(reasonOf(result)).toContain('H3:')
+  })
+
+  it('echo true | bash ruflo (pipe, bare-name variant) denies via H4b', () => {
+    const result = decide(bashCall('echo true | bash ruflo'), {})
+    expect(result.action).toBe('deny')
+    expect(reasonOf(result)).toContain('H4b:')
+  })
+
+  it('control: bash node_modules/.bin/ruflo with NO fed text at all still denies via H3 — unaffected by the fix, on both trees', () => {
+    const result = decide(bashCall('bash node_modules/.bin/ruflo'), {})
+    expect(result.action).toBe('deny')
+    expect(reasonOf(result)).toContain('H3:')
+  })
+
+  it("control: bash <<'EOF' with a benign shell AND a benign body (no ruflo anywhere) still allows", () => {
+    expect(decide(bashCall("bash <<'EOF'\necho hi\nEOF"), {}).action).toBe('allow')
+  })
+
+  it('control: echo true | bash (benign producer into a bare shell, no ruflo anywhere) still allows', () => {
+    expect(decide(bashCall('echo true | bash'), {}).action).toBe('allow')
   })
 })
 
@@ -1297,7 +1393,7 @@ describe('decide() — SMI-6869 governance round C1: space-separated redirect ta
   it.each(redArms)('%s -> deny (H4, same label as the plain spelling)', (command) => {
     const result = decide(bashCall(command), {})
     expect(result.action).toBe('deny')
-    expect(reasonOf(result)).toContain('H4')
+    expect(reasonOf(result)).toContain('H4:')
     const plain = decide(bashCall('ruflo memory store'), {})
     const label = /\[ruflo-host-guard\] (\S+):/.exec(reasonOf(result))?.[1]
     const plainLabel = /\[ruflo-host-guard\] (\S+):/.exec(reasonOf(plain))?.[1]
@@ -1358,21 +1454,21 @@ describe('decide() — SMI-6869 governance round C3: two heredocs on one line, b
     const command = 'bash <<A <<B\nharmless\nA\nruflo memory store\nB'
     const result = decide(bashCall(command), {})
     expect(result.action).toBe('deny')
-    expect(reasonOf(result)).toContain('H4')
+    expect(reasonOf(result)).toContain('H4:')
   })
 
   it('cat <<A <<B | sh, ruflo in B -> deny (H4, relayed through cat into the pipe, both heredocs joined)', () => {
     const command = 'cat <<A <<B | sh\nharmless\nA\nruflo memory store\nB'
     const result = decide(bashCall(command), {})
     expect(result.action).toBe('deny')
-    expect(reasonOf(result)).toContain('H4')
+    expect(reasonOf(result)).toContain('H4:')
   })
 
   it('control: bash <<A <<B, ruflo in A (harmless in B) -> deny (already correct pre-C3: .find() picked the right heredoc here)', () => {
     const command = 'bash <<A <<B\nruflo memory store\nA\nharmless\nB'
     const result = decide(bashCall(command), {})
     expect(result.action).toBe('deny')
-    expect(reasonOf(result)).toContain('H4')
+    expect(reasonOf(result)).toContain('H4:')
   })
 })
 
@@ -1696,6 +1792,55 @@ describe('decide() — SMI-6869 consumer-string: git exec-relevant config keys',
 
   it('control: plain git log allows', () => {
     expect(decide(bashCall('git log --oneline -5'), {}).action).toBe('allow')
+  })
+})
+
+// Governance-round M1 fix (post-PR-#2959 retro, new false positive): a
+// config VALUE this guard cannot statically resolve (a literal `$` in the
+// aligned token, or a non-empty `.subs`) is now SKIPPED by
+// `pushGitConfigValue` for the config-key family, the same "out of reach by
+// design" posture an unreadable `-f realfile` already carries elsewhere —
+// not denied, the different posture `checkUnresolvedCommand`'s own
+// `$`-in-head arm uses for an unresolved COMMAND NAME. Before this fix, the
+// five real repo lines below (`.husky/pre-commit`'s git-crypt filter
+// registration and `scripts/_lib.sh`'s `ensure_git_crypt_filter_registered`)
+// all denied, because the extracted `$VAR` value recursed straight into
+// that command-head arm one level down.
+describe('decide() — SMI-6869 governance round M1: an unresolvable git config VALUE is skipped, not denied (new false positive)', () => {
+  const repoShapeRows: Array<[string, string]> = [
+    ['pre-commit smudge (no -C)', 'git config --local filter.git-crypt.smudge "$SMUDGE_CMD"'],
+    ['pre-commit clean (no -C)', 'git config --local filter.git-crypt.clean "$CLEAN_CMD"'],
+    [
+      '_lib.sh smudge (with -C)',
+      'git -C "$git_context_dir" config --local filter.git-crypt.smudge "$GIT_CRYPT_CANONICAL_SMUDGE"',
+    ],
+    [
+      '_lib.sh clean (with -C)',
+      'git -C "$git_context_dir" config --local filter.git-crypt.clean "$GIT_CRYPT_CANONICAL_CLEAN"',
+    ],
+    [
+      '_lib.sh textconv (with -C)',
+      'git -C "$git_context_dir" config --local diff.git-crypt.textconv "$GIT_CRYPT_CANONICAL_TEXTCONV"',
+    ],
+  ]
+  it.each(repoShapeRows)('%s allows — the exact repo shape', (_label, cmd) => {
+    expect(decide(bashCall(cmd), {}).action).toBe('allow')
+  })
+
+  it('git -c core.pager="$X" log allows — an unresolvable config VALUE is out of reach by design, the same posture an unreadable -f realfile already carries elsewhere in this guard, not the different "unresolved command head" posture', () => {
+    expect(decide(bashCall('git -c core.pager="$X" log'), {}).action).toBe('allow')
+  })
+
+  it("literal control: git -c core.pager='ruflo memory store' log still denies via H4 — a fully resolvable value is unaffected by the fix", () => {
+    const result = decide(bashCall(`git -c core.pager='${R}' log`), {})
+    expect(result.action).toBe('deny')
+    expect(reasonOf(result)).toContain('H4:')
+  })
+
+  it("literal control: git config --local filter.git-crypt.smudge 'git-crypt smudge' allows — an ordinary literal git-crypt filter value spells no ruflo/claude-flow reference on its own merits", () => {
+    expect(
+      decide(bashCall("git config --local filter.git-crypt.smudge 'git-crypt smudge'"), {}).action
+    ).toBe('allow')
   })
 })
 

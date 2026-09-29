@@ -2,9 +2,12 @@
 /**
  * Heredoc-consumer table and body normalization for
  * `ruflo-host-guard-shell-fed.mjs` -- split into its own file (round-3
- * governance fix) purely to stay under the 500-line file-length gate once the
- * per-consumer body normalizer grew that file past the limit, same precedent
- * as `ruflo-host-guard-unresolved.mjs`.
+ * governance fix) purely to stay under the 500-line-per-file convention
+ * this repo keeps by hand for .mjs files under scripts/ (M3 correction: not
+ * enforced by tooling here — `scripts/check-file-length.mjs` only runs via
+ * `lint-staged` for `*.ts`/`*.sh`; SMI-5994) once the per-consumer body
+ * normalizer grew that file past the limit, same precedent as
+ * `ruflo-host-guard-unresolved.mjs`.
  */
 
 /**

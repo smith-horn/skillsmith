@@ -1,9 +1,12 @@
 /**
  * Verdict-shape constructors for `scripts/ruflo-host-guard.mjs` (SMI-6744
  * Wave 4). Split out of `ruflo-host-guard-predicates.mjs` (governance-round
- * split) purely to stay under the 500-line file-length gate
- * (`scripts/check-file-length.mjs`) once that file grew H-D/L-D's extra
- * path-normalization views and H1's `--require` clause — every export here
+ * split) purely to stay under the 500-line-per-file convention this repo
+ * keeps by hand for .mjs files under scripts/ (M3 correction: not enforced
+ * by tooling here — `scripts/check-file-length.mjs` only runs via
+ * `lint-staged` for `*.ts`/`*.sh`; SMI-5994) once that file grew H-D/L-D's
+ * extra path-normalization views and H1's `--require` clause — every
+ * export here
  * is a pure function or constant, no I/O, no state, and both
  * `ruflo-host-guard-predicates.mjs` and `ruflo-host-guard-h1to7.mjs` import
  * from this file (never the reverse), so there is no import cycle between
@@ -147,8 +150,11 @@ export const ALLOW = { action: 'allow', json: null, stderr: null }
  * rule (round 1 finding 5).
  *
  * Round-3 governance follow-up: moved here from the guard's own
- * orchestration file purely to stay under the 500-line file-length gate
- * once the patch's own docblock additions pushed that file to 501 lines —
+ * orchestration file purely to stay under the 500-line-per-file convention
+ * this repo keeps by hand for .mjs files under scripts/ (M3 correction:
+ * not enforced by tooling here — `scripts/check-file-length.mjs` only runs
+ * via `lint-staged` for `*.ts`/`*.sh`; SMI-5994) once the patch's own
+ * docblock additions pushed that file to 501 lines —
  * every dependency this predicate needs (`ALLOW`, `denyMalformedInput`,
  * `denyStartDaemon`) is already defined in this same file, so the move
  * needed no new import anywhere.

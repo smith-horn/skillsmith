@@ -2,7 +2,10 @@
  * H1–H7 path/token predicates for `scripts/ruflo-host-guard.mjs` (SMI-6744
  * Wave 4). Split out of `ruflo-host-guard-predicates.mjs` (governance-round
  * split, same rationale as `ruflo-host-guard-verdicts.mjs`'s own header) to
- * stay under the 500-line file-length gate.
+ * stay under the 500-line-per-file convention this repo keeps by hand for
+ * .mjs files under scripts/ (M3 correction: not enforced by tooling here —
+ * `scripts/check-file-length.mjs` only runs via `lint-staged` for
+ * `*.ts`/`*.sh`; SMI-5994).
  *
  * All matching is against LOWERCASED argv (`argvLower`/`scanArgvLower`) —
  * a deliberate, stated choice (plan § Predicate Specification): Bash rule
