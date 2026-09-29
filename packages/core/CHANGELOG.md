@@ -7,12 +7,18 @@ All notable changes to `@skillsmith/core` are documented here.
 - **Tests**: SMI-6532 -- the render-parity test's parse guard is now itself tested, and its failure
   mode is loud rather than silent. The guard reads TypeScript's INTERNAL `parseDiagnostics` field
   through a cast, so a rename upstream would have read `undefined`, skipped the check, and restored
-  the exact hole the guard exists to close -- quietly. Its absence is now fatal, and a canary test
-  asserts the field is present on a real `SourceFile`, so the day TypeScript stops setting it fails
-  here first. Three refusal paths gained tests (unparseable source, missing field, absent export);
-  red-tested by disabling the guard and by feeding the canary an object without the field. Found by
-  the post-merge retro on PR #2952 -- I had verified the guard once by hand when adding it, which
-  protected nothing afterwards.
+  the exact hole the guard exists to close -- quietly. Its absence is now fatal. The guard was split
+  out of `extractObjectLiteral` into its own `assertParsesCleanly` helper so both of its branches --
+  a missing field, and parse errors present -- can be pinned by a direct test instead of only the
+  parse-error branch; the missing-field branch is exercised with a fabricated `SourceFile`, since
+  nothing can make TypeScript itself stop setting the field. A separate canary confirms today's real
+  `SourceFile` still exposes the field as an array (the guard itself only rejects `undefined`, so
+  some future non-array replacements -- a `Set`, say -- would pass it silently and only the canary
+  would catch them; not all, since `null` throws on the length read and a non-empty string trips the
+  parse-error branch), and
+  a third direct test pins the unrelated absent-export refusal. Red-tested by disabling each guard
+  branch and by feeding the canary an object without the field. Found by the post-merge retro on PR
+  #2952 -- I had verified the guard once by hand when adding it, which protected nothing afterwards.
 
 - **Feature (internal)**: SMI-6532 step 6 -- the root barrel now exports the two closed-set
   `UpdateTargetReason`/`UpdateResultCode` types from `update-target-reason.ts` (previously internal
