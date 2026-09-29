@@ -55,7 +55,17 @@ describe.skipIf(noLiveTestPg)('SMI-6656 -- recompute_user_tier lock, two live se
     const { stderr } = await ctl.send(schemaSql(), 60_000)
     // A failed schema build must be loud: every assertion below would otherwise pass or
     // fail for the wrong reason.
-    expect(stderr, `schema build failed:\n${stderr}`).not.toMatch(/ERROR/)
+    // Reduce to a boolean and print the diagnostic separately, so the FULL stderr
+    // reaches the log instead of the ~37 characters an assertion renders
+    // (chai.config.truncateThreshold, 40; this repo sets no override).
+    //
+    // Retry is NOT the reason here: a beforeAll failure is never subject to vitest's
+    // retry condition at all -- @vitest/runner marks the suite failed and its tests
+    // skipped, and the condition is consulted only inside runTest's retry loop. The
+    // reason is the same convention the arms below follow. SMI-6864.
+    const schemaFailed = /ERROR/.test(stderr)
+    if (schemaFailed) console.error(`[smi6656] schema build stderr:\n${stderr}`)
+    expect(schemaFailed, 'schema build failed -- psql stderr printed above').toBe(false)
   }, 90_000)
 
   afterAll(async () => {
@@ -94,7 +104,16 @@ describe.skipIf(noLiveTestPg)('SMI-6656 -- recompute_user_tier lock, two live se
     const aPid = (await a.send('SELECT pg_backend_pid();')).stdout.trim()
     expect(aPid).toMatch(/^\d+$/)
 
-    const recomputeA = a.fire(`SELECT recompute_user_tier('${TEST_USER}');`)
+    // Explicit deadline rather than fire()'s undeclared 30s default, same reasoning as
+    // test 6's -- see the fuller note there, including the measurement. Not separately
+    // measured for THIS arm: the margin here is assumed to resemble test 6's, not
+    // observed. The shape is what matters -- the poll below runs entirely before B
+    // commits and releases A, so a late-but-successful detection on a loaded machine
+    // could expire a 30s budget and reject with a 'timed out' message on CORRECT code,
+    // which the retry condition matches. 55s is below the configured 60s test timeout
+    // -- not a guarantee of fitting whatever remains of it, since this deadline starts
+    // after the setup above.
+    const recomputeA = a.fire(`SELECT recompute_user_tier('${TEST_USER}');`, 55_000)
 
     // Assert A is REALLY blocked on the row lock before B proceeds. A bare sleep-then-check
     // cannot tell "A blocked" from "A never connected": if A reached the server only after
@@ -165,8 +184,25 @@ describe.skipIf(noLiveTestPg)('SMI-6656 -- recompute_user_tier lock, two live se
 
     const [resultA, resultB] = await Promise.all([teamA, teamB])
 
-    expect(resultA.stderr, `A stderr:\n${resultA.stderr}`).not.toMatch(/deadlock/i)
-    expect(resultB.stderr, `B stderr:\n${resultB.stderr}`).not.toMatch(/deadlock/i)
+    // Boolean reduction, same convention as the schema build's, and here retry IS the
+    // reason: this runs in a test body, so a failure does reach vitest's retry
+    // condition. The reachable channel is the MESSAGE, which is prepended verbatim and
+    // untruncated -- interpolating psql output into it is what put a trigger word in
+    // range. A raw-stderr RECEIVED value is bounded by chai's truncateThreshold (40,
+    // so ~37 chars render), which for this harness cuts off before 'timeout' at index
+    // 40 of 'ERROR:  canceling statement due to lock timeout' -- a 3-character margin,
+    // measured. Do not lean on that margin; keep psql output out of the message.
+    // A deadlock here is the deterministic regression this arm exists to catch, so it
+    // must never be re-run as flake. SMI-6864.
+    const aDeadlocked = /deadlock/i.test(resultA.stderr)
+    const bDeadlocked = /deadlock/i.test(resultB.stderr)
+    if (aDeadlocked || bDeadlocked) {
+      console.error(
+        `[smi6656] A stderr:\n${resultA.stderr}\n[smi6656] B stderr:\n${resultB.stderr}`
+      )
+    }
+    expect(aDeadlocked, 'session A deadlocked -- psql stderr printed above').toBe(false)
+    expect(bDeadlocked, 'session B deadlocked -- psql stderr printed above').toBe(false)
     expect(resultA.stdout.trim()).toBe(String(MEMBER_COUNT))
     expect(resultB.stdout.trim()).toBe(String(MEMBER_COUNT))
 
@@ -304,10 +340,11 @@ describe.skipIf(noLiveTestPg)('SMI-6656 -- recompute_user_tier lock, two live se
   // never blocked before SMI-6656. The fix was downgraded from FOR UPDATE
   // mid-review for exactly that reason; this arm is what pins the downgrade.
   //
-  // Both sibling functions that lock profiles rows already have this arm
-  // (purge-departed-toctou.pg.test.ts, inventory-device-lock.pg.test.ts), and
-  // neither substitutes for it: MEASURED, purge-departed-toctou.pg.test.ts is
-  // 11/11 green both pristine and with THIS function's lock widened. SMI-6857.
+  // Do NOT add a claim here about what the sibling suites cover. Every version of
+  // that sentence has been wrong about them, and a fresh one rots on the same
+  // schedule. This arm stands on its own assertions. What the siblings do and do
+  // not cover, and the measurement that the nearest one does not substitute for
+  // this arm, are recorded in SMI-6864 F1 and SMI-6857.
   // ==========================================================================
   it('is not widened to KEY strength: ordinary FK traffic on profiles(id) does not block it', async () => {
     // ON DELETE CASCADE so that a failure mid-test cannot outlive it: without
@@ -321,71 +358,161 @@ describe.skipIf(noLiveTestPg)('SMI-6656 -- recompute_user_tier lock, two live se
        );`
     )
 
-    // B holds an open FK-child INSERT: FOR KEY SHARE on TEST_USER's profiles row.
-    await b.send('BEGIN;')
-    const ins = await b.send(`INSERT INTO smi6857_fk_child (owner) VALUES ('${TEST_USER}');`)
-    // No stderr interpolated into any message in this arm or test 6: vitest's
-    // retry condition (vitest.preset.ts) matches /timeout/i against the whole
-    // assertion message, so embedding Postgres's own error text can annotate a
-    // deterministic logic regression as infra flake. vitest prints the received
-    // value anyway.
-    expect(ins.stderr, 'the FK-child INSERT itself failed').not.toMatch(/ERROR/)
+    // try/finally so teardown runs on every exit path, releasing B's FOR KEY SHARE
+    // deterministically rather than relying on close()'s SIGKILL timing.
+    //
+    // The leaked-lock failure this was filed for (SMI-6864 F4) did NOT reproduce --
+    // measured in two arms, identical results. Do not restate that chain here as
+    // though it were observed.
+    //
+    // A teardown failure is never swallowed: it is logged either way, and it FAILS
+    // the test when the body passed. A body that already threw suppresses it, because
+    // that error is the verdict worth reporting -- achieved by asserting AFTER the
+    // try/finally rather than throwing inside it.
+    const teardownFailures: string[] = []
+    try {
+      // B holds an open FK-child INSERT: FOR KEY SHARE on TEST_USER's profiles row.
+      await b.send('BEGIN;')
+      const ins = await b.send(`INSERT INTO smi6857_fk_child (owner) VALUES ('${TEST_USER}');`)
+      // No stderr interpolated into any message in this arm or test 6: vitest's
+      // retry condition (vitest.preset.ts) matches /timeout/i against the whole
+      // assertion message, so embedding Postgres's own error text can annotate a
+      // deterministic logic regression as infra flake. vitest prints the received
+      // value anyway.
+      expect(ins.stderr, 'the FK-child INSERT itself failed').not.toMatch(/ERROR/)
 
-    // KNOWN-POSITIVE for the instrument: prove that FK traffic really is holding
-    // a lock which KEY strength conflicts with. Without this, a test that
-    // contended nothing would pass whatever strength the function uses.
-    const keyStrength = await a.send(
-      `SELECT tier FROM profiles WHERE id = '${TEST_USER}' FOR UPDATE NOWAIT;`
-    )
+      // KNOWN-POSITIVE for the instrument: prove that FK traffic really is holding
+      // a lock which KEY strength conflicts with. Without this, a test that
+      // contended nothing would pass whatever strength the function uses.
+      const keyStrength = await a.send(
+        `SELECT tier FROM profiles WHERE id = '${TEST_USER}' FOR UPDATE NOWAIT;`
+      )
+      expect(
+        keyStrength.stderr,
+        'FOR UPDATE NOWAIT was not refused, so session B is not holding the FOR KEY SHARE this ' +
+          'test depends on -- the assertion below would then pass for the wrong reason'
+      ).toMatch(/could not obtain lock on row/i)
+
+      // KNOWN-NEGATIVE: NO KEY strength is admitted through that same traffic.
+      // Asserted with a message and a POSITIVE stdout check, because a bare
+      // `not.toMatch` passes on any unrelated failure that leaves stderr without
+      // that phrase -- including one that returned no row at all.
+      const noKey = await a.send(
+        `SELECT tier FROM profiles WHERE id = '${TEST_USER}' FOR NO KEY UPDATE NOWAIT;`
+      )
+      expect(
+        noKey.stderr,
+        'FOR NO KEY UPDATE NOWAIT was refused through FK-child traffic, contradicting the measured ' +
+          'conflict matrix -- the engine or the harness is not behaving as this arm assumes'
+      ).not.toMatch(/could not obtain lock/i)
+      expect(noKey.stdout, 'the known-negative probe returned no row, so it proved nothing').toBe(
+        'community'
+      )
+
+      // THE ASSERTION. Bounded, so a widened lock fails in seconds with a named
+      // error rather than hanging to the test timeout -- a hang is
+      // indistinguishable from an unrelated stall, which is the failure mode this
+      // suite exists to avoid.
+      await a.send("SET lock_timeout = '3s';")
+      // Assert the bound is in force AND SMALL ENOUGH, by effective duration rather
+      // than by shape. The property is not "positive" -- it is "expires before
+      // PsqlSession's own 30s deadline", so a widened lock fails here with a named
+      // database error instead of hanging. A shape match alone accepts '2147483647ms',
+      // which satisfies the pattern and breaks exactly that property (SMI-6864 gate).
+      //
+      // NEVER name lock_timeout or statement_timeout in an assertion MESSAGE here:
+      // the GUC names contain the substring `timeout`, which vitest.preset.ts's
+      // retry condition matches, so the message alone can get a real regression
+      // re-run as infra flake. Say "lock-wait bound".
+      const UNIT_MS: Record<string, number> = {
+        us: 0.001,
+        ms: 1,
+        s: 1_000,
+        min: 60_000,
+        h: 3_600_000,
+        d: 86_400_000,
+      }
+      const shownBound = (await a.send('SHOW lock_timeout;')).stdout.trim()
+      const parsedBound = /^([1-9]\d*)\s*(us|ms|s|min|h|d)?$/.exec(shownBound)
+      const boundMs = parsedBound
+        ? Number(parsedBound[1]) * UNIT_MS[parsedBound[2] ?? 'ms']
+        : Number.NaN
+      // Reduced to a boolean: a failure here must not render the GUC's own value or
+      // name into the message. 10s is comfortably under the 30s session deadline and
+      // well above the 3s this arm sets, so it fails on absence and on widening but
+      // not on an ordinary slow machine.
+      expect(
+        boundMs > 0 && boundMs <= 10_000,
+        'the lock-wait bound on session A is absent, unparseable, or too large to expire ' +
+          "before PsqlSession's own deadline -- a widened lock would then hang instead of " +
+          'failing with a named database error'
+      ).toBe(true)
+      const call = await a.send(`SELECT recompute_user_tier('${TEST_USER}');`)
+      // Reduced to a boolean BEFORE asserting, so Postgres's "canceling statement due
+      // to lock timeout" never reaches the assertion MESSAGE -- the untruncated channel
+      // that vitest.preset.ts's retry condition can match, which would annotate this
+      // deterministic regression as infra flake and re-run it. SMI-6864.
+      const blockedOnLock = /lock timeout/i.test(call.stderr)
+      expect(
+        blockedOnLock,
+        'recompute_user_tier() blocked on ordinary FK-child traffic, so its row lock was widened ' +
+          'to FOR UPDATE. Twelve columns reference profiles(id): this stalls device-login approval ' +
+          'and licence issuance for the length of a recompute, traffic that never blocked before ' +
+          'SMI-6656. (FOR SHARE is NOT this failure -- it does not conflict with FOR KEY SHARE, ' +
+          'so it passes this arm; test 6 is what catches it.)'
+      ).toBe(false)
+      // Reduced too, for the same reason and to keep one convention in this file.
+      // Ordering is load-bearing: the widening diagnosis above must fire FIRST, since
+      // a widening also puts 'ERROR:' in this stderr and would otherwise be reported
+      // as a bare "the recompute errored".
+      const callErrored = /ERROR/.test(call.stderr)
+      if (callErrored) console.error(`[smi6656] test 5 recompute stderr:\n${call.stderr}`)
+      expect(callErrored, 'the recompute itself errored -- psql stderr printed above').toBe(false)
+      expect(call.stdout).toBe('individual')
+    } finally {
+      // Nothing in here throws. A throw inside finally REPLACES a propagating error:
+      // if the body failed because session A died, a bare `a.send('RESET ...')` here
+      // raises "psql session already exited" and the real assertion failure is lost.
+      // So each statement is isolated and its error COLLECTED, then asserted on after
+      // the try/finally -- which is also why eslint's no-unsafe-finally stays happy.
+      // B's ROLLBACK goes first: it releases the locks.
+      //
+      // 5s per step, not send()'s 30s default. That bounds EACH step; it is not a
+      // bound on the total against whatever remains of the test's 60s budget, since
+      // these start after the body has already spent some of it. A test timeout
+      // renders 'Test timed out in 60000ms', which DOES match the retry condition,
+      // so an unbounded teardown could lose the body's error through that door.
+      for (const [label, session, sql] of [
+        ['rollback B', b, 'ROLLBACK;'],
+        ['reset A lock-wait bound', a, 'RESET lock_timeout;'],
+        ['drop fk child', ctl, 'DROP TABLE IF EXISTS smi6857_fk_child;'],
+      ] as const) {
+        try {
+          // BOTH failure channels. send() returns {stdout, stderr} and throws only on
+          // its own deadline or a dead session -- a failed STATEMENT reports via stderr
+          // and resolves normally. Catching exceptions alone made this assertion unable
+          // to see the likeliest failure (a bad teardown statement), which a red-test
+          // caught: an invalid DROP TABLE here left the test green.
+          const r = await session.send(sql, 5_000)
+          if (/ERROR/.test(r.stderr)) {
+            teardownFailures.push(`${label}: ${r.stderr.slice(0, 200)}`)
+          }
+        } catch (err) {
+          teardownFailures.push(`${label}: ${String(err).slice(0, 200)}`)
+        }
+      }
+      if (teardownFailures.length > 0) {
+        console.error(`[smi6656] teardown failures:\n${teardownFailures.join('\n')}`)
+      }
+    }
+
+    // Reached ONLY when the body passed -- a body error propagates past this line,
+    // so it is never masked. When the body DID pass, a broken teardown is the only
+    // signal there is, and swallowing it would be a false green (SMI-6864 gate).
     expect(
-      keyStrength.stderr,
-      'FOR UPDATE NOWAIT was not refused, so session B is not holding the FOR KEY SHARE this ' +
-        'test depends on -- the assertion below would then pass for the wrong reason'
-    ).toMatch(/could not obtain lock on row/i)
-
-    // KNOWN-NEGATIVE: NO KEY strength is admitted through that same traffic.
-    // Asserted with a message and a POSITIVE stdout check, because a bare
-    // `not.toMatch` passes on any unrelated failure that leaves stderr without
-    // that phrase -- including one that returned no row at all.
-    const noKey = await a.send(
-      `SELECT tier FROM profiles WHERE id = '${TEST_USER}' FOR NO KEY UPDATE NOWAIT;`
-    )
-    expect(
-      noKey.stderr,
-      'FOR NO KEY UPDATE NOWAIT was refused through FK-child traffic, contradicting the measured ' +
-        'conflict matrix -- the engine or the harness is not behaving as this arm assumes'
-    ).not.toMatch(/could not obtain lock/i)
-    expect(noKey.stdout, 'the known-negative probe returned no row, so it proved nothing').toBe(
-      'community'
-    )
-
-    // THE ASSERTION. Bounded, so a widened lock fails in seconds with a named
-    // error rather than hanging to the test timeout -- a hang is
-    // indistinguishable from an unrelated stall, which is the failure mode this
-    // suite exists to avoid.
-    await a.send("SET lock_timeout = '3s';")
-    const call = await a.send(`SELECT recompute_user_tier('${TEST_USER}');`)
-    // Reduced to a boolean BEFORE asserting. Matching on `call.stderr` directly
-    // puts Postgres's own "canceling statement due to lock timeout" text into the
-    // assertion error, which matches vitest.preset.ts's retry condition (/timeout/i)
-    // and gets a deterministic logic regression annotated as infra flake and run
-    // twice. That preset's comment claims assertion failures never match it; an
-    // assertion that quotes a timeout error is how that stops being true.
-    const blockedOnLock = /lock timeout/i.test(call.stderr)
-    expect(
-      blockedOnLock,
-      'recompute_user_tier() blocked on ordinary FK-child traffic, so its row lock was widened ' +
-        'to FOR UPDATE. Twelve columns reference profiles(id): this stalls device-login approval ' +
-        'and licence issuance for the length of a recompute, traffic that never blocked before ' +
-        'SMI-6656. (FOR SHARE is NOT this failure -- it does not conflict with FOR KEY SHARE, ' +
-        'so it passes this arm; test 6 is what catches it.)'
-    ).toBe(false)
-    expect(call.stderr).not.toMatch(/ERROR/)
-    expect(call.stdout).toBe('individual')
-
-    await a.send('RESET lock_timeout;')
-    await b.send('ROLLBACK;')
-    await ctl.send('DROP TABLE IF EXISTS smi6857_fk_child;')
+      teardownFailures.length,
+      'teardown failed after a passing body -- see the psql errors logged above'
+    ).toBe(0)
   }, 60_000)
 
   // ==========================================================================
@@ -451,6 +578,10 @@ describe.skipIf(noLiveTestPg)('SMI-6656 -- recompute_user_tier lock, two live se
     await b.send('BEGIN;')
     const held = await b.send(`SELECT tier FROM profiles WHERE id = '${PROBE}' FOR SHARE;`)
     expect(held.stderr, 'session B could not take FOR SHARE').not.toMatch(/ERROR/)
+    // Also HALF THE ATTRIBUTION argument below: this pins the tier the row already
+    // held, and the post-call read pins the tier A computed. Weakening this to an
+    // error-only check leaves the attribution unprovable while the suite stays green
+    // (measured). See the ATTRIBUTION block before the final assertion.
     expect(held.stdout, 'session B took no row, so it is holding nothing').toBe('community')
 
     // KNOWN-POSITIVE: the FOR SHARE is really held AND really does conflict with
@@ -474,7 +605,17 @@ describe.skipIf(noLiveTestPg)('SMI-6656 -- recompute_user_tier lock, two live se
     const aPid = (await a.send('SELECT pg_backend_pid();')).stdout.trim()
     expect(aPid).toMatch(/^\d+$/)
 
-    const callA = a.fire(`SELECT recompute_user_tier('${PROBE}');`)
+    // Explicit deadline rather than fire()'s undeclared 30s default: the poll below
+    // runs before B's ROLLBACK releases A, so a late-but-successful detection on a
+    // loaded machine could expire that default and reject with a 'timed out' message
+    // on CORRECT code, which the retry condition matches. 55s is below the configured
+    // 60s test timeout -- not a guarantee of fitting whatever remains of it, since this
+    // deadline starts after the setup above. A healthy run resolves ~51ms after this
+    // fire, against that 55s
+    // budget, so the real margin is very wide -- SMI-6864 overstated this hazard; see
+    // it for the numbers before widening again.
+    // Test 1 shares this shape; test 2 awaits immediately, so it does not.
+    const callA = a.fire(`SELECT recompute_user_tier('${PROBE}');`, 55_000)
 
     const aIsLockWaiting = async (): Promise<number> => {
       const r = await ctl.send(
@@ -513,17 +654,28 @@ describe.skipIf(noLiveTestPg)('SMI-6656 -- recompute_user_tier lock, two live se
       "the call failed once B released, so the wait above was not B's lock"
     ).not.toMatch(/ERROR/)
 
-    // ATTRIBUTION, and THIS is the assertion that carries it -- not a tier re-read.
-    // A first version re-read the tier here and called that the attribution check.
-    // It could not fail: a lock_timeout aborts the whole statement, so a fired
-    // UPDATE is rolled back and the tier always reads unchanged. MEASURED, with the
-    // lock deleted on a TEST_USER-shaped row: that re-read PASSED while this
-    // assertion FAILED with 'individual'. The credit was on the inert assertion.
+    // ATTRIBUTION -- why the wait observed above was the lock and not the UPDATE.
     //
-    // What this proves: the tier A computed equals the tier the row already had, so
-    // the function's own `UPDATE ... WHERE tier IS DISTINCT FROM v_new_tier`
-    // predicate was FALSE, no row was a candidate, and that UPDATE took no lock.
-    // So the wait observed above cannot have been the UPDATE.
+    // The argument needs TWO assertions and ranks neither above the other. The
+    // pre-call `FOR SHARE` read pins what tier the row already held; this
+    // post-call read pins what tier A computed. They are equal, so the function's
+    // own `UPDATE ... WHERE tier IS DISTINCT FROM v_new_tier` predicate was FALSE,
+    // no row was a candidate, and that UPDATE took no lock. Delete EITHER
+    // assertion and the argument breaks while every other test stays green.
+    //
+    // No assertion here is credited with carrying the attribution alone: an
+    // earlier comment claimed that and excluded the pre-call read, which
+    // establishes half of it (SMI-6864 F2). A tier re-read on its own cannot
+    // carry it -- a lock-wait abort rolls back a fired UPDATE, so the tier reads
+    // unchanged either way.
+    //
+    // KNOWN GAP, do not read this argument as airtight: step 3 INFERS that the
+    // UPDATE took no lock from the two tiers being equal, which holds only while
+    // the function keeps `WHERE tier IS DISTINCT FROM v_new_tier`. Make that
+    // predicate unconditional AND delete the explicit lock, and the UPDATE itself
+    // blocks on B's FOR SHARE while both assertions below stay green -- the arm goes
+    // inert. Neither mutation alone does it. Closing that needs an assertion on
+    // whether the UPDATE touched a row, not another tier read: SMI-6870.
     expect(
       after.stdout,
       'the probe user computed a different tier, so the UPDATE predicate was TRUE and the wait ' +
