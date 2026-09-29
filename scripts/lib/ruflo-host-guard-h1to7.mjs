@@ -2,7 +2,10 @@
  * H1–H7 path/token predicates for `scripts/ruflo-host-guard.mjs` (SMI-6744
  * Wave 4). Split out of `ruflo-host-guard-predicates.mjs` (governance-round
  * split, same rationale as `ruflo-host-guard-verdicts.mjs`'s own header) to
- * stay under the 500-line file-length gate.
+ * stay under the 500-line-per-file convention this repo keeps by hand for
+ * .mjs files under scripts/ (M3 correction: not enforced by tooling here —
+ * `scripts/check-file-length.mjs` only runs via `lint-staged` for
+ * `*.ts`/`*.sh`; SMI-5994).
  *
  * All matching is against LOWERCASED argv (`argvLower`/`scanArgvLower`) —
  * a deliberate, stated choice (plan § Predicate Specification): Bash rule
@@ -78,6 +81,24 @@ const H5_PACKAGE_FLAG_RE = /^--package=(ruflo|@claude-flow\/cli)$/
 const H6_NPX_DIR_RE = /_npx\/[0-9a-f]{16}\//
 const H7_RE1 = /lib\/node_modules\/ruflo(?:\/|$)/
 const H7_RE2 = /(?:^|\/)versions\/node\/v[0-9.]+\/bin\/(ruflo|claude-flow|claude-flow-mcp|cli)$/
+// A global npm install puts a SYMLINK at `<prefix>/bin/<name>`, and that
+// is the spelling a person types. H7_RE2 brackets only nvm's own layout;
+// `/usr/local/bin/ruflo` and `/opt/homebrew/bin/ruflo` are the same
+// install through the other two common prefixes. Anchored at end-of-token
+// so a `bin/ruflo-something` is untouched.
+const H7_RE3 = /(?:^|\/)bin\/(ruflo|claude-flow|claude-flow-mcp)$/
+// Governance round 8 follow-up (same C1/H7 dispatch): an explicit relative
+// execution path -- `./ruflo`, `../ruflo`, `./tools/ruflo` -- is the same
+// path-spelling family as H7_RE1-3 above, not a runner/bare-name shape H1-
+// H6 already cover, and measurably allowed on both trees before this arm
+// (confirmed: `./ruflo memory store`, `../ruflo memory store`, `bash
+// ./ruflo` all allow on main at 50d38872d). Deliberately narrow -- anchored
+// on a LEADING `./`/`../` so a blunt basename match doesn't regress the
+// H7_RE2 nvm-path label or false-positive a slash-bearing non-path token
+// (the reviewer measured both failure modes against a broader draft) -- and
+// anchored at end-of-token so `./rufloctl` and `./scripts/ruflo-service-
+// up.sh` (the basename is not the name) stay allow.
+const H7_RE4 = /^\.{1,2}\/(?:[^\s]*\/)?(ruflo|claude-flow|claude-flow-mcp)$/
 
 function stripDotSlash(s) {
   return s.startsWith('./') ? s.slice(2) : s
@@ -254,7 +275,8 @@ export function checkH1toH7(scanArgvLower, argvLower) {
 
   for (const el of scanArgvLower) {
     for (const view of tokenViews(el)) {
-      if (H7_RE1.test(view) || H7_RE2.test(view)) return denyWithReadOnlyHint('H7', el)
+      if (H7_RE1.test(view) || H7_RE2.test(view) || H7_RE3.test(view) || H7_RE4.test(view))
+        return denyWithReadOnlyHint('H7', el)
     }
   }
 

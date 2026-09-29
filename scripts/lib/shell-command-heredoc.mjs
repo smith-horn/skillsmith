@@ -1,9 +1,11 @@
 /**
  * Heredoc delimiter parsing and body consumption for the shell-command
  * tokenizer (SMI-6869 Fix B). Split out of `shell-command-tokenize.mjs`
- * purely to stay under the 500-line file-length gate
- * (`scripts/check-file-length.mjs`) once the redirect-operator and heredoc
- * handling pushed that file toward the limit.
+ * purely to stay under the 500-line-per-file convention this repo keeps by
+ * hand for .mjs files under scripts/ (M3 correction: not enforced by
+ * tooling here — `scripts/check-file-length.mjs` only runs via
+ * `lint-staged` for `*.ts`/`*.sh`; SMI-5994) once the redirect-operator and
+ * heredoc handling pushed that file toward the limit.
  *
  * Scope, per the fix's own spec: only three delimiter forms are
  * recognised — a bare word, a fully single-quoted word, or a fully
@@ -17,6 +19,12 @@
  * it just cannot be distinguished from the bare-word case here.
  */
 
+// L7 correction: `shell-command-tokenize.mjs` imports `consumeHeredocBodies`/
+// `parseHeredocDelimiter` back from THIS file — a real circular import. It
+// is safe only because both sides are hoisted function declarations
+// (`function foo() {}`, not `const foo = () => {}`) consumed at CALL time,
+// after both modules have finished loading, never at each other's own
+// module-evaluation time.
 import { readParen } from './shell-command-tokenize.mjs'
 
 /** Characters that end a BARE (unquoted) heredoc delimiter word. */

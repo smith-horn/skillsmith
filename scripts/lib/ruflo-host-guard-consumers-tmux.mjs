@@ -2,8 +2,11 @@
 /**
  * tmux consumer-string extraction -- split out of
  * `ruflo-host-guard-consumers.mjs` (round-3 governance fix) purely to stay
- * under the 500-line file-length gate once the per-subcommand value-flag map
- * grew that file past the limit, same precedent as
+ * under the 500-line-per-file convention this repo keeps by hand for .mjs
+ * files under scripts/ (M3 correction: not enforced by tooling here —
+ * `scripts/check-file-length.mjs` only runs via `lint-staged` for
+ * `*.ts`/`*.sh`; SMI-5994) once the per-subcommand value-flag map grew that
+ * file past the limit, same precedent as
  * `ruflo-host-guard-consumers-git.mjs`. Exported as `extractTmuxTexts` and
  * wired into `ruflo-host-guard-consumers.mjs`'s own `EXTRACTORS` list.
  */

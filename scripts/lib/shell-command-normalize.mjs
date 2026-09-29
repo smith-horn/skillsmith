@@ -45,9 +45,12 @@
  * predicate are guard-local for the same reason and are NOT in this file.
  *
  * `tokenize`/`basenameOf` moved to the sibling `shell-command-tokenize.mjs`
- * (SMI-6744 Wave 4 delta governance round, same 500-line file-length
- * pressure) and are re-exported below, so every existing import of THIS
- * file keeps working unchanged.
+ * (SMI-6744 Wave 4 delta governance round, same hand-kept 500-line-per-file
+ * convention this repo keeps for .mjs files under scripts/ — M3
+ * correction: not enforced by tooling here, `scripts/check-file-length.mjs`
+ * only runs via `lint-staged` for `*.ts`/`*.sh`; SMI-5994) and are
+ * re-exported below, so every existing import of THIS file keeps working
+ * unchanged.
  */
 
 import { basenameOf, tokenize } from './shell-command-tokenize.mjs'

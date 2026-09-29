@@ -7,14 +7,17 @@
  * value-flags, H-3 `env -S` skip-past-own-flags + glued form).
  *
  * Split out of the guard's own orchestration file purely to stay under the
- * 500-line file-length gate (scripts/check-file-length.mjs) -- these are
- * guard-SPECIFIC wrapper/launcher-peeling helpers, not general-purpose
- * primitives every consumer of shell-command-normalize.mjs would want, so
- * they stay out of that shared module (env-read-guard.mjs needs none of
- * this). Shell-fed-text and inline-interpreter-script helpers (H-4/H-8/M-1/
- * M-2, plus the pre-existing H-F) split further into their own sibling
- * file, `ruflo-host-guard-shell-fed.mjs` (same 500-line pressure, once the
- * delta round's fixes grew this file past the limit).
+ * 500-line-per-file convention this repo keeps by hand for .mjs files
+ * under scripts/ (M3 correction: not enforced by tooling here --
+ * scripts/check-file-length.mjs only runs via lint-staged for *.ts/*.sh;
+ * SMI-5994) -- these are guard-SPECIFIC wrapper/launcher-peeling helpers,
+ * not general-purpose primitives every consumer of shell-command-
+ * normalize.mjs would want, so they stay out of that shared module
+ * (env-read-guard.mjs needs none of this). Shell-fed-text and inline-
+ * interpreter-script helpers (H-4/H-8/M-1/M-2, plus the pre-existing H-F)
+ * split further into their own sibling file, `ruflo-host-guard-shell-
+ * fed.mjs` (same hand-kept convention, once the delta round's fixes grew
+ * this file past the limit).
  */
 
 import { basenameOf, normalizeWrappers, stripFlags } from './shell-command-normalize.mjs'
