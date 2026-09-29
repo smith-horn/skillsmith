@@ -4,6 +4,20 @@ All notable changes to `@skillsmith/mcp-server` are documented here.
 
 ## [Unreleased]
 
+## v0.7.18
+
+- **Fix (critical)**: **v0.7.17 cannot be imported at all — use this version instead.** `0.7.17`
+  declared `@skillsmith/core: ^0.12.5` and imports `withFileLock` from it, but the published
+  `@skillsmith/core@0.12.5` does not export that symbol: it was added to core's source without a
+  version bump, so the published `0.12.5` and this repo's `0.12.5` had the same version number and
+  different contents. `import('@skillsmith/mcp-server')` therefore threw
+  `SyntaxError: The requested module '@skillsmith/core' does not provide an export named
+  'withFileLock'` — at module load, so every consumer path was affected, not just the manifest one.
+  This release publishes `@skillsmith/core@0.12.6` with that export and raises the dependency to
+  `^0.12.6`. `0.7.17` is deprecated on npm.
+- Everything in v0.7.17's notes below still applies; it shipped correctly and only the resolved
+  `core` version was wrong.
+
 ## v0.7.17
 
 - **Refactor**: SMI-6532 step 6 -- `outdated.ts` split at the action seam (`outdated.action.ts`,
