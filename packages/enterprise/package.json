@@ -44,13 +44,13 @@
   "dependencies": {
     "@aws-sdk/client-cloudwatch-logs": "3.1125.0",
     "@opentelemetry/instrumentation-aws-sdk": "0.76.0",
-    "@skillsmith/core": "^0.12.5",
+    "@skillsmith/core": "^0.12.6",
     "jose": "^6.2.2",
     "stripe": "22.6.1",
     "zod": "4.2.1"
   },
   "devDependencies": {
-    "@skillsmith/mcp-server": "^0.7.17",
+    "@skillsmith/mcp-server": "^0.7.18",
     "@smithy/config-resolver": "4.7.2",
     "@smithy/core": "3.33.3",
     "@smithy/middleware-endpoint": "4.7.2",
@@ -62,7 +62,7 @@
     "vitest": "4.1.11"
   },
   "peerDependencies": {
-    "@skillsmith/mcp-server": "^0.7.17"
+    "@skillsmith/mcp-server": "^0.7.18"
   },
   "peerDependenciesMeta": {
     "@skillsmith/mcp-server": {
