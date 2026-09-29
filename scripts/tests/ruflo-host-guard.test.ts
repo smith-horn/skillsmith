@@ -1895,6 +1895,177 @@ describe('decide() — SMI-6869 governance round 8 C1: a $-in-the-TAIL config va
   })
 })
 
+// Governance follow-up (PR #2963 cross-family gate, class-1, found inside
+// the round-8 C1 fix above): `hasUnresolvableValueHead` treated the value's
+// FIRST whitespace word as the command head, but in shell a leading
+// `NAME=value` word is an ASSIGNMENT, not the command -- `git -c
+// core.pager="X=$Y ruflo memory store" log` and `git config alias.x
+// '!X=$Y ruflo status'` were both wrongly skipped (the assignment word
+// `X=$Y` carries a `$`) while git's own shell runs `ruflo`; both allowed
+// on the pre-fix tree. The mirror-image false positive: `git -c
+// core.pager="X=1 $PAGER" log` DENIED unresolved-command, because the
+// resolvable-looking assignment head `X=1` was not skipped and the
+// recursion then read `$PAGER` as if IT were the command. Fix: skip
+// leading `NAME=value` words before testing the head.
+describe('decide() — SMI-6869 governance follow-up (PR #2963): a leading NAME=value assignment word is skipped, not read as the command head (regression)', () => {
+  const redArms: Array<[string, string, string]> = [
+    [
+      'core.pager, assignment head X=$Y, then ruflo',
+      'git -c core.pager="X=$Y ruflo memory store" log',
+      'H4:',
+    ],
+    [
+      'alias bang, assignment head X=$Y, then ruflo',
+      "git config alias.x '!X=$Y ruflo status'",
+      'H4:',
+    ],
+  ]
+  it.each(redArms)('%s denies', (_label, cmd, expectedCode) => {
+    const result = decide(bashCall(cmd), {})
+    expect(result.action).toBe('deny')
+    expect(reasonOf(result)).toContain(expectedCode)
+  })
+
+  it('core.pager, assignment head X=1, then $PAGER allows — the row that over-denied (unresolved-command) before this fix, because the resolvable assignment head X=1 was not skipped and the recursion then read $PAGER as the command', () => {
+    expect(decide(bashCall('git -c core.pager="X=1 $PAGER" log'), {}).action).toBe('allow')
+  })
+
+  it('control: core.pager="A=1 B=$X ruflo status" still denies via H4 — already correct before this fix (the OLD unmodified head "A=1" carried no $, so it was already read as resolvable and extracted)', () => {
+    const result = decide(bashCall('git -c core.pager="A=1 B=$X ruflo status" log'), {})
+    expect(result.action).toBe('deny')
+    expect(reasonOf(result)).toContain('H4:')
+  })
+
+  it('control: core.pager="A=1 ruflo status" still denies via H4 — already correct before this fix', () => {
+    const result = decide(bashCall('git -c core.pager="A=1 ruflo status" log'), {})
+    expect(result.action).toBe('deny')
+    expect(reasonOf(result)).toContain('H4:')
+  })
+
+  it('control: core.pager="X=1" allows — an assignment with no command at all (every word is an assignment), same net verdict as before this fix', () => {
+    expect(decide(bashCall('git -c core.pager="X=1" log'), {}).action).toBe('allow')
+  })
+
+  it('control: core.pager="LESS=-R less" allows — an ordinary non-ruflo assignment-prefixed pager invocation is unaffected', () => {
+    expect(decide(bashCall('git -c core.pager="LESS=-R less" log'), {}).action).toBe('allow')
+  })
+})
+
+// Governance follow-up (same PR #2963 thread, regression the assignment-skip
+// fix above introduced): the round above measured `git -c core.pager="X=ruflo
+// $PAGER" log` as an honest ALLOW ("no predicate decides against this row")
+// -- but that measurement was itself a regression relative to the PRE-skip-
+// loop tree, where this exact value denied via H8 (the recursion's own
+// H8(i) saw the `X=ruflo` token directly, before the skip loop existed to
+// walk past it). The guard's posture at the top level is that an assignment
+// whose VALUE is runner-shaped denies (`X=ruflo; $X memory store` denies H8
+// on `X=ruflo`), so the config-value skip must not swallow one either. Fix:
+// while walking past a leading assignment word, stop and return false (do
+// not skip) the moment that word's own value half matches `RUNNER_TOKEN_RE`
+// -- the exact regex `checkAssignmentValuePredicate` (H8(i),
+// `ruflo-host-guard-predicates.mjs`) already uses, reused rather than
+// duplicated. This REPLACES the round-above's now-stale "measured...
+// allows" assertion for this exact command.
+describe('decide() — SMI-6869 governance follow-up (PR #2963, round 2): a runner-shaped assignment VALUE stops the skip and is extracted, where H8(i) catches it as before (regression)', () => {
+  const redArms: Array<[string, string, string]> = [
+    [
+      'core.pager, assignment value X=ruflo, then $PAGER',
+      'git -c core.pager="X=ruflo $PAGER" log',
+      'H8:',
+    ],
+    [
+      'alias bang, assignment value X=ruflo, then $PAGER',
+      "git config alias.x '!X=ruflo $PAGER'",
+      'H8:',
+    ],
+  ]
+  it.each(redArms)('%s denies', (_label, cmd, expectedCode) => {
+    const result = decide(bashCall(cmd), {})
+    expect(result.action).toBe('deny')
+    expect(reasonOf(result)).toContain(expectedCode)
+  })
+
+  it('control: core.pager="X=1 $PAGER" still allows — the round-8 over-deny row this whole thread started from is unaffected: "1" is not runner-shaped, so the skip loop still walks past it to the genuinely unresolvable $PAGER head and skips', () => {
+    expect(decide(bashCall('git -c core.pager="X=1 $PAGER" log'), {}).action).toBe('allow')
+  })
+
+  it('control: core.pager="X=$Y ruflo memory store" still denies via H4, unchanged — this row was never routed through the assignment-value runner check at all: its assignment word (X=$Y) has an unresolvable VALUE ($Y, not runner-shaped), so the skip loop walks past it on the ordinary path and the post-assignment head "ruflo" is caught by the pre-existing RUFLO_NAME_IN_VALUE_HEAD_RE check', () => {
+    const result = decide(bashCall('git -c core.pager="X=$Y ruflo memory store" log'), {})
+    expect(result.action).toBe('deny')
+    expect(reasonOf(result)).toContain('H4:')
+  })
+
+  it('control: core.pager="LESS=-R less" still allows, unchanged', () => {
+    expect(decide(bashCall('git -c core.pager="LESS=-R less" log'), {}).action).toBe('allow')
+  })
+})
+
+// Governance follow-up (same PR #2963 thread, round 3): the round-2 fix's
+// own "measured...allows" test above named a genuine gap and left the
+// decision to the coordinator -- RUNNER_TOKEN_RE alone only catches the
+// EXACT bare name (`X=ruflo`), not a path whose tail spells it
+// (`X=node_modules/.bin/ruflo`, `X=/usr/local/bin/ruflo`, `X=./ruflo`). The
+// decision: one rule for the head test and the assignment-value test, not
+// two -- a skipped assignment's value is now tested with the SAME predicate
+// pair the post-skip HEAD test already uses ("spells the name even with a
+// $ in it"): `RUFLO_NAME_IN_VALUE_HEAD_RE` (a bare name or a path whose
+// tail is the name) in addition to `RUNNER_TOKEN_RE`. This REPLACES the
+// round-2 block's now-stale "measured...allows" assertion for the path-
+// shaped row.
+describe("decide() — SMI-6869 governance follow-up (PR #2963, round 3): a path-shaped assignment VALUE stops the skip too, matching the head test's own predicate (regression)", () => {
+  const redArms: Array<[string, string, string]> = [
+    [
+      'core.pager, assignment value X=node_modules/.bin/ruflo, then $PAGER',
+      'git -c core.pager="X=node_modules/.bin/ruflo $PAGER" log',
+      'unresolved-command:',
+    ],
+    [
+      'core.pager, assignment value X=/usr/local/bin/ruflo, then $PAGER',
+      'git -c core.pager="X=/usr/local/bin/ruflo $PAGER" log',
+      'unresolved-command:',
+    ],
+    [
+      'core.pager, assignment value X=./ruflo, then $PAGER',
+      'git -c core.pager="X=./ruflo $PAGER" log',
+      'unresolved-command:',
+    ],
+  ]
+  it.each(redArms)(
+    '%s denies (label pinned, not asserted as the mechanism that matters)',
+    (_label, cmd, expectedCode) => {
+      const result = decide(bashCall(cmd), {})
+      expect(result.action).toBe('deny')
+      expect(reasonOf(result)).toContain(expectedCode)
+    }
+  )
+
+  it('control: core.pager="X=node_modules/.bin/eslint $PAGER" allows — a path-shaped assignment value that does NOT spell the tool is unaffected', () => {
+    expect(
+      decide(bashCall('git -c core.pager="X=node_modules/.bin/eslint $PAGER" log'), {}).action
+    ).toBe('allow')
+  })
+
+  it('control: core.pager="X=/usr/bin/less $PAGER" allows — an ordinary absolute-path assignment value naming an unrelated tool is unaffected', () => {
+    expect(decide(bashCall('git -c core.pager="X=/usr/bin/less $PAGER" log'), {}).action).toBe(
+      'allow'
+    )
+  })
+
+  it('control (round-2, unchanged): core.pager="X=1 $PAGER" still allows', () => {
+    expect(decide(bashCall('git -c core.pager="X=1 $PAGER" log'), {}).action).toBe('allow')
+  })
+
+  it('control (round-2, unchanged): core.pager="X=$Y ruflo memory store" still denies via H4', () => {
+    const result = decide(bashCall('git -c core.pager="X=$Y ruflo memory store" log'), {})
+    expect(result.action).toBe('deny')
+    expect(reasonOf(result)).toContain('H4:')
+  })
+
+  it('control (round-2, unchanged): core.pager="LESS=-R less" still allows', () => {
+    expect(decide(bashCall('git -c core.pager="LESS=-R less" log'), {}).action).toBe('allow')
+  })
+})
+
 describe('decide() — SMI-6869 consumer-string: vim/nvim ex-commands', () => {
   it('vim -c with a bang (":!cmd") ex-command denies via H4', () => {
     const result = decide(bashCall(`vim -Nu NONE -c ':!${R}' -c q`), {})

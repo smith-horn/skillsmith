@@ -18,6 +18,8 @@
  * `ruflo-host-guard-consumers.mjs`'s own `EXTRACTORS` list.
  */
 
+import { RUNNER_TOKEN_RE } from './ruflo-host-guard-h1to7.mjs'
+
 /**
  * Exact exec-relevant keys (round 2 expansion). `core.hooksPath` is
  * DELIBERATELY not here — its value is a directory PATH git reads hook
@@ -124,18 +126,81 @@ const RUFLO_NAME_IN_VALUE_HEAD_RE =
   /(?:^|[/\\])(?:ruflo|claude-flow-mcp|claude-flow)(?![a-z0-9._-])/i
 
 /**
+ * Governance follow-up (PR #2963 cross-family gate, class-1): a leading
+ * `NAME=value` word in the config VALUE is a shell ASSIGNMENT, not the
+ * command -- git's own shell runs whatever word comes after it, exactly the
+ * same "skip a leading VAR=val before reading the command name" shape
+ * H8(i)'s own docblock describes for a real argv (`checkAssignmentValuePredicate`,
+ * `ruflo-host-guard-predicates.mjs`). Matches that same regex's key shape
+ * (`[A-Za-z_][A-Za-z0-9_]*=`) so the two stay in lockstep.
+ */
+const ASSIGNMENT_WORD_RE = /^[A-Za-z_][A-Za-z0-9_]*=/
+
+/**
  * True when the config value's own COMMAND HEAD -- the first shell word of
- * the text git would exec (after the `!` alias marker) -- can neither be
- * resolved statically NOR be read as spelling the name. Only the HEAD
- * matters: a `$` in a LATER word leaves the head a readable literal that
- * still spells the name (`ruflo $X`), so testing the whole token would skip
- * a value this guard can in fact read.
+ * the text git would exec (after the `!` alias marker and after skipping
+ * any leading `NAME=value` assignment words) -- can neither be resolved
+ * statically NOR be read as spelling the name. Only the HEAD matters: a `$`
+ * in a LATER word leaves the head a readable literal that still spells the
+ * name (`ruflo $X`), so testing the whole token would skip a value this
+ * guard can in fact read. A leading assignment word (`X=$Y ruflo status`)
+ * is skipped before this test, not read AS the head -- an assignment's own
+ * word never carries the command name git's shell will exec, and treating
+ * it as the head wrongly reads its `$`/backtick (or absence of one) as if
+ * it described the command that follows. If every word is an assignment,
+ * there is no command in this value at all; skipping is correct (nothing
+ * to extract), matching the caller's existing skip = no-op posture. The
+ * assignment words themselves are NOT stripped from the extracted text when
+ * this returns false -- `pushGitConfigValue` still pushes the WHOLE value,
+ * and the recursion H8(i) already scans handles them (verdict-redundant
+ * with round 3's own note on that function, not new coverage here).
+ *
+ * Governance follow-up (same PR #2963 thread, regression the skip loop
+ * above introduced): skipping PAST an assignment word is only safe when
+ * that word's own VALUE is not itself runner-shaped -- `X=ruflo $PAGER`
+ * denied H8 before the skip loop existed (the recursion's own H8(i) saw
+ * the `X=ruflo` token directly), and silently started allowing once the
+ * skip loop began walking past it to test `$PAGER` instead. The guard's
+ * own posture at the top level is that an assignment whose value is
+ * runner-shaped denies (`X=ruflo; $X memory store` denies H8 on
+ * `X=ruflo`), so the config-value path must not swallow one either.
+ *
+ * Round-3 correction (same PR #2963 thread): `RUNNER_TOKEN_RE` alone only
+ * catches the EXACT bare name (`X=ruflo`), not a path whose tail spells it
+ * (`X=node_modules/.bin/ruflo`, `X=/usr/local/bin/ruflo`, `X=./ruflo`) --
+ * the coordinator's own decision is ONE rule for the head test and the
+ * assignment-value test, not two: an assignment word's value half is
+ * tested with the SAME TWO checks the post-skip head already uses two
+ * lines below (`RUFLO_NAME_IN_VALUE_HEAD_RE` for "a bare name or a path
+ * whose tail is the name", `RUNNER_TOKEN_RE` for H8(i)'s own exact-name
+ * shape, kept alongside it rather than replaced -- `RUNNER_TOKEN_RE` still
+ * matches `@claude-flow/cli`, a form `RUFLO_NAME_IN_VALUE_HEAD_RE` does not
+ * cover, its `@` not being a path separator). Either match stops the skip
+ * immediately and returns false, so the whole value is extracted and
+ * recursed, where a predicate downstream catches it (H8(i) for the exact-
+ * name case; a path-shaped case reaches whatever the recursion's own
+ * pipeline resolves it to once the assignment word itself is stripped --
+ * measured per-case, not asserted here).
  * @param {string} value the config value (already split from its key)
  * @param {{value: string, subs?: string[]}} [token] the aligned token
  */
 function hasUnresolvableValueHead(value, token) {
   const body = value.startsWith('!') ? value.slice(1) : value
-  const head = body.trim().split(/\s+/)[0] ?? ''
+  const words = body.trim().split(/\s+/)
+  let i = 0
+  while (i < words.length && ASSIGNMENT_WORD_RE.test(words[i])) {
+    const eq = words[i].indexOf('=')
+    const assignedValue = words[i].slice(eq + 1)
+    if (
+      RUFLO_NAME_IN_VALUE_HEAD_RE.test(assignedValue) ||
+      RUNNER_TOKEN_RE.test(assignedValue.toLowerCase())
+    ) {
+      return false
+    }
+    i++
+  }
+  if (i >= words.length) return true
+  const head = words[i] ?? ''
   if (RUFLO_NAME_IN_VALUE_HEAD_RE.test(head)) return false
   if (head.includes('$') || head.includes('`')) return true
   return head === '' && (token?.subs?.length ?? 0) > 0
