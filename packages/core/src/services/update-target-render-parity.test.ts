@@ -72,31 +72,17 @@ const __dirname = path.dirname(fileURLToPath(import.meta.url))
 // ─────────────────────────────────────────────────────────────────────────────
 
 /**
- * Extract `export const <exportName> = { ... }`'s string-keyed,
- * string-valued properties via the TypeScript AST. Refuses (throws) rather
- * than guessing on anything that isn't a plain top-level `const` object
- * literal of string-to-string properties: a non-`const` binding's
- * initializer is not necessarily its current value, a nested declaration
- * (e.g. inside a namespace) is not reachable the way a flat top-level export
- * is, and a non-string-literal property value (spread, computed key,
- * shorthand, method, getter/setter) has no single static string this parser
- * can extract without guessing. Sibling of `extractArrayLiteral` in
- * `update-target-reason.test.ts` — same principle, generalised from array
- * elements to object properties.
+ * Throws if `sourceFile` failed to parse cleanly, or if TypeScript's internal
+ * `parseDiagnostics` field is no longer readable at all. Split out from
+ * `extractObjectLiteral` so the missing-field branch can be exercised directly, by
+ * passing a fabricated `SourceFile`, rather than only by way of TypeScript itself no
+ * longer setting the field — which nothing in this test suite can arrange.
  */
-function extractObjectLiteral(
-  source: string,
-  exportName: string,
-  fileName: string
-): Record<string, string> {
-  const sourceFile = ts.createSourceFile(
-    fileName,
-    source,
-    ts.ScriptTarget.Latest,
-    /* setParentNodes */ true,
-    ts.ScriptKind.TS
-  )
-
+function assertParsesCleanly(
+  sourceFile: ts.SourceFile,
+  fileName: string,
+  exportName: string
+): void {
   // PARSE ERRORS ARE FATAL HERE. `createSourceFile` RECOVERS an AST from malformed
   // syntax rather than throwing, so without this check a syntactically broken mirror
   // still yields a plausible-looking table. A mirror that does not parse cleanly is
@@ -124,6 +110,35 @@ function extractObjectLiteral(
         `had to recover.`
     )
   }
+}
+
+/**
+ * Extract `export const <exportName> = { ... }`'s string-keyed,
+ * string-valued properties via the TypeScript AST. Refuses (throws) rather
+ * than guessing on anything that isn't a plain top-level `const` object
+ * literal of string-to-string properties: a non-`const` binding's
+ * initializer is not necessarily its current value, a nested declaration
+ * (e.g. inside a namespace) is not reachable the way a flat top-level export
+ * is, and a non-string-literal property value (spread, computed key,
+ * shorthand, method, getter/setter) has no single static string this parser
+ * can extract without guessing. Sibling of `extractArrayLiteral` in
+ * `update-target-reason.test.ts` — same principle, generalised from array
+ * elements to object properties.
+ */
+function extractObjectLiteral(
+  source: string,
+  exportName: string,
+  fileName: string
+): Record<string, string> {
+  const sourceFile = ts.createSourceFile(
+    fileName,
+    source,
+    ts.ScriptTarget.Latest,
+    /* setParentNodes */ true,
+    ts.ScriptKind.TS
+  )
+
+  assertParsesCleanly(sourceFile, fileName, exportName)
 
   // Top-level statements only — a `const` nested inside a namespace or
   // function is not what a flat mirror file is supposed to export.
@@ -262,9 +277,11 @@ const ALL_MEMBERS: TaggedMember[] = [
 // while it recounted the previous round, which is the pattern `pr-reviewer` names.
 describe('SMI-6532 step 6: reason/result TABLE parity (MCP + VS Code)', () => {
   // THE EXTRACTOR'S OWN REFUSALS, tested rather than hand-checked once. The parse
-  // guard was added in response to a review finding and verified by mutating a real
-  // mirror; that proved it worked that afternoon and protects nothing afterwards.
-  // These pin both of its branches.
+  // guard's two branches — a missing `parseDiagnostics` field, and parse errors
+  // present — are each pinned by a direct test below; a third test pins the separate
+  // absent-export refusal, and the canary between them confirms today's real
+  // `SourceFile` still exposes the field, as an array, without itself testing either
+  // guard branch.
   describe('extractObjectLiteral refusals', () => {
     it('throws on a source file the parser had to recover, naming the diagnostic', () => {
       expect(() => extractObjectLiteral('export const ((( T = { a: 1 }', 'T', 'broken.ts')).toThrow(
@@ -272,10 +289,29 @@ describe('SMI-6532 step 6: reason/result TABLE parity (MCP + VS Code)', () => {
       )
     })
 
+    it('throws when parseDiagnostics is missing from the SourceFile entirely', () => {
+      // Nothing can make TypeScript itself stop setting this internal field, so the
+      // branch is exercised directly instead: a bare object cast to `ts.SourceFile`
+      // has no `parseDiagnostics` at all, the same shape the guard would see if
+      // TypeScript ever renamed or removed the field.
+      const fieldless = {} as unknown as ts.SourceFile
+      expect(() => assertParsesCleanly(fieldless, 'fieldless.ts', 'T')).toThrow(
+        /Cannot read parseDiagnostics/
+      )
+    })
+
     it('reads parseDiagnostics off a real SourceFile — the field the guard depends on', () => {
-      // If TypeScript ever stops setting this internal field, the guard above throws
-      // its own "cannot read parseDiagnostics" error instead of silently passing. This
-      // asserts the field is present TODAY, so that day is visible here first.
+      // If TypeScript ever stops setting this internal field, the mirrored reads
+      // further down (`readMirroredObject` calls, outside any `it()`) run in the
+      // `describe` body, so vitest executes them at COLLECTION time: they would throw
+      // first and abort the whole file, and no `it()` here — canary included — would
+      // run (measured: `Tests  no tests`). This assertion is a separate, more explicit
+      // signal for whoever reads the wreckage: it also verifies the field is still an
+      // array, which `assertParsesCleanly` itself does not check (it only rejects
+      // `undefined`), so SOME future non-array replacements — a `Set`, or a plain
+      // object — would pass the guard silently and only this assertion would catch
+      // them. Not all: `null` throws on the `.length` read, and a non-empty string
+      // has positive length and so trips the parse-error branch instead.
       const probe = ts.createSourceFile('probe.ts', 'export const T = {}', ts.ScriptTarget.Latest)
       const diagnostics = (probe as unknown as { parseDiagnostics?: readonly ts.Diagnostic[] })
         .parseDiagnostics

@@ -6306,8 +6306,9 @@ console.log(
 // no longer carries `ruflo` (SMI-6744 Wave 4 / A4.6, design doc § 1(b)
 // Layer R and Layer X, Checkpoint 4 rows 9 and 14)
 //
-// Two independent assertions: (a) every one of the 43 Bash deny entries the
-// adversarial command census requires is present in `permissions.deny`
+// Two independent assertions: (a) every one of the RUFLO_BASH_DENY_ENTRIES
+// (audit-ruflo-host-paths-helpers.mjs) Bash deny entries the adversarial
+// command census requires is present in `permissions.deny`
 // (exact and ` *` forms only -- no `:*` duplicates, since fact 1 of the
 // permission-rule semantics record documents `:*` as equivalent to ` *`);
 // (b) `node_modules/ruflo` is absent from the host tree (Checkpoint 4 row

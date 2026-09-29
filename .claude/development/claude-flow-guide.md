@@ -112,7 +112,6 @@ mcp__ruflo__swarm_shutdown({ graceful: true })
 Configs in `.claude/hive-mind/`:
 
 ```bash
-./start-hive-mind.sh                                                          # Run config
 # Direct form: the config lives on the host, but the served @claude-flow/cli only sees
 # skillsmith-ruflo-1's own mount (/srv/ruflo, ADR-170 § 1) -- copy the config in first, then
 # reference it by its in-container path (SMI-6744 Wave 4 removes the root ruflo devDependency,

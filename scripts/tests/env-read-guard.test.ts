@@ -517,6 +517,81 @@ describe('decide() — fourth-round adversarial confirmation finding (SMI-6361)'
   })
 })
 
+describe("decide() — C1: ANSI-C $'...' octal escapes evade the guard (SMI-6744 delta round)", () => {
+  // This guard shares its tokenizer with scripts/ruflo-host-guard.mjs
+  // (scripts/lib/shell-command-normalize.mjs -> shell-command-tokenize.mjs),
+  // so the SAME `$'...'` decode gap applied here: `cat $'\056env'` (octal
+  // 056 = '.') reached this guard as the literal text `\056env`, never
+  // equalling the decoded `.env` its classifyPath/EMBEDDED_ENV_RE test
+  // for — MEASURED to allow before the C1 fix.
+  it("cat $'\\056env' -> deny (octal 056 decodes to '.', spelling .env)", () => {
+    const result = decide(bashCall(String.raw`cat $'\056env'`), {})
+    expect(result.action).toBe('deny')
+  })
+
+  // Regression pin, not a red arm: the \xHH hex arm was already fixed by
+  // the ORIGINAL H-6 fix and MEASURED to already deny before this C1 fix —
+  // kept here so a future regression in the shared decoder's hex arm is
+  // caught alongside the octal arm above.
+  it("cat $'\\x2e'env -> deny (hex 0x2e decodes to '.', spelling .env; already correct pre-C1)", () => {
+    const result = decide(bashCall(String.raw`cat $'\x2e'env`), {})
+    expect(result.action).toBe('deny')
+  })
+})
+
+// SMI-6869 Fix A: this guard shares the tokenizer with
+// scripts/ruflo-host-guard.mjs, so the same redirect-operator fix applies
+// here too — before the fix, `2>&1` glued onto a preceding bare digit
+// swallowed the digit into a leftover word, splitting the trailing `1`
+// into what LOOKED like a second, unrelated argv element; this guard's own
+// argv-building must now exclude the redirect token entirely rather than
+// treat any part of it as a command argument.
+describe('decide() — SMI-6869 Fix A: a trailing redirect does not change the verdict', () => {
+  it("cat $'\\056env' 2>&1 -> deny (still reads .env; 2>&1 is excluded from argv, not misparsed into it)", () => {
+    const result = decide(bashCall(String.raw`cat $'\056env' 2>&1`), {})
+    expect(result.action).toBe('deny')
+  })
+
+  it('control: cat notes.txt 2>&1 -> allow (an ordinary redirect on an unrelated read stays harmless)', () => {
+    const result = decide(bashCall('cat notes.txt 2>&1'), {})
+    expect(result.action).toBe('allow')
+  })
+})
+
+// SMI-6869 governance round High (regression): this guard's own
+// `evaluateCommand` recursed into a word token's `.subs` but silently
+// DROPPED every `heredoc`-type token — a heredoc body fed to a shell
+// (`bash <<EOF`) or reached through a pipe (`cat <<EOF | sh`) is executed
+// verbatim by that shell, exactly like the `.env`-reading command it
+// contains, but the guard never looked at it at all. Fixed with a second
+// loop (after the existing `.subs` recursion) that recurses
+// `evaluateCommand` over every heredoc token's own `.value`, regardless of
+// quoting (unlike the ruflo-host-guard's `subs`-only distinction, quoting
+// a heredoc delimiter only disables `$()`/backtick SUBSTITUTION — it does
+// not stop the CONSUMING shell from executing the body text it receives).
+describe('decide() — SMI-6869 governance round High: heredoc body dropped from evaluation (regression)', () => {
+  const redArms = [
+    "bash <<'EOF'\ncat .env\nEOF",
+    'bash <<EOF\ncat .env\nEOF',
+    'cat <<EOF | sh\ncat .env\nEOF',
+    'sh <<A <<B\nx\nA\ncat .env\nB',
+  ]
+  it.each(redArms)('%s -> deny (the heredoc body is now recursed into)', (command) => {
+    expect(decide(bashCall(command), {}).action).toBe('deny')
+  })
+
+  const controls = [
+    'cat <<EOF\nthis mentions .env harmlessly\nEOF',
+    "cat <<'EOF' > /tmp/doc.md\n# how to run\nnpm test\nEOF",
+  ]
+  it.each(controls)(
+    'control: %s -> allow (a docs heredoc with no reader-command-shaped text)',
+    (command) => {
+      expect(decide(bashCall(command), {}).action).toBe('allow')
+    }
+  )
+})
+
 describe('decide() — SKILLSMITH_ENV_READ_GUARD_DISABLE hard-disable', () => {
   it('a command that would normally deny is allowed when the disable var is set', () => {
     const result = decide(bashCall('grep PAT .env'), { SKILLSMITH_ENV_READ_GUARD_DISABLE: '1' })

@@ -796,6 +796,48 @@ describe('decide() — M-2: printf hex-escape decode before recursing (delta rou
   })
 })
 
+describe("decide() — C1: ANSI-C $'...' octal/unicode escapes evade the guard (delta round)", () => {
+  // MEASURED against decide() before the C1 fix (SMI-6744 delta governance
+  // round): each of these five rows ALLOWED (predicateLabel(...) was
+  // `null`), while the plain-text equivalent it decodes to already
+  // correctly denied. Asserting EQUALITY between the two verdicts' labels
+  // — not a hardcoded predicate string — pins "escaped resolves to the
+  // SAME verdict as plain", not a particular predicate's own spelling
+  // (which could legitimately change without this being a regression).
+  const rows: Array<[string, string]> = [
+    ['ruflo memory store', String.raw`$'\162uflo' memory store`],
+    ['npx ruflo', String.raw`npx $'\162uflo'`],
+    ["echo 'ruflo memory store' | bash", String.raw`echo $'\162uflo memory store' | bash`],
+    ["eval 'ruflo memory store'", String.raw`eval $'\162uflo memory store'`],
+    ["env -S 'ruflo memory store'", String.raw`env -S $'\162uflo memory store'`],
+  ]
+
+  function predicateLabel(result: ReturnType<typeof decide>): string | null {
+    const m = /\[ruflo-host-guard\]\s*([\w-]+):/.exec(reasonOf(result))
+    return m ? m[1] : null
+  }
+
+  it.each(rows)('%s vs %s -> escaped gets the same deny label as plain', (plain, escaped) => {
+    const plainResult = decide(bashCall(plain), {})
+    const escapedResult = decide(bashCall(escaped), {})
+    expect(plainResult.action).toBe('deny')
+    expect(escapedResult.action).toBe('deny')
+    expect(predicateLabel(escapedResult)).toBe(predicateLabel(plainResult))
+  })
+
+  // Control, NOT a red arm: `$'ruflo' memory store` carries no escape
+  // sequence at all, so it was never part of this bug — MEASURED to
+  // already deny (H4) before the C1 fix. Kept here (rather than folded
+  // into the it.each above) so a future regression in the no-escapes fast
+  // path is still caught alongside the five genuine C1 arms, without
+  // misrepresenting it as one of them.
+  it("control: $'ruflo' memory store -> deny (H4; no escape sequence, never part of this bug)", () => {
+    const result = decide(bashCall(String.raw`$'ruflo' memory store`), {})
+    expect(result.action).toBe('deny')
+    expect(reasonOf(result)).toContain('H4')
+  })
+})
+
 describe('decide() — A: fail-closed fall-through when argv[0] cannot be resolved (delta round)', () => {
   it('NPX=npx; $NPX ruflo memory store --key k --value v -> deny (unresolved-command, the H-7 motivating case)', () => {
     const result = decide(bashCall('NPX=npx; $NPX ruflo memory store --key k --value v'), {})
@@ -829,9 +871,20 @@ describe('decide() — M-6: bare-name inversion closes unmodelled launchers (del
   // remainder close via the NEW H4b bare-name-inversion predicate (or, for
   // exec/command/timeout/chrt/xargs, via the SAME H-1/H-2 launcher-table
   // fixes already covered above -- included here again because they are
-  // also literally part of this fix's own required red-arm list).
+  // also literally part of this fix's own required red-arm list). SMI-6869
+  // round 2: `ssh localhost ruflo memory store` now denies via H4, not
+  // H4b — the ssh consumer-string extraction (round 2) now joins EVERY
+  // non-flag argument after the destination and recurses it, so this shape
+  // hits H4 on the recursed text before M-6's own bare-name scan ever
+  // runs (measured; label changed here to match, per the SMI-6869 round 2
+  // task's explicit sign-off on this exact reclassification).
   const redArms: Array<[string, string]> = [
-    ['ssh localhost ruflo memory store', 'H4b'],
+    // 'H4:' (not bare 'H4') is deliberate here, unlike the other rows below:
+    // a bare 'H4' substring-matches BOTH 'H4:' and 'H4b:' reasons, so it
+    // would not have discriminated this row's round-1-to-round-2 label
+    // change (H4b -> H4) at all -- caught while proving this test against
+    // the round-1 (pre-round-2) tree, SMI-6598 discipline.
+    ['ssh localhost ruflo memory store', 'H4:'],
     ["su -c 'ruflo memory store --key k'", 'H4'],
     ['watch ruflo memory store --key k', 'H4b'],
     ['flock /tmp/l ruflo memory store --key k', 'H4b'],
@@ -931,6 +984,436 @@ describe('decide() — M-6: bare-name inversion closes unmodelled launchers (del
   })
 })
 
+// SMI-6869 Fix A: `<`/`>`/`&>` were plain word characters, and `&` was
+// always a job-control operator, before this fix — so a redirect glued
+// directly onto `ruflo`/a runner hid the name inside one opaque token no
+// H-predicate ever split apart (bypass), while a digit-prefixed redirect
+// like `2>&1` split into a leftover `2>` word plus a stray `1` word that
+// `checkUnresolvedCommand`'s all-digit arm then denied on (false
+// positive). See scripts/lib/shell-command-tokenize.mjs's own
+// `readRedirectOperator` for the tokenizer-level fix these verdicts rest
+// on, and shell-command-normalize.test.ts's own SMI-6869 Fix A block for
+// the token-shape-level tests.
+describe('decide() — SMI-6869 Fix A: redirect operators are not word boundaries', () => {
+  const bypassArms: Array<[string, string]> = [
+    ['ruflo>/dev/null memory store', 'H4'],
+    ['ruflo>>/tmp/o memory store', 'H4'],
+    ['ruflo</dev/null memory store', 'H4'],
+    ['npx ruflo>/dev/null', 'H5'],
+    ['bash<<<"ruflo memory store"', 'H4'],
+  ]
+  it.each(bypassArms)(
+    '%s -> deny (%s) (bypass under the pre-fix tokenizer: the glued redirect hid the name)',
+    (command, predicate) => {
+      const result = decide(bashCall(command), {})
+      expect(result.action).toBe('deny')
+      expect(reasonOf(result)).toContain(predicate)
+    }
+  )
+
+  // The bypass rows above must get the SAME predicate label as their
+  // plain, unredirected spelling — not a hard-coded string repeated at
+  // each call site, so a future change to which predicate closes a given
+  // shape cannot silently drift the two apart.
+  const labelParityPairs: Array<[string, string]> = [
+    ['ruflo>/dev/null memory store', 'ruflo memory store'],
+    ['ruflo>>/tmp/o memory store', 'ruflo memory store'],
+    ['ruflo</dev/null memory store', 'ruflo memory store'],
+    ['npx ruflo>/dev/null', 'npx ruflo'],
+    ['bash<<<"ruflo memory store"', 'bash <<< "ruflo memory store"'],
+  ]
+  it.each(labelParityPairs)(
+    '%s gets the same predicate label as its plain/spaced spelling %s',
+    (glued, plain) => {
+      const gluedResult = decide(bashCall(glued), {})
+      const plainResult = decide(bashCall(plain), {})
+      expect(gluedResult.action).toBe('deny')
+      expect(plainResult.action).toBe('deny')
+      const gluedLabel = /\[ruflo-host-guard\] (\S+):/.exec(reasonOf(gluedResult))?.[1]
+      const plainLabel = /\[ruflo-host-guard\] (\S+):/.exec(reasonOf(plainResult))?.[1]
+      expect(gluedLabel).toBeDefined()
+      expect(gluedLabel).toBe(plainLabel)
+    }
+  )
+
+  const falsePositiveArms = [
+    'gh pr checks 2957 2>&1 | sort',
+    'docker stop x 2>&1',
+    'git push -u origin fix/x > /tmp/o 2>&1; rc=$?',
+    'echo warn >&2',
+  ]
+  it.each(falsePositiveArms)(
+    '%s -> allow (false positive under the pre-fix tokenizer: 2>&1/> ... 2>&1 was misparsed into a stray argv element)',
+    (command) => {
+      expect(decide(bashCall(command), {}).action).toBe('allow')
+    }
+  )
+
+  it('control: ruflo 2>/dev/null memory store -> deny (H4, already correct pre-fix, unaffected)', () => {
+    const result = decide(bashCall('ruflo 2>/dev/null memory store'), {})
+    expect(result.action).toBe('deny')
+    expect(reasonOf(result)).toContain('H4')
+  })
+
+  const controlsAllow = ['ls &> /tmp/o', 'ls 2>/dev/null', 'sleep 5 & wait', 'ls |& cat']
+  it.each(controlsAllow)(
+    'control: %s -> allow (already correct pre-fix, unaffected)',
+    (command) => {
+      expect(decide(bashCall(command), {}).action).toBe('allow')
+    }
+  )
+})
+
+// SMI-6869 Fix B: the tokenizer had no heredoc state — a `<<`/`<<-` body's
+// own lines tokenized as separate, ordinary command-line segments. This
+// let a line-initial backtick inside the body reach the guard as a
+// command substitution to evaluate (a false-positive denial on a QUOTED
+// heredog, whose body a real shell never substitutes at all), and
+// separately meant a heredoc directly or indirectly feeding a bare shell
+// (`bash <<'EOF' ... EOF`, `cat <<'EOF' | bash`) was never recognized as
+// shell-fed text at all (a bypass).
+describe('decide() — SMI-6869 Fix B: heredoc bodies are not tokenised as command lines', () => {
+  it('a QUOTED heredoc redirected to /dev/null, whose body text happens to start a line with a backtick, is data -> allow (the shell substitutes nothing in a quoted heredoc)', () => {
+    const command =
+      "cat <<'EOF' > /dev/null\n" +
+      '`readManifestState` classifies into ok / missing / corrupt / unreadable /\n' +
+      'version_unsupported. The union carries a manifest ONLY on ok and missing.\n' +
+      'EOF\necho done'
+    expect(decide(bashCall(command), {}).action).toBe('allow')
+  })
+
+  // MEASURED (SMI-6598 discipline): this one does NOT fail against the
+  // unfixed guard — under the pre-fix tokenizer, the heredoc body's own
+  // "ruflo memory store" line surfaces as its OWN independent top-level
+  // segment (the very bug Fix B closes) and denies via H4 for that
+  // unrelated, accidental reason. Kept as a control pinning the CORRECT
+  // mechanism/label post-fix (genuine shell-fed recognition via the
+  // heredoc directly redirected onto bash's own stdin), not a bypass this
+  // test proves closed.
+  it("control: bash <<'EOF' ... EOF (a heredoc redirected directly onto a bare shell's own stdin) -> deny via the shell-fed path (H4), not unresolved-command", () => {
+    const command = "bash <<'EOF'\nruflo memory store\nEOF"
+    const result = decide(bashCall(command), {})
+    expect(result.action).toBe('deny')
+    expect(reasonOf(result)).toContain('H4')
+    expect(reasonOf(result)).not.toContain('unresolved-command')
+  })
+
+  // MEASURED: also does not fail against the unfixed guard, same reason as
+  // the control directly above (the body line independently denies as its
+  // own accidental top-level segment pre-fix). Control, not a red arm.
+  it("control: cat <<'EOF' | bash with a ruflo body -> deny (the heredoc is relayed through cat's stdout into the pipe)", () => {
+    const command = "cat <<'EOF' | bash\nruflo memory store\nEOF"
+    expect(decide(bashCall(command), {}).action).toBe('deny')
+  })
+
+  // MEASURED: also does not fail against the unfixed guard — the
+  // tokenizer's own `$(...)`/backtick substitution recognition is
+  // unconditional (pre-dates this fix entirely), so the embedded `$(ruflo
+  // memory store)` was already recursed into as a real command regardless
+  // of heredoc-awareness. Control, not a red arm.
+  it('control: cat <<EOF with an UNQUOTED $(ruflo memory store) body -> deny (the invoking shell expands $(...) while assembling the heredoc, regardless of which command consumes it)', () => {
+    const command = 'cat <<EOF\n$(ruflo memory store)\nEOF'
+    expect(decide(bashCall(command), {}).action).toBe('deny')
+  })
+
+  it("cat <<'EOF' with the SAME body but a QUOTED delimiter -> allow (quoted heredocs disable substitution entirely, so nothing executes)", () => {
+    const command = "cat <<'EOF'\n$(ruflo memory store)\nEOF"
+    expect(decide(bashCall(command), {}).action).toBe('allow')
+  })
+
+  it('cat <<EOF with a bare, unquoted "ruflo memory store" body and no pipe -> allow: it is DATA handed to cat, never executed by anything', () => {
+    const command = 'cat <<EOF\nruflo memory store\nEOF'
+    expect(decide(bashCall(command), {}).action).toBe('allow')
+  })
+
+  it('git commit -F - <<\'EOF\' with "npx ruflo" inside the commit message body -> allow (git never executes its own commit message text, and the heredoc is quoted — nothing about this shape is code)', () => {
+    const command =
+      "git commit -F - <<'EOF'\nMentions the npx ruflo workaround discussed in review\nEOF"
+    expect(decide(bashCall(command), {}).action).toBe('allow')
+  })
+})
+
+// SMI-6869 Fix C: `evaluateGuardCommand`'s H-8 recursion re-tokenizes
+// inline interpreter SCRIPT TEXT (not a shell command line) through this
+// guard's own shell-shaped pipeline. Program syntax this guard's tokenizer
+// happens to treat as command-splitting punctuation (here, `(`/`)`
+// isolating a lone numeric argument, e.g. `padEnd(15)`) could trip arms
+// that presume the text IS a shell command line — "embedded" mode turns
+// those three arms off for exactly this one recursion site.
+describe('decide() — SMI-6869 Fix C: embedded inline-script evaluation skips shell-command-line-only arms', () => {
+  it('a multi-line node -e script whose own JS syntax (padEnd(15)) would trip the all-digit unresolved-command arm under naive re-evaluation -> allow', () => {
+    const command =
+      "node -e 'const cases = { a: 1 };\n" +
+      'for (const [name, v] of Object.entries(cases)) {\n' +
+      '  console.log(name.padEnd(15), JSON.stringify({ ...v }));\n' +
+      "}'"
+    expect(decide(bashCall(command), {}).action).toBe('allow')
+  })
+
+  // MEASURED: does not fail against the unfixed guard — H8-script's own
+  // `INLINE_SCRIPT_BARE_NAME_RE` scan denies this BEFORE the embedded-mode
+  // recursion is ever reached (the quoted "npx ruflo memory store" string
+  // matches its quote-delimited-run alternative directly), so embedded
+  // mode's own arm-gating is not what closes this one. Control, not a red
+  // arm for Fix C specifically — kept because the task's own case table
+  // names it and because it is a genuine regression pin either way.
+  it('control: node -e with a nested require("child_process").exec("npx ruflo memory store") -> deny (H8-script, before embedded-mode recursion is reached)', () => {
+    const command = 'node -e \'require("child_process").exec("npx ruflo memory store")\''
+    expect(decide(bashCall(command), {}).action).toBe('deny')
+  })
+
+  // MEASURED: same reason as directly above (H8-script fires first).
+  it('control: python3 -c with os.system("ruflo memory store") -> deny (H8-script, before embedded-mode recursion is reached)', () => {
+    const command = `python3 -c 'import os; os.system("ruflo memory store")'`
+    expect(decide(bashCall(command), {}).action).toBe('deny')
+  })
+
+  // Correction round: the ORIGINAL Fix C left the `$`-in-head arm of
+  // checkUnresolvedCommand active even when embedded — a bare `$` inside a
+  // JS string literal is not a shell expansion, so re-tokenizing this
+  // script's own text split `$SP/probe-final.out,utf8` off as a fake
+  // "unresolved command" head and denied a script that never mentions
+  // ruflo at all. MEASURED to deny (unresolved-command, matched on
+  // `$SP/probe-final.out,utf8`) before this correction.
+  it('a node -e script whose text contains a literal $ inside a string (readFileSync path) -> allow (not a shell expansion)', () => {
+    const command =
+      "node -e \"const L=require('fs').readFileSync('$SP/probe-final.out','utf8').split('\\n');console.log(L.length)\""
+    expect(decide(bashCall(command), {}).action).toBe('allow')
+  })
+
+  // Control: the SAME $-in-head arm must stay active on a REAL shell
+  // command line (not embedded) — MEASURED first: denies via
+  // unresolved-command, matched on `$X` (the assigned value "echo" is not
+  // ruflo-shaped, so H8(i) never fires on the `X=echo` segment, isolating
+  // this arm specifically).
+  it('control: X=echo; $X memory store -> still denies via unresolved-command (matched on $X) on a real shell line', () => {
+    const command = 'X=echo; $X memory store'
+    const result = decide(bashCall(command), {})
+    expect(result.action).toBe('deny')
+    expect(reasonOf(result)).toContain('unresolved-command')
+  })
+})
+
+// SMI-6869: measured against a peer's report that these three deny under
+// the CURRENT (pre-fix) guard. MEASURED RESULT (SMI-6598 discipline): all
+// three already ALLOW under the unfixed guard too — none of them is a red
+// arm, and the peer's report does not reproduce. Recorded here as the
+// correct, verified behavior (and in the task's own report) rather than
+// silently dropped.
+describe('decide() — SMI-6869: read-only gh/pooler-psql.sh commands stay allowed', () => {
+  const commands = [
+    'gh workflow run indexer-backfill.yml --help',
+    'gh run view 36462245848 --json status,conclusion,updatedAt',
+    './scripts/pooler-psql.sh --help',
+  ]
+  it.each(commands)('%s -> allow', (command) => {
+    expect(decide(bashCall(command), {}).action).toBe('allow')
+  })
+})
+
+// SMI-6869 Fix D: the H5 arm (checkH1toH7) denies ANY RUNNER_TOKEN_RE-
+// shaped token appearing anywhere after a runner basename, with no notion
+// that npm's own SUBCOMMAND determines whether that token is ever
+// executed — `npm ls ruflo`/`npm view ruflo`/etc. only ever query
+// metadata, never spawn the named package as a process, unlike `npm
+// exec`/`npm x`/a bare `npx`. MEASURED (SMI-6598 discipline) against the
+// pre-Fix-D guard before writing `isReadOnlyNpmForm`: every read-only-arm
+// row below denied via H5; every executing-form control below already
+// denied via H5 too (same label, unaffected by this fix); `npm ls -g
+// ruflo` and `npm uninstall -g ruflo --dry-run` already allowed (pre-
+// existing Stage 1 `isSanctionedNpmForm` exact forms, unaffected).
+describe('decide() — SMI-6869 Fix D: read-only npm subcommands with a package-name argument allow', () => {
+  const redArms = [
+    'npm ls ruflo',
+    'npm view ruflo version',
+    'npm explain ruflo',
+    'npm ls --depth=0 ruflo',
+    'npm list ruflo',
+    'npm ll ruflo',
+    'npm la ruflo',
+    'npm info ruflo',
+    'npm show ruflo',
+    'npm why ruflo',
+    'npm outdated ruflo',
+    'npm search ruflo',
+    'npm config get ruflo',
+  ]
+  it.each(redArms)('%s -> allow (H5 denied this before Fix D)', (command) => {
+    expect(decide(bashCall(command), {}).action).toBe('allow')
+  })
+
+  // Control: already allowed pre-fix via Stage 1's own exact-form
+  // allowlist (isSanctionedNpmForm), not via this fix — kept alongside the
+  // red arms above since it is the same read-only-subcommand family.
+  it('control: npm ls -g ruflo -> allow (pre-existing Stage 1 sanctioned form, unaffected)', () => {
+    expect(decide(bashCall('npm ls -g ruflo'), {}).action).toBe('allow')
+  })
+
+  // Executing forms must keep denying, with the SAME label measured
+  // against the pre-Fix-D guard (H5) — not a hard-coded string repeated
+  // at each call site, so a future change to which predicate closes a
+  // given shape cannot silently drift the assertion apart from reality.
+  const executingForms = [
+    'npm exec ruflo',
+    'npm x ruflo',
+    'npm exec -- ruflo',
+    'npx ruflo',
+    'npm run ruflo',
+  ]
+  it.each(executingForms)(
+    'control: %s -> still denies, label unchanged from pre-Fix-D (H5)',
+    (command) => {
+      const result = decide(bashCall(command), {})
+      expect(result.action).toBe('deny')
+      expect(reasonOf(result)).toContain('H5')
+    }
+  )
+
+  // Control: already allowed pre-fix, unrelated to this fix (Stage 1's
+  // own `--dry-run` allowance on the uninstall form).
+  it('control: npm uninstall -g ruflo --dry-run -> allow (pre-existing Stage 1 sanctioned form, unaffected)', () => {
+    expect(decide(bashCall('npm uninstall -g ruflo --dry-run'), {}).action).toBe('allow')
+  })
+})
+
+// SMI-6869 governance round C1 (bypass, regression): a space-separated
+// redirect target (`> ls`, `2> cat`, …) was left an ordinary, untagged
+// word by the ORIGINAL Fix A, so it became argv[0] of the "residual"
+// command once the redirect token itself was excluded — `ls`/`cat`/etc.
+// sit on `NON_EXECUTING_VERBS`, so `checkBareNameInversion` exempted the
+// whole segment. MEASURED: every row below denies with the SAME label
+// (H4) as the plain, unredirected spelling `ruflo memory store`.
+describe('decide() — SMI-6869 governance round C1: space-separated redirect target was an untagged bypass (regression)', () => {
+  const redArms = [
+    '> ls ruflo memory store',
+    '2> cat ruflo memory store',
+    '> grep ruflo memory store',
+    '> rm ruflo memory store',
+    '> echo ruflo memory store',
+    '>> mv ruflo memory store',
+    '< test ruflo memory store',
+    '&> which ruflo memory store',
+  ]
+  it.each(redArms)('%s -> deny (H4, same label as the plain spelling)', (command) => {
+    const result = decide(bashCall(command), {})
+    expect(result.action).toBe('deny')
+    expect(reasonOf(result)).toContain('H4')
+    const plain = decide(bashCall('ruflo memory store'), {})
+    const label = /\[ruflo-host-guard\] (\S+):/.exec(reasonOf(result))?.[1]
+    const plainLabel = /\[ruflo-host-guard\] (\S+):/.exec(reasonOf(plain))?.[1]
+    expect(label).toBe(plainLabel)
+  })
+})
+
+// SMI-6869 governance round C2 (bypass, regression): an interpreter
+// reading its own PROGRAM from stdin (a heredoc directly on the
+// interpreter, or piped into it) was never recognized as shell-fed text
+// at all before this round — `findShellFedLiteralText` only ever checked
+// `SHELL_COMMANDS` (bash/sh/zsh/…), never `isInlineInterpreterBasename`
+// (python/node/perl/ruby/php/bun). MEASURED: all nine deny rows below
+// close via H8-script (the quoted `"ruflo"` text matches
+// `INLINE_SCRIPT_BARE_NAME_RE` directly, before the embedded recursion is
+// even needed); all four controls stay allow (harmless program text with
+// no ruflo reference, read from a heredoc or a pipe).
+describe('decide() — SMI-6869 governance round C2: interpreter reading its program from stdin (bypass, regression)', () => {
+  const redArms = [
+    'python3 <<EOF\nimport os\nos.system("ruflo")\nEOF',
+    'node <<EOF\nrequire("child_process").execSync("ruflo")\nEOF',
+    'perl <<EOF\nsystem("ruflo")\nEOF',
+    'ruby <<EOF\nsystem("ruflo")\nEOF',
+    'php <<EOF\nexec("ruflo");\nEOF',
+    'echo \'os.system("ruflo")\' | python3',
+    'cat <<EOF | python3\nos.system("ruflo")\nEOF',
+    'python3 - <<EOF\nos.system("ruflo")\nEOF',
+    'python3 <<EOF\nos.system("ruflo")\nEOF',
+  ]
+  it.each(redArms)('%s -> deny (H8-script)', (command) => {
+    const result = decide(bashCall(command), {})
+    expect(result.action).toBe('deny')
+    expect(reasonOf(result)).toContain('H8-script')
+  })
+
+  const controls = [
+    'python3 <<EOF\nprint(1)\nEOF',
+    'node <<EOF\nconsole.log("a".padEnd(15))\nEOF',
+    'echo hello | python3',
+    'cat data.json | node process.js',
+  ]
+  it.each(controls)('control: %s -> allow (harmless interpreter stdin, unaffected)', (command) => {
+    expect(decide(bashCall(command), {}).action).toBe('allow')
+  })
+})
+
+// SMI-6869 governance round C3 (bypass, regression): with TWO heredocs on
+// one line (`bash <<A <<B`), the OLD `.find()` in both
+// `findShellFedLiteralText` and `resolveShellFedProducer` returned the
+// FIRST heredoc token — but bash itself reads stdin from the LAST one.
+// `ruflo` planted in the second heredoc (B) was never seen. Fixed by
+// filtering ALL heredoc tokens and joining their bodies. The control
+// (ruflo in A, harmless in B) was ALREADY correctly denied before this
+// round too — `.find()` picking the first heredoc happens to be the RIGHT
+// one there, so it is a control, not a red arm for C3 specifically.
+describe('decide() — SMI-6869 governance round C3: two heredocs on one line, bash reads the last one (bypass, regression)', () => {
+  it('bash <<A <<B, ruflo in B -> deny (H4, the fix now sees the second heredoc)', () => {
+    const command = 'bash <<A <<B\nharmless\nA\nruflo memory store\nB'
+    const result = decide(bashCall(command), {})
+    expect(result.action).toBe('deny')
+    expect(reasonOf(result)).toContain('H4')
+  })
+
+  it('cat <<A <<B | sh, ruflo in B -> deny (H4, relayed through cat into the pipe, both heredocs joined)', () => {
+    const command = 'cat <<A <<B | sh\nharmless\nA\nruflo memory store\nB'
+    const result = decide(bashCall(command), {})
+    expect(result.action).toBe('deny')
+    expect(reasonOf(result)).toContain('H4')
+  })
+
+  it('control: bash <<A <<B, ruflo in A (harmless in B) -> deny (already correct pre-C3: .find() picked the right heredoc here)', () => {
+    const command = 'bash <<A <<B\nruflo memory store\nA\nharmless\nB'
+    const result = decide(bashCall(command), {})
+    expect(result.action).toBe('deny')
+    expect(reasonOf(result)).toContain('H4')
+  })
+})
+
+// SMI-6869 governance round C4 (bypass, PRE-EXISTING on both trees — not a
+// regression from any earlier SMI-6869 round): `checkBraceSegment` only
+// ever fired when the EFFECTIVE FIRST WORD was already a known runner —
+// it never considered that a brace ALTERNATION could itself SPELL the
+// runner/ruflo name (`{ruflo,} memory store` expands to plain `ruflo`).
+// Fixed by scanning every word for a literal comma and checking each
+// comma-separated part's basename against H4B_NAMES/RUNNER_BASENAMES,
+// BEFORE the runner gate. Controls confirm shell GROUPING (`{ cmd; }`,
+// no comma in any word) and ordinary brace expansion with no
+// runner/ruflo-shaped part stay allowed.
+describe('decide() — SMI-6869 governance round C4: brace alternation spelling the command name (bypass, pre-existing)', () => {
+  const redArms = ['{ruflo,} memory store', '{ruflo,x} memory store']
+  it.each(redArms)('%s -> deny (brace-syntax)', (command) => {
+    const result = decide(bashCall(command), {})
+    expect(result.action).toBe('deny')
+    expect(reasonOf(result)).toContain('brace-syntax')
+  })
+
+  const controls = [
+    '{ npm run lint; }',
+    '{ npm test; npm run lint; }',
+    'cp file{,.bak}',
+    'mkdir -p dir/{a,b,c}',
+  ]
+  it.each(controls)(
+    'control: %s -> allow (shell grouping or a comma part with no runner/ruflo name)',
+    (command) => {
+      expect(decide(bashCall(command), {}).action).toBe('allow')
+    }
+  )
+
+  it('control: npx {ruflo,eslint} memory store -> still denies with brace-syntax in the reason (unaffected by C4)', () => {
+    const result = decide(bashCall('npx {ruflo,eslint} memory store'), {})
+    expect(result.action).toBe('deny')
+    expect(reasonOf(result)).toContain('brace-syntax')
+  })
+})
+
 // --- SMI-6854 startDaemon shapes ---
 
 describe('decide() — mcp__ruflo__hooks_session-start startDaemon gate (SMI-6854)', () => {
@@ -958,6 +1441,696 @@ describe('decide() — mcp__ruflo__hooks_session-start startDaemon gate (SMI-685
   it('missing tool_input entirely -> deny (fail-closed rule, round 1 finding 5)', () => {
     const result = decide({ tool_name: 'mcp__ruflo__hooks_session-start' }, {})
     expect(result.action).toBe('deny')
+  })
+})
+
+// --- SMI-6869 consumer-string family (awk/sed/ssh/git/vim/tmux/screen/
+// expect/env-vars/heredoc-consumers) ---
+//
+// Every label below was MEASURED against this guard's own decide() (via an
+// ad-hoc probe script, per CLAUDE.md's "measure, don't reason") before
+// being hardcoded here. Most red arms resolve through RECURSION into a
+// pre-existing predicate rather than a brand-new label: the new
+// `extractConsumerTexts` step (scripts/lib/ruflo-host-guard-consumers.mjs)
+// only ever extracts a candidate {text, kind} pair and hands it back to
+// `evaluateGuardCommand` — the deny itself almost always comes from H4
+// (a bare `ruflo` at argv[0] of the recursed text) or H8-script (the
+// shared `INLINE_SCRIPT_BARE_NAME_RE` quoted-text regex, the same one H-8
+// already uses for node/python/perl/ruby/php source text).
+
+const R = 'ruflo memory store'
+
+describe('decide() — SMI-6869 consumer-string: awk/gawk system()/pipe-to-sh', () => {
+  it('awk system() denies via H8-script (the program text is source, matched by the shared quoted-text regex)', () => {
+    const result = decide(bashCall(`awk 'BEGIN{system("${R}")}'`), {})
+    expect(result.action).toBe('deny')
+    expect(reasonOf(result)).toContain('H8-script')
+  })
+
+  it('gawk system() denies via H8-script', () => {
+    const result = decide(bashCall(`gawk 'BEGIN{system("${R}")}'`), {})
+    expect(result.action).toBe('deny')
+    expect(reasonOf(result)).toContain('H8-script')
+  })
+
+  it('awk pipe to "sh" denies via H8-script', () => {
+    const result = decide(bashCall(`awk 'BEGIN{print "${R}" | "sh"}'`), {})
+    expect(result.action).toBe('deny')
+    expect(reasonOf(result)).toContain('H8-script')
+  })
+
+  it('control: awk -f <file> allows — the program is unreadable (comes from a file), same posture as `source f`', () => {
+    expect(decide(bashCall('awk -f prog.awk data.txt'), {}).action).toBe('allow')
+  })
+
+  it('control: plain awk with no ruflo reference allows', () => {
+    expect(decide(bashCall("awk -F: '{print $2}' /etc/passwd"), {}).action).toBe('allow')
+  })
+
+  it('M5: awk -f /dev/stdin fed a heredoc denies via H8-script — the readable-stdin alias is not a real file when a heredoc feeds it', () => {
+    const result = decide(bashCall(`awk -f /dev/stdin <<'EOF'\nBEGIN{system("${R}")}\nEOF`), {})
+    expect(result.action).toBe('deny')
+    expect(reasonOf(result)).toContain('H8-script')
+  })
+
+  it('M5: awk --file=/dev/stdin fed a heredoc denies via H8-script', () => {
+    const result = decide(bashCall(`awk --file=/dev/stdin <<'EOF'\nBEGIN{system("${R}")}\nEOF`), {})
+    expect(result.action).toBe('deny')
+    expect(reasonOf(result)).toContain('H8-script')
+  })
+
+  it("M5 (process-substitution form): awk -f <(echo ...) denies via H8-script — the substitution's own inner echo producer is resolved the same way `bash <(echo ...)` already resolves one, and its text is closed by the shared quoted-text regex", () => {
+    const result = decide(bashCall(`awk -f <(echo 'BEGIN{system("${R}")}') data.txt`), {})
+    expect(result.action).toBe('deny')
+    expect(reasonOf(result)).toContain('H8-script')
+  })
+
+  it('M5 (process-substitution form): awk --file=<(printf ...) denies via H8-script', () => {
+    const result = decide(bashCall(`awk --file=<(printf '%s' 'BEGIN{system("${R}")}')`), {})
+    expect(result.action).toBe('deny')
+    expect(reasonOf(result)).toContain('H8-script')
+  })
+
+  it('control: awk -f <(echo ...) with an ordinary awk program allows — the resolved producer text is real, but it names no ruflo reference', () => {
+    expect(decide(bashCall("awk -f <(echo '{print $1}') data.txt"), {}).action).toBe('allow')
+  })
+
+  it('control: awk -f <(a non-literal generator) allows — only echo/printf (or cat-with-a-heredoc) are literal producers this guard can read statically; anything else extracts nothing', () => {
+    expect(decide(bashCall('awk -f <(some-generator) data.txt'), {}).action).toBe('allow')
+  })
+
+  it('control: bash <(echo ...) still denies via H4 — pre-existing shell-fed process-substitution handling, unaffected by sharing its literal-producer definition with the awk/sed extractors', () => {
+    const result = decide(bashCall(`bash <(echo '${R}')`), {})
+    expect(result.action).toBe('deny')
+    expect(reasonOf(result)).toContain('H4:')
+  })
+
+  it('m6 (stated limit): a glued -vx=ruflo assignment allows — the awk variable value is opaque to this guard, so system(x) never spells a literal "ruflo" the shared regex can see', () => {
+    expect(decide(bashCall(`awk -vx=ruflo 'BEGIN{system(x)}'`), {}).action).toBe('allow')
+  })
+})
+
+describe('decide() — SMI-6869 consumer-string: sed/gsed e-flag and e-command shell extraction', () => {
+  it('sed s///e flag denies via H4 — the replacement text is extracted as real shell text and recursed', () => {
+    const result = decide(bashCall(`printf x | sed 's/x/${R}/e'`), {})
+    expect(result.action).toBe('deny')
+    expect(reasonOf(result)).toContain('H4:')
+  })
+
+  it('sed Ne command form denies via H4', () => {
+    const result = decide(bashCall(`sed '1e ${R}' file`), {})
+    expect(result.action).toBe('deny')
+    expect(reasonOf(result)).toContain('H4:')
+  })
+
+  it('sed -e "...e" flag denies via H4', () => {
+    const result = decide(bashCall(`sed -e 's/x/${R}/e' file`), {})
+    expect(result.action).toBe('deny')
+    expect(reasonOf(result)).toContain('H4:')
+  })
+
+  it('control: sed -n "1,5p" (no e-flag/e-command shape) allows', () => {
+    expect(decide(bashCall("sed -n '1,5p' f"), {}).action).toBe('allow')
+  })
+
+  it('control: plain sed substitution with no e flag allows', () => {
+    expect(decide(bashCall("sed 's/a/b/' file.txt"), {}).action).toBe('allow')
+  })
+
+  it('C4: a SECOND e-command in a multi-command script denies via H4 — the extraction regex is now global, not just the first `.exec`', () => {
+    const result = decide(bashCall(`sed '1e date;2e ${R}' f`), {})
+    expect(result.action).toBe('deny')
+    expect(reasonOf(result)).toContain('H4:')
+  })
+
+  it('M5: sed -f /dev/stdin fed a heredoc script denies via H4 — the body is a sed SCRIPT (same syntax as -e), not a whole program', () => {
+    const result = decide(bashCall(`sed -f /dev/stdin f <<'EOF'\ns/x/${R}/e\nEOF`), {})
+    expect(result.action).toBe('deny')
+    expect(reasonOf(result)).toContain('H4:')
+  })
+
+  it("M5 (process-substitution form): sed -f <(echo 's///e') denies via H4 — the substitution's own inner echo producer resolves to a sed script, fed through the SAME s///e extraction as -e", () => {
+    const result = decide(bashCall(`sed -f <(echo 's/x/${R}/e') f`), {})
+    expect(result.action).toBe('deny')
+    expect(reasonOf(result)).toContain('H4:')
+  })
+})
+
+describe('decide() — SMI-6869 consumer-string: ssh single-token quoted remote command', () => {
+  it('ssh with a single quoted remote command denies via H4', () => {
+    const result = decide(bashCall(`ssh localhost '${R}'`), {})
+    expect(result.action).toBe('deny')
+    expect(reasonOf(result)).toContain('H4:')
+  })
+
+  it('ssh with leading flags then a single quoted remote command denies via H4', () => {
+    const result = decide(bashCall(`ssh -p 2222 -i key user@host '${R}'`), {})
+    expect(result.action).toBe('deny')
+    expect(reasonOf(result)).toContain('H4:')
+  })
+
+  it('an UNQUOTED multi-word remote command denies via H4 — round 2 joins EVERY non-flag argument after the destination, not just a single trailing token', () => {
+    const result = decide(bashCall(`ssh localhost ${R}`), {})
+    expect(result.action).toBe('deny')
+    expect(reasonOf(result)).toContain('H4:')
+  })
+
+  it('a stray flag-shaped token AFTER the remote command text does not break the join — still denies via H4', () => {
+    const result = decide(bashCall(`ssh host '${R}' -v`), {})
+    expect(result.action).toBe('deny')
+    expect(reasonOf(result)).toContain('H4:')
+  })
+
+  it("ssh -o ProxyCommand='...' denies via H4 — ssh execs the option's value as a shell command directly", () => {
+    const result = decide(bashCall(`ssh -o ProxyCommand='${R}' host`), {})
+    expect(result.action).toBe('deny')
+    expect(reasonOf(result)).toContain('H4:')
+  })
+
+  it('control: ssh host uptime (no ruflo reference) allows', () => {
+    expect(decide(bashCall('ssh host uptime'), {}).action).toBe('allow')
+  })
+})
+
+describe('decide() — SMI-6869 consumer-string: git exec-relevant config keys', () => {
+  const execKeyRows: Array<[string, string]> = [
+    ['git -c core.pager', `git -c core.pager='${R}' log`],
+    ['git -c core.editor', `git -c core.editor='${R}' commit`],
+    ['git -c core.sshCommand', `git -c core.sshCommand='${R}' fetch`],
+    ['git -c credential.helper (bang-prefixed)', `git -c credential.helper='!${R}' fetch`],
+    ['git -c alias.x (GIT_EXEC_KEY_PATTERNS, bang-prefixed)', `git -c alias.x='!${R}' x`],
+    ['git config core.pager (SET form)', `git config core.pager '${R}'`],
+    ['git config --global core.editor (SET form)', `git config --global core.editor '${R}'`],
+    // round 2 (probe-consumers-2.mjs) expansion of GIT_EXEC_KEYS/PATTERNS
+    ['git -c core.askpass', `git -c core.askpass='${R}' fetch`],
+    ['git -c diff.external', `git -c diff.external='${R}' diff`],
+    ['git -c gpg.program', `git -c gpg.program='${R}' commit -S`],
+    ['git -c sequence.editor', `git -c sequence.editor='${R}' rebase -i HEAD~2`],
+    [
+      'git -c credential.<url>.helper (pattern, slashes/colons in the middle segment)',
+      `git -c credential.https://x.helper='!${R}' fetch`,
+    ],
+    ['git -c filter.x.clean', `git -c filter.x.clean='${R}' add .`],
+    ['git -c difftool.x.cmd', `git -c difftool.x.cmd='${R}' difftool`],
+    ['git -c pager.log', `git -c pager.log='${R}' log`],
+    ['git -c core.fsmonitor', `git -c core.fsmonitor='${R}' status`],
+    [
+      'git config --global alias.x (bang-prefixed, SET form)',
+      `git config --global alias.x '!${R}'`,
+    ],
+    // round-3 governance (M4) expansion of GIT_EXEC_KEYS/PATTERNS
+    ['git -c trailer.x.command (deprecated spelling)', `git -c trailer.sign.command='${R}' commit`],
+    ['git -c trailer.x.cmd', `git -c trailer.sign.cmd='${R}' commit`],
+    ['git -c core.alternateRefsCommand', `git -c core.alternateRefsCommand='${R}' fetch`],
+    [
+      'git -c submodule.x.update (bang-prefixed only)',
+      `git -c submodule.x.update='!${R}' submodule update`,
+    ],
+    ['git -c diff.x.textconv', `git -c diff.x.textconv='${R}' diff`],
+    ['git -c interactive.diffFilter', `git -c interactive.diffFilter='${R}' add -p`],
+    ['git -c browser.x.cmd', `git -c browser.x.cmd='${R}' web--browse .`],
+    ['git -c web.browser', `git -c web.browser='${R}' help -w`],
+    ['git -c man.x.cmd', `git -c man.x.cmd='${R}' help -m add`],
+    ['git -c remote.origin.uploadpack', `git -c remote.origin.uploadpack='${R}' fetch`],
+    ['git -c remote.origin.receivepack', `git -c remote.origin.receivepack='${R}' push`],
+    ['git -c instaweb.httpd', `git -c instaweb.httpd='${R}' instaweb`],
+    ['git -c sendemail.smtpServer', `git -c sendemail.smtpServer='${R}' send-email`],
+  ]
+  it.each(execKeyRows)('%s denies via H4', (_label, cmd) => {
+    const result = decide(bashCall(cmd), {})
+    expect(result.action).toBe('deny')
+    expect(reasonOf(result)).toContain('H4:')
+  })
+
+  it('control: git -c submodule.x.update WITHOUT a bang (a real git keyword like "checkout") allows', () => {
+    expect(decide(bashCall('git -c submodule.x.update=checkout submodule update'), {}).action).toBe(
+      'allow'
+    )
+  })
+
+  it('git -c core.pager with an npx form value denies via H5 — the recursion decides, not the key', () => {
+    const result = decide(bashCall(`git -c core.pager='npx ${R}' log`), {})
+    expect(result.action).toBe('deny')
+    expect(reasonOf(result)).toContain('H5')
+  })
+
+  it('control: git -c core.pager=less (value has no ruflo reference) allows', () => {
+    expect(decide(bashCall('git -c core.pager=less log'), {}).action).toBe('allow')
+  })
+
+  it('control: git -c core.pager=delta allows — the recursion decides, not the key', () => {
+    expect(decide(bashCall('git -c core.pager=delta log'), {}).action).toBe('allow')
+  })
+
+  it('control: git -c gpg.program=gpg2 commit -S allows', () => {
+    expect(decide(bashCall('git -c gpg.program=gpg2 commit -S'), {}).action).toBe('allow')
+  })
+
+  it('control: git -c core.hooksPath=/tmp/hooks status allows — a PATH git reads hook scripts from, not exec text, deliberately left out of GIT_EXEC_KEYS/PATTERNS', () => {
+    expect(decide(bashCall('git -c core.hooksPath=/tmp/hooks status'), {}).action).toBe('allow')
+  })
+
+  it('control: git -c user.name — NOT an exec-relevant key, so its value is never extracted even though it spells the target text', () => {
+    expect(decide(bashCall(`git -c user.name='${R}' log`), {}).action).toBe('allow')
+  })
+
+  it('control: plain git log allows', () => {
+    expect(decide(bashCall('git log --oneline -5'), {}).action).toBe('allow')
+  })
+})
+
+describe('decide() — SMI-6869 consumer-string: vim/nvim ex-commands', () => {
+  it('vim -c with a bang (":!cmd") ex-command denies via H4', () => {
+    const result = decide(bashCall(`vim -Nu NONE -c ':!${R}' -c q`), {})
+    expect(result.action).toBe('deny')
+    expect(reasonOf(result)).toContain('H4:')
+  })
+
+  it('vim leading-+ positional bang ex-command denies via H4', () => {
+    const result = decide(bashCall(`vim '+!${R}' file`), {})
+    expect(result.action).toBe('deny')
+    expect(reasonOf(result)).toContain('H4:')
+  })
+
+  it('nvim --cmd bang denies via H4', () => {
+    const result = decide(bashCall(`nvim --cmd '!${R}'`), {})
+    expect(result.action).toBe('deny')
+    expect(reasonOf(result)).toContain('H4:')
+  })
+
+  it('vim -c "call system(...)" denies via H8-script — Vimscript SOURCE, caught by the shared quoted-text regex, no Vimscript-specific parsing', () => {
+    const result = decide(bashCall(`vim -c 'call system("${R}")'`), {})
+    expect(result.action).toBe('deny')
+    expect(reasonOf(result)).toContain('H8-script')
+  })
+
+  it('vim -c "terminal cmd" denies via H4', () => {
+    const result = decide(bashCall(`vim -c 'terminal ${R}'`), {})
+    expect(result.action).toBe('deny')
+    expect(reasonOf(result)).toContain('H4:')
+  })
+
+  it('control: vim -c "set number" (ordinary Vimscript, no shell/system/terminal shape) allows', () => {
+    expect(decide(bashCall("vim -c 'set number' file.txt"), {}).action).toBe('allow')
+  })
+
+  it('C1: vimdiff -c bang denies via H4 — vimdiff (and view/ex/gvimdiff/nvimdiff/evim/eview/rvim/rview/rgvim/rgview) is the SAME binary under a personality argv[0], missing from the original VIM_BASENAMES set', () => {
+    const result = decide(bashCall(`vimdiff -c '!${R}' a b`), {})
+    expect(result.action).toBe('deny')
+    expect(reasonOf(result)).toContain('H4:')
+  })
+})
+
+describe('decide() — SMI-6869 consumer-string: tmux send-keys/new-window', () => {
+  it('tmux send-keys with a trailing Enter denies via H4', () => {
+    const result = decide(bashCall(`tmux send-keys '${R}' Enter`), {})
+    expect(result.action).toBe('deny')
+    expect(reasonOf(result)).toContain('H4:')
+  })
+
+  it('tmux new-window denies via H4', () => {
+    const result = decide(bashCall(`tmux new-window '${R}'`), {})
+    expect(result.action).toBe('deny')
+    expect(reasonOf(result)).toContain('H4:')
+  })
+
+  it('tmux run-shell denies via H4', () => {
+    const result = decide(bashCall(`tmux run-shell '${R}'`), {})
+    expect(result.action).toBe('deny')
+    expect(reasonOf(result)).toContain('H4:')
+  })
+
+  it('control: tmux ls allows', () => {
+    expect(decide(bashCall('tmux ls'), {}).action).toBe('allow')
+  })
+
+  it('C2: tmux new-session -d denies via H4 — new-session/new, respawn-pane, if-shell, pipe-pane and display-popup were all missing from the shell-subcommand set', () => {
+    const result = decide(bashCall(`tmux new-session -d '${R}'`), {})
+    expect(result.action).toBe('deny')
+    expect(reasonOf(result)).toContain('H4:')
+  })
+
+  it('M1: tmux send-keys -t 0 (a numeric pane target) with an ordinary command allows — the flag VALUE is no longer kept as command text, so it never trips the all-digit arm', () => {
+    expect(decide(bashCall("tmux send-keys -t 0 'ls -la' Enter"), {}).action).toBe('allow')
+  })
+
+  it('M1: tmux new-window -t 0 (numeric) with an ordinary command allows', () => {
+    expect(decide(bashCall("tmux new-window -t 0 'htop'"), {}).action).toBe('allow')
+  })
+
+  it('control: tmux new-window -t 9 with a ruflo command still denies via H4 — the value-flag fix only drops the FLAG value, not the real positional', () => {
+    const result = decide(bashCall(`tmux new-window -t 9 '${R}'`), {})
+    expect(result.action).toBe('deny')
+    expect(reasonOf(result)).toContain('H4:')
+  })
+})
+
+describe('decide() — SMI-6869 consumer-string: screen -X stuff', () => {
+  it('screen -X stuff denies via H4', () => {
+    const result = decide(bashCall(`screen -X stuff '${R}\\n'`), {})
+    expect(result.action).toBe('deny')
+    expect(reasonOf(result)).toContain('H4:')
+  })
+
+  it('control: screen followed by a bare positional command already denies via the PRE-EXISTING H4b bare-name inversion — measured, no new logic needed for this shape', () => {
+    const result = decide(bashCall(`screen ${R}`), {})
+    expect(result.action).toBe('deny')
+    expect(reasonOf(result)).toContain('H4b')
+  })
+
+  it('control: screen -ls allows', () => {
+    expect(decide(bashCall('screen -ls'), {}).action).toBe('allow')
+  })
+
+  it('C3: screen -X -S sess stuff denies via H4 — real screen accepts its own options BETWEEN -X and the command word, and the original cut required stuff immediately after -X', () => {
+    const result = decide(bashCall(`screen -X -S sess stuff '${R}\\n'`), {})
+    expect(result.action).toBe('deny')
+    expect(reasonOf(result)).toContain('H4:')
+  })
+})
+
+describe('decide() — SMI-6869 consumer-string: expect -c spawn/exec', () => {
+  it("expect -c 'spawn ...' denies via H4 — the spawned command is extracted as real shell text and recursed", () => {
+    const result = decide(bashCall(`expect -c 'spawn ${R}'`), {})
+    expect(result.action).toBe('deny')
+    expect(reasonOf(result)).toContain('H4:')
+  })
+
+  it('control: expect -c with no spawn/exec builtin allows', () => {
+    expect(decide(bashCall('expect -c \'send "hello"\''), {}).action).toBe('allow')
+  })
+
+  it('C5: expect -c \'open "|cmd" r\' denies via H8-script — the whole -c body is ALSO Tcl SOURCE, given the same quoted-text-regex treatment as node/python source, not just a bare spawn/exec prefix', () => {
+    const result = decide(bashCall(`expect -c 'open "|${R}" r'`), {})
+    expect(result.action).toBe('deny')
+    expect(reasonOf(result)).toContain('H8-script')
+  })
+})
+
+describe('decide() — SMI-6869 consumer-string: sqlite3 dot-commands (round-4 cross-family gate)', () => {
+  it("sqlite3 /tmp/x.db '.shell ...' denies via H4 — the remainder after .shell is extracted as real shell text and recursed", () => {
+    const result = decide(bashCall(`sqlite3 /tmp/x.db '.shell ${R}'`), {})
+    expect(result.action).toBe('deny')
+    expect(reasonOf(result)).toContain('H4:')
+  })
+
+  it("sqlite3 /tmp/x.db '.system ...' denies via H4 — .system is the same shell-out dot-command as .shell", () => {
+    const result = decide(bashCall(`sqlite3 /tmp/x.db '.system ${R}'`), {})
+    expect(result.action).toBe('deny')
+    expect(reasonOf(result)).toContain('H4:')
+  })
+
+  it("sqlite3 -cmd '.system ...' x.db denies via H4 — -cmd's value is sqlite3 command text, same as a trailing positional", () => {
+    const result = decide(bashCall(`sqlite3 -cmd '.system ${R}' x.db`), {})
+    expect(result.action).toBe('deny')
+    expect(reasonOf(result)).toContain('H4:')
+  })
+
+  it("sqlite3 x.db '.once |...' denies via H4 — .once's leading pipe hands the remainder to a shell, same as .output's", () => {
+    const result = decide(bashCall(`sqlite3 x.db '.once |${R}'`), {})
+    expect(result.action).toBe('deny')
+    expect(reasonOf(result)).toContain('H4:')
+  })
+
+  it("sqlite3 x.db '.output |...' denies via H4", () => {
+    const result = decide(bashCall(`sqlite3 x.db '.output |${R}'`), {})
+    expect(result.action).toBe('deny')
+    expect(reasonOf(result)).toContain('H4:')
+  })
+
+  it("control: sqlite3 /tmp/x.db 'select 1;' allows — ordinary SQL is not extracted", () => {
+    expect(decide(bashCall(`sqlite3 /tmp/x.db 'select 1;'`), {}).action).toBe('allow')
+  })
+
+  it("control: sqlite3 x.db '.tables' allows — an ordinary dot-command with no shell-out is not extracted", () => {
+    expect(decide(bashCall(`sqlite3 x.db '.tables'`), {}).action).toBe('allow')
+  })
+})
+
+describe('decide() — SMI-6869 consumer-string: psql \\! and COPY/\\copy PROGRAM clauses (round-4 cross-family gate)', () => {
+  it("psql -c '\\! ...' denies via H4 — the text after \\! is extracted as real shell text and recursed", () => {
+    const result = decide(bashCall(`psql -c '\\! ${R}'`), {})
+    expect(result.action).toBe('deny')
+    expect(reasonOf(result)).toContain('H4:')
+  })
+
+  it('psql -c "copy t to program \'...\'" denies via H4 — the quoted PROGRAM value survives bash double-quote decoding intact', () => {
+    const result = decide(bashCall(`psql -c "copy t to program '${R}'"`), {})
+    expect(result.action).toBe('deny')
+    expect(reasonOf(result)).toContain('H4:')
+  })
+
+  it("psql -c '\\copy t to program ''...''' denies via H4 — measured: bash's own doubled-single-quote decoding strips every quote character around the program name before this guard ever sees the argument, so the extractor's unquoted fallback (not the quoted-string branch) is what fires here", () => {
+    const result = decide(bashCall(`psql -c '\\copy t to program ''${R}'''`), {})
+    expect(result.action).toBe('deny')
+    expect(reasonOf(result)).toContain('H4:')
+  })
+
+  it("psql -f - fed a heredoc with a \\! line denies via H4 — the same READABLE_STDIN_RE + segment-heredoc lookup awk/sed's own -f already uses", () => {
+    const command = `psql -f - <<'EOF'\n\\! ${R}\nEOF`
+    const result = decide(bashCall(command), {})
+    expect(result.action).toBe('deny')
+    expect(reasonOf(result)).toContain('H4:')
+  })
+
+  it("control: psql -c 'select 1' allows — ordinary SQL is not extracted", () => {
+    expect(decide(bashCall(`psql -c 'select 1'`), {}).action).toBe('allow')
+  })
+
+  it("control: psql -c '\\dt' allows — a meta-command that is not \\! and has no PROGRAM clause is not extracted", () => {
+    expect(decide(bashCall(`psql -c '\\dt'`), {}).action).toBe('allow')
+  })
+
+  it('control: psql -f schema.sql allows — a REAL file path does not match READABLE_STDIN_RE, so the file content is out of reach by design', () => {
+    expect(decide(bashCall('psql -f schema.sql'), {}).action).toBe('allow')
+  })
+
+  it('control: psql -f - fed a heredoc of ordinary SQL allows — the heredoc body is scanned, but ordinary SQL is not extracted', () => {
+    const command = "psql -f - <<'EOF'\nselect 1;\nEOF"
+    expect(decide(bashCall(command), {}).action).toBe('allow')
+  })
+
+  it("control: psql -c '\\!ruflo memory store' (glued, no whitespace) denies via H4 — round-6 confirmation-round finding: real psql accepts the glued form identically to the spaced one, and the original \\s+ requirement missed it", () => {
+    const result = decide(bashCall(`psql -c '\\!${R}'`), {})
+    expect(result.action).toBe('deny')
+    expect(reasonOf(result)).toContain('H4:')
+  })
+
+  it('psql -c "COPY t TO PROGRAM E\'...\'" denies via H4 — round-6 Class 1 fix: an E-prefixed string literal is now recognized as a real PostgreSQL string (previously the quoted arm didn\'t recognize the E prefix and the bare-text fallback extracted the literal text "Eruflo memory store", which never spelled a bare ruflo)', () => {
+    const result = decide(bashCall(`psql -c "COPY t TO PROGRAM E'${R}'"`), {})
+    expect(result.action).toBe('deny')
+    expect(reasonOf(result)).toContain('H4:')
+  })
+
+  it('psql -c "COPY t FROM PROGRAM E\'...\'" denies via H4 — FROM PROGRAM is the same operand shape as TO PROGRAM', () => {
+    const result = decide(bashCall(`psql -c "COPY t FROM PROGRAM E'${R}'"`), {})
+    expect(result.action).toBe('deny')
+    expect(reasonOf(result)).toContain('H4:')
+  })
+
+  it("psql -c '\\copy t to program $$...$$' denies via H4 — round-6 Class 1 fix: a dollar-quoted PostgreSQL string literal is now recognized as a real string form for the PROGRAM operand", () => {
+    const result = decide(bashCall(`psql -c '\\copy t to program $$${R}$$'`), {})
+    expect(result.action).toBe('deny')
+    expect(reasonOf(result)).toContain('H4:')
+  })
+
+  it("control: psql -c \"select 'program ...'\" allows — round-6 Class 2 fix: PROGRAM is only executable syntax inside an actual COPY/\\copy clause, and this statement has no copy/\\copy keyword at all, so the anchored context regex correctly finds nothing (previously the unanchored regex extracted the string's own contents as shell text and denied — a real over-deny, now fixed)", () => {
+    const result = decide(bashCall(`psql -c "select 'program ${R}'"`), {})
+    expect(result.action).toBe('allow')
+  })
+
+  it("known over-deny, not a regression: psql -c \"select 'copy to program ...'\" denies via H4 even though it only selects a string literal — this guard's anchoring is a keyword scanner, not a SQL-string-literal-aware parser, so it cannot distinguish a genuine COPY...TO...PROGRAM clause from a string literal that merely CONTAINS those words as data on the same statement; measured (not assumed) after implementing the Class 2 fix, and accepted as the guard's existing fail-closed posture rather than built out further", () => {
+    const result = decide(bashCall(`psql -c "select 'copy to program ${R}'"`), {})
+    expect(result.action).toBe('deny')
+    expect(reasonOf(result)).toContain('H4:')
+  })
+
+  it('control: psql -c "COPY t TO PROGRAM \'...\'" (double-quoted -c wrapper) still denies via H4 after the Class 2 anchoring change — a genuine COPY clause is unaffected', () => {
+    const result = decide(bashCall(`psql -c "COPY t TO PROGRAM '${R}'"`), {})
+    expect(result.action).toBe('deny')
+    expect(reasonOf(result)).toContain('H4:')
+  })
+})
+
+describe('decide() — SMI-6869 consumer-string: osascript -e AppleScript source (round-4 cross-family gate)', () => {
+  it('osascript -e \'do shell script "..."\' denies via H8-script — measured: the EXISTING quoted-bare-name alternative of INLINE_SCRIPT_BARE_NAME_RE already catches a quoted ruflo mention inside AppleScript source, with no do-shell-script-specific extraction needed', () => {
+    const result = decide(bashCall(`osascript -e 'do shell script "${R}"'`), {})
+    expect(result.action).toBe('deny')
+    expect(reasonOf(result)).toContain('H8-script')
+  })
+
+  it('osascript -e \'do shell script "..." with administrator privileges\' denies via H8-script — the trailing clause does not change which mechanism fires', () => {
+    const result = decide(
+      bashCall(`osascript -e 'do shell script "${R}" with administrator privileges'`),
+      {}
+    )
+    expect(result.action).toBe('deny')
+    expect(reasonOf(result)).toContain('H8-script')
+  })
+
+  it("control: osascript -e 'return 1' allows", () => {
+    expect(decide(bashCall(`osascript -e 'return 1'`), {}).action).toBe('allow')
+  })
+
+  it('control: osascript -e \'display dialog "hi"\' allows — ordinary AppleScript source with no ruflo/claude-flow mention recurses embedded and finds nothing, same as an ordinary awk program', () => {
+    expect(decide(bashCall(`osascript -e 'display dialog "hi"'`), {}).action).toBe('allow')
+  })
+})
+
+describe('decide() — SMI-6869 consumer-string: process-launching env vars (EXEC_ENV_VARS, H8(i) extension)', () => {
+  const envVarRows: Array<[string, string]> = [
+    ['bare PAGER prefix', `PAGER='${R}' git log`],
+    ['env GIT_PAGER (argument to env, not bare prefix)', `env GIT_PAGER='${R}' git log`],
+    ['bare EDITOR prefix', `EDITOR='${R}' git commit`],
+    ['bare GIT_SSH_COMMAND prefix', `GIT_SSH_COMMAND='${R}' git fetch`],
+    ['bare VISUAL prefix (sibling var)', `VISUAL='${R}' git commit`],
+    ['bare GIT_EDITOR prefix (sibling var)', `GIT_EDITOR='${R}' git commit`],
+    // round 2 (probe-consumers-2.mjs) siblings
+    ['GIT_ASKPASS', `GIT_ASKPASS='${R}' git fetch`],
+    ['SSH_ASKPASS', `SSH_ASKPASS='${R}' ssh host`],
+    ['GIT_EXTERNAL_DIFF', `GIT_EXTERNAL_DIFF='${R}' git diff`],
+    ['GIT_SEQUENCE_EDITOR', `GIT_SEQUENCE_EDITOR='${R}' git rebase -i HEAD~2`],
+    ['MANPAGER', `MANPAGER='${R}' man ls`],
+    ['BROWSER', `BROWSER='${R}' gh repo view -w`],
+    ['env -i PAGER (env-argument form survives env its own flags)', `env -i PAGER='${R}' git log`],
+  ]
+  it.each(envVarRows)('%s denies via H8', (_label, cmd) => {
+    const result = decide(bashCall(cmd), {})
+    expect(result.action).toBe('deny')
+    expect(reasonOf(result)).toContain('H8:')
+  })
+
+  it('PAGER assigned an npx form value denies via H5 — round 2 recurses the VALUE through the full pipeline, not just a first-word exact match', () => {
+    const result = decide(bashCall(`PAGER='npx ${R}' git log`), {})
+    expect(result.action).toBe('deny')
+    expect(reasonOf(result)).toContain('H5')
+  })
+
+  it('PAGER assigned a sh -c form value denies via H4', () => {
+    const result = decide(bashCall(`PAGER='sh -c "${R}"' git log`), {})
+    expect(result.action).toBe('deny')
+    expect(reasonOf(result)).toContain('H4:')
+  })
+
+  it('PAGER assigned a ruflo PATH form value denies via H3 (unaffected pre-existing path predicate, now also reachable via the recursion)', () => {
+    const result = decide(bashCall(`PAGER='/opt/x/node_modules/.bin/ruflo' git log`), {})
+    expect(result.action).toBe('deny')
+    expect(reasonOf(result)).toContain('H3')
+  })
+
+  it('GIT_SSH_COMMAND assigned a sh -c form value denies via H4', () => {
+    const result = decide(bashCall(`GIT_SSH_COMMAND='sh -c "${R}"' git fetch`), {})
+    expect(result.action).toBe('deny')
+    expect(reasonOf(result)).toContain('H4:')
+  })
+
+  it('control: PAGER assigned an ordinary pager name allows', () => {
+    expect(decide(bashCall('PAGER=less git log'), {}).action).toBe('allow')
+  })
+
+  it('control: GIT_SSH_COMMAND assigned an ordinary ssh invocation with flags allows', () => {
+    expect(decide(bashCall(`GIT_SSH_COMMAND='ssh -i ~/.ssh/k' git fetch`), {}).action).toBe('allow')
+  })
+})
+
+describe('decide() — SMI-6869 consumer-string: heredoc consumers (make/crontab/at/batch)', () => {
+  it("make -f - fed a heredoc Makefile recipe denies via H4 — the tab-indented recipe line is its own segment after the guard's \\n-splitting", () => {
+    const result = decide(bashCall("make -f - <<'EOF'\nall:\n\t" + R + '\nEOF'), {})
+    expect(result.action).toBe('deny')
+    expect(reasonOf(result)).toContain('H4:')
+  })
+
+  it('crontab - fed a heredoc line denies via H4 — round-3 governance strips the 5 leading schedule fields (M2), so argv[0] genuinely is ruflo once they are gone, not just a bare-name match past position 0', () => {
+    const result = decide(bashCall("crontab - <<'EOF'\n* * * * * " + R + '\nEOF'), {})
+    expect(result.action).toBe('deny')
+    expect(reasonOf(result)).toContain('H4:')
+  })
+
+  it('at now fed a heredoc job body denies via H4', () => {
+    const result = decide(bashCall("at now <<'EOF'\n" + R + '\nEOF'), {})
+    expect(result.action).toBe('deny')
+    expect(reasonOf(result)).toContain('H4:')
+  })
+
+  it('batch fed a heredoc job body denies via H4 (same treatment as at)', () => {
+    const result = decide(bashCall("batch <<'EOF'\n" + R + '\nEOF'), {})
+    expect(result.action).toBe('deny')
+    expect(reasonOf(result)).toContain('H4:')
+  })
+
+  it("printf piped into crontab - denies via H4 — round 2's pipe-producer walk-back resolves the LITERAL printf text, then round-3's schedule-field strip (M2) leaves argv[0] genuinely as ruflo", () => {
+    const result = decide(bashCall(`printf '* * * * * ${R}\\n' | crontab -`), {})
+    expect(result.action).toBe('deny')
+    expect(reasonOf(result)).toContain('H4:')
+  })
+
+  it('control: make with no heredoc reads its real Makefile from disk — out of reach by design, allows', () => {
+    expect(decide(bashCall('make build'), {}).action).toBe('allow')
+  })
+
+  it('control: crontab -l (no heredoc) allows', () => {
+    expect(decide(bashCall('crontab -l'), {}).action).toBe('allow')
+  })
+
+  it('control: crontab -l | crontab - allows — a non-literal producer (crontab itself) yields nothing extracted, never a deny, so ordinary round-tripping usage is unaffected', () => {
+    expect(decide(bashCall('crontab -l | crontab -'), {}).action).toBe('allow')
+  })
+
+  it('C6: a make recipe line prefixed with @ (silence) still denies via H4 — make itself strips @/-/+ before the shell ever sees the line, so this guard must strip them too', () => {
+    const result = decide(bashCall("make -f - <<'EOF'\nall:\n\t@" + R + '\nEOF'), {})
+    expect(result.action).toBe('deny')
+    expect(reasonOf(result)).toContain('H4:')
+  })
+
+  it("C7 (regression): make -f - ruflo with a BENIGN heredoc body still denies via H4b — the heredoc body is an ADDITIONAL place to look, not a replacement for the segment's own argv", () => {
+    const result = decide(
+      bashCall(`make -f - ${R.split(' ')[0]} <<'EOF'\nall:\n\techo hi\nEOF`),
+      {}
+    )
+    expect(result.action).toBe('deny')
+    expect(reasonOf(result)).toContain('H4b')
+  })
+
+  it('C7 (regression): crontab - ruflo with a BENIGN heredoc body still denies via H4b', () => {
+    const result = decide(bashCall(`crontab - ${R.split(' ')[0]} <<'EOF'\n* * * * * date\nEOF`), {})
+    expect(result.action).toBe('deny')
+    expect(reasonOf(result)).toContain('H4b')
+  })
+
+  it('C7 (regression): make -f - -I node_modules/ruflo/bin with a benign heredoc body still denies via H1 — the path-shaped flag value in argv is its own H1 match, independent of the heredoc', () => {
+    const result = decide(
+      bashCall("make -f - -I node_modules/ruflo/bin <<'EOF'\nall:\n\techo hi\nEOF"),
+      {}
+    )
+    expect(result.action).toBe('deny')
+    expect(reasonOf(result)).toContain('H1')
+  })
+
+  it('C7 (regression): crontab - node_modules/.bin/ruflo with a benign heredoc body still denies via H3', () => {
+    const result = decide(
+      bashCall("crontab - node_modules/.bin/ruflo <<'EOF'\n* * * * * date\nEOF"),
+      {}
+    )
+    expect(result.action).toBe('deny')
+    expect(reasonOf(result)).toContain('H3')
+  })
+
+  it('M2: an ordinary crontab install (5 schedule fields + a real command, no ruflo) allows — the schedule fields no longer reach the all-digit arm', () => {
+    expect(
+      decide(bashCall("crontab - <<'EOF'\n0 3 * * * /usr/local/bin/backup.sh\nEOF"), {}).action
+    ).toBe('allow')
+  })
+
+  it('M3: an ordinary make -f - recipe using $(CC)/$@/$< allows — a make-level variable reference at the head is skipped, not denied, since make (not the shell) resolves it to a name this guard cannot see either way', () => {
+    expect(
+      decide(bashCall("make -f - <<'EOF'\napp: main.o\n\t$(CC) -o $@ $<\nEOF"), {}).action
+    ).toBe('allow')
+  })
+
+  it('m5 (control): a SPACE-indented (not tab) Makefile recipe line still denies — this guard strips the prefix on every line rather than only tab-indented ones (GNU make lets .RECIPEPREFIX change the character), so over-scanning here costs at worst an over-deny on a Makefile make itself would reject as "missing separator"', () => {
+    const result = decide(bashCall("make -f - <<'EOF'\nall:\n    " + R + '\nEOF'), {})
+    expect(result.action).toBe('deny')
+    expect(reasonOf(result)).toContain('H4:')
   })
 })
 

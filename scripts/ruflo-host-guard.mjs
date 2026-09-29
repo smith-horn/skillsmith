@@ -63,11 +63,14 @@ import {
   checkRunnerVariableArgument,
   denyInternalError,
   denyMalformedInput,
-  denyStartDaemon,
   denyWith,
+  isReadOnlyNpmForm,
   isSanctionedDockerExec,
   isSanctionedNpmForm,
 } from './lib/ruflo-host-guard-predicates.mjs'
+import { decideHooksSessionStart } from './lib/ruflo-host-guard-verdicts.mjs'
+import { checkUnresolvedCommand } from './lib/ruflo-host-guard-unresolved.mjs'
+import { extractConsumerTexts, extractExecEnvVarTexts } from './lib/ruflo-host-guard-consumers.mjs'
 
 /**
  * Real statement separators for THIS guard's own segmentation — unlike
@@ -144,59 +147,6 @@ function checkEvalPredicate(wordTokens, depth) {
 }
 
 /**
- * A fix (SMI-6744 Wave 4 governance round) — fail-closed fall-through,
- * closing H-1/H-2/H-5/H-7/L-1/M-6 at the MECHANISM level rather than
- * one-off per instance. Once wrappers/launchers are peeled and Stage 1
- * has not matched, argv[0] must be a REAL, resolvable command name for
- * the H1–H8 predicates below to mean anything: a launcher's own arity
- * table, or a wrapper's own flag-skipping, can be mis-modelled against a
- * command this guard never actually gets to see — in that case the
- * "residual" argv evaluated below is not the command the shell will
- * actually run, and every H-predicate tests the WRONG thing. Denies when:
- *   - the residual argv is EMPTY (a launcher/wrapper claimed the whole
- *     rest of argv was its own flags) — UNLESS every raw token in this
- *     segment was itself `VAR=val`-shaped, meaning there never was a
- *     command here to lose (a bare `FOO=bar` statement is genuinely
- *     empty, not mis-modelled; `V=ru; npx "${V}flo" …`'s own first
- *     segment is exactly this shape, and must stay allowed so the
- *     SECOND segment's own H8(ii) denial is the one this guard reports);
- *   - argv[0] is `--` (a stray separator with nothing after it);
- *   - argv[0] is a bare, all-digit token (a launcher's arity table
- *     over-consumed a real command name, leaving only its own numeric
- *     argument, e.g. a mis-modelled `chrt`/`timeout` positional);
- *   - argv[0] is a `/dev/*` path (a launcher's own output-file argument
- *     mistaken for a command);
- *   - argv[0]'s own token carries `$` in `.value` or a non-empty `.subs`
- *     — an UNRESOLVABLE command name this guard cannot statically
- *     resolve (the motivating case: `NPX=npx; $NPX ruflo …`).
- * A mis-modelled arity must never fall through to an ALLOW.
- * @param {string[]} rawValues pre-strip word values for this segment
- * @param {string[]} normalizedArgv post wrapper/launcher-peel argv
- * @param {Array<{value: string, subs?: string[]}>} alignedTokens original
- *   tokens aligned to `normalizedArgv` (see `tokensForArgv`)
- */
-function checkUnresolvedCommand(rawValues, normalizedArgv, alignedTokens) {
-  if (normalizedArgv.length === 0) {
-    const allAssignments =
-      rawValues.length > 0 && rawValues.every((v) => /^[A-Za-z_][A-Za-z0-9_]*=/.test(v))
-    if (allAssignments) return null
-    return denyWith('unresolved-command', '(empty residual command after wrapper/launcher peeling)')
-  }
-  const head = normalizedArgv[0]
-  const headToken = alignedTokens[0]
-  if (head === '--') return denyWith('unresolved-command', head)
-  if (/^[0-9]+$/.test(head)) return denyWith('unresolved-command', head)
-  if (head.startsWith('/dev/')) return denyWith('unresolved-command', head)
-  if (
-    headToken &&
-    (headToken.value.includes('$') || (headToken.subs && headToken.subs.length > 0))
-  ) {
-    return denyWith('unresolved-command', headToken.value)
-  }
-  return null
-}
-
-/**
  * Evaluate one segment (a raw, un-split-on-brace token list: word tokens
  * interleaved with any surviving `{`/`}` op tokens). Order matters — see
  * the plan's Stage 0/1/2 structure, reordered by the M-C governance-round
@@ -212,6 +162,9 @@ function checkUnresolvedCommand(rawValues, normalizedArgv, alignedTokens) {
  *   1b. brace-syntax fail-closed check (needs the RAW token list)
  *   2. H9 (eval) — before wrapper normalization
  *   3. H8(i) — pre-strip assignment-value check
+ *   3b. (SMI-6869) `extractExecEnvVarTexts` — an `EXEC_ENV_VARS` assignment's
+ *      VALUE recursed as real shell text; H8(i) above is a verdict-redundant
+ *      cheap early deny for the same shapes (see its own docblock)
  *   4. H-B/H-3 — `env -S`/`--split-string` (before wrapper normalization
  *      mishandles it as an ordinary flag value)
  *   5. wrapper normalization (exec/launcher/docker-container-exec-aware/
@@ -226,30 +179,59 @@ function checkUnresolvedCommand(rawValues, normalizedArgv, alignedTokens) {
  *      deliberately AFTER H1–H7/H8(ii): those already close an inline
  *      `-e`/`-c` argument that spells a path-shaped substring, so this
  *      only needs to catch what they don't (a bare quoted name, no path)
+ *   11a. (SMI-6869) `extractConsumerTexts` — awk/sed/ssh/git/vim/tmux/
+ *      screen/expect/sqlite3/psql/osascript, whose OWN arguments (or a
+ *      config value they write) embed a string that PROGRAM will itself
+ *      hand to a shell or spawn as a new process. Checked AFTER H-8, same
+ *      rationale: a narrower predicate above may already have closed the
+ *      same argv. See `scripts/lib/ruflo-host-guard-consumers.mjs`'s own
+ *      docblock.
  *   12. (M-6) bare-name inversion — LAST, the most general fallback,
  *      closing a bare `ruflo` past argv[0] in front of an unmodelled
  *      launcher (`ssh`/`watch`/`flock`/`strace`/…) that nothing above
  *      already denies
+ *
+ * SMI-6869 Fix A/B/C additions: a redirect-marked word token (`2>&1`,
+ * `>/dev/null`) is excluded from `wordTokens`/argv wherever this file
+ * builds it — it is never real command argv (Fix A). A `heredoc`-type
+ * token's own `.subs` are recursed into unconditionally alongside `.word`
+ * subs (step 0) — an UNQUOTED heredoc's `$(...)`/backtick spans are
+ * expanded by the CURRENT shell regardless of which command consumes the
+ * heredoc body, so they execute even when that body is otherwise inert
+ * data (Fix B). `embedded` (default false, Fix C) gates three groups of
+ * this function's own arms — `checkUnresolvedCommand`'s empty-residual,
+ * all-digit, `/dev/` path and `$`-in-head arms, the `unreadable-shell-input`
+ * shell-fed-deny arm, and the bare-name-inversion check — off when
+ * evaluating INTERPRETER PROGRAM SOURCE, since those arms presume the
+ * text is a real shell command line. It is set true at exactly THREE sites
+ * (round-4 correction — an earlier version of this doc said "two"), all
+ * program-source entrances: the interpreter-stdin branch of the shell-fed
+ * step (an interpreter's own heredoc, or a pipe into one), the H-8
+ * inline-flag recursion below, and the consumer-string step's own
+ * `kind === 'source'` recursion further below. Every route that extracts
+ * genuine shell text (`$()`, backticks, `eval`, `env -S`, a shell's `-c`,
+ * text fed to a shell) recurses non-embedded.
  * @param {Array<{type: string, value?: string, subs?: string[]}>} segmentTokens
  * @param {number} depth
  * @param {Array<{tokens: Array<object>, precedingOp: string|null}>} segments
  *   every segment of the FULL command, in order
  * @param {number} segmentIndex this segment's own index into `segments`
+ * @param {boolean} [embedded]
  */
-function evaluateGuardSegment(segmentTokens, depth, segments, segmentIndex) {
+function evaluateGuardSegment(segmentTokens, depth, segments, segmentIndex, embedded = false) {
   for (const tok of segmentTokens) {
-    if (tok.type !== 'word') continue
+    if (tok.type !== 'word' && tok.type !== 'heredoc') continue
     for (const sub of tok.subs ?? []) {
       const nestedVerdict = evaluateGuardCommand(sub, depth + 1)
       if (nestedVerdict) return nestedVerdict
     }
   }
 
-  const firstWord = segmentTokens.find((t) => t.type === 'word')
+  const firstWord = segmentTokens.find((t) => t.type === 'word' && !t.redirect)
   const wordTokens =
     firstWord && basenameOf(firstWord.value) === 'xargs'
       ? restoreXargsReplacementWordTokens(segmentTokens)
-      : segmentTokens.filter((t) => t.type === 'word')
+      : segmentTokens.filter((t) => t.type === 'word' && !t.redirect)
   if (wordTokens.length === 0) return null
   const rawValues = wordTokens.map((t) => t.value)
 
@@ -264,6 +246,17 @@ function evaluateGuardSegment(segmentTokens, depth, segments, segmentIndex) {
   const h8iVerdict = checkAssignmentValuePredicate(wordTokens)
   if (h8iVerdict) return h8iVerdict
 
+  // SMI-6869 round 2: an EXEC_ENV_VARS assignment's VALUE is real shell
+  // text a downstream program execs — recurse it non-embedded, same as an
+  // `env -S` body. Runs on the SAME pre-strip wordTokens as H8(i) above.
+  const execEnvTexts = extractExecEnvVarTexts(wordTokens)
+  if (execEnvTexts) {
+    for (const { text } of execEnvTexts) {
+      const nestedEnvVerdict = evaluateGuardCommand(text, depth + 1)
+      if (nestedEnvVerdict) return nestedEnvVerdict
+    }
+  }
+
   const envSplitNested = detectEnvSplitString(rawValues)
   if (envSplitNested !== null) return evaluateGuardCommand(envSplitNested, depth + 1)
 
@@ -272,16 +265,43 @@ function evaluateGuardSegment(segmentTokens, depth, segments, segmentIndex) {
 
   const argvLower = normalizedArgv.map((s) => s.toLowerCase())
   if (isSanctionedNpmForm(argvLower)) return null
+  // SMI-6869 Fix D: read-only npm subcommands (ls/view/explain/…), checked
+  // here (before H1–H7) so H5's blunt runner-token scan never reaches
+  // them; npm's own executing forms (exec/x/run) are untouched by this.
+  if (isReadOnlyNpmForm(argvLower)) return null
 
   const alignedTokens = tokensForArgv(wordTokens, normalizedArgv)
 
-  const unresolvedVerdict = checkUnresolvedCommand(rawValues, normalizedArgv, alignedTokens)
+  const unresolvedVerdict = checkUnresolvedCommand(
+    rawValues,
+    normalizedArgv,
+    alignedTokens,
+    embedded
+  )
   if (unresolvedVerdict) return unresolvedVerdict
 
   const shellFedResult = findShellFedLiteralText(argvLower, segmentTokens, segments, segmentIndex)
   if (shellFedResult) {
-    if (shellFedResult.deny) return denyWith('unreadable-shell-input', shellFedResult.token)
-    return evaluateGuardCommand(shellFedResult.text, depth + 1)
+    if (shellFedResult.deny) {
+      if (!embedded) return denyWith('unreadable-shell-input', shellFedResult.token)
+      // embedded: an "unreadable pipeline producer" heuristic doesn't
+      // mean anything against inline script text — skip this arm only,
+      // fall through to the remaining checks below.
+    } else if (shellFedResult.embedded) {
+      // an interpreter's stdin is PROGRAM SOURCE, not a shell command line
+      if (INLINE_SCRIPT_BARE_NAME_RE.test(shellFedResult.text)) {
+        return denyWith('H8-script', shellFedResult.text)
+      }
+      const nested = evaluateGuardCommand(shellFedResult.text, depth + 1, true)
+      if (nested) return nested
+    } else if (shellFedResult.continueOnAllow) {
+      // a heredoc CONSUMER's body is an EXTRA place to look, not a replacement
+      // for its own argv — see `ruflo-host-guard-heredoc-consumers.mjs`.
+      const nestedFed = evaluateGuardCommand(shellFedResult.text, depth + 1)
+      if (nestedFed) return nestedFed
+    } else {
+      return evaluateGuardCommand(shellFedResult.text, depth + 1)
+    }
   }
 
   const scanArgvLower = rawValues.map((s) => s.toLowerCase())
@@ -306,8 +326,46 @@ function evaluateGuardSegment(segmentTokens, depth, segments, segmentIndex) {
     if (INLINE_SCRIPT_BARE_NAME_RE.test(inlineScriptText)) {
       return denyWith('H8-script', inlineScriptText)
     }
-    const nestedScriptVerdict = evaluateGuardCommand(inlineScriptText, depth + 1)
+    // SMI-6869 Fix C: this text is program source (JS/Python/…), not a
+    // shell command line — evaluate it in embedded mode. This is one of
+    // THREE program-source entrances that set embedded true (round-4
+    // correction — an earlier version of this comment said "two", but the
+    // consumer-string step's OWN `kind === 'source'` recursion below has
+    // been a third since that family's awk/vim/expect source-kind entries
+    // were introduced): the interpreter-stdin branch of the shell-fed step
+    // above (round 1), this H-8 inline-script recursion, and the
+    // consumer-string `kind === 'source'` recursion a few lines down; every
+    // other recursive call in this file evaluates real shell text and
+    // stays non-embedded.
+    const nestedScriptVerdict = evaluateGuardCommand(inlineScriptText, depth + 1, true)
     if (nestedScriptVerdict) return nestedScriptVerdict
+  }
+
+  // SMI-6869 consumer-string family — awk/sed/ssh/git/vim/tmux/screen/
+  // expect (see ruflo-host-guard-consumers.mjs). Each extracted text is
+  // either 'shell' (recursed non-embedded, the same treatment a nested
+  // `-c` body gets) or 'source' (tested against INLINE_SCRIPT_BARE_NAME_RE,
+  // then recursed embedded — exactly the H-8 pattern immediately above).
+  const consumerTexts = extractConsumerTexts(
+    normalizedArgv,
+    alignedTokens,
+    segmentTokens,
+    segments,
+    segmentIndex
+  )
+  if (consumerTexts) {
+    for (const { text, kind } of consumerTexts) {
+      if (kind === 'source') {
+        if (INLINE_SCRIPT_BARE_NAME_RE.test(text)) {
+          return denyWith('H8-script', text)
+        }
+        const nestedSourceVerdict = evaluateGuardCommand(text, depth + 1, true)
+        if (nestedSourceVerdict) return nestedSourceVerdict
+      } else {
+        const nestedShellVerdict = evaluateGuardCommand(text, depth + 1)
+        if (nestedShellVerdict) return nestedShellVerdict
+      }
+    }
   }
 
   // (M-6) bare-name inversion — checked LAST, as the most general
@@ -317,9 +375,13 @@ function evaluateGuardSegment(segmentTokens, depth, segments, segmentIndex) {
   // predicate label (measured: several A-row/H-5/L-D census rows
   // regressed to `H4b` when this ran earlier). This closes what NONE of
   // them do: a bare `ruflo` in front of an unmodelled launcher
-  // (`ssh`/`watch`/`flock`/`strace`/…).
-  const bareNameVerdict = checkBareNameInversion(argvLower)
-  if (bareNameVerdict) return bareNameVerdict
+  // (`ssh`/`watch`/`flock`/`strace`/…). Skipped when embedded (SMI-6869
+  // Fix C) — program source text is not shaped like "a launcher followed
+  // by a bare command name".
+  if (!embedded) {
+    const bareNameVerdict = checkBareNameInversion(argvLower)
+    if (bareNameVerdict) return bareNameVerdict
+  }
 
   return null
 }
@@ -334,8 +396,20 @@ function evaluateGuardSegment(segmentTokens, depth, segments, segmentIndex) {
  * Specification "Failure posture").
  * @param {string} commandText
  * @param {number} depth
+ * @param {boolean} [embedded] SMI-6869 Fix C — true only when `commandText`
+ *   is inline interpreter/consumer-string program source, not a real shell
+ *   command line; see `evaluateGuardSegment`'s own doc. Applies uniformly to
+ *   every segment of `commandText` (all of it is the same embedded program
+ *   source), but is NOT inherited by any recursive `evaluateGuardCommand`
+ *   call this function's segments make for genuinely nested shell text
+ *   (subs, heredoc subs, eval, `env -S`, a nested shell body, shell-fed
+ *   text) — embedded mode is entered only from THREE recursion sites
+ *   (round-4 correction — an earlier version of this doc said "the one H-8
+ *   recursion site"): the shell-fed step's interpreter-stdin branch, the
+ *   H-8 inline-script recursion, and the consumer-string step's own
+ *   `kind === 'source'` recursion.
  */
-function evaluateGuardCommand(commandText, depth) {
+function evaluateGuardCommand(commandText, depth, embedded = false) {
   if (depth > MAX_DEPTH) {
     return denyInternalError('recursion depth cap exceeded while unwrapping nested shell text')
   }
@@ -343,26 +417,10 @@ function evaluateGuardCommand(commandText, depth) {
   const tokens = tokenize(commandText)
   const segments = splitSegments(tokens)
   for (let i = 0; i < segments.length; i++) {
-    const verdict = evaluateGuardSegment(segments[i].tokens, depth, segments, i)
+    const verdict = evaluateGuardSegment(segments[i].tokens, depth, segments, i, embedded)
     if (verdict) return verdict
   }
   return null
-}
-
-/**
- * `mcp__ruflo__hooks_session-start`'s `startDaemon` gate (SMI-6854, design
- * § "SMI-6854"). Allow only when `tool_input` is a plain object and
- * `startDaemon` is absent or strictly `false`; deny every other present
- * value. A missing/malformed `tool_input` follows the runtime fail-closed
- * rule (round 1 finding 5).
- * @param {unknown} toolInput
- */
-function decideHooksSessionStart(toolInput) {
-  if (toolInput === null || typeof toolInput !== 'object' || Array.isArray(toolInput)) {
-    return denyMalformedInput('mcp__ruflo__hooks_session-start requires an object tool_input')
-  }
-  if (!('startDaemon' in toolInput) || toolInput.startDaemon === false) return ALLOW
-  return denyStartDaemon(toolInput.startDaemon)
 }
 
 /**

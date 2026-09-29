@@ -20,14 +20,19 @@ import {
   basenameOf,
   hasInlineScriptFlag,
   INLINE_SCRIPT_LONG_FLAGS,
+  SHELL_COMMANDS,
   tokenize,
 } from './shell-command-normalize.mjs'
-
-/** Recognized shell wrappers — mirrors `shell-command-normalize.mjs`'s own `SHELL_COMMANDS`. */
-const SHELL_COMMANDS = new Set(['bash', 'sh', 'zsh', 'dash', 'ksh'])
+import { decodeShellEscapes } from './shell-escape-decode.mjs'
+import {
+  HEREDOC_CONSUMER_BASENAMES,
+  normalizeHeredocConsumerBody,
+} from './ruflo-host-guard-heredoc-consumers.mjs'
 
 /**
- * M-2 fix (SMI-6744 Wave 4 governance round): decodes printf(1)'s own
+ * M-2 fix (SMI-6744 Wave 4 governance round), broadened by the C1 delta-
+ * round fix to call the SHARED `decodeShellEscapes` (`shell-escape-
+ * decode.mjs`) instead of its own bespoke regex: decodes printf(1)'s own
  * `\xHH` (hex byte), `\NNN` (1-3 digit octal), and the GNU printf
  * `\uHHHH`/`\UHHHHHHHH` (Unicode) escapes, so text piped through
  * `printf '<encoded>' | bash` surfaces as the command printf will
@@ -35,21 +40,18 @@ const SHELL_COMMANDS = new Set(['bash', 'sh', 'zsh', 'dash', 'ksh'])
  * this guard's tokenizer captures verbatim from printf's own single-
  * quoted argument (single quotes never process escapes, so `\x6e\x70\x78`
  * reaches this guard as those 12 literal characters, not the 3 bytes
- * `npx`). Deliberately minimal: `\n`/`\t`/etc are left alone since they
- * cannot themselves spell out a runner/path token.
+ * `npx`). The ORIGINAL fix here was deliberately minimal (`\n`/`\t`/etc
+ * left alone, since they cannot themselves spell out a runner/path token)
+ * but had its own bespoke regex that could silently diverge from the
+ * ANSI-C `$'...'` tokenizer branch's table — now both call the same
+ * function, so bash's `printf` builtin's own `\n`/`\t`/`\a`/`\cX`/etc
+ * escapes decode too (a strictly more conservative superset: it can only
+ * make this guard MORE willing to recognize a disguised invocation, never
+ * less).
  * @param {string} s
  */
 function decodePrintfEscapes(s) {
-  return s.replace(
-    /\\x([0-9a-fA-F]{1,2})|\\u([0-9a-fA-F]{4})|\\U([0-9a-fA-F]{8})|\\([0-7]{1,3})/g,
-    (whole, hex, u4, u8, oct) => {
-      if (hex !== undefined) return String.fromCharCode(parseInt(hex, 16))
-      if (u4 !== undefined) return String.fromCodePoint(parseInt(u4, 16))
-      if (u8 !== undefined) return String.fromCodePoint(parseInt(u8, 16))
-      if (oct !== undefined) return String.fromCharCode(parseInt(oct, 8))
-      return whole
-    }
-  )
+  return decodeShellEscapes(s)
 }
 
 /**
@@ -66,6 +68,56 @@ function literalTextFromProducerWords(head, words) {
   if (args.length === 0) return null
   const joined = args.join(' ')
   return head === 'printf' ? decodePrintfEscapes(joined) : joined
+}
+
+/**
+ * Round-3 governance follow-up (M5, process-substitution form): the LITERAL
+ * producer shapes this guard can read statically without executing
+ * anything -- `echo`/`printf`'s own positional arguments, or a `cat`/`echo`/
+ * `printf` producer's OWN attached heredoc (which it relays verbatim).
+ * Factored out of `resolveShellFedProducer`'s own inline checks so a
+ * `<(...)` process substitution's inner command (which is never part of a
+ * `segments` pipeline the way a producer segment is) can share the exact
+ * same "is this literal" definition via `resolveProcessSubstitutionText`
+ * below, rather than drifting into a second, subtly different one.
+ * @param {string} head basename of the producer's own argv[0]
+ * @param {Array<{value: string}>} words the producer's own word tokens
+ * @param {Array<{value: string|null}>} heredocToks any heredoc tokens
+ *   attached to the SAME segment/token list as `words`
+ * @returns {string | null} null means "not a literal producer", not "empty"
+ */
+function literalProducerText(head, words, heredocToks) {
+  if (heredocToks.length > 0 && (head === 'cat' || head === 'echo' || head === 'printf')) {
+    return heredocToks.map((t) => t.value ?? '').join('\n')
+  }
+  if (head === 'echo' || head === 'printf') {
+    return literalTextFromProducerWords(head, words)
+  }
+  return null
+}
+
+/**
+ * Round-3 governance follow-up (M5, process-substitution form): resolves
+ * the literal text (if any) a `<(...)` process substitution's OWN inner
+ * command would write to its read end -- the exact same three literal-
+ * producer shapes `resolveShellFedProducer` recognizes for a pipe producer,
+ * reused here so `bash <(echo '...')` (already handled below) and the
+ * awk/sed extractors' own `-f <(...)`/`--file=<(...)` handling
+ * (`ruflo-host-guard-consumers-awksed.mjs`) share one definition of
+ * "literal producer" instead of two that could silently diverge.
+ * @param {string} subText the substitution's own inner text — a WORD
+ *   token's `.subs` entry, already stripped of the `<(`/`)` wrapper by the
+ *   tokenizer (SMI-6744: `$(...)`/`<(...)`/`>(...)` all record their inner
+ *   text into `.subs` identically).
+ * @returns {string | null}
+ */
+export function resolveProcessSubstitutionText(subText) {
+  const innerTokens = tokenize(subText)
+  const innerWords = innerTokens.filter((t) => t.type === 'word' && !t.redirect)
+  if (innerWords.length === 0) return null
+  const innerHeredocs = innerTokens.filter((t) => t.type === 'heredoc')
+  const innerHead = basenameOf(innerWords[0].value)
+  return literalProducerText(innerHead, innerWords, innerHeredocs)
 }
 
 /**
@@ -98,7 +150,11 @@ const PASS_THROUGH_HEADS = new Set(['tee', 'cat'])
  */
 function resolveShellFedProducer(segments, index) {
   if (index < 0) return { text: null }
-  let words = segments[index].tokens.filter((t) => t.type === 'word')
+  const segTokens = segments[index].tokens
+  // SMI-6869 Fix A: a redirect-marked word token is never part of this
+  // producer's own argv (a trailing `cat file 2>/dev/null` must still
+  // resolve `cat`'s real args, not the redirect's own target).
+  let words = segTokens.filter((t) => t.type === 'word' && !t.redirect)
   if (words.length === 0) return { text: null }
 
   if (basenameOf(words[0].value) === 'stdbuf') {
@@ -110,6 +166,27 @@ function resolveShellFedProducer(segments, index) {
 
   const head = basenameOf(words[0].value)
 
+  // SMI-6869 Fix B: a `cat`/`echo`/`printf` producer whose OWN segment
+  // carries a heredoc (`cat <<'EOF' | bash`) relays that heredoc's body
+  // verbatim to its stdout — the literal text a downstream bare shell
+  // actually receives, taking priority over any of the command's own
+  // positional arguments (a heredoc redirect on one of these three would
+  // never realistically appear alongside them, but if it did, the
+  // heredoc is what actually reaches the pipe).
+  const heredocToks = segTokens.filter((t) => t.type === 'heredoc')
+  if (heredocToks.length > 0 && (head === 'cat' || head === 'echo' || head === 'printf')) {
+    return { text: heredocToks.map((t) => t.value ?? '').join('\n') }
+  }
+
+  // NOTE: deliberately NOT routed through the shared `literalProducerText`
+  // (round-3 governance M5 follow-up) — this arm's contract is "always
+  // return `{text}`, even when `text` is null" (a recognized-but-empty
+  // echo/printf producer is NOT the same as an unrecognized one three lines
+  // below, which must return the bare `null` that signals "unreadable,
+  // deny"). `literalProducerText` returns a bare `null` for BOTH cases,
+  // which is the right contract for `resolveProcessSubstitutionText` (a
+  // `<(...)`'s own inner command is either literal or it silently
+  // contributes nothing) but would collapse this distinction here.
   if (head === 'echo' || head === 'printf') {
     const text = literalTextFromProducerWords(head, words)
     return { text }
@@ -169,7 +246,63 @@ function resolveShellFedProducer(segments, index) {
  *   case) for the caller to turn into a verdict, or null (nothing found)
  */
 export function findShellFedLiteralText(argvLower, segmentTokens, segments, segmentIndex) {
-  if (!SHELL_COMMANDS.has(basenameOf(argvLower[0] ?? ''))) return null
+  const head0 = basenameOf(argvLower[0] ?? '')
+  const isShell = SHELL_COMMANDS.has(head0)
+  const isInterp = isInlineInterpreterBasename(head0)
+  const isHeredocConsumer = HEREDOC_CONSUMER_BASENAMES.has(head0)
+  if (!isShell && !isInterp && !isHeredocConsumer) return null
+
+  // SMI-6869 Fix B: a heredoc redirected directly onto THIS segment's own
+  // stdin is what the consumer actually executes. ALL heredocs on the line
+  // are evaluated, not just the first: real Bash's LAST stdin redirection
+  // wins, so picking the first silently skipped the live one.
+  const ownHeredocs = segmentTokens.filter((t) => t.type === 'heredoc')
+  if (ownHeredocs.length > 0) {
+    const raw = ownHeredocs.map((t) => t.value ?? '').join('\n')
+    // Round-3 governance fix: `continueOnAllow` — for a heredoc CONSUMER the
+    // body is an ADDITIONAL place to look, not a replacement for this
+    // segment's own argv. Without the flag the caller `return`ed the body's
+    // verdict outright, so a benign body short-circuited H1–H7, the
+    // consumer step and the bare-name inversion for the segment itself:
+    // `make -f - ruflo <<'EOF'…EOF` and `crontab - ruflo <<'EOF'…EOF` both
+    // denied (H4b) BEFORE this commit and reached ALLOW after it — the two
+    // regressions this flag removes. Shells and interpreters keep the
+    // original replace-outright semantics (the body IS what they run).
+    return {
+      text: isHeredocConsumer ? normalizeHeredocConsumerBody(head0, raw) : raw,
+      embedded: isInterp,
+      continueOnAllow: isHeredocConsumer,
+    }
+  }
+  if (isHeredocConsumer) {
+    // SMI-6869 round 2: a pipe-fed literal producer (echo/printf/a cat
+    // relaying its own heredoc) supplies text the same way it does for a
+    // bare shell below -- but an unreadable/non-literal producer means
+    // "nothing extracted", not "deny" (see this function's own docblock).
+    if (segments[segmentIndex]?.precedingOp === '|' && segmentIndex > 0) {
+      const resolved = resolveShellFedProducer(segments, segmentIndex - 1)
+      if (resolved !== null && resolved.text !== null) {
+        return {
+          text: normalizeHeredocConsumerBody(head0, resolved.text),
+          continueOnAllow: true,
+        }
+      }
+    }
+    // No heredoc and no literal pipe producer: make/crontab/at/batch read
+    // their real Makefile/crontab/job file from disk, out of reach by
+    // design (same posture as a shell's own `source f`/`sh <file>`).
+    return null
+  }
+  if (isInterp) {
+    // an interpreter fed by a pipe reads its PROGRAM from stdin
+    if (segments[segmentIndex]?.precedingOp === '|' && segmentIndex > 0) {
+      const resolved = resolveShellFedProducer(segments, segmentIndex - 1)
+      if (resolved !== null && resolved.text !== null) {
+        return { text: resolved.text, embedded: true }
+      }
+    }
+    return null
+  }
 
   if (segments[segmentIndex]?.precedingOp === '|' && segmentIndex > 0) {
     const resolved = resolveShellFedProducer(segments, segmentIndex - 1)
@@ -190,15 +323,16 @@ export function findShellFedLiteralText(argvLower, segmentTokens, segments, segm
     if (val.startsWith('<<<') && val.length > 3) return { text: val.slice(3) }
   }
 
+  // Round-3 governance follow-up (M5, process-substitution form): shares
+  // `resolveProcessSubstitutionText`'s definition of "literal producer"
+  // with the awk/sed extractors' own `-f <(...)` handling — a strict
+  // superset of the original echo/printf-only check (now also resolves a
+  // `cat`-with-its-own-heredoc producer, e.g. `bash <(cat <<'EOF' …
+  // EOF)`), so nothing this already caught stops being caught.
   for (const t of words) {
     for (const sub of t.subs ?? []) {
-      const innerWords = tokenize(sub).filter((tk) => tk.type === 'word')
-      if (innerWords.length === 0) continue
-      const innerHead = basenameOf(innerWords[0].value)
-      if (innerHead === 'echo' || innerHead === 'printf') {
-        const text = literalTextFromProducerWords(innerHead, innerWords)
-        if (text !== null) return { text }
-      }
+      const text = resolveProcessSubstitutionText(sub)
+      if (text !== null) return { text }
     }
   }
 
@@ -234,7 +368,8 @@ export function restoreXargsReplacementWordTokens(segmentTokens) {
   const result = []
   for (let i = 0; i < segmentTokens.length; i++) {
     const tok = segmentTokens[i]
-    if (tok.type !== 'word') continue
+    // SMI-6869 Fix A: a redirect-marked word token is never real argv.
+    if (tok.type !== 'word' || tok.redirect) continue
     result.push(tok)
     if (tok.value !== '-I' && tok.value !== '-i') continue
     const next = segmentTokens[i + 1]
@@ -269,6 +404,19 @@ const INLINE_SCRIPT_SHORT_FLAG_CHARS = {
 
 function isPythonBasename(base) {
   return /^python[0-9]*(\.[0-9]+)?$/.test(base)
+}
+
+/** Interpreters that execute a program read from their own stdin. */
+export function isInlineInterpreterBasename(base) {
+  return (
+    isPythonBasename(base) ||
+    base === 'node' ||
+    base === 'nodejs' ||
+    base === 'perl' ||
+    base === 'ruby' ||
+    base === 'php' ||
+    base === 'bun'
+  )
 }
 
 /**
