@@ -735,6 +735,42 @@ describe('decide() — SMI-6869 governance round 12 F4 controls: a comment does 
   })
 })
 
+// Round 13 (the confirmation gate): a computed reader's ARGUMENTS are opened
+// like any other argument's substitutions, and the head check runs on the
+// wrapper-peeled argv, so a wrapper in front of a computed reader does not
+// hide it. Before this fix the head check saw `sudo`/`docker` as the head
+// and read a tail substitution as the literal text `$(echo .env)`.
+describe('decide() — SMI-6869 round 13: a computed reader is judged after wrapper peeling, with its tail substitutions opened', () => {
+  it.each([
+    '$(echo cat) $(echo .env)',
+    '$(echo cat) "$(echo /app/.env)"',
+    '$(echo cat) $(echo $(echo .env))',
+    'sudo $(echo cat) .env',
+    'sudo $(echo cat) $(echo .env)',
+    'docker exec skillsmith-dev-1 $(echo cat) /app/.env',
+    'varlock run -- $(echo cat) /app/.env',
+  ])('%s -> deny', (command) => {
+    expect(decide(bashCall(command), {}).action).toBe('deny')
+  })
+
+  it.each([
+    '$(echo ls) $(echo .env.example)',
+    'sudo $(echo ls) .env.example',
+    '$(echo cat) $(echo README.md)',
+    'sudo $(echo cat) README.md',
+    "grep -qE '^KEY=' .env",
+  ])('control: %s -> allow', (command) => {
+    expect(decide(bashCall(command), {}).action).toBe('allow')
+  })
+
+  it.each(['$(echo cat) .env', 'sudo cat .env', 'docker exec skillsmith-dev-1 cat /app/.env'])(
+    'known-positive control: %s -> deny',
+    (command) => {
+      expect(decide(bashCall(command), {}).action).toBe('deny')
+    }
+  )
+})
+
 describe('decide() — SKILLSMITH_ENV_READ_GUARD_DISABLE hard-disable', () => {
   it('a command that would normally deny is allowed when the disable var is set', () => {
     const result = decide(bashCall('grep PAT .env'), { SKILLSMITH_ENV_READ_GUARD_DISABLE: '1' })

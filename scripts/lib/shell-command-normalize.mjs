@@ -395,20 +395,44 @@ export function flattenSubWords(words, depth = 0) {
  * 2. The shape this guard has always caught: the body prints its OWN
  *    name, found by re-running the caller's own `checkArgv` with the
  *    body's HEAD word swapped in for the unresolved argv[0].
- * @param {Array<{value: string, subs?: string[]}>} argvWords
+ * @param {Array<{value: string, subs?: string[]}>} argvWords the segment's
+ *   words BEFORE wrapper peeling (the peeled argv is aligned to them here)
+ * @param {string[]} normalizedArgv the caller's wrapper-peeled argv values
  * @param {(arg: string) => T | null} checkFlaggedArg returns the caller's
  *   own violation shape for a flagged tail argument, or null
  * @param {(argv: string[]) => T | null} checkArgv the caller's own per-argv check
+ * @param {() => T} onTruncated the caller's fail-closed violation when the
+ *   tail's substitutions nest past `MAX_DEPTH`
  * @returns {T | null}
  */
-export function checkUnresolvedHeadTail(argvWords, checkFlaggedArg, checkArgv) {
-  if (argvWords.length === 0 || (argvWords[0].subs?.length ?? 0) === 0) return null
-  const tailArgs = argvWords.slice(1).map((w) => w.value)
+export function checkUnresolvedHeadTail(
+  argvWords,
+  normalizedArgv,
+  checkFlaggedArg,
+  checkArgv,
+  onTruncated
+) {
+  // Wrapper peeling (`normalizeWrappers`) only ever strips a PREFIX, so the
+  // normalized argv is a suffix of the words: align to it, so that
+  // `sudo $(echo cat) .env` is judged by its real head and not by `sudo`.
+  const offset = argvWords.length - normalizedArgv.length
+  const aligned =
+    offset > 0 && normalizedArgv.every((v, i) => argvWords[offset + i]?.value === v)
+      ? argvWords.slice(offset)
+      : argvWords
+  if (aligned.length === 0 || (aligned[0].subs?.length ?? 0) === 0) return null
+  // A tail argument that is itself a substitution supplies its OUTPUT, so
+  // its body's words (at any depth) are this unnamed command's arguments
+  // too: `$(echo cat) $(echo .env)`.
+  const tailWords = aligned.slice(1)
+  const tailFlat = flattenSubWords(tailWords)
+  if (tailFlat.truncated) return onTruncated()
+  const tailArgs = [...tailWords.map((w) => w.value), ...tailFlat.words]
   for (const a of tailArgs) {
     const flagged = checkFlaggedArg(a)
     if (flagged) return flagged
   }
-  for (const s of argvWords[0].subs) {
+  for (const s of aligned[0].subs) {
     const head = tokenize(s).find((t) => t.type === 'word' && !t.redirect)
     if (!head) continue
     const violation = checkArgv([head.value, ...tailArgs])

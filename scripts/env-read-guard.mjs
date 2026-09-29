@@ -383,13 +383,15 @@ function evaluateCommand(command, depth) {
         ? evaluateCommand(nested, depth + 1)
         : checkArgv(subWords.length > 0 ? argv.concat(subWords) : argv)
     if (violation) return violation
-    // An argv[0] that is itself a substitution leaves the command name
-    // unresolved for this segment; see `checkUnresolvedHeadTail`'s own doc
-    // for the two independent checks it runs (round 12 F2 adds the first).
+    // An argv[0] that is itself a substitution (after wrapper peeling)
+    // leaves the command name unresolved for this segment; see
+    // `checkUnresolvedHeadTail`'s own doc for the two checks it runs.
     const headViolation = checkUnresolvedHeadTail(
       argvWords,
+      argv,
       (a) => (classifyPath(a) === 'protected' ? { kind: 'read', file: a } : null),
-      checkArgv
+      checkArgv,
+      () => ({ kind: 'depth-cap' })
     )
     if (headViolation) return headViolation
   }
