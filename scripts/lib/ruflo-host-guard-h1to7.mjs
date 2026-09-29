@@ -82,10 +82,11 @@ const H6_NPX_DIR_RE = /_npx\/[0-9a-f]{16}\//
 const H7_RE1 = /lib\/node_modules\/ruflo(?:\/|$)/
 const H7_RE2 = /(?:^|\/)versions\/node\/v[0-9.]+\/bin\/(ruflo|claude-flow|claude-flow-mcp|cli)$/
 // A global npm install puts a SYMLINK at `<prefix>/bin/<name>`, and that
-// is the spelling a person types. H7_RE2 brackets only nvm's own layout;
-// `/usr/local/bin/ruflo` and `/opt/homebrew/bin/ruflo` are the same
-// install through the other two common prefixes. Anchored at end-of-token
-// so a `bin/ruflo-something` is untouched.
+// is the spelling a person types. No prefix restriction, so this covers
+// nvm's `versions/node/vX/bin/<name>` as well as `/usr/local/bin`,
+// `/opt/homebrew/bin` and `~/bin`; H7_RE2 above adds only the `cli`
+// basename under nvm (pinned by the round-10 L2 test). Anchored at
+// end-of-token so a `bin/ruflo-something` is untouched.
 const H7_RE3 = /(?:^|\/)bin\/(ruflo|claude-flow|claude-flow-mcp)$/
 // Governance round 8 follow-up (same C1/H7 dispatch): an explicit relative
 // execution path -- `./ruflo`, `../ruflo`, `./tools/ruflo` -- is the same

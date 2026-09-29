@@ -147,8 +147,8 @@ const ASSIGNMENT_WORD_RE = /^[A-Za-z_][A-Za-z0-9_]*=/
  * guard can in fact read. A leading assignment word (`X=$Y ruflo status`)
  * is skipped before this test, not read AS the head -- an assignment's own
  * word never carries the command name git's shell will exec, and treating
- * it as the head wrongly reads its `$`/backtick (or absence of one) as if
- * it described the command that follows. If every word is an assignment,
+ * it as the head wrongly reads its `$` (or absence of one) as if it
+ * described the command that follows. If every word is an assignment,
  * there is no command in this value at all; skipping is correct (nothing
  * to extract), matching the caller's existing skip = no-op posture. The
  * assignment words themselves are NOT stripped from the extracted text when
@@ -199,14 +199,42 @@ const ASSIGNMENT_WORD_RE = /^[A-Za-z_][A-Za-z0-9_]*=/
  * already uses, and iterate its WORD tokens' own `.value` -- `X="a b"`
  * becomes one word (`X=a b`), matching how a real shell would see it --
  * for BOTH the assignment-skip loop and the head test below.
- * @param {string} value the config value (already split from its key)
- * @param {{value: string, subs?: string[]}} [token] the aligned token
+ *
+ * A config value is shell TEXT and may hold several commands;
+ * hasUnresolvableValueHead below composes the per-segment head test with the
+ * substitution rule and states the whole rule in one sentence.
  */
-function hasUnresolvableValueHead(value, token) {
-  const body = value.startsWith('!') ? value.slice(1) : value
-  const words = tokenize(body)
-    .filter((t) => t.type === 'word')
-    .map((t) => t.value)
+/**
+ * The value's own tokens, split into COMMAND SEGMENTS on the tokenizer's
+ * `op` tokens. A config value is shell TEXT, and shell text can hold more
+ * than one command (`$X; ruflo memory store`). Testing only the first
+ * word of the whole value reads segment 1's head and then discards every
+ * later segment -- the shape that let an unresolvable head hide a
+ * perfectly resolvable invocation behind a `;`/`&&`/`||`/`|`/newline.
+ */
+function valueSegments(body) {
+  const segments = []
+  let current = []
+  for (const t of tokenize(body)) {
+    if (t.type === 'op') {
+      if (current.length > 0) segments.push(current)
+      current = []
+      continue
+    }
+    if (t.type === 'word') current.push(t)
+  }
+  if (current.length > 0) segments.push(current)
+  return segments
+}
+
+/**
+ * The head test for ONE command segment: an assignment prefix is skipped,
+ * a head that spells the name forces extraction, a head carrying `$` is
+ * unresolvable. A backtick substitution never reaches here as a backtick:
+ * the shared tokenizer spells it `$(...)` (see shell-command-tokenize.mjs).
+ */
+function segmentHeadIsUnresolvable(tokens, token) {
+  const words = tokens.map((t) => t.value)
   let i = 0
   while (i < words.length && ASSIGNMENT_WORD_RE.test(words[i])) {
     const eq = words[i].indexOf('=')
@@ -222,8 +250,42 @@ function hasUnresolvableValueHead(value, token) {
   if (i >= words.length) return true
   const head = words[i] ?? ''
   if (RUFLO_NAME_IN_VALUE_HEAD_RE.test(head)) return false
-  if (head.includes('$') || head.includes('`')) return true
+  if (head.includes('$')) return true
   return head === '' && (token?.subs?.length ?? 0) > 0
+}
+
+/**
+ * A command SUBSTITUTION written literally in the value (`$(...)` or a
+ * backtick pair) is text this guard CAN read -- the shared tokenizer hands
+ * its body back in `.subs`. The skip's premise is "cannot be resolved and
+ * cannot spell the name"; that premise fails for a substitution, so a value
+ * carrying one is extracted and the recursion resolves it, exactly as it
+ * did before the skip existed.
+ */
+function carriesResolvableSubstitution(segments) {
+  return segments.some((tokens) => tokens.some((t) => (t.subs?.length ?? 0) > 0))
+}
+
+/**
+ * THE RULE, in one sentence: skip a git config value only when EVERY
+ * command in it has a head this guard can neither resolve nor read as the
+ * name, and the value carries no command substitution whose body it could
+ * read instead.
+ *
+ * A value that is read is shell text and gets shell text's posture: an
+ * unresolvable head in a segment the guard evaluates denies as
+ * unresolved-command, exactly as the same text under bash -c does. The
+ * skip exists for a value the guard cannot read at all, not for one it
+ * can partly read.
+ * @param {string} value the config value (already split from its key)
+ * @param {{value: string, subs?: string[]}} [token] the aligned token
+ */
+function hasUnresolvableValueHead(value, token) {
+  const body = value.startsWith('!') ? value.slice(1) : value
+  const segments = valueSegments(body)
+  if (segments.length === 0) return true
+  if (carriesResolvableSubstitution(segments)) return false
+  return segments.every((tokens) => segmentHeadIsUnresolvable(tokens, token))
 }
 
 function pushGitConfigValue(results, key, value, token) {

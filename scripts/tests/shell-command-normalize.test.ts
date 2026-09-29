@@ -76,11 +76,32 @@ describe('tokenize()', () => {
     expect(sub.subs).toEqual(['echo hi'])
   })
 
-  it('a backtick substitution drops the backticks from .value but keeps .subs', () => {
+  it('tokenize() normalizes a backtick substitution to the $(...) spelling in .value, and keeps the unwrapped body in .subs', () => {
     const tokens = tokenize('echo `echo hi`')
     const sub = tokens[1]
-    expect(sub.value).toBe('echo hi')
+    expect(sub.value).toBe('$(echo hi)')
     expect(sub.subs).toEqual(['echo hi'])
+  })
+
+  it('tokenize() normalizes a whole-word backtick substitution (`x`) to $(x) in .value and records .subs', () => {
+    const tokens = tokenize('`x`')
+    expect(tokens).toHaveLength(1)
+    expect(tokens[0].value).toBe('$(x)')
+    expect(tokens[0].subs).toEqual(['x'])
+  })
+
+  it('tokenize() normalizes a lone unmatched backtick to $() in .value, with an empty .subs entry', () => {
+    const tokens = tokenize('`')
+    expect(tokens).toHaveLength(1)
+    expect(tokens[0].value).toBe('$()')
+    expect(tokens[0].subs).toEqual([''])
+  })
+
+  it('tokenize() normalizes a backtick substitution embedded in double-quoted text to $(...) in .value', () => {
+    const tokens = tokenize('"a `x` b"')
+    expect(tokens).toHaveLength(1)
+    expect(tokens[0].value).toBe('a $(x) b')
+    expect(tokens[0].subs).toEqual(['x'])
   })
 
   it('records a <(...) process substitution with its delimiters kept in .value', () => {

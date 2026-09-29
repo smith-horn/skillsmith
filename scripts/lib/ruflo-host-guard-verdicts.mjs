@@ -15,8 +15,11 @@
  * § Predicate Specification "Denial shape".
  */
 
-/** The literal alternative every denial reason names (design § 1(b)). */
-export const SANCTIONED_ALTERNATIVE =
+/**
+ * The literal alternative every denial reason names (design § 1(b)). Not
+ * exported: nothing outside this file reads it.
+ */
+const SANCTIONED_ALTERNATIVE =
   'docker exec skillsmith-ruflo-1 node /opt/ruflo-seed/node_modules/@claude-flow/cli/bin/cli.js …'
 
 /**
@@ -93,7 +96,7 @@ export function denyMalformedInput(reason) {
  * (design § "SMI-6854").
  * @param {unknown} value the offending startDaemon value
  */
-export function denyStartDaemon(value) {
+function denyStartDaemon(value) {
   return {
     action: 'deny',
     json: {

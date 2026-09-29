@@ -81,7 +81,7 @@ export const SHELL_COMMANDS = new Set(['bash', 'sh', 'zsh', 'dash', 'ksh'])
  * sets instead of reusing this one — see `ruflo-host-guard-wrappers.mjs`'s
  * `LAUNCHER_TABLE`.
  */
-export const WRAPPER_VALUE_FLAGS = new Set(
+const WRAPPER_VALUE_FLAGS = new Set(
   (
     '-u --user -g --group -p --prompt -h --host -e --env -w --workdir --env-file --detach-keys ' +
     '--index -f --file --project-name --project-directory --profile --progress --ansi ' +
@@ -123,7 +123,7 @@ export const INLINE_SCRIPT_LONG_FLAGS = new Set([
  * for the scanning rationale (moved verbatim from env-read-guard.mjs,
  * SMI-6361 finding F6).
  */
-export const POSITIONAL_SCRIPT_COMMANDS = new Set(['awk', 'gawk', 'mawk', 'sed'])
+const POSITIONAL_SCRIPT_COMMANDS = new Set(['awk', 'gawk', 'mawk', 'sed'])
 
 // --- Wrapper normalization ---
 

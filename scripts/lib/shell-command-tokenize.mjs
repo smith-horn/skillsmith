@@ -1,7 +1,11 @@
 /**
  * Shell-command tokenizer (quote-aware, records command substitutions),
  * shared by `scripts/env-read-guard.mjs` and `scripts/ruflo-host-guard.mjs`
- * via `scripts/lib/shell-command-normalize.mjs`.
+ * via `scripts/lib/shell-command-normalize.mjs`. A backtick substitution is
+ * normalized to the `$(...)` spelling in `.value` (its body is unchanged in
+ * `.subs`): the two constructs run the same command, so both must reach
+ * every downstream `$`-based unresolvable-head test identically, and a
+ * body inlined as plain text reads as an ordinary resolvable command.
  *
  * Split out of `shell-command-normalize.mjs` itself (SMI-6744 Wave 4 delta
  * governance round) purely to stay under the 500-line-per-file convention
@@ -201,7 +205,7 @@ export function tokenize(command) {
           const e = command.indexOf('`', j + 1)
           const inner = e === -1 ? command.slice(j + 1) : command.slice(j + 1, e)
           w.subs.push(inner)
-          w.value += inner
+          w.value += '$(' + inner + ')'
           j = e === -1 ? command.length : e + 1
         } else {
           w.value += command[j]
@@ -216,7 +220,7 @@ export function tokenize(command) {
       const e = command.indexOf('`', i + 1)
       const inner = e === -1 ? command.slice(i + 1) : command.slice(i + 1, e)
       w.subs.push(inner)
-      w.value += inner
+      w.value += '$(' + inner + ')'
       i = e === -1 ? command.length : e + 1
       continue
     }
