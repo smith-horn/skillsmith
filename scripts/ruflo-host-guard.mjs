@@ -187,12 +187,17 @@ function checkEvalPredicate(wordTokens, depth) {
  * subs (step 0) — an UNQUOTED heredoc's `$(...)`/backtick spans are
  * expanded by the CURRENT shell regardless of which command consumes the
  * heredoc body, so they execute even when that body is otherwise inert
- * data (Fix B). `embedded` (default false, Fix C) gates three of this
- * function's own arms — `checkUnresolvedCommand`'s empty-residual/
- * all-digit//dev/* arms, the `unreadable-shell-input` shell-fed-deny arm,
- * and the bare-name-inversion check — off when evaluating INLINE
- * INTERPRETER SCRIPT TEXT (set true only at the H-8 recursion site below),
- * since those three arms presume the text is a real shell command line.
+ * data (Fix B). `embedded` (default false, Fix C) gates three groups of
+ * this function's own arms — `checkUnresolvedCommand`'s empty-residual,
+ * all-digit, `/dev/` path and `$`-in-head arms, the `unreadable-shell-input`
+ * shell-fed-deny arm, and the bare-name-inversion check — off when
+ * evaluating INTERPRETER PROGRAM SOURCE, since those arms presume the
+ * text is a real shell command line. It is set true at exactly two sites,
+ * both program-source entrances: the interpreter-stdin branch of the
+ * shell-fed step (an interpreter's own heredoc, or a pipe into one) and
+ * the H-8 inline-flag recursion below. Every route that extracts genuine
+ * shell text (`$()`, backticks, `eval`, `env -S`, a shell's `-c`, text
+ * fed to a shell) recurses non-embedded.
  * @param {Array<{type: string, value?: string, subs?: string[]}>} segmentTokens
  * @param {number} depth
  * @param {Array<{tokens: Array<object>, precedingOp: string|null}>} segments
@@ -293,9 +298,11 @@ function evaluateGuardSegment(segmentTokens, depth, segments, segmentIndex, embe
       return denyWith('H8-script', inlineScriptText)
     }
     // SMI-6869 Fix C: this text is program source (JS/Python/…), not a
-    // shell command line — evaluate it in embedded mode. This is the
-    // ONLY site that ever sets embedded true; every other recursive call
-    // in this file evaluates real shell text and stays non-embedded.
+    // shell command line — evaluate it in embedded mode. This is one of
+    // the TWO sites that set embedded true (the other is the interpreter-
+    // stdin branch of the shell-fed step above, round 1); every other
+    // recursive call in this file evaluates real shell text and stays
+    // non-embedded.
     const nestedScriptVerdict = evaluateGuardCommand(inlineScriptText, depth + 1, true)
     if (nestedScriptVerdict) return nestedScriptVerdict
   }
