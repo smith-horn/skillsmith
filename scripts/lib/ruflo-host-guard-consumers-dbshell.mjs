@@ -10,6 +10,7 @@
  */
 
 import { READABLE_STDIN_RE } from './ruflo-host-guard-consumers-awksed.mjs'
+import { decodeShellEscapes } from './shell-escape-decode.mjs'
 
 const SQLITE_BASENAMES = new Set(['sqlite3', 'sqlite'])
 
@@ -70,31 +71,130 @@ export function extractSqliteTexts(base, argv, alignedTokens) {
 }
 
 // psql's `\!` meta-command shells out to whatever text follows it on the
-// same line/statement.
-const PSQL_BACKSLASH_BANG_RE = /\\!\s+(.+)$/gm
-// `COPY ... TO/FROM PROGRAM '...'` (server-side) and `\copy ... program
-// '...'` (client-side) both hand the quoted program to a shell. The first
-// alternative matches the ordinary quoted form; the second is a fallback for
-// when the shell's OWN quoting has already stripped every quote character
-// around the program name before this guard ever sees the argument text
-// (measured: `psql -c '\copy t to program ''ruflo memory store'''` decodes,
-// via this guard's own bash-quote-removal tokenizer, to the fully bare
-// `\copy t to program ruflo memory store` -- no quote characters survive to
-// anchor a quoted-only regex against). Alternation order matters: the
-// quoted form is tried first, so it wins whenever a quote is actually
-// present; the bare-text fallback only fires when `program` is immediately
-// followed by non-quote text.
-const PSQL_PROGRAM_RE = /\bprogram\s+'([^']*)'|\bprogram\s+(\S[^\n]*)/gi
+// same line/statement -- with or without whitespace: `\s*` (round-4
+// confirmation-round finding), since real psql accepts the GLUED form
+// (`\!ruflo memory store`, no space) identically to the spaced one
+// (measured: the guard's own `.\s+` original missed the glued form).
+const PSQL_BACKSLASH_BANG_RE = /\\!\s*(.+)$/gm
+
+// (Round-4 confirmation-round Class 2 fix) `program` is only executable
+// syntax inside an actual `COPY ... TO/FROM` clause or a `\copy ... to/from`
+// meta-command -- NOT anywhere the bare word "program" appears, including
+// inside an unrelated string literal (`select 'program ...'`). Anchor to a
+// COPY/`\copy` keyword, then a TO/FROM keyword, then PROGRAM, all within the
+// SAME statement (bounded by `;` or a newline -- `[^;\n]*?` never crosses
+// either, so an earlier statement's COPY can't license a later statement's
+// unrelated `program` mention). This is a keyword scanner, not a real SQL
+// parser: it cannot tell a GENUINE COPY clause from a STRING LITERAL that
+// merely CONTAINS the words "copy ... to ... program" as data (see the
+// `known over-deny` test in the guard test file for the measured case and
+// why this guard accepts that tradeoff).
+const PSQL_COPY_PROGRAM_CONTEXT_RE =
+  /(?:\bcopy\b|\\copy\b)[^;\n]*?\b(?:to|from)\b[^;\n]*?\bprogram\b/gi
+
+/**
+ * Scans a single-quoted PostgreSQL string literal starting at `text[pos]`
+ * (which MUST be `'`). Doubled quotes (`''`) are the standard SQL escape for
+ * a literal quote inside the string -- not a backslash. For an E-prefixed
+ * literal (`isEString`), a backslash-escaped quote (`\'`) ALSO continues the
+ * string (both forms are valid inside an E-string), and every OTHER
+ * backslash escape in the raw content is decoded via the shared
+ * `decodeShellEscapes` table AFTER the doubled-quote unescape -- the same
+ * hex/octal/unicode escape hazard class this guard's own `$'...'`
+ * ANSI-C-quoting fix closed for bash, applied here so a hex-obfuscated
+ * "ruflo" (`E'\x72uflo...'`) cannot hide inside a PROGRAM operand. A plain
+ * (non-E) literal's backslashes are NOT escapes in modern PostgreSQL
+ * (`standard_conforming_strings` defaults on) -- only the doubled-quote
+ * unescape applies.
+ * @returns {{ value: string, endPos: number } | null} `endPos` is the index
+ *   just past the CLOSING quote; `null` if the string is never closed.
+ */
+function scanQuotedLiteral(text, pos, isEString) {
+  let i = pos + 1
+  let raw = ''
+  while (i < text.length) {
+    const ch = text[i]
+    if (isEString && ch === '\\' && i + 1 < text.length) {
+      raw += ch + text[i + 1]
+      i += 2
+      continue
+    }
+    if (ch === "'") {
+      if (text[i + 1] === "'") {
+        raw += "''"
+        i += 2
+        continue
+      }
+      const unescaped = raw.replace(/''/g, "'")
+      return { value: isEString ? decodeShellEscapes(unescaped) : unescaped, endPos: i + 1 }
+    }
+    raw += ch
+    i++
+  }
+  return null
+}
+
+/**
+ * Scans a PostgreSQL dollar-quoted string literal (`$$...$$` or
+ * `$tag$...$tag$`) starting at `text[pos]` (which MUST be `$`). No escape
+ * processing inside one -- its whole design point is that nothing is
+ * special until the matching closing tag reappears.
+ * @returns {{ value: string, endPos: number } | null}
+ */
+function scanDollarQuotedLiteral(text, pos) {
+  const tagMatch = /^\$([A-Za-z_][A-Za-z0-9_]*)?\$/.exec(text.slice(pos))
+  if (!tagMatch) return null
+  const opener = tagMatch[0]
+  const closeIdx = text.indexOf(opener, pos + opener.length)
+  if (closeIdx === -1) return null
+  return { value: text.slice(pos + opener.length, closeIdx), endPos: closeIdx + opener.length }
+}
+
+/**
+ * Parses the PROGRAM operand starting at `text[pos]` (already past
+ * `program` and its following whitespace) as a real PostgreSQL string:
+ * optional `E`/`e` prefix + single-quoted literal, or a dollar-quoted
+ * string, in that order. Falls back to the bare-text shape (round-4
+ * measured: bash's own quote removal can strip every Postgres-level quote
+ * character before this guard ever sees the argument -- `psql -c '\copy t
+ * to program ''ruflo memory store'''` decodes to the fully bare `...program
+ * ruflo memory store`) only when NONE of the quoted forms match.
+ */
+function parsePsqlProgramOperand(text, pos) {
+  if (/^[Ee]'/.test(text.slice(pos))) {
+    const scanned = scanQuotedLiteral(text, pos + 1, true)
+    if (scanned) return scanned.value
+  }
+  if (text[pos] === "'") {
+    const scanned = scanQuotedLiteral(text, pos, false)
+    if (scanned) return scanned.value
+  }
+  if (text[pos] === '$') {
+    const scanned = scanDollarQuotedLiteral(text, pos)
+    if (scanned) return scanned.value
+  }
+  const bareMatch = /^(\S[^\n]*)/.exec(text.slice(pos))
+  return bareMatch ? bareMatch[1] : null
+}
+
+function extractPsqlProgramTexts(text) {
+  const results = []
+  for (const m of text.matchAll(PSQL_COPY_PROGRAM_CONTEXT_RE)) {
+    const afterKeyword = m.index + m[0].length
+    const wsMatch = /^\s+/.exec(text.slice(afterKeyword))
+    const operandStart = afterKeyword + (wsMatch ? wsMatch[0].length : 0)
+    const value = parsePsqlProgramOperand(text, operandStart)
+    if (value) results.push({ text: value, kind: 'shell' })
+  }
+  return results
+}
 
 function extractPsqlStatementTexts(text) {
   const results = []
   for (const m of text.matchAll(PSQL_BACKSLASH_BANG_RE)) {
     results.push({ text: m[1], kind: 'shell' })
   }
-  for (const m of text.matchAll(PSQL_PROGRAM_RE)) {
-    const shellText = m[1] ?? m[2]
-    if (shellText) results.push({ text: shellText, kind: 'shell' })
-  }
+  results.push(...extractPsqlProgramTexts(text))
   return results
 }
 

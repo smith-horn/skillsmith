@@ -1909,6 +1909,47 @@ describe('decide() — SMI-6869 consumer-string: psql \\! and COPY/\\copy PROGRA
     const command = "psql -f - <<'EOF'\nselect 1;\nEOF"
     expect(decide(bashCall(command), {}).action).toBe('allow')
   })
+
+  it("control: psql -c '\\!ruflo memory store' (glued, no whitespace) denies via H4 — round-6 confirmation-round finding: real psql accepts the glued form identically to the spaced one, and the original \\s+ requirement missed it", () => {
+    const result = decide(bashCall(`psql -c '\\!${R}'`), {})
+    expect(result.action).toBe('deny')
+    expect(reasonOf(result)).toContain('H4:')
+  })
+
+  it('psql -c "COPY t TO PROGRAM E\'...\'" denies via H4 — round-6 Class 1 fix: an E-prefixed string literal is now recognized as a real PostgreSQL string (previously the quoted arm didn\'t recognize the E prefix and the bare-text fallback extracted the literal text "Eruflo memory store", which never spelled a bare ruflo)', () => {
+    const result = decide(bashCall(`psql -c "COPY t TO PROGRAM E'${R}'"`), {})
+    expect(result.action).toBe('deny')
+    expect(reasonOf(result)).toContain('H4:')
+  })
+
+  it('psql -c "COPY t FROM PROGRAM E\'...\'" denies via H4 — FROM PROGRAM is the same operand shape as TO PROGRAM', () => {
+    const result = decide(bashCall(`psql -c "COPY t FROM PROGRAM E'${R}'"`), {})
+    expect(result.action).toBe('deny')
+    expect(reasonOf(result)).toContain('H4:')
+  })
+
+  it("psql -c '\\copy t to program $$...$$' denies via H4 — round-6 Class 1 fix: a dollar-quoted PostgreSQL string literal is now recognized as a real string form for the PROGRAM operand", () => {
+    const result = decide(bashCall(`psql -c '\\copy t to program $$${R}$$'`), {})
+    expect(result.action).toBe('deny')
+    expect(reasonOf(result)).toContain('H4:')
+  })
+
+  it("control: psql -c \"select 'program ...'\" allows — round-6 Class 2 fix: PROGRAM is only executable syntax inside an actual COPY/\\copy clause, and this statement has no copy/\\copy keyword at all, so the anchored context regex correctly finds nothing (previously the unanchored regex extracted the string's own contents as shell text and denied — a real over-deny, now fixed)", () => {
+    const result = decide(bashCall(`psql -c "select 'program ${R}'"`), {})
+    expect(result.action).toBe('allow')
+  })
+
+  it("known over-deny, not a regression: psql -c \"select 'copy to program ...'\" denies via H4 even though it only selects a string literal — this guard's anchoring is a keyword scanner, not a SQL-string-literal-aware parser, so it cannot distinguish a genuine COPY...TO...PROGRAM clause from a string literal that merely CONTAINS those words as data on the same statement; measured (not assumed) after implementing the Class 2 fix, and accepted as the guard's existing fail-closed posture rather than built out further", () => {
+    const result = decide(bashCall(`psql -c "select 'copy to program ${R}'"`), {})
+    expect(result.action).toBe('deny')
+    expect(reasonOf(result)).toContain('H4:')
+  })
+
+  it('control: psql -c "COPY t TO PROGRAM \'...\'" (double-quoted -c wrapper) still denies via H4 after the Class 2 anchoring change — a genuine COPY clause is unaffected', () => {
+    const result = decide(bashCall(`psql -c "COPY t TO PROGRAM '${R}'"`), {})
+    expect(result.action).toBe('deny')
+    expect(reasonOf(result)).toContain('H4:')
+  })
 })
 
 describe('decide() — SMI-6869 consumer-string: osascript -e AppleScript source (round-4 cross-family gate)', () => {
