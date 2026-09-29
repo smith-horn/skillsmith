@@ -13,6 +13,8 @@ All notable changes to `@skillsmith/mcp-server` are documented here.
   `apply-manifest-reconcile.{actions,helpers,verify}.ts`; no behaviour change on a well-formed
   manifest.
 
+## v0.7.17
+
 - **Refactor**: SMI-6532 step 6 -- `outdated.ts` split at the action seam (`outdated.action.ts`,
   `outdated.helpers.ts` unchanged in behaviour) so a renderer table could land beside it without
   pushing either file over the 500-line gate. New `update-target-render.ts` exports
@@ -92,6 +94,7 @@ All notable changes to `@skillsmith/mcp-server` are documented here.
   stricter would leave affected users with no way out. Both sites now carry a comment naming
   the other, and a test pins the behaviour, so a future pass that "harmonizes" the two
   cannot quietly remove the escape hatch.
+
 - **Fix**: SMI-6651 -- private-registry skill installs now read a skill's packaged content
   through an audited, server-side `release_private_registry_skill_content` RPC instead of a
   direct table read over the caller's own token. This version needs that RPC to already exist
