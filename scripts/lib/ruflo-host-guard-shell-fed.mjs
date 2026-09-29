@@ -9,21 +9,21 @@
  *
  * Split out of `ruflo-host-guard-wrappers.mjs` (itself already split out
  * of the guard's own orchestration file) purely to stay under the
- * 500-line file-length gate (scripts/check-file-length.mjs) once the
- * delta round's fixes grew that file past the limit -- these are guard-
- * SPECIFIC helpers, not general-purpose primitives every consumer of
- * shell-command-normalize.mjs would want, so they stay out of that shared
- * module (env-read-guard.mjs needs none of this).
+ * 500-line-per-file convention this repo keeps by hand for .mjs files
+ * under scripts/ (M3 correction: not enforced by tooling here --
+ * scripts/check-file-length.mjs only runs via lint-staged for *.ts/*.sh;
+ * SMI-5994) once the delta round's fixes grew that file past the limit --
+ * these are guard-SPECIFIC helpers, not general-purpose primitives every
+ * consumer of shell-command-normalize.mjs would want, so they stay out of
+ * that shared module (env-read-guard.mjs needs none of this).
  */
 
-import {
-  basenameOf,
-  hasInlineScriptFlag,
-  INLINE_SCRIPT_LONG_FLAGS,
-  SHELL_COMMANDS,
-  tokenize,
-} from './shell-command-normalize.mjs'
+import { basenameOf, SHELL_COMMANDS, tokenize } from './shell-command-normalize.mjs'
 import { decodeShellEscapes } from './shell-escape-decode.mjs'
+// `isPythonBasename` lives in the inline-script module, the only other
+// user, so the edge between these two files runs ONE way (this file ->
+// inline-script, for the re-export at the bottom too) and no cycle forms.
+import { isPythonBasename } from './ruflo-host-guard-inline-script.mjs'
 import {
   HEREDOC_CONSUMER_BASENAMES,
   normalizeHeredocConsumerBody,
@@ -241,9 +241,18 @@ function resolveShellFedProducer(segments, index) {
  * @param {Array<{tokens: Array<object>, precedingOp: string|null}>} segments
  *   every segment of the FULL command, in order
  * @param {number} segmentIndex this segment's own index into `segments`
- * @returns {{text: string} | {deny: true, token: string} | null} a literal-
- *   text result to recurse into, a deny signal (M-1's unreadable-producer
- *   case) for the caller to turn into a verdict, or null (nothing found)
+ * @returns {{text: string, embedded?: boolean} | {deny: true, token: string} |
+ *   null} a literal-text result to recurse into (L3 correction: `embedded:
+ *   true` when the fed text is INTERPRETER PROGRAM SOURCE, not a shell
+ *   command line, so the caller evaluates it with the shell-command-line-
+ *   only arms turned off; governance round 8 Minor 3: every non-`embedded`
+ *   result — a heredoc CONSUMER's body or a bare shell/interpreter's fed
+ *   text alike — is likewise an EXTRA place to look, not a replacement for
+ *   the segment's own argv checks, so the caller always falls through on a
+ *   clean recursion instead of returning; see `scripts/ruflo-host-guard.mjs`
+ *   for the one merged arm this collapsed into), a deny signal (M-1's
+ *   unreadable-producer case) for the caller to turn into a verdict, or
+ *   null (nothing found)
  */
 export function findShellFedLiteralText(argvLower, segmentTokens, segments, segmentIndex) {
   const head0 = basenameOf(argvLower[0] ?? '')
@@ -259,19 +268,21 @@ export function findShellFedLiteralText(argvLower, segmentTokens, segments, segm
   const ownHeredocs = segmentTokens.filter((t) => t.type === 'heredoc')
   if (ownHeredocs.length > 0) {
     const raw = ownHeredocs.map((t) => t.value ?? '').join('\n')
-    // Round-3 governance fix: `continueOnAllow` — for a heredoc CONSUMER the
-    // body is an ADDITIONAL place to look, not a replacement for this
-    // segment's own argv. Without the flag the caller `return`ed the body's
-    // verdict outright, so a benign body short-circuited H1–H7, the
-    // consumer step and the bare-name inversion for the segment itself:
-    // `make -f - ruflo <<'EOF'…EOF` and `crontab - ruflo <<'EOF'…EOF` both
-    // denied (H4b) BEFORE this commit and reached ALLOW after it — the two
-    // regressions this flag removes. Shells and interpreters keep the
-    // original replace-outright semantics (the body IS what they run).
+    // Round-3 governance fix (Minor 3 follow-up, governance round 8: the
+    // caller no longer branches on a flag here — see
+    // `scripts/ruflo-host-guard.mjs`'s own merged comment): for a heredoc
+    // CONSUMER the body is an ADDITIONAL place to look, not a replacement
+    // for this segment's own argv. An unconditional `return`-the-body's-
+    // verdict-outright caller would let a benign body short-circuit
+    // H1–H7, the consumer step and the bare-name inversion for the
+    // segment itself: `make -f - ruflo <<'EOF'…EOF` and `crontab - ruflo
+    // <<'EOF'…EOF` both need to keep denying (H4b) via that fall-through.
+    // A shell or interpreter's own fed body is the SAME kind of extra
+    // place to look, not a replacement for its own argv either — the
+    // caller's fall-through applies uniformly to every arm reached here.
     return {
       text: isHeredocConsumer ? normalizeHeredocConsumerBody(head0, raw) : raw,
       embedded: isInterp,
-      continueOnAllow: isHeredocConsumer,
     }
   }
   if (isHeredocConsumer) {
@@ -284,7 +295,6 @@ export function findShellFedLiteralText(argvLower, segmentTokens, segments, segm
       if (resolved !== null && resolved.text !== null) {
         return {
           text: normalizeHeredocConsumerBody(head0, resolved.text),
-          continueOnAllow: true,
         }
       }
     }
@@ -316,6 +326,11 @@ export function findShellFedLiteralText(argvLower, segmentTokens, segments, segm
     if (resolved.text !== null) return { text: resolved.text }
   }
 
+  // L5 correction: deliberately NOT `&& !t.redirect` here (unlike
+  // `evaluateGuardSegment`'s own `wordTokens` filter) -- the `<<<` marker
+  // word and/or its following text word must still be SEEN by this scan
+  // even if the tokenizer marks either one `.redirect`, or a real here-string
+  // operand would never be found at all.
   const words = segmentTokens.filter((t) => t.type === 'word')
   for (let i = 0; i < words.length; i++) {
     const val = words[i].value
@@ -388,26 +403,12 @@ export function restoreXargsReplacementWordTokens(segmentTokens) {
 }
 
 /**
- * H-8 fix (SMI-6744 Wave 4 governance round): per-interpreter short-flag
- * characters for the inline-script-text flags this guard recurses into --
- * reused via the shared `hasInlineScriptFlag` as a first-pass "does this
- * argv even carry an inline-script flag" check (see that function's own
- * doc in shell-command-normalize.mjs for why long flags are checked
- * uniformly instead of per-interpreter).
+ * Interpreters that execute a program read from their own stdin.
+ * L1 correction: dropped the unused `export` -- used only locally in this
+ * file (the test file's own comment naming it is prose, not an import;
+ * confirmed via `grep -rn` across scripts/).
  */
-const INLINE_SCRIPT_SHORT_FLAG_CHARS = {
-  node: 'ep',
-  perl: 'eE',
-  ruby: 'e',
-  php: 'r',
-}
-
-function isPythonBasename(base) {
-  return /^python[0-9]*(\.[0-9]+)?$/.test(base)
-}
-
-/** Interpreters that execute a program read from their own stdin. */
-export function isInlineInterpreterBasename(base) {
+function isInlineInterpreterBasename(base) {
   return (
     isPythonBasename(base) ||
     base === 'node' ||
@@ -419,75 +420,11 @@ export function isInlineInterpreterBasename(base) {
   )
 }
 
-/**
- * H-8 fix: extracts the inline SCRIPT-TEXT argument from a node, python
- * (any version), perl, ruby, or php interpreter invocation, or `bun -e`,
- * or `deno eval` (a subcommand, not a flag, so it has no short/long flag
- * shape at all). Reuses the shared `hasInlineScriptFlag` (with this
- * guard's OWN per-interpreter short-flag map) to decide whether an
- * inline-script flag is present at all before locating and returning its
- * VALUE — `hasInlineScriptFlag` only ever answers yes/no, it does not
- * locate which argument or return its text.
- * @param {string[]} normalizedArgv post wrapper/launcher-peel argv
- * @param {Array<{value: string}>} alignedTokens original-case tokens
- *   aligned to `normalizedArgv` (see `tokensForArgv`)
- * @returns {string | null} the script text, or null if this segment
- *   isn't one of these interpreter shapes
- */
-export function extractInlineScriptText(normalizedArgv, alignedTokens) {
-  if (normalizedArgv.length === 0) return null
-  const base = basenameOf(normalizedArgv[0])
-
-  if (base === 'deno') {
-    return normalizedArgv[1] === 'eval' && alignedTokens[2] ? alignedTokens[2].value : null
-  }
-
-  const shortChars = isPythonBasename(base)
-    ? 'c'
-    : (INLINE_SCRIPT_SHORT_FLAG_CHARS[base] ?? (base === 'bun' ? 'e' : ''))
-  if (shortChars === '') return null
-
-  const args = normalizedArgv.slice(1)
-  if (!hasInlineScriptFlag(base, args, { [base]: shortChars })) return null
-
-  for (let i = 1; i < normalizedArgv.length; i++) {
-    const tok = normalizedArgv[i]
-    if (tok === '--') break
-    const eqIdx = tok.indexOf('=')
-    const flagPart = eqIdx === -1 ? tok : tok.slice(0, eqIdx)
-    if (INLINE_SCRIPT_LONG_FLAGS.has(flagPart)) {
-      if (eqIdx !== -1) return alignedTokens[i].value.slice(eqIdx + 1)
-      return alignedTokens[i + 1] ? alignedTokens[i + 1].value : null
-    }
-    if (tok.startsWith('-') && tok !== '-' && !tok.startsWith('--')) {
-      for (const ch of shortChars) {
-        const pos = tok.indexOf(ch, 1)
-        if (pos !== -1) {
-          const glued = tok.slice(pos + 1)
-          if (glued.length > 0) return glued
-          return alignedTokens[i + 1] ? alignedTokens[i + 1].value : null
-        }
-      }
-    }
-  }
-  return null
-}
-
-/**
- * H-8 fix: a whole-word `ruflo`/`claude-flow`/`claude-flow-mcp` reference
- * sitting inside a quoted string within inline interpreter script text --
- * `node -e 'require("child_process").execSync("ruflo")'` never spells any
- * shell-tokenizable "ruflo" argv element (it is JS source text handed to
- * node's OWN parser), so H1–H8's argv-shaped predicates cannot see it.
- * The first alternative matches ANY quote-delimited run (single, double,
- * or backtick) containing the target word with word boundaries anywhere
- * inside it, which alone covers every one of this fix's own red arms
- * (`execSync("ruflo")`, `execSync("ruflo memory store")`,
- * `os.system("ruflo")`, `exec "ruflo"`). The second alternative is
- * defense-in-depth for an unquoted call-site form
- * (`system(`/`exec(`/`execSync(`/`spawn(` immediately followed by the
- * target word) that no red arm here exercises but the design's own
- * wording names explicitly.
- */
-export const INLINE_SCRIPT_BARE_NAME_RE =
-  /(['"`])(?:(?!\1).)*?\b(ruflo|claude-flow-mcp|claude-flow)\b(?:(?!\1).)*?\1|\b(?:system|exec|execSync|spawn)\(\s*['"`]?(ruflo|claude-flow-mcp|claude-flow)\b/i
+// M3 follow-up: `extractInlineScriptText`/`INLINE_SCRIPT_BARE_NAME_RE`
+// moved to `ruflo-host-guard-inline-script.mjs` (file-length split) and are
+// re-exported here so `scripts/ruflo-host-guard.mjs`'s own import
+// statement needed no change.
+export {
+  extractInlineScriptText,
+  INLINE_SCRIPT_BARE_NAME_RE,
+} from './ruflo-host-guard-inline-script.mjs'

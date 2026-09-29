@@ -1,13 +1,15 @@
 /**
  * npm-specific Stage-1 allowlist predicates for `scripts/ruflo-host-guard.mjs`
  * (SMI-6744 Wave 4 Stage 1 row 3; SMI-6869 Fix D). Split out of
- * `ruflo-host-guard-predicates.mjs` purely to stay under the 500-line
- * file-length gate (`scripts/check-file-length.mjs`) once Fix D's
- * read-only-subcommand predicate pushed that file over the limit — both
- * exports here are pure functions/constants, no I/O, no state, grouped
- * together because they are the two halves of "which npm invocations this
- * guard already knows are safe regardless of what H1–H8 would otherwise
- * say about them."
+ * `ruflo-host-guard-predicates.mjs` purely to stay under the 500-line-per-
+ * file convention this repo keeps by hand for .mjs files under scripts/
+ * (M3 correction: not enforced by tooling here — `scripts/check-file-
+ * length.mjs` only runs via `lint-staged` for `*.ts`/`*.sh`; SMI-5994)
+ * once Fix D's read-only-subcommand predicate pushed that file over the
+ * limit — both exports here are pure functions/constants, no I/O, no
+ * state, grouped together because they are the two halves of "which npm
+ * invocations this guard already knows are safe regardless of what H1–H8
+ * would otherwise say about them."
  */
 
 import { basenameOf } from './shell-command-normalize.mjs'

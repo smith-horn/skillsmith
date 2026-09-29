@@ -4,7 +4,10 @@
  * cross-family gate follow-up). Split into its own file from the start,
  * same precedent as `ruflo-host-guard-consumers-awksed.mjs`/`-git.mjs`/
  * `-tmux.mjs`, since three families' worth of extractors plus docblocks
- * would push `ruflo-host-guard-consumers.mjs` well past the 500-line gate.
+ * would push `ruflo-host-guard-consumers.mjs` well past the 500-line-per-file
+ * convention this repo keeps by hand for .mjs files under scripts/ (M3
+ * correction: not enforced by tooling here — `scripts/check-file-length.mjs`
+ * only runs via `lint-staged` for `*.ts`/`*.sh`; SMI-5994).
  * Exported as `extractSqliteTexts`/`extractPsqlTexts`/`extractOsascriptTexts`
  * and wired into `ruflo-host-guard-consumers.mjs`'s own `EXTRACTORS` list.
  */
