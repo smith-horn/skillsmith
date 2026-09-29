@@ -2066,6 +2066,65 @@ describe("decide() — SMI-6869 governance follow-up (PR #2963, round 3): a path
   })
 })
 
+// Governance follow-up (PR #2963 confirmation round, class-2, one last fix
+// commit): `hasUnresolvableValueHead` naively whitespace-split the VALUE
+// text after the OUTER tokenizer had already stripped the outer `-c`
+// quoting, so quoting that survives INSIDE the value itself was invisible
+// to the split -- `X="a b" $PAGER` became the bogus words `X="a`, `b"`,
+// `$PAGER`: the assignment-skip loop stopped one word early on `b"` as a
+// resolvable head, and the recursion denied unresolved-command on the REAL
+// trailing `$PAGER`, where the unquoted shape (`X=1 $PAGER`) correctly
+// allows. Fix: parse the value with the SAME shared `tokenize()`
+// (`shell-command-normalize.mjs`) the outer pipeline already uses, and
+// iterate its word tokens' own values for both the assignment-skip loop
+// and the head test -- `X="a b"` becomes one word (`X=a b`), matching how
+// a real shell reads it.
+describe('decide() — SMI-6869 governance follow-up (PR #2963, round 4): the value is parsed with the shared tokenizer, not a naive whitespace split (regression)', () => {
+  const redArms: Array<[string, string]> = [
+    ['core.pager, single-quoted outer, X="a b" $PAGER', 'git -c core.pager=\'X="a b" $PAGER\' log'],
+    ['alias bang, X="a b" $PAGER', 'git config alias.x \'!X="a b" $PAGER\''],
+    [
+      "core.pager, double-quoted outer, X='a b' \\$PAGER",
+      'git -c core.pager="X=\'a b\' \\$PAGER" log',
+    ],
+  ]
+  it.each(redArms)('%s allows', (_label, cmd) => {
+    expect(decide(bashCall(cmd), {}).action).toBe('allow')
+  })
+
+  it('control: core.pager=\'X="a b" ruflo memory store\' log denies via H4 — the quoted-away portion is harmless, the real trailing command still names the tool', () => {
+    const result = decide(bashCall('git -c core.pager=\'X="a b" ruflo memory store\' log'), {})
+    expect(result.action).toBe('deny')
+    expect(reasonOf(result)).toContain('H4:')
+  })
+
+  it("control: core.pager='X=\"ruflo\" $PAGER' log denies — a quoted assignment value that still exactly names the tool is caught the same as its unquoted round-2 sibling (measured: H8, via the recursion's own pre-strip assignment scan, not forced)", () => {
+    const result = decide(bashCall('git -c core.pager=\'X="ruflo" $PAGER\' log'), {})
+    expect(result.action).toBe('deny')
+    expect(reasonOf(result)).toContain('H8:')
+  })
+
+  it('control (round-2/round-8, unchanged): core.pager="X=1 $PAGER" log still allows', () => {
+    expect(decide(bashCall('git -c core.pager="X=1 $PAGER" log'), {}).action).toBe('allow')
+  })
+
+  it('control (round-2/round-8, unchanged): core.pager="LESS=-R less" log still allows', () => {
+    expect(decide(bashCall('git -c core.pager="LESS=-R less" log'), {}).action).toBe('allow')
+  })
+
+  it('control (round-2, unchanged): core.pager="X=ruflo $PAGER" log still denies via H8', () => {
+    const result = decide(bashCall('git -c core.pager="X=ruflo $PAGER" log'), {})
+    expect(result.action).toBe('deny')
+    expect(reasonOf(result)).toContain('H8:')
+  })
+
+  it('control (round-3, unchanged): core.pager="X=node_modules/.bin/ruflo $PAGER" log still denies via unresolved-command', () => {
+    const result = decide(bashCall('git -c core.pager="X=node_modules/.bin/ruflo $PAGER" log'), {})
+    expect(result.action).toBe('deny')
+    expect(reasonOf(result)).toContain('unresolved-command:')
+  })
+})
+
 describe('decide() — SMI-6869 consumer-string: vim/nvim ex-commands', () => {
   it('vim -c with a bang (":!cmd") ex-command denies via H4', () => {
     const result = decide(bashCall(`vim -Nu NONE -c ':!${R}' -c q`), {})

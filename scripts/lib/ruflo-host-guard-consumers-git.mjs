@@ -19,6 +19,7 @@
  */
 
 import { RUNNER_TOKEN_RE } from './ruflo-host-guard-h1to7.mjs'
+import { tokenize } from './shell-command-normalize.mjs'
 
 /**
  * Exact exec-relevant keys (round 2 expansion). `core.hooksPath` is
@@ -181,12 +182,31 @@ const ASSIGNMENT_WORD_RE = /^[A-Za-z_][A-Za-z0-9_]*=/
  * name case; a path-shaped case reaches whatever the recursion's own
  * pipeline resolves it to once the assignment word itself is stripped --
  * measured per-case, not asserted here).
+ *
+ * Class-2 correction (PR #2963 confirmation round, one last fix): the value
+ * is itself SHELL TEXT, quoted or not, and this guard's own outer tokenizer
+ * has already stripped the OUTER quoting around the whole `-c key=value`
+ * argument by the time this function sees `value` -- a naive
+ * `.split(/\s+/)` on that already-unquoted text does not know about
+ * quoting that survives INSIDE the value itself (`X="a b" $PAGER`, where
+ * the inner double quotes are literal characters the outer `-c`
+ * single-quoting protected). Splitting on whitespace alone breaks `"a b"`
+ * into two words (`"a` and `b"`), so the assignment-skip loop stops one
+ * word early on a bogus "resolvable" head and the recursion denies
+ * unresolved-command on the REAL trailing `$PAGER`, where the unquoted
+ * shape (`X=1 $PAGER`) correctly allows. Fix: parse `body` with the SAME
+ * shared `tokenize()` (`shell-command-normalize.mjs`) the outer pipeline
+ * already uses, and iterate its WORD tokens' own `.value` -- `X="a b"`
+ * becomes one word (`X=a b`), matching how a real shell would see it --
+ * for BOTH the assignment-skip loop and the head test below.
  * @param {string} value the config value (already split from its key)
  * @param {{value: string, subs?: string[]}} [token] the aligned token
  */
 function hasUnresolvableValueHead(value, token) {
   const body = value.startsWith('!') ? value.slice(1) : value
-  const words = body.trim().split(/\s+/)
+  const words = tokenize(body)
+    .filter((t) => t.type === 'word')
+    .map((t) => t.value)
   let i = 0
   while (i < words.length && ASSIGNMENT_WORD_RE.test(words[i])) {
     const eq = words[i].indexOf('=')
