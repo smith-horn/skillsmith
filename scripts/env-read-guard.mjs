@@ -66,7 +66,7 @@ import {
   MAX_DEPTH,
   normalizeWrappers,
   scanPositionalScriptText,
-  splitCommandSegments,
+  splitCommandSegmentsWithSubRuns,
   tokenize,
 } from './lib/shell-command-normalize.mjs'
 
@@ -321,7 +321,8 @@ function checkArgv(argv) {
  * substitutions and `bash -c` bodies, check each segment. Contract: a protected file
  * spelled LITERALLY anywhere, substitution bodies included, up to `MAX_DEPTH` nesting
  * levels, is a read target -- an unquoted `${...}` expansion is NOT an exception
- * (`SEGMENT_SEPARATOR_OPS` never tears a brace apart). Past `MAX_DEPTH` a nested command
+ * (`SEGMENT_SEPARATOR_OPS` never tears a brace apart, and `groupingOpSubRuns` keeps the
+ * command name a brace merge would otherwise hide). Past `MAX_DEPTH` a nested command
  * denies with kind `'depth-cap'` unread, never silently allowed. Limit: a name the shell
  * only ASSEMBLES at runtime (a variable, a non-literal emitter, a literal split across a
  * substitution boundary) is not spelled anywhere this guard can read (`f=.en; cat ${f}v`).
@@ -336,7 +337,7 @@ function evaluateCommand(command, depth) {
   if (depth > MAX_DEPTH) return { kind: 'depth-cap' }
   if (typeof command !== 'string' || command.trim() === '') return null
 
-  const segments = splitCommandSegments(tokenize(command))
+  const segments = splitCommandSegmentsWithSubRuns(tokenize(command))
 
   for (const segment of segments) {
     for (const w of segment) {

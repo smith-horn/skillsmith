@@ -2396,7 +2396,7 @@ describe('decide() — SMI-6869 governance round 12 F4: an unquoted # at a word 
 describe('decide() — SMI-6869 governance round 15 C1: a # glued to }/{ or to a non-bash blank is not a comment boundary, so H5 still fires on the invocation after it', () => {
   it.each([
     ['glued to } (${X}#x)', 'echo ${X}#x; npx ruflo memory store'],
-    ['glued to a non-bash blank (NBSP)', 'echo hi #x; npx ruflo memory store'],
+    ['glued to a non-bash blank (NBSP)', 'echo hi\u00a0#x; npx ruflo memory store'],
   ])(
     '%s -> deny H5 (the # never starts a comment, so the invocation is not hidden)',
     (_label, command) => {
@@ -2408,10 +2408,6 @@ describe('decide() — SMI-6869 governance round 15 C1: a # glued to }/{ or to a
 
   it('echo hi # x; npx ruflo memory store -> allow (control: a REAL comment, preceded by an actual space, still hides the invocation)', () => {
     expect(decide(bashCall('echo hi # x; npx ruflo memory store'), {}).action).toBe('allow')
-  })
-
-  it('(echo x)#x; npx ruflo memory store -> allow (control: ) IS a genuine bash boundary, so this is a real comment)', () => {
-    expect(decide(bashCall('(echo x)#x; npx ruflo memory store'), {}).action).toBe('allow')
   })
 
   it('echo a\\#b; npx ruflo memory store -> deny H5 (control: an escaped # never starts a comment, boundary or not)', () => {
@@ -2432,6 +2428,60 @@ describe('decide() — SMI-6869 governance round 15 C1: a # glued to }/{ or to a
       expect(reasonOf(result)).toContain('H5:')
     }
   )
+})
+
+// SMI-6892 C3 (High, round 16): this tokenizer cannot tell a STANDALONE
+// subshell command `(cmd)` -- whose closing `)` really is a bash comment
+// boundary -- from a zsh GLOB-ALTERNATION pattern `(a|b)`, where `)` is
+// just another character inside one WORD and a glued `#suffix` is part of
+// that same glob text, never a comment. Measured directly (not inferred):
+// in zsh 5.9 (the shell Claude Code's own Bash tool runs on this machine),
+// `printf "[%s]" (a|b)#x` with a file literally named `a#x` present in cwd
+// expands the WHOLE `(a|b)#x` to that filename and the command after it
+// still runs; with no match, zsh's own parse error is `no matches found:
+// (a|b)#x`, i.e. `#x` was already part of the glob token, not split off as
+// a comment. Bash lacks this glob form entirely (`echo (a|b)#x` is a
+// syntax error in bash 3.2 and 5.2 -- confirmed live on both), so bash
+// alone could never surface this ambiguity. Ruling (queen, fail-closed,
+// zero corpus hits): `(` and `)` are dropped from `COMMENT_BOUNDARY_CHARS`
+// entirely, so a `#` right after `)` is NEVER treated as a comment start,
+// in EITHER shell -- an accepted OVER-block for the real-subshell case
+// (bash and zsh both agree `(echo x)#x; npx ruflo memory store` is a
+// genuine comment, per `retro14-bash-truth.sh`'s own `)#x` measurement and
+// this round's own zsh confirmation), traded for closing the
+// glob-ambiguous case no simple tokenizer can distinguish from it.
+describe('decide() — SMI-6892 C3: a # right after a closing ) is never a comment boundary -- zsh may be closing a glob alternation there, not a subshell', () => {
+  it('(echo x)#x; npx ruflo memory store -> deny H5 (accepted over-block: bash AND zsh both treat this as a real comment, but the tokenizer cannot tell it apart from the zsh glob shape below)', () => {
+    const result = decide(bashCall('(echo x)#x; npx ruflo memory store'), {})
+    expect(result.action).toBe('deny')
+    expect(reasonOf(result)).toContain('H5:')
+  })
+
+  it('echo (a|b)#x; npx ruflo memory store -> deny H5 (the zsh-glob shape itself: measured live in zsh 5.9, (a|b)#x is ONE glob word with # inside it, never a comment)', () => {
+    const result = decide(bashCall('echo (a|b)#x; npx ruflo memory store'), {})
+    expect(result.action).toBe('deny')
+    expect(reasonOf(result)).toContain('H5:')
+  })
+})
+
+// SMI-6892 C2 (round 16, pre-existing, both guards): a backslash + newline
+// is a LINE CONTINUATION bash and zsh both remove before word splitting,
+// but the tokenizer's backslash branch appended the newline into the word
+// instead -- `npx ru<nl>flo memory store` reached the ruflo predicates as
+// the literal string `"ru\nflo"`, which is not `ruflo`, and allowed. Each
+// row below must give the EXACT SAME verdict and reason as its
+// non-continuation spelling.
+describe('decide() — SMI-6892 C2: a line continuation (backslash + newline) is invisible to the guard, exactly like its non-continuation spelling', () => {
+  it.each([
+    ['npx ru\\<nl>flo memory store (command NAME split)', 'npx ru\\\nflo memory store'],
+    ['npx \\<nl>ruflo memory store (before the name)', 'npx \\\nruflo memory store'],
+  ] as const)('%s matches its plain spelling', (_label, contCmd) => {
+    const contResult = decide(bashCall(contCmd), {})
+    const plainResult = decide(bashCall('npx ruflo memory store'), {})
+    expect(contResult.action).toBe(plainResult.action)
+    expect(contResult.action).toBe('deny')
+    expect(reasonOf(contResult)).toBe(reasonOf(plainResult))
+  })
 })
 
 describe('decide() — SMI-6869: a backtick substitution is read like a $(...) substitution: one construct, one representation', () => {

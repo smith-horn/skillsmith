@@ -68,6 +68,20 @@ describe('tokenize()', () => {
     expect(wordValues(tokens)).toEqual(['echo', 'a b'])
   })
 
+  // SMI-6892 C2 (round 16, pre-existing): `\` + newline is a LINE
+  // CONTINUATION, which bash and zsh both REMOVE before word splitting --
+  // not an ordinary backslash escape, which keeps the escaped character.
+  // Measured in bash 3.2, bash 5.2 and zsh 5.9: `cat \<nl>f` reads `f`
+  // (the pair vanishes), `ca\<nl>t f` still runs `cat` (the continuation
+  // can split the command NAME itself), and the same removal happens
+  // inside double quotes. Appending the newline instead (the old
+  // behavior) put a literal `\n` INSIDE the word, which is why
+  // `cat \<nl>.env` used to reach the read check as `"\n.env"` and allow.
+  it('a backslash + newline (line continuation) is removed, not appended into the word', () => {
+    const tokens = tokenize('cat \\\n.env')
+    expect(wordValues(tokens)).toEqual(['cat', '.env'])
+  })
+
   it('records a $(...) substitution in both .value and .subs', () => {
     const tokens = tokenize('echo $(echo hi)')
     const sub = tokens[1]
@@ -294,23 +308,25 @@ describe('SMI-6869 governance round 12 F4: an unquoted # at a word boundary star
   })
 })
 
-// SMI-6869 governance round 14/15 (C1 fix): an unquoted # starts a comment
-// only after a blank, an operator, or at the start of input -- bash's own
-// word boundary, not the tokenizer's former `cur === null` check. Every
-// "comment" row below was confirmed against REAL bash on both the host
-// (bash 3.2.57, macOS) and the worktree container (bash 5.2.15, Linux) --
-// the two shells agreed on every row (scripts/tests/... bash-truth-r15.sh
-// probe, not re-run here since this describe block pins the TOKENIZER's
-// own output, not a shell's). A "comment" row denies through to end of
+// SMI-6892 (governance rounds 14-16, C1 fix): an unquoted # starts a
+// comment only after a blank, an operator, or at the start of input --
+// bash's own word boundary, not the tokenizer's former `cur === null`
+// check. Every "comment" row below was confirmed against REAL bash 3.2
+// (host, macOS), bash 5.2 (worktree container, Linux), AND zsh 5.9 (host --
+// the shell Claude Code's own Bash tool actually runs on this machine) --
+// all three shells agreed on every row (retro record: SMI-6892's own
+// governance-round history holds the probe scripts and raw output, not
+// reproduced here since this describe block pins the TOKENIZER's own
+// output, not a shell's). A "comment" row denies through to end of
 // line/input; a "not a comment" row keeps the `#` and everything after it
 // as ordinary word text.
 const CR = '\r'
 const VT = '\v'
 const FF = '\f'
-const NBSP = ' '
+const NBSP = '\u00a0'
 const TAB = '\t'
 
-describe("SMI-6869 governance round 15 C1: an unquoted # starts a comment only after a blank, an operator, or at the start of input -- bash's word boundary, not the tokenizer's", () => {
+describe('SMI-6892 C1: an unquoted # starts a comment only after a blank, an operator, or at the start of input -- measured in bash 3.2, bash 5.2 and zsh 5.9, all three agreeing', () => {
   it.each([
     ['start of input', '#x', []],
     ['after space', 'echo #x', ['echo']],
@@ -319,13 +335,19 @@ describe("SMI-6869 governance round 15 C1: an unquoted # starts a comment only a
     ['after ;', 'echo a;#x', ['echo', 'a']],
     ['after |', 'echo a|#x', ['echo', 'a']],
     ['after &', 'echo a&#x', ['echo', 'a']],
-    ['after (', '(#x', []],
-    ['after )', '(echo a)#x', ['echo', 'a']],
   ])('%s: %j is a comment -- words %j', (_label, command, expected) => {
     expect(wordValues(tokenize(command))).toEqual(expected)
   })
 
   it.each([
+    // SMI-6892 C3 (round 16) supersedes this row's own original bash-only
+    // measurement: `(`/`)` were dropped from COMMENT_BOUNDARY_CHARS
+    // entirely, an accepted over-block for the real-subshell case bash and
+    // zsh both agree on, closing a zsh glob-alternation ambiguity
+    // (`(a|b)#x`) a simple tokenizer cannot tell apart from it -- see
+    // `env-read-guard.test.ts`'s own SMI-6892 C3 describe block.
+    ['NOT after ( (opens a word instead of a comment)', '(#x', ['#x']],
+    ['NOT after ) (opens a word instead of a comment)', '(echo a)#x', ['echo', 'a', '#x']],
     ['NOT after } (${X}#foo)', '${X}#foo', ['$', 'X', '#foo']],
     ['NOT after { in a literal brace-expansion attempt (a{b}#x)', 'a{b}#x', ['a', 'b', '#x']],
     ["NOT after CR (not one of bash's own blanks)", `hi${CR}#x`, ['hi', '#x']],

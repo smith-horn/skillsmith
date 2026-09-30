@@ -701,6 +701,41 @@ describe('decide() — SMI-6869 governance round 12 F2: a computed reader with a
   })
 })
 
+// SMI-6892 (round 16, ADR-172 sec 1): round 12 caught a SUBSTITUTION head
+// (`$(echo cat) .env`) but not a bare VARIABLE head with no substitution
+// at all -- `$X cat .env` / `$EDITOR .env` tokenize with NO `.subs`, so
+// `checkUnresolvedHeadTail`'s old `(aligned[0].subs?.length ?? 0) === 0`
+// early-return treated them as an ordinary, resolved head and never
+// re-checked the tail at all. This is a narrower fix than round 12's own
+// "documented limit" ruling just below (a name a shell only ASSEMBLES at
+// runtime, like `cat ${f}v`, stays out of reach by design) -- a bare `$X`
+// or `$EDITOR` used AS THE COMMAND NAME, with an ALREADY-LITERAL protected
+// argument, is exactly the shape ADR-172 sec 1 names as a read target,
+// not a "variable-built path" the guard was never meant to resolve.
+describe('decide() — SMI-6892 (ADR-172 sec 1): a bare variable head (no substitution) with a protected argument denies, the same as a substitution head', () => {
+  it.each([
+    ['$X cat .env', '$X cat .env'],
+    ['$EDITOR .env (single-word variable head)', '$EDITOR .env'],
+    ['sudo $X cat .env (wrapper-peeled first)', 'sudo $X cat .env'],
+    ['$X $(echo cat) .env (variable head, substitution tail)', '$X $(echo cat) .env'],
+  ])('%s -> deny', (_label, command) => {
+    expect(decide(bashCall(command), {}).action).toBe('deny')
+  })
+
+  it.each([
+    ['$X cat README.md (no protected argument)', '$X cat README.md'],
+    ['$CMD .env.example (safe file)', '$CMD .env.example'],
+    ['$X ls -la (no protected argument at all)', '$X ls -la'],
+    ['echo $X cat .env (a LITERAL, resolved echo head)', 'echo $X cat .env'],
+  ])('%s -> allow (control)', (_label, command) => {
+    expect(decide(bashCall(command), {}).action).toBe('allow')
+  })
+
+  it("grep -qE '^KEY=' .env -> allow (control: the sanctioned output-free exception is unaffected)", () => {
+    expect(decide(bashCall("grep -qE '^KEY=' .env"), {}).action).toBe('allow')
+  })
+})
+
 // SMI-6869 governance round 12 (ruling, not a fix): `cat $(echo /app/.en)v`
 // allows and stays allowed. The guard's contract is literal text -- a
 // protected name spelled anywhere, substitution bodies included, is a read
@@ -765,17 +800,13 @@ describe('decide() — SMI-6869 governance round 15 C1: a # glued to }/{ or to a
   it.each([
     ['glued to } (${X}#x)', 'echo ${X}#x; cat .env'],
     ['glued to } via a literal brace-expansion attempt (a{b}#x)', 'echo a{b}#x; cat .env'],
-    ['glued to a non-bash blank (NBSP)', 'echo hi #x; cat .env'],
+    ['glued to a non-bash blank (NBSP)', 'echo hi\u00a0#x; cat .env'],
   ])('%s -> deny (the # never starts a comment, so the read is not hidden)', (_label, command) => {
     expect(decide(bashCall(command), {}).action).toBe('deny')
   })
 
   it('echo hi # x; cat .env -> allow (control: a REAL comment, preceded by an actual space, still hides the read)', () => {
     expect(decide(bashCall('echo hi # x; cat .env'), {}).action).toBe('allow')
-  })
-
-  it('(echo x)#x; cat .env -> allow (control: ) IS a genuine bash boundary, so this is a real comment)', () => {
-    expect(decide(bashCall('(echo x)#x; cat .env'), {}).action).toBe('allow')
   })
 
   it('echo a\\#b; cat .env -> deny (control: an escaped # never starts a comment, boundary or not)', () => {
@@ -792,6 +823,36 @@ describe('decide() — SMI-6869 governance round 15 C1: a # glued to }/{ or to a
       expect(decide(bashCall(command), {}).action).toBe('deny')
     }
   )
+})
+
+// SMI-6892 C3 (High, round 16): this tokenizer cannot tell a STANDALONE
+// subshell command `(cmd)` -- whose closing `)` really is a bash comment
+// boundary -- from a zsh GLOB-ALTERNATION pattern `(a|b)`, where `)` is
+// just another character inside one WORD and a glued `#suffix` is part of
+// that same glob text, never a comment. Measured directly (not inferred):
+// in zsh 5.9 (the shell Claude Code's own Bash tool runs on this machine),
+// `printf "[%s]" (a|b)#x` with a file literally named `a#x` present in cwd
+// expands the WHOLE `(a|b)#x` to that filename and the command after it
+// still runs; with no match, zsh's own parse error is `no matches found:
+// (a|b)#x`, i.e. `#x` was already part of the glob token, not split off as
+// a comment. Bash lacks this glob form entirely (`echo (a|b)#x` is a
+// syntax error in bash 3.2 and 5.2 -- confirmed live on both), so bash
+// alone could never surface this ambiguity. Ruling (queen, fail-closed,
+// zero corpus hits): `(` and `)` are dropped from `COMMENT_BOUNDARY_CHARS`
+// entirely, so a `#` right after `)` is NEVER treated as a comment start,
+// in EITHER shell -- an accepted OVER-block for the real-subshell case
+// (bash and zsh both agree `(echo x)#x; cat .env` is a genuine comment,
+// per `retro14-bash-truth.sh`'s own `)#x` measurement and this round's own
+// zsh confirmation), traded for closing the glob-ambiguous case no simple
+// tokenizer can distinguish from it.
+describe('decide() — SMI-6892 C3: a # right after a closing ) is never a comment boundary -- zsh may be closing a glob alternation there, not a subshell', () => {
+  it('(echo x)#x; cat .env -> deny (accepted over-block: bash AND zsh both treat this as a real comment, but the tokenizer cannot tell it apart from the zsh glob shape below)', () => {
+    expect(decide(bashCall('(echo x)#x; cat .env'), {}).action).toBe('deny')
+  })
+
+  it('echo (a|b)#x; cat .env -> deny (the zsh-glob shape itself: measured live in zsh 5.9, (a|b)#x is ONE glob word with # inside it, never a comment)', () => {
+    expect(decide(bashCall('echo (a|b)#x; cat .env'), {}).action).toBe('deny')
+  })
 })
 
 // SMI-6869 governance round 15 C2 (pre-existing): `evaluateCommand` used to
@@ -826,6 +887,75 @@ describe('decide() — SMI-6869 governance round 15 C2: an unquoted ${VAR} expan
       expect(decide(bashCall(command), {}).action).toBe('deny')
     }
   )
+})
+
+// SMI-6892 C1 (round 16, regression in the round-15 C2 fix): not splitting
+// on `{`/`}` is what lets `cat ${HOME}/.env` read as ONE command, but it
+// also MERGES the words on either side of a dropped brace into one
+// segment -- so `${X} cat .env` tokenizes as `$` `{` `X` `}` `cat` `.env`,
+// and the merged segment's own argv[0] is the bare `$`, not the shell's
+// real command name `cat`, which reached ALLOW. Fixed with
+// `groupingOpSubRuns` (shell-command-segments.mjs): every run of words
+// starting right after a DROPPED op (a `{` or `}`) is checked as its OWN
+// segment too, alongside the coarse `splitCommandSegments` one -- a
+// violation in either denies (monotone: this can only ADD denials, never
+// remove one). Measured in bash 3.2 (host), bash 5.2 (container) AND zsh
+// 5.9 (host): with `X` unset, `${X} cat probe.txt`, `${X}cat probe.txt`
+// (glued) and `V=${X} cat probe.txt` all really read the probe file in
+// all three shells -- an unset unquoted expansion contributes ZERO words,
+// so the real head is `cat`, not `$`.
+describe('decide() — SMI-6892 C1: a merged ${VAR} segment does not hide the real command name behind the brace', () => {
+  it.each([
+    ['${X} cat .env', '${X} cat .env'],
+    ['${X}cat .env (glued)', '${X}cat .env'],
+    ['${A}${B} cat .env (two adjacent braces)', '${A}${B} cat .env'],
+    ['{ ${X} cat .env; } (inside a brace GROUP too)', '{ ${X} cat .env; }'],
+    ['V=${X} cat .env (assignment prefix)', 'V=${X} cat .env'],
+    ['${} cat .env (empty braces)', '${} cat .env'],
+  ])('%s -> deny', (_label, command) => {
+    expect(decide(bashCall(command), {}).action).toBe('deny')
+  })
+
+  it.each([
+    [
+      'a{b} cat README.md (invalid brace expansion, stays literal, no protected arg)',
+      'a{b} cat README.md',
+    ],
+    ['echo ${X} cat README.md (literal echo head, no protected arg)', 'echo ${X} cat README.md'],
+  ])('%s -> allow (control)', (_label, command) => {
+    expect(decide(bashCall(command), {}).action).toBe('allow')
+  })
+})
+
+// SMI-6892 C2 (round 16, pre-existing, both guards): a backslash + newline
+// is a LINE CONTINUATION bash and zsh both remove before word splitting,
+// but the tokenizer's backslash branch appended the newline into the word
+// instead -- `cat \<nl>.env` reached the read check as the literal string
+// `"\n.env"`, which is not `.env`, and allowed. Each row below must give
+// the EXACT SAME verdict and reason as its non-continuation spelling, the
+// same equality-pair shape the backtick/`$(...)`  pairs above use.
+describe('decide() — SMI-6892 C2: a line continuation (backslash + newline) is invisible to the guard, exactly like its non-continuation spelling', () => {
+  function reasonOf(result: ReturnType<typeof decide>): string {
+    return result.json?.hookSpecificOutput.permissionDecisionReason ?? ''
+  }
+
+  it.each([
+    ['cat \\<nl>.env', 'cat \\\n.env', 'cat .env'],
+    ['ca\\<nl>t .env (command NAME split)', 'ca\\\nt .env', 'cat .env'],
+    ['cat .en\\<nl>v (mid-argument split)', 'cat .en\\\nv', 'cat .env'],
+    ['cat "\\<nl>.env" (removed inside double quotes too)', 'cat "\\\n.env"', 'cat ".env"'],
+    [
+      'bash -c "cat \\<nl>.env" (nested shell body)',
+      'bash -c "cat \\\n.env"',
+      'bash -c "cat .env"',
+    ],
+  ] as const)('%s matches its plain spelling', (_label, contCmd, plainCmd) => {
+    const contResult = decide(bashCall(contCmd), {})
+    const plainResult = decide(bashCall(plainCmd), {})
+    expect(contResult.action).toBe(plainResult.action)
+    expect(contResult.action).toBe('deny')
+    expect(reasonOf(contResult)).toBe(reasonOf(plainResult))
+  })
 })
 
 // SMI-6869 governance round 15 C3 (pre-existing): `evaluateCommand`'s own

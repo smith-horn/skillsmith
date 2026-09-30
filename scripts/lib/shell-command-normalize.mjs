@@ -54,8 +54,20 @@
  */
 
 import { basenameOf, tokenize } from './shell-command-tokenize.mjs'
+import {
+  groupingOpSubRuns,
+  SEGMENT_SEPARATOR_OPS,
+  splitCommandSegments,
+  splitCommandSegmentsWithSubRuns,
+} from './shell-command-segments.mjs'
 
 export { basenameOf, tokenize }
+export {
+  groupingOpSubRuns,
+  SEGMENT_SEPARATOR_OPS,
+  splitCommandSegments,
+  splitCommandSegmentsWithSubRuns,
+}
 
 /** Recognized shell wrappers whose `-c '<body>'` form carries a nested command. */
 export const SHELL_COMMANDS = new Set(['bash', 'sh', 'zsh', 'dash', 'ksh'])
@@ -350,41 +362,6 @@ export function scanPositionalScriptText(cmd, args, scanFn) {
 }
 
 /**
- * Op values that really END a command. `{`/`}`/`(`/`)` come back from
- * `tokenize` as op tokens unconditionally, but `{`/`}` are bash RESERVED
- * WORDS, not separators, so a consumer that splits on them tears `${VAR}`
- * into pieces -- which is how `cat ${HOME}/.env` reached ALLOW while
- * `cat "${HOME}/.env"` and `cat $HOME/.env` both denied. Deliberately the
- * same set as `ruflo-host-guard-segments.mjs`'s `SPLIT_OPS` and (minus
- * `(`/`)`, which cannot appear in that position) the git consumer's
- * `SEGMENT_BOUNDARY_OPS`; the third copy of this rule, now shared.
- */
-export const SEGMENT_SEPARATOR_OPS = new Set([';', '&&', '||', '|', '&', '\n', '(', ')'])
-
-/**
- * Split a token stream into command segments on `SEGMENT_SEPARATOR_OPS`,
- * dropping every other op token and keeping word AND heredoc tokens in the
- * segment they belong to.
- * @param {Array<{type: string, value?: string}>} tokens
- * @returns {Array<Array<object>>}
- */
-export function splitCommandSegments(tokens) {
-  const segments = []
-  let current = []
-  for (const token of tokens) {
-    if (token.type === 'op') {
-      if (!SEGMENT_SEPARATOR_OPS.has(token.value)) continue
-      if (current.length > 0) segments.push(current)
-      current = []
-      continue
-    }
-    current.push(token)
-  }
-  if (current.length > 0) segments.push(current)
-  return segments
-}
-
-/**
  * Every word of every substitution BODY under `words`, at any nesting
  * depth: a body is tokenized, its words collected, and each of those
  * words' own `.subs` opened in turn, so `$(echo $(echo .env))` reads like
@@ -416,20 +393,30 @@ export function flattenSubWords(words, depth = 0) {
 }
 
 /**
- * When a segment's own argv[0] IS a substitution, the command that will
- * run is unresolved for this segment -- `` `cat` .env `` runs whatever its
- * body prints, with `.env` as ITS OWN argument, so no reader check can
- * fire against a named command at all. Two independent checks the caller
- * cannot make on its own:
+ * When a segment's own argv[0] IS UNRESOLVED, the command that will run is
+ * unknown for this segment. Unresolved covers two shapes (ADR-172 sec 1):
+ * a SUBSTITUTION head -- `` `cat` .env `` runs whatever its body prints,
+ * with `.env` as ITS OWN argument -- and a bare VARIABLE head with no
+ * substitution at all -- `$X cat .env` / `$EDITOR .env`, where `$X`/
+ * `$EDITOR` is computed at runtime and this guard cannot know what it
+ * expands to. Either way no reader check can fire against a named command,
+ * so two independent checks the caller cannot make on its own:
  *
- * 1. Whatever the body prints, a value in a REMAINING argument the
- *    caller's own `checkFlaggedArg` flags is still that unnamed command's
- *    argument -- checked first, regardless of what the body resolves to
+ * 1. Whatever the head resolves to, a value in a REMAINING argument the
+ *    caller's own `checkFlaggedArg` flags is still that command's argument
+ *    -- checked first, regardless of what the head turns out to be
  *    (`$(echo cat) .env`: the body's head is `echo`, not `cat`, so a
- *    head-only re-check misses this entirely).
- * 2. The shape this guard has always caught: the body prints its OWN
- *    name, found by re-running the caller's own `checkArgv` with the
- *    body's HEAD word swapped in for the unresolved argv[0].
+ *    head-only re-check misses this entirely; `$EDITOR .env` has no body
+ *    at all, so only this check can ever fire for it).
+ * 2. The shape this guard has always caught for a SUBSTITUTION head: the
+ *    body prints its OWN name, found by re-running the caller's own
+ *    `checkArgv` with the body's HEAD word swapped in for the unresolved
+ *    argv[0]. A bare variable head has no body to re-run this against --
+ *    `aligned[0].subs` is empty, so this loop is simply a no-op for it,
+ *    and check 1 above is the only coverage that shape gets (which is
+ *    also the only coverage ADR-172 asks for: it names the risk as "an
+ *    unresolved head plus a protected argument", not "a variable head
+ *    whose own runtime value happens to be dangerous").
  * @param {Array<{value: string, subs?: string[]}>} argvWords the segment's
  *   words BEFORE wrapper peeling (the peeled argv is aligned to them here)
  * @param {string[]} normalizedArgv the caller's wrapper-peeled argv values
@@ -462,7 +449,16 @@ export function checkUnresolvedHeadTail(
     offset > 0 && normalizedArgv.every((v, i) => argvWords[offset + i]?.value === v)
       ? argvWords.slice(offset)
       : argvWords
-  if (aligned.length === 0 || (aligned[0].subs?.length ?? 0) === 0) return null
+  if (aligned.length === 0) return null
+  // ADR-172 sec 1: a head is unresolved when it carries a substitution
+  // (`.subs` non-empty) OR is itself a bare, non-substitution variable
+  // reference (`$X`, `$EDITOR` -- `.value` contains `$` with no `.subs` at
+  // all, since a bare `$VAR` is never wrapped in `$(...)`). Same test
+  // `checkUnresolvedCommand` uses for the ruflo guard's own argv[0]
+  // (`ruflo-host-guard-unresolved.mjs`), so a computed head is unresolved
+  // by the identical rule in both guards.
+  const head = aligned[0]
+  if (!head.value.includes('$') && (head.subs?.length ?? 0) === 0) return null
   // A tail argument that is itself a substitution supplies its OUTPUT, so
   // its body's words (at any depth) are this unnamed command's arguments
   // too: `$(echo cat) $(echo .env)`.
@@ -474,7 +470,7 @@ export function checkUnresolvedHeadTail(
     const flagged = checkFlaggedArg(a)
     if (flagged) return flagged
   }
-  for (const s of aligned[0].subs) {
+  for (const s of head.subs ?? []) {
     const head = tokenize(s).find((t) => t.type === 'word' && !t.redirect)
     if (!head) continue
     const violation = checkArgv([head.value, ...tailArgs])

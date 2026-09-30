@@ -42,7 +42,7 @@ import { consumeHeredocBodies, parseHeredocDelimiter } from './shell-command-her
  * metacharacters, so they are absent -- see the comment branch in
  * `tokenize` for the measurements behind both exclusions.
  */
-const COMMENT_BOUNDARY_CHARS = new Set([' ', '\t', '\n', ';', '|', '&', '(', ')'])
+const COMMENT_BOUNDARY_CHARS = new Set([' ', '\t', '\n', ';', '|', '&'])
 
 /** @param {string} p */
 export function basenameOf(p) {
@@ -198,6 +198,21 @@ export function tokenize(command) {
   while (i < command.length) {
     const c = command[i]
     if (c === '\\') {
+      // `\` + newline is a LINE CONTINUATION: bash and zsh both REMOVE the
+      // pair before word splitting, so it must neither land in a word's
+      // value nor start a word. Measured in bash 3.2 and zsh 5.9: `cat
+      // \<nl>f` reads `f`, `ca\<nl>t f` runs `cat` (the command NAME can be
+      // split), `cat f\<nl>oo` is the one word `foo`, and the removal
+      // happens inside double quotes too. Appending the newline instead put
+      // a literal `\n` INSIDE the word, so `cat \<nl>.env` reached the read
+      // check as `"\n.env"` and allowed, and `npx ru\<nl>flo memory store`
+      // reached the ruflo predicates as `"ru\nflo"` and allowed -- the same
+      // one-construct-two-representations class as the backtick and `$'...'`
+      // fixes (ADR-172 sec 3).
+      if (command[i + 1] === '\n') {
+        i += 2
+        continue
+      }
       if (i + 1 < command.length) word().value += command[i + 1]
       i += 2
       continue
@@ -213,7 +228,9 @@ export function tokenize(command) {
       let j = i + 1
       while (j < command.length && command[j] !== '"') {
         if (command[j] === '\\') {
-          if (j + 1 < command.length) w.value += command[j + 1]
+          // A line continuation is removed inside double quotes too
+          // (measured: `cat "probe\<nl>.txt"` reads `probe.txt`).
+          if (command[j + 1] !== '\n' && j + 1 < command.length) w.value += command[j + 1]
           j += 2
         } else if (command[j] === '$' && command[j + 1] === '(') {
           const r = readParen(command, j + 1)
