@@ -350,6 +350,41 @@ export function scanPositionalScriptText(cmd, args, scanFn) {
 }
 
 /**
+ * Op values that really END a command. `{`/`}`/`(`/`)` come back from
+ * `tokenize` as op tokens unconditionally, but `{`/`}` are bash RESERVED
+ * WORDS, not separators, so a consumer that splits on them tears `${VAR}`
+ * into pieces -- which is how `cat ${HOME}/.env` reached ALLOW while
+ * `cat "${HOME}/.env"` and `cat $HOME/.env` both denied. Deliberately the
+ * same set as `ruflo-host-guard-segments.mjs`'s `SPLIT_OPS` and (minus
+ * `(`/`)`, which cannot appear in that position) the git consumer's
+ * `SEGMENT_BOUNDARY_OPS`; the third copy of this rule, now shared.
+ */
+export const SEGMENT_SEPARATOR_OPS = new Set([';', '&&', '||', '|', '&', '\n', '(', ')'])
+
+/**
+ * Split a token stream into command segments on `SEGMENT_SEPARATOR_OPS`,
+ * dropping every other op token and keeping word AND heredoc tokens in the
+ * segment they belong to.
+ * @param {Array<{type: string, value?: string}>} tokens
+ * @returns {Array<Array<object>>}
+ */
+export function splitCommandSegments(tokens) {
+  const segments = []
+  let current = []
+  for (const token of tokens) {
+    if (token.type === 'op') {
+      if (!SEGMENT_SEPARATOR_OPS.has(token.value)) continue
+      if (current.length > 0) segments.push(current)
+      current = []
+      continue
+    }
+    current.push(token)
+  }
+  if (current.length > 0) segments.push(current)
+  return segments
+}
+
+/**
  * Every word of every substitution BODY under `words`, at any nesting
  * depth: a body is tokenized, its words collected, and each of those
  * words' own `.subs` opened in turn, so `$(echo $(echo .env))` reads like
@@ -402,7 +437,14 @@ export function flattenSubWords(words, depth = 0) {
  *   own violation shape for a flagged tail argument, or null
  * @param {(argv: string[]) => T | null} checkArgv the caller's own per-argv check
  * @param {() => T} onTruncated the caller's fail-closed violation when the
- *   tail's substitutions nest past `MAX_DEPTH`
+ *   tail's substitutions nest past `MAX_DEPTH`. Unreachable from
+ *   `env-read-guard.mjs`'s own call site: that caller already runs
+ *   `flattenSubWords` over the FULL `argvWords` (head included) before
+ *   calling this function and returns its own depth-cap violation on
+ *   truncation, so by the time this function's narrower tail-only flatten
+ *   runs, a truncation it could hit would already have fired there first.
+ *   The parameter is the contract for a second caller that does not
+ *   pre-flatten the same way.
  * @returns {T | null}
  */
 export function checkUnresolvedHeadTail(

@@ -118,12 +118,19 @@ const RUFLO_NAME_IN_VALUE_HEAD_RE =
 const ASSIGNMENT_WORD_RE = /^[A-Za-z_][A-Za-z0-9_]*=/
 
 /**
- * Only these op values END a command. `{`/`}`/`(`/`)` are GROUPING, not
- * separators, and the tokenizer emits them unconditionally -- so `${VAR}`
- * arrives here as the three tokens `$`, op `{`, `VAR`, op `}`, and treating
- * the braces as boundaries put `VAR` in its own segment where it read as a
- * RESOLVABLE head. That made `${PAGER}` extract-and-deny while `$PAGER`
- * skipped: two spellings of one construct, two verdicts.
+ * Only these op values END a command IN THIS CONSUMER -- a git config
+ * VALUE, not a full command line, so a literal `(`/`)` cannot occur here in
+ * a position this segmentation would ever need to split on; excluding them
+ * costs nothing in this domain. `{`/`}` are GROUPING, not separators, and
+ * the tokenizer emits them unconditionally -- so `${VAR}` arrives here as
+ * the three tokens `$`, op `{`, `VAR`, op `}`, and treating the braces as
+ * boundaries put `VAR` in its own segment where it read as a RESOLVABLE
+ * head. That made `${PAGER}` extract-and-deny while `$PAGER` skipped: two
+ * spellings of one construct, two verdicts. This is NOT a repo-wide rule
+ * about `(`/`)`: `ruflo-host-guard-segments.mjs`'s own `SPLIT_OPS` DOES
+ * split on `(`/`)` for its own consumer (a full command line, where a real
+ * subshell grouping can appear) -- each consumer's boundary set matches
+ * what can actually occur in the text it segments.
  */
 const SEGMENT_BOUNDARY_OPS = new Set([';', '&&', '||', '|', '&', '\n'])
 

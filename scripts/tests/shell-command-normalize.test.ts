@@ -294,6 +294,52 @@ describe('SMI-6869 governance round 12 F4: an unquoted # at a word boundary star
   })
 })
 
+// SMI-6869 governance round 14/15 (C1 fix): an unquoted # starts a comment
+// only after a blank, an operator, or at the start of input -- bash's own
+// word boundary, not the tokenizer's former `cur === null` check. Every
+// "comment" row below was confirmed against REAL bash on both the host
+// (bash 3.2.57, macOS) and the worktree container (bash 5.2.15, Linux) --
+// the two shells agreed on every row (scripts/tests/... bash-truth-r15.sh
+// probe, not re-run here since this describe block pins the TOKENIZER's
+// own output, not a shell's). A "comment" row denies through to end of
+// line/input; a "not a comment" row keeps the `#` and everything after it
+// as ordinary word text.
+const CR = '\r'
+const VT = '\v'
+const FF = '\f'
+const NBSP = ' '
+const TAB = '\t'
+
+describe("SMI-6869 governance round 15 C1: an unquoted # starts a comment only after a blank, an operator, or at the start of input -- bash's word boundary, not the tokenizer's", () => {
+  it.each([
+    ['start of input', '#x', []],
+    ['after space', 'echo #x', ['echo']],
+    ['after tab', `echo${TAB}#x`, ['echo']],
+    ['after newline', 'echo a\n#x', ['echo', 'a']],
+    ['after ;', 'echo a;#x', ['echo', 'a']],
+    ['after |', 'echo a|#x', ['echo', 'a']],
+    ['after &', 'echo a&#x', ['echo', 'a']],
+    ['after (', '(#x', []],
+    ['after )', '(echo a)#x', ['echo', 'a']],
+  ])('%s: %j is a comment -- words %j', (_label, command, expected) => {
+    expect(wordValues(tokenize(command))).toEqual(expected)
+  })
+
+  it.each([
+    ['NOT after } (${X}#foo)', '${X}#foo', ['$', 'X', '#foo']],
+    ['NOT after { in a literal brace-expansion attempt (a{b}#x)', 'a{b}#x', ['a', 'b', '#x']],
+    ["NOT after CR (not one of bash's own blanks)", `hi${CR}#x`, ['hi', '#x']],
+    ["NOT after VT (not one of bash's own blanks)", `hi${VT}#x`, ['hi', '#x']],
+    ["NOT after FF (not one of bash's own blanks)", `hi${FF}#x`, ['hi', '#x']],
+    ["NOT after NBSP (not one of bash's own blanks)", `hi${NBSP}#x`, ['hi', '#x']],
+    ['NOT mid-word (a#b)', 'a#b', ['a#b']],
+    ['NOT quoted ("a # b")', '"a # b"', ['a # b']],
+    ['NOT escaped (echo \\# x)', 'echo \\# x', ['echo', '#', 'x']],
+  ])('%s: %j is NOT a comment -- words %j', (_label, command, expected) => {
+    expect(wordValues(tokenize(command))).toEqual(expected)
+  })
+})
+
 // SMI-6869 Fix A: `<`/`>`/`&>` were plain word characters before this fix —
 // `2>&1` tokenized as a leftover `2>` word plus a job-control `&` op plus a
 // stray `1` word, which is what let a trailing redirect masquerade as an

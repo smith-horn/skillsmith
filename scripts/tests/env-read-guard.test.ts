@@ -719,6 +719,21 @@ describe('decide() — documented limit: a protected name assembled across a sub
   })
 })
 
+// SMI-6869 governance round 14 L5: a reader that receives the filename from
+// another command's own OUTPUT, not as a literal argv token, is the same
+// class of documented limit as the substitution-boundary case above -- the
+// name is spelled literally in the command text, but never lands in the
+// consuming reader's own argv, which is all `checkArgv` inspects.
+describe("decide() — documented limit: a reader that receives the filename from another command's output, not its own argv, stays out of reach", () => {
+  it('echo .env | xargs cat -> allow', () => {
+    expect(decide(bashCall('echo .env | xargs cat'), {}).action).toBe('allow')
+  })
+
+  it('find . -name .env -exec cat {} \\; -> allow', () => {
+    expect(decide(bashCall('find . -name .env -exec cat {} \\;'), {}).action).toBe('allow')
+  })
+})
+
 // SMI-6869 governance round 12 F4 (tokenizer comment rule) — these two are
 // CONTROLS for this guard, not red arms: both already deny/allow correctly
 // on the merged tree too, since the protected name here sits BEFORE any
@@ -732,6 +747,136 @@ describe('decide() — SMI-6869 governance round 12 F4 controls: a comment does 
 
   it('# cat .env -> allow (the whole line is a comment; nothing runs)', () => {
     expect(decide(bashCall('# cat .env'), {}).action).toBe('allow')
+  })
+})
+
+// SMI-6869 governance round 15 (C1 regression, this PR's own comment rule):
+// the round-12 F4 fix used `cur === null` alone as the comment boundary,
+// which is the TOKENIZER's word boundary, not bash's. `{`/`}` are flushed
+// as op tokens unconditionally, so a `#` glued right after one looked like
+// a fresh word start though bash does not end a word there; and the
+// whitespace flush used JS `/\s/`, which treats CR/VT/FF/NBSP as blanks
+// though bash's only word-ending blanks are space/tab/newline. Either gap
+// let the "comment" swallow real command text after it. Fixed with a
+// positive allowlist (`COMMENT_BOUNDARY_CHARS`): a `#` starts a comment
+// only right after one of bash's own word-ending characters, or at the
+// start of input.
+describe('decide() — SMI-6869 governance round 15 C1: a # glued to }/{ or to a non-bash blank is not a comment boundary, so the read after it still denies', () => {
+  it.each([
+    ['glued to } (${X}#x)', 'echo ${X}#x; cat .env'],
+    ['glued to } via a literal brace-expansion attempt (a{b}#x)', 'echo a{b}#x; cat .env'],
+    ['glued to a non-bash blank (NBSP)', 'echo hi #x; cat .env'],
+  ])('%s -> deny (the # never starts a comment, so the read is not hidden)', (_label, command) => {
+    expect(decide(bashCall(command), {}).action).toBe('deny')
+  })
+
+  it('echo hi # x; cat .env -> allow (control: a REAL comment, preceded by an actual space, still hides the read)', () => {
+    expect(decide(bashCall('echo hi # x; cat .env'), {}).action).toBe('allow')
+  })
+
+  it('(echo x)#x; cat .env -> allow (control: ) IS a genuine bash boundary, so this is a real comment)', () => {
+    expect(decide(bashCall('(echo x)#x; cat .env'), {}).action).toBe('allow')
+  })
+
+  it('echo a\\#b; cat .env -> deny (control: an escaped # never starts a comment, boundary or not)', () => {
+    expect(decide(bashCall('echo a\\#b; cat .env'), {}).action).toBe('deny')
+  })
+
+  it.each([
+    ['parameter-length operator (${#arr[@]})', 'echo ${#arr[@]}; cat .env'],
+    ['parameter-pattern operator (${v#pat})', 'echo ${v#pat}; cat .env'],
+    ['a URL fragment (http://x/#f)', 'echo http://x/#f; cat .env'],
+  ])(
+    '%s -> deny (control: unaffected by this fix, a genuine non-comment # the guard already read correctly)',
+    (_label, command) => {
+      expect(decide(bashCall(command), {}).action).toBe('deny')
+    }
+  )
+})
+
+// SMI-6869 governance round 15 C2 (pre-existing): `evaluateCommand` used to
+// segment on every op token `tokenize` emits, `{`/`}` included -- but
+// `{`/`}` are bash RESERVED WORDS, not separators, so splitting on them tore
+// `${HOME}/.env` into three pieces (`$`, an empty segment between the
+// braces, `/.env`) and the `/.env` piece alone never resolved to a protected
+// path. `cat $HOME/.env` (no braces at all) was never affected, since there
+// are no `{`/`}` tokens to mis-split on -- the same divergence round 11
+// already fixed for the config-value path (`SEGMENT_BOUNDARY_OPS`). Fixed
+// by segmenting on the shared `SEGMENT_SEPARATOR_OPS` (real separators only)
+// via `splitCommandSegments`, imported from shell-command-normalize.mjs.
+describe('decide() — SMI-6869 governance round 15 C2: an unquoted ${VAR} expansion is not torn apart by the segmenter, so a protected path inside it still denies', () => {
+  it('cat ${HOME}/.env -> deny (the whole word resolves as one, braces and all)', () => {
+    expect(decide(bashCall('cat ${HOME}/.env'), {}).action).toBe('deny')
+  })
+
+  it('cat ${HOME}/.env.example -> allow (the safe-file allowlist still applies through the brace expansion)', () => {
+    expect(decide(bashCall('cat ${HOME}/.env.example'), {}).action).toBe('allow')
+  })
+
+  it('cat ${X} -> allow (control: a braced expansion naming nothing protected)', () => {
+    expect(decide(bashCall('cat ${X}'), {}).action).toBe('allow')
+  })
+
+  it.each([
+    ['double-quoted', 'cat "${HOME}/.env"'],
+    ['no braces at all', 'cat $HOME/.env'],
+  ])(
+    '%s: %s -> deny (control: already denied before this fix, unaffected by it)',
+    (_label, command) => {
+      expect(decide(bashCall(command), {}).action).toBe('deny')
+    }
+  )
+})
+
+// SMI-6869 governance round 15 C3 (pre-existing): `evaluateCommand`'s own
+// depth cap failed OPEN -- `if (depth > MAX_DEPTH || ...) return null`, with
+// `null` meaning ALLOW -- while `ruflo-host-guard.mjs`'s own
+// `evaluateGuardCommand` fails CLOSED at the same shared `MAX_DEPTH`, and
+// this file's own `flattenSubWords` docblock already claimed the fail-closed
+// posture for substitution bodies. A `bash -c` chain nested past MAX_DEPTH
+// (6) hid its innermost `cat .env` behind the cap instead of denying it.
+// Each nest level's own lexical VALIDITY (that bash actually runs the
+// innermost command through that many `bash -c "..."` wrappers) is
+// confirmed by retro14-depth3-validity.out, not re-derived here.
+describe('decide() — SMI-6869 governance round 15 C3: the depth cap fails CLOSED, not open -- a command nested past MAX_DEPTH denies, it is never silently allowed unread', () => {
+  function nestBashC(n: number, inner: string): string {
+    let s = inner
+    for (let k = 0; k < n; k++) {
+      s = 'bash -c "' + s.replace(/\\/g, '\\\\').replace(/"/g, '\\"') + '"'
+    }
+    return s
+  }
+
+  function reasonOf(result: ReturnType<typeof decide>): string {
+    return result.json?.hookSpecificOutput.permissionDecisionReason ?? ''
+  }
+
+  it('a 6-level bash -c chain around cat .env still denies as an ordinary read (within MAX_DEPTH)', () => {
+    const result = decide(bashCall(nestBashC(6, 'cat .env')), {})
+    expect(result.action).toBe('deny')
+    expect(reasonOf(result)).not.toContain('past depth')
+    expect(reasonOf(result)).toContain('.env')
+  })
+
+  it('a 7-level bash -c chain around cat .env denies depth-cap -- past MAX_DEPTH, the innermost read is never reached, let alone allowed', () => {
+    const result = decide(bashCall(nestBashC(7, 'cat .env')), {})
+    expect(result.action).toBe('deny')
+    expect(reasonOf(result)).toContain('past depth 6')
+  })
+
+  it('a 7-level bash -c chain around a BENIGN command (echo hi) also denies depth-cap: the fail-closed consequence is unconditional on content, not a read-specific check', () => {
+    const result = decide(bashCall(nestBashC(7, 'echo hi')), {})
+    expect(result.action).toBe('deny')
+    expect(reasonOf(result)).toContain('past depth 6')
+  })
+
+  // M6: `varlock load` is not the fix for a command that nests too deep --
+  // the depth-cap reason gets its own alternative tail instead of the
+  // shared one every other reason uses.
+  it('the depth-cap reason names its own disable var and never mentions varlock', () => {
+    const reason = reasonOf(decide(bashCall(nestBashC(7, 'cat .env')), {}))
+    expect(reason).toContain('SKILLSMITH_ENV_READ_GUARD_DISABLE=1')
+    expect(reason).not.toContain('varlock')
   })
 })
 

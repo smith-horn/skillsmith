@@ -643,6 +643,29 @@ describe('decide() — M-D: standing arm for the fail-closed depth-cap boundary 
   })
 })
 
+// SMI-6869 governance round 15 C3 (control, not a fix for THIS file): the
+// sibling env-read-guard.mjs's own depth cap failed OPEN at its shared
+// MAX_DEPTH -- this guard's own `evaluateGuardCommand` already failed
+// CLOSED at the same cap before that fix, and this file was not touched by
+// it. A 7-level `bash -c` chain (the same construction env-read-guard's own
+// round-15 C3 test uses, not this file's usual `echo $(...)` nesting) must
+// still deny exactly as it did before.
+describe("decide() — SMI-6869 governance round 15 C3 control: this guard's own depth cap is unaffected by the sibling env-read-guard.mjs fix", () => {
+  function nestBashC(n: number, inner: string): string {
+    let s = inner
+    for (let k = 0; k < n; k++) {
+      s = 'bash -c "' + s.replace(/\\/g, '\\\\').replace(/"/g, '\\"') + '"'
+    }
+    return s
+  }
+
+  it('a 7-level bash -c chain around npx ruflo memory store still denies with "internal error", unchanged', () => {
+    const result = decide(bashCall(nestBashC(7, 'npx ruflo memory store')), {})
+    expect(result.action).toBe('deny')
+    expect(reasonOf(result)).toContain('internal error')
+  })
+})
+
 // --- SMI-6744 Wave 4 DELTA governance round: H-1 through M-6, L-1 through L-4 ---
 // Every red arm below was watched failing (allowing, or denying via the
 // wrong predicate) against the unfixed code before its fix landed — see
@@ -2358,6 +2381,55 @@ describe('decide() — SMI-6869 governance round 12 F4: an unquoted # at a word 
     'control: %s -> allow (quoted, or no word boundary before #)',
     (command) => {
       expect(decide(bashCall(command), {}).action).toBe('allow')
+    }
+  )
+})
+
+// SMI-6869 governance round 15 (C1 regression, this PR's own comment rule):
+// the round-12 F4 fix used `cur === null` alone as the comment boundary,
+// which is the TOKENIZER's word boundary, not bash's -- `{`/`}` flush as op
+// tokens unconditionally, and the whitespace flush used JS `/\s/`, which
+// treats CR/VT/FF/NBSP as blanks though bash's own word-ending blanks are
+// only space/tab/newline. Either gap let a "comment" swallow a real ruflo
+// invocation after it. Fixed with a positive allowlist
+// (`COMMENT_BOUNDARY_CHARS`) shared with env-read-guard.mjs's own tokenizer.
+describe('decide() — SMI-6869 governance round 15 C1: a # glued to }/{ or to a non-bash blank is not a comment boundary, so H5 still fires on the invocation after it', () => {
+  it.each([
+    ['glued to } (${X}#x)', 'echo ${X}#x; npx ruflo memory store'],
+    ['glued to a non-bash blank (NBSP)', 'echo hi #x; npx ruflo memory store'],
+  ])(
+    '%s -> deny H5 (the # never starts a comment, so the invocation is not hidden)',
+    (_label, command) => {
+      const result = decide(bashCall(command), {})
+      expect(result.action).toBe('deny')
+      expect(reasonOf(result)).toContain('H5:')
+    }
+  )
+
+  it('echo hi # x; npx ruflo memory store -> allow (control: a REAL comment, preceded by an actual space, still hides the invocation)', () => {
+    expect(decide(bashCall('echo hi # x; npx ruflo memory store'), {}).action).toBe('allow')
+  })
+
+  it('(echo x)#x; npx ruflo memory store -> allow (control: ) IS a genuine bash boundary, so this is a real comment)', () => {
+    expect(decide(bashCall('(echo x)#x; npx ruflo memory store'), {}).action).toBe('allow')
+  })
+
+  it('echo a\\#b; npx ruflo memory store -> deny H5 (control: an escaped # never starts a comment, boundary or not)', () => {
+    const result = decide(bashCall('echo a\\#b; npx ruflo memory store'), {})
+    expect(result.action).toBe('deny')
+    expect(reasonOf(result)).toContain('H5:')
+  })
+
+  it.each([
+    ['parameter-length operator (${#arr[@]})', 'echo ${#arr[@]}; npx ruflo memory store'],
+    ['parameter-pattern operator (${v#pat})', 'echo ${v#pat}; npx ruflo memory store'],
+    ['a URL fragment (http://x/#f)', 'echo http://x/#f; npx ruflo memory store'],
+  ])(
+    '%s -> deny H5 (control: unaffected by this fix, a genuine non-comment # the guard already read correctly)',
+    (_label, command) => {
+      const result = decide(bashCall(command), {})
+      expect(result.action).toBe('deny')
+      expect(reasonOf(result)).toContain('H5:')
     }
   )
 })

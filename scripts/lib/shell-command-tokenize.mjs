@@ -7,9 +7,14 @@
  * reach every downstream $-based unresolvable-head test identically; a
  * backtick inside single quotes, behind a backslash, or in a heredoc body
  * is literal text and stays as written. An unquoted `#` that starts a NEW
- * word begins a comment running through the next newline; a `#` that is
- * not at a word boundary, is quoted, or sits inside a substitution body
- * stays literal text.
+ * word AND directly follows one of bash's own word-ending characters
+ * (`COMMENT_BOUNDARY_CHARS`) begins a comment running through the next
+ * newline; every other `#` -- quoted, mid-word, glued to a `{`/`}`, or
+ * glued to a non-bash whitespace character -- stays literal text. A `#`
+ * inside a `$(...)`/backtick BODY is likewise literal in the enclosing
+ * word's `.value`, but a consumer that re-tokenizes that body
+ * (`flattenSubWords`, `evaluateCommand`'s `.subs` recursion) applies the
+ * comment rule to it, matching bash: the body is its own command text.
  *
  * Split out of `shell-command-normalize.mjs` itself (SMI-6744 Wave 4 delta
  * governance round) purely to stay under the 500-line-per-file convention
@@ -28,6 +33,16 @@ import { decodeEscapeAt } from './shell-escape-decode.mjs'
 // () => {}`) consumed at CALL time, after both modules have finished
 // loading, never at each other's own module-evaluation time.
 import { consumeHeredocBodies, parseHeredocDelimiter } from './shell-command-heredoc.mjs'
+
+/**
+ * The raw characters bash itself ends a word on, and therefore the only
+ * ones a `#` may directly follow and still start a comment. Space, tab and
+ * newline are bash's ONLY blanks (NOT JS `/\s/`'s set); `;`/`|`/`&`/`(`/`)`
+ * are its other metacharacters. `{`/`}` are reserved WORDS, not
+ * metacharacters, so they are absent -- see the comment branch in
+ * `tokenize` for the measurements behind both exclusions.
+ */
+const COMMENT_BOUNDARY_CHARS = new Set([' ', '\t', '\n', ';', '|', '&', '(', ')'])
 
 /** @param {string} p */
 export function basenameOf(p) {
@@ -347,17 +362,42 @@ export function tokenize(command) {
       i = pushOp(c, 1, i)
       continue
     }
-    // An unquoted `#` starting a NEW word (`cur === null`: it follows
-    // whitespace, an operator, or the start of input) begins a comment:
-    // discard through the next newline, which the branch above still emits
-    // as its own `op` token. A `#` that is not at a word boundary (`a#b`,
-    // `${var#pattern}`, `http://x/#f`) leaves `cur` non-null and is
-    // appended like any other character. One exception: `${#name}` and
-    // `${#name[@]}` (bash's parameter-length operator) put `#` right after
-    // the `{` this tokenizer flushed as its own op token, a word boundary
-    // by its rule but not a comment in any shell; checked against the raw
-    // characters, since `$` and `{` are already two tokens by this point.
-    if (c === '#' && cur === null && !(command[i - 1] === '{' && command[i - 2] === '$')) {
+    // An unquoted `#` begins a comment -- discard through the next
+    // newline, which the `\n` branch above still emits as its own `op`
+    // token -- only when it starts a NEW word (`cur === null`) AND the raw
+    // character before it is one bash itself ends a word on
+    // (`COMMENT_BOUNDARY_CHARS`). A `#` that is not at a word boundary
+    // (`a#b`, `${var#pattern}`, `http://x/#f`) leaves `cur` non-null and is
+    // appended like any other character.
+    //
+    // `cur === null` ALONE is not the boundary, in two measured directions:
+    //
+    //  - `{`/`}` are bash RESERVED WORDS, not operators, but this tokenizer
+    //    flushes them as op tokens unconditionally (the same divergence
+    //    `ruflo-host-guard-segments.mjs`'s `SPLIT_OPS` and
+    //    `ruflo-host-guard-consumers-git.mjs`'s `SEGMENT_BOUNDARY_OPS`
+    //    already exclude them for). `printf "[%s]" ${X}#foo bar` is TWO
+    //    words in bash (`#foo`, `bar`), and `a{b}#x; cmd` still runs `cmd`.
+    //  - the whitespace flush above uses JS `/\s/`, which matches CR, VT,
+    //    FF, NBSP and a dozen Unicode spaces; bash's only word-ending
+    //    blanks are space, tab and newline, so `hi<CR>#x; cmd` is one word
+    //    plus a live `cmd` in bash (measured for CR/VT/FF/NBSP).
+    //
+    // Either way the discard swallowed command text that really executes:
+    // `echo ${X}#x; cat .env` and `echo hi<NBSP>#x; npx ruflo memory store`
+    // both reached ALLOW in both guards. `;`/`|`/`&`/`(`/`)` ARE genuine
+    // bash metacharacters (measured: `(printf "P\n")#x; printf MARK` prints
+    // no MARK), so they stay boundaries. `<`/`>` are metacharacters too but
+    // are deliberately absent: their own branch above always leaves `cur`
+    // non-null (the redirect token), so listing them would be a no-op, and
+    // keeping a glued `>#f` as the redirect target only ever retains text
+    // (measured: real bash treats `>#f` as `>` with no target followed by a
+    // comment and rejects the whole line with a syntax error, so retaining
+    // `#f` here can only make this tokenizer over-block a shape bash itself
+    // never runs at all, never under-block a shape that does run).
+    // `${#name}`/`${#name[@]}` (bash's parameter-length operator) need no
+    // special case now -- that `#` follows a `{`.
+    if (c === '#' && cur === null && (i === 0 || COMMENT_BOUNDARY_CHARS.has(command[i - 1]))) {
       while (i < command.length && command[i] !== '\n') i++
       continue
     }
