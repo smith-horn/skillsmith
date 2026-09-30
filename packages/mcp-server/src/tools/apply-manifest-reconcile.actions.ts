@@ -11,7 +11,12 @@
  * revert exist before the caller sees a success response.
  */
 
-import { ManifestManager, type SkillManifest, type SkillManifestEntry } from '@skillsmith/core'
+import {
+  installedSkillsOf,
+  ManifestManager,
+  type SkillManifest,
+  type SkillManifestEntry,
+} from '@skillsmith/core'
 import { resolveClientId, type ClientId } from '@skillsmith/core/install'
 
 import type { ToolContext } from '../context.js'
@@ -309,7 +314,8 @@ export async function runRevert(
 
   await withLockTimeoutMapping(() =>
     manager.updateSafely((manifest: SkillManifest) => {
-      const current = manifest.installedSkills[key] as unknown as
+      // SMI-6733 MAJOR 3: a nullish `installedSkills` classifies `ok`.
+      const current = installedSkillsOf(manifest)[key] as unknown as
         | Record<string, unknown>
         | undefined
       // Same-entry conflict detection replaces the whole-file hash guard

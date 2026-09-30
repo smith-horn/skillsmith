@@ -283,8 +283,10 @@ async function installSkillImpl(input: unknown, _context?: ToolContext): Promise
   // false-positive against an unrelated same-named global entry — both real
   // problems, but the fix is to read the RIGHT manifest, not to skip the
   // check. `loadManifest()` (install.helpers.js) now takes the manifest path
-  // as an optional argument (default: global, unchanged for its other 3
-  // callers — outdated.ts, skill-updates.ts, updateManifestSafely) — passing
+  // as an optional argument (default: global, unchanged for its other two
+  // callers — outdated.action.ts and skill-updates.ts; SMI-6733 moved
+  // updateManifestSafely off this lenient reader onto loadManifestForWrite,
+  // since a write must not proceed from a failed read) — passing
   // `scopeTarget.manifestPath` here makes this pre-flight correct for BOTH
   // scopes instead of gated to one.
   // SMI-6585: collected here rather than swallowed, and surfaced via `tips`
