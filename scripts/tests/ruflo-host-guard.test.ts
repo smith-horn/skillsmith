@@ -1884,14 +1884,24 @@ describe('decide() — SMI-6869 governance round 8 C1: a $-in-the-TAIL config va
     expect(reasonOf(result)).toContain(expectedCode)
   })
 
-  it('core.pager, head=$SMUDGE_CMD tail=ruflo allows — the HEAD (not the value as a whole) is what must be unresolvable to skip', () => {
-    expect(
-      decide(bashCall('git config --local filter.f.smudge "$SMUDGE_CMD ruflo"'), {}).action
-    ).toBe('allow')
+  // Governance round 11 F3 supersedes both tests below: the skip's premise
+  // is "cannot resolve the head AND cannot read the name" — quantified over
+  // the WHOLE segment, not just the head. `$SMUDGE_CMD ruflo`/`$X ruflo` put
+  // a readable `ruflo` in an ARGUMENT slot behind an unresolvable head, and
+  // with the variable unset a real shell still runs `ruflo` there
+  // (`sh -c '$X ruflo'` prints nothing but still execs `ruflo`) — text this
+  // guard can read, same posture as a name in a later segment. The prior
+  // "only the head matters" premise these two tests pinned is retired.
+  it('core.pager, head=$SMUDGE_CMD tail=ruflo denies — the readable ARGUMENT-slot name is text this guard can read (round 11 F3 supersedes the prior allow)', () => {
+    const result = decide(bashCall('git config --local filter.f.smudge "$SMUDGE_CMD ruflo"'), {})
+    expect(result.action).toBe('deny')
+    expect(reasonOf(result)).toContain('unresolved-command:')
   })
 
-  it('core.pager, head=$X tail=ruflo allows — same shape via -c instead of config --local', () => {
-    expect(decide(bashCall('git -c core.pager="$X ruflo" log'), {}).action).toBe('allow')
+  it('core.pager, head=$X tail=ruflo denies — same shape via -c instead of config --local (round 11 F3 supersedes the prior allow)', () => {
+    const result = decide(bashCall('git -c core.pager="$X ruflo" log'), {})
+    expect(result.action).toBe('deny')
+    expect(reasonOf(result)).toContain('unresolved-command:')
   })
 })
 
@@ -2122,6 +2132,301 @@ describe('decide() — SMI-6869 governance follow-up (PR #2963, round 4): the va
     const result = decide(bashCall('git -c core.pager="X=node_modules/.bin/ruflo $PAGER" log'), {})
     expect(result.action).toBe('deny')
     expect(reasonOf(result)).toContain('unresolved-command:')
+  })
+})
+
+// SMI-6869 governance round-10 C1/C2: two mechanisms in
+// `hasUnresolvableValueHead`. C1: a multi-command value's head test now
+// covers every command segment (`valueSegments`, split on the tokenizer's
+// `op` tokens), not just the first word, so an unresolvable segment can no
+// longer hide a resolvable one behind it. C2: a value carrying a literal
+// `$(...)`/backtick substitution (`carriesResolvableSubstitution`) is never
+// skipped, since its body is text this guard can read.
+describe("decide() — SMI-6869 governance round 10 C1/C2: a config value is shell TEXT — every command segment's head is tested, and a substitution is read, not skipped", () => {
+  // Rows 1-8 deny via `unresolved-command`: the first evaluated segment's
+  // head is unresolvable, and that arm runs before the recursion reaches
+  // the ruflo segment. Rows 9-10 reach the ruflo text first and deny H4.
+  it.each([
+    [
+      '1: unresolvable head, ; , then ruflo',
+      `git -c core.pager="$X; ${R}" log`,
+      'unresolved-command:',
+    ],
+    [
+      '2: unresolvable head, &&, then ruflo',
+      `git -c core.pager="$X && ${R}" log`,
+      'unresolved-command:',
+    ],
+    [
+      '3: unresolvable head, ||, then ruflo',
+      `git -c core.pager="$X || ${R}" log`,
+      'unresolved-command:',
+    ],
+    [
+      '4: unresolvable head, |, then ruflo',
+      `git -c core.pager="$X | ${R}" log`,
+      'unresolved-command:',
+    ],
+    [
+      '5: unresolvable head, real newline, then ruflo',
+      `git -c core.pager="$X\n${R}" log`,
+      'unresolved-command:',
+    ],
+    [
+      '6: unresolvable $(...) head, ; , then ruflo',
+      `git -c core.pager="$(id); ${R}" log`,
+      'unresolved-command:',
+    ],
+    [
+      '7: alias bang, unresolvable head, ; , then ruflo',
+      `git config alias.x '!$X; ${R}'`,
+      'unresolved-command:',
+    ],
+    [
+      '8: git-crypt smudge filter, unresolvable head, ; , then ruflo',
+      `git config --local filter.git-crypt.smudge "$SMUDGE_CMD; ${R}"`,
+      'unresolved-command:',
+    ],
+    [
+      "9 (C2): core.pager='$(ruflo memory store)' log — base emitted H4, PR #2963 wrongly allowed, this restores H4",
+      `git -c core.pager='$(${R})' log`,
+      'H4:',
+    ],
+    [
+      "10: assignment-shaped segment 1 (X=$Y), then ; , then ruflo — the flatten's other direction",
+      `git -c core.pager="X=$Y; ${R}" log`,
+      'H4:',
+    ],
+  ])('%s denies', (_label, cmd, labelPrefix) => {
+    const result = decide(bashCall(cmd), {})
+    expect(result.action).toBe('deny')
+    expect(reasonOf(result)).toContain(labelPrefix)
+  })
+
+  // Controls: a value shaped the SAME way as the deny rows above (an
+  // unresolvable first segment) but whose OTHER segment names nothing
+  // ruflo-shaped. These three allow on both the merged and the fixed
+  // tree, because EVERY segment in them is unresolvable (so the value is
+  // skipped outright, same as the pre-existing M1 single-segment case) --
+  // they are not multi-segment-with-one-resolvable-segment shapes.
+  it.each([
+    ['ctrl: unresolvable ; unresolvable (both $)', 'git -c core.pager="$X; $Y" log'],
+    ['ctrl: alias bang, unresolvable ; unresolvable (both $)', "git config alias.x '!$X; $Y'"],
+    [
+      'ctrl: git-crypt smudge filter, single unresolvable segment (pre-existing M1 shape, unaffected)',
+      'git config --local filter.git-crypt.smudge "$SMUDGE_CMD"',
+    ],
+  ])('%s allows', (_label, cmd) => {
+    expect(decide(bashCall(cmd), {}).action).toBe('allow')
+  })
+
+  it.each([
+    ['git config value: unresolvable && ordinary word', 'git -c core.pager="$X && less" log'],
+    [
+      'git config value: unresolvable $(...) ; ordinary word',
+      'git -c core.pager="$(id); less" log',
+    ],
+    ['top-level control: same shape, no git config at all', "bash -c '$X && less'"],
+  ])(
+    "%s: a value the guard reads is shell text and gets shell text's posture: an unresolvable head in an evaluated segment denies unresolved-command, as the same text under bash -c does",
+    (_label, cmd) => {
+      const result = decide(bashCall(cmd), {})
+      expect(result.action).toBe('deny')
+      expect(reasonOf(result)).toContain('unresolved-command:')
+    }
+  )
+
+  it('a backtick-substitution config value denies via H4 — the tokenizer reads the backtick body through the $(...) normalization', () => {
+    const result = decide(bashCall(`git -c core.pager='\`${R}\`' log`), {})
+    expect(result.action).toBe('deny')
+    expect(reasonOf(result)).toContain('H4:')
+  })
+})
+
+// SMI-6869 governance round 11, F2 (High): `{`/`}`/`(`/`)` are GROUPING
+// tokens, not command separators, but `valueSegments` used to split on
+// EVERY op token — so `${VAR}` arrived as the four tokens `$`, op `{`,
+// `VAR`, op `}`, and the brace boundary put the bare `VAR` word in its own
+// segment where it read as a RESOLVABLE head. That made `${PAGER}`
+// extract-and-deny while the bare `$PAGER` spelling skipped: two spellings
+// of one construct, two verdicts. Fixed by splitting segments only on the
+// real command separators (`; && || | & <newline>`).
+describe('decide() — SMI-6869 governance round 11 F2: `{`/`}`/`(`/`)` are grouping, not segment boundaries — a braced/parenthesized $VAR reference is unresolvable exactly like its bare spelling', () => {
+  it.each([
+    ['bare ${PAGER}', 'git -c core.pager="${PAGER}" log'],
+    ['bare ${SMUDGE_CMD}', 'git config --local filter.git-crypt.smudge "${SMUDGE_CMD}"'],
+    ['bare ${CLEAN_CMD}', 'git config --local filter.git-crypt.clean "${CLEAN_CMD}"'],
+    ['${PAGER:-less} default-value form', 'git -c core.pager="${PAGER:-less}" log'],
+    ['${PAGER} -R (braced head, ordinary tail)', 'git -c core.pager="${PAGER} -R" log'],
+    ['alias bang value !${X}', "git config alias.x '!${X}'"],
+  ])('%s -> allow', (_label, cmd) => {
+    expect(decide(bashCall(cmd), {}).action).toBe('allow')
+  })
+
+  // Controls: `{`/`(` grouping around an unresolvable head still denies
+  // once the guard's recursion reaches the ruflo text inside — measured to
+  // deny on both the merged and the fixed tree, so these are NOT evidence
+  // the fix changed anything; they confirm the boundary-op narrowing didn't
+  // regress the case a brace/paren wraps a genuinely resolvable invocation.
+  it.each([
+    ['{ $X; }; ruflo memory store', `git -c core.pager="{ $X; }; ${R}" log`],
+    ['($X); ruflo memory store', `git -c core.pager="($X); ${R}" log`],
+  ])('control: %s -> deny (unaffected by the boundary-op fix)', (_label, cmd) => {
+    const result = decide(bashCall(cmd), {})
+    expect(result.action).toBe('deny')
+    expect(reasonOf(result)).toContain('unresolved-command:')
+  })
+})
+
+// SMI-6869 governance round 11, F3 (High): the skip's premise is "the guard
+// can neither resolve the head NOR read the name" — but the second half of
+// that premise quantifies over the WHOLE segment, not just its head. With
+// `$X` unset, `sh -c '$X ruflo memory store'` runs `ruflo memory store`, so
+// a readable name behind an unresolvable head is text this guard CAN read,
+// whether it sits in a later SEGMENT (already fixed) or in an ARGUMENT slot
+// of the SAME segment, or in a heredoc/here-string body the unresolvable
+// head may go on to execute. Twelve rows below are the shapes governance
+// round 11 measured allowing on the merged tree despite a readable name
+// this guard could read.
+describe('decide() — SMI-6869 governance round 11 F3: the skip cannot hide a readable name behind an unresolvable head — an argument-slot name or a heredoc/here-string body is text this guard can read', () => {
+  it.each([
+    ['1 base: $X ruflo memory store', `git -c core.pager="$X ${R}" log`],
+    ['2 alias-of-1', `git config alias.x '!$X ${R}'`],
+    ['3 smudge-of-1', `git config --local filter.git-crypt.smudge "$X ${R}"`],
+    ['4 $X npx ruflo memory store', `git -c core.pager="$X npx ${R}" log`],
+    ['5 $X; $Y ruflo memory store', `git -c core.pager="$X; $Y ${R}" log`],
+    ['6 heredoc base ($SHELL <<EOF)', `git -c core.pager="$SHELL <<EOF\n${R}\nEOF" log`],
+    ['7 heredoc $X variant', `git -c core.pager="$X <<EOF\n${R}\nEOF" log`],
+    ['8 heredoc <<- variant', `git -c core.pager="$SHELL <<-EOF\n${R}\nEOF" log`],
+    [
+      "9 heredoc <<'EOF' quoted-delimiter variant",
+      `git -c core.pager="$SHELL <<'EOF'\n${R}\nEOF" log`,
+    ],
+    ['10 heredoc alias spelling', `git config alias.x '!$SHELL <<EOF\n${R}\nEOF'`],
+    [
+      '11 heredoc smudge spelling',
+      `git config --local filter.git-crypt.smudge "$SHELL <<EOF\n${R}\nEOF"`,
+    ],
+    ["12 here-string: $X <<< 'ruflo memory store'", `git -c core.pager="$X <<< '${R}'" log`],
+  ])('%s -> deny', (_label, cmd) => {
+    const result = decide(bashCall(cmd), {})
+    expect(result.action).toBe('deny')
+    expect(reasonOf(result)).toContain('unresolved-command:')
+  })
+
+  // Controls: same unresolvable-head-plus-tail-text shape, but the tail
+  // never spells the name (a redirect TARGET or an unrelated file
+  // argument) — these allow on both trees.
+  it.each([
+    [
+      'git-crypt smudge with an extra resolvable-looking arg, no name',
+      'git config --local filter.git-crypt.smudge "$SMUDGE_CMD $EXTRA_ARG"',
+    ],
+    ['$X < ruflo (file redirect target, not exec)', 'git -c core.pager="$X < ruflo" log'],
+    ['$X > ruflo (file redirect target, not exec)', 'git -c core.pager="$X > ruflo" log'],
+    [
+      '$PAGER ruflo.md (file argument, not the tool name)',
+      'git -c core.pager="$PAGER ruflo.md" log',
+    ],
+  ])('control: %s -> allow', (_label, cmd) => {
+    expect(decide(bashCall(cmd), {}).action).toBe('allow')
+  })
+})
+
+// SMI-6869 governance round 12 (cross-family gate, class 2): the tokenizer
+// had no comment rule at all, so `git -c core.pager="$X # ruflo" log`
+// denied unresolved-command -- round 11's every-word name test read
+// "ruflo" sitting right there after the `#`, even though a real shell
+// never executes commented-out text. Fixed in the tokenizer itself: an
+// unquoted `#` starting a NEW word discards through the next newline.
+describe('decide() — SMI-6869 governance round 12 F4: an unquoted # at a word boundary starts a comment, so a name after it is never read', () => {
+  it.each([
+    'git -c core.pager="$X # ruflo" log',
+    'git -c core.pager="$X #ruflo" log',
+    'echo hi # ruflo memory store',
+  ])('%s -> allow', (command) => {
+    expect(decide(bashCall(command), {}).action).toBe('allow')
+  })
+
+  it('control: ruflo memory store # hi -> deny H4 (the name comes before the comment)', () => {
+    const result = decide(bashCall('ruflo memory store # hi'), {})
+    expect(result.action).toBe('deny')
+    expect(reasonOf(result)).toContain('H4:')
+  })
+
+  it.each(["echo 'a # ruflo'", 'echo a#ruflo'])(
+    'control: %s -> allow (quoted, or no word boundary before #)',
+    (command) => {
+      expect(decide(bashCall(command), {}).action).toBe('allow')
+    }
+  )
+})
+
+describe('decide() — SMI-6869: a backtick substitution is read like a $(...) substitution: one construct, one representation', () => {
+  it('double-quoted git config value denies — measured red/green against the reverted tokenizer: this is the row the fix actually changes', () => {
+    const result = decide(bashCall('git -c core.pager="`which ruflo`" log'), {})
+    expect(result.action).toBe('deny')
+    expect(reasonOf(result)).toContain('unresolved-command:')
+  })
+
+  // Controls: measured to already deny with the tokenizer reverted (a
+  // different pre-existing mechanism reaches these two independently of
+  // the $(...) normalization) — kept here to confirm the fix doesn't
+  // regress them, not as evidence the fix changed anything for them.
+  it.each([
+    ['single-quoted git config value', "git -c core.pager='`which ruflo`' log"],
+    ['alias bang value', "git config alias.x '!`which ruflo`'"],
+  ])('%s still denies', (_label, cmd) => {
+    const result = decide(bashCall(cmd), {})
+    expect(result.action).toBe('deny')
+    expect(reasonOf(result)).toContain('unresolved-command:')
+  })
+
+  it.each([
+    ['top-level, unrelated command wrapping the name', '`which less`', '$(which less)', 'deny'],
+    ['top-level, ordinary substitution', 'echo `date`', 'echo $(date)', 'allow'],
+    [
+      'assignment value, then a benign command',
+      'X=`ruflo memory store` less',
+      'X=$(ruflo memory store) less',
+      'deny',
+    ],
+    [
+      'git config value, double-quoted, unrelated command wrapping the name',
+      'git -c core.pager="`which ruflo`" log',
+      'git -c core.pager="$(which ruflo)" log',
+      'deny',
+    ],
+    [
+      'git config value, single-quoted, whole value is the tool',
+      "git -c core.pager='`ruflo memory store`' log",
+      "git -c core.pager='$(ruflo memory store)' log",
+      'deny',
+    ],
+    [
+      'bash -c, double-quoted, whole body is the tool',
+      'bash -c "`ruflo memory store`"',
+      'bash -c "$(ruflo memory store)"',
+      'deny',
+    ],
+  ] as const)(
+    '%s: the backtick and $(...) spellings reach the same verdict and label',
+    (_label, backtickCmd, dollarCmd, expectedAction) => {
+      const backtickResult = decide(bashCall(backtickCmd), {})
+      const dollarResult = decide(bashCall(dollarCmd), {})
+      const labelOf = (r: ReturnType<typeof decide>) =>
+        reasonOf(r).match(/\[ruflo-host-guard\]\s*([^:]+):/)?.[1] ?? ''
+      expect(backtickResult.action).toBe(expectedAction)
+      expect(backtickResult.action).toBe(dollarResult.action)
+      expect(labelOf(backtickResult)).toBe(labelOf(dollarResult))
+    }
+  )
+
+  it.each([
+    ['top-level, benign substitution as an echo argument', 'echo `date`'],
+    ['top-level, benign substitution as an ls argument', 'ls `pwd`'],
+  ])('%s allows', (_label, cmd) => {
+    expect(decide(bashCall(cmd), {}).action).toBe('allow')
   })
 })
 
@@ -2652,6 +2957,19 @@ describe('decide() — SMI-6869 governance round 8 H7_RE4: explicit relative exe
 
   it('control: /usr/local/bin/ruflo still denies via H7 — H7_RE4 is additive, not a replacement for H7_RE3', () => {
     const result = decide(bashCall('/usr/local/bin/ruflo'), {})
+    expect(result.action).toBe('deny')
+    expect(reasonOf(result)).toContain('H7:')
+  })
+})
+
+// RE3 has no prefix restriction, so RE2's only distinct match is the
+// `cli` basename under nvm; this pins it.
+describe('decide() — SMI-6869 governance round 10 L2: H7_RE2 is redundant with H7_RE3 for the three real names — its one surviving unique arm is the bare "cli" basename under an nvm path', () => {
+  it('the nvm cli-basename row still denies via H7 — H7_RE2\'s own surviving unique coverage, not subsumed by H7_RE3 (which has no "cli" alternative)', () => {
+    const result = decide(
+      bashCall('/Users/x/.nvm/versions/node/v22.22.2/bin/cli memory store --key k --value v'),
+      {}
+    )
     expect(result.action).toBe('deny')
     expect(reasonOf(result)).toContain('H7:')
   })

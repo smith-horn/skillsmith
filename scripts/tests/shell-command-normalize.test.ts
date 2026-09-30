@@ -76,11 +76,53 @@ describe('tokenize()', () => {
     expect(sub.subs).toEqual(['echo hi'])
   })
 
-  it('a backtick substitution drops the backticks from .value but keeps .subs', () => {
+  it('tokenize() normalizes a backtick substitution to the $(...) spelling in .value, and keeps the unwrapped body in .subs', () => {
     const tokens = tokenize('echo `echo hi`')
     const sub = tokens[1]
-    expect(sub.value).toBe('echo hi')
+    expect(sub.value).toBe('$(echo hi)')
     expect(sub.subs).toEqual(['echo hi'])
+  })
+
+  it('tokenize() normalizes a whole-word backtick substitution (`x`) to $(x) in .value and records .subs', () => {
+    const tokens = tokenize('`x`')
+    expect(tokens).toHaveLength(1)
+    expect(tokens[0].value).toBe('$(x)')
+    expect(tokens[0].subs).toEqual(['x'])
+  })
+
+  it('tokenize() normalizes a lone unmatched backtick to $() in .value, with an empty .subs entry', () => {
+    const tokens = tokenize('`')
+    expect(tokens).toHaveLength(1)
+    expect(tokens[0].value).toBe('$()')
+    expect(tokens[0].subs).toEqual([''])
+  })
+
+  it('tokenize() normalizes a backtick substitution embedded in double-quoted text to $(...) in .value', () => {
+    const tokens = tokenize('"a `x` b"')
+    expect(tokens).toHaveLength(1)
+    expect(tokens[0].value).toBe('a $(x) b')
+    expect(tokens[0].subs).toEqual(['x'])
+  })
+
+  it('the backtick and $(...) spellings of one substitution produce the SAME .value: one construct, one representation', () => {
+    for (const inner of ['x', 'which ruflo', 'echo hi']) {
+      expect(tokenize('`' + inner + '`')[0].value).toBe(tokenize('$(' + inner + ')')[0].value)
+      expect(tokenize('"a `' + inner + '` b"')[0].value).toBe(
+        tokenize('"a $(' + inner + ') b"')[0].value
+      )
+    }
+  })
+
+  it('a backtick inside single quotes is literal text, not a substitution: .value keeps the backticks and .subs stays empty', () => {
+    const tokens = tokenize("echo 'a `x` b'")
+    expect(tokens[1].value).toBe('a `x` b')
+    expect(tokens[1].subs).toEqual([])
+  })
+
+  it('a backslash-escaped backtick outside quotes is literal text, not a substitution: .value keeps the backticks and .subs stays empty', () => {
+    const tokens = tokenize('echo \\`x\\`')
+    expect(tokens[1].value).toBe('`x`')
+    expect(tokens[1].subs).toEqual([])
   })
 
   it('records a <(...) process substitution with its delimiters kept in .value', () => {
@@ -197,6 +239,58 @@ describe('tokenize()', () => {
       const tokens = tokenize("echo $'abc")
       expect(wordValues(tokens)).toEqual(['echo', 'abc'])
     })
+  })
+})
+
+// SMI-6869 governance round 12 (cross-family gate, class 2): an unquoted
+// `#` had no special meaning at all before this fix — it tokenized as a
+// plain word character, so `# ruflo` inside a config value read as two
+// ordinary words instead of a discarded comment.
+describe('SMI-6869 governance round 12 F4: an unquoted # at a word boundary starts a comment', () => {
+  it('tokenize("echo a # b c") yields words echo, a only -- # and everything after it is discarded', () => {
+    expect(wordValues(tokenize('echo a # b c'))).toEqual(['echo', 'a'])
+  })
+
+  it('tokenize(\'echo "a # b"\') keeps the quoted "a # b" literally', () => {
+    expect(wordValues(tokenize('echo "a # b"'))).toEqual(['echo', 'a # b'])
+  })
+
+  it('tokenize("echo a#b") keeps a#b literally -- # is not at a word boundary', () => {
+    expect(wordValues(tokenize('echo a#b'))).toEqual(['echo', 'a#b'])
+  })
+
+  it('tokenize("a # b\\nc") yields a, an op newline, then c', () => {
+    const tokens = tokenize('a # b\nc')
+    expect(tokens.map((t) => (t.type === 'op' ? t : t.value))).toEqual([
+      'a',
+      { type: 'op', value: '\n' },
+      'c',
+    ])
+  })
+
+  // Self-found regression (corpus replay against the real repo corpus, not
+  // a queen-assigned finding): `${#var}`/`${#name[@]}` (bash's
+  // parameter-length operator) puts `#` immediately after the `{` this
+  // tokenizer already emits as its own op token when it flushes `$` as a
+  // separate word -- a word boundary by the naive rule above, but never a
+  // comment in any shell. An early version of the F4 fix truncated
+  // `${#before[@]}` (a real line in .github/workflows scripts) to `$`, `{`
+  // and nothing else. Checked against the raw characters immediately
+  // preceding, not the token stream, since `$` and `{` are already two
+  // separate tokens by the time `#` is reached.
+  it('tokenize("echo ${#var}") is unaffected -- # right after a literal ${ is the parameter-length operator, not a comment', () => {
+    expect(wordValues(tokenize('echo ${#var}'))).toEqual(['echo', '$', '#var'])
+  })
+
+  it('tokenize on the real corpus line ${#before[@]} keeps every word, unaffected by the comment rule', () => {
+    expect(wordValues(tokenize('[ ${#before[@]} -lt "$N" ]'))).toEqual([
+      '[',
+      '$',
+      '#before[@]',
+      '-lt',
+      '$N',
+      ']',
+    ])
   })
 })
 

@@ -1,7 +1,15 @@
 /**
  * Shell-command tokenizer (quote-aware, records command substitutions),
  * shared by `scripts/env-read-guard.mjs` and `scripts/ruflo-host-guard.mjs`
- * via `scripts/lib/shell-command-normalize.mjs`.
+ * via `scripts/lib/shell-command-normalize.mjs`. A backtick the tokenizer
+ * interprets as a substitution (unquoted, or inside double quotes) is
+ * spelled $(...) in .value, its body unchanged in .subs, so both spellings
+ * reach every downstream $-based unresolvable-head test identically; a
+ * backtick inside single quotes, behind a backslash, or in a heredoc body
+ * is literal text and stays as written. An unquoted `#` that starts a NEW
+ * word begins a comment running through the next newline; a `#` that is
+ * not at a word boundary, is quoted, or sits inside a substitution body
+ * stays literal text.
  *
  * Split out of `shell-command-normalize.mjs` itself (SMI-6744 Wave 4 delta
  * governance round) purely to stay under the 500-line-per-file convention
@@ -201,7 +209,7 @@ export function tokenize(command) {
           const e = command.indexOf('`', j + 1)
           const inner = e === -1 ? command.slice(j + 1) : command.slice(j + 1, e)
           w.subs.push(inner)
-          w.value += inner
+          w.value += '$(' + inner + ')'
           j = e === -1 ? command.length : e + 1
         } else {
           w.value += command[j]
@@ -216,7 +224,7 @@ export function tokenize(command) {
       const e = command.indexOf('`', i + 1)
       const inner = e === -1 ? command.slice(i + 1) : command.slice(i + 1, e)
       w.subs.push(inner)
-      w.value += inner
+      w.value += '$(' + inner + ')'
       i = e === -1 ? command.length : e + 1
       continue
     }
@@ -337,6 +345,20 @@ export function tokenize(command) {
     }
     if (c === ';' || c === '|' || c === '&' || c === '(' || c === ')' || c === '{' || c === '}') {
       i = pushOp(c, 1, i)
+      continue
+    }
+    // An unquoted `#` starting a NEW word (`cur === null`: it follows
+    // whitespace, an operator, or the start of input) begins a comment:
+    // discard through the next newline, which the branch above still emits
+    // as its own `op` token. A `#` that is not at a word boundary (`a#b`,
+    // `${var#pattern}`, `http://x/#f`) leaves `cur` non-null and is
+    // appended like any other character. One exception: `${#name}` and
+    // `${#name[@]}` (bash's parameter-length operator) put `#` right after
+    // the `{` this tokenizer flushed as its own op token, a word boundary
+    // by its rule but not a comment in any shell; checked against the raw
+    // characters, since `$` and `{` are already two tokens by this point.
+    if (c === '#' && cur === null && !(command[i - 1] === '{' && command[i - 2] === '$')) {
+      while (i < command.length && command[i] !== '\n') i++
       continue
     }
     word().value += c

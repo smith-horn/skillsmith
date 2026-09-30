@@ -47,10 +47,12 @@
  * (`tokenize`, `stripFlags`, `stripEnvPrefix`, `stripDockerExec`,
  * `stripDockerCompose`, `stripVarlockRun`, `extractShellDashC`,
  * `normalizeWrappers`, `hasInlineScriptFlag`, `scanPositionalScriptText`,
- * `basenameOf`, plus `SHELL_COMMANDS`/`WRAPPER_VALUE_FLAGS`/`MAX_DEPTH`/
- * `INLINE_SCRIPT_LONG_FLAGS`/`POSITIONAL_SCRIPT_COMMANDS`) moved to
- * `scripts/lib/shell-command-normalize.mjs` so `scripts/ruflo-host-guard.mjs`
- * can reuse them instead of re-implementing its own copy. This file's own
+ * `basenameOf`, plus `SHELL_COMMANDS`/`MAX_DEPTH`/`INLINE_SCRIPT_LONG_FLAGS`)
+ * moved to `scripts/lib/shell-command-normalize.mjs` so
+ * `scripts/ruflo-host-guard.mjs` can reuse them instead of re-implementing its
+ * own copy. `WRAPPER_VALUE_FLAGS` and `POSITIONAL_SCRIPT_COMMANDS` moved there
+ * too, but live private to that module -- used only by the moved functions'
+ * own bodies, not re-exported for another file to import. This file's own
  * `INLINE_SCRIPT_SHORT_FLAG_CHARS` and `scanTextForProtected` stay here —
  * they are `.env`-specific — and are passed into the two moved functions
  * whose env-specific piece became a parameter in the move.
@@ -58,6 +60,8 @@
 
 import {
   basenameOf,
+  checkUnresolvedHeadTail,
+  flattenSubWords,
   hasInlineScriptFlag,
   MAX_DEPTH,
   normalizeWrappers,
@@ -313,7 +317,13 @@ function checkArgv(argv) {
 
 /**
  * Evaluate a full command string: split on shell operators, recurse into
- * command substitutions and `bash -c` bodies, check each segment.
+ * command substitutions (any nesting depth) and `bash -c` bodies, check
+ * each segment. Contract: a protected file spelled LITERALLY anywhere,
+ * substitution bodies included, is a read target. Limit: a name the shell
+ * only ASSEMBLES at runtime -- a variable, a non-literal emitter, or a
+ * literal split across a substitution boundary -- is not spelled anywhere
+ * this guard can read, and stays out of reach (same limit as a plain
+ * variable: `f=.en; cat ${f}v`).
  * @returns {{ kind: string, file?: string, format?: string } | null}
  */
 function evaluateCommand(command, depth) {
@@ -356,9 +366,34 @@ function evaluateCommand(command, depth) {
     // just above via the same loop, is the only part of it that ever
     // executes).
     const argvWords = segment.filter((w) => w.type === 'word' && !w.redirect)
+    // A command substitution in an ARGUMENT slot supplies its own OUTPUT as
+    // that argument, so a protected path inside the body is a read target
+    // of the ENCLOSING command: `cat $(echo /app/.env)` reads the file even
+    // though `echo /app/.env` does not. The `.subs` recursion above
+    // evaluates the body as a COMMAND and never sees this. Flatten every
+    // word from every substitution BODY, at any nesting depth (round 12;
+    // one non-recursive pass left a nested `$(...)` unopened), into extra
+    // argv entries the enclosing command's own read check covers.
+    const flattenedSubs = flattenSubWords(argvWords)
+    if (flattenedSubs.truncated) return { kind: 'depth-cap' }
+    const subWords = flattenedSubs.words
     const { argv, nested } = normalizeWrappers(argvWords.map((w) => w.value))
-    const violation = nested !== null ? evaluateCommand(nested, depth + 1) : checkArgv(argv)
+    const violation =
+      nested !== null
+        ? evaluateCommand(nested, depth + 1)
+        : checkArgv(subWords.length > 0 ? argv.concat(subWords) : argv)
     if (violation) return violation
+    // An argv[0] that is itself a substitution (after wrapper peeling)
+    // leaves the command name unresolved for this segment; see
+    // `checkUnresolvedHeadTail`'s own doc for the two checks it runs.
+    const headViolation = checkUnresolvedHeadTail(
+      argvWords,
+      argv,
+      (a) => (classifyPath(a) === 'protected' ? { kind: 'read', file: a } : null),
+      checkArgv,
+      () => ({ kind: 'depth-cap' })
+    )
+    if (headViolation) return headViolation
   }
   return null
 }
@@ -373,6 +408,12 @@ function reasonFor(violation) {
     return (
       `[env-read-guard] \`varlock load --format ${violation.format}\` emits UNMASKED secret ` +
       `values and is prohibited. ${ALTERNATIVE}`
+    )
+  }
+  if (violation.kind === 'depth-cap') {
+    return (
+      `[env-read-guard] This command nests substitutions past depth ${MAX_DEPTH}, which ` +
+      `cannot be confirmed safe -- denied by default rather than allowed. ${ALTERNATIVE}`
     )
   }
   return (
