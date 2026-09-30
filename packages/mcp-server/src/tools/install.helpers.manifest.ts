@@ -9,7 +9,7 @@
 
 import * as fs from 'fs/promises'
 import * as path from 'path'
-import { assertNotRealUserHome, withFileLock } from '@skillsmith/core'
+import { assertNotRealUserHome, loadManifestForWrite, withFileLock } from '@skillsmith/core'
 import { MANIFEST_PATH, SKILLSMITH_DIR, type SkillManifest } from './install.types.js'
 
 // ============================================================================
@@ -26,9 +26,17 @@ import { MANIFEST_PATH, SKILLSMITH_DIR, type SkillManifest } from './install.typ
  * workspace-scoped reinstall instead of either always reading global (wrong
  * manifest) or being skipped entirely for workspace scope (silently
  * dropping `conflictAction`'s only effect — `SkillInstallationService.install()`
- * itself never consumes that option). Every other caller
- * (`outdated.ts`, `skill-updates.ts`, this file's own `updateManifestSafely`)
- * keeps calling this with zero args, unaffected.
+ * itself never consumes that option). The other callers
+ * (`outdated.action.ts` and `skill-updates.ts`) keep calling this with zero
+ * args, unaffected.
+ *
+ * SMI-6733: this reader stays LENIENT deliberately, and those two are the only
+ * remaining callers. `updateManifestSafely` used to be a third — it is not any
+ * more, because a write must not proceed from a failed read (ADR-171 § 1), so
+ * it takes `loadManifestForWrite` instead. Making this reader strict would turn
+ * two read-only reports into thrown errors, which is why ADR-171 specifies two
+ * wrappers rather than one strict reader. Giving these two the lenient wrapper
+ * and surfacing its warning is Phase 2.
  */
 export async function loadManifest(manifestPath: string = MANIFEST_PATH): Promise<SkillManifest> {
   try {
@@ -80,7 +88,16 @@ export async function updateManifestSafely(
   // doesn't exist yet.
   await fs.mkdir(SKILLSMITH_DIR, { recursive: true })
   await withFileLock(MANIFEST_PATH, 'manifest update', async () => {
-    const manifest = await loadManifest()
+    // SMI-6733 / ADR-171 § 1: the write side takes the STRICT wrapper, so a
+    // corrupt, unreadable or version-unsupported manifest throws here rather
+    // than being replaced by an empty document. This module's own
+    // `loadManifest` below stays lenient because three READ-ONLY callers
+    // (`install.ts`'s conflict pre-flight, `outdated.action.ts`,
+    // `skill-updates.ts`) share it and must degrade rather than fail; giving
+    // them the lenient wrapper and a surfaced warning is Phase 2. Splitting
+    // the read from the write is the whole reason ADR-171 specifies two
+    // wrappers rather than one strict reader.
+    const manifest = (await loadManifestForWrite(MANIFEST_PATH)) as SkillManifest
     const updatedManifest = updateFn(manifest)
     await saveManifest(updatedManifest)
   })

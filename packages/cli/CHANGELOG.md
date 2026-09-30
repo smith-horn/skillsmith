@@ -4,6 +4,16 @@ All notable changes to `@skillsmith/cli` are documented here.
 
 ## [Unreleased]
 
+- **Fix (data integrity)**: SMI-6733 -- `skillsmith update` no longer replaces a manifest it could
+  not read. `getSkillDiff`'s untracked-skill adoption reached `adoptUntrackedSkillEntry`, which took
+  a tolerant load unconditionally: that substitutes an empty document for a corrupt, unreadable or
+  version-unsupported manifest and then saves over the original bytes. Measured against a manifest
+  whose readable prefix recorded a real skill followed by trailing garbage -- one `update` left a
+  valid file holding only the adopted entry, and the recorded skill was gone. `update` has no
+  `force` in its option surface, so nothing authorised that overwrite. Tolerance is now an explicit
+  `tolerateDegradedRead` argument defaulting to refuse, and this call site passes nothing; a refused
+  adoption returns a distinct outcome rather than a hard error.
+
 - **Test**: SMI-6358 post-merge retro -- the `audit sources` already-tracked overlay's own client
   keying is now pinned. Reverting it to a bare-name lookup previously left all five audit-sources
   test files green; what pins it is the THREE-test set, not the two added here. Both new tests use

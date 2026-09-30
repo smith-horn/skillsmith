@@ -58,7 +58,7 @@ import type {
   InstallResult,
 } from './skill-installation.types.js'
 import { TRUST_TIER_SCANNER_OPTIONS } from './skill-installation.types.js'
-import type { ManifestManager } from './skill-manifest.js'
+import { installedSkillsOf, type ManifestManager } from './skill-manifest.js'
 import { SecurityScanner } from '../security/index.js'
 import type { ScanReport } from '../security/index.js'
 import {
@@ -331,7 +331,9 @@ export async function installFromContent(params: InstallFromContentParams): Prom
     const targetCheck = await checkInstallTarget({
       installPath,
       skillsDir,
-      manifestEntry: manifestData.installedSkills[manifestKey],
+      // SMI-6733 MAJOR 3: a nullish `installedSkills` classifies `ok`, so a
+      // bare subscript here type-checks and throws at runtime.
+      manifestEntry: installedSkillsOf(manifestData)[manifestKey],
       force,
     })
     if (!targetCheck.ok) {
