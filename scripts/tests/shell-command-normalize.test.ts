@@ -862,3 +862,68 @@ describe('scanPositionalScriptText() — post-move 3-arg signature', () => {
     expect(scanPositionalScriptText('awk', ['BEGIN{print "hi"}'], scanForDotEnv)).toBeNull()
   })
 })
+
+// SMI-6903 C2: the arithmetic-adjacency rule, at the tokenizer level. A `#`
+// inside `((…))` is not a comment, and RAW adjacency is the discriminator --
+// `( (` with a blank between is nested subshells, where the `#` IS a comment.
+// Every row measured in bash 3.2, bash 5.2 and zsh 5.9.
+describe('tokenize() — SMI-6903 C2: arithmetic ((…)) suppresses the comment rule', () => {
+  it('keeps the text after a `#` inside `(( … ))` (all three shells run it)', () => {
+    expect(wordValues(tokenize('(( 1 #2 )); cat .env'))).toContain('.env')
+  })
+
+  it('keeps it when the `#` opens the expression (`(( #2 ))`)', () => {
+    expect(wordValues(tokenize('(( #2 )); cat .env'))).toContain('.env')
+  })
+
+  it('suppression is keyed on RAW adjacency: `( ( 1 #2 ) )` is a real comment', () => {
+    // A blank between the parens makes them nested subshells; the shells read
+    // a comment, so the tokenizer must too.
+    expect(wordValues(tokenize('( ( 1 #2 ) ); cat .env'))).not.toContain('.env')
+  })
+
+  it('suppression ENDS when the arithmetic pair closes', () => {
+    // `(( 1 )) #c; printf MARK` prints nothing in all three shells.
+    expect(wordValues(tokenize('(( 1 )) #c; cat .env'))).not.toContain('.env')
+  })
+
+  it('`if (( … ))` and `&& (( … ))` are arithmetic too (not only line-start)', () => {
+    expect(wordValues(tokenize('if (( 1 #2 )); then :; fi; cat .env'))).toContain('.env')
+    expect(wordValues(tokenize('true && (( 1 #2 )); cat .env'))).toContain('.env')
+  })
+})
+
+// SMI-6903 C3/H1: the `wordGroup` / `gluedLeft` / `gluedRight` tags a consumer
+// needs to rebuild the single zsh word a glob group forms. Asserted as the
+// PROPERTY that distinguishes a glob group from a subshell, not as a token
+// dump, so the rows stay meaningful if the token shape changes.
+describe('tokenize() — SMI-6903: paren op tokens carry position and adjacency', () => {
+  const parenOps = (command: string) =>
+    tokenize(command).filter((t) => t.type === 'op' && (t.value === '(' || t.value === ')'))
+
+  it('a WORD-position group is tagged wordGroup, a real subshell is not', () => {
+    expect(parenOps('echo (a|b)').every((t) => t.wordGroup === true)).toBe(true)
+    expect(parenOps('(cat f)').every((t) => t.wordGroup === true)).toBe(false)
+  })
+
+  it('a group welded into a path records glue on BOTH sides', () => {
+    const [open, close] = parenOps('./(node_modules|x)/.bin/ruflo memory store')
+    expect(open.gluedLeft).toBe(true)
+    expect(close.gluedRight).toBe(true)
+  })
+
+  it('a space-separated group records no glue on the side with the blank', () => {
+    const [open, close] = parenOps('echo (a|b) rest')
+    expect(open.gluedLeft).toBe(false)
+    expect(close.gluedRight).toBe(false)
+  })
+
+  it('glue is one-sided when only one side is welded', () => {
+    const [openL, closeL] = parenOps('./x/(ruflo|y) memory store')
+    expect(openL.gluedLeft).toBe(true)
+    expect(closeL.gluedRight).toBe(false)
+    const [openR, closeR] = parenOps('echo (a|b)tail')
+    expect(openR.gluedLeft).toBe(false)
+    expect(closeR.gluedRight).toBe(true)
+  })
+})

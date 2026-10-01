@@ -10,7 +10,12 @@
  * file, so it moves cleanly.
  */
 
-import { SEGMENT_SEPARATOR_OPS as SPLIT_OPS } from './shell-command-segments.mjs'
+import { denyUnreadableGlob } from './ruflo-host-guard-verdicts.mjs'
+import {
+  globGroupAlternativeReadings,
+  MAX_GLOB_READINGS,
+  SEGMENT_SEPARATOR_OPS as SPLIT_OPS,
+} from './shell-command-segments.mjs'
 
 /**
  * Real statement separators for THIS guard's own segmentation -- this
@@ -50,4 +55,49 @@ export function splitSegments(tokens) {
   }
   if (current.length > 0) segments.push({ tokens: current, precedingOp })
   return segments
+}
+
+/**
+ * The SECOND reading, beside `splitSegments` and never replacing it (SMI-6903
+ * H1). A word-position paren group is a zsh glob alternation welded into one
+ * word, so `./(node_modules|x)/.bin/ruflo memory store` really invokes
+ * `./node_modules/.bin/ruflo` (measured in zsh 5.9) — but splitting on `(`,
+ * `|` and `)` left `x` as `argv[0]`, hiding the path from the `argv[0]`-keyed
+ * H3/H5 checks. `globGroupAlternativeReadings` rebuilds each word the shell
+ * would form; this runs the caller's OWN per-segment evaluator over each
+ * rebuilt token list and returns the first denial.
+ *
+ * Additive by construction: it only ever ADDS a denial, because the caller
+ * has already run its primary reading and this returns `null` when nothing
+ * denies. Teaching `splitSegments` itself about word-position parens was
+ * tried first and rejected on measurement — it moved 21 real repository
+ * command lines from `deny/unresolved-command` to `allow`, a fail-open change
+ * to a guard whose whole posture is fail-closed, and it did not even fix the
+ * target shape.
+ *
+ * Past the expansion's caps it FAILS CLOSED (SMI-6903 round 22 F2): the
+ * expansion returns `null` when it abandons, and a command this guard could
+ * not read is a command it does not allow. Before that, abandonment looked
+ * like "nothing to expand" and the verdict fell back to the primary reading,
+ * which allowed a five-group path zsh 5.9 invokes — coverage dropped exactly
+ * where the command got wider.
+ * @param {Array<object>} tokens the full token stream for this command text
+ * @param {(segments: Array<{tokens: Array<object>, precedingOp: string|null}>, index: number) => object|null} evalSegment
+ * @returns {object|null}
+ */
+export function evaluateGlobGroupReadings(tokens, evalSegment) {
+  const readings = globGroupAlternativeReadings(tokens)
+  if (readings === null) {
+    return denyUnreadableGlob(
+      `its alternations multiply to more than ${MAX_GLOB_READINGS} readings of one command`
+    )
+  }
+  for (const reading of readings) {
+    const segments = splitSegments(reading)
+    for (let i = 0; i < segments.length; i++) {
+      const verdict = evalSegment(segments, i)
+      if (verdict) return verdict
+    }
+  }
+  return null
 }

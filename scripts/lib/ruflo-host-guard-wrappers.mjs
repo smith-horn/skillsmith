@@ -10,127 +10,25 @@
  * 500-line-per-file convention this repo keeps by hand for .mjs files
  * under scripts/ (M3 correction: not enforced by tooling here --
  * scripts/check-file-length.mjs only runs via lint-staged for *.ts/*.sh;
- * SMI-5994) -- these are guard-SPECIFIC wrapper/launcher-peeling helpers,
- * not general-purpose primitives every consumer of shell-command-
- * normalize.mjs would want, so they stay out of that shared module
- * (env-read-guard.mjs needs none of this). Shell-fed-text and inline-
+ * SMI-5994) -- these are guard-SPECIFIC wrapper-peeling helpers, not
+ * general-purpose primitives every consumer of shell-command-normalize.mjs
+ * would want, so they stay out of that shared module. The LAUNCHER TABLE
+ * was the exception: env-read-guard.mjs turned out to need it too
+ * (SMI-6903 round 22, `timeout 5 cat .env`), so it now lives in the shared
+ * `shell-command-launchers.mjs` and is imported here. Shell-fed-text and inline-
  * interpreter-script helpers (H-4/H-8/M-1/M-2, plus the pre-existing H-F)
  * split further into their own sibling file, `ruflo-host-guard-shell-
  * fed.mjs` (same hand-kept convention, once the delta round's fixes grew
  * this file past the limit).
  */
 
+import { launcherDashCCommand, peelOneLauncher } from './shell-command-launchers.mjs'
 import { basenameOf, normalizeWrappers, stripFlags } from './shell-command-normalize.mjs'
 
-/**
- * Process-wrapping launcher table (H-A fix, SMI-6744 Wave 4 governance
- * round; extended by the delta round's H-1/H-2 fixes below): each of these
- * prefixes a command without itself BEING the command, defeating H4's
- * argv[0]-exact check and H5's "scan forward from a runner" when placed in
- * front of a runner or a bare `ruflo`. One table with an arity column, so
- * the next launcher is a row, not a new branch: `positionals` is the
- * number of bare (non-flag) arguments the launcher itself consumes before
- * the wrapped command starts (0 for most; `timeout <duration>`, `script
- * <file>`, and `chrt <priority>` take exactly 1); `valueFlags` is the
- * launcher's own flags that consume a following value, so flag-skipping
- * does not mistake that value for the wrapped command. A combined
- * short-flag+value token (`-o0`) is not in `valueFlags` — it is
- * self-contained, and the generic single-token skip below already handles
- * it correctly.
- *
- * `exec`/`command`/`noglob`/`builtin` moved INTO this table (H-2 fix,
- * SMI-6744 Wave 4 governance round) with their OWN per-wrapper
- * `valueFlags`, instead of being routed through the shared
- * `stripFlags`/`WRAPPER_VALUE_FLAGS` in `shell-command-normalize.mjs` (the
- * former `TRANSPARENT_WRAPPERS` special-case, now removed) — that shared
- * set's `-p`/`--prompt` (sudo's own password-prompt flag) collided with
- * `command -p`'s unrelated, value-LESS POSIX "use the default PATH" flag,
- * so `command -p ruflo memory store` was wrongly parsed as `-p` consuming
- * `ruflo` as its value, leaving no ruflo-shaped text in the residual argv
- * at all (a live bypass, not a cosmetic mis-parse — see
- * `shell-command-normalize.mjs`'s own corrected `WRAPPER_VALUE_FLAGS`
- * docblock). `noglob`/`builtin` take no flags of their own in real Bash;
- * `exec -a <name>` sets argv[0] of the replaced process and is the one
- * `exec` flag that takes a value.
- */
-const LAUNCHER_TABLE = new Map(
-  [
-    { name: 'nohup', positionals: 0, valueFlags: [] },
-    { name: 'setsid', positionals: 0, valueFlags: [] },
-    { name: 'time', positionals: 0, valueFlags: [] },
-    { name: 'unbuffer', positionals: 0, valueFlags: [] },
-    { name: 'doas', positionals: 0, valueFlags: [] },
-    { name: 'caffeinate', positionals: 0, valueFlags: [] },
-    // H-1 fix (SMI-6744 Wave 4 governance round): `timeout -k <duration>
-    // 5 ruflo …` / `timeout -s KILL 5 ruflo …` both left `timeout`'s own
-    // `-k`/`-s` VALUE sitting where the wrapped command's own duration
-    // positional was expected, since neither flag was in this table's
-    // valueFlags before.
-    { name: 'timeout', positionals: 1, valueFlags: ['-k', '--kill-after', '-s', '--signal'] },
-    { name: 'nice', positionals: 0, valueFlags: ['-n'] },
-    { name: 'stdbuf', positionals: 0, valueFlags: ['-o', '-e', '-i'] },
-    // `script`'s own `-c COMMAND` shape is a NESTED command, not a
-    // flag/positional this table's generic stripping models correctly —
-    // handled separately by `extractScriptDashC` below, checked BEFORE
-    // this table ever peels `script`, so this entry only ever governs the
-    // plain `script [flags] [file]` (no `-c`) shape.
-    { name: 'script', positionals: 1, valueFlags: [] },
-    // H-1 fix: `chrt -f 1 ruflo …`'s priority (`1`) is a REQUIRED bare
-    // positional between chrt's own flags and the wrapped command --
-    // `positionals: 0` left it sitting as argv[0] of the "residual"
-    // command (a bare number), which is exactly the H-7 mis-modelled-
-    // arity shape the new fail-closed fallback exists to catch, but a
-    // correctly-modelled arity here means H4 catches `ruflo` directly
-    // instead.
-    { name: 'chrt', positionals: 1, valueFlags: ['-p'] },
-    { name: 'ionice', positionals: 0, valueFlags: ['-c', '-n', '-p'] },
-    // H-1 fix: `-I`/`-i` added to xargs's own valueFlags -- correct ONLY
-    // once `restoreXargsReplacementWordTokens` (below) has first restored
-    // the `{}` replacement-string token an UNQUOTED `-I{}`/`-I {}` loses
-    // entirely to this guard's own tokenizer (which treats bare `{`/`}`
-    // as command-grouping operators, not word characters) -- without that
-    // restoration, treating `-I`/`-i` as value-flags here would instead
-    // make them wrongly consume the NEXT REAL WORD (the wrapped command's
-    // own name) as if it were the vanished replacement string.
-    { name: 'xargs', positionals: 0, valueFlags: ['-I', '-i', '-n', '-P', '-d', '-L', '-s'] },
-    { name: 'exec', positionals: 0, valueFlags: ['-a'] },
-    { name: 'command', positionals: 0, valueFlags: [] },
-    { name: 'noglob', positionals: 0, valueFlags: [] },
-    { name: 'builtin', positionals: 0, valueFlags: [] },
-  ].map((entry) => [
-    entry.name,
-    { positionals: entry.positionals, valueFlags: new Set(entry.valueFlags) },
-  ])
-)
-
-/** Strips one launcher's own flags (value-flags aware), then its `positionals` bare arguments. */
-function stripLauncher(argv, entry) {
-  let i = 0
-  while (i < argv.length) {
-    const a = argv[i]
-    if (a === '--') {
-      i++
-      break
-    }
-    if (!a.startsWith('-') || a === '-') break
-    i += entry.valueFlags.has(a) ? 2 : 1
-  }
-  return argv.slice(i + entry.positionals)
-}
-
-/**
- * Peels ONE leading launcher-table entry (H-2 fix folded `exec`/`command`/
- * `noglob`/`builtin` into the same table, so there is no longer a separate
- * "transparent wrapper" branch using the shared, differently-shaped
- * `stripFlags`); null if argv[0] matches none.
- */
-function peelOneLauncher(argv) {
-  if (argv.length === 0) return null
-  const base = basenameOf(argv[0])
-  const entry = LAUNCHER_TABLE.get(base)
-  if (entry) return stripLauncher(argv.slice(1), entry)
-  return null
-}
+// The process-launcher table (H-A/H-1/H-2 fixes) and `peelOneLauncher` live
+// in `shell-command-launchers.mjs` since SMI-6903 round 22, shared with the
+// env guard's transparent-head reading; the table's docblock carries the
+// per-launcher shell measurements and the arity model.
 
 /**
  * `docker container exec [flags] <container> <inner...>` → `<inner...>`
@@ -159,20 +57,22 @@ function stripDockerContainerExec(argv) {
  * argument, discarding it). `-c`'s position is order-independent
  * (`script -q -c '...' /dev/null` and `script /dev/null -c '...'` both
  * work) since real `script(1)` accepts its own flags and the output-file
- * positional in either order.
+ * positional in either order. The set and the extractor are the shared
+ * `DASH_C_LAUNCHERS` / `launcherDashCCommand` since SMI-6903 rounds 23 and
+ * 24: round 23 added `flock FILE -c COMMAND` (measured running its body in
+ * bash 5.2) and round 24 found this guard's own extractor still matched a
+ * bare `-c` only, so `script --command 'ruflo …'`, `--command=…`, `-c…`
+ * glued and `-qc …` clustered reached the fail-closed arity fallback or
+ * allowed where the env guard read them.
  */
-const DASH_C_NESTED_COMMAND_NAMES = new Set(['script', 'su', 'dtrace'])
 
 /**
  * @param {string[]} argv
  * @returns {string | null} the nested command text, or null if this isn't
- *   one of the `DASH_C_NESTED_COMMAND_NAMES`' own `-c` invocation.
+ *   one of the `DASH_C_LAUNCHERS`' own `-c` invocation.
  */
 function extractDashCNestedCommand(argv) {
-  if (!DASH_C_NESTED_COMMAND_NAMES.has(basenameOf(argv[0] ?? ''))) return null
-  const idx = argv.indexOf('-c')
-  if (idx === -1) return null
-  return idx + 1 < argv.length ? argv[idx + 1] : null
+  return launcherDashCCommand(argv)
 }
 
 /**

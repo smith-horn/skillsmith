@@ -35,6 +35,16 @@
  * .env -exec cat {} \;`). Also out of scope: NEEDLE / Codex dispatch, the MCP servers'
  * own processes, GitHub Actions runners, and any non-Claude-Code process on the machine.
  *
+ * Named instances of the "reader not on READER_COMMANDS" clause, so they are not
+ * rediscovered as findings (SMI-6903 L2): `read -r line < .env` and
+ * `while IFS= read -r l; do echo "$l"; done < .env` are ALLOWED, and correctly so.
+ * `read` is not a reader -- it prints nothing, it assigns a variable -- so the file's
+ * contents never reach the transcript through it. The loop body's `echo "$l"` does
+ * expose them, but that is the variable-indirection clause above, which this guard
+ * does not claim to cover. Both shapes also allowed before the input-redirect fix
+ * (SMI-6903 C1), so they are a stated limit of the contract rather than a regression
+ * in it; `inputRedirectSources` deliberately does not special-case them.
+ *
  * Env vars (plain local environment variables — this hook runs
  * client-side in a developer's own Claude Code session, not in CI):
  *   SKILLSMITH_ENV_READ_GUARD_DISABLE - '1' to hard-disable; the hook
@@ -43,26 +53,27 @@
  *
  * @see docs/internal/implementation/varlock-secret-exposure-defense-in-depth.md
  *
- * SMI-6744 A4.6: the tokenizer and wrapper-normalization primitives below
- * (`tokenize`, `stripFlags`, `stripEnvPrefix`, `stripDockerExec`,
- * `stripDockerCompose`, `stripVarlockRun`, `extractShellDashC`,
- * `normalizeWrappers`, `hasInlineScriptFlag`, `scanPositionalScriptText`,
- * `basenameOf`, plus `SHELL_COMMANDS`/`MAX_DEPTH`/`INLINE_SCRIPT_LONG_FLAGS`)
- * moved to `scripts/lib/shell-command-normalize.mjs` so
- * `scripts/ruflo-host-guard.mjs` can reuse them instead of re-implementing its
- * own copy. `WRAPPER_VALUE_FLAGS` and `POSITIONAL_SCRIPT_COMMANDS` moved there
- * too, but live private to that module -- used only by the moved functions'
- * own bodies, not re-exported for another file to import. This file's own
- * `INLINE_SCRIPT_SHORT_FLAG_CHARS` and `scanTextForProtected` stay here —
- * they are `.env`-specific — and are passed into the two moved functions
- * whose env-specific piece became a parameter in the move.
+ * SMI-6744 A4.6: every tokenizer and wrapper-normalization primitive this
+ * file used to own (`tokenize`, `stripFlags`, `stripEnvPrefix`,
+ * `stripDockerExec`, `stripDockerCompose`, `stripVarlockRun`,
+ * `extractShellDashC`, `normalizeWrappers`, `hasInlineScriptFlag`,
+ * `scanPositionalScriptText`, `basenameOf`, `SHELL_COMMANDS`, `MAX_DEPTH`,
+ * `INLINE_SCRIPT_LONG_FLAGS`) lives in
+ * `scripts/lib/shell-command-normalize.mjs` so `scripts/ruflo-host-guard.mjs`
+ * can reuse it; `WRAPPER_VALUE_FLAGS` and `POSITIONAL_SCRIPT_COMMANDS` moved
+ * there too but stay private to it. Only the `.env`-specific pieces
+ * (`INLINE_SCRIPT_SHORT_FLAG_CHARS`, `scanTextForProtected`) stay here, passed
+ * into the two moved functions as parameters.
  */
 
+import { reasonFor } from './lib/env-read-guard-reasons.mjs'
 import {
   basenameOf,
+  checkNestedRedirectSources,
   checkUnresolvedHeadTail,
   flattenSubWords,
   hasInlineScriptFlag,
+  inputRedirectSources,
   MAX_DEPTH,
   normalizeWrappers,
   scanPositionalScriptText,
@@ -337,7 +348,7 @@ function evaluateCommand(command, depth) {
   if (depth > MAX_DEPTH) return { kind: 'depth-cap' }
   if (typeof command !== 'string' || command.trim() === '') return null
 
-  const segments = splitCommandSegmentsWithSubRuns(tokenize(command))
+  const segments = splitCommandSegmentsWithSubRuns(tokenize(command), normalizeWrappers)
 
   for (const segment of segments) {
     for (const w of segment) {
@@ -375,12 +386,25 @@ function evaluateCommand(command, depth) {
     const flattenedSubs = flattenSubWords(argvWords)
     if (flattenedSubs.truncated) return { kind: 'depth-cap' }
     const subWords = flattenedSubs.words
+    // An INPUT redirect's source is this segment's read target too (see
+    // `inputRedirectSources`), fed through the SAME `checkArgv` as argv so
+    // every existing exception still applies: `wc < .env` and
+    // `grep -q KEY < .env` stay allowed, as `wc .env` already is.
+    const redirectSources = inputRedirectSources(segment, flattenSubWords)
+    const extraArgs = subWords.concat(redirectSources)
     const { argv, nested } = normalizeWrappers(argvWords.map((w) => w.value))
     const violation =
       nested !== null
         ? evaluateCommand(nested, depth + 1)
-        : checkArgv(subWords.length > 0 ? argv.concat(subWords) : argv)
+        : checkArgv(extraArgs.length > 0 ? argv.concat(extraArgs) : argv)
     if (violation) return violation
+    // A wrapper's own redirect feeds the nested BODY's stdin, which has no
+    // argv to append to (round 21; see `checkNestedRedirectSources`).
+    if (nested !== null) {
+      const deps = { tokenize, normalizeWrappers, checkArgv }
+      const v = checkNestedRedirectSources(nested, redirectSources, deps)
+      if (v) return v
+    }
     // An argv[0] that is itself a substitution (after wrapper peeling)
     // leaves the command name unresolved for this segment; see
     // `checkUnresolvedHeadTail`'s own doc for the two checks it runs.
@@ -389,39 +413,12 @@ function evaluateCommand(command, depth) {
       argv,
       (a) => (classifyPath(a) === 'protected' ? { kind: 'read', file: a } : null),
       checkArgv,
-      () => ({ kind: 'depth-cap' })
+      () => ({ kind: 'depth-cap' }),
+      redirectSources
     )
     if (headViolation) return headViolation
   }
   return null
-}
-
-const ALTERNATIVE =
-  'Use `varlock load` (default pretty format, masked) or `varlock load --quiet` for validation only; ' +
-  'for a genuine false positive, re-run with SKILLSMITH_ENV_READ_GUARD_DISABLE=1.'
-
-/** `varlock load` fixes nothing about nesting -- depth-cap gets its own tail. */
-const DEPTH_CAP_ALTERNATIVE =
-  'Simplify the nesting, or for a genuine false positive re-run with SKILLSMITH_ENV_READ_GUARD_DISABLE=1.'
-
-/** @param {{ kind: string, file?: string, format?: string }} violation */
-function reasonFor(violation) {
-  if (violation.kind === 'varlock-format') {
-    return (
-      `[env-read-guard] \`varlock load --format ${violation.format}\` emits UNMASKED secret ` +
-      `values and is prohibited. ${ALTERNATIVE}`
-    )
-  }
-  if (violation.kind === 'depth-cap') {
-    return (
-      `[env-read-guard] This command nests substitutions past depth ${MAX_DEPTH}, which ` +
-      `cannot be confirmed safe -- denied by default rather than allowed. ${DEPTH_CAP_ALTERNATIVE}`
-    )
-  }
-  return (
-    `[env-read-guard] This command reads \`${violation.file}\`, a secret-bearing env file — ` +
-    `reading its contents is prohibited because they would land in the session transcript. ${ALTERNATIVE}`
-  )
 }
 
 /**
@@ -450,7 +447,7 @@ export function decide(toolCall, env) {
         hookSpecificOutput: {
           hookEventName: 'PreToolUse',
           permissionDecision: 'deny',
-          permissionDecisionReason: reasonFor(violation),
+          permissionDecisionReason: reasonFor(violation, MAX_DEPTH),
         },
       },
       stderr: null,
