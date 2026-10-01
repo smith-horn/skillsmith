@@ -67,32 +67,24 @@ function stripDockerContainerExec(argv) {
  */
 
 /**
- * @param {string[]} argv
- * @returns {string | null} the nested command text, or null if this isn't
- *   one of the `DASH_C_LAUNCHERS`' own `-c` invocation.
- */
-function extractDashCNestedCommand(argv) {
-  return launcherDashCCommand(argv)
-}
-
-/**
  * `exec`/`command`/`noglob`/`builtin`-aware, launcher-aware,
- * `docker container exec`-aware, `script`/`su`/`dtrace` `-c`-aware wrapper
- * normalization (round 1 finding 2; docs fact 3; H-A/H-1/L-A/M-6 fixes).
- * Alternates peeling ONE leading launcher/`docker container exec` prefix
- * and calling the shared unwrap until neither changes anything or a
- * nested shell body is found. `extractDashCNestedCommand` runs FIRST, on
- * `current` before any peeling touches `script` itself, since the
+ * `docker container exec`-aware, `script`/`su`/`dtrace`/`flock` `-c`-aware
+ * wrapper normalization (round 1 finding 2; docs fact 3; H-A/H-1/L-A/M-6
+ * fixes). Alternates peeling ONE leading launcher/`docker container exec`
+ * prefix and calling the shared unwrap until neither changes anything or a
+ * nested shell body is found. The shared `launcherDashCCommand` runs FIRST,
+ * on `current` before any peeling touches `script` itself, since the
  * launcher table's own `script` entry would otherwise mis-model `-c`'s
  * value (`su`/`dtrace` are not launcher-table entries at all, so this is
- * their only unwrap path).
+ * their only unwrap path). The guard-local alias it once went through was
+ * removed in SMI-6908 (F-10).
  * @param {string[]} argvIn
  * @returns {{argv: string[], nested: string|null}}
  */
 export function normalizeWrappersWithExec(argvIn) {
   let current = argvIn
   for (let pass = 0; pass < 8; pass++) {
-    const dashCNested = extractDashCNestedCommand(current)
+    const dashCNested = launcherDashCCommand(current)
     if (dashCNested !== null) return { argv: current, nested: dashCNested }
 
     let changed = false

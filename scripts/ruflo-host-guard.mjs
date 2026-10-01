@@ -417,6 +417,10 @@ function evaluateGuardCommand(commandText, depth, embedded = false) {
     if (verdict) return verdict
   }
   // SMI-6903 H1: additive second reading over zsh glob-group alternatives.
+  // Not in embedded mode: inline program text is not shell words, so its
+  // `(a || b)` groups are not zsh alternations, and their cross product
+  // reached the `glob-cap` refusal on a real `node -e` (SMI-6908 F-14).
+  if (embedded) return null
   return evaluateGlobGroupReadings(tokens, (segs, i) =>
     evaluateGuardSegment(segs[i].tokens, depth, segs, i, embedded)
   )
