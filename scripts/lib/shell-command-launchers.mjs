@@ -88,21 +88,39 @@ export const LAUNCHER_TABLE = new Map(
     // F-4). `-arm64`/`-x86_64` are single tokens the generic skip handles.
     { name: 'arch', positionals: 0, valueFlags: ['-arch', '-d', '-e'], stopFlags: ['-h'] },
     // macOS `xcrun(1)` runs a developer tool: `xcrun cat D` and `xcrun --sdk
-    // macosx cat D` printed (SMI-6908 F-4); the `--find`/`--show-*` flags
-    // describe and run nothing (`xcrun -f cat` measured printing nothing).
+    // macosx cat D` printed (SMI-6908 F-4). xcrun's own spelling is
+    // single-dash, and the row first carried only the double-dash forms, so
+    // `xcrun -sdk macosx cat D` left `macosx` as argv[0] (round 27, the
+    // cross-family gate; measured printing in bash 3.2 and zsh 5.9). Every
+    // single-dash spelling was then measured with a decoy: `-sdk`/`-toolchain`
+    // take a value and run the command; `-log`/`-l`, `-verbose`/`-v`,
+    // `-no-cache`/`-n`, `-kill-cache`/`-k`, `-run`/`-r` take none and run it
+    // (the generic skip); `-find`/`-f`, `-show-sdk-*`, `-h`/`-help`,
+    // `-version` describe and run nothing (exit 64 with a trailing command);
+    // `-sdk=macosx`, `-sdkmacosx` and `-ln` are usage errors that run nothing.
     {
       name: 'xcrun',
       positionals: 0,
-      valueFlags: ['--sdk', '--toolchain'],
+      valueFlags: ['-sdk', '--sdk', '-toolchain', '--toolchain'],
       stopFlags: [
         '-f',
+        '-find',
         '--find',
+        '-show-sdk-path',
         '--show-sdk-path',
+        '-show-sdk-version',
         '--show-sdk-version',
+        '-show-sdk-build-version',
         '--show-sdk-build-version',
+        '-show-sdk-platform-path',
         '--show-sdk-platform-path',
+        '-show-sdk-platform-version',
         '--show-sdk-platform-version',
+        '-show-toolchain-path',
         '--show-toolchain-path',
+        '-h',
+        '-help',
+        '-version',
       ],
     },
     // OpenBSD doas(1): `-a style`, `-C config`, `-u user` take values (round

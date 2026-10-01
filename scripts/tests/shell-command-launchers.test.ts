@@ -118,6 +118,15 @@ describe('LAUNCHER_TABLE — the shared launcher rows', () => {
     ['xcrun', ['cat', '.env'], ['cat', '.env']],
     ['xcrun', ['--sdk', 'macosx', 'cat', '.env'], ['cat', '.env']],
     ['xcrun', ['--toolchain', 'default', 'cat', '.env'], ['cat', '.env']],
+    // SMI-6908 round 27 F-17: xcrun's own spelling is single-dash (each row
+    // measured printing a decoy in bash 3.2 and zsh 5.9; the first three
+    // left `macosx`/`default` as argv[0] on 4552e41a7).
+    ['xcrun', ['-sdk', 'macosx', 'cat', '.env'], ['cat', '.env']],
+    ['xcrun', ['-toolchain', 'default', 'cat', '.env'], ['cat', '.env']],
+    ['xcrun', ['-sdk', 'macosx', '-toolchain', 'default', 'cat', '.env'], ['cat', '.env']],
+    ['xcrun', ['-sdk', 'macosx', '--', 'cat', '.env'], ['cat', '.env']],
+    ['xcrun', ['-sdk', 'macosx', '-log', 'cat', '.env'], ['cat', '.env']],
+    ['xcrun', ['-log', 'cat', '.env'], ['cat', '.env']],
     ['xargs', ['-a', 'list', '--delimiter', ',', 'cat'], ['cat']],
     // `--` ends the launcher's own options.
     ['nice', ['--', 'cat', '.env'], ['cat', '.env']],
@@ -240,6 +249,18 @@ describe('transparentHeadReadings — a launcher head, with and without a wrappe
     expect(peelOneLauncher(['arch', '-arch', 'arm64', 'cat', '.env'])).toEqual(['cat', '.env'])
     expect(peelOneLauncher(['arch', '-h'])).toBeNull()
     expect(peelOneLauncher(['xcrun', '--show-sdk-path'])).toBeNull()
+    // SMI-6908 round 27 F-17: the single-dash describe-only spellings stop
+    // (each measured exiting 64 and running nothing with a trailing command),
+    // and `-toolchain`, a value flag whose letters include `h`, is one
+    // option, never a cluster holding xcrun's own `-h`.
+    expect(peelOneLauncher(['xcrun', '-show-sdk-path', 'cat', '.env'])).toBeNull()
+    expect(peelOneLauncher(['xcrun', '-sdk', 'macosx', '-find', 'cat'])).toBeNull()
+    expect(peelOneLauncher(['xcrun', '-h', 'cat', '.env'])).toBeNull()
+    expect(peelOneLauncher(['xcrun', '-version', 'cat', '.env'])).toBeNull()
+    expect(peelOneLauncher(['xcrun', '-toolchain', 'default', 'cat', '.env'])).toEqual([
+      'cat',
+      '.env',
+    ])
   })
 
   // Round 23: a launcher's own `-c`/`--command` value is a nested command the

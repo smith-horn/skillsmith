@@ -1628,6 +1628,58 @@ describe('decide() — SMI-6908: a wrapper body read with every reading, the bra
   )
 })
 
+// SMI-6908 round 27 F-17 (the cross-family gate on 4552e41a7): xcrun's own
+// option spelling is single-dash, and the F-4 row carried only the
+// double-dash forms, so `xcrun -sdk macosx cat .env` left `macosx` as argv[0]
+// and allowed while the shell ran cat (the reviewer measured `xcrun -sdk
+// macosx printf` printing; every row below re-measured with a decoy in bash
+// 3.2 and zsh 5.9 on this host).
+describe('decide() — SMI-6908 round 27 F-17: xcrun single-dash spellings', () => {
+  const arms = [
+    'xcrun -sdk macosx cat .env',
+    'xcrun -toolchain default cat .env',
+    'xcrun -sdk macosx -toolchain default cat .env',
+    'xcrun -sdk macosx -- cat .env',
+    'xcrun -sdk macosx -log cat .env',
+  ]
+  it.each(arms)('%s -> deny (allowed on 4552e41a7)', (command) => {
+    expect(decide(bashCall(command), {}).action).toBe('deny')
+  })
+
+  // PINS, denied on 4552e41a7 too: the value-less flags that run the command
+  // fall to the generic skip, and the double-dash forms were already rows.
+  it.each([
+    'xcrun -log cat .env',
+    'xcrun -v cat .env',
+    'xcrun -run cat .env',
+    'xcrun --sdk macosx cat .env',
+  ])('pin: %s -> deny', (command) => {
+    expect(decide(bashCall(command), {}).action).toBe('deny')
+  })
+
+  // Describe-only spellings run nothing (exit 64 with a trailing command,
+  // measured), so they stop the peel: allowed now, denied on 4552e41a7, where
+  // only the double-dash forms stopped (over-blocks corrected, not arms).
+  it.each([
+    'xcrun -find cat .env',
+    'xcrun -show-sdk-path cat .env',
+    'xcrun -sdk macosx -find cat .env',
+    'xcrun -h cat .env',
+    'xcrun -version cat .env',
+  ])('control (nothing runs): %s -> allow', (command) => {
+    expect(decide(bashCall(command), {}).action).toBe('allow')
+  })
+
+  // Residue, pinned: usage errors that run nothing still deny, since the
+  // guard cannot know xcrun rejects a glued or `=` value and a cluster.
+  it.each(['xcrun -sdk=macosx cat .env', 'xcrun -sdkmacosx cat .env', 'xcrun -ln cat .env'])(
+    'residue (over-block of a usage error): %s -> deny',
+    (command) => {
+      expect(decide(bashCall(command), {}).action).toBe('deny')
+    }
+  )
+})
+
 // SMI-6903 round 21 F2 (Critical, pre-existing): an input-redirect source that
 // is a command substitution supplies its OUTPUT as the filename, so the body's
 // own words are this segment's read targets -- the same flatten an argv-slot
