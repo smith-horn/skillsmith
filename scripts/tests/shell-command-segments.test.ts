@@ -24,19 +24,18 @@
  */
 import { describe, expect, it } from 'vitest'
 
-import { flattenSubWords } from '../lib/shell-command-normalize.mjs'
+import { flattenSubWords, normalizeWrappers } from '../lib/shell-command-normalize.mjs'
 import {
   nestedGroupAlternatives,
   stripTransparentHeadWords,
   transparentHeadReadings,
 } from '../lib/shell-command-readings.mjs'
+import { inputRedirectSources } from '../lib/shell-command-redirects.mjs'
 import { tokenize } from '../lib/shell-command-tokenize.mjs'
 import {
   globGroupAlternativeReadings,
   groupingOpSubRuns,
-  inputRedirectSources,
   SEGMENT_SEPARATOR_OPS,
-  shellBodySegmentArgvs,
   splitCommandSegments,
   splitCommandSegmentsParensGrouping,
   splitCommandSegmentsWithSubRuns,
@@ -324,13 +323,13 @@ describe('shell-command-readings.mjs — SMI-6903 round 21', () => {
 
   it('yields one extra segment per transparent-headed segment, and none otherwise', () => {
     const seg = (c: string) => splitCommandSegments(tokenize(c))
-    expect(shape(transparentHeadReadings(seg('if true; then cat .env; fi')))).toEqual([
-      ['true'],
-      ['cat', '.env'],
-    ])
-    expect(transparentHeadReadings(seg('cat .env'))).toEqual([])
+    const read = (c: string) => transparentHeadReadings(seg(c), null, splitCommandSegments)
+    expect(shape(read('if true; then cat .env; fi'))).toEqual([['true'], ['cat', '.env']])
+    expect(read('cat .env')).toEqual([])
     // A segment that is ENTIRELY transparent words has no command to judge.
-    expect(transparentHeadReadings(seg('then; cat .env'))).toEqual([])
+    expect(read('then; cat .env')).toEqual([])
+    // SMI-6908 F-13: the splitter is required, never defaulted.
+    expect(() => transparentHeadReadings(seg('then cat .env'), null)).toThrow(TypeError)
   })
 
   it('the combined reading keeps the transparent-head segments', () => {
@@ -338,15 +337,26 @@ describe('shell-command-readings.mjs — SMI-6903 round 21', () => {
     expect(combined).toContainEqual(['cat', '.env'])
   })
 
-  it('reads the argv of each segment of a shell body (F3)', () => {
-    expect(shellBodySegmentArgvs(tokenize, 'cat')).toEqual([['cat']])
-    expect(shellBodySegmentArgvs(tokenize, 'echo hi; grep -q K')).toEqual([
-      ['echo', 'hi'],
-      ['grep', '-q', 'K'],
-    ])
-    // Redirect words are excluded, so a body's own redirect cannot become argv.
-    expect(shellBodySegmentArgvs(tokenize, 'cat < f')).toEqual([['cat']])
-    expect(shellBodySegmentArgvs(tokenize, '')).toEqual([])
+  // SMI-6908 F-2: the brace sub-run reading gets its own head reading. The
+  // sub-run is the only reading that isolates the command after an assignment
+  // prefix carrying a brace (`V=${X}` tokenizes as `V=$`, `{`, `X`, `}`), so
+  // without it `V=${X} nohup cat .env` had no reading whose argv was `cat .env`
+  // (35 of 37 heads allowed on 673f19ceb; 12 measured printing a decoy).
+  it('gives the brace sub-runs their own transparent-head reading (SMI-6908 F-2)', () => {
+    const combined = (c: string) =>
+      shape(splitCommandSegmentsWithSubRuns(tokenize(c), normalizeWrappers))
+    expect(combined('V=${X} nohup cat .env')).toContainEqual(['cat', '.env'])
+    expect(combined('V=${X} eval cat .env')).toContainEqual(['cat', '.env'])
+    expect(combined('V=${X} timeout 5 cat .env')).toContainEqual(['cat', '.env'])
+    expect(combined('V=${HOME} nohup cat .env')).toContainEqual(['cat', '.env'])
+    // The unbraced twin already read through the separator reading's peel.
+    expect(combined('V=$Y nohup cat .env')).toContainEqual(['cat', '.env'])
+    // The sub-run after the brace is read as a command whatever precedes
+    // it: the reader cannot tell an assignment prefix from an ordinary word,
+    // so `foo ${X} nohup ls` yields `ls` too, one more reading that can only
+    // deny. A head the shell does not peel adds nothing.
+    expect(combined('foo ${X} nohup ls')).toContainEqual(['ls'])
+    expect(combined('foo ${X} bar ls')).not.toContainEqual(['ls'])
   })
 
   it('flattens a nested group to one single-word alternative per word (F4)', () => {

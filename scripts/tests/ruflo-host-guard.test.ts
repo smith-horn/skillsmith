@@ -3443,6 +3443,79 @@ describe("decide() — SMI-6903 round 23: a launcher's full option model, and fl
   })
 })
 
+// SMI-6908 F-14: the zsh glob-group reading ran in EMBEDDED mode too, over
+// inline program text that is not shell words. The round-21 nested-group
+// flattening then turned every JS call expression holding another call into a
+// multi-way group, and eight `console.log(…, x.includes(…))` lines multiplied
+// past the 64-reading cap, so a peer's read-only `docker exec … node -e`
+// probe was refused `glob-cap` on 673f19ceb (measured; the string is on
+// SMI-6908). Inline program text gets no glob reading now.
+describe('decide() — SMI-6908 F-14: no glob reading over inline program text', () => {
+  const script =
+    'console.log("a", f("b")); console.log("c", f("d")); console.log("e", f("g")); console.log("h", f("i"))'
+  const allowNow = [`node -e '${script}'`, `docker exec skillsmith-dev-1 node -e '${script}'`]
+  it.each(allowNow)('%s -> allow (was glob-cap)', (command) => {
+    expect(decide(bashCall(command), {}).action).toBe('allow')
+  })
+
+  // The reading still runs on real shell words, and a ruflo name inside the
+  // program text is still H8's.
+  it('control: a real zsh alternation past the cap still denies glob-cap', () => {
+    const verdict = decide(bashCall('ls (a|b)/(c|d)/(e|f)/(g|h)/(i|j)/(k|l)/(m|n)'), {})
+    expect(reasonOf(verdict)).toContain('glob-cap')
+  })
+  it('control: node -e with a ruflo invocation in its text still denies (H8-script)', () => {
+    const verdict = decide(
+      bashCall('node -e \'require("child_process").exec("npx ruflo memory store")\''),
+      {}
+    )
+    expect(verdict.action).toBe('deny')
+  })
+})
+
+// SMI-6908 F-16 (a peer's question, measured on 673f19ceb): `deno run -`
+// reads its program from stdin as `node -` does, but `deno` was only in the
+// `eval`-subcommand list, not the stdin-interpreter list, so a program piped
+// to it was never read while the same text piped to node, bun or python3
+// denied H5.
+describe('decide() — SMI-6908 F-16: a program piped to deno is read like one piped to node', () => {
+  const program = 'npx ruflo memory store'
+  const arms = [`echo '${program}' | deno run -`, `echo '${program}' | deno run --allow-all -`]
+  it.each(arms)('%s -> deny (H5, the fed program is read)', (command) => {
+    expect(decide(bashCall(command), {}).action).toBe('deny')
+  })
+  // PINS, denied on every tree: the interpreters already listed, and deno's
+  // own inline form.
+  it.each([`echo '${program}' | node -`, `echo '${program}' | bun -`, `deno eval '${program}'`])(
+    'pin: %s -> deny',
+    (command) => {
+      expect(decide(bashCall(command), {}).action).toBe('deny')
+    }
+  )
+  it.each(["echo 'console.log(1)' | deno run -", 'cat prog.js | deno run -'])(
+    'control: %s -> allow',
+    (command) => {
+      expect(decide(bashCall(command), {}).action).toBe('allow')
+    }
+  )
+})
+
+// SMI-6908 F-4 residue: a modelled launcher with nothing after its own
+// operands falls to `unresolved-command` on every tree (`env`, `nice`,
+// `nohup`, `time`, `sudo` bare all deny on 60da8b5a8, 733427c82 and
+// 673f19ceb, measured), so `arch` and `xcrun` bare join that posture when
+// their rows join the table: an over-block of a complete command (`arch`
+// prints the machine type), the same one `env` bare already carries, recorded
+// on SMI-6900 rather than special-cased here.
+describe('decide() — SMI-6908 F-4 residue: a bare arch/xcrun shares the arity fallback', () => {
+  it.each(['arch', 'xcrun'])('arm against 673f19ceb (allowed there): %s -> deny', (command) => {
+    expect(reasonOf(decide(bashCall(command), {}))).toContain('unresolved-command')
+  })
+  it.each(['env', 'nice', 'nohup'])('pin (denied on every tree): %s -> deny', (command) => {
+    expect(reasonOf(decide(bashCall(command), {}))).toContain('unresolved-command')
+  })
+})
+
 // SMI-6903 round 22, a correction the shared launcher table forced: `command
 // -v NAME` DESCRIBES a name and runs nothing (measured in bash 3.2 and zsh 5.9
 // with a decoy executable named through a variable: no marker written, while
@@ -3478,10 +3551,13 @@ describe('decide() — SMI-6903 round 22: `command -v NAME` is not an invocation
     expect(reasonOf(result)).toContain(predicate)
   })
 
-  // PIN, the arity fallback this guard already had for a modelled launcher
-  // with nothing after its own operands (`timeout 5` alone denies the same
-  // way on every tree): `flock FILE` with no command now shares it.
-  it('pin: flock 9 -> deny (unresolved-command, the modelled-launcher arity fallback)', () => {
+  // The arity fallback this guard already had for a modelled launcher with
+  // nothing after its own operands (`timeout 5` alone denies the same way on
+  // every tree, a pin): `flock FILE` with no command joined it when `flock`
+  // joined the table, so for `flock 9` this is an ARM against `60da8b5a8`,
+  // where it allowed (SMI-6908 F-7: the mechanism predates the row, the row
+  // does not).
+  it('arm against 60da8b5a8: flock 9 -> deny (unresolved-command, the modelled-launcher arity fallback)', () => {
     const result = decide(bashCall('flock 9'), {})
     expect(result.action).toBe('deny')
     expect(reasonOf(result)).toContain('unresolved-command')

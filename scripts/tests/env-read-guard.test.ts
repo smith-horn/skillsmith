@@ -1485,10 +1485,12 @@ describe("decide() — SMI-6903 round 23: a launcher's full option model, and it
     expect(decide(bashCall(command), {}).action).toBe('deny')
   })
 
-  // PIN, not an arm: this guard's extractor already read `--command` on
-  // `733427c82`; the round-24 arm for that spelling is the RUFLO guard's,
-  // whose own extractor had lagged.
-  it("pin: flock /tmp/l --command 'cat .env' -> deny (already read)", () => {
+  // A pin against the intra-branch tree `733427c82` (this guard's extractor
+  // already read `--command` there; the round-24 arm for that spelling is the
+  // RUFLO guard's), and an ARM against main's own history: on `60da8b5a8`,
+  // the base of PR #2973, this allowed. Labelled with both trees because the
+  // squash erased the round boundary (SMI-6908 F-7).
+  it("arm against 60da8b5a8, pin against 733427c82: flock /tmp/l --command 'cat .env' -> deny", () => {
     expect(decide(bashCall("flock /tmp/l --command 'cat .env'"), {}).action).toBe('deny')
   })
 
@@ -1521,6 +1523,109 @@ describe("decide() — SMI-6903 round 23: a launcher's full option model, and it
   it.each(controls)('control: %s -> allow', (command) => {
     expect(decide(bashCall(command), {}).action).toBe('allow')
   })
+})
+
+// SMI-6908 (the post-merge retro of PR #2973): five residual shapes of the
+// classes that PR closed, one level further out, every one ALLOWING on the
+// pre-PR base `60da8b5a8` and on the merged `673f19ceb`, each measured with a
+// decoy in bash 3.2 and zsh 5.9 on the host and bash 5.2 in the container.
+describe('decide() — SMI-6908: a wrapper body read with every reading, the brace sub-run peeled, time -o, arch/xcrun, nocorrect', () => {
+  // F-1: a wrapper's redirect body was read with the separator reading only
+  // and never recursed, so a reader behind a reserved word, a launcher or a
+  // second wrapper inside the body never met the source (35 of 37 heads).
+  const wrapperBodyArms = [
+    'bash -c "eval cat" < .env',
+    'bash -c "command cat" < .env',
+    'bash -c "nohup cat" < .env',
+    'bash -c "if true; then cat; fi" < .env',
+    'bash -c "nice -n 5 cat" < .env',
+    'bash -c "timeout 5 cat" < .env',
+    'bash -c "stdbuf -oL cat" < .env',
+    'bash -c "bash -c \'cat\'" < .env',
+    'sh -c "bash -c cat" < .env',
+    'bash -c "eval cat" <.env',
+    'bash -c "eval cat" 0< .env',
+    'bash -c "eval cat" < $(echo .env)',
+    'docker exec c bash -c "nohup cat" < /app/.env',
+    'sudo bash -c "eval cat" < .env',
+    'timeout 5 bash -c "nohup cat" < .env',
+    'bash -c "echo hi; nohup cat" < .env',
+  ]
+  it.each(wrapperBodyArms)('%s -> deny (F-1, the body is read with every reading)', (command) => {
+    expect(decide(bashCall(command), {}).action).toBe('deny')
+  })
+
+  // F-2: an assignment prefix carrying a brace tokenizes as `V=$`, `{`, `X`,
+  // `}`, so the separator reading's head after the assignment peel is `X` and
+  // only the brace sub-run held the real head, which had no head reading.
+  const braceSubRunArms = [
+    'V=${X} nohup cat .env',
+    'V=${X} eval cat .env',
+    'V=${X} command cat .env',
+    'V=${X} exec cat .env',
+    'V=${X} time cat .env',
+    'V=${X} timeout 5 cat .env',
+    'V=${X} nice -n 5 cat .env',
+    'V=${X} setsid cat .env',
+    'V=${X} stdbuf -oL cat .env',
+    'V=${X} caffeinate -t 1 cat .env',
+    'V=${HOME} nohup cat .env',
+  ]
+  it.each(braceSubRunArms)(
+    '%s -> deny (F-2, the brace sub-run gets its head reading)',
+    (command) => {
+      expect(decide(bashCall(command), {}).action).toBe('deny')
+    }
+  )
+
+  // F-3: BSD time's `-o FILE`; F-4: macOS `arch` and `xcrun`; F-5: zsh's
+  // `nocorrect` precommand modifier.
+  const launcherArms = [
+    '/usr/bin/time -o /tmp/t cat .env',
+    'time -a -o /tmp/t cat .env',
+    'time -p -o /tmp/t cat .env',
+    'arch -arm64 cat .env',
+    'arch -x86_64 cat .env',
+    'arch -arch arm64 cat .env',
+    'xcrun cat .env',
+    'xcrun --sdk macosx cat .env',
+    'xcrun --toolchain default cat .env',
+    'nocorrect cat .env',
+    'nocorrect timeout 5 cat .env',
+    'nocorrect eval cat .env',
+  ]
+  it.each(launcherArms)('%s -> deny (F-3/F-4/F-5)', (command) => {
+    expect(decide(bashCall(command), {}).action).toBe('deny')
+  })
+
+  const controls = [
+    // The caller's own exceptions still apply inside a body.
+    'bash -c "wc -l" < .env',
+    'bash -c "grep -q K" < .env',
+    'bash -c "nohup wc -l" < .env',
+    // The brace sub-run's peel reaches no reader here.
+    'V=${X} ls',
+    'foo ${X} nohup ls',
+    // Launchers before a non-reader, and the describe-only forms.
+    '/usr/bin/time -o /tmp/t ls',
+    'arch -h',
+    'xcrun --show-sdk-path',
+    'xcrun -f cat',
+    'nocorrect ls',
+  ]
+  it.each(controls)('control: %s -> allow', (command) => {
+    expect(decide(bashCall(command), {}).action).toBe('allow')
+  })
+
+  // PINS, measured identical on `60da8b5a8`, `673f19ceb` and here: the
+  // unbraced assignment twin always read through the separator reading's
+  // peel, and `V=${X} cat .env` had no head to peel.
+  it.each(['V=$Y nohup cat .env', 'A=1 nohup cat .env', 'V=${X} cat .env'])(
+    'pin (denied on every tree): %s -> deny',
+    (command) => {
+      expect(decide(bashCall(command), {}).action).toBe('deny')
+    }
+  )
 })
 
 // SMI-6903 round 21 F2 (Critical, pre-existing): an input-redirect source that
@@ -1624,10 +1729,13 @@ describe('decide() — SMI-6903 F3: a redirect on a wrapper reaches its body', (
     )
   })
 
-  // PIN: the redirect INSIDE the body already denied before the fix, since the
-  // body is tokenized as its own command there. Kept so the two spellings are
-  // visibly distinguished.
-  it('pin (denied before the fix): bash -c "cat < .env" -> deny', () => {
+  // A pin against the intra-branch tree `733427c82` (the redirect INSIDE the
+  // body was already denied there, since the body is tokenized as its own
+  // command) and an ARM against main's history: on `60da8b5a8`, the base of
+  // PR #2973, this allowed. Both trees named, both measured, because the
+  // squash erased the round boundary (SMI-6908 F-7). Kept so the two
+  // spellings are visibly distinguished.
+  it('arm against 60da8b5a8, pin against 733427c82: bash -c "cat < .env" -> deny', () => {
     expect(decide(bashCall('bash -c "cat < .env"'), {}).action).toBe('deny')
   })
 })

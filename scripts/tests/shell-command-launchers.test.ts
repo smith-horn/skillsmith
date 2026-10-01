@@ -51,6 +51,9 @@ describe('LAUNCHER_TABLE — the shared launcher rows', () => {
     'command',
     'builtin',
     'xargs',
+    'time',
+    'arch',
+    'xcrun',
   ])('has a row for %s', (name) => {
     expect(LAUNCHER_TABLE.has(name)).toBe(true)
   })
@@ -106,6 +109,15 @@ describe('LAUNCHER_TABLE — the shared launcher rows', () => {
     ['chrt', ['--sched-runtime', '1000', '0', 'cat', '.env'], ['cat', '.env']],
     ['xargs', ['--max-args', '1', 'cat'], ['cat']],
     ['doas', ['-a', 'style', 'cat', '.env'], ['cat', '.env']],
+    // SMI-6908 F-3 and F-4: BSD time's `-o FILE`, and the two macOS launchers.
+    ['time', ['-o', '/tmp/t', 'cat', '.env'], ['cat', '.env']],
+    ['time', ['-p', '-o', '/tmp/t', 'cat', '.env'], ['cat', '.env']],
+    ['time', ['-f', '%e', 'cat', '.env'], ['cat', '.env']],
+    ['arch', ['-arm64', 'cat', '.env'], ['cat', '.env']],
+    ['arch', ['-arch', 'arm64', 'cat', '.env'], ['cat', '.env']],
+    ['xcrun', ['cat', '.env'], ['cat', '.env']],
+    ['xcrun', ['--sdk', 'macosx', 'cat', '.env'], ['cat', '.env']],
+    ['xcrun', ['--toolchain', 'default', 'cat', '.env'], ['cat', '.env']],
     ['xargs', ['-a', 'list', '--delimiter', ',', 'cat'], ['cat']],
     // `--` ends the launcher's own options.
     ['nice', ['--', 'cat', '.env'], ['cat', '.env']],
@@ -160,8 +172,8 @@ describe('stripTransparentHeadWords — launchers and transparent words, iterati
 })
 
 const readingWords = (command: string, peel: typeof normalizeWrappers | null = null) =>
-  transparentHeadReadings(splitCommandSegments(tokenize(command)), peel).map((r) =>
-    r.map((t) => (t.redirect === true ? `<${t.value}>` : t.value))
+  transparentHeadReadings(splitCommandSegments(tokenize(command)), peel, splitCommandSegments).map(
+    (r) => r.map((t) => (t.redirect === true ? `<${t.value}>` : t.value))
   )
 
 describe('transparentHeadReadings — a launcher head, with and without a wrapper peel', () => {
@@ -222,6 +234,12 @@ describe('transparentHeadReadings — a launcher head, with and without a wrappe
     // A cluster WITHOUT a stop flag, and a glued value, still peel.
     expect(peelOneLauncher(['exec', '-cl', 'cat', '.env'])).toEqual(['cat', '.env'])
     expect(peelOneLauncher(['nice', '-n5', 'cat', '.env'])).toEqual(['cat', '.env'])
+    // SMI-6908: a known VALUE flag is one option, never a cluster, so
+    // `arch -arch arm64 cat` (which runs cat, measured) is not read as a
+    // cluster holding `-h`.
+    expect(peelOneLauncher(['arch', '-arch', 'arm64', 'cat', '.env'])).toEqual(['cat', '.env'])
+    expect(peelOneLauncher(['arch', '-h'])).toBeNull()
+    expect(peelOneLauncher(['xcrun', '--show-sdk-path'])).toBeNull()
   })
 
   // Round 23: a launcher's own `-c`/`--command` value is a nested command the

@@ -74,8 +74,37 @@ export const LAUNCHER_TABLE = new Map(
   [
     { name: 'nohup', positionals: 0, valueFlags: [] },
     { name: 'setsid', positionals: 0, valueFlags: [] },
-    { name: 'time', positionals: 0, valueFlags: [] },
+    // BSD `time(1)` (macOS) takes `-o file`; `/usr/bin/time -o /tmp/t cat D`,
+    // `-a -o`, `-p -o` all printed a decoy in bash 3.2 and zsh 5.9 while the
+    // row had no value flags, leaving `/tmp/t` as argv[0] (SMI-6908 F-3, the
+    // exact shape round 23 blocked on, in a row that round read as complete).
+    // The GNU long forms and `-f FORMAT` by the full-synopsis rule, documented
+    // (`/usr/bin/time` is absent from the dev container, measured).
+    { name: 'time', positionals: 0, valueFlags: ['-o', '--output', '-f', '--format'] },
     { name: 'unbuffer', positionals: 0, valueFlags: [] },
+    // macOS `arch(1)` runs its command under an architecture: `arch -arm64
+    // cat D` and `arch -arch arm64 cat D` printed a decoy in bash 3.2 and zsh
+    // 5.9; bare `arch cat D` prints the architecture and runs nothing (SMI-6908
+    // F-4). `-arm64`/`-x86_64` are single tokens the generic skip handles.
+    { name: 'arch', positionals: 0, valueFlags: ['-arch', '-d', '-e'], stopFlags: ['-h'] },
+    // macOS `xcrun(1)` runs a developer tool: `xcrun cat D` and `xcrun --sdk
+    // macosx cat D` printed (SMI-6908 F-4); the `--find`/`--show-*` flags
+    // describe and run nothing (`xcrun -f cat` measured printing nothing).
+    {
+      name: 'xcrun',
+      positionals: 0,
+      valueFlags: ['--sdk', '--toolchain'],
+      stopFlags: [
+        '-f',
+        '--find',
+        '--show-sdk-path',
+        '--show-sdk-version',
+        '--show-sdk-build-version',
+        '--show-sdk-platform-path',
+        '--show-sdk-platform-version',
+        '--show-toolchain-path',
+      ],
+    },
     // OpenBSD doas(1): `-a style`, `-C config`, `-u user` take values (round
     // 24; documented, the binary is installed nowhere here).
     { name: 'doas', positionals: 0, valueFlags: ['-a', '-u', '-C'] },
@@ -219,7 +248,13 @@ export function launcherStops(argv, entry) {
     const a = argv[i]
     if (a === '--' || !a.startsWith('-') || a === '-') return false
     if (UNIVERSAL_STOP_FLAGS.has(a) || entry.stopFlags.has(a)) return true
-    if (/^-[A-Za-z]{2,}$/.test(a) && [...a.slice(1)].some((ch) => entry.stopFlags.has('-' + ch))) {
+    // A known value flag is one option, not a cluster: `arch -arch arm64 cat`
+    // runs cat (measured) and `-arch` must not read as a cluster holding `-h`.
+    if (
+      !entry.valueFlags.has(a) &&
+      /^-[A-Za-z]{2,}$/.test(a) &&
+      [...a.slice(1)].some((ch) => entry.stopFlags.has('-' + ch))
+    ) {
       return true
     }
     i += entry.valueFlags.has(a) ? 2 : 1

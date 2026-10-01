@@ -53,16 +53,15 @@
  * unchanged.
  */
 
-import { basenameOf, tokenize } from './shell-command-tokenize.mjs'
+import { checkNestedRedirectSources, inputRedirectSources } from './shell-command-redirects.mjs'
 import {
-  checkNestedRedirectSources,
   groupingOpSubRuns,
-  inputRedirectSources,
   SEGMENT_SEPARATOR_OPS,
   splitCommandSegments,
   splitCommandSegmentsParensGrouping,
   splitCommandSegmentsWithSubRuns,
 } from './shell-command-segments.mjs'
+import { basenameOf, tokenize } from './shell-command-tokenize.mjs'
 
 export { basenameOf, tokenize }
 export {
