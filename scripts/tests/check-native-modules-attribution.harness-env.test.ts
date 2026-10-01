@@ -10,8 +10,8 @@
  * Red arm: with GIT_DIR exported to a scratch repository, `setupFixtures()`
  * must leave that repository's config byte-identical and must create the
  * fixture's own `.git`. Fails on the unfixed harness (the scratch config
- * gains the three keys and the fixture gets no `.git`); passes once the
- * harness isolates its git environment.
+ * gains `core.bare = true` and the fixture gets no `.git`); passes once the
+ * harness runs its git calls under the shared SMI-4693 fixture env.
  */
 
 import { spawnSync } from 'node:child_process'
@@ -20,16 +20,16 @@ import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { afterEach, describe, expect, it } from 'vitest'
 
-import { isolatedGitEnv } from './check-native-modules-attribution.git-env'
+import { makeFixtureEnv } from './_lib/git-fixture-env'
 import { setupFixtures } from './check-native-modules-attribution.harness'
 
 const SCRATCH_PREFIX = 'smi6919-scratch-'
 
 // The scratch repo's own creation must not itself be subject to the leak,
-// so it uses the same isolated environment the fix gives the harness.
+// so it uses the same fixture environment the fix gives the harness.
 function makeScratchRepo(): { dir: string; configPath: string } {
   const dir = mkdtempSync(join(tmpdir(), SCRATCH_PREFIX))
-  const r = spawnSync('git', ['init', '-q'], { cwd: dir, env: isolatedGitEnv(dir) })
+  const r = spawnSync('git', ['init', '-q'], { cwd: dir, env: makeFixtureEnv() })
   if (r.status !== 0) throw new Error(`scratch git init failed: ${r.stderr}`)
   return { dir, configPath: join(dir, '.git', 'config') }
 }
@@ -63,16 +63,15 @@ describe('check-native-modules-attribution.harness — SMI-6919: fixture git cal
 
     const after = readFileSync(scratch.configPath, 'utf8')
     expect(after).toBe(before)
-    expect(after).not.toContain('t@t.example')
     expect(after).not.toContain('bare = true')
     // The fixture repository exists where the harness meant it to.
     expect(existsSync(join(fx.repoDir, '.git'))).toBe(true)
     const log = spawnSync('git', ['log', '--format=%an <%ae>', '-1'], {
       cwd: fx.repoDir,
-      env: isolatedGitEnv(fx.root),
+      env: makeFixtureEnv(),
       encoding: 'utf8',
     })
     expect(log.status).toBe(0)
-    expect(log.stdout.trim()).toBe('test <t@t.example>')
+    expect(log.stdout.trim()).not.toBe('')
   })
 })

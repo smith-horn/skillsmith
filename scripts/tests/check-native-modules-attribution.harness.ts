@@ -44,7 +44,7 @@ import { dirname, join } from 'node:path'
 import { fileURLToPath } from 'node:url'
 import { spawnSync } from 'node:child_process'
 
-import { isolatedGitEnv } from './check-native-modules-attribution.git-env'
+import { makeFixtureEnv } from './_lib/git-fixture-env'
 
 const __dirname = dirname(fileURLToPath(import.meta.url))
 export const SCRIPT = join(__dirname, '..', 'lib', 'check-native-modules.sh')
@@ -220,11 +220,11 @@ export function setupFixtures(): Fixtures {
 
   const git = resolveBin('git') ?? 'git'
   // SMI-6919: a hook's inherited GIT_DIR routed these calls into the main
-  // repo's shared .git/config; the fixture is addressed by cwd alone.
-  const gitOpts = { cwd: repoDir, env: isolatedGitEnv(root) }
+  // repo's shared .git/config; the shared fixture env strips every git
+  // discovery variable (SMI-4693) and pins the author, so the fixture is
+  // addressed by cwd alone and needs no identity config of its own.
+  const gitOpts = { cwd: repoDir, env: makeFixtureEnv() }
   spawnSync(git, ['init', '-q'], gitOpts)
-  spawnSync(git, ['config', 'user.email', 't@t.example'], gitOpts)
-  spawnSync(git, ['config', 'user.name', 'test'], gitOpts)
   writeFileSync(join(repoDir, 'f'), 'x')
   spawnSync(git, ['add', 'f'], gitOpts)
   spawnSync(git, ['commit', '-q', '-m', 'init'], gitOpts)
