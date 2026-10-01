@@ -45,9 +45,9 @@
  * mistake that value for the wrapped command. A combined short-flag+value
  * token (`-oL`, `-n5`, `-5`) is self-contained and the generic single-token
  * skip handles it. A launcher whose own flag takes a NESTED COMMAND STRING
- * (`script -c`, `su -c`, `dtrace -c`, `flock -c`, `watch` without `-x`) is
- * not modelled by this table: the ruflo guard's `DASH_C_NESTED_COMMAND_NAMES`
- * covers the first three, and ADR-172 sec 1 names the rest as a stated limit.
+ * (`script -c`, `su -c`, `dtrace -c`, `flock FILE -c`) is `DASH_C_LAUNCHERS`
+ * below, read as shell text by both guards (round 23); `watch` without `-x`
+ * joins its words into `sh -c` text, which reads as the same argv here.
  *
  * `exec`/`command`/`noglob`/`builtin` are table rows with their OWN value
  * flags rather than routed through the shared `WRAPPER_VALUE_FLAGS` in
@@ -84,29 +84,111 @@ export const LAUNCHER_TABLE = new Map(
     // timeout's own flag VALUE where the duration positional was expected.
     { name: 'timeout', positionals: 1, valueFlags: ['-k', '--kill-after', '-s', '--signal'] },
     { name: 'nice', positionals: 0, valueFlags: ['-n', '--adjustment'] },
-    { name: 'stdbuf', positionals: 0, valueFlags: ['-o', '-e', '-i'] },
-    // `script`'s own `-c COMMAND` is a nested command the ruflo guard handles
-    // before this table ever peels `script`; this row governs only the plain
-    // `script [flags] [file]` shape.
-    { name: 'script', positionals: 1, valueFlags: [] },
+    // Round 23: every row's value flags are the launcher's FULL synopsis,
+    // separated long forms included (`stdbuf --output L` printed a decoy in
+    // bash 5.2 while only `-o` was modelled). A long form with `=` is one
+    // token and needs no row; an OPTIONAL-argument flag (`xargs --replace`,
+    // util-linux `script -t[FILE]`) is never a value flag, since the shell
+    // does not hand it the next word.
+    {
+      name: 'stdbuf',
+      positionals: 0,
+      valueFlags: ['-o', '-e', '-i', '--output', '--error', '--input'],
+    },
+    // BSD `script [-adkpqr] [-F pipe] [-t time] [file [command …]]` (macOS;
+    // `script -q -t 1 /dev/null cat D` printed, round 23) and util-linux
+    // `script [options] [file]` whose own `-c`/`--command` is a nested
+    // command string (`launcherDashCCommand`, read before this row peels).
+    {
+      name: 'script',
+      positionals: 1,
+      valueFlags: [
+        '-F',
+        '-t',
+        '-E',
+        '--echo',
+        '-o',
+        '--output-limit',
+        '-T',
+        '--log-timing',
+        '-I',
+        '--log-in',
+        '-O',
+        '--log-out',
+        '-B',
+        '--log-io',
+        '-m',
+        '--logging-format',
+      ],
+    },
     // H-1 fix: `chrt -f 1 …`'s priority is a REQUIRED bare positional between
-    // chrt's own flags and the wrapped command.
-    { name: 'chrt', positionals: 1, valueFlags: ['-p'] },
-    { name: 'ionice', positionals: 0, valueFlags: ['-c', '-n', '-p'] },
+    // chrt's own flags and the wrapped command; the deadline options take
+    // nanosecond values.
+    {
+      name: 'chrt',
+      positionals: 1,
+      valueFlags: [
+        '-p',
+        '--pid',
+        '-T',
+        '--sched-runtime',
+        '-P',
+        '--sched-period',
+        '-D',
+        '--sched-deadline',
+      ],
+    },
+    {
+      name: 'ionice',
+      positionals: 0,
+      valueFlags: [
+        '-c',
+        '--class',
+        '-n',
+        '--classdata',
+        '-p',
+        '--pid',
+        '-P',
+        '--pgid',
+        '-u',
+        '--uid',
+      ],
+    },
     { name: 'taskset', positionals: 1, valueFlags: [] },
-    // `flock [options] FILE COMMAND`; `-c` (a nested command string) is a
-    // stated limit, see above.
+    // `flock [options] FILE COMMAND`, or `flock [options] FILE -c COMMAND`
+    // (`launcherDashCCommand`; measured running the body only with FILE first).
     {
       name: 'flock',
       positionals: 1,
-      valueFlags: ['-w', '--timeout', '-E', '--conflict-exit-code'],
+      valueFlags: ['-w', '--wait', '--timeout', '-E', '--conflict-exit-code'],
     },
     { name: 'chroot', positionals: 1, valueFlags: ['--userspec', '--groups'] },
     { name: 'watch', positionals: 0, valueFlags: ['-n', '--interval'] },
     // H-1 fix: `-I`/`-i` are xargs's own value flags -- correct only once the
     // ruflo guard's `restoreXargsReplacementWordTokens` has restored the `{}`
-    // token its tokenizer loses; see that function.
-    { name: 'xargs', positionals: 0, valueFlags: ['-I', '-i', '-n', '-P', '-d', '-L', '-s'] },
+    // token its tokenizer loses; see that function. `--replace`, `--eof` and
+    // `--max-lines` take an OPTIONAL value and are deliberately absent.
+    {
+      name: 'xargs',
+      positionals: 0,
+      valueFlags: [
+        '-I',
+        '-i',
+        '-n',
+        '-P',
+        '-d',
+        '-L',
+        '-s',
+        '-a',
+        '-E',
+        '--arg-file',
+        '--delimiter',
+        '--max-args',
+        '--max-procs',
+        '--max-chars',
+        '--process-slot-var',
+      ],
+    },
     { name: 'exec', positionals: 0, valueFlags: ['-a'] },
     { name: 'command', positionals: 0, valueFlags: [], stopFlags: ['-v', '-V'] },
     { name: 'noglob', positionals: 0, valueFlags: [] },
@@ -123,7 +205,9 @@ export const LAUNCHER_TABLE = new Map(
 
 /**
  * True when one of the launcher's own leading flags means it will not run
- * the command after them (`command -v flock`, `timeout --version`).
+ * the command after them (`command -v flock`, `timeout --version`). A
+ * short-flag CLUSTER carrying a stop flag stops too (`command -pv cat`
+ * prints cat's path and runs nothing, measured; round 23).
  * @param {string[]} argv the words AFTER the launcher's own name
  * @param {{valueFlags: Set<string>, stopFlags: Set<string>}} entry
  */
@@ -133,9 +217,42 @@ export function launcherStops(argv, entry) {
     const a = argv[i]
     if (a === '--' || !a.startsWith('-') || a === '-') return false
     if (UNIVERSAL_STOP_FLAGS.has(a) || entry.stopFlags.has(a)) return true
+    if (/^-[A-Za-z]{2,}$/.test(a) && [...a.slice(1)].some((ch) => entry.stopFlags.has('-' + ch))) {
+      return true
+    }
     i += entry.valueFlags.has(a) ? 2 : 1
   }
   return false
+}
+
+/**
+ * Launchers whose own `-c`/`--command` value is a NESTED COMMAND STRING the
+ * launcher runs through a shell: util-linux `script -c`, `su -c`, `dtrace -c`,
+ * `flock FILE -c` (each measured printing a decoy file in bash 5.2 where the
+ * binary exists; `flock -c CMD FILE` with the file last runs nothing, so the
+ * extraction over-approximates and can only add a denial). The ruflo guard
+ * has recursed the first three since SMI-6744; the env guard reads them one
+ * level deep since SMI-6903 round 23, through `transparentHeadReadings`.
+ */
+export const DASH_C_LAUNCHERS = new Set(['script', 'su', 'dtrace', 'flock'])
+
+/**
+ * The nested command string of a `DASH_C_LAUNCHERS` invocation, or null.
+ * `-c CMD`, `-cCMD`, `--command CMD` and `--command=CMD`, anywhere after the
+ * launcher's name (util-linux permutes options past the file operand).
+ * @param {string[]} argv the whole argv, launcher name first
+ * @returns {string|null}
+ */
+export function launcherDashCCommand(argv) {
+  if (argv.length === 0 || !DASH_C_LAUNCHERS.has(basenameOf(argv[0]))) return null
+  for (let i = 1; i < argv.length; i++) {
+    const a = argv[i]
+    if (a === '--') return null
+    if (a === '-c' || a === '--command') return argv[i + 1] ?? null
+    if (a.startsWith('--command=')) return a.slice('--command='.length)
+    if (a.startsWith('-c') && a.length > 2 && !a.startsWith('--')) return a.slice(2)
+  }
+  return null
 }
 
 /**

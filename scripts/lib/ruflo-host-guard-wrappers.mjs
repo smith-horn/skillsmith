@@ -22,7 +22,7 @@
  * this file past the limit).
  */
 
-import { peelOneLauncher } from './shell-command-launchers.mjs'
+import { DASH_C_LAUNCHERS, peelOneLauncher } from './shell-command-launchers.mjs'
 import { basenameOf, normalizeWrappers, stripFlags } from './shell-command-normalize.mjs'
 
 // The process-launcher table (H-A/H-1/H-2 fixes) and `peelOneLauncher` live
@@ -57,9 +57,11 @@ function stripDockerContainerExec(argv) {
  * argument, discarding it). `-c`'s position is order-independent
  * (`script -q -c '...' /dev/null` and `script /dev/null -c '...'` both
  * work) since real `script(1)` accepts its own flags and the output-file
- * positional in either order.
+ * positional in either order. The set is the shared `DASH_C_LAUNCHERS`
+ * since SMI-6903 round 23, which added `flock FILE -c COMMAND` (measured
+ * running its body in bash 5.2) for both guards.
  */
-const DASH_C_NESTED_COMMAND_NAMES = new Set(['script', 'su', 'dtrace'])
+const DASH_C_NESTED_COMMAND_NAMES = DASH_C_LAUNCHERS
 
 /**
  * @param {string[]} argv

@@ -12,7 +12,12 @@
 
 import { describe, expect, it } from 'vitest'
 
-import { LAUNCHER_TABLE, peelOneLauncher, stripLauncher } from '../lib/shell-command-launchers.mjs'
+import {
+  LAUNCHER_TABLE,
+  launcherDashCCommand,
+  peelOneLauncher,
+  stripLauncher,
+} from '../lib/shell-command-launchers.mjs'
 import { normalizeWrappers } from '../lib/shell-command-normalize.mjs'
 import {
   stripTransparentHeadWords,
@@ -87,6 +92,20 @@ describe('LAUNCHER_TABLE — the shared launcher rows', () => {
     ['exec', ['-a', 'x', 'cat', '.env'], ['cat', '.env']],
     ['command', ['-p', 'cat', '.env'], ['cat', '.env']],
     ['xargs', ['-I', '{}', 'cat', '{}'], ['cat', '{}']],
+    // Round 23: the full synopsis, separated long forms included.
+    ['script', ['-q', '-t', '1', '/dev/null', 'cat', '.env'], ['cat', '.env']],
+    ['script', ['-F', '/tmp/p', '/dev/null', 'cat', '.env'], ['cat', '.env']],
+    ['stdbuf', ['--output', 'L', 'cat', '.env'], ['cat', '.env']],
+    ['stdbuf', ['--error', 'L', '--input', '0', 'cat', '.env'], ['cat', '.env']],
+    ['ionice', ['--class', '3', 'cat', '.env'], ['cat', '.env']],
+    ['ionice', ['--classdata', '7', 'cat', '.env'], ['cat', '.env']],
+    ['ionice', ['-c', '2', '--classdata', '7', 'cat', '.env'], ['cat', '.env']],
+    ['flock', ['--wait', '5', '/tmp/l', 'cat', '.env'], ['cat', '.env']],
+    ['flock', ['--timeout', '5', '/tmp/l', 'cat', '.env'], ['cat', '.env']],
+    ['chrt', ['-d', '-T', '1000', '-P', '2000', '-D', '3000', '0', 'cat', '.env'], ['cat', '.env']],
+    ['chrt', ['--sched-runtime', '1000', '0', 'cat', '.env'], ['cat', '.env']],
+    ['xargs', ['--max-args', '1', 'cat'], ['cat']],
+    ['xargs', ['-a', 'list', '--delimiter', ',', 'cat'], ['cat']],
     // `--` ends the launcher's own options.
     ['nice', ['--', 'cat', '.env'], ['cat', '.env']],
     // Nothing after the launcher's own operands: nothing is left.
@@ -195,6 +214,50 @@ describe('transparentHeadReadings — a launcher head, with and without a wrappe
     ])
     expect(peelOneLauncher(['command', '-v', 'flock'])).toBeNull()
     expect(peelOneLauncher(['nice', '--help', 'cat', '.env'])).toBeNull()
+    // Round 23: a short-flag cluster carrying the stop flag stops too
+    // (`command -pv cat` prints cat's path and runs nothing, measured).
+    expect(peelOneLauncher(['command', '-pv', 'cat', '.env'])).toBeNull()
+    expect(readingWords('command -pv cat .env')).toEqual([])
+    // A cluster WITHOUT a stop flag, and a glued value, still peel.
+    expect(peelOneLauncher(['exec', '-cl', 'cat', '.env'])).toEqual(['cat', '.env'])
+    expect(peelOneLauncher(['nice', '-n5', 'cat', '.env'])).toEqual(['cat', '.env'])
+  })
+
+  // Round 23: a launcher's own `-c`/`--command` value is a nested command the
+  // launcher runs through a shell (util-linux `script -c`, `flock FILE -c`,
+  // `su -c`; each measured printing a decoy in bash 5.2). The env guard reads
+  // it as shell text through this reading, one level deep.
+  it('extracts a -c body from a DASH_C launcher in every spelling', () => {
+    expect(launcherDashCCommand(['script', '-q', '-c', 'cat .env', '/dev/null'])).toBe('cat .env')
+    expect(launcherDashCCommand(['script', '-q', '/dev/null', '-c', 'cat .env'])).toBe('cat .env')
+    expect(launcherDashCCommand(['script', '--command', 'cat .env', 'f'])).toBe('cat .env')
+    expect(launcherDashCCommand(['script', '--command=cat .env', 'f'])).toBe('cat .env')
+    expect(launcherDashCCommand(['script', '-ccat .env', 'f'])).toBe('cat .env')
+    expect(launcherDashCCommand(['flock', '/tmp/l', '-c', 'cat .env'])).toBe('cat .env')
+    expect(launcherDashCCommand(['su', 'root', '-c', 'cat .env'])).toBe('cat .env')
+    expect(launcherDashCCommand(['/usr/bin/script', '-c', 'cat .env'])).toBe('cat .env')
+    // No body, a `--` before it, or not a DASH_C launcher: null.
+    expect(launcherDashCCommand(['script', '-q', '/dev/null'])).toBeNull()
+    expect(launcherDashCCommand(['script', '--', '-c', 'cat .env'])).toBeNull()
+    expect(launcherDashCCommand(['timeout', '-c', 'cat .env'])).toBeNull()
+    expect(launcherDashCCommand(['script', '-c'])).toBeNull()
+  })
+
+  it('reads a -c body as its own segments through the caller-supplied splitter', () => {
+    const split = (c: string) =>
+      transparentHeadReadings(
+        splitCommandSegments(tokenize(c)),
+        normalizeWrappers,
+        splitCommandSegments
+      ).map((r) => r.map((t) => t.value))
+    expect(split("script -q -c 'cat .env' /dev/null")).toEqual([['cat', '.env']])
+    expect(split("script -q -c 'ls; cat .env' /dev/null")).toEqual([['ls'], ['cat', '.env']])
+    expect(split("flock /tmp/l -c 'cat .env'")).toEqual([['cat', '.env']])
+    expect(split("sudo script -q -c 'cat .env' /dev/null")).toEqual([['cat', '.env']])
+    // Without the splitter the body is one segment (the default), still read.
+    expect(readingWords("script -q -c 'cat .env' /dev/null")).toEqual([['cat', '.env']])
+    // A `script` with no -c body is an ordinary launcher row.
+    expect(readingWords('script -q /dev/null cat .env')).toEqual([['cat', '.env']])
   })
 
   it('yields nothing when peeling consumes every word', () => {

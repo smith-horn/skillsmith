@@ -3384,6 +3384,47 @@ describe('decide() — SMI-6903 H1: a zsh glob group cannot hide a ruflo path', 
   })
 })
 
+// SMI-6903 round 23 (the cross-family re-gate): the launcher table's value
+// flags are each row's FULL synopsis now, and `flock FILE -c COMMAND` joined
+// the shared `DASH_C_LAUNCHERS` set this guard recurses (measured running its
+// body in bash 5.2). Two consequences for this guard, each measured on
+// `e5396e581` and here: a `-c` body behind `flock` reaches H4 where it was
+// allowed, and a separated long-form value that used to sit as an all-digit
+// `argv[0]` (`ionice --class 3 …`, `xargs --max-args 1 …`) is consumed, so the
+// fail-closed `unresolved-command` fallback no longer fires on a benign
+// command and H4 fires on a ruflo one.
+describe("decide() — SMI-6903 round 23: a launcher's full option model, and flock -c", () => {
+  it("flock /tmp/l -c 'ruflo memory store --key k' -> deny (H4, the body is recursed)", () => {
+    const result = decide(bashCall("flock /tmp/l -c 'ruflo memory store --key k'"), {})
+    expect(result.action).toBe('deny')
+    expect(reasonOf(result)).toContain('H4:')
+  })
+
+  it('xargs --max-args 1 ruflo memory store -> deny (H4, not the all-digit fallback)', () => {
+    const result = decide(bashCall('xargs --max-args 1 ruflo memory store'), {})
+    expect(result.action).toBe('deny')
+    expect(reasonOf(result)).toContain('H4:')
+  })
+
+  // Corrected over-blocks: a benign command whose launcher value was read as
+  // an all-digit command name denied `unresolved-command` before; the value
+  // is consumed now and nothing ruflo-shaped remains.
+  const correctedAllows = [
+    'ionice --class 3 cat notes.txt',
+    'script -q -t 1 /dev/null cat notes.txt',
+    'stdbuf --output L cat notes.txt',
+  ]
+  it.each(correctedAllows)('%s -> allow (value consumed, nothing ruflo-shaped left)', (command) => {
+    expect(decide(bashCall(command), {}).action).toBe('allow')
+  })
+
+  // PIN: an optional-argument flag is never a value flag, so the bare name
+  // after `--replace` is still the command (H4 on every tree).
+  it('pin: xargs --replace ruflo memory store -> deny (H4)', () => {
+    expect(reasonOf(decide(bashCall('xargs --replace ruflo memory store'), {}))).toContain('H4:')
+  })
+})
+
 // SMI-6903 round 22, a correction the shared launcher table forced: `command
 // -v NAME` DESCRIBES a name and runs nothing (measured in bash 3.2 and zsh 5.9
 // with a decoy executable named through a variable: no marker written, while

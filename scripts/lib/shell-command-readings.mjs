@@ -1,12 +1,13 @@
 /**
  * Two readings of a tokenized command that exist because a single reading was
- * wrong about a real shell (SMI-6903 rounds 21 and 22). Both are ADDITIVE: a
+ * wrong about a real shell (SMI-6903 rounds 21 to 23). Both are ADDITIVE: a
  * caller keeps its own primary reading and only ADDS verdicts from these, so
  * an approximate rebuild can only ever over-block, never under-block.
  *
  *   - `transparentHeadReadings` (F1): a shell RESERVED WORD, a command
  *     modifier, a process LAUNCHER with its own operands, or a wrapper the
- *     caller already peels, at a segment's head, is not the command.
+ *     caller already peels, at a segment's head, is not the command; and a
+ *     launcher's own `-c` body is shell text.
  *   - `nestedGroupAlternatives` (F4): a zsh glob group may contain another
  *     glob group.
  *
@@ -15,8 +16,14 @@
  * this machine), with a decoy file read or a decoy executable invoked.
  */
 
-import { LAUNCHER_TABLE, launcherStops, stripLauncher } from './shell-command-launchers.mjs'
-import { basenameOf } from './shell-command-tokenize.mjs'
+import {
+  DASH_C_LAUNCHERS,
+  LAUNCHER_TABLE,
+  launcherDashCCommand,
+  launcherStops,
+  stripLauncher,
+} from './shell-command-launchers.mjs'
+import { basenameOf, tokenize } from './shell-command-tokenize.mjs'
 
 /**
  * Words that introduce or modify a command without BEING it, and take no
@@ -91,20 +98,25 @@ export function stripTransparentHeadWords(argv) {
 }
 
 /**
- * The reading of ONE segment with its transparent head peeled: a launcher
+ * The readings of ONE segment with its transparent head peeled: a launcher
  * (flags and positionals included), a transparent word, or a wrapper prefix
  * the caller's own `peelWrappers` strips, repeated until the head is none of
  * those. Redirect-marked words passed over on the way are KEPT, in order, in
  * front of the remainder, so `timeout 5 cat < .env` still carries its source.
+ * A `DASH_C_LAUNCHERS` head whose `-c` body is present yields that body's
+ * own segments instead (`script -q -c 'ls; cat .env' /dev/null` reads
+ * `ls` and `cat .env`; round 23, measured printing in bash 5.2), split by the
+ * caller's `splitFn` and one level deep by stated limit.
  * Returns null when nothing was peeled, or when peeling consumed every word
  * (`timeout 5` alone has no command to judge). A nested shell body reported
  * by `peelWrappers` ends the peel with the reading kept, so the caller's own
  * wrapper arm can pair the body with the redirect words carried in front.
  * @param {Array<{type: string, value?: string, redirect?: boolean}>} segment
  * @param {((argv: string[]) => {argv: string[], nested: string|null}) | null} peelWrappers
- * @returns {Array<object>|null}
+ * @param {(tokens: Array<object>) => Array<Array<object>>} splitFn
+ * @returns {Array<Array<object>>|null}
  */
-function peelHead(segment, peelWrappers) {
+function peelHead(segment, peelWrappers, splitFn) {
   const kept = []
   let i = 0
   let peeled = false
@@ -134,7 +146,12 @@ function peelHead(segment, peelWrappers) {
       i++
       continue
     }
-    const entry = LAUNCHER_TABLE.get(basenameOf(t.value))
+    const base = basenameOf(t.value)
+    if (DASH_C_LAUNCHERS.has(base)) {
+      const body = launcherDashCCommand(plainValuesFrom(i))
+      if (body !== null) return splitFn(tokenize(body))
+    }
+    const entry = LAUNCHER_TABLE.get(base)
     if (entry !== undefined) {
       const after = plainValuesFrom(i + 1)
       if (launcherStops(after, entry)) break
@@ -167,27 +184,31 @@ function peelHead(segment, peelWrappers) {
     break
   }
   if (!peeled || i >= segment.length) return null
-  return kept.concat(segment.slice(i))
+  return [kept.concat(segment.slice(i))]
 }
 
 /**
- * One extra segment per segment whose head is transparent (see `peelHead`).
- * Returns `[]` when no segment has such a head, the overwhelming majority of
- * command lines. `peelWrappers` is the caller's own wrapper normalizer
- * (`normalizeWrappers`), passed in rather than imported so this module stays
- * below `shell-command-normalize.mjs` in the import graph; with it,
- * `sudo timeout 5 cat .env` and `docker exec c timeout 5 cat /app/.env` read
- * through to the reader, which the wrapper peel alone could not reach because
- * it stops at the first non-wrapper word.
+ * The extra segments for every segment whose head is transparent (see
+ * `peelHead`). Returns `[]` when no segment has such a head, the overwhelming
+ * majority of command lines. `peelWrappers` is the caller's own wrapper
+ * normalizer (`normalizeWrappers`) and `splitFn` its own segment splitter,
+ * both passed in rather than imported so this module stays below
+ * `shell-command-normalize.mjs` and `shell-command-segments.mjs` in the
+ * import graph; with the first, `sudo timeout 5 cat .env` and
+ * `docker exec c timeout 5 cat /app/.env` read through to the reader, which
+ * the wrapper peel alone could not reach because it stops at the first
+ * non-wrapper word; with the second, a `-c` body's own `;`-separated commands
+ * are read one by one.
  * @param {Array<Array<{type: string, value?: string, redirect?: boolean}>>} segments
  * @param {((argv: string[]) => {argv: string[], nested: string|null}) | null} [peelWrappers]
+ * @param {(tokens: Array<object>) => Array<Array<object>>} [splitFn]
  * @returns {Array<Array<object>>}
  */
-export function transparentHeadReadings(segments, peelWrappers = null) {
+export function transparentHeadReadings(segments, peelWrappers = null, splitFn = (t) => [t]) {
   const extra = []
   for (const segment of segments) {
-    const reading = peelHead(segment, peelWrappers)
-    if (reading !== null) extra.push(reading)
+    const readings = peelHead(segment, peelWrappers, splitFn)
+    if (readings !== null) extra.push(...readings)
   }
   return extra
 }

@@ -1420,6 +1420,66 @@ describe("decide() — SMI-6903 round 22 F1: a launcher's own operands cannot hi
   })
 })
 
+// SMI-6903 round 23 (Critical, the cross-family re-gate): three launchers IN
+// the table had an incomplete option model, so a value sat where the command
+// should be and the reader behind it was never reached: BSD `script -t TIME`
+// (`script -q -t 1 /dev/null cat .env` printed a decoy in bash 3.2 and zsh
+// 5.9), GNU `stdbuf --output L` and util-linux `ionice --class 3` /
+// `--classdata 7` (printed in bash 5.2). Every row's value flags are now the
+// launcher's full synopsis, separated long forms included. The same round
+// closes a launcher's own `-c` body as shell text, one level deep: util-linux
+// `script -c`, `--command`, `--command=`, `-c` after the file, `flock FILE
+// -c`, `su -c` (each but `su` measured printing in bash 5.2), and a
+// short-flag cluster carrying a stop flag (`command -pv cat .env` prints
+// cat's path and runs nothing). Every arm below ALLOWED on `e5396e581`.
+describe("decide() — SMI-6903 round 23: a launcher's full option model, and its -c body", () => {
+  const redArms = [
+    'script -q -t 1 /dev/null cat .env',
+    'script -F /tmp/p /dev/null cat .env',
+    'stdbuf --output L cat .env',
+    'stdbuf --error L cat .env',
+    'ionice --class 3 cat .env',
+    'ionice --classdata 7 cat .env',
+    'ionice -c 2 --classdata 7 cat .env',
+    'flock --wait 5 /tmp/l cat .env',
+    'flock --timeout 5 /tmp/l cat .env',
+    'chrt -d -T 1000 -P 2000 -D 3000 0 cat .env',
+    // The `-c` body is shell text.
+    "script -q -c 'cat .env' /dev/null",
+    "script -q --command 'cat .env' /dev/null",
+    "script -q --command='cat .env' /dev/null",
+    "script -q /dev/null -c 'cat .env'",
+    "script -q -c 'ls; cat .env' /dev/null",
+    "script -q -c 'ls && cat .env' /dev/null",
+    "flock /tmp/l -c 'cat .env'",
+    "su -c 'cat .env'",
+    "su root -c 'cat .env'",
+    "sudo script -q -c 'cat .env' /dev/null",
+    "timeout 5 script -q -c 'cat .env' /dev/null",
+    // A shell inside the body is the guard's own wrapper arm, reached through
+    // the body's segment.
+    'script -q -c "bash -c \'cat .env\'" /dev/null',
+  ]
+  it.each(redArms)('%s -> deny', (command) => {
+    expect(decide(bashCall(command), {}).action).toBe('deny')
+  })
+
+  const controls = [
+    "script -q -c 'ls -la' /dev/null",
+    'script -q /dev/null ls',
+    'stdbuf --output L ls',
+    'ionice --class 3 ls',
+    "flock /tmp/l -c 'ls'",
+    // `command -v`/`-V` describe, in a cluster too; `command -v` with two
+    // names describes both and reads neither.
+    'command -pv cat .env',
+    'command -v cat .env',
+  ]
+  it.each(controls)('control: %s -> allow', (command) => {
+    expect(decide(bashCall(command), {}).action).toBe('allow')
+  })
+})
+
 // SMI-6903 round 21 F2 (Critical, pre-existing): an input-redirect source that
 // is a command substitution supplies its OUTPUT as the filename, so the body's
 // own words are this segment's read targets -- the same flatten an argv-slot

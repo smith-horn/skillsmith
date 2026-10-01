@@ -494,6 +494,6 @@ export function splitCommandSegmentsWithSubRuns(tokens, peelWrappers = null) {
   return separator
     .concat(groupingOpSubRuns(tokens))
     .concat(grouping)
-    .concat(transparentHeadReadings(separator, peelWrappers))
-    .concat(transparentHeadReadings(grouping, peelWrappers))
+    .concat(transparentHeadReadings(separator, peelWrappers, splitCommandSegments))
+    .concat(transparentHeadReadings(grouping, peelWrappers, splitCommandSegments))
 }
