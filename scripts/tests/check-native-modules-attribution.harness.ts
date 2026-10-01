@@ -44,6 +44,8 @@ import { dirname, join } from 'node:path'
 import { fileURLToPath } from 'node:url'
 import { spawnSync } from 'node:child_process'
 
+import { isolatedGitEnv } from './check-native-modules-attribution.git-env'
+
 const __dirname = dirname(fileURLToPath(import.meta.url))
 export const SCRIPT = join(__dirname, '..', 'lib', 'check-native-modules.sh')
 export const CASES_DIR = join(__dirname, 'fixtures', 'native-attribution', 'cases')
@@ -217,12 +219,15 @@ export function setupFixtures(): Fixtures {
   writeExec(join(appDir, 'scripts', 'lib', 'check-mount-composition.sh'), CHECKER_SH)
 
   const git = resolveBin('git') ?? 'git'
-  spawnSync(git, ['init', '-q'], { cwd: repoDir })
-  spawnSync(git, ['config', 'user.email', 't@t.example'], { cwd: repoDir })
-  spawnSync(git, ['config', 'user.name', 'test'], { cwd: repoDir })
+  // SMI-6919: a hook's inherited GIT_DIR routed these calls into the main
+  // repo's shared .git/config; the fixture is addressed by cwd alone.
+  const gitOpts = { cwd: repoDir, env: isolatedGitEnv(root) }
+  spawnSync(git, ['init', '-q'], gitOpts)
+  spawnSync(git, ['config', 'user.email', 't@t.example'], gitOpts)
+  spawnSync(git, ['config', 'user.name', 'test'], gitOpts)
   writeFileSync(join(repoDir, 'f'), 'x')
-  spawnSync(git, ['add', 'f'], { cwd: repoDir })
-  spawnSync(git, ['commit', '-q', '-m', 'init'], { cwd: repoDir })
+  spawnSync(git, ['add', 'f'], gitOpts)
+  spawnSync(git, ['commit', '-q', '-m', 'init'], gitOpts)
 
   return {
     root,
