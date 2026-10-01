@@ -35,12 +35,16 @@ import { decodeEscapeAt } from './shell-escape-decode.mjs'
 import { consumeHeredocBodies, parseHeredocDelimiter } from './shell-command-heredoc.mjs'
 
 /**
- * The raw characters bash itself ends a word on, and therefore the only
- * ones a `#` may directly follow and still start a comment. Space, tab and
- * newline are bash's ONLY blanks (NOT JS `/\s/`'s set); `;`/`|`/`&`/`(`/`)`
- * are its other metacharacters. `{`/`}` are reserved WORDS, not
- * metacharacters, so they are absent -- see the comment branch in
- * `tokenize` for the measurements behind both exclusions.
+ * The raw characters bash itself ends a word on that this tokenizer treats
+ * as UNCONDITIONAL `#` comment boundaries: space, tab and newline (bash's
+ * ONLY blanks -- NOT JS `/\s/`'s set), plus `;`, `|`, `&`. A `)` is NOT in
+ * this set -- it is a boundary only by POSITION (SMI-6892 round 16): a
+ * command-position close (a real subshell/group, or an unmatched `)` as in
+ * a `case` pattern) IS a boundary, but a word-position close is NOT, since
+ * zsh's glob-alternation group `(a|b)#x` is one word and bash's array
+ * assignment `a=(1 2)#x` keeps `#x` live -- see `tokenize`'s `parenKinds`
+ * stack and its own comment block. `{`/`}` are reserved WORDS, not
+ * metacharacters, so they stay absent.
  */
 const COMMENT_BOUNDARY_CHARS = new Set([' ', '\t', '\n', ';', '|', '&'])
 
@@ -195,7 +199,25 @@ export function tokenize(command) {
   }
 
   let i = 0
+  // `parenKinds`: a stack of `'command' | 'word'`, one per currently OPEN
+  // `(`, recording where it opened (see the `(`/`)` branches below).
+  // `closeParenIsBoundary` is the verdict from the MOST RECENTLY closed `)`
+  // -- the only one a following `#` can ever need.
+  const parenKinds = []
+  let closeParenIsBoundary = false
+  // `prevChar`: the LOGICAL previous character the comment test reads, not
+  // always raw `command[i - 1]` -- a removed `\`+newline continuation (see
+  // the `\\` branch) must not change it to `\n`. Updated once per outer
+  // iteration, except right after a removed continuation
+  // (`skipPrevCharUpdate` suppresses that one update).
+  let prevChar = ''
+  let skipPrevCharUpdate = false
   while (i < command.length) {
+    if (skipPrevCharUpdate) {
+      skipPrevCharUpdate = false
+    } else {
+      prevChar = i === 0 ? '' : command[i - 1]
+    }
     const c = command[i]
     if (c === '\\') {
       // `\` + newline is a LINE CONTINUATION: bash and zsh both REMOVE the
@@ -208,9 +230,14 @@ export function tokenize(command) {
       // check as `"\n.env"` and allowed, and `npx ru\<nl>flo memory store`
       // reached the ruflo predicates as `"ru\nflo"` and allowed -- the same
       // one-construct-two-representations class as the backtick and `$'...'`
-      // fixes (ADR-172 sec 3).
+      // fixes (ADR-172 sec 3). `skipPrevCharUpdate` keeps `prevChar` at
+      // whatever preceded the backslash across the removal (SMI-6892 round
+      // 16) -- without it, `command[i - 1] === '\n'` always
+      // matched `COMMENT_BOUNDARY_CHARS` and misread a live `)`/word tail
+      // right after the removed pair as a comment.
       if (command[i + 1] === '\n') {
         i += 2
+        skipPrevCharUpdate = true
         continue
       }
       if (i + 1 < command.length) word().value += command[i + 1]
@@ -375,46 +402,71 @@ export function tokenize(command) {
       i = pushOp('|', 2, i)
       continue
     }
-    if (c === ';' || c === '|' || c === '&' || c === '(' || c === ')' || c === '{' || c === '}') {
+    if (c === ';' || c === '|' || c === '&' || c === '{' || c === '}') {
       i = pushOp(c, 1, i)
       continue
     }
-    // An unquoted `#` begins a comment -- discard through the next
-    // newline, which the `\n` branch above still emits as its own `op`
-    // token -- only when it starts a NEW word (`cur === null`) AND the raw
-    // character before it is one bash itself ends a word on
-    // (`COMMENT_BOUNDARY_CHARS`). A `#` that is not at a word boundary
-    // (`a#b`, `${var#pattern}`, `http://x/#f`) leaves `cur` non-null and is
-    // appended like any other character.
+    // A `(` is COMMAND position (subshell / `((…))`) when the token stream
+    // is empty, or its last token (checking the in-progress word `cur`
+    // first, since it is not yet flushed into `tokens`) is an op other than
+    // `)`/`}`; otherwise it is WORD position (`echo (a|b)`, `a=(1 2)`;
+    // SMI-6892 round 16).
+    if (c === '(') {
+      const last = cur !== null ? cur : tokens[tokens.length - 1]
+      parenKinds.push(
+        last === undefined || (last.type === 'op' && last.value !== ')' && last.value !== '}')
+          ? 'command'
+          : 'word'
+      )
+      i = pushOp(c, 1, i)
+      continue
+    }
+    // The matching `)` is a boundary iff its `(` was COMMAND position, or
+    // it is UNMATCHED (`parenKinds.pop()` on an empty stack is `undefined`,
+    // also `!== 'word'` -- a `case` pattern's `a)#x`).
+    if (c === ')') {
+      closeParenIsBoundary = parenKinds.pop() !== 'word'
+      i = pushOp(c, 1, i)
+      continue
+    }
+    // An unquoted `#` begins a comment -- discard through the next newline
+    // (the `\n` branch above still emits that as its own `op` token) --
+    // only when it starts a NEW word (`cur === null`) AND the LOGICAL
+    // previous character (`prevChar`, tracked above) is a boundary. A `#`
+    // not at a word boundary (`a#b`, `${var#pattern}`, `http://x/#f`)
+    // leaves `cur` non-null and is appended like any other character.
     //
-    // `cur === null` ALONE is not the boundary, in two measured directions:
+    // `cur === null` alone is not the boundary: `{`/`}` are bash RESERVED
+    // WORDS, not operators, yet flushed as op tokens unconditionally
+    // (`printf "[%s]" ${X}#foo bar` is TWO words in bash, `a{b}#x; cmd`
+    // still runs `cmd`); and the whitespace flush above uses JS `/\s/`,
+    // wider than bash's own space/tab/newline blanks (`hi<CR>#x; cmd` is
+    // one word plus a live `cmd` in bash -- measured for CR/VT/FF/NBSP).
     //
-    //  - `{`/`}` are bash RESERVED WORDS, not operators, but this tokenizer
-    //    flushes them as op tokens unconditionally (the same divergence
-    //    `ruflo-host-guard-segments.mjs`'s `SPLIT_OPS` and
-    //    `ruflo-host-guard-consumers-git.mjs`'s `SEGMENT_BOUNDARY_OPS`
-    //    already exclude them for). `printf "[%s]" ${X}#foo bar` is TWO
-    //    words in bash (`#foo`, `bar`), and `a{b}#x; cmd` still runs `cmd`.
-    //  - the whitespace flush above uses JS `/\s/`, which matches CR, VT,
-    //    FF, NBSP and a dozen Unicode spaces; bash's only word-ending
-    //    blanks are space, tab and newline, so `hi<CR>#x; cmd` is one word
-    //    plus a live `cmd` in bash (measured for CR/VT/FF/NBSP).
+    // A `)` is a boundary by POSITION, not unconditionally (SMI-6892 round
+    // 16, bash 3.2, bash 5.2, zsh 5.9 agreeing): a command-position close
+    // (`(echo x)#x`) or an unmatched `)` (a `case` pattern) IS a boundary;
+    // a word-position close is NOT, since zsh's glob group `echo (a|b)#x`
+    // is one word and bash's `a=(1 2)#x` keeps its tail live (zsh reads a
+    // comment there: the shells disagree, so this tokenizer keeps the
+    // word-position reading, the safer direction for a guard). A removed
+    // `\`+newline continuation must not flip this: `echo (a|b)\<nl>#x` and
+    // `a=(1 2)\<nl>#x` both keep `#x` live too, which is why `prevChar`
+    // tracks the pre-backslash character instead of the `\n` the removal
+    // leaves in `command[i - 1]`.
     //
-    // Either way the discard swallowed command text that really executes:
-    // `echo ${X}#x; cat .env` and `echo hi<NBSP>#x; npx ruflo memory store`
-    // both reached ALLOW in both guards. `;`/`|`/`&`/`(`/`)` ARE genuine
-    // bash metacharacters (measured: `(printf "P\n")#x; printf MARK` prints
-    // no MARK), so they stay boundaries. `<`/`>` are metacharacters too but
-    // are deliberately absent: their own branch above always leaves `cur`
-    // non-null (the redirect token), so listing them would be a no-op, and
-    // keeping a glued `>#f` as the redirect target only ever retains text
-    // (measured: real bash treats `>#f` as `>` with no target followed by a
-    // comment and rejects the whole line with a syntax error, so retaining
-    // `#f` here can only make this tokenizer over-block a shape bash itself
-    // never runs at all, never under-block a shape that does run).
-    // `${#name}`/`${#name[@]}` (bash's parameter-length operator) need no
-    // special case now -- that `#` follows a `{`.
-    if (c === '#' && cur === null && (i === 0 || COMMENT_BOUNDARY_CHARS.has(command[i - 1]))) {
+    // `<`/`>` are metacharacters too but deliberately absent: their own
+    // branch above always leaves `cur` non-null, so listing them is a
+    // no-op, and real bash rejects a glued `>#f` as a syntax error anyway
+    // (over-blocking a shape bash never runs, never under-blocking one
+    // that does). `${#name}` needs no special case -- that `#` follows `{`.
+    if (
+      c === '#' &&
+      cur === null &&
+      (prevChar === '' ||
+        COMMENT_BOUNDARY_CHARS.has(prevChar) ||
+        (prevChar === ')' && closeParenIsBoundary))
+    ) {
       while (i < command.length && command[i] !== '\n') i++
       continue
     }

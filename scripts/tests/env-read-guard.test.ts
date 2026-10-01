@@ -825,33 +825,61 @@ describe('decide() — SMI-6869 governance round 15 C1: a # glued to }/{ or to a
   )
 })
 
-// SMI-6892 C3 (High, round 16): this tokenizer cannot tell a STANDALONE
-// subshell command `(cmd)` -- whose closing `)` really is a bash comment
-// boundary -- from a zsh GLOB-ALTERNATION pattern `(a|b)`, where `)` is
-// just another character inside one WORD and a glued `#suffix` is part of
-// that same glob text, never a comment. Measured directly (not inferred):
-// in zsh 5.9 (the shell Claude Code's own Bash tool runs on this machine),
-// `printf "[%s]" (a|b)#x` with a file literally named `a#x` present in cwd
-// expands the WHOLE `(a|b)#x` to that filename and the command after it
-// still runs; with no match, zsh's own parse error is `no matches found:
-// (a|b)#x`, i.e. `#x` was already part of the glob token, not split off as
-// a comment. Bash lacks this glob form entirely (`echo (a|b)#x` is a
-// syntax error in bash 3.2 and 5.2 -- confirmed live on both), so bash
-// alone could never surface this ambiguity. Ruling (queen, fail-closed,
-// zero corpus hits): `(` and `)` are dropped from `COMMENT_BOUNDARY_CHARS`
-// entirely, so a `#` right after `)` is NEVER treated as a comment start,
-// in EITHER shell -- an accepted OVER-block for the real-subshell case
-// (bash and zsh both agree `(echo x)#x; cat .env` is a genuine comment,
-// per `retro14-bash-truth.sh`'s own `)#x` measurement and this round's own
-// zsh confirmation), traded for closing the glob-ambiguous case no simple
-// tokenizer can distinguish from it.
-describe('decide() — SMI-6892 C3: a # right after a closing ) is never a comment boundary -- zsh may be closing a glob alternation there, not a subshell', () => {
-  it('(echo x)#x; cat .env -> deny (accepted over-block: bash AND zsh both treat this as a real comment, but the tokenizer cannot tell it apart from the zsh glob shape below)', () => {
-    expect(decide(bashCall('(echo x)#x; cat .env'), {}).action).toBe('deny')
+// SMI-6892 C3 (round 16): a `)` is a comment boundary only when it closes
+// a COMMAND-position `(` (a real subshell/group, or `((...))`), or it is
+// UNMATCHED (a `case` pattern) -- measured in bash 3.2, bash 5.2 and zsh
+// 5.9, all three agreeing. A WORD-position `)` is NOT a boundary: zsh's
+// glob-alternation group `(a|b)#x` (measured live -- with no match, zsh's
+// own parse error is `no matches found: (a|b)#x`, i.e. `#x` was already
+// part of the glob token, not split off as a comment) and bash's
+// array-assignment parens `a=(1 2)#x` (bash runs the tail; zsh reads a
+// comment -- the shells disagree, so the word-position reading wins, the
+// safer direction for a guard) both keep `#x` live. A `\`+newline
+// continuation removed just before the `#` does not change either verdict
+// (the continuation rows below).
+describe('decide() — SMI-6892 C3: a ) is a comment boundary only when it closes a command-position ( or is unmatched, not unconditionally', () => {
+  it('(echo x)#x; cat .env -> allow (a command-position close -- a real subshell -- IS a comment boundary)', () => {
+    expect(decide(bashCall('(echo x)#x; cat .env'), {}).action).toBe('allow')
   })
 
-  it('echo (a|b)#x; cat .env -> deny (the zsh-glob shape itself: measured live in zsh 5.9, (a|b)#x is ONE glob word with # inside it, never a comment)', () => {
+  it('true && (echo x)#x; cat .env -> allow (command-position close after &&)', () => {
+    expect(decide(bashCall('true && (echo x)#x; cat .env'), {}).action).toBe('allow')
+  })
+
+  it('((1))#x; cat .env -> allow (command-position close, arithmetic ((...)))', () => {
+    expect(decide(bashCall('((1))#x; cat .env'), {}).action).toBe('allow')
+  })
+
+  it('case a in a)#x; cat .env<nl>esac -> allow (an UNMATCHED ) ending a case pattern IS a comment boundary too)', () => {
+    expect(decide(bashCall('case a in a)#x; cat .env\nesac'), {}).action).toBe('allow')
+  })
+
+  it('echo (a|b)#x; cat .env -> deny (a WORD-position close -- the zsh glob-alternation shape -- is NOT a boundary, measured live in zsh 5.9)', () => {
     expect(decide(bashCall('echo (a|b)#x; cat .env'), {}).action).toBe('deny')
+  })
+
+  it('a=(1 2)#x; cat .env -> deny (a WORD-position close -- array assignment -- keeps the tail live in bash; the shells disagree, so the word-position reading wins)', () => {
+    expect(decide(bashCall('a=(1 2)#x; cat .env'), {}).action).toBe('deny')
+  })
+
+  it('echo (a|b)\\<nl>#x; cat .env -> deny (a removed continuation right before # does not turn a word-position close into a boundary)', () => {
+    expect(decide(bashCall('echo (a|b)\\\n#x; cat .env'), {}).action).toBe('deny')
+  })
+
+  it('a=(1 2)\\<nl>#x; cat .env -> deny (same, for the array-assignment shape)', () => {
+    expect(decide(bashCall('a=(1 2)\\\n#x; cat .env'), {}).action).toBe('deny')
+  })
+
+  it('(echo x)\\<nl>#x; cat .env -> allow (same continuation removal, but a command-position close -- still a boundary)', () => {
+    expect(decide(bashCall('(echo x)\\\n#x; cat .env'), {}).action).toBe('allow')
+  })
+
+  it.each([
+    ['a real read inside a subshell, no # at all', '(cat .env)'],
+    ['a real read after a subshell, no #', '(echo x); cat .env'],
+    ['a real read after a glob word, no #', 'echo (a|b) ; cat .env'],
+  ])('%s: %j -> deny (control: no # at all, unaffected by this rule)', (_label, command) => {
+    expect(decide(bashCall(command), {}).action).toBe('deny')
   })
 })
 

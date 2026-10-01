@@ -335,19 +335,53 @@ describe('SMI-6892 C1: an unquoted # starts a comment only after a blank, an ope
     ['after ;', 'echo a;#x', ['echo', 'a']],
     ['after |', 'echo a|#x', ['echo', 'a']],
     ['after &', 'echo a&#x', ['echo', 'a']],
+    // SMI-6892 C3 (round 16): a `)` is a comment boundary by POSITION, not
+    // unconditionally -- measured in bash 3.2, bash 5.2 and zsh 5.9, all
+    // three agreeing. A COMMAND-position close (a real subshell/group, or
+    // `((...))`) IS a boundary, and so is an UNMATCHED `)` (a `case`
+    // pattern) -- see the "NOT a comment" rows below for the WORD-position
+    // (zsh glob group / bash array assignment) case that is NOT. A removed
+    // `\`+newline continuation right before the `#` must not change this
+    // verdict either way (the two continuation rows here and below).
+    ['after a COMMAND-position ) (subshell, (echo a)#x)', '(echo a)#x', ['echo', 'a']],
+    ['after a COMMAND-position ) (arithmetic, ((1))#x)', '((1))#x', ['1']],
+    [
+      'after an UNMATCHED ) (case pattern, case a in a)#x<nl>esac)',
+      'case a in a)#x\nesac',
+      ['case', 'a', 'in', 'a', 'esac'],
+    ],
+    [
+      'after a COMMAND-position ) across a continuation ((echo a)\\<nl>#x)',
+      '(echo a)\\\n#x',
+      ['echo', 'a'],
+    ],
+    ['after a removed continuation with no preceding ) (echo \\<nl>#x)', 'echo \\\n#x', ['echo']],
   ])('%s: %j is a comment -- words %j', (_label, command, expected) => {
     expect(wordValues(tokenize(command))).toEqual(expected)
   })
 
   it.each([
-    // SMI-6892 C3 (round 16) supersedes this row's own original bash-only
-    // measurement: `(`/`)` were dropped from COMMENT_BOUNDARY_CHARS
-    // entirely, an accepted over-block for the real-subshell case bash and
-    // zsh both agree on, closing a zsh glob-alternation ambiguity
-    // (`(a|b)#x`) a simple tokenizer cannot tell apart from it -- see
-    // `env-read-guard.test.ts`'s own SMI-6892 C3 describe block.
     ['NOT after ( (opens a word instead of a comment)', '(#x', ['#x']],
-    ['NOT after ) (opens a word instead of a comment)', '(echo a)#x', ['echo', 'a', '#x']],
+    [
+      'NOT after a WORD-position ) (zsh glob group, echo (a|b)#x)',
+      'echo (a|b)#x',
+      ['echo', 'a', 'b', '#x'],
+    ],
+    [
+      'NOT after a WORD-position ) (array assignment, a=(1 2)#x -- bash runs the tail, zsh reads a comment; the word-position reading wins)',
+      'a=(1 2)#x',
+      ['a=', '1', '2', '#x'],
+    ],
+    [
+      'NOT after a WORD-position ) across a continuation (echo (a|b)\\<nl>#x)',
+      'echo (a|b)\\\n#x',
+      ['echo', 'a', 'b', '#x'],
+    ],
+    [
+      'NOT after a WORD-position ) across a continuation (a=(1 2)\\<nl>#x)',
+      'a=(1 2)\\\n#x',
+      ['a=', '1', '2', '#x'],
+    ],
     ['NOT after } (${X}#foo)', '${X}#foo', ['$', 'X', '#foo']],
     ['NOT after { in a literal brace-expansion attempt (a{b}#x)', 'a{b}#x', ['a', 'b', '#x']],
     ["NOT after CR (not one of bash's own blanks)", `hi${CR}#x`, ['hi', '#x']],
