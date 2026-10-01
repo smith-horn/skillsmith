@@ -440,6 +440,51 @@ describe('installSkill() Zod boundary guard (SMI-4288 / #599)', () => {
       expect(result.tips?.join(' ') ?? '').toContain('backup store unreadable')
     })
 
+    it('completes the pre-flight on a manifest whose installedSkills is nullish (SMI-6886)', async () => {
+      // SMI-6733 Phase 2 Wave 2 Step 6. `install.ts:306` subscripts
+      // `manifest.installedSkills[manifestKey]` with no guard, and ADR-171
+      // § 5's nullish carve-out makes `installedSkills: null` classify `ok`
+      // — so the lenient reader hands it back UNCHANGED and the subscript
+      // throws `TypeError: Cannot read properties of null`.
+      //
+      // That throw lands in the `try` at `install.ts:295`, so the plan's
+      // "assert no error was thrown" would pass against the unfixed code.
+      // What it cannot pass is the pre-flight's own self-report: a throw
+      // makes it push the `could not be evaluated` problem onto `tips`.
+      // Absence of that tip is the observable "it ran to completion".
+      //
+      // Both arms are in ONE test on purpose. The fixed arm's assertion is a
+      // NEGATIVE (`not.toContain`), which passes vacuously if `tips` is
+      // undefined for any unrelated reason; the control arm is the
+      // known-positive proving this instrument can see the tip at all.
+      mockLoadManifest.mockResolvedValueOnce({ version: '1.0.0', installedSkills: null })
+      const nullish = await installSkill({
+        skillId: 'owner/repo/test-skill',
+        force: true,
+        conflictAction: 'overwrite',
+      })
+
+      mockLoadManifest.mockRejectedValueOnce(new Error('control: reader threw'))
+      const control = await installSkill({
+        skillId: 'owner/repo/test-skill',
+        force: true,
+        conflictAction: 'overwrite',
+      })
+
+      expect({
+        nullishReportedUnevaluable: (nullish.tips?.join(' ') ?? '').includes(
+          'could not be evaluated'
+        ),
+        controlReportedUnevaluable: (control.tips?.join(' ') ?? '').includes(
+          'could not be evaluated'
+        ),
+      }).toEqual({ nullishReportedUnevaluable: false, controlReportedUnevaluable: true })
+
+      // Both installs still delegated, so neither result above came from an
+      // early return that skipped the pre-flight block entirely.
+      expect(mockInstall).toHaveBeenCalledTimes(2)
+    })
+
     it('survives a thrown value whose string conversion itself throws', async () => {
       // SMI-6585 cross-model review: a rejection can carry ANY value. An
       // object with a throwing `toString` would make the reporting code throw

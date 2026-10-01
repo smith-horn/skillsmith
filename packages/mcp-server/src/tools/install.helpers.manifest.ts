@@ -9,7 +9,12 @@
 
 import * as fs from 'fs/promises'
 import * as path from 'path'
-import { assertNotRealUserHome, loadManifestForWrite, withFileLock } from '@skillsmith/core'
+import {
+  assertNotRealUserHome,
+  loadManifestForWrite,
+  loadManifestLenient,
+  withFileLock,
+} from '@skillsmith/core'
 import { MANIFEST_PATH, SKILLSMITH_DIR, type SkillManifest } from './install.types.js'
 
 // ============================================================================
@@ -48,6 +53,32 @@ export async function loadManifest(manifestPath: string = MANIFEST_PATH): Promis
       installedSkills: {},
     }
   }
+}
+
+/**
+ * ADR-171 § 4b / § 10 (SMI-6733 Phase 2 Wave 2): a SIBLING of {@link
+ * loadManifest} above, not a replacement for it and not a change to its
+ * return type. `outdated.action.ts` and `skill-updates.ts` are the only two
+ * callers that need the degraded-read signal — this wraps
+ * `@skillsmith/core`'s `loadManifestLenient` (the ADR-171 § 4b read-side
+ * policy wrapper) so those two tools can surface `warning` at their
+ * response root (ADR-171 § 10's fixed wire contract: `warning?: string`,
+ * same key in both tools, carrying this value unchanged — no restructuring,
+ * no new union).
+ *
+ * The cast mirrors `updateManifestSafely`'s own `loadManifestForWrite` cast
+ * immediately below — `@skillsmith/core`'s `SkillManifest` and this
+ * package's `SkillManifest` (`install.types.ts`) are two independently
+ * declared, structurally identical interfaces (`version: string`,
+ * `installedSkills: Record<string, SkillManifestEntry>`); ADR-171 § 9
+ * forbids merging the three manifest *implementations* into one, so the
+ * cast at this one boundary is the documented trust boundary, not a hole.
+ */
+export async function loadManifestWithWarning(
+  manifestPath: string = MANIFEST_PATH
+): Promise<{ manifest: SkillManifest; warning: string | null }> {
+  const { manifest, warning } = await loadManifestLenient(manifestPath)
+  return { manifest: manifest as SkillManifest, warning }
 }
 
 /**

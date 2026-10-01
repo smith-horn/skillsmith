@@ -19,6 +19,7 @@ import {
   emitInstallEvent,
   checkInstallTarget,
   manifestKeyFor,
+  installedSkillsOf,
   type RegistryLookup,
   type RegistrySkillInfo,
 } from '@skillsmith/core'
@@ -303,7 +304,13 @@ async function installSkillImpl(input: unknown, _context?: ToolContext): Promise
       // skip this WHOLE pre-flight block for them regardless of what's
       // actually on disk.
       const manifestKey = manifestKeyFor(skillName, effectiveClient)
-      const existingEntry = manifest.installedSkills[manifestKey]
+      // SMI-6886: `loadManifest()` above has no shape validation — it
+      // returns whatever `JSON.parse` produced for a readable file
+      // (ADR-171 § 5's nullish carve-out: `installedSkills: null` is
+      // valid JSON and classifies `ok` elsewhere in this ADR), so a
+      // bare `manifest.installedSkills[manifestKey]` subscript would
+      // throw `TypeError: Cannot read properties of null`.
+      const existingEntry = installedSkillsOf(manifest)[manifestKey]
 
       if (existingEntry) {
         // SMI-6529 N5 (round 4): compute installPath the SAME way core's
