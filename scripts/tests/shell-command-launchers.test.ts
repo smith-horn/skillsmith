@@ -105,6 +105,7 @@ describe('LAUNCHER_TABLE — the shared launcher rows', () => {
     ['chrt', ['-d', '-T', '1000', '-P', '2000', '-D', '3000', '0', 'cat', '.env'], ['cat', '.env']],
     ['chrt', ['--sched-runtime', '1000', '0', 'cat', '.env'], ['cat', '.env']],
     ['xargs', ['--max-args', '1', 'cat'], ['cat']],
+    ['doas', ['-a', 'style', 'cat', '.env'], ['cat', '.env']],
     ['xargs', ['-a', 'list', '--delimiter', ',', 'cat'], ['cat']],
     // `--` ends the launcher's own options.
     ['nice', ['--', 'cat', '.env'], ['cat', '.env']],
@@ -233,6 +234,13 @@ describe('transparentHeadReadings — a launcher head, with and without a wrappe
     expect(launcherDashCCommand(['script', '--command', 'cat .env', 'f'])).toBe('cat .env')
     expect(launcherDashCCommand(['script', '--command=cat .env', 'f'])).toBe('cat .env')
     expect(launcherDashCCommand(['script', '-ccat .env', 'f'])).toBe('cat .env')
+    // Round 24: getopt's cluster rule. `c` last takes the next word; `c` not
+    // last takes the rest of the token (`-cq` runs `q`, measured).
+    expect(launcherDashCCommand(['script', '-qc', 'cat .env', 'f'])).toBe('cat .env')
+    expect(launcherDashCCommand(['script', '-qccat .env', 'f'])).toBe('cat .env')
+    expect(launcherDashCCommand(['script', '-cq', 'cat .env', 'f'])).toBe('q')
+    expect(launcherDashCCommand(['script', '-qa', '-c', 'cat .env'])).toBe('cat .env')
+    expect(launcherDashCCommand(['script', '-q', '-c'])).toBeNull()
     expect(launcherDashCCommand(['flock', '/tmp/l', '-c', 'cat .env'])).toBe('cat .env')
     expect(launcherDashCCommand(['su', 'root', '-c', 'cat .env'])).toBe('cat .env')
     expect(launcherDashCCommand(['/usr/bin/script', '-c', 'cat .env'])).toBe('cat .env')
@@ -258,6 +266,28 @@ describe('transparentHeadReadings — a launcher head, with and without a wrappe
     expect(readingWords("script -q -c 'cat .env' /dev/null")).toEqual([['cat', '.env']])
     // A `script` with no -c body is an ordinary launcher row.
     expect(readingWords('script -q /dev/null cat .env')).toEqual([['cat', '.env']])
+  })
+
+  it('re-reads a -c body with this same reading, two levels deep (round 24)', () => {
+    const split = (c: string) =>
+      transparentHeadReadings(
+        splitCommandSegments(tokenize(c)),
+        normalizeWrappers,
+        splitCommandSegments
+      ).map((r) => r.map((t) => t.value))
+    // A launcher inside the body yields the body segment AND its peel.
+    expect(split("script -q -c 'timeout 5 cat .env' /dev/null")).toEqual([
+      ['timeout', '5', 'cat', '.env'],
+      ['cat', '.env'],
+    ])
+    // A body inside the body: one more level, then the launcher row's own
+    // peel of the innermost `script` (its quoted body is a positional).
+    expect(split('script -q -c "script -q -c \'cat .env\' f" f')).toEqual([
+      ['script', '-q', '-c', 'cat .env', 'f'],
+      ['cat', '.env'],
+    ])
+    const three = 'script -q -c "script -q -c \\"script -q -c \'cat .env\' f\\" f" f'
+    expect(split(three).some((r) => r.join(' ') === 'cat .env')).toBe(false)
   })
 
   it('yields nothing when peeling consumes every word', () => {

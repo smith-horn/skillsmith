@@ -3406,6 +3406,24 @@ describe("decide() — SMI-6903 round 23: a launcher's full option model, and fl
     expect(reasonOf(result)).toContain('H4:')
   })
 
+  // Round 24: this guard's own `-c` extractor matched a bare `-c` only, so
+  // every other spelling the env guard read reached the fail-closed arity
+  // fallback (`script --command 'ruflo …'`) or allowed outright (`flock
+  // /tmp/l --command 'ruflo …'`). It is the shared `launcherDashCCommand`
+  // now; each row below is H4 through the recursed body.
+  const dashCSpellings = [
+    "script --command 'ruflo memory store' /dev/null",
+    "script --command='ruflo memory store' /dev/null",
+    "script -c'ruflo memory store' /dev/null",
+    "script -qc 'ruflo memory store' /dev/null",
+    "flock /tmp/l --command 'ruflo memory store'",
+  ]
+  it.each(dashCSpellings)('%s -> deny (H4, the shared -c extractor)', (command) => {
+    const result = decide(bashCall(command), {})
+    expect(result.action).toBe('deny')
+    expect(reasonOf(result)).toContain('H4:')
+  })
+
   // Corrected over-blocks: a benign command whose launcher value was read as
   // an all-digit command name denied `unresolved-command` before; the value
   // is consumed now and nothing ruflo-shaped remains.

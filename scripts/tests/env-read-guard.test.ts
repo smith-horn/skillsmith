@@ -1464,6 +1464,49 @@ describe("decide() — SMI-6903 round 23: a launcher's full option model, and it
     expect(decide(bashCall(command), {}).action).toBe('deny')
   })
 
+  // Round 24 (the re-gate on round 23's fix), each ALLOWED on `733427c82` and
+  // each measured printing a decoy in bash 5.2 unless noted: a short-flag
+  // cluster whose `c` is last takes the next word as the body (getopt's
+  // rule); a launcher INSIDE the body is peeled by the same reading; a body
+  // inside the body is extracted one level further; `doas -a style` takes a
+  // value (documented; no doas here); `flock --command`.
+  const round24Arms = [
+    "script -qc 'cat .env' /dev/null",
+    "script -qc'cat .env' /dev/null",
+    "script -q -c 'timeout 5 cat .env' /dev/null",
+    "script -q -c 'nice -n 5 cat .env' /dev/null",
+    "script -q -c 'if true; then cat .env; fi' /dev/null",
+    "script -q -c 'ls; timeout 5 cat .env' /dev/null",
+    'script -q -c "script -q -c \'cat .env\' /dev/null" /dev/null',
+    'script -q --command="script -q -c \'timeout 5 cat .env\' /dev/null" /dev/null',
+    'doas -a style cat .env',
+  ]
+  it.each(round24Arms)('%s -> deny (round 24)', (command) => {
+    expect(decide(bashCall(command), {}).action).toBe('deny')
+  })
+
+  // PIN, not an arm: this guard's extractor already read `--command` on
+  // `733427c82`; the round-24 arm for that spelling is the RUFLO guard's,
+  // whose own extractor had lagged.
+  it("pin: flock /tmp/l --command 'cat .env' -> deny (already read)", () => {
+    expect(decide(bashCall("flock /tmp/l --command 'cat .env'"), {}).action).toBe('deny')
+  })
+
+  // A cluster whose `c` is NOT last takes the rest of the token as the body:
+  // `script -cq 'cat .env'` runs `q` (measured: nothing printed), so this
+  // reads `q`, never `cat .env`. Allowed, and a pin of getopt's rule.
+  it("pin: script -cq 'cat .env' /dev/null -> allow (the body is `q`)", () => {
+    expect(decide(bashCall("script -cq 'cat .env' /dev/null"), {}).action).toBe('allow')
+  })
+
+  // Three levels of `-c` nesting is past MAX_DASH_C_DEPTH: the innermost
+  // body is not extracted (stated limit; the launcher row's own peel leaves
+  // the quoted body as a positional). Pinned so the limit is recorded.
+  it('pin (stated limit): a -c body three levels deep is not read', () => {
+    const three = 'script -q -c "script -q -c \\"script -q -c \'cat .env\' f\\" f" f'
+    expect(decide(bashCall(three), {}).action).toBe('allow')
+  })
+
   const controls = [
     "script -q -c 'ls -la' /dev/null",
     'script -q /dev/null ls',

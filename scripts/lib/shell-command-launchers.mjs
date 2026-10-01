@@ -76,7 +76,9 @@ export const LAUNCHER_TABLE = new Map(
     { name: 'setsid', positionals: 0, valueFlags: [] },
     { name: 'time', positionals: 0, valueFlags: [] },
     { name: 'unbuffer', positionals: 0, valueFlags: [] },
-    { name: 'doas', positionals: 0, valueFlags: ['-u', '-C'] },
+    // OpenBSD doas(1): `-a style`, `-C config`, `-u user` take values (round
+    // 24; documented, the binary is installed nowhere here).
+    { name: 'doas', positionals: 0, valueFlags: ['-a', '-u', '-C'] },
     // `caffeinate -t 5 cat …` (measured printing on macOS): `-t`/`-w` take a
     // value, so an empty value-flag set left `5` sitting as argv[0].
     { name: 'caffeinate', positionals: 0, valueFlags: ['-t', '-w'] },
@@ -239,7 +241,11 @@ export const DASH_C_LAUNCHERS = new Set(['script', 'su', 'dtrace', 'flock'])
 /**
  * The nested command string of a `DASH_C_LAUNCHERS` invocation, or null.
  * `-c CMD`, `-cCMD`, `--command CMD` and `--command=CMD`, anywhere after the
- * launcher's name (util-linux permutes options past the file operand).
+ * launcher's name (util-linux permutes options past the file operand), and a
+ * short-flag CLUSTER with getopt's own rule (round 24): the first `c` in the
+ * cluster takes the REST of the token as its value, or the next word when
+ * nothing follows it. `script -qc 'cat D'` and `script -qc'cat D'` print a
+ * decoy in bash 5.2; `script -cq 'cat D'` runs `q`, not cat (measured).
  * @param {string[]} argv the whole argv, launcher name first
  * @returns {string|null}
  */
@@ -248,9 +254,12 @@ export function launcherDashCCommand(argv) {
   for (let i = 1; i < argv.length; i++) {
     const a = argv[i]
     if (a === '--') return null
-    if (a === '-c' || a === '--command') return argv[i + 1] ?? null
+    if (a === '--command') return argv[i + 1] ?? null
     if (a.startsWith('--command=')) return a.slice('--command='.length)
-    if (a.startsWith('-c') && a.length > 2 && !a.startsWith('--')) return a.slice(2)
+    if (a.startsWith('--') || !a.startsWith('-') || a.length < 2) continue
+    const k = a.indexOf('c', 1)
+    if (k === -1) continue
+    return k === a.length - 1 ? (argv[i + 1] ?? null) : a.slice(k + 1)
   }
   return null
 }

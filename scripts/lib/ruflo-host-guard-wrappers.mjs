@@ -22,7 +22,7 @@
  * this file past the limit).
  */
 
-import { DASH_C_LAUNCHERS, peelOneLauncher } from './shell-command-launchers.mjs'
+import { launcherDashCCommand, peelOneLauncher } from './shell-command-launchers.mjs'
 import { basenameOf, normalizeWrappers, stripFlags } from './shell-command-normalize.mjs'
 
 // The process-launcher table (H-A/H-1/H-2 fixes) and `peelOneLauncher` live
@@ -57,22 +57,22 @@ function stripDockerContainerExec(argv) {
  * argument, discarding it). `-c`'s position is order-independent
  * (`script -q -c '...' /dev/null` and `script /dev/null -c '...'` both
  * work) since real `script(1)` accepts its own flags and the output-file
- * positional in either order. The set is the shared `DASH_C_LAUNCHERS`
- * since SMI-6903 round 23, which added `flock FILE -c COMMAND` (measured
- * running its body in bash 5.2) for both guards.
+ * positional in either order. The set and the extractor are the shared
+ * `DASH_C_LAUNCHERS` / `launcherDashCCommand` since SMI-6903 rounds 23 and
+ * 24: round 23 added `flock FILE -c COMMAND` (measured running its body in
+ * bash 5.2) and round 24 found this guard's own extractor still matched a
+ * bare `-c` only, so `script --command 'ruflo …'`, `--command=…`, `-c…`
+ * glued and `-qc …` clustered reached the fail-closed arity fallback or
+ * allowed where the env guard read them.
  */
-const DASH_C_NESTED_COMMAND_NAMES = DASH_C_LAUNCHERS
 
 /**
  * @param {string[]} argv
  * @returns {string | null} the nested command text, or null if this isn't
- *   one of the `DASH_C_NESTED_COMMAND_NAMES`' own `-c` invocation.
+ *   one of the `DASH_C_LAUNCHERS`' own `-c` invocation.
  */
 function extractDashCNestedCommand(argv) {
-  if (!DASH_C_NESTED_COMMAND_NAMES.has(basenameOf(argv[0] ?? ''))) return null
-  const idx = argv.indexOf('-c')
-  if (idx === -1) return null
-  return idx + 1 < argv.length ? argv[idx + 1] : null
+  return launcherDashCCommand(argv)
 }
 
 /**

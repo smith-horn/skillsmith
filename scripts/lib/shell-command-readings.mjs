@@ -106,7 +106,12 @@ export function stripTransparentHeadWords(argv) {
  * A `DASH_C_LAUNCHERS` head whose `-c` body is present yields that body's
  * own segments instead (`script -q -c 'ls; cat .env' /dev/null` reads
  * `ls` and `cat .env`; round 23, measured printing in bash 5.2), split by the
- * caller's `splitFn` and one level deep by stated limit.
+ * caller's `splitFn`, PLUS this same reading of each of those segments, so a
+ * launcher inside the body is peeled too (`script -q -c 'timeout 5 cat .env'
+ * /dev/null` printed a decoy while the body's `timeout` sat as argv[0];
+ * round 24) and a body inside the body is extracted up to
+ * `MAX_DASH_C_DEPTH` levels (`script -q --command="script -q -c 'cat D' f" f`
+ * printed too). Past that depth the launcher row's own peel still applies.
  * Returns null when nothing was peeled, or when peeling consumed every word
  * (`timeout 5` alone has no command to judge). A nested shell body reported
  * by `peelWrappers` ends the peel with the reading kept, so the caller's own
@@ -114,9 +119,12 @@ export function stripTransparentHeadWords(argv) {
  * @param {Array<{type: string, value?: string, redirect?: boolean}>} segment
  * @param {((argv: string[]) => {argv: string[], nested: string|null}) | null} peelWrappers
  * @param {(tokens: Array<object>) => Array<Array<object>>} splitFn
+ * @param {number} depth how many `-c` bodies enclose this segment
  * @returns {Array<Array<object>>|null}
  */
-function peelHead(segment, peelWrappers, splitFn) {
+const MAX_DASH_C_DEPTH = 2
+
+function peelHead(segment, peelWrappers, splitFn, depth) {
   const kept = []
   let i = 0
   let peeled = false
@@ -147,9 +155,12 @@ function peelHead(segment, peelWrappers, splitFn) {
       continue
     }
     const base = basenameOf(t.value)
-    if (DASH_C_LAUNCHERS.has(base)) {
+    if (DASH_C_LAUNCHERS.has(base) && depth < MAX_DASH_C_DEPTH) {
       const body = launcherDashCCommand(plainValuesFrom(i))
-      if (body !== null) return splitFn(tokenize(body))
+      if (body !== null) {
+        const segs = splitFn(tokenize(body))
+        return segs.concat(transparentHeadReadings(segs, peelWrappers, splitFn, depth + 1))
+      }
     }
     const entry = LAUNCHER_TABLE.get(base)
     if (entry !== undefined) {
@@ -202,12 +213,18 @@ function peelHead(segment, peelWrappers, splitFn) {
  * @param {Array<Array<{type: string, value?: string, redirect?: boolean}>>} segments
  * @param {((argv: string[]) => {argv: string[], nested: string|null}) | null} [peelWrappers]
  * @param {(tokens: Array<object>) => Array<Array<object>>} [splitFn]
+ * @param {number} [depth] internal: how many `-c` bodies enclose `segments`
  * @returns {Array<Array<object>>}
  */
-export function transparentHeadReadings(segments, peelWrappers = null, splitFn = (t) => [t]) {
+export function transparentHeadReadings(
+  segments,
+  peelWrappers = null,
+  splitFn = (t) => [t],
+  depth = 0
+) {
   const extra = []
   for (const segment of segments) {
-    const readings = peelHead(segment, peelWrappers, splitFn)
+    const readings = peelHead(segment, peelWrappers, splitFn, depth)
     if (readings !== null) extra.push(...readings)
   }
   return extra
