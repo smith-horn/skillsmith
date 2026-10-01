@@ -4,6 +4,17 @@ All notable changes to `@skillsmith/mcp-server` are documented here.
 
 ## [Unreleased]
 
+- **Fix**: SMI-6733 Phase 2 Wave 2 -- `skill_outdated` and `skill_updates` now surface a
+  `warning?: string` at the response root when the local manifest read degraded
+  (corrupt/unreadable/version-unsupported), per ADR-171 § 10's same-key cross-tool contract.
+  Previously both tools reported `total_installed: 0` / `updatesAvailable: 0` on a manifest neither
+  one could read -- a positive false statement, not silence. Mechanism: a new
+  `loadManifestWithWarning` sibling wrapping core's `loadManifestLenient`, not a return-type change
+  on the existing lenient `loadManifest`. `install.ts`, `install.helpers.ts`,
+  `install.helpers.manifest.ts`, and `install.conflict.ts` also route their `installedSkills` reads
+  through core's `installedSkillsOf()` for the same nullish-carve-out reason as the entry below --
+  `installedSkills: null` classifies `ok` under ADR-171 § 5, and a bare subscript threw.
+
 - **Fix**: SMI-6733 -- the three `apply_manifest_reconcile` entry points now read `installedSkills`
   through `@skillsmith/core`'s `installedSkillsOf()` rather than subscripting the field directly.
   A manifest whose `installedSkills` is `null` or absent classifies `ok` (both mean "nothing

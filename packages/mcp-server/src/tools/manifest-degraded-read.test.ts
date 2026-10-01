@@ -247,6 +247,43 @@ describe('SMI-6733 Wave 2: a degraded manifest read reaches the response', () =>
         sameText: fromOutdated.warning === fromUpdates.warning,
       }).toEqual({ outdatedHasWarning: true, updatesHasWarning: true, sameText: true })
     })
+
+    // F7 (SMI-6733 Phase 2 governance review): ADR-171 § 4b's two properties
+    // — no warning on `missing`, no warning on a nullish `installedSkills` —
+    // were asserted for skill_outdated above but never for skill_updates,
+    // though § 10's whole contract is that the two tools agree. Mirrors the
+    // skill_outdated arms above; additions only, nothing above this point
+    // in the describe block is touched.
+    it('does not warn when the manifest is simply absent', async () => {
+      // ADR-171 § 4b: `missing` is the normal state of a machine that has
+      // installed nothing. Warning here would train users to ignore the
+      // field, which is the failure mode that makes the whole thread useless.
+      await removeManifest()
+      const res = await runUpdates()
+      expect({ warning: res.warning, updatesAvailable: res.updatesAvailable }).toEqual({
+        warning: undefined,
+        updatesAvailable: 0,
+      })
+    })
+
+    it('warns on a shape-corrupt manifest but NOT on a nullish installedSkills', async () => {
+      // The author-chosen mutation this arm exists to kill: an implementation
+      // that keys the warning on `JSON.parse` throwing, rather than on the
+      // classifier's state. Both fixtures below are VALID JSON and differ by
+      // one token; the classifier calls one `corrupt` (array) and the other
+      // `ok` (null), per ADR-171 § 5. A parse-keyed implementation warns on
+      // neither and passes every other test in this file.
+      await writeManifest(BYTES_CORRUPT_SHAPE)
+      const arrayShaped = await runUpdates()
+
+      await writeManifest(BYTES_OK_NULL)
+      const nullish = await runUpdates()
+
+      expect({
+        arrayWarns: typeof arrayShaped.warning === 'string' && arrayShaped.warning.length > 0,
+        nullishWarns: nullish.warning !== undefined,
+      }).toEqual({ arrayWarns: true, nullishWarns: false })
+    })
   })
 
   // -------------------------------------------------------------------------
@@ -287,6 +324,56 @@ describe('SMI-6733 Wave 2: a degraded manifest read reaches the response', () =>
       await writeManifest(BYTES_OK_NULL)
       const nullish = await runUpdates()
       expect(nullish.updatesAvailable).toBe(0)
+    })
+  })
+
+  // -------------------------------------------------------------------------
+  // The advice has to match the failure, not merely exist.
+  //
+  // Added from the post-commit governance review, which was asked to name a
+  // mutation class the author would not have chosen — and did. Every other
+  // assertion about the warning in this file is one of two shapes: "is a
+  // non-empty string" or "contains the manifest path". Both are properties a
+  // correct implementation happens to have, so a warning that names the file
+  // and then gives the WRONG next action passes all of them. That is SMI-6732's
+  // tell exactly: pinning the shape an answer takes rather than the property
+  // that makes it right.
+  //
+  // It matters here more than usual, because the whole premise of this change
+  // is that a positive false statement is worse than silence by being
+  // actionable. A shape-corrupt manifest sent to a JSON validator is a positive
+  // false statement of its own — the validator reports no problem.
+  //
+  // This file already wrote BOTH fixtures and used the pair only as a
+  // CLASSIFICATION discriminator (warns / does not warn). Using it as a MESSAGE
+  // discriminator costs one test and closes the reason `ManifestCorruptKind` is
+  // a three-way union rather than a boolean.
+  // -------------------------------------------------------------------------
+
+  describe('the remedy is specific to the failure (ADR-171 § 8)', () => {
+    it('does not send a shape-corrupt manifest to a JSON validator', async () => {
+      await writeManifest(BYTES_UNPARSEABLE)
+      const unparseable = (await runOutdated()).warning ?? ''
+
+      await writeManifest(BYTES_CORRUPT_SHAPE)
+      const shape = (await runOutdated()).warning ?? ''
+
+      expect({
+        // Both are `corrupt`; one policy outcome, two different next actions.
+        differ: unparseable !== shape,
+        // The known-positive control. Without it, stripping the remedy from
+        // BOTH branches passes the other two arms, and a cap or a refactor
+        // that ate every remedy would read as a passing test.
+        unparseableSendsToValidator: unparseable.includes('JSON validator'),
+        shapeSendsToValidator: shape.includes('JSON validator'),
+        // What the shape case should say instead: the field is the fix.
+        shapeNamesTheField: shape.includes('Open the file and correct that field'),
+      }).toEqual({
+        differ: true,
+        unparseableSendsToValidator: true,
+        shapeSendsToValidator: false,
+        shapeNamesTheField: true,
+      })
     })
   })
 })

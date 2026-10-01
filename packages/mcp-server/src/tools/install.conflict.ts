@@ -176,7 +176,11 @@ export async function handleMergeAction(
   client: ClientId
 ): Promise<MergeOperationResult> {
   const manifestKey = manifestKeyFor(skillName, client)
-  const existingEntry = manifest.installedSkills[manifestKey] as SkillManifestEntry | undefined
+  // SMI-6886: same nullish-`installedSkills` hazard as checkForConflicts()
+  // above — see that function's comment. This function has no production
+  // caller today, so this is the sibling-miss this file's own docblock
+  // (:161-165) warns about, not a live defect.
+  const existingEntry = installedSkillsOf(manifest)[manifestKey] as SkillManifestEntry | undefined
 
   // Load original and current content
   const originalContent = await loadOriginal(skillName)
@@ -229,7 +233,7 @@ export async function handleMergeAction(
     installedSkills: {
       ...currentManifest.installedSkills,
       [manifestKey]: {
-        ...currentManifest.installedSkills[manifestKey],
+        ...installedSkillsOf(currentManifest)[manifestKey],
         lastUpdated: new Date().toISOString(),
         originalContentHash: upstreamHash,
       },

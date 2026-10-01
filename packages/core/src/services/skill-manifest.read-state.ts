@@ -116,9 +116,41 @@ type ManifestRefusalState = Extract<
  * than guessed at, matching that literal.
  */
 function parseMajorVersion(version: string): number | null {
+  // Deliberately not end-anchored: a prerelease or build suffix ("1.0.0-beta",
+  // "1.0.0+build") records a real major version and must stay supported rather
+  // than becoming `version_malformed`. The cost is that a junk suffix also
+  // parses, so "2.0.0" + 200 KB of noise classifies `version_unsupported`
+  // rather than `corrupt` — a defensible read of a file that does record major
+  // 2, and the reason `capDiagnostic` below exists rather than an anchor here.
   const match = /^(\d+)\.\d+\.\d+/.exec(version)
   if (!match) return null
   return Number.parseInt(match[1], 10)
+}
+
+/** Longest untrusted substring allowed into a diagnostic. */
+const MAX_DIAGNOSTIC_VALUE_LENGTH = 120
+
+/**
+ * SMI-6733 Phase 2 Wave 2: bound any value read out of the manifest FILE before
+ * it is interpolated into a message.
+ *
+ * `version` is attacker- or accident-controlled and arbitrarily long, and since
+ * Wave 2 these messages have a new egress: `loadManifestLenient`'s `warning`
+ * rides `skill_outdated` and `skill_updates` straight to the response root and
+ * therefore into an LLM context window. Measured before this cap, in a temp
+ * dir: a 200 KB `version` produced a **200,641**-character warning, against 482
+ * for an ordinary unparseable manifest.
+ *
+ * Bounded HERE, at the producer, rather than at the two consumers — the write
+ * path's equivalent is already bounded by `truncateErrorMessage` before
+ * telemetry, and `install.ts:377-380` (SMI-6588) states the rule this restores:
+ * *"an unbounded message from an arbitrary throw site is not something to pass
+ * back to a caller."*
+ */
+function capDiagnostic(value: string): string {
+  return value.length > MAX_DIAGNOSTIC_VALUE_LENGTH
+    ? `${value.slice(0, MAX_DIAGNOSTIC_VALUE_LENGTH)}… (${value.length} chars total)`
+    : value
 }
 
 /** `JSON.parse`'s own error message embeds `... at position N ...` when available. */
@@ -261,14 +293,17 @@ export async function readManifestState(manifestPath: string): Promise<ManifestR
       return {
         state: 'corrupt',
         kind: 'version_malformed',
-        reason: `its "version" field is "${versionValue}", which is not a major.minor.patch string`,
+        reason: `its "version" field is "${capDiagnostic(versionValue)}", which is not a major.minor.patch string`,
         position: null,
       }
     }
     if (major > SUPPORTED_MAJOR_VERSION) {
       return {
         state: 'version_unsupported',
-        found: versionValue,
+        // Capped on the STATE, not at the interpolation, so every consumer of
+        // `found` is bounded — it is a diagnostic string, never compared or
+        // computed on (sole reader: `describeManifestProblem`'s message).
+        found: capDiagnostic(versionValue),
         expected: CURRENT_MANIFEST_VERSION,
       }
     }

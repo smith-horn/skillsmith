@@ -355,4 +355,58 @@ describe('ADR-171 manifest read-state classifier (SMI-6733)', () => {
       expect(result.manifest).toEqual({ version: '1.0.0', installedSkills: {} })
     })
   })
+
+  // ==========================================================================
+  // SMI-6733 Phase 2 Wave 2: the warning is bounded
+  // ==========================================================================
+
+  describe('the warning is bounded, because `version` is file-controlled', () => {
+    // Wave 2 gave these messages a new egress: `loadManifestLenient`'s warning
+    // now rides `skill_outdated` and `skill_updates` to the response root, and
+    // therefore into an LLM context window. Measured before `capDiagnostic`, in
+    // a temp dir: a 200 KB `version` produced a 200,641-character warning.
+    // `install.ts` (SMI-6588) already states the rule — "an unbounded message
+    // from an arbitrary throw site is not something to pass back to a caller."
+    const HUGE = 'X'.repeat(200_000)
+
+    it('caps a malformed `version`, and still says what is wrong', async () => {
+      await writeManifestFile(JSON.stringify({ version: HUGE, installedSkills: {} }))
+      const { warning } = await loadManifestLenient(manifestPath)
+
+      expect({
+        bounded: (warning ?? '').length < 2_000,
+        namesTheProblem: (warning ?? '').includes('major.minor.patch'),
+        reportsTheRealSize: (warning ?? '').includes('200000 chars total'),
+      }).toEqual({ bounded: true, namesTheProblem: true, reportsTheRealSize: true })
+    })
+
+    it('caps an unsupported `version` carrying a junk suffix', async () => {
+      // `parseMajorVersion` is deliberately not end-anchored so a prerelease
+      // suffix stays supported, which means a junk suffix parses too and this
+      // lands in `version_unsupported` rather than `corrupt`. Either way the
+      // string must not reach the caller at full length.
+      await writeManifestFile(JSON.stringify({ version: `2.0.0${HUGE}`, installedSkills: {} }))
+      const { warning } = await loadManifestLenient(manifestPath)
+
+      expect({
+        bounded: (warning ?? '').length < 2_000,
+        namesTheProblem: (warning ?? '').includes('a newer Skillsmith wrote it'),
+      }).toEqual({ bounded: true, namesTheProblem: true })
+    })
+
+    it('leaves an ordinary corrupt manifest its FULL diagnostic', async () => {
+      // The known-positive control. Without it, a cap that truncated every
+      // warning to nothing would pass both tests above — and the whole premise
+      // of this change is that a warning has to be actionable, so a cap that
+      // ate the remedy would be a regression dressed as a fix.
+      await writeManifestFile('{ not valid json')
+      const { warning } = await loadManifestLenient(manifestPath)
+
+      expect({
+        stillDetailed: (warning ?? '').length > 300,
+        namesTheFile: (warning ?? '').includes(manifestPath),
+        keepsTheRemedy: (warning ?? '').includes('JSON validator'),
+      }).toEqual({ stillDetailed: true, namesTheFile: true, keepsTheRemedy: true })
+    })
+  })
 })
