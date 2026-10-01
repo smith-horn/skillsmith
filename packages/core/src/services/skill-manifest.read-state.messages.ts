@@ -47,9 +47,20 @@ export function capDiagnostic(value: string, max: number = MAX_DIAGNOSTIC_VALUE_
  * — that was tried twice and failed twice (SMI-6733).
  */
 function pathForMessage(value: string): string {
+  // INTERIM, and it fixes only half of what gate round 4 found. The sentinel no
+  // longer carries angle brackets, which a client rendering tool-response strings
+  // as HTML or Markdown could treat as markup. What this does NOT fix: a path
+  // within the limit is still echoed verbatim, so a real path containing markup
+  // or a newline still injects it into the warning.
+  //
+  // That half cannot be fixed in prose, and round 4 was right that trying is the
+  // recurring defect rather than the cure: the durable answer is to drop the path
+  // from the sentence and expose it as a structured field beside a generic
+  // warning. That changes ADR-171 § 10's wire contract, so it is SMI-6917 rather
+  // than a fifth adjustment here. Do not "fix" this with escaping.
   return value.length <= MAX_ECHOABLE_PATH_LENGTH
     ? value
-    : `<a supplied path of ${value.length} characters, too long to name a file>`
+    : `a supplied path of ${value.length} characters, too long to name a file`
 }
 
 /**
