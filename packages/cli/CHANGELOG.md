@@ -4,6 +4,18 @@ All notable changes to `@skillsmith/cli` are documented here.
 
 ## [Unreleased]
 
+- **Fix (crash)**: SMI-6733 / SMI-6886 -- `sklx pin`, `sklx unpin` and `sklx diff` no longer break on
+  a manifest whose `installedSkills` is `null`. That is not a corrupt file: ADR-171 § 5 classifies it
+  `ok` deliberately, because it is byte-identical to an absent key in the content-addressed canonical
+  form § 3 requires, so the reader hands it back unchanged. Five sites then subscripted it with no
+  guard (`pin.ts:85`, `:112`, `:150`, `:165`; `diff.ts:141`), all fed by a lenient loader that
+  silently substitutes an empty document on any read failure. `pin`/`unpin` surfaced a raw
+  `TypeError: Cannot read properties of null`; `diff` differed, because `fetchLatestContent` catches
+  it and reported "check your network connection" instead of naming the real problem. All five now
+  read through `installedSkillsOf`. Each is pinned by a test asserting the command's normal
+  not-installed output rather than merely the absence of a throw -- an absence assertion passes
+  whenever the command silently did nothing.
+
 - **Fix (data integrity)**: SMI-6733 -- `skillsmith update` no longer replaces a manifest it could
   not read. `getSkillDiff`'s untracked-skill adoption reached `adoptUntrackedSkillEntry`, which took
   a tolerant load unconditionally: that substitutes an empty document for a corrupt, unreadable or
