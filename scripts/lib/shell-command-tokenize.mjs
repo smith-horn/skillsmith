@@ -16,35 +16,26 @@
  * (`flattenSubWords`, `evaluateCommand`'s `.subs` recursion) applies the
  * comment rule to it, matching bash: the body is its own command text.
  *
- * Split out of `shell-command-normalize.mjs` itself (SMI-6744 Wave 4 delta
- * governance round) purely to stay under the 500-line-per-file convention
- * this repo keeps by hand for .mjs files under scripts/ (M3 correction:
- * not enforced by tooling here — `scripts/check-file-length.mjs` only runs
- * via `lint-staged` for `*.ts`/`*.sh`; SMI-5994) once the H-6 ANSI-C-quoting
- * fix and its own docblock corrections pushed that file past the limit —
- * `shell-command-normalize.mjs` imports `tokenize`/`basenameOf` back from
- * here and RE-EXPORTS them, so no consumer's own import path changes.
+ * Split out of `shell-command-normalize.mjs` (SMI-6744 Wave 4) to stay under
+ * the repo's by-hand 500-line .mjs convention (not tool-enforced here;
+ * SMI-5994); that file imports `tokenize`/`basenameOf` back from here and
+ * RE-EXPORTS them, so no consumer's own import path changes.
  */
 
 import { decodeEscapeAt } from './shell-escape-decode.mjs'
 // L7 correction: `shell-command-heredoc.mjs` imports `readParen` back from
-// THIS file — a real circular import. It is safe only because both sides
-// are hoisted function declarations (`function foo() {}`, not `const foo =
-// () => {}`) consumed at CALL time, after both modules have finished
-// loading, never at each other's own module-evaluation time.
+// THIS file — a real circular import, safe only because both sides are
+// hoisted function declarations consumed at CALL time, after both modules
+// finish loading.
 import { consumeHeredocBodies, parseHeredocDelimiter } from './shell-command-heredoc.mjs'
 
 /**
  * The raw characters bash itself ends a word on that this tokenizer treats
  * as UNCONDITIONAL `#` comment boundaries: space, tab and newline (bash's
  * ONLY blanks -- NOT JS `/\s/`'s set), plus `;`, `|`, `&`. A `)` is NOT in
- * this set -- it is a boundary only by POSITION (SMI-6892 round 16): a
- * command-position close (a real subshell/group, or an unmatched `)` as in
- * a `case` pattern) IS a boundary, but a word-position close is NOT, since
- * zsh's glob-alternation group `(a|b)#x` is one word and bash's array
- * assignment `a=(1 2)#x` keeps `#x` live -- see `tokenize`'s `parenKinds`
- * stack and its own comment block. `{`/`}` are reserved WORDS, not
- * metacharacters, so they stay absent.
+ * this set -- it is a boundary only by POSITION (see `tokenize`'s
+ * `parenKinds` stack and its own comment block, SMI-6892 rounds 16-17).
+ * `{`/`}` are reserved WORDS, not metacharacters, so they stay absent.
  */
 const COMMENT_BOUNDARY_CHARS = new Set([' ', '\t', '\n', ';', '|', '&'])
 
@@ -142,6 +133,26 @@ function readRedirectOperator(command, i) {
 }
 
 /**
+ * True when `tokens` ends in the words `case`, `<anything>`, `in` --
+ * `case`'s own subject line -- with `case` itself at command position (the
+ * token before it absent, or an op other than `)`/`}`; SMI-6892 round 17).
+ * Read before `pushOp` flushes `cur`: a glued in-progress word is never
+ * this paren.
+ * @param {Array<{type: string, value?: string}>} tokens
+ */
+function isCasePatternParen(tokens) {
+  const n = tokens.length
+  if (n < 3) return false
+  const [caseTok, subject, inTok] = tokens.slice(n - 3)
+  if (caseTok.type !== 'word' || caseTok.value !== 'case' || subject.type !== 'word') return false
+  if (inTok.type !== 'word' || inTok.value !== 'in') return false
+  const before = tokens[n - 4]
+  return (
+    before === undefined || (before.type === 'op' && before.value !== ')' && before.value !== '}')
+  )
+}
+
+/**
  * Split a command string into word/operator tokens. Word tokens carry
  * their unquoted `value` plus any `$(...)` / backtick bodies in `subs`. A
  * redirect operator (and any target GLUED directly onto it, no space) is
@@ -149,16 +160,13 @@ function readRedirectOperator(command, i) {
  * build argv from word tokens must exclude these; `findShellFedLiteralText`
  * deliberately does NOT, since it still needs to see a glued `<<<text`
  * shape. A SEPARATE (space-separated) target word is ALSO marked
- * `redirect: true` (SMI-6869 C1 correction): when a redirect token is
- * flushed with nothing glued onto it, the very next word token — and only
- * that one — is tagged as the pending target and cleared on any operator
- * or newline; the original Fix A left this word untagged, so it became a
- * bare argv[0] (`> ls ruflo memory store` reached `checkBareNameInversion`
- * as `ls ruflo memory store`, and `ls` sits on `NON_EXECUTING_VERBS`,
- * exempting the whole segment — a real bypass, not a cosmetic gap). A
- * heredoc (`<<`/`<<-`) produces its own `{type: 'heredoc', ...}` token
- * instead, filled in once the introducing line's newline is reached
- * (SMI-6869 Fix B) — see `shell-command-heredoc.mjs`.
+ * `redirect: true` (SMI-6869 C1 correction): the token right after a bare
+ * redirect op is tagged as its pending target and cleared on the next
+ * op/newline — otherwise it became a bare argv[0] that bypassed
+ * `NON_EXECUTING_VERBS` checks (`> ls ruflo memory store`). A heredoc
+ * (`<<`/`<<-`) produces its own `{type: 'heredoc', ...}` token instead,
+ * filled in at the next newline (SMI-6869 Fix B) — see
+ * `shell-command-heredoc.mjs`.
  * @param {string} command
  */
 export function tokenize(command) {
@@ -199,10 +207,11 @@ export function tokenize(command) {
   }
 
   let i = 0
-  // `parenKinds`: a stack of `'command' | 'word'`, one per currently OPEN
-  // `(`, recording where it opened (see the `(`/`)` branches below).
-  // `closeParenIsBoundary` is the verdict from the MOST RECENTLY closed `)`
-  // -- the only one a following `#` can ever need.
+  // `parenKinds`: a stack of `{ kind: 'command' | 'word', fnName }` entries,
+  // one per currently OPEN `(` (fnName: glued to a bare word without `=`,
+  // SMI-6892 round 17; see the `(`/`)` branches below). `closeParenIsBoundary`
+  // is the verdict from the MOST RECENTLY closed `)` -- the only one a
+  // following `#` can ever need.
   const parenKinds = []
   let closeParenIsBoundary = false
   // `prevChar`: the LOGICAL previous character the comment test reads, not
@@ -221,20 +230,15 @@ export function tokenize(command) {
     const c = command[i]
     if (c === '\\') {
       // `\` + newline is a LINE CONTINUATION: bash and zsh both REMOVE the
-      // pair before word splitting, so it must neither land in a word's
-      // value nor start a word. Measured in bash 3.2 and zsh 5.9: `cat
-      // \<nl>f` reads `f`, `ca\<nl>t f` runs `cat` (the command NAME can be
-      // split), `cat f\<nl>oo` is the one word `foo`, and the removal
-      // happens inside double quotes too. Appending the newline instead put
-      // a literal `\n` INSIDE the word, so `cat \<nl>.env` reached the read
-      // check as `"\n.env"` and allowed, and `npx ru\<nl>flo memory store`
-      // reached the ruflo predicates as `"ru\nflo"` and allowed -- the same
-      // one-construct-two-representations class as the backtick and `$'...'`
-      // fixes (ADR-172 sec 3). `skipPrevCharUpdate` keeps `prevChar` at
-      // whatever preceded the backslash across the removal (SMI-6892 round
-      // 16) -- without it, `command[i - 1] === '\n'` always
-      // matched `COMMENT_BOUNDARY_CHARS` and misread a live `)`/word tail
-      // right after the removed pair as a comment.
+      // pair before word splitting (measured: `cat \<nl>f` reads `f`, the
+      // command NAME can itself be split, and removal happens inside double
+      // quotes too) -- appending the newline instead left a literal `\n`
+      // INSIDE the word, a live read/ruflo-predicate bypass (the same
+      // one-construct-two-representations class as the backtick and
+      // `$'...'` fixes, ADR-172 sec 3). `skipPrevCharUpdate` keeps
+      // `prevChar` at whatever preceded the backslash across the removal
+      // (SMI-6892 round 16) -- without it, a comment-boundary char left by
+      // the removed pair could misread a live `)`/word tail as a comment.
       if (command[i + 1] === '\n') {
         i += 2
         skipPrevCharUpdate = true
@@ -288,24 +292,15 @@ export function tokenize(command) {
       continue
     }
     if (c === '$' && command[i + 1] === "'") {
-      // ANSI-C quoting (H-6 fix, SMI-6744 Wave 4 governance round, broadened
-      // by the C1 delta-round fix): `$'...'` is a distinct Bash quoting form
-      // from a plain `'...'` — unlike single quotes, its body's own
-      // backslash escapes ARE processed, so `bash -c $'npx ruflo memory
-      // store'` reached `extractShellDashC` with the LITERAL text `$'npx
-      // ruflo memory store'` still attached to the `$`, which never equalled
-      // the decoded command text `H1`/`H4`/`H5` test for. The escape table
-      // itself now lives in the shared `decodeEscapeAt` (SMI-6744 C1 fix) —
-      // the ORIGINAL fix here only covered `\n`, `\t`, `\\`, `\'`, and
-      // `\xHH`, which left `\NNN` (octal), `\uHHHH`, and `\UHHHHHHHH` still
-      // decoding to their own literal text, a live bypass
-      // (`$'\162uflo' memory store` reached `decide()` as `\162uflo`, never
-      // equalling `ruflo`) — see that module's own docblock for the full
-      // table and the bash/zsh divergence its "unrecognized escape" arm
-      // preserves. Dropping the `$` and reusing the current word (`word()`,
-      // not a fresh one) lets `$'text'` glued directly onto other
-      // characters compose the same way a plain quoted segment already
-      // does.
+      // ANSI-C quoting (H-6 fix, SMI-6744 Wave 4; broadened by the C1
+      // delta-round fix): `$'...'` is a distinct Bash quoting form from a
+      // plain `'...'` -- its body's own backslash escapes ARE processed, so
+      // leaving them undecoded was a live literal-text bypass. The escape
+      // table lives in the shared `decodeEscapeAt` (SMI-6744 C1 fix) -- see
+      // that module's own docblock for the full table and the bash/zsh
+      // divergence its "unrecognized escape" arm preserves. Dropping the
+      // `$` and reusing the current word lets `$'text'` glued onto other
+      // characters compose like a plain quoted segment already does.
       const w = word()
       let j = i + 2
       while (j < command.length && command[j] !== "'") {
@@ -409,23 +404,31 @@ export function tokenize(command) {
     // A `(` is COMMAND position (subshell / `((…))`) when the token stream
     // is empty, or its last token (checking the in-progress word `cur`
     // first, since it is not yet flushed into `tokens`) is an op other than
-    // `)`/`}`; otherwise it is WORD position (`echo (a|b)`, `a=(1 2)`;
-    // SMI-6892 round 16).
+    // `)`/`}`, or it is a `case` statement's own leading pattern paren
+    // (SMI-6892 round 17); otherwise it is WORD position (`echo (a|b)`,
+    // `a=(1 2)`; SMI-6892 round 16) -- recorded along with whether the `(`
+    // is glued to a bare word without `=`, a function definition's `name()`
+    // shape (SMI-6892 round 17), consumed only by the matching `)`.
     if (c === '(') {
       const last = cur !== null ? cur : tokens[tokens.length - 1]
-      parenKinds.push(
+      const isCommand =
         last === undefined || (last.type === 'op' && last.value !== ')' && last.value !== '}')
-          ? 'command'
-          : 'word'
-      )
+      parenKinds.push({
+        kind: isCommand || (cur === null && isCasePatternParen(tokens)) ? 'command' : 'word',
+        fnName:
+          !isCommand && last !== undefined && last.type === 'word' && !last.value.includes('='),
+      })
       i = pushOp(c, 1, i)
       continue
     }
-    // The matching `)` is a boundary iff its `(` was COMMAND position, or
-    // it is UNMATCHED (`parenKinds.pop()` on an empty stack is `undefined`,
-    // also `!== 'word'` -- a `case` pattern's `a)#x`).
+    // The matching `)` is a boundary iff its `(` was COMMAND position, it
+    // is UNMATCHED (`parenKinds.pop()` on an empty stack is `undefined` --
+    // a `case` pattern's `a)#x`), or (SMI-6892 round 17) it closes a
+    // function definition's EMPTY `name()`, nothing between `(` and `)`.
     if (c === ')') {
-      closeParenIsBoundary = parenKinds.pop() !== 'word'
+      const entry = parenKinds.pop()
+      closeParenIsBoundary =
+        entry === undefined || entry.kind === 'command' || (entry.fnName && prevChar === '(')
       i = pushOp(c, 1, i)
       continue
     }
@@ -454,6 +457,10 @@ export function tokenize(command) {
     // `a=(1 2)\<nl>#x` both keep `#x` live too, which is why `prevChar`
     // tracks the pre-backslash character instead of the `\n` the removal
     // leaves in `command[i - 1]`.
+    //
+    // Two more close positions count too (SMI-6892 round 17): a function
+    // definition's EMPTY `name()` (no `=` in the name) and a `case`
+    // statement's own leading pattern `(` are both boundaries too.
     //
     // `<`/`>` are metacharacters too but deliberately absent: their own
     // branch above always leaves `cur` non-null, so listing them is a

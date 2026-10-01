@@ -2473,6 +2473,34 @@ describe('decide() — SMI-6892 C3: a ) is a comment boundary only when it close
     expect(result.action).toBe('deny')
     expect(reasonOf(result)).toContain('H5:')
   })
+
+  it('f()# npx ruflo memory store<nl>{ :; }; f -> allow (SMI-6892 round 17: an EMPTY function-definition ) glued to the name IS a comment boundary)', () => {
+    expect(decide(bashCall('f()# npx ruflo memory store\n{ :; }; f'), {}).action).toBe('allow')
+  })
+
+  it("case a in (a)# npx ruflo memory store<nl>:;;<nl>esac -> allow (SMI-6892 round 17: a case statement's own leading pattern ( IS a comment boundary too)", () => {
+    expect(decide(bashCall('case a in (a)# npx ruflo memory store\n:;;\nesac'), {}).action).toBe(
+      'allow'
+    )
+  })
+
+  it('f ( )#x; npx ruflo memory store<nl>{ :; } -> deny H5 (a SPACED function-paren close -- the zsh glob-word shape -- is NOT a boundary)', () => {
+    const result = decide(bashCall('f ( )#x; npx ruflo memory store\n{ :; }'), {})
+    expect(result.action).toBe('deny')
+    expect(reasonOf(result)).toContain('H5:')
+  })
+
+  it('a=()#x; npx ruflo memory store -> deny H5 (an empty array-assignment ) keeps the tail live in bash; the name carries =, so it is not a function definition)', () => {
+    const result = decide(bashCall('a=()#x; npx ruflo memory store'), {})
+    expect(result.action).toBe('deny')
+    expect(reasonOf(result)).toContain('H5:')
+  })
+
+  it('f() { npx ruflo memory store; } -> deny H5 (control: a real function body, no # at all, unaffected by this rule)', () => {
+    const result = decide(bashCall('f() { npx ruflo memory store; }'), {})
+    expect(result.action).toBe('deny')
+    expect(reasonOf(result)).toContain('H5:')
+  })
 })
 
 // SMI-6892 C2 (round 16, pre-existing, both guards): a backslash + newline

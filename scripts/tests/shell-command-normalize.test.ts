@@ -342,7 +342,9 @@ describe('SMI-6892 C1: an unquoted # starts a comment only after a blank, an ope
     // pattern) -- see the "NOT a comment" rows below for the WORD-position
     // (zsh glob group / bash array assignment) case that is NOT. A removed
     // `\`+newline continuation right before the `#` must not change this
-    // verdict either way (the two continuation rows here and below).
+    // verdict either way (the two continuation rows here and below). Round
+    // 17 adds two more: a function definition's EMPTY `name()`, and a
+    // `case` statement's own leading pattern `(`.
     ['after a COMMAND-position ) (subshell, (echo a)#x)', '(echo a)#x', ['echo', 'a']],
     ['after a COMMAND-position ) (arithmetic, ((1))#x)', '((1))#x', ['1']],
     [
@@ -356,6 +358,18 @@ describe('SMI-6892 C1: an unquoted # starts a comment only after a blank, an ope
       ['echo', 'a'],
     ],
     ['after a removed continuation with no preceding ) (echo \\<nl>#x)', 'echo \\\n#x', ['echo']],
+    ['after an EMPTY function-definition ) glued to the name (f()#x)', 'f()#x', ['f']],
+    ['after an EMPTY function-definition ) spaced from the name (f ()#x)', 'f ()#x', ['f']],
+    [
+      "after an EMPTY function-definition ) with the 'function' keyword (function f ()#x)",
+      'function f ()#x',
+      ['function', 'f'],
+    ],
+    [
+      "after a case statement's own leading pattern ( (case a in (a)#x<nl>esac)",
+      'case a in (a)#x\nesac',
+      ['case', 'a', 'in', 'a', 'esac'],
+    ],
   ])('%s: %j is a comment -- words %j', (_label, command, expected) => {
     expect(wordValues(tokenize(command))).toEqual(expected)
   })
@@ -391,6 +405,17 @@ describe('SMI-6892 C1: an unquoted # starts a comment only after a blank, an ope
     ['NOT mid-word (a#b)', 'a#b', ['a#b']],
     ['NOT quoted ("a # b")', '"a # b"', ['a # b']],
     ['NOT escaped (echo \\# x)', 'echo \\# x', ['echo', '#', 'x']],
+    ['NOT after a SPACED function-paren close (zsh glob word, f ( )#x)', 'f ( )#x', ['f', '#x']],
+    [
+      'NOT after an empty array-assignment ) (bash keeps the tail live, a=()#x)',
+      'a=()#x',
+      ['a=', '#x'],
+    ],
+    [
+      "NOT after 'in' used as an argument, not the case keyword (echo in (a|b)#x)",
+      'echo in (a|b)#x',
+      ['echo', 'in', 'a', 'b', '#x'],
+    ],
   ])('%s: %j is NOT a comment -- words %j', (_label, command, expected) => {
     expect(wordValues(tokenize(command))).toEqual(expected)
   })

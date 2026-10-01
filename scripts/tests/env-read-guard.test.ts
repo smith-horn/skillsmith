@@ -874,10 +874,36 @@ describe('decide() — SMI-6892 C3: a ) is a comment boundary only when it close
     expect(decide(bashCall('(echo x)\\\n#x; cat .env'), {}).action).toBe('allow')
   })
 
+  it('f()#x; cat .env<nl>{ :; } -> allow (SMI-6892 round 17: an EMPTY function-definition ) glued to the name IS a comment boundary)', () => {
+    expect(decide(bashCall('f()#x; cat .env\n{ :; }'), {}).action).toBe('allow')
+  })
+
+  it("function f ()#x; cat .env<nl>{ :; } -> allow (same, with the 'function' keyword and a spaced name)", () => {
+    expect(decide(bashCall('function f ()#x; cat .env\n{ :; }'), {}).action).toBe('allow')
+  })
+
+  it("case a in (a)#x; cat .env<nl>:;;<nl>esac -> allow (SMI-6892 round 17: a case statement's own leading pattern ( IS a comment boundary too)", () => {
+    expect(decide(bashCall('case a in (a)#x; cat .env\n:;;\nesac'), {}).action).toBe('allow')
+  })
+
+  it('f ( )#x; cat .env<nl>{ :; } -> deny (a SPACED function-paren close -- the zsh glob-word shape -- is NOT a boundary)', () => {
+    expect(decide(bashCall('f ( )#x; cat .env\n{ :; }'), {}).action).toBe('deny')
+  })
+
+  it('a=()#x; cat .env -> deny (an empty array-assignment ) keeps the tail live in bash; the name carries =, so it is not a function definition)', () => {
+    expect(decide(bashCall('a=()#x; cat .env'), {}).action).toBe('deny')
+  })
+
+  it("echo in (a|b)#x; cat .env -> deny ('in' here is an argument, not the case keyword, so its ( is not a case pattern paren)", () => {
+    expect(decide(bashCall('echo in (a|b)#x; cat .env'), {}).action).toBe('deny')
+  })
+
   it.each([
     ['a real read inside a subshell, no # at all', '(cat .env)'],
     ['a real read after a subshell, no #', '(echo x); cat .env'],
     ['a real read after a glob word, no #', 'echo (a|b) ; cat .env'],
+    ['a real read inside a function body, no # at all', 'f() { cat .env; }'],
+    ['a real read inside a case arm, no # at all', 'case a in (a) cat .env;; esac'],
   ])('%s: %j -> deny (control: no # at all, unaffected by this rule)', (_label, command) => {
     expect(decide(bashCall(command), {}).action).toBe('deny')
   })
