@@ -100,7 +100,7 @@ import {
 import { decideHooksSessionStart } from './lib/ruflo-host-guard-verdicts.mjs'
 import { checkUnresolvedCommand } from './lib/ruflo-host-guard-unresolved.mjs'
 import { extractConsumerTexts, extractExecEnvVarTexts } from './lib/ruflo-host-guard-consumers.mjs'
-import { splitSegments } from './lib/ruflo-host-guard-segments.mjs'
+import { evaluateGlobGroupReadings, splitSegments } from './lib/ruflo-host-guard-segments.mjs'
 import { parseEvalSegment } from './lib/ruflo-host-guard-eval.mjs'
 
 // M3 follow-up: `splitSegments` moved to `ruflo-host-guard-segments.mjs`
@@ -416,7 +416,10 @@ function evaluateGuardCommand(commandText, depth, embedded = false) {
     const verdict = evaluateGuardSegment(segments[i].tokens, depth, segments, i, embedded)
     if (verdict) return verdict
   }
-  return null
+  // SMI-6903 H1: additive second reading over zsh glob-group alternatives.
+  return evaluateGlobGroupReadings(tokens, (segs, i) =>
+    evaluateGuardSegment(segs[i].tokens, depth, segs, i, embedded)
+  )
 }
 
 /**

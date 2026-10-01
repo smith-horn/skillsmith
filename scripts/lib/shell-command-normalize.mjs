@@ -55,17 +55,23 @@
 
 import { basenameOf, tokenize } from './shell-command-tokenize.mjs'
 import {
+  checkNestedRedirectSources,
   groupingOpSubRuns,
+  inputRedirectSources,
   SEGMENT_SEPARATOR_OPS,
   splitCommandSegments,
+  splitCommandSegmentsParensGrouping,
   splitCommandSegmentsWithSubRuns,
 } from './shell-command-segments.mjs'
 
 export { basenameOf, tokenize }
 export {
+  checkNestedRedirectSources,
   groupingOpSubRuns,
+  inputRedirectSources,
   SEGMENT_SEPARATOR_OPS,
   splitCommandSegments,
+  splitCommandSegmentsParensGrouping,
   splitCommandSegmentsWithSubRuns,
 }
 
@@ -432,6 +438,14 @@ export function flattenSubWords(words, depth = 0) {
  *   runs, a truncation it could hit would already have fired there first.
  *   The parameter is the contract for a second caller that does not
  *   pre-flatten the same way.
+ * @param {string[]} [extraTailArgs] further argument VALUES that belong to
+ *   this segment but are not among `argvWords` -- `env-read-guard.mjs`
+ *   passes the segment's INPUT-REDIRECT sources, which the tokenizer marks
+ *   `redirect: true` and the caller therefore excludes from argv even
+ *   though `cat < .env` reads the file. Appending them here (rather than to
+ *   `argvWords`) keeps this function's own suffix alignment against
+ *   `normalizedArgv` intact, so `sudo $(echo cat) .env` is still judged by
+ *   its peeled head.
  * @returns {T | null}
  */
 export function checkUnresolvedHeadTail(
@@ -439,7 +453,8 @@ export function checkUnresolvedHeadTail(
   normalizedArgv,
   checkFlaggedArg,
   checkArgv,
-  onTruncated
+  onTruncated,
+  extraTailArgs = []
 ) {
   // Wrapper peeling (`normalizeWrappers`) only ever strips a PREFIX, so the
   // normalized argv is a suffix of the words: align to it, so that
@@ -465,7 +480,7 @@ export function checkUnresolvedHeadTail(
   const tailWords = aligned.slice(1)
   const tailFlat = flattenSubWords(tailWords)
   if (tailFlat.truncated) return onTruncated()
-  const tailArgs = [...tailWords.map((w) => w.value), ...tailFlat.words]
+  const tailArgs = [...tailWords.map((w) => w.value), ...tailFlat.words, ...extraTailArgs]
   for (const a of tailArgs) {
     const flagged = checkFlaggedArg(a)
     if (flagged) return flagged

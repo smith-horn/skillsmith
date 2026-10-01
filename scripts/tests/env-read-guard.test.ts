@@ -1146,3 +1146,488 @@ describe('decide() — malformed / non-Bash input fails open to allow', () => {
     expect(result).toEqual({ action: 'allow', json: null, stderr: null })
   })
 })
+
+// SMI-6903 C1 (Critical regression, introduced by `50d38872d` / PR #2959 and
+// found by the post-merge retro of PR #2970): an INPUT redirect's source is a
+// read target. SMI-6869 Fix A tagged both the redirect operator word AND a
+// space-separated target `redirect: true` so a trailing `2>&1` could not
+// perturb a verdict, and `evaluateCommand` drops every redirect-marked word
+// from argv -- right for an output redirect, wrong for an input one. Sixteen
+// spellings went from deny to allow at that commit; `cat < .env` and
+// `cat <.env` were measured printing a decoy file's contents in bash 3.2,
+// bash 5.2 and zsh 5.9. Every arm below was watched FAILING against the
+// unfixed tree (the PR #2970 merge state) before the fix landed.
+describe('decide() — SMI-6903 C1: an input redirect source is a read target', () => {
+  const redArms = [
+    'cat < .env',
+    'cat <.env',
+    'cat 0< .env',
+    'cat <> .env',
+    'grep KEY < .env',
+    'head -5 < .env',
+    'base64 < .env',
+    'sudo cat < .env',
+    'bash -c "cat < .env"',
+    'docker exec c cat < /app/.env',
+    'cat < ./.env',
+    'cat < .env.local',
+    '$X < .env',
+  ]
+  it.each(redArms)('%s -> deny (the redirect source is the read target)', (command) => {
+    expect(decide(bashCall(command), {}).action).toBe('deny')
+  })
+
+  const controls = [
+    // An unrelated file, a safe file, and a trailing stderr redirect.
+    'cat < notes.txt',
+    'cat < .env.example',
+    'cat notes.txt 2>&1',
+    // An OUTPUT redirect writes; it does not emit the file's contents.
+    'echo hi > .env',
+    // A here-string's operand is TEXT, not a filename: measured in all three
+    // shells, `cat <<< .env` prints the four characters `.env`.
+    'cat <<< .env',
+  ]
+  it.each(controls)('control: %s -> allow', (command) => {
+    expect(decide(bashCall(command), {}).action).toBe('allow')
+  })
+
+  // Asserted as a PROPERTY rather than a pinned verdict: whatever posture the
+  // guard takes for a metadata-only reader, the redirect spelling must match
+  // the argv spelling. This stays correct if `wc` ever leaves
+  // METADATA_COMMANDS, where a hardcoded `allow` would silently go stale.
+  it('`wc < .env` and `wc .env` reach the SAME verdict (metadata-only parity)', () => {
+    expect(decide(bashCall('wc < .env'), {}).action).toBe(decide(bashCall('wc .env'), {}).action)
+  })
+
+  // Same parity argument for the one sanctioned exception.
+  it('`grep -q KEY < .env` and `grep -q KEY .env` reach the SAME verdict', () => {
+    expect(decide(bashCall('grep -q KEY < .env'), {}).action).toBe(
+      decide(bashCall('grep -q KEY .env'), {}).action
+    )
+  })
+})
+
+// SMI-6903 C2 (Critical, pre-existing): a `#` inside an arithmetic command
+// `((…))` is NOT a comment. Measured in bash 3.2, bash 5.2 and zsh 5.9:
+// `(( 1 #2 )); printf MARK` prints MARK in all three, and
+// `(( 1 #2 )); cat <decoy>` prints the decoy's contents -- while the comment
+// rule discarded the whole rest of the line, so both guards allowed it.
+// Adjacency is the discriminator and it was measured, not reasoned.
+describe('decide() — SMI-6903 C2: no comment inside an arithmetic ((…))', () => {
+  const redArms = [
+    '(( 1 #2 )); cat .env',
+    '(( #2 )); cat .env',
+    'if (( 1 #2 )); then :; fi; cat .env',
+    'true && (( 1 #2 )); cat .env',
+    '(( $(echo 1) #2 )); cat .env',
+  ]
+  it.each(redArms)('%s -> deny (the tail after the `#` is live)', (command) => {
+    expect(decide(bashCall(command), {}).action).toBe('deny')
+  })
+
+  const controls = [
+    // A SPACE between the parens makes them nested subshells, where the `#`
+    // IS a comment in all three shells, so the tail never runs.
+    '( ( 1 #2 ) ); cat .env',
+    // A `#` after the arithmetic pair CLOSES is an ordinary comment
+    // (measured: `(( 1 )) #c; printf MARK` prints nothing in all three).
+    '(( 1 )) #c; cat .env',
+  ]
+  it.each(controls)('control: %s -> allow (a real comment there)', (command) => {
+    expect(decide(bashCall(command), {}).action).toBe('allow')
+  })
+
+  it('control: a glued `16#ff` base literal is not a comment and still denies', () => {
+    expect(decide(bashCall('((1#2)); cat .env'), {}).action).toBe('deny')
+  })
+})
+
+// SMI-6903 C3 (Critical, pre-existing): a zsh glob group in ARGUMENT position
+// is one word, so the separator segmentation (which splits on `(`, `|` and
+// `)`) tore the protected path away from the reader consuming it and left it
+// as a harmless-looking `argv[0]`. Reachability was demonstrated inside the
+// gated context itself: Claude Code's Bash tool runs `/bin/zsh` 5.9 on this
+// machine, and a tool call of this exact shape printed a decoy file's
+// contents. The paren twin of the brace fault round 15 fixed for
+// `cat ${HOME}/.env`, and fixed the same way: an extra reading.
+describe('decide() — SMI-6903 C3: a zsh glob group cannot hide a read target', () => {
+  const redArms = [
+    'cat (.env|zzz)',
+    'cat (zzz|.env)',
+    'cat (.env)',
+    'head -5 (.env|zzz)',
+    'cat /app/(.env|zzz)',
+    'cat ./(.env|zzz)',
+    'cat $D/(.env|zzz)',
+  ]
+  it.each(redArms)('%s -> deny (one zsh word; the reader keeps its argument)', (command) => {
+    expect(decide(bashCall(command), {}).action).toBe('deny')
+  })
+
+  it('control: a real subshell (cat .env) still denies (command-position paren)', () => {
+    expect(decide(bashCall('(cat .env)'), {}).action).toBe('deny')
+  })
+
+  it('control: echo (a|b); cat .env -> deny (the second segment is a real read)', () => {
+    expect(decide(bashCall('echo (a|b); cat .env'), {}).action).toBe('deny')
+  })
+
+  const allowControls = [
+    'echo (a|b)',
+    'cat (notes.txt|zzz)',
+    'cat (.env.example|zzz)',
+    // An array assignment is NOT a glob alternation: its alternative holds
+    // two words, which no glob alternative can.
+    'a=(1 2); echo ok',
+  ]
+  it.each(allowControls)('control: %s -> allow', (command) => {
+    expect(decide(bashCall(command), {}).action).toBe('allow')
+  })
+})
+
+// SMI-6903 round 21 F1 (Critical, pre-existing and older than this branch):
+// a shell RESERVED WORD or command modifier at a segment's head is not the
+// command. None of them is an operator, so no segmentation splits there, and
+// `argv[0]` was the modifier while the reader's own name was a mere argument.
+// Every arm below ALLOWED on the pre-fix tree (the branch head before this
+// commit) and every one emits a decoy file's contents in bash 3.2 (host),
+// bash 5.2 (container) and zsh 5.9 (host, the shell Claude Code's Bash tool
+// runs on this machine) -- measured, with the decoy actually read. The WORD
+// twin of the brace fault round 15 fixed for `cat \${HOME}/.env` and the paren
+// fault C3 fixed above; fixed the same way, with an extra reading.
+describe('decide() — SMI-6903 F1: a reserved word or modifier cannot hide a reader', () => {
+  const redArms = [
+    'if true; then cat .env; fi',
+    'if true; then :; else cat .env; fi',
+    'if true; then :; elif true; then cat .env; fi',
+    'if cat .env; then :; fi',
+    'for f in a b; do cat .env; done',
+    'for ((i=0;i<3;i++)); do cat .env; done',
+    'while :; do cat .env; done',
+    'until false; do cat .env; done',
+    'select f in a; do cat .env; done',
+    'time cat .env',
+    'command cat .env',
+    'exec cat .env',
+    'eval cat .env',
+    'builtin cat .env',
+    '! cat .env',
+    // The peel is iterative, so a stacked pair still reaches the reader.
+    'then command cat .env',
+    // The peeled segment keeps its own redirect words, so an input-redirect
+    // source behind a reserved word is still this segment's read target.
+    'do cat < .env',
+  ]
+  it.each(redArms)('%s -> deny (the head word is not the command)', (command) => {
+    expect(decide(bashCall(command), {}).action).toBe('deny')
+  })
+
+  const controls = [
+    'if true; then cat notes.txt; fi',
+    'if true; then cat .env.example; fi',
+    'for f in a b; do echo "$f"; done',
+    // `echo` is not a reader, so peeling reaches it and still allows.
+    'then echo .env',
+    'command -v cat',
+    // ADR-172 sec 1's named out-of-contract shapes stay allowed: `read` prints
+    // nothing, and the loop body's `echo "$l"` is variable indirection.
+    'read -r line < .env',
+    'while IFS= read -r l; do echo "$l"; done < .env',
+  ]
+  it.each(controls)('control: %s -> allow', (command) => {
+    expect(decide(bashCall(command), {}).action).toBe('allow')
+  })
+
+  // Still a pin, still out of contract (ADR-172 sec 1): xargs's command gets
+  // its arguments from stdin as TEXT, not as an argv path the guard can see.
+  // The launcher rows that used to sit beside it here were a leak, not a
+  // limit; they are arms in the round 22 block below.
+  it('pin (out of contract): echo .env | xargs cat -> allow', () => {
+    expect(decide(bashCall('echo .env | xargs cat'), {}).action).toBe('allow')
+  })
+})
+
+// SMI-6903 round 22 F1 (Critical, pre-existing; found by the cross-family
+// gate): a process LAUNCHER takes its own options and operands BEFORE the
+// command, so the one-word peel above stopped at `5` in `timeout 5 cat .env`,
+// and the branch had pinned that shape as an allowed limit. ADR-172 sec 1
+// class 1 covers an argv path behind a modifier head and names only `xargs`
+// out of contract, so the pin recorded a leak. The ruflo guard has read these
+// through its launcher table since SMI-6744 Wave 4; that table now lives in
+// `shell-command-launchers.mjs`, and the transparent-head reading consumes a
+// launcher's own flags and positionals, and a wrapper prefix the guard already
+// peels, before peeling on. Every arm below ALLOWED on `827a0b910`, and each
+// launcher emits a decoy file's contents on whichever of bash 3.2, bash 5.2
+// and zsh 5.9 has it (measured; the per-shell table is in that module).
+describe("decide() — SMI-6903 round 22 F1: a launcher's own operands cannot hide a reader", () => {
+  const redArms = [
+    'timeout 5 cat .env',
+    'timeout --foreground -k 2 5 cat .env',
+    'timeout -s TERM 5 cat .env',
+    '/usr/bin/timeout 5 cat .env',
+    'nice cat .env',
+    'nice -n 5 cat .env',
+    'nice -n5 cat .env',
+    'nice -5 cat .env',
+    'nice --adjustment=5 cat .env',
+    'nohup cat .env',
+    'setsid -w cat .env',
+    'stdbuf -oL cat .env',
+    'stdbuf -o L cat .env',
+    'ionice -c3 -n7 cat .env',
+    'caffeinate -t 5 cat .env',
+    'taskset -c 0 cat .env',
+    'flock -n /tmp/l cat .env',
+    'chroot / cat .env',
+    'script -q /dev/null cat .env',
+    // A transparent word's own flag: round 21 peeled the word and left `-a`.
+    'exec -a x cat .env',
+    'command -p cat .env',
+    // Chains, in both orders, and behind wrappers the guard already peels.
+    'timeout 5 nice cat .env',
+    'nice timeout 5 cat .env',
+    'nohup nice -n 5 cat .env',
+    'env X=1 timeout 5 cat .env',
+    'sudo timeout 5 cat .env',
+    'docker exec c timeout 5 cat /app/.env',
+    'if true; then timeout 5 cat .env; fi',
+    // The peeled segment keeps its own redirect words (F3 reaches the body).
+    'timeout 5 cat < .env',
+    'timeout 5 bash -c cat < .env',
+  ]
+  it.each(redArms)('%s -> deny (the launcher is not the command)', (command) => {
+    expect(decide(bashCall(command), {}).action).toBe('deny')
+  })
+
+  const controls = [
+    'timeout 5 ls',
+    'nice -n 5 npm test',
+    'nohup npm run build',
+    'timeout 5 cat notes.txt',
+    'flock -n /tmp/l ls -la',
+    'sudo timeout 5 ls',
+    // The sanctioned output-free presence check survives a launcher.
+    "timeout 5 grep -qE '^KEY=' .env",
+    // `echo` is not a reader; peeling reaches it and still allows.
+    'timeout 5 echo .env',
+    // A launcher with nothing after its own operands has no command to judge.
+    'timeout 5',
+    'nice -n 5',
+  ]
+  it.each(controls)('control: %s -> allow', (command) => {
+    expect(decide(bashCall(command), {}).action).toBe('allow')
+  })
+})
+
+// SMI-6903 round 23 (Critical, the cross-family re-gate): three launchers IN
+// the table had an incomplete option model, so a value sat where the command
+// should be and the reader behind it was never reached: BSD `script -t TIME`
+// (`script -q -t 1 /dev/null cat .env` printed a decoy in bash 3.2 and zsh
+// 5.9), GNU `stdbuf --output L` and util-linux `ionice --class 3` /
+// `--classdata 7` (printed in bash 5.2). Every row's value flags are now the
+// launcher's full synopsis, separated long forms included. The same round
+// closes a launcher's own `-c` body as shell text, one level deep: util-linux
+// `script -c`, `--command`, `--command=`, `-c` after the file, `flock FILE
+// -c`, `su -c` (each but `su` measured printing in bash 5.2), and a
+// short-flag cluster carrying a stop flag (`command -pv cat .env` prints
+// cat's path and runs nothing). Every arm below ALLOWED on `e5396e581`.
+describe("decide() — SMI-6903 round 23: a launcher's full option model, and its -c body", () => {
+  const redArms = [
+    'script -q -t 1 /dev/null cat .env',
+    'script -F /tmp/p /dev/null cat .env',
+    'stdbuf --output L cat .env',
+    'stdbuf --error L cat .env',
+    'ionice --class 3 cat .env',
+    'ionice --classdata 7 cat .env',
+    'ionice -c 2 --classdata 7 cat .env',
+    'flock --wait 5 /tmp/l cat .env',
+    'flock --timeout 5 /tmp/l cat .env',
+    'chrt -d -T 1000 -P 2000 -D 3000 0 cat .env',
+    // The `-c` body is shell text.
+    "script -q -c 'cat .env' /dev/null",
+    "script -q --command 'cat .env' /dev/null",
+    "script -q --command='cat .env' /dev/null",
+    "script -q /dev/null -c 'cat .env'",
+    "script -q -c 'ls; cat .env' /dev/null",
+    "script -q -c 'ls && cat .env' /dev/null",
+    "flock /tmp/l -c 'cat .env'",
+    "su -c 'cat .env'",
+    "su root -c 'cat .env'",
+    "sudo script -q -c 'cat .env' /dev/null",
+    "timeout 5 script -q -c 'cat .env' /dev/null",
+    // A shell inside the body is the guard's own wrapper arm, reached through
+    // the body's segment.
+    'script -q -c "bash -c \'cat .env\'" /dev/null',
+  ]
+  it.each(redArms)('%s -> deny', (command) => {
+    expect(decide(bashCall(command), {}).action).toBe('deny')
+  })
+
+  // Round 24 (the re-gate on round 23's fix), each ALLOWED on `733427c82` and
+  // each measured printing a decoy in bash 5.2 unless noted: a short-flag
+  // cluster whose `c` is last takes the next word as the body (getopt's
+  // rule); a launcher INSIDE the body is peeled by the same reading; a body
+  // inside the body is extracted one level further; `doas -a style` takes a
+  // value (documented; no doas here); `flock --command`.
+  const round24Arms = [
+    "script -qc 'cat .env' /dev/null",
+    "script -qc'cat .env' /dev/null",
+    "script -q -c 'timeout 5 cat .env' /dev/null",
+    "script -q -c 'nice -n 5 cat .env' /dev/null",
+    "script -q -c 'if true; then cat .env; fi' /dev/null",
+    "script -q -c 'ls; timeout 5 cat .env' /dev/null",
+    'script -q -c "script -q -c \'cat .env\' /dev/null" /dev/null',
+    'script -q --command="script -q -c \'timeout 5 cat .env\' /dev/null" /dev/null',
+    'doas -a style cat .env',
+  ]
+  it.each(round24Arms)('%s -> deny (round 24)', (command) => {
+    expect(decide(bashCall(command), {}).action).toBe('deny')
+  })
+
+  // PIN, not an arm: this guard's extractor already read `--command` on
+  // `733427c82`; the round-24 arm for that spelling is the RUFLO guard's,
+  // whose own extractor had lagged.
+  it("pin: flock /tmp/l --command 'cat .env' -> deny (already read)", () => {
+    expect(decide(bashCall("flock /tmp/l --command 'cat .env'"), {}).action).toBe('deny')
+  })
+
+  // A cluster whose `c` is NOT last takes the rest of the token as the body:
+  // `script -cq 'cat .env'` runs `q` (measured: nothing printed), so this
+  // reads `q`, never `cat .env`. Allowed, and a pin of getopt's rule.
+  it("pin: script -cq 'cat .env' /dev/null -> allow (the body is `q`)", () => {
+    expect(decide(bashCall("script -cq 'cat .env' /dev/null"), {}).action).toBe('allow')
+  })
+
+  // Three levels of `-c` nesting is past MAX_DASH_C_DEPTH: the innermost
+  // body is not extracted (stated limit; the launcher row's own peel leaves
+  // the quoted body as a positional). Pinned so the limit is recorded.
+  it('pin (stated limit): a -c body three levels deep is not read', () => {
+    const three = 'script -q -c "script -q -c \\"script -q -c \'cat .env\' f\\" f" f'
+    expect(decide(bashCall(three), {}).action).toBe('allow')
+  })
+
+  const controls = [
+    "script -q -c 'ls -la' /dev/null",
+    'script -q /dev/null ls',
+    'stdbuf --output L ls',
+    'ionice --class 3 ls',
+    "flock /tmp/l -c 'ls'",
+    // `command -v`/`-V` describe, in a cluster too; `command -v` with two
+    // names describes both and reads neither.
+    'command -pv cat .env',
+    'command -v cat .env',
+  ]
+  it.each(controls)('control: %s -> allow', (command) => {
+    expect(decide(bashCall(command), {}).action).toBe('allow')
+  })
+})
+
+// SMI-6903 round 21 F2 (Critical, pre-existing): an input-redirect source that
+// is a command substitution supplies its OUTPUT as the filename, so the body's
+// own words are this segment's read targets -- the same flatten an argv-slot
+// substitution already got. Every arm ALLOWED on the pre-fix tree while its
+// argv twin DENIED, and each emits a decoy file's contents in all three
+// shells (measured). ADR-172 sec 1 names both classes; this is one reaching
+// the other.
+describe('decide() — SMI-6903 F2: a redirect source that is a substitution', () => {
+  const redArms = [
+    'cat < $(echo .env)',
+    'cat <$(echo .env)',
+    'cat < `echo .env`',
+    'cat < $(echo $(echo .env))',
+    'cat <> $(echo .env)',
+    'cat 0< $(echo .env)',
+    'head -5 < $(echo .env)',
+  ]
+  it.each(redArms)('%s -> deny (the body spells the read target)', (command) => {
+    expect(decide(bashCall(command), {}).action).toBe('deny')
+  })
+
+  const controls = ['cat < $(echo notes.txt)', 'cat < $(echo .env.example)']
+  it.each(controls)('control: %s -> allow', (command) => {
+    expect(decide(bashCall(command), {}).action).toBe('allow')
+  })
+
+  // Asserted as a PROPERTY: whatever posture a metadata-only reader has, the
+  // substitution-source spelling must match the argv spelling.
+  it('`wc < $(echo .env)` and `wc $(echo .env)` reach the SAME verdict', () => {
+    expect(decide(bashCall('wc < $(echo .env)'), {}).action).toBe(
+      decide(bashCall('wc $(echo .env)'), {}).action
+    )
+  })
+
+  // The ARM for the cap boundary: six levels is the deepest the new path
+  // reads, and it ALLOWED before the fix.
+  it('a 6-deep substitution source still denies as a read', () => {
+    const six = 'cat < $(echo $(echo $(echo $(echo $(echo $(echo .env))))))'
+    const result = decide(bashCall(six), {})
+    expect(result.action).toBe('deny')
+    expect(reasonText(result)).not.toContain('past depth')
+  })
+
+  // PIN, not an arm: this already denied `depth-cap` on the pre-fix tree
+  // (measured), because the segment's own `.subs` recursion caps at the same
+  // MAX_DEPTH and runs BEFORE the redirect sources are collected. That is
+  // exactly why `inputRedirectSources` needs no truncation handling of its
+  // own, and the row is here so that argument stops being a claim.
+  it('pin (denied depth-cap before the fix too): a 7-deep source fails CLOSED', () => {
+    const seven = 'cat < $(echo $(echo $(echo $(echo $(echo $(echo $(echo .env)))))))'
+    const result = decide(bashCall(seven), {})
+    expect(result.action).toBe('deny')
+    expect(reasonText(result)).toContain('past depth 6')
+  })
+
+  function reasonText(result: ReturnType<typeof decide>): string {
+    return result.json?.hookSpecificOutput.permissionDecisionReason ?? ''
+  }
+})
+
+// SMI-6903 round 21 F3 (Critical, pre-existing): a wrapper's own input
+// redirect feeds the NESTED body's stdin, and that body is evaluated as text
+// with no argv for the guard to append the source to -- so the source was
+// never checked at all. Every arm ALLOWED on the pre-fix tree while its argv
+// twin DENIED, and each emits a decoy file's contents in bash 3.2, bash 5.2
+// and zsh 5.9 (measured).
+describe('decide() — SMI-6903 F3: a redirect on a wrapper reaches its body', () => {
+  const redArms = [
+    "bash -c 'cat' < .env",
+    "sh -c 'cat' < .env",
+    "docker exec c bash -c 'cat' < /app/.env",
+    "varlock run -- bash -c 'cat' < .env",
+    // Every segment head of the body is checked, not just the first.
+    "bash -c 'echo hi; cat' < .env",
+    // The body's own argv is wrapper-normalized, so a nested `sudo` peels.
+    "bash -c 'sudo cat' < .env",
+  ]
+  it.each(redArms)('%s -> deny (the body consumes the redirected file)', (command) => {
+    expect(decide(bashCall(command), {}).action).toBe('deny')
+  })
+
+  const controls = [
+    // The caller's own exceptions still apply, because its own `checkArgv`
+    // runs: a metadata-only reader and an output-free grep stay allowed.
+    "bash -c 'wc -l' < .env",
+    "bash -c 'grep -q K' < .env",
+    "bash -c 'echo hi' < .env",
+    "bash -c 'cat' < notes.txt",
+  ]
+  it.each(controls)('control: %s -> allow', (command) => {
+    expect(decide(bashCall(command), {}).action).toBe('allow')
+  })
+
+  // Property, not a pinned verdict: the redirect spelling must agree with the
+  // argv spelling for the same body command, whatever that posture is.
+  it("`bash -c 'wc -l' < .env` and `wc -l .env` reach the SAME verdict", () => {
+    expect(decide(bashCall("bash -c 'wc -l' < .env"), {}).action).toBe(
+      decide(bashCall('wc -l .env'), {}).action
+    )
+  })
+
+  // PIN: the redirect INSIDE the body already denied before the fix, since the
+  // body is tokenized as its own command there. Kept so the two spellings are
+  // visibly distinguished.
+  it('pin (denied before the fix): bash -c "cat < .env" -> deny', () => {
+    expect(decide(bashCall('bash -c "cat < .env"'), {}).action).toBe('deny')
+  })
+})

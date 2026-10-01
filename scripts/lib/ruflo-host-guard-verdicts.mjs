@@ -47,6 +47,31 @@ export function denyWith(predicate, token) {
 }
 
 /**
+ * Deny for a command the guard could not READ in full (SMI-6903 round 22
+ * F2): a zsh glob alternation wider than `shell-command-segments.mjs`'s
+ * expansion caps. Not an internal error (nothing threw) and not a matched
+ * predicate (nothing matched); the guard refuses because it cannot say what
+ * the shell would run, the posture ADR-172 sec 4 states for both guards.
+ * @param {string} detail what could not be read, named for the reader
+ */
+export function denyUnreadableGlob(detail) {
+  return {
+    action: 'deny',
+    json: {
+      hookSpecificOutput: {
+        hookEventName: 'PreToolUse',
+        permissionDecision: 'deny',
+        permissionDecisionReason:
+          `[ruflo-host-guard] glob-cap: this command's zsh glob alternation is too wide to read ` +
+          `(${detail}). Denying by design (fail-closed on what the guard cannot read) — spell ` +
+          `the path out, or use \`${SANCTIONED_ALTERNATIVE}\` for ruflo access.`,
+      },
+    },
+    stderr: null,
+  }
+}
+
+/**
  * Deny for a runtime/evaluator failure — this guard's failure posture is
  * fail-CLOSED (deliberately the opposite of env-read-guard.mjs's fail-open;
  * plan § "Failure posture — where this guard must differ from its

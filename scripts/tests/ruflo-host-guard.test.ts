@@ -909,8 +909,11 @@ describe('decide() — M-6: bare-name inversion closes unmodelled launchers (del
     // the round-1 (pre-round-2) tree, SMI-6598 discipline.
     ['ssh localhost ruflo memory store', 'H4:'],
     ["su -c 'ruflo memory store --key k'", 'H4'],
-    ['watch ruflo memory store --key k', 'H4b'],
-    ['flock /tmp/l ruflo memory store --key k', 'H4b'],
+    // `watch` and `flock` moved from H4b (unmodelled) to 'H4:' (modelled)
+    // when the launcher table gained their rows (SMI-6903 round 22, the env
+    // guard's `flock -n /tmp/l cat .env` measured printing a decoy file).
+    ['watch ruflo memory store --key k', 'H4:'],
+    ['flock /tmp/l ruflo memory store --key k', 'H4:'],
     ['strace -f ruflo memory store --key k', 'H4b'],
     ["dtrace -c 'ruflo memory store --key k'", 'H4'],
     ['perl -e \'exec "ruflo"\'', 'H8-script'],
@@ -3231,4 +3234,367 @@ describe('runtime wrapper (child process) — malformed input shapes deny', () =
     expect(parsed.hookSpecificOutput.permissionDecision).toBe('deny')
     expect(parsed.hookSpecificOutput.permissionDecisionReason).toMatch(/\[ruflo-host-guard\] H\d/)
   })
+})
+
+// SMI-6903 C2 (Critical, pre-existing, BOTH guards): a `#` inside an
+// arithmetic command `((…))` is not a comment, so the rest of the line is
+// live. Measured in bash 3.2, bash 5.2 and zsh 5.9 -- all three run the tail.
+// Before the fix the tokenizer discarded it, so a ruflo invocation hidden
+// this way reached allow.
+describe('decide() — SMI-6903 C2: an arithmetic ((…)) cannot hide an invocation', () => {
+  // The ONE arm on this guard that constrains the arithmetic fix, and the
+  // reason is asserted, not just the action: on the pre-fix tree this ALLOWS,
+  // and here it must deny via H5 -- the invocation itself -- rather than via
+  // the pre-existing paren path below.
+  it('(( #2 )); npx ruflo memory store -> deny H5 (the tail after the `#` is live)', () => {
+    const result = decide(bashCall('(( #2 )); npx ruflo memory store'), {})
+    expect(result.action).toBe('deny')
+    expect(reasonOf(result)).toMatch(/\[ruflo-host-guard\] H5/)
+  })
+
+  // These two are verdict PINS, not coverage, and the difference matters.
+  // Measured: `(( 1 #2 )); npx ruflo memory store` denies `unresolved-command`
+  // on the pre-fix tree AND here, because `1` is left as a segment head this
+  // guard cannot resolve -- a pre-existing over-block that masks the
+  // arithmetic rule entirely. They would pass unchanged with the fix removed,
+  // so they prove nothing about it; the constraining coverage for this guard
+  // is the H5 row above, plus the tokenizer rows in
+  // shell-command-normalize.test.ts that assert the tail survives
+  // tokenization. Kept so a future change to that over-block is visible here
+  // rather than silent, and labelled so nobody reads them as the rule's test.
+  const pinsThatPassWithoutTheFix = [
+    '(( 1 #2 )); npx ruflo memory store',
+    'true && (( 1 #2 )); npx ruflo memory store',
+  ]
+  it.each(pinsThatPassWithoutTheFix)(
+    'pin (does NOT constrain the fix; pre-existing unresolved-command): %s -> deny',
+    (command) => {
+      expect(decide(bashCall(command), {}).action).toBe('deny')
+    }
+  )
+
+  // Asserted as a PROPERTY, because a pinned verdict here would measure the
+  // wrong thing. This guard already denies `( ( 1 ) ); echo ok` -- any
+  // paren-segmented line whose head it cannot resolve -- on both the pre-fix
+  // and post-fix trees (measured), a pre-existing over-block unrelated to the
+  // comment rule. So the question that isolates THIS rule is whether adding
+  // the `#` changes anything: with a blank between the parens it must not,
+  // because all three shells read a comment there and the arithmetic
+  // suppression deliberately does not fire.
+  it('control: a blank between the parens leaves the verdict unchanged by the `#`', () => {
+    expect(decide(bashCall('( ( 1 #2 ) ); npx ruflo memory store'), {}).action).toBe(
+      decide(bashCall('( ( 1 ) ); npx ruflo memory store'), {}).action
+    )
+  })
+
+  // Why `(( #2 ))` is this guard's only constraining arm for the rule, and
+  // why no single-tree row can do better: a `#` opening the expression leaves
+  // nothing before it, so the pre-existing unresolved-head over-block cannot
+  // fire and the verdict turns entirely on whether the tail survived
+  // tokenization -- which is what the H5 REASON assertion above pins. For
+  // every `(( 1 #2 ))` shape, and for a no-`#` twin like `(( 2 ))`, that
+  // over-block denies on both trees (measured), so an in-test comparison
+  // between them is uninformative by construction. The cross-tree evidence
+  // lives in the arms table on SMI-6903, not here.
+})
+
+// SMI-6903 H1 (High, pre-existing): a zsh glob group welded into a PATH hid a
+// ruflo binary from the argv[0]-keyed H3/H5 checks, because splitting on `(`,
+// `|` and `)` left an alternative as the segment's argv[0] and the real path
+// as a mere argument. Measured in zsh 5.9 with a decoy executable actually
+// invoked: `./(node_modules|x)/.bin/tool`, `./(x|node_modules)/.bin/tool`,
+// `./node_modules/.bin/(tool|x)` and `./(a|node_modules)/(x|.bin)/tool` all
+// RUN it; both bashes reject the syntax. Fixed with an ADDITIVE second
+// reading (`evaluateGlobGroupReadings`) -- teaching `splitSegments` itself
+// about word-position parens was tried and rejected on measurement, because
+// it moved 21 real repository command lines from deny to allow.
+describe('decide() — SMI-6903 H1: a zsh glob group cannot hide a ruflo path', () => {
+  // The three arms that CONSTRAIN the fix: each ALLOWED on the pre-fix tree
+  // (measured) because the split left a glob alternative as argv[0].
+  const redArms = [
+    './(node_modules|x)/.bin/ruflo memory store',
+    './(x|node_modules)/.bin/ruflo memory store',
+    './(a|node_modules)/(x|.bin)/ruflo memory store',
+  ]
+  it.each(redArms)('%s -> deny (one zsh word; argv[0] is the real path)', (command) => {
+    expect(decide(bashCall(command), {}).action).toBe('deny')
+  })
+
+  // Pins, not coverage: these two already DENIED before the fix, via H4 on the
+  // bare `ruflo` word inside the group rather than via argv[0] (measured on
+  // the pre-fix tree). They would pass with the fix removed, so they prove
+  // nothing about it -- kept so a change to H4's own reach is visible here,
+  // and labelled so they are not mistaken for the rule's test.
+  const pinsThatPassWithoutTheFix = [
+    './node_modules/.bin/(ruflo|x) memory store',
+    'node_modules/.bin/(ruflo|x) memory store',
+  ]
+  it.each(pinsThatPassWithoutTheFix)(
+    'pin (does NOT constrain the fix; already denied via H4): %s -> deny',
+    (command) => {
+      expect(decide(bashCall(command), {}).action).toBe('deny')
+    }
+  )
+
+  const allowControls = [
+    // A non-ruflo binary reached the same way must stay allowed.
+    './(node_modules|x)/.bin/less',
+    './(node_modules|x)/.bin/tsc --noEmit',
+    // An ordinary glob group in an argument, and two of them.
+    'echo (a|b)',
+    'echo (a|b) (c|d)',
+    'ls (src|dist)/index.js',
+    'git log (a|b)',
+    // A leading `(` is COMMAND position, not a glob: measured in zsh 5.9,
+    // `(./node_modules|x)/.bin/tool` is a PARSE ERROR, so nothing runs. This
+    // row corrects an expectation the author first got wrong by reasoning.
+    '(./node_modules|x)/.bin/ruflo memory store',
+  ]
+  it.each(allowControls)('control: %s -> allow', (command) => {
+    expect(decide(bashCall(command), {}).action).toBe('allow')
+  })
+
+  it('control: the additive reading does not disturb a real subshell', () => {
+    expect(decide(bashCall('(npx ruflo memory store)'), {}).action).toBe('deny')
+    expect(decide(bashCall('(echo x) | cat'), {}).action).toBe('allow')
+  })
+
+  it('control: a C-style arithmetic for-loop is untouched', () => {
+    expect(decide(bashCall('for (( i=0; i<3; i++ )); do :; done'), {}).action).toBe('allow')
+  })
+
+  it('control: an array append keeps its own verdict (multi-word alternative)', () => {
+    // No glob alternative can hold two words, so a group that does is an
+    // array assignment and is never expanded. The repository's own
+    // `compose_profile_args+=(--profile "$profile")` was the single corpus
+    // difference this rule removed.
+    expect(decide(bashCall('compose_profile_args+=(--profile "$profile")'), {}).action).toBe(
+      'allow'
+    )
+  })
+
+  it('a five-group path is READ now that only the cross product is capped (round 22)', () => {
+    // Five two-way groups is 32 readings; round 21's group cap of four
+    // abandoned this and the verdict fell back to the primary reading, which
+    // ALLOWED it (the cross-family gate measured zsh 5.9 running a real
+    // five-group path). The group cap is gone; see the round 22 block below.
+    expect(decide(bashCall('./(a|b)/(c|d)/(e|f)/(g|h)/(i|j)/ruflo memory store'), {}).action).toBe(
+      'deny'
+    )
+  })
+})
+
+// SMI-6903 round 23 (the cross-family re-gate): the launcher table's value
+// flags are each row's FULL synopsis now, and `flock FILE -c COMMAND` joined
+// the shared `DASH_C_LAUNCHERS` set this guard recurses (measured running its
+// body in bash 5.2). Two consequences for this guard, each measured on
+// `e5396e581` and here: a `-c` body behind `flock` reaches H4 where it was
+// allowed, and a separated long-form value that used to sit as an all-digit
+// `argv[0]` (`ionice --class 3 …`, `xargs --max-args 1 …`) is consumed, so the
+// fail-closed `unresolved-command` fallback no longer fires on a benign
+// command and H4 fires on a ruflo one.
+describe("decide() — SMI-6903 round 23: a launcher's full option model, and flock -c", () => {
+  it("flock /tmp/l -c 'ruflo memory store --key k' -> deny (H4, the body is recursed)", () => {
+    const result = decide(bashCall("flock /tmp/l -c 'ruflo memory store --key k'"), {})
+    expect(result.action).toBe('deny')
+    expect(reasonOf(result)).toContain('H4:')
+  })
+
+  it('xargs --max-args 1 ruflo memory store -> deny (H4, not the all-digit fallback)', () => {
+    const result = decide(bashCall('xargs --max-args 1 ruflo memory store'), {})
+    expect(result.action).toBe('deny')
+    expect(reasonOf(result)).toContain('H4:')
+  })
+
+  // Round 24: this guard's own `-c` extractor matched a bare `-c` only, so
+  // every other spelling the env guard read reached the fail-closed arity
+  // fallback (`script --command 'ruflo …'`) or allowed outright (`flock
+  // /tmp/l --command 'ruflo …'`). It is the shared `launcherDashCCommand`
+  // now; each row below is H4 through the recursed body.
+  const dashCSpellings = [
+    "script --command 'ruflo memory store' /dev/null",
+    "script --command='ruflo memory store' /dev/null",
+    "script -c'ruflo memory store' /dev/null",
+    "script -qc 'ruflo memory store' /dev/null",
+    "flock /tmp/l --command 'ruflo memory store'",
+  ]
+  it.each(dashCSpellings)('%s -> deny (H4, the shared -c extractor)', (command) => {
+    const result = decide(bashCall(command), {})
+    expect(result.action).toBe('deny')
+    expect(reasonOf(result)).toContain('H4:')
+  })
+
+  // Corrected over-blocks: a benign command whose launcher value was read as
+  // an all-digit command name denied `unresolved-command` before; the value
+  // is consumed now and nothing ruflo-shaped remains.
+  const correctedAllows = [
+    'ionice --class 3 cat notes.txt',
+    'script -q -t 1 /dev/null cat notes.txt',
+    'stdbuf --output L cat notes.txt',
+  ]
+  it.each(correctedAllows)('%s -> allow (value consumed, nothing ruflo-shaped left)', (command) => {
+    expect(decide(bashCall(command), {}).action).toBe('allow')
+  })
+
+  // PIN: an optional-argument flag is never a value flag, so the bare name
+  // after `--replace` is still the command (H4 on every tree).
+  it('pin: xargs --replace ruflo memory store -> deny (H4)', () => {
+    expect(reasonOf(decide(bashCall('xargs --replace ruflo memory store'), {}))).toContain('H4:')
+  })
+})
+
+// SMI-6903 round 22, a correction the shared launcher table forced: `command
+// -v NAME` DESCRIBES a name and runs nothing (measured in bash 3.2 and zsh 5.9
+// with a decoy executable named through a variable: no marker written, while
+// the bare invocation control wrote it). With `flock` in the table, peeling
+// through `command -v flock` left an EMPTY command and the fail-closed arity
+// fallback denied a real repository line; `command` now carries stop flags
+// (`-v`, `-V`; `--help`/`--version` for every launcher) under which no peel
+// happens. Two corpus lines move from `unresolved-command` to allow as a
+// result (`command -v "$x" >/dev/null 2>&1 || …`): a computed name that is
+// never executed was an over-block, not a catch.
+describe('decide() — SMI-6903 round 22: `command -v NAME` is not an invocation of NAME', () => {
+  const allowNow = [
+    'command -v flock',
+    'if command -v flock >/dev/null 2>&1; then echo yes; fi',
+    'command -v "$x" >/dev/null 2>&1 || { echo absent; exit 0; }',
+    'command -v "$1" >/dev/null 2>&1 || err "required command not found"',
+  ]
+  it.each(allowNow)('%s -> allow (describes, never runs)', (command) => {
+    expect(decide(bashCall(command), {}).action).toBe('allow')
+  })
+
+  // A ruflo NAME under `command -v` still denies: the bare-name inversion
+  // (H4b) sees it where the launcher peel no longer hands it to H4, and an
+  // assignment feeding it is H8's. The verdict is unchanged; the predicate is.
+  const stillDeny: Array<[string, string]> = [
+    ['command -v ruflo', 'H4b'],
+    ['command -V ruflo', 'H4b'],
+    ['x=ruflo; command -v "$x"', 'H8'],
+  ]
+  it.each(stillDeny)('%s -> deny (%s)', (command, predicate) => {
+    const result = decide(bashCall(command), {})
+    expect(result.action).toBe('deny')
+    expect(reasonOf(result)).toContain(predicate)
+  })
+
+  // PIN, the arity fallback this guard already had for a modelled launcher
+  // with nothing after its own operands (`timeout 5` alone denies the same
+  // way on every tree): `flock FILE` with no command now shares it.
+  it('pin: flock 9 -> deny (unresolved-command, the modelled-launcher arity fallback)', () => {
+    const result = decide(bashCall('flock 9'), {})
+    expect(result.action).toBe('deny')
+    expect(reasonOf(result)).toContain('unresolved-command')
+    expect(reasonOf(decide(bashCall('timeout 5'), {}))).toContain('unresolved-command')
+  })
+})
+
+// SMI-6903 round 22 F2 (High, found by the cross-family gate): past either
+// expansion cap, `globGroupAlternativeReadings` returned `[]`, which reads
+// exactly like "nothing to expand", so the ruflo guard fell back to its primary
+// reading and ALLOWED a five-group path that zsh 5.9 invokes (measured by the
+// gate with a real executable: `/(u|x)(sr|y)/(b|x)(in|y)/(env|x) printf`
+// runs). Coverage dropped precisely at the cap, the opposite of ADR-172
+// sec 4's posture. Two changes: the cap on the NUMBER of groups is gone (a
+// one-alternative group is one reading, and a blanket deny at five groups hit
+// a pinned `node -e` script and a real repository SQL line, measured), and
+// past the one remaining cap, the cross product, the expansion returns null
+// and the guard denies `glob-cap`: a command it cannot read is a command it
+// does not allow. The cost is a stated over-block on an alternation wider than
+// 64 readings that names no ruflo path, pinned below as the posture's price.
+describe('decide() — SMI-6903 round 22 F2: past the glob cap the ruflo guard fails closed', () => {
+  // Each ALLOWED on 827a0b910 (abandoned by the group cap, verdict fell back).
+  const readNowArms = [
+    // Five groups, 32 readings: expanded and denied through the real path.
+    './(a|b)/(c|d)/(e|f)/(g|h)/(i|j)/ruflo memory store',
+    // Five one-alternative groups: one reading, read to the end.
+    './(a)/(b)/(c)/(d)/(e)/ruflo memory store',
+  ]
+  it.each(readNowArms)('%s -> deny (read, no longer abandoned)', (command) => {
+    expect(decide(bashCall(command), {}).action).toBe('deny')
+  })
+
+  const capArms = [
+    // Seven two-way groups: 128 readings, past the cap.
+    './(a|b)/(c|d)/(e|f)/(g|h)/(i|j)/(k|l)/(m|n)/ruflo memory store',
+    // Four groups of four: 256 readings, past the cap.
+    './(a|b|c|d)/(e|f|g|h)/(i|j|k|l)/(m|n|o|p)/ruflo memory store',
+  ]
+  it.each(capArms)('%s -> deny glob-cap', (command) => {
+    const verdict = decide(bashCall(command), {})
+    expect(verdict.action).toBe('deny')
+    expect(verdict.json.hookSpecificOutput.permissionDecisionReason).toContain('glob-cap')
+  })
+
+  // The boundary and the shapes the group cap used to over-block.
+  const allowControls = [
+    // Six two-way groups: 64 readings, AT the cap, expanded, no ruflo path.
+    './(a|b)/(c|d)/(e|f)/(g|h)/(i|j)/(k|l)/less',
+    './(a|b)/(c|d)/(e|f)/(g|h)/(i|j)/less',
+    'echo (a|b) (c|d) (e|f) (g|h)',
+    'ls (src|dist)/index.js',
+    // One-alternative groups by the handful: inline-script and SQL syntax.
+    "node -e 'a(1); b(2); c(3); d(4); e(5); f(6)'",
+    'psql -c "CREATE TABLE t (a TEXT, b TEXT, c TEXT, d TEXT, e TEXT, f(1), g(2))"',
+  ]
+  it.each(allowControls)('control: %s -> allow', (command) => {
+    expect(decide(bashCall(command), {}).action).toBe('allow')
+  })
+
+  // The posture's price, pinned so it is a recorded decision: an alternation
+  // wider than the cap denies even when it names no ruflo path, because the
+  // guard cannot read it. Zero repository command lines are this wide (corpus,
+  // 8,534 lines, 0 verdict differences).
+  it('stated over-block: a wide alternation with no ruflo path -> deny glob-cap', () => {
+    const verdict = decide(bashCall('ls (a|b)/(c|d)/(e|f)/(g|h)/(i|j)/(k|l)/(m|n)'), {})
+    expect(verdict.action).toBe('deny')
+    expect(verdict.json.hookSpecificOutput.permissionDecisionReason).toContain('glob-cap')
+  })
+})
+
+// SMI-6903 round 21 F4 (pre-existing): one extra paren bypassed the H1 fix.
+// zsh nests glob alternations, and zsh 5.9 INVOKES a decoy executable through
+// `./((a|node_modules)|y)/.bin/tool`, `./(y|(a|node_modules))/.bin/tool` and
+// `./(a(x|node_modules))/.bin/tool` (measured, the decoy actually ran); both
+// bashes reject the syntax. `readWordGroup` skipped any group holding a nested
+// paren, so the argv[0]-keyed H3/H5 checks never saw the real path.
+describe('decide() — SMI-6903 F4: a NESTED glob group cannot hide a ruflo path', () => {
+  // The three arms that constrain the fix: each ALLOWED on the pre-fix tree.
+  const redArms = [
+    './((a|node_modules)|y)/.bin/ruflo memory store',
+    './(y|(a|node_modules))/.bin/ruflo memory store',
+    './(a(x|node_modules))/.bin/ruflo memory store',
+  ]
+  it.each(redArms)('%s -> deny (the nested group is expanded too)', (command) => {
+    expect(decide(bashCall(command), {}).action).toBe('deny')
+  })
+
+  const allowControls = [
+    // A non-ruflo binary reached the same way must stay allowed.
+    './((node_modules|x)|y)/.bin/less',
+    './((node_modules|x)|y)/.bin/tsc --noEmit',
+    // An ordinary nested group in an argument.
+    'echo ((a|b)|c)',
+    'echo (a(b|c)|d)',
+    'ls ((src|dist)|build)/index.js',
+  ]
+  it.each(allowControls)('control: %s -> allow', (command) => {
+    expect(decide(bashCall(command), {}).action).toBe('allow')
+  })
+
+  // PINS, not arms: each passes identically with the fix removed (measured).
+  // Kept so the boundaries the fix does NOT move stay visible -- the flat
+  // single-group path it already denied and the array-append shape it still
+  // never expands. (The five-group row that sat here as an `allow` pin was a
+  // leak, not a boundary; it is a `glob-cap` arm in the round 22 block.)
+  const pinsThatPassWithoutTheFix: Array<[string, string]> = [
+    ['./(node_modules|x)/.bin/ruflo memory store', 'deny'],
+    ['compose_profile_args+=(--profile "$profile")', 'allow'],
+  ]
+  it.each(pinsThatPassWithoutTheFix)(
+    'pin (does NOT constrain the fix): %s -> %s',
+    (command, expected) => {
+      expect(decide(bashCall(command), {}).action).toBe(expected)
+    }
+  )
 })
