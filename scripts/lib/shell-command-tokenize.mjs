@@ -28,16 +28,16 @@ import { decodeEscapeAt } from './shell-escape-decode.mjs'
 // hoisted function declarations consumed at CALL time, after both modules
 // finish loading.
 import { consumeHeredocBodies, parseHeredocDelimiter } from './shell-command-heredoc.mjs'
-
-/**
- * The raw characters bash itself ends a word on that this tokenizer treats
- * as UNCONDITIONAL `#` comment boundaries: space, tab and newline (bash's
- * ONLY blanks -- NOT JS `/\s/`'s set), plus `;`, `|`, `&`. A `)` is NOT in
- * this set -- it is a boundary only by POSITION (see `tokenize`'s
- * `parenKinds` stack and its own comment block, SMI-6892 rounds 16-17).
- * `{`/`}` are reserved WORDS, not metacharacters, so they stay absent.
- */
-const COMMENT_BOUNDARY_CHARS = new Set([' ', '\t', '\n', ';', '|', '&'])
+// The comment-boundary rule (which characters and paren positions may
+// precede a `#`, and the arithmetic suppression) lives in its own module
+// since the retro of PR #2970: rounds 14 to 19 patched it inline until this
+// file sat at exactly the 500-line convention with no room for the next
+// correction. See that module's docblocks for every measured row.
+import {
+  classifyOpenParen,
+  closingParenIsBoundary,
+  startsComment,
+} from './shell-command-comment.mjs'
 
 /** @param {string} p */
 export function basenameOf(p) {
@@ -133,26 +133,6 @@ function readRedirectOperator(command, i) {
 }
 
 /**
- * True when `tokens` ends in the words `case`, `<anything>`, `in` --
- * `case`'s own subject line -- with `case` itself at command position (the
- * token before it absent, or an op other than `)`/`}`; SMI-6892 round 17).
- * Read before `pushOp` flushes `cur`: a glued in-progress word is never
- * this paren.
- * @param {Array<{type: string, value?: string}>} tokens
- */
-function isCasePatternParen(tokens) {
-  const n = tokens.length
-  if (n < 3) return false
-  const [caseTok, subject, inTok] = tokens.slice(n - 3)
-  if (caseTok.type !== 'word' || caseTok.value !== 'case' || subject.type !== 'word') return false
-  if (inTok.type !== 'word' || inTok.value !== 'in') return false
-  const before = tokens[n - 4]
-  return (
-    before === undefined || (before.type === 'op' && before.value !== ')' && before.value !== '}')
-  )
-}
-
-/**
  * Split a command string into word/operator tokens. Word tokens carry
  * their unquoted `value` plus any `$(...)` / backtick bodies in `subs`. A
  * redirect operator (and any target GLUED directly onto it, no space) is
@@ -207,13 +187,17 @@ export function tokenize(command) {
   }
 
   let i = 0
-  // `parenKinds`: a stack of `{ kind: 'command' | 'word', fnName }` entries,
-  // one per currently OPEN `(` (fnName: glued to a bare word without `=`,
-  // SMI-6892 round 17; see the `(`/`)` branches below). `closeParenIsBoundary`
-  // is the verdict from the MOST RECENTLY closed `)` -- the only one a
-  // following `#` can ever need.
+  // `parenKinds`: a stack of `{ kind, fnName, arith }` entries, one per
+  // currently OPEN `(`, built by `classifyOpenParen`. Declared INSIDE
+  // `tokenize`, so a guard that recurses into a `bash -c` body gets a fresh
+  // stack per call and an input ending inside an open `(` cannot leak its
+  // state into the next one. `closeParenIsBoundary` is the verdict from the
+  // MOST RECENTLY closed `)` -- the only one a following `#` can ever need.
+  // `arithDepth` counts open arithmetic `((` pairs, in which a `#` is not a
+  // comment.
   const parenKinds = []
   let closeParenIsBoundary = false
+  let arithDepth = 0
   // `prevChar`: the LOGICAL previous character the comment test reads, not
   // always raw `command[i - 1]` -- a removed `\`+newline continuation (see
   // the `\\` branch) must not change it to `\n`. Updated once per outer
@@ -401,82 +385,39 @@ export function tokenize(command) {
       i = pushOp(c, 1, i)
       continue
     }
-    // A `(` is COMMAND position (subshell / `((…))`) when the token stream
-    // is empty, or its last token (checking the in-progress word `cur`
-    // first, since it is not yet flushed into `tokens`) is an op other than
-    // `)`/`}`, or it is a `case` statement's own leading pattern paren
-    // (SMI-6892 round 17); otherwise it is WORD position (`echo (a|b)`,
-    // `a=(1 2)`; SMI-6892 round 16) -- recorded along with whether the `(`
-    // is glued to a bare word without `=`, a function definition's `name()`
-    // shape (SMI-6892 round 17), consumed only by the matching `)`.
+    // `classifyOpenParen` decides command vs word position, the
+    // function-definition mark, and whether this `(` is the inner half of
+    // an arithmetic `((` -- see `shell-command-comment.mjs` for every
+    // measured row behind those three.
+    // Both paren op tokens carry `wordGroup`: true when the `(` was WORD
+    // position, so a consumer can tell zsh's glob group `(.env|zzz)` -- ONE
+    // word to the shell, whose `|` is not a pipe -- from a real subshell,
+    // whose `|` is. `splitCommandSegmentsParensGrouping` needs exactly that.
     if (c === '(') {
       const last = cur !== null ? cur : tokens[tokens.length - 1]
-      const isCommand =
-        last === undefined || (last.type === 'op' && last.value !== ')' && last.value !== '}')
-      parenKinds.push({
-        kind: isCommand || (cur === null && isCasePatternParen(tokens)) ? 'command' : 'word',
-        fnName:
-          !isCommand && last !== undefined && last.type === 'word' && !last.value.includes('='),
-      })
+      const entry = classifyOpenParen(last, tokens, cur, command[i - 1], parenKinds.length)
+      parenKinds.push(entry)
+      if (entry.arith) arithDepth++
       i = pushOp(c, 1, i)
+      tokens[tokens.length - 1].wordGroup = entry.kind === 'word'
       continue
     }
-    // The matching `)` is a boundary iff its `(` was COMMAND position, it
-    // is UNMATCHED (`parenKinds.pop()` on an empty stack is `undefined` --
-    // a `case` pattern's `a)#x`), or (SMI-6892 round 17) it closes a
-    // function definition's EMPTY `name()`. Empty means the RAW previous
-    // character is `(`, not the tracked `prevChar`: a `\`+newline inside the
-    // parens makes zsh read `()#x` as a glob word and run the tail
-    // (measured; bash reads a comment), so a continuation there keeps the
-    // tail live (round 18).
     if (c === ')') {
       const entry = parenKinds.pop()
-      closeParenIsBoundary =
-        entry === undefined ||
-        entry.kind === 'command' ||
-        (entry.fnName === true && command[i - 1] === '(')
+      if (entry?.arith === true && arithDepth > 0) arithDepth--
+      closeParenIsBoundary = closingParenIsBoundary(entry, command[i - 1])
       i = pushOp(c, 1, i)
+      tokens[tokens.length - 1].wordGroup = entry !== undefined && entry.kind === 'word'
       continue
     }
     // An unquoted `#` begins a comment -- discard through the next newline
     // (the `\n` branch above still emits that as its own `op` token) --
-    // only when it starts a NEW word (`cur === null`) AND the LOGICAL
-    // previous character (`prevChar`, tracked above) is a boundary. A `#`
-    // not at a word boundary (`a#b`, `${var#pattern}`, `http://x/#f`)
-    // leaves `cur` non-null and is appended like any other character.
-    //
-    // `cur === null` alone is not the boundary: `{`/`}` are bash RESERVED
-    // WORDS, not operators, yet flushed as op tokens unconditionally
-    // (`printf "[%s]" ${X}#foo bar` is TWO words in bash, `a{b}#x; cmd`
-    // still runs `cmd`); and the whitespace flush above uses JS `/\s/`,
-    // wider than bash's own space/tab/newline blanks (`hi<CR>#x; cmd` is
-    // one word plus a live `cmd` in bash -- measured for CR/VT/FF/NBSP).
-    //
-    // A `)` is a boundary by POSITION, not unconditionally (SMI-6892 rounds
-    // 16-18; bash 3.2, bash 5.2, zsh 5.9): a command-position close
-    // (`(echo x)#x`), an unmatched `)` (a `case` pattern), a `case`
-    // statement's own leading pattern `(`, and a function definition's
-    // raw-adjacent `name()` ARE boundaries; a word-position close is NOT,
-    // since zsh's glob group `echo (a|b)#x` is one word and bash's
-    // `a=(1 2)#x` keeps its tail live (zsh reads a comment there: the shells
-    // disagree, so the word-position reading wins, the safer direction for
-    // a guard). A removed `\`+newline continuation must not flip this:
-    // `echo (a|b)\<nl>#x` and `a=(1 2)\<nl>#x` keep `#x` live too, which
-    // is why `prevChar` tracks the pre-backslash character instead of the
-    // `\n` the removal leaves in `command[i - 1]`.
-    //
-    // `<`/`>` are metacharacters too but deliberately absent: their own
-    // branch above always leaves `cur` non-null, so listing them is a
-    // no-op, and real bash rejects a glued `>#f` as a syntax error anyway
-    // (over-blocking a shape bash never runs, never under-blocking one
-    // that does). `${#name}` needs no special case -- that `#` follows `{`.
-    if (
-      c === '#' &&
-      cur === null &&
-      (prevChar === '' ||
-        COMMENT_BOUNDARY_CHARS.has(prevChar) ||
-        (prevChar === ')' && closeParenIsBoundary))
-    ) {
+    // only where a real shell starts one. `startsComment` holds that whole
+    // rule and the measured table behind it; a `#` not at a word boundary
+    // (`a#b`, `${var#pattern}`, `http://x/#f`, `16#ff` inside `((…))`)
+    // leaves `cur` non-null or fails the test, and is appended like any
+    // other character.
+    if (c === '#' && startsComment(cur, prevChar, closeParenIsBoundary, arithDepth)) {
       while (i < command.length && command[i] !== '\n') i++
       continue
     }
