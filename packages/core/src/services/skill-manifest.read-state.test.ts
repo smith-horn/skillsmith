@@ -206,6 +206,36 @@ describe('ADR-171 manifest read-state classifier (SMI-6733)', () => {
         const result = await readManifestState(manifestPath)
         expect(result.state).toBe('ok')
       })
+
+      // The surviving mutation a cross-family gate named on PR #2976. Loosening
+      // `parseMajorVersion`'s `/^(\d+)\.\d+\.\d+/` to `/^(\d+)/` left every test
+      // above green: `not-a-version` still corrupt, `2.0.0` still unsupported,
+      // `1.9.0` still ok. What it changes is the shape nobody asserted — a bare
+      // `"1"` would classify **ok**, so a manifest the contract calls malformed
+      // would silently produce confident tool output.
+      //
+      // The `'2'` row is the sharpest: under the loosened regex it becomes
+      // `version_unsupported`, which ASSERTS a newer writer exists on the
+      // evidence of a string that records no minor or patch at all. § 6's first
+      // rider exists to forbid exactly that inference.
+      //
+      // The two junk-suffix rows are not oversights — they pin the stated COST
+      // of leaving the regex un-anchored, which is what keeps `1.0.0-beta`
+      // supported. Anchoring it would make this table's last two rows corrupt
+      // and break prerelease manifests, so the table records the trade rather
+      // than leaving a reader to guess which half was intended.
+      it.each([
+        ['1', 'corrupt'],
+        ['1.0', 'corrupt'],
+        ['2', 'corrupt'],
+        ['1.0.0-beta', 'ok'],
+        ['1.0.0+build', 'ok'],
+        ['1.0.0garbage', 'ok'],
+      ])('version %j classifies %s', async (version, expected) => {
+        await writeManifestFile(JSON.stringify({ version, installedSkills: {} }))
+        const result = await readManifestState(manifestPath)
+        expect(result.state).toBe(expected)
+      })
     })
 
     describe('CAS round-trip (ADR-171 § 3): the object handed onward is the raw JSON.parse value', () => {
@@ -392,6 +422,66 @@ describe('ADR-171 manifest read-state classifier (SMI-6733)', () => {
         bounded: (warning ?? '').length < 2_000,
         namesTheProblem: (warning ?? '').includes('a newer Skillsmith wrote it'),
       }).toEqual({ bounded: true, namesTheProblem: true })
+    })
+
+    it('caps a caller-supplied PATH, which the exported wrapper accepts', async () => {
+      // Cross-family gate finding (PR #2976): my claim that "the warning is
+      // bounded" was FALSE. Capping `version` left `manifestPath` unbounded, and
+      // `loadManifestLenient` is exported with an arbitrary-path signature — so
+      // a 200 KB path fails `ENAMETOOLONG` and the whole string rode the warning
+      // out to the response root.
+      const { warning } = await loadManifestLenient('x'.repeat(200_000))
+
+      expect({
+        bounded: (warning ?? '').length < 2_000,
+        // Still diagnostic: it must say the read failed, not just be short.
+        saysUnreadable: (warning ?? '').includes('could not be read'),
+      }).toEqual({ bounded: true, saysUnreadable: true })
+    })
+
+    it("characterizes V8's own parse-message truncation — the reason cap is NOT exercised", async () => {
+      // Honest framing, after this test failed its own red-test. I first wrote
+      // it as "caps an oversized JSON parse message" and it passed with the cap
+      // removed, which makes it decorative: a test that cannot fail reads as
+      // coverage it never gave.
+      //
+      // Measured why: V8 self-truncates. A 200 KB invalid token, a 200 KB
+      // unterminated string and a 200 KB key all yield 68–71 characters, because
+      // the message embeds only a small window around the error offset. So there
+      // is no live unbounded path here and the producer-side cap is unexercised
+      // defence against V8 changing that format.
+      //
+      // This asserts the property that is actually true and actually load-
+      // bearing: the engine's message arrives far under our cap. If a future
+      // Node emits a message near or above it, this goes red — which is exactly
+      // the moment the cap stops being decorative and starts mattering.
+      await writeManifestFile(`{"version":"1.0.0","installedSkills":${'q'.repeat(200_000)}}`)
+      const { warning } = await loadManifestLenient(manifestPath)
+
+      // The raw engine message, recovered from the warning: everything between
+      // the parenthesised detail. Asserting on the WARNING's total length would
+      // measure our prose, not V8's.
+      const reason = /not valid JSON \(([^)]*)\)/.exec(warning ?? '')?.[1] ?? ''
+
+      expect({
+        engineMessageRecovered: reason.length > 0,
+        engineTruncatesWellUnderOurCap: reason.length < 120,
+        notCarryingTheDocument: !reason.includes('q'.repeat(200)),
+      }).toEqual({
+        engineMessageRecovered: true,
+        engineTruncatesWellUnderOurCap: true,
+        notCarryingTheDocument: true,
+      })
+    })
+
+    it('does NOT truncate a real manifest path — § 8 requires naming the file', async () => {
+      // The known-positive control for the path cap, and the reason paths get a
+      // 400-char ceiling rather than the 120 used for file CONTENT. A cap short
+      // enough to cut a real path would satisfy the bound by breaking § 8.
+      await writeManifestFile('{ not valid json')
+      const { warning } = await loadManifestLenient(manifestPath)
+
+      expect(warning ?? '').toContain(manifestPath)
     })
 
     it('leaves an ordinary corrupt manifest its FULL diagnostic', async () => {

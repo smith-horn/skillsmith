@@ -116,12 +116,10 @@ type ManifestRefusalState = Extract<
  * than guessed at, matching that literal.
  */
 function parseMajorVersion(version: string): number | null {
-  // Deliberately not end-anchored: a prerelease or build suffix ("1.0.0-beta",
-  // "1.0.0+build") records a real major version and must stay supported rather
-  // than becoming `version_malformed`. The cost is that a junk suffix also
-  // parses, so "2.0.0" + 200 KB of noise classifies `version_unsupported`
-  // rather than `corrupt` — a defensible read of a file that does record major
-  // 2, and the reason `capDiagnostic` below exists rather than an anchor here.
+  // Deliberately NOT end-anchored, so a prerelease or build suffix stays
+  // supported. The cost is that a junk suffix parses too; `capDiagnostic` below
+  // bounds that rather than an anchor here. Both halves are pinned by the
+  // version table in this module's tests — do not anchor without reading it.
   const match = /^(\d+)\.\d+\.\d+/.exec(version)
   if (!match) return null
   return Number.parseInt(match[1], 10)
@@ -130,27 +128,31 @@ function parseMajorVersion(version: string): number | null {
 /** Longest untrusted substring allowed into a diagnostic. */
 const MAX_DIAGNOSTIC_VALUE_LENGTH = 120
 
+/** Larger than content: § 8 requires NAMING the file, so a path must survive. */
+const MAX_DIAGNOSTIC_PATH_LENGTH = 400
+
 /**
- * SMI-6733 Phase 2 Wave 2: bound any value read out of the manifest FILE before
- * it is interpolated into a message.
- *
- * `version` is attacker- or accident-controlled and arbitrarily long, and since
- * Wave 2 these messages have a new egress: `loadManifestLenient`'s `warning`
- * rides `skill_outdated` and `skill_updates` straight to the response root and
- * therefore into an LLM context window. Measured before this cap, in a temp
- * dir: a 200 KB `version` produced a **200,641**-character warning, against 482
- * for an ordinary unparseable manifest.
- *
- * Bounded HERE, at the producer, rather than at the two consumers — the write
- * path's equivalent is already bounded by `truncateErrorMessage` before
- * telemetry, and `install.ts:377-380` (SMI-6588) states the rule this restores:
- * *"an unbounded message from an arbitrary throw site is not something to pass
- * back to a caller."*
+ * Bound every value read out of the manifest FILE before interpolating it into a
+ * message. `loadManifestLenient`'s warning reaches a tool response root and so an
+ * LLM context window, and SMI-6588 already states the rule: an unbounded message
+ * from an arbitrary throw site is not something to pass back to a caller. Bound
+ * at the producer, not at each consumer. Evidence: SMI-6733.
  */
-function capDiagnostic(value: string): string {
-  return value.length > MAX_DIAGNOSTIC_VALUE_LENGTH
-    ? `${value.slice(0, MAX_DIAGNOSTIC_VALUE_LENGTH)}… (${value.length} chars total)`
-    : value
+function capDiagnostic(value: string, max: number = MAX_DIAGNOSTIC_VALUE_LENGTH): string {
+  return value.length > max ? `${value.slice(0, max)}… (${value.length} chars total)` : value
+}
+
+/**
+ * `manifestPath` is caller-supplied — the exported wrappers accept any string —
+ * so it is bounded here too. **Of the three non-`version` vectors, only this one
+ * is live**: the two `reason` caps are defence against a format change and are
+ * deliberately UNEXERCISED, because V8 self-truncates its parse message and the
+ * `unreadable` branch prefers `result.code`. Do not read their caps as tested.
+ * The `shape` reason needs none — `describeShapeProblem` emits only type names.
+ * Measurements for all four: SMI-6733.
+ */
+function capPath(value: string): string {
+  return capDiagnostic(value, MAX_DIAGNOSTIC_PATH_LENGTH)
 }
 
 /** `JSON.parse`'s own error message embeds `... at position N ...` when available. */
@@ -322,8 +324,13 @@ export async function readManifestState(manifestPath: string): Promise<ManifestR
 }
 
 /** Diagnostic sentence plus one concrete next action for a refusing state. */
+/**
+ * `shownPath` is ALREADY capped by both callers, and the parameter is named for
+ * that rather than `manifestPath` because an unbounded path is invisible at the
+ * interpolation site. A third caller must pass `capPath(...)`, not a raw path.
+ */
 function describeManifestProblem(
-  manifestPath: string,
+  shownPath: string,
   result: ManifestRefusalState
 ): { detail: string; remedy: string } {
   switch (result.state) {
@@ -335,7 +342,7 @@ function describeManifestProblem(
       // takes it from `reason`, which is where a user reads it.
       if (result.kind === 'unparseable') {
         return {
-          detail: `the file exists but is not valid JSON (${result.reason})`,
+          detail: `the file exists but is not valid JSON (${capDiagnostic(result.reason)})`,
           remedy:
             'Fix it by hand (a JSON validator will find the break) or restore a copy your ' +
             'editor or backup tool kept, then retry. Repairing a corrupt manifest file is not ' +
@@ -359,11 +366,11 @@ function describeManifestProblem(
       }
     }
     case 'unreadable': {
-      const code = result.code ?? result.reason
+      const code = result.code ?? capDiagnostic(result.reason)
       return {
         detail: `the file exists but could not be read (${code})`,
         remedy:
-          `Check the file's owner and permissions (\`ls -l ${manifestPath}\`), and that the ` +
+          `Check the file's owner and permissions (\`ls -l ${shownPath}\`), and that the ` +
           'volume is neither full nor read-only, then retry.',
       }
     }
@@ -385,7 +392,8 @@ function describeManifestProblem(
 
 /** ADR-171 § 8: the four required properties in one message per state. */
 function buildRefusalMessage(manifestPath: string, result: ManifestRefusalState): string {
-  const { detail, remedy } = describeManifestProblem(manifestPath, result)
+  const shownPath = capPath(manifestPath)
+  const { detail, remedy } = describeManifestProblem(shownPath, result)
   const notModified =
     result.state === 'version_unsupported'
       ? 'Your manifest has NOT been modified — treating it as corrupt would discard the skills ' +
@@ -393,13 +401,14 @@ function buildRefusalMessage(manifestPath: string, result: ManifestRefusalState)
       : 'Your manifest has NOT been modified — every skill it records is still recorded. This ' +
         'file is the only record of what Skillsmith has installed, so Skillsmith never repairs, ' +
         'replaces or moves it automatically.'
-  return `Refusing to write ${manifestPath}: ${detail}. ${notModified} ${remedy}`
+  return `Refusing to write ${shownPath}: ${detail}. ${notModified} ${remedy}`
 }
 
 /** Read-only framing of the same diagnostic, for {@link loadManifestLenient}. */
 function buildLenientWarning(manifestPath: string, result: ManifestRefusalState): string {
-  const { detail, remedy } = describeManifestProblem(manifestPath, result)
-  return `${manifestPath} could not be read (treated as empty): ${detail}. ${remedy}`
+  const shownPath = capPath(manifestPath)
+  const { detail, remedy } = describeManifestProblem(shownPath, result)
+  return `${shownPath} could not be read (treated as empty): ${detail}. ${remedy}`
 }
 
 /**
