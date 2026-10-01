@@ -4,6 +4,15 @@ All notable changes to `@skillsmith/core` are documented here.
 
 ## [Unreleased]
 
+- **Fix (diagnostics)**: SMI-6733 Phase 2 Wave 1 -- a `ManifestUnwritableError`'s own message (ADR-171
+  § 8: names the file, the exact byte offset on a parse failure, and a remedy) now reaches the user
+  instead of being replaced by `sanitizeInstallError`'s generic "Installation failed due to an
+  internal error" fallback. `ManifestUnwritableError` matched none of the 12-member
+  `KNOWN_ERROR_PREFIXES` allowlist, so a correctly-classified refusal became an undiagnosable one.
+  Fixed the same way `InstallRestoreError` already bypasses that allowlist in
+  `skill-installation.helpers.ts`'s `sanitizeInstallError`: an `instanceof` arm, not a 13th
+  message-content prefix -- a prefix would couple the sanitizer to ADR-171 § 8's exact wording.
+
 - **Fix (data integrity)**: SMI-6733 -- untracked-skill adoption no longer overwrites a manifest it
   could not read. `adoptUntrackedSkillEntry` took a tolerant load unconditionally, which substitutes
   an empty document for a corrupt/unreadable/version-unsupported manifest and then saves over the

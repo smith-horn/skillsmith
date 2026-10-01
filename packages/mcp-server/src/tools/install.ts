@@ -19,6 +19,7 @@ import {
   emitInstallEvent,
   checkInstallTarget,
   manifestKeyFor,
+  installedSkillsOf,
   type RegistryLookup,
   type RegistrySkillInfo,
 } from '@skillsmith/core'
@@ -35,7 +36,7 @@ import { resolveAuditMode } from '@skillsmith/core/config/audit-mode'
 import type { ToolContext } from '../context.js'
 import { getToolContext } from '../context.js'
 import { MANIFEST_PATH, installInputSchema, type InstallResult } from './install.types.js'
-import { loadManifest, lookupSkillFromRegistry } from './install.helpers.js'
+import { loadManifestWithWarning, lookupSkillFromRegistry } from './install.helpers.js'
 
 // SMI-1867: Conflict resolution logic (extracted per governance review)
 import { checkForConflicts } from './install.conflict.js'
@@ -282,19 +283,26 @@ async function installSkillImpl(input: unknown, _context?: ToolContext): Promise
   // ignored and the install would proceed and overwrite anyway) or worse,
   // false-positive against an unrelated same-named global entry — both real
   // problems, but the fix is to read the RIGHT manifest, not to skip the
-  // check. `loadManifest()` (install.helpers.js) now takes the manifest path
-  // as an optional argument (default: global, unchanged for its other two
-  // callers — outdated.action.ts and skill-updates.ts; SMI-6733 moved
-  // updateManifestSafely off this lenient reader onto loadManifestForWrite,
-  // since a write must not proceed from a failed read) — passing
-  // `scopeTarget.manifestPath` here makes this pre-flight correct for BOTH
+  // check. The reader takes the manifest path as an optional argument, so
+  // passing `scopeTarget.manifestPath` makes this pre-flight correct for BOTH
   // scopes instead of gated to one.
+  // SMI-6733 Phase 2 Wave 2: this is the lenient read's third caller, and the
+  // only one that gates a DECISION on what it finds. A corrupt or unreadable
+  // manifest yields an EMPTY document here, so `existingEntry` would be
+  // undefined, the block below would be skipped, and a requested
+  // `conflictAction` (e.g. `cancel`) would be silently ignored while the
+  // install overwrote the target anyway. The `catch` below cannot see that —
+  // the lenient read swallows rather than throws — so the warning rides the
+  // same `tips` channel. `loadManifestForWrite` does throw, but only at
+  // manifest-write time, after the files are already on disk: too late to be
+  // a decision.
   // SMI-6585: collected here rather than swallowed, and surfaced via `tips`
   // below alongside the fan-out failures.
   const preflightProblems: string[] = []
   if (validInput.force && validInput.conflictAction) {
     try {
-      const manifest = await loadManifest(scopeTarget.manifestPath)
+      const { manifest, warning } = await loadManifestWithWarning(scopeTarget.manifestPath)
+      if (warning) preflightProblems.push(warning)
       const skillName = extractSkillName(validInput.skillId)
       // SMI-6529 N5 (round 4): look up the SAME manifest key
       // `service.install()` itself will read/write (`manifestKeyFor(name,
@@ -303,7 +311,10 @@ async function installSkillImpl(input: unknown, _context?: ToolContext): Promise
       // skip this WHOLE pre-flight block for them regardless of what's
       // actually on disk.
       const manifestKey = manifestKeyFor(skillName, effectiveClient)
-      const existingEntry = manifest.installedSkills[manifestKey]
+      // SMI-6886: ADR-171 § 5's nullish carve-out — `installedSkills: null`
+      // classifies `ok` and is returned unchanged, so a bare
+      // `manifest.installedSkills[manifestKey]` subscript throws.
+      const existingEntry = installedSkillsOf(manifest)[manifestKey]
 
       if (existingEntry) {
         // SMI-6529 N5 (round 4): compute installPath the SAME way core's

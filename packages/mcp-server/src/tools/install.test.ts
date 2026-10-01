@@ -61,13 +61,30 @@ vi.mock('../context.js', () => ({
 
 // SMI-4288: Mock install.helpers so the conflict-preflight path exercises
 // deterministic behaviour. Each test configures loadManifest explicitly.
-const { mockLoadManifest, mockLookupSkillFromRegistry } = vi.hoisted(() => ({
-  mockLoadManifest: vi.fn(),
-  mockLookupSkillFromRegistry: vi.fn(),
-}))
+const { mockLoadManifest, mockLoadManifestWithWarning, mockLookupSkillFromRegistry } = vi.hoisted(
+  () => ({
+    mockLoadManifest: vi.fn(),
+    mockLoadManifestWithWarning: vi.fn(),
+    mockLookupSkillFromRegistry: vi.fn(),
+  })
+)
 
+// SMI-6733 Phase 2 Wave 2: the pre-flight reader moved from `loadManifest` to
+// `loadManifestWithWarning`, so a degraded read reaches `tips` instead of
+// silently fabricating an empty manifest and skipping the whole block.
+//
+// Both names are declared because the TRIGGER moved and the ASSERTIONS did not.
+// Every `mockLoadManifest.*` setup below still drives this block through the
+// delegating default installed in `beforeEach` — including the five that make
+// the read REJECT, which still reach `install.ts`'s catch exactly as before.
+// Not one `expect(...)` in this file changed.
+//
+// `mockLoadManifestWithWarning` is separately settable so the new warning path
+// has a test of its own; the delegation can never produce a non-null warning.
+// That delegation is also the masking vector SMI-6906 exists to remove.
 vi.mock('./install.helpers.js', () => ({
   loadManifest: mockLoadManifest,
+  loadManifestWithWarning: mockLoadManifestWithWarning,
   lookupSkillFromRegistry: mockLookupSkillFromRegistry,
 }))
 
@@ -150,6 +167,7 @@ describe('installSkill() Zod boundary guard (SMI-4288 / #599)', () => {
     mockInstall.mockReset()
     mockEmitInstallEvent.mockReset()
     mockLoadManifest.mockReset()
+    mockLoadManifestWithWarning.mockReset()
     mockLookupSkillFromRegistry.mockReset()
     mockCheckForConflicts.mockReset()
     mockRunNamespaceGate.mockReset()
@@ -177,6 +195,16 @@ describe('installSkill() Zod boundary guard (SMI-4288 / #599)', () => {
     mockInstall.mockResolvedValue(HAPPY_RESULT)
     // By default no conflict preflight interception.
     mockLoadManifest.mockResolvedValue({ version: '1', installedSkills: {} })
+    // SMI-6733 Phase 2 Wave 2: the default DELEGATES to `mockLoadManifest`, so
+    // every pre-existing `mockLoadManifest.mockResolvedValueOnce` /
+    // `mockRejectedValueOnce` setup in this file keeps driving the pre-flight
+    // unchanged — a resolve becomes `{ manifest, warning: null }`, and a reject
+    // propagates and lands in `install.ts`'s catch exactly as it did before.
+    // A test that needs a degraded read overrides this mock directly.
+    mockLoadManifestWithWarning.mockImplementation(async (...args: unknown[]) => ({
+      manifest: await mockLoadManifest(...args),
+      warning: null,
+    }))
     mockCheckForConflicts.mockResolvedValue({ shouldProceed: true })
     // SMI-4588 Wave 2 PR #3: default the namespace gate to `proceed` with
     // no warnings/pending so the Zod boundary tests remain focused on
@@ -438,6 +466,101 @@ describe('installSkill() Zod boundary guard (SMI-4288 / #599)', () => {
 
       expect(mockInstall).toHaveBeenCalledTimes(1)
       expect(result.tips?.join(' ') ?? '').toContain('backup store unreadable')
+    })
+
+    it('completes the pre-flight on a manifest whose installedSkills is nullish (SMI-6886)', async () => {
+      // SMI-6733 Phase 2 Wave 2 Step 6. `install.ts:306` subscripts
+      // `manifest.installedSkills[manifestKey]` with no guard, and ADR-171
+      // § 5's nullish carve-out makes `installedSkills: null` classify `ok`
+      // — so the lenient reader hands it back UNCHANGED and the subscript
+      // throws `TypeError: Cannot read properties of null`.
+      //
+      // That throw lands in the `try` at `install.ts:295`, so the plan's
+      // "assert no error was thrown" would pass against the unfixed code.
+      // What it cannot pass is the pre-flight's own self-report: a throw
+      // makes it push the `could not be evaluated` problem onto `tips`.
+      // Absence of that tip is the observable "it ran to completion".
+      //
+      // Both arms are in ONE test on purpose. The fixed arm's assertion is a
+      // NEGATIVE (`not.toContain`), which passes vacuously if `tips` is
+      // undefined for any unrelated reason; the control arm is the
+      // known-positive proving this instrument can see the tip at all.
+      mockLoadManifest.mockResolvedValueOnce({ version: '1.0.0', installedSkills: null })
+      const nullish = await installSkill({
+        skillId: 'owner/repo/test-skill',
+        force: true,
+        conflictAction: 'overwrite',
+      })
+
+      mockLoadManifest.mockRejectedValueOnce(new Error('control: reader threw'))
+      const control = await installSkill({
+        skillId: 'owner/repo/test-skill',
+        force: true,
+        conflictAction: 'overwrite',
+      })
+
+      expect({
+        nullishReportedUnevaluable: (nullish.tips?.join(' ') ?? '').includes(
+          'could not be evaluated'
+        ),
+        controlReportedUnevaluable: (control.tips?.join(' ') ?? '').includes(
+          'could not be evaluated'
+        ),
+      }).toEqual({ nullishReportedUnevaluable: false, controlReportedUnevaluable: true })
+
+      // Both installs still delegated, so neither result above came from an
+      // early return that skipped the pre-flight block entirely.
+      expect(mockInstall).toHaveBeenCalledTimes(2)
+    })
+
+    it('surfaces a DEGRADED manifest read on tips, instead of silently skipping the pre-flight', async () => {
+      // The finding this closes (post-commit governance on a661274da). Before
+      // Wave 2 this path read `loadManifest`, which swallows every read failure
+      // and fabricates `{ version, installedSkills: {} }`. On a corrupt or
+      // unreadable manifest the consequences compounded silently:
+      //
+      //   `existingEntry` is undefined -> `if (existingEntry)` is skipped ->
+      //   `checkInstallTarget` and `checkForConflicts` never run -> the
+      //   requested `conflictAction` is ignored -> the install overwrites.
+      //
+      // And the `catch` below it could not see any of that, because nothing
+      // threw. `loadManifestForWrite` does throw, but only at manifest-write
+      // time — after the files are already on disk, which is too late to be a
+      // decision. So the warning has to ride the channel that already exists.
+      //
+      // This is also the ONLY test of the warning path: the `beforeEach`
+      // delegation can never produce a non-null warning, which is exactly the
+      // masking SMI-6906 exists to remove.
+      mockLoadManifestWithWarning.mockResolvedValueOnce({
+        manifest: { version: '1.0.0', installedSkills: {} },
+        warning: '/mock/manifest.json exists but is corrupt: trailing garbage at position 42',
+      })
+      const degraded = await installSkill({
+        skillId: 'owner/repo/test-skill',
+        force: true,
+        conflictAction: 'cancel',
+      })
+
+      // Known-negative control, same instrument: a clean read must NOT invent a
+      // tip. Without it, an implementation that pushed a tip unconditionally
+      // would pass the arm above, and a pre-flight that warns on every install
+      // trains the user to ignore the field — the failure mode that makes the
+      // whole channel worthless.
+      const clean = await installSkill({
+        skillId: 'owner/repo/test-skill',
+        force: true,
+        conflictAction: 'cancel',
+      })
+
+      expect({
+        degradedNamesTheFile: (degraded.tips?.join(' ') ?? '').includes('/mock/manifest.json'),
+        degradedSaysCorrupt: (degraded.tips?.join(' ') ?? '').includes('corrupt'),
+        cleanStaysQuiet: (clean.tips?.join(' ') ?? '').includes('manifest.json'),
+      }).toEqual({
+        degradedNamesTheFile: true,
+        degradedSaysCorrupt: true,
+        cleanStaysQuiet: false,
+      })
     })
 
     it('survives a thrown value whose string conversion itself throws', async () => {

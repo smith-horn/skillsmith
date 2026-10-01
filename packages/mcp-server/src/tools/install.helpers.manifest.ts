@@ -9,7 +9,12 @@
 
 import * as fs from 'fs/promises'
 import * as path from 'path'
-import { assertNotRealUserHome, loadManifestForWrite, withFileLock } from '@skillsmith/core'
+import {
+  assertNotRealUserHome,
+  loadManifestForWrite,
+  loadManifestLenient,
+  withFileLock,
+} from '@skillsmith/core'
 import { MANIFEST_PATH, SKILLSMITH_DIR, type SkillManifest } from './install.types.js'
 
 // ============================================================================
@@ -30,13 +35,25 @@ import { MANIFEST_PATH, SKILLSMITH_DIR, type SkillManifest } from './install.typ
  * (`outdated.action.ts` and `skill-updates.ts`) keep calling this with zero
  * args, unaffected.
  *
- * SMI-6733: this reader stays LENIENT deliberately, and those two are the only
- * remaining callers. `updateManifestSafely` used to be a third — it is not any
- * more, because a write must not proceed from a failed read (ADR-171 § 1), so
- * it takes `loadManifestForWrite` instead. Making this reader strict would turn
- * two read-only reports into thrown errors, which is why ADR-171 specifies two
- * wrappers rather than one strict reader. Giving these two the lenient wrapper
- * and surfacing its warning is Phase 2.
+ * SMI-6733: this reader stays LENIENT deliberately. `updateManifestSafely` was
+ * once a caller — it is not any more, because a write must not proceed from a
+ * failed read (ADR-171 § 1), so it takes `loadManifestForWrite` instead.
+ * Making this reader strict would turn read-only reports into thrown errors,
+ * which is why ADR-171 specifies two wrappers rather than one strict reader.
+ *
+ * SMI-6733 Phase 2 Wave 2, measured not assumed: this function now has **zero
+ * production callers**. All three — `install.ts`'s conflict pre-flight,
+ * `outdated.action.ts` and `skill-updates.ts` — take `loadManifestWithWarning`
+ * below, so a degraded read reaches the user instead of vanishing. What remains
+ * is the re-export in `install.helpers.ts` and the `vi.mock` factories in
+ * `install.test.ts` / `outdated.test.ts` / `skill-updates.test.ts`.
+ *
+ * So this is now the easy door ADR-171 names as the anti-pattern
+ * (`fan-out.manifest.ts:103`): a state-discarding reader sitting beside the
+ * correct one, where the next writer will reach for it. Retiring it is SMI-6906
+ * — it is a 57-reference mock re-point across three test files plus an API
+ * change to `install.helpers.ts`, which is why it is its own change and not
+ * this one. **Do not add a caller.**
  */
 export async function loadManifest(manifestPath: string = MANIFEST_PATH): Promise<SkillManifest> {
   try {
@@ -48,6 +65,32 @@ export async function loadManifest(manifestPath: string = MANIFEST_PATH): Promis
       installedSkills: {},
     }
   }
+}
+
+/**
+ * ADR-171 § 4b / § 10 (SMI-6733 Phase 2 Wave 2): a SIBLING of {@link
+ * loadManifest} above, not a replacement for it and not a change to its
+ * return type. `outdated.action.ts` and `skill-updates.ts` are the only two
+ * callers that need the degraded-read signal — this wraps
+ * `@skillsmith/core`'s `loadManifestLenient` (the ADR-171 § 4b read-side
+ * policy wrapper) so those two tools can surface `warning` at their
+ * response root (ADR-171 § 10's fixed wire contract: `warning?: string`,
+ * same key in both tools, carrying this value unchanged — no restructuring,
+ * no new union).
+ *
+ * The cast mirrors `updateManifestSafely`'s own `loadManifestForWrite` cast
+ * immediately below — `@skillsmith/core`'s `SkillManifest` and this
+ * package's `SkillManifest` (`install.types.ts`) are two independently
+ * declared, structurally identical interfaces (`version: string`,
+ * `installedSkills: Record<string, SkillManifestEntry>`); ADR-171 § 9
+ * forbids merging the three manifest *implementations* into one, so the
+ * cast at this one boundary is the documented trust boundary, not a hole.
+ */
+export async function loadManifestWithWarning(
+  manifestPath: string = MANIFEST_PATH
+): Promise<{ manifest: SkillManifest; warning: string | null }> {
+  const { manifest, warning } = await loadManifestLenient(manifestPath)
+  return { manifest: manifest as SkillManifest, warning }
 }
 
 /**

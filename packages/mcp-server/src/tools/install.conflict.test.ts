@@ -310,6 +310,64 @@ describe('handleMergeAction keys by client too (SMI-6358 retro)', () => {
   })
 })
 
+// SMI-6733 Phase 2 Wave 2 Step 6 / SMI-6886.
+//
+// `checkForConflicts` subscripts `manifest.installedSkills[manifestKey]`
+// (`install.conflict.ts:67`) with no guard. ADR-171 § 5's nullish carve-out
+// makes `installedSkills: null` classify `ok`, so `loadManifestLenient`
+// returns it UNCHANGED — no substitution, no warning — and the subscript
+// throws `TypeError: Cannot read properties of null`.
+//
+// Reached HERE rather than through `install.ts` deliberately, and this is a
+// correction to the plan's Step 6 assertion 3. Through `install.ts` the
+// dereference at `:306` throws FIRST, and once that one is fixed
+// `existingEntry` is `undefined`, so the `if (existingEntry)` block — which
+// is the only caller of `checkForConflicts` — never runs. So no input to
+// `install_skill` can make a nullish manifest reach this function: it is a
+// latent hazard for the next caller, and a direct unit test is the only thing
+// that can pin it.
+describe('a nullish installedSkills does not crash the conflict pre-flight (SMI-6886)', () => {
+  /** Valid JSON that the ADR-171 classifier accepts as `ok`. */
+  function manifestWithNullishSkills(): SkillManifest {
+    return { version: '1.0.0', installedSkills: null } as unknown as SkillManifest
+  }
+
+  it('resolves to proceed, exactly as an empty manifest does', async () => {
+    // The assertion is EQUIVALENCE to the empty manifest, not "it resolved".
+    // `null` and `{}` both mean "nothing installed under this key", which is
+    // the whole reason § 5 classifies `null` as `ok`; a fix that stopped the
+    // throw but answered differently for the two would be a second defect,
+    // and a bare `.resolves.not.toThrow()` would not see it.
+    const nullish = await checkForConflicts(
+      'my-skill',
+      '/installed/my-skill',
+      manifestWithNullishSkills(),
+      undefined,
+      'owner/repo/my-skill',
+      CANONICAL
+    )
+    const empty = await checkForConflicts(
+      'my-skill',
+      '/installed/my-skill',
+      { version: '1.0.0', installedSkills: {} } as unknown as SkillManifest,
+      undefined,
+      'owner/repo/my-skill',
+      CANONICAL
+    )
+
+    expect(nullish).toEqual(empty)
+    // Known-positive control for the instrument: `manifestWithEntry` above
+    // DOES reach `detectModifications` for this same client (the
+    // "still reads the bare name for the canonical client" case), so a
+    // consulted-count of 0 here is a real absence rather than a mock that was
+    // never wired.
+    expect({
+      proceeded: nullish.shouldProceed,
+      consulted: mockDetectModifications.mock.calls.length,
+    }).toEqual({ proceeded: true, consulted: 0 })
+  })
+})
+
 // EVERY non-canonical client, at BOTH call sites (SMI-6358 retro, round 3).
 //
 // An earlier version of this block sampled one extra client ('windsurf') to rule
