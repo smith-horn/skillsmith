@@ -1,11 +1,12 @@
 /**
  * Two readings of a tokenized command that exist because a single reading was
- * wrong about a real shell (SMI-6903 round 21). Both are ADDITIVE: a caller
- * keeps its own primary reading and only ADDS verdicts from these, so an
- * approximate rebuild can only ever over-block, never under-block.
+ * wrong about a real shell (SMI-6903 rounds 21 and 22). Both are ADDITIVE: a
+ * caller keeps its own primary reading and only ADDS verdicts from these, so
+ * an approximate rebuild can only ever over-block, never under-block.
  *
- *   - `transparentHeadReadings` (F1): a shell RESERVED WORD or command
- *     modifier at a segment's head is not the command.
+ *   - `transparentHeadReadings` (F1): a shell RESERVED WORD, a command
+ *     modifier, a process LAUNCHER with its own operands, or a wrapper the
+ *     caller already peels, at a segment's head, is not the command.
  *   - `nestedGroupAlternatives` (F4): a zsh glob group may contain another
  *     glob group.
  *
@@ -14,13 +15,20 @@
  * this machine), with a decoy file read or a decoy executable invoked.
  */
 
+import { LAUNCHER_TABLE, launcherStops, stripLauncher } from './shell-command-launchers.mjs'
+import { basenameOf } from './shell-command-tokenize.mjs'
+
 /**
- * Words that introduce or modify a command without BEING it.
+ * Words that introduce or modify a command without BEING it, and take no
+ * operands of their own. A head that takes operands (`timeout 5`, `nice -n 5`,
+ * `exec -a name`) is read through `LAUNCHER_TABLE` instead, which is consulted
+ * FIRST so `exec -a x cat .env` peels its flag and not just its name.
  *
- * None of them is an operator, so no segmentation can split there -- which
+ * None of these is an operator, so no segmentation can split there -- which
  * left the modifier as `argv[0]` and the reader's own name as a mere
  * argument. Every one of these ALLOWED in `env-read-guard.mjs` before this
- * reading, while emitting a decoy file's contents in all three shells:
+ * reading (round 21), while emitting a decoy file's contents in all three
+ * shells:
  *
  *   if true; then cat .env; fi        if true; then :; else cat .env; fi
  *   for f in a b; do cat .env; done   for ((i=0;i<1;i++)); do cat .env; done
@@ -35,12 +43,12 @@
  *
  * `fi`/`done`/`esac` are absent: they END a statement and never precede the
  * command they would hide. `in` is absent because the word before it stops
- * the peel (`for f in …` peels `for`, then halts on `f`).
- * `timeout`/`nice`/`xargs` are absent because each takes its OWN operands
- * before the command, so a one-word peel cannot reach it
- * (`timeout 5 cat .env` peels to `5 cat .env`); `xargs` is additionally named
- * out of contract in ADR-172 sec 1 (`echo .env | xargs cat`). Those two are
- * pinned as such in the tests rather than left unstated.
+ * the peel (`for f in …` peels `for`, then halts on `f`). `timeout`, `nice`
+ * and the other launchers were absent from round 21's version of this set
+ * and PINNED as allowed, which the round 22 cross-family gate named as a leak
+ * (`timeout 5 cat .env` prints the file in bash 5.2; `nice -n 5 cat .env` in
+ * all three) -- they are launcher-table rows now. `xargs` stays out of
+ * contract by ADR-172 sec 1: its command's arguments arrive on stdin as text.
  */
 export const TRANSPARENT_HEAD_WORDS = new Set([
   '!',
@@ -59,44 +67,127 @@ export const TRANSPARENT_HEAD_WORDS = new Set([
 ])
 
 /**
- * `argv` with every leading `TRANSPARENT_HEAD_WORDS` entry removed,
- * iteratively (`then command cat .env` peels twice). Returns the SAME array
+ * `argv` with every leading transparent word and every leading launcher
+ * (with that launcher's own flags and positionals) removed, iteratively
+ * (`then timeout 5 cat .env` peels to `cat .env`). Returns the SAME array
  * identity when nothing was peeled, so a caller pays nothing on the ordinary
  * line and can test identity rather than length.
  * @param {string[]} argv
  * @returns {string[]}
  */
 export function stripTransparentHeadWords(argv) {
-  let i = 0
-  while (i < argv.length && TRANSPARENT_HEAD_WORDS.has(argv[i])) i++
-  return i === 0 ? argv : argv.slice(i)
+  let a = argv
+  while (a.length > 0) {
+    const entry = LAUNCHER_TABLE.get(basenameOf(a[0]))
+    if (entry !== undefined) {
+      if (launcherStops(a.slice(1), entry)) break
+      a = stripLauncher(a.slice(1), entry)
+      continue
+    }
+    if (!TRANSPARENT_HEAD_WORDS.has(a[0])) break
+    a = a.slice(1)
+  }
+  return a === argv ? argv : a
 }
 
 /**
- * One extra segment per segment whose head is transparent, holding the same
- * tokens with the leading transparent WORD tokens dropped. Redirect-marked
- * words stay in place, so the segment's own input-redirect sources still
- * reach the caller's check (`then cat < .env`). A segment that is ENTIRELY
- * transparent words yields nothing: there is no command there to judge.
- *
- * Returns `[]` when no segment has a transparent head, the overwhelming
- * majority of command lines.
- * @param {Array<Array<{type: string, value?: string, redirect?: boolean}>>} segments
- * @returns {Array<Array<object>>}
+ * The reading of ONE segment with its transparent head peeled: a launcher
+ * (flags and positionals included), a transparent word, or a wrapper prefix
+ * the caller's own `peelWrappers` strips, repeated until the head is none of
+ * those. Redirect-marked words passed over on the way are KEPT, in order, in
+ * front of the remainder, so `timeout 5 cat < .env` still carries its source.
+ * Returns null when nothing was peeled, or when peeling consumed every word
+ * (`timeout 5` alone has no command to judge). A nested shell body reported
+ * by `peelWrappers` ends the peel with the reading kept, so the caller's own
+ * wrapper arm can pair the body with the redirect words carried in front.
+ * @param {Array<{type: string, value?: string, redirect?: boolean}>} segment
+ * @param {((argv: string[]) => {argv: string[], nested: string|null}) | null} peelWrappers
+ * @returns {Array<object>|null}
  */
-export function transparentHeadReadings(segments) {
-  const extra = []
-  for (const segment of segments) {
-    let i = 0
-    while (
-      i < segment.length &&
-      segment[i].type === 'word' &&
-      segment[i].redirect !== true &&
-      TRANSPARENT_HEAD_WORDS.has(segment[i].value)
-    ) {
+function peelHead(segment, peelWrappers) {
+  const kept = []
+  let i = 0
+  let peeled = false
+  // The values of the plain (non-redirect) words from `i` to the segment's
+  // next non-word token, which is what a launcher or wrapper consumes from.
+  const plainValuesFrom = (start) => {
+    const out = []
+    for (let k = start; k < segment.length && segment[k].type === 'word'; k++) {
+      if (segment[k].redirect !== true) out.push(segment[k].value)
+    }
+    return out
+  }
+  // Advance `i` past `n` plain words, keeping any redirect words in between.
+  const advancePlain = (n) => {
+    let seen = 0
+    while (i < segment.length && seen < n && segment[i].type === 'word') {
+      if (segment[i].redirect === true) kept.push(segment[i])
+      else seen++
       i++
     }
-    if (i > 0 && i < segment.length) extra.push(segment.slice(i))
+  }
+  while (i < segment.length) {
+    const t = segment[i]
+    if (t.type !== 'word') break
+    if (t.redirect === true) {
+      kept.push(t)
+      i++
+      continue
+    }
+    const entry = LAUNCHER_TABLE.get(basenameOf(t.value))
+    if (entry !== undefined) {
+      const after = plainValuesFrom(i + 1)
+      if (launcherStops(after, entry)) break
+      const consumed = after.length - stripLauncher(after, entry).length
+      i++
+      advancePlain(consumed)
+      peeled = true
+      continue
+    }
+    if (TRANSPARENT_HEAD_WORDS.has(t.value)) {
+      i++
+      peeled = true
+      continue
+    }
+    if (peelWrappers !== null) {
+      const values = plainValuesFrom(i)
+      const { argv: after, nested } = peelWrappers(values)
+      // A nested shell body stops the peel but keeps the reading: the
+      // caller's own wrapper arm then sees `bash -c cat` beside the redirect
+      // words kept above (`timeout 5 bash -c cat < .env`, measured leaking
+      // when this returned null instead).
+      if (nested !== null) break
+      const consumed = values.length - after.length
+      if (consumed > 0) {
+        advancePlain(consumed)
+        peeled = true
+        continue
+      }
+    }
+    break
+  }
+  if (!peeled || i >= segment.length) return null
+  return kept.concat(segment.slice(i))
+}
+
+/**
+ * One extra segment per segment whose head is transparent (see `peelHead`).
+ * Returns `[]` when no segment has such a head, the overwhelming majority of
+ * command lines. `peelWrappers` is the caller's own wrapper normalizer
+ * (`normalizeWrappers`), passed in rather than imported so this module stays
+ * below `shell-command-normalize.mjs` in the import graph; with it,
+ * `sudo timeout 5 cat .env` and `docker exec c timeout 5 cat /app/.env` read
+ * through to the reader, which the wrapper peel alone could not reach because
+ * it stops at the first non-wrapper word.
+ * @param {Array<Array<{type: string, value?: string, redirect?: boolean}>>} segments
+ * @param {((argv: string[]) => {argv: string[], nested: string|null}) | null} [peelWrappers]
+ * @returns {Array<Array<object>>}
+ */
+export function transparentHeadReadings(segments, peelWrappers = null) {
+  const extra = []
+  for (const segment of segments) {
+    const reading = peelHead(segment, peelWrappers)
+    if (reading !== null) extra.push(reading)
   }
   return extra
 }

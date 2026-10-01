@@ -1,0 +1,209 @@
+/**
+ * `scripts/lib/shell-command-launchers.mjs` and the launcher-aware half of
+ * `scripts/lib/shell-command-readings.mjs` (SMI-6903 round 22 F1).
+ *
+ * The launcher table moved here from the ruflo guard's own wrappers module
+ * so the env guard's transparent-head reading can consume a launcher's own
+ * flags and positionals before peeling on. Every arm below fails on
+ * `827a0b910` (the table was not reachable from the readings module there);
+ * the mutation that kills each is named beside it. End-to-end `decide()` arms
+ * live in `env-read-guard.test.ts` ("round 22 F1").
+ */
+
+import { describe, expect, it } from 'vitest'
+
+import { LAUNCHER_TABLE, peelOneLauncher, stripLauncher } from '../lib/shell-command-launchers.mjs'
+import { normalizeWrappers } from '../lib/shell-command-normalize.mjs'
+import {
+  stripTransparentHeadWords,
+  transparentHeadReadings,
+} from '../lib/shell-command-readings.mjs'
+import { tokenize } from '../lib/shell-command-tokenize.mjs'
+import { splitCommandSegments } from '../lib/shell-command-segments.mjs'
+
+const entry = (name: string) => {
+  const e = LAUNCHER_TABLE.get(name)
+  if (e === undefined) throw new Error(`no launcher row for ${name}`)
+  return e
+}
+
+describe('LAUNCHER_TABLE — the shared launcher rows', () => {
+  // Every launcher measured printing a decoy file in at least one of the three
+  // shells has a row (killed by deleting any row).
+  it.each([
+    'timeout',
+    'nice',
+    'nohup',
+    'setsid',
+    'stdbuf',
+    'ionice',
+    'caffeinate',
+    'taskset',
+    'flock',
+    'chroot',
+    'script',
+    'exec',
+    'command',
+    'builtin',
+    'xargs',
+  ])('has a row for %s', (name) => {
+    expect(LAUNCHER_TABLE.has(name)).toBe(true)
+  })
+
+  it('every row carries a positional count, a value-flag set and a stop-flag set', () => {
+    for (const [name, row] of LAUNCHER_TABLE) {
+      expect(typeof row.positionals, name).toBe('number')
+      expect(row.valueFlags, name).toBeInstanceOf(Set)
+      expect(row.stopFlags, name).toBeInstanceOf(Set)
+    }
+    expect(entry('command').stopFlags.has('-v')).toBe(true)
+  })
+
+  // The arity model each measured shape depends on (killed by changing the
+  // named row's positionals or value flags).
+  it.each<[string, string[], string[]]>([
+    ['timeout', ['5', 'cat', '.env'], ['cat', '.env']],
+    ['timeout', ['--foreground', '-k', '2', '5', 'cat', '.env'], ['cat', '.env']],
+    ['timeout', ['-s', 'TERM', '5', 'cat', '.env'], ['cat', '.env']],
+    ['nice', ['cat', '.env'], ['cat', '.env']],
+    ['nice', ['-n', '5', 'cat', '.env'], ['cat', '.env']],
+    ['nice', ['-n5', 'cat', '.env'], ['cat', '.env']],
+    ['nice', ['-5', 'cat', '.env'], ['cat', '.env']],
+    ['nice', ['--adjustment=5', 'cat', '.env'], ['cat', '.env']],
+    ['nice', ['--adjustment', '5', 'cat', '.env'], ['cat', '.env']],
+    ['stdbuf', ['-oL', 'cat', '.env'], ['cat', '.env']],
+    ['stdbuf', ['-o', 'L', 'cat', '.env'], ['cat', '.env']],
+    ['ionice', ['-c3', '-n7', 'cat', '.env'], ['cat', '.env']],
+    ['ionice', ['-c', '3', 'cat', '.env'], ['cat', '.env']],
+    ['caffeinate', ['-t', '5', 'cat', '.env'], ['cat', '.env']],
+    ['caffeinate', ['-i', 'cat', '.env'], ['cat', '.env']],
+    ['taskset', ['-c', '0', 'cat', '.env'], ['cat', '.env']],
+    ['taskset', ['1', 'cat', '.env'], ['cat', '.env']],
+    ['flock', ['-n', '/tmp/l', 'cat', '.env'], ['cat', '.env']],
+    ['flock', ['-w', '5', '/tmp/l', 'cat', '.env'], ['cat', '.env']],
+    ['chroot', ['/', 'cat', '.env'], ['cat', '.env']],
+    ['chroot', ['--userspec', 'u:g', '/', 'cat', '.env'], ['cat', '.env']],
+    ['script', ['-q', '/dev/null', 'cat', '.env'], ['cat', '.env']],
+    ['exec', ['-a', 'x', 'cat', '.env'], ['cat', '.env']],
+    ['command', ['-p', 'cat', '.env'], ['cat', '.env']],
+    ['xargs', ['-I', '{}', 'cat', '{}'], ['cat', '{}']],
+    // `--` ends the launcher's own options.
+    ['nice', ['--', 'cat', '.env'], ['cat', '.env']],
+    // Nothing after the launcher's own operands: nothing is left.
+    ['timeout', ['5'], []],
+    ['nice', ['-n', '5'], []],
+  ])('stripLauncher(%s, %j) -> %j', (name, argv, expected) => {
+    expect(stripLauncher(argv, entry(name))).toEqual(expected)
+  })
+
+  it('peelOneLauncher matches the head by basename and returns null otherwise', () => {
+    expect(peelOneLauncher(['/usr/bin/timeout', '5', 'cat', '.env'])).toEqual(['cat', '.env'])
+    expect(peelOneLauncher(['cat', '.env'])).toBeNull()
+    expect(peelOneLauncher([])).toBeNull()
+  })
+})
+
+describe('stripTransparentHeadWords — launchers and transparent words, iteratively', () => {
+  it.each<[string[], string[]]>([
+    [
+      ['timeout', '5', 'cat', '.env'],
+      ['cat', '.env'],
+    ],
+    [
+      ['then', 'timeout', '5', 'cat', '.env'],
+      ['cat', '.env'],
+    ],
+    [
+      ['timeout', '5', 'nice', '-n', '5', 'cat', '.env'],
+      ['cat', '.env'],
+    ],
+    [
+      ['nohup', 'nice', '-n', '5', 'cat', '.env'],
+      ['cat', '.env'],
+    ],
+    [
+      ['exec', '-a', 'x', 'cat', '.env'],
+      ['cat', '.env'],
+    ],
+    [
+      ['do', 'cat', '.env'],
+      ['cat', '.env'],
+    ],
+  ])('%j -> %j', (argv, expected) => {
+    expect(stripTransparentHeadWords(argv)).toEqual(expected)
+  })
+
+  it('returns the same array identity when nothing is peeled', () => {
+    const untouched = ['cat', '.env']
+    expect(stripTransparentHeadWords(untouched)).toBe(untouched)
+  })
+})
+
+const readingWords = (command: string, peel: typeof normalizeWrappers | null = null) =>
+  transparentHeadReadings(splitCommandSegments(tokenize(command)), peel).map((r) =>
+    r.map((t) => (t.redirect === true ? `<${t.value}>` : t.value))
+  )
+
+describe('transparentHeadReadings — a launcher head, with and without a wrapper peel', () => {
+  it('consumes a launcher with its flags and positionals (killed by dropping the table branch)', () => {
+    expect(readingWords('timeout --foreground -k 2 5 cat .env')).toEqual([['cat', '.env']])
+    expect(readingWords('nice -n 5 cat .env')).toEqual([['cat', '.env']])
+  })
+
+  it('keeps redirect words passed over, in order, in front of the remainder', () => {
+    // `<` and its target are redirect-marked words; the reading must still
+    // carry them so `inputRedirectSources` sees the source.
+    expect(readingWords('timeout 5 cat < .env')).toEqual([['cat', '<<>', '<.env>']])
+    expect(readingWords('timeout < .env 5 cat')).toEqual([['<<>', '<.env>', 'cat']])
+  })
+
+  it('reads through a wrapper only when the caller passes its peel (killed by ignoring the argument)', () => {
+    expect(readingWords('sudo timeout 5 cat .env')).toEqual([])
+    expect(readingWords('sudo timeout 5 cat .env', normalizeWrappers)).toEqual([['cat', '.env']])
+    expect(readingWords('docker exec c timeout 5 cat /app/.env', normalizeWrappers)).toEqual([
+      ['cat', '/app/.env'],
+    ])
+    expect(readingWords('X=1 timeout 5 cat .env', normalizeWrappers)).toEqual([['cat', '.env']])
+  })
+
+  it('stops at a nested shell body and KEEPS the reading reached so far', () => {
+    // Nothing peeled before the body: no reading (the primary one recurses it).
+    expect(readingWords("bash -c 'cat .env'", normalizeWrappers)).toEqual([])
+    // A launcher peeled before the body: the reading is the wrapper command,
+    // which the caller's own wrapper arm pairs with any kept redirect words
+    // (`timeout 5 bash -c cat < .env` leaked while this returned nothing).
+    expect(readingWords("timeout 5 bash -c 'cat .env'", normalizeWrappers)).toEqual([
+      ['bash', '-c', 'cat .env'],
+    ])
+    // The redirect words sit after the body here, so they stay in place.
+    expect(readingWords('timeout 5 bash -c cat < .env', normalizeWrappers)).toEqual([
+      ['bash', '-c', 'cat', '<<>', '<.env>'],
+    ])
+  })
+
+  it('does not peel a launcher whose own flags say it runs nothing', () => {
+    // `command -v NAME` describes NAME; peeling through it left `flock` as a
+    // launcher with no command, and the ruflo guard denied a real repository
+    // line (`… && command -v flock >/dev/null 2>&1; then`). Measured, round 22.
+    expect(readingWords('command -v flock')).toEqual([])
+    expect(readingWords('command -V cat')).toEqual([])
+    expect(readingWords('timeout --version cat .env')).toEqual([])
+    expect(stripTransparentHeadWords(['command', '-v', 'flock'])).toEqual([
+      'command',
+      '-v',
+      'flock',
+    ])
+    expect(peelOneLauncher(['command', '-v', 'flock'])).toBeNull()
+    expect(peelOneLauncher(['nice', '--help', 'cat', '.env'])).toBeNull()
+  })
+
+  it('yields nothing when peeling consumes every word', () => {
+    expect(readingWords('timeout 5')).toEqual([])
+    expect(readingWords('nice -n 5')).toEqual([])
+  })
+
+  it('yields nothing on an ordinary command', () => {
+    expect(readingWords('cat .env')).toEqual([])
+    expect(readingWords('ls -la', normalizeWrappers)).toEqual([])
+  })
+})

@@ -10,8 +10,10 @@
  * file, so it moves cleanly.
  */
 
+import { denyUnreadableGlob } from './ruflo-host-guard-verdicts.mjs'
 import {
   globGroupAlternativeReadings,
+  MAX_GLOB_READINGS,
   SEGMENT_SEPARATOR_OPS as SPLIT_OPS,
 } from './shell-command-segments.mjs'
 
@@ -72,12 +74,25 @@ export function splitSegments(tokens) {
  * command lines from `deny/unresolved-command` to `allow`, a fail-open change
  * to a guard whose whole posture is fail-closed, and it did not even fix the
  * target shape.
+ *
+ * Past the expansion's caps it FAILS CLOSED (SMI-6903 round 22 F2): the
+ * expansion returns `null` when it abandons, and a command this guard could
+ * not read is a command it does not allow. Before that, abandonment looked
+ * like "nothing to expand" and the verdict fell back to the primary reading,
+ * which allowed a five-group path zsh 5.9 invokes — coverage dropped exactly
+ * where the command got wider.
  * @param {Array<object>} tokens the full token stream for this command text
  * @param {(segments: Array<{tokens: Array<object>, precedingOp: string|null}>, index: number) => object|null} evalSegment
  * @returns {object|null}
  */
 export function evaluateGlobGroupReadings(tokens, evalSegment) {
-  for (const reading of globGroupAlternativeReadings(tokens)) {
+  const readings = globGroupAlternativeReadings(tokens)
+  if (readings === null) {
+    return denyUnreadableGlob(
+      `its alternations multiply to more than ${MAX_GLOB_READINGS} readings of one command`
+    )
+  }
+  for (const reading of readings) {
     const segments = splitSegments(reading)
     for (let i = 0; i < segments.length; i++) {
       const verdict = evalSegment(segments, i)

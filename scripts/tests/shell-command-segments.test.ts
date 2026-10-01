@@ -207,15 +207,18 @@ describe('globGroupAlternativeReadings() — SMI-6903 H1', () => {
     ])
   })
 
-  // Finding 6 (round 21): the GROUP cap had no row of its own. The five-group
-  // row below it is 32 readings, so MAX_GLOB_READINGS abandons that one too --
-  // raising MAX_GLOB_GROUPS to 99 left every row green (mutant M23). One
-  // alternative per group is ONE reading, so only the group cap can abandon it.
-  it('abandons past the GROUP cap even when the reading count is 1', () => {
-    expect(globGroupAlternativeReadings(tokenize('./(a)/(b)/(c)/(d)/(e)/x'))).toEqual([])
-    // Four groups is at the cap, so this one IS expanded -- the pair isolates
-    // the boundary rather than asserting one side of it.
-    expect(globGroupAlternativeReadings(tokenize('./(a)/(b)/(c)/(d)/x'))).toHaveLength(1)
+  // Round 22 F2: the GROUP cap (round 21 finding 6 had pinned it at four) is
+  // gone. A one-alternative group costs ONE reading, and inline scripts carry
+  // many of them (`a(1); b(2); c(3); d(4); e(5)`), so a group cap feeding a
+  // fail-closed consumer denied a real repository line and a pinned `node -e`
+  // script (measured). Only the cross product is capped now.
+  it('many one-alternative groups are one reading, never abandoned', () => {
+    expect(globGroupAlternativeReadings(tokenize('./(a)/(b)/(c)/(d)/(e)/x'))).toHaveLength(1)
+    expect(
+      globGroupAlternativeReadings(
+        tokenize("node -e 'a(1); b(2); c(3); d(4); e(5); f(6); g(7); h(8)'")
+      )
+    ).toEqual([])
   })
 
   // Finding 7 (round 21): the `adjacent` weld branch of `weldChains` had no
@@ -234,16 +237,29 @@ describe('globGroupAlternativeReadings() — SMI-6903 H1', () => {
     ])
   })
 
-  it('abandons the expansion past the group cap instead of truncating it', () => {
+  it('abandons the expansion past the reading cap instead of truncating it', () => {
     // A partial cross product would check some alternatives and not others,
-    // which reads as coverage it did not give. Five groups exceeds the cap.
-    expect(globGroupAlternativeReadings(tokenize('./(a|b)/(c|d)/(e|f)/(g|h)/(i|j)/x'))).toEqual([])
+    // which reads as coverage it did not give. Six two-way groups is 64, AT
+    // the cap and expanded; seven is 128, past it. The pair isolates the
+    // boundary rather than asserting one side of it.
+    const six = './(a|b)/(c|d)/(e|f)/(g|h)/(i|j)/(k|l)/x'
+    expect(globGroupAlternativeReadings(tokenize(six))).toHaveLength(64)
+    const seven = './(a|b)/(c|d)/(e|f)/(g|h)/(i|j)/(k|l)/(m|n)/x'
+    expect(globGroupAlternativeReadings(tokenize(seven))).toBeNull()
+    // Four groups of four alternatives is 256 readings, past the cap too.
+    const many = './(a|b|c|d)/(e|f|g|h)/(i|j|k|l)/(m|n|o|p)/x'
+    expect(globGroupAlternativeReadings(tokenize(many))).toBeNull()
   })
 
-  it('abandons the expansion past the reading cap', () => {
-    // Four groups of four alternatives is 256 readings, past MAX_GLOB_READINGS.
-    const many = './(a|b|c|d)/(e|f|g|h)/(i|j|k|l)/(m|n|o|p)/x'
-    expect(globGroupAlternativeReadings(tokenize(many))).toEqual([])
+  // Round 22 F2: ABANDONED and NOTHING-TO-EXPAND were both `[]`, so a consumer
+  // could not tell "I read every alternative" from "I read none", and the
+  // ruflo guard fell back to allow at the cap. The two are distinct values now.
+  it('distinguishes nothing-to-expand ([]) from abandoned (null)', () => {
+    expect(globGroupAlternativeReadings(tokenize('echo a b'))).toEqual([])
+    expect(globGroupAlternativeReadings(tokenize('echo (a|b)'))).toHaveLength(2)
+    expect(
+      globGroupAlternativeReadings(tokenize('echo (a|b|c|d|e|f|g|h|i) (j|k|l|m|n|o|p|q)'))
+    ).toBeNull()
   })
 
   it('a reading preserves the tokens outside the group untouched', () => {

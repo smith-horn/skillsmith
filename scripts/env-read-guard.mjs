@@ -348,7 +348,7 @@ function evaluateCommand(command, depth) {
   if (depth > MAX_DEPTH) return { kind: 'depth-cap' }
   if (typeof command !== 'string' || command.trim() === '') return null
 
-  const segments = splitCommandSegmentsWithSubRuns(tokenize(command))
+  const segments = splitCommandSegmentsWithSubRuns(tokenize(command), normalizeWrappers)
 
   for (const segment of segments) {
     for (const w of segment) {

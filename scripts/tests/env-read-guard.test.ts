@@ -1339,25 +1339,85 @@ describe('decide() — SMI-6903 F1: a reserved word or modifier cannot hide a re
     expect(decide(bashCall(command), {}).action).toBe('allow')
   })
 
-  // PINS, not arms: these pass identically with the fix removed (measured on
-  // the pre-fix tree), and they are here to record a deliberate boundary of
-  // TRANSPARENT_HEAD_WORDS rather than to constrain the reading. Each of these
-  // commands takes its OWN operands before the command name, so a one-word
-  // peel cannot reach the reader (`timeout 5 cat .env` peels to `5 cat .env`,
-  // whose argv[0] is `5`); `xargs` is additionally named out of contract in
-  // ADR-172 sec 1. They are a known under-block, not a passing check.
-  const pinsThatPassWithoutTheFix = [
+  // Still a pin, still out of contract (ADR-172 sec 1): xargs's command gets
+  // its arguments from stdin as TEXT, not as an argv path the guard can see.
+  // The launcher rows that used to sit beside it here were a leak, not a
+  // limit; they are arms in the round 22 block below.
+  it('pin (out of contract): echo .env | xargs cat -> allow', () => {
+    expect(decide(bashCall('echo .env | xargs cat'), {}).action).toBe('allow')
+  })
+})
+
+// SMI-6903 round 22 F1 (Critical, pre-existing; found by the cross-family
+// gate): a process LAUNCHER takes its own options and operands BEFORE the
+// command, so the one-word peel above stopped at `5` in `timeout 5 cat .env`,
+// and the branch had pinned that shape as an allowed limit. ADR-172 sec 1
+// class 1 covers an argv path behind a modifier head and names only `xargs`
+// out of contract, so the pin recorded a leak. The ruflo guard has read these
+// through its launcher table since SMI-6744 Wave 4; that table now lives in
+// `shell-command-launchers.mjs`, and the transparent-head reading consumes a
+// launcher's own flags and positionals, and a wrapper prefix the guard already
+// peels, before peeling on. Every arm below ALLOWED on `827a0b910`, and each
+// launcher emits a decoy file's contents on whichever of bash 3.2, bash 5.2
+// and zsh 5.9 has it (measured; the per-shell table is in that module).
+describe("decide() — SMI-6903 round 22 F1: a launcher's own operands cannot hide a reader", () => {
+  const redArms = [
     'timeout 5 cat .env',
+    'timeout --foreground -k 2 5 cat .env',
+    'timeout -s TERM 5 cat .env',
+    '/usr/bin/timeout 5 cat .env',
     'nice cat .env',
     'nice -n 5 cat .env',
-    'echo .env | xargs cat',
+    'nice -n5 cat .env',
+    'nice -5 cat .env',
+    'nice --adjustment=5 cat .env',
+    'nohup cat .env',
+    'setsid -w cat .env',
+    'stdbuf -oL cat .env',
+    'stdbuf -o L cat .env',
+    'ionice -c3 -n7 cat .env',
+    'caffeinate -t 5 cat .env',
+    'taskset -c 0 cat .env',
+    'flock -n /tmp/l cat .env',
+    'chroot / cat .env',
+    'script -q /dev/null cat .env',
+    // A transparent word's own flag: round 21 peeled the word and left `-a`.
+    'exec -a x cat .env',
+    'command -p cat .env',
+    // Chains, in both orders, and behind wrappers the guard already peels.
+    'timeout 5 nice cat .env',
+    'nice timeout 5 cat .env',
+    'nohup nice -n 5 cat .env',
+    'env X=1 timeout 5 cat .env',
+    'sudo timeout 5 cat .env',
+    'docker exec c timeout 5 cat /app/.env',
+    'if true; then timeout 5 cat .env; fi',
+    // The peeled segment keeps its own redirect words (F3 reaches the body).
+    'timeout 5 cat < .env',
+    'timeout 5 bash -c cat < .env',
   ]
-  it.each(pinsThatPassWithoutTheFix)(
-    'pin (does NOT constrain the fix; operands precede the command): %s -> allow',
-    (command) => {
-      expect(decide(bashCall(command), {}).action).toBe('allow')
-    }
-  )
+  it.each(redArms)('%s -> deny (the launcher is not the command)', (command) => {
+    expect(decide(bashCall(command), {}).action).toBe('deny')
+  })
+
+  const controls = [
+    'timeout 5 ls',
+    'nice -n 5 npm test',
+    'nohup npm run build',
+    'timeout 5 cat notes.txt',
+    'flock -n /tmp/l ls -la',
+    'sudo timeout 5 ls',
+    // The sanctioned output-free presence check survives a launcher.
+    "timeout 5 grep -qE '^KEY=' .env",
+    // `echo` is not a reader; peeling reaches it and still allows.
+    'timeout 5 echo .env',
+    // A launcher with nothing after its own operands has no command to judge.
+    'timeout 5',
+    'nice -n 5',
+  ]
+  it.each(controls)('control: %s -> allow', (command) => {
+    expect(decide(bashCall(command), {}).action).toBe('allow')
+  })
 })
 
 // SMI-6903 round 21 F2 (Critical, pre-existing): an input-redirect source that

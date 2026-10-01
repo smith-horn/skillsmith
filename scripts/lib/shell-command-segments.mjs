@@ -270,15 +270,17 @@ export function splitCommandSegmentsParensGrouping(tokens) {
 }
 
 /**
- * Caps on the glob-group expansion below. Past either one the expansion is
- * abandoned entirely (no extra readings) rather than truncated: a partial
- * cross product would silently check some alternatives and not others, which
- * reads as coverage it did not give. Abandoning leaves exactly the behaviour
- * that existed before the expansion, which is the honest degradation and is
- * recorded as a stated limit rather than a silent one.
+ * The one cap on the glob-group expansion below: the size of the cross
+ * product. Past it the expansion is abandoned whole rather than truncated and
+ * reports `null`, distinct from the `[]` of "nothing to expand", so a consumer
+ * can FAIL CLOSED (SMI-6903 round 22 F2: `[]` for both left the ruflo guard
+ * allowing a five-group path zsh 5.9 invokes). The round-21 cap on the NUMBER
+ * of groups is gone: a one-alternative group is one reading, and inline
+ * scripts (`node -e 'a(1); b(2); …'`) and SQL text carry many, so that cap
+ * plus a fail-closed consumer denied real text (measured). 64 is 2^6 two-way
+ * alternations, each one evaluator pass.
  */
-const MAX_GLOB_READINGS = 16
-const MAX_GLOB_GROUPS = 4
+export const MAX_GLOB_READINGS = 64
 
 /**
  * One word-position paren group: its `(`/`)` indices and its `|`-separated
@@ -431,14 +433,16 @@ function buildGlobReading(tokens, chains, chosen) {
  * actually form, so the SAME per-segment checks can run over each one.
  *
  * Returns `[]` when there is nothing to expand, so a caller pays nothing on
- * the overwhelming majority of command lines. Deliberately ADDITIVE: the
- * caller keeps its own primary reading and only ADDS verdicts from these, so
- * an approximate rebuild (a multi-word alternative is concatenated; a group
- * containing a nested paren is skipped) can only ever over-block, never
- * under-block. Changing the primary reading instead was measured and rejected
- * — it moved 21 real repository command lines from deny to allow.
+ * the overwhelming majority of command lines, and `null` when there IS
+ * something to expand but it is past a cap, so a caller can refuse what it
+ * could not read. Deliberately ADDITIVE otherwise: the caller keeps its own
+ * primary reading and only ADDS verdicts from these, so an approximate rebuild
+ * (a multi-word alternative is concatenated; a nested group is flattened) can
+ * only ever over-block, never under-block. Changing the primary reading instead
+ * was measured and rejected — it moved 21 real repository command lines from
+ * deny to allow.
  * @param {Array<object>} tokens
- * @returns {Array<Array<object>>}
+ * @returns {Array<Array<object>>|null}
  */
 export function globGroupAlternativeReadings(tokens) {
   const groups = []
@@ -450,10 +454,10 @@ export function globGroupAlternativeReadings(tokens) {
     groups.push(group)
     i = group.close
   }
-  if (groups.length === 0 || groups.length > MAX_GLOB_GROUPS) return []
+  if (groups.length === 0) return []
   let total = 1
   for (const g of groups) total *= Math.max(g.alts.length, 1)
-  if (total > MAX_GLOB_READINGS) return []
+  if (total > MAX_GLOB_READINGS) return null
   const chains = weldChains(tokens, groups)
   const readings = []
   const walk = (gi, chosen) => {
@@ -476,19 +480,20 @@ export function globGroupAlternativeReadings(tokens) {
  * `splitCommandSegments` PLUS `groupingOpSubRuns` PLUS the paren-grouping
  * reading PLUS the transparent-head reading of each of the first and third
  * (SMI-6903 round 21), for a consumer that checks a segment's `argv[0]` as its
- * command name. A violation found in ANY of the four denies, which is strictly more
- * conservative than any one alone and so cannot move a verdict toward ALLOW:
- * the caller scans every segment and returns on the first violation, so
- * adding segments can only add denials.
+ * command name. A violation in ANY of the four denies, so adding a reading can
+ * only add denials. `peelWrappers` is the caller's own wrapper normalizer,
+ * handed to the transparent-head reading so a launcher behind a wrapper the
+ * caller peels (`sudo timeout 5 cat .env`) is read through (round 22 F1).
  * @param {Array<{type: string, value?: string}>} tokens
+ * @param {((argv: string[]) => {argv: string[], nested: string|null}) | null} [peelWrappers]
  * @returns {Array<Array<object>>}
  */
-export function splitCommandSegmentsWithSubRuns(tokens) {
+export function splitCommandSegmentsWithSubRuns(tokens, peelWrappers = null) {
   const separator = splitCommandSegments(tokens)
   const grouping = splitCommandSegmentsParensGrouping(tokens)
   return separator
     .concat(groupingOpSubRuns(tokens))
     .concat(grouping)
-    .concat(transparentHeadReadings(separator))
-    .concat(transparentHeadReadings(grouping))
+    .concat(transparentHeadReadings(separator, peelWrappers))
+    .concat(transparentHeadReadings(grouping, peelWrappers))
 }
