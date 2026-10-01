@@ -898,6 +898,14 @@ describe('decide() — SMI-6892 C3: a ) is a comment boundary only when it close
     expect(decide(bashCall('echo in (a|b)#x; cat .env'), {}).action).toBe('deny')
   })
 
+  it('f (\\<nl>)#x; cat .env<nl>{ :; } -> deny (SMI-6892 round 18: a continuation INSIDE the function parens makes zsh read ()#x as a glob word and run the tail; bash reads a comment; the shells disagree, so the tail stays live)', () => {
+    expect(decide(bashCall('f (\\\n)#x; cat .env\n{ :; }'), {}).action).toBe('deny')
+  })
+
+  it('f(\\<nl>)#x; cat .env<nl>{ :; } -> deny (same, glued: zsh runs the tail under nonomatch)', () => {
+    expect(decide(bashCall('f(\\\n)#x; cat .env\n{ :; }'), {}).action).toBe('deny')
+  })
+
   it.each([
     ['a real read inside a subshell, no # at all', '(cat .env)'],
     ['a real read after a subshell, no #', '(echo x); cat .env'],

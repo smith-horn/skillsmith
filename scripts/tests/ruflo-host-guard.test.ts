@@ -2501,6 +2501,12 @@ describe('decide() — SMI-6892 C3: a ) is a comment boundary only when it close
     expect(result.action).toBe('deny')
     expect(reasonOf(result)).toContain('H5:')
   })
+
+  it('f (\\<nl>)#x; npx ruflo memory store<nl>{ :; } -> deny H5 (SMI-6892 round 18: a continuation INSIDE the function parens makes zsh read ()#x as a glob word and run the tail; bash reads a comment; the tail stays live)', () => {
+    const result = decide(bashCall('f (\\\n)#x; npx ruflo memory store\n{ :; }'), {})
+    expect(result.action).toBe('deny')
+    expect(reasonOf(result)).toContain('H5:')
+  })
 })
 
 // SMI-6892 C2 (round 16, pre-existing, both guards): a backslash + newline

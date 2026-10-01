@@ -359,6 +359,11 @@ describe('SMI-6892 C1: an unquoted # starts a comment only after a blank, an ope
     ],
     ['after a removed continuation with no preceding ) (echo \\<nl>#x)', 'echo \\\n#x', ['echo']],
     ['after an EMPTY function-definition ) glued to the name (f()#x)', 'f()#x', ['f']],
+    [
+      'after an EMPTY function-definition ) then a continuation OUTSIDE the parens (f()\\<nl>#x; all three shells read a comment)',
+      'f()\\\n#x',
+      ['f'],
+    ],
     ['after an EMPTY function-definition ) spaced from the name (f ()#x)', 'f ()#x', ['f']],
     [
       "after an EMPTY function-definition ) with the 'function' keyword (function f ()#x)",
@@ -415,6 +420,19 @@ describe('SMI-6892 C1: an unquoted # starts a comment only after a blank, an ope
       "NOT after 'in' used as an argument, not the case keyword (echo in (a|b)#x)",
       'echo in (a|b)#x',
       ['echo', 'in', 'a', 'b', '#x'],
+    ],
+    // SMI-6892 round 18: a `\`+newline INSIDE a function definition's parens
+    // makes zsh read `()#x` as a glob word and run the tail (bash reads a
+    // comment); the shells disagree, so the tail stays live.
+    [
+      'NOT after a function-paren close with a continuation inside (f (\\<nl>)#x)',
+      'f (\\\n)#x',
+      ['f', '#x'],
+    ],
+    [
+      'NOT after a glued function-paren close with a continuation inside (f(\\<nl>)#x)',
+      'f(\\\n)#x',
+      ['f', '#x'],
     ],
   ])('%s: %j is NOT a comment -- words %j', (_label, command, expected) => {
     expect(wordValues(tokenize(command))).toEqual(expected)

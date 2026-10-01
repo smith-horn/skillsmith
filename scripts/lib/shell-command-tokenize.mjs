@@ -424,11 +424,17 @@ export function tokenize(command) {
     // The matching `)` is a boundary iff its `(` was COMMAND position, it
     // is UNMATCHED (`parenKinds.pop()` on an empty stack is `undefined` --
     // a `case` pattern's `a)#x`), or (SMI-6892 round 17) it closes a
-    // function definition's EMPTY `name()`, nothing between `(` and `)`.
+    // function definition's EMPTY `name()`. Empty means the RAW previous
+    // character is `(`, not the tracked `prevChar`: a `\`+newline inside the
+    // parens makes zsh read `()#x` as a glob word and run the tail
+    // (measured; bash reads a comment), so a continuation there keeps the
+    // tail live (round 18).
     if (c === ')') {
       const entry = parenKinds.pop()
       closeParenIsBoundary =
-        entry === undefined || entry.kind === 'command' || (entry.fnName && prevChar === '(')
+        entry === undefined ||
+        entry.kind === 'command' ||
+        (entry.fnName === true && command[i - 1] === '(')
       i = pushOp(c, 1, i)
       continue
     }
@@ -446,21 +452,18 @@ export function tokenize(command) {
     // wider than bash's own space/tab/newline blanks (`hi<CR>#x; cmd` is
     // one word plus a live `cmd` in bash -- measured for CR/VT/FF/NBSP).
     //
-    // A `)` is a boundary by POSITION, not unconditionally (SMI-6892 round
-    // 16, bash 3.2, bash 5.2, zsh 5.9 agreeing): a command-position close
-    // (`(echo x)#x`) or an unmatched `)` (a `case` pattern) IS a boundary;
-    // a word-position close is NOT, since zsh's glob group `echo (a|b)#x`
-    // is one word and bash's `a=(1 2)#x` keeps its tail live (zsh reads a
-    // comment there: the shells disagree, so this tokenizer keeps the
-    // word-position reading, the safer direction for a guard). A removed
-    // `\`+newline continuation must not flip this: `echo (a|b)\<nl>#x` and
-    // `a=(1 2)\<nl>#x` both keep `#x` live too, which is why `prevChar`
-    // tracks the pre-backslash character instead of the `\n` the removal
-    // leaves in `command[i - 1]`.
-    //
-    // Two more close positions count too (SMI-6892 round 17): a function
-    // definition's EMPTY `name()` (no `=` in the name) and a `case`
-    // statement's own leading pattern `(` are both boundaries too.
+    // A `)` is a boundary by POSITION, not unconditionally (SMI-6892 rounds
+    // 16-18; bash 3.2, bash 5.2, zsh 5.9): a command-position close
+    // (`(echo x)#x`), an unmatched `)` (a `case` pattern), a `case`
+    // statement's own leading pattern `(`, and a function definition's
+    // raw-adjacent `name()` ARE boundaries; a word-position close is NOT,
+    // since zsh's glob group `echo (a|b)#x` is one word and bash's
+    // `a=(1 2)#x` keeps its tail live (zsh reads a comment there: the shells
+    // disagree, so the word-position reading wins, the safer direction for
+    // a guard). A removed `\`+newline continuation must not flip this:
+    // `echo (a|b)\<nl>#x` and `a=(1 2)\<nl>#x` keep `#x` live too, which
+    // is why `prevChar` tracks the pre-backslash character instead of the
+    // `\n` the removal leaves in `command[i - 1]`.
     //
     // `<`/`>` are metacharacters too but deliberately absent: their own
     // branch above always leaves `cur` non-null, so listing them is a
