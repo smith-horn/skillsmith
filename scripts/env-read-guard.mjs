@@ -27,13 +27,13 @@
  * in the denial message), not a detection heuristic of unknown
  * precision.
  *
- * **Known-uncovered bypasses (Tier 1 raises the cost, it does not close
- * these — Tier 2 plaintext removal is what makes them harmless):** shell
- * variable indirection (`V=.env; cat "$V"`), copy-then-read
- * (`cp .env /tmp/x && cat /tmp/x`), archive/encode round-trips, and any
- * reader not on READER_COMMANDS. Also out of scope entirely: NEEDLE /
- * Codex dispatch, the MCP servers' own processes, GitHub Actions
- * runners, and any non-Claude-Code process on the machine.
+ * **Known-uncovered bypasses (Tier 1 raises the cost, it does not close these — Tier 2
+ * plaintext removal is what makes them harmless):** shell variable indirection
+ * (`V=.env; cat "$V"`), copy-then-read (`cp .env /tmp/x && cat /tmp/x`), archive/encode
+ * round-trips, any reader not on READER_COMMANDS, and a reader fed the filename from
+ * another command's OUTPUT, not its own argv (`echo .env | xargs cat`, `find . -name
+ * .env -exec cat {} \;`). Also out of scope: NEEDLE / Codex dispatch, the MCP servers'
+ * own processes, GitHub Actions runners, and any non-Claude-Code process on the machine.
  *
  * Env vars (plain local environment variables — this hook runs
  * client-side in a developer's own Claude Code session, not in CI):
@@ -66,6 +66,7 @@ import {
   MAX_DEPTH,
   normalizeWrappers,
   scanPositionalScriptText,
+  splitCommandSegmentsWithSubRuns,
   tokenize,
 } from './lib/shell-command-normalize.mjs'
 
@@ -316,30 +317,27 @@ function checkArgv(argv) {
 }
 
 /**
- * Evaluate a full command string: split on shell operators, recurse into
- * command substitutions (any nesting depth) and `bash -c` bodies, check
- * each segment. Contract: a protected file spelled LITERALLY anywhere,
- * substitution bodies included, is a read target. Limit: a name the shell
- * only ASSEMBLES at runtime -- a variable, a non-literal emitter, or a
- * literal split across a substitution boundary -- is not spelled anywhere
- * this guard can read, and stays out of reach (same limit as a plain
- * variable: `f=.en; cat ${f}v`).
+ * Evaluate a full command string: split on shell operators, recurse into command
+ * substitutions and `bash -c` bodies, check each segment. Contract: a protected file
+ * spelled LITERALLY anywhere, substitution bodies included, up to `MAX_DEPTH` nesting
+ * levels, is a read target -- an unquoted `${...}` expansion is NOT an exception
+ * (`SEGMENT_SEPARATOR_OPS` never tears a brace apart, and `groupingOpSubRuns` keeps the
+ * command name a brace merge would otherwise hide). Past `MAX_DEPTH` a nested command
+ * denies with kind `'depth-cap'` unread, never silently allowed. Limit: a name the shell
+ * only ASSEMBLES at runtime (a variable, a non-literal emitter, a literal split across a
+ * substitution boundary) is not spelled anywhere this guard can read (`f=.en; cat ${f}v`).
  * @returns {{ kind: string, file?: string, format?: string } | null}
  */
 function evaluateCommand(command, depth) {
-  if (depth > MAX_DEPTH || typeof command !== 'string' || command.trim() === '') return null
+  // Fail CLOSED at the cap -- the posture `evaluateGuardCommand` takes at
+  // the same `MAX_DEPTH`, and the one `flattenSubWords`' docblock claims
+  // for this file. Folded into the checks below it returned null (ALLOW),
+  // so a validity-checked 7-level `bash -c` chain hid its innermost `cat
+  // .env`; the flatten's own cap covers only substitution bodies.
+  if (depth > MAX_DEPTH) return { kind: 'depth-cap' }
+  if (typeof command !== 'string' || command.trim() === '') return null
 
-  const segments = []
-  let current = []
-  for (const token of tokenize(command)) {
-    if (token.type === 'op') {
-      if (current.length > 0) segments.push(current)
-      current = []
-    } else {
-      current.push(token)
-    }
-  }
-  if (current.length > 0) segments.push(current)
+  const segments = splitCommandSegmentsWithSubRuns(tokenize(command))
 
   for (const segment of segments) {
     for (const w of segment) {
@@ -402,6 +400,10 @@ const ALTERNATIVE =
   'Use `varlock load` (default pretty format, masked) or `varlock load --quiet` for validation only; ' +
   'for a genuine false positive, re-run with SKILLSMITH_ENV_READ_GUARD_DISABLE=1.'
 
+/** `varlock load` fixes nothing about nesting -- depth-cap gets its own tail. */
+const DEPTH_CAP_ALTERNATIVE =
+  'Simplify the nesting, or for a genuine false positive re-run with SKILLSMITH_ENV_READ_GUARD_DISABLE=1.'
+
 /** @param {{ kind: string, file?: string, format?: string }} violation */
 function reasonFor(violation) {
   if (violation.kind === 'varlock-format') {
@@ -413,7 +415,7 @@ function reasonFor(violation) {
   if (violation.kind === 'depth-cap') {
     return (
       `[env-read-guard] This command nests substitutions past depth ${MAX_DEPTH}, which ` +
-      `cannot be confirmed safe -- denied by default rather than allowed. ${ALTERNATIVE}`
+      `cannot be confirmed safe -- denied by default rather than allowed. ${DEPTH_CAP_ALTERNATIVE}`
     )
   }
   return (

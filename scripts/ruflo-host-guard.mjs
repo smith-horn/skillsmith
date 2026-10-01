@@ -383,11 +383,13 @@ function evaluateGuardSegment(segmentTokens, depth, segments, segmentIndex, embe
 /**
  * Evaluate a full command string: tokenize, split into segments (NOT
  * splitting on `{`/`}`, per `SPLIT_OPS`), evaluate each in order, return
- * the first denial. Fail-closed depth boundary — unlike
- * `env-read-guard.mjs`'s `evaluateCommand`, which returns `null` (allow)
- * once `depth > MAX_DEPTH`, this guard DENIES at that boundary, matching
- * its overall fail-closed posture (plan § "Choices Made" / § Predicate
- * Specification "Failure posture").
+ * the first denial. Fail-closed depth boundary — this guard DENIES once
+ * `depth > MAX_DEPTH`, matching its overall fail-closed posture (plan §
+ * "Choices Made" / § Predicate Specification "Failure posture").
+ * `env-read-guard.mjs`'s own `evaluateCommand` used to return `null`
+ * (allow) at the same boundary instead; since SMI-6892 it denies with kind
+ * `'depth-cap'` at the same shared `MAX_DEPTH`, so both guards now share
+ * one fail-closed posture at this cap, not two different ones.
  * @param {string} commandText
  * @param {number} depth
  * @param {boolean} [embedded] SMI-6869 Fix C — true only when `commandText`

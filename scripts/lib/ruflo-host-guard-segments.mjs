@@ -10,15 +10,21 @@
  * file, so it moves cleanly.
  */
 
+import { SEGMENT_SEPARATOR_OPS as SPLIT_OPS } from './shell-command-segments.mjs'
+
 /**
- * Real statement separators for THIS guard's own segmentation — unlike
- * `env-read-guard.mjs`'s `evaluateCommand`, which treats every op token
- * (including `{`/`}`) as a splitter, this guard deliberately does NOT
- * split on `{`/`}` so the brace-syntax check (`checkBraceSegment` in
- * `ruflo-host-guard-predicates.mjs`) can see them still grouped with the
- * command they belong to (round 1 finding 3).
+ * Real statement separators for THIS guard's own segmentation -- this
+ * guard deliberately does NOT split on `{`/`}` so the brace-syntax check
+ * (`checkBraceSegment` in `ruflo-host-guard-predicates.mjs`) can see them
+ * still grouped with the command they belong to (round 1 finding 3).
+ * `env-read-guard.mjs`'s own `evaluateCommand` used to treat every op
+ * token, `{`/`}` included, as a splitter; since SMI-6892 it splits on this
+ * SAME shared `SEGMENT_SEPARATOR_OPS` set (imported here under the local
+ * name `SPLIT_OPS` this file already used, M-4 governance round -- the two
+ * sets had drifted into a byte-identical independent copy, now one source)
+ * plus `groupingOpSubRuns`'s own separate sub-run check for the words a
+ * dropped `{`/`}` merges, so a violation in either denies.
  */
-const SPLIT_OPS = new Set([';', '&&', '||', '|', '&', '\n', '(', ')'])
 
 /**
  * Splits `tokens` into segments, each carrying the operator that PRECEDED

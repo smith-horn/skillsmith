@@ -643,6 +643,29 @@ describe('decide() — M-D: standing arm for the fail-closed depth-cap boundary 
   })
 })
 
+// SMI-6869 governance round 15 C3 (control, not a fix for THIS file): the
+// sibling env-read-guard.mjs's own depth cap failed OPEN at its shared
+// MAX_DEPTH -- this guard's own `evaluateGuardCommand` already failed
+// CLOSED at the same cap before that fix, and this file was not touched by
+// it. A 7-level `bash -c` chain (the same construction env-read-guard's own
+// round-15 C3 test uses, not this file's usual `echo $(...)` nesting) must
+// still deny exactly as it did before.
+describe("decide() — SMI-6869 governance round 15 C3 control: this guard's own depth cap is unaffected by the sibling env-read-guard.mjs fix", () => {
+  function nestBashC(n: number, inner: string): string {
+    let s = inner
+    for (let k = 0; k < n; k++) {
+      s = 'bash -c "' + s.replace(/\\/g, '\\\\').replace(/"/g, '\\"') + '"'
+    }
+    return s
+  }
+
+  it('a 7-level bash -c chain around npx ruflo memory store still denies with "internal error", unchanged', () => {
+    const result = decide(bashCall(nestBashC(7, 'npx ruflo memory store')), {})
+    expect(result.action).toBe('deny')
+    expect(reasonOf(result)).toContain('internal error')
+  })
+})
+
 // --- SMI-6744 Wave 4 DELTA governance round: H-1 through M-6, L-1 through L-4 ---
 // Every red arm below was watched failing (allowing, or denying via the
 // wrong predicate) against the unfixed code before its fix landed — see
@@ -2360,6 +2383,150 @@ describe('decide() — SMI-6869 governance round 12 F4: an unquoted # at a word 
       expect(decide(bashCall(command), {}).action).toBe('allow')
     }
   )
+})
+
+// SMI-6869 governance round 15 (C1 regression, this PR's own comment rule):
+// the round-12 F4 fix used `cur === null` alone as the comment boundary,
+// which is the TOKENIZER's word boundary, not bash's -- `{`/`}` flush as op
+// tokens unconditionally, and the whitespace flush used JS `/\s/`, which
+// treats CR/VT/FF/NBSP as blanks though bash's own word-ending blanks are
+// only space/tab/newline. Either gap let a "comment" swallow a real ruflo
+// invocation after it. Fixed with a positive allowlist
+// (`COMMENT_BOUNDARY_CHARS`) shared with env-read-guard.mjs's own tokenizer.
+describe('decide() — SMI-6869 governance round 15 C1: a # glued to }/{ or to a non-bash blank is not a comment boundary, so H5 still fires on the invocation after it', () => {
+  it.each([
+    ['glued to } (${X}#x)', 'echo ${X}#x; npx ruflo memory store'],
+    ['glued to a non-bash blank (NBSP)', 'echo hi\u00a0#x; npx ruflo memory store'],
+  ])(
+    '%s -> deny H5 (the # never starts a comment, so the invocation is not hidden)',
+    (_label, command) => {
+      const result = decide(bashCall(command), {})
+      expect(result.action).toBe('deny')
+      expect(reasonOf(result)).toContain('H5:')
+    }
+  )
+
+  it('echo hi # x; npx ruflo memory store -> allow (control: a REAL comment, preceded by an actual space, still hides the invocation)', () => {
+    expect(decide(bashCall('echo hi # x; npx ruflo memory store'), {}).action).toBe('allow')
+  })
+
+  it('echo a\\#b; npx ruflo memory store -> deny H5 (control: an escaped # never starts a comment, boundary or not)', () => {
+    const result = decide(bashCall('echo a\\#b; npx ruflo memory store'), {})
+    expect(result.action).toBe('deny')
+    expect(reasonOf(result)).toContain('H5:')
+  })
+
+  it.each([
+    ['parameter-length operator (${#arr[@]})', 'echo ${#arr[@]}; npx ruflo memory store'],
+    ['parameter-pattern operator (${v#pat})', 'echo ${v#pat}; npx ruflo memory store'],
+    ['a URL fragment (http://x/#f)', 'echo http://x/#f; npx ruflo memory store'],
+  ])(
+    '%s -> deny H5 (control: unaffected by this fix, a genuine non-comment # the guard already read correctly)',
+    (_label, command) => {
+      const result = decide(bashCall(command), {})
+      expect(result.action).toBe('deny')
+      expect(reasonOf(result)).toContain('H5:')
+    }
+  )
+})
+
+// SMI-6892 C3 (round 16): a `)` is a comment boundary only when it closes
+// a COMMAND-position `(` (a real subshell/group), or it is UNMATCHED --
+// measured in bash 3.2, bash 5.2 and zsh 5.9, all three agreeing. A
+// WORD-position `)` is NOT a boundary: zsh's glob-alternation group
+// `(a|b)#x` (measured live -- with no match, zsh's own parse error is `no
+// matches found: (a|b)#x`, i.e. `#x` was already part of the glob token)
+// and bash's array-assignment parens `a=(1 2)#x` (bash runs the tail; zsh
+// reads a comment -- the shells disagree, so the word-position reading
+// wins, the safer direction for a guard) both keep `#x` live. A
+// `\`+newline continuation removed just before the `#` does not change
+// either verdict (the continuation rows below).
+describe('decide() — SMI-6892 C3: a ) is a comment boundary only when it closes a command-position ( or is unmatched, not unconditionally', () => {
+  it('(echo x)#x; npx ruflo memory store -> allow (a command-position close -- a real subshell -- IS a comment boundary)', () => {
+    expect(decide(bashCall('(echo x)#x; npx ruflo memory store'), {}).action).toBe('allow')
+  })
+
+  it('echo (a|b)#x; npx ruflo memory store -> deny H5 (a WORD-position close -- the zsh glob-alternation shape -- is NOT a boundary, measured live in zsh 5.9)', () => {
+    const result = decide(bashCall('echo (a|b)#x; npx ruflo memory store'), {})
+    expect(result.action).toBe('deny')
+    expect(reasonOf(result)).toContain('H5:')
+  })
+
+  it('a=(1 2)#x; npx ruflo memory store -> deny (a WORD-position close -- array assignment -- keeps the tail live in bash; the VAR= prefix then makes the unresolved `1` deny on its own, before the ruflo tail is even reached)', () => {
+    const result = decide(bashCall('a=(1 2)#x; npx ruflo memory store'), {})
+    expect(result.action).toBe('deny')
+    expect(reasonOf(result)).toContain('unresolved-command')
+  })
+
+  it('echo (a|b)\\<nl>#x; npx ruflo memory store -> deny H5 (a removed continuation right before # does not turn a word-position close into a boundary)', () => {
+    const result = decide(bashCall('echo (a|b)\\\n#x; npx ruflo memory store'), {})
+    expect(result.action).toBe('deny')
+    expect(reasonOf(result)).toContain('H5:')
+  })
+
+  it('(echo x)\\<nl>#x; npx ruflo memory store -> allow (same continuation removal, but a command-position close -- still a boundary)', () => {
+    expect(decide(bashCall('(echo x)\\\n#x; npx ruflo memory store'), {}).action).toBe('allow')
+  })
+
+  it('(echo x); npx ruflo memory store -> deny H5 (control: no # at all, unaffected by this rule)', () => {
+    const result = decide(bashCall('(echo x); npx ruflo memory store'), {})
+    expect(result.action).toBe('deny')
+    expect(reasonOf(result)).toContain('H5:')
+  })
+
+  it('f()# npx ruflo memory store<nl>{ :; }; f -> allow (SMI-6892 round 17: an EMPTY function-definition ) glued to the name IS a comment boundary)', () => {
+    expect(decide(bashCall('f()# npx ruflo memory store\n{ :; }; f'), {}).action).toBe('allow')
+  })
+
+  it("case a in (a)# npx ruflo memory store<nl>:;;<nl>esac -> allow (SMI-6892 round 17: a case statement's own leading pattern ( IS a comment boundary too)", () => {
+    expect(decide(bashCall('case a in (a)# npx ruflo memory store\n:;;\nesac'), {}).action).toBe(
+      'allow'
+    )
+  })
+
+  it('f ( )#x; npx ruflo memory store<nl>{ :; } -> deny H5 (a SPACED function-paren close -- the zsh glob-word shape -- is NOT a boundary)', () => {
+    const result = decide(bashCall('f ( )#x; npx ruflo memory store\n{ :; }'), {})
+    expect(result.action).toBe('deny')
+    expect(reasonOf(result)).toContain('H5:')
+  })
+
+  it('a=()#x; npx ruflo memory store -> deny H5 (an empty array-assignment ) keeps the tail live in bash; the name carries =, so it is not a function definition)', () => {
+    const result = decide(bashCall('a=()#x; npx ruflo memory store'), {})
+    expect(result.action).toBe('deny')
+    expect(reasonOf(result)).toContain('H5:')
+  })
+
+  it('f() { npx ruflo memory store; } -> deny H5 (control: a real function body, no # at all, unaffected by this rule)', () => {
+    const result = decide(bashCall('f() { npx ruflo memory store; }'), {})
+    expect(result.action).toBe('deny')
+    expect(reasonOf(result)).toContain('H5:')
+  })
+
+  it('f (\\<nl>)#x; npx ruflo memory store<nl>{ :; } -> deny H5 (SMI-6892 round 18: a continuation INSIDE the function parens makes zsh read ()#x as a glob word and run the tail; bash reads a comment; the tail stays live)', () => {
+    const result = decide(bashCall('f (\\\n)#x; npx ruflo memory store\n{ :; }'), {})
+    expect(result.action).toBe('deny')
+    expect(reasonOf(result)).toContain('H5:')
+  })
+})
+
+// SMI-6892 C2 (round 16, pre-existing, both guards): a backslash + newline
+// is a LINE CONTINUATION bash and zsh both remove before word splitting,
+// but the tokenizer's backslash branch appended the newline into the word
+// instead -- `npx ru<nl>flo memory store` reached the ruflo predicates as
+// the literal string `"ru\nflo"`, which is not `ruflo`, and allowed. Each
+// row below must give the EXACT SAME verdict and reason as its
+// non-continuation spelling.
+describe('decide() — SMI-6892 C2: a line continuation (backslash + newline) is invisible to the guard, exactly like its non-continuation spelling', () => {
+  it.each([
+    ['npx ru\\<nl>flo memory store (command NAME split)', 'npx ru\\\nflo memory store'],
+    ['npx \\<nl>ruflo memory store (before the name)', 'npx \\\nruflo memory store'],
+  ] as const)('%s matches its plain spelling', (_label, contCmd) => {
+    const contResult = decide(bashCall(contCmd), {})
+    const plainResult = decide(bashCall('npx ruflo memory store'), {})
+    expect(contResult.action).toBe(plainResult.action)
+    expect(contResult.action).toBe('deny')
+    expect(reasonOf(contResult)).toBe(reasonOf(plainResult))
+  })
 })
 
 describe('decide() — SMI-6869: a backtick substitution is read like a $(...) substitution: one construct, one representation', () => {

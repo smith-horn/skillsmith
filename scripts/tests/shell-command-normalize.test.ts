@@ -68,6 +68,20 @@ describe('tokenize()', () => {
     expect(wordValues(tokens)).toEqual(['echo', 'a b'])
   })
 
+  // SMI-6892 C2 (round 16, pre-existing): `\` + newline is a LINE
+  // CONTINUATION, which bash and zsh both REMOVE before word splitting --
+  // not an ordinary backslash escape, which keeps the escaped character.
+  // Measured in bash 3.2, bash 5.2 and zsh 5.9: `cat \<nl>f` reads `f`
+  // (the pair vanishes), `ca\<nl>t f` still runs `cat` (the continuation
+  // can split the command NAME itself), and the same removal happens
+  // inside double quotes. Appending the newline instead (the old
+  // behavior) put a literal `\n` INSIDE the word, which is why
+  // `cat \<nl>.env` used to reach the read check as `"\n.env"` and allow.
+  it('a backslash + newline (line continuation) is removed, not appended into the word', () => {
+    const tokens = tokenize('cat \\\n.env')
+    expect(wordValues(tokens)).toEqual(['cat', '.env'])
+  })
+
   it('records a $(...) substitution in both .value and .subs', () => {
     const tokens = tokenize('echo $(echo hi)')
     const sub = tokens[1]
@@ -291,6 +305,137 @@ describe('SMI-6869 governance round 12 F4: an unquoted # at a word boundary star
       '$N',
       ']',
     ])
+  })
+})
+
+// SMI-6892 (governance rounds 14-16, C1 fix): an unquoted # starts a
+// comment only after a blank, an operator, or at the start of input --
+// bash's own word boundary, not the tokenizer's former `cur === null`
+// check. Every "comment" row below was confirmed against REAL bash 3.2
+// (host, macOS), bash 5.2 (worktree container, Linux), AND zsh 5.9 (host --
+// the shell Claude Code's own Bash tool actually runs on this machine) --
+// all three shells agreed on every row (retro record: SMI-6892's own
+// governance-round history holds the probe scripts and raw output, not
+// reproduced here since this describe block pins the TOKENIZER's own
+// output, not a shell's). A "comment" row denies through to end of
+// line/input; a "not a comment" row keeps the `#` and everything after it
+// as ordinary word text.
+const CR = '\r'
+const VT = '\v'
+const FF = '\f'
+const NBSP = '\u00a0'
+const TAB = '\t'
+
+describe('SMI-6892 C1: an unquoted # starts a comment only after a blank, an operator, or at the start of input -- measured in bash 3.2, bash 5.2 and zsh 5.9, all three agreeing', () => {
+  it.each([
+    ['start of input', '#x', []],
+    ['after space', 'echo #x', ['echo']],
+    ['after tab', `echo${TAB}#x`, ['echo']],
+    ['after newline', 'echo a\n#x', ['echo', 'a']],
+    ['after ;', 'echo a;#x', ['echo', 'a']],
+    ['after |', 'echo a|#x', ['echo', 'a']],
+    ['after &', 'echo a&#x', ['echo', 'a']],
+    // SMI-6892 C3 (round 16): a `)` is a comment boundary by POSITION, not
+    // unconditionally -- measured in bash 3.2, bash 5.2 and zsh 5.9, all
+    // three agreeing. A COMMAND-position close (a real subshell/group, or
+    // `((...))`) IS a boundary, and so is an UNMATCHED `)` (a `case`
+    // pattern) -- see the "NOT a comment" rows below for the WORD-position
+    // (zsh glob group / bash array assignment) case that is NOT. A removed
+    // `\`+newline continuation right before the `#` must not change this
+    // verdict either way (the two continuation rows here and below). Round
+    // 17 adds two more: a function definition's EMPTY `name()`, and a
+    // `case` statement's own leading pattern `(`.
+    ['after a COMMAND-position ) (subshell, (echo a)#x)', '(echo a)#x', ['echo', 'a']],
+    ['after a COMMAND-position ) (arithmetic, ((1))#x)', '((1))#x', ['1']],
+    [
+      'after an UNMATCHED ) (case pattern, case a in a)#x<nl>esac)',
+      'case a in a)#x\nesac',
+      ['case', 'a', 'in', 'a', 'esac'],
+    ],
+    [
+      'after a COMMAND-position ) across a continuation ((echo a)\\<nl>#x)',
+      '(echo a)\\\n#x',
+      ['echo', 'a'],
+    ],
+    ['after a removed continuation with no preceding ) (echo \\<nl>#x)', 'echo \\\n#x', ['echo']],
+    ['after an EMPTY function-definition ) glued to the name (f()#x)', 'f()#x', ['f']],
+    [
+      'after an EMPTY function-definition ) then a continuation OUTSIDE the parens (f()\\<nl>#x; all three shells read a comment)',
+      'f()\\\n#x',
+      ['f'],
+    ],
+    ['after an EMPTY function-definition ) spaced from the name (f ()#x)', 'f ()#x', ['f']],
+    [
+      "after an EMPTY function-definition ) with the 'function' keyword (function f ()#x)",
+      'function f ()#x',
+      ['function', 'f'],
+    ],
+    [
+      "after a case statement's own leading pattern ( (case a in (a)#x<nl>esac)",
+      'case a in (a)#x\nesac',
+      ['case', 'a', 'in', 'a', 'esac'],
+    ],
+  ])('%s: %j is a comment -- words %j', (_label, command, expected) => {
+    expect(wordValues(tokenize(command))).toEqual(expected)
+  })
+
+  it.each([
+    ['NOT after ( (opens a word instead of a comment)', '(#x', ['#x']],
+    [
+      'NOT after a WORD-position ) (zsh glob group, echo (a|b)#x)',
+      'echo (a|b)#x',
+      ['echo', 'a', 'b', '#x'],
+    ],
+    [
+      'NOT after a WORD-position ) (array assignment, a=(1 2)#x -- bash runs the tail, zsh reads a comment; the word-position reading wins)',
+      'a=(1 2)#x',
+      ['a=', '1', '2', '#x'],
+    ],
+    [
+      'NOT after a WORD-position ) across a continuation (echo (a|b)\\<nl>#x)',
+      'echo (a|b)\\\n#x',
+      ['echo', 'a', 'b', '#x'],
+    ],
+    [
+      'NOT after a WORD-position ) across a continuation (a=(1 2)\\<nl>#x)',
+      'a=(1 2)\\\n#x',
+      ['a=', '1', '2', '#x'],
+    ],
+    ['NOT after } (${X}#foo)', '${X}#foo', ['$', 'X', '#foo']],
+    ['NOT after { in a literal brace-expansion attempt (a{b}#x)', 'a{b}#x', ['a', 'b', '#x']],
+    ["NOT after CR (not one of bash's own blanks)", `hi${CR}#x`, ['hi', '#x']],
+    ["NOT after VT (not one of bash's own blanks)", `hi${VT}#x`, ['hi', '#x']],
+    ["NOT after FF (not one of bash's own blanks)", `hi${FF}#x`, ['hi', '#x']],
+    ["NOT after NBSP (not one of bash's own blanks)", `hi${NBSP}#x`, ['hi', '#x']],
+    ['NOT mid-word (a#b)', 'a#b', ['a#b']],
+    ['NOT quoted ("a # b")', '"a # b"', ['a # b']],
+    ['NOT escaped (echo \\# x)', 'echo \\# x', ['echo', '#', 'x']],
+    ['NOT after a SPACED function-paren close (zsh glob word, f ( )#x)', 'f ( )#x', ['f', '#x']],
+    [
+      'NOT after an empty array-assignment ) (bash keeps the tail live, a=()#x)',
+      'a=()#x',
+      ['a=', '#x'],
+    ],
+    [
+      "NOT after 'in' used as an argument, not the case keyword (echo in (a|b)#x)",
+      'echo in (a|b)#x',
+      ['echo', 'in', 'a', 'b', '#x'],
+    ],
+    // SMI-6892 round 18: a `\`+newline INSIDE a function definition's parens
+    // makes zsh read `()#x` as a glob word and run the tail (bash reads a
+    // comment); the shells disagree, so the tail stays live.
+    [
+      'NOT after a function-paren close with a continuation inside (f (\\<nl>)#x)',
+      'f (\\\n)#x',
+      ['f', '#x'],
+    ],
+    [
+      'NOT after a glued function-paren close with a continuation inside (f(\\<nl>)#x)',
+      'f(\\\n)#x',
+      ['f', '#x'],
+    ],
+  ])('%s: %j is NOT a comment -- words %j', (_label, command, expected) => {
+    expect(wordValues(tokenize(command))).toEqual(expected)
   })
 })
 
