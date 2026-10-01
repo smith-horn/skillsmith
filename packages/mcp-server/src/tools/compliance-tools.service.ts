@@ -11,7 +11,7 @@
 
 import * as os from 'os'
 import * as path from 'path'
-import { ManifestManager } from '@skillsmith/core'
+import { ManifestManager, installedSkillsOf } from '@skillsmith/core'
 import type { Database } from '@skillsmith/core'
 import type { ComplianceService, ComplianceData, SkillInventoryItem } from './compliance-tools.js'
 
@@ -144,18 +144,24 @@ export function createRealComplianceService(
       // (SMI-5675) — `skills` table joined only for supplementary metadata.
       // ----------------------------------------------------------------
       const manifest = await manifestManager.load()
-      // Defensive fallback: ManifestManager.load() only guards against
-      // invalid JSON syntax (falls back to {installedSkills:{}} on a parse
-      // failure) — a manifest file that parses as valid JSON but has an
-      // unexpected shape (an old-format file, or installedSkills
-      // missing/null) is NOT caught there and would otherwise throw on
-      // Object.values() below. Degrade to "zero installed skills" rather
-      // than failing the whole compliance report.
-      const installedSkillsRecord =
-        manifest.installedSkills && typeof manifest.installedSkills === 'object'
-          ? manifest.installedSkills
-          : {}
-      const installedEntries = Object.values(installedSkillsRecord)
+      // SMI-6733: the previous comment here claimed `ManifestManager.load()`
+      // "falls back to {installedSkills:{}} on a parse failure". It does NOT —
+      // it THROWS, and has since SMI-6007. That false claim mattered because it
+      // is exactly the sentence that would talk a reader out of the fail-closed
+      // read contract (ADR-171 § 1), so it is corrected rather than softened.
+      //
+      // The guard below is still needed, but for a different reason than the one
+      // the old comment gave. ADR-171 § 5's nullish carve-out classifies
+      // `installedSkills: null` as **ok** on purpose — it is byte-identical to an
+      // absent key in the content-addressed canonical form § 3 requires — so
+      // `load()` returns it unchanged and `Object.values(null)` throws. A
+      // shape-invalid manifest (an array, a string) now classifies `corrupt` and
+      // never reaches here at all.
+      //
+      // `installedSkillsOf` is the one shared helper for that carve-out rather
+      // than a fourth hand-rolled guard; it also excludes arrays, which a bare
+      // `typeof x === 'object'` check admits.
+      const installedEntries = Object.values(installedSkillsOf(manifest))
 
       const skills: SkillInventoryItem[] = []
       if (installedEntries.length > 0) {
