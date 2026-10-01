@@ -127,6 +127,20 @@ describe('LAUNCHER_TABLE — the shared launcher rows', () => {
     ['xcrun', ['-sdk', 'macosx', '--', 'cat', '.env'], ['cat', '.env']],
     ['xcrun', ['-sdk', 'macosx', '-log', 'cat', '.env'], ['cat', '.env']],
     ['xcrun', ['-log', 'cat', '.env'], ['cat', '.env']],
+    // Round 28: orderings and combinations (each execution form measured
+    // printing by the reviewer and the queen): a value-less flag before or
+    // after the value flag, a cluster of them, an empty SDK, a repeated SDK.
+    ['xcrun', ['-log', '-sdk', 'macosx', 'cat', '.env'], ['cat', '.env']],
+    ['xcrun', ['-l', '-v', '-n', '-k', 'cat', '.env'], ['cat', '.env']],
+    ['xcrun', ['-run', '-sdk', 'macosx', 'cat', '.env'], ['cat', '.env']],
+    ['xcrun', ['-sdk', 'macosx', '-r', 'cat', '.env'], ['cat', '.env']],
+    ['xcrun', ['-sdk', '', 'cat', '.env'], ['cat', '.env']],
+    ['xcrun', ['-sdk', 'macosx', '-sdk', 'iphoneos', 'cat', '.env'], ['cat', '.env']],
+    ['xcrun', ['--sdk', 'macosx', '-sdk', 'macosx', 'cat', '.env'], ['cat', '.env']],
+    // Options are case-sensitive (`xcrun -SDK macosx cat D` exits 64 and runs
+    // nothing, measured): an unknown flag is skipped and the next word is
+    // left as the command, an over-approximation that allows here.
+    ['xcrun', ['-SDK', 'macosx', 'cat', '.env'], ['macosx', 'cat', '.env']],
     ['xargs', ['-a', 'list', '--delimiter', ',', 'cat'], ['cat']],
     // `--` ends the launcher's own options.
     ['nice', ['--', 'cat', '.env'], ['cat', '.env']],

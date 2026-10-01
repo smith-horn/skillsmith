@@ -1641,34 +1641,69 @@ describe('decide() — SMI-6908 round 27 F-17: xcrun single-dash spellings', () 
     'xcrun -sdk macosx -toolchain default cat .env',
     'xcrun -sdk macosx -- cat .env',
     'xcrun -sdk macosx -log cat .env',
+    // Round 28: orderings and combinations, each measured printing a decoy
+    // (a value-less flag before the value flag, `-run`/`-r` on either side,
+    // an empty SDK, a repeated SDK in either spelling).
+    'xcrun -log -sdk macosx cat .env',
+    'xcrun -run -sdk macosx cat .env',
+    'xcrun -r -sdk macosx cat .env',
+    'xcrun -sdk macosx -r cat .env',
+    'xcrun -sdk macosx -run cat .env',
+    'xcrun -sdk "" cat .env',
+    'xcrun -sdk macosx -sdk iphoneos cat .env',
+    'xcrun --sdk macosx -sdk macosx cat .env',
   ]
   it.each(arms)('%s -> deny (allowed on 4552e41a7)', (command) => {
     expect(decide(bashCall(command), {}).action).toBe('deny')
   })
 
   // PINS, denied on 4552e41a7 too: the value-less flags that run the command
-  // fall to the generic skip, and the double-dash forms were already rows.
+  // fall to the generic skip (singly or clustered), and the double-dash forms
+  // were already rows.
   it.each([
     'xcrun -log cat .env',
     'xcrun -v cat .env',
     'xcrun -run cat .env',
+    'xcrun -l -v -n -k cat .env',
     'xcrun --sdk macosx cat .env',
   ])('pin: %s -> deny', (command) => {
     expect(decide(bashCall(command), {}).action).toBe('deny')
   })
 
-  // Describe-only spellings run nothing (exit 64 with a trailing command,
-  // measured), so they stop the peel: allowed now, denied on 4552e41a7, where
-  // only the double-dash forms stopped (over-blocks corrected, not arms).
+  // Controls, allowed on every tree and running nothing natively (exit 64):
+  // a describe-only flag anywhere among the options stops the peel, and
+  // options are case-sensitive, so `-SDK` is an unknown flag whose next word
+  // is left as the command (an over-approximation that allows).
   it.each([
-    'xcrun -find cat .env',
-    'xcrun -show-sdk-path cat .env',
-    'xcrun -sdk macosx -find cat .env',
-    'xcrun -h cat .env',
-    'xcrun -version cat .env',
+    'xcrun -sdk macosx -f cat',
+    'xcrun -f -sdk macosx cat .env',
+    'xcrun -show-sdk-path -sdk macosx cat .env',
+    'xcrun -SDK macosx cat .env',
   ])('control (nothing runs): %s -> allow', (command) => {
     expect(decide(bashCall(command), {}).action).toBe('allow')
   })
+
+  // Describe-only spellings run nothing (exit 64 with a trailing command,
+  // measured), so they stop the peel. These five were DENIED on 4552e41a7,
+  // where only the double-dash forms stopped: over-blocks corrected, not
+  // arms (round 28 named the split).
+  it.each([
+    'xcrun -show-sdk-path cat .env',
+    'xcrun -show-sdk-version cat .env',
+    'xcrun -h cat .env',
+    'xcrun -help cat .env',
+    'xcrun -version cat .env',
+  ])('corrected over-block (nothing runs): %s -> allow', (command) => {
+    expect(decide(bashCall(command), {}).action).toBe('allow')
+  })
+  // PINS, allowed on 4552e41a7 too: `-f` already stopped through the cluster
+  // rule, and after `-sdk macosx` the peel there stopped at `macosx`.
+  it.each(['xcrun -find cat .env', 'xcrun -sdk macosx -find cat .env', 'xcrun -f cat .env'])(
+    'pin (nothing runs, allowed on every tree): %s -> allow',
+    (command) => {
+      expect(decide(bashCall(command), {}).action).toBe('allow')
+    }
+  )
 
   // Residue, pinned: usage errors that run nothing still deny, since the
   // guard cannot know xcrun rejects a glued or `=` value and a cluster.
