@@ -399,10 +399,13 @@ function evaluateCommand(command, depth) {
         : checkArgv(extraArgs.length > 0 ? argv.concat(extraArgs) : argv)
     if (violation) return violation
     // A wrapper's own redirect feeds the nested BODY's stdin, which has no
-    // argv to append to (round 21; see `checkNestedRedirectSources`).
+    // argv to append to (round 21; see `checkNestedRedirectSources`, which
+    // since SMI-6908 reads the body with every reading and follows stdin
+    // into a nested wrapper, sharing this depth counter and its cap).
     if (nested !== null) {
-      const deps = { tokenize, normalizeWrappers, checkArgv }
-      const v = checkNestedRedirectSources(nested, redirectSources, deps)
+      const onDepthCap = () => ({ kind: 'depth-cap' })
+      const deps = { tokenize, normalizeWrappers, checkArgv, maxDepth: MAX_DEPTH, onDepthCap }
+      const v = checkNestedRedirectSources(nested, redirectSources, deps, depth + 1)
       if (v) return v
     }
     // An argv[0] that is itself a substitution (after wrapper peeling)

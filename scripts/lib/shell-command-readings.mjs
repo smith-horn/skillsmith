@@ -71,6 +71,11 @@ export const TRANSPARENT_HEAD_WORDS = new Set([
   'eval',
   'builtin',
   'time',
+  // zsh's `nocorrect` precommand modifier (its sibling `noglob` is a
+  // launcher-table row): `nocorrect cat D` printed a decoy in zsh 5.9, the
+  // shell the Bash tool runs here, and allowed (SMI-6908 F-5). Silent in bash,
+  // where the word is a command not found.
+  'nocorrect',
 ])
 
 /**
@@ -210,18 +215,17 @@ function peelHead(segment, peelWrappers, splitFn, depth) {
  * the wrapper peel alone could not reach because it stops at the first
  * non-wrapper word; with the second, a `-c` body's own `;`-separated commands
  * are read one by one.
+ * `splitFn` is required (SMI-6908 F-13): a default of "one unsplit segment"
+ * would let a future caller lose a `-c` body's segmentation silently.
  * @param {Array<Array<{type: string, value?: string, redirect?: boolean}>>} segments
- * @param {((argv: string[]) => {argv: string[], nested: string|null}) | null} [peelWrappers]
- * @param {(tokens: Array<object>) => Array<Array<object>>} [splitFn]
+ * @param {((argv: string[]) => {argv: string[], nested: string|null}) | null} peelWrappers
+ * @param {(tokens: Array<object>) => Array<Array<object>>} splitFn
  * @param {number} [depth] internal: how many `-c` bodies enclose `segments`
  * @returns {Array<Array<object>>}
  */
-export function transparentHeadReadings(
-  segments,
-  peelWrappers = null,
-  splitFn = (t) => [t],
-  depth = 0
-) {
+export function transparentHeadReadings(segments, peelWrappers, splitFn, depth = 0) {
+  if (typeof splitFn !== 'function')
+    throw new TypeError('transparentHeadReadings: splitFn is required')
   const extra = []
   for (const segment of segments) {
     const readings = peelHead(segment, peelWrappers, splitFn, depth)
