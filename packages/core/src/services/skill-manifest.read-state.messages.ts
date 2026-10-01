@@ -20,8 +20,11 @@ const REPAIR_FOLLOW_UP_ISSUE = 'SMI-6862'
 const MAX_DIAGNOSTIC_VALUE_LENGTH = 120
 
 /**
- * No real path reaches this: `PATH_MAX` is 1024 on macOS and 4096 on Linux, so a
- * string longer than this cannot name a file any `open(2)` would accept.
+ * A bound on what is echoed, NOT a proof of validity — gate round 3 was right that
+ * the stronger claim was wrong. Linux's limit counts the terminating NUL and is in
+ * BYTES, while `String.length` is UTF-16 units, so a value at or below this is not
+ * guaranteed openable. What it does guarantee: every path a filesystem accepts
+ * (macOS 1024, Linux 4096) is echoed whole, and nothing larger is echoed at all.
  */
 const MAX_ECHOABLE_PATH_LENGTH = 4096
 
@@ -49,16 +52,16 @@ function pathForMessage(value: string): string {
     : `<a supplied path of ${value.length} characters, too long to name a file>`
 }
 
-/** Diagnostic sentence plus one concrete next action for a refusing state. */
 /**
- * `shownPath` is ALREADY capped by both callers, and the parameter is named for
- * that rather than `manifestPath` because an unbounded path is invisible at the
- * interpolation site. A third caller must pass `pathForMessage(...)`, not a raw path.
+ * Takes NO path, by design. Gate round 3 removed the only interpolation of one
+ * here, and dropping the parameter is what stops a future edit from reintroducing
+ * it: message construction does not need the path, and the two wrappers below
+ * already prepend it exactly once through {@link pathForMessage}.
  */
-function describeManifestProblem(
-  shownPath: string,
-  result: ManifestRefusalState
-): { detail: string; remedy: string } {
+function describeManifestProblem(result: ManifestRefusalState): {
+  detail: string
+  remedy: string
+} {
   switch (result.state) {
     case 'corrupt': {
       // `position` is EXTRACTED from `reason`, so appending it restated the
@@ -95,9 +98,18 @@ function describeManifestProblem(
       const code = result.code ?? capDiagnostic(result.reason)
       return {
         detail: `the file exists but could not be read (${code})`,
+        // The path is NOT repeated here. Gate round 3: it already opens the
+        // warning, and a second copy doubled the response for every unreadable
+        // manifest — measured 8,407 chars for a 4096-char path, and 49,369 once
+        // JSON-serialized when that path held NUL bytes, because `length` is not
+        // serialized size. Worse, the over-limit sentinel rendered as
+        // `ls -l <a supplied path of N characters…>`, where `<a` is shell
+        // redirection: an invalid command presented as advice. Keep the prose
+        // generic; the path lives at the start of the message and, raw, on
+        // `ManifestUnwritableError.path`.
         remedy:
-          `Check the file's owner and permissions (\`ls -l ${shownPath}\`), and that the ` +
-          'volume is neither full nor read-only, then retry.',
+          "Check the file's owner and permissions, and that the volume is neither full " +
+          'nor read-only, then retry.',
       }
     }
     case 'version_unsupported': {
@@ -119,7 +131,7 @@ function describeManifestProblem(
 /** ADR-171 § 8: the four required properties in one message per state. */
 export function buildRefusalMessage(manifestPath: string, result: ManifestRefusalState): string {
   const shownPath = pathForMessage(manifestPath)
-  const { detail, remedy } = describeManifestProblem(shownPath, result)
+  const { detail, remedy } = describeManifestProblem(result)
   const notModified =
     result.state === 'version_unsupported'
       ? 'Your manifest has NOT been modified — treating it as corrupt would discard the skills ' +
@@ -133,6 +145,6 @@ export function buildRefusalMessage(manifestPath: string, result: ManifestRefusa
 /** Read-only framing of the same diagnostic, for {@link loadManifestLenient}. */
 export function buildLenientWarning(manifestPath: string, result: ManifestRefusalState): string {
   const shownPath = pathForMessage(manifestPath)
-  const { detail, remedy } = describeManifestProblem(shownPath, result)
+  const { detail, remedy } = describeManifestProblem(result)
   return `${shownPath} could not be read (treated as empty): ${detail}. ${remedy}`
 }

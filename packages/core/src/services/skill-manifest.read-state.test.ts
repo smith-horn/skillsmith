@@ -37,6 +37,13 @@ import {
   ManifestUnwritableError,
 } from './skill-manifest.read-state.js'
 import type { SkillManifest, SkillManifestEntry } from './skill-installation.types.js'
+// SMI-6915 split the § 8 message builders out. Gate round 3's point: now that
+// they are a separate module with an exported surface, the two `reason` caps can
+// be tested against SYNTHETIC refusal states — a test of OUR contract, rather
+// than of whatever V8 happens to put in a parse error. That is exactly the
+// distinction that made the deleted characterization test wrong and makes these
+// two right.
+import { buildLenientWarning } from './skill-manifest.read-state.messages.js'
 
 // ============================================================================
 // Helpers
@@ -468,6 +475,62 @@ describe('ADR-171 manifest read-state classifier (SMI-6733)', () => {
         carriesNoPrefixOfIt: true,
         reportsItsLength: true,
         stillSaysTheReadFailed: true,
+      })
+    })
+
+    it('names the path exactly ONCE, however long it is', async () => {
+      // Gate round 3 regression guard. The `unreadable` remedy used to repeat the
+      // path inside an `ls -l` suggestion, so every unreadable manifest paid for
+      // two copies: measured 8,407 characters for a 4096-char path and 49,369
+      // once JSON-serialized with NUL bytes, because `String.length` is not
+      // serialized size. Halved by removing the second interpolation.
+      //
+      // Asserting the COUNT rather than a length ceiling is deliberate: a ceiling
+      // would pass again the moment someone re-added the copy with a smaller
+      // path, and the defect is the duplication, not the size.
+      const longPath = `${tmpDir}/${'p'.repeat(600)}`
+      const { warning } = await loadManifestLenient(longPath)
+      const w = warning ?? ''
+
+      expect({
+        occurrences: w.split(longPath).length - 1,
+        noShellCommandCarryingIt: !w.includes('ls -l'),
+      }).toEqual({ occurrences: 1, noShellCommandCarryingIt: true })
+    })
+
+    it('bounds an oversized `reason` on both branches that carry one', async () => {
+      // The caps gate round 1 asked for and gate round 3 asked to test directly.
+      // Driven through synthetic states, because neither is reachable from a real
+      // file on this engine — V8 self-truncates its parse message, and the
+      // `unreadable` branch prefers `result.code` whenever the error carries one.
+      // So this pins the CONTRACT (an oversized reason is bounded) without
+      // depending on an engine detail to produce it.
+      const huge = 'z'.repeat(200_000)
+
+      const unparseable = buildLenientWarning('/tmp/m.json', {
+        state: 'corrupt',
+        kind: 'unparseable',
+        reason: huge,
+        position: null,
+      })
+      const unreadable = buildLenientWarning('/tmp/m.json', {
+        state: 'unreadable',
+        reason: huge,
+        code: null, // the only path on which `reason` is consulted at all
+      })
+
+      expect({
+        unparseableBounded: unparseable.length < 2_000,
+        unreadableBounded: unreadable.length < 2_000,
+        // Still diagnostic, not merely short — and reporting the real size is
+        // what tells a reader the value was large rather than absent.
+        unparseableSaysSize: unparseable.includes('200000 chars total'),
+        unreadableSaysSize: unreadable.includes('200000 chars total'),
+      }).toEqual({
+        unparseableBounded: true,
+        unreadableBounded: true,
+        unparseableSaysSize: true,
+        unreadableSaysSize: true,
       })
     })
 
