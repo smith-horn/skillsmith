@@ -10,6 +10,8 @@
  * `shell-command-normalize.mjs`, so every existing import keeps working.
  */
 
+import { nestedGroupAlternatives, transparentHeadReadings } from './shell-command-readings.mjs'
+
 /**
  * An INPUT-redirect operator, optionally fd-prefixed: `<`, `N<`, `<>`.
  * `<&` (fd duplication) names no file. `<<<` (here-string) carries TEXT,
@@ -35,11 +37,29 @@ const INPUT_REDIRECT_OP_RE = /^[0-9]*(?:<>|<(?![<&]))/
  * allow in `env-read-guard.mjs` (regression at `50d38872d`, found by the
  * post-merge retro of PR #2970). Recovering only the INPUT sources leaves
  * Fix A's own property intact.
- * @param {Array<{type: string, value?: string, redirect?: boolean}>} segment
+ *
+ * A source that is itself a command substitution supplies its OUTPUT as the
+ * filename, so the body's own words are read targets of this segment exactly
+ * as they are when the substitution sits in an argv slot: `cat < $(echo .env)`
+ * and `cat <$(echo .env)` emit a decoy file's contents in bash 3.2, bash 5.2
+ * and zsh 5.9 while the argv twin `cat $(echo .env)` already denied (measured,
+ * SMI-6903 round 21). Pass the caller's own `flattenSubWords` to recover them;
+ * omit it for literal sources only. ADR-172 sec 1 names both classes -- an
+ * input-redirect source AND a command-substitution body at any depth -- so
+ * this is one enumerated class reaching another, not a new one.
+ *
+ * Truncation past `MAX_DEPTH` needs no handling here: the caller recurses
+ * every word's `.subs` (redirect-marked words included) BEFORE this runs and
+ * returns its own `depth-cap` violation at the same constant -- the argument
+ * `checkUnresolvedHeadTail`'s `onTruncated` docblock makes for its own caller,
+ * and executed here (a 7-deep redirect source denies `depth-cap`, pinned).
+ * @param {Array<{type: string, value?: string, redirect?: boolean, subs?: string[]}>} segment
+ * @param {((words: Array<object>) => {words: string[]}) | null} [flattenSubWords]
  * @returns {string[]}
  */
-export function inputRedirectSources(segment) {
+export function inputRedirectSources(segment, flattenSubWords = null) {
   const sources = []
+  const sourceWords = []
   for (let i = 0; i < segment.length; i++) {
     const w = segment[i]
     if (w.type !== 'word' || w.redirect !== true) continue
@@ -48,14 +68,19 @@ export function inputRedirectSources(segment) {
     const glued = w.value.slice(op[0].length)
     if (glued !== '') {
       sources.push(glued)
+      sourceWords.push(w)
       continue
     }
     // A bare operator's target is the NEXT token, tagged `redirect: true`
     // as its pending target by the tokenizer (`awaitingRedirectTarget`).
     const target = segment[i + 1]
-    if (target?.type === 'word' && target.redirect === true) sources.push(target.value)
+    if (target?.type === 'word' && target.redirect === true) {
+      sources.push(target.value)
+      sourceWords.push(target)
+    }
   }
-  return sources
+  if (flattenSubWords === null || sourceWords.length === 0) return sources
+  return sources.concat(flattenSubWords(sourceWords).words)
 }
 
 /**
@@ -135,6 +160,58 @@ export function groupingOpSubRuns(tokens) {
 }
 
 /**
+ * The argv of each segment of a shell BODY (a `bash -c` string), redirect
+ * words excluded. Whole argvs rather than head words, so a caller's
+ * flag-sensitive exceptions still see their flags: with heads alone
+ * `bash -c 'grep -q K' < .env` denied while `grep -q K .env` allowed
+ * (measured on the first draft of the fix below).
+ * @param {(command: string) => Array<object>} tokenizeFn the caller's `tokenize`
+ * @param {string} body
+ * @returns {string[][]}
+ */
+export function shellBodySegmentArgvs(tokenizeFn, body) {
+  if (typeof body !== 'string' || body.trim() === '') return []
+  const argvs = []
+  for (const segment of splitCommandSegments(tokenizeFn(body))) {
+    const argv = segment.filter((t) => t.type === 'word' && t.redirect !== true).map((t) => t.value)
+    if (argv.length > 0) argvs.push(argv)
+  }
+  return argvs
+}
+
+/**
+ * The caller's own `checkArgv`, re-run over each command in a WRAPPER's nested
+ * body with that wrapper's own input-redirect sources appended.
+ *
+ * A wrapper's redirect feeds the BODY's stdin, so the source is a read target
+ * of whichever command in the body reads it -- but the body is evaluated as
+ * TEXT, so there is no argv for the caller to append the source to, and
+ * `bash -c 'cat' < .env`, `sh -c 'cat' < .env`,
+ * `docker exec c bash -c 'cat' < /app/.env` and
+ * `varlock run -- bash -c 'cat' < .env` all reached ALLOW while their argv
+ * twins denied, every one of them emitting a decoy file's contents in bash
+ * 3.2, bash 5.2 and zsh 5.9 (SMI-6903 round 21). Every existing exception
+ * still applies, since the caller's own `checkArgv` runs:
+ * `bash -c 'wc -l' < .env` stays allowed exactly as `wc .env` is.
+ *
+ * Stated limit: ONE level. A body that is itself a wrapper
+ * (`bash -c "bash -c 'cat'" < .env`) is not descended into -- the caller's own
+ * recursion covers the body's argv paths; only the source injection stops here.
+ * @param {string} body the wrapper's nested command text
+ * @param {string[]} sources this segment's input-redirect sources
+ * @param {{tokenize: Function, normalizeWrappers: Function, checkArgv: Function}} deps
+ * @returns {object|null} the caller's own violation shape, or null
+ */
+export function checkNestedRedirectSources(body, sources, deps) {
+  if (sources.length === 0) return null
+  for (const argv of shellBodySegmentArgvs(deps.tokenize, body)) {
+    const violation = deps.checkArgv(deps.normalizeWrappers(argv).argv.concat(sources))
+    if (violation) return violation
+  }
+  return null
+}
+
+/**
  * The separators MINUS `(`/`)`, i.e. parens read as GROUPING rather than as
  * statement boundaries -- the same set `ruflo-host-guard-consumers-git.mjs`
  * uses for a git config value (ADR-172 sec 2).
@@ -205,21 +282,34 @@ const MAX_GLOB_GROUPS = 4
 
 /**
  * One word-position paren group: its `(`/`)` indices and its `|`-separated
- * alternatives. Returns null for a group containing a nested paren, which
- * this expansion deliberately does not handle (skipping it only forgoes extra
- * denials, never adds a wrong one).
+ * alternatives. A group containing a NESTED paren is read through
+ * `nestedGroupAlternatives` (SMI-6903 round 21 F4) -- zsh nests glob
+ * alternations and invokes through them, so skipping such a group left the H1
+ * fix bypassable by one extra paren; see that function for the measurement and
+ * for the approximation it accepts.
  * @param {Array<object>} tokens
  * @param {number} open index of the `(` op token
  */
 function readWordGroup(tokens, open) {
   let close = open + 1
+  let depth = 0
+  let nested = false
   while (close < tokens.length) {
     const t = tokens[close]
-    if (t.type === 'op' && t.value === '(') return null
-    if (t.type === 'op' && t.value === ')') break
+    if (t.type === 'op' && t.value === '(') {
+      depth++
+      nested = true
+    } else if (t.type === 'op' && t.value === ')') {
+      if (depth === 0) break
+      depth--
+    }
     close++
   }
   if (close >= tokens.length || tokens[close].wordGroup !== true) return null
+  if (nested) {
+    const alts = nestedGroupAlternatives(tokens, open, close)
+    return alts === null ? null : { open, close, alts }
+  }
   // Alternatives are the `|`-separated word runs inside the group. Any other
   // op inside is skipped rather than treated as a separator.
   const alts = [[]]
@@ -384,8 +474,9 @@ export function globGroupAlternativeReadings(tokens) {
 
 /**
  * `splitCommandSegments` PLUS `groupingOpSubRuns` PLUS the paren-grouping
- * reading, for a consumer that checks a segment's `argv[0]` as its command
- * name. A violation found in ANY of the three denies, which is strictly more
+ * reading PLUS the transparent-head reading of each of the first and third
+ * (SMI-6903 round 21), for a consumer that checks a segment's `argv[0]` as its
+ * command name. A violation found in ANY of the four denies, which is strictly more
  * conservative than any one alone and so cannot move a verdict toward ALLOW:
  * the caller scans every segment and returns on the first violation, so
  * adding segments can only add denials.
@@ -393,7 +484,11 @@ export function globGroupAlternativeReadings(tokens) {
  * @returns {Array<Array<object>>}
  */
 export function splitCommandSegmentsWithSubRuns(tokens) {
-  return splitCommandSegments(tokens)
+  const separator = splitCommandSegments(tokens)
+  const grouping = splitCommandSegmentsParensGrouping(tokens)
+  return separator
     .concat(groupingOpSubRuns(tokens))
-    .concat(splitCommandSegmentsParensGrouping(tokens))
+    .concat(grouping)
+    .concat(transparentHeadReadings(separator))
+    .concat(transparentHeadReadings(grouping))
 }

@@ -55,6 +55,7 @@
 
 import { basenameOf, tokenize } from './shell-command-tokenize.mjs'
 import {
+  checkNestedRedirectSources,
   groupingOpSubRuns,
   inputRedirectSources,
   SEGMENT_SEPARATOR_OPS,
@@ -65,6 +66,7 @@ import {
 
 export { basenameOf, tokenize }
 export {
+  checkNestedRedirectSources,
   groupingOpSubRuns,
   inputRedirectSources,
   SEGMENT_SEPARATOR_OPS,

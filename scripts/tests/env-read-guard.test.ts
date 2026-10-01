@@ -1285,3 +1285,186 @@ describe('decide() — SMI-6903 C3: a zsh glob group cannot hide a read target',
     expect(decide(bashCall(command), {}).action).toBe('allow')
   })
 })
+
+// SMI-6903 round 21 F1 (Critical, pre-existing and older than this branch):
+// a shell RESERVED WORD or command modifier at a segment's head is not the
+// command. None of them is an operator, so no segmentation splits there, and
+// `argv[0]` was the modifier while the reader's own name was a mere argument.
+// Every arm below ALLOWED on the pre-fix tree (the branch head before this
+// commit) and every one emits a decoy file's contents in bash 3.2 (host),
+// bash 5.2 (container) and zsh 5.9 (host, the shell Claude Code's Bash tool
+// runs on this machine) -- measured, with the decoy actually read. The WORD
+// twin of the brace fault round 15 fixed for `cat \${HOME}/.env` and the paren
+// fault C3 fixed above; fixed the same way, with an extra reading.
+describe('decide() — SMI-6903 F1: a reserved word or modifier cannot hide a reader', () => {
+  const redArms = [
+    'if true; then cat .env; fi',
+    'if true; then :; else cat .env; fi',
+    'if true; then :; elif true; then cat .env; fi',
+    'if cat .env; then :; fi',
+    'for f in a b; do cat .env; done',
+    'for ((i=0;i<3;i++)); do cat .env; done',
+    'while :; do cat .env; done',
+    'until false; do cat .env; done',
+    'select f in a; do cat .env; done',
+    'time cat .env',
+    'command cat .env',
+    'exec cat .env',
+    'eval cat .env',
+    'builtin cat .env',
+    '! cat .env',
+    // The peel is iterative, so a stacked pair still reaches the reader.
+    'then command cat .env',
+    // The peeled segment keeps its own redirect words, so an input-redirect
+    // source behind a reserved word is still this segment's read target.
+    'do cat < .env',
+  ]
+  it.each(redArms)('%s -> deny (the head word is not the command)', (command) => {
+    expect(decide(bashCall(command), {}).action).toBe('deny')
+  })
+
+  const controls = [
+    'if true; then cat notes.txt; fi',
+    'if true; then cat .env.example; fi',
+    'for f in a b; do echo "$f"; done',
+    // `echo` is not a reader, so peeling reaches it and still allows.
+    'then echo .env',
+    'command -v cat',
+    // ADR-172 sec 1's named out-of-contract shapes stay allowed: `read` prints
+    // nothing, and the loop body's `echo "$l"` is variable indirection.
+    'read -r line < .env',
+    'while IFS= read -r l; do echo "$l"; done < .env',
+  ]
+  it.each(controls)('control: %s -> allow', (command) => {
+    expect(decide(bashCall(command), {}).action).toBe('allow')
+  })
+
+  // PINS, not arms: these pass identically with the fix removed (measured on
+  // the pre-fix tree), and they are here to record a deliberate boundary of
+  // TRANSPARENT_HEAD_WORDS rather than to constrain the reading. Each of these
+  // commands takes its OWN operands before the command name, so a one-word
+  // peel cannot reach the reader (`timeout 5 cat .env` peels to `5 cat .env`,
+  // whose argv[0] is `5`); `xargs` is additionally named out of contract in
+  // ADR-172 sec 1. They are a known under-block, not a passing check.
+  const pinsThatPassWithoutTheFix = [
+    'timeout 5 cat .env',
+    'nice cat .env',
+    'nice -n 5 cat .env',
+    'echo .env | xargs cat',
+  ]
+  it.each(pinsThatPassWithoutTheFix)(
+    'pin (does NOT constrain the fix; operands precede the command): %s -> allow',
+    (command) => {
+      expect(decide(bashCall(command), {}).action).toBe('allow')
+    }
+  )
+})
+
+// SMI-6903 round 21 F2 (Critical, pre-existing): an input-redirect source that
+// is a command substitution supplies its OUTPUT as the filename, so the body's
+// own words are this segment's read targets -- the same flatten an argv-slot
+// substitution already got. Every arm ALLOWED on the pre-fix tree while its
+// argv twin DENIED, and each emits a decoy file's contents in all three
+// shells (measured). ADR-172 sec 1 names both classes; this is one reaching
+// the other.
+describe('decide() — SMI-6903 F2: a redirect source that is a substitution', () => {
+  const redArms = [
+    'cat < $(echo .env)',
+    'cat <$(echo .env)',
+    'cat < `echo .env`',
+    'cat < $(echo $(echo .env))',
+    'cat <> $(echo .env)',
+    'cat 0< $(echo .env)',
+    'head -5 < $(echo .env)',
+  ]
+  it.each(redArms)('%s -> deny (the body spells the read target)', (command) => {
+    expect(decide(bashCall(command), {}).action).toBe('deny')
+  })
+
+  const controls = ['cat < $(echo notes.txt)', 'cat < $(echo .env.example)']
+  it.each(controls)('control: %s -> allow', (command) => {
+    expect(decide(bashCall(command), {}).action).toBe('allow')
+  })
+
+  // Asserted as a PROPERTY: whatever posture a metadata-only reader has, the
+  // substitution-source spelling must match the argv spelling.
+  it('`wc < $(echo .env)` and `wc $(echo .env)` reach the SAME verdict', () => {
+    expect(decide(bashCall('wc < $(echo .env)'), {}).action).toBe(
+      decide(bashCall('wc $(echo .env)'), {}).action
+    )
+  })
+
+  // The ARM for the cap boundary: six levels is the deepest the new path
+  // reads, and it ALLOWED before the fix.
+  it('a 6-deep substitution source still denies as a read', () => {
+    const six = 'cat < $(echo $(echo $(echo $(echo $(echo $(echo .env))))))'
+    const result = decide(bashCall(six), {})
+    expect(result.action).toBe('deny')
+    expect(reasonText(result)).not.toContain('past depth')
+  })
+
+  // PIN, not an arm: this already denied `depth-cap` on the pre-fix tree
+  // (measured), because the segment's own `.subs` recursion caps at the same
+  // MAX_DEPTH and runs BEFORE the redirect sources are collected. That is
+  // exactly why `inputRedirectSources` needs no truncation handling of its
+  // own, and the row is here so that argument stops being a claim.
+  it('pin (denied depth-cap before the fix too): a 7-deep source fails CLOSED', () => {
+    const seven = 'cat < $(echo $(echo $(echo $(echo $(echo $(echo $(echo .env)))))))'
+    const result = decide(bashCall(seven), {})
+    expect(result.action).toBe('deny')
+    expect(reasonText(result)).toContain('past depth 6')
+  })
+
+  function reasonText(result: ReturnType<typeof decide>): string {
+    return result.json?.hookSpecificOutput.permissionDecisionReason ?? ''
+  }
+})
+
+// SMI-6903 round 21 F3 (Critical, pre-existing): a wrapper's own input
+// redirect feeds the NESTED body's stdin, and that body is evaluated as text
+// with no argv for the guard to append the source to -- so the source was
+// never checked at all. Every arm ALLOWED on the pre-fix tree while its argv
+// twin DENIED, and each emits a decoy file's contents in bash 3.2, bash 5.2
+// and zsh 5.9 (measured).
+describe('decide() — SMI-6903 F3: a redirect on a wrapper reaches its body', () => {
+  const redArms = [
+    "bash -c 'cat' < .env",
+    "sh -c 'cat' < .env",
+    "docker exec c bash -c 'cat' < /app/.env",
+    "varlock run -- bash -c 'cat' < .env",
+    // Every segment head of the body is checked, not just the first.
+    "bash -c 'echo hi; cat' < .env",
+    // The body's own argv is wrapper-normalized, so a nested `sudo` peels.
+    "bash -c 'sudo cat' < .env",
+  ]
+  it.each(redArms)('%s -> deny (the body consumes the redirected file)', (command) => {
+    expect(decide(bashCall(command), {}).action).toBe('deny')
+  })
+
+  const controls = [
+    // The caller's own exceptions still apply, because its own `checkArgv`
+    // runs: a metadata-only reader and an output-free grep stay allowed.
+    "bash -c 'wc -l' < .env",
+    "bash -c 'grep -q K' < .env",
+    "bash -c 'echo hi' < .env",
+    "bash -c 'cat' < notes.txt",
+  ]
+  it.each(controls)('control: %s -> allow', (command) => {
+    expect(decide(bashCall(command), {}).action).toBe('allow')
+  })
+
+  // Property, not a pinned verdict: the redirect spelling must agree with the
+  // argv spelling for the same body command, whatever that posture is.
+  it("`bash -c 'wc -l' < .env` and `wc -l .env` reach the SAME verdict", () => {
+    expect(decide(bashCall("bash -c 'wc -l' < .env"), {}).action).toBe(
+      decide(bashCall('wc -l .env'), {}).action
+    )
+  })
+
+  // PIN: the redirect INSIDE the body already denied before the fix, since the
+  // body is tokenized as its own command there. Kept so the two spellings are
+  // visibly distinguished.
+  it('pin (denied before the fix): bash -c "cat < .env" -> deny', () => {
+    expect(decide(bashCall('bash -c "cat < .env"'), {}).action).toBe('deny')
+  })
+})

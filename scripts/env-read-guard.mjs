@@ -69,6 +69,7 @@
 import { reasonFor } from './lib/env-read-guard-reasons.mjs'
 import {
   basenameOf,
+  checkNestedRedirectSources,
   checkUnresolvedHeadTail,
   flattenSubWords,
   hasInlineScriptFlag,
@@ -389,7 +390,7 @@ function evaluateCommand(command, depth) {
     // `inputRedirectSources`), fed through the SAME `checkArgv` as argv so
     // every existing exception still applies: `wc < .env` and
     // `grep -q KEY < .env` stay allowed, as `wc .env` already is.
-    const redirectSources = inputRedirectSources(segment)
+    const redirectSources = inputRedirectSources(segment, flattenSubWords)
     const extraArgs = subWords.concat(redirectSources)
     const { argv, nested } = normalizeWrappers(argvWords.map((w) => w.value))
     const violation =
@@ -397,6 +398,13 @@ function evaluateCommand(command, depth) {
         ? evaluateCommand(nested, depth + 1)
         : checkArgv(extraArgs.length > 0 ? argv.concat(extraArgs) : argv)
     if (violation) return violation
+    // A wrapper's own redirect feeds the nested BODY's stdin, which has no
+    // argv to append to (round 21; see `checkNestedRedirectSources`).
+    if (nested !== null) {
+      const deps = { tokenize, normalizeWrappers, checkArgv }
+      const v = checkNestedRedirectSources(nested, redirectSources, deps)
+      if (v) return v
+    }
     // An argv[0] that is itself a substitution (after wrapper peeling)
     // leaves the command name unresolved for this segment; see
     // `checkUnresolvedHeadTail`'s own doc for the two checks it runs.

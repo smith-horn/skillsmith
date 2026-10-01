@@ -3379,3 +3379,50 @@ describe('decide() — SMI-6903 H1: a zsh glob group cannot hide a ruflo path', 
     )
   })
 })
+
+// SMI-6903 round 21 F4 (pre-existing): one extra paren bypassed the H1 fix.
+// zsh nests glob alternations, and zsh 5.9 INVOKES a decoy executable through
+// `./((a|node_modules)|y)/.bin/tool`, `./(y|(a|node_modules))/.bin/tool` and
+// `./(a(x|node_modules))/.bin/tool` (measured, the decoy actually ran); both
+// bashes reject the syntax. `readWordGroup` skipped any group holding a nested
+// paren, so the argv[0]-keyed H3/H5 checks never saw the real path.
+describe('decide() — SMI-6903 F4: a NESTED glob group cannot hide a ruflo path', () => {
+  // The three arms that constrain the fix: each ALLOWED on the pre-fix tree.
+  const redArms = [
+    './((a|node_modules)|y)/.bin/ruflo memory store',
+    './(y|(a|node_modules))/.bin/ruflo memory store',
+    './(a(x|node_modules))/.bin/ruflo memory store',
+  ]
+  it.each(redArms)('%s -> deny (the nested group is expanded too)', (command) => {
+    expect(decide(bashCall(command), {}).action).toBe('deny')
+  })
+
+  const allowControls = [
+    // A non-ruflo binary reached the same way must stay allowed.
+    './((node_modules|x)|y)/.bin/less',
+    './((node_modules|x)|y)/.bin/tsc --noEmit',
+    // An ordinary nested group in an argument.
+    'echo ((a|b)|c)',
+    'echo (a(b|c)|d)',
+    'ls ((src|dist)|build)/index.js',
+  ]
+  it.each(allowControls)('control: %s -> allow', (command) => {
+    expect(decide(bashCall(command), {}).action).toBe('allow')
+  })
+
+  // PINS, not arms: each passes identically with the fix removed (measured).
+  // Kept so the boundaries the fix does NOT move stay visible -- the flat
+  // single-group path it already denied, the group cap it still abandons at,
+  // and the array-append shape it still never expands.
+  const pinsThatPassWithoutTheFix: Array<[string, string]> = [
+    ['./(node_modules|x)/.bin/ruflo memory store', 'deny'],
+    ['./(a|b)/(c|d)/(e|f)/(g|h)/(i|j)/ruflo memory store', 'allow'],
+    ['compose_profile_args+=(--profile "$profile")', 'allow'],
+  ]
+  it.each(pinsThatPassWithoutTheFix)(
+    'pin (does NOT constrain the fix): %s -> %s',
+    (command, expected) => {
+      expect(decide(bashCall(command), {}).action).toBe(expected)
+    }
+  )
+})
