@@ -1146,3 +1146,142 @@ describe('decide() — malformed / non-Bash input fails open to allow', () => {
     expect(result).toEqual({ action: 'allow', json: null, stderr: null })
   })
 })
+
+// SMI-6903 C1 (Critical regression, introduced by `50d38872d` / PR #2959 and
+// found by the post-merge retro of PR #2970): an INPUT redirect's source is a
+// read target. SMI-6869 Fix A tagged both the redirect operator word AND a
+// space-separated target `redirect: true` so a trailing `2>&1` could not
+// perturb a verdict, and `evaluateCommand` drops every redirect-marked word
+// from argv -- right for an output redirect, wrong for an input one. Sixteen
+// spellings went from deny to allow at that commit; `cat < .env` and
+// `cat <.env` were measured printing a decoy file's contents in bash 3.2,
+// bash 5.2 and zsh 5.9. Every arm below was watched FAILING against the
+// unfixed tree (the PR #2970 merge state) before the fix landed.
+describe('decide() — SMI-6903 C1: an input redirect source is a read target', () => {
+  const redArms = [
+    'cat < .env',
+    'cat <.env',
+    'cat 0< .env',
+    'cat <> .env',
+    'grep KEY < .env',
+    'head -5 < .env',
+    'base64 < .env',
+    'sudo cat < .env',
+    'bash -c "cat < .env"',
+    'docker exec c cat < /app/.env',
+    'cat < ./.env',
+    'cat < .env.local',
+    '$X < .env',
+  ]
+  it.each(redArms)('%s -> deny (the redirect source is the read target)', (command) => {
+    expect(decide(bashCall(command), {}).action).toBe('deny')
+  })
+
+  const controls = [
+    // An unrelated file, a safe file, and a trailing stderr redirect.
+    'cat < notes.txt',
+    'cat < .env.example',
+    'cat notes.txt 2>&1',
+    // An OUTPUT redirect writes; it does not emit the file's contents.
+    'echo hi > .env',
+    // A here-string's operand is TEXT, not a filename: measured in all three
+    // shells, `cat <<< .env` prints the four characters `.env`.
+    'cat <<< .env',
+  ]
+  it.each(controls)('control: %s -> allow', (command) => {
+    expect(decide(bashCall(command), {}).action).toBe('allow')
+  })
+
+  // Asserted as a PROPERTY rather than a pinned verdict: whatever posture the
+  // guard takes for a metadata-only reader, the redirect spelling must match
+  // the argv spelling. This stays correct if `wc` ever leaves
+  // METADATA_COMMANDS, where a hardcoded `allow` would silently go stale.
+  it('`wc < .env` and `wc .env` reach the SAME verdict (metadata-only parity)', () => {
+    expect(decide(bashCall('wc < .env'), {}).action).toBe(decide(bashCall('wc .env'), {}).action)
+  })
+
+  // Same parity argument for the one sanctioned exception.
+  it('`grep -q KEY < .env` and `grep -q KEY .env` reach the SAME verdict', () => {
+    expect(decide(bashCall('grep -q KEY < .env'), {}).action).toBe(
+      decide(bashCall('grep -q KEY .env'), {}).action
+    )
+  })
+})
+
+// SMI-6903 C2 (Critical, pre-existing): a `#` inside an arithmetic command
+// `((…))` is NOT a comment. Measured in bash 3.2, bash 5.2 and zsh 5.9:
+// `(( 1 #2 )); printf MARK` prints MARK in all three, and
+// `(( 1 #2 )); cat <decoy>` prints the decoy's contents -- while the comment
+// rule discarded the whole rest of the line, so both guards allowed it.
+// Adjacency is the discriminator and it was measured, not reasoned.
+describe('decide() — SMI-6903 C2: no comment inside an arithmetic ((…))', () => {
+  const redArms = [
+    '(( 1 #2 )); cat .env',
+    '(( #2 )); cat .env',
+    'if (( 1 #2 )); then :; fi; cat .env',
+    'true && (( 1 #2 )); cat .env',
+    '(( $(echo 1) #2 )); cat .env',
+  ]
+  it.each(redArms)('%s -> deny (the tail after the `#` is live)', (command) => {
+    expect(decide(bashCall(command), {}).action).toBe('deny')
+  })
+
+  const controls = [
+    // A SPACE between the parens makes them nested subshells, where the `#`
+    // IS a comment in all three shells, so the tail never runs.
+    '( ( 1 #2 ) ); cat .env',
+    // A `#` after the arithmetic pair CLOSES is an ordinary comment
+    // (measured: `(( 1 )) #c; printf MARK` prints nothing in all three).
+    '(( 1 )) #c; cat .env',
+  ]
+  it.each(controls)('control: %s -> allow (a real comment there)', (command) => {
+    expect(decide(bashCall(command), {}).action).toBe('allow')
+  })
+
+  it('control: a glued `16#ff` base literal is not a comment and still denies', () => {
+    expect(decide(bashCall('((1#2)); cat .env'), {}).action).toBe('deny')
+  })
+})
+
+// SMI-6903 C3 (Critical, pre-existing): a zsh glob group in ARGUMENT position
+// is one word, so the separator segmentation (which splits on `(`, `|` and
+// `)`) tore the protected path away from the reader consuming it and left it
+// as a harmless-looking `argv[0]`. Reachability was demonstrated inside the
+// gated context itself: Claude Code's Bash tool runs `/bin/zsh` 5.9 on this
+// machine, and a tool call of this exact shape printed a decoy file's
+// contents. The paren twin of the brace fault round 15 fixed for
+// `cat ${HOME}/.env`, and fixed the same way: an extra reading.
+describe('decide() — SMI-6903 C3: a zsh glob group cannot hide a read target', () => {
+  const redArms = [
+    'cat (.env|zzz)',
+    'cat (zzz|.env)',
+    'cat (.env)',
+    'head -5 (.env|zzz)',
+    'cat /app/(.env|zzz)',
+    'cat ./(.env|zzz)',
+    'cat $D/(.env|zzz)',
+  ]
+  it.each(redArms)('%s -> deny (one zsh word; the reader keeps its argument)', (command) => {
+    expect(decide(bashCall(command), {}).action).toBe('deny')
+  })
+
+  it('control: a real subshell (cat .env) still denies (command-position paren)', () => {
+    expect(decide(bashCall('(cat .env)'), {}).action).toBe('deny')
+  })
+
+  it('control: echo (a|b); cat .env -> deny (the second segment is a real read)', () => {
+    expect(decide(bashCall('echo (a|b); cat .env'), {}).action).toBe('deny')
+  })
+
+  const allowControls = [
+    'echo (a|b)',
+    'cat (notes.txt|zzz)',
+    'cat (.env.example|zzz)',
+    // An array assignment is NOT a glob alternation: its alternative holds
+    // two words, which no glob alternative can.
+    'a=(1 2); echo ok',
+  ]
+  it.each(allowControls)('control: %s -> allow', (command) => {
+    expect(decide(bashCall(command), {}).action).toBe('allow')
+  })
+})

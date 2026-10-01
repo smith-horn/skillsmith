@@ -39,6 +39,15 @@ import {
   startsComment,
 } from './shell-command-comment.mjs'
 
+/**
+ * Characters that cannot continue a word, so the character right after a `)`
+ * being one of these means no word is glued onto that `)`. Wider than
+ * `COMMENT_BOUNDARY_CHARS` on purpose: this asks "does a word start here",
+ * which every metacharacter and all of JS `/\s/` answers no to, whereas the
+ * comment rule asks the narrower "did the SHELL end a word here".
+ */
+const WORD_ENDING_RE = /[\s;|&(){}<>#]/
+
 /** @param {string} p */
 export function basenameOf(p) {
   return p.split('/').pop()
@@ -393,21 +402,31 @@ export function tokenize(command) {
     // position, so a consumer can tell zsh's glob group `(.env|zzz)` -- ONE
     // word to the shell, whose `|` is not a pipe -- from a real subshell,
     // whose `|` is. `splitCommandSegmentsParensGrouping` needs exactly that.
+    // `gluedLeft`/`gluedRight` record whether the group is WELDED to the word
+    // on that side with no blank between, which is what makes the whole run
+    // ONE zsh word: `./(node_modules|x)/.bin/ruflo` is a single path. A
+    // consumer rebuilding that word needs the adjacency, since the tokens
+    // alone cannot distinguish it from `./ (node_modules|x) /.bin/ruflo`
+    // (SMI-6903 H1; `globGroupAlternativeReadings`).
     if (c === '(') {
       const last = cur !== null ? cur : tokens[tokens.length - 1]
       const entry = classifyOpenParen(last, tokens, cur, command[i - 1], parenKinds.length)
       parenKinds.push(entry)
       if (entry.arith) arithDepth++
+      const gluedLeft = cur !== null
       i = pushOp(c, 1, i)
       tokens[tokens.length - 1].wordGroup = entry.kind === 'word'
+      tokens[tokens.length - 1].gluedLeft = gluedLeft
       continue
     }
     if (c === ')') {
       const entry = parenKinds.pop()
       if (entry?.arith === true && arithDepth > 0) arithDepth--
       closeParenIsBoundary = closingParenIsBoundary(entry, command[i - 1])
+      const after = command[i + 1]
       i = pushOp(c, 1, i)
       tokens[tokens.length - 1].wordGroup = entry !== undefined && entry.kind === 'word'
+      tokens[tokens.length - 1].gluedRight = after !== undefined && !WORD_ENDING_RE.test(after)
       continue
     }
     // An unquoted `#` begins a comment -- discard through the next newline

@@ -35,6 +35,16 @@
  * .env -exec cat {} \;`). Also out of scope: NEEDLE / Codex dispatch, the MCP servers'
  * own processes, GitHub Actions runners, and any non-Claude-Code process on the machine.
  *
+ * Named instances of the "reader not on READER_COMMANDS" clause, so they are not
+ * rediscovered as findings (SMI-6903 L2): `read -r line < .env` and
+ * `while IFS= read -r l; do echo "$l"; done < .env` are ALLOWED, and correctly so.
+ * `read` is not a reader -- it prints nothing, it assigns a variable -- so the file's
+ * contents never reach the transcript through it. The loop body's `echo "$l"` does
+ * expose them, but that is the variable-indirection clause above, which this guard
+ * does not claim to cover. Both shapes also allowed before the input-redirect fix
+ * (SMI-6903 C1), so they are a stated limit of the contract rather than a regression
+ * in it; `inputRedirectSources` deliberately does not special-case them.
+ *
  * Env vars (plain local environment variables — this hook runs
  * client-side in a developer's own Claude Code session, not in CI):
  *   SKILLSMITH_ENV_READ_GUARD_DISABLE - '1' to hard-disable; the hook
