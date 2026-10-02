@@ -4,6 +4,14 @@ All notable changes to `@skillsmith/cli` are documented here.
 
 ## [Unreleased]
 
+- **Docs (internal)**: SMI-6733 -- two comments in `install-skill.ts` pointed at `install.ts:299-301`
+  for a `resolveClientId`/`getInstallPath` pattern. Those lines held something else entirely, and had
+  before this branch started: the citation rotted at some earlier edit, and nothing noticed because
+  nothing checks a line number in a comment. Both now name the construct (`install.ts`'s own
+  `effectiveClient` resolution) instead. Found by sweeping every `install.ts:NNN` citation in the repo
+  after a cross-family review round flagged two others that a file split had shifted by 36 lines --
+  four stale citations in one sweep, which is the argument for naming constructs rather than lines.
+
 - **Fix (crash)**: SMI-6733 / SMI-6886 -- `sklx pin`, `sklx unpin` and `sklx diff` no longer break on
   a manifest whose `installedSkills` is `null`. That is not a corrupt file: ADR-171 § 5 classifies it
   `ok` deliberately, because it is byte-identical to an absent key in the content-addressed canonical
