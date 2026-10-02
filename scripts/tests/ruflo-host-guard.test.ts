@@ -3553,11 +3553,17 @@ describe('decide() — SMI-6920: a trap action is shell text', () => {
     expect(reasonOf(v)).not.toContain('unresolved-command')
     expect(decide(bashCall('eval -- echo hi'), {}).action).toBe('allow')
   })
-  it('an action that expands is H9, as an eval argument is', () => {
-    const verdict = decide(bashCall('trap "$X" EXIT'), {})
-    expect(verdict.action).toBe('deny')
-    expect(reasonOf(verdict)).toContain('H9')
-  })
+  // Round 2 (the governance review of 243a96847, H-2): an expanding trap
+  // action is the variable-indirection limit this guard already accepts,
+  // not H9. On 243a96847 it denied H9 with a false reason, and so did 19 of
+  // the 34 `trap` lines in this repository's own shell scripts, on a guard
+  // with no opt-out; on cfc96eccd every one allowed. Corrected over-blocks.
+  it.each(['trap "$X" EXIT', 'trap \'rm -rf "$TMPROOT"\' EXIT', "trap 'kill $(jobs -p)' EXIT"])(
+    'corrected over-block (denied H9 on 243a96847): %s -> allow',
+    (command) => {
+      expect(decide(bashCall(command), {})).toEqual({ action: 'allow', json: null, stderr: null })
+    }
+  )
   // PINS, denied on every tree: the two shell-text heads already read.
   it.each([
     'eval "npx ruflo memory store"',
@@ -3728,6 +3734,34 @@ describe('decide() — SMI-6903 F4: a NESTED glob group cannot hide a ruflo path
     'pin (does NOT constrain the fix): %s -> %s',
     (command, expected) => {
       expect(decide(bashCall(command), {}).action).toBe(expected)
+    }
+  )
+})
+
+// SMI-6920 round 2 (the governance review of 243a96847): the bare `env -S`
+// path read the split text alone, so `env -S npx ruflo memory store` allowed
+// while the same line behind `sudo` denied (H-1); a `trap` whose action was
+// clean ended its segment before every later predicate (M-1).
+describe('decide() — SMI-6920 round 2: env -S reads its remainder on the bare path, a clean trap falls through', () => {
+  it.each([
+    'env -S npx ruflo memory store',
+    'env -S "npx" ruflo memory store',
+    'env -S npx ruflo',
+    'env -u X -S npx ruflo memory store',
+  ])('%s -> deny (H-1, allowed on cfc96eccd and 243a96847)', (command) => {
+    expect(decide(bashCall(command), {}).action).toBe('deny')
+  })
+  // M-1: on cfc96eccd H5 read the whole argv after the `nohup` peel; on
+  // 243a96847 the clean action `npx` ended the segment. The shape runs
+  // nothing (`nohup` execs a program named `trap`), so this pins the
+  // mechanism, not a reachable bypass.
+  it('corrected regression (allowed on 243a96847): nohup trap npx ruflo EXIT -> deny', () => {
+    expect(decide(bashCall('nohup trap npx ruflo EXIT'), {}).action).toBe('deny')
+  })
+  it.each(['env -S "echo hi" x', 'trap cleanup EXIT', "trap 'exit 0' TERM INT"])(
+    'control: %s -> allow',
+    (command) => {
+      expect(decide(bashCall(command), {})).toEqual({ action: 'allow', json: null, stderr: null })
     }
   )
 })

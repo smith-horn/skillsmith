@@ -120,10 +120,12 @@ export function normalizeWrappersWithExec(argvIn) {
  * needed it, until the post-merge retro of PR #2978 found the env guard
  * allowing `env -S "cat .env"` on every tree (SMI-6920, the SMI-6737
  * shape); the extractor now lives in the shared
- * `shell-command-shell-text.mjs` beside `eval` and `trap`, unchanged in
- * behaviour, and is re-exported here so this guard's import is untouched.
+ * `shell-command-shell-text.mjs` beside `eval` and `trap`, and this guard
+ * reads the split text WITH the remaining operands env appends (its own
+ * text-only reading let `env -S npx ruflo memory store` through while the
+ * same line behind `sudo` denied; the review of 243a96847, H-1).
  */
-export { detectEnvSplitString } from './shell-command-shell-text.mjs'
+export { envSplitCommandText } from './shell-command-shell-text.mjs'
 
 /**
  * Recover the ORIGINAL token objects (with `.subs`) aligned to a

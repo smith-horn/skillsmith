@@ -587,7 +587,7 @@ describe('decide() — SMI-6869 governance round High: heredoc body dropped from
   it.each(controls)(
     'control: %s -> allow (a docs heredoc with no reader-command-shaped text)',
     (command) => {
-      expect(decide(bashCall(command), {}).action).toBe('allow')
+      expect(decide(bashCall(command), {})).toEqual({ action: 'allow', json: null, stderr: null })
     }
   )
 })
@@ -641,7 +641,7 @@ describe('decide() — SMI-6869 governance round 11 F1: a command substitution i
     'echo `date`',
     'cat `echo README.md`',
   ])('control: %s -> allow', (command) => {
-    expect(decide(bashCall(command), {}).action).toBe('allow')
+    expect(decide(bashCall(command), {})).toEqual({ action: 'allow', json: null, stderr: null })
   })
 
   it('known-positive control: cat .env -> deny', () => {
@@ -668,7 +668,7 @@ describe('decide() — SMI-6869 governance round 12 F1: a nested command substit
   it.each(['cat $(echo $(echo README.md))', 'ls $(dirname $(git rev-parse --show-toplevel))'])(
     'control: %s -> allow',
     (command) => {
-      expect(decide(bashCall(command), {}).action).toBe('allow')
+      expect(decide(bashCall(command), {})).toEqual({ action: 'allow', json: null, stderr: null })
     }
   )
 })
@@ -692,7 +692,7 @@ describe('decide() — SMI-6869 governance round 12 F2: a computed reader with a
   it.each(['$(echo ls) .env.example', '$(echo cat) README.md'])(
     'control: %s -> allow',
     (command) => {
-      expect(decide(bashCall(command), {}).action).toBe('allow')
+      expect(decide(bashCall(command), {})).toEqual({ action: 'allow', json: null, stderr: null })
     }
   )
 
@@ -728,7 +728,7 @@ describe('decide() — SMI-6892 (ADR-172 sec 1): a bare variable head (no substi
     ['$X ls -la (no protected argument at all)', '$X ls -la'],
     ['echo $X cat .env (a LITERAL, resolved echo head)', 'echo $X cat .env'],
   ])('%s -> allow (control)', (_label, command) => {
-    expect(decide(bashCall(command), {}).action).toBe('allow')
+    expect(decide(bashCall(command), {})).toEqual({ action: 'allow', json: null, stderr: null })
   })
 
   it("grep -qE '^KEY=' .env -> allow (control: the sanctioned output-free exception is unaffected)", () => {
@@ -985,7 +985,7 @@ describe('decide() — SMI-6892 C1: a merged ${VAR} segment does not hide the re
     ],
     ['echo ${X} cat README.md (literal echo head, no protected arg)', 'echo ${X} cat README.md'],
   ])('%s -> allow (control)', (_label, command) => {
-    expect(decide(bashCall(command), {}).action).toBe('allow')
+    expect(decide(bashCall(command), {})).toEqual({ action: 'allow', json: null, stderr: null })
   })
 })
 
@@ -1097,7 +1097,7 @@ describe('decide() — SMI-6869 round 13: a computed reader is judged after wrap
     'sudo $(echo cat) README.md',
     "grep -qE '^KEY=' .env",
   ])('control: %s -> allow', (command) => {
-    expect(decide(bashCall(command), {}).action).toBe('allow')
+    expect(decide(bashCall(command), {})).toEqual({ action: 'allow', json: null, stderr: null })
   })
 
   it.each(['$(echo cat) .env', 'sudo cat .env', 'docker exec skillsmith-dev-1 cat /app/.env'])(
@@ -1189,7 +1189,7 @@ describe('decide() — SMI-6903 C1: an input redirect source is a read target', 
     'cat <<< .env',
   ]
   it.each(controls)('control: %s -> allow', (command) => {
-    expect(decide(bashCall(command), {}).action).toBe('allow')
+    expect(decide(bashCall(command), {})).toEqual({ action: 'allow', json: null, stderr: null })
   })
 
   // Asserted as a PROPERTY rather than a pinned verdict: whatever posture the
@@ -1235,7 +1235,7 @@ describe('decide() — SMI-6903 C2: no comment inside an arithmetic ((…))', ()
     '(( 1 )) #c; cat .env',
   ]
   it.each(controls)('control: %s -> allow (a real comment there)', (command) => {
-    expect(decide(bashCall(command), {}).action).toBe('allow')
+    expect(decide(bashCall(command), {})).toEqual({ action: 'allow', json: null, stderr: null })
   })
 
   it('control: a glued `16#ff` base literal is not a comment and still denies', () => {
@@ -1282,7 +1282,7 @@ describe('decide() — SMI-6903 C3: a zsh glob group cannot hide a read target',
     'a=(1 2); echo ok',
   ]
   it.each(allowControls)('control: %s -> allow', (command) => {
-    expect(decide(bashCall(command), {}).action).toBe('allow')
+    expect(decide(bashCall(command), {})).toEqual({ action: 'allow', json: null, stderr: null })
   })
 })
 
@@ -1336,7 +1336,7 @@ describe('decide() — SMI-6903 F1: a reserved word or modifier cannot hide a re
     'while IFS= read -r l; do echo "$l"; done < .env',
   ]
   it.each(controls)('control: %s -> allow', (command) => {
-    expect(decide(bashCall(command), {}).action).toBe('allow')
+    expect(decide(bashCall(command), {})).toEqual({ action: 'allow', json: null, stderr: null })
   })
 
   // Still a pin, still out of contract (ADR-172 sec 1): xargs's command gets
@@ -1416,7 +1416,7 @@ describe("decide() — SMI-6903 round 22 F1: a launcher's own operands cannot hi
     'nice -n 5',
   ]
   it.each(controls)('control: %s -> allow', (command) => {
-    expect(decide(bashCall(command), {}).action).toBe('allow')
+    expect(decide(bashCall(command), {})).toEqual({ action: 'allow', json: null, stderr: null })
   })
 })
 
@@ -1521,7 +1521,7 @@ describe("decide() — SMI-6903 round 23: a launcher's full option model, and it
     'command -v cat .env',
   ]
   it.each(controls)('control: %s -> allow', (command) => {
-    expect(decide(bashCall(command), {}).action).toBe('allow')
+    expect(decide(bashCall(command), {})).toEqual({ action: 'allow', json: null, stderr: null })
   })
 })
 
@@ -1614,7 +1614,7 @@ describe('decide() — SMI-6908: a wrapper body read with every reading, the bra
     'nocorrect ls',
   ]
   it.each(controls)('control: %s -> allow', (command) => {
-    expect(decide(bashCall(command), {}).action).toBe('allow')
+    expect(decide(bashCall(command), {})).toEqual({ action: 'allow', json: null, stderr: null })
   })
 
   // PINS, measured identical on `60da8b5a8`, `673f19ceb` and here: the
@@ -1680,7 +1680,7 @@ describe('decide() — SMI-6908 round 27 F-17: xcrun single-dash spellings', () 
     'xcrun -show-sdk-path -sdk macosx cat .env',
     'xcrun -SDK macosx cat .env',
   ])('control (nothing runs): %s -> allow', (command) => {
-    expect(decide(bashCall(command), {}).action).toBe('allow')
+    expect(decide(bashCall(command), {})).toEqual({ action: 'allow', json: null, stderr: null })
   })
 
   // Describe-only spellings run nothing (exit 64 with a trailing command,
@@ -1694,14 +1694,14 @@ describe('decide() — SMI-6908 round 27 F-17: xcrun single-dash spellings', () 
     'xcrun -help cat .env',
     'xcrun -version cat .env',
   ])('corrected over-block (nothing runs): %s -> allow', (command) => {
-    expect(decide(bashCall(command), {}).action).toBe('allow')
+    expect(decide(bashCall(command), {})).toEqual({ action: 'allow', json: null, stderr: null })
   })
   // PINS, allowed on 4552e41a7 too: `-f` already stopped through the cluster
   // rule, and after `-sdk macosx` the peel there stopped at `macosx`.
   it.each(['xcrun -find cat .env', 'xcrun -sdk macosx -find cat .env', 'xcrun -f cat .env'])(
     'pin (nothing runs, allowed on every tree): %s -> allow',
     (command) => {
-      expect(decide(bashCall(command), {}).action).toBe('allow')
+      expect(decide(bashCall(command), {})).toEqual({ action: 'allow', json: null, stderr: null })
     }
   )
 
@@ -1821,7 +1821,7 @@ describe('decide() — SMI-6920: a quoted operand that is shell text, and a comp
     'env -S "printf harmless"',
     "env -S 'printf harmless' .env.example",
   ])('control: %s -> allow', (command) => {
-    expect(decide(bashCall(command), {}).action).toBe('allow')
+    expect(decide(bashCall(command), {})).toEqual({ action: 'allow', json: null, stderr: null })
   })
 
   // The depth cap still governs the new reading: an operand nested past
@@ -1857,7 +1857,7 @@ describe('decide() — SMI-6903 F2: a redirect source that is a substitution', (
 
   const controls = ['cat < $(echo notes.txt)', 'cat < $(echo .env.example)']
   it.each(controls)('control: %s -> allow', (command) => {
-    expect(decide(bashCall(command), {}).action).toBe('allow')
+    expect(decide(bashCall(command), {})).toEqual({ action: 'allow', json: null, stderr: null })
   })
 
   // Asserted as a PROPERTY: whatever posture a metadata-only reader has, the
@@ -1924,7 +1924,7 @@ describe('decide() — SMI-6903 F3: a redirect on a wrapper reaches its body', (
     "bash -c 'cat' < notes.txt",
   ]
   it.each(controls)('control: %s -> allow', (command) => {
-    expect(decide(bashCall(command), {}).action).toBe('allow')
+    expect(decide(bashCall(command), {})).toEqual({ action: 'allow', json: null, stderr: null })
   })
 
   // Property, not a pinned verdict: the redirect spelling must agree with the
@@ -1943,5 +1943,85 @@ describe('decide() — SMI-6903 F3: a redirect on a wrapper reaches its body', (
   // spellings are visibly distinguished.
   it('arm against 60da8b5a8, pin against 733427c82: bash -c "cat < .env" -> deny', () => {
     expect(decide(bashCall('bash -c "cat < .env"'), {}).action).toBe('deny')
+  })
+})
+
+// SMI-6920 round 2 (the governance review of 243a96847): two Criticals
+// INSIDE the first fix. C-1: `env -S` appends its remaining operands
+// verbatim, but the first version joined them bare and re-tokenized, so an
+// operand carrying `#`, `;`, `|`, `&`, `>` or a quote became a comment, a
+// separator or a redirect and the reader vanished (eight spellings moved
+// from deny to allow; every one printed a decoy through /usr/bin/env). C-2:
+// the substitution recursion never saw the inherited redirect sources, and
+// the peel had stopped at a shell-text head instead of also emitting the
+// fully peeled reading, so `eval 'echo $(cat)' < .env` moved from deny to
+// allow (printed a decoy in bash 3.2 and zsh 5.9). Each fix was watched
+// failing on a tree of 243a96847; the corrected rows passed on cfc96eccd.
+describe('decide() — SMI-6920 round 2: a quoted env -S remainder, inherited sources in a substitution, both readings at a shell-text head', () => {
+  // C-1: corrected regressions (allowed on 243a96847, denied on cfc96eccd).
+  it.each([
+    'env -S cat "#x" .env',
+    'env -S cat "#" .env',
+    'env -S cat ";" .env',
+    'env -S cat "|" .env',
+    'env -S cat "&" .env',
+    'env -S cat ">" .env',
+    'env -S cat "\\"" .env',
+    'env -S cat "\'" .env',
+  ])('corrected regression (C-1): %s -> deny', (command) => {
+    expect(decide(bashCall(command), {}).action).toBe('deny')
+  })
+
+  // C-2: the two corrected regressions, then the siblings that allowed on
+  // every tree (arms), each measured printing a decoy.
+  it.each(["eval 'echo $(cat)' < .env", 'eval "echo $X" < .env'])(
+    'corrected regression (C-2): %s -> deny',
+    (command) => {
+      expect(decide(bashCall(command), {}).action).toBe('deny')
+    }
+  )
+  it.each([
+    "bash -c 'echo $(cat)' < .env",
+    "bash -c 'echo `cat`' < .env",
+    "bash -c '{ echo $(cat); }' < .env",
+    "eval 'echo `cat`' < .env",
+    "trap 'echo $(cat)' EXIT < .env",
+  ])('%s -> deny (C-2, allowed on cfc96eccd)', (command) => {
+    expect(decide(bashCall(command), {}).action).toBe('deny')
+  })
+
+  // A space-carrying operand denied on every tree (the join split it into
+  // words the reader still saw): a pin beside the metacharacter rows.
+  it('pin: env -S cat "a b" .env -> deny', () => {
+    expect(decide(bashCall('env -S cat "a b" .env'), {}).action).toBe('deny')
+  })
+
+  // L-2: `watch` without `-x` joins its operands into `sh -c` text; the
+  // quoted spelling is read now (documented semantics, `watch` is installed
+  // nowhere here).
+  it('watch "cat .env" -> deny (L-2, allowed on cfc96eccd)', () => {
+    expect(decide(bashCall('watch "cat .env"'), {}).action).toBe('deny')
+  })
+  it('pin: watch cat .env -> deny', () => {
+    expect(decide(bashCall('watch cat .env'), {}).action).toBe('deny')
+  })
+
+  // A new denial on every tree, harmless: env rejects `$(…)` in its split
+  // text (`Only ${VARNAME} expansion is supported`), so the line runs
+  // nothing; the substitution recursion now carries the inherited source.
+  it('over-block (allowed on cfc96eccd and 243a96847): env -S "echo $(cat)" < .env -> deny', () => {
+    expect(decide(bashCall("env -S 'echo $(cat)' < .env"), {}).action).toBe('deny')
+  })
+
+  // Controls assert the WHOLE result (M-2): a fail-open allow carries a
+  // stderr line, so `.action` alone passed on a guard whose shell-text
+  // mechanism was entirely dead (measured: 13 of 13 with the import removed).
+  it.each([
+    'echo $(cat) < .env',
+    'watch -x "cat .env"',
+    'env -S cat "#x" notes.txt',
+    'eval "echo $X"',
+  ])('control: %s -> allow', (command) => {
+    expect(decide(bashCall(command), {})).toEqual({ action: 'allow', json: null, stderr: null })
   })
 })

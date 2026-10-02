@@ -22,7 +22,7 @@
  * `ruflo-host-guard-segments.mjs`/`ruflo-host-guard-eval.mjs`, split out of
  * THIS file, when its own docblock corrections pushed it over 500 lines).
  * Seven are imported directly: `ruflo-host-guard-wrappers.mjs`
- * (`detectEnvSplitString`/`normalizeWrappersWithExec`/`tokensForArgv`),
+ * (`envSplitCommandText`/`normalizeWrappersWithExec`/`tokensForArgv`),
  * `ruflo-host-guard-shell-fed.mjs` (`findShellFedLiteralText`/
  * `restoreXargsReplacementWordTokens`, plus `extractInlineScriptText`/
  * `INLINE_SCRIPT_BARE_NAME_RE` re-exported from ITS OWN sibling
@@ -73,7 +73,7 @@
 
 import { MAX_DEPTH, basenameOf, tokenize } from './lib/shell-command-normalize.mjs'
 import {
-  detectEnvSplitString,
+  envSplitCommandText,
   normalizeWrappersWithExec,
   tokensForArgv,
 } from './lib/ruflo-host-guard-wrappers.mjs'
@@ -108,12 +108,11 @@ import { parseEvalSegment } from './lib/ruflo-host-guard-eval.mjs'
 // cleanly) — see that file's own docblock.
 
 /**
- * H9 — dynamic shell evaluators (round 1 finding 1). Thin wrapper: the
- * PARSING logic (peeling wrappers, locating the eval body, the expansion
- * check) moved to `ruflo-host-guard-eval.mjs`'s `parseEvalSegment` (M3
- * follow-up) — only the final recursive `evaluateGuardCommand` call, which
- * needs THIS file's own local (non-exported) `evaluateGuardCommand`, stays
- * here. See that file's own docblock for the full H9 rationale.
+ * H9 — dynamic shell evaluators (round 1 finding 1). The PARSING lives in
+ * `ruflo-host-guard-eval.mjs`'s `parseEvalSegment`; only the recursion into
+ * this file's own `evaluateGuardCommand` stays here. A `trap` whose action
+ * is clean FALLS THROUGH (undefined): its segment still carries real argv
+ * for every later predicate (SMI-6920 round 2, M-1).
  * @param {Array<{value: string, subs?: string[]}>} wordTokens
  * @param {number} depth
  * @returns {object | undefined} undefined = "not an eval segment, keep going"
@@ -121,8 +120,9 @@ import { parseEvalSegment } from './lib/ruflo-host-guard-eval.mjs'
 function checkEvalPredicate(wordTokens, depth) {
   const parsed = parseEvalSegment(wordTokens)
   if (parsed === undefined || parsed === null) return parsed
-  if (typeof parsed.joined === 'string') return evaluateGuardCommand(parsed.joined, depth + 1)
-  return parsed // a deny-verdict object from the H9 expansion check
+  if (typeof parsed.joined !== 'string') return parsed // H9 itself fired
+  const verdict = evaluateGuardCommand(parsed.joined, depth + 1)
+  return verdict ?? (parsed.head === 'trap' ? undefined : null)
 }
 
 /**
@@ -240,7 +240,7 @@ function evaluateGuardSegment(segmentTokens, depth, segments, segmentIndex, embe
     }
   }
 
-  const envSplitNested = detectEnvSplitString(rawValues)
+  const envSplitNested = envSplitCommandText(rawValues)
   if (envSplitNested !== null) return evaluateGuardCommand(envSplitNested, depth + 1)
 
   const { argv: normalizedArgv, nested } = normalizeWrappersWithExec(rawValues)

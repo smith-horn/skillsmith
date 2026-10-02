@@ -132,6 +132,7 @@ const MAX_DASH_C_DEPTH = 2
 
 function peelHead(segment, peelWrappers, splitFn, depth) {
   const kept = []
+  const readings = []
   let i = 0
   let peeled = false
   // The values of the plain (non-redirect) words from `i` to the segment's
@@ -162,11 +163,16 @@ function peelHead(segment, peelWrappers, splitFn, depth) {
     }
     const base = basenameOf(t.value)
     // SMI-6920 F-A: a head whose operand IS shell text (`eval "…"`,
-    // `trap "…" SIG`) ends the peel with the reading kept, so the caller's
-    // own shell-text arm reads the operand. Peeling it left one unreadable
-    // word: `nohup eval "cat .env"` and `command eval "cat .env"` allowed
-    // with every reading fully peeled to `cat .env` (measured).
-    if (shellTextOperand(plainValuesFrom(i)) !== null) break
+    // `trap "…" SIG`) gets a reading kept AT the head, so the caller's own
+    // shell-text arm reads the operand (`nohup eval "cat .env"` had every
+    // reading fully peeled to one unreadable word), and the peel then goes
+    // on as before, so the fully peeled reading survives beside it: a first
+    // version stopped here and lost it, and `eval 'echo $(cat)' < .env`
+    // moved from deny to allow (the governance review of 243a96847, C-2).
+    // Readings only add.
+    if (peeled && shellTextOperand(plainValuesFrom(i)) !== null) {
+      readings.push(kept.concat(segment.slice(i)))
+    }
     if (DASH_C_LAUNCHERS.has(base) && depth < MAX_DASH_C_DEPTH) {
       const body = launcherDashCCommand(plainValuesFrom(i))
       if (body !== null) {
@@ -206,8 +212,13 @@ function peelHead(segment, peelWrappers, splitFn, depth) {
     }
     break
   }
-  if (!peeled || i >= segment.length) return null
-  return [kept.concat(segment.slice(i))]
+  if (peeled && i < segment.length) {
+    const last = readings[readings.length - 1]
+    const final = kept.concat(segment.slice(i))
+    if (last === undefined || last.length !== final.length || last.some((t, k) => t !== final[k]))
+      readings.push(final)
+  }
+  return readings.length === 0 ? null : readings
 }
 
 /**

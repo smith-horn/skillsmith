@@ -114,7 +114,12 @@ function evaluateCommand(command, depth, inheritedSources = []) {
   for (const segment of segments) {
     for (const w of segment) {
       for (const sub of w.subs) {
-        const nestedViolation = evaluateCommand(sub, depth + 1)
+        // The INHERITED sources, not this segment's own: `eval 'echo $(cat)'
+        // < .env` feeds the body's stdin to the substitution's `cat` and
+        // printed a decoy, while `echo $(cat) < .env` prints nothing because
+        // expansion precedes redirection (measured, bash 3.2 and zsh 5.9; the
+        // governance review of 243a96847, C-2).
+        const nestedViolation = evaluateCommand(sub, depth + 1, inheritedSources)
         if (nestedViolation) return nestedViolation
       }
     }
@@ -183,7 +188,9 @@ function evaluateCommand(command, depth, inheritedSources = []) {
     // read inside that word, so every quoted spelling allowed while the
     // separate-word spelling denied. Read the operand as a command line
     // under the same depth cap, stdin inherited.
-    const operandText = shellTextOperand(argv)
+    // A nested body already read above is not read twice (`env -S` reports
+    // one through the normalizer).
+    const operandText = nested === null ? shellTextOperand(argv) : null
     if (operandText !== null) {
       const operandViolation = evaluateCommand(operandText, depth + 1, redirectSources)
       if (operandViolation) return operandViolation

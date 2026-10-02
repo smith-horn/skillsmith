@@ -18,6 +18,7 @@
  */
 
 import { basenameOf } from './shell-command-normalize.mjs'
+import { shellTextOperandSpan } from './shell-command-shell-text.mjs'
 import { normalizeWrappersWithExec, tokensForArgv } from './ruflo-host-guard-wrappers.mjs'
 import { denyWith } from './ruflo-host-guard-verdicts.mjs'
 
@@ -41,8 +42,9 @@ import { denyWith } from './ruflo-host-guard-verdicts.mjs'
  * ACTION to the shell as text exactly as `eval` hands its arguments, and
  * `trap "npx ruflo memory store" EXIT` allowed on every tree while the eval
  * twin denied. The action joins this reading with eval's posture: literal
- * text is recursed, an expanding action is H9, and the forms that run
- * nothing (`trap -l`, `trap -p`, `trap - SIG`) are not eval segments.
+ * text is recursed, an expanding action is left alone as the variable-
+ * indirection limit (round 2, H-2), and the forms that run nothing
+ * (`trap -l`, `trap -p`, `trap - SIG`) are not eval segments.
  * @param {Array<{value: string, subs?: string[]}>} wordTokens
  * @returns {object | null | { joined: string } | undefined} `undefined` =
  *   "not an eval segment, keep going"; `null` = an eval segment with no
@@ -59,23 +61,25 @@ export function parseEvalSegment(wordTokens) {
   if (head !== 'eval' && head !== 'trap') return undefined
 
   const alignedTokens = tokensForArgv(wordTokens, normalizedArgv)
-  // Only trap's first operand, past an optional `--`, is shell text; the
-  // rest are signal names (`trap -- "…" EXIT` allowed before the `--` was
-  // read, SMI-6920 probe).
-  let rest = alignedTokens.slice(1)
-  // `eval -- …` runs the rest (measured): without this the recursion read
-  // `--` as the command and denied `unresolved-command`, an over-block.
-  if (head === 'eval' && rest[0]?.value === '--') rest = rest.slice(1)
-  if (head === 'trap') {
-    const at = rest[0]?.value === '--' ? 1 : 0
-    rest = rest.slice(at, at + 1)
-    if (rest.length === 0) return null
-    if (rest[0].value === '-' || (at === 0 && rest[0].value.startsWith('-'))) return undefined
-  }
+  // Which words are shell text is ONE rule, shared with the env guard
+  // (`shellTextOperandSpan`: eval joins everything past a separate `--`,
+  // trap hands over its one action past an optional `--`; SMI-6920 round 2,
+  // M-5), mapped here onto the `.subs`-bearing tokens the expansion check
+  // needs. A `trap` that runs nothing is not an eval segment; an `eval`
+  // with no argument is one with nothing to read.
+  const span = shellTextOperandSpan(normalizedArgv)
+  if (span === null) return head === 'eval' ? null : undefined
+  const rest = alignedTokens.slice(span.start, span.end)
   if (rest.length === 0) return null
   const hasExpansion = rest.some((t) => t.value.includes('$') || (t.subs && t.subs.length > 0))
   if (hasExpansion) {
+    // An expanding `trap` action is the variable-indirection limit this
+    // guard already accepts, not H9: 19 of 34 `trap` lines in this
+    // repository expand (`trap 'rm -rf "$TMPROOT"' EXIT`) and every one
+    // denied with a false reason on a guard with no opt-out (the review of
+    // 243a96847, H-2). `eval "$X"` stays H9, as it has been since round 1.
+    if (head === 'trap') return undefined
     return denyWith('H9', alignedTokens[0].value + ' ' + rest.map((t) => t.value).join(' '))
   }
-  return { joined: rest.map((t) => t.value).join(' ') }
+  return { joined: rest.map((t) => t.value).join(' '), head }
 }

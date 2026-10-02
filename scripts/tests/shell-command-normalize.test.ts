@@ -759,7 +759,14 @@ describe('normalizeWrappers()', () => {
       argv: ['env', '-S', 'cat .env'],
       nested: 'cat .env',
     })
-    expect(normalizeWrappers(['env', '-S', 'cat', '.env']).nested).toBe('cat .env')
+    // The remaining operands are single-quoted (round 2, C-1): bare, an
+    // operand carrying `#`, `;`, `|`, `&`, `>` or a quote became a comment,
+    // a separator or a redirect when re-tokenized and the reader vanished.
+    expect(normalizeWrappers(['env', '-S', 'cat', '.env']).nested).toBe("cat '.env'")
+    expect(normalizeWrappers(['env', '-S', 'cat', '#x', '.env']).nested).toBe("cat '#x' '.env'")
+    expect(normalizeWrappers(['env', '-S', 'cat', "a'b", '.env']).nested).toBe(
+      "cat 'a'\\''b' '.env'"
+    )
     expect(normalizeWrappers(['env', 'X=1', '--split-string=cat .env']).nested).toBe('cat .env')
     expect(normalizeWrappers(['sudo', 'env', '-u', 'X', '-Scat .env']).nested).toBe('cat .env')
     // Pins: `-S` with no operand peels as before; a plain env prefix never

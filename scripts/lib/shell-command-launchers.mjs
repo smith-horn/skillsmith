@@ -47,10 +47,11 @@
  * skip handles it. A launcher whose own flag takes a NESTED COMMAND STRING
  * (`script -c`, `su -c`, `dtrace -c`, `flock FILE -c`) is `DASH_C_LAUNCHERS`
  * below, read as shell text by both guards (round 23); `watch` without `-x`
- * joins its words into `sh -c` text, which reads as the same argv here ONLY
- * in the separate-word spelling (`watch cat .env`): `watch "cat .env"` is one
- * operand and allows, a stated limit of this row, not a measurement (`watch`
- * is installed nowhere here; SMI-6908 retro F-H).
+ * joins its words into `sh -c` text, which reads as the same argv here in
+ * the separate-word spelling (`watch cat .env`) and, since SMI-6920 round 2,
+ * as shell text in the quoted one (`watch "cat .env"`, through
+ * `shellTextOperandSpan`); documented semantics, `watch` is installed
+ * nowhere here (SMI-6908 retro F-H named the quoted spelling as a limit).
  *
  * `exec`/`command`/`noglob`/`builtin` are table rows with their OWN value
  * flags rather than routed through the shared `WRAPPER_VALUE_FLAGS` in

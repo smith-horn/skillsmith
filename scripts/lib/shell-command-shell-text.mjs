@@ -8,16 +8,25 @@
  * 5.9 and bash 5.2; the live hook pair let `eval "cat <path>/.env"`
  * through). Shared by both guards: the ruflo guard had read `eval` and
  * `env -S` through guard-local helpers whose docblock said no sibling
- * needed them, which is how the env guard's gap went unnoticed.
+ * needed them, which is how the env guard's gap went unnoticed; its own
+ * text-only `env -S` reading (`detectEnvSplitString`) went with them once
+ * the review of 243a96847 found `env -S npx ruflo memory store` allowed
+ * through it while the same line behind `sudo` denied.
  *
  * Returns the operand text to evaluate as a command line, or null when the
  * head is not one of these or runs nothing (`trap -l`, `trap -p`, `trap -
  * SIG`, `eval` with no argument). The caller decides how an operand that
  * EXPANDS is treated: the env guard re-tokenizes it anyway (an expansion
  * yields no literal protected name, and its substitutions are already read
- * by the enclosing segment), the ruflo guard denies it (H9).
+ * by the enclosing segment); the ruflo guard denies an expanding `eval`
+ * argument (H9) and leaves an expanding `trap` action as the variable-
+ * indirection limit it already accepts (19 of 34 `trap` lines in this
+ * repository expand, `trap 'rm -rf "$TMPROOT"' EXIT`; the governance review
+ * of 243a96847 measured them all denied, with a false reason, on a guard
+ * with no opt-out).
  */
 
+import { LAUNCHER_TABLE, stripLauncher } from './shell-command-launchers.mjs'
 import { basenameOf } from './shell-command-tokenize.mjs'
 
 /**
@@ -63,27 +72,59 @@ export function envSplitString(rawValues) {
 }
 
 /**
- * The split text alone, the ruflo guard's original contract (its H9-style
- * recursion reads the text and the appended operands are its own argv).
- * @param {string[]} rawValues
- * @returns {string | null}
- */
-export function detectEnvSplitString(rawValues) {
-  return envSplitString(rawValues)?.text ?? null
-}
-
-/**
  * The command line `env -S` will run: the split text with the remaining
- * operands appended, joined by spaces. Re-tokenizing a joined operand is an
- * over-approximation (a word that carried a space splits), which is safe in
- * an additive reading: it can add a denial, never remove one.
+ * operands appended. env appends those operands VERBATIM (it never
+ * re-parses them), so each is single-quoted here before the whole is
+ * re-tokenized: joined bare, an operand carrying `#`, `;`, `|`, `&`, `>`
+ * or a quote became a comment, a separator or a redirect and the reader
+ * behind it vanished (`env -S cat "#x" .env` read nothing while the shell
+ * printed the file; the governance review of 243a96847, C-1, eight
+ * spellings). Quoted, a word stays one word whatever it carries.
  * @param {string[]} rawValues
  * @returns {string | null}
  */
 export function envSplitCommandText(rawValues) {
   const s = envSplitString(rawValues)
   if (s === null) return null
-  return s.rest.length === 0 ? s.text : s.text + ' ' + s.rest.join(' ')
+  const quoted = (w) => "'" + w.split("'").join("'\\''") + "'"
+  return s.rest.length === 0 ? s.text : s.text + ' ' + s.rest.map(quoted).join(' ')
+}
+
+/**
+ * Which of `argv`'s words a shell-text head hands to the shell as text: a
+ * half-open index span, or null when the head is not one of these or runs
+ * nothing. ONE rule for both guards (the ruflo guard maps the span onto its
+ * own `.subs`-bearing tokens): `eval` joins every word after it, past a
+ * separate `--` (`eval -- cat D` runs `cat D` in bash 3.2, zsh 5.9 and
+ * bash 5.2; `eval "-- cat D"` runs nothing and the quoted word is left
+ * alone); `trap [--] ACTION SIG…` hands over the one action word (`trap
+ * -l`, `trap -p`, `trap - SIG` run nothing; past `--` the action is
+ * whatever follows, `trap -- "cat D" EXIT` printed a decoy); `watch`
+ * without `-x`/`--exec` joins its operands into `sh -c` text (documented
+ * semantics, the binary is installed nowhere here; with `-x` the operands
+ * are argv and the launcher row reads them).
+ * @param {string[]} argv
+ * @returns {{ start: number, end: number } | null}
+ */
+export function shellTextOperandSpan(argv) {
+  if (argv.length < 2) return null
+  const head = basenameOf(argv[0])
+  if (head === 'eval') return { start: argv[1] === '--' ? 2 : 1, end: argv.length }
+  if (head === 'trap') {
+    const at = argv[1] === '--' ? 2 : 1
+    const action = argv[at]
+    if (action === undefined || action === '-') return null
+    if (at === 1 && action.startsWith('-')) return null
+    return { start: at, end: at + 1 }
+  }
+  if (head === 'watch') {
+    const rest = stripLauncher(argv.slice(1), LAUNCHER_TABLE.get('watch'))
+    const start = argv.length - rest.length
+    if (rest.length === 0 || argv.slice(1, start).some((w) => w === '-x' || w === '--exec'))
+      return null
+    return { start, end: argv.length }
+  }
+  return null
 }
 
 /**
@@ -91,23 +132,8 @@ export function envSplitCommandText(rawValues) {
  * @returns {string | null} the shell text the head will tokenize again
  */
 export function shellTextOperand(argv) {
-  if (argv.length < 2) return null
-  const head = basenameOf(argv[0])
-  // `eval -- cat D` runs `cat D` (measured: bash 3.2, zsh 5.9, bash 5.2),
-  // so a separate `--` is not part of the text; `eval "-- cat D"` runs
-  // nothing, and the quoted spelling is left as it is.
-  if (head === 'eval') return argv.slice(argv[1] === '--' ? 2 : 1).join(' ')
-  if (head === 'trap') {
-    // `trap [--] ACTION SIG…`: only the action is shell text; `trap -l`,
-    // `trap -p` and `trap - SIG` (reset) run nothing. Past the `--` option
-    // terminator the action is whatever follows (`trap -- "cat D" EXIT`
-    // printed a decoy in bash 3.2 and zsh 5.9; it allowed, SMI-6920 probe).
-    const at = argv[1] === '--' ? 2 : 1
-    const action = argv[at]
-    if (action === undefined || action === '-') return null
-    if (at === 1 && action.startsWith('-')) return null
-    return action
-  }
-  if (head === 'env') return envSplitCommandText(argv)
+  const span = shellTextOperandSpan(argv)
+  if (span !== null) return argv.slice(span.start, span.end).join(' ')
+  if (argv.length >= 2 && basenameOf(argv[0]) === 'env') return envSplitCommandText(argv)
   return null
 }
