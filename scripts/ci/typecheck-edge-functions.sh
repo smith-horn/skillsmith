@@ -14,11 +14,21 @@
 # inherit -e from the calling step and sets its own flags.
 set -uo pipefail
 
-REPO_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
+# -P: deno reports PHYSICAL paths, so a logical pwd under a symlinked checkout
+# would never match the prefix and every path would fail to reduce (m-1).
+REPO_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd -P)"
 cd "$REPO_ROOT" || exit 1
 
 # shellcheck source=scripts/_lib.sh
 source "$REPO_ROOT/scripts/_lib.sh"
+
+# There is no `set -e`, so a failed source would NOT abort -- it would leave
+# has_git_crypt_magic_header undefined, `if ! has_...` would take the false
+# branch, and a git-crypt LOCKED tree would be labelled PLAINTEXT (m-5).
+if ! declare -F has_git_crypt_magic_header >/dev/null; then
+  printf '[edge-typecheck] FATAL: scripts/_lib.sh did not provide has_git_crypt_magic_header\n' >&2
+  exit 1
+fi
 
 CONFIG="supabase/deno.json"
 BASELINE="supabase/functions/typecheck-baseline.tsv"
@@ -49,56 +59,28 @@ if [[ -z "$CONTEXT" ]]; then
   fi
 fi
 
-say() { printf '%s\n' "$*"; }
-field() { printf '  %-12s %s\n' "$1" "$2"; }
+# M-1: validated against a closed set, because the `case` below has no
+# default-deny and an unrecognised value fell through to the warn arm. Measured:
+# `requried-ci` (one transposition) turned all six INCONCLUSIVE branches into
+# exit 0. That made SETTING this variable strictly riskier than omitting it,
+# since the auto-detected fallback is the safe one -- and nothing typechecks a
+# string in YAML.
+case "$CONTEXT" in
+  required-ci | pre-deploy | fork-pr | local) ;;
+  *)
+    printf '[edge-typecheck] FATAL: unknown CONTEXT %s -- expected one of: required-ci pre-deploy fork-pr local\n' "$CONTEXT" >&2
+    exit 1
+    ;;
+esac
 
-# RESULT answers "did the check produce a usable answer"; VERDICT answers "is the
-# tree acceptable". They are separate axes on purpose: conflating them is how a
-# checker that never ran gets recorded as a checker that found nothing
-# (SMI-6684's STATE/CAUSE split, SMI-6704 Item 8).
-RESULT="EVALUATED"
-VERDICT=""
-INCONCLUSIVE_WHY=""
+# The output contract and exit policy live in a sibling, per the 500-line gate.
+# shellcheck source=scripts/ci/typecheck-edge-functions.helpers.sh
+source "$REPO_ROOT/scripts/ci/typecheck-edge-functions.helpers.sh"
 
-inconclusive() {
-  RESULT="INCONCLUSIVE"
-  INCONCLUSIVE_WHY="$1"
-}
-
-finish() {
-  say ""
-  say "[edge-typecheck] SMI-6897"
-  field "context" "$CONTEXT"
-  field "config" "$CONFIG (explicit --config; DENO_NO_PACKAGE_JSON=1)"
-  field "lock" "${LOCK_MODE:-not reached}"
-  field "deno" "${DENO_VERSION:-unknown}"
-  field "discovered" "${DISCOVERED:-?} .ts under supabase/functions"
-  field "excluded" "${EXCLUDED:-?} (vitest-importing -- Node runtime, not Deno)"
-  field "checked" "${CHECKED:-?} files"
-  field "crypt" "${CRYPT_STATE:-?} (sentinel $CRYPT_SENTINEL)"
-  [[ -n "${ERR_LINE:-}" ]] && field "errors" "$ERR_LINE"
-  [[ -n "${BASE_LINE:-}" ]] && field "baseline" "$BASE_LINE"
-  [[ -n "${DELTA_LINE:-}" ]] && field "delta" "$DELTA_LINE"
-  field "RESULT" "$RESULT${INCONCLUSIVE_WHY:+ -- $INCONCLUSIVE_WHY}"
-  field "VERDICT" "${VERDICT:-NONE}"
-  [[ -n "${NEXT_ACTION:-}" ]] && say "  next: $NEXT_ACTION"
-  say ""
-}
-
-# An inconclusive result exits non-zero wherever this check guards something.
-exit_for_inconclusive() {
-  finish
-  case "$CONTEXT" in
-    required-ci | pre-deploy)
-      say "FATAL: the check could not run, and $CONTEXT depends on it. \"Not checked\" is not \"safe\"."
-      exit 1
-      ;;
-    *)
-      say "WARNING: the check could not run. Not fatal in context '$CONTEXT'."
-      exit 0
-      ;;
-  esac
-}
+if ! declare -F finish >/dev/null || ! declare -F exit_for_inconclusive >/dev/null; then
+  printf '[edge-typecheck] FATAL: helpers did not load\n' >&2
+  exit 1
+fi
 
 # ---------------------------------------------------------------------------
 # Preconditions
@@ -137,20 +119,89 @@ trap 'rm -f "$ALL_LIST" "$PROD_LIST" "$RAW_OUT"' EXIT
 find supabase/functions -name '*.ts' -type f 2>/dev/null | sort > "$ALL_LIST"
 DISCOVERED="$(wc -l < "$ALL_LIST" | tr -d ' ')"
 
-# Partition on "imports vitest", not on a filename pattern: one test file is not
-# named *.test.ts (I-1's sibling finding). Both quote styles and a bare
-# `import 'vitest'` are recognised -- review flagged that matching only the
-# single-quoted `from 'vitest'` form is an assumption about repo convention.
-: > "$PROD_LIST"
-EXCLUDED=0
+# THE PARTITION IS COMMITTED DATA, NOT INFERRED FROM FILE CONTENT.
+#
+# Governance round 2 (C-1) measured the bypass that makes this necessary: when the
+# partition was computed by grepping each file for a vitest import, adding a
+# three-line COMMENT mentioning `'vitest'` to a production file removed it from the
+# denominator. Matched pair, identical files but for the comment: `checked 216 /
+# FAIL / exit 1` versus `checked 215 / PASS / exit 0`. `RESULT` stayed `EVALUATED`,
+# so it presented as a conclusive clean result, and the summary's `checked` count
+# returned to its pre-probe value, so a reviewer diffing run summaries saw nothing.
+#
+# Worse, it self-laundered: the file's baselined row then reported `gone -- fixed,
+# or RENAMED` with `PASS (improved)`, and `--update` dropped the row without
+# refusing. A vitest mention added to `create-portal-session/index.ts` (14
+# baselined errors) would have passed, reported an improvement, and permanently
+# removed that file from the gate with no artifact recording it.
+#
+# So the excluded set lives in a committed file, and a change to the partition is
+# a reviewable diff. The content-based detection still runs -- as a CROSS-CHECK,
+# not as the source of truth -- and any disagreement is loud.
+#
+# ONE FILE MAKES THIS WORSE THAN IT LOOKS, and it is the reason this fix is not
+# merely tidy. `_shared/resend-inbound.signature-contract.deno.ts` carries two
+# `/// <reference lib=...>` directives, and those are PROGRAM-WIDE: they supply
+# `deno.ns` and `dom` to every file in the compilation unit. Measured at tree
+# scale -- bare 60 errors versus 59 under this gate's config, a delta of one, where
+# a single file measured in isolation moves from 10 errors to 0. So if THAT file
+# were dropped from the checked set, the lib set would collapse for all 215 files
+# at once, not just for itself. Of the 215 ways to exercise C-1, one is an order of
+# magnitude worse than the rest.
+EXCLUDE_LIST="supabase/functions/typecheck-exclude.txt"
+if [[ ! -f "$EXCLUDE_LIST" ]]; then
+  inconclusive "missing $EXCLUDE_LIST"
+  NEXT_ACTION="restore the committed exclusion list; the partition must not be inferred from file content (C-1)"
+  exit_for_inconclusive
+fi
+
+# Production = discovered minus committed-excluded. `comm` needs sorted input;
+# both sides are sorted. -f disables globbing so a metachar in a path cannot
+# expand (m-2).
+set -f
+comm -23 "$ALL_LIST" <(sort "$EXCLUDE_LIST") > "$PROD_LIST"
+EXCLUDED="$(wc -l < "$EXCLUDE_LIST" | tr -d ' ')"
+CHECKED="$(wc -l < "$PROD_LIST" | tr -d ' ')"
+
+# Cross-check: what WOULD content detection say? A disagreement means either a new
+# test file needs adding to the list, or someone put a vitest mention in a
+# production file. Either way a human decides, and neither silently shrinks the
+# denominator.
+DETECTED="$(mktemp)"
+: > "$DETECTED"
 while IFS= read -r f; do
   if grep -qE "(from|import)[[:space:]]+['\"]vitest['\"]" "$f" 2>/dev/null; then
-    EXCLUDED=$((EXCLUDED + 1))
-  else
-    printf '%s\n' "$f" >> "$PROD_LIST"
+    printf '%s\n' "$f" >> "$DETECTED"
   fi
 done < "$ALL_LIST"
-CHECKED="$(wc -l < "$PROD_LIST" | tr -d ' ')"
+
+PARTITION_DIFF="$(comm -3 <(sort "$EXCLUDE_LIST") <(sort "$DETECTED") || true)"
+rm -f "$DETECTED"
+set +f
+
+# A partition disagreement is a VERDICT, not an INCONCLUSIVE result, and that
+# distinction was wrong in the first version of this fix. The check ran perfectly
+# and found something suspicious -- that is a statement about the tree, not about
+# whether the checker worked. Classifying it as INCONCLUSIVE made it merely WARN in
+# `local` context, so a developer adding a vitest mention to a production file
+# would have seen a warning and shipped it; only CI would have objected. It now
+# fails in EVERY context, which is the whole point of C-1.
+if [[ -n "$PARTITION_DIFF" ]]; then
+  VERDICT="FAIL (partition changed)"
+  DELTA_LINE="committed exclusion list disagrees with detected vitest imports"
+  finish
+  say "The set of files this gate checks has changed, and that set is committed data."
+  say ""
+  say "--- in the committed list but no longer importing vitest (left column),"
+  say "    or importing vitest but not in the list (right column) ---"
+  printf '%s\n' "$PARTITION_DIFF" | head -20
+  say ""
+  say "If this is a genuine NEW TEST FILE: add it to $EXCLUDE_LIST in a reviewed commit."
+  say "If a PRODUCTION file merely MENTIONS vitest -- in a comment or a string --"
+  say "remove the mention. Do NOT add a production file to the list: that silently"
+  say "deletes it from this gate's denominator, which is the bypass C-1 recorded."
+  exit 1
+fi
 
 if [[ "$DISCOVERED" -eq 0 || "$CHECKED" -eq 0 ]]; then
   inconclusive "zero files to check (discovered=$DISCOVERED checked=$CHECKED)"
@@ -197,9 +248,24 @@ else
   LOCK_MODE="no-lock (cannot read or write a lockfile; see H-2 for why)"
 fi
 
-# shellcheck disable=SC2046
+# Paths are passed via an array, not an unquoted $(cat), which would word-split a
+# path containing a space (m-2). Measured: 0 of 363 paths contain a space or a glob
+# metachar today, so this is latent -- fixed because "latent" means "until someone
+# adds one".
+#
+# Built with a read loop rather than `mapfile`: mapfile is a bash-4 builtin and
+# macOS ships bash 3.2 as /bin/bash. Measured -- the mapfile form died with
+# "mapfile: command not found" on every local run while working in CI's bash 4,
+# i.e. it broke exactly the environment a developer uses and left CI looking
+# healthy. Worse, it crashed BEFORE the report, so three red-test cases exited 1
+# for the wrong reason and had to be re-run; a kill only counts when it is
+# attributable to the mutation (SMI-6932).
+PROD_PATHS=()
+while IFS= read -r _p; do
+  PROD_PATHS+=("$_p")
+done < "$PROD_LIST"
 DENO_NO_PACKAGE_JSON=1 deno check --config "$CONFIG" "${LOCK_ARGS[@]}" \
-  $(cat "$PROD_LIST") > "$RAW_OUT" 2>&1
+  "${PROD_PATHS[@]}" > "$RAW_OUT" 2>&1
 DENO_RC=$?
 
 CLEAN_OUT="$(mktemp)"; trap 'rm -f "$ALL_LIST" "$PROD_LIST" "$RAW_OUT" "$CLEAN_OUT"' EXIT
@@ -214,6 +280,16 @@ if grep -qiE "^error: (Relative import|Module not found|The module|Expected|Impo
   NEXT_ACTION="resolve the graph error; the type-error count below would be meaningless"
   exit_for_inconclusive
 fi
+# M-3: under --frozen a stale lock produces neither a graph error nor a type
+# total, and was being reported as "the parser may need updating". Its own arm,
+# with its own next action.
+if grep -qiE "lockfile|lock file|out of date|--frozen" "$CLEAN_OUT" \
+  && ! grep -qE '^TS[0-9]+ \[ERROR\]' "$CLEAN_OUT"; then
+  inconclusive "lockfile is stale or incomplete under --frozen"
+  say "--- lockfile diagnostic ---"; grep -iE "lockfile|lock file|out of date" "$CLEAN_OUT" | head -5
+  NEXT_ACTION="regenerate supabase/deno.lock, or unset SKILLSMITH_EDGE_TYPECHECK_FROZEN. This is NOT a type error and NOT a parser bug."
+  exit_for_inconclusive
+fi
 if grep -qiE "^error: (Download failed|error sending request|Import .* failed)" "$CLEAN_OUT"; then
   inconclusive "remote module fetch failed"
   NEXT_ACTION="a CDN or network failure. This is NOT a clean tree -- re-run, or fix the lockfile."
@@ -221,9 +297,18 @@ if grep -qiE "^error: (Download failed|error sending request|Import .* failed)" 
 fi
 
 # Deno prints no "Found N errors" line when there are none.
+# M-2, measured on the exact CI pin: deno prints `Found 2 errors.` for two but
+# NO "Found" line at all for ONE. So a tree with a single remaining error --
+# precisely this gate's success condition as the baseline burns down -- fell into
+# "no parseable error total" and told the developer the parser was broken.
+# Invisible to the Wave-1 red-tests because 59 pre-existing errors guarantee the
+# total exceeds 1 today. Count headers before declaring the output unparseable.
 REPORTED="$(grep -oE 'Found [0-9]+ error' "$CLEAN_OUT" | grep -oE '[0-9]+' | tail -1)"
 if [[ -z "$REPORTED" ]]; then
-  if [[ "$DENO_RC" -eq 0 ]]; then
+  HEADER_COUNT="$(grep -cE '^TS[0-9]+ \[ERROR\]' "$CLEAN_OUT")"
+  if [[ "$HEADER_COUNT" -gt 0 ]]; then
+    REPORTED="$HEADER_COUNT"
+  elif [[ "$DENO_RC" -eq 0 ]]; then
     REPORTED=0
   else
     inconclusive "deno exited $DENO_RC with no parseable error total"

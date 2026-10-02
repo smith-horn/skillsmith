@@ -1242,7 +1242,14 @@ jobs:
     name: Edge Functions Typecheck
     runs-on: ubuntu-latest
     timeout-minutes: 10
-    needs: [classify, detect-changes]
+    # `needs: [detect-changes]` ONLY. Governance round 2 (C-2): this job reads no
+    # `classify` output, so listing it added nothing but a failure mode -- a job
+    # whose `needs` did not all succeed is SKIPPED rather than failed, and a
+    # skipped job SATISFIES branch protection. `classify` timing out is not
+    # hypothetical (its own timeout was raised 2->4 min after observed timeouts,
+    # SMI-6381), so a classify blip would have silently waved this gate through
+    # the moment it became required.
+    needs: [detect-changes]
     if: needs.detect-changes.outputs.code == 'true'
 
     steps:
@@ -1274,6 +1281,10 @@ jobs:
       - name: Typecheck edge functions
         env:
           # Inconclusive results fail closed here: a merge depends on this job.
+          # The wrapper validates this string against a closed set and exits 1 on
+          # anything else (M-1) -- before that, a single transposition here would
+          # have turned every inconclusive result into a green pass, which made
+          # setting the variable riskier than omitting it.
           SKILLSMITH_EDGE_TYPECHECK_CONTEXT: required-ci
         run: bash scripts/ci/typecheck-edge-functions.sh
 
