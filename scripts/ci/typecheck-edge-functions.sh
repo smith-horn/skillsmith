@@ -78,7 +78,8 @@ esac
 source "$REPO_ROOT/scripts/ci/typecheck-edge-functions.helpers.sh"
 
 if ! declare -F finish >/dev/null || ! declare -F exit_for_inconclusive >/dev/null \
-  || ! declare -F resolve_partition >/dev/null; then
+  || ! declare -F resolve_partition >/dev/null || ! declare -F validate_baseline >/dev/null \
+  || ! declare -F compare_to_baseline >/dev/null; then
   printf '[edge-typecheck] FATAL: helpers did not load\n' >&2
   exit 1
 fi
@@ -106,23 +107,34 @@ if has_git_crypt_magic_header "$CRYPT_SENTINEL"; then
   CRYPT_STATE="CIPHERTEXT"
   inconclusive "tree is git-crypt locked; deno cannot parse it"
   NEXT_ACTION="expected on a fork PR (no GIT_CRYPT_KEY). Wave 5's pre-deploy arm is the backstop. If this fires on an internal PR, the unlock step failed -- investigate that."
-  finish
-  # THE ONE INCONCLUSIVE STATE THAT WARNS IN EVERY CONTEXT, INCLUDING required-ci.
+  # H-4: this used to warn in EVERY context, which the cross-family gate called
+  # unsafe and it was right. Key presence is not proof that an invocation is a
+  # fork, one mutable sentinel decided the outcome before any file was checked,
+  # and the job set `required-ci` unconditionally -- forks included -- so the
+  # carve-out was reachable exactly where it must not be.
   #
-  # Caught by reading the plan's own P-4 row 6 against this implementation: a fork
-  # PR runs in GitHub Actions, so CONTEXT auto-resolves to `required-ci` -- and the
-  # job sets it explicitly anyway -- which would have failed the gate on EVERY
-  # external contribution. A fork has no GIT_CRYPT_KEY by design, so this is not a
-  # degraded environment to fail closed on; it is the one case where "cannot run"
-  # is structurally true and unfixable by the contributor.
-  #
-  # Safe to warn because it cannot mask a real failure where it matters: both
-  # deploy jobs carry a `Verify git-crypt key present` step that hard-fails when
-  # the key is absent, so the tree is never ciphertext in the pre-deploy context.
-  # Every OTHER inconclusive state still fails closed.
-  say "WARNING: the tree is git-crypt locked, so this check cannot run. Expected on a fork PR."
-  say "This is the only inconclusive state that does not fail closed -- see the comment at this branch."
-  exit 0
+  # Ciphertext is now tolerated ONLY under `fork-pr`, and CI selects that context
+  # from GitHub's own event metadata (`pull_request.head.repo.fork`) rather than
+  # from anything this script can observe. Under required-ci or pre-deploy a
+  # locked tree means the unlock step failed, which is a real fault.
+  if [[ "$CONTEXT" == "fork-pr" ]]; then
+    # Caught by reading the plan's own P-4 row 6 against this implementation: a
+    # fork PR runs in GitHub Actions, so CONTEXT auto-resolves to `required-ci` --
+    # and the job set it explicitly anyway -- which would have failed the gate on
+    # EVERY external contribution. A fork has no GIT_CRYPT_KEY by design, so this
+    # is not a degraded environment to fail closed on; it is the one case where
+    # "cannot run" is structurally true and unfixable by the contributor.
+    NEXT_ACTION="nothing for the contributor to do -- a fork has no GIT_CRYPT_KEY by design. Wave 5's pre-deploy arm is the backstop for code that arrives this way."
+  else
+    NEXT_ACTION="a locked tree in context '$CONTEXT' means the git-crypt unlock failed -- investigate that. Only fork-pr tolerates ciphertext, and CI selects it from the event payload."
+  fi
+  # Ciphertext is the ONE cause marked tolerable on a fork, so that decision lives
+  # in exit_for_inconclusive's own matrix rather than in an inline `exit 0` here --
+  # an inline exit is how the pre-H-4 version came to override every context at
+  # once. Tolerating it cannot mask a real failure where it matters: both deploy
+  # jobs carry a `Verify git-crypt key present` step that hard-fails when the key
+  # is absent, so the tree is never ciphertext in the pre-deploy context.
+  exit_for_inconclusive --tolerated-on-fork
 fi
 CRYPT_STATE="PLAINTEXT"
 
@@ -133,7 +145,36 @@ CRYPT_STATE="PLAINTEXT"
 ALL_LIST="$(mktemp)"; PROD_LIST="$(mktemp)"; RAW_OUT="$(mktemp)"
 trap 'rm -f "$ALL_LIST" "$PROD_LIST" "$RAW_OUT"' EXIT
 
-find supabase/functions -name '*.ts' -type f 2>/dev/null | sort > "$ALL_LIST"
+# H-3: `-name '*.ts'` alone left a .tsx production file invisible -- not
+# discovered, not checked, and perfectly consistent with the committed
+# partition, so the gate would report PASS over an unchecked deployed file.
+# Deno accepts .ts, .tsx, .mts and .cts, so all four are discovered. If a
+# future Deno adds another, the assertion below is what catches it rather than
+# silence.
+find supabase/functions \( -name '*.ts' -o -name '*.tsx' -o -name '*.mts' -o -name '*.cts' \) \
+  -type f 2>/dev/null | sort > "$ALL_LIST"
+
+# Assert there is no OTHER TypeScript-ish extension we are silently skipping.
+#
+# The exclusion list is DERIVED from running this probe against the committed tree,
+# not guessed: `*.ts?` matches `typecheck-baseline.tsv` -- this gate's own baseline
+# -- so without `tsv` here the probe reports a finding on every clean run. It did,
+# and only a known-negative control showed it: the first version of this line had a
+# quoting error that made the command substitution fail, leaving UNKNOWN_TS empty,
+# so the assertion silently passed and the false positive stayed invisible. Two
+# defects, one masking the other, in the code written to make silence impossible.
+UNKNOWN_TS="$(find supabase/functions -type f \( -name '*.ts?' -o -name '*.?ts' \) \
+  2>/dev/null | grep -vE '\.(ts|tsx|mts|cts|tsv)$')"
+if [[ -n "$UNKNOWN_TS" ]]; then
+  # Captured in full, truncated only for display -- a `head` on the capture would
+  # have decided the verdict from a truncated set, and also closed the pipe early.
+  UNKNOWN_N="$(printf '%s\n' "$UNKNOWN_TS" | grep -c .)"
+  inconclusive "$UNKNOWN_N unrecognised TypeScript-like extension(s) under supabase/functions"
+  say "--- not covered by the discovery glob (showing up to 20 of $UNKNOWN_N) ---"
+  printf '%s\n' "$UNKNOWN_TS" | head -20
+  NEXT_ACTION="extend the discovery glob, or confirm these are not deployed. An undiscovered file is an unchecked file."
+  exit_for_inconclusive
+fi
 DISCOVERED="$(wc -l < "$ALL_LIST" | tr -d ' ')"
 
 # I-3 FIRST, before anything derived from the file list. Measured: when the find
@@ -256,10 +297,30 @@ fi
 # Invisible to the Wave-1 red-tests because 59 pre-existing errors guarantee the
 # total exceeds 1 today. Count headers before declaring the output unparseable.
 REPORTED="$(grep -oE 'Found [0-9]+ error' "$CLEAN_OUT" | grep -oE '[0-9]+' | tail -1)"
+# H-2, and this is a defect my OWN M-2 fix introduced. Deriving REPORTED from
+# the header count makes it the same quantity attribution is derived from, so
+# reconciliation stops being independent and becomes self-referential. Round 2
+# had reasoned that truncation is safe because `Found N errors.` is the last
+# line, so losing it routes to "unparseable". The cross-family gate inverted
+# that: losing the total ACTIVATES the self-reconciling fallback, so a truncated
+# run whose surviving header/location pairs are complete reconciles perfectly
+# and can pass if the prefix sits inside baseline allowances.
+#
+# So the fallback is narrowed to the ONE measured Deno special case it exists
+# for: exactly one error header, with the exit status a type error produces.
+# Two or more headers and no total means truncation or changed wording, and
+# that is inconclusive rather than counted.
 if [[ -z "$REPORTED" ]]; then
   HEADER_COUNT="$(grep -cE '^TS[0-9]+ \[ERROR\]' "$CLEAN_OUT")"
-  if [[ "$HEADER_COUNT" -gt 0 ]]; then
-    REPORTED="$HEADER_COUNT"
+  if [[ "$HEADER_COUNT" -eq 1 && "$DENO_RC" -eq 1 ]]; then
+    # Measured on deno 2.3.6: one error prints no "Found" line; two print
+    # "Found 2 errors.". This is that case and only that case.
+    REPORTED=1
+  elif [[ "$HEADER_COUNT" -gt 1 ]]; then
+    inconclusive "$HEADER_COUNT error headers but no reported total -- output truncated, or deno's wording changed"
+    NEXT_ACTION="do NOT trust a count derived from the headers alone; it would reconcile against itself. Re-run, or update the parser for this deno version."
+    say "--- raw tail ---"; tail -20 "$CLEAN_OUT"
+    exit_for_inconclusive
   elif [[ "$DENO_RC" -eq 0 ]]; then
     REPORTED=0
   else
@@ -275,7 +336,7 @@ fi
 # error header -- five blocks carry a second "the expected type comes from" line,
 # and counting locations instead of errors over-reports.
 BY_FILE="$(mktemp)"
-trap 'rm -f "$ALL_LIST" "$PROD_LIST" "$RAW_OUT" "$CLEAN_OUT" "$BY_FILE"' EXIT
+trap 'rm -f "$ALL_LIST" "$PROD_LIST" "$RAW_OUT" "$CLEAN_OUT" "$BY_FILE" "${BASELINE_SNAPSHOT:-}"' EXIT
 # Paths are made relative by stripping the KNOWN repo root, not by matching a
 # repo name. Measured 2026-10-02: a `.*/skillsmith/` strip yields
 # `supabase/...` in a plain checkout but `.worktrees/<name>/supabase/...` in a
@@ -311,19 +372,43 @@ ERR_FILES="$(wc -l < "$BY_FILE" | tr -d ' ')"
 # has ever caught a wrong attribution here; two of five wrong derivations looked
 # entirely plausible and only arithmetic against deno's own total exposed them.
 if [[ "$ATTRIB" -ne "$REPORTED" ]]; then
-  ERR_LINE="$REPORTED total / $ATTRIB attributed across $ERR_FILES files   [MISMATCH]"
+  ERR_FIELD="$REPORTED total / $ATTRIB attributed across $ERR_FILES files   [MISMATCH]"
   inconclusive "attribution ($ATTRIB) does not reconcile with the reported total ($REPORTED)"
   NEXT_ACTION="the output parser is wrong for this deno version. Do NOT trust the per-file numbers. Raw output retained above."
   say "--- raw tail, for the parser fix ---"; tail -20 "$CLEAN_OUT"
   exit_for_inconclusive
 fi
-ERR_LINE="$REPORTED total / $ATTRIB attributed across $ERR_FILES files   [RECONCILED]"
+ERR_FIELD="$REPORTED total / $ATTRIB attributed across $ERR_FILES files   [RECONCILED]"
 
 # ---------------------------------------------------------------------------
 # --update: a RATCHET, not a rewrite (plan D-16). It may lower a count and drop
 # a zeroed row. It may NOT add a row or raise an allowance -- a developer
 # following the documented remedy must not be able to legitimize a regression.
 # ---------------------------------------------------------------------------
+# C-1: VALIDATE the baseline before it is compared against or rewritten. A
+# duplicated path made awk return two numbers, both numeric comparisons threw an
+# arithmetic error, and with no `set -e` the run continued and reached PASS -- so a
+# duplicate row could hide any number of new errors in that file. Validation also
+# catches a zeroed row kept instead of deleted, an absolute path, an unsorted file,
+# and a path that is no longer in the checked set (deleted, renamed, or newly
+# excluded -- the shape that otherwise reads as an "improvement").
+BASELINE_SNAPSHOT="$(mktemp)"
+if [[ -f "$BASELINE" ]]; then
+  cp "$BASELINE" "$BASELINE_SNAPSHOT"
+  if ! validate_baseline "$BASELINE" "$PROD_LIST"; then
+    VERDICT="FAIL (baseline malformed)"
+    BASE_FIELD="$(wc -l < "$BASELINE" | tr -d ' ') rows -- REJECTED"
+    finish
+    say "The baseline is not a valid ratchet file, so no comparison against it can be trusted:"
+    printf '%s\n' "$BASELINE_BAD"
+    say ""
+    say "Fix the rows above. This refuses rather than guessing, because the specific"
+    say "failure this check exists for -- a DUPLICATE path -- silently suppressed real"
+    say "regressions by making both numeric comparisons error out."
+    exit 1
+  fi
+fi
+
 if [[ "$MODE" == "--update" ]]; then
   if [[ -f "$BASELINE" ]]; then
     REFUSALS=""
@@ -347,9 +432,29 @@ if [[ "$MODE" == "--update" ]]; then
       exit 1
     fi
   fi
-  cp "$BY_FILE" "$BASELINE"
+  # M-5: validate and replace under a lock, then rename atomically. Without
+  # this, two concurrent updates could each validate against allowance 5, write
+  # 1 and 4 in either order, and leave the committed allowance RAISED to 4 while
+  # both runs reported a successful ratchet.
+  LOCK="$BASELINE.lock"
+  if ! mkdir "$LOCK" 2>/dev/null; then
+    VERDICT="REFUSED (another --update holds $LOCK)"
+    finish
+    say "Another --update is in progress. If none is, remove $LOCK -- it holds no state."
+    exit 1
+  fi
+  # Re-read under the lock: the file may have changed since validation.
+  if ! cmp -s "$BASELINE" "$BASELINE_SNAPSHOT"; then
+    rmdir "$LOCK"
+    VERDICT="REFUSED (baseline changed during validation)"
+    finish
+    say "The baseline changed while this run was validating. Re-run."
+    exit 1
+  fi
+  cp "$BY_FILE" "$BASELINE.tmp.$$" && mv -f "$BASELINE.tmp.$$" "$BASELINE"
+  rmdir "$LOCK"
   VERDICT="BASELINE UPDATED"
-  BASE_LINE="$ERR_FILES files / $REPORTED errors (written)"
+  BASE_FIELD="$ERR_FILES files / $REPORTED errors (written)"
   finish
   exit 0
 fi
@@ -357,68 +462,6 @@ fi
 # ---------------------------------------------------------------------------
 # Compare against the baseline. The ratchet BLOCKS: no continue-on-error.
 # ---------------------------------------------------------------------------
-if [[ ! -f "$BASELINE" ]]; then
-  BASE_LINE="absent"
-  if [[ "$REPORTED" -eq 0 ]]; then
-    VERDICT="PASS (zero errors, no baseline needed)"
-    finish
-    exit 0
-  fi
-  VERDICT="FAIL"
-  NEXT_ACTION="no baseline exists. Generate one deliberately: bash scripts/ci/typecheck-edge-functions.sh --update"
-  finish
-  exit 1
-fi
-
-BASE_TOTAL="$(awk -F'\t' '{s += $1} END {print s + 0}' "$BASELINE")"
-BASE_FILES="$(wc -l < "$BASELINE" | tr -d ' ')"
-BASE_LINE="$BASE_FILES files / $BASE_TOTAL errors"
-
-NEW_ERRORS=""; NEW_FILES=0; IMPROVED=""; MISSING=""
-while IFS=$'\t' read -r cur_count cur_path; do
-  [[ -z "${cur_path:-}" ]] && continue
-  base_count="$(awk -F'\t' -v p="$cur_path" '$2 == p {print $1}' "$BASELINE")"
-  if [[ -z "$base_count" ]]; then
-    NEW_ERRORS+=$'\n'"  NEW FILE    $cur_path ($cur_count)"
-    NEW_FILES=$((NEW_FILES + 1))
-  elif [[ "$cur_count" -gt "$base_count" ]]; then
-    NEW_ERRORS+=$'\n'"  INCREASED   $cur_path ($base_count -> $cur_count)"
-  elif [[ "$cur_count" -lt "$base_count" ]]; then
-    IMPROVED+=$'\n'"  improved    $cur_path ($base_count -> $cur_count)"
-  fi
-done < "$BY_FILE"
-
-# A baselined path that no longer appears is EITHER fixed OR renamed, and the
-# mechanism cannot tell which. Report it separately from a new error so the two
-# are not conflated (D-16).
-while IFS=$'\t' read -r _ base_path; do
-  [[ -z "${base_path:-}" ]] && continue
-  if ! awk -F'\t' -v p="$base_path" '$2 == p {found = 1} END {exit !found}' "$BY_FILE"; then
-    MISSING+=$'\n'"  gone        $base_path -- fixed, or RENAMED (the mechanism cannot tell)"
-  fi
-done < "$BASELINE"
-
-DELTA_LINE="$NEW_FILES newly-failing files / $(printf '%s' "$NEW_ERRORS" | grep -c . || true) regressions"
-
-if [[ -n "$NEW_ERRORS" ]]; then
-  VERDICT="FAIL"
-  finish
-  say "New or increased errors -- this is the ratchet, and it blocks:$NEW_ERRORS"
-  [[ -n "$MISSING" ]] && { say ""; say "Also, baselined paths no longer reporting:$MISSING"; \
-    say "If one of those is the RENAME of a file listed above, that is the SMI-6704 R10 case:"; \
-    say "edit the baseline deliberately and say so in the commit. --update will refuse it."; }
-  say ""
-  say "next: fix the error, or -- only if it is a rename -- adjust the baseline by hand with a stated reason."
-  exit 1
-fi
-
-if [[ -n "$IMPROVED" || -n "$MISSING" ]]; then
-  VERDICT="PASS (improved -- rerun with --update to lower the baseline)"
-  finish
-  say "Improvements:$IMPROVED$MISSING"
-  exit 0
-fi
-
-VERDICT="PASS (at baseline)"
-finish
-exit 0
+# The comparison and its verdicts live in the helper, per the 500-line gate. It
+# exits the process itself.
+compare_to_baseline

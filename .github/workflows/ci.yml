@@ -1249,8 +1249,22 @@ jobs:
     # hypothetical (its own timeout was raised 2->4 min after observed timeouts,
     # SMI-6381), so a classify blip would have silently waved this gate through
     # the moment it became required.
+    #
+    # M-6, the cross-family gate: dropping `classify` closed one skip path and left
+    # the same hole for `detect-changes` -- under the implicit `success()` condition a
+    # failed or timed-out detector SKIPS this job, and a skipped job SATISFIES branch
+    # protection. So the condition is explicit, and the run step below holds the whole
+    # decision: a detector that did not succeed, or that emitted anything outside
+    # 'true'/'false', is a fault, while 'false' is an ordinary docs-only pass.
+    #
+    # `!cancelled()`, NOT `always()`: `always()` also admits a CANCELLED run, and
+    # `cancel-in-progress: true` above means every force-push cancels one. Under
+    # `always()` each of those would reach the run step, read result='cancelled',
+    # and emit a red `::error::` for a run nobody was waiting on. `!cancelled()`
+    # admits success and failure alike -- which is the detector-fault case this
+    # exists for -- and declines only genuine cancellation.
     needs: [detect-changes]
-    if: needs.detect-changes.outputs.code == 'true'
+    if: ${{ !cancelled() }}
 
     steps:
       - name: Checkout
@@ -1285,8 +1299,37 @@ jobs:
           # anything else (M-1) -- before that, a single transposition here would
           # have turned every inconclusive result into a green pass, which made
           # setting the variable riskier than omitting it.
-          SKILLSMITH_EDGE_TYPECHECK_CONTEXT: required-ci
-        run: bash scripts/ci/typecheck-edge-functions.sh
+          # H-4, the cross-family gate: this was unconditionally `required-ci`, which
+          # made the wrapper's ciphertext carve-out reachable in the one context where
+          # it must not be. The context now comes from GitHub's OWN event metadata --
+          # `head.repo.fork` -- not from anything the script can observe, because key
+          # presence is not proof that an invocation is a fork.
+          #
+          # A fork PR legitimately cannot decrypt the tree, so it gets `fork-pr`, where
+          # a locked tree warns. Everything internal gets `required-ci`, where a locked
+          # tree means the unlock step failed and is a real fault.
+          SKILLSMITH_EDGE_TYPECHECK_CONTEXT: >-
+            ${{ github.event.pull_request.head.repo.fork == true && 'fork-pr' || 'required-ci' }}
+          DETECT_RESULT: ${{ needs.detect-changes.result }}
+          DETECT_CODE: ${{ needs.detect-changes.outputs.code }}
+        run: |
+          # `!cancelled()` admits us on a detector fault, deliberately (M-6), and that
+          # is a failure here rather than a skip. This is the job's ONE decision point:
+          # the docs-only arm costs a wasted checkout and Deno install, and that is the
+          # price of not spreading the decision across per-step `if:` conditions a
+          # reader would then have to verify one at a time. Read through env vars
+          # rather than inline interpolation, so nothing from the event payload
+          # reaches this shell as code.
+          if [ "$DETECT_RESULT" != "success" ]; then
+            echo "::error::detect-changes concluded '$DETECT_RESULT' -- cannot establish whether this PR touches code, so this gate fails closed."
+            exit 1
+          fi
+          case "$DETECT_CODE" in
+            true) ;;
+            false) echo "detect-changes reports no code changes; nothing to typecheck."; exit 0 ;;
+            *) echo "::error::detect-changes emitted code='$DETECT_CODE', outside the expected closed set."; exit 1 ;;
+          esac
+          bash scripts/ci/typecheck-edge-functions.sh
 
   # SMI-2192: Matrix-based test execution for affected packages
   # Runs tests in parallel per package, only for packages affected by changes
