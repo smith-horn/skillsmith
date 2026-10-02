@@ -40,6 +40,16 @@ export const GIT_DISCOVERY_VARS = [
   // an explicit override (e.g. HOME: scratch).
   'GIT_CONFIG',
   'XDG_CONFIG_HOME',
+  // SMI-6919 (the governance review of cde048ff7): config INJECTION, not
+  // discovery, but the same accidental-inheritance class. git exports
+  // GIT_CONFIG_PARAMETERS into every hook of a `git -c k=v <cmd>` run, and it
+  // outranks GIT_CONFIG_GLOBAL=/dev/null (command-line precedence): measured,
+  // `core.hooksPath` through it ran a hook from outside the fixture and
+  // `include.path` through it was honoured. GIT_CONFIG_COUNT is the indexed
+  // spelling (GIT_CONFIG_KEY_n/VALUE_n are inert without it). Parity with
+  // scripts/ci/git-env-sanitize.sh's contract v4; closes half of SMI-6600.
+  'GIT_CONFIG_PARAMETERS',
+  'GIT_CONFIG_COUNT',
 ] as const
 
 const realpath: (p: string) => string =

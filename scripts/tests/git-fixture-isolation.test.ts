@@ -15,7 +15,7 @@
  * Audit-39 in `scripts/audit-standards.mjs` is the second line of defence.
  */
 import { execFileSync } from 'node:child_process'
-import { readdirSync, readFileSync, realpathSync, rmSync } from 'node:fs'
+import { existsSync, readdirSync, readFileSync, realpathSync, rmSync, writeFileSync } from 'node:fs'
 import { dirname, join } from 'node:path'
 import { fileURLToPath } from 'node:url'
 import { afterEach, beforeEach, describe, expect, it } from 'vitest'
@@ -49,6 +49,8 @@ describe('SMI-4693: makeFixtureEnv strips git discovery env vars', () => {
       GIT_PREFIX: 'subdir/',
       GIT_CEILING_DIRECTORIES: '/',
       GIT_DISCOVERY_ACROSS_FILESYSTEM: '1',
+      GIT_CONFIG_PARAMETERS: "'core.hookspath=/totally/wrong/hooks'",
+      GIT_CONFIG_COUNT: '1',
     }
     Object.assign(process.env, sentinels)
     try {
@@ -193,6 +195,89 @@ describe('SMI-4693: end-to-end — fixture spawn does not mutate parent worktree
       encoding: 'utf8',
     }).trim()
     expect(outerBranch).toBe('smi-4693-outer-feature')
+  })
+})
+
+// SMI-6919 (the governance review of cde048ff7, F2): the list walk above can
+// never notice a MISSING entry, so this arm is behavioural. GIT_CONFIG_PARAMETERS
+// outranks GIT_CONFIG_GLOBAL=/dev/null, and git exports it into every hook of a
+// `git -c k=v <cmd>` run, so a fixture spawned from such a hook inherited it;
+// `core.hooksPath` through it ran a hook from OUTSIDE the fixture (measured).
+// The control passes the variable through `extra`, which is applied after the
+// deletions, and the foreign hook must run, so the instrument is known to
+// fire; the arm sets it in process.env and makeFixtureEnv() must strip it.
+// Red arm: with the two entries removed from GIT_DISCOVERY_VARS this fails.
+describe('SMI-6919: an inherited GIT_CONFIG_PARAMETERS cannot reach a fixture', () => {
+  const savedParams = process.env.GIT_CONFIG_PARAMETERS
+  const savedCount = process.env.GIT_CONFIG_COUNT
+  const savedKey = process.env.GIT_CONFIG_KEY_0
+  const savedValue = process.env.GIT_CONFIG_VALUE_0
+  afterEach(() => {
+    for (const [k, v] of [
+      ['GIT_CONFIG_PARAMETERS', savedParams],
+      ['GIT_CONFIG_COUNT', savedCount],
+      ['GIT_CONFIG_KEY_0', savedKey],
+      ['GIT_CONFIG_VALUE_0', savedValue],
+    ] as const) {
+      if (v === undefined) delete process.env[k]
+      else process.env[k] = v
+    }
+  })
+
+  function hooksDirWithMarker(): { hooks: string; marker: string } {
+    const hooks = makeFixtureTempDir('smi-6919-hooks')
+    tempDirsToClean.push(hooks)
+    const marker = join(hooks, 'ran')
+    writeFileSync(join(hooks, 'pre-commit'), `#!/bin/sh\n: > "${marker}"\n`, { mode: 0o755 })
+    return { hooks, marker }
+  }
+
+  function fixtureRepo(): string {
+    const repo = makeFixtureTempDir('smi-6919-params')
+    tempDirsToClean.push(repo)
+    execFileSync('git', ['init', '-q', '-b', 'main'], { cwd: repo, env: makeFixtureEnv() })
+    return repo
+  }
+
+  it('GIT_CONFIG_PARAMETERS: honoured through `extra` (control), stripped from process.env (arm)', () => {
+    const { hooks, marker } = hooksDirWithMarker()
+    const repo = fixtureRepo()
+    const params = `'core.hookspath=${hooks}'`
+    execFileSync('git', ['commit', '--allow-empty', '-q', '-m', 'control'], {
+      cwd: repo,
+      env: makeFixtureEnv({ GIT_CONFIG_PARAMETERS: params }),
+    })
+    expect(existsSync(marker), 'control: the foreign hook must run').toBe(true)
+    rmSync(marker)
+    process.env.GIT_CONFIG_PARAMETERS = params
+    execFileSync('git', ['commit', '--allow-empty', '-q', '-m', 'arm'], {
+      cwd: repo,
+      env: makeFixtureEnv(),
+    })
+    expect(existsSync(marker), 'arm: the inherited variable must be stripped').toBe(false)
+  })
+
+  it('GIT_CONFIG_COUNT: the indexed spelling is stripped too (KEY/VALUE are inert without it)', () => {
+    const { hooks, marker } = hooksDirWithMarker()
+    const repo = fixtureRepo()
+    execFileSync('git', ['commit', '--allow-empty', '-q', '-m', 'control'], {
+      cwd: repo,
+      env: makeFixtureEnv({
+        GIT_CONFIG_COUNT: '1',
+        GIT_CONFIG_KEY_0: 'core.hookspath',
+        GIT_CONFIG_VALUE_0: hooks,
+      }),
+    })
+    expect(existsSync(marker), 'control: the foreign hook must run').toBe(true)
+    rmSync(marker)
+    process.env.GIT_CONFIG_COUNT = '1'
+    process.env.GIT_CONFIG_KEY_0 = 'core.hookspath'
+    process.env.GIT_CONFIG_VALUE_0 = hooks
+    execFileSync('git', ['commit', '--allow-empty', '-q', '-m', 'arm'], {
+      cwd: repo,
+      env: makeFixtureEnv(),
+    })
+    expect(existsSync(marker), 'arm: the count must be stripped').toBe(false)
   })
 })
 

@@ -219,15 +219,26 @@ export function setupFixtures(): Fixtures {
   writeExec(join(appDir, 'scripts', 'lib', 'check-mount-composition.sh'), CHECKER_SH)
 
   const git = resolveBin('git') ?? 'git'
-  // SMI-6919: a hook's inherited GIT_DIR routed these calls into the main
-  // repo's shared .git/config; the shared fixture env strips every git
-  // discovery variable (SMI-4693) and pins the author, so the fixture is
-  // addressed by cwd alone and needs no identity config of its own.
-  const gitOpts = { cwd: repoDir, env: makeFixtureEnv() }
-  spawnSync(git, ['init', '-q'], gitOpts)
+  // SMI-6919: a push from a linked worktree exports GIT_DIR into pre-push and
+  // these calls once addressed THAT repository (core.bare=true and a test
+  // identity in the main checkout's shared .git/config). The shared fixture
+  // env strips the discovery and config-injection variables and pins the
+  // author (SMI-4693); HOME is pinned inside the fixture so the host's
+  // ~/.config/git/ignore and attributes cannot reach it (a global ignore
+  // matching `f` refused the add, measured); and each status is checked, since
+  // a fixture that silently failed to commit hands every test an empty repo.
+  const gitOpts = { cwd: repoDir, env: makeFixtureEnv({ HOME: root }), encoding: 'utf8' as const }
+  const run = (args: string[]) => {
+    const r = spawnSync(git, args, gitOpts)
+    if (r.status !== 0)
+      throw new Error(
+        `fixture git ${args.join(' ')} failed (status ${r.status}): ${r.stderr ?? ''}`
+      )
+  }
+  run(['init', '-q'])
   writeFileSync(join(repoDir, 'f'), 'x')
-  spawnSync(git, ['add', 'f'], gitOpts)
-  spawnSync(git, ['commit', '-q', '-m', 'init'], gitOpts)
+  run(['add', 'f'])
+  run(['commit', '-q', '-m', 'init'])
 
   return {
     root,
