@@ -2204,6 +2204,38 @@ describe('decide() — SMI-6920 round 2: a quoted env -S remainder, inherited so
     expectAllow('coproc NAME cat .env')
   })
 
+  // SMI-6937, gate round 2: zsh's `repeat` takes an arithmetic COUNT, which
+  // may begin with a dash, so a dash-prefixed word after `repeat` is never an
+  // option. Routing the row through the shared flag parser was wrong in BOTH
+  // directions, measured with a decoy in zsh 5.9 with both controls behaving:
+  //
+  //   repeat -x cat D   with x=-1  ->  count 1, the reader RAN, guard ALLOWED
+  //   repeat -x 2 cat D            ->  nothing ran,            guard DENIED
+  //
+  // The first was a bypass this branch INTRODUCED; the gate reported only the
+  // second. One opt-in `noFlags` row property fixes both.
+  //
+  // Red arm: drop `noFlags: true` from the `repeat` row and the first row
+  // below allows while the second denies -- the arm fails in both directions.
+  it('SMI-6937 gate 2 arm: a dash-prefixed count is the count, so the reader is read', () => {
+    expect(decide(bashCall('repeat -x cat .env'), {}).action).toBe('deny')
+  })
+  it('SMI-6937 gate 2 arm, other direction: a count then a non-command runs nothing', () => {
+    expectAllow('repeat -x 2 cat .env')
+  })
+  // Accepted cost, stated rather than hidden: a literal reader behind a count
+  // the guard cannot evaluate is refused whatever the count turns out to be.
+  // A zero or negative count runs nothing and is refused anyway. That is the
+  // only posture that is right when the count is an expansion, which it may
+  // always be, and it joins the runs-nothing-but-refused class this guard
+  // already accepts elsewhere.
+  it.each(['repeat 0 cat .env', 'repeat -1 cat .env'])(
+    'SMI-6937 accepted cost, a zero count still refuses: %s -> deny',
+    (command) => {
+      expect(decide(bashCall(command), {}).action).toBe('deny')
+    }
+  )
+
   // Controls assert the WHOLE result (M-2): a fail-open allow carries a
   // stderr line, so `.action` alone passed on a guard whose shell-text
   // mechanism was entirely dead (measured: 13 of 13 with the import removed).
