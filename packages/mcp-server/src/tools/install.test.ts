@@ -469,14 +469,22 @@ describe('installSkill() Zod boundary guard (SMI-4288 / #599)', () => {
     })
 
     it('completes the pre-flight on a manifest whose installedSkills is nullish (SMI-6886)', async () => {
-      // SMI-6733 Phase 2 Wave 2 Step 6. `install.ts:306` subscripts
-      // `manifest.installedSkills[manifestKey]` with no guard, and ADR-171
-      // § 5's nullish carve-out makes `installedSkills: null` classify `ok`
-      // — so the lenient reader hands it back UNCHANGED and the subscript
-      // throws `TypeError: Cannot read properties of null`.
+      // SMI-6733 Phase 2 Wave 2 Step 6. Unfixed, `install.ts` subscripted
+      // `manifest.installedSkills[manifestKey]` with no guard — the
+      // `existingEntry` read in the conflict pre-flight, now reached through
+      // `installedSkillsOf`. ADR-171 § 5's nullish carve-out makes
+      // `installedSkills: null` classify `ok`, so the lenient reader hands it
+      // back UNCHANGED and the bare subscript throws
+      // `TypeError: Cannot read properties of null`.
       //
-      // That throw lands in the `try` at `install.ts:295`, so the plan's
-      // "assert no error was thrown" would pass against the unfixed code.
+      // That throw lands in the `try` wrapping the whole pre-flight — the one
+      // guarded by `validInput.force && validInput.conflictAction` — so the
+      // plan's "assert no error was thrown" would pass against the unfixed code.
+      //
+      // Both anchors above were line numbers until the SMI-6733 post-merge
+      // retro moved three functions out of `install.ts` and shifted them by 36
+      // lines, with nothing to catch it. Named by construct now, because a line
+      // number in a comment rots the first time anyone edits above it.
       // What it cannot pass is the pre-flight's own self-report: a throw
       // makes it push the `could not be evaluated` problem onto `tips`.
       // Absence of that tip is the observable "it ran to completion".

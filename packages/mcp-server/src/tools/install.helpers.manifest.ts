@@ -8,8 +8,8 @@
  */
 
 import * as fs from 'fs/promises'
-import * as path from 'path'
 import {
+  ManifestManager,
   assertNotRealUserHome,
   loadManifestForWrite,
   loadManifestLenient,
@@ -98,12 +98,25 @@ export async function loadManifestWithWarning(
  * SMI-1533: Uses atomic write pattern with lock
  */
 export async function saveManifest(manifest: SkillManifest): Promise<void> {
-  assertNotRealUserHome(MANIFEST_PATH, 'write')
-  await fs.mkdir(path.dirname(MANIFEST_PATH), { recursive: true })
-  // Write to temp file first, then rename for atomic operation
-  const tempPath = MANIFEST_PATH + '.tmp.' + process.pid
-  await fs.writeFile(tempPath, JSON.stringify(manifest, null, 2))
-  await fs.rename(tempPath, MANIFEST_PATH)
+  // SMI-6746 / SMI-6733: DELEGATES rather than repeating the hardening. This
+  // used to be its own write with `MANIFEST_PATH + '.tmp.' + process.pid` — no
+  // random suffix, so two concurrent saves in one process collided on an
+  // identical temp path, and no cleanup, so a failed write left the temp file
+  // behind. SMI-6746's definition of done forbids copying the fix a third
+  // time in as many words: "Copy-pasting the fix produces a fourth copy to
+  // keep in sync."
+  //
+  // `ManifestManager.save()` already owns all of it — the `randomUUID()`
+  // suffix (SMI-6007), the try/catch that removes only THIS invocation's temp
+  // file before rethrowing the original error, the `mkdir -p`, and
+  // `assertNotRealUserHome`. Delegating means a future hardening lands in one
+  // place rather than needing to be found in three.
+  //
+  // The cast is the same documented trust boundary as `loadManifestForWrite`'s
+  // above: core's `SkillManifest` and this package's are two independently
+  // declared, structurally identical interfaces, and ADR-171 § 9 forbids
+  // merging the three manifest implementations.
+  await new ManifestManager(MANIFEST_PATH).save(manifest as Parameters<ManifestManager['save']>[0])
 }
 
 /**

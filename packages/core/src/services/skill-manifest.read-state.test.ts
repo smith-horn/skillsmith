@@ -131,11 +131,10 @@ describe('ADR-171 manifest read-state classifier (SMI-6733)', () => {
       expect(result.state).toBe('corrupt')
     })
 
-    // SMI-6733 Phase 1 fix: `installedSkills: null` is byte-identical to an
-    // absent key for every consumer — `{...null}` spreads to `{}` and
-    // `Object.entries(null ?? {})`-style guards already treat it as empty,
-    // exactly like every ad-hoc tolerance guard elsewhere in this repo
-    // (`manifest.installedSkills && typeof …` short-circuits on null). The
+    // SMI-6733 Phase 1 fix. § 5 accepts both `installedSkills: null` and an
+    // absent key; § 3 preserves the difference; `installedSkillsOf` normalises
+    // either to an empty map. No causal clause joining those — see the helper's
+    // own docblock for why three review rounds removed one. The
     // hazard set SMI-6752 actually measured harm from is non-empty strings
     // and non-empty arrays, not nullish values, so null/undefined classify
     // `ok` while string/number/array — including the array shapes above —
@@ -248,6 +247,51 @@ describe('ADR-171 manifest read-state classifier (SMI-6733)', () => {
         const result = await readManifestState(manifestPath)
         expect(result.state).toBe(expected)
       })
+
+      // Post-merge retro on cfc96eccd. Every row in the table above holds
+      // `installedSkills: {}`, so none of them combines a newer major version
+      // with an INVALID shape — and that combination is the only thing that
+      // observes which of the two checks runs first.
+      //
+      // The surviving mutation: `isPlainObject(parsed)` -> `isValidManifestShape(parsed)`
+      // at the `versionValue` read inverts the precedence and passes 42 of 42.
+      // Measured, not argued. What it changes is the answer for a manifest a
+      // NEWER Skillsmith wrote whose shape this version does not recognise:
+      // `version_unsupported` becomes `corrupt`, and the user is told "Open the
+      // file and correct that field" about a file that is not theirs to correct.
+      // ADR-171 § 6 names discarding a newer version's records as the harm this
+      // state exists to prevent, so the precedence is load-bearing, not stylistic.
+      //
+      // `installedSkills: []` is the sharpest fixture available because it is
+      // separately pinned as `corrupt` in the shape table above. That makes this
+      // row a genuine discriminator between the two orderings rather than a
+      // second sample of the same one.
+      // The cross-family gate on PR #2980 named what the first three rows
+      // still left room for, and it is worth stating because it is subtler
+      // than the mutation they were written against: an implementation that
+      // checks version first ONLY for array/string values and falls back to
+      // shape-first for every other invalid type passes all three. That is not
+      // a contrived mutation — a hand-written predicate enumerating the shapes
+      // it has seen in fixtures arrives at exactly it.
+      //
+      // So the row set has to span the invalid-type SPACE, not a sample of it:
+      // the two container types a reader would think of, plus the three
+      // primitive classes nobody writes a fixture for.
+      it.each([
+        ['an array', [] as unknown],
+        ['a string', 'hello' as unknown],
+        ['an array of entries', [{ installPath: '/tmp/x' }] as unknown],
+        ['a number', 42 as unknown],
+        ['a boolean', true as unknown],
+        ['the literal false', false as unknown],
+      ])(
+        'a NEWER major version wins over an invalid shape (%s) — § 6 precedence',
+        async (_label, installedSkills) => {
+          await writeManifestFile(JSON.stringify({ version: '2.0.0', installedSkills }))
+          const result = await readManifestState(manifestPath)
+          expect(result.state).toBe('version_unsupported')
+        }
+      )
     })
 
     describe('CAS round-trip (ADR-171 § 3): the object handed onward is the raw JSON.parse value', () => {
