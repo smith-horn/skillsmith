@@ -21,7 +21,7 @@
  */
 import { describe, it, expect } from 'vitest'
 import * as path from 'path'
-import { existsSync, mkdirSync, readFileSync } from 'fs'
+import { existsSync, mkdirSync, readFileSync, readdirSync, rmSync, writeFileSync } from 'fs'
 import { MANIFEST_PATH } from './install.types.js'
 import { saveManifest, updateManifestSafely } from './install.helpers.manifest.js'
 
@@ -95,5 +95,64 @@ describe('SMI-6735: updateManifestSafely() holds an ownership-tokened lock', () 
 
     // Released on success, not left for the next process to age out.
     expect(existsSync(MANIFEST_PATH + '.lock')).toBe(false)
+  })
+})
+
+// SMI-6746 / SMI-6733 (governance review of the owed-items branch). `saveManifest`
+// was changed from its own inline temp write to a delegation to
+// `ManifestManager.save()`, and NOTHING observed that it still delegates: with the
+// delegation reverted to the pre-fix `MANIFEST_PATH + '.tmp.' + process.pid` body,
+// all 49 tests across this file, tests/unit/install-helpers.test.ts and core's
+// skill-manifest.test.ts passed. Measured, not argued — that is the same
+// invisible-success class the delegation itself was written to remove.
+//
+// This is NOT a second copy of core's own "a failed save() only removes its own
+// temp file" test. That one's subject is `ManifestManager.save()`; this one's is
+// whether THIS module's entry point still routes through it. Core's test stays
+// green under the revert precisely because the revert does not touch core.
+//
+// The injected failure is a real one, not a mock: `MANIFEST_PATH` is made a
+// non-empty directory, so `writeFile(temp)` succeeds and the final
+// `rename(temp, MANIFEST_PATH)` fails (EISDIR on Linux). The temp file therefore
+// exists at the moment the write fails, which is the only window in which the
+// two implementations differ.
+describe('SMI-6746: saveManifest() delegates its temp-file hardening to ManifestManager', () => {
+  const manifestDir = path.dirname(MANIFEST_PATH)
+
+  function strayTempFiles(): string[] {
+    return readdirSync(manifestDir).filter((f) => f.includes('.tmp.'))
+  }
+
+  it('cleans up its own temp file when the write fails, and surfaces the failure', async () => {
+    mkdirSync(manifestDir, { recursive: true })
+    // The SMI-6735 test above leaves MANIFEST_PATH behind as a FILE, and
+    // `mkdirSync(..., { recursive: true })` tolerates an existing directory but
+    // not an existing file (EEXIST). Clear it first.
+    rmSync(MANIFEST_PATH, { recursive: true, force: true })
+    // Occupied so the rename cannot succeed by replacing an empty directory.
+    mkdirSync(MANIFEST_PATH, { recursive: true })
+    writeFileSync(path.join(MANIFEST_PATH, 'occupant'), 'x')
+
+    try {
+      // Fail-closed: the error is surfaced rather than swallowed. This arm does
+      // NOT discriminate the two implementations — the pre-fix body rejects here
+      // too, because its uncaught rename error propagates. It is asserted anyway
+      // because a future "fix" that swallowed the failure would be the fail-open
+      // defect this whole branch exists to close.
+      await expect(saveManifest({ version: '1.0.0', installedSkills: {} })).rejects.toThrow()
+
+      // THE discriminating assertion. The pre-fix body leaves
+      // `manifest.json.tmp.<pid>` behind; the delegation's try/catch unlinks
+      // exactly its own temp file before rethrowing.
+      expect(strayTempFiles()).toEqual([])
+
+      // The failed write clobbered nothing it did not own.
+      expect(readFileSync(path.join(MANIFEST_PATH, 'occupant'), 'utf8')).toBe('x')
+    } finally {
+      // MANIFEST_PATH must go back to not existing: the assertions earlier in
+      // this file require it absent, and a leftover DIRECTORY here would break
+      // any later test that expects a file.
+      rmSync(MANIFEST_PATH, { recursive: true, force: true })
+    }
   })
 })
