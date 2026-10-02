@@ -1259,10 +1259,16 @@ jobs:
     #
     # `!cancelled()`, NOT `always()`: `always()` also admits a CANCELLED run, and
     # `cancel-in-progress: true` above means every force-push cancels one. Under
-    # `always()` each of those would reach the run step, read result='cancelled',
-    # and emit a red `::error::` for a run nobody was waiting on. `!cancelled()`
-    # admits success and failure alike -- which is the detector-fault case this
-    # exists for -- and declines only genuine cancellation.
+    # `always()` this job would be admitted on every cancelled run and would spend
+    # a runner, a git-crypt unlock and a Deno install on a run nobody is waiting
+    # for -- and its conclusion would then attach to a superseded commit.
+    #
+    # m6 corrects the REASON an earlier draft of this comment gave, which was that
+    # the step would "read result='cancelled'". Measured against cancelled run
+    # 37060974633: `detect-changes` concluded SUCCESS there (it finished at
+    # 20:31:09, the run was cancelled at 20:31:50), so under `always()` the step
+    # would have read DETECT_RESULT=success, passed the guard, and run the whole
+    # check. The choice survives; the mechanism stated for it did not.
     needs: [detect-changes]
     if: ${{ !cancelled() }}
 

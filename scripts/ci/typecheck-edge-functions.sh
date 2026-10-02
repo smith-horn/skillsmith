@@ -79,7 +79,8 @@ source "$REPO_ROOT/scripts/ci/typecheck-edge-functions.helpers.sh"
 
 if ! declare -F finish >/dev/null || ! declare -F exit_for_inconclusive >/dev/null \
   || ! declare -F resolve_partition >/dev/null || ! declare -F validate_baseline >/dev/null \
-  || ! declare -F compare_to_baseline >/dev/null; then
+  || ! declare -F compare_to_baseline >/dev/null \
+  || ! declare -F apply_update_ratchet >/dev/null; then
   printf '[edge-typecheck] FATAL: helpers did not load\n' >&2
   exit 1
 fi
@@ -106,7 +107,7 @@ fi
 if has_git_crypt_magic_header "$CRYPT_SENTINEL"; then
   CRYPT_STATE="CIPHERTEXT"
   inconclusive "tree is git-crypt locked; deno cannot parse it"
-  NEXT_ACTION="expected on a fork PR (no GIT_CRYPT_KEY). Wave 5's pre-deploy arm is the backstop. If this fires on an internal PR, the unlock step failed -- investigate that."
+  NEXT_ACTION="expected on a fork PR (no GIT_CRYPT_KEY). If this fires on an internal PR, the unlock step failed -- investigate that."
   # H-4: this used to warn in EVERY context, which the cross-family gate called
   # unsafe and it was right. Key presence is not proof that an invocation is a
   # fork, one mutable sentinel decided the outcome before any file was checked,
@@ -124,7 +125,7 @@ if has_git_crypt_magic_header "$CRYPT_SENTINEL"; then
     # EVERY external contribution. A fork has no GIT_CRYPT_KEY by design, so this
     # is not a degraded environment to fail closed on; it is the one case where
     # "cannot run" is structurally true and unfixable by the contributor.
-    NEXT_ACTION="nothing for the contributor to do -- a fork has no GIT_CRYPT_KEY by design. Wave 5's pre-deploy arm is the backstop for code that arrives this way."
+    NEXT_ACTION="nothing for the contributor to do -- a fork has no GIT_CRYPT_KEY by design. Such code is first checked by this gate on the post-merge push to main, which RACES the deploy; a pre-deploy arm that would check it before deploying is Wave 5 and is NOT built."
   else
     NEXT_ACTION="a locked tree in context '$CONTEXT' means the git-crypt unlock failed -- investigate that. Only fork-pr tolerates ciphertext, and CI selects it from the event payload."
   fi
@@ -175,6 +176,29 @@ if [[ -n "$UNKNOWN_TS" ]]; then
   NEXT_ACTION="extend the discovery glob, or confirm these are not deployed. An undiscovered file is an unchecked file."
   exit_for_inconclusive
 fi
+# M2 (round-2 gate): Deno LOADS AND RUNS .js/.mjs/.cjs/.jsx, and the probe above
+# structurally cannot see them -- neither `*.ts?` nor `*.?ts` matches. Such a file
+# would deploy, execute in production, and be absent from this gate while the
+# counts below implied it was covered.
+#
+# REPORTED, not checked: `deno check` does not type-check JavaScript without
+# `compilerOptions.checkJs`, which this config does not set. Adding them to the
+# checked set would grow the denominator without checking anything, which is worse
+# than refusing. Refusing forces a decision -- port, delete, or enable checkJs and
+# re-baseline. 0 such files exist today, so this costs nothing until the premise
+# changes. The plan's § M2 records the measurement and why the reviewer's own
+# proposed remedy (a per-path `Check file://` assertion) was rejected.
+UNCHECKED_JS="$(find supabase/functions -type f \
+  \( -name '*.js' -o -name '*.mjs' -o -name '*.cjs' -o -name '*.jsx' \) 2>/dev/null)"
+if [[ -n "$UNCHECKED_JS" ]]; then
+  UNCHECKED_N="$(printf '%s\n' "$UNCHECKED_JS" | grep -c .)"
+  inconclusive "$UNCHECKED_N JavaScript file(s) under supabase/functions that deno runs but does not type-check"
+  say "--- deployed, executed, and covered by nothing (showing up to 20 of $UNCHECKED_N) ---"
+  printf '%s\n' "$UNCHECKED_JS" | head -20
+  NEXT_ACTION="deno executes these but type-checks JS only with compilerOptions.checkJs, which supabase/deno.json does not set. Port them to TypeScript, delete them, or enable checkJs and re-baseline. Do NOT read the counts below as covering them."
+  exit_for_inconclusive
+fi
+
 DISCOVERED="$(wc -l < "$ALL_LIST" | tr -d ' ')"
 
 # I-3 FIRST, before anything derived from the file list. Measured: when the find
@@ -207,29 +231,17 @@ resolve_partition
 # independently (a renamed path breaks one, a discovery-precedence change the
 # other).
 # ---------------------------------------------------------------------------
-# Lockfile policy (plan H-2). A CHECK MUST NOT WRITE. `deno check --lock <path>`
-# without `--frozen` *updates* the lockfile when it disagrees with the real import
-# graph, which would leave a tracked file modified after a read-only gate run --
-# a dirty tree in CI, and an unexplained ~150-line diff for a developer running
-# this locally for the first time.
+# Lockfile policy (plan H-2). A CHECK MUST NOT WRITE, and `--lock` without
+# `--frozen` rewrites the lockfile when it disagrees with the import graph. So the
+# default is `--no-lock` -- nothing read, nothing writable -- and the only other
+# mode this gate will ever run in is `--lock --frozen`, which errors on a stale
+# lock instead of rewriting it. `SKILLSMITH_EDGE_TYPECHECK_FROZEN=1` selects it;
+# it is the intended end state once `supabase/deno.lock` actually covers this
+# import graph, which today it does not (SMI-6912).
 #
-# So the default is `--no-lock`: no lockfile is read and none can be written. That
-# gives up reproducibility, which is a real cost and is why H-2 asked for a
-# lockfile model rather than silence. The honest position today is that
-# `supabase/deno.lock` does not cover the full edge-function import graph (a known
-# follow-on), so pinning against it would verify almost nothing while risking a
-# write.
-#
-# `SKILLSMITH_EDGE_TYPECHECK_FROZEN=1` switches to `--lock <path> --frozen`, which
-# is read-only by construction -- it ERRORS on a stale lock rather than rewriting
-# it. That is the intended end state once the lock is regenerated, and it is the
-# only lock mode this gate will ever run in, because it is the only one that
-# cannot mutate the tree.
-#
-# Not attributed, stated as unknown: a modified `supabase/deno.lock` and a stray
-# root `deno.lock` were observed in this worktree during development. Re-running
-# this gate against a restored lockfile does NOT reproduce either, so the cause is
-# not established and is not being guessed at. `--no-lock` removes the question.
+# The cost of `--no-lock` is reproducibility, and the plan's § Lockfile policy
+# holds the full reasoning plus one unattributed observation that `--no-lock`
+# makes moot.
 if [[ -n "${SKILLSMITH_EDGE_TYPECHECK_FROZEN:-}" ]]; then
   LOCK_ARGS=(--lock supabase/deno.lock --frozen)
   LOCK_MODE="frozen (--lock supabase/deno.lock --frozen; read-only, errors on stale)"
@@ -259,7 +271,13 @@ DENO_NO_PACKAGE_JSON=1 deno check --config "$CONFIG" "${LOCK_ARGS[@]}" \
 DENO_RC=$?
 
 CLEAN_OUT="$(mktemp)"; trap 'rm -f "$ALL_LIST" "$PROD_LIST" "$RAW_OUT" "$CLEAN_OUT"' EXIT
-perl -pe 's/\e\[[0-9;]*m//g' "$RAW_OUT" > "$CLEAN_OUT"
+# Strip ANSI colour AND NUL bytes. m3: a git-crypt-locked tree puts NULs in
+# deno's output, and some greps then treat the stream as binary and silently
+# stop matching -- measured, ugrep 7.8.4 returns no match on the graph-error
+# pattern where GNU grep 3.8 (what CI runs) and BSD grep (stock macOS) both
+# match. That would disable the graph-error arm on one developer's machine only,
+# which is the worst shape for a check: correct everywhere it is observed.
+perl -pe 's/\e\[[0-9;]*m//g; tr/\000//d' "$RAW_OUT" > "$CLEAN_OUT"
 
 # I-4: a module-graph or parser failure is NOT a low error count. Separate it
 # from type diagnostics before counting anything.
@@ -333,10 +351,35 @@ fi
 
 # I-5, measured five times and the most reliable failure on this surface: a
 # derived count that looks credible and is wrong. Take the FIRST location per
-# error header -- five blocks carry a second "the expected type comes from" line,
-# and counting locations instead of errors over-reports.
+# error header, because some blocks carry more than one.
+#
+# m4 corrects this comment, which had the shape of the thing wrong while having
+# the number it turns on right. Re-measured 2026-10-02 over the real 59-error
+# output: 59 blocks, of which 6 carry a second location line. Five of those
+# second lines are `at file://` -- so 64 file:// lines total, 59 firsts plus 5
+# extras, which is the arithmetic this code depends on -- and the sixth is a
+# remote `at https://esm.sh/@supabase/auth-js@2.65.1/...` (see m2 below). The
+# introducing note varies and is NOT the location line: "The expected type comes
+# from" appears 5 times and "is declared here" 4 times across the output. The
+# earlier wording named 5 blocks and attributed the count to a phrase that does
+# not carry the location.
 BY_FILE="$(mktemp)"
 trap 'rm -f "$ALL_LIST" "$PROD_LIST" "$RAW_OUT" "$CLEAN_OUT" "$BY_FILE" "${BASELINE_SNAPSHOT:-}"' EXIT
+# m5: the field split below used to be a two-field print, which splits on default
+# whitespace and so TRUNCATES a path at its first space before it reaches
+# BY_FILE. The consequence was loud rather than silent -- a truncated path has no
+# baseline row, so it read as NEW FILE and failed -- but the m-2 comment below
+# called the whitespace handling fixed when only the deno invocation was. The
+# count is now taken, the leading count stripped, and the rest of the line kept
+# intact whatever it contains. Measured 2026-10-02: 0 of 363 discovered paths
+# contain a space or tab (control: 322 contain a hyphen), so this is latent
+# rather than live, and fixed anyway.
+#
+# NOTE FOR THE NEXT EDITOR: the awk program below is a SINGLE-QUOTED shell
+# string. A comment placed between its body and its closing quote becomes part of
+# the program, and one apostrophe in that comment ends the string early. The
+# first draft of this very comment did exactly that, and the whole attribution
+# pipeline silently produced nothing.
 # Paths are made relative by stripping the KNOWN repo root, not by matching a
 # repo name. Measured 2026-10-02: a `.*/skillsmith/` strip yields
 # `supabase/...` in a plain checkout but `.worktrees/<name>/supabase/...` in a
@@ -345,6 +388,24 @@ trap 'rm -f "$ALL_LIST" "$PROD_LIST" "$RAW_OUT" "$CLEAN_OUT" "$BY_FILE" "${BASEL
 # wherever it is generated.
 awk -v root="$REPO_ROOT/" '
   /^TS[0-9]+ \[ERROR\]/ { want = 1; next }
+  # m2: this matched `at file://` ONLY. Measured in the real 59-error output, one
+  # location line reads `at https://esm.sh/@supabase/auth-js@2.65.1/...` -- today
+  # a SECONDARY line, so the arithmetic is unaffected and 59/59 reconciles. But
+  # if a future diagnostic reports a remote URL as the FIRST location in a block,
+  # the old pattern left `want` set, consumed the location belonging to the NEXT
+  # block, and cascaded into a mis-attribution that the reconciliation caught
+  # only by accident, as an unexplained MISMATCH. Matching any scheme and
+  # emitting a marker makes the cause legible instead of inferred.
+  #
+  # NO APOSTROPHES IN THIS COMMENT BLOCK: the awk program is a single-quoted
+  # shell string, so one apostrophe terminates it and the shell then parses the
+  # rest of the program as commands. The first draft of this very comment did
+  # exactly that.
+  want && /^[[:space:]]+at [a-z][a-z0-9+.-]*:\/\// && !/^[[:space:]]+at file:\/\// {
+    print "REMOTE_FIRST_LOCATION"
+    want = 0
+    next
+  }
   want && /^[[:space:]]+at file:\/\// {
     line = $0
     sub(/^[[:space:]]+at file:\/\//, "", line)
@@ -353,7 +414,20 @@ awk -v root="$REPO_ROOT/" '
     print line
     want = 0
   }
-' "$CLEAN_OUT" | sort | uniq -c | awk '{print $1"\t"$2}' | sort -k2,2 > "$BY_FILE"
+' "$CLEAN_OUT" | sort | uniq -c \
+  | awk -v OFS='\t' '{ c = $1; sub(/^[[:space:]]*[0-9]+[[:space:]]+/, ""); print c, $0 }' \
+  | sort -k2,2 > "$BY_FILE"
+
+# m2's marker, handled explicitly rather than left to surface as a file named
+# REMOTE_FIRST_LOCATION. It means a diagnostic block gave a remote URL as its
+# FIRST location, so that error cannot be attributed to a file in this repo and
+# the per-file numbers below would be short by one with no stated reason.
+if grep -qE '(^|\t)REMOTE_FIRST_LOCATION($|\t)' "$BY_FILE"; then
+  inconclusive "a diagnostic reported a remote URL as its first location, so it cannot be attributed to a repo file"
+  say "--- the raw blocks ---"; grep -aE 'at [a-z][a-z0-9+.-]*://' "$CLEAN_OUT" | grep -av 'at file://' | head -5
+  NEXT_ACTION="attribution is per-file and this error has no repo file. Read the raw block above; the parser needs an explicit rule for this diagnostic shape."
+  exit_for_inconclusive
+fi
 
 # Any path that did not reduce to a repo-relative one is a bug in the stripping,
 # not a file outside the repo: every entry in PROD_LIST came from a repo-relative
@@ -410,53 +484,9 @@ if [[ -f "$BASELINE" ]]; then
 fi
 
 if [[ "$MODE" == "--update" ]]; then
-  if [[ -f "$BASELINE" ]]; then
-    REFUSALS=""
-    while IFS=$'\t' read -r new_count new_path; do
-      [[ -z "${new_path:-}" ]] && continue
-      old_count="$(awk -F'\t' -v p="$new_path" '$2 == p {print $1}' "$BASELINE")"
-      if [[ -z "$old_count" ]]; then
-        REFUSALS+=$'\n'"  NEW FILE    $new_path ($new_count) -- not in the baseline"
-      elif [[ "$new_count" -gt "$old_count" ]]; then
-        REFUSALS+=$'\n'"  INCREASED   $new_path ($old_count -> $new_count)"
-      fi
-    done < "$BY_FILE"
-    if [[ -n "$REFUSALS" ]]; then
-      VERDICT="REFUSED"
-      finish
-      say "--update REFUSED: a ratchet may only lower counts and drop zeroed rows.$REFUSALS"
-      say ""
-      say "If a baselined file was RENAMED, this is expected and the mechanism cannot tell"
-      say "the difference (SMI-6704 R10). The rename report above names the missing old row;"
-      say "edit the baseline deliberately and say so in the commit. Do not auto-accept."
-      exit 1
-    fi
-  fi
-  # M-5: validate and replace under a lock, then rename atomically. Without
-  # this, two concurrent updates could each validate against allowance 5, write
-  # 1 and 4 in either order, and leave the committed allowance RAISED to 4 while
-  # both runs reported a successful ratchet.
-  LOCK="$BASELINE.lock"
-  if ! mkdir "$LOCK" 2>/dev/null; then
-    VERDICT="REFUSED (another --update holds $LOCK)"
-    finish
-    say "Another --update is in progress. If none is, remove $LOCK -- it holds no state."
-    exit 1
-  fi
-  # Re-read under the lock: the file may have changed since validation.
-  if ! cmp -s "$BASELINE" "$BASELINE_SNAPSHOT"; then
-    rmdir "$LOCK"
-    VERDICT="REFUSED (baseline changed during validation)"
-    finish
-    say "The baseline changed while this run was validating. Re-run."
-    exit 1
-  fi
-  cp "$BY_FILE" "$BASELINE.tmp.$$" && mv -f "$BASELINE.tmp.$$" "$BASELINE"
-  rmdir "$LOCK"
-  VERDICT="BASELINE UPDATED"
-  BASE_FIELD="$ERR_FILES files / $REPORTED errors (written)"
-  finish
-  exit 0
+  # The ratchet and its refusals live in the helper, per the 500-line gate.
+  # It exits the process itself.
+  apply_update_ratchet
 fi
 
 # ---------------------------------------------------------------------------

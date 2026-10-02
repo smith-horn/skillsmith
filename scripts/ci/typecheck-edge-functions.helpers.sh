@@ -69,7 +69,27 @@ finish() {
 # Passed as an argument rather than read from a variable: a variable set by one
 # branch and never cleared would widen the amnesty silently, which is the shape of
 # the defect this narrowing exists to remove.
+# SC2120: the optional argument is passed from the OTHER half of this script
+# (typecheck-edge-functions.sh, the ciphertext branch). shellcheck cannot see
+# across the source boundary, so it reports the parameter as never supplied.
+# Suppressed with the reason stated so nobody resolves the warning by deleting
+# the parameter, which would silently restore the blanket fork amnesty H-4
+# removed.
+# shellcheck disable=SC2120
 exit_for_inconclusive() {
+  # m1: validated against a closed set, for the same reason M-1 validates
+  # CONTEXT -- silently ignoring an unrecognised value is what that finding was,
+  # and this is the most safety-critical argument in the script. Drift fails
+  # CLOSED (no amnesty), but it would fail EVERY fork PR while printing "this
+  # was not that" about a cause that was exactly that. Note that the adjacent
+  # `inconclusive "$1"` takes a MESSAGE where this takes a FLAG.
+  case "${1:-}" in
+    "" | --tolerated-on-fork) ;;
+    *)
+      printf '[edge-typecheck] FATAL: exit_for_inconclusive got unknown argument %s\n' "$1" >&2
+      exit 1
+      ;;
+  esac
   local tolerated_on_fork=""
   [[ "${1:-}" == "--tolerated-on-fork" ]] && tolerated_on_fork=1
   finish
@@ -126,7 +146,20 @@ validate_baseline() {
     {
       n++
       if (NF != 2)                      { bad = bad "\n  row " NR ": expected <count>\\t<path>, got " NF " field(s)"; next }
-      if ($1 !~ /^[0-9]+$/)             { bad = bad "\n  row " NR ": count is not a non-negative integer: " $1; next }
+      # C1, from the round-2 cross-family gate, and it is C-1 REPRODUCED INSIDE
+      # THE FUNCTION WRITTEN TO CLOSE C-1. The old pattern accepted "08", which
+      # awk reads as 8 but bash reads as octal -- and 08 is not octal, so
+      # `[[ 9 -gt 08 ]]` throws "value too great for base". BOTH comparison arms
+      # throw, both are therefore false, and with no `set -e` the run falls
+      # through to "unchanged, at baseline". Measured: an 08 allowance against a
+      # current 500 reported PASS (at baseline), exit 0.
+      #
+      # The width bound is the other half of the same defect: bash wraps past
+      # 2^63, so a 20-digit allowance made a current 5 report as "improved".
+      # Six digits is far above the 59 this baseline holds and far below where
+      # wrapping begins.
+      if ($1 !~ /^(0|[1-9][0-9]*)$/)    { bad = bad "\n  row " NR ": count is not a canonical non-negative integer -- no leading zeros, because bash reads 08 as octal and throws: " $1; next }
+      if (length($1) > 6)               { bad = bad "\n  row " NR ": count has " length($1) " digits; a comparison that wide wraps silently in bash: " $1; next }
       if ($1 + 0 == 0)                  { bad = bad "\n  row " NR ": count is 0 -- a zeroed row must be deleted, not kept"; next }
       if ($2 == "")                     { bad = bad "\n  row " NR ": empty path"; next }
       if ($2 ~ /^\//)                   { bad = bad "\n  row " NR ": absolute path (must be repo-relative): " $2; next }
@@ -245,6 +278,106 @@ resolve_partition() {
 }
 
 # Compare the current per-file counts against the baseline and decide the verdict.
+# --------------------------------------------------------------------------
+# `--update`, the RATCHET. Lives here for the same reason compare_to_baseline
+# does -- the 500-line gate, not modularity. It reads and sets the caller's
+# variables and exits the process itself: one script in two files.
+#
+# It may lower a count and drop a zeroed row. It may NOT add a row or raise an
+# allowance (plan D-16), so a developer following the documented remedy cannot
+# legitimize a regression.
+apply_update_ratchet() {
+  if [[ -f "$BASELINE" ]]; then
+    REFUSALS=""
+    while IFS=$'\t' read -r new_count new_path; do
+      [[ -z "${new_path:-}" ]] && continue
+      old_count="$(awk -F'\t' -v p="$new_path" '$2 == p {print $1}' "$BASELINE")"
+      if [[ -z "$old_count" ]]; then
+        REFUSALS+=$'\n'"  NEW FILE    $new_path ($new_count) -- not in the baseline"
+      elif [[ "$((10#$new_count))" -gt "$((10#$old_count))" ]]; then
+        # 10#, per C1: without it an `08` allowance let the RATCHET raise a
+        # count, which its own contract says it may not do.
+        REFUSALS+=$'\n'"  INCREASED   $new_path ($old_count -> $new_count)"
+      fi
+    done < "$BY_FILE"
+    if [[ -n "$REFUSALS" ]]; then
+      VERDICT="REFUSED"
+      finish
+      say "--update REFUSED: a ratchet may only lower counts and drop zeroed rows.$REFUSALS"
+      say ""
+      say "If a baselined file was RENAMED, this is expected and the mechanism cannot tell"
+      say "the difference (SMI-6704 R10). The rename report above names the missing old row;"
+      say "edit the baseline deliberately and say so in the commit. Do not auto-accept."
+      exit 1
+    fi
+  fi
+  # M-5: validate and replace under a lock, then rename atomically. Without
+  # this, two concurrent updates could each validate against allowance 5, write
+  # 1 and 4 in either order, and leave the committed allowance RAISED to 4 while
+  # both runs reported a successful ratchet.
+  LOCK="$BASELINE.lock"
+  if ! MKDIR_ERR="$(mkdir "$LOCK" 2>&1)"; then
+    # `mkdir` fails for TWO reasons and they need opposite remedies. Measured
+    # while red-testing the write path: with the directory read-only, mkdir fails
+    # because it cannot create anything there, and the first version of this
+    # branch reported "another --update holds $LOCK" and told the reader to remove
+    # a lock that does not exist. The existence test is what separates them --
+    # mkdir's own non-zero status cannot, since it is the same status for both.
+    if [[ -d "$LOCK" ]]; then
+      VERDICT="REFUSED (another --update holds $LOCK)"
+      finish
+      say "Another --update is in progress. If none is, remove $LOCK -- it holds no state."
+    else
+      VERDICT="REFUSED (cannot create the lock; baseline unchanged)"
+      finish
+      say "The lock could not be created and no lock is present, so this is not contention:"
+      say "  $MKDIR_ERR"
+      say "Check that $(dirname "$BASELINE") is writable and has free space, then re-run."
+    fi
+    exit 1
+  fi
+  # Release the lock and the temp file on ANY exit from here, including a signal
+  # between the cp and the mv. `LOCK_HELD` gates it so this only ever removes a
+  # lock THIS process created: the refusal branch above exits while another run
+  # holds the directory, and an ungated trap would have deleted that run's lock
+  # on the way out -- turning the mutex into a no-op for exactly the concurrent
+  # case it exists to serialise.
+  LOCK_HELD=1
+  trap 'rm -f "$ALL_LIST" "$PROD_LIST" "$RAW_OUT" "$CLEAN_OUT" "$BY_FILE" \
+        "${BASELINE_SNAPSHOT:-}" "$BASELINE.tmp.$$"
+        [[ -n "${LOCK_HELD:-}" ]] && rmdir "$LOCK" 2>/dev/null
+        true' EXIT
+  # Re-read under the lock: the file may have changed since validation.
+  if ! cmp -s "$BASELINE" "$BASELINE_SNAPSHOT"; then
+    rmdir "$LOCK"
+    VERDICT="REFUSED (baseline changed during validation)"
+    finish
+    say "The baseline changed while this run was validating. Re-run."
+    exit 1
+  fi
+  # The status of this write is CHECKED, and that is the whole point of the line.
+  # Written first as `cp … && mv …` on its own: with no `set -e` a failed cp or mv
+  # short-circuits the && and execution simply CONTINUES to the lines below, which
+  # report "BASELINE UPDATED" and exit 0 over an untouched file. Found by sweeping
+  # this script's own exit-0 paths -- the third instance in this work of a
+  # discarded status producing a success report, after C-1 and the H-3 quoting
+  # error. A full disk, a read-only tree or a perms change all take that branch.
+  if ! cp "$BY_FILE" "$BASELINE.tmp.$$" || ! mv -f "$BASELINE.tmp.$$" "$BASELINE"; then
+    rm -f "$BASELINE.tmp.$$"
+    rmdir "$LOCK"
+    VERDICT="FAILED TO WRITE (baseline unchanged)"
+    finish
+    say "Could not write $BASELINE. It is UNCHANGED -- nothing was ratcheted."
+    say "Check free space and that the tree is writable, then re-run."
+    exit 1
+  fi
+  rmdir "$LOCK"
+  VERDICT="BASELINE UPDATED"
+  BASE_FIELD="$ERR_FILES files / $REPORTED errors (written)"
+  finish
+  exit 0
+}
+
 # Lives here only because of the 500-line gate; it reads and sets the caller's
 # variables and exits the process itself, by design -- this is one script in two
 # files, not a library.
@@ -273,9 +406,12 @@ compare_to_baseline() {
     if [[ -z "$base_count" ]]; then
       NEW_ERRORS+=$'\n'"  NEW FILE    $cur_path ($cur_count)"
       NEW_FILES=$((NEW_FILES + 1))
-    elif [[ "$cur_count" -gt "$base_count" ]]; then
+    # 10# forces base 10 on both operands (C1). Belt and braces with the
+    # validator's regex above: that guards the committed file, this guards the
+    # value whatever produced it.
+    elif [[ "$((10#$cur_count))" -gt "$((10#$base_count))" ]]; then
       NEW_ERRORS+=$'\n'"  INCREASED   $cur_path ($base_count -> $cur_count)"
-    elif [[ "$cur_count" -lt "$base_count" ]]; then
+    elif [[ "$((10#$cur_count))" -lt "$((10#$base_count))" ]]; then
       IMPROVED+=$'\n'"  improved    $cur_path ($base_count -> $cur_count)"
     fi
   done < "$BY_FILE"
