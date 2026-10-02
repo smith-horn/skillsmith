@@ -4,6 +4,20 @@ All notable changes to `@skillsmith/core` are documented here.
 
 ## [Unreleased]
 
+- **Docs (internal)**: SMI-6733 -- two false claims in comments corrected, both found by cross-family
+  review rounds on PR #2980 rather than by any test. (1) `skill-manifest.read-state.ts` said
+  `installedSkills: null` is *"byte-identical to absent"*. The claim it was making is true -- no
+  consumer can tell them apart, and `{...null}` spreads to `{}` -- but "byte-identical" is a claim
+  about bytes, and that imprecision is what mattered: downstream prose copied the word and upgraded it
+  into a claim about ADR-171 § 3's CAS canonical form, which is **false**. § 3 fixes that form as the
+  raw `JSON.parse` value where *"`null` stays `null`, and an absent key stays absent"* -- it preserves
+  the distinction. The false version had reached four files; the ADR itself never made the claim. Now
+  "indistinguishable", with the reason it is not the other word. (2) `update-target.evidence.ts` cited
+  `skill-manifest.ts:120` for a defaulting of `installedSkills` -- wrong line (that is inside
+  `assertNotRealUserHome`) and wrong behaviour (nothing in that file defaults the field; the helper
+  normalises it for a reader without writing a default). Both now name constructs rather than lines,
+  after a stale-citation sweep found six across the repo.
+
 - **Fix (diagnostics)**: SMI-6733 Phase 2 Wave 1 -- a `ManifestUnwritableError`'s own message (ADR-171
   § 8: names the file, the exact byte offset on a parse failure, and a remedy) now reaches the user
   instead of being replaced by `sanitizeInstallError`'s generic "Installation failed due to an

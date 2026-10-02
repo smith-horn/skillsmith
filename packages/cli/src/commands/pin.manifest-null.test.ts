@@ -1,9 +1,18 @@
 /**
  * @fileoverview SMI-6733 Phase 2 F5 — pin/unpin against a manifest whose
  * `installedSkills` classifies `ok` but holds no usable record. ADR-171 § 5's
- * nullish carve-out admits TWO such shapes and they are indistinguishable in
- * the CAS canonical form: an explicit `null`, and the key being absent. Before
- * the fix, a bare `manifest.installedSkills[key]` subscript in pin.ts threw
+ * nullish carve-out admits TWO such shapes — an explicit `null`, and the key
+ * being absent — because both mean "this machine has installed nothing" and a
+ * consumer cannot tell them apart: `{...null}` spreads to `{}`.
+ *
+ * NOT because they are identical in the CAS canonical form. They are not, and
+ * an earlier version of this docblock said they were. § 3 fixes that form as
+ * the raw `JSON.parse` value with *"`null` stays `null`, and an absent key
+ * stays absent"* — it preserves the distinction rather than erasing it. The
+ * equivalence is observational, at the reader; the ADR itself never made the
+ * canonical-form claim.
+ *
+ * Before the fix, a bare `manifest.installedSkills[key]` subscript in pin.ts threw
  * `TypeError: Cannot read properties of null (reading '<key>')`; pin/unpin
  * must now read through `installedSkillsOf()` and degrade to the same
  * "not found in manifest" error an empty manifest already produces.
@@ -84,9 +93,9 @@ const NULL_INSTALLED_SKILLS_MANIFEST = { version: '1.0.0', installedSkills: null
 
 /**
  * ADR-171 § 5 admits TWO nullish shapes, not one: `installedSkills: null` and
- * the key being absent entirely. They are the same document in the
- * content-addressed canonical form § 3 requires, which is the whole reason both
- * classify `ok`.
+ * the key being absent entirely. Both classify `ok` because no consumer can
+ * distinguish them, not because § 3's canonical form treats them as one — it
+ * does not; see the file header.
  *
  * Only the first was covered until the cross-family gate on PR #2980 named the
  * mutation that exploits the gap: `m.installedSkills === null ? {} :

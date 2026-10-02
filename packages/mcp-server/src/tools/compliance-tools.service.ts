@@ -144,42 +144,16 @@ export function createRealComplianceService(
       // (SMI-5675) — `skills` table joined only for supplementary metadata.
       // ----------------------------------------------------------------
       const manifest = await manifestManager.load()
-      // SMI-6733: the previous comment here claimed `ManifestManager.load()`
-      // "falls back to {installedSkills:{}} on a parse failure". It does NOT —
-      // it THROWS, and has since SMI-6007. That false claim mattered because it
-      // is exactly the sentence that would talk a reader out of the fail-closed
-      // read contract (ADR-171 § 1), so it is corrected rather than softened.
+      // `load()` is fail-closed: ENOENT gives an empty manifest, every other
+      // read or parse failure throws (SMI-6007, ADR-171 § 1). It does not fall
+      // back to an empty document — an earlier comment here said it did.
       //
-      // The guard below is still needed, but for a different reason than the one
-      // the old comment gave. ADR-171 § 5's nullish carve-out classifies
-      // `installedSkills: null` as **ok** on purpose — it is byte-identical to an
-      // absent key in the content-addressed canonical form § 3 requires — so
-      // `load()` returns it unchanged and `Object.values(null)` throws. A
-      // shape-invalid manifest (an array, a string) now classifies `corrupt` and
-      // never reaches here at all.
+      // `installedSkillsOf` normalises a nullish `installedSkills`, which
+      // ADR-171 § 5 classifies `ok`. It validates no shape. SMI-6921.
       //
-      // `installedSkillsOf` is the one shared helper for that carve-out rather
-      // than a fourth hand-rolled guard. It does exactly one thing — `value ?? {}`
-      // — and nothing else: it does NOT validate shape, so it does not exclude
-      // an array. Shape is `load()`'s job, which is why it must stay fail-closed.
-      //
-      // An earlier draft of this comment claimed the helper excluded arrays. It
-      // does not, and the claim was measured false (gate round on PR #2980)
-      // rather than merely doubted: `installedSkills: [{...}]` yields the same
-      // one entry under the old hand-rolled guard and under the helper. The
-      // claim is recorded here only because repeating it is the same defect
-      // class this whole comment exists to correct.
-      //
-      // ONE input class does diverge, and it is a regression rather than an
-      // improvement: `installedSkills: "ab"` gave `[]` under the old guard and
-      // gives `["a","b"]` here, which this loop would treat as two skill
-      // records. Not reachable in production — `load()` classifies a string
-      // `corrupt` and throws, and no production caller passes `options
-      // .manifestManager` (measured, not assumed) — so the only way in is a
-      // test injecting an override. The seam exists, though, and the next
-      // caller inherits it, so the general question of whether
-      // `installedSkillsOf` should enforce its object contract at all 22 call
-      // sites is SMI-6921 rather than a hand-rolled guard re-added here.
+      // Two successive review rounds each found a false claim in the prose that
+      // used to stand here, so the prose is gone rather than corrected a third
+      // time. The issues hold the measurements; this file holds the call.
       const installedEntries = Object.values(installedSkillsOf(manifest))
 
       const skills: SkillInventoryItem[] = []

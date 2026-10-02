@@ -312,8 +312,11 @@ describe('handleMergeAction keys by client too (SMI-6358 retro)', () => {
 
 // SMI-6733 Phase 2 Wave 2 Step 6 / SMI-6886.
 //
-// `checkForConflicts` subscripts `manifest.installedSkills[manifestKey]`
-// (`install.conflict.ts:67`) with no guard. ADR-171 § 5's nullish carve-out
+// `checkForConflicts` subscripts `manifest.installedSkills[manifestKey]` —
+// its `existingEntry` read, now through `installedSkillsOf` — with no guard.
+// (That anchor was the line number `install.conflict.ts:67` until a review
+// round found it pointing at a comment four lines above the read. Named by
+// construct now, like the other four this PR repointed.) ADR-171 § 5's nullish carve-out
 // makes `installedSkills: null` classify `ok`, so `loadManifestLenient`
 // returns it UNCHANGED — no substitution, no warning — and the subscript
 // throws `TypeError: Cannot read properties of null`.
@@ -335,9 +338,12 @@ describe('a nullish installedSkills does not crash the conflict pre-flight (SMI-
   /**
    * The OTHER shape § 5 admits, and the one every fixture here missed.
    *
-   * `installedSkills: null` and an absent `installedSkills` are the same
-   * document in the content-addressed canonical form § 3 requires, which is
-   * why both classify `ok`. The cross-family gate on PR #2980 named the
+   * `installedSkills: null` and an absent `installedSkills` both classify `ok`
+   * because no consumer can distinguish them — `{...null}` spreads to `{}`.
+   * NOT because § 3's canonical form treats them as one document: it fixes that
+   * form as the raw `JSON.parse` value where *"`null` stays `null`, and an
+   * absent key stays absent"*, so the distinction is preserved. An earlier
+   * version of this docblock had that backwards. The cross-family gate on PR #2980 named the
    * mutation that separates them: `m.installedSkills === null ? {} :
    * m.installedSkills` passes every explicit-`null` fixture and throws on an
    * absent key. Both shapes are now driven at every site below.

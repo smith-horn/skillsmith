@@ -131,8 +131,8 @@ describe('ADR-171 manifest read-state classifier (SMI-6733)', () => {
       expect(result.state).toBe('corrupt')
     })
 
-    // SMI-6733 Phase 1 fix: `installedSkills: null` is byte-identical to an
-    // absent key for every consumer — `{...null}` spreads to `{}` and
+    // SMI-6733 Phase 1 fix: `installedSkills: null` is indistinguishable from an
+    // absent key to every consumer — `{...null}` spreads to `{}` and
     // `Object.entries(null ?? {})`-style guards already treat it as empty,
     // exactly like every ad-hoc tolerance guard elsewhere in this repo
     // (`manifest.installedSkills && typeof …` short-circuits on null). The
