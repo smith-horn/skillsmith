@@ -1214,6 +1214,69 @@ jobs:
           PR_BODY: ${{ github.event.pull_request.body }}
         run: npm run audit:standards
 
+  # SMI-6897: typecheck supabase/functions/** with `deno check`, in the runtime
+  # that actually runs those files. Nothing else covers this tree -- tsc compiles
+  # zero files there, eslint ignores it, and vitest only reaches lines a test
+  # exercises. A synchronous TypeError in the Stripe checkout webhook lived there
+  # ~6.5 months (SMI-6907) and deploys to production on merge to main.
+  #
+  # A DEDICATED job, not a step inside quality-checks. That job carries the
+  # `audit:carveout-pure-js` marker (SMI-4647), and adding a native runtime plus a
+  # remote module cache to it would make the marker false. Plan review M-1 judged
+  # the "twice-established precedent" claim only partial for exactly that reason:
+  # the VS Code and API checks reuse the already-installed Node toolchain, this
+  # does not.
+  #
+  # BLOCKING on arrival -- no continue-on-error. Review measured that a
+  # report-only arm protects nothing (the wrapper prints FAIL, the job stays
+  # green), so the baseline ratchet is the enforcement and it blocks: any new
+  # error, any newly-failing file, any increased count fails. The 22-row baseline
+  # pins today's 59 pre-existing errors without tolerating a 60th.
+  #
+  # NOT YET A REQUIRED STATUS CHECK. Adding `Edge Functions Typecheck` to branch
+  # protection is a repository-settings change outside this diff, and until it is
+  # made the job reports without blocking a merge. That is stated rather than
+  # assumed, because an unenforced gate that everyone believes is enforced is the
+  # precise failure this plan exists to remove.
+  edge-functions-check:
+    name: Edge Functions Typecheck
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    needs: [classify, detect-changes]
+    if: needs.detect-changes.outputs.code == 'true'
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+
+      # The tree is git-crypt encrypted. Without the key `deno check` aborts with
+      # "The module's source code could not be parsed", which the wrapper
+      # classifies as INCONCLUSIVE rather than as a clean tree. On a fork PR the
+      # key is absent by design and the wrapper warns; the pre-deploy arm is the
+      # backstop for that case.
+      - name: Unlock git-crypt
+        if: ${{ env.GIT_CRYPT_KEY != '' }}
+        env:
+          GIT_CRYPT_KEY: ${{ secrets.GIT_CRYPT_KEY }}
+        uses: ./.github/actions/unlock-git-crypt
+        with:
+          git-crypt-key: ${{ secrets.GIT_CRYPT_KEY }}
+
+      # Pinned to a SHA, per the repo's action-pin audit. Deno 2.x is chosen to
+      # match `supabase/config.toml`'s `deno_version = 2`; hosted Supabase's exact
+      # patch level is NOT verified, so this pins a known-good 2.x rather than
+      # claiming parity with production.
+      - name: Setup Deno
+        uses: denoland/setup-deno@22d081ff2d3a40755e97629de92e3bcbfa7cf2ed # v2.0.5
+        with:
+          deno-version: '2.3.6'
+
+      - name: Typecheck edge functions
+        env:
+          # Inconclusive results fail closed here: a merge depends on this job.
+          SKILLSMITH_EDGE_TYPECHECK_CONTEXT: required-ci
+        run: bash scripts/ci/typecheck-edge-functions.sh
+
   # SMI-2192: Matrix-based test execution for affected packages
   # Runs tests in parallel per package, only for packages affected by changes
   # When affected_dirs is empty (docs-only), this job is skipped entirely
