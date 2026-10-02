@@ -177,7 +177,16 @@ function peelHead(segment, peelWrappers, splitFn, depth) {
       const body = launcherDashCCommand(plainValuesFrom(i))
       if (body !== null) {
         const segs = splitFn(tokenize(body))
-        return segs.concat(transparentHeadReadings(segs, peelWrappers, splitFn, depth + 1))
+        // `readings` first: a reading the shell-text arm above just pushed is
+        // part of the result, not something this return discards. Unreachable
+        // today — `DASH_C_LAUNCHERS` is disjoint from the shell-text heads, so
+        // `readings` is always empty here — but a one-word fix is cheaper than
+        // a comment promising the two sets stay disjoint (SMI-6920 round 3,
+        // F-5). Readings only add.
+        return readings.concat(
+          segs,
+          transparentHeadReadings(segs, peelWrappers, splitFn, depth + 1)
+        )
       }
     }
     const entry = LAUNCHER_TABLE.get(base)

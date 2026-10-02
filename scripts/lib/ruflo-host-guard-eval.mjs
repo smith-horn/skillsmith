@@ -17,7 +17,7 @@
  * reason to depend on it.
  */
 
-import { basenameOf } from './shell-command-normalize.mjs'
+import { basenameOf, tokenize } from './shell-command-normalize.mjs'
 import { shellTextOperandSpan } from './shell-command-shell-text.mjs'
 import { normalizeWrappersWithExec, tokensForArgv } from './ruflo-host-guard-wrappers.mjs'
 import { denyWith } from './ruflo-host-guard-verdicts.mjs'
@@ -74,12 +74,48 @@ export function parseEvalSegment(wordTokens) {
   const hasExpansion = rest.some((t) => t.value.includes('$') || (t.subs && t.subs.length > 0))
   if (hasExpansion) {
     // An expanding `trap` action is the variable-indirection limit this
-    // guard already accepts, not H9: 19 of 34 `trap` lines in this
-    // repository expand (`trap 'rm -rf "$TMPROOT"' EXIT`) and every one
-    // denied with a false reason on a guard with no opt-out (the review of
-    // 243a96847, H-2). `eval "$X"` stays H9, as it has been since round 1.
-    if (head === 'trap') return undefined
+    // guard already accepts, not H9: most `trap` lines in this repository
+    // expand (`trap 'rm -rf "$TMPROOT"' EXIT`) and every one denied with a
+    // false reason on a guard with no opt-out (the review of 243a96847,
+    // H-2). `eval "$X"` stays H9, as it has been since round 1.
+    //
+    // Round 3 of SMI-6920: suppressing the WHOLE reading on one expansion
+    // anywhere in the action made the literal denial worth nothing, because
+    // appending a variable bought an allow — `trap "npx ruflo $X" EXIT`
+    // allowed while `trap "npx ruflo" EXIT` denied, and the `eval` twin
+    // denied either way. So read the action's literal spine instead: the
+    // limit is the words that expand, not the action that contains one.
+    if (head === 'trap') {
+      const spine = literalSpineOf(rest.map((t) => t.value).join(' '))
+      return spine === '' ? undefined : { joined: spine, head }
+    }
     return denyWith('H9', alignedTokens[0].value + ' ' + rest.map((t) => t.value).join(' '))
   }
   return { joined: rest.map((t) => t.value).join(' '), head }
+}
+
+/**
+ * The literal spine of a `trap` action: re-tokenize the action text with the
+ * shared tokenizer and drop every WORD that expands, keeping operators so the
+ * recursion still sees the action's own segment structure. An action that is
+ * nothing but expansions (`trap "$exit_body" EXIT`) yields the empty string,
+ * which the caller reads as "no reading to add" — the same fall-through round
+ * 2 gave every expanding action.
+ *
+ * Dropping words can only ADD a denial (ADR-172 § 1: a reading never moves a
+ * verdict toward allow), because the alternative for this branch is no reading
+ * at all. It cannot resurrect a name the action never wrote literally: a head
+ * that arrives only by expansion is dropped with its word, which is the
+ * variable-indirection limit this guard still declares.
+ * @param {string} actionText
+ * @returns {string}
+ */
+function literalSpineOf(actionText) {
+  const kept = []
+  for (const t of tokenize(actionText)) {
+    const expands = t.value.includes('$') || (t.subs && t.subs.length > 0)
+    if (t.type === 'word' && expands) continue
+    kept.push(t.value)
+  }
+  return kept.join(' ').trim()
 }

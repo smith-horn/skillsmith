@@ -3555,8 +3555,8 @@ describe('decide() — SMI-6920: a trap action is shell text', () => {
   })
   // Round 2 (the governance review of 243a96847, H-2): an expanding trap
   // action is the variable-indirection limit this guard already accepts,
-  // not H9. On 243a96847 it denied H9 with a false reason, and so did 19 of
-  // the 34 `trap` lines in this repository's own shell scripts, on a guard
+  // not H9. On 243a96847 it denied H9 with a false reason, and so did 22 of
+  // the 45 `trap` lines in this repository's own shell scripts, on a guard
   // with no opt-out; on cfc96eccd every one allowed. Corrected over-blocks.
   it.each(['trap "$X" EXIT', 'trap \'rm -rf "$TMPROOT"\' EXIT', "trap 'kill $(jobs -p)' EXIT"])(
     'corrected over-block (denied H9 on 243a96847): %s -> allow',
@@ -3564,6 +3564,24 @@ describe('decide() — SMI-6920: a trap action is shell text', () => {
       expect(decide(bashCall(command), {})).toEqual({ action: 'allow', json: null, stderr: null })
     }
   )
+  // Round 3 (the governance review of 2e5d5bbb1, F-1): round 2 suppressed the
+  // whole reading on one expansion ANYWHERE in the action, so appending a
+  // variable bought an allow — every row below allowed on 2e5d5bbb1 while
+  // `trap "npx ruflo" EXIT` denied, and the `eval` twin denied either way.
+  // The limit is now the words that expand, not the action containing one:
+  // the action's literal spine is read, and an action that is nothing but
+  // expansions still falls through. Red arm: restore `if (head === 'trap')
+  // return undefined` in `parseEvalSegment` and all six fail.
+  it.each([
+    'trap "npx ruflo $X" EXIT',
+    'trap "npx ruflo memory store $HOME" EXIT',
+    'trap \'npx ruflo memory store \'"$X" EXIT',
+    'trap "$(echo npx) ruflo" EXIT',
+    'trap "ruflo $X" EXIT',
+    'trap "$X npx ruflo" EXIT',
+  ])('closed bypass (allowed on 2e5d5bbb1 and cfc96eccd): %s -> deny', (command) => {
+    expect(decide(bashCall(command), {}).action).toBe('deny')
+  })
   // PINS, denied on every tree: the two shell-text heads already read.
   it.each([
     'eval "npx ruflo memory store"',
