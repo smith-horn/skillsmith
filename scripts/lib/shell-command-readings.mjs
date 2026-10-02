@@ -178,11 +178,17 @@ function peelHead(segment, peelWrappers, splitFn, depth) {
       if (body !== null) {
         const segs = splitFn(tokenize(body))
         // `readings` first: a reading the shell-text arm above just pushed is
-        // part of the result, not something this return discards. Unreachable
-        // today — `DASH_C_LAUNCHERS` is disjoint from the shell-text heads, so
-        // `readings` is always empty here — but a one-word fix is cheaper than
-        // a comment promising the two sets stay disjoint (SMI-6920 round 3,
-        // F-5). Readings only add.
+        // part of the result, not something this return discards. REACHABLE,
+        // and this comment used to say otherwise: the two sets being disjoint
+        // (`DASH_C_LAUNCHERS` vs the shell-text heads) does not make
+        // `readings` empty here, because the push and this return need not be
+        // the same loop iteration, and `watch` is BOTH a shell-text head and a
+        // peelable launcher. Measured: 40 of 747 probed commands moved from
+        // allow to deny across this one word, none the other way; smallest case
+        // a launcher before `watch script -c` with a redirect. SMI-6920 round
+        // 3 F-5 shipped it as "unreachable", round 4 F-B measured it, round 5
+        // M4 found this comment still carrying the false claim. Readings only
+        // add.
         return readings.concat(
           segs,
           transparentHeadReadings(segs, peelWrappers, splitFn, depth + 1)

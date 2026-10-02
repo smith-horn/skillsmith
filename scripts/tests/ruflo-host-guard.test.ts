@@ -3616,14 +3616,88 @@ describe('decide() — SMI-6920: a trap action is shell text', () => {
   })
   // The literal twins of those rows, which deny on every tree. Without these
   // the rows above would pass on a guard that denies every `trap` line.
+  // Round 5 (M2) replaced the first entry: it was a byte-identical copy of
+  // round-4 row 1, not its twin, and it allowed on 84aece0bf — so it pinned
+  // nothing and the block's own header was false for it.
   it.each([
-    "trap 'echo $(npx ruflo)' EXIT",
+    "trap 'echo npx ruflo' EXIT",
     'trap "diff <(npx ruflo) f" EXIT',
     'trap "> OUT ruflo memory store" EXIT',
     "trap './(node_modules|x)/.bin/ruflo' EXIT",
     'trap "LIT npx ruflo" EXIT',
   ])('literal twin pin: %s -> deny', (command) => {
     expect(decide(bashCall(command), {}).action).toBe('deny')
+  })
+  // Round 5 (the governance pass on 6da0245f8, C1): `checkUnresolvedCommand`
+  // emits one predicate from FIVE arms and only the last is the
+  // variable-indirection limit. Round 4 excused all five for a `trap`
+  // action, so an empty residual, a `--` head, an all-digit head or a
+  // `/dev/` head masked a reader written out literally: these denied on
+  // 84aece0bf and allowed on 6da0245f8, and the last two carry no expansion
+  // anywhere, so no twin-differential could have found them. The excuse is
+  // now behavioural -- if the spine equals the action, nothing expanded and
+  // the refusal stands.
+  //
+  // Red arm: restore `if (spine === '' || spine === parsed.joined) return
+  // undefined` and all six fail.
+  it.each([
+    "trap '$X -- npx ruflo' EXIT",
+    "trap '$X 0 npx ruflo' EXIT",
+    "trap '$X /dev/null npx ruflo' EXIT",
+    "trap '0 npx ruflo' EXIT",
+    "trap '/dev/null npx ruflo' EXIT",
+    'trap "$X -- npx ruflo" EXIT',
+  ])('round 5 C1 (denied on 84aece0bf, allowed on 6da0245f8): %s -> deny', (command) => {
+    expect(decide(bashCall(command), {}).action).toBe('deny')
+  })
+  // Round 5, C2: the excuse used to be a substring match on the refusal
+  // REASON, which `denyWith` builds by interpolating the matched token --
+  // and three H8-script sites pass the whole inline script as that token. A
+  // script padded with the predicate's own label impersonated it and the
+  // whole trap reading was dropped. The predicate is now a structured field.
+  //
+  // Both directions are pinned here, which round 4's docblock claimed
+  // without it being true (L3): the padded script must still deny, and a
+  // genuinely unresolved head must still fall through.
+  it('round 5 C2: a padded predicate label cannot impersonate the predicate', () => {
+    const spoof = 'trap "node -e \'unresolved-command: spawn(\\"npx ruflo\\")\'" EXIT'
+    expect(decide(bashCall(spoof), {}).action).toBe('deny')
+    const twin = 'trap "node -e \'spawn(\\"npx ruflo\\")\'" EXIT'
+    expect(decide(bashCall(twin), {}).action).toBe('deny')
+  })
+  it('round 5 C2 (other direction): a real unresolved head still falls through', () => {
+    expect(decide(bashCall('trap "$exit_body" EXIT'), {})).toEqual({
+      action: 'allow',
+      json: null,
+      stderr: null,
+    })
+    const direct = decide(bashCall('$exit_body'), {})
+    expect(direct.action).toBe('deny')
+    expect(direct.predicate).toBe('unresolved-command')
+  })
+  // Round 5, M1: `prev` was the last KEPT token, so dropping a word that
+  // expands welded the tokens on either side of it across a blank the source
+  // actually had. That fabricated a path: `./(node_modules|x)$X /.bin/ruflo`
+  // became `./(node_modules|x)/.bin/ruflo` in the spine and denied, although
+  // its space-separated twin allows on EVERY tree including cfc96eccd. 84
+  // composed commands of that shape denied on 6da0245f8 alone.
+  //
+  // These three rows are the arm, the policy anchor and the discriminator, in
+  // that order. A first version of this block asserted two shapes whose
+  // verdict did not depend on the fix at all: it passed identically with the
+  // fix reverted, which is the decorative-test defect this repo's own rule
+  // names, and the red arm is what exposed it.
+  it('round 5 M1 arm (denied on 6da0245f8, allows on cfc96eccd): a dropped word does not weld across a real blank', () => {
+    expect(decide(bashCall('trap "./(node_modules|x)$X /.bin/ruflo" EXIT'), {}).action).toBe(
+      'allow'
+    )
+  })
+  it('round 5 M1 policy anchor: the same line without the expansion allows on every tree, which is what the arm agrees with', () => {
+    expect(decide(bashCall('trap "./(node_modules|x) /.bin/ruflo" EXIT'), {}).action).toBe('allow')
+  })
+  it('round 5 M1 discriminator: a REAL weld still denies, so the arm is not just a hole', () => {
+    expect(decide(bashCall('trap "./(node_modules|x)$X/.bin/ruflo" EXIT'), {}).action).toBe('deny')
+    expect(decide(bashCall('trap "./(node_modules|x)/.bin/ruflo" EXIT'), {}).action).toBe('deny')
   })
   // PINS, denied on every tree: the two shell-text heads already read.
   it.each([

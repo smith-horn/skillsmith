@@ -101,42 +101,40 @@ export function parseEvalSegment(wordTokens) {
 }
 
 /**
- * The `unresolved-command` label `denyWith` writes into its reason. The
- * predicate is not a structured field on the verdict, and adding one would
- * change an object shape the suites compare whole, so the label is matched in
- * the text it is interpolated into. The suite pins both directions of this
- * match, since a silent miss would make the retry below never happen and a
- * silent over-match would suppress every denial instead of one class.
+ * The predicate `checkUnresolvedCommand` emits when it cannot resolve a
+ * command name. Read from the verdict's structured `predicate` field, never
+ * from its reason text: the reason interpolates the matched token, and an
+ * inline script padded with this label impersonated the predicate before
+ * round 5 (C2). The suite pins BOTH directions -- a padded script still
+ * denies, and a genuinely unresolved head still falls through.
  */
-const UNRESOLVED_LABEL = 'unresolved-command: '
+const UNRESOLVED_PREDICATE = 'unresolved-command'
 
-/**
- * A plain, resolvable word to stand in for a `trap` action's head when the
- * shell assembles that head at runtime. It must not look unresolvable to
- * `checkUnresolvedHeadTail` (so: not `--`, not all digits, not under
- * `/dev/`, no `$`) and must name nothing this guard matches on.
- */
-const NEUTRAL_HEAD = 'skillsmithTrapHead'
-
-/** Does this verdict deny because the guard could not resolve a command name? */
+/** Did the guard refuse because it could not resolve a command name? */
 function isUnresolvedHeadDenial(verdict) {
-  const reason = verdict?.json?.hookSpecificOutput?.permissionDecisionReason ?? ''
-  return reason.includes(UNRESOLVED_LABEL)
+  return verdict?.predicate === UNRESOLVED_PREDICATE
 }
 
 /**
- * The literal spine of a `trap` action: the action text re-tokenized, every
- * WORD that expands dropped, the operators kept, and the survivors re-joined.
+ * The literal spine of a `trap` action: the action re-tokenized, every WORD
+ * that expands dropped, the operators kept, the survivors re-joined.
  *
- * This is a LOSSY reading and is only ever one of two. Round 4 measured four
- * loss classes in the token-to-text round trip -- operator-to-target binding,
- * adjacency glue, quoting boundaries, and a substitution body that the
- * single-quote branch records in `.value` rather than `.subs` -- so six
- * spellings read nothing here. They are read by the other reading, the action
- * exactly as written. What this one adds is the case that reading cannot see:
- * an action whose HEAD the shell assembles, where the fail-closed
- * `unresolved-command` denial masks every ruflo predicate behind it
- * (`$(echo npx) ruflo`, `\${X} npx ruflo`, `$X; ruflo`).
+ * This is a LOSSY reading and is only ever one of two. A token-to-text round
+ * trip loses an operator's binding to its target, quoting boundaries, and a
+ * substitution body that the single-quote branch records in `.value` rather
+ * than `.subs`; six spellings read nothing here (round 4, F-A). They are read
+ * by the other reading, the action exactly as written. What this one adds is
+ * the case that reading cannot see: an action whose HEAD the shell assembles,
+ * where the fail-closed unresolved-head refusal masks every ruflo predicate
+ * behind it.
+ *
+ * The re-join emits no blank where the tokenizer welded two tokens. That does
+ * not make a glued glob group come back as ONE word -- interior blanks are
+ * still introduced, so `./(a|x)/.bin/ruflo` becomes `./( a | x )/.bin/ruflo`
+ * -- it restores the two OUTER welds, and re-tokenizing that text re-derives
+ * the paren flags, which is what the glob reading needs (round 4 L2 corrected
+ * an overstatement here). `prev` is reset when a word is dropped, so a
+ * dropped word cannot weld two tokens the source kept apart (round 5, M1).
  * @param {string} actionText
  * @returns {string}
  */
@@ -145,12 +143,11 @@ function literalSpineOf(actionText) {
   let prev = null
   for (const tok of tokenize(actionText)) {
     const expands = tok.value.includes('$') || (tok.subs && tok.subs.length > 0)
-    if (tok.type === 'word' && expands) continue
-    // No blank where the tokenizer recorded the two tokens as welded, or a
-    // glued glob group -- ONE zsh word -- comes back as several and the glob
-    // reading no longer sees a path. Every defeat left in round 4's 2,450-row
-    // fuzz was that one shape.
-    const glued = tok.gluedLeft === true || prev?.gluedRight === true
+    if (tok.type === 'word' && expands) {
+      prev = null
+      continue
+    }
+    const glued = prev !== null && (tok.gluedLeft === true || prev.gluedRight === true)
     if (parts.length > 0 && !glued) parts.push(' ')
     parts.push(tok.value)
     prev = tok
@@ -167,13 +164,20 @@ function literalSpineOf(actionText) {
  * action falls THROUGH to the later predicates instead of ending the segment --
  * round 2's M-1.
  *
- * `verdict` is the first reading: the action exactly as written, every
- * substitution body, redirect binding, glue flag and quoting boundary intact.
- * {@link literalSpineOf} is the second. A fail-closed `unresolved-command`
- * from either is suppressed, because an action whose head the shell assembles
- * at runtime is the variable-indirection limit this guard declares and 3 of the
- * 45 real `trap` lines in this repository are exactly that. Every other denial
- * from either reading stands, and a reading can only ADD one.
+ * Only ONE refusal is excused, and the test for it is behavioural rather than
+ * by label, because `checkUnresolvedCommand` emits the same predicate from
+ * five arms and only the last is the variable-indirection limit: an empty
+ * residual after peeling, a `--` head, an all-digit head and a `/dev/` head
+ * are fail-closed arity arms that fire AFTER the head is read and BEFORE the
+ * ruflo predicates, so excusing them masks a reader written out literally.
+ * Round 5 (C1) measured seven such rows denying on `84aece0bf` and allowing
+ * here, two of them carrying no expansion at all.
+ *
+ * So: if the spine equals the action, nothing expanded, there is no indirection
+ * to excuse, and the refusal stands. If the spine is empty, every word
+ * expanded, and that IS the limit -- `trap "$exit_body" EXIT`, 3 of the real
+ * `trap` lines in this repository. Otherwise the spine is read, and whatever
+ * it refuses stands, including its own fail-closed refusal.
  * @param {{head: string, joined: string}} parsed
  * @param {object | null | undefined} verdict the action as written
  * @param {(text: string) => object | null | undefined} recurse same evaluator, next depth
@@ -183,7 +187,7 @@ export function resolveTrapVerdict(parsed, verdict, recurse) {
   if (parsed.head !== 'trap') return verdict ?? null
   if (verdict && !isUnresolvedHeadDenial(verdict)) return verdict
   const spine = literalSpineOf(parsed.joined)
-  if (spine === '' || spine === parsed.joined) return undefined
-  const second = recurse(spine)
-  return second && !isUnresolvedHeadDenial(second) ? second : undefined
+  if (spine === parsed.joined) return verdict ?? undefined
+  if (spine === '') return undefined
+  return recurse(spine) ?? undefined
 }

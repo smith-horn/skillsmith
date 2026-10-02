@@ -39,14 +39,19 @@ function bashCall(command: string) {
  * shell-text module's import removed, 13 of 13 rows still passed a bare
  * `.action` check on a mechanism that was entirely dead. Round 3 (F-2) found
  * the conversion had reached 27 of 76 rows while the record claimed all of
- * them. Round 4 (F-C) measured this file again: of 76 allow assertions, 41
- * call {@link expectAllow} and 35 compare against {@link ALLOW_RESULT}
- * directly, 30 of those 35 being the two-statement `const result = decide(…)`
- * form and 5 not going through `bashCall` with the plain env at all. Both
- * spellings assert the whole verdict, so assertion strength is uniform; what
- * is NOT mechanized is the exclusion of a third spelling, and `.action`
- * alone would still pass review unaided. Command:
- * `grep -c 'expectAllow(' …` and `grep -c 'toEqual(ALLOW_RESULT)' …`.
+ * them. Round 4 restated the figures and got them wrong too, and round 5
+ * (M3) measured the file a third time. Both spellings assert the whole
+ * verdict, so assertion strength is uniform across them and the exact split
+ * carries no behavioural weight — which is precisely why it kept going
+ * unchecked. The count is therefore left to the one command that produces
+ * it rather than restated here as prose that rots: `grep -o 'expectAllow(' …
+ * | wc -l` counts occurrences INCLUDING the helper definition, and
+ * `grep -o 'toEqual(ALLOW_RESULT)' … | wc -l` the other spelling; a line
+ * count differs from an occurrence count, and an `it.each` row differs from
+ * a call site, which is where all three wrong figures came from.
+ *
+ * What matters and is checkable: no allow assertion reads `.action` alone.
+ * `grep -c "\\.action).toBe('allow')" …` must be 0.
  */
 const ALLOW_RESULT = { action: 'allow', json: null, stderr: null }
 
