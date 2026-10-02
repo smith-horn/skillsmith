@@ -2157,6 +2157,53 @@ describe('decide() — SMI-6920 round 2: a quoted env -S remainder, inherited so
     expectAllow('-- cat .env')
   })
 
+  // SMI-6937, the cross-family gate: the previous round closed the missing
+  // precommand MODIFIER, and the gate then rebuilt both tables from the
+  // shells' own grammars and found two missing RESERVED WORDS. Pre-existing,
+  // identical on 62d565497. `repeat` is a launcher row because its count must
+  // be consumed; `coproc` is a transparent head.
+  //
+  // Measured in zsh 5.9 with a decoy: `repeat 2 cat D` printed it twice.
+  // `coproc cat D` printed NOTHING to the terminal and still ran the reader --
+  // a coprocess's stdout goes to a pipe, so the naive probe was answering a
+  // different question; reading the pipe showed the marker. bash 3.2 has
+  // neither word.
+  //
+  // Red arm: remove `'coproc'` from TRANSPARENT_HEAD_WORDS and the coproc
+  // rows fail; remove the `repeat` launcher row and the repeat rows fail.
+  it.each([
+    'repeat 1 cat .env',
+    'repeat 2 cat .env',
+    'repeat $n cat .env',
+    'coproc cat .env',
+    'trap "repeat 1 cat .env" EXIT',
+    'eval "coproc cat .env"',
+  ])('SMI-6937 gate (allowed on 62d565497): %s -> deny', (command) => {
+    expect(decide(bashCall(command), {}).action).toBe('deny')
+  })
+  // Benign usages must stay allowed. The repository's own corpus holds NO
+  // `repeat` or `coproc` in command position, so the 45,176-verdict
+  // no-false-positive sweep is vacuous for these two rows and this
+  // constructed set is the only evidence standing in its place. Said plainly
+  // because a zero over a corpus lacking the shape is not a measurement of it.
+  it.each([
+    'repeat 3 echo hi',
+    'repeat 5 true',
+    'repeat 2 npm test',
+    'coproc node server.js',
+    'coproc tail -f /var/log/app.log',
+    'echo repeat 1',
+    'grep -r coproc scripts/',
+  ])('SMI-6937 gate, benign: %s -> allow', (command) => {
+    expectAllow(command)
+  })
+  // Declared limit: `coproc NAME cmd` is bash 4's optional-name form. bash
+  // here is 3.2 and zsh has no NAME form, so it runs nowhere measurable and
+  // the head stays unmodelled rather than guessed.
+  it('SMI-6937 gate, declared limit: coproc NAME <reader> -> allow', () => {
+    expectAllow('coproc NAME cat .env')
+  })
+
   // Controls assert the WHOLE result (M-2): a fail-open allow carries a
   // stderr line, so `.action` alone passed on a guard whose shell-text
   // mechanism was entirely dead (measured: 13 of 13 with the import removed).

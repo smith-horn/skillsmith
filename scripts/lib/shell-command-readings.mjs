@@ -88,6 +88,14 @@ export const TRANSPARENT_HEAD_WORDS = new Set([
   // the governance pass on this issue's own fix; the class ADR-172 sec 1
   // already names, one spelling short).
   '-',
+  // zsh's `coproc` reserved word takes the command directly. Measured: a
+  // naive probe said it does NOT run, because a coprocess's stdout goes to a
+  // pipe rather than the terminal -- reading that pipe shows the reader ran,
+  // so the first probe was answering a different question than the one asked.
+  // bash gained `coproc` in 4.0 and this host's 3.2 has none, so the optional
+  // NAME form (`coproc NAME cmd`) runs nowhere measurable here and stays a
+  // stated limit rather than a guessed row (SMI-6937, the cross-family gate).
+  'coproc',
 ])
 
 /**

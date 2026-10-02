@@ -137,6 +137,12 @@ export const LAUNCHER_TABLE = new Map(
     // timeout's own flag VALUE where the duration positional was expected.
     { name: 'timeout', positionals: 1, valueFlags: ['-k', '--kill-after', '-s', '--signal'] },
     { name: 'nice', positionals: 0, valueFlags: ['-n', '--adjustment'] },
+    // zsh's `repeat N command` reserved word. A launcher row and not a
+    // transparent head, because the count must be consumed: transparency
+    // alone would leave `1` as the command. Measured in zsh 5.9 with a decoy,
+    // `repeat 2 cat D` printing it twice; bash has no such word, so the row
+    // costs nothing there (SMI-6937, the cross-family gate).
+    { name: 'repeat', positionals: 1, valueFlags: [] },
     // Round 23: every row's value flags are the launcher's FULL synopsis,
     // separated long forms included (`stdbuf --output L` printed a decoy in
     // bash 5.2 while only `-o` was modelled). A long form with `=` is one

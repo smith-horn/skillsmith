@@ -3740,6 +3740,24 @@ describe('decide() — SMI-6920: a trap action is shell text', () => {
     expect(decide(bashCall(command), {})).toEqual({ action: 'allow', json: null, stderr: null })
   })
 
+  // SMI-6937, the cross-family gate: `repeat` is now a modelled launcher, so
+  // `repeat` with its count and no command joins the arity posture this guard
+  // already has. Measured on BOTH trees: `timeout 5`, `nice -n 5`,
+  // `flock /tmp/l` and `script -q /dev/null` all deny the same way, so this
+  // is a new instance of a documented accepted cost and not a new class.
+  it.each(['repeat 3', 'repeat foo', 'repeat'])(
+    'SMI-6937 accepted cost, same posture as timeout 5: %s -> deny',
+    (command) => {
+      expect(decide(bashCall(command), {}).action).toBe('deny')
+    }
+  )
+  it.each(['timeout 5', 'nice -n 5', 'flock /tmp/l'])(
+    'SMI-6937 posture anchor, denies on every tree: %s -> deny',
+    (command) => {
+      expect(decide(bashCall(command), {}).action).toBe('deny')
+    }
+  )
+
   // PINS, denied on every tree: the two shell-text heads already read.
   it.each([
     'eval "npx ruflo memory store"',
