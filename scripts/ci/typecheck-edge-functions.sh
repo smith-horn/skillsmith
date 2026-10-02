@@ -166,19 +166,35 @@ fi
 # independently (a renamed path breaks one, a discovery-precedence change the
 # other).
 # ---------------------------------------------------------------------------
-# Lockfile policy (plan H-2). `--lock` is explicit so the gate can never silently
-# fall back to auto-discovery, and `--frozen` is opt-in via the env var rather
-# than hardcoded: `supabase/deno.lock` is currently INCOMPLETE (it does not cover
-# the full edge-function import graph -- a known follow-on), so turning --frozen
-# on before that is fixed would fail every run for a reason unrelated to types.
-# Set SKILLSMITH_EDGE_TYPECHECK_FROZEN=1 to require a current lock, which is the
-# intended end state once the lock is regenerated.
-LOCK_ARGS=(--lock supabase/deno.lock)
+# Lockfile policy (plan H-2). A CHECK MUST NOT WRITE. `deno check --lock <path>`
+# without `--frozen` *updates* the lockfile when it disagrees with the real import
+# graph, which would leave a tracked file modified after a read-only gate run --
+# a dirty tree in CI, and an unexplained ~150-line diff for a developer running
+# this locally for the first time.
+#
+# So the default is `--no-lock`: no lockfile is read and none can be written. That
+# gives up reproducibility, which is a real cost and is why H-2 asked for a
+# lockfile model rather than silence. The honest position today is that
+# `supabase/deno.lock` does not cover the full edge-function import graph (a known
+# follow-on), so pinning against it would verify almost nothing while risking a
+# write.
+#
+# `SKILLSMITH_EDGE_TYPECHECK_FROZEN=1` switches to `--lock <path> --frozen`, which
+# is read-only by construction -- it ERRORS on a stale lock rather than rewriting
+# it. That is the intended end state once the lock is regenerated, and it is the
+# only lock mode this gate will ever run in, because it is the only one that
+# cannot mutate the tree.
+#
+# Not attributed, stated as unknown: a modified `supabase/deno.lock` and a stray
+# root `deno.lock` were observed in this worktree during development. Re-running
+# this gate against a restored lockfile does NOT reproduce either, so the cause is
+# not established and is not being guessed at. `--no-lock` removes the question.
 if [[ -n "${SKILLSMITH_EDGE_TYPECHECK_FROZEN:-}" ]]; then
-  LOCK_ARGS+=(--frozen)
-  LOCK_MODE="frozen (--lock supabase/deno.lock --frozen)"
+  LOCK_ARGS=(--lock supabase/deno.lock --frozen)
+  LOCK_MODE="frozen (--lock supabase/deno.lock --frozen; read-only, errors on stale)"
 else
-  LOCK_MODE="unfrozen (--lock supabase/deno.lock; lock is incomplete -- see H-2)"
+  LOCK_ARGS=(--no-lock)
+  LOCK_MODE="no-lock (cannot read or write a lockfile; see H-2 for why)"
 fi
 
 # shellcheck disable=SC2046
