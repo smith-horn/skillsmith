@@ -406,9 +406,27 @@ compare_to_baseline() {
     if [[ -z "$base_count" ]]; then
       NEW_ERRORS+=$'\n'"  NEW FILE    $cur_path ($cur_count)"
       NEW_FILES=$((NEW_FILES + 1))
+    # THE FALL-THROUGH IS THE MECHANISM BEHIND BOTH CRITICALS, so it is closed
+    # structurally rather than by guarding its inputs again. C-1 (a duplicated
+    # path making the count "5\\n5") and C1 (a leading zero read as octal) were
+    # different inputs with one shape: an arithmetic comparison that THROWS is
+    # FALSE, so two throwing arms both decline and execution reaches the benign
+    # "unchanged, at baseline" branch. Measured on bash 3.2: $((10#abc)),
+    # $((10#1e3)) and $((10#"5 6")) all throw, and $((10#)) on an empty string
+    # quietly yields 0.
+    #
+    # The validator rejects every one of those on the committed side, which makes
+    # this arm unreachable today. It is here because the NEXT unvalidated operand
+    # -- a future generator, a hand-edit between validation and comparison -- must
+    # fail loudly instead of passing quietly, and because an input guard protecting
+    # a silent fall-through is one edit away from protecting nothing.
+    elif ! [[ "$cur_count" =~ ^(0|[1-9][0-9]*)$ ]] || ! [[ "$base_count" =~ ^(0|[1-9][0-9]*)$ ]]; then
+      NEW_ERRORS+=$'\n'"  UNCOMPARABLE $cur_path (measured '$cur_count' against baseline '$base_count')"
+      NEW_FILES=$((NEW_FILES + 1))
     # 10# forces base 10 on both operands (C1). Belt and braces with the
-    # validator's regex above: that guards the committed file, this guards the
-    # value whatever produced it.
+    # validator's regex above and the arm immediately below: each guards a
+    # different surface, and the comparison is only reached once both operands
+    # are known canonical.
     elif [[ "$((10#$cur_count))" -gt "$((10#$base_count))" ]]; then
       NEW_ERRORS+=$'\n'"  INCREASED   $cur_path ($base_count -> $cur_count)"
     elif [[ "$((10#$cur_count))" -lt "$((10#$base_count))" ]]; then
