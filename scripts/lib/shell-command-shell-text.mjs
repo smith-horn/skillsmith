@@ -20,7 +20,7 @@
  * yields no literal protected name, and its substitutions are already read
  * by the enclosing segment); the ruflo guard denies an expanding `eval`
  * argument (H9) and leaves an expanding `trap` action as the variable-
- * indirection limit it already accepts (22 of the 45 `trap` lines in this
+ * indirection limit it already accepts (about half the `trap` lines in this
  * repository expand, `trap 'rm -rf "$TMPROOT"' EXIT`; the governance review
  * of 243a96847 measured them all denied, with a false reason, on a guard
  * with no opt-out).
@@ -98,7 +98,8 @@ export function envSplitCommandText(rawValues) {
  * separate `--` (`eval -- cat D` runs `cat D` in bash 3.2, zsh 5.9 and
  * bash 5.2; `eval "-- cat D"` runs nothing and the quoted word is left
  * alone); `trap [--] ACTION SIG…` hands over the one action word (`trap
- * -l`, `trap -p`, `trap - SIG` run nothing; past `--` the action is
+ * -l`, `trap -p`, a cluster of those two, `trap - SIG`, and `trap --` with
+ * no action or with a bare `-` after it all run nothing; past `--` the action is
  * whatever follows, `trap -- "cat D" EXIT` printed a decoy); `watch`
  * without `-x`/`--exec` joins its operands into `sh -c` text (documented
  * semantics, the binary is installed nowhere here; with `-x` the operands

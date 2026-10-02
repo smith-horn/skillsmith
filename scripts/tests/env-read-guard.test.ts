@@ -2122,6 +2122,41 @@ describe('decide() — SMI-6920 round 2: a quoted env -S remainder, inherited so
     expectAllow(command)
   })
 
+  // SMI-6937, the governance pass on this issue's own fix: zsh has a SECOND
+  // precommand modifier, spelled `-`, and the transparent-head set held only
+  // `nocorrect`. So a reader behind it was allowed, and it runs.
+  //
+  // Measured with a decoy and both controls behaving in both shells (a plain
+  // read printed the marker once, `true` printed it zero times): `- cat D`,
+  // `- - cat D`, `- command cat D` and `nocorrect - cat D` all printed the
+  // file in zsh 5.9, and `env -S "- cat D"` printed it under bash 3.2 TOO,
+  // because env splits the string itself and then execs -- so the class is not
+  // zsh-only in effect. Pre-existing, identical on cfc96eccd and 62d565497.
+  //
+  // Red arm: remove `'-'` from TRANSPARENT_HEAD_WORDS and all of these fail.
+  it.each([
+    '- cat .env',
+    '- - cat .env',
+    '- command cat .env',
+    'nocorrect - cat .env',
+    'sudo - cat .env',
+    'trap "- cat .env" EXIT',
+    "trap '- cat .env' EXIT",
+    'trap -- "- cat .env" EXIT',
+    'eval "- cat .env"',
+    'eval - cat .env',
+    'env -S "- cat .env"',
+    'bash -c "- cat .env"',
+  ])('SMI-6937 C-1 (allowed on 62d565497 and cfc96eccd): %s -> deny', (command) => {
+    expect(decide(bashCall(command), {}).action).toBe('deny')
+  })
+  // `--` is NOT a zsh precommand modifier and measured as running nothing in
+  // both shells, so it stays allowed. This row is the discriminator: without
+  // it, adding every dash-leading word to the set would look equally correct.
+  it('SMI-6937 C-1 discriminator: -- is not a modifier, so it stays allowed', () => {
+    expectAllow('-- cat .env')
+  })
+
   // Controls assert the WHOLE result (M-2): a fail-open allow carries a
   // stderr line, so `.action` alone passed on a guard whose shell-text
   // mechanism was entirely dead (measured: 13 of 13 with the import removed).
