@@ -4,19 +4,23 @@ All notable changes to `@skillsmith/core` are documented here.
 
 ## [Unreleased]
 
-- **Docs (internal)**: SMI-6733 -- two false claims in comments corrected, both found by cross-family
-  review rounds on PR #2980 rather than by any test. (1) `skill-manifest.read-state.ts` said
-  `installedSkills: null` is *"byte-identical to absent"*. The claim it was making is true -- no
-  consumer can tell them apart, and `{...null}` spreads to `{}` -- but "byte-identical" is a claim
-  about bytes, and that imprecision is what mattered: downstream prose copied the word and upgraded it
-  into a claim about ADR-171 § 3's CAS canonical form, which is **false**. § 3 fixes that form as the
-  raw `JSON.parse` value where *"`null` stays `null`, and an absent key stays absent"* -- it preserves
-  the distinction. The false version had reached four files; the ADR itself never made the claim. Now
-  "indistinguishable", with the reason it is not the other word. (2) `update-target.evidence.ts` cited
-  `skill-manifest.ts:120` for a defaulting of `installedSkills` -- wrong line (that is inside
-  `assertNotRealUserHome`) and wrong behaviour (nothing in that file defaults the field; the helper
-  normalises it for a reader without writing a default). Both now name constructs rather than lines,
-  after a stale-citation sweep found six across the repo.
+- **Docs (internal)**: SMI-6733 -- the prose explaining why `installedSkills: null` classifies `ok` is
+  **deleted**, not reworded. Three cross-family review rounds on PR #2980 each found a false claim in
+  it: *"byte-identical to absent"*, then *"byte-identical for every consumer"*, then
+  *"indistinguishable to every consumer"* -- the last false because `Object.hasOwn`, `JSON.stringify`
+  and `=== null` each distinguish the two shapes (measured). What remains is three facts and no causal
+  clause joining them: ADR-171 § 5 accepts both an explicit `null` and an absent key, § 3 **preserves**
+  the difference (that form is the raw `JSON.parse` value where *"`null` stays `null`, and an absent
+  key stays absent"*), and `installedSkillsOf` normalises either to an empty map for a map-oriented
+  reader. The false versions had reached five files across three packages; ADR-171 itself never made
+  any of the claims.
+
+- **Docs (internal)**: SMI-6733 -- `update-target.evidence.ts` cited `skill-manifest.ts:120` for a
+  defaulting of `installedSkills`. Wrong twice: that line is inside `assertNotRealUserHome`, and
+  nothing in that file defaults the field at all (`installedSkillsOf` normalises it for a reader
+  without writing a default). Now names constructs rather than lines, after a stale-citation sweep
+  found six across the repo -- the sixth only because the first sweep's regex, `install\.ts:[0-9]+`,
+  structurally could not match `install.conflict.ts:67`.
 
 - **Fix (diagnostics)**: SMI-6733 Phase 2 Wave 1 -- a `ManifestUnwritableError`'s own message (ADR-171
   § 8: names the file, the exact byte offset on a parse failure, and a remedy) now reaches the user

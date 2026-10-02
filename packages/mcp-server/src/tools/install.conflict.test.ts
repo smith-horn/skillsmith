@@ -338,12 +338,12 @@ describe('a nullish installedSkills does not crash the conflict pre-flight (SMI-
   /**
    * The OTHER shape § 5 admits, and the one every fixture here missed.
    *
-   * `installedSkills: null` and an absent `installedSkills` both classify `ok`
-   * because no consumer can distinguish them — `{...null}` spreads to `{}`.
-   * NOT because § 3's canonical form treats them as one document: it fixes that
-   * form as the raw `JSON.parse` value where *"`null` stays `null`, and an
-   * absent key stays absent"*, so the distinction is preserved. An earlier
-   * version of this docblock had that backwards. The cross-family gate on PR #2980 named the
+   * § 5 accepts `installedSkills: null` and an absent key both. § 3 preserves
+   * the difference. `installedSkillsOf` normalises either to an empty map. No
+   * causal clause joining those three — three review rounds each found a false
+   * one; see `installedSkillsOf`'s docblock in core.
+   *
+   * The cross-family gate on PR #2980 named the
    * mutation that separates them: `m.installedSkills === null ? {} :
    * m.installedSkills` passes every explicit-`null` fixture and throws on an
    * absent key. Both shapes are now driven at every site below.

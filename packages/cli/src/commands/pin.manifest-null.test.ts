@@ -1,16 +1,13 @@
 /**
  * @fileoverview SMI-6733 Phase 2 F5 — pin/unpin against a manifest whose
- * `installedSkills` classifies `ok` but holds no usable record. ADR-171 § 5's
- * nullish carve-out admits TWO such shapes — an explicit `null`, and the key
- * being absent — because both mean "this machine has installed nothing" and a
- * consumer cannot tell them apart: `{...null}` spreads to `{}`.
+ * `installedSkills` classifies `ok` but holds no usable record. ADR-171 § 5
+ * accepts TWO such shapes: an explicit `null`, and the key being absent. § 3
+ * preserves the difference between them. `installedSkillsOf` normalises either
+ * to an empty map.
  *
- * NOT because they are identical in the CAS canonical form. They are not, and
- * an earlier version of this docblock said they were. § 3 fixes that form as
- * the raw `JSON.parse` value with *"`null` stays `null`, and an absent key
- * stays absent"* — it preserves the distinction rather than erasing it. The
- * equivalence is observational, at the reader; the ADR itself never made the
- * canonical-form claim.
+ * Those three facts and no fourth. Three review rounds each found a false claim
+ * in the causal explanation that used to sit here; see `installedSkillsOf`'s own
+ * docblock in core for what they were.
  *
  * Before the fix, a bare `manifest.installedSkills[key]` subscript in pin.ts threw
  * `TypeError: Cannot read properties of null (reading '<key>')`; pin/unpin
@@ -92,10 +89,8 @@ async function runCommand(
 const NULL_INSTALLED_SKILLS_MANIFEST = { version: '1.0.0', installedSkills: null }
 
 /**
- * ADR-171 § 5 admits TWO nullish shapes, not one: `installedSkills: null` and
- * the key being absent entirely. Both classify `ok` because no consumer can
- * distinguish them, not because § 3's canonical form treats them as one — it
- * does not; see the file header.
+ * ADR-171 § 5 accepts TWO nullish shapes, not one: `installedSkills: null` and
+ * the key being absent entirely. Both classify `ok`. See the file header.
  *
  * Only the first was covered until the cross-family gate on PR #2980 named the
  * mutation that exploits the gap: `m.installedSkills === null ? {} :

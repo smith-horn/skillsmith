@@ -131,11 +131,10 @@ describe('ADR-171 manifest read-state classifier (SMI-6733)', () => {
       expect(result.state).toBe('corrupt')
     })
 
-    // SMI-6733 Phase 1 fix: `installedSkills: null` is indistinguishable from an
-    // absent key to every consumer — `{...null}` spreads to `{}` and
-    // `Object.entries(null ?? {})`-style guards already treat it as empty,
-    // exactly like every ad-hoc tolerance guard elsewhere in this repo
-    // (`manifest.installedSkills && typeof …` short-circuits on null). The
+    // SMI-6733 Phase 1 fix. § 5 accepts both `installedSkills: null` and an
+    // absent key; § 3 preserves the difference; `installedSkillsOf` normalises
+    // either to an empty map. No causal clause joining those — see the helper's
+    // own docblock for why three review rounds removed one. The
     // hazard set SMI-6752 actually measured harm from is non-empty strings
     // and non-empty arrays, not nullish values, so null/undefined classify
     // `ok` while string/number/array — including the array shapes above —

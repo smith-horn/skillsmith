@@ -159,17 +159,16 @@ function isPlainObject(value: unknown): value is Record<string, unknown> {
  *
  * `installedSkills: null` classifies `ok`, not `corrupt`, exactly like an
  * absent key (SMI-6733 Phase 1 — re-measured from a wrong "any non-object
- * installedSkills is corrupt" premise). `null` is INDISTINGUISHABLE from absent
- * to every consumer: `{...null}` spreads to `{}` and every ad-hoc tolerance
- * guard elsewhere in this repo already treats it that way (`manifest
- * .installedSkills && typeof …` short-circuits on null).
+ * installedSkills is corrupt" premise).
  *
- * Deliberately not "byte-identical", which this sentence used to say. The claim
- * is observational, at the reader — § 3's canonical form does NOT merge the two,
- * it fixes the raw `JSON.parse` value where "`null` stays `null`, and an absent
- * key stays absent". The imprecise word is what mattered: downstream prose
- * copied it, upgraded it to a claim about the canonical form, and that version
- * was false and wrong in four files before a review round caught it. The hazard set
+ * Three facts, and no causal story joining them — § 5 accepts both shapes, § 3
+ * preserves the difference between them, and `installedSkillsOf` normalises
+ * either to an empty map for a map-oriented reader. Three successive review
+ * rounds each found a false claim in the explanation that used to stand here
+ * ("byte-identical", then "byte-identical for every consumer", then
+ * "indistinguishable to every consumer" — the last is false because
+ * `Object.hasOwn`, `JSON.stringify` and `=== null` each distinguish them), so
+ * the explanation is gone rather than reworded a fourth time. The hazard set
  * measured to cause real harm (SMI-6752) is non-empty strings and non-empty
  * arrays — a string spreads char-indexed and an array of entries spreads
  * index-keyed, both of which corrupt `installedSkills` on the next write.

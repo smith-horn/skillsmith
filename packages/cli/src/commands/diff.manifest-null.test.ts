@@ -1,12 +1,10 @@
 /**
  * @fileoverview SMI-6733 Phase 2 F5 — diff against a manifest whose
- * `installedSkills` classifies `ok` but is `null` (ADR-171 § 5's nullish
- * carve-out: indistinguishable from an absent key to any consumer, since
- * `{...null}` spreads to `{}`. NOT identical in the CAS canonical form — § 3
- * fixes that as the raw `JSON.parse` value where "`null` stays `null`, and an
- * absent key stays absent", so it preserves the difference. An earlier version
- * of this line claimed the canonical form erased it; the ADR never did).
- * Before the
+ * `installedSkills` classifies `ok` but is `null`. ADR-171 § 5 accepts that and
+ * an absent key both; § 3 preserves the difference; `installedSkillsOf`
+ * normalises either to an empty map. (Three facts, no causal clause joining
+ * them — three review rounds each found a false one. See `installedSkillsOf`'s
+ * docblock in core.) Before the
  * fix, `fetchLatestContent()`'s bare `manifest.installedSkills[skillName]`
  * subscript threw `TypeError: Cannot read properties of null (reading
  * '<skillName>')` — but unlike pin.ts/unpin.ts, that function's own

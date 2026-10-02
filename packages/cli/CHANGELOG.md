@@ -14,12 +14,10 @@ All notable changes to `@skillsmith/cli` are documented here.
 
 - **Fix (crash)**: SMI-6733 / SMI-6886 -- `sklx pin`, `sklx unpin` and `sklx diff` no longer break on
   a manifest whose `installedSkills` is `null`. That is not a corrupt file: ADR-171 § 5 classifies it
-  `ok` deliberately, because no consumer can distinguish it from an absent key -- `{...null}` spreads
-  to `{}` -- so the reader hands it back unchanged. (An earlier version of this entry said the two were
-  byte-identical in the content-addressed canonical form § 3 requires. They are not: § 3 fixes that
-  form as the raw `JSON.parse` value where "`null` stays `null`, and an absent key stays absent", so
-  it preserves the distinction. The equivalence is observational, at the reader. ADR-171 never made
-  the canonical-form claim -- it was invented in the prose around it.) Five sites then subscripted it with no
+  `ok`, and the reader hands it back unchanged. (ADR-171 § 5 accepts both that and an absent key; § 3
+  preserves the difference between them; `installedSkillsOf` normalises either to an empty map. No
+  causal clause joining those three -- earlier versions of this entry carried one, and three review
+  rounds on PR #2980 each found it false. See `installedSkillsOf`'s docblock in core.) Five sites then subscripted it with no
   guard (`pin.ts:85`, `:112`, `:150`, `:165`; `diff.ts:141`), all fed by a lenient loader that
   silently substitutes an empty document on any read failure. `pin`/`unpin` surfaced a raw
   `TypeError: Cannot read properties of null`; `diff` differed, because `fetchLatestContent` catches
