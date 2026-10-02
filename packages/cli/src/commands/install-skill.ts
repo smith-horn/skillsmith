@@ -39,7 +39,7 @@ function getAssetsPath(): string {
  *
  * SMI-4578 / SMI-5893 (Wave 7 Step 3): routes through
  * `@skillsmith/core/install`'s `getInstallPath(client)` — the same
- * `resolveClientId`/`getInstallPath` pattern `install.ts:299-301` already
+ * `resolveClientId`/`getInstallPath` pattern `install.ts`'s own `effectiveClient` resolution already
  * uses — so a resolved `--client`/`SKILLSMITH_CLIENT` value is honored
  * instead of always hardcoding the canonical Claude Code directory.
  */
@@ -173,7 +173,7 @@ async function setupActionImpl(opts: { force?: boolean; client?: string }): Prom
       )
     }
     // SMI-5893 (Wave 7 Step 3): same `resolveClientId`/`getInstallPath`
-    // pattern install.ts:299-301 already uses — an explicit --client wins,
+    // pattern install.ts's own `effectiveClient` resolution already uses — an explicit --client wins,
     // otherwise SKILLSMITH_CLIENT, otherwise the canonical client.
     const client = resolveClientId(opts.client ?? process.env['SKILLSMITH_CLIENT'])
     await installSkillsmithSkill(opts.force ?? false, client)

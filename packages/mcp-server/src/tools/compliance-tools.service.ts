@@ -159,8 +159,27 @@ export function createRealComplianceService(
       // never reaches here at all.
       //
       // `installedSkillsOf` is the one shared helper for that carve-out rather
-      // than a fourth hand-rolled guard; it also excludes arrays, which a bare
-      // `typeof x === 'object'` check admits.
+      // than a fourth hand-rolled guard. It does exactly one thing — `value ?? {}`
+      // — and nothing else: it does NOT validate shape, so it does not exclude
+      // an array. Shape is `load()`'s job, which is why it must stay fail-closed.
+      //
+      // An earlier draft of this comment claimed the helper excluded arrays. It
+      // does not, and the claim was measured false (gate round on PR #2980)
+      // rather than merely doubted: `installedSkills: [{...}]` yields the same
+      // one entry under the old hand-rolled guard and under the helper. The
+      // claim is recorded here only because repeating it is the same defect
+      // class this whole comment exists to correct.
+      //
+      // ONE input class does diverge, and it is a regression rather than an
+      // improvement: `installedSkills: "ab"` gave `[]` under the old guard and
+      // gives `["a","b"]` here, which this loop would treat as two skill
+      // records. Not reachable in production — `load()` classifies a string
+      // `corrupt` and throws, and no production caller passes `options
+      // .manifestManager` (measured, not assumed) — so the only way in is a
+      // test injecting an override. The seam exists, though, and the next
+      // caller inherits it, so the general question of whether
+      // `installedSkillsOf` should enforce its object contract at all 22 call
+      // sites is SMI-6921 rather than a hand-rolled guard re-added here.
       const installedEntries = Object.values(installedSkillsOf(manifest))
 
       const skills: SkillInventoryItem[] = []

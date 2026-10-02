@@ -332,40 +332,62 @@ describe('a nullish installedSkills does not crash the conflict pre-flight (SMI-
     return { version: '1.0.0', installedSkills: null } as unknown as SkillManifest
   }
 
-  it('resolves to proceed, exactly as an empty manifest does', async () => {
-    // The assertion is EQUIVALENCE to the empty manifest, not "it resolved".
-    // `null` and `{}` both mean "nothing installed under this key", which is
-    // the whole reason § 5 classifies `null` as `ok`; a fix that stopped the
-    // throw but answered differently for the two would be a second defect,
-    // and a bare `.resolves.not.toThrow()` would not see it.
-    const nullish = await checkForConflicts(
-      'my-skill',
-      '/installed/my-skill',
-      manifestWithNullishSkills(),
-      undefined,
-      'owner/repo/my-skill',
-      CANONICAL
-    )
-    const empty = await checkForConflicts(
-      'my-skill',
-      '/installed/my-skill',
-      { version: '1.0.0', installedSkills: {} } as unknown as SkillManifest,
-      undefined,
-      'owner/repo/my-skill',
-      CANONICAL
-    )
+  /**
+   * The OTHER shape § 5 admits, and the one every fixture here missed.
+   *
+   * `installedSkills: null` and an absent `installedSkills` are the same
+   * document in the content-addressed canonical form § 3 requires, which is
+   * why both classify `ok`. The cross-family gate on PR #2980 named the
+   * mutation that separates them: `m.installedSkills === null ? {} :
+   * m.installedSkills` passes every explicit-`null` fixture and throws on an
+   * absent key. Both shapes are now driven at every site below.
+   */
+  function manifestWithAbsentSkills(): SkillManifest {
+    return { version: '1.0.0' } as unknown as SkillManifest
+  }
 
-    expect(nullish).toEqual(empty)
-    // Known-positive control for the instrument: `manifestWithEntry` above
-    // DOES reach `detectModifications` for this same client (the
-    // "still reads the bare name for the canonical client" case), so a
-    // consulted-count of 0 here is a real absence rather than a mock that was
-    // never wired.
-    expect({
-      proceeded: nullish.shouldProceed,
-      consulted: mockDetectModifications.mock.calls.length,
-    }).toEqual({ proceeded: true, consulted: 0 })
-  })
+  const NULLISH_MANIFESTS: ReadonlyArray<readonly [string, () => SkillManifest]> = [
+    ['installedSkills: null', manifestWithNullishSkills],
+    ['installedSkills absent', manifestWithAbsentSkills],
+  ]
+
+  it.each(NULLISH_MANIFESTS)(
+    'resolves to proceed, exactly as an empty manifest does (%s)',
+    async (_label, build) => {
+      // The assertion is EQUIVALENCE to the empty manifest, not "it resolved".
+      // `null` and `{}` both mean "nothing installed under this key", which is
+      // the whole reason § 5 classifies `null` as `ok`; a fix that stopped the
+      // throw but answered differently for the two would be a second defect,
+      // and a bare `.resolves.not.toThrow()` would not see it.
+      const nullish = await checkForConflicts(
+        'my-skill',
+        '/installed/my-skill',
+        build(),
+        undefined,
+        'owner/repo/my-skill',
+        CANONICAL
+      )
+      const empty = await checkForConflicts(
+        'my-skill',
+        '/installed/my-skill',
+        { version: '1.0.0', installedSkills: {} } as unknown as SkillManifest,
+        undefined,
+        'owner/repo/my-skill',
+        CANONICAL
+      )
+
+      expect(nullish).toEqual(empty)
+      // Known-positive control for the instrument: `manifestWithEntry` above
+      // DOES reach `detectModifications` for this same client (the
+      // "still reads the bare name for the canonical client" case), so a
+      // consulted-count of 0 here is a real absence rather than a mock that was
+      // never wired.
+      expect({
+        proceeded: nullish.shouldProceed,
+        consulted: mockDetectModifications.mock.calls.length,
+      }).toEqual({ proceeded: true, consulted: 0 })
+    }
+  )
 
   // Post-merge retro on cfc96eccd. The case above covers `checkForConflicts`
   // only. `handleMergeAction` carries the same two reads and neither had a
@@ -374,68 +396,74 @@ describe('a nullish installedSkills does not crash the conflict pre-flight (SMI-
   // separately for the reason the SMI-6358 retro block above already records:
   // a mutation applied to both at once measures their union, not either one.
 
-  it('handleMergeAction: the ENTRY read answers exactly as an empty manifest does', async () => {
-    // `existingEntry?.version || '1.0.0'` is the observable: a nullish manifest
-    // and an empty one both hold no entry under this key, so both must reach
-    // storeOriginal with the same fallback. Equivalence, not "did not throw" —
-    // the latter would also pass for a fix that answered differently.
-    await handleMergeAction(
-      'my-skill',
-      '/installed/my-skill',
-      'upstream content',
-      manifestWithNullishSkills(),
-      'owner',
-      'repo',
-      'owner/repo/my-skill',
-      CANONICAL
-    )
-    const nullishMeta = mockStoreOriginal.mock.calls[0]![2] as { version: string }
+  it.each(NULLISH_MANIFESTS)(
+    'handleMergeAction: the ENTRY read answers exactly as an empty manifest does (%s)',
+    async (_label, build) => {
+      // `existingEntry?.version || '1.0.0'` is the observable: a nullish manifest
+      // and an empty one both hold no entry under this key, so both must reach
+      // storeOriginal with the same fallback. Equivalence, not "did not throw" —
+      // the latter would also pass for a fix that answered differently.
+      await handleMergeAction(
+        'my-skill',
+        '/installed/my-skill',
+        'upstream content',
+        build(),
+        'owner',
+        'repo',
+        'owner/repo/my-skill',
+        CANONICAL
+      )
+      const nullishMeta = mockStoreOriginal.mock.calls[0]![2] as { version: string }
 
-    mockStoreOriginal.mockClear()
-    await handleMergeAction(
-      'my-skill',
-      '/installed/my-skill',
-      'upstream content',
-      { version: '1.0.0', installedSkills: {} } as unknown as SkillManifest,
-      'owner',
-      'repo',
-      'owner/repo/my-skill',
-      CANONICAL
-    )
-    const emptyMeta = mockStoreOriginal.mock.calls[0]![2] as { version: string }
+      mockStoreOriginal.mockClear()
+      await handleMergeAction(
+        'my-skill',
+        '/installed/my-skill',
+        'upstream content',
+        { version: '1.0.0', installedSkills: {} } as unknown as SkillManifest,
+        'owner',
+        'repo',
+        'owner/repo/my-skill',
+        CANONICAL
+      )
+      const emptyMeta = mockStoreOriginal.mock.calls[0]![2] as { version: string }
 
-    expect(nullishMeta.version).toBe(emptyMeta.version)
-    expect(nullishMeta.version).toBe('1.0.0')
-  })
-
-  it('handleMergeAction: the WRITE updater survives a nullish re-read', async () => {
-    // `updateManifestSafely` re-reads the file under the lock, so the manifest
-    // the updater receives is a different document from the one passed in — a
-    // concurrent writer can null `installedSkills` between the two. Drive the
-    // captured updater with that document directly.
-    await handleMergeAction(
-      'my-skill',
-      '/installed/my-skill',
-      'upstream content',
-      manifestWithEntry('my-skill', '9.9.9'),
-      'owner',
-      'repo',
-      'owner/repo/my-skill',
-      CANONICAL
-    )
-
-    expect(mockUpdateManifestSafely).toHaveBeenCalledOnce()
-    const updater = mockUpdateManifestSafely.mock.calls[0]![0] as (m: unknown) => {
-      installedSkills: Record<string, { originalContentHash?: string }>
+      expect(nullishMeta.version).toBe(emptyMeta.version)
+      expect(nullishMeta.version).toBe('1.0.0')
     }
-    const written = updater(manifestWithNullishSkills())
+  )
 
-    // The entry is created, not merged onto a prior one — there is nothing to
-    // merge. Asserting the hash landed proves the write still happened rather
-    // than being swallowed.
-    expect(Object.keys(written.installedSkills)).toEqual(['my-skill'])
-    expect(written.installedSkills['my-skill']?.originalContentHash).toBeTruthy()
-  })
+  it.each(NULLISH_MANIFESTS)(
+    'handleMergeAction: the WRITE updater survives a nullish re-read (%s)',
+    async (_label, build) => {
+      // `updateManifestSafely` re-reads the file under the lock, so the manifest
+      // the updater receives is a different document from the one passed in — a
+      // concurrent writer can null `installedSkills` between the two. Drive the
+      // captured updater with that document directly.
+      await handleMergeAction(
+        'my-skill',
+        '/installed/my-skill',
+        'upstream content',
+        manifestWithEntry('my-skill', '9.9.9'),
+        'owner',
+        'repo',
+        'owner/repo/my-skill',
+        CANONICAL
+      )
+
+      expect(mockUpdateManifestSafely).toHaveBeenCalledOnce()
+      const updater = mockUpdateManifestSafely.mock.calls[0]![0] as (m: unknown) => {
+        installedSkills: Record<string, { originalContentHash?: string }>
+      }
+      const written = updater(build())
+
+      // The entry is created, not merged onto a prior one — there is nothing to
+      // merge. Asserting the hash landed proves the write still happened rather
+      // than being swallowed.
+      expect(Object.keys(written.installedSkills)).toEqual(['my-skill'])
+      expect(written.installedSkills['my-skill']?.originalContentHash).toBeTruthy()
+    }
+  )
 })
 
 // EVERY non-canonical client, at BOTH call sites (SMI-6358 retro, round 3).

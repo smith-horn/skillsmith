@@ -267,10 +267,24 @@ describe('ADR-171 manifest read-state classifier (SMI-6733)', () => {
       // separately pinned as `corrupt` in the shape table above. That makes this
       // row a genuine discriminator between the two orderings rather than a
       // second sample of the same one.
+      // The cross-family gate on PR #2980 named what the first three rows
+      // still left room for, and it is worth stating because it is subtler
+      // than the mutation they were written against: an implementation that
+      // checks version first ONLY for array/string values and falls back to
+      // shape-first for every other invalid type passes all three. That is not
+      // a contrived mutation — a hand-written predicate enumerating the shapes
+      // it has seen in fixtures arrives at exactly it.
+      //
+      // So the row set has to span the invalid-type SPACE, not a sample of it:
+      // the two container types a reader would think of, plus the three
+      // primitive classes nobody writes a fixture for.
       it.each([
         ['an array', [] as unknown],
         ['a string', 'hello' as unknown],
         ['an array of entries', [{ installPath: '/tmp/x' }] as unknown],
+        ['a number', 42 as unknown],
+        ['a boolean', true as unknown],
+        ['the literal false', false as unknown],
       ])(
         'a NEWER major version wins over an invalid shape (%s) — § 6 precedence',
         async (_label, installedSkills) => {
