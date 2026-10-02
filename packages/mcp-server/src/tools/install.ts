@@ -38,6 +38,15 @@ import { getToolContext } from '../context.js'
 import { MANIFEST_PATH, installInputSchema, type InstallResult } from './install.types.js'
 import { loadManifestWithWarning, lookupSkillFromRegistry } from './install.helpers.js'
 
+// SMI-6733 post-merge retro: the three structured error-envelope builders moved
+// to a sibling to clear the 500-line pre-commit gate, which this file sat one
+// line under. Pure move — see install.errors.ts's own header.
+import {
+  buildValidationError,
+  buildInvalidSkillIdError,
+  buildScopeError,
+} from './install.errors.js'
+
 // SMI-1867: Conflict resolution logic (extracted per governance review)
 import { checkForConflicts } from './install.conflict.js'
 
@@ -75,62 +84,6 @@ class McpRegistryLookup implements RegistryLookup {
 
   async lookup(skillId: string): Promise<RegistrySkillInfo | null> {
     return lookupSkillFromRegistry(skillId, this.context)
-  }
-}
-
-/**
- * Build an application-level validation failure result.
- *
- * SMI-4288 / GitHub #599: When an MCP caller passes a malformed argument
- * payload (e.g. `{}`, wrong `skillId` type, invalid `conflictAction` enum),
- * return a structured `InstallResult` with `success: false` rather than
- * throwing. Matches the existing `team-workspace.ts` error-envelope
- * convention (application-level failure, not MCP protocol-level `isError`).
- *
- * @see #599
- */
-function buildValidationError(message: string): InstallResult {
-  return {
-    success: false,
-    skillId: '',
-    installPath: '',
-    error: `Invalid install input: ${message}`,
-  }
-}
-
-/**
- * SMI-4737: structured tool-error envelope for `extractSkillName` throws.
- * Adversarial `skillId` values that survive Zod's 512-char boundary but
- * produce an over-cap (>128 char) extracted segment are rejected here so
- * the throw never escapes the MCP handler. Mirrors the `buildValidationError`
- * shape (application-level failure, not MCP protocol-level `isError`).
- */
-function buildInvalidSkillIdError(skillId: string, message: string): InstallResult {
-  return {
-    success: false,
-    skillId,
-    installPath: '',
-    error: `invalid_skill_id: ${message}`,
-  }
-}
-
-/**
- * ADR-139 (SMI-6274 Wave 4) / GPT-5.6-Sol PR review: structured tool-error
- * envelope for an unsatisfiable/invalid `scope` request — mirrors
- * {@link buildValidationError}'s precedent (a structured `success: false`
- * result, not an MCP protocol-level throw) so an unsatisfiable
- * `scope: 'workspace'` request still surfaces as the "HARD ERROR naming the
- * reason" ADR-139 point 2 requires, through the SAME structured channel
- * every other pre-flight failure in this tool already uses, rather than an
- * uncaught throw escaping into an MCP protocol-level error the caller can't
- * distinguish from a transport failure.
- */
-function buildScopeError(skillId: string, error: Error): InstallResult {
-  return {
-    success: false,
-    skillId,
-    installPath: '',
-    error: error.message,
   }
 }
 
