@@ -4,6 +4,56 @@ All notable changes to `@skillsmith/core` are documented here.
 
 ## [Unreleased]
 
+- **Fix (reliability)**: SMI-6931 -- the **native** `better-sqlite3` driver now detects a corrupt
+  database on open and self-heals, instead of throwing on every query for the life of the file. The
+  corruption self-heal added by SMI-4484 was wired only into the WASM driver, while
+  `createDatabase` prefers native -- so on any machine where the native module loads, which is the
+  normal configuration, a corrupt `skills.db` had no detection, no backup-aside and no rebuild.
+  Found live: `get_skill` failed on every call on the owner's machine, with `integrity_check`
+  reporting 101 damaged pages.
+
+  Three things here were measured rather than copied from the WASM driver, and each would have
+  shipped a probe that detected nothing while looking correct:
+
+  - **A `sqlite_master` read is not sufficient.** That is the WASM driver's probe, and it validates
+    only the schema page. On a database whose schema page is intact and whose data pages are damaged
+    -- the reported condition -- it **succeeds**, while `SELECT COUNT(*)` on a real table throws
+    `database disk image is malformed`. Mirroring it would have detected nothing on the machine that
+    prompted the fix. The probe is `PRAGMA quick_check(1)`, chosen over `integrity_check(1)` on
+    measured cost (114 ms vs 190 ms on a fresh 59.6 MB database) and because index-vs-table
+    consistency is repairable by REINDEX rather than grounds for discarding a file.
+  - **`quick_check` reports rather than throws.** It returns `ok` for a healthy database and the
+    damage as a *string* for a corrupt one, so a `try`/`catch` around it alone is a no-op whose catch
+    never fires. The verdict is inspected.
+  - **`close()` deletes the `-wal` and `-shm` sidecars it found at open** (measured). A backup taken
+    after closing is silently missing them, so the files move aside *before* the handle closes.
+
+- **Fix (reliability)**: SMI-6931 -- `backupCorruptDbFile` moves a database's `-wal` and `-shm`
+  sidecars with the main file rather than renaming the main file alone. `schema-sql.ts` sets
+  `journal_mode = WAL`, so a real database on disk is three files; moving one left orphans at the
+  live paths carrying a header salt tied to a database no longer there, and left the backup
+  incomplete, since a WAL can hold committed pages the main file does not. Suffixes are appended
+  after the timestamp (`<backup>-wal`) so the moved set stays self-associating and the backup is
+  recoverable. The sql.js driver never sets WAL, so for its callers every source is absent and the
+  move is a no-op -- which is what keeps that driver's existing "exactly one backup" expectation
+  true.
+
+- **Fix (reliability)**: SMI-6931 -- a corrupt database opened with `readonly: true` now throws a
+  diagnosable error naming the file and the verdict, instead of being backed aside and rebuilt.
+  Backing a file aside is a write, and a caller that asked only to read must not have its database
+  renamed and replaced underneath it. The WASM driver has no `readonly` mode, which is why its own
+  self-heal never had to draw this distinction.
+
+- **Test**: SMI-6931 -- ten cases covering the native driver's **file-open** path, which had none:
+  all nine `createBetterSqlite3Database` call sites in the existing driver test pass `:memory:`,
+  which is why a missing corruption probe reached production unnoticed. Includes two known-positive
+  controls (a healthy database is left alone; an absent path opens as new) without which a driver
+  that backed aside unconditionally would satisfy every other arm. Both new mechanisms were
+  red-tested one site at a time, each mutation confirmed to still compile, each killing exactly one
+  test, and the source restored byte-identical and re-run green afterwards -- the ordering fix was
+  pinned by a **relocation** mutation, moving the backup below the close rather than changing any
+  value.
+
 - **Docs (internal)**: SMI-6733 -- the prose explaining why `installedSkills: null` classifies `ok` is
   **deleted**, not reworded. Three cross-family review rounds on PR #2980 each found a false claim in
   it: *"byte-identical to absent"*, then *"byte-identical for every consumer"*, then

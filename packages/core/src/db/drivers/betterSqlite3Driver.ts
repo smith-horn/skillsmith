@@ -10,8 +10,10 @@
  */
 
 import { createRequire } from 'node:module'
+import { existsSync } from 'node:fs'
 import type BetterSqlite3 from 'better-sqlite3'
 import type { Database, Statement, RunResult, DatabaseOptions } from '../database-interface.js'
+import { isCorruptionError, backupCorruptDbFile } from './corruption.js'
 
 // ESM-compatible require for native modules
 const require = createRequire(import.meta.url)
@@ -139,9 +141,111 @@ export function createBetterSqlite3Database(
     dbOptions.verbose = console.log
   }
 
+  // Captured BEFORE opening, because `new Database()` creates the file — a
+  // check made afterwards can never distinguish a pre-existing database from
+  // one this call just brought into being.
+  const fileExistedBeforeOpen = path !== ':memory:' && existsSync(path)
+
   const db = new Database(path, dbOptions)
 
+  if (fileExistedBeforeOpen) {
+    const corruptionReason = detectCorruption(db, path)
+
+    if (corruptionReason !== null) {
+      // Backing a file aside is a WRITE. A caller that asked only to read must
+      // not have its database renamed and replaced underneath it, so refuse
+      // with something it can act on. The WASM driver has no `readonly` mode,
+      // which is why its own self-heal never had to make this distinction.
+      if (dbOptions.readonly === true) {
+        closeQuietly(db)
+        throw new Error(
+          `[Skillsmith] The database at ${path} is corrupt and cannot be read ` +
+            `(${corruptionReason}). It was NOT modified, because this connection is ` +
+            `read-only. Re-open it read-write to have Skillsmith back it up and ` +
+            `rebuild, or move it aside manually.`
+        )
+      }
+
+      // Move the files aside BEFORE closing the handle. Measured (SMI-6931):
+      // `close()` DELETES the `-wal` and `-shm` SQLite found at open, so a
+      // backup taken afterwards is silently missing them and the sidecars are
+      // gone rather than preserved. Renaming first is safe — the open handle
+      // follows the inode — and leaves `close()` looking for paths that no
+      // longer exist, which it tolerates.
+      const backupPath = backupCorruptDbFile(path)
+      closeQuietly(db)
+
+      console.warn(
+        `[Skillsmith] The local database at ${path} was corrupt and could not be read ` +
+          `(${corruptionReason}). It has been backed up to ${backupPath} and will be ` +
+          `rebuilt on the next sync.`
+      )
+      return new BetterSqlite3Database(new Database(path, dbOptions))
+    }
+  }
+
   return new BetterSqlite3Database(db)
+}
+
+/** Release a handle whose state is already unknown, without masking the real error. */
+function closeQuietly(db: BetterSqlite3.Database): void {
+  try {
+    db.close()
+  } catch {
+    // Handle already unusable — nothing left to release.
+  }
+}
+
+/**
+ * Decide whether an already-open database is corrupt.
+ *
+ * SMI-6931. Two things here are not obvious and were both measured rather than
+ * assumed, because getting either wrong yields a probe that silently detects
+ * nothing while looking correct:
+ *
+ * **1. A `sqlite_master` read is not sufficient.** The WASM driver probes
+ * `SELECT name FROM sqlite_master LIMIT 1` (SMI-4484), which validates only the
+ * schema page. On a database whose schema page is intact and whose data pages
+ * are damaged — the condition SMI-6931 was actually filed for — that read
+ * **succeeds** while `SELECT COUNT(*)` on a real table throws
+ * `database disk image is malformed`. Copying the WASM probe here would have
+ * detected nothing on the machine that prompted the fix.
+ *
+ * **2. `quick_check` REPORTS rather than throws.** It returns a row whose value
+ * is `ok` for a healthy database, and the damage as a *string* for a corrupt
+ * one. Wrapping it in `try`/`catch` alone would be a no-op: the catch never
+ * fires and every corrupt database passes. The verdict has to be inspected.
+ *
+ * `quick_check` over `integrity_check` on measured cost: on a fresh 59.6 MB
+ * database, `quick_check(1)` took 114 ms against `integrity_check(1)`'s 190 ms.
+ * It skips index-vs-table consistency, which a rebuild-on-corruption path does
+ * not need — an inconsistent index is repairable by REINDEX, not grounds for
+ * discarding the file. The `(1)` argument stops after the first error, so the
+ * corrupt case is cheap; the healthy case is the one that pays, and that cost
+ * is why this is worth stating out loud rather than burying.
+ *
+ * @returns A human-readable reason, or `null` when the database reads cleanly.
+ */
+function detectCorruption(db: BetterSqlite3.Database, path: string): string | null {
+  try {
+    const rows = db.pragma('quick_check(1)') as unknown
+    const first = Array.isArray(rows) ? rows[0] : undefined
+    const verdict =
+      first && typeof first === 'object'
+        ? String(Object.values(first)[0] ?? '')
+        : String(first ?? '')
+
+    if (verdict.trim().toLowerCase() === 'ok') return null
+    return verdict.trim() || `quick_check returned no verdict for ${path}`
+  } catch (error) {
+    // A corruption-class throw is still corruption; anything else is a real
+    // failure this function must not swallow.
+    if (isCorruptionError(error)) {
+      return error instanceof Error ? error.message : String(error)
+    }
+    closeQuietly(db)
+    throw error
+  }
 }
 
 /**
