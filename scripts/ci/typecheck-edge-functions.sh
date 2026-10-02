@@ -77,7 +77,8 @@ esac
 # shellcheck source=scripts/ci/typecheck-edge-functions.helpers.sh
 source "$REPO_ROOT/scripts/ci/typecheck-edge-functions.helpers.sh"
 
-if ! declare -F finish >/dev/null || ! declare -F exit_for_inconclusive >/dev/null; then
+if ! declare -F finish >/dev/null || ! declare -F exit_for_inconclusive >/dev/null \
+  || ! declare -F resolve_partition >/dev/null; then
   printf '[edge-typecheck] FATAL: helpers did not load\n' >&2
   exit 1
 fi
@@ -104,8 +105,24 @@ fi
 if has_git_crypt_magic_header "$CRYPT_SENTINEL"; then
   CRYPT_STATE="CIPHERTEXT"
   inconclusive "tree is git-crypt locked; deno cannot parse it"
-  NEXT_ACTION="unlock git-crypt, or accept that fork PRs cannot run this check (pre-deploy is the backstop)"
-  exit_for_inconclusive
+  NEXT_ACTION="expected on a fork PR (no GIT_CRYPT_KEY). Wave 5's pre-deploy arm is the backstop. If this fires on an internal PR, the unlock step failed -- investigate that."
+  finish
+  # THE ONE INCONCLUSIVE STATE THAT WARNS IN EVERY CONTEXT, INCLUDING required-ci.
+  #
+  # Caught by reading the plan's own P-4 row 6 against this implementation: a fork
+  # PR runs in GitHub Actions, so CONTEXT auto-resolves to `required-ci` -- and the
+  # job sets it explicitly anyway -- which would have failed the gate on EVERY
+  # external contribution. A fork has no GIT_CRYPT_KEY by design, so this is not a
+  # degraded environment to fail closed on; it is the one case where "cannot run"
+  # is structurally true and unfixable by the contributor.
+  #
+  # Safe to warn because it cannot mask a real failure where it matters: both
+  # deploy jobs carry a `Verify git-crypt key present` step that hard-fails when
+  # the key is absent, so the tree is never ciphertext in the pre-deploy context.
+  # Every OTHER inconclusive state still fails closed.
+  say "WARNING: the tree is git-crypt locked, so this check cannot run. Expected on a fork PR."
+  say "This is the only inconclusive state that does not fail closed -- see the comment at this branch."
+  exit 0
 fi
 CRYPT_STATE="PLAINTEXT"
 
@@ -119,95 +136,27 @@ trap 'rm -f "$ALL_LIST" "$PROD_LIST" "$RAW_OUT"' EXIT
 find supabase/functions -name '*.ts' -type f 2>/dev/null | sort > "$ALL_LIST"
 DISCOVERED="$(wc -l < "$ALL_LIST" | tr -d ' ')"
 
-# THE PARTITION IS COMMITTED DATA, NOT INFERRED FROM FILE CONTENT.
+# I-3 FIRST, before anything derived from the file list. Measured: when the find
+# expression matched nothing, the PARTITION check fired first and reported
+# "exclusion list disagrees" -- so this arm, which exists specifically so the
+# empty-denominator case ships observed (plan P-4 row 3), was unreachable. Still
+# exit 1 either way, but the diagnosis named the wrong cause, and a dead arm is
+# not an observed one.
 #
-# Governance round 2 (C-1) measured the bypass that makes this necessary: when the
-# partition was computed by grepping each file for a vitest import, adding a
-# three-line COMMENT mentioning `'vitest'` to a production file removed it from the
-# denominator. Matched pair, identical files but for the comment: `checked 216 /
-# FAIL / exit 1` versus `checked 215 / PASS / exit 0`. `RESULT` stayed `EVALUATED`,
-# so it presented as a conclusive clean result, and the summary's `checked` count
-# returned to its pre-probe value, so a reviewer diffing run summaries saw nothing.
-#
-# Worse, it self-laundered: the file's baselined row then reported `gone -- fixed,
-# or RENAMED` with `PASS (improved)`, and `--update` dropped the row without
-# refusing. A vitest mention added to `create-portal-session/index.ts` (14
-# baselined errors) would have passed, reported an improvement, and permanently
-# removed that file from the gate with no artifact recording it.
-#
-# So the excluded set lives in a committed file, and a change to the partition is
-# a reviewable diff. The content-based detection still runs -- as a CROSS-CHECK,
-# not as the source of truth -- and any disagreement is loud.
-#
-# ONE FILE MAKES THIS WORSE THAN IT LOOKS, and it is the reason this fix is not
-# merely tidy. `_shared/resend-inbound.signature-contract.deno.ts` carries two
-# `/// <reference lib=...>` directives, and those are PROGRAM-WIDE: they supply
-# `deno.ns` and `dom` to every file in the compilation unit. Measured at tree
-# scale -- bare 60 errors versus 59 under this gate's config, a delta of one, where
-# a single file measured in isolation moves from 10 errors to 0. So if THAT file
-# were dropped from the checked set, the lib set would collapse for all 215 files
-# at once, not just for itself. Of the 215 ways to exercise C-1, one is an order of
-# magnitude worse than the rest.
-EXCLUDE_LIST="supabase/functions/typecheck-exclude.txt"
-if [[ ! -f "$EXCLUDE_LIST" ]]; then
-  inconclusive "missing $EXCLUDE_LIST"
-  NEXT_ACTION="restore the committed exclusion list; the partition must not be inferred from file content (C-1)"
-  exit_for_inconclusive
-fi
-
-# Production = discovered minus committed-excluded. `comm` needs sorted input;
-# both sides are sorted. -f disables globbing so a metachar in a path cannot
-# expand (m-2).
-set -f
-comm -23 "$ALL_LIST" <(sort "$EXCLUDE_LIST") > "$PROD_LIST"
-EXCLUDED="$(wc -l < "$EXCLUDE_LIST" | tr -d ' ')"
-CHECKED="$(wc -l < "$PROD_LIST" | tr -d ' ')"
-
-# Cross-check: what WOULD content detection say? A disagreement means either a new
-# test file needs adding to the list, or someone put a vitest mention in a
-# production file. Either way a human decides, and neither silently shrinks the
-# denominator.
-DETECTED="$(mktemp)"
-: > "$DETECTED"
-while IFS= read -r f; do
-  if grep -qE "(from|import)[[:space:]]+['\"]vitest['\"]" "$f" 2>/dev/null; then
-    printf '%s\n' "$f" >> "$DETECTED"
-  fi
-done < "$ALL_LIST"
-
-PARTITION_DIFF="$(comm -3 <(sort "$EXCLUDE_LIST") <(sort "$DETECTED") || true)"
-rm -f "$DETECTED"
-set +f
-
-# A partition disagreement is a VERDICT, not an INCONCLUSIVE result, and that
-# distinction was wrong in the first version of this fix. The check ran perfectly
-# and found something suspicious -- that is a statement about the tree, not about
-# whether the checker worked. Classifying it as INCONCLUSIVE made it merely WARN in
-# `local` context, so a developer adding a vitest mention to a production file
-# would have seen a warning and shipped it; only CI would have objected. It now
-# fails in EVERY context, which is the whole point of C-1.
-if [[ -n "$PARTITION_DIFF" ]]; then
-  VERDICT="FAIL (partition changed)"
-  DELTA_LINE="committed exclusion list disagrees with detected vitest imports"
-  finish
-  say "The set of files this gate checks has changed, and that set is committed data."
-  say ""
-  say "--- in the committed list but no longer importing vitest (left column),"
-  say "    or importing vitest but not in the list (right column) ---"
-  printf '%s\n' "$PARTITION_DIFF" | head -20
-  say ""
-  say "If this is a genuine NEW TEST FILE: add it to $EXCLUDE_LIST in a reviewed commit."
-  say "If a PRODUCTION file merely MENTIONS vitest -- in a comment or a string --"
-  say "remove the mention. Do NOT add a production file to the list: that silently"
-  say "deletes it from this gate's denominator, which is the bypass C-1 recorded."
-  exit 1
-fi
-
-if [[ "$DISCOVERED" -eq 0 || "$CHECKED" -eq 0 ]]; then
-  inconclusive "zero files to check (discovered=$DISCOVERED checked=$CHECKED)"
+# An empty glob makes bare `deno check` exit 0, so a zero denominator must never
+# read as a clean tree.
+if [[ "$DISCOVERED" -eq 0 ]]; then
+  inconclusive "zero .ts files discovered under supabase/functions"
   NEXT_ACTION="the discovery glob is broken, or the tree moved. This is NOT a clean result."
   exit_for_inconclusive
 fi
+
+# The partition is resolved by a helper, per the 500-line gate. It sets EXCLUDED,
+# CHECKED and PROD_LIST, and exits non-zero itself if the committed and detected
+# partitions disagree -- see resolve_partition() for why that is a VERDICT and not
+# an inconclusive result.
+resolve_partition
+
 
 # ---------------------------------------------------------------------------
 # The check. Config and package discovery are both pinned explicitly: measured
@@ -290,7 +239,10 @@ if grep -qiE "lockfile|lock file|out of date|--frozen" "$CLEAN_OUT" \
   NEXT_ACTION="regenerate supabase/deno.lock, or unset SKILLSMITH_EDGE_TYPECHECK_FROZEN. This is NOT a type error and NOT a parser bug."
   exit_for_inconclusive
 fi
-if grep -qiE "^error: (Download failed|error sending request|Import .* failed)" "$CLEAN_OUT"; then
+# Patterns taken from deno 2.3.6's real output, not guessed (plan P-4 row 7).
+# Note "error sending request" is INDENTED under its parent line, so this is
+# deliberately unanchored.
+if grep -qiE "(^error: (Failed loading|Download failed)|error sending request for url|connection refused|dns error|Import .* failed)" "$CLEAN_OUT"; then
   inconclusive "remote module fetch failed"
   NEXT_ACTION="a CDN or network failure. This is NOT a clean tree -- re-run, or fix the lockfile."
   exit_for_inconclusive
