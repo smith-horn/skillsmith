@@ -3580,6 +3580,49 @@ describe('decide() — SMI-6920: a trap action is shell text', () => {
     'trap "ruflo $X" EXIT',
     'trap "$X npx ruflo" EXIT',
   ])('closed bypass (allowed on 2e5d5bbb1 and cfc96eccd): %s -> deny', (command) => {
+    const v = decide(bashCall(command), {})
+    expect(v.action).toBe('deny')
+    // The REASON, not just the action (round 4, F-G): all six denied on
+    // 243a96847 too, under H9 and the false reason round 2 removed. Asserting
+    // the action alone leaves a surviving mutation — delete the whole
+    // `head === 'trap'` branch and they fall to `denyWith('H9', …)`, staying
+    // green while the 22-of-45 over-block comes back.
+    expect(reasonOf(v)).not.toContain('H9')
+  })
+  // Round 4 (the governance review of 84aece0bf, F-A): round 3 read the action's
+  // literal spine and nothing else, and rebuilding a command line from the
+  // surviving tokens lost four things — an operator's binding to its target,
+  // adjacency glue, quoting boundaries, and a substitution body the
+  // single-quote branch records in `.value` rather than `.subs`. Six spellings
+  // read nothing, each measured against its literal twin on the same tree, so
+  // the only difference between deny and allow was the presence of an
+  // expansion. The action is now read BOTH as written and by its spine, and
+  // the spine's re-join respects the tokenizer's own adjacency flags.
+  //
+  // Red arm, per row: drop the as-written reading (return the spine alone from
+  // `resolveTrapVerdict`) and rows 1 to 4 fail; drop the spine reading and rows
+  // 5 to 8 fail; drop the glue clause in `literalSpineOf` and row 8 fails.
+  it.each([
+    "trap 'echo $(npx ruflo)' EXIT",
+    "trap '$(npx ruflo)' EXIT",
+    'trap "diff <(npx ruflo) $X" EXIT',
+    'trap "> $X ruflo memory store" EXIT',
+    'trap "$(echo npx) ruflo" EXIT',
+    'trap "${X} npx ruflo" EXIT',
+    'trap "$X; ruflo" EXIT',
+    "trap '$X ./(node_modules|x)/.bin/ruflo' EXIT",
+  ])('closed bypass (allowed on 84aece0bf and cfc96eccd): %s -> deny', (command) => {
+    expect(decide(bashCall(command), {}).action).toBe('deny')
+  })
+  // The literal twins of those rows, which deny on every tree. Without these
+  // the rows above would pass on a guard that denies every `trap` line.
+  it.each([
+    "trap 'echo $(npx ruflo)' EXIT",
+    'trap "diff <(npx ruflo) f" EXIT',
+    'trap "> OUT ruflo memory store" EXIT',
+    "trap './(node_modules|x)/.bin/ruflo' EXIT",
+    'trap "LIT npx ruflo" EXIT',
+  ])('literal twin pin: %s -> deny', (command) => {
     expect(decide(bashCall(command), {}).action).toBe('deny')
   })
   // PINS, denied on every tree: the two shell-text heads already read.

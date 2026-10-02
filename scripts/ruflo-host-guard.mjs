@@ -101,7 +101,7 @@ import { decideHooksSessionStart } from './lib/ruflo-host-guard-verdicts.mjs'
 import { checkUnresolvedCommand } from './lib/ruflo-host-guard-unresolved.mjs'
 import { extractConsumerTexts, extractExecEnvVarTexts } from './lib/ruflo-host-guard-consumers.mjs'
 import { evaluateGlobGroupReadings, splitSegments } from './lib/ruflo-host-guard-segments.mjs'
-import { parseEvalSegment } from './lib/ruflo-host-guard-eval.mjs'
+import { parseEvalSegment, resolveTrapVerdict } from './lib/ruflo-host-guard-eval.mjs'
 
 // M3 follow-up: `splitSegments` moved to `ruflo-host-guard-segments.mjs`
 // (pure, no dependency on anything else in this file, so it moves
@@ -122,7 +122,7 @@ function checkEvalPredicate(wordTokens, depth) {
   if (parsed === undefined || parsed === null) return parsed
   if (typeof parsed.joined !== 'string') return parsed // H9 itself fired
   const verdict = evaluateGuardCommand(parsed.joined, depth + 1)
-  return verdict ?? (parsed.head === 'trap' ? undefined : null)
+  return resolveTrapVerdict(parsed, verdict, (t) => evaluateGuardCommand(t, depth + 1))
 }
 
 /**

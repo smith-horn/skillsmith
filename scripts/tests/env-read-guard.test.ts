@@ -39,8 +39,14 @@ function bashCall(command: string) {
  * shell-text module's import removed, 13 of 13 rows still passed a bare
  * `.action` check on a mechanism that was entirely dead. Round 3 (F-2) found
  * the conversion had reached 27 of 76 rows while the record claimed all of
- * them, so every allow row now goes through {@link expectAllow} and a new one
- * cannot regress by default.
+ * them. Round 4 (F-C) measured this file again: of 76 allow assertions, 41
+ * call {@link expectAllow} and 35 compare against {@link ALLOW_RESULT}
+ * directly, 30 of those 35 being the two-statement `const result = decide(…)`
+ * form and 5 not going through `bashCall` with the plain env at all. Both
+ * spellings assert the whole verdict, so assertion strength is uniform; what
+ * is NOT mechanized is the exclusion of a third spelling, and `.action`
+ * alone would still pass review unaided. Command:
+ * `grep -c 'expectAllow(' …` and `grep -c 'toEqual(ALLOW_RESULT)' …`.
  */
 const ALLOW_RESULT = { action: 'allow', json: null, stderr: null }
 
@@ -2025,11 +2031,36 @@ describe('decide() — SMI-6920 round 2: a quoted env -S remainder, inherited so
 
   // A RESTORED denial, not a new over-block (round 3, F-3): measured deny on
   // cfc96eccd, allow on 243a96847, deny here. Harmless either way -- env
-  // rejects the substitution in its split `$(…)` in its split
+  // rejects the substitution in its split
   // text (`Only ${VARNAME} expansion is supported`), so the line runs
   // nothing; the substitution recursion now carries the inherited source.
   it("restored denial (allowed on 243a96847, denied on cfc96eccd): env -S 'echo $(cat)' < .env -> deny", () => {
     expect(decide(bashCall("env -S 'echo $(cat)' < .env"), {}).action).toBe('deny')
+  })
+
+  // SMI-6920 round 4, F-B: the `-c`-launcher branch in
+  // `shell-command-readings.mjs` used to return without the readings
+  // `peelHead` had just pushed, and round 3 recorded that as unreachable
+  // because the `-c` launcher set is disjoint from the shell-text heads. The
+  // inference was wrong: the push and the return need not be the same loop
+  // iteration, and `watch` is BOTH a shell-text head and a peelable launcher,
+  // so a reading pushed at `watch` survives into a later `script`/`su`/
+  // `flock` head. Measured: 40 of 747 probed commands moved from allow to deny
+  // across that one-word change, none the other way. The leading launcher is
+  // needed because the push is gated on having peeled something.
+  //
+  // Red arm: restore `return segs.concat(...)` and all three fail.
+  it.each([
+    'nohup watch script -c cat < .env',
+    'nohup watch su -c cat < .env',
+    'nohup watch flock /tmp/l -c cat < .env',
+  ])('round 4 F-B (allowed on 2e5d5bbb1 and cfc96eccd): %s -> deny', (command) => {
+    expect(decide(bashCall(command), {}).action).toBe('deny')
+  })
+  // The same shapes without the leading launcher deny on both trees: the pin
+  // that keeps the rows above from passing on a guard that denies all of them.
+  it('pin: watch script -c cat < .env -> deny on both trees', () => {
+    expect(decide(bashCall('watch script -c cat < .env'), {}).action).toBe('deny')
   })
 
   // Controls assert the WHOLE result (M-2): a fail-open allow carries a
