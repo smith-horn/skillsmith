@@ -150,11 +150,17 @@ export const temporaryManifestEvidenceResolver: ManifestEvidenceResolver = async
   const manifestKey = manifestKeyFor(dirName, harness)
 
   // The `?.` guards a case `SkillManifest` says cannot happen, and it is NOT
-  // dead code: `packages/cli/src/utils/manifest.ts:150` does
+  // dead code: the CLI's own `loadManifest` (`cli/src/utils/manifest.ts`) does
   // `JSON.parse(content) as SkillManifest` — an unchecked cast. A manifest file
   // missing `installedSkills` yields an object the type claims has it and that
-  // does not. (`skill-manifest.ts:120` does default it, but that is a different
-  // loader, and this resolver is handed a snapshot rather than choosing one.)
+  // does not.
+  //
+  // A parenthetical here used to add that `skill-manifest.ts:120` defaults the
+  // field. Two things were wrong with that and a stale-citation sweep caught
+  // both: the line is inside `assertNotRealUserHome`, and nothing in that file
+  // defaults `installedSkills` at all. `installedSkillsOf` normalises it for a
+  // READER without writing a default, which is a different thing. So this
+  // resolver's guard has no sibling to defer to.
   //
   // Without the guard that case is a TypeError inside the gate, which fails a
   // safety check OPEN by crashing the run rather than reporting every skill
