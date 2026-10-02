@@ -113,48 +113,19 @@ export function normalizeWrappersWithExec(argvIn) {
  * `env -S '<command text>'` / `env --split-string='<command text>'` / a
  * glued `-S<text>` (H-3 fix, SMI-6744 Wave 4 governance round, extending
  * the original H-B fix): env's own `-S`/`--split-string` flag re-tokenizes
- * its argument as a SINGLE shell command line (GNU coreutils `env(1)`),
- * collapsing "ruflo memory store ..." into one argv token that the shared
- * `stripEnvPrefix`'s per-token flag/assignment scan never expands back
- * out. The original fix only checked `rawValues[1]` directly, missing
- * `-S` preceded by env's OWN other flags/assignments (`env -uX -S '...'`,
- * `env X=1 -S '...'`) and the glued short-option form (`-S'...'`, which
- * this guard's own tokenizer concatenates into one word since there is no
- * space to split on) — this now skips past env's own leading
- * flags/assignments first, then scans every remaining token. Detected on
- * the raw (pre-strip) word values, before this segment's OWN wrapper
- * normalization would otherwise treat `-S` as an ordinary flag — guard-
- * local since no other consumer of `shell-command-normalize.mjs` needs
- * this env-specific flag.
- * @param {string[]} rawValues
- * @returns {string | null} the nested command text, or null if this
- *   segment isn't that shape
+ * its argument as a SINGLE shell command line (GNU coreutils `env(1)`).
+ * Detected on the raw (pre-strip) word values, before this segment's OWN
+ * wrapper normalization would otherwise treat `-S` as an ordinary flag.
+ * Lived here as a guard-local helper, with a docblock claiming no sibling
+ * needed it, until the post-merge retro of PR #2978 found the env guard
+ * allowing `env -S "cat .env"` on every tree (SMI-6920, the SMI-6737
+ * shape); the extractor now lives in the shared
+ * `shell-command-shell-text.mjs` beside `eval` and `trap`, and this guard
+ * reads the split text WITH the remaining operands env appends (its own
+ * text-only reading let `env -S npx ruflo memory store` through while the
+ * same line behind `sudo` denied; the review of 243a96847, H-1).
  */
-export function detectEnvSplitString(rawValues) {
-  if (basenameOf(rawValues[0] ?? '') !== 'env') return null
-  let i = 1
-  while (i < rawValues.length) {
-    const a = rawValues[i]
-    if (a === '-S' || a === '--split-string') return rawValues[i + 1] ?? null
-    if (a.startsWith('--split-string=')) return a.slice('--split-string='.length)
-    if (a.startsWith('-S') && a !== '-S') return a.slice(2)
-    if (/^[A-Za-z_][A-Za-z0-9_]*=/.test(a)) {
-      i++
-      continue
-    }
-    if (a === '-u' || a === '--unset' || a === '-C' || a === '--chdir') {
-      i += 2
-      continue
-    }
-    if (a === '--') break
-    if (a.startsWith('-')) {
-      i++
-      continue
-    }
-    break // the actual wrapped command name -- no -S here
-  }
-  return null
-}
+export { envSplitCommandText } from './shell-command-shell-text.mjs'
 
 /**
  * Recover the ORIGINAL token objects (with `.subs`) aligned to a

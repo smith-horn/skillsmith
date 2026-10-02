@@ -23,6 +23,7 @@ import {
   launcherStops,
   stripLauncher,
 } from './shell-command-launchers.mjs'
+import { shellTextOperand } from './shell-command-shell-text.mjs'
 import { basenameOf, tokenize } from './shell-command-tokenize.mjs'
 
 /**
@@ -131,6 +132,7 @@ const MAX_DASH_C_DEPTH = 2
 
 function peelHead(segment, peelWrappers, splitFn, depth) {
   const kept = []
+  const readings = []
   let i = 0
   let peeled = false
   // The values of the plain (non-redirect) words from `i` to the segment's
@@ -160,11 +162,37 @@ function peelHead(segment, peelWrappers, splitFn, depth) {
       continue
     }
     const base = basenameOf(t.value)
+    // SMI-6920 F-A: a head whose operand IS shell text (`eval "…"`,
+    // `trap "…" SIG`) gets a reading kept AT the head, so the caller's own
+    // shell-text arm reads the operand (`nohup eval "cat .env"` had every
+    // reading fully peeled to one unreadable word), and the peel then goes
+    // on as before, so the fully peeled reading survives beside it: a first
+    // version stopped here and lost it, and `eval 'echo $(cat)' < .env`
+    // moved from deny to allow (the governance review of 243a96847, C-2).
+    // Readings only add.
+    if (peeled && shellTextOperand(plainValuesFrom(i)) !== null) {
+      readings.push(kept.concat(segment.slice(i)))
+    }
     if (DASH_C_LAUNCHERS.has(base) && depth < MAX_DASH_C_DEPTH) {
       const body = launcherDashCCommand(plainValuesFrom(i))
       if (body !== null) {
         const segs = splitFn(tokenize(body))
-        return segs.concat(transparentHeadReadings(segs, peelWrappers, splitFn, depth + 1))
+        // `readings` first: a reading the shell-text arm above just pushed is
+        // part of the result, not something this return discards. REACHABLE,
+        // and this comment used to say otherwise: the two sets being disjoint
+        // (`DASH_C_LAUNCHERS` vs the shell-text heads) does not make
+        // `readings` empty here, because the push and this return need not be
+        // the same loop iteration, and `watch` is BOTH a shell-text head and a
+        // peelable launcher. Measured: 40 of 747 probed commands moved from
+        // allow to deny across this one word, none the other way; smallest case
+        // a launcher before `watch script -c` with a redirect. SMI-6920 round
+        // 3 F-5 shipped it as "unreachable", round 4 F-B measured it, round 5
+        // M4 found this comment still carrying the false claim. Readings only
+        // add.
+        return readings.concat(
+          segs,
+          transparentHeadReadings(segs, peelWrappers, splitFn, depth + 1)
+        )
       }
     }
     const entry = LAUNCHER_TABLE.get(base)
@@ -199,8 +227,13 @@ function peelHead(segment, peelWrappers, splitFn, depth) {
     }
     break
   }
-  if (!peeled || i >= segment.length) return null
-  return [kept.concat(segment.slice(i))]
+  if (peeled && i < segment.length) {
+    const last = readings[readings.length - 1]
+    const final = kept.concat(segment.slice(i))
+    if (last === undefined || last.length !== final.length || last.some((t, k) => t !== final[k]))
+      readings.push(final)
+  }
+  return readings.length === 0 ? null : readings
 }
 
 /**

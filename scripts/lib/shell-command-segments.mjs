@@ -12,9 +12,10 @@
 
 import { nestedGroupAlternatives, transparentHeadReadings } from './shell-command-readings.mjs'
 
-// `inputRedirectSources` and `checkNestedRedirectSources` live in
-// `shell-command-redirects.mjs` since SMI-6908 (this file had reached the
-// 500-line convention); `shell-command-normalize.mjs` re-exports them.
+// `inputRedirectSources` lives in `shell-command-redirects.mjs` since SMI-6908
+// (this file had reached the 500-line convention); `shell-command-normalize.mjs`
+// re-exports it. The wrapper-body check that sat beside it was retired in
+// SMI-6920: the env guard now recurses its own evaluator with the sources.
 
 /**
  * Op values that really END a command. `{`/`}`/`(`/`)` come back from

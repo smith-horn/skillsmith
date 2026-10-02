@@ -346,7 +346,12 @@ describe('shell-command-readings.mjs — SMI-6903 round 21', () => {
     const combined = (c: string) =>
       shape(splitCommandSegmentsWithSubRuns(tokenize(c), normalizeWrappers))
     expect(combined('V=${X} nohup cat .env')).toContainEqual(['cat', '.env'])
-    expect(combined('V=${X} eval cat .env')).toContainEqual(['cat', '.env'])
+    // SMI-6920: a shell-text head (`eval`) ends the peel with its reading
+    // kept, so the sub-run's own reading `eval cat .env` is what the caller's
+    // shell-text arm reads (verdict pinned end to end in `env-read-guard.test.ts`).
+    // A pin, not an arm: that reading exists on every tree; the F-2 arm is
+    // carried by the `nohup` and `timeout` rows around it.
+    expect(combined('V=${X} eval cat .env')).toContainEqual(['eval', 'cat', '.env'])
     expect(combined('V=${X} timeout 5 cat .env')).toContainEqual(['cat', '.env'])
     expect(combined('V=${HOME} nohup cat .env')).toContainEqual(['cat', '.env'])
     // The unbraced twin already read through the separator reading's peel.

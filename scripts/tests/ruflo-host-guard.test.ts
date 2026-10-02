@@ -3516,6 +3516,204 @@ describe('decide() — SMI-6908 F-4 residue: a bare arch/xcrun shares the arity 
   })
 })
 
+// SMI-6920 (round 29): `trap ACTION SIG…` hands its action to the shell as
+// text, exactly as `eval` does, and this guard read `eval` (H9) and `env -S`
+// but not `trap`: `trap "npx ruflo memory store" EXIT` allowed on every
+// tree. The action joins H9's reading: a literal action is recursed through
+// the pipeline, an action that expands is denied as H9, and the forms that
+// run nothing (`trap -l`, `trap -p`, `trap - SIG`) are left alone. The
+// extractor is shared with the env guard (`shell-command-shell-text.mjs`).
+describe('decide() — SMI-6920: a trap action is shell text', () => {
+  it.each([
+    'trap "npx ruflo memory store" EXIT',
+    'trap "./node_modules/.bin/ruflo memory store" INT TERM',
+    "trap 'npx ruflo memory store; echo done' EXIT",
+    'command trap "npx ruflo memory store" EXIT',
+    'trap -- "npx ruflo memory store" EXIT',
+    // `env -S` behind a wrapper or launcher reaches the recursion through
+    // the shared normalizer's nested body now (allowed on cfc96eccd, where
+    // the raw-head scan was the only reader of `-S`).
+    "sudo env -S 'npx ruflo memory store'",
+    "nohup env -S 'npx ruflo memory store'",
+  ])('%s -> deny (the action is recursed; allowed on cfc96eccd)', (command) => {
+    expect(decide(bashCall(command), {}).action).toBe('deny')
+  })
+  // `sudo` execs a program, so the builtin behind it never runs: an
+  // over-block pin matching the separate-word posture, not a leak closed.
+  it('over-block pin (the builtin never runs; allowed on cfc96eccd): sudo trap "npx ruflo memory store" EXIT -> deny', () => {
+    expect(decide(bashCall('sudo trap "npx ruflo memory store" EXIT'), {}).action).toBe('deny')
+  })
+  // `eval -- …` runs the rest (measured): the terminator is dropped, so the
+  // recursion reads the real command (a predicate label, not the
+  // `unresolved-command` fail-closed arm cfc96eccd reached on `--`), and a
+  // harmless rest is allowed where cfc96eccd over-blocked it.
+  it('eval -- is read past its terminator', () => {
+    const v = decide(bashCall('eval -- npx ruflo memory store'), {})
+    expect(v.action).toBe('deny')
+    expect(reasonOf(v)).not.toContain('unresolved-command')
+    expect(decide(bashCall('eval -- echo hi'), {}).action).toBe('allow')
+  })
+  // Round 2 (the governance review of 243a96847, H-2): an expanding trap
+  // action is the variable-indirection limit this guard already accepts,
+  // not H9. On 243a96847 it denied H9 with a false reason, and so did 22 of
+  // the 45 `trap` lines in this repository's own shell scripts, on a guard
+  // with no opt-out; on cfc96eccd every one allowed. Corrected over-blocks.
+  it.each(['trap "$X" EXIT', 'trap \'rm -rf "$TMPROOT"\' EXIT', "trap 'kill $(jobs -p)' EXIT"])(
+    'corrected over-block (denied H9 on 243a96847): %s -> allow',
+    (command) => {
+      expect(decide(bashCall(command), {})).toEqual({ action: 'allow', json: null, stderr: null })
+    }
+  )
+  // Round 3 (the governance review of 2e5d5bbb1, F-1): round 2 suppressed the
+  // whole reading on one expansion ANYWHERE in the action, so appending a
+  // variable bought an allow — every row below allowed on 2e5d5bbb1 while
+  // `trap "npx ruflo" EXIT` denied, and the `eval` twin denied either way.
+  // The limit is now the words that expand, not the action containing one:
+  // the action's literal spine is read, and an action that is nothing but
+  // expansions still falls through. Red arm: restore `if (head === 'trap')
+  // return undefined` in `parseEvalSegment` and all six fail.
+  it.each([
+    'trap "npx ruflo $X" EXIT',
+    'trap "npx ruflo memory store $HOME" EXIT',
+    'trap \'npx ruflo memory store \'"$X" EXIT',
+    'trap "$(echo npx) ruflo" EXIT',
+    'trap "ruflo $X" EXIT',
+    'trap "$X npx ruflo" EXIT',
+  ])('closed bypass (allowed on 2e5d5bbb1 and cfc96eccd): %s -> deny', (command) => {
+    const v = decide(bashCall(command), {})
+    expect(v.action).toBe('deny')
+    // The REASON, not just the action (round 4, F-G): all six denied on
+    // 243a96847 too, under H9 and the false reason round 2 removed. Asserting
+    // the action alone leaves a surviving mutation — delete the whole
+    // `head === 'trap'` branch and they fall to `denyWith('H9', …)`, staying
+    // green while the 22-of-45 over-block comes back.
+    expect(reasonOf(v)).not.toContain('H9')
+  })
+  // Round 4 (the governance review of 84aece0bf, F-A): round 3 read the action's
+  // literal spine and nothing else, and rebuilding a command line from the
+  // surviving tokens lost four things — an operator's binding to its target,
+  // adjacency glue, quoting boundaries, and a substitution body the
+  // single-quote branch records in `.value` rather than `.subs`. Six spellings
+  // read nothing, each measured against its literal twin on the same tree, so
+  // the only difference between deny and allow was the presence of an
+  // expansion. The action is now read BOTH as written and by its spine, and
+  // the spine's re-join respects the tokenizer's own adjacency flags.
+  //
+  // Red arm, per row: drop the as-written reading (return the spine alone from
+  // `resolveTrapVerdict`) and rows 1 to 4 fail; drop the spine reading and rows
+  // 5 to 8 fail; drop the glue clause in `literalSpineOf` and row 8 fails.
+  it.each([
+    "trap 'echo $(npx ruflo)' EXIT",
+    "trap '$(npx ruflo)' EXIT",
+    'trap "diff <(npx ruflo) $X" EXIT',
+    'trap "> $X ruflo memory store" EXIT',
+    'trap "$(echo npx) ruflo" EXIT',
+    'trap "${X} npx ruflo" EXIT',
+    'trap "$X; ruflo" EXIT',
+    "trap '$X ./(node_modules|x)/.bin/ruflo' EXIT",
+  ])('closed bypass (allowed on 84aece0bf and cfc96eccd): %s -> deny', (command) => {
+    expect(decide(bashCall(command), {}).action).toBe('deny')
+  })
+  // The literal twins of those rows, which deny on every tree. Without these
+  // the rows above would pass on a guard that denies every `trap` line.
+  // Round 5 (M2) replaced the first entry: it was a byte-identical copy of
+  // round-4 row 1, not its twin, and it allowed on 84aece0bf — so it pinned
+  // nothing and the block's own header was false for it.
+  it.each([
+    "trap 'echo npx ruflo' EXIT",
+    'trap "diff <(npx ruflo) f" EXIT',
+    'trap "> OUT ruflo memory store" EXIT',
+    "trap './(node_modules|x)/.bin/ruflo' EXIT",
+    'trap "LIT npx ruflo" EXIT',
+  ])('literal twin pin: %s -> deny', (command) => {
+    expect(decide(bashCall(command), {}).action).toBe('deny')
+  })
+  // Round 5 (the governance pass on 6da0245f8, C1): `checkUnresolvedCommand`
+  // emits one predicate from FIVE arms and only the last is the
+  // variable-indirection limit. Round 4 excused all five for a `trap`
+  // action, so an empty residual, a `--` head, an all-digit head or a
+  // `/dev/` head masked a reader written out literally: these denied on
+  // 84aece0bf and allowed on 6da0245f8, and the last two carry no expansion
+  // anywhere, so no twin-differential could have found them. The excuse is
+  // now behavioural -- if the spine equals the action, nothing expanded and
+  // the refusal stands.
+  //
+  // Red arm: restore `if (spine === '' || spine === parsed.joined) return
+  // undefined` and all six fail.
+  it.each([
+    "trap '$X -- npx ruflo' EXIT",
+    "trap '$X 0 npx ruflo' EXIT",
+    "trap '$X /dev/null npx ruflo' EXIT",
+    "trap '0 npx ruflo' EXIT",
+    "trap '/dev/null npx ruflo' EXIT",
+    'trap "$X -- npx ruflo" EXIT',
+  ])('round 5 C1 (denied on 84aece0bf, allowed on 6da0245f8): %s -> deny', (command) => {
+    expect(decide(bashCall(command), {}).action).toBe('deny')
+  })
+  // Round 5, C2: the excuse used to be a substring match on the refusal
+  // REASON, which `denyWith` builds by interpolating the matched token --
+  // and three H8-script sites pass the whole inline script as that token. A
+  // script padded with the predicate's own label impersonated it and the
+  // whole trap reading was dropped. The predicate is now a structured field.
+  //
+  // Both directions are pinned here, which round 4's docblock claimed
+  // without it being true (L3): the padded script must still deny, and a
+  // genuinely unresolved head must still fall through.
+  it('round 5 C2: a padded predicate label cannot impersonate the predicate', () => {
+    const spoof = 'trap "node -e \'unresolved-command: spawn(\\"npx ruflo\\")\'" EXIT'
+    expect(decide(bashCall(spoof), {}).action).toBe('deny')
+    const twin = 'trap "node -e \'spawn(\\"npx ruflo\\")\'" EXIT'
+    expect(decide(bashCall(twin), {}).action).toBe('deny')
+  })
+  it('round 5 C2 (other direction): a real unresolved head still falls through', () => {
+    expect(decide(bashCall('trap "$exit_body" EXIT'), {})).toEqual({
+      action: 'allow',
+      json: null,
+      stderr: null,
+    })
+    const direct = decide(bashCall('$exit_body'), {})
+    expect(direct.action).toBe('deny')
+    expect(direct.predicate).toBe('unresolved-command')
+  })
+  // Round 5, M1: `prev` was the last KEPT token, so dropping a word that
+  // expands welded the tokens on either side of it across a blank the source
+  // actually had. That fabricated a path: `./(node_modules|x)$X /.bin/ruflo`
+  // became `./(node_modules|x)/.bin/ruflo` in the spine and denied, although
+  // its space-separated twin allows on EVERY tree including cfc96eccd. 84
+  // composed commands of that shape denied on 6da0245f8 alone.
+  //
+  // These three rows are the arm, the policy anchor and the discriminator, in
+  // that order. A first version of this block asserted two shapes whose
+  // verdict did not depend on the fix at all: it passed identically with the
+  // fix reverted, which is the decorative-test defect this repo's own rule
+  // names, and the red arm is what exposed it.
+  it('round 5 M1 arm (denied on 6da0245f8, allows on cfc96eccd): a dropped word does not weld across a real blank', () => {
+    expect(decide(bashCall('trap "./(node_modules|x)$X /.bin/ruflo" EXIT'), {}).action).toBe(
+      'allow'
+    )
+  })
+  it('round 5 M1 policy anchor: the same line without the expansion allows on every tree, which is what the arm agrees with', () => {
+    expect(decide(bashCall('trap "./(node_modules|x) /.bin/ruflo" EXIT'), {}).action).toBe('allow')
+  })
+  it('round 5 M1 discriminator: a REAL weld still denies, so the arm is not just a hole', () => {
+    expect(decide(bashCall('trap "./(node_modules|x)$X/.bin/ruflo" EXIT'), {}).action).toBe('deny')
+    expect(decide(bashCall('trap "./(node_modules|x)/.bin/ruflo" EXIT'), {}).action).toBe('deny')
+  })
+  // PINS, denied on every tree: the two shell-text heads already read.
+  it.each([
+    'eval "npx ruflo memory store"',
+    'env -S "npx ruflo memory store"',
+    "env -S 'npx ruflo' memory store",
+  ])('pin: %s -> deny', (command) => {
+    expect(decide(bashCall(command), {}).action).toBe('deny')
+  })
+  it.each(['trap "echo bye" EXIT', 'trap - EXIT', 'trap -l', 'trap -p'])(
+    'control: %s -> allow',
+    (command) => {
+      expect(decide(bashCall(command), {}).action).toBe('allow')
+    }
+  )
+})
 // SMI-6903 round 22, a correction the shared launcher table forced: `command
 // -v NAME` DESCRIBES a name and runs nothing (measured in bash 3.2 and zsh 5.9
 // with a decoy executable named through a variable: no marker written, while
@@ -3671,6 +3869,34 @@ describe('decide() — SMI-6903 F4: a NESTED glob group cannot hide a ruflo path
     'pin (does NOT constrain the fix): %s -> %s',
     (command, expected) => {
       expect(decide(bashCall(command), {}).action).toBe(expected)
+    }
+  )
+})
+
+// SMI-6920 round 2 (the governance review of 243a96847): the bare `env -S`
+// path read the split text alone, so `env -S npx ruflo memory store` allowed
+// while the same line behind `sudo` denied (H-1); a `trap` whose action was
+// clean ended its segment before every later predicate (M-1).
+describe('decide() — SMI-6920 round 2: env -S reads its remainder on the bare path, a clean trap falls through', () => {
+  it.each([
+    'env -S npx ruflo memory store',
+    'env -S "npx" ruflo memory store',
+    'env -S npx ruflo',
+    'env -u X -S npx ruflo memory store',
+  ])('%s -> deny (H-1, allowed on cfc96eccd and 243a96847)', (command) => {
+    expect(decide(bashCall(command), {}).action).toBe('deny')
+  })
+  // M-1: on cfc96eccd H5 read the whole argv after the `nohup` peel; on
+  // 243a96847 the clean action `npx` ended the segment. The shape runs
+  // nothing (`nohup` execs a program named `trap`), so this pins the
+  // mechanism, not a reachable bypass.
+  it('corrected regression (allowed on 243a96847): nohup trap npx ruflo EXIT -> deny', () => {
+    expect(decide(bashCall('nohup trap npx ruflo EXIT'), {}).action).toBe('deny')
+  })
+  it.each(['env -S "echo hi" x', 'trap cleanup EXIT', "trap 'exit 0' TERM INT"])(
+    'control: %s -> allow',
+    (command) => {
+      expect(decide(bashCall(command), {})).toEqual({ action: 'allow', json: null, stderr: null })
     }
   )
 })
