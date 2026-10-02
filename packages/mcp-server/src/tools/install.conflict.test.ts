@@ -366,6 +366,76 @@ describe('a nullish installedSkills does not crash the conflict pre-flight (SMI-
       consulted: mockDetectModifications.mock.calls.length,
     }).toEqual({ proceeded: true, consulted: 0 })
   })
+
+  // Post-merge retro on cfc96eccd. The case above covers `checkForConflicts`
+  // only. `handleMergeAction` carries the same two reads and neither had a
+  // nullish fixture, so reverting both to bare subscripts left the whole
+  // mcp-server suite green. The two sites fail independently and are asserted
+  // separately for the reason the SMI-6358 retro block above already records:
+  // a mutation applied to both at once measures their union, not either one.
+
+  it('handleMergeAction: the ENTRY read answers exactly as an empty manifest does', async () => {
+    // `existingEntry?.version || '1.0.0'` is the observable: a nullish manifest
+    // and an empty one both hold no entry under this key, so both must reach
+    // storeOriginal with the same fallback. Equivalence, not "did not throw" —
+    // the latter would also pass for a fix that answered differently.
+    await handleMergeAction(
+      'my-skill',
+      '/installed/my-skill',
+      'upstream content',
+      manifestWithNullishSkills(),
+      'owner',
+      'repo',
+      'owner/repo/my-skill',
+      CANONICAL
+    )
+    const nullishMeta = mockStoreOriginal.mock.calls[0]![2] as { version: string }
+
+    mockStoreOriginal.mockClear()
+    await handleMergeAction(
+      'my-skill',
+      '/installed/my-skill',
+      'upstream content',
+      { version: '1.0.0', installedSkills: {} } as unknown as SkillManifest,
+      'owner',
+      'repo',
+      'owner/repo/my-skill',
+      CANONICAL
+    )
+    const emptyMeta = mockStoreOriginal.mock.calls[0]![2] as { version: string }
+
+    expect(nullishMeta.version).toBe(emptyMeta.version)
+    expect(nullishMeta.version).toBe('1.0.0')
+  })
+
+  it('handleMergeAction: the WRITE updater survives a nullish re-read', async () => {
+    // `updateManifestSafely` re-reads the file under the lock, so the manifest
+    // the updater receives is a different document from the one passed in — a
+    // concurrent writer can null `installedSkills` between the two. Drive the
+    // captured updater with that document directly.
+    await handleMergeAction(
+      'my-skill',
+      '/installed/my-skill',
+      'upstream content',
+      manifestWithEntry('my-skill', '9.9.9'),
+      'owner',
+      'repo',
+      'owner/repo/my-skill',
+      CANONICAL
+    )
+
+    expect(mockUpdateManifestSafely).toHaveBeenCalledOnce()
+    const updater = mockUpdateManifestSafely.mock.calls[0]![0] as (m: unknown) => {
+      installedSkills: Record<string, { originalContentHash?: string }>
+    }
+    const written = updater(manifestWithNullishSkills())
+
+    // The entry is created, not merged onto a prior one — there is nothing to
+    // merge. Asserting the hash landed proves the write still happened rather
+    // than being swallowed.
+    expect(Object.keys(written.installedSkills)).toEqual(['my-skill'])
+    expect(written.installedSkills['my-skill']?.originalContentHash).toBeTruthy()
+  })
 })
 
 // EVERY non-canonical client, at BOTH call sites (SMI-6358 retro, round 3).
