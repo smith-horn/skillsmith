@@ -5,54 +5,61 @@ All notable changes to `@skillsmith/core` are documented here.
 ## [Unreleased]
 
 - **Fix (reliability)**: SMI-6931 -- the **native** `better-sqlite3` driver now detects a corrupt
-  database on open and self-heals, instead of throwing on every query for the life of the file. The
-  corruption self-heal added by SMI-4484 was wired only into the WASM driver, while
-  `createDatabase` prefers native -- so on any machine where the native module loads, which is the
-  normal configuration, a corrupt `skills.db` had no detection, no backup-aside and no rebuild.
-  Found live: `get_skill` failed on every call on the owner's machine, with `integrity_check`
-  reporting 101 damaged pages.
+  database on open and **refuses with an actionable diagnostic**, instead of throwing a raw SQLite
+  error from whatever query happened to touch a damaged page. The corruption handling added by
+  SMI-4484 was wired only into the WASM driver, while `createDatabase` prefers native -- so on any
+  machine where the native module loads, which is the normal configuration, a corrupt `skills.db`
+  produced an undiagnosable failure with no stated cause and no remedy. Found live: `get_skill`
+  failed on every call on the owner's machine, with `integrity_check` reporting 101 damaged pages.
 
-  Three things here were measured rather than copied from the WASM driver, and each would have
-  shipped a probe that detected nothing while looking correct:
+  **It refuses rather than repairing, and that is the design.** An earlier draft backed the file
+  aside and rebuilt it, mirroring the WASM driver. A cross-family review rejected that as a Critical
+  defect and was right: this database is shared between processes -- a CLI invocation and a
+  long-lived MCP server can both hold it -- and SQLite coordinates processes through the file
+  **paths**, not the inodes. Renaming it out from under a live handle leaves that process writing
+  into the renamed file while new connections use the replacement, and the two diverge silently.
+  Losing a writer's data is worse than refusing to start, and this database is a rebuildable mirror
+  of the remote registry, so refusing costs little. ADR-155 had already settled the policy:
+  *"Recovery never runs automatically."*
 
-  - **A `sqlite_master` read is not sufficient.** That is the WASM driver's probe, and it validates
+  The refusal names the path, the verdict and the exact manual move, including the WAL sidecars,
+  because a correct refusal the user cannot act on is its own defect.
+
+  Two things about the probe were measured rather than carried over from the WASM driver, and each
+  would have shipped a check that detected nothing while reading as correct:
+
+  - **A `sqlite_master` read is not sufficient.** That is the WASM driver's probe and it validates
     only the schema page. On a database whose schema page is intact and whose data pages are damaged
     -- the reported condition -- it **succeeds**, while `SELECT COUNT(*)` on a real table throws
     `database disk image is malformed`. Mirroring it would have detected nothing on the machine that
     prompted the fix. The probe is `PRAGMA quick_check(1)`, chosen over `integrity_check(1)` on
-    measured cost (114 ms vs 190 ms on a fresh 59.6 MB database) and because index-vs-table
-    consistency is repairable by REINDEX rather than grounds for discarding a file.
+    measured cost: 114 ms vs 190 ms on a fresh 59.6 MB database. An earlier measurement showed the
+    reverse and was a page-cache artifact of probe ordering.
   - **`quick_check` reports rather than throws.** It returns `ok` for a healthy database and the
     damage as a *string* for a corrupt one, so a `try`/`catch` around it alone is a no-op whose catch
-    never fires. The verdict is inspected.
-  - **`close()` deletes the `-wal` and `-shm` sidecars it found at open** (measured). A backup taken
-    after closing is silently missing them, so the files move aside *before* the handle closes.
+    never fires.
 
-- **Fix (reliability)**: SMI-6931 -- `backupCorruptDbFile` moves a database's `-wal` and `-shm`
-  sidecars with the main file rather than renaming the main file alone. `schema-sql.ts` sets
-  `journal_mode = WAL`, so a real database on disk is three files; moving one left orphans at the
-  live paths carrying a header salt tied to a database no longer there, and left the backup
-  incomplete, since a WAL can hold committed pages the main file does not. Suffixes are appended
-  after the timestamp (`<backup>-wal`) so the moved set stays self-associating and the backup is
-  recoverable. The sql.js driver never sets WAL, so for its callers every source is absent and the
-  move is a no-op -- which is what keeps that driver's existing "exactly one backup" expectation
-  true.
+- **Fix (reliability)**: SMI-6931 -- an unrecognised `quick_check` result is now a **probe fault**,
+  reported as such, rather than a corruption verdict. An earlier draft mapped any unexpected shape --
+  a scalar, an empty array, a renamed row key -- to "corrupt", on the reasoning that unknown should
+  be treated as unsafe. That is backwards where the "unsafe" branch refuses to open the user's
+  database: a `pragma()` return-shape change in a dependency would then have bricked every open.
+  Fail-closed is right only where the closed state is the harmless one.
 
-- **Fix (reliability)**: SMI-6931 -- a corrupt database opened with `readonly: true` now throws a
-  diagnosable error naming the file and the verdict, instead of being backed aside and rebuilt.
-  Backing a file aside is a write, and a caller that asked only to read must not have its database
-  renamed and replaced underneath it. The WASM driver has no `readonly` mode, which is why its own
-  self-heal never had to draw this distinction.
+- **Fix (reliability)**: SMI-6931 -- corruption rejected by the **constructor** is classified too,
+  rather than bypassing every diagnostic. Any non-corruption open failure still propagates unchanged.
 
-- **Test**: SMI-6931 -- ten cases covering the native driver's **file-open** path, which had none:
+- **Test**: SMI-6931 -- nine cases covering the native driver's **file-open** path, which had none:
   all nine `createBetterSqlite3Database` call sites in the existing driver test pass `:memory:`,
-  which is why a missing corruption probe reached production unnoticed. Includes two known-positive
-  controls (a healthy database is left alone; an absent path opens as new) without which a driver
-  that backed aside unconditionally would satisfy every other arm. Both new mechanisms were
-  red-tested one site at a time, each mutation confirmed to still compile, each killing exactly one
-  test, and the source restored byte-identical and re-run green afterwards -- the ordering fix was
-  pinned by a **relocation** mutation, moving the backup below the close rather than changing any
-  value.
+  which is why a missing probe reached production unnoticed. Every corrupt-file arm asserts the main
+  file is **byte-identical** afterwards, which is the discriminating assertion -- a refusal that
+  still touched the bytes would pass a throw-only test. Three known-positive controls (a healthy
+  database opens with its rows intact; an absent path opens as new; `:memory:` is not probed) without
+  which a driver that refused unconditionally would satisfy every other arm. One case pins the
+  `pragma()` **result contract** this code parses, so a library change fails loudly instead of the
+  probe silently misreading a healthy database. Red-tested: removing the refusal while keeping the
+  probe compiles cleanly and kills exactly the five refusal arms, leaving all controls green, with
+  the source restored byte-identical.
 
 - **Docs (internal)**: SMI-6733 -- the prose explaining why `installedSkills: null` classifies `ok` is
   **deleted**, not reworded. Three cross-family review rounds on PR #2980 each found a false claim in

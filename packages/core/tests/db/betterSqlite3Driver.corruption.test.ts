@@ -1,24 +1,29 @@
 /**
- * SMI-6931: the native driver detects a corrupt database and self-heals
+ * SMI-6931: the native driver detects a corrupt database and refuses
  *
- * The WASM driver has had corruption detection since SMI-4484. The native
- * driver — which `createDatabase` prefers — had none, so on any machine where
- * better-sqlite3 loads, a corrupt `skills.db` threw on every query forever.
+ * The WASM driver has had corruption handling since SMI-4484. The native driver
+ * — which `createDatabase` prefers — had none, so on any machine where
+ * better-sqlite3 loads, a corrupt `skills.db` threw a raw SQLite error from
+ * whatever query happened to touch a damaged page, with no indication of the
+ * cause and no remedy.
  *
- * Two things make this driver's case different from the WASM one, and both are
- * covered here because neither is reachable from the WASM driver's own tests:
+ * **It refuses rather than repairing, and that is the design, not a shortcut.**
+ * An earlier draft backed the file aside and rebuilt it, mirroring the WASM
+ * driver. A cross-family review rejected that: this database is shared between
+ * processes — a CLI invocation and a long-lived MCP server can both hold it —
+ * and SQLite coordinates processes through the file PATHS, not the inodes.
+ * Renaming it out from under a live handle leaves that process writing into the
+ * renamed backup while new connections use the replacement, and the two diverge
+ * silently. ADR-155 had already settled the policy: *"Recovery never runs
+ * automatically."*
  *
- *   - `options.readonly` exists here and does not exist there. Backing a file
- *     aside is a WRITE, so a readonly caller must get a diagnosable error
- *     instead of a silently repaired database it never asked for.
- *   - WAL is enabled for the real database (`schema-sql.ts` sets
- *     `journal_mode = WAL`), so `-wal` and `-shm` sidecars exist on disk. The
- *     WASM driver never sets WAL, so `backupCorruptDbFile` only ever had to
- *     move one file.
+ * So every test below asserts the file is left **byte-identical**. That is the
+ * discriminating assertion, not decoration: a refusal that still touched the
+ * bytes would pass a throw-only test.
  *
- * Every test here opens a REAL file. The sibling `betterSqlite3Driver.test.ts`
- * passes `:memory:` at all nine of its open sites, which is why the file-open
- * path reached production with no corruption handling at all.
+ * Every test opens a REAL file. The sibling `betterSqlite3Driver.test.ts` passes
+ * `:memory:` at all nine of its open sites, which is why a missing corruption
+ * probe reached production unnoticed.
  */
 
 import { describe, it, expect, afterEach, beforeEach } from 'vitest'
@@ -37,7 +42,6 @@ import {
   createBetterSqlite3Database,
   isBetterSqlite3Available,
 } from '../../src/db/drivers/betterSqlite3Driver.js'
-import { backupCorruptDbFile } from '../../src/db/drivers/corruption.js'
 
 /** These tests are meaningless without the native module; skip rather than fail. */
 const describeNative = isBetterSqlite3Available() ? describe : describe.skip
@@ -48,16 +52,11 @@ function makeTempDir(): string {
   )
 }
 
-/** Files whose name marks them as a corruption backup. */
-function backupsIn(dir: string): string[] {
-  return readdirSync(dir).filter((f) => f.includes('.corrupt-'))
-}
-
 /**
  * A file whose header is not SQLite's. `sqlite3_open` does not read the header,
  * so the handle opens cleanly and the first page read is what fails — which is
- * the whole reason detection must be an explicit probe rather than a check on
- * the constructor's result.
+ * why detection must be an explicit probe rather than a check on the
+ * constructor's result.
  */
 function writeNotADatabase(path: string): void {
   writeFileSync(path, Buffer.from('this is definitely not a sqlite database file'))
@@ -65,10 +64,13 @@ function writeNotADatabase(path: string): void {
 
 /**
  * A real SQLite file with its b-trees damaged: valid header, corrupt pages.
+ *
  * This is the shape SMI-6931 was filed for — `integrity_check` on the owner's
- * machine reported invalid page numbers, not a bad header — so a fixture that
- * only ever produced "not a database" would leave the reported condition
- * untested.
+ * machine reported invalid page numbers, not a bad header. It matters because
+ * `SELECT name FROM sqlite_master`, the WASM driver's probe, **succeeds** on
+ * this file: the schema page is deliberately left intact. A fixture that only
+ * produced "not a database" would have passed against that insufficient probe
+ * and hidden the reported condition entirely.
  */
 function writeHeaderValidPageCorrupt(path: string): void {
   const db = createBetterSqlite3Database(path)
@@ -78,12 +80,27 @@ function writeHeaderValidPageCorrupt(path: string): void {
   db.close()
 
   const bytes = readFileSync(path)
-  // Keep the first page (header + schema root) intact, shred what follows.
   for (let offset = 4096; offset < bytes.length; offset += 1) bytes[offset] = 0xff
   writeFileSync(path, bytes)
 }
 
-describeNative('createBetterSqlite3Database — corrupt-file handling (SMI-6931)', () => {
+/** Captures everything that must be unchanged after a refusal. */
+function snapshot(dir: string, path: string) {
+  return {
+    bytes: readFileSync(path),
+    mtimeMs: statSync(path).mtimeMs,
+    entries: readdirSync(dir).sort(),
+  }
+}
+
+function expectUntouched(dir: string, path: string, before: ReturnType<typeof snapshot>): void {
+  expect(readFileSync(path).equals(before.bytes)).toBe(true)
+  expect(statSync(path).mtimeMs).toBe(before.mtimeMs)
+  // No backup, no rebuild, no stray sidecar: the directory is exactly as found.
+  expect(readdirSync(dir).sort()).toEqual(before.entries)
+}
+
+describeNative('createBetterSqlite3Database — corrupt-file refusal (SMI-6931)', () => {
   let tempDir: string
 
   beforeEach(() => {
@@ -94,89 +111,90 @@ describeNative('createBetterSqlite3Database — corrupt-file handling (SMI-6931)
     if (tempDir && existsSync(tempDir)) rmSync(tempDir, { recursive: true, force: true })
   })
 
-  // ── Arm A: the probe fires at all ───────────────────────────────────────────
-  // Against the unprobed driver this fails on the backup count, because
-  // `new Database()` succeeds on a corrupt file and nothing ever reads a page.
-
-  it('backs aside a file whose header is not a database, and returns a usable empty DB', () => {
+  it('refuses a file whose header is not a database, and leaves it untouched', () => {
     const dbPath = join(tempDir, 'skills.db')
     writeNotADatabase(dbPath)
+    const before = snapshot(tempDir, dbPath)
 
-    const db = createBetterSqlite3Database(dbPath)
-
-    expect(backupsIn(tempDir)).toHaveLength(1)
-
-    // The rebuilt database is usable, which is the point of self-healing.
-    db.exec('CREATE TABLE t (id INTEGER PRIMARY KEY, name TEXT)')
-    db.prepare('INSERT INTO t (name) VALUES (?)').run('hello')
-    expect(db.prepare<{ name: string }>('SELECT name FROM t WHERE id = 1').get()?.name).toBe(
-      'hello'
-    )
-    db.close()
+    expect(() => createBetterSqlite3Database(dbPath)).toThrow(/is corrupt and cannot be read/)
+    expectUntouched(tempDir, dbPath, before)
   })
 
-  it('backs aside a file with a valid header and corrupt pages — the reported condition', () => {
+  it('refuses a file with a valid header and corrupt pages — the reported condition', () => {
+    const dbPath = join(tempDir, 'skills.db')
+    writeHeaderValidPageCorrupt(dbPath)
+    const before = snapshot(tempDir, dbPath)
+
+    expect(() => createBetterSqlite3Database(dbPath)).toThrow(/is corrupt and cannot be read/)
+    expectUntouched(tempDir, dbPath, before)
+  })
+
+  it('names the path, the verdict, and a remedy covering all three WAL files', () => {
     const dbPath = join(tempDir, 'skills.db')
     writeHeaderValidPageCorrupt(dbPath)
 
-    const db = createBetterSqlite3Database(dbPath)
+    let message = ''
+    try {
+      createBetterSqlite3Database(dbPath)
+    } catch (error) {
+      message = error instanceof Error ? error.message : String(error)
+    }
 
-    expect(backupsIn(tempDir)).toHaveLength(1)
-    db.close()
+    // A correct refusal the user cannot act on is its own defect, so the
+    // message is asserted rather than assumed: the file, the cause, and the
+    // exact move — including the sidecars, because this is a WAL database and
+    // moving only the main file orphans the other two against a rebuilt file.
+    expect(message).toContain(dbPath)
+    expect(message).toMatch(/btreeInitPage|malformed|page/i)
+    expect(message).toContain(`mv ${dbPath} ${dbPath}.corrupt`)
+    expect(message).toContain(`${dbPath}-wal`)
+    expect(message).toContain(`${dbPath}-shm`)
+    expect(message).toMatch(/does not repair it automatically/)
   })
 
-  // ── Arm B: the WAL sidecars travel with the main file ───────────────────────
-  // Against the unextended helper this fails because `skills.db-wal` is still
-  // sitting at its original path beside a freshly rebuilt database.
+  it('refuses identically under readonly — no branch, because nothing is ever written', () => {
+    const dbPath = join(tempDir, 'skills.db')
+    writeNotADatabase(dbPath)
+    const before = snapshot(tempDir, dbPath)
 
-  it('moves the -wal and -shm sidecars with the main file, leaving no orphan', () => {
+    expect(() => createBetterSqlite3Database(dbPath, { readonly: true })).toThrow(
+      /is corrupt and cannot be read/
+    )
+    expectUntouched(tempDir, dbPath, before)
+  })
+
+  it('leaves the main file byte-identical even when WAL sidecars are present', () => {
     const dbPath = join(tempDir, 'skills.db')
     writeNotADatabase(dbPath)
     writeFileSync(`${dbPath}-wal`, Buffer.alloc(2048, 7))
     writeFileSync(`${dbPath}-shm`, Buffer.alloc(512, 3))
-
-    const db = createBetterSqlite3Database(dbPath)
-    db.close()
-
-    // Nothing belonging to the old database may remain at the live paths.
-    expect(existsSync(`${dbPath}-wal`)).toBe(false)
-    expect(existsSync(`${dbPath}-shm`)).toBe(false)
-
-    // And the backup must be a complete, self-consistent triple — named so that
-    // the moved sidecars still associate with the moved database, which is what
-    // makes the backup recoverable rather than merely preserved.
-    const backups = backupsIn(tempDir)
-    const main = backups.find((f) => !f.endsWith('-wal') && !f.endsWith('-shm'))
-    expect(main).toBeDefined()
-    expect(backups).toContain(`${main}-wal`)
-    expect(backups).toContain(`${main}-shm`)
-    expect(backups).toHaveLength(3)
-  })
-
-  // ── Arm C: readonly refuses rather than repairs ─────────────────────────────
-  // Against the unguarded driver this fails on "expected to throw", since there
-  // is no probe and therefore no error.
-
-  it('refuses a corrupt file under readonly instead of repairing it', () => {
-    const dbPath = join(tempDir, 'skills.db')
-    writeNotADatabase(dbPath)
-    const before = readFileSync(dbPath)
+    const mainBefore = readFileSync(dbPath)
     const mtimeBefore = statSync(dbPath).mtimeMs
 
-    expect(() => createBetterSqlite3Database(dbPath, { readonly: true })).toThrow(/corrupt/i)
+    expect(() => createBetterSqlite3Database(dbPath)).toThrow(/is corrupt and cannot be read/)
 
-    // The discriminating assertion: a readonly caller asked not to mutate, so
-    // the bytes must be untouched and nothing may have been backed aside.
-    expect(readFileSync(dbPath).equals(before)).toBe(true)
+    // The guarantee is about the MAIN file: not backed aside, not rebuilt, not
+    // rewritten. That is what this driver controls.
+    expect(readFileSync(dbPath).equals(mainBefore)).toBe(true)
     expect(statSync(dbPath).mtimeMs).toBe(mtimeBefore)
-    expect(backupsIn(tempDir)).toHaveLength(0)
+    expect(readdirSync(tempDir).filter((f) => f.includes('.corrupt'))).toHaveLength(0)
+
+    // Deliberately NOT asserted: that the `-wal`/`-shm` survive. An earlier
+    // version of this test did, and it failed — measured, SQLite removes the
+    // journal files it was managing when the last connection closes, and on a
+    // healthy database it CHECKPOINTS the WAL into the main file first, so the
+    // content is not lost but the files do go away. Those files are SQLite's,
+    // created and owned by it, and promising to preserve them would mean either
+    // leaking the handle or fighting the library's own protocol — which is the
+    // same instinct that produced this change's Critical review finding. The
+    // refusal message therefore says "if present" rather than assuming they are.
   })
 
-  // ── Arm D: known-positive control ───────────────────────────────────────────
-  // Passes before the fix. Without it, a driver that backs aside
-  // unconditionally would satisfy every arm above.
+  // ── Known-positive controls. Both pass before the change. ───────────────────
+  // Without these, a driver that refused unconditionally would satisfy every
+  // arm above.
 
-  it('leaves a healthy database alone and backs nothing aside', () => {
+  it('opens a healthy database and leaves its contents intact', () => {
     const dbPath = join(tempDir, 'skills.db')
     const seed = createBetterSqlite3Database(dbPath)
     seed.exec('CREATE TABLE t (id INTEGER PRIMARY KEY, val TEXT)')
@@ -184,22 +202,27 @@ describeNative('createBetterSqlite3Database — corrupt-file handling (SMI-6931)
     seed.close()
 
     const db = createBetterSqlite3Database(dbPath)
-
-    expect(backupsIn(tempDir)).toHaveLength(0)
-    // The original row survives — proving the file was opened, not rebuilt.
+    // The original row survives, proving the file was opened rather than replaced.
     expect(db.prepare<{ val: string }>('SELECT val FROM t WHERE id = 1').get()?.val).toBe('kept')
     db.close()
   })
 
-  it('opens an absent path as a new database without backing anything aside', () => {
+  it('opens an absent path as a new database', () => {
     const dbPath = join(tempDir, 'does-not-exist-yet.db')
     const db = createBetterSqlite3Database(dbPath)
-    expect(backupsIn(tempDir)).toHaveLength(0)
+    db.exec('CREATE TABLE t (id INTEGER PRIMARY KEY)')
+    db.close()
+    expect(existsSync(dbPath)).toBe(true)
+  })
+
+  it('opens an in-memory database without probing', () => {
+    const db = createBetterSqlite3Database(':memory:')
+    expect(db.memory).toBe(true)
     db.close()
   })
 })
 
-describe('backupCorruptDbFile — sidecar handling (SMI-6931)', () => {
+describeNative('quick_check result contract (SMI-6931)', () => {
   let tempDir: string
 
   beforeEach(() => {
@@ -210,59 +233,31 @@ describe('backupCorruptDbFile — sidecar handling (SMI-6931)', () => {
     if (tempDir && existsSync(tempDir)) rmSync(tempDir, { recursive: true, force: true })
   })
 
-  // ── Arm E: no-sidecar no-op ─────────────────────────────────────────────────
-  // Passes before the fix, and protects the existing sql.js caller, which never
-  // has sidecars because that driver does not set WAL. `corruption.test.ts`
-  // asserts exactly one backup for that path, so the extension must create
-  // nothing when a sidecar source is absent.
-
-  it('creates exactly one backup when no sidecars exist', () => {
+  /**
+   * Detection parses `pragma('quick_check(1)')`, and an unrecognised shape is
+   * treated as a **probe fault** rather than as corruption — deliberately, since
+   * the corruption branch refuses to open the user's database and a dependency
+   * changing its return shape must not brick every open.
+   *
+   * That inversion is only safe while the shape this code expects is the shape
+   * the library actually returns, so the contract is pinned here. If
+   * better-sqlite3 changes it, this test fails and names the cause, instead of
+   * the probe silently reporting a healthy database as unreadable.
+   */
+  it('returns an array whose first row holds the string "ok" for a healthy database', () => {
     const dbPath = join(tempDir, 'skills.db')
-    writeFileSync(dbPath, 'garbage')
+    const seed = createBetterSqlite3Database(dbPath)
+    seed.exec('CREATE TABLE t (id INTEGER PRIMARY KEY)')
 
-    const backupPath = backupCorruptDbFile(dbPath)
+    const rows = seed.native.pragma('quick_check(1)') as unknown
 
-    expect(backupPath).toMatch(/skills\.db\.corrupt-/)
-    expect(readdirSync(tempDir).filter((f) => f.includes('.corrupt-'))).toHaveLength(1)
-  })
+    expect(Array.isArray(rows)).toBe(true)
+    const first = (rows as unknown[])[0]
+    expect(first).toBeTypeOf('object')
+    const verdict = Object.values(first as Record<string, unknown>)[0]
+    expect(verdict).toBeTypeOf('string')
+    expect(String(verdict).trim().toLowerCase()).toBe('ok')
 
-  it('returns the MAIN backup path, not a sidecar path', () => {
-    const dbPath = join(tempDir, 'skills.db')
-    writeFileSync(dbPath, 'garbage')
-    writeFileSync(`${dbPath}-wal`, 'wal bytes')
-
-    const backupPath = backupCorruptDbFile(dbPath)
-
-    // The return contract is unchanged: callers log this path to the user.
-    expect(backupPath.endsWith('-wal')).toBe(false)
-    expect(backupPath.endsWith('-shm')).toBe(false)
-    expect(existsSync(backupPath)).toBe(true)
-    expect(existsSync(`${backupPath}-wal`)).toBe(true)
-  })
-
-  it('moves a -wal present without a -shm, and does not invent the missing one', () => {
-    const dbPath = join(tempDir, 'skills.db')
-    writeFileSync(dbPath, 'garbage')
-    writeFileSync(`${dbPath}-wal`, 'wal bytes')
-
-    const backupPath = backupCorruptDbFile(dbPath)
-
-    expect(existsSync(`${dbPath}-wal`)).toBe(false)
-    expect(existsSync(`${backupPath}-wal`)).toBe(true)
-    expect(existsSync(`${backupPath}-shm`)).toBe(false)
-    expect(readdirSync(tempDir).filter((f) => f.includes('.corrupt-'))).toHaveLength(2)
-  })
-
-  it('preserves sidecar contents byte-for-byte across the move', () => {
-    const dbPath = join(tempDir, 'skills.db')
-    const walBytes = Buffer.alloc(1024, 0x5a)
-    writeFileSync(dbPath, 'garbage')
-    writeFileSync(`${dbPath}-wal`, walBytes)
-
-    const backupPath = backupCorruptDbFile(dbPath)
-
-    // A backup that silently truncated the WAL would pass every existence
-    // check above while losing the committed pages the WAL may still hold.
-    expect(readFileSync(`${backupPath}-wal`).equals(walBytes)).toBe(true)
+    seed.close()
   })
 })

@@ -13,7 +13,7 @@ import { createRequire } from 'node:module'
 import { existsSync } from 'node:fs'
 import type BetterSqlite3 from 'better-sqlite3'
 import type { Database, Statement, RunResult, DatabaseOptions } from '../database-interface.js'
-import { isCorruptionError, backupCorruptDbFile } from './corruption.js'
+import { isCorruptionError } from './corruption.js'
 
 // ESM-compatible require for native modules
 const require = createRequire(import.meta.url)
@@ -146,45 +146,69 @@ export function createBetterSqlite3Database(
   // one this call just brought into being.
   const fileExistedBeforeOpen = path !== ':memory:' && existsSync(path)
 
-  const db = new Database(path, dbOptions)
+  // SMI-6931 finding 6: the constructor itself can reject a corrupt file, and
+  // that path previously bypassed every diagnostic. Classify it the same way as
+  // a probe failure; anything that is not corruption propagates untouched.
+  let db: BetterSqlite3.Database
+  try {
+    db = new Database(path, dbOptions)
+  } catch (error) {
+    if (fileExistedBeforeOpen && isCorruptionError(error)) {
+      throw corruptDatabaseError(path, error instanceof Error ? error.message : String(error))
+    }
+    throw error
+  }
 
   if (fileExistedBeforeOpen) {
     const corruptionReason = detectCorruption(db, path)
-
     if (corruptionReason !== null) {
-      // Backing a file aside is a WRITE. A caller that asked only to read must
-      // not have its database renamed and replaced underneath it, so refuse
-      // with something it can act on. The WASM driver has no `readonly` mode,
-      // which is why its own self-heal never had to make this distinction.
-      if (dbOptions.readonly === true) {
-        closeQuietly(db)
-        throw new Error(
-          `[Skillsmith] The database at ${path} is corrupt and cannot be read ` +
-            `(${corruptionReason}). It was NOT modified, because this connection is ` +
-            `read-only. Re-open it read-write to have Skillsmith back it up and ` +
-            `rebuild, or move it aside manually.`
-        )
-      }
-
-      // Move the files aside BEFORE closing the handle. Measured (SMI-6931):
-      // `close()` DELETES the `-wal` and `-shm` SQLite found at open, so a
-      // backup taken afterwards is silently missing them and the sidecars are
-      // gone rather than preserved. Renaming first is safe — the open handle
-      // follows the inode — and leaves `close()` looking for paths that no
-      // longer exist, which it tolerates.
-      const backupPath = backupCorruptDbFile(path)
       closeQuietly(db)
-
-      console.warn(
-        `[Skillsmith] The local database at ${path} was corrupt and could not be read ` +
-          `(${corruptionReason}). It has been backed up to ${backupPath} and will be ` +
-          `rebuilt on the next sync.`
-      )
-      return new BetterSqlite3Database(new Database(path, dbOptions))
+      throw corruptDatabaseError(path, corruptionReason)
     }
   }
 
   return new BetterSqlite3Database(db)
+}
+
+/**
+ * The refusal a corrupt database produces.
+ *
+ * **Why this refuses instead of repairing (SMI-6931).** An earlier draft backed
+ * the file aside and rebuilt, mirroring the WASM driver. A cross-family review
+ * rejected it, and correctly: this database is shared between processes — a CLI
+ * invocation and a long-lived MCP server can both hold it — and SQLite
+ * coordinates processes through the **file paths**, not the inodes. Renaming it
+ * out from under a live handle leaves that process writing into the renamed
+ * backup while new connections use the replacement, so the two diverge
+ * silently. Losing writes is worse than refusing to start, and this database is
+ * a rebuildable mirror of the remote registry, so refusing costs little.
+ *
+ * It is also what this repo already decided. ADR-155: *"Recovery never runs
+ * automatically."* Skillsmith refuses and defers to an explicit command rather
+ * than acting on the user's data unasked.
+ *
+ * The message therefore has to be actionable, because a correct refusal the
+ * user cannot act on is its own defect. It names the path, the verdict, and the
+ * exact manual move — **including the WAL sidecars**, because
+ * `schema-sql.ts` sets `journal_mode = WAL`, so the database on disk is three
+ * files and moving one leaves the others orphaned against a rebuilt file.
+ */
+function corruptDatabaseError(path: string, reason: string): Error {
+  return new Error(
+    `[Skillsmith] The local database at ${path} is corrupt and cannot be read: ${reason}\n` +
+      `\n` +
+      `Skillsmith does not repair it automatically — it holds no data that cannot be ` +
+      `rebuilt from the registry, and repairing a database another process may have ` +
+      `open risks losing that process's writes.\n` +
+      `\n` +
+      `To recover, move the file aside and re-run. It is a WAL database, so move all ` +
+      `three files together:\n` +
+      `  mv ${path} ${path}.corrupt\n` +
+      `  mv ${path}-wal ${path}.corrupt-wal   # if present\n` +
+      `  mv ${path}-shm ${path}.corrupt-shm   # if present\n` +
+      `\n` +
+      `Skillsmith rebuilds the database on the next sync.`
+  )
 }
 
 /** Release a handle whose state is already unknown, without masking the real error. */
@@ -230,16 +254,29 @@ function detectCorruption(db: BetterSqlite3.Database, path: string): string | nu
   try {
     const rows = db.pragma('quick_check(1)') as unknown
     const first = Array.isArray(rows) ? rows[0] : undefined
-    const verdict =
-      first && typeof first === 'object'
-        ? String(Object.values(first)[0] ?? '')
-        : String(first ?? '')
+    const verdict = first && typeof first === 'object' ? Object.values(first)[0] : undefined
 
-    if (verdict.trim().toLowerCase() === 'ok') return null
-    return verdict.trim() || `quick_check returned no verdict for ${path}`
+    if (typeof verdict !== 'string' || verdict.length === 0) {
+      // SMI-6931 finding 5: an unrecognised result is a PROBE failure, not a
+      // corruption verdict. An earlier draft mapped any unexpected shape —
+      // a scalar, an empty array, a renamed row key — to "corrupt", reasoning
+      // that unknown should be treated as unsafe. That is backwards when the
+      // "unsafe" branch is the one that refuses to open the user's database:
+      // a `pragma()` return-shape change in a dependency would then have
+      // bricked every open. Fail-closed is right only where the closed state
+      // is the harmless one.
+      throw new Error(
+        `[Skillsmith] Could not read a quick_check verdict for ${path}. This is a ` +
+          `fault in the integrity probe, not evidence that the database is corrupt. ` +
+          `Received: ${JSON.stringify(rows)?.slice(0, 200)}`
+      )
+    }
+
+    return verdict.trim().toLowerCase() === 'ok' ? null : verdict.trim()
   } catch (error) {
-    // A corruption-class throw is still corruption; anything else is a real
-    // failure this function must not swallow.
+    // A corruption-class throw IS corruption. Everything else — including the
+    // probe fault above — propagates, so a broken probe is never reported to
+    // the user as a broken database.
     if (isCorruptionError(error)) {
       return error instanceof Error ? error.message : String(error)
     }
