@@ -2068,6 +2068,60 @@ describe('decide() — SMI-6920 round 2: a quoted env -S remainder, inherited so
     expect(decide(bashCall('watch script -c cat < .env'), {}).action).toBe('deny')
   })
 
+  // SMI-6937 (the post-merge retro of PR #2982): the span rule tested the
+  // whole action's first character, so ANY action beginning with a dash lost
+  // its entire reading -- in both guards, the module being shared. Intended
+  // only to skip the forms that run nothing.
+  //
+  // zsh 5.9, the shell the harness runs, INSTALLS and RUNS these: with a
+  // decoy file and both controls behaving (a plain action printed the marker
+  // once, no trap printed it zero times), the -l, -p, inner --, bare-dash and
+  // unknown-flag spellings all printed it. bash 3.2 rejects all five, which is
+  // why the shell measurement and not the builtin's synopsis decides this.
+  //
+  // Red arm: restore `if (at === 1 && action.startsWith('-')) return null` in
+  // shellTextOperandSpan and every row below fails.
+  it.each([
+    'trap "-l; cat .env" EXIT',
+    'trap "-p; cat .env" EXIT',
+    'trap "-- echo a; cat .env" EXIT',
+    'trap "- ; cat .env" EXIT',
+    'trap "-n echo a; cat .env" EXIT',
+    'trap "-x; cat .env" EXIT',
+    "trap '-l; cat .env' EXIT",
+  ])('SMI-6937 (allowed on 62d565497): %s -> deny', (command) => {
+    expect(decide(bashCall(command), {}).action).toBe('deny')
+  })
+  // The twins: the same action text with no dash prefix, and the same text with
+  // no trap wrapper. Both deny on every tree, so a guard that denied every
+  // `trap` line would not pass the rows above on their account.
+  it.each(['trap "cat .env" EXIT', 'cat .env', '-l; cat .env'])(
+    'SMI-6937 twin pin: %s -> deny',
+    (command) => {
+      expect(decide(bashCall(command), {}).action).toBe('deny')
+    }
+  )
+  // The forms that genuinely run nothing keep their verdicts. These are PINS,
+  // not arms, and a mutation says so: deleting the `/^-[lp]+$/` early return
+  // leaves all of them green, because reading `-l` or `-p` as an action denies
+  // nothing either. The early return is there because reading an option word as
+  // an action is wrong in principle -- it is what would have read `EXIT` as the
+  // action of `trap -p EXIT` had the fix advanced past the option instead --
+  // and it has no behavioural arm today. Said plainly rather than left to look
+  // like coverage it does not give.
+  it.each([
+    'trap -l',
+    'trap -p',
+    'trap -lp',
+    'trap -pl',
+    'trap -p EXIT',
+    'trap -l EXIT INT',
+    'trap - EXIT',
+    'trap -',
+  ])('SMI-6937 no-op form: %s -> allow', (command) => {
+    expectAllow(command)
+  })
+
   // Controls assert the WHOLE result (M-2): a fail-open allow carries a
   // stderr line, so `.action` alone passed on a guard whose shell-text
   // mechanism was entirely dead (measured: 13 of 13 with the import removed).

@@ -3699,6 +3699,47 @@ describe('decide() — SMI-6920: a trap action is shell text', () => {
     expect(decide(bashCall('trap "./(node_modules|x)$X/.bin/ruflo" EXIT'), {}).action).toBe('deny')
     expect(decide(bashCall('trap "./(node_modules|x)/.bin/ruflo" EXIT'), {}).action).toBe('deny')
   })
+  // SMI-6937 (the post-merge retro of PR #2982): the span rule tested the
+  // whole action's first character, so ANY action beginning with a dash lost
+  // its entire reading -- in both guards, the module being shared. Intended
+  // only to skip the forms that run nothing.
+  //
+  // zsh 5.9, the shell the harness runs, INSTALLS and RUNS these: with a
+  // decoy file and both controls behaving (a plain action printed the marker
+  // once, no trap printed it zero times), the -l, -p, inner --, bare-dash and
+  // unknown-flag spellings all printed it. bash 3.2 rejects all five, which is
+  // why the shell measurement and not the builtin's synopsis decides this.
+  //
+  // Red arm: restore `if (at === 1 && action.startsWith('-')) return null` in
+  // shellTextOperandSpan and every row below fails.
+  it.each([
+    'trap "-l; npx ruflo memory store" EXIT',
+    'trap "-p; npx ruflo memory store" EXIT',
+    'trap "-- echo a; npx ruflo memory store" EXIT',
+    'trap "- ; npx ruflo memory store" EXIT',
+    'trap "-n echo a; npx ruflo memory store" EXIT',
+    "trap '-l; ./node_modules/.bin/ruflo memory store' EXIT",
+  ])('SMI-6937 (allowed on 62d565497): %s -> deny', (command) => {
+    expect(decide(bashCall(command), {}).action).toBe('deny')
+  })
+  it.each(['trap "npx ruflo memory store" EXIT', 'npx ruflo memory store'])(
+    'SMI-6937 twin pin: %s -> deny',
+    (command) => {
+      expect(decide(bashCall(command), {}).action).toBe('deny')
+    }
+  )
+  it.each([
+    'trap -l',
+    'trap -p',
+    'trap -lp',
+    'trap -p EXIT',
+    'trap -l EXIT INT',
+    'trap - EXIT',
+    'trap -',
+  ])('SMI-6937 no-op form: %s -> allow', (command) => {
+    expect(decide(bashCall(command), {})).toEqual({ action: 'allow', json: null, stderr: null })
+  })
+
   // PINS, denied on every tree: the two shell-text heads already read.
   it.each([
     'eval "npx ruflo memory store"',
