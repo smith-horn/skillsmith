@@ -3516,6 +3516,63 @@ describe('decide() — SMI-6908 F-4 residue: a bare arch/xcrun shares the arity 
   })
 })
 
+// SMI-6920 (round 29): `trap ACTION SIG…` hands its action to the shell as
+// text, exactly as `eval` does, and this guard read `eval` (H9) and `env -S`
+// but not `trap`: `trap "npx ruflo memory store" EXIT` allowed on every
+// tree. The action joins H9's reading: a literal action is recursed through
+// the pipeline, an action that expands is denied as H9, and the forms that
+// run nothing (`trap -l`, `trap -p`, `trap - SIG`) are left alone. The
+// extractor is shared with the env guard (`shell-command-shell-text.mjs`).
+describe('decide() — SMI-6920: a trap action is shell text', () => {
+  it.each([
+    'trap "npx ruflo memory store" EXIT',
+    'trap "./node_modules/.bin/ruflo memory store" INT TERM',
+    "trap 'npx ruflo memory store; echo done' EXIT",
+    'command trap "npx ruflo memory store" EXIT',
+    'trap -- "npx ruflo memory store" EXIT',
+    // `env -S` behind a wrapper or launcher reaches the recursion through
+    // the shared normalizer's nested body now (allowed on cfc96eccd, where
+    // the raw-head scan was the only reader of `-S`).
+    "sudo env -S 'npx ruflo memory store'",
+    "nohup env -S 'npx ruflo memory store'",
+  ])('%s -> deny (the action is recursed; allowed on cfc96eccd)', (command) => {
+    expect(decide(bashCall(command), {}).action).toBe('deny')
+  })
+  // `sudo` execs a program, so the builtin behind it never runs: an
+  // over-block pin matching the separate-word posture, not a leak closed.
+  it('over-block pin (the builtin never runs; allowed on cfc96eccd): sudo trap "npx ruflo memory store" EXIT -> deny', () => {
+    expect(decide(bashCall('sudo trap "npx ruflo memory store" EXIT'), {}).action).toBe('deny')
+  })
+  // `eval -- …` runs the rest (measured): the terminator is dropped, so the
+  // recursion reads the real command (a predicate label, not the
+  // `unresolved-command` fail-closed arm cfc96eccd reached on `--`), and a
+  // harmless rest is allowed where cfc96eccd over-blocked it.
+  it('eval -- is read past its terminator', () => {
+    const v = decide(bashCall('eval -- npx ruflo memory store'), {})
+    expect(v.action).toBe('deny')
+    expect(reasonOf(v)).not.toContain('unresolved-command')
+    expect(decide(bashCall('eval -- echo hi'), {}).action).toBe('allow')
+  })
+  it('an action that expands is H9, as an eval argument is', () => {
+    const verdict = decide(bashCall('trap "$X" EXIT'), {})
+    expect(verdict.action).toBe('deny')
+    expect(reasonOf(verdict)).toContain('H9')
+  })
+  // PINS, denied on every tree: the two shell-text heads already read.
+  it.each([
+    'eval "npx ruflo memory store"',
+    'env -S "npx ruflo memory store"',
+    "env -S 'npx ruflo' memory store",
+  ])('pin: %s -> deny', (command) => {
+    expect(decide(bashCall(command), {}).action).toBe('deny')
+  })
+  it.each(['trap "echo bye" EXIT', 'trap - EXIT', 'trap -l', 'trap -p'])(
+    'control: %s -> allow',
+    (command) => {
+      expect(decide(bashCall(command), {}).action).toBe('allow')
+    }
+  )
+})
 // SMI-6903 round 22, a correction the shared launcher table forced: `command
 // -v NAME` DESCRIBES a name and runs nothing (measured in bash 3.2 and zsh 5.9
 // with a decoy executable named through a variable: no marker written, while

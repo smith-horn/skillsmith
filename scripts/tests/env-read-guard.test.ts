@@ -1715,6 +1715,125 @@ describe('decide() — SMI-6908 round 27 F-17: xcrun single-dash spellings', () 
   )
 })
 
+// SMI-6920 (the post-merge retro of PR #2978, round 29): a head whose single
+// quoted operand is shell text was never re-tokenized, so `eval "cat .env"`
+// allowed while `eval cat .env` denied (F-A, Critical; every tree back to
+// 60da8b5a8; decoys printed in bash 3.2, zsh 5.9 and bash 5.2; the live
+// hook pair let `eval "cat <path>/.env"` through). And a computed command
+// name inside a wrapper's redirect-fed body never met the source (F-B,
+// High): the body got every reading but not the computed-head check.
+describe('decide() — SMI-6920: a quoted operand that is shell text, and a computed head fed by a redirect', () => {
+  function reasonOf(result: ReturnType<typeof decide>): string {
+    return result.json?.hookSpecificOutput.permissionDecisionReason ?? ''
+  }
+
+  const shellTextArms = [
+    'eval "cat .env"',
+    "eval 'cat .env'",
+    'eval "grep KEY .env"',
+    'eval "nohup cat .env"',
+    'eval "if true; then cat .env; fi"',
+    'eval "bash -c \'cat .env\'"',
+    'env -S "cat .env"',
+    'env -S "nohup cat .env"',
+    'env --split-string="cat .env"',
+    'env -S"cat .env"',
+    'env X=1 -S "cat .env"',
+    'sudo env -S "cat .env"',
+    'nohup env -S "cat .env"',
+    'trap -- "cat .env" EXIT',
+    'trap "cat .env" EXIT INT',
+    'V=${X} eval "cat .env"',
+    // macOS ships `/usr/bin/command`, a program, so `nohup command eval`
+    // PRINTED in bash 3.2 and zsh 5.9 on the host (SILENT in the container,
+    // which has no such program); `command trap` and `command eval` are
+    // bash-only (zsh's `command` runs external commands and was SILENT).
+    'nohup command eval "cat .env"',
+    'command trap "cat .env" EXIT',
+    'trap "cat .env" EXIT',
+    'trap "nohup cat .env" INT TERM',
+    'bash -c "eval \\"nohup cat\\"" < .env',
+    'sudo bash -c "eval \\"nohup cat\\"" < .env',
+    'eval "varlock load --format json"',
+    'command eval "cat .env"',
+    'eval -- cat .env',
+  ]
+  it.each(shellTextArms)('%s -> deny (F-A, allowed on cfc96eccd)', (command) => {
+    expect(decide(bashCall(command), {}).action).toBe('deny')
+  })
+
+  // A launcher that execs a PROGRAM never runs a builtin behind it: every
+  // row here was SILENT in bash 3.2, zsh 5.9 and bash 5.2 (`nohup: eval:
+  // No such file or directory`). The deny is the additive reading keeping
+  // the quoted spelling at the posture its separate-word twin (`nohup eval
+  // cat .env`) already had on every tree -- an over-approximation ADR-172
+  // accepts, and not a leak closed, so these are pins, not arms.
+  it.each([
+    'nohup eval "cat .env"',
+    'nohup trap "cat .env" EXIT',
+    'sudo eval "cat .env"',
+    'sudo nohup eval "cat .env"',
+    'timeout 5 eval "cat .env"',
+    'env X=1 eval "cat .env"',
+  ])('over-block pin (the builtin never runs; allowed on cfc96eccd): %s -> deny', (command) => {
+    expect(decide(bashCall(command), {}).action).toBe('deny')
+  })
+
+  const computedHeadArms = [
+    'bash -c "$(echo cat)" < .env',
+    'sh -c "$X" < .env',
+    'bash -c "${READER}" < .env',
+    'bash -c "nohup $(echo cat)" < .env',
+  ]
+  it.each(computedHeadArms)('%s -> deny (F-B, allowed on cfc96eccd)', (command) => {
+    expect(decide(bashCall(command), {}).action).toBe('deny')
+  })
+
+  // PINS, denied on every tree: the separate-word spellings and the
+  // computed head with a visible source.
+  it.each([
+    'eval cat .env',
+    'eval "cat" ".env"',
+    'env -S cat .env',
+    '$(echo cat) < .env',
+    'bash -c "$(echo cat) .env"',
+    'bash -c cat < .env',
+    'env -S "cat" .env',
+  ])('pin: %s -> deny', (command) => {
+    expect(decide(bashCall(command), {}).action).toBe('deny')
+  })
+
+  // Controls: shell text that reads nothing, the sanctioned idiom inside an
+  // operand, the forms of `trap` that run nothing, and an operand whose
+  // only `.env` is behind an expansion the shell assembles at runtime.
+  it.each([
+    'eval "echo hi"',
+    'eval "ls -la"',
+    'env -S "ls -la"',
+    'trap "echo bye" EXIT',
+    'trap - EXIT',
+    'trap -l',
+    'trap -p',
+    'eval "grep -q KEY .env"',
+    'eval "wc -l .env"',
+    'eval "cat $F"',
+    'bash -c "wc -l" < .env',
+    'env -S "printf harmless"',
+    "env -S 'printf harmless' .env.example",
+  ])('control: %s -> allow', (command) => {
+    expect(decide(bashCall(command), {}).action).toBe('allow')
+  })
+
+  // The depth cap still governs the new reading: an operand nested past
+  // MAX_DEPTH levels fails closed rather than falling through.
+  it('an eval chain past the depth cap fails closed', () => {
+    let chain = 'cat .env'
+    for (let i = 0; i < 8; i++) chain = `eval ${JSON.stringify(chain)}`
+    const verdict = decide(bashCall(chain), {})
+    expect(verdict.action).toBe('deny')
+    expect(reasonOf(verdict)).toContain('past depth')
+  })
+})
 // SMI-6903 round 21 F2 (Critical, pre-existing): an input-redirect source that
 // is a command substitution supplies its OUTPUT as the filename, so the body's
 // own words are this segment's read targets -- the same flatten an argv-slot

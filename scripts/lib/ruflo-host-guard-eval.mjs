@@ -36,6 +36,13 @@ import { denyWith } from './ruflo-host-guard-verdicts.mjs'
  * evaluate through the same pipeline. A nested `-c` body found while
  * peeling is left for the main flow to handle (`undefined`, "not an eval
  * segment").
+ *
+ * SMI-6920 (the post-merge retro of PR #2978): `trap ACTION SIG…` hands its
+ * ACTION to the shell as text exactly as `eval` hands its arguments, and
+ * `trap "npx ruflo memory store" EXIT` allowed on every tree while the eval
+ * twin denied. The action joins this reading with eval's posture: literal
+ * text is recursed, an expanding action is H9, and the forms that run
+ * nothing (`trap -l`, `trap -p`, `trap - SIG`) are not eval segments.
  * @param {Array<{value: string, subs?: string[]}>} wordTokens
  * @returns {object | null | { joined: string } | undefined} `undefined` =
  *   "not an eval segment, keep going"; `null` = an eval segment with no
@@ -48,10 +55,23 @@ export function parseEvalSegment(wordTokens) {
   const { argv: normalizedArgv, nested } = normalizeWrappersWithExec(rawValues)
   if (nested !== null) return undefined
   if (normalizedArgv.length === 0) return undefined
-  if (basenameOf(normalizedArgv[0]) !== 'eval') return undefined
+  const head = basenameOf(normalizedArgv[0])
+  if (head !== 'eval' && head !== 'trap') return undefined
 
   const alignedTokens = tokensForArgv(wordTokens, normalizedArgv)
-  const rest = alignedTokens.slice(1)
+  // Only trap's first operand, past an optional `--`, is shell text; the
+  // rest are signal names (`trap -- "…" EXIT` allowed before the `--` was
+  // read, SMI-6920 probe).
+  let rest = alignedTokens.slice(1)
+  // `eval -- …` runs the rest (measured): without this the recursion read
+  // `--` as the command and denied `unresolved-command`, an over-block.
+  if (head === 'eval' && rest[0]?.value === '--') rest = rest.slice(1)
+  if (head === 'trap') {
+    const at = rest[0]?.value === '--' ? 1 : 0
+    rest = rest.slice(at, at + 1)
+    if (rest.length === 0) return null
+    if (rest[0].value === '-' || (at === 0 && rest[0].value.startsWith('-'))) return undefined
+  }
   if (rest.length === 0) return null
   const hasExpansion = rest.some((t) => t.value.includes('$') || (t.subs && t.subs.length > 0))
   if (hasExpansion) {

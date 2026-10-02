@@ -403,7 +403,7 @@ function evaluateGuardSegment(segmentTokens, depth, segments, segmentIndex, embe
  *   (round-4 correction — an earlier version of this doc said "the one H-8
  *   recursion site"): the shell-fed step's interpreter-stdin branch, the
  *   H-8 inline-script recursion, and the consumer-string step's own
- *   `kind === 'source'` recursion.
+ *   `kind === 'source'` recursion; a fourth gate is this function's own, the glob reading below, skipped when embedded (SMI-6908 F-14).
  */
 function evaluateGuardCommand(commandText, depth, embedded = false) {
   if (depth > MAX_DEPTH) {

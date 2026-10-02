@@ -61,271 +61,28 @@
  * `INLINE_SCRIPT_LONG_FLAGS`) lives in
  * `scripts/lib/shell-command-normalize.mjs` so `scripts/ruflo-host-guard.mjs`
  * can reuse it; `WRAPPER_VALUE_FLAGS` and `POSITIONAL_SCRIPT_COMMANDS` moved
- * there too but stay private to it. Only the `.env`-specific pieces
- * (`INLINE_SCRIPT_SHORT_FLAG_CHARS`, `scanTextForProtected`) stay here, passed
- * into the two moved functions as parameters.
+ * there too but stay private to it. The `.env`-specific argv rules
+ * (`checkArgv`, the reader/metadata/grep tables, path classification,
+ * `scanTextForProtected`, `INLINE_SCRIPT_SHORT_FLAG_CHARS`) live in
+ * `scripts/lib/env-read-guard-argv.mjs` since SMI-6920, when this file
+ * crossed the same 500-line convention; it keeps the command-line walk
+ * (`evaluateCommand`) and `decide`.
  */
 
+import { checkArgv, classifyPath } from './lib/env-read-guard-argv.mjs'
 import { reasonFor } from './lib/env-read-guard-reasons.mjs'
+import { shellTextOperand } from './lib/shell-command-shell-text.mjs'
 import {
-  basenameOf,
-  checkNestedRedirectSources,
   checkUnresolvedHeadTail,
   flattenSubWords,
-  hasInlineScriptFlag,
   inputRedirectSources,
   MAX_DEPTH,
   normalizeWrappers,
-  scanPositionalScriptText,
   splitCommandSegmentsWithSubRuns,
   tokenize,
 } from './lib/shell-command-normalize.mjs'
 
-/** Env files that are always safe to read — placeholders / schema only. */
-const SAFE_ENV_BASENAMES = new Set(['.env.example', '.env.schema'])
-
-/**
- * Commands that emit file contents. Illustrative, not exhaustive — a
- * reader outside this set is a named residual gap, not an oversight.
- */
-const READER_COMMANDS = new Set([
-  'cat',
-  'tac',
-  'bat',
-  'zcat',
-  'grep',
-  'egrep',
-  'fgrep',
-  'rg',
-  'head',
-  'tail',
-  'sed',
-  'awk',
-  'gawk',
-  'mawk',
-  'less',
-  'more',
-  'strings',
-  'od',
-  'xxd',
-  'hexdump',
-  'nl',
-  'cut',
-  'sort',
-  'uniq',
-  'base64',
-  'base32',
-  'source',
-  '.',
-])
-
-/**
- * Short-flag characters that introduce inline script text, PER INTERPRETER —
- * not a single shared set. A generic "-[ce]" regex misses real bypasses
- * (`node -p '<code>'` prints an expression's value exactly like `-e`; `php
- * -r '<code>'` runs code) because those interpreters' inline-code short
- * flags don't happen to be the letters `c`/`e`. Getting this wrong is not a
- * cosmetic gap here — `node -p "require('fs').readFileSync('.env','utf8')"`
- * and `php -r "readfile('.env');"` both print the complete secret file and
- * were confirmed to return `allow` before this fix (SMI-6361 pre-merge
- * review). Deliberately per-interpreter rather than a single pooled set:
- * ruby's `-r` means "require a library" (not inline code), so pooling
- * python/node/perl/ruby/php's short flags together would make `ruby -r`
- * false-positive as inline-script, or worse, tempt a future edit to drop a
- * real flag while "simplifying" a shared set.
- *
- * `perl: 'eE'` and `php: 'rBRE'` were added by a second-round adversarial
- * confirmation pass on the fix above (same session, same SMI-6361): `perl
- * -E` is documented as "like -e, but enables all optional features" (`perl
- * -h`, confirmed live) — the exact -e-equivalent shape the first round
- * fixed for node's -p, missed here on the first pass. `php`'s `-B`/`-R`/`-E`
- * (process-begin/process-code/process-end hooks, confirmed against
- * php.net's CLI options page) carry inline PHP code exactly like `-r`.
- * `php: 'F'` is deliberately excluded — `-F` names an external FILE to run
- * per input line, not inline text; that shape is already covered by the
- * plain reader/argv-path rule, not this inline-script path.
- *
- * Interpreters here MUST stay in sync with `INLINE_INTERPRETERS` below — a
- * name added to one without the other either skips inline-script scanning
- * entirely (added here but not there) or silently no-ops via the `?? ''`
- * fallback in `hasInlineScriptFlag` (added there but not here). Derived
- * relationship, not independently maintained: see `INLINE_INTERPRETERS`.
- */
-const INLINE_SCRIPT_SHORT_FLAG_CHARS = {
-  python: 'c',
-  python3: 'c',
-  node: 'ep',
-  nodejs: 'ep',
-  perl: 'eE',
-  ruby: 'e',
-  php: 'rBRE',
-}
-
-/**
- * Interpreters whose inline script text must be scanned, not just argv.
- * Derived from INLINE_SCRIPT_SHORT_FLAG_CHARS's keys (not a separately
- * maintained list) so the two structurally cannot drift apart — a gap an
- * adversarial review flagged as a latent fail-open risk (SMI-6361).
- */
-const INLINE_INTERPRETERS = new Set(Object.keys(INLINE_SCRIPT_SHORT_FLAG_CHARS))
-
-/**
- * Sanctioned exception: metadata-only / exit-code-only commands. These
- * never emit file contents, which preserves the already-approved
- * `[ -f .env ] && grep -q "KEY" .env` idiom.
- */
-const METADATA_COMMANDS = new Set(['ls', 'stat', 'test', '[', 'wc'])
-
-const GREP_COMMANDS = new Set(['grep', 'egrep', 'fgrep', 'rg'])
-const GREP_QUIET_LONG = new Set(['--quiet', '--silent'])
-const GREP_OUTPUT_LONG = new Set([
-  '--only-matching',
-  '--count',
-  '--count-matches',
-  '--after-context',
-  '--before-context',
-  '--context',
-])
-
 const ALLOW = { action: 'allow', json: null, stderr: null }
-
-// --- File classification ---
-
-/**
- * Classify a bare basename. Any `.env.<anything>` is protected except
- * the two safe files; `.envrc` and friends are not env files at all.
- * @param {string} base
- * @returns {'protected' | 'safe' | null}
- */
-function classifyBasename(base) {
-  if (base === '.env') return 'protected'
-  if (SAFE_ENV_BASENAMES.has(base)) return 'safe'
-  if (/^\.env\.[^/]+$/.test(base)) return 'protected'
-  return null
-}
-
-/**
- * Classify a whole argv token as a path. Matching on the BASENAME makes
- * every enumerated form (bare, `./.env`, absolute, `.worktrees/**\/.env`,
- * container-side `/app/.env`) fall out of one rule; it is deliberately a
- * superset of that enumeration, since reading any other tree's `.env` is
- * the same class of exposure.
- * @param {string} raw
- * @returns {'protected' | 'safe' | null}
- */
-function classifyPath(raw) {
-  if (typeof raw !== 'string' || raw === '') return null
-  return classifyBasename(basenameOf(raw.replace(/^[<>]+/, '')))
-}
-
-/**
- * Embedded reference inside script text, e.g. `open('.env')`. Anchored on
- * BOTH sides (leading boundary via the first alternation, trailing via the
- * negative lookahead) — a fifth adversarial confirmation round (SMI-6361)
- * found the original leading-only anchor let `.envrc`/`.environment`/
- * `.env-backup` false-positive as an embedded `.env` match (e.g.
- * `awk '{print}' .envrc` denied), contradicting this file's own stated
- * classification of `.envrc` as "not an env file at all" — `classifyPath`
- * already got this right for whole-token matches; this regex now agrees.
- * A false positive (over-blocking), not a bypass — same direction as
- * every other tradeoff in this file, just closing an inconsistency.
- */
-const EMBEDDED_ENV_RE = /(?:^|[^A-Za-z0-9_.\-])(\.env(?:\.[A-Za-z0-9_-]+)*)(?![A-Za-z0-9_-])/g
-
-/**
- * Scan free text (an inline interpreter's script) for a protected-file
- * reference. Returns the first protected match, or null.
- * @param {string} text
- * @returns {string | null}
- */
-function scanTextForProtected(text) {
-  if (typeof text !== 'string') return null
-  EMBEDDED_ENV_RE.lastIndex = 0
-  let m
-  while ((m = EMBEDDED_ENV_RE.exec(text)) !== null) {
-    if (classifyBasename(m[1]) === 'protected') return m[1]
-  }
-  return null
-}
-
-// --- Rules ---
-
-/**
- * The one sanctioned exception: a quiet grep with no output-producing
- * flag. A count (`-c`) is treated as output — it leaks structure.
- */
-function isOutputFreeGrep(args) {
-  let quiet = false
-  let output = false
-  for (const a of args) {
-    if (a === '--') break
-    if (!a.startsWith('-') || a === '-') continue
-    if (a.startsWith('--')) {
-      const name = a.split('=')[0]
-      if (GREP_QUIET_LONG.has(name)) quiet = true
-      if (GREP_OUTPUT_LONG.has(name)) output = true
-      continue
-    }
-    for (const ch of a.slice(1)) {
-      if (ch === 'q') quiet = true
-      if (ch === 'o' || ch === 'c' || ch === 'A' || ch === 'B' || ch === 'C') output = true
-    }
-  }
-  return quiet && !output
-}
-
-/** `varlock load --format <value>` → value, or null when absent. */
-function extractFormatFlag(args) {
-  for (let i = 0; i < args.length; i++) {
-    if (args[i] === '--format') return i + 1 < args.length ? args[i + 1] : ''
-    if (args[i].startsWith('--format=')) return args[i].slice('--format='.length)
-  }
-  return null
-}
-
-/**
- * Apply the rules to one normalized argv.
- * @returns {{ kind: string, file?: string, format?: string } | null}
- */
-function checkArgv(argv) {
-  if (argv.length === 0) return null
-  const cmd = basenameOf(argv[0])
-  const args = argv.slice(1)
-
-  // Flag-level rule, no file argument involved: only the default pretty
-  // format redacts. json / json-full / json-full-compact / env are all
-  // unmasked plaintext.
-  if (cmd === 'varlock' && args[0] === 'load') {
-    const format = extractFormatFlag(args.slice(1))
-    if (format !== null && format !== 'pretty') return { kind: 'varlock-format', format }
-    return null
-  }
-
-  if (METADATA_COMMANDS.has(cmd)) return null
-
-  const isInterpreter = INLINE_INTERPRETERS.has(cmd)
-  const isReader = READER_COMMANDS.has(cmd) || isInterpreter
-
-  if (isReader) {
-    for (const a of args) {
-      if (classifyPath(a) !== 'protected') continue
-      if (GREP_COMMANDS.has(cmd) && isOutputFreeGrep(args)) return null
-      return { kind: 'read', file: a }
-    }
-  }
-
-  const positionalEmbedded = scanPositionalScriptText(cmd, args, scanTextForProtected)
-  if (positionalEmbedded) return { kind: 'read', file: positionalEmbedded }
-
-  if (isInterpreter && hasInlineScriptFlag(cmd, args, INLINE_SCRIPT_SHORT_FLAG_CHARS)) {
-    for (const a of args) {
-      const embedded = scanTextForProtected(a)
-      if (embedded) return { kind: 'read', file: embedded }
-    }
-  }
-
-  return null
-}
 
 /**
  * Evaluate a full command string: split on shell operators, recurse into command
@@ -337,9 +94,13 @@ function checkArgv(argv) {
  * denies with kind `'depth-cap'` unread, never silently allowed. Limit: a name the shell
  * only ASSEMBLES at runtime (a variable, a non-literal emitter, a literal split across a
  * substitution boundary) is not spelled anywhere this guard can read (`f=.en; cat ${f}v`).
+ * `inheritedSources` are the input-redirect sources of the wrapper or shell-text head
+ * whose body this call reads (`bash -c '…' < .env`, `eval '…'`): stdin follows the body
+ * inward, so they are every body segment's read targets too, through the same checks the
+ * segment's own sources get (SMI-6908 F-1, SMI-6920 F-B).
  * @returns {{ kind: string, file?: string, format?: string } | null}
  */
-function evaluateCommand(command, depth) {
+function evaluateCommand(command, depth, inheritedSources = []) {
   // Fail CLOSED at the cap -- the posture `evaluateGuardCommand` takes at
   // the same `MAX_DEPTH`, and the one `flattenSubWords`' docblock claims
   // for this file. Folded into the checks below it returned null (ALLOW),
@@ -390,24 +151,20 @@ function evaluateCommand(command, depth) {
     // `inputRedirectSources`), fed through the SAME `checkArgv` as argv so
     // every existing exception still applies: `wc < .env` and
     // `grep -q KEY < .env` stay allowed, as `wc .env` already is.
-    const redirectSources = inputRedirectSources(segment, flattenSubWords)
+    const redirectSources = inputRedirectSources(segment, flattenSubWords).concat(inheritedSources)
     const extraArgs = subWords.concat(redirectSources)
     const { argv, nested } = normalizeWrappers(argvWords.map((w) => w.value))
+    // A wrapper's own redirect feeds the nested BODY's stdin, which has no
+    // argv to append to, so the sources travel into the body's evaluation
+    // as `inheritedSources` and meet every reading AND every check there
+    // (round 21 appended them to the separator reading only; SMI-6908 F-1
+    // gave the body every reading; SMI-6920 F-B gave it the computed-head
+    // check too, by this one parameter instead of a second implementation).
     const violation =
       nested !== null
-        ? evaluateCommand(nested, depth + 1)
+        ? evaluateCommand(nested, depth + 1, redirectSources)
         : checkArgv(extraArgs.length > 0 ? argv.concat(extraArgs) : argv)
     if (violation) return violation
-    // A wrapper's own redirect feeds the nested BODY's stdin, which has no
-    // argv to append to (round 21; see `checkNestedRedirectSources`, which
-    // since SMI-6908 reads the body with every reading and follows stdin
-    // into a nested wrapper, sharing this depth counter and its cap).
-    if (nested !== null) {
-      const onDepthCap = () => ({ kind: 'depth-cap' })
-      const deps = { tokenize, normalizeWrappers, checkArgv, maxDepth: MAX_DEPTH, onDepthCap }
-      const v = checkNestedRedirectSources(nested, redirectSources, deps, depth + 1)
-      if (v) return v
-    }
     // An argv[0] that is itself a substitution (after wrapper peeling)
     // leaves the command name unresolved for this segment; see
     // `checkUnresolvedHeadTail`'s own doc for the two checks it runs.
@@ -420,6 +177,17 @@ function evaluateCommand(command, depth) {
       redirectSources
     )
     if (headViolation) return headViolation
+    // SMI-6920 F-A: a head whose operand IS shell text (`eval "cat .env"`,
+    // `env -S "cat .env"`, `trap "cat .env" EXIT`) hands one word to the
+    // shell to be tokenized again; stripping the head as transparent never
+    // read inside that word, so every quoted spelling allowed while the
+    // separate-word spelling denied. Read the operand as a command line
+    // under the same depth cap, stdin inherited.
+    const operandText = shellTextOperand(argv)
+    if (operandText !== null) {
+      const operandViolation = evaluateCommand(operandText, depth + 1, redirectSources)
+      if (operandViolation) return operandViolation
+    }
   }
   return null
 }

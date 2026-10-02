@@ -1,17 +1,20 @@
 /**
- * Input-redirect sources and the wrapper-body check (SMI-6903 C1, round 21 F2
- * and F3; rebuilt in SMI-6908 F-1).
+ * Input-redirect sources (SMI-6903 C1, round 21 F2).
  *
  * Split out of `shell-command-segments.mjs`, which sat at exactly the
  * hand-kept 500-line convention with the SMI-6908 fix still to land
  * (`scripts/check-file-length.mjs` only runs via `lint-staged` for
  * `*.ts`/`*.sh`, so this one is honoured by hand; SMI-5994), the same way
  * `shell-command-comment.mjs` was split out of the tokenizer. Re-exported by
- * `shell-command-normalize.mjs`, so every existing import keeps working. This
- * module imports the segments module and never the reverse.
+ * `shell-command-normalize.mjs`, so every existing import keeps working.
+ *
+ * The wrapper-body check that lived beside this (`checkNestedRedirectSources`,
+ * round 21 F3, rebuilt in SMI-6908 F-1) is gone: a wrapper's redirect sources
+ * now travel into the env guard's own `evaluateCommand` as inherited sources,
+ * so the body meets every reading and every check through one recursion
+ * instead of a second implementation (SMI-6920 F-B: the computed-head check
+ * had been the one left out).
  */
-
-import { splitCommandSegmentsWithSubRuns } from './shell-command-segments.mjs'
 
 /**
  * An INPUT-redirect operator, optionally fd-prefixed: `<`, `N<`, `<>`.
@@ -82,58 +85,4 @@ export function inputRedirectSources(segment, flattenSubWords = null) {
   }
   if (flattenSubWords === null || sourceWords.length === 0) return sources
   return sources.concat(flattenSubWords(sourceWords).words)
-}
-
-/**
- * The caller's own `checkArgv`, re-run over every reading of every command in
- * a WRAPPER's nested body with that wrapper's own input-redirect sources
- * appended, recursing into a body that is itself a wrapper.
- *
- * A wrapper's redirect feeds the BODY's stdin, so the source is a read target
- * of whichever command in the body reads it -- but the body is evaluated as
- * TEXT, so there is no argv for the caller to append the source to, and
- * `bash -c 'cat' < .env`, `sh -c 'cat' < .env`,
- * `docker exec c bash -c 'cat' < /app/.env` and
- * `varlock run -- bash -c 'cat' < .env` all reached ALLOW while their argv
- * twins denied, every one of them emitting a decoy file's contents in bash
- * 3.2, bash 5.2 and zsh 5.9 (SMI-6903 round 21). Every existing exception
- * still applies, since the caller's own `checkArgv` runs:
- * `bash -c 'wc -l' < .env` stays allowed exactly as `wc .env` is.
- *
- * Round 21's version read the body with the SEPARATOR reading only and
- * stopped at one level, so a body whose reader sat behind a reserved word,
- * a launcher or a second wrapper never reached `checkArgv`: of 37 body heads
- * the post-merge retro of PR #2973 swept, 35 allowed, and `bash -c "eval
- * cat" < D`, `"nohup cat"`, `"if true; then cat; fi"`, `"nice -n 5 cat"`,
- * `"bash -c 'cat'"`, `sh -c "bash -c cat" < D` (bash 3.2 and zsh 5.9),
- * `"timeout 5 cat"`, `"stdbuf -oL cat"` (bash 5.2) all printed a decoy
- * (SMI-6908 F-1). The body is now read with the caller's FULL set of
- * readings (`splitCommandSegmentsWithSubRuns` with the caller's own
- * `normalizeWrappers`: separator, brace sub-run, parens-grouping and the
- * transparent-head reading of each, launchers included), and a body segment
- * whose own wrapper reports a nested body recurses here, so the sources
- * follow stdin inward as the shell passes it. The recursion shares the
- * caller's depth counter and cap, so a chain past `maxDepth` denies with the
- * caller's own `depth-cap` violation rather than falling through.
- * @param {string} body the wrapper's nested command text
- * @param {string[]} sources this segment's input-redirect sources
- * @param {{tokenize: Function, normalizeWrappers: Function, checkArgv: Function, maxDepth: number, onDepthCap: Function}} deps
- * @param {number} [depth] the caller's recursion depth for this body
- * @returns {object|null} the caller's own violation shape, or null
- */
-export function checkNestedRedirectSources(body, sources, deps, depth = 0) {
-  if (sources.length === 0 || typeof body !== 'string' || body.trim() === '') return null
-  if (depth > deps.maxDepth) return deps.onDepthCap()
-  const readings = splitCommandSegmentsWithSubRuns(deps.tokenize(body), deps.normalizeWrappers)
-  for (const segment of readings) {
-    const argv = segment.filter((t) => t.type === 'word' && t.redirect !== true).map((t) => t.value)
-    if (argv.length === 0) continue
-    const { argv: peeled, nested } = deps.normalizeWrappers(argv)
-    const violation =
-      nested !== null
-        ? checkNestedRedirectSources(nested, sources, deps, depth + 1)
-        : deps.checkArgv(peeled.concat(sources))
-    if (violation) return violation
-  }
-  return null
 }

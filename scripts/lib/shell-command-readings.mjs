@@ -23,6 +23,7 @@ import {
   launcherStops,
   stripLauncher,
 } from './shell-command-launchers.mjs'
+import { shellTextOperand } from './shell-command-shell-text.mjs'
 import { basenameOf, tokenize } from './shell-command-tokenize.mjs'
 
 /**
@@ -160,6 +161,12 @@ function peelHead(segment, peelWrappers, splitFn, depth) {
       continue
     }
     const base = basenameOf(t.value)
+    // SMI-6920 F-A: a head whose operand IS shell text (`eval "…"`,
+    // `trap "…" SIG`) ends the peel with the reading kept, so the caller's
+    // own shell-text arm reads the operand. Peeling it left one unreadable
+    // word: `nohup eval "cat .env"` and `command eval "cat .env"` allowed
+    // with every reading fully peeled to `cat .env` (measured).
+    if (shellTextOperand(plainValuesFrom(i)) !== null) break
     if (DASH_C_LAUNCHERS.has(base) && depth < MAX_DASH_C_DEPTH) {
       const body = launcherDashCCommand(plainValuesFrom(i))
       if (body !== null) {

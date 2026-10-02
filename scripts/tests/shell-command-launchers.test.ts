@@ -266,7 +266,11 @@ describe('transparentHeadReadings — a launcher head, with and without a wrappe
     // SMI-6908 round 27 F-17: the single-dash describe-only spellings stop
     // (each measured exiting 64 and running nothing with a trailing command),
     // and `-toolchain`, a value flag whose letters include `h`, is one
-    // option, never a cluster holding xcrun's own `-h`.
+    // option, never a cluster holding xcrun's own `-h`. Reference tree for
+    // these arms: `4552e41a7` (the branch commit that added the `xcrun` row
+    // without these stops), where each `.toBeNull()` row returned a peeled
+    // argv. On `084176142` they are null only because the row is absent,
+    // which is not the property under test (retro F-F).
     expect(peelOneLauncher(['xcrun', '-show-sdk-path', 'cat', '.env'])).toBeNull()
     expect(peelOneLauncher(['xcrun', '-sdk', 'macosx', '-find', 'cat'])).toBeNull()
     expect(peelOneLauncher(['xcrun', '-h', 'cat', '.env'])).toBeNull()
