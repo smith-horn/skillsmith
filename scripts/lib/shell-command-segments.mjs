@@ -12,76 +12,10 @@
 
 import { nestedGroupAlternatives, transparentHeadReadings } from './shell-command-readings.mjs'
 
-/**
- * An INPUT-redirect operator, optionally fd-prefixed: `<`, `N<`, `<>`.
- * `<&` (fd duplication) names no file. `<<<` (here-string) carries TEXT,
- * not a filename -- `cat <<< .env` prints those four characters (measured,
- * all three shells) -- and `<<`/`<<-` never reach here, becoming heredoc
- * tokens instead.
- */
-const INPUT_REDIRECT_OP_RE = /^[0-9]*(?:<>|<(?![<&]))/
-
-/**
- * Every INPUT-redirect source named in one segment, glued (`<.env`) or
- * space-separated (`< .env`).
- *
- * An input redirect hands the file to the segment's command on stdin, so
- * its source is a read target of that command exactly as an argv path is:
- * `cat < f`, `cat <f`, `cat 0< f`, `grep KEY < f`, `base64 < f` all emit
- * the contents (measured in bash 3.2, bash 5.2 and zsh 5.9). SMI-6869
- * Fix A tagged BOTH the operator word and a space-separated target
- * `redirect: true` so a trailing `2>&1` could not perturb a verdict, and
- * each consumer therefore drops every redirect-marked word from argv. That
- * is right for an OUTPUT redirect and wrong for an input one, which
- * silently turned sixteen spellings of a protected read from deny into
- * allow in `env-read-guard.mjs` (regression at `50d38872d`, found by the
- * post-merge retro of PR #2970). Recovering only the INPUT sources leaves
- * Fix A's own property intact.
- *
- * A source that is itself a command substitution supplies its OUTPUT as the
- * filename, so the body's own words are read targets of this segment exactly
- * as they are when the substitution sits in an argv slot: `cat < $(echo .env)`
- * and `cat <$(echo .env)` emit a decoy file's contents in bash 3.2, bash 5.2
- * and zsh 5.9 while the argv twin `cat $(echo .env)` already denied (measured,
- * SMI-6903 round 21). Pass the caller's own `flattenSubWords` to recover them;
- * omit it for literal sources only. ADR-172 sec 1 names both classes -- an
- * input-redirect source AND a command-substitution body at any depth -- so
- * this is one enumerated class reaching another, not a new one.
- *
- * Truncation past `MAX_DEPTH` needs no handling here: the caller recurses
- * every word's `.subs` (redirect-marked words included) BEFORE this runs and
- * returns its own `depth-cap` violation at the same constant -- the argument
- * `checkUnresolvedHeadTail`'s `onTruncated` docblock makes for its own caller,
- * and executed here (a 7-deep redirect source denies `depth-cap`, pinned).
- * @param {Array<{type: string, value?: string, redirect?: boolean, subs?: string[]}>} segment
- * @param {((words: Array<object>) => {words: string[]}) | null} [flattenSubWords]
- * @returns {string[]}
- */
-export function inputRedirectSources(segment, flattenSubWords = null) {
-  const sources = []
-  const sourceWords = []
-  for (let i = 0; i < segment.length; i++) {
-    const w = segment[i]
-    if (w.type !== 'word' || w.redirect !== true) continue
-    const op = INPUT_REDIRECT_OP_RE.exec(w.value)
-    if (op === null) continue
-    const glued = w.value.slice(op[0].length)
-    if (glued !== '') {
-      sources.push(glued)
-      sourceWords.push(w)
-      continue
-    }
-    // A bare operator's target is the NEXT token, tagged `redirect: true`
-    // as its pending target by the tokenizer (`awaitingRedirectTarget`).
-    const target = segment[i + 1]
-    if (target?.type === 'word' && target.redirect === true) {
-      sources.push(target.value)
-      sourceWords.push(target)
-    }
-  }
-  if (flattenSubWords === null || sourceWords.length === 0) return sources
-  return sources.concat(flattenSubWords(sourceWords).words)
-}
+// `inputRedirectSources` lives in `shell-command-redirects.mjs` since SMI-6908
+// (this file had reached the 500-line convention); `shell-command-normalize.mjs`
+// re-exports it. The wrapper-body check that sat beside it was retired in
+// SMI-6920: the env guard now recurses its own evaluator with the sources.
 
 /**
  * Op values that really END a command. `{`/`}`/`(`/`)` come back from
@@ -157,58 +91,6 @@ export function groupingOpSubRuns(tokens) {
   }
   flush()
   return runs
-}
-
-/**
- * The argv of each segment of a shell BODY (a `bash -c` string), redirect
- * words excluded. Whole argvs rather than head words, so a caller's
- * flag-sensitive exceptions still see their flags: with heads alone
- * `bash -c 'grep -q K' < .env` denied while `grep -q K .env` allowed
- * (measured on the first draft of the fix below).
- * @param {(command: string) => Array<object>} tokenizeFn the caller's `tokenize`
- * @param {string} body
- * @returns {string[][]}
- */
-export function shellBodySegmentArgvs(tokenizeFn, body) {
-  if (typeof body !== 'string' || body.trim() === '') return []
-  const argvs = []
-  for (const segment of splitCommandSegments(tokenizeFn(body))) {
-    const argv = segment.filter((t) => t.type === 'word' && t.redirect !== true).map((t) => t.value)
-    if (argv.length > 0) argvs.push(argv)
-  }
-  return argvs
-}
-
-/**
- * The caller's own `checkArgv`, re-run over each command in a WRAPPER's nested
- * body with that wrapper's own input-redirect sources appended.
- *
- * A wrapper's redirect feeds the BODY's stdin, so the source is a read target
- * of whichever command in the body reads it -- but the body is evaluated as
- * TEXT, so there is no argv for the caller to append the source to, and
- * `bash -c 'cat' < .env`, `sh -c 'cat' < .env`,
- * `docker exec c bash -c 'cat' < /app/.env` and
- * `varlock run -- bash -c 'cat' < .env` all reached ALLOW while their argv
- * twins denied, every one of them emitting a decoy file's contents in bash
- * 3.2, bash 5.2 and zsh 5.9 (SMI-6903 round 21). Every existing exception
- * still applies, since the caller's own `checkArgv` runs:
- * `bash -c 'wc -l' < .env` stays allowed exactly as `wc .env` is.
- *
- * Stated limit: ONE level. A body that is itself a wrapper
- * (`bash -c "bash -c 'cat'" < .env`) is not descended into -- the caller's own
- * recursion covers the body's argv paths; only the source injection stops here.
- * @param {string} body the wrapper's nested command text
- * @param {string[]} sources this segment's input-redirect sources
- * @param {{tokenize: Function, normalizeWrappers: Function, checkArgv: Function}} deps
- * @returns {object|null} the caller's own violation shape, or null
- */
-export function checkNestedRedirectSources(body, sources, deps) {
-  if (sources.length === 0) return null
-  for (const argv of shellBodySegmentArgvs(deps.tokenize, body)) {
-    const violation = deps.checkArgv(deps.normalizeWrappers(argv).argv.concat(sources))
-    if (violation) return violation
-  }
-  return null
 }
 
 /**
@@ -478,22 +360,34 @@ export function globGroupAlternativeReadings(tokens) {
 
 /**
  * `splitCommandSegments` PLUS `groupingOpSubRuns` PLUS the paren-grouping
- * reading PLUS the transparent-head reading of each of the first and third
- * (SMI-6903 round 21), for a consumer that checks a segment's `argv[0]` as its
- * command name. A violation in ANY of the four denies, so adding a reading can
- * only add denials. `peelWrappers` is the caller's own wrapper normalizer,
- * handed to the transparent-head reading so a launcher behind a wrapper the
- * caller peels (`sudo timeout 5 cat .env`) is read through (round 22 F1).
+ * reading PLUS the transparent-head reading of each of the three (SMI-6903
+ * round 21; the brace sub-runs' own head reading since SMI-6908 F-2), for a
+ * consumer that checks a segment's `argv[0]` as its command name. A violation
+ * in ANY reading denies, so adding a reading can only add denials.
+ * `peelWrappers` is the caller's own wrapper normalizer, handed to the
+ * transparent-head reading so a launcher behind a wrapper the caller peels
+ * (`sudo timeout 5 cat .env`) is read through (round 22 F1).
+ *
+ * The sub-runs needed their own head reading because they are the only
+ * reading that isolates the command after an assignment prefix carrying a
+ * brace: `V=${X} nohup cat .env` tokenizes as `V=$`, `{`, `X`, `}`, `nohup`,
+ * `cat`, `.env`, so the separator reading's head is `X` after the assignment
+ * peel and the sub-run `nohup cat .env` was the only reading holding the real
+ * head -- unpeeled, so 35 of 37 heads allowed while `V=${X} cat .env` denied
+ * (SMI-6908 F-2, the post-merge retro of PR #2973; 12 shapes measured printing
+ * a decoy).
  * @param {Array<{type: string, value?: string}>} tokens
  * @param {((argv: string[]) => {argv: string[], nested: string|null}) | null} [peelWrappers]
  * @returns {Array<Array<object>>}
  */
 export function splitCommandSegmentsWithSubRuns(tokens, peelWrappers = null) {
   const separator = splitCommandSegments(tokens)
+  const subRuns = groupingOpSubRuns(tokens)
   const grouping = splitCommandSegmentsParensGrouping(tokens)
   return separator
-    .concat(groupingOpSubRuns(tokens))
+    .concat(subRuns)
     .concat(grouping)
     .concat(transparentHeadReadings(separator, peelWrappers, splitCommandSegments))
+    .concat(transparentHeadReadings(subRuns, peelWrappers, splitCommandSegments))
     .concat(transparentHeadReadings(grouping, peelWrappers, splitCommandSegments))
 }
