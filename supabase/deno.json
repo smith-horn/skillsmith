@@ -1,0 +1,18 @@
+{
+  // SMI-6897. Exists primarily to STOP Deno's upward config walk before it
+  // reaches the repo root package.json. Measured 2026-10-01: without this,
+  // `deno check` on one healthy edge function reports 48 phantom TS2304
+  // (Response/URL/Deno) because package.json discovery drops deno.ns + dom
+  // from the default lib. NOT caused by tsconfig.json — Deno never reads it.
+  //
+  // The gate NEVER relies on discovery finding this file. The wrapper passes
+  // `--config supabase/deno.json` explicitly and sets DENO_NO_PACKAGE_JSON=1,
+  // because plan review (C-2) found the "placing it here stops the upward
+  // walk" claim unverified, and a gate whose configuration depends on the
+  // working directory is a gate that can silently measure something else.
+  "compilerOptions": {
+    "lib": ["deno.ns", "deno.window", "dom", "dom.iterable", "esnext"],
+    "strict": true
+  },
+  "lint": { "exclude": ["functions/**/*.test.ts", "functions/events/_tests_/"] }
+}

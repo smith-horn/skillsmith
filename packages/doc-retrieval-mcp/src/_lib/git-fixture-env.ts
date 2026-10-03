@@ -42,12 +42,31 @@ export const GIT_DISCOVERY_VARS = [
   'XDG_CONFIG_HOME',
 ] as const
 
+/**
+ * Config INJECTION variables (SMI-6919, the governance review of cde048ff7),
+ * stripped from a FIXTURE env only. git exports GIT_CONFIG_PARAMETERS into
+ * every hook of a `git -c k=v <cmd>` run, and it outranks
+ * GIT_CONFIG_GLOBAL=/dev/null (command-line precedence): measured,
+ * `core.hooksPath` through it ran a hook from outside the fixture and
+ * `include.path` through it was honoured. GIT_CONFIG_COUNT is the indexed
+ * spelling (GIT_CONFIG_KEY_n/VALUE_n are inert without it). Parity with
+ * scripts/ci/git-env-sanitize.sh's contract v4; closes half of SMI-6600.
+ *
+ * Kept OUT of GIT_DISCOVERY_VARS on purpose: the production read-path scrub
+ * (`stripGitDiscoveryEnv` in the per-package copy) iterates that list and
+ * must keep a user's own `git -c` overrides visible. The round-30
+ * cross-family gate found `git -c remote.origin.url=… push` losing its
+ * override through every adapter when the two lists were one.
+ */
+export const GIT_CONFIG_INJECTION_VARS = ['GIT_CONFIG_PARAMETERS', 'GIT_CONFIG_COUNT'] as const
+
 const realpath: (p: string) => string =
   typeof realpathSync.native === 'function' ? realpathSync.native : realpathSync
 
 export function makeFixtureEnv(extra: Record<string, string> = {}): NodeJS.ProcessEnv {
   const env: NodeJS.ProcessEnv = { ...process.env }
   for (const v of GIT_DISCOVERY_VARS) delete env[v]
+  for (const v of GIT_CONFIG_INJECTION_VARS) delete env[v]
   // SMI-4699: GIT_CONFIG_GLOBAL=/dev/null already overrides $HOME/.gitconfig,
   // so HOME itself is left as the caller set it (some fixtures legitimately
   // chdir HOME to a scratch dir for non-git tooling). GIT_TERMINAL_PROMPT=0
@@ -83,6 +102,8 @@ export function makeFixtureTempDir(prefix: string): string {
  * `GIT_WORK_TREE`, `GIT_INDEX_FILE`, …) that git honors OVER the spawned
  * process's `cwd:`. An ambient `GIT_DIR` (e.g. exported by git into the
  * pre-push hook) would otherwise make the adapter read the wrong repo.
+ * It never strips GIT_CONFIG_INJECTION_VARS: a user running the adapters
+ * under `git -c k=v <cmd>` must keep that override (SMI-6919, round 30).
  *
  * Pass via the `env:` option of every `execFileSync('git', …)` /
  * `execSync('git …')` / `execFileSync('gh', …)` in the read path:
