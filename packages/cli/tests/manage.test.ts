@@ -334,7 +334,7 @@ describe('SMI-745: Skill Management Commands', () => {
           version: '1.0.0',
           trustTier: 'verified',
           installDate: '2026-01-01',
-          hasUpdates: false,
+          updateStatus: 'current',
           installedVia: 'claude-code',
           scope: 'global',
           untracked: false,

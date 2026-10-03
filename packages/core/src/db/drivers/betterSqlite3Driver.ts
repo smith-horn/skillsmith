@@ -14,6 +14,8 @@ import { existsSync } from 'node:fs'
 import { randomBytes } from 'node:crypto'
 import type BetterSqlite3 from 'better-sqlite3'
 import type { Database, Statement, RunResult, DatabaseOptions } from '../database-interface.js'
+import { CorruptDatabaseError } from '../db-errors.js'
+import { classifyProbeFailure, remedyKindFor } from '../probe-classification.js'
 
 // ESM-compatible require for native modules
 const require = createRequire(import.meta.url)
@@ -161,9 +163,9 @@ export function createBetterSqlite3Database(
   // Refusing here also means a corrupt file is never opened read-write, so
   // there is no handle to leak and no constructor path left unclassified.
   if (fileExistedBeforeOpen) {
-    const corruptionReason = probeForCorruption(Database, path)
-    if (corruptionReason !== null) {
-      throw corruptDatabaseError(path, corruptionReason)
+    const corruption = probeForCorruption(Database, path)
+    if (corruption !== null) {
+      throw corruptDatabaseError(path, corruption.verdict, corruption.sqliteCode, corruption.cause)
     }
   }
 
@@ -195,7 +197,12 @@ export function createBetterSqlite3Database(
  * `schema-sql.ts` sets `journal_mode = WAL`, so the database on disk is three
  * files and moving one leaves the others orphaned against a rebuilt file.
  */
-function corruptDatabaseError(path: string, reason: string): Error {
+function corruptDatabaseError(
+  path: string,
+  reason: string,
+  sqliteCode?: string,
+  cause?: unknown
+): CorruptDatabaseError {
   // A collision-resistant destination. `.corrupt` alone can already exist and
   // `mv` would replace it silently, losing an earlier diagnosis to a later one.
   // A millisecond timestamp alone is not enough either: two processes can refuse
@@ -207,23 +214,54 @@ function corruptDatabaseError(path: string, reason: string): Error {
   // a path containing a space — or anything worse — must not change what the
   // command does.
   const q = shellQuote
-  return new Error(
-    `[Skillsmith] The local database at ${path} is corrupt and cannot be read: ${reason}\n` +
+  const remedyKind = remedyKindFor(sqliteCode)
+
+  // The guidance is a RECOMMENDED framework, not a guaranteed fix (ADR-175 § 6).
+  // Whether it restores service depends on conditions this error cannot verify
+  // — above all whether every process holding the file has actually stopped —
+  // so nothing below promises the database comes back.
+  const recommended =
+    remedyKind === 'reindex'
+      ? // SQLite names REINDEX for this code and names it conditionally: it
+        // "might" resolve the problem "assuming no other problems exist". The
+        // probe runs quick_check(1), which stops at the first reported problem,
+        // so it cannot establish the index is the only damage. Hence the
+        // sequence ends in a re-check rather than in a fix.
+        `Recommended: SQLite reports this as index corruption, which a reindex may be ` +
+        `able to resolve — though only if nothing else is damaged, which this check ` +
+        `cannot confirm. Stop every Skillsmith process, including any running MCP ` +
+        `server, then:\n` +
+        `  cp ${q(path)} ${q(dest)}   # keep a copy first\n` +
+        `  sqlite3 ${q(path)} 'REINDEX;'\n` +
+        `  sqlite3 ${q(path)} 'PRAGMA quick_check;'\n` +
+        `\n` +
+        `Treat the database as healthy only if that last command prints "ok". If it ` +
+        `does not, move the files aside as below and let a sync rebuild them.\n`
+      : `Recommended: stop every Skillsmith process, including any running MCP server, ` +
+        `then move the database set aside and re-run Skillsmith. This is a WAL ` +
+        `database, so move whichever of the three files are present:\n` +
+        `  mv ${q(path)} ${q(dest)}\n` +
+        `  mv ${q(`${path}-wal`)} ${q(`${dest}-wal`)}   # if present\n` +
+        `  mv ${q(`${path}-shm`)} ${q(`${dest}-shm`)}   # if present\n` +
+        `\n` +
+        `Skillsmith rebuilds the database on the next sync. Keep the moved files until ` +
+        `you are satisfied nothing is missing.\n`
+
+  return new CorruptDatabaseError({
+    path,
+    verdict: reason,
+    remedyKind,
+    sqliteCode,
+    cause,
+    message:
+      `[Skillsmith] The local database at ${path} is corrupt and cannot be read: ${reason}\n` +
       `\n` +
       `Skillsmith does not repair it automatically — it holds no data that cannot be ` +
       `rebuilt from the registry, and repairing a database another process may have ` +
       `open risks losing that process's writes.\n` +
       `\n` +
-      `To recover: stop every Skillsmith process, including any running MCP server, ` +
-      `then run these in sequence and re-run Skillsmith. This is a WAL database, so ` +
-      `move whichever of the three files are present:\n` +
-      `  mv ${q(path)} ${q(dest)}\n` +
-      `  mv ${q(`${path}-wal`)} ${q(`${dest}-wal`)}   # if present\n` +
-      `  mv ${q(`${path}-shm`)} ${q(`${dest}-shm`)}   # if present\n` +
-      `\n` +
-      `Skillsmith rebuilds the database on the next sync. Keep the moved files until ` +
-      `you are satisfied nothing is missing.`
-  )
+      recommended,
+  })
 }
 
 /** Release a handle whose state is already unknown, without masking the real error. */
@@ -241,26 +279,20 @@ function shellQuote(value: string): string {
 }
 
 /**
- * Corruption classified by SQLite's own **result code**, not by message text.
+ * The SQLite extended result code on an error, when it carries a usable one.
  *
- * SMI-6931. The shared `isCorruptionError` matches bare substrings — `malformed`,
- * `file is encrypted`, `not a database` — against a message. A cross-family
- * review found no standard SQLite transient I/O, permission, busy or locking
- * message that collides with those, so the practical risk was smaller than
- * feared; but the approach still discards the structured code, accepts
- * incidental text from a wrapper or a *file path*, and under a refusal design
- * any collision becomes confident advice to move the user's data.
+ * Read out so it can travel on the refusal as `sqliteCode` (ADR-175 § 7) and so
+ * `remedyKindFor` can distinguish `SQLITE_CORRUPT_INDEX` from the rest. The
+ * classification itself lives in `probe-classification.ts`, where it is
+ * family-aware and directly testable; this only extracts the value.
  *
- * So this driver classifies locally and narrowly. The shared helper is left
- * alone because the WASM driver depends on it and changing it would alter that
- * driver's behaviour without review.
- *
- * The prefix test covers SQLite's extended codes (`SQLITE_CORRUPT_VTAB` and
- * friends) without enumerating them.
+ * better-sqlite3 documents `code` as a string naming an extended result code,
+ * so a missing or non-string value means the error did not come from the driver
+ * — a probe fault, for instance, which carries none by design.
  */
-function isNativeCorruptionCode(error: unknown): boolean {
-  const code = (error as { code?: unknown })?.code
-  return typeof code === 'string' && (code.startsWith('SQLITE_CORRUPT') || code === 'SQLITE_NOTADB')
+function sqliteCodeOf(error: unknown): string | undefined {
+  const code = (error as { code?: unknown } | null | undefined)?.code
+  return typeof code === 'string' && code.length > 0 ? code : undefined
 }
 
 /**
@@ -291,9 +323,14 @@ function isNativeCorruptionCode(error: unknown): boolean {
  * corrupt case is cheap; the healthy case is the one that pays, and that cost
  * is why this is worth stating out loud rather than burying.
  *
- * @returns A human-readable reason, or `null` when the database reads cleanly.
+ * @returns The verdict plus the SQLite code that produced it, or `null` when the
+ *   database reads cleanly. The code is absent when the finding came from a
+ *   `quick_check` row rather than a thrown error — see the non-`ok` branch.
  */
-function probeForCorruption(DatabaseCtor: typeof BetterSqlite3, path: string): string | null {
+function probeForCorruption(
+  DatabaseCtor: typeof BetterSqlite3,
+  path: string
+): { verdict: string; sqliteCode?: string; cause?: unknown } | null {
   let probe: BetterSqlite3.Database
   try {
     probe = new DatabaseCtor(path, { readonly: true, timeout: 5000 })
@@ -303,27 +340,33 @@ function probeForCorruption(DatabaseCtor: typeof BetterSqlite3, path: string): s
     // operational problem, and this function must not reinterpret it as
     // corruption. It propagates as itself.
     //
-    // SQLITE_READONLY_RECOVERY / SQLITE_READONLY_ROLLBACK deserve their own
-    // note, because they are the one shape where "the probe cannot open it"
-    // might not mean "the caller cannot open it": they signal that a read-only
-    // connection cannot perform a recovery the file needs, which a READ-WRITE
-    // open — the one this function runs ahead of — can. If that were reachable,
-    // probing read-only would turn a recoverable database into a refusal to
-    // open, a regression this change would have introduced.
+    // `classifyProbeFailure` names four classes (ADR-175 § 2). PR-1 acts on
+    // `corrupt` and propagates the other three, which is today's behaviour —
+    // what changes is that they are now *named* rather than falling into an
+    // unexamined catch-all, and the classifier is tested directly against every
+    // code including those no fixture can produce.
     //
-    // They get no special branch, because the asymmetry was looked for and not
-    // found: a read-only open recovered every crash-damaged database it was
-    // given — hot rollback journal, and WAL both with and without its `-shm` —
-    // and the asymmetry requires writable storage, since otherwise the
-    // read-write open fails too. SMI-6931 holds the fixtures and the one arm
-    // recorded VACUOUS rather than passing.
+    // `transient` (SQLITE_BUSY family) and `recovery-required`
+    // (SQLITE_READONLY_RECOVERY / _ROLLBACK / _CANTLOCK / _CANTINIT) are the
+    // two classes whose eventual handling differs from propagation: a lock
+    // should be retried inside one shared deadline, and a pending recovery
+    // should be performed by a read-write caller and then re-checked, while a
+    // read-only caller gets its own distinct error. **That wiring is PR-2**
+    // (ADR-175 § 3 and § 4); until it lands, both propagate as themselves,
+    // which is strictly no worse than before this classifier existed.
     //
-    // So an open failure the probe cannot classify fails loudly. If a state is
-    // ever found where a read-write open would have recovered what the probe
-    // could not, this is the comment it falsifies, and the fix is to return null
-    // here and let the real open attempt the recovery.
-    if (isNativeCorruptionCode(error)) {
-      return error instanceof Error ? error.message : String(error)
+    // What this must never become is "proceed without a verdict." An earlier
+    // draft of the ADR returned "no corruption established" for those classes,
+    // which would have let the real connection open with no integrity check at
+    // all whenever the probe was contended — turning "refuse corruption" into
+    // "refuse corruption only when an uncontended probe completes."
+    const failureClass = classifyProbeFailure(error)
+    if (failureClass === 'corrupt') {
+      return {
+        verdict: error instanceof Error ? error.message : String(error),
+        sqliteCode: sqliteCodeOf(error),
+        cause: error,
+      }
     }
     throw error
   }
@@ -352,13 +395,22 @@ function probeForCorruption(DatabaseCtor: typeof BetterSqlite3, path: string): s
       )
     }
 
-    return verdict.toLowerCase() === 'ok' ? null : verdict
+    // A non-`ok` verdict is a corruption verdict with NO SQLite code attached:
+    // `quick_check` returns its finding as a string rather than throwing, so
+    // there is nothing to read a code from and no `cause` to chain. This is
+    // exactly why `sqliteCode` is optional and why consumers must not rely on
+    // `cause` to learn which code fired — on this path neither exists.
+    return verdict.toLowerCase() === 'ok' ? null : { verdict }
   } catch (error) {
     // A corruption-class CODE is corruption. Everything else — including the
     // probe fault above, which carries no SQLite code — propagates, so a broken
     // probe is never reported to the user as a broken database.
-    if (isNativeCorruptionCode(error)) {
-      return error instanceof Error ? error.message : String(error)
+    if (classifyProbeFailure(error) === 'corrupt') {
+      return {
+        verdict: error instanceof Error ? error.message : String(error),
+        sqliteCode: sqliteCodeOf(error),
+        cause: error,
+      }
     }
     throw error
   } finally {
