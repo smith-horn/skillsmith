@@ -44,6 +44,8 @@ import { dirname, join } from 'node:path'
 import { fileURLToPath } from 'node:url'
 import { spawnSync } from 'node:child_process'
 
+import { makeFixtureEnv } from './_lib/git-fixture-env'
+
 const __dirname = dirname(fileURLToPath(import.meta.url))
 export const SCRIPT = join(__dirname, '..', 'lib', 'check-native-modules.sh')
 export const CASES_DIR = join(__dirname, 'fixtures', 'native-attribution', 'cases')
@@ -217,12 +219,26 @@ export function setupFixtures(): Fixtures {
   writeExec(join(appDir, 'scripts', 'lib', 'check-mount-composition.sh'), CHECKER_SH)
 
   const git = resolveBin('git') ?? 'git'
-  spawnSync(git, ['init', '-q'], { cwd: repoDir })
-  spawnSync(git, ['config', 'user.email', 't@t.example'], { cwd: repoDir })
-  spawnSync(git, ['config', 'user.name', 'test'], { cwd: repoDir })
+  // SMI-6919: a push from a linked worktree exports GIT_DIR into pre-push and
+  // these calls once addressed THAT repository (core.bare=true and a test
+  // identity in the main checkout's shared .git/config). The shared fixture
+  // env strips the discovery and config-injection variables and pins the
+  // author (SMI-4693); HOME is pinned inside the fixture so the host's
+  // ~/.config/git/ignore and attributes cannot reach it (a global ignore
+  // matching `f` refused the add, measured); and each status is checked, since
+  // a fixture that silently failed to commit hands every test an empty repo.
+  const gitOpts = { cwd: repoDir, env: makeFixtureEnv({ HOME: root }), encoding: 'utf8' as const }
+  const run = (args: string[]) => {
+    const r = spawnSync(git, args, gitOpts)
+    if (r.status !== 0)
+      throw new Error(
+        `fixture git ${args.join(' ')} failed (status ${r.status}): ${r.stderr ?? ''}`
+      )
+  }
+  run(['init', '-q'])
   writeFileSync(join(repoDir, 'f'), 'x')
-  spawnSync(git, ['add', 'f'], { cwd: repoDir })
-  spawnSync(git, ['commit', '-q', '-m', 'init'], { cwd: repoDir })
+  run(['add', 'f'])
+  run(['commit', '-q', '-m', 'init'])
 
   return {
     root,
