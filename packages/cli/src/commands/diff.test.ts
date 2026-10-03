@@ -26,6 +26,13 @@ vi.mock('../utils/manifest.js', () => ({
 const mockClassifyChange = vi.fn()
 vi.mock('@skillsmith/core', () => ({
   classifyChange: (...args: unknown[]) => mockClassifyChange(...args),
+  // F5 (SMI-6733 Phase 2): diff.ts now reads entries through installedSkillsOf()
+  // rather than a bare `manifest.installedSkills[...]` subscript — this mock
+  // must mirror the real helper (`manifest.installedSkills ?? {}`) or every
+  // existing test on the registry-fetch path throws `installedSkillsOf is not
+  // a function`, since vi.mock replaces the whole module.
+  installedSkillsOf: (manifest: { installedSkills?: Record<string, unknown> | null }) =>
+    manifest.installedSkills ?? {},
 }))
 
 // readFile is used for --old-content / --new-content file overrides

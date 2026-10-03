@@ -32,6 +32,12 @@ const SANCTIONED_ALTERNATIVE =
 export function denyWith(predicate, token) {
   return {
     action: 'deny',
+    // The predicate as DATA, beside the prose. A consumer deciding on the
+    // predicate must not read the reason: that string interpolates `token`,
+    // and three H8-script sites pass the whole inline script as the token, so
+    // a script padded with another predicate's label used to impersonate it
+    // (SMI-6920 round 5, C2 -- measured defeating the trap reading).
+    predicate,
     json: {
       hookSpecificOutput: {
         hookEventName: 'PreToolUse',
