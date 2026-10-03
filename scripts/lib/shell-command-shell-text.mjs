@@ -20,7 +20,7 @@
  * yields no literal protected name, and its substitutions are already read
  * by the enclosing segment); the ruflo guard denies an expanding `eval`
  * argument (H9) and leaves an expanding `trap` action as the variable-
- * indirection limit it already accepts (19 of 34 `trap` lines in this
+ * indirection limit it already accepts (about half the `trap` lines in this
  * repository expand, `trap 'rm -rf "$TMPROOT"' EXIT`; the governance review
  * of 243a96847 measured them all denied, with a false reason, on a guard
  * with no opt-out).
@@ -98,7 +98,8 @@ export function envSplitCommandText(rawValues) {
  * separate `--` (`eval -- cat D` runs `cat D` in bash 3.2, zsh 5.9 and
  * bash 5.2; `eval "-- cat D"` runs nothing and the quoted word is left
  * alone); `trap [--] ACTION SIG…` hands over the one action word (`trap
- * -l`, `trap -p`, `trap - SIG` run nothing; past `--` the action is
+ * -l`, `trap -p`, a cluster of those two, `trap - SIG`, and `trap --` with
+ * no action or with a bare `-` after it all run nothing; past `--` the action is
  * whatever follows, `trap -- "cat D" EXIT` printed a decoy); `watch`
  * without `-x`/`--exec` joins its operands into `sh -c` text (documented
  * semantics, the binary is installed nowhere here; with `-x` the operands
@@ -111,11 +112,29 @@ export function shellTextOperandSpan(argv) {
   const head = basenameOf(argv[0])
   if (head === 'eval') return { start: argv[1] === '--' ? 2 : 1, end: argv.length }
   if (head === 'trap') {
-    const at = argv[1] === '--' ? 2 : 1
-    const action = argv[at]
-    if (action === undefined || action === '-') return null
-    if (at === 1 && action.startsWith('-')) return null
-    return { start: at, end: at + 1 }
+    // Past a separate `--` the next word is the action whatever it looks like
+    // (`trap -- "cat D" EXIT` printed a decoy).
+    if (argv[1] === '--') {
+      const action = argv[2]
+      if (action === undefined || action === '-') return null
+      return { start: 2, end: 3 }
+    }
+    // `-l` and `-p` (and a cluster of them) are the only options either
+    // builtin accepts -- `trap [-lp] [arg] [sig…]` in both synopses -- and
+    // under either the builtin LISTS or PRINTS and runs no action, so there is
+    // nothing to read. Testing the whole action's first character instead
+    // dropped the reading for any action merely BEGINNING with a dash, which
+    // zsh 5.9 installs and runs: `trap "-l; cat D" EXIT` printed the decoy
+    // while both guards allowed, as did the `-p;`, `-- echo a;`, `- ;` and
+    // `-n echo a;` spellings (SMI-6937, the post-merge retro of PR #2982;
+    // bash 3.2 rejects all five, zsh is the shell the harness runs).
+    //
+    // Matching the option exactly also keeps `trap -p EXIT` unread, where
+    // advancing PAST the option would have read `EXIT` as the action and
+    // refused a line that only prints.
+    if (/^-[lp]+$/.test(argv[1])) return null
+    if (argv[1] === '-') return null
+    return { start: 1, end: 2 }
   }
   if (head === 'watch') {
     const rest = stripLauncher(argv.slice(1), LAUNCHER_TABLE.get('watch'))

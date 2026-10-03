@@ -137,6 +137,12 @@ export const LAUNCHER_TABLE = new Map(
     // timeout's own flag VALUE where the duration positional was expected.
     { name: 'timeout', positionals: 1, valueFlags: ['-k', '--kill-after', '-s', '--signal'] },
     { name: 'nice', positionals: 0, valueFlags: ['-n', '--adjustment'] },
+    // zsh's `repeat N command` reserved word. A launcher row and not a
+    // transparent head, because the count must be consumed: transparency
+    // alone would leave `1` as the command. Measured in zsh 5.9 with a decoy,
+    // `repeat 2 cat D` printing it twice; bash has no such word, so the row
+    // costs nothing there (SMI-6937, the cross-family gate).
+    { name: 'repeat', positionals: 1, valueFlags: [], noFlags: true },
     // Round 23: every row's value flags are the launcher's FULL synopsis,
     // separated long forms included (`stdbuf --output L` printed a decoy in
     // bash 5.2 while only `-o` was modelled). A long form with `=` is one
@@ -252,6 +258,9 @@ export const LAUNCHER_TABLE = new Map(
       positionals: entry.positionals,
       valueFlags: new Set(entry.valueFlags),
       stopFlags: new Set(entry.stopFlags ?? []),
+      // Opt-in, default off: a row whose operand may itself begin with a dash
+      // must not have that operand eaten as a flag (see the `repeat` row).
+      noFlags: entry.noFlags === true,
     },
   ])
 )
@@ -266,6 +275,8 @@ export const LAUNCHER_TABLE = new Map(
  */
 export function launcherStops(argv, entry) {
   let i = 0
+  // A `noFlags` row cannot be stopped by a flag it does not have.
+  if (entry.noFlags) return false
   while (i < argv.length) {
     const a = argv[i]
     if (a === '--' || !a.startsWith('-') || a === '-') return false
@@ -330,7 +341,12 @@ export function launcherDashCCommand(argv) {
  */
 export function stripLauncher(argv, entry) {
   let i = 0
-  while (i < argv.length) {
+  // A `noFlags` row has no options at all, so every leading word is an
+  // operand. Parsing flags there is wrong twice over: it eats a dash-prefixed
+  // operand AND then takes the command as the operand in its place (measured
+  // on `repeat -x cat D`, which ran the reader while the guard allowed it,
+  // and on `repeat -x 2 cat D`, which ran nothing while the guard denied it).
+  while (!entry.noFlags && i < argv.length) {
     const a = argv[i]
     if (a === '--') {
       i++

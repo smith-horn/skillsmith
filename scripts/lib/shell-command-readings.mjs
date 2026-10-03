@@ -77,6 +77,25 @@ export const TRANSPARENT_HEAD_WORDS = new Set([
   // shell the Bash tool runs here, and allowed (SMI-6908 F-5). Silent in bash,
   // where the word is a command not found.
   'nocorrect',
+  // zsh's OTHER precommand modifier, spelled `-` (it makes the next command's
+  // argv[0] begin with a dash, as a login shell is invoked). Measured with a
+  // decoy and both controls: `- cat D`, `- - cat D`, `- command cat D` and
+  // `nocorrect - cat D` all printed the file in zsh 5.9 and the env guard
+  // allowed every one, while the unwrapped twin denied. **Not zsh-only in
+  // effect**: `env -S "- cat D"` printed it under bash 3.2 as well, because
+  // `env` splits the string itself and then execs. `--` is NOT a modifier and
+  // measured as running nothing in either shell, so it stays out (SMI-6937,
+  // the governance pass on this issue's own fix; the class ADR-172 sec 1
+  // already names, one spelling short).
+  '-',
+  // zsh's `coproc` reserved word takes the command directly. Measured: a
+  // naive probe said it does NOT run, because a coprocess's stdout goes to a
+  // pipe rather than the terminal -- reading that pipe shows the reader ran,
+  // so the first probe was answering a different question than the one asked.
+  // bash gained `coproc` in 4.0 and this host's 3.2 has none, so the optional
+  // NAME form (`coproc NAME cmd`) runs nowhere measurable here and stays a
+  // stated limit rather than a guessed row (SMI-6937, the cross-family gate).
+  'coproc',
 ])
 
 /**
