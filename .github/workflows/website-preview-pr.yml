@@ -10,6 +10,7 @@ on:
     types: [opened, synchronize, reopened]
     paths:
       - 'packages/website/**'
+      - 'scripts/ci/use-lockfile-vercel.sh'
 
 concurrency:
   group: website-preview-${{ github.ref }}
@@ -58,12 +59,8 @@ jobs:
       - name: Install dependencies
         run: npm ci --ignore-scripts
 
-      - name: Install Vercel CLI (pinned to root devDep)
-        run: |
-          PINNED=$(node -p "require('./package.json').devDependencies.vercel")
-          echo "Installing vercel@$PINNED (pinned from root package.json)"
-          npm i -g "vercel@$PINNED"
-          vercel --version
+      - name: Use Vercel CLI from the lockfile (SMI-6944)
+        run: bash scripts/ci/use-lockfile-vercel.sh
 
       - name: Deploy preview (prebuilt)
         id: deploy
@@ -74,9 +71,9 @@ jobs:
           VERCEL_PROJECT_ID: ${{ secrets.VERCEL_PROJECT_ID }}
         run: |
           set -eu
-          vercel pull --yes --environment=preview --token "$VERCEL_TOKEN"
-          vercel build --token "$VERCEL_TOKEN"
-          URL=$(vercel deploy --prebuilt --yes --token "$VERCEL_TOKEN" 2>/dev/null | grep -E '^https://' | tail -1)
+          "$GITHUB_WORKSPACE/node_modules/.bin/vercel" pull --yes --environment=preview --token "$VERCEL_TOKEN"
+          "$GITHUB_WORKSPACE/node_modules/.bin/vercel" build --token "$VERCEL_TOKEN"
+          URL=$("$GITHUB_WORKSPACE/node_modules/.bin/vercel" deploy --prebuilt --yes --token "$VERCEL_TOKEN" 2>/dev/null | grep -E '^https://' | tail -1)
           echo "url=$URL" >> "$GITHUB_OUTPUT"
 
       - name: Comment preview URL on PR

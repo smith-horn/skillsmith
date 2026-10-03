@@ -13,12 +13,15 @@
  *      do NOT fail the check.
  *   3. `.github/workflows/**\/*.yml` — third-party actions (owner not in the
  *      first-party allowlist) must be pinned to a 40-char SHA.
- *   4. `.github/workflows/**\/*.yml` — `npm i -g <pkg>` and `npx <pkg>` in
- *      `run:` blocks must be pinned to an exact `@<semver>` unless allow-listed
- *      (self-test of our own published packages) OR running after `npm ci` /
- *      `npm install` in the same job (resolves from lockfile-tracked devDeps).
- *      Added in SMI-4874 Wave D after the `vercel@latest` regression
- *      (closed by Waves A + B).
+ *   4. `.github/workflows/**\/*.yml` and `.github/actions/**\/action.yml` —
+ *      `npm i -g <pkg>` and `npx <pkg>` in `run:` blocks must be pinned to an
+ *      exact `@<semver>` unless allow-listed (self-test of our own published
+ *      packages) OR running after `npm ci` / `npm install` in the same job
+ *      (resolves from lockfile-tracked devDeps). Added in SMI-4874 Wave D after
+ *      the `vercel@latest` regression (closed by Waves A + B). SMI-6944 adds rule
+ *      `workflow-global-root-dep-install`: a global install of (or `npx
+ *      <dep>@<ver>` with no earlier `npm ci` for) any direct dependency of root
+ *      or a workspace is refused, because root `overrides` never reach it.
  *
  * Deterministic: no network, no LLM, zero dependencies. Runs in < 500ms.
  *
@@ -33,11 +36,30 @@ import {
   parsePkgSpec,
   extractRunBlocks,
   scanRunBlockForInstalls,
+  scanRunBlockForGlobalRootDepInstalls,
+  scanWorkflowSource,
+  loadDirectDependencyNames,
+  jobBoundaries,
+  jobOf,
+  jobNameOf,
+  vercelInvocations,
   NPM_CI_REGEX,
 } from './check-supply-chain-pins.helpers.mjs'
 
 // Re-export helpers so tests can import them through the main module surface.
-export { parsePkgSpec, extractRunBlocks, scanRunBlockForInstalls, NPM_CI_REGEX }
+export {
+  parsePkgSpec,
+  extractRunBlocks,
+  scanRunBlockForInstalls,
+  scanRunBlockForGlobalRootDepInstalls,
+  scanWorkflowSource,
+  loadDirectDependencyNames,
+  jobBoundaries,
+  jobOf,
+  jobNameOf,
+  vercelInvocations,
+  NPM_CI_REGEX,
+}
 export { WORKFLOW_INSTALL_ALLOWLIST } from './check-supply-chain-pins.helpers.mjs'
 
 const __dirname = dirname(fileURLToPath(import.meta.url))
@@ -317,21 +339,32 @@ export function checkWorkflows(rootDir) {
 // ---------------------------------------------------------------------------
 
 /**
- * Audit `npm i -g` and `npx` invocations across every workflow run block.
- * Walks each job's steps in document order; flips `npmCiSeen` to true once a
- * `run:` body contains `npm ci` / `npm install`, and from that step onward
- * `npx` invocations are accepted (workspace-resolved).
+ * Audit `npm i -g` and `npx` invocations across every workflow run block and
+ * every composite action (`.github/actions/**\/action.yml`, SMI-6944). Walks each
+ * job's steps in document order; flips `npmCiSeen` to true once a `run:` body
+ * contains `npm ci` / `npm install`, and from that step onward `npx`
+ * invocations are accepted (workspace-resolved). Also applies the SMI-6944
+ * `workflow-global-root-dep-install` rule against every direct dependency of
+ * root and of each workspace. Per-source logic lives in
+ * `scanWorkflowSource` (helpers module).
  *
- * @returns {{ findings: Array, scannedFiles: number }}
+ * @returns {{ findings: Array, scannedFiles: number, runBlocks: number,
+ *   vercelInvocationBlocks: number }}
  */
 export function auditWorkflowInstalls(rootDir) {
   const localFindings = []
   let scannedFiles = 0
+  let runBlocks = 0
+  let vercelInvocationBlocks = 0
+  const empty = { findings: localFindings, scannedFiles, runBlocks, vercelInvocationBlocks }
   const wfRoot = join(rootDir, '.github', 'workflows')
-  if (!existsSync(wfRoot)) return { findings: localFindings, scannedFiles }
+  if (!existsSync(wfRoot)) return empty
 
-  const ymlFiles = walk(wfRoot, (p) => p.endsWith('.yml') || p.endsWith('.yaml'))
-  for (const abs of ymlFiles) {
+  const rootDeps = loadDirectDependencyNames(rootDir)
+  const isYml = (p) => p.endsWith('.yml') || p.endsWith('.yaml')
+  const isAction = (p) => /(^|[\\/])action\.ya?ml$/.test(p)
+  const files = [...walk(wfRoot, isYml), ...walk(join(rootDir, '.github', 'actions'), isAction)]
+  for (const abs of files) {
     let source
     try {
       source = readFileSync(abs, 'utf-8')
@@ -339,65 +372,12 @@ export function auditWorkflowInstalls(rootDir) {
       continue
     }
     scannedFiles++
-    // Strip full-line YAML comments before scanning to suppress commented-out
-    // examples (matches checkWorkflows behaviour).
-    const cleaned = source
-      .split('\n')
-      .map((l) => (l.trimStart().startsWith('#') ? '' : l))
-      .join('\n')
-    const blocks = extractRunBlocks(cleaned)
-    // npmCiSeen resets at each new top-level job. We approximate "job boundary"
-    // by re-parsing the file's `^  <name>:` job headers and binning each
-    // block's line into the right job.
-    const jobBoundaries = []
-    const allLines = cleaned.split('\n')
-    let inJobs = false
-    for (let i = 0; i < allLines.length; i++) {
-      if (/^jobs:\s*$/.test(allLines[i])) {
-        inJobs = true
-        continue
-      }
-      if (!inJobs) continue
-      // New top-level key at column 0 ends the jobs block.
-      if (/^[a-zA-Z_][a-zA-Z0-9_-]*:/.test(allLines[i])) {
-        inJobs = false
-        continue
-      }
-      if (/^  [a-z][a-z0-9-]*:\s*$/.test(allLines[i])) {
-        jobBoundaries.push(i + 1)
-      }
-    }
-    const jobOf = (line) => {
-      let last = 0
-      for (const b of jobBoundaries) {
-        if (b <= line) last = b
-        else break
-      }
-      return last
-    }
-    // Walk blocks in order, tracking npmCiSeen per job.
-    const npmCiByJob = new Map()
-    for (const block of blocks) {
-      const jobKey = jobOf(block.line)
-      const npmCiSeen = npmCiByJob.get(jobKey) === true
-      const violations = scanRunBlockForInstalls(block.body, npmCiSeen)
-      for (const v of violations) {
-        localFindings.push({
-          file: relative(rootDir, abs),
-          rule: 'workflow-install-pin',
-          message: `${v.command} \`${v.pkg}\` at line ${block.line}: ${v.reason}`,
-          remediation:
-            v.command === 'npm i -g'
-              ? `Pin to exact semver: \`npm i -g "${parsePkgSpec(v.pkg)?.name || v.pkg}@<x.y.z>"\`, ideally reading the version from root package.json via \`node -p "require('./package.json').devDependencies.<pkg>"\`.`
-              : `Either pin to exact semver (\`npx ${parsePkgSpec(v.pkg)?.name || v.pkg}@<x.y.z>\`), add to the allow-list in check-supply-chain-pins.mjs if this is a workspace devDep or self-test, or move the step after an \`npm ci\` step in the same job.`,
-        })
-      }
-      if (NPM_CI_REGEX.test(block.body)) {
-        npmCiByJob.set(jobKey, true)
-      }
-    }
+    const r = scanWorkflowSource(source, relative(rootDir, abs), rootDeps)
+    localFindings.push(...r.findings)
+    runBlocks += r.runBlocks
+    vercelInvocationBlocks += r.vercelInvocationBlocks
   }
-  return { findings: localFindings, scannedFiles }
+  return { findings: localFindings, scannedFiles, runBlocks, vercelInvocationBlocks }
 }
 
 // ---------------------------------------------------------------------------
@@ -465,7 +445,7 @@ export async function main(rootDir = ROOT) {
   }
 
   for (const f of all) {
-    const annotation = `::error file=${f.file}::${f.message} ${f.remediation}`
+    const annotation = `::error file=${f.file}::check-supply-chain-pins: ${f.rule}: ${f.file}: ${f.message} ${f.remediation}`
     if (CI) console.log(annotation)
     else console.error(`  FAIL: ${f.file}: ${f.message}\n         ${f.remediation}`)
   }

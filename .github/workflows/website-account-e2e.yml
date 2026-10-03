@@ -75,6 +75,7 @@ on:
       - 'packages/website/tests/e2e/astro-helpers.ts'
       - 'packages/website/playwright.config.ts'
       - '.github/workflows/website-account-e2e.yml'
+      - 'scripts/ci/use-lockfile-vercel.sh'
   workflow_dispatch: {}
 
 concurrency:
@@ -136,13 +137,8 @@ jobs:
         # the SMI-5475 popstate race only reproduces there.
         run: npx playwright install --with-deps chromium webkit
 
-      - name: Install Vercel CLI (pinned to root devDep)
-        run: |
-          set -eu
-          PINNED=$(node -p "require('./package.json').devDependencies.vercel")
-          echo "Installing vercel@$PINNED (pinned from root package.json)"
-          npm i -g "vercel@$PINNED"
-          vercel --version
+      - name: Use Vercel CLI from the lockfile (SMI-6944)
+        run: bash scripts/ci/use-lockfile-vercel.sh
 
       - name: Vercel pull + build website
         working-directory: packages/website
@@ -152,8 +148,8 @@ jobs:
           VERCEL_PROJECT_ID: ${{ secrets.VERCEL_PROJECT_ID }}
         run: |
           set -eu
-          vercel pull --yes --environment=preview --token "$VERCEL_TOKEN"
-          vercel build --token "$VERCEL_TOKEN"
+          "$GITHUB_WORKSPACE/node_modules/.bin/vercel" pull --yes --environment=preview --token "$VERCEL_TOKEN"
+          "$GITHUB_WORKSPACE/node_modules/.bin/vercel" build --token "$VERCEL_TOKEN"
 
       - name: Start vercel dev (Astro SSR account pages)
         working-directory: packages/website
@@ -166,7 +162,7 @@ jobs:
           # in a sub-shell that does not inherit npm .bin lookup -- prepend both
           # workspace and root .bin so `astro` resolves (SMI-4493/4508).
           export PATH="$GITHUB_WORKSPACE/packages/website/node_modules/.bin:$GITHUB_WORKSPACE/node_modules/.bin:$PATH"
-          nohup vercel dev --token "$VERCEL_TOKEN" --listen 127.0.0.1:4321 \
+          nohup "$GITHUB_WORKSPACE/node_modules/.bin/vercel" dev --token "$VERCEL_TOKEN" --listen 127.0.0.1:4321 \
             > "$GITHUB_WORKSPACE/test-results/preview.log" 2>&1 &
           echo $! > "$GITHUB_WORKSPACE/test-results/preview.pid"
 

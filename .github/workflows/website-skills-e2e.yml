@@ -82,9 +82,9 @@ jobs:
           # filter matched a rename on both its old and new path; .filename
           # alone would miss a file renamed OUT of a relevant path.
           FILES="$(gh api "repos/${{ github.repository }}/pulls/${{ github.event.pull_request.number }}/files" --paginate --jq '.[] | .filename, (.previous_filename // empty)')"
-          # Relevance list == the workflow's former 6 `paths` entries.
+          # Relevance list == the workflow's former 6 `paths` entries, plus the shared Vercel CLI step script (SMI-6944).
           # Regex-anchored to the start of the repo-relative path.
-          if echo "$FILES" | grep -qE '^(packages/website/src/components/|packages/website/src/pages/skills/|packages/website/src/styles/|packages/website/tests/e2e/skills-filter\.spec\.ts$|packages/website/playwright\.config\.ts$|\.github/workflows/website-skills-e2e\.yml$)'; then
+          if echo "$FILES" | grep -qE '^(packages/website/src/components/|packages/website/src/pages/skills/|packages/website/src/styles/|packages/website/tests/e2e/skills-filter\.spec\.ts$|packages/website/playwright\.config\.ts$|\.github/workflows/website-skills-e2e\.yml$|scripts/ci/use-lockfile-vercel\.sh$)'; then
             echo "relevant=true" >> "$GITHUB_OUTPUT"
           else
             echo "relevant=false" >> "$GITHUB_OUTPUT"
@@ -129,13 +129,8 @@ jobs:
       - name: Install Playwright Chromium
         run: npx playwright install --with-deps chromium
 
-      - name: Install Vercel CLI (pinned to root devDep)
-        run: |
-          set -eu
-          PINNED=$(node -p "require('./package.json').devDependencies.vercel")
-          echo "Installing vercel@$PINNED (pinned from root package.json)"
-          npm i -g "vercel@$PINNED"
-          vercel --version
+      - name: Use Vercel CLI from the lockfile (SMI-6944)
+        run: bash scripts/ci/use-lockfile-vercel.sh
 
       - name: Vercel pull + build website
         working-directory: packages/website
@@ -145,8 +140,8 @@ jobs:
           VERCEL_PROJECT_ID: ${{ secrets.VERCEL_PROJECT_ID }}
         run: |
           set -eu
-          vercel pull --yes --environment=preview --token "$VERCEL_TOKEN"
-          vercel build --token "$VERCEL_TOKEN"
+          "$GITHUB_WORKSPACE/node_modules/.bin/vercel" pull --yes --environment=preview --token "$VERCEL_TOKEN"
+          "$GITHUB_WORKSPACE/node_modules/.bin/vercel" build --token "$VERCEL_TOKEN"
 
       - name: Start vercel dev (Astro SSR + static skills page)
         working-directory: packages/website
@@ -159,7 +154,7 @@ jobs:
           # in a sub-shell that does not inherit npm .bin lookup -- prepend both
           # workspace and root .bin so `astro` resolves (SMI-4493/4508).
           export PATH="$GITHUB_WORKSPACE/packages/website/node_modules/.bin:$GITHUB_WORKSPACE/node_modules/.bin:$PATH"
-          nohup vercel dev --token "$VERCEL_TOKEN" --listen 127.0.0.1:4321 \
+          nohup "$GITHUB_WORKSPACE/node_modules/.bin/vercel" dev --token "$VERCEL_TOKEN" --listen 127.0.0.1:4321 \
             > "$GITHUB_WORKSPACE/test-results/preview.log" 2>&1 &
           echo $! > "$GITHUB_WORKSPACE/test-results/preview.pid"
 

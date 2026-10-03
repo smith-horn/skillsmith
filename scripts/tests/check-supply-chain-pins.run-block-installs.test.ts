@@ -109,6 +109,9 @@ describe('SMI-3985: check-supply-chain-pins — run-block installs (SMI-4874)', 
   })
 
   describe('scanRunBlockForInstalls', () => {
+    // Pin rule only. A global install of a repo dependency is refused by the
+    // separate `workflow-global-root-dep-install` rule (SMI-6944); see
+    // check-supply-chain-pins.global-root-dep.test.ts.
     it('case 1: passes on `npm i -g vercel@52.2.0` (exact pin)', () => {
       expect(scanRunBlockForInstalls('npm i -g vercel@52.2.0', false)).toEqual([])
     })
