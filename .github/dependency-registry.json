@@ -1,26 +1,50 @@
 {
-  "description": "Registry of every root package.json override and every accepted dev-scope npm-audit advisory, with reason, provenance, removal condition and expiry. Every override and every accepted advisory must have an entry here (SMI-6943); an audit:standards coherence check is planned under SMI-6943 and does not exist yet.",
+  "description": "Registry of every root package.json override and every accepted dev-scope npm-audit advisory, with reason, provenance, removal condition and expiry. Every override and every accepted advisory must have an entry here. Nothing enforces that yet: the audit:standards coherence and expiry check is tracked in SMI-6949.",
   "overrides": {
     "undici": {
       "pin": "^7.30.0",
-      "reason": "Floor and force for undici security advisories; pins the whole tree to the patched 7.x line.",
-      "advisories": ["GHSA-9qxr-qj54-h672", "GHSA-w293-vg96-wgc3"],
+      "reason": "Forces every consumer onto patched 7.x. The nine @vercel/node copies exact-pin 5.28.4, which 15 advisories affect (3 high listed here); GHSA-w293-vg96-wgc3 covers 7.24.1 to below 7.29.1.",
+      "advisories": [
+        "GHSA-vxpw-j846-p89q",
+        "GHSA-vrm6-8vpv-qv8q",
+        "GHSA-v9p9-hfj2-hcw8",
+        "GHSA-w293-vg96-wgc3"
+      ],
       "introducedBy": ["SMI-1280", "SMI-5912", "aff9c26f6"],
-      "crossesMajor": "forces @vercel/node (exact 5.28.4, x9) up from 5.x, @vercel/blob, wdio-vscode-service and webdriver up from 6.x, and unifont (^8.0.0) down from 8.x to 7.x (SMI-6891)",
-      "removeWhen": "No consumer declares a range admitting a version in the advisories vulnerable ranges; blocked while @vercel/node exact-pins undici 5.28.4."
+      "crossesMajor": "forces @vercel/node (exact 5.28.4, x9) up from 5.x, @vercel/blob, wdio-vscode-service and webdriver up from 6.x, and unifont (^8.0.0) down from 8.x to 7.x (SMI-6891); also forces miniflare (exact 7.28.0) within 7.x",
+      "removeWhen": "A scratch delete followed by npm audit --json reports no undici advisory (blocked while @vercel/node exact-pins 5.28.4)."
     },
     "path-to-regexp": {
-      "pin": "^8.3.0",
-      "reason": "Fixes the ReDoS in path-to-regexp for every consumer.",
-      "advisories": ["CVE-2024-45296"],
+      "pin": "^8.4.0",
+      "reason": "Forces the patched line onto consumers that exact-pin vulnerable 6.1.0 (@vercel/node x9, @vercel/remix-builder, @vercel/routing-utils), and raises the 8.x floor past GHSA-j3q9-mxjg-w52f and GHSA-27v5-c462-wpq7 (<8.4.0).",
+      "advisories": [
+        "CVE-2024-45296",
+        "GHSA-j3q9-mxjg-w52f",
+        "GHSA-27v5-c462-wpq7",
+        "GHSA-9wv6-86v2-598j"
+      ],
       "introducedBy": ["SMI-1280", "06b293656"],
-      "crossesMajor": "forces 12 consumers (@vercel/node x9, @vercel/remix-builder, @vercel/routing-utils, wrangler) up from 6.x to 8.x (SMI-6891)",
-      "removeWhen": "No consumer declares a range admitting a version vulnerable to CVE-2024-45296 (6.x below 6.3.0, 8.x below 8.0.0); investigate whether the 6.x line at 6.3.0 is enough."
+      "crossesMajor": "forces 12 consumers up from 6.x to 8.x: @vercel/node (exact 6.1.0) x9, @vercel/remix-builder, @vercel/routing-utils (exact 6.1.0), and wrangler (exact 6.3.0, which is itself unaffected, so its crossing is unnecessary) (SMI-6891)",
+      "removeWhen": "Every consumer declares path-to-regexp >=6.3.0 within 6.x or >=8.4.0 (today @vercel/node and @vercel/routing-utils still exact-pin 6.1.0, and @vercel/fun declares 8.2.0)."
     },
     "axios": {
-      "pin": "^1.18.1",
+      "pin": "^1.20.0",
       "reason": "Deliberate re-arming pin: axios is not in the lockfile today, but its past advisories (proxy header leak, prototype pollution) must not return if a dependency brings it back.",
-      "advisories": ["GHSA-xj6q-8x83-jv6g"],
+      "advisories": [
+        "GHSA-xj6q-8x83-jv6g",
+        "GHSA-j8rh-479h-cp32",
+        "GHSA-4hqw-qxg8-jxx2",
+        "GHSA-m8m8-qj5v-23w3",
+        "GHSA-44g4-m2mj-wpvx",
+        "GHSA-r4gj-5m52-g5wh",
+        "GHSA-vh66-26gq-q6x8",
+        "GHSA-9fr6-4gfg-395g",
+        "GHSA-c29m-xwm3-cm6r",
+        "GHSA-mghh-pgcx-3jjj",
+        "GHSA-x97p-jq2g-jp4f",
+        "GHSA-3pq3-5fj3-cg6v",
+        "GHSA-542g-h47m-68v8"
+      ],
       "introducedBy": ["SMI-5266", "SMI-5778", "SMI-6858"],
       "crossesMajor": null,
       "removeWhen": "Repo decides no dependency may ever bring axios back; checkable by npm explain axios returning nothing for a year."
@@ -43,11 +67,11 @@
     },
     "diff": {
       "pin": "^8.0.3",
-      "reason": "No recorded reason beyond \"diff vulnerabilities\" in the originating commit; no advisory was ever named.",
-      "advisories": [],
+      "reason": "Floor for GHSA-73rr-hh4g-fpgx (<8.0.3). @wdio/reporter declares ^8.0.2, which admits the vulnerable 8.0.2.",
+      "advisories": ["GHSA-73rr-hh4g-fpgx"],
       "introducedBy": ["1c36f5255"],
       "crossesMajor": "forces astro@7.2.10 (declares ^9.0.0) down from 9.x to 8.x; forces mocha (declares ^5.2.0) up from 5.x",
-      "removeWhen": "investigate: no advisory recorded (SMI-6943)"
+      "removeWhen": "No consumer admits diff <8.0.3: today @wdio/reporter (^8.0.2) and mocha (^5.2.0) both do."
     },
     "global-agent": {
       "pin": "^4.1.3",
@@ -68,7 +92,7 @@
     "ip-address": {
       "pin": "^10.7.2",
       "reason": "Floor for ip-address SSRF and trust-boundary advisories.",
-      "advisories": [],
+      "advisories": ["GHSA-j6r3-76f7-8jcv", "GHSA-h3mg-xc3c-68pw"],
       "introducedBy": ["SMI-5912", "SMI-6883"],
       "crossesMajor": null,
       "removeWhen": "It is a floor: remove when a scratch delete and fresh resolve still yields 10.7.2 or higher and the repo adopts npm update as its lock refresh convention."
@@ -87,9 +111,9 @@
       "removeWhen": "@vercel/fun declares tar at or above the patched floor (latest already exact-pins 7.5.22) and every other consumer range admits only patched versions."
     },
     "toml": {
-      "pin": "^4.1.2",
+      "pin": "^4.2.0",
       "reason": "Deliberate re-arming pin: toml is not in the lockfile today, but 3.0.0 had a high prototype pollution (Dependabot #212).",
-      "advisories": [],
+      "advisories": ["GHSA-82x6-q7mm-w9cf"],
       "introducedBy": ["SMI-6379", "SMI-6858"],
       "crossesMajor": null,
       "removeWhen": "Repo decides no dependency may ever bring toml back; checkable by npm explain toml returning nothing for a year."
@@ -104,19 +128,19 @@
     },
     "nanoid": {
       "pin": "^3.3.18",
-      "reason": "No recorded reason: the originating commit is an unrelated scanner port; likely a companion to the postcss floor but never stated.",
-      "advisories": [],
+      "reason": "Floor for GHSA-2v37-7h3g-55p8 (high, <3.3.18). postcss declares ^3.3.17, which admits the vulnerable 3.3.17. The originating commit did not record this; identified 2026-10-03.",
+      "advisories": ["GHSA-2v37-7h3g-55p8"],
       "introducedBy": ["SMI-5879", "f705223b1"],
       "crossesMajor": null,
-      "removeWhen": "investigate: no advisory recorded (SMI-6943)"
+      "removeWhen": "postcss declares nanoid >=3.3.18."
     },
     "astro > vite > postcss": {
       "pin": "^8.5.23",
-      "reason": "Raises the stale postcss nested under astro's vite. Because its nested object has no \".\" key, it probably also shadows the global vite override inside astro, which would explain why astro resolves vite 8.x (fixture-verified behaviour, SMI-6891; not re-resolved against this tree).",
+      "reason": "Raises the stale postcss nested under astro's own vite (GHSA-fxqj-rqcc-2cmp).",
       "advisories": ["GHSA-fxqj-rqcc-2cmp"],
       "introducedBy": ["52e44e243"],
-      "crossesMajor": "probable side effect: shadows the global vite ^7.3.5 inside astro, which declares ^8.0.13; unverified whether deleting it would force astro down a major",
-      "removeWhen": "The global vite override is removed or raised to the 8 line, and a scratch re-resolve without this entry shows astro keeping vite 8; do not delete in isolation."
+      "crossesMajor": null,
+      "removeWhen": "A scratch delete leaves the postcss under astro's vite at a version outside GHSA-fxqj-rqcc-2cmp, per package-lock.json."
     },
     "sharp": {
       "pin": "0.35.4",
@@ -130,7 +154,7 @@
         "GHSA-rgj7-g3m4-5g8c"
       ],
       "introducedBy": ["SMI-5799", "SMI-6478", "4e8304cfd"],
-      "crossesMajor": "0.x minor crossing (0.34 to 0.35): @huggingface/transformers and miniflare (exact 0.34.5)",
+      "crossesMajor": "0.x minor crossing (0.34 to 0.35): miniflare (exact 0.34.5) and @huggingface/transformers (^0.34.1)",
       "removeWhen": "@huggingface/transformers and miniflare declare sharp 0.35.4 or higher."
     },
     "js-yaml": {
@@ -165,7 +189,7 @@
     "mocha > serialize-javascript": {
       "pin": "^7.0.5",
       "reason": "Forces mocha, whose own release caps serialize-javascript at ^6.0.2, onto the patched 7.x line.",
-      "advisories": ["CVE-2026-34043", "GHSA-5c6j"],
+      "advisories": ["CVE-2026-34043", "GHSA-5c6j-r48x-rmvq"],
       "introducedBy": ["SMI-5652", "19948bf1f"],
       "crossesMajor": "forces mocha@10.8.2 (declares ^6.0.2) up from 6.x to 7.x; recorded as verified safe",
       "removeWhen": "Installed mocha declares serialize-javascript ^7 (mocha latest declares ^7.1.1)."
@@ -179,20 +203,26 @@
       "removeWhen": "It is a floor: remove when a scratch delete and fresh resolve still yields 1.15.9 or higher."
     },
     "tmp": {
-      "pin": "^0.2.6",
+      "pin": "^0.2.7",
       "reason": "Floor for the tmp path traversal advisory, dev-only via @vscode/vsce.",
-      "advisories": ["GHSA-ph9p-34f9-6g65"],
+      "advisories": ["GHSA-ph9p-34f9-6g65", "GHSA-7c78-jf6q-g5cm"],
       "introducedBy": ["SMI-5268"],
       "crossesMajor": null,
-      "removeWhen": "It is a floor: remove when a scratch delete and fresh resolve still yields 0.2.6 or higher."
+      "removeWhen": "Every consumer declared range excludes the advisory ranges, so a scratch delete followed by npm audit --json reports nothing for tmp."
     },
     "hono": {
-      "pin": "^4.13.5",
+      "pin": "^4.13.7",
       "reason": "Floor for a long series of hono advisories (JSX, serve-static, cookie, IP); the most bumped override.",
-      "advisories": ["GHSA-gq3j-xvxp-8hrf", "GHSA-v8w9-8mx6-g223", "GHSA-gqvv-2mrq-wpjv"],
+      "advisories": [
+        "GHSA-gq3j-xvxp-8hrf",
+        "GHSA-v8w9-8mx6-g223",
+        "GHSA-gqvv-2mrq-wpjv",
+        "GHSA-hxh3-vqpv-xpqv",
+        "GHSA-6623-4q32-82v8"
+      ],
       "introducedBy": ["f1a17fd2e", "SMI-3984", "SMI-4248", "SMI-5249", "SMI-5788", "SMI-6478"],
       "crossesMajor": null,
-      "removeWhen": "It is a floor: remove when a scratch delete and fresh resolve still yields 4.13.5 or higher."
+      "removeWhen": "Every consumer declared range excludes the advisory ranges, so a scratch delete followed by npm audit --json reports nothing for hono."
     },
     "@hono/node-server": {
       "pin": "2.0.11",
@@ -232,20 +262,17 @@
       "removeWhen": "Root vite consumers (vitest, @tailwindcss/vite) all admit a patched 8.x, or the repo moves to the vite 8 line."
     },
     "fast-xml-parser": {
-      "pin": "^5.5.7",
+      "pin": "^5.7.0",
       "reason": "Floor for fast-xml-parser entity expansion, stack overflow and related advisories.",
-      "advisories": ["GHSA-jmr7-xgp7-cmfj", "GHSA-fj3w-jwp8-x2g3", "CVE-2026-26278"],
+      "advisories": [
+        "GHSA-jmr7-xgp7-cmfj",
+        "GHSA-fj3w-jwp8-x2g3",
+        "CVE-2026-26278",
+        "GHSA-gh4j-gqv2-49f6"
+      ],
       "introducedBy": ["45f3bd2a9", "SMI-2902", "SMI-3474", "SMI-3604"],
       "crossesMajor": null,
-      "removeWhen": "It is a floor: remove when a scratch delete and fresh resolve still yields 5.5.7 or higher."
-    },
-    "@aws-sdk/xml-builder": {
-      "pin": ">=3.972.3",
-      "reason": "Originally forced the exact-pinned fast-xml-parser inside xml-builder; the premise no longer holds and the unbounded pin now holds the lock below every consumer's declared minimum.",
-      "advisories": [],
-      "introducedBy": ["SMI-3604", "9c0d9403d"],
-      "crossesMajor": null,
-      "removeWhen": "Delete once a scratch resolve confirms no-op: no consumer declares a range excluding the pin (all 9 declare ^3.972.40)."
+      "removeWhen": "Every consumer declared range excludes the advisory ranges, so a scratch delete followed by npm audit --json reports nothing for fast-xml-parser."
     },
     "rollup": {
       "pin": "^4.59.0",
@@ -256,12 +283,12 @@
       "removeWhen": "It is a floor: remove when a scratch delete and fresh resolve still yields 4.59.0 or higher."
     },
     "qs": {
-      "pin": "^6.15.2",
+      "pin": "^6.16.0",
       "reason": "Floor for the qs arrayLimit bypass and a later runtime advisory.",
-      "advisories": ["CVE-2026-2391"],
+      "advisories": ["CVE-2026-2391", "GHSA-x5fp-wj9c-mxmx", "GHSA-4mjr-xmp4-gh2g"],
       "introducedBy": ["18782edfd", "SMI-5249"],
       "crossesMajor": null,
-      "removeWhen": "It is a floor: remove when a scratch delete and fresh resolve still yields 6.15.2 or higher."
+      "removeWhen": "Every consumer declared range excludes the advisory ranges, so a scratch delete followed by npm audit --json reports nothing for qs."
     },
     "web-vitals": {
       "pin": "5.1.0",
@@ -341,14 +368,6 @@
       "crossesMajor": null,
       "removeWhen": "yaml-language-server declares ajv ^8.18.0 or higher."
     },
-    "yaml-language-server > yaml": {
-      "pin": "^2.8.3",
-      "reason": "Raised yaml-language-server's exact-pinned yaml 2.7.1 past the stack overflow advisory; the consumer now declares exact 2.8.3 itself.",
-      "advisories": ["GHSA-48c2-rrv3-qjmp"],
-      "introducedBy": ["SMI-3984", "8ec28dfaa"],
-      "crossesMajor": null,
-      "removeWhen": "Delete once a scratch resolve confirms no-op (condition already met: consumer declares yaml 2.8.3)."
-    },
     "@vercel/routing-utils > ajv": {
       "pin": "^8.18.0",
       "reason": "Scoped ajv ReDoS fix for @vercel/routing-utils.",
@@ -391,11 +410,11 @@
     },
     "@tootallnate/once": {
       "pin": "^3.0.1",
-      "reason": "Forces @vercel/fun, which exact-pins 2.0.0, onto the patched 3.x line.",
+      "reason": "Forces @vercel/fun, which exact-pins vulnerable 2.0.0 (GHSA-vpq2-c234-7xj6, fixed in 2.0.1), onto 3.x.",
       "advisories": ["CVE-2026-3449", "GHSA-vpq2-c234-7xj6"],
       "introducedBy": ["SMI-3098", "5d2e00ce0"],
       "crossesMajor": "forces @vercel/fun (exact 2.0.0) up from 2.x to 3.x",
-      "removeWhen": "@vercel/fun declares @tootallnate/once 3.0.1 or higher; check whether 2.0.1 (the current @vercel/fun pin) is patched first."
+      "removeWhen": "@vercel/fun declares @tootallnate/once >=2.0.1."
     },
     "picomatch": {
       "pin": "^4.0.4",
@@ -426,7 +445,7 @@
       "reason": "Fixes the smol-toml DoS advisories and reaches vercel's own exact 1.5.2 pin, which the two removed nested rules did not.",
       "advisories": ["GHSA-7w5x-hrqm-74c2", "GHSA-v3rj-xjv7-4jmq"],
       "introducedBy": ["SMI-6943"],
-      "crossesMajor": "forces vercel (exact 1.5.2) up a minor within 1.x; no major crossing",
+      "crossesMajor": "forces vercel, @vercel/python-analysis and @vercel/rust (all exact 1.5.2) up within 1.x; no major crossing",
       "removeWhen": "vercel, @vercel/python-analysis and @vercel/rust all declare smol-toml 1.8.0 or higher (vercel latest still exact-pins 1.5.2)."
     },
     "markdown-it": {
@@ -445,7 +464,7 @@
       "severity": "high",
       "scope": "dev",
       "tier": "R4",
-      "basis": "VS Code Web path only; startServer has one call site at dist/launcher.js:82 inside _setupVSCodeWeb, and e2e/wdio.conf.ts:71 sets browserName vscode; fix needs @fastify/static 10.x, a major above wdio-vscode-service's ^7.0.4",
+      "basis": "Module may load, but its vulnerable code runs only on the VS Code Web path; startServer has one call site at dist/launcher.js:82 inside _setupVSCodeWeb, and e2e/wdio.conf.ts:71 sets browserName vscode; fix needs @fastify/static 10.x, a major above wdio-vscode-service's ^7.0.4",
       "owner": "wrsmith108",
       "accepted": "2026-10-03",
       "expires": "2027-04-01",
@@ -457,7 +476,7 @@
       "severity": "moderate",
       "scope": "dev",
       "tier": "R4",
-      "basis": "VS Code Web path only; startServer has one call site at dist/launcher.js:82 inside _setupVSCodeWeb, and e2e/wdio.conf.ts:71 sets browserName vscode; fix needs @fastify/static 10.x, a major above wdio-vscode-service's ^7.0.4",
+      "basis": "Module may load, but its vulnerable code runs only on the VS Code Web path; startServer has one call site at dist/launcher.js:82 inside _setupVSCodeWeb, and e2e/wdio.conf.ts:71 sets browserName vscode; fix needs @fastify/static 10.x, a major above wdio-vscode-service's ^7.0.4",
       "owner": "wrsmith108",
       "accepted": "2026-10-03",
       "expires": "2027-04-01",
@@ -469,7 +488,7 @@
       "severity": "high",
       "scope": "dev",
       "tier": "R4",
-      "basis": "VS Code Web path only; startServer has one call site at dist/launcher.js:82 inside _setupVSCodeWeb, and e2e/wdio.conf.ts:71 sets browserName vscode; fix needs fastify 5.x, a major above wdio-vscode-service's ^4.28.1",
+      "basis": "Module may load, but its vulnerable code runs only on the VS Code Web path; startServer has one call site at dist/launcher.js:82 inside _setupVSCodeWeb, and e2e/wdio.conf.ts:71 sets browserName vscode; fix needs fastify 5.x, a major above wdio-vscode-service's ^4.28.1",
       "owner": "wrsmith108",
       "accepted": "2026-10-03",
       "expires": "2027-04-01",
@@ -481,7 +500,7 @@
       "severity": "high",
       "scope": "dev",
       "tier": "R4",
-      "basis": "VS Code Web path only; startServer has one call site at dist/launcher.js:82 inside _setupVSCodeWeb, and e2e/wdio.conf.ts:71 sets browserName vscode; fix needs fastify 5.x, a major above wdio-vscode-service's ^4.28.1",
+      "basis": "Module may load, but its vulnerable code runs only on the VS Code Web path; startServer has one call site at dist/launcher.js:82 inside _setupVSCodeWeb, and e2e/wdio.conf.ts:71 sets browserName vscode; fix needs fastify 5.x, a major above wdio-vscode-service's ^4.28.1",
       "owner": "wrsmith108",
       "accepted": "2026-10-03",
       "expires": "2027-04-01",
@@ -493,7 +512,7 @@
       "severity": "high",
       "scope": "dev",
       "tier": "R4",
-      "basis": "VS Code Web path only; startServer has one call site at dist/launcher.js:82 inside _setupVSCodeWeb, and e2e/wdio.conf.ts:71 sets browserName vscode; fix needs fastify 5.x, a major above wdio-vscode-service's ^4.28.1",
+      "basis": "Module may load, but its vulnerable code runs only on the VS Code Web path; startServer has one call site at dist/launcher.js:82 inside _setupVSCodeWeb, and e2e/wdio.conf.ts:71 sets browserName vscode; fix needs fastify 5.x, a major above wdio-vscode-service's ^4.28.1",
       "owner": "wrsmith108",
       "accepted": "2026-10-03",
       "expires": "2027-04-01",
@@ -505,7 +524,7 @@
       "severity": "high",
       "scope": "dev",
       "tier": "R4",
-      "basis": "VS Code Web path only; startServer has one call site at dist/launcher.js:82 inside _setupVSCodeWeb, and e2e/wdio.conf.ts:71 sets browserName vscode; fix needs fastify 5.x, a major above wdio-vscode-service's ^4.28.1",
+      "basis": "Module may load, but its vulnerable code runs only on the VS Code Web path; startServer has one call site at dist/launcher.js:82 inside _setupVSCodeWeb, and e2e/wdio.conf.ts:71 sets browserName vscode; fix needs fastify 5.x, a major above wdio-vscode-service's ^4.28.1",
       "owner": "wrsmith108",
       "accepted": "2026-10-03",
       "expires": "2027-04-01",
@@ -517,7 +536,7 @@
       "severity": "high",
       "scope": "dev",
       "tier": "R4",
-      "basis": "VS Code Web path only; startServer has one call site at dist/launcher.js:82 inside _setupVSCodeWeb, and e2e/wdio.conf.ts:71 sets browserName vscode; fix needs fastify 5.x, a major above wdio-vscode-service's ^4.28.1",
+      "basis": "Module may load, but its vulnerable code runs only on the VS Code Web path; startServer has one call site at dist/launcher.js:82 inside _setupVSCodeWeb, and e2e/wdio.conf.ts:71 sets browserName vscode; fix needs fastify 5.x, a major above wdio-vscode-service's ^4.28.1",
       "owner": "wrsmith108",
       "accepted": "2026-10-03",
       "expires": "2027-04-01",
@@ -529,7 +548,7 @@
       "severity": "moderate",
       "scope": "dev",
       "tier": "R4",
-      "basis": "VS Code Web path only; startServer has one call site at dist/launcher.js:82 inside _setupVSCodeWeb, and e2e/wdio.conf.ts:71 sets browserName vscode; fix needs fastify 5.x, a major above wdio-vscode-service's ^4.28.1",
+      "basis": "Module may load, but its vulnerable code runs only on the VS Code Web path; startServer has one call site at dist/launcher.js:82 inside _setupVSCodeWeb, and e2e/wdio.conf.ts:71 sets browserName vscode; fix needs fastify 5.x, a major above wdio-vscode-service's ^4.28.1",
       "owner": "wrsmith108",
       "accepted": "2026-10-03",
       "expires": "2027-04-01",
@@ -541,7 +560,7 @@
       "severity": "moderate",
       "scope": "dev",
       "tier": "R4",
-      "basis": "VS Code Web path only; startServer has one call site at dist/launcher.js:82 inside _setupVSCodeWeb, and e2e/wdio.conf.ts:71 sets browserName vscode; fix needs fastify 5.x, a major above wdio-vscode-service's ^4.28.1",
+      "basis": "Module may load, but its vulnerable code runs only on the VS Code Web path; startServer has one call site at dist/launcher.js:82 inside _setupVSCodeWeb, and e2e/wdio.conf.ts:71 sets browserName vscode; fix needs fastify 5.x, a major above wdio-vscode-service's ^4.28.1",
       "owner": "wrsmith108",
       "accepted": "2026-10-03",
       "expires": "2027-04-01",
@@ -553,7 +572,7 @@
       "severity": "moderate",
       "scope": "dev",
       "tier": "R4",
-      "basis": "VS Code Web path only; startServer has one call site at dist/launcher.js:82 inside _setupVSCodeWeb, and e2e/wdio.conf.ts:71 sets browserName vscode; fix needs fastify 5.x, a major above wdio-vscode-service's ^4.28.1",
+      "basis": "Module may load, but its vulnerable code runs only on the VS Code Web path; startServer has one call site at dist/launcher.js:82 inside _setupVSCodeWeb, and e2e/wdio.conf.ts:71 sets browserName vscode; fix needs fastify 5.x, a major above wdio-vscode-service's ^4.28.1",
       "owner": "wrsmith108",
       "accepted": "2026-10-03",
       "expires": "2027-04-01",
@@ -565,7 +584,7 @@
       "severity": "low",
       "scope": "dev",
       "tier": "R4",
-      "basis": "VS Code Web path only; startServer has one call site at dist/launcher.js:82 inside _setupVSCodeWeb, and e2e/wdio.conf.ts:71 sets browserName vscode; fix needs fastify 5.x, a major above wdio-vscode-service's ^4.28.1",
+      "basis": "Module may load, but its vulnerable code runs only on the VS Code Web path; startServer has one call site at dist/launcher.js:82 inside _setupVSCodeWeb, and e2e/wdio.conf.ts:71 sets browserName vscode; fix needs fastify 5.x, a major above wdio-vscode-service's ^4.28.1",
       "owner": "wrsmith108",
       "accepted": "2026-10-03",
       "expires": "2027-04-01",
@@ -577,7 +596,7 @@
       "severity": "moderate",
       "scope": "dev",
       "tier": "R4",
-      "basis": "VS Code Web download path only; downloadBundle has one call site at dist/launcher.js:247 inside the standalone VS Code Web download function, and e2e/wdio.conf.ts:71 sets browserName vscode; fix needs file-type 21.x, a major above the downloader's ^20.5.0",
+      "basis": "Module may load, but its vulnerable code runs only on the VS Code Web download path; downloadBundle has one call site at dist/launcher.js:247 inside the standalone VS Code Web download function, and e2e/wdio.conf.ts:71 sets browserName vscode; fix needs file-type 21.x, a major above the downloader's ^20.5.0",
       "owner": "wrsmith108",
       "accepted": "2026-10-03",
       "expires": "2027-04-01",
@@ -589,7 +608,7 @@
       "severity": "moderate",
       "scope": "dev",
       "tier": "R4",
-      "basis": "VS Code Web download path only; downloadBundle has one call site at dist/launcher.js:247 inside the standalone VS Code Web download function, and e2e/wdio.conf.ts:71 sets browserName vscode; fix needs file-type 21.x, a major above the downloader's ^20.5.0",
+      "basis": "Module may load, but its vulnerable code runs only on the VS Code Web download path; downloadBundle has one call site at dist/launcher.js:247 inside the standalone VS Code Web download function, and e2e/wdio.conf.ts:71 sets browserName vscode; fix needs file-type 21.x, a major above the downloader's ^20.5.0",
       "owner": "wrsmith108",
       "accepted": "2026-10-03",
       "expires": "2027-04-01",
@@ -601,7 +620,7 @@
       "severity": "high",
       "scope": "dev",
       "tier": "R4",
-      "basis": "Only reached by get-uri for an ftp: PAC URL; no PAC or proxy variables appear in workflows, Dockerfile or e2e config, and the fix (6.2.1) is outside get-uri's ^5 range",
+      "basis": "Reached through vercel via proxy-agent, pac-proxy-agent and get-uri, and only for an ftp: PAC URL. No PAC or proxy variables appear in workflows, the Dockerfile or e2e config. The fix (6.2.1) is outside get-uri's ^5 range.",
       "owner": "wrsmith108",
       "accepted": "2026-10-03",
       "expires": "2027-04-01",
@@ -649,7 +668,7 @@
       "severity": "high",
       "scope": "dev",
       "tier": "R1",
-      "basis": "No patched release exists (4.2.0 is latest); astro build-time remote image caching (assets/build/remote.js:14,24-28) never sends max-stale and has no multi-user cache",
+      "basis": "No patched release exists (4.2.0 is latest). Reached two ways: astro build-time remote image caching (assets/build/remote.js:14,24-28), which never sends max-stale and has no multi-user cache; and got via cacheable-request, which is only on wdio-vscode-service's VS Code Web download path, never selected (e2e/wdio.conf.ts:71).",
       "owner": "wrsmith108",
       "accepted": "2026-10-03",
       "expires": "2026-11-02",
@@ -660,12 +679,12 @@
       "package": "deepmerge-ts",
       "severity": "high",
       "scope": "dev",
-      "tier": "R3",
-      "basis": "fix scheduled: @wdio/* 9.32.0 bump pending E2E",
+      "tier": "R2",
+      "basis": "Consumed by @wdio/config, @wdio/runner and webdriver, which run in vscode-e2e.yml (CI, no secrets, contents: read); the fix (bump @wdio/* to 9.32.0) needs the full E2E run.",
       "owner": "wrsmith108",
       "accepted": "2026-10-03",
       "expires": "2026-11-02",
-      "tracking": "SMI-6943"
+      "tracking": "SMI-6948"
     }
   ]
 }
