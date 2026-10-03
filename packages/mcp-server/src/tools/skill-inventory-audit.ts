@@ -97,7 +97,7 @@ export const skillInventoryAuditToolSchema = {
 /**
  * Execute the `skill_inventory_audit` tool. Validates input via Zod and
  * returns either the success response OR a structured validation-error
- * envelope (matches `install.ts:buildValidationError` pattern).
+ * envelope (matches `install.errors.ts:buildValidationError` pattern).
  */
 async function skillInventoryAuditImpl(
   input: unknown
@@ -134,7 +134,7 @@ export const skillInventoryAudit = withTelemetry(skillInventoryAuditImpl, {
 
 /**
  * Application-level validation-error envelope. Mirrors the
- * `install.ts:buildValidationError` shape so MCP clients that introspect
+ * `install.errors.ts:buildValidationError` shape so MCP clients that introspect
  * `success` get a consistent failure surface across audit + install
  * tools.
  */

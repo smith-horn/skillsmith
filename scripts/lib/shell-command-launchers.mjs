@@ -47,7 +47,11 @@
  * skip handles it. A launcher whose own flag takes a NESTED COMMAND STRING
  * (`script -c`, `su -c`, `dtrace -c`, `flock FILE -c`) is `DASH_C_LAUNCHERS`
  * below, read as shell text by both guards (round 23); `watch` without `-x`
- * joins its words into `sh -c` text, which reads as the same argv here.
+ * joins its words into `sh -c` text, which reads as the same argv here in
+ * the separate-word spelling (`watch cat .env`) and, since SMI-6920 round 2,
+ * as shell text in the quoted one (`watch "cat .env"`, through
+ * `shellTextOperandSpan`); documented semantics, `watch` is installed
+ * nowhere here (SMI-6908 retro F-H named the quoted spelling as a limit).
  *
  * `exec`/`command`/`noglob`/`builtin` are table rows with their OWN value
  * flags rather than routed through the shared `WRAPPER_VALUE_FLAGS` in
@@ -74,8 +78,55 @@ export const LAUNCHER_TABLE = new Map(
   [
     { name: 'nohup', positionals: 0, valueFlags: [] },
     { name: 'setsid', positionals: 0, valueFlags: [] },
-    { name: 'time', positionals: 0, valueFlags: [] },
+    // BSD `time(1)` (macOS) takes `-o file`; `/usr/bin/time -o /tmp/t cat D`,
+    // `-a -o`, `-p -o` all printed a decoy in bash 3.2 and zsh 5.9 while the
+    // row had no value flags, leaving `/tmp/t` as argv[0] (SMI-6908 F-3, the
+    // exact shape round 23 blocked on, in a row that round read as complete).
+    // The GNU long forms and `-f FORMAT` by the full-synopsis rule, documented
+    // (`/usr/bin/time` is absent from the dev container, measured).
+    { name: 'time', positionals: 0, valueFlags: ['-o', '--output', '-f', '--format'] },
     { name: 'unbuffer', positionals: 0, valueFlags: [] },
+    // macOS `arch(1)` runs its command under an architecture: `arch -arm64
+    // cat D` and `arch -arch arm64 cat D` printed a decoy in bash 3.2 and zsh
+    // 5.9; bare `arch cat D` prints the architecture and runs nothing (SMI-6908
+    // F-4). `-arm64`/`-x86_64` are single tokens the generic skip handles.
+    { name: 'arch', positionals: 0, valueFlags: ['-arch', '-d', '-e'], stopFlags: ['-h'] },
+    // macOS `xcrun(1)` runs a developer tool: `xcrun cat D` and `xcrun --sdk
+    // macosx cat D` printed (SMI-6908 F-4). xcrun's own spelling is
+    // single-dash, and the row first carried only the double-dash forms, so
+    // `xcrun -sdk macosx cat D` left `macosx` as argv[0] (round 27, the
+    // cross-family gate; measured printing in bash 3.2 and zsh 5.9). Every
+    // single-dash spelling was then measured with a decoy: `-sdk`/`-toolchain`
+    // take a value and run the command; `-log`/`-l`, `-verbose`/`-v`,
+    // `-no-cache`/`-n`, `-kill-cache`/`-k`, `-run`/`-r` take none and run it
+    // (the generic skip); `-find`/`-f`, `-show-sdk-*`, `-h`/`-help`,
+    // `-version` describe and run nothing (exit 64 with a trailing command);
+    // `-sdk=macosx`, `-sdkmacosx` and `-ln` are usage errors that run nothing.
+    {
+      name: 'xcrun',
+      positionals: 0,
+      valueFlags: ['-sdk', '--sdk', '-toolchain', '--toolchain'],
+      stopFlags: [
+        '-f',
+        '-find',
+        '--find',
+        '-show-sdk-path',
+        '--show-sdk-path',
+        '-show-sdk-version',
+        '--show-sdk-version',
+        '-show-sdk-build-version',
+        '--show-sdk-build-version',
+        '-show-sdk-platform-path',
+        '--show-sdk-platform-path',
+        '-show-sdk-platform-version',
+        '--show-sdk-platform-version',
+        '-show-toolchain-path',
+        '--show-toolchain-path',
+        '-h',
+        '-help',
+        '-version',
+      ],
+    },
     // OpenBSD doas(1): `-a style`, `-C config`, `-u user` take values (round
     // 24; documented, the binary is installed nowhere here).
     { name: 'doas', positionals: 0, valueFlags: ['-a', '-u', '-C'] },
@@ -219,7 +270,13 @@ export function launcherStops(argv, entry) {
     const a = argv[i]
     if (a === '--' || !a.startsWith('-') || a === '-') return false
     if (UNIVERSAL_STOP_FLAGS.has(a) || entry.stopFlags.has(a)) return true
-    if (/^-[A-Za-z]{2,}$/.test(a) && [...a.slice(1)].some((ch) => entry.stopFlags.has('-' + ch))) {
+    // A known value flag is one option, not a cluster: `arch -arch arm64 cat`
+    // runs cat (measured) and `-arch` must not read as a cluster holding `-h`.
+    if (
+      !entry.valueFlags.has(a) &&
+      /^-[A-Za-z]{2,}$/.test(a) &&
+      [...a.slice(1)].some((ch) => entry.stopFlags.has('-' + ch))
+    ) {
       return true
     }
     i += entry.valueFlags.has(a) ? 2 : 1

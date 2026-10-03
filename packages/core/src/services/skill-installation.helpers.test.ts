@@ -24,8 +24,10 @@ import {
   generateTips,
   manifestKeyFor,
   performUninstall,
+  sanitizeInstallError,
 } from './skill-installation.helpers.js'
 import { ManifestManager } from './skill-manifest.js'
+import { loadManifestForWrite, ManifestUnwritableError } from './skill-manifest.read-state.js'
 import type { SkillManifestEntry } from './skill-installation.types.js'
 import type { SkillDependencyRepository } from '../repositories/SkillDependencyRepository.js'
 
@@ -350,5 +352,53 @@ describe('performUninstall adopts untracked skills (ADR-139 point 1, SMI-6274 Wa
     expect(result.message).toContain('disk full (simulated)')
     // Adoption failed, so removal must never have proceeded.
     expect(fs.existsSync(skillDir)).toBe(true)
+  })
+})
+
+describe('sanitizeInstallError bypasses the manifest-refusal diagnostic (SMI-6733 Phase 2 Wave 1)', () => {
+  let tmpDir: string
+  let manifestPath: string
+
+  beforeEach(() => {
+    tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), 'skillsmith-manifest-refusal-'))
+    manifestPath = path.join(tmpDir, 'manifest.json')
+  })
+
+  afterEach(() => {
+    fs.rmSync(tmpDir, { recursive: true, force: true })
+  })
+
+  it('passes a ManifestUnwritableError message through unchanged, not the generic fallback', async () => {
+    // Truncated mid-object: JSON.parse rejects it, readManifestState
+    // classifies it `corrupt`, and loadManifestForWrite throws a
+    // ManifestUnwritableError naming the path and the byte offset -- the
+    // live diagnostic ADR-171 § 8 already produces and sanitizeInstallError
+    // currently discards (no KNOWN_ERROR_PREFIXES member matches it, and it
+    // is not an InstallRestoreError).
+    fs.writeFileSync(manifestPath, '{"version":"1.0.0","installedSkills":{"a":{}')
+
+    let caught: unknown
+    try {
+      await loadManifestForWrite(manifestPath)
+    } catch (error) {
+      caught = error
+    }
+
+    expect(caught).toBeInstanceOf(ManifestUnwritableError)
+    const manifestError = caught as InstanceType<typeof ManifestUnwritableError>
+    // The diagnostic names the byte offset -- confirms this fixture
+    // actually exercises the `corrupt` path the bypass is for, not some
+    // other refusal shape.
+    expect(manifestError.message).toMatch(/position \d+/)
+
+    // Assert on the thing that matters, not on a copy of the message
+    // pasted into the test: does sanitizeInstallError let THIS error's OWN
+    // `.message` through unchanged? Byte equality against the error's own
+    // property (rather than a hand-typed string literal) can't pass by
+    // accidentally matching unrelated text, and it fails the instant the
+    // bypass stops firing -- which is exactly the property under test. A
+    // substring/regex match on fixed text was not used because this
+    // stronger equality was directly available.
+    expect(sanitizeInstallError(manifestError)).toBe(manifestError.message)
   })
 })

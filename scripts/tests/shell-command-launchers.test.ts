@@ -51,6 +51,9 @@ describe('LAUNCHER_TABLE — the shared launcher rows', () => {
     'command',
     'builtin',
     'xargs',
+    'time',
+    'arch',
+    'xcrun',
   ])('has a row for %s', (name) => {
     expect(LAUNCHER_TABLE.has(name)).toBe(true)
   })
@@ -106,6 +109,38 @@ describe('LAUNCHER_TABLE — the shared launcher rows', () => {
     ['chrt', ['--sched-runtime', '1000', '0', 'cat', '.env'], ['cat', '.env']],
     ['xargs', ['--max-args', '1', 'cat'], ['cat']],
     ['doas', ['-a', 'style', 'cat', '.env'], ['cat', '.env']],
+    // SMI-6908 F-3 and F-4: BSD time's `-o FILE`, and the two macOS launchers.
+    ['time', ['-o', '/tmp/t', 'cat', '.env'], ['cat', '.env']],
+    ['time', ['-p', '-o', '/tmp/t', 'cat', '.env'], ['cat', '.env']],
+    ['time', ['-f', '%e', 'cat', '.env'], ['cat', '.env']],
+    ['arch', ['-arm64', 'cat', '.env'], ['cat', '.env']],
+    ['arch', ['-arch', 'arm64', 'cat', '.env'], ['cat', '.env']],
+    ['xcrun', ['cat', '.env'], ['cat', '.env']],
+    ['xcrun', ['--sdk', 'macosx', 'cat', '.env'], ['cat', '.env']],
+    ['xcrun', ['--toolchain', 'default', 'cat', '.env'], ['cat', '.env']],
+    // SMI-6908 round 27 F-17: xcrun's own spelling is single-dash (each row
+    // measured printing a decoy in bash 3.2 and zsh 5.9; the first three
+    // left `macosx`/`default` as argv[0] on 4552e41a7).
+    ['xcrun', ['-sdk', 'macosx', 'cat', '.env'], ['cat', '.env']],
+    ['xcrun', ['-toolchain', 'default', 'cat', '.env'], ['cat', '.env']],
+    ['xcrun', ['-sdk', 'macosx', '-toolchain', 'default', 'cat', '.env'], ['cat', '.env']],
+    ['xcrun', ['-sdk', 'macosx', '--', 'cat', '.env'], ['cat', '.env']],
+    ['xcrun', ['-sdk', 'macosx', '-log', 'cat', '.env'], ['cat', '.env']],
+    ['xcrun', ['-log', 'cat', '.env'], ['cat', '.env']],
+    // Round 28: orderings and combinations (each execution form measured
+    // printing by the reviewer and the queen): a value-less flag before or
+    // after the value flag, a cluster of them, an empty SDK, a repeated SDK.
+    ['xcrun', ['-log', '-sdk', 'macosx', 'cat', '.env'], ['cat', '.env']],
+    ['xcrun', ['-l', '-v', '-n', '-k', 'cat', '.env'], ['cat', '.env']],
+    ['xcrun', ['-run', '-sdk', 'macosx', 'cat', '.env'], ['cat', '.env']],
+    ['xcrun', ['-sdk', 'macosx', '-r', 'cat', '.env'], ['cat', '.env']],
+    ['xcrun', ['-sdk', '', 'cat', '.env'], ['cat', '.env']],
+    ['xcrun', ['-sdk', 'macosx', '-sdk', 'iphoneos', 'cat', '.env'], ['cat', '.env']],
+    ['xcrun', ['--sdk', 'macosx', '-sdk', 'macosx', 'cat', '.env'], ['cat', '.env']],
+    // Options are case-sensitive (`xcrun -SDK macosx cat D` exits 64 and runs
+    // nothing, measured): an unknown flag is skipped and the next word is
+    // left as the command, an over-approximation that allows here.
+    ['xcrun', ['-SDK', 'macosx', 'cat', '.env'], ['macosx', 'cat', '.env']],
     ['xargs', ['-a', 'list', '--delimiter', ',', 'cat'], ['cat']],
     // `--` ends the launcher's own options.
     ['nice', ['--', 'cat', '.env'], ['cat', '.env']],
@@ -160,8 +195,8 @@ describe('stripTransparentHeadWords — launchers and transparent words, iterati
 })
 
 const readingWords = (command: string, peel: typeof normalizeWrappers | null = null) =>
-  transparentHeadReadings(splitCommandSegments(tokenize(command)), peel).map((r) =>
-    r.map((t) => (t.redirect === true ? `<${t.value}>` : t.value))
+  transparentHeadReadings(splitCommandSegments(tokenize(command)), peel, splitCommandSegments).map(
+    (r) => r.map((t) => (t.redirect === true ? `<${t.value}>` : t.value))
   )
 
 describe('transparentHeadReadings — a launcher head, with and without a wrapper peel', () => {
@@ -222,6 +257,28 @@ describe('transparentHeadReadings — a launcher head, with and without a wrappe
     // A cluster WITHOUT a stop flag, and a glued value, still peel.
     expect(peelOneLauncher(['exec', '-cl', 'cat', '.env'])).toEqual(['cat', '.env'])
     expect(peelOneLauncher(['nice', '-n5', 'cat', '.env'])).toEqual(['cat', '.env'])
+    // SMI-6908: a known VALUE flag is one option, never a cluster, so
+    // `arch -arch arm64 cat` (which runs cat, measured) is not read as a
+    // cluster holding `-h`.
+    expect(peelOneLauncher(['arch', '-arch', 'arm64', 'cat', '.env'])).toEqual(['cat', '.env'])
+    expect(peelOneLauncher(['arch', '-h'])).toBeNull()
+    expect(peelOneLauncher(['xcrun', '--show-sdk-path'])).toBeNull()
+    // SMI-6908 round 27 F-17: the single-dash describe-only spellings stop
+    // (each measured exiting 64 and running nothing with a trailing command),
+    // and `-toolchain`, a value flag whose letters include `h`, is one
+    // option, never a cluster holding xcrun's own `-h`. Reference tree for
+    // these arms: `4552e41a7` (the branch commit that added the `xcrun` row
+    // without these stops), where each `.toBeNull()` row returned a peeled
+    // argv. On `084176142` they are null only because the row is absent,
+    // which is not the property under test (retro F-F).
+    expect(peelOneLauncher(['xcrun', '-show-sdk-path', 'cat', '.env'])).toBeNull()
+    expect(peelOneLauncher(['xcrun', '-sdk', 'macosx', '-find', 'cat'])).toBeNull()
+    expect(peelOneLauncher(['xcrun', '-h', 'cat', '.env'])).toBeNull()
+    expect(peelOneLauncher(['xcrun', '-version', 'cat', '.env'])).toBeNull()
+    expect(peelOneLauncher(['xcrun', '-toolchain', 'default', 'cat', '.env'])).toEqual([
+      'cat',
+      '.env',
+    ])
   })
 
   // Round 23: a launcher's own `-c`/`--command` value is a nested command the
