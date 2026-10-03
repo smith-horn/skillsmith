@@ -61,16 +61,16 @@ All notable changes to `@skillsmith/core` are documented here.
   destination silently overwrites an earlier diagnosis. It also tells the user to stop every
   Skillsmith process first, including any running MCP server, and to keep the moved files.
 
-- **Test**: SMI-6931 -- twelve cases covering the native driver's **file-open** path, which had none:
-  all nine `createBetterSqlite3Database` call sites in the existing driver test pass `:memory:`,
-  which is why a missing probe reached production unnoticed. Every refusal arm asserts the main file
+- **Test**: SMI-6931 -- a dedicated suite covering the native driver's **file-open** path, which had
+  none: all nine `createBetterSqlite3Database` call sites in the existing driver test pass
+  `:memory:`, which is why a missing probe reached production unnoticed. Every refusal arm asserts the main file
   **and** the `-wal` are byte-identical afterwards. The `-shm`'s bytes are deliberately **not**
   asserted, and that narrowing is measured rather than assumed: with the `-shm` deleted outright
   every committed row remained readable and the `-wal` stayed byte-identical, so it is SQLite's
   shared-memory WAL index and byte-identity on it asserts the wrong property. Includes propagation
   controls -- a `SQLITE_CANTOPEN` open failure must surface as itself, not as a corruption verdict --
-  and three known-positive controls without which a driver that refused unconditionally would satisfy
-  every other arm.
+  and known-positive controls -- a healthy database, an absent path, an in-memory path -- without
+  which a driver that refused unconditionally would satisfy every other arm.
 
   One arm uses a **genuine WAL fixture** — a real WAL database with a row committed into an
   uncheckpointed `-wal`, whose main file is then damaged past the schema page. A review round caught
