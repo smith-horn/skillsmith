@@ -17,9 +17,18 @@
  * silently. ADR-155 had already settled the policy: *"Recovery never runs
  * automatically."*
  *
- * So every test below asserts the file is left **byte-identical**. That is the
- * discriminating assertion, not decoration: a refusal that still touched the
- * bytes would pass a throw-only test.
+ * The probe runs through a SEPARATE READ-ONLY connection, opened and closed
+ * before the caller's connection exists. That is not fastidiousness: a
+ * read-write open mutates on close — SQLite checkpoints committed WAL content
+ * into the main file and unlinks the journal sidecars — so probing through the
+ * caller's own handle cannot deliver a non-mutating refusal however carefully
+ * the rest is written. A first version claimed non-mutation without earning it,
+ * and the test asserting the sidecars survive is what caught the lie.
+ *
+ * So every test below asserts the files are left **byte-identical** — all three
+ * of them, not just the main file. That is the discriminating assertion, not
+ * decoration: a refusal that still touched the bytes would pass a throw-only
+ * test.
  *
  * Every test opens a REAL file. The sibling `betterSqlite3Driver.test.ts` passes
  * `:memory:` at all nine of its open sites, which is why a missing corruption
@@ -29,6 +38,7 @@
 import { describe, it, expect, afterEach, beforeEach } from 'vitest'
 import {
   mkdtempSync,
+  mkdirSync,
   writeFileSync,
   readFileSync,
   existsSync,
@@ -146,7 +156,7 @@ describeNative('createBetterSqlite3Database — corrupt-file refusal (SMI-6931)'
     // moving only the main file orphans the other two against a rebuilt file.
     expect(message).toContain(dbPath)
     expect(message).toMatch(/btreeInitPage|malformed|page/i)
-    expect(message).toContain(`mv ${dbPath} ${dbPath}.corrupt`)
+    expect(message).toContain(`mv '${dbPath}'`)
     expect(message).toContain(`${dbPath}-wal`)
     expect(message).toContain(`${dbPath}-shm`)
     expect(message).toMatch(/does not repair it automatically/)
@@ -163,31 +173,107 @@ describeNative('createBetterSqlite3Database — corrupt-file refusal (SMI-6931)'
     expectUntouched(tempDir, dbPath, before)
   })
 
-  it('leaves the main file byte-identical even when WAL sidecars are present', () => {
+  it('leaves the WAL sidecars byte-identical too, not merely the main file', () => {
     const dbPath = join(tempDir, 'skills.db')
     writeNotADatabase(dbPath)
-    writeFileSync(`${dbPath}-wal`, Buffer.alloc(2048, 7))
-    writeFileSync(`${dbPath}-shm`, Buffer.alloc(512, 3))
-    const mainBefore = readFileSync(dbPath)
-    const mtimeBefore = statSync(dbPath).mtimeMs
+    const walBytes = Buffer.alloc(2048, 7)
+    const shmBytes = Buffer.alloc(512, 3)
+    writeFileSync(`${dbPath}-wal`, walBytes)
+    writeFileSync(`${dbPath}-shm`, shmBytes)
+    const before = snapshot(tempDir, dbPath)
 
     expect(() => createBetterSqlite3Database(dbPath)).toThrow(/is corrupt and cannot be read/)
 
-    // The guarantee is about the MAIN file: not backed aside, not rebuilt, not
-    // rewritten. That is what this driver controls.
-    expect(readFileSync(dbPath).equals(mainBefore)).toBe(true)
-    expect(statSync(dbPath).mtimeMs).toBe(mtimeBefore)
-    expect(readdirSync(tempDir).filter((f) => f.includes('.corrupt'))).toHaveLength(0)
+    // This assertion was once DELETED because it failed. That was the wrong
+    // call: its failure was evidence the non-mutation claim was false, not
+    // evidence the test was over-reaching. A read-write open mutates on close —
+    // SQLite checkpoints committed WAL content into the main file and unlinks
+    // the journal files — so the only way to earn this guarantee is to probe
+    // through a separate READ-ONLY connection, which cannot do either.
+    //
+    // It is restored, and it is the assertion that holds that design in place:
+    // probe through the caller's read-write connection again and this goes red.
+    expect(existsSync(`${dbPath}-wal`)).toBe(true)
+    expect(readFileSync(`${dbPath}-wal`).equals(walBytes)).toBe(true)
 
-    // Deliberately NOT asserted: that the `-wal`/`-shm` survive. An earlier
-    // version of this test did, and it failed — measured, SQLite removes the
-    // journal files it was managing when the last connection closes, and on a
-    // healthy database it CHECKPOINTS the WAL into the main file first, so the
-    // content is not lost but the files do go away. Those files are SQLite's,
-    // created and owned by it, and promising to preserve them would mean either
-    // leaking the handle or fighting the library's own protocol — which is the
-    // same instinct that produced this change's Critical review finding. The
-    // refusal message therefore says "if present" rather than assuming they are.
+    // The `-shm` must still EXIST but its bytes are deliberately not asserted,
+    // and that narrowing is measured rather than assumed — it is the same shape
+    // as a weakening that was wrong once already in this change, so it needed
+    // evidence. Measured: with the `-shm` deleted outright, every committed row
+    // remained readable and the `-wal` stayed byte-identical. It is SQLite's
+    // shared-memory WAL index, cross-process coordination scratch holding no
+    // durable data, so byte-identity on it asserts the wrong property. The
+    // `-wal` above is where committed-but-uncheckpointed data lives, and that
+    // one IS asserted byte-for-byte.
+    expect(existsSync(`${dbPath}-shm`)).toBe(true)
+    void shmBytes
+
+    expect(readFileSync(dbPath).equals(before.bytes)).toBe(true)
+    expect(statSync(dbPath).mtimeMs).toBe(before.mtimeMs)
+    expect(readdirSync(tempDir).sort()).toEqual(before.entries)
+  })
+
+  it('shell-quotes the paths in its remedy and names a destination that cannot collide', () => {
+    const dirWithSpace = join(tempDir, 'has space')
+    mkdirSync(dirWithSpace)
+    const dbPath = join(dirWithSpace, 'skills.db')
+    writeNotADatabase(dbPath)
+
+    let message = ''
+    try {
+      createBetterSqlite3Database(dbPath)
+    } catch (error) {
+      message = error instanceof Error ? error.message : String(error)
+    }
+
+    // These lines are instructions a user pastes into a shell. An unquoted path
+    // containing a space changes what the command does, and a fixed `.corrupt`
+    // destination silently overwrites an earlier diagnosis.
+    expect(message).toContain(`mv '${dbPath}'`)
+    expect(message).not.toMatch(/mv [^']*has space/)
+    expect(message).toMatch(/\.corrupt-\d{4}-\d{2}-\d{2}T/)
+    expect(message).toMatch(/stop every Skillsmith process/)
+  })
+
+  // ── Propagation controls. These are the arms a previous round of this work
+  // claimed existed and did not: the difference between an operational failure
+  // and a corruption verdict is the whole safety property here, and nothing
+  // held it.
+
+  it('propagates a non-corruption open failure unchanged, as its own error', () => {
+    // `fileMustExist` on an absent path is SQLITE_CANTOPEN — operational, not
+    // corruption. It must not be reinterpreted as a corrupt database, which
+    // would tell the user to move a file that does not exist.
+    const dbPath = join(tempDir, 'absent.db')
+
+    let caught: unknown
+    try {
+      createBetterSqlite3Database(dbPath, { fileMustExist: true })
+    } catch (error) {
+      caught = error
+    }
+
+    expect(caught).toBeInstanceOf(Error)
+    expect((caught as { code?: string }).code).toBe('SQLITE_CANTOPEN')
+    expect((caught as Error).message).not.toMatch(/is corrupt and cannot be read/)
+  })
+
+  it('classifies on the SQLite result code, not on the word "malformed" in a path', () => {
+    // The shared `isCorruptionError` matches the bare substring `malformed`
+    // against a message, and a message can carry the file path. A healthy
+    // database living at a path containing that word must still open.
+    const dirName = join(tempDir, 'malformed-fixtures')
+    mkdirSync(dirName)
+    const dbPath = join(dirName, 'skills.db')
+
+    const seed = createBetterSqlite3Database(dbPath)
+    seed.exec('CREATE TABLE t (id INTEGER PRIMARY KEY, val TEXT)')
+    seed.prepare('INSERT INTO t (val) VALUES (?)').run('healthy')
+    seed.close()
+
+    const db = createBetterSqlite3Database(dbPath)
+    expect(db.prepare<{ val: string }>('SELECT val FROM t WHERE id = 1').get()?.val).toBe('healthy')
+    db.close()
   })
 
   // ── Known-positive controls. Both pass before the change. ───────────────────
