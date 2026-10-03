@@ -11,6 +11,7 @@
 
 import { createRequire } from 'node:module'
 import { existsSync } from 'node:fs'
+import { randomBytes } from 'node:crypto'
 import type BetterSqlite3 from 'better-sqlite3'
 import type { Database, Statement, RunResult, DatabaseOptions } from '../database-interface.js'
 
@@ -150,8 +151,12 @@ export function createBetterSqlite3Database(
   // checkpoints committed WAL content into the main file and unlinks the
   // journal sidecars — so probing through the caller's connection cannot
   // deliver a non-mutating refusal, however carefully the rest is written.
-  // Measured: after a read-only open and close of a WAL database, the main
-  // file, `-wal` and `-shm` are all byte-identical and still present.
+  // Measured: after a read-only open and close of a WAL database, the main file
+  // and the `-wal` — the durable, data-bearing files — are byte-identical, and
+  // the `-shm` remains present and usable. The `-shm` is deliberately NOT
+  // claimed byte-identical: a WAL reader participates in coordination through
+  // it, so it is mutable shared state. It carries no durable data, measured by
+  // deleting it outright and finding every committed row still readable.
   //
   // Refusing here also means a corrupt file is never opened read-write, so
   // there is no handle to leak and no constructor path left unclassified.
@@ -191,10 +196,12 @@ export function createBetterSqlite3Database(
  * files and moving one leaves the others orphaned against a rebuilt file.
  */
 function corruptDatabaseError(path: string, reason: string): Error {
-  // A unique destination: `.corrupt` alone can already exist, and `mv` would
-  // overwrite it without saying so — losing an earlier diagnosis to a later one.
+  // A collision-resistant destination. `.corrupt` alone can already exist and
+  // `mv` would replace it silently, losing an earlier diagnosis to a later one.
+  // A millisecond timestamp alone is not enough either: two processes can refuse
+  // within the same millisecond, so the suffix carries randomness as well.
   const stamp = new Date().toISOString().replace(/[:.]/g, '-')
-  const dest = `${path}.corrupt-${stamp}`
+  const dest = `${path}.corrupt-${stamp}-${randomBytes(3).toString('hex')}`
 
   // Paths are shell-quoted. These lines are instructions a user will paste, and
   // a path containing a space — or anything worse — must not change what the
@@ -208,8 +215,8 @@ function corruptDatabaseError(path: string, reason: string): Error {
       `open risks losing that process's writes.\n` +
       `\n` +
       `To recover: stop every Skillsmith process, including any running MCP server, ` +
-      `then move the files aside as one operation and re-run. This is a WAL database, ` +
-      `so move whichever of the three are present:\n` +
+      `then run these in sequence and re-run Skillsmith. This is a WAL database, so ` +
+      `move whichever of the three files are present:\n` +
       `  mv ${q(path)} ${q(dest)}\n` +
       `  mv ${q(`${path}-wal`)} ${q(`${dest}-wal`)}   # if present\n` +
       `  mv ${q(`${path}-shm`)} ${q(`${dest}-shm`)}   # if present\n` +
@@ -291,9 +298,12 @@ function probeForCorruption(DatabaseCtor: typeof BetterSqlite3, path: string): s
   try {
     probe = new DatabaseCtor(path, { readonly: true, timeout: 5000 })
   } catch (error) {
-    // A corrupt header is rejected at open. Anything else — SQLITE_CANTOPEN,
-    // a permission error, a locking failure — is an operational problem this
-    // function must not reinterpret as corruption.
+    // A corrupt header is rejected at open. Anything else — SQLITE_CANTOPEN, a
+    // permission error, a locking failure, or SQLITE_READONLY_RECOVERY /
+    // SQLITE_READONLY_ROLLBACK (meaning the read-only connection cannot perform
+    // a recovery the file needs) — is an operational problem this function must
+    // not reinterpret as corruption. Those last two in particular are NOT
+    // evidence that the database is damaged.
     if (isNativeCorruptionCode(error)) {
       return error instanceof Error ? error.message : String(error)
     }

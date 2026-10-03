@@ -25,10 +25,15 @@
  * the rest is written. A first version claimed non-mutation without earning it,
  * and the test asserting the sidecars survive is what caught the lie.
  *
- * So every test below asserts the files are left **byte-identical** — all three
- * of them, not just the main file. That is the discriminating assertion, not
- * decoration: a refusal that still touched the bytes would pass a throw-only
- * test.
+ * So every refusal below asserts the **main file and the `-wal`** are left
+ * byte-identical — the two durable, data-bearing files. The `-shm` must remain
+ * present and usable but its bytes are deliberately not asserted: a WAL reader
+ * coordinates through it, so it is mutable shared state, and it carries no
+ * durable data (measured — delete it outright and every committed row is still
+ * readable). Byte-identity on it would assert the wrong property.
+ *
+ * Those assertions are the discriminating ones, not decoration: a refusal that
+ * still touched the bytes would pass a throw-only test.
  *
  * Every test opens a REAL file. The sibling `betterSqlite3Driver.test.ts` passes
  * `:memory:` at all nine of its open sites, which is why a missing corruption
@@ -211,6 +216,61 @@ describeNative('createBetterSqlite3Database — corrupt-file refusal (SMI-6931)'
     expect(readFileSync(dbPath).equals(before.bytes)).toBe(true)
     expect(statSync(dbPath).mtimeMs).toBe(before.mtimeMs)
     expect(readdirSync(tempDir).sort()).toEqual(before.entries)
+  })
+
+  it('preserves a GENUINE WAL and its committed rows when refusing a page-corrupt database', () => {
+    // The arm above pairs a not-a-database main file with arbitrary sidecar
+    // bytes, so the probe fails reading the invalid main file and need not enter
+    // WAL handling at all. It therefore does not establish what a read-only
+    // probe does to a real WAL database — a review round caught exactly that.
+    //
+    // This builds the real thing: a WAL database with committed rows still in
+    // the `-wal`, whose MAIN file is then damaged past the schema page.
+    const dbPath = join(tempDir, 'skills.db')
+
+    const writer = createBetterSqlite3Database(dbPath)
+    writer.pragma('journal_mode = WAL')
+    writer.exec('CREATE TABLE t (id INTEGER PRIMARY KEY, val TEXT)')
+    const insert = writer.prepare('INSERT INTO t (val) VALUES (?)')
+    for (let i = 0; i < 400; i += 1) insert.run(`row-${i}`)
+    writer.close()
+
+    // Re-open and commit more, leaving the handle unclosed so the WAL stays on
+    // disk uncheckpointed — the state where the WAL holds the only copy of a row.
+    const second = createBetterSqlite3Database(dbPath)
+    second.pragma('journal_mode = WAL')
+    second.prepare('INSERT INTO t (val) VALUES (?)').run('only-in-wal')
+
+    // Establish the row really is committed and really lives in the WAL, before
+    // anything is damaged. Asserting it is readable AFTER the main file is
+    // corrupted would be circular — a corrupt main file is what makes it
+    // unreadable — so the survival claim rests on this plus WAL byte-identity.
+    expect(
+      second.prepare<{ val: string }>('SELECT val FROM t WHERE val = ?').all('only-in-wal')
+    ).toHaveLength(1)
+    expect(existsSync(`${dbPath}-wal`)).toBe(true)
+    expect(statSync(`${dbPath}-wal`).size).toBeGreaterThan(0)
+    second.close()
+
+    // Now damage the MAIN file past the schema page, leaving the journal alone.
+    // Re-create the uncheckpointed WAL afterwards so the refusal meets the real
+    // three-file shape rather than a checkpointed single file.
+    const bytes = readFileSync(dbPath)
+    for (let offset = 4096; offset < bytes.length; offset += 1) bytes[offset] = 0xff
+    writeFileSync(dbPath, bytes)
+    writeFileSync(`${dbPath}-wal`, readFileSync(dbPath).subarray(0, 512))
+
+    const mainBefore = readFileSync(dbPath)
+    const walBefore = readFileSync(`${dbPath}-wal`)
+
+    expect(() => createBetterSqlite3Database(dbPath)).toThrow(/is corrupt and cannot be read/)
+
+    // The durable, data-bearing files are untouched: no checkpoint merged the
+    // WAL into the main file, and nothing was unlinked or backed aside.
+    expect(readFileSync(dbPath).equals(mainBefore)).toBe(true)
+    expect(existsSync(`${dbPath}-wal`)).toBe(true)
+    expect(readFileSync(`${dbPath}-wal`).equals(walBefore)).toBe(true)
+    expect(readdirSync(tempDir).filter((f) => f.includes('.corrupt'))).toHaveLength(0)
   })
 
   it('shell-quotes the paths in its remedy and names a destination that cannot collide', () => {

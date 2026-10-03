@@ -72,12 +72,20 @@ All notable changes to `@skillsmith/core` are documented here.
   and three known-positive controls without which a driver that refused unconditionally would satisfy
   every other arm.
 
+  One arm uses a **genuine WAL fixture** — a real WAL database with a row committed into an
+  uncheckpointed `-wal`, whose main file is then damaged past the schema page. A review round caught
+  that the earlier sidecar arm paired a not-a-database main file with arbitrary sidecar bytes, so the
+  probe failed reading the invalid main file and need not enter WAL handling at all: it looked like it
+  proved WAL preservation and did not. The row's presence is established **before** anything is
+  damaged, because asserting it is readable afterwards would be circular.
+
   Red-tested one site at a time, each mutation confirmed to still compile: removing the refusal kills
   exactly the refusal arms and leaves the controls green, and **opening the probe read-write instead
-  of read-only fails exactly the sidecar arm**. That last one matters, because an earlier round of
-  this work deleted that very assertion as over-reaching when it failed. Its failure was evidence the
-  non-mutation claim was false, and it is now the only thing that discriminates the correct design
-  from the incorrect one.
+  of read-only kills two arms, including the genuine-WAL one**. That mutation was suggested by the
+  reviewer rather than chosen by the author, and it matters because an earlier round of this work
+  deleted the sidecar assertion as over-reaching when it failed. Its failure was evidence the
+  non-mutation claim was false, and it is now among the few things that discriminate the correct
+  design from the incorrect one.
 
 - **Docs (internal)**: SMI-6733 -- the prose explaining why `installedSkills: null` classifies `ok` is
   **deleted**, not reworded. Three cross-family review rounds on PR #2980 each found a false claim in
