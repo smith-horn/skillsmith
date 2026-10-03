@@ -74,7 +74,7 @@
       "advisories": [],
       "introducedBy": ["SMI-4481", "afd8cabff"],
       "crossesMajor": "forces onnxruntime-node@1.21.0 (declares ^3.0.0) up from 3.x to 4.x",
-      "removeWhen": "Installed onnxruntime-node declares global-agent ^4 (latest already does)."
+      "removeWhen": "The onnxruntime-node version locked in package-lock.json declares global-agent ^4 or higher. Today the locked 1.21.0 declares ^3.0.0; onnxruntime-node 1.30.0 (latest, checked 2026-10-03) declares ^4.1.3."
     },
     "fast-uri": {
       "pin": "^3.1.8",
@@ -103,7 +103,7 @@
       ],
       "introducedBy": ["158e79689", "45f3bd2a9", "d6b175024", "500ee65c4"],
       "crossesMajor": null,
-      "removeWhen": "@vercel/fun declares tar at or above the patched floor (latest already exact-pins 7.5.22) and every other consumer range admits only patched versions."
+      "removeWhen": "The @vercel/fun version locked in package-lock.json declares a patched tar, and every other consumer range admits only patched versions. @vercel/fun 1.3.6 (latest, checked 2026-10-03) exact-pins tar 7.5.22."
     },
     "toml": {
       "pin": "^4.2.0",
@@ -187,7 +187,7 @@
       "advisories": ["CVE-2026-34043", "GHSA-5c6j-r48x-rmvq"],
       "introducedBy": ["SMI-5652", "19948bf1f"],
       "crossesMajor": "forces mocha@10.8.2 (declares ^6.0.2) up from 6.x to 7.x; recorded as verified safe",
-      "removeWhen": "Installed mocha declares serialize-javascript ^7 (mocha latest declares ^7.1.1)."
+      "removeWhen": "The mocha version locked in package-lock.json declares serialize-javascript ^7 or higher. mocha 12.0.3 (latest, checked 2026-10-03) declares ^7.1.1."
     },
     "h3": {
       "pin": "^1.15.9",
@@ -340,11 +340,11 @@
     },
     "@modelcontextprotocol/sdk > .": {
       "pin": "^1.27.1",
-      "reason": "Forces the SDK onto a version fixing the cross-client data leak; audit:standards has a drift check tying it to mcp-server's own range.",
+      "reason": "Two purposes. Security: forces the SDK onto a version fixing the cross-client data leak (GHSA-345p-7cg4-v4c7, fixed in 1.27.1). Lock stability: the \".\" key keeps Dependabot lockfile regeneration on one SDK copy (docs/internal/implementation/dependabot-mcp-sdk-lock-fix.md). audit:standards fails if this pin drifts from packages/mcp-server's own range.",
       "advisories": ["GHSA-345p-7cg4-v4c7"],
       "introducedBy": ["SMI-2330", "352111d0a"],
       "crossesMajor": null,
-      "removeWhen": "Remove only together with the audit:standards drift check on this override."
+      "removeWhen": "Both conditions hold: every consumer declares an SDK range with a minimum of 1.27.1 or higher (already true on 2026-10-03: packages/mcp-server and packages/doc-retrieval-mcp both declare ^1.27.1), and a Dependabot lockfile regeneration without the \".\" key leaves exactly one SDK copy in package-lock.json. Delete the audit:standards drift check in the same change."
     },
     "@modelcontextprotocol/sdk > ajv": {
       "pin": "^8.18.0",
@@ -408,7 +408,7 @@
       "advisories": ["CVE-2026-3449", "GHSA-vpq2-c234-7xj6"],
       "introducedBy": ["SMI-3098", "5d2e00ce0"],
       "crossesMajor": "forces @vercel/fun (exact 2.0.0) up from 2.x to 3.x",
-      "removeWhen": "@vercel/fun declares @tootallnate/once >=2.0.1."
+      "removeWhen": "The @vercel/fun version locked in package-lock.json declares @tootallnate/once with a minimum of 2.0.1 or higher (2.0.1 is the first patched release). Today it exact-pins 2.0.0."
     },
     "picomatch": {
       "pin": "^4.0.4",
@@ -424,7 +424,7 @@
       "advisories": ["GHSA-c2c7-rcm5-vvqj", "GHSA-3v7f-55p6-f55p"],
       "introducedBy": ["SMI-3547", "4a08e0ab0"],
       "crossesMajor": null,
-      "removeWhen": "Removed together with the global picomatch override."
+      "removeWhen": "The global picomatch override is removed in the same change, and anymatch declares a picomatch range whose minimum is 2.3.2 or higher (today ^2.0.4). Then resolution cannot select a vulnerable 2.x release, and nothing forces anymatch onto 4.x."
     },
     "micromatch > picomatch": {
       "pin": "^2.3.2",
@@ -432,7 +432,7 @@
       "advisories": ["GHSA-c2c7-rcm5-vvqj", "GHSA-3v7f-55p6-f55p"],
       "introducedBy": ["SMI-3547", "4a08e0ab0"],
       "crossesMajor": null,
-      "removeWhen": "Removed together with the global picomatch override."
+      "removeWhen": "The global picomatch override is removed in the same change, and micromatch declares a picomatch range whose minimum is 2.3.2 or higher (today ^2.3.1). Then resolution cannot select a vulnerable 2.x release, and nothing forces micromatch onto 4.x."
     },
     "smol-toml": {
       "pin": "^1.8.0",
@@ -440,7 +440,7 @@
       "advisories": ["GHSA-7w5x-hrqm-74c2", "GHSA-v3rj-xjv7-4jmq"],
       "introducedBy": ["SMI-6943"],
       "crossesMajor": "forces vercel, @vercel/python-analysis and @vercel/rust (all exact 1.5.2) up within 1.x; no major crossing",
-      "removeWhen": "vercel, @vercel/python-analysis and @vercel/rust all declare smol-toml 1.8.0 or higher (vercel latest still exact-pins 1.5.2)."
+      "removeWhen": "vercel, @vercel/python-analysis and @vercel/rust, as locked in package-lock.json, all declare smol-toml 1.8.0 or higher. vercel 62.2.0 (latest, checked 2026-10-03) still exact-pins 1.5.2."
     },
     "markdown-it": {
       "pin": "^14.3.1",
@@ -618,7 +618,7 @@
       "owner": "wrsmith108",
       "accepted": "2026-10-03",
       "expires": "2027-04-01",
-      "tracking": null
+      "tracking": "SMI-6945"
     },
     {
       "advisory": "GHSA-vfj7-8cjw-p6xm",
