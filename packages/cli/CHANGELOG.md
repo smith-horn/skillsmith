@@ -4,6 +4,38 @@ All notable changes to `@skillsmith/cli` are documented here.
 
 ## [Unreleased]
 
+- **Fix (correctness)**: SMI-6946 / ADR-175 -- `skillsmith manage` and `skillsmith list` no longer
+  report **"Up to date"** for every installed skill when the local database cannot be read. They
+  report **"Unknown"**, name the cause once, and say so rather than asserting currency they have no
+  basis for.
+
+  The mechanism was a `boolean`. `hasUpdates` had exactly two states, the renderer printed `false` as
+  "Up to date", and a bare `catch {}` commented *"DB not available yet"* turned **five** distinct
+  causes into that one `false`: a database that does not exist, one that is corrupt, one we lack
+  permission to read, one locked by another process, and one whose schema is wrong. Only the first
+  licenses "no updates available" -- nothing is installed that could be out of date. The other four
+  leave the answer unknowable, and the command was stating it anyway.
+
+  So `hasUpdates: boolean` becomes `updateStatus: 'available' | 'current' | 'unknown'`, **replaced
+  rather than kept alongside**: a surviving boolean is a second source of truth a reader can pick up
+  without noticing the distinction. `--outdated` now filters on a *confirmed* newer version and
+  reports how many entries it could not determine, exiting 0 -- it did what it could and says what it
+  could not. Its `"All installed skills are up to date."` line, a second false statement on the same
+  fault, may now only print when every skill was actually checked.
+
+  Introduced by SMI-6931, which made the driver throw a structured-less `Error` that this consumer
+  discarded; **measured as a regression**, since a read-only open of a page-corrupt file *succeeds*,
+  so the path worked before. Found by a post-merge retrospective after nine reviews missed it -- every
+  one scoped to the diff, and a diff does not contain its consumers.
+
+  Two further things the implementation turned up, neither in the original report. A **second** false
+  statement lived one layer in: a per-skill lookup failure also fell back to "up to date", and it is
+  now classified on SQLite's result code so query-time corruption is named rather than described
+  generically. And on the **WASM driver** an *absent* database reported `unknown` for every skill
+  rather than `current`, because that driver succeeds on a missing path and hands back an empty
+  in-memory database -- so absence is now established before the open, where no driver's behaviour can
+  mask it. That one was reachable on any `npx` install without a native build, before a first sync.
+
 - **Docs (internal)**: SMI-6733 -- two comments in `install-skill.ts` pointed at `install.ts:299-301`
   for a `resolveClientId`/`getInstallPath` pattern. Those lines held something else entirely, and had
   before this branch started: the citation rotted at some earlier edit, and nothing noticed because
