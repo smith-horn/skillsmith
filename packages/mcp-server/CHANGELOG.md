@@ -4,6 +4,33 @@ All notable changes to `@skillsmith/mcp-server` are documented here.
 
 ## [Unreleased]
 
+- **Fix (concurrency)**: SMI-6733 / SMI-6746 -- `saveManifest` no longer carries its own
+  temp-file write. It wrote through `MANIFEST_PATH + '.tmp.' + process.pid`, which has no random
+  suffix, so two concurrent saves in one process collided on an identical temp path, and no cleanup,
+  so a failed write left the temp file behind. It now delegates to `ManifestManager.save()`, which
+  has owned the `randomUUID()` suffix and the this-invocation-only temp cleanup since SMI-6007.
+  SMI-6746's definition of done forbids copying that hardening a third time, and `save()` is public
+  with a path-taking constructor, so delegation was available rather than extraction.
+
+- **Docs**: SMI-6733 -- corrected a false claim in `compliance-tools.service.ts`. The comment said
+  `ManifestManager.load()` "falls back to `{installedSkills:{}}` on a parse failure". It **throws**,
+  and has since SMI-6007 -- that sentence is the one most likely to convince a reader the fail-closed
+  read contract does not exist. The guard beneath it is still required, but for a different reason
+  than the comment gave: a shape-invalid manifest now classifies `corrupt` and never arrives, while
+  `installedSkills: null` classifies **ok** under ADR-171 § 5's nullish carve-out and is returned
+  unchanged. That guard now delegates to `installedSkillsOf` instead of a fourth hand-rolled check.
+
+- **Fix**: SMI-6733 Phase 2 Wave 2 -- `skill_outdated` and `skill_updates` now surface a
+  `warning?: string` at the response root when the local manifest read degraded
+  (corrupt/unreadable/version-unsupported), per ADR-171 § 10's same-key cross-tool contract.
+  Previously both tools reported `total_installed: 0` / `updatesAvailable: 0` on a manifest neither
+  one could read -- a positive false statement, not silence. Mechanism: a new
+  `loadManifestWithWarning` sibling wrapping core's `loadManifestLenient`, not a return-type change
+  on the existing lenient `loadManifest`. `install.ts`, `install.helpers.ts`,
+  `install.helpers.manifest.ts`, and `install.conflict.ts` also route their `installedSkills` reads
+  through core's `installedSkillsOf()` for the same nullish-carve-out reason as the entry below --
+  `installedSkills: null` classifies `ok` under ADR-171 § 5, and a bare subscript threw.
+
 - **Fix**: SMI-6733 -- the three `apply_manifest_reconcile` entry points now read `installedSkills`
   through `@skillsmith/core`'s `installedSkillsOf()` rather than subscripting the field directly.
   A manifest whose `installedSkills` is `null` or absent classifies `ok` (both mean "nothing

@@ -125,6 +125,15 @@ export interface OutdatedSummary {
 export interface OutdatedResponse {
   skills: OutdatedSkillInfo[]
   summary: OutdatedSummary
+  /**
+   * ADR-171 § 10 (SMI-6733 Phase 2 Wave 2): present only when the local
+   * manifest read degraded (`corrupt` / `unreadable` / `version_unsupported`
+   * — never on `missing`, which is the normal state of a machine that has
+   * installed nothing). Carries `loadManifestLenient`'s warning string
+   * unchanged. Same key, same meaning, in `skill_updates`'s
+   * `CheckUpdatesResponse`.
+   */
+  warning?: string
 }
 
 // ============================================================================
