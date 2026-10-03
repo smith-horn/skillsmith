@@ -73,14 +73,20 @@ case "$CONTEXT" in
     ;;
 esac
 
-# The output contract and exit policy live in a sibling, per the 500-line gate.
+# Two siblings, per the 500-line gate. The guard below fails loudly if either did
+# not load -- with no `set -e`, a failed source surfaces as "command not found"
+# mid-check instead.
 # shellcheck source=scripts/ci/typecheck-edge-functions.helpers.sh
 source "$REPO_ROOT/scripts/ci/typecheck-edge-functions.helpers.sh"
+# shellcheck source=scripts/ci/typecheck-edge-functions.baseline.sh
+source "$REPO_ROOT/scripts/ci/typecheck-edge-functions.baseline.sh"
 
 if ! declare -F finish >/dev/null || ! declare -F exit_for_inconclusive >/dev/null \
   || ! declare -F resolve_partition >/dev/null || ! declare -F validate_baseline >/dev/null \
   || ! declare -F compare_to_baseline >/dev/null \
-  || ! declare -F apply_update_ratchet >/dev/null; then
+  || ! declare -F apply_update_ratchet >/dev/null \
+  || ! declare -F is_comparable_count >/dev/null \
+  || ! declare -F assert_deno_status_contract >/dev/null; then
   printf '[edge-typecheck] FATAL: helpers did not load\n' >&2
   exit 1
 fi
@@ -349,6 +355,10 @@ if [[ -z "$REPORTED" ]]; then
   fi
 fi
 
+# Round 3: the status and the output must agree before either is trusted. Policy
+# lives in the helper, per the 500-line budget; it exits the process itself.
+assert_deno_status_contract "$REPORTED" "$DENO_RC"
+
 # I-5, measured five times and the most reliable failure on this surface: a
 # derived count that looks credible and is wrong. Take the FIRST location per
 # error header, because some blocks carry more than one.
@@ -365,21 +375,15 @@ fi
 # not carry the location.
 BY_FILE="$(mktemp)"
 trap 'rm -f "$ALL_LIST" "$PROD_LIST" "$RAW_OUT" "$CLEAN_OUT" "$BY_FILE" "${BASELINE_SNAPSHOT:-}"' EXIT
-# m5: the field split below used to be a two-field print, which splits on default
-# whitespace and so TRUNCATES a path at its first space before it reaches
-# BY_FILE. The consequence was loud rather than silent -- a truncated path has no
-# baseline row, so it read as NEW FILE and failed -- but the m-2 comment below
-# called the whitespace handling fixed when only the deno invocation was. The
-# count is now taken, the leading count stripped, and the rest of the line kept
-# intact whatever it contains. Measured 2026-10-02: 0 of 363 discovered paths
-# contain a space or tab (control: 322 contain a hyphen), so this is latent
-# rather than live, and fixed anyway.
+# NEXT EDITOR: the awk program below is a SINGLE-QUOTED shell string, so a
+# comment placed between its body and its closing quote becomes part of the
+# program and one apostrophe there ends the string early. That happened, twice,
+# and the attribution pipeline silently produced nothing both times.
 #
-# NOTE FOR THE NEXT EDITOR: the awk program below is a SINGLE-QUOTED shell
-# string. A comment placed between its body and its closing quote becomes part of
-# the program, and one apostrophe in that comment ends the string early. The
-# first draft of this very comment did exactly that, and the whole attribution
-# pipeline silently produced nothing.
+# m5: the field split takes the count, strips it, and keeps the rest of the line
+# intact -- a two-field print truncated a path at its first space. Latent today
+# (0 of 363 paths contain whitespace) and fixed anyway. Plan § m5 has the detail.
+#
 # Paths are made relative by stripping the KNOWN repo root, not by matching a
 # repo name. Measured 2026-10-02: a `.*/skillsmith/` strip yields
 # `supabase/...` in a plain checkout but `.worktrees/<name>/supabase/...` in a
@@ -460,12 +464,10 @@ ERR_FIELD="$REPORTED total / $ATTRIB attributed across $ERR_FILES files   [RECON
 # following the documented remedy must not be able to legitimize a regression.
 # ---------------------------------------------------------------------------
 # C-1: VALIDATE the baseline before it is compared against or rewritten. A
-# duplicated path made awk return two numbers, both numeric comparisons threw an
-# arithmetic error, and with no `set -e` the run continued and reached PASS -- so a
-# duplicate row could hide any number of new errors in that file. Validation also
-# catches a zeroed row kept instead of deleted, an absolute path, an unsorted file,
-# and a path that is no longer in the checked set (deleted, renamed, or newly
-# excluded -- the shape that otherwise reads as an "improvement").
+# duplicated path made awk return two numbers, both comparisons threw, and with no
+# `set -e` the run reached PASS -- so one duplicate row could hide any number of
+# new errors. See validate_baseline in the baseline sibling for the full rule set
+# and for C1, the leading-zero variant found inside this very fix.
 BASELINE_SNAPSHOT="$(mktemp)"
 if [[ -f "$BASELINE" ]]; then
   cp "$BASELINE" "$BASELINE_SNAPSHOT"
