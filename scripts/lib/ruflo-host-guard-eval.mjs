@@ -74,8 +74,8 @@ export function parseEvalSegment(wordTokens) {
   const hasExpansion = rest.some((t) => t.value.includes('$') || (t.subs && t.subs.length > 0))
   if (hasExpansion) {
     // An expanding `trap` action is the variable-indirection limit this
-    // guard already accepts, not H9: most `trap` lines in this repository
-    // expand (`trap 'rm -rf "$TMPROOT"' EXIT`) and every one denied with a
+    // guard already accepts, not H9: about half the `trap` lines in this
+    // repository expand (`trap 'rm -rf "$TMPROOT"' EXIT`) and every one denied with a
     // false reason on a guard with no opt-out (the review of 243a96847,
     // H-2). `eval "$X"` stays H9, as it has been since round 1.
     //
