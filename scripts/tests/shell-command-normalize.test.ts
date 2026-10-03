@@ -750,6 +750,34 @@ describe('normalizeWrappers()', () => {
     })
   })
 
+  // SMI-6920: `env -S TEXT [more…]` is a wrapper with a nested body (the
+  // re-tokenized text plus the remaining operands, GNU env(1)), reported
+  // as `bash -c` is. On cfc96eccd `-S` peeled as a flag and the text stayed
+  // one word in `argv`.
+  it('reports env -S as a nested body, with the remaining operands appended', () => {
+    expect(normalizeWrappers(['env', '-S', 'cat .env'])).toEqual({
+      argv: ['env', '-S', 'cat .env'],
+      nested: 'cat .env',
+    })
+    // The remaining operands are single-quoted (round 2, C-1): bare, an
+    // operand carrying `#`, `;`, `|`, `&`, `>` or a quote became a comment,
+    // a separator or a redirect when re-tokenized and the reader vanished.
+    expect(normalizeWrappers(['env', '-S', 'cat', '.env']).nested).toBe("cat '.env'")
+    expect(normalizeWrappers(['env', '-S', 'cat', '#x', '.env']).nested).toBe("cat '#x' '.env'")
+    expect(normalizeWrappers(['env', '-S', 'cat', "a'b", '.env']).nested).toBe(
+      "cat 'a'\\''b' '.env'"
+    )
+    expect(normalizeWrappers(['env', 'X=1', '--split-string=cat .env']).nested).toBe('cat .env')
+    expect(normalizeWrappers(['sudo', 'env', '-u', 'X', '-Scat .env']).nested).toBe('cat .env')
+    // Pins: `-S` with no operand peels as before; a plain env prefix never
+    // reports a body.
+    expect(normalizeWrappers(['env', '-S'])).toEqual({ argv: [], nested: null })
+    expect(normalizeWrappers(['env', '-i', 'cat', '.env'])).toEqual({
+      argv: ['cat', '.env'],
+      nested: null,
+    })
+  })
+
   it('unwraps varlock run --', () => {
     expect(normalizeWrappers(['varlock', 'run', '--', 'node', 'x.js'])).toEqual({
       argv: ['node', 'x.js'],

@@ -36,15 +36,17 @@
 import * as fs from 'fs/promises'
 
 import type { SkillManifest } from './skill-installation.types.js'
+import {
+  buildLenientWarning,
+  buildRefusalMessage,
+  capDiagnostic,
+} from './skill-manifest.read-state.messages.js'
 
 /** ADR-171 § 6: all three `SkillManifest` declarations use this literal today. */
 const CURRENT_MANIFEST_VERSION = '1.0.0'
 
 /** ADR-171 § 6: the major component this Skillsmith understands. */
 const SUPPORTED_MAJOR_VERSION = 1
-
-/** SMI-6862: tracks file-level repair, named in the § 8 refusal message. */
-const REPAIR_FOLLOW_UP_ISSUE = 'SMI-6862'
 
 function emptyManifest(): SkillManifest {
   // Returned by value (namespace-overrides.ts's own `emptyLedger()`
@@ -102,7 +104,7 @@ export type ManifestReadState =
 export type ManifestCorruptKind = 'unparseable' | 'shape' | 'version_malformed'
 
 /** The three states {@link loadManifestForWrite} refuses on. */
-type ManifestRefusalState = Extract<
+export type ManifestRefusalState = Extract<
   ManifestReadState,
   { state: 'corrupt' | 'unreadable' | 'version_unsupported' }
 >
@@ -116,6 +118,10 @@ type ManifestRefusalState = Extract<
  * than guessed at, matching that literal.
  */
 function parseMajorVersion(version: string): number | null {
+  // Deliberately NOT end-anchored, so a prerelease or build suffix stays
+  // supported. The cost is that a junk suffix parses too; `capDiagnostic`
+  // bounds that rather than an anchor here. Both halves are pinned by the
+  // version table in this module's tests — do not anchor without reading it.
   const match = /^(\d+)\.\d+\.\d+/.exec(version)
   if (!match) return null
   return Number.parseInt(match[1], 10)
@@ -153,10 +159,16 @@ function isPlainObject(value: unknown): value is Record<string, unknown> {
  *
  * `installedSkills: null` classifies `ok`, not `corrupt`, exactly like an
  * absent key (SMI-6733 Phase 1 — re-measured from a wrong "any non-object
- * installedSkills is corrupt" premise). `null` is byte-identical to absent
- * for every consumer: `{...null}` spreads to `{}` and every ad-hoc tolerance
- * guard elsewhere in this repo already treats it that way (`manifest
- * .installedSkills && typeof …` short-circuits on null). The hazard set
+ * installedSkills is corrupt" premise).
+ *
+ * Three facts, and no causal story joining them — § 5 accepts both shapes, § 3
+ * preserves the difference between them, and `installedSkillsOf` normalises
+ * either to an empty map for a map-oriented reader. Three successive review
+ * rounds each found a false claim in the explanation that used to stand here
+ * ("byte-identical", then "byte-identical for every consumer", then
+ * "indistinguishable to every consumer" — the last is false because
+ * `Object.hasOwn`, `JSON.stringify` and `=== null` each distinguish them), so
+ * the explanation is gone rather than reworded a fourth time. The hazard set
  * measured to cause real harm (SMI-6752) is non-empty strings and non-empty
  * arrays — a string spreads char-indexed and an array of entries spreads
  * index-keyed, both of which corrupt `installedSkills` on the next write.
@@ -261,14 +273,17 @@ export async function readManifestState(manifestPath: string): Promise<ManifestR
       return {
         state: 'corrupt',
         kind: 'version_malformed',
-        reason: `its "version" field is "${versionValue}", which is not a major.minor.patch string`,
+        reason: `its "version" field is "${capDiagnostic(versionValue)}", which is not a major.minor.patch string`,
         position: null,
       }
     }
     if (major > SUPPORTED_MAJOR_VERSION) {
       return {
         state: 'version_unsupported',
-        found: versionValue,
+        // Capped on the STATE, not at the interpolation, so every consumer of
+        // `found` is bounded — it is a diagnostic string, never compared or
+        // computed on (sole reader: `describeManifestProblem`'s message).
+        found: capDiagnostic(versionValue),
         expected: CURRENT_MANIFEST_VERSION,
       }
     }
@@ -284,87 +299,6 @@ export async function readManifestState(manifestPath: string): Promise<ManifestR
   }
 
   return { state: 'ok', manifest: parsed, raw: parsed }
-}
-
-/** Diagnostic sentence plus one concrete next action for a refusing state. */
-function describeManifestProblem(
-  manifestPath: string,
-  result: ManifestRefusalState
-): { detail: string; remedy: string } {
-  switch (result.state) {
-    case 'corrupt': {
-      // `position` is EXTRACTED from `reason`, so appending it restated the
-      // same byte offset twice in one sentence ("… at position 1 (line 1
-      // column 2), at position 1"). It stays on the state as structured data
-      // for callers that want the number without parsing prose; the message
-      // takes it from `reason`, which is where a user reads it.
-      if (result.kind === 'unparseable') {
-        return {
-          detail: `the file exists but is not valid JSON (${result.reason})`,
-          remedy:
-            'Fix it by hand (a JSON validator will find the break) or restore a copy your ' +
-            'editor or backup tool kept, then retry. Repairing a corrupt manifest file is not ' +
-            `implemented yet — ${REPAIR_FOLLOW_UP_ISSUE} tracks it; apply_manifest_reconcile ` +
-            'repairs a corrupt entry inside a readable file, not a file that cannot be parsed.',
-        }
-      }
-      // Well-formed JSON, wrong document. A JSON validator finds nothing
-      // here, so it must not be the advice — and the rule that was broken is
-      // named in the user's own vocabulary rather than as an ADR section
-      // number they cannot open.
-      return {
-        detail: `the file is valid JSON but is not a Skillsmith manifest (${result.reason})`,
-        remedy:
-          'Open the file and correct that field — "version" is a string like "1.0.0", and ' +
-          '"installedSkills" is a JSON object whose keys are skill names (an empty object, ' +
-          '{}, if nothing is installed) — or restore a copy your editor or backup tool kept, ' +
-          `then retry. Repairing a corrupt manifest file is not implemented yet — ` +
-          `${REPAIR_FOLLOW_UP_ISSUE} tracks it; apply_manifest_reconcile repairs a corrupt ` +
-          'entry inside a well-formed manifest, not a file whose own shape is wrong.',
-      }
-    }
-    case 'unreadable': {
-      const code = result.code ?? result.reason
-      return {
-        detail: `the file exists but could not be read (${code})`,
-        remedy:
-          `Check the file's owner and permissions (\`ls -l ${manifestPath}\`), and that the ` +
-          'volume is neither full nor read-only, then retry.',
-      }
-    }
-    case 'version_unsupported': {
-      return {
-        detail:
-          `it records version ${result.found} and this Skillsmith understands version ` +
-          `${result.expected}, so a newer Skillsmith wrote it`,
-        remedy: 'Upgrade Skillsmith, or point this client at a different manifest.',
-      }
-    }
-    /* c8 ignore next 4 -- exhaustiveness guard; TS rejects a missing case at compile time */
-    default: {
-      const exhaustive: never = result
-      throw new Error(`unreachable manifest read state: ${JSON.stringify(exhaustive)}`)
-    }
-  }
-}
-
-/** ADR-171 § 8: the four required properties in one message per state. */
-function buildRefusalMessage(manifestPath: string, result: ManifestRefusalState): string {
-  const { detail, remedy } = describeManifestProblem(manifestPath, result)
-  const notModified =
-    result.state === 'version_unsupported'
-      ? 'Your manifest has NOT been modified — treating it as corrupt would discard the skills ' +
-        'that newer version recorded.'
-      : 'Your manifest has NOT been modified — every skill it records is still recorded. This ' +
-        'file is the only record of what Skillsmith has installed, so Skillsmith never repairs, ' +
-        'replaces or moves it automatically.'
-  return `Refusing to write ${manifestPath}: ${detail}. ${notModified} ${remedy}`
-}
-
-/** Read-only framing of the same diagnostic, for {@link loadManifestLenient}. */
-function buildLenientWarning(manifestPath: string, result: ManifestRefusalState): string {
-  const { detail, remedy } = describeManifestProblem(manifestPath, result)
-  return `${manifestPath} could not be read (treated as empty): ${detail}. ${remedy}`
 }
 
 /**
