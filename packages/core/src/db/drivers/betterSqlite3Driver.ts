@@ -298,12 +298,31 @@ function probeForCorruption(DatabaseCtor: typeof BetterSqlite3, path: string): s
   try {
     probe = new DatabaseCtor(path, { readonly: true, timeout: 5000 })
   } catch (error) {
-    // A corrupt header is rejected at open. Anything else — SQLITE_CANTOPEN, a
-    // permission error, a locking failure, or SQLITE_READONLY_RECOVERY /
-    // SQLITE_READONLY_ROLLBACK (meaning the read-only connection cannot perform
-    // a recovery the file needs) — is an operational problem this function must
-    // not reinterpret as corruption. Those last two in particular are NOT
-    // evidence that the database is damaged.
+    // A corrupt header is rejected at open, so that case is a verdict. Anything
+    // else — SQLITE_CANTOPEN, a permission error, a locking failure — is an
+    // operational problem, and this function must not reinterpret it as
+    // corruption. It propagates as itself.
+    //
+    // SQLITE_READONLY_RECOVERY / SQLITE_READONLY_ROLLBACK deserve their own
+    // note, because they are the one shape where "the probe cannot open it"
+    // might not mean "the caller cannot open it": they signal that a read-only
+    // connection cannot perform a recovery the file needs, which a READ-WRITE
+    // open — the one this function runs ahead of — can. If that were reachable,
+    // probing read-only would turn a recoverable database into a refusal to
+    // open, a regression this change would have introduced.
+    //
+    // Measured rather than reasoned, and not reachable in any state that could
+    // produce it: a genuine crash-left hot rollback journal (4,616 bytes, child
+    // SIGKILLed mid-`BEGIN IMMEDIATE`) opened read-only and returned the
+    // correctly rolled-back rows; a crashed WAL database opened read-only both
+    // with its `-shm` intact and with the `-shm` deleted, recovering the WAL
+    // index itself each time. The asymmetry requires writable storage, since
+    // otherwise the read-write open fails too — and with writable storage the
+    // read-only open succeeded in every case. So these codes get no special
+    // branch: an open failure the probe cannot classify fails loudly, which is
+    // correct while no state is known where it is wrong. If one is ever found,
+    // this is the comment it contradicts, and the fix is to return null here
+    // and let the real open attempt the recovery.
     if (isNativeCorruptionCode(error)) {
       return error instanceof Error ? error.message : String(error)
     }
