@@ -5800,6 +5800,12 @@ console.log(`\n${BOLD}Check 65: test-suite manifest hygiene (SMI-6343)${RESET}`)
     // ManifestManager. All four are genuine false positives.
     'packages/cli/src/commands/pin.test.ts':
       "updateManifestEntry is replaced via vi.mock('../utils/manifest.js', () => ({ updateManifestEntry: mockUpdateManifestEntry, ... })) — no real manifest module is loaded",
+    // SMI-6733 Phase 2 Wave 2: same mock surface as pin.test.ts directly above,
+    // in a sibling file that pins the ADR-171 § 5 nullish case (`installedSkills:
+    // null` classifies `ok`, so a bare subscript threw a raw TypeError out of
+    // `sklx pin`). Same justification, same mocked module.
+    'packages/cli/src/commands/pin.manifest-null.test.ts':
+      "updateManifestEntry is replaced via vi.mock('../utils/manifest.js', ...) — no real manifest module is loaded",
     'packages/cli/src/utils/manifest.test.ts':
       "this IS manifest.ts's own test file — fs/promises is fully mocked (vi.mock with importOriginal, only mkdir/writeFile/rename/readFile/unlink overridden) so saveManifest()'s writes go to an in-memory memfs object, never real disk; a dedicated 'SMI-6343: real-home write guard' describe block additionally proves the new guard itself fires",
     'packages/mcp-server/src/tools/install.helpers.manifest.test.ts':

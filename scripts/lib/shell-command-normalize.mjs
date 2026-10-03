@@ -37,10 +37,10 @@
  * docs/internal/implementation/smi-6744-ruflo-host-guard.md's "Parity
  * harness for the shared normalizer" section.
  *
- * `env-read-guard.mjs`'s own `checkArgv`, `evaluateCommand`, `decide`,
+ * `env-read-guard.mjs` keeps `evaluateCommand` and `decide`; its `checkArgv`,
  * `scanTextForProtected`, `INLINE_SCRIPT_SHORT_FLAG_CHARS` and
- * `INLINE_INTERPRETERS` stay in that file — they are `.env`-specific, not
- * reusable normalization primitives. `scripts/ruflo-host-guard.mjs`'s own
+ * `INLINE_INTERPRETERS` live in `env-read-guard-argv.mjs` (SMI-6920) — all
+ * `.env`-specific, not reusable normalization primitives. `scripts/ruflo-host-guard.mjs`'s own
  * `exec`-wrapper handling, brace-syntax fail-closed check, and H9 (`eval`)
  * predicate are guard-local for the same reason and are NOT in this file.
  *
@@ -53,20 +53,19 @@
  * unchanged.
  */
 
-import { basenameOf, tokenize } from './shell-command-tokenize.mjs'
+import { inputRedirectSources } from './shell-command-redirects.mjs'
+import { envSplitCommandText } from './shell-command-shell-text.mjs'
 import {
-  checkNestedRedirectSources,
   groupingOpSubRuns,
-  inputRedirectSources,
   SEGMENT_SEPARATOR_OPS,
   splitCommandSegments,
   splitCommandSegmentsParensGrouping,
   splitCommandSegmentsWithSubRuns,
 } from './shell-command-segments.mjs'
+import { basenameOf, tokenize } from './shell-command-tokenize.mjs'
 
 export { basenameOf, tokenize }
 export {
-  checkNestedRedirectSources,
   groupingOpSubRuns,
   inputRedirectSources,
   SEGMENT_SEPARATOR_OPS,
@@ -270,6 +269,11 @@ export function normalizeWrappers(argvIn) {
       continue
     }
     if (head === 'env') {
+      // `env -S '<text>' [more…]` runs the re-tokenized text plus the rest:
+      // a wrapper with a nested body, as `bash -c` is. Peeled as a flag, the
+      // text was one unreadable word (`sudo env -S "cat .env"`, SMI-6920).
+      const split = envSplitCommandText(argv)
+      if (split !== null) return { argv, nested: split }
       argv = stripEnvPrefix(argv.slice(1))
       continue
     }
