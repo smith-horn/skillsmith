@@ -42,6 +42,7 @@ const acc = (over: Record<string, unknown> = {}) => ({
   ...over,
 })
 const lockWith = (...names: string[]) => ({
+  lockfileVersion: 3,
   packages: Object.fromEntries(['', ...names].map((n) => [n ? `node_modules/${n}` : '', {}])),
 })
 
@@ -255,7 +256,7 @@ describe('R4 pinning (H3)', () => {
       fails(r4({ pinnedBy: 'tests/nope.test.ts' }, () => false))
         .map((f) => f.message)
         .join('\n')
-    ).toMatch(/pinnedBy "tests\/nope.test.ts" names a file that does not exist/)
+    ).toMatch(/pinnedBy "tests\/nope.test.ts" does not name an existing regular file/)
     const ok = r4({ pinnedBy: 'tests/yes.test.ts' }, () => true)
     expect(fails(ok)).toHaveLength(0)
     expect(warns(ok)).toHaveLength(0)
@@ -343,7 +344,11 @@ describe('raw registry shape and duplicate keys (T24-T26, M2)', () => {
     ).toMatch(/package "pkgone", which is not in package-lock.json/)
     expect(fails(evalFx({ lock: lockWith('pkgone') }))).toHaveLength(0)
     expect(
-      fails(evalFx({ lock: { packages: { 'node_modules/x/node_modules/pkgone': {} } } }))
+      fails(
+        evalFx({
+          lock: { lockfileVersion: 3, packages: { 'node_modules/x/node_modules/pkgone': {} } },
+        })
+      )
     ).toHaveLength(0)
   })
 })

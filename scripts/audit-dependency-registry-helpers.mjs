@@ -17,9 +17,20 @@
  * validated) and compared as Date.UTC day numbers, never as local-time Dates.
  */
 
-import { existsSync, readFileSync, appendFileSync } from 'node:fs'
+import { readFileSync, appendFileSync } from 'node:fs'
 import { join } from 'node:path'
 import { scanDuplicateJsonKeys } from './audit-dependency-registry-json.mjs'
+import {
+  findAmbiguousOverrideKeys,
+  hasOwn,
+  isNonEmptyString,
+  isRegularFile,
+  lockHasPackage,
+  lockProblem,
+  pinnedByProblem,
+  validateAcceptanceTypes,
+  validateOverrideEntryTypes,
+} from './audit-dependency-registry-fields.mjs'
 
 export const REGISTRY_PATH = '.github/dependency-registry.json'
 export const TIER_CEILING_DAYS = Object.freeze({ R1: 30, R2: 90, R3: 90, R4: 180 })
@@ -29,7 +40,6 @@ const CVE_RE = /^CVE-\d{4}-\d{4,}$/
 const DATE_RE = /^\d{4}-\d{2}-\d{2}$/
 
 const isAdvisoryId = (s) => typeof s === 'string' && (GHSA_RE.test(s) || CVE_RE.test(s))
-const isNonEmptyString = (s) => typeof s === 'string' && s.trim().length > 0
 
 /** Day number of a strictly valid UTC `YYYY-MM-DD`, or null. */
 export function utcDayNumber(s) {
@@ -56,16 +66,19 @@ export function collectOverrideLeaves(overrides, prefix = []) {
 const f = (message, fix) => ({ severity: 'fail', message, fix })
 const w = (message, fix) => ({ severity: 'warn', message, fix })
 
-function lockHasPackage(lock, name) {
-  const keys = Object.keys(lock?.packages ?? {})
-  return keys.some((k) => k === `node_modules/${name}` || k.endsWith(`/node_modules/${name}`))
-}
-
 function checkOverrides({ pkg, registry }, out) {
   const leaves = collectOverrideLeaves(pkg?.overrides)
   const entries = registry.overrides ?? {}
+  for (const bad of findAmbiguousOverrideKeys(pkg?.overrides)) {
+    out.push(
+      f(
+        `Check 76: package.json override key "${bad}" contains " > ", which collides with the nesting separator used by the registry`,
+        'Rename the override key, or express the nesting as a nested overrides object'
+      )
+    )
+  }
   for (const key of leaves.keys()) {
-    if (!(key in entries)) {
+    if (!hasOwn(entries, key)) {
       out.push(
         f(
           `Check 76: override "${key}" has no entry in ${REGISTRY_PATH}`,
@@ -99,10 +112,11 @@ function checkOverrides({ pkg, registry }, out) {
       }
     }
     for (const field of ['crossesMajor', 'introducedBy']) {
-      if (!Object.prototype.hasOwnProperty.call(e, field)) {
-        out.push(f(`Check 76: override "${key}" is missing the key "${field}" (null is allowed)`))
+      if (!hasOwn(e, field)) {
+        out.push(f(`Check 76: override "${key}" is missing the key "${field}"`))
       }
     }
+    validateOverrideEntryTypes(key, e, out)
     if (!Array.isArray(e.advisories)) {
       out.push(f(`Check 76: override "${key}" advisories is not an array`))
     } else {
@@ -141,8 +155,9 @@ function checkAcceptance(a, ctx, out, windowEntries) {
       f(`Check 76: acceptance advisory ${JSON.stringify(a.advisory)} is not a full GHSA or CVE id`)
     )
   }
+  validateAcceptanceTypes(a, label, out)
   if (a.scope !== 'dev') out.push(f(`Check 76: acceptance ${label} scope must be "dev"`))
-  if (!Object.prototype.hasOwnProperty.call(TIER_CEILING_DAYS, a.tier)) {
+  if (!hasOwn(TIER_CEILING_DAYS, a.tier)) {
     out.push(f(`Check 76: acceptance ${label} tier must be one of R1, R2, R3, R4`))
   }
   if (isNonEmptyString(a.package) && !lockHasPackage(lock, a.package)) {
@@ -175,7 +190,7 @@ function checkAcceptance(a, ctx, out, windowEntries) {
           `Check 76: acceptance ${label} expires ${a.expires} is not after accepted ${a.accepted} (UTC)`
         )
       )
-    const ceiling = TIER_CEILING_DAYS[a.tier]
+    const ceiling = hasOwn(TIER_CEILING_DAYS, a.tier) ? TIER_CEILING_DAYS[a.tier] : undefined
     if (ceiling !== undefined && exp - acc > ceiling) {
       out.push(
         f(
@@ -192,11 +207,12 @@ function checkAcceptance(a, ctx, out, windowEntries) {
   }
   if (a.tier === 'R4') {
     const hasPin = a.pinnedBy !== undefined && a.pinnedBy !== null
-    if (hasPin && (!isNonEmptyString(a.pinnedBy) || !exists(join(root, a.pinnedBy)))) {
+    const pinProblem = hasPin ? pinnedByProblem(a.pinnedBy, root, exists) : null
+    if (pinProblem) {
       out.push(
         f(
-          `Check 76: acceptance ${label} pinnedBy ${JSON.stringify(a.pinnedBy)} names a file that does not exist`,
-          'Point pinnedBy at the repo test file that pins the R4 condition'
+          `Check 76: acceptance ${label} pinnedBy ${JSON.stringify(a.pinnedBy)} ${pinProblem}`,
+          'Point pinnedBy at the repo-relative test file (*.test.* / *.spec.*) that pins the R4 condition'
         )
       )
     }
@@ -220,7 +236,7 @@ function checkAcceptance(a, ctx, out, windowEntries) {
     if (todayN >= exp) {
       out.push(
         f(
-          `Check 76: acceptance ${label} expired ${a.expires} (UTC). Re-triage: if still unfixed, set accepted=${today} and expires <= today+${TIER_CEILING_DAYS[a.tier] ?? '<ceiling>'}d in ${REGISTRY_PATH}; if fixed, delete the entry. No opt-out exists; every code PR fails until this is done.`
+          `Check 76: acceptance ${label} expired ${a.expires} (UTC). Re-triage: if still unfixed, set accepted=${today} and expires <= today+${hasOwn(TIER_CEILING_DAYS, a.tier) ? TIER_CEILING_DAYS[a.tier] : '<ceiling>'}d in ${REGISTRY_PATH}; if fixed, delete the entry. No opt-out exists; every code PR fails until this is done.`
         )
       )
     } else if (todayN >= exp - WARN_WINDOW_DAYS) {
@@ -247,11 +263,11 @@ function checkAcceptance(a, ctx, out, windowEntries) {
  * @param {object|null} input.lock parsed package-lock.json
  * @param {string} input.today UTC YYYY-MM-DD, injected by the caller
  * @param {string} [input.root] repo root for pinnedBy lookups
- * @param {(p: string) => boolean} [input.exists] filesystem probe
+ * @param {(p: string) => boolean} [input.exists] probe, true iff the JOINED path is a regular file
  * @returns {{findings: Array, examined: object, windowEntries: Array, evaluated: boolean}}
  */
 export function evaluateDependencyRegistry(input) {
-  const { pkg, registryText, lock, today, root = '.', exists = existsSync } = input
+  const { pkg, registryText, lock, today, root = '.', exists = isRegularFile } = input
   const findings = []
   const windowEntries = []
   const notEvaluated = (why) => ({
@@ -267,6 +283,8 @@ export function evaluateDependencyRegistry(input) {
   if (!pkg || typeof pkg !== 'object') return notEvaluated('package.json is missing or unparseable')
   if (!lock || typeof lock !== 'object')
     return notEvaluated('package-lock.json is missing or unparseable')
+  const lockWhy = lockProblem(lock)
+  if (lockWhy) return notEvaluated(lockWhy)
   if (typeof registryText !== 'string') return notEvaluated(`${REGISTRY_PATH} is missing`)
   let registry
   try {

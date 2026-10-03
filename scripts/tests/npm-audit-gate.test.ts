@@ -125,8 +125,9 @@ describe('npm-audit-gate.sh command and ambient config (T6, T7, T8, T23)', () =>
     expect(r.argv).toEqual(PINNED_ARGV)
   })
 
-  const BASELINE = '2 vulnerabilities (1 high, 1 critical)'
-  const ambient: Array<[string, Record<string, string>, Record<string, string>?, string?]> = [
+  const BASELINE = '1 high severity vulnerability'
+  type Files = { userrc?: string; projectrc?: string; globalrc?: string }
+  const ambient: Array<[string, Record<string, string>, Files?]> = [
     ['NPM_CONFIG_OFFLINE=true', { NPM_CONFIG_OFFLINE: 'true' }],
     ['npm_config_offline=true', { npm_config_offline: 'true' }],
     ['NPM_CONFIG_PREFER_OFFLINE=true', { NPM_CONFIG_PREFER_OFFLINE: 'true' }],
@@ -148,26 +149,33 @@ describe('npm-audit-gate.sh command and ambient config (T6, T7, T8, T23)', () =>
     ['user .npmrc workspaces=true', {}, { userrc: 'workspaces=true\n' }],
     ['user .npmrc offline=true', {}, { userrc: 'offline=true\n' }],
     ['user .npmrc registry=http://127.0.0.1:1', {}, { userrc: 'registry=http://127.0.0.1:1\n' }],
+    // SMI-6949 review round 1 (R1-H1): config sources that narrowed the audit to a clean workspace
+    ['project .npmrc workspace=packages/a', {}, { projectrc: 'workspace=packages/a\n' }],
+    ['project .npmrc workspaces=false', {}, { projectrc: 'workspaces=false\n' }],
+    ['global config file workspace=packages/a', {}, { globalrc: 'workspace=packages/a\n' }],
+    ['project .npmrc color=always (R1-M1)', {}, { projectrc: 'color=always\n' }],
+    ['NPM_CONFIG_COLOR=always (R1-M1)', { NPM_CONFIG_COLOR: 'always' }],
   ]
 
-  const runAmbient = (
-    env: Record<string, string>,
-    files?: { userrc?: string; projectrc?: string }
-  ) => {
+  const runAmbient = (env: Record<string, string>, files?: Files) => {
     const dir = scratchDir('rc')
-    const standin = join(dir, 'standin')
-    mkdirSync(standin)
     const userrc = join(dir, 'user.npmrc')
+    const globalrc = join(dir, 'global.npmrc')
     if (files?.userrc !== undefined) writeFileSync(userrc, files.userrc)
+    if (files?.globalrc !== undefined) writeFileSync(globalrc, files.globalrc)
     return runGate({
       npmScript: STANDIN_NPM,
       rc: 0,
-      env: { ...env, ...(files?.userrc !== undefined ? { NPM_CONFIG_USERCONFIG: userrc } : {}) },
+      env: {
+        ...env,
+        ...(files?.userrc !== undefined ? { NPM_CONFIG_USERCONFIG: userrc } : {}),
+        ...(files?.globalrc !== undefined ? { NPM_CONFIG_GLOBALCONFIG: globalrc } : {}),
+      },
       cwdFiles: files?.projectrc !== undefined ? { '.npmrc': files.projectrc } : {},
     })
   }
 
-  it('T7 baseline (no ambient config) audits the full graph: VULNERABLE with both advisories', () => {
+  it('T7 baseline (no ambient config) audits the full graph: VULNERABLE (the advisory lives only in packages/b)', () => {
     const r = runAmbient({})
     expect(r.all).toContain(BASELINE)
     expect(r.status).toBe(10)
@@ -184,12 +192,6 @@ describe('npm-audit-gate.sh command and ambient config (T6, T7, T8, T23)', () =>
     for (const [label, env, files] of ambient) {
       expect(runAmbient(env, files).argv, label).toEqual(PINNED_ARGV)
     }
-  })
-
-  it('T7 residual (documented, measured): a PROJECT .npmrc workspace= narrows the audit but never reports CLEAN', () => {
-    const r = runAmbient({}, { projectrc: 'workspace=packages/a\n' })
-    expect(r.all).toContain('1 critical severity vulnerability')
-    expect(r.status).toBe(10)
   })
 
   it('T8 npm absent => exit 12 with a 127 final line and the shell message', () => {
