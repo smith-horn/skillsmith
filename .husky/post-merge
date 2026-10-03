@@ -125,4 +125,65 @@ if git diff --name-only ORIG_HEAD HEAD | grep -q '^package-lock\.json$'; then
   echo ""
 fi
 
+# --- ruflo bridge-verdict probe (SMI-6744 A5.5.2 delta) ---------------------
+# Deliberately OUTSIDE the lockfile conditional above (D1.1): that gate reads
+# the merged range between ORIG_HEAD and HEAD, not the clock, and this repo
+# has gone 15+ days with no package-lock.json change at all — nesting the
+# probe inside it would starve it for just as long. Host-resolved key (D3 —
+# `resolveMainRepoKey()` inside the probe, never a container-side
+# computation), single-flight lock (`~/.skillsmith/ruflo-bridge.state.lock`),
+# 24h debounce on the entry's own `evaluatedAt`. SIGKILL at 65s, strictly
+# inside the probe's own 120s lock-stale window — the two are related by
+# construction; changing one means re-checking the other.
+#
+# This hook has NO `set -e` (see the shebang above) and the line above this
+# comment closes the hook's only conditional, so a writer exit 2 here is
+# inert — it cannot fail a developer's pull. Do not add `|| true` (there is
+# no `set -e` for it to suppress) and do not move this after `exit 0` below,
+# where it would never run at all.
+#
+# Capability-probe timeout binary (measured: stock macOS has NEITHER `timeout`
+# nor `gtimeout` on PATH by default — confirmed on a real machine; a bare
+# `timeout -k 5 60 ...` here would fail "command not found" and silently skip
+# the probe every time), matching `scripts/session-start-priming.sh`'s own
+# established pattern (plan-review #5 there) rather than inventing a new one.
+if [ "${SKILLSMITH_RUFLO_PROBE_DISABLE:-}" != "1" ] && command -v node > /dev/null 2>&1 && [ -f scripts/ruflo-bridge-probe.mjs ]; then
+  _RUFLO_BRIDGE_TSX="$(dirname "$0")/../node_modules/.bin/tsx"
+  if [ -x "$_RUFLO_BRIDGE_TSX" ]; then
+    _RUFLO_BRIDGE_CMD="$_RUFLO_BRIDGE_TSX scripts/ruflo-bridge-probe.mjs"
+  else
+    _RUFLO_BRIDGE_CMD="npx --no-install tsx scripts/ruflo-bridge-probe.mjs"
+  fi
+
+  _RUFLO_BRIDGE_TIMEOUT_BIN=""
+  if command -v gtimeout > /dev/null 2>&1; then
+    _RUFLO_BRIDGE_TIMEOUT_BIN="gtimeout"
+  elif command -v timeout > /dev/null 2>&1 && timeout --kill-after=0 0 true > /dev/null 2>&1; then
+    _RUFLO_BRIDGE_TIMEOUT_BIN="timeout"
+  fi
+
+  if [ -n "$_RUFLO_BRIDGE_TIMEOUT_BIN" ]; then
+    "$_RUFLO_BRIDGE_TIMEOUT_BIN" -k 5 60 $_RUFLO_BRIDGE_CMD >/dev/null 2>&1
+  else
+    # Job-control fallback (no GNU timeout/gtimeout available): launch in its
+    # own process group, watchdog SIGTERMs at 60s and SIGKILLs at 65s — same
+    # 65s-inside-120s relationship as the GNU-timeout path above, just
+    # enforced by hand. `set -m` makes `$!` a process-group leader so `kill
+    # -SIG "-$PID"` reaches the whole group, not only the shell wrapper.
+    set -m
+    $_RUFLO_BRIDGE_CMD >/dev/null 2>&1 &
+    _RUFLO_BRIDGE_PID=$!
+    (
+      sleep 60
+      kill -TERM "-$_RUFLO_BRIDGE_PID" 2>/dev/null || true
+      sleep 5
+      kill -KILL "-$_RUFLO_BRIDGE_PID" 2>/dev/null || true
+    ) &
+    _RUFLO_BRIDGE_WATCHDOG_PID=$!
+    wait "$_RUFLO_BRIDGE_PID" 2>/dev/null || true
+    kill "$_RUFLO_BRIDGE_WATCHDOG_PID" 2>/dev/null || true
+    set +m
+  fi
+fi
+
 exit 0

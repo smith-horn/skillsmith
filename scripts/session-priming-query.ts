@@ -27,6 +27,9 @@
  * state, and the CLI entry point.
  */
 
+import { appendFileSync, mkdirSync } from 'node:fs'
+import { dirname } from 'node:path'
+
 import {
   readEntry,
   renderAutohealBanner,
@@ -50,6 +53,12 @@ import {
   readAndAck,
   renderDisconnectBanner,
 } from '../packages/doc-retrieval-mcp/src/retrieval-log/mcp-disconnect-state.js'
+import {
+  BRIDGE_VERDICT_SHADOW_VAR,
+  readEntryResult as readBridgeEntryResult,
+  renderBridgeBanner,
+  resolveBridgeLogPath,
+} from '../packages/doc-retrieval-mcp/src/retrieval-log/ruflo-bridge-state.js'
 import {
   logRetrievalEvent,
   resolveRetrievalLogPaths,
@@ -249,8 +258,40 @@ export async function runQuery(args: CliArgs): Promise<PrimingResult> {
     }
   }
 
-  // Combined banner: stale-probe section first, liveness one-liner, reindex one-liner, disconnect one-liner below.
-  const contextBanner = [probeBanner, livenessLine, reindexLine, disconnectLine]
+  // SMI-6744 A5.5.2 delta — ruflo bridge-verdict banner (session-priming
+  // state-consumer, mirrors the autoheal/liveness/reindex/disconnect banners
+  // above). Computed BEFORE the disabled short-circuit, same rationale: a
+  // silently-degraded bridge should surface even when priming itself is
+  // disabled for this session. D2 (owner-decided 2026-10-03): this delta
+  // ships LIVE — `.claude/settings.json` sets SKILLSMITH_RUFLO_VERDICT_SHADOW
+  // to "0" — but the shadow predicate itself (unset or non-'0' = shadow)
+  // stays in force as the lever: shadow mode still computes the line and
+  // appends it to the probe's own log, it just never renders.
+  let bridgeLine = ''
+  if (process.env.SKILLSMITH_RUFLO_VERDICT_DISABLE !== '1') {
+    try {
+      const bridgeKey = resolveMainRepoKey(args.cwd)
+      if (bridgeKey) {
+        const rendered = renderBridgeBanner(readBridgeEntryResult(bridgeKey), { now })
+        if (rendered) {
+          const shadow = process.env[BRIDGE_VERDICT_SHADOW_VAR] !== '0'
+          if (shadow) {
+            const logPath = resolveBridgeLogPath(now)
+            mkdirSync(dirname(logPath), { recursive: true })
+            appendFileSync(logPath, `${now.toISOString()} [shadow] would render:\n${rendered}\n`)
+          } else {
+            bridgeLine = rendered
+          }
+        }
+      }
+    } catch {
+      /* fail-soft — must never crash the priming hook */
+    }
+  }
+
+  // Combined banner: stale-probe section first, liveness one-liner, reindex
+  // one-liner, disconnect one-liner, ruflo-bridge one-liner below.
+  const contextBanner = [probeBanner, livenessLine, reindexLine, disconnectLine, bridgeLine]
     .filter(Boolean)
     .join('\n')
 

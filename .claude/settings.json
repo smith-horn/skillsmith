@@ -1,5 +1,7 @@
 {
-  "env": {},
+  "env": {
+    "SKILLSMITH_RUFLO_VERDICT_SHADOW": "0"
+  },
   "permissions": {
     "allow": [
       "Bash(npm run lint)",
