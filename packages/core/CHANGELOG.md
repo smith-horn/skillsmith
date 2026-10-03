@@ -4,6 +4,42 @@ All notable changes to `@skillsmith/core` are documented here.
 
 ## [Unreleased]
 
+- **Test**: SMI-6946 / ADR-175 -- the driver's refusal is now asserted on its **structured
+  contract**, not only its message. A pre-merge gate found that all seven refusal arms matched the
+  message text, so replacing `CorruptDatabaseError` with a plain `Error` carrying the same words left
+  the entire suite green -- and then a consumer's only discriminator is English prose again, which is
+  the defect SMI-6946 exists to remove. `CorruptDatabaseError` was constructed at exactly one site
+  and asserted in **zero** tests; `sqliteCode`, `remedyKind` and `verdict` appeared in no test in
+  either package. Three arms now assert `code`, `path`, `verdict` and `remedyKind` on both fixture
+  routes -- the open-throws route and the `quick_check`-reports route, which is the case that makes
+  `sqliteCode` a field rather than something read off `cause`, since nothing is thrown there and no
+  `cause` exists. The paired negative forbids the degenerate predicate: a plain `Error` carrying the
+  identical message must **not** be recognised. Measured: the mutation kills the three new arms and
+  all seven message arms survive it, which is the finding itself.
+
+- **Test**: SMI-6946 / ADR-175 -- a **consumer inventory**, run as a check rather than cited as a
+  count. ADR-175 required this and PR-1 shipped without it. SMI-6931 passed nine independent reviews
+  and still shipped a regression, because the driver was correct in isolation and the consumer was
+  correct before the driver changed -- and every one of those reviews scoped to the diff, which does
+  not contain its consumers. The check enumerates every file opening a database across all packages
+  (31 files today; 13 of them are CLI command files, across 17 call sites, all opening read-write
+  through one wrapper) and fails on any addition or removal, naming the path. A plain `grep` over the
+  same tree returns 35 files, and the four-file gap is the point: those four name an opener only in a
+  comment or an `@deprecated` note, which the known-negative control excludes by design. The red is not a defect report: it is a prompt to answer one
+  question for the new site -- when the driver refuses a corrupt database, what does this caller do
+  with the refusal? -- and record the answer. Because a source scan is the kind of instrument that
+  answers plausibly when aimed wrongly, it ships with a known-positive, a known-negative (a prose
+  mention must not count as a call site) and a file-count denominator; without those a scan matching
+  nothing would report a clean inventory forever.
+
+- **Docs**: SMI-6946 -- corrected, for the third time, the paragraph describing what the corruption
+  suite's refusal arms assert. It claimed two arms "additionally" compare the `-wal`, which reads as
+  a superset of the arms calling `expectUntouched`; the two sets are in fact **disjoint**. The
+  consequence is real: the arms with the strongest non-mutation claim are the ones that do not check
+  the directory listing. Per `pr-reviewer`'s own rule for a third correction to one piece of prose,
+  the review narrative is **deleted** rather than corrected again, and only the three disjoint groups
+  are stated. Both surfaces -- this file and the test's own header -- now say the same thing.
+
 - **Fix (reliability)**: SMI-6931 -- the **native** `better-sqlite3` driver now detects a corrupt
   database and **refuses with an actionable diagnostic**, instead of throwing a raw SQLite error from
   whatever query happened to touch a damaged page. The corruption handling added by SMI-4484 was
@@ -67,11 +103,15 @@ All notable changes to `@skillsmith/core` are documented here.
 
 - **Test**: SMI-6931 -- a dedicated suite covering the native driver's **file-open** path, which had
   none: all nine `createBetterSqlite3Database` call sites in the existing driver test pass
-  `:memory:`, which is why a missing probe reached production unnoticed. The arms that assert
-  non-mutation compare the main file's bytes and the directory listing; **two of them additionally
-  compare the `-wal` byte-for-byte**, and two assert the refusal's message rather than any file's
-  contents. An earlier version of this entry claimed *every* refusal arm asserted both files, which
-  was false -- the third false claim found in this one entry, after two stale tallies. The `-shm`'s
+  `:memory:`, which is why a missing probe reached production unnoticed. The arms fall into three
+  **disjoint** groups, and no arm belongs to two, so each group's guarantee is exactly as wide as its
+  own membership: three call `expectUntouched` (main-file bytes, mtime, and the directory listing, so
+  "no backup, no rebuild, no stray sidecar" rests on these three alone); two compare the `-wal`
+  byte-for-byte and assert neither the mtime nor the listing; two assert the refusal itself -- its
+  message, and its structured fields -- rather than any file's contents. Two earlier versions of this
+  sentence were wrong about that split: the first claimed *every* arm asserted both files, and its
+  replacement said the `-wal` arms compared it *"additionally"*, which reads as a superset of the
+  `expectUntouched` arms when the two sets are in fact disjoint. The `-shm`'s
   bytes are deliberately **not**
   asserted, and that narrowing is measured rather than assumed: with the `-shm` deleted outright
   every committed row remained readable and the `-wal` stayed byte-identical, so it is SQLite's

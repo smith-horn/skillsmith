@@ -4,6 +4,29 @@ All notable changes to `@skillsmith/cli` are documented here.
 
 ## [Unreleased]
 
+- **Test**: SMI-6946 / ADR-175 -- coverage for the two `list` output paths a pre-merge gate showed
+  were unobservable. `warnUndetermined` appeared in **zero** test files, so no mutation to it could
+  be caught, and the gate named one that survived the whole suite: relocate that call one line later,
+  past the `--outdated` early return, and a run against a wholly unreadable database prints **nothing
+  at all** and exits 0. The green "All installed skills are up to date." is gated on
+  `undetermined.length === 0` and the yellow partial line on `undetermined.length < skills.length`, so
+  with the warning unreachable both are correctly suppressed and nothing replaces them -- SMI-6946's
+  original defect reproduced by moving one line. A second mutation, sourcing `undetermined` from
+  `filtered` rather than `skills`, restores the false green line on a fully corrupt database, because
+  `--outdated`'s filter keeps only `'available'`. Both are now killed (2 and 4 respectively), and a
+  paired silence control forbids the degenerate fix of warning unconditionally.
+
+  Separately, the claim that **absence is established before the open** now has a test. It asserts
+  the *mechanism* -- that no open is attempted for a path that does not exist -- rather than the
+  resulting status, deliberately: the native driver re-states an absent path's `SQLITE_CANTOPEN` into
+  the same `current` outcome, so an outcome assertion is blind to the gate's removal, and the
+  difference shows only on the WASM driver, which the CLI suite cannot exercise. Asserting the
+  mechanism holds for every driver, present and future.
+
+- **Docs**: SMI-6946 -- `describeQueryFailure`'s docblock sat immediately above
+  `resolveUpdateStatus`, which has its own. Only the nearest attaches, so the first was dangling dead
+  text and `describeQueryFailure` had no documentation at all. Moved to its own signature.
+
 - **Fix (correctness)**: SMI-6946 / ADR-175 -- `skillsmith manage` and `skillsmith list` no longer
   report **"Up to date"** for every installed skill when the local database cannot be read. They
   report **"Unknown"**, name the cause once, and say so rather than asserting currency they have no

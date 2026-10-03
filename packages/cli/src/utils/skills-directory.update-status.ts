@@ -88,21 +88,6 @@ export function classifyOpenFailure(error: unknown, dbPath: string): string | un
 }
 
 /**
- * Why a per-skill version lookup failed, after the open already succeeded.
- *
- * Separate from `classifyOpenFailure` because the inputs differ: by this point
- * the database opened, so `CorruptDatabaseError` — constructed only by the
- * driver's pre-open probe — cannot appear. What CAN appear is a raw SQLite
- * error whose code says the file is corrupt, which is the case
- * `openCliDatabase` documents as "a corrupt page only read once the schema
- * queries run."
- *
- * Classified on the code via the shared `isCorruptionCode`, so this agrees with
- * the driver's own classification instead of re-deriving it. There is no
- * benign case here: the open succeeded, so a failing query is always
- * unknowable rather than informative.
- */
-/**
  * Resolve one skill's update status, given a version lookup that may fail.
  *
  * Lives here rather than inline in `getSkillsFromDirectory` because it is
@@ -145,6 +130,21 @@ export async function resolveUpdateStatus(
   }
 }
 
+/**
+ * Why a per-skill version lookup failed, after the open already succeeded.
+ *
+ * Separate from `classifyOpenFailure` because the inputs differ: by this point
+ * the database opened, so `CorruptDatabaseError` — constructed only by the
+ * driver's pre-open probe — cannot appear. What CAN appear is a raw SQLite
+ * error whose code says the file is corrupt, which is the case
+ * `openCliDatabase` documents as "a corrupt page only read once the schema
+ * queries run."
+ *
+ * Classified on the code via the shared `isCorruptionCode`, so this agrees with
+ * the driver's own classification instead of re-deriving it. There is no
+ * benign case here: the open succeeded, so a failing query is always
+ * unknowable rather than informative.
+ */
 export function describeQueryFailure(error: unknown, dbPath: string | undefined): string {
   const code = (error as { code?: unknown } | null | undefined)?.code
   if (typeof code === 'string' && isCorruptionCode(code)) {
