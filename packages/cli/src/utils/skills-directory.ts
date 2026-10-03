@@ -4,12 +4,12 @@
  */
 
 import { readdir, readFile, realpath, stat } from 'fs/promises'
+import { existsSync } from 'node:fs'
 import { join } from 'path'
 import {
   ManifestManager,
   SkillParser,
   SkillVersionRepository,
-  isCorruptDatabaseError,
   manifestKeyFor,
   type Database,
   type SkillManifestEntry,
@@ -59,13 +59,20 @@ export {
 export { computeHasUpdates } from './skills-directory.hash-comparison.js'
 import { computeHasUpdates } from './skills-directory.hash-comparison.js'
 
-// ADR-175 / SMI-6946: UpdateStatus + classifyOpenFailure extracted to
-// skills-directory.update-status.ts to stay under the 500-line standard once
-// the tri-state and its cause classification were added -- re-exported here
-// so existing call sites and tests import from this module unmodified (same
-// convention as computeHasUpdates above).
-export { classifyOpenFailure, type UpdateStatus } from './skills-directory.update-status.js'
-import { classifyOpenFailure, type UpdateStatus } from './skills-directory.update-status.js'
+// ADR-175 / SMI-6946: the update-status type and its classifiers live in
+// skills-directory.update-status.ts (the fourth extraction from this file for
+// the 500-line standard) -- re-exported, same convention as above.
+export {
+  classifyOpenFailure,
+  describeQueryFailure,
+  resolveUpdateStatus,
+  type UpdateStatus,
+} from './skills-directory.update-status.js'
+import {
+  classifyOpenFailure,
+  resolveUpdateStatus,
+  type UpdateStatus,
+} from './skills-directory.update-status.js'
 
 export interface InstalledSkill {
   name: string
@@ -213,11 +220,20 @@ export async function getSkillsFromDirectory(
   // Non-null when the version lookup is unavailable for a reason that leaves
   // update state UNKNOWABLE, rather than knowably "nothing installed".
   let unknownReason: string | undefined
-  if (dbPath) {
+  // ADR-175 § 5: absence is decided BEFORE the open, because the two drivers
+  // disagree about what an absent path does. Native throws SQLITE_CANTOPEN;
+  // WASM **succeeds** with an empty in-memory database, so the absence would
+  // resurface as a per-skill query failure and render `unknown` — wrong, since
+  // an absent database is this contract's one benign case. Reachable on any
+  // machine without a native build, which is the normal npx install.
+  //
+  // Not the precheck ADR § 2 forbids: that bars `existsSync` from classifying a
+  // failure CODE, which it cannot do. This asks a different question.
+  if (dbPath && existsSync(dbPath)) {
     try {
       // SMI-5139: this is a pure-read version lookup — open read-only so the
       // WASM driver does not persist (write) on close() and throw EROFS when
-      // dbPath is unwritable/absent.
+      // dbPath is unwritable.
       dbConn = await openCliDatabase(dbPath, { readonly: true })
       versionRepo = new SkillVersionRepository(dbConn)
     } catch (error) {
@@ -262,32 +278,20 @@ export async function getSkillsFromDirectory(
           // on-disk hash — see computeHasUpdates()'s doc comment for why the
           // pre-fix version of this block never actually reached the
           // manifest's stored hash.
-          // Default to the reason the open established, if any. With no
-          // version repository and no reason, there is genuinely nothing to
-          // compare against, which is `current` rather than `unknown`.
-          let updateStatus: UpdateStatus = unknownReason ? 'unknown' : 'current'
-          let updateStatusReason: string | undefined = unknownReason
-          if (versionRepo && parsed) {
-            try {
-              const parsedAny = parsed as unknown as Record<string, unknown>
-              const skillId = (parsedAny['id'] as string | undefined) ?? entry.name
-              const latestVersion = await versionRepo.getLatestVersion(skillId)
-              const manifestEntry = manifestEntries[manifestKeyFor(entry.name, effectiveClient)]
-              updateStatus = computeHasUpdates(manifestEntry, content, latestVersion, skillsDir)
-                ? 'available'
-                : 'current'
-              updateStatusReason = undefined
-            } catch (error) {
-              // The open succeeded but THIS query failed, so the answer for
-              // this skill is unknowable even though others may have resolved.
-              // Previously this fell back to `false` — "up to date" — which is
-              // the same false statement one layer in.
-              updateStatus = 'unknown'
-              updateStatusReason = isCorruptDatabaseError(error)
-                ? `the local database at ${error.path} is corrupt`
-                : `the version lookup for this skill failed`
-            }
-          }
+          const repo = versionRepo
+          const { updateStatus, updateStatusReason } = await resolveUpdateStatus(
+            repo && parsed
+              ? async () => {
+                  const parsedAny = parsed as unknown as Record<string, unknown>
+                  const skillId = (parsedAny['id'] as string | undefined) ?? entry.name
+                  const latestVersion = await repo.getLatestVersion(skillId)
+                  const manifestEntry = manifestEntries[manifestKeyFor(entry.name, effectiveClient)]
+                  return computeHasUpdates(manifestEntry, content, latestVersion, skillsDir)
+                }
+              : null,
+            unknownReason,
+            dbPath
+          )
 
           skills.push({
             name: parsed?.name || entry.name,

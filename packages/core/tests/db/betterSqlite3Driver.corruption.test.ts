@@ -30,12 +30,23 @@
  * the rest is written. A first version claimed non-mutation without earning it,
  * and the test asserting the sidecars survive is what caught the lie.
  *
- * So every refusal below asserts the **main file and the `-wal`** are left
- * byte-identical — the two durable, data-bearing files. The `-shm` must remain
- * present and usable but its bytes are deliberately not asserted: a WAL reader
- * coordinates through it, so it is mutable shared state, and it carries no
- * durable data (measured — delete it outright and every committed row is still
- * readable). Byte-identity on it would assert the wrong property.
+ * What the refusal arms below actually assert, stated precisely because an
+ * earlier version of this paragraph claimed **every** arm compared both the
+ * main file and the `-wal` byte-for-byte, and that was false. The arms using
+ * `expectUntouched` compare the main file's bytes, its mtime, and the directory
+ * listing; **two arms additionally compare the `-wal` byte-for-byte**, and two
+ * assert the refusal's message rather than any file's contents.
+ *
+ * That false universal is the FOURTH wrong claim found in this cluster, after
+ * two stale tallies and one in the CHANGELOG — and the commit that corrected
+ * the CHANGELOG edited this very docblock and missed this line, leaving two
+ * surfaces disagreeing with the wrong one in the file a reader opens first.
+ *
+ * The `-shm` must remain present and usable but its bytes are deliberately not
+ * asserted: a WAL reader coordinates through it, so it is mutable shared state,
+ * and it carries no durable data (measured — delete it outright and every
+ * committed row is still readable). Byte-identity on it would assert the wrong
+ * property.
  *
  * Those assertions are the discriminating ones, not decoration: a refusal that
  * still touched the bytes would pass a throw-only test.

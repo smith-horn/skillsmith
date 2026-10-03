@@ -385,9 +385,10 @@ async function listActionImpl(opts: Record<string, string | boolean | undefined>
       // be printed when every skill was actually checked.
       if (undetermined.length === 0) {
         console.log(chalk.green('\nAll installed skills are up to date.\n'))
-      } else if (undetermined.length === skills.length) {
-        console.log(chalk.yellow('\nNo skill could be checked for updates.\n'))
-      } else {
+      } else if (undetermined.length < skills.length) {
+        // Partial: say what WAS established, then let the warning say what
+        // was not. When nothing could be checked, this line would only
+        // restate the warning, so it is omitted rather than duplicated.
         console.log(chalk.yellow('\nNo updates found among the skills that could be checked.\n'))
       }
       warnUndetermined(undetermined, skills.length)

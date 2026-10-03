@@ -28,8 +28,11 @@ const logger = getCliLogger()
 export function warnUndetermined(undetermined: InstalledSkill[], total: number): void {
   if (undetermined.length === 0) return
 
-  // Distinct reasons, in first-seen order. Normally one; more than one means
-  // the open succeeded and individual lookups failed for differing causes.
+  // Distinct reasons, in first-seen order. Normally one, since a single open
+  // failure explains every row. More than one is reachable two ways: the open
+  // succeeded and per-skill lookups failed for differing causes (a corruption
+  // code versus anything else), or several scanned directories resolved to
+  // different database paths.
   const reasons = [
     ...new Set(undetermined.map((s) => s.updateStatusReason).filter((r): r is string => !!r)),
   ]
