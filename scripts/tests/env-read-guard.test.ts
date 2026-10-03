@@ -32,6 +32,34 @@ function bashCall(command: string) {
   return { tool_name: 'Bash', tool_input: { command } }
 }
 
+/**
+ * The guard's allow verdict, whole. Round 2 of SMI-6920 (M-2) started
+ * asserting this instead of `.action` alone, because the only
+ * allow-with-stderr this guard produces is the catch-all fail-open: with the
+ * shell-text module's import removed, 13 of 13 rows still passed a bare
+ * `.action` check on a mechanism that was entirely dead. Round 3 (F-2) found
+ * the conversion had reached 27 of 76 rows while the record claimed all of
+ * them. Round 4 restated the figures and got them wrong too, and round 5
+ * (M3) measured the file a third time. Both spellings assert the whole
+ * verdict, so assertion strength is uniform across them and the exact split
+ * carries no behavioural weight — which is precisely why it kept going
+ * unchecked. The count is therefore left to the one command that produces
+ * it rather than restated here as prose that rots: `grep -o 'expectAllow(' …
+ * | wc -l` counts occurrences INCLUDING the helper definition, and
+ * `grep -o 'toEqual(ALLOW_RESULT)' … | wc -l` the other spelling; a line
+ * count differs from an occurrence count, and an `it.each` row differs from
+ * a call site, which is where all three wrong figures came from.
+ *
+ * What matters and is checkable: no allow assertion reads `.action` alone.
+ * `grep -c "\\.action).toBe('allow')" …` must be 0.
+ */
+const ALLOW_RESULT = { action: 'allow', json: null, stderr: null }
+
+/** Assert that `command` is allowed, asserting the whole verdict. */
+function expectAllow(command: string): void {
+  expect(decide(bashCall(command), {})).toEqual(ALLOW_RESULT)
+}
+
 describe('.claude/settings.json registration (regression pin)', () => {
   it('registers env-read-guard.mjs on the Bash PreToolUse matcher', () => {
     const settings = JSON.parse(readFileSync(SETTINGS_PATH, 'utf8'))
@@ -91,17 +119,17 @@ describe('decide() — required minimum cases (plan Wave 1 Step 3)', () => {
 
   it("4. grep -qE '^LINEAR_API_KEY=' .env -> allow (output-free presence check)", () => {
     const result = decide(bashCall("grep -qE '^LINEAR_API_KEY=' .env"), {})
-    expect(result.action).toBe('allow')
+    expect(result).toEqual(ALLOW_RESULT)
   })
 
   it('5. cat .env.schema -> allow (safe file)', () => {
     const result = decide(bashCall('cat .env.schema'), {})
-    expect(result.action).toBe('allow')
+    expect(result).toEqual(ALLOW_RESULT)
   })
 
   it('6. cat .env.example -> allow (safe file)', () => {
     const result = decide(bashCall('cat .env.example'), {})
-    expect(result.action).toBe('allow')
+    expect(result).toEqual(ALLOW_RESULT)
   })
 
   it('7. head -5 .worktrees/foo/.env -> deny (nested worktree path)', () => {
@@ -142,7 +170,7 @@ describe('decide() — additional cases from the guard’s own documented behavi
 
   it('grep -q PAT .env (quiet, no output flag) -> allow', () => {
     const result = decide(bashCall('grep -q PAT .env'), {})
-    expect(result.action).toBe('allow')
+    expect(result).toEqual(ALLOW_RESULT)
   })
 
   it('grep -o PAT .env (quiet-less, output-producing) -> deny', () => {
@@ -152,32 +180,32 @@ describe('decide() — additional cases from the guard’s own documented behavi
 
   it('[ -f .env ] presence/metadata check -> allow', () => {
     const result = decide(bashCall('[ -f .env ]'), {})
-    expect(result.action).toBe('allow')
+    expect(result).toEqual(ALLOW_RESULT)
   })
 
   it('test -f .env presence/metadata check -> allow', () => {
     const result = decide(bashCall('test -f .env'), {})
-    expect(result.action).toBe('allow')
+    expect(result).toEqual(ALLOW_RESULT)
   })
 
   it('wc -c .env metadata check -> allow', () => {
     const result = decide(bashCall('wc -c .env'), {})
-    expect(result.action).toBe('allow')
+    expect(result).toEqual(ALLOW_RESULT)
   })
 
   it('varlock load (default pretty format, no --format flag) -> allow', () => {
     const result = decide(bashCall('varlock load'), {})
-    expect(result.action).toBe('allow')
+    expect(result).toEqual(ALLOW_RESULT)
   })
 
   it('varlock load --format pretty -> allow (explicit default format)', () => {
     const result = decide(bashCall('varlock load --format pretty'), {})
-    expect(result.action).toBe('allow')
+    expect(result).toEqual(ALLOW_RESULT)
   })
 
   it('varlock load --quiet -> allow (validation only)', () => {
     const result = decide(bashCall('varlock load --quiet'), {})
-    expect(result.action).toBe('allow')
+    expect(result).toEqual(ALLOW_RESULT)
   })
 
   it('varlock load --format=json (equals-spelling) -> deny', () => {
@@ -224,12 +252,12 @@ describe('decide() — additional cases from the guard’s own documented behavi
 
   it('cp .env /tmp/x (not a reader command) -> allow (named residual gap, not covered)', () => {
     const result = decide(bashCall('cp .env /tmp/x'), {})
-    expect(result.action).toBe('allow')
+    expect(result).toEqual(ALLOW_RESULT)
   })
 
   it('cat some-other-file.txt -> allow (no protected file referenced)', () => {
     const result = decide(bashCall('cat some-other-file.txt'), {})
-    expect(result.action).toBe('allow')
+    expect(result).toEqual(ALLOW_RESULT)
   })
 })
 
@@ -259,22 +287,22 @@ describe('decide() — interpreter short-flag bypass regression (pre-merge revie
 
   it('node -p "<code with no .env reference>" -> allow (no false positive)', () => {
     const result = decide(bashCall('node -p "1+1"'), {})
-    expect(result.action).toBe('allow')
+    expect(result).toEqual(ALLOW_RESULT)
   })
 
   it('node -pe "<code with no .env reference>" -> allow (combined short flags, no false positive)', () => {
     const result = decide(bashCall('node -pe "1+1"'), {})
-    expect(result.action).toBe('allow')
+    expect(result).toEqual(ALLOW_RESULT)
   })
 
   it('ruby -r json -e "puts 1" -> allow (ruby\'s -r means require-a-library, not run-code — must not be pooled with php\'s -r)', () => {
     const result = decide(bashCall('ruby -r json -e "puts 1"'), {})
-    expect(result.action).toBe('allow')
+    expect(result).toEqual(ALLOW_RESULT)
   })
 
   it('php -v -> allow (a real php flag that happens to start with a different letter than -r)', () => {
     const result = decide(bashCall('php -v'), {})
-    expect(result.action).toBe('allow')
+    expect(result).toEqual(ALLOW_RESULT)
   })
 
   // Discriminating regression for the per-interpreter design itself
@@ -289,7 +317,7 @@ describe('decide() — interpreter short-flag bypass regression (pre-merge revie
   // takes a library name to require, not code to run).
   it('ruby -r "<text containing .env>" -> allow (proves per-interpreter chars, not a pooled set, are in effect)', () => {
     const result = decide(bashCall(`ruby -r "readfile('.env')"`), {})
-    expect(result.action).toBe('allow')
+    expect(result).toEqual(ALLOW_RESULT)
   })
 })
 
@@ -331,7 +359,7 @@ describe('decide() — second-round adversarial confirmation findings (SMI-6361)
   // set — proving the exclusion is actually load-bearing, not just stated.
   it('php -F "<text touching .env>" -> allow (-F names a per-line script FILE argument, not inline code — its value is a filename, never scanned as script text)', () => {
     const result = decide(bashCall(`php -F "readfile('.env')"`), {})
-    expect(result.action).toBe('allow')
+    expect(result).toEqual(ALLOW_RESULT)
   })
 
   // Finding F6: awk/sed are on READER_COMMANDS (the guard's own declared
@@ -346,7 +374,7 @@ describe('decide() — second-round adversarial confirmation findings (SMI-6361)
 
   it('awk -f script.awk file.txt -> allow (ordinary usage, no .env reference anywhere)', () => {
     const result = decide(bashCall('awk -f script.awk file.txt'), {})
-    expect(result.action).toBe('allow')
+    expect(result).toEqual(ALLOW_RESULT)
   })
 
   it("sed 'r .env' -> deny (GNU sed's r command reads and prints an arbitrary file)", () => {
@@ -361,7 +389,7 @@ describe('decide() — second-round adversarial confirmation findings (SMI-6361)
 
   it('sed -f script.sed input.txt -> allow (ordinary usage, no .env reference anywhere)', () => {
     const result = decide(bashCall('sed -f script.sed input.txt'), {})
-    expect(result.action).toBe('allow')
+    expect(result).toEqual(ALLOW_RESULT)
   })
 })
 
@@ -421,17 +449,17 @@ describe('decide() — third-round adversarial confirmation findings F-A/F-B/F-C
 
   it("awk -v n=1 '{print $n}' data.txt -> allow (ordinary -v usage, no .env reference)", () => {
     const result = decide(bashCall(`awk -v n=1 '{print $n}' data.txt`), {})
-    expect(result.action).toBe('allow')
+    expect(result).toEqual(ALLOW_RESULT)
   })
 
   it("sed -i '' 's/a/b/' file.txt -> allow (ordinary BSD in-place edit, no .env reference)", () => {
     const result = decide(bashCall("sed -i '' 's/a/b/' file.txt"), {})
-    expect(result.action).toBe('allow')
+    expect(result).toEqual(ALLOW_RESULT)
   })
 
   it("sed 's/foo/bar/' file.txt -> allow (ordinary substitution, no false positive)", () => {
     const result = decide(bashCall("sed 's/foo/bar/' file.txt"), {})
-    expect(result.action).toBe('allow')
+    expect(result).toEqual(ALLOW_RESULT)
   })
 })
 
@@ -479,7 +507,7 @@ describe('decide() — fourth-round adversarial confirmation finding (SMI-6361)'
 
   it("awk -F: '{print $1}' /etc/passwd -> allow (ordinary field-separator usage, no false positive)", () => {
     const result = decide(bashCall("awk -F: '{print $1}' /etc/passwd"), {})
-    expect(result.action).toBe('allow')
+    expect(result).toEqual(ALLOW_RESULT)
   })
 
   // A fifth confirmation round on the -- fix above surfaced a separate,
@@ -493,22 +521,22 @@ describe('decide() — fourth-round adversarial confirmation finding (SMI-6361)'
 
   it("awk '{print}' .envrc -> allow (.envrc is not an env file, per this guard's own classifyBasename rule)", () => {
     const result = decide(bashCall("awk '{print}' .envrc"), {})
-    expect(result.action).toBe('allow')
+    expect(result).toEqual(ALLOW_RESULT)
   })
 
   it('node -e "console.log(\'.envrc\')" -> allow (same boundary fix, inline-interpreter text-scan path)', () => {
     const result = decide(bashCall(`node -e "console.log('.envrc')"`), {})
-    expect(result.action).toBe('allow')
+    expect(result).toEqual(ALLOW_RESULT)
   })
 
   it('node -e "console.log(\'.environment\')" -> allow (a different .env-prefixed non-env filename)', () => {
     const result = decide(bashCall(`node -e "console.log('.environment')"`), {})
-    expect(result.action).toBe('allow')
+    expect(result).toEqual(ALLOW_RESULT)
   })
 
   it('node -e "console.log(\'.env-backup\')" -> allow (hyphen-suffixed, not dot-suffixed)', () => {
     const result = decide(bashCall(`node -e "console.log('.env-backup')"`), {})
-    expect(result.action).toBe('allow')
+    expect(result).toEqual(ALLOW_RESULT)
   })
 
   it('node -e "console.log(\'.env.local\')" -> deny (still correctly protected: a real dot-suffixed variant)', () => {
@@ -554,7 +582,7 @@ describe('decide() — SMI-6869 Fix A: a trailing redirect does not change the v
 
   it('control: cat notes.txt 2>&1 -> allow (an ordinary redirect on an unrelated read stays harmless)', () => {
     const result = decide(bashCall('cat notes.txt 2>&1'), {})
-    expect(result.action).toBe('allow')
+    expect(result).toEqual(ALLOW_RESULT)
   })
 })
 
@@ -587,7 +615,7 @@ describe('decide() — SMI-6869 governance round High: heredoc body dropped from
   it.each(controls)(
     'control: %s -> allow (a docs heredoc with no reader-command-shaped text)',
     (command) => {
-      expect(decide(bashCall(command), {}).action).toBe('allow')
+      expectAllow(command)
     }
   )
 })
@@ -641,7 +669,7 @@ describe('decide() — SMI-6869 governance round 11 F1: a command substitution i
     'echo `date`',
     'cat `echo README.md`',
   ])('control: %s -> allow', (command) => {
-    expect(decide(bashCall(command), {}).action).toBe('allow')
+    expectAllow(command)
   })
 
   it('known-positive control: cat .env -> deny', () => {
@@ -668,7 +696,7 @@ describe('decide() — SMI-6869 governance round 12 F1: a nested command substit
   it.each(['cat $(echo $(echo README.md))', 'ls $(dirname $(git rev-parse --show-toplevel))'])(
     'control: %s -> allow',
     (command) => {
-      expect(decide(bashCall(command), {}).action).toBe('allow')
+      expectAllow(command)
     }
   )
 })
@@ -692,7 +720,7 @@ describe('decide() — SMI-6869 governance round 12 F2: a computed reader with a
   it.each(['$(echo ls) .env.example', '$(echo cat) README.md'])(
     'control: %s -> allow',
     (command) => {
-      expect(decide(bashCall(command), {}).action).toBe('allow')
+      expectAllow(command)
     }
   )
 
@@ -728,11 +756,11 @@ describe('decide() — SMI-6892 (ADR-172 sec 1): a bare variable head (no substi
     ['$X ls -la (no protected argument at all)', '$X ls -la'],
     ['echo $X cat .env (a LITERAL, resolved echo head)', 'echo $X cat .env'],
   ])('%s -> allow (control)', (_label, command) => {
-    expect(decide(bashCall(command), {}).action).toBe('allow')
+    expectAllow(command)
   })
 
   it("grep -qE '^KEY=' .env -> allow (control: the sanctioned output-free exception is unaffected)", () => {
-    expect(decide(bashCall("grep -qE '^KEY=' .env"), {}).action).toBe('allow')
+    expectAllow("grep -qE '^KEY=' .env")
   })
 })
 
@@ -746,11 +774,11 @@ describe('decide() — SMI-6892 (ADR-172 sec 1): a bare variable head (no substi
 // (`cat "$LOG"` included) -- a design change outside this PR.
 describe('decide() — documented limit: a protected name assembled across a substitution boundary is not spelled anywhere and stays out of reach, like a variable-built path', () => {
   it('cat $(echo /app/.en)v -> allow', () => {
-    expect(decide(bashCall('cat $(echo /app/.en)v'), {}).action).toBe('allow')
+    expectAllow('cat $(echo /app/.en)v')
   })
 
   it('f=.en; cat ${f}v -> allow', () => {
-    expect(decide(bashCall('f=.en; cat ${f}v'), {}).action).toBe('allow')
+    expectAllow('f=.en; cat ${f}v')
   })
 })
 
@@ -761,11 +789,11 @@ describe('decide() — documented limit: a protected name assembled across a sub
 // consuming reader's own argv, which is all `checkArgv` inspects.
 describe("decide() — documented limit: a reader that receives the filename from another command's output, not its own argv, stays out of reach", () => {
   it('echo .env | xargs cat -> allow', () => {
-    expect(decide(bashCall('echo .env | xargs cat'), {}).action).toBe('allow')
+    expectAllow('echo .env | xargs cat')
   })
 
   it('find . -name .env -exec cat {} \\; -> allow', () => {
-    expect(decide(bashCall('find . -name .env -exec cat {} \\;'), {}).action).toBe('allow')
+    expectAllow('find . -name .env -exec cat {} \\;')
   })
 })
 
@@ -781,7 +809,7 @@ describe('decide() — SMI-6869 governance round 12 F4 controls: a comment does 
   })
 
   it('# cat .env -> allow (the whole line is a comment; nothing runs)', () => {
-    expect(decide(bashCall('# cat .env'), {}).action).toBe('allow')
+    expectAllow('# cat .env')
   })
 })
 
@@ -806,7 +834,7 @@ describe('decide() — SMI-6869 governance round 15 C1: a # glued to }/{ or to a
   })
 
   it('echo hi # x; cat .env -> allow (control: a REAL comment, preceded by an actual space, still hides the read)', () => {
-    expect(decide(bashCall('echo hi # x; cat .env'), {}).action).toBe('allow')
+    expectAllow('echo hi # x; cat .env')
   })
 
   it('echo a\\#b; cat .env -> deny (control: an escaped # never starts a comment, boundary or not)', () => {
@@ -839,19 +867,19 @@ describe('decide() — SMI-6869 governance round 15 C1: a # glued to }/{ or to a
 // (the continuation rows below).
 describe('decide() — SMI-6892 C3: a ) is a comment boundary only when it closes a command-position ( or is unmatched, not unconditionally', () => {
   it('(echo x)#x; cat .env -> allow (a command-position close -- a real subshell -- IS a comment boundary)', () => {
-    expect(decide(bashCall('(echo x)#x; cat .env'), {}).action).toBe('allow')
+    expectAllow('(echo x)#x; cat .env')
   })
 
   it('true && (echo x)#x; cat .env -> allow (command-position close after &&)', () => {
-    expect(decide(bashCall('true && (echo x)#x; cat .env'), {}).action).toBe('allow')
+    expectAllow('true && (echo x)#x; cat .env')
   })
 
   it('((1))#x; cat .env -> allow (command-position close, arithmetic ((...)))', () => {
-    expect(decide(bashCall('((1))#x; cat .env'), {}).action).toBe('allow')
+    expectAllow('((1))#x; cat .env')
   })
 
   it('case a in a)#x; cat .env<nl>esac -> allow (an UNMATCHED ) ending a case pattern IS a comment boundary too)', () => {
-    expect(decide(bashCall('case a in a)#x; cat .env\nesac'), {}).action).toBe('allow')
+    expectAllow('case a in a)#x; cat .env\nesac')
   })
 
   it('echo (a|b)#x; cat .env -> deny (a WORD-position close -- the zsh glob-alternation shape -- is NOT a boundary, measured live in zsh 5.9)', () => {
@@ -871,19 +899,19 @@ describe('decide() — SMI-6892 C3: a ) is a comment boundary only when it close
   })
 
   it('(echo x)\\<nl>#x; cat .env -> allow (same continuation removal, but a command-position close -- still a boundary)', () => {
-    expect(decide(bashCall('(echo x)\\\n#x; cat .env'), {}).action).toBe('allow')
+    expectAllow('(echo x)\\\n#x; cat .env')
   })
 
   it('f()#x; cat .env<nl>{ :; } -> allow (SMI-6892 round 17: an EMPTY function-definition ) glued to the name IS a comment boundary)', () => {
-    expect(decide(bashCall('f()#x; cat .env\n{ :; }'), {}).action).toBe('allow')
+    expectAllow('f()#x; cat .env\n{ :; }')
   })
 
   it("function f ()#x; cat .env<nl>{ :; } -> allow (same, with the 'function' keyword and a spaced name)", () => {
-    expect(decide(bashCall('function f ()#x; cat .env\n{ :; }'), {}).action).toBe('allow')
+    expectAllow('function f ()#x; cat .env\n{ :; }')
   })
 
   it("case a in (a)#x; cat .env<nl>:;;<nl>esac -> allow (SMI-6892 round 17: a case statement's own leading pattern ( IS a comment boundary too)", () => {
-    expect(decide(bashCall('case a in (a)#x; cat .env\n:;;\nesac'), {}).action).toBe('allow')
+    expectAllow('case a in (a)#x; cat .env\n:;;\nesac')
   })
 
   it('f ( )#x; cat .env<nl>{ :; } -> deny (a SPACED function-paren close -- the zsh glob-word shape -- is NOT a boundary)', () => {
@@ -933,11 +961,11 @@ describe('decide() — SMI-6869 governance round 15 C2: an unquoted ${VAR} expan
   })
 
   it('cat ${HOME}/.env.example -> allow (the safe-file allowlist still applies through the brace expansion)', () => {
-    expect(decide(bashCall('cat ${HOME}/.env.example'), {}).action).toBe('allow')
+    expectAllow('cat ${HOME}/.env.example')
   })
 
   it('cat ${X} -> allow (control: a braced expansion naming nothing protected)', () => {
-    expect(decide(bashCall('cat ${X}'), {}).action).toBe('allow')
+    expectAllow('cat ${X}')
   })
 
   it.each([
@@ -985,7 +1013,7 @@ describe('decide() — SMI-6892 C1: a merged ${VAR} segment does not hide the re
     ],
     ['echo ${X} cat README.md (literal echo head, no protected arg)', 'echo ${X} cat README.md'],
   ])('%s -> allow (control)', (_label, command) => {
-    expect(decide(bashCall(command), {}).action).toBe('allow')
+    expectAllow(command)
   })
 })
 
@@ -1097,7 +1125,7 @@ describe('decide() — SMI-6869 round 13: a computed reader is judged after wrap
     'sudo $(echo cat) README.md',
     "grep -qE '^KEY=' .env",
   ])('control: %s -> allow', (command) => {
-    expect(decide(bashCall(command), {}).action).toBe('allow')
+    expectAllow(command)
   })
 
   it.each(['$(echo cat) .env', 'sudo cat .env', 'docker exec skillsmith-dev-1 cat /app/.env'])(
@@ -1111,7 +1139,7 @@ describe('decide() — SMI-6869 round 13: a computed reader is judged after wrap
 describe('decide() — SKILLSMITH_ENV_READ_GUARD_DISABLE hard-disable', () => {
   it('a command that would normally deny is allowed when the disable var is set', () => {
     const result = decide(bashCall('grep PAT .env'), { SKILLSMITH_ENV_READ_GUARD_DISABLE: '1' })
-    expect(result).toEqual({ action: 'allow', json: null, stderr: null })
+    expect(result).toEqual(ALLOW_RESULT)
   })
 
   it('a non-"1" value does not disable the guard (still denies)', () => {
@@ -1123,27 +1151,27 @@ describe('decide() — SKILLSMITH_ENV_READ_GUARD_DISABLE hard-disable', () => {
 describe('decide() — malformed / non-Bash input fails open to allow', () => {
   it('a non-Bash tool_name always allows, regardless of command content', () => {
     const result = decide({ tool_name: 'Read', tool_input: { command: 'cat .env' } }, {})
-    expect(result).toEqual({ action: 'allow', json: null, stderr: null })
+    expect(result).toEqual(ALLOW_RESULT)
   })
 
   it('a null toolCall allows, does not throw', () => {
     expect(() => decide(null, {})).not.toThrow()
-    expect(decide(null, {})).toEqual({ action: 'allow', json: null, stderr: null })
+    expect(decide(null, {})).toEqual(ALLOW_RESULT)
   })
 
   it('an undefined toolCall allows, does not throw', () => {
     expect(() => decide(undefined, {})).not.toThrow()
-    expect(decide(undefined, {})).toEqual({ action: 'allow', json: null, stderr: null })
+    expect(decide(undefined, {})).toEqual(ALLOW_RESULT)
   })
 
   it('a Bash tool_call with a missing command allows', () => {
     const result = decide({ tool_name: 'Bash', tool_input: {} }, {})
-    expect(result).toEqual({ action: 'allow', json: null, stderr: null })
+    expect(result).toEqual(ALLOW_RESULT)
   })
 
   it('a Bash tool_call with an empty/whitespace-only command allows', () => {
     const result = decide(bashCall('   '), {})
-    expect(result).toEqual({ action: 'allow', json: null, stderr: null })
+    expect(result).toEqual(ALLOW_RESULT)
   })
 })
 
@@ -1189,7 +1217,7 @@ describe('decide() — SMI-6903 C1: an input redirect source is a read target', 
     'cat <<< .env',
   ]
   it.each(controls)('control: %s -> allow', (command) => {
-    expect(decide(bashCall(command), {}).action).toBe('allow')
+    expectAllow(command)
   })
 
   // Asserted as a PROPERTY rather than a pinned verdict: whatever posture the
@@ -1235,7 +1263,7 @@ describe('decide() — SMI-6903 C2: no comment inside an arithmetic ((…))', ()
     '(( 1 )) #c; cat .env',
   ]
   it.each(controls)('control: %s -> allow (a real comment there)', (command) => {
-    expect(decide(bashCall(command), {}).action).toBe('allow')
+    expectAllow(command)
   })
 
   it('control: a glued `16#ff` base literal is not a comment and still denies', () => {
@@ -1282,7 +1310,7 @@ describe('decide() — SMI-6903 C3: a zsh glob group cannot hide a read target',
     'a=(1 2); echo ok',
   ]
   it.each(allowControls)('control: %s -> allow', (command) => {
-    expect(decide(bashCall(command), {}).action).toBe('allow')
+    expectAllow(command)
   })
 })
 
@@ -1336,7 +1364,7 @@ describe('decide() — SMI-6903 F1: a reserved word or modifier cannot hide a re
     'while IFS= read -r l; do echo "$l"; done < .env',
   ]
   it.each(controls)('control: %s -> allow', (command) => {
-    expect(decide(bashCall(command), {}).action).toBe('allow')
+    expectAllow(command)
   })
 
   // Still a pin, still out of contract (ADR-172 sec 1): xargs's command gets
@@ -1344,7 +1372,7 @@ describe('decide() — SMI-6903 F1: a reserved word or modifier cannot hide a re
   // The launcher rows that used to sit beside it here were a leak, not a
   // limit; they are arms in the round 22 block below.
   it('pin (out of contract): echo .env | xargs cat -> allow', () => {
-    expect(decide(bashCall('echo .env | xargs cat'), {}).action).toBe('allow')
+    expectAllow('echo .env | xargs cat')
   })
 })
 
@@ -1416,7 +1444,7 @@ describe("decide() — SMI-6903 round 22 F1: a launcher's own operands cannot hi
     'nice -n 5',
   ]
   it.each(controls)('control: %s -> allow', (command) => {
-    expect(decide(bashCall(command), {}).action).toBe('allow')
+    expectAllow(command)
   })
 })
 
@@ -1485,10 +1513,12 @@ describe("decide() — SMI-6903 round 23: a launcher's full option model, and it
     expect(decide(bashCall(command), {}).action).toBe('deny')
   })
 
-  // PIN, not an arm: this guard's extractor already read `--command` on
-  // `733427c82`; the round-24 arm for that spelling is the RUFLO guard's,
-  // whose own extractor had lagged.
-  it("pin: flock /tmp/l --command 'cat .env' -> deny (already read)", () => {
+  // A pin against the intra-branch tree `733427c82` (this guard's extractor
+  // already read `--command` there; the round-24 arm for that spelling is the
+  // RUFLO guard's), and an ARM against main's own history: on `60da8b5a8`,
+  // the base of PR #2973, this allowed. Labelled with both trees because the
+  // squash erased the round boundary (SMI-6908 F-7).
+  it("arm against 60da8b5a8, pin against 733427c82: flock /tmp/l --command 'cat .env' -> deny", () => {
     expect(decide(bashCall("flock /tmp/l --command 'cat .env'"), {}).action).toBe('deny')
   })
 
@@ -1496,7 +1526,7 @@ describe("decide() — SMI-6903 round 23: a launcher's full option model, and it
   // `script -cq 'cat .env'` runs `q` (measured: nothing printed), so this
   // reads `q`, never `cat .env`. Allowed, and a pin of getopt's rule.
   it("pin: script -cq 'cat .env' /dev/null -> allow (the body is `q`)", () => {
-    expect(decide(bashCall("script -cq 'cat .env' /dev/null"), {}).action).toBe('allow')
+    expectAllow("script -cq 'cat .env' /dev/null")
   })
 
   // Three levels of `-c` nesting is past MAX_DASH_C_DEPTH: the innermost
@@ -1504,7 +1534,7 @@ describe("decide() — SMI-6903 round 23: a launcher's full option model, and it
   // the quoted body as a positional). Pinned so the limit is recorded.
   it('pin (stated limit): a -c body three levels deep is not read', () => {
     const three = 'script -q -c "script -q -c \\"script -q -c \'cat .env\' f\\" f" f'
-    expect(decide(bashCall(three), {}).action).toBe('allow')
+    expectAllow(three)
   })
 
   const controls = [
@@ -1519,10 +1549,319 @@ describe("decide() — SMI-6903 round 23: a launcher's full option model, and it
     'command -v cat .env',
   ]
   it.each(controls)('control: %s -> allow', (command) => {
-    expect(decide(bashCall(command), {}).action).toBe('allow')
+    expectAllow(command)
   })
 })
 
+// SMI-6908 (the post-merge retro of PR #2973): five residual shapes of the
+// classes that PR closed, one level further out, every one ALLOWING on the
+// pre-PR base `60da8b5a8` and on the merged `673f19ceb`, each measured with a
+// decoy in bash 3.2 and zsh 5.9 on the host and bash 5.2 in the container.
+describe('decide() — SMI-6908: a wrapper body read with every reading, the brace sub-run peeled, time -o, arch/xcrun, nocorrect', () => {
+  // F-1: a wrapper's redirect body was read with the separator reading only
+  // and never recursed, so a reader behind a reserved word, a launcher or a
+  // second wrapper inside the body never met the source (35 of 37 heads).
+  const wrapperBodyArms = [
+    'bash -c "eval cat" < .env',
+    'bash -c "command cat" < .env',
+    'bash -c "nohup cat" < .env',
+    'bash -c "if true; then cat; fi" < .env',
+    'bash -c "nice -n 5 cat" < .env',
+    'bash -c "timeout 5 cat" < .env',
+    'bash -c "stdbuf -oL cat" < .env',
+    'bash -c "bash -c \'cat\'" < .env',
+    'sh -c "bash -c cat" < .env',
+    'bash -c "eval cat" <.env',
+    'bash -c "eval cat" 0< .env',
+    'bash -c "eval cat" < $(echo .env)',
+    'docker exec c bash -c "nohup cat" < /app/.env',
+    'sudo bash -c "eval cat" < .env',
+    'timeout 5 bash -c "nohup cat" < .env',
+    'bash -c "echo hi; nohup cat" < .env',
+  ]
+  it.each(wrapperBodyArms)('%s -> deny (F-1, the body is read with every reading)', (command) => {
+    expect(decide(bashCall(command), {}).action).toBe('deny')
+  })
+
+  // F-2: an assignment prefix carrying a brace tokenizes as `V=$`, `{`, `X`,
+  // `}`, so the separator reading's head after the assignment peel is `X` and
+  // only the brace sub-run held the real head, which had no head reading.
+  const braceSubRunArms = [
+    'V=${X} nohup cat .env',
+    'V=${X} eval cat .env',
+    'V=${X} command cat .env',
+    'V=${X} exec cat .env',
+    'V=${X} time cat .env',
+    'V=${X} timeout 5 cat .env',
+    'V=${X} nice -n 5 cat .env',
+    'V=${X} setsid cat .env',
+    'V=${X} stdbuf -oL cat .env',
+    'V=${X} caffeinate -t 1 cat .env',
+    'V=${HOME} nohup cat .env',
+  ]
+  it.each(braceSubRunArms)(
+    '%s -> deny (F-2, the brace sub-run gets its head reading)',
+    (command) => {
+      expect(decide(bashCall(command), {}).action).toBe('deny')
+    }
+  )
+
+  // F-3: BSD time's `-o FILE`; F-4: macOS `arch` and `xcrun`; F-5: zsh's
+  // `nocorrect` precommand modifier.
+  const launcherArms = [
+    '/usr/bin/time -o /tmp/t cat .env',
+    'time -a -o /tmp/t cat .env',
+    'time -p -o /tmp/t cat .env',
+    'arch -arm64 cat .env',
+    'arch -x86_64 cat .env',
+    'arch -arch arm64 cat .env',
+    'xcrun cat .env',
+    'xcrun --sdk macosx cat .env',
+    'xcrun --toolchain default cat .env',
+    'nocorrect cat .env',
+    'nocorrect timeout 5 cat .env',
+    'nocorrect eval cat .env',
+  ]
+  it.each(launcherArms)('%s -> deny (F-3/F-4/F-5)', (command) => {
+    expect(decide(bashCall(command), {}).action).toBe('deny')
+  })
+
+  const controls = [
+    // The caller's own exceptions still apply inside a body.
+    'bash -c "wc -l" < .env',
+    'bash -c "grep -q K" < .env',
+    'bash -c "nohup wc -l" < .env',
+    // The brace sub-run's peel reaches no reader here.
+    'V=${X} ls',
+    'foo ${X} nohup ls',
+    // Launchers before a non-reader, and the describe-only forms.
+    '/usr/bin/time -o /tmp/t ls',
+    'arch -h',
+    'xcrun --show-sdk-path',
+    'xcrun -f cat',
+    'nocorrect ls',
+  ]
+  it.each(controls)('control: %s -> allow', (command) => {
+    expectAllow(command)
+  })
+
+  // PINS, measured identical on `60da8b5a8`, `673f19ceb` and here: the
+  // unbraced assignment twin always read through the separator reading's
+  // peel, and `V=${X} cat .env` had no head to peel.
+  it.each(['V=$Y nohup cat .env', 'A=1 nohup cat .env', 'V=${X} cat .env'])(
+    'pin (denied on every tree): %s -> deny',
+    (command) => {
+      expect(decide(bashCall(command), {}).action).toBe('deny')
+    }
+  )
+})
+
+// SMI-6908 round 27 F-17 (the cross-family gate on 4552e41a7): xcrun's own
+// option spelling is single-dash, and the F-4 row carried only the
+// double-dash forms, so `xcrun -sdk macosx cat .env` left `macosx` as argv[0]
+// and allowed while the shell ran cat (the reviewer measured `xcrun -sdk
+// macosx printf` printing; every row below re-measured with a decoy in bash
+// 3.2 and zsh 5.9 on this host).
+describe('decide() — SMI-6908 round 27 F-17: xcrun single-dash spellings', () => {
+  const arms = [
+    'xcrun -sdk macosx cat .env',
+    'xcrun -toolchain default cat .env',
+    'xcrun -sdk macosx -toolchain default cat .env',
+    'xcrun -sdk macosx -- cat .env',
+    'xcrun -sdk macosx -log cat .env',
+    // Round 28: orderings and combinations, each measured printing a decoy
+    // (a value-less flag before the value flag, `-run`/`-r` on either side,
+    // an empty SDK, a repeated SDK in either spelling).
+    'xcrun -log -sdk macosx cat .env',
+    'xcrun -run -sdk macosx cat .env',
+    'xcrun -r -sdk macosx cat .env',
+    'xcrun -sdk macosx -r cat .env',
+    'xcrun -sdk macosx -run cat .env',
+    'xcrun -sdk "" cat .env',
+    'xcrun -sdk macosx -sdk iphoneos cat .env',
+    'xcrun --sdk macosx -sdk macosx cat .env',
+  ]
+  it.each(arms)('%s -> deny (allowed on 4552e41a7)', (command) => {
+    expect(decide(bashCall(command), {}).action).toBe('deny')
+  })
+
+  // PINS, denied on 4552e41a7 too: the value-less flags that run the command
+  // fall to the generic skip (singly or clustered), and the double-dash forms
+  // were already rows.
+  it.each([
+    'xcrun -log cat .env',
+    'xcrun -v cat .env',
+    'xcrun -run cat .env',
+    'xcrun -l -v -n -k cat .env',
+    'xcrun --sdk macosx cat .env',
+  ])('pin: %s -> deny', (command) => {
+    expect(decide(bashCall(command), {}).action).toBe('deny')
+  })
+
+  // Controls, allowed on every tree and running nothing natively (exit 64):
+  // a describe-only flag anywhere among the options stops the peel, and
+  // options are case-sensitive, so `-SDK` is an unknown flag whose next word
+  // is left as the command (an over-approximation that allows).
+  it.each([
+    'xcrun -sdk macosx -f cat',
+    'xcrun -f -sdk macosx cat .env',
+    'xcrun -show-sdk-path -sdk macosx cat .env',
+    'xcrun -SDK macosx cat .env',
+  ])('control (nothing runs): %s -> allow', (command) => {
+    expectAllow(command)
+  })
+
+  // Describe-only spellings run nothing (exit 64 with a trailing command,
+  // measured), so they stop the peel. These five were DENIED on 4552e41a7,
+  // where only the double-dash forms stopped: over-blocks corrected, not
+  // arms (round 28 named the split).
+  it.each([
+    'xcrun -show-sdk-path cat .env',
+    'xcrun -show-sdk-version cat .env',
+    'xcrun -h cat .env',
+    'xcrun -help cat .env',
+    'xcrun -version cat .env',
+  ])('corrected over-block (nothing runs): %s -> allow', (command) => {
+    expectAllow(command)
+  })
+  // PINS, allowed on 4552e41a7 too: `-f` already stopped through the cluster
+  // rule, and after `-sdk macosx` the peel there stopped at `macosx`.
+  it.each(['xcrun -find cat .env', 'xcrun -sdk macosx -find cat .env', 'xcrun -f cat .env'])(
+    'pin (nothing runs, allowed on every tree): %s -> allow',
+    (command) => {
+      expectAllow(command)
+    }
+  )
+
+  // Residue, pinned: usage errors that run nothing still deny, since the
+  // guard cannot know xcrun rejects a glued or `=` value and a cluster.
+  it.each(['xcrun -sdk=macosx cat .env', 'xcrun -sdkmacosx cat .env', 'xcrun -ln cat .env'])(
+    'residue (over-block of a usage error): %s -> deny',
+    (command) => {
+      expect(decide(bashCall(command), {}).action).toBe('deny')
+    }
+  )
+})
+
+// SMI-6920 (the post-merge retro of PR #2978, round 29): a head whose single
+// quoted operand is shell text was never re-tokenized, so `eval "cat .env"`
+// allowed while `eval cat .env` denied (F-A, Critical; every tree back to
+// 60da8b5a8; decoys printed in bash 3.2, zsh 5.9 and bash 5.2; the live
+// hook pair let `eval "cat <path>/.env"` through). And a computed command
+// name inside a wrapper's redirect-fed body never met the source (F-B,
+// High): the body got every reading but not the computed-head check.
+describe('decide() — SMI-6920: a quoted operand that is shell text, and a computed head fed by a redirect', () => {
+  function reasonOf(result: ReturnType<typeof decide>): string {
+    return result.json?.hookSpecificOutput.permissionDecisionReason ?? ''
+  }
+
+  const shellTextArms = [
+    'eval "cat .env"',
+    "eval 'cat .env'",
+    'eval "grep KEY .env"',
+    'eval "nohup cat .env"',
+    'eval "if true; then cat .env; fi"',
+    'eval "bash -c \'cat .env\'"',
+    'env -S "cat .env"',
+    'env -S "nohup cat .env"',
+    'env --split-string="cat .env"',
+    'env -S"cat .env"',
+    'env X=1 -S "cat .env"',
+    'sudo env -S "cat .env"',
+    'nohup env -S "cat .env"',
+    'trap -- "cat .env" EXIT',
+    'trap "cat .env" EXIT INT',
+    'V=${X} eval "cat .env"',
+    // macOS ships `/usr/bin/command`, a program, so `nohup command eval`
+    // PRINTED in bash 3.2 and zsh 5.9 on the host (SILENT in the container,
+    // which has no such program); `command trap` and `command eval` are
+    // bash-only (zsh's `command` runs external commands and was SILENT).
+    'nohup command eval "cat .env"',
+    'command trap "cat .env" EXIT',
+    'trap "cat .env" EXIT',
+    'trap "nohup cat .env" INT TERM',
+    'bash -c "eval \\"nohup cat\\"" < .env',
+    'sudo bash -c "eval \\"nohup cat\\"" < .env',
+    'eval "varlock load --format json"',
+    'command eval "cat .env"',
+    'eval -- cat .env',
+  ]
+  it.each(shellTextArms)('%s -> deny (F-A, allowed on cfc96eccd)', (command) => {
+    expect(decide(bashCall(command), {}).action).toBe('deny')
+  })
+
+  // A launcher that execs a PROGRAM never runs a builtin behind it: every
+  // row here was SILENT in bash 3.2, zsh 5.9 and bash 5.2 (`nohup: eval:
+  // No such file or directory`). The deny is the additive reading keeping
+  // the quoted spelling at the posture its separate-word twin (`nohup eval
+  // cat .env`) already had on every tree -- an over-approximation ADR-172
+  // accepts, and not a leak closed, so these are pins, not arms.
+  it.each([
+    'nohup eval "cat .env"',
+    'nohup trap "cat .env" EXIT',
+    'sudo eval "cat .env"',
+    'sudo nohup eval "cat .env"',
+    'timeout 5 eval "cat .env"',
+    'env X=1 eval "cat .env"',
+  ])('over-block pin (the builtin never runs; allowed on cfc96eccd): %s -> deny', (command) => {
+    expect(decide(bashCall(command), {}).action).toBe('deny')
+  })
+
+  const computedHeadArms = [
+    'bash -c "$(echo cat)" < .env',
+    'sh -c "$X" < .env',
+    'bash -c "${READER}" < .env',
+    'bash -c "nohup $(echo cat)" < .env',
+  ]
+  it.each(computedHeadArms)('%s -> deny (F-B, allowed on cfc96eccd)', (command) => {
+    expect(decide(bashCall(command), {}).action).toBe('deny')
+  })
+
+  // PINS, denied on every tree: the separate-word spellings and the
+  // computed head with a visible source.
+  it.each([
+    'eval cat .env',
+    'eval "cat" ".env"',
+    'env -S cat .env',
+    '$(echo cat) < .env',
+    'bash -c "$(echo cat) .env"',
+    'bash -c cat < .env',
+    'env -S "cat" .env',
+  ])('pin: %s -> deny', (command) => {
+    expect(decide(bashCall(command), {}).action).toBe('deny')
+  })
+
+  // Controls: shell text that reads nothing, the sanctioned idiom inside an
+  // operand, the forms of `trap` that run nothing, and an operand whose
+  // only `.env` is behind an expansion the shell assembles at runtime.
+  it.each([
+    'eval "echo hi"',
+    'eval "ls -la"',
+    'env -S "ls -la"',
+    'trap "echo bye" EXIT',
+    'trap - EXIT',
+    'trap -l',
+    'trap -p',
+    'eval "grep -q KEY .env"',
+    'eval "wc -l .env"',
+    'eval "cat $F"',
+    'bash -c "wc -l" < .env',
+    'env -S "printf harmless"',
+    "env -S 'printf harmless' .env.example",
+  ])('control: %s -> allow', (command) => {
+    expectAllow(command)
+  })
+
+  // The depth cap still governs the new reading: an operand nested past
+  // MAX_DEPTH levels fails closed rather than falling through.
+  it('an eval chain past the depth cap fails closed', () => {
+    let chain = 'cat .env'
+    for (let i = 0; i < 8; i++) chain = `eval ${JSON.stringify(chain)}`
+    const verdict = decide(bashCall(chain), {})
+    expect(verdict.action).toBe('deny')
+    expect(reasonOf(verdict)).toContain('past depth')
+  })
+})
 // SMI-6903 round 21 F2 (Critical, pre-existing): an input-redirect source that
 // is a command substitution supplies its OUTPUT as the filename, so the body's
 // own words are this segment's read targets -- the same flatten an argv-slot
@@ -1546,7 +1885,7 @@ describe('decide() — SMI-6903 F2: a redirect source that is a substitution', (
 
   const controls = ['cat < $(echo notes.txt)', 'cat < $(echo .env.example)']
   it.each(controls)('control: %s -> allow', (command) => {
-    expect(decide(bashCall(command), {}).action).toBe('allow')
+    expectAllow(command)
   })
 
   // Asserted as a PROPERTY: whatever posture a metadata-only reader has, the
@@ -1613,7 +1952,7 @@ describe('decide() — SMI-6903 F3: a redirect on a wrapper reaches its body', (
     "bash -c 'cat' < notes.txt",
   ]
   it.each(controls)('control: %s -> allow', (command) => {
-    expect(decide(bashCall(command), {}).action).toBe('allow')
+    expectAllow(command)
   })
 
   // Property, not a pinned verdict: the redirect spelling must agree with the
@@ -1624,10 +1963,120 @@ describe('decide() — SMI-6903 F3: a redirect on a wrapper reaches its body', (
     )
   })
 
-  // PIN: the redirect INSIDE the body already denied before the fix, since the
-  // body is tokenized as its own command there. Kept so the two spellings are
-  // visibly distinguished.
-  it('pin (denied before the fix): bash -c "cat < .env" -> deny', () => {
+  // A pin against the intra-branch tree `733427c82` (the redirect INSIDE the
+  // body was already denied there, since the body is tokenized as its own
+  // command) and an ARM against main's history: on `60da8b5a8`, the base of
+  // PR #2973, this allowed. Both trees named, both measured, because the
+  // squash erased the round boundary (SMI-6908 F-7). Kept so the two
+  // spellings are visibly distinguished.
+  it('arm against 60da8b5a8, pin against 733427c82: bash -c "cat < .env" -> deny', () => {
     expect(decide(bashCall('bash -c "cat < .env"'), {}).action).toBe('deny')
+  })
+})
+
+// SMI-6920 round 2 (the governance review of 243a96847): two Criticals
+// INSIDE the first fix. C-1: `env -S` appends its remaining operands
+// verbatim, but the first version joined them bare and re-tokenized, so an
+// operand carrying `#`, `;`, `|`, `&`, `>` or a quote became a comment, a
+// separator or a redirect and the reader vanished (eight spellings moved
+// from deny to allow; every one printed a decoy through /usr/bin/env). C-2:
+// the substitution recursion never saw the inherited redirect sources, and
+// the peel had stopped at a shell-text head instead of also emitting the
+// fully peeled reading, so `eval 'echo $(cat)' < .env` moved from deny to
+// allow (printed a decoy in bash 3.2 and zsh 5.9). Each fix was watched
+// failing on a tree of 243a96847; the corrected rows passed on cfc96eccd.
+describe('decide() — SMI-6920 round 2: a quoted env -S remainder, inherited sources in a substitution, both readings at a shell-text head', () => {
+  // C-1: corrected regressions (allowed on 243a96847, denied on cfc96eccd).
+  it.each([
+    'env -S cat "#x" .env',
+    'env -S cat "#" .env',
+    'env -S cat ";" .env',
+    'env -S cat "|" .env',
+    'env -S cat "&" .env',
+    'env -S cat ">" .env',
+    'env -S cat "\\"" .env',
+    'env -S cat "\'" .env',
+  ])('corrected regression (C-1): %s -> deny', (command) => {
+    expect(decide(bashCall(command), {}).action).toBe('deny')
+  })
+
+  // C-2: the two corrected regressions, then the siblings that allowed on
+  // every tree (arms), each measured printing a decoy.
+  it.each(["eval 'echo $(cat)' < .env", 'eval "echo $X" < .env'])(
+    'corrected regression (C-2): %s -> deny',
+    (command) => {
+      expect(decide(bashCall(command), {}).action).toBe('deny')
+    }
+  )
+  it.each([
+    "bash -c 'echo $(cat)' < .env",
+    "bash -c 'echo `cat`' < .env",
+    "bash -c '{ echo $(cat); }' < .env",
+    "eval 'echo `cat`' < .env",
+    "trap 'echo $(cat)' EXIT < .env",
+  ])('%s -> deny (C-2, allowed on cfc96eccd)', (command) => {
+    expect(decide(bashCall(command), {}).action).toBe('deny')
+  })
+
+  // A space-carrying operand denied on every tree (the join split it into
+  // words the reader still saw): a pin beside the metacharacter rows.
+  it('pin: env -S cat "a b" .env -> deny', () => {
+    expect(decide(bashCall('env -S cat "a b" .env'), {}).action).toBe('deny')
+  })
+
+  // L-2: `watch` without `-x` joins its operands into `sh -c` text; the
+  // quoted spelling is read now (documented semantics, `watch` is installed
+  // nowhere here).
+  it('watch "cat .env" -> deny (L-2, allowed on cfc96eccd)', () => {
+    expect(decide(bashCall('watch "cat .env"'), {}).action).toBe('deny')
+  })
+  it('pin: watch cat .env -> deny', () => {
+    expect(decide(bashCall('watch cat .env'), {}).action).toBe('deny')
+  })
+
+  // A RESTORED denial, not a new over-block (round 3, F-3): measured deny on
+  // cfc96eccd, allow on 243a96847, deny here. Harmless either way -- env
+  // rejects the substitution in its split
+  // text (`Only ${VARNAME} expansion is supported`), so the line runs
+  // nothing; the substitution recursion now carries the inherited source.
+  it("restored denial (allowed on 243a96847, denied on cfc96eccd): env -S 'echo $(cat)' < .env -> deny", () => {
+    expect(decide(bashCall("env -S 'echo $(cat)' < .env"), {}).action).toBe('deny')
+  })
+
+  // SMI-6920 round 4, F-B: the `-c`-launcher branch in
+  // `shell-command-readings.mjs` used to return without the readings
+  // `peelHead` had just pushed, and round 3 recorded that as unreachable
+  // because the `-c` launcher set is disjoint from the shell-text heads. The
+  // inference was wrong: the push and the return need not be the same loop
+  // iteration, and `watch` is BOTH a shell-text head and a peelable launcher,
+  // so a reading pushed at `watch` survives into a later `script`/`su`/
+  // `flock` head. Measured: 40 of 747 probed commands moved from allow to deny
+  // across that one-word change, none the other way. The leading launcher is
+  // needed because the push is gated on having peeled something.
+  //
+  // Red arm: restore `return segs.concat(...)` and all three fail.
+  it.each([
+    'nohup watch script -c cat < .env',
+    'nohup watch su -c cat < .env',
+    'nohup watch flock /tmp/l -c cat < .env',
+  ])('round 4 F-B (allowed on 2e5d5bbb1 and cfc96eccd): %s -> deny', (command) => {
+    expect(decide(bashCall(command), {}).action).toBe('deny')
+  })
+  // The same shapes without the leading launcher deny on both trees: the pin
+  // that keeps the rows above from passing on a guard that denies all of them.
+  it('pin: watch script -c cat < .env -> deny on both trees', () => {
+    expect(decide(bashCall('watch script -c cat < .env'), {}).action).toBe('deny')
+  })
+
+  // Controls assert the WHOLE result (M-2): a fail-open allow carries a
+  // stderr line, so `.action` alone passed on a guard whose shell-text
+  // mechanism was entirely dead (measured: 13 of 13 with the import removed).
+  it.each([
+    'echo $(cat) < .env',
+    'watch -x "cat .env"',
+    'env -S cat "#x" notes.txt',
+    'eval "echo $X"',
+  ])('control: %s -> allow', (command) => {
+    expectAllow(command)
   })
 })

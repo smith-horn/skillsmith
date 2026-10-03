@@ -407,6 +407,10 @@ export function restoreXargsReplacementWordTokens(segmentTokens) {
  * L1 correction: dropped the unused `export` -- used only locally in this
  * file (the test file's own comment naming it is prose, not an import;
  * confirmed via `grep -rn` across scripts/).
+ * SMI-6908 F-16 (a peer's question, measured): `deno run -` reads its
+ * program from stdin the way `node -` does, but `deno` was only in the
+ * `eval`-subcommand list, so `echo '<program>' | deno run -` was never
+ * read while the same text piped to node, bun or python3 denied H5.
  */
 function isInlineInterpreterBasename(base) {
   return (
@@ -416,7 +420,8 @@ function isInlineInterpreterBasename(base) {
     base === 'perl' ||
     base === 'ruby' ||
     base === 'php' ||
-    base === 'bun'
+    base === 'bun' ||
+    base === 'deno'
   )
 }
 

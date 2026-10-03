@@ -9,12 +9,16 @@
  *   outdated.ts.
  */
 
-import { SkillVersionRepository, compareSkillContentHashes } from '@skillsmith/core'
+import {
+  SkillVersionRepository,
+  compareSkillContentHashes,
+  installedSkillsOf,
+} from '@skillsmith/core'
 import { withTelemetry } from '@skillsmith/core/telemetry'
 import type { IdentitySignal, IdentityInconclusiveReason } from '@skillsmith/core'
 import type { ToolContext } from '../context.js'
 import { hashContent } from './install.conflict-helpers.js'
-import { loadManifest, lookupSkillFromRegistry } from './install.helpers.js'
+import { loadManifestWithWarning, lookupSkillFromRegistry } from './install.helpers.js'
 import { getManifestInstalledSkillIds } from './manifest-skill-ids.helpers.js'
 import type { SkillManifestEntry, RegistrySkillInfo } from './install.types.js'
 import { readInstalledContent, checkDependencies } from './outdated.helpers.js'
@@ -47,8 +51,13 @@ async function executeOutdatedImpl(
   input: OutdatedInput,
   context: ToolContext
 ): Promise<OutdatedResponse> {
-  const manifest = await loadManifest()
-  const entries = Object.values(manifest.installedSkills) as SkillManifestEntry[]
+  // SMI-6733 Phase 2 Wave 2: `loadManifestWithWarning` (not `loadManifest`)
+  // so a degraded read's warning reaches the response (ADR-171 § 10).
+  // `installedSkillsOf` (not a bare `manifest.installedSkills`) because
+  // ADR-171 § 5's nullish carve-out means a manifest classifying `ok` can
+  // still have `installedSkills: null` — `Object.values(null)` throws.
+  const { manifest, warning } = await loadManifestWithWarning()
+  const entries = Object.values(installedSkillsOf(manifest)) as SkillManifestEntry[]
 
   if (entries.length === 0) {
     return {
@@ -62,6 +71,7 @@ async function executeOutdatedImpl(
         local_drift: 0,
         identity_mismatch: 0,
       },
+      ...(warning ? { warning } : {}),
     }
   }
 
@@ -340,6 +350,13 @@ async function executeOutdatedImpl(
       local_drift: localDriftCount,
       identity_mismatch: identityMismatchCount,
     },
+    // SMI-6733 Phase 2 Wave 2: threaded for symmetry with the early return
+    // above, not for coverage — `loadManifestLenient`'s only non-null-warning
+    // return is also the empty manifest, so `warning !== null` here implies
+    // `entries.length === 0`, which always takes the early return above.
+    // This branch is unreachable with a non-null `warning` and no test
+    // claims otherwise.
+    ...(warning ? { warning } : {}),
   }
 }
 
