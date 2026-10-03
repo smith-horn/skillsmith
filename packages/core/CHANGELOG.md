@@ -17,8 +17,12 @@ All notable changes to `@skillsmith/core` are documented here.
   database is shared between processes -- a CLI invocation and a long-lived MCP server can both hold
   it -- and SQLite coordinates processes through the file **paths**, not the inodes. Renaming it out
   from under a live handle leaves that process writing into the renamed file while new connections
-  use the replacement, and the two diverge silently. ADR-155 had already settled the policy:
-  *"Recovery never runs automatically."*
+  use the replacement, and the two diverge silently -- worse than divergence, in fact, since the two
+  files then **share a journal by name**, so one database's recovery can read the other's content.
+  SQLite states this itself: renaming an open database "results in behavior that is undefined and
+  probably undesirable." **ADR-175** records the decision. An earlier version of this entry cited
+  *ADR-155: "Recovery never runs automatically"* as settled policy here; that was a misattribution --
+  ADR-155 governs skill-folder recovery and mentions no database.
 
   **The probe runs on a separate read-only connection**, opened and closed before the caller's
   connection exists. This is the part that makes the refusal non-mutating, and a second review round
@@ -63,8 +67,12 @@ All notable changes to `@skillsmith/core` are documented here.
 
 - **Test**: SMI-6931 -- a dedicated suite covering the native driver's **file-open** path, which had
   none: all nine `createBetterSqlite3Database` call sites in the existing driver test pass
-  `:memory:`, which is why a missing probe reached production unnoticed. Every refusal arm asserts the main file
-  **and** the `-wal` are byte-identical afterwards. The `-shm`'s bytes are deliberately **not**
+  `:memory:`, which is why a missing probe reached production unnoticed. The arms that assert
+  non-mutation compare the main file's bytes and the directory listing; **two of them additionally
+  compare the `-wal` byte-for-byte**, and two assert the refusal's message rather than any file's
+  contents. An earlier version of this entry claimed *every* refusal arm asserted both files, which
+  was false -- the third false claim found in this one entry, after two stale tallies. The `-shm`'s
+  bytes are deliberately **not**
   asserted, and that narrowing is measured rather than assumed: with the `-shm` deleted outright
   every committed row remained readable and the `-wal` stayed byte-identical, so it is SQLite's
   shared-memory WAL index and byte-identity on it asserts the wrong property. Includes propagation

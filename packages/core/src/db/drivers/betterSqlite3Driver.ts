@@ -187,9 +187,15 @@ export function createBetterSqlite3Database(
  * silently. Losing writes is worse than refusing to start, and this database is
  * a rebuildable mirror of the remote registry, so refusing costs little.
  *
- * It is also what this repo already decided. ADR-155: *"Recovery never runs
- * automatically."* Skillsmith refuses and defers to an explicit command rather
- * than acting on the user's data unasked.
+ * **ADR-175** records this decision and the evidence for it. An earlier version
+ * of this comment cited *ADR-155: "Recovery never runs automatically"* as
+ * settled policy for database drivers; that was a misattribution — ADR-155
+ * governs skill-folder recovery and mentions no database at all. The quote is
+ * real and its scope is another subsystem. The argument that actually holds is
+ * the one above, which SQLite states itself: renaming an open database "results
+ * in behavior that is undefined and probably undesirable", and the two files
+ * then share a journal by name, so one database's recovery can read the other's
+ * content.
  *
  * The message therefore has to be actionable, because a correct refusal the
  * user cannot act on is its own defect. It names the path, the verdict, and the

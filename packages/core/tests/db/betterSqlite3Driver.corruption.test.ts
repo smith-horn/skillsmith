@@ -14,8 +14,13 @@
  * and SQLite coordinates processes through the file PATHS, not the inodes.
  * Renaming it out from under a live handle leaves that process writing into the
  * renamed backup while new connections use the replacement, and the two diverge
- * silently. ADR-155 had already settled the policy: *"Recovery never runs
- * automatically."*
+ * silently — and worse, the two files then share a journal by name, so one
+ * database's recovery can read the other's content. SQLite says so itself:
+ * renaming an open database "results in behavior that is undefined and probably
+ * undesirable." **ADR-175** records the decision. An earlier version of this
+ * comment cited *ADR-155: "Recovery never runs automatically"* as settled policy
+ * here; that was a misattribution — ADR-155 governs skill-folder recovery and
+ * mentions no database.
  *
  * The probe runs through a SEPARATE READ-ONLY connection, opened and closed
  * before the caller's connection exists. That is not fastidiousness: a
