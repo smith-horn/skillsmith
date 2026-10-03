@@ -6,8 +6,16 @@
  * sed escapes (ubuntu runner); tests run in the Linux container.
  */
 import { spawnSync } from 'node:child_process'
-import { chmodSync, existsSync, mkdirSync, mkdtempSync, readFileSync, writeFileSync } from 'node:fs'
-import { createRequire } from 'node:module'
+import {
+  chmodSync,
+  cpSync,
+  existsSync,
+  mkdirSync,
+  mkdtempSync,
+  readFileSync,
+  writeFileSync,
+} from 'node:fs'
+import { builtinModules, createRequire } from 'node:module'
 import { tmpdir } from 'node:os'
 import { dirname, join, resolve } from 'node:path'
 import { fileURLToPath } from 'node:url'
@@ -30,7 +38,9 @@ interface Doc {
 const yaml = require('js-yaml') as { load: (t: string) => Doc }
 const doc = (): Doc => yaml.load(readFileSync(WORKFLOW, 'utf8'))
 const script = (): string => {
-  const steps = Object.values(doc().jobs)[0].steps.filter((s) => s.run?.includes('audit-standards'))
+  const steps = Object.values(doc().jobs)[0].steps.filter((s) =>
+    s.run?.includes('check-dependency-registry')
+  )
   expect(steps).toHaveLength(1)
   return steps[0].run as string
 }
@@ -49,7 +59,8 @@ describe('workflow shape', () => {
     expect(doc().permissions).toEqual({ contents: 'read', issues: 'write' })
   })
   it('runs exactly the narrow Check 76 command', () => {
-    expect(script()).toContain('node scripts/audit-standards.mjs --only dependency-registry')
+    expect(script()).toContain('node scripts/check-dependency-registry.mjs')
+    expect(script()).not.toContain('audit-standards')
     expect(script()).toContain('gh issue list --label "$ISSUE_LABEL"')
     expect(Object.values(doc().jobs)[0].env?.ISSUE_LABEL).toBe('dependency-registry-expiry')
   })
@@ -74,7 +85,7 @@ describe('executed run of the workflow script (stub node and gh)', () => {
   const FAILED =
     '✗ Check 76: acceptance GHSA-ffff-gggg-hhhh (pkg, tier R2, owner someone) expired 2026-10-01 (UTC). Re-triage.\n'
 
-  function exec(nodeOut: string, nodeRc: number, existing = '') {
+  function exec(nodeOut: string, nodeRc: number, existing = '', ghFail = '') {
     const dir = mkdtempSync(join(tmpdir(), 'smi6949-expiry-'))
     const bin = join(dir, 'bin')
     mkdirSync(bin)
@@ -88,6 +99,7 @@ describe('executed run of the workflow script (stub node and gh)', () => {
       join(bin, 'gh'),
       `#!/bin/bash
 echo "$*" >> "$GH_LOG"
+if [ "$1 $2" = "$STUB_GH_FAIL" ]; then echo "stub gh: $1 $2 failed" >&2; exit 1; fi
 prev=""
 for a in "$@"; do
   if [ "$prev" = "--body-file" ]; then cp "$a" "$GH_BODY"; fi
@@ -115,13 +127,14 @@ exit 0
         STUB_NODE_OUT: nodeOutFile,
         STUB_NODE_RC: String(nodeRc),
         STUB_EXISTING: existing,
+        STUB_GH_FAIL: ghFail,
         GH_LOG: ghLog,
         GH_BODY: ghBody,
       },
     })
     const calls = readFileSync(ghLog, 'utf8').split('\n').filter(Boolean)
     const body = existsSync(ghBody) ? readFileSync(ghBody, 'utf8') : ''
-    return { status: r.status, calls, body, stderr: r.stderr }
+    return { status: r.status, calls, body, stderr: r.stderr, stdout: r.stdout }
   }
   const verbs = (calls: string[]) => calls.map((c) => c.split(' ').slice(0, 2).join(' '))
 
@@ -166,10 +179,75 @@ exit 0
     expect(r.body).not.toContain('\u001b') // the colour codes did not leak into the issue body
     expect(r.body).toContain('- \u2717 Check 76: acceptance GHSA-ffff-gggg-hhhh expired')
   })
+  it('a failing `gh issue list` aborts non-zero and never creates (no duplicate issue)', () => {
+    const r = exec(EXPIRING, 0, '42', 'issue list')
+    expect(r.status).not.toBe(0)
+    expect(verbs(r.calls)).toEqual(['issue list'])
+    expect(r.stdout).toContain('::error::gh issue list failed')
+  })
+  it.each([
+    ['issue create', EXPIRING, 0, ''],
+    ['issue edit', EXPIRING, 0, '42'],
+    ['issue close', GREEN_R4, 0, '42'],
+  ])('a failing `gh %s` exits non-zero even when the check itself passed', (cmd, out, rc, ex) => {
+    const r = exec(out, rc, ex, cmd)
+    expect(r.status).not.toBe(0)
+    expect(verbs(r.calls)).toContain(cmd)
+    expect(r.stdout).toContain(`::error::gh ${cmd} failed`)
+  })
   it('a crash with no failure line still opens the issue and says the check did not complete', () => {
     const r = exec('Error: boom\n', 2)
     expect(r.status).toBe(2)
     expect(verbs(r.calls)).toContain('issue create')
     expect(r.body).toContain('did not complete (exit 2)')
+  })
+})
+
+describe('the REAL script runs with no node_modules on the path (M1)', () => {
+  // The workflow has no `npm ci`. Copy scripts/ plus the three data files
+  // into a bare directory and run the real script with the real node.
+  // The dev container has /node_modules above any temp dir, so a bare `import 'semver'`
+  // would still resolve there and the run below cannot prove the closure by itself
+  // (measured: adding that import left the run green). Walk the import closure statically.
+  it('the import closure of the script is node builtins and repo files only', () => {
+    const seen = new Set<string>()
+    const bare: string[] = []
+    const walk = (file: string): void => {
+      if (seen.has(file)) return
+      seen.add(file)
+      const src = readFileSync(file, 'utf8')
+      const re = /(?:\bfrom\s+|\bimport\s*\(?\s*)['"]([^'"]+)['"]/g
+      for (const m of src.matchAll(re)) {
+        const spec = m[1]
+        if (spec.startsWith('.')) walk(resolve(dirname(file), spec))
+        else if (!spec.startsWith('node:') && !builtinModules.includes(spec)) {
+          bare.push(`${file}: ${spec}`)
+        }
+      }
+    }
+    walk(join(REPO_ROOT, 'scripts/check-dependency-registry.mjs'))
+    expect(seen.size).toBeGreaterThanOrEqual(4) // presence: the walk reached the helper modules
+    expect(bare).toEqual([])
+  })
+  it('exits 0 and prints the coherent line from a node_modules-free copy', () => {
+    const dir = mkdtempSync(join(tmpdir(), 'smi6949-bare-'))
+    // The whole scripts/ tree (minus tests and any node_modules): the closure must resolve in it.
+    cpSync(join(REPO_ROOT, 'scripts'), join(dir, 'scripts'), {
+      recursive: true,
+      filter: (src) => !/[\\/](node_modules|tests)$/.test(src),
+    })
+    for (const rel of ['.github/dependency-registry.json', 'package.json', 'package-lock.json']) {
+      mkdirSync(dirname(join(dir, rel)), { recursive: true })
+      writeFileSync(join(dir, rel), readFileSync(join(REPO_ROOT, rel)))
+    }
+    expect(existsSync(join(dir, 'node_modules'))).toBe(false)
+    const r = spawnSync(process.execPath, ['scripts/check-dependency-registry.mjs'], {
+      cwd: dir,
+      encoding: 'utf8',
+      env: { PATH: process.env.PATH ?? '' },
+    })
+    expect(r.stderr).not.toMatch(/ERR_MODULE_NOT_FOUND/)
+    expect(r.status).toBe(0)
+    expect(r.stdout).toMatch(/Check 76: dependency registry coherent \(/)
   })
 })

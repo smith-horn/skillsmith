@@ -8,10 +8,12 @@
 # permanently). The job exits with Check 76's own status, so a lapsed
 # acceptance also shows red in Actions.
 #
-# No Docker and no `needs: docker-build`: the audit:standards import closure for
-# `--only dependency-registry` is node builtins plus repo files (measured), so
-# the SMI-4647 `# audit:carveout-pure-js` marker does not apply -- that marker
-# only gates jobs declaring `needs: docker-build`.
+# No Docker, no `npm ci` and no `needs: docker-build`: this runs
+# scripts/check-dependency-registry.mjs, whose import closure is node builtins
+# plus repo files only (a test runs it from a copy with no node_modules).
+# audit-standards.mjs itself cannot run here (it imports `semver`). The SMI-4647
+# `# audit:carveout-pure-js` marker does not apply -- that marker only gates jobs
+# declaring `needs: docker-build`.
 name: Dependency Registry Expiry
 
 on:
@@ -52,14 +54,18 @@ jobs:
           CLEAN="$RUNNER_TEMP/check76.clean"
           BODY="$RUNNER_TEMP/check76.body.md"
           TITLE='Dependency registry: acceptances failing or expiring (Check 76)'
-          node scripts/audit-standards.mjs --only dependency-registry > "$OUT" 2>&1
+          node scripts/check-dependency-registry.mjs > "$OUT" 2>&1
           RC=$?
           cat "$OUT"
           sed -e 's/\x1b\[[0-9;]*m//g' "$OUT" > "$CLEAN"
           FAIL_MARK=$(printf '\xe2\x9c\x97')
           FAILS=$(grep -aF "$FAIL_MARK" "$CLEAN" | grep -a 'Check 76' || true)
           EXPIRING=$(grep -a '^::warning file=.github/dependency-registry.json::' "$CLEAN" | sed -e 's/^::warning file=[^:]*:://' || true)
-          EXISTING=$(gh issue list --label "$ISSUE_LABEL" --state open --json number -q '.[0].number' 2>/dev/null || true)
+          # A failed lookup must not read as "no open issue" (that would file a duplicate).
+          if ! EXISTING=$(gh issue list --label "$ISSUE_LABEL" --state open --json number -q '.[0].number // empty'); then
+            echo "::error::gh issue list failed; cannot tell whether a tracking issue is open"
+            exit 1
+          fi
           if [ -n "$FAILS" ] || [ -n "$EXPIRING" ] || [ "$RC" -ne 0 ]; then
             {
               printf 'The scheduled dependency-registry check (audit:standards Check 76) needs attention.\n\n'
@@ -81,11 +87,20 @@ jobs:
             } > "$BODY"
             gh label create "$ISSUE_LABEL" --color d93f0b --force > /dev/null 2>&1 || true
             if [ -n "$EXISTING" ]; then
-              gh issue edit "$EXISTING" --title "$TITLE" --body-file "$BODY"
+              gh issue edit "$EXISTING" --title "$TITLE" --body-file "$BODY" || {
+                echo "::error::gh issue edit failed"
+                exit 1
+              }
             else
-              gh issue create --title "$TITLE" --label "$ISSUE_LABEL" --body-file "$BODY"
+              gh issue create --title "$TITLE" --label "$ISSUE_LABEL" --body-file "$BODY" || {
+                echo "::error::gh issue create failed"
+                exit 1
+              }
             fi
           elif [ -n "$EXISTING" ]; then
-            gh issue close "$EXISTING" --comment "Check 76 is clean (no failures, nothing expiring within 14 days) in run ${GITHUB_RUN_ID}."
+            gh issue close "$EXISTING" --comment "Check 76 is clean (no failures, nothing expiring within 14 days) in run ${GITHUB_RUN_ID}." || {
+              echo "::error::gh issue close failed"
+              exit 1
+            }
           fi
           exit "$RC"

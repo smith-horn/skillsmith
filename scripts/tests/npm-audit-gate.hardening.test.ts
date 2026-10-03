@@ -168,7 +168,7 @@ describe('workspace list derivation (R1-H1)', () => {
       cwdFiles: {
         ...dirs('packages/a', 'packages/c', 'tools/x'),
         'packages/nopkg/README.md': 'no package.json here',
-        'packages/node_modules/z/package.json': '{}',
+        'packages/node_modules/package.json': '{}',
       },
     })
     const ws = r.argv.filter((a) => a.startsWith('--workspace='))
@@ -190,6 +190,9 @@ describe('workspace list derivation (R1-H1)', () => {
     ['an unsupported glob (**)', pkg(['packages/**'])],
     ['a negation', pkg(['packages/*', '!packages/a'])],
     ['a mid-path star', pkg(['packages/*/sub'])],
+    ['a multi-star pattern (packages/* beside libs/*/*)', pkg(['packages/*', 'libs/*/*'])],
+    ['a star in the base directory (packages/* beside a*/*)', pkg(['packages/*', 'a*/*'])],
+    ['a leading multi-star (packages/* beside */*)', pkg(['packages/*', '*/*'])],
     ['no workspaces key', JSON.stringify({ name: 'fx' })],
     ['an empty workspaces list', pkg([])],
     ['patterns that match nothing', pkg(['nowhere/*'])],

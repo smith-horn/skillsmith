@@ -49,15 +49,23 @@ export function utcDayNumber(s) {
   return ms / 86400000
 }
 
-/** Override leaves of a package.json `overrides` map, keyed `a > b > .`. */
-export function collectOverrideLeaves(overrides, prefix = []) {
+/**
+ * Override leaves of a package.json `overrides` map, keyed `a > b > .`.
+ * `collisions` (optional) receives every joined key produced twice, e.g.
+ * {"a >":{"b":1},"a":{"> b":2}} joins both leaves to "a > > b" (R2-L2).
+ */
+export function collectOverrideLeaves(overrides, prefix = [], collisions = []) {
   const leaves = new Map()
+  const put = (k, v) => {
+    if (leaves.has(k)) collisions.push(k)
+    leaves.set(k, v)
+  }
   for (const [key, value] of Object.entries(overrides ?? {})) {
     const path = [...prefix, key]
     if (value !== null && typeof value === 'object') {
-      for (const [k, v] of collectOverrideLeaves(value, path)) leaves.set(k, v)
+      for (const [k, v] of collectOverrideLeaves(value, path, collisions)) put(k, v)
     } else {
-      leaves.set(path.join(' > '), value)
+      put(path.join(' > '), value)
     }
   }
   return leaves
@@ -67,7 +75,16 @@ const f = (message, fix) => ({ severity: 'fail', message, fix })
 const w = (message, fix) => ({ severity: 'warn', message, fix })
 
 function checkOverrides({ pkg, registry }, out) {
-  const leaves = collectOverrideLeaves(pkg?.overrides)
+  const collisions = []
+  const leaves = collectOverrideLeaves(pkg?.overrides, [], collisions)
+  for (const dup of collisions) {
+    out.push(
+      f(
+        `Check 76: two package.json overrides join to the same registry key "${dup}" (a key containing the " > " separator collides with a nested path)`,
+        'Rename the override key, or express the nesting as a nested overrides object'
+      )
+    )
+  }
   const entries = registry.overrides ?? {}
   for (const bad of findAmbiguousOverrideKeys(pkg?.overrides)) {
     out.push(
@@ -398,6 +415,30 @@ export function runDependencyRegistryCheck({ pass, warn, fail }, opts = {}) {
   }
   emitGithubActionsReport(result.windowEntries, opts.env ?? process.env)
   return failures
+}
+
+export const CHECK_76_BANNER = 'Check 76: dependency registry coherence and expiry (SMI-6949)'
+
+/**
+ * The whole of Check 76 for a standalone caller (scripts/check-dependency-registry.mjs
+ * and `audit:standards --only dependency-registry`): banner, findings, summary line.
+ * Returns the failure count; the one implementation both entry points share.
+ */
+export function runDependencyRegistryCli(opts = {}, out = console.log) {
+  const GREEN = '\x1b[32m'
+  const YELLOW = '\x1b[33m'
+  const RED = '\x1b[31m'
+  const RESET = '\x1b[0m'
+  const BOLD = '\x1b[1m'
+  out(`\n${BOLD}${CHECK_76_BANNER}${RESET}`)
+  const line = (color, mark) => (msg, fix) => {
+    out(`${color}${mark}${RESET} ${msg}`)
+    if (fix) out(`  ${YELLOW}Fix:${RESET} ${fix}`)
+  }
+  return runDependencyRegistryCheck(
+    { pass: line(GREEN, '✓'), warn: line(YELLOW, '⚠'), fail: line(RED, '✗') },
+    opts
+  )
 }
 
 /** Check 11 (override exact-pin) text, kept here so a test can pin it (SMI-6949 section 5). */

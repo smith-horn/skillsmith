@@ -45,6 +45,9 @@ export function pinnedByProblem(pinnedBy, root, isFile) {
     return 'resolves outside the repository root'
   }
   const posix = rel.split('\\').join('/')
+  if (posix.split('/').includes('node_modules')) {
+    return 'is under a node_modules directory (not repo-tracked content)'
+  }
   if (!TEST_PATTERNS.some((re) => re.test(posix))) {
     return 'is not a test file (it must match *.test.* or *.spec.*)'
   }

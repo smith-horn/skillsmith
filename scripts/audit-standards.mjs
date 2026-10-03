@@ -107,6 +107,7 @@ import {
 } from './audit-cli-pin-drift-helpers.mjs'
 import {
   runDependencyRegistryCheck,
+  runDependencyRegistryCli,
   exactPinOverrideWarning,
 } from './audit-dependency-registry-helpers.mjs'
 import { TEST_PATTERNS } from './ci/source-patterns.mjs'
@@ -156,10 +157,8 @@ const CHECK_REGISTRY = new Map([
   // SMI-6949: Check 76 (dependency registry) as a narrow `--only dependency-registry`.
   [
     'dependency-registry',
-    async () => {
-      console.log(`\n${BOLD}Check 76: dependency registry coherence and expiry (SMI-6949)${RESET}`)
-      return runDependencyRegistryCheck({ pass, warn, fail }) === 0
-    },
+    // Same implementation as scripts/check-dependency-registry.mjs.
+    async () => runDependencyRegistryCli() === 0,
   ],
 ])
 

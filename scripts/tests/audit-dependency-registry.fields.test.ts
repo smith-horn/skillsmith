@@ -105,6 +105,14 @@ describe('pinnedBy (R1-M3, mutant D)', () => {
   it('an existing regular file that is not a test file fails', () => {
     expect(failText(r4('tests/plain.ts', { root }))).toMatch(/is not a test file/)
   })
+  it('a test file under a node_modules segment fails even though it exists', () => {
+    mkdirSync(join(root, 'node_modules', 'pkg'), { recursive: true })
+    writeFileSync(join(root, 'node_modules', 'pkg', 'x.test.ts'), '')
+    expect(failText(r4('node_modules/pkg/x.test.ts', { root }))).toMatch(/under a node_modules/)
+    expect(failText(r4('tests/../node_modules/pkg/x.test.ts', { root }))).toMatch(
+      /under a node_modules/
+    )
+  })
   it('a missing test file fails', () => {
     expect(failText(r4('tests/missing.test.ts', { root }))).toMatch(
       /does not name an existing regular file/
@@ -225,6 +233,26 @@ describe('override keys containing " > " (R1-L3)', () => {
       overrides: { 'a > b': ov({ pin: '2.0.0' }) },
     })
     expect(failText(r)).toMatch(/override key "a > b" contains " > "/)
+  })
+  it('a " > " inside a NESTED key fails (the scan recurses)', () => {
+    const r = run({
+      pkg: { overrides: { a: { 'x > y': '1.0.0' } } },
+      overrides: { 'a > x > y': ov({ pin: '1.0.0' }) },
+    })
+    expect(failText(r)).toMatch(/override key "a > x > y" contains " > "/)
+    const deep = run({
+      pkg: { overrides: { a: { b: { 'c > d': '1.0.0' } } } },
+      overrides: { 'a > b > c > d': ov({ pin: '1.0.0' }) },
+    })
+    expect(failText(deep)).toMatch(/override key "a > b > c > d" contains " > "/)
+  })
+  it('two leaves that JOIN to the same key fail even though neither key contains " > "', () => {
+    // {"a >": {"b"}} and {"a": {"> b"}} both join to "a > > b".
+    const r = run({
+      pkg: { overrides: { 'a >': { b: '1.0.0' }, a: { '> b': '2.0.0' } } },
+      overrides: { 'a > > b': ov({ pin: '2.0.0' }) },
+    })
+    expect(failText(r)).toMatch(/join to the same registry key "a > > b"/)
   })
   it('control: the same shape written as a nested object is clean', () => {
     const r = run({
