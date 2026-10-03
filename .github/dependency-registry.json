@@ -1,0 +1,671 @@
+{
+  "description": "Registry of every root package.json override and every accepted dev-scope npm-audit advisory, with reason, provenance, removal condition and expiry. Every override and every accepted advisory must have an entry here (SMI-6943); an audit:standards coherence check is planned under SMI-6943 and does not exist yet.",
+  "overrides": {
+    "undici": {
+      "pin": "^7.30.0",
+      "reason": "Floor and force for undici security advisories; pins the whole tree to the patched 7.x line.",
+      "advisories": ["GHSA-9qxr-qj54-h672", "GHSA-w293-vg96-wgc3"],
+      "introducedBy": ["SMI-1280", "SMI-5912", "aff9c26f6"],
+      "crossesMajor": "forces @vercel/node (exact 5.28.4, x9) up from 5.x, @vercel/blob, wdio-vscode-service and webdriver up from 6.x, and unifont (^8.0.0) down from 8.x to 7.x (SMI-6891)",
+      "removeWhen": "No consumer declares a range admitting a version in the advisories vulnerable ranges; blocked while @vercel/node exact-pins undici 5.28.4."
+    },
+    "path-to-regexp": {
+      "pin": "^8.3.0",
+      "reason": "Fixes the ReDoS in path-to-regexp for every consumer.",
+      "advisories": ["CVE-2024-45296"],
+      "introducedBy": ["SMI-1280", "06b293656"],
+      "crossesMajor": "forces 12 consumers (@vercel/node x9, @vercel/remix-builder, @vercel/routing-utils, wrangler) up from 6.x to 8.x (SMI-6891)",
+      "removeWhen": "No consumer declares a range admitting a version vulnerable to CVE-2024-45296 (6.x below 6.3.0, 8.x below 8.0.0); investigate whether the 6.x line at 6.3.0 is enough."
+    },
+    "axios": {
+      "pin": "^1.18.1",
+      "reason": "Deliberate re-arming pin: axios is not in the lockfile today, but its past advisories (proxy header leak, prototype pollution) must not return if a dependency brings it back.",
+      "advisories": ["GHSA-xj6q-8x83-jv6g"],
+      "introducedBy": ["SMI-5266", "SMI-5778", "SMI-6858"],
+      "crossesMajor": null,
+      "removeWhen": "Repo decides no dependency may ever bring axios back; checkable by npm explain axios returning nothing for a year."
+    },
+    "find-my-way": {
+      "pin": "^9.7.0",
+      "reason": "Fixes the HTTP/2 DoS in the router that fastify pulls into the VS Code extension dev tree.",
+      "advisories": ["CVE-2026-47219"],
+      "introducedBy": ["824606c3d"],
+      "crossesMajor": "forces fastify@4.29.1 (declares ^8.0.0) up to 9.x",
+      "removeWhen": "Installed fastify declares find-my-way ^9.7.0 or higher (fastify 5.12.5 declares ^9.6.0, so a fastify upgrade makes this floor-only)."
+    },
+    "esbuild": {
+      "pin": "^0.28.1",
+      "reason": "Fixes the RCE and dev-server file read advisories in esbuild 0.28.0 and earlier.",
+      "advisories": ["GHSA-67mh-4wv8-2f99", "GHSA-gv7w-rqvm-qjhr", "GHSA-g7r4-m6w7-qqqr"],
+      "introducedBy": ["3edb11188", "SMI-5268", "SMI-5266"],
+      "crossesMajor": "0.x minor crossing (0.27 to 0.28) for 13 edges: @vercel/node x9, @vercel/gatsby-plugin-vercel-builder, vercel, tsx, vite@7 (SMI-6891)",
+      "removeWhen": "@vercel/node, vercel, tsx and root vite all declare esbuild 0.28.1 or higher."
+    },
+    "diff": {
+      "pin": "^8.0.3",
+      "reason": "No recorded reason beyond \"diff vulnerabilities\" in the originating commit; no advisory was ever named.",
+      "advisories": [],
+      "introducedBy": ["1c36f5255"],
+      "crossesMajor": "forces astro@7.2.10 (declares ^9.0.0) down from 9.x to 8.x; forces mocha (declares ^5.2.0) up from 5.x",
+      "removeWhen": "investigate: no advisory recorded (SMI-6943)"
+    },
+    "global-agent": {
+      "pin": "^4.1.3",
+      "reason": "Not a security pin: drops the deprecated boolean package pulled by onnxruntime-node via global-agent 3.",
+      "advisories": [],
+      "introducedBy": ["SMI-4481", "afd8cabff"],
+      "crossesMajor": "forces onnxruntime-node@1.21.0 (declares ^3.0.0) up from 3.x to 4.x",
+      "removeWhen": "Installed onnxruntime-node declares global-agent ^4 (latest already does)."
+    },
+    "fast-uri": {
+      "pin": "^3.1.8",
+      "reason": "Floor for fast-uri path traversal and host confusion advisories.",
+      "advisories": ["GHSA-q3j6-qgpj-74h6", "GHSA-4c8g-83qw-93j6"],
+      "introducedBy": ["SMI-4818", "SMI-5788", "SMI-5912", "SMI-6883"],
+      "crossesMajor": "forces @fastify/ajv-compiler and fast-json-stringify (declare 2.x) up to 3.x (SMI-6891)",
+      "removeWhen": "Installed @fastify/ajv-compiler and fast-json-stringify declare fast-uri ^3.1.8 or higher."
+    },
+    "ip-address": {
+      "pin": "^10.7.2",
+      "reason": "Floor for ip-address SSRF and trust-boundary advisories.",
+      "advisories": [],
+      "introducedBy": ["SMI-5912", "SMI-6883"],
+      "crossesMajor": null,
+      "removeWhen": "It is a floor: remove when a scratch delete and fresh resolve still yields 10.7.2 or higher and the repo adopts npm update as its lock refresh convention."
+    },
+    "tar": {
+      "pin": "^7.5.22",
+      "reason": "Fixes tar path handling advisories; raises @vercel/fun, which exact-pins 7.5.7.",
+      "advisories": [
+        "GHSA-8qq5-rm4j-mr97",
+        "GHSA-83g3-92jg-28cx",
+        "CVE-2026-53655",
+        "GHSA-r292-9mhp-454m"
+      ],
+      "introducedBy": ["158e79689", "45f3bd2a9", "d6b175024", "500ee65c4"],
+      "crossesMajor": null,
+      "removeWhen": "@vercel/fun declares tar at or above the patched floor (latest already exact-pins 7.5.22) and every other consumer range admits only patched versions."
+    },
+    "toml": {
+      "pin": "^4.1.2",
+      "reason": "Deliberate re-arming pin: toml is not in the lockfile today, but 3.0.0 had a high prototype pollution (Dependabot #212).",
+      "advisories": [],
+      "introducedBy": ["SMI-6379", "SMI-6858"],
+      "crossesMajor": null,
+      "removeWhen": "Repo decides no dependency may ever bring toml back; checkable by npm explain toml returning nothing for a year."
+    },
+    "postcss": {
+      "pin": "^8.5.23",
+      "reason": "Floor for the high severity postcss .map file disclosure.",
+      "advisories": ["GHSA-r28c-9q8g-f849"],
+      "introducedBy": ["500ee65c4"],
+      "crossesMajor": null,
+      "removeWhen": "It is a floor: remove when a scratch delete and fresh resolve still yields 8.5.23 or higher and the repo adopts npm update as its lock refresh convention."
+    },
+    "nanoid": {
+      "pin": "^3.3.18",
+      "reason": "No recorded reason: the originating commit is an unrelated scanner port; likely a companion to the postcss floor but never stated.",
+      "advisories": [],
+      "introducedBy": ["SMI-5879", "f705223b1"],
+      "crossesMajor": null,
+      "removeWhen": "investigate: no advisory recorded (SMI-6943)"
+    },
+    "astro > vite > postcss": {
+      "pin": "^8.5.23",
+      "reason": "Raises the stale postcss nested under astro's vite. Because its nested object has no \".\" key, it probably also shadows the global vite override inside astro, which would explain why astro resolves vite 8.x (fixture-verified behaviour, SMI-6891; not re-resolved against this tree).",
+      "advisories": ["GHSA-fxqj-rqcc-2cmp"],
+      "introducedBy": ["52e44e243"],
+      "crossesMajor": "probable side effect: shadows the global vite ^7.3.5 inside astro, which declares ^8.0.13; unverified whether deleting it would force astro down a major",
+      "removeWhen": "The global vite override is removed or raised to the 8 line, and a scratch re-resolve without this entry shows astro keeping vite 8; do not delete in isolation."
+    },
+    "sharp": {
+      "pin": "0.35.4",
+      "reason": "Fixes libvips and libheif advisories in sharp; exact pin must match the exact sharp pin in packages/website.",
+      "advisories": [
+        "CVE-2026-33327",
+        "CVE-2026-33328",
+        "CVE-2026-35590",
+        "CVE-2026-35591",
+        "GHSA-f88m-g3jw-g9cj",
+        "GHSA-rgj7-g3m4-5g8c"
+      ],
+      "introducedBy": ["SMI-5799", "SMI-6478", "4e8304cfd"],
+      "crossesMajor": "0.x minor crossing (0.34 to 0.35): @huggingface/transformers and miniflare (exact 0.34.5)",
+      "removeWhen": "@huggingface/transformers and miniflare declare sharp 0.35.4 or higher."
+    },
+    "js-yaml": {
+      "pin": "^4.3.2",
+      "reason": "Floor for js-yaml advisories (quadratic CPU in !!omap and others); raises @vercel/python-analysis which exact-pins 4.1.1.",
+      "advisories": [
+        "CVE-2026-53550",
+        "CVE-2026-59870",
+        "GHSA-5p4m-2wfm-xmqj",
+        "GHSA-2883-xcg3-v3hh"
+      ],
+      "introducedBy": ["SMI-5652", "SMI-5943", "SMI-6478"],
+      "crossesMajor": null,
+      "removeWhen": "@vercel/python-analysis declares js-yaml 4.3.2 or higher."
+    },
+    "gray-matter > js-yaml": {
+      "pin": "^3.15.2",
+      "reason": "Shield keeping gray-matter on the patched js-yaml 3.x line (js-yaml 4 removed safeLoad); untrusted SKILL.md YAML reaches it.",
+      "advisories": ["CVE-2026-53550", "CVE-2026-59870", "GHSA-2883-xcg3-v3hh"],
+      "introducedBy": ["SMI-5652", "SMI-5943", "SMI-6478"],
+      "crossesMajor": null,
+      "removeWhen": "gray-matter declares js-yaml ^4, or the global js-yaml override is dropped."
+    },
+    "@yarnpkg/parsers > js-yaml": {
+      "pin": "^3.15.2",
+      "reason": "Shield keeping @yarnpkg/parsers on the patched js-yaml 3.x line.",
+      "advisories": ["CVE-2026-53550", "CVE-2026-59870", "GHSA-2883-xcg3-v3hh"],
+      "introducedBy": ["SMI-5652", "SMI-5943", "SMI-6478"],
+      "crossesMajor": null,
+      "removeWhen": "@yarnpkg/parsers declares js-yaml ^4."
+    },
+    "mocha > serialize-javascript": {
+      "pin": "^7.0.5",
+      "reason": "Forces mocha, whose own release caps serialize-javascript at ^6.0.2, onto the patched 7.x line.",
+      "advisories": ["CVE-2026-34043", "GHSA-5c6j"],
+      "introducedBy": ["SMI-5652", "19948bf1f"],
+      "crossesMajor": "forces mocha@10.8.2 (declares ^6.0.2) up from 6.x to 7.x; recorded as verified safe",
+      "removeWhen": "Installed mocha declares serialize-javascript ^7 (mocha latest declares ^7.1.1)."
+    },
+    "h3": {
+      "pin": "^1.15.9",
+      "reason": "Floor for h3 path traversal and SSE injection.",
+      "advisories": [],
+      "introducedBy": ["SMI-3474", "e66194e4c"],
+      "crossesMajor": null,
+      "removeWhen": "It is a floor: remove when a scratch delete and fresh resolve still yields 1.15.9 or higher."
+    },
+    "tmp": {
+      "pin": "^0.2.6",
+      "reason": "Floor for the tmp path traversal advisory, dev-only via @vscode/vsce.",
+      "advisories": ["GHSA-ph9p-34f9-6g65"],
+      "introducedBy": ["SMI-5268"],
+      "crossesMajor": null,
+      "removeWhen": "It is a floor: remove when a scratch delete and fresh resolve still yields 0.2.6 or higher."
+    },
+    "hono": {
+      "pin": "^4.13.5",
+      "reason": "Floor for a long series of hono advisories (JSX, serve-static, cookie, IP); the most bumped override.",
+      "advisories": ["GHSA-gq3j-xvxp-8hrf", "GHSA-v8w9-8mx6-g223", "GHSA-gqvv-2mrq-wpjv"],
+      "introducedBy": ["f1a17fd2e", "SMI-3984", "SMI-4248", "SMI-5249", "SMI-5788", "SMI-6478"],
+      "crossesMajor": null,
+      "removeWhen": "It is a floor: remove when a scratch delete and fresh resolve still yields 4.13.5 or higher."
+    },
+    "@hono/node-server": {
+      "pin": "2.0.11",
+      "reason": "Fixes the serve-static path traversal and an unauthenticated advisory; exact pin on the 2.x line.",
+      "advisories": ["GHSA-frvp-7c67-39w9", "GHSA-9mqv-5hh9-4cgg"],
+      "introducedBy": ["SMI-3984", "SMI-5799"],
+      "crossesMajor": "forces @modelcontextprotocol/sdk@1.29.0 (declares ^1.19.9) up from 1.x to 2.x",
+      "removeWhen": "Installed @modelcontextprotocol/sdk declares a @hono/node-server range whose lowest version is outside both advisories (verify 2.0.5 is unaffected)."
+    },
+    "protobufjs": {
+      "pin": "^7.6.5",
+      "reason": "Floor for protobufjs advisories including a critical one.",
+      "advisories": [
+        "GHSA-xq3m-2v4x-88gg",
+        "GHSA-458j-xx4x-4375",
+        "GHSA-q6x5-8v7m-xcrf",
+        "GHSA-j3f2-48v5-ccww"
+      ],
+      "introducedBy": ["SMI-4248", "SMI-4499", "SMI-4888", "SMI-5282", "SMI-5778"],
+      "crossesMajor": null,
+      "removeWhen": "It is a floor: remove when a scratch delete and fresh resolve still yields 7.6.5 or higher."
+    },
+    "uuid": {
+      "pin": "^14.0.0",
+      "reason": "Deliberate re-arming pin: uuid is not in the lockfile today, but Dependabot #95 (medium) hit three chains that could return.",
+      "advisories": [],
+      "introducedBy": ["SMI-4501", "SMI-6858"],
+      "crossesMajor": null,
+      "removeWhen": "Repo decides no dependency may ever bring a vulnerable uuid back; checkable by npm explain uuid returning nothing for a year."
+    },
+    "vite": {
+      "pin": "^7.3.5",
+      "reason": "Fixes vite path traversal, fs.deny bypass and file read advisories on the root 7.x line; astro's vite escapes via the carve-out above.",
+      "advisories": ["GHSA-4w7w-66w2-5vf9", "GHSA-v2wj-q39q-566r", "GHSA-p9ff-h696-f583"],
+      "introducedBy": ["SMI-3984", "SMI-5282"],
+      "crossesMajor": null,
+      "removeWhen": "Root vite consumers (vitest, @tailwindcss/vite) all admit a patched 8.x, or the repo moves to the vite 8 line."
+    },
+    "fast-xml-parser": {
+      "pin": "^5.5.7",
+      "reason": "Floor for fast-xml-parser entity expansion, stack overflow and related advisories.",
+      "advisories": ["GHSA-jmr7-xgp7-cmfj", "GHSA-fj3w-jwp8-x2g3", "CVE-2026-26278"],
+      "introducedBy": ["45f3bd2a9", "SMI-2902", "SMI-3474", "SMI-3604"],
+      "crossesMajor": null,
+      "removeWhen": "It is a floor: remove when a scratch delete and fresh resolve still yields 5.5.7 or higher."
+    },
+    "@aws-sdk/xml-builder": {
+      "pin": ">=3.972.3",
+      "reason": "Originally forced the exact-pinned fast-xml-parser inside xml-builder; the premise no longer holds and the unbounded pin now holds the lock below every consumer's declared minimum.",
+      "advisories": [],
+      "introducedBy": ["SMI-3604", "9c0d9403d"],
+      "crossesMajor": null,
+      "removeWhen": "Delete once a scratch resolve confirms no-op: no consumer declares a range excluding the pin (all 9 declare ^3.972.40)."
+    },
+    "rollup": {
+      "pin": "^4.59.0",
+      "reason": "Floor for the rollup arbitrary file write via path traversal.",
+      "advisories": ["GHSA-mw96-cpmx-2vgc"],
+      "introducedBy": ["SMI-2902", "4c08ba640"],
+      "crossesMajor": null,
+      "removeWhen": "It is a floor: remove when a scratch delete and fresh resolve still yields 4.59.0 or higher."
+    },
+    "qs": {
+      "pin": "^6.15.2",
+      "reason": "Floor for the qs arrayLimit bypass and a later runtime advisory.",
+      "advisories": ["CVE-2026-2391"],
+      "introducedBy": ["18782edfd", "SMI-5249"],
+      "crossesMajor": null,
+      "removeWhen": "It is a floor: remove when a scratch delete and fresh resolve still yields 6.15.2 or higher."
+    },
+    "web-vitals": {
+      "pin": "5.1.0",
+      "reason": "Not security: fixes a hoisting collision where vercel's transitive web-vitals 0.2.4 was hoisted to root instead of the website's 5.1.0; must match the exact pins in root and packages/website.",
+      "advisories": [],
+      "introducedBy": ["SMI-2563", "a3105dc7e"],
+      "crossesMajor": "forces @vercel/gatsby-plugin-vercel-analytics@1.0.11 (exact 0.2.4) up from 0.x to 5.x",
+      "removeWhen": "The hoist no longer collides: that plugin is gone or declares ^5, or the website copy is nested; test with a scratch delete and npm ls web-vitals showing one version."
+    },
+    "@grpc/grpc-js": {
+      "pin": "^1.14.5",
+      "reason": "Floor for grpc-js advisories.",
+      "advisories": ["GHSA-5375-pq7m-f5r2", "GHSA-99f4-grh7-6pcq"],
+      "introducedBy": ["SMI-5249", "SMI-6883"],
+      "crossesMajor": null,
+      "removeWhen": "It is a floor: remove when a scratch delete and fresh resolve still yields 1.14.5 or higher."
+    },
+    "ws": {
+      "pin": "^8.21.0",
+      "reason": "Floor for runtime moderate advisories in ws; no advisory id was recorded.",
+      "advisories": [],
+      "introducedBy": ["SMI-5249", "e4b323ab6"],
+      "crossesMajor": null,
+      "removeWhen": "It is a floor: remove when a scratch delete and fresh resolve still yields 8.21.0 or higher; advisory id not recorded (SMI-6943)."
+    },
+    "svgo": {
+      "pin": "^4.1.0",
+      "reason": "Floor for svgo advisories (removeScripts and others).",
+      "advisories": ["GHSA-2p49-hgcm-8545", "GHSA-w27v-7q3p-w38r", "GHSA-4vpr-x523-8j87"],
+      "introducedBy": ["SMI-5788", "SMI-6478"],
+      "crossesMajor": null,
+      "removeWhen": "It is a floor: remove when a scratch delete and fresh resolve still yields 4.1.0 or higher."
+    },
+    "brace-expansion": {
+      "pin": "^5.0.12",
+      "reason": "Floor for brace-expansion advisories; drags older minimatch copies onto the patched 5.x line.",
+      "advisories": [
+        "GHSA-3jxr-9vmj-r5cp",
+        "GHSA-mh99-v99m-4gvg",
+        "GHSA-q2hr-2g5m-vwhr",
+        "GHSA-qhr7-859c-m2p7",
+        "GHSA-6j4f-fj2g-mc7p"
+      ],
+      "introducedBy": ["SMI-5249", "SMI-5778", "SMI-5912", "SMI-6883", "500ee65c4"],
+      "crossesMajor": "forces 11 minimatch consumers (declare ^1.1.7 or ^2.x) up to 5.x (SMI-6891)",
+      "removeWhen": "Every minimatch consumer is on minimatch 10 or higher (brace-expansion ^5); npm ls brace-expansion shows no declaring edge below ^5."
+    },
+    "body-parser": {
+      "pin": "^2.3.0",
+      "reason": "Floor for the low severity body-parser advisory on the copy express pulls.",
+      "advisories": [],
+      "introducedBy": ["SMI-5778", "1014d23c7"],
+      "crossesMajor": null,
+      "removeWhen": "It is a floor: remove when a scratch delete and fresh resolve still yields 2.3.0 or higher."
+    },
+    "@modelcontextprotocol/sdk > .": {
+      "pin": "^1.27.1",
+      "reason": "Forces the SDK onto a version fixing the cross-client data leak; audit:standards has a drift check tying it to mcp-server's own range.",
+      "advisories": ["GHSA-345p-7cg4-v4c7"],
+      "introducedBy": ["SMI-2330", "352111d0a"],
+      "crossesMajor": null,
+      "removeWhen": "Remove only together with the audit:standards drift check on this override."
+    },
+    "@modelcontextprotocol/sdk > ajv": {
+      "pin": "^8.18.0",
+      "reason": "Scoped ajv ReDoS fix; a global ajv override would break ESLint (ajv 6).",
+      "advisories": ["CVE-2025-69873"],
+      "introducedBy": ["13f12638e"],
+      "crossesMajor": null,
+      "removeWhen": "The SDK declares ajv ^8.18.0 or higher."
+    },
+    "yaml-language-server > ajv": {
+      "pin": "^8.18.0",
+      "reason": "Scoped ajv ReDoS fix for yaml-language-server.",
+      "advisories": ["CVE-2025-69873"],
+      "introducedBy": ["13f12638e"],
+      "crossesMajor": null,
+      "removeWhen": "yaml-language-server declares ajv ^8.18.0 or higher."
+    },
+    "yaml-language-server > yaml": {
+      "pin": "^2.8.3",
+      "reason": "Raised yaml-language-server's exact-pinned yaml 2.7.1 past the stack overflow advisory; the consumer now declares exact 2.8.3 itself.",
+      "advisories": ["GHSA-48c2-rrv3-qjmp"],
+      "introducedBy": ["SMI-3984", "8ec28dfaa"],
+      "crossesMajor": null,
+      "removeWhen": "Delete once a scratch resolve confirms no-op (condition already met: consumer declares yaml 2.8.3)."
+    },
+    "@vercel/routing-utils > ajv": {
+      "pin": "^8.18.0",
+      "reason": "Scoped ajv ReDoS fix for @vercel/routing-utils.",
+      "advisories": ["CVE-2025-69873"],
+      "introducedBy": ["13f12638e"],
+      "crossesMajor": "forces @vercel/routing-utils (optional ajv ^6.12.3) up from 6.x to 8.x; not verified to work on ajv 8",
+      "removeWhen": "@vercel/routing-utils declares ajv 6.14 or higher (the 6.x line has a patched release) or ajv ^8.18.0."
+    },
+    "@vercel/static-config > ajv": {
+      "pin": "^8.18.0",
+      "reason": "Raises @vercel/static-config's exact-pinned ajv 8.6.3 past the ReDoS advisory.",
+      "advisories": ["CVE-2025-69873"],
+      "introducedBy": ["SMI-3984", "8ec28dfaa"],
+      "crossesMajor": null,
+      "removeWhen": "@vercel/static-config declares ajv 8.18.0 or higher."
+    },
+    "@vercel/python-analysis > minimatch": {
+      "pin": "^10.2.3",
+      "reason": "Raises @vercel/python-analysis's exact-pinned minimatch 10.1.1 past the ReDoS advisories.",
+      "advisories": ["GHSA-3ppc-4f35-3m26", "GHSA-7r86-cg39-jmmj", "GHSA-23c5-xmqv-rm74"],
+      "introducedBy": ["8655c31b2", "SMI-3984", "8ec28dfaa"],
+      "crossesMajor": null,
+      "removeWhen": "@vercel/python-analysis declares minimatch 10.2.3 or higher."
+    },
+    "@vercel/backends > srvx": {
+      "pin": "^0.11.13",
+      "reason": "Raises @vercel/backends' exact-pinned srvx 0.8.9 past the middleware bypass advisory.",
+      "advisories": ["GHSA-p36q-q72m-gchr"],
+      "introducedBy": ["SMI-3984", "8ec28dfaa"],
+      "crossesMajor": "0.x minor crossing: @vercel/backends exact 0.8.9 up to 0.11.x",
+      "removeWhen": "@vercel/backends declares srvx 0.11.13 or higher."
+    },
+    "@vercel/backends > js-yaml": {
+      "pin": "^3.15.2",
+      "reason": "Shield keeping @vercel/backends on the patched js-yaml 3.x line.",
+      "advisories": ["CVE-2026-53550", "CVE-2026-59870", "GHSA-2883-xcg3-v3hh"],
+      "introducedBy": ["SMI-5652", "SMI-6478", "19948bf1f"],
+      "crossesMajor": null,
+      "removeWhen": "@vercel/backends declares js-yaml ^4."
+    },
+    "@tootallnate/once": {
+      "pin": "^3.0.1",
+      "reason": "Forces @vercel/fun, which exact-pins 2.0.0, onto the patched 3.x line.",
+      "advisories": ["CVE-2026-3449", "GHSA-vpq2-c234-7xj6"],
+      "introducedBy": ["SMI-3098", "5d2e00ce0"],
+      "crossesMajor": "forces @vercel/fun (exact 2.0.0) up from 2.x to 3.x",
+      "removeWhen": "@vercel/fun declares @tootallnate/once 3.0.1 or higher; check whether 2.0.1 (the current @vercel/fun pin) is patched first."
+    },
+    "picomatch": {
+      "pin": "^4.0.4",
+      "reason": "Floor for picomatch ReDoS and method injection advisories.",
+      "advisories": ["GHSA-c2c7-rcm5-vvqj", "GHSA-3v7f-55p6-f55p"],
+      "introducedBy": ["SMI-3547", "4a08e0ab0"],
+      "crossesMajor": "forces mocha's readdirp@3.6.0 (declares ^2.2.1) up from 2.x to 4.x",
+      "removeWhen": "Every picomatch consumer range admits a patched release without forcing (the 2.x line has patched 2.3.2)."
+    },
+    "anymatch > picomatch": {
+      "pin": "^2.3.2",
+      "reason": "Shield keeping anymatch on the patched picomatch 2.x line.",
+      "advisories": ["GHSA-c2c7-rcm5-vvqj", "GHSA-3v7f-55p6-f55p"],
+      "introducedBy": ["SMI-3547", "4a08e0ab0"],
+      "crossesMajor": null,
+      "removeWhen": "Removed together with the global picomatch override."
+    },
+    "micromatch > picomatch": {
+      "pin": "^2.3.2",
+      "reason": "Shield keeping micromatch on the patched picomatch 2.x line.",
+      "advisories": ["GHSA-c2c7-rcm5-vvqj", "GHSA-3v7f-55p6-f55p"],
+      "introducedBy": ["SMI-3547", "4a08e0ab0"],
+      "crossesMajor": null,
+      "removeWhen": "Removed together with the global picomatch override."
+    },
+    "smol-toml": {
+      "pin": "^1.8.0",
+      "reason": "Fixes the smol-toml DoS advisories and reaches vercel's own exact 1.5.2 pin, which the two removed nested rules did not.",
+      "advisories": ["GHSA-7w5x-hrqm-74c2", "GHSA-v3rj-xjv7-4jmq"],
+      "introducedBy": ["SMI-6943"],
+      "crossesMajor": "forces vercel (exact 1.5.2) up a minor within 1.x; no major crossing",
+      "removeWhen": "vercel, @vercel/python-analysis and @vercel/rust all declare smol-toml 1.8.0 or higher (vercel latest still exact-pins 1.5.2)."
+    },
+    "markdown-it": {
+      "pin": "^14.3.1",
+      "reason": "Fixes the markdown-it linkify quadratic advisory for @vscode/vsce within its declared ^14.1.0 range.",
+      "advisories": ["GHSA-253c-mchw-3w2r"],
+      "introducedBy": ["SMI-6943"],
+      "crossesMajor": null,
+      "removeWhen": "It is a floor: remove when @vscode/vsce declares markdown-it 14.3.1 or higher."
+    }
+  },
+  "acceptances": [
+    {
+      "advisory": "GHSA-83w8-p2f5-377r",
+      "package": "@fastify/static",
+      "severity": "high",
+      "scope": "dev",
+      "tier": "R4",
+      "basis": "VS Code Web path only; startServer has one call site at dist/launcher.js:82 inside _setupVSCodeWeb, and e2e/wdio.conf.ts:71 sets browserName vscode; fix needs @fastify/static 10.x, a major above wdio-vscode-service's ^7.0.4",
+      "owner": "wrsmith108",
+      "accepted": "2026-10-03",
+      "expires": "2027-04-01",
+      "tracking": "SMI-6945"
+    },
+    {
+      "advisory": "GHSA-8pvw-jcv7-9cmj",
+      "package": "@fastify/static",
+      "severity": "moderate",
+      "scope": "dev",
+      "tier": "R4",
+      "basis": "VS Code Web path only; startServer has one call site at dist/launcher.js:82 inside _setupVSCodeWeb, and e2e/wdio.conf.ts:71 sets browserName vscode; fix needs @fastify/static 10.x, a major above wdio-vscode-service's ^7.0.4",
+      "owner": "wrsmith108",
+      "accepted": "2026-10-03",
+      "expires": "2027-04-01",
+      "tracking": "SMI-6945"
+    },
+    {
+      "advisory": "GHSA-jx2c-rxcm-jvmq",
+      "package": "fastify",
+      "severity": "high",
+      "scope": "dev",
+      "tier": "R4",
+      "basis": "VS Code Web path only; startServer has one call site at dist/launcher.js:82 inside _setupVSCodeWeb, and e2e/wdio.conf.ts:71 sets browserName vscode; fix needs fastify 5.x, a major above wdio-vscode-service's ^4.28.1",
+      "owner": "wrsmith108",
+      "accepted": "2026-10-03",
+      "expires": "2027-04-01",
+      "tracking": "SMI-6945"
+    },
+    {
+      "advisory": "GHSA-667r-xxjv-c9mm",
+      "package": "fastify",
+      "severity": "high",
+      "scope": "dev",
+      "tier": "R4",
+      "basis": "VS Code Web path only; startServer has one call site at dist/launcher.js:82 inside _setupVSCodeWeb, and e2e/wdio.conf.ts:71 sets browserName vscode; fix needs fastify 5.x, a major above wdio-vscode-service's ^4.28.1",
+      "owner": "wrsmith108",
+      "accepted": "2026-10-03",
+      "expires": "2027-04-01",
+      "tracking": "SMI-6945"
+    },
+    {
+      "advisory": "GHSA-p68q-wchp-6fh7",
+      "package": "fastify",
+      "severity": "high",
+      "scope": "dev",
+      "tier": "R4",
+      "basis": "VS Code Web path only; startServer has one call site at dist/launcher.js:82 inside _setupVSCodeWeb, and e2e/wdio.conf.ts:71 sets browserName vscode; fix needs fastify 5.x, a major above wdio-vscode-service's ^4.28.1",
+      "owner": "wrsmith108",
+      "accepted": "2026-10-03",
+      "expires": "2027-04-01",
+      "tracking": "SMI-6945"
+    },
+    {
+      "advisory": "GHSA-hwr6-493r-vm6h",
+      "package": "fastify",
+      "severity": "high",
+      "scope": "dev",
+      "tier": "R4",
+      "basis": "VS Code Web path only; startServer has one call site at dist/launcher.js:82 inside _setupVSCodeWeb, and e2e/wdio.conf.ts:71 sets browserName vscode; fix needs fastify 5.x, a major above wdio-vscode-service's ^4.28.1",
+      "owner": "wrsmith108",
+      "accepted": "2026-10-03",
+      "expires": "2027-04-01",
+      "tracking": "SMI-6945"
+    },
+    {
+      "advisory": "GHSA-9q9j-q6p8-xq58",
+      "package": "fastify",
+      "severity": "high",
+      "scope": "dev",
+      "tier": "R4",
+      "basis": "VS Code Web path only; startServer has one call site at dist/launcher.js:82 inside _setupVSCodeWeb, and e2e/wdio.conf.ts:71 sets browserName vscode; fix needs fastify 5.x, a major above wdio-vscode-service's ^4.28.1",
+      "owner": "wrsmith108",
+      "accepted": "2026-10-03",
+      "expires": "2027-04-01",
+      "tracking": "SMI-6945"
+    },
+    {
+      "advisory": "GHSA-444r-cwp2-x5xf",
+      "package": "fastify",
+      "severity": "moderate",
+      "scope": "dev",
+      "tier": "R4",
+      "basis": "VS Code Web path only; startServer has one call site at dist/launcher.js:82 inside _setupVSCodeWeb, and e2e/wdio.conf.ts:71 sets browserName vscode; fix needs fastify 5.x, a major above wdio-vscode-service's ^4.28.1",
+      "owner": "wrsmith108",
+      "accepted": "2026-10-03",
+      "expires": "2027-04-01",
+      "tracking": "SMI-6945"
+    },
+    {
+      "advisory": "GHSA-w2qp-rph6-63g4",
+      "package": "fastify",
+      "severity": "moderate",
+      "scope": "dev",
+      "tier": "R4",
+      "basis": "VS Code Web path only; startServer has one call site at dist/launcher.js:82 inside _setupVSCodeWeb, and e2e/wdio.conf.ts:71 sets browserName vscode; fix needs fastify 5.x, a major above wdio-vscode-service's ^4.28.1",
+      "owner": "wrsmith108",
+      "accepted": "2026-10-03",
+      "expires": "2027-04-01",
+      "tracking": "SMI-6945"
+    },
+    {
+      "advisory": "GHSA-4mh8-r7rc-xpvc",
+      "package": "fastify",
+      "severity": "moderate",
+      "scope": "dev",
+      "tier": "R4",
+      "basis": "VS Code Web path only; startServer has one call site at dist/launcher.js:82 inside _setupVSCodeWeb, and e2e/wdio.conf.ts:71 sets browserName vscode; fix needs fastify 5.x, a major above wdio-vscode-service's ^4.28.1",
+      "owner": "wrsmith108",
+      "accepted": "2026-10-03",
+      "expires": "2027-04-01",
+      "tracking": "SMI-6945"
+    },
+    {
+      "advisory": "GHSA-mrq3-vjjr-p77c",
+      "package": "fastify",
+      "severity": "low",
+      "scope": "dev",
+      "tier": "R4",
+      "basis": "VS Code Web path only; startServer has one call site at dist/launcher.js:82 inside _setupVSCodeWeb, and e2e/wdio.conf.ts:71 sets browserName vscode; fix needs fastify 5.x, a major above wdio-vscode-service's ^4.28.1",
+      "owner": "wrsmith108",
+      "accepted": "2026-10-03",
+      "expires": "2027-04-01",
+      "tracking": "SMI-6945"
+    },
+    {
+      "advisory": "GHSA-5v7r-6r5c-r473",
+      "package": "file-type",
+      "severity": "moderate",
+      "scope": "dev",
+      "tier": "R4",
+      "basis": "VS Code Web download path only; downloadBundle has one call site at dist/launcher.js:247 inside the standalone VS Code Web download function, and e2e/wdio.conf.ts:71 sets browserName vscode; fix needs file-type 21.x, a major above the downloader's ^20.5.0",
+      "owner": "wrsmith108",
+      "accepted": "2026-10-03",
+      "expires": "2027-04-01",
+      "tracking": "SMI-6945"
+    },
+    {
+      "advisory": "GHSA-j47w-4g3g-c36v",
+      "package": "file-type",
+      "severity": "moderate",
+      "scope": "dev",
+      "tier": "R4",
+      "basis": "VS Code Web download path only; downloadBundle has one call site at dist/launcher.js:247 inside the standalone VS Code Web download function, and e2e/wdio.conf.ts:71 sets browserName vscode; fix needs file-type 21.x, a major above the downloader's ^20.5.0",
+      "owner": "wrsmith108",
+      "accepted": "2026-10-03",
+      "expires": "2027-04-01",
+      "tracking": "SMI-6945"
+    },
+    {
+      "advisory": "GHSA-c475-qrg2-pj4r",
+      "package": "basic-ftp",
+      "severity": "high",
+      "scope": "dev",
+      "tier": "R4",
+      "basis": "Only reached by get-uri for an ftp: PAC URL; no PAC or proxy variables appear in workflows, Dockerfile or e2e config, and the fix (6.2.1) is outside get-uri's ^5 range",
+      "owner": "wrsmith108",
+      "accepted": "2026-10-03",
+      "expires": "2027-04-01",
+      "tracking": null
+    },
+    {
+      "advisory": "GHSA-vfj7-8cjw-p6xm",
+      "package": "braces",
+      "severity": "high",
+      "scope": "dev",
+      "tier": "R1",
+      "basis": "No patched release exists (3.0.3 is latest); inputs are repo-controlled glob patterns (vercel build, ESLint, secretlint), and mocha watch mode that loads chokidar is never invoked",
+      "owner": "wrsmith108",
+      "accepted": "2026-10-03",
+      "expires": "2026-11-02",
+      "tracking": null
+    },
+    {
+      "advisory": "GHSA-jmr9-qjv8-65gv",
+      "package": "extract-zip",
+      "severity": "high",
+      "scope": "dev",
+      "tier": "R2",
+      "basis": "No patched release exists (2.0.1 is latest); only extracts chromedriver archives fetched over HTTPS from storage.googleapis.com/chrome-for-testing-public in vscode-e2e.yml (read-only token, no secrets)",
+      "owner": "wrsmith108",
+      "accepted": "2026-10-03",
+      "expires": "2027-01-01",
+      "tracking": null
+    },
+    {
+      "advisory": "GHSA-7pqw-9j4j-h8q3",
+      "package": "extract-zip",
+      "severity": "high",
+      "scope": "dev",
+      "tier": "R2",
+      "basis": "No patched release exists (2.0.1 is latest); only extracts chromedriver archives fetched over HTTPS from storage.googleapis.com/chrome-for-testing-public in vscode-e2e.yml (read-only token, no secrets)",
+      "owner": "wrsmith108",
+      "accepted": "2026-10-03",
+      "expires": "2027-01-01",
+      "tracking": null
+    },
+    {
+      "advisory": "GHSA-ch52-4w7c-c8xp",
+      "package": "http-cache-semantics",
+      "severity": "high",
+      "scope": "dev",
+      "tier": "R1",
+      "basis": "No patched release exists (4.2.0 is latest); astro build-time remote image caching (assets/build/remote.js:14,24-28) never sends max-stale and has no multi-user cache",
+      "owner": "wrsmith108",
+      "accepted": "2026-10-03",
+      "expires": "2026-11-02",
+      "tracking": null
+    },
+    {
+      "advisory": "GHSA-ggr8-5vv4-36mx",
+      "package": "deepmerge-ts",
+      "severity": "high",
+      "scope": "dev",
+      "tier": "R3",
+      "basis": "fix scheduled: @wdio/* 9.32.0 bump pending E2E",
+      "owner": "wrsmith108",
+      "accepted": "2026-10-03",
+      "expires": "2026-11-02",
+      "tracking": "SMI-6943"
+    }
+  ]
+}

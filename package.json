@@ -160,14 +160,8 @@
     "svgo": "^4.1.0",
     "brace-expansion": "^5.0.12",
     "body-parser": "^2.3.0",
-    "@claude-flow/mcp": {
-      "body-parser": "^1.20.6"
-    },
     "@modelcontextprotocol/sdk": {
       ".": "^1.27.1",
-      "ajv": "^8.18.0"
-    },
-    "agentdb": {
       "ajv": "^8.18.0"
     },
     "yaml-language-server": {
@@ -181,15 +175,11 @@
       "ajv": "^8.18.0"
     },
     "@vercel/python-analysis": {
-      "minimatch": "^10.2.3",
-      "smol-toml": "^1.6.1"
+      "minimatch": "^10.2.3"
     },
     "@vercel/backends": {
       "srvx": "^0.11.13",
       "js-yaml": "^3.15.2"
-    },
-    "@vercel/rust": {
-      "smol-toml": "^1.6.1"
     },
     "@tootallnate/once": "^3.0.1",
     "picomatch": "^4.0.4",
@@ -198,6 +188,8 @@
     },
     "micromatch": {
       "picomatch": "^2.3.2"
-    }
+    },
+    "smol-toml": "^1.8.0",
+    "markdown-it": "^14.3.1"
   }
 }
