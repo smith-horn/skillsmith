@@ -168,20 +168,12 @@ describeNative('createBetterSqlite3Database — corrupt-file refusal (SMI-6931)'
   })
 
   it('refuses a corrupt file whether or not the caller asked for a read-only handle', () => {
-    // The title once read "no branch, because nothing is ever written". That
-    // sentence is false twice over, and it is the same sentence a review round
-    // already marked false at High severity: the driver's ordinary job is
-    // opening a WRITABLE database, and even on this path the `-shm` is mutable
-    // shared state the header above explicitly declines to claim unchanged.
-    // Vitest prints a title detached from that header, so the unscoped claim
-    // would travel alone into CI output and greps.
-    //
-    // What is true: the refusal happens inside `probeForCorruption`, before the
-    // caller's options are consumed, so there is no `readonly` branch on this
-    // path. That makes the argument below INERT BY DESIGN. This arm pins the
-    // absence of a branch; the arm that follows proves the option is wired at
-    // all. Neither means anything alone — delete the option plumbing and this
-    // test stays green.
+    // The refusal happens inside `probeForCorruption`, before the caller's
+    // options are consumed, so there is no `readonly` branch on this path and
+    // the argument below is INERT BY DESIGN. Do not read it as coverage of the
+    // option: this arm pins the absence of a branch, and the arm that follows is
+    // what proves the option is wired at all. Delete the plumbing and this test
+    // alone stays green. Keep them together or neither constrains anything.
     const dbPath = join(tempDir, 'skills.db')
     writeNotADatabase(dbPath)
     const before = snapshot(tempDir, dbPath)
@@ -193,14 +185,20 @@ describeNative('createBetterSqlite3Database — corrupt-file refusal (SMI-6931)'
   })
 
   it('honours readonly on a healthy database — the arm that proves the option is wired', () => {
-    // The paired PRESENCE assertion for the inert arm above, and the reason it
-    // is needed: `readonly` is production-reachable — `packages/cli`'s
-    // `utils/open-database.ts` and `utils/skills-directory.ts` both pass it —
-    // yet before this test nothing in the repo asserted that a readonly-opened
-    // database IS readonly. The only two `.readonly` assertions anywhere check
-    // `toBe(false)` on a DEFAULT open, which a driver ignoring the option
-    // entirely would also satisfy. So the plumbing could be deleted with every
-    // test still green, which is the SMI-6598 class exactly.
+    // The paired PRESENCE assertion for the inert arm above. `readonly` is
+    // production-reachable — `packages/cli`'s `utils/open-database.ts` and
+    // `utils/skills-directory.ts` both pass it — so the plumbing must not be
+    // deletable with the suite still green (SMI-6598).
+    //
+    // The write assertion matches the readonly MESSAGE, not a bare `toThrow()`.
+    // Measured: a bare throw is satisfied by at least three wrong reasons — a
+    // missing table and a syntax error both raise SQLITE_ERROR, and a closed
+    // connection raises "The database connection is not open". Only the
+    // readonly refusal says "attempt to write a readonly database".
+    //
+    // `try/finally` here diverges deliberately from the bare `close()` the other
+    // tests in this file use: this is the arm most likely to fail, and a failed
+    // assertion should not also leak the handle.
     const dbPath = join(tempDir, 'skills.db')
     const seed = createBetterSqlite3Database(dbPath)
     seed.exec('CREATE TABLE t (id INTEGER PRIMARY KEY)')
@@ -209,7 +207,9 @@ describeNative('createBetterSqlite3Database — corrupt-file refusal (SMI-6931)'
     const db = createBetterSqlite3Database(dbPath, { readonly: true })
     try {
       expect(db.readonly).toBe(true)
-      expect(() => db.exec('INSERT INTO t (id) VALUES (1)')).toThrow()
+      expect(() => db.exec('INSERT INTO t (id) VALUES (1)')).toThrow(
+        /attempt to write a readonly database/
+      )
     } finally {
       db.close()
     }
