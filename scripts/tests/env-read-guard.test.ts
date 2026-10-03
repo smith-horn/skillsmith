@@ -2068,6 +2068,174 @@ describe('decide() — SMI-6920 round 2: a quoted env -S remainder, inherited so
     expect(decide(bashCall('watch script -c cat < .env'), {}).action).toBe('deny')
   })
 
+  // SMI-6937 (the post-merge retro of PR #2982): the span rule tested the
+  // whole action's first character, so ANY action beginning with a dash lost
+  // its entire reading -- in both guards, the module being shared. Intended
+  // only to skip the forms that run nothing.
+  //
+  // zsh 5.9, the shell the harness runs, INSTALLS and RUNS these: with a
+  // decoy file and both controls behaving (a plain action printed the marker
+  // once, no trap printed it zero times), the -l, -p, inner --, bare-dash and
+  // unknown-flag spellings all printed it. bash 3.2 rejects all five, which is
+  // why the shell measurement and not the builtin's synopsis decides this.
+  //
+  // Red arm: restore `if (at === 1 && action.startsWith('-')) return null` in
+  // shellTextOperandSpan and every row below fails.
+  it.each([
+    'trap "-l; cat .env" EXIT',
+    'trap "-p; cat .env" EXIT',
+    'trap "-- echo a; cat .env" EXIT',
+    'trap "- ; cat .env" EXIT',
+    'trap "-n echo a; cat .env" EXIT',
+    'trap "-x; cat .env" EXIT',
+    "trap '-l; cat .env' EXIT",
+  ])('SMI-6937 (allowed on 62d565497): %s -> deny', (command) => {
+    expect(decide(bashCall(command), {}).action).toBe('deny')
+  })
+  // The twins: the same action text with no dash prefix, and the same text with
+  // no trap wrapper. Both deny on every tree, so a guard that denied every
+  // `trap` line would not pass the rows above on their account.
+  it.each(['trap "cat .env" EXIT', 'cat .env', '-l; cat .env'])(
+    'SMI-6937 twin pin: %s -> deny',
+    (command) => {
+      expect(decide(bashCall(command), {}).action).toBe('deny')
+    }
+  )
+  // The forms that genuinely run nothing keep their verdicts. These are PINS,
+  // not arms, and a mutation says so: deleting the `/^-[lp]+$/` early return
+  // leaves all of them green, because reading `-l` or `-p` as an action denies
+  // nothing either. The early return is there because reading an option word as
+  // an action is wrong in principle -- it is what would have read `EXIT` as the
+  // action of `trap -p EXIT` had the fix advanced past the option instead --
+  // and it has no behavioural arm today. Said plainly rather than left to look
+  // like coverage it does not give.
+  it.each([
+    'trap -l',
+    'trap -p',
+    'trap -lp',
+    'trap -pl',
+    'trap -p EXIT',
+    'trap -l EXIT INT',
+    'trap - EXIT',
+    'trap -',
+  ])('SMI-6937 no-op form: %s -> allow', (command) => {
+    expectAllow(command)
+  })
+
+  // SMI-6937, the governance pass on this issue's own fix: zsh has a SECOND
+  // precommand modifier, spelled `-`, and the transparent-head set held only
+  // `nocorrect`. So a reader behind it was allowed, and it runs.
+  //
+  // Measured with a decoy and both controls behaving in both shells (a plain
+  // read printed the marker once, `true` printed it zero times): `- cat D`,
+  // `- - cat D`, `- command cat D` and `nocorrect - cat D` all printed the
+  // file in zsh 5.9, and `env -S "- cat D"` printed it under bash 3.2 TOO,
+  // because env splits the string itself and then execs -- so the class is not
+  // zsh-only in effect. Pre-existing, identical on cfc96eccd and 62d565497.
+  //
+  // Red arm: remove `'-'` from TRANSPARENT_HEAD_WORDS and all of these fail.
+  it.each([
+    '- cat .env',
+    '- - cat .env',
+    '- command cat .env',
+    'nocorrect - cat .env',
+    'sudo - cat .env',
+    'trap "- cat .env" EXIT',
+    "trap '- cat .env' EXIT",
+    'trap -- "- cat .env" EXIT',
+    'eval "- cat .env"',
+    'eval - cat .env',
+    'env -S "- cat .env"',
+    'bash -c "- cat .env"',
+  ])('SMI-6937 C-1 (allowed on 62d565497 and cfc96eccd): %s -> deny', (command) => {
+    expect(decide(bashCall(command), {}).action).toBe('deny')
+  })
+  // `--` is NOT a zsh precommand modifier and measured as running nothing in
+  // both shells, so it stays allowed. This row is the discriminator: without
+  // it, adding every dash-leading word to the set would look equally correct.
+  it('SMI-6937 C-1 discriminator: -- is not a modifier, so it stays allowed', () => {
+    expectAllow('-- cat .env')
+  })
+
+  // SMI-6937, the cross-family gate: the previous round closed the missing
+  // precommand MODIFIER, and the gate then rebuilt both tables from the
+  // shells' own grammars and found two missing RESERVED WORDS. Pre-existing,
+  // identical on 62d565497. `repeat` is a launcher row because its count must
+  // be consumed; `coproc` is a transparent head.
+  //
+  // Measured in zsh 5.9 with a decoy: `repeat 2 cat D` printed it twice.
+  // `coproc cat D` printed NOTHING to the terminal and still ran the reader --
+  // a coprocess's stdout goes to a pipe, so the naive probe was answering a
+  // different question; reading the pipe showed the marker. bash 3.2 has
+  // neither word.
+  //
+  // Red arm: remove `'coproc'` from TRANSPARENT_HEAD_WORDS and the coproc
+  // rows fail; remove the `repeat` launcher row and the repeat rows fail.
+  it.each([
+    'repeat 1 cat .env',
+    'repeat 2 cat .env',
+    'repeat $n cat .env',
+    'coproc cat .env',
+    'trap "repeat 1 cat .env" EXIT',
+    'eval "coproc cat .env"',
+  ])('SMI-6937 gate (allowed on 62d565497): %s -> deny', (command) => {
+    expect(decide(bashCall(command), {}).action).toBe('deny')
+  })
+  // Benign usages must stay allowed. The repository's own corpus holds NO
+  // `repeat` or `coproc` in command position, so the 45,176-verdict
+  // no-false-positive sweep is vacuous for these two rows and this
+  // constructed set is the only evidence standing in its place. Said plainly
+  // because a zero over a corpus lacking the shape is not a measurement of it.
+  it.each([
+    'repeat 3 echo hi',
+    'repeat 5 true',
+    'repeat 2 npm test',
+    'coproc node server.js',
+    'coproc tail -f /var/log/app.log',
+    'echo repeat 1',
+    'grep -r coproc scripts/',
+  ])('SMI-6937 gate, benign: %s -> allow', (command) => {
+    expectAllow(command)
+  })
+  // Declared limit: `coproc NAME cmd` is bash 4's optional-name form. bash
+  // here is 3.2 and zsh has no NAME form, so it runs nowhere measurable and
+  // the head stays unmodelled rather than guessed.
+  it('SMI-6937 gate, declared limit: coproc NAME <reader> -> allow', () => {
+    expectAllow('coproc NAME cat .env')
+  })
+
+  // SMI-6937, gate round 2: zsh's `repeat` takes an arithmetic COUNT, which
+  // may begin with a dash, so a dash-prefixed word after `repeat` is never an
+  // option. Routing the row through the shared flag parser was wrong in BOTH
+  // directions, measured with a decoy in zsh 5.9 with both controls behaving:
+  //
+  //   repeat -x cat D   with x=-1  ->  count 1, the reader RAN, guard ALLOWED
+  //   repeat -x 2 cat D            ->  nothing ran,            guard DENIED
+  //
+  // The first was a bypass this branch INTRODUCED; the gate reported only the
+  // second. One opt-in `noFlags` row property fixes both.
+  //
+  // Red arm: drop `noFlags: true` from the `repeat` row and the first row
+  // below allows while the second denies -- the arm fails in both directions.
+  it('SMI-6937 gate 2 arm: a dash-prefixed count is the count, so the reader is read', () => {
+    expect(decide(bashCall('repeat -x cat .env'), {}).action).toBe('deny')
+  })
+  it('SMI-6937 gate 2 arm, other direction: a count then a non-command runs nothing', () => {
+    expectAllow('repeat -x 2 cat .env')
+  })
+  // Accepted cost, stated rather than hidden: a literal reader behind a count
+  // the guard cannot evaluate is refused whatever the count turns out to be.
+  // A zero or negative count runs nothing and is refused anyway. That is the
+  // only posture that is right when the count is an expansion, which it may
+  // always be, and it joins the runs-nothing-but-refused class this guard
+  // already accepts elsewhere.
+  it.each(['repeat 0 cat .env', 'repeat -1 cat .env'])(
+    'SMI-6937 accepted cost, a zero count still refuses: %s -> deny',
+    (command) => {
+      expect(decide(bashCall(command), {}).action).toBe('deny')
+    }
+  )
+
   // Controls assert the WHOLE result (M-2): a fail-open allow carries a
   // stderr line, so `.action` alone passed on a guard whose shell-text
   // mechanism was entirely dead (measured: 13 of 13 with the import removed).
