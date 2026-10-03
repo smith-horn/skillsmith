@@ -31,7 +31,7 @@ import { Command } from 'commander'
 import chalk from 'chalk'
 import { getCliLogger } from '../cli-logger.js'
 import { withTelemetry } from '@skillsmith/core/telemetry'
-import { manifestKeyFor } from '@skillsmith/core'
+import { manifestKeyFor, installedSkillsOf } from '@skillsmith/core'
 import { resolveClientId, type ClientId } from '@skillsmith/core/install'
 import { requireTier } from '../utils/require-tier.js'
 import { sanitizeError } from '../utils/sanitize.js'
@@ -82,7 +82,7 @@ async function pinActionImpl(
     const manifestKey = manifestKeyFor(skillName, client)
 
     const manifest = await loadManifest()
-    const entry = manifest.installedSkills[manifestKey]
+    const entry = installedSkillsOf(manifest)[manifestKey]
 
     if (!entry) {
       logger.error(
@@ -109,7 +109,7 @@ async function pinActionImpl(
     const pinHash = truncateHash(hash)
 
     await updateManifestEntry((m) => {
-      const existingEntry = m.installedSkills[manifestKey]
+      const existingEntry = installedSkillsOf(m)[manifestKey]
       if (!existingEntry) return m
       return {
         ...m,
@@ -147,7 +147,7 @@ async function unpinActionImpl(
     const manifestKey = manifestKeyFor(skillName, client)
 
     const manifest = await loadManifest()
-    const entry = manifest.installedSkills[manifestKey]
+    const entry = installedSkillsOf(manifest)[manifestKey]
 
     if (!entry) {
       logger.error(chalk.red(`Skill "${skillName}" not found in manifest.`))
@@ -162,7 +162,7 @@ async function unpinActionImpl(
     const previousPin = entry.pinnedVersion
 
     await updateManifestEntry((m) => {
-      const existingEntry = m.installedSkills[manifestKey]
+      const existingEntry = installedSkillsOf(m)[manifestKey]
       if (!existingEntry) return m
 
       const { pinnedVersion: _removed, ...rest } = existingEntry

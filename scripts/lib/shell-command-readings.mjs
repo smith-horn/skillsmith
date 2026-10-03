@@ -23,6 +23,7 @@ import {
   launcherStops,
   stripLauncher,
 } from './shell-command-launchers.mjs'
+import { shellTextOperand } from './shell-command-shell-text.mjs'
 import { basenameOf, tokenize } from './shell-command-tokenize.mjs'
 
 /**
@@ -71,6 +72,11 @@ export const TRANSPARENT_HEAD_WORDS = new Set([
   'eval',
   'builtin',
   'time',
+  // zsh's `nocorrect` precommand modifier (its sibling `noglob` is a
+  // launcher-table row): `nocorrect cat D` printed a decoy in zsh 5.9, the
+  // shell the Bash tool runs here, and allowed (SMI-6908 F-5). Silent in bash,
+  // where the word is a command not found.
+  'nocorrect',
 ])
 
 /**
@@ -126,6 +132,7 @@ const MAX_DASH_C_DEPTH = 2
 
 function peelHead(segment, peelWrappers, splitFn, depth) {
   const kept = []
+  const readings = []
   let i = 0
   let peeled = false
   // The values of the plain (non-redirect) words from `i` to the segment's
@@ -155,11 +162,37 @@ function peelHead(segment, peelWrappers, splitFn, depth) {
       continue
     }
     const base = basenameOf(t.value)
+    // SMI-6920 F-A: a head whose operand IS shell text (`eval "…"`,
+    // `trap "…" SIG`) gets a reading kept AT the head, so the caller's own
+    // shell-text arm reads the operand (`nohup eval "cat .env"` had every
+    // reading fully peeled to one unreadable word), and the peel then goes
+    // on as before, so the fully peeled reading survives beside it: a first
+    // version stopped here and lost it, and `eval 'echo $(cat)' < .env`
+    // moved from deny to allow (the governance review of 243a96847, C-2).
+    // Readings only add.
+    if (peeled && shellTextOperand(plainValuesFrom(i)) !== null) {
+      readings.push(kept.concat(segment.slice(i)))
+    }
     if (DASH_C_LAUNCHERS.has(base) && depth < MAX_DASH_C_DEPTH) {
       const body = launcherDashCCommand(plainValuesFrom(i))
       if (body !== null) {
         const segs = splitFn(tokenize(body))
-        return segs.concat(transparentHeadReadings(segs, peelWrappers, splitFn, depth + 1))
+        // `readings` first: a reading the shell-text arm above just pushed is
+        // part of the result, not something this return discards. REACHABLE,
+        // and this comment used to say otherwise: the two sets being disjoint
+        // (`DASH_C_LAUNCHERS` vs the shell-text heads) does not make
+        // `readings` empty here, because the push and this return need not be
+        // the same loop iteration, and `watch` is BOTH a shell-text head and a
+        // peelable launcher. Measured: 40 of 747 probed commands moved from
+        // allow to deny across this one word, none the other way; smallest case
+        // a launcher before `watch script -c` with a redirect. SMI-6920 round
+        // 3 F-5 shipped it as "unreachable", round 4 F-B measured it, round 5
+        // M4 found this comment still carrying the false claim. Readings only
+        // add.
+        return readings.concat(
+          segs,
+          transparentHeadReadings(segs, peelWrappers, splitFn, depth + 1)
+        )
       }
     }
     const entry = LAUNCHER_TABLE.get(base)
@@ -194,8 +227,13 @@ function peelHead(segment, peelWrappers, splitFn, depth) {
     }
     break
   }
-  if (!peeled || i >= segment.length) return null
-  return [kept.concat(segment.slice(i))]
+  if (peeled && i < segment.length) {
+    const last = readings[readings.length - 1]
+    const final = kept.concat(segment.slice(i))
+    if (last === undefined || last.length !== final.length || last.some((t, k) => t !== final[k]))
+      readings.push(final)
+  }
+  return readings.length === 0 ? null : readings
 }
 
 /**
@@ -210,18 +248,17 @@ function peelHead(segment, peelWrappers, splitFn, depth) {
  * the wrapper peel alone could not reach because it stops at the first
  * non-wrapper word; with the second, a `-c` body's own `;`-separated commands
  * are read one by one.
+ * `splitFn` is required (SMI-6908 F-13): a default of "one unsplit segment"
+ * would let a future caller lose a `-c` body's segmentation silently.
  * @param {Array<Array<{type: string, value?: string, redirect?: boolean}>>} segments
- * @param {((argv: string[]) => {argv: string[], nested: string|null}) | null} [peelWrappers]
- * @param {(tokens: Array<object>) => Array<Array<object>>} [splitFn]
+ * @param {((argv: string[]) => {argv: string[], nested: string|null}) | null} peelWrappers
+ * @param {(tokens: Array<object>) => Array<Array<object>>} splitFn
  * @param {number} [depth] internal: how many `-c` bodies enclose `segments`
  * @returns {Array<Array<object>>}
  */
-export function transparentHeadReadings(
-  segments,
-  peelWrappers = null,
-  splitFn = (t) => [t],
-  depth = 0
-) {
+export function transparentHeadReadings(segments, peelWrappers, splitFn, depth = 0) {
+  if (typeof splitFn !== 'function')
+    throw new TypeError('transparentHeadReadings: splitFn is required')
   const extra = []
   for (const segment of segments) {
     const readings = peelHead(segment, peelWrappers, splitFn, depth)
