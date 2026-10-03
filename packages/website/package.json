@@ -20,9 +20,6 @@
     "build:worker": "npx wrangler deploy --dry-run --outdir dist-worker"
   },
   "dependencies": {
-    "@astrojs/check": "0.9.10",
-    "@astrojs/rss": "4.0.19",
-    "@astrojs/sitemap": "3.7.4",
     "@supabase/supabase-js": "2.114.0",
     "@tailwindcss/vite": "4.1.18",
     "cookie": "2.0.1",
@@ -32,6 +29,9 @@
     "turndown-plugin-gfm": "1.0.2"
   },
   "devDependencies": {
+    "@astrojs/check": "0.9.10",
+    "@astrojs/rss": "4.0.19",
+    "@astrojs/sitemap": "3.7.4",
     "@astrojs/vercel": "11.0.9",
     "@axe-core/playwright": "4.11.1",
     "@playwright/test": "1.62.1",
