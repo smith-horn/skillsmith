@@ -1233,11 +1233,21 @@ jobs:
   # error, any newly-failing file, any increased count fails. The 22-row baseline
   # pins today's 59 pre-existing errors without tolerating a 60th.
   #
-  # NOT YET A REQUIRED STATUS CHECK. Adding `Edge Functions Typecheck` to branch
-  # protection is a repository-settings change outside this diff, and until it is
-  # made the job reports without blocking a merge. That is stated rather than
-  # assumed, because an unenforced gate that everyone believes is enforced is the
-  # precise failure this plan exists to remove.
+  # NOW A REQUIRED STATUS CHECK, as of 2026-10-02: `Edge Functions Typecheck` is
+  # the 16th required context on `main`, added by the same change that recorded it
+  # in `.github/branch-protection.json`. An earlier version of this comment said
+  # "NOT YET A REQUIRED STATUS CHECK ... the job reports without blocking a
+  # merge", which was true when written and became false hours later. Read
+  # `.github/branch-protection.json`, or run
+  # `scripts/validate-branch-protection.sh --dry-run`, rather than trusting any
+  # count or claim in a comment -- including this one.
+  #
+  # This job has NO path filter, deliberately. It gates on
+  # `detect-changes.outputs.code`, whose own filter is `'**'` minus docs, so it
+  # runs on every code PR and not only on PRs touching `supabase/functions`. A PR
+  # that adds no file to that tree cannot raise the baseline, but it can still be
+  # FAILED by an INCONCLUSIVE result -- which is why the wrapper's `RESULT` line
+  # is the first thing to read, ahead of `VERDICT`.
   edge-functions-check:
     name: Edge Functions Typecheck
     runs-on: ubuntu-latest
