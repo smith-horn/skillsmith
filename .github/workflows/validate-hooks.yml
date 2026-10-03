@@ -32,6 +32,7 @@ on:
       - 'scripts/session-start-mcp-command-guard.sh'
       - 'scripts/session-mcp-disconnect-guard.sh'
       - 'scripts/lib/hook-docker-detect.sh'
+      - 'scripts/ci/npm-audit-gate.sh'
       - 'scripts/lib/check-container-deps-fresh.sh'
       - 'scripts/lib/check-container-deps-fresh-inner.sh'
       - 'scripts/tests/check-container-deps-fresh.test.sh'
@@ -144,6 +145,7 @@ jobs:
             scripts/lib/check-container-deps-fresh.sh \
             scripts/lib/check-container-deps-fresh-inner.sh \
             scripts/lib/check-hooks-path.sh \
+            scripts/ci/npm-audit-gate.sh \
             scripts/tests/check-container-deps-fresh.test.sh \
             scripts/tests/check-container-deps-fresh-lock.test.sh \
             scripts/tests/_lib/check-container-deps-fresh-fixtures.sh \
@@ -223,6 +225,7 @@ jobs:
           bash -n scripts/docker-health.sh
           bash -n scripts/session-start-mcp-command-guard.sh
           bash -n scripts/session-mcp-disconnect-guard.sh
+          bash -n scripts/ci/npm-audit-gate.sh
           sh -n scripts/lib/hook-docker-detect.sh
           sh -n scripts/lib/check-container-deps-fresh.sh
           sh -n scripts/lib/check-container-deps-fresh-inner.sh

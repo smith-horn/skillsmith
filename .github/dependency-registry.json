@@ -1,5 +1,5 @@
 {
-  "description": "Registry of every root package.json override and every accepted dev-scope npm-audit advisory, with reason, provenance, removal condition and expiry. Every override and every accepted advisory must have an entry here. Nothing enforces that yet: the audit:standards coherence and expiry check is tracked in SMI-6949.",
+  "description": "Registry of every root package.json override and every accepted dev-scope npm-audit advisory, with reason, provenance, removal condition and expiry. Every override and every accepted advisory must have an entry here. audit:standards Check 76 enforces it (SMI-6949, ADR-176): override keys and pins must match package.json, and an acceptance fails CI on and after its expiry date.",
   "overrides": {
     "undici": {
       "pin": "^7.30.0",
