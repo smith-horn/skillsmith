@@ -101,7 +101,7 @@ Note: `Dependency Guard` (ci.yml) runs on every PR but is NOT a required context
 
 ### How It Works
 
-- **Code PRs**: All 14 required checks must pass (the `required_status_checks.contexts` set in `.github/branch-protection.json`)
+- **Code PRs**: every context in `required_status_checks.contexts` must pass. **The count is deliberately not restated here** — `.github/branch-protection.json` is the declared set and `scripts/validate-branch-protection.sh --dry-run` compares it against live. Measured 2026-10-03: that file had drifted two contexts behind live (`pointer-check` and `Edge Functions Typecheck` both missing), and because `--fix` applies the file TO GitHub, running it would have *removed* a required check. The validator is not wired into CI, which is why the drift survived
 - **Docs-only PRs**: Only Secret Scan + Markdown Lint (from `docs-only.yml`) — plus `Website Skills E2E Gate`, which reports on every PR and auto-passes in seconds when no skills-page paths changed
 - **Mixed PRs**: Full CI runs
 

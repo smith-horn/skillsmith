@@ -1,23 +1,25 @@
 {
   "$schema": "https://json.schemastore.org/github-branch-protection-rule.json",
-  "_comment": "Source of truth for main branch protection. Apply with: gh api repos/Smith-Horn/skillsmith/branches/main/protection -X PUT --input .github/branch-protection.json",
+  "_comment": "Source of truth for main branch protection. Apply with: gh api repos/Smith-Horn/skillsmith/branches/main/protection -X PUT --input .github/branch-protection.json UPDATED 2026-10-03: this file had drifted TWO contexts behind live protection, and the drift direction matters -- `--fix` applies THIS FILE to GitHub, so running it would have REMOVED a required check rather than added one. `pointer-check` (the docs/internal gitlink ancestry gate, ADR-143) was added to live protection and never recorded here; `Edge Functions Typecheck` (SMI-6897) is added by the same commit that recorded it live. Both are now listed. The validator is not wired into CI, so nothing was failing -- which is exactly why the drift survived.",
   "required_status_checks": {
     "strict": true,
     "contexts": [
-      "Secret Scan",
-      "Classify Changes",
-      "Package Validation",
-      "Build Docker Image",
-      "Quality Checks",
-      "Security Audit",
       "Build",
+      "Build Docker Image",
+      "Classify Changes",
+      "Edge Functions Typecheck",
       "Markdown Lint",
       "PR Validation (Node)",
       "PR Validation (Shell)",
-      "Test (root)",
-      "Test (root colocated)",
+      "Package Validation",
+      "Quality Checks",
+      "Secret Scan",
+      "Security Audit",
       "Test (mcp-server integration)",
-      "Website Skills E2E Gate"
+      "Test (root colocated)",
+      "Test (root)",
+      "Website Skills E2E Gate",
+      "pointer-check"
     ]
   },
   "enforce_admins": false,
