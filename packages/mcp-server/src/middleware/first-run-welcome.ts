@@ -45,6 +45,7 @@
  */
 
 import type { CallToolResult } from '@modelcontextprotocol/sdk/types.js'
+import { spliceStructured } from './structured-content.js'
 
 /**
  * The not-yet-delivered welcome payload. `null` once there is nothing left
@@ -164,7 +165,7 @@ export function annotateResponseWithWelcome(response: CallToolResult): CallToolR
   // early return above leaves `pendingWelcome` untouched.
   pendingWelcome = null
 
-  return { ...response, content: nextContent }
+  return { ...response, content: nextContent, ...spliceStructured(response, annotated) }
 }
 
 /**

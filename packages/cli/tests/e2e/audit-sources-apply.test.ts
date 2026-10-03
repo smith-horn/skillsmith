@@ -44,6 +44,7 @@ function makeOpts(o: Partial<AuditSourcesOptions> & { db: string }): AuditSource
     writeFrontmatter: o.writeFrontmatter ?? false,
     forceWriteFrontmatter: o.forceWriteFrontmatter ?? false,
     db: o.db,
+    client: o.client,
   }
 }
 

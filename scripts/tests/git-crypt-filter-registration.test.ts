@@ -20,7 +20,15 @@
 
 import { describe, it, expect, afterEach } from 'vitest'
 import { execFileSync, spawnSync } from 'node:child_process'
-import { chmodSync, existsSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs'
+import {
+  chmodSync,
+  existsSync,
+  mkdtempSync,
+  readdirSync,
+  rmSync,
+  symlinkSync,
+  writeFileSync,
+} from 'node:fs'
 import { tmpdir } from 'node:os'
 import { resolve, dirname, join } from 'node:path'
 import { fileURLToPath } from 'node:url'
@@ -36,27 +44,81 @@ const REAL_BASH = execFileSync('bash', ['-c', 'command -v bash'], { encoding: 'u
 // it never actually INVOKES git-crypt (repair is pure `git config` calls),
 // so a do-nothing PATH shim is sufficient and keeps these tests hermetic
 // regardless of whether the real binary happens to be installed in the
-// environment running them (it is NOT inside this repo's own Docker dev
-// container by design — git-crypt operations are host-side, see CLAUDE.md's
-// Git-Crypt section — which is exactly the gap that first surfaced this).
+// environment running them.
+//
+// SMI-6491 correction: this comment used to assert git-crypt "is NOT inside
+// this repo's own Docker dev container by design". That is no longer true —
+// the dev image now installs it, because gate-check's G-5 closure test and
+// Turborepo's dirty-hash computation both need the filter to run in-container.
+// The shim remains correct and still keeps the tests hermetic; only the
+// parenthetical claim about the environment was stale.
 const GIT_CRYPT_SHIM_DIR = mkdtempSync(join(tmpdir(), 'git-crypt-shim-'))
 writeFileSync(join(GIT_CRYPT_SHIM_DIR, 'git-crypt'), '#!/bin/sh\nexit 0\n')
 chmodSync(join(GIT_CRYPT_SHIM_DIR, 'git-crypt'), 0o755)
 const GIT_ENV = { ...makeFixtureEnv(), PATH: `${GIT_CRYPT_SHIM_DIR}:${process.env.PATH ?? ''}` }
 
-/** PATH with NO git-crypt reachable at all (neither the shim nor a real install), for T9. */
+/**
+ * Every temp directory created during a test, removed in `afterEach`.
+ *
+ * Declared here rather than beside `afterEach` below because
+ * `mirrorWithoutGitCrypt` pushes to it. That function is only ever called
+ * from inside a test, so a later declaration would work — but only by
+ * accident; calling it at module scope would throw on the TDZ.
+ *
+ * `rmSync(..., { recursive: true })` unlinks symlinks rather than following
+ * them, so removing a mirror directory never touches the `/usr/bin` entries
+ * it points at. Verified empirically, not assumed — the failure mode if it
+ * were untrue is deleting system binaries.
+ */
+const tempDirs: string[] = []
+
+/**
+ * PATH with NO git-crypt reachable at all — neither the shim above nor a real
+ * install — while every OTHER executable stays exactly where it was. T9's
+ * premise depends on both halves.
+ *
+ * SMI-6491, two bugs in sequence, both worth recording because the obvious
+ * fixes are the wrong ones:
+ *
+ * 1. The original helper removed only `dirname(command -v git-crypt)`. That
+ *    was correct on a macOS host, where Homebrew provides exactly one
+ *    git-crypt, and broke the moment git-crypt was installed in the dev
+ *    image: Debian's `/bin` is a symlink to `/usr/bin`, so `type -a
+ *    git-crypt` reports BOTH paths. Removing one left the binary reachable
+ *    via the other, and T9's premise was silently false.
+ *
+ * 2. Removing every directory that holds a git-crypt does not work either —
+ *    on Debian that means dropping `/usr/bin` and `/bin`, which takes `git`,
+ *    `dirname`, and `date` with it. `_lib.sh` then dies while being sourced
+ *    (`line 31: dirname: command not found`), the function never reaches the
+ *    gate under test, and the run exits 0 for a reason unrelated to
+ *    git-crypt. Re-supplying `git` alone does not help; the coreutils are
+ *    needed too, and enumerating them is a guessing game.
+ *
+ * So: replace each git-crypt-bearing directory IN PLACE with a temp mirror of
+ * itself — symlinks to every entry except `git-crypt`. PATH order and every
+ * other binary are preserved exactly; only git-crypt disappears. This keeps
+ * T9 exercising the real `command -v git-crypt` gate rather than a seam, and
+ * is indifferent to how many aliases of one directory the OS exposes.
+ */
+function mirrorWithoutGitCrypt(dir: string): string {
+  const mirror = mkdtempSync(join(tmpdir(), 'path-no-git-crypt-'))
+  tempDirs.push(mirror)
+  for (const name of readdirSync(dir)) {
+    if (name === 'git-crypt') continue
+    symlinkSync(join(dir, name), join(mirror, name))
+  }
+  return mirror
+}
+
 function pathWithoutAnyGitCrypt(): string {
-  const real = (() => {
-    const r = spawnSync('bash', ['-c', 'command -v git-crypt'], { encoding: 'utf8' })
-    return r.status === 0 ? dirname(r.stdout.trim()) : null
-  })()
   return (process.env.PATH ?? '')
     .split(':')
-    .filter((p) => p !== GIT_CRYPT_SHIM_DIR && p !== real)
+    .filter((p) => p !== GIT_CRYPT_SHIM_DIR && p !== '')
+    .map((dir) => (existsSync(join(dir, 'git-crypt')) ? mirrorWithoutGitCrypt(dir) : dir))
     .join(':')
 }
 
-const tempDirs: string[] = []
 afterEach(() => {
   for (const d of tempDirs) {
     if (existsSync(d)) rmSync(d, { recursive: true, force: true })

@@ -37,7 +37,7 @@ describe('buildDeviceCardHtml — suggested action / device batch tip (SMI-5595)
     const html = buildDeviceCardHtml(device)
     expect(html).toContain('<span class="skill-action">')
     // '/' is not HTML-significant — escapeHtml leaves it unchanged.
-    expect(html).toContain('<code>skillsmith update acme/widget</code>')
+    expect(html).toContain('<code>skillsmith update acme/widget --dry-run</code>')
   })
 
   it('drifted: escapes a skill id containing < and & inside the rendered <code> span (XSS-safety regression)', () => {
@@ -65,7 +65,7 @@ describe('buildDeviceCardHtml — suggested action / device batch tip (SMI-5595)
     }
     const html = buildDeviceCardHtml(device)
     expect(html).not.toContain('<script>&x')
-    expect(html).toContain('<code>skillsmith update evil/&lt;script&gt;&amp;x</code>')
+    expect(html).toContain('<code>skillsmith update evil/&lt;script&gt;&amp;x --dry-run</code>')
   })
 
   it('drifted: a backtick in the skill id does not shift code-span parity (regression for the split-then-substitute order)', () => {
@@ -96,10 +96,12 @@ describe('buildDeviceCardHtml — suggested action / device batch tip (SMI-5595)
     // inside the already-identified code segment, means a backtick carried in
     // by the skill id can't shift which parts of the surrounding sentence get
     // treated as code — the whole command stays inside one <code> span.
-    expect(html).toContain('<code>skillsmith update acme/wid`get</code>')
+    expect(html).toContain('<code>skillsmith update acme/wid`get --dry-run</code>')
     const actionMatch = html.match(/<span class="skill-action">(.*?)<\/span>/)
     expect(actionMatch).not.toBeNull()
-    expect(actionMatch![1]).toBe('Run <code>skillsmith update acme/wid`get</code> on that machine.')
+    expect(actionMatch![1]).toBe(
+      'Preview it first: run <code>skillsmith update acme/wid`get --dry-run</code> on that machine.'
+    )
   })
 
   it('current: renders a .skill-action span with plain text and no <code> child for a no-command state', () => {
@@ -161,7 +163,7 @@ describe('buildDeviceCardHtml — suggested action / device batch tip (SMI-5595)
     const liHtml = liMatch![0]
     expect(liHtml).toContain('acme/widget')
     expect(liHtml).toContain('<span class="skill-action">')
-    expect(liHtml).toContain('<code>skillsmith update acme/widget</code>')
+    expect(liHtml).toContain('<code>skillsmith update acme/widget --dry-run</code>')
   })
 
   describe('device batch tip (computeDeviceBatchTip integration)', () => {
@@ -197,7 +199,7 @@ describe('buildDeviceCardHtml — suggested action / device batch tip (SMI-5595)
       const html = buildDeviceCardHtml(device)
       const matches = html.match(/class="device-batch-tip"/g) ?? []
       expect(matches).toHaveLength(1)
-      expect(html).toContain('<code>skillsmith update --all</code>')
+      expect(html).toContain('<code>skillsmith update --all --dry-run</code>')
     })
 
     it('renders no .device-batch-tip when 0 or 1 skill is drifted', () => {

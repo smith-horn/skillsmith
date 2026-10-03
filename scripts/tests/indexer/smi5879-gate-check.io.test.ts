@@ -200,6 +200,132 @@ describe('smi5879-gate-check.io.ts — finding #7: simulator report internal con
     }
   })
 
+  it('coverage.<cohort>.primaryNotFound disagreeing with the actual primary_not_found row count is malformed', () => {
+    const dir = makeScratchDir()
+    const rows = [makeSimRow({ id: 'r1', cohort: 'C4', outcome: 'primary_not_found' })]
+    const coverage = {
+      C1: makeCoverage(),
+      C2: makeCoverage(),
+      C3: makeCoverage(),
+      // Claims 0 primaryNotFound even though the one C4 row IS primary_not_found.
+      C4: makeCoverage({ scanned: 1, total: 1, primaryNotFound: 0 }),
+    }
+    const path = writeFixtureFile(
+      dir,
+      'simulator.json',
+      makeSimulatorReportJson({ rows, coverage })
+    )
+    const result = loadSimulatorReport(path, 'simulator-report')
+    expect(result.status).toBe('malformed')
+    if (result.status === 'malformed') {
+      expect(result.reason).toMatch(/coverage\.C4\.primaryNotFound=0 does not equal/)
+    }
+  })
+
+  it('a report predating SMI-6442 (coverage.<cohort> genuinely missing primaryNotFound) still loads ok — treated as 0', () => {
+    const dir = makeScratchDir()
+    const rows = [makeSimRow({ id: 'r1', cohort: 'C1', outcome: 'unchanged_clean' })]
+    const legacyCoverage = {
+      C1: { status: 'full', scanned: 1, total: 1, unevaluable: 0, unfetchable: 0 },
+      C2: { status: 'full', scanned: 0, total: 0, unevaluable: 0, unfetchable: 0 },
+      C3: { status: 'full', scanned: 0, total: 0, unevaluable: 0, unfetchable: 0 },
+      C4: { status: 'full', scanned: 0, total: 0, unevaluable: 0, unfetchable: 0 },
+    }
+    const path = writeFixtureFile(
+      dir,
+      'simulator.json',
+      makeSimulatorReportJson({ rows, coverage: legacyCoverage })
+    )
+    const result = loadSimulatorReport(path, 'simulator-report')
+    expect(result.status).toBe('ok')
+    if (result.status === 'ok') {
+      expect(result.value.coverage.C1.primaryNotFound).toBe(0)
+    }
+  })
+
+  it('coverage.<cohort>.primaryNotFound PRESENT but not a number is malformed, not silently defaulted', () => {
+    const dir = makeScratchDir()
+    const rows = [makeSimRow({ id: 'r1', cohort: 'C1', outcome: 'unchanged_clean' })]
+    const coverage = {
+      C1: {
+        status: 'full',
+        scanned: 1,
+        total: 1,
+        unevaluable: 0,
+        unfetchable: 0,
+        primaryNotFound: 'zero',
+      },
+      C2: makeCoverage(),
+      C3: makeCoverage(),
+      C4: makeCoverage(),
+    }
+    const path = writeFixtureFile(
+      dir,
+      'simulator.json',
+      makeSimulatorReportJson({ rows, coverage })
+    )
+    const result = loadSimulatorReport(path, 'simulator-report')
+    expect(result.status).toBe('malformed')
+    if (result.status === 'malformed') {
+      expect(result.reason).toMatch(/primaryNotFound must be a number/)
+    }
+  })
+
+  it('a report predating SMI-6442 (counts genuinely missing primary_not_found) still loads ok — treated as 0 (SMI-6481)', () => {
+    const dir = makeScratchDir()
+    const rows = [makeSimRow({ id: 'r1', cohort: 'C1', outcome: 'unchanged_clean' })]
+    const simJson = makeSimulatorReportJson({ rows })
+    const counts = { ...(simJson['counts'] as Record<string, number>) }
+    delete counts['primary_not_found']
+    simJson['counts'] = counts
+    const path = writeFixtureFile(dir, 'simulator.json', simJson)
+    const result = loadSimulatorReport(path, 'simulator-report')
+    expect(result.status).toBe('ok')
+    if (result.status === 'ok') {
+      expect(result.value.counts.primary_not_found).toBe(0)
+    }
+  })
+
+  it('counts.primary_not_found PRESENT but not a number is malformed, not silently defaulted', () => {
+    const dir = makeScratchDir()
+    const rows = [makeSimRow({ id: 'r1', cohort: 'C1', outcome: 'unchanged_clean' })]
+    const simJson = makeSimulatorReportJson({ rows })
+    simJson['counts'] = {
+      ...(simJson['counts'] as Record<string, number>),
+      primary_not_found: 'zero',
+    }
+    const path = writeFixtureFile(dir, 'simulator.json', simJson)
+    const result = loadSimulatorReport(path, 'simulator-report')
+    expect(result.status).toBe('malformed')
+    if (result.status === 'malformed') {
+      expect(result.reason).toMatch(/counts\.primary_not_found must be a number/)
+    }
+  })
+
+  it('counts.primary_not_found ABSENT while a REAL primary_not_found row exists in rows[] is still rejected (safety half of the SMI-6481 shim, via the countsSum consistency check)', () => {
+    const dir = makeScratchDir()
+    // Unlike the "genuinely predates SMI-6442" test above, this report DOES
+    // have a primary_not_found row — the shim must never silently swallow a
+    // genuine mismatch between a missing counts.primary_not_found and rows
+    // that actually contain that outcome.
+    const rows = [
+      makeSimRow({ id: 'r1', cohort: 'C4', outcome: 'primary_not_found' }),
+      makeSimRow({ id: 'r2', cohort: 'C4', outcome: 'unchanged_clean' }),
+    ]
+    const simJson = makeSimulatorReportJson({ rows })
+    const counts = { ...(simJson['counts'] as Record<string, number>) }
+    delete counts['primary_not_found']
+    simJson['counts'] = counts
+    const path = writeFixtureFile(dir, 'simulator.json', simJson)
+    const result = loadSimulatorReport(path, 'simulator-report')
+    expect(result.status).toBe('malformed')
+    if (result.status === 'malformed') {
+      expect(result.reason).toMatch(
+        /counts sums to 1 across all outcome buckets but rows\.length is 2/
+      )
+    }
+  })
+
   it('a truncated rows array with unmodified coverage/counts (the exact tamper shape G-2/G-3 alone would miss) is malformed', () => {
     const dir = makeScratchDir()
     // Report CLAIMS full coverage over 100 C1 rows via `coverage`, and

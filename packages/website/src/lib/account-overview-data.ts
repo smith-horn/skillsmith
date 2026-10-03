@@ -148,7 +148,7 @@ export async function loadTeamOverviewData(
   // rendered as human-readable lines (no raw UUIDs). (SMI-5151)
   const { data: activityRows } = await supabase
     .from('audit_logs')
-    .select('id, event_type, actor, resource, action, timestamp, metadata')
+    .select('id, event_type, actor, resource, action, result, timestamp, metadata')
     .eq('metadata->>team_id', teamId)
     .order('timestamp', { ascending: false })
     .limit(10)

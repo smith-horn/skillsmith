@@ -1,0 +1,14 @@
+{
+  "$comment": "SMI-6441: provenance record for every vendored file under data/wordlists/. Each entry pins an exact upstream commit SHA (never a branch) and a SHA-256 of the vendored bytes, which scripts/gen-weak-password-lexicon.mjs verifies before every generation run (hard-fail on mismatch). See data/wordlists/README.md.",
+  "files": [
+    {
+      "file": "seclists-xato-top-10000.txt",
+      "upstream": "https://github.com/danielmiessler/SecLists",
+      "path": "Passwords/Common-Credentials/xato-net-10-million-passwords-10000.txt",
+      "commit": "c205c36a445bff37f8e58a9ec829105cd4975c58",
+      "sha256": "c63d5e4ccc31344d662583cc39ca4bd5bd20517ff1d24501f0c4e0c22d9b722a",
+      "license": "MIT",
+      "retrieved": "2026-09-08"
+    }
+  ]
+}

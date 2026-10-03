@@ -76,7 +76,7 @@ Encrypted files tracked by git-crypt are safe in the current state of the reposi
 
    ```bash
    docker compose --profile dev up -d
-   docker exec skillsmith-dev-1 npm install
+   docker exec -w /app skillsmith-dev-1 sh -c 'sh scripts/lib/node-modules-mount-gate.sh && npm install'
    docker exec skillsmith-dev-1 npm run build
    ```
 

@@ -125,15 +125,15 @@ describe('processRow — tier-2 outcome classification', () => {
     expect(result.reason).toMatch(/unparseable/)
   })
 
-  it('unevaluable: repo_url embeds a ref, census resolved the repo fine, but SKILL.md itself still 404s (file-level absence is NOT reclassified by this fix)', async () => {
+  it('primary_not_found: repo_url embeds a ref, census resolved the repo fine, but SKILL.md itself still 404s (a genuine live fetch, distinct from the embedded-ref repo-level bypass above — SMI-6442 routes this to primary_not_found, not unevaluable)', async () => {
     const row = makeRow()
     const branchMap: BranchMap = new Map([
       [`acme/${row.id}`, { resolution: 'resolved', default_branch: 'main' }],
     ])
     registerPrimary(row, [new Response('Not Found', { status: 404 })])
     const result = await processRow(row, branchMap, baseDeps(cleanScanner, cleanScanner))
-    expect(result.outcome).toBe('unevaluable')
-    expect(result.reason).toMatch(/confirmed absent/)
+    expect(result.outcome).toBe('primary_not_found')
+    expect(result.reason).toMatch(/not found/)
   })
 
   it('unchanged_clean: repo_url embeds a ref and census reports transient — transient does not block an embedded-ref row (it never needed default_branch)', async () => {
@@ -168,12 +168,12 @@ describe('processRow — tier-2 outcome classification', () => {
     expect(result.reason).toMatch(/primary fetch exhausted/)
   })
 
-  it('unevaluable: primary SKILL.md confirmed absent (404) since the snapshot (judgment call)', async () => {
+  it('primary_not_found: primary SKILL.md 404s (SMI-6442 — terminal, not retry-eligible)', async () => {
     const row = makeRow()
     registerPrimary(row, [new Response('Not Found', { status: 404 })])
     const result = await processRow(row, new Map(), baseDeps(cleanScanner, cleanScanner))
-    expect(result.outcome).toBe('unevaluable')
-    expect(result.reason).toMatch(/confirmed absent/)
+    expect(result.outcome).toBe('primary_not_found')
+    expect(result.reason).toMatch(/not found/)
   })
 
   it('unevaluable: a sibling exhausts retries', async () => {
@@ -205,6 +205,62 @@ describe('processRow — tier-2 outcome classification', () => {
     expect(result.outcome).toBe('bundle_absent')
     expect(result.prePortQuarantine).toBe(false)
     expect(result.postPortQuarantine).toBe(false)
+  })
+
+  it('SMI-6436: bundle_absent still fires for a non-change when both scans are quarantined (not just both clean)', async () => {
+    const row = makeRow()
+    registerPrimary(row, [contentsApiResponse('# SKILL')])
+    const scanner = makeBundleAbsentScanner(DIRTY_RISK)
+    const result = await processRow(row, new Map(), baseDeps(scanner, scanner))
+    expect(result.outcome).toBe('bundle_absent')
+    expect(result.prePortQuarantine).toBe(true)
+    expect(result.postPortQuarantine).toBe(true)
+  })
+
+  // SMI-6436 regression: empty sibling scope (bundle_absent-eligible) must
+  // NOT mask a real verdict delta. Prior to the fix, `isBundleAbsent` was
+  // checked before `classifyVerdictDelta`, so both of these rows would have
+  // been misclassified `bundle_absent` instead of their real delta.
+
+  it('SMI-6436: newly_quarantined even with empty sibling scope (bundle_absent must not mask a real delta)', async () => {
+    const row = makeRow()
+    registerPrimary(row, [contentsApiResponse('# SKILL')])
+    const postPort = makeBundleAbsentScanner(DIRTY_RISK)
+    const prePort = makeBundleAbsentScanner(CLEAN_RISK)
+    const result = await processRow(row, new Map(), baseDeps(postPort, prePort))
+    expect(result.outcome).toBe('newly_quarantined')
+    expect(result.prePortQuarantine).toBe(false)
+    expect(result.postPortQuarantine).toBe(true)
+    // SMI-6481: the bundle-absence diagnostic must not be silently dropped
+    // just because a real delta won — it's recovered in `reason` instead.
+    expect(result.reason).toMatch(/bundle scope confirmed empty/)
+    expect(result.reason).toMatch(/verdict delta takes precedence/)
+  })
+
+  it('SMI-6436: newly_cleared even with empty sibling scope (bundle_absent must not mask a real delta)', async () => {
+    const row = makeRow()
+    registerPrimary(row, [contentsApiResponse('# SKILL')])
+    const postPort = makeBundleAbsentScanner(CLEAN_RISK)
+    const prePort = makeBundleAbsentScanner(DIRTY_RISK)
+    const result = await processRow(row, new Map(), baseDeps(postPort, prePort))
+    expect(result.outcome).toBe('newly_cleared')
+    expect(result.prePortQuarantine).toBe(true)
+    expect(result.postPortQuarantine).toBe(false)
+    // SMI-6481: same recovered diagnostic on the opposite delta direction.
+    expect(result.reason).toMatch(/bundle scope confirmed empty/)
+    expect(result.reason).toMatch(/verdict delta takes precedence/)
+  })
+
+  it('SMI-6481: a genuine unchanged_clean/unchanged_quarantined delta (no bundle-absence in play) carries no reason', async () => {
+    const row = makeRow()
+    registerPrimary(row, [contentsApiResponse('# SKILL')])
+    // A verdict-delta scanner that does NOT touch siblings at all — the
+    // opposite of makeBundleAbsentScanner — so isBundleAbsent is false and
+    // the plain delta branch's `reason` stays entirely absent, exactly like
+    // before SMI-6481.
+    const result = await processRow(row, new Map(), baseDeps(cleanScanner, cleanScanner))
+    expect(result.outcome).toBe('unchanged_clean')
+    expect(result.reason).toBeUndefined()
   })
 
   it('newly_quarantined: pre-port clean, post-port quarantined', async () => {
@@ -330,6 +386,27 @@ describe('computeCoverage — unfetchable does NOT block full coverage, unevalua
     const coverage = computeCoverage({ C1: [], C2: rows, C3: [], C4: [] }, results)
     expect(coverage.C2.status).toBe('full')
     expect(coverage.C2.unfetchable).toBe(1)
+    expect(coverage.C2.unevaluable).toBe(0)
+  })
+
+  it('SMI-6442: a cohort where every row is primary_not_found or a resolved verdict reports full', () => {
+    const rows: [SimSnapshotRow, SimSnapshotRow] = [
+      makeRow({ cohort: 'C2' }),
+      makeRow({ cohort: 'C2' }),
+    ]
+    const results = new Map<string, SimRowResult>([
+      [
+        rows[0].id,
+        { id: rows[0].id, cohort: 'C2', author: null, name: null, outcome: 'primary_not_found' },
+      ],
+      [
+        rows[1].id,
+        { id: rows[1].id, cohort: 'C2', author: null, name: null, outcome: 'unchanged_clean' },
+      ],
+    ])
+    const coverage = computeCoverage({ C1: [], C2: rows, C3: [], C4: [] }, results)
+    expect(coverage.C2.status).toBe('full')
+    expect(coverage.C2.primaryNotFound).toBe(1)
     expect(coverage.C2.unevaluable).toBe(0)
   })
 

@@ -129,6 +129,9 @@ export async function getAdminUserClient(operation: string): Promise<UserClientB
  * `getContent`) hand a team's packaged content to anyone holding the key regardless of whether
  * they are still a member, and (for `publish`) leave `published_by` NULL — unrecoverable for D-6's
  * self-approval check, which needs a real submitter to compare against.
+ *
+ * Unchanged by SMI-6622 round 6 (its message stays in scope for SMI-6649, not this fix) — see
+ * {@link tryBindMemberUserClient} below for the probe-safe variant that fix added.
  */
 export async function getMemberUserClient(operation: string): Promise<UserClientBinding> {
   return bindUserClient(
@@ -139,4 +142,44 @@ export async function getMemberUserClient(operation: string): Promise<UserClient
       'Any team member can do this once signed in — it does not require a team admin. ' +
       'Run `skillsmith login` on this machine and retry.'
   )
+}
+
+/** Why {@link tryBindMemberUserClient} could not produce a binding — a closed enum, never text. */
+export type ProbeBindFailureReason = 'not_signed_in' | 'token_unavailable' | 'client_unavailable'
+
+export type ProbeBindResult =
+  | { ok: true; binding: UserClientBinding }
+  | { ok: false; reason: ProbeBindFailureReason }
+
+/**
+ * Probe-safe member-client binder (SMI-6622 round 6 PR-07) — the ONLY caller is
+ * `registry-tools.membership-check.ts`'s `probeTeamMembership()`, which must never see upstream
+ * error text (a keychain/token-store failure, a Supabase client-construction error) in any form,
+ * message included. Resolves `resolveUserAccessToken()` EXACTLY ONCE, inside a `try`, so the probe
+ * no longer makes a second, duplicate resolution call the way it did when it checked the token
+ * itself before also calling {@link getMemberUserClient} (round 5) — that duplicated keychain/
+ * refresh work and left a window where the credential could change between the two reads.
+ *
+ * Never throws; every failure returns a `reason`, never a message. `getMemberUserClient()` above
+ * is UNCHANGED — its message text is SMI-6649 scope, not this fix.
+ */
+export async function tryBindMemberUserClient(): Promise<ProbeBindResult> {
+  let token: string | null
+  try {
+    token = await resolveUserAccessToken()
+  } catch {
+    // `resolveFreshAccessToken()` (packages/core) can reject — a token-store/keychain read or a
+    // refresh-endpoint call failing — with upstream text; never read here.
+    return { ok: false, reason: 'token_unavailable' }
+  }
+  if (!token) return { ok: false, reason: 'not_signed_in' }
+  try {
+    const client = (await getSupabaseUserClient(token)) as MinimalSupabaseClient
+    return { ok: true, binding: { client, actorUserId: accessTokenSubject(token), role: 'member' } }
+  } catch {
+    // A token existed, so this is client CONSTRUCTION failing (an invalid URL, the test-time prod
+    // guard in supabase-client.ts, etc.) — not an auth problem, so the caller must not advise
+    // logging in for it. Its message is never read here either.
+    return { ok: false, reason: 'client_unavailable' }
+  }
 }

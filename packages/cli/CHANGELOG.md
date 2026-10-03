@@ -4,6 +4,83 @@ All notable changes to `@skillsmith/cli` are documented here.
 
 ## [Unreleased]
 
+- **Docs (internal)**: SMI-6733 -- two comments in `install-skill.ts` pointed at `install.ts:299-301`
+  for a `resolveClientId`/`getInstallPath` pattern. Those lines held something else entirely, and had
+  before this branch started: the citation rotted at some earlier edit, and nothing noticed because
+  nothing checks a line number in a comment. Both now name the construct (`install.ts`'s own
+  `effectiveClient` resolution) instead. Found by sweeping every `install.ts:NNN` citation in the repo
+  after a cross-family review round flagged two others that a file split had shifted by 36 lines --
+  four stale citations in one sweep, which is the argument for naming constructs rather than lines.
+
+- **Fix (crash)**: SMI-6733 / SMI-6886 -- `sklx pin`, `sklx unpin` and `sklx diff` no longer break on
+  a manifest whose `installedSkills` is `null`. That is not a corrupt file: ADR-171 § 5 classifies it
+  `ok`, and the reader hands it back unchanged. (ADR-171 § 5 accepts both that and an absent key; § 3
+  preserves the difference between them; `installedSkillsOf` normalises either to an empty map. No
+  causal clause joining those three -- earlier versions of this entry carried one, and three review
+  rounds on PR #2980 each found it false. See `installedSkillsOf`'s docblock in core.) Five sites then subscripted it with no
+  guard (`pin.ts:85`, `:112`, `:150`, `:165`; `diff.ts:141`), all fed by a lenient loader that
+  silently substitutes an empty document on any read failure. `pin`/`unpin` surfaced a raw
+  `TypeError: Cannot read properties of null`; `diff` differed, because `fetchLatestContent` catches
+  it and reported "check your network connection" instead of naming the real problem. All five now
+  read through `installedSkillsOf`. Each is pinned by a test asserting the command's normal
+  not-installed output rather than merely the absence of a throw -- an absence assertion passes
+  whenever the command silently did nothing.
+
+- **Fix (data integrity)**: SMI-6733 -- `skillsmith update` no longer replaces a manifest it could
+  not read. `getSkillDiff`'s untracked-skill adoption reached `adoptUntrackedSkillEntry`, which took
+  a tolerant load unconditionally: that substitutes an empty document for a corrupt, unreadable or
+  version-unsupported manifest and then saves over the original bytes. Measured against a manifest
+  whose readable prefix recorded a real skill followed by trailing garbage -- one `update` left a
+  valid file holding only the adopted entry, and the recorded skill was gone. `update` has no
+  `force` in its option surface, so nothing authorised that overwrite. Tolerance is now an explicit
+  `tolerateDegradedRead` argument defaulting to refuse, and this call site passes nothing; a refused
+  adoption returns a distinct outcome rather than a hard error.
+
+- **Test**: SMI-6358 post-merge retro -- the `audit sources` already-tracked overlay's own client
+  keying is now pinned. Reverting it to a bare-name lookup previously left all five audit-sources
+  test files green; what pins it is the THREE-test set, not the two added here. Both new tests use
+  a non-canonical client, so an always-suffixed implementation satisfies both; the arm that rules
+  that out is the pre-existing default-client test, which is therefore load-bearing and must not be
+  deleted as redundant. Also pins the telemetry hook script's `0o755` mode, which
+  a fully-faked `chmodSync` had made invisible -- a dropped executable bit would have registered a
+  hook that could not run. Corrections to comments that described mechanisms the code does not
+  have. (#2920 follow-up)
+
+- **Fix (data integrity)**: SMI-6358 -- `pin` and `unpin` gained `--client` and key through
+  `manifestKeyFor(name, client)`. They previously read and wrote the bare name whatever client you
+  asked for, so pinning a non-canonical install either silently did nothing or modified the
+  canonical client's record instead. Client resolution matches `update`/`remove`/`install`:
+  explicit flag, then `SKILLSMITH_CLIENT`, then canonical. (#2920)
+
+- **Fix (concurrency)**: SMI-6358 -- `updateManifestEntry()` takes the same cross-process lock as
+  every other manifest writer in the repo, via `ManifestManager.updateSafely()`, instead of doing an
+  unlocked read-modify-write. It also reads fail-closed and returns the post-update manifest, so a
+  caller needing the fresh value does not take a second unlocked read. It accepts an optional
+  explicit manifest path, mirroring `loadManifest()`. (#2920)
+
+## v0.8.12
+
+- **Cadence**: Mechanical cadence alignment (no changes since v0.8.11).
+
+## v0.8.11
+
+- **Fix**: SMI-6530 -- stop recommending bulk `skillsmith update` until the safety gate ships (#2801)
+- **Fix (data loss)**: `skillsmith update` writes only into the directory it compared and refuses
+  otherwise, so a skill can no longer be written into a differently named directory. Skills marked
+  local, and skills Skillsmith didn't install, are skipped before any source recovery or registry
+  lookup instead of being resolved and overwritten. `--dry-run` no longer writes the manifest. The
+  "no recorded registry source" hint no longer suggests `install --force` and names the skill by
+  its directory (SMI-6529).
+
+- **Security**: `skillsmith update --all` in CLI 0.8.8-0.8.10 can overwrite local edits in skill
+  directories that are git clones and can write into the wrong directory (SMI-6528). On those
+  versions, preview with `--dry-run` and update skills one at a time. This release includes the
+  install-layer fix (SMI-6529).
+
+## v0.8.10
+
+- **Fixed**: SMI-6472 -- `src/utils/skill-name.ts`'s re-export of `VALID_SKILL_NAME_RE`/`validateSkillName` now imports from the narrow `@skillsmith/core/utils/skill-name` subpath instead of the `@skillsmith/core` package barrel. The barrel import transitively pulled in `skill-installation.io.ts` -> `safe-fs.ts`'s `fs/promises` needs (`open`/`lstat`/`constants`), breaking `tests/create.test.ts`'s narrow `fs/promises` mock (`mkdir`/`writeFile`/`stat` only) with `[vitest] No "constants" export is defined on the "fs/promises" mock`. No behavior change — only the import path.
+
 ## v0.8.9
 
 - **Feature**: SMI-6343 Wave 3 -- tamper-check classification (#2710)

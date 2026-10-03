@@ -1,8 +1,8 @@
-// AUTO-GENERATED from packages/cli/src/utils/skill-name.ts (SMI-4194).
+// AUTO-GENERATED from packages/core/src/utils/skill-name.ts (SMI-4194).
 // DO NOT EDIT BY HAND. Regenerate with:
 //   node scripts/sync-skill-name-validation.mjs
-// audit:standards enforces drift between this copy and the CLI source.
-// The VS Code extension cannot import @skillsmith/cli per ADR-113; this
+// audit:standards enforces drift between this copy and the core source.
+// The VS Code extension cannot import @skillsmith/core per ADR-113; this
 // codegen preserves parity without creating a runtime dependency.
 
 export const VALID_SKILL_NAME_RE = /^[a-z][a-z0-9-]*$/

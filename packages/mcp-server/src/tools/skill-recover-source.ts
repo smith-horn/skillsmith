@@ -88,6 +88,8 @@ export const skillRecoverSourceToolSchema = {
     'skill entry reports confidence (exact/high/medium/low), method, and ' +
     'the recovered source URL. Feed exact/high results into ' +
     '`sklx audit sources --apply` to backfill the manifest.',
+  title: 'Recover Skill Source',
+  annotations: { readOnlyHint: true, destructiveHint: false },
   inputSchema: {
     type: 'object' as const,
     properties: {

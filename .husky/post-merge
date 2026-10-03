@@ -1,8 +1,15 @@
 #!/bin/sh
 # Post-merge hook
-# - SMI-2552: Auto-install npm dependencies when package-lock.json changes
-# - SMI-5343: Also run/advise a HOST npm install (feeds host tooling + worktree
-#             symlinks) alongside the existing Docker path.
+# - SMI-2552: originally auto-installed npm dependencies when
+#   package-lock.json changed.
+# - SMI-6614 (ADR-158): no longer installs anything here. An unattended
+#   `npm install` in the shared main tree (this hook's own past behavior)
+#   is the exact hazard this plan exists to remove — every release-cadence
+#   merge changed the lockfile, so this ran an unattended container +
+#   host install on every one. Now: classify the lockfile delta via the
+#   single shared classifier and either do nothing (fresh/cosmetic) or
+#   print the shared, ordered refresh advice (real/unknown) for a human to
+#   run. See docs/internal/adr/158-lockfile-drift-classifier-single-install-oracle.md.
 # Fires after git pull (merge) and git merge. Non-blocking — cannot abort.
 
 # Color codes (match pre-commit style)
@@ -11,8 +18,6 @@ YELLOW='\033[1;33m'
 BLUE='\033[0;34m'
 NC='\033[0m'
 
-DOCKER_CONTAINER="skillsmith-dev-1"
-
 # Check if package-lock.json changed in the merge
 # ORIG_HEAD = tip before merge, HEAD = after merge
 if git diff --name-only ORIG_HEAD HEAD | grep -q '^package-lock\.json$'; then
@@ -20,9 +25,8 @@ if git diff --name-only ORIG_HEAD HEAD | grep -q '^package-lock\.json$'; then
   echo "${BLUE}=== Post-Merge: package-lock.json changed ===${NC}"
   echo ""
 
-  # SMI-5624: linked-worktree detection, hoisted so BOTH the Docker block and
-  # the SMI-5623 host-path guard below share one computation (same idiom as
-  # scripts/lib/check-node-modules-fresh.sh).
+  # SMI-5624: linked-worktree detection, shared by the classify-driven
+  # branch below and the advice printer's <main-checkout-path> argument.
   _gcd="$(git rev-parse --git-common-dir 2>/dev/null)"
   _gd="$(git rev-parse --git-dir 2>/dev/null)"
   _IS_LINKED_WT=0
@@ -31,91 +35,91 @@ if git diff --name-only ORIG_HEAD HEAD | grep -q '^package-lock\.json$'; then
     _IS_LINKED_WT=1
     _MAIN_CHECKOUT="$(cd "$_gcd/.." 2>/dev/null && pwd || echo '')"
   fi
-  # Note: .husky/post-checkout had the identical hardcoded-container bug —
-  # fixed separately in SMI-5628 (docs/internal/implementation/smi-5628-post-checkout-worktree-container-guard.md).
+  _ADVICE_MAIN="$_MAIN_CHECKOUT"
+  if [ -z "$_ADVICE_MAIN" ]; then
+    _ADVICE_MAIN="$(git rev-parse --show-toplevel 2>/dev/null || pwd)"
+  fi
 
-  # --- Docker path (SMI-2552; SMI-5624 linked-worktree guard) -----------------
-  # In a linked worktree, "$DOCKER_CONTAINER" is the MAIN checkout's container
-  # — installing there from here mistargets, and installing into this
-  # worktree's OWN container is wrong-by-design (its node_modules mounts are
-  # read-only views of main's tree, SMI-5560/SMI-5626). Skip and advise the
-  # main-checkout refresh instead, mirroring the host-path guard below.
-  if [ "$_IS_LINKED_WT" = "1" ]; then
-    echo "${YELLOW}Skipping Docker npm install — this is a linked worktree.${NC}"
-    echo "  Installing here would target MAIN's container by mistake, and installing"
-    echo "  into this worktree's OWN container would fail (EROFS) — its node_modules"
-    echo "  mounts are read-only views of main's tree (SMI-5560/SMI-5626)."
-    if [ -n "$_MAIN_CHECKOUT" ]; then
-      echo "  Run instead: ( cd \"$_MAIN_CHECKOUT\" && docker exec -w /app $DOCKER_CONTAINER npm install )"
-    else
-      echo "  Run instead: docker exec -w /app $DOCKER_CONTAINER npm install"
+  # --- One classifier decides everything below (SMI-6606/SMI-6614) -----------
+  # Resolved relative to THIS hook file's own location (matching the
+  # FRESHNESS_LIB idiom already used by .husky/pre-commit and .husky/pre-push)
+  # — always the real, checked-out script, regardless of cwd. Overridable via
+  # a test seam so a test can substitute a stub classifier without touching
+  # the real script.
+  CLASSIFY_LIB="${SKILLSMITH_DEPS_CLASSIFY_SCRIPT_TEST:-$(dirname "$0")/../scripts/lib/check-node-modules-fresh.sh}"
+  ADVICE_LIB="$(dirname "$0")/../scripts/lib/print-deps-refresh-advice.sh"
+
+  # Status and token are captured SEPARATELY and both must check out: a
+  # classifier that prints a valid token but exits non-zero (a crash after
+  # its own stdout write, a killed subprocess, etc.) must NOT be trusted —
+  # only a clean exit 0 with a token we recognize is accepted. Any other
+  # combination (non-zero exit regardless of stdout, empty stdout, or an
+  # unrecognized token) reads as `unknown` — the safe, advise-don't-install
+  # direction.
+  VERDICT="unknown"
+  if [ -r "$CLASSIFY_LIB" ]; then
+    _CLASSIFY_OUT="$(sh "$CLASSIFY_LIB" --classify 2>/dev/null)"
+    _CLASSIFY_RC=$?
+    if [ "$_CLASSIFY_RC" -eq 0 ]; then
+      case "$_CLASSIFY_OUT" in
+        fresh | cosmetic | real | unknown) VERDICT="$_CLASSIFY_OUT" ;;
+        *) VERDICT="unknown" ;;
+      esac
     fi
-  elif command -v docker > /dev/null 2>&1 && \
-     docker ps --format '{{.Names}}' 2>/dev/null | grep -q "^${DOCKER_CONTAINER}$"; then
-    echo "${YELLOW}Installing updated dependencies in Docker...${NC}"
-    if docker exec -w /app "$DOCKER_CONTAINER" npm install; then
-      echo "${GREEN}  Docker dependencies updated successfully.${NC}"
-    else
-      echo "${YELLOW}  Docker npm install failed. Run manually:${NC}"
-      echo "    docker exec $DOCKER_CONTAINER npm install"
+  fi
+
+  if [ "$_IS_LINKED_WT" = "1" ]; then
+    echo "${YELLOW}Linked worktree — no install runs from here.${NC}"
+    echo "  node_modules here is a symlink into the main checkout, and this worktree's"
+    echo "  own container mounts node_modules read-only (SMI-5560/SMI-5626) — installing"
+    echo "  in either place would corrupt state or fail (EROFS)."
+    echo ""
+    if [ -r "$ADVICE_LIB" ]; then
+      sh "$ADVICE_LIB" "$_ADVICE_MAIN"
     fi
   else
-    echo "${YELLOW}Docker container '${DOCKER_CONTAINER}' is not running.${NC}"
-    echo "  Start it and install Docker deps:"
-    echo "    docker compose --profile dev up -d"
-    echo "    docker exec $DOCKER_CONTAINER npm install"
+    case "$VERDICT" in
+      fresh)
+        echo "${GREEN}Dependencies already match package-lock.json — nothing to do.${NC}"
+        ;;
+      cosmetic)
+        echo "${GREEN}package-lock.json changed only in workspace-self version fields —${NC}"
+        echo "${GREEN}installed dependencies still match. No install needed.${NC}"
+        ;;
+      *)
+        echo "${YELLOW}A real dependency change was detected (or the classifier result${NC}"
+        echo "${YELLOW}could not be determined) — this hook no longer installs${NC}"
+        echo "${YELLOW}automatically (SMI-6614, ADR-158): an unattended install here has${NC}"
+        echo "${YELLOW}broken other sessions' containers before. Refresh manually:${NC}"
+        echo ""
+        if [ -r "$ADVICE_LIB" ]; then
+          sh "$ADVICE_LIB" "$_ADVICE_MAIN"
+        fi
+        ;;
+    esac
   fi
 
   echo ""
 
-  # --- Host path (SMI-5343) --------------------------------------------------
-  # The host node_modules tree feeds host tooling (tsc, eslint) and is symlinked
-  # into every worktree — it must stay in sync with package-lock.json too.
-  # BUT: in a linked worktree, node_modules (root + every packages/*/node_modules)
-  # is itself a SYMLINK into the main checkout's tree (create-worktree.sh SMI-4377
-  # + SMI-4381). Running `npm install` here would have npm's reify process UNLINK
-  # those symlinks and rebuild real directories in their place, corrupting this
-  # worktree's local state (SMI-5623) — this fires on ANY pull/merge in ANY
-  # worktree with a lockfile change, not just a --delete-branch merge. Detect a
-  # linked worktree via git-dir vs git-common-dir (same idiom as
-  # scripts/lib/check-node-modules-fresh.sh) and skip-and-advise instead of
-  # installing here; the human runs npm install in the MAIN checkout, where
-  # node_modules is the real tree.
-  if [ "$_IS_LINKED_WT" = "1" ]; then
-    echo "${YELLOW}Skipping host npm install — this is a linked worktree.${NC}"
-    echo "  node_modules here is a symlink into the main checkout; installing in"
-    echo "  place would unlink it and corrupt this worktree's local state."
-    if [ -n "$_MAIN_CHECKOUT" ]; then
-      echo "  Run instead: ( cd \"$_MAIN_CHECKOUT\" && npm install )"
-    else
-      echo "  Run npm install in the main checkout instead."
-    fi
-  elif command -v npm > /dev/null 2>&1; then
-    echo "${YELLOW}Installing updated dependencies on the host...${NC}"
-    if npm install; then
-      echo "${GREEN}  Host dependencies updated successfully.${NC}"
-    else
-      echo "${YELLOW}  Host npm install failed. Run manually:${NC}"
-      echo "    npm install"
-    fi
-  else
-    echo "${YELLOW}npm not found on host PATH — install dependencies manually:${NC}"
-    echo "  npm install"
-  fi
-
   # --- Host retrieval auto-heal (SMI-5426) -----------------------------------
-  # Out-of-band: after the host install above completes, kick a detached, guarded
-  # auto-heal of the host better-sqlite3 binding so ~6-week-dead retrieval
-  # telemetry self-revives (SMI-4549 / SMI-5419). The script is fail-soft,
-  # Docker-no-op, cheap-exits on a healthy host, serializes via a lock, backs off
-  # on repeated failure, and is opt-out via SKILLSMITH_RETRIEVAL_AUTOHEAL_DISABLE=1.
-  # --print-banner runs synchronously (prints only when broken); the heal runs
-  # detached so it never blocks the hook. Firing AFTER the install above closes
-  # the "wait for the parent install" gap. See
-  # docs/internal/implementation/smi-5426-w01-host-autoheal.md.
+  # Out-of-band: kick a detached, guarded auto-heal of the host better-sqlite3
+  # binding so long-dead retrieval telemetry self-revives (SMI-4549/SMI-5419).
+  # SMI-6614: kicked ONLY on fresh/cosmetic — retrieval-autoheal.sh's own
+  # repair step runs repair-host-native-deps.sh against the HOST tree, and
+  # its own lock does not exclude a concurrent human-run install, so
+  # kicking it on real/unknown would race the refresh advised above.
+  # regen-lockfile.sh re-kicks the auto-heal once that refresh completes.
+  # --print-banner is read-only and always runs, regardless of verdict.
   if command -v node > /dev/null 2>&1 && [ -f scripts/retrieval-autoheal.sh ]; then
     bash scripts/retrieval-autoheal.sh --print-banner 2>/dev/null || true
-    nohup bash scripts/retrieval-autoheal.sh </dev/null >/dev/null 2>&1 &
+    case "$VERDICT" in
+      fresh | cosmetic)
+        nohup bash scripts/retrieval-autoheal.sh </dev/null >/dev/null 2>&1 &
+        ;;
+      *)
+        echo "${YELLOW}Retrieval auto-heal deferred until the refresh above completes.${NC}"
+        ;;
+    esac
   fi
 
   echo ""

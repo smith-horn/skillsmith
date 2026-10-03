@@ -4,6 +4,260 @@ All notable changes to `@skillsmith/mcp-server` are documented here.
 
 ## [Unreleased]
 
+- **Fix (concurrency)**: SMI-6733 / SMI-6746 -- `saveManifest` no longer carries its own
+  temp-file write. It wrote through `MANIFEST_PATH + '.tmp.' + process.pid`, which has no random
+  suffix, so two concurrent saves in one process collided on an identical temp path, and no cleanup,
+  so a failed write left the temp file behind. It now delegates to `ManifestManager.save()`, which
+  has owned the `randomUUID()` suffix and the this-invocation-only temp cleanup since SMI-6007.
+  SMI-6746's definition of done forbids copying that hardening a third time, and `save()` is public
+  with a path-taking constructor, so delegation was available rather than extraction.
+
+- **Docs**: SMI-6733 -- corrected a false claim in `compliance-tools.service.ts`. The comment said
+  `ManifestManager.load()` "falls back to `{installedSkills:{}}` on a parse failure". It **throws**,
+  and has since SMI-6007 -- that sentence is the one most likely to convince a reader the fail-closed
+  read contract does not exist. The guard beneath it is still required, but for a different reason
+  than the comment gave: a shape-invalid manifest now classifies `corrupt` and never arrives, while
+  `installedSkills: null` classifies **ok** under ADR-171 § 5's nullish carve-out and is returned
+  unchanged. That guard now delegates to `installedSkillsOf` instead of a fourth hand-rolled check.
+
+- **Fix**: SMI-6733 Phase 2 Wave 2 -- `skill_outdated` and `skill_updates` now surface a
+  `warning?: string` at the response root when the local manifest read degraded
+  (corrupt/unreadable/version-unsupported), per ADR-171 § 10's same-key cross-tool contract.
+  Previously both tools reported `total_installed: 0` / `updatesAvailable: 0` on a manifest neither
+  one could read -- a positive false statement, not silence. Mechanism: a new
+  `loadManifestWithWarning` sibling wrapping core's `loadManifestLenient`, not a return-type change
+  on the existing lenient `loadManifest`. `install.ts`, `install.helpers.ts`,
+  `install.helpers.manifest.ts`, and `install.conflict.ts` also route their `installedSkills` reads
+  through core's `installedSkillsOf()` for the same nullish-carve-out reason as the entry below --
+  `installedSkills: null` classifies `ok` under ADR-171 § 5, and a bare subscript threw.
+
+- **Fix**: SMI-6733 -- the three `apply_manifest_reconcile` entry points now read `installedSkills`
+  through `@skillsmith/core`'s `installedSkillsOf()` rather than subscripting the field directly.
+  A manifest whose `installedSkills` is `null` or absent classifies `ok` (both mean "nothing
+  installed") while `SkillManifest` declares the field non-optional, so a direct subscript
+  type-checked and then threw `Cannot read properties of null` at runtime, which the outer catch
+  turned into a message carrying no diagnosis. Measured on both shapes before the fix. Applies to
+  `apply-manifest-reconcile.{actions,helpers,verify}.ts`; no behaviour change on a well-formed
+  manifest.
+## v0.7.18
+
+- **Fix (critical)**: **v0.7.17 cannot be imported at all — use this version instead.** `0.7.17`
+  declared `@skillsmith/core: ^0.12.5` and imports `withFileLock` from it, but the published
+  `@skillsmith/core@0.12.5` does not export that symbol: it was added to core's source without a
+  version bump, so the published `0.12.5` and this repo's `0.12.5` had the same version number and
+  different contents. `import('@skillsmith/mcp-server')` therefore threw
+  `SyntaxError: The requested module '@skillsmith/core' does not provide an export named
+  'withFileLock'` — at module load, so every consumer path was affected, not just the manifest one.
+  This release publishes `@skillsmith/core@0.12.6` with that export and raises the dependency to
+  `^0.12.6`. `0.7.17` is deprecated on npm.
+- Everything in v0.7.17's notes below still applies; it shipped correctly and only the resolved
+  `core` version was wrong.
+
+## v0.7.17
+
+- **Refactor**: SMI-6532 step 6 -- `outdated.ts` split at the action seam (`outdated.action.ts`,
+  `outdated.helpers.ts` unchanged in behaviour) so a renderer table could land beside it without
+  pushing either file over the 500-line gate. New `update-target-render.ts` exports
+  `UPDATE_TARGET_TEXT`, a total `Record<UpdateTargetReason | UpdateResultCode, string>` mirroring
+  `@skillsmith/core`'s closed update-classification sets (§4.4 of
+  `update-safety-and-source-resolution.md`) -- exported but not yet wired into `outdated.ts` or
+  `skill-updates.ts`, since neither tool classifies a target against those sets today; the call
+  site arrives with step 5/A1's update-target pipeline. `@skillsmith/core`'s root barrel now also
+  exports the two closed-set types (`UpdateTargetReason`, `UpdateResultCode`) this file's `Record`
+  signature needs -- previously internal to that package, with no path for another workspace
+  package to reach them. The three-surface (well, two-surface until CLI's step 5 lands)
+  reason/result renderer parity test lives in `@skillsmith/core`
+  (`update-target-render-parity.test.ts`), not here -- it AST-reads this file and the VS Code
+  extension's `manifestReader.ts` rather than importing either, so it needs no new devDependency
+  and no wider export than the two types above.
+
+- **Test**: SMI-6358 post-merge retro -- `install.conflict.ts`'s client keying is now pinned at
+  BOTH of its `manifestKeyFor` call sites, `checkForConflicts` and `handleMergeAction`, by
+  `install.conflict.test.ts`. `install.test.ts` mocks the whole module, so it asserts what is
+  passed and never executes the function; the e2e file passes `CANONICAL_CLIENT` everywhere, for
+  which `manifestKeyFor` is the identity function. Reverting both keying calls to a bare name
+  previously left all 24 unit and all 11 e2e tests green. The suite exercises every non-canonical
+  `ClientId` at both sites rather than a sampled one or two -- the union is closed, so the table is
+  derived from `CLIENT_IDS` and pinned before use, because a parameterized suite given an empty
+  table generates no cases and reports a pass. (#2920 follow-up)
+
+- **Fix (data integrity)**: SMI-6358 -- `checkForConflicts()` takes `client` and resolves the
+  manifest key through `manifestKeyFor(name, client)` rather than assuming the canonical client.
+  Installing for one client could previously report a conflict belonging to another, or miss a real
+  one. Every caller passes the argument; no export was removed. (#2920)
+
+- **Fix**: SMI-6768 -- the `held` remedy this file renders verbatim from `@skillsmith/core` no
+  longer asserts the holder is alive; see `@skillsmith/core`'s entry for why that claim was false
+  in three reachable states. Nothing changes in this package's own behaviour. The `lockReason`
+  docstring and the `lock_timeout` comment are corrected: **four** of the five reasons depend on a
+  fact this value does not carry, not three -- `held` was added to that list in round 5, after four
+  rounds had read it as determined. (#2896)
+
+- **Fix**: SMI-6764 -- `apply_manifest_reconcile`'s lock-timeout message now renders `@skillsmith/core`'s
+  per-reason remedy verbatim instead of maintaining its own, and drops the per-reason verb along
+  with the primitive (see `@skillsmith/core`'s entry). This file is the one that drifted last time:
+  SMI-6759 changed the verb here and left `StuckLockError` saying something else about the same
+  lock file, in the same process. Three corrections to the text SMI-6759 added, each measured.
+  (1) It claimed the lock "will not clear on its own". A peer process without
+  `SKILLSMITH_LOCK_NO_AUTO_RECLAIM` set can reclaim and release it, measured clearing in under two
+  seconds -- and pairing that false certainty with an unqualified "remove the file" invited
+  deleting a lock a live peer had just taken, the exact break SMI-6735 removed. (2) It advised
+  "unset `SKILLSMITH_LOCK_NO_AUTO_RECLAIM` and retry", which cannot work here: this tool is
+  MCP-only and the server is a long-lived stdio process, so a shell `unset` never reaches it. The
+  message now names the server restart -- the one thing core cannot know, and so the only
+  reason-specific text this file still owns. (#2894)
+
+- **Fix**: SMI-6759 -- a dead lock holder is no longer reported as a timeout. When
+  `SKILLSMITH_LOCK_NO_AUTO_RECLAIM` is set and a process was killed holding the manifest lock,
+  `apply_manifest_reconcile` waited 30s and said "Timed out waiting", which reads as transient
+  contention. That reason (`reclaim_disabled`) is returned only when auto-reclaim is off AND the
+  holder is already dead, so retrying in that process can never help. It now says the lock could
+  not be acquired, states that the holder is dead and auto-reclaim is disabled, and names the
+  remedy that touches no files. (#2893)
+
+- **Fix**: SMI-6735 -- this package's own manifest lock is gone, not fixed in place.
+  `acquireManifestLock()`/`releaseManifestLock()` hand-rolled a second, independent age-based lock
+  against the **byte-identical** path `@skillsmith/core`'s `ManifestManager` locks, and this server runs
+  both in one process -- two protocols on one lock file is not mutual exclusion, so fixing either alone
+  would not have closed it. Both now delegate to core's shared `withFileLock` (`owned-lock`).
+  `updateManifestSafely()` is the only locked entry point; the two lock functions are **removed** and no
+  longer re-exported from `install.helpers.ts`. Neither had a production caller outside this module.
+  `apply_manifest_reconcile`'s lock-timeout mapping also changed: it detected the timeout by matching a
+  literal error message that no longer occurs, and now matches the typed `StuckLockError`. Its guard
+  error additionally names the reclaim-lock path when that is what is held, and distinguishes a genuine
+  timeout from a permanently unacquirable lock -- `errorCode` is unchanged. (#2891)
+- **Docs (no behaviour change)**: SMI-6732 -- `apply_manifest_reconcile`'s `drop_entry`
+  deliberately treats *any* error while checking a record's path as "no longer resolves",
+  which is the opposite of the convention the uninstall guard uses (only a missing path
+  counts as absent). That divergence is intentional and load-bearing: `drop_entry` is the
+  only supported way to clear a manifest record that is blocking an uninstall, so making it
+  stricter would leave affected users with no way out. Both sites now carry a comment naming
+  the other, and a test pins the behaviour, so a future pass that "harmonizes" the two
+  cannot quietly remove the escape hatch.
+
+- **Fix**: SMI-6651 -- private-registry skill installs now read a skill's packaged content
+  through an audited, server-side `release_private_registry_skill_content` RPC instead of a
+  direct table read over the caller's own token. This version needs that RPC to already exist
+  on the server (the accompanying SMI-6651 migration). Once that migration is applied,
+  `authenticated` no longer has table-level SELECT on `private_registry_skills` at all, so an
+  earlier `@skillsmith/mcp-server` version can no longer install private-registry skills --
+  it reads `content` directly, and that read will simply fail. (#2861)
+- **Fix**: SMI-6622 -- `private_registry_publish` and `private_registry_manage` now reach
+  the real private registry with no Supabase environment variables. Before, a server
+  without `SUPABASE_URL` and `SUPABASE_ANON_KEY` quietly used an in-memory test registry:
+  publishes reported success and saved nothing (#2845).
+- **Fix**: SMI-6622 -- registry team lookup also reads the API key `skillsmith login` saves
+  in `~/.skillsmith/config.json`, not only `SKILLSMITH_LICENSE_KEY`/`SKILLSMITH_API_KEY`
+  (#2845).
+- **Fix**: SMI-6622 -- an empty `list` or unresolved `namespace` no longer looks like an
+  empty registry when the problem is membership. If your account isn't on the resolved
+  team, `list`, `namespace` and `publish` say so and name the credential that resolved it.
+  If the membership check itself fails (signed out, network or auth error), `list` and
+  `namespace` return that error instead of an empty success (#2845).
+- **Fix**: SMI-6622 -- a configured Supabase URL that embeds a username or password is now
+  rejected with a clear error up front, instead of letting the credentials show up later in
+  an error message (#2845).
+- **Fix**: SMI-6114 -- private-registry publish, approve, reject, deprecate and undeprecate are
+  now audited by the database itself once the `20260913000000` migration is applied, on every
+  path including hosts without a service-role key, where they previously went unrecorded. The
+  MCP server no longer writes its own success audit rows for those mutations. Rows land in
+  Supabase `audit_logs` with `metadata.transport = 'database_trigger'` and in the website team
+  activity feed; `audit_query`, `audit_export` and `siem_export` read the local audit log and do
+  not include them. Rows about pending or rejected versions stay hidden from every team member,
+  including the reviewing admin and the submitter (#2850).
+
+## v0.7.16
+
+- **Fix**: SMI-6585 -- the install pre-flight reports its failure instead of swallowing it (#2821)
+- **Fix**: `install_skill` now reports it when the namespace pre-flight — the check for
+  a name collision with your already-installed skills — could not run. It degrades to
+  letting the install proceed, which is correct for an advisory check, but it used to
+  do so reporting nothing at all, so "no collision found" and "nothing ever looked"
+  were the same result. Each failure now names itself in `tips`, on the same surface
+  the conflict pre-flight uses: the rename ledger failing to read, the local inventory
+  failing to scan, and — the one that matters most — the collision detector itself
+  throwing. That last case degrades inside `runInstallPreflight`, which returned a
+  result byte-identical to a clean run; reporting it required a change there, not only
+  at the gate above it (SMI-6588).
+- **Fix**: `install_skill` now reports it when its pre-flight safety check could not
+  run, instead of continuing silently. The pre-flight sat inside a bare `catch {}`
+  that predates it; SMI-6529 Wave A0 moved the `checkInstallTarget` guard inside that
+  catch, which made a fail-closed guard fail open for anything that threw there — a
+  manifest load, the target guard itself, or the conflict check.
+
+  **No skill folder was ever at risk from this.** The installer runs the same target
+  guard unconditionally before any download or disk write, so an unsafe target was
+  always refused. What was missing was the report, not the protection. The install's
+  outcome is deliberately unchanged; what is no longer invisible is that the
+  pre-flight did not complete — which means a requested `conflictAction` may not have
+  been fully applied, and its conflict backup may not have been written. That now rides
+  `tips`, the same surface fan-out refusals already use, and names the underlying
+  error so a caller can tell "pre-flight passed" from "pre-flight could not be
+  evaluated" (SMI-6585).
+
+- **Fix**: namespace-gate warnings no longer replace the installer's own warnings in
+  the tool result; both sets are merged. Pre-existing since SMI-4588 and harmless
+  while only one producer ever returned warnings — the same shape as the catch
+  above, where a line's meaning inverts the day something else starts returning
+  data (SMI-6585, cross-model review).
+
+## v0.7.15
+
+- **Fix**: SMI-6508 -- move MF-5 last; it was suppressing HIGH findings (#2808)
+- **Fix**: SMI-6508 — detect prefixed secrets assignments at MEDIUM (MF-5) (#2806)
+- **Fix**: SMI-6530 -- stop recommending bulk `skillsmith update` until the safety gate ships (#2801)
+- **Fix**: SMI-6505 -- stop scoring an embedded key assigned a boolean as a credential (#2793)
+- **Feature**: SMI-6441 -- MF-4b common-password veto (Wave 2) (#2786)
+- **Fix (data loss)**: `install_skill` checks the target directory before its conflict backup, so a
+  git working tree or a directory Skillsmith didn't install is refused without being backed up and
+  overwritten; that check now runs against the *right* client's skills directory and manifest key
+  (not always the default client's), and refuses cleanly if the resolved target somehow isn't
+  inside the skills directory at all. A failed check due to a permission error is reported
+  accurately (it names the real error) instead of falsely claiming a git repository was found.
+  `--also-link --force` and uninstall's own link cleanup now surface a fan-out refusal (e.g. a
+  recorded copy that grew a `.git` directory) in the tool result, not only stderr. Tier-1 self-heal
+  treats such user-owned directories as present instead of retrying them every day, but only when
+  the directory genuinely exists on disk — a phantom manifest row with nothing on disk is still
+  retried (SMI-6529).
+
+- **Security**: `skillsmith update --all` in CLI 0.8.8-0.8.10 can overwrite local edits in skill
+  directories that are git clones and can write into the wrong directory (SMI-6528). On those
+  versions, preview with `--dry-run` and update skills one at a time. This release includes the
+  install-layer fix (SMI-6529).
+- **Fix**: copyright headers in the three quota middleware source files now read
+  `2025-2026 Smith Horn Group Ltd`; they previously gave 2024 as the start year. Comment-only,
+  no behavior change. (SMI-6552)
+
+## v0.7.14
+
+- **Fix**: SMI-5207 -- sensitive_path action-context gating (Wave 1) (#2760)
+- **Fixed**: SMI-6472 -- `skill_validate` now enforces two additional Agent Skills
+  spec requirements that were previously silently accepted. (1) Frontmatter `name` must match
+  the canonical slug format (lowercase letters, digits, and hyphens, starting with a lowercase
+  letter) — reuses the same `validateSkillName` the CLI's `create`/`author init` commands already
+  enforce, relocated to `@skillsmith/core` as the canonical source (`packages/cli/src/utils/skill-name.ts`
+  is now a re-export). (2) Frontmatter `name` must match the skill's enclosing directory name, for
+  both a direct skill-directory `skill_path` and a direct `.../my-skill/SKILL.md` file path. Both
+  checks report as `field: 'name'`, `severity: 'error'`.
+- **Fixed**: SMI-6472 Wave 2 -- every MCP tool schema (all 43) now declares a top-level
+  `title` and an `annotations: { readOnlyHint, destructiveHint }` object per the MCP spec, and
+  `src/index.ts`'s `ListToolsRequestSchema` handler now reads and re-emits both fields onto the
+  wire response. Previously that handler mapped every tool to `{ name, description, inputSchema }`
+  only, so a field added to a tool's schema constant was silently invisible to MCP clients unless
+  the handler was also updated — a hazard covered going forward by a new wire-level integration
+  test (`tests/integration/tools-list-annotations.integration.test.ts`) that spawns the real built
+  server and asserts on the live `tools/list` response rather than the exported schema constants.
+- **Fixed**: SMI-6472 Wave 3 -- `search`, `get_skill`, and `skill_validate` now declare an MCP
+  `outputSchema` (derived from each tool's own response type) and return `structuredContent`
+  alongside the existing text block, per the MCP spec. `src/index.ts`'s `ListToolsRequestSchema`
+  handler now reads and re-emits `outputSchema` the same way as `title`/`annotations`, and the
+  shared `ok()` response wrapper (`middleware/license.gate.ts`) gained an opt-in second parameter
+  (`{ structuredContent: true }`) so the ~40 other tools that declare no `outputSchema` keep their
+  exact existing wire shape. Covered by a new wire-level integration test alongside
+  `tools-list-annotations.integration.test.ts` that spawns the real built server, calls each of the
+  three tools through a genuine SDK `Client`, and relies on the client's own automatic
+  `structuredContent`-vs-`outputSchema` validation as the conformance check.
+
 ## v0.7.13
 
 - **Feature**: SMI-6343 Wave 4 -- apply_manifest_reconcile tool (#2715)

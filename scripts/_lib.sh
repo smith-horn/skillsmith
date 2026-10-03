@@ -1238,7 +1238,11 @@ node_modules/.bin."
 # SMI-5689: closes a gap where a stale empty directory (e.g. left behind by
 # an incomplete container teardown) permanently blocked the symlink from
 # ever being (re)created, breaking the host-side dependency-freshness
-# sentinel, tsc --build alias resolution, and the ruflo CLI statusline.
+# sentinel and tsc --build alias resolution. (SMI-6744 Wave 4 F4: the "ruflo
+# CLI statusline" this comment used to also name no longer exists on the
+# host -- ruflo is served exclusively from the skillsmith-ruflo-1 container,
+# ADR-170 -- so that clause is removed rather than left to describe a
+# binary that isn't there.)
 #
 # Uses rmdir (never rm -rf) so a directory that is empty right now but held
 # by an active mount reference fails safely instead of silently removing
@@ -2242,7 +2246,7 @@ is_main_checkout() {
 # bucketed pair (3070/3071 for branch `main`), and on macOS bind-mounts
 # main's own node_modules READ-ONLY over /app/node_modules (_lib.sh:703-704),
 # replacing the base named volume at docker-compose.yml:26 -- so
-# `docker exec skillsmith-dev-1 npm install` afterwards fails EROFS against
+# an ungated container `npm install` afterwards fails EROFS against
 # a container that no longer exists under that name. Nothing undoes it: the
 # file is gitignored (.gitignore:190) and repair_worktrees_compose_override
 # skips the repo root (_lib.sh:1611).

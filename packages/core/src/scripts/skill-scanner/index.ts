@@ -110,8 +110,12 @@ Output Files:
 
 /**
  * CLI entry point
+ *
+ * Exported (SMI-6464) so callers — including the scan-imported-skills.ts
+ * backwards-compat shim — can invoke the CLI explicitly instead of relying
+ * on this module's own module-load-time side effect below.
  */
-async function main(): Promise<void> {
+export async function main(): Promise<void> {
   const args = process.argv.slice(2)
   const { options, inputPath } = parseArgs(args)
 
@@ -133,7 +137,11 @@ async function main(): Promise<void> {
   }
 }
 
-main().catch((error) => {
-  console.error('Unhandled error:', error)
-  process.exit(1)
-})
+// Run if executed directly (SMI-6464: previously ran unconditionally at
+// module load, so importing this file for its exports also ran the CLI)
+if (import.meta.url === `file://${process.argv[1]}`) {
+  main().catch((error) => {
+    console.error('Fatal error:', error)
+    process.exit(1)
+  })
+}

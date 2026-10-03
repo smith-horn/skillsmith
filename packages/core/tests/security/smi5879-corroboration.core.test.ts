@@ -68,6 +68,38 @@ type CoreNonAiKey = (typeof CORE_NON_AI_BREAKDOWN_KEYS)[number]
 
 const STRUCTURALLY_ZERO_CORE_KEYS = ['typosquat'] as const
 
+/**
+ * SMI-6020 (found on the first meaningful run of this test — PR #2192's
+ * corroboration test was written pre-merge and only started comparing real
+ * pre-port-vs-post-port behavior once this branch was rebased onto main and
+ * ran for real): `SecurityScanner.scan()` (SecurityScanner.ts:246-268)
+ * pushes a LOW-severity `suspicious_pattern` ("Multiline regex scan
+ * truncated at N code units...") advisory finding whenever
+ * `content.length > Math.min(MAX_CONTENT_LENGTH_FOR_REGEX, maxContentLength)`.
+ * The RC-1 fix (already part of PR #2192, unrelated to SMI-6020's own
+ * changes) intentionally raised `MAX_CONTENT_LENGTH_FOR_REGEX` 10,000 ->
+ * 1,000,000 to close a truncation blind spot on real-sized files. SB-4-primary
+ * is a ~300KB stress case, deliberately sized between the OLD and NEW
+ * thresholds: pre-port it exceeded the (then 10,000) cap and got flagged
+ * (contributing golden.suspiciousCode=6.5); post-port it no longer exceeds
+ * the (now 1,000,000) cap, so the advisory correctly stops firing
+ * (actual.suspiciousCode=0). This is the fix working as intended, not a
+ * regression -- but it means the "every non-jailbreak/ai_defence key is
+ * unchanged" invariant has one narrow, root-caused exception, exactly the
+ * same class of intentional divergence jailbreak/aiDefence already get,
+ * scoped to the one finding source and one case that can actually trigger it.
+ * Verified: no other corpus case has a content length between the two
+ * thresholds, so no other (case, key) pair is affected.
+ *
+ * Maps to the EXACT expected post-port value, not a blind skip -- if a
+ * future change moves this case's actual value to anything other than 0,
+ * that is still a real offense worth catching, not silently swallowed by
+ * this documented exception.
+ */
+const KNOWN_INTENTIONAL_DIVERGENCES: ReadonlyMap<string, number> = new Map([
+  ['SB-4-primary::suspiciousCode', 0],
+])
+
 // ---------------------------------------------------------------------------
 // Manifest/golden shapes (only the fields this file reads)
 // ---------------------------------------------------------------------------
@@ -162,7 +194,7 @@ describe('SMI-5879 G-5 fixture-corpus corroboration (core)', () => {
     interface Offense {
       caseId: string
       key: CoreNonAiKey
-      golden: number
+      golden: number | string
       actual: number
     }
     const offenses: Offense[] = []
@@ -182,6 +214,19 @@ describe('SMI-5879 G-5 fixture-corpus corroboration (core)', () => {
       const report = scanner.scan(c.skillId, text)
       const actualProjection = projectCore(report.riskBreakdown)
       for (const key of CORE_NON_AI_BREAKDOWN_KEYS) {
+        const divergenceKey = `${c.caseId}::${key}`
+        if (KNOWN_INTENTIONAL_DIVERGENCES.has(divergenceKey)) {
+          const expectedActual = KNOWN_INTENTIONAL_DIVERGENCES.get(divergenceKey)
+          if (actualProjection[key] !== expectedActual) {
+            offenses.push({
+              caseId: c.caseId,
+              key,
+              golden: `expected documented divergence value ${expectedActual}`,
+              actual: actualProjection[key],
+            })
+          }
+          continue
+        }
         if (actualProjection[key] !== goldenRow.breakdown[key]) {
           offenses.push({
             caseId: c.caseId,

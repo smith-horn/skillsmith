@@ -1,0 +1,957 @@
+/**
+ * Characterisation tests for the shell-command-normalize primitives
+ * (SMI-6744 A4.6), pinned BEFORE extracting them out of
+ * `scripts/env-read-guard.mjs` into `scripts/lib/shell-command-normalize.mjs`
+ * (plan § "Parity harness for the shared normalizer" /
+ * docs/internal/implementation/smi-6744-ruflo-host-guard.md).
+ *
+ * The claim this file backs is "behaviourally equivalent for the
+ * characterised input matrix", not "byte-for-byte" (round 1 finding 6) —
+ * every case below was run GREEN against the pre-extraction in-file
+ * implementations (temporarily exported from env-read-guard.mjs for this
+ * one characterisation pass) before the code moved, and is run again here,
+ * post-move, against `scripts/lib/shell-command-normalize.mjs`'s exports.
+ * `hasInlineScriptFlag` and `scanPositionalScriptText` changed signature in
+ * the move (their env-specific pieces became parameters instead of closed-
+ * over module constants) — this file exercises the POST-move signature,
+ * passing the exact same values env-read-guard.mjs itself now passes, so
+ * the two runs are checking the same behaviour through two different call
+ * shapes, not two different behaviours.
+ */
+import { describe, expect, it } from 'vitest'
+
+import {
+  extractShellDashC,
+  hasInlineScriptFlag,
+  MAX_DEPTH,
+  normalizeWrappers,
+  scanPositionalScriptText,
+  stripDockerCompose,
+  stripDockerExec,
+  stripEnvPrefix,
+  stripFlags,
+  stripVarlockRun,
+  tokenize,
+} from '../lib/shell-command-normalize.mjs'
+
+// Mirrors env-read-guard.mjs's own INLINE_SCRIPT_SHORT_FLAG_CHARS exactly —
+// this file is testing the SHARED primitive, so it supplies the same env
+// this guard passes, not a synthetic stand-in.
+const SHORT_FLAG_CHARS = {
+  python: 'c',
+  python3: 'c',
+  node: 'ep',
+  nodejs: 'ep',
+  perl: 'eE',
+  ruby: 'e',
+  php: 'rBRE',
+}
+
+function scanForDotEnv(text: string): string | null {
+  return typeof text === 'string' && /(?:^|[^A-Za-z0-9_.-])\.env(?![A-Za-z0-9_-])/.test(text)
+    ? '.env'
+    : null
+}
+
+function wordValues(tokens: Array<{ type: string; value?: string }>) {
+  return tokens.filter((t) => t.type === 'word').map((t) => t.value)
+}
+
+describe('tokenize()', () => {
+  it('splits on whitespace and preserves quoted spaces as one word', () => {
+    const tokens = tokenize('echo \'a b\' "c d"')
+    expect(wordValues(tokens)).toEqual(['echo', 'a b', 'c d'])
+  })
+
+  it('an unquoted backslash escapes the next character into the same word', () => {
+    const tokens = tokenize('echo a\\ b')
+    expect(wordValues(tokens)).toEqual(['echo', 'a b'])
+  })
+
+  // SMI-6892 C2 (round 16, pre-existing): `\` + newline is a LINE
+  // CONTINUATION, which bash and zsh both REMOVE before word splitting --
+  // not an ordinary backslash escape, which keeps the escaped character.
+  // Measured in bash 3.2, bash 5.2 and zsh 5.9: `cat \<nl>f` reads `f`
+  // (the pair vanishes), `ca\<nl>t f` still runs `cat` (the continuation
+  // can split the command NAME itself), and the same removal happens
+  // inside double quotes. Appending the newline instead (the old
+  // behavior) put a literal `\n` INSIDE the word, which is why
+  // `cat \<nl>.env` used to reach the read check as `"\n.env"` and allow.
+  it('a backslash + newline (line continuation) is removed, not appended into the word', () => {
+    const tokens = tokenize('cat \\\n.env')
+    expect(wordValues(tokens)).toEqual(['cat', '.env'])
+  })
+
+  it('records a $(...) substitution in both .value and .subs', () => {
+    const tokens = tokenize('echo $(echo hi)')
+    const sub = tokens[1]
+    expect(sub.type).toBe('word')
+    expect(sub.value).toBe('$(echo hi)')
+    expect(sub.subs).toEqual(['echo hi'])
+  })
+
+  it('tokenize() normalizes a backtick substitution to the $(...) spelling in .value, and keeps the unwrapped body in .subs', () => {
+    const tokens = tokenize('echo `echo hi`')
+    const sub = tokens[1]
+    expect(sub.value).toBe('$(echo hi)')
+    expect(sub.subs).toEqual(['echo hi'])
+  })
+
+  it('tokenize() normalizes a whole-word backtick substitution (`x`) to $(x) in .value and records .subs', () => {
+    const tokens = tokenize('`x`')
+    expect(tokens).toHaveLength(1)
+    expect(tokens[0].value).toBe('$(x)')
+    expect(tokens[0].subs).toEqual(['x'])
+  })
+
+  it('tokenize() normalizes a lone unmatched backtick to $() in .value, with an empty .subs entry', () => {
+    const tokens = tokenize('`')
+    expect(tokens).toHaveLength(1)
+    expect(tokens[0].value).toBe('$()')
+    expect(tokens[0].subs).toEqual([''])
+  })
+
+  it('tokenize() normalizes a backtick substitution embedded in double-quoted text to $(...) in .value', () => {
+    const tokens = tokenize('"a `x` b"')
+    expect(tokens).toHaveLength(1)
+    expect(tokens[0].value).toBe('a $(x) b')
+    expect(tokens[0].subs).toEqual(['x'])
+  })
+
+  it('the backtick and $(...) spellings of one substitution produce the SAME .value: one construct, one representation', () => {
+    for (const inner of ['x', 'which ruflo', 'echo hi']) {
+      expect(tokenize('`' + inner + '`')[0].value).toBe(tokenize('$(' + inner + ')')[0].value)
+      expect(tokenize('"a `' + inner + '` b"')[0].value).toBe(
+        tokenize('"a $(' + inner + ') b"')[0].value
+      )
+    }
+  })
+
+  it('a backtick inside single quotes is literal text, not a substitution: .value keeps the backticks and .subs stays empty', () => {
+    const tokens = tokenize("echo 'a `x` b'")
+    expect(tokens[1].value).toBe('a `x` b')
+    expect(tokens[1].subs).toEqual([])
+  })
+
+  it('a backslash-escaped backtick outside quotes is literal text, not a substitution: .value keeps the backticks and .subs stays empty', () => {
+    const tokens = tokenize('echo \\`x\\`')
+    expect(tokens[1].value).toBe('`x`')
+    expect(tokens[1].subs).toEqual([])
+  })
+
+  it('records a <(...) process substitution with its delimiters kept in .value', () => {
+    const tokens = tokenize('diff <(cmd1) <(cmd2)')
+    expect(tokens[1].value).toBe('<(cmd1)')
+    expect(tokens[1].subs).toEqual(['cmd1'])
+    expect(tokens[2].value).toBe('<(cmd2)')
+    expect(tokens[2].subs).toEqual(['cmd2'])
+  })
+
+  it('unquoted { and } become their own op tokens, splitting the surrounding word', () => {
+    const tokens = tokenize('npx ru{f,}lo')
+    expect(tokens.map((t) => t.type)).toEqual(['word', 'word', 'op', 'word', 'op', 'word'])
+    expect(tokens[2].value).toBe('{')
+    expect(tokens[4].value).toBe('}')
+  })
+
+  it('quoted braces are literal text, not operators', () => {
+    const tokens = tokenize("printf '{harmless}'")
+    expect(tokens.map((t) => t.type)).toEqual(['word', 'word'])
+    expect(tokens[1].value).toBe('{harmless}')
+  })
+
+  it('| && ; and newline are op tokens', () => {
+    const tokens = tokenize('a | b && c ; d\ne')
+    const ops = tokens.filter((t) => t.type === 'op').map((t) => t.value)
+    expect(ops).toEqual(['|', '&&', ';', '\n'])
+  })
+
+  it('an unmatched single quote consumes the rest of the string as the word value', () => {
+    const tokens = tokenize("echo 'abc")
+    expect(wordValues(tokens)).toEqual(['echo', 'abc'])
+  })
+
+  it('an unmatched double quote consumes the rest of the string as the word value', () => {
+    const tokens = tokenize('echo "abc')
+    expect(wordValues(tokens)).toEqual(['echo', 'abc'])
+  })
+
+  // H-6 fix (SMI-6744 Wave 4 delta governance round): `$'...'` (ANSI-C
+  // quoting) is a distinct Bash quoting form from a plain `'...'` — its
+  // body's own backslash escapes ARE processed, unlike single quotes.
+  describe("$'...' ANSI-C quoting (H-6 fix)", () => {
+    it('is treated as a plain quoted word when it carries no escapes', () => {
+      const tokens = tokenize("bash -c $'npx ruflo memory store --key k --value v'")
+      expect(wordValues(tokens)).toEqual(['bash', '-c', 'npx ruflo memory store --key k --value v'])
+    })
+
+    it('decodes \\n and \\t', () => {
+      const tokens = tokenize("echo $'a\\tb\\nc'")
+      expect(wordValues(tokens)).toEqual(['echo', 'a\tb\nc'])
+    })
+
+    it("decodes \\\\ and \\' literally", () => {
+      const tokens = tokenize("echo $'a\\\\b\\'c'")
+      expect(wordValues(tokens)).toEqual(['echo', "a\\b'c"])
+    })
+
+    it('decodes \\xHH hex escapes', () => {
+      const tokens = tokenize("echo $'\\x6e\\x70\\x78'")
+      expect(wordValues(tokens)).toEqual(['echo', 'npx'])
+    })
+
+    // C1 fix (SMI-6744 delta governance round): the ORIGINAL H-6 fix above
+    // only decoded `\n`, `\t`, `\\`, `\'`, and `\xHH` -- `\NNN` (octal),
+    // `\uHHHH`, and `\UHHHHHHHH` fell through UNCHANGED, so
+    // `$'\162uflo' memory store` (octal 162 = 'r') reached the ruflo host
+    // guard as the literal text `\162uflo`, never equalling the decoded
+    // `ruflo` its H-predicates test for -- a live bypass (measured:
+    // `zsh -c "printf '\162uflo\n'"` prints `ruflo`), not a cosmetic gap.
+    describe('C1 fix -- octal/unicode/control escapes', () => {
+      it('decodes \\NNN octal escapes', () => {
+        const tokens = tokenize("$'\\162uflo'")
+        expect(wordValues(tokens)).toEqual(['ruflo'])
+      })
+
+      // Control, not a red arm: a `$'...'` word with NO escape sequence at
+      // all was never part of this bug (it already decoded correctly
+      // before this fix, since no escape branch is ever entered) — kept
+      // here as a regression pin, not claimed to fail against the
+      // pre-fix tokenizer.
+      it("control: a $'...' word with no escapes at all decodes to its literal text", () => {
+        const tokens = tokenize("$'ruflo'")
+        expect(wordValues(tokens)).toEqual(['ruflo'])
+      })
+
+      it('decodes \\UHHHHHHHH (8-hex Unicode) escapes', () => {
+        const tokens = tokenize("$'\\U00000072uflo'")
+        expect(wordValues(tokens)).toEqual(['ruflo'])
+      })
+
+      it('decodes \\cX control-character escapes', () => {
+        const tokens = tokenize("$'\\cA'")
+        expect(wordValues(tokens)).toEqual(['\x01'])
+      })
+
+      it('decodes \\e / \\E as ESC (0x1b)', () => {
+        expect(wordValues(tokenize("$'\\e'"))).toEqual(['\x1b'])
+        expect(wordValues(tokenize("$'\\E'"))).toEqual(['\x1b'])
+      })
+
+      it('decodes \\0 and \\000 as a NUL byte', () => {
+        expect(wordValues(tokenize("$'\\0'"))).toEqual(['\0'])
+        expect(wordValues(tokenize("$'\\000'"))).toEqual(['\0'])
+      })
+    })
+
+    it('passes an unrecognized escape character through unchanged', () => {
+      const tokens = tokenize("echo $'a\\zb'")
+      expect(wordValues(tokens)).toEqual(['echo', 'azb'])
+    })
+
+    it("an unmatched $'... consumes the rest of the string", () => {
+      const tokens = tokenize("echo $'abc")
+      expect(wordValues(tokens)).toEqual(['echo', 'abc'])
+    })
+  })
+})
+
+// SMI-6869 governance round 12 (cross-family gate, class 2): an unquoted
+// `#` had no special meaning at all before this fix — it tokenized as a
+// plain word character, so `# ruflo` inside a config value read as two
+// ordinary words instead of a discarded comment.
+describe('SMI-6869 governance round 12 F4: an unquoted # at a word boundary starts a comment', () => {
+  it('tokenize("echo a # b c") yields words echo, a only -- # and everything after it is discarded', () => {
+    expect(wordValues(tokenize('echo a # b c'))).toEqual(['echo', 'a'])
+  })
+
+  it('tokenize(\'echo "a # b"\') keeps the quoted "a # b" literally', () => {
+    expect(wordValues(tokenize('echo "a # b"'))).toEqual(['echo', 'a # b'])
+  })
+
+  it('tokenize("echo a#b") keeps a#b literally -- # is not at a word boundary', () => {
+    expect(wordValues(tokenize('echo a#b'))).toEqual(['echo', 'a#b'])
+  })
+
+  it('tokenize("a # b\\nc") yields a, an op newline, then c', () => {
+    const tokens = tokenize('a # b\nc')
+    expect(tokens.map((t) => (t.type === 'op' ? t : t.value))).toEqual([
+      'a',
+      { type: 'op', value: '\n' },
+      'c',
+    ])
+  })
+
+  // Self-found regression (corpus replay against the real repo corpus, not
+  // a queen-assigned finding): `${#var}`/`${#name[@]}` (bash's
+  // parameter-length operator) puts `#` immediately after the `{` this
+  // tokenizer already emits as its own op token when it flushes `$` as a
+  // separate word -- a word boundary by the naive rule above, but never a
+  // comment in any shell. An early version of the F4 fix truncated
+  // `${#before[@]}` (a real line in .github/workflows scripts) to `$`, `{`
+  // and nothing else. Checked against the raw characters immediately
+  // preceding, not the token stream, since `$` and `{` are already two
+  // separate tokens by the time `#` is reached.
+  it('tokenize("echo ${#var}") is unaffected -- # right after a literal ${ is the parameter-length operator, not a comment', () => {
+    expect(wordValues(tokenize('echo ${#var}'))).toEqual(['echo', '$', '#var'])
+  })
+
+  it('tokenize on the real corpus line ${#before[@]} keeps every word, unaffected by the comment rule', () => {
+    expect(wordValues(tokenize('[ ${#before[@]} -lt "$N" ]'))).toEqual([
+      '[',
+      '$',
+      '#before[@]',
+      '-lt',
+      '$N',
+      ']',
+    ])
+  })
+})
+
+// SMI-6892 (governance rounds 14-16, C1 fix): an unquoted # starts a
+// comment only after a blank, an operator, or at the start of input --
+// bash's own word boundary, not the tokenizer's former `cur === null`
+// check. Every "comment" row below was confirmed against REAL bash 3.2
+// (host, macOS), bash 5.2 (worktree container, Linux), AND zsh 5.9 (host --
+// the shell Claude Code's own Bash tool actually runs on this machine) --
+// all three shells agreed on every row (retro record: SMI-6892's own
+// governance-round history holds the probe scripts and raw output, not
+// reproduced here since this describe block pins the TOKENIZER's own
+// output, not a shell's). A "comment" row denies through to end of
+// line/input; a "not a comment" row keeps the `#` and everything after it
+// as ordinary word text.
+const CR = '\r'
+const VT = '\v'
+const FF = '\f'
+const NBSP = '\u00a0'
+const TAB = '\t'
+
+describe('SMI-6892 C1: an unquoted # starts a comment only after a blank, an operator, or at the start of input -- measured in bash 3.2, bash 5.2 and zsh 5.9, all three agreeing', () => {
+  it.each([
+    ['start of input', '#x', []],
+    ['after space', 'echo #x', ['echo']],
+    ['after tab', `echo${TAB}#x`, ['echo']],
+    ['after newline', 'echo a\n#x', ['echo', 'a']],
+    ['after ;', 'echo a;#x', ['echo', 'a']],
+    ['after |', 'echo a|#x', ['echo', 'a']],
+    ['after &', 'echo a&#x', ['echo', 'a']],
+    // SMI-6892 C3 (round 16): a `)` is a comment boundary by POSITION, not
+    // unconditionally -- measured in bash 3.2, bash 5.2 and zsh 5.9, all
+    // three agreeing. A COMMAND-position close (a real subshell/group, or
+    // `((...))`) IS a boundary, and so is an UNMATCHED `)` (a `case`
+    // pattern) -- see the "NOT a comment" rows below for the WORD-position
+    // (zsh glob group / bash array assignment) case that is NOT. A removed
+    // `\`+newline continuation right before the `#` must not change this
+    // verdict either way (the two continuation rows here and below). Round
+    // 17 adds two more: a function definition's EMPTY `name()`, and a
+    // `case` statement's own leading pattern `(`.
+    ['after a COMMAND-position ) (subshell, (echo a)#x)', '(echo a)#x', ['echo', 'a']],
+    ['after a COMMAND-position ) (arithmetic, ((1))#x)', '((1))#x', ['1']],
+    [
+      'after an UNMATCHED ) (case pattern, case a in a)#x<nl>esac)',
+      'case a in a)#x\nesac',
+      ['case', 'a', 'in', 'a', 'esac'],
+    ],
+    [
+      'after a COMMAND-position ) across a continuation ((echo a)\\<nl>#x)',
+      '(echo a)\\\n#x',
+      ['echo', 'a'],
+    ],
+    ['after a removed continuation with no preceding ) (echo \\<nl>#x)', 'echo \\\n#x', ['echo']],
+    ['after an EMPTY function-definition ) glued to the name (f()#x)', 'f()#x', ['f']],
+    [
+      'after an EMPTY function-definition ) then a continuation OUTSIDE the parens (f()\\<nl>#x; all three shells read a comment)',
+      'f()\\\n#x',
+      ['f'],
+    ],
+    ['after an EMPTY function-definition ) spaced from the name (f ()#x)', 'f ()#x', ['f']],
+    [
+      "after an EMPTY function-definition ) with the 'function' keyword (function f ()#x)",
+      'function f ()#x',
+      ['function', 'f'],
+    ],
+    [
+      "after a case statement's own leading pattern ( (case a in (a)#x<nl>esac)",
+      'case a in (a)#x\nesac',
+      ['case', 'a', 'in', 'a', 'esac'],
+    ],
+  ])('%s: %j is a comment -- words %j', (_label, command, expected) => {
+    expect(wordValues(tokenize(command))).toEqual(expected)
+  })
+
+  it.each([
+    ['NOT after ( (opens a word instead of a comment)', '(#x', ['#x']],
+    [
+      'NOT after a WORD-position ) (zsh glob group, echo (a|b)#x)',
+      'echo (a|b)#x',
+      ['echo', 'a', 'b', '#x'],
+    ],
+    [
+      'NOT after a WORD-position ) (array assignment, a=(1 2)#x -- bash runs the tail, zsh reads a comment; the word-position reading wins)',
+      'a=(1 2)#x',
+      ['a=', '1', '2', '#x'],
+    ],
+    [
+      'NOT after a WORD-position ) across a continuation (echo (a|b)\\<nl>#x)',
+      'echo (a|b)\\\n#x',
+      ['echo', 'a', 'b', '#x'],
+    ],
+    [
+      'NOT after a WORD-position ) across a continuation (a=(1 2)\\<nl>#x)',
+      'a=(1 2)\\\n#x',
+      ['a=', '1', '2', '#x'],
+    ],
+    ['NOT after } (${X}#foo)', '${X}#foo', ['$', 'X', '#foo']],
+    ['NOT after { in a literal brace-expansion attempt (a{b}#x)', 'a{b}#x', ['a', 'b', '#x']],
+    ["NOT after CR (not one of bash's own blanks)", `hi${CR}#x`, ['hi', '#x']],
+    ["NOT after VT (not one of bash's own blanks)", `hi${VT}#x`, ['hi', '#x']],
+    ["NOT after FF (not one of bash's own blanks)", `hi${FF}#x`, ['hi', '#x']],
+    ["NOT after NBSP (not one of bash's own blanks)", `hi${NBSP}#x`, ['hi', '#x']],
+    ['NOT mid-word (a#b)', 'a#b', ['a#b']],
+    ['NOT quoted ("a # b")', '"a # b"', ['a # b']],
+    ['NOT escaped (echo \\# x)', 'echo \\# x', ['echo', '#', 'x']],
+    ['NOT after a SPACED function-paren close (zsh glob word, f ( )#x)', 'f ( )#x', ['f', '#x']],
+    [
+      'NOT after an empty array-assignment ) (bash keeps the tail live, a=()#x)',
+      'a=()#x',
+      ['a=', '#x'],
+    ],
+    [
+      "NOT after 'in' used as an argument, not the case keyword (echo in (a|b)#x)",
+      'echo in (a|b)#x',
+      ['echo', 'in', 'a', 'b', '#x'],
+    ],
+    // SMI-6892 round 18: a `\`+newline INSIDE a function definition's parens
+    // makes zsh read `()#x` as a glob word and run the tail (bash reads a
+    // comment); the shells disagree, so the tail stays live.
+    [
+      'NOT after a function-paren close with a continuation inside (f (\\<nl>)#x)',
+      'f (\\\n)#x',
+      ['f', '#x'],
+    ],
+    [
+      'NOT after a glued function-paren close with a continuation inside (f(\\<nl>)#x)',
+      'f(\\\n)#x',
+      ['f', '#x'],
+    ],
+  ])('%s: %j is NOT a comment -- words %j', (_label, command, expected) => {
+    expect(wordValues(tokenize(command))).toEqual(expected)
+  })
+})
+
+// SMI-6869 Fix A: `<`/`>`/`&>` were plain word characters before this fix —
+// `2>&1` tokenized as a leftover `2>` word plus a job-control `&` op plus a
+// stray `1` word, which is what let a trailing redirect masquerade as an
+// unrelated argv element (`unresolved-command` firing on that stray `1`)
+// and let a GLUED runner+redirect (`ruflo>/dev/null`) hide `ruflo` inside
+// one opaque word H4 never saw. See scripts/tests/ruflo-host-guard.test.ts'
+// own SMI-6869 Fix A describe block for the guard-level verdict red arms
+// these tokenizer shapes feed.
+describe('SMI-6869 Fix A: redirect operators are word boundaries', () => {
+  it('an unquoted > ends the current word; the operator plus its glued target is ONE redirect-marked word', () => {
+    const tokens = tokenize('ruflo>/dev/null memory store')
+    expect(tokens[0]).toMatchObject({ type: 'word', value: 'ruflo' })
+    expect(tokens[0].redirect).toBeUndefined()
+    expect(tokens[1]).toMatchObject({ type: 'word', value: '>/dev/null', redirect: true })
+    expect(wordValues(tokens)).toEqual(['ruflo', '>/dev/null', 'memory', 'store'])
+  })
+
+  it('a bare digit sequence immediately before > stays attached as the fd prefix (2>&1 is ONE token, not 2> + & + 1)', () => {
+    const tokens = tokenize('gh pr checks 2957 2>&1')
+    expect(wordValues(tokens)).toEqual(['gh', 'pr', 'checks', '2957', '2>&1'])
+    expect(tokens[tokens.length - 1]).toMatchObject({ value: '2>&1', redirect: true })
+  })
+
+  // SMI-6869 C1 correction: this assertion originally pinned `/tmp/o` as
+  // `redirect: false` — a BYPASS, not a neutral observation. A redirect
+  // token flushed with nothing glued onto it (`>` alone, followed by a
+  // space) still has a target: the very NEXT word. Leaving that word
+  // untagged let it become argv[0] of the "residual" command, and since a
+  // word like `ls`/`cat`/`grep` sits on `NON_EXECUTING_VERBS`,
+  // `checkBareNameInversion` exempted the whole segment — `> ls ruflo
+  // memory store` and seven siblings ALLOWED. Fixed: the pending-redirect
+  // flag now survives across the flush and tags the next word token too,
+  // clearing on any operator or newline.
+  it('a redirect operator followed by a SEPARATE (space-separated) target is ALSO marked redirect (C1 fix: it is still the target, just not glued)', () => {
+    const tokens = tokenize('git push > /tmp/o 2>&1')
+    expect(tokens.map((t) => [t.type, t.value, t.redirect ?? false])).toEqual([
+      ['word', 'git', false],
+      ['word', 'push', false],
+      ['word', '>', true],
+      ['word', '/tmp/o', true],
+      ['word', '2>&1', true],
+    ])
+  })
+
+  it('C1: the pending-redirect-target flag clears on an operator, so a word AFTER a stray trailing redirect is not wrongly tagged', () => {
+    const tokens = tokenize('cmd > ; echo hi')
+    const echoIdx = tokens.findIndex((t) => t.type === 'word' && t.value === 'echo')
+    expect(tokens[echoIdx].redirect ?? false).toBe(false)
+  })
+
+  it('C1: the pending-redirect-target flag clears on a newline too', () => {
+    const tokens = tokenize('cmd >\necho hi')
+    const echoIdx = tokens.findIndex((t) => t.type === 'word' && t.value === 'echo')
+    expect(tokens[echoIdx].redirect ?? false).toBe(false)
+  })
+
+  it('a digit that is NOT immediately followed by a redirect stays an ordinary word (no fd-prefix false match)', () => {
+    const tokens = tokenize('sleep 5 & wait')
+    expect(wordValues(tokens)).toEqual(['sleep', '5', 'wait'])
+    expect(tokens.every((t) => !t.redirect)).toBe(true)
+  })
+
+  it('&> is recognized as ONE glued redirect operator token, not a job-control & followed by a word', () => {
+    const tokens = tokenize('ls &> /tmp/o')
+    expect(tokens.map((t) => t.type)).toEqual(['word', 'word', 'word'])
+    expect(tokens[1]).toMatchObject({ type: 'word', value: '&>', redirect: true })
+  })
+
+  it('&>> (append form) is likewise one glued token', () => {
+    const tokens = tokenize('ls &>> /tmp/o')
+    expect(tokens[1]).toMatchObject({ type: 'word', value: '&>>', redirect: true })
+  })
+
+  it('|& tokenizes as the plain pipe operator (one op token), not a pipe plus a separate & job-control op', () => {
+    const tokens = tokenize('ls |& cat')
+    expect(tokens.map((t) => t.type)).toEqual(['word', 'op', 'word'])
+    expect(tokens[1]).toEqual({ type: 'op', value: '|' })
+  })
+
+  it('a bare job-control & (not part of >&/<&/&>/&&/|&) is still its own op token', () => {
+    const tokens = tokenize('sleep 5 & wait')
+    expect(tokens.filter((t) => t.type === 'op')).toEqual([{ type: 'op', value: '&' }])
+  })
+
+  it('a glued here-string (bash<<<"text", no space) is ONE <<<-prefixed redirect word, split off the preceding command word', () => {
+    const tokens = tokenize('bash<<<"ruflo memory store"')
+    expect(wordValues(tokens)).toEqual(['bash', '<<<ruflo memory store'])
+    expect(tokens[1].redirect).toBe(true)
+  })
+
+  it('&& and || are unaffected by the new & handling', () => {
+    const tokens = tokenize('a && b || c')
+    expect(tokens.filter((t) => t.type === 'op').map((t) => t.value)).toEqual(['&&', '||'])
+  })
+})
+
+// SMI-6869 Fix B: the tokenizer had no heredoc state at all — a `<<`/`<<-`
+// body's own lines were tokenized as ordinary, separate command-line
+// segments (the exact bug this fix closes). See
+// scripts/lib/shell-command-heredoc.mjs for the delimiter-parsing and
+// body-consumption implementation these tests exercise indirectly through
+// `tokenize()`.
+describe('SMI-6869 Fix B: heredoc tokenization', () => {
+  it("a quoted heredoc (<<'EOF') body becomes ONE heredoc token — its lines never surface as their own word tokens", () => {
+    const tokens = tokenize("cat <<'EOF'\nline one\nline two\nEOF\necho done")
+    const heredoc = tokens.find((t) => t.type === 'heredoc')
+    expect(heredoc).toMatchObject({ value: 'line one\nline two\n', quoted: true, delim: 'EOF' })
+    expect(wordValues(tokens)).toEqual(['cat', 'echo', 'done'])
+  })
+
+  it('an unquoted heredoc (<<EOF) records a $(...) substitution in .subs', () => {
+    const tokens = tokenize('cat <<EOF\n$(ruflo memory store)\nEOF')
+    const heredoc = tokens.find((t) => t.type === 'heredoc')
+    expect(heredoc).toMatchObject({ quoted: false, subs: ['ruflo memory store'] })
+  })
+
+  it("a quoted heredoc (<<'EOF') never records a substitution, even when the body LOOKS like $(...)", () => {
+    const tokens = tokenize("cat <<'EOF'\n$(ruflo memory store)\nEOF")
+    const heredoc = tokens.find((t) => t.type === 'heredoc')
+    expect(heredoc).toMatchObject({ quoted: true, subs: [] })
+    expect(heredoc?.value).toBe('$(ruflo memory store)\n')
+  })
+
+  it('a double-quoted delimiter (<<"EOF") is also recognized as quoted', () => {
+    const tokens = tokenize('cat <<"EOF"\n$(ruflo memory store)\nEOF')
+    const heredoc = tokens.find((t) => t.type === 'heredoc')
+    expect(heredoc).toMatchObject({ quoted: true, subs: [] })
+  })
+
+  it('<<- strips leading tabs when matching the terminator (and from the captured body line)', () => {
+    const tokens = tokenize('cat <<-EOF\n\tindented body\n\tEOF')
+    const heredoc = tokens.find((t) => t.type === 'heredoc')
+    expect(heredoc).toMatchObject({ dash: true, delim: 'EOF', value: 'indented body\n' })
+  })
+
+  it('several heredocs opened on one line are filled in the order they were opened', () => {
+    const tokens = tokenize('cat <<A <<B\nfirst\nA\nsecond\nB')
+    const heredocs = tokens.filter((t) => t.type === 'heredoc')
+    expect(heredocs.map((h) => h.value)).toEqual(['first\n', 'second\n'])
+  })
+
+  it('an unterminated heredoc (no terminator line before end of input) runs to end of input', () => {
+    const tokens = tokenize('cat <<EOF\nnever terminated')
+    const heredoc = tokens.find((t) => t.type === 'heredoc')
+    expect(heredoc?.value).toBe('never terminated\n')
+  })
+
+  it('<< is distinct from <<< — a bare here-string operator never becomes a heredoc token', () => {
+    const tokens = tokenize('bash <<< "ruflo memory store"')
+    expect(tokens.some((t) => t.type === 'heredoc')).toBe(false)
+  })
+})
+
+describe('stripFlags()', () => {
+  it('drops leading single-char flags', () => {
+    expect(stripFlags(['-a', '-b', 'cmd'])).toEqual(['cmd'])
+  })
+
+  it('consumes a value for a known value-taking flag', () => {
+    expect(stripFlags(['-u', 'someuser', 'cmd'])).toEqual(['cmd'])
+  })
+
+  it('stops at -- and returns everything after it', () => {
+    expect(stripFlags(['--', '--not-a-flag'])).toEqual(['--not-a-flag'])
+  })
+
+  it('treats an =-form flag as self-contained (no value consumed)', () => {
+    expect(stripFlags(['--env=FOO', 'cmd'])).toEqual(['cmd'])
+  })
+
+  it('stops at the first non-flag token', () => {
+    expect(stripFlags(['cmd', '-a'])).toEqual(['cmd', '-a'])
+  })
+
+  it('a bare "-" is not a flag and stops the scan', () => {
+    expect(stripFlags(['-', 'cmd'])).toEqual(['-', 'cmd'])
+  })
+})
+
+describe('stripEnvPrefix()', () => {
+  it('drops leading VAR=val assignments', () => {
+    expect(stripEnvPrefix(['FOO=1', 'BAR=2', 'cmd', 'arg'])).toEqual(['cmd', 'arg'])
+  })
+
+  it('consumes a value for -u / --unset / -C / --chdir', () => {
+    expect(stripEnvPrefix(['-u', 'FOO', 'cmd'])).toEqual(['cmd'])
+  })
+
+  it('drops -- as a bare flag', () => {
+    expect(stripEnvPrefix(['--', 'cmd'])).toEqual(['cmd'])
+  })
+
+  it('drops an unrecognized single-token flag', () => {
+    expect(stripEnvPrefix(['-i', 'cmd'])).toEqual(['cmd'])
+  })
+
+  it('stops once a non-flag, non-assignment token is seen', () => {
+    expect(stripEnvPrefix(['cmd', 'FOO=1'])).toEqual(['cmd', 'FOO=1'])
+  })
+})
+
+describe('stripDockerExec()', () => {
+  it('drops exec flags and the container name, keeping the inner command', () => {
+    expect(stripDockerExec(['-it', 'mycontainer', 'cat', '/app/.env'])).toEqual([
+      'cat',
+      '/app/.env',
+    ])
+  })
+
+  it('drops the container name alone when there are no flags', () => {
+    expect(stripDockerExec(['mycontainer', 'echo', 'hi'])).toEqual(['echo', 'hi'])
+  })
+})
+
+describe('stripDockerCompose()', () => {
+  it('unwraps `docker compose exec <service> <inner>`', () => {
+    expect(
+      stripDockerCompose(['docker', 'compose', 'exec', 'dev', 'cat', 'file'], 'docker')
+    ).toEqual(['cat', 'file'])
+  })
+
+  it('unwraps the docker-compose binary form the same way', () => {
+    expect(
+      stripDockerCompose(['docker-compose', 'exec', 'dev', 'cat', 'file'], 'docker-compose')
+    ).toEqual(['cat', 'file'])
+  })
+
+  it('returns null when the subcommand is not exec (e.g. up)', () => {
+    expect(stripDockerCompose(['docker', 'compose', 'up', '-d'], 'docker')).toBeNull()
+  })
+})
+
+describe('stripVarlockRun()', () => {
+  it('unwraps up to an explicit --', () => {
+    expect(stripVarlockRun(['varlock', 'run', '--', 'echo', 'hi'])).toEqual(['echo', 'hi'])
+  })
+
+  it('falls back to flag-stripping when there is no --', () => {
+    expect(stripVarlockRun(['varlock', 'run', '-q', 'echo'])).toEqual(['echo'])
+  })
+
+  // H-E fix (SMI-6744 Wave 4 governance round): a `--` belonging to the
+  // WRAPPED command's own argv (e.g. npx/npm's own `--` separator) must
+  // not be mistaken for varlock run's own separator just because it is
+  // the first `--` anywhere in argv.
+  it('falls back to flag-stripping when the first -- belongs to the wrapped command, not varlock', () => {
+    expect(
+      stripVarlockRun([
+        'varlock',
+        'run',
+        'npx',
+        'ruflo',
+        'memory',
+        'store',
+        '--key',
+        'k',
+        '--',
+        'x',
+      ])
+    ).toEqual(['npx', 'ruflo', 'memory', 'store', '--key', 'k', '--', 'x'])
+  })
+
+  it('falls back to flag-stripping when the wrapped command has no flags at all before its own --', () => {
+    expect(
+      stripVarlockRun(['varlock', 'run', 'ruflo', 'memory', 'store', '--key', 'k', '--', 'x'])
+    ).toEqual(['ruflo', 'memory', 'store', '--key', 'k', '--', 'x'])
+  })
+
+  it("still trusts a -- immediately after a run of value-taking flags as varlock's own separator", () => {
+    // -e/--env is in WRAPPER_VALUE_FLAGS, so "run -e FOO --" is a
+    // flag-only span and this -- is legitimately varlock's own boundary.
+    expect(stripVarlockRun(['varlock', 'run', '-e', 'FOO', '--', 'echo', 'hi'])).toEqual([
+      'echo',
+      'hi',
+    ])
+  })
+})
+
+describe('extractShellDashC()', () => {
+  it('extracts the body of a -c flag', () => {
+    expect(extractShellDashC(['bash', '-c', 'echo hi'])).toBe('echo hi')
+  })
+
+  it('extracts the body of a combined flag containing c (e.g. -lc)', () => {
+    expect(extractShellDashC(['bash', '-lc', 'echo hi'])).toBe('echo hi')
+  })
+
+  it('returns null when a flag has no c and the next token is not a flag', () => {
+    expect(extractShellDashC(['bash', '-l', 'somefile'])).toBeNull()
+  })
+
+  it('returns null when there is no flag at all', () => {
+    expect(extractShellDashC(['bash', 'echo'])).toBeNull()
+  })
+})
+
+describe('normalizeWrappers()', () => {
+  it('unwraps sudo', () => {
+    expect(normalizeWrappers(['sudo', 'node', 'x.js'])).toEqual({
+      argv: ['node', 'x.js'],
+      nested: null,
+    })
+  })
+
+  it('unwraps env FOO=1', () => {
+    expect(normalizeWrappers(['env', 'FOO=1', 'node', 'x.js'])).toEqual({
+      argv: ['node', 'x.js'],
+      nested: null,
+    })
+  })
+
+  // SMI-6920: `env -S TEXT [more…]` is a wrapper with a nested body (the
+  // re-tokenized text plus the remaining operands, GNU env(1)), reported
+  // as `bash -c` is. On cfc96eccd `-S` peeled as a flag and the text stayed
+  // one word in `argv`.
+  it('reports env -S as a nested body, with the remaining operands appended', () => {
+    expect(normalizeWrappers(['env', '-S', 'cat .env'])).toEqual({
+      argv: ['env', '-S', 'cat .env'],
+      nested: 'cat .env',
+    })
+    // The remaining operands are single-quoted (round 2, C-1): bare, an
+    // operand carrying `#`, `;`, `|`, `&`, `>` or a quote became a comment,
+    // a separator or a redirect when re-tokenized and the reader vanished.
+    expect(normalizeWrappers(['env', '-S', 'cat', '.env']).nested).toBe("cat '.env'")
+    expect(normalizeWrappers(['env', '-S', 'cat', '#x', '.env']).nested).toBe("cat '#x' '.env'")
+    expect(normalizeWrappers(['env', '-S', 'cat', "a'b", '.env']).nested).toBe(
+      "cat 'a'\\''b' '.env'"
+    )
+    expect(normalizeWrappers(['env', 'X=1', '--split-string=cat .env']).nested).toBe('cat .env')
+    expect(normalizeWrappers(['sudo', 'env', '-u', 'X', '-Scat .env']).nested).toBe('cat .env')
+    // Pins: `-S` with no operand peels as before; a plain env prefix never
+    // reports a body.
+    expect(normalizeWrappers(['env', '-S'])).toEqual({ argv: [], nested: null })
+    expect(normalizeWrappers(['env', '-i', 'cat', '.env'])).toEqual({
+      argv: ['cat', '.env'],
+      nested: null,
+    })
+  })
+
+  it('unwraps varlock run --', () => {
+    expect(normalizeWrappers(['varlock', 'run', '--', 'node', 'x.js'])).toEqual({
+      argv: ['node', 'x.js'],
+      nested: null,
+    })
+  })
+
+  it('unwraps docker exec <container>', () => {
+    expect(normalizeWrappers(['docker', 'exec', 'mycontainer', 'cat', 'f'])).toEqual({
+      argv: ['cat', 'f'],
+      nested: null,
+    })
+  })
+
+  it('unwraps docker compose exec <service>', () => {
+    expect(normalizeWrappers(['docker', 'compose', 'exec', 'dev', 'cat', 'f'])).toEqual({
+      argv: ['cat', 'f'],
+      nested: null,
+    })
+  })
+
+  it('unwraps a leading bare VAR=val assignment', () => {
+    expect(normalizeWrappers(['FOO=1', 'node', 'x.js'])).toEqual({
+      argv: ['node', 'x.js'],
+      nested: null,
+    })
+  })
+
+  it('unwraps sudo then env in the same call (iterates passes)', () => {
+    expect(normalizeWrappers(['sudo', 'env', 'FOO=1', 'node', 'x.js'])).toEqual({
+      argv: ['node', 'x.js'],
+      nested: null,
+    })
+  })
+
+  it('detects a nested bash -c body and returns it without stripping argv', () => {
+    const result = normalizeWrappers(['bash', '-c', 'echo hi'])
+    expect(result.nested).toBe('echo hi')
+    expect(result.argv).toEqual(['bash', '-c', 'echo hi'])
+  })
+
+  it('the internal pass cap (8) does not fully unwrap a 9-deep sudo chain in one call', () => {
+    const nineSudos = Array(9).fill('sudo').concat(['node', 'x.js'])
+    const result = normalizeWrappers(nineSudos)
+    // 8 passes peel 8 sudos; one sudo (plus node, x.js) remains — this pins
+    // the existing internal loop bound, distinct from MAX_DEPTH (which
+    // governs recursion into nested/substituted command TEXT, not this
+    // wrapper-unwrap loop).
+    expect(result.argv).toEqual(['sudo', 'node', 'x.js'])
+    expect(result.nested).toBeNull()
+  })
+})
+
+describe('MAX_DEPTH', () => {
+  it('is exported as the recursion cap constant (6)', () => {
+    expect(MAX_DEPTH).toBe(6)
+  })
+})
+
+describe('hasInlineScriptFlag() — post-move 3-arg signature', () => {
+  it('recognizes -e for node via the supplied short-flag-chars map', () => {
+    expect(hasInlineScriptFlag('node', ['-e', 'code'], SHORT_FLAG_CHARS)).toBe(true)
+  })
+
+  it('recognizes -p for node (prints an expression, same hazard as -e)', () => {
+    expect(hasInlineScriptFlag('node', ['-p', 'code'], SHORT_FLAG_CHARS)).toBe(true)
+  })
+
+  it('does not flag a plain script-file invocation', () => {
+    expect(hasInlineScriptFlag('node', ['script.js'], SHORT_FLAG_CHARS)).toBe(false)
+  })
+
+  it('recognizes a long flag (--eval) uniformly across interpreters', () => {
+    expect(hasInlineScriptFlag('python', ['--eval', 'code'], SHORT_FLAG_CHARS)).toBe(true)
+  })
+
+  it('stops scanning at --, so a flag-shaped positional after -- is not matched', () => {
+    expect(hasInlineScriptFlag('node', ['--', '-e'], SHORT_FLAG_CHARS)).toBe(false)
+  })
+
+  it("ruby's -r (require) is not treated as inline code (per-interpreter short chars)", () => {
+    expect(hasInlineScriptFlag('ruby', ['-r', 'somelib'], SHORT_FLAG_CHARS)).toBe(false)
+  })
+
+  it('an interpreter with no entry in the map never flags (?? fallback)', () => {
+    expect(hasInlineScriptFlag('unknown-interp', ['-e', 'code'], SHORT_FLAG_CHARS)).toBe(false)
+  })
+})
+
+describe('scanPositionalScriptText() — post-move 3-arg signature', () => {
+  it('scans awk script text for an embedded match via the supplied scanFn', () => {
+    expect(scanPositionalScriptText('awk', ['BEGIN{print ".env"}'], scanForDotEnv)).toBe('.env')
+  })
+
+  it('scans sed script text too', () => {
+    expect(scanPositionalScriptText('sed', ['s/x/.env/'], scanForDotEnv)).toBe('.env')
+  })
+
+  it('returns null for a command outside POSITIONAL_SCRIPT_COMMANDS', () => {
+    expect(scanPositionalScriptText('node', ['x.env'], scanForDotEnv)).toBeNull()
+  })
+
+  it('does NOT stop at -- (script text can follow it, unlike an option scan)', () => {
+    expect(scanPositionalScriptText('awk', ['--', 'BEGIN{print ".env"}'], scanForDotEnv)).toBe(
+      '.env'
+    )
+  })
+
+  it('returns null when nothing embedded matches', () => {
+    expect(scanPositionalScriptText('awk', ['BEGIN{print "hi"}'], scanForDotEnv)).toBeNull()
+  })
+})
+
+// SMI-6903 C2: the arithmetic-adjacency rule, at the tokenizer level. A `#`
+// inside `((…))` is not a comment, and RAW adjacency is the discriminator --
+// `( (` with a blank between is nested subshells, where the `#` IS a comment.
+// Every row measured in bash 3.2, bash 5.2 and zsh 5.9.
+describe('tokenize() — SMI-6903 C2: arithmetic ((…)) suppresses the comment rule', () => {
+  it('keeps the text after a `#` inside `(( … ))` (all three shells run it)', () => {
+    expect(wordValues(tokenize('(( 1 #2 )); cat .env'))).toContain('.env')
+  })
+
+  it('keeps it when the `#` opens the expression (`(( #2 ))`)', () => {
+    expect(wordValues(tokenize('(( #2 )); cat .env'))).toContain('.env')
+  })
+
+  it('suppression is keyed on RAW adjacency: `( ( 1 #2 ) )` is a real comment', () => {
+    // A blank between the parens makes them nested subshells; the shells read
+    // a comment, so the tokenizer must too.
+    expect(wordValues(tokenize('( ( 1 #2 ) ); cat .env'))).not.toContain('.env')
+  })
+
+  it('suppression ENDS when the arithmetic pair closes', () => {
+    // `(( 1 )) #c; printf MARK` prints nothing in all three shells.
+    expect(wordValues(tokenize('(( 1 )) #c; cat .env'))).not.toContain('.env')
+  })
+
+  it('`if (( … ))` and `&& (( … ))` are arithmetic too (not only line-start)', () => {
+    expect(wordValues(tokenize('if (( 1 #2 )); then :; fi; cat .env'))).toContain('.env')
+    expect(wordValues(tokenize('true && (( 1 #2 )); cat .env'))).toContain('.env')
+  })
+})
+
+// SMI-6903 C3/H1: the `wordGroup` / `gluedLeft` / `gluedRight` tags a consumer
+// needs to rebuild the single zsh word a glob group forms. Asserted as the
+// PROPERTY that distinguishes a glob group from a subshell, not as a token
+// dump, so the rows stay meaningful if the token shape changes.
+describe('tokenize() — SMI-6903: paren op tokens carry position and adjacency', () => {
+  const parenOps = (command: string) =>
+    tokenize(command).filter((t) => t.type === 'op' && (t.value === '(' || t.value === ')'))
+
+  it('a WORD-position group is tagged wordGroup, a real subshell is not', () => {
+    expect(parenOps('echo (a|b)').every((t) => t.wordGroup === true)).toBe(true)
+    expect(parenOps('(cat f)').every((t) => t.wordGroup === true)).toBe(false)
+  })
+
+  it('a group welded into a path records glue on BOTH sides', () => {
+    const [open, close] = parenOps('./(node_modules|x)/.bin/ruflo memory store')
+    expect(open.gluedLeft).toBe(true)
+    expect(close.gluedRight).toBe(true)
+  })
+
+  it('a space-separated group records no glue on the side with the blank', () => {
+    const [open, close] = parenOps('echo (a|b) rest')
+    expect(open.gluedLeft).toBe(false)
+    expect(close.gluedRight).toBe(false)
+  })
+
+  it('glue is one-sided when only one side is welded', () => {
+    const [openL, closeL] = parenOps('./x/(ruflo|y) memory store')
+    expect(openL.gluedLeft).toBe(true)
+    expect(closeL.gluedRight).toBe(false)
+    const [openR, closeR] = parenOps('echo (a|b)tail')
+    expect(openR.gluedLeft).toBe(false)
+    expect(closeR.gluedRight).toBe(true)
+  })
+})

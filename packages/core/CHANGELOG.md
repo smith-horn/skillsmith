@@ -4,6 +4,533 @@ All notable changes to `@skillsmith/core` are documented here.
 
 ## [Unreleased]
 
+- **Docs (internal)**: SMI-6733 -- the prose explaining why `installedSkills: null` classifies `ok` is
+  **deleted**, not reworded. Three cross-family review rounds on PR #2980 each found a false claim in
+  it: *"byte-identical to absent"*, then *"byte-identical for every consumer"*, then
+  *"indistinguishable to every consumer"* -- the last false because `Object.hasOwn`, `JSON.stringify`
+  and `=== null` each distinguish the two shapes (measured). What remains is three facts and no causal
+  clause joining them: ADR-171 § 5 accepts both an explicit `null` and an absent key, § 3 **preserves**
+  the difference (that form is the raw `JSON.parse` value where *"`null` stays `null`, and an absent
+  key stays absent"*), and `installedSkillsOf` normalises either to an empty map for a map-oriented
+  reader. The false versions had reached five files across three packages; ADR-171 itself never made
+  any of the claims.
+
+- **Docs (internal)**: SMI-6733 -- `update-target.evidence.ts` cited `skill-manifest.ts:120` for a
+  defaulting of `installedSkills`. Wrong twice: that line is inside `assertNotRealUserHome`, and
+  nothing in that file defaults the field at all (`installedSkillsOf` normalises it for a reader
+  without writing a default). Now names constructs rather than lines, after a stale-citation sweep
+  found six across the repo -- the sixth only because the first sweep's regex, `install\.ts:[0-9]+`,
+  structurally could not match `install.conflict.ts:67`.
+
+- **Fix (diagnostics)**: SMI-6733 Phase 2 Wave 1 -- a `ManifestUnwritableError`'s own message (ADR-171
+  § 8: names the file, the exact byte offset on a parse failure, and a remedy) now reaches the user
+  instead of being replaced by `sanitizeInstallError`'s generic "Installation failed due to an
+  internal error" fallback. `ManifestUnwritableError` matched none of the 12-member
+  `KNOWN_ERROR_PREFIXES` allowlist, so a correctly-classified refusal became an undiagnosable one.
+  Fixed the same way `InstallRestoreError` already bypasses that allowlist in
+  `skill-installation.helpers.ts`'s `sanitizeInstallError`: an `instanceof` arm, not a 13th
+  message-content prefix -- a prefix would couple the sanitizer to ADR-171 § 8's exact wording.
+
+- **Fix (data integrity)**: SMI-6733 -- untracked-skill adoption no longer overwrites a manifest it
+  could not read. `adoptUntrackedSkillEntry` took a tolerant load unconditionally, which substitutes
+  an empty document for a corrupt/unreadable/version-unsupported manifest and then saves over the
+  original bytes. Measured: against a manifest whose readable prefix recorded a real skill followed
+  by trailing garbage, one adoption left a valid 410-byte file holding only the adopted entry, and
+  the recorded skill was gone. Tolerance is now an explicit `tolerateDegradedRead` argument
+  defaulting to refuse; `performUninstall` passes its own `force`, and the CLI `update` path (which
+  has no `force`) passes nothing. A refused adoption returns a distinct `adoptionRefusal` outcome
+  rather than a hard error, so `performUninstall`'s more specific identity checks still run first.
+
+- **Fix**: SMI-6733 -- a manifest whose `installedSkills` is `null` or absent classifies `ok` (both
+  mean "nothing installed"), but `SkillManifest` declares the field non-optional, so consumers
+  subscripting it type-checked and then threw `Cannot read properties of null`. Added
+  `installedSkillsOf()` and routed every consumer of `ManifestManager.load()` through it. The
+  classifier is unchanged -- ADR-171 § 3 forbids it transforming the parsed value, so the fix is on
+  the consumer side.
+
+- **Fix (diagnostics)**: SMI-6733 -- a manifest that is well-formed JSON but the wrong shape no
+  longer reports "is not valid JSON" and no longer advises running a JSON validator, which would
+  find nothing; it names the offending field in the user's own vocabulary instead of citing an
+  internal ADR section. The `corrupt` state carries a new `kind`
+  (`unparseable`/`shape`/`version_malformed`) to distinguish them. Unparseable-JSON refusals also
+  stop restating the byte position twice in one sentence.
+
+- **Tests**: SMI-6733 -- every refusal test now asserts the file's BYTES (length + SHA-256), not
+  only the message, per ADR-171's own test plan. That assertion is the one that catches a silent
+  clobber: the existing test covering this exact scenario asserted a refusal message, never looked
+  at the file, and passed throughout the window in which a refused uninstall was rewriting it. The
+  `raw`/`manifest` non-transform guarantee gained a reference-identity assertion, since `toEqual`
+  alone passes against the single spread the rule exists to forbid.
+
+## v0.12.6
+
+- **Fix (critical, release-mechanical)**: this version exists because the published
+  `@skillsmith/core@0.12.5` and this repo's `0.12.5` had the **same version number and different
+  contents**. Exports added to core's source after `0.12.5` was published — `withFileLock` among
+  them — were never released, because the version was not bumped when they landed. That is invisible
+  inside the monorepo, where every workspace resolves to the local tree, and only surfaces once a
+  published consumer resolves `core` from npm: `@skillsmith/mcp-server@0.7.17` did, and could not be
+  imported at all. Publishing `0.12.6` makes the registry's `core` match this tree again.
+  No behavioural change to core itself is intended by the bump.
+- **Tests**: SMI-6532 -- the render-parity test's parse guard is now itself tested, and its failure
+  mode is loud rather than silent. The guard reads TypeScript's INTERNAL `parseDiagnostics` field
+  through a cast, so a rename upstream would have read `undefined`, skipped the check, and restored
+  the exact hole the guard exists to close -- quietly. Its absence is now fatal. The guard was split
+  out of `extractObjectLiteral` into its own `assertParsesCleanly` helper so both of its branches --
+  a missing field, and parse errors present -- can be pinned by a direct test instead of only the
+  parse-error branch; the missing-field branch is exercised with a fabricated `SourceFile`, since
+  nothing can make TypeScript itself stop setting the field. A separate canary confirms today's real
+  `SourceFile` still exposes the field as an array (the guard itself only rejects `undefined`, so
+  some future non-array replacements -- a `Set`, say -- would pass it silently and only the canary
+  would catch them; not all, since `null` throws on the length read and a non-empty string trips the
+  parse-error branch), and
+  a third direct test pins the unrelated absent-export refusal. Red-tested by disabling each guard
+  branch and by feeding the canary an object without the field. Found by the post-merge retro on PR
+  #2952 -- I had verified the guard once by hand when adding it, which protected nothing afterwards.
+
+- **Feature (internal)**: SMI-6532 step 6 -- the root barrel now exports the two closed-set
+  `UpdateTargetReason`/`UpdateResultCode` types from `update-target-reason.ts` (previously internal
+  to this package). `@skillsmith/mcp-server`'s `update-target-render.ts` needs them for its
+  `Record<UpdateTargetReason | UpdateResultCode, string>` renderer signature; only the types are
+  exported, not the arrays or `remediationFor`, since no production consumer outside this package
+  needs the values -- the one caller that did (this package's own new
+  `update-target-render-parity.test.ts`) reaches them via a plain relative import, the same as its
+  sibling `update-target-reason.test.ts` already does.
+
+- **Test**: SMI-6532 step 6 -- `update-target-render-parity.test.ts` checks, for all 38
+  reason/result members, that `@skillsmith/mcp-server`'s renderer and the VS Code extension's
+  mirrored text are both non-empty, and that the VS Code extension's mirrored remediation kind
+  agrees with this package's own `remediationFor()`. Reads both external files via the TypeScript
+  AST (the same technique the sibling `update-target-reason.test.ts` already uses for its VS Code
+  array-mirror check) rather than importing them, so no new dependency is needed in either
+  direction.
+
+- **Tests**: SMI-6841 -- the update-eligibility gate's fs-purity guard could not detect a whole
+  class of filesystem call, and now can. The guard replaces `node:fs` and `node:fs/promises` with
+  recording spies that throw; it re-attached only own, enumerable, string-keyed members, so the
+  four stream constructors' 142 inherited statics and `opendir`'s promisify symbol were absent from
+  the mock -- a real `fs.opendir[util.promisify.custom](...)` call would have performed I/O in
+  silence with every assertion green. Demonstrated rather than argued: the same injection fails both
+  purity tests under the new mock and passes both under the old one. `wrapNamespace` now wraps the
+  same reflective surface the differential walks, excluding only keys where the target already
+  resolves the identical function, so gaps went 143 -> 0 and roughly 130 lines that existed purely
+  to DESCRIBE the gap were deleted. Own members mirror their real descriptor; inherited members sit
+  on a shadow prototype so `Object.hasOwn` still answers as production does; and exactly one symbol,
+  `Symbol.hasInstance`, is handed through real, because wrapping `Writable`'s custom implementation
+  made `x instanceof fs.WriteStream` -- a pure type check -- report a purity violation. That
+  exception is keyed on the one implementation that was READ (Node 22's runs the default
+  `Function.prototype` test, then compares identities and `_writableState instanceof
+  WritableState`), not on well-known-symbol status: `Symbol.iterator`, `asyncIterator` and the
+  disposal hooks are extension points that may perform I/O, so they get a throwing spy. Wrapping
+  something pure fails visibly; handing something impure through fails silently. Twelve review rounds; the last four each found a defect introduced by the fix before it. Every
+  behavioural defect is pinned by an assertion that fails when reverted; the one exception is the
+  policy narrowing that restricts the symbol passthrough to `hasInstance`, which no realistic `fs`
+  surface can exercise today and which is justified by reading the implementation and by the
+  failure-direction asymmetry rather than by a red test -- a direct assertion on the policy set now
+  makes an accidental widening fail even so.
+
+- **Docs**: SMI-6841 -- three comment corrections in the update-eligibility gate's own files, with
+  no behaviour change: every changed line in `update-target-reason.ts` and `update-target.probe.ts`
+  is inside a comment. PR #2939 replaced seven unresolvable "task brief" referents on the stated
+  ground that a referent no later reader can resolve is not durable, and left eight more -- one of
+  them four lines above a referent it did fix, and five in the file its own docstring sends the
+  reader to, so the source said `SMI-6532` while routing you to a file that still said "the
+  brief's". The sweep is now mechanism-wide and must be run multiline-aware: the phrase wraps
+  across JSDoc line breaks, and a line-based `grep` undercounts it by six. Separately, the note on
+  `hasGitAncestorBetween`'s export status was corrected at the fourth of four sites, and the plan
+  doc's own `§4` bullet alongside it, so the two surfaces agree rather than one lending the other
+  false authority.
+
+- **Docs**: SMI-6840 -- the comments around the `sk_live_` redaction rule and the gitleaks rules
+  made claims the repository does not establish: that Stripe's and Clerk's keys are alphanumeric,
+  that our alphabet differs from theirs, and that SMI-6840 was caused by someone changing an
+  issuer's pattern. None of that was measured, and the last is not what happened -- the defect was
+  an alphanumeric pattern written against base64url keys. Four review rounds each found a fresh
+  error in the explanation, so under a stopping rule fixed in advance the explanation is now
+  deleted rather than reworded again: each site states the instruction (what the class must include,
+  what must not be re-added, which neighbouring rules are unexamined) and points at this issue for
+  the evidence. No behaviour change -- every pattern byte-identical.
+
+- **Security**: SMI-6840 (PR #2936; found while enumerating redaction sites for SMI-6636) --
+  `redactSensitiveData` / `redactSensitiveObject` masked only part of a Skillsmith API key, or none
+  of it. The `sk_live_` pattern's body was `[a-zA-Z0-9]`, but `generateLicenseKey` emits base64url,
+  so a real key can contain `-` and `_`. The rate is derivable, not merely sampled: a base64url
+  body draws from 64 symbols, 62 of them alphanumeric, so the old pattern failed to match outright
+  for 1 - (62/64)^24 = 53.3% of keys, and the true leak rate is higher because a `_` later in the
+  body also defeated the trailing `\b`. A 10,000-key sample from a verbatim port of the generator
+  agreed, with a matching-positive and a non-matching-negative control both passing: 6,353 not
+  redacted at all, 1,024 redacted only as far as the first hyphen, 7,377 leaked in whole or in
+  part. Two mechanisms: a `-` or `_` inside the first 24 body characters ends
+  the run below the `{24,}` minimum so the match fails outright, and `_` is itself a word character,
+  so no trailing `\b` can ever match after an alphanumeric run followed by one -- backtracking
+  cannot rescue that, since every shorter run is also followed by a word character. The
+  partial-match case was the worst of the three, because the line carried a `[REDACTED]` marker with
+  the tail of the key beside it. Fixed by widening the class to the emitted alphabet and removing
+  the trailing `\b` rather than replacing it: the greedy quantifier already consumes the whole body,
+  so no terminator is needed. The precise defect was `\b` specifically, which cannot match after a
+  base64url body; a base64url-aware assertion would have been correct, merely redundant. Over-matching
+  into adjacent `[A-Za-z0-9_-]` text is the deliberate failure direction, but it is only safe on the
+  confidentiality axis -- adjacent log content can be swallowed, which is a real diagnostic cost,
+  accepted because a leaked credential is not recoverable and lost context is. `redactSensitiveObject`
+  returns a new object and never mutates its input, so this is confined to the emitted copy. Widening
+  is monotonic, so every string the old pattern matched this one still matches -- a statement about
+  the two patterns, not a claim that any issuer's keys were fully covered before. The `sk_test_`, `pk_live_` and `pk_test_`
+  rules are deliberately left untouched -- nothing in this repo mints those, and their issuer's real
+  key alphabet was never measured here, so widening them would have no evidence behind it either. Consumers of
+  `@skillsmith/core`'s logging and telemetry modules get the fix with no API change.
+
+- **Docs**: SMI-6826 (PR #2930; found by the PR #2929 post-merge retro) -- `ApiCache`'s
+  documentation said it evicts least-recently-used entries. It does not, and never did: when full,
+  `evictLeastUsed()` takes the first EXPIRED entry its scan meets, and failing that the one with the
+  lowest `hitCount`. Recency is never read. The JSDoc directly above that method contradicted the
+  method's own inline comment three lines below it. Corrected at five sites -- the module header and
+  that JSDoc in `api/cache.ts`, and the `search()` / `getSkill()` / `getRecommendations()` JSDoc in
+  `api/client.ts`, which each called it an "LRU cache". No behaviour change; `ApiCache` is re-exported
+  from the package root, so this is documentation an external consumer can read. `cache/lru.ts`'s
+  `L1Cache` is deliberately untouched -- it is a genuine LRU backed by the `lru-cache` package and
+  says so correctly. Whether `evictLeastUsed` should simply be renamed, since the name is what keeps
+  inviting the wrong reading, is left open on SMI-6826.
+
+- **Feature**: SMI-6532 -- the first internal pieces of the update eligibility gate, which will
+  decide whether an update may write into a given skill directory. Nothing reads them from a
+  command yet, so there is no user-visible behaviour change in this release. Adds a manifest
+  evidence resolver behind a swappable seam (`update-target.evidence.ts`); a closed set of skip
+  reasons and result codes carrying machine-readable remediation data
+  (`update-target-reason.ts`), so an unhandled member fails typecheck instead of falling through
+  at runtime; and a probe (`update-target.probe.ts`) that performs the filesystem reads and fails
+  closed -- a permission or read error becomes an explicit `probe-failed`/`unreadable` outcome
+  rather than a value that reads as "nothing to do". New export: `isBackupDir` (below).
+  `hasGitAncestorBetween` is unrelated to this seam -- it is A0's own pre-write install-target
+  guard, already shipped. An earlier commit on this work did add an `export` keyword to it so a
+  test could import it directly; that is reverted, and it is module-private again. It was never
+  reachable by a consumer of this package in either state: it is absent from the root barrel
+  (`src/index.ts`) and there is no `exports` subpath for its file, so no published entrypoint
+  led to it.
+
+- **Fix**: SMI-6532 -- the backup-directory check matched only a `<name>.backup-YYYYMMDD-HHMMSS`
+  form that no code in the tree actually writes, and missed the `<name>.backup-<epoch-ms>` form
+  `ActivationManager` really creates -- e.g. `linear.backup-1758600000000` or
+  `notes.backup-20260419` previously read as an ordinary skill, not a backup. It is now a shared,
+  exported `isBackupDir` matching `.backup-` followed by a digit, which covers both forms and any
+  trailing suffix, so both examples above now flip from `false` to `true`. That flip changes what
+  `SourceRecoveryService.recoverSources()` reports today (its only live consumer, via
+  `scanLocalSkills`): a directory like those two used to be scanned and offered for source
+  recovery as though it were a real skill; it is now correctly reported as a backup and skipped.
+  It does NOT yet change what anything writes -- the update-eligibility gate that would use this
+  same flag to decide whether a write may overwrite a directory (`update-target-gate.rules.ts` row
+  2, described above) is not wired into any command yet. It deliberately errs toward treating a
+  directory as a backup: the cost of a false match is a skill that is not offered for source
+  recovery today (and, once the gate ships, not auto-updated), weighed against the cost of a real
+  backup directory being treated as an ordinary skill.
+
+- **Fix**: SMI-6744 / SMI-6814 (PR #2923 post-merge retro G3/G4; PR #2924 governance F1 and retro
+  C3/C4/C5/C8; PR #2925 retro F-A/F-B) -- `buildHighlights()` no longer wraps every character of
+  a result in `<mark></mark>` when the query carries an empty term (a trailing space, a lone `*`,
+  an empty query): empty terms are dropped before the alternation is built, the same
+  filter-then-guard shape as the log sweep below. The description snippet is placed at the
+  match's real offset (`exec()`, whose `index` is required) instead of an `indexOf()` into a
+  lowercased copy, which `toLowerCase()` can shift (U+0130) or lose (Greek final sigma), so a
+  description whose only match sat past such a character lost its highlight. The truncation `...`
+  markers are added after the `<mark>` replacement, so a term of dots no longer highlights the
+  markers themselves, and the window is snapped to code-point boundaries, so an emoji straddling
+  its edge is no longer cut into a lone surrogate (an already-lone surrogate in the description
+  is left alone). Matching uses the `u` flag as well as `i`, so the Kelvin sign, Ohm, Angstrom,
+  capital sharp s, the Greek capital theta symbol and the Greek iota-subscript capitals fold to
+  their lowercase forms, and the query term is no longer lowercased (the flags fold case;
+  lowercasing turned a query of U+0130 into two code units that matched nothing). It also no
+  longer relies on a shared global-flag regex between the two `.test()` calls: the shipped
+  sequence never saw a leaked `lastIndex`, but for three different reasons (a falsy name
+  short-circuits, a failing name test resets it itself, and only on a matching name did the
+  interleaved `.replace()` reset it); matching and replacing now use separate objects and the
+  matcher is non-global, so a reordering cannot make a description silently lose its highlight
+  after a name match. The docblock now states that the return values are HTML fragments around
+  un-escaped registry text (escaping inside the function is SMI-6815). Red-tested, nineteen
+  mutations, each watched to fail against the committed tests: removing the empty-term filter;
+  making the matcher global; restoring the lowercased `indexOf()`; removing the window clamp;
+  deleting the operator filter; wrapping before replacing; dropping `u`; dropping `[` and,
+  separately, `*` from the escape class; deleting the quote/paren strip; deleting the
+  trailing-`*` strip; restoring the term lowercasing; forcing the name branch on; dropping every
+  term after the first and, separately, after the second; removing the window's surrogate snap;
+  and dropping the snap's real-pair check, whole or either half alone. (#2924, #2925, #2927)
+
+- **Fix (data loss)**: SMI-6744 / SMI-6806 (PR #2919 post-merge retro, governance C1) --
+  `pruneExpiredLogs()` deleted every file older than 14 days in `~/.skillsmith/logs`, a
+  directory shared with other writers, including `native-attribution.jsonl`, which ADR-165
+  keeps for its lifetime as a denominator. It now deletes only this module's own
+  `skillsmith-<surface>-<date>.jsonl[.n]` files, where `<surface>` is the enumerated
+  `mcp|cli|vscode|doc-retrieval` set (regex-escaped),
+  so an owned-shaped foreign name such as `skillsmith-foreign-<date>.jsonl` is left alone.
+  Red-tested: removing `OWNED_LOG`'s test in `pruneExpiredLogs()` fails the new ownership test's
+  `foreign` survives-expectation (six fixtures, including `native-attribution.jsonl` and four
+  owned-shaped names). (#2921)
+
+- **Fix (data integrity)**: SMI-6358 -- `backfillManifest()` keys manifest writes through
+  `manifestKeyFor(name, client)` instead of the bare name. A skill installed for a non-canonical
+  client is stored as `name::client`; writing provenance under the bare name landed it on the
+  canonical client's entry instead, or on nothing. Red-tested: reverting the key takes down 2 of 15
+  tests in `backfill.test.ts`. For the canonical client the key is byte-identical to the old one,
+  so single-client installs are unaffected. (#2920)
+
+- **Fix**: SMI-6764 (post-merge round 5) -- `held`'s remedy no longer asserts the holder is alive.
+  The round-4 message read "A live holder is expected to release", which is the same liveness claim
+  the same commit had just deleted from `describeReason` as "a conclusion this function has no
+  standing to draw" -- relocated one sentence to the right rather than removed. `describeRemedy`
+  has strictly less standing than `describeReason`: it receives only `reason`, never the claim.
+  Three states reach `held` with no live holder, each measured: a definitely-dead pid when the
+  probe never ran (`timeoutMs` below `RECLAIM_PROBE_AFTER_MS`), a claim naming another host
+  (`isV1OwnerDead` bails on the host mismatch before signalling), and a pid `<= 0` or non-integer
+  (which `parseClaim` accepts as v1 and nothing will ever reclaim). The last two do not clear by
+  retrying, so the old wording also promised a recovery that cannot happen -- the same never-clears
+  trap this issue removed from `reclaim_unavailable`, surviving under the one reason the first four
+  rounds read as determined. `held` now states what is known and names the two cases that need the
+  manual steps. Test 4 was strengthened (it grepped the single literal `still alive`, so the
+  replacement phrasing passed it) and a new test 6 drives the real acquire loop into all three
+  states.
+
+- **Fix**: SMI-6764 -- lock-failure messages no longer guess whether retrying will help. Every
+  reason now opens `Could not acquire <label> at <path>`, followed by a reason-specific remedy.
+  The previous message picked between "Timed out waiting" and "Could not acquire" per reason; that
+  split is **removed**, not corrected, because `StuckLockReason` does not determine the thing the
+  verb asserted. Three of the five reasons depend on facts the reason does not carry:
+  `reclaim_unavailable` on whether the reclaim lock is merely busy or was orphaned by a crash,
+  `unreclaimable_legacy` on whether the legacy holder is still alive, and `reclaim_disabled` on
+  whether a differently-configured peer exists. The verb had to guess, and for an orphaned reclaim
+  lock -- which never clears, since nothing probes the reclaim lock's own owner -- it guessed
+  "Timed out waiting". The new `describeRemedy` (exported from the package root) states each case,
+  including "it depends, and on this" where that is the truth. Two related corrections in the same
+  message: `held` no longer claims the holder is "(still alive)", which was rendered for pids that
+  were never probed, and the unstick procedure is unchanged for every reason -- step 1 stays,
+  because an `unreclaimable_legacy` claim can be a perfectly live process. (#2894)
+
+- **Docs**: SMI-6759 -- `file-lock.ts`'s `RETRYABLE_REASONS` comment justified waiting out
+  `reclaim_disabled` with "it still ends when that holder releases". That holder is dead by
+  construction, so it never releases. The reason stays retryable -- a differently-configured peer
+  without the opt-out can still reclaim and release it -- but the comment now states that actual
+  mechanism instead of one that cannot occur. No behaviour change. (#2893)
+
+- **Fix**: SMI-6735 -- the installed-skills manifest lock is now ownership-verified. `ManifestManager`
+  previously judged an existing lock stale by its file age and released by unconditional `unlink`, so a
+  holder could delete a lock it did not own and two writers could each believe they held it exclusively.
+  Locking now delegates to the `owned-lock` primitive (random per-acquire token, liveness-checked
+  staleness, ownership-verified release) through a new shared `withFileLock` helper. The lock file path
+  and the 30s acquisition budget are unchanged. `acquireLock()`/`releaseLock()` are **removed** --
+  `updateSafely()` is now the only locked entry point, so an unchecked release is unreachable rather
+  than guarded. `withFileLock` and `StuckLockError` are newly exported from the package root.
+  **Note for anyone upgrading past a running older process**: a lock file written by a pre-fix version
+  carries a bare PID, which `owned-lock` classifies as a legacy claim and never auto-reclaims by design
+  (SMI-5883 D-5). A `StuckLockError` names the exact file to remove. (#2891)
+- **Fix (data loss)**: SMI-6732 -- uninstalling a skill no longer deletes whatever the
+  manifest happens to name. `installPath` was read straight out of manifest JSON and passed
+  to the removal with no absoluteness or containment check, so an entry naming a folder
+  outside the skills directory, a relative path (resolved against the current working
+  directory), or the skills root itself was deleted and reported as
+  `"uninstalled successfully"`. The workspace-scoped manifest lives inside the project tree
+  and is not gitignored, so a cloned repository could carry such an entry. Removal now
+  refuses anything that is not a direct child of the skills directory.
+- **Fix (data loss)**: SMI-6732 -- a skill reached by a *second spelling* of its name is no
+  longer deleted past its own manifest record. On case-insensitive or Unicode-normalizing
+  volumes (APFS, HFS+), removing `myskill` when the manifest recorded `MySkill` -- or an NFD
+  spelling of an NFC name -- adopted the directory as untracked, backdated its install time,
+  and so skipped the "modified since installation" check that the honest spelling correctly
+  tripped. Your edited work was deleted without `force`. Removal now compares kernel
+  identity rather than spellings, which no alias can defeat.
+- **Fix**: SMI-6732 -- `uninstall('.git')` no longer deletes a git-versioned skills
+  directory's history, and a removal target that cannot be checked is now refused rather
+  than assumed absent. Previously any error while checking a path was treated as "nothing
+  there", so a transient permissions error could let a tracked, modified skill be deleted.
+- **Fix (data loss)**: SMI-6732 -- if the skill directory disappears *while* uninstall is
+  checking it, the removal is now refused instead of continuing. Previously the check
+  treated that as "nothing here" and carried on, so anything that appeared at the same path
+  in the intervening moment -- including one of your other, modified skills renamed into
+  place -- was adopted and deleted, reported as success, leaving the real record pointing at
+  a path that no longer existed. You now get a message saying the directory changed under
+  the check, and nothing is removed.
+- **Known limits**, stated because they are real: on filesystems that reuse a freed inode
+  number immediately (ext4, so most Linux installs), a directory deleted and recreated
+  during the removal's own check window is still not reliably detected -- birthtime narrows
+  this but does not close it, and how much it catches depends on the filesystem and on
+  load — measured between roughly a sixth and three quarters of cases, so treat it as a
+  narrowing rather than a fix. On Windows, identity comparisons
+  elsewhere in the install path can still collapse two distinct entries into one for
+  directories whose underlying record has been reused many times (SMI-6763). Neither
+  affects the containment fixes above.
+
+## v0.12.5
+
+- **Cadence**: Mechanical cadence alignment (no changes since v0.12.4).
+
+## v0.12.4
+
+- **Fix**: SMI-6507 + SMI-6496 -- remediation strings that actually work (#2803)
+- **Fix**: SMI-6508 -- move MF-5 last; it was suppressing HIGH findings (#2808)
+- **Fix**: SMI-6508 — detect prefixed secrets assignments at MEDIUM (MF-5) (#2806)
+- **Fix**: SMI-6530 -- stop recommending bulk `skillsmith update` until the safety gate ships (#2801)
+- **Fix**: SMI-6505 -- stop scoring an embedded key assigned a boolean as a credential (#2793)
+- **Feature**: SMI-6441 -- MF-4b common-password veto (Wave 2) (#2786)
+- **Fix (data loss)**: install and update no longer destroy a skill directory that already
+  existed. A failed write restores every overwritten file to its original bytes and removes only
+  files and directories the install created; a directory that existed is never deleted (it was
+  removed recursively, `.git` included). A new pre-write check, `checkInstallTarget`, refuses to
+  write into a git working tree (or a directory inside one, symlinks resolved), a directory
+  Skillsmith didn't install (no matching manifest entry, or a row marked local or adopted), and a
+  target that differs from the directory `update` compared (`expectedInstallPath`); `force` does
+  not override these. A restore that itself fails now raises `InstallRestoreError` naming the
+  unrestored files instead of a generic internal error. Private-registry content keys can no
+  longer create a `.git` path, and `--also-link --force` replaces a symlink or a fan-out copy
+  Skillsmith itself recorded (the new copy is written to a hidden staging folder and swapped into
+  place under a per-destination lock, so a failed or concurrent refresh never loses the existing
+  copy; the new copy is published by claiming its name with a primitive that refuses to replace —
+  `mkdir` for a directory, `symlink` for a link — and the copy it replaces is moved aside only
+  while it is still the one that was checked; a published link is recorded only while it is still
+  the link this call wrote; an empty destination is refused with an explanation of what it probably is, on the plain and the `--force` path alike, and a hidden folder an interrupted refresh left behind is described without claiming Skillsmith owns it) but still refuses a real directory Skillsmith never created, or a recorded copy that has
+  since grown a `.git` directory; uninstall's own cleanup applies the same `.git` refusal to a
+  recorded copy instead of deleting it. A copy an interrupted refresh left behind is reported as
+  a warning, and is never restored over a skill uninstalled since. The fan-out link manifest is
+  changed under its own lock (concurrent fan-outs of different skills lost records and could
+  corrupt it), and a corrupt one is moved aside with a warning rather than replaced by an empty
+  one that dropped every other skill's record; a manifest written by a newer version is left
+  untouched. An uninstall racing a re-link or a refresh leaves the records matching what is on
+  disk, and an uninstall that can't read the manifest says so. The per-target write queue now
+  classifies and snapshots every write independently (not just the first for a given path), so two
+  differently-cased files on a case-sensitive filesystem restore correctly, a short write is
+  retried until complete or reported as a restore failure, and a 0-byte file orphaned by a failed
+  create is still cleaned up. Rollback and fan-out cleanup never recursively delete a folder that
+  something else put at its path after Skillsmith created it, and a cleanup step that fails is
+  reported rather than silently ignored. A crashed refresh's staging folder is reported, never
+  deleted, and an uninstall re-checks a fan-out copy just before removing it. Each of these
+  deletes now checks the entry, moves it to a hidden name and checks it again there before
+  removing it, so a folder another program swaps in at that moment is never the one deleted.
+  Nothing is ever renamed back over whatever has taken a path — a rename replaces an empty
+  directory, a file or a symlink — so anything a call moved aside is reported with its exact path
+  instead. A regular file is the one exception: it goes back atomically, since `link`
+  fails rather than replacing. What a failed removal leaves behind is reported by the next
+  uninstall of that skill, as well as next to a fan-out destination, and a refresh now says why it
+  kept the copy it replaced, removes only the symlink it checked when replacing one, and puts a
+  copy back only while that path is still free. Uninstall refuses a skill folder that is a git working tree (`.git` at its root), even
+  with force and before adopting an untracked one; it removes only the folder it checked, and
+  keeps the manifest entry when it removes nothing. It also drops a skill's record only while every
+  field of that record still matches the one it removed, so an install claiming the same name
+  meanwhile keeps its own record — at the same path, or written in the same millisecond. A manifest
+  write that fails after the folder is gone now says so, and what to do about it, instead of
+  surfacing as a bare lock error, and a progress listener that throws can no longer stop an
+  uninstall from reporting what it removed and what it left behind. A warning about something left
+  behind no longer claims Skillsmith owns it: in a race it can be an entry another program put at
+  that path. Backfill never modifies a
+  `provenance: 'local'` row (SMI-6529, ADR-155).
+
+- **Docs**: recorded the two missing `SCANNER_RULESET_VERSION` history entries for
+  `2026-09-11.1` and `2026-09-11.2`. Both bumps shipped correctly — the `comparable` gate does
+  re-scan — but the constant had moved twice past the end of its own documented history, so the
+  *direction* and the consequence-if-omitted were unrecorded for both. `.1` is
+  previously-clean-now-flagged (MF-5 delivers new detection). `.2` is the same direction for a
+  sharper reason: it invalidates verdicts `.1` computed wrongly under the array-position
+  suppression, so omitting it would have left the evasion alive in stored data even after the code
+  fix. Raised by another session (SMI-6554) after a downstream stale-dist failure. (SMI-6508)
+- **Fix (security regression, same-day)**: the MF-5 prefixed-secrets entry added below was
+  positioned at index 4 of `SENSITIVE_PATH_PATTERNS`, and `scanSensitivePaths` `break`s on the
+  **first** entry that matches, in array order. An always-MEDIUM entry ahead of a HIGH-capable one
+  therefore **suppressed** it: 11 of the 16 patterns sat after MF-5, so any line where a
+  prefixed-`secrets` token co-occurred with one of them reported MEDIUM instead of that entry's
+  HIGH, and `passed` flipped from `false` to `true` — the install block disappeared. Appending the
+  12-character comment `# a_secrets:` was sufficient to turn `cat ~/.ssh/id_rsa` and
+  `curl -F f=@/etc/passwd …` from blocking to passing, making this an attacker-controlled
+  suppression token rather than a theoretical ordering nit. **Fixed by moving the entry to LAST**,
+  after every HIGH-capable pattern. Realized blast radius was zero — of 636 skills carrying a
+  stored HIGH `sensitive_path` finding, none had a `location` matching the prefixed form — so no
+  stored verdict was wrongly cleared; the exposure was latent and adversarial. `SCANNER_RULESET_VERSION`
+  re-bumps to `2026-09-11.2` so verdicts stored under `.1` are not reused. A new
+  **ordering invariant** in `scanner-regression-guard.test.ts` now asserts that no always-MEDIUM
+  pattern precedes any HIGH-capable one, which generalises to the next such class; the eight
+  suppression cases are pinned in both the core and core↔edge suites. Caught by the post-merge
+  governance retro — a cross-family pre-merge gate, 3,175 passing tests and a 9-case manual
+  verification were all green over it, because every ordering test compared MF-5 only against the
+  one entry that precedes it. (SMI-6508)
+- **Fix**: `sensitive_path` now detects a secret assigned to a **prefixed** key —
+  `API_SECRETS`, `app_secrets`, `mySecrets`, and the singular `API_SECRET`. `SECRETS_ASSIGN_PATTERN`
+  carries `\b`, and `_` is a word character, so that boundary could never match after an underscore
+  or a camelCase hump; SCREAMING_SNAKE and snake_case are the dominant conventions for
+  secret-bearing environment variables, so this missed the most likely real shape. The sibling
+  `credentials` and `password` patterns carry no boundary and were never affected. Fixed by a
+  **complementary** pattern matching exactly what the boundary excludes, rather than by removing it
+  — the two never match the same occurrence, and `MY-SECRETS=` / `my.secrets=` stay with the bare
+  pattern since `-` and `.` are non-word characters its `\b` already accepts.
+- **Added**: a fifth `sensitive_path` severity class, **MF-5 (`OBSERVE_ONLY_MEDIUM_PATTERNS`)** —
+  always MEDIUM, never value-gated and never escalated. The prefixed form is classified here rather
+  than into MF-4 because MF-4 is HIGH by default, and a HIGH `sensitive_path` makes
+  `SecurityScanner` compute `passed = false`, which blocks installation with no allowlist in that
+  path. Measured against 66,495 real skill bodies in production: routing the prefixed form through
+  MF-4 would newly block 132 skills (0.20% of that corpus, ~975 extrapolated to the full registry),
+  and shape analysis put roughly 46% of those in false-positive-looking shapes. Shipping at MEDIUM
+  makes the detection visible at zero install cost and turns the open question into one the
+  accumulated findings can answer; promoting it later is a one-line move into the MF-4 set. The
+  severity-gate partition grows 4 classes → 5 and 15 patterns → 16, both guarded by the existing
+  regression test's totality check. **Deliberate asymmetry**: prefixed `password` / `credentials`
+  keys still reach HIGH, grandfathered rather than endorsed — their prefixed-form false-positive
+  rate has never been measured, and levelling in either direction without measuring would be the
+  wrong fix. `SCANNER_RULESET_VERSION` bumps to `2026-09-11.1` — *previously-clean-now-fires*, the
+  opposite direction from SMI-6505's bump and load-bearing for the same reason: without it the
+  `comparable` gate reuses the stored verdict and the new finding never reaches an already-scanned
+  skill. (SMI-6508)
+- **Fix**: `createDatabaseSync`/`createDatabaseAsync`'s native-module error messages no longer
+  recommend `docker compose --profile dev up -d`. `@skillsmith/core` ships under Elastic License
+  2.0 to external npm consumers (`@skillsmith/cli`, both MCP servers) who have no worktree tooling
+  and no `skillsmith-dev-1` container, so the Docker line was actively misleading for most of its
+  readers. The two remaining solutions (`npm rebuild better-sqlite3`, and `createDatabaseAsync()`'s
+  automatic WASM fallback) are correct in any environment. (SMI-6507)
+
+- **Changed**: the agent pack's CLI fallback commands (`CLI_FALLBACK_COMMANDS` in
+  `services/agent-pack/prompt-source.ts`) now lead with `skillsmith update --all --dry-run` and
+  then per-skill updates, instead of recommending `skillsmith update --all` directly. Containment
+  for SMI-6528: `update --all` in CLI 0.8.8-0.8.10 can overwrite local edits in skill directories
+  that are git clones and can write into the wrong directory (SMI-6530).
+
+- **Fix**: `sensitive_path` MF-4 no longer scores an **embedded** assignment key assigned a bare
+  boolean as a real credential. `allow_credentials=True` — the standard FastAPI/Starlette CORS
+  middleware flag — was scoring HIGH, which makes `SecurityScanner` compute `passed = false`, which
+  makes the install service reject the install. With no allowlist anywhere in the
+  `skill-installation.*` family, that made **any skill documenting FastAPI CORS setup uninstallable**
+  at a risk score of 1/100. The discriminator is the key, not the value: `credentials` matched inside
+  `allow_credentials` only because `CREDENTIALS_ASSIGN_PATTERN` carries no left boundary, so the fix
+  keys on the keyword being a *suffix of a longer identifier*. Bare `credentials:` / `secrets:` /
+  `password:` keys are untouched, and `AWS_CREDENTIALS=hunter2` still scores HIGH — deliberately
+  **not** fixed by adding `\b` to the pattern, which would have traded this false positive for that
+  false negative (tracked separately as SMI-6508, which documents the same missed-detection class
+  already live for `secrets`). `SCANNER_RULESET_VERSION` bumps to `2026-09-10.1` —
+  *previously-flagged-now-clean*, the same direction as SMI-5207's bump and the opposite of
+  SMI-6441's, and load-bearing for the same reason: without it the `comparable` gate keeps reusing
+  the stored pre-fix verdict and an already-scanned skill stays blocked. Two formatting variants are
+  accepted residuals and stay HIGH — a single-line multi-argument call, and a trailing inline comment
+  — because the relaxations that would fix them each leave part of the value span unexamined, which
+  measurably lets a real credential hide behind a boolean (both bypass shapes are pinned as
+  must-stay-HIGH tests). Adds a core↔edge behavioural parity test, which did not previously exist:
+  the existing twin guard only asserts the two `_shared` copies are byte-identical to each other, not
+  that they agree with `@skillsmith/core`.
+- **Fix**: `sensitive_path` MF-4 no longer reads a two-word all-lowercase value as a harmless
+  documentation label when **every** one of its words is a known common password — `password: monkey
+  dragon` now scores HIGH, while `credentials: rotation policy` and ordinary documentation labels are
+  untouched. Closes SMI-5207's residual R-2 for the two-common-password case only; a value pairing
+  one common password with an ordinary word (`password: horse staple`) deliberately stays MEDIUM,
+  because it is not distinguishable from a documentation label at a false-positive rate this gate can
+  afford. This is the first `sensitive_path` change that can RAISE severity, so SMI-5207's
+  monotonic-non-increase safety argument no longer applies — see
+  [ADR-149](../../docs/internal/adr/149-generated-scanner-data-veto-severity-model.md) for the
+  severity-raising exception and its § *Revision, 2026-09-09* for why the predicate is `every` and
+  not `some` (55% of the emitted lexicon is ordinary English dictionary words, so a `some` predicate
+  reopens the documentation false-positive class unboundedly). `SCANNER_RULESET_VERSION` bumps to
+  `2026-09-09.1` — *previously-clean-now-flagged*, the opposite direction from SMI-5207's bump, so
+  without it an already-scanned skill keeps its stored clean verdict and never sees the tightened
+  rule. `assignmentHasRealValue()` gains an optional `{ weakPasswordVeto }` parameter (default on) —
+  a pure per-call parameter used only by the blast-radius verification harness, never module state
+  (SMI-6441 Wave 2)
+
+## v0.12.3
+
+- **Add**: `SecurityScanner.weak-passwords.ts` — a generated, versioned list of common weak passwords (vendored from SecLists, hash-pinned, capped to the top 5,000 by frequency rank), built by the new `scripts/gen-weak-password-lexicon.mjs` generator and mirrored byte-identically into the Node and Deno/Supabase edge scanner twins. This wave ships the data pipeline only — no scanner behavior changes; the `sensitive_path` detection change that consumes this data is a separate, follow-on change (SMI-6441 Wave 1)
+- **Added**: SMI-6472 -- new `./utils/skill-name` subpath export (`VALID_SKILL_NAME_RE`, `validateSkillName`), matching the existing narrow-subpath convention (`./services/skill-installation-io`, etc.) rather than requiring consumers to import the full package barrel for a small, dependency-free utility.
+- **Fix**: `scripts/skill-scanner/index.ts` no longer runs its CLI `main()` unconditionally at module-load time — the invocation is guarded by the standard `import.meta.url === \`file://${process.argv[1]}\`` check, so importing the barrel for its exports (types, categorizer, trust-scorer, file-scanner, logger, reporter, scanner) no longer hijacks `process.argv`, runs a scan, or exits the importing process. `main` is now exported, and the `scripts/scan-imported-skills.ts` backwards-compat shim (the `weekly-security-scan.yml` entry point) invokes it explicitly under its own identical guard — direct `npx tsx` execution of either file is unchanged (SMI-6464)
+- **Fix**: `sensitive_path` scanner findings now require nearby action evidence (a verb, shell operator, or imperative framing) before scoring HIGH — a bare mention of a sensitive path in prose or a defensive/documentation context downgrades to MEDIUM instead of triggering the weekly security scan's allowlist-triage cycle (SMI-5207). Adds `SecurityScanner.action-context.ts` (the action-context gate) and `SecurityScanner.value-gate.ts`/`SecurityScanner.prose-lexicon.ts` (per-assignment-segmented value classification), with `patterns.sensitive-path.ts` split out of `patterns.ts` for the pattern family itself. `scanSensitivePaths()`'s severity-message construction now embeds up to 60 chars of the matched content — see `skill-scanner/allowlist.ts`'s updated design-invariant note if authoring a new allowlist entry against a `sensitive_path` message.
+- **Fix**: `multilineTruncated` (set when a scan hits its per-pattern iteration ceiling, so `riskScore` is a known under-count) was computed but never consumed at the quarantine decision — `trust-scorer.ts`'s `shouldQuarantine()` could clear or never apply a quarantine hold based on an incomplete scan. A truncated scan now forces `quarantine: true` before allowlist filtering runs, so an allowlist can no longer clear a scan-integrity hold (SMI-5879, SMI-6020)
+
 ## v0.12.2
 
 - **Feature**: SMI-6343 Wave 4 -- apply_manifest_reconcile tool (#2715)
@@ -380,6 +907,7 @@ All notable changes to `@skillsmith/core` are documented here.
 ## v0.11.6
 
 - **Fix**: Harden manifest concurrency (uninstall lock, temp-file races) (#2331)
+- **Fix**: `scanPatternsWithMultilineSupport` (`security/scanner/SecurityScanner.helpers.ts`) tested each `content`/`both`-scope pattern with a non-global regex `.match()`, returning only the *first* match in the whole document — a real jailbreak/prompt-injection attack repeated later in a long skill could undercount and slip past the quarantine threshold. Rewritten as a per-pattern global-exec loop bounded by `MAX_MULTILINE_LINES_PER_PATTERN` (64, score-neutral) and `MAX_MULTILINE_ITERATIONS_PER_PATTERN` (10,000, wall-clock liveness only, sets `ScanReport.multilineTruncated`); also fixes an off-by-one where a match capturing a leading `(?:^|\n)` anchor reported `.index` at the *previous* line's newline instead of the matched line's own start. `MAX_CONTENT_LENGTH_FOR_REGEX` (pass-1 full-content cap) raised from 10,000 to 1,000,000 chars, closing a truncation blind spot on real-sized SKILL.md files (re-benchmarked: ~56ms worst case at 1MB, linear to 4MB). `multilineTruncated` is now enforced at every quarantine write path (Node + Deno indexer runtimes, and this package's own `trust-scorer.ts`) — a truncated scan can only raise a verdict, never lower one (SMI-5879, SMI-6020)
 - **Fix**: code-review follow-up on the Antigravity `directory-package` companion-agent path (two BLOCKING findings). (1) `resolveCompanionAgentPath()` gains an explicit 3rd `baseDir` param (default `process.cwd()`) instead of letting Antigravity's relative `dir` resolve implicitly against whatever `process.cwd()` happens to be at the exact `fs` call that consumes the path — wrong for the long-running MCP server, whose cwd is fixed at launch and does not track the calling editor/agent's real project. `writeInstallFiles()` gains a matching optional `companionBaseDir` param, threaded through both its callers (`SkillInstallationService.install()` via a new `companionBaseDir` constructor param, and `installFromContent()`); the MCP `install_skill` tool gains an optional `cwd` input field passed through as `companionBaseDir` so a caller can supply its real project root. (2) `resolveCompanionAgentPath()`'s `directory-package` branch now rejects an unsafe `skillName` (`''`, `'.'`, `'..'`, or containing `/`/`\`) before building the path — `skillName` becomes its own path segment in this mode, so `'..'` would otherwise `path.join`-normalize outside the intended companion-agent directory. Not exploitable through either current caller (both already sanitize `skillName` upstream), but the function is exported/reusable with no validation of its own, so it now enforces the same "last line of defense" standard already applied to `skillNameFromSkillId()` (SMI-5982)
 - **Feature**: `antigravity` is now a real `ClientId` (`install/paths.ts`) — `CLIENT_NATIVE_PATHS['antigravity'] = ~/.gemini/config/skills`, un-deferred from `compatibility/slugs.ts`'s `BROWSE_ONLY_SLUGS` (which now only contains `gemini`), and given its own `CLIENT_TO_COMPATIBILITY_SLUG` entry. `CompanionAgentTarget.fileMode` gains a second value, `'directory-package'` (Antigravity only today) — a per-skill subdirectory `<dir>/<skillName>/agent.md`, instead of every other client's flat `<dir>/<name>-suffix.md`; `resolveCompanionAgentPath()` is now mode-aware. Antigravity's companion-agent output is project-scoped (`.agents/agents/<name>/agent.md`, relative to the invocation directory) — this CLI has no existing global-vs-project install-mode distinction to hook into, confirmed by grep, so global scope (`~/.gemini/config/agents/`) is a fast-follow, not implemented here (SMI-5982)
 - **Fix**: `writeInstallFiles()`'s rollback path could leave behind an orphaned, empty per-skill companion-agent directory when a new `directory-package`-mode install (Antigravity) failed partway through — every other client's agents dir is shared and pre-existing, so this hazard never applied to them. Cleanup uses a non-recursive `rmdir`, a safe no-op when the directory was never created or holds unexpected surviving content (SMI-5982)

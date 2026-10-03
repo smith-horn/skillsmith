@@ -15,6 +15,7 @@
  */
 
 import { bindGeneration } from './smi5879-gate-check.binding.ts'
+import { makeManualOnlyDispositionLookup } from './smi5879-gate-check.gates.bulk-authorization.ts'
 import {
   DRIFT_CLASSES_REQUIRING_EXCLUSION,
   MISSING_COHORT_DRIFT_CLASS,
@@ -301,10 +302,22 @@ export async function evaluateG2R(
   const requiringExclusion = driftRows.filter((r) =>
     (DRIFT_CLASSES_REQUIRING_EXCLUSION as readonly string[]).includes(r.drift_class)
   )
+  // SMI-6444: HONORING a disposition requires authorization — a `method:'bulk'`
+  // entry can never dispose a drift row (plan Item 0 keeps DR-1..DR-4 manual),
+  // so this reads through the same manual-only lookup G-1's own
+  // `missingDriftExcludes` check uses rather than the raw `byId` claim.
+  const driftDispositionOf = makeManualOnlyDispositionLookup(ledger.validation)
   const undisposed = requiringExclusion
-    .filter((r) => ledger.validation.byId.get(r.id) !== 'exclude')
+    .filter((r) => driftDispositionOf(r.id) !== 'exclude')
     .map((r) => r.id)
   const dr5Rows = driftRows.filter((r) => r.drift_class === 'DR-5-cohort-move-out')
+  // DELIBERATELY still the raw `byId` claim, NOT the authorized lookup — this
+  // check FLAGS an exclusion that should not exist (reported, never blocking),
+  // rather than honoring one. A bulk-excluded DR-5 row is every bit as
+  // improper as a manually-excluded one, so routing it through the lookup
+  // would HIDE it from the audit signal instead of strengthening it. Honoring
+  // a claim and flagging a claim are opposite directions: only the former
+  // needs authorization.
   const improperlyExcludedDr5 = dr5Rows
     .filter((r) => ledger.validation.byId.get(r.id) === 'exclude')
     .map((r) => r.id)

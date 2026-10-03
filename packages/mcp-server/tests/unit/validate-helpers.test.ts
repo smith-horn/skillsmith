@@ -5,12 +5,14 @@
  * SMI-1719: Unit tests for extracted helper functions from Wave 3 refactor
  */
 
+import { basename } from 'path'
 import { describe, it, expect } from 'vitest'
 import {
   parseYamlFrontmatter,
   hasSsrfPattern,
   hasPathTraversal,
   validateMetadata,
+  validateNameMatchesDirectory,
   detectClaudeMdModification,
 } from '../../src/tools/validate.helpers.js'
 
@@ -254,6 +256,39 @@ tags:
       expect(errors.some((e) => e.field === 'name' && e.message.includes('exceeds maximum'))).toBe(
         true
       )
+    })
+
+    // SMI-6472: Agent Skills spec name format
+    it('accepts a valid lowercase-hyphen name with no format error', () => {
+      const metadata = { name: 'my-skill', description: 'Test' }
+
+      const errors = validateMetadata(metadata, false)
+
+      expect(errors.some((e) => e.field === 'name')).toBe(false)
+    })
+
+    it('rejects a name with uppercase letters', () => {
+      const metadata = { name: 'My-Skill', description: 'Test' }
+
+      const errors = validateMetadata(metadata, false)
+
+      expect(errors.some((e) => e.field === 'name' && e.severity === 'error')).toBe(true)
+    })
+
+    it('rejects a name with underscores', () => {
+      const metadata = { name: 'my_skill', description: 'Test' }
+
+      const errors = validateMetadata(metadata, false)
+
+      expect(errors.some((e) => e.field === 'name' && e.severity === 'error')).toBe(true)
+    })
+
+    it('rejects a name starting with a digit', () => {
+      const metadata = { name: '1skill', description: 'Test' }
+
+      const errors = validateMetadata(metadata, false)
+
+      expect(errors.some((e) => e.field === 'name' && e.severity === 'error')).toBe(true)
     })
 
     it('validates tags array', () => {
@@ -546,6 +581,89 @@ tags:
       const result = detectClaudeMdModification('Edits CLAUDE.md')
 
       expect(result[0]).toContain('standards.md')
+    })
+  })
+
+  describe('validateNameMatchesDirectory', () => {
+    it('passes when name matches the directory (isDirectory=true)', () => {
+      const errors = validateNameMatchesDirectory('my-skill', '/skills/my-skill', true)
+
+      expect(errors).toEqual([])
+    })
+
+    it('passes when name matches the containing directory (isDirectory=false)', () => {
+      const errors = validateNameMatchesDirectory('my-skill', '/skills/my-skill/SKILL.md', false)
+
+      expect(errors).toEqual([])
+    })
+
+    // SMI-6472 (cross-model pre-merge review): a relative path used to
+    // degrade to '.' via basename(dirname('SKILL.md')), which can never
+    // equal a valid skill name — so a perfectly valid skill validated from
+    // inside its own directory was rejected outright. These pin the
+    // resolve()-before-basename fix.
+    it('passes for a bare relative SKILL.md resolved from inside the skill directory', () => {
+      const cwd = process.cwd()
+      const errors = validateNameMatchesDirectory(basename(cwd), 'SKILL.md', false)
+
+      expect(errors).toEqual([])
+    })
+
+    it('passes for a ./-prefixed relative SKILL.md', () => {
+      const cwd = process.cwd()
+      const errors = validateNameMatchesDirectory(basename(cwd), './SKILL.md', false)
+
+      expect(errors).toEqual([])
+    })
+
+    it("passes for '.' as the skill directory (isDirectory=true)", () => {
+      const cwd = process.cwd()
+      const errors = validateNameMatchesDirectory(basename(cwd), '.', true)
+
+      expect(errors).toEqual([])
+    })
+
+    it('still errors on a genuine mismatch given a relative path', () => {
+      const errors = validateNameMatchesDirectory(
+        'definitely-not-the-cwd-name',
+        './SKILL.md',
+        false
+      )
+
+      expect(errors).toHaveLength(1)
+      expect(errors[0]).toMatchObject({ field: 'name', severity: 'error' })
+    })
+
+    it('errors when name mismatches the directory (isDirectory=true)', () => {
+      const errors = validateNameMatchesDirectory('my-skill', '/skills/other-dir', true)
+
+      expect(errors).toHaveLength(1)
+      expect(errors[0]?.field).toBe('name')
+      expect(errors[0]?.severity).toBe('error')
+      expect(errors[0]?.message).toContain('my-skill')
+      expect(errors[0]?.message).toContain('other-dir')
+    })
+
+    it('errors when name mismatches the containing directory (isDirectory=false)', () => {
+      const errors = validateNameMatchesDirectory('my-skill', '/skills/other-dir/SKILL.md', false)
+
+      expect(errors).toHaveLength(1)
+      expect(errors[0]?.field).toBe('name')
+      expect(errors[0]?.severity).toBe('error')
+      expect(errors[0]?.message).toContain('my-skill')
+      expect(errors[0]?.message).toContain('other-dir')
+    })
+
+    it('returns no errors when name is missing (undefined)', () => {
+      const errors = validateNameMatchesDirectory(undefined, '/skills/my-skill', true)
+
+      expect(errors).toEqual([])
+    })
+
+    it('returns no errors when name is not a string', () => {
+      const errors = validateNameMatchesDirectory(123, '/skills/my-skill', true)
+
+      expect(errors).toEqual([])
     })
   })
 })

@@ -14,7 +14,7 @@
 import { readFileSync } from 'node:fs'
 import { createHash } from 'node:crypto'
 import { join } from 'node:path'
-import { describe, it, expect, vi } from 'vitest'
+import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest'
 import {
   withFetchRetry,
   fullJitterWaitMs,
@@ -110,6 +110,135 @@ describe('withFetchRetry', () => {
   it('honors overridden maxRetries/baseMs/maxMs defaults', () => {
     expect(DEFAULT_BASE_MS).toBe(1000)
     expect(DEFAULT_MAX_MS).toBe(60_000)
+  })
+
+  // SMI-6442: RateLimitError.retryAfterSeconds (parsed from the real
+  // Retry-After response header, _shared/rate-limit.ts) was previously
+  // discarded entirely in favor of blind full-jitter backoff. Fake timers
+  // throughout this block — a real Retry-After can be many seconds, and
+  // these tests must not actually wait that long.
+  describe('SMI-6442: honoring RateLimitError.retryAfterSeconds', () => {
+    beforeEach(() => {
+      vi.useFakeTimers()
+    })
+    afterEach(() => {
+      vi.useRealTimers()
+    })
+
+    it('a positive Retry-After is honored as a floor over local jitter', async () => {
+      const waits: number[] = []
+      const attempt = vi
+        .fn()
+        .mockRejectedValueOnce(new RateLimitError('rate limited', 429, 2))
+        .mockResolvedValueOnce({ content: 'ok' })
+      const resultPromise = withFetchRetry(attempt, {
+        baseMs: 1,
+        maxMs: 5,
+        onRetry: (_attempt, waitMs) => waits.push(waitMs),
+      })
+      await vi.runAllTimersAsync()
+      const result = await resultPromise
+      expect(result).toEqual({ content: 'ok' })
+      // Local jitter alone would be at most 5ms (maxMs) — the 2s Retry-After
+      // floor must win.
+      expect(waits[0]).toBe(2000)
+    })
+
+    it('missing/zero Retry-After falls back to jitter unchanged', async () => {
+      const waits: number[] = []
+      const attempt = vi
+        .fn()
+        .mockRejectedValueOnce(new RateLimitError('rate limited', 429, 0))
+        .mockResolvedValueOnce({ content: 'ok' })
+      const resultPromise = withFetchRetry(attempt, {
+        baseMs: 1,
+        maxMs: 5,
+        onRetry: (_attempt, waitMs) => waits.push(waitMs),
+      })
+      await vi.runAllTimersAsync()
+      await resultPromise
+      expect(waits[0]).toBeGreaterThanOrEqual(0)
+      expect(waits[0]).toBeLessThanOrEqual(5)
+    })
+
+    it('a Retry-After greater than maxMs is honored in full, never truncated', async () => {
+      const waits: number[] = []
+      const attempt = vi
+        .fn()
+        .mockRejectedValueOnce(new RateLimitError('rate limited', 429, 120))
+        .mockResolvedValueOnce({ content: 'ok' })
+      const resultPromise = withFetchRetry(attempt, {
+        baseMs: 1,
+        maxMs: 5, // far smaller than the 120s Retry-After
+        onRetry: (_attempt, waitMs) => waits.push(waitMs),
+      })
+      await vi.runAllTimersAsync()
+      await resultPromise
+      expect(waits[0]).toBe(120_000)
+    })
+
+    it('no sleep occurs after the final failed attempt, even with a positive Retry-After', async () => {
+      const attempt = vi.fn().mockRejectedValue(new RateLimitError('rate limited', 429, 5))
+      const resultPromise = withFetchRetry(attempt, { maxRetries: 1, baseMs: 1, maxMs: 5 })
+      await vi.runAllTimersAsync()
+      const result = await resultPromise
+      expect(result).toEqual({ exhausted: true, lastStatus: 429 })
+      // 1 initial attempt + 1 retry = 2 calls; no third attempt, no hang.
+      expect(attempt).toHaveBeenCalledTimes(2)
+    })
+
+    it('onRetry receives the actual post-floor wait value, not the raw jitter', async () => {
+      let observedWait: number | undefined
+      const attempt = vi
+        .fn()
+        .mockRejectedValueOnce(new RateLimitError('rate limited', 429, 3))
+        .mockResolvedValueOnce({ content: 'ok' })
+      const resultPromise = withFetchRetry(attempt, {
+        baseMs: 1,
+        maxMs: 5,
+        onRetry: (_attempt, waitMs) => {
+          observedWait = waitMs
+        },
+      })
+      await vi.runAllTimersAsync()
+      await resultPromise
+      expect(observedWait).toBe(3000)
+    })
+
+    it('a mixed null-then-RateLimitError sequence resolves lastStatus to the RateLimitError, not the stale null attempt', async () => {
+      const attempt = vi
+        .fn()
+        .mockResolvedValueOnce(null) // attempt 1: plain null, no status
+        .mockRejectedValueOnce(new RateLimitError('rate limited', 403, 1)) // attempt 2: real status
+      const resultPromise = withFetchRetry(attempt, {
+        maxRetries: 1,
+        baseMs: 1,
+        maxMs: 5,
+        captureStatus: () => 999, // would wrongly win if the ordering bug regressed
+      })
+      await vi.runAllTimersAsync()
+      const result = await resultPromise
+      expect(result).toEqual({ exhausted: true, lastStatus: 403 })
+    })
+
+    it('both 403 and 429 exercise the Retry-After path identically', async () => {
+      for (const status of [403, 429]) {
+        const attempt = vi
+          .fn()
+          .mockRejectedValueOnce(new RateLimitError('rate limited', status, 1))
+          .mockResolvedValueOnce({ content: 'ok' })
+        const waits: number[] = []
+        const resultPromise = withFetchRetry(attempt, {
+          baseMs: 1,
+          maxMs: 5,
+          onRetry: (_attempt, waitMs) => waits.push(waitMs),
+        })
+        await vi.runAllTimersAsync()
+        const result = await resultPromise
+        expect(result).toEqual({ content: 'ok' })
+        expect(waits[0]).toBe(1000)
+      }
+    })
   })
 })
 

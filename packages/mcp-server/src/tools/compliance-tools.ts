@@ -60,6 +60,8 @@ export const complianceReportToolSchema = {
     'Generate compliance reports: SOC2 (markdown), CycloneDX (JSON SBOM), or raw JSON. ' +
     'Scoped to local skill inventory. ' +
     'Requires Team tier or higher (compliance_reports feature).',
+  title: 'Generate Compliance Report',
+  annotations: { readOnlyHint: false, destructiveHint: false },
   inputSchema: {
     type: 'object' as const,
     properties: {

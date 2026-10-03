@@ -132,7 +132,7 @@ import DocsLayout from '../../../layouts/DocsLayout.astro'
 
   <p>Run this in your terminal:</p>
 
-  <pre><code>{`skillsmith update --all                   # Update all installed skills
+  <pre><code>{`skillsmith update --all --dry-run         # Review what --all would change first
 skillsmith update jest-helper             # Update one skill
 skillsmith update jest-helper commit-lint # Update a specific set of skills
 skillsmith update jest-helper --dry-run   # See what would change without applying`}</code></pre>
@@ -141,6 +141,17 @@ skillsmith update jest-helper --dry-run   # See what would change without applyi
     <code>skillsmith update</code> with no skill names and no <code>--all</code> prints usage
     guidance instead of updating anything — pick one of the forms above.
   </p>
+
+  <div class="callout warning">
+    <p class="callout-heading">Review the dry run, then update one skill at a time</p>
+    <p>
+      Always start with <code>skillsmith update --all --dry-run</code> and review the output
+      before applying anything. Once you have reviewed it, update skills individually rather
+      than re-running with <code>--all</code>. If a skill is its own git clone (you installed it
+      by cloning a repository), update it with <code>git pull</code> in that directory instead of
+      <code>skillsmith update</code>.
+    </p>
+  </div>
 
   <p>
     Before a major-version update, run a

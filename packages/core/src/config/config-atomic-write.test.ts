@@ -15,7 +15,15 @@
  */
 
 import { describe, it, expect } from 'vitest'
-import { existsSync, mkdirSync, readFileSync, readdirSync, utimesSync, writeFileSync } from 'fs'
+import {
+  existsSync,
+  mkdirSync,
+  readFileSync,
+  readdirSync,
+  statSync,
+  utimesSync,
+  writeFileSync,
+} from 'fs'
 import * as path from 'path'
 import * as os from 'os'
 import { hostname } from 'node:os'
@@ -39,7 +47,23 @@ describe('acquireConfigLock — mutual exclusion', () => {
 
     const release = acquireConfigLock(configPath)
     try {
-      expect(() => acquireConfigLock(configPath, 200)).toThrow(/Timed out waiting for config lock/)
+      // 500ms, not 200 (SMI-6764 F4): RECLAIM_PROBE_AFTER_MS is 250, and
+      // `acquireConfigLock` forwards only `timeoutMs`, so under the old budget
+      // the probe never ran and `held` came from the safe default rather than
+      // from `classifyRefusal`. The expected answer was the same either way,
+      // which is exactly why it went unnoticed — the test could not tell a
+      // working classifier from an absent one.
+      let caught: unknown
+      try {
+        acquireConfigLock(configPath, 500)
+      } catch (err) {
+        caught = err
+      }
+      const message = caught instanceof Error ? caught.message : String(caught)
+      expect(message).toMatch(/Could not acquire config lock/)
+      // Now classified, not defaulted: a live v1 owner reports its pid.
+      expect(message).toMatch(new RegExp(`held by pid ${process.pid}\\b`))
+      expect(message).toMatch(/retrying is the right first response/)
     } finally {
       release()
     }
@@ -110,7 +134,19 @@ describe('acquireConfigLock — mutual exclusion', () => {
     utimesSync(lockPath, longAgo, longAgo)
     const before = readFileSync(lockPath)
 
-    expect(() => acquireConfigLock(configPath, 200)).toThrow(/Timed out waiting for config lock/)
+    // 500ms for the same reason as the case above (SMI-6764 F4): under 200ms
+    // the reclaim probe never fired, so this test asserted the lock bytes were
+    // unchanged when nothing had ever tried to change them. The age-irrelevance
+    // property it exists for is only exercised once the probe actually runs.
+    let caught: unknown
+    try {
+      acquireConfigLock(configPath, 500)
+    } catch (err) {
+      caught = err
+    }
+    const message = caught instanceof Error ? caught.message : String(caught)
+    expect(message).toMatch(/Could not acquire config lock/)
+    expect(message).toMatch(new RegExp(`held by pid ${process.pid}\\b`))
     expect(readFileSync(lockPath).equals(before)).toBe(true)
   })
 
@@ -122,7 +158,31 @@ describe('acquireConfigLock — mutual exclusion', () => {
     writeFileSync(lockPath, String(process.pid)) // bare integer, no JSON, definitely live
     const before = readFileSync(lockPath)
 
-    expect(() => acquireConfigLock(configPath, 150)).toThrow(/Timed out waiting for config lock/)
+    let caught: unknown
+    try {
+      // 500ms, not 150ms (SMI-6764). `acquireConfigLock` forwards only
+      // `timeoutMs`, so the reclaim probe fires on its own schedule --
+      // RECLAIM_PROBE_AFTER_MS is 250. Under the old 150ms budget the probe
+      // never ran once, `lastRefusal` stayed at its safe default and this case
+      // reported `held`: the test named the D-5 legacy path and never reached
+      // `classifyRefusal` at all. Measured, not inferred -- the message read
+      // "held by another process" for a bare-PID claim.
+      acquireConfigLock(configPath, 500)
+    } catch (err) {
+      caught = err
+    }
+    const message = caught instanceof Error ? caught.message : String(caught)
+    // Guard the guard: if the budget ever drops back below the probe delay,
+    // this fails loudly here instead of silently re-testing `held`.
+    expect(message).toContain('legacy')
+    // "Could not acquire", not "Timed out waiting": a legacy claim is never
+    // auto-reclaimed by this process, so retrying cannot resolve it (SMI-6764).
+    expect(message).toMatch(/Could not acquire config lock/)
+    // The verb no longer discriminates anything — every reason opens this way
+    // since SMI-6764 — so it is `legacy` above and this remedy phrase that
+    // separate this case from the two `held` cases in the sibling tests.
+    expect(message).toMatch(/never auto-reclaimed, in any configuration/)
+    expect(message).not.toMatch(/retrying is the right first response/)
     expect(readFileSync(lockPath).equals(before)).toBe(true) // byte-identical
     expect(existsSync(`${lockPath}.reclaim`)).toBe(false) // no orphan left behind
     expect(readdirSync(dir).filter((f) => f.endsWith('.tmp'))).toEqual([])
@@ -182,5 +242,16 @@ describe('atomicWriteFile', () => {
     atomicWriteFile(filePath, '{}', 0o600)
 
     expect(existsSync(filePath)).toBe(true)
+    // SMI-6776 round 2: this test asserted ONLY existence while its name
+    // claimed to check the mode. `chmodSync(filePath, 0o644)` therefore passed
+    // it -- and 0o644 on `~/.skillsmith/config.json`, which holds the API key,
+    // is readable by every local account. A test whose name asserts a property
+    // it never checks is worse than no test: it occupies the slot.
+    expect(statSync(filePath).mode & 0o777).toBe(0o600)
+    // Known-negative: prove the assertion can observe a difference. Without
+    // it, the line above could be reading a constant.
+    const other = path.join(dir, 'other.json')
+    atomicWriteFile(other, '{}', 0o644)
+    expect(statSync(other).mode & 0o777).toBe(0o644)
   })
 })

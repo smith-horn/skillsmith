@@ -9,10 +9,65 @@ import * as os from 'os'
 import * as path from 'path'
 import { randomUUID } from 'node:crypto'
 
-import type { SkillManifest } from './skill-installation.types.js'
+import { withFileLock } from '../config/file-lock.js'
+import { loadManifestForWrite, loadManifestLenient } from './skill-manifest.read-state.js'
+import type { SkillManifest, SkillManifestEntry } from './skill-installation.types.js'
 
-const MANIFEST_LOCK_TIMEOUT_MS = 30000
-const MANIFEST_LOCK_RETRY_MS = 100
+/**
+ * SMI-6733 Phase 1 fix: {@link ManifestManager.updateSafely}'s optional
+ * second parameter. `tolerant: true` swaps the STRICT internal load
+ * (`this.load()` -> `loadManifestForWrite()`, which throws
+ * `ManifestUnwritableError` on a corrupt/unreadable/version-unsupported
+ * manifest) for the LENIENT one (`loadManifestLenient()`, which degrades to
+ * an empty document instead of throwing). Everything else about the call —
+ * locking, the update callback, the save — is identical; this is a load-mode
+ * switch, not a second code path.
+ *
+ * **It is also the one way to overwrite a manifest this process could not
+ * read, so it is not a convenience.** The lenient load substitutes an EMPTY
+ * document, and the save that follows writes the callback's result over the
+ * original bytes — so on a `corrupt`/`unreadable`/`version_unsupported`
+ * manifest, `{ tolerant: true }` is a destructive operation dressed as a
+ * load-mode switch. Measured (SMI-6733): against a manifest whose readable
+ * prefix recorded a real skill followed by trailing garbage, one tolerant
+ * adoption write left a valid 410-byte manifest holding only the adopted
+ * entry, and the recorded skill was gone — with nothing on the return path
+ * signalling that anything had been discarded. The single caller that passes
+ * it (`adoptUntrackedSkillEntry`) now gates it behind an explicit
+ * `tolerateDegradedRead` argument that no call site may default into; see
+ * that function's doc comment for the gate and its two call sites.
+ */
+export interface UpdateSafelyOptions {
+  tolerant?: boolean
+}
+
+/**
+ * The `installedSkills` map a consumer can safely dereference.
+ *
+ * ADR-171 § 5's container check deliberately admits a manifest whose
+ * `installedSkills` is absent or `null` (SMI-6733 Phase 1) — both mean "this
+ * machine has installed nothing" and neither is evidence of corruption, so
+ * both classify `ok`. But {@link SkillManifest} declares the field
+ * NON-optional, so a consumer writing `manifest.installedSkills[key]`
+ * type-checks and then throws `Cannot read properties of null` at runtime
+ * (SMI-6733 MAJOR 3, measured for both `null` and absent).
+ *
+ * The gap is closed HERE, on the consumer side, and not in the classifier,
+ * because ADR-171 § 3 forbids the classifier transforming the parsed value:
+ * the object handed onward must stay the raw `JSON.parse` result for the
+ * CAS's canonical-form comparison. Normalising for a READER is not the same
+ * as rewriting for a WRITER — the `{}` returned when the field is nullish is
+ * a fresh object, so a caller must not mutate it expecting the change to
+ * reach the manifest. Writers mutate inside {@link ManifestManager.updateSafely}'s
+ * callback, which builds its own object either way.
+ */
+export function installedSkillsOf(manifest: SkillManifest): Record<string, SkillManifestEntry> {
+  // The widening is the point: the declared type says non-optional, the
+  // validated runtime shape says otherwise, and the declared type is the one
+  // that is wrong. See the doc comment above.
+  const value = manifest.installedSkills as Record<string, SkillManifestEntry> | null | undefined
+  return value ?? {}
+}
 
 /**
  * SMI-6343 Wave 1 — runtime backstop for the test-fixture manifest leak.
@@ -112,28 +167,41 @@ export class ManifestManager {
    * that empty snapshot back out would erase every previously-recorded
    * install. Now it throws loudly instead, so a corrupt manifest surfaces as
    * an error rather than silently wiping state on the next write.
+   *
+   * ADR-171 (SMI-6733): re-implemented on top of the five-state classifier
+   * in `skill-manifest.read-state.ts` — external behaviour is unchanged
+   * (`ENOENT` -> empty manifest, everything else throws), but the thrown
+   * message is now ADR-171 § 8's, and a manifest that PARSES but fails § 5's
+   * shape check (e.g. `installedSkills: []`) now throws here too, where it
+   * previously flowed through untouched. `ManifestManager.load()` is
+   * literally `loadManifestForWrite()` — this class IS the canonical writer,
+   * so there is no separate "read-only" behaviour to preserve.
    */
   async load(): Promise<SkillManifest> {
-    let content: string
-    try {
-      content = await fs.readFile(this.manifestPath, 'utf-8')
-    } catch (error) {
-      if ((error as NodeJS.ErrnoException).code === 'ENOENT') {
-        return { version: '1.0.0', installedSkills: {} }
-      }
-      throw error
-    }
+    return loadManifestForWrite(this.manifestPath)
+  }
 
-    try {
-      return JSON.parse(content)
-    } catch (error) {
-      throw new Error(
-        'Manifest file at ' +
-          this.manifestPath +
-          ' exists but is corrupt/unparseable: ' +
-          (error instanceof Error ? error.message : String(error))
-      )
-    }
+  /**
+   * The lenient twin of {@link load}, and the ONLY thing `updateSafely`'s
+   * `{ tolerant: true }` substitutes for it.
+   *
+   * SMI-6733: it is a METHOD rather than a direct `loadManifestLenient(this
+   * .manifestPath)` call inside `updateSafely` purely for symmetry — the
+   * strict branch goes through `this.load()`, so a subclass or test double
+   * that overrides one load path but not the other would otherwise be
+   * consulted on the strict branch and silently bypassed on the tolerant
+   * one. That asymmetry is invisible at the call site and exactly the shape
+   * of bypass SMI-6733 Phase 1 removed one level up (a helper that called
+   * `manifest.save()` around an injected `ManifestManager`), so it is closed
+   * here rather than left as a smaller instance of the same thing.
+   *
+   * The warning `loadManifestLenient` returns is deliberately dropped: the
+   * decision to proceed on a degraded read has already been taken by the
+   * caller that passed `{ tolerant: true }`, and that caller — not this
+   * method — owns reporting it.
+   */
+  async loadTolerant(): Promise<SkillManifest> {
+    return (await loadManifestLenient(this.manifestPath)).manifest
   }
 
   /**
@@ -164,65 +232,44 @@ export class ManifestManager {
     }
   }
 
-  async acquireLock(): Promise<void> {
-    // Guarded here as well as in save(): updateSafely() acquires the lock
-    // BEFORE it loads, so without this the guard would fire only after a
-    // `manifest.json.lock` file had already been created in the real home.
+  /**
+   * SMI-6735: locking now delegates to `withFileLock` (the owned-lock
+   * primitive) instead of a hand-rolled age-based EEXIST/mtime protocol —
+   * see `../config/file-lock.ts`'s module comment for why: this manifest
+   * path and `@skillsmith/mcp-server`'s `install.helpers.manifest.ts` used
+   * to run two independent age-based lock implementations against the
+   * BYTE-IDENTICAL `<manifestPath>.lock` file in the same MCP server
+   * process, which is not mutual exclusion.
+   *
+   * The guard fires FIRST, before `withFileLock` ever attempts to create a
+   * lock file — this ordering is load-bearing, exactly as it was for the
+   * former `acquireLock()`: without it, a real-home-derived path would have
+   * a lock file created in the real home before the guard ever ran.
+   *
+   * SMI-6733 Phase 1: `options.tolerant` (default `false`) routes the
+   * internal load through `loadManifestLenient()` instead of `this.load()`.
+   * This is the dependency-injection fix for a bypass a previous
+   * implementation introduced — untracked-skill adoption used to write
+   * "around" a caller-supplied `ManifestManager` via a module-local
+   * `updateManifestTolerantly()` helper that took `manifest.path` and called
+   * `manifest.save()` directly, never `manifest.updateSafely()` itself. A
+   * caller injecting a test double (or any other `ManifestManager`-shaped
+   * object) never saw its own `updateSafely` invoked, so a double that
+   * intercepts `updateSafely` — to assert on what it receives, or to throw
+   * — was silently routed around. Tolerance is now a PARAMETER of this
+   * method instead of a path outside it, so a double that ignores the extra
+   * argument still intercepts the call.
+   */
+  async updateSafely(
+    updateFn: (manifest: SkillManifest) => SkillManifest,
+    options?: UpdateSafelyOptions
+  ): Promise<void> {
     assertNotRealUserHome(this.manifestPath, 'lock')
-    const lockPath = this.manifestPath + '.lock'
-    const startTime = Date.now()
-
     await fs.mkdir(path.dirname(this.manifestPath), { recursive: true })
-
-    while (Date.now() - startTime < MANIFEST_LOCK_TIMEOUT_MS) {
-      try {
-        await fs.writeFile(lockPath, String(process.pid), { flag: 'wx' })
-        return
-      } catch (error) {
-        if ((error as NodeJS.ErrnoException).code === 'EEXIST') {
-          try {
-            const stats = await fs.stat(lockPath)
-            if (Date.now() - stats.mtimeMs > MANIFEST_LOCK_TIMEOUT_MS) {
-              await fs.unlink(lockPath).catch(() => {})
-              continue
-            }
-          } catch {
-            continue
-          }
-          await new Promise((resolve) => setTimeout(resolve, MANIFEST_LOCK_RETRY_MS))
-        } else {
-          throw error
-        }
-      }
-    }
-
-    throw new Error('Failed to acquire manifest lock after ' + MANIFEST_LOCK_TIMEOUT_MS + 'ms')
-  }
-
-  async releaseLock(): Promise<void> {
-    // Guarded (adversarial-review finding, SMI-6343 follow-up): a caller that
-    // invokes releaseLock() directly against a real-home-derived path (a
-    // cleanup helper, an afterEach) would otherwise delete a lock a live
-    // skillsmith process is holding on the real manifest, silently breaking
-    // that process's mutual exclusion. save()/acquireLock() reach this only
-    // through updateSafely()'s already-guarded acquireLock(), so this is
-    // belt-and-suspenders for a caller that skips that path.
-    assertNotRealUserHome(this.manifestPath, 'unlock')
-    try {
-      await fs.unlink(this.manifestPath + '.lock')
-    } catch {
-      // Ignore — lock may have been cleaned up by timeout
-    }
-  }
-
-  async updateSafely(updateFn: (manifest: SkillManifest) => SkillManifest): Promise<void> {
-    await this.acquireLock()
-    try {
-      const manifest = await this.load()
+    await withFileLock(this.manifestPath, 'manifest update', async () => {
+      const manifest = options?.tolerant ? await this.loadTolerant() : await this.load()
       const updated = updateFn(manifest)
       await this.save(updated)
-    } finally {
-      await this.releaseLock()
-    }
+    })
   }
 }

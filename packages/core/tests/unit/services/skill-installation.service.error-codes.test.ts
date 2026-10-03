@@ -201,6 +201,28 @@ describe('SMI-4795: install failures populate errorCode', () => {
     expect(second.errorCode).toBe('ALREADY_INSTALLED')
   })
 
+  // SMI-6529 Wave A0: the actual fix for the reported data-loss bug — a
+  // pre-existing directory Skillsmith never installed (no manifest entry)
+  // must refuse BEFORE any network fetch, even under force=true.
+  it('INSTALL_TARGET_UNTRACKED when installPath already exists with no manifest entry — no network fetch attempted', async () => {
+    const untrackedDir = path.join(skillsDir, 'untracked-repo')
+    await fs.mkdir(untrackedDir, { recursive: true })
+    const sentinelPath = path.join(untrackedDir, 'my-own-file.txt')
+    await fs.writeFile(sentinelPath, 'a user file Skillsmith never wrote')
+
+    const mockFetch = vi.mocked(fetch)
+    const service = createService(db)
+    const result = await service.install('https://github.com/owner/untracked-repo', {
+      force: true,
+    })
+
+    expect(result.success).toBe(false)
+    expect(result.errorCode).toBe('INSTALL_TARGET_UNTRACKED')
+    expect(mockFetch).not.toHaveBeenCalled()
+    // Nothing was overwritten — the untracked directory's own content survives.
+    expect(await fs.readFile(sentinelPath, 'utf-8')).toBe('a user file Skillsmith never wrote')
+  })
+
   it('SKIP_SCAN_FORBIDDEN when skipScan requested on unknown tier', async () => {
     const mockFetch = vi.mocked(fetch)
     mockFetch.mockImplementation(async (url) => {

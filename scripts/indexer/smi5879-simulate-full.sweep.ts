@@ -15,6 +15,7 @@
  */
 
 import { runCancellablePool, type RateLimitTelemetry } from './_shared/rate-limit.ts'
+import { assertRowsInternallyCoherent } from './smi5879-merge-shards.outcome-coherence.ts'
 import { processRow, PROCESS_CONCURRENCY } from './smi5879-simulate-full.helpers.ts'
 import { writeCheckpoint } from './smi5879-simulate-full.checkpoint.ts'
 import { EMPTY_OUTCOME_COUNTS } from './smi5879-simulate-full.types.ts'
@@ -53,16 +54,18 @@ export function computeCoverage(
     let scanned = 0
     let unevaluable = 0
     let unfetchable = 0
+    let primaryNotFound = 0
     for (const row of rows) {
       const result = results.get(row.id)
       if (!result) continue
       scanned++
       if (result.outcome === 'unevaluable') unevaluable++
       if (result.outcome === 'unfetchable') unfetchable++
+      if (result.outcome === 'primary_not_found') primaryNotFound++
     }
     const status: CohortCoverage['status'] =
       scanned === total && unevaluable === 0 ? 'full' : 'partial'
-    coverage[cohort] = { status, scanned, total, unevaluable, unfetchable }
+    coverage[cohort] = { status, scanned, total, unevaluable, unfetchable, primaryNotFound }
   }
   return coverage
 }
@@ -159,8 +162,9 @@ const defaultSleep = (ms: number): Promise<void> =>
 /**
  * Re-run ONLY the rows currently classified `unevaluable`, in repeated sweep
  * passes, until fixed point (`|R_k| = 0`) or a hard stop (plan §3b tier 3).
- * `unfetchable` rows are never included in `initialResidual` by the caller —
- * being terminal, they can never cause non-convergence.
+ * `unfetchable`/`primary_not_found` rows are never included in
+ * `initialResidual` by the caller — being terminal, they can never cause
+ * non-convergence.
  */
 export async function runTier3Sweep(
   initialResidual: SimRowResult[],
@@ -275,6 +279,13 @@ export async function runSweepPhase(
         },
         PROCESS_CONCURRENCY
       )
+      // SMI-6481: same coherence check as runMainPass
+      // (smi5879-simulate-full.mainpass.ts) — validate THIS pass's own
+      // outcomes BEFORE merging into `results` and durably checkpointing via
+      // `onPass`/the abort path below. The tier-3 sweep calls `processRow`
+      // independently of `runMainPass`, so it needs its own copy of the same
+      // guard, not a shared call site.
+      assertRowsInternallyCoherent(outcomes)
       const updated = new Map(outcomes.map((o) => [o.id, o]))
       for (const [id, result] of updated) results.set(id, result)
       if (abortedBy) {

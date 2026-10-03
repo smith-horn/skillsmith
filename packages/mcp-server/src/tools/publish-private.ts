@@ -50,6 +50,8 @@ export const publishPrivateToolSchema = {
     'This is a local-only setting today -- it does not sync or share the skill with your ' +
     'teammates. For a real shared team registry, see the Enterprise-tier private_registry_publish ' +
     'tool. Requires Team tier license.',
+  title: 'Mark Skill Private',
+  annotations: { readOnlyHint: false, destructiveHint: false },
   inputSchema: {
     type: 'object' as const,
     properties: {

@@ -172,6 +172,15 @@ jobs:
       affected_packages: ${{ steps.affected.outputs.affected_packages || '[]' }}
       affected_dirs: ${{ steps.affected.outputs.affected_dirs || '[]' }}
       affected_count: ${{ steps.affected.outputs.affected_count || '0' }}
+      # SMI-6488: sentinel proving the affected_* outputs above actually
+      # landed -- 'computed' (detect-affected.ts ran and wrote its
+      # outputs), 'gated' (tier isn't code/deps, S1, legitimate and green),
+      # or the 'ABSENT' fallback (S3/S4 -- detect-affected.ts ran but
+      # failed to write, or crashed before writing). See the
+      # "Verify affected-detection sentinel" step below, which hard-fails
+      # this required job on ABSENT.
+      affected_status: ${{ steps.affected.outputs.affected_status || steps.affected_gated.outputs.affected_status || 'ABSENT' }}
+      affected_reason: ${{ steps.affected.outputs.affected_reason || steps.affected_gated.outputs.affected_reason || '' }}
     steps:
       - name: Checkout
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
@@ -232,8 +241,66 @@ jobs:
             CHANGED_FILES=$(git diff --name-only HEAD~1)
           fi
 
-          # Detect affected packages (outputs written to GITHUB_OUTPUT by script)
-          echo "$CHANGED_FILES" | npx tsx scripts/ci/detect-affected.ts > /dev/null
+          # Detect affected packages (outputs, incl. the SMI-6488
+          # affected_status=computed sentinel, written to GITHUB_OUTPUT by
+          # the script). SMI-6488: stdout is deliberately left
+          # un-redirected (was `> /dev/null`) -- it is the only log record
+          # of the computed affected_dirs array, and discarding it
+          # protected no exit code: the script's own exit status already
+          # propagates through this pipeline regardless of the redirect.
+          echo "$CHANGED_FILES" | npx tsx scripts/ci/detect-affected.ts
+
+      # SMI-6488: companion to the step above with the exact inverse `if:`
+      # (De Morgan's law over the same two tier checks). Emits a distinct
+      # affected_status so a docs/config-tier PR (S1, legitimately gated --
+      # this step's condition is false) is distinguishable from a
+      # code/deps-tier PR where detect-affected.ts ran but failed to write
+      # its outputs (S3/S4). Without this, both cases leave
+      # steps.affected.outputs.affected_status empty and are
+      # indistinguishable.
+      # This condition POSITIVELY ENUMERATES the legitimately-gated tiers. It
+      # is deliberately NOT the inverse of the detector's condition above.
+      # classify-changes.ts emits tier=code|deps|config|docs, but an inverse
+      # predicate (tier != 'code' && tier != 'deps') is also satisfied by an
+      # EMPTY tier -- which is exactly the failure this whole guard exists to
+      # catch, one level up: if classify-changes.ts ever exits 0 without
+      # writing tier, an inverse predicate would emit 'gated', the sentinel
+      # check below would pass, and affected_dirs would still default to []
+      # with every per-package check skipping green. Found by the
+      # cross-family pre-merge gate (ADR-128) on the PR that added this step.
+      # Adding a tier here without adding it to the detector's condition
+      # re-opens that hole; keep the two lists exhaustive between them.
+      - name: Detect affected packages (gated)
+        id: affected_gated
+        if: steps.classify.outputs.tier == 'config' || steps.classify.outputs.tier == 'docs'
+        run: |
+          echo "affected_status=gated" >> $GITHUB_OUTPUT
+          echo "affected_reason=tier '${{ steps.classify.outputs.tier }}' is not code/deps" >> $GITHUB_OUTPUT
+
+      # SMI-6488: hard-fails the required "Classify Changes" job when
+      # neither step above wrote affected_status. That condition means
+      # exactly "the affected_status || 'ABSENT' fallback in this job's
+      # outputs fired" -- i.e. detect-affected.ts ran (tier was code/deps)
+      # but exited without writing GITHUB_OUTPUT (S3, now also caught by
+      # the script's own exit code) or crashed before writing (S4, already
+      # red on its own). Lives here, in the producer's own job, rather than
+      # a downstream job: every downstream consumer of affected_dirs
+      # (e.g. `test-mcp-server-integration`) is itself gated on
+      # affected_dirs/affected_count being non-empty, so checking there
+      # would make the guard blind to the exact failure it exists to catch
+      # -- it would simply skip-as-success alongside the rest of that job.
+      - name: Verify affected-detection sentinel
+        if: always()
+        env:
+          AFFECTED_STATUS: ${{ steps.affected.outputs.affected_status }}
+          GATED_STATUS: ${{ steps.affected_gated.outputs.affected_status }}
+        run: |
+          STATUS="${AFFECTED_STATUS:-${GATED_STATUS:-ABSENT}}"
+          if [ "$STATUS" = "ABSENT" ]; then
+            echo "::error::detect-affected.ts did not report affected_status (ABSENT). This means the affected_dirs || '[]' fallback is masking a failure to write GITHUB_OUTPUT -- the per-package test matrix and other affected_dirs-gated required checks would silently skip. See docs/internal/implementation/smi-6488-verification-scope-reporting.md."
+            exit 1
+          fi
+          echo "affected-detection sentinel OK: $STATUS"
 
   # SMI-4924: PR Validation (Node) — bundles verify-implementation (SMI-3541/3546,
   # required check since 2026-04-05) and doc-drift (SMI-3882). The job-level if is
@@ -1147,6 +1214,129 @@ jobs:
           PR_BODY: ${{ github.event.pull_request.body }}
         run: npm run audit:standards
 
+  # SMI-6897: typecheck supabase/functions/** with `deno check`, in the runtime
+  # that actually runs those files. Nothing else covers this tree -- tsc compiles
+  # zero files there, eslint ignores it, and vitest only reaches lines a test
+  # exercises. A synchronous TypeError in the Stripe checkout webhook lived there
+  # ~6.5 months (SMI-6907) and deploys to production on merge to main.
+  #
+  # A DEDICATED job, not a step inside quality-checks. That job carries the
+  # `audit:carveout-pure-js` marker (SMI-4647), and adding a native runtime plus a
+  # remote module cache to it would make the marker false. Plan review M-1 judged
+  # the "twice-established precedent" claim only partial for exactly that reason:
+  # the VS Code and API checks reuse the already-installed Node toolchain, this
+  # does not.
+  #
+  # BLOCKING on arrival -- no continue-on-error. Review measured that a
+  # report-only arm protects nothing (the wrapper prints FAIL, the job stays
+  # green), so the baseline ratchet is the enforcement and it blocks: any new
+  # error, any newly-failing file, any increased count fails. The 22-row baseline
+  # pins today's 59 pre-existing errors without tolerating a 60th.
+  #
+  # NOT YET A REQUIRED STATUS CHECK. Adding `Edge Functions Typecheck` to branch
+  # protection is a repository-settings change outside this diff, and until it is
+  # made the job reports without blocking a merge. That is stated rather than
+  # assumed, because an unenforced gate that everyone believes is enforced is the
+  # precise failure this plan exists to remove.
+  edge-functions-check:
+    name: Edge Functions Typecheck
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    # `needs: [detect-changes]` ONLY. Governance round 2 (C-2): this job reads no
+    # `classify` output, so listing it added nothing but a failure mode -- a job
+    # whose `needs` did not all succeed is SKIPPED rather than failed, and a
+    # skipped job SATISFIES branch protection. `classify` timing out is not
+    # hypothetical (its own timeout was raised 2->4 min after observed timeouts,
+    # SMI-6381), so a classify blip would have silently waved this gate through
+    # the moment it became required.
+    #
+    # M-6, the cross-family gate: dropping `classify` closed one skip path and left
+    # the same hole for `detect-changes` -- under the implicit `success()` condition a
+    # failed or timed-out detector SKIPS this job, and a skipped job SATISFIES branch
+    # protection. So the condition is explicit, and the run step below holds the whole
+    # decision: a detector that did not succeed, or that emitted anything outside
+    # 'true'/'false', is a fault, while 'false' is an ordinary docs-only pass.
+    #
+    # `!cancelled()`, NOT `always()`: `always()` also admits a CANCELLED run, and
+    # `cancel-in-progress: true` above means every force-push cancels one. Under
+    # `always()` this job would be admitted on every cancelled run and would spend
+    # a runner, a git-crypt unlock and a Deno install on a run nobody is waiting
+    # for -- and its conclusion would then attach to a superseded commit.
+    #
+    # m6 corrects the REASON an earlier draft of this comment gave, which was that
+    # the step would "read result='cancelled'". Measured against cancelled run
+    # 37060974633: `detect-changes` concluded SUCCESS there (it finished at
+    # 20:31:09, the run was cancelled at 20:31:50), so under `always()` the step
+    # would have read DETECT_RESULT=success, passed the guard, and run the whole
+    # check. The choice survives; the mechanism stated for it did not.
+    needs: [detect-changes]
+    if: ${{ !cancelled() }}
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+
+      # The tree is git-crypt encrypted. Without the key `deno check` aborts with
+      # "The module's source code could not be parsed", which the wrapper
+      # classifies as INCONCLUSIVE rather than as a clean tree. On a fork PR the
+      # key is absent by design and the wrapper warns; the pre-deploy arm is the
+      # backstop for that case.
+      - name: Unlock git-crypt
+        if: ${{ env.GIT_CRYPT_KEY != '' }}
+        env:
+          GIT_CRYPT_KEY: ${{ secrets.GIT_CRYPT_KEY }}
+        uses: ./.github/actions/unlock-git-crypt
+        with:
+          git-crypt-key: ${{ secrets.GIT_CRYPT_KEY }}
+
+      # Pinned to a SHA, per the repo's action-pin audit. Deno 2.x is chosen to
+      # match `supabase/config.toml`'s `deno_version = 2`; hosted Supabase's exact
+      # patch level is NOT verified, so this pins a known-good 2.x rather than
+      # claiming parity with production.
+      - name: Setup Deno
+        uses: denoland/setup-deno@22d081ff2d3a40755e97629de92e3bcbfa7cf2ed # v2.0.5
+        with:
+          deno-version: '2.3.6'
+
+      - name: Typecheck edge functions
+        env:
+          # Inconclusive results fail closed here: a merge depends on this job.
+          # The wrapper validates this string against a closed set and exits 1 on
+          # anything else (M-1) -- before that, a single transposition here would
+          # have turned every inconclusive result into a green pass, which made
+          # setting the variable riskier than omitting it.
+          # H-4, the cross-family gate: this was unconditionally `required-ci`, which
+          # made the wrapper's ciphertext carve-out reachable in the one context where
+          # it must not be. The context now comes from GitHub's OWN event metadata --
+          # `head.repo.fork` -- not from anything the script can observe, because key
+          # presence is not proof that an invocation is a fork.
+          #
+          # A fork PR legitimately cannot decrypt the tree, so it gets `fork-pr`, where
+          # a locked tree warns. Everything internal gets `required-ci`, where a locked
+          # tree means the unlock step failed and is a real fault.
+          SKILLSMITH_EDGE_TYPECHECK_CONTEXT: >-
+            ${{ github.event.pull_request.head.repo.fork == true && 'fork-pr' || 'required-ci' }}
+          DETECT_RESULT: ${{ needs.detect-changes.result }}
+          DETECT_CODE: ${{ needs.detect-changes.outputs.code }}
+        run: |
+          # `!cancelled()` admits us on a detector fault, deliberately (M-6), and that
+          # is a failure here rather than a skip. This is the job's ONE decision point:
+          # the docs-only arm costs a wasted checkout and Deno install, and that is the
+          # price of not spreading the decision across per-step `if:` conditions a
+          # reader would then have to verify one at a time. Read through env vars
+          # rather than inline interpolation, so nothing from the event payload
+          # reaches this shell as code.
+          if [ "$DETECT_RESULT" != "success" ]; then
+            echo "::error::detect-changes concluded '$DETECT_RESULT' -- cannot establish whether this PR touches code, so this gate fails closed."
+            exit 1
+          fi
+          case "$DETECT_CODE" in
+            true) ;;
+            false) echo "detect-changes reports no code changes; nothing to typecheck."; exit 0 ;;
+            *) echo "::error::detect-changes emitted code='$DETECT_CODE', outside the expected closed set."; exit 1 ;;
+          esac
+          bash scripts/ci/typecheck-edge-functions.sh
+
   # SMI-2192: Matrix-based test execution for affected packages
   # Runs tests in parallel per package, only for packages affected by changes
   # When affected_dirs is empty (docs-only), this job is skipped entirely
@@ -1510,7 +1700,13 @@ jobs:
   # in NO CI job — `packages/mcp-server/vitest.config.ts` excludes tests/integration).
   # Clones `Test (root colocated)`'s tier gate, plus an affected_dirs guard mirroring
   # the `Test (mcp-server)` matrix so it runs ONLY when mcp-server is affected.
-  # ADVISORY until promoted to a required status check after 2 green runs (SMI-5262).
+  # REQUIRED status check (promoted per SMI-5262 after its 2-green-run bar; confirmed
+  # live via `gh api repos/smith-horn/skillsmith/branches/main/protection` during
+  # SMI-6488, 2026-09-11 -- "Test (mcp-server integration)" is in
+  # required_status_checks.checks). This comment previously said ADVISORY, which was
+  # stale: an affected_dirs-gated required job skips-as-success on a PR that doesn't
+  # touch mcp-server, which is exactly the failure shape SMI-6488 is about -- do not
+  # let this comment drift out of sync with branch protection again.
   test-mcp-server-integration:
     name: Test (mcp-server integration)
     runs-on: ubuntu-latest

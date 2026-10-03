@@ -36,6 +36,7 @@ import { createSmi5879GateCheckDbDeps } from './smi5879-gate-check.pg.ts'
 import { runStructuralClosureTestsViaVitest } from './smi5879-gate-check.closure.ts'
 import {
   bindGeneration,
+  bindSimulatorReportToPopulation,
   checkArtifactRunIdBinding,
   checkWindowCensusBinding,
 } from './smi5879-gate-check.binding.ts'
@@ -51,6 +52,7 @@ import {
 import {
   checkArtifactRunIdMatch,
   loadJsonFile,
+  memoizeCohortRowLoad,
   resolveLedger,
   validateDispositionLedgerShape,
   validateFreezeAttestationShape,
@@ -327,6 +329,32 @@ export async function evaluateGateCheck(
     })
   }
 
+  // --- Simulator-report authentication (SMI-6444, plan Item 2) -----------
+  // Runs immediately after the generation binding above and BEFORE any gate:
+  // the DB generation being sealed and digest-verified says nothing about the
+  // report FILE this invocation was handed. `loadCohortRows` is memoized
+  // because G-1 needs the very same population below and this is a ~314K-row
+  // load in production.
+  const populationLoader = memoizeCohortRowLoad(deps.db)
+  const reportBinding = await bindSimulatorReportToPopulation(
+    populationLoader,
+    decisionBinding,
+    simLoad.value
+  )
+  if (!reportBinding.bound) {
+    return buildReport(args, {
+      preconditions: allInvariants,
+      preconditionsPassed: true,
+      preconditionFailureReason: null,
+      artifactBindingOk: false,
+      artifactBindingReason: reportBinding.reason,
+      gates: [],
+      g2r: null,
+      overall: 'INCONCLUSIVE',
+      overallReason: reportBinding.reason,
+    })
+  }
+
   // --- Numbered gates, in order: G-8 -> G-7 -> G-2 -> G-3 -> G-5 -> G-2R -> G-1 ---
   // Finding #5 (adversarial review): the freeze attestation's and disposition
   // ledger's own run_id must be bound to --decision-run-id, same as the
@@ -366,13 +394,18 @@ export async function evaluateGateCheck(
   )
   gates.push(g2rGate)
 
+  // SMI-6444: the SAME digest-verified population `bindSimulatorReportToPopulation`
+  // just proved the report set-equal to (memoized, not reloaded), plus the
+  // sealed branch map G-1's `unfetchable` re-derivation needs.
   const g1 = evaluateG1(
     args.mode,
     simLoad.value,
     resolvedLedger,
     g2,
     g2rGate,
-    g2rReport?.drift_rows ?? []
+    g2rReport?.drift_rows ?? [],
+    await populationLoader.loadCohortRows(args.decisionRunId),
+    await deps.db.loadBranchMap(args.decisionRunId)
   )
   gates.push(g1)
 

@@ -66,6 +66,10 @@ const DETECTION_PATTERNS = {
     { pattern: /xoxp-[a-zA-Z0-9-]+/g, name: 'Slack user token' },
     { pattern: /xoxa-[a-zA-Z0-9-]+/g, name: 'Slack app token' },
 
+    // Skillsmith's own key also uses the `sk_live_` prefix; its body is base64url, so this
+    // class includes `-` and `_`. The Stripe rule below is unexamined. Why: SMI-6840.
+    { pattern: /sk_live_[A-Za-z0-9_-]{24,}/g, name: 'Skillsmith API key' },
+
     // Payment Processing
     { pattern: /sk_live_[a-zA-Z0-9]{24,}/g, name: 'Stripe secret key (live)' },
     { pattern: /sk_test_[a-zA-Z0-9]{24,}/g, name: 'Stripe secret key (test)' },

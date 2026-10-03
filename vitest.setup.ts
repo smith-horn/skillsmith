@@ -4,6 +4,16 @@
 // defense-in-depth ceiling guard, not a root-cause fix.
 process.setMaxListeners(20)
 
+// SMI-6622: packages/mcp-server/src/tools/registry-tools.ts picks its live Supabase-backed
+// service by DEFAULT (no isSupabaseConfigured() gate — the public @skillsmith/mcp-server package
+// must never require Supabase env vars). Set unconditionally, mirroring the $HOME sandbox above,
+// so a test that forgets to call setPrivateRegistryService() never falls through to a real network
+// call against production by accident. A test exercising the true default (module-load selection
+// with no override) deletes this itself before a fresh `vi.resetModules()` import — see
+// registry-tools.team.test.ts; a test wanting the live service calls
+// setPrivateRegistryService(createLiveRegistryService()) — see registry-tools.live.*.test.ts.
+process.env.SKILLSMITH_REGISTRY_STUB = '1'
+
 // ---------------------------------------------------------------------------
 // SMI-6343 Wave 1: $HOME sandbox
 // ---------------------------------------------------------------------------
@@ -37,6 +47,8 @@ import { homedir, tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { afterAll } from 'vitest'
 
+import { resolveRealHome } from './scripts/tests/_lib/resolve-real-home.js'
+
 // Ground truth for the runtime guard in
 // `packages/core/src/services/skill-manifest.ts`. Captured BEFORE $HOME is
 // rewritten — once the sandbox is installed, `os.homedir()` returns the
@@ -60,7 +72,11 @@ import { afterAll } from 'vitest'
 // default and no config overrides it, so this is currently latent — fixed
 // because it costs one line and the alternative is a guard that silently
 // stops working the moment someone reaches for `--no-isolate` as a speed-up.
-const REAL_HOME_BEFORE_SANDBOX = process.env.SKILLSMITH_TEST_REAL_HOME ?? homedir()
+// SMI-6514 finding 2: `??` alone only catches `undefined`, not a defined-but-
+// empty (or whitespace-only) env var, which would otherwise be captured
+// verbatim and propagated to every downstream reader of this env var for the
+// rest of the run. See resolve-real-home.ts for the concrete consequence.
+const REAL_HOME_BEFORE_SANDBOX = resolveRealHome(process.env.SKILLSMITH_TEST_REAL_HOME, homedir)
 process.env.SKILLSMITH_TEST_REAL_HOME = REAL_HOME_BEFORE_SANDBOX
 
 // One sandbox per setup execution (Vitest runs setup files once per test

@@ -31,7 +31,7 @@ import { assertRunAllowed, assertFreezeMarkerClear } from './run-gate.ts'
 import { buildGitHubHeaders } from './_shared/github-auth.ts'
 import {
   scanSkillContent,
-  shouldQuarantine,
+  shouldQuarantineFailClosed,
   type EdgeScanResult,
 } from './_shared/security-scanner-edge.ts'
 import { parseSkillMdUrl, fetchSkillMd } from './_shared/skill-md-fetch.ts'
@@ -63,9 +63,14 @@ export type SweepOutcome =
   | 'cas-skipped'
   | 'error'
 
-/** A row is a false positive (clearable) when the fixed scanner no longer quarantines it. */
+/**
+ * A row is a false positive (clearable) when the fixed scanner no longer
+ * quarantines it. SMI-6020 (design §2.5 item 9): fail-closed — a truncated
+ * re-scan must never clear a quarantine (the single most direct "clear an
+ * existing quarantine on an incomplete scan" violation in the tree).
+ */
 export function isFalsePositive(scan: EdgeScanResult): boolean {
-  return !shouldQuarantine(scan)
+  return !shouldQuarantineFailClosed(scan)
 }
 
 /** Count `security_scan` findings on a row's stored JSONB (for reporting). */

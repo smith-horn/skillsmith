@@ -9,7 +9,12 @@
  * combined actions file over the limit.
  */
 
-import { ManifestManager, type SkillManifest, type SkillManifestEntry } from '@skillsmith/core'
+import {
+  installedSkillsOf,
+  ManifestManager,
+  type SkillManifest,
+  type SkillManifestEntry,
+} from '@skillsmith/core'
 
 import type { ToolContext } from '../context.js'
 import { appendReconcileLedgerEntry } from './manifest-reconcile-ledger.js'
@@ -55,7 +60,9 @@ export async function runVerify(
   } else {
     // Batch (C3: "Batch by default"). Never hard-fails on offline/quota —
     // each entry degrades to an honest unverified result (H1 philosophy).
-    targets = Object.entries(manifest.installedSkills).map(([key, entry]) => ({
+    // SMI-6733 MAJOR 3: `Object.entries(null)` throws, and a nullish
+    // `installedSkills` classifies `ok` under ADR-171 § 5.
+    targets = Object.entries(installedSkillsOf(manifest)).map(([key, entry]) => ({
       key,
       entry: entry as SkillManifestEntry,
     }))
@@ -101,7 +108,7 @@ export async function runVerify(
     priorEntry: SkillManifestEntry
   }> = []
 
-  await withLockTimeoutMapping(scopeTarget.manifestPath, () =>
+  await withLockTimeoutMapping(() =>
     manager.updateSafely((m: SkillManifest) => {
       const updatedSkills = { ...m.installedSkills }
       for (const { key, verifiedAt } of writes) {

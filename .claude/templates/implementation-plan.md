@@ -109,13 +109,14 @@ If a SMOKE test cannot fire automatically post-deploy, name the human runner and
 
 ## Shared-State / Coordination Audit (P-5)
 
-_Required when the plan touches any of: browser/Node globals (window.\*, module singletons); event listeners on shared targets (`document`, `window`, broadcast channels, postMessage, signals); caches keyed by computed values (in-memory Map, Redis, KV, file-system caches); row-shape extensions (new column, new field on an interface with multiple persisters); new async producers feeding existing async consumers (or vice versa)._
+_Required when the plan touches any of: browser/Node globals (window.\*, module singletons); event listeners on shared targets (`document`, `window`, broadcast channels, postMessage, signals); caches keyed by computed values (in-memory Map, Redis, KV, file-system caches); row-shape extensions (new column, new field on an interface with multiple persisters); new async producers feeding existing async consumers (or vice versa); async chains whose completion callback writes shared UI/render state that a separately-triggered handler also writes (SMI-6428)._
 
 For each piece of shared mutable state introduced or extended:
 
 | State | Producers (file:line) | Consumers (file:line) | Coordination invariant | Test |
 |-------|------------------------|------------------------|------------------------|------|
 | Example: `window.__SUPABASE_CLIENT__` | `BaseLayout.astro:136` (eager init) + `supabase-client.ts:24` (lazy fallback) | `LoginButton.astro:247`, `callback.astro:*`, `device.astro:*` | Every consumer reads via `getSupabaseClient()`, not the raw global; lazy-init guarantees a client exists for the consumer's tick. | `LoginButton.test.ts` covers cold-load case |
+| Example: skills-page results region (`showState()` + `#results-count`) | `skills/index.astro:916` (init chain terminal write) + `:593`, `:636`, `:692`, `:778`, `:824` (searchSkills paths) | same functions; `skills-filter.spec.ts:24` `waitForResults` | Exactly one logical owner per page load: every `searchSkills()` entry advances `resultsGeneration`; any write after an `await` re-checks it; the init chain's featured write runs only when no query/filter intent is live. | `skills-filter.spec.ts` SMI-6428 describe (delayed-fetch stomp repro) |
 
 **Producers** are every write site, found via `grep -rn` against the codebase — not from memory. **Consumers** are every read site. The **coordination invariant** is one sentence stating the rule that must hold. The **test** is a specific case (file:test-name), not "tests pass".
 
@@ -128,6 +129,37 @@ grep -rn "<shared-state-name>" packages/
 
 If the audit surfaces a producer/consumer pair without an explicit invariant, **stop and fix the invariant before writing more of the plan.** This is the same rule the cache roundtrip (SMI-4861) and upsert-paths (SMI-4887) retros codified — make it visible at plan time, not retro time. The `concurrency-auditor` skill (`/concurrency-audit`) automates this matrix.
 
+## State-Flip Assertion Audit (P-7)
+
+_Required when the plan adds or removes a package (`Dockerfile`, `package.json`), deploys or retires a surface, or flips an existing default (shadow to live, guard on to off). A change that makes a previously-absent thing present, or a previously-present thing absent, invalidates every existing assertion about the old state. See SMI-6514._
+
+Name the noun that flipped and run the scanner against the pre-flip tree:
+
+```bash
+bash .claude/skills/plan-review-skill/scripts/scan-state-flip.sh <noun> [--ref <pre-flip-tree>]
+```
+
+Paste the noun, the exact command, the STEP-1 denominator, and STEP-2's full output. STEP-2 (noun times absence-vocabulary) is the mandated output. STEP-3 is a narrower reading-order subset only, not a substitute for STEP-2, since it is measured to miss real casualties.
+
+For each STEP-2 hit, name its category and give it a disposition:
+
+| Category | Failure mode |
+|---|---|
+| 1. Test whose premise is the old state | Fails loudly; cheap; usually already caught |
+| 2. Comment or doc asserting the old state | Silent; misleads the next reader |
+| 3. Diagnostic or error text naming the old state | Silent; wrong remediation ships while CI stays green |
+| 4. Catch block written when the old state was the only possible failure | Silent; miscategorizes a genuinely new failure |
+
+| Hit (file:line) | Category | Disposition | Notes |
+|---|---|---|---|
+| Example: `scripts/tests/git-crypt-shims.ts:18` | 2 | FIX-NOW | Comment asserted git-crypt is not installed in the dev container; it is, as of SMI-6491 |
+
+Disposition is one of: `FIX-NOW` (stale, fixed in this PR), `STILL-TRUE` (assertion survives the flip unchanged), `FALSE-POSITIVE` (matched the vocabulary but asserts something else), or `OUT-OF-SCOPE` (stale but owned elsewhere; requires an owner and an `SMI-NNNN`, never bare).
+
+**A STEP-1 denominator of 0 is not a pass.** It means the noun does not appear anywhere in the scanned paths. Check that the noun grepped is the one that actually flipped before recording a clean result.
+
+**Severity**: missing P-7 on a qualifying trigger, or a P-7 section that cites no noun, no command, or no STEP-1 count, is Critical. A newly added flag or guard that does not flip an existing default is Medium. A category 3 or 4 hit left without a disposition is High.
+
 ## Verification
 
 - [ ] `docker exec skillsmith-dev-1 npm run preflight`
@@ -136,12 +168,17 @@ If the audit surfaces a producer/consumer pair without an explicit invariant, **
 - [ ] Surface grounding (P-1, P-2): every cross-surface reference has a canonical source + verification command
 - [ ] PL/pgSQL name-collision audit (P-3) completed _if_ plan touches a `RETURNS TABLE` function
 - [ ] Smoke path (P-4) specified and run post-deploy (or `scripts/smoke-prod.sh` invoked once it exists)
-- [ ] Shared-state audit (P-5) completed _if_ plan touches browser/Node globals, event listeners on shared targets, computed-key caches, row-shape extensions, or new async producer/consumer pairs
+- [ ] Shared-state audit (P-5) completed _if_ plan touches browser/Node globals, event listeners on shared targets, computed-key caches, row-shape extensions, new async producer/consumer pairs, or async chains whose completion callback writes shared UI/render state that a separately-triggered handler also writes
+- [ ] State-flip assertion audit (P-7) completed _if_ plan adds/removes a package, deploys/retires a surface, or flips an existing default; scanner run with the noun, command, STEP-1 denominator, and STEP-2 output pasted, and every STEP-2 hit given a disposition
 - [ ] If this plan includes a genuine architecture decision (not just an implementation detail), flag it and confirm whether it warrants its own `docs/internal/adr/` entry — `plan-review-skill`'s VP Engineering rubric checks for this (standing rule since 2026-08-24, see CLAUDE.md § Infrastructure Change Policy)
 - [ ] **If this change targets a non-Docker CI workflow** (e.g. `post-merge-verify.yml`,
       any workflow running on `ubuntu-latest` without the Docker dev container):
-      verify in a clean-install environment — `npm ci` in a fresh clone or after
-      `docker volume rm skillsmith_node_modules`. Do NOT rely on a pre-built Docker
-      volume where native modules (better-sqlite3, onnxruntime-node) are already
-      compiled. The pre-built state masks `--ignore-scripts` and similar install
-      flag errors. (Lesson: SMI-4221/SMI-4239)
+      verify in a clean-install environment — `npm ci` in a fresh clone. Do NOT rely
+      on a pre-built Docker volume where native modules (better-sqlite3,
+      onnxruntime-node) are already compiled. The pre-built state masks
+      `--ignore-scripts` and similar install flag errors. (Lesson: SMI-4221/SMI-4239.)
+      **`docker volume rm skillsmith_node_modules` does not give you a clean
+      environment** — the new volume re-seeds from the image, which already holds
+      that `npm ci` output (the image also runs `npm rebuild` for those native
+      modules), so it reproduces the pre-built state this check exists to avoid
+      (SMI-6674).

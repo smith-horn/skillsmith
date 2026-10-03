@@ -161,6 +161,14 @@ describe('runSimulateFull', () => {
           author: 'acme',
           name: 'resume-a',
           outcome: 'unchanged_clean',
+          // SMI-6481: `unchanged_clean` is a SCORED_OUTCOME (pre-existing
+          // SMI-6015 invariant) — the checkpoint-coherence guard now checks
+          // this on resume too, so a fixture row missing these must carry
+          // them, same as the real `processRow` always would.
+          prePortQuarantine: false,
+          postPortQuarantine: false,
+          prePortRiskScore: 0,
+          postPortRiskScore: 0,
         },
       },
       sweep: { pass: 0, residual_history: [], non_decrease_streak: 0, hard_stopped: null },
@@ -179,6 +187,88 @@ describe('runSimulateFull', () => {
     expect(byId['resume-b']).toBeDefined()
     expect(byId['resume-a']?.outcome).toBe('unchanged_clean')
     expect(byId['resume-b']?.outcome).toBe('unchanged_clean')
+  })
+
+  // ---------------------------------------------------------------------------
+  // SMI-6481: a checkpoint whose row_results are internally inconsistent
+  // (written by pre-SMI-6436 classification code) must be refused BEFORE any
+  // scan/fetch is attempted on resume — never silently replayed into this
+  // run's own report.
+  // ---------------------------------------------------------------------------
+
+  it('refuses to resume a checkpoint containing an incoherent bundle_absent row, before any scan/fetch', async () => {
+    const rows: [SimSnapshotRow] = [makeRow({ cohort: 'C2', id: 'poison-row' })]
+    // No primary fetch response is registered for this row — but note that
+    // alone does NOT prove the guard fires before network I/O: the poison row
+    // is already IN the checkpoint, so `runMainPass` would filter it out of
+    // `pending` and never fetch it even without the guard (and the sweep only
+    // re-scans `unevaluable` rows). What discriminates this test is the
+    // message assertion below — the PREFERRED FIX / pre-SMI-6436 wording is
+    // produced only by `assertCheckpointRowsAreCoherent`, which
+    // `runSimulateFull` calls immediately after seeding `results`, before
+    // any batch is dispatched.
+    const db = makeFakeDb({ loadCohortRows: async () => rows })
+    const scanner = makeVerdictScanner(new Map())
+    const args = baseArgs()
+
+    const seeded: Smi5879SimulateCheckpoint = {
+      run_id: args.runId,
+      purpose: args.purpose,
+      baseline_commit: args.baselineCommit,
+      token_source: 'pat',
+      cohorts: ['C1', 'C2', 'C3', 'C4'],
+      clean_shutdown: true,
+      row_results: {
+        'poison-row': {
+          id: 'poison-row',
+          cohort: 'C2',
+          author: 'acme',
+          name: 'poison-row',
+          outcome: 'bundle_absent',
+          // A real verdict change (newly_cleared-shaped), mislabeled
+          // bundle_absent — exactly the pre-SMI-6436 masking bug's shape.
+          prePortQuarantine: true,
+          postPortQuarantine: false,
+          prePortRiskScore: 40,
+          postPortRiskScore: 0,
+        },
+      },
+      sweep: { pass: 0, residual_history: [], non_decrease_streak: 0, hard_stopped: null },
+      started_at: new Date().toISOString(),
+      updated_at: new Date().toISOString(),
+    }
+    writeCheckpoint(args.checkpointPath as string, seeded)
+
+    let caught: Error | undefined
+    try {
+      await runSimulateFull(db, scanner, scanner, args, {})
+    } catch (err) {
+      caught = err as Error
+    }
+    expect(caught).toBeDefined()
+    const message = caught?.message ?? ''
+    // Names the offending row and the real reason (assertBundleAbsentCoherence's
+    // own wording, unique to it — distinguishes this from a field-presence
+    // failure).
+    expect(message).toMatch(/poison-row/)
+    expect(message).toMatch(/is a real verdict change/)
+    // Cause attribution names BOTH possibilities, not just the stale-checkpoint
+    // one — a live classifier regression persisting poison via onBatchDone/
+    // the sweep phase would otherwise be misattributed.
+    expect(message).toMatch(/pre-SMI-6436 classification code/)
+    expect(message).toMatch(/defect in the CURRENT classifier/)
+    // The surgical, checkpoint-preserving fix is the PREFERRED option, named
+    // and ordered before the cold-start last resort — not the other way
+    // round.
+    const preferredIdx = message.indexOf('PREFERRED FIX')
+    const lastResortIdx = message.indexOf('LAST-RESORT COLD START')
+    expect(preferredIdx).toBeGreaterThan(-1)
+    expect(lastResortIdx).toBeGreaterThan(preferredIdx)
+    expect(message).toMatch(/remove exactly these row id\(s\).*poison-row/)
+    expect(message).toMatch(/delete the checkpoint.*start a fresh/)
+    // The original assertBundleAbsentCoherence error is preserved as `cause`,
+    // not discarded.
+    expect(caught?.cause).toBeInstanceOf(Error)
   })
 
   it('verifies digest at a cold start but not on a clean resume', async () => {

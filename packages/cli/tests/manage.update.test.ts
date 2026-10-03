@@ -16,6 +16,7 @@ import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest'
 import { join } from 'path'
 import { homedir } from 'os'
 import { SkillInstallationService } from '@skillsmith/core'
+import type { SkillManifestEntry } from '@skillsmith/core'
 
 // Mock file system
 vi.mock('fs/promises', () => ({
@@ -265,8 +266,33 @@ vi.mock('@skillsmith/core', () => ({
 describe('SMI-5593: skillsmith update — real update path', () => {
   const SKILLS_DIR = join(homedir(), '.claude', 'skills')
 
+  // SMI-6529 Wave A0: getSkillDiff() now short-circuits to 'skipped-local'
+  // BEFORE any cache-match/recovery resolution for a manifest entry with
+  // `source: 'unknown'` (what ADR-139 adoption always writes) or
+  // `provenance: 'local'`. Most of this file's tests are about update's
+  // FLOW (confirm prompt, force-install call, batch summary, --dry-run),
+  // not about untracked-skill handling specifically — `trackSkill()` gives
+  // those a real (non-'unknown'-source) manifest entry so the pre-existing
+  // cache-match resolution still fires, unchanged. The few tests that ARE
+  // about the untracked/adoption edge case stay untracked and assert the
+  // new 'skipped-local' outcome directly.
+  let trackedEntries: Record<string, SkillManifestEntry> = {}
+
+  async function trackSkill(name: string, id: string): Promise<void> {
+    trackedEntries[name] = {
+      id,
+      name,
+      version: '1.0.0',
+      source: `github:${id}`,
+      installPath: join(SKILLS_DIR, name),
+      installedAt: '2026-01-01T00:00:00Z',
+      lastUpdated: '2026-01-01T00:00:00Z',
+    }
+  }
+
   beforeEach(async () => {
     vi.clearAllMocks()
+    trackedEntries = {}
 
     const mockDb = { close: mocks.dbClose }
     mocks.createDatabaseAsync.mockResolvedValue(mockDb)
@@ -311,8 +337,14 @@ describe('SMI-5593: skillsmith update — real update path', () => {
 
     // SMI-6103: default empty manifest — the two author-mismatch regression
     // tests fall through to this path and expect no manifest entry either.
+    // SMI-6529: reads `trackedEntries` live (not a one-shot snapshot) so a
+    // test's own `trackSkill()` call (before OR after this beforeEach ran)
+    // is always reflected.
     const { loadManifest } = await import('../src/utils/manifest.js')
-    vi.mocked(loadManifest).mockResolvedValue({ version: '1.0.0', installedSkills: {} })
+    vi.mocked(loadManifest).mockImplementation(async () => ({
+      version: '1.0.0',
+      installedSkills: trackedEntries,
+    }))
   })
 
   afterEach(() => {
@@ -378,6 +410,10 @@ describe('SMI-5593: skillsmith update — real update path', () => {
           author: 'wrsmith108',
         },
       ])
+      // SMI-6529: an untracked skill now short-circuits to 'skipped-local'
+      // before ever reaching this cache-match — track it first so this test
+      // still exercises the cache-match resolution itself.
+      await trackSkill('astro', 'wrsmith108/astro')
 
       const { getSkillDiff } = await import('../src/commands/manage.js')
       const result = await getSkillDiff('astro', '/fake/db.sqlite')
@@ -394,13 +430,11 @@ describe('SMI-5593: skillsmith update — real update path', () => {
     // absent from) the installed skill's own claimed front-matter must NOT
     // be trusted — this is the exact shape of a real incident where two
     // personal, unclaimed skills ("commit", "Linear") were silently
-    // overwritten with unrelated same-named registry skills. With no
-    // manifest entry and no SourceRecoveryService match configured in this
-    // test, the safe outcome is a non-confident diff against the wrong
-    // author's row — and, per ADR-139 (SMI-6274 Wave 4), the untracked skill
-    // is now ADOPTED along the way, so the outcome is 'adopted-unresolvable'
-    // rather than the plain 'unresolvable' this returned before adoption
-    // existed.
+    // overwritten with unrelated same-named registry skills. SMI-6529 Wave
+    // A0 hardens this further: the untracked skill is adopted (source:
+    // 'unknown') and now short-circuits to 'skipped-local' BEFORE the
+    // cache-match scan even runs, rather than falling through to it and
+    // landing on 'adopted-unresolvable'.
     it('does NOT trust a bare-name cache match when the installed skill has no claimed author', async () => {
       await mockInstalledSkill('commit', { version: '1.0.0' }) // no author claimed
       mockCache([
@@ -416,7 +450,7 @@ describe('SMI-5593: skillsmith update — real update path', () => {
       const { getSkillDiff } = await import('../src/commands/manage.js')
       const result = await getSkillDiff('commit', '/fake/db.sqlite')
 
-      expect(result).toBe('adopted-unresolvable')
+      expect(result).toBe('skipped-local')
     })
 
     it('does NOT trust a bare-name cache match when the installed skill claims a DIFFERENT author', async () => {
@@ -434,7 +468,7 @@ describe('SMI-5593: skillsmith update — real update path', () => {
       const { getSkillDiff } = await import('../src/commands/manage.js')
       const result = await getSkillDiff('linear', '/fake/db.sqlite')
 
-      expect(result).toBe('adopted-unresolvable')
+      expect(result).toBe('skipped-local')
     })
 
     // GPT-5.6-Sol PR review finding (ADR-139 follow-up, adoption-guessed-id
@@ -463,6 +497,8 @@ describe('SMI-5593: skillsmith update — real update path', () => {
           author: 'wrsmith108',
         },
       ])
+      // SMI-6529: track it first (see the first cache-match test's comment).
+      await trackSkill('astro', 'wrsmith108/astro')
 
       const { getSkillDiff } = await import('../src/commands/manage.js')
       const result = await getSkillDiff('astro', '/fake/db.sqlite')
@@ -508,6 +544,8 @@ describe('SMI-5593: skillsmith update — real update path', () => {
           author: 'wrsmith108',
         },
       ])
+      // SMI-6529: track it first (see the cache-match test's own comment above).
+      await trackSkill('astro', 'wrsmith108/astro')
       const { confirm } = await import('@inquirer/prompts')
 
       const { updateSkill } = await import('../src/commands/manage.js')
@@ -529,6 +567,8 @@ describe('SMI-5593: skillsmith update — real update path', () => {
           author: 'wrsmith108',
         },
       ])
+      // SMI-6529: track it first (see the cache-match test's own comment above).
+      await trackSkill('astro', 'wrsmith108/astro')
       const { confirm } = await import('@inquirer/prompts')
 
       const { updateSkill } = await import('../src/commands/manage.js')
@@ -550,6 +590,8 @@ describe('SMI-5593: skillsmith update — real update path', () => {
           author: 'wrsmith108',
         },
       ])
+      // SMI-6529: track it first (see the cache-match test's own comment above).
+      await trackSkill('astro', 'wrsmith108/astro')
       const { confirm } = await import('@inquirer/prompts')
       vi.mocked(confirm).mockResolvedValue(true)
 
@@ -557,7 +599,12 @@ describe('SMI-5593: skillsmith update — real update path', () => {
       const success = await updateSkill('astro', '/fake/db.sqlite')
 
       expect(success).toBe(true)
-      expect(mocks.installFn).toHaveBeenCalledWith('wrsmith108/astro', { force: true })
+      // SMI-6529: install() now also receives expectedInstallPath — the exact
+      // directory this diff compared against (the tracked entry's installPath).
+      expect(mocks.installFn).toHaveBeenCalledWith('wrsmith108/astro', {
+        force: true,
+        expectedInstallPath: join(SKILLS_DIR, 'astro'),
+      })
     })
 
     // SMI-5982 PR-review follow-up: resolveCompanionAgentPath() no longer defaults a missing
@@ -575,6 +622,8 @@ describe('SMI-5593: skillsmith update — real update path', () => {
           author: 'wrsmith108',
         },
       ])
+      // SMI-6529: track it first (see the cache-match test's own comment above).
+      await trackSkill('astro', 'wrsmith108/astro')
       const { confirm } = await import('@inquirer/prompts')
       vi.mocked(confirm).mockResolvedValue(true)
 
@@ -597,6 +646,8 @@ describe('SMI-5593: skillsmith update — real update path', () => {
           author: 'wrsmith108',
         },
       ])
+      // SMI-6529: track it first (see the cache-match test's own comment above).
+      await trackSkill('astro', 'wrsmith108/astro')
       const { confirm } = await import('@inquirer/prompts')
       vi.mocked(confirm).mockResolvedValue(false)
 
@@ -618,6 +669,8 @@ describe('SMI-5593: skillsmith update — real update path', () => {
           author: 'wrsmith108',
         },
       ])
+      // SMI-6529: track it first (see the cache-match test's own comment above).
+      await trackSkill('astro', 'wrsmith108/astro')
       const { confirm } = await import('@inquirer/prompts')
       vi.mocked(confirm).mockResolvedValue(true)
       mocks.installFn.mockResolvedValue({
@@ -647,6 +700,8 @@ describe('SMI-5593: skillsmith update — real update path', () => {
           author: 'wrsmith108',
         },
       ])
+      // SMI-6529: track it first (see the cache-match test's own comment above).
+      await trackSkill('astro', 'wrsmith108/astro')
       mocks.classifyDivergentEntryFn.mockReturnValue({
         state: 'identity-mismatch',
         signal: 'owner-mismatch',
@@ -700,6 +755,10 @@ describe('SMI-5593: skillsmith update — real update path', () => {
           author: 'wrsmith108',
         },
       ])
+      // SMI-6529: track both — an untracked skill now short-circuits to
+      // 'skipped-local' before ever reaching this cache-match.
+      await trackSkill('astro', 'wrsmith108/astro')
+      await trackSkill('ci-doctor', 'wrsmith108/ci-doctor')
       const { confirm } = await import('@inquirer/prompts')
       vi.mocked(confirm).mockResolvedValue(true)
     }
@@ -711,12 +770,12 @@ describe('SMI-5593: skillsmith update — real update path', () => {
     // in without looking like a success).
     it('excludes a local-drift/identity-mismatch skill from the update batch and reports it in the new Skipped count with a reason', async () => {
       await mockTwoInstalledSkills()
-      // The adopted entry's `id` is the install-directory basename (this
-      // suite's `loadManifest` mock always returns an empty manifest, so
-      // both skills go through ADR-139 adoption) — differentiate on it.
+      // SMI-6529: both skills are now TRACKED (trackSkill in
+      // mockTwoInstalledSkills), so `entry.id` is the tracked registry id,
+      // not an adopted entry's install-directory-basename guess.
       mocks.classifyDivergentEntryFn.mockImplementation((params?: unknown) => {
         const entryId = (params as { entry: { id: string } }).entry.id
-        return entryId === 'ci-doctor'
+        return entryId === 'wrsmith108/ci-doctor'
           ? { state: 'local-drift', signal: null, inconclusiveReason: null }
           : { state: 'outdated', signal: null, inconclusiveReason: null }
       })
@@ -728,7 +787,10 @@ describe('SMI-5593: skillsmith update — real update path', () => {
 
       // Only astro (classified 'outdated') is actually force-installed.
       expect(mocks.installFn).toHaveBeenCalledTimes(1)
-      expect(mocks.installFn).toHaveBeenCalledWith('wrsmith108/astro', { force: true })
+      expect(mocks.installFn).toHaveBeenCalledWith('wrsmith108/astro', {
+        force: true,
+        expectedInstallPath: join(SKILLS_DIR, 'astro'),
+      })
       const output = logSpy.mock.calls.map((c) => String(c[0])).join('\n')
       expect(output).toContain('Updated: 1')
       expect(output).toContain('Skipped: 1')
@@ -797,13 +859,18 @@ describe('SMI-5593: skillsmith update — real update path', () => {
           author: 'wrsmith108',
         },
       ])
+      // SMI-6529: track it first (see the cache-match test's own comment above).
+      await trackSkill('astro', 'wrsmith108/astro')
       const { confirm } = await import('@inquirer/prompts')
       vi.mocked(confirm).mockResolvedValue(true)
 
       const { updateSkills } = await import('../src/commands/manage.js')
       await updateSkills(undefined, '/fake/db.sqlite', false)
 
-      expect(mocks.installFn).toHaveBeenCalledWith('wrsmith108/astro', { force: true })
+      expect(mocks.installFn).toHaveBeenCalledWith('wrsmith108/astro', {
+        force: true,
+        expectedInstallPath: join(SKILLS_DIR, 'astro'),
+      })
     })
 
     it('prints "No skills installed" and does nothing when there is nothing to update', async () => {

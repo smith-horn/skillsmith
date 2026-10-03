@@ -87,6 +87,8 @@ export const publishToolSchema = {
     'Prepare a skill for publishing. Validates the skill, generates a checksum, ' +
     'creates a publish manifest, and optionally checks for project-specific references. ' +
     'Can also create a GitHub repository for registry discovery.',
+  title: 'Prepare Skill for Publishing',
+  annotations: { readOnlyHint: false, destructiveHint: false },
   inputSchema: {
     type: 'object' as const,
     properties: {

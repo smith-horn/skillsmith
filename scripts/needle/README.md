@@ -80,6 +80,22 @@ Architecture decision: [ADR-128](../../docs/internal/adr/128-harness-of-harnesse
    `needle`, `bf`, and the adapter all install fine but every dispatch fails
    for a reason none of the earlier steps explain.
 
+   **Keep this current, not just installed once (SMI-6445).**
+   `NEEDLE_ALLOWED_MODELS` (`scripts/needle/lib.sh`) can list a model your
+   *local* Codex CLI predates — the CLI will accept `--model <that-slug>`
+   syntactically, then fail with an opaque
+   `404 The model 'X' does not exist or you do not have access to it.`,
+   indistinguishable from a genuinely dead/removed model. Before dispatching
+   with a model you haven't used before, run `npm view @openai/codex
+   version` and compare against your own `codex --version`; if yours is
+   behind, run `codex update`. **Before running `codex update`**, check
+   `scripts/needle/results/codex-*.log` for any dispatch in flight from a
+   concurrent session on this machine — `codex update` is a global `npm
+   install -g`, not scoped to this repo or to your current dispatch.
+   `dispatch.sh` itself checks this before every dispatch (its
+   `MIN_CODEX_VERSION` pre-flight check) and will tell you clearly if your
+   CLI is too old — this note is what to do about it.
+
 ## Usage
 
 ```sh
@@ -156,10 +172,35 @@ The adapter's sandbox (`-s read-only`) blocks Codex from *writing* to the
 target workspace, but not from *reading* it — a read-only sandbox can still
 `cat` a secret-bearing file, and that content can end up in
 `.beads/traces/<bead-id>/{trace.jsonl,stdout.txt}` or in NEEDLE's own
-telemetry log with no redaction step. **Do not dispatch into a workspace
-that contains live secrets** (`.env`, unencrypted credentials, etc.) — this
-is the same class of exposure CLAUDE.md's Varlock section already guards
-against for terminal output and logs, just via a new surface.
+telemetry log with no redaction step. This is the same class of exposure
+CLAUDE.md's Varlock section already guards against for terminal output and
+logs, just via a new surface.
+
+**The rule, revised 2026-09-13.** This section previously read "do not
+dispatch into a workspace that contains live secrets (`.env`, ...)". Every
+worktree now carries a varlock-managed `.env` by design — without it, e2e
+tests cannot run in a worktree's Docker container — so that rule had become
+unsatisfiable: read literally it forbids every dispatch, forever, which is
+not a security posture but an outage. The rule now is:
+
+- **A varlock-managed `.env` in a worktree does not by itself bar a
+  dispatch.** It is expected infrastructure, not an anomaly.
+- **The prompt must not ask Codex to read, summarize, or reason about
+  environment or credential files**, and must not send it looking through
+  config for an answer. Keep dispatches scoped to source, tests and docs.
+- **Treat `.beads/traces/<bead-id>/` as secret-bearing** for any dispatch
+  into a workspace holding real credentials. Do not paste trace content
+  into an issue, a PR, or a commit message without reading it first.
+- **Unencrypted credentials that are NOT varlock-managed** — a stray key
+  file, a dumped token, a downloaded service-account JSON — still bar a
+  dispatch. Remove them from the workspace first.
+
+None of this is enforced in code: `dispatch.sh` has no workspace-secret
+check, and its secret scanner covers only the `--title`/`--body-file`
+prompt text, never the workspace. The one observed mitigation — Codex
+finding a dummy `.env`, declining to read it, and citing the agent pack's
+Varlock skill (recorded below) — is defence in depth that depends on the
+model following guidance, and is not a substitute for any bullet above.
 
 Verified during implementation with a real dispatch into a workspace
 containing a dummy `.env`: Codex found the file, then explicitly declined to
@@ -185,7 +226,17 @@ guaranteed for every model/prompt.
   exit code — it re-reads via `bf show` and, if the bead is still not
   closed (e.g. a transient `bf` error), prints a loud `WARNING` with the
   exact manual remediation command; this never changes the dispatch's own
-  outcome or exit code.
+  outcome or exit code. **Both the results log and the final stdout summary
+  carry two bead fields (SMI-6658).** `bead_state_pre_close=` is the
+  `bf show` snapshot taken *before* the close call, on purpose: re-reading
+  after the close would destroy the diagnostic signature SMI-5847 relies
+  on. `bead_closed=yes`/`no` says whether the bead actually ended up closed.
+  To ask "is this bead still open?", read `bead_closed=`.
+- **`needle_run_exit=137` is the normal result, not a failure.** Once
+  polling finds a classified outcome, `dispatch.sh` stops the idle NEEDLE
+  worker itself (TERM, then KILL), and the KILL is what exits 137. Read
+  `outcome=` to learn whether the dispatch succeeded; `needle_run_exit`
+  doesn't tell you.
 - **A `needle run --count 1` worker drains the ENTIRE ready queue in the
   workspace's `.beads` store, oldest-first — not just the bead this
   dispatch just created — and `dispatch.sh` refuses to dispatch into a
@@ -360,8 +411,9 @@ their outcomes, are the concrete facts to bring to the harness team.
   the original guidance below to go read `~/.codex/sessions/` was wrong;
   read on for the corrected location.** The trace file `dispatch.sh` prints
   as `trace=`/`trace:` (built by `needle_bead_trace_path()` in
-  `scripts/needle/lib.sh`, pointing at `trace.jsonl`) only ever contains
-  `tool_call`/`tool_result`/`tokens` events — never the dispatched model's
+  `scripts/needle/lib.sh`, pointing at `trace.jsonl`) carries
+  `tool_call`/`tool_result`/`tokens` events, plus `error` events when the
+  backend refuses the turn — never the dispatched model's
   final text response, regardless of `--expect-write`. This originally led
   us to document `~/.codex/sessions/<year>/<month>/<day>/rollout-<timestamp>-<uuid>.jsonl`
   as the place to find it — **that was wrong.** The final answer actually
@@ -382,6 +434,100 @@ their outcomes, are the concrete facts to bring to the harness team.
   real failure back to success). A missing or corrupt `stdout.txt` never
   changes the outcome or exit code by itself — extraction failure degrades
   to "treat it as having no answer," not to a crash.
+- **A dispatch produces agent output that is PRESENT but INCOMPLETE — a
+  fragment read as a verdict.** (2026-09-15, three sessions in one evening.)
+  The `success-without-agent-message` downgrade above catches **zero**
+  `agent_message` items. It does not catch *one or more* items that stop
+  mid-task: a worker killed after 165s had written 54 KB of `stdout.txt`
+  whose last agent message was Codex announcing it was about to start
+  reading files. Everything the transport reports looks fine, and the
+  content is a fragment.
+
+  **Do not build a kill-detector out of transport signals.** Three sessions
+  independently converged on "absent `stdout.txt` means a kill" that
+  evening; it is sufficient but **not necessary**, and each of them then
+  reached for `reason="signal received during idle (SIGTERM)"` in the
+  NEEDLE log — which fires on **816 of 917** dispatch logs, because it is the
+  normal teardown the bullet above already describes.
+
+  **That field is NOT in this repo's results log**, and an earlier version of
+  this bullet said it was. Measured: `scripts/needle/results/` contains **zero**
+  occurrences of `reason=`. It lives in NEEDLE's own logs, which line 328 above
+  already calls `needle logs`. Recompute both yourself:
+
+      grep -rl 'signal received during idle' ~/.needle/logs | wc -l   # 816
+      find ~/.needle/logs -type f -name '*.jsonl' | wc -l             # 917
+
+  Those paths are outside any repository, so no committed artifact can
+  substantiate the ratio; it is local evidence and is recorded as such. Two wrong rules were derived from scratch while
+  the correct one was written down here.
+
+  **Read the OUTPUT against the contract you asked for.** Every dispatch
+  brief should name the sections it wants back — a findings table, a
+  verdict line, "checked", "could not check". Then the test is whether the
+  final `agent_message` contains them. That is content-based, needs no
+  knowledge of NEEDLE internals, survives any change to the signal layer,
+  and catches the fragment case that every transport-level signal misses.
+  Corroborate with `outcome=` and `bead_state_pre_close=` (`in_progress`
+  means the worker claimed and processed the bead; `open` means it died
+  before claiming) — but the contract is the test, not the corroboration.
+
+- **A killed dispatch, a quota-failed one and a capacity-failed one look
+  alike from outside. Read the trace's error message first**, before
+  `reason=`, `stdout.txt` or elapsed time. Each leaves a bead that stopped
+  without a complete agent message; only `trace.jsonl` separates them. Count
+  its event types, and check `total=` (the denominator) and `unparsed=`
+  before trusting the counts:
+
+      node -e 'const L=require("fs").readFileSync(process.argv[1],"utf8").split("\n").filter(Boolean);const c={};let bad=0;for(const s of L){try{const t=JSON.parse(s).type;c[t]=(c[t]||0)+1}catch(e){bad++}}console.log(JSON.stringify(c),"total="+L.length,"unparsed="+bad)' <workspace>/.beads/traces/<bead-id>/trace.jsonl
+      echo "exit=$?"
+
+  Read the result like this:
+
+  - **Any `error` event: the backend refused the turn, and its `message` is
+    the only thing that says which refusal.** `You've hit your usage limit`
+    is quota; `Selected model is at capacity` is capacity. **The tool-call
+    count does not discriminate**, in either direction: a usage-limit
+    failure can arrive after several completed calls, and a capacity failure
+    usually does too. So when the counts show `error`, print the messages:
+
+          node -e 'const L=require("fs").readFileSync(process.argv[1],"utf8").split("\n").filter(Boolean);let n=0;for(const s of L){const e=JSON.parse(s);if(e.type==="error"){n++;console.log(e.message)}}console.log("errors="+n,"total="+L.length)' <trace.jsonl or stdout.txt>
+          echo "exit=$?"
+  - **No `error`, matched counts, a trailing `tokens` event**: the turn
+    finished. Equal counts are weak evidence, not proof of pairing — the
+    command reports counts, not matching, so a returned-out-of-order or
+    unreturned call can still read as equal.
+  - **A `tool_call` count above `tool_result`, with no `error`**:
+    **PREDICTED, NOT MEASURED** as the shape of a kill mid-work. No killed
+    trace has been examined to confirm it, and an unequal count on its own
+    does not imply a kill: a real usage-limit failure produced 6 calls and 5
+    results. Treat it as a hypothesis, not a rule.
+  - **`total=0`**: you learned nothing. An empty trace exits 0 and prints
+    `{}`, which is not evidence that the run was clean. A missing file exits
+    non-zero and says so.
+  - **`unparsed=0`**: every line was valid JSON, which is not the same as
+    understood. An event whose type key ever changes buckets as
+    `"undefined"`, with `unparsed` still 0, so read the keys, not just the
+    counts.
+  - **No `trace.jsonl` at all**: run the message command above against
+    `stdout.txt`, which carries `error` events too. Do not apply the count
+    rules to it: `stdout.txt` uses a different vocabulary
+    (`thread.started`, `turn.started`, `item.started`, `item.completed`,
+    `turn.failed`) and has no `tool_call` events at all, so a zero
+    tool-call count there means nothing.
+
+  **Compare against a known-good run before concluding anything.** Run the
+  same command on a trace you already know finished cleanly, such as your
+  own last verified `success` bead, and compare the two shapes. A shape you
+  have never seen on a good run is a question, not a verdict.
+
+  **Elapsed time is corroboration only.** NEEDLE's `uptime_secs`
+  (`worker.idle_sleep_entered` and `worker.stopped` events in
+  `~/.needle/logs/*.jsonl`) and a bead's `duration_ms`
+  (`.beads/traces/<bead-id>/metadata.json`) say how long a process lived,
+  not why it stopped. A capacity failure and a clean run can take nearly the
+  same time. The measurements behind this bullet are on SMI-6684.
+
 - **A `bf` bead ends up `closed` with NO trace directory at all under
   `.beads/traces/<bead-id>/`** (SMI-6015 retro, 2026-08-25) — a different,
   earlier failure mode than the `success-without-agent-message` case above
@@ -401,3 +547,24 @@ their outcomes, are the concrete facts to bring to the harness team.
   that dispatch is starting cleanly (e.g. that the secret-scanner pre-check
   passes), that's fine to pipe through `head` — just re-run the real
   dispatch afterward rather than trusting that piped attempt's outcome.
+- **`codex exec` fails with `404 ... does not exist or you do not have
+  access to it` for a model that IS in `NEEDLE_ALLOWED_MODELS`.** (SMI-6445)
+  Your local Codex CLI predates that model's rollout — run `npm view
+  @openai/codex version` vs. `codex --version`, then `codex update` if
+  behind. See Setup step 6. `dispatch.sh` itself now checks this before
+  dispatching (its `MIN_CODEX_VERSION` pre-flight check) and prints the same
+  remediation; if you're seeing the raw Codex 404 instead of `dispatch.sh`'s
+  own clearer error, you likely bypassed `dispatch.sh` and called `codex
+  exec` directly.
+- **Dispatch killed with "stopped because the system is running low on
+  memory".** The Claude Code harness killed its own background task, not
+  NEEDLE. The workspace keeps an `in_progress` bead (or an `open` one, if
+  the kill came before the claim). Close it before retrying, or the retry
+  refuses with exit 2: find it with
+  `bf list --status in_progress --workspace <dir>` (and `--status open`),
+  then run `bf close <id> --workspace <dir>`. Check
+  `<dir>/.beads/traces/<bead-id>/stdout.txt` first: if it holds an
+  `agent_message` with the full review, use it. Otherwise relaunch detached,
+  outside the harness's task tracking:
+  `nohup sh -c './scripts/needle/dispatch.sh … > <log> 2>&1; echo $? > <rc>' </dev/null >/dev/null 2>&1 & disown`,
+  and wait for the rc file to appear.

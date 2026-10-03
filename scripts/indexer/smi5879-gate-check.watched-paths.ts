@@ -130,6 +130,14 @@ export const CLOSURE_WATCHED_SOURCE_PATHS = [
   'packages/core/src/security/scanner/SecurityScanner.formatters.ts', // imported by SecurityScanner.ts itself (toMinimalRefs et al.)
   'packages/core/src/security/scanner/confusables.ts', // confusable/homoglyph folding, imported by the already-watched SecurityScanner.exec.ts
   'scripts/indexer/_shared/github-auth.ts', // imported by the already-watched skill-processor.security.ts
+  // SMI-6441 Wave 2: the generated common-password lexicon became REACHABLE
+  // from the already-watched scanner graph only in this wave. Wave 1 emitted
+  // these modules but nothing imported them; Wave 2's MF-4b veto makes
+  // `*.value-gate.ts` import them, so they now decide scanner behaviour and a
+  // dirty copy changes what the corroboration tests evaluate. Found by
+  // RUNNING assertion 5, not hand-derived — same provenance as the four above.
+  'packages/core/src/security/scanner/SecurityScanner.weak-passwords.ts',
+  'scripts/indexer/_shared/security-scanner-edge.weak-passwords.ts',
   // The final four are a self-referential consequence of the edge
   // corroboration test importing `CLOSURE_WATCHED_SOURCE_PATHS` FROM this
   // very file (to check it is closed) — this file, and what it in turn
@@ -252,4 +260,59 @@ export const CLOSURE_WATCHED_SOURCE_PATHS = [
   // skill-processor.security.tree.ts above. Same closure-completeness
   // reasoning; Node tree only.
   'scripts/indexer/skill-processor.security.sibling.ts',
+  // SMI-6020: found by re-running assertion 5 after rebasing PR #2192 onto
+  // main (the first time this closure test ran against main's own
+  // intervening scanner evolution since ADDITIONAL_CLOSURE_WATCHED_SOURCE_PATHS
+  // was curated) — three more genuine gaps, same mechanism as the four above.
+  'scripts/indexer/_shared/security-scanner-edge.multiline.ts', // imported by the already-watched security-scanner-edge.ts
+  'scripts/indexer/_shared/security-scanner-edge.regex-utils.ts', // imported by the already-watched security-scanner-edge.ts AND .multiline.ts
+  'scripts/indexer/_shared/constants.ts', // imported by security-scanner-edge.regex-utils.ts
+  // Deno twins of the three above — same import chain, verified directly.
+  'supabase/functions/_shared/security-scanner-edge.multiline.ts',
+  'supabase/functions/_shared/security-scanner-edge.regex-utils.ts',
+  'supabase/functions/_shared/constants.ts',
+  // SMI-6020 (file-length fixup, post-rebase): security-scanner-edge.ts's own
+  // quarantine-decision + summary helpers (quickSecurityCheck,
+  // shouldQuarantine(FailClosed), isScanTruncated, ROOT_SCAN_LABEL,
+  // summarizeFindings) were extracted to this new sibling to clear the
+  // 500-line gate the rebased multilineTruncated additions pushed it over.
+  // Re-exported from the already-watched security-scanner-edge.ts, so this
+  // is reachable the same way every other sibling extraction above is.
+  'scripts/indexer/_shared/security-scanner-edge.quarantine.ts',
+  'supabase/functions/_shared/security-scanner-edge.quarantine.ts',
+  // SMI-5207: MF-3 (action-context gating) + MF-4 (assignment-value gating)
+  // added a new core sibling pair — SecurityScanner.prose-lexicon.ts
+  // (NEGATION_TOKENS/PROSE_STOPWORDS) and SecurityScanner.value-gate.ts (the
+  // round-8 per-assignment-segmented MF-4 classifier) — both imported by the
+  // already-watched SecurityScanner.scanners.ts, plus patterns.sensitive-
+  // path.ts (the sensitive_path pattern family + severity-gate classification
+  // sets, extracted out of the already-watched patterns.ts and re-exported
+  // from it). Same closure-completeness reasoning as every entry above;
+  // flagged as reachable-but-unwatched by assertion 5 (the real import-graph
+  // tracer) after this wave's changes landed.
+  'packages/core/src/security/scanner/SecurityScanner.prose-lexicon.ts',
+  'packages/core/src/security/scanner/SecurityScanner.value-gate.ts',
+  'packages/core/src/security/scanner/patterns.sensitive-path.ts',
+  // SMI-5207: the twin ports of the same two new siblings, imported by the
+  // already-watched security-scanner-edge.paths.ts on both twins — same
+  // closure-completeness reasoning, same symmetry as every other
+  // scripts/indexer/_shared + supabase/functions/_shared pair above (patterns
+  // .sensitive-path.ts has no edge-twin counterpart: both edge paths.ts twins
+  // already inline the equivalent pattern classification, unlike core, so
+  // there is nothing separate to watch there).
+  'scripts/indexer/_shared/security-scanner-edge.prose-lexicon.ts',
+  'scripts/indexer/_shared/security-scanner-edge.value-gate.ts',
+  'supabase/functions/_shared/security-scanner-edge.prose-lexicon.ts',
+  'supabase/functions/_shared/security-scanner-edge.value-gate.ts',
+  // SMI-5207 round 10: MF-3's action-context gate (two new disqualifiers —
+  // a determiner-forces-noun check and a detection-framing + relative-clause
+  // check) was extracted from the already-watched SecurityScanner.scanners.ts
+  // into its own sibling, SecurityScanner.action-context.ts, for the same
+  // 500-line pre-commit gate reason the prose-lexicon.ts/value-gate.ts split
+  // above happened — same closure-completeness reasoning, same symmetry:
+  // both edge twin ports below, imported by the already-watched
+  // security-scanner-edge.paths.ts on both twins.
+  'packages/core/src/security/scanner/SecurityScanner.action-context.ts',
+  'scripts/indexer/_shared/security-scanner-edge.action-context.ts',
+  'supabase/functions/_shared/security-scanner-edge.action-context.ts',
 ] as const

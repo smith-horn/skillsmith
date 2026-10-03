@@ -60,11 +60,12 @@
  *   SMI-6080), and surface an actionable error when no user credential is present.
  *
  * - **Content reads** (`getContent`, SMI-5905 Wave 3) are member-level like the operations above:
- *   the signed-in user's own JWT (so `_member_read` decides visibility against a real
- *   `auth.uid()`). `getAdminUserClient()` / `getMemberUserClient()` (`registry-tools.live.auth.ts`)
+ *   the signed-in user's own JWT, so the release RPC resolves visibility against a real
+ *   `auth.uid()`. `getAdminUserClient()` / `getMemberUserClient()` (`registry-tools.live.auth.ts`)
  *   are two explicitly-named getters for exactly this reason — the choice cannot be defaulted or
- *   omitted at a call site. What decides whether a content read is *entitled* is in
- *   `registry-tools.live.content.ts`, and is scoped to the row's own team, not the caller's tier.
+ *   omitted at a call site. Visibility, entitlement (scoped to the row's own team, not the
+ *   caller's tier) and the audit row all live in the `release_private_registry_skill_content`
+ *   RPC that `registry-tools.live.content.ts` calls (SMI-6651).
  *
  * - **`publish`** (SMI-5949 Wave 2 Step 2, D-7) is member-level like `getContent` — not admin: any
  *   team member may submit a version, not only admins. `published_by` is `DEFAULT auth.uid()`
@@ -89,6 +90,11 @@
  * `registry-tools.live.audit.ts`'s own audit-log write path (a system-table insert, fail-soft,
  * structurally different from a tenant-data read); `SKILLSMITH_API_KEY_HMAC_SECRET`'s
  * distribution (an unrelated secret, not consumed by any Supabase call).
+ *
+ * AUDIT (SMI-6114): a committed publish/deprecate/undeprecate/approve/reject is audited by the
+ * database trigger `trg_prs_audit`, never by a client-side success row from this file. The
+ * `recordRegistryAudit()` calls that remain record reads and attempts that did not commit, and
+ * only reach `audit_logs` on a host holding a service-role key — see that module's docstring.
  */
 
 import { sha256Hex } from '@skillsmith/core'
@@ -232,15 +238,8 @@ async function setDeprecated(teamId: string, skillId: string, value: boolean): P
     throw new Error(`Failed to ${operation} skill: ${resp.error.message ?? 'unknown error'}`)
   }
   if (Array.isArray(resp.data) && resp.data.length > 0) {
-    await recordRegistryAudit({
-      operation,
-      teamId,
-      skillId,
-      result: 'success',
-      authPath: 'user_jwt',
-      authRole: role,
-      actorUserId,
-    })
+    // SMI-6114: no client-side success row. trg_prs_audit wrote one audit_logs row per version
+    // whose `deprecated` value actually changed, in the same transaction as this UPDATE.
     return true
   }
 
@@ -332,7 +331,7 @@ function prepareContent(content: SkillContent): { contentHash: string } {
 export function createLiveRegistryService(): PrivateRegistryService {
   return {
     async publish(teamId, skillId, version, content, description): Promise<RegistrySkill> {
-      const { contentHash } = prepareContent(content)
+      prepareContent(content)
       // D-7: publish now runs as the signed-in user, not service-role — `published_by`
       // (DEFAULT auth.uid()) needs a real person behind it, both because an unconditional
       // BEFORE INSERT trigger (Wave 1) hard-rejects a NULL published_by, and because D-6's
@@ -354,9 +353,9 @@ export function createLiveRegistryService(): PrivateRegistryService {
       // authenticated` (20260729000000:268-269) does not include `content_hash` — sending it as
       // `authenticated` raises a column-privilege 42501, empirically confirmed alongside the
       // RETURNING check above. The BEFORE INSERT trigger derives it server-side from
-      // `content->>'SKILL.md'` regardless. `prepareContent()`'s own hash is still computed for
-      // validation and is attached to the audit row below for correlation with the server-derived
-      // value, not sent to the database.
+      // `content->>'SKILL.md'` regardless. `prepareContent()` still computes its own hash while
+      // validating, but that value is neither sent to the database nor recorded (SMI-6114: the
+      // audit row is the trigger's, and carries the server-derived hash).
       const insertResp = await client.from<PrivateRegistrySkillRow>(TABLE).insert({
         team_id: teamId,
         skill_id: skillId,
@@ -390,42 +389,13 @@ export function createLiveRegistryService(): PrivateRegistryService {
       // D-4(c): the row just landed `pending` and is structurally invisible to a plain SELECT —
       // read it back through the metadata-only submissions RPC instead (D-5).
       //
-      // SMI-5949 adversarial-review fix (M-5): the INSERT above already committed — the row
-      // genuinely exists in the database either way — so a failure HERE (RPC error, or a
-      // read-back miss) must still be audited, or a real, successful publish leaves ZERO audit
-      // trail: not a success row (the code never reaches the one below) and not an error row
-      // (nothing previously recorded one). Every other branch in this function audits both
-      // outcomes; this closes the one that did not. This does not roll back the already-committed
-      // insert — the fix is purely about not losing the audit trail for what already happened.
-      let submission
-      try {
-        submission = await readBackSubmission(client, teamId, skillId, version)
-      } catch (err) {
-        await recordRegistryAudit({
-          operation: 'publish',
-          teamId,
-          skillId,
-          version,
-          result: 'error',
-          authPath: 'user_jwt',
-          authRole: 'member',
-          actorUserId,
-          contentHash,
-          detail: 'readback_failed',
-        })
-        throw err
-      }
-      await recordRegistryAudit({
-        operation: 'publish',
-        teamId,
-        skillId,
-        version,
-        result: 'success',
-        authPath: 'user_jwt',
-        authRole: 'member',
-        actorUserId,
-        contentHash,
-      })
+      // SMI-6114: the committed INSERT is already audited — trg_prs_audit wrote its
+      // `private_registry:publish` row in the same transaction — so neither a successful
+      // read-back nor a failed one writes a client-side row. (SMI-5949's M-5 fix audited a failed
+      // read-back here so a real publish could not leave zero trail; the trigger now guarantees
+      // that trail on every path, including hosts with no service-role key.) `contentHash` stays a
+      // validation-only value: the server-derived hash is on the trigger's row.
+      const submission = await readBackSubmission(client, teamId, skillId, version)
       return mapSubmissionRow(teamId, submission)
     },
 
@@ -443,8 +413,8 @@ export function createLiveRegistryService(): PrivateRegistryService {
 
     // SMI-5905 Wave 3. MEMBER getter — never getAdminUserClient(): reading a skill you may
     // install is not an admin action, and claiming it is would lock every non-admin member out of
-    // their own team's registry. The entitlement check that DOES gate this lives in
-    // registry-tools.live.content.ts and is scoped to the row's own team, not the caller's tier.
+    // their own team's registry. The entitlement check that DOES gate this runs inside the
+    // release RPC that registry-tools.live.content.ts calls, scoped to the row's own team.
     async getContent(teamId, skillId, version): Promise<RegistrySkillContent | null> {
       const binding = await getMemberUserClient('install')
       return getSkillContent({ binding, teamId, skillId, version })
@@ -452,9 +422,9 @@ export function createLiveRegistryService(): PrivateRegistryService {
 
     // Deprecates every version of the skill within this team. SMI-5949 Wave 3: no longer just
     // "hidden from search, remains installable" — since the deprecated=false predicate below is
-    // now real (registry-tools.live.reads.ts, registry-tools.live.content.ts, the Edge Function),
-    // this makes every version genuinely unreachable through list/get/install, not just absent
-    // from a search surface the private registry never had. Admin-gated: runs as the signed-in
+    // now real (registry-tools.live.reads.ts, plus the release RPC behind install and the Edge
+    // Function), this makes every version genuinely unreachable through list/get/install, not
+    // just absent from a search surface the private registry never had. Admin-gated: runs as the signed-in
     // user so RLS authorizes it (SMI-5822). The team_id filter is still load-bearing — never
     // cross-team — and is now backed by `_admin_update`'s own USING clause rather than standing
     // alone.

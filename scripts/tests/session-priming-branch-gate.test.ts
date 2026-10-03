@@ -179,13 +179,13 @@ describe('session-start-priming.sh Gate 2 (SMI-4809)', () => {
     })
   }
 
-  it('does not prime when source != startup (Gate 1 still fires post-fix)', () => {
+  it('does not prime on an unrecognized source (Gate 1 still fails closed, SMI-6423)', () => {
     const { repo, home } = setupFixtureRepo('smi-4809-foo')
     tempDirs.push(repo, home)
 
     const event = JSON.stringify({
-      session_id: 'test-resumed-001',
-      source: 'resume', // <-- not startup
+      session_id: 'test-unrecognized-001',
+      source: 'clear', // <-- not startup/compact/resume
       cwd: repo,
       transcript_path: '',
     })
@@ -200,8 +200,43 @@ describe('session-start-priming.sh Gate 2 (SMI-4809)', () => {
     const logDir = join(home, '.skillsmith', 'logs')
 
     expect(proc.status).toBe(0)
-    expect(existsSync(logDir)).toBe(false) // Gate 1 still rejects, doesn't reach Gate 2
+    expect(existsSync(logDir)).toBe(false) // Gate 1 still rejects unrecognized sources, doesn't reach Gate 2
   })
+
+  // SMI-6423: Gate 1 now also accepts compact/resume, so the priming banner
+  // survives mid-session context compaction and --resume instead of only
+  // firing once at the very first startup. Both must reach Gate 2 exactly
+  // like startup does on the same fixture branch.
+  for (const source of ['compact', 'resume'] as const) {
+    it(`primes on source=${source} on a valid SMI branch (SMI-6423 Gate 1 widening)`, () => {
+      const { repo, home } = setupFixtureRepo('smi-4809-foo')
+      tempDirs.push(repo, home)
+
+      const event = JSON.stringify({
+        session_id: `test-${source}-001`,
+        source,
+        cwd: repo,
+        transcript_path: '',
+      })
+      const proc = spawnSync('bash', [HOOK_SCRIPT], {
+        cwd: repo,
+        env: makeFixtureEnv({ HOME: home }),
+        input: event,
+        encoding: 'utf8',
+        timeout: 10_000,
+      })
+
+      const logDir = join(home, '.skillsmith', 'logs')
+
+      expect(proc.status, `stderr was:\n${proc.stderr}`).toBe(0)
+      expect(
+        existsSync(logDir),
+        `Expected hook to pass Gate 1+2 for source=${source}, but $LOG_DIR was not created.\n` +
+          `stdout: ${proc.stdout}\nstderr: ${proc.stderr}`
+      ).toBe(true)
+      expect(proc.stdout).toMatch(/"hookEventName"\s*:\s*"SessionStart"/)
+    })
+  }
 
   it('skips on detached HEAD (empty branch — covered by deny-list "" arm)', () => {
     // Detached-HEAD repos report empty string from \`git branch --show-current\`.

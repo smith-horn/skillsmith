@@ -205,6 +205,121 @@ url: file:///etc/passwd
 
       expect(result.timing.totalMs).toBeGreaterThanOrEqual(0)
     })
+
+    // SMI-6472: Agent Skills spec name format + name/directory match
+    it('should reject a frontmatter name that does not match the spec name format', async () => {
+      const badFormatContent = `---
+name: Bad_Name
+description: A skill with an invalid name format
+version: 1.0.0
+---
+
+# Bad Name Skill
+`
+      const skillPath = await createMockInstalledSkill(ctx.skillsDir, 'Bad_Name', badFormatContent)
+
+      const result = await executeValidate({
+        skill_path: skillPath,
+      })
+
+      expect(result.valid).toBe(false)
+      expect(
+        result.errors.some(
+          // eslint-disable-next-line @typescript-eslint/no-explicit-any
+          (e: any) =>
+            e.field === 'name' && e.severity === 'error' && e.message.includes('lowercase letter')
+        )
+      ).toBe(true)
+    })
+
+    it('should pass when name matches spec format and directory (isDirectory=true)', async () => {
+      const matchingContent = `---
+name: matching-skill
+description: A skill whose name matches its directory
+version: 1.0.0
+---
+
+# Matching Skill
+`
+      const skillPath = await createMockInstalledSkill(
+        ctx.skillsDir,
+        'matching-skill',
+        matchingContent
+      )
+
+      const result = await executeValidate({
+        skill_path: skillPath,
+      })
+
+      expect(result.valid).toBe(true)
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+      expect(result.errors.filter((e: any) => e.severity === 'error')).toHaveLength(0)
+    })
+
+    it('should reject a frontmatter name that does not match its directory (isDirectory=true)', async () => {
+      const mismatchContent = `---
+name: other-skill-name
+description: A skill whose frontmatter name does not match its directory
+version: 1.0.0
+---
+
+# Mismatched Skill
+`
+      const skillPath = await createMockInstalledSkill(
+        ctx.skillsDir,
+        'actual-dir-name',
+        mismatchContent
+      )
+
+      const result = await executeValidate({
+        skill_path: skillPath,
+      })
+
+      expect(result.valid).toBe(false)
+      expect(
+        result.errors.some(
+          // eslint-disable-next-line @typescript-eslint/no-explicit-any
+          (e: any) =>
+            e.field === 'name' &&
+            e.severity === 'error' &&
+            e.message.includes('other-skill-name') &&
+            e.message.includes('actual-dir-name')
+        )
+      ).toBe(true)
+    })
+
+    it('should reject a frontmatter name that does not match its directory (isDirectory=false, direct SKILL.md path)', async () => {
+      const mismatchContent = `---
+name: file-mode-name
+description: A skill validated via a direct SKILL.md path, name mismatched
+version: 1.0.0
+---
+
+# Mismatched Skill (file mode)
+`
+      const skillDir = await createMockInstalledSkill(
+        ctx.skillsDir,
+        'file-mode-dir',
+        mismatchContent
+      )
+      const skillFilePath = path.join(skillDir, 'SKILL.md')
+
+      const result = await executeValidate({
+        skill_path: skillFilePath,
+      })
+
+      expect(result.valid).toBe(false)
+      expect(
+        result.errors.some(
+          // eslint-disable-next-line @typescript-eslint/no-explicit-any
+          (e: any) =>
+            e.field === 'name' &&
+            e.severity === 'error' &&
+            e.message.includes('file-mode-name') &&
+            e.message.includes('file-mode-dir')
+        )
+      ).toBe(true)
+    })
   })
 
   describe('formatValidationResults', () => {

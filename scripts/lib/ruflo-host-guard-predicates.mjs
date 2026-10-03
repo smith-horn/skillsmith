@@ -1,0 +1,371 @@
+/**
+ * Pure predicate logic for `scripts/ruflo-host-guard.mjs` (SMI-6744 Wave 4
+ * A4.6). Split out of the guard's own orchestration file purely to stay
+ * under the 500-line-per-file convention this repo keeps by hand for .mjs
+ * files under scripts/ (M3 correction: not enforced by tooling here —
+ * `scripts/check-file-length.mjs` only runs via `lint-staged` for
+ * `*.ts`/`*.sh`; SMI-5994) — every export here is a pure function or
+ * constant, no I/O, no state.
+ * `checkH1toH7` and the verdict-shape constructors this file's own
+ * predicates call (`ALLOW`, `denyInternalError`, `denyMalformedInput`,
+ * `denyWith`), plus the two npm-form predicates (`isSanctionedNpmForm`,
+ * `isReadOnlyNpmForm`), live in their own sibling files
+ * (`ruflo-host-guard-h1to7.mjs`, `ruflo-host-guard-verdicts.mjs`,
+ * `ruflo-host-guard-npm.mjs` — the last one SMI-6869 Fix D's own split,
+ * same hand-kept 500-line-per-file convention as the other two, M3
+ * correction) and are re-exported here so
+ * `scripts/ruflo-host-guard.mjs`'s own import statement needed no change
+ * across any of the three splits. `checkRunnerVariableArgument` moved to
+ * its own sibling `ruflo-host-guard-runner-arg.mjs` the same way
+ * (governance-round M3 follow-up, once this file's own docblock
+ * corrections pushed it to 502 lines) and is likewise re-exported here for
+ * the same reason. `RUNNER_BASENAMES`/`RUNNER_TOKEN_RE`
+ * (`ruflo-host-guard-h1to7.mjs`) are also imported here, for this file's
+ * OWN internal use (`checkBraceSegment` and `checkAssignmentValuePredicate`
+ * respectively — L1 correction: `checkRunnerVariableArgument` used to be
+ * the third internal consumer of `RUNNER_BASENAMES` named here, but that
+ * usage moved out with the function itself) — but, unlike `checkH1toH7`
+ * above, `RUNNER_BASENAMES`/`RUNNER_TOKEN_RE` are deliberately NOT
+ * re-exported: no consumer outside this file's own import statement ever
+ * referenced either one through it (SMI-6744 C1 delta round, L1 cleanup:
+ * confirmed via `grep -rn` across `scripts/` before removal).
+ * `SANCTIONED_ALTERNATIVE`
+ * (`ruflo-host-guard-verdicts.mjs`) was in the same position — re-exported
+ * with no external consumer — but had no internal use here either, so its
+ * import was dropped entirely rather than kept-but-unexported.
+ * `denyStartDaemon` was in this same re-export list until the round-3
+ * governance file-length fix moved `decideHooksSessionStart` (its only
+ * caller) into `ruflo-host-guard-verdicts.mjs` itself, alongside it — the
+ * orchestration file now imports `decideHooksSessionStart` from there
+ * directly, so this file needs neither the import nor the re-export.
+ *
+ * Design: docs/internal/implementation/smi-6744-ruflo-host-guard.md
+ * § Predicate Specification (Stage 1 allowlist, H1–H8), built from
+ * docs/internal/uat/smi-6744/a44-structural-design-2026-09-27.md § 1(b)
+ * Layer H and its 62-row adversarial census (§ 5).
+ *
+ * All H1–H8 matching is against LOWERCASED argv (`argvLower`) — a
+ * deliberate, stated choice (plan § Predicate Specification): Bash rule
+ * case-sensitivity is undocumented, so this guard covers both cases, and
+ * every sanctioned/denied token in this domain is conventionally lowercase
+ * in this repo. The one exception is the Stage 1 `docker exec
+ * skillsmith-ruflo-1` container-name check, which the plan states must
+ * match "exactly" — kept case-sensitive on that one field, deliberately.
+ */
+
+import { basenameOf, stripFlags } from './shell-command-normalize.mjs'
+import { RUNNER_BASENAMES, RUNNER_TOKEN_RE, checkH1toH7 } from './ruflo-host-guard-h1to7.mjs'
+import { isReadOnlyNpmForm, isSanctionedNpmForm } from './ruflo-host-guard-npm.mjs'
+import { checkRunnerVariableArgument } from './ruflo-host-guard-runner-arg.mjs'
+import { EXEC_ENV_VARS } from './ruflo-host-guard-consumers.mjs'
+import {
+  ALLOW,
+  denyInternalError,
+  denyMalformedInput,
+  denyWith,
+} from './ruflo-host-guard-verdicts.mjs'
+
+export {
+  checkH1toH7,
+  checkRunnerVariableArgument,
+  ALLOW,
+  denyInternalError,
+  denyMalformedInput,
+  denyWith,
+  isReadOnlyNpmForm,
+  isSanctionedNpmForm,
+}
+
+/**
+ * Stage 1 row 1 — `docker exec skillsmith-ruflo-1 …` (design § 1(b), plan
+ * § Predicate Specification Stage 1). Runs on the RAW pre-strip word
+ * values, before the shared `normalizeWrappers` ever gets a chance to
+ * unwrap `docker exec` unconditionally (it doesn't know about container
+ * names). The container name is matched EXACTLY (case-sensitive) — the
+ * one field in this whole predicate set that deliberately does not
+ * lowercase, per the plan's explicit "equals `skillsmith-ruflo-1` exactly".
+ *
+ * Also accepts the `docker container exec …` long-form alias (L-A fix,
+ * SMI-6744 Wave 4 governance round) — `docker container exec` is a real
+ * Docker CLI alias for `docker exec`, and this guard's own goal (letting
+ * the ONE sanctioned invocation shape through) is undermined by
+ * recognizing only the short form.
+ * @param {string[]} rawValues
+ */
+export function isSanctionedDockerExec(rawValues) {
+  if (rawValues.length < 2) return false
+  if (basenameOf(rawValues[0]).toLowerCase() !== 'docker') return false
+  let rest
+  if (rawValues[1].toLowerCase() === 'exec') {
+    rest = rawValues.slice(2)
+  } else if (rawValues[1].toLowerCase() === 'container' && rawValues[2]?.toLowerCase() === 'exec') {
+    rest = rawValues.slice(3)
+  } else {
+    return false
+  }
+  rest = stripFlags(rest)
+  return rest[0] === 'skillsmith-ruflo-1'
+}
+
+/**
+ * H8(i) — "deny the assignment-plus-runner shape" (a44 § 5 D11 candidate
+ * closure (i), kept as an additional narrow arm alongside (ii) per the
+ * owner's round-1 decision). Reads the PRE-strip word tokens for one
+ * segment — this must run before wrapper normalization discards a bare
+ * leading assignment, which is exactly what the shared `normalizeWrappers`
+ * does. Scans EVERY token in the segment (not just position 0), so it also
+ * catches a bare-assignment-only segment (`V=ruflo` on its own, ahead of a
+ * later `;`-joined use) as well as an assignment prefixing more argv in
+ * the same segment.
+ * SMI-6869 consumer-string round: also denies when the assignment KEY is a
+ * process-launching env var (`EXEC_ENV_VARS` —
+ * `ruflo-host-guard-consumers.mjs`, e.g. `PAGER`/`GIT_PAGER`/`EDITOR`/
+ * `GIT_SSH_COMMAND`) and the assigned value's FIRST whitespace-separated
+ * word exactly names `ruflo`/`claude-flow`/`claude-flow-mcp` — the value is
+ * later exec'd by whatever program honors that var (git's `$GIT_PAGER`,
+ * any pager/editor-invoking tool's `$PAGER`/`$EDITOR`), so its first word
+ * IS the command name that will run, the same exact-name signal M-6's own
+ * bare-name inversion (`checkBareNameInversion`, `H4B_NAMES` below) uses.
+ * This scan runs regardless of whether the assignment sits in BARE prefix
+ * position (`PAGER='ruflo …' git log`) or as an argument to `env`
+ * (`env GIT_PAGER='ruflo …' git log`) — this function already scans EVERY
+ * token in the segment, not just position 0, so both shapes reach it
+ * identically without any `env`-specific handling.
+ *
+ * Round-3 governance note: this `EXEC_ENV_VARS` arm is **verdict-redundant**
+ * with round 2's own full-pipeline recursion of the same value
+ * (`extractExecEnvVarTexts`, step 3b of `evaluateGuardSegment`) — measured by
+ * deleting this arm: every row it closes is still closed, only the reported
+ * label moves from `H8` to `H4`. It is KEPT deliberately: a fail-closed guard
+ * wants a cheap early deny that does not depend on the recursion machinery
+ * staying correct, and it pins the `H8` label for the bare-name shape. It is
+ * NOT independent coverage, and nothing should be added here on the
+ * assumption that it is.
+ * @param {Array<{value: string}>} wordTokens pre-strip word tokens (this segment)
+ */
+export function checkAssignmentValuePredicate(wordTokens) {
+  for (const tok of wordTokens) {
+    const m = /^([A-Za-z_][A-Za-z0-9_]*)=(.*)$/.exec(tok.value)
+    if (!m) continue
+    const [, key, rawValue] = m
+    if (RUNNER_TOKEN_RE.test(rawValue.toLowerCase())) {
+      return denyWith('H8', tok.value)
+    }
+    if (EXEC_ENV_VARS.has(key)) {
+      const firstWord = rawValue.trim().split(/\s+/)[0]?.toLowerCase()
+      if (firstWord && H4B_NAMES.has(firstWord)) {
+        return denyWith('H8', tok.value)
+      }
+    }
+  }
+  return null
+}
+
+/**
+ * Brace-syntax fail-closed check (round 1 finding 3). The tokenizer does
+ * not model Bash brace expansion — it treats `{`/`}` as command operators
+ * — so `npx ru{f,}lo …` never reaches any H-predicate as a contiguous
+ * `ruflo` substring. Rather than implement partial brace expansion, this
+ * fails CLOSED whenever a `{`/`}` op-token appears in a segment whose
+ * effective first command word (after skipping a leading VAR=val
+ * assignment, then optionally one `env`/`sudo`/`exec` wrapper and ITS OWN
+ * leading VAR=val arguments) is a package runner.
+ * @param {Array<{type: string, value?: string}>} segmentTokens the RAW
+ *   segment (word + op tokens interleaved) — must be called before the
+ *   caller strips down to word-only tokens.
+ */
+export function checkBraceSegment(segmentTokens) {
+  const braceIdx = segmentTokens.findIndex(
+    (t) => t.type === 'op' && (t.value === '{' || t.value === '}')
+  )
+  if (braceIdx === -1) return null
+
+  // SMI-6869 Fix A: a redirect-marked word token (`2>&1`, `>/dev/null`)
+  // is never part of the runner's own argv — excluding it here keeps this
+  // check's "effective first command word" walk from ever landing on one.
+  const words = segmentTokens.filter((t) => t.type === 'word' && !t.redirect)
+  let i = 0
+  while (i < words.length && /^[A-Za-z_][A-Za-z0-9_]*=/.test(words[i].value)) i++
+  if (i >= words.length) return null
+
+  let base = basenameOf(words[i].value).toLowerCase()
+  if (base === 'env' || base === 'sudo' || base === 'exec') {
+    let j = i + 1
+    while (j < words.length && /^[A-Za-z_][A-Za-z0-9_]*=/.test(words[j].value)) j++
+    if (j < words.length) {
+      i = j
+      base = basenameOf(words[i].value).toLowerCase()
+    }
+  }
+
+  // A brace expression can also SPELL the command name itself
+  // (`{ruflo,} memory store` expands to `ruflo`), in which case the
+  // effective first word is `ruflo,` and no runner is involved at all.
+  const commaSplit = (v) => v.split(',').filter((p) => p.length > 0)
+  for (const w of words) {
+    // only a word that is itself part of a brace ALTERNATION (it carries a
+    // comma) can expand to a different name; `{ npm run lint; }`'s own
+    // words carry none, so shell GROUPING stays allowed (M-B fix intact).
+    if (!w.value.includes(',')) continue
+    for (const part of commaSplit(w.value)) {
+      const b = basenameOf(part).toLowerCase()
+      if (H4B_NAMES.has(b) || RUNNER_BASENAMES.has(b)) {
+        return denyWith(
+          'brace-syntax',
+          'a `{`/`}` brace expression that can expand to a package-runner or ruflo name — ' +
+            'fails closed rather than implementing partial brace-expansion'
+        )
+      }
+    }
+  }
+
+  if (!RUNNER_BASENAMES.has(base)) return null
+
+  // M-B fix (SMI-6744 Wave 4 governance round): a `{`/`}` that appears AT
+  // OR BEFORE the effective first command word is shell GROUPING syntax
+  // (`{ npm run lint; }`), not a brace expression inside the runner's own
+  // arguments -- only deny when the brace strictly FOLLOWS that word.
+  // `words[i]` is the same object reference filtered out of
+  // `segmentTokens`, so `indexOf` finds its true position by identity.
+  const effectiveWordIdx = segmentTokens.indexOf(words[i])
+  if (braceIdx <= effectiveWordIdx) return null
+
+  return denyWith(
+    'brace-syntax',
+    'a `{`/`}` brace expression in a package-runner command — fails closed rather than ' +
+      'implementing partial brace-expansion (round 1 finding 3)'
+  )
+}
+
+/**
+ * M-6 fix (SMI-6744 Wave 4 governance round) — bare-name inversion. Every
+ * H-predicate before this one is either positional-at-argv[0] (H4),
+ * scoped to a KNOWN runner's own forward-scan (H5/H8(ii)), or a
+ * path-shaped substring check (H1/H2/H3/H6/H7) that a bare, unqualified
+ * name never matches — so a bare `ruflo`/`claude-flow`/`claude-flow-mcp`
+ * token sitting anywhere PAST argv[0], in front of a launcher this
+ * guard's own table doesn't model, was never examined by anything:
+ * `ssh localhost ruflo memory store`, `watch ruflo …`,
+ * `flock /tmp/l ruflo …`, `strace -f ruflo …` all reached ALLOW.
+ *
+ * The inversion: deny whenever ANY token at index >= 1 EXACTLY equals one
+ * of the three names (lowercased), UNLESS argv[0]'s own basename is on
+ * `NON_EXECUTING_VERBS` — a command whose own semantics never treat a
+ * bare positional word as something to RUN as a process (a search, a VCS
+ * operation, a filesystem operation, a printer, a shell builtin/test).
+ *
+ * `npm` is DELIBERATELY NOT on that allowlist, even though it appears in
+ * the design's own illustrative command list, because by the time a
+ * segment reaches this check Stage 1 (`isSanctionedNpmForm`, checked
+ * earlier in the pipeline) has ALREADY allowed npm's own legitimate
+ * inspection/remediation forms and returned — so an `npm` segment
+ * reaching here is one Stage 1 did NOT recognize, and `npm` must stay a
+ * RUNNER for it (`npm frobnicate ruflo` must still deny). The
+ * launchers/interpreters/shells that DO execute their own arguments
+ * (`find`, `xargs`, `env`, `sudo`, `ssh`, `su`, `watch`, `flock`,
+ * `strace`/`ltrace`/`dtrace`, `perl`/a `python*` build, `ruby`, `node`,
+ * `deno`, `bun`, `time`, `timeout`, `nice`, `nohup`, `setsid`, `script`,
+ * `stdbuf`, `chrt`, `ionice`, `caffeinate`, `exec`, `command`, `builtin`,
+ * `eval`, `sh`/`bash`/`zsh`) are likewise never on the allowlist — most of
+ * them are already peeled/recursed by an earlier H1–H9/H-1/H-2/H-8
+ * mechanism before a bare-name segment would even reach this check with
+ * `ruflo` still sitting past position 0.
+ *
+ * Two accepted false positives, MEASURED against the allowlist rather
+ * than assumed: `find . -name ruflo` (a real, harmless search — only
+ * `find`'s own literal `ruflo` search argument costs anything; `find`
+ * itself is correctly NOT on the allowlist, since `find … -exec ruflo …`
+ * really does execute it) and any `rm`/`mv`-class command naming a
+ * literal path/argument component `ruflo` (`rm -rf ruflo`, `mv x ruflo`)
+ * — these ARE on the allowlist, since neither ever executes its own
+ * arguments as a process.
+ * @param {string[]} argvLower post-normalize, lowercased argv
+ */
+const H4B_NAMES = new Set(['ruflo', 'claude-flow', 'claude-flow-mcp'])
+
+/**
+ * Per-launcher "this flag's value is a LABEL, not a command name" flags
+ * (M-6 fix) — deliberately modeled PER-LAUNCHER-BASENAME rather than as
+ * one shared/generic value-flags set: the SAME flag spelling means
+ * different things across different programs (`-f` is docker-compose's
+ * own `--file`, but strace's OWN `-f` is a boolean "follow forks" flag
+ * with no value at all) — a generic shared set would have to pick ONE
+ * meaning and get the other wrong. `docker compose --profile ruflo up -d`
+ * (a real, legitimate compose profile NAME, not a command) is this fix's
+ * own motivating case; `docker run --rm image ruflo memory store` (a bare
+ * `ruflo` as the CONTAINER's overridden entrypoint command, with no such
+ * label flag anywhere in front of it) must still deny, which is exactly
+ * why this is keyed by flag, not by blanket-exempting `docker` itself.
+ */
+const H4B_LABEL_VALUE_FLAGS = new Map(
+  [['docker', ['--profile', '--project-name', '--project-directory', '-p', '-f', '--file']]].map(
+    ([name, flags]) => [name, new Set(flags)]
+  )
+)
+H4B_LABEL_VALUE_FLAGS.set('docker-compose', H4B_LABEL_VALUE_FLAGS.get('docker'))
+
+const NON_EXECUTING_VERBS = new Set([
+  'grep',
+  'egrep',
+  'fgrep',
+  'rg',
+  'ag',
+  'git',
+  'gh',
+  'echo',
+  'printf',
+  'ls',
+  'cat',
+  'head',
+  'tail',
+  'wc',
+  'stat',
+  'file',
+  'du',
+  'diff',
+  'cmp',
+  'tree',
+  'sed',
+  'awk',
+  'jq',
+  'cut',
+  'sort',
+  'uniq',
+  'tr',
+  'mkdir',
+  'rmdir',
+  'touch',
+  'rm',
+  'mv',
+  'cp',
+  'ln',
+  'chmod',
+  'chown',
+  'cd',
+  'pushd',
+  'popd',
+  'test',
+  '[',
+  'true',
+  'false',
+  'export',
+  'unset',
+  'read',
+  'type',
+  'which',
+  'whereis',
+])
+
+export function checkBareNameInversion(argvLower) {
+  if (argvLower.length < 2) return null
+  const base = basenameOf(argvLower[0])
+  if (NON_EXECUTING_VERBS.has(base)) return null
+  const labelFlags = H4B_LABEL_VALUE_FLAGS.get(base)
+  for (let i = 1; i < argvLower.length; i++) {
+    if (labelFlags && labelFlags.has(argvLower[i - 1])) continue
+    if (H4B_NAMES.has(argvLower[i])) {
+      return denyWith('H4b', argvLower[i])
+    }
+  }
+  return null
+}

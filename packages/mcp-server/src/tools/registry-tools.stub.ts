@@ -13,15 +13,22 @@
  *      stub, so leaving the stub unfiltered would make that test silently assert behavior the two
  *      live transports (registry-tools.live.content.ts, the Edge Function) no longer have.
  *
- * Local-dev / test fallback used when Supabase is NOT configured. The real, Postgres-backed
- * implementation lives in registry-tools.live.ts and is selected automatically once SUPABASE_URL +
- * SUPABASE_ANON_KEY are present (see `registry-tools.ts`'s `isSupabaseConfigured()` branch).
+ * Local-dev / test fallback. The real, Postgres-backed implementation (registry-tools.live.ts) is
+ * now the module-level DEFAULT (SMI-6622: the public @skillsmith/mcp-server package must never
+ * require Supabase env vars, and the live path already has an anon-key production fallback —
+ * `supabase-client.ts`'s `getSupabaseClient()`/`getSupabaseUserClient()` — so there is no
+ * env-config reason left to prefer this stub). This stub is selected only when
+ * `SKILLSMITH_REGISTRY_STUB` is explicitly set (`'1'`/`'true'`) — see `registry-tools.ts`'s
+ * module-level `service` selection — which `vitest.setup.ts` does unconditionally for the whole
+ * test run, so unit tests never reach this file's own live sibling without an explicit
+ * `setPrivateRegistryService(createLiveRegistryService())` override.
  *
  * WHAT THIS STUB DOES NOT DO, and must never be read as evidence about:
  *   - **Entitlement.** `getContent()` here has no Enterprise/subscription check at all. That gate
- *     is a live-service concern (registry-tools.live.content.ts) because it is a query against
- *     `teams`/`subscriptions`, which the stub has no analogue of. A test that passes against this
- *     stub proves nothing about entitlement; those tests drive the live service instead.
+ *     is a live-service concern (the release RPC behind registry-tools.live.content.ts) because it
+ *     is a query against `teams`/`subscriptions`, which the stub has no analogue of. A test that
+ *     passes against this stub proves nothing about entitlement; those tests drive the live
+ *     service instead.
  *   - **Version immutability.** The real table's UNIQUE(team_id, skill_id, version) is what
  *     enforces that; re-publishing the same triple here just overwrites.
  *   - **RLS / cross-team isolation.** Approximated only: entries are keyed by (teamId, skillId) so
@@ -72,6 +79,7 @@
 import type { PrivateRegistryService, RegistrySkill, SkillContent } from './registry-tools.js'
 import type { RegistrySkillContent } from './registry-tools.content.types.js'
 import type { RegistryReviewDecision } from './registry-tools.review.types.js'
+import { markAsStub } from './stub-data-source.js'
 
 /** One published version's payload. Metadata for `list`/`get` lives in the separate skills map. */
 interface StubVersion {
@@ -202,7 +210,7 @@ export function createStubRegistryService(): StubRegistryService {
     return best
   }
 
-  return {
+  return markAsStub<StubRegistryService>({
     async publish(teamId, skillId, version, content: SkillContent, description) {
       const publishedAt = new Date().toISOString()
       const row: StubSkillRow = {
@@ -413,5 +421,5 @@ export function createStubRegistryService(): StubRegistryService {
     setActor(next: StubActor): void {
       actor = next
     },
-  }
+  })
 }

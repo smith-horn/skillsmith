@@ -14,9 +14,7 @@ import { join } from 'path'
  * A PATH with a do-nothing `git-crypt` shim prepended. The healer only ever
  * gates on `command -v git-crypt` before writing config; it never actually
  * invokes the binary, so a shim is sufficient and keeps these tests
- * hermetic regardless of whether the real binary is installed (it is NOT
- * inside this repo's own Docker dev container by design — git-crypt is
- * host-side tooling, see CLAUDE.md's Git-Crypt section).
+ * hermetic regardless of whether the real binary is installed.
  */
 export const GIT_CRYPT_SHIM_PATH: string = (() => {
   const dir = mkdtempSync(join(tmpdir(), 'git-crypt-shim-'))

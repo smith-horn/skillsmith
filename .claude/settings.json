@@ -1,15 +1,7 @@
 {
-  "env": {
-    "CLAUDE_FLOW_AUTO_COMMIT": "false",
-    "CLAUDE_FLOW_AUTO_PUSH": "false",
-    "CLAUDE_FLOW_HOOKS_ENABLED": "true",
-    "CLAUDE_FLOW_TELEMETRY_ENABLED": "true",
-    "CLAUDE_FLOW_REMOTE_EXECUTION": "true",
-    "CLAUDE_FLOW_CHECKPOINTS_ENABLED": "true"
-  },
+  "env": {},
   "permissions": {
     "allow": [
-      "Bash(npx ruflo:*)",
       "Bash(npm run lint)",
       "Bash(npm run test:*)",
       "Bash(npm test:*)",
@@ -58,6 +50,8 @@
       "mcp__ruflo__hive-mind_shutdown",
       "mcp__ruflo__hooks_intelligence_pattern-store",
       "mcp__ruflo__hooks_intelligence_pattern-search",
+      "mcp__ruflo__memory_import",
+      "mcp__ruflo__memory_import_claude",
       "mcp__ruflo__memory_migrate",
       "mcp__ruflo__memory_search",
       "mcp__ruflo__memory_search_unified",
@@ -78,7 +72,94 @@
       "Read(//Users/williamsmith/Documents/GitHub/Smith-Horn/skillsmith/.env)",
       "Read(//Users/williamsmith/Documents/GitHub/Smith-Horn/skillsmith/.worktrees/**/.env)",
       "Bash(cat .env)",
-      "Bash(cat .env:*)"
+      "Bash(cat .env:*)",
+      "Bash(npx ruflo)",
+      "Bash(npx ruflo *)",
+      "Bash(npx ruflo@*)",
+      "Bash(npx -y ruflo)",
+      "Bash(npx -y ruflo *)",
+      "Bash(npx -y ruflo@*)",
+      "Bash(npx --yes ruflo)",
+      "Bash(npx --yes ruflo *)",
+      "Bash(npx --yes ruflo@*)",
+      "Bash(npx claude-flow)",
+      "Bash(npx claude-flow *)",
+      "Bash(npx claude-flow@*)",
+      "Bash(npx @claude-flow/cli)",
+      "Bash(npx @claude-flow/cli *)",
+      "Bash(npx @claude-flow/cli@*)",
+      "Bash(npm exec ruflo)",
+      "Bash(npm exec ruflo *)",
+      "Bash(npm exec ruflo@*)",
+      "Bash(npm exec -- ruflo)",
+      "Bash(npm exec -- ruflo *)",
+      "Bash(npm exec -- ruflo@*)",
+      "Bash(npm x ruflo)",
+      "Bash(npm x ruflo *)",
+      "Bash(npm x ruflo@*)",
+      "Bash(npm x -- ruflo)",
+      "Bash(npm x -- ruflo *)",
+      "Bash(npm x -- ruflo@*)",
+      "Bash(pnpm dlx ruflo)",
+      "Bash(pnpm dlx ruflo *)",
+      "Bash(pnpm dlx ruflo@*)",
+      "Bash(yarn dlx ruflo)",
+      "Bash(yarn dlx ruflo *)",
+      "Bash(yarn dlx ruflo@*)",
+      "Bash(bunx ruflo)",
+      "Bash(bunx ruflo *)",
+      "Bash(bunx ruflo@*)",
+      "Bash(node node_modules/ruflo/*)",
+      "Bash(node ./node_modules/ruflo/*)",
+      "Bash(node node_modules/@claude-flow/cli/*)",
+      "Bash(node ./node_modules/@claude-flow/cli/*)",
+      "Bash(node node_modules/.bin/ruflo)",
+      "Bash(node node_modules/.bin/ruflo *)",
+      "Bash(node node_modules/.bin/claude-flow)",
+      "Bash(node node_modules/.bin/claude-flow *)",
+      "Bash(node_modules/.bin/ruflo)",
+      "Bash(node_modules/.bin/ruflo *)",
+      "Bash(./node_modules/.bin/ruflo)",
+      "Bash(./node_modules/.bin/ruflo *)",
+      "Bash(ruflo)",
+      "Bash(ruflo *)",
+      "mcp__ruflo__terminal_execute",
+      "mcp__ruflo__agent_execute",
+      "mcp__ruflo__wasm_agent_tool",
+      "mcp__ruflo__github_issue_track",
+      "mcp__ruflo__github_metrics",
+      "mcp__ruflo__github_pr_manage",
+      "mcp__ruflo__github_repo_analyze",
+      "mcp__ruflo__github_workflow",
+      "mcp__ruflo__browser_act",
+      "mcp__ruflo__browser_back",
+      "mcp__ruflo__browser_check",
+      "mcp__ruflo__browser_click",
+      "mcp__ruflo__browser_close",
+      "mcp__ruflo__browser_cookie_use",
+      "mcp__ruflo__browser_eval",
+      "mcp__ruflo__browser_fill",
+      "mcp__ruflo__browser_forward",
+      "mcp__ruflo__browser_get-text",
+      "mcp__ruflo__browser_get-title",
+      "mcp__ruflo__browser_get-url",
+      "mcp__ruflo__browser_get-value",
+      "mcp__ruflo__browser_hover",
+      "mcp__ruflo__browser_open",
+      "mcp__ruflo__browser_press",
+      "mcp__ruflo__browser_reload",
+      "mcp__ruflo__browser_screenshot",
+      "mcp__ruflo__browser_scroll",
+      "mcp__ruflo__browser_select",
+      "mcp__ruflo__browser_session-list",
+      "mcp__ruflo__browser_session_end",
+      "mcp__ruflo__browser_session_record",
+      "mcp__ruflo__browser_session_replay",
+      "mcp__ruflo__browser_snapshot",
+      "mcp__ruflo__browser_template_apply",
+      "mcp__ruflo__browser_type",
+      "mcp__ruflo__browser_uncheck",
+      "mcp__ruflo__browser_wait"
     ]
   },
   "hooks": {
@@ -89,12 +170,17 @@
           {
             "type": "command",
             "timeout": 5,
-            "command": "CMD=$(cat | jq -r '.tool_input.command // empty' | head -c 4096 | tr '\\n' ' '); if [ -n \"$CMD\" ]; then \"$CLAUDE_PROJECT_DIR/scripts/claude-hooks-log-wrapper.sh\" pre-command \"$CMD\" -- --command \"$CMD\" --validate-safety true --prepare-resources true; fi"
+            "command": "CMD=$(cat | jq -r '.tool_input.command // empty' | head -c 4096 | tr '\\n' ' '); if [ -n \"$CMD\" ]; then \"$CLAUDE_PROJECT_DIR/scripts/claude-hooks-log-wrapper.sh\" pre-command \"$CMD\"; fi"
           },
           {
             "type": "command",
             "timeout": 5,
             "command": "node \"$CLAUDE_PROJECT_DIR/scripts/env-read-guard.mjs\""
+          },
+          {
+            "type": "command",
+            "timeout": 5,
+            "command": "node \"$CLAUDE_PROJECT_DIR/scripts/ruflo-host-guard.mjs\""
           }
         ]
       },
@@ -104,7 +190,7 @@
           {
             "type": "command",
             "timeout": 5,
-            "command": "FILE=$(cat | jq -r '.tool_input.file_path // .tool_input.path // empty'); if [ -n \"$FILE\" ]; then \"$CLAUDE_PROJECT_DIR/scripts/claude-hooks-log-wrapper.sh\" pre-edit \"$FILE\" -- --file \"$FILE\" --auto-assign-agents true --load-context true; fi"
+            "command": "FILE=$(cat | jq -r '.tool_input.file_path // .tool_input.path // empty'); if [ -n \"$FILE\" ]; then \"$CLAUDE_PROJECT_DIR/scripts/claude-hooks-log-wrapper.sh\" pre-edit \"$FILE\"; fi"
           }
         ]
       },
@@ -126,6 +212,16 @@
             "command": "node \"$CLAUDE_PROJECT_DIR/scripts/linear-issue-creation-guard.mjs\""
           }
         ]
+      },
+      {
+        "matcher": "^mcp__ruflo__hooks_session-start$",
+        "hooks": [
+          {
+            "type": "command",
+            "timeout": 5,
+            "command": "node \"$CLAUDE_PROJECT_DIR/scripts/ruflo-host-guard.mjs\""
+          }
+        ]
       }
     ],
     "PostToolUse": [
@@ -135,7 +231,7 @@
           {
             "type": "command",
             "timeout": 5,
-            "command": "CMD=$(cat | jq -r '.tool_input.command // empty' | head -c 4096 | tr '\\n' ' '); if [ -n \"$CMD\" ]; then \"$CLAUDE_PROJECT_DIR/scripts/claude-hooks-log-wrapper.sh\" post-command \"$CMD\" -- --command \"$CMD\" --success true --track-metrics true --store-results true; fi"
+            "command": "CMD=$(cat | jq -r '.tool_input.command // empty' | head -c 4096 | tr '\\n' ' '); if [ -n \"$CMD\" ]; then \"$CLAUDE_PROJECT_DIR/scripts/claude-hooks-log-wrapper.sh\" post-command \"$CMD\"; fi"
           }
         ]
       },
@@ -145,7 +241,7 @@
           {
             "type": "command",
             "timeout": 5,
-            "command": "FILE=$(cat | jq -r '.tool_input.file_path // .tool_input.path // empty'); if [ -n \"$FILE\" ]; then \"$CLAUDE_PROJECT_DIR/scripts/claude-hooks-log-wrapper.sh\" post-edit \"$FILE\" -- --file \"$FILE\" --success true --format true --update-memory true; fi"
+            "command": "FILE=$(cat | jq -r '.tool_input.file_path // .tool_input.path // empty'); if [ -n \"$FILE\" ]; then \"$CLAUDE_PROJECT_DIR/scripts/claude-hooks-log-wrapper.sh\" post-edit \"$FILE\"; fi"
           }
         ]
       },
@@ -217,14 +313,13 @@
             "command": "$CLAUDE_PROJECT_DIR/scripts/session-start-mcp-command-guard.sh"
           }
         ]
-      }
-    ],
-    "Stop": [
+      },
       {
+        "matcher": "compact|resume",
         "hooks": [
           {
             "type": "command",
-            "command": "$CLAUDE_PROJECT_DIR/scripts/session-stop-hook-safe.sh"
+            "command": "$CLAUDE_PROJECT_DIR/scripts/session-start-priming.sh"
           }
         ]
       }

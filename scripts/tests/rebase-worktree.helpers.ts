@@ -63,16 +63,16 @@ export function sh(cmd: string, opts?: { cwd?: string }): string {
  * other call site needing to know about it.
  *
  * SMI-5702: defaults SKILLSMITH_GIT_CRYPT_FILTER_HEAL_DISABLE=1. Step 6.5
- * (step_ensure_filter_registered) now runs unconditionally in main(), and
- * this file's fixtures register a PORTABLE SIMULATED filter pair, not real
- * git-crypt's spelling -- indistinguishable from FOREIGN to the classifier,
- * so without this default the heal would overwrite the simulation (and
- * hard-error, since git-crypt isn't installed in this repo's own Docker dev
- * container by design). None of these pre-existing SMI-5773/SMI-5781 tests
- * are about SMI-5702's healing itself -- that's covered separately in
- * scripts/tests/git-crypt-filter-registration.test.ts, via a real PATH
- * shim. `extraEnv` can override this back off
- * (`{ SKILLSMITH_GIT_CRYPT_FILTER_HEAL_DISABLE: '0' }`).
+ * (step_ensure_filter_registered) runs unconditionally in main(), and this
+ * file's fixtures register a PORTABLE SIMULATED filter pair the classifier
+ * cannot distinguish from FOREIGN -- so without this default the heal
+ * overwrites the simulation. SMI-6491 changed why, not whether: git-crypt is
+ * now installed in this repo's Docker dev container, so the heal no longer
+ * hard-errors on a missing binary, it succeeds and silently replaces the
+ * simulated pair with a real registration. None of these SMI-5773/SMI-5781
+ * tests cover the heal itself -- that is
+ * scripts/tests/git-crypt-filter-registration.test.ts, via a real PATH shim.
+ * Override with `{ SKILLSMITH_GIT_CRYPT_FILTER_HEAL_DISABLE: '0' }`.
  */
 export function runScript(
   args: string,

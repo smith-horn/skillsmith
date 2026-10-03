@@ -96,6 +96,26 @@ release() {
     fi
 }
 
+# SMI-6614 (ADR-158): mount check before any self-heal install, via the
+# shared scripts/lib/node-modules-mount-gate.sh — checks every declared
+# node_modules path (root + one per packages/*), not just root, since
+# SMI-6516 detached nine of ten individually and a root-only check misses
+# "root attached, one workspace detached." The helper normalizes every
+# outcome to 0 (every path mounted with a volume-shaped root) / 32 (>=1
+# detached, mounted but not volume-shaped, or ambiguous — stderr names
+# each) / 127 (mountinfo unreadable) — see that file's own header for the
+# full contract and the residual it states plainly. Full history and
+# code-review trail: docs/internal/implementation/smi-6614-6606-lockfile-drift-classifier.md.
+#
+# check-container-deps-fresh.sh's own `docker exec -e ...` forwards nothing
+# mount-related, so this function always runs the real helper — there is no
+# test-only branch to accidentally exercise instead. Tests point the
+# helper's own SKILLSMITH_MOUNT_GATE_MOUNTINFO_TEST seam at a fixture
+# mountinfo file, running the exact production code path.
+_check_mountpoint() {
+    sh scripts/lib/node-modules-mount-gate.sh
+}
+
 if [ "${SKILLSMITH_LOCK_TEST_SOURCE:-0}" = "1" ]; then
     return 0 2>/dev/null || exit 0
 fi
@@ -109,6 +129,29 @@ fi
 
 if sh scripts/lib/check-node-modules-fresh.sh; then
     exit 0
+fi
+
+# Mount check sits AFTER the freshness check on purpose: a fresh or cosmetic
+# tree needs no install at all, so a mount problem must not block an
+# unrelated push. Both non-zero outcomes fail closed and print a distinct
+# reason: 32 (>=1 path detached, mounted but not volume-shaped, or
+# ambiguous) vs 127 (cannot verify at all — /proc/self/mountinfo is
+# unreadable). Captures the helper's own stderr (swap-redirect: `2>&1
+# 1>/dev/null` sends stderr to this command-substitution's target and
+# discards real stdout, which the helper never uses anyway) so the per-path
+# "MOUNT_DETACHED <path>" / "MOUNT_NOT_VOLUME <path> ..." / "MOUNT_AMBIGUOUS
+# <path>" lines it prints relay all the way up to
+# check-container-deps-fresh.sh's own $OUTPUT capture, naming exactly which
+# path(s) are at fault instead of only ever blaming the root.
+_mp_out="$(_check_mountpoint 2>&1 1>/dev/null)"
+_mp_rc=$?
+if [ "$_mp_rc" -ne 0 ]; then
+    case "$_mp_rc" in
+        32) printf '%s\n' "$_mp_out" >&2 ;;
+        127) echo "MOUNT_CHECK_UNAVAILABLE $_mp_rc" >&2 ;;
+        *) echo "MOUNT_CHECK_ERROR $_mp_rc" >&2 ;;
+    esac
+    exit 5
 fi
 
 echo "SELF_HEAL_START"

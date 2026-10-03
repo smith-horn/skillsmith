@@ -22,7 +22,9 @@ import { join } from 'node:path'
 import {
   findFloatingSupabaseCliInstalls,
   findUnpinnedBareNpxCliInPackageJson,
-  findUnpinnedRufloMcpEntry,
+  findUnpinnedRufloLauncherPin,
+  findRufloSeedPinDrift,
+  findProcScanCmdHintDrift,
   findClaudeFlowReintroductions,
 } from '../audit-cli-pin-drift-helpers.mjs'
 
@@ -156,75 +158,237 @@ describe('findUnpinnedBareNpxCliInPackageJson (SMI-5746 Check 59, sub-check 2)',
   })
 })
 
-describe('findUnpinnedRufloMcpEntry (SMI-5746 Check 59, sub-check 3)', () => {
-  it('flags a ruflo npx entry pinned to a non-exact-semver tag', () => {
+describe('findUnpinnedRufloLauncherPin (SMI-5746 Check 59, sub-check 3; SMI-6744 ADR-170 §7)', () => {
+  // ADR-170 § 7: the pin moved from .mcp.json's npx entry (retired --
+  // ruflo is now invoked via scripts/mcp-ruflo-launcher.sh, which docker
+  // execs into an image-baked tree) into one RUFLO_CLI_PIN=<semver>
+  // assignment in that launcher script itself.
+  it('flags a launcher with no RUFLO_CLI_PIN line at all', () => {
     const dir = scratchDir()
-    const mcpPath = join(dir, 'mcp.json')
-    writeFileSync(
-      mcpPath,
-      JSON.stringify({
-        mcpServers: { ruflo: { command: 'npx', args: ['ruflo@latest', 'mcp', 'start'] } },
-      })
-    )
+    const launcherPath = join(dir, 'mcp-ruflo-launcher.sh')
+    writeFileSync(launcherPath, '#!/usr/bin/env bash\nset -euo pipefail\necho hi\n')
 
-    const finding = findUnpinnedRufloMcpEntry(mcpPath)
-
-    expect(finding).toEqual({
-      reason: "ruflo npx entry pinned to a non-exact-semver tag 'latest'",
-      pkgArg: 'ruflo@latest',
+    expect(findUnpinnedRufloLauncherPin(launcherPath)).toEqual({
+      reason: `RUFLO_CLI_PIN not found in ${launcherPath}`,
+      launcherPath,
     })
   })
 
-  it('flags a ruflo npx entry missing an @version suffix entirely', () => {
+  it('flags a RUFLO_CLI_PIN pinned to a non-exact-semver value', () => {
     const dir = scratchDir()
-    const mcpPath = join(dir, 'mcp.json')
-    writeFileSync(
-      mcpPath,
-      JSON.stringify({ mcpServers: { ruflo: { command: 'npx', args: ['ruflo', 'mcp'] } } })
-    )
+    const launcherPath = join(dir, 'mcp-ruflo-launcher.sh')
+    writeFileSync(launcherPath, '#!/usr/bin/env bash\nRUFLO_CLI_PIN=latest\necho hi\n')
 
-    expect(findUnpinnedRufloMcpEntry(mcpPath)).toEqual({
-      reason: 'ruflo npx entry missing an @version suffix',
-      pkgArg: 'ruflo',
+    expect(findUnpinnedRufloLauncherPin(launcherPath)).toEqual({
+      reason: `RUFLO_CLI_PIN 'latest' in ${launcherPath} is not an exact semver`,
+      launcherPath,
+      pin: 'latest',
     })
   })
 
-  it('does not flag a ruflo entry pinned to an exact semver', () => {
+  it('does not flag a RUFLO_CLI_PIN pinned to an exact semver', () => {
     const dir = scratchDir()
-    const mcpPath = join(dir, 'mcp.json')
-    writeFileSync(
-      mcpPath,
-      JSON.stringify({
-        mcpServers: { ruflo: { command: 'npx', args: ['ruflo@3.14.2', 'mcp', 'start'] } },
-      })
-    )
+    const launcherPath = join(dir, 'mcp-ruflo-launcher.sh')
+    writeFileSync(launcherPath, '#!/usr/bin/env bash\nRUFLO_CLI_PIN=3.42.4\necho hi\n')
 
-    expect(findUnpinnedRufloMcpEntry(mcpPath)).toBeNull()
+    expect(findUnpinnedRufloLauncherPin(launcherPath)).toBeNull()
   })
 
-  it('does not flag a non-npx server entry (the worktree .mcp.json auto-patch case)', () => {
-    // Regression guard for Codex plan-review finding #2: create-worktree.sh
-    // step 6 auto-patches the `skillsmith` entry to a bare unversioned npx
-    // command in a worktree's local .mcp.json (skip-worktree, never
-    // committed). Check 59 is deliberately scoped to `ruflo` only so that
-    // worktree-local artifact is never mistaken for a real violation.
+  it('requires the assignment to be anchored to its own line (not embedded in other text)', () => {
     const dir = scratchDir()
-    const mcpPath = join(dir, 'mcp.json')
-    writeFileSync(
-      mcpPath,
-      JSON.stringify({
-        mcpServers: {
-          skillsmith: { command: 'npx', args: ['-y', '@skillsmith/mcp-server'] },
-          ruflo: { command: 'npx', args: ['ruflo@3.14.2', 'mcp', 'start'] },
-        },
-      })
-    )
+    const launcherPath = join(dir, 'mcp-ruflo-launcher.sh')
+    // A reference to RUFLO_CLI_PIN inside a comment or a larger line (not a
+    // bare "RUFLO_CLI_PIN=<value>" line by itself) must not satisfy the
+    // anchored regex -- this is what "found" actually means for Check 59
+    // and for cli-pin-drift-check.sh's own grep, which read the same shape.
+    writeFileSync(launcherPath, '# see RUFLO_CLI_PIN=3.42.4 below for context\necho hi\n')
 
-    expect(findUnpinnedRufloMcpEntry(mcpPath)).toBeNull()
+    expect(findUnpinnedRufloLauncherPin(launcherPath)).toEqual({
+      reason: `RUFLO_CLI_PIN not found in ${launcherPath}`,
+      launcherPath,
+    })
   })
 
-  it('returns null when .mcp.json does not exist', () => {
-    expect(findUnpinnedRufloMcpEntry(join(scratchDir(), 'nonexistent.json'))).toBeNull()
+  it('flags a missing launcher file by name', () => {
+    const launcherPath = join(scratchDir(), 'nonexistent-launcher.sh')
+
+    expect(findUnpinnedRufloLauncherPin(launcherPath)).toEqual({
+      reason: `RUFLO_CLI_PIN launcher not found at ${launcherPath}`,
+      launcherPath,
+    })
+  })
+
+  it('does not flag the real, committed scripts/mcp-ruflo-launcher.sh', () => {
+    // End-to-end regression anchor: this check must actually pass against
+    // the real launcher this PR ships, not only against fixtures.
+    const realLauncherPath = join(process.cwd(), 'scripts', 'mcp-ruflo-launcher.sh')
+
+    expect(findUnpinnedRufloLauncherPin(realLauncherPath)).toBeNull()
+  })
+})
+
+describe('findRufloSeedPinDrift (SMI-6744 M-3, post-merge governance retro on PR #2931)', () => {
+  function writeLauncher(dir: string, pin: string): string {
+    const p = join(dir, 'mcp-ruflo-launcher.sh')
+    writeFileSync(p, `#!/usr/bin/env bash\nRUFLO_CLI_PIN=${pin}\necho hi\n`)
+    return p
+  }
+  function writeSeedPackageJson(dir: string, pin: string | undefined): string {
+    mkdirSync(join(dir, 'ruflo-seed'), { recursive: true })
+    const p = join(dir, 'ruflo-seed', 'package.json')
+    const body = pin === undefined ? {} : { dependencies: { '@claude-flow/cli': pin } }
+    writeFileSync(p, JSON.stringify(body))
+    return p
+  }
+
+  it('does not flag matching pins', () => {
+    const dir = scratchDir()
+    const launcherPath = writeLauncher(dir, '3.42.4')
+    const seedPath = writeSeedPackageJson(dir, '3.42.4')
+
+    expect(findRufloSeedPinDrift(launcherPath, seedPath)).toBeNull()
+  })
+
+  it('flags a seed package.json pin that differs from the launcher pin, naming both values and both paths', () => {
+    const dir = scratchDir()
+    const launcherPath = writeLauncher(dir, '3.42.4')
+    const seedPath = writeSeedPackageJson(dir, '3.41.0')
+
+    expect(findRufloSeedPinDrift(launcherPath, seedPath)).toEqual({
+      reason: `RUFLO_CLI_PIN=3.42.4 in ${launcherPath} does not match dependencies["@claude-flow/cli"]=3.41.0 in ${seedPath}`,
+      launcherPath,
+      seedPackageJsonPath: seedPath,
+      launcherPin: '3.42.4',
+      seedPin: '3.41.0',
+    })
+  })
+
+  it('flags a missing dependencies["@claude-flow/cli"] entry in the seed package.json', () => {
+    const dir = scratchDir()
+    const launcherPath = writeLauncher(dir, '3.42.4')
+    const seedPath = writeSeedPackageJson(dir, undefined)
+
+    expect(findRufloSeedPinDrift(launcherPath, seedPath)).toEqual({
+      reason: `${seedPath} has no dependencies["@claude-flow/cli"] entry`,
+      launcherPath,
+      seedPackageJsonPath: seedPath,
+      launcherPin: '3.42.4',
+    })
+  })
+
+  it('flags a missing seed package.json file by name', () => {
+    const dir = scratchDir()
+    const launcherPath = writeLauncher(dir, '3.42.4')
+    const seedPath = join(dir, 'ruflo-seed', 'package.json')
+
+    expect(findRufloSeedPinDrift(launcherPath, seedPath)).toEqual({
+      reason: `seed package.json not found at ${seedPath}`,
+      launcherPath,
+      seedPackageJsonPath: seedPath,
+      launcherPin: '3.42.4',
+    })
+  })
+
+  it('does not flag the real, committed pair (scripts/mcp-ruflo-launcher.sh, scripts/ruflo-seed/package.json)', () => {
+    // End-to-end regression anchor, same convention as
+    // findUnpinnedRufloLauncherPin's own real-file test above.
+    const realLauncherPath = join(process.cwd(), 'scripts', 'mcp-ruflo-launcher.sh')
+    const realSeedPath = join(process.cwd(), 'scripts', 'ruflo-seed', 'package.json')
+
+    expect(findRufloSeedPinDrift(realLauncherPath, realSeedPath)).toBeNull()
+  })
+})
+
+describe('findProcScanCmdHintDrift (rec 2, SMI-6744 A1.8 retro)', () => {
+  // Deliberately escape-free: this string needs no \' or \\ handling, so
+  // these arms isolate the extract-and-compare LOGIC from the escape
+  // decoding, which gets its own dedicated arm below with hand-verified
+  // escape sequences.
+  const TEST_HINT = 'sh -c "scan procs for launchers"'
+  function writeGuard(dir: string, hintLiteralBody: string = TEST_HINT): string {
+    const p = join(dir, 'ruflo-launch-guard.mjs')
+    writeFileSync(
+      p,
+      `#!/usr/bin/env node\nconst PROC_SCAN_CMD_HINT =\n  '${hintLiteralBody}'\nconsole.log(PROC_SCAN_CMD_HINT)\n`
+    )
+    return p
+  }
+  function writeGuide(dir: string, body: string): string {
+    const p = join(dir, 'claude-flow-guide.md')
+    writeFileSync(p, body)
+    return p
+  }
+
+  it('does not flag a guide that carries the guard literal verbatim', () => {
+    const dir = scratchDir()
+    const guardPath = writeGuard(dir)
+    const guidePath = writeGuide(dir, `# guide\n\nrun \`docker exec c ${TEST_HINT}\`\n`)
+
+    expect(findProcScanCmdHintDrift(guardPath, guidePath)).toBeNull()
+  })
+
+  it('flags a guide whose prose has drifted from the guard literal', () => {
+    const dir = scratchDir()
+    const guardPath = writeGuard(dir)
+    const guidePath = writeGuide(dir, `# guide\n\nrun \`ps -eo pid,args\` to list live launchers\n`)
+
+    const result = findProcScanCmdHintDrift(guardPath, guidePath)
+    expect(result).not.toBeNull()
+    expect(result.reason).toContain('does not appear verbatim')
+    expect(result.hintLiteral).toBe(TEST_HINT)
+  })
+
+  it('flags a missing guard file by name', () => {
+    const dir = scratchDir()
+    const guardPath = join(dir, 'ruflo-launch-guard.mjs')
+    const guidePath = writeGuide(dir, '# guide\n')
+
+    expect(findProcScanCmdHintDrift(guardPath, guidePath)).toEqual({
+      reason: `guard not found at ${guardPath}`,
+      guardPath,
+      guideMdPath: guidePath,
+    })
+  })
+
+  it('flags a missing guide file by name once the guard parses cleanly', () => {
+    const dir = scratchDir()
+    const guardPath = writeGuard(dir)
+    const guidePath = join(dir, 'claude-flow-guide.md')
+
+    expect(findProcScanCmdHintDrift(guardPath, guidePath)).toEqual({
+      reason: `guide not found at ${guidePath}`,
+      guardPath,
+      guideMdPath: guidePath,
+      hintLiteral: TEST_HINT,
+    })
+  })
+
+  it('decodes escaped single-quotes and backslashes the same way the real constant uses them', () => {
+    const dir = scratchDir()
+    const guardPath = join(dir, 'ruflo-launch-guard.mjs')
+    // Written directly (not via this test file's own string-escaping of a
+    // shared constant) so the exact source bytes under test are visible
+    // here: the guard source literal is `'it\'s a \\test'`, which JS
+    // decodes to `it's a \test` (one backslash) -- the same two escape
+    // kinds (`\'`, `\\`) the real PROC_SCAN_CMD_HINT constant uses.
+    writeFileSync(
+      guardPath,
+      "const PROC_SCAN_CMD_HINT =\n  'it\\'s a \\\\test'\nconsole.log(PROC_SCAN_CMD_HINT)\n"
+    )
+    const guidePath = writeGuide(dir, "# guide\n\nliteral: it's a \\test\n")
+
+    expect(findProcScanCmdHintDrift(guardPath, guidePath)).toBeNull()
+  })
+
+  it('does not flag the real, committed pair (scripts/ruflo-launch-guard.mjs, .claude/development/claude-flow-guide.md)', () => {
+    // End-to-end regression anchor, same convention as
+    // findRufloSeedPinDrift's own real-file test above -- exercises the
+    // ACTUAL escaped literal (`\'` and `\\0`) this constant carries in
+    // production, not just the simplified fixtures above.
+    const realGuardPath = join(process.cwd(), 'scripts', 'ruflo-launch-guard.mjs')
+    const realGuidePath = join(process.cwd(), '.claude', 'development', 'claude-flow-guide.md')
+
+    expect(findProcScanCmdHintDrift(realGuardPath, realGuidePath)).toBeNull()
   })
 })
 
@@ -308,5 +472,211 @@ describe('findClaudeFlowReintroductions (SMI-5746 Check 59, sub-check 4)', () =>
       ])
     )
     expect(findings).toHaveLength(2)
+  })
+
+  // SMI-6744 Wave 4: a permissions.deny entry must literally spell the
+  // banned command it blocks (e.g. "Bash(npx claude-flow)") -- that is a
+  // BLOCK, the opposite of "reintroduces npx claude-flow", and must not be
+  // flagged. Verified against the unfixed helper before this fix landed:
+  // reverting the denyLiterals exemption reproduced this exact false
+  // positive on the real .claude/settings.json (three findings at the
+  // Bash(npx claude-flow...) deny lines) -- confirmed via a manual revert
+  // + audit-standards.mjs run, not just by this test.
+  it('does not flag a pretty-printed permissions.deny entry that literally blocks npx claude-flow', () => {
+    const dir = scratchDir()
+    mkdirSync(join(dir, '.claude'), { recursive: true })
+    writeFileSync(
+      join(dir, '.claude', 'settings.json'),
+      JSON.stringify(
+        {
+          permissions: {
+            allow: [],
+            deny: ['Bash(npx claude-flow)', 'Bash(npx claude-flow *)', 'Bash(npx claude-flow@*)'],
+          },
+        },
+        null,
+        2
+      ) + '\n'
+    )
+
+    expect(findClaudeFlowReintroductions(dir)).toEqual([])
+  })
+
+  it('still flags an identical literal when it is in permissions.allow, not permissions.deny', () => {
+    const dir = scratchDir()
+    mkdirSync(join(dir, '.claude'), { recursive: true })
+    writeFileSync(
+      join(dir, '.claude', 'settings.json'),
+      JSON.stringify({ permissions: { allow: ['Bash(npx claude-flow)'], deny: [] } }, null, 2) +
+        '\n'
+    )
+
+    const findings = findClaudeFlowReintroductions(dir)
+    expect(findings).toHaveLength(1)
+    expect(findings[0].file).toBe('.claude/settings.json')
+  })
+
+  // SMI-6744 Wave 4 H-1 governance finding: the prior version of this test
+  // used a DIFFERENT literal in allow vs. deny ("Bash(npx claude-flow)" vs.
+  // "Bash(npx claude-flow *)"), which cannot distinguish a positional
+  // exemption from a value-keyed one -- a value-keyed exemption also passes
+  // it, because the allow line's value is simply never a member of the deny
+  // set. The SAME literal in both arrays is the actual discriminating case:
+  // watched failing against the unfixed helper (value-keyed exemption)
+  // before this fix landed, reproducing findings: [] -- the allow entry was
+  // wrongly exempted because its value happened to also sit in `deny`.
+  it('discriminates by array position, not by value: the SAME literal in both allow and deny still flags the allow line', () => {
+    const dir = scratchDir()
+    mkdirSync(join(dir, '.claude'), { recursive: true })
+    writeFileSync(
+      join(dir, '.claude', 'settings.json'),
+      JSON.stringify(
+        {
+          permissions: {
+            allow: ['Bash(npx claude-flow)'],
+            deny: ['Bash(npx claude-flow)'],
+          },
+        },
+        null,
+        2
+      ) + '\n'
+    )
+
+    const findings = findClaudeFlowReintroductions(dir)
+    // Exactly the allow-array line (line 4 of the pretty-printed fixture)
+    // should be flagged; the deny-array line (line 7, identical value) must
+    // not be, because it sits inside the deny array's own bracket span.
+    expect(findings).toEqual([{ file: '.claude/settings.json', line: 4 }])
+  })
+
+  it('falls back to flagging every match when settings.json is not valid JSON', () => {
+    const dir = scratchDir()
+    mkdirSync(join(dir, '.claude'), { recursive: true })
+    writeFileSync(join(dir, '.claude', 'settings.json'), '{ this is not valid json npx claude-flow')
+
+    const findings = findClaudeFlowReintroductions(dir)
+    expect(findings).toEqual([{ file: '.claude/settings.json', line: 1 }])
+  })
+
+  // L-H fix (SMI-6744 Wave 4 governance round): findJsonArrayLineSpan used
+  // to scan the STARTING line's brackets from column 0, not from the
+  // matched key's own character index. A "packed" settings.json where the
+  // PRECEDING array's own closing `]` shares the line with `"deny": [`
+  // (e.g. `    ], "deny": [`) fed that stray `]` into the depth count
+  // FIRST, decrementing depth below zero before the real `[` for the deny
+  // array is even reached -- depth then crosses back to exactly zero the
+  // moment `[` opens, ending the span on the very line it started (a wrong
+  // endLine, one line too early), because the two arrays' brackets get
+  // conflated when scanned from line-start. That wrong span makes the
+  // deny-array-position exemption below never apply to the deny array's
+  // OWN entries, since a same-line start/end span has no strictly-interior
+  // line -- so a legitimate "Bash(npx claude-flow)" deny entry gets
+  // wrongly flagged as a reintroduction. Watched failing (a spurious
+  // finding at the deny-array line) against the unfixed line-start scan
+  // before this fix landed.
+  it("a packed deny-array opening line (the allow array's own closing bracket sharing it) does not corrupt the deny span", () => {
+    const dir = scratchDir()
+    mkdirSync(join(dir, '.claude'), { recursive: true })
+    writeFileSync(
+      join(dir, '.claude', 'settings.json'),
+      [
+        '{',
+        '  "permissions": {',
+        '    "allow": [',
+        '      "Bash(rg \'[a-z]\')"',
+        '    ], "deny": [',
+        '      "Bash(npx claude-flow)"',
+        '    ]',
+        '  }',
+        '}',
+        '',
+      ].join('\n')
+    )
+
+    expect(findClaudeFlowReintroductions(dir)).toEqual([])
+  })
+
+  // M-3 fix (SMI-6744 Wave 4 delta governance round): findJsonArrayLineSpan
+  // (LINE-based) replaced by findPermissionsDenySpan (CHARACTER-OFFSET-
+  // based, scoped from the "permissions" key). Three red arms, each
+  // watched failing against the unfixed line-based scanner before this fix
+  // landed.
+  it('RED (false negative): a same-line "], \\"allow\\": [" no longer swallows allow\'s own content into deny\'s span', () => {
+    const dir = scratchDir()
+    mkdirSync(join(dir, '.claude'), { recursive: true })
+    // The SAME literal in both arrays (matching the existing "discriminates
+    // by array position, not by value" test's own pattern) is deliberate,
+    // not incidental: the unfixed scanner's line-based positional bug alone
+    // is not observable through this test unless the value-only fallback
+    // check it ALSO ran would otherwise have saved it -- a differing value
+    // in allow vs deny (e.g. "Bash(rm -rf /)" vs "Bash(npx claude-flow)")
+    // is correctly rejected by that value check regardless of the
+    // positional bug, so it never reproduces the false negative. Watched
+    // failing (produced `[]`, not the line-6 finding below) against the
+    // unfixed findJsonArrayLineSpan before this fix landed.
+    writeFileSync(
+      join(dir, '.claude', 'settings.json'),
+      [
+        '{',
+        '  "permissions": {',
+        '    "deny": [',
+        '      "Bash(npx claude-flow)"',
+        '    ], "allow": [',
+        '      "Bash(npx claude-flow)"',
+        '    ]',
+        '  }',
+        '}',
+        '',
+      ].join('\n')
+    )
+
+    // Under the unfixed line-based scanner, allow's own `[` (sharing the
+    // same line as deny's closing `]`) re-incremented depth back past
+    // zero before the end-of-line check ran, so deny's span wrongly
+    // extended to swallow allow's own content -- the genuine reintroduction
+    // sitting in `allow` was never flagged (a false NEGATIVE).
+    expect(findClaudeFlowReintroductions(dir)).toEqual([{ file: '.claude/settings.json', line: 6 }])
+  })
+
+  it('RED (false positive): a single-line "deny": ["Bash(npx claude-flow)"] is not flagged', () => {
+    const dir = scratchDir()
+    mkdirSync(join(dir, '.claude'), { recursive: true })
+    writeFileSync(
+      join(dir, '.claude', 'settings.json'),
+      '{"permissions":{"deny":["Bash(npx claude-flow)"]}}'
+    )
+
+    // Under the unfixed line-based scanner, a single-line array collapses
+    // startLine === endLine, so the exemption's `idx > startLine && idx <
+    // endLine` check can never be true for anything on that one line --
+    // this legitimate deny entry was a false POSITIVE.
+    expect(findClaudeFlowReintroductions(dir)).toEqual([])
+  })
+
+  it('RED (wrong subject): an unrelated earlier "deny": [ elsewhere in the file is not mistaken for permissions.deny', () => {
+    const dir = scratchDir()
+    mkdirSync(join(dir, '.claude'), { recursive: true })
+    writeFileSync(
+      join(dir, '.claude', 'settings.json'),
+      [
+        '{',
+        '  "somethingElse": { "deny": [] },',
+        '  "permissions": {',
+        '    "deny": [',
+        '      "Bash(npx claude-flow)"',
+        '    ]',
+        '  }',
+        '}',
+        '',
+      ].join('\n')
+    )
+
+    // Under the unfixed scanner (which located the first bare `"deny":`
+    // text anywhere in the file, not scoped from "permissions"), the
+    // EARLIER, unrelated "somethingElse".deny -- an empty array that opens
+    // and closes immediately -- was mistaken for permissions.deny, so its
+    // own (tiny, already-closed) span never covered the REAL deny entry
+    // several lines later, which was wrongly flagged as a reintroduction.
+    expect(findClaudeFlowReintroductions(dir)).toEqual([])
   })
 })

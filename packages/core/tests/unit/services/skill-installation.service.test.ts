@@ -402,6 +402,57 @@ describe('SMI-3483: SkillInstallationService', () => {
       expect(manifest.installedSkills['test-repo'].id).toBe('https://github.com/owner/test-repo')
       expect(manifest.installedSkills['test-repo'].source).toBe('github:owner/test-repo')
     })
+
+    // SMI-6529 F8 (review round 1): checkInstallTarget's rule (b) is
+    // filesystem-first — an ENOENT installPath is ALWAYS a fresh install,
+    // regardless of what a stale manifest entry still claims about that key.
+    // This is a deliberate behavior change from pre-A0 (which refused with
+    // ALREADY_INSTALLED purely on manifest membership, even when the
+    // directory itself was long gone) — documented here, not just implied.
+    it('SMI-6529 F8: a stale manifest entry whose directory no longer exists lets a fresh install proceed WITHOUT force, replacing the entry', async () => {
+      const mockFetch = vi.mocked(fetch)
+      mockFetch.mockImplementation(async (url) => {
+        const urlStr = typeof url === 'string' ? url : url.toString()
+        if (urlStr.includes('SKILL.md')) {
+          return new Response(VALID_SKILL_MD, { status: 200 })
+        }
+        return new Response('Not found', { status: 404 })
+      })
+
+      // The manifest key/installPath match exactly what install() will
+      // compute below, but the directory was never created (e.g. a manual
+      // `rm -rf`, or a prior install whose write never landed).
+      await fs.mkdir(path.dirname(manifestPath), { recursive: true })
+      await fs.writeFile(
+        manifestPath,
+        JSON.stringify({
+          version: '1.0.0',
+          installedSkills: {
+            'test-repo': {
+              id: 'stale-author/stale-repo',
+              name: 'test-repo',
+              version: '0.0.1',
+              source: 'github:stale-author/stale-repo',
+              installPath: path.join(skillsDir, 'test-repo'),
+              installedAt: '2020-01-01T00:00:00.000Z',
+              lastUpdated: '2020-01-01T00:00:00.000Z',
+            },
+          },
+        })
+      )
+
+      const service = createService(db)
+      const result = await service.install('https://github.com/owner/test-repo', {
+        skipOptimize: true,
+        // force deliberately OMITTED — proving this proceeds without it.
+      })
+
+      expect(result.success).toBe(true)
+
+      const manifest = JSON.parse(await fs.readFile(manifestPath, 'utf-8'))
+      expect(manifest.installedSkills['test-repo'].id).toBe('https://github.com/owner/test-repo')
+      expect(manifest.installedSkills['test-repo'].source).toBe('github:owner/test-repo')
+    })
   })
 
   // SMI-5894 Wave 1 Step 3's multi-client manifest re-keying suite now

@@ -13,20 +13,27 @@
 # found and fixed during SMI-5813's own plan-review).
 #
 # Covers:
-#   A. Normal invocation: exit-code capture, JSON validity, all 5 fields
-#      present, secret redaction applied to both identifier and stderr.
-#   B. Always exits 0 regardless of the wrapped ruflo call's exit code.
+#   A. Normal invocation: JSON validity, all 5 fields present (exitCode and
+#      stderr are constants since SMI-6724), secret redaction applied to
+#      the identifier.
+#   B. Always exits 0; a failing ruflo fixture cannot affect the record
+#      because it is never run (SMI-6724).
 #   C. Dash-safety: 0 args and 1 arg do not crash the wrapper (the
 #      `shift 2` guard fix).
 #   D. `set -u` does not abort when $HOME is unset.
 #   E. Retention sweep deletes a log file older than the configured
-#      SKILLSMITH_HOOK_LOG_RETENTION_DAYS, and only on a new-day rollover.
+#      SKILLSMITH_HOOK_LOG_RETENTION_DAYS, and only on a new-day rollover;
+#      since SMI-6744 A1.9b it also carries the removed Stop hook's
+#      ruflo-session-end-*.log class (stale swept, fresh kept), and pins the
+#      boundary in the other direction: a stale file of another class in the
+#      same directory, and the never-rotated native-attribution.jsonl, are
+#      not swept.
 #   F. Redaction breadth: each secret shape added during plan-review
 #      (Bearer, provider-key prefixes, GitHub PAT, env-var assignment,
 #      quoted flag value) is actually stripped, and an ordinary command
 #      with no secrets passes through unmodified.
-#   G. A hanging ruflo subprocess is terminated by the internal watchdog,
-#      logged as a timeout, and still fails open.
+#   G. The wrapper does not invoke ruflo at all (SMI-6724), and therefore
+#      returns without paying the multi-second cost that invocation imposed.
 set -uo pipefail
 
 SCRIPT_DIR=$(cd "$(dirname "$0")/.." && pwd)
@@ -83,6 +90,12 @@ assert_not_contains() {
 # -----------------------------------------------------------------------
 # Fixture: a stub ruflo.js that echoes an argv marker to stderr and exits
 # with a caller-controlled code, plus a fake HOME for log isolation.
+#
+# Since SMI-6724 the wrapper never executes this stub. It is kept, and kept
+# parameterised, because it is what makes the assertions falsifiable: run
+# against the pre-removal wrapper the stub IS executed, and the exit code and
+# stderr set here are exactly what the rewritten assertions then contradict.
+# Deleting it would leave those assertions passing for no reason.
 # -----------------------------------------------------------------------
 setup_fixture() {
   local exit_code="$1"
@@ -133,19 +146,22 @@ for SHELL_BIN in bash dash; do
   assert_true "[$SHELL_BIN] log line is valid JSON" "$(printf '%s' "$LINE" | jq . >/dev/null 2>&1 && echo 0 || echo 1)"
   assert_eq "[$SHELL_BIN] hook field correct" "pre-command" "$(printf '%s' "$LINE" | jq -r .hook)"
   assert_eq "[$SHELL_BIN] identifier field correct" "npm run test:unit -- --coverage" "$(printf '%s' "$LINE" | jq -r .identifier)"
-  assert_eq "[$SHELL_BIN] exitCode field reflects the wrapped call" "0" "$(printf '%s' "$LINE" | jq -r .exitCode)"
-  assert_eq "[$SHELL_BIN] stderr field captured" "diagnostic stderr text" "$(printf '%s' "$LINE" | jq -r .stderr)"
+  # SMI-6724: there is no wrapped call any more, so these two fields are
+  # constants. They are still asserted because the log record's SHAPE is a
+  # consumed contract -- scripts and humans parse these keys.
+  assert_eq "[$SHELL_BIN] exitCode is always 0 (no downstream process)" "0" "$(printf '%s' "$LINE" | jq -r .exitCode)"
+  assert_eq "[$SHELL_BIN] stderr is empty (nothing to capture)" "" "$(printf '%s' "$LINE" | jq -r .stderr)"
   assert_true "[$SHELL_BIN] timestamp field present and non-empty" "$(printf '%s' "$LINE" | jq -e '.timestamp | length > 0' >/dev/null 2>&1 && echo 0 || echo 1)"
   teardown_fixture
 
   echo ""
-  echo "=== Group B: always exits 0 even when the wrapped call fails ==="
+  echo "=== Group B: a failing ruflo fixture cannot affect the record (it never runs) ==="
   setup_fixture 1 "some failure"
   run_wrapper "$SHELL_BIN" post-edit "/some/file.ts" -- --file "/some/file.ts" --success true >/dev/null 2>&1
   RC=$?
   assert_eq "[$SHELL_BIN] wrapper always exits 0 (failure case)" "0" "$RC"
   LINE=$(latest_log_line)
-  assert_eq "[$SHELL_BIN] exitCode field reflects the failure" "1" "$(printf '%s' "$LINE" | jq -r .exitCode)"
+  assert_eq "[$SHELL_BIN] exitCode stays 0 even with an exit-1 fixture present" "0" "$(printf '%s' "$LINE" | jq -r .exitCode)"
   teardown_fixture
 
   echo ""
@@ -176,7 +192,9 @@ for SHELL_BIN in bash dash; do
   assert_not_contains "[$SHELL_BIN] Bearer token redacted from identifier" "$ID_FIELD" "abcDEF123token"
   assert_not_contains "[$SHELL_BIN] quoted password value redacted from identifier" "$ID_FIELD" "two words"
   assert_not_contains "[$SHELL_BIN] env-var-style secret redacted from identifier" "$ID_FIELD" "shouldnotleak123"
-  assert_not_contains "[$SHELL_BIN] Bearer token redacted from stderr" "$ERR_FIELD" "abcDEF123token"
+  # SMI-6724: nothing writes stderr any more, so a "redacted" assertion here
+  # could never fail. Assert the shape that IS now guaranteed instead.
+  assert_eq "[$SHELL_BIN] stderr field carries nothing to redact (always empty since SMI-6724)" "" "$ERR_FIELD"
   assert_contains "[$SHELL_BIN] non-secret surrounding text preserved in identifier" "$ID_FIELD" "curl -H"
   teardown_fixture
 
@@ -188,27 +206,81 @@ for SHELL_BIN in bash dash; do
   teardown_fixture
 
   echo ""
-  echo "=== Group G: hanging ruflo is bounded and fails open ==="
+  echo "=== Group G: SMI-6724 -- the wrapper must NOT invoke ruflo at all ==="
   setup_fixture 0 "unused"
-  cat > "$FIXTURE_DIR/node_modules/ruflo/bin/ruflo.js" << 'NODE_EOF'
+  # A fixture that leaves a durable marker if it is ever executed.
+  MARKER="$FIXTURE_DIR/ruflo-was-invoked"
+  cat > "$FIXTURE_DIR/node_modules/ruflo/bin/ruflo.js" << NODE_EOF
 #!/usr/bin/env node
-setInterval(() => {}, 1000);
+require('fs').writeFileSync('$MARKER', 'invoked');
+// Block, so the elapsed-time assertion below measures something. A fixture
+// that returned instantly would satisfy that assertion whether or not the
+// wrapper invoked it -- passing identically against fixed and unfixed code,
+// which is no test at all (SMI-6598).
+require('child_process').execSync('sleep 5');
 NODE_EOF
+  # Expose the stub the way npm does. A re-add spelled `node_modules/.bin/ruflo`
+  # -- the symlink npm installs, and what `npx ruflo` resolves to -- would
+  # otherwise ENOENT inside this fixture, write no marker, return instantly,
+  # and pass every assertion below while restoring the full per-call block in
+  # production, where that symlink exists. Measured 46/46 green against exactly
+  # that mutant before this symlink was added (PR #2889 review, PR-16).
+  chmod +x "$FIXTURE_DIR/node_modules/ruflo/bin/ruflo.js"
+  mkdir -p "$FIXTURE_DIR/node_modules/.bin"
+  ln -s ../ruflo/bin/ruflo.js "$FIXTURE_DIR/node_modules/.bin/ruflo"
+  # A re-add naming NO fixture path at all (`npx ruflo ...`, `node <other
+  # path>`) is caught one layer down: every node/npx resolution during the
+  # wrapper run goes through a PATH shim that marks before exec'ing the real
+  # binary.
+  SHIM_DIR="$FIXTURE_DIR/shim"
+  NODE_MARKER="$FIXTURE_DIR/node-was-spawned"
+  mkdir -p "$SHIM_DIR"
+  for tool in node npx; do
+    real=$(command -v "$tool")
+    [ -n "$real" ] || continue
+    printf '#!/bin/sh\ntouch "%s"\nexec "%s" "$@"\n' "$NODE_MARKER" "$real" > "$SHIM_DIR/$tool"
+    chmod +x "$SHIM_DIR/$tool"
+  done
+  # POSITIVE CONTROLS first: prove each guard can observe what it claims to.
+  # Without them, "no marker" is indistinguishable from "this fixture could
+  # never have produced a marker" -- the failed/never-ran collapse. Writing
+  # the marker with a separate `node -e` is NOT sufficient: it proves only
+  # that node can write a file, and was measured passing against a fixture
+  # containing a deliberate syntax error. Invoked through the .bin symlink so
+  # the control proves the whole chain a re-add would use.
+  "$FIXTURE_DIR/node_modules/.bin/ruflo" >/dev/null 2>&1 &
+  CONTROL_PID=$!
+  CONTROL_WAIT=0
+  while [ ! -f "$MARKER" ] && [ "$CONTROL_WAIT" -lt 50 ]; do
+    sleep 0.1
+    CONTROL_WAIT=$((CONTROL_WAIT + 1))
+  done
+  kill "$CONTROL_PID" 2>/dev/null
+  wait "$CONTROL_PID" 2>/dev/null
+  assert_true "[$SHELL_BIN] control: marker DOES appear when the fixture is invoked via .bin/ruflo" \
+    "$([ -f "$MARKER" ] && echo 0 || echo 1)"
+  rm -f "$MARKER"
+  PATH="$SHIM_DIR:$PATH" node -e 'process.exit(0)' >/dev/null 2>&1
+  assert_true "[$SHELL_BIN] control: PATH shim DOES leave its marker when node is spawned" \
+    "$([ -f "$NODE_MARKER" ] && echo 0 || echo 1)"
+  rm -f "$NODE_MARKER"
   START_SECONDS=$(date +%s)
-  SKILLSMITH_HOOK_TIMEOUT_SECONDS=1 run_wrapper "$SHELL_BIN" pre-command "pwd" -- --command "pwd" >/dev/null 2>&1
+  PATH="$SHIM_DIR:$PATH" run_wrapper "$SHELL_BIN" pre-command "pwd" -- --command "pwd" >/dev/null 2>&1
   RC=$?
   ELAPSED_SECONDS=$(($(date +%s) - START_SECONDS))
-  assert_eq "[$SHELL_BIN] timed-out wrapper still exits 0" "0" "$RC"
-  assert_true "[$SHELL_BIN] hanging ruflo returns within 3s (elapsed=${ELAPSED_SECONDS}s)" \
-    "$([ "$ELAPSED_SECONDS" -le 3 ] && echo 0 || echo 1)"
-  LINE=$(latest_log_line)
-  assert_contains "[$SHELL_BIN] timeout is recorded in the durable log" \
-    "$(printf '%s' "$LINE" | jq -r .stderr)" "ruflo hook timed out after 1s"
-  assert_true "[$SHELL_BIN] timeout records a non-zero downstream exit" \
-    "$([ "$(printf '%s' "$LINE" | jq -r .exitCode)" -ne 0 ] && echo 0 || echo 1)"
+  # A fire-and-forget re-add (`node ... &`) returns before its child has
+  # written anything, so an immediate check races it -- measured missed in 5
+  # of 12 bash+dash iterations (PR #2889 review, PR-16). Let the child land.
+  sleep 0.5
+  assert_eq "[$SHELL_BIN] wrapper still exits 0" "0" "$RC"
+  assert_true "[$SHELL_BIN] ruflo fixture was NOT invoked (no marker)" \
+    "$([ ! -f "$MARKER" ] && echo 0 || echo 1)"
+  assert_true "[$SHELL_BIN] no node/npx process was spawned at all (no shim marker)" \
+    "$([ ! -f "$NODE_MARKER" ] && echo 0 || echo 1)"
+  assert_true "[$SHELL_BIN] returns without blocking on ruflo (elapsed=${ELAPSED_SECONDS}s)" \
+    "$([ "$ELAPSED_SECONDS" -le 1 ] && echo 0 || echo 1)"
   teardown_fixture
 
-  echo ""
   echo "=== Group E: retention sweep ==="
   setup_fixture 0 "n/a"
   LOG_DIR="$FIXTURE_DIR/home/.skillsmith/logs"
@@ -216,6 +288,33 @@ NODE_EOF
   STALE_FILE="$LOG_DIR/claude-hooks-2020-01-01.log"
   echo '{"stale":"entry"}' > "$STALE_FILE"
   touch -d "30 days ago" "$STALE_FILE" 2>/dev/null || touch -t "$(date -v-30d +%Y%m%d%H%M 2>/dev/null || date -d '30 days ago' +%Y%m%d%H%M)" "$STALE_FILE" 2>/dev/null || true
+  # SMI-6744 A1.9b: the removed Stop hook's ruflo-session-end-*.log files lost
+  # their only pruner with the hook; the same sweep now carries them. Two arms
+  # on one rollover: a stale one is swept, a fresh one is kept.
+  STALE_RUFLO="$LOG_DIR/ruflo-session-end-1600000000.log"
+  FRESH_RUFLO="$LOG_DIR/ruflo-session-end-1700000000.log"
+  echo 'stale' > "$STALE_RUFLO"
+  echo 'fresh' > "$FRESH_RUFLO"
+  touch -d "30 days ago" "$STALE_RUFLO" 2>/dev/null || touch -t "$(date -v-30d +%Y%m%d%H%M 2>/dev/null || date -d '30 days ago' +%Y%m%d%H%M)" "$STALE_RUFLO" 2>/dev/null || true
+  # Negative arms (SMI-6744 A1.9b post-merge retro F3): ~/.skillsmith/logs is shared
+  # with at least seven other classes -- session-audit-*, retrieval-autoheal-*,
+  # retrieval-liveness-*, eval-cron-*, skillsmith-{cli,mcp,doc-retrieval}-* and
+  # native-attribution.jsonl, which guards-and-opt-outs.md records as deliberately
+  # never rotated (ADR-165's falsifier needs its lifetime denominator). Measured:
+  # without these two arms, broadening the first glob to '*.log' or the second to
+  # '*' leaves every positive arm above green while deleting those files.
+  STALE_OTHER="$LOG_DIR/session-audit-2020-01-01.log"
+  STALE_ATTR="$LOG_DIR/native-attribution.jsonl"
+  echo 'other' > "$STALE_OTHER"
+  echo 'attr' > "$STALE_ATTR"
+  for _f in "$STALE_OTHER" "$STALE_ATTR"; do
+    touch -d "30 days ago" "$_f" 2>/dev/null || touch -t "$(date -v-30d +%Y%m%d%H%M 2>/dev/null || date -d '30 days ago' +%Y%m%d%H%M)" "$_f" 2>/dev/null || true
+  done
+  # Captured before the sweep so a broadened glob cannot produce two failures for one
+  # cause: if the backdating above silently failed, both negative arms would pass for the
+  # wrong reason (a fresh file is outside -mtime +N whatever the glob). Measured: with the
+  # loop neutered and the second glob broadened to '*', the two arms stayed green.
+  BACKDATED_COUNT=$(find "$LOG_DIR" -maxdepth 1 \( -name 'session-audit-2020-01-01.log' -o -name 'native-attribution.jsonl' \) -mtime +7 | wc -l | tr -d ' ')
   SKILLSMITH_HOOK_LOG_RETENTION_DAYS=7 run_wrapper "$SHELL_BIN" pre-command "trigger a new day's file" -- --command "x" >/dev/null 2>&1
   if [ -f "$STALE_FILE" ]; then
     echo "FAIL [$SHELL_BIN] stale log file was not swept (this can be a false failure on a fresh mtime touch across platforms; verify manually if it recurs)"
@@ -224,6 +323,15 @@ NODE_EOF
     echo "PASS [$SHELL_BIN] stale log file (30 days old, 7-day retention) was swept"
     pass=$((pass + 1))
   fi
+  assert_true "[$SHELL_BIN] stale ruflo-session-end log (30 days old, 7-day retention) was swept" \
+    "$([ ! -f "$STALE_RUFLO" ] && echo 0 || echo 1)"
+  assert_true "[$SHELL_BIN] fresh ruflo-session-end log was kept by the sweep" \
+    "$([ -f "$FRESH_RUFLO" ] && echo 0 || echo 1)"
+  assert_true "[$SHELL_BIN] stale session-audit log (not this sweep's class) was NOT swept" \
+    "$([ -f "$STALE_OTHER" ] && echo 0 || echo 1)"
+  assert_true "[$SHELL_BIN] stale native-attribution.jsonl (never rotated, ADR-165) was NOT swept" \
+    "$([ -f "$STALE_ATTR" ] && echo 0 || echo 1)"
+  assert_eq "[$SHELL_BIN] both negative-arm fixtures were backdated past retention (arms not vacuous)" "2" "$BACKDATED_COUNT"
   teardown_fixture
 done
 

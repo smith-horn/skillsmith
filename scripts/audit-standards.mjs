@@ -39,6 +39,9 @@ import {
   findFunctionsWithoutSearchPath,
   auditSecdefAnonGrants,
   findServerJsonFieldLengthViolations,
+  findServerJsonMetaPlacementViolations,
+  escapeMetaKeyForMessage,
+  MCP_REGISTRY_RESERVED_META_KEY,
   countUnreleasedEntries,
   findUnreleasedHeadingLines,
   isReleasePrepDiff,
@@ -46,7 +49,17 @@ import {
   classifyGitCryptScanResult,
 } from './audit-standards-helpers.mjs'
 import { getFilesRecursive } from './audit-file-walker-helpers.mjs'
+import {
+  parseNamedVolumeRepoRelativePaths,
+  findHostSideNamedVolumeOps,
+  allowlistKeyFor,
+} from './audit-host-volume-fs-guard-helpers.mjs'
 import { isGitCryptEncrypted } from './ci/check-supply-chain-pins.mjs'
+import {
+  loadGeneratorInputs as loadWeakPasswordLexiconInputs,
+  generateAll as generateWeakPasswordLexicon,
+  detectDrift as detectWeakPasswordLexiconDrift,
+} from './gen-weak-password-lexicon.mjs'
 import { VERCEL_JSON_SHARED_FIELDS, validateVercelJsonSync } from './audit-vercel-sync-helpers.mjs'
 import { findRealpathAsymmetry } from './audit-realpath-asymmetry-helpers.mjs'
 import { findUnpinnedActionUses } from './audit-workflow-sha-pin-helpers.mjs'
@@ -60,6 +73,24 @@ import {
   evaluateExportSurfaceShadowGate,
 } from './audit-export-surface-consumer-helpers.mjs'
 import { findGitCryptUnsetRemediations } from './audit-git-crypt-remediation-helpers.mjs'
+import {
+  evaluateAbsoluteSeparateGitDirWriters,
+  gitDirWriterReportLines,
+} from './audit-gitdir-writer-helpers.mjs'
+import { dockerEnvCoherenceReportLines } from './audit-docker-env-coherence-helpers.mjs'
+import {
+  evaluateContainerNpmGate,
+  containerNpmGateReportLines,
+} from './audit-container-npm-gate-helpers.mjs'
+import { evaluateSettingsEnv, settingsEnvReportLines } from './audit-settings-env-helpers.mjs'
+import {
+  evaluateRufloHostPaths,
+  rufloHostPathsReportLines,
+  evaluateRufloHostGuardHooks,
+  rufloHostGuardHooksReportLines,
+  evaluateRufloMcpDenies,
+  rufloMcpDeniesReportLines,
+} from './audit-ruflo-host-paths-helpers.mjs'
 import { findMissingHuskyStubs } from './audit-husky-stub-coverage-helpers.mjs'
 import {
   listManifestHygieneTestFiles,
@@ -69,7 +100,9 @@ import {
 import {
   findFloatingSupabaseCliInstalls,
   findUnpinnedBareNpxCliInPackageJson,
-  findUnpinnedRufloMcpEntry,
+  findUnpinnedRufloLauncherPin,
+  findRufloSeedPinDrift,
+  findProcScanCmdHintDrift,
   findClaudeFlowReintroductions,
 } from './audit-cli-pin-drift-helpers.mjs'
 import { TEST_PATTERNS } from './ci/source-patterns.mjs'
@@ -412,14 +445,11 @@ console.log(`\n${BOLD}9. Script Docker Compliance${RESET}`)
 
 // Check if scripts use local npm commands (anti-pattern)
 // Excludes:
-//   - launch-*.sh (workflow launchers run locally by design)
 //   - run_cmd npm (Docker wrapper function per SMI-1366)
 //   - Documentation/descriptive text (e.g., "Add npm run benchmark script")
 const scriptsDir = 'scripts'
 if (existsSync(scriptsDir)) {
-  const scriptFiles = readdirSync(scriptsDir).filter(
-    (f) => (f.endsWith('.sh') || f.endsWith('.md')) && !f.startsWith('launch-')
-  )
+  const scriptFiles = readdirSync(scriptsDir).filter((f) => f.endsWith('.sh') || f.endsWith('.md'))
   let localNpmCount = 0
   const violatingFiles = []
 
@@ -467,7 +497,7 @@ if (existsSync(scriptsDir)) {
   if (localNpmCount === 0) {
     pass('All scripts use Docker for npm commands')
   } else {
-    // Changed to warn - launch scripts are expected to run locally
+    // Warn, not fail: some host-side npm usage in scripts/ is legitimate.
     warn(
       `${violatingFiles.length} scripts use local npm commands`,
       'Consider: docker exec skillsmith-dev-1 npm ...'
@@ -1331,10 +1361,34 @@ try {
     pass('No double-encrypted files')
   }
 } catch {
-  warn(
-    'Skipped (git-crypt not installed) — Check 18 did not run',
-    'Install git-crypt on this runner to exercise this check'
-  )
+  // SMI-6491: "not installed" used to be the only way this could fail inside
+  // the dev container, so the catch-all message was accurate. It no longer is.
+  // The dev image now ships git-crypt, and the remaining in-container failure
+  // is a WORKTREE container, where /app/.git is a file naming a host path that
+  // does not exist inside the container — so no git command runs at all, and
+  // git-crypt exits 1 on `git rev-parse --show-cdup`. Reporting that as
+  // "git-crypt not installed" sends the reader off to install a binary they
+  // already have: the same shape of misleading diagnostic (a tooling condition
+  // wearing another condition's clothes) that SMI-6491 was filed to remove.
+  let gitCryptInstalled = false
+  try {
+    execSync('command -v git-crypt', { stdio: 'ignore' })
+    gitCryptInstalled = true
+  } catch {
+    gitCryptInstalled = false
+  }
+
+  if (gitCryptInstalled) {
+    warn(
+      'Skipped (git-crypt is installed, but `git-crypt status` failed) — Check 18 did not run',
+      'Most often a worktree container: /app/.git is a file naming a host path that does not exist inside it, so no git command can run. Run this check from the main checkout, or on the host.'
+    )
+  } else {
+    warn(
+      'Skipped (git-crypt not installed) — Check 18 did not run',
+      'Install git-crypt on this runner to exercise this check'
+    )
+  }
 }
 
 // 19. docs/ Directory Structure Guard (SMI-2607)
@@ -2070,7 +2124,7 @@ console.log(`\n${BOLD}27. VS Code skillNameValidation Codegen Drift (SMI-4194)${
       pass('skillNameValidation.ts is in sync with CLI source')
     } catch (e) {
       fail(
-        'skillNameValidation.ts is out of sync with packages/cli/src/utils/skill-name.ts',
+        'skillNameValidation.ts is out of sync with packages/core/src/utils/skill-name.ts',
         'Run: node scripts/sync-skill-name-validation.mjs'
       )
     }
@@ -5105,10 +5159,44 @@ console.log(`\n${BOLD}Check 59: CLI-tool pin invariants (SMI-5746)${RESET}`)
     )
   }
 
-  const rufloFinding = findUnpinnedRufloMcpEntry('.mcp.json')
+  const rufloLauncherPath = join('scripts', 'mcp-ruflo-launcher.sh')
+  const rufloFinding = findUnpinnedRufloLauncherPin(rufloLauncherPath)
   if (rufloFinding) {
     check59Violations++
-    report(`Check 59: .mcp.json — ${rufloFinding.reason} (${rufloFinding.pkgArg})${shadowSuffix}`)
+    report(
+      `Check 59: ${rufloLauncherPath} — ${rufloFinding.reason}${shadowSuffix}`,
+      `Add a plain, anchored "RUFLO_CLI_PIN=<exact-semver>" assignment near the top of ${rufloLauncherPath} (ADR-170 § 7).`
+    )
+  }
+
+  // SMI-6744 M-3 (post-merge governance retro, PR #2931): the launcher's own
+  // pin can be well-formed (the check above passes) while still having
+  // drifted apart from the OTHER committed copy that actually determines
+  // what ships in the ruflo image.
+  const rufloSeedPackageJsonPath = join('scripts', 'ruflo-seed', 'package.json')
+  const rufloSeedDrift = findRufloSeedPinDrift(rufloLauncherPath, rufloSeedPackageJsonPath)
+  if (rufloSeedDrift) {
+    check59Violations++
+    report(
+      `Check 59: ${rufloSeedDrift.reason}${shadowSuffix}`,
+      `Keep RUFLO_CLI_PIN in ${rufloLauncherPath} and dependencies["@claude-flow/cli"] in ${rufloSeedPackageJsonPath} identical (ADR-170 § 7) — bump both together and re-run scripts/ruflo-seed/regenerate-digest.sh.`
+    )
+  }
+
+  // rec 2 (SMI-6744 A1.8 retro): scripts/ruflo-launch-guard.mjs's
+  // PROC_SCAN_CMD_HINT constant is duplicated as prose in
+  // .claude/development/claude-flow-guide.md (L-1) -- a comment-only
+  // convention until now. Gate it the same way M-3/sub-check 5 gates the
+  // RUFLO_CLI_PIN pair.
+  const rufloGuardPath = join('scripts', 'ruflo-launch-guard.mjs')
+  const claudeFlowGuidePath = join('.claude', 'development', 'claude-flow-guide.md')
+  const procScanHintDrift = findProcScanCmdHintDrift(rufloGuardPath, claudeFlowGuidePath)
+  if (procScanHintDrift) {
+    check59Violations++
+    report(
+      `Check 59: ${procScanHintDrift.reason}${shadowSuffix}`,
+      `Update ${claudeFlowGuidePath}'s PROC_SCAN_CMD_HINT prose to match ${rufloGuardPath}'s constant verbatim, or vice versa.`
+    )
   }
 
   const claudeFlowHits = findClaudeFlowReintroductions(resolvePath('.'))
@@ -5116,7 +5204,7 @@ console.log(`\n${BOLD}Check 59: CLI-tool pin invariants (SMI-5746)${RESET}`)
     check59Violations++
     report(
       `Check 59: ${f.file}:${f.line} — reintroduces "npx claude-flow" (pre-rename name)${shadowSuffix}`,
-      `Replace with the local-bin form: node node_modules/ruflo/bin/ruflo.js ...`
+      `Replace with the sanctioned service form: docker exec skillsmith-ruflo-1 node /opt/ruflo-seed/node_modules/@claude-flow/cli/bin/cli.js ... (SMI-6744 Wave 4 removes the root ruflo devDependency, Checkpoint 4 row 5, so the fastmcp edge is gone from the lockfile; the host tree follows at the post-merge refresh)`
     )
   }
 
@@ -5275,7 +5363,7 @@ console.log(`\n${BOLD}Check 62: MCP server service-role usage lockdown (SMI-6109
   // an entry; keeping it would itself have been a silent, unnecessary allowlist grant.
   const MCP_SERVICE_ROLE_ALLOWLIST_JUSTIFICATIONS = {
     'packages/mcp-server/src/tools/registry-tools.live.audit.ts':
-      'audit-log write path — a system-table insert, fail-soft, structurally different from a tenant-data read',
+      'best-effort audit-log write for reads and uncommitted attempts only — fail-soft, a no-op without the key; committed mutations are audited by the trg_prs_audit trigger (SMI-6114)',
     // registry-tools.live.content.ts's entry was removed here (SMI-6111, 2026-08-24): its
     // getContent()/install() entitlement check now uses check_registry_team_entitlement(), a
     // SECURITY DEFINER RPC via the member client — no getSupabaseAdminClient() call remains in
@@ -5712,6 +5800,12 @@ console.log(`\n${BOLD}Check 65: test-suite manifest hygiene (SMI-6343)${RESET}`)
     // ManifestManager. All four are genuine false positives.
     'packages/cli/src/commands/pin.test.ts':
       "updateManifestEntry is replaced via vi.mock('../utils/manifest.js', () => ({ updateManifestEntry: mockUpdateManifestEntry, ... })) — no real manifest module is loaded",
+    // SMI-6733 Phase 2 Wave 2: same mock surface as pin.test.ts directly above,
+    // in a sibling file that pins the ADR-171 § 5 nullish case (`installedSkills:
+    // null` classifies `ok`, so a bare subscript threw a raw TypeError out of
+    // `sklx pin`). Same justification, same mocked module.
+    'packages/cli/src/commands/pin.manifest-null.test.ts':
+      "updateManifestEntry is replaced via vi.mock('../utils/manifest.js', ...) — no real manifest module is loaded",
     'packages/cli/src/utils/manifest.test.ts':
       "this IS manifest.ts's own test file — fs/promises is fully mocked (vi.mock with importOriginal, only mkdir/writeFile/rename/readFile/unlink overridden) so saveManifest()'s writes go to an in-memory memfs object, never real disk; a dedicated 'SMI-6343: real-home write guard' describe block additionally proves the new guard itself fires",
     'packages/mcp-server/src/tools/install.helpers.manifest.test.ts':
@@ -5739,6 +5833,8 @@ console.log(`\n${BOLD}Check 65: test-suite manifest hygiene (SMI-6343)${RESET}`)
     // again, that is a genuine regression, not a missing allowlist row.
     'packages/mcp-server/src/tools/__meta__/telemetry-coverage.test.ts':
       "'installSkill' is a string literal inside a tool->handler coverage data map, not a call",
+    'packages/core/src/config/file-lock.test.ts':
+      "updateManifestSafely appears only in a comment explaining WHY this suite exists — that the manifest suites exercise fn() succeeding, so withFileLock's release-on-throw path had no coverage (SMI-6735). The file tests a generic file lock against its own os.tmpdir() target and imports no manifest module at all",
     'packages/mcp-server/src/tools/skill-recover-source.test.ts':
       'backfillManifest appears only in comments documenting that this read-only tool deliberately never calls it',
     'packages/mcp-server/tests/onboarding/tier1-self-heal.test.ts':
@@ -5753,6 +5849,23 @@ console.log(`\n${BOLD}Check 65: test-suite manifest hygiene (SMI-6343)${RESET}`)
       "'skillsmith.installSkill' is a VS Code command id string passed to handleTierDenied",
     'packages/vscode-extension/src/commands/__meta__/telemetry-coverage.test.ts':
       "'skillsmith.installSkill' is a command-id key in a command->action coverage map",
+    // SMI-6358 retro. Added by a later issue than the SMI-6343 block above, so
+    // it sits outside that comment's "the four rows below" count rather than
+    // inside it — inserting a fifth row there would leave that comment naming a
+    // smaller set than it now covers.
+    //
+    // Residual gap this row does NOT close, stated so nobody assumes it does:
+    // a RENAME of the test file goes stale loudly (evaluateManifestHygiene
+    // reports it via staleAllowlistEntries). Deleting the vi.mock while keeping
+    // the updateManifestSafely reference does NOT — the row keeps matching and
+    // silently grants an exemption it no longer earns. After any edit to that
+    // file's mocks, re-confirm the row by deleting
+    // `updateManifestSafely: mockUpdateManifestSafely` from its vi.mock factory
+    // and running that file: 2 of 10 tests must fail. If they all still pass,
+    // the mock is no longer load-bearing and this row must be removed, not
+    // reworded.
+    'packages/mcp-server/src/tools/install.conflict.test.ts':
+      "updateManifestSafely is the only writer symbol this file matches, and it is replaced wholesale by vi.mock('./install.helpers.manifest.js', ...) returning { ...actual, updateManifestSafely: mockUpdateManifestSafely } — the assertions read the updater function off the mock's call record and run it against a literal object, so no manifest module, path or fs call is reachable. The subject under test is manifestKeyFor's keying, which is deliberately NOT mocked",
   }
 
   const CHECK_65_SHADOW_END_DATE = '2026-09-15'
@@ -5822,6 +5935,446 @@ console.log(`\n${BOLD}Check 65: test-suite manifest hygiene (SMI-6343)${RESET}`)
           '(Check 62 precedent), because a silently-stale row masks a real future regression at that path.'
       )
     }
+  }
+}
+
+// Check 66: host-side fs ops against docker-compose.yml named-volume paths (SMI-6457)
+console.log(
+  `\n${BOLD}Check 66: host-side fs ops against docker-compose.yml named-volume paths (SMI-6457)${RESET}`
+)
+{
+  const CHECK_66_SHADOW_END_DATE = '2026-10-20'
+  const inShadow = new Date() < new Date(CHECK_66_SHADOW_END_DATE)
+  const report = inShadow ? warn : fail
+  const shadowSuffix = inShadow
+    ? ` [shadow mode through ${CHECK_66_SHADOW_END_DATE} — advisory only]`
+    : ''
+
+  // Heuristic candidate-generator, not a definitive classifier — a matched
+  // line means "a host-side fs op targets a docker-compose.yml named-volume
+  // path with no same-line docker exec wrap", NOT "this is a bug." Each row
+  // below is a confirmed-correct host-side check (its script's own server
+  // runs host-only, or the check never crosses a host/container boundary at
+  // all), triaged during Check 66's own Wave 2 calibration against `main`
+  // (SMI-6457) — never a bare "looked fine" grant.
+  const HOST_VOLUME_GUARD_ALLOWLIST_JUSTIFICATIONS = {
+    'scripts/mcp-skillsmith-launcher.sh:if [ ! -f "$NM_SENTINEL" ]; then':
+      "the skillsmith MCP server itself runs entirely on the HOST (no docker exec in this launcher's own invocation, SMI-6454) — a host-side check here is correct, not the SMI-6453 bug shape",
+    'scripts/mcp-skillsmith-launcher.sh:if (existsSync(join(pkgDir, "node_modules", name))) return "nested-corrupt";':
+      'same host-only launcher as above — the DEP_PROBE_JS dependency probe correctly runs host-side',
+    'scripts/mcp-skillsmith-launcher.sh:"    rm -rf packages/mcp-server/node_modules/$dep_name':
+      'inert remediation TEXT inside emit_error(), never executed by the script itself, AND correct even if it were (host-only launcher, SMI-6454 fix)',
+    'scripts/lib/check-node-modules-fresh.sh:if [ -f "$SENTINEL" ]; then':
+      'this IS the canonical HOST-tree freshness guard (SMI-5343/5344/6006) — checking host bytes is its entire documented purpose',
+    'scripts/lib/check-node-modules-fresh.sh:if [ ! -f "$SENTINEL" ]; then':
+      'same guard as above, the inverse branch',
+    'scripts/lib/check-node-modules-fresh.sh:if [ -f "$SENTINEL_SHADOW" ]; then':
+      'SMI-6496 Fix 2 shadow-hash sentinel — same canonical HOST-tree freshness guard as the raw sentinel rows above, checking a second host-side file for the same documented purpose',
+    'scripts/repair-host-native-deps.sh:rm -rf "$dest"':
+      'file header: "audit:host-npm-required ... by-design host-side native binding rebuild per SMI-4549; cannot run in Docker" — deliberately host-only',
+    'scripts/repair-host-native-deps.sh:warn "$pkg_name: refetched but bin/esbuild still fails the ELF check — manual recovery: rm -rf node_modules/@esbuild/$(basename "${linux_dir%/}") && npm pack $pkg_name@$version"':
+      'same host-only script as above — inert instructional text inside a warn() call',
+    'scripts/repair-host-native-deps.sh:if [[ -d "$ROOT_BSQLITE_DIR" ]]; then':
+      'same host-only script, SMI-4780 fallback probe',
+    'scripts/repair-host-native-deps.sh:rm -rf node_modules/better-sqlite3':
+      'same host-only script, root binding reset',
+  }
+
+  const composePath = 'docker-compose.yml'
+  if (!existsSync(composePath)) {
+    warn('Check 66: docker-compose.yml not found — skipping')
+  } else {
+    const namedVolumePaths = parseNamedVolumeRepoRelativePaths(readFileSync(composePath, 'utf8'))
+    // scripts/audit-standards.mjs itself is excluded: HOST_VOLUME_GUARD_ALLOWLIST_JUSTIFICATIONS
+    // necessarily embeds, as string literals, the exact flagged text of real
+    // findings from OTHER files (for documentation) — Check 66's own
+    // operator/target-resolution logic can't distinguish that from real
+    // executable code, so this file unavoidably self-matches its own
+    // allowlist strings. Confirmed during Check 66's Wave 2 calibration
+    // (SMI-6457) — the one otherwise-legitimate finding this file itself
+    // produced (an npm-overrides existsSync() check that is self-referential
+    // and never crosses a host/container boundary) was independently
+    // confirmed correct before this exclusion was added.
+    const scanFiles = getFilesRecursive('scripts', ['.sh', '.ts', '.mjs']).filter(
+      (f) => !f.includes('.test.') && f !== join('scripts', 'audit-standards.mjs')
+    )
+    const findings = findHostSideNamedVolumeOps(scanFiles, namedVolumePaths)
+
+    const seenAllowlistKeys = new Set()
+    const unallowlisted = []
+    for (const finding of findings) {
+      const key = allowlistKeyFor(finding)
+      if (key in HOST_VOLUME_GUARD_ALLOWLIST_JUSTIFICATIONS) {
+        seenAllowlistKeys.add(key)
+      } else {
+        unallowlisted.push(finding)
+      }
+    }
+    const staleAllowlistKeys = Object.keys(HOST_VOLUME_GUARD_ALLOWLIST_JUSTIFICATIONS).filter(
+      (k) => !seenAllowlistKeys.has(k)
+    )
+
+    if (unallowlisted.length === 0 && staleAllowlistKeys.length === 0) {
+      pass(
+        `Check 66: no unallowlisted host-side fs op(s) found against docker-compose.yml's ` +
+          `${namedVolumePaths.length} named-volume path(s) (${seenAllowlistKeys.size} confirmed-correct match(es) allowlisted)`
+      )
+    } else {
+      for (const f of unallowlisted) {
+        report(
+          `Check 66: ${f.file}:${f.line} — ${f.operation} targets '${f.matchedPath}' (a docker-compose.yml ` +
+            `named-volume path) with no same-line docker exec wrap${shadowSuffix}`,
+          `This is a CANDIDATE for the SMI-6453/SMI-6454 bug class, not a confirmed bug — verify whether the ` +
+            `containing script's own server/process runs host-side (host check is correct) or container-side ` +
+            `(host check is the bug). If confirmed correct, add '${allowlistKeyFor(f)}' to ` +
+            `HOST_VOLUME_GUARD_ALLOWLIST_JUSTIFICATIONS in scripts/audit-standards.mjs with a specific reason.`
+        )
+      }
+      for (const stale of staleAllowlistKeys) {
+        report(
+          `Check 66: '${stale}' is allowlisted in HOST_VOLUME_GUARD_ALLOWLIST_JUSTIFICATIONS but no longer ` +
+            `matches a current finding (the line changed or moved)${shadowSuffix}`,
+          `Remove the stale entry — an unnecessary allowlist grant is itself a finding (Check 62/65 precedent).`
+        )
+      }
+    }
+  }
+}
+
+// Check 68: MCP registry server.json `_meta` placement
+// The MCP Registry schema (https://static.modelcontextprotocol.io/schemas/
+// 2025-12-11/server.schema.json) only PRESERVES the reserved top-level
+// `_meta` key `io.modelcontextprotocol.registry/publisher-provided` (4KB
+// budget) on publish. Anything else under top-level `_meta` is silently
+// dropped — confirmed live: the registry's `versions/latest` for
+// `io.github.smith-horn/skillsmith` returned `_meta: {}` while
+// packages/mcp-server/server.json still had `io.skillsmith/categories` and
+// `io.skillsmith/keywords` sitting directly under top-level `_meta` instead
+// of nested under the reserved key. This check fails loudly if a custom
+// `_meta` key ever lands at the top level again.
+console.log(`\n${BOLD}Check 68: MCP registry server.json _meta placement${RESET}`)
+{
+  const SERVER_JSON_PATH = 'packages/mcp-server/server.json'
+  if (!existsSync(SERVER_JSON_PATH)) {
+    warn(`Check 68: ${SERVER_JSON_PATH} not found — skipping registry _meta placement check`)
+  } else {
+    try {
+      const serverJson = JSON.parse(readFileSync(SERVER_JSON_PATH, 'utf8'))
+      const violations = findServerJsonMetaPlacementViolations(serverJson)
+      if (violations.length === 0) {
+        pass(`${SERVER_JSON_PATH} _meta has no keys the MCP registry will silently drop`)
+      } else {
+        for (const v of violations) {
+          fail(
+            `Check 68: ${SERVER_JSON_PATH}: _meta key '${v.key}' is not nested under the reserved ` +
+              `'${MCP_REGISTRY_RESERVED_META_KEY}' key and will be silently dropped by the registry`,
+            `Move ${SERVER_JSON_PATH}'s _meta.${escapeMetaKeyForMessage(v.key)} to be nested under ` +
+              `_meta['${MCP_REGISTRY_RESERVED_META_KEY}'] — see the registry schema at ` +
+              'https://static.modelcontextprotocol.io/schemas/2025-12-11/server.schema.json'
+          )
+        }
+      }
+    } catch (e) {
+      warn(`Check 68: could not parse ${SERVER_JSON_PATH}: ${e.message}`)
+    }
+  }
+}
+
+// Check 67: weak-password lexicon freshness (SMI-6441 Wave 1, item 5, L3)
+//
+// Anti-hand-edit / anti-drift gate for the three generated
+// COMMON_WEAK_PASSWORDS modules. Calls the generator's own exported
+// functions in-process (no subprocess, no shell — safer than
+// execFileSync('node', [...]) and avoids parsing its stdout) and compares
+// the freshly-rendered text against what's on disk via detectDrift, same
+// as `npm run lexicon:weak-passwords:check` does at the CLI.
+//
+// L1 (Deno<->Node byte identity) and L2 (three-way literal payload
+// identity) both `it.skipIf(isGitCryptEncrypted(...))` on the Deno copy;
+// this check does the equivalent for its own Deno-edge comparison — core
+// and Node-edge are ALWAYS compared (never skipped), and the Deno-edge
+// copy is compared only when git-crypt is unlocked, with the partial
+// coverage stated explicitly in the pass message rather than silently
+// treated as a full pass (per the plan's L3 requirement).
+/**
+ * Report Check 67's verdict. Deliberately isolated in its own function so
+ * the ONLY things in scope are already-stripped `{label, status}` pairs and
+ * a boolean — never the full rendered-module objects (which carry the
+ * actual lexicon payload as a `text` field). CodeQL's js/clear-text-logging
+ * query flagged this block twice already despite the caller renaming its
+ * variable and stripping the sensitive field with `.map()` — its taint
+ * tracking appears to treat any log call reachable in the SAME function
+ * scope as a call site that touched a password-named value as suspect,
+ * regardless of the actual transformation in between. Full scope
+ * separation (this function receives no reference to, and cannot reach,
+ * the sensitive `text` field at all) is the structural fix.
+ */
+function reportWeakPasswordLexiconFreshness(statuses, denoLocked) {
+  const genuineFailures = statuses.filter(
+    (s) => s.status !== 'fresh' && !(s.label === 'deno-edge' && denoLocked)
+  )
+
+  if (genuineFailures.length === 0) {
+    if (denoLocked) {
+      pass(
+        'Check 67: core + Node-edge weak-password lexicon copies are fresh; Deno-edge copy NOT ' +
+          'verified because git-crypt is locked — unlock and re-run before merging to confirm it too'
+      )
+    } else {
+      pass(
+        'Check 67: all 3 weak-password lexicon copies are fresh (see: npm run lexicon:weak-passwords:check)'
+      )
+    }
+  } else {
+    const detail = genuineFailures.map((s) => `${s.label} (${s.status})`).join(', ')
+    fail(
+      `Check 67: weak-password lexicon drift detected: ${detail}`,
+      'Run: npm run lexicon:weak-passwords, then commit the regenerated file(s). If this is the ' +
+        'Deno-edge copy and git-crypt is genuinely unlocked, also verify with ' +
+        '`git-crypt status supabase/functions/_shared/security-scanner-edge.weak-passwords.ts`.'
+    )
+  }
+}
+
+console.log(`\n${BOLD}Check 67: weak-password lexicon freshness (SMI-6441 L3)${RESET}`)
+try {
+  const weakPasswordInputs = loadWeakPasswordLexiconInputs()
+  const { rendered: weakPasswordRendered } = generateWeakPasswordLexicon(weakPasswordInputs)
+  const denoOutput = weakPasswordRendered.find((r) => r.label === 'deno-edge')
+  const denoLocked = denoOutput ? isGitCryptEncrypted(denoOutput.path) : false
+  const freshnessStatuses = detectWeakPasswordLexiconDrift(weakPasswordRendered).map(
+    ({ label, status }) => ({ label, status })
+  )
+  reportWeakPasswordLexiconFreshness(freshnessStatuses, denoLocked)
+} catch (err) {
+  fail(
+    `Check 67: weak-password lexicon generator failed: ${err.message}`,
+    'Investigate scripts/gen-weak-password-lexicon.mjs and its inputs under data/wordlists/ — a ' +
+      'thrown sanity-gate error here means the generator itself cannot currently produce a valid ' +
+      'lexicon, which is a harder failure than mere drift.'
+  )
+}
+
+// Check 69: absolute `--separate-git-dir` writer ban (SMI-6515 Wave 2)
+//
+// A submodule gitfile (`.git`) whose `gitdir:` line is an absolute host
+// path resolves fine on the host that wrote it, but breaks every git
+// command run inside skillsmith-dev-1 or any worktree container -- the
+// repo is bind-mounted at /app there, so the host path never exists.
+// docs/internal/implementation/smi-6515-absolute-gitdir-detector.md
+// confirms two writers of this exact bad form: git's own
+// `git submodule--helper clone` internals (unfixable from this repo --
+// it is git's own code, reached whenever `git submodule update --init`
+// is interrupted between its clone and finalize steps) and this repo's
+// own documented recipe (.claude/development/git-crypt-guide.md, SMI-6015
+// stall-recovery section, corrected in this same PR). This check closes
+// the second writer -- the one this repo's own tracked files can
+// regress -- but it cannot observe or prevent the git-internal one.
+//
+// Ships at FAIL, per the plan's original Wave 2 Step 2 spec. This scans
+// TRACKED files for a writer pattern, a fully CI-enforceable invariant
+// with no plausible false-positive surface once allow-listed paths are
+// excluded (see the helper's own header for why each allow-list entry is
+// there). This is a DIFFERENT question from Wave 0's cache-error-direction
+// measurement (conservative MISS, never a false HIT), which governs the
+// severity of a future detector for the untracked, machine-local GITDIR
+// ARTIFACT (Wave 3, out of scope here) -- that detector legitimately warns;
+// this check does not, matching the fail()-from-day-one precedent set by
+// Check 61 (also a tracked-file remediation-string ban).
+//
+// scripts/tests/gitdir-writer-check.test.ts is the executable twin of
+// this check -- same helper, same invariant.
+console.log(`\n${BOLD}Check 69: absolute --separate-git-dir writer ban (SMI-6515)${RESET}`)
+{
+  // SMI-6575: the helper throws when `git ls-files` fails, by design -- see its
+  // header. Before this catch existed, that throw killed the entire audit in
+  // every worktree dev container: Check 70, the summary block and the exit
+  // verdict, all lost. Measured 2026-09-12 -- worktree container exit 1 with 84
+  // pass-marks and no summary, versus host exit 0 with 89 passed / 7 warnings /
+  // 0 failed. NOT EVALUATED is a third outcome, never a silent pass.
+  //
+  // The branching that turns a verdict into report lines lives in the helper
+  // module, not here, so every outcome -- including the findings loop -- is
+  // directly testable. The first draft of this fix kept that branching inline
+  // and left the findings loop referencing two out-of-scope names, a
+  // ReferenceError reachable only when a finding exists. `.mjs` is outside both
+  // typecheck and eslint here, so nothing mechanical could see it. What remains
+  // below is a flat dispatch with no branch-local bindings to get wrong.
+  const reporters = { pass, warn, fail }
+  for (const line of gitDirWriterReportLines(
+    evaluateAbsoluteSeparateGitDirWriters('.', { isCI: Boolean(process.env.CI) })
+  )) {
+    reporters[line.severity](line.message, line.fix)
+  }
+}
+
+// Check 70: SKILLSMITH_DOCKER default coherence (SMI-6518)
+//
+// docker-compose.yml's `dev` service reads SKILLSMITH_DOCKER_CPUS /
+// SKILLSMITH_DOCKER_MEM via `${VAR:-default}` shorthand (SMI-6064).
+// .env.schema separately documents what those defaults are, in prose.
+// Nothing checked that the two agree -- confirmed during SMI-6518,
+// `grep -n "SKILLSMITH_DOCKER\|mem_limit" scripts/audit-standards.mjs`
+// returned zero hits before this check existed.
+//
+// Ships HARD (fail), not shadow/warn: this compares two static files
+// with no live-environment dependency and no plausible false-positive
+// surface. There is no legitimate reason for these two files to ever
+// disagree.
+//
+// scripts/tests/audit-docker-env-coherence.test.ts is the executable
+// twin of this check -- same helper, same invariant.
+console.log(`\n${BOLD}Check 70: SKILLSMITH_DOCKER default coherence (SMI-6518)${RESET}`)
+{
+  // SMI-6575: Check 70's two reads were unguarded, and Check 70 is the LAST
+  // check with the Summary block immediately below -- an ENOENT here destroyed
+  // the summary and the exit verdict exactly as Check 69's throw did. Measured
+  // by moving .env.schema aside: exit 1, no summary block at all.
+  //
+  // The branching lives in the helper module, not here, so every outcome --
+  // including the unread path -- is directly testable. A first version wrapped
+  // the reads inline; the cross-family pre-merge gate BLOCKED it for leaving
+  // the new failure path untested, which was the same defect that had blocked
+  // the Check 69 fix a round earlier. `.mjs` is outside both typecheck and
+  // eslint here, so nothing mechanical guards an inline branch.
+  //
+  // Scoped deliberately to the two reads #2804 introduced. Most of this file's
+  // readFileSync call sites are similarly unguarded -- a pre-existing repo-wide
+  // pattern, filed as SMI-6584 (which holds the counts and the method that
+  // produced them) rather than refactored here.
+  const reporters = { pass, warn, fail }
+  for (const line of dockerEnvCoherenceReportLines({ isCI: Boolean(process.env.CI) })) {
+    reporters[line.severity](line.message, line.fix)
+  }
+}
+
+// Check 72: container npm mutations go through the mount gate (SMI-6654)
+//
+// ADR-158 Decision 3 makes scripts/lib/node-modules-mount-gate.sh the only
+// sanctioned gate for a node_modules mutation inside a dev container. Arm A
+// flags a container launcher followed by an npm mutation verb unless it has one
+// of two structurally safe shapes; arm B flags a mount-table probe of a
+// node_modules path. Shadow through CHECK_72_SHADOW_END_DATE (UTC), then
+// FINDING lines fail. No marker, no disable var.
+//
+// Numbered 72, not 71: Check 71 was retired by SMI-6497 after this plan was
+// reviewed as Check 72, and the owner kept 72.
+//
+// Every outcome, including NOT-EVALUATED (fail under CI, warn in a worktree
+// container), is decided in the helper, so this stays a flat dispatch with no
+// branch-local bindings (the SMI-6575 lesson from Checks 69 and 70).
+//
+// scripts/tests/audit-container-npm-gate.test.ts is the executable twin of
+// this check -- same helper, same invariant.
+console.log(
+  `\n${BOLD}Check 72: container npm mutations go through the mount gate (SMI-6654)${RESET}`
+)
+{
+  const reporters = { pass, warn, fail }
+  for (const line of containerNpmGateReportLines(
+    evaluateContainerNpmGate('.', { isCI: Boolean(process.env.CI), now: new Date() })
+  )) {
+    reporters[line.severity](line.message, line.fix)
+  }
+}
+
+// Check 73: .claude/settings.json's `env` block is exactly the pinned set
+// (SMI-6744 Wave 4 / A4.3, Checkpoint 4 row 4)
+//
+// A4.1 measured that no censused Ruflo build's `init` writes
+// CLAUDE_FLOW_AUTO_COMMIT / CLAUDE_FLOW_AUTO_PUSH / CLAUDE_FLOW_REMOTE_EXECUTION
+// -- so a three-named-absence check (the plan's original spec) would be green
+// on the very re-add it exists to catch, because the live re-add writers
+// write a different set of keys entirely. Checkpoint 4 chose to pin the
+// exact expected `env` block instead (empty today), which is also what
+// closes the smuggled-hook-disable-variable route the design's Layer H
+// section names (a leading shell assignment never reaches the PreToolUse
+// hook process, so the `env` block is the one route that would work).
+//
+// Every outcome is decided in the helper, so this stays a flat dispatch
+// (the SMI-6575 lesson from Checks 69 and 70).
+//
+// scripts/tests/audit-settings-env.test.ts is the executable twin of this
+// check -- same helper, same invariant.
+console.log(
+  `\n${BOLD}Check 73: settings.json env block is exactly the pinned set (SMI-6744)${RESET}`
+)
+{
+  const reporters = { pass, warn, fail }
+  for (const line of settingsEnvReportLines(
+    evaluateSettingsEnv({ settingsPath: join('.claude', 'settings.json') })
+  )) {
+    reporters[line.severity](line.message, line.fix)
+  }
+}
+
+// Check 74: the SMI-6744 Wave 4 Bash deny set is present and the host tree
+// no longer carries `ruflo` (SMI-6744 Wave 4 / A4.6, design doc § 1(b)
+// Layer R and Layer X, Checkpoint 4 rows 9 and 14)
+//
+// Two independent assertions: (a) every one of the RUFLO_BASH_DENY_ENTRIES
+// (audit-ruflo-host-paths-helpers.mjs) Bash deny entries the adversarial
+// command census requires is present in `permissions.deny`
+// (exact and ` *` forms only -- no `:*` duplicates, since fact 1 of the
+// permission-rule semantics record documents `:*` as equivalent to ` *`);
+// (b) `node_modules/ruflo` is absent from the host tree (Checkpoint 4 row
+// 5's devDependency removal, a tree predicate distinct from the design's
+// lockfile-graph reachability computation).
+//
+// This check cannot see host-global (`~/.nvm`) or user-scope
+// (`~/.claude/settings.json`) state -- CI and the dev container have
+// neither, so asserting either here would be a wrong-subject check,
+// vacuously green in the very environments that run it. Both the pass and
+// fail lines say so; that gap is A4.7's owner-transcript job.
+//
+// scripts/tests/audit-ruflo-host-paths.test.ts is the executable twin of
+// this check -- same helper, same invariant.
+console.log(`\n${BOLD}Check 74: SMI-6744 Wave 4 Bash deny set + host-tree removal${RESET}`)
+{
+  const reporters = { pass, warn, fail }
+  for (const line of rufloHostPathsReportLines(
+    evaluateRufloHostPaths({
+      settingsPath: join('.claude', 'settings.json'),
+      root: process.cwd(),
+    })
+  )) {
+    reporters[line.severity](line.message, line.fix)
+  }
+  // A4.6 addition: the ruflo-host-guard.mjs hook-entry tripwire (detection,
+  // not prevention -- design doc § 8 item 13). Purely additive report
+  // lines under the same Check 74 number, same helper file.
+  for (const line of rufloHostGuardHooksReportLines(
+    evaluateRufloHostGuardHooks({ settingsPath: join('.claude', 'settings.json') })
+  )) {
+    reporters[line.severity](line.message, line.fix)
+  }
+}
+
+// Check 75: the SMI-6744 Wave 4 MCP deny set is present (SMI-6744 Wave 4 /
+// A4.6, design doc § 6 row 13 and decision 2.5)
+//
+// `mcp__ruflo__terminal_execute` / `agent_execute` / `wasm_agent_tool` grant
+// an arbitrary shell/agent/wasm surface inside the restricted service
+// container -- egress-bounded by the network namespace but not
+// store-bounded or ptrace-bounded, so leaving them reachable while denying
+// `memory_store` would make the memory denies decorative. Decision 2.5
+// additionally denies the `github_*` and `browser_*` families
+// (`network_mode: none` breaks both regardless, but a stray
+// `permissions.allow` entry would otherwise reach them). No parameter-level
+// MCP deny exists (permission-rule semantics record, gap 3), so the exact
+// tool name is the only enforceable form.
+//
+// scripts/tests/audit-ruflo-host-paths.test.ts is the executable twin of
+// this check too -- same helper file, same invariant class.
+console.log(
+  `\n${BOLD}Check 75: SMI-6744 Wave 4 MCP deny set (terminal/agent/wasm/github/browser)${RESET}`
+)
+{
+  const reporters = { pass, warn, fail }
+  for (const line of rufloMcpDeniesReportLines(
+    evaluateRufloMcpDenies({ settingsPath: join('.claude', 'settings.json') })
+  )) {
+    reporters[line.severity](line.message, line.fix)
   }
 }
 

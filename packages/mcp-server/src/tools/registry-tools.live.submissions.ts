@@ -187,8 +187,9 @@ function mapReviewRow(row: PrivateRegistryReviewRow): RegistryReviewDecision {
  * `published_by` (`23514`), self-approval. On failure the RPC's `error.message` is thrown
  * VERBATIM (plan-review finding M10) — no SQLSTATE-to-canned-message remapping, which would
  * silently drop the D-9 "promote a second admin/owner" remediation text or the D-7 client-version
- * remediation text. Every documented D-5 failure is a business-rule denial, so both this
- * function's failure branches audit `result: 'denied'`.
+ * remediation text. An RPC error is audited `result: 'denied'` (every documented D-5 failure is a
+ * business-rule denial); an empty response is audited `result: 'error'`. A successful decision is
+ * audited server-side by `trg_prs_audit` (SMI-6114), not here.
  */
 export async function reviewSubmission(params: {
   client: MinimalSupabaseClient
@@ -238,6 +239,7 @@ export async function reviewSubmission(params: {
         'success but returned no row — this should not happen; retry or check with a team admin.'
     )
   }
-  await recordRegistryAudit({ ...auditBase, result: 'success' })
+  // SMI-6114: no client-side success row. The RPC's UPDATE fired trg_prs_audit, which wrote the
+  // `private_registry:approve`/`reject` row in the same transaction as the decision itself.
   return mapReviewRow(row)
 }

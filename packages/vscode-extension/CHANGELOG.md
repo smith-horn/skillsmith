@@ -6,6 +6,45 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/), and this
 
 ## [Unreleased]
 
+- **Docs**: SMI-6532 -- `manifestReader.ts` now states in the file itself that nothing consumes its
+  two update-reason tables yet. Its two sibling tables (the MCP one and the parity test in core) each
+  said so in their own headers; this one did not, so a reader opening only this file saw carefully
+  maintained data and no signal that it is preparatory. Found by the post-merge retro on PR #2952.
+
+- **Feature**: SMI-6532 step 6 (preparatory -- see the scope note below) -- `manifestReader` now also carries two tables: a total `Record` from
+  every update skip reason and result code to the text this extension will show, and a mirror of which
+  remediation kind each member maps to. **Nothing consumes either yet**: the call site arrives with
+  the CLI/gate work tracked on SMI-6531, so this is preparatory data, not user-visible behaviour.
+
+  Two guards, and they cover different things -- an earlier version of this entry merged them and was
+  wrong as a result. TypeScript enforces that the text table is exhaustive over **this package's own
+  copy** of the two unions, so deleting an entry fails `tsc` here (measured: TS2741). It cannot see
+  core adding a member, because the copy is what the table is typed against; a parity test in core
+  AST-reads this file and is what catches the copy drifting from core's closed sets.
+
+  The remediation mirror is what keeps that parity test non-vacuous. The MCP surface will obtain its
+  kinds from core's own `remediationFor`, so comparing MCP against core would compare core with
+  itself; this copy can genuinely drift, so it is the one worth checking.
+
+- **Feature**: SMI-6532 -- the existing `manifestReader` service now carries the closed sets of
+  update skip reasons and result codes (23 and 15 members) that the update eligibility gate uses.
+  They are deliberately mirrored from `@skillsmith/core` rather than imported, because this
+  extension does not depend on that package; a test in core pins the two copies to the same
+  members in the same order, so they cannot drift apart silently. Nothing in the extension reads
+  these values yet, so there is no user-visible behaviour change in this release.
+
+## v0.7.12
+
+- **Cadence**: Mechanical cadence alignment (no changes since v0.7.11).
+
+## v0.7.11
+
+- **Chore**: SMI-6552 -- correct Smith Horn copyright start year to 2025 (#2810)
+
+## v0.7.10
+
+- **Chore**: SMI-6472 -- `src/utils/skillNameValidation.ts`'s auto-generated header now tracks `packages/core/src/utils/skill-name.ts` as its source instead of `packages/cli/src/utils/skill-name.ts` (`scripts/sync-skill-name-validation.mjs` retargeted, not retired -- retiring it would give the extension a `@skillsmith/core` runtime dependency and trip ADR-113's explicit trip-wire). No functional change: `VALID_SKILL_NAME_RE`/`validateSkillName`'s exported content is byte-identical, only the source-of-truth comment changed.
+
 ## v0.7.9
 
 - **Added**: `McpClient` gains `applyManifestReconcile()` and a matching `McpApplyManifestReconcileResponse` type (new `mcp/types.apply.ts`), calling the new `apply_manifest_reconcile` MCP tool (SMI-6343 Wave 4). Also fixes two pre-existing drift bugs found while wiring this in: `applyNamespaceRename`'s `action` type was missing `'revert'` (shipped server-side in SMI-5671), and there was no `undoApply` method or `McpUndoApplyResponse` type at all for the existing `undo_apply` tool — both added alongside the new tool's own types.

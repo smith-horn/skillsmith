@@ -167,6 +167,7 @@ const VALID_OUTCOMES: readonly SimRowOutcome[] = [
   'bundle_absent',
   'unevaluable',
   'unfetchable',
+  'primary_not_found',
 ]
 
 function validateCoverage(
@@ -178,13 +179,21 @@ function validateCoverage(
   const total = value['total']
   const unevaluable = value['unevaluable']
   const unfetchable = value['unfetchable']
+  // SMI-6442: primaryNotFound is additive to the report schema. A report
+  // from before this fix landed has no such field at all — treat a genuinely
+  // ABSENT field as 0 (backward compatible with every pre-existing report),
+  // but still reject a PRESENT, non-number value as malformed.
+  const primaryNotFoundRaw = value['primaryNotFound']
+  const primaryNotFound = primaryNotFoundRaw === undefined ? 0 : primaryNotFoundRaw
   if (status !== 'full' && status !== 'partial')
     return { ok: false, reason: 'status must be full|partial' }
   if (typeof scanned !== 'number') return { ok: false, reason: 'scanned must be a number' }
   if (typeof total !== 'number') return { ok: false, reason: 'total must be a number' }
   if (typeof unevaluable !== 'number') return { ok: false, reason: 'unevaluable must be a number' }
   if (typeof unfetchable !== 'number') return { ok: false, reason: 'unfetchable must be a number' }
-  return { ok: true, value: { status, scanned, total, unevaluable, unfetchable } }
+  if (typeof primaryNotFound !== 'number')
+    return { ok: false, reason: 'primaryNotFound must be a number when present' }
+  return { ok: true, value: { status, scanned, total, unevaluable, unfetchable, primaryNotFound } }
 }
 
 function validateRow(
@@ -214,6 +223,7 @@ function validateRow(
     }
   }
   const reason = value['reason']
+  const unfetchableSubtype = value['unfetchable_subtype']
   const prePortQuarantine = value['prePortQuarantine']
   const postPortQuarantine = value['postPortQuarantine']
   const prePortRiskScore = value['prePortRiskScore']
@@ -221,17 +231,45 @@ function validateRow(
   if (reason !== undefined && typeof reason !== 'string') {
     return { ok: false, reason: `rows[${i}].reason must be a string when present` }
   }
+  if (
+    unfetchableSubtype !== undefined &&
+    unfetchableSubtype !== 'url_parse' &&
+    unfetchableSubtype !== 'branch_resolution'
+  ) {
+    return {
+      ok: false,
+      reason: `rows[${i}].unfetchable_subtype must be "url_parse" or "branch_resolution" when present`,
+    }
+  }
   if (prePortQuarantine !== undefined && typeof prePortQuarantine !== 'boolean') {
     return { ok: false, reason: `rows[${i}].prePortQuarantine must be a boolean when present` }
   }
   if (postPortQuarantine !== undefined && typeof postPortQuarantine !== 'boolean') {
     return { ok: false, reason: `rows[${i}].postPortQuarantine must be a boolean when present` }
   }
-  if (prePortRiskScore !== undefined && typeof prePortRiskScore !== 'number') {
-    return { ok: false, reason: `rows[${i}].prePortRiskScore must be a number when present` }
+  // SMI-6481 (governance review, 2026-09-09): `Number.isFinite`, not
+  // `typeof === 'number'`, matching the checkpoint-side twin
+  // (`smi5879-simulate-full.checkpoint-row-shape.ts`). An asymmetry between the
+  // two loaders is the defect class SMI-6481 exists to remove, and having just
+  // tightened the checkpoint side it would be perverse to leave this one the
+  // weaker of the pair.
+  //
+  // Honest scope: this is defence-in-depth against a FUTURE caller, not a live
+  // hole. `validateRow` is module-private and its only reachable path is
+  // `loadSimulatorReport` -> `loadJsonFile` -> `JSON.parse`, and standard JSON
+  // cannot express NaN or Infinity — so no input available today can actually
+  // reach the tightened branch. It matters if a non-JSON producer is ever
+  // added, because a NaN risk score would otherwise pass G-5 silently:
+  // `checkDeltaBound` (`smi5879-gate-check.helpers.ts`) tests `delta > MAX`,
+  // and every comparison against NaN is false, so such a row is never flagged.
+  if (prePortRiskScore !== undefined && !Number.isFinite(prePortRiskScore)) {
+    return { ok: false, reason: `rows[${i}].prePortRiskScore must be a finite number when present` }
   }
-  if (postPortRiskScore !== undefined && typeof postPortRiskScore !== 'number') {
-    return { ok: false, reason: `rows[${i}].postPortRiskScore must be a number when present` }
+  if (postPortRiskScore !== undefined && !Number.isFinite(postPortRiskScore)) {
+    return {
+      ok: false,
+      reason: `rows[${i}].postPortRiskScore must be a finite number when present`,
+    }
   }
   return {
     ok: true,
@@ -242,10 +280,26 @@ function validateRow(
       name,
       outcome: outcome as SimRowOutcome,
       ...(typeof reason === 'string' ? { reason } : {}),
+      ...(unfetchableSubtype === 'url_parse' || unfetchableSubtype === 'branch_resolution'
+        ? { unfetchable_subtype: unfetchableSubtype }
+        : {}),
       ...(typeof prePortQuarantine === 'boolean' ? { prePortQuarantine } : {}),
       ...(typeof postPortQuarantine === 'boolean' ? { postPortQuarantine } : {}),
-      ...(typeof prePortRiskScore === 'number' ? { prePortRiskScore } : {}),
-      ...(typeof postPortRiskScore === 'number' ? { postPortRiskScore } : {}),
+      // SMI-6481: matches the `Number.isFinite` guard above, but keeps the
+      // `typeof` half — `Number.isFinite` is declared `(number: unknown) =>
+      // boolean`, NOT a type predicate, so it does not narrow. Using it alone
+      // here widened these to `unknown` and made the object un-assignable to
+      // `SimRowResult` (TS2322). That went unnoticed for one review round
+      // because `tsconfig.json` is `"files": []` + `packages/` references, so
+      // `npm run typecheck` never sees `scripts/` — the same blind spot as
+      // SMI-6486, hit while fixing SMI-6481. Verify changes here with
+      // `npx tsc --noEmit --strict ... <file>` directly, not `npm run typecheck`.
+      ...(typeof prePortRiskScore === 'number' && Number.isFinite(prePortRiskScore)
+        ? { prePortRiskScore }
+        : {}),
+      ...(typeof postPortRiskScore === 'number' && Number.isFinite(postPortRiskScore)
+        ? { postPortRiskScore }
+        : {}),
     },
   }
 }
@@ -302,6 +356,16 @@ function validateSimulatorReportConsistency(
         reason:
           `coverage.${cohort}.unfetchable=${cov.unfetchable} does not equal the number of ` +
           `unfetchable cohort=${cohort} rows in report.rows (${actualUnfetchable})`,
+      }
+    }
+    // SMI-6442: same cross-validation for the new terminal outcome.
+    const actualPrimaryNotFound = cohortRows.filter((r) => r.outcome === 'primary_not_found').length
+    if (cov.primaryNotFound !== actualPrimaryNotFound) {
+      return {
+        ok: false,
+        reason:
+          `coverage.${cohort}.primaryNotFound=${cov.primaryNotFound} does not equal the number of ` +
+          `primary_not_found cohort=${cohort} rows in report.rows (${actualPrimaryNotFound})`,
       }
     }
   }
@@ -376,7 +440,16 @@ export function loadSimulatorReport(
     if (!isPlainObject(countsRaw)) return { ok: false, reason: 'counts must be an object' }
     const counts: Partial<Record<SimRowOutcome, number>> = {}
     for (const outcome of VALID_OUTCOMES) {
-      const n = countsRaw[outcome]
+      const raw = countsRaw[outcome]
+      // SMI-6481: counts.primary_not_found is additive to the report schema
+      // (SMI-6442), same as coverage.<cohort>.primaryNotFound above — a
+      // report from before that fix has no such field at all. An ABSENT
+      // value means "zero pre-existing primary_not_found rows," never a
+      // malformed report; a PRESENT-but-non-number value is still rejected
+      // below, same as every other counts bucket. `validateCoverage`'s own
+      // shim (above) got this at the time; counts did not — this closes
+      // that asymmetry.
+      const n = outcome === 'primary_not_found' && raw === undefined ? 0 : raw
       if (typeof n !== 'number') return { ok: false, reason: `counts.${outcome} must be a number` }
       counts[outcome] = n
     }

@@ -78,7 +78,7 @@ Pattern training is implicit in v3 `post-edit` — no separate flag needed.
 
 ## Integration
 
-This hook is automatically called by Claude Code when:
+Claude Code fires a PreToolUse/PostToolUse hook on Write|Edit|MultiEdit in this repo, but it runs `scripts/claude-hooks-log-wrapper.sh`, which has not invoked ruflo since SMI-6724 — this command is not called automatically here. Upstream ruflo documents it as invoked when:
 
 - After Edit tool completes
 - Following MultiEdit operations

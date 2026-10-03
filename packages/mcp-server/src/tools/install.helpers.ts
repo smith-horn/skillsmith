@@ -25,9 +25,8 @@ export { parseRepoUrl, type ParsedRepoUrl }
 
 // Re-export manifest helpers from dedicated module
 export {
-  acquireManifestLock,
-  releaseManifestLock,
   loadManifest,
+  loadManifestWithWarning,
   saveManifest,
   updateManifestSafely,
 } from './install.helpers.manifest.js'

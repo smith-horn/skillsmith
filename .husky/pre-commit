@@ -32,6 +32,11 @@ fi
 # =============================================================================
 HOOK_DETECT_LIB="$(dirname "$0")/../scripts/lib/hook-docker-detect.sh"
 if [ -r "$HOOK_DETECT_LIB" ]; then
+  # SMI-6568: caller contract — pre-commit classifies the STAGED set, not
+  # the committed range. Unexported: this hook sources the lib directly in
+  # the same shell, so no child process needs to see it.
+  # shellcheck disable=SC2034 # read by the sourced hook-docker-detect.sh
+  HOOK_DETECT_CALLER=pre-commit
   # shellcheck source=../scripts/lib/hook-docker-detect.sh
   . "$HOOK_DETECT_LIB"
 else

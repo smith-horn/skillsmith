@@ -138,6 +138,48 @@ describe('shouldQuarantine + allowlist (SMI-4396)', () => {
     expect(shouldQuarantine(report, undefined, matcher)).toBe(true)
   })
 
+  // ------------------------ SMI-6020 (design §2.8 T2.28-T2.30) ------------------------
+
+  // T2.28
+  it('a truncated report quarantines even with zero findings', () => {
+    const report = makeReport('github/acme/truncated', [], { multilineTruncated: true })
+    expect(shouldQuarantine(report)).toBe(true)
+  })
+
+  // T2.29
+  it('an allowlist cannot clear a truncated report', () => {
+    const matcher = buildMatcher([VALID_ENTRY])
+    const report = makeReport(
+      VALID_ENTRY.skillId,
+      [
+        finding({
+          type: 'sensitive_path',
+          severity: 'high',
+          message: 'Reference to potentially sensitive path: password',
+        }),
+        finding({
+          type: 'sensitive_path',
+          severity: 'high',
+          message: 'Reference to potentially sensitive path: credentials',
+        }),
+      ],
+      { multilineTruncated: true }
+    )
+    // Without truncation, this exact finding set is the FP-pass-through case
+    // (see the first test above) — proving the allowlist alone would clear it.
+    expect(shouldQuarantine(report, undefined, matcher)).toBe(true)
+  })
+
+  // T2.30
+  it('an untruncated report is unaffected (explicit multilineTruncated:false)', () => {
+    const report = makeReport(
+      'skill/x',
+      [finding({ type: 'url', severity: 'low', message: 'http://example.com' })],
+      { passed: true, riskScore: 5, multilineTruncated: false }
+    )
+    expect(shouldQuarantine(report)).toBe(false)
+  })
+
   it('quarantines via post-filter risk score when no single finding is high/critical', () => {
     // Multi-category MEDIUM pile crosses the 40 threshold via weighted aggregation.
     // Categories with large aggregation weights (jailbreak 0.2, aiDefence 0.12,
@@ -424,11 +466,27 @@ describe('data/skills-security-allowlist.json (ship-it sanity)', () => {
   // description-advertises-a-security-feature FP class as skill-protocol-rs
   // and qpay-skills. Closes GH #2059 (7 straight Weekly Security Scan
   // failures on this exact skill/finding since 2026-07-26).
+  // SMI-6425 (2026-09-06): lucas-lima-s/claude-skill-repo-audit added —
+  // publish-readiness audit skill whose repo description says 'secret/PII
+  // scans'; same description-advertises-a-security-feature FP class as
+  // icm-shipwright. Closes GH #2616 + #2060.
+  // SMI-6466 (2026-09-08): 4 entries retired following SMI-5207's MF-3/MF-4
+  // sensitive_path action-context gating. A live post-merge targeted re-scan
+  // (real repo descriptions fetched via `gh api`, real scanner run against a
+  // hand-built imported-skills.json fixture, real edited allowlist file) confirmed
+  // all four now clear with zero HIGH/CRITICAL findings and isQuarantined=false:
+  // binnukarunakar/icm-shipwright and lucas-lima-s/claude-skill-repo-audit clear
+  // to MEDIUM via MF-3 exactly as the SMI-5207 plan predicted; kcmadden/
+  // claude-code-1password-skill and rhysha/claude-security-research-skill clear
+  // with ZERO sensitive_path findings at all (not the predicted MF-4 MEDIUM
+  // downgrade) — their current live GitHub descriptions no longer contain any
+  // text matching any of the 15 SENSITIVE_PATH_PATTERNS, so the MF-4 branch is
+  // never reached; the clear is content-driven, not gate-driven, for these two.
   it('is parseable and every entry expires 90 days after review', () => {
     const filePath = path.resolve(__dirname, '../../../../data/skills-security-allowlist.json')
     const raw = JSON.parse(fs.readFileSync(filePath, 'utf-8'))
     const parsed = parseAllowlistFile(raw)
-    expect(parsed.allowlist.length).toBe(12)
+    expect(parsed.allowlist.length).toBe(9)
     const ids = parsed.allowlist.map((e) => e.skillId).sort()
     expect(ids).toEqual(
       [
@@ -436,13 +494,10 @@ describe('data/skills-security-allowlist.json (ship-it sanity)', () => {
         'github/RENJI04/prompt-injection-auditor',
         'github/RobinGase/skill-protocol-rs',
         'github/StrategicPromptArchitect-AI/MalPromptSentinel-CC-Skill',
-        'github/binnukarunakar/icm-shipwright',
         'github/dokind/qpay-skills',
         'github/fitz2882/narthex',
         'github/fitz2882/narthex',
-        'github/kcmadden/claude-code-1password-skill',
         'github/leksman/ai-security-guard',
-        'github/rhysha/claude-security-research-skill',
         'github/straygizmo/mdium',
       ].sort()
     )
@@ -473,4 +528,16 @@ describe('data/skills-security-allowlist.json (ship-it sanity)', () => {
       ).toBeLessThanOrEqual(ONE_YEAR_MS)
     }
   })
+
+  // SMI-6425's regression-boundary test for the lucas-lima-s/
+  // claude-skill-repo-audit entry's messagePattern scoping lived here. That
+  // entry was retired under SMI-6466 (live post-merge re-scan confirmed the
+  // MF-3 gate clears it to MEDIUM without any allowlist entry at all), so the
+  // entry-specific scoping proof no longer has an entry to prove airtight
+  // scoping for — removed rather than left asserting against a skillId with
+  // zero matching allowlist rows. The underlying scanner behavior (path-form
+  // vs. assignment-form sensitive_path classification) stays covered by
+  // packages/core/tests/security/sensitive-path-fp.test.ts and
+  // sensitive-path-adversarial-review.test.ts, which test the scanner
+  // directly rather than through an allowlist entry.
 })

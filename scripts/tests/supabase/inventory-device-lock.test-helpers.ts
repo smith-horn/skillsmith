@@ -17,8 +17,10 @@
  *
  * Stand one up and run the suite:
  *
- *   docker run -d --name smi6345-devicelock-test-pg -e POSTGRES_PASSWORD=testpass \
+ *   docker run -d --rm --name smi6345-devicelock-test-pg -e POSTGRES_PASSWORD=testpass \
  *     -e POSTGRES_DB=postgres -p 15645:5432 postgres:15-alpine
+ *   # Tear down with `docker stop smi6345-devicelock-test-pg`: --rm then removes the container and
+ *   # its anonymous data volume (a bare `docker rm` would leak the volume, SMI-6619).
  *   SMI6345_TEST_PGHOST=host.docker.internal SMI6345_TEST_PGPORT=15645 \
  *   SMI6345_TEST_PGUSER=postgres SMI6345_TEST_PGPASSWORD=testpass \
  *   SMI6345_TEST_PGDATABASE=postgres \
@@ -28,8 +30,10 @@
  * which has no docker CLI, so the sibling Postgres is provisioned from the host and
  * reached through the Docker Desktop gateway.
  *
- * NO CI COVERAGE YET, STATED PLAINLY. CI provisions no Postgres service and sets none of
- * these vars, so this suite skips there — loudly, never silently (see
+ * NO CI COVERAGE YET. No CI check runs this suite: nothing sets its env vars. Not "CI
+ * provisions no Postgres" -- that is wrong (SMI-5946); grant-reactivate-concurrency.yml does,
+ * on supabase/migrations/** triggers. This suite is not wired into it, and nothing sets these
+ * vars, so this suite skips there — loudly, never silently (see
  * {@link noLiveTestPg}). Same known, tracked gap SMI-5946 already covers for the smi5879
  * and SMI-6321 suites; this is a third consumer of that gap, not a new one.
  *

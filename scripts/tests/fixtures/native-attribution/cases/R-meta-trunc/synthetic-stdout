@@ -1,0 +1,4 @@
+[mount-composition] mode=main service=dev scope=/app
+[mount-composition] in-scope declared destinations: 1 | mounted: 0 | MISSING: 1
+FAIL [A2] declared but NOT mounted: /app/packages/core/node_modules (declared as /app/packages/core/node_modules, source=core-node-modules)
+[mount-composition] 1 in-scope destination(s) checked; 0 finding(s), 0 not evaluated, 0 skipped by flag.

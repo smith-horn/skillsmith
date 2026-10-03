@@ -38,6 +38,7 @@ import {
   stubFetchCleanAlways,
   stubFetchMaliciousAlways,
   stubFetchTransientAlways,
+  stubFetchCleanSkillMdTruncatingSibling,
   BASE_OPTS,
   CLEAN_CONTENT,
 } from './recheck.test-helpers.ts'
@@ -50,7 +51,27 @@ vi.mock('../../indexer/indexer-audit-log.ts', () => ({
   writeIndexerAuditLog: (...args: unknown[]) => writeIndexerAuditLog(...args),
 }))
 
-// buildGitHubHeaders has no required env; let it run real (returns base headers).
+// SMI-6481 (governance review, 2026-09-09): the previous comment here claimed
+// "buildGitHubHeaders has no required env; let it run real (returns base
+// headers)." That premise is false. `recheck.ts` calls it unmocked, and
+// `getInstallationToken` DOES require GITHUB_APP_ID /
+// GITHUB_APP_INSTALLATION_ID / GITHUB_APP_PRIVATE_KEY and POSTs to
+// api.github.com to mint a real token when they are present in the REAL
+// `process.env` — silent in CI (unset) but a live network call under
+// `varlock run -- npm test`, which CLAUDE.md documents as a normal invocation.
+// Contained here only incidentally, by these tests stubbing `globalThis.fetch`.
+// `stale-reconciliation-verify.test.ts` and `stale-reconciliation-boundary.test.ts`
+// already mocked it; this file AND `recheck.sibling-rescan.test.ts` (which also
+// calls `runRecheck`) did not — both are fixed in the same change.
+// Partial mock via `importOriginal` so the module's other exports
+// (e.g. `GitHubAuthError`) survive for anything importing them at load time.
+vi.mock('../../indexer/_shared/github-auth.ts', async (importOriginal) => {
+  const actual = await importOriginal<typeof import('../../indexer/_shared/github-auth.ts')>()
+  return {
+    ...actual,
+    buildGitHubHeaders: vi.fn(async () => ({})),
+  }
+})
 
 // ---------------------------------------------------------------------------
 // TASK 1.1 — loadRecheckCandidates two-pass priority (E2)
@@ -415,6 +436,64 @@ describe('runRecheck — killswitch (P3)', () => {
     ]
     expect(params.recheck.killswitch_engaged).toBe(true)
     expect(params.runType).toBe('recheck')
+  })
+})
+
+// ---------------------------------------------------------------------------
+// SMI-6020 (design §2.7 T2.21/T2.22) — scan-incomplete outcome
+// ---------------------------------------------------------------------------
+
+describe('runRecheck — SMI-6020 scan-incomplete', () => {
+  beforeEach(() => {
+    writeIndexerAuditLog.mockClear()
+    delete process.env.RECHECK_ENABLED
+  })
+  afterEach(() => vi.restoreAllMocks())
+
+  it('T2.21: is counted separately and never inflates fetch_error_rate', async () => {
+    stubFetchCleanSkillMdTruncatingSibling()
+    const warnSpy = vi.spyOn(console, 'warn').mockImplementation(() => undefined)
+    // quarantined=true, reason 'stale' → pass-2 self-heal cohort → SKILL.md-clean
+    // reaches runSiblingRescan, whose sibling (README.md) truncates.
+    const row = makeRow({ id: 'sc-incomplete-1', quarantined: true, quarantine_reason: 'stale' })
+    const handle = makeRunDb({
+      pass1: [],
+      pass2: [row],
+      casReturns: [{ id: row.id }],
+      casError: null,
+    })
+
+    const result = await runRecheck({ supabase: handle.db, ...BASE_OPTS })
+
+    expect(result.recheck.scan_incomplete).toBe(1)
+    expect(result.recheck.fetch_error).toBe(0)
+    expect(result.recheck.fetch_error_rate).toBe(0)
+    // No skills write for a scan-incomplete row (fail-closed, no state change).
+    expect(handle.updatePayloads).toHaveLength(0)
+    // The E3 throttle warning must NOT fire — scan-incomplete is not a fetch error.
+    const throttleWarns = warnSpy.mock.calls.filter((c) =>
+      String(c[0]).includes('transient fetch errors')
+    )
+    expect(throttleWarns).toHaveLength(0)
+  })
+
+  it('T2.22: no processRow outcome reaches the default unhandled-outcome guard', async () => {
+    stubFetchCleanSkillMdTruncatingSibling()
+    const warnSpy = vi.spyOn(console, 'warn').mockImplementation(() => undefined)
+    const row = makeRow({ id: 'sc-incomplete-2', quarantined: true, quarantine_reason: 'stale' })
+    const handle = makeRunDb({
+      pass1: [],
+      pass2: [row],
+      casReturns: [{ id: row.id }],
+      casError: null,
+    })
+
+    await runRecheck({ supabase: handle.db, ...BASE_OPTS })
+
+    const unhandledWarns = warnSpy.mock.calls.filter((c) =>
+      String(c[0]).includes('unhandled processRow outcome')
+    )
+    expect(unhandledWarns).toHaveLength(0)
   })
 })
 

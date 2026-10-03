@@ -1,0 +1,14 @@
+[mount-composition] mode=worktree service=dev scope=/app
+[mount-composition] compose: /app/docker-compose.yml /app/docker-compose.override.yml
+[mount-composition] declared volume entries (all destinations): 178 (parse errors: 0)
+[mount-composition] in-scope declared destinations: 167 | mounted: 167 | MISSING: 0
+ok   [A2] all 167 in-scope declared destinations are mounted
+ok   [A2] backing identity (volume/bind/tmpfs + volume name) compared for 167 mounted destination(s); 0 substituted
+ok   [A6] 9 declared :ro destination(s) mode-checked
+FAIL [A4] /app/node_modules/@ruvector/attention-linux-arm64-gnu/attention.linux-arm64-gnu.node is MACHO, expected ELF (declared /app/node_modules/@ruvector/attention-linux-arm64-gnu, volume=native-seed-ruvector-attention-linux-arm64-gnu, version=0.1.32) -- destination IS mounted, so the SEEDED VOLUME CONTENT itself is wrong (not a fall-through)
+ok   [A4] asserted on 38 native binary/binaries for aarch64 across 129 declared native target(s) (mounted AND unmounted); 1 failed; 0 skipped as foreign-platform payloads
+ok   [A4] seeded version compared against the image seed for 46 mounted target(s); 0 stale; 83 had no seed reference
+ok   [A7] scanned 28 dot-directory/ies under 9 declared read-only parent(s); 0 undeclared
+SKIP [A5] --live-write not set: the A5 traversal-writability and A6 read-only-parent write probes did not run
+[mount-composition] 167 in-scope destination(s) checked; 1 finding(s), 0 not evaluated, 1 skipped by flag.
+[mount-composition] warn-only (D-20); pass --strict to make this blocking.

@@ -32,7 +32,8 @@ set -euo pipefail
 REPO="smith-horn/skillsmith"
 
 # ---------------------------------------------------------------------------
-# Taxonomy (26 labels total: 5 Type + 13 Domain + 7 Scope + 1 Workflow)
+# Taxonomy (27 labels total: 5 Type + 13 Domain + 7 Scope + 1 Workflow +
+# 1 Monitoring alert)
 # Format: "<name>|<color-without-hash>|<description>"
 # ---------------------------------------------------------------------------
 TAXONOMY=(
@@ -69,6 +70,20 @@ TAXONOMY=(
 
   # Workflow (1) — applied automatically by Issue Forms, removed by maintainers after triage
   "needs-triage|E4E669|Awaiting maintainer triage into Linear"
+
+  # Monitoring alerts (1) — SMI-6580 Wave 1: pre-registering this label here
+  # (in addition to the idempotent call-site `gh label create` in
+  # scripts/ci/submodule-pointer-autorepair.sh) means a fresh repo's alerting
+  # path never depends on this script having been run first. Root cause:
+  # `gh issue create --label submodule-pointer-regression` was failing
+  # ("not found") because the label had never existed on this repo, and the
+  # failure was being swallowed into a `::warning::` with the script still
+  # exiting 0 (see submodule-pointer-autorepair.sh's own header note). The
+  # other three monitor-only labels this same audit found missing
+  # (telemetry-liveness, prod-deploy-approval-cancelled,
+  # status-external-outage) are tracked separately under SMI-6586, which has
+  # its own fix plan — deliberately not added here.
+  "submodule-pointer-regression|B60205|docs/internal pointer regression pointer-autorepair could not safely auto-repair (SMI-6260/SMI-6580)"
 )
 
 # ---------------------------------------------------------------------------

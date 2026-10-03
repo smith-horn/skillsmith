@@ -21,6 +21,8 @@ export const installTool = {
   name: 'install_skill',
   description:
     "[Skillsmith — Install stage] Install an agent skill (SKILL.md format) from the Skillsmith registry or a GitHub repository to the local Claude Code skills directory (~/.claude/skills/) — or runtime-equivalent path when SKILLSMITH_CLIENT is set (cursor, copilot, windsurf). Use when the user asks to install/add/get a specific skill — e.g. 'install playwright-cli', 'add getsentry/commit', 'use Skillsmith to install the testing skill'. Performs Skillsmith security scan and content optimization (decomposition, subagent generation) before installation. Returns install path and Skillsmith optimization summary. Skillsmith is a registry for sharing, scanning, and tracking agent skills across any MCP-capable runtime.",
+  title: 'Install Skill',
+  annotations: { readOnlyHint: false, destructiveHint: true },
   inputSchema: {
     type: 'object' as const,
     properties: {

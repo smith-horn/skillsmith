@@ -73,6 +73,8 @@ export const undoApplyToolSchema = {
   name: 'undo_apply',
   description:
     "[Skillsmith — Maintain stage] Undo the most recent apply_namespace_rename / apply_recommended_edit changeset(s) made in THIS server session. Session-scoped: restarting the MCP server clears the undo history — for a namespace rename applied in a PRIOR session, use the durable, cross-session revert instead: apply_namespace_rename({ auditId, collisionId, action: 'revert' }) (SMI-5671). Restores from the apply tool's own pre-mutation backup and refuses (never throws) if the target was modified since the apply, the backup is missing, or the restore target falls outside the confined skill roots. Pass `count` to undo the N most-recent changesets (default 1), or `suggestion_id` to undo one specific changeset — mutually exclusive.",
+  title: 'Undo Apply',
+  annotations: { readOnlyHint: false, destructiveHint: true },
   inputSchema: {
     type: 'object' as const,
     properties: {

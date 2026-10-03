@@ -1,5 +1,5 @@
 // SPDX-License-Identifier: Elastic-2.0
-// Copyright 2024-2025 Smith Horn Group Ltd
+// Copyright 2025-2026 Smith Horn Group Ltd
 
 /**
  * SMI-XXXX: Quota Constants and Configuration

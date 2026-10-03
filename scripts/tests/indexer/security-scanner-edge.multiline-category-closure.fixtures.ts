@@ -24,12 +24,17 @@ export const PATTERNS_SRC = readFileSync(
   join(SHARED_DIR, 'security-scanner-edge.patterns.ts'),
   'utf-8'
 )
+export const MULTILINE_SRC = readFileSync(
+  join(SHARED_DIR, 'security-scanner-edge.multiline.ts'),
+  'utf-8'
+)
 
 export const ALL_SOURCES: ReadonlyArray<{ name: string; src: string }> = [
   { name: 'security-scanner-edge.ts', src: SCANNER_SRC },
   { name: 'security-scanner-edge.exec.ts', src: EXEC_SRC },
   { name: 'security-scanner-edge.context.ts', src: CONTEXT_SRC },
   { name: 'security-scanner-edge.patterns.ts', src: PATTERNS_SRC },
+  { name: 'security-scanner-edge.multiline.ts', src: MULTILINE_SRC },
 ]
 
 // --------------------------------------------------------------------
@@ -47,11 +52,16 @@ export const SUPABASE_SCANNER_PATH = join(SUPABASE_SHARED_DIR, 'security-scanner
 export const SUPABASE_EXEC_PATH = join(SUPABASE_SHARED_DIR, 'security-scanner-edge.exec.ts')
 export const SUPABASE_CONTEXT_PATH = join(SUPABASE_SHARED_DIR, 'security-scanner-edge.context.ts')
 export const SUPABASE_PATTERNS_PATH = join(SUPABASE_SHARED_DIR, 'security-scanner-edge.patterns.ts')
+export const SUPABASE_MULTILINE_PATH = join(
+  SUPABASE_SHARED_DIR,
+  'security-scanner-edge.multiline.ts'
+)
 
 export const supabaseScannerEncrypted = isGitCryptEncrypted(SUPABASE_SCANNER_PATH)
 export const supabaseExecEncrypted = isGitCryptEncrypted(SUPABASE_EXEC_PATH)
 export const supabaseContextEncrypted = isGitCryptEncrypted(SUPABASE_CONTEXT_PATH)
 export const supabasePatternsEncrypted = isGitCryptEncrypted(SUPABASE_PATTERNS_PATH)
+export const supabaseMultilineEncrypted = isGitCryptEncrypted(SUPABASE_MULTILINE_PATH)
 
 /**
  * Every identifier this codebase's per-line scan functions actually bind
@@ -80,15 +90,30 @@ function calleeName(expr: ts.Expression): string | undefined {
 
 /**
  * Every local identifier in `sourceFile` that resolves to `targetName` — the
- * name itself plus any simple `const Local = <alias>` variable alias
- * (resolved transitively, to a fixed point). `safeRegexTest` is a locally
- * declared function (not imported) in both scanner files, so import-rename
- * resolution isn't needed here, but local-alias resolution is: it is exactly
- * what closes the "alias calls...silently ignored" class of miss the code
- * review's Finding 3 named.
+ * name itself, any `import { targetName as Local }` rename, and any simple
+ * `const Local = <alias>` variable alias (resolved transitively, to a fixed
+ * point). `safeRegexTest` is a locally declared function (not imported) in
+ * both scanner files, so the import-rename branch is a no-op for that use;
+ * `scanPatternsWithMultilineSupport` IS imported (from
+ * `security-scanner-edge.multiline.ts`), so the import branch is what makes
+ * `extractMultilineCallSites` below robust against a future renamed import —
+ * mirroring core's `multiline-category-closure.test.ts` `collectAliases`.
+ * Local-alias resolution closes the "alias calls...silently ignored" class of
+ * miss the code review's Finding 3 named.
  */
 export function collectAliases(sourceFile: ts.SourceFile, targetName: string): Set<string> {
   const aliases = new Set<string>([targetName])
+
+  for (const stmt of sourceFile.statements) {
+    if (!ts.isImportDeclaration(stmt) || !stmt.importClause?.namedBindings) continue
+    const bindings = stmt.importClause.namedBindings
+    if (!ts.isNamedImports(bindings)) continue
+    for (const el of bindings.elements) {
+      const imported = el.propertyName?.text ?? el.name.text
+      if (imported === targetName) aliases.add(el.name.text)
+    }
+  }
+
   let changed = true
   while (changed) {
     changed = false
@@ -209,4 +234,130 @@ export function extractFunctionBody(
   throw new Error(
     `[multiline-category-closure/edge] unbalanced braces scanning ${functionName} in ${fileLabel}`
   )
+}
+
+// ============================================================================
+// scanPatternsWithMultilineSupport call-site census — the port has landed
+// (SMI-5879 Wave 2), mirroring core's already-reviewed
+// `extractMultilineCallSites` (packages/core/src/security/scanner/
+// multiline-category-closure.test.ts) rather than reinventing it.
+// ============================================================================
+
+export const TARGET_MULTILINE_FUNCTION_NAME = 'scanPatternsWithMultilineSupport'
+
+/** The only two pattern arrays a `scanPatternsWithMultilineSupport` call site may name, edge-side. */
+export const AI_CATEGORY_ARRAY_NAMES = ['JAILBREAK_PATTERNS', 'PROMPT_INJECTION_PATTERNS'] as const
+
+/** Every other pattern array in the edge scanner (design doc §8.3.1.2.2 assertion 3's exclusion list, edge-adapted). */
+export const NON_AI_ARRAY_NAMES = [
+  'SUSPICIOUS_PATTERNS',
+  'DATA_EXFILTRATION_PATTERNS',
+  'PRIVILEGE_ESCALATION_PATTERNS',
+  'CODE_EXECUTION_PATTERNS',
+] as const
+
+export interface MultilineCallSite {
+  /** Source-character offset of the call expression (for error messages). */
+  offset: number
+  /** The `type:` string literal in the call's config object. */
+  type: string
+  /** The identifier bound to the call's `patterns:` config field. */
+  patternsIdent: string
+}
+
+/** The textual name of an object-literal member (identifier or string-literal key). */
+function memberName(prop: ts.ObjectLiteralElementLike): string | undefined {
+  if (!prop.name) return undefined
+  if (ts.isIdentifier(prop.name)) return prop.name.text
+  if (ts.isStringLiteral(prop.name)) return prop.name.text
+  return undefined
+}
+
+/** Extract and validate the `{ type, patterns }` config object of a matched call. */
+function extractCallSiteConfig(
+  call: ts.CallExpression,
+  sourceFile: ts.SourceFile,
+  filePath: string
+): MultilineCallSite {
+  const offset = call.getStart(sourceFile)
+  const configArg = call.arguments.find(
+    (arg): arg is ts.ObjectLiteralExpression =>
+      ts.isObjectLiteralExpression(arg) &&
+      arg.properties.some((p) => memberName(p) === 'type') &&
+      arg.properties.some((p) => memberName(p) === 'patterns')
+  )
+  if (!configArg) {
+    throw new Error(
+      `[multiline-category-closure/edge] ${TARGET_MULTILINE_FUNCTION_NAME} call at ${filePath}:${offset} ` +
+        `has no object-literal argument with both 'type' and 'patterns' properties. Either the call ` +
+        `shape changed (update this extraction) or this is a genuine new/malformed call site — both ` +
+        `invalidate the closure proof and must be resolved before this test can pass.`
+    )
+  }
+
+  const typeProp = configArg.properties.find((p) => memberName(p) === 'type')
+  const patternsProp = configArg.properties.find((p) => memberName(p) === 'patterns')
+
+  if (
+    !typeProp ||
+    !ts.isPropertyAssignment(typeProp) ||
+    !ts.isStringLiteral(typeProp.initializer)
+  ) {
+    throw new Error(
+      `[multiline-category-closure/edge] ${TARGET_MULTILINE_FUNCTION_NAME} call at ${filePath}:${offset} ` +
+        `has a 'type' property that is not a plain string literal — this is exactly the "expression ` +
+        `argument" shape this AST census exists to catch. Resolve explicitly before this test can pass.`
+    )
+  }
+  if (
+    !patternsProp ||
+    !ts.isPropertyAssignment(patternsProp) ||
+    !ts.isIdentifier(patternsProp.initializer)
+  ) {
+    throw new Error(
+      `[multiline-category-closure/edge] ${TARGET_MULTILINE_FUNCTION_NAME} call at ${filePath}:${offset} ` +
+        `has a 'patterns' property that is not a bare identifier — either a property-access / expression ` +
+        `argument was introduced (the exact "silent miss" class this test exists to catch) or the call ` +
+        `shape genuinely changed. Resolve explicitly before this test can pass.`
+    )
+  }
+
+  return {
+    offset,
+    type: typeProp.initializer.text,
+    patternsIdent: patternsProp.initializer.text,
+  }
+}
+
+/**
+ * Extract every `scanPatternsWithMultilineSupport(...)` call site in `source`
+ * (at path `filePath`, used only for error messages), via full TypeScript AST
+ * traversal resolved through `collectAliases` (which now also resolves
+ * `import { X as Local }` renames — see that function's doc comment) — NOT
+ * text/regex matching over a bounded window, for the same "silent false
+ * negative on a renamed import / aliased call / extra whitespace" reason
+ * `extractSafeRegexTestSecondArgs` above already gives.
+ */
+export function extractMultilineCallSites(filePath: string, source: string): MultilineCallSite[] {
+  const sourceFile = ts.createSourceFile(
+    filePath,
+    source,
+    ts.ScriptTarget.Latest,
+    true,
+    ts.ScriptKind.TS
+  )
+  const aliases = collectAliases(sourceFile, TARGET_MULTILINE_FUNCTION_NAME)
+  const sites: MultilineCallSite[] = []
+
+  const visit = (node: ts.Node): void => {
+    if (ts.isCallExpression(node)) {
+      const name = calleeName(node.expression)
+      if (name && aliases.has(name)) {
+        sites.push(extractCallSiteConfig(node, sourceFile, filePath))
+      }
+    }
+    ts.forEachChild(node, visit)
+  }
+  visit(sourceFile)
+  return sites
 }

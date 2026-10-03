@@ -74,6 +74,8 @@ export const skillDiffToolSchema = {
     'Returns added, removed, and modified headings along with a change type ' +
     '(major/minor/patch) and update recommendation. ' +
     'Requires Individual tier or higher (version_tracking feature).',
+  title: 'Diff Skill Versions',
+  annotations: { readOnlyHint: true, destructiveHint: false },
   inputSchema: {
     type: 'object' as const,
     properties: {

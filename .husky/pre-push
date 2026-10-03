@@ -31,6 +31,15 @@
 #   0 - All checks passed (or user confirmed)
 #   1 - Check failed or user aborted
 
+# SMI-6568 (D3): pin the caller contract as the FIRST executable line, before
+# any child process below can source scripts/lib/hook-docker-detect.sh (the
+# first is scripts/lib/check-container-deps-fresh.sh, further down). Exported
+# — those sourcers run as CHILD `sh`/`bash` processes, not sourced into this
+# shell, so only an exported value reaches them. Overwrites any leaked
+# inherited value (e.g. a parent process's own HOOK_DETECT_CALLER=pre-commit)
+# with the correct pre-push semantics before anything else runs.
+export HOOK_DETECT_CALLER=pre-push
+
 # Phase 0: Skip all checks for delete-only pushes (SMI-3709)
 # git push --delete sends lines where local_sha is all zeros.
 # No code is being pushed, so quality gates are irrelevant.

@@ -8,7 +8,7 @@ Part of Skillsmith: a registry for sharing, scanning, and tracking agent skills 
 
 ## Contents
 
-- [What's New](#whats-new-in-v089)
+- [What's New](#whats-new-in-v0812)
 - [Installation](#installation)
 - [Commands](#commands)
   - [inventory](#inventory)
@@ -16,7 +16,7 @@ Part of Skillsmith: a registry for sharing, scanning, and tracking agent skills 
 - [Examples](#examples)
 - [Privacy & Data Handling](#privacy--data-handling)
 
-## What's New in v0.8.9
+## What's New in v0.8.12
 
 - **Multi-client targeting fixed across the board**: `install`, `list`, `remove`, `update`, `sync`, and `search -i`'s install action now all honor `SKILLSMITH_CLIENT`/`--client` consistently — previously several of these silently acted on the Claude Code directory regardless of the flag or env var.
 - **`update` no longer fails after a fresh install**: now resolves the installed skill's registry source from the manifest `install` already writes, instead of a dead-code path that could never find it.
@@ -142,8 +142,8 @@ names, or `--all` — bare `skillsmith update` with none of those prints usage
 guidance instead of updating anything.
 
 ```bash
-# Update all skills
-skillsmith update --all
+# Preview what --all would change before applying it
+skillsmith update --all --dry-run
 
 # Update one skill
 skillsmith update skill-name
@@ -833,8 +833,8 @@ npm run dev
 ### Manage Skills
 
 ```bash
-# Update all installed skills
-skillsmith update --all
+# Preview updates to all installed skills, then update one at a time
+skillsmith update --all --dry-run
 
 # Remove a skill
 skillsmith remove community/old-skill

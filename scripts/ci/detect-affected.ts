@@ -261,7 +261,7 @@ export function detectAffectedPackages(changedFiles: string[]): AffectedResult {
 /**
  * Output results for GitHub Actions
  */
-function outputForGitHub(result: AffectedResult): void {
+export function outputForGitHub(result: AffectedResult): void {
   const outputFile = process.env.GITHUB_OUTPUT
   const summaryFile = process.env.GITHUB_STEP_SUMMARY
 
@@ -273,6 +273,27 @@ function outputForGitHub(result: AffectedResult): void {
     appendFileSync(outputFile, `affected_packages=${jsonArray}\n`)
     appendFileSync(outputFile, `affected_dirs=${dirNamesArray}\n`)
     appendFileSync(outputFile, `affected_count=${result.all.length}\n`)
+    appendFileSync(outputFile, `affected_reason=${result.reason}\n`)
+    // SMI-6488: written LAST, on purpose. Its presence in GITHUB_OUTPUT is
+    // the sentinel that proves the four writes above actually landed.
+    // ci.yml mirrors this as a required job output
+    // (`steps.affected.outputs.affected_status || ... || 'ABSENT'`) and
+    // hard-fails the required "Classify Changes" job when it reads back
+    // 'ABSENT' -- which happens only if this function never reached here.
+    appendFileSync(outputFile, `affected_status=computed\n`)
+  } else {
+    // SMI-6488: in this script's only invocation context (the "Detect
+    // affected packages" CI step), an unset or unwritable GITHUB_OUTPUT is
+    // always an error, never a legitimate no-op. Silently returning here
+    // used to be the write-suppression failure mode (S3) this fix exists
+    // to close: the process would exit 0, the matrix output would default
+    // to `[]` via ci.yml's `|| '[]'` fallback, and the entire per-package
+    // test matrix would silently not run. Fail loud instead.
+    console.error(
+      `detect-affected.ts: GITHUB_OUTPUT is unset or its directory does not exist ` +
+        `(GITHUB_OUTPUT=${outputFile ?? '<unset>'}); refusing to silently skip writing affected_* outputs`
+    )
+    process.exit(1)
   }
 
   // Print JSON to stdout (primary output - directory names for matrix)

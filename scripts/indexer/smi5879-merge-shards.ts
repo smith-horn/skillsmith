@@ -65,6 +65,7 @@ import {
   type ShardReportInput,
 } from './smi5879-merge-shards.merge-rules.ts'
 import {
+  assertBundleAbsentCoherence,
   assertRowOutcomeCoherence,
   assertRowOutcomeFieldPresence,
 } from './smi5879-merge-shards.outcome-coherence.ts'
@@ -208,6 +209,7 @@ export async function runMergeShards(
   // only needs to worry about the four outcomes it's scoped to.
   assertRowOutcomeFieldPresence(mergedRows)
   assertRowOutcomeCoherence(mergedRows)
+  assertBundleAbsentCoherence(mergedRows)
 
   const { population, summary } = await loadVerifiedPopulation(db, args.runId)
   assertReportsBindToGeneration(identity, args.runId, summary)

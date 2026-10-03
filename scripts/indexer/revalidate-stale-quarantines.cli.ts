@@ -318,6 +318,8 @@ export interface SweepCounts {
   fetchErrors: number
   casSkipped: number
   errors: number
+  /** SMI-6020: rows whose root or sibling scan hit the multiline iteration ceiling. */
+  scanIncomplete: number
 }
 
 /** Above this fraction of transient fetch errors the run is throttled; repo-gone counts unreliable. */
@@ -357,6 +359,7 @@ export function reportSweepSummary(
       `  parse-failed:    ${counts.parseFailed}\n` +
       `  fetch-error:     ${counts.fetchErrors}\n` +
       `  cas-skipped:     ${counts.casSkipped}\n` +
+      `  scan-incomplete: ${counts.scanIncomplete}\n` +
       `  errors:          ${counts.errors}\n`
   )
 

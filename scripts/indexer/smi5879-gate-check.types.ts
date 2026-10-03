@@ -16,7 +16,11 @@
  */
 
 import type { InvariantResult, Smi5879Purpose, Smi5879RunStatus } from './smi5879-census.types.ts'
-import type { Smi5879SimulateFullReport } from './smi5879-simulate-full.types.ts'
+import type {
+  BranchMap,
+  SimSnapshotRow,
+  Smi5879SimulateFullReport,
+} from './smi5879-simulate-full.types.ts'
 
 // ---------------------------------------------------------------------------
 // Gate identity and outcome
@@ -176,6 +180,36 @@ export interface Smi5879G2rReport {
 
 export type DispositionVerdict = 'confirm' | 'exclude'
 
+/**
+ * SMI-6444 — terminal revocation record, shared shape for a revoked
+ * `DispositionRecord` (manual entries only — a bulk entry is never
+ * individually revocable, see `revoke-sign-off`/`revoke-batch`) and a
+ * revoked `DispositionBatch`. Once present, terminal — never re-activated by
+ * any sanctioned subcommand (plan Item 8, round 5).
+ */
+export interface RevocationInfo {
+  revoked_by: string
+  /** ISO 8601. */
+  revoked_at: string
+  reason: string
+}
+
+/**
+ * SMI-6444 — one append-only history entry recorded on `DispositionBatch`'s
+ * `sign_off_revocations` by a `revoke-sign-off` invocation (plan Item 8,
+ * round 5). Nothing about the prior sign-off is silently dropped.
+ */
+export interface SignOffRevocationEvent {
+  revoked_by: string
+  /** ISO 8601. */
+  revoked_at: string
+  reason: string
+  prior_signed_off_by: string
+  /** ISO 8601. */
+  prior_signed_off_at: string
+  prior_sign_off_digest: string
+}
+
 export interface DispositionRecord {
   id: string
   verdict: DispositionVerdict
@@ -184,16 +218,130 @@ export interface DispositionRecord {
   recorded_by?: string
   /** ISO 8601. */
   recorded_at?: string
+  /**
+   * SMI-6444 — `'bulk'` entries are producer-generated from a signed-off
+   * `DispositionBatch`; absent or `'manual'` means operator-authored (via
+   * `add-manual`, or hand-authored for a legacy ledger predating SMI-6444).
+   */
+  method?: 'manual' | 'bulk'
+  /**
+   * SMI-6444 — required when `method === 'bulk'`, forbidden otherwise.
+   * Resolves via `LedgerValidation.batchById`.
+   */
+  batch_id?: string
+  /**
+   * SMI-6444 — manual entries only. A tombstone, not a deletion: the entry
+   * stays in the file as its own audit trail; this field marks it terminal.
+   */
+  revoked?: RevocationInfo
+}
+
+/**
+ * SMI-6444 — one stratum's sample within a `DispositionBatch`, used by
+ * `primary_not_found`'s stratified sampling design (plan Item 5). Every
+ * id-list here is sorted with no duplicates (validator-enforced, Item 7).
+ */
+export interface DispositionBatchStratum {
+  stratum_key: string
+  population_count: number
+  /** Sorted. Drawn into the sample at selection time, persisted before any fetch begins. */
+  selected_ids: string[]
+  /** Sorted, subset of selected_ids — transient/rate-limited/retry-exhausted re-checks. */
+  unavailable_ids: string[]
+  /** Sorted, subset of selected_ids — withheld from this batch's own entries. */
+  mismatched_ids: string[]
+  verified_count: number
+  /** This stratum's exact-hypergeometric upper bound, in basis points. */
+  upper_bound_bp: number
+}
+
+/**
+ * SMI-6444 — a mechanically-corroborated batch attestation for a terminal
+ * no-verdict outcome class (`unfetchable`/`primary_not_found`), staged and
+ * signed off by `smi5879-dispose-terminal.ts` (plan Item 3). Every field
+ * below EXCEPT `signed_off_by`/`signed_off_at`/`sign_off_digest`/
+ * `stage_digest`/`revoked`/`sign_off_revocations` is covered by
+ * `stage_digest` (`smi5879-disposition-digest.ts`, Item 4) — changing any
+ * staged fact invalidates sign-off.
+ */
+export interface DispositionBatch {
+  /** 1 -- covered by the sign-off digest; bump on any breaking field-set change. */
+  schema_version: number
+  /** Unique within the ledger; producer refuses to emit a duplicate. */
+  batch_id: string
+  outcome_class: 'unfetchable' | 'primary_not_found'
+  /** Must match the ledger's own run_id. */
+  run_id: string
+  /** Free-text: what was checked and why it's trusted. */
+  reason: string
+  /** Git SHA the producer ran at. */
+  tool_commit: string
+  /** SHA-256 of the producer script's own source (dirty-worktree guard, Item 7). */
+  tool_source_digest: string
+  /** Total rows this batch covers. */
+  population_count: number
+  /** Keys are SimulatedCohort ('C1'..'C4'); values sum to population_count. */
+  population_cohort_counts: Record<string, number>
+  /** unfetchable only (Item 6). */
+  subtype_counts?: Record<string, number>
+  // -- statistical parameters (primary_not_found only; see Item 5) --
+  /** Integer, e.g. 95 -- never a float (digest-serialization stability, Item 4). */
+  confidence_pct?: number
+  /** Population-level acceptance threshold, in basis points. */
+  mismatch_threshold_bp?: number
+  /** Per-stratum acceptance threshold, in basis points. */
+  stratum_threshold_bp?: number
+  /** Integer, primary_not_found only -- sizing robustness target, ratified default 1 (Item 5). */
+  design_point_bad_draws_per_stratum?: number
+  allocation?: 'proportional'
+  sampling_seed?: string
+  /** Sorted by stratum_key. */
+  strata?: DispositionBatchStratum[]
+  /** Total across strata; unfetchable's full-recheck batches: === population_count. */
+  verified_count: number
+  /** primary_not_found only -- the population-arm bound (Item 5). */
+  observed_population_upper_bound_bp?: number
+  /** ISO 8601. */
+  verified_at: string
+  /** ISO 8601. */
+  staged_at: string
+  /** Number of ledger entries this batch covers. */
+  entry_count: number
+  /** SHA-256 over the sorted, newline-joined ledger-entry ids carrying this batch_id (Item 4). */
+  entry_ids_digest: string
+  /** SHA-256 over every field above (Item 4). */
+  stage_digest: string
+  /** Absent while staged; present only after a genuine sign-off pass. */
+  signed_off_by?: string
+  /** ISO 8601. */
+  signed_off_at?: string
+  /** Must equal stage_digest, recomputed at sign-off time -- proves nothing changed between staging and signing. */
+  sign_off_digest?: string
+  /** Terminal -- a revoked batch is never re-activated (Item 8, round 5). */
+  revoked?: RevocationInfo
+  /** Append-only history of revoke-sign-off events (Item 8, round 5). */
+  sign_off_revocations?: SignOffRevocationEvent[]
 }
 
 /**
  * The G-1 reviewer-disposition ledger. This artifact has NO producer
  * anywhere in the repo (per task spec) — gate-check.ts only CONSUMES an
  * operator-authored file at this shape, it never generates one.
+ *
+ * SMI-6444: `smi5879-dispose-terminal.ts` (a separate producer, outside this
+ * task's original "no producer exists" scope) DOES generate `method:'bulk'`
+ * entries plus `batches` for the two terminal no-verdict outcome classes —
+ * gate-check.ts still only ever CONSUMES this file, whichever tool wrote it.
  */
 export interface Smi5879DispositionLedger {
   run_id: string
   entries: DispositionRecord[]
+  /**
+   * SMI-6444 — unchanged on disk shape-wise (batches stay a plain array,
+   * easy to hand-inspect and diff); exposed to evaluateG1 as
+   * `LedgerValidation.batchById` instead of this raw array (Item 3).
+   */
+  batches?: DispositionBatch[]
 }
 
 // ---------------------------------------------------------------------------
@@ -248,6 +396,19 @@ export interface Smi5879GateCheckDbDeps {
   countFreezeLeak(decisionRunId: string, windowRunId: string): Promise<number>
   /** G-2R.1 — full drift enumeration between the decision and window generations. */
   enumerateDrift(decisionRunId: string, windowRunId: string): Promise<DriftRow[]>
+  /**
+   * SMI-6444 — the sealed generation's own C1-C4 population rows, the
+   * authoritative set `bindSimulatorReportToPopulation` proves the simulator
+   * report equals (`smi5879-gate-check.binding.ts`) and G-1's bulk-entry
+   * authorization cross-checks each disposed id against.
+   */
+  loadCohortRows(runId: string): Promise<SimSnapshotRow[]>
+  /**
+   * SMI-6444 — the sealed `(owner, repo)` branch-resolution map, needed for
+   * G-1's `unfetchable` ground-truth re-derivation (`deriveUnfetchableSubtype`,
+   * `smi5879-terminal-derivation.ts`).
+   */
+  loadBranchMap(runId: string): Promise<BranchMap>
 }
 
 /** The outcome of gate-check's own self-invoked structural closure test run (§12.1). */

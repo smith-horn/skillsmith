@@ -61,18 +61,10 @@ import {
 } from './smi5879-simulate-full.baseline.ts'
 import { scanSkillBundle as headScanSkillBundle } from './skill-processor.security.ts'
 import { parseArgs, type CliArgs } from './smi5879-simulate-full.cli.ts'
-import {
-  runMainPass,
-  assertPatTokenSource,
-  HEARTBEAT_INTERVAL_MS,
-} from './smi5879-simulate-full.helpers.ts'
-import {
-  computeCoverage,
-  summarizeCounts,
-  estimateCompletionAt,
-  runSweepPhase,
-  decideExitCode,
-} from './smi5879-simulate-full.sweep.ts'
+import { assertPatTokenSource, HEARTBEAT_INTERVAL_MS } from './smi5879-simulate-full.helpers.ts'
+import { runMainPass } from './smi5879-simulate-full.mainpass.ts'
+import { buildSimulateFullReport, type BuildReportContext } from './smi5879-simulate-full.report.ts'
+import { runSweepPhase, decideExitCode } from './smi5879-simulate-full.sweep.ts'
 import {
   checkpointPathFor,
   checkpointPathForShard,
@@ -82,6 +74,7 @@ import {
   assertCheckpointIdentity,
   assertCheckpointRowsBelongToGeneration,
 } from './smi5879-simulate-full.checkpoint.ts'
+import { assertCheckpointRowsAreCoherent } from './smi5879-simulate-full.checkpoint-coherence.ts'
 import { shardOf } from './smi5879-simulate-full.shard.ts'
 import { ALL_SIMULATED_COHORTS } from './smi5879-simulate-full.types.ts'
 import type {
@@ -106,7 +99,7 @@ function buildHolder(): string {
   return `${hostname()}:${process.pid}:${head}`
 }
 
-// runMainPass lives in smi5879-simulate-full.helpers.ts (500-line budget)
+// runMainPass lives in smi5879-simulate-full.mainpass.ts (500-line budget)
 
 /**
  * Run the full generation lifecycle and return the assembled report.
@@ -334,27 +327,31 @@ export async function runSimulateFull(
 
     const results = new Map(Object.entries(checkpoint.row_results))
 
-    /** Assemble the gate-eligible report from current state — shared by the normal-completion and deadline-exit paths. */
+    // SMI-6481: refuse an internally-inconsistent checkpoint BEFORE any
+    // scan/fetch — see assertCheckpointRowsAreCoherent's own doc comment.
+    assertCheckpointRowsAreCoherent([...results.values()], checkpointPath)
+
+    // Report assembly lives in smi5879-simulate-full.report.ts (500-line
+    // budget) — `buildReport` below is a thin closure over this fixed
+    // context, shared by the normal-completion and deadline-exit paths.
+    const reportCtx: BuildReportContext = {
+      runId: args.runId,
+      purpose: args.purpose,
+      status: summary.status,
+      tokenSource,
+      baselineCommit: args.baselineCommit,
+      rowsByCohort,
+      results,
+      startedAt,
+      totalRows,
+    }
     const buildReport = (
       scannedRows: number,
       sweepInfo: {
         passes_run: number
         hard_stopped: Smi5879SimulateFullReport['sweep']['hard_stopped']
       }
-    ): Smi5879SimulateFullReport => ({
-      report_kind: 'full_simulation',
-      run_id: args.runId,
-      purpose: args.purpose,
-      status: summary.status,
-      token_source: tokenSource,
-      baseline_commit: args.baselineCommit,
-      coverage: computeCoverage(rowsByCohort, results),
-      estimated_completion_at: estimateCompletionAt(startedAt, new Date(), totalRows, scannedRows),
-      sweep: sweepInfo,
-      rows: [...results.values()],
-      counts: summarizeCounts(results.values()),
-      generated_at: new Date().toISOString(),
-    })
+    ): Smi5879SimulateFullReport => buildSimulateFullReport(reportCtx, scannedRows, sweepInfo)
 
     const mainPassResult = await runMainPass(
       rowsForMainPass,

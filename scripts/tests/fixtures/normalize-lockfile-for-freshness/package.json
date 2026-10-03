@@ -1,0 +1,6 @@
+{
+  "name": "skillsmith",
+  "workspaces": [
+    "packages/*"
+  ]
+}

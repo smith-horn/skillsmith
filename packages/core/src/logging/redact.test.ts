@@ -379,3 +379,127 @@ MIIEvgIBADANBgkqhkiG9w0BAQEFAASCBKgwggSkAgEA
     })
   })
 })
+
+/**
+ * SMI-6840: the `sk_live_` rule's alphabet against Skillsmith's own key shape.
+ *
+ * Every pre-existing `sk_live_` fixture above is pure alphanumeric ('c'.repeat(24),
+ * 'abcdefghijklmnopqrstuvwx'), so the whole suite passed while ~74% of real keys leaked.
+ * That is the SMI-6732 failure mode exactly: the assertions pinned an output format a
+ * correct implementation happens to emit, not the property that makes it correct.
+ *
+ * These tests assert the PROPERTY — a generated key is wholly replaced by the marker —
+ * and they are built from keys the real generator produces, not hand-written fixtures.
+ */
+describe('SMI-6840: sk_live_ redaction covers the real key alphabet', () => {
+  /**
+   * Verbatim port of `generateLicenseKey()` from
+   * `supabase/functions/_shared/license.ts:45-60`. Copied rather than imported because
+   * that module is Deno edge-runtime source outside this npm workspace (the same
+   * cross-runtime sibling-copy situation ADR-137 governs). The base64url mapping below
+   * is the whole point of these tests: if the generator's alphabet ever changes, this
+   * copy must change with it.
+   */
+  function generateLicenseKeyBody(): string {
+    const bytes = new Uint8Array(32)
+    crypto.getRandomValues(bytes)
+    return btoa(String.fromCharCode(...bytes))
+      .replace(/\+/g, '-')
+      .replace(/\//g, '_')
+      .replace(/=/g, '')
+  }
+
+  it('redacts a generated key WHOLLY, leaving no fragment of the body', () => {
+    // 400 keys: the two failure modes need a `-` or `_` in the body, which ~74% of keys
+    // have, so this is overwhelmingly likely to exercise both. The deterministic cases
+    // below pin them exactly, so this test is the population check, not the only guard.
+    const leaks: string[] = []
+
+    for (let i = 0; i < 400; i++) {
+      const body = generateLicenseKeyBody()
+      const key = `sk_live_${body}`
+      const out = redactSensitiveData(`caller key=${key} status=ok`)
+
+      // The property: the ENTIRE key is gone, replaced by the marker. Not `toContain`,
+      // which a partial redaction satisfies while leaking the tail beside the marker.
+      if (out !== 'caller key=sk_live_[REDACTED] status=ok') leaks.push(key)
+    }
+
+    expect(leaks).toEqual([])
+  })
+
+  it('redacts a body whose 31st character is an underscore (the \\b-cannot-match case)', () => {
+    // `_` is a word character, so no \b can ever exist between an alphanumeric run and a
+    // following `_`. A trailing \b therefore made this key unredactable outright — and
+    // backtracking could not rescue it, because every shorter run is also followed by a
+    // word character.
+    const key = `sk_live_${'a'.repeat(30)}_${'b'.repeat(12)}`
+    const out = redactSensitiveData(`key=${key}`)
+
+    expect(out).toBe('key=sk_live_[REDACTED]')
+    expect(out).not.toContain('bbbb')
+  })
+
+  it('redacts a body whose 31st character is a hyphen, leaving no tail (the partial-leak case)', () => {
+    // The worst of the three modes: the old pattern matched the leading alphanumeric run
+    // and stopped at the hyphen, emitting `sk_live_[REDACTED]-bbbb...`. The marker made a
+    // leak look handled.
+    const key = `sk_live_${'a'.repeat(30)}-${'b'.repeat(12)}`
+    const out = redactSensitiveData(`key=${key}`)
+
+    expect(out).toBe('key=sk_live_[REDACTED]')
+    expect(out).not.toContain('bbbb')
+    expect(out).not.toContain('-b')
+  })
+
+  it('redacts a body whose FIRST characters are special (the below-minimum-run case)', () => {
+    // A `-` or `_` inside the first 24 body characters ended the run below the {24,}
+    // minimum, so the match failed entirely rather than partially.
+    const key = `sk_live_ab-cd_ef${'g'.repeat(28)}`
+    const out = redactSensitiveData(`key=${key}`)
+
+    expect(out).toBe('key=sk_live_[REDACTED]')
+    expect(out).not.toContain('gggg')
+  })
+
+  it('still redacts a purely alphanumeric sk_live_ key (Stripe shape unaffected)', () => {
+    // Widening the class is monotonic — alphanumeric is a subset — so Stripe's own live
+    // secret keys must stay covered. This is the known-positive control: without it, a
+    // regression that broke the alphanumeric path would look like a pass above.
+    const key = `sk_live_${'a'.repeat(32)}`
+    const out = redactSensitiveData(`key=${key}`)
+
+    expect(out).toBe('key=sk_live_[REDACTED]')
+  })
+
+  it('leaves a short sk_live_-prefixed string alone (known-negative control)', () => {
+    // Below the 24-character minimum: not key-shaped, must pass through untouched.
+    // Without this, a pattern that redacted everything would satisfy every test above.
+    const notAKey = 'sk_live_tooshort'
+    expect(redactSensitiveData(`key=${notAKey}`)).toBe('key=sk_live_tooshort')
+  })
+
+  // The two cases below pin the {24,} minimum itself, which nothing else here constrains.
+  //
+  // Found by a cross-family reviewer (GPT-5.6-Sol, PR #2936 pre-merge gate), and it is exactly
+  // the class the author of a fix cannot find in their own work: replacing {24,} with {9,}
+  // passed every other test in this block. The negative control above has an eight-character
+  // body, so it cannot distinguish a 24-character threshold from any threshold below nine —
+  // it proves only that SOMETHING short is left alone, not that the boundary sits where the
+  // pattern claims. Verified before writing these: at a 23-character body the two patterns
+  // diverge, at an eight-character body they do not.
+  //
+  // A too-low threshold is a real defect, not a harmless over-match: it would redact ordinary
+  // short `sk_live_`-prefixed identifiers out of logs, destroying diagnostic content on the
+  // strength of a prefix alone.
+
+  it('does NOT redact a body one character below the minimum (lower boundary)', () => {
+    const below = `sk_live_${'a'.repeat(23)}`
+    expect(redactSensitiveData(`key=${below}`)).toBe(`key=${below}`)
+  })
+
+  it('DOES redact a body exactly at the minimum (upper boundary)', () => {
+    const atMin = `sk_live_${'a'.repeat(24)}`
+    expect(redactSensitiveData(`key=${atMin}`)).toBe('key=sk_live_[REDACTED]')
+  })
+})

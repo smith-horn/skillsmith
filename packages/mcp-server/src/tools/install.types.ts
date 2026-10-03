@@ -301,8 +301,13 @@ export interface InstallResult {
   /**
    * SMI-4588 Wave 2 (PR #3): Non-blocking namespace warnings. Populated in
    * `power_user` and `governance` modes when a pre-flight collision is
-   * detected; the install still proceeds. Pre-flight scanner failure is
-   * treated as a clean pass (`warnings: undefined`).
+   * detected; the install still proceeds.
+   *
+   * `warnings: undefined` means the pre-flight ran and found no collision —
+   * and ONLY that. SMI-6588: it used to also mean the pre-flight had failed
+   * and been silently skipped, which made those two states identical to
+   * every caller. A pre-flight that could not run now reports itself through
+   * `tips` instead, so this field carries exactly one meaning.
    */
   warnings?: import('../audit/namespace-audit.types.js').NamespaceWarning[]
 }

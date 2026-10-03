@@ -488,4 +488,114 @@ describe('ADR-139 (SMI-6274 Wave 4): uninstall_skill MCP tool workspace-scope wi
     }
     expect(linkManifest.links.some((l) => l.skillId === 'scope-link-guard-skill')).toBe(true)
   })
+
+  it('SMI-6529: a canonical-client, GLOBAL-scoped uninstall surfaces a leftover interrupted-refresh backup warning from removeLinks in result.warning', async () => {
+    vi.resetModules()
+
+    const { ManifestManager } = await import('@skillsmith/core')
+    const { getLinkManifestPath, saveManifest: saveLinkManifest } =
+      await import('@skillsmith/core/install')
+
+    // Plant the GLOBAL canonical install this skill's fan-out link is
+    // recorded FROM -- this is the copy actually being uninstalled below.
+    const globalSkillDir = path.join(homeDir, '.claude', 'skills', 'leftover-warning-skill')
+    await mkdir(globalSkillDir, { recursive: true })
+    await writeFile(
+      path.join(globalSkillDir, 'SKILL.md'),
+      `---\nname: leftover-warning-skill\ndescription: test\n---\n${SKILL_MD_BODY}`,
+      'utf-8'
+    )
+    const globalManifestPath = path.join(homeDir, '.skillsmith', 'manifest.json')
+    await new ManifestManager(globalManifestPath).save({
+      version: '1.0.0',
+      installedSkills: {
+        'leftover-warning-skill': {
+          id: 'owner/leftover-warning-skill',
+          name: 'leftover-warning-skill',
+          version: '1.0.0',
+          source: 'github:owner/leftover-warning-skill',
+          installPath: globalSkillDir,
+          installedAt: new Date().toISOString(),
+          lastUpdated: new Date().toISOString(),
+        },
+      },
+    })
+
+    // Plant the fan-out destination + link record removeLinks() reads.
+    const fanOutDestDir = path.join(
+      homeDir,
+      '.codeium',
+      'windsurf',
+      'skills',
+      'leftover-warning-skill'
+    )
+    await mkdir(fanOutDestDir, { recursive: true })
+    await writeFile(
+      path.join(fanOutDestDir, 'SKILL.md'),
+      `---\nname: leftover-warning-skill\ndescription: test\n---\n${SKILL_MD_BODY}`,
+      'utf-8'
+    )
+    await saveLinkManifest({
+      version: 1,
+      links: [
+        {
+          skillId: 'leftover-warning-skill',
+          from: globalSkillDir,
+          to: fanOutDestDir,
+          kind: 'copy',
+          createdAt: new Date().toISOString(),
+        },
+      ],
+    })
+    const linkManifestPath = getLinkManifestPath()
+
+    // A hidden backup folder left behind by an earlier interrupted refresh,
+    // sitting next to the fan-out destination -- removeLinks (N6, round 4)
+    // reports this via listLeftoverBackups() without ever touching it.
+    const leftoverBackupDir = path.join(
+      homeDir,
+      '.codeium',
+      'windsurf',
+      'skills',
+      '.leftover-warning-skill.skillsmith-backup-AbC123'
+    )
+    await mkdir(path.join(leftoverBackupDir, 'original'), { recursive: true })
+    await writeFile(
+      path.join(leftoverBackupDir, 'original', 'SKILL.md'),
+      `---\nname: leftover-warning-skill\ndescription: test\n---\n${SKILL_MD_BODY}`,
+      'utf-8'
+    )
+
+    const { createToolContext } = await import('../../src/context.js')
+    const context = createToolContext({
+      dbPath: ':memory:',
+      apiClientConfig: { offlineMode: true },
+    })
+
+    const { uninstallSkill } = await import('../../src/tools/uninstall.js')
+    // No `client`/`scope` passed, and `cwd` points at a neutral dir with no
+    // workspace marker in its ancestry -- resolves to the canonical client
+    // at GLOBAL scope, which is exactly the (client, scope) pair
+    // uninstall.ts requires before it will call removeLinks() at all.
+    const result = await uninstallSkill(
+      { skillName: 'leftover-warning-skill', force: true, cwd: neutralCwd },
+      context
+    )
+
+    expect(result.success).toBe(true)
+    // The fan-out destination itself is torn down...
+    expect(await pathExists(fanOutDestDir)).toBe(false)
+
+    expect(result.warning).toBeDefined()
+    expect(result.warning).toContain('an interrupted refresh')
+
+    // ...but the orphaned backup itself is left alone, only ever reported,
+    // and its own manifest record for THIS skillId is gone (removed cleanly).
+    expect(await pathExists(path.join(leftoverBackupDir, 'original', 'SKILL.md'))).toBe(true)
+    const linkManifestRaw = await readFile(linkManifestPath, 'utf-8')
+    const linkManifest = JSON.parse(linkManifestRaw) as {
+      links: Array<{ skillId: string }>
+    }
+    expect(linkManifest.links.some((l) => l.skillId === 'leftover-warning-skill')).toBe(false)
+  })
 })

@@ -72,9 +72,40 @@ function createMonthlyQuotaExceededResponse(err: SkillsmithError): {
   }
 }
 
-export function ok(result: unknown): CallToolResult {
+/**
+ * SMI-6472 Wave 3: optional opt-in for a tool that declares an MCP
+ * `outputSchema` and must therefore also return `structuredContent` on every
+ * non-error response (the MCP SDK `Client` hard-throws on a declared-schema
+ * tool call that comes back without it — see the call sites in
+ * `tool-dispatch.ts` for the three tools that pass this today).
+ */
+export interface OkOptions {
+  /**
+   * When true, `result` is ALSO attached verbatim as `structuredContent`
+   * (cast to `Record<string, unknown>` — MCP requires an object at the
+   * schema root, so only pass this for a tool whose result type really is a
+   * plain object matching its own declared `outputSchema`).
+   */
+  structuredContent?: boolean
+}
+
+/**
+ * Shared MCP tool response wrapper — ~30 of the 43 tools return through this
+ * (directly from `tool-dispatch.ts`, or indirectly via `withLicenseAndQuota`
+ * below). `structuredContent` is opt-in (default omitted) rather than
+ * always-on: emitting it unconditionally would change the wire shape of
+ * every one of those ~30 tools' responses, including the ~40 across the
+ * whole server that declare no `outputSchema` at all — out of scope for this
+ * wave and needless risk for callers that never asked for it. Stays a
+ * stateless pure function (no module-level mutable state) since it runs on
+ * every concurrent tool call.
+ */
+export function ok(result: unknown, options?: OkOptions): CallToolResult {
   return {
     content: [{ type: 'text' as const, text: JSON.stringify(result, null, 2) }],
+    ...(options?.structuredContent === true
+      ? { structuredContent: result as Record<string, unknown> }
+      : {}),
   }
 }
 

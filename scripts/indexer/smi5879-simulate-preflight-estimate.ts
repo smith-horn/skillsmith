@@ -48,6 +48,7 @@ import {
 import { scanSkillBundle as headScanSkillBundle } from './skill-processor.security.ts'
 import { processRow, assertPatTokenSource } from './smi5879-simulate-full.helpers.ts'
 import { summarizeCounts } from './smi5879-simulate-full.sweep.ts'
+import { assertRowsInternallyCoherent } from './smi5879-merge-shards.outcome-coherence.ts'
 import type {
   Smi5879SimulateFullDbDeps,
   SimRowOutcome,
@@ -219,14 +220,41 @@ export async function runPreflightEstimate(
 
   const branchMap = await db.loadBranchMap(args.runId)
   const telemetry = newRateLimitTelemetry()
-  const headers = await buildGitHubHeaders('skillsmith-smi5879-preflight-estimate/1.0')
-  const scanDeps = { scanPostPort, scanPrePort, telemetry, headers }
+  // SMI-6481 (governance review, 2026-09-09): this MUST be `getHeaders` (a
+  // callback), not a `headers` object resolved once. `ProcessRowDeps`
+  // (`smi5879-simulate-full.helpers.ts`) switched to the callback form in
+  // SMI-6015 so a multi-day run re-mints the token instead of going stale
+  // past GitHub's 1h App-token expiry; `runMainPass`/`runSimulateFull` were
+  // updated then, this call site was missed. The result was not a stale-token
+  // bug but a hard `TypeError: getHeaders is not a function` on the FIRST row
+  // (`retryPrimaryFetch` calls `await getHeaders()`, and `withFetchRetry`
+  // rethrows non-`RateLimitError`), i.e. `runPreflightEstimate` could not
+  // complete a single row. Nothing caught it: `tsconfig.json` has
+  // `"files": []` and references only `packages/`, so `tsc --build` never
+  // sees `scripts/`, and `eslint.config.js`'s type-aware block is scoped to
+  // `packages/**` too. Mirrors `smi5879-simulate-full.ts`'s own wiring.
+  const getHeaders = () => buildGitHubHeaders('skillsmith-smi5879-preflight-estimate/1.0')
+  const scanDeps = { scanPostPort, scanPrePort, telemetry, getHeaders }
 
   const sample = seededSample(frame, args.sampleSize, args.seed)
   const results = []
   for (const row of sample) {
     results.push(await processRow(row, branchMap, scanDeps))
   }
+
+  // SMI-6481 (GPT-5.6-Sol cross-model gate, 2026-09-09): preflight is a
+  // fourth INDEPENDENT `processRow` row-production site — it calls the same
+  // classifier, accumulates its own rows, and derives counts + the verdict-
+  // change rate straight off them. It is not gate-eligible
+  // (`report_kind: 'preflight_estimate'`), so it cannot reproduce the exact
+  // G-1 review-set omission this issue is about, but an unguarded site still
+  // means a `processRow` classifier regression would silently corrupt the
+  // sampling estimate — `estimated_R` and `verdict_change_rate` are computed
+  // from `outcome` alone, so a masked delta biases the very number the real
+  // census is sized from. The guard is the same one every other
+  // row-introduction path already runs; "every row-introduction path" is only
+  // true if this one has it too.
+  assertRowsInternallyCoherent(results)
 
   const counts = summarizeCounts(results)
   const fullyScanned = results.filter((r) => VERDICT_OUTCOMES.includes(r.outcome))

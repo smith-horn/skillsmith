@@ -35,6 +35,8 @@ on:
       - 'scripts/lib/check-container-deps-fresh.sh'
       - 'scripts/lib/check-container-deps-fresh-inner.sh'
       - 'scripts/tests/check-container-deps-fresh.test.sh'
+      - 'scripts/tests/check-container-deps-fresh-lock.test.sh'
+      - 'scripts/tests/_lib/check-container-deps-fresh-fixtures.sh'
       - 'scripts/tests/session-mcp-disconnect-guard.test.sh'
       - 'scripts/tests/create-worktree-hooks.test.sh'
       - 'scripts/tests/worktree-hookspath.test.sh'
@@ -46,6 +48,13 @@ on:
       - 'scripts/tests/enumerate-compose-mounts-smi5784.test.sh'
       - 'scripts/tests/website-vercel-output-volume.test.sh'
       - 'scripts/tests/repair-worktree-container-symlinks.test.sh'
+      - 'scripts/lib/check-mount-composition.sh'
+      - 'scripts/lib/check-mount-composition.helpers.sh'
+      - 'scripts/lib/check-mount-composition.probes.sh'
+      - 'scripts/lib/check-mount-composition.identity.sh'
+      - 'scripts/tests/check-mount-composition.test.sh'
+      - 'scripts/verify-worktree-symlinks.sh'
+      - 'scripts/tests/verify-worktree-symlinks-dangling.test.sh'
       - 'scripts/tests/worktree-port-collision.test.sh'
       - 'scripts/tests/worktree-dev-port.test.sh'
       - 'scripts/tests/regen-worktree-overrides.test.sh'
@@ -57,6 +66,44 @@ on:
       - 'scripts/claude-hooks-log-wrapper.sh'
       - 'scripts/tests/claude-hooks-xargs-regression.test.sh'
       - 'scripts/tests/claude-hooks-log-wrapper.test.sh'
+      - 'scripts/mcp-skillsmith-launcher.sh'
+      - 'scripts/mcp-doc-retrieval-launcher.sh'
+      - 'scripts/tests/mcp-skillsmith-launcher.test.ts'
+      - 'scripts/tests/mcp-doc-retrieval-launcher.test.ts'
+      - 'scripts/tests/mcp-skillsmith-launcher.tier-b.test.ts'
+      - 'scripts/tests/mcp-doc-retrieval-launcher.tier-b.test.ts'
+      - 'scripts/lib/node-modules-mount-gate.sh'
+      - 'scripts/tests/node-modules-mount-gate.test.ts'
+      - 'scripts/lib/check-node-modules-fresh.sh'
+      - 'scripts/lib/print-deps-refresh-advice.sh'
+      - 'scripts/lib/running-script-pids.sh'
+      - 'scripts/regen-lockfile.sh'
+      - 'scripts/tests/repair-worktrees-docker-guard.test.ts'
+      # L-G (SMI-6744 A1.8 retro): scripts/mcp-ruflo-launcher.sh and its test
+      # are kept as dedicated literal entries because their basenames do NOT
+      # start with "ruflo-" (the "ruflo-*" glob below is a single-path-
+      # segment match and does not cross "/", per GitHub's path-filter glob
+      # semantics -- https://docs.github.com/en/actions/writing-workflows/choosing-when-your-workflows-run/patterns-to-match-file-paths).
+      # Everything else in the ruflo family is covered by the two globs so a
+      # future scripts/ruflo-foo.sh (or scripts/ruflo-foo/bar.sh) does not
+      # silently escape this trigger, the fragility H-4 was filed against.
+      - 'scripts/mcp-ruflo-launcher.sh'
+      - 'scripts/ruflo-*'
+      - 'scripts/ruflo-*/**'
+      - 'scripts/tests/mcp-ruflo-launcher.test.sh'
+      - 'scripts/tests/ruflo-*'
+      # S-3 (SMI-6744 A1.8 retro): 'scripts/tests/ruflo-*' above is a
+      # single-path-segment glob (per GitHub's path-filter glob semantics --
+      # https://docs.github.com/en/actions/writing-workflows/choosing-when-your-workflows-run/patterns-to-match-file-paths
+      # -- same citation as the L-G note above) and does NOT match a file
+      # nested under a ruflo-* subdirectory, e.g.
+      # scripts/tests/ruflo-foo/bar.sh -- add the '/**' variant so this
+      # trigger doesn't have the same single-segment gap the 'scripts/ruflo-*'
+      # / 'scripts/ruflo-*/**' pair above already closed for the top-level
+      # ruflo family.
+      - 'scripts/tests/ruflo-*/**'
+      - 'scripts/cli-pin-drift-check.sh'
+      - 'scripts/tests/cli-pin-drift-check.test.ts'
       - '.github/workflows/validate-hooks.yml'
 
 permissions:
@@ -98,6 +145,8 @@ jobs:
             scripts/lib/check-container-deps-fresh-inner.sh \
             scripts/lib/check-hooks-path.sh \
             scripts/tests/check-container-deps-fresh.test.sh \
+            scripts/tests/check-container-deps-fresh-lock.test.sh \
+            scripts/tests/_lib/check-container-deps-fresh-fixtures.sh \
             scripts/tests/session-mcp-disconnect-guard.test.sh \
             scripts/tests/create-worktree-hooks.test.sh \
             scripts/tests/worktree-hookspath.test.sh \
@@ -108,6 +157,13 @@ jobs:
             scripts/tests/enumerate-compose-mounts-smi5784.test.sh \
             scripts/tests/website-vercel-output-volume.test.sh \
             scripts/tests/repair-worktree-container-symlinks.test.sh \
+            scripts/lib/check-mount-composition.sh \
+            scripts/lib/check-mount-composition.helpers.sh \
+            scripts/lib/check-mount-composition.probes.sh \
+            scripts/lib/check-mount-composition.identity.sh \
+            scripts/tests/check-mount-composition.test.sh \
+            scripts/verify-worktree-symlinks.sh \
+            scripts/tests/verify-worktree-symlinks-dangling.test.sh \
             scripts/tests/worktree-port-collision.test.sh \
             scripts/tests/worktree-dev-port.test.sh \
             scripts/tests/regen-worktree-overrides.test.sh \
@@ -115,7 +171,40 @@ jobs:
             scripts/tests/session-start-mcp-command-guard.test.sh \
             scripts/claude-hooks-log-wrapper.sh \
             scripts/tests/claude-hooks-xargs-regression.test.sh \
-            scripts/tests/claude-hooks-log-wrapper.test.sh
+            scripts/tests/claude-hooks-log-wrapper.test.sh \
+            scripts/mcp-skillsmith-launcher.sh \
+            scripts/mcp-doc-retrieval-launcher.sh \
+            scripts/lib/node-modules-mount-gate.sh \
+            scripts/lib/check-node-modules-fresh.sh \
+            scripts/lib/print-deps-refresh-advice.sh \
+            scripts/lib/running-script-pids.sh \
+            scripts/regen-lockfile.sh \
+            scripts/mcp-ruflo-launcher.sh \
+            scripts/ruflo-service-up.sh \
+            scripts/ruflo-service-up.helpers.sh \
+            scripts/ruflo-federation-test.sh \
+            scripts/ruflo-acceptance/run.sh \
+            scripts/ruflo-acceptance/lib/common.sh \
+            scripts/ruflo-acceptance/lib/egress.sh \
+            scripts/ruflo-acceptance/lib/seed.sh \
+            scripts/ruflo-acceptance/lib/mutations.sh \
+            scripts/ruflo-acceptance/lib/consolidation.sh \
+            scripts/ruflo-acceptance/lib/quad.sh \
+            scripts/ruflo-acceptance/lib/quad.restore.sh \
+            scripts/ruflo-seed/regenerate-digest.sh \
+            scripts/cli-pin-drift-check.sh \
+            scripts/tests/mcp-ruflo-launcher.test.sh \
+            scripts/tests/ruflo-service-entrypoint.test.sh \
+            scripts/tests/ruflo-service-up.test.sh
+
+      # scripts/ruflo-service-entrypoint.sh is `#!/bin/sh`, not bash -- kept out
+      # of the bash-oriented invocation above (its own header already says it
+      # is lint-checked under `shellcheck -S warning -s sh`) and run here on
+      # its own, matching how this workflow treats every other sh-shebang
+      # script (see the bash -n step below, which runs `sh -n` for those).
+      - name: shellcheck (sh scripts)
+        run: |
+          shellcheck -S warning -s sh scripts/ruflo-service-entrypoint.sh
 
       - name: Syntax check (bash -n)
         run: |
@@ -138,7 +227,14 @@ jobs:
           sh -n scripts/lib/check-container-deps-fresh.sh
           sh -n scripts/lib/check-container-deps-fresh-inner.sh
           sh -n scripts/lib/check-hooks-path.sh
+          sh -n scripts/lib/node-modules-mount-gate.sh
+          sh -n scripts/lib/check-node-modules-fresh.sh
+          sh -n scripts/lib/print-deps-refresh-advice.sh
+          sh -n scripts/lib/running-script-pids.sh
+          bash -n scripts/regen-lockfile.sh
           bash -n scripts/tests/check-container-deps-fresh.test.sh
+          bash -n scripts/tests/check-container-deps-fresh-lock.test.sh
+          bash -n scripts/tests/_lib/check-container-deps-fresh-fixtures.sh
           bash -n scripts/tests/session-mcp-disconnect-guard.test.sh
           bash -n scripts/tests/create-worktree-hooks.test.sh
           bash -n scripts/tests/worktree-hookspath.test.sh
@@ -149,6 +245,13 @@ jobs:
           bash -n scripts/tests/enumerate-compose-mounts-smi5784.test.sh
           bash -n scripts/tests/website-vercel-output-volume.test.sh
           bash -n scripts/tests/repair-worktree-container-symlinks.test.sh
+          bash -n scripts/lib/check-mount-composition.sh
+          bash -n scripts/lib/check-mount-composition.helpers.sh
+          bash -n scripts/lib/check-mount-composition.probes.sh
+          bash -n scripts/lib/check-mount-composition.identity.sh
+          bash -n scripts/tests/check-mount-composition.test.sh
+          bash -n scripts/verify-worktree-symlinks.sh
+          bash -n scripts/tests/verify-worktree-symlinks-dangling.test.sh
           bash -n scripts/tests/worktree-port-collision.test.sh
           bash -n scripts/tests/worktree-dev-port.test.sh
           bash -n scripts/tests/regen-worktree-overrides.test.sh
@@ -156,10 +259,30 @@ jobs:
           bash -n scripts/tests/session-start-mcp-command-guard.test.sh
           bash -n scripts/tests/claude-hooks-xargs-regression.test.sh
           bash -n scripts/tests/claude-hooks-log-wrapper.test.sh
+          bash -n scripts/mcp-skillsmith-launcher.sh
+          bash -n scripts/mcp-doc-retrieval-launcher.sh
           sh -n scripts/claude-hooks-log-wrapper.sh
           sh -n .husky/pre-commit
           sh -n .husky/pre-push
           sh -n .husky/post-merge
+          bash -n scripts/mcp-ruflo-launcher.sh
+          bash -n scripts/ruflo-service-up.sh
+          bash -n scripts/ruflo-service-up.helpers.sh
+          bash -n scripts/ruflo-federation-test.sh
+          bash -n scripts/ruflo-acceptance/run.sh
+          bash -n scripts/ruflo-acceptance/lib/common.sh
+          bash -n scripts/ruflo-acceptance/lib/egress.sh
+          bash -n scripts/ruflo-acceptance/lib/seed.sh
+          bash -n scripts/ruflo-acceptance/lib/mutations.sh
+          bash -n scripts/ruflo-acceptance/lib/consolidation.sh
+          bash -n scripts/ruflo-acceptance/lib/quad.sh
+          bash -n scripts/ruflo-acceptance/lib/quad.restore.sh
+          bash -n scripts/ruflo-seed/regenerate-digest.sh
+          bash -n scripts/cli-pin-drift-check.sh
+          sh -n scripts/ruflo-service-entrypoint.sh
+          bash -n scripts/tests/mcp-ruflo-launcher.test.sh
+          bash -n scripts/tests/ruflo-service-entrypoint.test.sh
+          bash -n scripts/tests/ruflo-service-up.test.sh
 
       - name: Setup Node (for session-audit hook tsx invocations)
         uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v6
@@ -176,8 +299,13 @@ jobs:
       - name: Hooks unit tests
         run: |
           bash scripts/tests/check-container-deps-fresh.test.sh
+          bash scripts/tests/check-container-deps-fresh-lock.test.sh
           bash scripts/tests/session-mcp-disconnect-guard.test.sh
-          bash scripts/tests/create-worktree-hooks.test.sh
+          # SMI-6568 (D8): pinned Scenario 13 case+check total (36 per
+          # shell x 3 shells + 2 structural guards + 7 launcher checks =
+          # 117) — the harness fails loudly if a future edit silently
+          # drops or duplicates a case instead of updating this count.
+          SMI6568_EXPECTED_CASES=117 bash scripts/tests/create-worktree-hooks.test.sh
           bash scripts/tests/worktree-hookspath.test.sh
           bash scripts/tests/session-start-audit.test.sh
           bash scripts/tests/reclaim-node-modules.test.sh
@@ -186,6 +314,8 @@ jobs:
           bash scripts/tests/enumerate-compose-mounts-smi5784.test.sh
           bash scripts/tests/website-vercel-output-volume.test.sh
           bash scripts/tests/repair-worktree-container-symlinks.test.sh
+          bash scripts/tests/check-mount-composition.test.sh
+          bash scripts/tests/verify-worktree-symlinks-dangling.test.sh
           bash scripts/tests/worktree-port-collision.test.sh
           bash scripts/tests/worktree-dev-port.test.sh
           bash scripts/tests/regen-worktree-overrides.test.sh
@@ -193,3 +323,32 @@ jobs:
           bash scripts/tests/session-start-mcp-command-guard.test.sh
           bash scripts/tests/claude-hooks-xargs-regression.test.sh
           bash scripts/tests/claude-hooks-log-wrapper.test.sh
+          # H-4 (post-merge governance retro, PR #2931): these three ADR-170
+          # suites were previously unreferenced anywhere in this workflow.
+          # M-G (SMI-6744 A1.8 retro): this job is advisory -- `Hooks Test`
+          # is not among main's required status contexts (see this file's
+          # own header), so a red run does not block a merge. Treat it as a
+          # real signal to act on, not a gate -- the same standing this repo
+          # records for .github/workflows/ruflo-seed-digest.yml (M-1).
+          # External tools: node (already set up above), md5/md5sum (fake
+          # docker/git stubs; coreutils, always present on ubuntu-latest),
+          # jq (scripts/tests/ruflo-service-up.test.sh's foreign-project
+          # arms) -- ubuntu-latest ships jq preinstalled, matching the same
+          # assumption scripts/ruflo-federation-test.sh and
+          # scripts/cli-pin-drift-check.sh already document for this repo's
+          # host/CI environments; no install step needed -- and stat, which
+          # these three suites run on Linux in CI and on macOS locally: any
+          # coreutils-flag divergence (e.g. BSD `stat -f` vs GNU `stat -c`)
+          # must be handled with a runtime probe (see stat_mode() in
+          # ruflo-service-up.test.sh), never a `||` fallback (SMI-5596;
+          # H-A, SMI-6744 A1.8 retro). None of the three touches a real
+          # Docker daemon -- each fakes `docker` (and, for
+          # ruflo-service-up.test.sh's arms 13/14, `git`) on PATH. Arm 17 is
+          # the exception (F-10, SMI-6744 A1.8 retro round 2): it exercises
+          # git_dir_equals_common_dir() against the REAL git binary (with
+          # `git worktree add`, present on ubuntu-latest), not the fake
+          # stub, so this job also depends on a real git checkout/worktree
+          # being creatable under $SCRATCH_ROOT for that one arm.
+          bash scripts/tests/mcp-ruflo-launcher.test.sh
+          bash scripts/tests/ruflo-service-entrypoint.test.sh
+          bash scripts/tests/ruflo-service-up.test.sh

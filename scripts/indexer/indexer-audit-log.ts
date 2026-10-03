@@ -101,6 +101,10 @@ export interface RecheckAuditCounters {
   pass3_sibling_recovered: number
   /** SMI-5445 C2: rows that would have been cleared but hit the per-run sibling-clear cap; deferred to next run. */
   deferred_cap: number
+  /** SMI-6020 (design §3.3.6): rows whose root or sibling scan hit the multiline
+   *  iteration ceiling (a scan-integrity gap). Counted separately from
+   *  fetch_error so it can never inflate fetch_error_rate / trip the throttle. */
+  scan_incomplete: number
 }
 
 /**
@@ -178,6 +182,16 @@ export interface AuditLogParams {
    * callers; undefined elsewhere. Persisted under `metadata.purge`.
    */
   purge?: PurgeCounts
+  /**
+   * SMI-6020 (design §3.3.6, §2.5 item 12): count of repos whose scan hit the
+   * multiline iteration ceiling this run — the run-level telemetry counter
+   * that makes a systematic truncation breach observable rather than silent.
+   * Populated only by discovery's runUpsertPhase (the bulk-upsert path Rule B's
+   * ratchet applies to); optional and omitted from the JSON on every other
+   * run type (maintenance never calls runUpsertPhase; recheck/dequarantine/
+   * purge have their own truncation signals — skip_reason / scan_incomplete).
+   */
+  multiline_truncated?: number
 }
 
 /**
@@ -225,7 +239,13 @@ export async function writeIndexerAuditLog(
         },
         github_skill_count: params.github_skill_count,
         code_search: params.code_search,
-        security: { quarantined: params.quarantined, threshold: QUARANTINE_THRESHOLD },
+        security: {
+          quarantined: params.quarantined,
+          threshold: QUARANTINE_THRESHOLD,
+          // SMI-6020 (design §3.3.6): 0 when a caller doesn't populate it
+          // (maintenance/recheck/dequarantine/purge — see AuditLogParams doc).
+          multiline_truncated: params.multiline_truncated ?? 0,
+        },
         wildcard_expansion_count: params.wildcard_expansion_count,
         // SMI-4374: Slot-rotation observability — ops-report / v_indexer_health
         // slice by these when diagnosing a slow slot.

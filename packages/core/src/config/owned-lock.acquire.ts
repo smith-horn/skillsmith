@@ -31,6 +31,7 @@ import {
 import {
   LOCK_ACQUIRE_TIMEOUT_MS,
   LOCK_RETRY_DELAY_MS,
+  RECLAIM_LOCK_TIMEOUT_MS,
   RECLAIM_PROBE_AFTER_MS,
   RECLAIM_PROBE_INTERVAL_MS,
 } from './owned-lock.types.js'
@@ -39,8 +40,14 @@ import type { Claim, ReclaimOutcome, RefusalCategory, StuckLockReason } from './
 function describeReason(reason: StuckLockReason, claim: Claim, reclaimPath: string): string {
   switch (reason) {
     case 'held':
+      // No "(still alive)" here (SMI-6764): `held` is also the SAFE DEFAULT
+      // when the liveness probe never ran -- a `timeoutMs` shorter than
+      // `reclaimProbeAfterMs` expires first -- so this branch is reachable
+      // with a pid that was never probed, and measurably was: a deliberately
+      // dead pid rendered "still alive". Report the claim, not a liveness
+      // conclusion this function has no standing to draw.
       return claim.kind === 'v1'
-        ? `held by pid ${claim.pid} on host '${claim.host}' (still alive)`
+        ? `held by pid ${claim.pid} on host '${claim.host}'`
         : 'held by another process'
     case 'unreclaimable_legacy':
       return (
@@ -62,10 +69,102 @@ function describeReason(reason: StuckLockReason, claim: Claim, reclaimPath: stri
 }
 
 /**
+ * What the caller should do about this refusal, per reason.
+ *
+ * This exists because the opening verb used to carry it and could not
+ * (SMI-6764). A verb is binary; only `unreclaimable_unparseable` has an answer
+ * this function can give outright. Every other reason depends on a fact
+ * `reason` does not carry -- `reclaim_unavailable` on whether the reclaim lock
+ * is busy or orphaned, `unreclaimable_legacy` on whether the legacy holder is
+ * alive, `reclaim_disabled` on whether a differently-configured peer exists,
+ * and `held` on whether the holder was ever probed at all (round 5). So any
+ * binary split has to guess at them. Saying "it depends, and on this" is both
+ * honest and more useful than a guess -- and unlike a verb, it can be right.
+ *
+ * Note this function's own standing: it receives ONLY `reason`, never the
+ * claim. It therefore knows strictly less than `describeReason`, and must not
+ * assert anything about the holder that `reason` alone cannot support.
+ */
+export function describeRemedy(reason: StuckLockReason): string {
+  switch (reason) {
+    case 'held':
+      // No liveness claim here, for the same reason `describeReason` dropped
+      // "(still alive)" one sentence earlier -- and a stronger one. This
+      // function receives ONLY `reason`; it cannot see the claim at all, so it
+      // has strictly less standing than `describeReason`, which at least gets
+      // the pid. `held` turns on a fact the reason does not carry, exactly like
+      // the three above it: it is the
+      // safe default when the liveness probe never ran, and `classifyRefusal`
+      // also returns it for a claim naming another host or a pid that cannot
+      // be probed (`isV1OwnerDead` bails on both before it ever signals).
+      // Measured, all three rendering under `held`: a pid `isOwnerDefinitelyDead`
+      // reports dead, a foreign-host claim, and `pid: -1` -- which `parseClaim`
+      // accepts as v1 and nothing will ever reclaim.
+      return (
+        'The holder was not established to be gone, so retrying is the right first response. ' +
+        'If it persists, the claim may name another host or a pid this process cannot probe; ' +
+        'neither is auto-reclaimed from here, so only the manual steps clear those.'
+      )
+    case 'reclaim_unavailable':
+      // The two halves `describeReason` already names have OPPOSITE answers,
+      // and nothing in `reason` separates them: a concurrent reclaim clears in
+      // milliseconds, while an orphaned reclaim lock never clears at all --
+      // nothing probes the reclaim lock's own owner for liveness.
+      return (
+        'If a reclaim is in flight, retrying clears this. If it persists, the reclaim lock named ' +
+        'below was orphaned by a crash inside the critical section; nothing reclaims that one ' +
+        'automatically, so only the manual steps clear it.'
+      )
+    case 'unreclaimable_legacy':
+      return (
+        'A legacy claim is never auto-reclaimed, in any configuration (SMI-5883 D-5). If its ' +
+        'process is alive it still releases on its own; if it is dead, only the manual steps clear it.'
+      )
+    case 'unreclaimable_unparseable':
+      return 'An unparseable claim is never auto-reclaimed, so only the manual steps clear it.'
+    case 'reclaim_disabled':
+      return (
+        'The holder is already dead and auto-reclaim is off in this process, so retrying HERE ' +
+        'cannot reclaim it -- though a peer process without SKILLSMITH_LOCK_NO_AUTO_RECLAIM set ' +
+        'still can. Unset it here and restart this process, or use the manual steps.'
+      )
+    default: {
+      const exhaustive: never = reason
+      return exhaustive
+    }
+  }
+}
+
+/**
  * Thrown when {@link acquireOwnedLockCore} (and, through it, the public
- * `acquireOwnedLock`) times out. `reason` is a stable discriminant for
+ * `acquireOwnedLock`) gives up. `reason` is a stable discriminant for
  * mechanical triage (never prose-matching); the message embeds the manual
  * unstick procedure verbatim.
+ *
+ * **One verb, for every reason (SMI-6764).** Two earlier rounds tried to pick
+ * between "Timed out waiting" and "Could not acquire" per reason, to separate
+ * ordinary contention from a state needing action. Round 1 got the reason list
+ * wrong; round 2 found it duplicated across two layers; round 3 found the
+ * partition does not exist. `StuckLockReason` is not a total function onto
+ * "retry helps / retry does not": `reclaim_unavailable` depends on whether the
+ * reclaim lock is busy or orphaned, `unreclaimable_legacy` on whether the
+ * legacy holder is alive, `reclaim_disabled` on whether a
+ * differently-configured peer exists, and `held` -- added in round 5, after
+ * the first four rounds all treated it as determined -- on whether the holder
+ * was probed at all, and on whether it is even probeable from here. The binary
+ * verb had to guess, and it guessed wrong for an orphaned reclaim lock --
+ * which never clears, and read "Timed out waiting".
+ *
+ * "Could not acquire" is the honest superset: true for every reason, and it
+ * asserts nothing about elapsed time or about whether retrying helps. The old
+ * verb also claimed a timeout this class frequently never measured --
+ * `file-lock.ts` calls in with `timeoutMs: 0` and keeps its own 30s budget
+ * outside, so the wait that message described was zero milliseconds.
+ * {@link describeRemedy} now carries what the verb was reaching for, per
+ * reason, and can say "it depends, on this" where that is the truth.
+ *
+ * The unstick procedure is identical for every reason. Step 1 in particular is
+ * load-bearing for `unreclaimable_legacy`, whose claim may be a LIVE process.
  */
 export class StuckLockError extends Error {
   readonly lockPath: string
@@ -81,7 +180,8 @@ export class StuckLockError extends Error {
   ) {
     const namesReclaim = reason === 'reclaim_unavailable'
     const message =
-      `[skillsmith] Timed out waiting for ${label} at ${lockPath}: ${describeReason(reason, claim, reclaimPath)}. ` +
+      `[skillsmith] Could not acquire ${label} at ${lockPath}: ` +
+      `${describeReason(reason, claim, reclaimPath)}. ${describeRemedy(reason)} ` +
       `Manual unstick -- 1) confirm no skillsmith process is running: ps -ax | grep -E '[s]killsmith|[s]klx'; ` +
       `2) inspect (read-only): cat ${lockPath}${namesReclaim ? ` ; cat ${reclaimPath}` : ''}; ` +
       `3) remove ONLY the file(s) named above: rm ${lockPath}${namesReclaim ? ` ; rm ${reclaimPath}` : ''}.`
@@ -118,12 +218,23 @@ export interface AcquireOwnedLockCoreOptions {
   timeoutMs?: number
   label?: string
   reclaimProbeAfterMs?: number
+  reclaimLockTimeoutMs?: number
   onReclaimBoundary?: () => void
   onReclaimOutcome?: (outcome: ReclaimOutcome) => void
   /** @internal NEGATIVE CONTROL ONLY (owned-lock-reclaim-race.test.ts §8b). Removes the authoritative re-read that makes this mechanism sound -- reintroduces the round-3 lock-theft race on purpose. Never set outside that spec, and never reachable via the public acquireOwnedLock(). */
   unsafeSkipReclaimRevalidation?: boolean
   /** @internal test seam (owned-lock.test.ts item 14). Never reachable via the public acquireOwnedLock(). */
   linkSyncOverride?: (existingPath: string, newPath: string) => void
+}
+
+/**
+ * A timing option as a finite, non-negative number of milliseconds. Anything
+ * else (NaN, Infinity, a negative number) falls back to `fallback`: a NaN
+ * deadline never passes, so it hung the synchronous wait loop forever
+ * (SMI-6529 round 9).
+ */
+export function toTimingMs(value: number | undefined, fallback: number): number {
+  return typeof value === 'number' && Number.isFinite(value) && value >= 0 ? value : fallback
 }
 
 /**
@@ -140,10 +251,11 @@ export function acquireOwnedLockCore(
   const reclaimPath = `${lockPath}.reclaim`
   const token = randomHex(8)
   const label = opts.label ?? 'lock'
-  const timeoutMs = opts.timeoutMs ?? LOCK_ACQUIRE_TIMEOUT_MS
+  const timeoutMs = toTimingMs(opts.timeoutMs, LOCK_ACQUIRE_TIMEOUT_MS)
+  const reclaimLockTimeoutMs = toTimingMs(opts.reclaimLockTimeoutMs, RECLAIM_LOCK_TIMEOUT_MS)
   const started = Date.now()
   const deadline = started + timeoutMs
-  let nextProbeAt = started + (opts.reclaimProbeAfterMs ?? RECLAIM_PROBE_AFTER_MS)
+  let nextProbeAt = started + toTimingMs(opts.reclaimProbeAfterMs, RECLAIM_PROBE_AFTER_MS)
   let lastRefusal: RefusalCategory | ReclaimOutcome = 'held' // safe default: EEXIST already implies SOMETHING is there
   let lastObservedClaim: Claim = { kind: 'absent' }
 
@@ -164,6 +276,7 @@ export function acquireOwnedLockCore(
         const outcome: ReclaimOutcome = tryReclaimUnderLock(lockPath, reclaimPath, {
           unsafeSkipRevalidation: opts.unsafeSkipReclaimRevalidation,
           linkSyncOverride: opts.linkSyncOverride,
+          reclaimLockTimeoutMs,
         })
         opts.onReclaimOutcome?.(outcome)
         if (outcome === 'reclaimed' || outcome === 'gone') {
@@ -172,7 +285,11 @@ export function acquireOwnedLockCore(
         }
         lastRefusal = outcome // 'not-stale' | 'unavailable'
       } else {
-        lastRefusal = classifyRefusal(claim)
+        // SMI-6529 round 8: a claim that vanished between our EEXIST and this
+        // read was released by a live holder. That is contention, not a
+        // corrupt lock; calling it 'unparseable' made a non-waiting caller
+        // give up and advise `rm` on a lock another process may just have taken.
+        lastRefusal = claim.kind === 'absent' ? 'held' : classifyRefusal(claim)
       }
       nextProbeAt = Date.now() + RECLAIM_PROBE_INTERVAL_MS
     }

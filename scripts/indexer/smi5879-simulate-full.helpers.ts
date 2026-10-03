@@ -2,18 +2,21 @@
  * Core per-row control-flow helpers for smi5879-simulate-full.ts: the
  * retry-wrapped fetch adapters, verdict extraction, and tier-1/tier-2 outcome
  * classification (`processRow`). Coverage aggregation, checkpoint I/O, and
- * the tier-3 sweep loop live in the sibling `smi5879-simulate-full.sweep.ts`
- * (split for CLAUDE.md's <500-line-per-file convention).
+ * the tier-3 sweep loop live in the sibling `smi5879-simulate-full.sweep.ts`;
+ * the tier-1/tier-2 main pass loop (`runMainPass`) lives in the sibling
+ * `smi5879-simulate-full.mainpass.ts` (split for CLAUDE.md's
+ * <500-line-per-file convention — SMI-6481 moved `runMainPass` out to make
+ * room for the `processRow` delta-branch fix below).
  * @module scripts/indexer/smi5879-simulate-full.helpers
  *
  * Plan: docs/internal/implementation/smi-5879-wave3-census-simulation-plan.md §3a/§3b
  * Design: docs/internal/implementation/smi-5879-edge-twin-parity-design.md §8.2.3
  */
 
-import { shouldQuarantine, generateContentHash } from './_shared/security-scanner-edge.ts'
+import { shouldQuarantineFailClosed, generateContentHash } from './_shared/security-scanner-edge.ts'
 import { parseSkillMdUrl, fetchSkillMd, type ParsedSkillUrl } from './_shared/skill-md-fetch.ts'
 import { fetchSiblingContent, type ScanSkillBundleResult } from './skill-processor.security.ts'
-import { runCancellablePool, type RateLimitTelemetry } from './_shared/rate-limit.ts'
+import type { RateLimitTelemetry } from './_shared/rate-limit.ts'
 import { GitHubAuthError } from './_shared/github-auth.ts'
 import { withFetchRetry, type FetchRetryOptions } from './smi5879-fetch-retry.ts'
 import { resolveTokenSource } from './backfill-checkpoint.ts'
@@ -183,9 +186,12 @@ export function makeCachingSiblingFetcher(
 
 /**
  * Canonical "effective verdict" derivation — matches skill-processor.ts's own
- * `mergedScan ? mergedScan.quarantine : securityScan ? shouldQuarantine(securityScan) : false`
- * (skill-processor.ts:398-402), so the simulator's comparison basis is
- * identical to what production actually decides on.
+ * `mergedScan ? mergedScan.quarantine : securityScan ? shouldQuarantineFailClosed(securityScan) : false`
+ * (skill-processor.ts:399-403), so the simulator's comparison basis is
+ * identical to what production actually decides on. SMI-6020 (design §2.5
+ * item 11): required, not cosmetic — the census/rollback protocol for PR
+ * #2192 depends on the simulator's verdict being structurally identical to
+ * production, which now includes the truncation fail-closed gate.
  */
 export function effectiveVerdict(result: ScanSkillBundleResult): {
   quarantine: boolean
@@ -198,7 +204,7 @@ export function effectiveVerdict(result: ScanSkillBundleResult): {
     }
   }
   return {
-    quarantine: shouldQuarantine(result.securityScan),
+    quarantine: shouldQuarantineFailClosed(result.securityScan),
     riskScore: result.securityScan.riskScore,
   }
 }
@@ -256,12 +262,12 @@ export async function processRow(
       ...base,
       outcome: 'unfetchable',
       reason: `repo_url did not parse to a fetchable target (repo_url=${row.repo_url ?? '(null)'})`,
+      unfetchable_subtype: 'url_parse',
     }
   }
 
-  // SMI-6015 rehearsal finding (unevaluable-routing bug — SMI-6157): the
-  // census's branch-resolution
-  // table is consulted for EVERY row's repo, regardless of whether `repo_url`
+  // SMI-6015 rehearsal finding (unevaluable-routing bug — SMI-6157): the census's
+  // branch-resolution table is consulted for EVERY row's repo, regardless of whether `repo_url`
   // embeds its own ref (`/tree/<ref>/`) — a `not-found`/`unparseable`
   // resolution means the census already confirmed the REPO itself is gone or
   // its branch-resolution response was structurally unusable, a fact that has
@@ -275,7 +281,6 @@ export async function processRow(
   // rehearsal run measured 7,538 of 12,867 C4 primary-404 rows were exactly
   // this already-known-dead-repo case, wrongly blocking G-2 on a false
   // positive.
-  //
   // `transient` is deliberately NOT checked here (it still is, unchanged,
   // inside the `!parsed.ref` branch below): an embedded-ref row never needs
   // `default_branch` to be resolved at all — it already names its own ref —
@@ -293,6 +298,7 @@ export async function processRow(
       ...base,
       outcome: 'unfetchable',
       reason: `default_branch resolution=${info.resolution}`,
+      unfetchable_subtype: 'branch_resolution',
     }
   }
 
@@ -322,17 +328,16 @@ export async function processRow(
     }
   }
   if ('removed' in primaryOutcome) {
-    // JUDGMENT CALL (documented in the implementation report): a primary
-    // SKILL.md 404 has no dedicated bucket in the plan's closed vocabulary —
-    // `unfetchable` is reserved for structurally-undecidable ROW SHAPES
-    // determined without any network attempt; `bundle_absent` requires
-    // "primary OK". Routed to `unevaluable` (the conservative, G-2-blocking
-    // choice) because the post-port verdict is categorically unknowable with
-    // no primary content to score, matching unevaluable's own definition.
+    // SMI-6442: a confirmed 404 is terminal (never retried), so it must
+    // never be `unevaluable`. Not `unfetchable` either (no-network-attempt
+    // ROW SHAPE). Coverage-neutral, still G-1-exclude-required.
     return {
       ...base,
-      outcome: 'unevaluable',
-      reason: 'primary SKILL.md confirmed absent (404) since the generation was sealed',
+      outcome: 'primary_not_found',
+      reason:
+        'primary SKILL.md not found at this path/ref (404) — repo resolved fine, but this ' +
+        'specific file returned 404; not retried, since repeating an identical request will not ' +
+        'change the answer',
     }
   }
   const primaryContent = primaryOutcome.content
@@ -384,7 +389,15 @@ export async function processRow(
   const preVerdict = effectiveVerdict(prePortResult)
   const postVerdict = effectiveVerdict(postPortResult)
 
-  if (isBundleAbsent(postPortResult)) {
+  // SMI-6436: classify the delta FIRST — bundle_absent only replaces a
+  // non-change (unchanged_clean/unchanged_quarantined), never a real delta.
+  // The pre-fix order (isBundleAbsent before this) masked real flips.
+  const delta = classifyVerdictDelta(preVerdict.quarantine, postVerdict.quarantine)
+  // SMI-6481: hoisted — both branches below need it (previously evaluated
+  // twice: once in the `if` guard, once again in the fallthrough return).
+  const bundleAbsent = isBundleAbsent(postPortResult)
+
+  if ((delta === 'unchanged_clean' || delta === 'unchanged_quarantined') && bundleAbsent) {
     return {
       ...base,
       outcome: 'bundle_absent',
@@ -398,92 +411,24 @@ export async function processRow(
 
   return {
     ...base,
-    outcome: classifyVerdictDelta(preVerdict.quarantine, postVerdict.quarantine),
+    outcome: delta,
+    // SMI-6481: `bundleAbsent` is still true here (the bundle scope was
+    // genuinely empty), but `delta` — computed first, above — is a REAL
+    // verdict change, not the non-change `bundle_absent` requires. The old
+    // pre-SMI-6436 code path would have overridden this row to `bundle_absent`
+    // outright, silently dropping the fact that every sibling target 404'd
+    // from the record entirely once the fix made the delta win. Surfacing it
+    // in `reason` instead (rather than nowhere) recovers that diagnostic
+    // without reintroducing the masking bug SMI-6436 fixed.
+    ...(bundleAbsent
+      ? {
+          reason:
+            'bundle scope confirmed empty (all sibling targets 404) — verdict delta takes precedence',
+        }
+      : {}),
     prePortQuarantine: preVerdict.quarantine,
     postPortQuarantine: postVerdict.quarantine,
     prePortRiskScore: preVerdict.riskScore,
     postPortRiskScore: postVerdict.riskScore,
   }
-}
-
-// ---------------------------------------------------------------------------
-// Main pass (moved from smi5879-simulate-full.ts — 500-line budget)
-// ---------------------------------------------------------------------------
-
-/** Return value of {@link runMainPass} — see `deadlineExceeded`'s doc comment there. */
-export interface RunMainPassResult {
-  /**
-   * True iff the pass stopped because `deadlineAtMs` was reached — an
-   * EXPECTED, non-fatal way to stop (mirrors `runCancellablePool`'s own
-   * `deadlineExceeded`/`abortedBy` distinction and
-   * `smi5879-census.branches.ts`'s `sweepTransientRepos` pattern). The
-   * caller decides what to do next (write a final checkpoint and exit with
-   * partial coverage for re-dispatch); never rethrown the way a fatal
-   * `abortedBy` condition is.
-   */
-  deadlineExceeded: boolean
-}
-
-/**
- * Run the main pass over every not-yet-attempted row (from the checkpoint, if
- * resuming), in concurrency-bounded batches, checkpointing after each batch.
- *
- * SMI-6015 (GPT-5.6-Sol review, 2026-08-14): uses `runCancellablePool`, not
- * the plain `pMapBounded` this originally shipped with — `pMapBounded` has no
- * shared cancellation check between its concurrent workers, so a
- * `PrimaryFetchAuthError` thrown by one worker rejects the outer await while
- * sibling workers already in flight keep fetching from GitHub in the
- * background regardless, silently defeating the point of aborting on a dead
- * credential. `runCancellablePool`'s workers check a shared abort flag both
- * before AND after each item, so an abort actually stops new work; whatever
- * partial progress a batch made before the abort is checkpointed via
- * `onBatchDone` BEFORE rethrowing (durable partial write, never data loss).
- *
- * SMI-6015 Wave 1 (plan-review High finding #6): `deadlineAtMs` (optional)
- * threads straight into `runCancellablePool`'s own built-in deadline support
- * — the SAME mechanism `smi5879-census.branches.ts`'s `sweepTransientRepos`
- * already uses for its per-pass wall-clock cap, reused here rather than
- * inventing a second, fatal-`abortedBy`-based mechanism (the original design
- * for this Wave 1 item, corrected during plan review). A deadline hit between
- * batches (checked at the top of the next `runCancellablePool` call) or
- * mid-batch (checked per-worker) stops pulling new work; whatever the current
- * batch completed is still checkpointed via `onBatchDone` before returning,
- * exactly like a normal batch boundary — never a partial/corrupt write.
- */
-export async function runMainPass(
-  rows: SimSnapshotRow[],
-  alreadyResults: Map<string, SimRowResult>,
-  branchMap: BranchMap,
-  scanDeps: {
-    scanPostPort: ScanSkillBundleFn
-    scanPrePort: ScanSkillBundleFn
-    telemetry: RateLimitTelemetry
-    // SMI-6015: a callback, not a frozen headers object — see ProcessRowDeps's
-    // doc comment above. This run is multi-day; a token built once at startup
-    // would go stale after GitHub's 1h App-token expiry, same root cause as
-    // the census's own frozen-header bug.
-    getHeaders: () => Promise<Record<string, string>>
-  },
-  onBatchDone: (results: Map<string, SimRowResult>) => Promise<void>,
-  deadlineAtMs?: number
-): Promise<RunMainPassResult> {
-  const pending = rows.filter((r) => !alreadyResults.has(r.id))
-  for (let i = 0; i < pending.length; i += CHECKPOINT_BATCH_SIZE) {
-    const batch = pending.slice(i, i + CHECKPOINT_BATCH_SIZE)
-    const outcomes: SimRowResult[] = []
-    const { abortedBy, deadlineExceeded } = await runCancellablePool(
-      batch,
-      (row) => processRow(row, branchMap, scanDeps),
-      (outcome) => {
-        outcomes.push(outcome)
-      },
-      PROCESS_CONCURRENCY,
-      deadlineAtMs
-    )
-    for (const outcome of outcomes) alreadyResults.set(outcome.id, outcome)
-    await onBatchDone(alreadyResults)
-    if (abortedBy) throw abortedBy
-    if (deadlineExceeded) return { deadlineExceeded: true }
-  }
-  return { deadlineExceeded: false }
 }

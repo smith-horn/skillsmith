@@ -3,14 +3,35 @@
  * @see SMI-3902: Private Registry MCP Tools
  * @see SMI-5816: Private skill registry — real implementation (ADR-129)
  *
- * These exercise the handlers against the in-memory stub (no Supabase configured).
+ * These exercise the handlers against the in-memory stub, injected directly via
+ * `setPrivateRegistryService()` (unaffected by SMI-6622's live-by-default module selection).
  * Live Supabase-backed behaviour (cross-team scoping, immutability, size cap) is in
  * registry-tools.live.test.ts; RLS policy structure is in
  * scripts/tests/private-registry-rls.test.ts.
+ *
+ * SMI-6622: `resolveTeamId()` now ALWAYS attempts real team resolution — it never returns a
+ * placeholder id just because the STUB service was injected (the stub service and stub team id are
+ * independent concerns, `registry-tools.ts`'s own `useRegistryStub()` doc comment). So this file
+ * mocks `registry-tools.team.js` directly, same as every other registry-tools*.test.ts file that
+ * drives the dispatcher without a real credential.
  */
 
-import { describe, it, expect, beforeEach } from 'vitest'
+import { describe, it, expect, beforeEach, vi } from 'vitest'
 import type { ToolContext } from '../context.js'
+
+// importOriginal + spread (SMI-6622 round 2) — see registry-tools.install-action.test.ts's
+// identical comment for why (a future new export never needs re-adding to every mock).
+vi.mock('./registry-tools.team.js', async (importOriginal) => {
+  const actual = await importOriginal<typeof import('./registry-tools.team.js')>()
+  return {
+    ...actual,
+    resolveRegistryTeamId: vi.fn(async () => ({
+      teamId: 'team-alpha',
+      source: 'env:SKILLSMITH_LICENSE_KEY',
+    })),
+    readRegistryCredential: vi.fn(() => 'sk_test_fake_license'),
+  }
+})
 import {
   privateRegistryPublishInputSchema,
   privateRegistryManageInputSchema,

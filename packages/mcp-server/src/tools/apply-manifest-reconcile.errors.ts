@@ -11,6 +11,7 @@
  * and each message embeds the exact next remediation command inline.
  */
 
+import { describeRemedy, type StuckLockReason } from '@skillsmith/core'
 import type { ManifestReconcileErrorCode } from './apply-manifest-reconcile.types.js'
 
 export interface ReconcileErrorContext {
@@ -21,6 +22,29 @@ export interface ReconcileErrorContext {
   id?: string
   source?: string
   path?: string
+  /**
+   * lock_timeout only: the underlying `StuckLockError.reason` (SMI-6735
+   * adversarial-review finding 1). Reported to the caller as a stable
+   * discriminant, and used to select the reason-specific remedy clause below.
+   *
+   * It no longer selects a VERB (SMI-6764). Three attempts to derive one from
+   * this field failed, the last structurally: `reclaim_unavailable` depends on
+   * whether the reclaim lock is busy or orphaned, `unreclaimable_legacy` on
+   * whether the legacy holder is alive, `reclaim_disabled` on whether a
+   * differently-configured peer exists, and `held` on whether the holder was
+   * ever probed — none of which this value carries. (`held` was added to that
+   * list in round 5; the four rounds before it all read `held` as determined.)
+   * A remedy clause can say "it depends, on this"; a verb cannot.
+   */
+  lockReason?: StuckLockReason
+  /**
+   * lock_timeout only, present when `lockReason === 'reclaim_unavailable'`:
+   * the second file `owned-lock.ts`'s own module docstring documents as the
+   * accepted mitigation for its R1 residual risk (a `SIGKILL` inside the
+   * reclaim critical section orphans `<lock>.reclaim`) — naming ONLY the
+   * main lock path here would leave that orphan permanently un-diagnosable.
+   */
+  reclaimPath?: string
   ledgerEntryId?: string
   /** entry_changed: the value recorded at write time vs. what is on disk now. */
   recordedValue?: unknown
@@ -78,13 +102,44 @@ export function describeReconcileError(
       return `Refusing to back up '${ctx.path ?? '<unknown>'}' — it is not a regular file (C8 guard rail; see createProseBackup's single-file contract).`
     case 'manifest.reconcile.backup_failed':
       return `Failed to create the pre-mutation manifest backup${ctx.detail ? `: ${ctx.detail}` : '.'} No write was made.`
-    case 'manifest.reconcile.lock_timeout':
+    case 'manifest.reconcile.lock_timeout': {
+      // One verb, every reason — matching `StuckLockError` (SMI-6764). Two
+      // rounds tried to split "timed out" from "could not acquire" per reason;
+      // the third found the partition does not exist, because all but one of
+      // the five reasons depend on facts `lockReason` does not carry. Do not
+      // reintroduce a split here: this file is the consumer that drifted from
+      // the primitive last time, and a second verb has nothing true to say.
+      const verb = `Could not acquire the manifest lock at '${ctx.path ?? '<unknown>'}'`
+      const lockPath = ctx.path ?? '<manifest>.lock'
+      const namesReclaim = Boolean(ctx.reclaimPath)
+      // The per-reason remedy comes from core, verbatim (SMI-6764). This file
+      // is the one that drifted from the primitive last time — it got the new
+      // verb while `StuckLockError` kept the old one, on the same lock file —
+      // so it now consumes the prose rather than maintaining a second copy.
+      //
+      // What stays here is only what core cannot know: core's remedy for
+      // `reclaim_disabled` says to restart "this process", and this tool runs
+      // inside a long-lived MCP stdio server. A shell `unset` never reaches an
+      // already-running child (measured), and `isAutoReclaimDisabled()` re-reads
+      // the same value on every retry, so naming the server is load-bearing.
+      //
+      // Note what neither part says: that the lock "will not clear on its own".
+      // A peer without the opt-out can reclaim and release it, and pairing that
+      // false certainty with an unqualified `rm` is how a LIVE holder's lock
+      // gets deleted — the mutual-exclusion break SMI-6735 removed. Step 3
+      // below keeps its "if stale" qualifier for the same reason.
+      const remedy = ctx.lockReason ? ` ${describeRemedy(ctx.lockReason)}` : ''
+      const mcpAddendum =
+        ctx.lockReason === 'reclaim_disabled'
+          ? ` This tool runs inside the MCP server, so restarting "this process" means restarting the server.`
+          : ''
       return (
-        `Timed out waiting for the manifest lock at '${ctx.path ?? '<unknown>'}'. Manual unstick -- ` +
+        `${verb}${ctx.lockReason ? ` (reason: ${ctx.lockReason})` : ''}.${remedy}${mcpAddendum} Manual unstick -- ` +
         `1) confirm no skillsmith process is running: ps -ax | grep -E '[s]killsmith|[s]klx'; ` +
-        `2) inspect (read-only): cat ${ctx.path ?? '<manifest>.lock'}; ` +
-        `3) if stale, remove it: rm ${ctx.path ?? '<manifest>.lock'}.`
+        `2) inspect (read-only): cat ${lockPath}${namesReclaim ? ` ; cat ${ctx.reclaimPath}` : ''}; ` +
+        `3) if stale, remove it: rm ${lockPath}${namesReclaim ? ` ; rm ${ctx.reclaimPath}` : ''}.`
       )
+    }
     case 'manifest.reconcile.entry_changed':
       return (
         `Refusing to revert ledger entry '${ctx.ledgerEntryId ?? '<unknown>'}' for '${ctx.name ?? '<unknown>'}': ` +

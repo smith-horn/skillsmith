@@ -40,6 +40,7 @@ import {
   parseYamlFrontmatter,
   hasPathTraversal,
   validateMetadata,
+  validateNameMatchesDirectory,
   detectClaudeMdModification,
   validateDependencies,
 } from './validate.helpers.js'
@@ -128,6 +129,9 @@ async function executeValidateImpl(
     })
   } else {
     errors.push(...validateMetadata(metadata, strict))
+    // SMI-6472: frontmatter `name` must match the skill's
+    // enclosing directory, per the Agent Skills spec.
+    errors.push(...validateNameMatchesDirectory(metadata.name, skill_path, isDirectory))
   }
 
   // SMI-2441: Check if skill modifies CLAUDE.md

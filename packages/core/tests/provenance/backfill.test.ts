@@ -278,6 +278,53 @@ describe('backfillManifest', () => {
     expect(entry.version).toBe('2.5.0')
   })
 
+  // SMI-6529 Wave A0: a `provenance: 'local'` row is a positive user
+  // assertion ("this is my own skill, not registry-tracked") that must never
+  // be backfilled — even when its source/id fields are otherwise "unhealthy"
+  // (the exact shape that would normally qualify for the fill-missing-fields
+  // path below), unlike the plain-unhealthy case this differs from ONLY by
+  // `provenance`. Asserted field-by-field (not via a byte-identical file
+  // comparison) because `ManifestManager.save()` always rewrites the whole
+  // file with its own pretty-printed formatting whenever ANY entry in the
+  // batch qualifies for planning, regardless of whether this specific
+  // entry's fields end up unchanged — see the "never clobbers" test above
+  // for the same field-level assertion style.
+  it('SMI-6529: never backfills a provenance:"local" row, even though its source is empty (would otherwise qualify)', async () => {
+    const dir = mkSkillDir('local-skill')
+    const existing: SkillManifest = {
+      version: '1.0.0',
+      installedSkills: {
+        'local-skill': {
+          id: 'keep-id',
+          name: 'local-skill',
+          version: '3.0.0',
+          source: '', // "unhealthy" by field-completeness alone
+          installPath: dir,
+          installedAt: '2021-02-02T00:00:00.000Z',
+          lastUpdated: '2021-02-02T00:00:00.000Z',
+          provenance: 'local',
+        },
+      },
+    }
+    fs.mkdirSync(path.dirname(manifestPath), { recursive: true })
+    fs.writeFileSync(manifestPath, JSON.stringify(existing))
+
+    const outcome = await backfillManifest(report(gitResult(dir, 'local-skill')), {
+      manifestPath,
+      apply: true,
+      now: NOW,
+    })
+
+    expect(outcome.written).toEqual([])
+    expect(outcome.skipped).toContain('local-skill')
+
+    const entry = loadManifest().installedSkills['local-skill'] as SkillManifestEntry
+    expect(entry.source).toBe('') // NOT filled in, unlike the plain-unhealthy test below
+    expect(entry.id).toBe('keep-id')
+    expect(entry.version).toBe('3.0.0')
+    expect(entry.provenance).toBe('local')
+  })
+
   it('fills a missing source onto an unhealthy existing entry without clobbering other fields', async () => {
     const dir = mkSkillDir('partial')
     const existing: SkillManifest = {
@@ -322,6 +369,115 @@ describe('backfillManifest', () => {
     const second = await backfillManifest(rpt, { manifestPath, apply: true, now: NOW })
     expect(second.written).toEqual([])
     expect(fs.readFileSync(manifestPath, 'utf-8')).toBe(before)
+  })
+
+  // --------------------------------------------------------------------------
+  // SMI-6358: manifest key must be manifestKeyFor(name, client) — a
+  // non-canonical client's recovered skill must never read/overwrite a
+  // same-named canonical (or other-client) entry.
+  // --------------------------------------------------------------------------
+
+  it('SMI-6358: a non-canonical client writes the name::client key, not the bare name', async () => {
+    const dir = mkSkillDir('gitskill')
+    const canonicalEntry: SkillManifestEntry = {
+      id: 'existing-canonical-id',
+      name: 'gitskill',
+      version: '9.9.9',
+      source: 'https://github.com/keep/me',
+      installPath: '/somewhere/else',
+      installedAt: '2019-01-01T00:00:00.000Z',
+      lastUpdated: '2019-01-01T00:00:00.000Z',
+    }
+    fs.mkdirSync(path.dirname(manifestPath), { recursive: true })
+    fs.writeFileSync(
+      manifestPath,
+      JSON.stringify({ version: '1.0.0', installedSkills: { gitskill: canonicalEntry } })
+    )
+
+    const outcome = await backfillManifest(report(gitResult(dir, 'gitskill')), {
+      manifestPath,
+      apply: true,
+      now: NOW,
+      client: 'cursor',
+    })
+
+    expect(outcome.written).toEqual(['gitskill'])
+
+    const manifest = loadManifest()
+    // The cursor entry landed under the composite key...
+    const cursorEntry = manifest.installedSkills['gitskill::cursor'] as SkillManifestEntry
+    expect(cursorEntry.source).toBe('https://github.com/acme/gitrepo')
+    expect(cursorEntry.client).toBe('cursor')
+    // ...and the pre-existing canonical (bare-name) entry is byte-identical —
+    // no orphan duplicate, no clobber.
+    const bareEntry = manifest.installedSkills.gitskill as SkillManifestEntry
+    expect(bareEntry).toEqual(canonicalEntry)
+  })
+
+  it('SMI-6358: the default (canonical) client omits the client field and keys bare, byte-identical to pre-SMI-6358 output', async () => {
+    const dir = mkSkillDir('gitskill')
+    const outcome = await backfillManifest(report(gitResult(dir, 'gitskill')), {
+      manifestPath,
+      apply: true,
+      now: NOW,
+    })
+
+    expect(outcome.written).toEqual(['gitskill'])
+    const entry = loadManifest().installedSkills.gitskill as SkillManifestEntry
+    expect(entry.client).toBeUndefined()
+  })
+
+  it('SMI-6358: a non-canonical client never clobbers a healthy entry under ITS OWN key, even when a different client has an unhealthy entry of the same name', async () => {
+    const dir = mkSkillDir('shared-name')
+    const existing = {
+      version: '1.0.0',
+      installedSkills: {
+        // Canonical entry is unhealthy (no source) — would normally qualify
+        // for the fill-missing-fields merge path.
+        'shared-name': {
+          id: 'canon-id',
+          name: 'shared-name',
+          version: '1.0.0',
+          source: '',
+          installPath: dir,
+          installedAt: '2020-01-01T00:00:00.000Z',
+          lastUpdated: '2020-01-01T00:00:00.000Z',
+        },
+        // The cursor entry is already healthy — must be protected from
+        // clobber independent of the canonical entry's health.
+        'shared-name::cursor': {
+          id: 'cursor-id',
+          name: 'shared-name',
+          version: '2.0.0',
+          source: 'https://github.com/healthy/cursor-source',
+          installPath: dir,
+          installedAt: '2021-01-01T00:00:00.000Z',
+          lastUpdated: '2021-01-01T00:00:00.000Z',
+        },
+      },
+    }
+    fs.mkdirSync(path.dirname(manifestPath), { recursive: true })
+    fs.writeFileSync(manifestPath, JSON.stringify(existing))
+
+    const outcome = await backfillManifest(report(gitResult(dir, 'shared-name')), {
+      manifestPath,
+      apply: true,
+      now: NOW,
+      client: 'cursor',
+    })
+
+    // The already-healthy cursor entry is skipped, not clobbered.
+    expect(outcome.written).toEqual([])
+    expect(outcome.skipped).toContain('shared-name')
+
+    const manifest = loadManifest()
+    const cursorEntry = manifest.installedSkills['shared-name::cursor'] as SkillManifestEntry
+    expect(cursorEntry.id).toBe('cursor-id')
+    expect(cursorEntry.source).toBe('https://github.com/healthy/cursor-source')
+    // The canonical (unhealthy) entry was never even considered — different key.
+    const bareEntry = manifest.installedSkills['shared-name'] as SkillManifestEntry
+    expect(bareEntry.id).toBe('canon-id')
+    expect(bareEntry.source).toBe('')
   })
 
   it('writeFrontmatter adds repository: to a non-git skill, skipping git checkouts', async () => {

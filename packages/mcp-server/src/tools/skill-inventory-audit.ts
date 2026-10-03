@@ -66,7 +66,9 @@ export type SkillInventoryAuditValidatedInput = z.infer<typeof skillInventoryAud
 export const skillInventoryAuditToolSchema = {
   name: 'skill_inventory_audit',
   description:
-    "[Skillsmith — Maintain stage] Audit your installed AI coding clients' skill inventories (Claude Code, Cursor, Copilot, and every other Skillsmith-supported client) — plus Claude Code's own commands, agents, and CLAUDE.md trigger rules — for local namespace collisions. Returns rename + prose-edit suggestions keyed by a fresh `auditId`. Read-only — performs no file mutations. Feed the returned suggestions into `apply_namespace_rename` / `apply_recommended_edit`.",
+    "[Skillsmith — Maintain stage] Audit your installed AI coding clients' skill inventories (Claude Code, Cursor, Copilot, and every other Skillsmith-supported client) — plus Claude Code's own commands, agents, and CLAUDE.md trigger rules — for local namespace collisions. Returns rename + prose-edit suggestions keyed by a fresh `auditId`. Never modifies your skills, commands, agents, or CLAUDE.md — it only writes its own audit artifacts under `~/.skillsmith/audits/<auditId>/`. Feed the returned suggestions into `apply_namespace_rename` / `apply_recommended_edit`.",
+  title: 'Audit Skill Namespace Inventory',
+  annotations: { readOnlyHint: false, destructiveHint: false },
   inputSchema: {
     type: 'object' as const,
     properties: {
@@ -95,7 +97,7 @@ export const skillInventoryAuditToolSchema = {
 /**
  * Execute the `skill_inventory_audit` tool. Validates input via Zod and
  * returns either the success response OR a structured validation-error
- * envelope (matches `install.ts:buildValidationError` pattern).
+ * envelope (matches `install.errors.ts:buildValidationError` pattern).
  */
 async function skillInventoryAuditImpl(
   input: unknown
@@ -132,7 +134,7 @@ export const skillInventoryAudit = withTelemetry(skillInventoryAuditImpl, {
 
 /**
  * Application-level validation-error envelope. Mirrors the
- * `install.ts:buildValidationError` shape so MCP clients that introspect
+ * `install.errors.ts:buildValidationError` shape so MCP clients that introspect
  * `success` get a consistent failure surface across audit + install
  * tools.
  */

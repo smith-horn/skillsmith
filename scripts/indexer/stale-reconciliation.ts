@@ -33,7 +33,8 @@ import { buildGitHubHeaders } from './_shared/github-auth.ts'
 import { parseSkillMdUrl, fetchSkillMd } from './_shared/skill-md-fetch.ts'
 import {
   scanSkillContent,
-  shouldQuarantine,
+  shouldQuarantineFailClosed,
+  isScanTruncated,
   summarizeFindings,
 } from './_shared/security-scanner-edge.ts'
 
@@ -199,21 +200,28 @@ export async function verifyAndReconcileStaleSkill(
   const scan = await scanSkillContent(fetched.content)
   const now = new Date().toISOString()
 
-  if (shouldQuarantine(scan)) {
-    // Live repo, malicious content: quarantine with the REAL finding, not
-    // 'stale'. Match by id only + set quarantined:true explicitly —
-    // fail-closed (mirrors processRow's SMI-5377 requarantine branch).
+  if (shouldQuarantineFailClosed(scan)) {
+    // Live repo, malicious content (or a truncated scan — SMI-6020 design
+    // §3.3.6/§2.5 item 10): quarantine with the REAL finding, not 'stale'.
+    // Match by id only + set quarantined:true explicitly — fail-closed
+    // (mirrors processRow's SMI-5377 requarantine branch).
     const summary = summarizeFindings(scan.findings) || 'security scan'
+    const truncated = isScanTruncated(scan)
+    const updatePayload: Record<string, unknown> = {
+      quarantined: true,
+      quarantine_reason: summary,
+      last_scanned_at: now,
+      content_hash: scan.contentHash,
+    }
+    if (!truncated) {
+      // Rule B (design §2.3): omit these two keys on a truncated scan so the
+      // single-row .update() leaves the prior, stricter values in place.
+      updatePayload.security_score = scan.riskScore
+      updatePayload.security_findings = scan.findings
+    }
     const { error: updateErr } = await supabase
       .from('skills')
-      .update({
-        quarantined: true,
-        quarantine_reason: summary,
-        security_score: scan.riskScore,
-        security_findings: scan.findings,
-        last_scanned_at: now,
-        content_hash: scan.contentHash,
-      })
+      .update(updatePayload)
       .eq('id', row.id)
       .select('id')
     if (updateErr) {

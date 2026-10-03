@@ -261,7 +261,7 @@ validate_and_rebuild_per_package_native_modules() {
 
         if [ -n "$PACKAGE_TARGETS_FAILED" ]; then
             echo -e "${RED}[entrypoint] Per-package native module validation failed after rebuild: ${PACKAGE_TARGETS_FAILED}${NC}"
-            echo -e "${YELLOW}For verbose rebuild output (run on host, per target): docker exec <container> sh -c 'cd /app/packages/<pkg> && npm rebuild <module> --ignore-scripts=false'${NC}"
+            echo -e "${YELLOW}For verbose rebuild output (run on host, per target): docker exec <container> sh -c 'sh scripts/lib/node-modules-mount-gate.sh && cd /app/packages/<pkg> && npm rebuild <module> --ignore-scripts=false'${NC}"
             exit 1
         fi
 

@@ -14,8 +14,9 @@
  */
 
 import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest'
-import { existsSync, mkdirSync, readFileSync, writeFileSync, rmSync } from 'fs'
-import { dirname } from 'path'
+import { existsSync, mkdirSync, mkdtempSync, readFileSync, writeFileSync, rmSync } from 'fs'
+import { dirname, join } from 'path'
+import { tmpdir } from 'os'
 
 vi.mock('../../src/tools/install.js', () => ({
   installSkill: vi.fn(),
@@ -287,6 +288,124 @@ describe('Tier-1 Self-Heal (SMI-5582)', () => {
 
       const [, failures] = setPendingWelcomeMock.mock.calls[0]
       expect(failures).toEqual([])
+    })
+
+    // SMI-6529 L11 (round 2) / N10 (round 4): a Tier-1 install refused by
+    // the target guard because something is REALLY already there
+    // (untracked directory, or a git clone) must count as "installed" the
+    // same way ALREADY_INSTALLED does — otherwise this self-heal loop would
+    // re-nag on it every 24h forever, since the guard refuses the exact
+    // same way every retry. `installPath` here is a REAL, existing
+    // directory — matching production's actual shape (checkInstallTarget's
+    // caller always passes the real computed path on a refusal, never '' —
+    // confirmed via `skill-installation.service.ts`'s own
+    // `buildInstallFailure(targetCheck.code, { installPath, ... })` call,
+    // `installPath` being the same variable used for the successful-write
+    // path). N10 below covers the phantom (nothing-on-disk) counterpart.
+    it('INSTALL_TARGET_UNTRACKED with a REAL existing directory counts as installed and is not a failure', async () => {
+      seedStatusFile(undefined)
+      const realDir = mkdtempSync(join(tmpdir(), 'tier1-self-heal-real-'))
+      try {
+        installSkillMock
+          .mockResolvedValueOnce(successResult('skill-writer'))
+          .mockResolvedValueOnce({
+            success: false,
+            skillId: 'commit',
+            installPath: realDir,
+            error: 'untracked directory',
+            errorCode: 'INSTALL_TARGET_UNTRACKED',
+          } as MockInstallResult)
+          .mockResolvedValueOnce(successResult('code-review'))
+
+        await maybeInstallMissingTier1Skills(toolContext)
+
+        const persisted = readTier1Status()
+        expect(persisted.installed.sort()).toEqual([...SKILL_NAMES].sort())
+
+        const [, failures] = setPendingWelcomeMock.mock.calls[0]
+        expect(failures).toEqual([])
+      } finally {
+        rmSync(realDir, { recursive: true, force: true })
+      }
+    })
+
+    it('INSTALL_TARGET_GIT_WORKTREE with a REAL existing directory counts as installed and is not a failure', async () => {
+      seedStatusFile(undefined)
+      const realDir = mkdtempSync(join(tmpdir(), 'tier1-self-heal-real-'))
+      try {
+        installSkillMock
+          .mockResolvedValueOnce(successResult('skill-writer'))
+          .mockResolvedValueOnce({
+            success: false,
+            skillId: 'commit',
+            installPath: realDir,
+            error: 'git working tree',
+            errorCode: 'INSTALL_TARGET_GIT_WORKTREE',
+          } as MockInstallResult)
+          .mockResolvedValueOnce(successResult('code-review'))
+
+        await maybeInstallMissingTier1Skills(toolContext)
+
+        const persisted = readTier1Status()
+        expect(persisted.installed.sort()).toEqual([...SKILL_NAMES].sort())
+
+        const [, failures] = setPendingWelcomeMock.mock.calls[0]
+        expect(failures).toEqual([])
+      } finally {
+        rmSync(realDir, { recursive: true, force: true })
+      }
+    })
+
+    // SMI-6529 N10 (round 4, reviewer probe-untracked-codes.mjs): these two
+    // codes can ALSO fire with NOTHING on disk at all — e.g. an invalid or
+    // relative manifest `installPath` row (L17), or a `provenance:'local'`
+    // entry whose recorded directory is already gone (M8). Trusting them
+    // unconditionally as "installed" (the round-2 L11 behavior) would count
+    // a phantom, non-existent install as done FOREVER — no retry would ever
+    // fire to actually install the skill. This must NOT count as installed.
+    it('N10: INSTALL_TARGET_UNTRACKED with NOTHING on disk does NOT count as installed — retried, not silently trusted', async () => {
+      seedStatusFile(undefined)
+      const phantomPath = join(tmpdir(), 'tier1-self-heal-phantom-' + Date.now())
+      installSkillMock
+        .mockResolvedValueOnce(successResult('skill-writer'))
+        .mockResolvedValueOnce({
+          success: false,
+          skillId: 'commit',
+          installPath: phantomPath,
+          error: 'a phantom manifest row',
+          errorCode: 'INSTALL_TARGET_UNTRACKED',
+        } as MockInstallResult)
+        .mockResolvedValueOnce(successResult('code-review'))
+
+      await maybeInstallMissingTier1Skills(toolContext)
+
+      const persisted = readTier1Status()
+      expect(persisted.installed.sort()).toEqual(['code-review', 'skill-writer'].sort())
+
+      const [, failures] = setPendingWelcomeMock.mock.calls[0]
+      expect(failures).toEqual(['commit'])
+    })
+
+    it('N10: INSTALL_TARGET_UNTRACKED with an EMPTY installPath does NOT count as installed', async () => {
+      seedStatusFile(undefined)
+      installSkillMock
+        .mockResolvedValueOnce(successResult('skill-writer'))
+        .mockResolvedValueOnce({
+          success: false,
+          skillId: 'commit',
+          installPath: '',
+          error: 'a phantom manifest row',
+          errorCode: 'INSTALL_TARGET_GIT_WORKTREE',
+        } as MockInstallResult)
+        .mockResolvedValueOnce(successResult('code-review'))
+
+      await maybeInstallMissingTier1Skills(toolContext)
+
+      const persisted = readTier1Status()
+      expect(persisted.installed.sort()).toEqual(['code-review', 'skill-writer'].sort())
+
+      const [, failures] = setPendingWelcomeMock.mock.calls[0]
+      expect(failures).toEqual(['commit'])
     })
 
     it('throttle skip: within 24h of lastAttempt, installSkill is never called and the file is untouched', async () => {

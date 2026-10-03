@@ -94,7 +94,7 @@ these terms.
 
 ---
 
-Copyright 2026 Smith Horn Group Ltd
+Copyright 2025-2026 Smith Horn Group Ltd
 
 Licensed under the Elastic License 2.0; you may not use this software except in
 compliance with the Elastic License 2.0.

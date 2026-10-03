@@ -12,6 +12,7 @@
  */
 
 import { queryRows, queryScalar, nullable, type PgConnParams } from './smi5879-census.pg.ts'
+import { createSmi5879SimulateFullDbDeps } from './smi5879-simulate-full.db.ts'
 import type {
   DriftRow,
   Smi5879GateCheckDbDeps,
@@ -71,6 +72,16 @@ export function parseFreezeLeakCount(raw: string | null): number {
 
 /** Build the real, psql-backed dependency set for a given connection. */
 export function createSmi5879GateCheckDbDeps(conn: PgConnParams): Smi5879GateCheckDbDeps {
+  // SMI-6444: `loadCohortRows`/`loadBranchMap` DELEGATE to the simulator's own
+  // already-shipped adapter rather than re-declaring their SQL here. This
+  // file's `verifyDigest` below is explicitly annotated as "lifted verbatim
+  // from smi5879-simulate-full.db.ts" precisely to flag the drift risk of a
+  // second copy — adding two more hand-copied queries would compound exactly
+  // the problem that annotation exists to warn about. Delegation means the
+  // gate reads the population through the SAME query the simulator and
+  // merge-shards already read it through, so there is no second path that
+  // could drift out of sync with the first.
+  const simulateFullDeps = createSmi5879SimulateFullDbDeps(conn)
   return {
     async getRunSummary(runId) {
       // Timestamps are rendered via the SAME canonical UTC/microsecond
@@ -284,6 +295,15 @@ export function createSmi5879GateCheckDbDeps(conn: PgConnParams): Smi5879GateChe
         })
       }
       return out
+    },
+
+    // SMI-6444 — see the delegation note at the top of this factory.
+    async loadCohortRows(runId) {
+      return simulateFullDeps.loadCohortRows(runId)
+    },
+
+    async loadBranchMap(runId) {
+      return simulateFullDeps.loadBranchMap(runId)
     },
   }
 }

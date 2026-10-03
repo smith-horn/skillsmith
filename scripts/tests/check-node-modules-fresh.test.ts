@@ -11,7 +11,9 @@
  * Cases covered:
  *   P-1 FRESH:          --write-sentinel, then default check → exit 0.
  *   P-2 DRIFT:          write sentinel, mutate lockfile → check → exit 1;
- *                       output names `npm install`, does NOT contain `--no-verify`.
+ *                       output names the scripted refresh (regen-lockfile.sh),
+ *                       never a bare `npm install` line, and does NOT contain
+ *                       `--no-verify` (SMI-6606/SMI-6614, ADR-158).
  *   P-3 MISSING:        no sentinel → check → exit 1; "dependencies not installed"
  *                       message present.
  *   P-4 ESCAPE HATCH:   SKILLSMITH_SKIP_DEPS_FRESHNESS=1 on drifted fixture → exit 0.
@@ -143,7 +145,7 @@ describe('check-node-modules-fresh.sh (SMI-5343/5344)', () => {
 
   // ── P-2 DRIFT ───────────────────────────────────────────────────────────────
 
-  it('P-2 DRIFT: stale lockfile exits 1 naming npm install but not --no-verify', () => {
+  it('P-2 DRIFT: stale lockfile exits 1 naming the refresh remedy but not --no-verify', () => {
     const { root, lockfile } = fixture!
 
     // Write sentinel against original lockfile.
@@ -157,8 +159,18 @@ describe('check-node-modules-fresh.sh (SMI-5343/5344)', () => {
     const check = runScript(root)
     expect(check.status).toBe(1)
 
-    // Output must name the install remedy.
-    expect(check.output).toMatch(/npm install/)
+    // SMI-6606/SMI-6614 (ADR-158): the remedy no longer mentions `npm
+    // install` AT ALL (bare or otherwise, e.g. the old "docker exec
+    // skillsmith-dev-1 npm install   # container tree" line) — it points at
+    // the scripted refresh sequence (print-deps-refresh-advice.sh /
+    // regen-lockfile.sh) instead, so an unattended install in a shared tree
+    // is never advertised as the fix. A substring check (not just an
+    // anchored bare-line regex) is required here — the pre-fix banner's
+    // container-tree line contains "npm install" but is NOT a bare line, so
+    // an anchored-only assertion passes against both old and new code
+    // (caught by the SMI-6598 revert-and-fail check).
+    expect(check.output).not.toContain('npm install')
+    expect(check.output).toMatch(/regen-lockfile\.sh/)
 
     // Must NOT suggest --no-verify (plan §2 requirement: the footgun must not
     // be advertised when drift is an environmental issue, not a code problem).
@@ -176,12 +188,15 @@ describe('check-node-modules-fresh.sh (SMI-5343/5344)', () => {
     const check = runScript(root)
     expect(check.status).toBe(1)
 
-    // The script sets DRIFT_REASON="dependencies not installed — run npm install"
-    // for a missing sentinel and includes it in the `(%s)` line.
+    // The script sets DRIFT_REASON="dependencies not installed" for a
+    // missing sentinel and includes it in the `(%s)` line.
     expect(check.output).toMatch(/dependencies not installed/)
 
-    // The output should still guide toward npm install.
-    expect(check.output).toMatch(/npm install/)
+    // SMI-6606/SMI-6614 (ADR-158): the output guides toward the scripted
+    // refresh sequence and never mentions `npm install` at all (substring,
+    // not just an anchored bare-line check — see the P-2 case above for why).
+    expect(check.output).toMatch(/regen-lockfile\.sh/)
+    expect(check.output).not.toContain('npm install')
   })
 
   // ── P-4 ESCAPE HATCH ────────────────────────────────────────────────────────

@@ -584,20 +584,9 @@ jobs:
       - name: Verify core on npm
         if: steps.publish-core-oidc.outcome == 'success'
         run: |
+          # audit:publish-verify-step
           VERSION=$(jq -r .version packages/core/package.json)
-          # Retry to absorb npm registry/CDN propagation lag right after publish —
-          # a single immediate `npm view` can false-negative on a real publish.
-          for attempt in 1 2 3 4 5; do
-            LIVE=$(npm view "@skillsmith/core@${VERSION}" version 2>/dev/null || echo '')
-            if [ "$LIVE" = "$VERSION" ]; then
-              echo "✓ @skillsmith/core@${VERSION} verified live on npm (attempt ${attempt})"
-              exit 0
-            fi
-            echo "… @skillsmith/core@${VERSION} not yet visible (attempt ${attempt}/5); waiting 6s"
-            sleep 6
-          done
-          echo "::error::@skillsmith/core@${VERSION} is not live on npm after publish — failing the job."
-          exit 1
+          bash scripts/ci/verify-npm-publish.sh '@skillsmith/core' "$VERSION"
 
   # SMI-1319: Use pre-publish-check outputs to skip already-published packages
   publish-mcp-server:
@@ -721,20 +710,9 @@ jobs:
       - name: Verify mcp-server on npm
         if: steps.publish-mcp-server-oidc.outcome == 'success'
         run: |
+          # audit:publish-verify-step
           VERSION=$(jq -r .version packages/mcp-server/package.json)
-          # Retry to absorb npm registry/CDN propagation lag right after publish —
-          # a single immediate `npm view` can false-negative on a real publish.
-          for attempt in 1 2 3 4 5; do
-            LIVE=$(npm view "@skillsmith/mcp-server@${VERSION}" version 2>/dev/null || echo '')
-            if [ "$LIVE" = "$VERSION" ]; then
-              echo "✓ @skillsmith/mcp-server@${VERSION} verified live on npm (attempt ${attempt})"
-              exit 0
-            fi
-            echo "… @skillsmith/mcp-server@${VERSION} not yet visible (attempt ${attempt}/5); waiting 6s"
-            sleep 6
-          done
-          echo "::error::@skillsmith/mcp-server@${VERSION} is not live on npm after publish — failing the job."
-          exit 1
+          bash scripts/ci/verify-npm-publish.sh '@skillsmith/mcp-server' "$VERSION"
 
       # SMI-2158: Publish to MCP Registry after npm publish.
       # SMI-4534: pinned to a specific tag (not releases/latest) — mcp-publisher v1.6.0
@@ -931,20 +909,9 @@ jobs:
       - name: Verify cli on npm
         if: steps.publish-cli-oidc.outcome == 'success'
         run: |
+          # audit:publish-verify-step
           VERSION=$(jq -r .version packages/cli/package.json)
-          # Retry to absorb npm registry/CDN propagation lag right after publish —
-          # a single immediate `npm view` can false-negative on a real publish.
-          for attempt in 1 2 3 4 5; do
-            LIVE=$(npm view "@skillsmith/cli@${VERSION}" version 2>/dev/null || echo '')
-            if [ "$LIVE" = "$VERSION" ]; then
-              echo "✓ @skillsmith/cli@${VERSION} verified live on npm (attempt ${attempt})"
-              exit 0
-            fi
-            echo "… @skillsmith/cli@${VERSION} not yet visible (attempt ${attempt}/5); waiting 6s"
-            sleep 6
-          done
-          echo "::error::@skillsmith/cli@${VERSION} is not live on npm after publish — failing the job."
-          exit 1
+          bash scripts/ci/verify-npm-publish.sh '@skillsmith/cli' "$VERSION"
 
   # SMI-5513: Standalone OIDC publish job for the UNSCOPED skillsmith-cli wrapper
   # (the npm name-disambiguation redirect from SMI-3561; delegates to
@@ -1047,24 +1014,23 @@ jobs:
           npm publish -w skillsmith-cli --access public
           echo "::notice::OIDC publish succeeded for skillsmith-cli"
 
-      - name: Verify skillsmith-cli on npm + smoke the wrapper
+      - name: Verify skillsmith-cli on npm
         if: steps.publish-skillsmith-cli-oidc.outcome == 'success'
         run: |
+          # audit:publish-verify-step
           VERSION=$(jq -r .version packages/skillsmith-cli/package.json)
-          # Retry to absorb npm registry/CDN propagation lag right after publish.
-          LIVE=''
-          for attempt in 1 2 3 4 5; do
-            LIVE=$(npm view "skillsmith-cli@${VERSION}" version 2>/dev/null || echo '')
-            if [ "$LIVE" = "$VERSION" ]; then
-              echo "OK skillsmith-cli@${VERSION} verified live on npm (attempt ${attempt})"
-              break
-            fi
-            echo "... skillsmith-cli@${VERSION} not yet visible (attempt ${attempt}/5); waiting 6s"
-            sleep 6
-          done
-          if [ "$LIVE" != "$VERSION" ]; then
-            echo "::error::skillsmith-cli@${VERSION} is not live on npm after publish - failing the job."
-            exit 1
+          bash scripts/ci/verify-npm-publish.sh 'skillsmith-cli' "$VERSION"
+
+      - name: Smoke the npx wrapper
+        if: steps.publish-skillsmith-cli-oidc.outcome == 'success'
+        run: |
+          # SMI-6497: the split put a SECOND `jq` read on this job's path, after the
+          # verify step already passed. Guarded to match `mktemp` and `sleep` below --
+          # every fallible command in this tail is non-fatal, because the publish is
+          # irreversible and already confirmed live.
+          if ! VERSION=$(jq -r .version packages/skillsmith-cli/package.json); then
+            echo "::warning::could not read skillsmith-cli's version from packages/skillsmith-cli/package.json (missing file, unreadable, or malformed JSON) - skipping the bin-delegation smoke check. Non-fatal: the publish is already verified live on npm above."
+            exit 0
           fi
           # Smoke the REAL install path, run from a fresh temp dir OUTSIDE the
           # monorepo: npx must resolve the PUBLISHED skillsmith-cli + its
@@ -1075,16 +1041,26 @@ jobs:
           # cannot be un-published, so this bonus bin-delegation check warns
           # loudly for a fix-forward rather than red-failing an irreversible
           # success.
-          SMOKE_DIR="$(mktemp -d)"
+          if ! SMOKE_DIR="$(mktemp -d)"; then
+            echo "::warning::mktemp -d failed while preparing the skillsmith-cli smoke sandbox (disk full, an invalid/unwritable explicitly-set TMPDIR, or permissions) - skipping the bin-delegation smoke check. Non-fatal: the publish is already verified live on npm above."
+            exit 0
+          fi
           for attempt in 1 2 3; do
             if (cd "$SMOKE_DIR" && npx -y "skillsmith-cli@${VERSION}" --version) >/tmp/sk-smoke.out 2>&1; then
               echo "OK npx skillsmith-cli@${VERSION} --version -> $(tail -1 /tmp/sk-smoke.out)"
               exit 0
             fi
             echo "... npx smoke not ready (attempt ${attempt}/3); waiting 8s"
-            sleep 8
+            sleep 8 || {
+              echo "::warning::sleep failed during the npx smoke retry loop - skipping remaining attempts. Non-fatal: the publish is already verified live on npm above."
+              exit 0
+            }
           done
-          echo "::warning::npx skillsmith-cli@${VERSION} --version smoke did not pass (package is published + verified live on npm regardless; check bin delegation)."
+          # SMI-6493: if the verify loop above took the slow path (a high attempt
+          # number, or "final probe"), the tarball may simply not be on the CDN
+          # yet - installability lags packument visibility. Name that benign cause
+          # so a triager does not chase bin delegation for a slow-but-fine publish.
+          echo "::warning::npx skillsmith-cli@${VERSION} --version smoke did not pass (package is published + verified live on npm regardless). If the verify step above reported a high attempt number or a final-probe rescue, the likeliest cause is npm tarball propagation lag, not bin delegation - re-check with 'npx -y skillsmith-cli@${VERSION} --version' before investigating."
           cat /tmp/sk-smoke.out || true
           exit 0
 

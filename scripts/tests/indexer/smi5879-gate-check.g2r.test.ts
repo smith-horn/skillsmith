@@ -14,25 +14,42 @@ import {
   DECISION_RUN_ID,
   WINDOW_RUN_ID,
   WINDOW_STARTED_AT_OVER_BOUND,
-  makeCountingFakeDb,
-  makeDriftRow,
   makeRunSummary,
   makeWindowRunSummary,
 } from './smi5879-gate-check.fixtures.ts'
+import {
+  makeBulkEntry,
+  makeDispositionBatchJson,
+} from './smi5879-gate-check.fixtures.dispositions.ts'
+import { makeCountingFakeDb, makeDriftRow } from './smi5879-gate-check.fixtures.g2r.ts'
+import {
+  resolveLedger,
+  validateDispositionLedgerShape,
+} from '../../indexer/smi5879-gate-check.helpers.ts'
 import type { ResolvedLedger } from '../../indexer/smi5879-gate-check.helpers.ts'
 
+/**
+ * SMI-6444: ledger fixtures now go through the REAL shape validator +
+ * `resolveLedger` pipeline rather than hand-rolling a `LedgerValidation`
+ * object. Two reasons: `LedgerValidation` grew `provenanceById`/`batchById`,
+ * and G-2R's drift-disposition check now reads provenance — a hand-built
+ * fixture could assert a disposition the real validator would never produce.
+ */
+function ledgerFromJson(json: Record<string, unknown>): ResolvedLedger {
+  const shape = validateDispositionLedgerShape(json)
+  if (!shape.ok) throw new Error(`g2r fixture ledger is not shape-valid: ${shape.reason}`)
+  return resolveLedger({ status: 'ok', value: shape.value })
+}
+
 function emptyLedger(): ResolvedLedger {
-  return {
-    validation: { valid: true, byId: new Map(), conflictingIds: [] },
-    loadFailureReason: null,
-  }
+  return ledgerFromJson({ run_id: DECISION_RUN_ID, entries: [] })
 }
 
 function ledgerWith(entries: [string, 'confirm' | 'exclude'][]): ResolvedLedger {
-  return {
-    validation: { valid: true, byId: new Map(entries), conflictingIds: [] },
-    loadFailureReason: null,
-  }
+  return ledgerFromJson({
+    run_id: DECISION_RUN_ID,
+    entries: entries.map(([id, verdict]) => ({ id, verdict })),
+  })
 }
 
 describe('evaluateG2R — mode gating', () => {
@@ -242,6 +259,115 @@ describe('evaluateG2R — phase (ii) freeze-leak hard fail and DR-0 cross-check'
     // but no undisposed/DR-5 accounting happens beyond what phase (ii) sets.
     expect(report?.undisposed_drift_ids).toEqual([])
     expect(calls.enumerateDrift).toBe(1)
+  })
+})
+
+/**
+ * SMI-6444 (queen-coordinated extension of plan Item 2): G-2R's phase (iii)
+ * was a SECOND read site of the same disposition data G-1 now authorizes.
+ * Before this, a `method:'bulk'` entry made G-2R report a drift row as
+ * disposed and PASS while G-1 correctly refused it — no false overall PASS
+ * (G-1 still blocked), but a materially misleading gate result and
+ * `undisposed_drift_ids` field. Drift stays manual (plan Item 0).
+ */
+describe('evaluateG2R — phase (iii) bulk entries never dispose a drift row (SMI-6444)', () => {
+  const DRIFT_ID = 'drifted-1'
+  const BATCH_ID = 'batch-unfetchable-001'
+
+  function driftDb(): ReturnType<typeof makeCountingFakeDb> {
+    return makeCountingFakeDb({
+      async enumerateDrift() {
+        return [makeDriftRow({ id: DRIFT_ID, drift_class: 'DR-1-deleted-row' })]
+      },
+    })
+  }
+
+  it('a bulk entry naming a NONEXISTENT batch leaves the drift row undisposed', async () => {
+    const { db } = driftDb()
+    const ledger = ledgerFromJson({
+      run_id: DECISION_RUN_ID,
+      entries: [makeBulkEntry(DRIFT_ID, 'no-such-batch')],
+    })
+    const { gate, report } = await evaluateG2R(
+      'reconciliation',
+      db,
+      DECISION_RUN_ID,
+      WINDOW_RUN_ID,
+      ledger
+    )
+    expect(gate.outcome).toBe('INCONCLUSIVE')
+    expect(gate.reason).toMatch(/lack a recorded exclude/)
+    expect(report?.undisposed_drift_ids).toEqual([DRIFT_ID])
+  })
+
+  it('a bulk entry naming a REAL, SIGNED, coherent batch STILL leaves the drift row undisposed', async () => {
+    // The load-bearing case: `drift_class` and the report `outcome` are
+    // independent axes, so a genuinely-signed `unfetchable` batch could cover
+    // a row that is ALSO a DR-1 row. Authorization alone would let that
+    // through; the manual-only rule is what actually keeps drift manual.
+    const { db } = driftDb()
+    const ledger = ledgerFromJson({
+      run_id: DECISION_RUN_ID,
+      entries: [makeBulkEntry(DRIFT_ID, BATCH_ID)],
+      batches: [
+        makeDispositionBatchJson({
+          batchId: BATCH_ID,
+          outcomeClass: 'unfetchable',
+          entryIds: [DRIFT_ID],
+        }),
+      ],
+    })
+    // Sanity: the batch really is well-formed and signed — this test would be
+    // vacuous if the ledger were merely malformed.
+    expect(ledger.validation.batchById.get(BATCH_ID)?.signed_off_by).toBeTruthy()
+
+    const { gate, report } = await evaluateG2R(
+      'reconciliation',
+      db,
+      DECISION_RUN_ID,
+      WINDOW_RUN_ID,
+      ledger
+    )
+    expect(gate.outcome).toBe('INCONCLUSIVE')
+    expect(report?.undisposed_drift_ids).toEqual([DRIFT_ID])
+  })
+
+  it('a MANUAL exclude for the same drift row still disposes it (no regression)', async () => {
+    const { db } = driftDb()
+    const { gate, report } = await evaluateG2R(
+      'reconciliation',
+      db,
+      DECISION_RUN_ID,
+      WINDOW_RUN_ID,
+      ledgerWith([[DRIFT_ID, 'exclude']])
+    )
+    expect(gate.outcome).toBe('PASS')
+    expect(report?.undisposed_drift_ids).toEqual([])
+  })
+
+  it('a bulk-excluded DR-5 row is STILL flagged as improperly excluded (flagging a claim needs no authorization)', async () => {
+    // The deliberate asymmetry: honoring a disposition requires authorization,
+    // FLAGGING an unwanted one does not — routing this through the lookup
+    // would hide a bulk-excluded DR-5 row from the audit signal.
+    const { db } = makeCountingFakeDb({
+      async enumerateDrift() {
+        return [makeDriftRow({ id: 'moved-out-1', drift_class: 'DR-5-cohort-move-out' })]
+      },
+    })
+    const ledger = ledgerFromJson({
+      run_id: DECISION_RUN_ID,
+      entries: [makeBulkEntry('moved-out-1', 'no-such-batch')],
+    })
+    const { gate, report } = await evaluateG2R(
+      'reconciliation',
+      db,
+      DECISION_RUN_ID,
+      WINDOW_RUN_ID,
+      ledger
+    )
+    // DR-5 never blocks, so the gate still passes — but the row is reported.
+    expect(gate.outcome).toBe('PASS')
+    expect(report?.improperly_excluded_dr5_ids).toEqual(['moved-out-1'])
   })
 })
 

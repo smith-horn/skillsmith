@@ -264,10 +264,12 @@ jobs:
         id: spec
         # All spec files are passed explicitly: Playwright treats a positional
         # path as the test set, so naming only the round-trip spec would silently
-        # skip cross-harness-inventory.rls.spec.ts (Test E) or the SMI-5604
-        # dotfile-guard spec (Test E'). Keep all three in sync with the
-        # pull_request path filter glob `cross-harness-inventory.*` above.
-        run: npx playwright test --config=packages/website/playwright.config.ts packages/website/tests/e2e/cross-harness-inventory.spec.ts packages/website/tests/e2e/cross-harness-inventory.rls.spec.ts packages/website/tests/e2e/cross-harness-inventory.dotfile-guard.spec.ts --reporter=list
+        # skip cross-harness-inventory.rls.spec.ts (Test E), the SMI-5604
+        # dotfile-guard spec (Test E'), or the SMI-6503 rendered-contrast spec.
+        # Keep all four in sync with the pull_request path filter glob
+        # `cross-harness-inventory.*` above -- a spec added to the directory but
+        # not to this line is triggered by the filter and then never run.
+        run: npx playwright test --config=packages/website/playwright.config.ts packages/website/tests/e2e/cross-harness-inventory.spec.ts packages/website/tests/e2e/cross-harness-inventory.rls.spec.ts packages/website/tests/e2e/cross-harness-inventory.dotfile-guard.spec.ts packages/website/tests/e2e/cross-harness-inventory.contrast.spec.ts --reporter=list
 
       - name: Surface real e2e result (Phase-1 invisible-success guard)
         # The job is continue-on-error during Phase 1, so its conclusion is

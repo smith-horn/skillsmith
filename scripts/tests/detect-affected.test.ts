@@ -2,7 +2,10 @@
  * Tests for Affected Package Detection (SMI-2190)
  */
 
-import { describe, it, expect } from 'vitest'
+import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest'
+import { mkdtempSync, readFileSync, rmSync } from 'fs'
+import { tmpdir } from 'os'
+import { join } from 'path'
 import {
   loadWorkspacePackages,
   buildDependencyGraph,
@@ -10,7 +13,9 @@ import {
   requiresAllPackages,
   findAllDependents,
   detectAffectedPackages,
+  outputForGitHub,
   type PackageInfo,
+  type AffectedResult,
 } from '../ci/detect-affected'
 
 // Mock the actual workspace packages for consistent testing
@@ -283,6 +288,133 @@ describe('SMI-2190: Affected Package Detection', () => {
     it('should handle whitespace-only strings', () => {
       const result = detectAffectedPackages(['  ', '\t', '\n', 'packages/core/src/index.ts'])
       expect(result.directlyChanged).toContain('@skillsmith/core')
+    })
+  })
+
+  // SMI-6488: outputForGitHub() was previously untested from outside --
+  // 0 of this file's pre-existing test cases touched GITHUB_OUTPUT,
+  // outputForGitHub, or main(). It is now exported specifically so the
+  // affected_status sentinel (the ":272" guard block) and its failure path
+  // are directly testable, rather than only reachable by running the CI
+  // step itself.
+  describe('outputForGitHub (SMI-6488 sentinel)', () => {
+    const sampleResult: AffectedResult = {
+      directlyChanged: ['@skillsmith/core'],
+      affectedByDependency: ['@skillsmith/mcp-server'],
+      all: ['@skillsmith/core', '@skillsmith/mcp-server'],
+      dirNames: ['core', 'mcp-server'],
+      reason: 'directly changed: 1',
+    }
+
+    let tmpDir: string
+    let originalGithubOutput: string | undefined
+    let originalGithubStepSummary: string | undefined
+
+    beforeEach(() => {
+      tmpDir = mkdtempSync(join(tmpdir(), 'detect-affected-test-'))
+      originalGithubOutput = process.env.GITHUB_OUTPUT
+      originalGithubStepSummary = process.env.GITHUB_STEP_SUMMARY
+      delete process.env.GITHUB_STEP_SUMMARY
+    })
+
+    afterEach(() => {
+      if (originalGithubOutput === undefined) {
+        delete process.env.GITHUB_OUTPUT
+      } else {
+        process.env.GITHUB_OUTPUT = originalGithubOutput
+      }
+      if (originalGithubStepSummary === undefined) {
+        delete process.env.GITHUB_STEP_SUMMARY
+      } else {
+        process.env.GITHUB_STEP_SUMMARY = originalGithubStepSummary
+      }
+      rmSync(tmpDir, { recursive: true, force: true })
+      vi.restoreAllMocks()
+    })
+
+    it('writes affected_status=computed LAST, after affected_packages/affected_dirs/affected_count/affected_reason', () => {
+      const outputPath = join(tmpDir, 'github-output.txt')
+      process.env.GITHUB_OUTPUT = outputPath
+
+      outputForGitHub(sampleResult)
+
+      const lines = readFileSync(outputPath, 'utf-8').trim().split('\n')
+      expect(lines).toEqual([
+        `affected_packages=${JSON.stringify(sampleResult.all)}`,
+        `affected_dirs=${JSON.stringify(sampleResult.dirNames)}`,
+        `affected_count=${sampleResult.all.length}`,
+        `affected_reason=${sampleResult.reason}`,
+        'affected_status=computed',
+      ])
+      // The sentinel's whole value is that its presence proves the four
+      // writes above it landed -- assert the ordering invariant directly,
+      // not just set membership.
+      expect(lines[lines.length - 1]).toBe('affected_status=computed')
+    })
+
+    it('promotes result.reason to an affected_reason output distinguishing the discriminator strings', () => {
+      const outputPath = join(tmpDir, 'github-output.txt')
+      process.env.GITHUB_OUTPUT = outputPath
+
+      outputForGitHub({ ...sampleResult, all: [], dirNames: [], reason: 'No packages affected' })
+      const noPackagesLines = readFileSync(outputPath, 'utf-8').trim().split('\n')
+      expect(noPackagesLines).toContain('affected_reason=No packages affected')
+
+      const outputPath2 = join(tmpDir, 'github-output-2.txt')
+      process.env.GITHUB_OUTPUT = outputPath2
+      outputForGitHub({ ...sampleResult, all: [], dirNames: [], reason: 'No files changed' })
+      const noFilesLines = readFileSync(outputPath2, 'utf-8').trim().split('\n')
+      expect(noFilesLines).toContain('affected_reason=No files changed')
+    })
+
+    it('still prints the affected dirs JSON array to stdout on success', () => {
+      const outputPath = join(tmpDir, 'github-output.txt')
+      process.env.GITHUB_OUTPUT = outputPath
+      const logSpy = vi.spyOn(console, 'log').mockImplementation(() => {})
+
+      outputForGitHub(sampleResult)
+
+      expect(logSpy).toHaveBeenCalledWith(JSON.stringify(sampleResult.dirNames))
+    })
+
+    it('writes the step-summary block when GITHUB_STEP_SUMMARY is set and writable', () => {
+      const outputPath = join(tmpDir, 'github-output.txt')
+      const summaryPath = join(tmpDir, 'github-summary.md')
+      process.env.GITHUB_OUTPUT = outputPath
+      process.env.GITHUB_STEP_SUMMARY = summaryPath
+
+      outputForGitHub(sampleResult)
+
+      const summary = readFileSync(summaryPath, 'utf-8')
+      expect(summary).toContain('## Affected Packages')
+      expect(summary).toContain(sampleResult.reason)
+    })
+
+    it('fails loudly (exit 1) instead of silently no-op-ing when GITHUB_OUTPUT points into a nonexistent directory (S3)', () => {
+      process.env.GITHUB_OUTPUT = join(tmpDir, 'nonexistent-subdir', 'output.txt')
+      const errorSpy = vi.spyOn(console, 'error').mockImplementation(() => {})
+      const exitSpy = vi.spyOn(process, 'exit').mockImplementation((): never => {
+        throw new Error('process.exit called')
+      })
+
+      expect(() => outputForGitHub(sampleResult)).toThrow('process.exit called')
+
+      expect(exitSpy).toHaveBeenCalledWith(1)
+      expect(errorSpy).toHaveBeenCalledTimes(1)
+      expect(errorSpy.mock.calls[0][0]).toContain('GITHUB_OUTPUT')
+    })
+
+    it('fails loudly (exit 1) instead of silently no-op-ing when GITHUB_OUTPUT is unset', () => {
+      delete process.env.GITHUB_OUTPUT
+      const errorSpy = vi.spyOn(console, 'error').mockImplementation(() => {})
+      const exitSpy = vi.spyOn(process, 'exit').mockImplementation((): never => {
+        throw new Error('process.exit called')
+      })
+
+      expect(() => outputForGitHub(sampleResult)).toThrow('process.exit called')
+
+      expect(exitSpy).toHaveBeenCalledWith(1)
+      expect(errorSpy.mock.calls[0][0]).toContain('<unset>')
     })
   })
 

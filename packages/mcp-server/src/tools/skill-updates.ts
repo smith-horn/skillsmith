@@ -32,7 +32,7 @@ import {
   firstNonBlankHash,
 } from '@skillsmith/core'
 import { withTelemetry } from '@skillsmith/core/telemetry'
-import { loadManifest } from './install.helpers.js'
+import { loadManifestWithWarning } from './install.helpers.js'
 import { getManifestInstalledSkillIds } from './manifest-skill-ids.helpers.js'
 import type { SkillManifest } from './install.types.js'
 import type { ToolContext } from '../context.js'
@@ -89,6 +89,12 @@ export interface CheckUpdatesResponse {
   updatesAvailable: number
   /** Per-skill details */
   skills: SkillUpdateInfo[]
+  /**
+   * ADR-171 § 10 (SMI-6733 Phase 2 Wave 2): present only when the local
+   * manifest read degraded. Same key, same meaning, as `skill_outdated`'s
+   * `OutdatedResponse.warning` — see that field's doc comment.
+   */
+  warning?: string
 }
 
 // ============================================================================
@@ -104,6 +110,8 @@ export const skillUpdatesToolSchema = {
     'Check installed skills for available updates by comparing locally-recorded content hashes ' +
     'against the current registry state. Requires Individual tier or higher. ' +
     'Returns a list of skills with their installed vs. latest hash and whether an update is available.',
+  title: 'Check Skill Updates',
+  annotations: { readOnlyHint: true, destructiveHint: false },
   inputSchema: {
     type: 'object' as const,
     properties: {
@@ -190,7 +198,13 @@ async function executeSkillUpdatesImpl(
 ): Promise<CheckUpdatesResponse> {
   const versionRepo = new SkillVersionRepository(context.db)
 
-  const manifest = await loadManifest()
+  // SMI-6733 Phase 2 Wave 2: `loadManifestWithWarning` (not `loadManifest`)
+  // so a degraded read's warning reaches the response (ADR-171 § 10).
+  // `buildManifestInstalledHashMap` and `getManifestInstalledSkillIds`
+  // already guard against a nullish `installedSkills` (both open with
+  // `!manifest.installedSkills || typeof … !== 'object'`), so no
+  // `installedSkillsOf` migration is needed at either call site below.
+  const { manifest, warning } = await loadManifestWithWarning()
   const manifestInstalledHashes = buildManifestInstalledHashMap(manifest)
 
   // Determine which skill IDs to check.
@@ -255,6 +269,7 @@ async function executeSkillUpdatesImpl(
   return {
     updatesAvailable,
     skills: skillInfos,
+    ...(warning ? { warning } : {}),
   }
 }
 

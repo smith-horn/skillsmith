@@ -52,10 +52,18 @@ import { MAX_IDS_IN_ERROR } from './smi5879-merge-shards.merge-rules.ts'
 /**
  * The four "verdict-delta" outcomes — the only ones `classifyVerdictDelta`
  * (`smi5879-simulate-full.helpers.ts`) ever produces. `bundle_absent` also
- * carries `prePortQuarantine`/`postPortQuarantine` but is NOT one of these:
- * its outcome label is deliberately overridden past whatever those booleans
- * would classify to (`processRow`'s `isBundleAbsent` branch), so checking it
- * here would flag a correct row as a false positive.
+ * carries `prePortQuarantine`/`postPortQuarantine` but is NOT one of these —
+ * it is checked separately by {@link assertBundleAbsentCoherence} below.
+ *
+ * SMI-6436: prior to that fix, `processRow` checked `isBundleAbsent` BEFORE
+ * computing the verdict delta, so a `bundle_absent` row's outcome label was
+ * unconditionally overridden regardless of whether the delta was a real
+ * change — this comment used to say checking `bundle_absent` here "would
+ * flag a correct row as a false positive" on that basis. That is no longer
+ * true: post-fix, `processRow` only emits `bundle_absent` when the delta is
+ * `unchanged_clean`/`unchanged_quarantined`, so a `bundle_absent` row's own
+ * `prePortQuarantine`/`postPortQuarantine` must always agree — a real
+ * invariant, not a false-positive risk.
  */
 const VERDICT_DELTA_OUTCOMES: readonly SimRowOutcome[] = [
   'newly_quarantined',
@@ -164,7 +172,7 @@ export function assertRowOutcomeFieldPresence(rows: readonly SimRowResult[]): vo
         'still carries these fields could otherwise masquerade as a non-blocking, non-reviewed ' +
         "outcome while smuggling a real quarantine verdict's fields past G-1's review set and G-5's " +
         'delta-bound check; a row with only one field present is malformed regardless of outcome. ' +
-        'Refusing to merge.'
+        'Refusing to accept a report containing an internally-inconsistent row.'
     )
   }
 }
@@ -201,7 +209,91 @@ export function assertRowOutcomeCoherence(rows: readonly SimRowResult[]): void {
         `${mismatches.length > MAX_IDS_IN_ERROR ? ', ...' : ''}. G-1's review set and G-3's counts ` +
         'are derived directly from the outcome label — a row whose label disagrees with its own ' +
         'quarantine fields would corrupt both without any coverage/count arithmetic ever detecting it. ' +
-        'Refusing to merge a shard report containing an internally-inconsistent row.'
+        'Refusing to accept a report containing an internally-inconsistent row.'
     )
   }
+}
+
+/**
+ * SMI-6436: assert every merged `bundle_absent` row's own quarantine
+ * booleans actually agree with a non-change — `prePortQuarantine ===
+ * postPortQuarantine`. Post-fix, `processRow` only ever emits
+ * `bundle_absent` when `classifyVerdictDelta` already resolved to
+ * `unchanged_clean`/`unchanged_quarantined`; a `bundle_absent` row whose
+ * booleans disagree would mean a real verdict flip got mislabeled and
+ * silently dropped from G-1's review set and G-3's `newly_quarantined`/
+ * `newly_cleared` counts — exactly the bug class SMI-6436 fixed. Mirrors
+ * {@link assertRowOutcomeCoherence}'s shape but for the one outcome that
+ * function deliberately excludes.
+ */
+export function assertBundleAbsentCoherence(rows: readonly SimRowResult[]): void {
+  const mismatches: string[] = []
+  for (const row of rows) {
+    if (row.outcome !== 'bundle_absent') continue
+    if (row.prePortQuarantine === undefined || row.postPortQuarantine === undefined) {
+      mismatches.push(
+        `${row.id} (outcome=bundle_absent but prePortQuarantine/postPortQuarantine is missing)`
+      )
+      continue
+    }
+    if (row.prePortQuarantine !== row.postPortQuarantine) {
+      mismatches.push(
+        `${row.id} (outcome=bundle_absent, but prePortQuarantine=${row.prePortQuarantine}/` +
+          `postPortQuarantine=${row.postPortQuarantine} is a real verdict change, not a non-change)`
+      )
+    }
+  }
+  if (mismatches.length > 0) {
+    throw new Error(
+      `SMI-6436: ${mismatches.length} row(s) are labeled bundle_absent but their own ` +
+        `prePortQuarantine/postPortQuarantine fields show a real verdict change: ` +
+        `${mismatches.slice(0, MAX_IDS_IN_ERROR).join('; ')}` +
+        `${mismatches.length > MAX_IDS_IN_ERROR ? ', ...' : ''}. bundle_absent must only be used for a ` +
+        'non-change (unchanged_clean/unchanged_quarantined) — a row like this would hide a real ' +
+        "newly_quarantined/newly_cleared delta from G-1's review set and G-3's counts. Refusing to " +
+        'accept a report containing an internally-inconsistent row.'
+    )
+  }
+}
+
+/**
+ * Convenience composite of all three asserts above, in the required order
+ * (field-presence first — the other two assume presence already holds).
+ * `runMergeShards`/`bindSimulatorReportToPopulation` keep the three calls
+ * explicit (their own call-site comments explain why); SMI-6481's four new
+ * call sites (`smi5879-simulate-full.checkpoint-coherence.ts`/`.report.ts`/
+ * `.mainpass.ts`/`.sweep.ts`) want one terse call instead.
+ */
+export function assertRowsInternallyCoherent(rows: readonly SimRowResult[]): void {
+  assertRowOutcomeFieldPresence(rows)
+  assertRowOutcomeCoherence(rows)
+  assertBundleAbsentCoherence(rows)
+}
+
+/**
+ * SMI-6481: every row id that fails ANY of the three checks above — for a
+ * caller that needs to enumerate every offending row (e.g. so an operator
+ * can remove exactly those rows from a checkpoint's `row_results`), not just
+ * the first {@link MAX_IDS_IN_ERROR} named in a thrown message. Deliberately
+ * checks each row via the SAME three real functions above (one-row-at-a-time,
+ * catching each's throw) rather than re-deriving the "is this row bad"
+ * predicate independently — every one of these three checks is already
+ * per-row (no cross-row state), so this is exactly equivalent to the bulk
+ * check with zero risk of the two ever drifting apart. Only meant to be
+ * called in a failure path (after {@link assertRowsInternallyCoherent} has
+ * already thrown) — never on the hot path, so the extra per-row overhead is
+ * a non-issue.
+ */
+export function findIncoherentRowIds(rows: readonly SimRowResult[]): string[] {
+  const bad: string[] = []
+  for (const row of rows) {
+    try {
+      assertRowOutcomeFieldPresence([row])
+      assertRowOutcomeCoherence([row])
+      assertBundleAbsentCoherence([row])
+    } catch {
+      bad.push(row.id)
+    }
+  }
+  return bad
 }

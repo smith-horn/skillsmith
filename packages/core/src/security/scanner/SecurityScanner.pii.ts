@@ -46,8 +46,15 @@ const CREDENTIAL_PII_INDICES = new Set([0, 1, 2, 3, 4, 5, 6, 10])
  * FP-SAFE direction (over-flag a rare contrived placeholder) — strictly preferable
  * in a security scanner to the FN it replaces (a real secret downgraded); and a
  * longer such value falls under the entropy floor anyway.
+ *
+ * SMI-5207: exported (additively — `looksLikePlaceholderSecret` below is
+ * unchanged, and MF-1 / scanPiiPatterns keep sharing it byte-identically) so
+ * MF-4's isProseValue() can reuse the same placeholder vocabulary when
+ * deciding whether an assigned credential value references a secret rather
+ * than containing one. No `g` flag, so `.test()` is stateless and safe to
+ * share across call sites.
  */
-const PLACEHOLDER_SECRET_RE =
+export const PLACEHOLDER_SECRET_RE =
   /EXAMPLE|(?<![A-Za-z0-9])YOUR[_-]?|PLACEHOLDER|CHANGE[_-]?ME|(?<![A-Za-z0-9])DUMMY|(?<![A-Za-z0-9])FAKE|(?<![A-Za-z0-9])SAMPLE|REDACTED|INSERT[_-]|\.\.\.|<[^>]+>/i
 
 /**

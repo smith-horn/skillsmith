@@ -21,7 +21,7 @@
 
 import { describe, it, expect, afterEach } from 'vitest'
 import { execFileSync, spawnSync } from 'node:child_process'
-import { mkdirSync, writeFileSync, rmSync } from 'node:fs'
+import { mkdirSync, writeFileSync, rmSync, copyFileSync } from 'node:fs'
 import { join, resolve, dirname } from 'node:path'
 import { fileURLToPath } from 'node:url'
 import { makeFixtureEnv, makeFixtureTempDir } from './_lib/git-fixture-env.js'
@@ -122,11 +122,20 @@ interface RunResult {
   stderr: string
 }
 
-function runScript(parentDir: string, args: string[]): RunResult {
+/**
+ * `envOverrides` exists for the SMI-6569 case, which must inject an absolute
+ * GIT_DIR — the one thing `makeFixtureEnv()` deliberately does not set,
+ * because every other test needs a clean environment.
+ */
+function runScript(
+  parentDir: string,
+  args: string[],
+  envOverrides: NodeJS.ProcessEnv = {}
+): RunResult {
   const result = spawnSync('bash', [SCRIPT, ...args], {
     cwd: parentDir,
     encoding: 'utf8',
-    env: makeFixtureEnv(),
+    env: { ...makeFixtureEnv(), ...envOverrides },
   })
   return { status: result.status ?? -1, stdout: result.stdout ?? '', stderr: result.stderr ?? '' }
 }
@@ -196,6 +205,143 @@ describe('check-submodule-pointer.sh — R0-R11 + R-FETCH', () => {
     expect(r.stdout).toContain('stale')
     expect(r.stdout).toContain('by 1 commits')
   })
+
+  it('SMI-6569: an absolute inherited GIT_DIR does not fabricate R1 or suppress the true verdict', () => {
+    // `git -C <dir>` does NOT override an absolute GIT_DIR — -C changes the
+    // cwd, but GIT_DIR still wins over repo discovery, so every submodule-
+    // directed call in the helpers ran against the OUTER repo instead. Git
+    // exports an absolute GIT_DIR into hooks on a push FROM A LINKED
+    // WORKTREE, which is this repo's default workspace, so `.husky/pre-push`
+    // hit this on every run.
+    //
+    // The damage was in two directions at once: R1 ("was never pushed") is
+    // FABRICATED for a commit that is pushed and reachable, AND because R1 is
+    // a Layer-1 precondition it short-circuits Layer 2, SUPPRESSING the real
+    // verdict. This fixture is the R3 case above, so the true answer is known
+    // and the suppression is observable rather than merely asserted-absent.
+    //
+    // A relative GIT_DIR (".git") re-resolves against -C's cwd and is
+    // harmless; only an absolute one redirects. Hence the absolute path here.
+    const f = track(buildFixture())
+    const c1 = commitGitlink(f.parentDir, f.base, 'base bump (target)')
+    commitGitlink(f.parentDir, f.T, 'S = T (stale once remote advances)')
+    const advanced = commitFile(f.seedDir, 'f2.txt', 'advance\n', 'remote advances past T')
+    git(f.seedDir, 'push', '-q', 'origin', f.branch)
+
+    const args = ['--mode=block', '--ref=HEAD', `--target=${c1}`]
+    const clean = runScript(f.parentDir, args)
+
+    // GIT_DIR is the var git actually exports into hooks and the one that
+    // caused the reported bug. GIT_COMMON_DIR and GIT_OBJECT_DIRECTORY are
+    // included because they redirect identically and survive a GIT_DIR-only
+    // unset — measured, each producing exit 128 on the same `cat-file -e`
+    // call under `env -u GIT_DIR -u GIT_WORK_TREE`. Git exports neither into
+    // hooks, so they are a hardened class rather than a live trigger; the
+    // first version of this fix unset only GIT_DIR and claimed to have closed
+    // the class, which was false.
+    // Real ancestry-rewriting payloads. The boundary must be the ADVANCED
+    // commit (the new upstream tip), not `T`: shallow and graft files cut a
+    // commit's PARENTS, so detaching `T` leaves `T -> advanced` intact and
+    // changes nothing. Cutting `advanced`'s parents is what makes `T`
+    // unreachable from the tip, flipping `merge-base --is-ancestor` and the
+    // `rev-list --count` that R3's "behind by N" is built from.
+    //
+    // An earlier version of this test pointed both at /dev/null, which flips
+    // `rev-parse --is-shallow-repository` to true but lists no boundary and
+    // truncates nothing — it passed against the bug. Caught by removing the
+    // two vars from the sanitizer and watching the test still pass.
+    const shallowFile = join(f.root, 'poison-shallow')
+    writeFileSync(shallowFile, `${advanced}\n`)
+    const graftFile = join(f.root, 'poison-graft')
+    writeFileSync(graftFile, `${advanced}\n`)
+
+    const poisons: { name: string; value: string; why: string }[] = [
+      {
+        name: 'GIT_DIR',
+        value: join(f.parentDir, '.git'),
+        why: 'the var git actually exports into hooks; the reported bug',
+      },
+      {
+        name: 'GIT_COMMON_DIR',
+        value: join(f.parentDir, '.git'),
+        why: 'redirects identically and survives a GIT_DIR-only unset (measured exit 128)',
+      },
+      {
+        name: 'GIT_OBJECT_DIRECTORY',
+        value: join(f.parentDir, '.git', 'objects'),
+        why: 'same — survives a GIT_DIR-only unset',
+      },
+      {
+        // The counterexample that broke the "outer-repo calls are safe because
+        // an inherited worktree GIT_DIR already names the outer repo" claim.
+        // Pointing GIT_DIR at a DIFFERENT valid repository made the outer
+        // `ls-tree HEAD -- docs/internal` return EMPTY with exit 0, which
+        // evaluate_mount reads as "no gitlink entry … nothing to check" and
+        // reports as PASS — a wrong answer delivered as a pass.
+        name: 'GIT_DIR',
+        value: join(f.mountDir, '.git'),
+        why: 'points at the SUBMODULE repo, poisoning the OUTER calls too',
+      },
+      {
+        // Not a discovery variable at all — it rewrites ancestry. The file
+        // must name a REAL boundary commit to bite: an empty or /dev/null
+        // shallow file flips `rev-parse --is-shallow-repository` to true but
+        // truncates nothing, so a test using it would pass against the bug.
+        // With `T` listed as a boundary, T loses its parents, so
+        // `merge-base --is-ancestor <base> <T>` flips 0 -> 1 and
+        // `rev-list --count` drops — which is exactly what R3-R7 decide on.
+        name: 'GIT_SHALLOW_FILE',
+        value: shallowFile,
+        why: 'rewrites ancestry rather than redirecting discovery',
+      },
+      {
+        // Same class: a graft line naming a commit with no parents detaches
+        // it from its history.
+        name: 'GIT_GRAFT_FILE',
+        value: graftFile,
+        why: 'rewrites parentage, same class as GIT_SHALLOW_FILE',
+      },
+    ]
+
+    for (const p of poisons) {
+      const contaminated = runScript(f.parentDir, args, { [p.name]: p.value })
+      assertVerdictUnchanged(`${p.name} (${p.why})`, clean, contaminated)
+    }
+  })
+
+  /**
+   * The SMI-6569 invariant: a git-discovery environment variable must not
+   * change this check's verdict. Asserted as full stdout + exit-status
+   * equality rather than by symptom name — see the caller for why naming a
+   * symptom would let the test pass against the bug in this fixture.
+   */
+  function assertVerdictUnchanged(
+    varName: string,
+    clean: RunResult,
+    contaminated: RunResult
+  ): void {
+    // The real verdict survives contamination.
+    expect(contaminated.stdout, `${varName}: true verdict lost`).toContain('R3:')
+    expect(contaminated.stdout, `${varName}: true verdict lost`).toContain('stale')
+
+    // Neither contamination symptom is produced. Which one appears without
+    // the fix depends on whether the OUTER repo has an `origin` remote:
+    //   - production (outer repo HAS origin): the misdirected fetch succeeds
+    //     against the wrong repo, so the failure surfaces later as a
+    //     fabricated R1 — the reported SMI-6569 symptom.
+    //   - this fixture (parent has NO origin): the misdirected fetch itself
+    //     fails, so it surfaces earlier as R-FETCH.
+    // Both are the same defect. Asserting only R1 here would make this test
+    // pass against the bug in the fixture, which is why the invariant below
+    // is the load-bearing assertion rather than either symptom name.
+    expect(contaminated.stdout, `${varName}: fabricated R1`).not.toContain('R1:')
+    expect(contaminated.stdout, `${varName}: fabricated R-FETCH`).not.toContain('R-FETCH:')
+
+    // The invariant, and the strongest form of it: the variable must not
+    // change the verdict at all, exit status included.
+    expect(contaminated.status, `${varName}: exit status changed`).toBe(clean.status)
+    expect(contaminated.stdout, `${varName}: stdout changed`).toBe(clean.stdout)
+  }
 
   it('R4: S is a strict descendant of T and lives on a live remote branch -> PASS + warning', () => {
     const f = track(buildFixture())
@@ -561,5 +707,212 @@ describe('check-submodule-pointer.sh — evaluation order, gating, and mode sema
     expect(r.status).toBe(1)
     expect(r.stdout).toContain('R3:')
     expect(r.stdout).toContain('stale')
+  })
+})
+
+// ---------------------------------------------------------------------------
+// SMI-6598 — dependency integrity of the shared sanitizer
+// ---------------------------------------------------------------------------
+
+describe('check-submodule-pointer.sh — sanitizer dependency integrity (SMI-6598)', () => {
+  /**
+   * Copy the entry point and rule engine into a scratch dir, optionally
+   * writing a `git-env-sanitize.sh` alongside them. Omitting it, or writing a
+   * broken one, is what these tests exercise: the script resolves its sources
+   * relative to its own location, so a copy without the dependency reproduces
+   * a missing/corrupt deploy exactly.
+   */
+  function stageScripts(sanitizeContent: string | null): string {
+    const dir = makeFixtureTempDir('spa-dep-')
+    createdRoots.push(dir)
+    for (const f of ['check-submodule-pointer.sh', 'check-submodule-pointer.helpers.sh']) {
+      copyFileSync(join(REPO_ROOT, 'scripts', 'ci', f), join(dir, f))
+    }
+    if (sanitizeContent !== null) {
+      writeFileSync(join(dir, 'git-env-sanitize.sh'), sanitizeContent)
+    }
+    return dir
+  }
+
+  function runStaged(dir: string, cwd: string, env: NodeJS.ProcessEnv = {}): RunResult {
+    const result = spawnSync(
+      'bash',
+      [
+        join(dir, 'check-submodule-pointer.sh'),
+        '--mode=block',
+        '--ref=HEAD',
+        '--target=origin/main',
+      ],
+      { cwd, encoding: 'utf8', env: { ...makeFixtureEnv(), ...env } }
+    )
+    return { status: result.status ?? -1, stdout: result.stdout ?? '', stderr: result.stderr ?? '' }
+  }
+
+  it('a MISSING git-env-sanitize.sh fails closed instead of reporting a clean pass', () => {
+    // Neither entry point uses `set -e` (this one sets `set -u` only), so a
+    // failed `source` does not halt the script and the subsequent call to the
+    // undefined `sanitize_git_env` is only "command not found" — also
+    // non-fatal. Before the fix, with GIT_DIR poisoned, REPO_ROOT resolved to
+    // the submodule (the bare `git rev-parse --show-toplevel` has no -C by
+    // design), .gitmodules was not found there, and the guard printed
+    // "nothing to check" and exited 0. A silent clean pass — worse than the
+    // SMI-6569 bug it replaced, which was at least loud.
+    const f = track(buildFixture())
+    const dir = stageScripts(null)
+    const r = runStaged(dir, f.parentDir, { GIT_DIR: join(f.mountDir, '.git') })
+
+    expect(r.status).toBe(2)
+    expect(r.stderr).toContain('cannot source git-env-sanitize.sh')
+    expect(r.stdout).not.toContain('nothing to check')
+  })
+
+  it('a SYNTACTICALLY BROKEN git-env-sanitize.sh fails closed', () => {
+    // Honest note: this case passes WITH OR WITHOUT the guard, because bash
+    // aborts a non-interactive shell on a syntax error while parsing a sourced
+    // file, and that abort happens to exit 2. Confirmed by reverting the guard
+    // and watching this test still pass, unlike its two siblings.
+    //
+    // Kept because it pins behaviour that is currently incidental: if a future
+    // bash, or a wrapper, stopped aborting here, this would start failing and
+    // point at a real hole. It documents a load-bearing accident rather than
+    // demonstrating the guard. The `declare -F` test below is the one that
+    // actually exercises the guard — valid bash, zero status, no function.
+    const f = track(buildFixture())
+    const dir = stageScripts('this is not valid bash (((\n')
+    const r = runStaged(dir, f.parentDir)
+
+    expect(r.status).toBe(2)
+    expect(r.stdout).not.toContain('nothing to check')
+  })
+
+  it('a sanitize_git_env that sources cleanly but defines nothing fails closed', () => {
+    // The exact partial-contract case: valid bash, zero exit status, no
+    // function. `||` alone passes this through.
+    const f = track(buildFixture())
+    const dir = stageScripts('# valid bash, defines nothing\ntrue\n')
+    const r = runStaged(dir, f.parentDir)
+
+    expect(r.status).toBe(2)
+    expect(r.stderr).toContain('contract helper is undefined')
+    expect(r.stdout).not.toContain('nothing to check')
+  })
+
+  it('a STALE sanitizer that defines the function but has an old list is rejected', () => {
+    // `declare -F sanitize_git_env` proves the function EXISTS, not that it
+    // covers what this caller needs. A mixed deployment -- an older copy of
+    // git-env-sanitize.sh beside newer entry points -- defines it with a
+    // shorter list and sails through an existence check. Demonstrated: a stub
+    // defining only `unset GIT_DIR` satisfied `declare -F` while
+    // GIT_CONFIG_COUNT stayed live through "sanitization".
+    //
+    // A postcondition check alone could not catch this either, because it
+    // would probe the function against the stale file's own (short) list.
+    // Hence the contract VERSION, which is what this exercises.
+    const f = track(buildFixture())
+    const dir = stageScripts(
+      [
+        'SKILLSMITH_GIT_VERDICT_VARS=(GIT_DIR)',
+        'SKILLSMITH_GIT_SANITIZE_CONTRACT=1',
+        'assert_git_env_sanitize_contract() {',
+        '    [ "${SKILLSMITH_GIT_SANITIZE_CONTRACT:-0}" -lt "$1" ] && { echo "stale v1"; return 1; }',
+        '    return 0',
+        '}',
+        'sanitize_git_env() { unset GIT_DIR; }',
+        'git_sanitized() { git "$@"; }',
+        '',
+      ].join('\n')
+    )
+    const r = runStaged(dir, f.parentDir)
+
+    expect(r.status).toBe(2)
+    expect(r.stderr).toContain('failed its contract')
+    expect(r.stdout).not.toContain('nothing to check')
+  })
+
+  it('the real dependency present still evaluates normally', () => {
+    // Guards against the fix over-firing — the three cases above must not be
+    // achievable by simply making the script refuse to run.
+    const f = track(buildFixture())
+    const c1 = commitGitlink(f.parentDir, f.base, 'base bump (target)')
+    commitGitlink(f.parentDir, f.T, 'S = T')
+    const real = join(REPO_ROOT, 'scripts', 'ci', 'git-env-sanitize.sh')
+    const dir = stageScripts(null)
+    copyFileSync(real, join(dir, 'git-env-sanitize.sh'))
+
+    const result = spawnSync(
+      'bash',
+      [join(dir, 'check-submodule-pointer.sh'), '--mode=block', '--ref=HEAD', `--target=${c1}`],
+      { cwd: f.parentDir, encoding: 'utf8', env: makeFixtureEnv() }
+    )
+    expect(result.status).toBe(0)
+    expect(result.stdout).toContain('PASS [docs/internal]')
+  })
+})
+// ---------------------------------------------------------------------------
+// SMI-6598 — the sanitizer's own coverage contract
+// ---------------------------------------------------------------------------
+
+describe('git-env-sanitize.sh — coverage contract (SMI-6598)', () => {
+  /**
+   * Every variable this guard's verdict can depend on. Asserted DIRECTLY
+   * rather than through an end-to-end fixture, deliberately.
+   *
+   * Three attempts at end-to-end poisoning in this suite were decorative
+   * before being caught by a revert run: `/dev/null` as a shallow file lists
+   * no boundary, `GIT_CONFIG_GLOBAL=/dev/null` is what makeFixtureEnv already
+   * sets, and a replacement-ref variable does nothing in a fixture that has no
+   * replacement refs. Each LOOKED like a poison and changed nothing.
+   *
+   * The mechanism for each is established by measurement recorded in
+   * git-env-sanitize.sh's own comments (e.g. a real shallow boundary flips
+   * is-ancestor 0 -> 1 and rev-list --count 3 -> 1). What this test adds is
+   * the thing an end-to-end case kept failing to provide: it fails the moment
+   * an entry leaves the list, which is the regression actually worth guarding.
+   */
+  const REQUIRED = [
+    'GIT_DIR',
+    'GIT_WORK_TREE',
+    'GIT_INDEX_FILE',
+    'GIT_OBJECT_DIRECTORY',
+    'GIT_ALTERNATE_OBJECT_DIRECTORIES',
+    'GIT_COMMON_DIR',
+    'GIT_NAMESPACE',
+    'GIT_PREFIX',
+    'GIT_CEILING_DIRECTORIES',
+    'GIT_DISCOVERY_ACROSS_FILESYSTEM',
+    'GIT_SHALLOW_FILE',
+    'GIT_GRAFT_FILE',
+    'GIT_REPLACE_REF_BASE',
+    'GIT_NO_REPLACE_OBJECTS',
+    'GIT_CONFIG_COUNT',
+    'GIT_CONFIG_PARAMETERS',
+  ]
+
+  it('sanitize_git_env clears every verdict-affecting variable', () => {
+    const sanitizer = join(REPO_ROOT, 'scripts', 'ci', 'git-env-sanitize.sh')
+    const script = [
+      `source "${sanitizer}"`,
+      ...REQUIRED.map((v) => `export ${v}=probe`),
+      'sanitize_git_env',
+      ...REQUIRED.map((v) => `[ -n "\${${v}+set}" ] && printf '%s ' ${v}`),
+      'exit 0',
+    ].join('\n')
+
+    const r = spawnSync('bash', ['-c', script], { encoding: 'utf8', env: makeFixtureEnv() })
+    expect(r.status).toBe(0)
+    expect(r.stdout.trim()).toBe('')
+  })
+
+  it('the contract version is at least what the entry points require', () => {
+    // Both entry points call `assert_git_env_sanitize_contract 4`. If someone
+    // adds a variable without bumping the version, a stale deployment would
+    // still be accepted — this pins the two together.
+    const sanitizer = join(REPO_ROOT, 'scripts', 'ci', 'git-env-sanitize.sh')
+    const r = spawnSync(
+      'bash',
+      ['-c', `source "${sanitizer}"; assert_git_env_sanitize_contract 4`],
+      { encoding: 'utf8', env: makeFixtureEnv() }
+    )
+    expect(r.status).toBe(0)
   })
 })

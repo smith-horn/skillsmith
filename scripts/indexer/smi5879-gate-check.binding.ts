@@ -12,8 +12,22 @@
  * each" — reuses {@link bindGeneration} rather than re-deriving it).
  */
 
+import {
+  assertCoverageTotalsMatchPopulation,
+  assertMergedRowsMatchPopulation,
+} from './smi5879-merge-shards.population.ts'
+import {
+  assertBundleAbsentCoherence,
+  assertRowOutcomeCoherence,
+  assertRowOutcomeFieldPresence,
+} from './smi5879-merge-shards.outcome-coherence.ts'
 import type { Smi5879Purpose } from './smi5879-census.types.ts'
-import type { GenerationBinding, Smi5879GateCheckDbDeps } from './smi5879-gate-check.types.ts'
+import type {
+  GenerationBinding,
+  Smi5879GateCheckDbDeps,
+  Smi5879SimulateFullReport,
+} from './smi5879-gate-check.types.ts'
+import type { SimSnapshotRow } from './smi5879-simulate-full.types.ts'
 
 /**
  * Bind ONE generation: exists, `sealed`, correct `purpose`, digest
@@ -82,6 +96,94 @@ export async function bindGeneration(
     digest_verified: true,
     bound: true,
     reason: `generation ${runId} is sealed, purpose="${expectedPurpose}", digests re-verify`,
+  }
+}
+
+/**
+ * SMI-6444 (plan Item 2) — authenticate the SIMULATOR REPORT itself against
+ * the sealed, digest-verified population, at gate-check time.
+ *
+ * {@link bindGeneration} above binds only the live DB generation: it proves
+ * the run exists, is sealed, has the right purpose, and that its own digests
+ * re-verify. It says NOTHING about the report file gate-check was handed.
+ * `assertMergedRowsMatchPopulation` / `assertCoverageTotalsMatchPopulation`
+ * and the three outcome-coherence asserts all exist already, but until now
+ * ran ONLY inside `runMergeShards` — a separate, earlier invocation against a
+ * file that could have been altered (or swapped) in the interval. Gate-check
+ * cannot inherit that proof; it has to redo it against its own inputs, which
+ * is exactly what this function does.
+ *
+ * The `decisionBinding.bound && digest_verified === true` refusal makes the
+ * required ordering STRUCTURAL rather than documentary: a caller physically
+ * cannot use this to "verify" a report against a population whose own
+ * generation was never digest-verified first.
+ *
+ * Result-object idiom (`{bound, reason}`) rather than the throw idiom the
+ * reused asserts use, matching this module's other binding checks — the
+ * asserts' throws are caught and converted here.
+ */
+export async function bindSimulatorReportToPopulation(
+  db: Pick<Smi5879GateCheckDbDeps, 'loadCohortRows'>,
+  decisionBinding: GenerationBinding,
+  simReport: Smi5879SimulateFullReport
+): Promise<{ bound: true; reason: string } | { bound: false; reason: string }> {
+  if (!decisionBinding.bound || decisionBinding.digest_verified !== true) {
+    return {
+      bound: false,
+      reason:
+        `refusing to authenticate the simulator report against generation ${decisionBinding.run_id}: ` +
+        `its own generation binding is not verified (bound=${decisionBinding.bound}, ` +
+        `digest_verified=${String(decisionBinding.digest_verified)}) — comparing a report against a ` +
+        'population whose generation was never digest-verified would prove nothing',
+    }
+  }
+
+  let population: SimSnapshotRow[]
+  try {
+    population = await db.loadCohortRows(decisionBinding.run_id)
+  } catch (err) {
+    return {
+      bound: false,
+      reason:
+        `could not load the sealed population for run_id=${decisionBinding.run_id}: ` +
+        `${(err as Error).message}`,
+    }
+  }
+  if (population.length === 0) {
+    return {
+      bound: false,
+      reason:
+        `the sealed population for run_id=${decisionBinding.run_id} is empty (zero C1-C4 rows) — ` +
+        'an empty population trivially "matches" any report, which is the exact vacuous-equality ' +
+        "failure mode this check exists to close (mirrors loadVerifiedPopulation's own guard)",
+    }
+  }
+
+  try {
+    assertMergedRowsMatchPopulation(simReport.rows, population)
+    assertCoverageTotalsMatchPopulation(simReport.coverage, population)
+    // Structural outcome-label coherence — closes the class of relabeling
+    // tamper where the score fields were not also stripped/adjusted to match
+    // the claimed outcome (SMI-6436/SMI-6442's checks, applied gate-side for
+    // the first time here).
+    assertRowOutcomeFieldPresence(simReport.rows)
+    assertRowOutcomeCoherence(simReport.rows)
+    assertBundleAbsentCoherence(simReport.rows)
+  } catch (err) {
+    return {
+      bound: false,
+      reason:
+        `the simulator report does not authenticate against the sealed population for run_id=` +
+        `${decisionBinding.run_id}: ${(err as Error).message}`,
+    }
+  }
+
+  return {
+    bound: true,
+    reason:
+      `simulator report rows are exactly the ${population.length}-row sealed population for ` +
+      `run_id=${decisionBinding.run_id}, coverage totals agree with it, and every row's outcome ` +
+      'label is structurally coherent with its own score fields',
   }
 }
 

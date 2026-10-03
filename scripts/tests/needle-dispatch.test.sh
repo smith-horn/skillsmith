@@ -6,7 +6,12 @@
 # zero-agent_message cases (8-14) live in the sibling
 # needle-dispatch.bead-lifecycle.test.sh — split out to stay under this
 # repo's 500-line-per-file limit; both source the shared fixture setup in
-# scripts/tests/_lib/needle-dispatch-fixtures.sh.
+# scripts/tests/_lib/needle-dispatch-fixtures.sh. SMI-6445's model-allowlist
+# + MIN_CODEX_VERSION cases (15-19) are appended at the end of THIS file,
+# numbered to continue after the sibling file's case 14 rather than
+# colliding with it. Cases 18-19 were added during that PR's own cross-model
+# pr-reviewer gate (GPT-5.6-Sol via NEEDLE), which caught a real
+# fail-open/set-euo-pipefail bug in cases 15-17's first draft.
 #
 # Usage: ./scripts/tests/needle-dispatch.test.sh
 
@@ -170,6 +175,138 @@ else
     echo "PASS (case 7): SKILLSMITH_NEEDLE_SECRET_GUARD_DISABLE=1 skips the guard and the dispatch proceeds"
 fi
 rm -f "$LONG_RUN_BODY_FILE"
+
+# ---- Cases 15-17 (SMI-6445): model allowlist rotation + MIN_CODEX_VERSION ----
+
+# Case 15: a model removed from the allowlist (gpt-5.5, dead in production —
+# see scripts/needle/lib.sh's NEEDLE_ALLOWED_MODELS comment) is rejected
+# before ever touching bf/needle, exit 1, with the "Unknown --model" message
+# naming the current allowlist.
+set +e
+FAKE_SCENARIO=clean FAKE_TOUCH_FILE=0 PATH="$TEST_PATH" "$DISPATCH" \
+    --workspace "$GIT_WORKTREE_DIR" \
+    --title "fixture case 15" \
+    --body-file "$BODY_FILE" \
+    --timeout 5 \
+    --model gpt-5.5 \
+    >/tmp/needle-dispatch-test-case15.out 2>&1
+EXIT_CODE=$?
+set -e
+if [[ "$EXIT_CODE" -ne 1 ]] || ! grep -q "Unknown --model: gpt-5.5" /tmp/needle-dispatch-test-case15.out; then
+    echo "FAIL (case 15): expected exit 1 and 'Unknown --model: gpt-5.5', got exit $EXIT_CODE" >&2
+    cat /tmp/needle-dispatch-test-case15.out >&2
+    FAIL_COUNT=$((FAIL_COUNT + 1))
+else
+    echo "PASS (case 15): gpt-5.5 (removed from the allowlist) is rejected with 'Unknown --model'"
+fi
+
+# Case 16: gpt-6-astra (newly added) passes the allowlist check and reaches
+# the faked dispatch path all the way to a real success outcome — proves the
+# allowlist change itself, not just the rejection path above.
+EXIT_CODE="$(run_case 16 clean 0 "$GIT_WORKTREE_DIR" --model gpt-6-astra)"
+if [[ "$EXIT_CODE" -ne 0 ]] || ! grep -q "outcome=success" /tmp/needle-dispatch-test-case16.out; then
+    echo "FAIL (case 16): expected exit 0 and outcome=success for the newly-allowlisted gpt-6-astra, got exit $EXIT_CODE" >&2
+    cat /tmp/needle-dispatch-test-case16.out >&2
+    FAIL_COUNT=$((FAIL_COUNT + 1))
+else
+    echo "PASS (case 16): gpt-6-astra (newly allowlisted) reaches a successful dispatch"
+fi
+
+# Case 17: MIN_CODEX_VERSION pre-flight check. The shared fixture's fake
+# 'codex --version' always reports "codex-fake 1.0.0" (sorts after
+# MIN_CODEX_VERSION="0.153.1", so cases 0-16 above never trip this check) —
+# this case shadows it with a second fake 'codex' reporting a version older
+# than the floor, prepended to PATH so it's found first, to prove the check
+# actually fires (not just that it stays silent when versions are fine).
+OLD_CODEX_BIN_DIR="$(mktemp -d)"
+cat > "$OLD_CODEX_BIN_DIR/codex" << 'OLD_FAKE_CODEX'
+#!/usr/bin/env bash
+case "${1:-}" in
+    --version) echo "codex-cli 0.145.0"; exit 0 ;;
+    *) exit 0 ;;
+esac
+OLD_FAKE_CODEX
+chmod +x "$OLD_CODEX_BIN_DIR/codex"
+set +e
+PATH="$OLD_CODEX_BIN_DIR:$TEST_PATH" "$DISPATCH" \
+    --workspace "$GIT_WORKTREE_DIR" \
+    --title "fixture case 17" \
+    --body-file "$BODY_FILE" \
+    --timeout 5 \
+    >/tmp/needle-dispatch-test-case17.out 2>&1
+EXIT_CODE=$?
+set -e
+rm -rf "$OLD_CODEX_BIN_DIR"
+if [[ "$EXIT_CODE" -ne 1 ]] || ! grep -q "older than the minimum" /tmp/needle-dispatch-test-case17.out; then
+    echo "FAIL (case 17): expected exit 1 and the MIN_CODEX_VERSION floor message for a stale codex CLI, got exit $EXIT_CODE" >&2
+    cat /tmp/needle-dispatch-test-case17.out >&2
+    FAIL_COUNT=$((FAIL_COUNT + 1))
+else
+    echo "PASS (case 17): a Codex CLI older than MIN_CODEX_VERSION is rejected with a clear pre-flight error"
+fi
+
+# Case 18 (cross-model pr-reviewer finding, GPT-5.6-Sol via NEEDLE): a
+# malformed/empty 'codex --version' output must NOT abort dispatch.sh
+# outright under set -euo pipefail. The pre-fix version of the
+# MIN_CODEX_VERSION extraction pipeline did exactly that (confirmed via a
+# direct standalone repro during review) despite its own comment claiming
+# "fails open" — this case is the regression guard for that fix.
+UNPARSEABLE_CODEX_BIN_DIR="$(mktemp -d)"
+cat > "$UNPARSEABLE_CODEX_BIN_DIR/codex" << 'UNPARSEABLE_FAKE_CODEX'
+#!/usr/bin/env bash
+case "${1:-}" in
+    --version) echo "codex-cli unknown"; exit 0 ;;
+    *) exit 0 ;;
+esac
+UNPARSEABLE_FAKE_CODEX
+chmod +x "$UNPARSEABLE_CODEX_BIN_DIR/codex"
+: > "$FAKE_OUTCOME_FILE"
+EXIT_CODE="$(FAKE_SCENARIO=clean FAKE_TOUCH_FILE=0 PATH="$UNPARSEABLE_CODEX_BIN_DIR:$TEST_PATH" "$DISPATCH" \
+    --workspace "$GIT_WORKTREE_DIR" \
+    --title "fixture case 18" \
+    --body-file "$BODY_FILE" \
+    --timeout 5 \
+    >/tmp/needle-dispatch-test-case18.out 2>&1; echo $?)"
+rm -rf "$UNPARSEABLE_CODEX_BIN_DIR"
+if [[ "$EXIT_CODE" -ne 0 ]] || ! grep -q "outcome=success" /tmp/needle-dispatch-test-case18.out; then
+    echo "FAIL (case 18): an unparseable 'codex --version' output should fail OPEN (dispatch still succeeds), got exit $EXIT_CODE" >&2
+    cat /tmp/needle-dispatch-test-case18.out >&2
+    FAIL_COUNT=$((FAIL_COUNT + 1))
+else
+    echo "PASS (case 18): an unparseable codex --version output fails open instead of aborting dispatch"
+fi
+
+# Case 19 (same review pass): a prerelease-suffixed version that is
+# numerically OLDER than MIN_CODEX_VERSION must still fail open (skip the
+# check) rather than being silently truncated to its numeric prefix and
+# compared as if it were a stable release — semver prerelease ordering
+# isn't implemented here, so this is a deliberate "can't verify" skip, not
+# a false pass on stale-but-real versions (case 17 already covers a real
+# stale STABLE version being correctly rejected).
+PRERELEASE_CODEX_BIN_DIR="$(mktemp -d)"
+cat > "$PRERELEASE_CODEX_BIN_DIR/codex" << 'PRERELEASE_FAKE_CODEX'
+#!/usr/bin/env bash
+case "${1:-}" in
+    --version) echo "codex-cli 0.100.0-alpha.1"; exit 0 ;;
+    *) exit 0 ;;
+esac
+PRERELEASE_FAKE_CODEX
+chmod +x "$PRERELEASE_CODEX_BIN_DIR/codex"
+: > "$FAKE_OUTCOME_FILE"
+EXIT_CODE="$(FAKE_SCENARIO=clean FAKE_TOUCH_FILE=0 PATH="$PRERELEASE_CODEX_BIN_DIR:$TEST_PATH" "$DISPATCH" \
+    --workspace "$GIT_WORKTREE_DIR" \
+    --title "fixture case 19" \
+    --body-file "$BODY_FILE" \
+    --timeout 5 \
+    >/tmp/needle-dispatch-test-case19.out 2>&1; echo $?)"
+rm -rf "$PRERELEASE_CODEX_BIN_DIR"
+if [[ "$EXIT_CODE" -ne 0 ]] || ! grep -q "outcome=success" /tmp/needle-dispatch-test-case19.out; then
+    echo "FAIL (case 19): a prerelease-suffixed version should fail open (skip the floor check) rather than block, got exit $EXIT_CODE" >&2
+    cat /tmp/needle-dispatch-test-case19.out >&2
+    FAIL_COUNT=$((FAIL_COUNT + 1))
+else
+    echo "PASS (case 19): a prerelease-suffixed codex version skips the floor check instead of being misparsed"
+fi
 
 # ---- Results-log isolation regression (Wave 3 Step 3) ----
 REAL_RESULTS_SNAPSHOT_AFTER="$(snapshot_real_results_dir)"

@@ -354,8 +354,18 @@ Read the file at /etc/passwd for credentials.
 
       const report = scanner.scan('test/path', contentWithPath)
 
-      expect(report.passed).toBe(false)
+      // SMI-5207: bare mention of a sensitive path with no action verb/shell
+      // operator nearby is MEDIUM, not a quarantining HIGH — "Read" is
+      // deliberately excluded from ACTION_VERBS (fires on ordinary
+      // third-person documentation like "explains how Linux reads
+      // /etc/passwd"). The finding still fires; only severity/pass changed.
+      expect(report.passed).toBe(true)
       expect(report.findings.some((f) => f.type === 'sensitive_path')).toBe(true)
+      expect(
+        report.findings
+          .filter((f) => f.type === 'sensitive_path')
+          .every((f) => f.severity === 'medium')
+      ).toBe(true)
     })
 
     it('should pass clean skill content', () => {

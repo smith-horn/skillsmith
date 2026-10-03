@@ -3,7 +3,7 @@
  */
 
 // Version
-export const VERSION = '0.12.2'
+export const VERSION = '0.12.6'
 
 // ============================================================================
 // Grouped Exports from Barrel Files
@@ -352,6 +352,9 @@ export {
 // GitHub URL Parsing (SMI-2171)
 export { parseRepoUrl, isGitHubUrl, type ParsedRepoUrl } from './utils/github-url.js'
 
+// Shared skill name validation (relocated from @skillsmith/cli — canonical here now)
+export { VALID_SKILL_NAME_RE, validateSkillName } from './utils/skill-name.js'
+
 // SMI-2274: Safe filesystem operations
 export { safeWriteFile, SymlinkError, HardlinkError } from './utils/safe-fs.js'
 
@@ -371,6 +374,13 @@ export {
   type Tier as AuditModeTier,
   type ResolveAuditModeOptions,
 } from './config/audit-mode.js'
+
+// SMI-6735: generic cross-process file lock (wraps the owned-lock primitive),
+// exposed at the root so a consumer outside @skillsmith/core (e.g.
+// @skillsmith/mcp-server's manifest write path) can share the SAME lock
+// mechanism instead of hand-rolling its own age-based lock protocol.
+export { withFileLock } from './config/file-lock.js'
+export { describeRemedy, StuckLockError, type StuckLockReason } from './config/owned-lock.js'
 
 // ============================================================================
 // LIVE SERVICES WORKTREE STUBS (Phase 0 - Conflict Prevention)

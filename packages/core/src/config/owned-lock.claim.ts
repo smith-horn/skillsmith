@@ -21,6 +21,7 @@ import {
   closeSync,
   fstatSync,
   linkSync,
+  lstatSync,
   openSync,
   readSync,
   unlinkSync,
@@ -35,7 +36,7 @@ import {
   MAX_LOCK_BYTES,
   RECLAIM_LOCK_TIMEOUT_MS,
 } from './owned-lock.types.js'
-import type { Claim, ReclaimOutcome, RefusalCategory } from './owned-lock.types.js'
+import type { Claim, ReclaimOutcome, RefusalCategory, V1Claim } from './owned-lock.types.js'
 
 export function randomHex(bytes: number): string {
   return randomBytes(bytes).toString('hex')
@@ -100,15 +101,15 @@ export function parseClaim(text: string): Claim {
 
 /**
  * Bounded, TOCTOU-free claim read: open once, `fstat` THAT fd (not the
- * path), refuse above {@link MAX_LOCK_BYTES}, read from the same fd. Returns
- * `{ kind: 'absent' }` on `ENOENT` (or any other open failure).
+ * path), refuse above {@link MAX_LOCK_BYTES}, read from the same fd. An open
+ * failure is classified by {@link claimForOpenFailure}.
  */
 export function readClaim(path: string): Claim {
   let fd: number
   try {
     fd = openSync(path, 'r')
-  } catch {
-    return { kind: 'absent' }
+  } catch (err) {
+    return claimForOpenFailure(path, (err as NodeJS.ErrnoException).code)
   }
   try {
     const st = fstatSync(fd)
@@ -120,6 +121,31 @@ export function readClaim(path: string): Claim {
     return { kind: 'unparseable' }
   } finally {
     closeSync(fd)
+  }
+}
+
+/**
+ * SMI-6529 round 9: only a lock that is really gone reads as `absent`, which
+ * callers treat as a release and retry. Every open failure used to, so a
+ * non-waiting caller waited out its whole timeout, as "held", on a lock that
+ * can never be released: a dangling symlink, or a file it may not read.
+ *
+ *  - ENOENT with nothing at the path: absent (released).
+ *  - ENOENT, but `lstat` finds a symlink there: dangling, so unparseable. Any
+ *    other entry found is a new lock created since our open: absent, and the
+ *    next attempt sees it.
+ *  - EMFILE/ENFILE (out of file descriptors) is transient: absent, retried.
+ *  - Anything else (EACCES, ELOOP, ENOTDIR, ...): unparseable.
+ */
+function claimForOpenFailure(path: string, code: string | undefined): Claim {
+  if (code === 'EMFILE' || code === 'ENFILE') return { kind: 'absent' }
+  if (code !== 'ENOENT') return { kind: 'unparseable' }
+  try {
+    return lstatSync(path).isSymbolicLink() ? { kind: 'unparseable' } : { kind: 'absent' }
+  } catch (err) {
+    return (err as NodeJS.ErrnoException).code === 'ENOENT'
+      ? { kind: 'absent' }
+      : { kind: 'unparseable' }
   }
 }
 
@@ -140,6 +166,11 @@ export function isOwnerDefinitelyDead(
 ): boolean {
   if (isAutoReclaimDisabled()) return false
   if (claim.kind !== 'v1') return false // legacy | unparseable | absent -- never (D-5/D-6)
+  return isV1OwnerDead(claim, killProbe)
+}
+
+/** The liveness probe behind {@link isOwnerDefinitelyDead}, without the auto-reclaim opt-out. */
+function isV1OwnerDead(claim: V1Claim, killProbe: typeof process.kill = process.kill): boolean {
   if (claim.host !== hostname()) return false
   if (!Number.isInteger(claim.pid) || claim.pid <= 0) return false
   try {
@@ -152,9 +183,12 @@ export function isOwnerDefinitelyDead(
 }
 
 export function classifyRefusal(claim: Claim): RefusalCategory {
-  if (isAutoReclaimDisabled()) return 'reclaim-disabled'
   if (claim.kind === 'legacy') return 'legacy'
   if (claim.kind === 'unparseable' || claim.kind === 'absent') return 'unparseable'
+  // SMI-6529 round 9: with auto-reclaim off, only a holder that has died is
+  // 'reclaim-disabled'. A live one is still 'held', so the timeout message
+  // names it, and a legacy or unparseable claim keeps its own reason.
+  if (isAutoReclaimDisabled() && isV1OwnerDead(claim)) return 'reclaim-disabled'
   return 'held'
 }
 
@@ -255,6 +289,8 @@ export interface ReclaimInternalOptions {
   /** @internal NEGATIVE CONTROL ONLY (owned-lock-reclaim-race.test.ts) -- removes the authoritative re-read that makes this mechanism sound. Never set outside that spec. */
   unsafeSkipRevalidation?: boolean
   linkSyncOverride?: (existingPath: string, newPath: string) => void
+  /** Max wait for the reclaim lock (ms); defaults to RECLAIM_LOCK_TIMEOUT_MS. 0 means a single try, with no synchronous sleep. */
+  reclaimLockTimeoutMs?: number
 }
 
 /**
@@ -278,7 +314,7 @@ export function tryReclaimUnderLock(
       host: hostname(),
       acquiredAt: Date.now(),
     }) + '\n'
-  const rDeadline = Date.now() + RECLAIM_LOCK_TIMEOUT_MS
+  const rDeadline = Date.now() + (opts.reclaimLockTimeoutMs ?? RECLAIM_LOCK_TIMEOUT_MS)
   for (;;) {
     if (createLockExclusive(reclaimPath, rRecord, opts.linkSyncOverride)) break
     if (Date.now() >= rDeadline) return 'unavailable' // concurrent reclaimer, or an R1 orphan

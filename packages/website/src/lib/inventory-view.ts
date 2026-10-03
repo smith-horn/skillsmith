@@ -122,8 +122,11 @@ export const STALE_AFTER_HOURS = 24
 
 /**
  * Human-readable label, one-line tooltip, and suggested next action for each
- * {@link SkillState}. The `.astro` component maps each state to an
- * icon/shape; this module owns only the text.
+ * {@link SkillState}. `BADGE_CONFIG` in `skills-page-render.ts` maps each state
+ * to its visual treatment — an icon path plus foreground, background and border
+ * colours; this module owns only the text. That split is deliberate — see the
+ * note on `BADGE_CONFIG` for why the visuals are inline CSS colour literals
+ * rather than a component (SMI-6504).
  *
  * `suggestedAction` may contain inline-code spans delimited by backtick
  * pairs (`` ` ``...`` ` ``), which the renderer converts to `<code>` tags.
@@ -144,7 +147,7 @@ export const SKILL_STATE_META: Record<
   drifted: {
     label: 'Update available',
     description: 'A newer version is available in the registry',
-    suggestedAction: 'Run `skillsmith update <skill>` on that machine.',
+    suggestedAction: 'Preview it first: run `skillsmith update <skill> --dry-run` on that machine.',
   },
   missing: {
     label: 'Missing',
@@ -250,11 +253,14 @@ export function buildInventoryView(rows: InventoryRow[]): DeviceView[] {
 // ─── Device-wide batch tips ───────────────────────────────────────────────────
 
 /**
- * Copy shown when a device has multiple drifted skills, suggesting a single
- * batch-update command instead of updating each skill individually.
+ * Copy shown when a device has multiple drifted skills. SMI-6530: does not
+ * recommend applying `update --all` directly — a bulk, non-dry-run update can
+ * overwrite local edits in skill directories that are git clones, so this
+ * points at reviewing a dry run first and then updating skills individually.
+ * Containment until the update eligibility gate (SMI-6532) ships.
  */
 export const DEVICE_BATCH_UPDATE_TIP =
-  'Multiple skills on this machine have updates — run `skillsmith update --all` to update everything at once.'
+  'Multiple skills on this machine have updates — run `skillsmith update --all --dry-run` to review them, then update each skill individually.'
 
 /**
  * Decide whether to show the {@link DEVICE_BATCH_UPDATE_TIP} for a device.
@@ -262,7 +268,7 @@ export const DEVICE_BATCH_UPDATE_TIP =
  * Threshold is evaluated **device-wide, across all harnesses** — not
  * per-harness. A device with one `drifted` skill under `claude-code` and one
  * `drifted` skill under `cursor` still crosses the threshold, because
- * `skillsmith update --all` operates on the whole machine, not a single
+ * `skillsmith update --all --dry-run` reviews the whole machine, not a single
  * harness. Callers must pass the full flat list of a device's skills
  * (i.e. call this *before* any per-harness grouping) — grouping first and
  * calling this per-harness-group would undercount and suppress the tip.

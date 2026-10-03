@@ -46,18 +46,48 @@ vi.mock('../supabase-client.js', () => ({
   resetSupabaseClients: vi.fn(),
 }))
 
+// readLicenseKey is kept — registry-tools.live.audit.ts still calls it directly for the audit
+// row's masked-credential metadata. resolveLicenseTeamId is dropped: registry-tools.ts no longer
+// calls it (SMI-6622 — see the registry-tools.team.js mock below).
 vi.mock('./team-resolver.js', () => ({
   readLicenseKey: vi.fn(() => 'sk_test_fake_license'),
-  resolveLicenseTeamId: vi.fn(async () => 'team-alpha'),
   resolveUserAccessToken: vi.fn(async () => 'fake-user-access-token'),
 }))
+
+// SMI-6622: registry-tools.ts's resolveTeamId() now delegates to registry-tools.team.js, not
+// team-resolver.js's resolveLicenseTeamId.
+// importOriginal + spread (SMI-6622 round 2) — see registry-tools.install-action.test.ts's
+// identical comment for why (a future new export never needs re-adding to every mock).
+vi.mock('./registry-tools.team.js', async (importOriginal) => {
+  const actual = await importOriginal<typeof import('./registry-tools.team.js')>()
+  return {
+    ...actual,
+    resolveRegistryTeamId: vi.fn(async () => ({
+      teamId: 'team-alpha',
+      source: 'env:SKILLSMITH_LICENSE_KEY',
+    })),
+    readRegistryCredential: vi.fn(() => 'sk_test_fake_license'),
+  }
+})
 
 // ============================================================================
 // Shared setup
 // ============================================================================
 
-beforeEach(() => {
+beforeEach(async () => {
   setPrivateRegistryService(createLiveRegistryService())
+  // SMI-6622 round 5 PR-07 finding 3: reset the signed-in default HERE, at the top level, rather
+  // than in a local per-describe `beforeEach` — a test anywhere below can override
+  // `resolveUserAccessToken` via a PERSISTENT `mockResolvedValue(null)` (not `...Once`; the
+  // "namespace surfaces the probe's own ... login error" test below does this deliberately, to
+  // cover the probe's own second call), and this file's shared `afterEach`'s `vi.clearAllMocks()`
+  // does NOT undo a `mockResolvedValue` override — it only clears recorded calls/results, not a
+  // configured implementation. Resetting the default here, before EVERY test, means no earlier
+  // test's override can ever leak into a later one regardless of describe-block ordering. A test
+  // that wants a signed-out caller still overrides this from within its own body, which always runs
+  // after this `beforeEach`.
+  const { resolveUserAccessToken } = await import('./team-resolver.js')
+  vi.mocked(resolveUserAccessToken).mockResolvedValue('fake-user-access-token')
 })
 
 afterEach(() => {
@@ -93,7 +123,15 @@ describe('private_registry_manage namespace action — SMI-5852 AC-11', () => {
     const result = await executePrivateRegistryManage({ action: 'namespace' }, makeContext())
 
     expect(result.success).toBe(false)
-    expect(result.error).toMatch(/unable to resolve/i)
+    // SMI-6622 round 5 PR-07: a genuine query failure now surfaces the probe's own FIXED, AUTHORED
+    // text (never the raw `error.message` — see registry-tools.membership-check.ts's header on why
+    // that field is never read at all) rather than the generic "unable to resolve...skillsmith
+    // login" text — a probe failure must never be indistinguishable from "you're just not a
+    // member," so it gets its own, distinct wording. No `code` was given in this fixture, so none
+    // is appended either.
+    expect(result.error).toMatch(/unable to verify your team membership/i)
+    expect(result.error).toMatch(/the membership check itself failed/i)
+    expect(result.error).not.toContain('connection failure')
 
     // Cross-provider review finding (SMI-6109): the original draft collapsed this into `null` and
     // audited it as 'success' — a real outage reported as a successful read, in a log whose whole
@@ -101,6 +139,51 @@ describe('private_registry_manage namespace action — SMI-5852 AC-11', () => {
     const auditInsert = calls.find((c) => c.table === 'audit_logs')
     expect(auditInsert).toBeDefined()
     expect(auditInsert!.payload?.result).toBe('error')
+  })
+
+  // SMI-6622 round 5 PR-07 finding 2: no live test previously covered a CONFIRMED member whose team
+  // has a genuinely null `skill_namespace` — the generic "unable to resolve...skillsmith login"
+  // branch was reachable only in theory. `callCount` gives getNamespace()'s own `.single()` call a
+  // clean null (data present, `skill_namespace: null` — a real row, not a PGRST116 no-rows) and the
+  // SEPARATE membership probe's `.single()` call a confirmed-member row, so the probe's
+  // `membershipOverrideError()` returns `null` (nothing to override) and execution falls through to
+  // the generic text — the ONLY case that text is still reachable from, post round-4/5.
+  it('namespace falls through to the generic "unable to resolve" text for a confirmed member with a genuinely null skill_namespace', async () => {
+    let callCount = 0
+    const { client } = createFakeClient({
+      singleResponder: () => {
+        callCount += 1
+        if (callCount === 1) return { data: { skill_namespace: null }, error: null } // getNamespace()'s own query
+        return { data: { id: RESOLVED_TEAM }, error: null } // probe: confirmed member
+      },
+    })
+    await mockBothClients(client)
+
+    const result = await executePrivateRegistryManage({ action: 'namespace' }, makeContext())
+
+    expect(result.success).toBe(false)
+    expect(result.error).toMatch(/unable to resolve/i)
+    expect(result.error).toMatch(/skillsmith login/i)
+    // Distinct from a probe-failure result — a confirmed member never gets that wording.
+    expect(result.error).not.toMatch(/unable to verify your team membership/i)
+  })
+
+  // SMI-6622 round 2 finding 3: "Add tests for ... the non-member message." PGRST116 on EVERY
+  // `.single()` call covers both getNamespace()'s own query and the membership-check probe's —
+  // both are genuinely "no visible row for this team" under an RLS-scoped caller, so returning the
+  // SAME PGRST116 for both is not a shortcut, it is the real scenario this test targets.
+  it('replaces the generic namespace-unresolved message with the specific non-member message when confirmed', async () => {
+    const { client } = createFakeClient({
+      singleResponder: () => ({ data: null, error: { code: 'PGRST116', message: 'no rows' } }),
+    })
+    await mockBothClients(client)
+
+    const result = await executePrivateRegistryManage({ action: 'namespace' }, makeContext())
+
+    expect(result.success).toBe(false)
+    expect(result.error).toMatch(/not a member of the team resolved from/i)
+    expect(result.error).toMatch(/SKILLSMITH_LICENSE_KEY environment variable/)
+    expect(result.error).not.toMatch(/unable to resolve/i)
   })
 })
 
@@ -390,22 +473,248 @@ describe('private_registry_manage live mode — SMI-6109 member-credential requi
   // getNamespace's documented contract (registry-tools.ts's PrivateRegistryService interface) is
   // "or null if it could not be resolved" — it never throws, unlike list/get above, so a
   // not-logged-in caller cannot get the same loud, distinguishable "run skillsmith login" error
-  // list/get surface. Cross-provider review (SMI-6109) flagged the resulting UX gap: the generic
-  // "unable to resolve" message the caller CAN get is now required to at least hint at login
-  // (registry-tools.ts's namespace handler), a partial fix that keeps getNamespace()'s own
-  // never-throws contract intact. See registry-tools.live.member-reads.ts's header comment for
-  // why that contract itself is deliberate.
-  it('namespace resolves to an "unable to resolve" message that hints at login, when no user is signed in', async () => {
+  // list/get surface directly from getNamespace() itself. Cross-provider review (SMI-6109) flagged
+  // the resulting UX gap; round 4 PR-07 closed it more precisely than the original partial fix did:
+  // the membership-check probe's OWN not-signed-in error (which already names `skillsmith login`)
+  // now surfaces verbatim via `membershipOverrideError()`'s 'probe_failed' verdict, so this case no
+  // longer shares the generic "unable to resolve" text with a genuinely-unconfigured team — it gets
+  // the exact, specific reason. See registry-tools.live.member-reads.ts's header comment for why
+  // getNamespace()'s own never-throws contract is deliberate, and registry-tools.membership-
+  // check.ts's header for the round-4 'probe_failed' verdict.
+  it('namespace surfaces the probe\'s own "run skillsmith login" error when no user is signed in', async () => {
     const { resolveUserAccessToken } = await import('./team-resolver.js')
-    vi.mocked(resolveUserAccessToken).mockResolvedValueOnce(null)
+    // SMI-6622 round 2 finding 3: persistent (not `...Once`) — a genuinely-signed-out caller
+    // returns null on EVERY resolveUserAccessToken() call, including the membership-check probe
+    // this handler now also attempts. A single queued `null` only covered auditedGetNamespace()'s
+    // own call and let the probe's own (second) getMemberUserClient() call fall through to this
+    // mock's default token, incorrectly reaching a real `teams` query.
+    vi.mocked(resolveUserAccessToken).mockResolvedValue(null)
     const { client, calls } = createFakeClient()
     await mockBothClients(client)
 
     const result = await executePrivateRegistryManage({ action: 'namespace' }, makeContext())
 
     expect(result.success).toBe(false)
-    expect(result.error).toMatch(/unable to resolve/i)
+    // SMI-6622 round 5 PR-07: the probe now checks `resolveUserAccessToken()` directly, BEFORE
+    // constructing any client (registry-tools.membership-check.ts's `probeTeamMembership()`), and
+    // returns FIXED, AUTHORED not-signed-in text — never a forwarded exception message —
+    // distinguishable from an unrelated "unable to resolve" outage/misconfiguration.
+    expect(result.error).toMatch(/unable to verify your team membership/i)
+    expect(result.error).toMatch(/you are not signed in/i)
     expect(result.error).toMatch(/skillsmith login/i)
+    // No client was ever constructed for the probe, so no `teams` query ran either.
     expect(calls.find((c) => c.table === 'teams')).toBeUndefined()
+  })
+})
+
+// ============================================================================
+// Round 4/5/6 PR-07: a failed membership probe must never look identical to a genuinely
+// empty/unset registry — an empty `list` or null `namespace` plus a PROBE FAILURE (not a confirmed
+// member, not a confirmed non-member) must return `success:false`, never fall through to
+// `success:true`. Round 6 (third consecutive finding on this surface): the probe's failure text
+// must never carry ANY external string, full stop — round 5's validated error CODE is gone
+// entirely (an upstream-controlled code cannot be trusted just because it matches a pattern), and
+// `resolveUserAccessToken()`/`getSupabaseUserClient()` failures are now covered too, not only the
+// query layer. The signed-in default is reset in this file's shared top-level `beforeEach`
+// (finding 3), so no local override is needed here.
+// ============================================================================
+
+describe('private_registry_manage — membership probe failures never leak raw text, and are distinct from success (SMI-6622 round 4/5/6 PR-07)', () => {
+  it('list: returns success:false with ONLY authored text — never a JWT, API key, or license key — when the membership probe query throws', async () => {
+    const jwt = 'eyJhbGciOiJIUzI1NiJ9.eyJzdWIiOiJ4In0.sig'
+    const apiKey = 'sk_live_abcdefghijklmnopqrstuvwx'
+    const licenseKey = 'sk_test_fake_license'
+    const { client } = createFakeClient({
+      thenResponder: () => ({ data: [], error: null }), // list() itself: genuinely empty
+      singleResponder: () => {
+        // A hostile/misbehaving driver embedding credential-shaped text in a thrown exception's
+        // own message — this must never reach the result (round 5 PR-07 finding 1).
+        throw new Error(
+          `upstream failure while proxying token ${jwt} key ${apiKey} license ${licenseKey}`
+        )
+      },
+    })
+    await mockBothClients(client)
+
+    const result = await executePrivateRegistryManage({ action: 'list' }, makeContext())
+
+    expect(result.success).toBe(false)
+    expect(result.error).not.toContain(jwt)
+    expect(result.error).not.toContain(apiKey)
+    expect(result.error).not.toContain(licenseKey)
+    // Fixed, authored `transport_error` text — probeTeamMembership() never reads the exception's
+    // own message.
+    expect(result.error).toMatch(/unable to verify your team membership/i)
+    expect(result.error).toMatch(/a network error interrupted the check/i)
+  })
+
+  // SMI-6622 round 6 PR-07 finding 2: round 5's SAFE_ERROR_CODE_PATTERN let a real Postgres
+  // SQLSTATE (e.g. `42501`) through on the theory that "short + uppercase-alnum" was a safe enough
+  // shape — but the code is STILL upstream-controlled, and an upstream value that merely happens to
+  // match a pattern is not thereby trustworthy. Round 6 removed the allow-list entirely: no code
+  // ever appears, whether it looks like a real SQLSTATE or is an adversarial string shaped to pass
+  // the old pattern.
+  it.each([
+    ['a real-looking Postgres SQLSTATE', '42501'],
+    ['an adversarial upstream string shaped to pass the removed allow-pattern', 'SECRET1234'],
+  ])(
+    'list: drops the query-error code entirely — %s never reaches the result',
+    async (_label, code) => {
+      const { client } = createFakeClient({
+        thenResponder: () => ({ data: [], error: null }),
+        singleResponder: () => ({ data: null, error: { code, message: 'irrelevant' } }),
+      })
+      await mockBothClients(client)
+
+      const result = await executePrivateRegistryManage({ action: 'list' }, makeContext())
+
+      expect(result.success).toBe(false)
+      expect(result.error).not.toContain(code)
+      expect(result.error).toMatch(/unable to verify your team membership/i)
+      expect(result.error).toMatch(/the membership check itself failed\. try again/i)
+    }
+  )
+
+  // SMI-6622 round 6 PR-07 finding 1 (HIGH): `resolveUserAccessToken()` used to be awaited outside
+  // both `try` blocks in `probeTeamMembership` — a rejection escaped uncaught into
+  // `registry-tools.manage-action.ts`'s dispatcher catch, which copies `err.message` into the
+  // result. `tryBindMemberUserClient()` (registry-tools.live.auth.ts) now wraps that resolution in
+  // its own `try`. `service.list()` ALSO resolves a token (for its own binding) before the probe
+  // ever runs — the mock below lets that FIRST call succeed normally and only rejects the SECOND
+  // (the probe's), so this test isolates the probe's own handling from that separate, pre-existing,
+  // out-of-scope call site (SMI-6649).
+  it('list: returns success:false with ONLY authored text — never a JWT, API key, or license key — when resolveUserAccessToken() itself rejects', async () => {
+    const jwt = 'eyJhbGciOiJIUzI1NiJ9.eyJzdWIiOiJ4In0.sig'
+    const apiKey = 'sk_live_abcdefghijklmnopqrstuvwx'
+    const licenseKey = 'sk_test_fake_license'
+    const { resolveUserAccessToken } = await import('./team-resolver.js')
+    let callCount = 0
+    vi.mocked(resolveUserAccessToken).mockImplementation(async () => {
+      callCount += 1
+      if (callCount === 1) return 'fake-user-access-token' // service.list()'s own resolution
+      throw new Error(`keychain read failed: token ${jwt} key ${apiKey} license ${licenseKey}`)
+    })
+    const { client } = createFakeClient({ thenResponder: () => ({ data: [], error: null }) })
+    await mockBothClients(client)
+
+    const result = await executePrivateRegistryManage({ action: 'list' }, makeContext())
+
+    expect(result.success).toBe(false)
+    expect(result.error).not.toContain(jwt)
+    expect(result.error).not.toContain(apiKey)
+    expect(result.error).not.toContain(licenseKey)
+    expect(result.error).toMatch(/unable to verify your team membership/i)
+    expect(result.error).toMatch(/your saved sign-in could not be read or refreshed/i)
+  })
+
+  // SMI-6622 round 6 PR-07 finding 3: `client_unavailable` must be NEUTRAL — it covers non-auth
+  // client-construction failures (an invalid URL, the Vitest prod-fallback guard in
+  // supabase-client.ts) as well as auth ones, so it must never tell the caller to sign in. Same
+  // call-isolation technique as the token-rejection test above: the FIRST `getSupabaseUserClient()`
+  // call is service.list()'s own (succeeds normally), only the SECOND (the probe's) throws.
+  it('list: returns NEUTRAL client_unavailable text (no "skillsmith login") when getSupabaseUserClient() itself throws', async () => {
+    const jwt = 'eyJhbGciOiJIUzI1NiJ9.eyJzdWIiOiJ4In0.sig'
+    const apiKey = 'sk_live_abcdefghijklmnopqrstuvwx'
+    const licenseKey = 'sk_test_fake_license'
+    const { client } = createFakeClient({ thenResponder: () => ({ data: [], error: null }) })
+    await mockBothClients(client)
+    const { getSupabaseUserClient } = await import('../supabase-client.js')
+    let callCount = 0
+    vi.mocked(getSupabaseUserClient).mockImplementation(async () => {
+      callCount += 1
+      if (callCount === 1) return client // service.list()'s own binding succeeds
+      throw new Error(`client init failed: token ${jwt} key ${apiKey} license ${licenseKey}`)
+    })
+
+    const result = await executePrivateRegistryManage({ action: 'list' }, makeContext())
+
+    expect(result.success).toBe(false)
+    expect(result.error).not.toContain(jwt)
+    expect(result.error).not.toContain(apiKey)
+    expect(result.error).not.toContain(licenseKey)
+    expect(result.error).toMatch(/unable to verify your team membership/i)
+    expect(result.error).toMatch(/the registry client could not be created on this machine/i)
+    expect(result.error).not.toMatch(/skillsmith login/i)
+  })
+
+  // SMI-6622 round 6 PR-07 finding 3 (double token resolution): the probe must resolve the token
+  // EXACTLY ONCE — round 5's probe checked `resolveUserAccessToken()` itself AND ALSO called
+  // `getMemberUserClient()`, which resolved it again internally, duplicating keychain/refresh work
+  // and leaving a window where the credential could change between the two reads. Calls
+  // `probeTeamMembership()` directly (not through the full action handler) so the delta measured is
+  // the probe's own, not conflated with `service.list()`'s separate, unrelated resolution.
+  it('probeTeamMembership() calls resolveUserAccessToken() exactly once', async () => {
+    const { resolveUserAccessToken } = await import('./team-resolver.js')
+    const { probeTeamMembership } = await import('./registry-tools.membership-check.js')
+    const { client } = createFakeClient({
+      singleResponder: () => ({ data: { id: RESOLVED_TEAM }, error: null }),
+    })
+    await mockBothClients(client)
+
+    const before = vi.mocked(resolveUserAccessToken).mock.calls.length
+    await probeTeamMembership(RESOLVED_TEAM)
+    const after = vi.mocked(resolveUserAccessToken).mock.calls.length
+
+    expect(after - before).toBe(1)
+  })
+
+  it('namespace: returns success:false when the membership probe throws, even though getNamespace() itself returned a clean null', async () => {
+    // The 1st `.single()` call is getNamespace()'s own query (a genuine "no namespace configured"
+    // — data present, skill_namespace null, NOT an error); the 2nd is the separate membership
+    // probe, which throws. Two distinct responses on the SAME mocked terminal method, in call
+    // order — not a shortcut, this is the real two-query sequence registry-tools.manage-action.ts
+    // actually issues.
+    let callCount = 0
+    const { client } = createFakeClient({
+      singleResponder: () => {
+        callCount += 1
+        if (callCount === 1) return { data: { skill_namespace: null }, error: null }
+        throw new Error('network blip')
+      },
+    })
+    await mockBothClients(client)
+
+    const result = await executePrivateRegistryManage({ action: 'namespace' }, makeContext())
+
+    expect(result.success).toBe(false)
+    // SMI-6622 round 5 PR-07: fixed, authored `transport_error` text — the thrown 'network blip'
+    // message is never read or forwarded.
+    expect(result.error).toMatch(/unable to verify your team membership/i)
+    expect(result.error).toMatch(/a network error interrupted the check/i)
+    expect(result.error).not.toContain('network blip')
+  })
+
+  it('namespace: returns success:false when the membership probe returns a non-PGRST116 query error, even though getNamespace() itself returned a clean null', async () => {
+    let callCount = 0
+    const { client } = createFakeClient({
+      singleResponder: () => {
+        callCount += 1
+        if (callCount === 1) return { data: { skill_namespace: null }, error: null }
+        return { data: null, error: { message: 'db connection reset' } } // no code — none appended
+      },
+    })
+    await mockBothClients(client)
+
+    const result = await executePrivateRegistryManage({ action: 'namespace' }, makeContext())
+
+    expect(result.success).toBe(false)
+    expect(result.error).toMatch(/unable to verify your team membership/i)
+    expect(result.error).toMatch(/the membership check itself failed\. try again/i)
+    expect(result.error).not.toContain('db connection reset')
+  })
+
+  // Control (item d): a genuinely CONFIRMED member with a genuinely empty registry must still
+  // succeed — the fix must not turn every empty list into a failure, only an UNRESOLVED one.
+  it('list: still returns success:true with an empty list for a genuinely confirmed member (control)', async () => {
+    const { client } = createFakeClient({
+      thenResponder: () => ({ data: [], error: null }),
+      singleResponder: () => ({ data: { id: RESOLVED_TEAM }, error: null }), // probe: confirmed member
+    })
+    await mockBothClients(client)
+
+    const result = await executePrivateRegistryManage({ action: 'list' }, makeContext())
+
+    expect(result.success).toBe(true)
+    expect(result.skills).toEqual([])
   })
 })

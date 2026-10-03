@@ -139,13 +139,19 @@ export function buildOutdatedDiagnosis(params: {
         safeToBulkUpdate: true,
       }
     case 'outdated':
+      // SMI-6530 containment: `skillsmith update --all` in CLI 0.8.8-0.8.10 can
+      // overwrite local edits in skill directories that are git clones, or
+      // write into the wrong directory. Until the update eligibility gate
+      // (SMI-6532) ships, this state is excluded from bulk update and points
+      // at a dry-run preview followed by updating the skill on its own.
       return {
         state,
         signal: null,
         inconclusiveReason: null,
         summary: 'The registry has newer content for this id than what is installed.',
-        remediation: 'Run `skillsmith update <name>` to install the newer version.',
-        safeToBulkUpdate: true,
+        remediation:
+          'Preview with `skillsmith update <name> --dry-run`, then update this skill on its own.',
+        safeToBulkUpdate: false,
       }
     case 'local-drift':
       return {

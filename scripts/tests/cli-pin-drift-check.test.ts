@@ -14,11 +14,12 @@
  * Never skipIf(inDocker) — seams let this run inside the CI container where
  * vitest normally runs.
  */
-import { describe, it, expect, afterEach } from 'vitest'
+import { describe, it, expect, afterAll, afterEach } from 'vitest'
 import { spawnSync } from 'node:child_process'
 import { mkdirSync, mkdtempSync, readdirSync, readFileSync, rmSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { dirname, join, resolve } from 'node:path'
+import { createHash } from 'node:crypto'
 import { fileURLToPath } from 'node:url'
 
 const __dirname = dirname(fileURLToPath(import.meta.url))
@@ -37,21 +38,44 @@ function makeTmp(prefix: string): string {
   return d
 }
 
-/** Fixture repo: a .mcp.json + root package.json + packages/website/package.json. */
+/**
+ * Fixture repo: scripts/mcp-ruflo-launcher.sh (RUFLO_CLI_PIN=<semver>,
+ * SMI-6744 ADR-170 § 7 — the pin's new home, retired from .mcp.json's npx
+ * entry) + scripts/ruflo-seed/package.json (M-3's second committed copy) +
+ * root package.json + packages/website/package.json.
+ *
+ * `rufloPin: null` omits the RUFLO_CLI_PIN line entirely (the "absent pin"
+ * fixture); omitting `rufloPin` from opts keeps the '3.14.2' default every
+ * pre-existing call site here relies on. `rufloSeedPin` defaults to MATCH
+ * whatever `rufloPin` resolves to (so every pre-existing call site, which
+ * never passes it, gets a seed package.json that agrees with the launcher
+ * and never trips the M-3 drift check); `rufloSeedPin: null` omits the
+ * seed package.json file entirely (the "seed file absent" fixture) and
+ * `rufloSeedPin: 'absent-dep'` writes the file with no
+ * dependencies["@claude-flow/cli"] entry at all (the "no such dependency"
+ * fixture, distinct from the file being absent).
+ */
 function makeFixtureRepo(opts: {
-  rufloPin?: string
+  rufloPin?: string | null
+  rufloSeedPin?: string | null
   supabasePin?: string
   wranglerPin?: string
 }): string {
   const dir = makeTmp('cli-pin-drift-repo')
+  mkdirSync(join(dir, 'scripts'), { recursive: true })
+  const pinLine = opts.rufloPin === null ? '' : `RUFLO_CLI_PIN=${opts.rufloPin ?? '3.14.2'}\n`
   writeFileSync(
-    join(dir, '.mcp.json'),
-    JSON.stringify({
-      mcpServers: {
-        ruflo: { command: 'npx', args: [`ruflo@${opts.rufloPin ?? '3.14.2'}`, 'mcp', 'start'] },
-      },
-    })
+    join(dir, 'scripts', 'mcp-ruflo-launcher.sh'),
+    `#!/usr/bin/env bash\nset -euo pipefail\n${pinLine}echo hi\n`
   )
+  if (opts.rufloSeedPin !== null) {
+    mkdirSync(join(dir, 'scripts', 'ruflo-seed'), { recursive: true })
+    const seedBody =
+      opts.rufloSeedPin === 'absent-dep'
+        ? {}
+        : { dependencies: { '@claude-flow/cli': opts.rufloSeedPin ?? opts.rufloPin ?? '3.14.2' } }
+    writeFileSync(join(dir, 'scripts', 'ruflo-seed', 'package.json'), JSON.stringify(seedBody))
+  }
   writeFileSync(
     join(dir, 'package.json'),
     JSON.stringify({ devDependencies: { supabase: opts.supabasePin ?? '2.107.0' } })
@@ -164,6 +188,231 @@ describe('cli-pin-drift-check.sh (SMI-5746)', () => {
 
     expect(status).toBe(0)
     expect(state).toEqual({})
+  })
+
+  // SMI-6744 ADR-170 § 7: unlike every other soft-fail path in this script,
+  // a missing or non-semver RUFLO_CLI_PIN is a hard exit 1 — see the
+  // header's "Exit code" note and the block right above check_tool's calls.
+  it('exits 1 when RUFLO_CLI_PIN is absent from the launcher', () => {
+    const repo = makeFixtureRepo({ rufloPin: null })
+    const npm = makeFakeNpm({})
+    const { scriptPath: gh } = makeFakeGh()
+
+    const { status, log } = run({
+      SKILLSMITH_CLI_PIN_DRIFT_REPO_ROOT: repo,
+      SKILLSMITH_CLI_PIN_DRIFT_NPM_CMD: npm,
+      SKILLSMITH_CLI_PIN_DRIFT_GH_CMD: gh,
+    })
+
+    expect(status).toBe(1)
+    expect(log).toContain('RUFLO_CLI_PIN not found or not valid semver')
+    expect(log).toContain('mcp-ruflo-launcher.sh')
+    expect(log).not.toContain('no pin found, skipping')
+  })
+
+  it('exits 1 when RUFLO_CLI_PIN is not a valid semver', () => {
+    const repo = makeFixtureRepo({ rufloPin: 'latest' })
+    const npm = makeFakeNpm({})
+    const { scriptPath: gh } = makeFakeGh()
+
+    const { status, log } = run({
+      SKILLSMITH_CLI_PIN_DRIFT_REPO_ROOT: repo,
+      SKILLSMITH_CLI_PIN_DRIFT_NPM_CMD: npm,
+      SKILLSMITH_CLI_PIN_DRIFT_GH_CMD: gh,
+    })
+
+    expect(status).toBe(1)
+    expect(log).toContain('RUFLO_CLI_PIN not found or not valid semver')
+  })
+
+  // SMI-6744 M-3 (post-merge governance retro, PR #2931): mirrors
+  // scripts/audit-cli-pin-drift-helpers.mjs's findRufloSeedPinDrift() --
+  // a second committed pin that must never drift from the launcher's own.
+  it('M-3: exits 1 and names both values/paths when the seed package.json pin differs from the launcher pin', () => {
+    const repo = makeFixtureRepo({ rufloPin: '3.42.4', rufloSeedPin: '3.41.0' })
+    const npm = makeFakeNpm({ ruflo: { latest: '3.42.4', versions: ['3.42.4'] } })
+    const { scriptPath: gh } = makeFakeGh()
+
+    const { status, log } = run({
+      SKILLSMITH_CLI_PIN_DRIFT_REPO_ROOT: repo,
+      SKILLSMITH_CLI_PIN_DRIFT_NPM_CMD: npm,
+      SKILLSMITH_CLI_PIN_DRIFT_GH_CMD: gh,
+    })
+
+    expect(status).toBe(1)
+    expect(log).toContain('RUFLO_CLI_PIN=3.42.4')
+    expect(log).toContain(join('scripts', 'mcp-ruflo-launcher.sh'))
+    expect(log).toContain('dependencies["@claude-flow/cli"]=3.41.0')
+    expect(log).toContain(join('scripts', 'ruflo-seed', 'package.json'))
+  })
+
+  it('M-3: exits 1 when scripts/ruflo-seed/package.json has no @claude-flow/cli dependency at all', () => {
+    const repo = makeFixtureRepo({ rufloPin: '3.42.4', rufloSeedPin: 'absent-dep' })
+    const npm = makeFakeNpm({ ruflo: { latest: '3.42.4', versions: ['3.42.4'] } })
+    const { scriptPath: gh } = makeFakeGh()
+
+    const { status, log } = run({
+      SKILLSMITH_CLI_PIN_DRIFT_REPO_ROOT: repo,
+      SKILLSMITH_CLI_PIN_DRIFT_NPM_CMD: npm,
+      SKILLSMITH_CLI_PIN_DRIFT_GH_CMD: gh,
+    })
+
+    expect(status).toBe(1)
+    expect(log).toContain('has no dependencies["@claude-flow/cli"] entry')
+  })
+
+  // L-E (SMI-6744 A1.8 retro): the fixture already distinguished "seed
+  // package.json file absent" (rufloSeedPin: null) from "file exists but
+  // has no @claude-flow/cli entry" (rufloSeedPin: 'absent-dep', tested
+  // above), but no arm exercised the null branch until now -- the exact
+  // gap that let the shell mirror misreport a missing FILE as "has no ...
+  // entry" (a message that presumes the file exists) instead of naming the
+  // file as not found, the way the .mjs sibling's existsSync check does.
+  it('L-E: exits 1 and says "not found" (not "has no ... entry") when scripts/ruflo-seed/package.json itself is absent', () => {
+    const repo = makeFixtureRepo({ rufloPin: '3.42.4', rufloSeedPin: null })
+    const npm = makeFakeNpm({ ruflo: { latest: '3.42.4', versions: ['3.42.4'] } })
+    const { scriptPath: gh } = makeFakeGh()
+
+    const { status, log } = run({
+      SKILLSMITH_CLI_PIN_DRIFT_REPO_ROOT: repo,
+      SKILLSMITH_CLI_PIN_DRIFT_NPM_CMD: npm,
+      SKILLSMITH_CLI_PIN_DRIFT_GH_CMD: gh,
+    })
+
+    expect(status).toBe(1)
+    expect(log).toContain(`${join('scripts', 'ruflo-seed', 'package.json')} not found`)
+    expect(log).not.toContain('has no dependencies["@claude-flow/cli"] entry')
+  })
+
+  it('M-3: exits 0 when the seed package.json pin matches the launcher pin', () => {
+    const repo = makeFixtureRepo({ rufloPin: '3.42.4', rufloSeedPin: '3.42.4' })
+    const npm = makeFakeNpm({ ruflo: { latest: '3.42.4', versions: ['3.42.4'] } })
+    const { scriptPath: gh } = makeFakeGh()
+
+    const { status, log } = run({
+      SKILLSMITH_CLI_PIN_DRIFT_REPO_ROOT: repo,
+      SKILLSMITH_CLI_PIN_DRIFT_NPM_CMD: npm,
+      SKILLSMITH_CLI_PIN_DRIFT_GH_CMD: gh,
+    })
+
+    expect(status).toBe(0)
+    expect(log).not.toContain('does not match')
+  })
+
+  it('M-3: supabase/wrangler checks still run and the finding is routed through page_tool when only the seed pin mismatches', () => {
+    const repo = makeFixtureRepo({ rufloPin: '3.42.4', rufloSeedPin: '3.41.0' })
+    const npm = makeFakeNpm({
+      ruflo: { latest: '3.42.4', versions: ['3.42.4'] },
+      supabase: { latest: '2.107.0', versions: ['2.107.0'] },
+      wrangler: { latest: '4.112.0', versions: ['4.112.0'] },
+    })
+    const { scriptPath: gh, captureFile } = makeFakeGh()
+
+    const { status, log } = run({
+      SKILLSMITH_CLI_PIN_DRIFT_REPO_ROOT: repo,
+      SKILLSMITH_CLI_PIN_DRIFT_NPM_CMD: npm,
+      SKILLSMITH_CLI_PIN_DRIFT_GH_CMD: gh,
+    })
+
+    expect(status).toBe(1)
+    expect(log).toContain('supabase: up to date (2.107.0)')
+    expect(log).toContain('wrangler: up to date (4.112.0)')
+    expect(log).toContain('[shadow] WOULD open/update issue: CLI pin drift: ruflo-seed-drift')
+    expect(() => readFileSync(captureFile, 'utf8')).toThrow() // gh never actually invoked in shadow mode
+  })
+
+  // SMI-6744 M-11 (governance review, 2026-09-23): the old code `exit 1`ed
+  // immediately on a missing/invalid ruflo pin, before SUPABASE_PIN/
+  // WRANGLER_PIN were even read -- silently disabling both of those checks.
+  // Fixed: RUFLO_PIN_MISSING is set instead, every other check still runs,
+  // and the overall exit code stays 1 only at the very end.
+  it('M-11: supabase/wrangler checks still run when the ruflo pin is missing', () => {
+    const repo = makeFixtureRepo({ rufloPin: null })
+    const npm = makeFakeNpm({
+      supabase: { latest: '2.107.0', versions: ['2.107.0'] },
+      wrangler: { latest: '4.112.0', versions: ['4.112.0'] },
+    })
+    const { scriptPath: gh } = makeFakeGh()
+
+    const { status, log, state } = run({
+      SKILLSMITH_CLI_PIN_DRIFT_REPO_ROOT: repo,
+      SKILLSMITH_CLI_PIN_DRIFT_NPM_CMD: npm,
+      SKILLSMITH_CLI_PIN_DRIFT_GH_CMD: gh,
+    })
+
+    expect(status).toBe(1) // the ruflo pin is still missing -- overall exit code stays 1
+    expect(log).toContain('RUFLO_CLI_PIN not found or not valid semver')
+    // The fix under test: supabase and wrangler are NOT silently skipped.
+    expect(log).toContain('supabase: up to date (2.107.0)')
+    expect(log).toContain('wrangler: up to date (4.112.0)')
+    expect((state as { supabase?: unknown }).supabase).toBeDefined()
+    expect((state as { wrangler?: unknown }).wrangler).toBeDefined()
+  })
+
+  it('M-11: a missing ruflo pin is routed through page_tool -- the same notify path other drift findings use (shadow mode)', () => {
+    const repo = makeFixtureRepo({ rufloPin: null })
+    const npm = makeFakeNpm({
+      supabase: { latest: '2.107.0', versions: ['2.107.0'] },
+      wrangler: { latest: '4.112.0', versions: ['4.112.0'] },
+    })
+    const { scriptPath: gh, captureFile } = makeFakeGh()
+
+    const { status, log } = run({
+      SKILLSMITH_CLI_PIN_DRIFT_REPO_ROOT: repo,
+      SKILLSMITH_CLI_PIN_DRIFT_NPM_CMD: npm,
+      SKILLSMITH_CLI_PIN_DRIFT_GH_CMD: gh,
+      // SHADOW unset -- defaults to "1" inside the script, same as production default
+    })
+
+    expect(status).toBe(1)
+    expect(log).toContain('[shadow] WOULD open/update issue: CLI pin drift: ruflo')
+    expect(() => readFileSync(captureFile, 'utf8')).toThrow() // gh never actually invoked in shadow mode
+  })
+
+  it('M-11: with shadow lifted, a missing ruflo pin opens a real deduped GitHub issue via page_tool', () => {
+    const repo = makeFixtureRepo({ rufloPin: null })
+    const npm = makeFakeNpm({
+      supabase: { latest: '2.107.0', versions: ['2.107.0'] },
+      wrangler: { latest: '4.112.0', versions: ['4.112.0'] },
+    })
+    const { scriptPath: gh, captureFile } = makeFakeGh()
+
+    const { status } = run({
+      SKILLSMITH_CLI_PIN_DRIFT_REPO_ROOT: repo,
+      SKILLSMITH_CLI_PIN_DRIFT_NPM_CMD: npm,
+      SKILLSMITH_CLI_PIN_DRIFT_GH_CMD: gh,
+      SKILLSMITH_CLI_PIN_DRIFT_SHADOW: '0',
+    })
+
+    expect(status).toBe(1)
+    const capture = readFileSync(captureFile, 'utf8')
+    expect(capture).toContain('cmd:issue list')
+    expect(capture).toContain('cmd:issue create')
+    expect(capture).toMatch(/CLI pin drift: ruflo/)
+  })
+
+  it('prints "ruflo: pinned <X>..." (never "no pin found, skipping") once a valid pin is read from the launcher', () => {
+    // A drifted-but-within-grace-period pin is what actually produces a
+    // "pinned $pinned, first newer minor/major $first_newer" log line (the
+    // up-to-date branch instead logs "up to date ($pinned)") — this is the
+    // shape the plan row's "dry run prints ruflo: pinned <X>" refers to.
+    const repo = makeFixtureRepo({ rufloPin: '3.14.2' })
+    const npm = makeFakeNpm({
+      ruflo: { latest: '3.15.0', versions: ['3.14.2', '3.15.0'] },
+      supabase: { latest: '2.107.0', versions: ['2.107.0'] },
+      wrangler: { latest: '4.112.0', versions: ['4.112.0'] },
+    })
+    const { scriptPath: gh } = makeFakeGh()
+
+    const { status, log } = run({
+      SKILLSMITH_CLI_PIN_DRIFT_REPO_ROOT: repo,
+      SKILLSMITH_CLI_PIN_DRIFT_NPM_CMD: npm,
+      SKILLSMITH_CLI_PIN_DRIFT_GH_CMD: gh,
+    })
+
+    expect(status).toBe(0)
+    expect(log).toContain('ruflo: pinned 3.14.2, first newer minor/major 3.15.0')
+    expect(log).not.toContain('no pin found, skipping')
   })
 
   it('logs but does not page when the pin is already up to date', () => {
@@ -343,5 +592,82 @@ describe('cli-pin-drift-check.sh (SMI-5746)', () => {
     expect(result.status).toBe(0)
     expect(log).toContain('within 14-day re-notify cooldown; no gh action')
     expect(() => readFileSync(captureFile, 'utf8')).toThrow() // gh never invoked this run
+  })
+})
+
+// ---------------------------------------------------------------------------
+// M-11 red-arm test: mutate a scratch copy, watch the property fail
+// (SMI-6598's "revert the fix, watch it fail" rule, matching this repo's
+// scripts/tests/ruflo-seed-manifest.test.ts convention for a generator/
+// script rather than an application function.)
+// ---------------------------------------------------------------------------
+
+describe('cli-pin-drift-check.sh M-11 red-arm (scratch-copy mutation)', () => {
+  const originalSource = readFileSync(SCRIPT, 'utf8')
+  const originalMd5 = createHash('md5').update(originalSource).digest('hex')
+
+  afterAll(() => {
+    const finalSource = readFileSync(SCRIPT, 'utf8')
+    const finalMd5 = createHash('md5').update(finalSource).digest('hex')
+    expect(finalMd5).toBe(originalMd5)
+  })
+
+  /** Apply `mutate` to the real source, write the result to a scratch file, return its path. */
+  function makeMutant(mutate: (src: string) => string): string {
+    const mutated = mutate(originalSource)
+    expect(mutated).not.toBe(originalSource)
+    const dir = makeTmp('cli-pin-drift-mutant')
+    const mutantPath = join(dir, 'cli-pin-drift-check-mutant.sh')
+    writeFileSync(mutantPath, mutated, { mode: 0o755 })
+    return mutantPath
+  }
+
+  function replaceOnce(src: string, needle: string, replacement: string): string {
+    expect(src.split(needle).length - 1).toBe(1) // needle must be unique, or the mutation is ambiguous
+    return src.replace(needle, replacement)
+  }
+
+  it('restoring the pre-fix early `exit 1` makes supabase/wrangler silently skip when the ruflo pin is missing', () => {
+    const repo = makeFixtureRepo({ rufloPin: null })
+    const npm = makeFakeNpm({
+      supabase: { latest: '2.107.0', versions: ['2.107.0'] },
+      wrangler: { latest: '4.112.0', versions: ['4.112.0'] },
+    })
+    const { scriptPath: gh } = makeFakeGh()
+
+    // The exact pre-fix bug: `exit 1` immediately after detecting the
+    // missing pin, before SUPABASE_PIN/WRANGLER_PIN are ever read.
+    const mutantPath = makeMutant((src) =>
+      replaceOnce(src, 'RUFLO_PIN_MISSING=1\n', 'RUFLO_PIN_MISSING=1\n  exit 1\n')
+    )
+
+    const home = makeTmp('cli-pin-drift-mutant-home')
+    const result = spawnSync('bash', [mutantPath], {
+      env: {
+        ...process.env,
+        SKILLSMITH_CLI_PIN_DRIFT_TEST: '1',
+        SKILLSMITH_CLI_PIN_DRIFT_HOME: home,
+        SKILLSMITH_CLI_PIN_DRIFT_REPO_ROOT: repo,
+        SKILLSMITH_CLI_PIN_DRIFT_NPM_CMD: npm,
+        SKILLSMITH_CLI_PIN_DRIFT_GH_CMD: gh,
+      },
+      encoding: 'utf8',
+    })
+
+    let log = ''
+    try {
+      const logDir = join(home, '.skillsmith', 'logs')
+      log = readdirSync(logDir)
+        .map((f) => readFileSync(join(logDir, f), 'utf8'))
+        .join('\n')
+    } catch {
+      /* no log written under the mutant -- that itself is part of the failure */
+    }
+
+    expect(result.status).toBe(1)
+    // Under the mutant, supabase/wrangler are silently skipped -- the
+    // property under test (M-11's fix) FAILS to hold.
+    expect(log).not.toContain('supabase:')
+    expect(log).not.toContain('wrangler:')
   })
 })

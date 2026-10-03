@@ -118,6 +118,21 @@ jobs:
       - name: Checkout
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
 
+      # SMI-6654 (What Changes 5, D-3): ubuntu-latest's preinstalled Node
+      # version could not be confirmed from this repo, so pin one explicitly
+      # rather than assume it satisfies the helper's regex-lookbehind
+      # requirement (Node >= 10).
+      - name: Setup Node.js
+        uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v6
+        with:
+          node-version: '22'
+
+      # SMI-6654: audit:standards Check 72 (container npm mutations must go
+      # through scripts/lib/node-modules-mount-gate.sh) over the checked-out
+      # tree. node: builtins only -- no npm ci needed.
+      - name: Check container npm mount gate (Check 72)
+        run: node scripts/audit-container-npm-gate-helpers.mjs
+
       # SMI-2215: Pinned to SHA for reproducibility (v20 release)
       # To update: check https://github.com/DavidAnson/markdownlint-cli2-action/releases
       # Only lint non-encrypted markdown files.

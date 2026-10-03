@@ -25,13 +25,18 @@
 # check is safe here -- contrast device-login-roundtrip.yml /
 # cross-harness-inventory-e2e.yml, which need the event-scoped form.
 #
-# -g 5368 scopes the run to the 2 deterministic mocked tests (SMI-5375):
+# -g '5368|6428' scopes the run to 5 deterministic mocked tests (of 17 total
+# in this file; the other 12 are not run here — see follow-up note below):
 #   - "+N more" compat toggle expands without navigating away (SMI-3529/5367/5368/5369)
 #   - card stretched-link navigates to skill detail (SMI-5368 positive case)
-# These 2 tests self-mock via page.route() so they pass against any served
-# /skills shell with no live-backend dependency. The other 12 live-data tests
-# in the suite are not run here (follow-up: add page.route fixtures to the
-# SMI-1658 suite before wiring those into PR CI).
+#   - SMI-6428 scenario 1: a slow featured-load must not stomp an active search
+#   - SMI-6428 scenario 2: a filter changed before listeners bind is not lost
+#   - SMI-6428 confirmation review findings F-1 + 2: claiming ownership restores
+#     the retry button and clears stale error-state decoration
+# All 5 self-mock via page.route() so they pass against any served /skills
+# shell with no live-backend dependency. The other 12 live-data tests in the
+# suite are not run here (follow-up: add page.route fixtures to the SMI-1658
+# suite before wiring those into PR CI).
 
 name: Website Skills E2E
 
@@ -164,14 +169,21 @@ jobs:
         # 90s timeout -- vercel dev cold-start is ~20-30 s.
         run: npx --yes wait-on http://127.0.0.1:4321/ -t 90000
 
-      - name: Run skills-filter carve-out tests (SMI-5368, scoped via -g 5368)
+      - name: Warm up dev server (absorb Astro's first-load full-reload, SMI-6433)
+        # See docs/internal/implementation/smi-6433-vite-optimizedeps-prewarm-and-ci-warmup.md
+        # -- one real page load spends the one-time reload so the real test run's
+        # first load is a clean second load.
+        working-directory: packages/website
+        run: node scripts/warmup-skills-e2e.mjs
+
+      - name: Run skills-filter carve-out tests (SMI-5368 + SMI-6428, scoped via -g '5368|6428')
         # No --reporter override: the config's [list, html(open:never)] applies,
         # so the console gets list output AND playwright-report/ is populated for
         # the failure-artifact upload (pr-review F-G). open:never keeps CI non-blocking.
         # --timeout=90000 (SMI-5485): the one genuine failure in 18 shadow runs
         # was a 30s locator.click timeout that passed on retry; timeout-shaped
         # fix, retries stay 0 (config default).
-        run: npx playwright test --config=packages/website/playwright.config.ts --timeout=90000 packages/website/tests/e2e/skills-filter.spec.ts --project=desktop -g 5368
+        run: npx playwright test --config=packages/website/playwright.config.ts --timeout=90000 packages/website/tests/e2e/skills-filter.spec.ts --project=desktop -g '5368|6428'
 
       - name: Upload artifacts on failure
         if: failure()

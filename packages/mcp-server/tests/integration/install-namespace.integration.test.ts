@@ -249,6 +249,10 @@ describe('install namespace integration', () => {
     expect(outcome.resultPatch.warnings).toBeDefined()
     expect(outcome.resultPatch.warnings!.length).toBeGreaterThan(0)
     expect(outcome.resultPatch.warnings![0]!.kind).toBe('exact')
+    // SMI-6588: the negative half of case 5's assertion. A gate that really
+    // ran reports no problems, so a regression that tipped on every install
+    // fails here rather than passing quietly.
+    expect(outcome.problems).toEqual([])
   })
 
   it('case 4: governance mode + collision → proceeds with warnings[]', async () => {
@@ -291,6 +295,15 @@ describe('install namespace integration', () => {
     expect(outcome.resultPatch.warnings).toBeUndefined()
     expect(outcome.resultPatch.pendingCollision).toBeUndefined()
     expect(warnSpy).toHaveBeenCalled()
+
+    // SMI-6588: the three assertions above are ALL satisfied by a gate that
+    // ran cleanly and found nothing — which is exactly the ambiguity this
+    // degraded path used to fall into. `console.warn` firing was the only
+    // evidence, and it never reached the caller. The outcome must now say so
+    // itself, and name the step that failed.
+    expect(outcome.problems).toHaveLength(1)
+    expect(outcome.problems[0]).toContain('namespace pre-flight did not run')
+    expect(outcome.problems[0]).toContain('rename ledger could not be read')
   })
 
   it('case 6: mid-rename atomicity probe — target_exists short-circuits before mutation; ledger NOT appended', async () => {

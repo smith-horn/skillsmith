@@ -136,6 +136,8 @@ export const skillPackAuditToolSchema = {
     'triggerQuality and namespaceQuality fields appear when check_trigger_quality is ' +
     'true (default); existing fields (skills, driftCount, etc.) are unchanged. ' +
     'Requires Individual tier or higher.',
+  title: 'Audit Skill Pack',
+  annotations: { readOnlyHint: true, destructiveHint: false },
   inputSchema: {
     type: 'object' as const,
     properties: {

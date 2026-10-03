@@ -260,3 +260,42 @@ describe('setPendingWelcome / hasPendingWelcome', () => {
     expect(parseFirstText(out).tier1_install_failures).toEqual(['author/skill-a'])
   })
 })
+
+// ============================================================================
+// (f) structuredContent stays in lock-step with the text block (SMI-6472)
+// ============================================================================
+
+describe('annotateResponseWithWelcome — structuredContent parity', () => {
+  // Wave 3 gave search/get_skill/skill_validate an outputSchema, so their
+  // responses carry BOTH a text block and structuredContent. This decorator
+  // used to rebuild only `content`, leaving structuredContent stale — a
+  // structured-output client silently never saw the welcome fields that a
+  // text-reading client did. Cross-model pre-merge review caught it.
+  it('splices the welcome fields into structuredContent when present', () => {
+    setPendingWelcome('hello', ['author/skill-a'])
+
+    const envelope = {
+      content: [{ type: 'text', text: JSON.stringify({ result: 'ok' }) }],
+      structuredContent: { result: 'ok' },
+    } as unknown as CallToolResult
+
+    const out = annotateResponseWithWelcome(envelope)
+
+    expect(out.structuredContent).toMatchObject({
+      result: 'ok',
+      welcome_message: 'hello',
+      tier1_install_failures: ['author/skill-a'],
+    })
+    // The two representations must agree exactly, not merely overlap.
+    expect(out.structuredContent).toEqual(parseFirstText(out))
+  })
+
+  it('adds no structuredContent key to a response that never had one', () => {
+    setPendingWelcome('hello', [])
+
+    const out = annotateResponseWithWelcome(makeEnvelope({ result: 'ok' }))
+
+    expect('structuredContent' in out).toBe(false)
+    expect(parseFirstText(out).welcome_message).toBe('hello')
+  })
+})

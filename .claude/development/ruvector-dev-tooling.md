@@ -26,8 +26,13 @@ varlock load   # validates schema; the new var is non-sensitive
 # 2. Bring up the container (will now bind ~/.claude/projects/<encoded>/memory
 #    into /skillsmith-memory:ro).
 docker compose --profile dev up -d
-docker exec skillsmith-dev-1 npm install
-docker exec skillsmith-dev-1 npm run build -w packages/doc-retrieval-mcp
+# Mount-gated (SMI-6516/6520/6614, ADR-158; round-2b widened this to every
+# node_modules path, not just root): exit non-zero with no npm/build
+# output means at least one is not currently mounted with a volume-shaped
+# root — recreate first
+# (docker compose --profile dev up -d --force-recreate dev), then retry,
+# rather than assuming the install itself failed.
+docker exec -w /app skillsmith-dev-1 sh -c 'sh scripts/lib/node-modules-mount-gate.sh && npm install && npm run build -w packages/doc-retrieval-mcp'
 
 # 3. Verify the bind worked.
 docker exec skillsmith-dev-1 printenv SKILLSMITH_MEMORY_DIR_OVERRIDE   # → /skillsmith-memory
@@ -100,8 +105,7 @@ this if we adopt a longer-context model.
 1. `.ruvector/` is **git-ignored** and **CI-refused**. The indexer exits
    non-zero if `CI=true` or `SKILLSMITH_CI=true`. It also refuses to write
    outside `$REPO_ROOT/.ruvector/`.
-2. `.claude/settings.json` carries a `permissions.deny` list covering 42 Ruflo
-   tools with remote-persistence surfaces (AgentDB, hive-mind_memory,
+2. `.claude/settings.json` carries a `permissions.deny` list covering every Ruflo tool classified Blocked in the classification doc ([`ruflo-tool-classification.md`](../../docs/internal/architecture/ruflo-tool-classification.md), whose paste block is kept in lockstep with the array's `mcp__ruflo__*` entries; the count lives there, not here) with remote-persistence surfaces (AgentDB, hive-mind_memory,
    managed_agent_*, memory_store, etc.). This is the only Claude Code-enforced
    mechanism — `.mcp.json` `disabledTools` is silently ignored (SMI-4427).
    Authoritative list lives in
@@ -125,7 +129,7 @@ this if we adopt a longer-context model.
 The indexer uses `GIT_OPTIONAL_LOCKS=0` and passes
 `--no-optional-locks` to every `git diff` invocation, avoiding the
 SMI-2536 smudge-filter branch-switch hazard. Hook failure is non-fatal
-and non-blocking. Sessions opened in worktrees share the same corpus — the Docker container bind-mounts the main repo at `/app` and there is no per-worktree index.
+and non-blocking. Sessions opened in worktrees share the same corpus: the Docker container bind-mounts the main repo at `/app` and there is no per-worktree index. The index refreshes automatically only when someone commits in the main checkout itself. Commits made in worktrees never index their own changes: the hook's sentinel `.ruvector/skillsmith-docs/vectors` is gitignored and normally exists only in the main checkout, and even when it passes, the hook reindexes `skillsmith-dev-1`, whose `/app` is the main checkout. Commits inside `docs/internal` and `git pull`/merges don't trigger it either (SMI-5790, SMI-6422). After pulling `main` in the main checkout, run `skill_docs_reindex` (incremental by default; it resolves `docs/internal` submodule commits, SMI-5786). `skill_docs_status` shows `lastIndexedSha`, which you can compare with `git rev-parse HEAD`.
 
 To disable the auto-reindex: `rm -rf .ruvector/skillsmith-docs/` (first-run
 branch skips), or remove `packages/doc-retrieval-mcp/dist/`.

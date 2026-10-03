@@ -182,6 +182,95 @@ describe('createPinCommand', () => {
   })
 })
 
+// ============================================================================
+// SMI-6358: --client keying — a non-canonical client's entry lives at
+// `name::client`, never the bare `name` key (that's reserved for the
+// canonical claude-code client). pin/unpin must read AND write through
+// manifestKeyFor(name, client) so a --client pin never touches (or is
+// confused by) a same-named canonical entry.
+// ============================================================================
+
+describe('createPinCommand — --client keying (SMI-6358)', () => {
+  beforeEach(() => {
+    vi.clearAllMocks()
+  })
+
+  afterEach(() => {
+    vi.clearAllMocks()
+  })
+
+  it('pins only the name::client entry, leaving a same-named canonical entry byte-identical', async () => {
+    const canonicalEntry = {
+      id: 'anthropic/commit-helper',
+      name: 'commit-helper',
+      version: '1.0.0',
+      source: 'https://github.com/anthropic/commit-helper',
+      installPath: '/home/user/.claude/skills/commit-helper',
+      installedAt: '2024-01-01T00:00:00.000Z',
+      lastUpdated: '2024-01-01T00:00:00.000Z',
+      contentHash: 'aaaaaaaa1111111111111111111111111111111111111111111111111111',
+    }
+    const cursorEntry = {
+      id: 'anthropic/commit-helper',
+      name: 'commit-helper',
+      version: '1.0.0',
+      source: 'https://github.com/anthropic/commit-helper',
+      installPath: '/home/user/.cursor/skills/commit-helper',
+      installedAt: '2024-02-02T00:00:00.000Z',
+      lastUpdated: '2024-02-02T00:00:00.000Z',
+      contentHash: 'bbbbbbbb2222222222222222222222222222222222222222222222222222',
+    }
+    const manifest: SkillManifest = {
+      version: '1.0.0',
+      installedSkills: {
+        'commit-helper': canonicalEntry,
+        'commit-helper::cursor': cursorEntry,
+      },
+    }
+    mockLoadManifest.mockResolvedValue(manifest)
+
+    let capturedUpdateFn: ((m: SkillManifest) => SkillManifest) | null = null
+    mockUpdateManifestEntry.mockImplementation(async (fn: (m: SkillManifest) => SkillManifest) => {
+      capturedUpdateFn = fn
+    })
+
+    const cmd = createPinCommand()
+    const { exitCode, consoleOutput } = await runCommand(cmd, [
+      'commit-helper',
+      '--client',
+      'cursor',
+    ])
+
+    expect(exitCode).toBeNull()
+    expect(mockUpdateManifestEntry).toHaveBeenCalledOnce()
+
+    const updated = capturedUpdateFn!(manifest)
+    // The cursor entry got the pin...
+    expect(updated.installedSkills['commit-helper::cursor']?.pinnedVersion).toBe('bbbbbbbb')
+    // ...and the canonical entry is untouched (same object reference, since
+    // the updateFn never rebuilds it) — byte-identical apart from locking.
+    expect(updated.installedSkills['commit-helper']).toBe(canonicalEntry)
+    expect(updated.installedSkills['commit-helper']?.pinnedVersion).toBeUndefined()
+    expect(consoleOutput.join(' ')).toContain('bbbbbbbb')
+  })
+
+  it('defaults to the canonical (bare-name) key when --client is omitted', async () => {
+    const manifest = buildManifest()
+    mockLoadManifest.mockResolvedValue(manifest)
+
+    let capturedUpdateFn: ((m: SkillManifest) => SkillManifest) | null = null
+    mockUpdateManifestEntry.mockImplementation(async (fn: (m: SkillManifest) => SkillManifest) => {
+      capturedUpdateFn = fn
+    })
+
+    const cmd = createPinCommand()
+    await runCommand(cmd, ['commit-helper'])
+
+    const updated = capturedUpdateFn!(manifest)
+    expect(updated.installedSkills['commit-helper']?.pinnedVersion).toBe('a3f7b2c1')
+  })
+})
+
 describe('createUnpinCommand', () => {
   beforeEach(() => {
     vi.clearAllMocks()
@@ -239,5 +328,68 @@ describe('createUnpinCommand', () => {
     const cmd = createUnpinCommand()
     const { exitCode } = await runCommand(cmd, ['nonexistent-skill'])
     expect(exitCode).toBe(1)
+  })
+})
+
+describe('createUnpinCommand — --client keying (SMI-6358)', () => {
+  beforeEach(() => {
+    vi.clearAllMocks()
+  })
+
+  afterEach(() => {
+    vi.clearAllMocks()
+  })
+
+  it('unpins only the name::client entry, leaving a same-named canonical entry byte-identical', async () => {
+    const canonicalEntry = {
+      id: 'anthropic/commit-helper',
+      name: 'commit-helper',
+      version: '1.0.0',
+      source: 'https://github.com/anthropic/commit-helper',
+      installPath: '/home/user/.claude/skills/commit-helper',
+      installedAt: '2024-01-01T00:00:00.000Z',
+      lastUpdated: '2024-01-01T00:00:00.000Z',
+      pinnedVersion: 'aaaaaaaa',
+    }
+    const cursorEntry = {
+      id: 'anthropic/commit-helper',
+      name: 'commit-helper',
+      version: '1.0.0',
+      source: 'https://github.com/anthropic/commit-helper',
+      installPath: '/home/user/.cursor/skills/commit-helper',
+      installedAt: '2024-02-02T00:00:00.000Z',
+      lastUpdated: '2024-02-02T00:00:00.000Z',
+      pinnedVersion: 'bbbbbbbb',
+    }
+    const manifest: SkillManifest = {
+      version: '1.0.0',
+      installedSkills: {
+        'commit-helper': canonicalEntry,
+        'commit-helper::cursor': cursorEntry,
+      },
+    }
+    mockLoadManifest.mockResolvedValue(manifest)
+
+    let capturedUpdateFn: ((m: SkillManifest) => SkillManifest) | null = null
+    mockUpdateManifestEntry.mockImplementation(async (fn: (m: SkillManifest) => SkillManifest) => {
+      capturedUpdateFn = fn
+    })
+
+    const cmd = createUnpinCommand()
+    const { exitCode, consoleOutput } = await runCommand(cmd, [
+      'commit-helper',
+      '--client',
+      'cursor',
+    ])
+
+    expect(exitCode).toBeNull()
+    expect(mockUpdateManifestEntry).toHaveBeenCalledOnce()
+
+    const updated = capturedUpdateFn!(manifest)
+    expect(updated.installedSkills['commit-helper::cursor']?.pinnedVersion).toBeUndefined()
+    // Canonical entry untouched — same object reference.
+    expect(updated.installedSkills['commit-helper']).toBe(canonicalEntry)
+    expect(updated.installedSkills['commit-helper']?.pinnedVersion).toBe('aaaaaaaa')
+    expect(consoleOutput.join(' ')).toContain('Unpinned')
   })
 })

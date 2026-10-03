@@ -121,6 +121,8 @@ export const applyManifestReconcileToolSchema = {
   name: 'apply_manifest_reconcile',
   description:
     "[Skillsmith — Maintain stage] Repair a corrupted or ambiguous ~/.skillsmith/manifest.json entry through a supported path — MUTATES the manifest (with a pre-mutation backup and a durable, revertible ledger entry). Use after skill_outdated reports 'identity-mismatch' or 'local-drift', or after skill_recover_source found low/no confidence. Actions: 'mark_local' (stop tracking this entry against the registry — writes source:'unknown' + provenance:'local'); 'relink' (assert an explicit, registry-validated id/source pair — requires BOTH; never infers an identity); 'drop_entry' (hard-remove an entry whose installPath no longer resolves); 'verify' (re-check on-disk content against the registry's current content hash for one entry or, by default, every entry — writes verifiedAt only on a match); 'revert' (durable, cross-session undo of a prior reconcile on ONE entry, by ledgerEntryId or by name — survives an unrelated skill install happening in between).",
+  title: 'Reconcile Manifest Entry',
+  annotations: { readOnlyHint: false, destructiveHint: true },
   inputSchema: {
     type: 'object' as const,
     properties: {

@@ -1,0 +1,102 @@
+# SMI-6497: validate the shared npm-publish verify surface before merge.
+# publish.yml's four "Verify X on npm" steps were four copies of one program;
+# they now call scripts/ci/verify-npm-publish.sh. That helper is the only place
+# the SMI-6493 retry policy is written down.
+#
+# THREE REPLACEMENTS ARE WIRED HERE. They are not equally at risk, and saying so
+# accurately matters more than making the case sound stronger:
+#   1. verify-npm-publish.test.sh -- a `.test.sh` is not a vitest pattern at all,
+#      so ci.yml NEVER executes it. This workflow is its only CI execution. That
+#      is the load-bearing reason this file exists.
+#   2/3. publish-verify-call-sites.test.ts and publish-smoke-tail-guards.test.ts
+#      ARE vitest patterns, and ci.yml's `Test (root)` job does run them on a
+#      code-tier diff -- its condition is `tier == 'code' || tier == 'deps'`, not
+#      an affected-package set. They are named here anyway for two reasons: that
+#      job invokes `npx vitest run scripts/tests supabase/functions
+#      --passWithNoTests`, so a sweep selecting nothing is a GREEN run; and a
+#      tier classification that ever stops reaching these paths would remove
+#      their only other execution without any signal.
+# Hence: named in `paths:` AND executed by explicit path. Never a directory sweep.
+name: Validate Publish Verify
+
+env:
+  NODE_VERSION: '22'
+
+on:
+  pull_request:
+    paths:
+      - '.github/workflows/publish.yml'
+      - '.github/workflows/validate-publish-verify.yml'
+      - 'scripts/ci/verify-npm-publish.sh'
+      - 'scripts/tests/verify-npm-publish.test.sh'
+      - 'scripts/tests/publish-verify-call-sites.test.ts'
+      - 'scripts/tests/publish-smoke-tail-guards.test.ts'
+      # Its predicates live here. Omit this and an edit to one changes behaviour
+      # without scheduling the job that checks it -- the same never-ran class.
+      - 'scripts/tests/publish-smoke-tail-guards.helpers.ts'
+
+permissions:
+  contents: read
+
+jobs:
+  verify-surface:
+    name: Verify Surface
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+
+      # A vitest invocation naming a path that does not exist can degrade to a
+      # no-op. Assert presence first, so a deleted replacement fails loudly here
+      # instead of passing quietly two steps later.
+      - name: Assert every replacement file is present
+        run: |
+          set -euo pipefail
+          missing=0
+          for f in \
+            scripts/ci/verify-npm-publish.sh \
+            scripts/tests/verify-npm-publish.test.sh \
+            scripts/tests/publish-verify-call-sites.test.ts \
+            scripts/tests/publish-smoke-tail-guards.test.ts \
+            scripts/tests/publish-smoke-tail-guards.helpers.ts
+          do
+            if [ ! -f "$f" ]; then
+              echo "::error::required replacement file is missing: $f"
+              missing=$((missing + 1))
+            fi
+          done
+          echo "checked 5 file(s); missing ${missing}"
+          [ "$missing" -eq 0 ]
+
+      - name: shellcheck
+        run: |
+          shellcheck scripts/ci/verify-npm-publish.sh scripts/tests/verify-npm-publish.test.sh
+
+      - name: Syntax check (bash -n)
+        run: |
+          bash -n scripts/ci/verify-npm-publish.sh
+          bash -n scripts/tests/verify-npm-publish.test.sh
+
+      - name: Helper behavioural tests
+        run: |
+          bash scripts/tests/verify-npm-publish.test.sh
+
+      - name: Setup Node (for the two vitest replacements)
+        uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v6
+        with:
+          node-version: ${{ env.NODE_VERSION }}
+
+      - name: Install root devDeps (vitest + js-yaml + yaml)
+        # audit:carveout-pure-js -- both replacements parse YAML and load no
+        # native module. vitest pulls esbuild, which requires platform-specific
+        # optional deps (`@esbuild/linux-x64`); do NOT pass `--omit=optional` here.
+        run: npm ci --ignore-scripts --no-audit --no-fund
+
+      # Explicit paths, and deliberately NO --passWithNoTests: if either filter
+      # selects nothing, this step must go red. That flag is what makes ci.yml's
+      # root job unable to stand in for this one.
+      - name: Call-site registry test
+        run: npx vitest run scripts/tests/publish-verify-call-sites.test.ts
+
+      - name: Smoke-tail behavioural test
+        run: npx vitest run scripts/tests/publish-smoke-tail-guards.test.ts
