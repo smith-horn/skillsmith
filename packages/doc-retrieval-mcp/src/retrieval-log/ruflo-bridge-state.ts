@@ -90,76 +90,23 @@ export {
   hasExpectedByPassed,
   resolveProbeInstalledAt,
   resolveProbeScriptPath,
+  type ProbeInstall,
 } from './ruflo-bridge-state.expected-by.js'
 
-/**
- * The detector's five-value vocabulary (`ruflo-bridge-verdict.mjs`) plus
- * `unreadable`, which the detector itself never returns — it is this
- * writer's own classification for "could not even reach the server to ask,"
- * adopted verbatim from A5.5.2. A verdict string outside this set (a future
- * upstream rewording, or a hand-edited state file) renders via
- * {@link renderBridgeVerdictLine}'s not-evaluated branch, never promoted to
- * the reader's own `malformed` axis below.
- */
-export const KNOWN_VERDICTS = [
-  'healthy',
-  'degraded',
-  // Written by the probe, not by the detector: the backend read clean but
-  // identity or freshness could not be corroborated. Its own token because
-  // "could not ask" is not "healthy" and its remedy (inspect the store and
-  // the authority file) differs from the detector's 'malformed' (re-run the
-  // detector against the payload).
-  'unverified',
-  'not-evaluated',
-  'malformed',
-  'unrecognized',
-  'unreadable',
-] as const
-export type BridgeVerdictToken = (typeof KNOWN_VERDICTS)[number]
-
-export function isKnownVerdict(v: string): v is BridgeVerdictToken {
-  return (KNOWN_VERDICTS as readonly string[]).includes(v)
-}
-
-export interface BridgeEntry {
-  /** ISO-8601 — when this probe completed (successfully or not). */
-  evaluatedAt: string
-  /** One of {@link KNOWN_VERDICTS}, or an out-of-set token from a future detector. */
-  verdict: string
-  reason: string
-  /** `embeddingBackend` as observed this probe, when the payload carried one. */
-  observedBackend: string | null
-  /** `DERIVED_FROM.version` (ruflo-bridge-verdict.mjs) at probe time — remediation-command context. */
-  derivedFromVersion: string | null
-  patternsLearned: number | null
-  trajectoriesRecorded: number | null
-  /** A5.5.2 liveness arm: consecutive probes with neither counter moved. */
-  consecutiveNoLearning: number
-  /**
-   * SMI-6967 H-9: latches `true` the first time any probe observes a
-   * counter above zero, and never un-latches. Gates {@link
-   * renderBridgeLivenessLine} — before this is true, nothing has ever
-   * produced a pattern or trajectory, so comparing two zeros as "unmoved"
-   * would fire permanently within days instead of signalling anything real.
-   * Absent on an entry written before this field existed; readers must treat
-   * `undefined` the same as `false` (dormant), never as `true`.
-   */
-  everLearned: boolean
-  /**
-   * SMI-6967 H-9: the last NON-NULL pair of counters this checkout has
-   * observed, carried forward unchanged across any probe that could not read
-   * them (`patternsLearned`/`trajectoriesRecorded` above are THIS probe's own
-   * raw reading, which can be null even when this baseline is not). This is
-   * the baseline `foldLiveness` compares the next real observation against —
-   * distinguishing "not observed this probe" from "observed and unchanged"
-   * rather than letting a null reading silently reset or silently extend a
-   * real streak.
-   */
-  lastObservedPatternsLearned: number | null
-  lastObservedTrajectoriesRecorded: number | null
-}
-
-export type BridgeState = Record<string, BridgeEntry>
+// ---- Entry/state shape (SMI-6744 A5.5.2(b)/(c) delta) ---------------------
+// Split into `ruflo-bridge-state.entry.ts` to stay under this repo's
+// <500-line-per-file convention — re-exported here so callers (and the
+// writer) can import everything from this one module, matching the
+// expected-by/liveness/render splits below. See that module's own doc
+// comment for the full SMI-6967 H-1/M-5 field-semantics rationale.
+import type { BridgeEntry, BridgeState } from './ruflo-bridge-state.entry.js'
+export {
+  KNOWN_VERDICTS,
+  isKnownVerdict,
+  type BridgeVerdictToken,
+  type BridgeEntry,
+  type BridgeState,
+} from './ruflo-bridge-state.entry.js'
 
 export function resolveBridgeStateDir(): string {
   return process.env.SKILLSMITH_STATE_DIR_OVERRIDE || join(homedir(), '.skillsmith')

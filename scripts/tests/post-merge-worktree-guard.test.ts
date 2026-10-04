@@ -327,6 +327,11 @@ describe('.husky/post-merge — linked-worktree guard + lockfile-drift classifie
     // NOT be trusted — status and token are checked together, not token
     // alone.
     ['valid token (fresh) but non-zero exit', 'echo fresh; exit 9'],
+    // SMI-6967 L-4: completes the {valid, invalid, empty} x {zero, non-zero}
+    // matrix — the five rows above cover valid+zero (tested elsewhere via
+    // the real classifier), empty+zero, empty+non-zero, invalid+zero, and
+    // valid+non-zero, but not invalid+non-zero until this row.
+    ['unrecognized token AND non-zero exit', "printf 'garbage\\n'; exit 9"],
   ])('(e) malformed classifier output (%s) → treated as unknown', (_label, body) => {
     const { root, autohealLog } = fixture!
     bumpLockfileViaMerge(root, makeFixtureEnv(), 'main', 'main-malformed', cosmeticMutate)

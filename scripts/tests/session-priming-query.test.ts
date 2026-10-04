@@ -13,14 +13,21 @@ import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 
-const { searchMock, logRetrievalEventMock, tmpHolder } = vi.hoisted(() => ({
-  searchMock: vi.fn(),
-  logRetrievalEventMock: vi.fn(),
-  // SMI-4549 Wave 2 — mutable holder so the writer.js mock factory can read
-  // the per-test tmp dir set in beforeEach. vi.hoisted ensures the holder
-  // exists at module load time when vi.mock runs.
-  tmpHolder: { current: '' as string },
-}))
+const { searchMock, logRetrievalEventMock, tmpHolder, bridgeReaderShouldThrow } = vi.hoisted(
+  () => ({
+    searchMock: vi.fn(),
+    logRetrievalEventMock: vi.fn(),
+    // SMI-4549 Wave 2 — mutable holder so the writer.js mock factory can read
+    // the per-test tmp dir set in beforeEach. vi.hoisted ensures the holder
+    // exists at module load time when vi.mock runs.
+    tmpHolder: { current: '' as string },
+    // SMI-6967 M-4 — mutable switch so a single, dedicated test can force
+    // the bridge-verdict reader to throw (session-priming-query.ts's
+    // "the bridge-verdict reader failed: …" fault branch), without any
+    // other test's behavior changing (default false = transparent passthrough).
+    bridgeReaderShouldThrow: { current: false },
+  })
+)
 
 vi.mock('../../packages/doc-retrieval-mcp/src/search.js', () => ({
   search: searchMock,
@@ -36,6 +43,30 @@ vi.mock('../../packages/doc-retrieval-mcp/src/retrieval-log/writer.js', () => ({
     outageMarkerPath: join(tmpHolder.current, 'retrieval-log.outage.json'),
   }),
 }))
+
+// SMI-6967 M-4 — a transparent passthrough to the real module unless the
+// test-only switch above is flipped, in which case ONLY readEntryResult
+// throws. This is the only way to drive session-priming-query.ts's
+// "the bridge-verdict reader failed" catch branch deterministically: every
+// other path to a thrown error here is itself fail-soft further down.
+vi.mock(
+  '../../packages/doc-retrieval-mcp/src/retrieval-log/ruflo-bridge-state.js',
+  async (importOriginal) => {
+    const actual =
+      await importOriginal<
+        typeof import('../../packages/doc-retrieval-mcp/src/retrieval-log/ruflo-bridge-state.js')
+      >()
+    return {
+      ...actual,
+      readEntryResult: (...args: Parameters<typeof actual.readEntryResult>) => {
+        if (bridgeReaderShouldThrow.current) {
+          throw new Error('forced reader failure (SMI-6967 M-4 test)')
+        }
+        return actual.readEntryResult(...args)
+      },
+    }
+  }
+)
 
 import {
   countRecentJsonlSessions,
@@ -96,6 +127,7 @@ beforeEach(() => {
   process.env.RETRIEVAL_LOG_DIR_OVERRIDE = tmp
   searchMock.mockReset()
   logRetrievalEventMock.mockReset()
+  bridgeReaderShouldThrow.current = false
   delete process.env.SKILLSMITH_DOC_RETRIEVAL_DISABLE_PRIMING
   delete process.env.LINEAR_API_KEY
   // SMI-5419: buildSignal3/countRecentJsonlSessions now resolve via the
@@ -566,7 +598,14 @@ describe('runQuery — ruflo-bridge banner (SMI-6744 A5.5.2 delta)', () => {
       patternsLearned: 1,
       trajectoriesRecorded: 1,
       consecutiveNoLearning: 0,
+      // SMI-6967 H-1: the gate is now `everProducerPresent`, not
+      // `everLearned` — defaults model an already-armed, fully-producing
+      // entry so existing arms that don't care about either field stay
+      // unaffected; a test exercising the pre-producer dormant case must
+      // override `everProducerPresent: false` explicitly.
+      everProducerPresent: true,
       everLearned: true,
+      countersRegressed: false,
       lastObservedPatternsLearned: 1,
       lastObservedTrajectoriesRecorded: 1,
       ...overrides,
@@ -688,24 +727,127 @@ describe('runQuery — ruflo-bridge banner (SMI-6744 A5.5.2 delta)', () => {
     }
   })
 
-  // --- SMI-6967 H-9: the liveness arm's everLearned gate, exercised through
-  // the full runQuery stack (unit-level fold/render coverage lives in
+  // --- SMI-6967 H-9/H-1: the liveness arm's gate, exercised through the
+  // full runQuery stack (unit-level fold/render coverage lives in
   // ruflo-bridge-state.test.ts).
 
-  it('SMI-6967 H-9 — stays dormant before any probe has ever observed real learning, even past the threshold', async () => {
+  it('SMI-6967 H-9/H-1 — stays dormant before any PRODUCER has ever been observed, even past the threshold', async () => {
     seedBridgeEntry({
+      everProducerPresent: false,
       everLearned: false,
       consecutiveNoLearning: 999,
       lastObservedPatternsLearned: 0,
       lastObservedTrajectoriesRecorded: 0,
     })
     const result = await runQuery({ ...baseArgs, cwd: repoDir })
-    expect(result.additionalContext).not.toContain('no learning recorded')
+    expect(result.additionalContext).not.toContain('[ruflo-bridge]')
   })
 
-  it('SMI-6967 H-9 — fires once armed and past the threshold', async () => {
-    seedBridgeEntry({ everLearned: true, consecutiveNoLearning: 7 })
+  it('SMI-6967 H-9 — fires once armed and past the threshold (producer present AND has learned before)', async () => {
+    seedBridgeEntry({ everProducerPresent: true, everLearned: true, consecutiveNoLearning: 7 })
     const result = await runQuery({ ...baseArgs, cwd: repoDir })
     expect(result.additionalContext).toContain('no learning recorded in 7 consecutive probes')
   })
+
+  // SMI-6967 H-1 — the finding's own reported bug, driven through the full
+  // stack: a connected bridge with real store entries ("32 total entries")
+  // that has recorded zero patterns and zero trajectories, EVER, used to be
+  // permanently unreportable because the old gate was `everLearned`. The
+  // banner must now fire, worded DIFFERENTLY from the "learned then
+  // stalled" case above.
+  it('SMI-6967 H-1 fix — a connected bridge that has NEVER learned anything fires past the threshold, with its own distinct wording', async () => {
+    seedBridgeEntry({
+      everProducerPresent: true,
+      everLearned: false,
+      consecutiveNoLearning: 7,
+      lastObservedPatternsLearned: 0,
+      lastObservedTrajectoriesRecorded: 0,
+    })
+    const result = await runQuery({ ...baseArgs, cwd: repoDir })
+    expect(result.additionalContext).toContain('[ruflo-bridge]')
+    expect(result.additionalContext).toContain('has never recorded a pattern or trajectory')
+    expect(result.additionalContext).not.toContain('no learning recorded in 7 consecutive probes')
+  })
+
+  // --- SMI-6967 M-5: a counter regression, driven through the full stack.
+
+  it('SMI-6967 M-5 — a counter regression renders unconditionally once a producer has been observed', async () => {
+    seedBridgeEntry({
+      everProducerPresent: true,
+      countersRegressed: true,
+      consecutiveNoLearning: 0,
+    })
+    const result = await runQuery({ ...baseArgs, cwd: repoDir })
+    expect(result.additionalContext).toContain('learning counters regressed')
+  })
+
+  // --- SMI-6967 M-4: the two anti-silence fault branches in
+  // session-priming-query.ts (`the host repo key could not be resolved…` and
+  // `the bridge-verdict reader failed: …`) had zero coverage in any test
+  // file — our own SMI-6967 H-1 file-scope isolation fix (top of this file)
+  // removed the only path that had been accidentally exercising them.
+
+  it('SMI-6967 M-4 — a non-git cwd (bridgeKey unresolvable) renders the "could not be resolved" fault, not silence', async () => {
+    const nonGitDir = mkdtempSync(join(tmpdir(), 'session-priming-non-git-'))
+    try {
+      const result = await runQuery({ ...baseArgs, cwd: nonGitDir })
+      expect(result.additionalContext).toContain('[ruflo-bridge]')
+      expect(result.additionalContext).toContain(
+        'the host repo key could not be resolved, so no verdict could be read'
+      )
+    } finally {
+      rmSync(nonGitDir, { recursive: true, force: true })
+    }
+  })
+
+  it('SMI-6967 M-4 — a thrown reader renders the "bridge-verdict reader failed" fault, not silence', async () => {
+    bridgeReaderShouldThrow.current = true
+    const result = await runQuery({ ...baseArgs, cwd: repoDir })
+    expect(result.additionalContext).toContain('[ruflo-bridge]')
+    expect(result.additionalContext).toContain('the bridge-verdict reader failed')
+    expect(result.additionalContext).toContain('forced reader failure (SMI-6967 M-4 test)')
+  })
+
+  // --- SMI-6967 L-6: the garbage-value fallback for the two documented env
+  // vars was asserted only in a comment, not a test.
+
+  it.each(['abc', '0', '-1'])(
+    'SMI-6967 L-6 — SKILLSMITH_RUFLO_VERDICT_STALE_HOURS=%s falls back to the default (not NaN/0/negative)',
+    async (garbage) => {
+      const original = process.env.SKILLSMITH_RUFLO_VERDICT_STALE_HOURS
+      try {
+        seedBridgeEntry({
+          verdict: 'healthy',
+          evaluatedAt: new Date(Date.now() - 2 * 3600 * 1000).toISOString(), // 2h old
+        })
+        process.env.SKILLSMITH_RUFLO_VERDICT_STALE_HOURS = garbage
+        const result = await runQuery({ ...baseArgs, cwd: repoDir })
+        // Default threshold is 48h — a 2h-old entry must NOT be stale under
+        // the default, proving the garbage value was ignored rather than
+        // coerced into some other (wrong) threshold.
+        expect(result.additionalContext).not.toContain('verdict stale')
+      } finally {
+        if (original === undefined) delete process.env.SKILLSMITH_RUFLO_VERDICT_STALE_HOURS
+        else process.env.SKILLSMITH_RUFLO_VERDICT_STALE_HOURS = original
+      }
+    }
+  )
+
+  it.each(['abc', '0', '-1'])(
+    'SMI-6967 L-6 — SKILLSMITH_RUFLO_LIVENESS_DAYS=%s falls back to the default (not NaN/0/negative)',
+    async (garbage) => {
+      const original = process.env.SKILLSMITH_RUFLO_LIVENESS_DAYS
+      try {
+        seedBridgeEntry({ everProducerPresent: true, everLearned: true, consecutiveNoLearning: 3 })
+        process.env.SKILLSMITH_RUFLO_LIVENESS_DAYS = garbage
+        const result = await runQuery({ ...baseArgs, cwd: repoDir })
+        // Default threshold is 7 — a streak of 3 must NOT fire under the
+        // default, proving the garbage value was ignored.
+        expect(result.additionalContext).not.toContain('no learning recorded')
+      } finally {
+        if (original === undefined) delete process.env.SKILLSMITH_RUFLO_LIVENESS_DAYS
+        else process.env.SKILLSMITH_RUFLO_LIVENESS_DAYS = original
+      }
+    }
+  )
 })

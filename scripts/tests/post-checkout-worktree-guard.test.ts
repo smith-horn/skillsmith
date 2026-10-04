@@ -274,6 +274,11 @@ describe('.husky/post-checkout — linked-worktree guard + lockfile-drift classi
     // Code-review finding 1: a VALID token printed but a non-zero exit must
     // NOT be trusted — status and token are checked together.
     ['valid token (fresh) but non-zero exit', 'echo fresh; exit 9'],
+    // SMI-6967 L-4: completes the {valid, invalid, empty} x {zero, non-zero}
+    // matrix — the five rows above cover valid+zero (tested elsewhere via
+    // the real classifier), empty+zero, empty+non-zero, invalid+zero, and
+    // valid+non-zero, but not invalid+non-zero until this row.
+    ['unrecognized token AND non-zero exit', "printf 'garbage\\n'; exit 9"],
   ])('(f) malformed classifier output (%s) → treated as unknown', (_label, body) => {
     const { root, beforeSha, afterCosmeticSha } = fixture!
 

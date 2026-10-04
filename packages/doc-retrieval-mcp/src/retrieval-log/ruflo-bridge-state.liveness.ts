@@ -5,72 +5,158 @@
  * type from `ruflo-bridge-state.ts`, never the reverse at the value level —
  * the main module re-exports {@link foldLiveness} so callers (and the
  * writer) still import everything from that one entry point.
+ *
+ * SMI-6967 H-1 rewrite (misreading correction). The owner's decision was to
+ * gate the arm on a PRODUCER EXISTING, not on learning having happened — the
+ * prior (H-9) implementation conflated the two onto one flag (`everLearned`),
+ * which made a connected bridge with real store entries that has simply
+ * never produced a pattern or trajectory permanently unreportable: exactly
+ * the silent-stall shape SMI-6744 exists to catch. This fold now tracks two
+ * latches that never collapse into each other:
+ *   - `everProducerPresent` (NEW): gates the arm. Latches from the probe
+ *     observing `bridge.status === 'connected'` and/or `agentdb.totalEntries
+ *     > 0` — passed in as `producerPresentThisProbe`.
+ *   - `everLearned` (unchanged latch rule, demoted role): used ONLY to word
+ *     the rendered line once the arm is armed — see
+ *     `ruflo-bridge-state.render.ts`'s `renderBridgeLivenessLine`.
+ * A fresh checkout with no payload at all still renders nothing: neither
+ * latch is ever set from a probe that could not ask.
+ *
+ * SMI-6967 M-5 (two more findings from the same review):
+ *   - A counter DECREASE (the store was wiped/reset) is the loudest possible
+ *     signal for a feature about bridge integrity, and used to be
+ *     indistinguishable from steady progress (both reset the streak to 0).
+ *     `countersRegressed` surfaces it explicitly, for exactly the probe that
+ *     observed the decrease — it is not latched, the same scope `verdict`
+ *     itself has.
+ *   - A PARTIAL read (one counter valid, the other not) used to be collapsed
+ *     into a full not-observed probe, discarding a real reading on the valid
+ *     axis. Each axis is now folded independently; only an axis actually
+ *     read this probe can move that axis's own baseline, and "unchanged"
+ *     requires every axis that WAS read to agree with its own baseline (an
+ *     axis not read this probe agrees trivially — nothing moved it).
+ *   - A migration from a pre-H-9 entry (no `lastObservedPatternsLearned`/
+ *     `lastObservedTrajectoriesRecorded` fields at all — `undefined`, never
+ *     written) now seeds the baseline from the entry's own legacy
+ *     `patternsLearned`/`trajectoriesRecorded` reading when that was itself a
+ *     valid number, instead of silently discarding it and costing a whole
+ *     probe cycle re-establishing it. Distinct from an H-9-era entry's own
+ *     explicit `null` ("armed, but never yet observed"), which is NOT
+ *     migrated — `undefined` is the only trigger.
+ *
+ * SMI-6967 L-1: every external counter is validated as a finite,
+ * non-negative number before any `>`/`<`/`===` comparison — an untrusted
+ * JSON value (`0.5`, `"5"`, `Infinity`, `true`, `[1]`, a negative number)
+ * must never arm a latch or move a counter. An invalid value is treated
+ * exactly like a missing (`null`) reading on that axis.
  */
 
 import type { BridgeEntry } from './ruflo-bridge-state.js'
 
-/** Return shape of {@link foldLiveness} — the three fields of an entry that the liveness arm owns, folded together in one place. */
+/** Return shape of {@link foldLiveness} — the liveness-owned fields of an entry, folded together in one place. */
 export interface BridgeLivenessFold {
   consecutiveNoLearning: number
   everLearned: boolean
+  everProducerPresent: boolean
+  countersRegressed: boolean
   lastObservedPatternsLearned: number | null
   lastObservedTrajectoriesRecorded: number | null
 }
 
 /**
- * SMI-6967 H-9 rewrite. Folds one probe's observed counters into the prior
- * entry's liveness state, on three ways rather than two — the same
- * two-way-vs-three-way collapse this module's reader/writer axes were
- * already rewritten to remove:
- *
- * - NOT OBSERVED this probe (either counter `null` — server unreachable,
- *   malformed payload): the streak, the `everLearned` latch, and the
- *   last-observed baseline all carry forward UNCHANGED. A probe that could
- *   not read the counters must neither silently reset a real streak (the
- *   bug: a transient read failure used to zero it) nor silently advance one
- *   (nothing moved; nothing was even asked).
- * - OBSERVED, UNCHANGED (both counters equal the last-observed, non-null,
- *   baseline): the streak advances by one.
- * - OBSERVED, CHANGED (no non-null baseline yet, or either counter differs
- *   from it): the streak resets to 0 and the baseline becomes this probe's
- *   reading.
- *
- * `everLearned` latches `true` the first time either counter is observed
- * above zero, and never un-latches — the gate gating `renderBridgeLivenessLine`'s
- * render entirely: two equal zeros (nothing has ever produced a pattern or
- * trajectory yet, the documented out-of-scope case) no longer counts as
- * "unmoved," so the arm stays dormant instead of firing permanently within
- * days of a fresh checkout.
+ * SMI-6967 L-1 — never trust an external JSON counter before comparing it.
+ * These are COUNTS (`patternsLearned`/`trajectoriesRecorded`), so the valid
+ * set is non-negative INTEGERS, not merely finite numbers — measured arming
+ * on `0.5` is exactly the gap a bare `Number.isFinite` check leaves open
+ * (0.5 passes `isFinite` and `>= 0` but is not a count any real probe would
+ * ever produce). `Number.isInteger` also rejects `Infinity`/`NaN` on its
+ * own, so no separate finiteness check is needed.
+ */
+function isValidCount(value: unknown): value is number {
+  return typeof value === 'number' && Number.isInteger(value) && value >= 0
+}
+
+/**
+ * SMI-6967 M-5 migration seed. `baseline` is read via optional chaining so a
+ * pre-H-9 entry that never had the field at all reads as `undefined` —
+ * DISTINCT from an H-9-era entry's own explicit `null`. Only the `undefined`
+ * case falls back to the entry's legacy raw reading.
+ */
+function seedBaseline(
+  baseline: number | null | undefined,
+  legacy: number | null | undefined
+): number | null {
+  if (baseline !== undefined) return baseline
+  return isValidCount(legacy) ? legacy : null
+}
+
+/**
+ * Folds one probe's observed counters (and producer-presence signal) into
+ * the prior entry's liveness state. See this module's own doc comment for
+ * the full H-1/M-5/L-1 rationale. `producerPresentThisProbe` is `null` when
+ * the probe could not even ask (e.g. the server was unreachable this round).
  */
 export function foldLiveness(
   prior: BridgeEntry | null,
   patternsLearned: number | null,
-  trajectoriesRecorded: number | null
+  trajectoriesRecorded: number | null,
+  producerPresentThisProbe: boolean | null = null
 ): BridgeLivenessFold {
   const priorEverLearned = prior?.everLearned === true
-  const priorLastP = prior?.lastObservedPatternsLearned ?? null
-  const priorLastT = prior?.lastObservedTrajectoriesRecorded ?? null
+  const priorEverProducerPresent = prior?.everProducerPresent === true
+  const priorLastP = seedBaseline(prior?.lastObservedPatternsLearned, prior?.patternsLearned)
+  const priorLastT = seedBaseline(
+    prior?.lastObservedTrajectoriesRecorded,
+    prior?.trajectoriesRecorded
+  )
   const priorStreak = prior?.consecutiveNoLearning ?? 0
 
-  const observedThisProbe = patternsLearned !== null && trajectoriesRecorded !== null
-  if (!observedThisProbe) {
+  const everProducerPresent = priorEverProducerPresent || producerPresentThisProbe === true
+
+  const pValid = isValidCount(patternsLearned)
+  const tValid = isValidCount(trajectoriesRecorded)
+
+  if (!pValid && !tValid) {
+    // Nothing observed this probe at all (unreachable server, or a payload
+    // whose counters were both missing or both invalid) — carry everything
+    // else forward unchanged.
     return {
       consecutiveNoLearning: priorStreak,
       everLearned: priorEverLearned,
+      everProducerPresent,
+      countersRegressed: false,
       lastObservedPatternsLearned: priorLastP,
       lastObservedTrajectoriesRecorded: priorLastT,
     }
   }
 
-  const everLearned = priorEverLearned || patternsLearned > 0 || trajectoriesRecorded > 0
-  const hadBaseline = priorLastP !== null && priorLastT !== null
-  const unchanged =
-    hadBaseline && priorLastP === patternsLearned && priorLastT === trajectoriesRecorded
+  const pNum = pValid ? (patternsLearned as number) : null
+  const tNum = tValid ? (trajectoriesRecorded as number) : null
+
+  const pBaseline = pValid ? (pNum as number) : priorLastP
+  const tBaseline = tValid ? (tNum as number) : priorLastT
+
+  const pRegressed = pValid && priorLastP !== null && (pNum as number) < priorLastP
+  const tRegressed = tValid && priorLastT !== null && (tNum as number) < priorLastT
+  const regressed = pRegressed || tRegressed
+
+  // An axis not read this probe agrees with its own baseline trivially
+  // (nothing moved it); an axis that WAS read agrees only if it equals its
+  // own prior baseline (and a prior baseline must exist to agree at all —
+  // a first-ever observation on an axis is a change, not an agreement).
+  const pUnchanged = pValid ? priorLastP !== null && pNum === priorLastP : true
+  const tUnchanged = tValid ? priorLastT !== null && tNum === priorLastT : true
+  const unchanged = pUnchanged && tUnchanged
+
+  const everLearned =
+    priorEverLearned || (pValid && (pNum as number) > 0) || (tValid && (tNum as number) > 0)
 
   return {
-    consecutiveNoLearning: unchanged ? priorStreak + 1 : 0,
+    consecutiveNoLearning: regressed ? 0 : unchanged ? priorStreak + 1 : 0,
     everLearned,
-    lastObservedPatternsLearned: patternsLearned,
-    lastObservedTrajectoriesRecorded: trajectoriesRecorded,
+    everProducerPresent,
+    countersRegressed: regressed,
+    lastObservedPatternsLearned: pBaseline,
+    lastObservedTrajectoriesRecorded: tBaseline,
   }
 }

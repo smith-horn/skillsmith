@@ -34,6 +34,14 @@ if git diff --name-only ORIG_HEAD HEAD | grep -q '^package-lock\.json$'; then
 
   # SMI-5624: linked-worktree detection, shared by the classify-driven
   # branch below and the advice printer's <main-checkout-path> argument.
+  # SMI-6967 L-3: the `|| echo ''` on each line below is belt-and-braces,
+  # not load-bearing -- `set +e` at the top of this file (SMI-6967 H-6/P-1)
+  # is the real errexit protection for this hook; these two predate that
+  # fix, from when each line had to defend itself individually. Measured:
+  # the assigned value is identical either way (a failing `git rev-parse`
+  # with stderr redirected already yields empty stdout), so dropping
+  # `|| echo ''` would change nothing observable -- kept only to avoid
+  # re-verifying that under every shell this hook might run under.
   _gcd="$(git rev-parse --git-common-dir 2>/dev/null || echo '')"
   _gd="$(git rev-parse --git-dir 2>/dev/null || echo '')"
   _IS_LINKED_WT=0
