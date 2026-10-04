@@ -69,13 +69,27 @@ export async function openCliDatabase(
     // documents as unsafe, because SQLite coordinates through file paths rather
     // than inodes.
     //
-    // **This aborts every command, including `search`, `info` and `remove`,
-    // which could each have served from the remote API or the filesystem
-    // without a database.** That cost was weighed against degrading those three
-    // and the owner chose uniform refusal on 2026-10-04: one code path is far
-    // harder to regress than fourteen plus three exceptions, and § 1 binds
-    // without carve-outs. It is a decision, not an oversight — do not "fix" it
-    // by adding a per-command fallback without revisiting that call.
+    // **This refusal is uniform — no caller gets a repaired database — but it
+    // does NOT abort every command.** An earlier version of this comment said
+    // it did, which was false: what a caller does with the refusal is the
+    // caller's own business, and one of them swallows it.
+    //
+    //   Most commands have no `try` around their open, so the refusal reaches
+    //   the entry point's handler, prints one sanitized line, and exits 1.
+    //   `skillsmith update` does NOT abort. Its open sits inside
+    //   `updateSkillWithOutcome`'s try, whose catch records a per-skill
+    //   failure and lets the loop continue — so on a corrupt database every
+    //   skill fails, the command reports them, and (since SMI-6961 step 6)
+    //   exits 1. It never proceeds against an empty database, which is what
+    //   § 1 actually requires, but it is not an abort.
+    //
+    // The cost of refusing at all was weighed against degrading `search`,
+    // `info` and `remove`, each of which could have served from the remote API
+    // or the filesystem without a database. The owner chose uniform refusal on
+    // 2026-10-04: one code path is far harder to regress than fourteen plus
+    // three exceptions, and § 1 binds without carve-outs. It is a decision, not
+    // an oversight — do not "fix" it by adding a per-command fallback without
+    // revisiting that call.
     throw err
   }
 }

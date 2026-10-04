@@ -138,12 +138,18 @@ const KNOWN_OPENERS: Readonly<Record<string, { sites: number; note: string }>> =
   'packages/core/src/db/schema.ts': { sites: 3, note: 'factory; legacy + async variants' },
 
   // --- CLI commands, all read-write through openCliDatabase ---
-  // Each inherits the wrapper's behaviour; none handles the refusal itself.
   // SMI-6961's rethrow flipped this whole set from "rebuilt empty, command
-  // proceeds" to "command aborts with the remedy" — uniformly, by owner
-  // decision, including `search`, `info` and `remove`, which could each have
-  // degraded to a remote or filesystem path instead. That is why the set is
-  // enumerated here rather than summarised: the cost is per-command.
+  // proceeds" to "no caller gets a repaired database", by owner decision,
+  // including `search`, `info` and `remove`, which could each have degraded to
+  // a remote or filesystem path instead. That is why the set is enumerated here
+  // rather than summarised: the cost is per-command.
+  //
+  // What this header must NOT say — and twice did — is that every command
+  // "aborts" or that "none handles the refusal itself". `manage.update.ts` is
+  // in this very list and does both: it catches per skill and continues. The
+  // note on its own entry below says so. Two surfaces in one file disagreeing
+  // is the exact defect this file keeps accruing, so: the uniform property is
+  // about REPAIR, not about control flow.
   'packages/cli/src/commands/audit-sources.action.ts': { sites: 1, note: 'read-write; wrapper' },
   'packages/cli/src/commands/audit.ts': { sites: 1, note: 'read-write; wrapper' },
   'packages/cli/src/commands/import-local.ts': { sites: 2, note: 'read-write; wrapper' },
