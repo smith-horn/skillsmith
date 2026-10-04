@@ -1,0 +1,128 @@
+# SMI-6949 review round 1 (R1-L4). audit:standards Check 76 only runs on code
+# PRs, so its 14-day expiry warning reaches nobody between PRs and an acceptance
+# can lapse unseen on a quiet week. This daily run re-evaluates the dependency
+# registry and keeps ONE GitHub Issue (label dependency-registry-expiry) open
+# while Check 76 reports a failure or an acceptance inside its warn window, and
+# closes it when the check is clean. Standing R4 "unpinned" warnings are not an
+# expiry signal and are deliberately not listed (they would keep the issue open
+# permanently). The job exits with Check 76's own status, so a lapsed
+# acceptance also shows red in Actions. After the expiry check it reconciles the
+# acceptances against `npm audit --json --package-lock-only` (scripts/
+# check-dependency-registry.mjs --reconcile-audit): an acceptance whose advisory
+# is absent or belongs to another package, and any audit advisory with no
+# acceptance, are failures reported in the same issue. A missing audit report
+# is a failure, never a clean result.
+#
+# No Docker, no `npm ci` and no `needs: docker-build`: this runs
+# scripts/check-dependency-registry.mjs, whose import closure is node builtins
+# plus repo files only (a test runs it from a copy with no node_modules).
+# audit-standards.mjs itself cannot run here (it imports `semver`). The SMI-4647
+# `# audit:carveout-pure-js` marker does not apply -- that marker only gates jobs
+# declaring `needs: docker-build`.
+name: Dependency Registry Expiry
+
+on:
+  schedule:
+    # 09:17 UTC daily, off the :00 / :30 clusters.
+    - cron: '17 9 * * *'
+  workflow_dispatch: {}
+
+permissions:
+  contents: read
+  issues: write
+
+concurrency:
+  group: dependency-registry-expiry
+  cancel-in-progress: false
+
+jobs:
+  expiry:
+    name: Check dependency registry expiry
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    env:
+      GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+      ISSUE_LABEL: dependency-registry-expiry
+    steps:
+      - name: Checkout
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+
+      - name: Setup Node.js
+        uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v6
+        with:
+          node-version-file: .nvmrc
+
+      - name: Check 76 expiry and sync the tracking issue
+        run: |
+          set -uo pipefail
+          OUT="$RUNNER_TEMP/check76.out"
+          CLEAN="$RUNNER_TEMP/check76.clean"
+          BODY="$RUNNER_TEMP/check76.body.md"
+          TITLE='Dependency registry: acceptances failing or expiring (Check 76)'
+          AUDIT="$RUNNER_TEMP/audit.json"
+          FAIL_MARK=$(printf '\xe2\x9c\x97')
+          node scripts/check-dependency-registry.mjs > "$OUT" 2>&1
+          RC=$?
+          # Reconcile the acceptances against npm audit. --package-lock-only needs
+          # no node_modules. npm exits non-zero when it FINDS advisories, so its
+          # status is not the signal: the signal is a parseable report, which the
+          # reconcile step validates. No output at all is a failure, never clean.
+          npm audit --json --package-lock-only --offline=false --prefer-offline=false \
+            --registry=https://registry.npmjs.org --userconfig=/dev/null > "$AUDIT" 2> "$RUNNER_TEMP/audit.err"
+          cat "$RUNNER_TEMP/audit.err" >&2
+          if [ -s "$AUDIT" ]; then
+            node scripts/check-dependency-registry.mjs --reconcile-audit "$AUDIT" >> "$OUT" 2>&1
+            REC=$?
+          else
+            echo "::error::npm audit produced no JSON output; the acceptances could not be reconciled"
+            printf '%s Check 76 reconcile: npm audit produced no JSON output\n' "$FAIL_MARK" >> "$OUT"
+            REC=1
+          fi
+          if [ "$RC" -eq 0 ] && [ "$REC" -ne 0 ]; then RC="$REC"; fi
+          cat "$OUT"
+          sed -e 's/\x1b\[[0-9;]*m//g' "$OUT" > "$CLEAN"
+          FAILS=$(grep -aF "$FAIL_MARK" "$CLEAN" | grep -a 'Check 76' || true)
+          EXPIRING=$(grep -a '^::warning file=.github/dependency-registry.json::' "$CLEAN" | sed -e 's/^::warning file=[^:]*:://' || true)
+          # A failed lookup must not read as "no open issue" (that would file a duplicate).
+          if ! EXISTING=$(gh issue list --label "$ISSUE_LABEL" --state open --json number -q '.[0].number // empty'); then
+            echo "::error::gh issue list failed; cannot tell whether a tracking issue is open"
+            exit 1
+          fi
+          if [ -n "$FAILS" ] || [ -n "$EXPIRING" ] || [ "$RC" -ne 0 ]; then
+            {
+              printf 'The scheduled dependency-registry check (audit:standards Check 76) needs attention.\n\n'
+              if [ -n "$FAILS" ]; then
+                printf '### Failing (every code PR fails until this is fixed)\n\n'
+                printf '%s\n' "$FAILS" | sed -e 's/^/- /'
+                printf '\n'
+              fi
+              if [ -n "$EXPIRING" ]; then
+                printf '### Expiring within 14 days (UTC)\n\n'
+                printf '%s\n' "$EXPIRING" | sed -e 's/^/- /'
+                printf '\n'
+              fi
+              if [ "$RC" -ne 0 ] && [ -z "$FAILS" ]; then
+                printf '### The check did not complete (exit %s)\n\nSee the run log.\n\n' "$RC"
+              fi
+              printf 'Run: %s/%s/actions/runs/%s\n' "$GITHUB_SERVER_URL" "$GITHUB_REPOSITORY" "$GITHUB_RUN_ID"
+              printf 'Re-triage in .github/dependency-registry.json (see .claude/development/ci-reference.md): renew within the tier ceiling or delete the entry.\n'
+            } > "$BODY"
+            gh label create "$ISSUE_LABEL" --color d93f0b --force > /dev/null 2>&1 || true
+            if [ -n "$EXISTING" ]; then
+              gh issue edit "$EXISTING" --title "$TITLE" --body-file "$BODY" || {
+                echo "::error::gh issue edit failed"
+                exit 1
+              }
+            else
+              gh issue create --title "$TITLE" --label "$ISSUE_LABEL" --body-file "$BODY" || {
+                echo "::error::gh issue create failed"
+                exit 1
+              }
+            fi
+          elif [ -n "$EXISTING" ]; then
+            gh issue close "$EXISTING" --comment "Check 76 is clean (no failures, nothing expiring within 14 days) in run ${GITHUB_RUN_ID}." || {
+              echo "::error::gh issue close failed"
+              exit 1
+            }
+          fi
+          exit "$RC"

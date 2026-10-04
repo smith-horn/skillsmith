@@ -105,6 +105,11 @@ import {
   findProcScanCmdHintDrift,
   findClaudeFlowReintroductions,
 } from './audit-cli-pin-drift-helpers.mjs'
+import {
+  runDependencyRegistryCheck,
+  runDependencyRegistryCli,
+  exactPinOverrideWarning,
+} from './audit-dependency-registry-helpers.mjs'
 import { TEST_PATTERNS } from './ci/source-patterns.mjs'
 import { PACKAGE_SPECS } from './lib/version-utils.ts'
 // SMI-5992: MAX_LINES + isExemptFromLengthCheck are shared with pre-commit's
@@ -149,6 +154,12 @@ const CHECK_REGISTRY = new Map([
   // narrow `--only realpath-asymmetry` subprocess, without running the full
   // ~70-check audit against a synthetic fixture directory.
   ['realpath-asymmetry', async () => runRealpathAsymmetryCheck()],
+  // SMI-6949: Check 76 (dependency registry) as a narrow `--only dependency-registry`.
+  [
+    'dependency-registry',
+    // Same implementation as scripts/check-dependency-registry.mjs.
+    async () => runDependencyRegistryCli() === 0,
+  ],
 ])
 
 const cliArgs = parseArgs({
@@ -1492,11 +1503,15 @@ console.log(`\n${BOLD}20. Stale Doc Path References in Skills (SMI-2637)${RESET}
   }
 }
 
-// npm override exact-pin check (SMI-3099 lesson, SMI-3987 refinement)
-// Flags scoped overrides that target exact-pinned dependencies AND failed to
-// take effect via npm's dedup machinery. CLAUDE.md's `npm overrides` note:
-// "`npm update <pkg>` may resolve it via dedup if another chain pulls in the
-// patched version. Verify with `npm ls <dep>` after update."
+// npm override effectiveness check (SMI-3099 lesson, SMI-3987 refinement,
+// SMI-6949 text correction)
+// Flags scoped overrides on a parent that exact-pins the dependency when the
+// resolved tree has NO version that satisfies the override. It measures the
+// resolved result (`npm ls <dep>`), not a rule about pins: a flat override does
+// replace an exact-pinned transitive version (SMI-6891), so an exact pin alone
+// is not a problem. Guidance lives in .claude/development/ci-reference.md,
+// section "npm Overrides (Transitive Vulnerability Fixes)"; this comment does
+// not restate it.
 //
 // The original Check 11 (pre-SMI-3987) flagged any override targeting an
 // exact-pinned dep, even when dedup actually applied the override. This
@@ -1594,10 +1609,8 @@ console.log(`\n${BOLD}20. Stale Doc Path References in Skills (SMI-2637)${RESET}
     }
 
     if (exactPinIssues.length > 0) {
-      warn(
-        `${exactPinIssues.length} npm override(s) target exact-pinned dependencies (override may not take effect)`,
-        'Verify with `npm ls <dep>` and `npm audit`. Remove truly ineffective overrides and dismiss with documented rationale.'
-      )
+      const exactPinWarning = exactPinOverrideWarning(exactPinIssues.length)
+      warn(exactPinWarning.message, exactPinWarning.fix)
       exactPinIssues.forEach(({ parent, dep, spec, resolved }) => {
         const detail = resolved ? `resolved: ${resolved.join(', ')}` : 'could not inspect tree'
         console.log(`    ${parent} → ${dep}: "${spec}" (${detail})`)
@@ -6377,6 +6390,14 @@ console.log(
     reporters[line.severity](line.message, line.fix)
   }
 }
+
+// Check 76: the dependency registry (.github/dependency-registry.json) is
+// complete, well-formed and unexpired (SMI-6949, ADR-176). Pure logic lives in
+// scripts/audit-dependency-registry-helpers.mjs; today's date (UTC) is computed
+// there at the call site, never inside the evaluator. An expired acceptance
+// FAILS on and after its expiry date and there is no opt-out (ADR-176).
+console.log(`\n${BOLD}Check 76: dependency registry coherence and expiry (SMI-6949)${RESET}`)
+runDependencyRegistryCheck({ pass, warn, fail })
 
 // Summary
 console.log('\n' + '━'.repeat(50))
