@@ -1,28 +1,34 @@
 {
-  "$schema": "https://json.schemastore.org/github-branch-protection-rule.json",
-  "_comment": "Source of truth for main branch protection. Apply with: gh api repos/Smith-Horn/skillsmith/branches/main/protection -X PUT --input .github/branch-protection.json",
+  "_comment": "Declared branch protection for main. Apply with: gh api repos/Smith-Horn/skillsmith/branches/main/protection -X PUT --input .github/branch-protection.json -- a PUT REPLACES THE WHOLE OBJECT, so every live setting must be declared here or it is reset to its API default. Do not delete a key that looks like a redundant default; being written down is what makes an apply idempotent. Two live fields this file does not declare, and why, plus the 5-of-11 gap in the validator that checks it: .claude/development/ci-reference.md, 'What the branch-protection IaC file does and does not guarantee'. Tracked in SMI-6968.",
   "required_status_checks": {
     "strict": true,
     "contexts": [
-      "Secret Scan",
-      "Classify Changes",
-      "Package Validation",
-      "Build Docker Image",
-      "Quality Checks",
-      "Security Audit",
       "Build",
+      "Build Docker Image",
+      "Classify Changes",
+      "Edge Functions Typecheck",
       "Markdown Lint",
       "PR Validation (Node)",
       "PR Validation (Shell)",
-      "Test (root)",
-      "Test (root colocated)",
+      "Package Validation",
+      "Quality Checks",
+      "Secret Scan",
+      "Security Audit",
       "Test (mcp-server integration)",
-      "Website Skills E2E Gate"
+      "Test (root colocated)",
+      "Test (root)",
+      "Website Skills E2E Gate",
+      "pointer-check"
     ]
   },
   "enforce_admins": false,
   "required_pull_request_reviews": null,
   "restrictions": null,
   "allow_force_pushes": false,
-  "allow_deletions": false
+  "allow_deletions": false,
+  "required_linear_history": false,
+  "block_creations": false,
+  "required_conversation_resolution": false,
+  "lock_branch": false,
+  "allow_fork_syncing": false
 }
