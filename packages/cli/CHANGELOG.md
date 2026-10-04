@@ -23,6 +23,17 @@ All notable changes to `@skillsmith/cli` are documented here.
   data that cannot be rebuilt from the registry". That was false, and it was the sentence telling
   you there was nothing to lose.
 
+- **Fixed** (behaviour change for scripts): SMI-6961 -- `skillsmith update` now exits **1** when any
+  skill failed. It previously printed a red `Failed: N` and exited **0**, so a script wrapping the
+  command read total failure as success. On a corrupt database every installed skill lands in that
+  bucket, which made it the same silent-success defect this release exists to remove.
+
+  Keyed on failures only. A **skipped** skill still exits 0: a skip is a decision the command made
+  on purpose (`local-drift`, `identity-mismatch`), and reporting those as a process failure would
+  make a correct refusal look like a malfunction. If you have automation that tolerates partial
+  update failures and checks only the exit status, this will start failing for you -- check the
+  `Failed:` count in the summary instead.
+
 - **Fixed**: SMI-6961 -- an error that no command handled used to print your absolute home path and
   a stack trace. `program.parse()` does not await an async action's promise, so a rejection escaped
   to Node, which printed the raw message -- bypassing the sanitizer that exists to replace home

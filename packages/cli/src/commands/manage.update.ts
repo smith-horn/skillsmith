@@ -356,6 +356,21 @@ async function updateSkills(
   }
   if (failed > 0) {
     console.log(chalk.red(`  Failed: ${failed}`))
+    // SMI-6961 step 6: a failure must reach the exit code, or a script wrapping
+    // this command reads total failure as success. That is the same
+    // invisible-success class as the defect this issue was filed for: on a
+    // corrupt database EVERY skill lands here, the command printed a red
+    // "Failed: N", and still exited 0.
+    //
+    // `process.exitCode` rather than `process.exit()`: it lets stdout flush and
+    // lets the remaining lines below print. `process.exit()` here would
+    // truncate the summary mid-write on a piped stream.
+    //
+    // Deliberately keyed on `failed`, not on `skipped`. A skip is a decision
+    // the command made on purpose — `local-drift`, `identity-mismatch` — and
+    // reporting those as a process failure would make a correct refusal look
+    // like a malfunction.
+    process.exitCode = 1
   }
   console.log()
 

@@ -830,6 +830,8 @@ describe('SMI-5593: skillsmith update — real update path', () => {
 
       const { updateSkills } = await import('../src/commands/manage.js')
       const logSpy = vi.spyOn(console, 'log').mockImplementation(() => {})
+      const exitCodeBefore = process.exitCode
+      process.exitCode = undefined
 
       await updateSkills(['astro', 'ci-doctor'], '/fake/db.sqlite', false)
 
@@ -838,6 +840,42 @@ describe('SMI-5593: skillsmith update — real update path', () => {
       expect(output).toContain('Updated: 1')
       expect(output).toContain('Failed: 1')
 
+      // SMI-6961 step 6: the failure must reach the exit code. Printing a red
+      // "Failed: 1" and exiting 0 is invisible to any script wrapping this
+      // command — the same silent-success class as the corrupt-database defect
+      // this issue was filed for, where EVERY skill lands in this bucket.
+      expect(process.exitCode).toBe(1)
+
+      process.exitCode = exitCodeBefore
+      logSpy.mockRestore()
+    })
+
+    it('leaves the exit code alone when every skill succeeds — the control', async () => {
+      // Without this, setting `process.exitCode = 1` unconditionally would
+      // satisfy the arm above while failing every successful run.
+      await mockTwoInstalledSkills()
+      mocks.installFn.mockImplementation(async (skillId: unknown) => ({
+        success: true,
+        skillId: String(skillId),
+        installPath: join(homedir(), 'astro'),
+      }))
+
+      const { updateSkills } = await import('../src/commands/manage.js')
+      const logSpy = vi.spyOn(console, 'log').mockImplementation(() => {})
+      const exitCodeBefore = process.exitCode
+      process.exitCode = undefined
+
+      await updateSkills(['astro', 'ci-doctor'], '/fake/db.sqlite', false)
+
+      const output = logSpy.mock.calls.map((c) => String(c[0])).join('\n')
+      // Paired presence assertion: proves the run actually reached the summary
+      // rather than returning early, which would make the exitCode check below
+      // pass while testing nothing.
+      expect(output).toContain('Updated: 2')
+      expect(output).not.toContain('Failed:')
+      expect(process.exitCode).toBeUndefined()
+
+      process.exitCode = exitCodeBefore
       logSpy.mockRestore()
     })
 
