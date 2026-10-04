@@ -152,15 +152,19 @@ const KNOWN_OPENERS: Readonly<Record<string, { sites: number; note: string }>> =
   'packages/cli/src/commands/install.action.ts': { sites: 1, note: 'read-write; wrapper' },
   'packages/cli/src/commands/manage.action.ts': { sites: 1, note: 'read-write; wrapper' },
   'packages/cli/src/commands/manage.update.helpers.ts': { sites: 1, note: 'read-write; wrapper' },
-  // `update` no longer destroys the database, but it is still the odd one out:
-  // its `getSkillDiff` call sits inside `updateSkillWithOutcome`'s try, whose
-  // catch prints `sanitizeError(error)` — the whole multi-line remedy — once
-  // PER SKILL, counts the skill as failed, and lets the loop continue. With
-  // `failed > 0` the command prints a red count and still exits 0. Tracked as
-  // SMI-6961 step 6; it is a reporting defect now, not a data-loss one.
+  // `update` does not abort on a refusal the way every other command does: its
+  // `getSkillDiff` call sits inside `updateSkillWithOutcome`'s try, whose catch
+  // converts the refusal into a per-skill `failed` outcome and lets the loop
+  // continue. On a corrupt database that means EVERY skill fails.
+  //
+  // `failed > 0` now sets `process.exitCode = 1` (SMI-6961 step 6), so the
+  // condition is no longer invisible to a script. What remains is display only:
+  // the catch prints `sanitizeError(error)` — the whole multi-line remedy —
+  // once PER SKILL, so N installed skills produce N copies. Tracked as
+  // SMI-6982, filed Low; it is cosmetic, not data loss and not a wrong exit.
   'packages/cli/src/commands/manage.update.ts': {
     sites: 1,
-    note: 'read-write; remedy printed per skill, exits 0 (step 6)',
+    note: 'read-write; per-skill failure, exits 1; remedy repeats (SMI-6982)',
   },
   'packages/cli/src/commands/registry-install.action.ts': { sites: 1, note: 'read-write; wrapper' },
   'packages/cli/src/commands/search.action.ts': { sites: 2, note: 'read-write; wrapper' },
