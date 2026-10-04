@@ -37,6 +37,7 @@ on:
       - 'packages/website/tests/e2e/cross-harness-inventory.*'
       - '.github/workflows/cross-harness-inventory-e2e.yml'
       - '.github/workflows/cross-harness-inventory-e2e-cleanup.yml'
+      - 'scripts/ci/use-lockfile-vercel.sh'
       - 'scripts/seed-e2e-inventory-users.ts'
       - 'supabase/functions/inventory-upload/**'
       - 'supabase/migrations/2026062600000*.sql'
@@ -215,12 +216,9 @@ jobs:
           restore-keys: |
             vercel-cache-${{ runner.os }}-
 
-      - name: Install Vercel CLI (pinned to root devDep)
-        run: |
-          PINNED=$(node -p "require('./package.json').devDependencies.vercel")
-          echo "Installing vercel@$PINNED (pinned from root package.json)"
-          npm i -g "vercel@$PINNED"
-          vercel --version
+      - name: Use Vercel CLI from the lockfile (SMI-6944)
+        id: vercel_cli
+        run: bash scripts/ci/use-lockfile-vercel.sh
 
       - name: Vercel pull + build website
         working-directory: packages/website
@@ -235,8 +233,9 @@ jobs:
           # set at job level flow through the Astro bundle via build-time inlining.
           # VERCEL_TOKEN/ORG_ID/PROJECT_ID are read from the step env (not passed
           # as --token) so the token never enters the runner process table (governance Low #5).
-          vercel pull --yes --environment=preview
-          vercel build
+          "$GITHUB_WORKSPACE/node_modules/.bin/vercel" pull --yes --environment=preview
+          ( set -o pipefail; "$GITHUB_WORKSPACE/node_modules/.bin/vercel" build 2>&1 | tee "$RUNNER_TEMP/vercel-build.log" )
+          bash "$GITHUB_WORKSPACE/scripts/ci/use-lockfile-vercel.sh" --check-build-log "$RUNNER_TEMP/vercel-build.log"
 
       - name: Start vercel dev (Astro SSR + edge functions)
         working-directory: packages/website
@@ -251,7 +250,7 @@ jobs:
           # --port $PORT` in a sub-shell that doesn't inherit npm .bin lookup.
           export PATH="$GITHUB_WORKSPACE/packages/website/node_modules/.bin:$GITHUB_WORKSPACE/node_modules/.bin:$PATH"
           # VERCEL_TOKEN read from the step env (not --token) -- governance Low #5.
-          nohup vercel dev --listen 127.0.0.1:4321 \
+          nohup "$GITHUB_WORKSPACE/node_modules/.bin/vercel" dev --listen 127.0.0.1:4321 \
             > "$GITHUB_WORKSPACE/test-results/preview.log" 2>&1 &
           echo $! > "$GITHUB_WORKSPACE/test-results/preview.pid"
 

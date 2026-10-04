@@ -6,6 +6,7 @@
       "Build",
       "Build Docker Image",
       "Classify Changes",
+      "Dependency Guard",
       "Edge Functions Typecheck",
       "Markdown Lint",
       "PR Validation (Node)",
