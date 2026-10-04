@@ -96,14 +96,35 @@ The `main` branch is protected. Config: `.github/branch-protection.json`.
 | Test (root colocated) | ci.yml | Colocated `packages/*/src/**/*.test.ts` suite — SMI-3502 |
 | Test (mcp-server integration) | ci.yml | `packages/mcp-server` integration suite (`test-mcp-server-integration` job) |
 | Website Skills E2E Gate | website-skills-e2e.yml | Skills-page e2e carve-out (SMI-5485); auto-passes via relevance skip on unrelated PRs |
+| pointer-check | submodule-pointer-check.yml | `docs/internal` gitlink ancestry gate (ADR-143, SMI-6260) |
+| Edge Functions Typecheck | ci.yml | deno-check ratchet over `supabase/functions` (SMI-6897); no path filter, exits 0 in-step on a non-code PR |
+
+**This table is an enumeration, which is a count.** It was missing `pointer-check` and `Edge Functions Typecheck` until 2026-10-04 — the same two contexts the JSON was missing, and it survived the edit directly below that was made *because of* that drift. A three-column table reads as more authoritative than the prose count removed from "How It Works", so the stale version was the stronger claim and the one left standing. If you add a required context, this table is the second place to change and the easier one to forget. Verify against `.github/branch-protection.json`, not against this table.
+
+**Accepted risk, recorded at promotion (2026-10-04)**: `pointer-check` hard-fails on a fork PR that touches a submodule mount — a fork gets no `STRATEGY_SUBMODULE_PAT`, so the check routes to R8 by design (see `submodule-pointer-check.yml`'s header). Now that the context is *required*, an external contributor's PR touching `docs/internal` is structurally unmergeable without `--admin`. Same shape as the `Website Skills E2E Gate` fork risk above, same compensating control (maintainer review), and internal PRs are unaffected — `STRATEGY_SUBMODULE_PAT` is provisioned and recent `pointer-check` runs are green.
 
 Note: `Dependency Guard` (ci.yml) runs on every PR but is NOT a required context — it is intentionally excluded from `required_status_checks.contexts`, so it does not appear above.
 
 ### How It Works
 
-- **Code PRs**: every context in `required_status_checks.contexts` must pass. **The count is deliberately not restated here** — `.github/branch-protection.json` is the declared set and `scripts/validate-branch-protection.sh --dry-run` compares it against live. Measured 2026-10-03: that file had drifted two contexts behind live (`pointer-check` and `Edge Functions Typecheck` both missing), and because `--fix` applies the file TO GitHub, running it would have *removed* a required check. The validator is not wired into CI, which is why the drift survived
+- **Code PRs**: every context in `required_status_checks.contexts` must pass. **The count is deliberately not restated here** — `.github/branch-protection.json` is the declared set. `scripts/validate-branch-protection.sh --dry-run` is the arbiter **for the contexts set and four booleans, and nothing else**; calling it "the arbiter" unqualified overstates a five-field comparator (see below)
 - **Docs-only PRs**: Only Secret Scan + Markdown Lint (from `docs-only.yml`) — plus `Website Skills E2E Gate`, which reports on every PR and auto-passes in seconds when no skills-page paths changed
 - **Mixed PRs**: Full CI runs
+
+#### What the branch-protection IaC file does and does not guarantee (SMI-6897 / SMI-6968)
+
+This section carries what used to be a 2,000-character narrative inside the JSON's own `_comment`. It was moved here because that comment is **PUT to GitHub on every `--fix`** — a config payload is the worst place for a dated factual story, since it has no reader who can tell which claims have gone stale.
+
+**`--fix` applies the FILE to GitHub, not the reverse.** It runs `gh api … -X PUT --input <file>`, and a `PUT` replaces the **whole** protection object. A stale file therefore *removes* protection rather than adding it. Measured 2026-10-03: the file had drifted two contexts behind live (`pointer-check`, `Edge Functions Typecheck`), so running `--fix` would have deleted two required checks. The validator is **not wired into CI**, which is why that drift survived unnoticed.
+
+**`--dry-run` compares five fields; `--fix` overwrites eleven.** It checks `contexts`, `strict`, `enforce_admins`, `allow_force_pushes`, `allow_deletions` — and nothing else. So enable a setting in the GitHub UI and the validator reports clean while the next `--fix` silently switches it off. Five previously-absent settings (`required_linear_history`, `block_creations`, `required_conversation_resolution`, `lock_branch`, `allow_fork_syncing`) are now declared at their live values to make a `--fix` idempotent; do not delete them as redundant defaults, because being written down is the point.
+
+**Two live fields the file still does not declare**, both found by the 2026-10-04 cross-review and tracked in SMI-6968:
+
+- **`required_status_checks.checks`** — live pins all 16 contexts to `app_id: 15368` (GitHub Actions). The file declares only the deprecated `contexts` array, so after a `--fix` the app binding is **re-derived by GitHub's own heuristic from recent status history rather than declared**. Where that heuristic does not reproduce `15368` — a renamed job, a quiet period, a freshly promoted context — the context can land unpinned, at which point a hand-posted commit status via the Statuses API satisfies a required check instead of a real Actions run. Unverified whether the heuristic would in fact preserve `15368` for all 16 today; settling it needs a mutating PUT, and this endpoint has no dry-run, so it belongs on a throwaway repo rather than `main`.
+- **`required_signatures`** — live-but-absent, and that is correct: GitHub lists it only in this endpoint's *response* schema and manages it through separate `/protection/required_signatures` endpoints, so a PUT cannot express it and its omission cannot disable signature enforcement. This is the one documented exception to "every live setting must be declared here."
+
+There is **no `$schema` on the file**: the URL it used to carry (`json.schemastore.org/github-branch-protection-rule.json`) 404s as of 2026-10-04, and SchemaStore's catalog has no GitHub branch-protection schema. Nothing validates this file's shape — do not cite a schema as a check.
 
 ### Path-Filtered Workflows Cannot Be Required Checks (SMI-5485)
 

@@ -1233,21 +1233,34 @@ jobs:
   # error, any newly-failing file, any increased count fails. The 22-row baseline
   # pins today's 59 pre-existing errors without tolerating a 60th.
   #
-  # NOW A REQUIRED STATUS CHECK, as of 2026-10-02: `Edge Functions Typecheck` is
-  # the 16th required context on `main`, added by the same change that recorded it
-  # in `.github/branch-protection.json`. An earlier version of this comment said
-  # "NOT YET A REQUIRED STATUS CHECK ... the job reports without blocking a
-  # merge", which was true when written and became false hours later. Read
-  # `.github/branch-protection.json`, or run
-  # `scripts/validate-branch-protection.sh --dry-run`, rather than trusting any
-  # count or claim in a comment -- including this one.
+  # THIS IS A REQUIRED STATUS CHECK. Measured live 2026-10-04: `Edge Functions
+  # Typecheck` is one of 16 contexts in `required_status_checks.contexts` on
+  # `main`. An earlier version of this comment said "NOT YET A REQUIRED STATUS
+  # CHECK ... the job reports without blocking a merge", which was true when
+  # written and became false hours later.
   #
-  # This job has NO path filter, deliberately. It gates on
-  # `detect-changes.outputs.code`, whose own filter is `'**'` minus docs, so it
-  # runs on every code PR and not only on PRs touching `supabase/functions`. A PR
-  # that adds no file to that tree cannot raise the baseline, but it can still be
-  # FAILED by an INCONCLUSIVE result -- which is why the wrapper's `RESULT` line
-  # is the first thing to read, ahead of `VERDICT`.
+  # WHEN and BY WHAT it became required is NOT established, and the honest
+  # version matters more than a date. The job landed on `main` on 2026-10-02
+  # (43527c18a, #2985); the live context exists; and the FIRST record of it in
+  # `.github/branch-protection.json` is the commit carrying this comment. So the
+  # live addition was an out-of-band PUT that no commit records -- which is the
+  # same unrecorded-manual-change pattern that produced the `pointer-check` drift
+  # this change exists to fix. It is not attributable from the protection API,
+  # which carries no timestamps; only the org audit log could settle it.
+  #
+  # Read `.github/branch-protection.json` for the declared set, and note that
+  # `scripts/validate-branch-protection.sh --dry-run` compares only 5 of its 11
+  # fields -- so it is not a full arbiter either. Do not trust a count in a
+  # comment, including this one.
+  #
+  # This job has NO path filter, at workflow or job level. It is `needs:
+  # [detect-changes]` with `if: ${{ !cancelled() }}`, so it ALWAYS runs; the
+  # decision happens inside the step, on `$DETECT_CODE`, which exits 0 early on a
+  # non-code PR. That distinction is load-bearing: it reports a real `success`,
+  # not a `skipped`. (`detect-changes.outputs.code` is `'**'` minus docs.) A PR
+  # that adds no file under `supabase/functions` cannot raise the baseline, but it
+  # can still be FAILED by an INCONCLUSIVE result -- which is why the wrapper's
+  # `RESULT` line is the first thing to read, ahead of `VERDICT`.
   edge-functions-check:
     name: Edge Functions Typecheck
     runs-on: ubuntu-latest
