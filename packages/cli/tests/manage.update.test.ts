@@ -787,22 +787,35 @@ describe('SMI-5593: skillsmith update — real update path', () => {
 
       const { updateSkills } = await import('../src/commands/manage.js')
       const logSpy = vi.spyOn(console, 'log').mockImplementation(() => {})
+      const exitCodeBefore = process.exitCode
+      process.exitCode = undefined
 
-      await updateSkills(['astro', 'ci-doctor'], '/fake/db.sqlite', false)
+      try {
+        await updateSkills(['astro', 'ci-doctor'], '/fake/db.sqlite', false)
 
-      // Only astro (classified 'outdated') is actually force-installed.
-      expect(mocks.installFn).toHaveBeenCalledTimes(1)
-      expect(mocks.installFn).toHaveBeenCalledWith('wrsmith108/astro', {
-        force: true,
-        expectedInstallPath: join(SKILLS_DIR, 'astro'),
-      })
-      const output = logSpy.mock.calls.map((c) => String(c[0])).join('\n')
-      expect(output).toContain('Updated: 1')
-      expect(output).toContain('Skipped: 1')
-      expect(output).not.toContain('Updated: 2')
-      expect(output).toMatch(/ci-doctor.*local edit/i)
+        // Only astro (classified 'outdated') is actually force-installed.
+        expect(mocks.installFn).toHaveBeenCalledTimes(1)
+        expect(mocks.installFn).toHaveBeenCalledWith('wrsmith108/astro', {
+          force: true,
+          expectedInstallPath: join(SKILLS_DIR, 'astro'),
+        })
+        const output = logSpy.mock.calls.map((c) => String(c[0])).join('\n')
+        expect(output).toContain('Updated: 1')
+        expect(output).toContain('Skipped: 1')
+        expect(output).not.toContain('Updated: 2')
+        expect(output).toMatch(/ci-doctor.*local edit/i)
 
-      logSpy.mockRestore()
+        // SMI-6961 review F6: the carve-out is the load-bearing half of the
+        // exit-code change and nothing constrained it. Keying the exit code on
+        // `skipped + failed` instead passed all 21 tests. This test already
+        // drove the exact state needed — Skipped: 1 with failed === 0 — and
+        // asserted only printed output, so the assertion belongs here rather
+        // than in a new fixture.
+        expect(process.exitCode).toBeUndefined()
+      } finally {
+        process.exitCode = exitCodeBefore
+        logSpy.mockRestore()
+      }
     })
 
     it('updates a specific set of named skills and reports a summary', async () => {
@@ -833,21 +846,28 @@ describe('SMI-5593: skillsmith update — real update path', () => {
       const exitCodeBefore = process.exitCode
       process.exitCode = undefined
 
-      await updateSkills(['astro', 'ci-doctor'], '/fake/db.sqlite', false)
+      // try/finally, not a trailing restore (review F5). A throwing assertion
+      // below would otherwise leave `console.log` MOCKED for the twelve tests
+      // after this one — nothing in vitest.preset.ts sets `restoreMocks`, so a
+      // single real failure could cascade into unrelated output assertions.
+      // The leaked exit code is the lesser half of that hazard.
+      try {
+        await updateSkills(['astro', 'ci-doctor'], '/fake/db.sqlite', false)
 
-      expect(mocks.installFn).toHaveBeenCalledTimes(2)
-      const output = logSpy.mock.calls.map((c) => String(c[0])).join('\n')
-      expect(output).toContain('Updated: 1')
-      expect(output).toContain('Failed: 1')
+        expect(mocks.installFn).toHaveBeenCalledTimes(2)
+        const output = logSpy.mock.calls.map((c) => String(c[0])).join('\n')
+        expect(output).toContain('Updated: 1')
+        expect(output).toContain('Failed: 1')
 
-      // SMI-6961 step 6: the failure must reach the exit code. Printing a red
-      // "Failed: 1" and exiting 0 is invisible to any script wrapping this
-      // command — the same silent-success class as the corrupt-database defect
-      // this issue was filed for, where EVERY skill lands in this bucket.
-      expect(process.exitCode).toBe(1)
-
-      process.exitCode = exitCodeBefore
-      logSpy.mockRestore()
+        // SMI-6961 step 6: the failure must reach the exit code. Printing a red
+        // "Failed: 1" and exiting 0 is invisible to any script wrapping this
+        // command — the same silent-success class as the corrupt-database
+        // defect this issue was filed for, where EVERY skill lands here.
+        expect(process.exitCode).toBe(1)
+      } finally {
+        process.exitCode = exitCodeBefore
+        logSpy.mockRestore()
+      }
     })
 
     it('leaves the exit code alone when every skill succeeds — the control', async () => {
@@ -865,18 +885,55 @@ describe('SMI-5593: skillsmith update — real update path', () => {
       const exitCodeBefore = process.exitCode
       process.exitCode = undefined
 
-      await updateSkills(['astro', 'ci-doctor'], '/fake/db.sqlite', false)
+      try {
+        await updateSkills(['astro', 'ci-doctor'], '/fake/db.sqlite', false)
 
-      const output = logSpy.mock.calls.map((c) => String(c[0])).join('\n')
-      // Paired presence assertion: proves the run actually reached the summary
-      // rather than returning early, which would make the exitCode check below
-      // pass while testing nothing.
-      expect(output).toContain('Updated: 2')
-      expect(output).not.toContain('Failed:')
-      expect(process.exitCode).toBeUndefined()
+        const output = logSpy.mock.calls.map((c) => String(c[0])).join('\n')
+        // Paired presence assertion: proves the run actually reached the
+        // summary rather than returning early, which would make the exitCode
+        // check below pass while testing nothing.
+        expect(output).toContain('Updated: 2')
+        expect(output).not.toContain('Failed:')
+        expect(process.exitCode).toBeUndefined()
+      } finally {
+        process.exitCode = exitCodeBefore
+        logSpy.mockRestore()
+      }
+    })
 
-      process.exitCode = exitCodeBefore
-      logSpy.mockRestore()
+    it('a DECLINED prompt is not a failure — exits 0 and reports Cancelled', async () => {
+      // Review F1: a regression this branch introduced and nearly shipped. The
+      // loop's old `else` swept `cancelled` into `failed`, which was a cosmetic
+      // mislabel until `failed > 0` began setting a non-zero exit code. Then
+      // answering "n" to the confirm prompt made the command exit 1.
+      //
+      // A user's explicit decline is the most deliberate outcome there is. If
+      // this arm ever goes red because `cancelled` was folded back into
+      // `failed`, that is the regression, not this test.
+      await mockTwoInstalledSkills()
+      const { confirm } = await import('@inquirer/prompts')
+      vi.mocked(confirm).mockResolvedValue(false)
+
+      const { updateSkills } = await import('../src/commands/manage.js')
+      const logSpy = vi.spyOn(console, 'log').mockImplementation(() => {})
+      const exitCodeBefore = process.exitCode
+      process.exitCode = undefined
+
+      try {
+        await updateSkills(['astro', 'ci-doctor'], '/fake/db.sqlite', false)
+
+        const output = logSpy.mock.calls.map((c) => String(c[0])).join('\n')
+        // Presence first: proves the decline actually happened and reached the
+        // summary. Without it, a run that threw before prompting would satisfy
+        // the exit-code assertion while testing nothing.
+        expect(output).toContain('Cancelled: 2')
+        expect(output).not.toContain('Failed:')
+        expect(mocks.installFn).not.toHaveBeenCalled()
+        expect(process.exitCode).toBeUndefined()
+      } finally {
+        process.exitCode = exitCodeBefore
+        logSpy.mockRestore()
+      }
     })
 
     it('updates every installed skill when names is omitted (--all)', async () => {

@@ -326,23 +326,51 @@ async function updateSkills(
 
   let updated = 0
   let skipped = 0
+  let cancelled = 0
   let failed = 0
   const skipReasons: string[] = []
 
   for (const name of targetNames) {
     const result = await updateSkillWithOutcome(name, dbPath, dryRun, client, scopeTarget)
-    if (result.outcome === 'updated' || result.outcome === 'up-to-date') {
-      updated++
-    } else if (result.outcome === 'skipped') {
-      // SMI-6343 (Wave 3, H5): a `local-drift`/`identity-mismatch`/`unknown`
-      // classification lands here, never silently in `Updated` — the pre-
-      // Wave-3 code had no bucket for this, so `updateSkill()` returning
-      // `true` for "already up to date" made a skipped row indistinguishable
-      // from a real success.
-      skipped++
-      skipReasons.push(`${name}: ${result.reason ?? 'unsafe to force-install'}`)
-    } else {
-      failed++
+    // Every outcome is named. This was an `else` catch-all, which is how
+    // `cancelled` came to be counted as a failure (SMI-6961 review F1): once
+    // `failed > 0` began setting a non-zero exit code, declining the confirm
+    // prompt made `skillsmith update` exit 1. A user's explicit "n" is the most
+    // deliberate outcome there is — reporting it as a process failure is the
+    // same mislabel the carve-out below exists to prevent.
+    //
+    // A `switch` with an exhaustiveness check rather than a chain, so adding a
+    // seventh outcome is a TYPE ERROR here instead of silently landing in
+    // `failed` and setting exit 1. That silence is what made this a regression
+    // rather than a cosmetic mislabel.
+    switch (result.outcome) {
+      case 'updated':
+      case 'up-to-date':
+        updated++
+        break
+      case 'skipped':
+        // SMI-6343 (Wave 3, H5): a `local-drift`/`identity-mismatch`/`unknown`
+        // classification lands here, never silently in `Updated` — the pre-
+        // Wave-3 code had no bucket for this, so `updateSkill()` returning
+        // `true` for "already up to date" made a skipped row indistinguishable
+        // from a real success.
+        skipped++
+        skipReasons.push(`${name}: ${result.reason ?? 'unsafe to force-install'}`)
+        break
+      case 'cancelled':
+        cancelled++
+        break
+      case 'not-installed':
+      case 'failed':
+        // `not-installed` stays a failure deliberately: the user named a skill
+        // to update and it was not there, so the command did not do what was
+        // asked. That is unlike `cancelled`, where it did exactly what was asked.
+        failed++
+        break
+      default: {
+        const unreachable: never = result.outcome
+        throw new Error(`[Skillsmith] unhandled update outcome: ${String(unreachable)}`)
+      }
     }
   }
 
@@ -353,6 +381,12 @@ async function updateSkills(
     for (const reason of skipReasons) {
       console.log(chalk.dim(`    - ${reason}`))
     }
+  }
+  if (cancelled > 0) {
+    // Its own line rather than folded into Skipped: a decline is the user's
+    // decision, a skip is the command's. Reporting them together would hide
+    // which one happened.
+    console.log(chalk.dim(`  Cancelled: ${cancelled}`))
   }
   if (failed > 0) {
     console.log(chalk.red(`  Failed: ${failed}`))
@@ -366,10 +400,20 @@ async function updateSkills(
     // lets the remaining lines below print. `process.exit()` here would
     // truncate the summary mid-write on a piped stream.
     //
-    // Deliberately keyed on `failed`, not on `skipped`. A skip is a decision
-    // the command made on purpose — `local-drift`, `identity-mismatch` — and
-    // reporting those as a process failure would make a correct refusal look
-    // like a malfunction.
+    // Keyed on `failed` ALONE. Two outcomes are deliberately excluded, for the
+    // same reason stated twice because both were nearly wrong:
+    //
+    //   `skipped`   — a decision the command made on purpose (`local-drift`,
+    //                 `identity-mismatch`). Reporting a correct refusal as a
+    //                 process failure makes it look like a malfunction.
+    //   `cancelled` — a decision the USER made, by answering "n". Even more
+    //                 clearly not a failure. This one DID exit 1 briefly,
+    //                 because the loop's old `else` swept it into `failed`
+    //                 (review F1).
+    //
+    // Both are pinned by tests. They have to be: this is the load-bearing
+    // decision of the change, and keying on `skipped + failed` instead passed
+    // the entire suite before those arms existed.
     process.exitCode = 1
   }
   console.log()
