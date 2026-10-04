@@ -4,6 +4,23 @@ All notable changes to `@skillsmith/core` are documented here.
 
 ## [Unreleased]
 
+- **Removed** (breaking): SMI-6961 -- `isCorruptionError` and `backupCorruptDbFile` are gone, along
+  with `db/drivers/corruption.ts`. This is an API removal, not a deprecation, and it is deliberate
+  for both.
+
+  `backupCorruptDbFile` renamed a database out of the way. ADR-175 § 1 forbids that: SQLite
+  coordinates through file paths rather than inodes, so renaming a database another process may hold
+  open is undefined behaviour, and the two files then share a journal **by name** -- meaning one
+  database's recovery can read the other's content. Leaving it exported invited a consumer to
+  reintroduce the exact defect this release removes.
+
+  `isCorruptionError` matched substrings against arbitrary error text, so an incidental word in a
+  wrapper message or a file path could classify a healthy failure as corruption. Use
+  `isCorruptDatabaseError`, which matches `CorruptDatabaseError`'s stable `code`.
+
+  There is **no replacement for the backup helper**, by design. The refusal's message names the
+  files to move and the commands to run; which copy to keep is the user's decision, not a library's.
+
 - **Fixed**: SMI-6961 / ADR-175 § 1 -- the WASM (sql.js) driver no longer renames a corrupt
   database aside and rebuilds an empty one. It now refuses with the same structured
   `CorruptDatabaseError` the native driver throws, so a consumer branching on `error.code` gets

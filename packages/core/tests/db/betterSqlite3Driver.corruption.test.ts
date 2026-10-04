@@ -454,9 +454,13 @@ describeNative('createBetterSqlite3Database — corrupt-file refusal (SMI-6931)'
   })
 
   it('classifies on the SQLite result code, not on the word "malformed" in a path', () => {
-    // The shared `isCorruptionError` matches the bare substring `malformed`
-    // against a message, and a message can carry the file path. A healthy
-    // database living at a path containing that word must still open.
+    // The retired `isCorruptionError` matched the bare substring `malformed`
+    // against a message, and a message can carry the file path — so a healthy
+    // database at such a path was classified as corrupt. That helper is gone
+    // (SMI-6961 step 4) and classification is on the SQLite result code now,
+    // but the fixture stays: it pins the property, and the property is what
+    // must hold whatever the implementation. A healthy database living at a
+    // path containing that word must still open.
     const dirName = join(tempDir, 'malformed-fixtures')
     mkdirSync(dirName)
     const dbPath = join(dirName, 'skills.db')

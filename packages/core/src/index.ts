@@ -25,20 +25,22 @@ export { createDatabaseSync, createDatabaseAsync } from './db/createDatabase.js'
 // WASM has no cross-process write coordination — see compliance-tools.cyclonedx.ts).
 export { getBestDriver, type DriverType } from './db/createDatabase.js'
 export type { Database } from './db/database-interface.js'
-// SMI-4484's corruption detection + self-heal helpers. BOTH ARE NOW DEAD CODE:
-// as of SMI-6961 neither has a single caller anywhere under `packages/*/src`.
-// The WASM driver went to `sqljsDriver.corruption.js`, the native driver to
-// `probe-classification.js`, and the CLI opener stopped catching refusals
-// altogether. The only remaining references are mocks in two CLI test files
-// and `corruption.test.ts`.
+// SMI-4484's `isCorruptionError` and `backupCorruptDbFile` were REMOVED here
+// (SMI-6961 step 4), along with `db/drivers/corruption.ts` itself. This is an
+// API removal, not a deprecation, and it is deliberate for both of them:
 //
-// Kept exported for one commit only, so that deleting them is its own
-// reviewable change rather than a side effect of the behaviour fix. An earlier
-// version of this comment said `backupCorruptDbFile` "loses its last caller
-// once the WASM driver converges in PR-2" and that "the WASM driver and its
-// tests use them today" — both were already false when SMI-6961 landed, which
-// is exactly the prose-vs-code divergence that commit fixed one file over.
-export { isCorruptionError, backupCorruptDbFile } from './db/drivers/corruption.js'
+// - `backupCorruptDbFile` renamed a database out of the way. ADR-175 § 1
+//   forbids that, because SQLite coordinates through file paths rather than
+//   inodes: renaming a database another process may hold open is undefined
+//   behaviour, and the two files then share a journal by name. Leaving it
+//   exported invited a consumer to reintroduce the defect this issue removed.
+// - `isCorruptionError` matched substrings against arbitrary error text, so an
+//   incidental word in a wrapper message or a file path could classify a
+//   healthy failure as corruption. `CorruptDatabaseError`'s `code` replaces it.
+//
+// Recognise a refusal with `isCorruptDatabaseError` below. There is no
+// replacement for the backup helper, by design — the refusal's message tells
+// the user which files to move, and that decision is theirs.
 // ADR-175 / SMI-6946: the supported way to recognise a corruption refusal.
 // Match `code`, never the message and never `instanceof` — see db-errors.ts.
 export {

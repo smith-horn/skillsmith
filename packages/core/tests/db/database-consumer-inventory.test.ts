@@ -177,8 +177,9 @@ const KNOWN_OPENERS: Readonly<Record<string, { sites: number; note: string }>> =
   },
 
   // --- MCP server ---
-  // Confirmed to contain no isCorruptionError/backupCorruptDbFile, so it has
-  // no destructive branch to converge; the refusal propagates to startup.
+  // Never had a destructive branch to converge — the refusal propagates to
+  // startup. (It was confirmed to call neither of the two SMI-4484 helpers,
+  // which no longer exist anywhere: SMI-6961 step 4 deleted them outright.)
   'packages/mcp-server/src/context.async.ts': {
     sites: 2,
     note: 'propagates; no destructive branch',

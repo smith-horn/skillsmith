@@ -53,8 +53,6 @@ vi.mock('@skillsmith/core/telemetry', () => ({
 vi.mock('@skillsmith/core', () => ({
   createDatabaseAsync: (...args: unknown[]) => mocks.createDatabaseAsync(...args),
   initializeSchema: (...args: unknown[]) => mocks.initializeSchema(...args),
-  isCorruptionError: () => false,
-  backupCorruptDbFile: vi.fn(),
   SkillRepository: vi.fn().mockImplementation(function () {
     return {
       findById: vi.fn(() => null),
