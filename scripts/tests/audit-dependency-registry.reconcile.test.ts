@@ -103,6 +103,27 @@ describe('--reconcile-audit', () => {
       expect(r.out).toContain(`unaccepted advisory ${B} (pkgtwo, ${severity})`)
     }
   })
+  it.each([
+    ['low then high', 'low', 'high'],
+    ['high then low', 'high', 'low'],
+  ])('a repeated advisory with conflicting severities (%s) fails closed', (_l, first, second) => {
+    const r = reconcile(
+      [accept(A, 'pkgone', 'high')],
+      report({ pkgone: [advisory(A, 'pkgone', first)], other: [advisory(A, 'pkgone', second)] })
+    )
+    expect(r.status).toBe(1)
+    expect(r.out).toContain('the npm audit output is unusable')
+    expect(r.out).toContain(`conflicting severities "${first}" and "${second}"`)
+    expect(r.out).not.toContain('acceptances match')
+  })
+  it('a repeated advisory with the SAME severity is fine', () => {
+    const r = reconcile(
+      [accept(A, 'pkgone')],
+      report({ pkgone: [advisory(A, 'pkgone')], other: [advisory(A, 'pkgone')] })
+    )
+    expect(r.status).toBe(0)
+    expect(r.out).toContain('1 acceptances match the npm audit report')
+  })
   it('an advisory with no GHSA in its url is identified by source and is never accepted', () => {
     const noGhsa = {
       source: 4242,

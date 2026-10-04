@@ -55,6 +55,12 @@ export function reduceAudit(audit) {
       if (id === null || pkg === null || typeof item.severity !== 'string') {
         return bad(`an advisory under "${name}" has no usable id, package or severity`)
       }
+      const prior = entries.get(key(id, pkg))
+      if (prior && prior.severity !== item.severity) {
+        return bad(
+          `advisory ${id} (${pkg}) is reported with conflicting severities "${prior.severity}" and "${item.severity}"`
+        )
+      }
       entries.set(key(id, pkg), { id, pkg, severity: item.severity })
     }
   }
