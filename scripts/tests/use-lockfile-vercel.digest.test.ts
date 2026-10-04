@@ -14,6 +14,7 @@
  */
 import { describe, it, expect, beforeEach, afterEach } from 'vitest'
 import {
+  mkdirSync,
   mkdtempSync,
   readFileSync,
   readdirSync,
@@ -157,6 +158,51 @@ describe('SMI-6944 round 2: content digest of the CLI closure', () => {
     const r = run(t)
     expect(r.status).not.toBe(0)
     expect(r.err).toContain('digest-missing: node_modules/@vercel/build-utils')
+  })
+
+  // ---- M1: an optional edge the lockfile does not resolve ---------------------
+  const U_LINE = 'U node_modules/@vercel/build-utils encoding unresolved-optional absent'
+  const plantEncoding = (dir: string) => {
+    mkdirSync(dir, { recursive: true })
+    writeFileSync(join(dir, 'package.json'), '{"name":"encoding","version":"0.1.13"}')
+    writeFileSync(join(dir, 'index.js'), 'module.exports = {}\n')
+  }
+
+  it('an unresolved optional edge is recorded in the manifest and counted on stdout', () => {
+    const t = buildTree(root)
+    const r = run(t)
+    expect(r.status).toBe(0)
+    expect(r.out).toContain(' unresolved=1;')
+    const manifest = readFileSync(join(t.temp, 'vercel-cli-digest.manifest'), 'utf-8')
+    expect(manifest.split('\n')).toContain(U_LINE)
+  })
+
+  it.each([
+    ['the workspace root node_modules', (t: Tree) => join(t.ws, 'node_modules/encoding')],
+    ['a node_modules above the workspace', (t: Tree) => join(t.root, 'node_modules/encoding')],
+    [
+      "the requiring package's own node_modules",
+      (t: Tree) => join(t.ws, 'node_modules/@vercel/build-utils/node_modules/encoding'),
+    ],
+  ])('a package planted in %s for an unresolved optional edge is refused by path', (_n, where) => {
+    const t = buildTree(root)
+    const digest = install(t)
+    const planted = where(t)
+    plantEncoding(planted)
+    const v = verify(t, digest)
+    expect(v.status).not.toBe(0)
+    expect(v.err).toContain(`digest-unresolved: node_modules/@vercel/build-utils optionally`)
+    expect(v.err).toContain(`but ${planted} exists`)
+    expect(v.err).toContain('use-lockfile-vercel: cli-digest')
+    const out = join(root, 'out-planted')
+    writeFileSync(out, '')
+    const i = run(t, undefined, [], { GITHUB_OUTPUT: out })
+    expect(i.status).not.toBe(0)
+    expect(i.err).toContain(`but ${planted} exists`)
+    expect(readFileSync(out, 'utf-8')).toBe('')
+    // Control: removing the planted package restores the recorded digest.
+    rmSync(planted, { recursive: true })
+    expect(verify(t, digest).status).toBe(0)
   })
 
   it('the RUNNER_TEMP manifest is diagnostic only: deleting or forging it does not change the verdict', () => {

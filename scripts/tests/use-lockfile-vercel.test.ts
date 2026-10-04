@@ -32,6 +32,21 @@ import {
   writeJson,
 } from './use-lockfile-vercel.fixture'
 
+// The build-log fixtures reproduce what vercel 52.2.0 actually prints, derived from
+// its dist (not guessed): the builder installer calls
+//   output.log(`Installing ${pluralize("Builder", n)}: ${[...builders].join(", ")}`)
+// (dist/chunks/chunk-7L7NSLYK.js), and Output.log is
+//   (str, color = chalk.grey) => print(`${color(">")} ${str}\n`)
+// (dist/chunks/chunk-ZQKJVHXY.js), where the bundled ansi-styles defines
+// grey = gray = [90, 39]. pluralize("Builder", 1) is "Builder", else "Builders".
+const GREY = (s: string) => `\x1b[90m${s}\x1b[39m`
+const cliLog = (str: string, colour = true) => `${colour ? GREY('>') : '>'} ${str}\n`
+const installingBuilders = (b: string[]) =>
+  `Installing ${b.length === 1 ? 'Builder' : 'Builders'}: ${b.join(', ')}`
+const NODE_BUILDER = '@vercel/node@5.0.0'
+const STATIC = '@vercel/static-build@2.0.0'
+const REAL_LINE = cliLog(installingBuilders([NODE_BUILDER]))
+
 describe('SMI-6944 Test 4: use-lockfile-vercel.sh', () => {
   let root: string
   beforeEach(() => {
@@ -48,7 +63,7 @@ describe('SMI-6944 Test 4: use-lockfile-vercel.sh', () => {
     expect(r.status).toBe(0)
     expect(r.out).toMatch(
       new RegExp(
-        `vercel ${VERSION} from lockfile; sha256:[0-9a-f]{64} files=\\d+ packages=3; smol-toml 1\\.9\\.0 at `
+        `vercel ${VERSION} from lockfile; sha256:[0-9a-f]{64} files=\\d+ packages=3 unresolved=1; smol-toml 1\\.9\\.0 at `
       )
     )
     expect(r.out).toContain(join(t.ws, 'node_modules/smol-toml'))
@@ -198,7 +213,36 @@ describe('SMI-6944 Test 4: use-lockfile-vercel.sh', () => {
     fakeCli(join(t.ws, 'node_modules/vercel/dist/vc.js'), '60.1.3')
     const r = verify(t, digest)
     expect(r.status).not.toBe(0)
-    expect(r.err).toContain('use-lockfile-vercel: installed-version')
+    // The digest is checked before the binary runs, so the content check names it.
+    expect(r.err).toContain('use-lockfile-vercel: cli-digest: the CLI closure changed')
+  })
+
+  // ---- L3: verify-only never executes a binary whose digest does not match ----
+  it('verify-only: a tampered binary is refused by the digest before it is ever executed', () => {
+    const t = buildTree(root)
+    const digest = install(t)
+    const marker = join(root, 'tampered-binary-ran')
+    const vc = join(t.ws, 'node_modules/vercel/dist/vc.js')
+    writeFileSync(
+      vc,
+      `#!/usr/bin/env node\nrequire('fs').writeFileSync(${JSON.stringify(marker)}, 'ran')\nconsole.log('${VERSION}')\n`
+    )
+    chmodSync(vc, 0o755)
+    const r = verify(t, digest)
+    expect(r.status).not.toBe(0)
+    expect(r.err).toContain('use-lockfile-vercel: cli-digest: the CLI closure changed')
+    expect(existsSync(marker)).toBe(false)
+    // Presence: the same binary DOES run (and writes the marker) once its digest is
+    // the recorded one, so the absence above is due to the ordering, not a dead marker.
+    const reinstalled = run(t, undefined, [], { GITHUB_OUTPUT: join(root, 'out2') })
+    expect(reinstalled.status).toBe(0)
+    expect(existsSync(marker)).toBe(true)
+    rmSync(marker)
+    const d2 = readFileSync(join(root, 'out2'), 'utf-8')
+      .trim()
+      .replace(/^digest=/, '')
+    expect(verify(t, d2).status).toBe(0)
+    expect(existsSync(marker)).toBe(true)
   })
 
   it('verify-only: a nested vulnerable smol-toml that appeared after install is named', () => {
@@ -225,38 +269,39 @@ describe('SMI-6944 Test 4: use-lockfile-vercel.sh', () => {
       expect(r.status).toBe(0)
       expect(r.out).toContain('holds no runtime builder install')
     })
-    it('fails and names the line when a builder was installed at build time', () => {
+    it.each([
+      ['one builder (coloured)', cliLog(installingBuilders([NODE_BUILDER])), 'Builder'],
+      ['two builders (coloured)', cliLog(installingBuilders([NODE_BUILDER, STATIC])), 'Builders'],
+      ['one builder (no colour)', cliLog(installingBuilders([NODE_BUILDER]), false), 'Builder'],
+    ])("fails on the CLI's real install line: %s, and names it", (_n, line, noun) => {
       const t = buildTree(root)
-      const log = logAt(
-        'evil.log',
-        'Running "install" command: `npm install`...\nInstalling Builder: @vercel/node@5.0.0\ndone\n'
-      )
-      const r = run(t, undefined, ['--check-build-log', log])
+      const text = `Running "install" command: \`npm install\`...\n${line}${cliLog('done')}`
+      const r = run(t, undefined, ['--check-build-log', logAt('evil.log', text)])
       expect(r.status).not.toBe(0)
       expect(r.err).toContain('use-lockfile-vercel: builder-install')
-      expect(r.err).toContain('Installing Builder: @vercel/node@5.0.0')
+      expect(r.err).toContain(`> Installing ${noun}: ${NODE_BUILDER}`)
     })
     it.each([
-      [
-        'an ESC-prefixed (ANSI CSI) line',
-        'ok\n\x1b[2K\x1b[1GInstalling Builder: @vercel/node@5.0.0\n',
-      ],
-      ['a \\r-overwritten line', 'Installing deps 10%\rInstalling Builder: @vercel/node@5.0.0\n'],
-      [
-        'an OSC title plus colour codes',
-        '\x1b]0;vc\x07\x1b[32mInstalling Builder: @vercel/node@5.0.0\x1b[0m\n',
-      ],
+      ['an ESC-prefixed (ANSI CSI) line', `ok\n\x1b[2K\x1b[1G${REAL_LINE}`],
+      ['a \\r-overwritten line', `Installing deps 10%\r${REAL_LINE}`],
+      ['an OSC title before the line', `\x1b]0;vc\x07${REAL_LINE}`],
     ])('fails on %s and names the stripped line', (_n, text) => {
       const t = buildTree(root)
       const r = run(t, undefined, ['--check-build-log', logAt('ansi.log', text)])
       expect(r.status).not.toBe(0)
       expect(r.err).toContain(
-        'use-lockfile-vercel: builder-install: vercel build fetched a builder at runtime (outside the lockfile): Installing Builder: @vercel/node@5.0.0'
+        `use-lockfile-vercel: builder-install: vercel build fetched a builder at runtime (outside the lockfile): > Installing Builder: ${NODE_BUILDER}`
       )
     })
-    it('control: colour codes around an unrelated line, or the phrase mid-line, stay clean', () => {
+    it('control: unrelated `> ` CLI lines, colour codes, and the phrase mid-line stay clean', () => {
       const t = buildTree(root)
-      const text = '\x1b[32mBuild Completed\x1b[0m\r\nnote: not Installing Builder here\n'
+      const text =
+        '\x1b[32mBuild Completed\x1b[0m\r\n' +
+        cliLog('Build Completed in .vercel/output [2s]') +
+        'note: not Installing Builder here\n' +
+        cliLog('note: not Installing Builders here either') +
+        'Installing Builder dependencies from cache\n' +
+        cliLog('Installing Builders cache warm-up')
       const r = run(t, undefined, ['--check-build-log', logAt('ansi-clean.log', text)])
       expect(r.err).toBe('')
       expect(r.status).toBe(0)

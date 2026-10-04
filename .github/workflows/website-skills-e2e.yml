@@ -82,9 +82,9 @@ jobs:
           # filter matched a rename on both its old and new path; .filename
           # alone would miss a file renamed OUT of a relevant path.
           FILES="$(gh api "repos/${{ github.repository }}/pulls/${{ github.event.pull_request.number }}/files" --paginate --jq '.[] | .filename, (.previous_filename // empty)')"
-          # Relevance list == the workflow's former 6 `paths` entries, plus the shared Vercel CLI step script (SMI-6944).
+          # Relevance list == the workflow's former 6 `paths` entries, plus the shared Vercel CLI step script and its digest module (SMI-6944).
           # Regex-anchored to the start of the repo-relative path.
-          if echo "$FILES" | grep -qE '^(packages/website/src/components/|packages/website/src/pages/skills/|packages/website/src/styles/|packages/website/tests/e2e/skills-filter\.spec\.ts$|packages/website/playwright\.config\.ts$|\.github/workflows/website-skills-e2e\.yml$|scripts/ci/use-lockfile-vercel\.sh$)'; then
+          if echo "$FILES" | grep -qE '^(packages/website/src/components/|packages/website/src/pages/skills/|packages/website/src/styles/|packages/website/tests/e2e/skills-filter\.spec\.ts$|packages/website/playwright\.config\.ts$|\.github/workflows/website-skills-e2e\.yml$|scripts/ci/use-lockfile-vercel\.sh$|scripts/ci/vercel-cli-digest\.cjs$)'; then
             echo "relevant=true" >> "$GITHUB_OUTPUT"
           else
             echo "relevant=false" >> "$GITHUB_OUTPUT"
