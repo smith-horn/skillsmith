@@ -14,11 +14,13 @@
  * production gate (`npm audit --omit=dev --audit-level=high`, which fails only at high or
  * above) is separate. An unaccepted advisory
  * is printed as informational instead of failing ONLY when an install npm
- * reports as affected by it is a production install (not `dev`, not
- * `devOptional`), because only then does the production gate, which audits
- * production installs, see it. The package NAME is never consulted: a
+ * reports as affected by it is a production install (not `dev: true`), because only then does the production gate, which audits
+ * production installs, see it. A `devOptional` install WITHOUT `dev` is production here: the gate
+ * passes `--omit=dev` alone, and npm's audit omits a devOptional node only when BOTH dev and
+ * optional are omitted, so the gate audits it. The package NAME is never consulted: a
  * production copy npm does not report as affected proves nothing. A production-scope
- * advisory below high is reported here and enforced by no gate (ADR-176 section 4, SMI-6942).
+ * advisory below high is reported here, and in the open daily expiry issue, and enforced by no
+ * gate (ADR-176 section 4, SMI-6942).
  *
  * Affected installs are the report's `vulnerabilities[<pkg>].nodes` (lockfile
  * paths), looked up in package-lock.json's `packages`. `nodes` is per PACKAGE,
@@ -55,7 +57,7 @@ const GATE_TEXT = {
     "its severity is not one the production gate's high threshold is known to classify, so whether any gate fails on it is unknown",
 }
 const key = (id, pkg) => `${id}\u0000${pkg}`
-const isProdInstall = (entry) => entry.dev !== true && entry.devOptional !== true
+const isProdInstall = (entry) => entry.dev !== true
 
 /** The advisory id of an object `via` item: the GHSA in `url`, else `src:<source>`, else null. */
 function advisoryId(item) {
@@ -79,13 +81,15 @@ function affectedBy(v, id) {
     !!v &&
     typeof v === 'object' &&
     Array.isArray(v.via) &&
+    v.via.length > 0 &&
     v.via.every((x) => x !== null && typeof x === 'object' && advisoryId(x) === id)
   return { nodes: usable ? [...v.nodes] : null, sole }
 }
 
 /**
  * Scope of one unaccepted advisory record, from the installs npm reports as affected.
- * @returns {{scope: 'production'|'dev'|'unknown', prod?: string[], why?: string}}
+ * `dev` lists the other affected installs when this advisory is the entry's sole cause.
+ * @returns {{scope: 'production'|'dev'|'unknown', prod?: string[], dev?: string[], why?: string}}
  */
 function scopeOf(lock, e) {
   const unknown = (why) => ({ scope: 'unknown', why })
@@ -98,6 +102,7 @@ function scopeOf(lock, e) {
     )
   }
   const prod = []
+  const dev = []
   for (const path of e.nodes) {
     const entry = Object.hasOwn(lock.packages, path) ? lock.packages[path] : undefined
     if (!entry || typeof entry !== 'object') {
@@ -106,9 +111,10 @@ function scopeOf(lock, e) {
       )
     }
     if (isProdInstall(entry)) prod.push(path)
+    else dev.push(path)
   }
   if (prod.length === 0) return { scope: 'dev' }
-  if (prod.length === e.nodes.length || e.sole) return { scope: 'production', prod }
+  if (prod.length === e.nodes.length || e.sole) return { scope: 'production', prod, dev }
   return unknown(
     `npm reports ${e.pkg}'s affected installs as one set across several causes, some production and some dev, so the installs this advisory affects could not be determined`
   )
@@ -118,8 +124,9 @@ function scopeOf(lock, e) {
  * Direct advisories in an npm audit v2 report: one entry per object `via` item
  * (string `via` items are transitive links, not advisories). The id is the GHSA
  * in `url`, else `src:<source>`; an item with neither is unusable. Each record
- * carries the `nodes` of its package's own entry, `vulnerabilities[pkg]`, and
- * `sole`: whether the advisory is that entry's only `via` cause.
+ * carries the `nodes` of the entry it is listed under (which must be its own package's,
+ * `vulnerabilities[pkg]`, else the report is unusable) and `sole`: whether the advisory is that
+ * entry's only `via` cause.
  * @returns {{problem: string|null, entries: Map<string, {id: string, pkg: string, severity: string, nodes: string[]|null, sole: boolean}>}}
  */
 export function reduceAudit(audit) {
@@ -151,14 +158,21 @@ export function reduceAudit(audit) {
       if (id === null || pkg === null || typeof item.severity !== 'string') {
         return bad(`an advisory under "${name}" has no usable id, package or severity`)
       }
+      // npm lists an advisory only under the entry of the package it is for, so `nodes` and `via`
+      // of that entry are what describe it. An item naming another package is input npm never
+      // produces; reading that other entry's `nodes` could place a dev-only install in production.
+      if (pkg !== name) {
+        return bad(
+          `advisory ${id} is listed under "${name}" but names package "${pkg}"; npm lists an advisory only under its own package's entry`
+        )
+      }
       const prior = entries.get(key(id, pkg))
       if (prior && prior.severity !== item.severity) {
         return bad(
           `advisory ${id} (${pkg}) is reported with conflicting severities "${prior.severity}" and "${item.severity}"`
         )
       }
-      const own = Object.hasOwn(vulns, pkg) ? vulns[pkg] : undefined
-      entries.set(key(id, pkg), { id, pkg, severity: item.severity, ...affectedBy(own, id) })
+      entries.set(key(id, pkg), { id, pkg, severity: item.severity, ...affectedBy(v, id) })
     }
   }
   return { problem: null, entries }
@@ -214,11 +228,15 @@ export function reconcileAudit(registry, audit, lock) {
   }
   for (const e of entries.values()) {
     if (accepted.has(key(e.id, e.pkg))) continue
-    const { scope, prod, why } = scopeOf(lock, e)
+    const { scope, prod, dev, why } = scopeOf(lock, e)
     if (scope === 'production') {
+      const alsoDev =
+        dev.length > 0
+          ? ` (and dev install(s) ${dev.join(', ')}, which it also affects because it is the only cause npm lists for ${e.pkg})`
+          : ''
       out.push(
         info(
-          `Check 76 reconcile (informational): advisory ${e.id} (${e.pkg}, ${e.severity}) has no acceptance; npm audit reports it affecting production install(s) ${prod.join(', ')}, so it is production scope and outside this registry; ${GATE_TEXT[gateFor(e.severity)]}`,
+          `Check 76 reconcile (informational): advisory ${e.id} (${e.pkg}, ${e.severity}) has no acceptance; npm audit reports it affecting production install(s) ${prod.join(', ')}${alsoDev}, so it is production scope and outside this registry; ${GATE_TEXT[gateFor(e.severity)]}`,
           gateFor(e.severity)
         )
       )
