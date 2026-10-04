@@ -1,11 +1,24 @@
 name: CI
 
 # SMI-3999: Triggers unconditionally on every PR/push. The detect-changes job
-# (below) classifies doc-only vs non-doc commits and gates every required-check
-# job with `needs: [detect-changes]` + `if: needs.detect-changes.outputs.code == 'true'`
-# so that pure doc-only commits emit `skipped -> success` for all 9 ci.yml-defined
-# required contexts. This mirrors SMI-3997's fix for docs-only.yml (PR #493) and
-# the SMI-3546 precedent now carried by the `pr-validation-node` job (SMI-4924).
+# (below) classifies doc-only vs non-doc commits, and MOST required-check jobs
+# gate on `needs: [detect-changes]` + an `outputs.code == 'true'` test so that a
+# pure doc-only commit emits `skipped -> success` rather than leaving the context
+# absent (branch protection accepts the former, not the latter). This mirrors
+# SMI-3997's fix for docs-only.yml (PR #493) and the SMI-3546 precedent now
+# carried by the `pr-validation-node` job (SMI-4924).
+#
+# NOT EVERY JOB, and the exception is deliberate. `edge-functions-check` is
+# `if: ${{ !cancelled() }}` ALONE, with no `outputs.code` test, so it still runs
+# when `detect-changes` fails and then fails closed in-step. It is the only
+# required context whose red is guaranteed on a detector fault -- see the comment
+# above that job and SMI-6969. Do NOT "harmonise" it onto the pattern described
+# above; that is the one edit which would make the pipeline fail-open.
+#
+# No count of the required contexts is given here on purpose. An earlier version
+# of this header said "all 9", which was wrong by four within months and is the
+# class of claim that rots silently. `.github/branch-protection.json` is the
+# declared set.
 #
 # Previously, workflow-level `paths-ignore` suppressed ci.yml entirely on pure
 # doc-only PRs, leaving the 9 contexts *missing* (not skipped) on the commit,
@@ -31,10 +44,12 @@ env:
   COMPOSE_DOCKER_CLI_BUILD: 1
 
 jobs:
-  # SMI-3999: Detect whether this commit touches any non-doc file. Every required-check
-  # job below gates on `needs.detect-changes.outputs.code == 'true'` so that pure
-  # doc-only PRs emit `skipped -> success` for all required contexts (branch-protection
-  # accepts skipped-with-success but NOT absent contexts).
+  # SMI-3999: Detect whether this commit touches any non-doc file. MOST required-check
+  # jobs below gate on `needs.detect-changes.outputs.code == 'true'` so that pure
+  # doc-only PRs emit `skipped -> success` (branch protection accepts
+  # skipped-with-success but NOT absent contexts). `edge-functions-check` is the
+  # deliberate exception -- `!cancelled()` alone, failing closed in-step -- and must
+  # stay that way; see its own comment and SMI-6969 before changing any `if:` here.
   #
   # CRITICAL: uses an INVERTED filter (code-output, not docs-output) so mixed
   # commits (e.g., .md + .ts) correctly classify as code=true. A naive docs-output
@@ -1233,11 +1248,64 @@ jobs:
   # error, any newly-failing file, any increased count fails. The 22-row baseline
   # pins today's 59 pre-existing errors without tolerating a 60th.
   #
-  # NOT YET A REQUIRED STATUS CHECK. Adding `Edge Functions Typecheck` to branch
-  # protection is a repository-settings change outside this diff, and until it is
-  # made the job reports without blocking a merge. That is stated rather than
-  # assumed, because an unenforced gate that everyone believes is enforced is the
-  # precise failure this plan exists to remove.
+  # THIS IS A REQUIRED STATUS CHECK. Measured live 2026-10-04: `Edge Functions
+  # Typecheck` is one of 16 contexts in `required_status_checks.contexts` on
+  # `main`. An earlier version of this comment said "NOT YET A REQUIRED STATUS
+  # CHECK ... the job reports without blocking a merge", which was true when
+  # written and became false hours later.
+  #
+  # WHEN and BY WHAT it became required is NOT established, and the honest
+  # version matters more than a date. The job landed on `main` on 2026-10-02
+  # (43527c18a, #2985); the live context exists; and the FIRST record of it in
+  # `.github/branch-protection.json` is the commit carrying this comment. So the
+  # live addition was an out-of-band PUT that no commit records -- which is the
+  # same unrecorded-manual-change pattern that produced the `pointer-check` drift
+  # this change exists to fix. It is not attributable from the protection API,
+  # which carries no timestamps; only the org audit log could settle it.
+  #
+  # Read `.github/branch-protection.json` for the declared set, and note that
+  # `scripts/validate-branch-protection.sh --dry-run` compares a strict subset of
+  # it -- `required_status_checks.contexts` and `.strict`, plus `enforce_admins`,
+  # `allow_force_pushes`, `allow_deletions` -- so it is not a full arbiter either.
+  # Read the script, not a tally of it.
+  #
+  # This job has NO path filter, at workflow or job level. It is `needs:
+  # [detect-changes]` with `if: ${{ !cancelled() }}`, so it ALWAYS runs; the
+  # decision happens inside the step, on `$DETECT_CODE`, which exits 0 early on a
+  # non-code PR. That distinction is load-bearing: it reports a real `success`,
+  # not a `skipped`. (`detect-changes.outputs.code` is `'**'` minus docs.) A PR
+  # that adds no file under `supabase/functions` cannot raise the baseline, but it
+  # can still be FAILED by an INCONCLUSIVE result -- which is why the wrapper's
+  # `RESULT` line is the first thing to read, ahead of `VERDICT`.
+  #
+  # LOAD-BEARING BEYOND THIS JOB -- do not tighten the `if:` (SMI-6969). Because
+  # `if:` is `!cancelled()` ALONE, this job still runs when `detect-changes`
+  # fails, and the step then fails closed on `DETECT_RESULT != success` (M-6
+  # below). That makes it the ONLY required context that goes red on a detector
+  # fault. Derived from this file 2026-10-04, by two sessions independently, of
+  # the 13 required contexts `ci.yml` produces:
+  #
+  #   * 10 SKIP for certain. 9 have an `if:` carrying no status function, so the
+  #     implicit `success()` applies and a failed dependency skips them -- note
+  #     they all HAVE an `if:`; none is absent, so grepping for jobs without one
+  #     finds nothing. `Build` is the 10th and is over-determined: its
+  #     `needs.quality-checks.result == 'success'` is already false.
+  #   * 2 are CONDITIONAL, not certain -- `PR Validation (Shell)` and `Build
+  #     Docker Image`. Both reduce to `!cancelled() && outputs.code == 'true'`,
+  #     so they skip IFF that output is empty after the detector FAILED. That is
+  #     NOT MEASURED: the only recorded measurement covers the case where
+  #     `detect-changes` *skips* (SMI-3999's plan doc), and a failure is a
+  #     different question -- an output written before the failing step could
+  #     survive. If it does, these two RUN and the certain count is 10, not 12.
+  #   * 1 runs: this job.
+  #
+  # GitHub treats a skipped required check as satisfied, so without this job's
+  # red the merge button would unblock on a broken pipeline. Adding an
+  # `outputs.code == 'true'` test here -- the same shape those three use, and an
+  # obvious-looking tidy-up -- would silently remove the last close and make the
+  # pipeline fail-open, with nothing in CI objecting. SMI-6969 tracks pinning
+  # this with a mutation-tested assertion; until that lands, this comment is the
+  # only thing marking the line as load-bearing.
   edge-functions-check:
     name: Edge Functions Typecheck
     runs-on: ubuntu-latest
