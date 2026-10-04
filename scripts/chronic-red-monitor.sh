@@ -48,11 +48,13 @@ update_stored_sha() {
 # Ground truth, verified 2026-07-02 by grep over .github/workflows/*.yml
 # job names (SMI-5485 Wave 2). Deliberately NOT a summing partition —
 # Secret Scan is emitted by two workflows:
-#   - ci.yml emits 12 of the 14 required contexts — all except Markdown
-#     Lint and Website Skills E2E Gate: Secret Scan, Classify Changes,
-#     Package Validation, Quality Checks, Security Audit, Build, Build
-#     Docker Image, PR Validation (Node/Shell), Test (root), Test (root
-#     colocated), Test (mcp-server integration)
+#   - ci.yml emits every required context except Markdown Lint, Website
+#     Skills E2E Gate and pointer-check. No count or list is kept here on
+#     purpose: it went stale twice (SMI-6970, which owns deriving this
+#     allowlist from one source). .github/branch-protection.json is the
+#     declared set. NOTE: pointer-check comes from
+#     submodule-pointer-check.yml, which is not in the allowlist below
+#     (SMI-6970).
 #   - docs-only.yml emits Markdown Lint (sole emitter) + Secret Scan
 #     (dual-emitted — ci.yml also emits it)
 #   - website-skills-e2e.yml emits Website Skills E2E Gate (promoted

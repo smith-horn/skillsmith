@@ -3,8 +3,9 @@
  * fixes it rides on, and the workflow-side invariant that every credentialed
  * `vercel` call runs the lockfile binary by absolute path.
  *
- * These run under the required `Test (root)` job and are the real gate: Check 4
- * itself runs in Dependency Guard, which is not a required status context.
+ * These run under the required `Test (root)` job. Check 4 itself runs in
+ * Dependency Guard, which SMI-6944 also made a required context, so both block a
+ * merge; these tests additionally pin the workflow wiring Check 4 cannot see.
  *
  * @see docs/internal/implementation/smi-6944-vercel-cli-from-lockfile.md
  */
