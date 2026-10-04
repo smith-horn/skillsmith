@@ -14,17 +14,7 @@
  * `openCliDatabase` makes the footgun structurally impossible: it is the one
  * unmissable way a CLI command opens a database.
  */
-import {
-  createDatabaseAsync,
-  initializeSchema,
-  isCorruptionError,
-  backupCorruptDbFile,
-  type DatabaseType,
-} from '@skillsmith/core'
-import { getCliLogger } from '../cli-logger.js'
-import { existsSync } from 'node:fs'
-
-const logger = getCliLogger()
+import { createDatabaseAsync, initializeSchema, type DatabaseType } from '@skillsmith/core'
 
 /**
  * Open a CLI database with the full schema initialized and all migrations
@@ -58,15 +48,9 @@ export async function openCliDatabase(
     initializeSchema(db)
     return db
   } catch (err) {
-    // SMI-4484: backstop for corruption that surfaces during schema init (e.g.
-    // a corrupt page only read once the schema queries run). The sql.js driver
-    // self-heals on open, but a corrupt file opened by the native driver can
-    // still fail here. Back up the bad file and retry once on a fresh DB.
-    if (!isCorruptionError(err) || path === ':memory:' || !existsSync(path)) {
-      throw err
-    }
-    // Close the handle opened before initializeSchema failed so it is not
-    // leaked before we rebuild.
+    // Close the handle opened before `initializeSchema` failed, on EVERY
+    // failure path. The previous version closed it only on the branch that
+    // went on to rebuild, so a non-corruption failure leaked it.
     if (db) {
       try {
         db.close()
@@ -74,13 +58,24 @@ export async function openCliDatabase(
         // handle already unusable — nothing more to free
       }
     }
-    const backupPath = backupCorruptDbFile(path)
-    logger.warn(
-      `[Skillsmith] The local database at ${path} was corrupt and could not be opened. ` +
-        `It has been backed up to ${backupPath} and will be rebuilt on the next sync.`
-    )
-    const fresh = await createDatabaseAsync(path)
-    initializeSchema(fresh)
-    return fresh
+    // Rethrow untouched. This wrapper used to catch a corruption refusal here,
+    // feed it to a substring matcher, rename the MAIN FILE ONLY — orphaning the
+    // `-wal` against a rebuilt database — and return, so the command proceeded
+    // against an empty database (SMI-4484, forbidden by ADR-175 § 1).
+    //
+    // Repair is not this layer's decision to make. The driver has already
+    // established that the file is damaged and its refusal carries the remedy;
+    // renaming a database other processes may hold open is what ADR-175
+    // documents as unsafe, because SQLite coordinates through file paths rather
+    // than inodes.
+    //
+    // **This aborts every command, including `search`, `info` and `remove`,
+    // which could each have served from the remote API or the filesystem
+    // without a database.** That cost was weighed against degrading those three
+    // and the owner chose uniform refusal on 2026-10-04: one code path is far
+    // harder to regress than fourteen plus three exceptions, and § 1 binds
+    // without carve-outs. It is a decision, not an oversight — do not "fix" it
+    // by adding a per-command fallback without revisiting that call.
+    throw err
   }
 }

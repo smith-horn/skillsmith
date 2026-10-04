@@ -126,21 +126,24 @@ function inventory(root: string): Record<string, number> {
  */
 const KNOWN_OPENERS: Readonly<Record<string, { sites: number; note: string }>> = {
   // --- The wrappers every other caller goes through ---
-  // open-database.ts's read-only branch rethrows cleanly. Its read-write branch
-  // still feeds the refusal to a substring matcher and renames the database
-  // aside: ADR-175 § 1 forbids that and defers removal to PR-2. THE ONE KNOWN
-  // OPEN WINDOW on the native driver.
+  // Both of open-database.ts's branches now rethrow untouched. SMI-6961 deleted
+  // the read-write repair path — the substring matcher, the rename of the main
+  // file, and the rebuild — which is why this count dropped by one: the repair
+  // branch's own `createDatabaseAsync` is gone. No open window remains here.
   'packages/cli/src/utils/open-database.ts': {
-    sites: 4,
-    note: 'wrapper; read-write path still destructive (PR-2)',
+    sites: 3,
+    note: 'wrapper; both branches rethrow untouched',
   },
   'packages/core/src/db/createDatabase.ts': { sites: 2, note: 'factory; selects native or WASM' },
   'packages/core/src/db/schema.ts': { sites: 3, note: 'factory; legacy + async variants' },
 
   // --- CLI commands, all read-write through openCliDatabase ---
   // Each inherits the wrapper's behaviour; none handles the refusal itself.
-  // This is the set a PR-2 rethrow flips from "rebuilt empty, command
-  // proceeds" to "command aborts", which is why it is enumerated here.
+  // SMI-6961's rethrow flipped this whole set from "rebuilt empty, command
+  // proceeds" to "command aborts with the remedy" — uniformly, by owner
+  // decision, including `search`, `info` and `remove`, which could each have
+  // degraded to a remote or filesystem path instead. That is why the set is
+  // enumerated here rather than summarised: the cost is per-command.
   'packages/cli/src/commands/audit-sources.action.ts': { sites: 1, note: 'read-write; wrapper' },
   'packages/cli/src/commands/audit.ts': { sites: 1, note: 'read-write; wrapper' },
   'packages/cli/src/commands/import-local.ts': { sites: 2, note: 'read-write; wrapper' },
@@ -149,9 +152,15 @@ const KNOWN_OPENERS: Readonly<Record<string, { sites: number; note: string }>> =
   'packages/cli/src/commands/install.action.ts': { sites: 1, note: 'read-write; wrapper' },
   'packages/cli/src/commands/manage.action.ts': { sites: 1, note: 'read-write; wrapper' },
   'packages/cli/src/commands/manage.update.helpers.ts': { sites: 1, note: 'read-write; wrapper' },
+  // `update` no longer destroys the database, but it is still the odd one out:
+  // its `getSkillDiff` call sits inside `updateSkillWithOutcome`'s try, whose
+  // catch prints `sanitizeError(error)` — the whole multi-line remedy — once
+  // PER SKILL, counts the skill as failed, and lets the loop continue. With
+  // `failed > 0` the command prints a red count and still exits 0. Tracked as
+  // SMI-6961 step 6; it is a reporting defect now, not a data-loss one.
   'packages/cli/src/commands/manage.update.ts': {
     sites: 1,
-    note: 'read-write; getSkillDiff, the open window',
+    note: 'read-write; remedy printed per skill, exits 0 (step 6)',
   },
   'packages/cli/src/commands/registry-install.action.ts': { sites: 1, note: 'read-write; wrapper' },
   'packages/cli/src/commands/search.action.ts': { sites: 2, note: 'read-write; wrapper' },
