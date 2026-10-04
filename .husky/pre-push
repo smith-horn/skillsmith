@@ -137,6 +137,16 @@ fi
 
 # Phase 1: Check for uncommitted changes (SMI-1342)
 # This runs first to warn developers before they push
+#
+# SMI-6967 H-3: this hook runs under `sh -e` (.husky/_/h), so a bare command
+# followed by `$?` on its own line is normally errexit-unsafe (see Phase 4's
+# own comment below for the case where that bites). This one is errexit-safe
+# by inspection, not by accident: if the script below exits non-zero, `sh -e`
+# kills the hook right here with that exact non-zero status, which blocks
+# the push exactly as the explicit `exit 1` two lines down would -- the only
+# action guarded by that `if` is `exit 1`, so nothing downstream is skipped
+# that wouldn't already be skipped. The capture is reached only when the
+# script already exited 0, i.e. when there is nothing to abort for.
 bash "$(dirname "$0")/../scripts/pre-push-uncommitted-check.sh"
 UNCOMMITTED_STATUS=$?
 
@@ -146,6 +156,9 @@ if [ $UNCOMMITTED_STATUS -ne 0 ]; then
 fi
 
 # Phase 2: Run security checks (SMI-727)
+# SMI-6967 H-3: errexit-safe for the same reason as Phase 1 above -- the only
+# action on non-zero is `exit 1`, which is exactly what `sh -e` already does
+# by killing the hook at the bare command itself when it fails.
 bash "$(dirname "$0")/../scripts/pre-push-check.sh"
 SECURITY_STATUS=$?
 
@@ -269,14 +282,29 @@ fi
 # Docker already confirmed available in Phase 3.
 COVERAGE_SCRIPT="$(dirname "$0")/../scripts/pre-push-coverage-check.sh"
 
-if command -v timeout > /dev/null 2>&1; then
-  timeout 300 bash "$COVERAGE_SCRIPT"
-elif command -v gtimeout > /dev/null 2>&1; then
-  gtimeout 300 bash "$COVERAGE_SCRIPT"
-else
-  bash "$COVERAGE_SCRIPT"
-fi
-COVERAGE_STATUS=$?
+# SMI-6967 H-3(a): this hook runs under `sh -e` (.husky/_/h), so the bare
+# three-branch if/elif/else below followed by `COVERAGE_STATUS=$?` on its own
+# line was errexit-UNSAFE -- measured: under `sh -e`, a 124 (timeout) exit
+# from any of the three branches killed the hook immediately with no output
+# and exit 124, never reaching the "timed out after 5 minutes" diagnostic
+# below, making that diagnostic dead code. This is the one bare-cmd-then-$?
+# site in this hook that actually lost something (the Phase 1/2/6 captures
+# in this file do not -- see their own comments). `{ ... } || VAR=$?` scopes
+# the errexit bypass to only this compound command, so `sh -e` stays live
+# for everything else in the hook -- unlike Phase 4's own prior code, this is
+# NOT a blanket `set +e` (this is a BLOCKING hook; see .husky/post-merge and
+# .husky/post-checkout for where a blanket `set +e` is the correct fix
+# instead, because those are non-blocking).
+COVERAGE_STATUS=0
+{
+  if command -v timeout > /dev/null 2>&1; then
+    timeout 300 bash "$COVERAGE_SCRIPT"
+  elif command -v gtimeout > /dev/null 2>&1; then
+    gtimeout 300 bash "$COVERAGE_SCRIPT"
+  else
+    bash "$COVERAGE_SCRIPT"
+  fi
+} || COVERAGE_STATUS=$?
 
 if [ $COVERAGE_STATUS -eq 124 ]; then
   echo ""
@@ -304,6 +332,13 @@ if [ -r "$EVAL_VALIDATOR" ]; then
   # Replay the stashed pre-push refs to the validator (Phase 0 consumed git's
   # stdin already). Validator falls back to @{upstream}..HEAD if PRE_PUSH_REFS
   # is empty (e.g. invoked outside a real push).
+  #
+  # SMI-6967 H-3: errexit-safe like Phase 1/2 above -- a pipeline's exit
+  # status is its last command's (node here), so if node exits non-zero,
+  # `sh -e` kills the hook at the pipeline itself with that EXACT status,
+  # identical to the explicit `exit $EVAL_STATUS` below (not merely "also
+  # non-zero" -- the same literal value). The capture is reached only when
+  # the pipeline already succeeded.
   printf '%s\n' "$PRE_PUSH_REFS" | node "$EVAL_VALIDATOR"
   EVAL_STATUS=$?
   if [ $EVAL_STATUS -ne 0 ]; then
