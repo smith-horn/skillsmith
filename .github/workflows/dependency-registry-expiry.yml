@@ -104,6 +104,7 @@ jobs:
           if [ "$RC" -eq 0 ] && [ "$REC" -ne 0 ]; then RC="$REC"; fi
           # Seed lockfiles (SMI-6954): audit each inside its own directory, so npm
           # resolves that directory as the project root, and reconcile with --seed.
+          # Seed keys cannot contain control characters (Check 76 enforces it), so one per line is safe.
           # Failed seed paths, one per line, so a path with whitespace stays one path.
           SEEDS_FAILED="$RUNNER_TEMP/seeds-failed.txt"
           : > "$SEEDS_FAILED"

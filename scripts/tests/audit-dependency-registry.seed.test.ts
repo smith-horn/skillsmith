@@ -262,12 +262,33 @@ describe('S9 seeds shape and keys', () => {
     ['scripts/x/yarn.lock', /does not end in "\/package-lock\.json"/],
     ['package-lock.json', /is the root lockfile/],
     ['scripts/y/package-lock.json', /is not a tracked lockfile/],
+    ['node_modules/x/package-lock.json', /not a permitted lockfile location/],
+    ['.worktrees/w/package-lock.json', /not a permitted lockfile location/],
+    ['scripts/a\nb/package-lock.json', /control character/],
+    ['scripts/a\rb/package-lock.json', /control character/],
+    ['scripts/a\tb/package-lock.json', /control character/],
   ])('S9 the key %s fails', (key, re) => {
     const section = { overrides: {}, acceptances: [] }
     const msgs = fails(
       run({ seeds: { [K]: { overrides: { toml: ov('4.2.0') }, acceptances: [] }, [key]: section } })
     )
     expect(msgs).toContainEqual(expect.stringMatching(re))
+  })
+})
+
+describe('S9b forbidden lockfile locations in git mode', () => {
+  it.each(['node_modules/x/package-lock.json', '.worktrees/w/package-lock.json'])(
+    'a tracked %s fails',
+    (p) => {
+      expect(fails(run({ trackedLockfiles: ['package-lock.json', K, p] }))).toContainEqual(
+        expect.stringContaining(
+          `${p} is not a permitted lockfile location (under node_modules/ or .worktrees/)`
+        )
+      )
+    }
+  )
+  it('the existing paths still pass', () => {
+    expect(fails(run({}))).toEqual([])
   })
 })
 

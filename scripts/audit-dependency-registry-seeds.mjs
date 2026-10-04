@@ -10,6 +10,8 @@
  *   container's .git names an unmounted host path), a filesystem walk from the root finds every
  *   file named exactly package-lock.json instead (owner decision), skipping only node_modules,
  *   .git and .worktrees, never following symlinks, so it finds a superset of what git would list
+ *   apart from those three directories, where git mode (the mode CI runs in) FAILS any tracked
+ *   lockfile as "not a permitted lockfile location", so the skip only hides paths already rejected
  *   (a tracked lockfile under dist/, coverage/ or tests/fixtures/ is not missed; the tracked
  *   fixture lockfiles are named *.package-lock.json, which the exact-name match excludes); the
  *   output then says "tracked lockfiles from a file scan: git unavailable". The walk also counts
@@ -36,16 +38,22 @@ const SEED_TIERS = Object.freeze(['R3', 'R4'])
 const f = (message, fix) => ({ severity: 'fail', message, fix })
 const isPlainObject = (v) => v !== null && typeof v === 'object' && !Array.isArray(v)
 
+const FORBIDDEN_LOCATION =
+  'is not a permitted lockfile location (under node_modules/ or .worktrees/)'
+const inForbiddenDir = (p) => p.split('/').some((s) => s === 'node_modules' || s === '.worktrees')
+
 /** Why `key` cannot name a seed lockfile, or null. */
 export function seedKeyProblem(key) {
   if (key === 'package-lock.json') return 'is the root lockfile, which the top-level sections cover'
   if (!key.endsWith('/package-lock.json')) return 'does not end in "/package-lock.json"'
+  if (/[\x00-\x1f\x7f]/.test(key)) return 'contains a control character (newline, tab, ...)'
   if (key.startsWith('/') || /^[A-Za-z]:/.test(key) || key.includes('\\')) {
     return 'is not a repo-relative POSIX path'
   }
   if (key.split('/').some((s) => s === '' || s === '.' || s === '..')) {
     return 'has an empty, "." or ".." segment'
   }
+  if (inForbiddenDir(key)) return FORBIDDEN_LOCATION
   return null
 }
 
@@ -232,6 +240,15 @@ export function evaluateSeedSections(registry, input, checkers) {
     )
   } else {
     for (const lf of tracked) {
+      if (note === '' && inForbiddenDir(lf)) {
+        findings.push(
+          f(
+            `Check 76: ${lf} ${FORBIDDEN_LOCATION}`,
+            'Remove it from git (git rm --cached); the file-scan fallback skips these directories, so git mode is where they are rejected'
+          )
+        )
+        continue
+      }
       if (lf === 'package-lock.json' || hasOwn(seeds, lf)) continue
       findings.push(
         f(
