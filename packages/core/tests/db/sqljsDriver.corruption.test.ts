@@ -310,38 +310,11 @@ describe('createSqlJsDatabase — corrupt-file refusal (SMI-6961)', () => {
     expectUntouched(dbPath, before)
   })
 
-  // A zero-byte file is its own input class, and no engine-level probe can see
-  // it: SQLite accepts a zero-length file as a brand-new database, so nothing
-  // throws and `quick_check` returns `ok`. Measured before the guard existed —
-  // the open succeeded and a write-capable caller persisted 274,432 bytes of
-  // valid empty database over the damaged artifact, reproducing the exact
-  // later-invocation shape this whole issue exists to close: call one converts
-  // the damage, call two succeeds against emptiness with nothing to refuse.
-  //
-  // Every other fixture in this file is NON-EMPTY, so none of them reach this.
-  it.each([
-    ['read-write', undefined],
-    ['read-only', { readonly: true } as const],
-  ])('refuses a zero-byte file (%s) and does not rewrite it', async (_label, options) => {
-    const dbPath = join(dir, 'skills.db')
-    writeFileSync(dbPath, Buffer.alloc(0))
-    const before = snapshot(dbPath)
-    expect(before.bytes.length).toBe(0)
-
-    await expect(createSqlJsDatabase(dbPath, options)).rejects.toThrow(
-      /is corrupt and cannot be read/
-    )
-
-    // Still zero bytes. The pre-guard behaviour wrote a full database here.
-    expectUntouched(dbPath, before)
-    expect(readFileSync(dbPath).length).toBe(0)
-  })
-
-  it('still treats an ABSENT file as benign — the zero-byte guard must not catch it', async () => {
-    // The paired negative. Absence is this contract's one benign case: nothing
-    // is installed, so nothing can be out of date. Without this arm, a guard
-    // that refused every path lacking a readable database would satisfy both
-    // zero-byte arms above while breaking every first run.
+  it('treats an ABSENT file as benign — nothing is installed, so nothing is stale', async () => {
+    // Absence is this contract's one benign case: nothing is installed, so
+    // nothing can be out of date. The paired negative for every refusal arm
+    // above — without it, a driver that refused any path without a readable
+    // database would look correct while breaking every first run.
     const dbPath = join(dir, 'absent.db')
     expect(existsSync(dbPath)).toBe(false)
 

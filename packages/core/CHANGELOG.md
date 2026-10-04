@@ -21,24 +21,6 @@ All notable changes to `@skillsmith/core` are documented here.
   There is **no replacement for the backup helper**, by design. The refusal's message names the
   files to move and the commands to run; which copy to keep is the user's decision, not a library's.
 
-- **Fixed**: SMI-6961 -- a **zero-byte** file at the database path is now refused by **both** drivers,
-  in both read-only and read-write mode, instead of being adopted as a brand-new database.
-
-  SQLite accepts a zero-length file as a fresh database, so nothing throws and `PRAGMA
-  quick_check(1)` returns `ok` -- no engine-level probe can see this, which is why the check runs
-  before the open. Measured on both drivers before the fix: a zero-byte file opened cleanly and a
-  write-capable command persisted 274,432 bytes of valid empty database over it. The read-only case
-  was quieter and no better -- `skillsmith list` reported zero skills.
-
-  A zero-length file is not an absent one. Absence is this contract's one benign case; a zero-length
-  file is the documented residue of an interrupted write, so adopting it tells you that you have no
-  skills when what happened is that your database was destroyed. It also reproduced the
-  later-invocation shape this release exists to close: the first call converted the damaged artifact
-  into a valid empty database, and the second succeeded against it with nothing left to refuse.
-
-  Found by a cross-family pre-merge review. Every corruption fixture in the suite used **non-empty**
-  damaged bytes, so none of them reached this input class.
-
 - **Fixed**: SMI-6961 / ADR-175 § 1 -- the WASM (sql.js) driver no longer renames a corrupt
   database aside and rebuilds an empty one. It now refuses with the same structured
   `CorruptDatabaseError` the native driver throws, so a consumer branching on `error.code` gets

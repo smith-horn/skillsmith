@@ -14,7 +14,7 @@ import { existsSync } from 'node:fs'
 import type BetterSqlite3 from 'better-sqlite3'
 import type { Database, Statement, RunResult, DatabaseOptions } from '../database-interface.js'
 import { classifyProbeFailure } from '../probe-classification.js'
-import { corruptDatabaseError, refuseIfZeroLength, sqliteCodeOf } from '../corrupt-refusal.js'
+import { corruptDatabaseError, sqliteCodeOf } from '../corrupt-refusal.js'
 
 // ESM-compatible require for native modules
 const require = createRequire(import.meta.url)
@@ -125,14 +125,6 @@ export function createBetterSqlite3Database(
   // This is synchronous because better-sqlite3 is synchronous
 
   const Database = require('better-sqlite3') as typeof BetterSqlite3
-
-  // Parity with the WASM driver (ADR-175 section 1): a zero-byte file is
-  // refused before the open. SQLite accepts a zero-length file as a brand-new
-  // database, so the integrity probe below cannot see it -- measured, this
-  // driver opened one cleanly and a write-capable command then persisted
-  // 274,432 bytes of valid empty database over the damaged artifact, which is
-  // byte-for-byte the same outcome the WASM driver produced.
-  refuseIfZeroLength(path)
 
   // Build options object, only including defined values
   // better-sqlite3 doesn't accept undefined for boolean options

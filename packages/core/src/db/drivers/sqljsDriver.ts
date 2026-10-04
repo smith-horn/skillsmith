@@ -18,7 +18,7 @@
 import { createRequire } from 'node:module'
 import type { Database, Statement, RunResult, DatabaseOptions } from '../database-interface.js'
 import { existsSync, readFileSync, writeFileSync, renameSync, unlinkSync } from 'node:fs'
-import { corruptDatabaseError, refuseIfZeroLength } from '../corrupt-refusal.js'
+import { corruptDatabaseError } from '../corrupt-refusal.js'
 import { sqlJsCorruptionCode, refuseIfCorrupt } from './sqljsDriver.corruption.js'
 
 // ESM-compatible require for dynamic module loading
@@ -394,10 +394,6 @@ export async function createSqlJsDatabase(
   options?: DatabaseOptions
 ): Promise<SqlJsDatabaseAdapter> {
   const SQL = await loadSqlJs()
-
-  // Before the load: no later probe can see a zero-byte file, because sql.js
-  // accepts an empty buffer as a new database. Rationale in the function.
-  refuseIfZeroLength(path)
 
   // Load existing database from file if it exists
   let data: Uint8Array | undefined
