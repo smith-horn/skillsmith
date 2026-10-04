@@ -299,7 +299,9 @@ describe('SMI-6944 Test 4: use-lockfile-vercel.sh', () => {
         '\x1b[32mBuild Completed\x1b[0m\r\n' +
         cliLog('Build Completed in .vercel/output [2s]') +
         'note: not Installing Builder here\n' +
-        cliLog('note: not Installing Builders here either')
+        cliLog('note: not Installing Builders here either') +
+        'Installing Builder dependencies from cache\n' +
+        cliLog('Installing Builders cache warm-up')
       const r = run(t, undefined, ['--check-build-log', logAt('ansi-clean.log', text)])
       expect(r.err).toBe('')
       expect(r.status).toBe(0)

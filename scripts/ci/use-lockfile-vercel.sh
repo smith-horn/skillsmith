@@ -94,8 +94,9 @@ const t = require("fs").readFileSync(process.argv[1], "latin1")
 // ${pluralize("Builder", n)}: a, b` (dist chunks: the Output class `log`, and the
 // builder installer), so after ANSI stripping the line is `> Installing Builder: x`
 // or `> Installing Builders: x, y`. The `>` prefix is optional; anchoring at line
-// start keeps a mid-line mention of the phrase clean.
-const hit = t.find((l) => /^[ \t]*(?:>[ \t]*)?Installing Builders?\b/.test(l))
+// start keeps a mid-line mention of the phrase clean, and requiring the colon the
+// CLI always prints keeps unrelated prose ("Installing Builder dependencies ...") clean.
+const hit = t.find((l) => /^[ \t]*(?:>[ \t]*)?Installing Builders?:/.test(l))
 if (hit !== undefined) console.log(hit.trim())
 ' "$BUILD_LOG")" || fail "build-log" "could not read $BUILD_LOG"
     if [ -n "$HIT" ]; then
