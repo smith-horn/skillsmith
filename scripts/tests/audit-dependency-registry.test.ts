@@ -456,10 +456,19 @@ describe('Check 76 against the real repo files (T19, T21)', () => {
 
   it('T21 the verdict is timezone-independent (TZ=UTC, America/Los_Angeles, Pacific/Auckland agree)', () => {
     const today = todayFromRegistry()
-    const script = `import('${join(REPO_ROOT, 'scripts/audit-dependency-registry-helpers.mjs')}').then((m)=>{const i=m.readDependencyRegistryInputs(${JSON.stringify(REPO_ROOT)});const r=m.evaluateDependencyRegistry({...i,today:${JSON.stringify(today)}});console.log(JSON.stringify({fails:r.findings.filter(f=>f.severity==='fail').length,warns:r.findings.filter(f=>f.severity==='warn').length,n:r.examined.acceptances}))})`
+    // Paths and dates travel as argv, never spliced into the code string (CodeQL js/code-injection).
+    const script =
+      'const [root, today] = process.argv.slice(1);' +
+      "const { pathToFileURL } = require('node:url');" +
+      "const { join } = require('node:path');" +
+      "import(pathToFileURL(join(root, 'scripts/audit-dependency-registry-helpers.mjs')).href).then((m) => {" +
+      'const i = m.readDependencyRegistryInputs(root);' +
+      'const r = m.evaluateDependencyRegistry({ ...i, today });' +
+      "console.log(JSON.stringify({ fails: r.findings.filter((f) => f.severity === 'fail').length, warns: r.findings.filter((f) => f.severity === 'warn').length, n: r.examined.acceptances }));" +
+      '})'
     const run = (tz: string) =>
       JSON.parse(
-        spawnSync(process.execPath, ['-e', script], {
+        spawnSync(process.execPath, ['-e', script, REPO_ROOT, today], {
           encoding: 'utf8',
           env: { PATH: process.env.PATH ?? '', TZ: tz },
         }).stdout

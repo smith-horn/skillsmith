@@ -131,7 +131,7 @@ function capabilityProblems(value: string, src: string): string[] {
     }
   }
   for (const name of localImportNames(src)) {
-    const escaped = name.replace(/\$/g, '\\$')
+    const escaped = name.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')
     if (new RegExp(`(?<![\\w$.])${escaped}(?![\\w$])`).test(value)) {
       problems.push(`capabilities reference the locally imported name ${name}`)
     }
