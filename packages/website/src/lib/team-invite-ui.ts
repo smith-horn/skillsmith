@@ -20,59 +20,12 @@ import {
   type PendingInvitation,
 } from './team-invitations'
 
-/**
- * Row shape returned by `list_team_members_with_profile(p_team_id)` RPC
- * (SMI-4294 follow-up). Flat columns — no nested `profiles:` object — because
- * the RPC is SECURITY DEFINER and reads `profiles` itself, bypassing the
- * profiles RLS that filtered out non-self rows in the previous PostgREST join.
- */
-export interface TeamMemberRow {
-  member_id: string
-  user_id: string
-  role: 'owner' | 'admin' | 'member'
-  joined_at: string | null
-  invited_at: string | null
-  full_name: string | null
-  email: string | null
-  /** SMI-5589. `null` resolves to `identity_unlinked` (warn) in the compliance check. */
-  github_username: string | null
-  /**
-   * SMI-6205 (Wave 4). How this row was provisioned. `NOT NULL DEFAULT
-   * 'manual'` at the `team_members` table level with a CHECK-enforced enum
-   * (`20260827000000_team_permission_grants.sql:828-829`), so this is a
-   * closed union like `role` above, not a nullable string. `'sso'`-
-   * provisioned rows are the ones an IdP group-claim change can promote,
-   * demote, or expire; `'invite'`/`'billing'`-provisioned rows keep the
-   * role their team admin gave them even if the member also authenticates
-   * via SSO.
-   */
-  provisioned_via: 'invite' | 'billing' | 'sso' | 'manual'
-  /**
-   * SMI-6205 (Wave 4). When the identity provider itself last actually
-   * authenticated this user — stamped from the JWT's own `amr` timestamp
-   * (`record_sso_login()`), not wall-clock time at RPC-call time. `null`
-   * for a member who has never signed in via SSO.
-   */
-  sso_verified_at: string | null
-}
-
-/**
- * The viewer's role + auth id, used to decide whether to render per-row
- * Remove buttons. Resolved at page-load time from
- * `check_team_tier_access` (role) + `supabase.auth.getUser()` (user_id).
- */
-export interface Viewer {
-  role: 'owner' | 'admin' | 'member'
-  userId: string | null
-  /**
-   * SMI-6241 Wave 3. Resolved once per page load via the caller-scoped
-   * `has_team_permission(teamId, 'team:manage_members')` RPC — the real
-   * permission-system source of truth for the remove/edit gates below,
-   * rather than the `role` literal above (which stays on the interface for
-   * display purposes: role badges, the invite-role default, etc.).
-   */
-  canManageMembers: boolean
-}
+// SMI-6636 Wave 1a: `TeamMemberRow` and `Viewer` moved to the `.types.ts`
+// sibling when this file crossed the 500-line pre-commit gate. Re-exported here
+// so existing importers of `team-invite-ui` keep resolving — the split is a
+// file-length remedy, not an API change.
+export type { TeamMemberRow, Viewer } from './team-invite-ui.types'
+import type { TeamMemberRow, Viewer } from './team-invite-ui.types'
 
 function escapeHtml(text: string): string {
   const div = document.createElement('div')
@@ -96,8 +49,25 @@ function renderPendingRow(p: PendingInvitation): string {
   </div>`
 }
 
-export async function refreshPendingList(supabase: SupabaseClient, teamId: string): Promise<void> {
+/**
+ * SMI-6653: a plain member's SELECT on `team_invitations` now returns zero rows (manager-only
+ * RLS), so rendering "No pending invites." would assert something false to someone who simply
+ * cannot see. Gated on `viewer.canManageMembers` (same flag `members.astro` uses for the
+ * member-management gates) — the query isn't even issued for a non-manager.
+ */
+export async function refreshPendingList(
+  supabase: SupabaseClient,
+  teamId: string,
+  viewer: Viewer
+): Promise<void> {
+  const section = document.getElementById('pending-invites-section')
   const container = document.getElementById('pending-list')
+  if (!viewer.canManageMembers) {
+    if (section) section.hidden = true
+    if (container) container.innerHTML = ''
+    return
+  }
+  if (section) section.hidden = false
   if (!container) return
   const rows = await listPending(supabase, teamId)
   if (rows.length === 0) {
@@ -115,7 +85,7 @@ function showModalAlert(kind: 'error' | 'success', html: string): void {
   el.style.display = 'block'
 }
 
-export function wireInviteFlow(supabase: SupabaseClient, teamId: string): void {
+export function wireInviteFlow(supabase: SupabaseClient, teamId: string, viewer: Viewer): void {
   const modal = document.getElementById('team-invite-modal') as HTMLDialogElement | null
   const form = document.getElementById('invite-form') as HTMLFormElement | null
   const submitBtn = document.getElementById('invite-submit') as HTMLButtonElement | null
@@ -195,7 +165,7 @@ export function wireInviteFlow(supabase: SupabaseClient, teamId: string): void {
       } else {
         showModalAlert('success', `Invitation sent to ${safeEmail}.`)
       }
-      await refreshPendingList(supabase, teamId)
+      await refreshPendingList(supabase, teamId, viewer)
       // Every result.ok path leaves a pending invite on record, so re-pressing
       // is a no-op ("already pending") — lock the button regardless of subtype.
       lockAfterSuccess = true
@@ -253,7 +223,7 @@ export function wireInviteFlow(supabase: SupabaseClient, teamId: string): void {
         target.removeAttribute('disabled')
         return
       }
-      await refreshPendingList(supabase, teamId)
+      await refreshPendingList(supabase, teamId, viewer)
     }
   })
 }

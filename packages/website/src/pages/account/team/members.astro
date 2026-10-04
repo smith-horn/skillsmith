@@ -87,7 +87,11 @@ const supabaseConfig = getSupabaseConfig()
             <div class="member-list" id="member-list"></div>
           </section>
 
-          <section class="section">
+          <!-- SMI-6653: manager-only -- team_invitations_select_manager hides this data
+               from a plain member entirely (RLS + column lockdown), and the script below
+               hides the section itself via `hidden`, rather than showing an empty state
+               that would assert "No pending invites" to someone who simply cannot see. -->
+          <section class="section" id="pending-invites-section" hidden>
             <h2>Pending Invites</h2>
             <div id="pending-list" class="pending-list" aria-live="polite"></div>
           </section>
@@ -496,9 +500,9 @@ const supabaseConfig = getSupabaseConfig()
       if (nav.isStale()) return
       await refreshMembersList(supabase, teamId, viewer)
       if (nav.isStale()) return
-      await refreshPendingList(supabase, teamId)
+      await refreshPendingList(supabase, teamId, viewer)
       if (nav.isStale()) return
-      wireInviteFlow(supabase, teamId)
+      wireInviteFlow(supabase, teamId, viewer)
       wireMemberManagement(supabase, teamId, viewer)
 
       showState('content')
