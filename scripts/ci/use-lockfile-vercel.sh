@@ -21,9 +21,13 @@
 #
 # `vercel build` runs vercel.json's installCommand (`npm install`) and may fetch
 # builders, so the tree is not guaranteed unchanged after the install-mode step.
-# --verify-only re-runs identity + version + content digest + canary at the top of
-# each credentialed `vercel deploy` step; --check-build-log fails on a runtime
-# builder install.
+# --verify-only re-runs identity + canary + content digest + version immediately
+# before each credentialed `vercel deploy`: at the top of the deploy step where
+# the build ran in an earlier step (website-deploy-staging.yml), and mid-step,
+# after `vercel build` and its log check, where build and deploy share one step
+# (website-preview-pr.yml). It verifies the digest BEFORE it executes the binary
+# at all (`--version`), so a rewritten CLI is refused without being run.
+# --check-build-log fails on a runtime builder install.
 #
 # CONTENT DIGEST. Install mode hashes the CLI's runtime closure (node_modules/vercel
 # plus every package it can require, from the lockfile; scope and exclusions in
@@ -86,7 +90,12 @@ const t = require("fs").readFileSync(process.argv[1], "latin1")
   .replace(/(?:\x1b\[|\x9b)[0-?]*[ -\/]*[@-~]/g, "")
   .replace(/\x1b[@-Z\\-_]/g, "")
   .split(/\r\n|\r|\n/)
-const hit = t.find((l) => /^[ \t]*Installing Builder/.test(l))
+// vercel 52.x prints it through output.log: `${chalk.grey(">")} Installing
+// ${pluralize("Builder", n)}: a, b` (dist chunks: the Output class `log`, and the
+// builder installer), so after ANSI stripping the line is `> Installing Builder: x`
+// or `> Installing Builders: x, y`. The `>` prefix is optional; anchoring at line
+// start keeps a mid-line mention of the phrase clean.
+const hit = t.find((l) => /^[ \t]*(?:>[ \t]*)?Installing Builders?\b/.test(l))
 if (hit !== undefined) console.log(hit.trim())
 ' "$BUILD_LOG")" || fail "build-log" "could not read $BUILD_LOG"
     if [ -n "$HIT" ]; then
@@ -137,9 +146,17 @@ LOCKED="$(njs 'const p=require(process.argv[1]).packages["node_modules/vercel"];
 if [ "$PINNED" != "$LOCKED" ]; then
   fail "pin-matches-lockfile" "package.json devDependencies.vercel is '$PINNED' but the lockfile resolved '$LOCKED'"
 fi
-INSTALLED="$("$BIN" --version 2>/dev/null || true)"
-if [ "$INSTALLED" != "$LOCKED" ]; then
-  fail "installed-version" "$BIN reports '$INSTALLED', lockfile says '$LOCKED'"
+# Executes the binary. Install mode runs it here; verify mode runs it only after
+# the content digest has matched (step 5c), so a rewritten CLI never executes.
+check_installed_version() {
+  local installed
+  installed="$("$BIN" --version 2>/dev/null || true)"
+  if [ "$installed" != "$LOCKED" ]; then
+    fail "installed-version" "$BIN reports '$installed', lockfile says '$LOCKED'"
+  fi
+}
+if [ "$MODE" = "install" ]; then
+  check_installed_version
 fi
 
 # 3. Identity. The CLI tree must be the real lockfile install, not a symlink to
@@ -238,6 +255,12 @@ if [ "$MODE" = "verify" ] && [ "$DIGEST" != "$EXPECTED_DIGEST" ]; then
     node "$DIGEST_JS" "$WS" --diff-against "$MANIFEST" >/dev/null || true
   fi
   fail "cli-digest" "the CLI closure changed since the install step: now $DIGEST, recorded $EXPECTED_DIGEST"
+fi
+
+# 5c. Verify mode: the version check executes the binary, so it runs only now,
+#     after the digest proved the closure is the one the install step recorded.
+if [ "$MODE" = "verify" ]; then
+  check_installed_version
 fi
 
 # 6. Install mode: expose the shim dir to later steps (only this dir), and the

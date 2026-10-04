@@ -17,7 +17,9 @@
  *     call sites must spell the path literally, which is what Check 4 can see.
  *
  * Forms read as an assignment: leading `NAME=value` words of a command, and the
- * arguments of `export` / `local` / `declare` / `readonly` / `typeset`. NOT read
+ * arguments of `export` / `local` / `declare` / `readonly` / `typeset`, and an
+ * `alias NAME=vercel` / `alias NAME=vc` definition (an alias hides the command
+ * word exactly as a variable does, so the absolute path is refused there too). NOT read
  * (documented limits): `printf -v NAME vercel`, `read`, a `for NAME in vercel`
  * loop list, a value assembled from pieces (`ver"cel"`, `${A}${B}`), a value
  * read from a file or another step's output, and an action whose owner/repo does
@@ -31,7 +33,7 @@
  */
 import { allTokenLists, bare, isVercelWord } from './check-supply-chain-pins.commands.mjs'
 
-const DECLARERS = new Set(['export', 'local', 'declare', 'readonly', 'typeset'])
+const DECLARERS = new Set(['export', 'local', 'declare', 'readonly', 'typeset', 'alias'])
 const ASSIGN = /^([A-Za-z_][A-Za-z0-9_]*)(?:\[[^\]]*\])?\+?=([\s\S]*)$/
 const KEYWORDS = new Set(['then', 'do', 'else', 'elif', 'if', 'while', 'until', '!', '{', '}'])
 const USES = /^\s*(?:-\s*)?uses:\s*['"]?([^\s'"#]+)/

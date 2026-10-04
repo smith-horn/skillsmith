@@ -6,7 +6,8 @@
  * tests can prove the version check ran THROUGH the shim. The fake lockfile gives
  * the CLI a real closure: `node_modules/vercel` requires a hoisted `smol-toml` and
  * a hoisted `@vercel/build-utils`, so the content digest covers files outside
- * `node_modules/vercel` too.
+ * `node_modules/vercel` too. `@vercel/build-utils` declares an optional peer
+ * (`encoding`) the lockfile does not resolve.
  *
  * @see docs/internal/implementation/smi-6944-vercel-cli-from-lockfile.md
  */
@@ -78,7 +79,13 @@ export function buildTree(root: string, o: Opts = {}): Tree {
       dependencies: { 'smol-toml': '1.5.2', '@vercel/build-utils': '13.20.0' },
     },
     'node_modules/smol-toml': { version: hoisted },
-    'node_modules/@vercel/build-utils': { version: '13.20.0' },
+    // An optional peer the lockfile does not resolve, like node-fetch's `encoding`
+    // in the real closure: the digest must record it and refuse a planted copy.
+    'node_modules/@vercel/build-utils': {
+      version: '13.20.0',
+      peerDependencies: { encoding: '^0.1.0' },
+      peerDependenciesMeta: { encoding: { optional: true } },
+    },
   }
   if (o.nested) packages['node_modules/vercel/node_modules/smol-toml'] = { version: o.nested }
   writeJson(join(ws, 'package-lock.json'), { lockfileVersion: 3, packages })

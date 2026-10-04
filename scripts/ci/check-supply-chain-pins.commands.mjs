@@ -4,10 +4,14 @@
  * module to keep every file under the 500-line ceiling.
  *
  * A run block is split into commands (`;` `&&` `||` `|` newline `(` `)` backtick),
- * quote-aware, with leading `VAR=value` assignments and wrapper words (`env`,
- * `sudo`, `nohup`, `time`, `command`, `exec`, ...) skipped, so a rule sees the
- * real command word. Quoted `$(...)`, `sh -c '...'` and `eval '...'` are scanned
- * recursively (depth-limited).
+ * quote-aware; an unquoted `<`/`>` also starts a new (redirection) token, so
+ * `vercel>/dev/null` is two tokens. Leading `VAR=value` assignments, redirections,
+ * `function NAME`, and wrapper words with their own flags and values (`env`,
+ * `sudo`, `nohup`, `setsid`, `stdbuf`, `time`, `timeout`, `nice`, `xargs`,
+ * `command`, `exec`, ...) are skipped, so a rule sees the real command word
+ * (check-supply-chain-pins.wrappers.mjs). Quoted `$(...)`, `sh -c '...'`,
+ * `eval '...'` and `find ... -exec CMD ... ;` are scanned recursively
+ * (depth-limited). `alias NAME=vercel` is reported by the indirect-dispatch rule.
  *
  * A package-runner wrapper that runs the CLI (`npx vercel`, `bunx`, `pnpx`,
  * `npm exec|x`, `pnpm|yarn dlx|exec|run`, `bun x|run`, the implicit `yarn vercel`
@@ -19,8 +23,11 @@
  * deploy`) whose value is not assigned in a form the indirect-dispatch rule
  * reads (check-supply-chain-pins.vercel-dispatch.mjs names those forms), a
  * name assembled from pieces (`ver"cel"`, `${A}${B}`), a heredoc body, a script
- * file the run block executes, and a third-party action that deploys without
- * `vercel` in its owner/repo.
+ * file the run block executes, a third-party action that deploys without
+ * `vercel` in its owner/repo, a use of an alias or function whose definition is
+ * not in the same run block, and wrappers not in the wrappers module's table
+ * (`chrt`, `taskset`, `ionice`, `flock`, `unshare`, `nsenter`, `runuser`,
+ * `su -c`, `script -c`, `watch`, `parallel`, `strace`, `ssh host vercel`, ...).
  *
  * Pure functions. ASCII only.
  *
@@ -28,27 +35,16 @@
  * @see docs/internal/implementation/smi-6944-vercel-cli-from-lockfile.md
  */
 
+import { bare, commandWords } from './check-supply-chain-pins.wrappers.mjs'
+
+export { bare, commandWords }
+
 /** The only accepted spelling of a credentialed Vercel CLI command word. */
 export const ABS_VERCEL = '"$GITHUB_WORKSPACE/node_modules/.bin/vercel"'
 
-const KEYWORDS = new Set(['then', 'do', 'else', 'elif', 'if', 'while', 'until', '!', '{', '}'])
-const PREFIX_WRAPPERS = new Set([
-  'env',
-  'sudo',
-  'nohup',
-  'time',
-  'xargs',
-  'timeout',
-  'nice',
-  'corepack',
-])
 const SHELLS = new Set(['bash', 'sh', 'zsh', 'dash'])
-const ASSIGNMENT = /^[A-Za-z_][A-Za-z0-9_]*(\[[^\]]*\])?\+?=/
-
-/** Strip surrounding quote characters. */
-export function bare(token) {
-  return String(token).replace(/^["']+|["']+$/g, '')
-}
+const FIND_EXEC = new Set(['-exec', '-execdir', '-ok', '-okdir'])
+const FIND_END = new Set(['\\;', "';'", '";"', ';', '+'])
 
 function baseName(token) {
   return bare(token).split('/').pop()
@@ -97,6 +93,12 @@ export function splitCommands(text) {
       endTok()
     } else if (c === '&' && (src[i - 1] === '>' || src[i - 1] === '<' || src[i + 1] === '>')) {
       tok += c
+    } else if (c === '<' || c === '>') {
+      // A redirection starts its own token unless it continues one (`2>`, `&>`, `>>`).
+      if (!/^(?:\d+|&)?[<>&]*$/.test(tok)) endTok()
+      tok += c
+    } else if (c === '|' && src[i - 1] === '>') {
+      tok += c // `>|` (noclobber override) is a redirection, not a pipe
     } else if ('\n;|&()`'.includes(c)) {
       endCmd()
     } else {
@@ -105,33 +107,6 @@ export function splitCommands(text) {
   }
   endCmd()
   return commands
-}
-
-/** Tokens from the real command word onward, or null when there is none. */
-export function commandWords(tokens) {
-  let i = 0
-  while (i < tokens.length) {
-    const t = tokens[i]
-    const b = bare(t)
-    if (ASSIGNMENT.test(t) || KEYWORDS.has(b)) {
-      i++
-    } else if (PREFIX_WRAPPERS.has(b)) {
-      i++
-      while (
-        i < tokens.length &&
-        (tokens[i].startsWith('-') || ASSIGNMENT.test(tokens[i]) || /^\d+[smhd]?$/.test(tokens[i]))
-      ) {
-        i++
-      }
-    } else if (b === 'command' || b === 'exec' || b === 'builtin') {
-      i++
-      if (/^-[vV]/.test(tokens[i] || '')) return null
-      while (i < tokens.length && tokens[i].startsWith('-')) i++
-    } else {
-      break
-    }
-  }
-  return i < tokens.length ? tokens.slice(i) : null
 }
 
 function substitutions(token) {
@@ -176,6 +151,15 @@ export function allTokenLists(text, depth = 0) {
       if (k > 0 && cmd[k + 1]) out.push(...allTokenLists(unquote(cmd[k + 1]), depth + 1))
     } else if (bare(cmd[0]) === 'eval') {
       out.push(...allTokenLists(unquote(cmd.slice(1).join(' ')), depth + 1))
+    } else if (baseName(cmd[0]) === 'find') {
+      // `find ... -exec CMD ARGS ;` (or `+`) runs CMD once per match.
+      for (let j = 1; j < cmd.length; j++) {
+        if (!FIND_EXEC.has(cmd[j])) continue
+        let end = j + 1
+        while (end < cmd.length && !FIND_END.has(cmd[end])) end++
+        out.push(...allTokenLists(cmd.slice(j + 1, end).join(' '), depth + 1))
+        j = end
+      }
     }
   }
   return out
