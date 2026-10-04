@@ -26,6 +26,22 @@ All notable changes to `@skillsmith/core` are documented here.
   construct the identical error. No behaviour change on its own; it exists so the two drivers cannot
   drift apart again.
 
+- **Fixed**: SMI-6961 -- two defects in the text of the refusal itself, both found in review, both
+  in words a user reads while deciding what to do with a database they cannot open.
+
+  The message claimed the database "holds no data that cannot be rebuilt from the registry". **That
+  was false.** Skills added with `import-local` are tagged `source='local'` precisely so registry
+  sync -- `--force` included -- will not overwrite them, so a sync cannot recreate them; quarantine
+  review decisions have no registry source either. It was the sentence telling the user there was
+  nothing to lose. It now says what a sync does and does not restore, and why the instructions move
+  the files rather than deleting them.
+
+  Separately, the `SQLITE_CORRUPT_INDEX` branch ended "move the files aside **as below**" with
+  nothing below it -- the `mv` block lived in the mutually exclusive `replace` arm of the same
+  ternary, so the fallback the message directed users to carried no command at all. Both branches
+  now render it from one binding. Nothing had ever rendered that branch: the existing assertion only
+  checked `remedyKind` membership, and both fixtures yield `replace`.
+
 - **Test**: SMI-6946 / ADR-175 -- the driver's refusal is now asserted on its **structured
   contract**, not only its message. A pre-merge gate found that all seven refusal arms matched the
   message text, so replacing `CorruptDatabaseError` with a plain `Error` carrying the same words left

@@ -25,11 +25,19 @@ export { createDatabaseSync, createDatabaseAsync } from './db/createDatabase.js'
 // WASM has no cross-process write coordination — see compliance-tools.cyclonedx.ts).
 export { getBestDriver, type DriverType } from './db/createDatabase.js'
 export type { Database } from './db/database-interface.js'
-// SMI-4484: corruption detection + self-heal helpers, reused by the CLI opener.
-// ADR-175 supersedes the self-heal: nothing repairs a database on an open, so
-// `backupCorruptDbFile` loses its last caller once the WASM driver converges in
-// PR-2, and both of these are candidates for removal then. Still exported here
-// because the WASM driver and its tests use them today.
+// SMI-4484's corruption detection + self-heal helpers. BOTH ARE NOW DEAD CODE:
+// as of SMI-6961 neither has a single caller anywhere under `packages/*/src`.
+// The WASM driver went to `sqljsDriver.corruption.js`, the native driver to
+// `probe-classification.js`, and the CLI opener stopped catching refusals
+// altogether. The only remaining references are mocks in two CLI test files
+// and `corruption.test.ts`.
+//
+// Kept exported for one commit only, so that deleting them is its own
+// reviewable change rather than a side effect of the behaviour fix. An earlier
+// version of this comment said `backupCorruptDbFile` "loses its last caller
+// once the WASM driver converges in PR-2" and that "the WASM driver and its
+// tests use them today" — both were already false when SMI-6961 landed, which
+// is exactly the prose-vs-code divergence that commit fixed one file over.
 export { isCorruptionError, backupCorruptDbFile } from './db/drivers/corruption.js'
 // ADR-175 / SMI-6946: the supported way to recognise a corruption refusal.
 // Match `code`, never the message and never `instanceof` — see db-errors.ts.

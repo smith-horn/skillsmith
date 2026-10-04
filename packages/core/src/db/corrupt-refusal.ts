@@ -94,6 +94,17 @@ export function corruptDatabaseError(
   // Whether it restores service depends on conditions this error cannot verify
   // — above all whether every process holding the file has actually stopped —
   // so nothing below promises the database comes back.
+  // Rendered by BOTH branches. It used to live only in the `replace` branch
+  // while the `reindex` branch said "move the files aside as below" — and
+  // nothing was below it, because the two were mutually exclusive arms of one
+  // ternary. A reader who reached the fallback got no command at all. One
+  // binding, so the branches cannot drift apart again (SMI-6961 review F2).
+  const moveAside =
+    `This is a WAL database, so move whichever of the three files are present:\n` +
+    `  mv ${q(path)} ${q(dest)}\n` +
+    `  mv ${q(`${path}-wal`)} ${q(`${dest}-wal`)}   # if present\n` +
+    `  mv ${q(`${path}-shm`)} ${q(`${dest}-shm`)}   # if present\n`
+
   const recommended =
     remedyKind === 'reindex'
       ? // SQLite names REINDEX for this code and names it conditionally: it
@@ -110,16 +121,13 @@ export function corruptDatabaseError(
         `  sqlite3 ${q(path)} 'PRAGMA quick_check;'\n` +
         `\n` +
         `Treat the database as healthy only if that last command prints "ok". If it ` +
-        `does not, move the files aside as below and let a sync rebuild them.\n`
+        `does not, move the files aside and let a sync rebuild what it can:\n` +
+        moveAside
       : `Recommended: stop every Skillsmith process, including any running MCP server, ` +
-        `then move the database set aside and re-run Skillsmith. This is a WAL ` +
-        `database, so move whichever of the three files are present:\n` +
-        `  mv ${q(path)} ${q(dest)}\n` +
-        `  mv ${q(`${path}-wal`)} ${q(`${dest}-wal`)}   # if present\n` +
-        `  mv ${q(`${path}-shm`)} ${q(`${dest}-shm`)}   # if present\n` +
+        `then move the database set aside and re-run Skillsmith. ` +
+        moveAside +
         `\n` +
-        `Skillsmith rebuilds the database on the next sync. Keep the moved files until ` +
-        `you are satisfied nothing is missing.\n`
+        `Keep the moved files until you are satisfied nothing is missing.\n`
 
   return new CorruptDatabaseError({
     path,
@@ -130,9 +138,22 @@ export function corruptDatabaseError(
     message:
       `[Skillsmith] The local database at ${path} is corrupt and cannot be read: ${reason}\n` +
       `\n` +
-      `Skillsmith does not repair it automatically — it holds no data that cannot be ` +
-      `rebuilt from the registry, and repairing a database another process may have ` +
-      `open risks losing that process's writes.\n` +
+      `Skillsmith does not repair it automatically, because repairing a database ` +
+      `another process may have open risks losing that process's writes.\n` +
+      `\n` +
+      // This paragraph replaces a FALSE one claiming the database "holds no data
+      // that cannot be rebuilt from the registry" (SMI-6961 review F1). It is
+      // not true, and it was the sentence telling the user there was nothing to
+      // lose. `import-local` tags its rows `source='local'` precisely so that
+      // registry sync — `--force` included — will not overwrite them, so sync
+      // cannot recreate them; quarantine review decisions have no registry
+      // source either. Losing those is fail-safe in direction (a skill reverts
+      // to `pending`) but it is still loss. This is why every instruction below
+      // says `mv` and never `rm`.
+      `A sync rebuilds the registry mirror. It does NOT rebuild locally-created ` +
+      `rows: skills added with "skillsmith import-local" are deliberately excluded ` +
+      `from sync, and quarantine review decisions have no registry source. That is ` +
+      `why the steps below move the files aside rather than deleting them.\n` +
       `\n` +
       recommended,
   })

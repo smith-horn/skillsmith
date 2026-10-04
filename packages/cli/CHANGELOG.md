@@ -13,8 +13,25 @@ All notable changes to `@skillsmith/cli` are documented here.
   **This aborts every command, including `search`, `info` and `remove`**, each of which could have
   served from the remote API or the filesystem without a database. Uniform refusal was chosen
   deliberately over degrading those three: one code path is far harder to regress than fourteen plus
-  three exceptions. Move the database aside as the message instructs and every command works again
-  -- it holds no data that cannot be rebuilt from the registry.
+  three exceptions. Move the database aside as the message instructs and every command works again.
+
+  The message tells you to **move** the files, never delete them, and it now says why: a sync
+  rebuilds the registry mirror, but it does **not** rebuild rows you created locally. Skills added
+  with `skillsmith import-local` are tagged `source='local'` specifically so sync -- `--force`
+  included -- will not overwrite them, and quarantine review decisions have no registry source
+  either. An earlier draft of both this entry and the refusal itself claimed the database "holds no
+  data that cannot be rebuilt from the registry". That was false, and it was the sentence telling
+  you there was nothing to lose.
+
+- **Fixed**: SMI-6961 -- an error that no command handled used to print your absolute home path and
+  a stack trace. `program.parse()` does not await an async action's promise, so a rejection escaped
+  to Node, which printed the raw message -- bypassing the sanitizer that exists to replace home
+  paths with `~`. Every such failure now prints one sanitized line and exits 1.
+
+  Found in review of the change above, and newly reachable because of it: `search` opens its
+  database outside any `try`, so once the opener stopped swallowing corruption refusals, a corrupt
+  database on `skillsmith search` took exactly that route. The fix is at the entry point rather than
+  at those two call sites, so a command added later with the same shape cannot reintroduce it.
 
 - **Test**: SMI-6946 / ADR-175 -- coverage for the two `list` output paths a pre-merge gate showed
   were unobservable. `warnUndetermined` appeared in **zero** test files, so no mutation to it could
