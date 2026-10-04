@@ -145,8 +145,22 @@ describe('--reconcile-audit', () => {
     }
   })
   describe('scope of an unaccepted advisory (ADR-176): decided by the installs npm reports as affected', () => {
+    const GATE_FAILS =
+      'the production audit gate (npm audit --omit=dev --audit-level=high) fails on it'
+    const GATE_BELOW =
+      "it is below the production gate's high threshold, so no gate fails on it; it is listed here for visibility only"
+    const GATE_UNKNOWN =
+      "its severity is not one the production gate's high threshold is known to classify, so whether any gate fails on it is unknown"
+    const GATE_BY_SEV: Record<string, string> = {
+      high: GATE_FAILS,
+      critical: GATE_FAILS,
+      moderate: GATE_BELOW,
+      low: GATE_BELOW,
+      info: GATE_BELOW,
+      weird: GATE_UNKNOWN,
+    }
     const INFO = (id: string, pkg: string, sev: string, paths: string[]) =>
-      `ℹ Check 76 reconcile (informational): advisory ${id} (${pkg}, ${sev}) has no acceptance; npm audit reports it affecting production install(s) ${paths.join(', ')}, so it is production scope, outside this registry, and governed by the production audit gate (npm audit --omit=dev)`
+      `ℹ Check 76 reconcile (informational): advisory ${id} (${pkg}, ${sev}) has no acceptance; npm audit reports it affecting production install(s) ${paths.join(', ')}, so it is production scope and outside this registry; ${GATE_BY_SEV[sev]}`
     const withB = (pkg: string, severity: string) =>
       report({ pkgone: [advisory(A, 'pkgone')], [pkg]: [advisory(B, pkg, severity)] })
     // pkgone accepted; pkgtwo carries the unaccepted advisory B with explicit `nodes`.
@@ -156,9 +170,20 @@ describe('--reconcile-audit', () => {
         pkgtwo: { via, nodes },
       })
     const NOT_PROD = 'it is not treated as production'
-    it.each(['moderate', 'high'])(
-      'a %s advisory whose affected install is production is informational, not a failure',
-      (severity) => {
+    const SUMMARY = (tail: string) =>
+      `✓ Check 76 reconcile: 1 acceptances match the npm audit report; no unaccepted dev-scope advisories; 1 production-scope advisories listed as informational${tail}`
+    it.each([
+      ['high', ''],
+      ['critical', ''],
+      [
+        'moderate',
+        ", 1 of them below the production gate's high threshold and enforced by no gate",
+      ],
+      ['low', ", 1 of them below the production gate's high threshold and enforced by no gate"],
+      ['weird', ', 1 of unknown severity whose gate behaviour is unknown'],
+    ])(
+      'a %s advisory whose affected install is production is informational, with the gate stated honestly',
+      (severity, tail) => {
         const r = reconcile(
           [accept(A, 'pkgone')],
           withB('pkgtwo', severity),
@@ -167,9 +192,12 @@ describe('--reconcile-audit', () => {
         expect(r.status).toBe(0)
         expect(r.out).toContain(INFO(B, 'pkgtwo', severity, ['node_modules/pkgtwo']))
         expect(r.out).not.toContain('✗')
-        expect(r.out).toContain(
-          '✓ Check 76 reconcile: 1 acceptances match the npm audit report; no unaccepted dev-scope advisories; 1 production-scope advisories listed as informational'
-        )
+        expect(r.out).toContain(SUMMARY(tail))
+        if (severity === 'high' || severity === 'critical') {
+          expect(r.out).not.toContain('enforced by no gate')
+        } else {
+          expect(r.out).not.toContain(GATE_FAILS)
+        }
       }
     )
     it('a dev-only unaccepted advisory still fails and is not printed as informational', () => {

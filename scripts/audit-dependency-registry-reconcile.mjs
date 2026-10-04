@@ -11,12 +11,14 @@
  * shape, or that carries an `error` object is a failure, never a clean result.
  *
  * Scope (ADR-176, SMI-6971): the registry records DEV-scope acceptances; the
- * production gate (`npm audit --omit=dev`) is separate. An unaccepted advisory
+ * production gate (`npm audit --omit=dev --audit-level=high`, which fails only at high or
+ * above) is separate. An unaccepted advisory
  * is printed as informational instead of failing ONLY when an install npm
  * reports as affected by it is a production install (not `dev`, not
  * `devOptional`), because only then does the production gate, which audits
  * production installs, see it. The package NAME is never consulted: a
- * production copy npm does not report as affected proves nothing.
+ * production copy npm does not report as affected proves nothing. A production-scope
+ * advisory below high is reported here and enforced by no gate (ADR-176 section 4, SMI-6942).
  *
  * Affected installs are the report's `vulnerabilities[<pkg>].nodes` (lockfile
  * paths), looked up in package-lock.json's `packages`. `nodes` is per PACKAGE,
@@ -33,7 +35,25 @@ import { REGISTRY_PATH } from './audit-dependency-registry-helpers.mjs'
 
 const GHSA_IN_URL = /GHSA-[a-z0-9]{4}-[a-z0-9]{4}-[a-z0-9]{4}/
 const f = (message, fix) => ({ severity: 'fail', message, fix })
-const info = (message) => ({ severity: 'info', message })
+const info = (message, gate) => ({ severity: 'info', message, gate })
+
+/**
+ * What the production gate (`npm audit --audit-level=high --omit=dev`) does with an advisory of
+ * this severity: 'fails' (high, critical), 'below' (moderate, low, info: no gate fails on it)
+ * or 'unknown' (any other string: the gate's behaviour is not claimed).
+ */
+function gateFor(severity) {
+  if (severity === 'high' || severity === 'critical') return 'fails'
+  if (severity === 'moderate' || severity === 'low' || severity === 'info') return 'below'
+  return 'unknown'
+}
+const GATE_TEXT = {
+  fails: 'the production audit gate (npm audit --omit=dev --audit-level=high) fails on it',
+  below:
+    "it is below the production gate's high threshold, so no gate fails on it; it is listed here for visibility only",
+  unknown:
+    "its severity is not one the production gate's high threshold is known to classify, so whether any gate fails on it is unknown",
+}
 const key = (id, pkg) => `${id}\u0000${pkg}`
 const isProdInstall = (entry) => entry.dev !== true && entry.devOptional !== true
 
@@ -198,7 +218,8 @@ export function reconcileAudit(registry, audit, lock) {
     if (scope === 'production') {
       out.push(
         info(
-          `Check 76 reconcile (informational): advisory ${e.id} (${e.pkg}, ${e.severity}) has no acceptance; npm audit reports it affecting production install(s) ${prod.join(', ')}, so it is production scope, outside this registry, and governed by the production audit gate (npm audit --omit=dev)`
+          `Check 76 reconcile (informational): advisory ${e.id} (${e.pkg}, ${e.severity}) has no acceptance; npm audit reports it affecting production install(s) ${prod.join(', ')}, so it is production scope and outside this registry; ${GATE_TEXT[gateFor(e.severity)]}`,
+          gateFor(e.severity)
         )
       )
       continue
@@ -212,6 +233,19 @@ export function reconcileAudit(registry, audit, lock) {
     )
   }
   return out
+}
+
+/** Summary clause counting informational advisories the production gate does not fail on. */
+function unenforcedNote(infos) {
+  const below = infos.filter((x) => x.gate === 'below').length
+  const unknown = infos.filter((x) => x.gate === 'unknown').length
+  const parts = []
+  if (below > 0)
+    parts.push(
+      `${below} of them below the production gate's high threshold and enforced by no gate`
+    )
+  if (unknown > 0) parts.push(`${unknown} of unknown severity whose gate behaviour is unknown`)
+  return parts.length ? `, ${parts.join(', ')}` : ''
 }
 
 /** Reads the registry and an audit file and reports through `out`. Returns the failure count. */
@@ -253,7 +287,7 @@ export function runReconcileCli(auditPath, opts = {}, out = console.log) {
     const tail =
       infos.length === 0
         ? 'no unaccepted advisories'
-        : `no unaccepted dev-scope advisories; ${infos.length} production-scope advisories listed as informational (production audit gate)`
+        : `no unaccepted dev-scope advisories; ${infos.length} production-scope advisories listed as informational${unenforcedNote(infos)}`
     out(
       `✓ Check 76 reconcile: ${registry.acceptances.length} acceptances match the npm audit report; ${tail}`
     )

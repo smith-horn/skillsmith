@@ -14,7 +14,7 @@
 # An audit advisory with no acceptance is a failure too, unless an install npm
 # reports as affected by it (the report's `nodes`, looked up in
 # package-lock.json) is a production install; then it is printed as
-# informational and left to the production audit gate. Affected installs that
+# informational and left to the production audit gate, which fails only at high or above; below-high production advisories are reported by this job and enforced by no gate. Affected installs that
 # cannot be determined fail closed. Failures are reported in the same issue. A
 # missing audit report is a failure, never a clean result.
 #
