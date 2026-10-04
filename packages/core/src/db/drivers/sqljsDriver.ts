@@ -18,7 +18,8 @@
 import { createRequire } from 'node:module'
 import type { Database, Statement, RunResult, DatabaseOptions } from '../database-interface.js'
 import { existsSync, readFileSync, writeFileSync, renameSync, unlinkSync } from 'node:fs'
-import { isCorruptionError, backupCorruptDbFile } from './corruption.js'
+import { corruptDatabaseError } from '../corrupt-refusal.js'
+import { sqlJsCorruptionCode } from './sqljsDriver.corruption.js'
 
 // ESM-compatible require for dynamic module loading
 const require = createRequire(import.meta.url)
@@ -402,10 +403,15 @@ export async function createSqlJsDatabase(
     throw new Error(`SQLITE_CANTOPEN: unable to open database file: ${path}`)
   }
 
-  // Open the database. If the on-disk file is corrupt (e.g. WAL-mode files
-  // written by the native driver that sql.js cannot read — SMI-4484), back it
-  // up and rebuild an empty database so the next sync repopulates it, instead
-  // of crashing the user's command with `database disk image is malformed`.
+  // Open the database. If the on-disk file is corrupt, REFUSE — do not rename
+  // it aside and rebuild (ADR-175 § 1, SMI-6961). This driver used to do
+  // exactly that, inherited from SMI-4484, and it did so without consulting
+  // `options.readonly`: a read-only `skillsmith list` renamed the user's
+  // database and then, because `close()` skips `persist()` when read-only,
+  // wrote nothing back. The file was simply gone, and the NEXT run found no
+  // database and reported every skill "Up to date" — the false currency claim
+  // SMI-6946 had just removed, reappearing one run later through the
+  // absent-database path.
   //
   // sql.js validates the file lazily — `new SQL.Database(data)` and a no-op
   // PRAGMA can both succeed on garbage bytes; corruption only surfaces on the
@@ -438,16 +444,18 @@ export async function createSqlJsDatabase(
         // handle already unusable — nothing more to free
       }
     }
-    if (!isCorruptionError(error) || path === ':memory:' || !existsSync(path)) {
+    const sqliteCode = sqlJsCorruptionCode(error)
+    if (sqliteCode === undefined || path === ':memory:') {
       throw error
     }
-    const backupPath = backupCorruptDbFile(path)
-    console.warn(
-      `[Skillsmith] The local database at ${path} was corrupt and could not be opened. ` +
-        `It has been backed up to ${backupPath} and will be rebuilt on the next sync.`
+    // The same refusal the native driver throws, from the same builder, so the
+    // two drivers cannot drift apart about what a corrupt database means.
+    throw corruptDatabaseError(
+      path,
+      error instanceof Error ? error.message : String(error),
+      sqliteCode,
+      error
     )
-    db = new SQL.Database()
-    db.run('PRAGMA foreign_keys = ON')
   }
 
   return new SqlJsDatabaseAdapter(db, path, options)
