@@ -9,8 +9,18 @@
  * real command word. Quoted `$(...)`, `sh -c '...'` and `eval '...'` are scanned
  * recursively (depth-limited).
  *
+ * A package-runner wrapper that runs the CLI (`npx vercel`, `bunx`, `pnpx`,
+ * `npm exec|x`, `pnpm|yarn dlx|exec|run`, `bun x|run`, the implicit `yarn vercel`
+ * / `pnpm vercel` / `bun vercel`, and any of these behind `corepack`) is reported
+ * as a Vercel call whose command word is the wrapper, so it can never equal the
+ * absolute lockfile path.
+ *
  * NOT covered (documented limits): a command word held in a variable (`$V
- * deploy`) and a heredoc body.
+ * deploy`) whose value is not assigned in a form the indirect-dispatch rule
+ * reads (check-supply-chain-pins.vercel-dispatch.mjs names those forms), a
+ * name assembled from pieces (`ver"cel"`, `${A}${B}`), a heredoc body, a script
+ * file the run block executes, and a third-party action that deploys without
+ * `vercel` in its owner/repo.
  *
  * Pure functions. ASCII only.
  *
@@ -22,7 +32,16 @@
 export const ABS_VERCEL = '"$GITHUB_WORKSPACE/node_modules/.bin/vercel"'
 
 const KEYWORDS = new Set(['then', 'do', 'else', 'elif', 'if', 'while', 'until', '!', '{', '}'])
-const PREFIX_WRAPPERS = new Set(['env', 'sudo', 'nohup', 'time', 'xargs', 'timeout', 'nice'])
+const PREFIX_WRAPPERS = new Set([
+  'env',
+  'sudo',
+  'nohup',
+  'time',
+  'xargs',
+  'timeout',
+  'nice',
+  'corepack',
+])
 const SHELLS = new Set(['bash', 'sh', 'zsh', 'dash'])
 const ASSIGNMENT = /^[A-Za-z_][A-Za-z0-9_]*(\[[^\]]*\])?\+?=/
 
@@ -139,27 +158,37 @@ function unquote(token) {
 }
 
 /**
- * Every command in `text`, including those inside a quoted `$(...)`, a shell
- * `-c` string and `eval`. Each entry is the token list from the command word on.
+ * Every raw token list in `text` (assignments and keywords retained), including
+ * those inside a quoted `$(...)`, a shell `-c` string and `eval`.
  */
-export function allCommands(text, depth = 0) {
+export function allTokenLists(text, depth = 0) {
   const out = []
   for (const toks of splitCommands(text)) {
-    const cmd = commandWords(toks)
-    if (cmd) out.push(cmd)
+    out.push(toks)
     if (depth >= 3) continue
     for (const t of toks) {
-      for (const inner of substitutions(t)) out.push(...allCommands(inner, depth + 1))
+      for (const inner of substitutions(t)) out.push(...allTokenLists(inner, depth + 1))
     }
+    const cmd = commandWords(toks)
     if (!cmd) continue
     if (SHELLS.has(baseName(cmd[0]))) {
       const k = cmd.findIndex((t, j) => j > 0 && /^-[a-zA-Z]*c$/.test(t))
-      if (k > 0 && cmd[k + 1]) out.push(...allCommands(unquote(cmd[k + 1]), depth + 1))
+      if (k > 0 && cmd[k + 1]) out.push(...allTokenLists(unquote(cmd[k + 1]), depth + 1))
     } else if (bare(cmd[0]) === 'eval') {
-      out.push(...allCommands(unquote(cmd.slice(1).join(' ')), depth + 1))
+      out.push(...allTokenLists(unquote(cmd.slice(1).join(' ')), depth + 1))
     }
   }
   return out
+}
+
+/**
+ * Every command in `text`, including those inside a quoted `$(...)`, a shell
+ * `-c` string and `eval`. Each entry is the token list from the command word on.
+ */
+export function allCommands(text) {
+  return allTokenLists(text)
+    .map(commandWords)
+    .filter((cmd) => cmd !== null)
 }
 
 // ---------------------------------------------------------------------------
@@ -232,6 +261,60 @@ export function isVercelWord(word) {
   return /^(vercel|vc)(@.*)?$/.test(baseName(word))
 }
 
+const DIRECT_RUNNERS = new Set(['npx', 'bunx', 'pnpx'])
+const RUNNER_VERBS = {
+  npm: new Set(['exec', 'x']),
+  pnpm: new Set(['dlx', 'exec', 'run']),
+  yarn: new Set(['dlx', 'exec', 'run']),
+  bun: new Set(['x', 'run']),
+}
+const RUNNER_VALUE_FLAGS = new Set(['--prefix', '--workspace', '-w', '--cwd', '-C', '--call', '-c'])
+
+/**
+ * Index of the token naming the Vercel package or bin when `cmd` is a package
+ * runner that runs it (`npx vercel`, `npx -p vercel x`, `npm exec -- vercel`,
+ * `yarn dlx vc`, `pnpm vercel`, ...), else -1. `corepack` is already peeled.
+ */
+function wrappedVercelIndex(cmd) {
+  const pm = baseName(cmd[0])
+  if (!DIRECT_RUNNERS.has(pm) && !RUNNER_VERBS[pm]) return -1
+  let i = 1
+  // Skips flags; returns the index of a `-p/--package vercel` spec, else -1.
+  const skipFlags = () => {
+    while (i < cmd.length) {
+      const t = bare(cmd[i])
+      if (t === '--') {
+        i++
+        return -1
+      }
+      if (!t.startsWith('-')) return -1
+      if (t === '-p' || t === '--package') {
+        if (isVercelWord(cmd[i + 1] || '')) return i + 1
+        i += 2
+      } else if (t.startsWith('--package=')) {
+        if (isVercelWord(t.slice('--package='.length))) return i
+        i++
+      } else {
+        i += RUNNER_VALUE_FLAGS.has(t) ? 2 : 1
+      }
+    }
+    return -1
+  }
+  let hit = skipFlags()
+  if (hit >= 0) return hit
+  if (i >= cmd.length) return -1
+  if (!DIRECT_RUNNERS.has(pm)) {
+    const sub = bare(cmd[i])
+    if (pm !== 'npm' && isVercelWord(sub)) return i // implicit bin: `yarn vercel`
+    if (!RUNNER_VERBS[pm].has(sub)) return -1
+    i++
+    hit = skipFlags()
+    if (hit >= 0) return hit
+    if (i >= cmd.length) return -1
+  }
+  return isVercelWord(cmd[i]) ? i : -1
+}
+
 /**
  * Every Vercel CLI invocation: `[{ word, verb }]`. `word` is the raw command word
  * (quotes retained). `verb` is the subcommand; a call with no known subcommand is
@@ -244,8 +327,12 @@ export function vercelCalls(body) {
     // `node <path>/vc.js ...` runs the CLI entrypoint directly, bypassing the bin link.
     const isNode = /^node(js)?$/.test(baseName(cmd[0]))
     const viaNode = isNode ? cmd.findIndex((t) => baseName(t) === 'vc.js') : -1
-    if (viaNode < 0 && !isVercelWord(cmd[0])) continue
-    const at = Math.max(viaNode, 0)
+    // A package runner (`npx vercel`, `yarn dlx vc`, ...) reports the runner and its
+    // arguments up to the package as the command word.
+    const viaRunner = viaNode < 0 && !isVercelWord(cmd[0]) ? wrappedVercelIndex(cmd) : -1
+    if (viaNode < 0 && viaRunner < 0 && !isVercelWord(cmd[0])) continue
+    const at = Math.max(viaNode, viaRunner, 0)
+    const word = viaRunner >= 0 ? cmd.slice(0, viaRunner + 1).join(' ') : cmd[at]
     let verb = ''
     let meta = false
     for (let i = at + 1; i < cmd.length; i++) {
@@ -259,7 +346,7 @@ export function vercelCalls(body) {
       verb = VERCEL_VERBS.has(t) ? t : 'deploy'
       break
     }
-    out.push({ word: cmd[at], verb: verb || (meta ? 'meta' : 'deploy') })
+    out.push({ word, verb: verb || (meta ? 'meta' : 'deploy') })
   }
   return out
 }
@@ -339,14 +426,14 @@ export function packageCommands(body) {
   for (const cmd of allCommands(body)) {
     const pm = baseName(cmd[0])
     const rest = cmd.slice(1)
-    if (pm === 'npx' || pm === 'bunx') {
+    if (pm === 'npx' || pm === 'bunx' || pm === 'pnpx') {
       const a = parseArgs(rest)
       out.push({
         pm,
         kind: 'run',
         global: false,
         specs: [...a.packageSpecs, ...a.positionals.slice(0, 1)],
-        fetchAlways: pm === 'bunx',
+        fetchAlways: pm !== 'npx',
       })
     } else if (['npm', 'pnpm', 'yarn', 'bun'].includes(pm)) {
       const a = parseArgs(rest)

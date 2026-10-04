@@ -56,6 +56,11 @@ const RULE = 'workflow-global-root-dep-install'
 const ABS = '"$GITHUB_WORKSPACE/node_modules/.bin/vercel"'
 const SHIM_STEP = 'Use Vercel CLI from the lockfile (SMI-6944)'
 const SHIM_RUN = 'bash scripts/ci/use-lockfile-vercel.sh'
+const SHIM_ID = 'vercel_cli'
+// The deploy step's expected CLI digest must come from the shim step's OUTPUT (a later
+// step cannot rewrite it), never from a workspace or RUNNER_TEMP file.
+const DIGEST_ENV = 'VERCEL_CLI_DIGEST'
+const DIGEST_EXPR = '${{ steps.vercel_cli.outputs.digest }}'
 const SCRIPT_CALL = 'bash "$GITHUB_WORKSPACE/scripts/ci/use-lockfile-vercel.sh"'
 const BUILD_LOG = '"$RUNNER_TEMP/vercel-build.log"'
 const VERIFY = `${SCRIPT_CALL} --verify-only`
@@ -178,6 +183,14 @@ const SHADOWING = [
   /npm\s+(root|prefix|bin)\s+-g/,
 ]
 
+/** The parsed steps of one job (YAML), or [] when the job has none. */
+function jobSteps(source: string, job: string): Array<Record<string, unknown>> {
+  const doc = parseYaml(source) as {
+    jobs?: Record<string, { steps?: Array<Record<string, unknown>> }>
+  }
+  return doc.jobs?.[job]?.steps ?? []
+}
+
 /** Check every vercel-calling job in the given sources. Pure; no I/O. */
 function checkVercelJobs(files: Array<{ file: string; source: string }>) {
   const failures: Failure[] = []
@@ -206,20 +219,28 @@ function checkVercelJobs(files: Array<{ file: string; source: string }>) {
       const reported = new Set<number>()
       if (!shimBlock) fail('shim-step-missing', 0)
       else {
-        // Parse the YAML: the shim step must carry exactly `name` and `run`. Any
-        // other key (`continue-on-error`, `if`, `env`, `shell`, ...) can turn a
-        // failed check into a skipped or ignored one.
-        const doc = parseYaml(source) as {
-          jobs?: Record<string, { steps?: Array<Record<string, unknown>> }>
-        }
-        const steps = (doc.jobs?.[job]?.steps ?? []).filter(
+        // Parse the YAML: the shim step must carry exactly `id`, `name` and `run`.
+        // Any other key (`continue-on-error`, `if`, `env`, `shell`, ...) can turn a
+        // failed check into a skipped or ignored one; the id is what the deploy
+        // step reads the digest output through.
+        const steps = jobSteps(source, job).filter(
           (st) => typeof st.run === 'string' && st.run.trim() === SHIM_RUN
         )
         if (steps.length !== 1) fail('shim-step-count', shimBlock.line)
         for (const st of steps) {
           if (st.name !== SHIM_STEP) fail('shim-step-name', shimBlock.line)
-          if (Object.keys(st).sort().join(',') !== 'name,run')
+          if (Object.keys(st).sort().join(',') !== 'id,name,run' || st.id !== SHIM_ID)
             fail('shim-step-keys', shimBlock.line)
+        }
+      }
+      // Every step that runs --verify-only gets the digest from the shim step's output.
+      for (const st of jobSteps(source, job)) {
+        const run = typeof st.run === 'string' ? st.run : ''
+        if (!run.split('\n').some((l) => l.trim() === VERIFY)) continue
+        const env = (st.env ?? {}) as Record<string, unknown>
+        if (env[DIGEST_ENV] !== DIGEST_EXPR) {
+          const b = jb.find((x) => x.body.trim() === run.trim())
+          fail('verify-digest-env', b ? b.line : 0)
         }
       }
       for (const b of jb) {
@@ -255,6 +276,11 @@ function checkVercelJobs(files: Array<{ file: string; source: string }>) {
     }
   }
   return { failures, jobs: [...jobs].sort(), invocations }
+}
+
+const replaceLast = (src: string, needle: string, repl: string) => {
+  const at = src.lastIndexOf(needle)
+  return at < 0 ? src : src.slice(0, at) + repl + src.slice(at + needle.length)
 }
 
 const realFiles = readdirSync(WF_DIR)
@@ -307,7 +333,7 @@ describe('SMI-6944 Test 3: every credentialed vercel call runs the lockfile bina
 
   it('control: a shim step moved below the first invocation fails the ordering check', () => {
     const src = realFiles.find((f) => f.file === 'device-login-roundtrip.yml')!.source
-    const step = `      - name: ${SHIM_STEP}\n        run: ${SHIM_RUN}\n`
+    const step = `      - name: ${SHIM_STEP}\n        id: ${SHIM_ID}\n        run: ${SHIM_RUN}\n`
     expect(src).toContain(step)
     const pullAt = src.indexOf(`${ABS} pull`)
     const stepStart = src.lastIndexOf('      - name:', pullAt)
@@ -323,7 +349,7 @@ describe('SMI-6944 Test 3: every credentialed vercel call runs the lockfile bina
   })
 
   // ---- review round 1 (M1d / M3 / vc) ----------------------------------------
-  const shimStepText = `      - name: ${SHIM_STEP}\n        run: ${SHIM_RUN}\n`
+  const shimStepText = `      - name: ${SHIM_STEP}\n        id: ${SHIM_ID}\n        run: ${SHIM_RUN}\n`
   const countLines = (needle: string) =>
     realFiles.reduce(
       (n, f) => n + f.source.split('\n').filter((l) => l.trim() === needle).length,
@@ -345,7 +371,10 @@ describe('SMI-6944 Test 3: every credentialed vercel call runs the lockfile bina
     const src = staging().source
     // Both placements: before `run:` and after it (the key order must not matter).
     for (const mutated of [
-      src.replace(shimStepText, `      - name: ${SHIM_STEP}\n${key}        run: ${SHIM_RUN}\n`),
+      src.replace(
+        shimStepText,
+        `      - name: ${SHIM_STEP}\n${key}        id: ${SHIM_ID}\n        run: ${SHIM_RUN}\n`
+      ),
       src.replace(shimStepText, `${shimStepText}${key}`),
     ]) {
       expect(mutated).not.toBe(src)
@@ -374,6 +403,37 @@ describe('SMI-6944 Test 3: every credentialed vercel call runs the lockfile bina
     const r = checkVercelJobs([{ file: staging().file, source: lines.join('\n') }])
     expect(r.failures).toHaveLength(1)
     expect(r.failures[0]).toMatchObject({ job: 'deploy-production', kind: 'verify-before-deploy' })
+  })
+
+  const digestEnvLine = `          ${DIGEST_ENV}: ${DIGEST_EXPR}\n`
+  it('presence: every --verify-only step carries the digest env from the shim step output', () => {
+    const n = realFiles.reduce((acc, f) => acc + f.source.split(digestEnvLine).length - 1, 0)
+    expect(n).toBe(EXPECTED_VERIFY_LINES)
+  })
+
+  it.each([
+    ['removed', ''],
+    ['taken from a workspace file', `          ${DIGEST_ENV}: vercel-cli-digest.txt\n`],
+    [
+      'taken from another step',
+      `          ${DIGEST_ENV}: ${'$'}{{ steps.deploy.outputs.digest }}\n`,
+    ],
+  ])('control: the deploy-production digest env %s fails exactly once', (_n, repl) => {
+    const src = staging().source
+    const mutated = replaceLast(src, digestEnvLine, repl)
+    expect(mutated).not.toBe(src)
+    const r = checkVercelJobs([{ file: staging().file, source: mutated }])
+    expect(r.failures).toHaveLength(1)
+    expect(r.failures[0]).toMatchObject({ job: 'deploy-production', kind: 'verify-digest-env' })
+  })
+
+  it('control: a shim step without its id (the digest output has no name) fails as shim-step-keys', () => {
+    const src = staging().source
+    const mutated = src.replace(`        id: ${SHIM_ID}\n`, '')
+    expect(mutated).not.toBe(src)
+    const r = checkVercelJobs([{ file: staging().file, source: mutated }])
+    expect(r.failures).toHaveLength(1)
+    expect(r.failures[0]).toMatchObject({ job: 'deploy-staging', kind: 'shim-step-keys' })
   })
 
   it('control: a build step without the tee, or without the log check, fails exactly once', () => {

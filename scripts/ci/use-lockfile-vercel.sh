@@ -13,15 +13,41 @@
 # Usage: bash scripts/ci/use-lockfile-vercel.sh                       (install mode)
 #        bash scripts/ci/use-lockfile-vercel.sh --verify-only         (re-check, no PATH write)
 #        bash scripts/ci/use-lockfile-vercel.sh --check-build-log F   (scan a `vercel build` log)
-# Reads:  GITHUB_WORKSPACE (absolute), RUNNER_TEMP, GITHUB_PATH (set by the runner;
-#         the last two only in install mode)
-#   exit 0 - lockfile CLI verified (install mode: shim dir appended to $GITHUB_PATH)
+# Reads:  GITHUB_WORKSPACE (absolute); install mode also RUNNER_TEMP, GITHUB_PATH
+#         and GITHUB_OUTPUT; verify mode also VERCEL_CLI_DIGEST
+#   exit 0 - lockfile CLI verified (install mode: shim dir appended to $GITHUB_PATH,
+#            `digest=sha256:<hex>` appended to $GITHUB_OUTPUT)
 #   exit 1 - a check failed; an ::error:: line names the failing check
 #
 # `vercel build` runs vercel.json's installCommand (`npm install`) and may fetch
 # builders, so the tree is not guaranteed unchanged after the install-mode step.
-# --verify-only re-runs identity + version + canary at the top of each credentialed
-# `vercel deploy` step; --check-build-log fails on a runtime builder install.
+# --verify-only re-runs identity + version + content digest + canary at the top of
+# each credentialed `vercel deploy` step; --check-build-log fails on a runtime
+# builder install.
+#
+# CONTENT DIGEST. Install mode hashes the CLI's runtime closure (node_modules/vercel
+# plus every package it can require, from the lockfile; scope and exclusions in
+# scripts/ci/vercel-cli-digest.cjs) and publishes it as the STEP OUTPUT `digest`.
+# The deploy step receives it as `env: VERCEL_CLI_DIGEST: ${{ steps.vercel_cli.
+# outputs.digest }}`. A later step cannot change an earlier step's recorded output,
+# so the expected value is never read from the workspace or RUNNER_TEMP (the
+# manifest written to RUNNER_TEMP is a diagnostic only, used to name changed files).
+# --verify-only recomputes and fails closed on a mismatch or a missing/empty value.
+#
+# RESIDUAL (not closed, and not closable inside one job): the verifier itself, the
+# digest module and `node` are all writable by any code `vercel build` runs (same
+# uid, same job), and a step can rewrite later steps' environment through
+# GITHUB_ENV / GITHUB_PATH. Code that targets this verifier can therefore rewrite
+# it, or the `node` that runs it, before the deploy step. Copying the verifier to
+# RUNNER_TEMP before the build, or inlining it in YAML, does not change that: the
+# copy, the runner's own step-script file and the tool-cache `node` sit in the same
+# writable filesystem. The digest catches an in-place change made by anything that
+# does not know about this check (an `npm install` that re-resolves the tree, a
+# postinstall that patches node_modules, a generic payload). What closes the gap is
+# a deploy job on a fresh runner that never executes build-produced code: build in
+# one job, hand off only the prebuilt output as an artifact, `npm ci` + verify +
+# deploy in another; SMI-6964's token split removes the production capability from
+# the build-time token. See the plan's Residual Risk section.
 #
 # Credentialed `vercel pull|build|deploy|dev` calls in the workflows use the
 # absolute "$GITHUB_WORKSPACE/node_modules/.bin/vercel" and never resolve through
@@ -52,8 +78,19 @@ case "${1:-}" in
     # A builder fetched at build time is code outside the lockfile. The log must
     # exist AND be non-empty: an empty log is "not evaluated", never "clean".
     [ -s "$BUILD_LOG" ] || fail "build-log" "$BUILD_LOG is missing or empty; the build output was not captured, so it was not evaluated"
-    if grep -Eq '^[[:space:]]*Installing Builder' "$BUILD_LOG"; then
-      fail "builder-install" "vercel build fetched a builder at runtime (outside the lockfile): $(grep -E '^[[:space:]]*Installing Builder' "$BUILD_LOG" | head -1)"
+    # The CLI may colour its output or redraw a line with \r, so ANSI CSI/OSC
+    # sequences are stripped and \r is treated as a line break before matching.
+    HIT="$(node -e '
+const t = require("fs").readFileSync(process.argv[1], "latin1")
+  .replace(/\x1b\][\s\S]*?(?:\x07|\x1b\\)/g, "")
+  .replace(/(?:\x1b\[|\x9b)[0-?]*[ -\/]*[@-~]/g, "")
+  .replace(/\x1b[@-Z\\-_]/g, "")
+  .split(/\r\n|\r|\n/)
+const hit = t.find((l) => /^[ \t]*Installing Builder/.test(l))
+if (hit !== undefined) console.log(hit.trim())
+' "$BUILD_LOG")" || fail "build-log" "could not read $BUILD_LOG"
+    if [ -n "$HIT" ]; then
+      fail "builder-install" "vercel build fetched a builder at runtime (outside the lockfile): $HIT"
     fi
     echo "vercel build log $BUILD_LOG holds no runtime builder install"
     exit 0
@@ -71,12 +108,15 @@ esac
 if [ "$MODE" = "install" ]; then
   [ -n "${RUNNER_TEMP:-}" ] || fail "environment" "RUNNER_TEMP is not set"
   [ -n "${GITHUB_PATH:-}" ] || fail "environment" "GITHUB_PATH is not set"
+  [ -n "${GITHUB_OUTPUT:-}" ] || fail "environment" "GITHUB_OUTPUT is not set"
 fi
 
 WS="$GITHUB_WORKSPACE"
 BIN="$WS/node_modules/.bin/vercel"
 VC_JS="$WS/node_modules/vercel/dist/vc.js"
 SHIM_DIR="${RUNNER_TEMP:-}/vercel-bin"
+DIGEST_JS="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)/vercel-cli-digest.cjs"
+MANIFEST="${RUNNER_TEMP:-}/vercel-cli-digest.manifest"
 
 # Run a JS snippet with node; arguments are positional (process.argv.slice(1)).
 njs() {
@@ -173,13 +213,42 @@ else
   CANARY_MSG="smol-toml canary skipped: no override recorded"
 fi
 
-# 6. Install mode: expose the shim dir to later steps. Only this dir, nothing else.
+# 5b. Content. Identity proves WHICH file runs, not WHAT it holds: a same-uid
+#     process can rewrite dist/vc.js, or any file the CLI requires, in place and
+#     keep the locked version string. Install mode records the closure digest;
+#     verify mode recomputes it and compares against the earlier step's output.
+#     It runs after the canary so a known-bad nested smol-toml is named as such.
+if [ "$MODE" = "install" ]; then
+  DIGEST_LINE="$(node "$DIGEST_JS" "$WS" --manifest-out "$MANIFEST")" || fail "cli-digest" "could not hash the CLI closure (reason above)"
+else
+  EXPECTED_DIGEST="${VERCEL_CLI_DIGEST:-}"
+  case "$EXPECTED_DIGEST" in
+    sha256:*) ;;
+    "") fail "cli-digest" "VERCEL_CLI_DIGEST is missing or empty; pass the install step's output as env (VERCEL_CLI_DIGEST: \${{ steps.vercel_cli.outputs.digest }})" ;;
+    *) fail "cli-digest" "VERCEL_CLI_DIGEST '$EXPECTED_DIGEST' is not a sha256: digest" ;;
+  esac
+  DIGEST_LINE="$(node "$DIGEST_JS" "$WS")" || fail "cli-digest" "could not hash the CLI closure (reason above)"
+fi
+DIGEST="${DIGEST_LINE%% *}"
+if ! printf '%s\n' "$DIGEST" | grep -Eq '^sha256:[0-9a-f]{64}$'; then
+  fail "cli-digest" "the digest module returned '$DIGEST_LINE'"
+fi
+if [ "$MODE" = "verify" ] && [ "$DIGEST" != "$EXPECTED_DIGEST" ]; then
+  if [ -n "${RUNNER_TEMP:-}" ] && [ -f "$MANIFEST" ]; then
+    node "$DIGEST_JS" "$WS" --diff-against "$MANIFEST" >/dev/null || true
+  fi
+  fail "cli-digest" "the CLI closure changed since the install step: now $DIGEST, recorded $EXPECTED_DIGEST"
+fi
+
+# 6. Install mode: expose the shim dir to later steps (only this dir), and the
+#    digest as this step's output.
 if [ "$MODE" = "install" ]; then
   echo "$SHIM_DIR" >> "$GITHUB_PATH"
+  echo "digest=$DIGEST" >> "$GITHUB_OUTPUT"
 fi
 
 if [ "$MODE" = "verify" ]; then
-  echo "vercel $LOCKED from lockfile (verify-only); $CANARY_MSG"
+  echo "vercel $LOCKED from lockfile (verify-only, digest matches); $CANARY_MSG"
 else
-  echo "vercel $LOCKED from lockfile; $CANARY_MSG"
+  echo "vercel $LOCKED from lockfile; ${DIGEST_LINE}; $CANARY_MSG"
 fi

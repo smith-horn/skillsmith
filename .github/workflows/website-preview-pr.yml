@@ -60,6 +60,7 @@ jobs:
         run: npm ci --ignore-scripts
 
       - name: Use Vercel CLI from the lockfile (SMI-6944)
+        id: vercel_cli
         run: bash scripts/ci/use-lockfile-vercel.sh
 
       - name: Deploy preview (prebuilt)
@@ -69,6 +70,7 @@ jobs:
           VERCEL_TOKEN: ${{ secrets.VERCEL_TOKEN }}
           VERCEL_ORG_ID: ${{ secrets.VERCEL_ORG_ID }}
           VERCEL_PROJECT_ID: ${{ secrets.VERCEL_PROJECT_ID }}
+          VERCEL_CLI_DIGEST: ${{ steps.vercel_cli.outputs.digest }}
         run: |
           set -eu
           "$GITHUB_WORKSPACE/node_modules/.bin/vercel" pull --yes --environment=preview --token "$VERCEL_TOKEN"

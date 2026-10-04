@@ -1,9 +1,9 @@
 /**
  * SMI-6944 Test 4: scripts/ci/use-lockfile-vercel.sh against fake trees.
  *
- * GITHUB_WORKSPACE, RUNNER_TEMP and GITHUB_PATH are set per test (no seam in the
- * script). The fake `vercel` CLI logs the path it was invoked by, so the tests can
- * prove the version check ran THROUGH the shim and not through the .bin entry.
+ * Fixture (fake tree, env, the fake CLI that logs its invocation path) lives in
+ * use-lockfile-vercel.fixture.ts; the content-digest tests live in
+ * use-lockfile-vercel.digest.test.ts.
  *
  * @see docs/internal/implementation/smi-6944-vercel-cli-from-lockfile.md
  */
@@ -20,102 +20,17 @@ import {
   existsSync,
 } from 'fs'
 import { tmpdir } from 'os'
-import { join, dirname } from 'path'
-import { fileURLToPath } from 'url'
-import { spawnSync } from 'child_process'
-
-const SCRIPT = join(dirname(fileURLToPath(import.meta.url)), '..', 'ci', 'use-lockfile-vercel.sh')
-const VERSION = '52.2.0'
-
-interface Tree {
-  ws: string
-  temp: string
-  ghPath: string
-  log: string
-}
-
-function writeJson(path: string, obj: unknown) {
-  mkdirSync(dirname(path), { recursive: true })
-  writeFileSync(path, JSON.stringify(obj))
-}
-
-function fakeCli(path: string, version: string) {
-  mkdirSync(dirname(path), { recursive: true })
-  writeFileSync(
-    path,
-    `#!/usr/bin/env node\nrequire('fs').appendFileSync(process.env.VC_LOG, process.argv[1] + '\\n')\nconsole.log('${version}')\n`
-  )
-  chmodSync(path, 0o755)
-}
-
-function smolToml(dir: string, version: string) {
-  writeJson(join(dir, 'package.json'), { name: 'smol-toml', version, main: 'index.js' })
-  writeFileSync(join(dir, 'index.js'), '')
-}
-
-interface Opts {
-  override?: string | null
-  nested?: string | null
-  hoisted?: string
-  lockVersion?: string
-  pinned?: string
-  installed?: string
-  binTarget?: 'vc' | 'decoy' | 'none'
-}
-
-function buildTree(root: string, o: Opts = {}): Tree {
-  const ws = join(root, 'ws')
-  const temp = join(root, 'temp')
-  mkdirSync(temp, { recursive: true })
-  const overrides = o.override === null ? {} : { 'smol-toml': o.override ?? '^1.8.0' }
-  writeJson(join(ws, 'package.json'), {
-    devDependencies: { vercel: o.pinned ?? VERSION },
-    overrides,
-  })
-  writeJson(join(ws, 'package-lock.json'), {
-    packages: { 'node_modules/vercel': { version: o.lockVersion ?? VERSION } },
-  })
-  writeJson(join(ws, 'node_modules/vercel/package.json'), { name: 'vercel', version: VERSION })
-  fakeCli(join(ws, 'node_modules/vercel/dist/vc.js'), o.installed ?? VERSION)
-  // Decoy: prints the RIGHT version but is a different file, so only the realpath
-  // identity check can tell it from the real CLI. Also serves as the `vite` stand-in.
-  fakeCli(join(ws, 'node_modules/decoy/bin.js'), o.installed ?? VERSION)
-  fakeCli(join(ws, 'node_modules/vite/bin/vite.js'), '7.0.0')
-  const binDir = join(ws, 'node_modules/.bin')
-  mkdirSync(binDir, { recursive: true })
-  symlinkSync('../vite/bin/vite.js', join(binDir, 'vite'))
-  if (o.binTarget !== 'none') {
-    const target = o.binTarget === 'decoy' ? '../decoy/bin.js' : '../vercel/dist/vc.js'
-    symlinkSync(target, join(binDir, 'vercel'))
-  }
-  smolToml(join(ws, 'node_modules/smol-toml'), o.hoisted ?? '1.9.0')
-  if (o.nested) smolToml(join(ws, 'node_modules/vercel/node_modules/smol-toml'), o.nested)
-  const ghPath = join(root, 'github_path')
-  writeFileSync(ghPath, '')
-  return { ws, temp, ghPath, log: join(root, 'vc.log') }
-}
-
-function run(
-  t: Tree,
-  extraPath?: string,
-  args: string[] = [],
-  envOverride: Record<string, string | undefined> = {}
-) {
-  const env: Record<string, string> = {
-    PATH: `${extraPath ? extraPath + ':' : ''}${process.env.PATH}`,
-    HOME: process.env.HOME ?? '/tmp',
-    GITHUB_WORKSPACE: t.ws,
-    RUNNER_TEMP: t.temp,
-    GITHUB_PATH: t.ghPath,
-    VC_LOG: t.log,
-  }
-  for (const [k, v] of Object.entries(envOverride)) {
-    if (v === undefined) delete env[k]
-    else env[k] = v
-  }
-  const r = spawnSync('bash', [SCRIPT, ...args], { env, encoding: 'utf-8' })
-  return { status: r.status, out: r.stdout, err: r.stderr }
-}
+import { join } from 'path'
+import {
+  VERSION,
+  buildTree,
+  fakeCli,
+  install,
+  run,
+  smolToml,
+  verify,
+  writeJson,
+} from './use-lockfile-vercel.fixture'
 
 describe('SMI-6944 Test 4: use-lockfile-vercel.sh', () => {
   let root: string
@@ -131,7 +46,11 @@ describe('SMI-6944 Test 4: use-lockfile-vercel.sh', () => {
     const r = run(t)
     expect(r.err).toBe('')
     expect(r.status).toBe(0)
-    expect(r.out).toContain(`vercel ${VERSION} from lockfile; smol-toml 1.9.0 at `)
+    expect(r.out).toMatch(
+      new RegExp(
+        `vercel ${VERSION} from lockfile; sha256:[0-9a-f]{64} files=\\d+ packages=3; smol-toml 1\\.9\\.0 at `
+      )
+    )
     expect(r.out).toContain(join(t.ws, 'node_modules/smol-toml'))
   })
 
@@ -142,6 +61,7 @@ describe('SMI-6944 Test 4: use-lockfile-vercel.sh', () => {
     expect(r.err).toContain('::error::use-lockfile-vercel: smol-toml-canary')
     expect(r.err).toContain('vercel/node_modules/smol-toml')
     expect(readFileSync(t.ghPath, 'utf-8')).toBe('') // a failed run leaves PATH untouched
+    expect(readFileSync(t.ghOutput, 'utf-8')).toBe('') // ...and publishes no digest
   })
 
   it('fails when the installed version differs from the lockfile version', () => {
@@ -254,38 +174,38 @@ describe('SMI-6944 Test 4: use-lockfile-vercel.sh', () => {
   // ---- M3: re-verification and the build-log guard --------------------------
   it('verify-only: passes on a good tree, needs no RUNNER_TEMP/GITHUB_PATH, writes no shim and no PATH', () => {
     const t = buildTree(root)
-    const r = run(t, undefined, ['--verify-only'], {
-      RUNNER_TEMP: undefined,
-      GITHUB_PATH: undefined,
-    })
+    const digest = install(t)
+    rmSync(join(t.temp, 'vercel-bin'), { recursive: true })
+    writeFileSync(t.ghPath, '')
+    const r = verify(t, digest, { RUNNER_TEMP: undefined })
     expect(r.err).toBe('')
     expect(r.status).toBe(0)
-    expect(r.out).toContain('(verify-only)')
+    expect(r.out).toContain('(verify-only, digest matches)')
     expect(existsSync(join(t.temp, 'vercel-bin'))).toBe(false)
     expect(readFileSync(t.ghPath, 'utf-8')).toBe('')
   })
 
   it('verify-only: a decoy binary is refused', () => {
     const t = buildTree(root, { binTarget: 'decoy' })
-    const r = run(t, undefined, ['--verify-only'])
+    const r = verify(t, `sha256:${'0'.repeat(64)}`)
     expect(r.status).not.toBe(0)
     expect(r.err).toContain('use-lockfile-vercel: binary-identity')
   })
 
   it('verify-only: catches a CLI that changed after the install step (vercel build ran npm install)', () => {
     const t = buildTree(root)
-    expect(run(t).status).toBe(0)
+    const digest = install(t)
     fakeCli(join(t.ws, 'node_modules/vercel/dist/vc.js'), '60.1.3')
-    const r = run(t, undefined, ['--verify-only'])
+    const r = verify(t, digest)
     expect(r.status).not.toBe(0)
     expect(r.err).toContain('use-lockfile-vercel: installed-version')
   })
 
   it('verify-only: a nested vulnerable smol-toml that appeared after install is named', () => {
     const t = buildTree(root)
-    expect(run(t).status).toBe(0)
+    const digest = install(t)
     smolToml(join(t.ws, 'node_modules/vercel/node_modules/smol-toml'), '1.5.2')
-    const r = run(t, undefined, ['--verify-only'])
+    const r = verify(t, digest)
     expect(r.status).not.toBe(0)
     expect(r.err).toContain('use-lockfile-vercel: smol-toml-canary')
   })
@@ -315,6 +235,31 @@ describe('SMI-6944 Test 4: use-lockfile-vercel.sh', () => {
       expect(r.status).not.toBe(0)
       expect(r.err).toContain('use-lockfile-vercel: builder-install')
       expect(r.err).toContain('Installing Builder: @vercel/node@5.0.0')
+    })
+    it.each([
+      [
+        'an ESC-prefixed (ANSI CSI) line',
+        'ok\n\x1b[2K\x1b[1GInstalling Builder: @vercel/node@5.0.0\n',
+      ],
+      ['a \\r-overwritten line', 'Installing deps 10%\rInstalling Builder: @vercel/node@5.0.0\n'],
+      [
+        'an OSC title plus colour codes',
+        '\x1b]0;vc\x07\x1b[32mInstalling Builder: @vercel/node@5.0.0\x1b[0m\n',
+      ],
+    ])('fails on %s and names the stripped line', (_n, text) => {
+      const t = buildTree(root)
+      const r = run(t, undefined, ['--check-build-log', logAt('ansi.log', text)])
+      expect(r.status).not.toBe(0)
+      expect(r.err).toContain(
+        'use-lockfile-vercel: builder-install: vercel build fetched a builder at runtime (outside the lockfile): Installing Builder: @vercel/node@5.0.0'
+      )
+    })
+    it('control: colour codes around an unrelated line, or the phrase mid-line, stay clean', () => {
+      const t = buildTree(root)
+      const text = '\x1b[32mBuild Completed\x1b[0m\r\nnote: not Installing Builder here\n'
+      const r = run(t, undefined, ['--check-build-log', logAt('ansi-clean.log', text)])
+      expect(r.err).toBe('')
+      expect(r.status).toBe(0)
     })
     it('an empty or missing log is NOT EVALUATED, never clean', () => {
       const t = buildTree(root)

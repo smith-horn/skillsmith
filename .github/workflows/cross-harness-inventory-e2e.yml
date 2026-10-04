@@ -217,6 +217,7 @@ jobs:
             vercel-cache-${{ runner.os }}-
 
       - name: Use Vercel CLI from the lockfile (SMI-6944)
+        id: vercel_cli
         run: bash scripts/ci/use-lockfile-vercel.sh
 
       - name: Vercel pull + build website

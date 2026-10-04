@@ -78,6 +78,7 @@ jobs:
         run: npm ci --ignore-scripts
 
       - name: Use Vercel CLI from the lockfile (SMI-6944)
+        id: vercel_cli
         run: bash scripts/ci/use-lockfile-vercel.sh
 
       - name: Vercel pull + build (preview, prebuilt)
@@ -99,6 +100,7 @@ jobs:
           VERCEL_TOKEN: ${{ secrets.VERCEL_TOKEN }}
           VERCEL_ORG_ID: ${{ secrets.VERCEL_ORG_ID }}
           VERCEL_PROJECT_ID: ${{ secrets.VERCEL_PROJECT_ID }}
+          VERCEL_CLI_DIGEST: ${{ steps.vercel_cli.outputs.digest }}
         run: |
           # Deploy the prebuilt Build Output (no cloud rebuild)
           # Redirect stderr to stdout, then filter for URL only to avoid leaking logs
@@ -408,6 +410,7 @@ jobs:
         run: npm ci --ignore-scripts
 
       - name: Use Vercel CLI from the lockfile (SMI-6944)
+        id: vercel_cli
         run: bash scripts/ci/use-lockfile-vercel.sh
 
       - name: Vercel pull + build (production, prebuilt)
@@ -429,6 +432,7 @@ jobs:
           VERCEL_TOKEN: ${{ secrets.VERCEL_TOKEN }}
           VERCEL_ORG_ID: ${{ secrets.VERCEL_ORG_ID }}
           VERCEL_PROJECT_ID: ${{ secrets.VERCEL_PROJECT_ID }}
+          VERCEL_CLI_DIGEST: ${{ steps.vercel_cli.outputs.digest }}
         run: |
           # Deploy the prebuilt Build Output to production (no cloud rebuild)
           # Redirect stderr to stdout, then filter for URL only to avoid leaking logs
