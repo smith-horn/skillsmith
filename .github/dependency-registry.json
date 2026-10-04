@@ -1,5 +1,5 @@
 {
-  "description": "Registry of every root package.json override and every accepted dev-scope npm-audit advisory, with reason, provenance, removal condition and expiry. Every override and every accepted advisory must have an entry here. Nothing enforces that yet: the audit:standards coherence and expiry check is tracked in SMI-6949.",
+  "description": "Registry of every root package.json override and every accepted dev-scope npm-audit advisory, with reason, provenance, removal condition (removeWhen, recorded prose that people re-read; Check 76 requires it to be present and non-empty and never evaluates it) and expiry. Every override and every accepted advisory must have an entry here. audit:standards Check 76 enforces it (SMI-6949, ADR-176): override keys and pins must match package.json, and an acceptance fails CI on and after its expiry date. dependency-registry-expiry.yml re-runs the check daily, since Check 76 otherwise runs only on code PRs, and keeps one GitHub issue open while an acceptance is failing or within its 14-day warn window.",
   "overrides": {
     "undici": {
       "pin": "^7.30.0",
@@ -42,7 +42,7 @@
       ],
       "introducedBy": ["SMI-5266", "SMI-5778", "SMI-6858"],
       "crossesMajor": null,
-      "removeWhen": "Repo decides no dependency may ever bring axios back; checkable by npm explain axios returning nothing for a year."
+      "removeWhen": "Repo decides no dependency may ever bring axios back; confirm by hand with npm explain axios returning nothing for a year."
     },
     "find-my-way": {
       "pin": "^9.7.0",
@@ -111,7 +111,7 @@
       "advisories": ["GHSA-v5mp-jgw5-2x6j", "GHSA-82x6-q7mm-w9cf"],
       "introducedBy": ["SMI-6379", "SMI-6858"],
       "crossesMajor": null,
-      "removeWhen": "Repo decides no dependency may ever bring toml back; checkable by npm explain toml returning nothing for a year."
+      "removeWhen": "Repo decides no dependency may ever bring toml back; confirm by hand with npm explain toml returning nothing for a year."
     },
     "postcss": {
       "pin": "^8.5.23",
@@ -245,7 +245,7 @@
       "advisories": [],
       "introducedBy": ["SMI-4501", "SMI-6858"],
       "crossesMajor": null,
-      "removeWhen": "Repo decides no dependency may ever bring a vulnerable uuid back; checkable by npm explain uuid returning nothing for a year."
+      "removeWhen": "Repo decides no dependency may ever bring a vulnerable uuid back; confirm by hand with npm explain uuid returning nothing for a year."
     },
     "vite": {
       "pin": "^7.3.5",
@@ -462,7 +462,8 @@
       "owner": "wrsmith108",
       "accepted": "2026-10-03",
       "expires": "2027-04-01",
-      "tracking": "SMI-6945"
+      "tracking": "SMI-6945",
+      "pinnedBy": "scripts/tests/r4-wdio-desktop-only.test.ts"
     },
     {
       "advisory": "GHSA-8pvw-jcv7-9cmj",
@@ -474,7 +475,8 @@
       "owner": "wrsmith108",
       "accepted": "2026-10-03",
       "expires": "2027-04-01",
-      "tracking": "SMI-6945"
+      "tracking": "SMI-6945",
+      "pinnedBy": "scripts/tests/r4-wdio-desktop-only.test.ts"
     },
     {
       "advisory": "GHSA-jx2c-rxcm-jvmq",
@@ -486,7 +488,8 @@
       "owner": "wrsmith108",
       "accepted": "2026-10-03",
       "expires": "2027-04-01",
-      "tracking": "SMI-6945"
+      "tracking": "SMI-6945",
+      "pinnedBy": "scripts/tests/r4-wdio-desktop-only.test.ts"
     },
     {
       "advisory": "GHSA-667r-xxjv-c9mm",
@@ -498,7 +501,8 @@
       "owner": "wrsmith108",
       "accepted": "2026-10-03",
       "expires": "2027-04-01",
-      "tracking": "SMI-6945"
+      "tracking": "SMI-6945",
+      "pinnedBy": "scripts/tests/r4-wdio-desktop-only.test.ts"
     },
     {
       "advisory": "GHSA-p68q-wchp-6fh7",
@@ -510,7 +514,8 @@
       "owner": "wrsmith108",
       "accepted": "2026-10-03",
       "expires": "2027-04-01",
-      "tracking": "SMI-6945"
+      "tracking": "SMI-6945",
+      "pinnedBy": "scripts/tests/r4-wdio-desktop-only.test.ts"
     },
     {
       "advisory": "GHSA-hwr6-493r-vm6h",
@@ -522,7 +527,8 @@
       "owner": "wrsmith108",
       "accepted": "2026-10-03",
       "expires": "2027-04-01",
-      "tracking": "SMI-6945"
+      "tracking": "SMI-6945",
+      "pinnedBy": "scripts/tests/r4-wdio-desktop-only.test.ts"
     },
     {
       "advisory": "GHSA-9q9j-q6p8-xq58",
@@ -534,7 +540,8 @@
       "owner": "wrsmith108",
       "accepted": "2026-10-03",
       "expires": "2027-04-01",
-      "tracking": "SMI-6945"
+      "tracking": "SMI-6945",
+      "pinnedBy": "scripts/tests/r4-wdio-desktop-only.test.ts"
     },
     {
       "advisory": "GHSA-444r-cwp2-x5xf",
@@ -546,7 +553,8 @@
       "owner": "wrsmith108",
       "accepted": "2026-10-03",
       "expires": "2027-04-01",
-      "tracking": "SMI-6945"
+      "tracking": "SMI-6945",
+      "pinnedBy": "scripts/tests/r4-wdio-desktop-only.test.ts"
     },
     {
       "advisory": "GHSA-w2qp-rph6-63g4",
@@ -558,7 +566,8 @@
       "owner": "wrsmith108",
       "accepted": "2026-10-03",
       "expires": "2027-04-01",
-      "tracking": "SMI-6945"
+      "tracking": "SMI-6945",
+      "pinnedBy": "scripts/tests/r4-wdio-desktop-only.test.ts"
     },
     {
       "advisory": "GHSA-4mh8-r7rc-xpvc",
@@ -570,7 +579,8 @@
       "owner": "wrsmith108",
       "accepted": "2026-10-03",
       "expires": "2027-04-01",
-      "tracking": "SMI-6945"
+      "tracking": "SMI-6945",
+      "pinnedBy": "scripts/tests/r4-wdio-desktop-only.test.ts"
     },
     {
       "advisory": "GHSA-mrq3-vjjr-p77c",
@@ -582,7 +592,8 @@
       "owner": "wrsmith108",
       "accepted": "2026-10-03",
       "expires": "2027-04-01",
-      "tracking": "SMI-6945"
+      "tracking": "SMI-6945",
+      "pinnedBy": "scripts/tests/r4-wdio-desktop-only.test.ts"
     },
     {
       "advisory": "GHSA-5v7r-6r5c-r473",
@@ -594,7 +605,8 @@
       "owner": "wrsmith108",
       "accepted": "2026-10-03",
       "expires": "2027-04-01",
-      "tracking": "SMI-6945"
+      "tracking": "SMI-6945",
+      "pinnedBy": "scripts/tests/r4-wdio-desktop-only.test.ts"
     },
     {
       "advisory": "GHSA-j47w-4g3g-c36v",
@@ -606,7 +618,8 @@
       "owner": "wrsmith108",
       "accepted": "2026-10-03",
       "expires": "2027-04-01",
-      "tracking": "SMI-6945"
+      "tracking": "SMI-6945",
+      "pinnedBy": "scripts/tests/r4-wdio-desktop-only.test.ts"
     },
     {
       "advisory": "GHSA-c475-qrg2-pj4r",
@@ -618,7 +631,8 @@
       "owner": "wrsmith108",
       "accepted": "2026-10-03",
       "expires": "2027-04-01",
-      "tracking": "SMI-6945"
+      "tracking": "SMI-6945",
+      "pinnedBy": "scripts/tests/r4-no-pac-proxy.test.ts"
     },
     {
       "advisory": "GHSA-vfj7-8cjw-p6xm",

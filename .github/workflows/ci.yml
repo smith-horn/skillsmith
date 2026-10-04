@@ -612,7 +612,7 @@ jobs:
 
       # A. GitHub-native dependency review — license + OpenSSF scorecard.
       #    Complements (does NOT duplicate) the existing `Security Audit` job
-      #    which already runs `npm audit --audit-level=high --omit=dev`.
+      #    which runs the production npm audit via scripts/ci/npm-audit-gate.sh.
       #    The action only runs on pull_request events; the drift guard below
       #    still runs on push-to-main.
       - name: Dependency Review
@@ -1853,28 +1853,27 @@ jobs:
       - name: Extract node_modules
         run: zstd -d --stdout /tmp/node_modules.tar.zst | tar -xf - -C ${{ github.workspace }}
 
+      # SMI-6949: the audit command, its flags and the vulnerable-vs-could-not-run
+      # classification live in scripts/ci/npm-audit-gate.sh (shared with pre-push
+      # CHECK 2). This step owns only the CI policy: every non-zero exit fails the
+      # job, including 11 (registry unreachable) -- a required check must not read
+      # "could not run" as clean. No continue-on-error and no `if:` on this step.
       - name: Run dependency audit in Docker
-        # Fail on high/critical vulnerabilities in production deps only
-        # --omit=dev skips devDependencies (vercel, tsx) with known transitive vulnerabilities
-        continue-on-error: true
-        id: audit
         run: |
+          set +e
           docker run --rm --init \
             -v ${{ github.workspace }}:/app \
             -w /app \
             skillsmith-ci:${{ github.sha }} \
-            npm audit --audit-level=high --omit=dev
-
-      - name: Check audit result
-        if: steps.audit.outcome == 'failure'
-        run: |
-          echo "::warning::npm audit found high-severity vulnerabilities. Review the audit output above."
-
-      - name: Fail on high-severity vulnerabilities
-        if: steps.audit.outcome == 'failure'
-        run: |
-          echo "::error::npm audit found high-severity vulnerabilities. See audit output above."
-          exit 1
+            bash scripts/ci/npm-audit-gate.sh
+          rc=$?
+          case "$rc" in
+            0) ;;
+            10) echo "::error::npm audit found high-severity vulnerabilities in production dependencies. See audit output above, then .claude/development/ci-reference.md (When the production audit gate blocks on an advisory)."; exit 1 ;;
+            11) echo "::error::npm audit could not reach the registry; the gate cannot be evaluated. Re-run the job."; exit 1 ;;
+            12) echo "::error::npm audit result could not be classified (helper exit 12). This is not necessarily a vulnerability. See output above."; exit 1 ;;
+            *) echo "::error::npm-audit-gate.sh exited $rc (helper failure or unclassified). See output above."; exit 1 ;;
+          esac
 
       - name: Build project for security tests
         run: |

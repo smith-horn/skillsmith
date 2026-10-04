@@ -163,6 +163,7 @@ fi
 
 # =============================================================================
 # CHECK 2: npm audit (Optimized - single run)
+# SMI-6949: command + classification delegated to scripts/ci/npm-audit-gate.sh
 # SMI-1255: Only audit production dependencies, skip devDependencies
 # SMI-1366: Uses run_cmd for Docker/local fallback
 # SMI-4249: Skip entirely for docs-only / submodule-pointer pushes
@@ -174,45 +175,69 @@ if [ $DOCS_ONLY -eq 1 ]; then
 else
   echo "🔍 Running npm audit (production dependencies, high severity)..."
 
-  # Run audit once, capture both output and exit code
-  # --omit=dev skips devDependencies (vercel, tsx, etc.) which have known vulnerabilities
-  # that don't affect production code
-  AUDIT_OUTPUT=$(run_cmd npm audit --audit-level=high --omit=dev 2>&1) || AUDIT_STATUS=$?
-  AUDIT_STATUS=${AUDIT_STATUS:-0}
+  # SMI-6949: the command, its flags and the vulnerable-vs-could-not-run
+  # classification live in scripts/ci/npm-audit-gate.sh (shared with the CI
+  # Security Audit job); this block keeps only the pre-push POLICY. Helper exit
+  # codes: 0 clean, 10 vulnerable, 11 unavailable, 12 unclassified; anything else
+  # is a helper failure and blocks.
+  AUDIT_OUTPUT=$(run_cmd bash scripts/ci/npm-audit-gate.sh 2>&1) ; AUDIT_STATUS=$?
 
-  if [ $AUDIT_STATUS -ne 0 ]; then
-    # SMI-2369: Distinguish network errors from actual vulnerabilities
-    # Network errors should warn but not block the push
-    if echo "$AUDIT_OUTPUT" | grep -qiE "getaddrinfo|ECONNREFUSED|ENOTFOUND|EAI_AGAIN|ETIMEDOUT|fetch failed|request to .* failed"; then
-      echo -e "${YELLOW}⚠️  npm audit skipped - network unavailable${NC}"
-      echo -e "${YELLOW}   DNS or network error detected inside container.${NC}"
-      echo -e "${YELLOW}   CI will run npm audit on push. To fix locally:${NC}"
-      echo -e "${YELLOW}   docker network prune -f && docker compose --profile dev restart${NC}"
-      # Don't set CHECKS_FAILED - network errors are non-blocking
-    else
-      # Real vulnerabilities found - block the push
-      echo "$AUDIT_OUTPUT"
-      echo -e "${RED}✗ High-severity vulnerabilities detected${NC}"
-      if [ $USE_DOCKER -eq 1 ]; then
-        if [ "${IS_WORKTREE:-0}" = "1" ]; then
-          # SMI-6614 (ADR-158) / SMI-6378: a worktree container's node_modules
-          # is bind-mounted read-only from the host — npm audit fix here is
-          # not merely ineffective, it has been confirmed to actively corrupt
-          # the container's view of /app/node_modules (SMI-6378). Fix on the
-          # HOST, in the main checkout, which then propagates to this worktree.
-          echo -e "${YELLOW}Run 'npm audit fix' on the HOST in the main checkout (never inside this worktree's container — SMI-6378) to resolve issues${NC}"
-        else
-          echo -e "${YELLOW}Run 'docker exec -w /app $DOCKER_CONTAINER sh -c \"sh scripts/lib/node-modules-mount-gate.sh && npm audit fix\"' to resolve issues${NC}"
-          echo -e "${YELLOW}(exit non-zero with no npm output means at least one node_modules mount is detached or not a volume, SMI-6516/SMI-6520 — recreate first: docker compose --profile dev up -d --force-recreate dev)${NC}"
-        fi
-      else
-        echo -e "${YELLOW}Run 'npm audit fix' to resolve issues${NC}"
-      fi
-      CHECKS_FAILED=1
-    fi
+  # >>> CHECK2-AUDIT-POLICY (executed by scripts/tests/npm-audit-gate.test.ts)
+  AUDIT_FINAL=$(printf '%s\n' "$AUDIT_OUTPUT" | tail -n 1)
+  AUDIT_SOFT_RE='^npm-audit-gate: UNAVAILABLE \(npm exit [0-9]+\)$'
+  if [ "$AUDIT_STATUS" -eq 11 ] && [[ "$AUDIT_FINAL" =~ $AUDIT_SOFT_RE ]]; then
+    # SMI-2369: only exit 11 AND the exact final line soft-passes (network
+    # errors warn but do not block); either alone blocks.
+    echo -e "${YELLOW}⚠️  npm audit skipped - network unavailable${NC}"
+    echo -e "${YELLOW}   DNS or network error detected inside container.${NC}"
+    echo -e "${YELLOW}   CI will run npm audit on push. To fix locally:${NC}"
+    echo -e "${YELLOW}   docker network prune -f && docker compose --profile dev restart${NC}"
+    # Don't set CHECKS_FAILED - network errors are non-blocking
   else
-    echo -e "${GREEN}✓ No high-severity vulnerabilities found${NC}"
+    case "$AUDIT_STATUS" in
+      0)
+        echo -e "${GREEN}✓ No high-severity vulnerabilities found${NC}"
+        ;;
+      10)
+        echo "$AUDIT_OUTPUT"
+        echo -e "${RED}✗ High-severity vulnerabilities detected${NC}"
+        echo -e "${YELLOW}  What to do: .claude/development/ci-reference.md § When the production audit gate blocks on an advisory${NC}"
+        if [ $USE_DOCKER -eq 1 ]; then
+          if [ "${IS_WORKTREE:-0}" = "1" ]; then
+            # SMI-6614 (ADR-158) / SMI-6378: a worktree container's node_modules
+            # is bind-mounted read-only from the host — npm audit fix here is
+            # not merely ineffective, it has been confirmed to actively corrupt
+            # the container's view of /app/node_modules (SMI-6378). Fix on the
+            # HOST, in the main checkout, which then propagates to this worktree.
+            echo -e "${YELLOW}Run 'npm audit fix' on the HOST in the main checkout (never inside this worktree's container — SMI-6378) to resolve issues${NC}"
+          else
+            echo -e "${YELLOW}Run 'docker exec -w /app $DOCKER_CONTAINER sh -c \"sh scripts/lib/node-modules-mount-gate.sh && npm audit fix\"' to resolve issues${NC}"
+            echo -e "${YELLOW}(exit non-zero with no npm output means at least one node_modules mount is detached or not a volume, SMI-6516/SMI-6520 — recreate first: docker compose --profile dev up -d --force-recreate dev)${NC}"
+          fi
+        else
+          echo -e "${YELLOW}Run 'npm audit fix' to resolve issues${NC}"
+        fi
+        CHECKS_FAILED=1
+        ;;
+      12)
+        echo "$AUDIT_OUTPUT"
+        echo -e "${RED}✗ npm audit result could not be classified (helper exit 12); output above. This is not necessarily a vulnerability.${NC}"
+        CHECKS_FAILED=1
+        ;;
+      127)
+        echo "$AUDIT_OUTPUT"
+        echo -e "${RED}✗ npm audit helper not found (exit 127): scripts/ci/npm-audit-gate.sh may be invisible in the container (bind-mount freeze).${NC}"
+        echo -e "${YELLOW}Sync it with docker cp and verify by content: diff -q scripts/ci/npm-audit-gate.sh <(docker exec <container> cat /app/scripts/ci/npm-audit-gate.sh)${NC}"
+        CHECKS_FAILED=1
+        ;;
+      *)
+        echo "$AUDIT_OUTPUT"
+        echo -e "${RED}✗ npm audit helper failed (exit $AUDIT_STATUS); output above. This is not necessarily a vulnerability.${NC}"
+        CHECKS_FAILED=1
+        ;;
+    esac
   fi
+  # <<< CHECK2-AUDIT-POLICY
   echo ""
 fi
 
