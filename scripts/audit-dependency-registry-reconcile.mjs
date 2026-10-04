@@ -9,15 +9,33 @@
  *
  * Fails closed: an audit file that is unreadable, not JSON, not the v2 report
  * shape, or that carries an `error` object is a failure, never a clean result.
+ *
+ * Scope (ADR-176): the registry records DEV-scope acceptances; the production
+ * gate (`npm audit --omit=dev`) is separate. An audit advisory with no acceptance
+ * fails here unless its package has a production install in package-lock.json,
+ * in which case it is printed as informational. A package the lockfile cannot
+ * place (absent, or an unusable lockfile) is never treated as production.
  */
 
 import { readFileSync } from 'node:fs'
 import { join } from 'node:path'
 import { REGISTRY_PATH } from './audit-dependency-registry-helpers.mjs'
+import { lockOccurrences } from './audit-dependency-registry-fields.mjs'
 
 const GHSA_IN_URL = /GHSA-[a-z0-9]{4}-[a-z0-9]{4}-[a-z0-9]{4}/
 const f = (message, fix) => ({ severity: 'fail', message, fix })
+const info = (message) => ({ severity: 'info', message })
 const key = (id, pkg) => `${id}\u0000${pkg}`
+
+/** 'production' (some non-dev install), 'dev' (every install dev), or 'unknown' (cannot be placed). */
+function scopeOf(lock, pkg) {
+  if (!lock || typeof lock !== 'object' || !lock.packages || typeof lock.packages !== 'object') {
+    return 'unknown'
+  }
+  const occ = lockOccurrences(lock, pkg)
+  if (occ.length === 0) return 'unknown'
+  return occ.some((o) => !o.dev) ? 'production' : 'dev'
+}
 
 /**
  * Direct advisories in an npm audit v2 report: one entry per object `via` item
@@ -67,8 +85,12 @@ export function reduceAudit(audit) {
   return { problem: null, entries }
 }
 
-/** Failures reconciling the registry's acceptances against a parsed audit report. */
-export function reconcileAudit(registry, audit) {
+/**
+ * Findings reconciling the registry's acceptances against a parsed audit report:
+ * `fail` findings, plus `info` findings for production-scope advisories (not failures).
+ * `lock` is the parsed package-lock.json; without a usable one nothing is production.
+ */
+export function reconcileAudit(registry, audit, lock) {
   const { problem, entries } = reduceAudit(audit)
   if (problem) {
     return [
@@ -112,14 +134,26 @@ export function reconcileAudit(registry, audit) {
     }
   }
   for (const e of entries.values()) {
-    if (!accepted.has(key(e.id, e.pkg))) {
+    if (accepted.has(key(e.id, e.pkg))) continue
+    const scope = scopeOf(lock, e.pkg)
+    if (scope === 'production') {
       out.push(
-        f(
-          `Check 76 reconcile: unaccepted advisory ${e.id} (${e.pkg}, ${e.severity}) is reported by npm audit and has no acceptance`,
-          `Fix it (override or upgrade), or add an acceptance to ${REGISTRY_PATH}`
+        info(
+          `Check 76 reconcile (informational): advisory ${e.id} (${e.pkg}, ${e.severity}) has no acceptance; ${e.pkg} has a production install, so it is production scope, outside this registry, and governed by the production audit gate (npm audit --omit=dev)`
         )
       )
+      continue
     }
+    const why =
+      scope === 'unknown'
+        ? `; ${e.pkg} could not be placed in package-lock.json, so its scope is unknown and it is not treated as production`
+        : ''
+    out.push(
+      f(
+        `Check 76 reconcile: unaccepted advisory ${e.id} (${e.pkg}, ${e.severity}) is reported by npm audit and has no acceptance${why}`,
+        `Fix it (override or upgrade), or add an acceptance to ${REGISTRY_PATH}`
+      )
+    )
   }
   return out
 }
@@ -148,12 +182,25 @@ export function runReconcileCli(auditPath, opts = {}, out = console.log) {
     )
     return 1
   }
-  const findings = reconcileAudit(registry, audit)
-  for (const x of findings) fail(x.message, x.fix)
-  if (findings.length === 0) {
+  let lock = null
+  try {
+    lock = JSON.parse(readFileSync(join(root, 'package-lock.json'), 'utf8'))
+  } catch {
+    // fail closed: with no usable lockfile no unaccepted advisory can be placed in production scope
+  }
+  const findings = reconcileAudit(registry, audit, lock)
+  const failures = findings.filter((x) => x.severity === 'fail')
+  const infos = findings.filter((x) => x.severity === 'info')
+  for (const x of infos) out(`ℹ ${x.message}`)
+  for (const x of failures) fail(x.message, x.fix)
+  if (failures.length === 0) {
+    const tail =
+      infos.length === 0
+        ? 'no unaccepted advisories'
+        : `no unaccepted dev-scope advisories; ${infos.length} production-scope advisories listed as informational (production audit gate)`
     out(
-      `✓ Check 76 reconcile: ${registry.acceptances.length} acceptances match the npm audit report; no unaccepted advisories`
+      `✓ Check 76 reconcile: ${registry.acceptances.length} acceptances match the npm audit report; ${tail}`
     )
   }
-  return findings.length
+  return failures.length
 }

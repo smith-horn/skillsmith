@@ -42,13 +42,36 @@ const report = (vulns: Record<string, unknown[]>) => ({
 const A = 'GHSA-aaaa-bbbb-cccc'
 const B = 'GHSA-dddd-eeee-ffff'
 
-function reconcile(acceptances: unknown[], audit: unknown | string) {
+type LockSpec = Record<string, { dev?: boolean } | Array<{ dev?: boolean }>>
+// package-lock.json fixture: name -> install(s); [] or an absent name means "not in the lockfile".
+const lockOf = (spec: LockSpec) => {
+  const packages: Record<string, unknown> = { '': {} }
+  for (const [name, v] of Object.entries(spec)) {
+    const installs = Array.isArray(v) ? v : [v]
+    installs.forEach((e, i) => {
+      packages[i === 0 ? `node_modules/${name}` : `node_modules/host${i}/node_modules/${name}`] = e
+    })
+  }
+  return { lockfileVersion: 3, packages }
+}
+const DEV_LOCK: LockSpec = {
+  pkgone: { dev: true },
+  pkgtwo: { dev: true },
+  other: { dev: true },
+}
+
+function reconcile(
+  acceptances: unknown[],
+  audit: unknown | string,
+  lock: unknown | null = lockOf(DEV_LOCK)
+) {
   const dir = mkdtempSync(join(tmpdir(), 'smi6949-rec-'))
   mkdirSync(join(dir, '.github'), { recursive: true })
   writeFileSync(
     join(dir, '.github/dependency-registry.json'),
     JSON.stringify({ overrides: {}, acceptances })
   )
+  if (lock !== null) writeFileSync(join(dir, 'package-lock.json'), JSON.stringify(lock))
   const auditPath = join(dir, 'audit.json')
   writeFileSync(auditPath, typeof audit === 'string' ? audit : JSON.stringify(audit))
   const r = spawnSync(process.execPath, [SCRIPT, '--reconcile-audit', auditPath], {
@@ -102,6 +125,80 @@ describe('--reconcile-audit', () => {
       expect(r.status).toBe(1)
       expect(r.out).toContain(`unaccepted advisory ${B} (pkgtwo, ${severity})`)
     }
+  })
+  describe('scope of an unaccepted advisory (ADR-176)', () => {
+    const INFO = (id: string, pkg: string, sev: string) =>
+      `ℹ Check 76 reconcile (informational): advisory ${id} (${pkg}, ${sev}) has no acceptance; ${pkg} has a production install, so it is production scope, outside this registry, and governed by the production audit gate (npm audit --omit=dev)`
+    const withB = (pkg: string, severity: string) =>
+      report({ pkgone: [advisory(A, 'pkgone')], [pkg]: [advisory(B, pkg, severity)] })
+    it.each(['moderate', 'high'])(
+      'a %s production-scope unaccepted advisory is informational, not a failure',
+      (severity) => {
+        const r = reconcile(
+          [accept(A, 'pkgone')],
+          withB('pkgtwo', severity),
+          lockOf({
+            ...DEV_LOCK,
+            pkgtwo: { dev: false },
+          })
+        )
+        expect(r.status).toBe(0)
+        expect(r.out).toContain(INFO(B, 'pkgtwo', severity))
+        expect(r.out).not.toContain('✗')
+        expect(r.out).toContain(
+          '✓ Check 76 reconcile: 1 acceptances match the npm audit report; no unaccepted dev-scope advisories; 1 production-scope advisories listed as informational'
+        )
+      }
+    )
+    it('a dev-only unaccepted advisory still fails and is not printed as informational', () => {
+      const r = reconcile([accept(A, 'pkgone')], withB('pkgtwo', 'moderate'))
+      expect(r.status).toBe(1)
+      expect(r.out).toContain(`✗ Check 76 reconcile: unaccepted advisory ${B} (pkgtwo, moderate)`)
+      expect(r.out).not.toContain('informational')
+    })
+    it('a package with one dev and one production install counts as production', () => {
+      const r = reconcile(
+        [accept(A, 'pkgone')],
+        withB('pkgtwo', 'high'),
+        lockOf({
+          ...DEV_LOCK,
+          pkgtwo: [{ dev: true }, {}],
+        })
+      )
+      expect(r.status).toBe(0)
+      expect(r.out).toContain(INFO(B, 'pkgtwo', 'high'))
+    })
+    it('devOptional alone is dev-scope, so it still fails', () => {
+      const r = reconcile(
+        [accept(A, 'pkgone')],
+        withB('pkgtwo', 'high'),
+        lockOf({
+          ...DEV_LOCK,
+          pkgtwo: { devOptional: true } as { dev?: boolean },
+        })
+      )
+      expect(r.status).toBe(1)
+    })
+    it('a package absent from the lockfile fails closed (unknown is not production)', () => {
+      const r = reconcile([accept(A, 'pkgone')], withB('ghostpkg', 'moderate'))
+      expect(r.status).toBe(1)
+      expect(r.out).toContain(`unaccepted advisory ${B} (ghostpkg, moderate)`)
+      expect(r.out).toContain('ghostpkg could not be placed in package-lock.json')
+      expect(r.out).not.toContain('informational')
+    })
+    it('a missing or unparseable lockfile fails closed for every unaccepted advisory', () => {
+      for (const lock of [null, 'not a lockfile', { lockfileVersion: 3 }]) {
+        const r = reconcile([accept(A, 'pkgone')], withB('pkgtwo', 'high'), lock)
+        expect(r.status).toBe(1)
+        expect(r.out).not.toContain('informational')
+      }
+    })
+    it('an ACCEPTED advisory is unaffected by the production rule (matching acceptance passes)', () => {
+      const r = reconcile([accept(A, 'pkgone')], report({ pkgone: [advisory(A, 'pkgone')] }))
+      expect(r.status).toBe(0)
+      expect(r.out).toContain('no unaccepted advisories')
+      expect(r.out).not.toContain('informational')
+    })
   })
   it.each([
     ['low then high', 'low', 'high'],
