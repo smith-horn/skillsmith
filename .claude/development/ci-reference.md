@@ -105,6 +105,7 @@ The `main` branch is protected. Config: `.github/branch-protection.json`.
 **Accepted risk, recorded at promotion (2026-10-04)**: `pointer-check` hard-fails on a fork PR that touches a submodule mount — a fork gets no `STRATEGY_SUBMODULE_PAT`, so the check routes to R8 by design (see `submodule-pointer-check.yml`'s header). Now that the context is *required*, an external contributor's PR touching `docs/internal` is structurally unmergeable without `--admin`. Same shape as the `Website Skills E2E Gate` fork risk above, same compensating control (maintainer review), and internal PRs are unaffected — `STRATEGY_SUBMODULE_PAT` is provisioned and recent `pointer-check` runs are green.
 
 **Promotion note (SMI-6944, 2026-10-04)**: `Dependency Guard` was promoted from a non-required job to a required context. Before promoting, two failure modes were checked:
+
 - **It cannot hang a PR.** Its gate is a job-level `if:`, and `ci.yml` has no `paths:` filter, so a skipped job still produces a check-run concluded `skipped`, which satisfies protection. In 5 of 5 recent runs where Classify Changes failed, Dependency Guard had a completed `skipped` check-run.
 - **Fork PRs are tolerated by construction but untested live.** Its only secret-dependent step, the git-crypt unlock, is skipped when the key is absent, and the drift guard passes on a locked tree with a coverage-skipped warning (measured: 363 encrypted files, 0 scanned, exit 0). No fork PR has ever run it.
 
