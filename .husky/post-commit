@@ -1,4 +1,17 @@
 #!/bin/sh
+# SMI-6967 H-3(b): Husky invokes every hook through `sh -e` (.husky/_/h), so
+# errexit is always on here regardless of this file's own shebang -- the
+# shebang is never consulted (same mechanism documented in .husky/post-merge
+# and .husky/post-checkout's own headers). Without `set +e`, a failing
+# `REPO_ROOT=$(git rev-parse --show-toplevel 2>/dev/null)` below would abort
+# this hook before the background reindex kick ever runs. Reachability is
+# NOT established -- `--show-toplevel` succeeds inside any normal worktree,
+# and no concrete trigger for it failing here has been produced (one
+# recorded way `git rev-parse` can misbehave in this repo generally: the
+# `core.bare=true` leak in project memory). git ignores post-commit's exit
+# status entirely, so `set +e` costs nothing even if the condition never
+# fires.
+set +e
 # Post-commit hook
 # - SMI-2536: Branch integrity fallback guard
 # - SMI-710: Linear issue sync from commit messages

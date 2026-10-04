@@ -188,6 +188,46 @@ exit 0
     expect(verbs(r.calls)).not.toContain('issue create')
     expect(r.body).toContain('GHSA-xxxx-yyyy-zzzz')
   })
+  const INFO_LINE =
+    "\u2139 Check 76 reconcile (informational): advisory GHSA-iiii-jjjj-kkkk (prodpkg, moderate) has no acceptance; npm audit reports it affecting production install(s) node_modules/prodpkg, so it is production scope and outside this registry; it is below the production gate's high threshold, so no gate fails on it; it is listed here for visibility only\n"
+  const INFO_SUMMARY =
+    '\u2713 Check 76 reconcile: 1 acceptances match the npm audit report; no unaccepted dev-scope advisories; 1 production-scope advisories listed as informational\n'
+  it('an informational-only run opens ONE labelled issue with an Informational section, and the job stays green', () => {
+    const r = exec(GREEN_R4, 0, '', '', { rec: INFO_LINE + INFO_SUMMARY, recRc: 0 })
+    expect(r.status).toBe(0)
+    const creates = r.calls.filter((c) => c.startsWith('issue create '))
+    expect(creates).toHaveLength(1)
+    expect(creates[0]).toContain('--label dependency-registry-expiry')
+    expect(r.body).toContain('### Informational (production scope, below or outside the registry)')
+    expect(r.body).toContain(
+      '- \u2139 Check 76 reconcile (informational): advisory GHSA-iiii-jjjj-kkkk'
+    )
+    expect(r.body).not.toContain('Failing (every code PR fails')
+    expect(r.body).not.toContain('The check did not complete')
+    expect(r.body).not.toContain('Expiring within 14 days')
+  })
+  it('an informational-only run with an open issue UPDATES it (edit 42) and does not close it', () => {
+    const r = exec(GREEN_R4, 0, '42', '', { rec: INFO_LINE + INFO_SUMMARY, recRc: 0 })
+    expect(r.status).toBe(0)
+    expect(r.calls.some((c) => c.startsWith('issue edit 42 '))).toBe(true)
+    expect(verbs(r.calls)).not.toContain('issue close')
+    expect(verbs(r.calls)).not.toContain('issue create')
+    expect(r.body).toContain('### Informational (production scope')
+    expect(r.body).toContain('advisory GHSA-iiii-jjjj-kkkk (prodpkg, moderate)')
+  })
+  it('a failing `gh issue edit` on an informational-only run still fails the job', () => {
+    const r = exec(GREEN_R4, 0, '42', 'issue edit', { rec: INFO_LINE + INFO_SUMMARY, recRc: 0 })
+    expect(r.status).not.toBe(0)
+    expect(r.stdout).toContain('::error::gh issue edit failed')
+  })
+  it('a fully clean reconcile summary (no informational line) still closes an open issue', () => {
+    const rec =
+      '\u2713 Check 76 reconcile: 1 acceptances match the npm audit report; no unaccepted advisories\n'
+    const r = exec(GREEN_R4, 0, '42', '', { rec, recRc: 0 })
+    expect(r.status).toBe(0)
+    expect(r.calls.some((c) => c.startsWith('issue close 42 '))).toBe(true)
+    expect(verbs(r.calls)).not.toContain('issue edit')
+  })
   it('a failure opens the issue AND the script exits with the check status', () => {
     const r = exec(FAILED, 1)
     expect(r.status).toBe(1)
@@ -267,7 +307,8 @@ describe('the REAL script runs with no node_modules on the path (M1)', () => {
   // into a bare directory and run the real script with the real node.
   // The dev container has /node_modules above any temp dir, so a bare `import 'semver'`
   // would still resolve there and the run below cannot prove the closure by itself
-  // (measured: adding that import left the run green). Walk the import closure statically.
+  // (measured: adding that import left the run green). Walk the import closure statically; the
+  // dynamic runs below catch an UNRESOLVABLE package, and their verdict is deliberately not asserted.
   it('the import closure of the script is node builtins and repo files only', () => {
     const seen = new Set<string>()
     const bare: string[] = []
@@ -288,36 +329,140 @@ describe('the REAL script runs with no node_modules on the path (M1)', () => {
     expect(seen.size).toBeGreaterThanOrEqual(4) // presence: the walk reached the helper modules
     expect(bare).toEqual([])
   })
-  it('exits 0 and prints the coherent line from a node_modules-free copy', () => {
+  // The property under test is the IMPORT CLOSURE, not the registry's policy verdict: which
+  // acceptances are live depends on the clock, so the verdict legitimately turns red on an
+  // expiry date. So: the CLI must load and evaluate with no node_modules anywhere (module
+  // errors are the failure), and exit 0 or 1 (a verdict), never a crash.
+  const FAKE_CLOCK = `const T = Date.parse(process.env.FAKE_NOW + 'T12:00:00Z')
+const R = Date
+globalThis.Date = class extends R {
+  constructor(...a) { if (a.length === 0) super(T); else super(...a) }
+  static now() { return T }
+}
+`
+  // Every bare-copy run uses its OWN tree, never the real registry (which can legitimately hold
+  // zero acceptances): no overrides, one dev-only package, and the given acceptances. By default
+  // that is one R4 acceptance pinned by a test file written into the tree, so the pinnedBy probe
+  // is exercised too. FIXTURE_ACCEPTANCE (R2) expires 2026-12-01: live on the real clock today,
+  // expired by 2099.
+  const FIXTURE_ACCEPTANCE = {
+    advisory: 'GHSA-aaaa-bbbb-cccc',
+    package: 'devpkg',
+    severity: 'high',
+    scope: 'dev',
+    tier: 'R2',
+    basis: 'fixture acceptance for the fake-clock control',
+    owner: 'someone',
+    accepted: '2026-10-03',
+    expires: '2026-12-01',
+  }
+  const FIXTURE_PIN = 'scripts/tests/fixture-pin.test.ts'
+  const FIXTURE_PINNED_ACCEPTANCE = {
+    ...FIXTURE_ACCEPTANCE,
+    tier: 'R4',
+    expires: '2027-04-01',
+    tracking: 'SMI-1',
+    pinnedBy: FIXTURE_PIN,
+  }
+  const FIXTURE_LOCK = {
+    lockfileVersion: 3,
+    packages: { '': {}, 'node_modules/devpkg': { dev: true } },
+  }
+  function runFromBareCopy(
+    opts: {
+      inject?: string
+      fakeNow?: string
+      acceptances?: unknown[]
+      omitPinFile?: boolean
+    } = {}
+  ) {
     const dir = mkdtempSync(join(tmpdir(), 'smi6949-bare-'))
     // The whole scripts/ tree (minus tests and any node_modules): the closure must resolve in it.
     cpSync(join(REPO_ROOT, 'scripts'), join(dir, 'scripts'), {
       recursive: true,
       filter: (src) => !/[\\/](node_modules|tests)$/.test(src),
     })
-    // Check 76 verifies each acceptance's `pinnedBy` file exists, so the pinning tests come along.
-    const registry = JSON.parse(
-      readFileSync(join(REPO_ROOT, '.github/dependency-registry.json'), 'utf8')
-    ) as { acceptances: Array<{ pinnedBy?: string }> }
-    const pins = [...new Set(registry.acceptances.flatMap((a) => (a.pinnedBy ? [a.pinnedBy] : [])))]
-    expect(pins.length).toBeGreaterThan(0) // presence: the real registry does pin R4 acceptances
-    for (const rel of [
-      '.github/dependency-registry.json',
-      'package.json',
-      'package-lock.json',
-      ...pins,
-    ]) {
-      mkdirSync(dirname(join(dir, rel)), { recursive: true })
-      writeFileSync(join(dir, rel), readFileSync(join(REPO_ROOT, rel)))
+    mkdirSync(join(dir, '.github'), { recursive: true })
+    writeFileSync(
+      join(dir, '.github/dependency-registry.json'),
+      JSON.stringify({
+        overrides: {},
+        acceptances: opts.acceptances ?? [FIXTURE_PINNED_ACCEPTANCE],
+      })
+    )
+    writeFileSync(join(dir, 'package.json'), JSON.stringify({ name: 'fixture' }))
+    writeFileSync(join(dir, 'package-lock.json'), JSON.stringify(FIXTURE_LOCK))
+    if (!opts.omitPinFile) {
+      mkdirSync(join(dir, 'scripts/tests'), { recursive: true })
+      writeFileSync(join(dir, FIXTURE_PIN), '// pin\n')
+    }
+    if (opts.inject) {
+      const helper = join(dir, 'scripts/audit-dependency-registry-helpers.mjs')
+      writeFileSync(helper, `${readFileSync(helper, 'utf8')}\n${opts.inject}\n`)
     }
     expect(existsSync(join(dir, 'node_modules'))).toBe(false)
+    const env: Record<string, string> = { PATH: process.env.PATH ?? '' }
+    if (opts.fakeNow) {
+      writeFileSync(join(dir, 'fake-clock.mjs'), FAKE_CLOCK)
+      env.FAKE_NOW = opts.fakeNow
+      env.NODE_OPTIONS = `--import ${join(dir, 'fake-clock.mjs')}`
+    }
     const r = spawnSync(process.execPath, ['scripts/check-dependency-registry.mjs'], {
       cwd: dir,
       encoding: 'utf8',
-      env: { PATH: process.env.PATH ?? '' },
+      env,
     })
-    expect(r.stderr).not.toMatch(/ERR_MODULE_NOT_FOUND/)
-    expect(r.status).toBe(0)
-    expect(r.stdout).toMatch(/Check 76: dependency registry coherent \(/)
+    return { status: r.status, stdout: r.stdout, stderr: r.stderr }
+  }
+  /** Every way the closure can fail: a module error on stderr, or a crash-shaped exit. */
+  function closureProblems(r: ReturnType<typeof runFromBareCopy>): string[] {
+    const bad: string[] = []
+    if (/ERR_MODULE_NOT_FOUND|Cannot find (package|module)/.test(r.stderr)) bad.push('module-error')
+    if (r.status !== 0 && r.status !== 1) bad.push(`crash-status-${r.status}`)
+    if (!r.stdout.includes('Check 76: dependency registry coherence and expiry'))
+      bad.push('no-banner')
+    return bad
+  }
+  it.each([
+    // fixed clocks: the fixture acceptance (R4, expires 2027-04-01) is live under both, on any real date
+    ['a fixed clock (2026-10-04)', '2026-10-04'],
+    ['a fixed clock after the 2026-11-02 expiries (2026-11-03)', '2026-11-03'],
+  ])('loads and evaluates from a node_modules-free copy under %s', (_label, fakeNow) => {
+    const r = runFromBareCopy({ fakeNow })
+    expect(closureProblems(r)).toEqual([])
+    // positive control: the evaluation ran. Either the coherent summary, or a real finding naming
+    // an acceptance; NOT EVALUATED means it never reached the registry at all.
+    expect(r.stdout).not.toContain('NOT EVALUATED')
+    expect(r.stdout).toMatch(/acceptances examined\)|acceptance GHSA-[a-z0-9-]+ /)
+    // positive control: the FIXTURE acceptance was evaluated, and its pinnedBy file was found
+    // (the copied tree really contains it) rather than the pin probe being skipped.
+    expect(r.stdout).toContain('1 acceptances examined)')
+    expect(r.stdout).not.toMatch(/pinnedBy|unpinned/)
+    // the verdict agrees with the exit status in both directions
+    expect(r.status).toBe(r.stdout.includes('✗') ? 1 : 0)
+  })
+  it('positive control: the fake clock really moves the CLI (by 2099 every acceptance has expired)', () => {
+    // Its own fixture, never the real registry: this must hold when the real one has none.
+    const base = runFromBareCopy({
+      fakeNow: '2026-10-04',
+      acceptances: [FIXTURE_ACCEPTANCE],
+    })
+    expect(base.stdout).toContain('1 acceptances examined)') // presence: the fixture is evaluated, and live today
+    expect(base.status).toBe(0)
+    const r = runFromBareCopy({ fakeNow: '2099-01-01', acceptances: [FIXTURE_ACCEPTANCE] })
+    expect(closureProblems(r)).toEqual([]) // a policy failure is not a closure failure
+    expect(r.status).toBe(1)
+    expect(r.stdout).toMatch(/acceptance GHSA-[a-z0-9-]+ .* expired \d{4}-\d{2}-\d{2} \(UTC\)/)
+  })
+  it('positive control: the pinnedBy probe runs in the bare copy (a missing pin file is reported)', () => {
+    const r = runFromBareCopy({ omitPinFile: true })
+    expect(closureProblems(r)).toEqual([])
+    expect(r.status).toBe(1)
+    expect(r.stdout).toContain(`pinnedBy "${FIXTURE_PIN}" does not name an existing regular file`)
+  })
+  it('negative control: a bare import added to the copy is caught as a module error', () => {
+    const r = runFromBareCopy({ inject: "import 'smi6949-not-installed-pkg'" })
+    expect(r.stderr).toMatch(/ERR_MODULE_NOT_FOUND|Cannot find package 'smi6949-not-installed-pkg'/)
+    expect(closureProblems(r)).toContain('module-error')
   })
 })

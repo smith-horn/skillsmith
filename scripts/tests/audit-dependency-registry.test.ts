@@ -5,7 +5,7 @@
  * Dates are injected; nothing here reads the clock.
  */
 import { spawnSync } from 'node:child_process'
-import { mkdtempSync, readFileSync } from 'node:fs'
+import { mkdirSync, mkdtempSync, readFileSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { dirname, join, resolve } from 'node:path'
 import { fileURLToPath } from 'node:url'
@@ -148,8 +148,17 @@ describe('advisory ids (T15)', () => {
         .join('\n')
     ).toMatch(/acceptance advisory "GHSA-5c6j" is not a full/)
   })
-  it('a CVE id is accepted', () => {
-    expect(evalFx({ acceptances: [acc({ advisory: 'CVE-2026-12345' })] }).findings).toEqual([])
+  it('a CVE id is rejected as an acceptance id, because npm audit reports GHSA ids', () => {
+    const msgs = fails(evalFx({ acceptances: [acc({ advisory: 'CVE-2026-12345' })] })).map(
+      (f) => f.message
+    )
+    expect(msgs.join('\n')).toMatch(
+      /acceptance advisory "CVE-2026-12345" is not a full GHSA id \(npm audit reports GHSA ids/
+    )
+  })
+  it('a CVE id is still accepted as an override advisory reference (never matched against audit)', () => {
+    const o = { ...ov('^1.0.0'), advisories: ['CVE-2026-12345'] }
+    expect(fails(evalFx({ overrides: { alpha: o } }))).toEqual([])
   })
 })
 
@@ -454,28 +463,74 @@ describe('Check 76 against the real repo files (T19, T21)', () => {
     expect(r.examined.acceptances).toBeGreaterThan(0)
   })
 
-  it('T21 the verdict is timezone-independent (TZ=UTC, America/Los_Angeles, Pacific/Auckland agree)', () => {
-    const today = todayFromRegistry()
+  // T21 uses its OWN fixture registry (not the real one), so it discriminates a local-time date
+  // parse whatever the real registry happens to hold. Each acceptance spans EXACTLY its tier
+  // ceiling (R1: 30 days) across a DST fall-back in one tested zone, so a parse that reads local
+  // midnight sees 30 days + 1 hour and breaches the ceiling; each is evaluated on the day 14 days
+  // before expiry, which is where the same hour moves the warn window. Spring-forward spans are
+  // included for the same zones. 2026 transitions: America/Los_Angeles fell back 2026-11-01 and
+  // sprang forward 2026-03-08; Pacific/Auckland fell back 2026-04-05 and sprang forward 2026-09-27.
+  const T21_ACCEPTANCES = [
+    ['GHSA-aaaa-aaaa-aaa1', 'laFall', '2026-10-10', '2026-11-09'], // spans LA fall-back (Nov 1)
+    ['GHSA-aaaa-aaaa-aaa2', 'nzFall', '2026-03-20', '2026-04-19'], // spans NZ fall-back (Apr 5)
+    ['GHSA-aaaa-aaaa-aaa3', 'laSpring', '2026-02-20', '2026-03-22'], // spans LA spring-forward (Mar 8)
+    ['GHSA-aaaa-aaaa-aaa4', 'nzSpring', '2026-09-10', '2026-10-10'], // spans NZ spring-forward (Sep 27)
+  ] as const
+  const T21_TODAYS = ['2026-10-26', '2026-04-05', '2026-03-08', '2026-09-26'] // each expires - 14d
+
+  function t21Root(): string {
+    const root = mkdtempSync(join(tmpdir(), 'smi6949-tz-'))
+    mkdirSync(join(root, '.github'), { recursive: true })
+    writeFileSync(join(root, 'package.json'), JSON.stringify({ name: 'fx', overrides: {} }))
+    writeFileSync(
+      join(root, 'package-lock.json'),
+      JSON.stringify(lockWith(...T21_ACCEPTANCES.map((a) => a[1])))
+    )
+    writeFileSync(
+      join(root, '.github/dependency-registry.json'),
+      JSON.stringify({
+        overrides: {},
+        acceptances: T21_ACCEPTANCES.map(([advisory, pkg, accepted, expires]) =>
+          acc({ advisory, package: pkg, tier: 'R1', accepted, expires })
+        ),
+      })
+    )
+    return root
+  }
+
+  it('T21 the verdict is timezone-independent on a DST-straddling fixture (UTC, America/Los_Angeles, Pacific/Auckland agree)', () => {
+    const root = t21Root()
     // Paths and dates travel as argv, never spliced into the code string (CodeQL js/code-injection).
-    const script =
-      'const [root, today] = process.argv.slice(1);' +
+    const child =
+      'const [helper, root, todays] = process.argv.slice(1);' +
       "const { pathToFileURL } = require('node:url');" +
-      "const { join } = require('node:path');" +
-      "import(pathToFileURL(join(root, 'scripts/audit-dependency-registry-helpers.mjs')).href).then((m) => {" +
+      'import(pathToFileURL(helper).href).then((m) => {' +
       'const i = m.readDependencyRegistryInputs(root);' +
+      'console.log(JSON.stringify(JSON.parse(todays).map((today) => {' +
       'const r = m.evaluateDependencyRegistry({ ...i, today });' +
-      "console.log(JSON.stringify({ fails: r.findings.filter((f) => f.severity === 'fail').length, warns: r.findings.filter((f) => f.severity === 'warn').length, n: r.examined.acceptances }));" +
+      "return r.findings.map((f) => f.severity + ' ' + f.message).sort();" +
+      '})));' +
       '})'
-    const run = (tz: string) =>
+    const helper = join(REPO_ROOT, 'scripts/audit-dependency-registry-helpers.mjs')
+    const run = (tz: string): string[][] =>
       JSON.parse(
-        spawnSync(process.execPath, ['-e', script, REPO_ROOT, today], {
+        spawnSync(process.execPath, ['-e', child, helper, root, JSON.stringify(T21_TODAYS)], {
           encoding: 'utf8',
           env: { PATH: process.env.PATH ?? '', TZ: tz },
         }).stdout
       )
     const utc = run('UTC')
-    expect(utc.n).toBeGreaterThan(0)
-    expect(utc.fails).toBe(0)
+    // presence: the fixture really ran, for every day, and exercised the warn window
+    expect(utc).toHaveLength(T21_TODAYS.length)
+    expect(utc[0].join('\n')).toMatch(
+      /warn .*GHSA-aaaa-aaaa-aaa1 .* expires 2026-11-09 \(UTC\) in 14 day/
+    )
+    expect(utc[1].join('\n')).toMatch(
+      /warn .*GHSA-aaaa-aaaa-aaa2 .* expires 2026-04-19 \(UTC\) in 14 day/
+    )
+    // UTC itself: every span is exactly the ceiling, so no ceiling finding on any day
+    expect(utc.flat().filter((m) => /ceiling|NOT EVALUATED|impossible|invalid/.test(m))).toEqual([])
+    // agreement, in both directions of DST
     expect(run('America/Los_Angeles')).toEqual(utc)
     expect(run('Pacific/Auckland')).toEqual(utc)
   })

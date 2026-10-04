@@ -40,6 +40,8 @@ const CVE_RE = /^CVE-\d{4}-\d{4,}$/
 const DATE_RE = /^\d{4}-\d{2}-\d{2}$/
 
 const isAdvisoryId = (s) => typeof s === 'string' && (GHSA_RE.test(s) || CVE_RE.test(s))
+// An acceptance must match what `npm audit` reports, and npm audit reports GHSA ids only.
+const isGhsaId = (s) => typeof s === 'string' && GHSA_RE.test(s)
 
 /** Day number of a strictly valid UTC `YYYY-MM-DD`, or null. */
 export function utcDayNumber(s) {
@@ -174,9 +176,12 @@ function checkAcceptance(a, ctx, out, windowEntries) {
     if (!isNonEmptyString(a[field]))
       out.push(f(`Check 76: acceptance ${label} has an empty "${field}"`))
   }
-  if (!isAdvisoryId(a.advisory)) {
+  if (!isGhsaId(a.advisory)) {
     out.push(
-      f(`Check 76: acceptance advisory ${JSON.stringify(a.advisory)} is not a full GHSA or CVE id`)
+      f(
+        `Check 76: acceptance advisory ${JSON.stringify(a.advisory)} is not a full GHSA id (npm audit reports GHSA ids, so any other id can never match the reconcile)`,
+        'Use the GHSA id from the npm audit report, for example GHSA-xxxx-xxxx-xxxx'
+      )
     )
   }
   validateAcceptanceTypes(a, label, out)

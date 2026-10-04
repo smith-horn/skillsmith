@@ -116,20 +116,31 @@ export function lockOccurrences(lock, name) {
   const suffix = `/node_modules/${name}`
   return Object.entries(lock?.packages ?? {})
     .filter(([k]) => k === `node_modules/${name}` || k.endsWith(suffix))
-    .map(([path, e]) => ({ path, dev: e?.dev === true || e?.devOptional === true }))
+    .map(([path, e]) => ({
+      path,
+      dev: e?.dev === true,
+      devOptionalOnly: e?.dev !== true && e?.devOptional === true,
+    }))
 }
 
 /**
  * Why `name` cannot carry a dev-scope acceptance, or null. It must be in the lockfile
- * and EVERY occurrence must be dev (`dev` or `devOptional`); one production
- * occurrence is enough to fail, and the message names it.
+ * and EVERY occurrence must be `dev: true`; one production occurrence is enough to fail, and
+ * the message names it. A `devOptional` entry without `dev` is production: the production
+ * gate passes `--omit=dev` alone and npm's audit omits a devOptional node only when both dev
+ * and optional are omitted, so `npm audit --omit=dev` audits it.
  */
 export function lockScopeProblem(lock, name) {
   const occ = lockOccurrences(lock, name)
   if (occ.length === 0) return 'is not in package-lock.json'
   const prod = occ.filter((o) => !o.dev)
   if (prod.length === 0) return null
-  return `has a production (non-dev) install at ${prod.map((o) => o.path).join(', ')}, so a dev-scope acceptance does not cover it`
+  const devOpt = prod.filter((o) => o.devOptionalOnly).map((o) => o.path)
+  const why =
+    devOpt.length > 0
+      ? `; ${devOpt.join(', ')} is devOptional without dev, and npm audit --omit=dev audits devOptional installs`
+      : ''
+  return `has a production (non-dev) install at ${prod.map((o) => o.path).join(', ')}, so a dev-scope acceptance does not cover it${why}`
 }
 
 /** Why the lockfile cannot be evaluated, or null: `packages` exists only from lockfileVersion 2. */

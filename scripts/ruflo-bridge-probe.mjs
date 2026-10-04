@@ -39,12 +39,14 @@ import { mkdirSync, readFileSync, writeFileSync } from 'node:fs'
 import { dirname, join } from 'node:path'
 import { fileURLToPath } from 'node:url'
 
+import { isMainModule } from './lib/is-main-module.mjs'
 import { bridgeVerdict, DERIVED_FROM } from './lib/ruflo-bridge-verdict.mjs'
 import { checkIndependentIdentity } from './ruflo-bridge-probe.identity.mjs'
 import {
   acquireBridgeLock,
   BRIDGE_PROBE_DISABLE_VAR,
   foldLiveness,
+  isValidCount,
   readState,
   releaseBridgeLock,
   resolveBridgeLogPath,
@@ -65,6 +67,29 @@ const CONTAINER_NAME = 'skillsmith-ruflo-1'
 const SERVICE_CWD = '/srv/ruflo'
 const AGENTDB_DB_PATH = `${SERVICE_CWD}/.swarm/agentdb-memory.db`
 const AUTHORITY_FILE = join(process.env.HOME ?? '', '.skillsmith', 'ruflo-store.json')
+
+/**
+ * SMI-6967 H-1: a producer EXISTING is strictly weaker than learning having
+ * happened — `bridge.status === 'connected'` and/or a non-trivial
+ * `agentdb.totalEntries` both count, independent of the embeddingBackend
+ * verdict (a `degraded` mock-backend bridge can still be a real producer).
+ *
+ * SMI-6967 PR-gate (H-A) correction: `totalEntries` is validated through
+ * {@link isValidCount}, the SAME validator the liveness fold uses for
+ * `patternsLearned`/`trajectoriesRecorded` (`ruflo-bridge-state.liveness.ts`)
+ * — one shared predicate, not a second copy. The prior inline check here
+ * (`Number.isFinite(total) && total > 0`) wrongly accepted a fractional
+ * `totalEntries` like `0.5`: finite and positive, but not a count any real
+ * probe would ever produce, and `foldLiveness` LATCHES `everProducerPresent`
+ * permanently on a single `true` reading — so one invalid fractional payload
+ * could never be un-armed. `isValidCount` requires a non-negative INTEGER,
+ * closing that gap.
+ */
+export function isProducerPresent(payload) {
+  const total = payload?.agentdb?.totalEntries
+  if (isValidCount(total) && total > 0) return true
+  return payload?.bridge?.status === 'connected'
+}
 
 // ---- Deadlines, and why these numbers ------------------------------------
 // The invariant is that this writer never terminates without having written
@@ -255,6 +280,10 @@ async function main() {
 
     if (!first.ok) {
       log(`unreadable: ${first.reason}`)
+      // SMI-6967 H-1: the server could not even be reached, so there is no
+      // payload to read a producer signal from either — `null`, the same
+      // "could not ask" treatment the counters themselves get.
+      const fold = foldLiveness(prior, null, null, null)
       entry = {
         evaluatedAt: new Date().toISOString(),
         verdict: 'unreadable',
@@ -263,7 +292,12 @@ async function main() {
         derivedFromVersion: DERIVED_FROM.version,
         patternsLearned: null,
         trajectoriesRecorded: null,
-        consecutiveNoLearning: foldLiveness(prior, null, null),
+        consecutiveNoLearning: fold.consecutiveNoLearning,
+        everProducerPresent: fold.everProducerPresent,
+        everLearned: fold.everLearned,
+        countersRegressed: fold.countersRegressed,
+        lastObservedPatternsLearned: fold.lastObservedPatternsLearned,
+        lastObservedTrajectoriesRecorded: fold.lastObservedTrajectoriesRecorded,
       }
       exitCode = UNREADABLE_EXIT
     } else {
@@ -306,6 +340,16 @@ async function main() {
         }
       }
 
+      // SMI-6967 H-1: producer presence is read from the FIRST call's own
+      // payload, independent of `finalVerdict` — a degraded (mock-backend)
+      // bridge, or one D4 could not corroborate, is still a real producer.
+      const producerPresentThisProbe = isProducerPresent(first.payload)
+      const fold = foldLiveness(
+        prior,
+        patternsLearned,
+        trajectoriesRecorded,
+        producerPresentThisProbe
+      )
       entry = {
         evaluatedAt: new Date().toISOString(),
         verdict: finalVerdict,
@@ -314,7 +358,12 @@ async function main() {
         derivedFromVersion: DERIVED_FROM.version,
         patternsLearned,
         trajectoriesRecorded,
-        consecutiveNoLearning: foldLiveness(prior, patternsLearned, trajectoriesRecorded),
+        consecutiveNoLearning: fold.consecutiveNoLearning,
+        everProducerPresent: fold.everProducerPresent,
+        everLearned: fold.everLearned,
+        countersRegressed: fold.countersRegressed,
+        lastObservedPatternsLearned: fold.lastObservedPatternsLearned,
+        lastObservedTrajectoriesRecorded: fold.lastObservedTrajectoriesRecorded,
       }
       log(`verdict: ${finalVerdict} -- ${finalReason}`)
     }
@@ -341,9 +390,18 @@ function flushLog(lines) {
   }
 }
 
-main()
-  .then((code) => process.exit(code))
-  .catch((e) => {
-    process.stderr.write(`ruflo-bridge-probe fatal: ${e?.stack ?? e}\n`)
-    process.exit(UNREADABLE_EXIT)
-  })
+// SMI-6967 PR-gate (H-A) test-gap fix: entry-point guard (scripts/lib/
+// is-main-module.mjs, the same pattern ruflo-bridge-verdict.mjs uses) so
+// importing this module FOR ITS EXPORTS (isProducerPresent, in
+// scripts/tests/ruflo-bridge-probe.test.ts) never also spawns the launcher,
+// takes the bridge lock, or writes state as a side effect of the import.
+// `.husky/post-merge`'s `tsx scripts/ruflo-bridge-probe.mjs` invocation sets
+// argv[1] to this file, so main() still runs exactly as before there.
+if (isMainModule(import.meta.url)) {
+  main()
+    .then((code) => process.exit(code))
+    .catch((e) => {
+      process.stderr.write(`ruflo-bridge-probe fatal: ${e?.stack ?? e}\n`)
+      process.exit(UNREADABLE_EXIT)
+    })
+}

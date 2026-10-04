@@ -587,8 +587,9 @@ jobs:
   #   A. GitHub-native license + OpenSSF scorecard review (pull_request only)
   #   B. Deterministic drift guard: .mcp.json @latest, esm.sh semver pins,
   #      third-party GH Actions SHA pins
-  # Lands as non-required; promote to required after calibration (see
-  # docs/internal/implementation/supply-chain-hardening.md §Wave 1.5).
+  # Landed as non-required (see docs/internal/implementation/
+  # supply-chain-hardening.md §Wave 1.5); promoted to a required context by
+  # SMI-6944. `.github/branch-protection.json` is the declared set.
   dependency-guard:
     name: Dependency Guard
     needs: [classify]
