@@ -1,7 +1,10 @@
 /**
  * SMI-6944 Check 4: Vercel dispatch surfaces that do not show up as a `vercel` /
- * `vc` command word, scoped to CREDENTIALED jobs (a job, or the workflow-level
- * preamble it inherits, that references a Vercel token).
+ * `vc` command word. They apply to EVERY job in every workflow and composite
+ * action: the property is "nothing runs the Vercel CLI except through the
+ * lockfile binary's literal path", and the name of a secret (`VERCEL_TOKEN`,
+ * `DEPLOY_TOKEN`, a repo-level credential) is not part of it, so no rule here is
+ * gated on one.
  *
  *   - `workflow-vercel-action`: a `uses:` whose owner/repo contains "vercel"
  *     (case-insensitive), e.g. a third-party deploy action. It receives the token
@@ -28,31 +31,10 @@
  */
 import { allTokenLists, bare, isVercelWord } from './check-supply-chain-pins.commands.mjs'
 
-/** A job (or preamble) text that holds a Vercel deploy credential. */
-const CREDENTIAL = /\bvercel[-_](?:prod[-_])?token\b/i
 const DECLARERS = new Set(['export', 'local', 'declare', 'readonly', 'typeset'])
 const ASSIGN = /^([A-Za-z_][A-Za-z0-9_]*)(?:\[[^\]]*\])?\+?=([\s\S]*)$/
 const KEYWORDS = new Set(['then', 'do', 'else', 'elif', 'if', 'while', 'until', '!', '{', '}'])
 const USES = /^\s*(?:-\s*)?uses:\s*['"]?([^\s'"#]+)/
-
-/**
- * Header lines (as `jobOf` returns them) of every credentialed job. When the
- * preamble before the first job is credentialed, every job is, and key 0 (a
- * composite action, or text before `jobs:`) is included.
- */
-export function credentialedJobKeys(cleanedSource, boundaries) {
-  const lines = cleanedSource.split('\n')
-  const keys = new Set()
-  const firstJob = boundaries.length ? boundaries[0].line : lines.length + 1
-  const preamble = lines.slice(0, firstJob - 1).join('\n')
-  const all = CREDENTIAL.test(preamble)
-  if (all) keys.add(0)
-  boundaries.forEach((b, i) => {
-    const end = i + 1 < boundaries.length ? boundaries[i + 1].line - 1 : lines.length
-    if (all || CREDENTIAL.test(lines.slice(b.line - 1, end).join('\n'))) keys.add(b.line)
-  })
-  return keys
-}
 
 /** `[{ line, ref }]` for every `uses:` whose owner/repo names Vercel. */
 export function vercelUses(cleanedSource) {

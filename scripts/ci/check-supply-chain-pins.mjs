@@ -25,10 +25,10 @@
  *      over the lockfile copy after `npm ci` is refused, because root
  *      `overrides` never reach it. And `workflow-vercel-command-word`: any
  *      `vercel` / `vc` command word other than the exact absolute lockfile path,
- *      including one run through a package runner (`npx`, `yarn dlx`, ...). In a
- *      job holding a Vercel token, `workflow-vercel-action` (a `uses:` naming
- *      Vercel) and `workflow-vercel-indirect-dispatch` (a variable holding the
- *      CLI). Limits are listed in the commands and vercel-dispatch modules.
+ *      including one run through a package runner (`npx`, `yarn dlx`, ...). In every
+ *      job, whatever its secrets are named, `workflow-vercel-action` (a `uses:`
+ *      naming Vercel) and `workflow-vercel-indirect-dispatch` (a variable
+ *      holding the CLI). Limits are listed in the commands and vercel-dispatch modules.
  *
  * Deterministic: no network, no LLM, zero dependencies. Runs in < 500ms.
  *

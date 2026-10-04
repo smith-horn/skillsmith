@@ -19,7 +19,7 @@
  *     tests so there is one implementation.
  *   - vercelInvocations(body) — every `vercel`/`vc` command word with its verb
  *     (the tokenizer lives in check-supply-chain-pins.commands.mjs).
- *   - credentialed-job rules `workflow-vercel-action` and
+ *   - rules `workflow-vercel-action` and
  *     `workflow-vercel-indirect-dispatch` (check-supply-chain-pins.vercel-dispatch.mjs).
  *   - scanWorkflowSource(source, file, rootDeps, lockVersions) — Check 4 over one YAML source.
  *   - loadDirectDependencyNames(rootDir) — direct deps of root + every workspace.
@@ -39,11 +39,7 @@ import {
   vercelCalls,
   nonLockfileVercelCalls,
 } from './check-supply-chain-pins.commands.mjs'
-import {
-  credentialedJobKeys,
-  vercelAssignments,
-  vercelUses,
-} from './check-supply-chain-pins.vercel-dispatch.mjs'
+import { vercelAssignments, vercelUses } from './check-supply-chain-pins.vercel-dispatch.mjs'
 
 const SEMVER_REGEX = /^\d+\.\d+\.\d+(?:[-+][0-9A-Za-z.-]+)?$/
 
@@ -341,8 +337,9 @@ const ROOT_DEP_REMEDIATION =
   '(see scripts/ci/use-lockfile-vercel.sh).'
 
 const VERCEL_DISPATCH_REMEDIATION =
-  'In a job holding a Vercel token, run the lockfile CLI by its literal absolute path at each call ' +
-  'site (no variable holding it, no third-party Vercel action); see scripts/ci/use-lockfile-vercel.sh.'
+  'Run the lockfile CLI by its literal absolute path at each call site (no variable holding it, ' +
+  "no third-party Vercel action), whatever the job's secrets are named; " +
+  'see scripts/ci/use-lockfile-vercel.sh.'
 const VERCEL_WORD_REMEDIATION =
   'Run the lockfile copy by its exact absolute path, "$GITHUB_WORKSPACE/node_modules/.bin/vercel", ' +
   'never a bare or aliased `vercel` / `vc` (see scripts/ci/use-lockfile-vercel.sh).'
@@ -362,15 +359,13 @@ export function scanWorkflowSource(source, file, rootDeps, lockVersions = undefi
   const blocks = extractRunBlocks(cleaned)
   const boundaries = jobBoundaries(cleaned)
   const npmCiByJob = new Map()
-  const credentialed = credentialedJobKeys(cleaned, boundaries)
   for (const u of vercelUses(cleaned)) {
-    if (!credentialed.has(jobOf(boundaries, u.line))) continue
     const job = jobNameOf(boundaries, u.line)
     findings.push({
       file,
       rule: 'workflow-vercel-action',
       job,
-      message: `\`uses: ${u.ref}\` at line ${u.line}${job ? ` (job ${job})` : ''}: a Vercel action in a credentialed job runs a CLI outside the lockfile`,
+      message: `\`uses: ${u.ref}\` at line ${u.line}${job ? ` (job ${job})` : ''}: a Vercel action runs a CLI outside the lockfile`,
       remediation: VERCEL_DISPATCH_REMEDIATION,
     })
   }
@@ -413,16 +408,14 @@ export function scanWorkflowSource(source, file, rootDeps, lockVersions = undefi
         remediation: VERCEL_WORD_REMEDIATION,
       })
     }
-    if (credentialed.has(jobKey)) {
-      for (const a of vercelAssignments(block.body)) {
-        findings.push({
-          file,
-          rule: 'workflow-vercel-indirect-dispatch',
-          job,
-          message: `\`${a.name}=${a.value}\` ${where}: a variable holding the Vercel CLI hides the command word from this check`,
-          remediation: VERCEL_DISPATCH_REMEDIATION,
-        })
-      }
+    for (const a of vercelAssignments(block.body)) {
+      findings.push({
+        file,
+        rule: 'workflow-vercel-indirect-dispatch',
+        job,
+        message: `\`${a.name}=${a.value}\` ${where}: a variable holding the Vercel CLI hides the command word from this check`,
+        remediation: VERCEL_DISPATCH_REMEDIATION,
+      })
     }
     if (NPM_CI_REGEX.test(block.body)) npmCiByJob.set(jobKey, true)
   }
