@@ -267,7 +267,8 @@ describe('the REAL script runs with no node_modules on the path (M1)', () => {
   // into a bare directory and run the real script with the real node.
   // The dev container has /node_modules above any temp dir, so a bare `import 'semver'`
   // would still resolve there and the run below cannot prove the closure by itself
-  // (measured: adding that import left the run green). Walk the import closure statically.
+  // (measured: adding that import left the run green). Walk the import closure statically; the
+  // dynamic runs below catch an UNRESOLVABLE package, and their verdict is deliberately not asserted.
   it('the import closure of the script is node builtins and repo files only', () => {
     const seen = new Set<string>()
     const bare: string[] = []
@@ -288,7 +289,18 @@ describe('the REAL script runs with no node_modules on the path (M1)', () => {
     expect(seen.size).toBeGreaterThanOrEqual(4) // presence: the walk reached the helper modules
     expect(bare).toEqual([])
   })
-  it('exits 0 and prints the coherent line from a node_modules-free copy', () => {
+  // The property under test is the IMPORT CLOSURE, not the registry's policy verdict: which
+  // acceptances are live depends on the clock, so the verdict legitimately turns red on an
+  // expiry date. So: the CLI must load and evaluate with no node_modules anywhere (module
+  // errors are the failure), and exit 0 or 1 (a verdict), never a crash.
+  const FAKE_CLOCK = `const T = Date.parse(process.env.FAKE_NOW + 'T12:00:00Z')
+const R = Date
+globalThis.Date = class extends R {
+  constructor(...a) { if (a.length === 0) super(T); else super(...a) }
+  static now() { return T }
+}
+`
+  function runFromBareCopy(opts: { inject?: string; fakeNow?: string } = {}) {
     const dir = mkdtempSync(join(tmpdir(), 'smi6949-bare-'))
     // The whole scripts/ tree (minus tests and any node_modules): the closure must resolve in it.
     cpSync(join(REPO_ROOT, 'scripts'), join(dir, 'scripts'), {
@@ -310,14 +322,55 @@ describe('the REAL script runs with no node_modules on the path (M1)', () => {
       mkdirSync(dirname(join(dir, rel)), { recursive: true })
       writeFileSync(join(dir, rel), readFileSync(join(REPO_ROOT, rel)))
     }
+    if (opts.inject) {
+      const helper = join(dir, 'scripts/audit-dependency-registry-helpers.mjs')
+      writeFileSync(helper, `${readFileSync(helper, 'utf8')}\n${opts.inject}\n`)
+    }
     expect(existsSync(join(dir, 'node_modules'))).toBe(false)
+    const env: Record<string, string> = { PATH: process.env.PATH ?? '' }
+    if (opts.fakeNow) {
+      writeFileSync(join(dir, 'fake-clock.mjs'), FAKE_CLOCK)
+      env.FAKE_NOW = opts.fakeNow
+      env.NODE_OPTIONS = `--import ${join(dir, 'fake-clock.mjs')}`
+    }
     const r = spawnSync(process.execPath, ['scripts/check-dependency-registry.mjs'], {
       cwd: dir,
       encoding: 'utf8',
-      env: { PATH: process.env.PATH ?? '' },
+      env,
     })
-    expect(r.stderr).not.toMatch(/ERR_MODULE_NOT_FOUND/)
-    expect(r.status).toBe(0)
-    expect(r.stdout).toMatch(/Check 76: dependency registry coherent \(/)
+    return { status: r.status, stdout: r.stdout, stderr: r.stderr }
+  }
+  /** Every way the closure can fail: a module error on stderr, or a crash-shaped exit. */
+  function closureProblems(r: ReturnType<typeof runFromBareCopy>): string[] {
+    const bad: string[] = []
+    if (/ERR_MODULE_NOT_FOUND|Cannot find (package|module)/.test(r.stderr)) bad.push('module-error')
+    if (r.status !== 0 && r.status !== 1) bad.push(`crash-status-${r.status}`)
+    if (!r.stdout.includes('Check 76: dependency registry coherence and expiry'))
+      bad.push('no-banner')
+    return bad
+  }
+  it.each([
+    ['the real clock', undefined],
+    ['a clock after the 2026-11-02 expiries', '2026-11-03'],
+  ])('loads and evaluates from a node_modules-free copy under %s', (_label, fakeNow) => {
+    const r = runFromBareCopy({ fakeNow })
+    expect(closureProblems(r)).toEqual([])
+    // positive control: the evaluation ran. Either the coherent summary, or a real finding naming
+    // an acceptance; NOT EVALUATED means it never reached the registry at all.
+    expect(r.stdout).not.toContain('NOT EVALUATED')
+    expect(r.stdout).toMatch(/acceptances examined\)|acceptance GHSA-[a-z0-9-]+ /)
+    // the verdict agrees with the exit status in both directions
+    expect(r.status).toBe(r.stdout.includes('✗') ? 1 : 0)
+  })
+  it('positive control: the fake clock really moves the CLI (by 2099 every acceptance has expired)', () => {
+    const r = runFromBareCopy({ fakeNow: '2099-01-01' })
+    expect(closureProblems(r)).toEqual([]) // a policy failure is not a closure failure
+    expect(r.status).toBe(1)
+    expect(r.stdout).toMatch(/acceptance GHSA-[a-z0-9-]+ .* expired \d{4}-\d{2}-\d{2} \(UTC\)/)
+  })
+  it('negative control: a bare import added to the copy is caught as a module error', () => {
+    const r = runFromBareCopy({ inject: "import 'smi6949-not-installed-pkg'" })
+    expect(r.stderr).toMatch(/ERR_MODULE_NOT_FOUND|Cannot find package 'smi6949-not-installed-pkg'/)
+    expect(closureProblems(r)).toContain('module-error')
   })
 })

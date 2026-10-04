@@ -5,13 +5,18 @@
 # while Check 76 reports a failure or an acceptance inside its warn window, and
 # closes it when the check is clean. Standing R4 "unpinned" warnings are not an
 # expiry signal and are deliberately not listed (they would keep the issue open
-# permanently). The job exits with Check 76's own status, so a lapsed
-# acceptance also shows red in Actions. After the expiry check it reconciles the
+# permanently). The job exits with Check 76's own status when that failed, so a
+# lapsed acceptance also shows red in Actions; when the expiry check passed it
+# exits with the reconcile's status instead. After the expiry check it reconciles the
 # acceptances against `npm audit --json --package-lock-only` (scripts/
 # check-dependency-registry.mjs --reconcile-audit): an acceptance whose advisory
-# is absent or belongs to another package, and any audit advisory with no
-# acceptance, are failures reported in the same issue. A missing audit report
-# is a failure, never a clean result.
+# is absent, belongs to another package or has another severity is a failure.
+# An audit advisory with no acceptance is a failure too, unless an install npm
+# reports as affected by it (the report's `nodes`, looked up in
+# package-lock.json) is a production install; then it is printed as
+# informational and left to the production audit gate, which fails only at high or above; below-high production advisories are reported by this job and enforced by no gate. Affected installs that
+# cannot be determined fail closed. Failures are reported in the same issue. A
+# missing audit report is a failure, never a clean result.
 #
 # No Docker, no `npm ci` and no `needs: docker-build`: this runs
 # scripts/check-dependency-registry.mjs, whose import closure is node builtins
