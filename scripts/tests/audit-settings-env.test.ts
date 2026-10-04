@@ -32,7 +32,20 @@ import {
 const __dirname = dirname(fileURLToPath(import.meta.url))
 const REPO_ROOT = join(__dirname, '..', '..')
 
+// Harness-owned literal, never derived from EXPECTED_SETTINGS_ENV. Updated
+// 2026-10-03 alongside the pin's one authorised entry: an empty env block was
+// "exactly the pinned set" while the pin was empty, and is now a MISSING-key
+// case, which RED_MISSING_PINNED_KEY below covers deliberately.
 const GREEN_SETTINGS = `{
+  "env": { "SKILLSMITH_RUFLO_VERDICT_SHADOW": "0" },
+  "permissions": { "allow": [], "deny": [] }
+}`
+
+// The former GREEN fixture, kept as a RED one: with a non-empty pin, an empty
+// env block is a real failure mode and worth an arm of its own. Without this,
+// updating the pin would have silently deleted the only coverage of "the
+// pinned key is absent".
+const RED_MISSING_PINNED_KEY = `{
   "env": {},
   "permissions": { "allow": [], "deny": [] }
 }`
@@ -77,12 +90,32 @@ const RED_ENV_BOOLEAN = `{
 }`
 
 describe('EXPECTED_SETTINGS_ENV (SMI-6744 Checkpoint 4 row 4)', () => {
-  it('is pinned empty today', () => {
-    expect(EXPECTED_SETTINGS_ENV).toEqual({})
+  // Still a LITERAL, deliberately: this assertion exists so a bug in the
+  // helper's own idea of the pinned set cannot also construct the expectation
+  // meant to catch it. Updated 2026-10-03 from {} to one authorised entry by
+  // explicit owner decision — the A5.5.2 bridge-verdict banner ships live, and
+  // SKILLSMITH_RUFLO_VERDICT_SHADOW='0' in settings.json's env is what makes it
+  // live. Pinning the VALUE too means flipping it to '1' to silence the banner
+  // now fails here, so the guard covers the decision rather than yielding to it.
+  it('is pinned to exactly the one authorised entry', () => {
+    expect(EXPECTED_SETTINGS_ENV).toEqual({ SKILLSMITH_RUFLO_VERDICT_SHADOW: '0' })
   })
 })
 
 describe('evaluateSettingsEnv', () => {
+  it('reports the pinned key as missing when the env block is empty', () => {
+    const verdict = evaluateSettingsEnv({
+      settingsPath: '.claude/settings.json',
+      readFile: () => RED_MISSING_PINNED_KEY,
+    })
+    expect(verdict.status).toBe('evaluated')
+    expect(verdict.envPresent).toBe(true)
+    expect(verdict.missingKeys).toEqual(['SKILLSMITH_RUFLO_VERDICT_SHADOW'])
+    expect(verdict.unexpectedKeys).toEqual([])
+    const lines = settingsEnvReportLines(verdict)
+    expect(lines[0].severity).not.toBe('pass')
+  })
+
   it('passes a settings file whose env block is exactly the pinned set', () => {
     const verdict = evaluateSettingsEnv({
       settingsPath: '.claude/settings.json',

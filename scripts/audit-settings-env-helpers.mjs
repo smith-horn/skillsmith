@@ -29,8 +29,30 @@
 
 import { readFileSync } from 'node:fs'
 
-/** Checkpoint 4 row 4: the pinned expected `.claude/settings.json` `env` block. Empty today. */
-export const EXPECTED_SETTINGS_ENV = Object.freeze({})
+/**
+ * Checkpoint 4 row 4: the pinned expected `.claude/settings.json` `env` block.
+ *
+ * Was empty. One authorised entry since 2026-10-03, by the explicit owner
+ * decision this check's own FIX_UNEXPECTED_ENV_KEY text names as the sanctioned
+ * route ("update EXPECTED_SETTINGS_ENV if the pinned set itself changed by
+ * explicit decision").
+ *
+ * `SKILLSMITH_RUFLO_VERDICT_SHADOW: '0'` ships the A5.5.2 bridge-verdict banner
+ * live rather than shadow-default. Wave 4's pin and A5.5.2's requirement are
+ * two parts of SMI-6744 that genuinely conflicted: the pin exists to keep keys
+ * OUT of this block, and the banner needs one IN it. The pin wins the argument
+ * about process and the banner wins on the merits, so the key is listed here
+ * where the decision is reviewable, rather than the check being relaxed.
+ *
+ * Listing it does not weaken this guard, it extends it. Because the check pins
+ * VALUES as well as keys (see FIX_MISMATCHED_ENV_VALUE), the shadow variable is
+ * now held at exactly '0' — so flipping it to '1' to silence the banner
+ * surfaces here as a mismatched value, which is the same class of smuggling
+ * the empty pin was built to catch.
+ */
+export const EXPECTED_SETTINGS_ENV = Object.freeze({
+  SKILLSMITH_RUFLO_VERDICT_SHADOW: '0',
+})
 
 const FIX_MISSING_ENV_KEY =
   "settings.json's `env` block must be exactly the pinned set (SMI-6744 Checkpoint 4 row 4). " +
