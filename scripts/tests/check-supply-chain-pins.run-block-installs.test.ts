@@ -281,10 +281,16 @@ describe('SMI-3985: check-supply-chain-pins — run-block installs (SMI-4874)', 
         ].join('\n')
       )
       const result = auditWorkflowInstalls(tmp)
-      expect(result.findings).toHaveLength(1)
-      expect(result.findings[0].rule).toBe('workflow-install-pin')
-      expect(result.findings[0].file).toContain('regression.yml')
-      expect(result.findings[0].message).toContain('vercel@latest')
+      // The pin rule fires exactly once. The bare `vercel --version` that follows
+      // is, since SMI-6944, a separate `workflow-vercel-command-word` finding.
+      const pin = result.findings.filter((f) => f.rule === 'workflow-install-pin')
+      expect(pin).toHaveLength(1)
+      expect(pin[0].file).toContain('regression.yml')
+      expect(pin[0].message).toContain('vercel@latest')
+      expect(result.findings.map((f) => f.rule).sort()).toEqual([
+        'workflow-install-pin',
+        'workflow-vercel-command-word',
+      ])
     })
   })
 })

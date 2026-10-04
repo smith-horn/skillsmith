@@ -19,9 +19,12 @@
  *      packages) OR running after `npm ci` / `npm install` in the same job
  *      (resolves from lockfile-tracked devDeps). Added in SMI-4874 Wave D after
  *      the `vercel@latest` regression (closed by Waves A + B). SMI-6944 adds rule
- *      `workflow-global-root-dep-install`: a global install of (or `npx
- *      <dep>@<ver>` with no earlier `npm ci` for) any direct dependency of root
- *      or a workspace is refused, because root `overrides` never reach it.
+ *      `workflow-global-root-dep-install`: a global install of any direct
+ *      dependency of root or a workspace, a dlx-style run of one, an `npx` /
+ *      `npm exec` of one at a version that is not the lockfile's, or an install
+ *      over the lockfile copy after `npm ci` is refused, because root
+ *      `overrides` never reach it. And `workflow-vercel-command-word`: any
+ *      `vercel` / `vc` command word other than the exact absolute lockfile path.
  *
  * Deterministic: no network, no LLM, zero dependencies. Runs in < 500ms.
  *
@@ -39,6 +42,7 @@ import {
   scanRunBlockForGlobalRootDepInstalls,
   scanWorkflowSource,
   loadDirectDependencyNames,
+  loadLockfileVersions,
   jobBoundaries,
   jobOf,
   jobNameOf,
@@ -54,6 +58,7 @@ export {
   scanRunBlockForGlobalRootDepInstalls,
   scanWorkflowSource,
   loadDirectDependencyNames,
+  loadLockfileVersions,
   jobBoundaries,
   jobOf,
   jobNameOf,
@@ -361,6 +366,7 @@ export function auditWorkflowInstalls(rootDir) {
   if (!existsSync(wfRoot)) return empty
 
   const rootDeps = loadDirectDependencyNames(rootDir)
+  const lockVersions = loadLockfileVersions(rootDir)
   const isYml = (p) => p.endsWith('.yml') || p.endsWith('.yaml')
   const isAction = (p) => /(^|[\\/])action\.ya?ml$/.test(p)
   const files = [...walk(wfRoot, isYml), ...walk(join(rootDir, '.github', 'actions'), isAction)]
@@ -372,7 +378,7 @@ export function auditWorkflowInstalls(rootDir) {
       continue
     }
     scannedFiles++
-    const r = scanWorkflowSource(source, relative(rootDir, abs), rootDeps)
+    const r = scanWorkflowSource(source, relative(rootDir, abs), rootDeps, lockVersions)
     localFindings.push(...r.findings)
     runBlocks += r.runBlocks
     vercelInvocationBlocks += r.vercelInvocationBlocks

@@ -17,9 +17,11 @@
  *     (SMI-6944): root `overrides` never reach such a binary.
  *   - jobBoundaries / jobOf / jobNameOf — job-boundary helpers, shared with the
  *     tests so there is one implementation.
- *   - vercelInvocations(body) — every `vercel pull|build|deploy|dev` command word.
- *   - scanWorkflowSource(source, file, rootDeps) — Check 4 over one YAML source.
+ *   - vercelInvocations(body) — every `vercel`/`vc` command word with its verb
+ *     (the tokenizer lives in check-supply-chain-pins.commands.mjs).
+ *   - scanWorkflowSource(source, file, rootDeps, lockVersions) — Check 4 over one YAML source.
  *   - loadDirectDependencyNames(rootDir) — direct deps of root + every workspace.
+ *   - loadLockfileVersions(rootDir) — name -> version of the root lockfile's top-level installs.
  *   - NPM_CI_REGEX — predicate for "this block runs npm ci or npm install".
  *
  * Pure functions apart from `loadDirectDependencyNames`, the one file reader.
@@ -30,6 +32,11 @@
  */
 import { readFileSync, existsSync, readdirSync } from 'fs'
 import { join } from 'path'
+import {
+  packageCommands,
+  vercelCalls,
+  nonLockfileVercelCalls,
+} from './check-supply-chain-pins.commands.mjs'
 
 const SEMVER_REGEX = /^\d+\.\d+\.\d+(?:[-+][0-9A-Za-z.-]+)?$/
 
@@ -57,14 +64,6 @@ export const WORKFLOW_INSTALL_ALLOWLIST = new Set([
   'supabase',
 ])
 
-// `npm i|install|add <args>` up to the next shell separator. The args are then
-// tokenised by `scanNpmGlobalInstalls`, so quoting, flag order, a trailing `-g`,
-// `--location=global` and the `add` verb are all handled in one place, and the
-// pin rule and the root-dependency rule cannot diverge (SMI-6944).
-// Anchored to start-of-token so `pnpm install` does not match.
-const NPM_INSTALL_CMD_REGEX = /(?:^|[\s;&|(])npm\s+(?:i|install|add)(?=\s|$)([^|&;<>\n)]*)/g
-// Flags that consume the NEXT token as a value, so it is not mistaken for a spec.
-const VALUE_FLAGS = new Set(['--prefix', '--registry', '--userconfig', '--cache', '--workspace'])
 // `npx [--yes|--no-install|-y|-p <pkg>] <pkg>[@<ver>]` — capture the first
 // non-flag arg. Flags `-y`, `--yes`, `--no-install`, `--quiet` are skipped. An
 // optional leading quote is allowed before the spec (SMI-6944): `npx "foo@latest"`.
@@ -191,44 +190,14 @@ export function jobNameOf(boundaries, line) {
 }
 
 /**
- * Tokenise every `npm i|install|add` in a run block. Returns one entry per
- * command: `{ global, specs }`, where `specs` are the unquoted non-flag args.
- * `global` is true for `-g`, `--global`, a short-flag cluster containing `g`,
- * `--location=global` and `--location global`, in ANY position (SMI-6944).
+ * Every global install in a run block: `[{ command, specs }]`. Backed by the
+ * tokenizer, so flag order (`npm --global install`), the `add` verb, `pnpm add -g`,
+ * `yarn global add` and a quoted spec are all handled in one place (SMI-6944).
  */
-function scanNpmGlobalInstalls(body) {
-  const out = []
-  const flat = body.replace(/\\\n/g, ' ')
-  NPM_INSTALL_CMD_REGEX.lastIndex = 0
-  let m
-  while ((m = NPM_INSTALL_CMD_REGEX.exec(flat)) !== null) {
-    const tokens = m[1].trim().split(/\s+/).filter(Boolean)
-    let global = false
-    const specs = []
-    for (let i = 0; i < tokens.length; i++) {
-      const t = tokens[i]
-      if (t === '--') continue
-      if (t === '--global' || t === '--location=global' || /^-[a-zA-Z]*g[a-zA-Z]*$/.test(t)) {
-        global = true
-        continue
-      }
-      if (t === '--location') {
-        if (tokens[i + 1] === 'global') global = true
-        i++
-        continue
-      }
-      if (VALUE_FLAGS.has(t)) {
-        i++
-        continue
-      }
-      if (t.startsWith('-')) continue
-      const bare = t.replace(/^["']|["']$/g, '')
-      if (!bare || /^[/.~]/.test(bare) || bare.includes('://')) continue
-      specs.push(bare)
-    }
-    out.push({ global, specs })
-  }
-  return out
+function scanGlobalInstalls(body) {
+  return packageCommands(body)
+    .filter((c) => c.kind === 'install' && c.global)
+    .map((c) => ({ command: c.pm === 'npm' ? 'npm i -g' : `${c.pm} add -g`, specs: c.specs }))
 }
 
 /**
@@ -242,14 +211,13 @@ function scanNpmGlobalInstalls(body) {
 export function scanRunBlockForInstalls(body, npmCiSeen) {
   const violations = []
 
-  for (const cmd of scanNpmGlobalInstalls(body)) {
-    if (!cmd.global) continue
+  for (const cmd of scanGlobalInstalls(body)) {
     for (const raw of cmd.specs) {
       const spec = parsePkgSpec(raw)
       if (!spec) continue
       if (!spec.version || !SEMVER_REGEX.test(spec.version.split(/[/?]/)[0])) {
         violations.push({
-          command: 'npm i -g',
+          command: cmd.command,
           pkg: raw,
           reason: spec.version
             ? `non-exact version "${spec.version}" — require @x.y.z`
@@ -283,62 +251,74 @@ export function scanRunBlockForInstalls(body, npmCiSeen) {
 }
 
 /**
- * SMI-6944: flag a global / ad-hoc install of a package the repo already
- * depends on. A global install has no root package.json, so root `overrides`
- * never apply to it; the lockfile copy, run after `npm ci`, is the only copy
- * the overrides, `npm audit` and Dependabot govern.
- *
- * Catches `npm i|install|add -g|--global|--location=global <name>[@...]` (quoted
- * or not, any flag order) where <name> is in `rootDeps`, and `npx <name>@<ver>`
- * when no `npm ci` has run earlier in the job (it fetches outside the lockfile
- * tree the same way).
+ * SMI-6944: flag an install or ad-hoc run of a package the repo already depends
+ * on that does not come from the lockfile tree. Root `overrides`, `npm audit` and
+ * Dependabot govern only the lockfile copy, so each of these escapes them:
+ *   - a global install (`npm i -g`, `npm --global install`, `pnpm add -g`,
+ *     `yarn global add`, `bun add -g`), a variable spec included (it cannot be
+ *     verified, so it is refused);
+ *   - a `dlx`-style run (`pnpm dlx`, `yarn dlx`, `bunx`, `bun x`), always;
+ *   - `npx` / `npm exec` / `npm x` with a version, when no `npm ci` ran earlier in
+ *     the job OR the version is not the lockfile's;
+ *   - a non-global install of a version other than the lockfile's after `npm ci`
+ *     (`npm i --no-save <dep>@X`).
  *
  * @param {string} body
  * @param {Iterable<string>} rootDeps direct deps of root and every workspace
  * @param {boolean} [npmCiSeen=false]
+ * @param {Map<string,string>} [lockVersions] lockfile versions; when omitted a
+ *   version cannot be compared and only the no-`npm ci` condition applies
  * @returns {Array<{ command: string, pkg: string, reason: string }>}
  */
-export function scanRunBlockForGlobalRootDepInstalls(body, rootDeps, npmCiSeen = false) {
+export function scanRunBlockForGlobalRootDepInstalls(
+  body,
+  rootDeps,
+  npmCiSeen = false,
+  lockVersions = undefined
+) {
   const deps = rootDeps instanceof Set ? rootDeps : new Set(rootDeps)
   const out = []
-  for (const cmd of scanNpmGlobalInstalls(body)) {
-    if (!cmd.global) continue
+  const differs = (name, version) => (lockVersions ? lockVersions.get(name) !== version : false)
+  for (const cmd of packageCommands(body)) {
+    const globalLabel = cmd.pm === 'npm' ? 'npm i -g' : `${cmd.pm} add -g`
+    const runLabel = cmd.pm === 'npm' ? 'npm exec' : cmd.pm
+    const label = cmd.kind === 'run' ? runLabel : cmd.global ? globalLabel : `${cmd.pm} install`
     for (const raw of cmd.specs) {
       const spec = parsePkgSpec(raw)
-      if (spec && deps.has(spec.name)) {
-        out.push({ command: 'npm i -g', pkg: raw, reason: `\`${spec.name}\` is a repo dependency` })
-      }
-    }
-  }
-  if (!npmCiSeen) {
-    let m
-    NPX_REGEX.lastIndex = 0
-    while ((m = NPX_REGEX.exec(body)) !== null) {
-      const spec = parsePkgSpec(m[1])
-      if (spec && spec.version && deps.has(spec.name)) {
-        out.push({
-          command: 'npx',
-          pkg: m[1],
-          reason: `\`${spec.name}\` is a repo dependency fetched with no \`npm ci\` earlier in the job`,
-        })
+      const variable = raw.startsWith('$')
+      const name = spec ? spec.name : ''
+      const isDep = deps.has(name)
+      const add = (reason) => out.push({ command: label, pkg: raw, reason })
+      if (cmd.kind === 'install' && cmd.global) {
+        if (variable) add('a variable package spec in a global install cannot be verified')
+        else if (isDep) add(`\`${name}\` is a repo dependency`)
+      } else if (cmd.kind === 'run' && cmd.fetchAlways) {
+        if (variable) add('a variable package spec in a dlx-style run cannot be verified')
+        else if (isDep) add(`\`${name}\` is a repo dependency fetched outside the lockfile tree`)
+      } else if (cmd.kind === 'run') {
+        if (isDep && spec.version && (!npmCiSeen || differs(name, spec.version))) {
+          add(
+            npmCiSeen
+              ? `\`${name}@${spec.version}\` is not the lockfile version`
+              : `\`${name}\` is a repo dependency fetched with no \`npm ci\` earlier in the job`
+          )
+        }
+      } else if (
+        npmCiSeen &&
+        isDep &&
+        spec.version &&
+        (!lockVersions || differs(name, spec.version))
+      ) {
+        add(`\`${name}@${spec.version}\` replaces the lockfile copy installed by \`npm ci\``)
       }
     }
   }
   return out
 }
 
-// `<command-word> pull|build|deploy|dev` where the word ends in `vercel`.
-const VERCEL_INVOCATION_REGEX = /(\S*vercel"?)[ \t]+(pull|build|deploy|dev)\b/g
-
-/** Every `vercel pull|build|deploy|dev` in a body: `[{ word, verb }]`. */
+/** Every `vercel`/`vc` command word in a body: `[{ word, verb }]`. */
 export function vercelInvocations(body) {
-  const out = []
-  VERCEL_INVOCATION_REGEX.lastIndex = 0
-  let m
-  while ((m = VERCEL_INVOCATION_REGEX.exec(body)) !== null) {
-    out.push({ word: m[1].replace(/^.*\(/, ''), verb: m[2] })
-  }
-  return out
+  return vercelCalls(body)
 }
 
 const PIN_REMEDIATION =
@@ -353,13 +333,17 @@ const ROOT_DEP_REMEDIATION =
   'A global or ad-hoc install bypasses root `overrides`; run the lockfile copy after `npm ci` ' +
   '(see scripts/ci/use-lockfile-vercel.sh).'
 
+const VERCEL_WORD_REMEDIATION =
+  'Run the lockfile copy by its exact absolute path, "$GITHUB_WORKSPACE/node_modules/.bin/vercel", ' +
+  'never a bare or aliased `vercel` / `vc` (see scripts/ci/use-lockfile-vercel.sh).'
+
 /**
  * Check 4 over one workflow / composite-action source. Strips full-line YAML
  * comments, bins each `run:` block into its job, and tracks `npm ci` per job.
  *
  * @returns {{ findings: Array, runBlocks: number, vercelInvocationBlocks: number }}
  */
-export function scanWorkflowSource(source, file, rootDeps) {
+export function scanWorkflowSource(source, file, rootDeps, lockVersions = undefined) {
   const findings = []
   const cleaned = source
     .split('\n')
@@ -384,13 +368,27 @@ export function scanWorkflowSource(source, file, rootDeps) {
         remediation: v.command === 'npm i -g' ? PIN_REMEDIATION : NPX_REMEDIATION,
       })
     }
-    for (const v of scanRunBlockForGlobalRootDepInstalls(block.body, rootDeps, npmCiSeen)) {
+    for (const v of scanRunBlockForGlobalRootDepInstalls(
+      block.body,
+      rootDeps,
+      npmCiSeen,
+      lockVersions
+    )) {
       findings.push({
         file,
         rule: 'workflow-global-root-dep-install',
         job,
         message: `${v.command} \`${v.pkg}\` ${where}: ${v.reason}`,
         remediation: ROOT_DEP_REMEDIATION,
+      })
+    }
+    for (const v of nonLockfileVercelCalls(block.body)) {
+      findings.push({
+        file,
+        rule: 'workflow-vercel-command-word',
+        job,
+        message: `\`${v.word} ${v.verb}\` ${where}: the Vercel CLI command word is not the lockfile binary`,
+        remediation: VERCEL_WORD_REMEDIATION,
       })
     }
     if (NPM_CI_REGEX.test(block.body)) npmCiByJob.set(jobKey, true)
@@ -435,4 +433,18 @@ export function loadDirectDependencyNames(rootDir) {
     for (const d of dirs) add(readManifest(join(d, 'package.json')))
   }
   return names
+}
+
+/**
+ * name -> version for every top-level `node_modules/<name>` entry of the root
+ * `package-lock.json` (empty Map when it cannot be read).
+ */
+export function loadLockfileVersions(rootDir) {
+  const versions = new Map()
+  const packages = readManifest(join(rootDir, 'package-lock.json')).packages || {}
+  for (const [key, entry] of Object.entries(packages)) {
+    const m = key.match(/^node_modules\/((?:@[^/]+\/)?[^/]+)$/)
+    if (m && entry && typeof entry.version === 'string') versions.set(m[1], entry.version)
+  }
+  return versions
 }

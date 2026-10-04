@@ -227,7 +227,8 @@ jobs:
           # vercel build produces .vercel/output/ which `vercel dev` serves from.
           # PUBLIC_* envs flow through to the Astro bundle so /device talks to
           # staging Supabase.
-          "$GITHUB_WORKSPACE/node_modules/.bin/vercel" build --token "$VERCEL_TOKEN"
+          ( set -o pipefail; "$GITHUB_WORKSPACE/node_modules/.bin/vercel" build --token "$VERCEL_TOKEN" 2>&1 | tee "$RUNNER_TEMP/vercel-build.log" )
+          bash "$GITHUB_WORKSPACE/scripts/ci/use-lockfile-vercel.sh" --check-build-log "$RUNNER_TEMP/vercel-build.log"
 
       - name: Start vercel dev (Astro SSR + edge functions)
         working-directory: packages/website

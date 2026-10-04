@@ -72,7 +72,9 @@ jobs:
         run: |
           set -eu
           "$GITHUB_WORKSPACE/node_modules/.bin/vercel" pull --yes --environment=preview --token "$VERCEL_TOKEN"
-          "$GITHUB_WORKSPACE/node_modules/.bin/vercel" build --token "$VERCEL_TOKEN"
+          ( set -o pipefail; "$GITHUB_WORKSPACE/node_modules/.bin/vercel" build --token "$VERCEL_TOKEN" 2>&1 | tee "$RUNNER_TEMP/vercel-build.log" )
+          bash "$GITHUB_WORKSPACE/scripts/ci/use-lockfile-vercel.sh" --check-build-log "$RUNNER_TEMP/vercel-build.log"
+          bash "$GITHUB_WORKSPACE/scripts/ci/use-lockfile-vercel.sh" --verify-only
           URL=$("$GITHUB_WORKSPACE/node_modules/.bin/vercel" deploy --prebuilt --yes --token "$VERCEL_TOKEN" 2>/dev/null | grep -E '^https://' | tail -1)
           echo "url=$URL" >> "$GITHUB_OUTPUT"
 

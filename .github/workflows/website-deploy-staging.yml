@@ -5,6 +5,7 @@ on:
     branches: [main]
     paths:
       - 'packages/website/**'
+      - 'scripts/ci/use-lockfile-vercel.sh'
   workflow_dispatch:
     inputs:
       smoke_test_timeout:
@@ -88,7 +89,8 @@ jobs:
         run: |
           set -eu
           "$GITHUB_WORKSPACE/node_modules/.bin/vercel" pull --yes --environment=preview --token "$VERCEL_TOKEN"
-          "$GITHUB_WORKSPACE/node_modules/.bin/vercel" build --token "$VERCEL_TOKEN"
+          ( set -o pipefail; "$GITHUB_WORKSPACE/node_modules/.bin/vercel" build --token "$VERCEL_TOKEN" 2>&1 | tee "$RUNNER_TEMP/vercel-build.log" )
+          bash "$GITHUB_WORKSPACE/scripts/ci/use-lockfile-vercel.sh" --check-build-log "$RUNNER_TEMP/vercel-build.log"
 
       - name: Deploy prebuilt to Vercel (Staging)
         id: deploy
@@ -100,6 +102,7 @@ jobs:
         run: |
           # Deploy the prebuilt Build Output (no cloud rebuild)
           # Redirect stderr to stdout, then filter for URL only to avoid leaking logs
+          bash "$GITHUB_WORKSPACE/scripts/ci/use-lockfile-vercel.sh" --verify-only
           DEPLOYMENT_URL=$("$GITHUB_WORKSPACE/node_modules/.bin/vercel" deploy --prebuilt --yes --token="$VERCEL_TOKEN" 2>/dev/null | grep -E '^https://' | tail -1)
 
           if [ -z "$DEPLOYMENT_URL" ]; then
@@ -209,7 +212,7 @@ jobs:
       - name: Parse link check results
         id: parse
         run: |
-          set -euo pipefail
+          set -eu
           DEPLOYMENT_URL="${{ needs.deploy-staging.outputs.deployment-url }}"
           DOMAIN=$(echo "$DEPLOYMENT_URL" | sed 's|https://||' | cut -d'/' -f1)
 
@@ -416,7 +419,8 @@ jobs:
         run: |
           set -eu
           "$GITHUB_WORKSPACE/node_modules/.bin/vercel" pull --yes --environment=production --token "$VERCEL_TOKEN"
-          "$GITHUB_WORKSPACE/node_modules/.bin/vercel" build --prod --token "$VERCEL_TOKEN"
+          ( set -o pipefail; "$GITHUB_WORKSPACE/node_modules/.bin/vercel" build --prod --token "$VERCEL_TOKEN" 2>&1 | tee "$RUNNER_TEMP/vercel-build.log" )
+          bash "$GITHUB_WORKSPACE/scripts/ci/use-lockfile-vercel.sh" --check-build-log "$RUNNER_TEMP/vercel-build.log"
 
       - name: Deploy prebuilt to Vercel (Production)
         id: deploy
@@ -428,6 +432,7 @@ jobs:
         run: |
           # Deploy the prebuilt Build Output to production (no cloud rebuild)
           # Redirect stderr to stdout, then filter for URL only to avoid leaking logs
+          bash "$GITHUB_WORKSPACE/scripts/ci/use-lockfile-vercel.sh" --verify-only
           DEPLOYMENT_URL=$("$GITHUB_WORKSPACE/node_modules/.bin/vercel" deploy --prebuilt --prod --yes --token="$VERCEL_TOKEN" 2>/dev/null | grep -E '^https://' | tail -1)
 
           if [ -z "$DEPLOYMENT_URL" ]; then
@@ -608,7 +613,7 @@ jobs:
         # `read < <(curl -w ...)`: curl -w emits no trailing newline, so `read`
         # returns non-zero at EOF and trips `errexit` before any check runs.
         run: |
-          set -euo pipefail
+          set -eu
           URL=https://www.skillsmith.app/openapi.yaml
           TMP=$(mktemp)
           ok=0

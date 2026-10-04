@@ -233,7 +233,8 @@ jobs:
           # VERCEL_TOKEN/ORG_ID/PROJECT_ID are read from the step env (not passed
           # as --token) so the token never enters the runner process table (governance Low #5).
           "$GITHUB_WORKSPACE/node_modules/.bin/vercel" pull --yes --environment=preview
-          "$GITHUB_WORKSPACE/node_modules/.bin/vercel" build
+          ( set -o pipefail; "$GITHUB_WORKSPACE/node_modules/.bin/vercel" build 2>&1 | tee "$RUNNER_TEMP/vercel-build.log" )
+          bash "$GITHUB_WORKSPACE/scripts/ci/use-lockfile-vercel.sh" --check-build-log "$RUNNER_TEMP/vercel-build.log"
 
       - name: Start vercel dev (Astro SSR + edge functions)
         working-directory: packages/website
