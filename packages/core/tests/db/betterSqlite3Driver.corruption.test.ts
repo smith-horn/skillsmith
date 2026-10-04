@@ -59,9 +59,17 @@
  * Those assertions are the discriminating ones, not decoration: a refusal that
  * still touched the bytes would pass a throw-only test.
  *
- * Every test opens a REAL file. The sibling `betterSqlite3Driver.test.ts` passes
- * `:memory:` at all nine of its open sites, which is why a missing corruption
- * probe reached production unnoticed.
+ * Every test here opens a REAL file, and that is the whole reason this file
+ * exists alongside `betterSqlite3Driver.test.ts`. That sibling exercises the
+ * driver entirely in memory, and an in-memory open cannot reach the file-open
+ * path at all — so no amount of coverage there could have caught a missing
+ * corruption probe, and none did.
+ *
+ * Deliberately no count of the sibling's open sites: that is a census of
+ * another file, which goes stale the moment anyone adds a test to it. The
+ * paragraph above this one carried five successive wrong counts for exactly
+ * that reason, and the commit that removed them left this one four lines
+ * below — the instance fixed, the mechanism intact.
  */
 
 import { describe, it, expect, afterEach, beforeEach } from 'vitest'
