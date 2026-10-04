@@ -662,10 +662,36 @@ describe('arm 1 — .husky/post-merge: the bridge-probe invocation is outside th
     }
     expect(closeIdx).toBeGreaterThan(openIdx)
 
-    const probeIdx = lines.findIndex((l) => l.includes('ruflo-bridge-probe.mjs'))
-    expect(probeIdx).toBeGreaterThan(-1)
-    const isInsideConditional = probeIdx > openIdx && probeIdx < closeIdx
-    expect(isInsideConditional).toBe(false)
+    // Assert an EXECUTABLE invocation, not a filename mention. The previous
+    // form used `l.includes('ruflo-bridge-probe.mjs')`, which matches the
+    // `[ -f … ]` guard in the block's own `if` condition — so neutering both
+    // lines that actually run the probe left this arm green, confirmed by
+    // experiment. That pinned the position of a string rather than the
+    // existence of an invocation.
+    //
+    // Execution here goes through the command variable. A line that references
+    // it WITHOUT being an assignment to it is a command position; an
+    // assignment, a `[ -f … ]` test and a comment are not.
+    const CMD_VAR = '_RUFLO_BRIDGE_CMD'
+    const execIdxs = lines
+      .map((l, i) => ({ l, i }))
+      .filter(({ l }) => {
+        const body = l.replace(/#.*$/, '')
+        if (!body.includes(`$${CMD_VAR}`)) return false
+        return !new RegExp(`^\\s*${CMD_VAR}=`).test(body)
+      })
+      .map(({ i }) => i)
+
+    // At least one real invocation must exist at all.
+    expect(execIdxs.length).toBeGreaterThan(0)
+
+    // Every invocation must sit outside the lockfile conditional and before
+    // the hook's final `exit 0` — "at least one is fine" would let a second,
+    // nested copy hide inside the gate.
+    for (const idx of execIdxs) {
+      expect(idx > openIdx && idx < closeIdx).toBe(false)
+    }
+    const probeIdx = execIdxs[0]
 
     // The probe invocation must precede the hook's final `exit 0`.
     const exitIdx = lines.findIndex((l) => /^exit 0\s*$/.test(l))
@@ -747,5 +773,47 @@ describe('arm 2b — resolveMainRepoKey is independent of the calling cwd (never
     expect(resolved).not.toBe(toplevel)
     expect(resolved).toBe(mainRepo)
     expect(toplevel).toBe(linkedWorktree)
+  })
+})
+
+// ── The WRITER's own orchestration, not a reimplementation of it ────────────
+//
+// The real-concurrency worker calls the production lock primitives
+// (acquireBridgeLock, writeEntryIfOwned) but supplies its own acquire/probe/
+// write ordering, comparing a "correct" mode against a "buggy" one. That
+// proves the primitives behave under two orchestrations; it does NOT pin which
+// orchestration the writer chose, because the worker never calls the writer.
+// A cross-family code gate found exactly that gap.
+//
+// This arm closes it where the ordering actually lives: in the writer's source.
+// The invariant D1.3 states is that the lock is taken BEFORE the probe and held
+// through classification and the write — so acquire must precede the first
+// status call, the write must follow both, and the release must come last.
+describe("the writer's orchestration: lock before probe, held through the write", () => {
+  it('acquires the lock before probing, writes inside it, and releases last', () => {
+    const src = readFileSync(join(REPO_ROOT, 'scripts', 'ruflo-bridge-probe.mjs'), 'utf8').split(
+      '\n'
+    )
+
+    // Call sites only — the import list names the same symbols without parens.
+    const idxOf = (needle: string): number =>
+      src.findIndex((l) => !l.trim().startsWith('//') && l.includes(needle))
+
+    const acquireIdx = idxOf('acquireBridgeLock(')
+    const probeIdx = idxOf('callMemoryBridgeStatus(FIRST_CALL_MS)')
+    const writeIdx = idxOf('writeEntryIfOwned(')
+    const releaseIdx = idxOf('releaseBridgeLock(')
+
+    expect(acquireIdx).toBeGreaterThan(-1)
+    expect(probeIdx).toBeGreaterThan(-1)
+    expect(writeIdx).toBeGreaterThan(-1)
+    expect(releaseIdx).toBeGreaterThan(-1)
+
+    // The ordering IS the invariant. Mutation that must fail this arm: move the
+    // acquire below the probe, which is the narrowed-lock design the worker's
+    // "buggy" mode models but which nothing previously forbade in the writer.
+    expect(acquireIdx).toBeLessThan(probeIdx)
+    expect(probeIdx).toBeLessThan(writeIdx)
+    expect(writeIdx).toBeLessThan(releaseIdx)
   })
 })

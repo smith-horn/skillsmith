@@ -269,23 +269,46 @@ export async function runQuery(args: CliArgs): Promise<PrimingResult> {
   // appends it to the probe's own log, it just never renders.
   let bridgeLine = ''
   if (process.env.SKILLSMITH_RUFLO_VERDICT_DISABLE !== '1') {
+    // Reader-axis failures RENDER; they do not vanish. An earlier revision
+    // skipped the line entirely when the key resolved null, and swallowed any
+    // throw in a bare fail-soft catch — two silent paths, which the code gate
+    // found as its fifth finding. Silence is the exact state this banner
+    // exists to remove, so a reader that cannot do its job says so.
+    //
+    // Shape: the fallible work produces EITHER a rendered line OR a named
+    // fault, and the decision to render happens outside the try, so a throw
+    // while rendering cannot also swallow the fault it produced.
+    let computed = ''
+    let fault = ''
     try {
       const bridgeKey = resolveMainRepoKey(args.cwd)
-      if (bridgeKey) {
-        const rendered = renderBridgeBanner(readBridgeEntryResult(bridgeKey), { now })
-        if (rendered) {
-          const shadow = process.env[BRIDGE_VERDICT_SHADOW_VAR] !== '0'
-          if (shadow) {
-            const logPath = resolveBridgeLogPath(now)
-            mkdirSync(dirname(logPath), { recursive: true })
-            appendFileSync(logPath, `${now.toISOString()} [shadow] would render:\n${rendered}\n`)
-          } else {
-            bridgeLine = rendered
-          }
-        }
+      if (!bridgeKey) {
+        fault = 'the host repo key could not be resolved, so no verdict could be read'
+      } else {
+        computed = renderBridgeBanner(readBridgeEntryResult(bridgeKey), { now })
       }
-    } catch {
-      /* fail-soft — must never crash the priming hook */
+    } catch (e) {
+      const msg = e instanceof Error ? e.message : String(e)
+      fault = `the bridge-verdict reader failed: ${msg}`
+    }
+    const rendered = fault
+      ? `**[ruflo-bridge]** verdict not evaluated: ${fault} — run: node scripts/ruflo-bridge-probe.mjs — disable: SKILLSMITH_RUFLO_VERDICT_DISABLE=1`
+      : computed
+    if (rendered) {
+      const shadow = process.env[BRIDGE_VERDICT_SHADOW_VAR] !== '0'
+      if (shadow) {
+        // Best-effort only: a failure to LOG the shadow line must not become a
+        // second silent path, and must not crash the hook either.
+        try {
+          const logPath = resolveBridgeLogPath(now)
+          mkdirSync(dirname(logPath), { recursive: true })
+          appendFileSync(logPath, `${now.toISOString()} [shadow] would render:\n${rendered}\n`)
+        } catch {
+          /* logging is diagnostic; never block the hook on it */
+        }
+      } else {
+        bridgeLine = rendered
+      }
     }
   }
 

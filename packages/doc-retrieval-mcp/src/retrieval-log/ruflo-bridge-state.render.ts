@@ -109,6 +109,17 @@ export function renderBridgeVerdictLine(
       now
     )
   }
+  if (entry.verdict === 'unverified') {
+    // Deliberately NOT routed through detectorNotEvaluatedText: that text
+    // sends the reader to the payload detector, which is the wrong remedy for
+    // an identity failure and was the code gate's Medium finding. The reason
+    // string carries which of identity or freshness was not established.
+    return line(
+      `bridge UNVERIFIED: ${entry.reason ?? 'identity or freshness could not be corroborated'}`,
+      `inspect the store and authority file, then re-run: ${PROBE_COMMAND}`,
+      now
+    )
+  }
   if (entry.verdict === 'degraded') {
     return line(
       `bridge degraded: embeddingBackend '${entry.observedBackend ?? 'mock'}' (${ageSuffix})`,

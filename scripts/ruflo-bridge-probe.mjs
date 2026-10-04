@@ -40,6 +40,7 @@ import { dirname, join } from 'node:path'
 import { fileURLToPath } from 'node:url'
 
 import { bridgeVerdict, DERIVED_FROM } from './lib/ruflo-bridge-verdict.mjs'
+import { checkIndependentIdentity } from './ruflo-bridge-probe.identity.mjs'
 import {
   acquireBridgeLock,
   BRIDGE_PROBE_DISABLE_VAR,
@@ -64,6 +65,22 @@ const CONTAINER_NAME = 'skillsmith-ruflo-1'
 const SERVICE_CWD = '/srv/ruflo'
 const AGENTDB_DB_PATH = `${SERVICE_CWD}/.swarm/agentdb-memory.db`
 const AUTHORITY_FILE = join(process.env.HOME ?? '', '.skillsmith', 'ruflo-store.json')
+
+// ---- Deadlines, and why these numbers ------------------------------------
+// The invariant is that this writer never terminates without having written
+// something. The hook SIGTERMs at 60 s and SIGKILLs at 65 s, and SIGKILL
+// cannot write — so every internal deadline plus classification plus the
+// write must finish inside 60 s with margin. An earlier revision spent
+// 55 s + 10 s on the two status calls alone, which exceeded the SIGTERM
+// before classification began: the code gate found it as its second blocker.
+//
+// Budget: 30 s first call + 8 s second call + ~10 s for D4's own docker
+// probes (several 5 s ceilings, not all on the same path) = ~48 s, leaving
+// ~12 s for classification and the atomic write. The relationship that must
+// hold is FIRST + SECOND + D4 + write < SIGTERM < SIGKILL < stale-lock
+// threshold; changing any one of them requires re-checking the chain.
+const FIRST_CALL_MS = 30_000
+const SECOND_CALL_MS = 8_000
 
 // ---- Host-resolved key (D3) -----------------------------------------------
 // Identical derivation to retrieval-autoheal.sh's MAIN_REPO resolution: the
@@ -202,175 +219,9 @@ function callMemoryBridgeStatus(timeoutMs) {
 
 // ---- D4: independent identity + write-free freshness fallback -------------
 //
-// `memory_bridge_status` is a self-report from the layer that was lying
-// (ADR-170), so a cached or latched `healthy` is a plausible answer no enum
-// value alone can express. This check adds identity evidence the serving
-// layer cannot fabricate (the fd-resolved store's own generation, read
-// independently of the server's self-report) plus a write-free freshness
-// signal (a monotonic counter checked across two calls in one probe).
-//
-// The nonce-challenge design the spec names as primary (write a random value
-// into the store and require it echoed back) needs a write to the served
-// store, which is gated on the owner's ingestion consent (Checkpoint 7, not
-// taken here) — this implements ONLY the write-free fallback the spec names
-// for that case, and states its weakness rather than papering over it: a
-// counter that merely stays the same across two close-together calls is not
-// proof of freshness, only an absence of the one failure mode (a visible
-// decrease) this check can actually rule out.
-//
-// Fails OPEN: any error in this check (docker unavailable, no authority
-// file, parsing failure) is logged and otherwise ignored — a check that
-// cannot run is not the same as a check that found a problem, and promoting
-// "inconclusive" to "wrong" would make this a second point of failure for
-// the thing it exists to make more trustworthy.
-function checkIndependentIdentity(firstPayload, secondTotalEntries, log) {
-  try {
-    const authorityRaw = readFileSync(AUTHORITY_FILE, 'utf8')
-    const authority = JSON.parse(authorityRaw)
-    const expectedGeneration = authority.generationUuid
-    if (!expectedGeneration) {
-      log('D4: authority file has no generationUuid — identity check skipped')
-      return null
-    }
-    // Select the serving process by the descriptor it HOLDS, not by the order
-    // its command line happens to appear in.
-    //
-    // Measured 2026-10-03, and the reason this check previously protected
-    // nothing: six pids in this container satisfy a naive
-    // cli.js+mcp+start cmdline predicate, and pid 1 is one of them, because
-    // docker-init's own command line embeds the server's. /proc/[0-9]* globs
-    // lexicographically, so pid 1 sorts first and a .find() selected the
-    // wrapper — which holds no database descriptor at all. The check then
-    // reported "no fd to inspect" and failed open on every single run.
-    //
-    // That artifact also invited a wrong explanation: that sql.js loads the
-    // database into memory and keeps no descriptor. It does keep one. Of
-    // those six pids, exactly one held agentdb-memory.db together with its
-    // -wal and -shm. Scanning for the descriptor first is what makes this
-    // check able to find its subject at all.
-    //
-    // Ambiguity is reported rather than guessed past: the container
-    // accumulates orphaned server processes, so "more than one holder" is a
-    // state that really occurs, and picking one arbitrarily is how a wrong
-    // instrument returns a plausible answer instead of failing.
-    const holderScan = execFileSync(
-      'docker',
-      [
-        'exec',
-        CONTAINER_NAME,
-        'sh',
-        '-c',
-        'for p in /proc/[0-9]*; do pid=${p#/proc/}; ' +
-          'c=$(tr "\\0" " " < "$p/cmdline" 2>/dev/null); ' +
-          'case "$c" in *cli.js*mcp*start*) ' +
-          'for f in "$p"/fd/*; do tgt=$(readlink "$f" 2>/dev/null); ' +
-          'case "$tgt" in *agentdb-memory.db) echo "$pid $tgt";; esac; done;; esac; done',
-      ],
-      { encoding: 'utf8', timeout: 5000 }
-    )
-    const holders = holderScan
-      .split('\n')
-      .map((l) => l.trim())
-      .filter(Boolean)
-    if (holders.length === 0) {
-      log(
-        'D4: no server process holds an open fd to agentdb-memory.db — identity check skipped (genuinely no evidence, not a wrong subject)'
-      )
-      return null
-    }
-    // Several holders is the NORMAL state, not an anomaly, and an earlier
-    // revision of this check treated it as a finding — which rendered a loud
-    // false alarm on a healthy machine, measured 2026-10-03 (pids 2809 and
-    // 502). Two reasons it is normal: this probe spawns its own server, which
-    // opens the store, and the container accumulates orphaned servers that
-    // keep their descriptors. A check that fires every session is one the
-    // reader learns to ignore, which costs more than the check is worth.
-    //
-    // So the question is not WHICH process is the serving one — that is
-    // unanswerable from a descriptor scan and, more importantly, not the
-    // question D4 asks. D4 asks whether the store being served is the
-    // authoritative one. That is answerable without identifying a unique
-    // holder: require every holder to resolve to the same device:inode as
-    // the authoritative path, and every holder's store generation to match
-    // the authority file. Agreement across all holders confirms identity;
-    // disagreement names the divergent process and is a real finding.
-    const holderPids = holders.map((h) => h.split(' ')[0])
-    const openAgentDb = holders[0].split(' ')[1]
-    log(
-      `D4: ${holders.length} process(es) hold the store open (pid(s) ${holderPids.join(', ')}); requiring all to agree with the authority`
-    )
-    const statOpen = execFileSync(
-      'docker',
-      ['exec', CONTAINER_NAME, 'stat', '-c', '%d:%i', openAgentDb],
-      { encoding: 'utf8', timeout: 5000 }
-    ).trim()
-    const statExpected = execFileSync(
-      'docker',
-      ['exec', CONTAINER_NAME, 'stat', '-c', '%d:%i', AGENTDB_DB_PATH],
-      { encoding: 'utf8', timeout: 5000 }
-    ).trim()
-    if (statOpen !== statExpected) {
-      return `the server's open agentdb-memory.db fd resolves to device:inode ${statOpen}, which differs from ${AGENTDB_DB_PATH}'s own ${statExpected} — a copied or substituted store`
-    }
-    // Every holder must resolve to that same inode. One holder agreeing is
-    // not evidence about the others, and a divergent holder is exactly the
-    // substituted-store case this check exists to catch.
-    for (const hp of holderPids) {
-      const hTargets = execFileSync(
-        'docker',
-        [
-          'exec',
-          CONTAINER_NAME,
-          'sh',
-          '-c',
-          `for f in /proc/${hp}/fd/*; do tgt=$(readlink "$f" 2>/dev/null); case "$tgt" in *agentdb-memory.db) echo "$tgt";; esac; done`,
-        ],
-        { encoding: 'utf8', timeout: 5000 }
-      )
-      for (const tgt of hTargets
-        .split('\n')
-        .map((x) => x.trim())
-        .filter(Boolean)) {
-        const s = execFileSync('docker', ['exec', CONTAINER_NAME, 'stat', '-c', '%d:%i', tgt], {
-          encoding: 'utf8',
-          timeout: 5000,
-        }).trim()
-        if (s !== statExpected) {
-          return `pid ${hp} holds a store at device:inode ${s}, which differs from ${AGENTDB_DB_PATH}'s own ${statExpected} — two processes are serving different stores, so a healthy verdict is not attributable`
-        }
-      }
-    }
-    const genRaw = execFileSync(
-      'docker',
-      [
-        'exec',
-        CONTAINER_NAME,
-        'node',
-        '-e',
-        `const D=require('/opt/ruflo-seed/node_modules/better-sqlite3/lib/index.js');const db=new D(${JSON.stringify(openAgentDb)},{readonly:true});const r=db.prepare('SELECT id FROM store_generation').get();process.stdout.write(r?r.id:'')`,
-      ],
-      { encoding: 'utf8', timeout: 5000 }
-    ).trim()
-    if (genRaw && genRaw !== expectedGeneration) {
-      return `the fd-resolved store's generation (${genRaw.slice(0, 12)}...) does not match the authority file's (${expectedGeneration.slice(0, 12)}...) — a copied generation marker pointing at the wrong store`
-    }
-    // Write-free freshness fallback: a counter that visibly DECREASED between
-    // the two calls this probe made is impossible for a legitimate append-
-    // mostly store and is the one thing this weaker check can rule out.
-    const firstTotal = firstPayload?.agentdb?.totalEntries
-    if (
-      typeof firstTotal === 'number' &&
-      typeof secondTotalEntries === 'number' &&
-      secondTotalEntries < firstTotal
-    ) {
-      return `agentdb.totalEntries decreased from ${firstTotal} to ${secondTotalEntries} across two calls in one probe — a cached or inconsistent answer`
-    }
-    return null
-  } catch (e) {
-    log(`D4: identity check inconclusive (${e.message}) — trusting the detector's own verdict`)
-    return null
-  }
-}
+// D4's identity check lives in ./ruflo-bridge-probe.identity.mjs — split out
+// when the three-way outcome crossed the 500-line gate. Its constants are
+// passed in so there is exactly one definition of each.
 
 // ---- main -------------------------------------------------------------
 
@@ -398,7 +249,7 @@ async function main() {
     }
 
     log('probing memory_bridge_status via the launcher')
-    const first = await callMemoryBridgeStatus(55_000)
+    const first = await callMemoryBridgeStatus(FIRST_CALL_MS)
     let entry
     let exitCode = 0
 
@@ -429,13 +280,29 @@ async function main() {
       let finalVerdict = verdict.verdict
       let finalReason = verdict.reason
       if (finalVerdict === 'healthy' || finalVerdict === 'degraded') {
-        const second = await callMemoryBridgeStatus(10_000)
+        const second = await callMemoryBridgeStatus(SECOND_CALL_MS)
         const secondTotal = second.ok ? second.payload?.agentdb?.totalEntries : undefined
-        const d4Finding = checkIndependentIdentity(first.payload, secondTotal, log)
-        if (d4Finding) {
-          log(`D4 finding: ${d4Finding}`)
-          finalVerdict = 'malformed'
-          finalReason = `independent identity/freshness check failed: ${d4Finding}`
+        const d4 = checkIndependentIdentity(first.payload, secondTotal, log, {
+          execFileSync,
+          readFileSync,
+          CONTAINER_NAME,
+          AGENTDB_DB_PATH,
+          AUTHORITY_FILE,
+        })
+        // Three outcomes, never two. 'contradicted' is an active problem and
+        // reads as degraded; 'inconclusive' is the could-not-ask case and gets
+        // its OWN verdict rather than passing as healthy — collapsing it into
+        // either neighbour is what let a cached answer render nothing.
+        // It is deliberately NOT the detector's 'malformed', which means the
+        // payload contradicted itself and carries a different remedy.
+        if (d4.status === 'contradicted') {
+          log(`D4 contradicted: ${d4.detail}`)
+          finalVerdict = 'degraded'
+          finalReason = `the served store contradicts the authority: ${d4.detail}`
+        } else if (d4.status === 'inconclusive') {
+          log(`D4 inconclusive: ${d4.detail}`)
+          finalVerdict = 'unverified'
+          finalReason = `backend read clean (${verdict.reason}) but could not be corroborated: ${d4.detail}`
         }
       }
 

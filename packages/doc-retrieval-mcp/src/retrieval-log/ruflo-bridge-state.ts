@@ -119,6 +119,12 @@ export function hasExpectedByPassed(now: Date): boolean {
 export const KNOWN_VERDICTS = [
   'healthy',
   'degraded',
+  // Written by the probe, not by the detector: the backend read clean but
+  // identity or freshness could not be corroborated. Its own token because
+  // "could not ask" is not "healthy" and its remedy (inspect the store and
+  // the authority file) differs from the detector's 'malformed' (re-run the
+  // detector against the payload).
+  'unverified',
   'not-evaluated',
   'malformed',
   'unrecognized',
@@ -291,10 +297,49 @@ function maybeReclaimStale(lockDir: string, staleMs: number): void {
   if (ageMs <= staleMs) return
   const owner = readOwner(lockDir)
   if (!owner || isProcessAlive(owner.pid)) return // can't verify liveness, or still alive — never reclaim
+
+  // Rename-then-validate, because read-then-delete is a TOCTOU the code gate
+  // found: between reading the owner above and removing the directory, another
+  // contender can reclaim the lock and install its own LIVE one, and the
+  // delete then destroys that replacement rather than the stale holder we
+  // judged.
+  //
+  // A rename is atomic, so of two contenders exactly one wins it and the loser
+  // gets ENOENT instead of deleting a lock it never judged. That alone does not
+  // close the replacement case — we could still have moved a live replacement
+  // rather than the stale holder — so the moved directory is validated in
+  // quarantine, where no other caller can reach it, and **restored** if it
+  // turns out not to be the holder we decided about. A holder whose lock is
+  // briefly absent fails safe: its own pre-rename ownership check reads no
+  // owner and aborts the write, which is the direction we want it to err in.
+  const quarantine = `${lockDir}.stale.${process.pid}.${Date.now().toString(36)}`
   try {
-    rmSync(lockDir, { recursive: true, force: true })
+    renameSync(lockDir, quarantine)
   } catch {
-    // another caller may have reclaimed it first — fine, the next loop retries mkdir
+    return // another caller moved or removed it first — the next loop retries mkdir
+  }
+  const moved = readOwner(quarantine)
+  if (moved && moved.pid !== owner.pid) {
+    // We moved a replacement, not the stale holder. Put it back and leave the
+    // field to whoever owns it now.
+    try {
+      renameSync(quarantine, lockDir)
+    } catch {
+      // Restore lost a race against a fresh mkdir. The live path is occupied
+      // again either way, so dropping the quarantined copy is correct.
+      try {
+        rmSync(quarantine, { recursive: true, force: true })
+      } catch {
+        /* nothing further to do — the next loop retries mkdir */
+      }
+    }
+    return
+  }
+  try {
+    rmSync(quarantine, { recursive: true, force: true })
+  } catch {
+    // quarantined and out of the live path; a leftover directory there blocks
+    // nothing, and the next loop retries mkdir regardless
   }
 }
 
