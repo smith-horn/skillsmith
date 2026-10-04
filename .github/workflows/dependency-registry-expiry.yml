@@ -10,9 +10,13 @@
 # exits with the reconcile's status instead. After the expiry check it reconciles the
 # acceptances against `npm audit --json --package-lock-only` (scripts/
 # check-dependency-registry.mjs --reconcile-audit): an acceptance whose advisory
-# is absent or belongs to another package, and any audit advisory with no
-# acceptance, are failures reported in the same issue. A missing audit report
-# is a failure, never a clean result.
+# is absent, belongs to another package or has another severity is a failure.
+# An audit advisory with no acceptance is a failure too, unless an install npm
+# reports as affected by it (the report's `nodes`, looked up in
+# package-lock.json) is a production install; then it is printed as
+# informational and left to the production audit gate. Affected installs that
+# cannot be determined fail closed. Failures are reported in the same issue. A
+# missing audit report is a failure, never a clean result.
 #
 # No Docker, no `npm ci` and no `needs: docker-build`: this runs
 # scripts/check-dependency-registry.mjs, whose import closure is node builtins

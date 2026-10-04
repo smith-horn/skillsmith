@@ -10,38 +10,97 @@
  * Fails closed: an audit file that is unreadable, not JSON, not the v2 report
  * shape, or that carries an `error` object is a failure, never a clean result.
  *
- * Scope (ADR-176): the registry records DEV-scope acceptances; the production
- * gate (`npm audit --omit=dev`) is separate. An audit advisory with no acceptance
- * fails here unless its package has a production install in package-lock.json,
- * in which case it is printed as informational. A package the lockfile cannot
- * place (absent, or an unusable lockfile) is never treated as production.
+ * Scope (ADR-176, SMI-6971): the registry records DEV-scope acceptances; the
+ * production gate (`npm audit --omit=dev`) is separate. An unaccepted advisory
+ * is printed as informational instead of failing ONLY when an install npm
+ * reports as affected by it is a production install (not `dev`, not
+ * `devOptional`), because only then does the production gate, which audits
+ * production installs, see it. The package NAME is never consulted: a
+ * production copy npm does not report as affected proves nothing.
+ *
+ * Affected installs are the report's `vulnerabilities[<pkg>].nodes` (lockfile
+ * paths), looked up in package-lock.json's `packages`. `nodes` is per PACKAGE,
+ * the union over every cause in that entry's `via`, so it pins installs to one
+ * advisory only when that advisory is the entry's sole cause or every affected
+ * install has the same scope. Every other case fails closed: no usable `nodes`,
+ * an affected path absent from the lockfile, an unusable lockfile, or a mix of
+ * production and dev installs that cannot be attributed to this advisory.
  */
 
 import { readFileSync } from 'node:fs'
 import { join } from 'node:path'
 import { REGISTRY_PATH } from './audit-dependency-registry-helpers.mjs'
-import { lockOccurrences } from './audit-dependency-registry-fields.mjs'
 
 const GHSA_IN_URL = /GHSA-[a-z0-9]{4}-[a-z0-9]{4}-[a-z0-9]{4}/
 const f = (message, fix) => ({ severity: 'fail', message, fix })
 const info = (message) => ({ severity: 'info', message })
 const key = (id, pkg) => `${id}\u0000${pkg}`
+const isProdInstall = (entry) => entry.dev !== true && entry.devOptional !== true
 
-/** 'production' (some non-dev install), 'dev' (every install dev), or 'unknown' (cannot be placed). */
-function scopeOf(lock, pkg) {
+/** The advisory id of an object `via` item: the GHSA in `url`, else `src:<source>`, else null. */
+function advisoryId(item) {
+  const m = typeof item.url === 'string' ? GHSA_IN_URL.exec(item.url) : null
+  return m ? m[0] : item.source !== undefined ? `src:${item.source}` : null
+}
+
+/**
+ * The affected installs npm reports for package entry `v`, and whether advisory
+ * `id` is that entry's only cause. `nodes` is null when absent, empty, or not
+ * all non-empty strings.
+ */
+function affectedBy(v, id) {
+  const usable =
+    !!v &&
+    typeof v === 'object' &&
+    Array.isArray(v.nodes) &&
+    v.nodes.length > 0 &&
+    v.nodes.every((n) => typeof n === 'string' && n !== '')
+  const sole =
+    !!v &&
+    typeof v === 'object' &&
+    Array.isArray(v.via) &&
+    v.via.every((x) => x !== null && typeof x === 'object' && advisoryId(x) === id)
+  return { nodes: usable ? [...v.nodes] : null, sole }
+}
+
+/**
+ * Scope of one unaccepted advisory record, from the installs npm reports as affected.
+ * @returns {{scope: 'production'|'dev'|'unknown', prod?: string[], why?: string}}
+ */
+function scopeOf(lock, e) {
+  const unknown = (why) => ({ scope: 'unknown', why })
   if (!lock || typeof lock !== 'object' || !lock.packages || typeof lock.packages !== 'object') {
-    return 'unknown'
+    return unknown('package-lock.json is missing or unusable')
   }
-  const occ = lockOccurrences(lock, pkg)
-  if (occ.length === 0) return 'unknown'
-  return occ.some((o) => !o.dev) ? 'production' : 'dev'
+  if (e.nodes === null) {
+    return unknown(
+      `npm audit reports no usable "nodes" for ${e.pkg}, so the affected installs could not be determined`
+    )
+  }
+  const prod = []
+  for (const path of e.nodes) {
+    const entry = Object.hasOwn(lock.packages, path) ? lock.packages[path] : undefined
+    if (!entry || typeof entry !== 'object') {
+      return unknown(
+        `affected install "${path}" is not in package-lock.json, so the affected installs could not be determined`
+      )
+    }
+    if (isProdInstall(entry)) prod.push(path)
+  }
+  if (prod.length === 0) return { scope: 'dev' }
+  if (prod.length === e.nodes.length || e.sole) return { scope: 'production', prod }
+  return unknown(
+    `npm reports ${e.pkg}'s affected installs as one set across several causes, some production and some dev, so the installs this advisory affects could not be determined`
+  )
 }
 
 /**
  * Direct advisories in an npm audit v2 report: one entry per object `via` item
  * (string `via` items are transitive links, not advisories). The id is the GHSA
- * in `url`, else `src:<source>`; an item with neither is unusable.
- * @returns {{problem: string|null, entries: Map<string, {id: string, pkg: string, severity: string}>}}
+ * in `url`, else `src:<source>`; an item with neither is unusable. Each record
+ * carries the `nodes` of its package's own entry, `vulnerabilities[pkg]`, and
+ * `sole`: whether the advisory is that entry's only `via` cause.
+ * @returns {{problem: string|null, entries: Map<string, {id: string, pkg: string, severity: string, nodes: string[]|null, sole: boolean}>}}
  */
 export function reduceAudit(audit) {
   const bad = (problem) => ({ problem, entries: new Map() })
@@ -67,8 +126,7 @@ export function reduceAudit(audit) {
     }
     for (const item of v.via) {
       if (item === null || typeof item !== 'object') continue
-      const m = typeof item.url === 'string' ? GHSA_IN_URL.exec(item.url) : null
-      const id = m ? m[0] : item.source !== undefined ? `src:${item.source}` : null
+      const id = advisoryId(item)
       const pkg = typeof item.name === 'string' && item.name ? item.name : null
       if (id === null || pkg === null || typeof item.severity !== 'string') {
         return bad(`an advisory under "${name}" has no usable id, package or severity`)
@@ -79,7 +137,8 @@ export function reduceAudit(audit) {
           `advisory ${id} (${pkg}) is reported with conflicting severities "${prior.severity}" and "${item.severity}"`
         )
       }
-      entries.set(key(id, pkg), { id, pkg, severity: item.severity })
+      const own = Object.hasOwn(vulns, pkg) ? vulns[pkg] : undefined
+      entries.set(key(id, pkg), { id, pkg, severity: item.severity, ...affectedBy(own, id) })
     }
   }
   return { problem: null, entries }
@@ -135,22 +194,19 @@ export function reconcileAudit(registry, audit, lock) {
   }
   for (const e of entries.values()) {
     if (accepted.has(key(e.id, e.pkg))) continue
-    const scope = scopeOf(lock, e.pkg)
+    const { scope, prod, why } = scopeOf(lock, e)
     if (scope === 'production') {
       out.push(
         info(
-          `Check 76 reconcile (informational): advisory ${e.id} (${e.pkg}, ${e.severity}) has no acceptance; ${e.pkg} has a production install, so it is production scope, outside this registry, and governed by the production audit gate (npm audit --omit=dev)`
+          `Check 76 reconcile (informational): advisory ${e.id} (${e.pkg}, ${e.severity}) has no acceptance; npm audit reports it affecting production install(s) ${prod.join(', ')}, so it is production scope, outside this registry, and governed by the production audit gate (npm audit --omit=dev)`
         )
       )
       continue
     }
-    const why =
-      scope === 'unknown'
-        ? `; ${e.pkg} could not be placed in package-lock.json, so its scope is unknown and it is not treated as production`
-        : ''
+    const tail = why ? `; ${why}; it is not treated as production` : ''
     out.push(
       f(
-        `Check 76 reconcile: unaccepted advisory ${e.id} (${e.pkg}, ${e.severity}) is reported by npm audit and has no acceptance${why}`,
+        `Check 76 reconcile: unaccepted advisory ${e.id} (${e.pkg}, ${e.severity}) is reported by npm audit and has no acceptance${tail}`,
         `Fix it (override or upgrade), or add an acceptance to ${REGISTRY_PATH}`
       )
     )

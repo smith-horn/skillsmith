@@ -7,7 +7,9 @@
  * level and cannot run there). Exits 0 when clean, 1 on any failure or crash, 2 on bad usage.
  *
  * `--reconcile-audit <audit.json>` instead reconciles the registry's acceptances
- * against `npm audit --json --package-lock-only` output (exit 1 on any finding).
+ * against `npm audit --json --package-lock-only` output (exit 1 on any failure;
+ * an unaccepted advisory npm reports affecting a production install is only
+ * informational -- see audit-dependency-registry-reconcile.mjs for the rule).
  */
 import { runDependencyRegistryCli } from './audit-dependency-registry-helpers.mjs'
 import { runReconcileCli } from './audit-dependency-registry-reconcile.mjs'
