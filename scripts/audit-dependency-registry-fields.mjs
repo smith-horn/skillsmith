@@ -13,7 +13,8 @@ import { isAbsolute, join, relative, resolve } from 'node:path'
 import { TEST_PATTERNS } from './ci/source-patterns.mjs'
 
 export const SEVERITIES = Object.freeze(['low', 'moderate', 'high', 'critical'])
-const OWNER_RE = /^[A-Za-z0-9-]+$/
+// GitHub login: 1..39 chars, alphanumeric runs joined by SINGLE hyphens (no leading, trailing or doubled hyphen).
+const OWNER_RE = /^(?=.{1,39}$)[A-Za-z0-9]+(?:-[A-Za-z0-9]+)*$/
 const TRACKING_RE = /^SMI-\d+$/
 
 export const hasOwn = (obj, key) =>
@@ -110,12 +111,25 @@ export function findAmbiguousOverrideKeys(overrides, prefix = []) {
   return bad
 }
 
-/** True iff the lockfile has a `node_modules/<name>` entry at any nesting depth (exact path segments). */
-export function lockHasPackage(lock, name) {
+/** Every lockfile `packages` entry whose path ends in `node_modules/<name>` (exact segment match). */
+export function lockOccurrences(lock, name) {
   const suffix = `/node_modules/${name}`
-  return Object.keys(lock?.packages ?? {}).some(
-    (k) => k === `node_modules/${name}` || k.endsWith(suffix)
-  )
+  return Object.entries(lock?.packages ?? {})
+    .filter(([k]) => k === `node_modules/${name}` || k.endsWith(suffix))
+    .map(([path, e]) => ({ path, dev: e?.dev === true || e?.devOptional === true }))
+}
+
+/**
+ * Why `name` cannot carry a dev-scope acceptance, or null. It must be in the lockfile
+ * and EVERY occurrence must be dev (`dev` or `devOptional`); one production
+ * occurrence is enough to fail, and the message names it.
+ */
+export function lockScopeProblem(lock, name) {
+  const occ = lockOccurrences(lock, name)
+  if (occ.length === 0) return 'is not in package-lock.json'
+  const prod = occ.filter((o) => !o.dev)
+  if (prod.length === 0) return null
+  return `has a production (non-dev) install at ${prod.map((o) => o.path).join(', ')}, so a dev-scope acceptance does not cover it`
 }
 
 /** Why the lockfile cannot be evaluated, or null: `packages` exists only from lockfileVersion 2. */

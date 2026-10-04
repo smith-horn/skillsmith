@@ -38,7 +38,10 @@ const acc = (over: Record<string, unknown> = {}) => ({
 })
 const lockWith = (...names: string[]) => ({
   lockfileVersion: 3,
-  packages: Object.fromEntries(['', ...names].map((n) => [n ? `node_modules/${n}` : '', {}])),
+  // every listed package is a dev install (Check 76 requires an acceptance's package to be dev-only)
+  packages: Object.fromEntries(
+    ['', ...names].map((n) => [n ? `node_modules/${n}` : '', n ? { dev: true } : {}])
+  ),
 })
 
 interface Fx {
@@ -206,6 +209,16 @@ describe('field types (R1-L2)', () => {
 
   it.each(['a b', 'a/b', 'a@b', '@someone', 'a_b'])('owner %j is not a GitHub login', (v) => {
     expect(accFails({ owner: v })).toMatch(/owner .* is not a GitHub login/)
+  })
+  // GitHub login rules: 1..39 chars, alphanumeric, single hyphens only, none leading or trailing.
+  it.each(['-', 'a-', '-a', 'a--b', 'a'.repeat(40), '---', 'a-b-'])(
+    'owner %j breaks a GitHub login rule',
+    (v) => {
+      expect(accFails({ owner: v })).toMatch(/owner .* is not a GitHub login/)
+    }
+  )
+  it.each(['a', 'a-b', 'a-b-c', 'a'.repeat(39), 'A1-b2'])('control: owner %j is valid', (v) => {
+    expect(run({ acceptances: [acc({ owner: v })] }).findings).toEqual([])
   })
   it.each(['wrsmith108', 'a-b', 'A1'])('control: owner %s is accepted', (v) => {
     expect(run({ acceptances: [acc({ owner: v })] }).findings).toEqual([])

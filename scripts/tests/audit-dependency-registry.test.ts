@@ -43,7 +43,10 @@ const acc = (over: Record<string, unknown> = {}) => ({
 })
 const lockWith = (...names: string[]) => ({
   lockfileVersion: 3,
-  packages: Object.fromEntries(['', ...names].map((n) => [n ? `node_modules/${n}` : '', {}])),
+  // every listed package is a dev install (Check 76 requires an acceptance's package to be dev-only)
+  packages: Object.fromEntries(
+    ['', ...names].map((n) => [n ? `node_modules/${n}` : '', n ? { dev: true } : {}])
+  ),
 })
 
 interface Fx {
@@ -346,7 +349,10 @@ describe('raw registry shape and duplicate keys (T24-T26, M2)', () => {
     expect(
       fails(
         evalFx({
-          lock: { lockfileVersion: 3, packages: { 'node_modules/x/node_modules/pkgone': {} } },
+          lock: {
+            lockfileVersion: 3,
+            packages: { 'node_modules/x/node_modules/pkgone': { dev: true } },
+          },
         })
       )
     ).toHaveLength(0)

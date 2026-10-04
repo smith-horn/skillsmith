@@ -6,7 +6,12 @@
 # closes it when the check is clean. Standing R4 "unpinned" warnings are not an
 # expiry signal and are deliberately not listed (they would keep the issue open
 # permanently). The job exits with Check 76's own status, so a lapsed
-# acceptance also shows red in Actions.
+# acceptance also shows red in Actions. After the expiry check it reconciles the
+# acceptances against `npm audit --json --package-lock-only` (scripts/
+# check-dependency-registry.mjs --reconcile-audit): an acceptance whose advisory
+# is absent or belongs to another package, and any audit advisory with no
+# acceptance, are failures reported in the same issue. A missing audit report
+# is a failure, never a clean result.
 #
 # No Docker, no `npm ci` and no `needs: docker-build`: this runs
 # scripts/check-dependency-registry.mjs, whose import closure is node builtins
@@ -54,11 +59,28 @@ jobs:
           CLEAN="$RUNNER_TEMP/check76.clean"
           BODY="$RUNNER_TEMP/check76.body.md"
           TITLE='Dependency registry: acceptances failing or expiring (Check 76)'
+          AUDIT="$RUNNER_TEMP/audit.json"
+          FAIL_MARK=$(printf '\xe2\x9c\x97')
           node scripts/check-dependency-registry.mjs > "$OUT" 2>&1
           RC=$?
+          # Reconcile the acceptances against npm audit. --package-lock-only needs
+          # no node_modules. npm exits non-zero when it FINDS advisories, so its
+          # status is not the signal: the signal is a parseable report, which the
+          # reconcile step validates. No output at all is a failure, never clean.
+          npm audit --json --package-lock-only --offline=false --prefer-offline=false \
+            --registry=https://registry.npmjs.org --userconfig=/dev/null > "$AUDIT" 2> "$RUNNER_TEMP/audit.err"
+          cat "$RUNNER_TEMP/audit.err" >&2
+          if [ -s "$AUDIT" ]; then
+            node scripts/check-dependency-registry.mjs --reconcile-audit "$AUDIT" >> "$OUT" 2>&1
+            REC=$?
+          else
+            echo "::error::npm audit produced no JSON output; the acceptances could not be reconciled"
+            printf '%s Check 76 reconcile: npm audit produced no JSON output\n' "$FAIL_MARK" >> "$OUT"
+            REC=1
+          fi
+          if [ "$RC" -eq 0 ] && [ "$REC" -ne 0 ]; then RC="$REC"; fi
           cat "$OUT"
           sed -e 's/\x1b\[[0-9;]*m//g' "$OUT" > "$CLEAN"
-          FAIL_MARK=$(printf '\xe2\x9c\x97')
           FAILS=$(grep -aF "$FAIL_MARK" "$CLEAN" | grep -a 'Check 76' || true)
           EXPIRING=$(grep -a '^::warning file=.github/dependency-registry.json::' "$CLEAN" | sed -e 's/^::warning file=[^:]*:://' || true)
           # A failed lookup must not read as "no open issue" (that would file a duplicate).

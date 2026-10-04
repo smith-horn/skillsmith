@@ -25,7 +25,7 @@ import {
   hasOwn,
   isNonEmptyString,
   isRegularFile,
-  lockHasPackage,
+  lockScopeProblem,
   lockProblem,
   pinnedByProblem,
   validateAcceptanceTypes,
@@ -125,7 +125,14 @@ function checkOverrides({ pkg, registry }, out) {
     }
     for (const field of ['reason', 'removeWhen']) {
       if (!isNonEmptyString(e[field])) {
-        out.push(f(`Check 76: override "${key}" has an empty or missing "${field}"`))
+        out.push(
+          f(
+            `Check 76: override "${key}" has an empty or missing "${field}"` +
+              (field === 'removeWhen'
+                ? ' (a recorded removal condition; Check 76 checks only that it is present, not whether it holds)'
+                : '')
+          )
+        )
       }
     }
     for (const field of ['crossesMajor', 'introducedBy']) {
@@ -177,11 +184,12 @@ function checkAcceptance(a, ctx, out, windowEntries) {
   if (!hasOwn(TIER_CEILING_DAYS, a.tier)) {
     out.push(f(`Check 76: acceptance ${label} tier must be one of R1, R2, R3, R4`))
   }
-  if (isNonEmptyString(a.package) && !lockHasPackage(lock, a.package)) {
+  const scopeWhy = isNonEmptyString(a.package) ? lockScopeProblem(lock, a.package) : null
+  if (scopeWhy) {
     out.push(
       f(
-        `Check 76: acceptance ${label} names package "${a.package}", which is not in package-lock.json`,
-        'Delete the acceptance if the package is gone, or correct the package name'
+        `Check 76: acceptance ${label} names package "${a.package}", which ${scopeWhy}`,
+        'Delete the acceptance if the package is gone or no longer dev-only, or correct the package name'
       )
     )
   }

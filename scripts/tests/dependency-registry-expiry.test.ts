@@ -85,7 +85,13 @@ describe('executed run of the workflow script (stub node and gh)', () => {
   const FAILED =
     '✗ Check 76: acceptance GHSA-ffff-gggg-hhhh (pkg, tier R2, owner someone) expired 2026-10-01 (UTC). Re-triage.\n'
 
-  function exec(nodeOut: string, nodeRc: number, existing = '', ghFail = '') {
+  function exec(
+    nodeOut: string,
+    nodeRc: number,
+    existing = '',
+    ghFail = '',
+    audit: { out?: string; rec?: string; recRc?: number } = {}
+  ) {
     const dir = mkdtempSync(join(tmpdir(), 'smi6949-expiry-'))
     const bin = join(dir, 'bin')
     mkdirSync(bin)
@@ -94,7 +100,18 @@ describe('executed run of the workflow script (stub node and gh)', () => {
     const ghBody = join(dir, 'gh.body')
     writeFileSync(nodeOutFile, nodeOut)
     writeFileSync(ghLog, '')
-    writeFileSync(join(bin, 'node'), '#!/bin/bash\ncat "$STUB_NODE_OUT"\nexit "$STUB_NODE_RC"\n')
+    // The reconcile invocation is told apart by its flag; every other node call is the expiry check.
+    writeFileSync(
+      join(bin, 'node'),
+      '#!/bin/bash\nfor a in "$@"; do\n  if [ "$a" = "--reconcile-audit" ]; then\n    echo "$*" >> "$NODE_LOG"; printf \'%s\' "$STUB_REC_OUT"; exit "$STUB_REC_RC"\n  fi\ndone\ncat "$STUB_NODE_OUT"\nexit "$STUB_NODE_RC"\n'
+    )
+    writeFileSync(
+      join(bin, 'npm'),
+      '#!/bin/bash\necho "$*" >> "$NODE_LOG"\nprintf \'%s\' "$STUB_AUDIT_OUT"\n'
+    )
+    chmodSync(join(bin, 'npm'), 0o755)
+    const nodeLog = join(dir, 'node.log')
+    writeFileSync(nodeLog, '')
     writeFileSync(
       join(bin, 'gh'),
       `#!/bin/bash
@@ -126,6 +143,10 @@ exit 0
         GITHUB_RUN_ID: '123',
         STUB_NODE_OUT: nodeOutFile,
         STUB_NODE_RC: String(nodeRc),
+        STUB_AUDIT_OUT: audit.out ?? '{"auditReportVersion":2,"vulnerabilities":{}}',
+        STUB_REC_OUT: audit.rec ?? '',
+        STUB_REC_RC: String(audit.recRc ?? 0),
+        NODE_LOG: nodeLog,
         STUB_EXISTING: existing,
         STUB_GH_FAIL: ghFail,
         GH_LOG: ghLog,
@@ -134,7 +155,8 @@ exit 0
     })
     const calls = readFileSync(ghLog, 'utf8').split('\n').filter(Boolean)
     const body = existsSync(ghBody) ? readFileSync(ghBody, 'utf8') : ''
-    return { status: r.status, calls, body, stderr: r.stderr, stdout: r.stdout }
+    const nodeCalls = readFileSync(nodeLog, 'utf8').split('\n').filter(Boolean)
+    return { status: r.status, calls, body, stderr: r.stderr, stdout: r.stdout, nodeCalls }
   }
   const verbs = (calls: string[]) => calls.map((c) => c.split(' ').slice(0, 2).join(' '))
 
@@ -195,6 +217,43 @@ exit 0
     expect(verbs(r.calls)).toContain(cmd)
     expect(r.stdout).toContain(`::error::gh ${cmd} failed`)
   })
+  it('runs npm audit with the pinned flags, then reconciles against the file it wrote', () => {
+    const r = exec(GREEN_R4, 0)
+    const npmCall = r.nodeCalls.find((c) => c.startsWith('audit '))
+    expect(npmCall).toBeDefined()
+    for (const flag of [
+      '--json',
+      '--package-lock-only',
+      '--offline=false',
+      '--prefer-offline=false',
+      '--registry=https://registry.npmjs.org',
+      '--userconfig=/dev/null',
+    ]) {
+      expect(npmCall).toContain(flag)
+    }
+    expect(
+      r.nodeCalls.some((c) =>
+        /^scripts\/check-dependency-registry\.mjs --reconcile-audit \S*audit\.json$/.test(c)
+      )
+    ).toBe(true)
+  })
+  it('a reconcile failure opens the issue naming it and fails the job, though the expiry check passed', () => {
+    const rec =
+      '\u2717 Check 76 reconcile: unaccepted advisory GHSA-aaaa-bbbb-cccc (pkg, high) is reported by npm audit and has no acceptance\n'
+    const r = exec(GREEN_R4, 0, '', '', { rec, recRc: 1 })
+    expect(r.status).toBe(1)
+    expect(verbs(r.calls)).toContain('issue create')
+    expect(r.body).toContain('Failing (every code PR fails')
+    expect(r.body).toContain('unaccepted advisory GHSA-aaaa-bbbb-cccc')
+  })
+  it('npm audit producing no output is a ::error:: and a failing job, never a clean run', () => {
+    const r = exec(GREEN_R4, 0, '', '', { out: '' })
+    expect(r.status).toBe(1)
+    expect(r.stdout).toContain('::error::npm audit produced no JSON output')
+    expect(verbs(r.calls)).toContain('issue create')
+    expect(r.body).toContain('npm audit produced no JSON output')
+    expect(r.nodeCalls.some((c) => c.includes('--reconcile-audit'))).toBe(false)
+  })
   it('a crash with no failure line still opens the issue and says the check did not complete', () => {
     const r = exec('Error: boom\n', 2)
     expect(r.status).toBe(2)
@@ -236,7 +295,18 @@ describe('the REAL script runs with no node_modules on the path (M1)', () => {
       recursive: true,
       filter: (src) => !/[\\/](node_modules|tests)$/.test(src),
     })
-    for (const rel of ['.github/dependency-registry.json', 'package.json', 'package-lock.json']) {
+    // Check 76 verifies each acceptance's `pinnedBy` file exists, so the pinning tests come along.
+    const registry = JSON.parse(
+      readFileSync(join(REPO_ROOT, '.github/dependency-registry.json'), 'utf8')
+    ) as { acceptances: Array<{ pinnedBy?: string }> }
+    const pins = [...new Set(registry.acceptances.flatMap((a) => (a.pinnedBy ? [a.pinnedBy] : [])))]
+    expect(pins.length).toBeGreaterThan(0) // presence: the real registry does pin R4 acceptances
+    for (const rel of [
+      '.github/dependency-registry.json',
+      'package.json',
+      'package-lock.json',
+      ...pins,
+    ]) {
       mkdirSync(dirname(join(dir, rel)), { recursive: true })
       writeFileSync(join(dir, rel), readFileSync(join(REPO_ROOT, rel)))
     }
