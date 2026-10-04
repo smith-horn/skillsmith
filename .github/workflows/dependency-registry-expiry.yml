@@ -2,16 +2,27 @@
 # PRs, so its 14-day expiry warning reaches nobody between PRs and an acceptance
 # can lapse unseen on a quiet week. This daily run re-evaluates the dependency
 # registry and keeps ONE GitHub Issue (label dependency-registry-expiry) open
-# while Check 76 reports a failure or an acceptance inside its warn window, and
-# closes it when the check is clean. Standing R4 "unpinned" warnings are not an
+# while Check 76 reports a failure, an acceptance inside its warn window or an
+# informational production-scope advisory, and closes it only when all three are
+# absent. Standing R4 "unpinned" warnings are not an
 # expiry signal and are deliberately not listed (they would keep the issue open
-# permanently). The job exits with Check 76's own status, so a lapsed
-# acceptance also shows red in Actions. After the expiry check it reconciles the
+# permanently). Informational reconcile lines are listed in their own section.
+# The job exits with Check 76's own status when that failed, so a
+# lapsed acceptance also shows red in Actions; when the expiry check passed it
+# exits with the reconcile's status instead. After the expiry check it reconciles the
 # acceptances against `npm audit --json --package-lock-only` (scripts/
 # check-dependency-registry.mjs --reconcile-audit): an acceptance whose advisory
-# is absent or belongs to another package, and any audit advisory with no
-# acceptance, are failures reported in the same issue. A missing audit report
-# is a failure, never a clean result.
+# is absent, belongs to another package or has another severity is a failure.
+# An audit advisory with no acceptance is a failure too, unless an install npm
+# reports as affected by it (the report's `nodes`, looked up in
+# package-lock.json) is a production install (not `dev: true`; a devOptional install
+# without dev is production, because the gate's --omit=dev audits it); then it is
+# printed as informational and left to the production audit gate, which fails only at
+# high or above. Informational lines do not fail the job, but they keep the daily
+# issue open and are listed in it under "Informational", so a below-high production
+# advisory, which no gate enforces, is visible there. Affected installs that
+# cannot be determined fail closed. Failures are reported in the same issue. A
+# missing audit report is a failure, never a clean result.
 #
 # No Docker, no `npm ci` and no `needs: docker-build`: this runs
 # scripts/check-dependency-registry.mjs, whose import closure is node builtins
@@ -61,6 +72,7 @@ jobs:
           TITLE='Dependency registry: acceptances failing or expiring (Check 76)'
           AUDIT="$RUNNER_TEMP/audit.json"
           FAIL_MARK=$(printf '\xe2\x9c\x97')
+          INFO_MARK=$(printf '\xe2\x84\xb9')
           node scripts/check-dependency-registry.mjs > "$OUT" 2>&1
           RC=$?
           # Reconcile the acceptances against npm audit. --package-lock-only needs
@@ -82,13 +94,14 @@ jobs:
           cat "$OUT"
           sed -e 's/\x1b\[[0-9;]*m//g' "$OUT" > "$CLEAN"
           FAILS=$(grep -aF "$FAIL_MARK" "$CLEAN" | grep -a 'Check 76' || true)
+          INFOS=$(grep -aF "$INFO_MARK" "$CLEAN" | grep -a 'Check 76' || true)
           EXPIRING=$(grep -a '^::warning file=.github/dependency-registry.json::' "$CLEAN" | sed -e 's/^::warning file=[^:]*:://' || true)
           # A failed lookup must not read as "no open issue" (that would file a duplicate).
           if ! EXISTING=$(gh issue list --label "$ISSUE_LABEL" --state open --json number -q '.[0].number // empty'); then
             echo "::error::gh issue list failed; cannot tell whether a tracking issue is open"
             exit 1
           fi
-          if [ -n "$FAILS" ] || [ -n "$EXPIRING" ] || [ "$RC" -ne 0 ]; then
+          if [ -n "$FAILS" ] || [ -n "$EXPIRING" ] || [ -n "$INFOS" ] || [ "$RC" -ne 0 ]; then
             {
               printf 'The scheduled dependency-registry check (audit:standards Check 76) needs attention.\n\n'
               if [ -n "$FAILS" ]; then
@@ -99,6 +112,11 @@ jobs:
               if [ -n "$EXPIRING" ]; then
                 printf '### Expiring within 14 days (UTC)\n\n'
                 printf '%s\n' "$EXPIRING" | sed -e 's/^/- /'
+                printf '\n'
+              fi
+              if [ -n "$INFOS" ]; then
+                printf '### Informational (production scope, below or outside the registry)\n\n'
+                printf '%s\n' "$INFOS" | sed -e 's/^/- /'
                 printf '\n'
               fi
               if [ "$RC" -ne 0 ] && [ -z "$FAILS" ]; then
@@ -120,7 +138,7 @@ jobs:
               }
             fi
           elif [ -n "$EXISTING" ]; then
-            gh issue close "$EXISTING" --comment "Check 76 is clean (no failures, nothing expiring within 14 days) in run ${GITHUB_RUN_ID}." || {
+            gh issue close "$EXISTING" --comment "Check 76 is clean (no failures, nothing expiring within 14 days, no informational advisories) in run ${GITHUB_RUN_ID}." || {
               echo "::error::gh issue close failed"
               exit 1
             }

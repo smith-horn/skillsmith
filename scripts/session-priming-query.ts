@@ -55,9 +55,12 @@ import {
 } from '../packages/doc-retrieval-mcp/src/retrieval-log/mcp-disconnect-state.js'
 import {
   BRIDGE_VERDICT_SHADOW_VAR,
+  LIVENESS_DAYS_VAR,
   readEntryResult as readBridgeEntryResult,
   renderBridgeBanner,
   resolveBridgeLogPath,
+  resolveProbeInstalledAt,
+  STALE_HOURS_VAR,
 } from '../packages/doc-retrieval-mcp/src/retrieval-log/ruflo-bridge-state.js'
 import {
   logRetrievalEvent,
@@ -285,7 +288,26 @@ export async function runQuery(args: CliArgs): Promise<PrimingResult> {
       if (!bridgeKey) {
         fault = 'the host repo key could not be resolved, so no verdict could be read'
       } else {
-        computed = renderBridgeBanner(readBridgeEntryResult(bridgeKey), { now })
+        // SMI-6967 H-1: this checkout's own anchor for the expectedBy gate —
+        // see ruflo-bridge-state.expected-by.ts's doc comment.
+        const installedAt = resolveProbeInstalledAt(bridgeKey, now)
+        // SMI-6967 H-2: both tunables are documented but were never actually
+        // read from the environment — wired here following the reindex
+        // precedent above (same parsing, same fallback-on-garbage behavior,
+        // same precedence: an invalid/garbage value falls through to the
+        // renderer's own default rather than being passed through raw).
+        const staleHoursEnv = Number(process.env[STALE_HOURS_VAR])
+        const staleHours =
+          Number.isFinite(staleHoursEnv) && staleHoursEnv > 0 ? staleHoursEnv : undefined
+        const livenessDaysEnv = Number(process.env[LIVENESS_DAYS_VAR])
+        const livenessDays =
+          Number.isFinite(livenessDaysEnv) && livenessDaysEnv > 0 ? livenessDaysEnv : undefined
+        computed = renderBridgeBanner(readBridgeEntryResult(bridgeKey), {
+          now,
+          installedAt,
+          staleHours,
+          livenessDays,
+        })
       }
     } catch (e) {
       const msg = e instanceof Error ? e.message : String(e)

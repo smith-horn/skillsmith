@@ -13,14 +13,21 @@ import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 
-const { searchMock, logRetrievalEventMock, tmpHolder } = vi.hoisted(() => ({
-  searchMock: vi.fn(),
-  logRetrievalEventMock: vi.fn(),
-  // SMI-4549 Wave 2 — mutable holder so the writer.js mock factory can read
-  // the per-test tmp dir set in beforeEach. vi.hoisted ensures the holder
-  // exists at module load time when vi.mock runs.
-  tmpHolder: { current: '' as string },
-}))
+const { searchMock, logRetrievalEventMock, tmpHolder, bridgeReaderShouldThrow } = vi.hoisted(
+  () => ({
+    searchMock: vi.fn(),
+    logRetrievalEventMock: vi.fn(),
+    // SMI-4549 Wave 2 — mutable holder so the writer.js mock factory can read
+    // the per-test tmp dir set in beforeEach. vi.hoisted ensures the holder
+    // exists at module load time when vi.mock runs.
+    tmpHolder: { current: '' as string },
+    // SMI-6967 M-4 — mutable switch so a single, dedicated test can force
+    // the bridge-verdict reader to throw (session-priming-query.ts's
+    // "the bridge-verdict reader failed: …" fault branch), without any
+    // other test's behavior changing (default false = transparent passthrough).
+    bridgeReaderShouldThrow: { current: false },
+  })
+)
 
 vi.mock('../../packages/doc-retrieval-mcp/src/search.js', () => ({
   search: searchMock,
@@ -36,6 +43,30 @@ vi.mock('../../packages/doc-retrieval-mcp/src/retrieval-log/writer.js', () => ({
     outageMarkerPath: join(tmpHolder.current, 'retrieval-log.outage.json'),
   }),
 }))
+
+// SMI-6967 M-4 — a transparent passthrough to the real module unless the
+// test-only switch above is flipped, in which case ONLY readEntryResult
+// throws. This is the only way to drive session-priming-query.ts's
+// "the bridge-verdict reader failed" catch branch deterministically: every
+// other path to a thrown error here is itself fail-soft further down.
+vi.mock(
+  '../../packages/doc-retrieval-mcp/src/retrieval-log/ruflo-bridge-state.js',
+  async (importOriginal) => {
+    const actual =
+      await importOriginal<
+        typeof import('../../packages/doc-retrieval-mcp/src/retrieval-log/ruflo-bridge-state.js')
+      >()
+    return {
+      ...actual,
+      readEntryResult: (...args: Parameters<typeof actual.readEntryResult>) => {
+        if (bridgeReaderShouldThrow.current) {
+          throw new Error('forced reader failure (SMI-6967 M-4 test)')
+        }
+        return actual.readEntryResult(...args)
+      },
+    }
+  }
+)
 
 import {
   countRecentJsonlSessions,
@@ -59,6 +90,24 @@ import { makeFixtureEnv, makeFixtureTempDir } from './_lib/git-fixture-env.js'
 
 let tmp: string
 
+// SMI-6967 H-1: file-scope isolation for the ruflo-bridge banner, mirroring
+// the reindex describe block's own capture/restore pattern (below) rather
+// than inventing a second convention. Without this, every pre-existing
+// `runQuery` arm in this file ALSO computes a bridge-verdict line — with
+// `SKILLSMITH_RUFLO_VERDICT_SHADOW=0` reaching a local session via
+// `.claude/settings.json`, and `baseArgs.cwd` being a bare non-git temp dir
+// (so `resolveMainRepoKey` returns null), the fault branch renders a
+// non-empty `[ruflo-bridge]` line and every `toBe('')` assertion in this
+// file goes red locally while staying green in CI (GitHub Actions never
+// reads `.claude/settings.json`). Setting `SKILLSMITH_RUFLO_VERDICT_DISABLE`
+// skips that whole code path; `SKILLSMITH_STATE_DIR_OVERRIDE` keeps every
+// state-consumer (bridge AND reindex) off the real `~/.skillsmith`
+// regardless. The dedicated "ruflo-bridge banner" describe block below
+// overrides BOTH so it still exercises the real behavior.
+let fileScopeBridgeStateDir: string
+let fileScopeOriginalStateDirOverride: string | undefined
+let fileScopeOriginalBridgeVerdictDisable: string | undefined
+
 function makeHit(id: string, similarity: number, filePath: string): SearchHit {
   return {
     id,
@@ -78,11 +127,19 @@ beforeEach(() => {
   process.env.RETRIEVAL_LOG_DIR_OVERRIDE = tmp
   searchMock.mockReset()
   logRetrievalEventMock.mockReset()
+  bridgeReaderShouldThrow.current = false
   delete process.env.SKILLSMITH_DOC_RETRIEVAL_DISABLE_PRIMING
   delete process.env.LINEAR_API_KEY
   // SMI-5419: buildSignal3/countRecentJsonlSessions now resolve via the
   // module-memoized shared/per-cwd resolvers — reset so cases don't leak.
   resetProjectDirCache()
+
+  // SMI-6967 H-1 file-scope isolation — see the doc comment above.
+  fileScopeBridgeStateDir = mkdtempSync(join(tmpdir(), 'session-priming-bridge-state-'))
+  fileScopeOriginalStateDirOverride = process.env.SKILLSMITH_STATE_DIR_OVERRIDE
+  fileScopeOriginalBridgeVerdictDisable = process.env.SKILLSMITH_RUFLO_VERDICT_DISABLE
+  process.env.SKILLSMITH_STATE_DIR_OVERRIDE = fileScopeBridgeStateDir
+  process.env.SKILLSMITH_RUFLO_VERDICT_DISABLE = '1'
 })
 
 afterEach(() => {
@@ -90,6 +147,20 @@ afterEach(() => {
   delete process.env.RETRIEVAL_LOG_DIR_OVERRIDE
   vi.unstubAllEnvs()
   resetProjectDirCache()
+
+  // SMI-6967 H-1 file-scope isolation — restore, mirroring the reindex
+  // describe block's own capture/restore pattern.
+  rmSync(fileScopeBridgeStateDir, { recursive: true, force: true })
+  if (fileScopeOriginalStateDirOverride === undefined) {
+    delete process.env.SKILLSMITH_STATE_DIR_OVERRIDE
+  } else {
+    process.env.SKILLSMITH_STATE_DIR_OVERRIDE = fileScopeOriginalStateDirOverride
+  }
+  if (fileScopeOriginalBridgeVerdictDisable === undefined) {
+    delete process.env.SKILLSMITH_RUFLO_VERDICT_DISABLE
+  } else {
+    process.env.SKILLSMITH_RUFLO_VERDICT_DISABLE = fileScopeOriginalBridgeVerdictDisable
+  }
 })
 
 describe('parseCliArgs', () => {
@@ -465,7 +536,35 @@ describe('runQuery — ruflo-bridge banner (SMI-6744 A5.5.2 delta)', () => {
   let originalStateOverride: string | undefined
   let originalBridgeDisable: string | undefined
   let originalBridgeShadow: string | undefined
-  let originalExpectedByTest: string | undefined
+
+  // SMI-6967 H-1/PR-gate H-B: the expectedBy gate is anchored to the COMMIT
+  // DATE of the revision that last changed `scripts/ruflo-bridge-probe.mjs`
+  // (via `git log`), not the working-tree mtime — mtime was the original
+  // H-1 anchor but was replaced (see ruflo-bridge-state.expected-by.ts's own
+  // doc comment for why: it is renewable by any checkout/rebase/copy that
+  // rewrites byte-identical content). `ageMs` backdates the commit's
+  // author/committer date via `makeFixtureEnv`'s GIT_AUTHOR_DATE/
+  // GIT_COMMITTER_DATE override, so `resolveMainRepoKey(repoDir) ===
+  // repoDir` for this fresh `git init` with no linked worktrees resolves a
+  // real commit history, not an uncommitted file (which `git log` cannot
+  // date at all and the production code correctly reads as `unknown`).
+  // Content embeds `ageMs` so two calls in the same test (a `beforeEach`
+  // seed followed by a test-local override) always produce a real diff —
+  // git refuses an empty commit that touches nothing for this path, so an
+  // identical second write would silently fail to move the anchor.
+  function seedProbeScript(ageMs: number): void {
+    const scriptsDir = join(repoDir, 'scripts')
+    mkdirSync(scriptsDir, { recursive: true })
+    const scriptPath = join(scriptsDir, 'ruflo-bridge-probe.mjs')
+    writeFileSync(scriptPath, `// fixture probe script (SMI-6967 H-1/H-B) age=${ageMs}\n`)
+    const committedAt = new Date(Date.now() - ageMs).toISOString()
+    execFileSync('git', ['-C', repoDir, 'add', 'scripts/ruflo-bridge-probe.mjs'], {
+      env: makeFixtureEnv(),
+    })
+    execFileSync('git', ['-C', repoDir, 'commit', '-m', 'seed probe script', '--quiet'], {
+      env: makeFixtureEnv({ GIT_AUTHOR_DATE: committedAt, GIT_COMMITTER_DATE: committedAt }),
+    })
+  }
 
   beforeEach(() => {
     repoDir = makeFixtureTempDir('priming-bridge-repo')
@@ -476,16 +575,17 @@ describe('runQuery — ruflo-bridge banner (SMI-6744 A5.5.2 delta)', () => {
     originalStateOverride = process.env.SKILLSMITH_STATE_DIR_OVERRIDE
     originalBridgeDisable = process.env.SKILLSMITH_RUFLO_VERDICT_DISABLE
     originalBridgeShadow = process.env.SKILLSMITH_RUFLO_VERDICT_SHADOW
-    originalExpectedByTest = process.env.SKILLSMITH_RUFLO_VERDICT_EXPECTED_BY_TEST_ISO
     process.env.SKILLSMITH_STATE_DIR_OVERRIDE = stateDir
     delete process.env.SKILLSMITH_RUFLO_VERDICT_DISABLE
     // Ship-live (D2, owner-decided 2026-10-03): the production default via
     // .claude/settings.json is "0" (live) — match it here so these tests
     // exercise the shipped behavior, with a dedicated shadow test overriding it.
     process.env.SKILLSMITH_RUFLO_VERDICT_SHADOW = '0'
-    // expectedBy gate: push it into the past so a `missing` case renders
-    // loudly in these tests, matching "well after ship" production state.
-    process.env.SKILLSMITH_RUFLO_VERDICT_EXPECTED_BY_TEST_ISO = '2020-01-01T00:00:00.000Z'
+    // Default: the probe script was "installed" 2 days ago — past the 1-day
+    // grace window, matching "well after ship" production state (the old
+    // default's '2020-01-01' expectedBy override). Individual tests override
+    // this with a fresh mtime, or remove the file entirely.
+    seedProbeScript(2 * 24 * 3600 * 1000)
     process.env.SKILLSMITH_DOC_RETRIEVAL_DISABLE_PRIMING = '1'
   })
 
@@ -498,11 +598,6 @@ describe('runQuery — ruflo-bridge banner (SMI-6744 A5.5.2 delta)', () => {
     else process.env.SKILLSMITH_RUFLO_VERDICT_DISABLE = originalBridgeDisable
     if (originalBridgeShadow === undefined) delete process.env.SKILLSMITH_RUFLO_VERDICT_SHADOW
     else process.env.SKILLSMITH_RUFLO_VERDICT_SHADOW = originalBridgeShadow
-    if (originalExpectedByTest === undefined) {
-      delete process.env.SKILLSMITH_RUFLO_VERDICT_EXPECTED_BY_TEST_ISO
-    } else {
-      process.env.SKILLSMITH_RUFLO_VERDICT_EXPECTED_BY_TEST_ISO = originalExpectedByTest
-    }
     delete process.env.SKILLSMITH_DOC_RETRIEVAL_DISABLE_PRIMING
   })
 
@@ -518,21 +613,37 @@ describe('runQuery — ruflo-bridge banner (SMI-6744 A5.5.2 delta)', () => {
       patternsLearned: 1,
       trajectoriesRecorded: 1,
       consecutiveNoLearning: 0,
+      // SMI-6967 H-1: the gate is now `everProducerPresent`, not
+      // `everLearned` — defaults model an already-armed, fully-producing
+      // entry so existing arms that don't care about either field stay
+      // unaffected; a test exercising the pre-producer dormant case must
+      // override `everProducerPresent: false` explicitly.
+      everProducerPresent: true,
+      everLearned: true,
+      countersRegressed: false,
+      lastObservedPatternsLearned: 1,
+      lastObservedTrajectoriesRecorded: 1,
       ...overrides,
     }
     writeFileSync(join(stateDir, 'ruflo-bridge.state'), `${JSON.stringify({ [key]: entry })}\n`)
   }
 
-  it('renders nothing when no ruflo-bridge.state entry exists (before expectedBy)', async () => {
-    process.env.SKILLSMITH_RUFLO_VERDICT_EXPECTED_BY_TEST_ISO = '2099-01-01T00:00:00.000Z'
+  it('renders nothing when no ruflo-bridge.state entry exists and the probe was installed recently (within the grace window)', async () => {
+    seedProbeScript(5 * 60 * 1000) // 5 minutes old — well inside the 1-day grace
     const result = await runQuery({ ...baseArgs, cwd: repoDir })
     expect(result.additionalContext).toBe('')
   })
 
   it('renders loudly when no entry exists past expectedBy (the writer never fired)', async () => {
-    const result = await runQuery({ ...baseArgs, cwd: repoDir })
+    const result = await runQuery({ ...baseArgs, cwd: repoDir }) // default seeding: 2 days old
     expect(result.additionalContext).toContain('[ruflo-bridge]')
     expect(result.additionalContext).toContain('state missing')
+  })
+
+  it('SMI-6967 H-1 regression — never renders loudly when the probe script was never installed in this checkout, however long the entry has been missing', async () => {
+    rmSync(join(repoDir, 'scripts'), { recursive: true, force: true }) // undo the default seeding
+    const result = await runQuery({ ...baseArgs, cwd: repoDir })
+    expect(result.additionalContext).toBe('')
   })
 
   it('renders nothing for a fresh healthy entry', async () => {
@@ -582,4 +693,176 @@ describe('runQuery — ruflo-bridge banner (SMI-6744 A5.5.2 delta)', () => {
     expect(result.additionalContext).toContain('bridge degraded')
     expect(result.additionalContext).not.toContain('state missing')
   })
+
+  // --- SMI-6967 H-2: the two documented tunables were never actually read
+  // from the environment. These drive the ENV VAR specifically (not the
+  // renderer's own `staleHours`/`livenessDays` options, which were already
+  // covered — and passing — in ruflo-bridge-state.test.ts even with this bug
+  // present, which is exactly what let it ship unnoticed).
+
+  it('SMI-6967 H-2 — SKILLSMITH_RUFLO_VERDICT_STALE_HOURS actually moves the rendered threshold', async () => {
+    const original = process.env.SKILLSMITH_RUFLO_VERDICT_STALE_HOURS
+    try {
+      seedBridgeEntry({
+        verdict: 'healthy',
+        evaluatedAt: new Date(Date.now() - 2 * 3600 * 1000).toISOString(), // 2h old
+      })
+      // Default threshold (48h): a 2h-old healthy entry must NOT be stale yet.
+      const before = await runQuery({ ...baseArgs, cwd: repoDir })
+      expect(before.additionalContext).not.toContain('verdict stale')
+
+      // The SAME 2h-old entry must render stale once the documented env var
+      // is set to 1h — if session-priming-query.ts never reads the var (the
+      // bug this test pins), nothing changes and this assertion fails.
+      process.env.SKILLSMITH_RUFLO_VERDICT_STALE_HOURS = '1'
+      const after = await runQuery({ ...baseArgs, cwd: repoDir })
+      expect(after.additionalContext).toContain('verdict stale')
+    } finally {
+      if (original === undefined) delete process.env.SKILLSMITH_RUFLO_VERDICT_STALE_HOURS
+      else process.env.SKILLSMITH_RUFLO_VERDICT_STALE_HOURS = original
+    }
+  })
+
+  it('SMI-6967 H-2 — SKILLSMITH_RUFLO_LIVENESS_DAYS actually moves the rendered threshold', async () => {
+    const original = process.env.SKILLSMITH_RUFLO_LIVENESS_DAYS
+    try {
+      seedBridgeEntry({ everLearned: true, consecutiveNoLearning: 3 })
+      // Default threshold (7): a streak of 3 must NOT fire yet.
+      const before = await runQuery({ ...baseArgs, cwd: repoDir })
+      expect(before.additionalContext).not.toContain('no learning recorded')
+
+      // The SAME streak of 3 must fire once the documented env var is set to
+      // 3 — if session-priming-query.ts never reads the var, nothing changes.
+      process.env.SKILLSMITH_RUFLO_LIVENESS_DAYS = '3'
+      const after = await runQuery({ ...baseArgs, cwd: repoDir })
+      expect(after.additionalContext).toContain('no learning recorded in 3 consecutive probes')
+    } finally {
+      if (original === undefined) delete process.env.SKILLSMITH_RUFLO_LIVENESS_DAYS
+      else process.env.SKILLSMITH_RUFLO_LIVENESS_DAYS = original
+    }
+  })
+
+  // --- SMI-6967 H-9/H-1: the liveness arm's gate, exercised through the
+  // full runQuery stack (unit-level fold/render coverage lives in
+  // ruflo-bridge-state.test.ts).
+
+  it('SMI-6967 H-9/H-1 — stays dormant before any PRODUCER has ever been observed, even past the threshold', async () => {
+    seedBridgeEntry({
+      everProducerPresent: false,
+      everLearned: false,
+      consecutiveNoLearning: 999,
+      lastObservedPatternsLearned: 0,
+      lastObservedTrajectoriesRecorded: 0,
+    })
+    const result = await runQuery({ ...baseArgs, cwd: repoDir })
+    expect(result.additionalContext).not.toContain('[ruflo-bridge]')
+  })
+
+  it('SMI-6967 H-9 — fires once armed and past the threshold (producer present AND has learned before)', async () => {
+    seedBridgeEntry({ everProducerPresent: true, everLearned: true, consecutiveNoLearning: 7 })
+    const result = await runQuery({ ...baseArgs, cwd: repoDir })
+    expect(result.additionalContext).toContain('no learning recorded in 7 consecutive probes')
+  })
+
+  // SMI-6967 H-1 — the finding's own reported bug, driven through the full
+  // stack: a connected bridge with real store entries ("32 total entries")
+  // that has recorded zero patterns and zero trajectories, EVER, used to be
+  // permanently unreportable because the old gate was `everLearned`. The
+  // banner must now fire, worded DIFFERENTLY from the "learned then
+  // stalled" case above.
+  it('SMI-6967 H-1 fix — a connected bridge that has NEVER learned anything fires past the threshold, with its own distinct wording', async () => {
+    seedBridgeEntry({
+      everProducerPresent: true,
+      everLearned: false,
+      consecutiveNoLearning: 7,
+      lastObservedPatternsLearned: 0,
+      lastObservedTrajectoriesRecorded: 0,
+    })
+    const result = await runQuery({ ...baseArgs, cwd: repoDir })
+    expect(result.additionalContext).toContain('[ruflo-bridge]')
+    expect(result.additionalContext).toContain('has never recorded a pattern or trajectory')
+    expect(result.additionalContext).not.toContain('no learning recorded in 7 consecutive probes')
+  })
+
+  // --- SMI-6967 M-5: a counter regression, driven through the full stack.
+
+  it('SMI-6967 M-5 — a counter regression renders unconditionally once a producer has been observed', async () => {
+    seedBridgeEntry({
+      everProducerPresent: true,
+      countersRegressed: true,
+      consecutiveNoLearning: 0,
+    })
+    const result = await runQuery({ ...baseArgs, cwd: repoDir })
+    expect(result.additionalContext).toContain('learning counters regressed')
+  })
+
+  // --- SMI-6967 M-4: the two anti-silence fault branches in
+  // session-priming-query.ts (`the host repo key could not be resolved…` and
+  // `the bridge-verdict reader failed: …`) had zero coverage in any test
+  // file — our own SMI-6967 H-1 file-scope isolation fix (top of this file)
+  // removed the only path that had been accidentally exercising them.
+
+  it('SMI-6967 M-4 — a non-git cwd (bridgeKey unresolvable) renders the "could not be resolved" fault, not silence', async () => {
+    const nonGitDir = mkdtempSync(join(tmpdir(), 'session-priming-non-git-'))
+    try {
+      const result = await runQuery({ ...baseArgs, cwd: nonGitDir })
+      expect(result.additionalContext).toContain('[ruflo-bridge]')
+      expect(result.additionalContext).toContain(
+        'the host repo key could not be resolved, so no verdict could be read'
+      )
+    } finally {
+      rmSync(nonGitDir, { recursive: true, force: true })
+    }
+  })
+
+  it('SMI-6967 M-4 — a thrown reader renders the "bridge-verdict reader failed" fault, not silence', async () => {
+    bridgeReaderShouldThrow.current = true
+    const result = await runQuery({ ...baseArgs, cwd: repoDir })
+    expect(result.additionalContext).toContain('[ruflo-bridge]')
+    expect(result.additionalContext).toContain('the bridge-verdict reader failed')
+    expect(result.additionalContext).toContain('forced reader failure (SMI-6967 M-4 test)')
+  })
+
+  // --- SMI-6967 L-6: the garbage-value fallback for the two documented env
+  // vars was asserted only in a comment, not a test.
+
+  it.each(['abc', '0', '-1'])(
+    'SMI-6967 L-6 — SKILLSMITH_RUFLO_VERDICT_STALE_HOURS=%s falls back to the default (not NaN/0/negative)',
+    async (garbage) => {
+      const original = process.env.SKILLSMITH_RUFLO_VERDICT_STALE_HOURS
+      try {
+        seedBridgeEntry({
+          verdict: 'healthy',
+          evaluatedAt: new Date(Date.now() - 2 * 3600 * 1000).toISOString(), // 2h old
+        })
+        process.env.SKILLSMITH_RUFLO_VERDICT_STALE_HOURS = garbage
+        const result = await runQuery({ ...baseArgs, cwd: repoDir })
+        // Default threshold is 48h — a 2h-old entry must NOT be stale under
+        // the default, proving the garbage value was ignored rather than
+        // coerced into some other (wrong) threshold.
+        expect(result.additionalContext).not.toContain('verdict stale')
+      } finally {
+        if (original === undefined) delete process.env.SKILLSMITH_RUFLO_VERDICT_STALE_HOURS
+        else process.env.SKILLSMITH_RUFLO_VERDICT_STALE_HOURS = original
+      }
+    }
+  )
+
+  it.each(['abc', '0', '-1'])(
+    'SMI-6967 L-6 — SKILLSMITH_RUFLO_LIVENESS_DAYS=%s falls back to the default (not NaN/0/negative)',
+    async (garbage) => {
+      const original = process.env.SKILLSMITH_RUFLO_LIVENESS_DAYS
+      try {
+        seedBridgeEntry({ everProducerPresent: true, everLearned: true, consecutiveNoLearning: 3 })
+        process.env.SKILLSMITH_RUFLO_LIVENESS_DAYS = garbage
+        const result = await runQuery({ ...baseArgs, cwd: repoDir })
+        // Default threshold is 7 — a streak of 3 must NOT fire under the
+        // default, proving the garbage value was ignored.
+        expect(result.additionalContext).not.toContain('no learning recorded')
+      } finally {
+        if (original === undefined) delete process.env.SKILLSMITH_RUFLO_LIVENESS_DAYS
+        else process.env.SKILLSMITH_RUFLO_LIVENESS_DAYS = original
+      }
+    }
+  )
 })

@@ -46,8 +46,23 @@ describe('acceptance scope is classified from the lockfile', () => {
   it('control: a package whose only install is dev passes', () => {
     expect(run('devpkg', { 'node_modules/devpkg': { dev: true } })).toEqual([])
   })
-  it('control: devOptional counts as dev', () => {
-    expect(run('devpkg', { 'node_modules/devpkg': { devOptional: true } })).toEqual([])
+  it('devOptional WITHOUT dev is production: npm audit --omit=dev audits it, so the acceptance fails', () => {
+    const msgs = run('devpkg', { 'node_modules/devpkg': { devOptional: true } })
+    expect(msgs.join('\n')).toMatch(/production \(non-dev\) install at node_modules\/devpkg/)
+    expect(msgs.join('\n')).toMatch(
+      /node_modules\/devpkg is devOptional without dev, and npm audit --omit=dev audits devOptional installs/
+    )
+  })
+  it('control: an entry with dev AND devOptional set is dev and passes', () => {
+    expect(run('devpkg', { 'node_modules/devpkg': { dev: true, devOptional: true } })).toEqual([])
+  })
+  it('one devOptional-without-dev occurrence among dev ones fails and names only that path', () => {
+    const msgs = run('dup', {
+      'node_modules/a/node_modules/dup': { dev: true },
+      'node_modules/b/node_modules/dup': { devOptional: true },
+    }).join('\n')
+    expect(msgs).toMatch(/production \(non-dev\) install at node_modules\/b\/node_modules\/dup,/)
+    expect(msgs).not.toMatch(/install at [^,]*node_modules\/a\/node_modules\/dup/)
   })
   it('a package that is in the lockfile as a production install fails and names the path', () => {
     const msgs = run('prodpkg', { 'node_modules/prodpkg': {} })
@@ -82,7 +97,7 @@ describe('acceptance scope is classified from the lockfile', () => {
     expect(
       run('dup', {
         'node_modules/a/node_modules/dup': { dev: true },
-        'node_modules/dup': { devOptional: true },
+        'node_modules/dup': { dev: true },
       })
     ).toEqual([])
   })
