@@ -77,8 +77,19 @@ describe('failure-specific issue text (PR-2, #3005 retro)', () => {
     const r = exec(GREEN, 0, '', '', root(), { list: `${SEED}\n`, rec: SEED_FAIL, recRc: 1 })
     expect(r.body).toContain(`### Failing seed reconcile (fails this daily job only`)
     expect(r.body).toContain(SEED)
-    expect(r.body).toContain(`--seed ${SEED}`) // the seed remediation command
+    expect(r.body).toContain(`--seed '${SEED}'`) // the seed remediation command, shell-quoted
     expect(r.body).not.toContain('every code PR fails')
+  })
+  it('W4b a failed seed path with a space stays one path, single-quoted, in one remediation block', () => {
+    const SP = 'scripts/my seed/package-lock.json'
+    const rec = SEED_FAIL.split(SEED).join(SP)
+    const r = exec(GREEN, 0, '', '', root(), { list: `${SP}\n`, rec, recRc: 1 })
+    expect(r.status).toBe(1)
+    const blocks = r.body.split('\n').filter((l) => l.startsWith('Reproduce '))
+    expect(blocks).toHaveLength(1)
+    expect(blocks[0]).toMatch(
+      /^Reproduce 'scripts\/my seed\/package-lock\.json': \(cd 'scripts\/my seed' && npm audit .*\) > A\.json, then node scripts\/check-dependency-registry\.mjs --reconcile-audit A\.json --seed 'scripts\/my seed\/package-lock\.json'$/
+    )
   })
   it('W4 an expiry failure still says every code PR fails', () => {
     const r = exec(EXPIRED, 1, '', '', root())

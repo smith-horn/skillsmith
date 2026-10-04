@@ -367,7 +367,7 @@ describe('F file-scan fallback when git cannot list lockfiles (owner decision)',
     expect(passes).toHaveLength(1)
     expect(passes[0]).toContain('(tracked lockfiles from a file scan: git unavailable)')
   })
-  it('F3 the scan skips node_modules, .git, .worktrees, dist, coverage and tests/fixtures', () => {
+  it('F3 the scan skips only node_modules, .git and .worktrees; dist, coverage and tests/fixtures are found', () => {
     const root = noGitTree(FULL_SEEDS, [
       'node_modules/a/package-lock.json',
       '.worktrees/w/package-lock.json',
@@ -378,8 +378,22 @@ describe('F file-scan fallback when git cannot list lockfiles (owner decision)',
     ])
     const i = readDependencyRegistryInputs(root)
     expect(i.lockfileSource).toBe('scan')
-    expect([...i.trackedLockfiles].sort()).toEqual(['package-lock.json', K])
-    expect(fails(evalTree(root))).toEqual([])
+    expect([...i.trackedLockfiles].sort()).toEqual(
+      [
+        'package-lock.json',
+        K,
+        'dist/package-lock.json',
+        'coverage/package-lock.json',
+        'scripts/tests/fixtures/package-lock.json',
+        'pkg/tests/fixtures/deep/package-lock.json',
+      ].sort()
+    )
+  })
+  it('F3 a lockfile under dist/ with no seeds entry fails in fallback mode', () => {
+    const root = noGitTree(FULL_SEEDS, ['dist/package-lock.json'])
+    expect(fails(evalTree(root))).toContainEqual(
+      expect.stringMatching(/dist\/package-lock\.json has no "seeds" entry/)
+    )
   })
   it('F3 control: a lockfile in an ordinary directory IS found (untracked lockfiles count)', () => {
     const root = noGitTree(FULL_SEEDS, [

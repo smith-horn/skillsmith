@@ -8,8 +8,10 @@
  * - completeness: every tracked lockfile but the root has a `seeds` entry, so deleting the
  *   section fails. The set comes from `git ls-files`. When git cannot list it (a worktree dev
  *   container's .git names an unmounted host path), a filesystem walk from the root finds every
- *   file named exactly package-lock.json instead (owner decision), skipping node_modules, .git,
- *   .worktrees, dist, coverage and any tests/fixtures directory, never following symlinks; the
+ *   file named exactly package-lock.json instead (owner decision), skipping only node_modules,
+ *   .git and .worktrees, never following symlinks, so it finds a superset of what git would list
+ *   (a tracked lockfile under dist/, coverage/ or tests/fixtures/ is not missed; the tracked
+ *   fixture lockfiles are named *.package-lock.json, which the exact-name match excludes); the
  *   output then says "tracked lockfiles from a file scan: git unavailable". The walk also counts
  *   UNTRACKED lockfiles (a stray one in a scratch directory needs a seeds entry or deleting
  *   before the check passes there); that is accepted, since it can only add failures. If both
@@ -57,7 +59,7 @@ export function listTrackedLockfiles(root) {
   return r.stdout.split('\0').filter(Boolean)
 }
 
-const SCAN_SKIP = new Set(['node_modules', '.git', '.worktrees', 'dist', 'coverage'])
+const SCAN_SKIP = new Set(['node_modules', '.git', '.worktrees'])
 export const SCAN_NOTE = ' (tracked lockfiles from a file scan: git unavailable)'
 
 /**
@@ -74,7 +76,6 @@ export function scanLockfiles(root) {
       const child = rel ? `${rel}/${e.name}` : e.name
       if (e.isDirectory()) {
         if (SCAN_SKIP.has(e.name)) continue
-        if (e.name === 'fixtures' && rel.split('/').pop() === 'tests') continue
         walk(child)
       } else if (e.isFile() && e.name === 'package-lock.json') {
         found.push(child)

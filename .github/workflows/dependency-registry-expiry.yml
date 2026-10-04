@@ -104,7 +104,11 @@ jobs:
           if [ "$RC" -eq 0 ] && [ "$REC" -ne 0 ]; then RC="$REC"; fi
           # Seed lockfiles (SMI-6954): audit each inside its own directory, so npm
           # resolves that directory as the project root, and reconcile with --seed.
-          SEEDS_FAILED=''
+          # Failed seed paths, one per line, so a path with whitespace stays one path.
+          SEEDS_FAILED="$RUNNER_TEMP/seeds-failed.txt"
+          : > "$SEEDS_FAILED"
+          # Single-quote a value for the shell commands printed into the issue body.
+          shq() { printf "'%s'" "$(printf '%s' "$1" | sed "s/'/'\\\\''/g")"; }
           if node scripts/check-dependency-registry.mjs --list-seeds > "$SEED_LIST" 2>> "$OUT"; then
             N=0
             while IFS= read -r LF; do
@@ -122,7 +126,7 @@ jobs:
                 printf '%s Check 76 reconcile [%s]: npm audit produced no JSON output\n' "$FAIL_MARK" "$LF" >> "$OUT"
                 SREC=1
               fi
-              if [ "$SREC" -ne 0 ]; then SEEDS_FAILED="$SEEDS_FAILED $LF"; fi
+              if [ "$SREC" -ne 0 ]; then printf '%s\n' "$LF" >> "$SEEDS_FAILED"; fi
               if [ "$RC" -eq 0 ] && [ "$SREC" -ne 0 ]; then RC="$SREC"; fi
             done < "$SEED_LIST"
           else
@@ -165,12 +169,13 @@ jobs:
                 printf '\nReproduce: npm audit %s > A.json, then node scripts/check-dependency-registry.mjs --reconcile-audit A.json.\n\n' "$AUDIT_FLAGS"
               fi
               if [ -n "$SEED_FAILS" ]; then
-                printf '### Failing seed reconcile (fails this daily job only; code PRs are not blocked):%s\n\n' "$SEEDS_FAILED"
+                printf '### Failing seed reconcile (fails this daily job only; code PRs are not blocked):\n\n'
                 printf '%s\n' "$SEED_FAILS" | sed -e 's/^/- /'
                 printf '\n'
-                for LF in $SEEDS_FAILED; do
-                  printf 'Reproduce %s: (cd %s && npm audit %s) > A.json, then node scripts/check-dependency-registry.mjs --reconcile-audit A.json --seed %s.\n' "$LF" "$(dirname "$LF")" "$AUDIT_FLAGS" "$LF"
-                done
+                while IFS= read -r LF; do
+                  [ -n "$LF" ] || continue
+                  printf 'Reproduce %s: (cd %s && npm audit %s) > A.json, then node scripts/check-dependency-registry.mjs --reconcile-audit A.json --seed %s\n' "$(shq "$LF")" "$(shq "$(dirname "$LF")")" "$AUDIT_FLAGS" "$(shq "$LF")"
+                done < "$SEEDS_FAILED"
                 printf 'Fix with a seed override or add an acceptance under seeds[...] (tier R3, or R4 with pinnedBy); see .claude/development/ci-reference.md, Operating the seed section.\n\n'
               fi
               if [ -n "$EXPIRING" ]; then
