@@ -7,7 +7,7 @@
  * a tmpdir per `beforeEach` (plan-review #13).
  */
 
-import { mkdtempSync, mkdirSync, rmSync, utimesSync, writeFileSync } from 'node:fs'
+import { mkdtempSync, mkdirSync, rmSync, writeFileSync } from 'node:fs'
 import { execFileSync } from 'node:child_process'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
@@ -537,18 +537,33 @@ describe('runQuery — ruflo-bridge banner (SMI-6744 A5.5.2 delta)', () => {
   let originalBridgeDisable: string | undefined
   let originalBridgeShadow: string | undefined
 
-  // SMI-6967 H-1: the expectedBy gate is now anchored to the mtime of
-  // `scripts/ruflo-bridge-probe.mjs` as checked out in the fixture repo
-  // (resolveMainRepoKey(repoDir) === repoDir for a fresh `git init` with no
-  // linked worktrees) instead of a hardcoded wall-clock date — see
-  // ruflo-bridge-state.expected-by.ts. `ageMs` backdates the file's mtime.
+  // SMI-6967 H-1/PR-gate H-B: the expectedBy gate is anchored to the COMMIT
+  // DATE of the revision that last changed `scripts/ruflo-bridge-probe.mjs`
+  // (via `git log`), not the working-tree mtime — mtime was the original
+  // H-1 anchor but was replaced (see ruflo-bridge-state.expected-by.ts's own
+  // doc comment for why: it is renewable by any checkout/rebase/copy that
+  // rewrites byte-identical content). `ageMs` backdates the commit's
+  // author/committer date via `makeFixtureEnv`'s GIT_AUTHOR_DATE/
+  // GIT_COMMITTER_DATE override, so `resolveMainRepoKey(repoDir) ===
+  // repoDir` for this fresh `git init` with no linked worktrees resolves a
+  // real commit history, not an uncommitted file (which `git log` cannot
+  // date at all and the production code correctly reads as `unknown`).
+  // Content embeds `ageMs` so two calls in the same test (a `beforeEach`
+  // seed followed by a test-local override) always produce a real diff —
+  // git refuses an empty commit that touches nothing for this path, so an
+  // identical second write would silently fail to move the anchor.
   function seedProbeScript(ageMs: number): void {
     const scriptsDir = join(repoDir, 'scripts')
     mkdirSync(scriptsDir, { recursive: true })
     const scriptPath = join(scriptsDir, 'ruflo-bridge-probe.mjs')
-    writeFileSync(scriptPath, '// fixture probe script (SMI-6967 H-1)\n')
-    const mtime = new Date(Date.now() - ageMs)
-    utimesSync(scriptPath, mtime, mtime)
+    writeFileSync(scriptPath, `// fixture probe script (SMI-6967 H-1/H-B) age=${ageMs}\n`)
+    const committedAt = new Date(Date.now() - ageMs).toISOString()
+    execFileSync('git', ['-C', repoDir, 'add', 'scripts/ruflo-bridge-probe.mjs'], {
+      env: makeFixtureEnv(),
+    })
+    execFileSync('git', ['-C', repoDir, 'commit', '-m', 'seed probe script', '--quiet'], {
+      env: makeFixtureEnv({ GIT_AUTHOR_DATE: committedAt, GIT_COMMITTER_DATE: committedAt }),
+    })
   }
 
   beforeEach(() => {

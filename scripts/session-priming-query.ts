@@ -290,7 +290,7 @@ export async function runQuery(args: CliArgs): Promise<PrimingResult> {
       } else {
         // SMI-6967 H-1: this checkout's own anchor for the expectedBy gate —
         // see ruflo-bridge-state.expected-by.ts's doc comment.
-        const installedAt = resolveProbeInstalledAt(bridgeKey)
+        const installedAt = resolveProbeInstalledAt(bridgeKey, now)
         // SMI-6967 H-2: both tunables are documented but were never actually
         // read from the environment — wired here following the reindex
         // precedent above (same parsing, same fallback-on-garbage behavior,

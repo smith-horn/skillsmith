@@ -49,6 +49,15 @@
  * JSON value (`0.5`, `"5"`, `Infinity`, `true`, `[1]`, a negative number)
  * must never arm a latch or move a counter. An invalid value is treated
  * exactly like a missing (`null`) reading on that axis.
+ *
+ * SMI-6967 PR-gate (H-A) correction: {@link isValidCount} is now exported and
+ * re-exported from `ruflo-bridge-state.ts` (the same single-entry-point
+ * pattern as {@link foldLiveness}) so `scripts/ruflo-bridge-probe.mjs`'s own
+ * `isProducerPresent()` can import this SAME validator for
+ * `agentdb.totalEntries`, rather than carrying a second, laxer copy
+ * (`Number.isFinite`, which wrongly accepted `0.5`) one function over. One
+ * source of truth for "what counts as a valid non-negative integer read from
+ * untrusted JSON" — never a second predicate that can drift from this one.
  */
 
 import type { BridgeEntry } from './ruflo-bridge-state.js'
@@ -72,7 +81,7 @@ export interface BridgeLivenessFold {
  * ever produce). `Number.isInteger` also rejects `Infinity`/`NaN` on its
  * own, so no separate finiteness check is needed.
  */
-function isValidCount(value: unknown): value is number {
+export function isValidCount(value: unknown): value is number {
   return typeof value === 'number' && Number.isInteger(value) && value >= 0
 }
 

@@ -39,12 +39,14 @@ import { mkdirSync, readFileSync, writeFileSync } from 'node:fs'
 import { dirname, join } from 'node:path'
 import { fileURLToPath } from 'node:url'
 
+import { isMainModule } from './lib/is-main-module.mjs'
 import { bridgeVerdict, DERIVED_FROM } from './lib/ruflo-bridge-verdict.mjs'
 import { checkIndependentIdentity } from './ruflo-bridge-probe.identity.mjs'
 import {
   acquireBridgeLock,
   BRIDGE_PROBE_DISABLE_VAR,
   foldLiveness,
+  isValidCount,
   readState,
   releaseBridgeLock,
   resolveBridgeLogPath,
@@ -71,13 +73,21 @@ const AUTHORITY_FILE = join(process.env.HOME ?? '', '.skillsmith', 'ruflo-store.
  * happened — `bridge.status === 'connected'` and/or a non-trivial
  * `agentdb.totalEntries` both count, independent of the embeddingBackend
  * verdict (a `degraded` mock-backend bridge can still be a real producer).
- * Validated the same way the liveness fold validates counters (L-1): an
- * untrusted JSON `totalEntries` must be a finite non-negative number before
- * the `> 0` comparison, never trusted as-is.
+ *
+ * SMI-6967 PR-gate (H-A) correction: `totalEntries` is validated through
+ * {@link isValidCount}, the SAME validator the liveness fold uses for
+ * `patternsLearned`/`trajectoriesRecorded` (`ruflo-bridge-state.liveness.ts`)
+ * — one shared predicate, not a second copy. The prior inline check here
+ * (`Number.isFinite(total) && total > 0`) wrongly accepted a fractional
+ * `totalEntries` like `0.5`: finite and positive, but not a count any real
+ * probe would ever produce, and `foldLiveness` LATCHES `everProducerPresent`
+ * permanently on a single `true` reading — so one invalid fractional payload
+ * could never be un-armed. `isValidCount` requires a non-negative INTEGER,
+ * closing that gap.
  */
-function isProducerPresent(payload) {
+export function isProducerPresent(payload) {
   const total = payload?.agentdb?.totalEntries
-  if (typeof total === 'number' && Number.isFinite(total) && total > 0) return true
+  if (isValidCount(total) && total > 0) return true
   return payload?.bridge?.status === 'connected'
 }
 
@@ -380,9 +390,18 @@ function flushLog(lines) {
   }
 }
 
-main()
-  .then((code) => process.exit(code))
-  .catch((e) => {
-    process.stderr.write(`ruflo-bridge-probe fatal: ${e?.stack ?? e}\n`)
-    process.exit(UNREADABLE_EXIT)
-  })
+// SMI-6967 PR-gate (H-A) test-gap fix: entry-point guard (scripts/lib/
+// is-main-module.mjs, the same pattern ruflo-bridge-verdict.mjs uses) so
+// importing this module FOR ITS EXPORTS (isProducerPresent, in
+// scripts/tests/ruflo-bridge-probe.test.ts) never also spawns the launcher,
+// takes the bridge lock, or writes state as a side effect of the import.
+// `.husky/post-merge`'s `tsx scripts/ruflo-bridge-probe.mjs` invocation sets
+// argv[1] to this file, so main() still runs exactly as before there.
+if (isMainModule(import.meta.url)) {
+  main()
+    .then((code) => process.exit(code))
+    .catch((e) => {
+      process.stderr.write(`ruflo-bridge-probe fatal: ${e?.stack ?? e}\n`)
+      process.exit(UNREADABLE_EXIT)
+    })
+}

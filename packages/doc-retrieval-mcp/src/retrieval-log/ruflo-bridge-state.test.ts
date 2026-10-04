@@ -242,17 +242,37 @@ describe('hasExpectedByPassed', () => {
   })
 })
 
-// SMI-6967 H-2/L-2: resolveProbeInstalledAt/resolveProbeScriptPath against a
-// REAL filesystem, with positive and negative controls, per CLAUDE.md's
-// "measure, don't reason" rule — the finding's own case table, executed.
-describe('resolveProbeInstalledAt / resolveProbeScriptPath (SMI-6967 H-2/L-2)', () => {
-  it('readable: returns installed with the real mtime (positive control)', () => {
+// SMI-6967 H-2/L-2/PR-gate-H-B: resolveProbeInstalledAt/resolveProbeScriptPath
+// against a REAL filesystem (and, for H-B, a REAL git repo), with positive
+// and negative controls, per CLAUDE.md's "measure, don't reason" rule — the
+// finding's own case table, executed.
+//
+// H-B helper: initializes `dir` as a git repo (mirroring arm 2b's own fixture
+// conventions below) with `scripts/ruflo-bridge-probe.mjs` committed at
+// `committerDate` (an ISO string, fed to GIT_AUTHOR_DATE/GIT_COMMITTER_DATE
+// so the commit's date is pinned rather than "whenever this test ran").
+// Returns the script's absolute path.
+function initProbeRepoAt(dir: string, committerDate: string, content = '// x\n'): string {
+  execFileSync('git', ['-c', 'init.defaultBranch=main', 'init', '--quiet', dir], {
+    env: makeFixtureEnv(),
+  })
+  mkdirSync(join(dir, 'scripts'), { recursive: true })
+  const scriptPath = join(dir, 'scripts', 'ruflo-bridge-probe.mjs')
+  writeFileSync(scriptPath, content)
+  execFileSync('git', ['-C', dir, 'add', '.'], { env: makeFixtureEnv() })
+  execFileSync('git', ['-C', dir, 'commit', '-m', 'x', '--quiet'], {
+    env: makeFixtureEnv({ GIT_AUTHOR_DATE: committerDate, GIT_COMMITTER_DATE: committerDate }),
+  })
+  return scriptPath
+}
+
+describe('resolveProbeInstalledAt / resolveProbeScriptPath (SMI-6967 H-2/L-2, PR-gate H-B)', () => {
+  it('readable: returns installed with the commit date of the last change, not the working-tree mtime (positive control, H-B)', () => {
     const dir = tmpDir('expected-by-readable')
-    mkdirSync(join(dir, 'scripts'), { recursive: true })
-    writeFileSync(join(dir, 'scripts', 'ruflo-bridge-probe.mjs'), '// x\n')
+    const committerDate = '2026-09-01T00:00:00Z'
+    initProbeRepoAt(dir, committerDate)
     const result = resolveProbeInstalledAt(dir)
-    expect(result.kind).toBe('installed')
-    expect(result.kind === 'installed' && result.at instanceof Date).toBe(true)
+    expect(result).toEqual({ kind: 'installed', at: new Date(committerDate) })
   })
 
   it('absent (ENOENT): a directory that exists but never had the script returns absent, not unknown', () => {
@@ -299,6 +319,74 @@ describe('resolveProbeInstalledAt / resolveProbeScriptPath (SMI-6967 H-2/L-2)', 
     // would have wrongly reported `installed` with THIS repo's own probe
     // script's mtime, not failed loudly or obviously.
     expect(resolveProbeInstalledAt('')).toEqual({ kind: 'absent' })
+  })
+
+  // ── PR-gate H-B: commit-date anchor, not working-tree mtime ────────────
+
+  it('H-B: a script on disk but never committed (untracked, in a real repo WITH other history) reads as unknown — git log returns empty, not installed', () => {
+    const dir = tmpDir('expected-by-uncommitted')
+    execFileSync('git', ['-c', 'init.defaultBranch=main', 'init', '--quiet', dir], {
+      env: makeFixtureEnv(),
+    })
+    // An unrelated commit establishes a real HEAD first — measured live: a
+    // repo with ZERO commits at all fails `git log -1 -- <path>` with
+    // "fatal: ... does not have any commits yet" (the FAILS sub-case,
+    // covered by the no-repository-at-all test below), which is a different
+    // mechanism from the EMPTY-stdout sub-case this test exists to cover —
+    // an untracked path in a repo that already has history.
+    writeFileSync(join(dir, 'unrelated.txt'), 'x')
+    execFileSync('git', ['-C', dir, 'add', 'unrelated.txt'], { env: makeFixtureEnv() })
+    execFileSync('git', ['-C', dir, 'commit', '-m', 'unrelated', '--quiet'], {
+      env: makeFixtureEnv(),
+    })
+    mkdirSync(join(dir, 'scripts'), { recursive: true })
+    writeFileSync(join(dir, 'scripts', 'ruflo-bridge-probe.mjs'), '// x\n')
+    // Deliberately never `git add`/`git commit` the probe script itself —
+    // `git log -1 -- <path>` exits 0 with EMPTY stdout for an untracked
+    // path once the repo has at least one commit, the "returns empty"
+    // failure mode named in the fix's own spec.
+    const result = resolveProbeInstalledAt(dir)
+    expect(result.kind).toBe('unknown')
+  })
+
+  it('H-B: a script on disk with no git repository at all reads as unknown — git log fails, never absent and never a bogus mtime', () => {
+    const dir = tmpDir('expected-by-no-git')
+    mkdirSync(join(dir, 'scripts'), { recursive: true })
+    writeFileSync(join(dir, 'scripts', 'ruflo-bridge-probe.mjs'), '// x\n')
+    // No `git init` at all — `git log` fails with a non-zero exit (confirmed
+    // live: "fatal: not a git repository").
+    const result = resolveProbeInstalledAt(dir)
+    expect(result.kind).toBe('unknown')
+  })
+
+  it('H-B: a committer date in the future (clock skew / preserved archive metadata) reads as unknown, never silently clamped to installed', () => {
+    const dir = tmpDir('expected-by-future')
+    const futureDate = '2099-01-01T00:00:00Z'
+    initProbeRepoAt(dir, futureDate)
+    const result = resolveProbeInstalledAt(dir, new Date('2026-01-01T00:00:00Z'))
+    expect(result.kind).toBe('unknown')
+    expect(result.kind === 'unknown' && result.errno).toContain('future')
+  })
+
+  it('H-B RED-TEST: rewriting an already-installed, byte-identical script does NOT reopen the grace window', () => {
+    const dir = tmpDir('expected-by-rewrite')
+    const committerDate = '2026-08-01T00:00:00Z'
+    const content = '// x\n'
+    const scriptPath = initProbeRepoAt(dir, committerDate, content)
+
+    const before = resolveProbeInstalledAt(dir)
+    expect(before).toEqual({ kind: 'installed', at: new Date(committerDate) })
+
+    // Simulate a checkout/rebase/stash-restore: rewrite the SAME bytes to
+    // disk (a real git-crypt smudge filter or a plain non-`-a` copy does
+    // exactly this) and bump mtime to "now" explicitly, so a leftover
+    // mtime-based implementation would visibly reopen the window here — the
+    // exact M-3 defect this fix removes.
+    writeFileSync(scriptPath, content)
+    utimesSync(scriptPath, new Date(), new Date())
+
+    const after = resolveProbeInstalledAt(dir)
+    expect(after).toEqual(before)
   })
 })
 

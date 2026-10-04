@@ -402,7 +402,11 @@ export function writeEntryIfOwned(
 // <500-line-per-file convention — re-exported here so callers (and the
 // writer) can import everything from this one module, matching the render
 // split below. See that module's own doc comment for the full H-9 rationale.
-export { foldLiveness, type BridgeLivenessFold } from './ruflo-bridge-state.liveness.js'
+export {
+  foldLiveness,
+  isValidCount,
+  type BridgeLivenessFold,
+} from './ruflo-bridge-state.liveness.js'
 
 // ---- Render ----------------------------------------------------------
 // Split into `ruflo-bridge-state.render.ts` to stay under this repo's
