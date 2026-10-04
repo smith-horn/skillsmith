@@ -4,6 +4,28 @@ All notable changes to `@skillsmith/core` are documented here.
 
 ## [Unreleased]
 
+- **Fixed**: SMI-6961 / ADR-175 § 1 -- the WASM (sql.js) driver no longer renames a corrupt
+  database aside and rebuilds an empty one. It now refuses with the same structured
+  `CorruptDatabaseError` the native driver throws, so a consumer branching on `error.code` gets
+  identical behaviour from either driver. The old path was worse than a divergence: WASM `close()`
+  skips `persist()` on a read-only handle, so the rename left the database path **gone** rather than
+  replaced, and the next run opened an absent database and reported every skill up to date. Renaming
+  a database another process may hold open is what SQLite's own howtocorrupt documents as undefined
+  behaviour -- the two files then share a journal by name, so one database's recovery can read the
+  other's content.
+
+- **Fixed**: SMI-6961 -- the WASM driver now runs `PRAGMA quick_check(1)` before publishing a
+  handle. Measured: a database with a valid header and every page from 4096 onward overwritten --
+  the exact condition SMI-6931 was filed for -- **passes** the old `SELECT name FROM sqlite_master`
+  probe and opens cleanly, while `quick_check` reports the damage. Because `quick_check` *reports*
+  rather than throws, no `try`/`catch` around the open can observe it, which is why this is a
+  separate step rather than another catch arm -- and why its refusal carries no `sqliteCode`, there
+  being no thrown error to read one from.
+
+- **Changed**: SMI-6961 -- the refusal builder moved to `db/corrupt-refusal.ts` so both drivers
+  construct the identical error. No behaviour change on its own; it exists so the two drivers cannot
+  drift apart again.
+
 - **Test**: SMI-6946 / ADR-175 -- the driver's refusal is now asserted on its **structured
   contract**, not only its message. A pre-merge gate found that all seven refusal arms matched the
   message text, so replacing `CorruptDatabaseError` with a plain `Error` carrying the same words left

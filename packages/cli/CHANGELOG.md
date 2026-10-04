@@ -4,6 +4,18 @@ All notable changes to `@skillsmith/cli` are documented here.
 
 ## [Unreleased]
 
+- **Fixed**: SMI-6961 / ADR-175 § 1 -- commands no longer proceed against an empty database when
+  your local one is corrupt. The shared opener caught the driver's refusal, renamed the **main file
+  only** -- orphaning any `-wal` against a rebuilt database -- and returned, so the command ran to
+  completion against nothing and reported success. It now rethrows: the command aborts and prints
+  the remedy, which names the file and the `mv` to run.
+
+  **This aborts every command, including `search`, `info` and `remove`**, each of which could have
+  served from the remote API or the filesystem without a database. Uniform refusal was chosen
+  deliberately over degrading those three: one code path is far harder to regress than fourteen plus
+  three exceptions. Move the database aside as the message instructs and every command works again
+  -- it holds no data that cannot be rebuilt from the registry.
+
 - **Test**: SMI-6946 / ADR-175 -- coverage for the two `list` output paths a pre-merge gate showed
   were unobservable. `warnUndetermined` appeared in **zero** test files, so no mutation to it could
   be caught, and the gate named one that survived the whole suite: relocate that call one line later,
