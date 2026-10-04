@@ -61,6 +61,7 @@ function run(fx: Fx = {}): Result {
       acceptances: fx.acceptances ?? [acc()],
     }),
     lock: fx.lock ?? lockWith('pkgone'),
+    trackedLockfiles: ['package-lock.json'], // SMI-6954: no seed lockfile in these fixtures
     today: TODAY,
   }
   if (fx.root !== undefined) input.root = fx.root

@@ -20,11 +20,13 @@
 import { readFileSync, appendFileSync } from 'node:fs'
 import { join } from 'node:path'
 import { scanDuplicateJsonKeys } from './audit-dependency-registry-json.mjs'
+import { evaluateSeedSections, readSeedRegistryInputs } from './audit-dependency-registry-seeds.mjs'
 import {
   findAmbiguousOverrideKeys,
   hasOwn,
   isNonEmptyString,
   isRegularFile,
+  lockPresenceProblem,
   lockScopeProblem,
   lockProblem,
   pinnedByProblem,
@@ -167,6 +169,8 @@ function acceptanceLabel(a) {
 
 function checkAcceptance(a, ctx, out, windowEntries) {
   const { today, lock, root, exists } = ctx
+  const seed = ctx.scopeRule === 'seed' // SMI-6954: seeds[...] acceptances (ADR-176 section 6)
+  const scope = seed ? 'seed' : 'dev'
   if (!a || typeof a !== 'object') {
     out.push(f('Check 76: an acceptances entry is not an object'))
     return
@@ -185,11 +189,15 @@ function checkAcceptance(a, ctx, out, windowEntries) {
     )
   }
   validateAcceptanceTypes(a, label, out)
-  if (a.scope !== 'dev') out.push(f(`Check 76: acceptance ${label} scope must be "dev"`))
+  if (a.scope !== scope) out.push(f(`Check 76: acceptance ${label} scope must be "${scope}"`))
   if (!hasOwn(TIER_CEILING_DAYS, a.tier)) {
     out.push(f(`Check 76: acceptance ${label} tier must be one of R1, R2, R3, R4`))
   }
-  const scopeWhy = isNonEmptyString(a.package) ? lockScopeProblem(lock, a.package) : null
+  const scopeWhy = !isNonEmptyString(a.package)
+    ? null
+    : seed
+      ? lockPresenceProblem(lock, a.package, ctx.label)
+      : lockScopeProblem(lock, a.package)
   if (scopeWhy) {
     out.push(
       f(
@@ -246,7 +254,15 @@ function checkAcceptance(a, ctx, out, windowEntries) {
         )
       )
     }
-    if (!hasPin && !isNonEmptyString(a.tracking)) {
+    if (!hasPin && seed) {
+      // PR-1: unlike the root, a tracking-only seed R4 is a failure, not a warning.
+      out.push(
+        f(
+          `Check 76: seed acceptance ${label} is tier R4, and a seed R4 requires pinnedBy (a test file that pins the R4 condition); tracking alone is not enough`,
+          'Add pinnedBy: <repo path to the test>, or use tier R3'
+        )
+      )
+    } else if (!hasPin && !isNonEmptyString(a.tracking)) {
       out.push(
         f(
           `Check 76: R4 acceptance ${label} has neither pinnedBy (a test file) nor a tracking issue`,
@@ -275,6 +291,7 @@ function checkAcceptance(a, ctx, out, windowEntries) {
         package: a.package,
         expires: a.expires,
         owner: a.owner,
+        label: ctx.label,
       })
       out.push(
         w(
@@ -298,6 +315,7 @@ function checkAcceptance(a, ctx, out, windowEntries) {
  */
 export function evaluateDependencyRegistry(input) {
   const { pkg, registryText, lock, today, root = '.', exists = isRegularFile } = input
+  // trackedLockfiles and seedInputs (SMI-6954) are read by evaluateSeedSections from `input`.
   const findings = []
   const windowEntries = []
   const notEvaluated = (why) => ({
@@ -356,19 +374,30 @@ export function evaluateDependencyRegistry(input) {
       seen.add(a.advisory)
     }
   }
+  const seeds = evaluateSeedSections(
+    registry,
+    { ...input, root, exists },
+    {
+      checkOverrides,
+      checkAcceptance,
+    }
+  )
+  findings.push(...seeds.findings)
+  windowEntries.push(...seeds.windowEntries)
   return {
     findings,
     examined: {
       overrides: counts.registryOverrides,
       overrideLeaves: counts.overrideLeaves,
       acceptances: registry.acceptances.length,
+      ...seeds.examined,
     },
     windowEntries,
     evaluated: true,
   }
 }
 
-/** Reads the three real files; returns null for any that is missing or unparseable. */
+/** Reads the real files (null for any missing or unparseable) plus the seed inputs (SMI-6954). */
 export function readDependencyRegistryInputs(root = '.') {
   const readJson = (rel) => {
     try {
@@ -383,7 +412,13 @@ export function readDependencyRegistryInputs(root = '.') {
   } catch {
     registryText = null
   }
-  return { pkg: readJson('package.json'), lock: readJson('package-lock.json'), registryText, root }
+  return {
+    pkg: readJson('package.json'),
+    lock: readJson('package-lock.json'),
+    registryText,
+    root,
+    ...readSeedRegistryInputs(root, registryText),
+  }
 }
 
 /** UTC today, computed by the caller, never inside the evaluator. */
@@ -394,7 +429,7 @@ export function emitGithubActionsReport(windowEntries, env = process.env, write 
   if (env.GITHUB_ACTIONS !== 'true' || windowEntries.length === 0) return
   for (const e of windowEntries) {
     write(
-      `::warning file=${REGISTRY_PATH}::${e.advisory} expires ${e.expires} (UTC), owner ${e.owner}`
+      `::warning file=${REGISTRY_PATH}::${e.label ? `[${e.label}] ` : ''}${e.advisory} expires ${e.expires} (UTC), owner ${e.owner}`
     )
   }
   if (env.GITHUB_STEP_SUMMARY) {
@@ -423,7 +458,7 @@ export function runDependencyRegistryCheck({ pass, warn, fail }, opts = {}) {
   }
   if (result.evaluated && failures === 0) {
     pass(
-      `Check 76: dependency registry coherent (${result.examined.overrides} override entries for ${result.examined.overrideLeaves} override leaves, ${result.examined.acceptances} acceptances examined)`
+      `Check 76: dependency registry coherent (${result.examined.overrides} override entries for ${result.examined.overrideLeaves} override leaves, ${result.examined.acceptances} acceptances examined); seeds coherent (${result.examined.seedSections} lockfile(s), ${result.examined.seedOverrides} override entries, ${result.examined.seedAcceptances} acceptances examined)${result.examined.lockfileNote}`
     )
   }
   emitGithubActionsReport(result.windowEntries, opts.env ?? process.env)

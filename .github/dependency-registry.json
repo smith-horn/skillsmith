@@ -1,5 +1,5 @@
 {
-  "description": "Registry of every root package.json override and every accepted dev-scope npm-audit advisory, with reason, provenance, removal condition (removeWhen, recorded prose that people re-read; Check 76 requires it to be present and non-empty and never evaluates it) and expiry. Every override and every accepted advisory must have an entry here. audit:standards Check 76 enforces it (SMI-6949, ADR-176): override keys and pins must match package.json, and an acceptance fails CI on and after its expiry date. dependency-registry-expiry.yml re-runs the check daily, since Check 76 otherwise runs only on code PRs, and keeps one GitHub issue open while an acceptance is failing or within its 14-day warn window, and also runs check-dependency-registry.mjs --reconcile-audit against npm audit output (an acceptance absent from the report, for the wrong package or with the wrong severity, or an advisory with no acceptance, fails, unless an install npm reports as affected by it (the report's nodes, looked up in package-lock.json) is a production install: that one is informational and left to the production audit gate, which fails only at high or above, so below-high production advisories are reported by the job and enforced by no gate, and affected installs that cannot be determined fail closed).",
+  "description": "Registry of every root package.json override and every accepted dev-scope npm-audit advisory, plus (under \"seeds\", keyed by lockfile path) every override and accepted advisory of each other tracked lockfile, which the root overrides and the production audit gate never reach (SMI-6954, ADR-176 section 6), with reason, provenance, removal condition (removeWhen, recorded prose that people re-read; Check 76 requires it to be present and non-empty and never evaluates it) and expiry. Every override and every accepted advisory must have an entry here. audit:standards Check 76 enforces it (SMI-6949, ADR-176): override keys and pins must match package.json, and an acceptance fails CI on and after its expiry date. dependency-registry-expiry.yml re-runs the check daily, since Check 76 otherwise runs only on code PRs, and keeps one GitHub issue open while an acceptance is failing or within its 14-day warn window, and also runs check-dependency-registry.mjs --reconcile-audit against npm audit output (an acceptance absent from the report, for the wrong package or with the wrong severity, or an advisory with no acceptance, fails, unless an install npm reports as affected by it (the report's nodes, looked up in package-lock.json) is a production install: that one is informational and left to the production audit gate, which fails only at high or above, so below-high production advisories are reported by the job and enforced by no gate, and affected installs that cannot be determined fail closed). Every tracked lockfile other than the root needs a \"seeds\" entry; a seed acceptance has scope \"seed\" and tier R3, or R4 with pinnedBy; the daily job audits each seed inside its own directory and fails on every unaccepted seed advisory, at any severity and install scope, because no gate audits a seed tree.",
   "overrides": {
     "undici": {
       "pin": "^7.30.0",
@@ -682,5 +682,81 @@
       "expires": "2026-11-02",
       "tracking": "SMI-6952"
     }
-  ]
+  ],
+  "seeds": {
+    "scripts/ruflo-seed/package-lock.json": {
+      "overrides": {
+        "protobufjs": {
+          "pin": "7.6.6",
+          "reason": "Dependency Guard (npm audit --audit-level=high) finding when the seed landed (SMI-6744 A1.4). onnx-proto declares ^6.8.8, whose newest release 6.11.6 has 11 advisories (1 critical, 5 high, 5 moderate, re-confirmed 2026-10-04 against the npm bulk advisory API); forces every consumer (@google/genai, @grpc/proto-loader, onnx-proto, onnxruntime-web) onto patched 7.6.6.",
+          "advisories": [
+            "GHSA-xq3m-2v4x-88gg",
+            "GHSA-66ff-xgx4-vchm",
+            "GHSA-75px-5xx7-5xc7",
+            "GHSA-jvwf-75h9-cwgg",
+            "GHSA-685m-2w69-288q",
+            "GHSA-wcpc-wj8m-hjx6",
+            "GHSA-2pr8-phx7-x9h3",
+            "GHSA-fx83-v9x8-x52w",
+            "GHSA-q6x5-8v7m-xcrf",
+            "GHSA-jggg-4jg4-v7c6",
+            "GHSA-f38q-mgvj-vph7"
+          ],
+          "introducedBy": ["SMI-6744", "c786636f5"],
+          "crossesMajor": "forces onnx-proto (^6.8.8) up from 6.x to 7.x",
+          "removeWhen": "`npm ls protobufjs` inside scripts/ruflo-seed no longer lists it, or every consumer declares a range that includes 7.6.6 (today onnx-proto declares ^6.8.8). Re-evaluate on every @claude-flow/cli bump (scripts/ruflo-seed/regenerate-digest.sh)."
+        },
+        "@opentelemetry/propagator-jaeger": {
+          "pin": "2.9.0",
+          "reason": "Dependency Guard finding when the seed landed (SMI-6744 A1.4). @opentelemetry/sdk-node 0.218.0 exact-pins 2.7.1, which GHSA-45rx-2jwx-cxfr (high, <2.9.0) affects (re-confirmed 2026-10-04); forces it to 2.9.0 within 2.x.",
+          "advisories": ["GHSA-45rx-2jwx-cxfr"],
+          "introducedBy": ["SMI-6744", "c786636f5"],
+          "crossesMajor": null,
+          "removeWhen": "`npm ls @opentelemetry/propagator-jaeger` inside scripts/ruflo-seed no longer lists it, or every consumer declares a range that includes 2.9.0 (today @opentelemetry/sdk-node exact-pins 2.7.1). Re-evaluate on every @claude-flow/cli bump (scripts/ruflo-seed/regenerate-digest.sh)."
+        },
+        "toml": {
+          "pin": "4.2.0",
+          "reason": "Dependency Guard finding when the seed landed (SMI-6744 A1.4), reached via @claude-flow/cli itself, which declares ^3.0.0; 3.0.0, the only 3.x release, has GHSA-82x6-q7mm-w9cf and GHSA-v5mp-jgw5-2x6j (both high, re-confirmed 2026-10-04).",
+          "advisories": ["GHSA-82x6-q7mm-w9cf", "GHSA-v5mp-jgw5-2x6j"],
+          "introducedBy": ["SMI-6744", "c786636f5"],
+          "crossesMajor": "forces @claude-flow/cli (^3.0.0) up from 3.x to 4.x",
+          "removeWhen": "`npm ls toml` inside scripts/ruflo-seed no longer lists it, or every consumer declares a range that includes 4.2.0 (today @claude-flow/cli declares ^3.0.0). Re-evaluate on every @claude-flow/cli bump (scripts/ruflo-seed/regenerate-digest.sh)."
+        },
+        "sharp": {
+          "pin": "0.35.4",
+          "reason": "Dependency Guard finding when the seed landed (SMI-6744 A1.4). @xenova/transformers declares ^0.32.0, whose newest release 0.32.6 has GHSA-f88m-g3jw-g9cj and GHSA-rgj7-g3m4-5g8c (both high, re-confirmed 2026-10-04); @huggingface/transformers already declares ^0.35.4.",
+          "advisories": ["GHSA-f88m-g3jw-g9cj", "GHSA-rgj7-g3m4-5g8c"],
+          "introducedBy": ["SMI-6744", "c786636f5"],
+          "crossesMajor": "forces @xenova/transformers (^0.32.0) from 0.32.x to 0.35.x, a 0.x minor crossing that semver treats as breaking",
+          "removeWhen": "`npm ls sharp` inside scripts/ruflo-seed no longer lists it, or every consumer declares a range that includes 0.35.4 (today @xenova/transformers declares ^0.32.0). Re-evaluate on every @claude-flow/cli bump (scripts/ruflo-seed/regenerate-digest.sh)."
+        }
+      },
+      "acceptances": [
+        {
+          "advisory": "GHSA-vfj7-8cjw-p6xm",
+          "package": "braces",
+          "severity": "high",
+          "scope": "seed",
+          "tier": "R3",
+          "basis": "No patched release exists (3.0.3 is latest; the advisory range is <=3.0.3). Reached only through optional installs (agentic-flow -> http-proxy-middleware -> micromatch -> braces), and the seed is served by a local-only container with network_mode none and no secrets (ADR-170 section 1).",
+          "owner": "wrsmith108",
+          "accepted": "2026-10-04",
+          "expires": "2027-01-02",
+          "tracking": null
+        },
+        {
+          "advisory": "GHSA-8988-4f7v-96qf",
+          "package": "@opentelemetry/core",
+          "severity": "moderate",
+          "scope": "seed",
+          "tier": "R3",
+          "basis": "The 1.30.1 copy (under @opentelemetry/resources 1.30.1, which agentdb requests with ^1.25.0) has no 1.x fix. The 21 copies at 2.7.1 are exact-pinned by the 0.218.0 and 2.7.1 otel packages, and @opentelemetry/sdk-node 0.218.x has no release that lifts them, so only a seed override fixes them (SMI-6980, owner decision 2). Every install is optional, and the seed is served with no network and no secrets.",
+          "owner": "wrsmith108",
+          "accepted": "2026-10-04",
+          "expires": "2027-01-02",
+          "tracking": "SMI-6980"
+        }
+      ]
+    }
+  }
 }

@@ -1,5 +1,11 @@
 version: 2
 updates:
+  # SMI-6954 (owner decision 3, ADR-176 section 6): the second tracked lockfile,
+  # scripts/ruflo-seed/package-lock.json, deliberately gets NO version-update
+  # entry. Its pins are exact and every change moves SEED-MANIFEST.sha256, which
+  # is regenerated on arm64. The detector is the daily dependency-registry-expiry.yml
+  # seed reconcile (every unaccepted seed advisory fails it), plus Dependabot
+  # alerts if they cover the seed manifest.
   - package-ecosystem: 'npm'
     directory: '/'
     schedule:
